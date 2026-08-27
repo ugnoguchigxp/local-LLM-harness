@@ -1,0 +1,13 @@
+runtimes:
+  broken:
+    capability:
+      - llm.general
+    backend: nssm
+    node: ai395-01
+    policy: {}
+    resources:
+      estimatedMemoryGB: 24
+    deployment:
+      service: llama-qwen-27b-backend
+      healthPort: 50053
+      endpoint: http://127.0.0.1:50043

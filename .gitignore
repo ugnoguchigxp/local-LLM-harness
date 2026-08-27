@@ -1,0 +1,15 @@
+node_modules/
+*.tsbuildinfo
+.cache/
+
+# GGUF weights (tens of GB; GitHub rejects files over 100MB)
+models/
+*.gguf
+
+# local runtime noise
+logs/
+*.log
+backups/
+
+# nested llama.cpp clone (has its own .git) and compiler output
+atomic-llama-cpp-turboquant/

@@ -1,0 +1,19 @@
+profiles:
+  default:
+    require:
+      - llm.general
+  coding:
+    require:
+      - llm.general
+      - llm.coding
+  voice:
+    require:
+      - llm.general
+      - speech.stt
+      - speech.tts
+  meeting:
+    require:
+      - llm.general
+      - speech.stt
+      - speech.diarization
+      - translation

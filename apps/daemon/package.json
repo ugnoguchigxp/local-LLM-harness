@@ -1,0 +1,14 @@
+{
+  "name": "@larm/daemon",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "start": "bun run src/main.ts"
+  },
+  "dependencies": {
+    "@larm/backends": "workspace:*",
+    "@larm/core": "workspace:*",
+    "hono": "^4"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "local-ai-runtime-manager",
+  "private": true,
+  "packageManager": "bun@1.4.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "bun run --filter @larm/daemon dev",
+    "start": "bun run --filter @larm/daemon start",
+    "test": "bun test apps packages"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0"
+  }
+}

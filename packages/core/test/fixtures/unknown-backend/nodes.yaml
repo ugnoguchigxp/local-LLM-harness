@@ -1,0 +1,7 @@
+nodes:
+  ai395-01:
+    displayName: test
+    endpoint: http://127.0.0.1
+    resources:
+      memoryTotalGB: 128
+      reservedMemoryGB: 16

@@ -1,0 +1,38 @@
+# Drop-in for config/runtimes.yaml when llama-swap is proven.
+# Do not overwrite the production nssm file until NSSM Qwen services are stopped.
+# Copy onto runtimes.yaml only for a dedicated experiment:
+#   Copy-Item config\runtimes.llama-swap.yaml config\runtimes.yaml
+#
+# llama-swap must already be listening on 127.0.0.1:9292.
+
+runtimes:
+  qwen-general:
+    capability:
+      - llm.general
+      - llm.reasoning
+    backend: llama-swap
+    node: ai395-01
+    policy:
+      class: resident
+    resources:
+      estimatedMemoryGB: 24
+    deployment:
+      modelId: qwen-general
+      listen: http://127.0.0.1:9292
+      endpoint: http://127.0.0.1:9292
+      backendEndpoint: http://127.0.0.1:9292/upstream/qwen-general
+
+  qwen-worker:
+    capability:
+      - llm.general
+    backend: llama-swap
+    node: ai395-01
+    policy:
+      class: preferred
+    resources:
+      estimatedMemoryGB: 24
+    deployment:
+      modelId: qwen-worker
+      listen: http://127.0.0.1:9292
+      endpoint: http://127.0.0.1:9292
+      backendEndpoint: http://127.0.0.1:9292/upstream/qwen-worker

@@ -1,0 +1,3 @@
+# llama.cpp webui のテストは `bun run test`（apps / packages のみ）で除外する。
+[test]
+coverage = false

@@ -1,0 +1,5 @@
+profiles:
+  coding:
+    require:
+      - llm.general
+      - llm.coding

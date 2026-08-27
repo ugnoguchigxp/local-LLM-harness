@@ -1,0 +1,4 @@
+profiles:
+  default:
+    require:
+      - llm.general

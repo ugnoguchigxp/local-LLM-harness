@@ -1,0 +1,72 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
+#
+# llama-swap 実験用。本番 NSSM の :50051 / :50053 とはポートを分けている。
+# 起動（daemon は自動起動しない）:
+#   bin\llama-swap.exe --config config\llama-swap.yaml --listen 127.0.0.1:9292
+#
+# TTL は 0。unload は Manager が POST /api/models/unload/:id で行う。
+# matrix の dual は 2 replica 同時 HOT を許可する。Resident の eviction cost を高くして
+# worker ロードで general を落とさない。
+
+healthCheckTimeout: 300
+logLevel: info
+logToStdout: proxy
+startPort: 58000
+globalTTL: 0
+unloadTimeout: 10
+
+macros:
+  llama_server: "C:/Users/yuji/local-llm-setup/bin-upstream-vulkan/llama-server.exe"
+  qwen_model: "C:/Users/yuji/local-llm-setup/models/Qwen3.8-27B-MTP-Q3_K_M.gguf"
+  qwen_flags: >-
+    --host 127.0.0.1
+    -ngl 99
+    --ctx-size 163840
+    --parallel 1
+    -ctk q4_0
+    -ctv q4_0
+    -fa on
+    --spec-type draft-mtp
+    --spec-draft-n-max 2
+    --api-key sk-local-ai-max-395
+    --reasoning off
+    --temp 0.2
+    --top-p 0.9
+    --jinja
+    --context-shift
+
+models:
+  qwen-general:
+    cmd: >
+      ${llama_server}
+      -m ${qwen_model}
+      --port ${PORT}
+      ${qwen_flags}
+    ttl: 0
+    env:
+      - "HIP_VISIBLE_DEVICES=-1"
+      - "ROCR_VISIBLE_DEVICES=-1"
+  qwen-worker:
+    cmd: >
+      ${llama_server}
+      -m ${qwen_model}
+      --port ${PORT}
+      ${qwen_flags}
+    ttl: 0
+    env:
+      - "HIP_VISIBLE_DEVICES=-1"
+      - "ROCR_VISIBLE_DEVICES=-1"
+
+routing:
+  router:
+    use: matrix
+    settings:
+      matrix:
+        vars:
+          g: qwen-general
+          w: qwen-worker
+        evict_costs:
+          g: 100
+          w: 1
+        sets:
+          dual: "g & w"

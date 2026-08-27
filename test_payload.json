@@ -1,0 +1,1 @@
+{"model":"local-model","messages":[{"role":"user","content":"Write a long detailed paragraph about rivers. Keep going with many sentences."}],"max_tokens":200,"temperature":0.7,"stream":true}
