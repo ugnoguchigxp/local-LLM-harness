@@ -70,6 +70,10 @@ export type ControlPlaneOptions = {
   isRuntimeMutating?: (runtimeId: string) => boolean;
   onEvent?: (event: ControlEvent) => void;
   onRouteShadowComparison?: (comparison: RouteShadowComparison) => void;
+  requireFreshTelemetry?: boolean;
+  telemetryMaxAgeMs?: number;
+  getCatalogRevision?: () => string;
+  getRuntimeRelease?: (runtimeId: string) => string | undefined;
 };
 
 export class ControlPlane {
@@ -85,10 +89,11 @@ export class ControlPlane {
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private applyChain: Promise<void> = Promise.resolve();
   private draining = false;
+  private catalogReloading = false;
   private idSequence = 0;
 
   constructor(
-    private readonly registry: Registry,
+    private registry: Registry,
     private readonly backend: RuntimeBackend,
     private readonly observer: Observer,
     private readonly options: ControlPlaneOptions = {},
@@ -118,6 +123,69 @@ export class ControlPlane {
 
   isDraining(): boolean {
     return this.draining;
+  }
+
+  isCatalogReloading(): boolean {
+    return this.catalogReloading;
+  }
+
+  catalogReloadBlockers(): string[] {
+    this.expireDueAllocations();
+    const blockers: string[] = [];
+    if (this.draining) {
+      blockers.push("draining");
+    }
+    if (this.catalogReloading) {
+      blockers.push("catalog_reload_in_progress");
+    }
+    if (this.activeAdmissionCount() > 0) {
+      blockers.push("active_allocations");
+    }
+    if ([...this.operations.values()].some((operation) =>
+      operation.status === "pending" || operation.status === "running"
+    )) {
+      blockers.push("control_operations");
+    }
+    if (this.lifecycleReservations.size > 0) {
+      blockers.push("runtime_transition_in_progress");
+    }
+    return blockers;
+  }
+
+  beginCatalogReload():
+    | { ok: true; release: () => void }
+    | { ok: false; blockers: string[] } {
+    const blockers = this.catalogReloadBlockers();
+    if (blockers.length > 0) {
+      return { ok: false, blockers };
+    }
+    this.catalogReloading = true;
+    this.cancelIdle();
+    let released = false;
+    return {
+      ok: true,
+      release: () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        this.catalogReloading = false;
+        this.scheduleIdleReconcile();
+      },
+    };
+  }
+
+  replaceRegistry(registry: Registry): void {
+    if (!this.catalogReloading) {
+      throw new Error("registry replacement requires a catalog reload reservation");
+    }
+    const blockers = this.catalogReloadBlockers().filter((blocker) =>
+      blocker !== "catalog_reload_in_progress"
+    );
+    if (blockers.length > 0) {
+      throw new Error(`registry replacement is blocked: ${blockers.join(", ")}`);
+    }
+    this.registry = registry;
   }
 
   isRuntimeTransitioning(runtimeId: string): boolean {
@@ -172,6 +240,12 @@ export class ControlPlane {
       return {
         status: 503 as const,
         body: { error: { code: "draining", message: "control plane is draining" } },
+      };
+    }
+    if (this.catalogReloading) {
+      return {
+        status: 503 as const,
+        body: { error: { code: "catalog_reloading", message: "runtime catalog is reloading" } },
       };
     }
     if (!this.hasFreshState()) {
@@ -247,6 +321,7 @@ export class ControlPlane {
         candidateRank: selected.candidateRank,
         fallback: selected.fallback,
         selectionReason: selected.reason,
+        release: this.options.getRuntimeRelease?.(selected.runtime),
       });
     }
 
@@ -286,6 +361,15 @@ export class ControlPlane {
       state: this.observer.getState(),
       allocations: [...this.allocations.values()],
       candidateRuntimeIds: runtimeIds,
+      ...(this.options.requireFreshTelemetry
+        ? {
+          liveTelemetry: {
+            requiredForNonResident: true,
+            maxAgeMs: this.options.telemetryMaxAgeMs ?? 10_000,
+            now: this.now(),
+          },
+        }
+        : {}),
     });
     if (!admission.ok) {
       this.emit("allocation_rejected", { reason: admission.reason });
@@ -308,6 +392,7 @@ export class ControlPlane {
         (candidate) => this.allocations.has(candidate),
       ),
       bootEpoch: this.getBootEpoch(),
+      catalogRevision: this.options.getCatalogRevision?.(),
       client: request.client,
       status: request.deploymentPolicy === "existing-only" &&
         bindings.every((binding) => binding.status === "HOT" || binding.status === "BUSY")
@@ -487,6 +572,12 @@ export class ControlPlane {
       return {
         status: 503 as const,
         body: { error: { code: "draining", message: "control plane is draining" } },
+      };
+    }
+    if (this.catalogReloading) {
+      return {
+        status: 503 as const,
+        body: { error: { code: "catalog_reloading", message: "runtime catalog is reloading" } },
       };
     }
     const expanded = expandPrepareRequest(this.registry, request);
@@ -769,7 +860,7 @@ export class ControlPlane {
   }
 
   async reconcileOrphanedPreferred(): Promise<string[]> {
-    if (this.draining) {
+    if (this.draining || this.catalogReloading) {
       return [];
     }
     this.expireDueAllocations();
@@ -1182,6 +1273,7 @@ export class ControlPlane {
       client: allocation.client ?? "unknown",
       routes: [...new Set(allocation.bindings.map((binding) => binding.route))].join(","),
       runtimes: [...new Set(allocation.bindings.map((binding) => binding.runtime))].join(","),
+      releases: [...new Set(allocation.bindings.map((binding) => binding.release ?? "unmanaged"))].join(","),
       fallback: String(allocation.bindings.some((binding) => binding.fallback)),
       reasons: [...new Set(allocation.bindings.map((binding) => binding.selectionReason))].join(","),
     };

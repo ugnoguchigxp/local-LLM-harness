@@ -167,3 +167,49 @@ test("admission rejects a runtime at declared allocation capacity", () => {
     runtime: "worker",
   }));
 });
+
+test("non-resident startup fails closed on stale or insufficient live telemetry", () => {
+  const observed = state([]);
+  observed.node.telemetry = {
+    status: "available",
+    observedAt: "2026-08-28T00:00:00.000Z",
+    source: "test",
+    systemMemoryTotalBytes: 64 * 1024 ** 3,
+    systemMemoryAvailableBytes: 20 * 1024 ** 3,
+  };
+  const liveTelemetry = {
+    requiredForNonResident: true,
+    maxAgeMs: 10_000,
+    now: Date.parse("2026-08-28T00:00:01.000Z"),
+  };
+  const exhausted = admitRuntimes({
+    registry,
+    state: observed,
+    allocations: [],
+    candidateRuntimeIds: ["worker"],
+    liveTelemetry,
+  });
+  expect(exhausted.ok).toBe(false);
+  if (!exhausted.ok) expect(exhausted.reason).toBe("live_memory_exhausted");
+
+  const stale = admitRuntimes({
+    registry,
+    state: observed,
+    allocations: [],
+    candidateRuntimeIds: ["worker"],
+    liveTelemetry: { ...liveTelemetry, now: Date.parse("2026-08-28T00:01:00.000Z") },
+  });
+  expect(stale.ok).toBe(false);
+  if (!stale.ok) expect(stale.reason).toBe("telemetry_unavailable");
+});
+
+test("resident-only admission does not depend on live telemetry", () => {
+  const result = admitRuntimes({
+    registry,
+    state: state([]),
+    allocations: [],
+    candidateRuntimeIds: ["resident"],
+    liveTelemetry: { requiredForNonResident: true, maxAgeMs: 1, now: Date.now() },
+  });
+  expect(result.ok).toBe(true);
+});

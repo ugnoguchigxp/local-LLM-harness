@@ -10,11 +10,18 @@ export type DaemonIdentity = {
 
 const CONFIG_FILES = ["nodes.yaml", "runtimes.yaml", "profiles.yaml", "routes.yaml"];
 
-export function computeConfigRevision(configDir: string, artifactManifestPath: string): string {
+export function computeConfigRevision(
+  configDir: string,
+  artifactManifestPath: string,
+  releaseCatalogPath?: string,
+): string {
   const hash = createHash("sha256");
   const inputs = [
     ...CONFIG_FILES.map((name) => ({ name: `registry/${name}`, path: join(configDir, name) })),
     { name: "artifacts/models.yaml", path: artifactManifestPath },
+    ...(releaseCatalogPath
+      ? [{ name: "artifacts/releases.yaml", path: releaseCatalogPath }]
+      : []),
   ];
   for (const input of inputs) {
     hash.update(input.name);

@@ -59,11 +59,17 @@ configuration revision, aggregate results, and location of repository-external r
 
 ```bash
 cd /srv/ai/apps/local-LLM-harness
+deploy/gnosis/scripts/preflight-larm.sh
+deploy/gnosis/scripts/release-larm.sh plan
+sudo deploy/gnosis/scripts/release-larm.sh apply
 deploy/gnosis/scripts/verify.sh
 deploy/gnosis/scripts/smoke-larm.sh
+deploy/gnosis/scripts/shadow-larm.sh
 # Attended voice validation only:
 # LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/gnosis/scripts/smoke-voice.sh
 LARM_CANARY_ITERATIONS=3 deploy/gnosis/scripts/canary-gate.sh
+# Attended fault inventory; mutations require LARM_FAULT_CONFIRM=gnosis-attended:
+deploy/gnosis/scripts/fault-larm.sh plan
 systemctl is-active llama-server.service llama-swap-worker.service \
   qwen-asr.service voicevox-tts.service larm-daemon.service
 systemctl is-enabled llama-server.service llama-swap-worker.service \
@@ -74,9 +80,17 @@ journalctl -u voicevox-tts.service -f
 journalctl -u larm-daemon.service -f
 ```
 
+If `release-larm.sh plan` returns cleanup candidates, review them and pass its
+`cleanupConfirm` value through `LARM_RELEASE_CLEANUP_CONFIRM` to the matching `apply`.
+An unreviewed or changed candidate set is rejected before deletion or activation.
+
 After the repository installer is applied, the expected enablement is Resident/control units
 enabled and `qwen-tts.service` disabled. A Preferred service may still be active temporarily
 while an explicit Allocation uses it; enabled and active are separate states.
+
+LARM自身は`/srv/ai/apps/larm-releases/<commit-prefix>`へ世代固定し、
+`/srv/ai/apps/larm-current`のatomic symlinkをdaemon unitが参照します。rollbackは
+`sudo deploy/gnosis/scripts/release-larm.sh rollback`でLARM daemonだけを前世代へ戻します。
 
 The host uses a 100 GB TTM/GTT setting. Check it with `amd-ttm` after an attended boot.
 Do not automate `reboot`: the machine is dual boot and may start Windows.

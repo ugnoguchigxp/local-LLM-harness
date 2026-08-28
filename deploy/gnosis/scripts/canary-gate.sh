@@ -15,12 +15,13 @@ fi
 
 cd "${repo_root}"
 bun test packages/core/src/registry.test.ts packages/core/src/artifacts.test.ts >/dev/null
+deploy/gnosis/scripts/shadow-larm.sh >/dev/null
 
 health_before="$(curl -fsS --max-time 10 "${base_url}/health")"
 epoch_before="$(jq -er '.bootEpoch' <<<"${health_before}")"
 started_ns="$(date +%s%N)"
 for ((iteration = 1; iteration <= iterations; iteration += 1)); do
-  deploy/gnosis/scripts/smoke-larm.sh >/dev/null
+  bun run examples/resident-client.ts >/dev/null
 done
 elapsed_ns=$(( $(date +%s%N) - started_ns ))
 
@@ -40,12 +41,15 @@ average_ms=$((duration_ms / iterations))
 echo "canary passed: iterations=${iterations} total_ms=${duration_ms} average_ms=${average_ms} boot_epoch=${epoch_after}"
 metrics_output="$(curl -fsS --max-time 10 "${headers[@]}" "${base_url}/metrics")"
 if awk '
-  /^larm_(active_allocations|execution_active|execution_queued)(\{| )/ && ($NF + 0) != 0 { leaked = 1 }
-  END { exit leaked ? 1 : 0 }
+  /^larm_active_allocations(\{| )/ { allocations = 1; if (($NF + 0) != 0) leaked = 1 }
+  /^larm_execution_active(\{| )/ { execution_active = 1; if (($NF + 0) != 0) leaked = 1 }
+  /^larm_execution_queued(\{| )/ { execution_queued = 1; if (($NF + 0) != 0) leaked = 1 }
+  /^larm_artifact_operations_active(\{| )/ { artifact_operations = 1; if (($NF + 0) != 0) leaked = 1 }
+  END { exit leaked || !allocations || !execution_active || !execution_queued || !artifact_operations ? 1 : 0 }
 ' <<<"${metrics_output}"; then
   :
 else
-  echo "canary left an active Allocation or execution slot" >&2
+  echo "canary gauge is missing or an Allocation, execution slot, or artifact operation leaked" >&2
   exit 1
 fi
-grep -E '^larm_(active_allocations|allocation|gateway|execution_)' <<<"${metrics_output}" || true
+grep -E '^larm_(active_allocations|allocation|gateway|execution_|artifact_operations_active)' <<<"${metrics_output}" || true

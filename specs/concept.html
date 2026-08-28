@@ -164,7 +164,8 @@ LLM / STT / TTS runtimes</code></pre>
     <p>
       「動的にモデルを変える」とは、最初の段階では宣言済み・配備済みRuntimeの起動、割当、fallback、解放を意味します。
       新しいweightのdownload、checksum検証、staging、activation、rollbackは、管理credentialで保護した
-      別のlifecycleとして扱います。自動処理はmanifestに固定されたchecksum付き単一fileに限定します。
+      別のlifecycleとして扱います。自動処理はmanifestに固定されたchecksum付き単一file、または
+      全fileを列挙してsnapshot digestを固定したdirectoryに限定します。
     </p>
 
     <h3>API境界</h3>
@@ -176,9 +177,8 @@ LLM / STT / TTS runtimes</code></pre>
       </dd>
       <dt>Inference data plane</dt>
       <dd>
-        LLMはallocationを検証するOpenAI互換<code>/v1/chat/completions</code>
-        Gatewayを提供します。STTとTTSはprotocol
-        contractを追加するまでresolveされたendpointを直接使用します。
+        LLM、STT、TTSはprotocolを検証し、Allocationの固定Bindingだけを使用するOpenAI互換Gatewayを
+        提供します。通常の利用側へ個別Provider portを公開しません。
       </dd>
       <dt>Artifact deployment API</dt>
       <dd>
@@ -199,7 +199,7 @@ LLM / STT / TTS runtimes</code></pre>
       <li>systemdとllama-swapへのlifecycle委譲</li>
       <li>OpenAI互換の安定Gateway</li>
       <li>使用Runtime、fallback理由、startup・推論latencyの観測</li>
-      <li>宣言済み単一file artifactに対する検証・staging・activation・rollback</li>
+      <li>宣言済み単一file・directory snapshot artifactの検証・staging・activation・rollback</li>
     </ul>
   </section>
 
@@ -315,14 +315,14 @@ LLM / STT / TTS runtimes</code></pre>
         <tr>
           <th scope="row">ローカルLLMをOpenAI互換APIで常駐提供</th>
           <td>踏襲・拡張</td>
-          <td>
-            LLMはGatewayで安定化済み。STT/TTSもAllocation境界へ含め、protocol確定後にGateway化する
-          </td>
+          <td>LLM、STT、TTSをprotocol-awareなAllocation固定Gatewayへ統一済み</td>
         </tr>
         <tr>
           <th scope="row">ストリーミング応答の検証</th>
           <td>踏襲・更新</td>
-          <td>LLMはGatewayとAllocationを通るE2Eへ更新済み。STT/TTSも同じ検証へ発展させる</td>
+          <td>
+            LLM、STT、TTSをGatewayとAllocationへ通す自動testを実装済み。実音声のattended検証を継続する
+          </td>
         </tr>
         <tr>
           <th scope="row">memory、GPU、負荷の確認</th>

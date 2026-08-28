@@ -1,26 +1,59 @@
-import { LARM_VERSION, loadArtifactManifest, loadRegistry } from "@larm/core";
-import { createRuntimeBackend, LocalArtifactStore } from "@larm/backends";
+import { LARM_VERSION } from "@larm/core";
+import {
+  createRuntimeBackend,
+  LocalArtifactStore,
+  LocalRuntimeReleaseStateStore,
+  LinuxNodeTelemetry,
+  SwappableRuntimeBackend,
+} from "@larm/backends";
 import { createApp } from "./app";
 import { ArtifactManager } from "./artifact-manager";
 import { parseDaemonConfig } from "./config";
 import { ControlPlane, type ControlEvent } from "./controller";
 import { MetricsRegistry, RequestTracker } from "./metrics";
 import { Observer } from "./observer";
-import { computeConfigRevision, createBootEpoch } from "./identity";
+import { createBootEpoch } from "./identity";
 import { ExecutionGate } from "./execution-gate";
+import { RuntimeReleaseManager } from "./runtime-release-manager";
+import { CatalogManager, loadCatalogGeneration } from "./catalog-manager";
+import { MutationCoordinator } from "./mutation-coordinator";
 
 const config = parseDaemonConfig();
+const catalogGeneration = loadCatalogGeneration({
+  configDir: config.configDir,
+  artifactManifestPath: config.artifactManifestPath,
+  releaseCatalogPath: config.releaseCatalogPath,
+});
+const { registry, artifacts, releases: runtimeReleases } = catalogGeneration;
 const identity = {
   version: LARM_VERSION,
-  configRevision: computeConfigRevision(config.configDir, config.artifactManifestPath),
+  configRevision: catalogGeneration.revision,
   bootEpoch: createBootEpoch(),
 };
 
-const registry = loadRegistry(config.configDir);
-const backend = createRuntimeBackend(registry.runtimes);
-const observer = new Observer(registry, backend, { graceMs: config.graceMs });
+const backend = new SwappableRuntimeBackend(createRuntimeBackend(registry.runtimes));
 const metrics = new MetricsRegistry();
+const observer = new Observer(registry, backend, {
+  graceMs: config.graceMs,
+  telemetry: new LinuxNodeTelemetry(),
+  onTelemetry: (telemetry) => {
+    if (telemetry?.status !== "available") return;
+    metrics.setGauge(
+      "system_memory_available_bytes",
+      {},
+      telemetry.systemMemoryAvailableBytes ?? 0,
+    );
+    if (telemetry.acceleratorMemoryAvailableBytes !== undefined) {
+      metrics.setGauge(
+        "accelerator_memory_available_bytes",
+        {},
+        telemetry.acceleratorMemoryAvailableBytes,
+      );
+    }
+  },
+});
 const requestTracker = new RequestTracker();
+const mutationCoordinator = new MutationCoordinator();
 let control: ControlPlane;
 const writeEvent = (event: ControlEvent) => {
   console.log(JSON.stringify({
@@ -54,6 +87,8 @@ const artifactStore = new LocalArtifactStore({
   stateRoot: config.artifactStateRoot,
 });
 let artifactManager: ArtifactManager;
+let runtimeReleaseManager: RuntimeReleaseManager;
+let catalogManager: CatalogManager;
 control = new ControlPlane(registry, backend, observer, {
   bootEpoch: identity.bootEpoch,
   idleTtlMs: config.idleTtlMs,
@@ -62,6 +97,10 @@ control = new ControlPlane(registry, backend, observer, {
   historyLimit: config.historyLimit,
   maxActiveAllocations: config.activeAllocationLimit,
   stateMaxAgeMs: config.stateMaxAgeMs,
+  requireFreshTelemetry: true,
+  telemetryMaxAgeMs: config.telemetryMaxAgeMs,
+  getCatalogRevision: () => catalogManager?.revision ?? catalogGeneration.revision,
+  getRuntimeRelease: (runtimeId) => runtimeReleaseManager?.getActiveRelease(runtimeId),
   isRuntimeMutating: (runtimeId) => artifactManager?.isRuntimeMutating(runtimeId) ?? false,
   onEvent: observeEvent,
   deploymentCoordinator: {
@@ -71,7 +110,7 @@ control = new ControlPlane(registry, backend, observer, {
 });
 metrics.setGauge("active_allocations", {}, 0);
 artifactManager = new ArtifactManager(
-  loadArtifactManifest(config.artifactManifestPath),
+  artifacts,
   registry,
   artifactStore,
   backend,
@@ -81,20 +120,53 @@ artifactManager = new ArtifactManager(
     isRuntimeTransitioning: (runtimeId) => control.isRuntimeTransitioning(runtimeId),
     historyLimit: config.historyLimit,
     maxPendingOperations: config.artifactOperationLimit,
+    runtimeArtifacts: (runtimeId) => runtimeReleaseManager?.getRuntimeArtifacts(runtimeId),
+    additionalArtifactOwners: runtimeReleases.map((release) => ({
+      runtimeId: release.runtime,
+      artifactIds: release.artifacts,
+    })),
     onEvent: observeEvent,
+    mutationCoordinator,
+    onOperationState: (active) => metrics.setGauge("artifact_operations_active", {}, active),
   },
 );
 await artifactManager.initialize();
+runtimeReleaseManager = new RuntimeReleaseManager(
+  runtimeReleases,
+  artifactManager,
+  new LocalRuntimeReleaseStateStore(config.artifactStateRoot),
+  Date.now,
+  (runtimeId) => observer.getState().runtimes.find((runtime) => runtime.id === runtimeId),
+);
+await runtimeReleaseManager.initialize();
+catalogManager = new CatalogManager(
+  catalogGeneration,
+  {
+    configDir: config.configDir,
+    artifactManifestPath: config.artifactManifestPath,
+    releaseCatalogPath: config.releaseCatalogPath,
+  },
+  control,
+  observer,
+  backend,
+  artifactManager,
+  runtimeReleaseManager,
+  executionGate,
+  { onEvent: observeEvent, mutationCoordinator },
+);
 
 await observer.tick();
 
 const app = createApp({
   registry,
+  getRegistry: () => catalogManager.registry,
   getState: () => observer.getState(),
   control,
   apiToken: config.apiToken,
   managementToken: config.managementToken,
   artifactManager,
+  runtimeReleaseManager,
+  catalogManager,
   metrics,
   requestTracker,
   controlMaxBodyBytes: config.controlMaxBodyBytes,
@@ -104,6 +176,7 @@ const app = createApp({
   stateMaxAgeMs: config.stateMaxAgeMs,
   onEvent: writeEvent,
   identity,
+  getConfigRevision: () => catalogManager.revision,
   executionGate,
   idempotencyTtlMs: config.idempotencyTtlMs,
   idempotencyLimit: config.idempotencyLimit,
@@ -159,6 +232,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   console.log(`received ${signal}; draining`);
   control.beginDrain();
+  mutationCoordinator.beginDrain();
   artifactManager.beginDrain();
   executionGate.beginDrain();
   clearInterval(interval);
@@ -168,8 +242,9 @@ async function shutdown(signal: string): Promise<void> {
     Promise.all([
       control.flush(),
       artifactManager.flush(),
+      mutationCoordinator.drain(config.shutdownTimeoutMs),
       reconciliationInFlight ?? Promise.resolve(),
-    ]).then(() => true),
+    ]).then(([, , mutationDrained]) => mutationDrained),
     Bun.sleep(config.shutdownTimeoutMs).then(() => false),
   ]);
   const requestsDrained = await requestTracker.drain(Math.max(0, deadline - Date.now()));

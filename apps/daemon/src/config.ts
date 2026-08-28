@@ -22,6 +22,7 @@ export type DaemonConfig = {
   speechMaxBodyBytes: number;
   shutdownTimeoutMs: number;
   artifactManifestPath: string;
+  releaseCatalogPath: string;
   artifactStagingRoot: string;
   artifactRollbackRoot: string;
   artifactStateRoot: string;
@@ -29,6 +30,7 @@ export type DaemonConfig = {
   idempotencyLimit: number;
   recoveryGraceMs: number;
   artifactOperationLimit: number;
+  telemetryMaxAgeMs: number;
 };
 
 function numberSetting(
@@ -133,6 +135,9 @@ export function parseDaemonConfig(
     artifactManifestPath: resolve(
       env.LARM_ARTIFACT_MANIFEST ?? join(sourceDir, "../../../deploy/gnosis/models.yaml"),
     ),
+    releaseCatalogPath: resolve(
+      env.LARM_RELEASE_CATALOG ?? join(sourceDir, "../../../deploy/gnosis/releases.yaml"),
+    ),
     artifactStagingRoot: resolve(
       env.LARM_ARTIFACT_STAGING_ROOT ?? "/srv/ai/models/.larm-staging",
     ),
@@ -152,5 +157,6 @@ export function parseDaemonConfig(
       max: 10_000,
       integer: true,
     }),
+    telemetryMaxAgeMs: secondsSetting(env, "LARM_TELEMETRY_MAX_AGE_SECONDS", 10, 0.001),
   };
 }

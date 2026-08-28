@@ -13,6 +13,7 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.artifactOperationLimit).toBe(64);
   expect(config.recoveryGraceMs).toBe(60_000);
   expect(config.shutdownTimeoutMs).toBe(330_000);
+  expect(config.telemetryMaxAgeMs).toBe(10_000);
   expect(config.configDir).toBe("/workspace/config/gnosis");
 });
 
@@ -31,6 +32,9 @@ test("daemon configuration rejects invalid numbers", () => {
   );
   expect(() => parseDaemonConfig({ LARM_ARTIFACT_OPERATION_LIMIT: "0" })).toThrow(
     /LARM_ARTIFACT_OPERATION_LIMIT/,
+  );
+  expect(() => parseDaemonConfig({ LARM_TELEMETRY_MAX_AGE_SECONDS: "0" })).toThrow(
+    /LARM_TELEMETRY_MAX_AGE_SECONDS/,
   );
 });
 

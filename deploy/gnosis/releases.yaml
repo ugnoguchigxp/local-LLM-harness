@@ -1,0 +1,49 @@
+# Runtime releases combine immutable artifact entries into one deployable unit.
+# Model data stays outside this repository; every artifact is pinned in models.yaml.
+runtimeReleases:
+  qwen-general-current:
+    runtime: qwen-general
+    artifacts:
+      - qwen38-primary
+    providerConfigRevision: llama-server-qwen38-rocmfp4-v1
+    estimatedMemoryGB: 40
+    healthPath: /health
+    default: true
+
+  qwen-worker-quality-current:
+    runtime: qwen-worker-quality
+    artifacts:
+      - qwen38-worker-quality
+      - qwen38-mtp
+    providerConfigRevision: llama-swap-qwen-quality-v1
+    estimatedMemoryGB: 40
+    healthPath: /health
+    default: true
+
+  qwen-worker-fast-current:
+    runtime: qwen-worker-fast
+    artifacts:
+      - qwen38-worker-fast
+      - qwen38-mtp
+    providerConfigRevision: llama-swap-qwen-fast-v1
+    estimatedMemoryGB: 38
+    healthPath: /health
+    default: true
+
+  qwen-asr-current:
+    runtime: qwen-asr
+    artifacts:
+      - qwen3-asr-main
+    providerConfigRevision: qwen-asr-1.7b-v1
+    estimatedMemoryGB: 5
+    healthPath: /health
+    default: true
+
+  qwen-tts-current:
+    runtime: qwen-tts
+    artifacts:
+      - qwen3-tts-expressive
+    providerConfigRevision: qwen-tts-0.6b-v1
+    estimatedMemoryGB: 5
+    healthPath: /health
+    default: true

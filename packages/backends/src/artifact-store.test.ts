@@ -304,6 +304,39 @@ test("operation journal rejects unsafe identifiers", async () => {
   }
 });
 
+test("operation journal rejects a symbolic-link directory", async () => {
+  const { root, store } = await fixture();
+  try {
+    await store.writeOperation({ id: "artifact_op_safe", status: "running", kind: "stage" });
+    const operations = join(root, "state", "operations");
+    await rm(operations, { recursive: true });
+    const outside = join(root, "outside-operations");
+    await mkdir(outside);
+    await writeFile(join(outside, "artifact_op_link.json"), JSON.stringify({
+      id: "artifact_op_link",
+      status: "running",
+      kind: "stage",
+    }));
+    await symlink(outside, operations);
+    await expect(store.loadOperations()).rejects.toMatchObject({ code: "journal_corrupt" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("activation journal rejects a symbolic-link directory", async () => {
+  const { root, artifact, store } = await fixture();
+  try {
+    await mkdir(join(root, "state"));
+    const outside = join(root, "outside-activations");
+    await mkdir(outside);
+    await symlink(outside, join(root, "state", "activations"));
+    await expect(store.requireRollback(artifact)).rejects.toMatchObject({ code: "journal_corrupt" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("stages, activates, and rolls back an exact directory snapshot", async () => {
   const { root, target, artifact, store } = await snapshotFixture();
   try {
@@ -439,7 +472,7 @@ test("cleans expired partial snapshot directories after restart", async () => {
   }
 });
 
-test("rollback recovers a directory displaced by a crash during prepared activation", async () => {
+test("startup recovery restores a directory displaced by a prepared activation", async () => {
   const { root, target, artifact, store } = await snapshotFixture();
   try {
     await mkdir(target, { recursive: true });
@@ -461,11 +494,9 @@ test("rollback recovers a directory displaced by a crash during prepared activat
       activatedAt: new Date().toISOString(),
     })}\n`);
 
-    await store.rollback(artifact);
+    await store.recoverPreparedActivations([artifact]);
     expect(await readFile(join(target, "old.txt"), "utf8")).toBe("old-model");
-    // A crash before displacement is also safe: the original target exists and backup does not.
-    await store.rollback(artifact);
-    expect(await readFile(join(target, "old.txt"), "utf8")).toBe("old-model");
+    expect(await Bun.file(join(root, "state", "activations", `${artifact.id}.json`)).exists()).toBe(false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

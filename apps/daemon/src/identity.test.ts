@@ -8,12 +8,14 @@ test("boot epochs are header-safe and reject weak sources", () => {
   expect(() => createBootEpoch(() => "short")).toThrow(/at least 8/);
 });
 
-test("config revision covers every registry file and the artifact manifest", async () => {
+test("config revision covers every registry file and both deployment manifests", async () => {
   const root = await Bun.$`mktemp -d`.text().then((value) => value.trim());
   const config = join(root, "config");
   const manifest = join(root, "models.yaml");
   const relocatedConfig = join(root, "relocated", "config");
   const relocatedManifest = join(root, "relocated", "manifest.yaml");
+  const releases = join(root, "releases.yaml");
+  const relocatedReleases = join(root, "relocated", "releases.yaml");
   try {
     await mkdir(config);
     await mkdir(relocatedConfig, { recursive: true });
@@ -23,10 +25,12 @@ test("config revision covers every registry file and the artifact manifest", asy
     }
     await writeFile(manifest, "models: {}\n");
     await writeFile(relocatedManifest, "models: {}\n");
-    const before = computeConfigRevision(config, manifest);
-    expect(computeConfigRevision(relocatedConfig, relocatedManifest)).toBe(before);
+    await writeFile(releases, "runtimeReleases: {}\n");
+    await writeFile(relocatedReleases, "runtimeReleases: {}\n");
+    const before = computeConfigRevision(config, manifest, releases);
+    expect(computeConfigRevision(relocatedConfig, relocatedManifest, relocatedReleases)).toBe(before);
     await writeFile(join(config, "routes.yaml"), "routes: changed\n");
-    expect(computeConfigRevision(config, manifest)).not.toBe(before);
+    expect(computeConfigRevision(config, manifest, releases)).not.toBe(before);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

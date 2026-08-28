@@ -18,6 +18,7 @@ test("metrics discard identifiers and combinatorial labels to bound cardinality"
       client: "client_1",
       routes: "llm-default,llm-speed",
       runtimes: "qwen-general,qwen-worker",
+      releases: "qwen-general-r1,qwen-worker-r2",
       reasons: "primary-live,fallback-live",
     },
   });
@@ -29,6 +30,7 @@ test("metrics discard identifiers and combinatorial labels to bound cardinality"
       client: "client_2",
       routes: "llm-default",
       runtimes: "qwen-general",
+      releases: "qwen-general-r1",
       reasons: "primary-live",
     },
   });
@@ -39,9 +41,20 @@ test("metrics expose duration samples as sum and count", () => {
   const metrics = new MetricsRegistry();
   metrics.record({ name: "gateway_duration_seconds", value: 1.25 });
   metrics.record({ name: "gateway_duration_seconds", value: 0.75 });
-  expect(metrics.render()).toBe(
-    "larm_gateway_duration_seconds_count 2\nlarm_gateway_duration_seconds_sum 2\n",
-  );
+  const rendered = metrics.render();
+  expect(rendered).toContain("larm_gateway_duration_seconds_count 2\n");
+  expect(rendered).toContain("larm_gateway_duration_seconds_sum 2\n");
+  expect(rendered).toContain('larm_gateway_duration_seconds_bucket{le="1"} 1\n');
+  expect(rendered).toContain('larm_gateway_duration_seconds_bucket{le="2.5"} 2\n');
+  expect(rendered).toContain('larm_gateway_duration_seconds_bucket{le="+Inf"} 2\n');
+});
+
+test("duration metrics clamp clock regressions to zero", () => {
+  const metrics = new MetricsRegistry();
+  metrics.record({ name: "gateway_ttfb_seconds", value: -1 });
+  const rendered = metrics.render();
+  expect(rendered).toContain("larm_gateway_ttfb_seconds_sum 0\n");
+  expect(rendered).toContain('larm_gateway_ttfb_seconds_bucket{le="0.01"} 1\n');
 });
 
 test("execution gauges replace their current value and discard high-cardinality labels", () => {

@@ -41,7 +41,10 @@
         <tr>
           <th scope="row">Gateway</th>
           <td>本文の一括読込、slow upload、未読stream、timeout時のdrain残留</td>
-          <td>stream上限、全区間deadline、abort race、必ず完了するrequest trackingを実装</td>
+          <td>
+            stream上限、全区間deadline、abort
+            race、timeout時の上流reader取消し、未読本文でも必ず完了するrequest trackingを実装
+          </td>
         </tr>
         <tr>
           <th scope="row">Allocation</th>
@@ -119,6 +122,55 @@
           </td>
         </tr>
         <tr>
+          <th scope="row">Mutation lease</th>
+          <td>
+            失敗journalの書込み自体が失敗すると、artifactまたはcatalog mutationのleaseが残留する
+          </td>
+          <td>
+            enqueue前処理とcatalog
+            reload全体を単一の<code>finally</code>所有にし、journal、preflight、callbackの
+            例外経路でもleaseとRuntime予約を解放
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Persistent state</th>
+          <td>
+            operation journalの未知field・symlink・過大fileと、release stateの非canonical
+            revision・timestampを受理する
+          </td>
+          <td>
+            公開schemaによるstrict operation検証、real directoryと1 MiB上限、SHA-256 catalog
+            revision、canonical ISO timestampを永続境界で強制
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Release recovery</th>
+          <td>
+            terminal journal失敗またはcrash後、release
+            pointerと複数artifactの実体が異なる世代を指し得る
+          </td>
+          <td>
+            targetまたはoriginalの全digestが一致する場合だけpointerを収束し、どちらにも完全一致しない混在世代は
+            <code>state_corrupt</code>でfail closed
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Release staging</th>
+          <td>成功済みstage journalがあると、後から欠損したstaging dataを再取得できない</td>
+          <td>
+            成功operationの再利用前に現在の全digestを検証し、欠損・破損時は新しいstage
+            operationを実行
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Reference client</th>
+          <td>poll全体期限より長く個別HTTPが待機し、処理失敗時のrelease失敗を失う</td>
+          <td>
+            各poll
+            HTTPへ残り時間を適用し、処理とcleanupが両方失敗した場合は<code>AggregateError</code>で双方を保持
+          </td>
+        </tr>
+        <tr>
           <th scope="row">Configuration</th>
           <td>
             未知fieldを黙って除去し、<code>explicitOnly</code>などのタイプミスへ既定値を適用する
@@ -179,6 +231,9 @@
       <li>active Allocation、artifact operation、execution slot・queueはすべて明示上限を持つ。</li>
       <li>Allocationがrelease、expire、timeoutした後に新しいartifactをactivateしない。</li>
       <li>artifact operationは破壊的処理より先にjournalへ永続化する。</li>
+      <li>mutation leaseはjournalまたはpreflightが失敗しても必ず解放する。</li>
+      <li>release pointerはtargetまたはoriginal artifactの全digestと一致する状態だけを示す。</li>
+      <li>clientのpoll期限は、待機間隔だけでなく進行中のHTTP requestにも適用する。</li>
       <li>
         Qwen TTSはPreferredとしてboot時COLDを許容し、Resident serviceはLARMの権限で変更できない。
       </li>
@@ -192,7 +247,7 @@
         <code>bun run check</code>でsource-only、Spec
         HTML、TypeScript、全testを検証する。
       </li>
-      <li>review完了時点で197 testが成功し、失敗は0件。</li>
+      <li>review完了時点で266 test、729 assertionが成功し、失敗は0件。</li>
       <li>
         Bash scriptは<code>bash -n</code>、Python
         adapterは<code>ast.parse</code>でsyntax確認する。

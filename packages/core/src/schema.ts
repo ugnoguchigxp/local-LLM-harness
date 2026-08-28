@@ -142,6 +142,27 @@ export const runtimeSnapshotSchema = z.object({
   health: runtimeSnapshotHealthSchema.optional(),
 }).strict();
 
+export const nodeTelemetrySchema = z.object({
+  status: z.enum(["available", "unavailable"]),
+  observedAt: z.string().datetime(),
+  systemMemoryTotalBytes: z.number().int().nonnegative().optional(),
+  systemMemoryAvailableBytes: z.number().int().nonnegative().optional(),
+  acceleratorMemoryTotalBytes: z.number().int().nonnegative().optional(),
+  acceleratorMemoryAvailableBytes: z.number().int().nonnegative().optional(),
+  source: z.string().min(1).max(64),
+  detail: z.string().min(1).max(512).optional(),
+}).strict().superRefine((value, context) => {
+  if (
+    value.status === "available"
+    && (value.systemMemoryTotalBytes === undefined || value.systemMemoryAvailableBytes === undefined)
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "available telemetry requires system memory totals",
+    });
+  }
+});
+
 export const clusterStateSchema = z.object({
   generatedAt: z.string().datetime(),
   node: z.object({
@@ -150,6 +171,7 @@ export const clusterStateSchema = z.object({
     online: z.boolean(),
     endpoint: httpUrlSchema,
     resources: nodeResourcesSchema,
+    telemetry: nodeTelemetrySchema.optional(),
   }).strict(),
   runtimes: z.array(runtimeSnapshotSchema),
 }).strict();
@@ -204,6 +226,7 @@ export type WorkloadProfile = z.infer<typeof workloadProfileSchema>;
 export type RouteCandidate = z.infer<typeof routeCandidateSchema>;
 export type RouteDefinition = z.infer<typeof routeDefinitionSchema>;
 export type RuntimeSnapshot = z.infer<typeof runtimeSnapshotSchema>;
+export type NodeTelemetry = z.infer<typeof nodeTelemetrySchema>;
 export type ClusterState = z.infer<typeof clusterStateSchema>;
 
 export function isLlamaSwapRuntime(

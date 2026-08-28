@@ -10,13 +10,20 @@ export type NodeAdmission = {
   committedMemoryGB: number;
   incrementalMemoryGB: number;
   availableMemoryGB: number;
+  liveAvailableMemoryGB?: number;
 };
 
 export type AdmissionResult =
   | { ok: true; nodes: NodeAdmission[] }
   | {
       ok: false;
-      reason: "unknown_runtime" | "unknown_node" | "memory_exhausted" | "runtime_capacity";
+      reason:
+        | "unknown_runtime"
+        | "unknown_node"
+        | "memory_exhausted"
+        | "runtime_capacity"
+        | "telemetry_unavailable"
+        | "live_memory_exhausted";
       message: string;
       runtime?: string;
       node?: string;
@@ -45,6 +52,11 @@ export function admitRuntimes(input: {
   state: ClusterState;
   allocations: Allocation[];
   candidateRuntimeIds: string[];
+  liveTelemetry?: {
+    requiredForNonResident: boolean;
+    maxAgeMs: number;
+    now?: number;
+  };
 }): AdmissionResult {
   const committedIds = uniqueActiveRuntimeIds(input.allocations);
   for (const runtime of input.registry.runtimes) {
@@ -97,7 +109,7 @@ export function admitRuntimes(input: {
       .reduce((total, runtime) => total + runtime.resources.estimatedMemoryGB, 0);
     const usableMemoryGB = node.resources.memoryTotalGB - node.resources.reservedMemoryGB;
     const availableMemoryGB = usableMemoryGB - committedMemoryGB;
-    const summary = {
+    const summary: NodeAdmission = {
       node: nodeId,
       usableMemoryGB,
       committedMemoryGB,
@@ -113,6 +125,54 @@ export function admitRuntimes(input: {
         node: nodeId,
         nodes,
       };
+    }
+    const needsLiveTelemetry = input.liveTelemetry?.requiredForNonResident === true
+      && [...candidateIds].some((id) => {
+        const runtime = runtimeById(input.registry, id);
+        return runtime?.node === nodeId
+          && runtime.policy.class !== "resident"
+          && !committedIds.has(id);
+      });
+    if (needsLiveTelemetry) {
+      const telemetry = input.state.node.id === nodeId ? input.state.node.telemetry : undefined;
+      const observedAt = telemetry ? Date.parse(telemetry.observedAt) : Number.NaN;
+      const now = input.liveTelemetry?.now ?? Date.now();
+      if (
+        !telemetry
+        || telemetry.status !== "available"
+        || telemetry.systemMemoryAvailableBytes === undefined
+        || !Number.isFinite(observedAt)
+        || observedAt > now
+        || now - observedAt > input.liveTelemetry!.maxAgeMs
+      ) {
+        return {
+          ok: false,
+          reason: "telemetry_unavailable",
+          message: `fresh resource telemetry is unavailable for node ${nodeId}`,
+          node: nodeId,
+          nodes,
+        };
+      }
+      const liveBytes = telemetry.acceleratorMemoryAvailableBytes === undefined
+        ? telemetry.systemMemoryAvailableBytes
+        : Math.min(
+          telemetry.systemMemoryAvailableBytes,
+          telemetry.acceleratorMemoryAvailableBytes,
+        );
+      // The static gate above already preserves node.reservedMemoryGB. MemAvailable and
+      // accelerator available values are live headroom, so subtracting the reserve again
+      // would double-count it and incorrectly reject unified-memory hosts.
+      const liveAvailableMemoryGB = Math.max(0, liveBytes / (1024 ** 3));
+      summary.liveAvailableMemoryGB = liveAvailableMemoryGB;
+      if (incrementalMemoryGB > liveAvailableMemoryGB) {
+        return {
+          ok: false,
+          reason: "live_memory_exhausted",
+          message: `node ${nodeId} needs ${incrementalMemoryGB} GB but live headroom is ${liveAvailableMemoryGB.toFixed(2)} GB`,
+          node: nodeId,
+          nodes,
+        };
+      }
     }
   }
 

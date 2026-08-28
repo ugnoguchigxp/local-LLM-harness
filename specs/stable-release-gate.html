@@ -1,0 +1,60 @@
+<article lang="ja">
+  <h1>LARM Stable Release Gate</h1>
+
+  <p>
+    repository gateとproduction gateを混同しないための最終判定表です。コードと隔離testの完了だけでは
+    stableへ昇格せず、commissioningとAmbient client canaryの両方を要求します。
+  </p>
+
+  <table>
+    <caption>
+      Stable判定
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Gate</th>
+        <th scope="col">証拠</th>
+        <th scope="col">状態</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Repository</th>
+        <td><code>bun run check</code></td>
+        <td>合格が必要</td>
+      </tr>
+      <tr>
+        <th scope="row">Transactional release</th>
+        <td>
+          初回、再実行、upgrade、失敗、identity rollback、review済みretention、pointer回復の隔離test
+        </td>
+        <td>実装済み</td>
+      </tr>
+      <tr>
+        <th scope="row">Commissioning</th>
+        <td><a href="./commissioning-evidence.html">実機evidence</a></td>
+        <td>保留</td>
+      </tr>
+      <tr>
+        <th scope="row">Ambient canary</th>
+        <td>shadow、参照client、restart、rollback、soak、artifact operationを含むleak 0</td>
+        <td>保留</td>
+      </tr>
+      <tr>
+        <th scope="row">Resident policy</th>
+        <td>default routeとlive BindingがQwen 3.8 27B</td>
+        <td>コードで固定</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <section id="rollback">
+    <h2>Rollback条件</h2>
+    <p>
+      error budget、latency、memory headroom、fallback、epoch contract、operation
+      leakのいずれかが基準外なら、 Ambient clientをdirect
+      Providerへ戻し、<code>release-larm.sh rollback</code>でLARMだけを前世代へ戻します。
+      Provider processとmodel weightはLARM rollbackの対象にしません。
+    </p>
+  </section>
+</article>

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  API_OPERATIONS,
   clusterStateSchema,
   type Registry,
   type RouteShadowComparison,
@@ -10,6 +11,7 @@ import type { ArtifactManager, ArtifactOperation } from "./artifact-manager";
 import { ControlPlane, type ControlEvent, type ControlPlaneOptions } from "./controller";
 import { MetricsRegistry, RequestTracker } from "./metrics";
 import { Observer } from "./observer";
+import type { RuntimeReleaseManager } from "./runtime-release-manager";
 
 const registry: Registry = {
   nodes: [
@@ -154,6 +156,83 @@ test("GET /health", async () => {
     bootEpoch: "epoch-local",
   });
   expect(res.headers.get("x-larm-boot-epoch")).toBe("epoch-local");
+});
+
+test("GET /openapi.json exposes the machine-readable v1 contract", async () => {
+  const { app } = await makeApp(true);
+  const response = await app.request("/openapi.json");
+  expect(response.status).toBe(200);
+  const document = await response.json() as {
+    openapi: string;
+    paths: Record<string, unknown>;
+  };
+  expect(document.openapi).toBe("3.1.0");
+  expect(document.paths["/v1/allocations"]).toBeDefined();
+  expect(document.paths["/v1/runtime-releases"]).toBeDefined();
+});
+
+test("OpenAPI operation inventory cannot drift from daemon routes", async () => {
+  const { app } = await makeApp(true);
+  const actual = app.routes
+    .filter((route) => route.method !== "ALL")
+    .map((route) => `${route.method.toLowerCase()} ${route.path.replace(/:([a-zA-Z]+)/g, "{$1}")}`)
+    .sort();
+  const declared = API_OPERATIONS
+    .map(([method, path]) => `${method} ${path}`)
+    .sort();
+  expect(actual).toEqual(declared);
+});
+
+test("allocation pins catalog generation and active runtime release", async () => {
+  const { app } = await makeApp(true, false, {
+    getCatalogRevision: () => "catalog-r2",
+    getRuntimeRelease: () => "qwen-general-r1",
+  });
+  const response = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+      deploymentPolicy: "existing-only",
+      allowFallback: false,
+      ttlSeconds: 30,
+    }),
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    catalogRevision: "catalog-r2",
+    bindings: [{ release: "qwen-general-r1" }],
+  });
+});
+
+test("catalog reload reservation fails new allocation closed", async () => {
+  const { app, control } = await makeApp(true);
+  const reservation = control.beginCatalogReload();
+  expect(reservation.ok).toBeTrue();
+  const response = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+      deploymentPolicy: "existing-only",
+      allowFallback: false,
+      ttlSeconds: 30,
+    }),
+  });
+  expect(response.status).toBe(503);
+  expect(await response.json()).toMatchObject({ error: { code: "catalog_reloading" } });
+  if (reservation.ok) reservation.release();
+});
+
+test("catalog reload closes generation-dependent read APIs", async () => {
+  const { app } = await makeApp(true, false, {}, {
+    catalogManager: { isReloading: true } as AppDeps["catalogManager"],
+  });
+  for (const path of ["/runtimes", "/runtimes/qwen-general", "/state"]) {
+    const response = await app.request(path);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: { code: "catalog_reloading" } });
+  }
 });
 
 test("GET /runtimes lists registry definitions", async () => {
@@ -867,6 +946,37 @@ test("gateway timeout terminates a stalled upstream response stream", async () =
   expect(events.at(-1)?.labels?.outcome).toBe("timeout");
 });
 
+test("gateway timeout releases an unread upstream response stream", async () => {
+  const tracker = new RequestTracker();
+  const { app } = await makeApp(true, false, {}, {
+    requestTracker: tracker,
+    gatewayTimeoutMs: 5,
+    gatewayFetch: async () => new Response(new ReadableStream({ start() {} }), {
+      headers: { "content-type": "text/event-stream" },
+    }),
+  });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await created.json()) as { id: string }).id;
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-larm-allocation-id": allocationId,
+    },
+    body: "{}",
+  });
+  expect(response.status).toBe(200);
+  await Bun.sleep(10);
+  expect(tracker.count()).toBe(0);
+  await expect(response.text()).rejects.toThrow("gateway timeout");
+});
+
 test("allocation release cancels both active and queued gateway requests", async () => {
   let markStarted: (() => void) | undefined;
   const started = new Promise<void>((resolve) => {
@@ -1292,6 +1402,79 @@ test("artifact deployment API requires the separate management token", async () 
     headers: { "x-larm-management-token": "manage" },
   });
   expect(fetched.status).toBe(200);
+});
+
+test("runtime release APIs require management auth and preserve explicit release selection", async () => {
+  const calls: unknown[][] = [];
+  const releaseOperation: ArtifactOperation = {
+    id: "artifact_op_release",
+    kind: "activate",
+    runtimeId: "qwen-worker",
+    releaseId: "worker-r2",
+    status: "pending",
+    createdAt: "2026-08-28T00:00:00.000Z",
+  };
+  const runtimeReleaseManager = {
+    listReleases: () => [{
+      id: "worker-r2",
+      runtime: "qwen-worker",
+      artifacts: ["worker-artifact-r2"],
+      providerConfigRevision: "config-r2",
+      estimatedMemoryGB: 24,
+      healthPath: "/health",
+      default: false,
+      digest: "a".repeat(64),
+    }],
+    getDeployment: () => ({
+      runtime: "qwen-worker",
+      activeRelease: "worker-r1",
+      previousRelease: null,
+      desiredRelease: "worker-r1",
+      catalogRevision: "catalog",
+    }),
+    plan: async (...args: unknown[]) => {
+      calls.push(args);
+      return {
+        runtime: "qwen-worker",
+        release: "worker-r2",
+        activeRelease: "worker-r1",
+        artifacts: ["worker-artifact-r2"],
+        allowed: true,
+        blockers: [],
+      };
+    },
+    activate: async (...args: unknown[]) => {
+      calls.push(args);
+      return releaseOperation;
+    },
+  } as unknown as RuntimeReleaseManager;
+  const artifactManager = {} as ArtifactManager;
+  const { app } = await makeApp(true, false, {}, {
+    managementToken: "manage",
+    artifactManager,
+    runtimeReleaseManager,
+  });
+  expect((await app.request("/v1/runtime-releases")).status).toBe(403);
+  const headers = {
+    "content-type": "application/json",
+    "x-larm-management-token": "manage",
+  };
+  const plan = await app.request("/v1/deployments/qwen-worker/plan", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ release: "worker-r2" }),
+  });
+  expect(plan.status).toBe(200);
+  const activated = await app.request("/v1/deployments/qwen-worker/activate", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ release: "worker-r2", expectedActiveRelease: "worker-r1" }),
+  });
+  expect(activated.status).toBe(202);
+  expect(calls).toEqual([
+    ["qwen-worker", "worker-r2"],
+    ["qwen-worker", "worker-r2", "worker-r1"],
+  ]);
 });
 
 test("POST /release stops idle preferred worker", async () => {

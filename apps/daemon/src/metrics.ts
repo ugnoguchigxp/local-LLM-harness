@@ -6,6 +6,7 @@ const HIGH_CARDINALITY_LABELS = new Set([
   "reasons",
   "request",
   "request_id",
+  "releases",
   "routes",
   "runtimes",
 ]);
@@ -24,6 +25,7 @@ function keyOf(name: string, labels: Record<string, string>): string {
 }
 
 export class MetricsRegistry {
+  private static readonly DURATION_BUCKETS = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300];
   private readonly values = new Map<string, {
     name: string;
     labels: Record<string, string>;
@@ -35,8 +37,15 @@ export class MetricsRegistry {
       Object.entries(event.labels ?? {}).filter(([label]) => !HIGH_CARDINALITY_LABELS.has(label)),
     );
     if (event.name.endsWith("_seconds")) {
-      this.increment(metricName(`${event.name}_sum`), labels, event.value ?? 0);
+      const value = Math.max(0, event.value ?? 0);
+      this.increment(metricName(`${event.name}_sum`), labels, value);
       this.increment(metricName(`${event.name}_count`), labels, 1);
+      for (const upperBound of MetricsRegistry.DURATION_BUCKETS) {
+        if (value <= upperBound) {
+          this.increment(metricName(`${event.name}_bucket`), { ...labels, le: String(upperBound) }, 1);
+        }
+      }
+      this.increment(metricName(`${event.name}_bucket`), { ...labels, le: "+Inf" }, 1);
       return;
     }
     this.increment(metricName(`${event.name}_total`), labels, event.value ?? 1);

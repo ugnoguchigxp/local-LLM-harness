@@ -89,3 +89,19 @@ test("concurrent ticks share one backend observation", async () => {
   await Promise.all([first, second]);
   expect(calls).toBe(1);
 });
+
+test("telemetry failure degrades telemetry without losing runtime observation", async () => {
+  const observer = new Observer(registry, stub({
+    ...startingProbe,
+    healthOk: true,
+  }), {
+    telemetry: { observe: async () => { throw new Error("sensor unavailable"); } },
+  });
+  const state = await observer.tick();
+  expect(state.runtimes[0]?.status).toBe("HOT");
+  expect(state.node.telemetry).toMatchObject({
+    status: "unavailable",
+    source: "observer",
+    detail: "sensor unavailable",
+  });
+});

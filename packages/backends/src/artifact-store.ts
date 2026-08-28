@@ -522,7 +522,7 @@ export class LocalArtifactStore {
       await this.writeActivation(record);
     } catch (err) {
       await this.restoreActivation(record);
-      await rm(join(this.options.stateRoot, "activations", `${record.artifactId}.json`), {
+      await rm(join(await this.activationDirectory(), `${record.artifactId}.json`), {
         force: true,
       });
       throw err;
@@ -534,6 +534,18 @@ export class LocalArtifactStore {
     const record = await this.requireRollback(artifact);
     await this.restoreActivation(record);
     return record;
+  }
+
+  async recoverPreparedActivations(artifacts: ArtifactDefinition[]): Promise<void> {
+    for (const artifact of artifacts) {
+      const record = await this.readActivation(artifact.id);
+      if (!record || record.phase !== "prepared") continue;
+      await this.requireRollback(artifact);
+      await this.restoreActivation(record);
+      await rm(join(await this.activationDirectory(), `${record.artifactId}.json`), {
+        force: true,
+      });
+    }
   }
 
   async requireRollback(artifact: ArtifactDefinition): Promise<ActivationRecord> {
@@ -571,17 +583,20 @@ export class LocalArtifactStore {
     if (!SAFE_ID.test(record.id)) {
       throw new ArtifactStoreError("unsafe_operation_id", "operation id is not safe");
     }
-    const directory = join(this.options.stateRoot, "operations");
-    await mkdir(directory, { recursive: true });
+    const directory = await this.operationDirectory();
     await this.writeJsonAtomic(join(directory, `${record.id}.json`), record);
   }
 
   async loadOperations(): Promise<ArtifactJournalRecord[]> {
-    const directory = join(this.options.stateRoot, "operations");
+    const directory = await this.operationDirectory();
     const glob = new Bun.Glob("*.json");
     const records: ArtifactJournalRecord[] = [];
     try {
       for await (const path of glob.scan({ cwd: directory, absolute: true })) {
+        const metadata = await lstat(path);
+        if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 1024 * 1024) {
+          throw new ArtifactStoreError("journal_corrupt", `unsafe operation journal ${path}`);
+        }
         const record = JSON.parse(await readFile(path, "utf8")) as Partial<ArtifactJournalRecord>;
         if (
           typeof record.id !== "string"
@@ -605,7 +620,36 @@ export class LocalArtifactStore {
     if (!SAFE_ID.test(id)) {
       throw new ArtifactStoreError("unsafe_operation_id", "operation id is not safe");
     }
-    await rm(join(this.options.stateRoot, "operations", `${id}.json`), { force: true });
+    const directory = await this.operationDirectory();
+    await rm(join(directory, `${id}.json`), { force: true });
+  }
+
+  private async operationDirectory(): Promise<string> {
+    return await this.stateDirectory("operations", "artifact operation");
+  }
+
+  private async activationDirectory(): Promise<string> {
+    return await this.stateDirectory("activations", "artifact activation");
+  }
+
+  private async stateDirectory(name: "operations" | "activations", description: string): Promise<string> {
+    const stateRoot = resolve(this.options.stateRoot);
+    await mkdir(stateRoot, { recursive: true, mode: 0o700 });
+    const stateMetadata = await lstat(stateRoot);
+    if (
+      !stateMetadata.isDirectory()
+      || stateMetadata.isSymbolicLink()
+      || await realpath(stateRoot) !== stateRoot
+    ) {
+      throw new ArtifactStoreError("journal_corrupt", "artifact state root is unsafe");
+    }
+    const directory = join(stateRoot, name);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const metadata = await lstat(directory);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new ArtifactStoreError("journal_corrupt", `${description} directory is unsafe`);
+    }
+    return directory;
   }
 
   private async stageSnapshot(
@@ -1158,15 +1202,20 @@ export class LocalArtifactStore {
   }
 
   private async writeActivation(record: ActivationRecord): Promise<void> {
-    const directory = join(this.options.stateRoot, "activations");
-    await mkdir(directory, { recursive: true });
+    const directory = await this.activationDirectory();
     await this.writeJsonAtomic(join(directory, `${record.artifactId}.json`), record);
   }
 
   private async readActivation(id: string): Promise<ActivationRecord | undefined> {
     try {
+      const directory = await this.activationDirectory();
+      const path = join(directory, `${id}.json`);
+      const metadata = await lstat(path);
+      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 1024 * 1024) {
+        throw new ArtifactStoreError("journal_corrupt", `unsafe activation journal for ${id}`);
+      }
       const record = JSON.parse(
-        await readFile(join(this.options.stateRoot, "activations", `${id}.json`), "utf8"),
+        await readFile(path, "utf8"),
       ) as Partial<ActivationRecord>;
       if (
         record.artifactId !== id

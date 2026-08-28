@@ -1,6 +1,7 @@
 import type {
   ClusterState,
   NodeDefinition,
+  NodeTelemetry,
   RuntimeDefinition,
   RuntimeSnapshot,
   RuntimeStatus,
@@ -36,6 +37,7 @@ export function buildClusterState(input: {
   node: NodeDefinition;
   snapshots: RuntimeSnapshot[];
   generatedAt: string;
+  telemetry?: NodeTelemetry;
 }): ClusterState {
   return {
     generatedAt: input.generatedAt,
@@ -45,6 +47,7 @@ export function buildClusterState(input: {
       online: true,
       endpoint: input.node.endpoint,
       resources: input.node.resources,
+      telemetry: input.telemetry,
     },
     runtimes: input.snapshots,
   };

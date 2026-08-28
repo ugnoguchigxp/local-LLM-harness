@@ -119,6 +119,16 @@ export class ExecutionGate {
     return { active: state?.active ?? 0, queued: state?.queue.length ?? 0 };
   }
 
+  totals(): { active: number; queued: number } {
+    let active = 0;
+    let queued = 0;
+    for (const state of this.runtimes.values()) {
+      active += state.active;
+      queued += state.queue.length;
+    }
+    return { active, queued };
+  }
+
   private release(runtime: string, state: RuntimeGate, policy: ExecutionPolicy): () => void {
     let released = false;
     return () => {

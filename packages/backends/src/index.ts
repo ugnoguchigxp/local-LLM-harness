@@ -32,3 +32,16 @@ export {
   type LocalArtifactStoreOptions,
   type StagedArtifact,
 } from "./artifact-store";
+export {
+  LocalRuntimeReleaseStateStore,
+  ReleaseStateStoreError,
+  type RuntimeDeploymentRecord,
+  type RuntimeReleaseState,
+} from "./release-state-store";
+export { SwappableRuntimeBackend } from "./swappable";
+export {
+  LinuxNodeTelemetry,
+  parseMeminfo,
+  type LinuxNodeTelemetryOptions,
+  type NodeTelemetryProvider,
+} from "./linux-node-telemetry";

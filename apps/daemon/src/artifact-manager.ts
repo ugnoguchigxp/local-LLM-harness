@@ -1,5 +1,6 @@
 import {
   activeAllocation,
+  artifactOperationSchema,
   getRuntime,
   type Allocation,
   type ArtifactDefinition,
@@ -15,12 +16,19 @@ import {
 } from "@larm/backends";
 import type { ControlEvent, DeploymentCoordinator } from "./controller";
 import type { Observer } from "./observer";
+import {
+  type MutationCoordinator,
+  MutationCoordinatorError,
+  type MutationKind,
+  type MutationLease,
+} from "./mutation-coordinator";
 
 export type ArtifactOperation = {
   id: string;
   kind: "stage" | "activate" | "rollback";
   artifactId?: string;
   runtimeId?: string;
+  releaseId?: string;
   status: "pending" | "running" | "succeeded" | "failed" | "interrupted";
   createdAt: string;
   completedAt?: string;
@@ -38,7 +46,11 @@ export type ArtifactManagerOptions = {
   maxPendingOperations?: number;
   activeAllocations: () => Allocation[];
   isRuntimeTransitioning?: (runtimeId: string) => boolean;
+  runtimeArtifacts?: (runtimeId: string) => string[] | undefined;
+  additionalArtifactOwners?: { runtimeId: string; artifactIds: string[] }[];
   onEvent?: (event: ControlEvent) => void;
+  onOperationState?: (active: number) => void;
+  mutationCoordinator?: MutationCoordinator;
 };
 
 export class ArtifactManager implements DeploymentCoordinator {
@@ -48,11 +60,12 @@ export class ArtifactManager implements DeploymentCoordinator {
   private readonly artifactOwners = new Map<string, Set<string>>();
   private readonly mutationReservations = new Map<string, number>();
   private readonly operationAborts = new Map<string, AbortController>();
+  private additionalArtifactOwners: { runtimeId: string; artifactIds: string[] }[] = [];
   private idSequence = 0;
 
   constructor(
     artifacts: ArtifactDefinition[],
-    private readonly registry: Registry,
+    private registry: Registry,
     private readonly store: LocalArtifactStore,
     private readonly backend: RuntimeBackend,
     private readonly observer: Observer,
@@ -61,22 +74,47 @@ export class ArtifactManager implements DeploymentCoordinator {
     for (const artifact of artifacts) {
       this.artifacts.set(artifact.id, artifact);
     }
-    for (const runtime of registry.runtimes) {
-      for (const artifactId of runtime.artifacts ?? []) {
-        if (!this.artifacts.has(artifactId)) {
-          throw new ArtifactStoreError(
-            "unknown_artifact",
-            `runtime ${runtime.id} references unknown artifact ${artifactId}`,
-          );
-        }
-        const owners = this.artifactOwners.get(artifactId) ?? new Set<string>();
-        owners.add(runtime.id);
-        this.artifactOwners.set(artifactId, owners);
-      }
+    this.additionalArtifactOwners = options.additionalArtifactOwners ?? [];
+    for (const [artifactId, owners] of this.buildArtifactOwners(
+      this.artifacts,
+      this.registry,
+      this.additionalArtifactOwners,
+    )) {
+      this.artifactOwners.set(artifactId, owners);
     }
   }
 
+  private buildArtifactOwners(
+    artifacts: Map<string, ArtifactDefinition>,
+    registry: Registry,
+    additionalArtifactOwners: { runtimeId: string; artifactIds: string[] }[],
+  ): Map<string, Set<string>> {
+    const artifactOwners = new Map<string, Set<string>>();
+    const ownership = [
+      ...registry.runtimes.map((runtime) => ({
+        runtimeId: runtime.id,
+        artifactIds: runtime.artifacts ?? [],
+      })),
+      ...additionalArtifactOwners,
+    ];
+    for (const owner of ownership) {
+      for (const artifactId of owner.artifactIds) {
+        if (!artifacts.has(artifactId)) {
+          throw new ArtifactStoreError(
+            "unknown_artifact",
+            `runtime ${owner.runtimeId} references unknown artifact ${artifactId}`,
+          );
+        }
+        const owners = artifactOwners.get(artifactId) ?? new Set<string>();
+        owners.add(owner.runtimeId);
+        artifactOwners.set(artifactId, owners);
+      }
+    }
+    return artifactOwners;
+  }
+
   async initialize(): Promise<void> {
+    await this.store.recoverPreparedActivations([...this.artifacts.values()]);
     for (const saved of await this.store.loadOperations()) {
       const operation = this.savedOperation(saved);
       if (operation.status === "pending" || operation.status === "running") {
@@ -91,14 +129,133 @@ export class ArtifactManager implements DeploymentCoordinator {
       this.operations.set(operation.id, operation);
     }
     await this.pruneHistory();
+    this.emitOperationState();
   }
 
   getOperation(id: string): ArtifactOperation | undefined {
     return this.operations.get(id);
   }
 
+  findLatestOperation(match: {
+    kind: ArtifactOperation["kind"];
+    releaseId?: string;
+    runtimeId?: string;
+    status?: ArtifactOperation["status"];
+  }): ArtifactOperation | undefined {
+    return [...this.operations.values()]
+      .filter((operation) =>
+        operation.kind === match.kind
+        && (match.releaseId === undefined || operation.releaseId === match.releaseId)
+        && (match.runtimeId === undefined || operation.runtimeId === match.runtimeId)
+        && (match.status === undefined || operation.status === match.status)
+      )
+      .sort((left, right) => {
+        const created = Date.parse(right.createdAt) - Date.parse(left.createdAt);
+        if (created !== 0) return created;
+        const completed = Date.parse(right.completedAt ?? right.createdAt)
+          - Date.parse(left.completedAt ?? left.createdAt);
+        return completed !== 0 ? completed : right.id.localeCompare(left.id);
+      })[0];
+  }
+
   isRuntimeMutating(runtimeId: string): boolean {
     return (this.mutationReservations.get(runtimeId) ?? 0) > 0;
+  }
+
+  hasActiveOperations(): boolean {
+    return [...this.operations.values()].some((operation) =>
+      operation.status === "pending" || operation.status === "running"
+    ) || this.mutationReservations.size > 0;
+  }
+
+  activeOperationCount(): number {
+    return [...this.operations.values()].filter((operation) =>
+      operation.status === "pending" || operation.status === "running"
+    ).length;
+  }
+
+  replaceCatalog(
+    artifacts: ArtifactDefinition[],
+    registry: Registry,
+    additionalArtifactOwners: { runtimeId: string; artifactIds: string[] }[] = [],
+  ): void {
+    if (this.hasActiveOperations()) {
+      throw new ArtifactStoreError("deployment_in_progress", "artifact operations are still active");
+    }
+    const nextArtifacts = new Map(artifacts.map((artifact) => [artifact.id, artifact]));
+    const nextOwners = this.buildArtifactOwners(
+      nextArtifacts,
+      registry,
+      additionalArtifactOwners,
+    );
+    this.artifacts.clear();
+    for (const [artifactId, artifact] of nextArtifacts) this.artifacts.set(artifactId, artifact);
+    this.artifactOwners.clear();
+    for (const [artifactId, owners] of nextOwners) this.artifactOwners.set(artifactId, owners);
+    this.registry = registry;
+    this.additionalArtifactOwners = additionalArtifactOwners;
+  }
+
+  async planRuntimeActivation(runtimeId: string, artifactIds: string[]): Promise<string[]> {
+    const blockers: string[] = [];
+    const runtime = getRuntime(this.registry, runtimeId);
+    const validation = this.validateMutableRuntime(runtime);
+    if (validation) {
+      blockers.push(validation.code);
+    }
+    if (artifactIds.length === 0) {
+      blockers.push("artifact_not_declared");
+    }
+    for (const artifactId of artifactIds) {
+      try {
+        const artifact = this.requireArtifact(artifactId);
+        if (!await this.store.getStaged(artifact)) {
+          blockers.push(`artifact_not_staged:${artifactId}`);
+        }
+      } catch (error) {
+        blockers.push(error instanceof ArtifactStoreError ? error.code : "not_found");
+      }
+    }
+    if (runtime && blockers.length === 0) {
+      try {
+        await this.observer.tick();
+        await this.assertMutationSafe(runtimeId, artifactIds);
+      } catch (error) {
+        blockers.push(error instanceof ArtifactStoreError ? error.code : "deployment_blocked");
+      }
+    }
+    return [...new Set(blockers)];
+  }
+
+  async inspectStagedArtifacts(artifactIds: string[]): Promise<{
+    staged: boolean;
+    additionalBytesRequired: number;
+  }> {
+    let additionalBytesRequired = 0;
+    for (const artifactId of [...new Set(artifactIds)]) {
+      const artifact = this.requireArtifact(artifactId);
+      if (!await this.store.getStaged(artifact)) {
+        additionalBytesRequired += artifact.kind === "file"
+          ? artifact.bytes
+          : artifact.totalBytes;
+      }
+    }
+    return {
+      staged: additionalBytesRequired === 0,
+      additionalBytesRequired,
+    };
+  }
+
+  async areArtifactsActive(artifactIds: string[], signal?: AbortSignal): Promise<boolean> {
+    if (artifactIds.length === 0) {
+      return false;
+    }
+    for (const artifactId of artifactIds) {
+      if (!await this.store.activeMatches(this.requireArtifact(artifactId), signal)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   beginDrain(): void {
@@ -117,123 +274,324 @@ export class ArtifactManager implements DeploymentCoordinator {
   async stage(artifactId: string): Promise<ArtifactOperation> {
     const artifact = this.artifacts.get(artifactId);
     const operation = this.createOperation("stage", { artifactId });
-    if (await this.rejectAtCapacity(operation)) {
-      return operation;
-    }
-    await this.persistPending(operation);
-    if (!artifact) {
-      await this.fail(operation, "not_found", `artifact ${artifactId} is not in the manifest`);
-      return operation;
-    }
-    const abort = new AbortController();
-    this.operationAborts.set(operation.id, abort);
-    this.enqueue(`artifact:${artifactId}`, async () => {
-      try {
-        await this.run(operation, async () => {
-          const staged = await this.store.stage(artifact, abort.signal);
-          return { path: staged.path, bytes: staged.bytes, sha256: staged.sha256 };
-        });
-      } finally {
-        this.operationAborts.delete(operation.id);
+    const mutationLease = await this.acquireMutation(operation, "artifact-stage");
+    if (!mutationLease && this.options.mutationCoordinator) return operation;
+    let handedOff = false;
+    try {
+      if (await this.rejectAtCapacity(operation)) {
+        return operation;
       }
-    });
-    return operation;
+      await this.persistPending(operation);
+      if (!artifact) {
+        await this.fail(operation, "not_found", `artifact ${artifactId} is not in the manifest`);
+        return operation;
+      }
+      const abort = new AbortController();
+      this.operationAborts.set(operation.id, abort);
+      this.enqueue(`artifact:${artifactId}`, async () => {
+        try {
+          await this.run(operation, async () => {
+            const staged = await this.store.stage(artifact, abort.signal);
+            return { path: staged.path, bytes: staged.bytes, sha256: staged.sha256 };
+          });
+        } finally {
+          this.operationAborts.delete(operation.id);
+          mutationLease?.release();
+        }
+      });
+      handedOff = true;
+      return operation;
+    } finally {
+      if (!handedOff) mutationLease?.release();
+    }
+  }
+
+  async stageRelease(releaseId: string, artifactIds: string[]): Promise<ArtifactOperation> {
+    const existing = this.findLatestOperation({ kind: "stage", releaseId });
+    if (existing) {
+      if (existing.status === "pending" || existing.status === "running") return existing;
+      if (existing.status === "succeeded") {
+        try {
+          if ((await this.inspectStagedArtifacts(artifactIds)).staged) return existing;
+        } catch {
+          // Re-run validation in the new operation so the failure is journaled for the caller.
+        }
+      }
+    }
+    const operation = this.createOperation("stage", { releaseId });
+    const mutationLease = await this.acquireMutation(operation, "artifact-stage");
+    if (!mutationLease && this.options.mutationCoordinator) return operation;
+    let handedOff = false;
+    try {
+      if (await this.rejectAtCapacity(operation)) {
+        return operation;
+      }
+      await this.persistPending(operation);
+      let artifacts: ArtifactDefinition[];
+      try {
+        artifacts = [...new Set(artifactIds)].map((id) => this.requireArtifact(id));
+        if (artifacts.length === 0) {
+          throw new ArtifactStoreError("artifact_not_declared", `release ${releaseId} has no artifacts`);
+        }
+      } catch (error) {
+        await this.fail(
+          operation,
+          error instanceof ArtifactStoreError ? error.code : "not_found",
+          this.errorMessage(error),
+        );
+        return operation;
+      }
+      const abort = new AbortController();
+      this.operationAborts.set(operation.id, abort);
+      this.enqueue(`release:${releaseId}`, async () => {
+        try {
+          await this.run(operation, async () => {
+            const staged: StagedArtifact[] = [];
+            await this.withArtifactLocks(artifacts.map((artifact) => artifact.id), async () => {
+              for (const artifact of artifacts) {
+                this.throwIfAborted(abort.signal);
+                staged.push(await this.store.stage(artifact, abort.signal));
+              }
+            });
+            return {
+              release: releaseId,
+              artifacts: staged.map((item) => item.artifactId),
+            };
+          });
+        } finally {
+          this.operationAborts.delete(operation.id);
+          mutationLease?.release();
+        }
+      });
+      handedOff = true;
+      return operation;
+    } finally {
+      if (!handedOff) mutationLease?.release();
+    }
   }
 
   async activateRuntime(runtimeId: string): Promise<ArtifactOperation> {
-    const operation = this.createOperation("activate", { runtimeId });
-    if (await this.rejectAtCapacity(operation)) {
-      return operation;
-    }
-    await this.persistPending(operation);
     const runtime = getRuntime(this.registry, runtimeId);
-    const validation = this.validateMutableRuntime(runtime);
-    if (validation) {
-      await this.fail(operation, validation.code, validation.message);
-      return operation;
-    }
-    const releaseReservation = this.reserveRuntimeMutation(
-      this.affectedRuntimeIds(runtime!.artifacts ?? []),
+    return await this.activateRuntimeArtifacts(
+      runtimeId,
+      this.runtimeArtifactIds(runtime),
     );
-    const abort = new AbortController();
-    this.operationAborts.set(operation.id, abort);
-    this.enqueue(`runtime:${runtimeId}`, async () => {
-      try {
-        await this.run(operation, async () => {
-          this.throwIfAborted(abort.signal);
-          const staged = await this.stagedArtifacts(runtime!, abort.signal);
-          let changed: StagedArtifact[] = [];
-          await this.withArtifactLocks(staged.map((item) => item.artifactId), async () => {
-            changed = await this.changedArtifacts(staged, abort.signal);
-            if (changed.length === 0) {
-              return;
-            }
-            await this.observer.tick();
-            this.throwIfAborted(abort.signal);
-            await this.assertMutationSafe(runtimeId, changed.map((item) => item.artifactId));
-            await this.activateStagedRuntime(
-              runtime!,
-              changed,
-              () => undefined,
-              abort.signal,
-            );
-          });
-          if (changed.length === 0) {
-            return { runtime: runtimeId, artifacts: [], current: true };
-          }
-          return { runtime: runtimeId, artifacts: changed.map((item) => item.artifactId) };
-        });
-      } finally {
-        this.operationAborts.delete(operation.id);
-        releaseReservation();
+  }
+
+  async activateRuntimeRelease(
+    runtimeId: string,
+    releaseId: string,
+    artifactIds: string[],
+    providerConfigRevision: string,
+    healthPath: string,
+    onActivated: () => Promise<void>,
+  ): Promise<ArtifactOperation> {
+    return await this.activateRuntimeArtifacts(
+      runtimeId,
+      artifactIds,
+      releaseId,
+      providerConfigRevision,
+      healthPath,
+      onActivated,
+    );
+  }
+
+  private async activateRuntimeArtifacts(
+    runtimeId: string,
+    artifactIds: string[],
+    releaseId?: string,
+    providerConfigRevision?: string,
+    healthPath = "/health",
+    onActivated?: () => Promise<void>,
+  ): Promise<ArtifactOperation> {
+    const operation = this.createOperation("activate", { runtimeId, releaseId });
+    const mutationLease = await this.acquireMutation(operation, "runtime-activation");
+    if (!mutationLease && this.options.mutationCoordinator) return operation;
+    let handedOff = false;
+    let releaseReservation: (() => void) | undefined;
+    try {
+      if (await this.rejectAtCapacity(operation)) return operation;
+      await this.persistPending(operation);
+      const runtime = getRuntime(this.registry, runtimeId);
+      const validation = this.validateMutableRuntime(runtime);
+      if (validation) {
+        await this.fail(operation, validation.code, validation.message);
+        return operation;
       }
-    });
-    return operation;
+      const healthContractError = this.validateHealthContract(runtime, healthPath);
+      if (healthContractError) {
+        await this.fail(operation, "health_contract_mismatch", healthContractError);
+        return operation;
+      }
+      if (artifactIds.length === 0) {
+        await this.fail(operation, "artifact_not_declared", `runtime ${runtimeId} has no release artifacts`);
+        return operation;
+      }
+      try {
+        artifactIds.forEach((artifactId) => this.requireArtifact(artifactId));
+      } catch (error) {
+        await this.fail(operation, "not_found", this.errorMessage(error));
+        return operation;
+      }
+      releaseReservation = this.reserveRuntimeMutation(this.affectedRuntimeIds(artifactIds));
+      const abort = new AbortController();
+      this.operationAborts.set(operation.id, abort);
+      this.enqueue(`runtime:${runtimeId}`, async () => {
+        try {
+          await this.run(operation, async () => {
+            this.throwIfAborted(abort.signal);
+            const staged = await this.stagedArtifactsFor(artifactIds, abort.signal);
+            let changed: StagedArtifact[] = [];
+            await this.withArtifactLocks(staged.map((item) => item.artifactId), async () => {
+              changed = await this.changedArtifacts(staged, abort.signal);
+              if (changed.length === 0) {
+                await onActivated?.();
+                return;
+              }
+              await this.observer.tick();
+              this.throwIfAborted(abort.signal);
+              await this.assertMutationSafe(runtimeId, changed.map((item) => item.artifactId));
+              await this.activateStagedRuntime(
+                runtime!,
+                changed,
+                () => undefined,
+                abort.signal,
+                onActivated,
+              );
+            });
+            if (changed.length === 0) {
+              return {
+                runtime: runtimeId,
+                release: releaseId,
+                providerConfigRevision,
+                healthPath,
+                artifacts: [],
+                current: true,
+              };
+            }
+            return {
+              runtime: runtimeId,
+              release: releaseId,
+              providerConfigRevision,
+              healthPath,
+              artifacts: changed.map((item) => item.artifactId),
+            };
+          });
+        } finally {
+          this.operationAborts.delete(operation.id);
+          releaseReservation?.();
+          mutationLease?.release();
+        }
+      });
+      handedOff = true;
+      return operation;
+    } finally {
+      if (!handedOff) {
+        releaseReservation?.();
+        mutationLease?.release();
+      }
+    }
   }
 
   async rollbackRuntime(runtimeId: string): Promise<ArtifactOperation> {
-    const operation = this.createOperation("rollback", { runtimeId });
-    if (await this.rejectAtCapacity(operation)) {
-      return operation;
-    }
-    await this.persistPending(operation);
     const runtime = getRuntime(this.registry, runtimeId);
-    const validation = this.validateMutableRuntime(runtime);
-    if (validation) {
-      await this.fail(operation, validation.code, validation.message);
-      return operation;
-    }
-    const artifactIds = runtime!.artifacts ?? [];
-    const releaseReservation = this.reserveRuntimeMutation(this.affectedRuntimeIds(artifactIds));
-    this.enqueue(`runtime:${runtimeId}`, async () => {
-      try {
-        await this.run(operation, async () => {
-          await this.withArtifactLocks(artifactIds, async () => {
-            await Promise.all(
-              artifactIds.map((artifactId) =>
-                this.store.requireRollback(this.requireArtifact(artifactId))
-              ),
-            );
-            await this.observer.tick();
-            await this.assertMutationSafe(runtimeId, artifactIds);
-            const status = this.runtimeStatus(runtimeId);
-            const wasLive = status === "HOT" || status === "BUSY" || status === "STARTING";
-            await this.stopIfLive(runtime!);
-            for (const artifactId of [...artifactIds].reverse()) {
-              await this.store.rollback(this.requireArtifact(artifactId));
-            }
-            if (wasLive) {
-              await this.backend.ensure(runtime!);
-              await this.waitForRuntime(runtimeId);
-            }
-          });
-          return { runtime: runtimeId, rolledBack: artifactIds };
-        });
-      } finally {
-        releaseReservation();
+    return await this.rollbackRuntimeArtifacts(runtimeId, this.runtimeArtifactIds(runtime));
+  }
+
+  async rollbackRuntimeRelease(
+    runtimeId: string,
+    releaseId: string,
+    artifactIds: string[],
+    providerConfigRevision: string,
+    healthPath: string,
+    onRolledBack: () => Promise<void>,
+  ): Promise<ArtifactOperation> {
+    return await this.rollbackRuntimeArtifacts(
+      runtimeId,
+      artifactIds,
+      releaseId,
+      providerConfigRevision,
+      healthPath,
+      onRolledBack,
+    );
+  }
+
+  private async rollbackRuntimeArtifacts(
+    runtimeId: string,
+    artifactIds: string[],
+    releaseId?: string,
+    providerConfigRevision?: string,
+    healthPath = "/health",
+    onRolledBack?: () => Promise<void>,
+  ): Promise<ArtifactOperation> {
+    const operation = this.createOperation("rollback", { runtimeId, releaseId });
+    const mutationLease = await this.acquireMutation(operation, "runtime-rollback");
+    if (!mutationLease && this.options.mutationCoordinator) return operation;
+    let handedOff = false;
+    let releaseReservation: (() => void) | undefined;
+    try {
+      if (await this.rejectAtCapacity(operation)) return operation;
+      await this.persistPending(operation);
+      const runtime = getRuntime(this.registry, runtimeId);
+      const validation = this.validateMutableRuntime(runtime);
+      if (validation) {
+        await this.fail(operation, validation.code, validation.message);
+        return operation;
       }
-    });
-    return operation;
+      const healthContractError = this.validateHealthContract(runtime, healthPath);
+      if (healthContractError) {
+        await this.fail(operation, "health_contract_mismatch", healthContractError);
+        return operation;
+      }
+      if (artifactIds.length === 0) {
+        await this.fail(operation, "artifact_not_declared", `runtime ${runtimeId} has no release artifacts`);
+        return operation;
+      }
+      releaseReservation = this.reserveRuntimeMutation(this.affectedRuntimeIds(artifactIds));
+      this.enqueue(`runtime:${runtimeId}`, async () => {
+        try {
+          await this.run(operation, async () => {
+            await this.withArtifactLocks(artifactIds, async () => {
+              await Promise.all(
+                artifactIds.map((artifactId) =>
+                  this.store.requireRollback(this.requireArtifact(artifactId))
+                ),
+              );
+              await this.observer.tick();
+              await this.assertMutationSafe(runtimeId, artifactIds);
+              const status = this.runtimeStatus(runtimeId);
+              const wasLive = status === "HOT" || status === "BUSY" || status === "STARTING";
+              await this.stopIfLive(runtime!);
+              for (const artifactId of [...artifactIds].reverse()) {
+                await this.store.rollback(this.requireArtifact(artifactId));
+              }
+              if (wasLive) {
+                await this.backend.ensure(runtime!);
+                await this.waitForRuntime(runtimeId);
+              }
+              await onRolledBack?.();
+            });
+            return {
+              runtime: runtimeId,
+              release: releaseId,
+              providerConfigRevision,
+              healthPath,
+              rolledBack: artifactIds,
+            };
+          });
+        } finally {
+          releaseReservation?.();
+          mutationLease?.release();
+        }
+      });
+      handedOff = true;
+      return operation;
+    } finally {
+      if (!handedOff) {
+        releaseReservation?.();
+        mutationLease?.release();
+      }
+    }
   }
 
   async ensureRuntime(
@@ -243,6 +601,15 @@ export class ArtifactManager implements DeploymentCoordinator {
     signal?: AbortSignal,
   ): Promise<void> {
     const runtime = getRuntime(this.registry, runtimeId);
+    let mutationLease: MutationLease | undefined;
+    try {
+      mutationLease = this.options.mutationCoordinator?.reserve("allocation-deployment");
+    } catch (error) {
+      if (error instanceof MutationCoordinatorError) {
+        throw new ArtifactStoreError(error.code, error.message);
+      }
+      throw error;
+    }
     const releaseReservation = this.reserveRuntimeMutation(
       this.affectedRuntimeIds(runtime?.artifacts ?? []),
     );
@@ -253,6 +620,7 @@ export class ArtifactManager implements DeploymentCoordinator {
       });
     } finally {
       releaseReservation();
+      mutationLease?.release();
     }
   }
 
@@ -268,7 +636,7 @@ export class ArtifactManager implements DeploymentCoordinator {
     if (!runtime) {
       throw new ArtifactStoreError("not_found", `runtime ${runtimeId} is not in the registry`);
     }
-    const artifacts = (runtime.artifacts ?? []).map((id) => this.requireArtifact(id));
+    const artifacts = this.runtimeArtifactIds(runtime).map((id) => this.requireArtifact(id));
     if (artifacts.length === 0) {
       throw new ArtifactStoreError(
         "artifact_not_declared",
@@ -322,6 +690,7 @@ export class ArtifactManager implements DeploymentCoordinator {
     staged: StagedArtifact[],
     onPhase: (phase: string) => void = () => undefined,
     signal?: AbortSignal,
+    onActivated?: () => Promise<void>,
   ): Promise<void> {
     this.throwIfAborted(signal);
     const status = this.runtimeStatus(runtime.id);
@@ -340,6 +709,7 @@ export class ArtifactManager implements DeploymentCoordinator {
       this.throwIfAborted(signal);
       onPhase("verifying-runtime");
       await this.waitForRuntime(runtime.id, signal);
+      await onActivated?.();
       onPhase("runtime-ready");
     } catch (err) {
       if (activated) {
@@ -400,12 +770,12 @@ export class ArtifactManager implements DeploymentCoordinator {
     this.emit("artifact_activation", { runtime: runtime.id });
   }
 
-  private async stagedArtifacts(
-    runtime: RuntimeDefinition,
+  private async stagedArtifactsFor(
+    artifactIds: string[],
     signal?: AbortSignal,
   ): Promise<StagedArtifact[]> {
     const staged: StagedArtifact[] = [];
-    for (const artifactId of runtime.artifacts ?? []) {
+    for (const artifactId of artifactIds) {
       this.throwIfAborted(signal);
       const artifact = this.requireArtifact(artifactId);
       const item = await this.store.getStaged(artifact, signal);
@@ -415,6 +785,13 @@ export class ArtifactManager implements DeploymentCoordinator {
       staged.push(item);
     }
     return staged;
+  }
+
+  private runtimeArtifactIds(runtime: RuntimeDefinition | undefined): string[] {
+    if (!runtime) {
+      return [];
+    }
+    return this.options.runtimeArtifacts?.(runtime.id) ?? runtime.artifacts ?? [];
   }
 
   private async changedArtifacts(
@@ -597,7 +974,7 @@ export class ArtifactManager implements DeploymentCoordinator {
 
   private createOperation(
     kind: ArtifactOperation["kind"],
-    target: Pick<ArtifactOperation, "artifactId" | "runtimeId">,
+    target: Pick<ArtifactOperation, "artifactId" | "runtimeId" | "releaseId">,
   ): ArtifactOperation {
     const base = `artifact_op_${this.random()}`;
     let id = base;
@@ -613,6 +990,7 @@ export class ArtifactManager implements DeploymentCoordinator {
       createdAt: this.isoNow(),
     };
     this.operations.set(operation.id, operation);
+    this.emitOperationState();
     return operation;
   }
 
@@ -638,6 +1016,7 @@ export class ArtifactManager implements DeploymentCoordinator {
     rethrow = false,
   ): Promise<void> {
     operation.status = "running";
+    this.emitOperationState();
     try {
       await this.store.writeOperation(operation);
     } catch (err) {
@@ -653,6 +1032,7 @@ export class ArtifactManager implements DeploymentCoordinator {
         reason: "journal_write_failed",
       });
       await this.pruneHistory();
+      this.emitOperationState();
       if (rethrow) {
         throw new ArtifactStoreError("journal_write_failed", this.errorMessage(err));
       }
@@ -694,6 +1074,7 @@ export class ArtifactManager implements DeploymentCoordinator {
       throw new ArtifactStoreError("journal_write_failed", this.errorMessage(err));
     } finally {
       await this.pruneHistory();
+      this.emitOperationState();
     }
     if (failure && rethrow) {
       throw failure;
@@ -711,6 +1092,7 @@ export class ArtifactManager implements DeploymentCoordinator {
       reason: code,
     });
     await this.pruneHistory();
+    this.emitOperationState();
   }
 
   private async rejectAtCapacity(operation: ArtifactOperation): Promise<boolean> {
@@ -735,45 +1117,25 @@ export class ArtifactManager implements DeploymentCoordinator {
       await this.store.writeOperation(operation);
     } catch (err) {
       this.operations.delete(operation.id);
+      this.emitOperationState();
       throw new ArtifactStoreError("journal_write_failed", this.errorMessage(err));
     }
   }
 
   private savedOperation(saved: ArtifactJournalRecord): ArtifactOperation {
-    const kinds = new Set<ArtifactOperation["kind"]>(["stage", "activate", "rollback"]);
-    const statuses = new Set<ArtifactOperation["status"]>([
-      "pending",
-      "running",
-      "succeeded",
-      "failed",
-      "interrupted",
-    ]);
+    const parsed = artifactOperationSchema.safeParse(saved);
+    if (!parsed.success) {
+      throw new ArtifactStoreError("journal_corrupt", `invalid artifact operation ${saved.id}`);
+    }
+    const operation = parsed.data;
     if (
-      !/^artifact_op_[a-zA-Z0-9._-]+$/.test(saved.id)
-      || !kinds.has(saved.kind as ArtifactOperation["kind"])
-      || !statuses.has(saved.status as ArtifactOperation["status"])
-      || typeof saved.createdAt !== "string"
-      || !Number.isFinite(Date.parse(saved.createdAt))
-      || (saved.completedAt !== undefined && (
-        typeof saved.completedAt !== "string" || !Number.isFinite(Date.parse(saved.completedAt))
-      ))
-      || (saved.artifactId !== undefined && typeof saved.artifactId !== "string")
-      || (saved.runtimeId !== undefined && typeof saved.runtimeId !== "string")
-      || (saved.kind === "stage" && typeof saved.artifactId !== "string")
-      || (saved.kind !== "stage" && typeof saved.runtimeId !== "string")
-      || (saved.error !== undefined && (
-        typeof saved.error !== "object"
-        || saved.error === null
-        || typeof (saved.error as Record<string, unknown>).code !== "string"
-        || typeof (saved.error as Record<string, unknown>).message !== "string"
-      ))
-      || (saved.result !== undefined && (
-        typeof saved.result !== "object" || saved.result === null || Array.isArray(saved.result)
-      ))
+      !/^artifact_op_[a-zA-Z0-9._-]+$/.test(operation.id)
+      || (operation.kind === "stage" && !operation.artifactId && !operation.releaseId)
+      || (operation.kind !== "stage" && !operation.runtimeId)
     ) {
       throw new ArtifactStoreError("journal_corrupt", `invalid artifact operation ${saved.id}`);
     }
-    return saved as unknown as ArtifactOperation;
+    return operation;
   }
 
   private async pruneHistory(): Promise<void> {
@@ -801,6 +1163,38 @@ export class ArtifactManager implements DeploymentCoordinator {
 
   private emit(name: string, labels: Record<string, string>): void {
     this.options.onEvent?.({ name, labels });
+  }
+
+  private emitOperationState(): void {
+    this.options.onOperationState?.(this.activeOperationCount());
+  }
+
+  private async acquireMutation(
+    operation: ArtifactOperation,
+    kind: MutationKind,
+  ): Promise<MutationLease | undefined> {
+    try {
+      return this.options.mutationCoordinator?.reserve(kind);
+    } catch (error) {
+      if (error instanceof MutationCoordinatorError) {
+        await this.fail(operation, error.code, error.message);
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  private validateHealthContract(
+    runtime: RuntimeDefinition | undefined,
+    healthPath: string,
+  ): string | undefined {
+    if (!runtime) return undefined;
+    const configured = runtime.backend === "systemd"
+      ? runtime.deployment.healthPath ?? "/health"
+      : "/health";
+    return configured === healthPath
+      ? undefined
+      : `release health path ${healthPath} does not match runtime contract ${configured}`;
   }
 
   private now(): number {

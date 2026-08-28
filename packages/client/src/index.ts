@@ -1,0 +1,489 @@
+import {
+  allocationRequestSchema,
+  controlOperationSchema,
+  errorResponseSchema,
+  publicAllocationSchema,
+  type AllocationRequest,
+  type ControlOperation,
+  type PublicAllocation,
+} from "@larm/core";
+
+type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+export type LarmClientOptions = {
+  baseUrl: string;
+  apiToken?: string;
+  managementToken?: string;
+  fetch?: FetchLike;
+  timeoutMs?: number;
+  random?: () => string;
+};
+
+export type RequestOptions = {
+  signal?: AbortSignal;
+  idempotencyKey?: string;
+  management?: boolean;
+};
+
+export class LarmApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly responseBody?: unknown,
+  ) {
+    super(message);
+    this.name = "LarmApiError";
+  }
+}
+
+export class LarmEpochChangedError extends Error {
+  constructor(readonly previous: string, readonly current: string) {
+    super(`LARM boot epoch changed from ${previous} to ${current}; create a new Allocation`);
+    this.name = "LarmEpochChangedError";
+  }
+}
+
+export class LarmClient {
+  private readonly baseUrl: string;
+  private readonly fetchImpl: FetchLike;
+  private readonly timeoutMs: number;
+  private bootEpoch?: string;
+
+  constructor(private readonly options: LarmClientOptions) {
+    const url = new URL(options.baseUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error("LARM baseUrl must use http or https");
+    }
+    if (url.username || url.password || url.search || url.hash) {
+      throw new Error("LARM baseUrl must not contain credentials, query, or fragment");
+    }
+    this.baseUrl = url.toString().replace(/\/+$/, "");
+    this.fetchImpl = options.fetch ?? fetch;
+    this.timeoutMs = options.timeoutMs ?? 300_000;
+    if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) {
+      throw new RangeError("LARM timeoutMs must be a positive finite number");
+    }
+  }
+
+  get observedBootEpoch(): string | undefined {
+    return this.bootEpoch;
+  }
+
+  async allocate(request: AllocationRequest, options: RequestOptions = {}): Promise<PublicAllocation> {
+    const normalized = allocationRequestSchema.parse(request);
+    const response = await this.request("/v1/allocations", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
+      },
+      body: JSON.stringify(normalized),
+      signal: options.signal,
+    }, options.management ?? normalized.deploymentPolicy === "allow-listed");
+    return this.parseJson(response, publicAllocationSchema);
+  }
+
+  async getAllocation(id: string, signal?: AbortSignal): Promise<PublicAllocation> {
+    return await this.getAllocationWithin(id, signal, this.timeoutMs);
+  }
+
+  private async getAllocationWithin(
+    id: string,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
+  ): Promise<PublicAllocation> {
+    const response = await this.request(
+      `/v1/allocations/${encodeURIComponent(id)}`,
+      { signal },
+      false,
+      timeoutMs,
+    );
+    return this.parseJson(response, publicAllocationSchema);
+  }
+
+  async waitUntilReady(
+    allocation: PublicAllocation,
+    options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number } = {},
+  ): Promise<PublicAllocation> {
+    const timeoutMs = options.timeoutMs ?? this.timeoutMs;
+    const pollIntervalMs = options.pollIntervalMs ?? 250;
+    this.validatePollingOptions(timeoutMs, pollIntervalMs);
+    const deadline = Date.now() + timeoutMs;
+    let current = allocation;
+    while (current.status === "pending") {
+      if (Date.now() >= deadline) {
+        throw new LarmApiError(
+          408,
+          "allocation_timeout",
+          `allocation ${current.id} did not become ready before the client deadline`,
+          current,
+        );
+      }
+      await this.delay(
+        Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
+        options.signal,
+      );
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw this.allocationTimeout(current);
+      }
+      try {
+        current = await this.getAllocationWithin(current.id, options.signal, remainingMs);
+      } catch (error) {
+        if (Date.now() >= deadline) throw this.allocationTimeout(current);
+        throw error;
+      }
+    }
+    if (current.status !== "ready") {
+      throw new LarmApiError(409, current.error?.code ?? "allocation_not_ready", current.error?.message
+        ?? `allocation ${current.id} ended as ${current.status}`, current);
+    }
+    return current;
+  }
+
+  async renew(id: string, ttlSeconds = 300, signal?: AbortSignal): Promise<PublicAllocation> {
+    const response = await this.request(`/v1/allocations/${encodeURIComponent(id)}/renew`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ttlSeconds }),
+      signal,
+    });
+    return this.parseJson(response, publicAllocationSchema);
+  }
+
+  async release(id: string, signal?: AbortSignal): Promise<PublicAllocation> {
+    const response = await this.request(`/v1/allocations/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      signal,
+    });
+    return this.parseJson(response, publicAllocationSchema);
+  }
+
+  async getOperation(id: string, signal?: AbortSignal) {
+    return await this.getOperationWithin(id, signal, this.timeoutMs);
+  }
+
+  private async getOperationWithin(id: string, signal: AbortSignal | undefined, timeoutMs: number) {
+    const response = await this.request(
+      `/v1/operations/${encodeURIComponent(id)}`,
+      { signal },
+      false,
+      timeoutMs,
+    );
+    return this.parseJson(response, controlOperationSchema);
+  }
+
+  async waitForOperation(
+    operation: ControlOperation | string,
+    options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number } = {},
+  ): Promise<ControlOperation> {
+    const timeoutMs = options.timeoutMs ?? this.timeoutMs;
+    const pollIntervalMs = options.pollIntervalMs ?? 250;
+    this.validatePollingOptions(timeoutMs, pollIntervalMs);
+    const deadline = Date.now() + timeoutMs;
+    let current: ControlOperation;
+    if (typeof operation === "string") {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) throw this.operationTimeout(operation);
+      try {
+        current = await this.getOperationWithin(operation, options.signal, remainingMs);
+      } catch (error) {
+        if (Date.now() >= deadline) throw this.operationTimeout(operation);
+        throw error;
+      }
+    } else {
+      current = controlOperationSchema.parse(operation);
+    }
+    while (current.status === "pending" || current.status === "running") {
+      if (Date.now() >= deadline) {
+        throw this.operationTimeout(current.id, current);
+      }
+      await this.delay(
+        Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
+        options.signal,
+      );
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) throw this.operationTimeout(current.id, current);
+      try {
+        current = await this.getOperationWithin(current.id, options.signal, remainingMs);
+      } catch (error) {
+        if (Date.now() >= deadline) throw this.operationTimeout(current.id, current);
+        throw error;
+      }
+    }
+    if (current.status !== "succeeded") {
+      throw new LarmApiError(
+        current.status === "timed_out" ? 408 : 409,
+        current.error?.code ?? `operation_${current.status}`,
+        current.error?.message ?? `operation ${current.id} ended as ${current.status}`,
+        current,
+      );
+    }
+    return current;
+  }
+
+  async withAllocation<T>(
+    request: AllocationRequest,
+    handler: (allocation: PublicAllocation, client: LarmClient) => Promise<T>,
+    options: RequestOptions & { pollIntervalMs?: number; timeoutMs?: number } = {},
+  ): Promise<T> {
+    const allocated = await this.allocate(request, options);
+    const outcome: { ok: true; value: T } | { ok: false; error: unknown } = await (async () => {
+      try {
+        const ready = await this.waitUntilReady(allocated, options);
+        return { ok: true as const, value: await handler(ready, this) };
+      } catch (error) {
+        return { ok: false as const, error };
+      }
+    })();
+    try {
+      await this.release(allocated.id);
+    } catch (releaseError) {
+      if (!outcome.ok) {
+        throw new AggregateError(
+          [outcome.error, releaseError],
+          `allocation ${allocated.id} failed and could not be released`,
+        );
+      }
+      throw releaseError;
+    }
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
+  }
+
+  chat(allocationId: string, body: unknown, options: RequestOptions = {}): Promise<Response> {
+    return this.gateway("/v1/chat/completions", allocationId, body, options);
+  }
+
+  speech(allocationId: string, body: unknown, options: RequestOptions = {}): Promise<Response> {
+    return this.gateway("/v1/audio/speech", allocationId, body, options);
+  }
+
+  transcribe(
+    allocationId: string,
+    body: RequestInit["body"],
+    options: RequestOptions = {},
+  ): Promise<Response> {
+    return this.request("/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { "x-larm-allocation-id": allocationId },
+      body,
+      signal: options.signal,
+    });
+  }
+
+  voices(
+    allocationId: string,
+    capability?: string,
+    options: RequestOptions = {},
+  ): Promise<Response> {
+    return this.request("/v1/audio/voices", {
+      headers: {
+        "x-larm-allocation-id": allocationId,
+        ...(capability ? { "x-larm-capability": capability } : {}),
+      },
+      signal: options.signal,
+    });
+  }
+
+  private gateway(
+    path: string,
+    allocationId: string,
+    body: unknown,
+    options: RequestOptions,
+  ): Promise<Response> {
+    return this.request(path, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-larm-allocation-id": allocationId,
+      },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
+  }
+
+  private async request(
+    path: string,
+    init: RequestInit,
+    management = false,
+    timeoutMs = this.timeoutMs,
+  ): Promise<Response> {
+    const headers = new Headers(init.headers);
+    if (this.options.apiToken) {
+      headers.set("authorization", `Bearer ${this.options.apiToken}`);
+    }
+    if (management) {
+      if (!this.options.managementToken) {
+        throw new Error("LARM management token is required for this request");
+      }
+      headers.set("x-larm-management-token", this.options.managementToken);
+    }
+    const abort = new AbortController();
+    const upstreamSignal = init.signal;
+    const onAbort = () => abort.abort(upstreamSignal?.reason);
+    if (upstreamSignal?.aborted) {
+      onAbort();
+    } else {
+      upstreamSignal?.addEventListener("abort", onAbort, { once: true });
+    }
+    const timeout = setTimeout(
+      () => abort.abort(new Error("LARM client timeout")),
+      Math.max(0, timeoutMs),
+    );
+    timeout.unref?.();
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+        ...init,
+        headers,
+        signal: abort.signal,
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      upstreamSignal?.removeEventListener("abort", onAbort);
+      throw error;
+    }
+    try {
+      this.observeEpoch(response);
+    } catch (error) {
+      clearTimeout(timeout);
+      upstreamSignal?.removeEventListener("abort", onAbort);
+      void response.body?.cancel(error).catch(() => undefined);
+      throw error;
+    }
+    if (!response.ok) {
+      const body = await response.clone().json().catch(() => undefined);
+      await response.body?.cancel().catch(() => undefined);
+      clearTimeout(timeout);
+      upstreamSignal?.removeEventListener("abort", onAbort);
+      const parsed = errorResponseSchema.safeParse(body);
+      throw new LarmApiError(
+        response.status,
+        parsed.success ? parsed.data.error.code : "http_error",
+        parsed.success ? parsed.data.error.message : `LARM returned HTTP ${response.status}`,
+        body,
+      );
+    }
+    if (!response.body) {
+      clearTimeout(timeout);
+      upstreamSignal?.removeEventListener("abort", onAbort);
+      return response;
+    }
+    const reader = response.body.getReader();
+    let cleaned = false;
+    let managedController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let onManagedAbort: () => void = () => undefined;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      clearTimeout(timeout);
+      upstreamSignal?.removeEventListener("abort", onAbort);
+      abort.signal.removeEventListener("abort", onManagedAbort);
+    };
+    onManagedAbort = () => {
+      const reason = abort.signal.reason ?? new Error("LARM request aborted");
+      void reader.cancel(reason).catch(() => undefined);
+      cleanup();
+      managedController?.error(reason);
+    };
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        managedController = controller;
+        abort.signal.addEventListener("abort", onManagedAbort, { once: true });
+        if (abort.signal.aborted) onManagedAbort();
+      },
+      pull: async (controller) => {
+        try {
+          const chunk = await reader.read();
+          if (chunk.done) {
+            cleanup();
+            controller.close();
+          } else {
+            controller.enqueue(chunk.value);
+          }
+        } catch (error) {
+          cleanup();
+          controller.error(error);
+        }
+      },
+      cancel: async (reason) => {
+        abort.abort(reason);
+        cleanup();
+        await reader.cancel(reason).catch(() => undefined);
+      },
+    });
+    return new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
+  private observeEpoch(response: Response): void {
+    const epoch = response.headers.get("x-larm-boot-epoch");
+    if (!epoch) {
+      return;
+    }
+    if (this.bootEpoch && this.bootEpoch !== epoch) {
+      const previous = this.bootEpoch;
+      this.bootEpoch = epoch;
+      throw new LarmEpochChangedError(previous, epoch);
+    }
+    this.bootEpoch = epoch;
+  }
+
+  private async parseJson<T>(response: Response, schema: { parse(input: unknown): T }): Promise<T> {
+    return schema.parse(await response.json());
+  }
+
+  private createIdempotencyKey(): string {
+    return `client_${(this.options.random ?? (() => crypto.randomUUID()))()}`;
+  }
+
+  private allocationTimeout(allocation: PublicAllocation): LarmApiError {
+    return new LarmApiError(
+      408,
+      "allocation_timeout",
+      `allocation ${allocation.id} did not become ready before the client deadline`,
+      allocation,
+    );
+  }
+
+  private operationTimeout(id: string, operation?: ControlOperation): LarmApiError {
+    return new LarmApiError(
+      408,
+      "operation_timeout",
+      `operation ${id} did not complete before the client deadline`,
+      operation,
+    );
+  }
+
+  private validatePollingOptions(timeoutMs: number, pollIntervalMs: number): void {
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+      throw new RangeError("poll timeoutMs must be a nonnegative finite number");
+    }
+    if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 0) {
+      throw new RangeError("pollIntervalMs must be a nonnegative finite number");
+    }
+  }
+
+  private delay(ms: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+      return Promise.reject(signal.reason);
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      timer.unref?.();
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal?.reason);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+}

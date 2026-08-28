@@ -20,6 +20,7 @@ export const allocationBindingSchema = z.object({
   candidateRank: z.number().int().positive(),
   fallback: z.boolean(),
   selectionReason: z.string().min(1).max(128),
+  release: z.string().min(1).max(128).optional(),
 }).strict();
 
 export const allocationErrorSchema = z.object({
@@ -31,6 +32,7 @@ export const allocationSchema = z
   .object({
     id: z.string().min(1).max(192),
     bootEpoch: z.string().min(1).max(128),
+    catalogRevision: z.string().min(1).max(128).optional(),
     client: z.string().min(1).max(128).optional(),
     status: allocationStatusSchema,
     requirements: z.array(allocationRequirementSchema).min(1).max(16),

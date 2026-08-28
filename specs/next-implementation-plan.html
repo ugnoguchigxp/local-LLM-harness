@@ -1,243 +1,297 @@
 <article lang="ja">
-  <h1>LARM 次期実装計画: Production化と統一Data Plane</h1>
+  <h1>LARM 次期実装計画: 運用収束とVersioned Model Release</h1>
 
   <p>
-    この文書は、Route、Allocation、LLM Gateway、単一file artifact lifecycleまでを実装した
-    LARMを、gnosis上で常用できるLocal AI Providerへ進める次期計画です。次の主目的は、
-    現行機能を実運用へ反映し、LLM、STT、TTSを同じAllocation固定の安定endpointから利用可能にすることです。
+    この文書は、Milestone 8から14で実装したAllocation固定Data Plane、bounded execution、
+    再起動境界、artifact snapshot lifecycleを、gnosis上の常用Providerとして収束させるための
+    Milestone 15から21を定義します。次の主目的は、新しいモデルを増やすことではなく、現行の Qwen 3.8
+    27B経路を実機で証明し、allowlist済みmodel releaseをAPIから安全に選択・配備・
+    rollbackできる運用contractを完成させることです。
   </p>
 
   <dl>
     <dt>文書状態</dt>
-    <dd>repository実装完了・attended production gate待ち</dd>
+    <dd>Repository実装完了。gnosis commissioningとAmbient canaryはattended gate待ち</dd>
     <dt>策定日</dt>
     <dd><time>2026-08-28</time></dd>
-    <dt>前提</dt>
+    <dt>前提実装</dt>
     <dd>
-      <a href="./implementation-plan.html">初期実装計画・完了記録</a>のMilestone 0から6は
-      コード実装済み。attended production gateは未完了
+      <a href="./implementation-completion.html">Milestone 8–14 実装完了記録</a>と
+      <a href="./review-hardening.html">コードレビュー・Hardening記録</a>
     </dd>
     <dt>既定LLM</dt>
-    <dd>Qwen 3.8 27B Resident。通常処理とリアルタイム処理の両方を担当</dd>
+    <dd>Qwen 3.8 27B Resident。通常・リアルタイム・reasoning・codingを担当</dd>
     <dt>計画対象</dt>
-    <dd>Production commissioning、統一Gateway、bounded execution、再起動回復、snapshot artifact</dd>
+    <dd>
+      Production commissioning、LARM release、client contract、model release catalog、 atomic
+      catalog reload、resource telemetry、fault test、実client canary
+    </dd>
   </dl>
 
   <aside>
     <p>
-      Milestone 8から14のコードと自動検査は完了しました。実装結果と未実施の実機作業は
-      <a href="./implementation-completion.html">実装完了記録</a>を正本とします。
+      2026年8月28日にMilestone 15–21のrepository実装を完了しました。実装結果と残るlive gateは
+      <a href="./implementation-completion-m15-m21.html">完了記録</a>、host preflightは
+      <a href="./commissioning-evidence.html">commissioning evidence</a>を参照してください。
     </p>
   </aside>
 
-  <section id="executive-decision">
+  <section id="decision">
     <h2>結論</h2>
     <p>
-      次の着手対象は35Bではありません。まず現在のdaemonを常駐運用へ載せ、
-      <code>/v1/chat/completions</code
-      >に加えてSTTとTTSもAllocationで固定されたGatewayへ統一します。
-      その経路にRuntime単位の実行枠とbounded
-      queueを加え、daemon再起動をclientが確実に検出できるようにします。
-      その後、checksum付きdirectory snapshotをartifact lifecycleへ追加し、PreferredなQwen
-      TTSを最初の対象にします。
+      最初のblocking gateはコード追加ではなく、現在のcommitをgnosisへ導入して実測することです。 LARM
+      daemonがまだ実ホストへ導入されていない状態でcatalog reloadや追加モデルを実装しても、
+      実際のstartup latency、memory peak、音声経路、rollbackの前提を検証できません。
+    </p>
+    <p>
+      commissioning完了後は、LARM自身の更新をversioned releaseとしてrollback可能にし、
+      machine-readable API contractと参照clientを固定します。その上で、現行の「Runtimeごとに一つの
+      artifact集合」という制約を、immutableなmodel release catalogへ発展させます。推論requestは
+      引き続きRouteだけを指定し、artifact revisionの変更は管理APIへ分離します。
     </p>
     <aside>
       <p>
-        35Bはproduction Registryへ追加しません。特定taskの速度SLO、品質下限、memory実測、artifact
-        metadataが揃ったときだけ、別のdecision
-        recordを経て<code>llm-speed</code>へ追加します。
-        <code>llm-default</code>へ暗黙に混入させません。
+        35Bはこの計画の実装対象ではありません。Qwen 3.8 27Bがリアルタイム要求を含むResident
+        defaultであり続けます。35BはMilestone
+        21完了後、特定taskの速度SLOと品質下限を満たす場合にだけ、 独立したdecision
+        recordを経て明示的な速度route候補として評価します。
       </p>
     </aside>
   </section>
 
-  <section id="baseline-and-gaps">
-    <h2>実装開始前のbaselineと解消対象</h2>
+  <section id="baseline">
+    <h2>確認したbaselineと次のgap</h2>
     <table>
       <caption>
-        2026-08-28時点の実装状態から導いた次期対象
+        repositoryとgnosisをread-onlyで照合した結果
       </caption>
       <thead>
         <tr>
           <th scope="col">領域</th>
           <th scope="col">現在</th>
-          <th scope="col">次期到達点</th>
+          <th scope="col">次の到達点</th>
           <th scope="col">優先度</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <th scope="row">Production運用</th>
-          <td>service、polkit、導入scriptは実装済みだが、常駐daemonへの反映は未実施</td>
-          <td>自動検査とattended commissioningを通し、rollback可能な常駐構成にする</td>
+          <th scope="row">Repository gate</th>
+          <td>
+            commit <code>b51d7b4</code>、197 test、Spec
+            HTML・型・運用検査に合格
+          </td>
+          <td>同じrevisionを実機releaseの入力として固定し、証跡からcommitを追跡できる</td>
+          <td>P0</td>
+        </tr>
+        <tr>
+          <th scope="row">gnosis daemon</th>
+          <td><code>larm-daemon.service</code>はinactiveかつnot-found</td>
+          <td>既存Resident Providerを再起動せずに導入し、ready、smoke、restartを通す</td>
+          <td>P0・blocking</td>
+        </tr>
+        <tr>
+          <th scope="row">Runtime desired state</th>
+          <td>
+            Resident
+            Provider群はactive。Preferredの<code>qwen-tts.service</code>もactiveかつenabledで、
+            repositoryのon-demand方針と差がある
+          </td>
+          <td>外部利用の有無を確認後、LARMのreconciliationとboot disableを実機で証明する</td>
           <td>P0</td>
         </tr>
         <tr>
           <th scope="row">Data Plane</th>
-          <td>LLMだけがAllocation固定Gateway。STTとTTSはresolve後の個別portを直接使用</td>
-          <td>LLM、STT、TTSをprotocol-awareな共通Gateway境界へ統一する</td>
+          <td>LLM、STT、TTS、voice discovery、queue、cancel、deadlineを実装済み</td>
+          <td>実音声、実stream、実clientでlatencyとfailure contractを検証する</td>
           <td>P0</td>
         </tr>
         <tr>
-          <th scope="row">実行capacity</th>
-          <td>
-            Allocation数は制限可能だが、Gatewayのin-flight requestと待機数はRuntime単位で制御しない
-          </td>
-          <td>実行slot、bounded queue、cancel、deadline、429を一貫して管理する</td>
+          <th scope="row">LARM自身の配備</th>
+          <td>installerはunitとcredentialを配備するが、source releaseの世代管理は行わない</td>
+          <td>commit固定release、atomic current切替、daemon-only rollbackを実装する</td>
           <td>P0</td>
         </tr>
         <tr>
-          <th scope="row">再起動</th>
-          <td>active Allocationはmemory上だけにあり、再起動後は404になる</td>
-          <td>boot epochを公開し、idempotent再取得と孤立Preferred Runtimeの安全な回収を行う</td>
+          <th scope="row">Client contract</th>
+          <td>API仕様はHTMLで、人手実装したcurl例が中心</td>
+          <td>response schema、OpenAPI、参照client、contract testを同じschemaから提供する</td>
+          <td>P0</td>
+        </tr>
+        <tr>
+          <th scope="row">Model revision</th>
+          <td>Runtimeは起動時に固定されたartifact ID集合だけを参照する</td>
+          <td>allowlist済みのimmutable releaseを管理APIでplan、stage、activate、rollbackする</td>
           <td>P1</td>
         </tr>
         <tr>
-          <th scope="row">Artifact</th>
-          <td>bytesとSHA-256を持つ単一fileだけを無人staging可能</td>
-          <td>列挙済みfileから成るchecksum付きdirectory snapshotを安全にstageする</td>
+          <th scope="row">Catalog更新</th>
+          <td>Registryとmanifestはprocess起動時に一度だけ読み込む</td>
+          <td>検証済みgenerationを原子的にactivateし、失敗時は現行generationを維持する</td>
           <td>P1</td>
         </tr>
         <tr>
-          <th scope="row">35B</th>
-          <td>未登録</td>
-          <td>未登録を維持し、速度SLOが定義された後の独立評価とする</td>
-          <td>保留</td>
+          <th scope="row">Admission根拠</th>
+          <td>静的なestimated memoryと固定slotで安全側に制御する</td>
+          <td>静的上限を維持しつつ、実測headroomとSLOで値を校正する</td>
+          <td>P1</td>
         </tr>
       </tbody>
     </table>
   </section>
 
   <section id="target-state">
-    <h2>次期サイクルの完了状態</h2>
+    <h2>Milestone 21完了時の状態</h2>
     <ol>
-      <li>gnosisでLARM daemonが常駐し、再現可能な検査とrollback手順を持つ。</li>
-      <li>利用側はLLM、STT、TTSの個別portを知らず、Allocation IDと安定endpointだけを使用する。</li>
-      <li>Gatewayはrequest bodyからRuntime、upstream URL、pathを決定しない。</li>
-      <li>Runtimeごとの同時実行数、待機数、待機時間が設定値でboundedになる。</li>
+      <li>LARM daemonがgnosisで常駐し、実測を含むcommissioning evidenceを持つ。</li>
+      <li>LARM自身をcommit固定releaseとして導入し、Resident Runtimeに触れず前世代へ戻せる。</li>
+      <li>利用側は生成されたcontractと参照clientでAllocation、renew、Gateway、releaseを扱える。</li>
       <li>
-        daemon再起動後、古いAllocationを復元せず、clientへinstance変更と再Allocationを明示する。
+        推論requestはcapabilityとrouteを指定し、port、service、artifact revisionを指定しない。
       </li>
-      <li>孤立したPreferred RuntimeをResidentへ影響させず回収できる。</li>
+      <li>管理者はallowlist済みmodel releaseを明示的にplan、stage、activate、rollbackできる。</li>
       <li>
-        宣言済みdirectory snapshotを検証・stagingでき、Preferred Runtimeだけを無人activationできる。
+        catalog更新は世代単位で検証・原子切替され、active AllocationのBindingを暗黙に変更しない。
       </li>
-      <li>Qwen 3.8 27Bが通常・リアルタイム要求のResident defaultであり続ける。</li>
+      <li>
+        Preferred起動は静的memory budgetとfreshな実測headroomの両方を満たす場合だけ許可される。
+      </li>
+      <li>fault testと実client canary後もQwen 3.8 27BがResident defaultであり続ける。</li>
     </ol>
   </section>
 
   <section id="fixed-decisions">
-    <h2>実装着手時に固定した設計判断</h2>
+    <h2>先に固定する設計判断</h2>
     <ul>
       <li>
-        Active Allocationはdaemon再起動後に復元しません。利用中か不明なleaseを復活させるより、boot
-        epochの変更を返して再Allocationを要求します。
+        Request-time routingとrelease-time deploymentを分離する。通常のAllocation APIへURL、path、
+        checksum、artifact revisionを追加しない。
       </li>
       <li>
-        Runtime定義へcapabilityと対応するprotocol識別子を追加します。protocolはenumであり、API
-        requestから任意のupstream pathを受け取りません。
+        Model releaseはversion管理されたcatalogに事前登録されたIDだけを受け付ける。APIから任意URL、
+        任意path、任意command、任意systemd unitを受け取らない。
+      </li>
+      <li>Release IDと内容digestはimmutableとし、同じIDの内容差し替えを拒否する。</li>
+      <li>
+        Activationはoptimistic concurrencyを使い、呼出側が認識するactive
+        releaseと実状態が異なる場合は
+        <code>409</code>で拒否する。
       </li>
       <li>
-        同一protocolに複数Bindingがある場合、<code>x-larm-capability</code>で明示します。
-        省略時に選べるのは互換Bindingが一つだけの場合、または既存互換の<code>llm.general</code>だけです。
+        Active AllocationのBinding、catalog generation、active releaseは処理途中で変更しない。
+        変更後のgenerationは新規Allocationからだけ使用する。
       </li>
       <li>
-        Speech uploadは全量をdaemon memoryへ保持せず、byte上限付きstreamとしてupstreamへ転送します。
+        Resident artifactのAPI経由activation禁止を維持する。Resident更新は別のattended手順とし、
+        rollback確認なしに自動化しない。
       </li>
       <li>
-        Queueは任意長にしません。Runtimeごとに実行slot、最大待機数、queue timeoutを宣言し、
-        上限時は<code>429</code>と<code>Retry-After</code>を返します。
+        Catalog reloadは設定済みdirectoryだけを再読込し、request bodyからfilesystem
+        pathを受け取らない。
       </li>
       <li>
-        Snapshot artifactはmanifestに全fileのrelative
-        path、bytes、SHA-256が固定されたものだけを受け付けます。symlink、device、未列挙file、path
-        traversalを拒否します。
+        Live telemetryは静的memory reserveを置き換えない。telemetryがstaleまたは取得不能なら、
+        Preferred・Elasticの新規起動をfail closedする。
       </li>
-      <li>Resident artifactの無人activation禁止は維持します。</li>
+      <li>
+        Allocationはdaemon再起動後に復元しない。boot epoch変更と再Allocation contractを維持する。
+      </li>
     </ul>
   </section>
 
   <section id="dependency-order">
     <h2>依存関係と着手順</h2>
     <figure>
-      <pre><code>Milestone 8  Automated baseline and commissioning
+      <pre><code>Milestone 15  Current release commissioning ── blocking gate
       ↓
-Milestone 9  Protocol-aware Gateway foundation
+Milestone 16  Transactional LARM release / rollback
       ↓
-Milestone 10 STT / TTS stable Gateway
+Milestone 17  Machine-readable contract and reference client
       ↓
-Milestone 11 Bounded execution and backpressure
+Milestone 18  Immutable runtime release catalog
       ↓
-Milestone 12 Restart epoch and reconciliation
+Milestone 19  Atomic catalog generation activation
       ↓
-Milestone 13 Directory snapshot artifacts
+Milestone 20  Resource telemetry, SLO calibration, fault injection
       ↓
-Milestone 14 Canary migration and production gate</code></pre>
+Milestone 21  Ambient client canary and stable release gate</code></pre>
       <figcaption>
-        新しいdata planeを先に安定させ、その利用状態を使って実行capacityと再起動回復を実装する
+        実機baselineを先に確定し、control plane自身のrollback能力を整えてからmodel
+        releaseの動的変更へ進む
       </figcaption>
     </figure>
     <p>
-      Milestone 12のdomain設計とMilestone 13のmanifest設計は先行して並行検討できますが、
-      production有効化は上記の順番でgateします。各Milestoneは小さな互換commitへ分割し、
-      直前のgateを満たすまでは次の機能をproductionで有効にしません。
+      Milestone 17のschema整備はMilestone
+      16と並行設計できますが、productionへ有効化する順序は固定します。 Milestone
+      18以降を実装しても、Milestone 15を通過するまで実ホストの管理APIでは有効にしません。
     </p>
   </section>
 
-  <section id="milestone-8">
-    <h2>Milestone 8: Automated baseline and commissioning</h2>
+  <section id="milestone-15">
+    <h2>Milestone 15: Current release commissioning</h2>
     <dl>
       <dt>目的</dt>
-      <dd>現在の実装を再現可能なrelease候補にし、gnosisでLARM自身を常駐運用へ載せる。</dd>
+      <dd>現在の実装をgnosisへ安全に導入し、次の設計判断に使えるbaselineを採取する。</dd>
       <dt>優先度</dt>
-      <dd>P0</dd>
+      <dd>P0・後続のblocking gate</dd>
+      <dt>変更種別</dt>
+      <dd>attended operationと不足した検証toolの補完</dd>
     </dl>
 
-    <h3>実装項目</h3>
+    <h3>実施項目</h3>
     <ol>
       <li>
-        CIへfrozen install、source-only、Spec HTML、TypeScript、全test、Bash syntax、Python
-        syntax、systemd unit検証を追加する。
+        preflightでcommit、dirty tree、config revision、unit差分、credential mode、active service、
+        port、disk headroomを記録する。secret、prompt、transcript、audioは記録しない。
       </li>
       <li>
-        <code>/health</code>または専用version responseへsoftware
-        version、config revision、boot epochをpayload本文やsecretなしで出す。
+        既存unitを退避し、installerをdry-run相当で確認してからLARM unitだけを導入する。 Resident
+        Providerを一括restartしない。
       </li>
       <li>
-        Allocation作成、Resident 27B固定、Gateway stream、releaseを行う非破壊smoke scriptを
-        <code>deploy/gnosis</code>へ追加する。
+        <code>/health</code
+        >と<code>/ready</code>、Resident 27B Allocation、streaming
+        Gateway、 releaseを検証する。
       </li>
       <li>
-        installerの再実行、credential保持、unit差分、polkit最小権限、Preferred boot
-        disableをtestする。
+        非機密sampleでSTT、通常TTS、voice creditを確認する。Qwen
+        TTSの外部直接利用がないことを確認後、 enabled driftとorphan reconciliationを検証する。
       </li>
-      <li>operator立会いでserviceをinstall、startし、既存Provider portを停止せずにsmokeを通す。</li>
-      <li>導入前unitへ戻すrollback手順と、daemonだけを無効化する手順を記録する。</li>
+      <li>
+        Qwen TTS snapshotをstageし、Preferred
+        Allocation経由のactivate、health、自動rollback、明示rollbackを 一回ずつ確認する。
+      </li>
+      <li>
+        daemon process restartでboot
+        epochが変わり、旧Allocationが409、新Allocationがreadyになること、 execution
+        gaugeが0へ戻ることを確認する。
+      </li>
+      <li>
+        反復canaryと短時間soakでTTFB、完了時間、startup、error率、memory peak、gateway
+        overheadを採取し、 新しいSpec HTML evidenceへ要約する。raw outputはrepository外へ保存する。
+      </li>
     </ol>
 
     <h3>完了条件</h3>
     <ul>
       <li>
-        CIと<code>bun run check</code>が同じ必須検査を実行し、mainで成功する。
-      </li>
-      <li>
-        <code>larm-daemon.service</code
-        >が再起動後も起動し、<code>/ready</code>がfreshになる。
+        <code>larm-daemon.service</code>がenabled・activeで、再起動後もreadyになる。
       </li>
       <li>
         <code>llm-default</code
-        >smokeが必ず<code>qwen-general</code>を返す。
+        >が常に<code>qwen-general</code>を第一候補として返す。
       </li>
-      <li>導入中にResident serviceをstopまたはrestartしない。</li>
-      <li>daemon停止時は既存direct Provider endpointへ戻せる。</li>
+      <li>通常・リアルタイム、STT、通常TTSが追加Preferred Runtimeなしで完走する。</li>
+      <li>Qwen TTSは明示要求時だけ起動し、release後に回収される。</li>
+      <li>rollbackでLARMだけを外し、既存direct Provider経路を維持できる。</li>
+      <li>測定条件、commit、config revision、boot epoch、結果、逸脱がevidenceに残る。</li>
     </ul>
   </section>
 
-  <section id="milestone-9">
-    <h2>Milestone 9: Protocol-aware Gateway foundation</h2>
+  <section id="milestone-16">
+    <h2>Milestone 16: Transactional LARM release and rollback</h2>
     <dl>
       <dt>目的</dt>
-      <dd>LLM専用proxyを、protocolごとの差だけをadapterへ閉じ込めた共通data planeへ発展させる。</dd>
+      <dd>Git checkoutとservice実行位置を分離し、LARM自身の更新を世代管理する。</dd>
       <dt>優先度</dt>
       <dd>P0</dd>
     </dl>
@@ -245,169 +299,181 @@ Milestone 14 Canary migration and production gate</code></pre>
     <h3>実装項目</h3>
     <ol>
       <li>
-        Coreへcapabilityとprotocolの対応schemaを追加し、Registry読込時にRoute候補との整合性を検証する。
+        release manifestへcommit、LARM version、Bun version、lockfile digest、config
+        revision、作成時刻を固定する。
       </li>
       <li>
-        最初のprotocol enumを<code>openai.chat-completions.v1</code>、
-        <code>openai.audio-transcriptions.v1</code
-        >、<code>openai.audio-speech.v1</code>とする。
+        source-only release directoryをrepository外に作り、frozen installと全gate成功後だけ
+        <code>current</code>を原子的に切り替える。
       </li>
       <li>
-        Allocationから互換Bindingを選ぶ純粋関数をCoreへ追加し、曖昧、未割当、protocol不一致を区別する。
+        installerへ<code>plan</code>、<code>apply</code>、<code>rollback</code>を追加し、排他lock、
+        precondition、途中失敗時のcleanupを実装する。
       </li>
       <li>
-        daemonのbody limit、deadline、cancel伝播、header allowlist、response
-        stream、metricを共通proxy primitiveへ分離する。
+        service unitはversioned
+        releaseの<code>current</code>だけを参照する。更新時にrestartするのは
+        LARM daemonだけで、Resident・Preferred Providerへ連鎖restartしない。
       </li>
-      <li>既存chat completionsを共通primitiveへ移し、responseとerror contractを変更しない。</li>
       <li>
-        upstream error本文はそのまま返せても、credential、内部URL、stack traceはlogへ残さない。
+        credential、artifact journal、model dataをrelease
+        directoryから分離し、rollbackでも保持する。
+      </li>
+      <li>
+        filesystem root、symlinked release root、dirty source、digest不一致、並行applyをfail
+        closedする。
       </li>
     </ol>
 
     <h3>完了条件</h3>
     <ul>
-      <li>既存LLM Gatewayの全contract testが無変更で成功する。</li>
-      <li>
-        request指定の<code>model</code>、URL、pathでBindingを変更できない。
-      </li>
-      <li>protocol不一致と曖昧なBindingを推論開始前に拒否する。</li>
-      <li>upload、upstream接続、response streamの全区間へ同じdeadlineとcancelが伝播する。</li>
+      <li>隔離rootで初回導入、再実行、upgrade、途中失敗、rollbackを自動testできる。</li>
+      <li>rollback後のhealthが前releaseのversionとconfig revisionを返す。</li>
+      <li>release切替中もResident Provider processとmodel weightを変更しない。</li>
+      <li>保持世代数がboundedで、削除対象をplan表示してからだけcleanupする。</li>
     </ul>
   </section>
 
-  <section id="milestone-10">
-    <h2>Milestone 10: STT / TTS stable Gateway</h2>
+  <section id="milestone-17">
+    <h2>Milestone 17: Machine-readable contract and reference client</h2>
     <dl>
       <dt>目的</dt>
-      <dd>
-        上位Ambient Agentから8081、8082、8084の個別portを隠し、音声経路もAllocationへ固定する。
-      </dd>
+      <dd>Ambient Agent側がlifecycleの細部を再実装せず、安全にLARMを利用できる境界を作る。</dd>
       <dt>優先度</dt>
       <dd>P0</dd>
     </dl>
 
-    <h3>公開endpoint</h3>
+    <h3>実装項目</h3>
+    <ol>
+      <li>
+        Coreにrequestだけでなく、公開response、error、operation、health、stateのstrict
+        schemaを追加する。
+      </li>
+      <li>
+        route metadataとschemaからOpenAPI
+        3.1を生成し、<code>GET /openapi.json</code>で現行processの
+        contractを返す。手書きの別schemaを正本にしない。
+      </li>
+      <li>
+        <code>packages/client</code>へ薄いTypeScript
+        clientを追加し、Allocation作成、operation polling、
+        renew、Gateway、release-in-finally、timeout、AbortSignalを実装する。
+      </li>
+      <li>
+        clientはIdempotency-Keyとboot
+        epochを扱い、epoch変更時は明示的な再Allocation結果を呼出側へ返す。
+        route、fallback、releaseをclient内部で勝手に変更しない。
+      </li>
+      <li>
+        loopback、Bearer token、management tokenのcredential注入を分離し、tokenをerrorやdebug
+        logへ含めない。
+      </li>
+      <li>unversioned compatibility APIは維持するが、新規例と参照clientはv1だけを使用する。</li>
+    </ol>
+
+    <h3>完了条件</h3>
+    <ul>
+      <li>実daemon routeとOpenAPI operationの追加・削除driftをtestで検出する。</li>
+      <li>schemaで全成功responseと主要error responseをparseできる。</li>
+      <li>参照clientのcancel、timeout、renew失敗、epoch変更、release二重実行testがある。</li>
+      <li>一つのvoice AllocationからSTT、LLM、TTSを呼ぶE2E例が個別portを参照しない。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-18">
+    <h2>Milestone 18: Immutable runtime release catalog</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>
+        allowlist済みの複数model revisionから、Runtimeへ適用するreleaseを明示選択できるようにする。
+      </dd>
+      <dt>優先度</dt>
+      <dd>P1</dd>
+    </dl>
+
+    <h3>Release contract</h3>
+    <p>
+      新しいrelease catalogは、Runtime ID、release ID、artifact ID集合、resource estimate、 provider
+      config revision、health contractをimmutableな一単位として持ちます。Artifact manifestは
+      download元とdigestの正本、release catalogはRuntimeへ同時適用する組合せの正本です。
+    </p>
+    <pre><code>{
+  "runtime": "qwen-worker-fast",
+  "release": "qwen-worker-fast-2026-08-r1",
+  "expectedActiveRelease": "qwen-worker-fast-2026-07-r3"
+}</code></pre>
+
+    <h3>提案API</h3>
     <table>
       <caption>
-        追加するv1 data plane
+        管理credentialで保護するversioned release API
       </caption>
       <thead>
         <tr>
           <th scope="col">Method</th>
           <th scope="col">Path</th>
-          <th scope="col">Binding</th>
-          <th scope="col">主な制限</th>
+          <th scope="col">意味</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td>POST</td>
-          <th scope="row"><code>/v1/audio/transcriptions</code></th>
-          <td><code>speech.stt</code></td>
-          <td>multipart stream、upload bytes、deadline、cancel</td>
+          <td>GET</td>
+          <th scope="row"><code>/v1/runtime-releases</code></th>
+          <td>公開可能なrelease ID、runtime、状態、digestの一覧</td>
         </tr>
         <tr>
           <td>POST</td>
-          <th scope="row"><code>/v1/audio/speech</code></th>
-          <td>
-            <code>speech.tts</code>または<code
-              >speech.tts.expressive</code
-            >
-          </td>
-          <td>JSON bytes、audio stream、credit header</td>
+          <th scope="row"><code>/v1/runtime-releases/:id/stage</code></th>
+          <td>releaseが参照する全artifactの検証済みstaging</td>
         </tr>
         <tr>
           <td>GET</td>
-          <th scope="row"><code>/v1/audio/voices</code></th>
-          <td>選択済みTTS Binding</td>
-          <td>Allocation必須、Runtime固有結果を明示</td>
+          <th scope="row"><code>/v1/deployments/:runtime</code></th>
+          <td>active、previous、staged、health、generationの取得</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/deployments/:runtime/plan</code></th>
+          <td>停止、artifact、disk、allocation、rollback可能性を変更なしで評価</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/deployments/:runtime/activate</code></th>
+          <td>expected active release一致時だけPreferred releaseを切替</td>
         </tr>
       </tbody>
     </table>
 
     <h3>実装項目</h3>
-    <ul>
-      <li>STT uploadを全量bufferせず、転送中にbyte数を数えて上限超過時に両方向をcancelする。</li>
-      <li>
-        TTSのaudio responseをstreamし、content type、request id、VOICEVOX
-        creditを許可headerとして返す。
-      </li>
-      <li>
-        expressive TTSは明示routeで作成したBindingだけを使用し、通常TTSから暗黙に切り替えない。
-      </li>
-      <li>
-        Providerの429と<code>Retry-After</code>を保持し、LARM自身のcapacity拒否と区別可能にする。
-      </li>
-      <li>音声、文字起こし、合成textをlog、metric、operation journalへ保存しない。</li>
-      <li>LLM、STT、TTSを一つのvoice profile Allocationへ固定するE2E fixtureを追加する。</li>
-    </ul>
-
-    <h3>完了条件</h3>
-    <ul>
-      <li>
-        voice
-        profile一回のAllocationからSTT、LLM、TTSを順に呼び、各capabilityに固定されたBindingを使い続ける。
-      </li>
-      <li>STTのchunked upload、上限超過、disconnect、timeoutをintegration testで検証する。</li>
-      <li>TTSの通常音声と表現音声を明示的に選び分け、暗黙fallbackを行わない。</li>
-      <li>直接portを使わないAmbient Agent向け接続例とrollback例がある。</li>
-    </ul>
-  </section>
-
-  <section id="milestone-11">
-    <h2>Milestone 11: Bounded execution and backpressure</h2>
-    <dl>
-      <dt>目的</dt>
-      <dd>
-        Allocationのresource予約と、実際の推論requestの同時実行制御を分離して両方をboundedにする。
-      </dd>
-      <dt>優先度</dt>
-      <dd>P0</dd>
-    </dl>
-
-    <h3>実装項目</h3>
     <ol>
+      <li>Coreへrelease schema、digest、Registry・artifact参照整合性検証を追加する。</li>
+      <li>同じRuntime・release IDの内容差し替え、重複active target、未登録artifactを拒否する。</li>
+      <li>stageはrelease単位のoperationとし、一部artifactだけ成功した状態をactiveにしない。</li>
       <li>
-        Runtimeのresourcesへ<code>maxConcurrentRequests</code>、<code>maxQueuedRequests</code>、
-        <code>queueTimeoutMs</code>を追加する。
+        activate前にexpected active release、active Allocation、共有artifact、disk、staged
+        digestを再確認する。
       </li>
       <li>
-        Gateway対応Runtimeは<code>maxConcurrentRequests</code>を必須とし、
-        <code>maxQueuedRequests</code
-        >の既定値は0として、明示設定がない待機を作らない。
+        active、previous、candidate、operationをrepository外へ永続化し、crash後にprepared
+        phaseを回復する。
       </li>
-      <li>
-        daemonへRuntime単位のFIFO execution
-        gateを追加し、待機中のdisconnectとAllocation失効をcancelする。
-      </li>
-      <li>
-        実行開始直前にAllocation、boot epoch、observer freshness、固定Runtime状態を再検証する。
-      </li>
-      <li>
-        queue timeoutと満杯を安定したerror
-        code、429、<code>Retry-After</code>へ変換する。
-      </li>
-      <li>active、queued、rejected、queue durationをRuntime単位の低cardinality metricにする。</li>
-      <li>gnosisのslot値は推測で決めず、各Providerの負荷試験とmemory peakを記録して設定する。</li>
+      <li>最初のproduction対象はPreferred Qwen TTSと27B workerだけとする。</li>
     </ol>
 
     <h3>完了条件</h3>
     <ul>
-      <li>同時要求、queue満杯、queue中cancel、TTL満了、shutdown drainの決定的testがある。</li>
-      <li>設定した実行数と待機数を超えてPromise、body、audioを保持しない。</li>
-      <li>Resident 27Bの通常・リアルタイム経路がPreferred Runtimeの待機列に依存しない。</li>
-      <li>Provider固有429とLARM capacity 429をclientがerror codeで区別できる。</li>
+      <li>同じrelease指定のretryは同じoperationまたは同じactive状態へ収束する。</li>
+      <li>staleなexpected active releaseは409で、artifact変更を開始する前に拒否される。</li>
+      <li>health失敗時は全artifactとprovider configを同じprevious releaseへ戻す。</li>
+      <li>Resident Qwen 3.8 27BのAPI activationは引き続き拒否される。</li>
     </ul>
   </section>
 
-  <section id="milestone-12">
-    <h2>Milestone 12: Restart epoch, idempotency, and reconciliation</h2>
+  <section id="milestone-19">
+    <h2>Milestone 19: Atomic catalog generation activation</h2>
     <dl>
       <dt>目的</dt>
-      <dd>
-        daemon crashまたはrestartを曖昧な404ではなく、明示的で再試行可能なlifecycle eventにする。
-      </dd>
+      <dd>daemonを再起動せず、検証済みRegistry・Route・release catalog世代を安全に反映する。</dd>
       <dt>優先度</dt>
       <dd>P1</dd>
     </dl>
@@ -415,245 +481,236 @@ Milestone 14 Canary migration and production gate</code></pre>
     <h3>実装項目</h3>
     <ol>
       <li>
-        Milestone 8で公開したboot epochをAllocationとGateway response headerへ含め、data
-        plane全体のinstance境界として使用する。
+        Registry、artifact manifest、release
+        catalogを一つの<code>CatalogGeneration</code>としてloadし、 content
+        digestを計算する。
       </li>
       <li>
-        Allocation
-        IDへepochを含め、別epochのIDには<code>allocation_epoch_expired</code>を返す。
+        管理APIは設定済みdirectoryの再読込だけを要求できる。candidate generationをparse・cross
+        validateし、 diffとblock理由を返すplan phaseを持つ。
       </li>
       <li>
-        Allocation作成に<code>Idempotency-Key</code>を追加し、request
-        hash、結果、TTLをbounded memoryへ保持する。
+        active Allocation、execution、artifact operation、Runtime
+        transitionが参照する定義を変更・削除する generationはquiescentになるまでactivateしない。
       </li>
-      <li>同じkeyと同じrequestは同じ結果を返し、異なるrequestは409で拒否する。</li>
       <li>
-        起動後のrecovery graceを経て、active Allocationを持たないHOTなPreferred
-        Runtimeだけを回収する。
+        activateは短時間だけ新規Allocationをdrainし、observerとBackend
+        routingを構築後にpointerを原子的に 交換する。失敗時は旧generationで受付を再開する。
       </li>
-      <li>Resident、配備中Runtime、health不明Runtimeはstartup reconciliationで停止しない。</li>
-      <li>client向けにepoch変更時の再Allocation手順を示す。</li>
+      <li>
+        Allocationへcatalog generationとactive releaseを固定し、response headerへ
+        <code>x-larm-config-revision</code>を追加する。
+      </li>
+      <li>同時reload、同時activation、daemon shutdownとの競合を単一coordinatorで順序付ける。</li>
     </ol>
 
     <h3>完了条件</h3>
     <ul>
-      <li>daemon kill、restart、重複POST、timeout後retryのintegration testがある。</li>
-      <li>再起動前のactive Allocationを復元せず、別Runtimeへ暗黙移動しない。</li>
-      <li>孤立Preferredを回収してもResident serviceへstop命令が発行されない。</li>
-      <li>idempotency cacheの件数、key長、TTLがboundedである。</li>
+      <li>不正candidateは現行generation、ready、既存Allocationへ影響しない。</li>
+      <li>reload前のAllocationが別Runtimeまたは別releaseへ暗黙移動しない。</li>
+      <li>Resident defaultを変更するdiffは通常reloadで拒否し、attended decisionを要求する。</li>
+      <li>reload、allocation、activation、shutdown raceの決定的testがある。</li>
     </ul>
   </section>
 
-  <section id="milestone-13">
-    <h2>Milestone 13: Directory snapshot artifact lifecycle</h2>
+  <section id="milestone-20">
+    <h2>Milestone 20: Resource telemetry, SLO calibration, and fault injection</h2>
     <dl>
       <dt>目的</dt>
-      <dd>複数fileのモデルをallowlistされた一つのimmutable snapshotとして検証・stagingする。</dd>
+      <dd>推測値ではなく実測に基づき、Resident 27Bを守るadmissionとexecution設定を確定する。</dd>
       <dt>優先度</dt>
       <dd>P1</dd>
     </dl>
 
-    <h3>Manifest contract</h3>
-    <ul>
-      <li>
-        <code>kind</code
-        >は<code>file</code>または<code>snapshot</code>のdiscriminated
-        unionとする。
-      </li>
-      <li>snapshotはrevision、合計bytes、最大file数、sorted file listを持つ。</li>
-      <li>各fileは固定source、relative path、bytes、SHA-256を持つ。</li>
-      <li>
-        canonicalなfile listからsnapshot digestを計算し、同じrevision名の内容差し替えを拒否する。
-      </li>
-    </ul>
-
     <h3>実装項目</h3>
     <ol>
-      <li>Coreで重複path、絶対path、親参照、case衝突、未bounded manifestを拒否する。</li>
-      <li>Backendでregular file以外を拒否し、staging rootからの逸脱を実pathでも再検証する。</li>
-      <li>file単位の一時download、size・hash検証、snapshot全体検証後のatomic renameを実装する。</li>
-      <li>中断時は不完全snapshotをactiveにせず、期限付きcleanup対象にする。</li>
       <li>
-        active target切替とrollbackはsnapshot root単位で行い、journalへsnapshot digestを記録する。
+        Backend境界へLinux node telemetry adapterを追加し、system
+        memory、利用可能headroom、GPUまたは unified memory、採取時刻、取得状態を正規化する。
       </li>
       <li>
-        Qwen TTS設定はmanifestが管理するactive snapshot pathだけを読み、
-        revision切替がservice起動へ確実に反映されるcontract testを追加する。
+        Core admissionは静的estimated
+        memoryを第一gateとして維持し、Preferred・Elastic起動だけをfreshな live
+        headroomで二重確認する。
       </li>
       <li>
-        LARM serviceの<code>ReadWritePaths</code>へQwen TTSのactive target
-        directoryだけを追加し、model tree全体やResident artifactへの書込権限を与えない。
+        metricsへ固定bucketのstartup、queue、TTFB、total duration、memory headroomを追加する。
+        request、Allocation、client、promptをlabelにしない。
       </li>
       <li>
-        最初のproduction対象をPreferredなQwen TTSとし、Resident artifactはstaging-onlyにする。
+        benchmark runnerはraw JSONをrepository外へ保存し、commit、config、release、prompt
+        class、token数、 concurrencyだけを匿名化summaryへ変換する。
+      </li>
+      <li>
+        fake Backendでprocess crash、health stall、partial stream、disk full、journal
+        corruption、reload race、 shutdown timeoutを再現するfault testを追加する。
+      </li>
+      <li>
+        attended testでdaemon kill、Preferred provider kill、network stall、artifact
+        rollbackを確認し、 Resident providerを意図せず停止しないことを監査する。
       </li>
     </ol>
 
     <h3>完了条件</h3>
     <ul>
-      <li>一つのfileでもhash不一致ならsnapshot全体を拒否する。</li>
-      <li>
-        通信切断、disk不足、daemon restart、activation health失敗のfailure injection testがある。
-      </li>
-      <li>旧snapshotは新snapshotのhealth確認完了までrollback可能である。</li>
-      <li>APIから任意URL、path、file追加を行えない。</li>
-      <li>Resident activation禁止とsource-only policyを維持する。</li>
+      <li>telemetryがstaleでもResident経路は維持し、Preferredの新規起動だけを拒否する。</li>
+      <li>Qwen 3.8 27Bの通常・リアルタイムSLOと測定条件がSpec HTMLで固定される。</li>
+      <li>slot、queue、timeout、memory estimateの変更は実測根拠とrollback値を持つ。</li>
+      <li>fault test後にallocation、execution、operation gaugeが0または実状態へ収束する。</li>
     </ul>
   </section>
 
-  <section id="milestone-14">
-    <h2>Milestone 14: Canary migration and production gate</h2>
+  <section id="milestone-21">
+    <h2>Milestone 21: Ambient client canary and stable release gate</h2>
     <dl>
       <dt>目的</dt>
-      <dd>一つの実clientを統一Gatewayへ移し、観測結果を基にdirect endpoint依存を段階的に外す。</dd>
+      <dd>上位Runtimeの実trafficを個別portからLARM contractへ段階移行する。</dd>
       <dt>優先度</dt>
-      <dd>P1</dd>
+      <dd>P0・最終production gate</dd>
     </dl>
 
     <h3>Rollout</h3>
     <ol>
-      <li>実測するrequest形、同時実行数、latency、memory、安全reserveを受入資料へ固定する。</li>
-      <li>text chatだけをcanary化し、direct LLM endpointへ戻せる状態でsoakする。</li>
-      <li>STTを追加し、upload cancellation、429、privacy logを確認する。</li>
-      <li>通常TTSを追加し、VOICEVOX creditとaudio streamを確認する。</li>
-      <li>expressive TTSは明示routeを使うtaskだけへ追加する。</li>
-      <li>restart recoveryとPreferred idle回収を確認してから、統一Gatewayを既定接続先にする。</li>
+      <li>shadow接続テストでAllocationとresolve結果を比較し、推論trafficはまだ切り替えない。</li>
+      <li>
+        非音声の一部taskを参照client経由へ切り替え、direct Providerへの即時rollbackを保持する。
+      </li>
+      <li>通常・リアルタイムLLM、STT、通常TTSの順にcanary範囲を広げる。</li>
+      <li>expressive TTSは明示routeだけを別canaryにし、通常TTSと混ぜない。</li>
+      <li>soak中にdaemon restartとPreferred release rollbackを一度ずつ実施する。</li>
+      <li>
+        error budget、latency、memory、fallback、epoch変更、leakが基準内ならstable releaseとする。
+      </li>
     </ol>
 
-    <h3>Production gate</h3>
+    <h3>完了条件</h3>
     <ul>
-      <li>実際に使用したroute、Runtime、fallback、queue結果をpayloadなしで追跡できる。</li>
-      <li>連続運転中にAllocation、request slot、queue、Preferred Runtimeのleakがない。</li>
-      <li>daemon停止またはrollback時もResident Providerは利用可能である。</li>
-      <li>通常・リアルタイム・voice profileのLLM BindingがQwen 3.8 27Bである。</li>
-      <li>35BがRegistry、default route、fallbackへ存在しない。</li>
-      <li>
-        gateway overheadとProvider latencyの数値基準を実測から確定し、結果をSpec HTMLへ保存する。
-      </li>
+      <li>上位clientは8080から8084の個別port、service名、artifact pathを参照しない。</li>
+      <li>全turnで実際のRuntime、route、release、fallback理由を本文なしで監査できる。</li>
+      <li>daemon停止時にResident Providerを止めず、client設定だけでdirect経路へ戻せる。</li>
+      <li>soak後にactive Allocation、execution queue、artifact operationのleakがない。</li>
+      <li>commissioningとcanaryのevidenceがstable releaseのcommitへ相互linkされる。</li>
     </ul>
   </section>
 
-  <section id="component-changes">
-    <h2>Componentごとの変更範囲</h2>
+  <section id="component-scope">
+    <h2>Componentごとの主な変更範囲</h2>
     <table>
       <caption>
-        Architecture boundaryを維持する実装配置
+        実装責務の配置
       </caption>
       <thead>
         <tr>
           <th scope="col">Component</th>
-          <th scope="col">追加する責務</th>
-          <th scope="col">追加しない責務</th>
+          <th scope="col">追加責務</th>
+          <th scope="col">置かない責務</th>
         </tr>
       </thead>
       <tbody>
         <tr>
           <th scope="row"><code>packages/core</code></th>
-          <td>
-            protocol schema、Binding選択、execution policy、epoch contract、snapshot manifest検証
-          </td>
-          <td>HTTP stream、filesystem、systemd、task意味判断</td>
+          <td>公開response schema、release catalog、generation diff、admission policy</td>
+          <td>filesystem、systemd、ROCm command</td>
         </tr>
         <tr>
           <th scope="row"><code>packages/backends</code></th>
-          <td>snapshot staging、atomic activation、rollback、journal adapter</td>
-          <td>公開API、route選択、任意source処理</td>
+          <td>release state store、atomic pointer、Linux resource observation</td>
+          <td>Route選択、client retry policy</td>
         </tr>
         <tr>
           <th scope="row"><code>apps/daemon</code></th>
-          <td>
-            protocol Gateway、stream relay、execution gate、idempotency、startup reconciliation
-          </td>
-          <td>Provider model実装、Conversation、Cloud選択</td>
+          <td>OpenAPI、deployment coordinator、catalog activation、metrics</td>
+          <td>任意command実行、上位Task判断</td>
         </tr>
         <tr>
-          <th scope="row">
-            <code>apps/qwen-asr</code> /
-            <code>apps/voicevox-tts</code>
-          </th>
-          <td>固定済みOpenAI互換contractの維持と不足headerの整合</td>
-          <td>Allocation、route、model download</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>config/gnosis</code></th>
-          <td>protocolと実測済みexecution capacity</td>
-          <td>secret、生成state、35Bの先行登録</td>
+          <th scope="row"><code>packages/client</code></th>
+          <td>v1 lifecycle、epoch、idempotency、cancel、release helper</td>
+          <td>暗黙route選択、Cloud fallback、設定永続化</td>
         </tr>
         <tr>
           <th scope="row"><code>deploy/gnosis</code></th>
-          <td>commissioning、smoke、rollback、snapshot配置準備</td>
-          <td>無人reboot、Resident restart、model data</td>
+          <td>preflight、versioned release、rollback、canary、fault runbook</td>
+          <td>model weight、raw benchmark、credentialのGit保存</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>specs</code></th>
+          <td>API、release contract、commissioning・canary evidence</td>
+          <td>prompt、transcript、audio、secret、raw host log</td>
         </tr>
       </tbody>
     </table>
   </section>
 
-  <section id="test-matrix">
+  <section id="verification">
     <h2>Testと検証戦略</h2>
     <table>
       <caption>
-        次期Milestoneで追加する必須検証
+        Gateごとの検証対象
       </caption>
       <thead>
         <tr>
-          <th scope="col">層</th>
-          <th scope="col">対象</th>
-          <th scope="col">必須failure case</th>
+          <th scope="col">Layer</th>
+          <th scope="col">必須検証</th>
+          <th scope="col">失敗時</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <th scope="row">Schema</th>
-          <td>protocol、execution policy、snapshot manifest</td>
-          <td>capability不一致、unbounded値、重複path、危険path</td>
+          <th scope="row">Schema / Core</th>
+          <td>strict parse、digest、diff、generation pin、response round-trip</td>
+          <td>candidateを採用しない</td>
         </tr>
         <tr>
-          <th scope="row">Pure unit</th>
-          <td>Binding選択、execution gate、epoch、idempotency</td>
-          <td>曖昧Binding、queue満杯、key衝突、旧epoch</td>
+          <th scope="row">Backend</th>
+          <td>atomic rename、fsync、release rollback、telemetry timeout、path safety</td>
+          <td>旧releaseと旧generationを維持</td>
         </tr>
         <tr>
-          <th scope="row">Gateway integration</th>
-          <td>chat、multipart STT、audio TTS</td>
-          <td>chunked上限、disconnect、timeout、partial stream、upstream 429</td>
+          <th scope="row">Daemon concurrency</th>
+          <td>Allocation、reload、activation、idle stop、drain、cancelのrace</td>
+          <td>新規mutationを拒否して収束</td>
         </tr>
         <tr>
-          <th scope="row">Lifecycle integration</th>
-          <td>restart、reconciliation、shutdown</td>
-          <td>queue中restart、孤立Preferred、Resident保護、二重POST</td>
+          <th scope="row">Client contract</th>
+          <td>OpenAPI drift、epoch、retry、renew、stream cancel、release</td>
+          <td>stable packageを更新しない</td>
         </tr>
         <tr>
-          <th scope="row">Artifact failure injection</th>
-          <td>directory snapshot</td>
-          <td>部分download、hash不一致、disk不足、journal破損、rollback失敗</td>
+          <th scope="row">Deployment</th>
+          <td>隔離root、upgrade、rollback、並行apply、symlink、credential保持</td>
+          <td><code>current</code>を切り替えない</td>
         </tr>
         <tr>
-          <th scope="row">gnosis E2E</th>
-          <td>voice profile、memory、slot、idle回収</td>
-          <td>Resident停止、oversubscription、payload log、direct port依存</td>
+          <th scope="row">Live gate</th>
+          <td>27B、STT、TTS、restart、release rollback、soak、leak</td>
+          <td>direct Providerへ戻してreleaseを保留</td>
         </tr>
       </tbody>
     </table>
+    <p>
+      Repository共通gateは引き続き<code>bun run check</code>です。実機testは明示的なattended
+      commandへ 分離し、通常のCIからsystemd、GPU、model artifactを変更しません。
+    </p>
   </section>
 
-  <section id="implementation-slices">
+  <section id="commit-slices">
     <h2>推奨commit slice</h2>
     <ol>
-      <li>CIとoperator検査だけを追加する。</li>
-      <li>protocol schemaとRegistry contractだけを追加する。</li>
-      <li>LLM Gatewayを共通proxyへ移し、外部動作が同じことを確認する。</li>
-      <li>STT Gatewayを追加する。</li>
-      <li>TTS Gatewayとvoice discoveryを追加する。</li>
-      <li>execution gateとmetricsを追加する。</li>
-      <li>boot epochとidempotencyを追加する。</li>
-      <li>startup reconciliationを追加する。</li>
-      <li>snapshot schema、staging、activationの順に追加する。</li>
-      <li>gnosis canary設定と受入記録を追加する。</li>
+      <li>commissioning preflightとevidence template</li>
+      <li>release manifestと隔離root installer test</li>
+      <li>atomic apply・rollbackとdaemon unit切替</li>
+      <li>公開response schemaとOpenAPI generation</li>
+      <li>参照clientとE2E contract test</li>
+      <li>runtime release catalog schemaとcross validation</li>
+      <li>release stage・plan・activate・rollback API</li>
+      <li>catalog generation coordinatorとreload race test</li>
+      <li>resource telemetryとdual admission gate</li>
+      <li>fault harness、SLO summary、Ambient canary runbook</li>
     </ol>
     <p>
-      各sliceでSpec HTML、contract
-      test、rollback可能性を同時に更新します。大きなGateway置換とartifact
-      schema変更を同じcommitへ混在させません。
+      各sliceは単独で<code>bun run check</code>を通し、前sliceのpublic
+      contractを壊さない大きさにします。 live
+      stateを変更するcommitと、そのcommitを実機へ適用する操作は分離します。
     </p>
   </section>
 
@@ -661,7 +718,7 @@ Milestone 14 Canary migration and production gate</code></pre>
     <h2>主要riskと対策</h2>
     <table>
       <caption>
-        次期実装で先に管理するrisk
+        次期実装で特に監査するfailure mode
       </caption>
       <thead>
         <tr>
@@ -672,65 +729,75 @@ Milestone 14 Canary migration and production gate</code></pre>
       </thead>
       <tbody>
         <tr>
-          <th scope="row">大容量speech uploadのbuffer化</th>
-          <td>daemon memory圧迫とResident LLMへの影響</td>
-          <td>stream relay、byte counter、deadline、bounded queue</td>
+          <th scope="row">未commission状態での機能拡張</th>
+          <td>誤ったmemory・latency前提が固定される</td>
+          <td>Milestone 15をblocking gateにする</td>
         </tr>
         <tr>
-          <th scope="row">Gateway共通化の回帰</th>
-          <td>既存LLM streamの破損</td>
-          <td>LLM contractを先に固定し、protocol追加前に共通primitiveへ移す</td>
+          <th scope="row">Source releaseとlive checkoutの混同</th>
+          <td>restart時に未検証codeが起動する</td>
+          <td>commit固定releaseとatomic current pointerを使う</td>
         </tr>
         <tr>
-          <th scope="row">再起動後の誤ったlease復活</th>
-          <td>使用者不明のRuntime予約と誤routing</td>
-          <td>active Allocationを復元せず、epoch変更と再Allocationを要求</td>
+          <th scope="row">Catalog reload中のsplit generation</th>
+          <td>BindingとBackend定義が食い違う</td>
+          <td>generation pin、quiescence、single coordinator、atomic swap</td>
         </tr>
         <tr>
-          <th scope="row">startup reconciliationの誤停止</th>
-          <td>Resident停止または配備競合</td>
-          <td>Resident除外、recovery grace、mutation確認、fail closed</td>
+          <th scope="row">Model releaseの部分activation</th>
+          <td>artifactとprovider configが不整合になる</td>
+          <td>release単位journal、全事前検証、全体rollback</td>
         </tr>
         <tr>
-          <th scope="row">snapshot pathまたは内容の偽装</th>
-          <td>任意file配置と不正model activation</td>
-          <td>CoreとBackendの二重検証、全file hash、atomic rename、allowlist</td>
+          <th scope="row">Live telemetryの誤読</th>
+          <td>Resident memoryを圧迫する</td>
+          <td>静的reserveを維持し、fresh telemetryを追加gateとしてだけ使う</td>
         </tr>
         <tr>
-          <th scope="row">35Bのscope混入</th>
-          <td>memory安全域と既定routeの不安定化</td>
-          <td>Registry未登録をcontract testで固定し、別decisionへ分離</td>
+          <th scope="row">Reference clientの過剰自動化</th>
+          <td>暗黙fallbackや二重実行が起きる</td>
+          <td>route判断を持たず、epochとidempotencyを呼出側へ明示する</td>
+        </tr>
+        <tr>
+          <th scope="row">Preferred serviceの現行drift</th>
+          <td>boot後もQwen TTSが常駐してmemory前提が崩れる</td>
+          <td>外部利用確認、disable、reconciliation、reboot後確認を順序立てる</td>
         </tr>
       </tbody>
     </table>
   </section>
 
-  <section id="deferred">
+  <section id="non-goals">
     <h2>この計画で行わないこと</h2>
     <ul>
-      <li>35Bの登録、既定化、常駐化</li>
-      <li>Qwen 3.8 27B Residentの無人停止または無人artifact activation</li>
-      <li>active Allocationの永続化と再起動後の自動復活</li>
-      <li>multi-node schedulerとremote lifecycle control</li>
-      <li>設定の無停止hot reload</li>
-      <li>Ambient AgentのTask Route、Conversation、UI、Cloud Provider設定</li>
-      <li>API requestで指定された任意URL、path、commandの実行</li>
+      <li>
+        35Bをproduction Registryまたは<code>llm-default</code>へ追加すること。
+      </li>
+      <li>Qwen 3.8 27B Residentを自動停止、memory pressure evictionすること。</li>
+      <li>API requestから任意model URL、path、command、systemd unitを受け取ること。</li>
+      <li>daemon再起動をまたいでAllocationを復元すること。</li>
+      <li>複数hostのremote agent、distributed scheduler、leader electionを実装すること。</li>
+      <li>Cloud Provider選択、Situation判断、Conversation、UI、設定SQLiteをLARMへ入れること。</li>
+      <li>
+        raw prompt、response、transcript、audio、credential、model
+        weightをrepositoryへ保存すること。
+      </li>
     </ul>
   </section>
 
   <section id="definition-of-done">
     <h2>各Milestone共通のDefinition of Done</h2>
     <ul>
-      <li>新しいcontractとfailure caseをtestで固定し、既存testもすべて通す。</li>
+      <li>CoreのOS非依存境界とBackend adapter境界を維持する。</li>
+      <li>成功、拒否、timeout、cancel、restart、rollback、並行実行のtestを追加する。</li>
+      <li>queue、history、journal、release保持、telemetry labelへ明示上限を持たせる。</li>
+      <li>public contract変更と運用手順を同じcommitのSpec HTMLへ反映する。</li>
       <li>
-        <code>bun run check</code
-        >と追加したoperation検査がdiagnosticなしで成功する。
+        <code>bun run docs:check:fix</code
+        >と<code>bun run check</code>を通す。
       </li>
-      <li>公開API、Registry、運用手順の変更を同じcommitのSpec HTMLへ反映する。</li>
-      <li>request payload、audio、認証情報、model dataをrepositoryまたはlogへ保存しない。</li>
-      <li>timeout、cancel、上限、cleanup、metric、rollbackを受入条件へ含める。</li>
-      <li>Qwen 3.8 27B Resident保護と35B未登録を回帰testで維持する。</li>
-      <li>gnosisへの変更はattended gateで行い、rebootとResident restartを自動化しない。</li>
+      <li>weight、binary、build、cache、log、raw benchmark、生成mediaをGitへ追加しない。</li>
+      <li>live変更は対象、影響、precondition、rollbackを表示し、attended gateとして実行する。</li>
     </ul>
   </section>
 </article>

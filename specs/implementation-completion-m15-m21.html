@@ -1,0 +1,186 @@
+<article lang="ja">
+  <h1>Milestone 15–21 実装完了記録</h1>
+
+  <p>
+    <a href="./next-implementation-plan.html">運用収束とVersioned Model Release計画</a>に対する
+    repository実装の完了記録です。管理API、release catalog、atomic reload、resource telemetry、
+    参照client、versioned LARM release、検証toolを実装し、計画の完了条件を再監査して不足を
+    補完しました。実ホストへ変更を加える commissioningとAmbient
+    traffic切替は、commit固定releaseを作成した後に実施するattended gateとして 明確に分離しています。
+  </p>
+
+  <dl>
+    <dt>記録日</dt>
+    <dd><time>2026-08-28</time></dd>
+    <dt>Repository実装</dt>
+    <dd>完了</dd>
+    <dt>隔離環境検証</dt>
+    <dd>完了</dd>
+    <dt>gnosis commissioning</dt>
+    <dd>未実施。commit固定release待ち</dd>
+    <dt>Resident default</dt>
+    <dd>Qwen 3.8 27B。通常・リアルタイム共通</dd>
+  </dl>
+
+  <section id="delivered">
+    <h2>実装結果</h2>
+    <table>
+      <caption>
+        Milestone別の成果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Milestone</th>
+          <th scope="col">成果</th>
+          <th scope="col">状態</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">15</th>
+          <td>secretを記録しないJSON preflight、実client smoke、commissioning evidence</td>
+          <td>tool完了、実機gate待ち</td>
+        </tr>
+        <tr>
+          <th scope="row">16</th>
+          <td>
+            clean commitからのfrozen install、全gate、atomic
+            current切替、identity検証付きrollback、排他lock、review済みbounded retention
+          </td>
+          <td>隔離root test完了</td>
+        </tr>
+        <tr>
+          <th scope="row">17</th>
+          <td>
+            全成功responseとmedia typeを持つOpenAPI 3.1、strict compatibility
+            schema、operation待機を 含むTypeScript client、voice E2E例
+          </td>
+          <td>完了</td>
+        </tr>
+        <tr>
+          <th scope="row">18</th>
+          <td>
+            immutable runtime release catalog、release状態、実stage容量plan、provider config
+            revision、 stage・activate・rollback API、crash回復可能な永続state
+          </td>
+          <td>完了</td>
+        </tr>
+        <tr>
+          <th scope="row">19</th>
+          <td>
+            content digest世代、全変更を直列化するmutation coordinator、quiescence判定、
+            Backend・Observer・Registryのatomic切替とrollback
+          </td>
+          <td>完了</td>
+        </tr>
+        <tr>
+          <th scope="row">20</th>
+          <td>
+            Linux system・accelerator memory観測、fresh telemetry gate、固定bucket metrics、
+            operation gauge、隔離fault matrix、attended fault harness、匿名化benchmark summary
+          </td>
+          <td>コード完了、SLO校正待ち</td>
+        </tr>
+        <tr>
+          <th scope="row">21</th>
+          <td>
+            推論なしshadow比較、参照clientを使う反復canary、artifact operationを含むleak gate、voice
+            E2E、attended fault手順
+          </td>
+          <td>tool完了、Ambient canary待ち</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="contracts">
+    <h2>固定したcontract</h2>
+    <ul>
+      <li>通常requestはrouteだけを指定し、release ID、URL、path、serviceを指定しない。</li>
+      <li>release変更とcatalog reloadはBearer tokenに加えてmanagement tokenを要求する。</li>
+      <li>
+        release IDの内容はdigestでimmutableとし、activeまたはrollback対象の差し替えを拒否する。
+      </li>
+      <li>
+        provider config revisionはreleaseに固定した起動contract識別子とし、active・previous stateと
+        同時にcommitする。任意の設定本文やpathをrequestから受け取らない。
+      </li>
+      <li>
+        Allocationへcatalog revisionとactive releaseを固定し、全responseへconfig revision
+        headerを返す。
+      </li>
+      <li>
+        Resident contractを変えるcatalog reloadとResident artifact activationはattended手順へ残す。
+      </li>
+      <li>
+        live telemetryはPreferred・Elasticの新規起動だけをfail closedし、Resident経路を遮断しない。
+      </li>
+      <li>
+        catalog reload、artifact stage、release activation・rollback、allow-listed起動は単一mutation
+        coordinatorで直列化し、shutdown時は新規予約を拒否してdrainする。
+      </li>
+      <li>LARM releaseの切替とrollbackはLARM daemonだけをrestartし、Provider unitへ伝播しない。</li>
+    </ul>
+  </section>
+
+  <section id="completion-audit">
+    <h2>完了条件の再監査で補完した項目</h2>
+    <ul>
+      <li>
+        LARM releaseの保持数を2以上99以下に固定し、planが示した削除候補のdigest一致をapplyの
+        preconditionにした。削除は新世代health成功後だけ行い、失敗時はcurrentとrollback pointerを
+        復元する。
+      </li>
+      <li>
+        OpenAPIの全operationへ実際の成功statusとresponse contentを割り当て、JSON、SSE、Prometheus
+        text、audio binaryを区別した。legacy成功responseもstrict schemaで検証する。
+      </li>
+      <li>
+        Runtime release一覧へactive・previous・staged・availableを追加し、deployment planは実際の
+        staging dataから不足bytesを算出する。
+      </li>
+      <li>
+        restart、Preferred kill・stall、artifact rollback、health stall、partial
+        stream、disk不足、journal corruption、reload・shutdown
+        raceを再現または実行するfault経路を揃えた。
+      </li>
+      <li>
+        benchmark summaryとallocation eventへroute・Runtime・releaseを含め、metricsでは高cardinality
+        labelを除外した。leak gateへartifact operation gaugeを追加した。
+      </li>
+    </ul>
+  </section>
+
+  <section id="verification">
+    <h2>検証</h2>
+    <p>
+      型検査、Core・Backend・Daemon・Client test、Spec HTML検査、systemd検査、source-only検査、
+      installerとtransactional releaseの隔離root
+      testを<code>bun run check</code>で一括実行します。 実機値は<a
+        href="./commissioning-evidence.html"
+        >commissioning evidence</a
+      >へ分離し、 repository testの成功をproduction導入済みとは扱いません。
+    </p>
+  </section>
+
+  <section id="remaining-gates">
+    <h2>残るattended gate</h2>
+    <ol>
+      <li>この変更をreviewし、clean commitとして固定する。</li>
+      <li>
+        <code>release-larm.sh plan</code
+        >でcommit、target、cleanup候補を確認し、候補があれば表示された digestをapplyへ明示する。
+      </li>
+      <li>versioned releaseをapplyし、LARM daemonだけを導入する。</li>
+      <li>Resident、音声、Preferred release rollback、daemon restart、短時間soakを実測する。</li>
+      <li>上位Ambient clientをshadow、非音声、音声の順にcanaryへ進める。</li>
+    </ol>
+    <aside>
+      <p>
+        これらは実装不足ではなく、live process、credential、GPU
+        memory、実trafficを変更する運用gateです。 source worktreeがdirtyな状態ではrelease
+        tool自身がapplyを拒否します。
+      </p>
+    </aside>
+  </section>
+</article>

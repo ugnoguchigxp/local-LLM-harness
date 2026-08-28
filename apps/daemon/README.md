@@ -47,12 +47,14 @@ bun run dev
 | `LARM_GATEWAY_TIMEOUT_SECONDS` | `300` | uploadからresponse完了までの上限 |
 | `LARM_SHUTDOWN_TIMEOUT_SECONDS` | `330` | operationとrequestのdrain上限 |
 | `LARM_ARTIFACT_MANIFEST` | `deploy/gnosis/models.yaml` | artifact allowlist |
+| `LARM_RELEASE_CATALOG` | `deploy/gnosis/releases.yaml` | immutable Runtime release catalog |
 | `LARM_ARTIFACT_STAGING_ROOT` | `/srv/ai/models/.larm-staging` | 検証済みstaging data |
 | `LARM_ARTIFACT_ROLLBACK_ROOT` | `/srv/ai/models/.larm-rollback` | rollback data |
 | `LARM_ARTIFACT_STATE_ROOT` | `/var/lib/larm` | operation journal |
 | `LARM_IDEMPOTENCY_TTL_SECONDS` | `300` | Allocation idempotency結果の保持時間 |
 | `LARM_IDEMPOTENCY_LIMIT` | `1000` | TTL内のidempotency key件数上限。満杯時の新規keyは503でfail closed |
 | `LARM_RECOVERY_GRACE_SECONDS` | `60` | 起動後の孤立Preferred回収猶予 |
+| `LARM_TELEMETRY_MAX_AGE_SECONDS` | `10` | Preferred起動に使用できるresource telemetry freshness |
 
 数値設定は起動時に範囲検証され、不正値ではdaemonを起動しません。
 
@@ -66,6 +68,7 @@ Artifactの生成stateは既定で`/var/lib/larm`、stagingとrollback dataは`/
 curl http://127.0.0.1:9810/health
 curl http://127.0.0.1:9810/runtimes
 curl http://127.0.0.1:9810/state
+curl http://127.0.0.1:9810/openapi.json
 curl -sS -X POST http://127.0.0.1:9810/prepare \
   -H 'Content-Type: application/json' -d '{"profile":"voice"}'
 curl -sS -X POST http://127.0.0.1:9810/resolve \
@@ -111,7 +114,7 @@ curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${voice_allocation_id}"
 
 ## Artifact operations
 
-管理APIはmanifestに登録済みのartifactとRuntimeだけを受け付けます。Stage、activate、rollbackは202と非同期operationを返します。依存する次の操作へ進む前に、`GET /v1/artifact-operations/:id`が`succeeded`になるまで待つ必要があります。
+管理APIはmanifestとrelease catalogに登録済みのIDだけを受け付けます。Stage、activate、rollbackは202と非同期operationを返します。依存する次の操作へ進む前に、`GET /v1/artifact-operations/:id`が`succeeded`になるまで待つ必要があります。
 
 ```bash
 set -euo pipefail
@@ -140,23 +143,34 @@ wait_artifact_operation() {
   return 1
 }
 
-for artifact_id in qwen38-worker-fast qwen38-mtp; do
-  operation_json="$(curl -fsS -X POST "${management_headers[@]}" \
-    "http://127.0.0.1:9810/v1/artifacts/${artifact_id}/stage")"
-  wait_artifact_operation "$(jq -r .id <<<"${operation_json}")"
-done
-
+release_id="qwen-worker-fast-current"
 operation_json="$(curl -fsS -X POST "${management_headers[@]}" \
+  "http://127.0.0.1:9810/v1/runtime-releases/${release_id}/stage")"
+wait_artifact_operation "$(jq -r .id <<<"${operation_json}")"
+
+active_release="$(curl -fsS "${management_headers[@]}" \
+  http://127.0.0.1:9810/v1/deployments/qwen-worker-fast | jq -c .activeRelease)"
+operation_json="$(curl -fsS -X POST "${management_headers[@]}" \
+  -H 'content-type: application/json' \
+  -d "{\"release\":\"${release_id}\",\"expectedActiveRelease\":${active_release}}" \
   http://127.0.0.1:9810/v1/deployments/qwen-worker-fast/activate)"
 wait_artifact_operation "$(jq -r .id <<<"${operation_json}")"
 ```
 
 Runtimeが参照する全artifactをstageしてからactivateします。`deploymentPolicy: allow-listed`のAllocationでは、このstageからactivationまでをdaemonが一つの起動operation内で行います。
 
+`GET /v1/runtime-releases`は各releaseを`active`、`previous`、`staged`、`available`のいずれかで返します。`POST /v1/deployments/:runtime/plan`は実ファイルを再検証し、未stage bytes、Runtime状態、停止要否、rollback可能性、blockerを変更なしで返します。deployment stateにはactive・previous・desiredのprovider config revisionも含まれます。provider config revisionはreleaseと一緒に固定する起動contractの識別子で、APIから任意の設定内容やpathを渡すものではありません。
+
+Catalog reload、artifact stage、release activation・rollback、allow-listed起動は一つのmutation coordinatorで直列化します。競合中の変更は待たせずfail closedし、catalog切替中のrelease・deployment参照も503を返します。shutdownは新規mutationを閉じ、実行中operationを設定済み期限までdrainします。
+
 単一fileと、全fileが列挙・検証されたdirectory snapshotをstageできます。未列挙file、symlink、危険path、checksum不一致を拒否します。Resident Runtimeの無人activationは拒否します。
 `deploymentPolicy: allow-listed`のAllocationにも同じ管理tokenが必要です。
 activation後のhealth確認に失敗した場合は、直前のartifact targetへ自動rollbackします。
 Artifact downloadのBackend上限は既定3600秒で、例のpoll上限はその結果を取得できるよう3700秒です。
+
+`@larm/client`の`waitForOperation`はcontrol operationをterminal状態までpollし、進行中HTTPを含む全体timeoutと`AbortSignal`を扱います。`withAllocation`は成功・失敗のどちらでもAllocationを一度だけ解放し、処理と解放が両方失敗した場合は双方を`AggregateError`で保持します。
+
+Canary後は`larm_active_allocations`、`larm_execution_active`、`larm_execution_queued`、`larm_artifact_operations_active`が実状態へ収束したことを確認します。
 
 - Resident Runtimeは停止しません。
 - Preferred Runtimeだけを`prepare`とidle `release`の対象にします。

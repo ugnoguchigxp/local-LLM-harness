@@ -1,0 +1,92 @@
+import { expect, test } from "bun:test";
+import {
+  API_OPERATIONS,
+  createOpenApiDocument,
+  errorResponseSchema,
+  legacyPrepareResponseSchema,
+  legacyReleaseResponseSchema,
+  legacyResolveResponseSchema,
+  openApiDocumentSchema,
+} from "./api-contract";
+
+test("OpenAPI is generated from the public contract schemas", () => {
+  const document = createOpenApiDocument("test") as {
+    openapi: string;
+    paths: Record<string, Record<string, { operationId: string }>>;
+    components: { schemas: Record<string, unknown> };
+  };
+  expect(document.openapi).toBe("3.1.0");
+  expect(openApiDocumentSchema.parse(document).openapi).toBe("3.1.0");
+  expect(document.components.schemas.Allocation).toBeDefined();
+  expect(document.components.schemas.RuntimeReleaseSelection).toBeDefined();
+  expect(document.components.schemas.RuntimeReleasePlanRequest).toBeDefined();
+  expect(document.components.schemas.RuntimeList).toBeDefined();
+  const operationIds = API_OPERATIONS.map(([, , operationId]) => operationId);
+  expect(new Set(operationIds).size).toBe(operationIds.length);
+  for (const [method, path, operationId] of API_OPERATIONS) {
+    expect(document.paths[path]?.[method]?.operationId).toBe(operationId);
+    const operation = document.paths[path]?.[method] as unknown as {
+      responses: Record<string, { content?: Record<string, unknown> }>;
+    };
+    const successResponses = Object.entries(operation.responses)
+      .filter(([status]) => status.startsWith("2"));
+    expect(successResponses.length).toBeGreaterThan(0);
+    for (const [, response] of successResponses) expect(response.content).toBeDefined();
+  }
+  const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
+  expect(paths["/v1/allocations"]?.post?.requestBody).toBeDefined();
+  expect(paths["/v1/catalog/reload"]?.post?.security).toEqual([{
+    bearerAuth: [],
+    managementToken: [],
+  }]);
+  expect(JSON.stringify(paths["/health"]?.get)).toContain("#/components/schemas/Health");
+  expect(Object.keys((paths["/health"]?.get?.responses as Record<string, unknown>))).toEqual([
+    "200",
+    "4XX",
+    "5XX",
+  ]);
+  expect(JSON.stringify(paths["/prepare"]?.post)).toContain("#/components/schemas/LegacyPrepareResponse");
+  expect(JSON.stringify(paths["/v1/deployments/{runtime}/plan"]?.post))
+    .toContain("#/components/schemas/RuntimeReleasePlanRequest");
+  expect(JSON.stringify(paths["/v1/chat/completions"]?.post)).toContain("text/event-stream");
+});
+
+test("legacy public success schemas are strict and round-trip current responses", () => {
+  expect(legacyPrepareResponseSchema.parse({
+    leaseId: "lease-1",
+    operationId: "op-1",
+    desired: ["llm.general"],
+    ready: false,
+    runtimes: ["qwen-general"],
+  }).ready).toBeFalse();
+  expect(legacyResolveResponseSchema.parse({
+    runtime: "qwen-general",
+    node: "gnosis",
+    endpoint: "http://127.0.0.1:8080",
+    status: "HOT",
+  }).runtime).toBe("qwen-general");
+  expect(legacyReleaseResponseSchema.parse({
+    released: true,
+    leaseId: "lease-1",
+    desired: [],
+  }).released).toBeTrue();
+  expect(() => legacyReleaseResponseSchema.parse({
+    released: true,
+    leaseId: "lease-1",
+    desired: [],
+    token: "must-not-pass",
+  })).toThrow();
+});
+
+test("public error schema is strict while allowing bounded operational details", () => {
+  expect(errorResponseSchema.parse({
+    error: {
+      code: "catalog_reload_blocked",
+      message: "blocked",
+      blockers: ["active_allocations"],
+    },
+  }).error.blockers).toEqual(["active_allocations"]);
+  expect(() => errorResponseSchema.parse({
+    error: { code: "bad", message: "bad", secret: "must-not-pass" },
+  })).toThrow();
+});

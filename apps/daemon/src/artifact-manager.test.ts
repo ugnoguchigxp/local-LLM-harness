@@ -12,6 +12,7 @@ import {
 } from "@larm/backends";
 import { ArtifactManager, type ArtifactOperation } from "./artifact-manager";
 import { Observer } from "./observer";
+import { MutationCoordinator } from "./mutation-coordinator";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -25,6 +26,9 @@ async function setup(
     multipleArtifacts?: boolean;
     isRuntimeTransitioning?: (runtimeId: string) => boolean;
     maxPendingOperations?: number;
+    mutationCoordinator?: MutationCoordinator;
+    onOperationState?: (active: number) => void;
+    startupTimeoutMs?: number;
   } = {},
 ) {
   let sequence = 0;
@@ -162,6 +166,9 @@ async function setup(
       random: () => String(++sequence),
       historyLimit: options.historyLimit,
       maxPendingOperations: options.maxPendingOperations,
+      mutationCoordinator: options.mutationCoordinator,
+      onOperationState: options.onOperationState,
+      startupTimeoutMs: options.startupTimeoutMs,
     },
   );
   await manager.initialize();
@@ -198,6 +205,44 @@ test("artifact manager stages, activates, health-checks, and rolls back a prefer
     await manager.flush();
     expect(manager.getOperation(rolledBack.id)?.status).toBe("succeeded");
     expect(await readFile(target, "utf8")).toBe("old-model");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("artifact manager reports only unstaged bytes in deployment preflight", async () => {
+  const { root, manager } = await setup(() => [], { multipleArtifacts: true });
+  try {
+    expect(await manager.inspectStagedArtifacts(["tiny-model", "tiny-model-two"])).toEqual({
+      staged: false,
+      additionalBytesRequired: 20,
+    });
+    const staged = await manager.stage("tiny-model");
+    await manager.flush();
+    expect(staged.status).toBe("succeeded");
+    expect(await manager.inspectStagedArtifacts(["tiny-model", "tiny-model-two"])).toEqual({
+      staged: false,
+      additionalBytesRequired: 11,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("release staging retries when a previously staged artifact is missing", async () => {
+  const { root, artifact, manager, store } = await setup();
+  try {
+    const first = await manager.stageRelease("worker-r2", [artifact.id]);
+    await manager.flush();
+    const staged = await store.getStaged(artifact);
+    expect(staged).toBeDefined();
+    await rm(staged!.path, { force: true });
+
+    const retried = await manager.stageRelease("worker-r2", [artifact.id]);
+    await manager.flush();
+    expect(retried.id).not.toBe(first.id);
+    expect(retried.status).toBe("succeeded");
+    expect(await store.getStaged(artifact)).toBeDefined();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -312,6 +357,33 @@ test("artifact manager restores the previous revision when activated runtime hea
   }
 });
 
+test("artifact manager times out a stalled health probe and restores the previous artifact", async () => {
+  const { root, target, manager, backend, probes } = await setup(undefined, { startupTimeoutMs: 2 });
+  try {
+    await mkdir(join(root, "active"), { recursive: true });
+    await writeFile(target, "old-model");
+    await manager.stage("tiny-model");
+    await manager.flush();
+    backend.ensure = async (runtime) => {
+      const stalled: RuntimeHealth = {
+        runtimeId: runtime.id,
+        service: "Running",
+        listening: true,
+        healthOk: false,
+        busy: false,
+      };
+      probes.set(runtime.id, stalled);
+      return stalled;
+    };
+    const activation = await manager.activateRuntime("worker");
+    await manager.flush();
+    expect(activation).toMatchObject({ status: "failed", error: { code: "startup_timeout" } });
+    expect(await readFile(target, "utf8")).toBe("old-model");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("artifact manager marks unfinished journal operations interrupted on restart", async () => {
   const { root, manager, store } = await setup();
   try {
@@ -327,6 +399,32 @@ test("artifact manager marks unfinished journal operations interrupted on restar
       status: "interrupted",
       error: expect.objectContaining({ code: "daemon_restarted" }),
     }));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("artifact manager orders restored operation history by timestamps", async () => {
+  const { root, manager, store } = await setup();
+  try {
+    await store.writeOperation({
+      id: "artifact_op_z_old",
+      kind: "stage",
+      releaseId: "worker-r2",
+      status: "succeeded",
+      createdAt: "2026-08-28T00:00:00.000Z",
+    });
+    await store.writeOperation({
+      id: "artifact_op_a_new",
+      kind: "stage",
+      releaseId: "worker-r2",
+      status: "succeeded",
+      createdAt: "2026-08-28T00:00:01.000Z",
+    });
+    await manager.initialize();
+    expect(manager.findLatestOperation({ kind: "stage", releaseId: "worker-r2" })?.id).toBe(
+      "artifact_op_a_new",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -423,6 +521,78 @@ test("artifact manager rejects malformed operation journals", async () => {
   }
 });
 
+test("artifact manager rejects unknown fields in operation journals", async () => {
+  const { root, manager, store } = await setup();
+  try {
+    await store.writeOperation({
+      id: "artifact_op_extra",
+      kind: "stage",
+      artifactId: "tiny-model",
+      status: "succeeded",
+      createdAt: "2026-08-28T00:00:00.000Z",
+      unexpected: true,
+    });
+    await expect(manager.initialize()).rejects.toMatchObject({ code: "journal_corrupt" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("artifact manager releases the mutation lease when failure journaling fails", async () => {
+  const coordinator = new MutationCoordinator();
+  const { root, manager, store } = await setup(undefined, { mutationCoordinator: coordinator });
+  try {
+    const writeOperation = store.writeOperation.bind(store);
+    store.writeOperation = async (record) => {
+      if (record.status === "failed") throw new Error("journal unavailable");
+      await writeOperation(record);
+    };
+    await expect(manager.stage("missing-artifact")).rejects.toThrow("journal unavailable");
+    expect(coordinator.current()).toBeUndefined();
+    const lease = coordinator.reserve("catalog-reload");
+    lease.release();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("artifact catalog replacement validates before changing the active generation", async () => {
+  const { root, manager } = await setup();
+  try {
+    const invalidRegistry: Registry = {
+      nodes: [],
+      profiles: [],
+      routes: [],
+      runtimes: [{
+        id: "invalid",
+        artifacts: ["missing-artifact"],
+        capability: ["llm.general"],
+        protocol: "openai.chat-completions.v1",
+        backend: "systemd",
+        node: "gnosis",
+        policy: { class: "preferred" },
+        resources: {
+          estimatedMemoryGB: 1,
+          maxConcurrentRequests: 1,
+          maxQueuedRequests: 0,
+          queueTimeoutMs: 100,
+        },
+        deployment: {
+          service: "invalid.service",
+          healthPort: 8099,
+          endpoint: "http://127.0.0.1:8099",
+        },
+      }],
+    };
+    expect(() => manager.replaceCatalog([], invalidRegistry)).toThrow(/missing-artifact/);
+    const operation = await manager.stage("tiny-model");
+    await manager.flush();
+    expect(operation.status).toBe("succeeded");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("allow-listed ensure is mutation-reserved and journaled", async () => {
   const { root, manager, store } = await setup();
   try {
@@ -511,4 +681,59 @@ test("artifact manager drain cancels an in-flight staging operation", async () =
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("runtime release activation records provider config and enforces its health contract", async () => {
+  const { manager, artifact } = await setup();
+  const staged = await manager.stageRelease("worker-r2", [artifact.id]);
+  await manager.flush();
+  expect(staged.status).toBe("succeeded");
+  const activated = await manager.activateRuntimeRelease(
+    "worker",
+    "worker-r2",
+    [artifact.id],
+    "worker-config-r2",
+    "/health",
+    async () => undefined,
+  );
+  await manager.flush();
+  expect(activated.status).toBe("succeeded");
+  expect(activated.result).toMatchObject({
+    release: "worker-r2",
+    providerConfigRevision: "worker-config-r2",
+    healthPath: "/health",
+  });
+
+  const rejected = await manager.activateRuntimeRelease(
+    "worker",
+    "worker-r3",
+    [artifact.id],
+    "worker-config-r3",
+    "/readyz",
+    async () => undefined,
+  );
+  expect(rejected).toMatchObject({
+    status: "failed",
+    error: { code: "health_contract_mismatch" },
+  });
+});
+
+test("artifact operations share the global mutation coordinator and publish an active gauge", async () => {
+  const coordinator = new MutationCoordinator();
+  const states: number[] = [];
+  const { manager } = await setup(undefined, {
+    mutationCoordinator: coordinator,
+    onOperationState: (active) => states.push(active),
+  });
+  const catalog = coordinator.reserve("catalog-reload");
+  const rejected = await manager.stage("tiny-model");
+  expect(rejected).toMatchObject({ status: "failed", error: { code: "mutation_in_progress" } });
+  catalog.release();
+  const staged = await manager.stage("tiny-model");
+  expect(manager.activeOperationCount()).toBe(1);
+  await manager.flush();
+  expect(staged.status).toBe("succeeded");
+  expect(manager.activeOperationCount()).toBe(0);
+  expect(states).toContain(1);
+  expect(states.at(-1)).toBe(0);
 });

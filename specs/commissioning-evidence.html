@@ -1,0 +1,84 @@
+<article lang="ja">
+  <h1>gnosis Commissioning Evidence</h1>
+
+  <p>
+    LARMのproduction commissioning結果を、秘密情報、prompt、transcript、audio、raw logを含めずに
+    記録する文書です。2026年8月28日のread-only preflightではdaemon未導入を確認しました。 live
+    mutationはclean commitからversioned releaseを作成するまで実施していません。
+  </p>
+
+  <dl>
+    <dt>状態</dt>
+    <dd>preflight完了、commissioning保留</dd>
+    <dt>観測時刻</dt>
+    <dd><time>2026-08-28T15:15:18Z</time></dd>
+    <dt>観測commit</dt>
+    <dd><code>b51d7b431f7c18c8f9c38d90ec0ea2604d8a46f1</code></dd>
+    <dt>worktree</dt>
+    <dd>dirty。現在の実装変更を含むためrelease apply不可</dd>
+  </dl>
+
+  <section id="preflight">
+    <h2>Read-only preflight</h2>
+    <table>
+      <caption>
+        Hostへ変更を加える前の状態
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">larm-daemon unit</th>
+          <td>not-found、inactive、not enabled</td>
+        </tr>
+        <tr>
+          <th scope="row">Candidate config revision</th>
+          <td><code>7016f39e8bf22825f42f498d4961a7c6c9fcc4efbb2564110b7d9885f5c1b844</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Port 9810</th>
+          <td>listenerなし</td>
+        </tr>
+        <tr>
+          <th scope="row">Credential file</th>
+          <td>未作成</td>
+        </tr>
+        <tr>
+          <th scope="row">Repository unit一致</th>
+          <td>installed unitがないため不一致</td>
+        </tr>
+        <tr>
+          <th scope="row">/srv/ai available</th>
+          <td>約1.35 TB</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen TTS</th>
+          <td>active。Preferred desired stateとの差分あり</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      raw preflight JSONはrepository外の<code>/tmp/larm-preflight-2026-08-28.json</code>へ保存しました。
+      一時領域のため恒久証跡ではなく、commissioning時にoperator管理領域へ再採取します。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>未実施のacceptance</h2>
+    <ul>
+      <li>version、config revision、boot epochを固定したhealth・ready</li>
+      <li>Qwen 3.8 27B Resident Allocationとstreaming Gateway</li>
+      <li>STT、通常TTS、voice credit</li>
+      <li>明示Qwen TTS起動、release、health failure自動rollback、明示rollback</li>
+      <li>daemon restart後のepoch変更と旧Allocation 409</li>
+      <li>TTFB、total duration、startup、queue、memory headroom、error率の短時間soak</li>
+    </ul>
+  </section>
+
+  <section id="slo">
+    <h2>保留中のSLO calibration gate</h2>
+    <p>
+      実測前に数値を捏造しません。通常・リアルタイムのthresholdは、同じcommit、catalog revision、
+      release ID、prompt class、token数、concurrencyを記録したcanaryから確定します。校正後も Qwen
+      3.8 27Bを両経路のResident defaultとし、変更にはrollback値を併記します。
+    </p>
+  </section>
+</article>

@@ -24,6 +24,12 @@
         "@larm/core": "workspace:*",
       },
     },
+    "packages/client": {
+      "name": "@larm/client",
+      "dependencies": {
+        "@larm/core": "workspace:*",
+      },
+    },
     "packages/core": {
       "name": "@larm/core",
       "dependencies": {
@@ -48,6 +54,8 @@
     "@html-validate/stylish": ["@html-validate/stylish@5.2.0", "", {}, "sha512-7lF57/RTs2tZi0FtgY7Y5CP73Y2GEPPMaJ9PeZKRRUOs7Bt7/Qlqt8kdsAbVMO7GrpuWtUfGvR11riSOryioow=="],
 
     "@larm/backends": ["@larm/backends@workspace:packages/backends"],
+
+    "@larm/client": ["@larm/client@workspace:packages/client"],
 
     "@larm/core": ["@larm/core@workspace:packages/core"],
 

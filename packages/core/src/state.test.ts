@@ -36,10 +36,18 @@ test("buildClusterState matches ClusterState schema", () => {
     node,
     snapshots: [snapshot],
     generatedAt: "2026-08-26T00:00:01.000Z",
+    telemetry: {
+      status: "available",
+      observedAt: "2026-08-26T00:00:01.000Z",
+      source: "test",
+      systemMemoryTotalBytes: 128 * 1024 ** 3,
+      systemMemoryAvailableBytes: 64 * 1024 ** 3,
+    },
   });
   expect(clusterStateSchema.parse(state).runtimes[0]?.status).toBe("HOT");
   expect(state.node.online).toBe(true);
   expect(state.runtimes[0]?.endpoint).toBe("http://127.0.0.1:8080");
+  expect(state.node.telemetry?.status).toBe("available");
 });
 
 test("primaryNode follows the first runtime node id", () => {

@@ -81,6 +81,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   let uploadError: unknown;
   let uploadCompletion = Promise.resolve();
   let releaseSlot: (() => void) | undefined;
+  let cancelUpstream: ((reason: unknown) => Promise<void>) | undefined;
   let finished = false;
   const finishTracked = options.requestTracker?.begin() ?? (() => undefined);
   const abortFromClient = () => {
@@ -91,13 +92,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     outcome = "binding_invalidated";
     abort.abort(options.lifecycleSignal?.reason ?? new Error("allocation is no longer active"));
   };
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    outcome = "timeout";
-    abort.abort(new Error("gateway timeout"));
-  }, options.timeoutMs);
-  timeout.unref?.();
-
+  let timeout: ReturnType<typeof setTimeout>;
   const finish = () => {
     if (finished) {
       return;
@@ -124,6 +119,15 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       },
     });
   };
+  timeout = setTimeout(() => {
+    timedOut = true;
+    outcome = "timeout";
+    const reason = new Error("gateway timeout");
+    abort.abort(reason);
+    void cancelUpstream?.(reason).catch(() => undefined);
+    finish();
+  }, options.timeoutMs);
+  timeout.unref?.();
   const failure = (
     code: string,
     message: string,
@@ -349,6 +353,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   }
 
   const reader = upstream.body.getReader();
+  cancelUpstream = async (reason) => await reader.cancel(reason);
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {

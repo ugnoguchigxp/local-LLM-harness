@@ -4,6 +4,8 @@ AMD Ryzen AI MAX+ 395 / Ubuntu / ROCm を中心にした、Linux-first のロー
 
 Qwen 3.8 27Bは通常処理とリアルタイム処理のResident defaultです。速度特化Runtimeは明示routeでだけ選択し、35Bはproduction Registryへ登録していません。
 
+通常requestは必要なcapabilityとrouteをAllocation APIへ渡します。`llm-default`は常駐27Bへ固定され、速度特化処理だけが`llm-speed`を明示します。管理APIではallowlist済みRuntime releaseをstage・plan・activate・rollbackでき、requestから任意のURL、model path、service、commandを注入することはできません。
+
 ## Repository policy
 
 Gitで管理するのは、ソースコード、設定、systemd unit、再現手順、モデル取得元とchecksumだけです。次の実体は管理しません。
@@ -19,12 +21,13 @@ Gitで管理するのは、ソースコード、設定、systemd unit、再現�
 
 | Path | Role |
 | --- | --- |
-| `apps/daemon` | Route、Allocation、Gateway、artifact operationを提供するcontrol plane |
+| `apps/daemon` | Route、Allocation、Gateway、runtime release、catalog reloadを提供するcontrol plane |
 | `apps/qwen-asr` | OpenAI互換ASR adapter |
 | `apps/qwen-tts` | gfx1151向けQwen3-TTS設定・patch |
 | `apps/voicevox-tts` | 低遅延VOICEVOX adapter |
 | `packages/core` | OS非依存のregistry/state/planner |
-| `packages/backends` | SystemdBackend、LlamaSwapBackend |
+| `packages/backends` | Systemd、llama-swap、atomic state、Linux telemetry adapter |
+| `packages/client` | v1 lifecycleとGatewayを扱う参照TypeScript client |
 | `config/gnosis` | Linux production registryとllama-swap設定 |
 | `deploy/gnosis` | systemd unit、host導入、検証、model manifest |
 | `specs` | Spec HTMLで作成する設計書・仕様書・実装計画 |
@@ -54,7 +57,7 @@ HTML文書は`<article lang="ja">`をrootとし、document固有の`html`、`hea
 Providerの最新コンセプトは[`specs/concept.html`](specs/concept.html)、公開APIは
 [`specs/api.html`](specs/api.html)、次期工程は
 [`specs/next-implementation-plan.html`](specs/next-implementation-plan.html)、実装結果は
-[`specs/implementation-completion.html`](specs/implementation-completion.html)を正本とします。
+[`specs/implementation-completion-m15-m21.html`](specs/implementation-completion-m15-m21.html)を正本とします。
 
 daemonは既定で `config/gnosis` を読み、`127.0.0.1:9810` で待ち受けます。別構成は `LARM_CONFIG_DIR` で指定できます。
 
@@ -65,9 +68,13 @@ cd /srv/ai/apps/local-LLM-harness
 # 必要な場合だけ、変更内容を確認してhost準備を実行:
 # sudo deploy/gnosis/scripts/prepare-host.sh
 sudo deploy/gnosis/scripts/install-services.sh
+deploy/gnosis/scripts/release-larm.sh plan
+sudo deploy/gnosis/scripts/release-larm.sh apply
 sudo systemctl start llama-server.service llama-swap-worker.service \
   qwen-asr.service voicevox-tts.service larm-daemon.service
 deploy/gnosis/scripts/verify.sh
 ```
+
+`plan`の`cleanupConfirm`が`null`でない場合、保持上限を超える削除候補があります。表示された候補を確認し、そのdigestを`LARM_RELEASE_CLEANUP_CONFIRM`へ設定した`apply`だけが配備を続行します。
 
 `systemctl start`は初回導入時だけ実行します。更新時にResident serviceを一括restartしません。詳細は[`docs/gnosis.md`](docs/gnosis.md)と[`deploy/gnosis/README.md`](deploy/gnosis/README.md)を参照してください。このdual-boot hostでは、配備処理からrebootしません。

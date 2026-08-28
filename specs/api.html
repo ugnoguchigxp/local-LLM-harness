@@ -30,7 +30,10 @@
         <code>/health</code
         >と<code>/ready</code>以外はBearer tokenで保護する。
       </li>
-      <li>Artifact管理APIは追加で<code>x-larm-management-token</code>を検証する。</li>
+      <li>
+        Artifact、Runtime release、catalog reload管理APIは追加で
+        <code>x-larm-management-token</code>を検証する。
+      </li>
       <li>
         <code>deploymentPolicy: allow-listed</code>のAllocationも同じ管理tokenを必須とする。
       </li>
@@ -46,6 +49,17 @@
         objectは未知fieldを拒否する。タイプミスを除去して既定値へ fallbackしない。
       </li>
     </ul>
+  </section>
+
+  <section id="machine-contract">
+    <h2>Machine-readable contract</h2>
+    <p>
+      <code>GET /openapi.json</code>はdaemonと同じCore schemaおよびroute
+      metadataから生成します。 全operationは実装が返す成功statusとresponse
+      contentを持ち、JSON、SSE、Prometheus text、audio binaryのmedia typeを区別します。compatibility
+      APIの成功responseもstrict schemaで検証し、 実routeとの追加・削除driftと2xx response
+      schemaの欠落をtestで拒否します。
+    </p>
   </section>
 
   <section id="endpoints">
@@ -76,6 +90,11 @@
           <td>GET</td>
           <th scope="row"><code>/metrics</code></th>
           <td>Prometheus text format metrics</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/openapi.json</code></th>
+          <td>現processのschemaから生成したOpenAPI 3.1 contract</td>
         </tr>
         <tr>
           <td>GET</td>
@@ -153,6 +172,26 @@
           <td>allowlist artifactのdownloadと検証</td>
         </tr>
         <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/runtime-releases</code></th>
+          <td>immutable release ID、Runtime、artifact、digest一覧</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/runtime-releases/:id/stage</code></th>
+          <td>releaseが参照する全artifactの一括staging</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/deployments/:runtime</code></th>
+          <td>active、previous、desired release状態</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/deployments/:runtime/plan</code></th>
+          <td>release activation blockerのread-only評価</td>
+        </tr>
+        <tr>
           <td>POST</td>
           <th scope="row"><code>/v1/deployments/:runtime/activate</code></th>
           <td>Preferred Runtimeのartifact activation</td>
@@ -166,6 +205,16 @@
           <td>GET</td>
           <th scope="row"><code>/v1/artifact-operations/:id</code></th>
           <td>配備operation状態</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/catalog/reload/plan</code></th>
+          <td>設定済みcatalog candidateの検証とblocker表示</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/catalog/reload</code></th>
+          <td>revision一致時のcatalog generation原子切替</td>
         </tr>
         <tr>
           <td>POST</td>
@@ -196,11 +245,12 @@
 }</code></pre>
     <p>
       <code>GET /health</code>はpayloadやcredentialを含めず、software
-      version、Registryとartifact manifestのcontent revision、process固有boot
-      epochを返します。content
+      version、Registry・artifact manifest・runtime release catalogのcontent
+      revision、process固有boot epochを返します。content
       revisionは論理ファイル名と内容だけから計算し、同一構成を別の絶対パスへ
       配置しても変化しません。全responseにも
-      <code>x-larm-boot-epoch</code>を付与します。
+      <code>x-larm-boot-epoch</code
+      >と<code>x-larm-config-revision</code>を付与します。
     </p>
   </section>
 
@@ -242,6 +292,10 @@
       </li>
       <li>Resident Runtimeのmemoryは観測状態にかかわらず常時予約する。</li>
       <li>
+        Preferred・Elasticの新規起動は静的memory gateに加え、freshなsystem・accelerator memory
+        headroomを要求する。telemetry不能またはstale時もResident-only Allocationは維持する。
+      </li>
+      <li>
         active AllocationとAllocationを持たないLegacy Leaseの合計を
         <code>LARM_ACTIVE_ALLOCATION_LIMIT</code>で制限し、上限時は新規受付を503で拒否する。
       </li>
@@ -251,6 +305,7 @@
     <pre><code>{
   "id": "alloc_example",
   "bootEpoch": "epoch-example",
+  "catalogRevision": "sha256...",
   "status": "ready",
   "requirements": [
     { "capability": "llm.general", "route": "llm-default" }
@@ -264,7 +319,8 @@
       "status": "HOT",
       "candidateRank": 1,
       "fallback": false,
-      "selectionReason": "primary-live"
+      "selectionReason": "primary-live",
+      "release": "qwen-general-current"
     }
   ],
   "expiresAt": "..."
@@ -273,6 +329,7 @@
       Allocation responseはupstream
       endpointを隠します。明示的な<code>resolve</code>またはGatewayだけが
       Bindingのendpointを使用します。一度作成したBindingは、別RuntimeがHOTになっても変更しません。
+      catalog revisionとactive releaseも作成時に固定します。
       固定Runtimeが非稼働またはsnapshotがstaleなら、別Runtimeへ移動せずresolveを503で拒否します。
     </p>
     <p>
@@ -371,7 +428,7 @@
       <li>
         <code>larm_active_allocations</code>、<code>larm_execution_active</code>、
         <code>larm_execution_queued</code
-        >は現在値のgaugeとして公開し、canary後のleak検査に使用する。
+        >、<code>larm_artifact_operations_active</code>は現在値のgaugeとして公開し、canary後のleak検査に使用する。
       </li>
     </ul>
   </section>
@@ -397,6 +454,10 @@
       <li>rollbackはjournalに記録された直前targetだけを復元する。</li>
       <li>Allocationのrelease、TTL、startup deadlineをdownloadとactivationへ伝播する。</li>
       <li>operationは受付応答前にjournalへ保存し、terminal historyを設定上限内に保つ。</li>
+      <li>
+        catalog reload、artifact stage、release activation・rollback、allow-listed起動は単一mutation
+        coordinatorで直列化し、競合をfail closedする。
+      </li>
     </ol>
     <h3>非同期管理operation</h3>
     <p>
@@ -418,6 +479,60 @@
         lockとoperator手順で管理します。
       </p>
     </aside>
+  </section>
+
+  <section id="runtime-release">
+    <h2>Runtime releaseとcatalog generation</h2>
+    <p>
+      <code>deploy/gnosis/releases.yaml</code>は、release ID、Runtime、artifact集合、provider
+      config revision、memory estimate、health pathを一つのimmutable
+      contractとして定義します。同じIDの
+      内容差し替え、未知artifact、Runtimeの現行artifactと一致しないdefault
+      releaseを起動時に拒否します。
+    </p>
+    <p>
+      <code>GET /v1/runtime-releases</code
+      >は各releaseの状態を<code>active</code>、
+      <code>previous</code
+      >、<code>staged</code>、<code>available</code>で返します。deployment
+      responseは active・previous・desiredのprovider config revisionを返し、plan
+      responseはRuntime状態、停止要否、
+      staging実体から算出した不足bytes、rollback可能性、blockerを返します。provider config
+      revisionは
+      releaseに固定された起動contractの識別子であり、requestから任意の設定内容やpathは受け取りません。
+    </p>
+    <h3>Activation request</h3>
+    <p>
+      read-only
+      planは<code>{ "release": "..." }</code>だけを受け取ります。activationは次のように
+      呼出側が観測したactive releaseを必須にし、staleな操作をartifact変更前に拒否します。
+    </p>
+    <pre><code>{
+  "release": "qwen-worker-fast-current",
+  "expectedActiveRelease": "qwen-worker-fast-previous"
+}</code></pre>
+    <ol>
+      <li>
+        <code>plan</code>でRuntime
+        class、staging、Allocation、共有artifact、transitionを評価する。
+      </li>
+      <li>release単位で全artifactをstageし、一部成功をactive状態にしない。</li>
+      <li>expected active releaseが一致する場合だけPreferred releaseをactivateする。</li>
+      <li>health成功後にactive・previous stateをrepository外へfsync付きで保存する。</li>
+      <li>
+        失敗時は全artifactを直前releaseへ戻し、Resident RuntimeのAPI activationは常に拒否する。
+      </li>
+    </ol>
+    <p>
+      catalog reloadはrequest
+      bodyからpathを受け取りません。起動時と同じ設定pathを再読込し、Registry、
+      artifact、releaseをcross validateしてcontent revisionを作ります。active Allocation、Gateway
+      execution、artifact operation、Runtime transitionがある間は切替を拒否します。reload予約後は
+      Runtime・state・release・deploymentの世代依存参照と変更を503で閉じ、世代を混在させません。Resident
+      Runtimeまたはdefault Routeを 変えるcandidateもattended
+      restartを要求します。切替失敗時はBackend、Observer、Registry、release stateを
+      旧generationへ戻します。
+    </p>
   </section>
 
   <section id="errors">
@@ -443,7 +558,7 @@
         </tr>
         <tr>
           <th scope="row"><code>resource_exhausted</code></th>
-          <td>memoryまたはRuntime allocation capacity不足</td>
+          <td>静的memory、live headroom、またはRuntime allocation capacity不足</td>
         </tr>
         <tr>
           <th scope="row"><code>allocation_capacity</code></th>
@@ -476,6 +591,22 @@
         <tr>
           <th scope="row"><code>deployment_in_progress</code></th>
           <td>対象Runtimeまたは共有artifactが配備のため予約中</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>active_release_conflict</code></th>
+          <td>expected active releaseと永続化されたactive releaseが不一致</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>catalog_revision_conflict</code></th>
+          <td>reload呼出側のcurrent revisionが現generationと不一致</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>catalog_reload_blocked</code></th>
+          <td>Allocation、execution、operation、Resident contract差分により世代切替を拒否</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>mutation_in_progress</code></th>
+          <td>別種のcatalog・artifact・Runtime mutationが実行中</td>
         </tr>
         <tr>
           <th scope="row"><code>runtime_transition_in_progress</code></th>
@@ -558,7 +689,7 @@
       unversionedの<code>prepare</code>、<code>resolve</code>、<code>release</code>は維持します。
       default Routeが定義されたcapabilityは内部Allocationへ変換し、従来のlease
       response形へ戻します。新規clientはRuntime固定と期限を明示できるv1 Allocation APIを使用します。
-      requestとresponseの詳細は<code>spec/api.md</code>を参照してください。
+      機械可読な詳細は実daemonの<code>GET /openapi.json</code>を参照してください。
     </p>
   </section>
 </article>
