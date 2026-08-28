@@ -57,7 +57,7 @@ Provider（本プロジェクト）
         │
         ▼
 RuntimeBackend
-├─ NSSM | llama-swap | Process | …
+├─ NSSM | systemd | llama-swap | Process | …
         │
         ▼
 llama-server / その他 Runtime
@@ -82,7 +82,7 @@ Networking、Storage、Service Mesh、分散 Consensus、自前 LLM Runtime、KV
 
 実態に近い表現:
 
-> systemd（本環境では NSSM）+ Runtime Scheduler + OpenAI 互換 Gateway
+> systemd / NSSM + Runtime Scheduler + OpenAI 互換 Gateway
 
 概念的には小さな Kubernetes に似るが、Kubernetes を再実装しない。Resource を増やして「小さな Kubernetes」になることも拒む。
 
@@ -126,7 +126,7 @@ Ambient / 音声対話を前提にする環境では、最低限の Interaction 
 Audio Input → VAD → Streaming STT → General LLM
 ```
 
-これらに対応する Runtime は Resident であり、通常の Resource Pressure では Eviction しない。初期の本マシンでは STT / VAD はまだ常駐していない。Resident はまず General LLM #1 から始め、音声系は ProcessBackend が用意できてから Resident Set に加える。
+これらに対応する Runtime は Resident であり、通常の Resource Pressure では Eviction しない。gnosis では General LLM、Qwen3-ASR、VOICEVOX を Resident とする。GPUを共有する表現力重視の Qwen3-TTS は Preferred とし、通常応答の低遅延音声経路を守る。
 
 ### Backend-Agnostic
 

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { loadRegistry, RegistryError } from "../src/registry";
 
 const repoConfig = join(import.meta.dir, "../../../config");
+const gnosisConfig = join(repoConfig, "gnosis");
 const fixtures = join(import.meta.dir, "../test/fixtures");
 
 test("loads production config with resident and preferred Qwen replicas", () => {
@@ -23,6 +24,26 @@ test("loads production config with resident and preferred Qwen replicas", () => 
   }
   expect(registry.nodes[0]?.id).toBe("ai395-01");
   expect(registry.profiles.some((p) => p.id === "meeting")).toBe(true);
+});
+
+test("loads gnosis systemd speech and llama-swap runtimes", () => {
+  const registry = loadRegistry(gnosisConfig);
+  const general = registry.runtimes.find((runtime) => runtime.id === "qwen-general");
+  const asr = registry.runtimes.find((runtime) => runtime.id === "qwen-asr");
+  const realtimeTts = registry.runtimes.find((runtime) => runtime.id === "voicevox-tts");
+  const expressiveTts = registry.runtimes.find((runtime) => runtime.id === "qwen-tts");
+  const qualityWorker = registry.runtimes.find(
+    (runtime) => runtime.id === "qwen-worker-quality",
+  );
+
+  expect(registry.nodes[0]?.id).toBe("gnosis");
+  expect(general?.backend).toBe("systemd");
+  expect(general?.policy.class).toBe("resident");
+  expect(asr?.capability).toContain("speech.stt");
+  expect(realtimeTts?.capability).toContain("speech.tts");
+  expect(expressiveTts?.capability).toContain("speech.tts.expressive");
+  expect(qualityWorker?.backend).toBe("llama-swap");
+  expect(registry.profiles.some((profile) => profile.id === "voice-expressive")).toBe(true);
 });
 
 test("rejects missing policy.class", () => {

@@ -5,6 +5,18 @@ node_modules/
 # GGUF weights (tens of GB; GitHub rejects files over 100MB)
 models/
 *.gguf
+*.safetensors
+*.onnx
+*.vvm
+
+# Python/model caches and local environments
+.venv/
+__pycache__/
+.pytest_cache/
+.huggingface/
+voice_library/
+*.wav
+*.mp3
 
 # local runtime noise
 logs/

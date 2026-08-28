@@ -4,6 +4,7 @@ export {
   clusterStateSchema,
   isLlamaSwapRuntime,
   isNssmRuntime,
+  isSystemdRuntime,
   nodeDefinitionSchema,
   runtimeDefinitionSchema,
   runtimeSnapshotSchema,
@@ -18,6 +19,7 @@ export {
   type RuntimeSnapshot,
   type RuntimeStatus,
   type ServiceState,
+  type SystemdRuntimeDefinition,
   type WorkloadProfile,
 } from "./schema";
 export {

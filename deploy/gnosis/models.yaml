@@ -1,0 +1,69 @@
+# Model binaries live under /srv/ai/models and are deliberately not part of this repository.
+# Pin the source revision here; record a checksum after each deliberate model replacement.
+models:
+  qwen38-primary:
+    role: resident-llm
+    source: https://huggingface.co/julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF
+    revision: 1e67b67e0e23324a29a7a4449279685fac364b37
+    filename: Qwen3.8-27B-ROCmFP4-FAST.gguf
+    path: /srv/ai/models/qwen38-rocmfp4/Qwen3.8-27B-ROCmFP4-FAST.gguf
+    bytes: 14562236384
+    sha256: fb89c78d2be91cdb68eaaaa45b1270710bf34aa721dc1f0b9e3aa7b98d2e1da9
+    quantization: ROCmFP4_FAST
+    runtime: q38rocm
+
+  qwen38-worker-quality:
+    role: preferred-llm
+    source: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF
+    revision: 4ca720788d1e01f1bff70c033e0d0028fd02e502
+    filename: Qwen3.8-27B-UD-Q4_K_XL.gguf
+    path: /srv/ai/models/qwen38-worker/Qwen3.8-27B-UD-Q4_K_XL.gguf
+    bytes: 17559178144
+    sha256: 3f227079003add2511437e5b1e94812e363385225bf6a9b47b0054a72bc8b01e
+    quantization: UD-Q4_K_XL
+    runtime: llama.cpp-vulkan
+
+  qwen38-worker-fast:
+    role: preferred-llm
+    source: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF
+    revision: 4ca720788d1e01f1bff70c033e0d0028fd02e502
+    filename: Qwen3.8-27B-Q4_0.gguf
+    path: /srv/ai/models/qwen38-worker/Qwen3.8-27B-Q4_0.gguf
+    bytes: 16056478688
+    sha256: ede16c7b36e578ca87a8c70e011e4b4633a32c831c0ce76d0f474582384e671d
+    quantization: Q4_0
+    runtime: llama.cpp-vulkan
+
+  qwen38-mtp:
+    role: mtp-draft
+    source: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF
+    revision: 4ca720788d1e01f1bff70c033e0d0028fd02e502
+    filename: mtp-Qwen3.8-27B-Q4_0.gguf
+    path: /srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
+    bytes: 1369590656
+    sha256: 50d9ce5a6da381bbcfb31061cf73df94a90e6faf8efeddee379a9cb8f1501c6e
+    quantization: Q4_0
+
+  qwen3-asr-main:
+    role: resident-stt
+    source: https://huggingface.co/Qwen/Qwen3-ASR-1.7B
+    revision: 7278e1e70fe206f11671096ffdd38061171dd6e5
+    path: /srv/ai/models/qwen-asr/Qwen3-ASR-1.7B
+
+  qwen3-asr-fallback:
+    role: optional-stt
+    source: https://huggingface.co/Qwen/Qwen3-ASR-0.6B
+    revision: 5eb144179a02acc5e5ba31e748d22b0cf3e303b0
+    path: /srv/ai/models/qwen-asr/Qwen3-ASR-0.6B
+
+  qwen3-tts-expressive:
+    role: preferred-tts
+    source: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+    revision: 85e237c12c027371202489a0ec509ded67b5e4b5
+    path: /srv/ai/models/qwen-tts/Qwen3-TTS-12Hz-0.6B-CustomVoice
+
+  voicevox:
+    role: resident-tts
+    source: https://github.com/VOICEVOX/voicevox_core
+    version: 0.17.0
+    path: /srv/ai/apps/voicevox-core-0.17.0

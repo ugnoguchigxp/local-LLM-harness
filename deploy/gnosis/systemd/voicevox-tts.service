@@ -1,0 +1,33 @@
+[Unit]
+Description=VOICEVOX CORE CPU OpenAI-compatible low-contention TTS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/voicevox-core-0.17.0
+Environment=HOME=/srv/ai/cache
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=VOICEVOX_RUNTIME_ROOT=/srv/ai/apps/voicevox-core-0.17.0/runtime
+Environment=VOICEVOX_THREADS=16
+Environment=VOICEVOX_DEFAULT_VOICE=Kasukabe_Tsumugi
+Environment=OMP_NUM_THREADS=16
+Environment=OPENBLAS_NUM_THREADS=16
+ExecStart=/srv/ai/apps/voicevox-core-0.17.0/.venv/bin/uvicorn voicevox_api:app --host 0.0.0.0 --port 8084 --workers 1
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=15
+LimitNOFILE=65535
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/srv/ai/cache /srv/ai/logs
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

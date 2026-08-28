@@ -33,6 +33,20 @@ const swapRuntime: RuntimeDefinition = {
   },
 };
 
+const systemdRuntime: RuntimeDefinition = {
+  id: "qwen-asr",
+  capability: ["speech.stt"],
+  backend: "systemd",
+  node: "gnosis",
+  policy: { class: "resident" },
+  resources: { estimatedMemoryGB: 5 },
+  deployment: {
+    service: "qwen-asr.service",
+    healthPort: 1,
+    endpoint: "http://127.0.0.1:8081",
+  },
+};
+
 test("routes list and lifecycle to the owning backend", async () => {
   const nssm = new NssmBackend([nssmRuntime], {
     queryService: async () => "Stopped",
@@ -65,5 +79,15 @@ test("createRuntimeBackend keeps production nssm runtimes on NssmBackend", async
   const listed = await backend.list();
   expect(listed).toHaveLength(1);
   expect(listed[0]?.runtimeId).toBe("qwen-general");
+  expect(listed[0]?.service).toBe("Stopped");
+});
+
+test("createRuntimeBackend routes Linux services to SystemdBackend", async () => {
+  const backend = createRuntimeBackend([systemdRuntime], {
+    systemd: { queryService: async () => "Stopped" },
+  });
+  const listed = await backend.list();
+  expect(listed).toHaveLength(1);
+  expect(listed[0]?.runtimeId).toBe("qwen-asr");
   expect(listed[0]?.service).toBe("Stopped");
 });

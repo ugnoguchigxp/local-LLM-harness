@@ -67,13 +67,16 @@ runtimes:
 | フィールド | 必須 | 意味 |
 | --- | --- | --- |
 | `capability` | yes | この Runtime が満たす Capability。1 つ以上 |
-| `backend` | yes | `nssm` \| `llama-swap` |
+| `backend` | yes | `nssm` \| `systemd` \| `llama-swap` |
 | `node` | yes | `nodes.yaml` のキー |
 | `policy.class` | yes | `resident` \| `preferred` \| `elastic` |
 | `resources.estimatedMemoryGB` | yes | 重み + 典型 KV の目安。ピーク観測値ではない |
 | `deployment.service` | nssm 時 yes | Windows サービス名 |
 | `deployment.proxyService` | nssm 時 no | proxy の NSSM 名。ensure/stop で backend の前後に扱う |
 | `deployment.healthPort` | nssm 時 yes | llama-server の `/health` |
+| `deployment.service` | systemd 時 yes | systemd unit 名（`.service` を含めてよい） |
+| `deployment.healthPort` | systemd 時 yes | Runtime の `/health` ポート |
+| `deployment.healthPath` | systemd 時 no | 既定 `/health` 以外を使う場合のパス |
 | `deployment.modelId` | llama-swap 時 yes | llama-swap の models キー |
 | `deployment.listen` | llama-swap 時 yes | llama-swap のベース URL |
 | `deployment.endpoint` | yes | 推論 HTTP の到達点。nssm 時は現行 proxy。Gateway はここへプロキシする |

@@ -14,6 +14,12 @@ export {
   type CreateRuntimeBackendOptions,
 } from "./routing";
 export {
+  parseSystemctlState,
+  SystemdBackend,
+  type SystemdBackendOptions,
+  type SystemdServiceControl,
+} from "./systemd";
+export {
   LifecycleError,
   NotImplementedError,
   type RuntimeBackend,

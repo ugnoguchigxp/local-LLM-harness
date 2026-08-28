@@ -20,11 +20,11 @@ Agent から見た主契約は OpenAI 互換 Gateway である。Gateway は選�
 
 G1 まで現行 `proxy.js` を残す。Gateway は別ポートで立て、壊れたらクライアントの baseURL を戻せるようにする。
 
-### D3. 最初の本番 Backend は NssmBackend。llama-swap は実行器として載せる
+### D3. OS サービスは Backend 越しに扱い、llama-swap は実行器として載せる
 
-本番の Qwen 2 本は NSSM サービスである。S0 は観測。S1 で Preferred の stop/start を NssmBackend 経由で実証済み。LlamaSwapBackend はコード上存在する。本番 config は **nssm のまま**。`backend: llama-swap` を選んだ Runtime だけ LlamaSwapBackend が扱う。本番 NSSM プロセスと llama-swap が同じ 27B を奪い合わないよう、実験用 listen は `127.0.0.1:9292`、upstream は `58000` 台とする。
+Windows の Qwen 2 本は NSSM サービスであり、Preferred の stop/start を NssmBackend 経由で実証済み。gnosis の LLM/STT/TTS は systemd サービスで、SystemdBackend が同じ RuntimeBackend 契約で観測・制御する。`backend: llama-swap` を選んだ Runtime だけ LlamaSwapBackend が扱う。llama-swap 自体は OS サービスとして常駐し、モデル寿命だけを内部で管理する。
 
-S2 で LLM 寿命を llama-swap へ移すのは、Gateway が「選んだ endpoint へ流す」形になってから。Scheduler は「どの Logical Runtime を HOT にしたいか」までを決める。llama-swap の matrix / TTL / preload と同じ swap solver を TypeScript で書かない。
+Scheduler は「どの Logical Runtime を HOT にしたいか」までを決める。llama-swap の matrix / TTL / preload と同じ swap solver を TypeScript で書かない。gnosis では resident LLM は systemd、256K worker は llama-swap と責務を分ける。
 
 ### D4. 同じモデルの複数本は replica
 
@@ -49,7 +49,7 @@ Agent に出す `model` は `general` のような論理名である。Capabilit
 ```text
 apps/daemon          Hono。YAML を読み、Core を呼び、制御 API と（G1 以降）Gateway を出す
 packages/core        Registry / State / leases / planner / resolve
-packages/backends    NssmBackend, LlamaSwapBackend, RoutingBackend
+packages/backends    NssmBackend, SystemdBackend, LlamaSwapBackend, RoutingBackend
 packages/gateway     OpenAI 互換プロキシ。G1 で追加。Core に置かない
 config/              nodes.yaml, runtimes.yaml, profiles.yaml, llama-swap.yaml
                      G1 で models.yaml（論理モデル alias）を足してよい
@@ -72,7 +72,7 @@ Codex / Claude / CLI / Ambient
            RuntimeBackend
                 │
                 ▼
-           NSSM / llama-server / llama-swap
+           NSSM / systemd / llama-server / llama-swap
 ```
 
 Core は `hono` も OS 固有 API も import しない。Backend の interface にだけ依存する。Gateway は Core の resolve /（G2）ensure を呼び、推論本文は Runtime へプロキシする。
@@ -127,6 +127,20 @@ llama-swap の `/v1` は upstream である。Agent 向けの OpenAI 互換面�
 
 daemon は Runtime ごとに Backend を振り分ける RoutingBackend を使う。本番 `config/runtimes.yaml` がすべて nssm なら NssmBackend だけが動く。
 
+### SystemdBackend
+
+`backend: systemd` の Runtime を扱う。HTTP health を HOT/BUSY 判定の一次ソースにし、`systemctl is-active` で COLD/STARTING/FAILED を補助判定する。
+
+| 観測 | 判定の使い方 |
+| --- | --- |
+| `/health` が `status: ok` または `healthy` | HOT |
+| 同上 + `fail_on_no_slot=true` が 503 | BUSY |
+| unit が active/activating だが health 未到達 | STARTING |
+| unit が inactive/failed | COLD |
+| unit が存在しない | FAILED |
+
+Preferred の `ensure` / `stop` は `systemctl start` / `stop` に委譲する。Resident は拒否する。daemon ユーザーに lifecycle 操作を許可しない配備では観測専用として使い、サービス操作は管理者が行う。
+
 ---
 
 ## 4. 観測ループ
@@ -141,7 +155,7 @@ daemon は起動時に YAML を読み、Registry をメモリに載せる。以�
 
 ```text
 packages/gateway/              G1。OpenAI 互換プロキシ。起動はしない（G2 で Preferred ensure）
-packages/backends/process/     S3。STT 等
+packages/backends/process/     S3。OS サービス化しない Runtime
 ```
 
 空のパッケージをマイルストーンより先に作らない。`proxy.js` は G1 が同等になるまで残す。

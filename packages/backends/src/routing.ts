@@ -1,12 +1,14 @@
 import type { RuntimeDefinition } from "@larm/core";
-import { isLlamaSwapRuntime } from "@larm/core";
+import { isLlamaSwapRuntime, isSystemdRuntime } from "@larm/core";
 import { LlamaSwapBackend, type LlamaSwapBackendOptions } from "./llama-swap";
 import { NssmBackend, type NssmBackendOptions } from "./nssm";
+import { SystemdBackend, type SystemdBackendOptions } from "./systemd";
 import { LifecycleError, type RuntimeBackend, type RuntimeHealth } from "./types";
 
 export type CreateRuntimeBackendOptions = {
   nssm?: NssmBackendOptions;
   llamaSwap?: LlamaSwapBackendOptions;
+  systemd?: SystemdBackendOptions;
 };
 
 const missing = (runtimeId: string): RuntimeHealth => ({
@@ -58,9 +60,13 @@ export function createRuntimeBackend(
 ): RuntimeBackend {
   const nssm = new NssmBackend(runtimes, options.nssm);
   const llamaSwap = new LlamaSwapBackend(runtimes, options.llamaSwap);
+  const systemd = new SystemdBackend(runtimes, options.systemd);
   const routes = new Map<string, RuntimeBackend>();
   for (const runtime of runtimes) {
-    routes.set(runtime.id, isLlamaSwapRuntime(runtime) ? llamaSwap : nssm);
+    routes.set(
+      runtime.id,
+      isLlamaSwapRuntime(runtime) ? llamaSwap : isSystemdRuntime(runtime) ? systemd : nssm,
+    );
   }
   return new RoutingBackend(routes);
 }

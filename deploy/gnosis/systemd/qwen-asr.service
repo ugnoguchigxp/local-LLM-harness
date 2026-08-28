@@ -1,0 +1,38 @@
+[Unit]
+Description=Qwen3 ASR OpenAI-compatible provider
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/qwen-speech/asr
+Environment=HOME=/srv/ai/cache
+Environment=HF_HOME=/srv/ai/cache/huggingface
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=QWEN_SPEECH_CACHE=/srv/ai/cache/qwen-speech
+Environment=QWEN_ASR_MODEL=/srv/ai/models/qwen-asr/Qwen3-ASR-1.7B
+Environment=QWEN_ASR_MODEL_ID=qwen3-asr-1.7b
+Environment=QWEN_ASR_DTYPE=float16
+Environment=QWEN_ASR_MAX_BATCH_SIZE=1
+Environment=QWEN_ASR_MAX_NEW_TOKENS=512
+Environment=TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+ExecStart=/srv/ai/apps/qwen-speech/asr/.venv/bin/uvicorn api:app --host 0.0.0.0 --port 8081 --workers 1
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=900
+TimeoutStopSec=30
+LimitMEMLOCK=infinity
+LimitNOFILE=65535
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/srv/ai/cache /srv/ai/logs
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

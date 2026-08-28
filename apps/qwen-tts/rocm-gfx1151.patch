@@ -1,0 +1,104 @@
+diff --git a/api/backends/optimized_backend.py b/api/backends/optimized_backend.py
+index 95db28e..fb7bbd6 100644
+--- a/api/backends/optimized_backend.py
++++ b/api/backends/optimized_backend.py
+@@ -12,7 +12,48 @@ import numpy as np
+ 
+ logger = logging.getLogger(__name__)
+ 
+-CONFIG_PATH = Path.home() / "qwen3-tts" / "config.yaml"
++CONFIG_PATH = Path(
++    os.getenv("TTS_CONFIG", str(Path.home() / "qwen3-tts" / "config.yaml"))
++).expanduser()
++
++
++def install_rocm_multinomial_fallback() -> None:
++    """Sample on CPU to avoid the gfx1151 HIP multinomial failure."""
++    import torch
++
++    if not torch.version.hip or getattr(torch.multinomial, "_gfx1151_fallback", False):
++        return
++
++    native_multinomial = torch.multinomial
++
++    def cpu_multinomial(
++        probabilities,
++        num_samples,
++        replacement=False,
++        *,
++        generator=None,
++        out=None,
++    ):
++        if probabilities.device.type != "cuda":
++            return native_multinomial(
++                probabilities,
++                num_samples,
++                replacement=replacement,
++                generator=generator,
++                out=out,
++            )
++        sampled = native_multinomial(
++            probabilities.float().cpu(),
++            num_samples,
++            replacement=replacement,
++        ).to(probabilities.device)
++        if out is not None:
++            out.copy_(sampled)
++            return out
++        return sampled
++
++    cpu_multinomial._gfx1151_fallback = True
++    torch.multinomial = cpu_multinomial
+ 
+ def load_config() -> dict:
+     if CONFIG_PATH.exists():
+@@ -59,10 +100,26 @@ class OptimizedQwen3TTSBackend:
+     def get_current_model_key(self) -> Optional[str]:
+         return self.current_model_key
+ 
++    def _generation_kwargs(self) -> dict:
++        allowed = {
++            "do_sample",
++            "top_k",
++            "top_p",
++            "temperature",
++            "subtalker_dosample",
++            "subtalker_top_k",
++            "subtalker_top_p",
++            "subtalker_temperature",
++        }
++        configured = self.config.get("generation", {})
++        return {key: value for key, value in configured.items() if key in allowed}
++
+     async def _ensure_model_loaded(self, model_key: str) -> None:
+         """Load model if not already loaded."""
+         import torch
+ 
++        install_rocm_multinomial_fallback()
++
+         if self.current_model_key == model_key and self.model is not None:
+             return
+ 
+@@ -121,7 +178,6 @@ class OptimizedQwen3TTSBackend:
+                     compile_mode=opt.get("compile_mode", "max-autotune"),
+                     use_fast_codebook=opt.get("use_fast_codebook", True),
+                     compile_codebook_predictor=opt.get("compile_codebook_predictor", True),
+-                    compile_talker=opt.get("compile_talker", False),
+                 )
+                 logger.info(f"torch.compile enabled: mode={opt.get('compile_mode', 'max-autotune')}, fast_codebook={opt.get('use_fast_codebook', True)}")
+ 
+@@ -256,6 +312,7 @@ class OptimizedQwen3TTSBackend:
+             language=language,
+             speaker=voice,
+             instruct=instruct,
++            **self._generation_kwargs(),
+         )
+ 
+         audio = wavs[0]
+@@ -304,5 +361,6 @@ class OptimizedQwen3TTSBackend:
+             instruct=instruct,
+             emit_every_frames=emit_every_frames,
+             decode_window_frames=decode_window_frames,
++            **self._generation_kwargs(),
+         ):
+             yield chunk, sr

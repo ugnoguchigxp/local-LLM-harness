@@ -1,0 +1,91 @@
+runtimes:
+  qwen-general:
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    backend: systemd
+    node: gnosis
+    policy:
+      class: resident
+    resources:
+      estimatedMemoryGB: 40
+    deployment:
+      service: llama-server.service
+      healthPort: 8080
+      endpoint: http://127.0.0.1:8080
+
+  qwen-worker-quality:
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    backend: llama-swap
+    node: gnosis
+    policy:
+      class: preferred
+    resources:
+      estimatedMemoryGB: 40
+    deployment:
+      modelId: qwen-quality
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/qwen-quality
+      backendEndpoint: http://127.0.0.1:8083/upstream/qwen-quality
+
+  qwen-worker-fast:
+    capability:
+      - llm.general
+      - llm.coding
+    backend: llama-swap
+    node: gnosis
+    policy:
+      class: preferred
+    resources:
+      estimatedMemoryGB: 38
+    deployment:
+      modelId: qwen-fast
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/qwen-fast
+      backendEndpoint: http://127.0.0.1:8083/upstream/qwen-fast
+
+  qwen-asr:
+    capability:
+      - speech.stt
+    backend: systemd
+    node: gnosis
+    policy:
+      class: resident
+    resources:
+      estimatedMemoryGB: 5
+    deployment:
+      service: qwen-asr.service
+      healthPort: 8081
+      endpoint: http://127.0.0.1:8081
+
+  voicevox-tts:
+    capability:
+      - speech.tts
+    backend: systemd
+    node: gnosis
+    policy:
+      class: resident
+    resources:
+      estimatedMemoryGB: 1
+    deployment:
+      service: voicevox-tts.service
+      healthPort: 8084
+      endpoint: http://127.0.0.1:8084
+
+  qwen-tts:
+    capability:
+      - speech.tts.expressive
+    backend: systemd
+    node: gnosis
+    policy:
+      class: preferred
+    resources:
+      estimatedMemoryGB: 5
+    deployment:
+      service: qwen-tts.service
+      healthPort: 8082
+      endpoint: http://127.0.0.1:8082

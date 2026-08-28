@@ -1,0 +1,29 @@
+[Unit]
+Description=local-LLM-harness on-demand Qwen worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/local-LLM-harness
+Environment=HOME=/srv/ai/cache
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+ExecStart=/srv/ai/apps/llama-swap/llama-swap --config /srv/ai/apps/local-LLM-harness/config/gnosis/llama-swap.yaml --listen 0.0.0.0:8083
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=60
+KillMode=control-group
+LimitMEMLOCK=infinity
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/ai/cache /srv/ai/logs
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

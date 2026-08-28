@@ -24,9 +24,9 @@ export function buildRuntimeSnapshot(input: {
     endpoint: input.runtime.deployment.endpoint,
     backendEndpoint: input.runtime.deployment.backendEndpoint,
     service:
-      input.runtime.backend === "nssm"
-        ? input.runtime.deployment.service
-        : input.runtime.deployment.modelId,
+      input.runtime.backend === "llama-swap"
+        ? input.runtime.deployment.modelId
+        : input.runtime.deployment.service,
     observedAt: input.observedAt,
     health: input.health,
   };

@@ -1,0 +1,46 @@
+default_model: 0.6B-CustomVoice
+models:
+  0.6B-CustomVoice:
+    hf_id: /srv/ai/models/qwen-tts/Qwen3-TTS-12Hz-0.6B-CustomVoice
+    type: customvoice
+optimization:
+  attention: sdpa
+  compile_mode: max-autotune
+  use_compile: true
+  use_cuda_graphs: true
+  use_fast_codebook: true
+  compile_codebook_predictor: true
+  streaming:
+    decode_window_frames: 72
+    emit_every_frames: 6
+generation:
+  do_sample: true
+  top_k: 50
+  top_p: 1.0
+  temperature: 0.8
+  subtalker_dosample: true
+  subtalker_top_k: 50
+  subtalker_top_p: 1.0
+  subtalker_temperature: 0.8
+server:
+  host: 0.0.0.0
+  port: 8082
+voices:
+  - name: Aiden
+    language: Japanese
+  - name: Ono_Anna
+    language: Japanese
+  - name: Vivian
+    language: Chinese
+  - name: Serena
+    language: Chinese
+  - name: Uncle_Fu
+    language: Chinese
+  - name: Dylan
+    language: Chinese
+  - name: Eric
+    language: Chinese
+  - name: Ryan
+    language: English
+  - name: Sohee
+    language: English

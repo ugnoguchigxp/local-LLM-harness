@@ -1,0 +1,48 @@
+[Unit]
+Description=Qwen3 TTS low-latency OpenAI-compatible provider
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/Qwen3-TTS-Openai-Fastapi
+Environment=HOME=/srv/ai/cache
+Environment=HF_HOME=/srv/ai/cache/huggingface
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/srv/ai/apps/Qwen3-TTS-Openai-Fastapi
+Environment=TTS_CONFIG=/srv/ai/apps/Qwen3-TTS-Openai-Fastapi/config.production.yaml
+Environment=TTS_BACKEND=optimized
+Environment=HOST=0.0.0.0
+Environment=PORT=8082
+Environment=WORKERS=1
+Environment=ENABLE_VOICE_STUDIO=false
+Environment=VOICE_LIBRARY_DIR=/srv/ai/apps/Qwen3-TTS-Openai-Fastapi/voice_library
+Environment=GPU_KEEPALIVE_INTERVAL=15
+Environment=TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+Environment=TORCH_BLAS_PREFER_HIPBLASLT=1
+Environment=MIOPEN_FIND_MODE=FAST
+Environment=GPU_MAX_HW_QUEUES=1
+Environment=GPU_MAX_ALLOC_PERCENT=100
+Environment=GPU_MAX_HEAP_SIZE=100
+Environment=PYTORCH_TUNABLEOP_ENABLED=0
+Environment=TORCHINDUCTOR_CACHE_DIR=/srv/ai/cache/torchinductor/qwen-tts
+ExecStart=/srv/ai/apps/qwen-speech/tts/.venv/bin/python -m api.main
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=900
+TimeoutStopSec=60
+LimitMEMLOCK=infinity
+LimitNOFILE=65535
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/srv/ai/cache /srv/ai/logs /srv/ai/apps/Qwen3-TTS-Openai-Fastapi/voice_library
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
