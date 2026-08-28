@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { loadRegistry, RegistryError } from "../src/registry";
+import {
+  loadRegistry,
+  parseRegistryDocuments,
+  RegistryError,
+} from "../src/registry";
 
 const repoConfig = join(import.meta.dir, "../../../config/gnosis");
 const fixtures = join(import.meta.dir, "../test/fixtures");
@@ -14,6 +18,8 @@ test("loads the Linux production registry", () => {
   const qualityWorker = registry.runtimes.find(
     (runtime) => runtime.id === "qwen-worker-quality",
   );
+  const defaultRoute = registry.routes.find((route) => route.id === "llm-default");
+  const speedRoute = registry.routes.find((route) => route.id === "llm-speed");
 
   expect(registry.nodes[0]?.id).toBe("gnosis");
   expect(general?.backend).toBe("systemd");
@@ -27,6 +33,13 @@ test("loads the Linux production registry", () => {
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");
   expect(qualityWorker?.backend).toBe("llama-swap");
   expect(registry.profiles.some((profile) => profile.id === "voice-expressive")).toBe(true);
+  expect(defaultRoute?.candidates[0]).toEqual({
+    runtime: "qwen-general",
+    purpose: "primary",
+  });
+  expect(defaultRoute?.explicitOnly).toBe(false);
+  expect(speedRoute?.explicitOnly).toBe(true);
+  expect(defaultRoute?.candidates.some((candidate) => candidate.runtime.includes("35b"))).toBe(false);
 });
 
 test("rejects missing policy.class", () => {
@@ -58,4 +71,84 @@ test("loads llama-swap runtimes with modelId deployment", () => {
     expect(general.deployment.modelId).toBe("qwen-general");
     expect(general.deployment.listen).toBe("http://127.0.0.1:9292");
   }
+});
+
+function registryDocuments(routes: unknown) {
+  return {
+    nodesYaml: {
+      nodes: {
+        gnosis: {
+          endpoint: "http://127.0.0.1",
+          resources: { memoryTotalGB: 128, reservedMemoryGB: 16 },
+        },
+      },
+    },
+    runtimesYaml: {
+      runtimes: {
+        "qwen-general": {
+          capability: ["llm.general"],
+          backend: "systemd",
+          node: "gnosis",
+          policy: { class: "resident" },
+          resources: { estimatedMemoryGB: 40 },
+          deployment: {
+            service: "llama-server.service",
+            healthPort: 8080,
+            endpoint: "http://127.0.0.1:8080",
+          },
+        },
+      },
+    },
+    profilesYaml: { profiles: {} },
+    routesYaml: routes,
+  };
+}
+
+test("rejects a route that references an unknown runtime", () => {
+  expect(() =>
+    parseRegistryDocuments(
+      registryDocuments({
+        routes: {
+          "llm-default": {
+            capabilities: ["llm.general"],
+            candidates: [{ runtime: "missing", purpose: "primary" }],
+          },
+        },
+      }),
+    ),
+  ).toThrow(/unknown runtime missing/);
+});
+
+test("rejects a route whose candidate does not provide every declared capability", () => {
+  expect(() =>
+    parseRegistryDocuments(
+      registryDocuments({
+        routes: {
+          "llm-default": {
+            capabilities: ["llm.general", "llm.coding"],
+            candidates: [{ runtime: "qwen-general", purpose: "primary" }],
+          },
+        },
+      }),
+    ),
+  ).toThrow(/does not provide llm.coding/);
+});
+
+test("rejects multiple default routes for the same capability", () => {
+  expect(() =>
+    parseRegistryDocuments(
+      registryDocuments({
+        routes: {
+          "llm-default": {
+            capabilities: ["llm.general"],
+            candidates: [{ runtime: "qwen-general", purpose: "primary" }],
+          },
+          "llm-other-default": {
+            capabilities: ["llm.general"],
+            candidates: [{ runtime: "qwen-general", purpose: "primary" }],
+          },
+        },
+      }),
+    ),
+  ).toThrow(/multiple default routes/);
 });

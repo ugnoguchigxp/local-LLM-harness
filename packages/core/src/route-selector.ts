@@ -130,6 +130,13 @@ export function selectRoute(input: {
     }
 
     const fallback = candidate.purpose === "fallback";
+    const reason: RouteSelectionReason = fallback
+      ? availability === "live"
+        ? "fallback-live"
+        : "fallback-startable"
+      : availability === "live"
+        ? "primary-live"
+        : "primary-startable";
     return {
       ok: true,
       route: route.id,
@@ -140,7 +147,7 @@ export function selectRoute(input: {
       status: snapshot.status,
       candidateRank: index + 1,
       fallback,
-      reason: `${fallback ? "fallback" : "primary"}-${availability}`,
+      reason,
     };
   }
 

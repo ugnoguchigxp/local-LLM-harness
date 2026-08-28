@@ -226,7 +226,7 @@ LLM / STT / TTS runtimes</code></pre>
         <tr>
           <th scope="row">Registry / schema validation</th>
           <td>実装済み</td>
-          <td>YAMLとZodによるNode、Runtime、Profile検証</td>
+          <td>YAMLとZodによるNode、Runtime、Profile、Route検証</td>
         </tr>
         <tr>
           <th scope="row">Health / state observation</th>
@@ -243,8 +243,11 @@ LLM / STT / TTS runtimes</code></pre>
         </tr>
         <tr>
           <th scope="row">明示的な性能route</th>
-          <td>未実装</td>
-          <td>現在はcapabilityだけで選び、特定Runtimeや速度特化routeを指定できない</td>
+          <td>部分実装</td>
+          <td>
+            Route catalog、決定的selector、既存resolveとのshadow比較は実装済み。 公開allocation
+            APIからのroute指定は未実装
+          </td>
         </tr>
         <tr>
           <th scope="row">Resource admission</th>

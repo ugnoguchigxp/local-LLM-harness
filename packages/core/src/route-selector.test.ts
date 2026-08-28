@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import type { ClusterState, Registry, RuntimeSnapshot } from "./schema";
+import type { Registry } from "./registry";
+import type { ClusterState, RuntimeSnapshot } from "./schema";
 import {
   compareRouteSelection,
   findDefaultRoute,

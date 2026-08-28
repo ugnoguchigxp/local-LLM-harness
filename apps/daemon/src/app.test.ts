@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   clusterStateSchema,
   type Registry,
+  type RouteShadowComparison,
 } from "@larm/core";
 import type { RuntimeBackend, RuntimeHealth } from "@larm/backends";
 import { createApp } from "./app";
@@ -110,6 +111,7 @@ async function makeApp(
   const control = new ControlPlane(registry, backend, observer, {
     idleTtlMs: 0,
     random: () => "fixed",
+    onRouteShadowComparison: () => undefined,
     ...controlOptions,
   });
   const app = createApp({
@@ -221,7 +223,7 @@ test("POST /resolve is 503 when nothing is HOT", async () => {
 });
 
 test("POST /resolve reports route shadow differences without changing legacy behavior", async () => {
-  const comparisons: Parameters<NonNullable<ControlPlaneOptions["onRouteShadowComparison"]>>[0][] = [];
+  const comparisons: RouteShadowComparison[] = [];
   const { app } = await makeApp(false, false, {
     onRouteShadowComparison: (comparison) => comparisons.push(comparison),
   });

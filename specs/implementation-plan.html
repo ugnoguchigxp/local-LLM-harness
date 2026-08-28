@@ -98,6 +98,49 @@
     </table>
   </section>
 
+  <section id="implementation-progress">
+    <h2>実装進捗</h2>
+    <table>
+      <caption>
+        2026-08-28時点の最初の実装slice
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">状態</th>
+          <th scope="col">実装内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Route schemaと参照整合性</th>
+          <td>完了</td>
+          <td>候補順、primary / fallback、明示専用route、Runtime capabilityを検証</td>
+        </tr>
+        <tr>
+          <th scope="row">gnosis Route catalog</th>
+          <td>完了</td>
+          <td>LLM default / long-context / speedとSTT / TTS routeを宣言</td>
+        </tr>
+        <tr>
+          <th scope="row">決定的Route selector</th>
+          <td>完了</td>
+          <td>設定順、状態、fallback許可からRuntimeと選択理由を返す純粋関数</td>
+        </tr>
+        <tr>
+          <th scope="row">Shadow comparison</th>
+          <td>完了</td>
+          <td>既存resolveとdefault routeの差分を記録し、現行responseは変更しない</td>
+        </tr>
+        <tr>
+          <th scope="row">Route-aware prepare / allocation</th>
+          <td>未着手</td>
+          <td>次のsliceでBindingと期限付きAllocationを導入する</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
   <section id="routing-policy">
     <h2>確定するRoute policy</h2>
     <p>
