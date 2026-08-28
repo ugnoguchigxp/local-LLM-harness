@@ -1,0 +1,434 @@
+<article lang="ja">
+  <h1>Local AI Provider コンセプト</h1>
+
+  <p>
+    LARMは、Linux上の複数のローカルAI Runtimeを一つのProviderとして扱う、 source-onlyのcontrol
+    planeです。利用側はport、service名、quantization、起動方式ではなく、
+    必要なcapabilityと明示的な実行意図を要求します。
+  </p>
+
+  <dl>
+    <dt>文書状態</dt>
+    <dd>現行コンセプト</dd>
+    <dt>更新日</dt>
+    <dd><time>2026-08-28</time></dd>
+    <dt>対象</dt>
+    <dd>local-LLM-harness / LARM Provider control plane</dd>
+    <dt>上位システム</dt>
+    <dd>Local-first Ambient Agent Runtime</dd>
+  </dl>
+
+  <section id="north-star">
+    <h2>North Star</h2>
+    <blockquote>
+      <p>
+        常用するローカル対話経路を常に利用可能に保ち、追加Runtimeは明示された必要性に応じてだけ起動し、
+        利用側へ安定したProvider contractを提供する。
+      </p>
+    </blockquote>
+    <p>
+      中核価値はモデルそのものではなく、Runtimeの状態を観測し、要求に適したRuntimeを安全かつ決定的に割り当て、
+      利用終了後に資源を回収することです。
+    </p>
+  </section>
+
+  <section id="system-boundary">
+    <h2>上位システムとの責務境界</h2>
+    <p>
+      Ambient Agent側はTask Route、会話、音声フロー、Situation、UI、永続設定を所有します。
+      LARMは、上位システムが示したcapabilityと実行意図を、ローカルRuntimeの具体的な割当に変換します。
+    </p>
+
+    <figure>
+      <pre><code>Ambient Agent / Local Client
+  └─ task + capability + explicit performance intent
+       ↓
+LARM
+  ├─ registry / health observation
+  ├─ admission / allocation / lease
+  ├─ lifecycle delegation
+  └─ stable provider endpoint
+       ↓
+systemd / llama-swap
+       ↓
+LLM / STT / TTS runtimes</code></pre>
+      <figcaption>上位のTask判断と、LARMが所有するRuntime判断の境界</figcaption>
+    </figure>
+  </section>
+
+  <section id="operating-principles">
+    <h2>運用原則</h2>
+    <ol>
+      <li><strong>Local-first:</strong> 基本処理はCloudなしで成立させます。</li>
+      <li><strong>Resident-first:</strong> 常用経路は追加モデルの状態に依存させません。</li>
+      <li>
+        <strong>Explicit selection:</strong> 特殊Runtimeは明示されたrouteまたはperformance
+        intentでだけ選択します。
+      </li>
+      <li>
+        <strong>Lease-bound allocation:</strong>
+        一度選択したRuntimeはleaseへ固定し、処理途中で暗黙に変更しません。
+      </li>
+      <li>
+        <strong>Observable fallback:</strong>
+        fallbackは理由と実際に使ったRuntimeを利用側へ返します。
+      </li>
+      <li>
+        <strong>Bounded lifecycle:</strong>
+        lease、operation、queue、startup待機、idle保持には上限を持たせます。
+      </li>
+      <li><strong>Adapter-first:</strong> OSやRuntime固有処理はBackendへ閉じ込めます。</li>
+      <li>
+        <strong>Source-only:</strong>
+        weight、外部binary、build結果、cache、log、生成mediaをGitへ保存しません。
+      </li>
+    </ol>
+  </section>
+
+  <section id="model-policy">
+    <h2>モデルとRuntimeの方針</h2>
+    <table>
+      <caption>
+        現時点で確定しているRuntimeの役割
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Runtime</th>
+          <th scope="col">役割</th>
+          <th scope="col">方針</th>
+          <th scope="col">選択条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen 3.8 27B primary</th>
+          <td>通常、リアルタイム、reasoning、codingの既定LLM</td>
+          <td>Resident</td>
+          <td>通常要求を含む既定経路</td>
+        </tr>
+        <tr>
+          <th scope="row">27B optional workers</th>
+          <td>256K contextのquality / fast worker</td>
+          <td>Preferred</td>
+          <td>明示route、または既定Runtimeが利用不能な場合</td>
+        </tr>
+        <tr>
+          <th scope="row">35B candidate</th>
+          <td>特定の速度要求を持つtask向け候補</td>
+          <td>Preferred、未登録</td>
+          <td>明示的な速度特化routeだけ。既定では選択しない</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen ASR</th>
+          <td>日本語音声認識</td>
+          <td>Resident</td>
+          <td><code>speech.stt</code></td>
+        </tr>
+        <tr>
+          <th scope="row">VOICEVOX</th>
+          <td>低遅延の通常音声合成</td>
+          <td>Resident</td>
+          <td><code>speech.tts</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen TTS</th>
+          <td>表現力を優先する音声合成</td>
+          <td>Preferred</td>
+          <td><code>speech.tts.expressive</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      35Bはメインモデルではありません。35BがHOTであっても、一般的な<code>llm.general</code>要求から
+      自動選択してはいけません。将来メイン候補として評価する場合も、コード内の暗黙順位ではなく、
+      version管理されたroute設定と検証結果によって昇格させます。
+    </p>
+  </section>
+
+  <section id="request-lifecycle">
+    <h2>目標とするRequest lifecycle</h2>
+    <ol>
+      <li>利用側がcapabilityと必要な実行意図を指定します。</li>
+      <li>LARMがroute候補、health、空きslot、資源制約を評価します。</li>
+      <li>必要なPreferred Runtimeを起動し、期限内にreadyになるか観測します。</li>
+      <li>選択結果をleaseのallocationとして固定します。</li>
+      <li>利用側は固定されたendpoint、または将来の安定Gatewayを通じて推論します。</li>
+      <li>release後、他のleaseとidle policyを確認してPreferred Runtimeを回収します。</li>
+    </ol>
+
+    <p>
+      「動的にモデルを変える」とは、最初の段階では宣言済み・配備済みRuntimeの起動、割当、fallback、解放を意味します。
+      新しいweightのdownload、checksum検証、staging、activation、rollbackは別の管理lifecycleとして扱います。
+    </p>
+
+    <h3>API境界</h3>
+    <dl>
+      <dt>Runtime allocation API</dt>
+      <dd>
+        capabilityとperformance intentを受け、配備済みRuntimeをprepare、resolve、releaseします。
+        現行APIを拡張する最初の実装対象です。
+      </dd>
+      <dt>Inference data plane</dt>
+      <dd>
+        現在はresolveされたendpointを利用側が直接呼びます。将来はallocationを検証する安定したOpenAI互換Gatewayへ統合します。
+      </dd>
+      <dt>Artifact deployment API</dt>
+      <dd>
+        将来、宣言済みmodelとversionだけをchecksum検証、staging、activation、rollbackします。
+        任意URL、任意path、任意commandは受け付けません。
+      </dd>
+    </dl>
+  </section>
+
+  <section id="ownership">
+    <h2>LARMが所有するもの</h2>
+    <ul>
+      <li>Runtime registryとmodel artifact manifest</li>
+      <li>health observationとRuntime state</li>
+      <li>Resident / Preferred / Elastic policy</li>
+      <li>resource admission、allocation、lease、operation</li>
+      <li>capabilityと明示的な実行意図からRuntimeへの解決</li>
+      <li>systemdとllama-swapへのlifecycle委譲</li>
+      <li>OpenAI互換の安定Gateway</li>
+      <li>使用Runtime、fallback理由、startup・推論latencyの観測</li>
+      <li>将来の宣言済みartifactに対する検証・staging・rollback</li>
+    </ul>
+  </section>
+
+  <section id="non-goals">
+    <h2>LARMが所有しないもの</h2>
+    <ul>
+      <li>Ambient AgentのSituation判断、Conversation、Presentation、UI</li>
+      <li>TaskごとのLocal / Cloud選択やProvider設定の永続化</li>
+      <li>CodexなどAgent Providerのthreadとsandbox</li>
+      <li>tool use、memory retrieval、Knowledge管理、Coding Agent</li>
+      <li>モデル推論engineの再実装</li>
+      <li>APIから渡された任意command、任意URL、任意pathの無検証実行</li>
+      <li>Resident 27Bの暗黙停止または特殊モデルへの暗黙昇格</li>
+    </ul>
+  </section>
+
+  <section id="maturity">
+    <h2>現在の実装到達点</h2>
+    <table>
+      <caption>
+        コンセプトに対する現在の実装状態
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">状態</th>
+          <th scope="col">説明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Registry / schema validation</th>
+          <td>実装済み</td>
+          <td>YAMLとZodによるNode、Runtime、Profile検証</td>
+        </tr>
+        <tr>
+          <th scope="row">Health / state observation</th>
+          <td>実装済み</td>
+          <td>systemdとllama-swapを観測し状態を導出</td>
+        </tr>
+        <tr>
+          <th scope="row">Capability lease</th>
+          <td>部分実装</td>
+          <td>
+            <code>prepare</code
+            >、<code>resolve</code>、<code>release</code>はあるが、選択Runtimeをleaseへ固定していない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">明示的な性能route</th>
+          <td>未実装</td>
+          <td>現在はcapabilityだけで選び、特定Runtimeや速度特化routeを指定できない</td>
+        </tr>
+        <tr>
+          <th scope="row">Resource admission</th>
+          <td>未実装</td>
+          <td>推定memoryは定義済みだがPlannerでは使用していない</td>
+        </tr>
+        <tr>
+          <th scope="row">Stable inference Gateway</th>
+          <td>未実装</td>
+          <td>利用側は解決された個別endpointを直接呼び出す</td>
+        </tr>
+        <tr>
+          <th scope="row">Artifact deployment lifecycle</th>
+          <td>未実装</td>
+          <td>manifestはあるがdownload、verification、staging、activation、rollback APIはない</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="past-plan-classification">
+    <h2>過去のplan.mdの分類</h2>
+    <p>
+      初期コミット<code>bb2ae1d</code>の<code>plan.md</code>はWindows中心の環境構築案でした。
+      現在のLinux Providerへ引き継ぐ価値と、実機構成に合わせて更新すべき点を次のように分類します。
+    </p>
+
+    <table>
+      <caption>
+        過去計画から踏襲・更新・廃止する内容
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">過去の内容</th>
+          <th scope="col">分類</th>
+          <th scope="col">現在の判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Ryzen AI MAX+ 395と128GB統合memoryの活用</th>
+          <td>踏襲</td>
+          <td><code>gnosis</code>を最初のproduction nodeとして維持する</td>
+        </tr>
+        <tr>
+          <th scope="row">ローカルLLMをOpenAI互換APIで常駐提供</th>
+          <td>踏襲・拡張</td>
+          <td>LLMに加えてSTT/TTSも統一Provider境界へ含め、将来Gatewayで安定化する</td>
+        </tr>
+        <tr>
+          <th scope="row">ストリーミング応答の検証</th>
+          <td>踏襲・更新</td>
+          <td>direct endpointのsmoke testに加え、将来Gatewayとallocationを通るE2Eへ発展させる</td>
+        </tr>
+        <tr>
+          <th scope="row">memory、GPU、負荷の確認</th>
+          <td>踏襲・更新</td>
+          <td>手動確認だけでなくresource admissionと継続observabilityへ組み込む</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.8 27Bを主力にする</th>
+          <td>踏襲・確定</td>
+          <td>通常処理とリアルタイム処理のResident defaultとする</td>
+        </tr>
+        <tr>
+          <th scope="row">160K Q4_K_M + MTP、dual instance、旧memory見積り</th>
+          <td>更新</td>
+          <td>
+            ROCmFP4 FAST resident、256K構成、Q4 worker、実測値を正本とし、旧見積りを採用しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 2.5 72BとGemma 2 27Bを初期候補にする</th>
+          <td>廃止</td>
+          <td>現行production registryの選択根拠には使用しない</td>
+        </tr>
+        <tr>
+          <th scope="row">Ollamaを推奨経路にする</th>
+          <td>廃止</td>
+          <td>
+            複数Runtimeの観測、明示割当、細かなlifecycle制御に合わせてsystemdとllama-swapを採用する
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">llama.cppでcontextやGPU offloadを細かく調整する</th>
+          <td>踏襲・更新</td>
+          <td>
+            <code>llama-server</code
+            >の設定能力は維持し、個別手順ではなくversion管理したsystemdとllama-swap設定で管理する
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ログインなしでRuntimeをbackground serviceとして常駐させる</th>
+          <td>踏襲・置換</td>
+          <td>Windows startupとNSSMではなく、systemdによる自動起動とrestart policyを使用する</td>
+        </tr>
+        <tr>
+          <th scope="row">Windows、NSSM、PowerShellによるservice化</th>
+          <td>廃止・置換</td>
+          <td>Ubuntu、systemd、Bash、Bun daemonへ置き換える</td>
+        </tr>
+        <tr>
+          <th scope="row">localhostまたはLAN公開の選択</th>
+          <td>踏襲・更新</td>
+          <td>control APIはloopbackを既定とし、推論portのLAN公開はUFWと明示設定で制限する</td>
+        </tr>
+        <tr>
+          <th scope="row">モデル保存先を分離する</th>
+          <td>踏襲・確定</td>
+          <td>
+            weightは<code>/srv/ai/models</code>、cacheは<code>/srv/ai/cache</code>、実行物は<code>/srv/ai/apps</code>へ置く
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">一括setup scriptでmodel downloadまで自動化する</th>
+          <td>更新</td>
+          <td>
+            host準備、artifact staging、service
+            installを分離し、checksumと明示activationを必須にする
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="ambient-plan-classification">
+    <h2>上位Ambient Agent計画から踏襲するもの</h2>
+    <table>
+      <caption>
+        上位計画とLARMの責務分類
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">上位計画の考え方</th>
+          <th scope="col">分類</th>
+          <th scope="col">LARMでの扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Local-first</th>
+          <td>踏襲</td>
+          <td>ローカルRuntimeを標準経路とし、CloudなしでProviderを成立させる</td>
+        </tr>
+        <tr>
+          <th scope="row">Capability-based routing</th>
+          <td>踏襲・具体化</td>
+          <td>capabilityに加え、明示的なperformance intentとlease allocationを導入する</td>
+        </tr>
+        <tr>
+          <th scope="row">Explicit lifecycle、bounded everything</th>
+          <td>踏襲</td>
+          <td>Runtime、lease、operation、timeout、idle回収へ適用する</td>
+        </tr>
+        <tr>
+          <th scope="row">Task Route、Settings UI、SQLite</th>
+          <td>上位責務へ分離</td>
+          <td>Ambient Agentが所有し、LARMには実行意図だけを渡す</td>
+        </tr>
+        <tr>
+          <th scope="row">Situation、Presentation、Conversation</th>
+          <td>上位責務へ分離</td>
+          <td>LARMには実装せず、Provider healthとallocation結果を返す</td>
+        </tr>
+        <tr>
+          <th scope="row">Codex、NightWorkers、contextStill</th>
+          <td>外部責務</td>
+          <td>LARMのRuntime lifecycleとは独立したintegrationとして扱う</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="decision-test">
+    <h2>機能追加の判断基準</h2>
+    <p>新機能は、次の質問に一つ以上明確に答える場合だけLARMへ追加します。</p>
+    <ul>
+      <li>ローカルRuntimeの発見、状態観測、割当、起動、停止を安全にするか。</li>
+      <li>利用側からport、service名、model配置などの運用詳細を隠せるか。</li>
+      <li>Resident経路を保護しながら、必要な追加capacityを利用可能にするか。</li>
+      <li>実際に使ったRuntimeとfallback理由を検証可能にするか。</li>
+    </ul>
+    <p>
+      Taskの意味理解、UI表示、会話管理、Cloud選択、Agent実行そのものが中心なら、LARMではなく上位Runtimeの責務です。
+    </p>
+  </section>
+</article>

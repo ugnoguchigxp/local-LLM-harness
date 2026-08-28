@@ -5,6 +5,9 @@ export {
   isLlamaSwapRuntime,
   isSystemdRuntime,
   nodeDefinitionSchema,
+  routeCandidatePurposeSchema,
+  routeCandidateSchema,
+  routeDefinitionSchema,
   runtimeDefinitionSchema,
   runtimeSnapshotSchema,
   runtimeStatusSchema,
@@ -12,6 +15,9 @@ export {
   type ClusterState,
   type LlamaSwapRuntimeDefinition,
   type NodeDefinition,
+  type RouteCandidate,
+  type RouteCandidatePurpose,
+  type RouteDefinition,
   type RuntimeClass,
   type RuntimeDefinition,
   type RuntimeSnapshot,
@@ -48,6 +54,16 @@ export {
   type TransitionPlan,
 } from "./planner";
 export { resolveCapability, type ResolveResult } from "./resolve";
+export {
+  compareRouteSelection,
+  findDefaultRoute,
+  selectRoute,
+  type RouteSelectionFailure,
+  type RouteSelectionMode,
+  type RouteSelectionReason,
+  type RouteSelectionResult,
+  type RouteShadowComparison,
+} from "./route-selector";
 export { expandPrepareRequest, type ExpandPrepareResult } from "./prepare";
 export {
   prepareRequestSchema,

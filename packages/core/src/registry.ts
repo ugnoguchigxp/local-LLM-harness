@@ -4,8 +4,10 @@ import { parse as parseYaml } from "yaml";
 import {
   nodesFileSchema,
   profilesFileSchema,
+  routesFileSchema,
   runtimesFileSchema,
   type NodeDefinition,
+  type RouteDefinition,
   type RuntimeDefinition,
   type WorkloadProfile,
 } from "./schema";
@@ -21,6 +23,7 @@ export type Registry = {
   nodes: NodeDefinition[];
   runtimes: RuntimeDefinition[];
   profiles: WorkloadProfile[];
+  routes: RouteDefinition[];
 };
 
 function readYamlFile(path: string): unknown {
@@ -51,6 +54,7 @@ export function parseRegistryDocuments(input: {
   nodesYaml: unknown;
   runtimesYaml: unknown;
   profilesYaml: unknown;
+  routesYaml: unknown;
 }): Registry {
   const nodesParsed = nodesFileSchema.safeParse(input.nodesYaml);
   if (!nodesParsed.success) {
@@ -63,6 +67,10 @@ export function parseRegistryDocuments(input: {
   const profilesParsed = profilesFileSchema.safeParse(input.profilesYaml);
   if (!profilesParsed.success) {
     throw new RegistryError(formatZodError("profiles.yaml", profilesParsed.error));
+  }
+  const routesParsed = routesFileSchema.safeParse(input.routesYaml);
+  if (!routesParsed.success) {
+    throw new RegistryError(formatZodError("routes.yaml", routesParsed.error));
   }
 
   const nodes: NodeDefinition[] = Object.entries(nodesParsed.data.nodes)
@@ -95,7 +103,71 @@ export function parseRegistryDocuments(input: {
     .map(([id, profile]) => ({ id, ...profile }))
     .sort((a, b) => a.id.localeCompare(b.id));
 
-  return { nodes, runtimes, profiles };
+  const runtimeById = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
+  const defaultRouteByCapability = new Map<string, string>();
+  const routes: RouteDefinition[] = Object.entries(routesParsed.data.routes)
+    .map(([id, route]) => ({ id, ...route }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  for (const route of routes) {
+    const capabilities = new Set(route.capabilities);
+    if (capabilities.size !== route.capabilities.length) {
+      throw new RegistryError(`routes.yaml: route ${route.id} contains duplicate capabilities`);
+    }
+
+    const candidateIds = new Set<string>();
+    let sawFallback = false;
+    for (const [index, candidate] of route.candidates.entries()) {
+      if (candidateIds.has(candidate.runtime)) {
+        throw new RegistryError(
+          `routes.yaml: route ${route.id} contains duplicate runtime ${candidate.runtime}`,
+        );
+      }
+      candidateIds.add(candidate.runtime);
+
+      if (candidate.purpose === "fallback") {
+        sawFallback = true;
+      } else if (sawFallback) {
+        throw new RegistryError(
+          `routes.yaml: route ${route.id} has a primary candidate after a fallback`,
+        );
+      }
+      if (index === 0 && candidate.purpose !== "primary") {
+        throw new RegistryError(
+          `routes.yaml: route ${route.id} must start with a primary candidate`,
+        );
+      }
+
+      const runtime = runtimeById.get(candidate.runtime);
+      if (!runtime) {
+        throw new RegistryError(
+          `routes.yaml: route ${route.id} references unknown runtime ${candidate.runtime}`,
+        );
+      }
+      const unsupported = route.capabilities.filter(
+        (capability) => !runtime.capability.includes(capability),
+      );
+      if (unsupported.length > 0) {
+        throw new RegistryError(
+          `routes.yaml: runtime ${candidate.runtime} does not provide ${unsupported.join(", ")} for route ${route.id}`,
+        );
+      }
+    }
+
+    if (!route.explicitOnly) {
+      for (const capability of route.capabilities) {
+        const existing = defaultRouteByCapability.get(capability);
+        if (existing) {
+          throw new RegistryError(
+            `routes.yaml: capability ${capability} has multiple default routes: ${existing}, ${route.id}`,
+          );
+        }
+        defaultRouteByCapability.set(capability, route.id);
+      }
+    }
+  }
+
+  return { nodes, runtimes, profiles, routes };
 }
 
 export function loadRegistry(configDir: string): Registry {
@@ -103,6 +175,7 @@ export function loadRegistry(configDir: string): Registry {
     nodesYaml: readYamlFile(join(configDir, "nodes.yaml")),
     runtimesYaml: readYamlFile(join(configDir, "runtimes.yaml")),
     profilesYaml: readYamlFile(join(configDir, "profiles.yaml")),
+    routesYaml: readYamlFile(join(configDir, "routes.yaml")),
   });
 }
 

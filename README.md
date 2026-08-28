@@ -25,6 +25,7 @@ Gitで管理するのは、ソースコード、設定、systemd unit、再現�
 | `packages/backends` | SystemdBackend、LlamaSwapBackend |
 | `config/gnosis` | Linux production registryとllama-swap設定 |
 | `deploy/gnosis` | systemd unit、host導入、検証、model manifest |
+| `specs` | Spec HTMLで作成する設計書・仕様書・実装計画 |
 
 ## Development
 
@@ -33,6 +34,20 @@ bun install --frozen-lockfile
 bun run check
 bun run dev
 ```
+
+## Design documents
+
+新しい設計書、仕様書、実装計画、調査結果は`specs/`にSpec HTMLのHTML fragmentとして作成します。既存Markdownは移行するまでそのまま参照できます。
+
+```bash
+bun run docs
+bun run docs:check
+bun run docs:check:fix
+```
+
+HTML文書は`<article lang="ja">`をrootとし、document固有の`html`、`head`、`body`、CSS、navigationは持たせません。詳細は[`specs/overview.html`](specs/overview.html)を参照してください。
+
+Providerの最新コンセプトは[`specs/concept.html`](specs/concept.html)を正本とします。
 
 daemonは既定で `config/gnosis` を読み、`127.0.0.1:9810` で待ち受けます。別構成は `LARM_CONFIG_DIR` で指定できます。
 

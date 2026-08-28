@@ -1,0 +1,38 @@
+<article lang="ja">
+  <h1>local-LLM-harness 設計資料</h1>
+
+  <p>
+    このディレクトリは、LARMの設計書、仕様書、実装計画、調査結果をSpec HTMLで管理する正本です。
+    新しい文書はMarkdownではなく、意味構造を持つHTML fragmentとして作成します。
+  </p>
+
+  <section id="documents" aria-labelledby="document-list">
+    <h2 id="document-list">設計資料一覧</h2>
+    <ul>
+      <li><a href="./concept.html">Local AI Provider コンセプト</a></li>
+      <li><a href="./implementation-plan.html">LARM 新規実装計画</a></li>
+    </ul>
+  </section>
+
+  <section id="authoring" aria-labelledby="authoring-rules">
+    <h2 id="authoring-rules">文書作成規則</h2>
+    <ul>
+      <li>root要素は主言語を指定した<code>article</code>とします。</li>
+      <li>文書ごとに<code>h1</code>を一つだけ置きます。</li>
+      <li>
+        <code>html</code
+        >、<code>head</code>、<code>body</code>、文書固有CSS、navigationは追加しません。
+      </li>
+      <li>表、注記、詳細、図が理解を改善するときはsemantic HTMLを使用します。</li>
+      <li>編集後は<code>bun run docs:check:fix</code>を実行します。</li>
+    </ul>
+  </section>
+
+  <section id="model-policy" aria-labelledby="current-policy">
+    <h2 id="current-policy">現在のモデル運用前提</h2>
+    <p>
+      Qwen 3.8 27Bを通常処理とリアルタイム処理のResident defaultとします。
+      速度特化モデルは、対象タスクが明示的に要求した場合だけ選択します。
+    </p>
+  </section>
+</article>

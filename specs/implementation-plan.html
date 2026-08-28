@@ -1,0 +1,848 @@
+<article lang="ja">
+  <h1>LARM 新規実装計画</h1>
+
+  <p>
+    この計画は、<a href="./concept.html">Local AI Provider コンセプト</a>を、
+    現行コードから段階的に実装するための実行順序と完了条件へ落とし込んだものです。
+    最初に配備済みRuntimeの決定的な選択とallocationを完成させ、その上にresource admission、
+    安定Gateway、宣言済みartifactの配備を積み上げます。
+  </p>
+
+  <dl>
+    <dt>文書状態</dt>
+    <dd>実装着手用</dd>
+    <dt>作成日</dt>
+    <dd><time>2026-08-28</time></dd>
+    <dt>対象repository</dt>
+    <dd>local-LLM-harness / LARM</dd>
+    <dt>計画の基準</dt>
+    <dd>機能数や期限ではなく、依存関係とproduction gate</dd>
+  </dl>
+
+  <section id="objective">
+    <h2>実装目標</h2>
+    <p>この計画の完了時に、LARMは次の状態を満たします。</p>
+    <ol>
+      <li>通常・リアルタイム要求はResidentのQwen 3.8 27Bへ決定的に割り当てる。</li>
+      <li>特殊Runtimeは宣言済みrouteが明示された場合だけ選択する。</li>
+      <li>選択したRuntimeを期限付きallocationへ固定し、処理途中で暗黙に変更しない。</li>
+      <li>memoryと同時実行制約を満たす場合だけPreferred Runtimeを起動する。</li>
+      <li>利用側へ個別portを見せず、allocationを検証する安定した推論endpointを提供する。</li>
+      <li>宣言済みartifactに限り、APIから検証、staging、activation、rollbackできる。</li>
+      <li>35Bは速度特化routeからだけ利用でき、通常経路へ混入しない。</li>
+    </ol>
+
+    <aside>
+      <h3>守るべき不変条件</h3>
+      <ul>
+        <li>Qwen 3.8 27B ResidentをLARMの判断で停止しない。</li>
+        <li>リアルタイム要求だけを理由に35Bやoptional workerへ切り替えない。</li>
+        <li>通常の推論要求からmodel downloadやactivationを暗黙に開始しない。</li>
+        <li>APIから任意URL、任意path、任意commandを受け取らない。</li>
+        <li>Coreからsystemd、llama-swap、filesystem操作を直接呼ばない。</li>
+        <li>weight、binary、cache、operation logをrepositoryへ保存しない。</li>
+      </ul>
+    </aside>
+  </section>
+
+  <section id="baseline">
+    <h2>現行実装と主要gap</h2>
+    <table>
+      <caption>
+        実装済みの土台と次に解消するgap
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">現在</th>
+          <th scope="col">必要な変更</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Registry</th>
+          <td>Node、Runtime、ProfileをYAMLとZodで検証</td>
+          <td>Routeとartifact referenceを追加し、参照整合性を検証する</td>
+        </tr>
+        <tr>
+          <th scope="row">Planner</th>
+          <td>capabilityを満たす最初のPreferred Runtimeを選択</td>
+          <td>route候補、fallback policy、資源制約を含む決定的selectorへ分離する</td>
+        </tr>
+        <tr>
+          <th scope="row">Lease</th>
+          <td>要求capabilityだけをmemory上に保持</td>
+          <td>選択Runtime、期限、選択理由をallocationとして固定する</td>
+        </tr>
+        <tr>
+          <th scope="row">Operation</th>
+          <td>ensureのpending、running、succeeded、failedを保持</td>
+          <td>deadline、timeout、cancel、失敗時cleanup、状態遷移検証を追加する</td>
+        </tr>
+        <tr>
+          <th scope="row">Resource control</th>
+          <td><code>estimatedMemoryGB</code>は定義だけ</td>
+          <td>重複を除いた使用量とin-flight reservationでadmission判定する</td>
+        </tr>
+        <tr>
+          <th scope="row">Inference</th>
+          <td><code>resolve</code>した個別endpointを利用側が直接呼ぶ</td>
+          <td>allocationへ固定されたupstreamだけへproxyするGatewayを追加する</td>
+        </tr>
+        <tr>
+          <th scope="row">Artifact</th>
+          <td>metadata manifestと手動配備手順</td>
+          <td>allowlistされたartifactの検証、staging、activation、rollbackを実装する</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="routing-policy">
+    <h2>確定するRoute policy</h2>
+    <p>
+      公開APIはRuntime idを直接選ばせず、version管理されたroute idを受け取ります。
+      これによりmodelやquantizationを変更しても利用側のcontractを維持できます。
+    </p>
+
+    <table>
+      <caption>
+        gnosisで最初に定義するroute
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Route</th>
+          <th scope="col">既定候補</th>
+          <th scope="col">Fallback</th>
+          <th scope="col">選択条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>llm-default</code></th>
+          <td><code>qwen-general</code></td>
+          <td><code>qwen-worker-quality</code></td>
+          <td>通常、リアルタイム、reasoning、codingの既定経路</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm-long-context</code></th>
+          <td><code>qwen-worker-quality</code></td>
+          <td>呼出側が許可した場合だけ<code>qwen-general</code></td>
+          <td>長いcontextが明示された場合だけ</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm-speed</code></th>
+          <td>当初は<code>qwen-worker-fast</code></td>
+          <td>呼出側が許可した場合だけ<code>qwen-general</code></td>
+          <td>速度特化routeが明示された場合だけ</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>stt-default</code></th>
+          <td><code>qwen-asr</code></td>
+          <td>なし</td>
+          <td><code>speech.stt</code>の既定経路</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>tts-default</code></th>
+          <td><code>voicevox-tts</code></td>
+          <td>なし</td>
+          <td>低遅延の<code>speech.tts</code>経路</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>tts-expressive</code></th>
+          <td><code>qwen-tts</code></td>
+          <td>なし</td>
+          <td><code>speech.tts.expressive</code>が明示された場合だけ</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      35Bは評価と登録が完了するまで候補に含めません。登録後も<code>llm-speed</code>だけの候補とし、
+      <code>llm-default</code>のprimaryまたはfallbackには追加しません。
+      fallbackはrequestの<code>allowFallback</code>が真の場合だけ許可し、結果へ理由を含めます。
+    </p>
+
+    <h3>Route定義案</h3>
+    <pre><code>routes:
+  llm-default:
+    capabilities: [llm.general, llm.reasoning, llm.coding]
+    candidates:
+      - runtime: qwen-general
+        purpose: primary
+      - runtime: qwen-worker-quality
+        purpose: fallback
+  llm-speed:
+    capabilities: [llm.general, llm.coding]
+    explicitOnly: true
+    candidates:
+      - runtime: qwen-worker-fast
+        purpose: primary</code></pre>
+    <p>
+      正式なfield名とvalidation ruleはMilestone 0で固定します。候補順は設定順を使用し、
+      同順位をRuntime idの偶然の辞書順で決めないようにします。
+    </p>
+  </section>
+
+  <section id="target-api">
+    <h2>目標API contract</h2>
+    <p>
+      新しいcontractは<code>/v1</code>配下へ追加し、既存の<code>prepare</code>、<code>resolve</code>、
+      <code>release</code>は移行期間中にdefault routeへ変換するcompatibility
+      adapterとして残します。
+    </p>
+
+    <table>
+      <caption>
+        段階的に追加するAPI
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Method</th>
+          <th scope="col">Path</th>
+          <th scope="col">責務</th>
+          <th scope="col">実装段階</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/allocations</code></th>
+          <td>route選択、admission、起動、期限付きallocation作成</td>
+          <td>Milestone 2</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/allocations/:id</code></th>
+          <td>allocationと選択結果の取得</td>
+          <td>Milestone 2</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/allocations/:id/resolve</code></th>
+          <td>固定済みRuntimeの接続情報を返す</td>
+          <td>Milestone 2</td>
+        </tr>
+        <tr>
+          <td>DELETE</td>
+          <th scope="row"><code>/v1/allocations/:id</code></th>
+          <td>allocationを解放し、idle回収を再評価する</td>
+          <td>Milestone 2</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/operations/:id</code></th>
+          <td>非同期操作の状態、deadline、errorを返す</td>
+          <td>Milestone 2</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/chat/completions</code></th>
+          <td>allocationを検証して固定upstreamへstreaming proxyする</td>
+          <td>Milestone 4</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/artifacts/:id/stage</code></th>
+          <td>manifestに固定されたartifactをdownloadして検証する</td>
+          <td>Milestone 6</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/deployments/:runtime/activate</code></th>
+          <td>staged artifactをactivateしてhealthを確認する</td>
+          <td>Milestone 6</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/deployments/:runtime/rollback</code></th>
+          <td>直前の検証済みrevisionへ戻す</td>
+          <td>Milestone 6</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Allocation request案</h3>
+    <pre><code>{
+  "requirements": [
+    { "capability": "llm.general", "route": "llm-default" }
+  ],
+  "client": "ambient",
+  "allowFallback": false,
+  "ttlSeconds": 120,
+  "deploymentPolicy": "existing-only"
+}</code></pre>
+
+    <h3>Ready response案</h3>
+    <pre><code>{
+  "allocationId": "alloc_example",
+  "status": "ready",
+  "expiresAt": "...",
+  "bindings": [
+    {
+      "capability": "llm.general",
+      "route": "llm-default",
+      "runtime": "qwen-general",
+      "node": "gnosis",
+      "selectionReason": "primary-resident"
+    }
+  ]
+}</code></pre>
+    <p>
+      <code>deploymentPolicy</code
+      >の既定は<code>existing-only</code>です。 Milestone
+      6の完了後、権限を持つlocal
+      clientだけが<code>allow-listed</code>を指定でき、
+      staging、activation、起動、allocationを一つの追跡可能なoperationとして要求できます。
+    </p>
+  </section>
+
+  <section id="dependency-order">
+    <h2>依存関係と着手順</h2>
+    <figure>
+      <pre><code>Milestone 0: Contract foundation
+      ↓
+Milestone 1: Route selector
+      ↓
+Milestone 2: Lease-bound allocation
+      ↓
+Milestone 3: Resource admission
+      ↓
+Milestone 4: Stable inference Gateway
+      ↓
+Milestone 5: Production hardening
+      ↓
+Milestone 6: Artifact deployment lifecycle
+      ↓
+Milestone 7: Optional 35B onboarding</code></pre>
+      <figcaption>各段階は直前のproduction gateを満たしてから有効化する</figcaption>
+    </figure>
+
+    <table>
+      <caption>
+        優先度の意味
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">優先度</th>
+          <th scope="col">Milestone</th>
+          <th scope="col">理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">P0</th>
+          <td>0から3</td>
+          <td>誤選択、allocation drift、memory超過を防ぐcontrol planeの中核</td>
+        </tr>
+        <tr>
+          <th scope="row">P1</th>
+          <td>4から5</td>
+          <td>上位利用側へ安定contractを提供し、production運用を可能にする</td>
+        </tr>
+        <tr>
+          <th scope="row">P2</th>
+          <td>6</td>
+          <td>破壊的になり得る配備操作を、安定済みallocation基盤へ追加する</td>
+        </tr>
+        <tr>
+          <th scope="row">P3</th>
+          <td>7</td>
+          <td>35Bは中核要件ではなく、速度SLOを満たす場合だけ導入する</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="milestone-0">
+    <h2>Milestone 0: Contract foundation</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>既存動作を保護し、新しいAPIとdomain modelを安全に追加できる基準を作る。</dd>
+      <dt>主な対象</dt>
+      <dd>
+        <code>packages/core</code
+        >、<code>apps/daemon</code>、API仕様
+      </dd>
+    </dl>
+
+    <h3>実装項目</h3>
+    <ul>
+      <li>現行APIのrequest、response、error codeをcontract testで固定する。</li>
+      <li>Allocation、Binding、Route、SelectionReason、OperationのZod schemaを先に定義する。</li>
+      <li>operation state transitionとerror taxonomyを一箇所へ集約する。</li>
+      <li>clock、id generator、deadlineを注入可能にし、時間依存testを決定的にする。</li>
+      <li>
+        <code>/v1</code>の共通error envelopeとrequest idを定義する。
+      </li>
+      <li>既存unversioned APIをcompatibility対象として明記する。</li>
+    </ul>
+
+    <h3>完了条件</h3>
+    <ul>
+      <li>既存62 testを変更前と同じ意味で通過させる。</li>
+      <li>全operation state transitionにunit testがある。</li>
+      <li>不正なroute、期限、fallback指定をschema validationで拒否する。</li>
+      <li>この段階ではRuntimeの選択結果を変えない。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-1">
+    <h2>Milestone 1: 明示Routeと決定的Selector</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>capabilityだけの暗黙順位を廃止し、version管理されたroute policyで候補を絞る。</dd>
+      <dt>主な対象</dt>
+      <dd>
+        <code>packages/core</code>、<code>config/gnosis</code>
+      </dd>
+    </dl>
+
+    <h3>実装項目</h3>
+    <ul>
+      <li><code>routes.yaml</code>とRouteDefinition schemaを追加する。</li>
+      <li>
+        routeのcapability、候補順、primaryとfallback、<code>explicitOnly</code>を検証する。
+      </li>
+      <li>
+        未知Runtime、capability不一致、Residentを特殊routeだけに置く誤設定を起動時に拒否する。
+      </li>
+      <li>selectorをPlannerから純粋関数として分離し、同じ入力には常に同じ結果を返す。</li>
+      <li>選択結果へroute、candidate rank、fallback有無、理由を含める。</li>
+      <li>
+        既存<code>prepare</code>は各capabilityに対応するdefault
+        routeへ変換する。
+      </li>
+      <li>shadow modeで現行selectorとの差分をlogへ出し、まだlifecycle操作には使用しない。</li>
+    </ul>
+
+    <h3>完了条件</h3>
+    <ul>
+      <li>
+        通常・リアルタイム要求は、HOTなoptional
+        Runtimeが存在しても<code>qwen-general</code>を選ぶ。
+      </li>
+      <li>
+        <code>llm-speed</code
+        >を明示しない限り<code>qwen-worker-fast</code>をprimary選択しない。
+      </li>
+      <li>
+        35Bを仮fixtureへ追加しても<code>llm-default</code>から選択されないtestがある。
+      </li>
+      <li>fallback不許可時はprimary unavailableを明示errorとして返す。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-2">
+    <h2>Milestone 2: Lease-bound allocation</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>選択Runtimeをleaseへ固定し、prepareとresolveの間の選択driftをなくす。</dd>
+      <dt>主な対象</dt>
+      <dd>
+        <code>packages/core</code>、<code>apps/daemon</code>
+      </dd>
+    </dl>
+
+    <h3>実装項目</h3>
+    <ul>
+      <li>LeaseをAllocationへ発展させ、capabilityごとのBindingを保持する。</li>
+      <li>selector結果をtrial allocationとして検証し、成功時だけ原子的に登録する。</li>
+      <li>必要Runtimeをensureし、observerがreadyを確認するまでoperationをrunningに保つ。</li>
+      <li>startup deadline、allocation TTL、operation TTL、renew、cancelを実装する。</li>
+      <li>
+        ensure失敗またはtimeout時はallocationをfailedにし、不要なPreferred Runtimeをcleanupする。
+      </li>
+      <li>resolveはallocation idとcapabilityを受け、Bindingに固定されたRuntimeだけを返す。</li>
+      <li>releaseをidempotentにし、他allocationを再確認してからidle timerを開始する。</li>
+      <li>daemon再起動時はmemory上のallocationを失効させ、利用側に再取得を要求する。</li>
+    </ul>
+
+    <h3>完了条件</h3>
+    <ul>
+      <li>allocation作成後に別RuntimeがHOTになってもresolve結果が変わらない。</li>
+      <li>同一Runtimeを共有する複数allocationの一つをreleaseしてもRuntimeを停止しない。</li>
+      <li>deadline超過、ensure失敗、cancel、二重releaseのtestがある。</li>
+      <li>Residentをstopするtransitionをproperty testで生成しても実行されない。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-3">
+    <h2>Milestone 3: Resource admission</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>gnosisのmemoryとRuntime slotを超える起動を開始前に拒否または待機させる。</dd>
+      <dt>主な対象</dt>
+      <dd><code>packages/core</code>、Runtime registry、observer</dd>
+    </dl>
+
+    <h3>判定原則</h3>
+    <pre><code>usable = memoryTotalGB - reservedMemoryGB
+committed = unique(HOT, BUSY, STARTING runtimes) + in-flight reservations
+incremental = candidateがまだcommittedでない場合のestimatedMemoryGB
+admit when committed + incremental &lt;= usable</code></pre>
+    <ul>
+      <li>一つのRuntimeが複数capabilityを提供してもmemoryを重複計上しない。</li>
+      <li>Residentのmemoryと安全reserveを先に確保する。</li>
+      <li>推定値がないRuntime、staleなsnapshot、計算不能なNodeはfail closedとする。</li>
+      <li>Preferredを起動するためにResidentをevictしない。</li>
+      <li>同時作成されるallocationはin-flight reservationで競合を防ぐ。</li>
+      <li>
+        最初は明示的な<code>resource_exhausted</code>を返し、queueは上限とcancelを設計してから追加する。
+      </li>
+    </ul>
+
+    <h3>完了条件</h3>
+    <ul>
+      <li>境界値、複数capability、同時allocation、STARTING中のreservationをtestする。</li>
+      <li>admission結果にrequired、available、rejection reasonを含める。</li>
+      <li>
+        実機のpeak
+        memory計測で<code>estimatedMemoryGB</code>を更新し、根拠を記録する。
+      </li>
+      <li>voice profileとoptional LLMを同時に使用する実機smoke testを通す。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-4">
+    <h2>Milestone 4: Stable inference Gateway</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>利用側から個別portを隠し、allocationのBindingを強制するOpenAI互換経路を提供する。</dd>
+      <dt>主な対象</dt>
+      <dd><code>apps/daemon</code>と小さなprotocol adapter</dd>
+    </dl>
+
+    <h3>実装項目</h3>
+    <ul>
+      <li>
+        最初の対象を<code>/v1/chat/completions</code>のstreamingとnon-streamingに限定する。
+      </li>
+      <li>request headerでallocation idを受け、期限、client、capability、Bindingを検証する。</li>
+      <li>upstream URLはRegistryとBindingからだけ構築し、request bodyから受け取らない。</li>
+      <li>許可header、body size、connect timeout、first-byte timeout、total timeoutを制限する。</li>
+      <li>client disconnectをupstreamへ伝播し、streamとslotを確実に解放する。</li>
+      <li>最初のbyteを返した後は別Runtimeへretryしない。</li>
+      <li>最初のbyteより前の失敗でもBindingを暗黙変更せず、再allocationが必要なerrorを返す。</li>
+      <li>STTとTTSは各protocol contractを定義するまで既存direct endpointを維持する。</li>
+    </ul>
+
+    <h3>完了条件</h3>
+    <ul>
+      <li>OpenAI互換clientからstreaming responseを最後まで受け取れる。</li>
+      <li>期限切れ、未知allocation、capability不一致をGatewayが拒否する。</li>
+      <li>disconnect、slow upstream、partial stream、BUSYのintegration testがある。</li>
+      <li>Gateway経由のRuntimeはallocationに記録されたRuntimeと常に一致する。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-5">
+    <h2>Milestone 5: Observabilityとproduction hardening</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>選択、起動、推論、回収の結果を検証できる状態でproduction利用を開始する。</dd>
+      <dt>主な対象</dt>
+      <dd>全component、gnosis運用手順</dd>
+    </dl>
+
+    <h3>実装項目</h3>
+    <ul>
+      <li>request id、allocation id、route、runtime、selection reasonを構造化logへ含める。</li>
+      <li>
+        allocation結果、fallback、admission拒否、startup時間、TTFB、推論時間、releaseをmetric化する。
+      </li>
+      <li>prompt、response、audio本文、認証情報を既定logへ保存しない。</li>
+      <li>healthをdaemon、observer freshness、Backend、Gatewayへ分ける。</li>
+      <li>control APIはloopback既定を維持し、LAN公開時は認証とUFW制限を必須にする。</li>
+      <li>graceful shutdown時に新規allocationを止め、in-flight requestへ上限付きdrainを行う。</li>
+      <li>route変更をconfig reloadではなく、検証済みrestartで最初に運用する。</li>
+    </ul>
+
+    <h3>production gate</h3>
+    <ul>
+      <li>default route、speed route、fallback、resource rejectionのE2E testをgnosisで通す。</li>
+      <li>連続運転中にallocation leak、Preferredのstop漏れ、Resident停止がない。</li>
+      <li>主要errorにoperator向けの原因と復旧手順がある。</li>
+      <li>上位Ambient Agentを一clientだけGatewayへ移行し、direct endpointへ戻せる。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-6">
+    <h2>Milestone 6: Artifact deployment lifecycle</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>宣言済みmodelをAPIから安全にstaging、activation、rollbackできるようにする。</dd>
+      <dt>主な対象</dt>
+      <dd>
+        <code>packages/core</code>、新しいdeployment Backend、<code
+          >deploy/gnosis</code
+        >
+      </dd>
+    </dl>
+
+    <h3>実装順序</h3>
+    <ol>
+      <li>
+        <code>models.yaml</code>をschema validationし、Runtimeからartifact
+        idを参照できるようにする。
+      </li>
+      <li>単一file GGUFを対象に、固定source、revision、bytes、SHA-256を検証してstagingする。</li>
+      <li>一時pathへdownloadし、検証成功後だけ同一filesystem上でatomic renameする。</li>
+      <li>
+        activate前に対象Runtimeをdrainし、検証済みrevisionを指すlinkまたは設定を原子的に切り替える。
+      </li>
+      <li>Runtime起動とhealth確認が失敗した場合は直前revisionへrollbackする。</li>
+      <li>operation journalをrepository外へ保存し、daemon再起動後に中断状態を検出する。</li>
+      <li>
+        directory形式modelと複数file artifactは、snapshot全体のhash manifestを定義してから追加する。
+      </li>
+      <li>
+        最後に権限付きallocation requestの<code>deploymentPolicy: allow-listed</code>を実装し、
+        stageからallocationまでを一つのcomposite operationとして追跡する。
+      </li>
+    </ol>
+
+    <h3>Security boundary</h3>
+    <ul>
+      <li>APIが受け取るのはartifact id、runtime id、宣言済みactionだけとする。</li>
+      <li>source URL、checksum、配置path、service名はrepositoryのmanifestから取得する。</li>
+      <li>配備APIはloopbackまたはUnix socketに限定し、通常の推論credentialと分離する。</li>
+      <li>root権限が必要な操作は固定引数のallowlisted helperへ隔離する。</li>
+      <li>同じartifactまたはRuntimeに対するoperationは排他lockで直列化する。</li>
+      <li>disk空き容量、download上限、operation deadline、staging cleanupを必須にする。</li>
+    </ul>
+
+    <h3>完了条件</h3>
+    <ul>
+      <li>checksum不一致、容量不足、中断download、activation失敗のtestがある。</li>
+      <li>失敗時に現在稼働中の検証済みrevisionを破壊しない。</li>
+      <li>
+        通常のallocationは<code>existing-only</code>のままでdownloadを開始しない。
+      </li>
+      <li>allowlisted composite operationでstage、activate、start、allocateの進捗を取得できる。</li>
+      <li>artifact dataとoperation journalがsource-only検査の対象外pathにだけ作成される。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-7">
+    <h2>Milestone 7: Optional 35B onboarding</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>35Bが特定taskの速度SLOを満たす場合だけ、明示的な速度routeへ追加する。</dd>
+      <dt>依存</dt>
+      <dd>Milestone 1から6のproduction gate</dd>
+    </dl>
+
+    <h3>評価と導入</h3>
+    <ol>
+      <li>対象task、prompt長、output長、同時実行数、要求latencyを先に固定する。</li>
+      <li>
+        Qwen 3.8 27B primaryと同じ条件でstartup、prompt
+        processing、TTFB、token生成、memoryを測定する。
+      </li>
+      <li>
+        速度SLO、品質下限、memory安全域を満たすrevisionとquantizationだけをmanifestへ追加する。
+      </li>
+      <li>Preferred Runtimeとして登録し、Resident保護下でadmissionできることを検証する。</li>
+      <li>
+        <code>llm-speed</code>の明示候補へ追加し、default
+        routeには追加しない。
+      </li>
+      <li>実運用metricから効果が確認できなければrouteから外し、artifactはinactiveに戻す。</li>
+    </ol>
+
+    <h3>完了条件</h3>
+    <ul>
+      <li>通常、リアルタイム、defaultのcoding profileから35Bが選ばれないcontract testがある。</li>
+      <li>
+        <code>llm-speed</code
+        >だけが35Bを選択でき、実際に使用したRuntimeをresponseとmetricで確認できる。
+      </li>
+      <li>35B起動失敗時もQwen 3.8 27B Residentが継続利用できる。</li>
+      <li>将来のmain昇格は別decisionとしてroute設定、benchmark、rollback planをreviewする。</li>
+    </ul>
+  </section>
+
+  <section id="package-work">
+    <h2>Componentごとの変更範囲</h2>
+    <table>
+      <caption>
+        Architecture boundaryを維持する実装配置
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Component</th>
+          <th scope="col">追加する責務</th>
+          <th scope="col">追加しない責務</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>packages/core</code></th>
+          <td>Route schema、selector、Allocation、admission、operation state</td>
+          <td>HTTP proxy、systemctl、download、filesystem mutation</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>packages/backends</code></th>
+          <td>systemd、llama-swap、将来のartifact操作adapter</td>
+          <td>Taskの意味判断、route policy、公開API</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>apps/daemon</code></th>
+          <td>API、operation coordination、Gateway、auth boundary、shutdown</td>
+          <td>model固有の起動commandや配置pathの組み立て</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>config/gnosis</code></th>
+          <td>Node、Runtime、Profile、Routeのproduction desired state</td>
+          <td>weight、secret、生成state</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>deploy/gnosis</code></th>
+          <td>artifact manifest、service unit、固定helper、verification</td>
+          <td>download済みmodel、binary、operation journal</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="test-strategy">
+    <h2>Testと検証戦略</h2>
+    <table>
+      <caption>
+        層ごとに必須とする検証
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">層</th>
+          <th scope="col">対象</th>
+          <th scope="col">代表的な失敗条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Schema</th>
+          <td>Route、Allocation、Operation、Artifact</td>
+          <td>未知参照、capability不一致、危険path、無期限値</td>
+        </tr>
+        <tr>
+          <th scope="row">Pure unit</th>
+          <td>selector、admission、transition、expiry</td>
+          <td>同順位、fallback禁止、境界memory、clock進行</td>
+        </tr>
+        <tr>
+          <th scope="row">Controller integration</th>
+          <td>同時allocation、ensure、release、cancel</td>
+          <td>race、部分失敗、二重release、stale observer</td>
+        </tr>
+        <tr>
+          <th scope="row">Gateway integration</th>
+          <td>OpenAI互換、stream、disconnect、timeout</td>
+          <td>partial response、BUSY、期限切れallocation</td>
+        </tr>
+        <tr>
+          <th scope="row">Deployment failure injection</th>
+          <td>download、hash、activate、rollback</td>
+          <td>容量不足、通信切断、checksum不一致、health失敗</td>
+        </tr>
+        <tr>
+          <th scope="row">gnosis E2E</th>
+          <td>実memory、GPU、startup、streaming、idle回収</td>
+          <td>Resident停止、resource oversubscription、allocation leak</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="rollout">
+    <h2>Rolloutとrollback</h2>
+    <ol>
+      <li>Route selectorはshadow結果だけを記録し、現行選択との差分を確認する。</li>
+      <li>
+        <code>/v1/allocations</code>をopt-in clientへ限定し、既存APIを維持する。
+      </li>
+      <li>Gatewayは一つのAmbient Agent clientから開始し、direct endpointへ戻せるようにする。</li>
+      <li>artifact APIはstaging-onlyから開始し、activationは明示的なoperator操作に限定する。</li>
+      <li>
+        composite deploymentを有効化する前に、単独のstage、activate、rollbackを実機で検証する。
+      </li>
+      <li>35Bはroute設定一つで無効化できるようにし、Resident構成を変更しない。</li>
+    </ol>
+  </section>
+
+  <section id="risks">
+    <h2>主要riskと対策</h2>
+    <table>
+      <caption>
+        実装時に先回りして管理するrisk
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Risk</th>
+          <th scope="col">影響</th>
+          <th scope="col">対策</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">観測snapshotのstale</th>
+          <td>誤った起動やadmission</td>
+          <td>freshness上限、in-flight reservation、操作直前の再観測</td>
+        </tr>
+        <tr>
+          <th scope="row">memory見積り不足</th>
+          <td>OOMとResident経路の停止</td>
+          <td>安全reserve、実測peak、fail closed、35Bの後段導入</td>
+        </tr>
+        <tr>
+          <th scope="row">stream中のupstream失敗</th>
+          <td>重複出力や壊れたresponse</td>
+          <td>stream開始後はretryしない、明示error、再allocation</td>
+        </tr>
+        <tr>
+          <th scope="row">daemon再起動</th>
+          <td>memory上のallocation喪失</td>
+          <td>期限付きallocation、restart epoch、client再取得</td>
+        </tr>
+        <tr>
+          <th scope="row">配備APIの権限拡大</th>
+          <td>任意code実行や既存model破壊</td>
+          <td>allowlist、固定helper、loopback、atomic activation、rollback</td>
+        </tr>
+        <tr>
+          <th scope="row">route設定の誤り</th>
+          <td>35Bの通常経路混入</td>
+          <td>起動時参照検証、contract test、review可能な設定差分</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="definition-of-done">
+    <h2>各Milestone共通のDefinition of Done</h2>
+    <ul>
+      <li>要求とerror caseをtestで先に固定し、対象testと既存testをすべて通す。</li>
+      <li>
+        <code>bun run check</code
+        >と<code>bun run docs:check</code>が診断なしで成功する。
+      </li>
+      <li>CoreとBackendのarchitecture boundaryを維持する。</li>
+      <li>公開contractまたは運用手順を変更した場合はSpec HTMLを同じ変更で更新する。</li>
+      <li>source-only検査に違反するartifactをrepositoryへ追加しない。</li>
+      <li>Resident保護、timeout、cleanup、observabilityを受入条件へ含める。</li>
+      <li>gnosisへ反映する変更はrollback手順と実機verification結果を持つ。</li>
+    </ul>
+  </section>
+
+  <section id="first-implementation-slice">
+    <h2>最初に着手する実装slice</h2>
+    <p>
+      最初の変更はMilestone 0とMilestone 1のうち、Runtime
+      lifecycleをまだ変更しない範囲に限定します。 具体的にはRoute
+      schema、<code>routes.yaml</code>、純粋なselector、選択理由、shadow
+      comparison、 contract
+      testを実装します。これにより、現在のResident経路を壊さずに、次のallocation実装が依存できる
+      決定的な選択contractを先に確立できます。
+    </p>
+  </section>
+</article>

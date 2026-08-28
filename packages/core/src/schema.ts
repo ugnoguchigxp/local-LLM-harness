@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const runtimeClassSchema = z.enum(["resident", "preferred", "elastic"]);
 export const backendKindSchema = z.enum(["llama-swap", "systemd"]);
+export const routeCandidatePurposeSchema = z.enum(["primary", "fallback"]);
 export const runtimeStatusSchema = z.enum([
   "COLD",
   "STARTING",
@@ -126,6 +127,23 @@ export const clusterStateSchema = z.object({
 export const nodeYamlSchema = nodeDefinitionSchema.omit({ id: true });
 export const profileYamlSchema = workloadProfileSchema.omit({ id: true });
 
+export const routeCandidateSchema = z.object({
+  runtime: z.string().min(1),
+  purpose: routeCandidatePurposeSchema,
+});
+
+const routeShared = {
+  capabilities: z.array(z.string().min(1)).min(1),
+  explicitOnly: z.boolean().default(false),
+  candidates: z.array(routeCandidateSchema).min(1),
+};
+
+export const routeYamlSchema = z.object(routeShared);
+export const routeDefinitionSchema = z.object({
+  id: z.string().min(1),
+  ...routeShared,
+});
+
 export const nodesFileSchema = z.object({
   nodes: z.record(z.string(), nodeYamlSchema),
 });
@@ -138,8 +156,13 @@ export const profilesFileSchema = z.object({
   profiles: z.record(z.string(), profileYamlSchema),
 });
 
+export const routesFileSchema = z.object({
+  routes: z.record(z.string(), routeYamlSchema),
+});
+
 export type RuntimeClass = z.infer<typeof runtimeClassSchema>;
 export type BackendKind = z.infer<typeof backendKindSchema>;
+export type RouteCandidatePurpose = z.infer<typeof routeCandidatePurposeSchema>;
 export type RuntimeStatus = z.infer<typeof runtimeStatusSchema>;
 export type ServiceState = z.infer<typeof serviceStateSchema>;
 export type NodeDefinition = z.infer<typeof nodeDefinitionSchema>;
@@ -147,6 +170,8 @@ export type LlamaSwapRuntimeDefinition = z.infer<typeof llamaSwapRuntimeDefiniti
 export type SystemdRuntimeDefinition = z.infer<typeof systemdRuntimeDefinitionSchema>;
 export type RuntimeDefinition = z.infer<typeof runtimeDefinitionSchema>;
 export type WorkloadProfile = z.infer<typeof workloadProfileSchema>;
+export type RouteCandidate = z.infer<typeof routeCandidateSchema>;
+export type RouteDefinition = z.infer<typeof routeDefinitionSchema>;
 export type RuntimeSnapshot = z.infer<typeof runtimeSnapshotSchema>;
 export type ClusterState = z.infer<typeof clusterStateSchema>;
 
