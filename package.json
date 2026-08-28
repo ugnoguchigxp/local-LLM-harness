@@ -14,7 +14,9 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test apps packages",
     "check:source-only": "bash scripts/check-source-only.sh",
-    "check": "bun run check:source-only && bun run docs:check && bun run typecheck && bun run test"
+    "check:operations": "bash scripts/check-operations.sh",
+    "test:deployment": "bash deploy/gnosis/scripts/install-services.test.sh",
+    "check": "bun run check:source-only && bun run check:operations && bun run docs:check && bun run typecheck && bun run test && bun run test:deployment"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",

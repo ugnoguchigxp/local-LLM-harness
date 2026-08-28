@@ -3,7 +3,11 @@
 `gnosis` is the first Linux deployment of LARM. It keeps the interactive voice path hot
 while providing one resident Qwen3.8 27B LLM and two on-demand 256K worker variants.
 
-## Runtime map
+## Desired runtime map
+
+This table describes the repository-managed desired state. Check the live host with
+`systemctl is-active`, `systemctl is-enabled`, and `ss -ltnp`; do not infer current service
+state from this document alone.
 
 | Port | Runtime | Policy | Purpose |
 | ---: | --- | --- | --- |
@@ -14,10 +18,12 @@ while providing one resident Qwen3.8 27B LLM and two on-demand 256K worker varia
 | 8084 | VOICEVOX CORE 0.17.0 | resident | low-latency speech |
 | 9810 | LARM daemon | control plane | allocation and local Gateway |
 
-The Runtime ports bind to all interfaces, but UFW permits TCP 22 and 8080-8084 only from
-`192.168.0.0/24`. Runtime control and health use loopback endpoints from
+The Runtime ports are configured to bind to all interfaces. `prepare-host.sh` adds UFW rules
+for TCP 22 and 8080-8084 from `192.168.0.0/24` by default, but deliberately does not enable
+UFW. Those rules are not enforced until an operator reviews `ufw status` and explicitly
+enables UFW. Runtime control and health use loopback endpoints from
 [`../config/gnosis/runtimes.yaml`](../config/gnosis/runtimes.yaml).
-LARM remains loopback-only on port 9810; expose it through an authenticated local
+LARM is configured as loopback-only on port 9810; expose it through an authenticated local
 adapter or deliberately reviewed reverse proxy rather than opening the port directly.
 
 ## Why this split
@@ -44,22 +50,39 @@ These are local acceptance measurements, not upstream performance claims.
 | Qwen3-TTS 0.6B optimized, idle | non-stream RTF 0.505-0.520; stream TTFB 0.342 s |
 | Qwen3-TTS while primary LLM runs | TTFB 1.319 s; RTF 2.448 |
 
+The repository does not contain the raw clips, command transcript, or machine-readable result
+set for these historical measurements. Treat them as baseline context, not a reproducible release
+gate. Record each future acceptance run in a Spec HTML summary with the exact procedure,
+configuration revision, aggregate results, and location of repository-external raw data.
+
 ## Operations
 
 ```bash
 cd /srv/ai/apps/local-LLM-harness
 deploy/gnosis/scripts/verify.sh
+deploy/gnosis/scripts/smoke-larm.sh
+# Attended voice validation only:
+# LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/gnosis/scripts/smoke-voice.sh
+LARM_CANARY_ITERATIONS=3 deploy/gnosis/scripts/canary-gate.sh
+systemctl is-active llama-server.service llama-swap-worker.service \
+  qwen-asr.service voicevox-tts.service larm-daemon.service
+systemctl is-enabled llama-server.service llama-swap-worker.service \
+  qwen-asr.service voicevox-tts.service larm-daemon.service qwen-tts.service
 journalctl -u llama-server.service -f
 journalctl -u qwen-asr.service -f
 journalctl -u voicevox-tts.service -f
 journalctl -u larm-daemon.service -f
 ```
 
+After the repository installer is applied, the expected enablement is Resident/control units
+enabled and `qwen-tts.service` disabled. A Preferred service may still be active temporarily
+while an explicit Allocation uses it; enabled and active are separate states.
+
 The host uses a 100 GB TTM/GTT setting. Check it with `amd-ttm` after an attended boot.
 Do not automate `reboot`: the machine is dual boot and may start Windows.
 
-`qwen-tts.service` is installed but disabled at boot because it is Preferred. LARM starts
-and stops only that service through the narrow rule in
+The desired state leaves `qwen-tts.service` installed but disabled at boot because it is
+Preferred. LARM starts and stops only that service through the narrow rule in
 [`../deploy/gnosis/polkit/50-larm-runtime-control.rules`](../deploy/gnosis/polkit/50-larm-runtime-control.rules).
 Resident provider units remain outside unattended lifecycle authorization.
 

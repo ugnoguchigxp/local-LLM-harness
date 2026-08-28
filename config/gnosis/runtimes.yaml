@@ -6,12 +6,16 @@ runtimes:
       - llm.general
       - llm.reasoning
       - llm.coding
+    protocol: openai.chat-completions.v1
     backend: systemd
     node: gnosis
     policy:
       class: resident
     resources:
       estimatedMemoryGB: 40
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
     deployment:
       service: llama-server.service
       healthPort: 8080
@@ -25,12 +29,16 @@ runtimes:
       - llm.general
       - llm.reasoning
       - llm.coding
+    protocol: openai.chat-completions.v1
     backend: llama-swap
     node: gnosis
     policy:
       class: preferred
     resources:
       estimatedMemoryGB: 40
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
     deployment:
       modelId: qwen-quality
       listen: http://127.0.0.1:8083
@@ -44,12 +52,16 @@ runtimes:
     capability:
       - llm.general
       - llm.coding
+    protocol: openai.chat-completions.v1
     backend: llama-swap
     node: gnosis
     policy:
       class: preferred
     resources:
       estimatedMemoryGB: 38
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
     deployment:
       modelId: qwen-fast
       listen: http://127.0.0.1:8083
@@ -61,28 +73,34 @@ runtimes:
       - qwen3-asr-main
     capability:
       - speech.stt
+    protocol: openai.audio-transcriptions.v1
     backend: systemd
     node: gnosis
     policy:
       class: resident
     resources:
       estimatedMemoryGB: 5
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
     deployment:
       service: qwen-asr.service
       healthPort: 8081
       endpoint: http://127.0.0.1:8081
 
   voicevox-tts:
-    artifacts:
-      - voicevox
     capability:
       - speech.tts
+    protocol: openai.audio-speech.v1
     backend: systemd
     node: gnosis
     policy:
       class: resident
     resources:
       estimatedMemoryGB: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
     deployment:
       service: voicevox-tts.service
       healthPort: 8084
@@ -93,12 +111,16 @@ runtimes:
       - qwen3-tts-expressive
     capability:
       - speech.tts.expressive
+    protocol: openai.audio-speech.v1
     backend: systemd
     node: gnosis
     policy:
       class: preferred
     resources:
       estimatedMemoryGB: 5
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
     deployment:
       service: qwen-tts.service
       healthPort: 8082

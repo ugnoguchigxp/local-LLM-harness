@@ -9,10 +9,13 @@ function definition(
   return {
     id: cls === "resident" ? "qwen-asr" : "qwen-tts",
     capability: [cls === "resident" ? "speech.stt" : "speech.tts.expressive"],
+    protocol: cls === "resident"
+      ? "openai.audio-transcriptions.v1"
+      : "openai.audio-speech.v1",
     backend: "systemd",
     node: "gnosis",
     policy: { class: cls },
-    resources: { estimatedMemoryGB: 5 },
+    resources: { estimatedMemoryGB: 5, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
     deployment: {
       service: `${cls === "resident" ? "qwen-asr" : "qwen-tts"}.service`,
       healthPort: port,

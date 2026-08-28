@@ -1,7 +1,6 @@
 import {
   activeAllocation,
   getRuntime,
-  isStageableArtifact,
   type Allocation,
   type ArtifactDefinition,
   type Registry,
@@ -36,7 +35,9 @@ export type ArtifactManagerOptions = {
   startupTimeoutMs?: number;
   pollIntervalMs?: number;
   historyLimit?: number;
+  maxPendingOperations?: number;
   activeAllocations: () => Allocation[];
+  isRuntimeTransitioning?: (runtimeId: string) => boolean;
   onEvent?: (event: ControlEvent) => void;
 };
 
@@ -108,23 +109,20 @@ export class ArtifactManager implements DeploymentCoordinator {
   }
 
   async flush(): Promise<void> {
-    await Promise.all([...this.queues.values()]);
+    while (this.queues.size > 0) {
+      await Promise.all([...this.queues.values()]);
+    }
   }
 
   async stage(artifactId: string): Promise<ArtifactOperation> {
     const artifact = this.artifacts.get(artifactId);
     const operation = this.createOperation("stage", { artifactId });
+    if (await this.rejectAtCapacity(operation)) {
+      return operation;
+    }
     await this.persistPending(operation);
     if (!artifact) {
       await this.fail(operation, "not_found", `artifact ${artifactId} is not in the manifest`);
-      return operation;
-    }
-    if (!isStageableArtifact(artifact)) {
-      await this.fail(
-        operation,
-        "artifact_not_stageable",
-        `artifact ${artifactId} is not a checksummed single-file artifact`,
-      );
       return operation;
     }
     const abort = new AbortController();
@@ -144,6 +142,9 @@ export class ArtifactManager implements DeploymentCoordinator {
 
   async activateRuntime(runtimeId: string): Promise<ArtifactOperation> {
     const operation = this.createOperation("activate", { runtimeId });
+    if (await this.rejectAtCapacity(operation)) {
+      return operation;
+    }
     await this.persistPending(operation);
     const runtime = getRuntime(this.registry, runtimeId);
     const validation = this.validateMutableRuntime(runtime);
@@ -192,6 +193,9 @@ export class ArtifactManager implements DeploymentCoordinator {
 
   async rollbackRuntime(runtimeId: string): Promise<ArtifactOperation> {
     const operation = this.createOperation("rollback", { runtimeId });
+    if (await this.rejectAtCapacity(operation)) {
+      return operation;
+    }
     await this.persistPending(operation);
     const runtime = getRuntime(this.registry, runtimeId);
     const validation = this.validateMutableRuntime(runtime);
@@ -293,6 +297,12 @@ export class ArtifactManager implements DeploymentCoordinator {
         allocationId,
       );
       const operation = this.createOperation("activate", { runtimeId });
+      if (await this.rejectAtCapacity(operation)) {
+        throw new ArtifactStoreError(
+          "artifact_operation_capacity",
+          operation.error?.message ?? "artifact operation capacity has been reached",
+        );
+      }
       await this.persistPending(operation);
       await this.run(operation, async () => {
         const staged: StagedArtifact[] = [];
@@ -498,6 +508,15 @@ export class ArtifactManager implements DeploymentCoordinator {
     exceptAllocationId?: string,
   ): Promise<void> {
     const affectedRuntimeIds = this.affectedRuntimeIds(artifactIds);
+    const transitioning = affectedRuntimeIds.find((affectedRuntimeId) =>
+      this.options.isRuntimeTransitioning?.(affectedRuntimeId)
+    );
+    if (transitioning) {
+      throw new ArtifactStoreError(
+        "runtime_transition_in_progress",
+        `runtime ${transitioning} is changing lifecycle state`,
+      );
+    }
     const inUse = this.options.activeAllocations().some(
       (allocation) =>
         allocation.id !== exceptAllocationId &&
@@ -692,6 +711,23 @@ export class ArtifactManager implements DeploymentCoordinator {
       reason: code,
     });
     await this.pruneHistory();
+  }
+
+  private async rejectAtCapacity(operation: ArtifactOperation): Promise<boolean> {
+    const active = [...this.operations.values()].filter((candidate) =>
+      candidate.id !== operation.id
+      && (candidate.status === "pending" || candidate.status === "running")
+    ).length;
+    const limit = Math.max(1, this.options.maxPendingOperations ?? 64);
+    if (active < limit) {
+      return false;
+    }
+    await this.fail(
+      operation,
+      "artifact_operation_capacity",
+      `pending artifact operation capacity ${limit} has been reached`,
+    );
+    return true;
   }
 
   private async persistPending(operation: ArtifactOperation): Promise<void> {

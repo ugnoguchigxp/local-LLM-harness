@@ -97,6 +97,20 @@ export function parseRegistryDocuments(input: {
         `runtimes.yaml: runtime ${runtime.id} references unknown node ${runtime.node}`,
       );
     }
+    const compatible = runtime.capability.every((capability) => {
+      if (runtime.protocol === "openai.chat-completions.v1") {
+        return capability.startsWith("llm.");
+      }
+      if (runtime.protocol === "openai.audio-transcriptions.v1") {
+        return capability === "speech.stt";
+      }
+      return capability.startsWith("speech.tts");
+    });
+    if (!compatible) {
+      throw new RegistryError(
+        `runtimes.yaml: runtime ${runtime.id} has capabilities incompatible with ${runtime.protocol}`,
+      );
+    }
   }
 
   for (const node of nodes) {

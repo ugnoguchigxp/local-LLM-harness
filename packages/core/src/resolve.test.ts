@@ -15,10 +15,11 @@ const registry: Registry = {
     {
       id: "qwen-general",
       capability: ["llm.general"],
+      protocol: "openai.chat-completions.v1",
       backend: "systemd",
       node: "ai395-01",
       policy: { class: "resident" },
-      resources: { estimatedMemoryGB: 24 },
+      resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
         service: "a",
         healthPort: 1,
@@ -28,10 +29,11 @@ const registry: Registry = {
     {
       id: "qwen-worker",
       capability: ["llm.general"],
+      protocol: "openai.chat-completions.v1",
       backend: "systemd",
       node: "ai395-01",
       policy: { class: "preferred" },
-      resources: { estimatedMemoryGB: 24 },
+      resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
         service: "b",
         healthPort: 2,

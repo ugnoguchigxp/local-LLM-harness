@@ -4,13 +4,21 @@
   <p>
     この計画は、<a href="./concept.html">Local AI Provider コンセプト</a>を、
     現行コードから段階的に実装するための実行順序と完了条件へ落とし込み、その結果を記録したものです。
-    Route、Allocation、resource admission、安定Gateway、宣言済みartifact配備までを実装し、 optional
-    35Bの登録だけはbenchmarkとartifact metadataが揃うまでproduction gateで保留しています。
+    Route、Allocation、resource
+    admission、安定Gateway、宣言済みartifact配備までのコード実装を完了しました。
+    常駐daemonへの反映、実client canary、directory artifact、optional 35Bはproduction
+    gateを通していません。
+  </p>
+
+  <p>
+    完了した基盤をproduction運用、STT / TTS Gateway、bounded execution、再起動回復、directory
+    artifactへ発展させる工程は、<a href="./next-implementation-plan.html">次期実装計画</a
+    >を参照してください。
   </p>
 
   <dl>
     <dt>文書状態</dt>
-    <dd>主要Milestone実装完了・35B onboarding保留</dd>
+    <dd>Milestone 0から6のコード実装完了・attended production gate未完了</dd>
     <dt>作成日</dt>
     <dd><time>2026-08-28</time></dd>
     <dt>対象repository</dt>
@@ -27,8 +35,11 @@
       <li>特殊Runtimeは宣言済みrouteが明示された場合だけ選択する。</li>
       <li>選択したRuntimeを期限付きallocationへ固定し、処理途中で暗黙に変更しない。</li>
       <li>memoryと同時実行制約を満たす場合だけPreferred Runtimeを起動する。</li>
-      <li>利用側へ個別portを見せず、allocationを検証する安定した推論endpointを提供する。</li>
-      <li>宣言済みartifactに限り、APIから検証、staging、activation、rollbackできる。</li>
+      <li>LLM利用側へ個別portを見せず、allocationを検証する安定した推論endpointを提供する。</li>
+      <li>
+        宣言済みでchecksum付きの単一file
+        artifactに限り、APIから検証、staging、activation、rollbackできる。
+      </li>
       <li>35Bを将来登録する場合も速度特化routeからだけ利用でき、通常経路へ混入しない。</li>
     </ol>
 
@@ -54,7 +65,7 @@
       <thead>
         <tr>
           <th scope="col">領域</th>
-          <th scope="col">現在</th>
+          <th scope="col">着手時</th>
           <th scope="col">必要な変更</th>
         </tr>
       </thead>
@@ -152,7 +163,7 @@
         </tr>
         <tr>
           <th scope="row">Production hardening</th>
-          <td>実装完了</td>
+          <td>コード完了・運用gate未実施</td>
           <td>
             Bearer認証、管理token、readiness、低cardinality metrics、構造化event、graceful
             drain、入力上限、限定polkit rule、Preferred serviceのboot disable、型検査を追加
@@ -198,7 +209,7 @@
         <tr>
           <th scope="row"><code>llm-default</code></th>
           <td><code>qwen-general</code></td>
-          <td><code>qwen-worker-quality</code></td>
+          <td>呼出側が許可した場合だけ<code>qwen-worker-quality</code></td>
           <td>通常、リアルタイム、reasoning、codingの既定経路</td>
         </tr>
         <tr>
@@ -209,7 +220,7 @@
         </tr>
         <tr>
           <th scope="row"><code>llm-speed</code></th>
-          <td>当初は<code>qwen-worker-fast</code></td>
+          <td><code>qwen-worker-fast</code></td>
           <td>呼出側が許可した場合だけ<code>qwen-general</code></td>
           <td>速度特化routeが明示された場合だけ</td>
         </tr>
@@ -256,7 +267,7 @@
       - runtime: qwen-worker-fast
         purpose: primary</code></pre>
     <p>
-      field名とvalidation ruleはschemaで固定済みです。候補順は設定順を使用し、 Runtime
+      field名とvalidation ruleはschemaで固定済みです。候補順は設定順を使用し、Runtime
       idの偶然の辞書順では決めません。
     </p>
   </section>
@@ -940,9 +951,9 @@ admit when committed + incremental &lt;= usable</code></pre>
       <p>
         <code>larm-daemon.service</code
         >とcredential生成を含むinstall手順は実装・静的検証済みです。
-        この作業では既存systemd構成を変更しておらず、operatorがinstall手順を実行するまで port
+        この作業では既存systemd構成を変更しておらず、operatorがinstall手順を実行するまでport
         9810の常駐serviceは有効になりません。35B登録、実artifact
-        activation、速度workerの実機benchmarkは、 model metadataと運用影響を伴う別のattended
+        activation、速度workerの実機benchmarkは、model metadataと運用影響を伴う別のattended
         production gateです。
       </p>
     </aside>
@@ -970,7 +981,7 @@ admit when committed + incremental &lt;= usable</code></pre>
       Milestone 0とMilestone 1ではRuntime lifecycleを変更せず、Route
       schema、<code>routes.yaml</code>、純粋なselector、選択理由、shadow
       comparison、contract
-      testを実装しました。そのcontractを維持したまま、後続のAllocation、Gateway、 Artifact
+      testを実装しました。そのcontractを維持したまま、後続のAllocation、Gateway、Artifact
       lifecycleまで実装しています。
     </p>
   </section>

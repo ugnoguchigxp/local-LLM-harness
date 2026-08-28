@@ -3,14 +3,14 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Allocation, ArtifactDefinition, Registry } from "@larm/core";
+import type { Allocation, FileArtifactDefinition, Registry } from "@larm/core";
 import {
   ArtifactStoreError,
   LocalArtifactStore,
   type RuntimeBackend,
   type RuntimeHealth,
 } from "@larm/backends";
-import { ArtifactManager } from "./artifact-manager";
+import { ArtifactManager, type ArtifactOperation } from "./artifact-manager";
 import { Observer } from "./observer";
 
 function sha256(value: string): string {
@@ -19,12 +19,19 @@ function sha256(value: string): string {
 
 async function setup(
   activeAllocations: () => Allocation[] = () => [],
-  options: { sharedOwner?: boolean; historyLimit?: number; multipleArtifacts?: boolean } = {},
+  options: {
+    sharedOwner?: boolean;
+    historyLimit?: number;
+    multipleArtifacts?: boolean;
+    isRuntimeTransitioning?: (runtimeId: string) => boolean;
+    maxPendingOperations?: number;
+  } = {},
 ) {
   let sequence = 0;
   const root = await mkdtemp(join(tmpdir(), "larm-manager-"));
   const target = join(root, "active", "model.gguf");
-  const artifact: ArtifactDefinition = {
+  const artifact: FileArtifactDefinition = {
+    kind: "file",
     id: "tiny-model",
     role: "preferred-llm",
     source: "https://example.com/model.gguf",
@@ -35,7 +42,7 @@ async function setup(
     sha256: sha256("new-model"),
   };
   const secondTarget = join(root, "active", "model-two.gguf");
-  const secondArtifact: ArtifactDefinition | undefined = options.multipleArtifacts
+  const secondArtifact: FileArtifactDefinition | undefined = options.multipleArtifacts
     ? {
         ...artifact,
         id: "tiny-model-two",
@@ -56,10 +63,11 @@ async function setup(
       id: "worker",
       artifacts: ["tiny-model"],
       capability: ["llm.general"],
+      protocol: "openai.chat-completions.v1",
       backend: "systemd",
       node: "gnosis",
       policy: { class: "preferred" },
-      resources: { estimatedMemoryGB: 24 },
+      resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
         service: "worker.service",
         healthPort: 8080,
@@ -149,9 +157,11 @@ async function setup(
     observer,
     {
       activeAllocations,
+      isRuntimeTransitioning: options.isRuntimeTransitioning,
       pollIntervalMs: 0,
       random: () => String(++sequence),
       historyLimit: options.historyLimit,
+      maxPendingOperations: options.maxPendingOperations,
     },
   );
   await manager.initialize();
@@ -193,6 +203,27 @@ test("artifact manager stages, activates, health-checks, and rolls back a prefer
   }
 });
 
+test("artifact manager bounds pending operations", async () => {
+  const { root, manager } = await setup(() => [], { maxPendingOperations: 1 });
+  try {
+    const operations = (manager as unknown as {
+      operations: Map<string, ArtifactOperation>;
+    }).operations;
+    operations.set("artifact_op_busy", {
+      id: "artifact_op_busy",
+      kind: "stage",
+      artifactId: "tiny-model",
+      status: "running",
+      createdAt: new Date().toISOString(),
+    });
+    const rejected = await manager.stage("tiny-model");
+    expect(rejected.status).toBe("failed");
+    expect(rejected.error?.code).toBe("artifact_operation_capacity");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("artifact manager rejects activation while another allocation uses the runtime", async () => {
   let allocations: Allocation[] = [];
   const { root, manager } = await setup(() => allocations);
@@ -202,6 +233,7 @@ test("artifact manager rejects activation while another allocation uses the runt
     expect(manager.getOperation(staged.id)?.status).toBe("succeeded");
     allocations = [{
       id: "alloc_active",
+      bootEpoch: "epoch-test",
       status: "ready",
       requirements: [{ capability: "llm.general", route: "llm-speed" }],
       bindings: [{
@@ -226,6 +258,22 @@ test("artifact manager rejects activation while another allocation uses the runt
       status: "failed",
       error: expect.objectContaining({ code: "runtime_in_use" }),
     }));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("artifact manager rejects activation during a control-plane lifecycle transition", async () => {
+  const { root, manager } = await setup(() => [], {
+    isRuntimeTransitioning: (runtimeId) => runtimeId === "worker",
+  });
+  try {
+    await manager.stage("tiny-model");
+    await manager.flush();
+    const operation = await manager.activateRuntime("worker");
+    await manager.flush();
+    expect(operation.status).toBe("failed");
+    expect(operation.error?.code).toBe("runtime_transition_in_progress");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -7,10 +7,11 @@ function definition(listen: string, cls: "resident" | "preferred" = "preferred")
   return {
     id: cls === "resident" ? "qwen-general" : "qwen-worker",
     capability: ["llm.general"],
+    protocol: "openai.chat-completions.v1",
     backend: "llama-swap",
     node: "ai395-01",
     policy: { class: cls },
-    resources: { estimatedMemoryGB: 24 },
+    resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
     deployment: {
       modelId: cls === "resident" ? "qwen-general" : "qwen-worker",
       listen,
@@ -202,10 +203,11 @@ test("ignores systemd runtimes registered on this backend", async () => {
   const systemd: RuntimeDefinition = {
     id: "qwen-asr",
     capability: ["speech.stt"],
+    protocol: "openai.audio-transcriptions.v1",
     backend: "systemd",
     node: "gnosis",
     policy: { class: "resident" },
-    resources: { estimatedMemoryGB: 5 },
+    resources: { estimatedMemoryGB: 5, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
     deployment: {
       service: "qwen-asr.service",
       healthPort: 8081,

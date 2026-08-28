@@ -19,10 +19,11 @@ const registry: Registry = {
     {
       id: "qwen-general",
       capability: ["llm.general", "llm.reasoning", "llm.coding"],
+      protocol: "openai.chat-completions.v1",
       backend: "systemd",
       node: "gnosis",
       policy: { class: "resident" },
-      resources: { estimatedMemoryGB: 40 },
+      resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
         service: "llama-server.service",
         healthPort: 8080,
@@ -32,10 +33,11 @@ const registry: Registry = {
     {
       id: "qwen-worker-quality",
       capability: ["llm.general", "llm.reasoning", "llm.coding"],
+      protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
       node: "gnosis",
       policy: { class: "preferred" },
-      resources: { estimatedMemoryGB: 40 },
+      resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
         modelId: "qwen-quality",
         listen: "http://127.0.0.1:8083",
@@ -45,10 +47,11 @@ const registry: Registry = {
     {
       id: "qwen-worker-fast",
       capability: ["llm.general", "llm.coding"],
+      protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
       node: "gnosis",
       policy: { class: "preferred" },
-      resources: { estimatedMemoryGB: 38 },
+      resources: { estimatedMemoryGB: 38, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
         modelId: "qwen-fast",
         listen: "http://127.0.0.1:8083",
@@ -58,10 +61,11 @@ const registry: Registry = {
     {
       id: "qwen-35b-speed",
       capability: ["llm.general", "llm.coding"],
+      protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
       node: "gnosis",
       policy: { class: "preferred" },
-      resources: { estimatedMemoryGB: 48 },
+      resources: { estimatedMemoryGB: 48, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
         modelId: "qwen-35b-speed",
         listen: "http://127.0.0.1:8083",

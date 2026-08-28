@@ -8,15 +8,29 @@ test("metrics aggregate counters without logging request content", () => {
   expect(metrics.render()).toBe('larm_allocation_ready_total{route="llm-default"} 2\n');
 });
 
-test("metrics discard request and allocation identifiers to bound cardinality", () => {
+test("metrics discard identifiers and combinatorial labels to bound cardinality", () => {
   const metrics = new MetricsRegistry();
   metrics.record({
     name: "allocation_ready",
-    labels: { route: "llm-default", allocation: "alloc_1", client: "client_1" },
+    labels: {
+      route: "llm-default",
+      allocation: "alloc_1",
+      client: "client_1",
+      routes: "llm-default,llm-speed",
+      runtimes: "qwen-general,qwen-worker",
+      reasons: "primary-live,fallback-live",
+    },
   });
   metrics.record({
     name: "allocation_ready",
-    labels: { route: "llm-default", allocation: "alloc_2", client: "client_2" },
+    labels: {
+      route: "llm-default",
+      allocation: "alloc_2",
+      client: "client_2",
+      routes: "llm-default",
+      runtimes: "qwen-general",
+      reasons: "primary-live",
+    },
   });
   expect(metrics.render()).toBe('larm_allocation_ready_total{route="llm-default"} 2\n');
 });
@@ -28,6 +42,13 @@ test("metrics expose duration samples as sum and count", () => {
   expect(metrics.render()).toBe(
     "larm_gateway_duration_seconds_count 2\nlarm_gateway_duration_seconds_sum 2\n",
   );
+});
+
+test("execution gauges replace their current value and discard high-cardinality labels", () => {
+  const metrics = new MetricsRegistry();
+  metrics.setGauge("execution_active", { runtime: "qwen-general", request: "one" }, 1);
+  metrics.setGauge("execution_active", { runtime: "qwen-general", request: "two" }, 0);
+  expect(metrics.render()).toBe('larm_execution_active{runtime="qwen-general"} 0\n');
 });
 
 test("request tracker drains after all requests finish", async () => {

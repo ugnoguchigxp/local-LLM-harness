@@ -11,8 +11,9 @@ while IFS= read -r -d "" file; do
   case "${file}" in
     bin/*|*/bin/*|bin-*/*|*/bin-*/*|build/*|*/build/*|build-*/*|*/build-*/*|\
     dist/*|*/dist/*|vendor/*|*/vendor/*|models/*|*/models/*|\
+    coverage/*|*/coverage/*|.cache/*|*/.cache/*|__pycache__/*|*/__pycache__/*|\
     *.exe|*.dll|*.so|*.dylib|*.a|*.lib|*.pdb|*.bin|*.zip|*.7z|*.tar|*.tar.gz|*.tgz|\
-    *.gguf|*.safetensors|*.onnx|*.vvm|*.pt|*.pth|*.ckpt)
+    *.gguf|*.safetensors|*.onnx|*.vvm|*.pt|*.pth|*.ckpt|*.pyc|*.pyo|*.log)
       echo "forbidden repository artifact: ${file}" >&2
       failed=1
       continue

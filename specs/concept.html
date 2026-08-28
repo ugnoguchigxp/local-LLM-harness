@@ -2,7 +2,7 @@
   <h1>Local AI Provider コンセプト</h1>
 
   <p>
-    LARMは、Linux上の複数のローカルAI Runtimeを一つのProviderとして扱う、 source-onlyのcontrol
+    LARMは、Linux上の複数のローカルAI Runtimeを一つのProviderとして扱う、source-onlyのcontrol
     planeです。利用側はport、service名、quantization、起動方式ではなく、
     必要なcapabilityと明示的な実行意図を要求します。
   </p>
@@ -110,7 +110,7 @@ LLM / STT / TTS runtimes</code></pre>
           <th scope="row">27B optional workers</th>
           <td>256K contextのquality / fast worker</td>
           <td>Preferred</td>
-          <td>明示route、または既定Runtimeが利用不能な場合</td>
+          <td>明示route、または既定Runtimeが利用不能かつ呼出側がfallbackを許可した場合</td>
         </tr>
         <tr>
           <th scope="row">35B candidate</th>
@@ -177,7 +177,7 @@ LLM / STT / TTS runtimes</code></pre>
       <dt>Inference data plane</dt>
       <dd>
         LLMはallocationを検証するOpenAI互換<code>/v1/chat/completions</code>
-        Gatewayを提供します。 STTとTTSはprotocol
+        Gatewayを提供します。STTとTTSはprotocol
         contractを追加するまでresolveされたendpointを直接使用します。
       </dd>
       <dt>Artifact deployment API</dt>
@@ -244,7 +244,7 @@ LLM / STT / TTS runtimes</code></pre>
           <th scope="row">Capability lease</th>
           <td>実装済み</td>
           <td>
-            v1 AllocationがRoute、Runtime、期限、fallback理由をBindingへ固定。 既存lease
+            v1 AllocationがRoute、Runtime、期限、fallback理由をBindingへ固定。既存lease
             APIも内部Allocationへ変換
           </td>
         </tr>
@@ -263,22 +263,29 @@ LLM / STT / TTS runtimes</code></pre>
         </tr>
         <tr>
           <th scope="row">Stable inference Gateway</th>
-          <td>LLM実装済み</td>
+          <td>実装済み</td>
           <td>
-            Allocation固定のOpenAI互換chat completions、stream、timeout、cancel、body上限を実装
+            Allocation固定のLLM、STT、通常・表現TTS、voice
+            discovery、stream、timeout、cancel、body上限を実装
           </td>
         </tr>
         <tr>
           <th scope="row">Artifact deployment lifecycle</th>
-          <td>制限付き実装済み</td>
+          <td>実装済み</td>
           <td>
-            checksum付き単一fileのstage、atomic
-            activation、rollback、永続journal、共有artifact排他、 deadline
-            cancellationを実装。directory modelとResident activationはfail closed
+            checksum付き単一fileとdirectory snapshotのstage、atomic
+            activation、rollback、永続journal、共有artifact排他、deadline
+            cancellationを実装。Resident activationはfail closed
           </td>
         </tr>
       </tbody>
     </table>
+    <p>
+      bounded execution、boot epoch、idempotency、再起動回復、directory snapshot
+      artifactまで実装済みです。 実装結果は<a href="./implementation-completion.html"
+        >Milestone 8–14 実装完了記録</a
+      >、 live commissioningとcanaryは同文書のattended gateを参照します。35Bは登録していません。
+    </p>
   </section>
 
   <section id="past-plan-classification">

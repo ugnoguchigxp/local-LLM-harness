@@ -4,6 +4,7 @@ import { allocationSchema } from "./allocation";
 function allocation() {
   return {
     id: "alloc_test",
+    bootEpoch: "epoch-test",
     status: "ready",
     requirements: [{ capability: "llm.general", route: "llm-default" }],
     bindings: [{

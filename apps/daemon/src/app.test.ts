@@ -24,10 +24,11 @@ const registry: Registry = {
     {
       id: "qwen-general",
       capability: ["llm.general", "llm.reasoning"],
+      protocol: "openai.chat-completions.v1",
       backend: "systemd",
       node: "ai395-01",
       policy: { class: "resident" },
-      resources: { estimatedMemoryGB: 24 },
+      resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 1, queueTimeoutMs: 100 },
       deployment: {
         service: "llama-server.service",
         healthPort: 8080,
@@ -37,11 +38,18 @@ const registry: Registry = {
     },
     {
       id: "qwen-worker",
-      capability: ["llm.general"],
+      capability: ["llm.general", "llm.reasoning"],
+      protocol: "openai.chat-completions.v1",
       backend: "systemd",
       node: "ai395-01",
       policy: { class: "preferred" },
-      resources: { estimatedMemoryGB: 24, maxConcurrentAllocations: 1 },
+      resources: {
+        estimatedMemoryGB: 24,
+        maxConcurrentAllocations: 1,
+        maxConcurrentRequests: 1,
+        maxQueuedRequests: 1,
+        queueTimeoutMs: 100,
+      },
       deployment: {
         service: "qwen-tts.service",
         healthPort: 8082,
@@ -57,7 +65,7 @@ const registry: Registry = {
   routes: [
     {
       id: "llm-default",
-      capabilities: ["llm.general"],
+      capabilities: ["llm.general", "llm.reasoning"],
       explicitOnly: false,
       candidates: [
         { runtime: "qwen-general", purpose: "primary" },
@@ -139,7 +147,13 @@ test("GET /health", async () => {
   const { app } = await makeApp(true);
   const res = await app.request("/health");
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ status: "ok" });
+  expect(await res.json()).toEqual({
+    status: "ok",
+    version: "test",
+    configRevision: "test",
+    bootEpoch: "epoch-local",
+  });
+  expect(res.headers.get("x-larm-boot-epoch")).toBe("epoch-local");
 });
 
 test("GET /runtimes lists registry definitions", async () => {
@@ -625,6 +639,23 @@ test("v1 admission enforces declared runtime allocation capacity", async () => {
   });
 });
 
+test("control plane bounds active allocations even when runtime capacity is unbounded", async () => {
+  const { app } = await makeApp(true, false, { maxActiveAllocations: 1 });
+  const create = () => app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  expect((await create()).status).toBe(200);
+  const full = await create();
+  expect(full.status).toBe(503);
+  expect(await full.json()).toEqual({
+    error: expect.objectContaining({ code: "allocation_capacity" }),
+  });
+});
+
 test("allocation admission rejects a runtime reserved for artifact mutation", async () => {
   const { app } = await makeApp(true, false, {
     isRuntimeMutating: (runtimeId) => runtimeId === "qwen-worker",
@@ -700,7 +731,7 @@ test("gateway proxies streaming chat through the allocation binding", async () =
   });
   expect(tracker.count()).toBe(0);
   expect(metrics.render()).toContain("larm_gateway_request_total");
-  expect(events.map((event) => event.name)).toEqual([
+  expect(events.filter((event) => event.name.startsWith("gateway_")).map((event) => event.name)).toEqual([
     "gateway_request_started",
     "gateway_request_completed",
   ]);
@@ -836,6 +867,53 @@ test("gateway timeout terminates a stalled upstream response stream", async () =
   expect(events.at(-1)?.labels?.outcome).toBe("timeout");
 });
 
+test("allocation release cancels both active and queued gateway requests", async () => {
+  let markStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const { app } = await makeApp(true, false, {}, {
+    gatewayFetch: async (_input, init) => {
+      markStarted?.();
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        const cancel = () => reject(signal?.reason ?? new Error("cancelled"));
+        if (signal?.aborted) cancel();
+        else signal?.addEventListener("abort", cancel, { once: true });
+      });
+    },
+  });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await created.json()) as { id: string }).id;
+  const invoke = () => app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-larm-allocation-id": allocationId,
+    },
+    body: "{}",
+  });
+  const active = invoke();
+  await started;
+  const queued = invoke();
+  await Bun.sleep(1);
+  expect((await app.request(`/v1/allocations/${allocationId}`, { method: "DELETE" })).status)
+    .toBe(200);
+  const responses = await Promise.all([active, queued]);
+  expect(responses.map((response) => response.status)).toEqual([409, 409]);
+  for (const response of responses) {
+    expect(await response.json()).toEqual({
+      error: expect.objectContaining({ code: "allocation_not_ready" }),
+    });
+  }
+});
+
 test("allocation resolve fails closed when its fixed runtime is no longer live", async () => {
   const { app, observer, probes } = await makeApp(true);
   const created = await app.request("/v1/allocations", {
@@ -876,6 +954,214 @@ test("generated identifiers remain unique when an injected random source repeats
   expect(first.id).not.toBe(second.id);
 });
 
+test("allocation creation is idempotent and rejects key reuse with a different request", async () => {
+  const { app } = await makeApp(true);
+  const create = (route: string) => app.request("/v1/allocations", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": "ambient-turn-1",
+    },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route }],
+    }),
+  });
+  const responses = await Promise.all([create("llm-default"), create("llm-default")]);
+  const bodies = await Promise.all(
+    responses.map((response) => response.json() as Promise<{ id: string; bootEpoch: string }>),
+  );
+  expect(bodies[1]?.id).toBe(bodies[0]?.id);
+  expect(responses.filter((response) =>
+    response.headers.get("x-larm-idempotent-replay") === "true"
+  )).toHaveLength(1);
+  expect(bodies[0]?.bootEpoch).toBe("epoch-local");
+  const conflict = await create("llm-speed");
+  expect(conflict.status).toBe(409);
+  expect(await conflict.json()).toEqual({
+    error: expect.objectContaining({ code: "idempotency_conflict" }),
+  });
+});
+
+test("allocation idempotency normalizes requirement order", async () => {
+  const { app } = await makeApp(true);
+  const create = (requirements: { capability: string; route: string }[]) =>
+    app.request("/v1/allocations", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "ambient-multi-capability",
+      },
+      body: JSON.stringify({ requirements }),
+    });
+  const requirements = [
+    { capability: "llm.general", route: "llm-default" },
+    { capability: "llm.reasoning", route: "llm-default" },
+  ];
+  const first = await create(requirements);
+  const second = await create([...requirements].reverse());
+  const firstBody = (await first.json()) as { id: string };
+  const secondBody = (await second.json()) as { id: string };
+  expect(second.status).toBe(200);
+  expect(second.headers.get("x-larm-idempotent-replay")).toBe("true");
+  expect(secondBody.id).toBe(firstBody.id);
+});
+
+test("idempotency capacity fails closed without evicting live results", async () => {
+  const { app } = await makeApp(true, false, {}, { idempotencyLimit: 1 });
+  const create = (key: string) => app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json", "idempotency-key": key },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const first = await create("capacity-one");
+  const firstBody = (await first.json()) as { id: string };
+  const full = await create("capacity-two");
+  expect(full.status).toBe(503);
+  expect(await full.json()).toEqual({
+    error: expect.objectContaining({ code: "idempotency_capacity" }),
+  });
+  const replay = await create("capacity-one");
+  expect(replay.status).toBe(200);
+  expect(replay.headers.get("x-larm-idempotent-replay")).toBe("true");
+  expect((await replay.json() as { id: string }).id).toBe(firstBody.id);
+});
+
+test("gateway and idempotency headers reject malformed identifiers", async () => {
+  const { app } = await makeApp(true);
+  const emptyKey = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json", "idempotency-key": "" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  expect(emptyKey.status).toBe(400);
+
+  const invalidAllocation = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": "alloc_epoch-local_bad:identifier",
+    },
+    body: "{}",
+  });
+  expect(invalidAllocation.status).toBe(400);
+
+  const invalidCapability = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": "alloc_epoch-local_missing",
+      "x-larm-capability": "llm/general",
+    },
+    body: "{}",
+  });
+  expect(invalidCapability.status).toBe(400);
+});
+
+test("control API rejects invalid UTF-8 JSON", async () => {
+  const { app } = await makeApp(true);
+  const response = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: new Uint8Array([0xff]),
+  });
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({
+    error: expect.objectContaining({ code: "bad_request" }),
+  });
+});
+
+test("control API rejects unknown request fields", async () => {
+  const { app } = await makeApp(true);
+  const response = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+      runtime: "qwen-worker",
+    }),
+  });
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({
+    error: expect.objectContaining({ code: "bad_request" }),
+  });
+});
+
+test("allocation IDs from an earlier boot epoch fail with an explicit lifecycle error", async () => {
+  const { app } = await makeApp(true);
+  const response = await app.request("/v1/allocations/alloc_epoch-previous_123");
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({
+    error: expect.objectContaining({ code: "allocation_epoch_expired" }),
+  });
+});
+
+test("startup reconciliation stops only orphaned HOT preferred runtimes", async () => {
+  const { control, log } = await makeApp(true, true);
+  expect(await control.reconcileOrphanedPreferred()).toEqual(["qwen-worker"]);
+  expect(log.stop).toEqual(["qwen-worker"]);
+});
+
+test("startup reconciliation preserves a preferred runtime required by a legacy lease", async () => {
+  const { control, log } = await makeApp(true, true);
+  const leases = (control as unknown as {
+    leases: Map<string, { id: string; capabilities: string[]; createdAt: string }>;
+  }).leases;
+  leases.set("legacy", {
+    id: "legacy",
+    capabilities: ["llm.general"],
+    createdAt: new Date().toISOString(),
+  });
+  expect(await control.reconcileOrphanedPreferred()).toEqual([]);
+  expect(log.stop).toEqual([]);
+});
+
+test("allocation fails closed while startup reconciliation is stopping its runtime", async () => {
+  const probes = new Map<string, RuntimeHealth>([
+    ["qwen-general", probe("qwen-general", true)],
+    ["qwen-worker", probe("qwen-worker", true)],
+  ]);
+  let markStopStarted!: () => void;
+  let releaseStop!: () => void;
+  const stopStarted = new Promise<void>((resolve) => {
+    markStopStarted = resolve;
+  });
+  const stopGate = new Promise<void>((resolve) => {
+    releaseStop = resolve;
+  });
+  const backend = stubBackend(probes, { ensure: [], stop: [] });
+  backend.stop = async (id) => {
+    markStopStarted();
+    await stopGate;
+    probes.set(id, probe(id, false));
+  };
+  const observer = new Observer(registry, backend);
+  await observer.tick();
+  const control = new ControlPlane(registry, backend, observer, {
+    random: () => "fixed",
+  });
+  const app = createApp({ registry, getState: () => observer.getState(), control });
+
+  const reconciliation = control.reconcileOrphanedPreferred();
+  await stopStarted;
+  const allocation = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-speed" }],
+    }),
+  });
+  expect(allocation.status).toBe(409);
+  expect(await allocation.json()).toEqual({
+    error: expect.objectContaining({ code: "runtime_transition_in_progress" }),
+  });
+  releaseStop();
+  expect(await reconciliation).toEqual(["qwen-worker"]);
+});
+
 test("legacy lease is detached if its backing allocation expires", async () => {
   let now = Date.now();
   const { app, control } = await makeApp(true, false, { now: () => now });
@@ -903,6 +1189,14 @@ test("drain rejects new allocations and readiness", async () => {
     artifactManager,
     managementToken: "manage",
   });
+  const allocated = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await allocated.json()) as { id: string }).id;
   control.beginDrain();
   expect((await app.request("/ready")).status).toBe(503);
   expect((await app.request("/v1/allocations", {
@@ -916,6 +1210,55 @@ test("drain rejects new allocations and readiness", async () => {
     method: "POST",
     headers: { "x-larm-management-token": "manage" },
   })).status).toBe(503);
+  expect((await app.request(`/v1/allocations/${allocationId}/renew`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ttlSeconds: 300 }),
+  })).status).toBe(503);
+  expect((await app.request(`/v1/allocations/${allocationId}/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capability: "llm.general" }),
+  })).status).toBe(503);
+  expect((await app.request("/resolve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capability: "llm.general" }),
+  })).status).toBe(503);
+});
+
+test("drain never schedules a new idle runtime stop", async () => {
+  const { app, control, log } = await makeApp(true, true);
+  const allocated = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-speed" }],
+    }),
+  });
+  const allocationId = ((await allocated.json()) as { id: string }).id;
+  control.beginDrain();
+  expect((await app.request(`/v1/allocations/${allocationId}`, { method: "DELETE" })).status)
+    .toBe(200);
+  await control.flush();
+  expect(log.stop).toEqual([]);
+});
+
+test("control flush waits for work enqueued by an in-flight task", async () => {
+  const { control } = await makeApp(true);
+  const order: string[] = [];
+  const enqueue = (work: () => Promise<void>) => {
+    (control as unknown as { enqueue: (task: () => Promise<void>) => void }).enqueue(work);
+  };
+  enqueue(async () => {
+    order.push("first");
+    enqueue(async () => {
+      await Bun.sleep(1);
+      order.push("second");
+    });
+  });
+  await control.flush();
+  expect(order).toEqual(["first", "second"]);
 });
 
 test("artifact deployment API requires the separate management token", async () => {

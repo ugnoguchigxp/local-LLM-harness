@@ -16,19 +16,27 @@ const registry: Registry = {
     {
       id: "resident",
       capability: ["llm.general"],
+      protocol: "openai.chat-completions.v1",
       backend: "systemd",
       node: "gnosis",
       policy: { class: "resident" },
-      resources: { estimatedMemoryGB: 24 },
+      resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: { service: "resident", healthPort: 1, endpoint: "http://127.0.0.1:1" },
     },
     {
       id: "worker",
       capability: ["llm.general", "llm.coding"],
+      protocol: "openai.chat-completions.v1",
       backend: "systemd",
       node: "gnosis",
       policy: { class: "preferred" },
-      resources: { estimatedMemoryGB: 24, maxConcurrentAllocations: 1 },
+      resources: {
+        estimatedMemoryGB: 24,
+        maxConcurrentAllocations: 1,
+        maxConcurrentRequests: 1,
+        maxQueuedRequests: 0,
+        queueTimeoutMs: 100,
+      },
       deployment: { service: "worker", healthPort: 2, endpoint: "http://127.0.0.1:2" },
     },
   ],
@@ -66,6 +74,7 @@ function state(runtimes: RuntimeSnapshot[]): ClusterState {
 function allocation(runtime: string): Allocation {
   return {
     id: "alloc_existing",
+    bootEpoch: "epoch-test",
     status: "ready",
     requirements: [{ capability: "llm.general", route: "llm-speed" }],
     bindings: [{

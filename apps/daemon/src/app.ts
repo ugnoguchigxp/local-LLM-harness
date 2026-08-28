@@ -1,4 +1,4 @@
-import type { ClusterState, Registry } from "@larm/core";
+import type { ClusterState, Registry, RuntimeProtocol } from "@larm/core";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   allocationRenewRequestSchema,
@@ -7,12 +7,19 @@ import {
   prepareRequestSchema,
   releaseRequestSchema,
   resolveRequestSchema,
+  getRuntime,
+  selectProtocolBinding,
   type Allocation,
+  type AllocationRequest,
 } from "@larm/core";
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import type { ControlEvent, ControlPlane } from "./controller";
 import type { ArtifactManager } from "./artifact-manager";
 import type { MetricsRegistry, RequestTracker } from "./metrics";
+import type { DaemonIdentity } from "./identity";
+import { ExecutionGate } from "./execution-gate";
+import { proxyGateway } from "./gateway";
+import { readBodyLimited, RequestBodyError } from "./http-body";
 
 export type FetchLike = (
   input: string | URL | Request,
@@ -32,10 +39,15 @@ export type AppDeps = {
   controlMaxBodyBytes?: number;
   gatewayMaxBodyBytes?: number;
   gatewayTimeoutMs?: number;
+  speechMaxBodyBytes?: number;
   stateMaxAgeMs?: number;
   now?: () => number;
   random?: () => string;
   onEvent?: (event: ControlEvent) => void;
+  identity?: DaemonIdentity;
+  executionGate?: ExecutionGate;
+  idempotencyTtlMs?: number;
+  idempotencyLimit?: number;
 };
 
 function errorBody(code: string, message: string) {
@@ -52,6 +64,7 @@ export function publicRuntime(runtime: Registry["runtimes"][number]) {
   return {
     id: runtime.id,
     capability: runtime.capability,
+    protocol: runtime.protocol,
     backend: runtime.backend,
     node: runtime.node,
     policy: runtime.policy,
@@ -67,103 +80,6 @@ export function publicAllocation(allocation: Allocation) {
   };
 }
 
-class RequestBodyError extends Error {
-  constructor(
-    readonly code: "bad_request" | "body_too_large",
-    message: string,
-    readonly status: 400 | 413,
-  ) {
-    super(message);
-    this.name = "RequestBodyError";
-  }
-}
-
-function validateContentLength(request: Request, maxBytes: number): void {
-  const header = request.headers.get("content-length");
-  if (header === null) {
-    return;
-  }
-  if (!/^\d+$/.test(header.trim())) {
-    throw new RequestBodyError("bad_request", "invalid content-length header", 400);
-  }
-  if (Number(header) > maxBytes) {
-    throw new RequestBodyError("body_too_large", `request exceeds ${maxBytes} bytes`, 413);
-  }
-}
-
-function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const rejectAbort = () => {
-      cleanup();
-      reject(
-        signal.reason instanceof Error ? signal.reason : new Error("request aborted"),
-      );
-    };
-    const cleanup = () => signal.removeEventListener("abort", rejectAbort);
-    if (signal.aborted) {
-      rejectAbort();
-      return;
-    }
-    signal.addEventListener("abort", rejectAbort, { once: true });
-    promise.then(
-      (value) => {
-        cleanup();
-        resolve(value);
-      },
-      (err) => {
-        cleanup();
-        reject(err);
-      },
-    );
-  });
-}
-
-async function readBodyLimited(
-  request: Request,
-  maxBytes: number,
-  signal?: AbortSignal,
-): Promise<Uint8Array> {
-  validateContentLength(request, maxBytes);
-  if (!request.body) {
-    return new Uint8Array();
-  }
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const read = reader.read();
-      const chunk = signal ? await withAbort(read, signal) : await read;
-      if (chunk.done) {
-        break;
-      }
-      total += chunk.value.byteLength;
-      if (total > maxBytes) {
-        throw new RequestBodyError(
-          "body_too_large",
-          `request exceeds ${maxBytes} bytes`,
-          413,
-        );
-      }
-      chunks.push(chunk.value);
-    }
-  } catch (err) {
-    try {
-      await reader.cancel(err);
-    } catch {
-      // Preserve the original input or abort error.
-    }
-    throw err;
-  }
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
-}
-
 async function readJson(c: { req: { raw: Request } }, maxBytes: number): Promise<unknown> {
   let body: Uint8Array;
   try {
@@ -175,15 +91,61 @@ async function readJson(c: { req: { raw: Request } }, maxBytes: number): Promise
     throw new RequestBodyError("bad_request", "request body could not be read", 400);
   }
   try {
-    return JSON.parse(new TextDecoder().decode(body));
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
   } catch {
-    throw new RequestBodyError("bad_request", "request body must be valid JSON", 400);
+    throw new RequestBodyError("bad_request", "request body must be valid UTF-8 JSON", 400);
   }
+}
+
+function normalizedAllocationRequestHash(request: AllocationRequest): string {
+  const normalized = {
+    ...request,
+    requirements: [...request.requirements].sort((left, right) => {
+      const leftKey = `${left.capability}\0${left.route}`;
+      const rightKey = `${right.capability}\0${right.route}`;
+      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    }),
+  };
+  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
 
 export function createApp(deps: AppDeps) {
   const app = new Hono();
   const controlMaxBodyBytes = deps.controlMaxBodyBytes ?? 64 * 1024;
+  const identity = deps.identity ?? {
+    version: "test",
+    configRevision: "test",
+    bootEpoch: deps.control.getBootEpoch(),
+  };
+  const executionGate = deps.executionGate ?? new ExecutionGate({
+    now: deps.now,
+    onState: (runtime, state) => {
+      deps.metrics?.setGauge("execution_active", { runtime }, state.active);
+      deps.metrics?.setGauge("execution_queued", { runtime }, state.queued);
+    },
+    onEvent: (event) => {
+      deps.metrics?.record(event);
+      deps.onEvent?.(event);
+    },
+  });
+  type AllocationApiResult = {
+    status: 200 | 202 | 400 | 403 | 404 | 409 | 503;
+    body: unknown;
+  };
+  const idempotency = new Map<string, {
+    requestHash: string;
+    result: Promise<AllocationApiResult>;
+    expiresAt: number;
+    settled: boolean;
+  }>();
+  const pruneIdempotency = () => {
+    const now = deps.now?.() ?? Date.now();
+    for (const [key, entry] of idempotency) {
+      if (entry.settled && entry.expiresAt <= now) {
+        idempotency.delete(key);
+      }
+    }
+  };
 
   app.onError((err, c) => {
     if (err instanceof RequestBodyError) {
@@ -194,6 +156,7 @@ export function createApp(deps: AppDeps) {
   });
 
   app.use("*", async (c, next) => {
+    c.header("x-larm-boot-epoch", identity.bootEpoch);
     const publicPath = c.req.path === "/health" || c.req.path === "/ready";
     if (deps.apiToken && !publicPath) {
       const expected = `Bearer ${deps.apiToken}`;
@@ -220,7 +183,94 @@ export function createApp(deps: AppDeps) {
   app.use("/v1/deployments/*", requireManagement);
   app.use("/v1/artifact-operations/*", requireManagement);
 
-  app.get("/health", (c) => c.json({ status: "ok" }));
+  const handleGateway = async (
+    c: Context,
+    options: {
+      protocol: RuntimeProtocol;
+      upstreamPath: string;
+      bodyMode: "buffered" | "stream" | "none";
+      maxBodyBytes: number;
+      capability?: string;
+    },
+  ): Promise<Response> => {
+    if (deps.control.isDraining()) {
+      return c.json(errorBody("draining", "control plane is draining"), 503);
+    }
+    const allocationId = c.req.header("x-larm-allocation-id");
+    if (allocationId === undefined) {
+      return c.json(errorBody("allocation_required", "x-larm-allocation-id is required"), 400);
+    }
+    if (!/^alloc_[a-zA-Z0-9._-]{1,186}$/.test(allocationId)) {
+      return c.json(errorBody("bad_request", "x-larm-allocation-id is invalid"), 400);
+    }
+    const requestedCapability = options.capability ?? c.req.header("x-larm-capability");
+    if (
+      requestedCapability !== undefined
+      && !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(requestedCapability)
+    ) {
+      return c.json(errorBody("bad_request", "x-larm-capability is invalid"), 400);
+    }
+    const allocation = deps.control.getAllocation(allocationId);
+    if (!allocation) {
+      const missing = deps.control.allocationLookupError(allocationId);
+      return c.json(missing.body, missing.status);
+    }
+    const selected = selectProtocolBinding({
+      registry: deps.registry,
+      allocation,
+      protocol: options.protocol,
+      capability: requestedCapability,
+    });
+    if (!selected.ok) {
+      const status = selected.reason === "capability_not_allocated"
+        || selected.reason === "protocol_not_allocated"
+        ? 404
+        : 409;
+      return c.json(errorBody(selected.reason, selected.reason.replaceAll("_", " ")), status);
+    }
+    const resolved = deps.control.resolveAllocation(allocationId, selected.binding.capability);
+    if (resolved.status !== 200 || !("endpoint" in resolved.body)) {
+      return c.json(resolved.body, resolved.status as 404 | 409 | 503);
+    }
+    const runtime = getRuntime(deps.registry, resolved.body.runtime);
+    if (!runtime || runtime.protocol !== options.protocol) {
+      return c.json(errorBody("protocol_mismatch", "allocated runtime protocol does not match"), 409);
+    }
+
+    return await proxyGateway({
+      request: c.req.raw,
+      allocationId,
+      protocol: options.protocol,
+      upstreamPath: options.upstreamPath,
+      runtime,
+      bodyMode: options.bodyMode,
+      maxBodyBytes: options.maxBodyBytes,
+      timeoutMs: deps.gatewayTimeoutMs ?? 300_000,
+      bootEpoch: identity.bootEpoch,
+      executionGate,
+      fetchImpl: deps.gatewayFetch,
+      metrics: deps.metrics,
+      requestTracker: deps.requestTracker,
+      lifecycleSignal: deps.control.getAllocationSignal(allocationId),
+      now: deps.now,
+      random: deps.random,
+      onEvent: deps.onEvent,
+      revalidate: () => {
+        const current = deps.control.resolveAllocation(allocationId, selected.binding.capability);
+        if (current.status !== 200 || !("endpoint" in current.body)) {
+          return { ok: false, status: current.status, body: current.body };
+        }
+        return { ok: true, binding: current.body };
+      },
+    });
+  };
+
+  app.get("/health", (c) => c.json({
+    status: "ok",
+    version: identity.version,
+    configRevision: identity.configRevision,
+    bootEpoch: identity.bootEpoch,
+  }));
 
   app.get("/ready", (c) => {
     const generated = Date.parse(deps.getState().generatedAt);
@@ -282,15 +332,75 @@ export function createApp(deps: AppDeps) {
         return c.json(errorBody("forbidden", "valid management token required for deployment"), 403);
       }
     }
-    const result = await deps.control.allocate(parsed.data);
-    const body = "id" in result.body ? publicAllocation(result.body as Allocation) : result.body;
-    return c.json(body, result.status as 200 | 202 | 400 | 403 | 404 | 409 | 503);
+    const idempotencyKey = c.req.header("idempotency-key");
+    if (idempotencyKey !== undefined && !/^[a-zA-Z0-9._:-]{1,128}$/.test(idempotencyKey)) {
+      return c.json(errorBody("bad_request", "Idempotency-Key is invalid"), 400);
+    }
+    const requestHash = normalizedAllocationRequestHash(parsed.data);
+    if (idempotencyKey !== undefined) {
+      pruneIdempotency();
+      const existing = idempotency.get(idempotencyKey);
+      if (existing) {
+        if (existing.requestHash !== requestHash) {
+          return c.json(errorBody(
+            "idempotency_conflict",
+            "Idempotency-Key was already used for a different allocation request",
+          ), 409);
+        }
+        const replay = await existing.result;
+        c.header("x-larm-idempotent-replay", "true");
+        return c.json(replay.body, replay.status);
+      }
+      if (idempotency.size >= (deps.idempotencyLimit ?? 1_000)) {
+        return c.json(errorBody(
+          "idempotency_capacity",
+          "idempotency result capacity is temporarily exhausted",
+        ), 503);
+      }
+    }
+    const allocationResult = (async (): Promise<AllocationApiResult> => {
+      const result = await deps.control.allocate(parsed.data);
+      return {
+        status: result.status,
+        body: "id" in result.body ? publicAllocation(result.body as Allocation) : result.body,
+      };
+    })();
+    const entry = idempotencyKey !== undefined
+      ? {
+        requestHash,
+        result: allocationResult,
+        expiresAt: (deps.now?.() ?? Date.now()) + (deps.idempotencyTtlMs ?? 300_000),
+        settled: false,
+      }
+      : undefined;
+    if (idempotencyKey !== undefined && entry) {
+      idempotency.set(idempotencyKey, entry);
+      void allocationResult.then(
+        (result) => {
+          entry.settled = true;
+          if (result.status !== 200 && result.status !== 202) {
+            if (idempotency.get(idempotencyKey) === entry) {
+              idempotency.delete(idempotencyKey);
+            }
+          }
+        },
+        () => {
+          entry.settled = true;
+          if (idempotency.get(idempotencyKey) === entry) {
+            idempotency.delete(idempotencyKey);
+          }
+        },
+      );
+    }
+    const result = await allocationResult;
+    return c.json(result.body, result.status);
   });
 
   app.get("/v1/allocations/:id", (c) => {
     const allocation = deps.control.getAllocation(c.req.param("id"));
     if (!allocation) {
-      return c.json(errorBody("not_found", "allocation not found"), 404);
+      const missing = deps.control.allocationLookupError(c.req.param("id"));
+      return c.json(missing.body, missing.status);
     }
     return c.json(publicAllocation(allocation));
   });
@@ -302,7 +412,7 @@ export function createApp(deps: AppDeps) {
     }
     const result = deps.control.renewAllocation(c.req.param("id"), parsed.data.ttlSeconds);
     const body = "id" in result.body ? publicAllocation(result.body as Allocation) : result.body;
-    return c.json(body, result.status as 200 | 404 | 409);
+    return c.json(body, result.status as 200 | 404 | 409 | 503);
   });
 
   app.post("/v1/allocations/:id/resolve", async (c) => {
@@ -317,196 +427,36 @@ export function createApp(deps: AppDeps) {
   app.delete("/v1/allocations/:id", async (c) => {
     const result = await deps.control.releaseAllocation(c.req.param("id"));
     const body = "id" in result.body ? publicAllocation(result.body as Allocation) : result.body;
-    return c.json(body, result.status as 200 | 404);
+    return c.json(body, result.status as 200 | 404 | 409);
   });
 
-  app.post("/v1/chat/completions", async (c) => {
-    if (deps.control.isDraining()) {
-      return c.json(errorBody("draining", "control plane is draining"), 503);
-    }
-    const allocationId = c.req.header("x-larm-allocation-id");
-    if (!allocationId) {
-      return c.json(errorBody("allocation_required", "x-larm-allocation-id is required"), 400);
-    }
-    const binding = deps.control.resolveAllocation(allocationId, "llm.general");
-    if (binding.status !== 200 || !("endpoint" in binding.body)) {
-      return c.json(binding.body, binding.status as 404 | 409 | 503);
-    }
+  app.post("/v1/chat/completions", (c) => handleGateway(c, {
+    protocol: "openai.chat-completions.v1",
+    upstreamPath: "/v1/chat/completions",
+    bodyMode: "buffered",
+    maxBodyBytes: deps.gatewayMaxBodyBytes ?? 4 * 1024 * 1024,
+  }));
 
-    const requestId = `req_${(deps.random ?? (() => crypto.randomUUID()))()}`;
-    const startedAt = deps.now?.() ?? Date.now();
-    let outcome = "pending";
-    deps.onEvent?.({
-      name: "gateway_request_started",
-      labels: {
-        request: requestId,
-        allocation: allocationId,
-        runtime: binding.body.runtime,
-      },
-    });
-    const finishTracked = deps.requestTracker?.begin() ?? (() => undefined);
-    const abort = new AbortController();
-    const clientSignal = c.req.raw.signal;
-    let timedOut = false;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    let finished = false;
-    const finish = () => {
-      if (finished) {
-        return;
-      }
-      finished = true;
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-      clientSignal.removeEventListener("abort", abortFromClient);
-      finishTracked();
-      deps.metrics?.record({
-        name: "gateway_duration_seconds",
-        labels: { runtime: binding.body.runtime },
-        value: Math.max(0, ((deps.now?.() ?? Date.now()) - startedAt) / 1_000),
-      });
-      deps.onEvent?.({
-        name: "gateway_request_completed",
-        labels: {
-          request: requestId,
-          allocation: allocationId,
-          runtime: binding.body.runtime,
-          outcome,
-        },
-      });
-    };
-    const abortFromClient = () => {
-      outcome = "client_cancelled";
-      abort.abort(clientSignal.reason);
-      finish();
-    };
-    timeout = setTimeout(() => {
-      timedOut = true;
-      outcome = "timeout";
-      abort.abort(new Error("gateway timeout"));
-      finish();
-    }, deps.gatewayTimeoutMs ?? 300_000);
-    timeout.unref?.();
-    if (clientSignal.aborted) {
-      abortFromClient();
-    } else {
-      clientSignal.addEventListener("abort", abortFromClient, { once: true });
-    }
+  app.post("/v1/audio/transcriptions", (c) => handleGateway(c, {
+    protocol: "openai.audio-transcriptions.v1",
+    upstreamPath: "/v1/audio/transcriptions",
+    bodyMode: "stream",
+    maxBodyBytes: deps.speechMaxBodyBytes ?? 257 * 1024 * 1024,
+  }));
 
-    const gatewayFailure = (
-      code: string,
-      message: string,
-      status: 400 | 413 | 502 | 504,
-      result: string,
-    ) => {
-      outcome = result;
-      deps.metrics?.record({ name: "gateway_request", labels: { result } });
-      finish();
-      return c.json(errorBody(code, message), status);
-    };
+  app.post("/v1/audio/speech", (c) => handleGateway(c, {
+    protocol: "openai.audio-speech.v1",
+    upstreamPath: "/v1/audio/speech",
+    bodyMode: "buffered",
+    maxBodyBytes: deps.gatewayMaxBodyBytes ?? 4 * 1024 * 1024,
+  }));
 
-    const maxBodyBytes = deps.gatewayMaxBodyBytes ?? 4 * 1024 * 1024;
-    let body: Uint8Array;
-    try {
-      body = await readBodyLimited(c.req.raw, maxBodyBytes, abort.signal);
-    } catch (err) {
-      if (timedOut) {
-        return gatewayFailure("gateway_timeout", "gateway request timed out", 504, "timeout");
-      }
-      if (clientSignal.aborted) {
-        return gatewayFailure("request_cancelled", "client cancelled the request", 400, "client_cancelled");
-      }
-      if (err instanceof RequestBodyError) {
-        return gatewayFailure(err.code, err.message, err.status, err.code);
-      }
-      return gatewayFailure("bad_request", "request body could not be read", 400, "bad_request");
-    }
-
-    const endpoint = binding.body.endpoint.replace(/\/+$/, "");
-    const target = `${endpoint}/v1/chat/completions`;
-    let upstream: Response;
-    try {
-      const fetchRequest = (deps.gatewayFetch ?? fetch)(target, {
-        method: "POST",
-        headers: {
-          "content-type": c.req.header("content-type") ?? "application/json",
-          accept: c.req.header("accept") ?? "application/json",
-          "x-request-id": requestId,
-        },
-        body,
-        signal: abort.signal,
-      });
-      upstream = await withAbort(fetchRequest, abort.signal);
-    } catch (err) {
-      if (timedOut) {
-        return gatewayFailure("gateway_timeout", "upstream request timed out", 504, "timeout");
-      }
-      if (clientSignal.aborted) {
-        return gatewayFailure("request_cancelled", "client cancelled the request", 400, "client_cancelled");
-      }
-      return gatewayFailure(
-        "upstream_unavailable",
-        "upstream request failed",
-        502,
-        "upstream_error",
-      );
-    }
-
-    const ttfbSeconds = ((deps.now?.() ?? Date.now()) - startedAt) / 1000;
-    outcome = `http_${upstream.status}`;
-    deps.metrics?.record({
-      name: "gateway_ttfb_seconds",
-      labels: { runtime: binding.body.runtime, status: String(upstream.status) },
-      value: ttfbSeconds,
-    });
-    deps.metrics?.record({
-      name: "gateway_request",
-      labels: { runtime: binding.body.runtime, status: String(upstream.status) },
-    });
-
-    const headers = new Headers();
-    headers.set("content-type", upstream.headers.get("content-type") ?? "application/json");
-    headers.set("x-request-id", requestId);
-    const cacheControl = upstream.headers.get("cache-control");
-    if (cacheControl) {
-      headers.set("cache-control", cacheControl);
-    }
-    if (!upstream.body) {
-      finish();
-      return new Response(null, { status: upstream.status, headers });
-    }
-    const reader = upstream.body.getReader();
-    const stream = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        try {
-          const chunk = await withAbort(reader.read(), abort.signal);
-          if (chunk.done) {
-            finish();
-            controller.close();
-            return;
-          }
-          controller.enqueue(chunk.value);
-        } catch (err) {
-          if (!timedOut && !clientSignal.aborted) {
-            outcome = "stream_error";
-          }
-          void reader.cancel(err).catch(() => undefined);
-          finish();
-          controller.error(err);
-        }
-      },
-      async cancel(reason) {
-        outcome = "client_cancelled";
-        abort.abort(reason);
-        try {
-          await reader.cancel(reason);
-        } finally {
-          finish();
-        }
-      },
-    });
-    return new Response(stream, { status: upstream.status, headers });
-  });
+  app.get("/v1/audio/voices", (c) => handleGateway(c, {
+    protocol: "openai.audio-speech.v1",
+    upstreamPath: "/v1/audio/voices",
+    bodyMode: "none",
+    maxBodyBytes: 0,
+  }));
 
   app.get("/v1/artifact-operations/:id", (c) => {
     if (!deps.artifactManager) {

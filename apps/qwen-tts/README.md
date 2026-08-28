@@ -4,10 +4,16 @@
 
 - upstream: `https://github.com/dingausmwald/Qwen3-TTS-Openai-Fastapi`
 - pinned commit: `eb14f6e6a50445cf442979abb9203ff0d5042c43`
-- resident model: `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`
-- retained comparison model: `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`
+- production model: `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`
+- comparison model: `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`（production Registry対象外）
 - service: `qwen-tts.service`
 - port: `8082`
+- LARM policy: Preferred。installerはboot時disabledにし、明示的な`tts-expressive` Allocationだけが起動する
+
+upstreamとrevisionの正本は[`../../deploy/gnosis/sources.lock.yaml`](../../deploy/gnosis/sources.lock.yaml)、
+production modelのfile list、bytes、SHA-256、snapshot digest、active targetの正本は
+[`../../deploy/gnosis/models.yaml`](../../deploy/gnosis/models.yaml)です。Qwen TTSは最初のPreferred
+directory snapshot activation対象です。
 
 配備手順:
 
@@ -15,7 +21,8 @@
 git clone https://github.com/dingausmwald/Qwen3-TTS-Openai-Fastapi.git /srv/ai/apps/Qwen3-TTS-Openai-Fastapi
 git -C /srv/ai/apps/Qwen3-TTS-Openai-Fastapi checkout eb14f6e6a50445cf442979abb9203ff0d5042c43
 git -C /srv/ai/apps/Qwen3-TTS-Openai-Fastapi apply /srv/ai/apps/local-LLM-harness/apps/qwen-tts/rocm-gfx1151.patch
-install -m 0644 apps/qwen-tts/config.production.yaml /srv/ai/apps/Qwen3-TTS-Openai-Fastapi/config.production.yaml
+install -m 0644 /srv/ai/apps/local-LLM-harness/apps/qwen-tts/config.production.yaml \
+  /srv/ai/apps/Qwen3-TTS-Openai-Fastapi/config.production.yaml
 ```
 
 パッチは次を行う。

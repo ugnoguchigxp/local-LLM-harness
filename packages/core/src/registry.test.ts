@@ -88,10 +88,16 @@ function registryDocuments(routes: unknown) {
       runtimes: {
         "qwen-general": {
           capability: ["llm.general"],
+          protocol: "openai.chat-completions.v1",
           backend: "systemd",
           node: "gnosis",
           policy: { class: "resident" },
-          resources: { estimatedMemoryGB: 40 },
+          resources: {
+            estimatedMemoryGB: 40,
+            maxConcurrentRequests: 1,
+            maxQueuedRequests: 0,
+            queueTimeoutMs: 1000,
+          },
           deployment: {
             service: "llama-server.service",
             healthPort: 8080,
@@ -104,6 +110,27 @@ function registryDocuments(routes: unknown) {
     routesYaml: routes,
   };
 }
+
+test("rejects unknown configuration fields instead of applying defaults", () => {
+  expect(() => parseRegistryDocuments(registryDocuments({
+    routes: {
+      "llm-speed": {
+        capabilities: ["llm.general"],
+        explicitOnli: true,
+        candidates: [{ runtime: "qwen-general", purpose: "primary" }],
+      },
+    },
+  }))).toThrow(/explicitOnli/);
+});
+
+test("rejects endpoint URLs whose suffix would corrupt gateway path joining", () => {
+  const documents = registryDocuments({ routes: {} });
+  const runtimes = documents.runtimesYaml as {
+    runtimes: Record<string, { deployment: { endpoint: string } }>;
+  };
+  runtimes.runtimes["qwen-general"]!.deployment.endpoint = "http://127.0.0.1:8080?target=other";
+  expect(() => parseRegistryDocuments(documents)).toThrow(/query/);
+});
 
 test("rejects a route that references an unknown runtime", () => {
   expect(() =>
@@ -167,6 +194,12 @@ test("rejects duplicate runtime capabilities", () => {
     "llm.general",
   ];
   expect(() => parseRegistryDocuments(documents)).toThrow(/unique/);
+});
+
+test("rejects capabilities that do not match the runtime protocol", () => {
+  const documents = registryDocuments({ routes: {} });
+  documents.runtimesYaml.runtimes["qwen-general"].capability = ["speech.stt"];
+  expect(() => parseRegistryDocuments(documents)).toThrow(/incompatible/);
 });
 
 test("rejects a resident floor that exceeds usable node memory", () => {

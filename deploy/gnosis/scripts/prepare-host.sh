@@ -27,6 +27,7 @@ usermod -aG render,video "${operator}"
 install -d -o "${operator}" -g "${operator}" \
   /srv/ai/models /srv/ai/apps /srv/ai/cache /srv/ai/logs \
   /srv/ai/models/qwen38-worker \
+  /srv/ai/models/qwen-tts \
   /srv/ai/models/.larm-staging /srv/ai/models/.larm-rollback \
   /var/lib/larm
 

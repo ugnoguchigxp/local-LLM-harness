@@ -29,7 +29,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
-ReadWritePaths=/srv/ai/cache /srv/ai/logs /srv/ai/models/.larm-staging /srv/ai/models/.larm-rollback /srv/ai/models/qwen38-worker /var/lib/larm
+ReadWritePaths=/srv/ai/cache /srv/ai/logs /srv/ai/models/.larm-staging /srv/ai/models/.larm-rollback /srv/ai/models/qwen38-worker /srv/ai/models/qwen-tts /var/lib/larm
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]

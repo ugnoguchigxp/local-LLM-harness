@@ -3,7 +3,7 @@
 ## Components
 
 ```text
-apps/daemon          Allocation API、LLM Gateway、観測loop、operation coordination
+apps/daemon          Allocation API、LLM・STT・TTS Gateway、execution gate、観測loop、operation coordination
 packages/core        registry、Route、Allocation、admission、planner、resolve
 packages/backends    systemd、llama-swap、artifact store
 config/gnosis        production desired state
@@ -11,7 +11,8 @@ deploy/gnosis        host setup、systemd units、artifact manifest
 ```
 
 CoreはOS非依存の選択・状態計算に限定し、推論本文を処理しません。daemonのGatewayは
-Allocationへ固定された`deployment.endpoint`だけへHTTPをproxyします。最新の公開contractは
+Allocationへ固定された`deployment.endpoint`だけへprotocol-awareにHTTPをproxyします。Runtime別の
+同時実行slotとbounded queueを通り、実行直前にAllocationと観測状態を再検証します。最新の公開contractは
 [`../specs/api.html`](../specs/api.html)を参照してください。
 
 ## RuntimeBackend
@@ -20,10 +21,12 @@ Allocationへ固定された`deployment.endpoint`だけへHTTPをproxyします�
 interface RuntimeBackend {
   list(): Promise<RuntimeHealth[]>;
   health(runtimeId: string): Promise<RuntimeHealth>;
-  ensure(runtime: RuntimeDefinition): Promise<RuntimeHealth>;
+  ensure(runtime: RuntimeDefinition, signal?: AbortSignal): Promise<RuntimeHealth>;
   stop(runtimeId: string): Promise<void>;
 }
 ```
+
+`AbortSignal`はAllocation release、TTL、startup deadline、daemon drainをBackendの起動待機まで伝播します。`stop`はidle reconciliationまたは明示的な配備操作から呼ばれ、ResidentではBackendが拒否します。
 
 ### SystemdBackend
 

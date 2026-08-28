@@ -3,12 +3,16 @@ runtimes:
     capability:
       - llm.general
       - llm.reasoning
+    protocol: openai.chat-completions.v1
     backend: llama-swap
     node: ai395-01
     policy:
       class: resident
     resources:
       estimatedMemoryGB: 24
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
     deployment:
       modelId: qwen-general
       listen: http://127.0.0.1:9292
@@ -17,12 +21,16 @@ runtimes:
   qwen-worker:
     capability:
       - llm.general
+    protocol: openai.chat-completions.v1
     backend: llama-swap
     node: ai395-01
     policy:
       class: preferred
     resources:
       estimatedMemoryGB: 24
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
     deployment:
       modelId: qwen-worker
       listen: http://127.0.0.1:9292

@@ -2,6 +2,8 @@
 
 Linux Runtimeを観測・制御するLARM daemonです。既定で `config/gnosis` を読み、SystemdBackendとLlamaSwapBackendへRuntime単位でルーティングします。
 
+実装済みAPI contractの正本は[`../../specs/api.html`](../../specs/api.html)です。LLM、STT、通常TTS、表現TTSをprotocol-awareな共通Gatewayで提供し、個別Provider portを利用側へ公開しません。
+
 ## Start
 
 ```bash
@@ -17,12 +19,44 @@ export LARM_PORT=9810
 export LARM_PREFERRED_IDLE_TTL_SECONDS=60
 export LARM_CONTROL_MAX_BODY_BYTES=65536
 export LARM_GATEWAY_MAX_BODY_BYTES=4194304
+export LARM_SPEECH_MAX_BODY_BYTES=269484032
 export LARM_GATEWAY_TIMEOUT_SECONDS=300
 export LARM_SHUTDOWN_TIMEOUT_SECONDS=330
 bun run dev
 ```
 
-loopback以外でlistenする場合は`LARM_API_TOKEN`と`LARM_MANAGEMENT_TOKEN`の両方が必須です。
+主要設定は次の通りです。
+
+| Environment | Default | Purpose |
+| --- | ---: | --- |
+| `LARM_HOST` | `127.0.0.1` | listen address |
+| `LARM_PORT` | `9810` | listen port |
+| `LARM_CONFIG_DIR` | `config/gnosis` | Node、Runtime、Profile、Route registry |
+| `LARM_OBSERVE_INTERVAL_MS` | `2000` | Backend観測間隔 |
+| `LARM_STARTING_GRACE_SECONDS` | `300` | STARTINGからFAILEDへ移す猶予 |
+| `LARM_PREFERRED_IDLE_TTL_SECONDS` | `60` | 未使用Preferredを回収するまでの時間 |
+| `LARM_STARTUP_TIMEOUT_SECONDS` | `300` | Allocation起動上限 |
+| `LARM_STARTUP_POLL_INTERVAL_MS` | `500` | readiness確認間隔 |
+| `LARM_STATE_MAX_AGE_SECONDS` | `10` | observer snapshot freshness上限 |
+| `LARM_HISTORY_LIMIT` | `1000` | memory上のterminal履歴上限 |
+| `LARM_ACTIVE_ALLOCATION_LIMIT` | `1000` | active Allocationと直接Legacy Leaseの合計上限 |
+| `LARM_ARTIFACT_OPERATION_LIMIT` | `64` | pending/running artifact operationの合計上限 |
+| `LARM_CONTROL_MAX_BODY_BYTES` | `65536` | control API body上限。設定可能な最大値は1 MiB |
+| `LARM_GATEWAY_MAX_BODY_BYTES` | `4194304` | LLMとTTS JSON body上限。設定可能な最大値は64 MiB |
+| `LARM_SPEECH_MAX_BODY_BYTES` | `269484032` | STT upload上限 |
+| `LARM_GATEWAY_TIMEOUT_SECONDS` | `300` | uploadからresponse完了までの上限 |
+| `LARM_SHUTDOWN_TIMEOUT_SECONDS` | `330` | operationとrequestのdrain上限 |
+| `LARM_ARTIFACT_MANIFEST` | `deploy/gnosis/models.yaml` | artifact allowlist |
+| `LARM_ARTIFACT_STAGING_ROOT` | `/srv/ai/models/.larm-staging` | 検証済みstaging data |
+| `LARM_ARTIFACT_ROLLBACK_ROOT` | `/srv/ai/models/.larm-rollback` | rollback data |
+| `LARM_ARTIFACT_STATE_ROOT` | `/var/lib/larm` | operation journal |
+| `LARM_IDEMPOTENCY_TTL_SECONDS` | `300` | Allocation idempotency結果の保持時間 |
+| `LARM_IDEMPOTENCY_LIMIT` | `1000` | TTL内のidempotency key件数上限。満杯時の新規keyは503でfail closed |
+| `LARM_RECOVERY_GRACE_SECONDS` | `60` | 起動後の孤立Preferred回収猶予 |
+
+数値設定は起動時に範囲検証され、不正値ではdaemonを起動しません。
+
+loopback以外でlistenする場合は`LARM_API_TOKEN`と`LARM_MANAGEMENT_TOKEN`の両方が必須です。`LARM_API_TOKEN`を設定した場合、`/health`と`/ready`以外へ`Authorization: Bearer ...`が必要です。
 loopbackでも`LARM_MANAGEMENT_TOKEN`がない場合、Artifact管理と`allow-listed`配備はfail closedで無効になります。
 Artifactの生成stateは既定で`/var/lib/larm`、stagingとrollback dataは`/srv/ai/models/.larm-*`へ置きます。
 
@@ -52,25 +86,77 @@ curl -sS -N -X POST http://127.0.0.1:9810/v1/chat/completions \
   -d '{"model":"local","stream":true,"messages":[{"role":"user","content":"こんにちは"}]}'
 
 curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${allocation_id}"
+
+voice_allocation_json="$(curl -sS -X POST http://127.0.0.1:9810/v1/allocations \
+  -H 'Content-Type: application/json' \
+  -d '{"requirements":[{"capability":"speech.stt","route":"stt-default"},{"capability":"speech.tts","route":"tts-default"}],"ttlSeconds":300}')"
+voice_allocation_id="$(jq -r .id <<<"${voice_allocation_json}")"
+
+# speech.stt Bindingを含むAllocationでは、音声をbufferせず転送します。
+curl -sS -X POST http://127.0.0.1:9810/v1/audio/transcriptions \
+  -H "x-larm-allocation-id: ${voice_allocation_id}" -F 'file=@sample.wav'
+
+# TTS Bindingが複数ある場合はcapabilityを明示します。
+curl -sS -X POST http://127.0.0.1:9810/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -H "x-larm-allocation-id: ${voice_allocation_id}" \
+  -H 'x-larm-capability: speech.tts' \
+  -d '{"model":"voicevox-core","input":"こんにちは","voice":"Kasukabe_Tsumugi","response_format":"wav"}' \
+  -o /dev/null
+
+curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${voice_allocation_id}"
 ```
 
 速度特化Runtimeは`route`へ`llm-speed`を明示した場合だけ選択されます。fallbackはrequestで`allowFallback: true`を指定した場合だけ許可されます。
 
 ## Artifact operations
 
-管理APIはmanifestに登録済みのartifactとRuntimeだけを受け付けます。
+管理APIはmanifestに登録済みのartifactとRuntimeだけを受け付けます。Stage、activate、rollbackは202と非同期operationを返します。依存する次の操作へ進む前に、`GET /v1/artifact-operations/:id`が`succeeded`になるまで待つ必要があります。
 
 ```bash
-curl -sS -X POST http://127.0.0.1:9810/v1/artifacts/qwen38-worker-fast/stage \
-  -H "x-larm-management-token: ${LARM_MANAGEMENT_TOKEN}"
+set -euo pipefail
 
-curl -sS -X POST http://127.0.0.1:9810/v1/deployments/qwen-worker-fast/activate \
-  -H "x-larm-management-token: ${LARM_MANAGEMENT_TOKEN}"
+management_headers=(-H "x-larm-management-token: ${LARM_MANAGEMENT_TOKEN}")
+# LARM_API_TOKENを設定している場合:
+# management_headers+=(-H "Authorization: Bearer ${LARM_API_TOKEN}")
+
+wait_artifact_operation() {
+  local operation_id="$1" max_wait_seconds="${2:-3700}"
+  local deadline=$((SECONDS + max_wait_seconds)) operation_json operation_status
+
+  while ((SECONDS < deadline)); do
+    operation_json="$(curl -fsS --max-time 5 "${management_headers[@]}" \
+      "http://127.0.0.1:9810/v1/artifact-operations/${operation_id}")"
+    operation_status="$(jq -r .status <<<"${operation_json}")"
+    case "${operation_status}" in
+      succeeded) return 0 ;;
+      failed|interrupted) jq . <<<"${operation_json}"; return 1 ;;
+      pending|running) sleep 1 ;;
+      *) jq . <<<"${operation_json}"; return 1 ;;
+    esac
+  done
+
+  echo "artifact operation timed out: ${operation_id}" >&2
+  return 1
+}
+
+for artifact_id in qwen38-worker-fast qwen38-mtp; do
+  operation_json="$(curl -fsS -X POST "${management_headers[@]}" \
+    "http://127.0.0.1:9810/v1/artifacts/${artifact_id}/stage")"
+  wait_artifact_operation "$(jq -r .id <<<"${operation_json}")"
+done
+
+operation_json="$(curl -fsS -X POST "${management_headers[@]}" \
+  http://127.0.0.1:9810/v1/deployments/qwen-worker-fast/activate)"
+wait_artifact_operation "$(jq -r .id <<<"${operation_json}")"
 ```
 
-Resident Runtimeの無人activationと、checksumのないdirectory modelは拒否します。
+Runtimeが参照する全artifactをstageしてからactivateします。`deploymentPolicy: allow-listed`のAllocationでは、このstageからactivationまでをdaemonが一つの起動operation内で行います。
+
+単一fileと、全fileが列挙・検証されたdirectory snapshotをstageできます。未列挙file、symlink、危険path、checksum不一致を拒否します。Resident Runtimeの無人activationは拒否します。
 `deploymentPolicy: allow-listed`のAllocationにも同じ管理tokenが必要です。
 activation後のhealth確認に失敗した場合は、直前のartifact targetへ自動rollbackします。
+Artifact downloadのBackend上限は既定3600秒で、例のpoll上限はその結果を取得できるよう3700秒です。
 
 - Resident Runtimeは停止しません。
 - Preferred Runtimeだけを`prepare`とidle `release`の対象にします。

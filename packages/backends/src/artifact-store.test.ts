@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ArtifactDefinition } from "@larm/core";
+import {
+  computeSnapshotDigest,
+  type FileArtifactDefinition,
+  type SnapshotArtifactDefinition,
+} from "@larm/core";
 import { ArtifactStoreError, LocalArtifactStore } from "./artifact-store";
 
 function sha256(value: string): string {
@@ -18,10 +22,19 @@ test("rejects filesystem root as an artifact data directory", () => {
   })).toThrow(/must not be the filesystem root/);
 });
 
+test("rejects overlapping artifact data directories", () => {
+  expect(() => new LocalArtifactStore({
+    stagingRoot: "/tmp/larm-data",
+    rollbackRoot: "/tmp/larm-data/rollback",
+    stateRoot: "/tmp/larm-state",
+  })).toThrow(/must not overlap/);
+});
+
 async function fixture(content = "new-model") {
   const root = await mkdtemp(join(tmpdir(), "larm-artifact-"));
   const target = join(root, "active", "model.gguf");
-  const artifact: ArtifactDefinition = {
+  const artifact: FileArtifactDefinition = {
+    kind: "file",
     id: "tiny-model",
     role: "preferred-llm",
     source: "https://example.com/model.gguf",
@@ -38,6 +51,61 @@ async function fixture(content = "new-model") {
     random: () => "fixed",
     now: () => 1_000,
     fetchImpl: async () => new Response(content),
+  });
+  return { root, target, artifact, store };
+}
+
+async function snapshotFixture(
+  corruptPath?: string,
+  options: {
+    availableBytes?: number;
+    incompleteSnapshotTtlMs?: number;
+    fetchImpl?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+    contents?: Record<string, string>;
+  } = {},
+) {
+  const root = await mkdtemp(join(tmpdir(), "larm-snapshot-"));
+  const target = join(root, "active", "model");
+  const contents: Record<string, string> = options.contents ?? {
+    "config.json": "{}",
+    "weights/model.safetensors": "weights",
+  };
+  const files = Object.entries(contents).map(([path, content]) => ({
+    path,
+    bytes: Buffer.byteLength(content),
+    sha256: sha256(content),
+  }));
+  const artifact: SnapshotArtifactDefinition = {
+    kind: "snapshot",
+    id: "tiny-snapshot",
+    role: "preferred-tts",
+    source: "https://example.com/model",
+    revision: "revision-1",
+    path: target,
+    totalBytes: files.reduce((total, file) => total + file.bytes, 0),
+    maxFiles: files.length,
+    snapshotDigest: computeSnapshotDigest(files),
+    files,
+  };
+  const store = new LocalArtifactStore({
+    stagingRoot: join(root, "staging"),
+    rollbackRoot: join(root, "rollback"),
+    stateRoot: join(root, "state"),
+    random: () => "fixed",
+    now: () => Date.now(),
+    availableBytes: options.availableBytes === undefined
+      ? undefined
+      : () => options.availableBytes!,
+    incompleteSnapshotTtlMs: options.incompleteSnapshotTtlMs,
+    fetchImpl: options.fetchImpl ?? (async (input) => {
+      const path = decodeURIComponent(new URL(input.toString()).pathname)
+        .replace(/^\/model\//, "");
+      const content = contents[path];
+      if (content === undefined) {
+        return new Response("missing", { status: 404 });
+      }
+      return new Response(path === corruptPath ? `${content}-corrupt` : content);
+    }),
   });
   return { root, target, artifact, store };
 }
@@ -180,6 +248,16 @@ test("store rejects an unsafe revision even for programmatic callers", async () 
   }
 });
 
+test("store rejects artifact targets that overlap managed data roots", async () => {
+  const { root, artifact, store } = await fixture();
+  artifact.path = join(root, "staging");
+  try {
+    await expect(store.stage(artifact)).rejects.toMatchObject({ code: "unsafe_path" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("rollback restores an absent target by removing the activated link", async () => {
   const { root, target, artifact, store } = await fixture();
   try {
@@ -221,6 +299,187 @@ test("operation journal rejects unsafe identifiers", async () => {
   try {
     await expect(store.writeOperation({ id: "../escape", status: "running" })).rejects
       .toMatchObject({ code: "unsafe_operation_id" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("stages, activates, and rolls back an exact directory snapshot", async () => {
+  const { root, target, artifact, store } = await snapshotFixture();
+  try {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "old.txt"), "old-model");
+    const staged = await store.stage(artifact);
+    expect(staged.kind).toBe("snapshot");
+    expect(await readFile(join(staged.path, "weights/model.safetensors"), "utf8")).toBe("weights");
+    await store.activate(artifact, staged);
+    expect((await lstat(target)).isSymbolicLink()).toBe(true);
+    expect(await readFile(join(target, "config.json"), "utf8")).toBe("{}");
+    expect(await store.activeMatches(artifact)).toBe(true);
+    await store.rollback(artifact);
+    expect((await lstat(target)).isDirectory()).toBe(true);
+    expect(await readFile(join(target, "old.txt"), "utf8")).toBe("old-model");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("snapshot verification uses canonical global path order", async () => {
+  const { root, artifact, store } = await snapshotFixture(undefined, {
+    contents: {
+      "a.txt": "root-file",
+      "a/file.bin": "nested-file",
+    },
+  });
+  try {
+    const staged = await store.stage(artifact);
+    expect(await store.getStaged(artifact)).toEqual(staged);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cleans an incomplete snapshot after a file checksum failure", async () => {
+  const { root, artifact, store } = await snapshotFixture("weights/model.safetensors");
+  try {
+    await expect(store.stage(artifact)).rejects.toMatchObject({ code: "size_mismatch" });
+    expect(await store.getStaged(artifact)).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects symbolic links injected into a staged snapshot", async () => {
+  const { root, artifact, store } = await snapshotFixture();
+  try {
+    const staged = await store.stage(artifact);
+    const injected = join(staged.path, "weights/model.safetensors");
+    await rm(injected);
+    await symlink("/etc/passwd", injected);
+    await expect(store.activate(artifact, staged)).rejects.toMatchObject({ code: "unsafe_snapshot" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("does not accept unlisted files in a staged snapshot", async () => {
+  const { root, artifact, store } = await snapshotFixture();
+  try {
+    const staged = await store.stage(artifact);
+    await writeFile(join(staged.path, "unlisted.txt"), "unexpected");
+    expect(await store.getStaged(artifact)).toBeUndefined();
+    await expect(store.activate(artifact, staged)).rejects.toMatchObject({ code: "staged_invalid" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("does not accept unlisted empty directories in a staged snapshot", async () => {
+  const { root, artifact, store } = await snapshotFixture();
+  try {
+    const staged = await store.stage(artifact);
+    await mkdir(join(staged.path, "empty"));
+    expect(await store.getStaged(artifact)).toBeUndefined();
+    await expect(store.activate(artifact, staged)).rejects.toMatchObject({ code: "staged_invalid" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a snapshot before download when disk reserve is insufficient", async () => {
+  const { root, artifact, store } = await snapshotFixture(undefined, { availableBytes: 1 });
+  try {
+    await expect(store.stage(artifact)).rejects.toMatchObject({ code: "disk_space_exhausted" });
+    expect(await store.getStaged(artifact)).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cancels and removes a partially downloaded snapshot", async () => {
+  const controller = new AbortController();
+  const { root, artifact, store } = await snapshotFixture(undefined, {
+    fetchImpl: async (input, init) => {
+      if (input.toString().endsWith("config.json")) {
+        return new Response("{}");
+      }
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        const cancel = () => reject(signal?.reason ?? new Error("cancelled"));
+        if (signal?.aborted) cancel();
+        else signal?.addEventListener("abort", cancel, { once: true });
+      });
+    },
+  });
+  try {
+    const staging = store.stage(artifact, controller.signal);
+    await Bun.sleep(1);
+    controller.abort(new Error("daemon draining"));
+    await expect(staging).rejects.toMatchObject({ code: "operation_cancelled" });
+    expect(await store.getStaged(artifact)).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cleans expired partial snapshot directories after restart", async () => {
+  const { root, artifact, store } = await snapshotFixture(undefined, {
+    incompleteSnapshotTtlMs: 1,
+  });
+  try {
+    const stagingParent = join(root, "staging", artifact.id, artifact.revision);
+    const stale = join(stagingParent, `${artifact.snapshotDigest}.part-stale`);
+    await mkdir(stale, { recursive: true });
+    await writeFile(join(stale, "partial"), "partial");
+    await utimes(stale, new Date(0), new Date(0));
+    await store.stage(artifact);
+    expect(await Bun.file(join(stale, "partial")).exists()).toBe(false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rollback recovers a directory displaced by a crash during prepared activation", async () => {
+  const { root, target, artifact, store } = await snapshotFixture();
+  try {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "old.txt"), "old-model");
+    const staged = await store.stage(artifact);
+    const previous = join(root, "rollback", artifact.id, "crash-previous");
+    await mkdir(join(root, "rollback", artifact.id), { recursive: true });
+    await rename(target, previous);
+    await mkdir(join(root, "state", "activations"), { recursive: true });
+    await writeFile(join(root, "state", "activations", `${artifact.id}.json`), `${JSON.stringify({
+      artifactKind: artifact.kind,
+      artifactDigest: artifact.snapshotDigest,
+      phase: "prepared",
+      artifactId: artifact.id,
+      revision: artifact.revision,
+      target,
+      activePath: staged.path,
+      previous: { kind: "directory", path: previous },
+      activatedAt: new Date().toISOString(),
+    })}\n`);
+
+    await store.rollback(artifact);
+    expect(await readFile(join(target, "old.txt"), "utf8")).toBe("old-model");
+    // A crash before displacement is also safe: the original target exists and backup does not.
+    await store.rollback(artifact);
+    expect(await readFile(join(target, "old.txt"), "utf8")).toBe("old-model");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("restaging never replaces a corrupt snapshot while it is the active target", async () => {
+  const { root, target, artifact, store } = await snapshotFixture();
+  try {
+    const staged = await store.stage(artifact);
+    await store.activate(artifact, staged);
+    await writeFile(join(staged.path, "unlisted.txt"), "unexpected");
+    await expect(store.stage(artifact)).rejects.toMatchObject({ code: "active_artifact_invalid" });
+    expect((await lstat(target)).isSymbolicLink()).toBe(true);
+    expect(await readFile(join(target, "config.json"), "utf8")).toBe("{}");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

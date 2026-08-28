@@ -1,0 +1,196 @@
+<article lang="ja">
+  <h1>LARM Milestone 8–14 実装完了記録</h1>
+
+  <p>
+    <a href="./next-implementation-plan.html">次期実装計画</a>に定義したMilestone 8から14について、
+    repository内で完了した実装、固定したcontract、残るattended production作業を記録します。
+    コード実装の完了とgnosis実機への適用完了を混同しません。 実装後の再監査結果は<a
+      href="./review-hardening.html"
+      >コードレビュー・Hardening記録</a
+    >を参照します。
+  </p>
+
+  <dl>
+    <dt>記録日</dt>
+    <dd><time>2026-08-28</time></dd>
+    <dt>コード状態</dt>
+    <dd>Milestone 8–14の実装と自動検査を完了</dd>
+    <dt>実機状態</dt>
+    <dd>attended commissioning、実client canary、latency・memory実測は未実行</dd>
+    <dt>既定LLM</dt>
+    <dd>Qwen 3.8 27B Resident。通常・リアルタイム経路を担当</dd>
+  </dl>
+
+  <section id="outcome">
+    <h2>実装結果</h2>
+    <table>
+      <caption>
+        Milestoneごとのrepository到達点
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Milestone</th>
+          <th scope="col">状態</th>
+          <th scope="col">実装したcontract</th>
+          <th scope="col">実機で残るgate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">8: Automated baseline</th>
+          <td>コード完了</td>
+          <td>
+            frozen CI、source-only・Spec HTML・TypeScript・test・Bash・Python・systemd検査、
+            installer再実行test、version・config revision・boot epoch、Resident smoke
+          </td>
+          <td>operatorによるunit差分確認、daemon install・start、smoke</td>
+        </tr>
+        <tr>
+          <th scope="row">9: Protocol-aware foundation</th>
+          <td>完了</td>
+          <td>protocol enum、capability整合、Binding選択、共通stream proxy</td>
+          <td>なし</td>
+        </tr>
+        <tr>
+          <th scope="row">10: STT / TTS Gateway</th>
+          <td>コード完了</td>
+          <td>transcriptions、speech、voices、bounded upload、audio stream、credit header</td>
+          <td>実音声によるattended voice smoke</td>
+        </tr>
+        <tr>
+          <th scope="row">11: Bounded execution</th>
+          <td>コード完了</td>
+          <td>Runtime別FIFO slot・queue・timeout・cancel・429・current gauge</td>
+          <td>Provider負荷試験後のslot・queue値確定</td>
+        </tr>
+        <tr>
+          <th scope="row">12: Restart recovery</th>
+          <td>完了</td>
+          <td>epoch付きID、全response header、同時retry対応idempotency、孤立Preferred回収</td>
+          <td>実process kill・restartを含むattended確認</td>
+        </tr>
+        <tr>
+          <th scope="row">13: Directory snapshot</th>
+          <td>コード完了</td>
+          <td>
+            discriminated manifest、canonical digest、file別stream
+            staging、link拒否、directory切替・rollback
+          </td>
+          <td>Qwen TTS snapshotのstage、activate、health、rollback実機確認</td>
+        </tr>
+        <tr>
+          <th scope="row">14: Canary gate</th>
+          <td>tooling完了</td>
+          <td>Resident smoke、voice smoke、反復canary、boot epoch固定、低cardinality metric</td>
+          <td>実client移行、soak、gateway overhead・Provider latency・memory値の確定</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="runtime-contract">
+    <h2>Data Plane contract</h2>
+    <ul>
+      <li>Runtimeはcapabilityに対応するprotocolを一つ持ち、Registry読込時に不一致を拒否します。</li>
+      <li>
+        <code>/v1/chat/completions</code>、<code>/v1/audio/transcriptions</code>、
+        <code>/v1/audio/speech</code
+        >、<code>/v1/audio/voices</code>はAllocationの固定Bindingだけを使用します。
+      </li>
+      <li>requestのmodel、URL、path、service名はroutingまたはlifecycle targetになりません。</li>
+      <li>
+        Gateway deadlineはqueue、body、upstream接続、response streamを覆い、client disconnect、
+        Allocation release、TTL満了をactive・queued requestへ伝播します。
+      </li>
+      <li>
+        production execution値は全Runtimeで同時実行1、queue 0、queue timeout 1000msです。
+        これは安全側の初期値であり、実測なしの待機capacityを導入しない判断です。
+      </li>
+    </ul>
+  </section>
+
+  <section id="restart-contract">
+    <h2>再起動contract</h2>
+    <ul>
+      <li>
+        <code>/health</code>はsoftware version、config revision、boot
+        epochを返します。
+      </li>
+      <li>全HTTP responseは<code>x-larm-boot-epoch</code>を返します。</li>
+      <li>Allocation IDはepochを含み、旧epochのIDを曖昧な404ではなく409で拒否します。</li>
+      <li>
+        同じIdempotency-Keyと正規化済みrequestの同時・逐次retryは同じ結果を返し、保持領域満杯時は
+        entryを追い出さずfail closedします。
+      </li>
+      <li>
+        起動後の猶予を経て、AllocationとLegacy LeaseがなくHOTなPreferredだけを停止します。
+        停止中はRuntimeを予約して新規Allocationとartifact変更を拒否します。
+      </li>
+      <li>Resident、health不明、配備中、Allocation使用中のRuntimeはstartup回収から除外します。</li>
+    </ul>
+  </section>
+
+  <section id="snapshot-contract">
+    <h2>Artifact snapshot contract</h2>
+    <p>
+      <code>deploy/gnosis/models.yaml</code
+      >は単一GGUFを<code>kind: file</code>、Qwen ASRとQwen
+      TTSを<code>kind: snapshot</code>として固定します。snapshot
+      digestはpath、bytes、SHA-256の sorted
+      listから計算します。モデルweight自体はrepositoryへ保存しません。
+    </p>
+    <ul>
+      <li>
+        絶対path、親参照、空segment、重複、case-fold衝突、件数・合計bytes不一致をschemaで拒否します。
+      </li>
+      <li>downloadはfile単位の一時fileへstreamし、全file検証後にsnapshot rootをrenameします。</li>
+      <li>
+        staging内のsymlink、device、未列挙file・directory、manifest外のactive
+        linkをBackendで拒否します。
+      </li>
+      <li>中断した一時snapshotはactiveにならず、既定24時間後の再試行でcleanupします。</li>
+      <li>
+        activation journalはartifact kind、digest、prepared・active
+        phaseを固定し、crash時も旧directoryを rollbackできる状態でhealth確認まで保持します。
+      </li>
+      <li>Resident Qwen ASRはstaging-only、Preferred Qwen TTSだけが無人activation対象です。</li>
+      <li>
+        VOICEVOXはmodel snapshotではなく外部runtime release bundleなので、model manifestから除外し、
+        source lockとoperator配備手順で管理します。
+      </li>
+    </ul>
+  </section>
+
+  <section id="verification">
+    <h2>自動検証</h2>
+    <p>
+      repository gateは<code>bun run check</code>です。CIもfrozen
+      install後に同じcommandを実行します。 unit testはprotocol不一致、Binding曖昧性、chunked
+      upload上限、Provider 429、queue満杯・timeout・cancel、 concurrent
+      idempotency、旧epoch、Resident保護、snapshot
+      hash・link・disk・中断・cleanup・rollback、lifecycle race、容量上限、strict configを含みます。
+    </p>
+  </section>
+
+  <section id="attended-gate">
+    <h2>残るattended production gate</h2>
+    <ol>
+      <li>
+        導入前のunitとcredentialを退避し、Resident Providerが稼働したままinstaller差分を確認する。
+      </li>
+      <li>
+        <code>larm-daemon.service</code>だけをstartし、readyとResident smokeを確認する。
+      </li>
+      <li>非機密の音声sampleでSTT、通常TTS、credit headerを確認する。</li>
+      <li>Qwen TTS snapshotをstageし、明示Allocationでactivate、health、rollbackを確認する。</li>
+      <li>process restart、孤立Preferred回収、queue gaugeが0へ戻ることを確認する。</li>
+      <li>実clientを段階移行し、latency、memory、error率、soak結果を別Spec HTMLへ記録する。</li>
+    </ol>
+    <aside>
+      <p>
+        これらはlive service、GPU負荷、実client接続を変更するため自動実行しません。
+        repository実装完了は、このattended gateの成功を意味しません。
+      </p>
+    </aside>
+  </section>
+</article>

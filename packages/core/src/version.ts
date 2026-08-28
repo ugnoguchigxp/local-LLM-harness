@@ -1,1 +1,1 @@
-export const LARM_VERSION = "0.0.0-s0";
+export const LARM_VERSION = "0.1.0";

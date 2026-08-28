@@ -2,6 +2,7 @@
 # Pin the source revision here; record a checksum after each deliberate model replacement.
 models:
   qwen38-primary:
+    kind: file
     role: resident-llm
     source: https://huggingface.co/julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF
     revision: 1e67b67e0e23324a29a7a4449279685fac364b37
@@ -13,6 +14,7 @@ models:
     runtime: q38rocm
 
   qwen38-worker-quality:
+    kind: file
     role: preferred-llm
     source: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF
     revision: 4ca720788d1e01f1bff70c033e0d0028fd02e502
@@ -24,6 +26,7 @@ models:
     runtime: llama.cpp-vulkan
 
   qwen38-worker-fast:
+    kind: file
     role: preferred-llm
     source: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF
     revision: 4ca720788d1e01f1bff70c033e0d0028fd02e502
@@ -35,6 +38,7 @@ models:
     runtime: llama.cpp-vulkan
 
   qwen38-mtp:
+    kind: file
     role: mtp-draft
     source: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF
     revision: 4ca720788d1e01f1bff70c033e0d0028fd02e502
@@ -46,25 +50,63 @@ models:
     quantization: Q4_0
 
   qwen3-asr-main:
+    kind: snapshot
     role: resident-stt
     source: https://huggingface.co/Qwen/Qwen3-ASR-1.7B
     revision: 7278e1e70fe206f11671096ffdd38061171dd6e5
     path: /srv/ai/models/qwen-asr/Qwen3-ASR-1.7B
+    totalBytes: 4703055333
+    maxFiles: 10
+    snapshotDigest: 40c5daeda5f7b72437f9a87c2a17b684e5d8cdf53e60f78a306c4a96821a27bc
+    files:
+      - { path: chat_template.json, bytes: 1161, sha256: 75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff }
+      - { path: config.json, bytes: 6194, sha256: 2e74a751548b8ad7d7526d29365ad8144c345d8b412b1152d25dc6698452712f }
+      - { path: generation_config.json, bytes: 142, sha256: 1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c }
+      - { path: merges.txt, bytes: 1671853, sha256: 8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5 }
+      - { path: model-00001-of-00002.safetensors, bytes: 4220320824, sha256: a4cd1f1a04d90b757dc7f7dd26254e69a013b19e80efe590a83c6a3bde8608d6 }
+      - { path: model-00002-of-00002.safetensors, bytes: 478200688, sha256: 6e0b9d9e09e2e0238e7ef3cc8a484ab387e91b90f1900bedf88bc92d7929ccfc }
+      - { path: model.safetensors.index.json, bytes: 64821, sha256: f994739fe38e5210b9e3e8ce6c6307315e2ceac3cb630e7b7414d69dce520f60 }
+      - { path: preprocessor_config.json, bytes: 330, sha256: 45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d }
+      - { path: tokenizer_config.json, bytes: 12487, sha256: 4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c }
+      - { path: vocab.json, bytes: 2776833, sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910 }
 
   qwen3-asr-fallback:
+    kind: snapshot
     role: optional-stt
     source: https://huggingface.co/Qwen/Qwen3-ASR-0.6B
     revision: 5eb144179a02acc5e5ba31e748d22b0cf3e303b0
     path: /srv/ai/models/qwen-asr/Qwen3-ASR-0.6B
+    totalBytes: 1880560703
+    maxFiles: 8
+    snapshotDigest: f875aed4bba9e00f466773ed70bf08db6b3ceecdf59b5877d269e9da5ae2dcea
+    files:
+      - { path: chat_template.json, bytes: 1161, sha256: 75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff }
+      - { path: config.json, bytes: 6193, sha256: 76d3ae4601ce939830b2517f4a6cadb86cc51316c3900af6b020b051c21a478c }
+      - { path: generation_config.json, bytes: 142, sha256: 1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c }
+      - { path: merges.txt, bytes: 1671853, sha256: 8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5 }
+      - { path: model.safetensors, bytes: 1876091704, sha256: 79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea }
+      - { path: preprocessor_config.json, bytes: 330, sha256: 45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d }
+      - { path: tokenizer_config.json, bytes: 12487, sha256: 4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c }
+      - { path: vocab.json, bytes: 2776833, sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910 }
 
   qwen3-tts-expressive:
+    kind: snapshot
     role: preferred-tts
     source: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
     revision: 85e237c12c027371202489a0ec509ded67b5e4b5
     path: /srv/ai/models/qwen-tts/Qwen3-TTS-12Hz-0.6B-CustomVoice
-
-  voicevox:
-    role: resident-tts
-    source: https://github.com/VOICEVOX/voicevox_core
-    version: 0.17.0
-    path: /srv/ai/apps/voicevox-core-0.17.0
+    totalBytes: 2498383610
+    maxFiles: 11
+    snapshotDigest: b28faa06766da85c667918066dc441079fd88122f80e69eb175710587f385583
+    files:
+      - { path: config.json, bytes: 4908, sha256: 81aca2b6fac304944d8acf345272d8a9a727d5fc2e2e66b222ab4729340c7455 }
+      - { path: generation_config.json, bytes: 245, sha256: f1b90b4513f3b34c62851049e2492d7b4c5940daf1276f89c82b8ef04127f3aa }
+      - { path: merges.txt, bytes: 1671839, sha256: 599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3 }
+      - { path: model.safetensors, bytes: 1811626576, sha256: bc3c7e785eb961179c25450d1acff03f839e0002f2f3a5aeb67b5735c0fa2adb }
+      - { path: preprocessor_config.json, bytes: 127, sha256: efdde1022ea9d76928bf7a9cd53139138f5ba2e466e837f08f6105ab1af1c119 }
+      - { path: speech_tokenizer/config.json, bytes: 2336, sha256: ee65bb901c876664ab8707c487157aa1a6ee57c65969b28fb5ec9dc211e68167 }
+      - { path: speech_tokenizer/configuration.json, bytes: 76, sha256: 6bc26d64eb5024b4d1dab5a52371958b429256d6c9d59787f1f5294a54e0cebd }
+      - { path: speech_tokenizer/model.safetensors, bytes: 682293092, sha256: 836b7b357f5ea43e889936a3709af68dfe3751881acefe4ecf0dbd30ba571258 }
+      - { path: speech_tokenizer/preprocessor_config.json, bytes: 234, sha256: fcb3805e597e786d4067706e602f6688524640f8d3396790e2e09b5942fcbdfb }
+      - { path: tokenizer_config.json, bytes: 7344, sha256: dc3c31c3bdaedd5016382bb3cbe07323026775ad51f5a4fb564505992ae4a670 }
+      - { path: vocab.json, bytes: 2776833, sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910 }

@@ -2,6 +2,7 @@
 
 永続化するdesired stateはYAML、観測state、lease、Allocationはdaemon memoryに保持します。
 Artifact operation journalだけはrepository外の`/var/lib/larm`へ保存します。
+daemon再起動後にactive Allocationは復元せず、利用側が再取得します。
 
 ## Node
 
@@ -24,18 +25,24 @@ nodes:
 runtimes:
   qwen-general:
     capability: [llm.general, llm.reasoning, llm.coding]
+    protocol: openai.chat-completions.v1
     artifacts: [qwen38-primary]
     backend: systemd
     node: gnosis
     policy: { class: resident }
-    resources: { estimatedMemoryGB: 40 }
+    resources:
+      estimatedMemoryGB: 40
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
     deployment:
       service: llama-server.service
       healthPort: 8080
       endpoint: http://127.0.0.1:8080
 ```
 
-systemd deploymentは`service`、`healthPort`、`endpoint`が必須です。llama-swap deploymentは`modelId`、`listen`、`endpoint`が必須です。
+Gateway対応Runtimeはprotocolと実行slot・queue上限が必須です。systemd deploymentは`service`、
+`healthPort`、`endpoint`、llama-swap deploymentは`modelId`、`listen`、`endpoint`が必須です。
 
 ## Route
 
@@ -55,6 +62,13 @@ routes:
 Allocationは要求capabilityごとのRoute、Runtime、node、endpoint、選択理由をBindingへ固定し、
 `pending | ready | failed | released | expired`の状態とTTLを持ちます。公開一覧ではendpointを隠し、
 resolveまたはGatewayだけが固定endpointを使用します。daemon再起動後は再取得が必要です。
+Allocation IDとresponse headerはboot epochを持ち、旧epochのIDを明示的に拒否します。
+
+## Artifact
+
+artifact manifestは`kind: file | snapshot`のdiscriminated unionです。snapshotは固定revision、
+合計bytes、最大file数、sorted file list、fileごとのbytes・SHA-256、canonical snapshot digestを持ちます。
+weightはrepositoryへ保存せず、artifact operation journalだけを`/var/lib/larm`へ保存します。
 
 ## Profile
 

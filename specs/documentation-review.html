@@ -1,0 +1,268 @@
+<article lang="ja">
+  <h1>LARM ドキュメントレビュー記録</h1>
+
+  <aside>
+    <p>
+      この文書はMilestone 8–14実装前の監査記録です。現在の実装状態と継続制限は
+      <a href="./implementation-completion.html">実装完了記録</a>を参照してください。
+    </p>
+  </aside>
+
+  <p>
+    2026-08-28に、Spec HTML、repository README、Provider README、compatibility仕様、gnosis運用手順を
+    現行コード、Registry、artifact manifest、systemd
+    unit、配備script、実ホストの読取結果と照合しました。
+    この文書は検出した不整合、修正結果、文書正本の対応を記録します。
+  </p>
+
+  <dl>
+    <dt>状態</dt>
+    <dd>指摘修正済み・未解消の文書指摘なし</dd>
+    <dt>対象日</dt>
+    <dd><time>2026-08-28</time></dd>
+    <dt>対象</dt>
+    <dd>
+      <code>README.md</code
+      >、<code>apps/*/README.md</code>、<code>docs/</code>、<code>spec/</code>、<code>specs/</code>、<code
+        >deploy/gnosis/README.md</code
+      >
+    </dd>
+    <dt>非対象</dt>
+    <dd>外部projectの上流文書と、repository外にあるmodel・binaryの内容</dd>
+  </dl>
+
+  <section id="resolved-findings">
+    <h2>解消した指摘</h2>
+    <table>
+      <caption>
+        文書監査で検出した問題と修正
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">問題</th>
+          <th scope="col">修正</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Artifact手順</th>
+          <td>
+            複数artifact Runtimeで一つだけstageし、202 operationの完了前にactivateする例だった
+          </td>
+          <td>
+            全artifactをstageし、各operationの<code>succeeded</code>をpollしてからactivateする手順へ変更
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Network</th>
+          <td>UFW ruleが現在enforceされているように読めた</td>
+          <td>
+            <code>prepare-host.sh</code
+            >はruleを追加するだけで、operatorが明示的にenableするまで未適用と明記
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Desired state</th>
+          <td>repository設定と実ホストのactive / enabled状態が混同されていた</td>
+          <td>Runtime mapをdesired stateと明記し、live状態の確認commandと期待enablementを追加</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen TTS</th>
+          <td>Preferred Runtimeのmodelをresident modelと表現していた</td>
+          <td>production modelへ修正し、boot disabled、明示Allocationだけで起動する方針を追記</td>
+        </tr>
+        <tr>
+          <th scope="row">VOICEVOX</th>
+          <td>LARM自身がLLM出力を文分割するように読めた</td>
+          <td>現行LARMは分割せず、逐次発話が必要な利用側の責務であると明記</td>
+        </tr>
+        <tr>
+          <th scope="row">Backend contract</th>
+          <td>
+            Markdownの<code>RuntimeBackend.ensure</code>に<code>AbortSignal</code>がなかった
+          </td>
+          <td>現行interfaceと、release・TTL・deadline・drainのcancel伝播を反映</td>
+        </tr>
+        <tr>
+          <th scope="row">API contract</th>
+          <td>存在しないAllocation一覧を示す表現と、Artifact operationの依存待機説明が不足</td>
+          <td>Allocation responseへ修正し、202、terminal status、複数artifactのstage前提を追加</td>
+        </tr>
+        <tr>
+          <th scope="row">API inventory</th>
+          <td>v1仕様のendpoint表からunversionedの運用・互換routeが省略されていた</td>
+          <td>実装済み21 routeを一覧化し、互換request / response仕様へlink</td>
+        </tr>
+        <tr>
+          <th scope="row">計画状態</th>
+          <td>コード実装完了とattended production gate完了の区別が弱かった</td>
+          <td>Milestone 0から6はコード完了、常駐導入と実client canaryは未完了と統一</td>
+        </tr>
+        <tr>
+          <th scope="row">設定</th>
+          <td>daemonの主要environmentと上限値がまとまっていなかった</td>
+          <td>既定値、単位、用途、起動時validationをdaemon READMEへ追加</td>
+        </tr>
+        <tr>
+          <th scope="row">Navigation</th>
+          <td>旧Markdown、現行Spec、完了計画、次期計画の正本関係が分散していた</td>
+          <td>overviewを状態付き一覧へ変更し、各READMEから正本へ相互link</td>
+        </tr>
+        <tr>
+          <th scope="row">Performance evidence</th>
+          <td>gnosisの精密な測定値に、repository内のraw dataと再現手順がなかった</td>
+          <td>historical baselineと明示し、release gateへ使わず、将来runに必要な記録項目を追加</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="sources-of-truth">
+    <h2>正本対応表</h2>
+    <table>
+      <caption>
+        内容ごとに優先するsource
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">内容</th>
+          <th scope="col">正本</th>
+          <th scope="col">補足</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">責務とモデル方針</th>
+          <td><a href="./concept.html">Providerコンセプト</a></td>
+          <td>Qwen 3.8 27B Resident default、35B未登録</td>
+        </tr>
+        <tr>
+          <th scope="row">実装済み公開API</th>
+          <td><a href="./api.html">v1 API仕様</a></td>
+          <td>
+            <code>spec/api.md</code>はunversioned compatibility APIだけを補足
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">完了済み実装</th>
+          <td><a href="./implementation-plan.html">初期実装計画・完了記録</a></td>
+          <td>production gate未実施箇所を区別</td>
+        </tr>
+        <tr>
+          <th scope="row">次期工程</th>
+          <td><a href="./next-implementation-plan.html">次期実装計画</a></td>
+          <td>Milestone 8から14</td>
+        </tr>
+        <tr>
+          <th scope="row">Node・Runtime・Profile・Route</th>
+          <td><code>config/gnosis</code></td>
+          <td>repository desired state</td>
+        </tr>
+        <tr>
+          <th scope="row">Model artifact metadata</th>
+          <td><code>deploy/gnosis/models.yaml</code></td>
+          <td>単一fileだけがbytesとSHA-256を持つ無人staging対象</td>
+        </tr>
+        <tr>
+          <th scope="row">外部source identity</th>
+          <td><code>deploy/gnosis/sources.lock.yaml</code></td>
+          <td>repository、revision、version、patch</td>
+        </tr>
+        <tr>
+          <th scope="row">Host desired service構成</th>
+          <td>
+            <code>deploy/gnosis/systemd</code>と<code
+              >deploy/gnosis/scripts</code
+            >
+          </td>
+          <td>
+            実ホスト状態は<code>systemctl</code>と<code>ss</code>で別途確認
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="observed-host-state">
+    <h2>Review時の実ホスト観測</h2>
+    <p>
+      読取確認ではProvider serviceの8080から8084がlistenし、Qwen TTSを含むProvider
+      unitはactiveでした。
+      一方、<code>larm-daemon.service</code>はinactiveかつ未installで、Qwen
+      TTSはenabledでした。これはrepositoryが定義する次のdesired state、すなわちLARM常駐とQwen TTS
+      boot disabledへ未収束の状態です。このreviewではsystemd、UFW、processを変更していません。
+    </p>
+    <aside>
+      <p>
+        この節は2026-08-28の観測記録であり、現在状態の正本ではありません。運用判断の直前に
+        <code>systemctl is-active</code
+        >、<code>systemctl is-enabled</code>、<code>ss -ltnp</code>を再実行します。
+      </p>
+    </aside>
+  </section>
+
+  <section id="validation">
+    <h2>再検証</h2>
+    <table>
+      <caption>
+        修正後に実行した検証と結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">検証</th>
+          <th scope="col">結果</th>
+          <th scope="col">範囲</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>bun run docs:check</code></th>
+          <td>成功</td>
+          <td>Spec HTML 7 files、format差分なし、lint error / warningなし</td>
+        </tr>
+        <tr>
+          <th scope="row">Markdown監査</th>
+          <td>成功</td>
+          <td>
+            全relative link targetの存在と、全<code>bash</code> code
+            blockの構文
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実装contract照合</th>
+          <td>成功</td>
+          <td>公開API 21 / 21 route、daemon environment 20 / 20項目</td>
+        </tr>
+        <tr>
+          <th scope="row">配備静的検証</th>
+          <td>成功</td>
+          <td>Bash script、Python AST、project systemd unit。OS同梱xfs unitのwarningは非対象</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>bun run check</code></th>
+          <td>成功</td>
+          <td>source-only、Spec HTML、TypeScript、148 tests、0 failures</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="remaining-limitations">
+    <h2>レビュー時点の継続制限</h2>
+    <ul>
+      <li>
+        STTとTTSの安定Gatewayはレビュー実施時点で未実装であり、resolveした個別endpointを使用していた。
+      </li>
+      <li>directory modelはAPI staging対象外である。</li>
+      <li>Resident artifactはAPIからactivationできない。</li>
+      <li>active Allocationはdaemon再起動後に復元しない。</li>
+      <li>35Bはproduction Registryへ登録していない。</li>
+      <li>
+        VOICEVOXの<code>0.vvm</code>
+        releaseはREADMEに記録されているが、file manifestとchecksumは未整備である。
+      </li>
+      <li>過去のgnosis性能値にはrepository内のraw dataがなく、再現可能なrelease gateではない。</li>
+    </ul>
+  </section>
+</article>

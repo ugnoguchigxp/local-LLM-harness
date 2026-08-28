@@ -20,16 +20,17 @@ export const allocationBindingSchema = z.object({
   candidateRank: z.number().int().positive(),
   fallback: z.boolean(),
   selectionReason: z.string().min(1).max(128),
-});
+}).strict();
 
 export const allocationErrorSchema = z.object({
   code: z.string().min(1),
   message: z.string().min(1),
-});
+}).strict();
 
 export const allocationSchema = z
   .object({
     id: z.string().min(1).max(192),
+    bootEpoch: z.string().min(1).max(128),
     client: z.string().min(1).max(128).optional(),
     status: allocationStatusSchema,
     requirements: z.array(allocationRequirementSchema).min(1).max(16),
@@ -41,7 +42,7 @@ export const allocationSchema = z
     operationId: z.string().min(1).max(192).optional(),
     releasedAt: z.string().datetime().optional(),
     error: allocationErrorSchema.optional(),
-  })
+  }).strict()
   .superRefine((allocation, context) => {
     const requirements = new Map(
       allocation.requirements.map((requirement) => [requirement.capability, requirement.route]),
@@ -80,8 +81,8 @@ export type AllocationBinding = z.infer<typeof allocationBindingSchema>;
 export type AllocationError = z.infer<typeof allocationErrorSchema>;
 export type Allocation = z.infer<typeof allocationSchema>;
 
-export function createAllocationId(random?: () => string): string {
-  return `alloc_${(random ?? (() => crypto.randomUUID()))()}`;
+export function createAllocationId(bootEpoch: string, random?: () => string): string {
+  return `alloc_${bootEpoch}_${(random ?? (() => crypto.randomUUID()))()}`;
 }
 
 export function activeAllocation(status: AllocationStatus): boolean {

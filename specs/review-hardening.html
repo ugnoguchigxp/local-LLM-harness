@@ -49,9 +49,52 @@
           <td>最新snapshotを確認し、staleまたは非稼働なら固定先を変えずfail closed</td>
         </tr>
         <tr>
+          <th scope="row">Allocation boundedness</th>
+          <td>keyを持たないReady AllocationをTTL内に無制限作成できる</td>
+          <td>
+            active Allocationと直接Legacy Leaseのdaemon全体上限を追加し、上限時は
+            <code>allocation_capacity</code>で拒否
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Idempotency</th>
+          <td>件数上限処理がTTL内または処理中entryを追い出し、同じkeyで二重Allocationを作り得る</td>
+          <td>
+            処理中entryを保持し、requirements順序を正規化し、満杯時は
+            <code>idempotency_capacity</code>でfail closed
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Lifecycle race</th>
+          <td>startup reconciliationまたはidle stopの判定後に新規Allocationが入り得る</td>
+          <td>
+            停止中Runtimeを予約し、Allocationとartifact
+            mutationの双方を拒否して、各停止直前に利用状況を再確認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Shutdown</th>
+          <td>drain後のrenew・resolve・idle stop再予約と、後続workを待たないflush</td>
+          <td>
+            drain中の新規利用延長を拒否し、idle
+            stopを抑止。追加されたworkと実行中reconciliationも安定状態まで待機
+          </td>
+        </tr>
+        <tr>
           <th scope="row">Artifact path</th>
           <td>revision由来のpath traversalと偽装staged path</td>
-          <td>relative path検証とmanifest完全一致をCoreとBackendの両方で強制</td>
+          <td>
+            relative path検証、manifest完全一致、管理root相互とactive
+            targetの非重複をCoreとBackendで強制
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Directory snapshot</th>
+          <td>DFS順とcanonical path順の差、未列挙empty directory、検証中file差替え</td>
+          <td>
+            全pathをglobal
+            sortし、暗黙directory集合まで照合。<code>O_NOFOLLOW</code>とinode・時刻再確認でfile検証を強化
+          </td>
         </tr>
         <tr>
           <th scope="row">Artifact concurrency</th>
@@ -63,7 +106,7 @@
           <td>Allocation期限後もdownloadとactivationが継続する</td>
           <td>
             release、TTL、startup deadline、daemon
-            drainのAbortSignalをdownloadとhealth待機まで伝播し、 rollback完了用のshutdown猶予を確保
+            drainのAbortSignalをdownloadとhealth待機まで伝播し、rollback完了用のshutdown猶予を確保
           </td>
         </tr>
         <tr>
@@ -71,7 +114,26 @@
           <td>受付直後のcrash、破損record、無制限history、部分rollback失敗</td>
           <td>
             202応答前のpending永続化、schema検証、terminal retention、失敗code保持、複数artifactの
-            rollback事前検証を実装
+            rollback事前検証、journal
+            fileと親directoryの<code>fsync</code>を実装
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Configuration</th>
+          <td>
+            未知fieldを黙って除去し、<code>explicitOnly</code>などのタイプミスへ既定値を適用する
+          </td>
+          <td>
+            Registry、artifact manifest、制御requestをstrict parseし、capability識別子とGateway base
+            URLも検証
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Operation boundedness</th>
+          <td>管理APIからpending artifact operationを無制限に積める</td>
+          <td>
+            pending・running
+            operation上限を追加し、<code>artifact_operation_capacity</code>で拒否
           </td>
         </tr>
         <tr>
@@ -93,7 +155,12 @@
         <tr>
           <th scope="row">gnosis lifecycle</th>
           <td>Preferred TTSのboot常駐、LARMのsystemd権限とactive target書込権限不足</td>
-          <td>Preferredをdisable、限定polkit rule、必要なReadWritePathsだけを付与</td>
+          <td>installerでPreferredをdisableし、限定polkit ruleと必要なReadWritePathsだけを配備</td>
+        </tr>
+        <tr>
+          <th scope="row">Installer isolation</th>
+          <td>test install rootがsymlinkまたは正規化後のfilesystem rootになり得る</td>
+          <td>既存の実directoryだけをrealpathで解決し、rootとsymlinkをcopy前に拒否</td>
         </tr>
       </tbody>
     </table>
@@ -107,6 +174,9 @@
         AllocationのBindingは変更しない。固定Runtimeが停止した場合は別Runtimeへ暗黙移動しない。
       </li>
       <li>配備中のRuntimeと共有artifact ownerには新しいAllocationを入れない。</li>
+      <li>reconciliationまたはidle stop中のRuntimeへAllocationやartifact変更を入れない。</li>
+      <li>冪等性保持領域が満杯でも、TTL内または処理中のkeyを追い出さない。</li>
+      <li>active Allocation、artifact operation、execution slot・queueはすべて明示上限を持つ。</li>
       <li>Allocationがrelease、expire、timeoutした後に新しいartifactをactivateしない。</li>
       <li>artifact operationは破壊的処理より先にjournalへ永続化する。</li>
       <li>
@@ -122,6 +192,7 @@
         <code>bun run check</code>でsource-only、Spec
         HTML、TypeScript、全testを検証する。
       </li>
+      <li>review完了時点で197 testが成功し、失敗は0件。</li>
       <li>
         Bash scriptは<code>bash -n</code>、Python
         adapterは<code>ast.parse</code>でsyntax確認する。
@@ -137,8 +208,14 @@
   <aside>
     <h2>継続する制限</h2>
     <p>
-      directory modelはsnapshot単位のhash manifestがないため無人staging対象外です。Resident artifact
-      activationも引き続きattended operationです。35Bはproduction Registryへ登録していません。
+      directory modelは全fileとsnapshot digestを固定したmanifestだけが無人staging対象です。Resident
+      artifact activationは引き続きattended operationです。35Bはproduction
+      Registryへ登録していません。
+    </p>
+    <p>
+      この表のgnosis対策はrepositoryのdesired stateです。実ホストへの常駐daemon導入とservice
+      enablementの収束は<a href="./next-implementation-plan.html">次期実装計画</a>のattended
+      gateで行います。
     </p>
   </aside>
 </article>

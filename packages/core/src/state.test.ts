@@ -12,10 +12,11 @@ const node = {
 const runtime: RuntimeDefinition = {
   id: "qwen-general",
   capability: ["llm.general"],
+  protocol: "openai.chat-completions.v1",
   backend: "systemd",
   node: "ai395-01",
   policy: { class: "resident" },
-  resources: { estimatedMemoryGB: 24 },
+  resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
   deployment: {
     service: "llama-server.service",
     healthPort: 8080,
@@ -50,10 +51,11 @@ test("llama-swap snapshots expose modelId as service", () => {
     runtime: {
       id: "qwen-worker",
       capability: ["llm.general"],
+      protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
       node: "ai395-01",
       policy: { class: "preferred" },
-      resources: { estimatedMemoryGB: 24 },
+      resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
         modelId: "qwen-worker",
         listen: "http://127.0.0.1:9292",

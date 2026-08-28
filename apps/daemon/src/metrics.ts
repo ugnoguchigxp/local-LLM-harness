@@ -1,6 +1,14 @@
 import type { ControlEvent } from "./controller";
 
-const HIGH_CARDINALITY_LABELS = new Set(["allocation", "client", "request", "request_id"]);
+const HIGH_CARDINALITY_LABELS = new Set([
+  "allocation",
+  "client",
+  "reasons",
+  "request",
+  "request_id",
+  "routes",
+  "runtimes",
+]);
 
 function metricName(name: string): string {
   return `larm_${name.replace(/[^a-zA-Z0-9_:]/g, "_")}`;
@@ -32,6 +40,21 @@ export class MetricsRegistry {
       return;
     }
     this.increment(metricName(`${event.name}_total`), labels, event.value ?? 1);
+  }
+
+  setGauge(name: string, labels: Record<string, string>, value: number): void {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    const safeLabels = Object.fromEntries(
+      Object.entries(labels).filter(([label]) => !HIGH_CARDINALITY_LABELS.has(label)),
+    );
+    const normalized = metricName(name);
+    this.values.set(keyOf(normalized, safeLabels), {
+      name: normalized,
+      labels: safeLabels,
+      value,
+    });
   }
 
   private increment(name: string, labels: Record<string, string>, value: number): void {

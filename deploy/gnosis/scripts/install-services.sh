@@ -3,8 +3,68 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 unit_source="${repo_root}/deploy/gnosis/systemd"
-unit_target="/etc/systemd/system"
+test_mode="${LARM_INSTALL_TEST_MODE:-0}"
+install_root="${LARM_INSTALL_ROOT:-}"
 operator="ugnoguchi"
+
+if [[ "${test_mode}" == "1" && -z "${install_root}" ]]; then
+  echo "LARM_INSTALL_ROOT is required in test mode" >&2
+  exit 1
+fi
+if [[ -n "${install_root}" ]]; then
+  if [[ "${test_mode}" != "1" || "${install_root}" != /* || "${install_root}" == "/" ]]; then
+    echo "LARM_INSTALL_ROOT is only allowed as an absolute non-root path in test mode" >&2
+    exit 1
+  fi
+  if [[ ! -d "${install_root}" || -L "${install_root}" ]]; then
+    echo "LARM_INSTALL_ROOT must be an existing, real directory" >&2
+    exit 1
+  fi
+  install_root="$(realpath -e -- "${install_root}")"
+  if [[ "${install_root}" == "/" ]]; then
+    echo "LARM_INSTALL_ROOT must not resolve to the filesystem root" >&2
+    exit 1
+  fi
+  install_root="${install_root%/}"
+fi
+
+target_path() {
+  printf '%s%s' "${install_root}" "$1"
+}
+
+unit_target="$(target_path /etc/systemd/system)"
+credential_dir="$(target_path /etc/larm)"
+credential_path="${credential_dir}/larm.env"
+polkit_dir="$(target_path /etc/polkit-1/rules.d)"
+state_dir="$(target_path /var/lib/larm)"
+staging_dir="$(target_path /srv/ai/models/.larm-staging)"
+rollback_dir="$(target_path /srv/ai/models/.larm-rollback)"
+worker_dir="$(target_path /srv/ai/models/qwen38-worker)"
+tts_dir="$(target_path /srv/ai/models/qwen-tts)"
+
+if [[ "${test_mode}" == "1" ]]; then
+  data_owner="$(id -un)"
+  data_group="$(id -gn)"
+  system_owner="${data_owner}"
+  system_group="${data_group}"
+  credential_owner="${data_owner}"
+  credential_group="${data_group}"
+else
+  data_owner="${operator}"
+  data_group="${operator}"
+  system_owner="root"
+  system_group="root"
+  credential_owner="root"
+  credential_group="${operator}"
+fi
+
+systemctl_run() {
+  if [[ "${test_mode}" == "1" ]]; then
+    printf '%s\n' "$*" >>"$(target_path /var/lib/larm/install-systemctl.log)"
+  else
+    systemctl "$@"
+  fi
+}
 
 units=(
   llama-server.service
@@ -23,52 +83,55 @@ enabled_units=(
   larm-daemon.service
 )
 
-if [[ "$(id -u)" -ne 0 ]]; then
+if [[ "${test_mode}" != "1" && "$(id -u)" -ne 0 ]]; then
   echo "Run with sudo: sudo $0" >&2
   exit 1
 fi
 
-if ! id "${operator}" >/dev/null 2>&1; then
+if [[ "${test_mode}" != "1" ]] && ! id "${operator}" >/dev/null 2>&1; then
   echo "Required service account does not exist: ${operator}" >&2
   exit 1
 fi
 
-install -d -o "${operator}" -g "${operator}" \
-  /srv/ai/models/qwen38-worker \
-  /srv/ai/models/.larm-staging \
-  /srv/ai/models/.larm-rollback \
-  /var/lib/larm
+install -d -o "${data_owner}" -g "${data_group}" \
+  "${worker_dir}" \
+  "${tts_dir}" \
+  "${staging_dir}" \
+  "${rollback_dir}" \
+  "${state_dir}"
+install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${unit_target}"
 
 for unit in "${units[@]}"; do
-  install -o root -g root -m 0644 "${unit_source}/${unit}" "${unit_target}/${unit}"
+  install -o "${system_owner}" -g "${system_group}" -m 0644 \
+    "${unit_source}/${unit}" "${unit_target}/${unit}"
 done
 
-install -d -o root -g root -m 0755 /etc/polkit-1/rules.d
-install -o root -g root -m 0644 \
+install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${polkit_dir}"
+install -o "${system_owner}" -g "${system_group}" -m 0644 \
   "${repo_root}/deploy/gnosis/polkit/50-larm-runtime-control.rules" \
-  /etc/polkit-1/rules.d/50-larm-runtime-control.rules
+  "${polkit_dir}/50-larm-runtime-control.rules"
 
-install -d -o root -g "${operator}" -m 0750 /etc/larm
-if [[ -L /etc/larm/larm.env ]]; then
-  echo "Refusing symlinked credential file: /etc/larm/larm.env" >&2
+install -d -o "${credential_owner}" -g "${credential_group}" -m 0750 "${credential_dir}"
+if [[ -L "${credential_path}" ]]; then
+  echo "Refusing symlinked credential file: ${credential_path}" >&2
   exit 1
 fi
-if [[ ! -e /etc/larm/larm.env ]]; then
+if [[ ! -e "${credential_path}" ]]; then
   management_token="$(openssl rand -hex 32)"
   umask 0077
-  printf 'LARM_MANAGEMENT_TOKEN=%s\n' "${management_token}" >/etc/larm/larm.env
-elif [[ ! -f /etc/larm/larm.env ]]; then
-  echo "Credential path is not a regular file: /etc/larm/larm.env" >&2
+  printf 'LARM_MANAGEMENT_TOKEN=%s\n' "${management_token}" >"${credential_path}"
+elif [[ ! -f "${credential_path}" ]]; then
+  echo "Credential path is not a regular file: ${credential_path}" >&2
   exit 1
 fi
-chown root:"${operator}" /etc/larm/larm.env
-chmod 0640 /etc/larm/larm.env
+chown "${credential_owner}":"${credential_group}" "${credential_path}"
+chmod 0640 "${credential_path}"
 
-systemctl daemon-reload
-systemctl enable "${enabled_units[@]}"
-systemctl disable qwen-tts.service
+systemctl_run daemon-reload
+systemctl_run enable "${enabled_units[@]}"
+systemctl_run disable qwen-tts.service
 
 echo "Resident/control units enabled; preferred qwen-tts.service left disabled for on-demand use."
 echo "This script intentionally does not reboot or restart services."
 echo "Apply a changed unit explicitly, for example: systemctl restart llama-swap-worker.service"
-echo "LARM management credentials are stored in /etc/larm/larm.env."
+echo "LARM management credentials are stored in ${credential_path}."

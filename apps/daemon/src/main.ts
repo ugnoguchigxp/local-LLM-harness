@@ -1,4 +1,4 @@
-import { loadArtifactManifest, loadRegistry } from "@larm/core";
+import { LARM_VERSION, loadArtifactManifest, loadRegistry } from "@larm/core";
 import { createRuntimeBackend, LocalArtifactStore } from "@larm/backends";
 import { createApp } from "./app";
 import { ArtifactManager } from "./artifact-manager";
@@ -6,14 +6,22 @@ import { parseDaemonConfig } from "./config";
 import { ControlPlane, type ControlEvent } from "./controller";
 import { MetricsRegistry, RequestTracker } from "./metrics";
 import { Observer } from "./observer";
+import { computeConfigRevision, createBootEpoch } from "./identity";
+import { ExecutionGate } from "./execution-gate";
 
 const config = parseDaemonConfig();
+const identity = {
+  version: LARM_VERSION,
+  configRevision: computeConfigRevision(config.configDir, config.artifactManifestPath),
+  bootEpoch: createBootEpoch(),
+};
 
 const registry = loadRegistry(config.configDir);
 const backend = createRuntimeBackend(registry.runtimes);
 const observer = new Observer(registry, backend, { graceMs: config.graceMs });
 const metrics = new MetricsRegistry();
 const requestTracker = new RequestTracker();
+let control: ControlPlane;
 const writeEvent = (event: ControlEvent) => {
   console.log(JSON.stringify({
     timestamp: new Date().toISOString(),
@@ -24,19 +32,35 @@ const writeEvent = (event: ControlEvent) => {
 };
 const observeEvent = (event: ControlEvent) => {
   metrics.record(event);
+  if (event.name.startsWith("allocation_")) {
+    metrics.setGauge(
+      "active_allocations",
+      {},
+      control?.getActiveAllocationCount() ?? 0,
+    );
+  }
   writeEvent(event);
 };
+const executionGate = new ExecutionGate({
+  onEvent: observeEvent,
+  onState: (runtime, state) => {
+    metrics.setGauge("execution_active", { runtime }, state.active);
+    metrics.setGauge("execution_queued", { runtime }, state.queued);
+  },
+});
 const artifactStore = new LocalArtifactStore({
   stagingRoot: config.artifactStagingRoot,
   rollbackRoot: config.artifactRollbackRoot,
   stateRoot: config.artifactStateRoot,
 });
 let artifactManager: ArtifactManager;
-const control = new ControlPlane(registry, backend, observer, {
+control = new ControlPlane(registry, backend, observer, {
+  bootEpoch: identity.bootEpoch,
   idleTtlMs: config.idleTtlMs,
   startupTimeoutMs: config.startupTimeoutMs,
   pollIntervalMs: config.pollIntervalMs,
   historyLimit: config.historyLimit,
+  maxActiveAllocations: config.activeAllocationLimit,
   stateMaxAgeMs: config.stateMaxAgeMs,
   isRuntimeMutating: (runtimeId) => artifactManager?.isRuntimeMutating(runtimeId) ?? false,
   onEvent: observeEvent,
@@ -45,6 +69,7 @@ const control = new ControlPlane(registry, backend, observer, {
       artifactManager.ensureRuntime(runtimeId, allocationId, onPhase, signal),
   },
 });
+metrics.setGauge("active_allocations", {}, 0);
 artifactManager = new ArtifactManager(
   loadArtifactManifest(config.artifactManifestPath),
   registry,
@@ -53,7 +78,9 @@ artifactManager = new ArtifactManager(
   observer,
   {
     activeAllocations: () => control.getAllocations(),
+    isRuntimeTransitioning: (runtimeId) => control.isRuntimeTransitioning(runtimeId),
     historyLimit: config.historyLimit,
+    maxPendingOperations: config.artifactOperationLimit,
     onEvent: observeEvent,
   },
 );
@@ -72,9 +99,14 @@ const app = createApp({
   requestTracker,
   controlMaxBodyBytes: config.controlMaxBodyBytes,
   gatewayMaxBodyBytes: config.gatewayMaxBodyBytes,
+  speechMaxBodyBytes: config.speechMaxBodyBytes,
   gatewayTimeoutMs: config.gatewayTimeoutMs,
   stateMaxAgeMs: config.stateMaxAgeMs,
   onEvent: writeEvent,
+  identity,
+  executionGate,
+  idempotencyTtlMs: config.idempotencyTtlMs,
+  idempotencyLimit: config.idempotencyLimit,
 });
 
 let ticking = false;
@@ -103,6 +135,22 @@ const server = Bun.serve({
 console.log(`larm listening on http://${server.hostname}:${server.port}`);
 console.log(`config ${config.configDir}`);
 
+let reconciliationInFlight: Promise<void> | undefined;
+const reconciliationTimer = setTimeout(() => {
+  const task = control.reconcileOrphanedPreferred()
+    .then(() => undefined)
+    .catch((error) => {
+      console.error(`startup reconciliation failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  reconciliationInFlight = task;
+  void task.finally(() => {
+    if (reconciliationInFlight === task) {
+      reconciliationInFlight = undefined;
+    }
+  });
+}, config.recoveryGraceMs);
+reconciliationTimer.unref?.();
+
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) {
@@ -112,10 +160,16 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`received ${signal}; draining`);
   control.beginDrain();
   artifactManager.beginDrain();
+  executionGate.beginDrain();
   clearInterval(interval);
+  clearTimeout(reconciliationTimer);
   const deadline = Date.now() + config.shutdownTimeoutMs;
   const operationsDrained = await Promise.race([
-    Promise.all([control.flush(), artifactManager.flush()]).then(() => true),
+    Promise.all([
+      control.flush(),
+      artifactManager.flush(),
+      reconciliationInFlight ?? Promise.resolve(),
+    ]).then(() => true),
     Bun.sleep(config.shutdownTimeoutMs).then(() => false),
   ]);
   const requestsDrained = await requestTracker.drain(Math.max(0, deadline - Date.now()));

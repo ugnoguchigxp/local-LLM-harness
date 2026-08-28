@@ -8,10 +8,11 @@ import { LifecycleError, type RuntimeBackend } from "./types";
 const systemdRuntime: RuntimeDefinition = {
   id: "qwen-asr",
   capability: ["speech.stt"],
+  protocol: "openai.audio-transcriptions.v1",
   backend: "systemd",
   node: "gnosis",
   policy: { class: "resident" },
-  resources: { estimatedMemoryGB: 5 },
+  resources: { estimatedMemoryGB: 5, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
   deployment: {
     service: "qwen-asr.service",
     healthPort: 1,
@@ -22,10 +23,11 @@ const systemdRuntime: RuntimeDefinition = {
 const swapRuntime: RuntimeDefinition = {
   id: "qwen-worker",
   capability: ["llm.general"],
+  protocol: "openai.chat-completions.v1",
   backend: "llama-swap",
   node: "ai395-01",
   policy: { class: "preferred" },
-  resources: { estimatedMemoryGB: 24 },
+  resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
   deployment: {
     modelId: "qwen-worker",
     listen: "http://127.0.0.1:9",

@@ -13,16 +13,22 @@ export type DaemonConfig = {
   pollIntervalMs: number;
   stateMaxAgeMs: number;
   historyLimit: number;
+  activeAllocationLimit: number;
   apiToken?: string;
   managementToken?: string;
   gatewayTimeoutMs: number;
   controlMaxBodyBytes: number;
   gatewayMaxBodyBytes: number;
+  speechMaxBodyBytes: number;
   shutdownTimeoutMs: number;
   artifactManifestPath: string;
   artifactStagingRoot: string;
   artifactRollbackRoot: string;
   artifactStateRoot: string;
+  idempotencyTtlMs: number;
+  idempotencyLimit: number;
+  recoveryGraceMs: number;
+  artifactOperationLimit: number;
 };
 
 function numberSetting(
@@ -98,18 +104,29 @@ export function parseDaemonConfig(
       max: 1_000_000,
       integer: true,
     }),
+    activeAllocationLimit: numberSetting(env, "LARM_ACTIVE_ALLOCATION_LIMIT", 1_000, {
+      min: 1,
+      max: 1_000_000,
+      integer: true,
+    }),
     apiToken,
     managementToken,
     gatewayTimeoutMs: secondsSetting(env, "LARM_GATEWAY_TIMEOUT_SECONDS", 300, 0.001),
     controlMaxBodyBytes: numberSetting(env, "LARM_CONTROL_MAX_BODY_BYTES", 64 * 1024, {
       min: 1,
-      max: 1024 * 1024 * 1024,
+      max: 1024 * 1024,
       integer: true,
     }),
     gatewayMaxBodyBytes: numberSetting(
       env,
       "LARM_GATEWAY_MAX_BODY_BYTES",
       4 * 1024 * 1024,
+      { min: 1, max: 64 * 1024 * 1024, integer: true },
+    ),
+    speechMaxBodyBytes: numberSetting(
+      env,
+      "LARM_SPEECH_MAX_BODY_BYTES",
+      257 * 1024 * 1024,
       { min: 1, max: 1024 * 1024 * 1024, integer: true },
     ),
     shutdownTimeoutMs: secondsSetting(env, "LARM_SHUTDOWN_TIMEOUT_SECONDS", 330, 0.001),
@@ -123,5 +140,17 @@ export function parseDaemonConfig(
       env.LARM_ARTIFACT_ROLLBACK_ROOT ?? "/srv/ai/models/.larm-rollback",
     ),
     artifactStateRoot: resolve(env.LARM_ARTIFACT_STATE_ROOT ?? "/var/lib/larm"),
+    idempotencyTtlMs: secondsSetting(env, "LARM_IDEMPOTENCY_TTL_SECONDS", 300, 0.001),
+    idempotencyLimit: numberSetting(env, "LARM_IDEMPOTENCY_LIMIT", 1_000, {
+      min: 1,
+      max: 1_000_000,
+      integer: true,
+    }),
+    recoveryGraceMs: secondsSetting(env, "LARM_RECOVERY_GRACE_SECONDS", 60),
+    artifactOperationLimit: numberSetting(env, "LARM_ARTIFACT_OPERATION_LIMIT", 64, {
+      min: 1,
+      max: 10_000,
+      integer: true,
+    }),
   };
 }

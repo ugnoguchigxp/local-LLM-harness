@@ -1,12 +1,19 @@
 export { LARM_VERSION } from "./version";
+export * from "./protocol";
 export {
   artifactDefinitionSchema,
   artifactDownloadUrl,
+  artifactFileDownloadUrl,
   ArtifactManifestError,
-  isStageableArtifact,
+  computeSnapshotDigest,
+  isFileArtifact,
+  isSnapshotArtifact,
   loadArtifactManifest,
   parseArtifactManifest,
   type ArtifactDefinition,
+  type FileArtifactDefinition,
+  type SnapshotArtifactDefinition,
+  type SnapshotFileDefinition,
 } from "./artifacts";
 export {
   activeAllocation,
@@ -35,6 +42,7 @@ export {
   routeCandidateSchema,
   routeDefinitionSchema,
   runtimeDefinitionSchema,
+  runtimeProtocolSchema,
   runtimeSnapshotSchema,
   runtimeStatusSchema,
   type BackendKind,
@@ -46,6 +54,7 @@ export {
   type RouteDefinition,
   type RuntimeClass,
   type RuntimeDefinition,
+  type RuntimeProtocol,
   type RuntimeSnapshot,
   type RuntimeStatus,
   type ServiceState,

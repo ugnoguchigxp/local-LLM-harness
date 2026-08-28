@@ -56,6 +56,7 @@ export type ControlEvent = {
 };
 
 export type ControlPlaneOptions = {
+  bootEpoch?: string;
   idleTtlMs?: number;
   now?: () => number;
   random?: () => string;
@@ -63,6 +64,7 @@ export type ControlPlaneOptions = {
   startupTimeoutMs?: number;
   pollIntervalMs?: number;
   historyLimit?: number;
+  maxActiveAllocations?: number;
   stateMaxAgeMs?: number;
   deploymentCoordinator?: DeploymentCoordinator;
   isRuntimeMutating?: (runtimeId: string) => boolean;
@@ -77,7 +79,9 @@ export class ControlPlane {
   private readonly operations = new Map<string, Operation>();
   private readonly allocationTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly allocationAborts = new Map<string, AbortController>();
+  private readonly allocationLifecycleAborts = new Map<string, AbortController>();
   private readonly operationAborts = new Map<string, AbortController>();
+  private readonly lifecycleReservations = new Set<string>();
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private applyChain: Promise<void> = Promise.resolve();
   private draining = false;
@@ -92,6 +96,10 @@ export class ControlPlane {
 
   getLeases(): Lease[] {
     return [...this.leases.values()];
+  }
+
+  getBootEpoch(): string {
+    return this.options.bootEpoch ?? "epoch-local";
   }
 
   beginDrain(): void {
@@ -112,6 +120,10 @@ export class ControlPlane {
     return this.draining;
   }
 
+  isRuntimeTransitioning(runtimeId: string): boolean {
+    return this.lifecycleReservations.has(runtimeId);
+  }
+
   getOperation(id: string): Operation | undefined {
     return this.operations.get(id);
   }
@@ -121,9 +133,38 @@ export class ControlPlane {
     return this.allocations.get(id);
   }
 
+  getAllocationSignal(id: string): AbortSignal | undefined {
+    this.expireDueAllocations();
+    return this.allocationLifecycleAborts.get(id)?.signal;
+  }
+
+  allocationLookupError(id: string) {
+    if (id.startsWith("alloc_") && !id.startsWith(`alloc_${this.getBootEpoch()}_`)) {
+      return {
+        status: 409 as const,
+        body: {
+          error: {
+            code: "allocation_epoch_expired",
+            message: `allocation ${id} belongs to a previous daemon boot epoch`,
+          },
+        },
+      };
+    }
+    return {
+      status: 404 as const,
+      body: { error: { code: "not_found", message: `allocation ${id} does not exist` } },
+    };
+  }
+
   getAllocations(): Allocation[] {
     this.expireDueAllocations();
     return [...this.allocations.values()];
+  }
+
+  getActiveAllocationCount(): number {
+    return [...this.allocations.values()].filter((allocation) =>
+      activeAllocation(allocation.status)
+    ).length;
   }
 
   async allocate(request: AllocationRequest) {
@@ -146,6 +187,19 @@ export class ControlPlane {
       };
     }
     this.expireDueAllocations();
+    const activeLimit = Math.max(1, this.options.maxActiveAllocations ?? 1_000);
+    if (this.activeAdmissionCount() >= activeLimit) {
+      this.emit("allocation_rejected", { reason: "allocation_capacity" });
+      return {
+        status: 503 as const,
+        body: {
+          error: {
+            code: "allocation_capacity",
+            message: `active allocation capacity ${activeLimit} has been reached`,
+          },
+        },
+      };
+    }
     const capabilities = new Set<string>();
     const bindings: AllocationBinding[] = [];
     for (const requirement of request.requirements) {
@@ -197,6 +251,21 @@ export class ControlPlane {
     }
 
     const runtimeIds = [...new Set(bindings.map((binding) => binding.runtime))];
+    const transitioningRuntime = runtimeIds.find((runtimeId) =>
+      this.lifecycleReservations.has(runtimeId)
+    );
+    if (transitioningRuntime) {
+      this.emit("allocation_rejected", { reason: "runtime_transition_in_progress" });
+      return {
+        status: 409 as const,
+        body: {
+          error: {
+            code: "runtime_transition_in_progress",
+            message: `runtime ${transitioningRuntime} is changing lifecycle state`,
+          },
+        },
+      };
+    }
     const mutatingRuntime = runtimeIds.find((runtimeId) =>
       this.options.isRuntimeMutating?.(runtimeId)
     );
@@ -235,9 +304,10 @@ export class ControlPlane {
     const now = this.now();
     const allocation: Allocation = {
       id: this.uniqueId(
-        createAllocationId(this.options.random),
+        createAllocationId(this.getBootEpoch(), this.options.random),
         (candidate) => this.allocations.has(candidate),
       ),
+      bootEpoch: this.getBootEpoch(),
       client: request.client,
       status: request.deploymentPolicy === "existing-only" &&
         bindings.every((binding) => binding.status === "HOT" || binding.status === "BUSY")
@@ -251,6 +321,8 @@ export class ControlPlane {
       expiresAt: new Date(now + request.ttlSeconds * 1000).toISOString(),
     };
     this.allocations.set(allocation.id, allocation);
+    this.allocationLifecycleAborts.set(allocation.id, new AbortController());
+    this.emit("allocation_pending", this.allocationLabels(allocation));
     this.scheduleAllocationExpiry(allocation);
     this.cancelIdle();
 
@@ -290,13 +362,16 @@ export class ControlPlane {
   }
 
   renewAllocation(id: string, ttlSeconds: number) {
+    if (this.draining) {
+      return {
+        status: 503 as const,
+        body: { error: { code: "draining", message: "control plane is draining" } },
+      };
+    }
     this.expireDueAllocations();
     const allocation = this.allocations.get(id);
     if (!allocation) {
-      return {
-        status: 404 as const,
-        body: { error: { code: "not_found", message: `allocation ${id} does not exist` } },
-      };
+      return this.allocationLookupError(id);
     }
     if (!activeAllocation(allocation.status)) {
       return {
@@ -315,13 +390,16 @@ export class ControlPlane {
   }
 
   resolveAllocation(id: string, capability: string) {
+    if (this.draining) {
+      return {
+        status: 503 as const,
+        body: { error: { code: "draining", message: "control plane is draining" } },
+      };
+    }
     this.expireDueAllocations();
     const allocation = this.allocations.get(id);
     if (!allocation) {
-      return {
-        status: 404 as const,
-        body: { error: { code: "not_found", message: `allocation ${id} does not exist` } },
-      };
+      return this.allocationLookupError(id);
     }
     if (allocation.status !== "ready") {
       return {
@@ -380,10 +458,7 @@ export class ControlPlane {
   async releaseAllocation(id: string, terminal: "released" | "expired" = "released") {
     const allocation = this.allocations.get(id);
     if (!allocation) {
-      return {
-        status: 404 as const,
-        body: { error: { code: "not_found", message: `allocation ${id} does not exist` } },
-      };
+      return this.allocationLookupError(id);
     }
     if (allocation.status === "released" || allocation.status === "expired") {
       return { status: 200 as const, body: allocation };
@@ -392,6 +467,7 @@ export class ControlPlane {
     allocation.releasedAt = this.isoNow();
     this.clearAllocationTimer(id);
     this.allocationAborts.get(id)?.abort(new Error(`allocation ${terminal}`));
+    this.allocationLifecycleAborts.get(id)?.abort(new Error(`allocation ${terminal}`));
     this.detachLegacyAllocation(id);
     if (allocation.operationId) {
       const operation = this.operations.get(allocation.operationId);
@@ -525,6 +601,19 @@ export class ControlPlane {
       };
     }
 
+    const activeLimit = Math.max(1, this.options.maxActiveAllocations ?? 1_000);
+    if (this.activeAdmissionCount() >= activeLimit) {
+      return {
+        status: 503 as const,
+        body: {
+          error: {
+            code: "allocation_capacity",
+            message: `active allocation capacity ${activeLimit} has been reached`,
+          },
+        },
+      };
+    }
+
     this.cancelIdle();
     const lease: Lease = {
       id: this.uniqueId(
@@ -627,6 +716,12 @@ export class ControlPlane {
   }
 
   resolve(capability: string) {
+    if (this.draining) {
+      return {
+        status: 503 as const,
+        body: { error: { code: "draining", message: "control plane is draining" } },
+      };
+    }
     const result = resolveCapability(this.registry, this.observer.getState(), capability);
     if (!result.ok && result.reason === "unknown_capability") {
       return {
@@ -664,7 +759,62 @@ export class ControlPlane {
   }
 
   async flush(): Promise<void> {
-    await this.applyChain;
+    while (true) {
+      const current = this.applyChain;
+      await current;
+      if (this.applyChain === current) {
+        return;
+      }
+    }
+  }
+
+  async reconcileOrphanedPreferred(): Promise<string[]> {
+    if (this.draining) {
+      return [];
+    }
+    this.expireDueAllocations();
+    const state = await this.observer.tick();
+    const allocated = new Set(
+      [...this.allocations.values()]
+        .filter((allocation) => activeAllocation(allocation.status))
+        .flatMap((allocation) => allocation.bindings.map((binding) => binding.runtime)),
+    );
+    const legacyCapabilities = new Set(
+      [...this.leases.values()].flatMap((lease) => lease.capabilities),
+    );
+    const stopped: string[] = [];
+    for (const snapshot of state.runtimes) {
+      const runtime = getRuntime(this.registry, snapshot.id);
+      if (
+        !runtime
+        || runtime.policy.class !== "preferred"
+        || snapshot.status !== "HOT"
+        || allocated.has(runtime.id)
+        || runtime.capability.some((capability) => legacyCapabilities.has(capability))
+        || this.options.isRuntimeMutating?.(runtime.id)
+      ) {
+        continue;
+      }
+      this.lifecycleReservations.add(runtime.id);
+      try {
+        const inUse = [...this.allocations.values()].some(
+          (allocation) => activeAllocation(allocation.status)
+            && allocation.bindings.some((binding) => binding.runtime === runtime.id),
+        );
+        if (inUse || this.options.isRuntimeMutating?.(runtime.id)) {
+          continue;
+        }
+        await this.backend.stop(runtime.id);
+        stopped.push(runtime.id);
+        this.emit("startup_reconciliation", { runtime: runtime.id, result: "stopped_orphan" });
+      } finally {
+        this.lifecycleReservations.delete(runtime.id);
+      }
+    }
+    if (stopped.length > 0) {
+      await this.observer.tick();
+    }
+    return stopped;
   }
 
   private enqueue(work: () => Promise<void>): void {
@@ -765,6 +915,7 @@ export class ControlPlane {
           operation.error = allocation.error;
           operation.completedAt = this.isoNow();
           this.clearAllocationTimer(allocation.id);
+          this.allocationLifecycleAborts.get(allocation.id)?.abort(new Error("allocation failed"));
           this.detachLegacyAllocation(allocation.id);
           this.emit("allocation_failed", {
             ...this.allocationLabels(allocation),
@@ -798,6 +949,7 @@ export class ControlPlane {
       operation.error = error;
       operation.completedAt = this.isoNow();
       this.clearAllocationTimer(allocation.id);
+      this.allocationLifecycleAborts.get(allocation.id)?.abort(new Error("allocation failed"));
       this.detachLegacyAllocation(allocation.id);
       this.emit("allocation_failed", {
         ...this.allocationLabels(allocation),
@@ -883,18 +1035,29 @@ export class ControlPlane {
 
   private async runStop(ids: string[]): Promise<void> {
     await this.observer.tick();
-    const plan = planTransition({
-      registry: this.registry,
-      state: this.observer.getState(),
-      leases: this.planningLeases(),
-    });
-    const targets = ids.filter((id) => plan.stop.includes(id));
-    for (const runtimeId of targets) {
+    for (const runtimeId of ids) {
+      if (this.lifecycleReservations.has(runtimeId)) {
+        continue;
+      }
+      this.lifecycleReservations.add(runtimeId);
       try {
+        if (this.options.isRuntimeMutating?.(runtimeId)) {
+          continue;
+        }
+        const plan = planTransition({
+          registry: this.registry,
+          state: this.observer.getState(),
+          leases: this.planningLeases(),
+        });
+        if (!plan.stop.includes(runtimeId)) {
+          continue;
+        }
         await this.backend.stop(runtimeId);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`stop ${runtimeId} failed: ${message}`);
+      } finally {
+        this.lifecycleReservations.delete(runtimeId);
       }
     }
     await this.observer.tick();
@@ -919,7 +1082,17 @@ export class ControlPlane {
     return [...this.leases.values(), ...allocationLeases];
   }
 
+  private activeAdmissionCount(): number {
+    const directLegacyLeases = [...this.leases.keys()].filter((leaseId) =>
+      !this.legacyAllocationByLease.has(leaseId)
+    ).length;
+    return this.getActiveAllocationCount() + directLegacyLeases;
+  }
+
   private scheduleIdleReconcile(): void {
+    if (this.draining) {
+      return;
+    }
     const plan = planTransition({
       registry: this.registry,
       state: this.observer.getState(),
@@ -931,6 +1104,9 @@ export class ControlPlane {
   }
 
   private scheduleIdleStop(ids: string[]): void {
+    if (this.draining) {
+      return;
+    }
     const ttl = this.options.idleTtlMs ?? 60_000;
     this.cancelIdle();
     if (ttl <= 0) {
@@ -986,6 +1162,7 @@ export class ControlPlane {
       const allocation = terminalAllocations.shift();
       if (allocation) {
         this.allocations.delete(allocation.id);
+        this.allocationLifecycleAborts.delete(allocation.id);
       }
     }
     const terminalOperations = [...this.operations.values()]

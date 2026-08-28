@@ -8,12 +8,57 @@
 
   <section id="documents" aria-labelledby="document-list">
     <h2 id="document-list">設計資料一覧</h2>
-    <ul>
-      <li><a href="./concept.html">Local AI Provider コンセプト</a></li>
-      <li><a href="./implementation-plan.html">LARM 実装計画・完了記録</a></li>
-      <li><a href="./api.html">LARM v1 API仕様</a></li>
-      <li><a href="./review-hardening.html">LARM コードレビュー・Hardening記録</a></li>
-    </ul>
+    <table>
+      <caption>
+        文書の役割と状態
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">文書</th>
+          <th scope="col">役割</th>
+          <th scope="col">状態</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><a href="./concept.html">Local AI Provider コンセプト</a></th>
+          <td>責務境界、運用原則、モデル方針</td>
+          <td>現行正本</td>
+        </tr>
+        <tr>
+          <th scope="row"><a href="./api.html">LARM v1 API仕様</a></th>
+          <td>実装済み公開API contract</td>
+          <td>現行正本</td>
+        </tr>
+        <tr>
+          <th scope="row"><a href="./implementation-plan.html">初期実装計画・完了記録</a></th>
+          <td>Milestone 0から7の計画とコード実装結果</td>
+          <td>0から6のコード完了、attended production gateとMilestone 7は未完了</td>
+        </tr>
+        <tr>
+          <th scope="row"><a href="./next-implementation-plan.html">次期実装計画</a></th>
+          <td>Milestone 8から14の着手順と完了条件</td>
+          <td>repository実装完了、attended production gate待ち</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./implementation-completion.html">Milestone 8–14 実装完了記録</a>
+          </th>
+          <td>実装結果、固定contract、残る実機gate</td>
+          <td>現行記録</td>
+        </tr>
+        <tr>
+          <th scope="row"><a href="./review-hardening.html">コードレビュー・Hardening記録</a></th>
+          <td>コード監査の指摘、対策、不変条件</td>
+          <td>指摘修正済み</td>
+        </tr>
+        <tr>
+          <th scope="row"><a href="./documentation-review.html">ドキュメントレビュー記録</a></th>
+          <td>文書監査、正本対応、運用状態との区別</td>
+          <td>指摘修正済み</td>
+        </tr>
+      </tbody>
+    </table>
   </section>
 
   <section id="authoring" aria-labelledby="authoring-rules">
