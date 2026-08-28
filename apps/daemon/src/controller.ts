@@ -1,13 +1,18 @@
 import {
   createLeaseId,
+  compareRouteSelection,
   expandPrepareRequest,
+  findDefaultRoute,
   getRuntime,
   planTransition,
   prepareRequestSchema,
   resolveCapability,
+  selectRoute,
   type Lease,
   type PrepareRequest,
   type Registry,
+  type ResolveResult,
+  type RouteShadowComparison,
 } from "@larm/core";
 import type { RuntimeBackend } from "@larm/backends";
 import { LifecycleError } from "@larm/backends";
@@ -27,6 +32,7 @@ export type ControlPlaneOptions = {
   idleTtlMs?: number;
   now?: () => number;
   random?: () => string;
+  onRouteShadowComparison?: (comparison: RouteShadowComparison) => void;
 };
 
 export class ControlPlane {
@@ -183,6 +189,7 @@ export class ControlPlane {
 
   resolve(capability: string) {
     const result = resolveCapability(this.registry, this.observer.getState(), capability);
+    this.observeRouteShadow(capability, result);
     if (!result.ok && result.reason === "unknown_capability") {
       return {
         status: 404 as const,
@@ -267,6 +274,26 @@ export class ControlPlane {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = undefined;
+    }
+  }
+
+  private observeRouteShadow(capability: string, legacy: ResolveResult): void {
+    const route = findDefaultRoute(this.registry, capability);
+    if (!route) {
+      return;
+    }
+    const selected = selectRoute({
+      registry: this.registry,
+      state: this.observer.getState(),
+      routeId: route.id,
+      capability,
+      mode: "default",
+      allowFallback: true,
+    });
+    const comparison = compareRouteSelection(capability, route, legacy, selected);
+    this.options.onRouteShadowComparison?.(comparison);
+    if (!comparison.matches && !this.options.onRouteShadowComparison) {
+      console.warn(JSON.stringify({ event: "route_shadow_mismatch", ...comparison }));
     }
   }
 

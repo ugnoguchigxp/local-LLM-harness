@@ -1,0 +1,8 @@
+routes:
+  llm-default:
+    capabilities: [llm.general]
+    candidates:
+      - runtime: qwen-general
+        purpose: primary
+      - runtime: qwen-worker
+        purpose: fallback

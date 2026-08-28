@@ -27,6 +27,7 @@ const registry: Registry = {
     },
   ],
   profiles: [],
+  routes: [],
 };
 
 function stub(probe: RuntimeHealth): RuntimeBackend {

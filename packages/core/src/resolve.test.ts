@@ -39,6 +39,7 @@ const registry: Registry = {
     },
   ],
   profiles: [],
+  routes: [],
 };
 
 function state(runtimes: RuntimeSnapshot[]): ClusterState {

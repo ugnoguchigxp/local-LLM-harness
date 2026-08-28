@@ -39,6 +39,7 @@ const registry: Registry = {
     },
   ],
   profiles: [],
+  routes: [],
 };
 
 function snap(id: string, status: RuntimeSnapshot["status"], cls: RuntimeSnapshot["class"]): RuntimeSnapshot {

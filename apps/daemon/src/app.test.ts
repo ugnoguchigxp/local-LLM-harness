@@ -5,7 +5,7 @@ import {
 } from "@larm/core";
 import type { RuntimeBackend, RuntimeHealth } from "@larm/backends";
 import { createApp } from "./app";
-import { ControlPlane } from "./controller";
+import { ControlPlane, type ControlPlaneOptions } from "./controller";
 import { Observer } from "./observer";
 
 const registry: Registry = {
@@ -51,6 +51,17 @@ const registry: Registry = {
     { id: "default", require: ["llm.general"] },
     { id: "meeting", require: ["llm.general", "speech.stt"] },
   ],
+  routes: [
+    {
+      id: "llm-default",
+      capabilities: ["llm.general"],
+      explicitOnly: false,
+      candidates: [
+        { runtime: "qwen-general", purpose: "primary" },
+        { runtime: "qwen-worker", purpose: "fallback" },
+      ],
+    },
+  ],
 };
 
 function probe(
@@ -83,7 +94,11 @@ function stubBackend(probes: Map<string, RuntimeHealth>, log: { ensure: string[]
   };
 }
 
-async function makeApp(generalHot: boolean, workerHot = false) {
+async function makeApp(
+  generalHot: boolean,
+  workerHot = false,
+  controlOptions: ControlPlaneOptions = {},
+) {
   const probes = new Map<string, RuntimeHealth>([
     ["qwen-general", probe("qwen-general", generalHot)],
     ["qwen-worker", probe("qwen-worker", workerHot)],
@@ -95,6 +110,7 @@ async function makeApp(generalHot: boolean, workerHot = false) {
   const control = new ControlPlane(registry, backend, observer, {
     idleTtlMs: 0,
     random: () => "fixed",
+    ...controlOptions,
   });
   const app = createApp({
     registry,
@@ -204,6 +220,31 @@ test("POST /resolve is 503 when nothing is HOT", async () => {
   expect(res.status).toBe(503);
 });
 
+test("POST /resolve reports route shadow differences without changing legacy behavior", async () => {
+  const comparisons: Parameters<NonNullable<ControlPlaneOptions["onRouteShadowComparison"]>>[0][] = [];
+  const { app } = await makeApp(false, false, {
+    onRouteShadowComparison: (comparison) => comparisons.push(comparison),
+  });
+  const res = await app.request("/resolve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ capability: "llm.general" }),
+  });
+
+  expect(res.status).toBe(503);
+  expect(comparisons).toEqual([
+    {
+      capability: "llm.general",
+      route: "llm-default",
+      legacyRuntime: undefined,
+      routeRuntime: "qwen-worker",
+      legacyOutcome: "error:not_ready",
+      routeOutcome: "runtime:qwen-worker",
+      matches: false,
+    },
+  ]);
+});
+
 test("POST /release stops idle preferred worker", async () => {
   const { app, control, log } = await makeApp(true, true);
   const prepared = await app.request("/prepare", {
@@ -221,4 +262,3 @@ test("POST /release stops idle preferred worker", async () => {
   await control.flush();
   expect(log.stop).toEqual(["qwen-worker"]);
 });
-

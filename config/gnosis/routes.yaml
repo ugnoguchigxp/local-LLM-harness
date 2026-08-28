@@ -1,0 +1,55 @@
+routes:
+  llm-default:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    candidates:
+      - runtime: qwen-general
+        purpose: primary
+      - runtime: qwen-worker-quality
+        purpose: fallback
+
+  llm-long-context:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: qwen-worker-quality
+        purpose: primary
+      - runtime: qwen-general
+        purpose: fallback
+
+  llm-speed:
+    capabilities:
+      - llm.general
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: qwen-worker-fast
+        purpose: primary
+      - runtime: qwen-general
+        purpose: fallback
+
+  stt-default:
+    capabilities:
+      - speech.stt
+    candidates:
+      - runtime: qwen-asr
+        purpose: primary
+
+  tts-default:
+    capabilities:
+      - speech.tts
+    candidates:
+      - runtime: voicevox-tts
+        purpose: primary
+
+  tts-expressive:
+    capabilities:
+      - speech.tts.expressive
+    candidates:
+      - runtime: qwen-tts
+        purpose: primary
