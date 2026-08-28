@@ -24,3 +24,11 @@ export {
   type RuntimeHealth,
   type RuntimeInstance,
 } from "./types";
+export {
+  ArtifactStoreError,
+  LocalArtifactStore,
+  type ActivationRecord,
+  type ArtifactJournalRecord,
+  type LocalArtifactStoreOptions,
+  type StagedArtifact,
+} from "./artifact-store";

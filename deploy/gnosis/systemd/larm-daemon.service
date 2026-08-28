@@ -1,0 +1,36 @@
+[Unit]
+Description=LARM local AI runtime control plane
+After=network-online.target llama-server.service llama-swap-worker.service
+Wants=network-online.target llama-server.service llama-swap-worker.service
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/local-LLM-harness
+Environment=HOME=/srv/ai/cache
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+Environment=LARM_HOST=127.0.0.1
+Environment=LARM_PORT=9810
+Environment=LARM_ARTIFACT_STAGING_ROOT=/srv/ai/models/.larm-staging
+Environment=LARM_ARTIFACT_ROLLBACK_ROOT=/srv/ai/models/.larm-rollback
+Environment=LARM_ARTIFACT_STATE_ROOT=/var/lib/larm
+EnvironmentFile=/etc/larm/larm.env
+ExecStart=/home/ugnoguchi/.bun/bin/bun run apps/daemon/src/main.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=360
+KillSignal=SIGTERM
+LimitNOFILE=65535
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/srv/ai/cache /srv/ai/logs /srv/ai/models/.larm-staging /srv/ai/models/.larm-rollback /srv/ai/models/qwen38-worker /var/lib/larm
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

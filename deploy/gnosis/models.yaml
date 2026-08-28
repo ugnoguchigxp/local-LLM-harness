@@ -39,6 +39,7 @@ models:
     source: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF
     revision: 4ca720788d1e01f1bff70c033e0d0028fd02e502
     filename: mtp-Qwen3.8-27B-Q4_0.gguf
+    sourcePath: MTP/mtp-Qwen3.8-27B-Q4_0.gguf
     path: /srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
     bytes: 1369590656
     sha256: 50d9ce5a6da381bbcfb31061cf73df94a90e6faf8efeddee379a9cb8f1501c6e

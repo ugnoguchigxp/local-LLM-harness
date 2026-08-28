@@ -17,7 +17,7 @@ Gitで管理するのは、ソースコード、設定、systemd unit、再現�
 
 | Path | Role |
 | --- | --- |
-| `apps/daemon` | Runtime registry、lease、resolve、control API |
+| `apps/daemon` | Route、Allocation、Gateway、artifact operationを提供するcontrol plane |
 | `apps/qwen-asr` | OpenAI互換ASR adapter |
 | `apps/qwen-tts` | gfx1151向けQwen3-TTS設定・patch |
 | `apps/voicevox-tts` | 低遅延VOICEVOX adapter |
@@ -32,6 +32,7 @@ Gitで管理するのは、ソースコード、設定、systemd unit、再現�
 ```bash
 bun install --frozen-lockfile
 bun run check
+bun run typecheck
 bun run dev
 ```
 
@@ -47,7 +48,8 @@ bun run docs:check:fix
 
 HTML文書は`<article lang="ja">`をrootとし、document固有の`html`、`head`、`body`、CSS、navigationは持たせません。詳細は[`specs/overview.html`](specs/overview.html)を参照してください。
 
-Providerの最新コンセプトは[`specs/concept.html`](specs/concept.html)を正本とします。
+Providerの最新コンセプトは[`specs/concept.html`](specs/concept.html)、公開APIは
+[`specs/api.html`](specs/api.html)を正本とします。
 
 daemonは既定で `config/gnosis` を読み、`127.0.0.1:9810` で待ち受けます。別構成は `LARM_CONFIG_DIR` で指定できます。
 
@@ -55,8 +57,10 @@ daemonは既定で `config/gnosis` を読み、`127.0.0.1:9810` で待ち受け�
 
 ```bash
 cd /srv/ai/apps/local-LLM-harness
-deploy/gnosis/scripts/verify.sh
 sudo deploy/gnosis/scripts/install-services.sh
+sudo systemctl start llama-server.service llama-swap-worker.service \
+  qwen-asr.service voicevox-tts.service larm-daemon.service
+deploy/gnosis/scripts/verify.sh
 ```
 
 詳細は [`docs/gnosis.md`](docs/gnosis.md) と [`deploy/gnosis/README.md`](deploy/gnosis/README.md) を参照してください。このdual-boot hostでは、配備処理からrebootしません。

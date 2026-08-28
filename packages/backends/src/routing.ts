@@ -22,8 +22,27 @@ export class RoutingBackend implements RuntimeBackend {
   constructor(private readonly routes: Map<string, RuntimeBackend>) {}
 
   async list(): Promise<RuntimeHealth[]> {
-    const unique = [...new Set(this.routes.values())];
-    const parts = await Promise.all(unique.map((backend) => backend.list()));
+    const groups = new Map<RuntimeBackend, string[]>();
+    for (const [runtimeId, backend] of this.routes) {
+      const ids = groups.get(backend) ?? [];
+      ids.push(runtimeId);
+      groups.set(backend, ids);
+    }
+    const parts = await Promise.all([...groups].map(async ([backend, runtimeIds]) => {
+      try {
+        return await backend.list();
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        return runtimeIds.map((runtimeId): RuntimeHealth => ({
+          runtimeId,
+          service: "Unknown",
+          listening: false,
+          healthOk: false,
+          busy: false,
+          detail: `backend observation failed: ${detail}`,
+        }));
+      }
+    }));
     return parts.flat();
   }
 
@@ -35,12 +54,12 @@ export class RoutingBackend implements RuntimeBackend {
     return backend.health(runtimeId);
   }
 
-  async ensure(runtime: RuntimeDefinition): Promise<RuntimeHealth> {
+  async ensure(runtime: RuntimeDefinition, signal?: AbortSignal): Promise<RuntimeHealth> {
     const backend = this.routes.get(runtime.id);
     if (!backend) {
       throw new LifecycleError("start_failed", `runtime ${runtime.id} is not registered`);
     }
-    return backend.ensure(runtime);
+    return backend.ensure(runtime, signal);
   }
 
   async stop(runtimeId: string): Promise<void> {

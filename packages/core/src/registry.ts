@@ -99,6 +99,19 @@ export function parseRegistryDocuments(input: {
     }
   }
 
+  for (const node of nodes) {
+    const residentMemoryGB = runtimes
+      .filter((runtime) => runtime.node === node.id && runtime.policy.class === "resident")
+      .reduce((total, runtime) => total + runtime.resources.estimatedMemoryGB, 0);
+    const usableMemoryGB =
+      node.resources.memoryTotalGB - node.resources.reservedMemoryGB;
+    if (residentMemoryGB > usableMemoryGB) {
+      throw new RegistryError(
+        `runtimes.yaml: resident runtimes on node ${node.id} require ${residentMemoryGB}GB but only ${usableMemoryGB}GB is usable`,
+      );
+    }
+  }
+
   const profiles: WorkloadProfile[] = Object.entries(profilesParsed.data.profiles)
     .map(([id, profile]) => ({ id, ...profile }))
     .sort((a, b) => a.id.localeCompare(b.id));

@@ -1,23 +1,65 @@
 import { z } from "zod";
 
+const requestIdSchema = z.string().min(1).max(128);
+const capabilitySchema = z.string().min(1).max(128);
+const capabilityListSchema = z
+  .array(capabilitySchema)
+  .min(1)
+  .max(16)
+  .refine((items) => new Set(items).size === items.length, "capabilities must be unique");
+
 export const prepareRequestSchema = z
   .object({
-    profile: z.string().min(1).optional(),
-    capabilities: z.array(z.string().min(1)).optional(),
-    client: z.string().min(1).optional(),
+    profile: requestIdSchema.optional(),
+    capabilities: capabilityListSchema.optional(),
+    client: requestIdSchema.optional(),
   })
   .refine((value) => Boolean(value.profile) || (value.capabilities && value.capabilities.length > 0), {
     message: "profile or capabilities is required",
   });
 
 export const releaseRequestSchema = z.object({
-  leaseId: z.string().min(1),
+  leaseId: requestIdSchema,
 });
 
 export const resolveRequestSchema = z.object({
-  capability: z.string().min(1),
+  capability: capabilitySchema,
+});
+
+export const allocationRequirementSchema = z.object({
+  capability: capabilitySchema,
+  route: requestIdSchema,
+});
+
+export const deploymentPolicySchema = z.enum(["existing-only", "allow-listed"]);
+
+export const allocationRequestSchema = z
+  .object({
+    requirements: z.array(allocationRequirementSchema).min(1).max(16),
+    client: requestIdSchema.optional(),
+    allowFallback: z.boolean().default(false),
+    ttlSeconds: z.number().int().min(1).max(86_400).default(300),
+    deploymentPolicy: deploymentPolicySchema.default("existing-only"),
+  })
+  .refine(
+    (value) => new Set(value.requirements.map((requirement) => requirement.capability)).size
+      === value.requirements.length,
+    { message: "requirements must contain each capability at most once", path: ["requirements"] },
+  );
+
+export const allocationResolveRequestSchema = z.object({
+  capability: capabilitySchema,
+});
+
+export const allocationRenewRequestSchema = z.object({
+  ttlSeconds: z.number().int().min(1).max(86_400).default(300),
 });
 
 export type PrepareRequest = z.infer<typeof prepareRequestSchema>;
 export type ReleaseRequest = z.infer<typeof releaseRequestSchema>;
 export type ResolveRequest = z.infer<typeof resolveRequestSchema>;
+export type AllocationRequirement = z.infer<typeof allocationRequirementSchema>;
+export type DeploymentPolicy = z.infer<typeof deploymentPolicySchema>;
+export type AllocationRequest = z.infer<typeof allocationRequestSchema>;
+export type AllocationResolveRequest = z.infer<typeof allocationResolveRequestSchema>;
+export type AllocationRenewRequest = z.infer<typeof allocationRenewRequestSchema>;

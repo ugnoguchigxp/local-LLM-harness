@@ -1,4 +1,5 @@
-import type { ClusterState, Registry, RuntimeSnapshot } from "./schema";
+import type { Registry } from "./registry";
+import type { ClusterState, RuntimeSnapshot } from "./schema";
 import { providersOf } from "./planner";
 
 const RANK: Record<string, number> = {

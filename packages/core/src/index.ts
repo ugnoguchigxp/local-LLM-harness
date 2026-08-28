@@ -1,5 +1,31 @@
 export { LARM_VERSION } from "./version";
 export {
+  artifactDefinitionSchema,
+  artifactDownloadUrl,
+  ArtifactManifestError,
+  isStageableArtifact,
+  loadArtifactManifest,
+  parseArtifactManifest,
+  type ArtifactDefinition,
+} from "./artifacts";
+export {
+  activeAllocation,
+  allocationBindingSchema,
+  allocationErrorSchema,
+  allocationSchema,
+  allocationStatusSchema,
+  createAllocationId,
+  type Allocation,
+  type AllocationBinding,
+  type AllocationError,
+  type AllocationStatus,
+} from "./allocation";
+export {
+  admitRuntimes,
+  type AdmissionResult,
+  type NodeAdmission,
+} from "./admission";
+export {
   backendKindSchema,
   clusterStateSchema,
   isLlamaSwapRuntime,
@@ -66,9 +92,19 @@ export {
 } from "./route-selector";
 export { expandPrepareRequest, type ExpandPrepareResult } from "./prepare";
 export {
+  allocationRenewRequestSchema,
+  allocationRequestSchema,
+  allocationRequirementSchema,
+  allocationResolveRequestSchema,
+  deploymentPolicySchema,
   prepareRequestSchema,
   releaseRequestSchema,
   resolveRequestSchema,
+  type AllocationRenewRequest,
+  type AllocationRequest,
+  type AllocationRequirement,
+  type AllocationResolveRequest,
+  type DeploymentPolicy,
   type PrepareRequest,
   type ReleaseRequest,
   type ResolveRequest,

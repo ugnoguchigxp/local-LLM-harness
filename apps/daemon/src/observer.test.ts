@@ -58,3 +58,33 @@ test("STARTING becomes FAILED after grace", async () => {
   now = 1_000 + 300_000;
   expect((await observer.tick()).runtimes[0]?.status).toBe("FAILED");
 });
+
+test("concurrent ticks share one backend observation", async () => {
+  let calls = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const backend: RuntimeBackend = {
+    list: async () => {
+      calls += 1;
+      await gate;
+      return [];
+    },
+    health: async () => ({
+      runtimeId: "qwen-general",
+      service: "Unknown",
+      listening: false,
+      healthOk: false,
+      busy: false,
+    }),
+    ensure: async () => { throw new Error("not used"); },
+    stop: async () => undefined,
+  };
+  const observer = new Observer(registry, backend);
+  const first = observer.tick();
+  const second = observer.tick();
+  release();
+  await Promise.all([first, second]);
+  expect(calls).toBe(1);
+});

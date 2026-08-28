@@ -13,6 +13,7 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=VOICEVOX_RUNTIME_ROOT=/srv/ai/apps/voicevox-core-0.17.0/runtime
 Environment=VOICEVOX_THREADS=16
 Environment=VOICEVOX_DEFAULT_VOICE=Kasukabe_Tsumugi
+Environment=VOICEVOX_MAX_REQUEST_BYTES=65536
 Environment=OMP_NUM_THREADS=16
 Environment=OPENBLAS_NUM_THREADS=16
 ExecStart=/srv/ai/apps/voicevox-core-0.17.0/.venv/bin/uvicorn voicevox_api:app --host 0.0.0.0 --port 8084 --workers 1

@@ -11,12 +11,14 @@
     "docs:format": "bun x --bun --no-install spec-html format ./specs --write",
     "docs:check": "bun x --bun --no-install spec-html check ./specs --warnings-as-errors",
     "docs:check:fix": "bun x --bun --no-install spec-html check ./specs --fix --warnings-as-errors",
+    "typecheck": "tsc --noEmit",
     "test": "bun test apps packages",
     "check:source-only": "bash scripts/check-source-only.sh",
-    "check": "bun run check:source-only && bun run docs:check && bun run test"
+    "check": "bun run check:source-only && bun run docs:check && bun run typecheck && bun run test"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",
-    "spec-html": "0.1.6"
+    "spec-html": "0.1.6",
+    "typescript": "5.9.2"
   }
 }

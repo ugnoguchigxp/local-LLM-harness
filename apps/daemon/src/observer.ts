@@ -17,6 +17,7 @@ export type ObserverOptions = {
 export class Observer {
   private readonly startingSince = new Map<string, number>();
   private snapshot: ClusterState;
+  private tickInFlight: Promise<ClusterState> | undefined;
 
   constructor(
     private readonly registry: Registry,
@@ -35,7 +36,21 @@ export class Observer {
     return this.snapshot;
   }
 
-  async tick(): Promise<ClusterState> {
+  tick(): Promise<ClusterState> {
+    if (this.tickInFlight) {
+      return this.tickInFlight;
+    }
+    const observed = this.observe();
+    const tracked = observed.finally(() => {
+      if (this.tickInFlight === tracked) {
+        this.tickInFlight = undefined;
+      }
+    });
+    this.tickInFlight = tracked;
+    return tracked;
+  }
+
+  private async observe(): Promise<ClusterState> {
     const now = this.now();
     const observedAt = new Date(now).toISOString();
     const graceMs = this.options.graceMs ?? 300_000;

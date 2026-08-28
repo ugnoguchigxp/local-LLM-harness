@@ -40,6 +40,7 @@ test("loads the Linux production registry", () => {
   expect(defaultRoute?.explicitOnly).toBe(false);
   expect(speedRoute?.explicitOnly).toBe(true);
   expect(defaultRoute?.candidates.some((candidate) => candidate.runtime.includes("35b"))).toBe(false);
+  expect(registry.runtimes.some((runtime) => runtime.id.includes("35b"))).toBe(false);
 });
 
 test("rejects missing policy.class", () => {
@@ -151,4 +152,27 @@ test("rejects multiple default routes for the same capability", () => {
       }),
     ),
   ).toThrow(/multiple default routes/);
+});
+
+test("rejects impossible node memory reservations", () => {
+  const documents = registryDocuments({ routes: {} });
+  documents.nodesYaml.nodes.gnosis.resources.reservedMemoryGB = 129;
+  expect(() => parseRegistryDocuments(documents)).toThrow(/reservedMemoryGB/);
+});
+
+test("rejects duplicate runtime capabilities", () => {
+  const documents = registryDocuments({ routes: {} });
+  documents.runtimesYaml.runtimes["qwen-general"].capability = [
+    "llm.general",
+    "llm.general",
+  ];
+  expect(() => parseRegistryDocuments(documents)).toThrow(/unique/);
+});
+
+test("rejects a resident floor that exceeds usable node memory", () => {
+  const documents = registryDocuments({ routes: {} });
+  documents.runtimesYaml.runtimes["qwen-general"].resources.estimatedMemoryGB = 113;
+  expect(() => parseRegistryDocuments(documents)).toThrow(
+    /resident runtimes on node gnosis require 113GB but only 112GB is usable/,
+  );
 });

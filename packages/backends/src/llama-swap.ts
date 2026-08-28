@@ -1,6 +1,7 @@
 import type { LlamaSwapRuntimeDefinition, RuntimeDefinition, ServiceState } from "@larm/core";
 import { isLlamaSwapRuntime } from "@larm/core";
 import { LifecycleError, type RuntimeBackend, type RuntimeHealth } from "./types";
+import { responseTextLimited } from "./http";
 
 const HEALTH_OK = /"status"\s*:\s*"ok"/;
 
@@ -12,7 +13,7 @@ export type LlamaSwapHttpResponse = {
 
 export type LlamaSwapRequest = (
   url: string,
-  init?: { method?: string; timeoutMs?: number },
+  init?: { method?: string; timeoutMs?: number; signal?: AbortSignal },
 ) => Promise<LlamaSwapHttpResponse>;
 
 export type LlamaSwapBackendOptions = {
@@ -26,6 +27,14 @@ export type LlamaSwapProcess = {
   model: string;
   state: string;
 };
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("runtime start was cancelled");
+  }
+}
 
 export function parseRunning(body: string): LlamaSwapProcess[] {
   let parsed: unknown;
@@ -113,7 +122,7 @@ export class LlamaSwapBackend implements RuntimeBackend {
     return Promise.all([...this.runtimes.keys()].map((id) => this.health(id)));
   }
 
-  async health(runtimeId: string): Promise<RuntimeHealth> {
+  async health(runtimeId: string, signal?: AbortSignal): Promise<RuntimeHealth> {
     const runtime = this.runtimes.get(runtimeId);
     if (!runtime) {
       return {
@@ -126,7 +135,8 @@ export class LlamaSwapBackend implements RuntimeBackend {
       };
     }
 
-    const processes = await this.running(runtime.deployment.listen);
+    const processes = await this.running(runtime.deployment.listen, signal);
+    throwIfAborted(signal);
     if (processes === undefined) {
       return {
         runtimeId,
@@ -152,8 +162,10 @@ export class LlamaSwapBackend implements RuntimeBackend {
     }
 
     const healthUrl = this.upstreamHealthUrl(runtime);
-    const plain = await this.probeHealth(healthUrl, false);
-    const slot = await this.probeHealth(healthUrl, true);
+    const [plain, slot] = await Promise.all([
+      this.probeHealth(healthUrl, false, signal),
+      this.probeHealth(healthUrl, true, signal),
+    ]);
     return {
       runtimeId,
       service: "Running",
@@ -165,15 +177,17 @@ export class LlamaSwapBackend implements RuntimeBackend {
     };
   }
 
-  async ensure(runtime: RuntimeDefinition): Promise<RuntimeHealth> {
+  async ensure(runtime: RuntimeDefinition, signal?: AbortSignal): Promise<RuntimeHealth> {
     if (!isLlamaSwapRuntime(runtime)) {
       throw new LifecycleError("start_failed", `${runtime.id} is not a llama-swap runtime`);
     }
     this.assertControllable(runtime, "ensure");
+    throwIfAborted(signal);
     this.runtimes.set(runtime.id, runtime);
-    await this.load(runtime);
-    await this.waitHealthy(runtime);
-    return this.health(runtime.id);
+    await this.load(runtime, signal);
+    await this.waitHealthy(runtime, signal);
+    throwIfAborted(signal);
+    return this.health(runtime.id, signal);
   }
 
   async stop(runtimeId: string): Promise<void> {
@@ -215,7 +229,7 @@ export class LlamaSwapBackend implements RuntimeBackend {
     }
   }
 
-  private async load(runtime: LlamaSwapRuntimeDefinition): Promise<void> {
+  private async load(runtime: LlamaSwapRuntimeDefinition, signal?: AbortSignal): Promise<void> {
     const loadUrl = joinListen(
       runtime.deployment.listen,
       `/api/models/load/${encodeURIComponent(runtime.deployment.modelId)}`,
@@ -224,6 +238,7 @@ export class LlamaSwapBackend implements RuntimeBackend {
       const response = await this.request(loadUrl, {
         method: "POST",
         timeoutMs: this.readyTimeoutMs,
+        signal,
       });
       if (response.ok) {
         return;
@@ -235,6 +250,7 @@ export class LlamaSwapBackend implements RuntimeBackend {
         );
       }
     } catch (err) {
+      throwIfAborted(signal);
       if (err instanceof LifecycleError) {
         throw err;
       }
@@ -242,21 +258,27 @@ export class LlamaSwapBackend implements RuntimeBackend {
 
     const warmUrl = this.upstreamHealthUrl(runtime);
     try {
-      await this.request(warmUrl, { timeoutMs: this.readyTimeoutMs });
+      await this.request(warmUrl, { timeoutMs: this.readyTimeoutMs, signal });
     } catch (err) {
+      throwIfAborted(signal);
       const detail = err instanceof Error ? err.message : String(err);
       throw new LifecycleError("start_failed", `failed to warm ${runtime.id}: ${detail}`);
     }
   }
 
-  private async waitHealthy(runtime: LlamaSwapRuntimeDefinition): Promise<void> {
+  private async waitHealthy(
+    runtime: LlamaSwapRuntimeDefinition,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const deadline = Date.now() + this.readyTimeoutMs;
     while (Date.now() < deadline) {
-      const probe = await this.health(runtime.id);
+      throwIfAborted(signal);
+      const probe = await this.health(runtime.id, signal);
       if (probe.healthOk) {
         return;
       }
       await this.sleep(Math.min(2000, this.probeTimeoutMs));
+      throwIfAborted(signal);
     }
     throw new LifecycleError(
       "start_failed",
@@ -264,16 +286,21 @@ export class LlamaSwapBackend implements RuntimeBackend {
     );
   }
 
-  private async running(listen: string): Promise<LlamaSwapProcess[] | undefined> {
+  private async running(
+    listen: string,
+    signal?: AbortSignal,
+  ): Promise<LlamaSwapProcess[] | undefined> {
     try {
       const response = await this.request(joinListen(listen, "/running"), {
         timeoutMs: this.probeTimeoutMs,
+        signal,
       });
       if (!response.ok) {
         return undefined;
       }
       return parseRunning(response.body);
     } catch {
+      throwIfAborted(signal);
       return undefined;
     }
   }
@@ -291,16 +318,22 @@ export class LlamaSwapBackend implements RuntimeBackend {
   private async probeHealth(
     healthUrl: string,
     failOnNoSlot: boolean,
+    signal?: AbortSignal,
   ): Promise<{ ok: boolean; status?: number; detail?: string }> {
-    const url = failOnNoSlot ? `${healthUrl}?fail_on_no_slot=true` : healthUrl;
+    const separator = healthUrl.includes("?") ? "&" : "?";
+    const url = failOnNoSlot ? `${healthUrl}${separator}fail_on_no_slot=true` : healthUrl;
     try {
-      const response = await this.request(url, { timeoutMs: this.probeTimeoutMs });
+      const response = await this.request(url, {
+        timeoutMs: this.probeTimeoutMs,
+        signal,
+      });
       return {
         ok: response.ok && HEALTH_OK.test(response.body),
         status: response.status,
         detail: response.body.slice(0, 200),
       };
     } catch (err) {
+      throwIfAborted(signal);
       const detail = err instanceof Error ? err.message : String(err);
       return { ok: false, detail };
     }
@@ -309,15 +342,18 @@ export class LlamaSwapBackend implements RuntimeBackend {
 
 async function defaultRequest(
   url: string,
-  init: { method?: string; timeoutMs?: number } = {},
+  init: { method?: string; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<LlamaSwapHttpResponse> {
+  const timeoutSignal = AbortSignal.timeout(init.timeoutMs ?? 1500);
   const response = await fetch(url, {
     method: init.method ?? "GET",
-    signal: AbortSignal.timeout(init.timeoutMs ?? 1500),
+    signal: init.signal
+      ? AbortSignal.any([init.signal, timeoutSignal])
+      : timeoutSignal,
   });
   return {
     ok: response.ok,
     status: response.status,
-    body: await response.text(),
+    body: await responseTextLimited(response),
   };
 }

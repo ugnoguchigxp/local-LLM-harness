@@ -3,14 +3,16 @@
 ## Components
 
 ```text
-apps/daemon          HTTP control API、観測loop、Backend routing
-packages/core        registry、state、leases、planner、resolve
-packages/backends    systemd、llama-swap
+apps/daemon          Allocation API、LLM Gateway、観測loop、operation coordination
+packages/core        registry、Route、Allocation、admission、planner、resolve
+packages/backends    systemd、llama-swap、artifact store
 config/gnosis        production desired state
 deploy/gnosis        host setup、systemd units、artifact manifest
 ```
 
-Coreはcontrol planeに限定し、推論本文を処理しません。将来のGatewayはCoreが選んだ`deployment.endpoint`へHTTPをproxyします。
+CoreはOS非依存の選択・状態計算に限定し、推論本文を処理しません。daemonのGatewayは
+Allocationへ固定された`deployment.endpoint`だけへHTTPをproxyします。最新の公開contractは
+[`../specs/api.html`](../specs/api.html)を参照してください。
 
 ## RuntimeBackend
 
@@ -41,4 +43,6 @@ llama-swap配下のmodel lifecycleを扱います。llama-swap process自体はs
 
 ## Desired state
 
-Desired capabilityはactive leaseの和集合にResidentが提供する能力を加えたものです。`prepare`はleaseを追加し、`release`は返却します。Residentは常に保護し、空きがある限りPreferredを急いで停止しません。
+Desired capabilityはactive leaseとAllocationの和集合にResidentが提供する能力を加えたものです。
+v1 AllocationはRoute選択結果を期限付きBindingへ固定します。`prepare`と`release`は互換adapterとして
+内部Allocationを利用します。Residentは常に保護し、Preferredだけを明示Routeとidle policyの対象にします。

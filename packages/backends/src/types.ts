@@ -25,6 +25,6 @@ export type RuntimeInstance = RuntimeHealth;
 export interface RuntimeBackend {
   list(): Promise<RuntimeInstance[]>;
   health(runtimeId: string): Promise<RuntimeHealth>;
-  ensure(runtime: RuntimeDefinition): Promise<RuntimeInstance>;
+  ensure(runtime: RuntimeDefinition, signal?: AbortSignal): Promise<RuntimeInstance>;
   stop(runtimeId: string): Promise<void>;
 }

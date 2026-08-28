@@ -144,7 +144,7 @@ export function selectRoute(input: {
       runtime: runtime.id,
       node: runtime.node,
       endpoint: runtime.deployment.endpoint,
-      status: snapshot.status,
+      status: snapshot!.status,
       candidateRank: index + 1,
       fallback,
       reason,

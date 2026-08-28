@@ -1,4 +1,5 @@
-import type { ClusterState, Registry, RuntimeDefinition, RuntimeSnapshot, RuntimeStatus } from "./schema";
+import type { Registry } from "./registry";
+import type { ClusterState, RuntimeDefinition, RuntimeSnapshot, RuntimeStatus } from "./schema";
 import { desiredCapabilities, residentCapabilitiesFrom, type Lease } from "./leases";
 
 const LIVE: RuntimeStatus[] = ["HOT", "BUSY", "STARTING"];

@@ -1,5 +1,8 @@
 # Control API
 
+Route-aware Allocation、Gateway、Artifact管理を含む最新のv1 contractは
+[`../specs/api.html`](../specs/api.html)を正本とします。この文書はunversioned compatibility APIの説明です。
+
 daemonの既定listenは`127.0.0.1:9810`です。
 
 | Method | Path | Purpose |

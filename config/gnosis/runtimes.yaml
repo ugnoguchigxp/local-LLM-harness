@@ -1,5 +1,7 @@
 runtimes:
   qwen-general:
+    artifacts:
+      - qwen38-primary
     capability:
       - llm.general
       - llm.reasoning
@@ -16,6 +18,9 @@ runtimes:
       endpoint: http://127.0.0.1:8080
 
   qwen-worker-quality:
+    artifacts:
+      - qwen38-worker-quality
+      - qwen38-mtp
     capability:
       - llm.general
       - llm.reasoning
@@ -33,6 +38,9 @@ runtimes:
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen-quality
 
   qwen-worker-fast:
+    artifacts:
+      - qwen38-worker-fast
+      - qwen38-mtp
     capability:
       - llm.general
       - llm.coding
@@ -49,6 +57,8 @@ runtimes:
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen-fast
 
   qwen-asr:
+    artifacts:
+      - qwen3-asr-main
     capability:
       - speech.stt
     backend: systemd
@@ -63,6 +73,8 @@ runtimes:
       endpoint: http://127.0.0.1:8081
 
   voicevox-tts:
+    artifacts:
+      - voicevox
     capability:
       - speech.tts
     backend: systemd
@@ -77,6 +89,8 @@ runtimes:
       endpoint: http://127.0.0.1:8084
 
   qwen-tts:
+    artifacts:
+      - qwen3-tts-expressive
     capability:
       - speech.tts.expressive
     backend: systemd

@@ -1,16 +1,16 @@
 <article lang="ja">
-  <h1>LARM 新規実装計画</h1>
+  <h1>LARM 実装計画・完了記録</h1>
 
   <p>
     この計画は、<a href="./concept.html">Local AI Provider コンセプト</a>を、
-    現行コードから段階的に実装するための実行順序と完了条件へ落とし込んだものです。
-    最初に配備済みRuntimeの決定的な選択とallocationを完成させ、その上にresource admission、
-    安定Gateway、宣言済みartifactの配備を積み上げます。
+    現行コードから段階的に実装するための実行順序と完了条件へ落とし込み、その結果を記録したものです。
+    Route、Allocation、resource admission、安定Gateway、宣言済みartifact配備までを実装し、 optional
+    35Bの登録だけはbenchmarkとartifact metadataが揃うまでproduction gateで保留しています。
   </p>
 
   <dl>
     <dt>文書状態</dt>
-    <dd>実装着手用</dd>
+    <dd>主要Milestone実装完了・35B onboarding保留</dd>
     <dt>作成日</dt>
     <dd><time>2026-08-28</time></dd>
     <dt>対象repository</dt>
@@ -29,7 +29,7 @@
       <li>memoryと同時実行制約を満たす場合だけPreferred Runtimeを起動する。</li>
       <li>利用側へ個別portを見せず、allocationを検証する安定した推論endpointを提供する。</li>
       <li>宣言済みartifactに限り、APIから検証、staging、activation、rollbackできる。</li>
-      <li>35Bは速度特化routeからだけ利用でき、通常経路へ混入しない。</li>
+      <li>35Bを将来登録する場合も速度特化routeからだけ利用でき、通常経路へ混入しない。</li>
     </ol>
 
     <aside>
@@ -46,10 +46,10 @@
   </section>
 
   <section id="baseline">
-    <h2>現行実装と主要gap</h2>
+    <h2>着手時の実装と主要gap</h2>
     <table>
       <caption>
-        実装済みの土台と次に解消するgap
+        計画策定時に存在した土台と解消対象のgap
       </caption>
       <thead>
         <tr>
@@ -102,7 +102,7 @@
     <h2>実装進捗</h2>
     <table>
       <caption>
-        2026-08-28時点の最初の実装slice
+        2026-08-28時点の実装結果
       </caption>
       <thead>
         <tr>
@@ -134,8 +134,42 @@
         </tr>
         <tr>
           <th scope="row">Route-aware prepare / allocation</th>
-          <td>未着手</td>
-          <td>次のsliceでBindingと期限付きAllocationを導入する</td>
+          <td>完了</td>
+          <td>v1 Allocationと既存prepare adapterがRuntime、期限、選択理由を固定</td>
+        </tr>
+        <tr>
+          <th scope="row">Resource admission</th>
+          <td>完了</td>
+          <td>
+            Node memory reserve、Resident floor常時予約、重複排除、in-flight
+            reservation、任意slot上限を実装
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Stable inference Gateway</th>
+          <td>LLM完了</td>
+          <td>OpenAI互換chat completionsのstream、cancel、timeout、body上限、固定Bindingを実装</td>
+        </tr>
+        <tr>
+          <th scope="row">Production hardening</th>
+          <td>実装完了</td>
+          <td>
+            Bearer認証、管理token、readiness、低cardinality metrics、構造化event、graceful
+            drain、入力上限、限定polkit rule、Preferred serviceのboot disable、型検査を追加
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Artifact deployment</th>
+          <td>単一file完了</td>
+          <td>
+            allowlist、size・SHA-256、stage、activate、health失敗時の自動rollback、永続journal、
+            Runtime・共有artifact排他、Allocation deadline cancellationを実装
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Optional 35B</th>
+          <td>未登録を維持</td>
+          <td>速度SLOとartifact metadata未確定のため候補へ追加せず、default混入防止testを実装</td>
         </tr>
       </tbody>
     </table>
@@ -206,7 +240,7 @@
       fallbackはrequestの<code>allowFallback</code>が真の場合だけ許可し、結果へ理由を含めます。
     </p>
 
-    <h3>Route定義案</h3>
+    <h3>現行Route定義の要約</h3>
     <pre><code>routes:
   llm-default:
     capabilities: [llm.general, llm.reasoning, llm.coding]
@@ -222,13 +256,13 @@
       - runtime: qwen-worker-fast
         purpose: primary</code></pre>
     <p>
-      正式なfield名とvalidation ruleはMilestone 0で固定します。候補順は設定順を使用し、
-      同順位をRuntime idの偶然の辞書順で決めないようにします。
+      field名とvalidation ruleはschemaで固定済みです。候補順は設定順を使用し、 Runtime
+      idの偶然の辞書順では決めません。
     </p>
   </section>
 
   <section id="target-api">
-    <h2>目標API contract</h2>
+    <h2>実装API contract</h2>
     <p>
       新しいcontractは<code>/v1</code>配下へ追加し、既存の<code>prepare</code>、<code>resolve</code>、
       <code>release</code>は移行期間中にdefault routeへ変換するcompatibility
@@ -237,7 +271,7 @@
 
     <table>
       <caption>
-        段階的に追加するAPI
+        実装したAPI
       </caption>
       <thead>
         <tr>
@@ -305,7 +339,7 @@
       </tbody>
     </table>
 
-    <h3>Allocation request案</h3>
+    <h3>Allocation request</h3>
     <pre><code>{
   "requirements": [
     { "capability": "llm.general", "route": "llm-default" }
@@ -316,9 +350,9 @@
   "deploymentPolicy": "existing-only"
 }</code></pre>
 
-    <h3>Ready response案</h3>
+    <h3>Ready response</h3>
     <pre><code>{
-  "allocationId": "alloc_example",
+  "id": "alloc_example",
   "status": "ready",
   "expiresAt": "...",
   "bindings": [
@@ -327,21 +361,20 @@
       "route": "llm-default",
       "runtime": "qwen-general",
       "node": "gnosis",
-      "selectionReason": "primary-resident"
+      "selectionReason": "primary-live"
     }
   ]
 }</code></pre>
     <p>
       <code>deploymentPolicy</code
-      >の既定は<code>existing-only</code>です。 Milestone
-      6の完了後、権限を持つlocal
+      >の既定は<code>existing-only</code>です。管理credentialを持つlocal
       clientだけが<code>allow-listed</code>を指定でき、
-      staging、activation、起動、allocationを一つの追跡可能なoperationとして要求できます。
+      staging、activation、起動、allocationをphase付きの一つのoperationとして追跡できます。
     </p>
   </section>
 
   <section id="dependency-order">
-    <h2>依存関係と着手順</h2>
+    <h2>依存関係と実施順</h2>
     <figure>
       <pre><code>Milestone 0: Contract foundation
       ↓
@@ -715,7 +748,7 @@ admit when committed + incremental &lt;= usable</code></pre>
       <thead>
         <tr>
           <th scope="col">Component</th>
-          <th scope="col">追加する責務</th>
+          <th scope="col">実装責務</th>
           <th scope="col">追加しない責務</th>
         </tr>
       </thead>
@@ -727,7 +760,7 @@ admit when committed + incremental &lt;= usable</code></pre>
         </tr>
         <tr>
           <th scope="row"><code>packages/backends</code></th>
-          <td>systemd、llama-swap、将来のartifact操作adapter</td>
+          <td>systemd、llama-swap、artifact staging・activation・rollback adapter</td>
           <td>Taskの意味判断、route policy、公開API</td>
         </tr>
         <tr>
@@ -861,6 +894,60 @@ admit when committed + incremental &lt;= usable</code></pre>
     </table>
   </section>
 
+  <section id="validation-result">
+    <h2>実装完了時の検証結果</h2>
+    <table>
+      <caption>
+        2026-08-28に実施した検証
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">検証</th>
+          <th scope="col">結果</th>
+          <th scope="col">範囲</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>bun run check</code></th>
+          <td>成功</td>
+          <td>source-only、Spec HTML、TypeScript、unit・integration test</td>
+        </tr>
+        <tr>
+          <th scope="row">systemd・shell静的検証</th>
+          <td>成功</td>
+          <td>
+            <code>systemd-analyze verify</code>と<code>bash -n</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">gnosis Runtime</th>
+          <td>成功</td>
+          <td>gfx1151、8080から8084のservice・health、memory状態</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM live smoke</th>
+          <td>成功</td>
+          <td>
+            一時loopback daemonで<code>llm-default</code> AllocationがResident
+            27Bへ固定され、streaming Gateway完走後にreleaseできることを確認
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <h3>運用反映の境界</h3>
+      <p>
+        <code>larm-daemon.service</code
+        >とcredential生成を含むinstall手順は実装・静的検証済みです。
+        この作業では既存systemd構成を変更しておらず、operatorがinstall手順を実行するまで port
+        9810の常駐serviceは有効になりません。35B登録、実artifact
+        activation、速度workerの実機benchmarkは、 model metadataと運用影響を伴う別のattended
+        production gateです。
+      </p>
+    </aside>
+  </section>
+
   <section id="definition-of-done">
     <h2>各Milestone共通のDefinition of Done</h2>
     <ul>
@@ -878,14 +965,13 @@ admit when committed + incremental &lt;= usable</code></pre>
   </section>
 
   <section id="first-implementation-slice">
-    <h2>最初に着手する実装slice</h2>
+    <h2>最初の実装sliceの完了結果</h2>
     <p>
-      最初の変更はMilestone 0とMilestone 1のうち、Runtime
-      lifecycleをまだ変更しない範囲に限定します。 具体的にはRoute
+      Milestone 0とMilestone 1ではRuntime lifecycleを変更せず、Route
       schema、<code>routes.yaml</code>、純粋なselector、選択理由、shadow
-      comparison、 contract
-      testを実装します。これにより、現在のResident経路を壊さずに、次のallocation実装が依存できる
-      決定的な選択contractを先に確立できます。
+      comparison、contract
+      testを実装しました。そのcontractを維持したまま、後続のAllocation、Gateway、 Artifact
+      lifecycleまで実装しています。
     </p>
   </section>
 </article>

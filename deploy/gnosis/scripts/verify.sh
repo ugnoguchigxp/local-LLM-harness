@@ -5,11 +5,11 @@ services=(
   llama-server.service
   llama-swap-worker.service
   qwen-asr.service
-  qwen-tts.service
   voicevox-tts.service
+  larm-daemon.service
 )
 
-ports=(8080 8081 8082 8083 8084)
+ports=(8080 8081 8083 8084 9810)
 failed=0
 
 echo "GPU"
@@ -30,6 +30,16 @@ for service in "${services[@]}"; do
     failed=1
   fi
 done
+
+if systemctl is-active --quiet qwen-tts.service; then
+  printf '%-32s active (preferred)\n' qwen-tts.service
+  if ! curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:8082/health" >/dev/null; then
+    echo ":8082 unhealthy"
+    failed=1
+  fi
+else
+  printf '%-32s cold (preferred)\n' qwen-tts.service
+fi
 
 echo "Health endpoints"
 for port in "${ports[@]}"; do

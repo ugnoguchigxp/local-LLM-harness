@@ -1,0 +1,377 @@
+<article lang="ja">
+  <h1>LARM v1 API仕様</h1>
+
+  <p>
+    この文書は、Route-aware Allocation、OpenAI互換Gateway、Artifact管理APIの実装contractです。
+    設計上の背景は<a href="./concept.html">Providerコンセプト</a>、工程と受入条件は
+    <a href="./implementation-plan.html">実装計画</a>を参照してください。
+  </p>
+
+  <dl>
+    <dt>状態</dt>
+    <dd>実装済みcontract</dd>
+    <dt>version</dt>
+    <dd><code>v1</code></dd>
+    <dt>既定listen</dt>
+    <dd><code>http://127.0.0.1:9810</code></dd>
+    <dt>更新日</dt>
+    <dd><time>2026-08-28</time></dd>
+  </dl>
+
+  <section id="security">
+    <h2>Security boundary</h2>
+    <ul>
+      <li>
+        loopback以外でlistenする場合は<code>LARM_API_TOKEN</code>を必須とする。
+      </li>
+      <li>
+        <code>/health</code
+        >と<code>/ready</code>以外はBearer tokenで保護する。
+      </li>
+      <li>Artifact管理APIは追加で<code>x-larm-management-token</code>を検証する。</li>
+      <li><code>deploymentPolicy: allow-listed</code>のAllocationも同じ管理tokenを必須とする。</li>
+      <li>管理tokenは<code>LARM_MANAGEMENT_TOKEN</code>で設定する。</li>
+      <li>
+        管理tokenが未設定なら、loopbackでもArtifact管理と<code>allow-listed</code>配備を無効化する。
+      </li>
+      <li>
+        API requestからupstream URL、filesystem path、checksum、service名、commandを受け取らない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="endpoints">
+    <h2>Endpoint一覧</h2>
+    <table>
+      <caption>
+        v1と運用endpoint
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Method</th>
+          <th scope="col">Path</th>
+          <th scope="col">Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/health</code></th>
+          <td>process health</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/ready</code></th>
+          <td>drainとobserver freshnessを含むreadiness</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/metrics</code></th>
+          <td>Prometheus text format metrics</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/allocations</code></th>
+          <td>Route選択、admission、起動、Binding固定</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/allocations/:id</code></th>
+          <td>Allocation状態</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/allocations/:id/renew</code></th>
+          <td>期限更新</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/allocations/:id/resolve</code></th>
+          <td>固定済みendpoint解決</td>
+        </tr>
+        <tr>
+          <td>DELETE</td>
+          <th scope="row"><code>/v1/allocations/:id</code></th>
+          <td>解放とidle回収</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/operations/:id</code></th>
+          <td>非同期起動operation</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/chat/completions</code></th>
+          <td>Allocation固定OpenAI互換Gateway</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/artifacts/:id/stage</code></th>
+          <td>allowlist artifactのdownloadと検証</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/deployments/:runtime/activate</code></th>
+          <td>Preferred Runtimeのartifact activation</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/deployments/:runtime/rollback</code></th>
+          <td>直前artifactへのrollback</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/artifact-operations/:id</code></th>
+          <td>配備operation状態</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="allocation">
+    <h2>Allocation</h2>
+    <h3>Request</h3>
+    <pre><code>{
+  "requirements": [
+    { "capability": "llm.general", "route": "llm-default" }
+  ],
+  "client": "ambient",
+  "allowFallback": false,
+  "ttlSeconds": 300,
+  "deploymentPolicy": "existing-only"
+}</code></pre>
+    <ul>
+      <li>
+        <code>requirements</code
+        >は一つ以上必要で、同じcapabilityを重複指定できない。
+      </li>
+      <li><code>ttlSeconds</code>は1から86400で、既定値は300。</li>
+      <li><code>allowFallback</code>の既定値は偽。</li>
+      <li>
+        <code>deploymentPolicy</code
+        >は<code>existing-only</code>または<code>allow-listed</code>。
+      </li>
+      <li>
+        staleなobserver snapshot、memory不足、Runtime
+        capacity超過、配備中Runtimeは起動前に拒否する。
+      </li>
+      <li>Resident Runtimeのmemoryは観測状態にかかわらず常時予約する。</li>
+    </ul>
+
+    <h3>Ready response</h3>
+    <pre><code>{
+  "id": "alloc_example",
+  "status": "ready",
+  "requirements": [
+    { "capability": "llm.general", "route": "llm-default" }
+  ],
+  "bindings": [
+    {
+      "capability": "llm.general",
+      "route": "llm-default",
+      "runtime": "qwen-general",
+      "node": "gnosis",
+      "status": "HOT",
+      "candidateRank": 1,
+      "fallback": false,
+      "selectionReason": "primary-live"
+    }
+  ],
+  "expiresAt": "..."
+}</code></pre>
+    <p>
+      Allocation一覧responseはupstream
+      endpointを隠します。明示的な<code>resolve</code>またはGatewayだけが
+      Bindingのendpointを使用します。一度作成したBindingは、別RuntimeがHOTになっても変更しません。
+      固定Runtimeが非稼働またはsnapshotがstaleなら、別Runtimeへ移動せずresolveを503で拒否します。
+    </p>
+
+    <h3>Status</h3>
+    <dl>
+      <dt><code>pending</code></dt>
+      <dd>配備、起動、readiness待機中</dd>
+      <dt><code>ready</code></dt>
+      <dd>固定Bindingを利用可能</dd>
+      <dt><code>failed</code></dt>
+      <dd>起動、配備、deadlineの失敗</dd>
+      <dt><code>released</code></dt>
+      <dd>利用側が明示解放</dd>
+      <dt><code>expired</code></dt>
+      <dd>TTL満了による解放</dd>
+    </dl>
+
+    <h3>非同期operation phase</h3>
+    <p>
+      <code>GET /v1/operations/:id</code
+      >は<code>pending</code>、<code>running</code>、
+      <code>succeeded</code
+      >、<code>failed</code>、<code>cancelled</code>、
+      <code>timed_out</code
+      >を返します。<code>allow-listed</code>配備では
+      <code>checking-artifacts</code>、<code>staging-artifacts</code>、
+      <code>stopping-runtime</code>、<code>activating-artifacts</code>、
+      <code>starting-runtime</code>、<code>verifying-runtime</code>、
+      <code>rolling-back</code
+      >、<code>runtime-ready</code>のphaseで進捗を示します。
+    </p>
+  </section>
+
+  <section id="routing-guarantees">
+    <h2>Route選択保証</h2>
+    <ul>
+      <li><code>llm-default</code>はQwen 3.8 27B Residentを第一候補とする。</li>
+      <li>
+        <code>llm-speed</code
+        >と<code>llm-long-context</code>はroute idの明示指定を必要とする。
+      </li>
+      <li>fallback candidateは<code>allowFallback: true</code>の場合だけ使用する。</li>
+      <li>35Bはproduction Registryに未登録で、default routeの候補ではない。</li>
+      <li>Resident Runtimeはstop、無人activation、resource evictionの対象にしない。</li>
+    </ul>
+  </section>
+
+  <section id="gateway">
+    <h2>OpenAI互換Gateway</h2>
+    <p>
+      <code>POST /v1/chat/completions</code
+      >には<code>x-larm-allocation-id</code>を指定します。
+      Gatewayは<code>llm.general</code>のready
+      Bindingだけを使用し、requestの<code>model</code>値から
+      別RuntimeやURLを選択しません。
+    </p>
+    <ul>
+      <li>streamingとnon-streaming responseを透過する。</li>
+      <li>client disconnectをupstreamへ伝播する。</li>
+      <li>body sizeとtotal timeoutを環境変数で制限する。</li>
+      <li>total timeoutはrequest upload、upstream接続、response streamの全区間へ適用する。</li>
+      <li>stream開始後の別Runtime retryは行わない。</li>
+      <li>prompt、response、audio本文をmetricsまたは構造化eventへ記録しない。</li>
+      <li>
+        request id、Allocation id、Runtime、結果は構造化eventへ記録する。Prometheus
+        metricsからrequest・Allocation・client idを除き、時系列数をboundedに保つ。
+      </li>
+      <li>
+        latency
+        metricはPrometheusの<code>_sum</code>と<code>_count</code>として公開する。
+      </li>
+    </ul>
+  </section>
+
+  <section id="artifact-lifecycle">
+    <h2>Artifact lifecycle</h2>
+    <ol>
+      <li>
+        <code>models.yaml</code
+        >に固定されたsource、revision、filename、bytes、SHA-256を読む。
+      </li>
+      <li>同一filesystemのstaging directoryへ期限付きでstream downloadする。</li>
+      <li>sizeとSHA-256が一致したfileだけをstagedとして扱う。</li>
+      <li>Preferred Runtimeが他Allocationで使用中でないことを確認して停止する。</li>
+      <li>配備対象とartifactを共有する全Runtimeを予約し、別ownerが稼働中なら拒否する。</li>
+      <li>直前targetをhardlinkまたはsymlinkとして保持し、検証済みfileへ原子的に切り替える。</li>
+      <li>Runtimeを起動し、health失敗時は直前targetへ自動rollbackする。</li>
+      <li>rollbackはjournalに記録された直前targetだけを復元する。</li>
+      <li>Allocationのrelease、TTL、startup deadlineをdownloadとactivationへ伝播する。</li>
+      <li>operationは受付応答前にjournalへ保存し、terminal historyを設定上限内に保つ。</li>
+    </ol>
+    <aside>
+      <h3>自動配備の制限</h3>
+      <p>
+        現在の自動staging対象は、bytesとSHA-256を持つ単一file artifactです。 directory
+        modelはsnapshot hash manifestがないためfail closedとし、Resident artifactのactivationは
+        attended operationに限定します。
+      </p>
+    </aside>
+  </section>
+
+  <section id="errors">
+    <h2>主要error code</h2>
+    <table>
+      <caption>
+        利用側が分岐に使用できるerror
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Code</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>fallback_not_allowed</code></th>
+          <td>primary unavailableだがfallback未許可</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>no_candidate_available</code></th>
+          <td>Route候補を起動または利用できない</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>resource_exhausted</code></th>
+          <td>memoryまたはRuntime allocation capacity不足</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>stale_state</code></th>
+          <td>observer snapshotが古い</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>allocation_not_ready</code></th>
+          <td>Bindingがpending、failed、released、expired</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>runtime_not_ready</code></th>
+          <td>固定済みRuntimeが現在HOTまたはBUSYではない</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>deployment_in_progress</code></th>
+          <td>対象Runtimeまたは共有artifactが配備のため予約中</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>runtime_in_use</code></th>
+          <td>別Allocationが対象Runtimeを使用中</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>resident_activation_forbidden</code></th>
+          <td>Residentの無人activationを拒否</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>shared_artifact_in_use</code></th>
+          <td>変更対象artifactを共有する別Runtimeが稼働中</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>operation_cancelled</code></th>
+          <td>Allocation release、TTL、deadlineによりartifact処理を中止</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>gateway_timeout</code></th>
+          <td>Gatewayの全区間deadlineを超過</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>checksum_mismatch</code></th>
+          <td>download artifactがmanifestと不一致</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>activation_rollback_failed</code></th>
+          <td>activation失敗後の自動rollbackまたは旧Runtime復旧にも失敗</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>draining</code></th>
+          <td>shutdown中のため新規要求を拒否</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>management_not_configured</code></th>
+          <td>管理token未設定のため配備系機能をfail closedで無効化</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="compatibility">
+    <h2>既存APIとの互換</h2>
+    <p>
+      unversionedの<code>prepare</code>、<code>resolve</code>、<code>release</code>は維持します。
+      default Routeが定義されたcapabilityは内部Allocationへ変換し、従来のlease
+      response形へ戻します。 新規clientはRuntime固定と期限を明示できるv1 Allocation
+      APIを使用します。
+    </p>
+  </section>
+</article>

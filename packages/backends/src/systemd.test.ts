@@ -39,7 +39,7 @@ test("health accepts healthy status from a running systemd service", async () =>
     },
   });
   try {
-    const backend = new SystemdBackend([definition(server.port)], {
+    const backend = new SystemdBackend([definition(server.port!)], {
       queryService: async () => "Running",
     });
     const health = await backend.health("qwen-tts");
@@ -59,13 +59,17 @@ test("preferred systemd runtime starts and stops through systemctl control", asy
       return Response.json({ status: "ok" });
     },
   });
-  const runtime = definition(server.port);
+  const runtime = definition(server.port!);
   try {
     const backend = new SystemdBackend([runtime], {
       queryService: async () => "Running",
       control: {
-        start: async (service) => actions.push(`start:${service}`),
-        stop: async (service) => actions.push(`stop:${service}`),
+        start: async (service) => {
+          actions.push(`start:${service}`);
+        },
+        stop: async (service) => {
+          actions.push(`stop:${service}`);
+        },
       },
       sleep: async () => undefined,
     });
@@ -93,4 +97,25 @@ test("resident systemd runtime is lifecycle protected", async () => {
   });
   await expect(backend.ensure(runtime)).rejects.toMatchObject({ code: "resident_protected" });
   await expect(backend.stop(runtime.id)).rejects.toMatchObject({ code: "resident_protected" });
+});
+
+test("ensure stops before health polling when caller cancellation follows start", async () => {
+  const runtime = definition(1);
+  const controller = new AbortController();
+  const reason = new Error("allocation expired");
+  let starts = 0;
+  let receivedSignal: AbortSignal | undefined;
+  const backend = new SystemdBackend([runtime], {
+    control: {
+      start: async (_service, signal) => {
+        starts += 1;
+        receivedSignal = signal;
+        controller.abort(reason);
+      },
+      stop: async () => undefined,
+    },
+  });
+  await expect(backend.ensure(runtime, controller.signal)).rejects.toBe(reason);
+  expect(starts).toBe(1);
+  expect(receivedSignal).toBe(controller.signal);
 });

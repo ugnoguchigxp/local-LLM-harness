@@ -9,10 +9,11 @@ max_source_bytes=$((5 * 1024 * 1024))
 
 while IFS= read -r -d "" file; do
   case "${file}" in
-    bin/*|bin-*/*|build/*|build-*/*|dist/*|vendor/*|models/*|\
+    bin/*|*/bin/*|bin-*/*|*/bin-*/*|build/*|*/build/*|build-*/*|*/build-*/*|\
+    dist/*|*/dist/*|vendor/*|*/vendor/*|models/*|*/models/*|\
     *.exe|*.dll|*.so|*.dylib|*.a|*.lib|*.pdb|*.bin|*.zip|*.7z|*.tar|*.tar.gz|*.tgz|\
-    *.gguf|*.safetensors|*.onnx|*.vvm)
-      echo "forbidden tracked artifact: ${file}" >&2
+    *.gguf|*.safetensors|*.onnx|*.vvm|*.pt|*.pth|*.ckpt)
+      echo "forbidden repository artifact: ${file}" >&2
       failed=1
       continue
       ;;
@@ -20,10 +21,10 @@ while IFS= read -r -d "" file; do
 
   size="$(wc -c < "${file}")"
   if (( size > max_source_bytes )); then
-    echo "tracked file exceeds 5 MiB source limit: ${file} (${size} bytes)" >&2
+    echo "repository file exceeds 5 MiB source limit: ${file} (${size} bytes)" >&2
     failed=1
   fi
-done < <(git ls-files -z)
+done < <(git ls-files --cached --others --exclude-standard -z)
 
 if (( failed != 0 )); then
   exit 1

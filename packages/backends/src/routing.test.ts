@@ -3,7 +3,7 @@ import type { RuntimeDefinition } from "@larm/core";
 import { LlamaSwapBackend } from "./llama-swap";
 import { SystemdBackend } from "./systemd";
 import { createRuntimeBackend, RoutingBackend } from "./routing";
-import { LifecycleError } from "./types";
+import { LifecycleError, type RuntimeBackend } from "./types";
 
 const systemdRuntime: RuntimeDefinition = {
   id: "qwen-asr",
@@ -41,7 +41,7 @@ test("routes list and lifecycle to the owning backend", async () => {
     request: async () => ({ ok: true, status: 200, body: `{"running":[]}` }),
   });
   const backend = new RoutingBackend(
-    new Map([
+    new Map<string, RuntimeBackend>([
       ["qwen-asr", systemd],
       ["qwen-worker", swap],
     ]),
@@ -66,4 +66,43 @@ test("createRuntimeBackend routes Linux services to SystemdBackend", async () =>
   expect(listed).toHaveLength(1);
   expect(listed[0]?.runtimeId).toBe("qwen-asr");
   expect(listed[0]?.service).toBe("Stopped");
+});
+
+test("routing isolates a failed backend observation", async () => {
+  const failed: RuntimeBackend = {
+    list: async () => { throw new Error("probe crashed"); },
+    health: async () => { throw new Error("probe crashed"); },
+    ensure: async () => { throw new Error("not used"); },
+    stop: async () => undefined,
+  };
+  const healthy: RuntimeBackend = {
+    list: async () => [{
+      runtimeId: "healthy",
+      service: "Running",
+      listening: true,
+      healthOk: true,
+      busy: false,
+    }],
+    health: async () => ({
+      runtimeId: "healthy",
+      service: "Running",
+      listening: true,
+      healthOk: true,
+      busy: false,
+    }),
+    ensure: async () => { throw new Error("not used"); },
+    stop: async () => undefined,
+  };
+  const backend = new RoutingBackend(new Map([
+    ["failed", failed],
+    ["healthy", healthy],
+  ]));
+  expect(await backend.list()).toEqual([
+    expect.objectContaining({
+      runtimeId: "failed",
+      service: "Unknown",
+      detail: "backend observation failed: probe crashed",
+    }),
+    expect.objectContaining({ runtimeId: "healthy", healthOk: true }),
+  ]);
 });

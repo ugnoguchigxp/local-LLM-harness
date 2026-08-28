@@ -9,6 +9,7 @@ local-LLM-harness (LARM) is the Linux-first control plane for local AI runtimes 
 - Install: `bun install --frozen-lockfile`
 - Full check: `bun run check`
 - Tests: `bun run test`
+- Type check: `bun run typecheck`
 - Preview design documents: `bun run docs`
 - Check design documents: `bun run docs:check`
 - Fix and check design documents: `bun run docs:check:fix`

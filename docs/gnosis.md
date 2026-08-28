@@ -12,10 +12,13 @@ while providing one resident Qwen3.8 27B LLM and two on-demand 256K worker varia
 | 8082 | Qwen3-TTS 0.6B optimized | preferred | expressive speech |
 | 8083 | llama-swap | resident executor | on-demand 256K Q4 workers |
 | 8084 | VOICEVOX CORE 0.17.0 | resident | low-latency speech |
+| 9810 | LARM daemon | control plane | allocation and local Gateway |
 
-The ports bind to all interfaces, but UFW permits TCP 22 and 8080-8084 only from
+The Runtime ports bind to all interfaces, but UFW permits TCP 22 and 8080-8084 only from
 `192.168.0.0/24`. Runtime control and health use loopback endpoints from
 [`../config/gnosis/runtimes.yaml`](../config/gnosis/runtimes.yaml).
+LARM remains loopback-only on port 9810; expose it through an authenticated local
+adapter or deliberately reviewed reverse proxy rather than opening the port directly.
 
 ## Why this split
 
@@ -49,10 +52,16 @@ deploy/gnosis/scripts/verify.sh
 journalctl -u llama-server.service -f
 journalctl -u qwen-asr.service -f
 journalctl -u voicevox-tts.service -f
+journalctl -u larm-daemon.service -f
 ```
 
 The host uses a 100 GB TTM/GTT setting. Check it with `amd-ttm` after an attended boot.
 Do not automate `reboot`: the machine is dual boot and may start Windows.
+
+`qwen-tts.service` is installed but disabled at boot because it is Preferred. LARM starts
+and stops only that service through the narrow rule in
+[`../deploy/gnosis/polkit/50-larm-runtime-control.rules`](../deploy/gnosis/polkit/50-larm-runtime-control.rules).
+Resident provider units remain outside unattended lifecycle authorization.
 
 VOICEVOX output must be credited as `VOICEVOX:春日部つむぎ` with the current default
 speaker. If the speaker changes, update the displayed credit accordingly.

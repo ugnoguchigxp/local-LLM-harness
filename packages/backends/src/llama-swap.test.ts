@@ -175,6 +175,29 @@ test("ensure loads a preferred model and stop unloads it", async () => {
   }
 });
 
+test("ensure propagates caller cancellation to llama-swap requests", async () => {
+  const runtime = definition("http://127.0.0.1:9");
+  const controller = new AbortController();
+  let requestSignal: AbortSignal | undefined;
+  const backend = new LlamaSwapBackend([runtime], {
+    request: async (_url, init) => {
+      requestSignal = init?.signal;
+      return await new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(init.signal?.reason ?? new Error("cancelled")),
+          { once: true },
+        );
+      });
+    },
+  });
+  const starting = backend.ensure(runtime, controller.signal);
+  const reason = new Error("allocation released");
+  controller.abort(reason);
+  await expect(starting).rejects.toBe(reason);
+  expect(requestSignal).toBe(controller.signal);
+});
+
 test("ignores systemd runtimes registered on this backend", async () => {
   const systemd: RuntimeDefinition = {
     id: "qwen-asr",

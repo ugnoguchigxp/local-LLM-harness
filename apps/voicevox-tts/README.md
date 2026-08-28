@@ -8,9 +8,12 @@
 - service: `voicevox-tts.service`
 - port: `8084`
 - default voice: `Kasukabe_Tsumugi`（style ID 8）
+- request body上限: 64 KiB
+- 同時合成: 1。使用中は`429`、`/health?fail_on_no_slot=true`は`503`を返す
 
 VOICEVOX CORE自体は逐次ストリーミングを提供しない。harness側でLLM出力を文単位へ分割して呼び出す。
 
 VOICEVOX公式ダウンローダーは利用規約への同意を要求する。生成音声を利用する際は選択した音声ライブラリの正式なクレジットを表示すること。既定話者は`VOICEVOX:春日部つむぎ`。
 
-APIは正式表記を`GET /v1/audio/voices`から返し、音声レスポンスにはASCIIの`X-VOICEVOX-Credit`ヘッダーを付ける。
+APIは正式表記を`GET /v1/audio/voices`から返し、音声レスポンスにはRFC
+8187形式でUTF-8 percent encodeしたASCIIの`X-VOICEVOX-Credit`ヘッダーを付ける。

@@ -3,11 +3,28 @@ import { createConnection } from "node:net";
 import type { RuntimeDefinition, ServiceState, SystemdRuntimeDefinition } from "@larm/core";
 import { isSystemdRuntime } from "@larm/core";
 import { LifecycleError, type RuntimeBackend, type RuntimeHealth } from "./types";
+import { responseTextLimited } from "./http";
 
 const HEALTH_OK = /"status"\s*:\s*"(?:ok|healthy)"/i;
+const MAX_COMMAND_OUTPUT = 64 * 1024;
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("runtime start was cancelled");
+  }
+}
+
+function appendOutput(current: string, chunk: unknown): string {
+  const combined = current + String(chunk);
+  return combined.length > MAX_COMMAND_OUTPUT
+    ? combined.slice(combined.length - MAX_COMMAND_OUTPUT)
+    : combined;
+}
 
 export type SystemdServiceControl = {
-  start: (name: string) => Promise<void>;
+  start: (name: string, signal?: AbortSignal) => Promise<void>;
   stop: (name: string) => Promise<void>;
 };
 
@@ -51,8 +68,10 @@ export class SystemdBackend implements RuntimeBackend {
       return missing(runtimeId);
     }
 
-    const service = await this.queryService(runtime.deployment.service);
-    const listening = await isListening(runtime.deployment.healthPort, this.probeTimeoutMs);
+    const [service, listening] = await Promise.all([
+      this.queryService(runtime.deployment.service),
+      isListening(runtime.deployment.healthPort, this.probeTimeoutMs),
+    ]);
     if (!listening) {
       return {
         runtimeId,
@@ -64,18 +83,10 @@ export class SystemdBackend implements RuntimeBackend {
     }
 
     const path = runtime.deployment.healthPath ?? "/health";
-    const plain = await probeHealth(
-      runtime.deployment.healthPort,
-      path,
-      false,
-      this.probeTimeoutMs,
-    );
-    const slot = await probeHealth(
-      runtime.deployment.healthPort,
-      path,
-      true,
-      this.probeTimeoutMs,
-    );
+    const [plain, slot] = await Promise.all([
+      probeHealth(runtime.deployment.healthPort, path, false, this.probeTimeoutMs),
+      probeHealth(runtime.deployment.healthPort, path, true, this.probeTimeoutMs),
+    ]);
     return {
       runtimeId,
       service,
@@ -87,15 +98,20 @@ export class SystemdBackend implements RuntimeBackend {
     };
   }
 
-  async ensure(runtime: RuntimeDefinition): Promise<RuntimeHealth> {
+  async ensure(runtime: RuntimeDefinition, signal?: AbortSignal): Promise<RuntimeHealth> {
     if (!isSystemdRuntime(runtime)) {
       throw new LifecycleError("start_failed", `${runtime.id} is not a systemd runtime`);
     }
     this.assertControllable(runtime, "ensure");
+    throwIfAborted(signal);
     this.runtimes.set(runtime.id, runtime);
-    await this.control.start(runtime.deployment.service);
-    await this.waitHealthy(runtime);
-    return this.health(runtime.id);
+    await this.control.start(runtime.deployment.service, signal);
+    throwIfAborted(signal);
+    await this.waitHealthy(runtime, signal);
+    throwIfAborted(signal);
+    const health = await this.health(runtime.id);
+    throwIfAborted(signal);
+    return health;
   }
 
   async stop(runtimeId: string): Promise<void> {
@@ -116,19 +132,25 @@ export class SystemdBackend implements RuntimeBackend {
     }
   }
 
-  private async waitHealthy(runtime: SystemdRuntimeDefinition): Promise<void> {
+  private async waitHealthy(
+    runtime: SystemdRuntimeDefinition,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const deadline = Date.now() + this.readyTimeoutMs;
     while (Date.now() < deadline) {
+      throwIfAborted(signal);
       const probe = await probeHealth(
         runtime.deployment.healthPort,
         runtime.deployment.healthPath ?? "/health",
         false,
         this.probeTimeoutMs,
+        signal,
       );
       if (probe.ok) {
         return;
       }
       await this.sleep(Math.min(2000, this.probeTimeoutMs));
+      throwIfAborted(signal);
     }
     throw new LifecycleError(
       "start_failed",
@@ -166,20 +188,24 @@ async function probeHealth(
   path: string,
   failOnNoSlot: boolean,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ ok: boolean; status?: number; detail?: string }> {
   const separator = path.includes("?") ? "&" : "?";
   const suffix = failOnNoSlot ? `${separator}fail_on_no_slot=true` : "";
   try {
     const response = await fetch(`http://127.0.0.1:${port}${path}${suffix}`, {
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs),
     });
-    const body = await response.text();
+    const body = await responseTextLimited(response);
     return {
       ok: response.ok && HEALTH_OK.test(body),
       status: response.status,
       detail: body.slice(0, 200),
     };
   } catch (error) {
+    throwIfAborted(signal);
     const detail = error instanceof Error ? error.message : String(error);
     return { ok: false, detail };
   }
@@ -206,30 +232,38 @@ function createSystemdQuery(systemctlPath: string) {
       const child = spawn(systemctlPath, ["is-active", service]);
       let stdout = "";
       let stderr = "";
+      let settled = false;
+      const finish = (state: ServiceState) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        resolve(state);
+      };
       const timer = setTimeout(() => {
         child.kill();
-        resolve("Unknown");
+        finish("Unknown");
       }, 1500);
       child.stdout.on("data", (chunk) => {
-        stdout += String(chunk);
+        stdout = appendOutput(stdout, chunk);
       });
       child.stderr.on("data", (chunk) => {
-        stderr += String(chunk);
+        stderr = appendOutput(stderr, chunk);
       });
       child.on("error", () => {
-        clearTimeout(timer);
-        resolve("Unknown");
+        finish("Unknown");
       });
       child.on("close", (code) => {
-        clearTimeout(timer);
-        resolve(parseSystemctlState(stdout, stderr, code ?? 1));
+        finish(parseSystemctlState(stdout, stderr, code ?? 1));
       });
     });
 }
 
 function createSystemdControl(systemctlPath: string): SystemdServiceControl {
   return {
-    start: (name) => runSystemctl(systemctlPath, "start", name, "start_failed"),
+    start: (name, signal) =>
+      runSystemctl(systemctlPath, "start", name, "start_failed", signal),
     stop: (name) => runSystemctl(systemctlPath, "stop", name, "stop_failed"),
   };
 }
@@ -239,37 +273,68 @@ function runSystemctl(
   action: "start" | "stop",
   service: string,
   failCode: "start_failed" | "stop_failed",
+  signal?: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(systemctlPath, [action, service]);
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const cleanup = () => signal?.removeEventListener("abort", abortStart);
+    const fail = (error: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      cleanup();
+      reject(error);
+    };
+    const succeed = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      cleanup();
+      resolve();
+    };
+    const abortStart = () => {
+      child.kill();
+      fail(signal?.reason instanceof Error ? signal.reason : new Error("runtime start was cancelled"));
+    };
     const timer = setTimeout(() => {
       child.kill();
-      reject(new LifecycleError(failCode, `systemctl ${action} ${service} timed out`));
+      fail(new LifecycleError(failCode, `systemctl ${action} ${service} timed out`));
     }, 30_000);
+    if (signal?.aborted) {
+      abortStart();
+    } else {
+      signal?.addEventListener("abort", abortStart, { once: true });
+    }
     child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
+      stdout = appendOutput(stdout, chunk);
     });
     child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
+      stderr = appendOutput(stderr, chunk);
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(new LifecycleError(failCode, error.message));
+      fail(new LifecycleError(failCode, error.message));
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      if (settled) {
+        return;
+      }
       const detail = `${stdout}\n${stderr}`.trim();
       if (code === 0) {
-        resolve();
+        succeed();
         return;
       }
       if (/access denied|authentication is required|permission denied/i.test(detail)) {
-        reject(new LifecycleError("access_denied", `systemctl ${action} ${service}: ${detail}`));
+        fail(new LifecycleError("access_denied", `systemctl ${action} ${service}: ${detail}`));
         return;
       }
-      reject(
+      fail(
         new LifecycleError(
           failCode,
           `systemctl ${action} ${service} exited ${code}: ${detail}`,

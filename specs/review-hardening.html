@@ -1,0 +1,144 @@
+<article lang="ja">
+  <h1>LARM コードレビュー・Hardening記録</h1>
+
+  <p>
+    2026-08-28に、Core contract、Allocation、Gateway、Artifact lifecycle、Backend、Provider
+    adapter、gnosis運用設定を対象として、失敗復旧、競合、期限、入力境界、長期運転を再監査しました。
+    この文書は検出事項と実装済み対策、回帰確認の正本です。
+  </p>
+
+  <dl>
+    <dt>状態</dt>
+    <dd>指摘修正済み・全check対象</dd>
+    <dt>既定モデル前提</dt>
+    <dd>Qwen 3.8 27B Resident。通常処理とリアルタイム処理を担当</dd>
+    <dt>関連仕様</dt>
+    <dd><a href="./api.html">LARM v1 API仕様</a></dd>
+  </dl>
+
+  <section id="resolved-findings">
+    <h2>解消した主要事項</h2>
+    <table>
+      <caption>
+        Reviewで確認したriskと現在の保証
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">検出事項</th>
+          <th scope="col">実装した対策</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Admission</th>
+          <td>Residentが一時的にCOLDの間、常駐memory予約が消える</td>
+          <td>
+            観測状態にかかわらず全Residentをcommitted memoryへ算入し、Registry読込時にもResident
+            floorがusable memory内であることを検証
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Gateway</th>
+          <td>本文の一括読込、slow upload、未読stream、timeout時のdrain残留</td>
+          <td>stream上限、全区間deadline、abort race、必ず完了するrequest trackingを実装</td>
+        </tr>
+        <tr>
+          <th scope="row">Allocation</th>
+          <td>固定Runtime停止後も古いBindingをresolveできる</td>
+          <td>最新snapshotを確認し、staleまたは非稼働なら固定先を変えずfail closed</td>
+        </tr>
+        <tr>
+          <th scope="row">Artifact path</th>
+          <td>revision由来のpath traversalと偽装staged path</td>
+          <td>relative path検証とmanifest完全一致をCoreとBackendの両方で強制</td>
+        </tr>
+        <tr>
+          <th scope="row">Artifact concurrency</th>
+          <td>Allocation受付とactivation、共有artifactを持つRuntime同士の競合</td>
+          <td>Runtime mutation reservation、共有owner確認、artifact単位の順序付き排他を実装</td>
+        </tr>
+        <tr>
+          <th scope="row">Artifact deadline</th>
+          <td>Allocation期限後もdownloadとactivationが継続する</td>
+          <td>
+            release、TTL、startup deadline、daemon
+            drainのAbortSignalをdownloadとhealth待機まで伝播し、 rollback完了用のshutdown猶予を確保
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Journal</th>
+          <td>受付直後のcrash、破損record、無制限history、部分rollback失敗</td>
+          <td>
+            202応答前のpending永続化、schema検証、terminal retention、失敗code保持、複数artifactの
+            rollback事前検証を実装
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Backend observation</th>
+          <td>一つのBackend例外がcluster snapshot全体を停止する</td>
+          <td>Backendごとに失敗を隔離し、該当RuntimeだけUnknownとして観測を継続</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider input</th>
+          <td>
+            ASR uploadとaudio durationが無制限、request parser前のbody上限不足、PCM media
+            typeとcredit headerの符号化不整合
+          </td>
+          <td>
+            ASGI body・upload・duration上限、単一slotの429/health BUSY、s16le PCM contract、RFC
+            8187形式のVOICEVOX creditへ修正
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">gnosis lifecycle</th>
+          <td>Preferred TTSのboot常駐、LARMのsystemd権限とactive target書込権限不足</td>
+          <td>Preferredをdisable、限定polkit rule、必要なReadWritePathsだけを付与</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="invariants">
+    <h2>Review後の不変条件</h2>
+    <ul>
+      <li>Qwen 3.8 27Bを含むResident floorのmemoryは状態にかかわらず予約する。</li>
+      <li>
+        AllocationのBindingは変更しない。固定Runtimeが停止した場合は別Runtimeへ暗黙移動しない。
+      </li>
+      <li>配備中のRuntimeと共有artifact ownerには新しいAllocationを入れない。</li>
+      <li>Allocationがrelease、expire、timeoutした後に新しいartifactをactivateしない。</li>
+      <li>artifact operationは破壊的処理より先にjournalへ永続化する。</li>
+      <li>
+        Qwen TTSはPreferredとしてboot時COLDを許容し、Resident serviceはLARMの権限で変更できない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="validation">
+    <h2>受入確認</h2>
+    <ul>
+      <li>
+        <code>bun run check</code>でsource-only、Spec
+        HTML、TypeScript、全testを検証する。
+      </li>
+      <li>
+        Bash scriptは<code>bash -n</code>、Python
+        adapterは<code>ast.parse</code>でsyntax確認する。
+      </li>
+      <li>systemd unitは<code>systemd-analyze verify</code>で静的検証する。</li>
+      <li>
+        live smokeはResident
+        serviceを停止・再起動せず、health、Allocation、Gateway、releaseだけを行う。
+      </li>
+    </ul>
+  </section>
+
+  <aside>
+    <h2>継続する制限</h2>
+    <p>
+      directory modelはsnapshot単位のhash manifestがないため無人staging対象外です。Resident artifact
+      activationも引き続きattended operationです。35Bはproduction Registryへ登録していません。
+    </p>
+  </aside>
+</article>
