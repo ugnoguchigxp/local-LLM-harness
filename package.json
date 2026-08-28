@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "bun run --filter @larm/daemon dev",
     "start": "bun run --filter @larm/daemon start",
-    "test": "bun test apps packages"
+    "test": "bun test apps packages",
+    "check:source-only": "bash scripts/check-source-only.sh",
+    "check": "bun run check:source-only && bun run test"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0"

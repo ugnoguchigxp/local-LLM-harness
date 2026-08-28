@@ -14,27 +14,27 @@ const registry: Registry = {
     {
       id: "qwen-general",
       capability: ["llm.general"],
-      backend: "nssm",
+      backend: "systemd",
       node: "ai395-01",
       policy: { class: "resident" },
       resources: { estimatedMemoryGB: 24 },
       deployment: {
         service: "a",
         healthPort: 1,
-        endpoint: "http://127.0.0.1:50043",
+        endpoint: "http://127.0.0.1:8080",
       },
     },
     {
       id: "qwen-worker",
       capability: ["llm.general"],
-      backend: "nssm",
+      backend: "systemd",
       node: "ai395-01",
       policy: { class: "preferred" },
       resources: { estimatedMemoryGB: 24 },
       deployment: {
         service: "b",
         healthPort: 2,
-        endpoint: "http://127.0.0.1:50041",
+        endpoint: "http://127.0.0.1:8082",
       },
     },
   ],
@@ -66,7 +66,7 @@ function snap(
     class: cls,
     capability: ["llm.general"],
     node: "ai395-01",
-    backend: "nssm",
+    backend: "systemd",
     endpoint,
     observedAt: "2026-08-26T00:00:00.000Z",
   };
@@ -76,8 +76,8 @@ test("prefers HOT resident over HOT preferred", () => {
   const result = resolveCapability(
     registry,
     state([
-      snap("qwen-worker", "HOT", "preferred", "http://127.0.0.1:50041"),
-      snap("qwen-general", "HOT", "resident", "http://127.0.0.1:50043"),
+      snap("qwen-worker", "HOT", "preferred", "http://127.0.0.1:8082"),
+      snap("qwen-general", "HOT", "resident", "http://127.0.0.1:8080"),
     ]),
     "llm.general",
   );
@@ -85,7 +85,7 @@ test("prefers HOT resident over HOT preferred", () => {
     ok: true,
     runtime: "qwen-general",
     node: "ai395-01",
-    endpoint: "http://127.0.0.1:50043",
+    endpoint: "http://127.0.0.1:8080",
     status: "HOT",
   });
 });
@@ -93,7 +93,7 @@ test("prefers HOT resident over HOT preferred", () => {
 test("returns BUSY if that is the only live replica", () => {
   const result = resolveCapability(
     registry,
-    state([snap("qwen-general", "BUSY", "resident", "http://127.0.0.1:50043")]),
+    state([snap("qwen-general", "BUSY", "resident", "http://127.0.0.1:8080")]),
     "llm.general",
   );
   expect(result.ok).toBe(true);
@@ -105,7 +105,7 @@ test("returns BUSY if that is the only live replica", () => {
 test("not_ready when only COLD", () => {
   const result = resolveCapability(
     registry,
-    state([snap("qwen-general", "COLD", "resident", "http://127.0.0.1:50043")]),
+    state([snap("qwen-general", "COLD", "resident", "http://127.0.0.1:8080")]),
     "llm.general",
   );
   expect(result).toEqual({ ok: false, reason: "not_ready" });

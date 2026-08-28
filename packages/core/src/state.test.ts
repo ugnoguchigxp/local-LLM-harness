@@ -12,15 +12,15 @@ const node = {
 const runtime: RuntimeDefinition = {
   id: "qwen-general",
   capability: ["llm.general"],
-  backend: "nssm",
+  backend: "systemd",
   node: "ai395-01",
   policy: { class: "resident" },
   resources: { estimatedMemoryGB: 24 },
   deployment: {
-    service: "llama-qwen-27b-backend",
-    healthPort: 50053,
-    endpoint: "http://127.0.0.1:50043",
-    backendEndpoint: "http://127.0.0.1:50053",
+    service: "llama-server.service",
+    healthPort: 8080,
+    endpoint: "http://127.0.0.1:8080",
+    backendEndpoint: "http://127.0.0.1:8080",
   },
 };
 
@@ -38,7 +38,7 @@ test("buildClusterState matches ClusterState schema", () => {
   });
   expect(clusterStateSchema.parse(state).runtimes[0]?.status).toBe("HOT");
   expect(state.node.online).toBe(true);
-  expect(state.runtimes[0]?.endpoint).toBe("http://127.0.0.1:50043");
+  expect(state.runtimes[0]?.endpoint).toBe("http://127.0.0.1:8080");
 });
 
 test("primaryNode follows the first runtime node id", () => {

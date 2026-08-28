@@ -2,32 +2,11 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { loadRegistry, RegistryError } from "../src/registry";
 
-const repoConfig = join(import.meta.dir, "../../../config");
-const gnosisConfig = join(repoConfig, "gnosis");
+const repoConfig = join(import.meta.dir, "../../../config/gnosis");
 const fixtures = join(import.meta.dir, "../test/fixtures");
 
-test("loads production config with resident and preferred Qwen replicas", () => {
+test("loads the Linux production registry", () => {
   const registry = loadRegistry(repoConfig);
-  const general = registry.runtimes.find((r) => r.id === "qwen-general");
-  const worker = registry.runtimes.find((r) => r.id === "qwen-worker");
-
-  expect(general?.policy.class).toBe("resident");
-  expect(general?.capability).toContain("llm.general");
-  expect(general?.backend).toBe("nssm");
-  if (general?.backend === "nssm") {
-    expect(general.deployment.healthPort).toBe(50053);
-    expect(general.deployment.endpoint).toBe("http://127.0.0.1:50043");
-  }
-  expect(worker?.policy.class).toBe("preferred");
-  if (worker?.backend === "nssm") {
-    expect(worker.deployment.healthPort).toBe(50051);
-  }
-  expect(registry.nodes[0]?.id).toBe("ai395-01");
-  expect(registry.profiles.some((p) => p.id === "meeting")).toBe(true);
-});
-
-test("loads gnosis systemd speech and llama-swap runtimes", () => {
-  const registry = loadRegistry(gnosisConfig);
   const general = registry.runtimes.find((runtime) => runtime.id === "qwen-general");
   const asr = registry.runtimes.find((runtime) => runtime.id === "qwen-asr");
   const realtimeTts = registry.runtimes.find((runtime) => runtime.id === "voicevox-tts");
@@ -39,6 +18,10 @@ test("loads gnosis systemd speech and llama-swap runtimes", () => {
   expect(registry.nodes[0]?.id).toBe("gnosis");
   expect(general?.backend).toBe("systemd");
   expect(general?.policy.class).toBe("resident");
+  if (general?.backend === "systemd") {
+    expect(general.deployment.healthPort).toBe(8080);
+    expect(general.deployment.endpoint).toBe("http://127.0.0.1:8080");
+  }
   expect(asr?.capability).toContain("speech.stt");
   expect(realtimeTts?.capability).toContain("speech.tts");
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");

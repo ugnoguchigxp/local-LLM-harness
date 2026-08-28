@@ -6,7 +6,7 @@ import { ControlPlane } from "./controller";
 import { Observer } from "./observer";
 
 const configDir = resolve(
-  process.env.LARM_CONFIG_DIR ?? join(import.meta.dir, "../../../config"),
+  process.env.LARM_CONFIG_DIR ?? join(import.meta.dir, "../../../config/gnosis"),
 );
 const port = Number(process.env.LARM_PORT ?? 9810);
 const hostname = process.env.LARM_HOST ?? "127.0.0.1";

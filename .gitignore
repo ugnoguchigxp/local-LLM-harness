@@ -2,6 +2,27 @@ node_modules/
 *.tsbuildinfo
 .cache/
 
+# Generated/downloaded programs and build output
+bin/
+bin-*/
+build/
+build-*/
+dist/
+vendor/
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.pdb
+*.bin
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+
 # GGUF weights (tens of GB; GitHub rejects files over 100MB)
 models/
 *.gguf

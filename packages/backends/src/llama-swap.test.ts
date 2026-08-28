@@ -175,21 +175,21 @@ test("ensure loads a preferred model and stop unloads it", async () => {
   }
 });
 
-test("ignores nssm runtimes registered on this backend", async () => {
-  const nssm: RuntimeDefinition = {
-    id: "qwen-general",
-    capability: ["llm.general"],
-    backend: "nssm",
-    node: "ai395-01",
+test("ignores systemd runtimes registered on this backend", async () => {
+  const systemd: RuntimeDefinition = {
+    id: "qwen-asr",
+    capability: ["speech.stt"],
+    backend: "systemd",
+    node: "gnosis",
     policy: { class: "resident" },
-    resources: { estimatedMemoryGB: 24 },
+    resources: { estimatedMemoryGB: 5 },
     deployment: {
-      service: "llama-qwen-27b-backend",
-      healthPort: 50053,
-      endpoint: "http://127.0.0.1:50043",
+      service: "qwen-asr.service",
+      healthPort: 8081,
+      endpoint: "http://127.0.0.1:8081",
     },
   };
-  const backend = new LlamaSwapBackend([nssm]);
+  const backend = new LlamaSwapBackend([systemd]);
   const listed = await backend.list();
   expect(listed).toEqual([]);
 });

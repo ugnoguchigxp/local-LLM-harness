@@ -1,0 +1,38 @@
+# Source/release identities used to reconstruct binaries under /srv/ai/apps.
+# No artifact from these projects is vendored into this repository.
+sources:
+  llama-cpp:
+    repository: https://github.com/ggml-org/llama.cpp.git
+    revision: cb300598d5f90189cb69d2702f4930aaf99d32a2
+    path: /srv/ai/apps/llama.cpp
+    builds:
+      - directory: build
+        cmake:
+          - -DGGML_HIP=ON
+          - -DGPU_TARGETS=gfx1151
+          - -DCMAKE_BUILD_TYPE=Release
+      - directory: build-vulkan
+        cmake:
+          - -DGGML_VULKAN=ON
+          - -DCMAKE_BUILD_TYPE=Release
+
+  q38rocm:
+    repository: https://github.com/julianmb/q38rocm.git
+    revision: 9fb59a674a2fe88cc9b39274bae2b9a86bd4a2af
+    path: /srv/ai/apps/q38rocm
+
+  llama-swap:
+    repository: https://github.com/mostlygeek/llama-swap.git
+    version: v251
+    path: /srv/ai/apps/llama-swap
+
+  qwen3-tts-openai-fastapi:
+    repository: https://github.com/dingausmwald/Qwen3-TTS-Openai-Fastapi.git
+    revision: eb14f6e6a50445cf442979abb9203ff0d5042c43
+    path: /srv/ai/apps/Qwen3-TTS-Openai-Fastapi
+    patch: apps/qwen-tts/rocm-gfx1151.patch
+
+  voicevox-core:
+    repository: https://github.com/VOICEVOX/voicevox_core.git
+    version: 0.17.0
+    path: /srv/ai/apps/voicevox-core-0.17.0

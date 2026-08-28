@@ -1,21 +1,21 @@
 import { expect, test } from "bun:test";
 import type { RuntimeDefinition } from "@larm/core";
 import { LlamaSwapBackend } from "./llama-swap";
-import { NssmBackend } from "./nssm";
+import { SystemdBackend } from "./systemd";
 import { createRuntimeBackend, RoutingBackend } from "./routing";
 import { LifecycleError } from "./types";
 
-const nssmRuntime: RuntimeDefinition = {
-  id: "qwen-general",
-  capability: ["llm.general"],
-  backend: "nssm",
-  node: "ai395-01",
+const systemdRuntime: RuntimeDefinition = {
+  id: "qwen-asr",
+  capability: ["speech.stt"],
+  backend: "systemd",
+  node: "gnosis",
   policy: { class: "resident" },
-  resources: { estimatedMemoryGB: 24 },
+  resources: { estimatedMemoryGB: 5 },
   deployment: {
-    service: "llama-qwen-27b-backend",
+    service: "qwen-asr.service",
     healthPort: 1,
-    endpoint: "http://127.0.0.1:50043",
+    endpoint: "http://127.0.0.1:8081",
   },
 };
 
@@ -33,22 +33,8 @@ const swapRuntime: RuntimeDefinition = {
   },
 };
 
-const systemdRuntime: RuntimeDefinition = {
-  id: "qwen-asr",
-  capability: ["speech.stt"],
-  backend: "systemd",
-  node: "gnosis",
-  policy: { class: "resident" },
-  resources: { estimatedMemoryGB: 5 },
-  deployment: {
-    service: "qwen-asr.service",
-    healthPort: 1,
-    endpoint: "http://127.0.0.1:8081",
-  },
-};
-
 test("routes list and lifecycle to the owning backend", async () => {
-  const nssm = new NssmBackend([nssmRuntime], {
+  const systemd = new SystemdBackend([systemdRuntime], {
     queryService: async () => "Stopped",
   });
   const swap = new LlamaSwapBackend([swapRuntime], {
@@ -56,30 +42,20 @@ test("routes list and lifecycle to the owning backend", async () => {
   });
   const backend = new RoutingBackend(
     new Map([
-      ["qwen-general", nssm],
+      ["qwen-asr", systemd],
       ["qwen-worker", swap],
     ]),
   );
 
   const listed = await backend.list();
-  expect(listed.map((item) => item.runtimeId).sort()).toEqual(["qwen-general", "qwen-worker"]);
+  expect(listed.map((item) => item.runtimeId).sort()).toEqual(["qwen-asr", "qwen-worker"]);
 
   const worker = await backend.health("qwen-worker");
   expect(worker.service).toBe("Stopped");
   expect(worker.detail).toBe("model is not running");
 
-  await expect(backend.ensure(nssmRuntime)).rejects.toMatchObject({ code: "resident_protected" });
+  await expect(backend.ensure(systemdRuntime)).rejects.toMatchObject({ code: "resident_protected" });
   await expect(backend.stop("missing")).rejects.toBeInstanceOf(LifecycleError);
-});
-
-test("createRuntimeBackend keeps production nssm runtimes on NssmBackend", async () => {
-  const backend = createRuntimeBackend([nssmRuntime], {
-    nssm: { queryService: async () => "Stopped" },
-  });
-  const listed = await backend.list();
-  expect(listed).toHaveLength(1);
-  expect(listed[0]?.runtimeId).toBe("qwen-general");
-  expect(listed[0]?.service).toBe("Stopped");
 });
 
 test("createRuntimeBackend routes Linux services to SystemdBackend", async () => {

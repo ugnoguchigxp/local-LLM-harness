@@ -1,4 +1,3 @@
-export { NssmBackend, parseScQuery, type NssmBackendOptions, type ServiceControl } from "./nssm";
 export {
   LlamaSwapBackend,
   joinListen,
@@ -21,7 +20,6 @@ export {
 } from "./systemd";
 export {
   LifecycleError,
-  NotImplementedError,
   type RuntimeBackend,
   type RuntimeHealth,
   type RuntimeInstance,

@@ -7,6 +7,7 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 ## Layout
 
 - `models.yaml`: model source and absolute runtime placement, never model data
+- `sources.lock.yaml`: external runtime source/release pins, never built binaries
 - `systemd/`: the units installed on gnosis
 - `scripts/prepare-host.sh`: conservative host prerequisites; no reboot and no UFW enable
 - `scripts/install-services.sh`: install and enable units without restarting them

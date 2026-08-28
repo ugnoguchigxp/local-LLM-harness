@@ -21,29 +21,29 @@ const registry: Registry = {
     {
       id: "qwen-general",
       capability: ["llm.general", "llm.reasoning"],
-      backend: "nssm",
+      backend: "systemd",
       node: "ai395-01",
       policy: { class: "resident" },
       resources: { estimatedMemoryGB: 24 },
       deployment: {
-        service: "llama-qwen-27b-backend",
-        healthPort: 50053,
-        endpoint: "http://127.0.0.1:50043",
-        backendEndpoint: "http://127.0.0.1:50053",
+        service: "llama-server.service",
+        healthPort: 8080,
+        endpoint: "http://127.0.0.1:8080",
+        backendEndpoint: "http://127.0.0.1:8080",
       },
     },
     {
       id: "qwen-worker",
       capability: ["llm.general"],
-      backend: "nssm",
+      backend: "systemd",
       node: "ai395-01",
       policy: { class: "preferred" },
       resources: { estimatedMemoryGB: 24 },
       deployment: {
-        service: "llama-qwen-27b-2-backend",
-        healthPort: 50051,
-        endpoint: "http://127.0.0.1:50041",
-        backendEndpoint: "http://127.0.0.1:50051",
+        service: "qwen-tts.service",
+        healthPort: 8082,
+        endpoint: "http://127.0.0.1:8082",
+        backendEndpoint: "http://127.0.0.1:8082",
       },
     },
   ],
@@ -189,7 +189,7 @@ test("POST /resolve returns the HOT resident endpoint", async () => {
   expect(await res.json()).toEqual({
     runtime: "qwen-general",
     node: "ai395-01",
-    endpoint: "http://127.0.0.1:50043",
+    endpoint: "http://127.0.0.1:8080",
     status: "HOT",
   });
 });

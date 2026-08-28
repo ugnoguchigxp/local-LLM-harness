@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const runtimeClassSchema = z.enum(["resident", "preferred", "elastic"]);
-export const backendKindSchema = z.enum(["nssm", "llama-swap", "systemd"]);
+export const backendKindSchema = z.enum(["llama-swap", "systemd"]);
 export const runtimeStatusSchema = z.enum([
   "COLD",
   "STARTING",
@@ -41,14 +41,6 @@ const runtimeShared = {
   }),
 };
 
-export const nssmDeploymentSchema = z.object({
-  service: z.string().min(1),
-  proxyService: z.string().min(1).optional(),
-  healthPort: z.number().int().min(1).max(65535),
-  endpoint: z.string().min(1),
-  backendEndpoint: z.string().min(1).optional(),
-});
-
 export const llamaSwapDeploymentSchema = z.object({
   modelId: z.string().min(1),
   listen: z.string().min(1),
@@ -64,12 +56,6 @@ export const systemdDeploymentSchema = z.object({
   backendEndpoint: z.string().min(1).optional(),
 });
 
-export const nssmRuntimeYamlSchema = z.object({
-  backend: z.literal("nssm"),
-  ...runtimeShared,
-  deployment: nssmDeploymentSchema,
-});
-
 export const llamaSwapRuntimeYamlSchema = z.object({
   backend: z.literal("llama-swap"),
   ...runtimeShared,
@@ -83,14 +69,9 @@ export const systemdRuntimeYamlSchema = z.object({
 });
 
 export const runtimeYamlSchema = z.discriminatedUnion("backend", [
-  nssmRuntimeYamlSchema,
   llamaSwapRuntimeYamlSchema,
   systemdRuntimeYamlSchema,
 ]);
-
-export const nssmRuntimeDefinitionSchema = nssmRuntimeYamlSchema.extend({
-  id: z.string().min(1),
-});
 
 export const llamaSwapRuntimeDefinitionSchema = llamaSwapRuntimeYamlSchema.extend({
   id: z.string().min(1),
@@ -101,7 +82,6 @@ export const systemdRuntimeDefinitionSchema = systemdRuntimeYamlSchema.extend({
 });
 
 export const runtimeDefinitionSchema = z.discriminatedUnion("backend", [
-  nssmRuntimeDefinitionSchema,
   llamaSwapRuntimeDefinitionSchema,
   systemdRuntimeDefinitionSchema,
 ]);
@@ -163,17 +143,12 @@ export type BackendKind = z.infer<typeof backendKindSchema>;
 export type RuntimeStatus = z.infer<typeof runtimeStatusSchema>;
 export type ServiceState = z.infer<typeof serviceStateSchema>;
 export type NodeDefinition = z.infer<typeof nodeDefinitionSchema>;
-export type NssmRuntimeDefinition = z.infer<typeof nssmRuntimeDefinitionSchema>;
 export type LlamaSwapRuntimeDefinition = z.infer<typeof llamaSwapRuntimeDefinitionSchema>;
 export type SystemdRuntimeDefinition = z.infer<typeof systemdRuntimeDefinitionSchema>;
 export type RuntimeDefinition = z.infer<typeof runtimeDefinitionSchema>;
 export type WorkloadProfile = z.infer<typeof workloadProfileSchema>;
 export type RuntimeSnapshot = z.infer<typeof runtimeSnapshotSchema>;
 export type ClusterState = z.infer<typeof clusterStateSchema>;
-
-export function isNssmRuntime(runtime: RuntimeDefinition): runtime is NssmRuntimeDefinition {
-  return runtime.backend === "nssm";
-}
 
 export function isLlamaSwapRuntime(
   runtime: RuntimeDefinition,

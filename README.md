@@ -1,49 +1,47 @@
-# local-llm-setup
+# local-LLM-harness
 
-AMD Ryzen AI MAX+ 395（統一メモリ 128GB）上のローカル AI 実行環境。Windows/NSSM と Ubuntu/systemd の両方を RuntimeBackend 越しに扱い、Agent がそのまま繋ぐ **Local AI Provider**（コードネーム LARM）を構築中。
+AMD Ryzen AI MAX+ 395 / Ubuntu / ROCm を中心にした、Linux-first のローカルAI Providerです。Qwen3.8 27B、音声認識、音声合成の Runtime を systemd と llama-swap 越しに観測・制御します。
 
-| | |
+## Repository policy
+
+Gitで管理するのは、ソースコード、設定、systemd unit、再現手順、モデル取得元とchecksumだけです。次の実体は管理しません。
+
+- モデルweight、Hugging Face cache
+- llama.cpp、llama-swap、VOICEVOX COREなどの取得・ビルド可能な実行物
+- `.exe`、`.dll`、`.so`、build directory、virtual environment
+- ログ、生成音声、一時ベンチマーク出力
+
+実行物は `/srv/ai/apps`、モデルは `/srv/ai/models`、cacheは `/srv/ai/cache` に置きます。モデルの取得元・revision・SHA256は [`deploy/gnosis/models.yaml`](deploy/gnosis/models.yaml) が正本です。
+
+## Layout
+
+| Path | Role |
 | --- | --- |
-| コンセプト | [docs/CONCEPT.md](docs/CONCEPT.md) |
-| 仕様 | [spec/README.md](spec/README.md) |
-| S0（観測・完了） | [spec/milestone-0.md](spec/milestone-0.md) |
-| S2（llama-swap・opt-in） | [spec/milestone-2.md](spec/milestone-2.md) |
-| gnosis（Ubuntu/gfx1151） | [docs/gnosis.md](docs/gnosis.md) |
-| gnosis 配備ファイル | [deploy/gnosis/README.md](deploy/gnosis/README.md) |
+| `apps/daemon` | Runtime registry、lease、resolve、control API |
+| `apps/qwen-asr` | OpenAI互換ASR adapter |
+| `apps/qwen-tts` | gfx1151向けQwen3-TTS設定・patch |
+| `apps/voicevox-tts` | 低遅延VOICEVOX adapter |
+| `packages/core` | OS非依存のregistry/state/planner |
+| `packages/backends` | SystemdBackend、LlamaSwapBackend |
+| `config/gnosis` | Linux production registryとllama-swap設定 |
+| `deploy/gnosis` | systemd unit、host導入、検証、model manifest |
 
-Windows の起動・停止はこれまでどおり `start_servers.ps1` / `stop_servers.ps1`。gnosis は `deploy/gnosis/systemd` と `config/gnosis` を正本にする。次スライス **G1** で OpenAI 互換 Gateway を足し、論理モデル名で話す。それまでは各 Runtime のポートを直接利用する。
+## Development
 
-モデル本体は Git 管理しない。`deploy/gnosis/models.yaml` は取得元と `/srv/ai/models` 上の配置先だけを管理する。
-
-## 開発環境
-
-| ツール | 入り方 | 確認 |
-| --- | --- | --- |
-| Bun 1.4 | `winget install --id Oven-sh.Bun` | 新しいターミナルで `bun --version` |
-| NSSM | 既存の `bin\nssm.exe` | 追加インストール不要 |
-| llama-swap v251（S2 実験） | `bin\llama-swap.exe`。無ければ GitHub release の `llama-swap_251_windows_amd64.zip` | `--listen 127.0.0.1:9292`。本番ポートは使わない |
-
-gnosis では Bun 1.4、systemd、llama-swap v251 を使う。導入・検証手順は [deploy/gnosis/README.md](deploy/gnosis/README.md) を参照。
-
-依存関係（初回、および `package.json` を変えたあと）:
-
-```powershell
-bun install
-bun run test
-```
-
-daemon（観測 + leases。`GET /health` `/runtimes` `/state`、`POST /prepare` `/resolve` `/release`）:
-
-```powershell
+```bash
+bun install --frozen-lockfile
+bun run check
 bun run dev
 ```
 
-別ターミナル:
+daemonは既定で `config/gnosis` を読み、`127.0.0.1:9810` で待ち受けます。別構成は `LARM_CONFIG_DIR` で指定できます。
 
-```powershell
-curl.exe http://127.0.0.1:9810/health
-curl.exe http://127.0.0.1:9810/state
-curl.exe -sS -X POST http://127.0.0.1:9810/resolve -H "Content-Type: application/json" -d "{\"capability\":\"llm.general\"}"
+## gnosis operations
+
+```bash
+cd /srv/ai/apps/local-LLM-harness
+deploy/gnosis/scripts/verify.sh
+sudo deploy/gnosis/scripts/install-services.sh
 ```
 
-起動手順の詳細は [apps/daemon/README.md](apps/daemon/README.md)。`bun test` を引数なしで叩くと `atomic-llama-cpp-turboquant` 配下のテストまで拾うので、**`bun run test`** を使う。
+詳細は [`docs/gnosis.md`](docs/gnosis.md) と [`deploy/gnosis/README.md`](deploy/gnosis/README.md) を参照してください。このdual-boot hostでは、配備処理からrebootしません。

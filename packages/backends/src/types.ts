@@ -1,14 +1,5 @@
 import type { RuntimeDefinition, ServiceState } from "@larm/core";
 
-export class NotImplementedError extends Error {
-  readonly code = "not_implemented" as const;
-
-  constructor(method: string) {
-    super(`${method} is not implemented`);
-    this.name = "NotImplementedError";
-  }
-}
-
 export class LifecycleError extends Error {
   constructor(
     readonly code: "resident_protected" | "start_failed" | "stop_failed" | "access_denied",
