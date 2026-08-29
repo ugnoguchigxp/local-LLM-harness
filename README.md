@@ -59,7 +59,8 @@ HTML文書は`<article lang="ja">`をrootとし、document固有の`html`、`hea
 
 Providerの最新コンセプトは[`specs/concept.html`](specs/concept.html)、公開APIは
 [`specs/api.html`](specs/api.html)、残るproduction完了工程は
-[`specs/production-completion-plan.html`](specs/production-completion-plan.html)、実装結果は
+[`specs/production-completion-plan.html`](specs/production-completion-plan.html)、そのattended実行順は
+[`specs/production-rollout-execution-plan.html`](specs/production-rollout-execution-plan.html)、実装結果は
 [`specs/implementation-completion-m15-m21.html`](specs/implementation-completion-m15-m21.html)を正本とします。
 
 daemonは既定で `config/gnosis` を読み、`127.0.0.1:9810` で待ち受けます。別構成は `LARM_CONFIG_DIR` で指定できます。

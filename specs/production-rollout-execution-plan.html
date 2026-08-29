@@ -1,0 +1,524 @@
+<article lang="ja">
+  <h1>LARM Production Rollout 実行計画</h1>
+
+  <p>
+    <a href="./production-completion-plan.html">Production Completion実装計画</a>で未完了の
+    Milestone 23から27を、gnosisへ安全に適用するための実行順、入力、証跡、停止条件、rollbackを
+    定義します。新機能を追加する計画ではなく、実装済みのrelease、commissioning、benchmark、canary、
+    network convergence toolを使ってstable昇格まで完了させるための運用計画です。
+  </p>
+
+  <dl>
+    <dt>計画日</dt>
+    <dd><time>2026-08-29</time></dd>
+    <dt>計画状態</dt>
+    <dd>attended実行待ち</dd>
+    <dt>設計上の正本</dt>
+    <dd><a href="./production-completion-plan.html">Production Completion実装計画</a></dd>
+    <dt>blocking path</dt>
+    <dd>Release候補固定 → M23 → M24 → M25校正 → M26 → M27</dd>
+    <dt>対象外</dt>
+    <dd>Milestone 28の任意35B評価、新機能、Provider・modelの一括更新、reboot</dd>
+  </dl>
+
+  <aside>
+    <p>
+      この文書のcommandは順序と証跡要件を固定するためのものです。root操作、service停止、Provider
+      restart、firewall変更、traffic切替は自動実行せず、各checkpointでoperatorが対象とrollbackを
+      reviewした後だけ実施します。
+    </p>
+  </aside>
+
+  <section id="decision">
+    <h2>実行方針</h2>
+    <p>
+      次の作業は機能開発ではなくproduction収束です。一つの変更windowで全工程を連続実行せず、
+      各phaseのexit criteriaと証跡を確定してから次へ進みます。失敗したphaseを残したまま後工程へ
+      進めません。
+    </p>
+    <figure>
+      <pre><code>R0  reviewed release candidate
+ ↓
+R1  M23 versioned daemon deployed
+ ↓
+R2  M24 runtime commissioning passed
+ ↓
+R3  M25 calibrated SLO gate passed
+ ↓
+R4  M26 Ambient canary and soak passed
+ ↓
+R5  M27 Gateway-only network and stable gate passed</code></pre>
+      <figcaption>各状態は前状態へ戻せるrollbackと、identity付き証跡を持つ</figcaption>
+    </figure>
+  </section>
+
+  <section id="baseline">
+    <h2>計画策定時のbaseline</h2>
+    <p>
+      次の値は計画策定時のread-only観測です。実行開始時には同じ項目を再採取し、古い値を実行判断に
+      使用しません。
+    </p>
+    <table>
+      <caption>
+        2026年8月29日の開始状態
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">観測値</th>
+          <th scope="col">最初の判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Repository gate</th>
+          <td>288 unit test、804 assertion、10 deployment test、4 shell integration suite成功</td>
+          <td>実行候補commitでも再実行する</td>
+        </tr>
+        <tr>
+          <th scope="row">Release candidate</th>
+          <td>
+            監査起点は<code>e2b88b8</code>。当時の<code>origin/main</code>より4
+            commit先
+          </td>
+          <td>本計画を含むclean commitをreview可能な状態へ固定する</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM daemon</th>
+          <td>unitはnot-found、serviceはinactive、port 9810 listenerなし</td>
+          <td>初回導入として扱う</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider network</th>
+          <td>port 8080–8084はloopback以外でもlisten</td>
+          <td>M26完了までdirect rollback経路として維持する</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen TTS</th>
+          <td>enabledかつactive</td>
+          <td>直接利用確認後にM23でdisabled・inactiveへ収束する</td>
+        </tr>
+        <tr>
+          <th scope="row">SLO manifest</th>
+          <td><code>uncalibrated</code></td>
+          <td>M24完了後の実測だけから値を作る</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="inputs">
+    <h2>実行前に確保する入力と権限</h2>
+    <ul>
+      <li>
+        review済みでcleanなfull
+        commitと、同commitで成功した<code>bun run check</code>。
+      </li>
+      <li>root操作を一件ずつ確認できるoperatorと、Resident Providerを監視できる変更window。</li>
+      <li>repository外にあるmode 0700のevidence directoryと、mode 0600で保存する各結果file。</li>
+      <li>利用規約を満たす非機密のSTT音声fixture。prompt、transcript、生成音声はcommitしない。</li>
+      <li>installed unitとrelease pointerのoperator backup、およびProvider単位の復元command。</li>
+      <li>UFWをread-onlyで確認できる権限と、LAN側から接続拒否を確認する別host。</li>
+      <li>
+        Ambient client設定を変更・rollbackできる担当者、commitまたはconfig digest、対象task一覧。
+      </li>
+    </ul>
+    <aside>
+      <p>
+        上記のいずれかが欠ける場合、codeを追加して条件を迂回しません。該当phaseを開始せず、
+        入力または権限を確保します。
+      </p>
+    </aside>
+  </section>
+
+  <section id="phase-0">
+    <h2>Phase 0: Release候補の固定</h2>
+    <dl>
+      <dt>host mutation</dt>
+      <dd>なし</dd>
+      <dt>目的</dt>
+      <dd>実機へ適用するsource、検査結果、rollback境界を一意にする</dd>
+    </dl>
+
+    <ol>
+      <li>本計画と関連文書をreviewし、worktreeを一つのclean commitへ固定する。</li>
+      <li>
+        projectの共有方針に従って候補commitをreview可能な場所へ反映し、commit hashを記録する。
+      </li>
+      <li>
+        <code>bun install --frozen-lockfile</code
+        >と<code>bun run check</code>を実行する。
+      </li>
+      <li>
+        <code>preflight-larm.sh</code
+        >をrepository外の一意なfileへ保存し、commit、config
+        revision、disk、unit、credential、listener、UFW、external asset identityをreviewする。
+      </li>
+      <li>
+        <code>backup-host-state.sh plan</code>を実行し、対象unit、current
+        pointer、digestをreviewする。
+      </li>
+      <li>初回導入失敗時の未導入状態への復帰と、将来の前release rollbackの違いを確認する。</li>
+    </ol>
+
+    <h3>Checkpoint R0</h3>
+    <ul>
+      <li>候補commitがcleanで、全repository gateが成功している。</li>
+      <li>preflightとbackup planが同じ候補commitへ関連付けられている。</li>
+      <li>Resident PID、Provider listener、Qwen TTS状態、UFW読取結果が変更前証跡にある。</li>
+      <li>backup targetとrollback commandがreview済みである。</li>
+    </ul>
+  </section>
+
+  <section id="phase-1">
+    <h2>Phase 1: Milestone 23 versioned production deployment</h2>
+    <dl>
+      <dt>変更対象</dt>
+      <dd>LARM unit、credential、release directory、current pointer、Qwen TTSのdesired state</dd>
+      <dt>変更しない対象</dt>
+      <dd>Resident Provider process、model weight、Provider listener、UFW、Ambient traffic</dd>
+    </dl>
+
+    <ol>
+      <li>
+        reviewしたconfirmation
+        digestを指定して<code>backup-host-state.sh apply</code>を実行し、
+        copy後digestとcapture終了時のhost identityがplanと一致することを確認する。
+      </li>
+      <li>
+        <code>install-services.sh</code
+        >を実行し、同じcredentialを保持したまま再実行できること、
+        unitをinstallしてもProviderをrestartしないことを確認する。
+      </li>
+      <li>
+        <code>release-larm.sh plan</code
+        >のcommit、target、dirty状態、cleanup候補をreviewする。
+        cleanup候補がある場合だけ、表示されたdigestをapplyへ明示する。
+      </li>
+      <li>
+        <code>release-larm.sh apply</code>を実行し、release manifestと
+        <code>/health</code>のcommit、version、config revisionを照合する。
+      </li>
+      <li>
+        <code>/ready</code>、port 9810
+        owner、credentialのtype・mode・ownerを値を表示せず検証する。
+      </li>
+      <li>
+        <code>smoke-larm.sh</code>でResident 27B固定、SSE完了、Allocation
+        releaseを確認する。
+      </li>
+      <li>
+        Qwen TTSのdirect consumerがないことを担当者が確認した後だけserviceをstopし、
+        disabledかつinactiveを確認する。
+      </li>
+      <li>変更前後でResident Provider PIDが変化していないことを比較する。</li>
+    </ol>
+
+    <h3>Checkpoint R1</h3>
+    <ul>
+      <li>
+        <code>larm-daemon.service</code>がloaded、enabled、activeで、9810を所有する。
+      </li>
+      <li>health、ready、release manifestが同一identityを返す。</li>
+      <li>Qwen TTSはdisabled・inactive、Resident Provider PIDは変更なし。</li>
+      <li>失敗時はLARM releaseだけをrollbackでき、direct Provider経路が残っている。</li>
+    </ul>
+  </section>
+
+  <section id="phase-2">
+    <h2>Phase 2: Milestone 24 runtime commissioning and recovery</h2>
+    <p>
+      このphaseは実Runtime、GPU memory、systemd、llama-swapを含む機能acceptanceです。各試験の前後で
+      health identityとResident PIDを記録し、失敗した試験を再実行だけで消さず、原因とrollback結果を
+      証跡へ残します。
+    </p>
+
+    <table>
+      <caption>
+        Commissioning work package
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">順序</th>
+          <th scope="col">試験</th>
+          <th scope="col">使用する経路</th>
+          <th scope="col">合格条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <th scope="row">基礎health</th>
+          <td><code>verify.sh</code></td>
+          <td>GPU、Resident、daemon、local endpointが正常</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <th scope="row">Resident LLM</th>
+          <td><code>smoke-larm.sh</code></td>
+          <td><code>llm-default</code>がQwen 3.8 27Bへ固定されSSE完了</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <th scope="row">Resident voice</th>
+          <td><code>smoke-voice.sh</code></td>
+          <td>STT、通常TTS、VOICEVOX credit、releaseが成功</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <th scope="row">Expressive TTS</th>
+          <td>明示route Allocation</td>
+          <td>Qwen TTSだけが起動し、release後にidle回収</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <th scope="row">Artifact release</th>
+          <td>stage、activate、health failure、rollback API</td>
+          <td>自動・明示rollbackとjournalのrelease identityが一致</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <th scope="row">Daemon restart</th>
+          <td><code>fault-larm.sh daemon-restart</code></td>
+          <td>epoch変更、旧Allocation 409、孤立Preferred回収、Resident PID不変</td>
+        </tr>
+        <tr>
+          <td>7</td>
+          <th scope="row">Bounded execution</th>
+          <td>同時要求、queue、timeout、cancelのattended probe</td>
+          <td>安定429と、終了後のactive・queued gauge 0</td>
+        </tr>
+        <tr>
+          <td>8</td>
+          <th scope="row">Preferred failure</th>
+          <td><code>fault-larm.sh preferred-stall</code>とreview済みrollback</td>
+          <td>Preferredだけが回復し、Resident経路とPIDは不変</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Checkpoint R2</h3>
+    <ul>
+      <li>全試験にcommit、config revision、boot epoch、route、Runtime、releaseを記録した。</li>
+      <li>Allocation、execution、artifact operation、Preferred processのleakが0である。</li>
+      <li>未解決のfailure、identity不一致、Resident再起動がない。</li>
+      <li>
+        <a href="./commissioning-evidence.html">Commissioning Evidence</a>を実結果へ更新した。
+      </li>
+    </ul>
+  </section>
+
+  <section id="phase-3">
+    <h2>Phase 3: Milestone 25 SLO calibration</h2>
+    <dl>
+      <dt>原則</dt>
+      <dd>thresholdは実測分布からだけ決め、観測前に合格値を置かない</dd>
+      <dt>series</dt>
+      <dd>通常LLM、リアルタイム相当LLM、STT、通常TTS</dd>
+    </dl>
+
+    <ol>
+      <li>固定prompt class、token上限、concurrency 1、非機密音声fixtureをreviewする。</li>
+      <li>warm-upと測定を分離し、4 seriesすべてを一つのidentityで測定する。</li>
+      <li>
+        別々のevidence directoryを使って最低3 runを採取する。各runは同じrelease commit、config
+        revision、route、Runtime、release IDを持ち、boot epoch変化とfallbackがないことを確認する。
+      </li>
+      <li>
+        TTFB、total、startup、memory headroom、error rate、queue、Provider 429の分布をreviewし、
+        acceptance値と、より保守的なrollback値を決める。
+      </li>
+      <li>
+        <code>deploy/gnosis/slo.yaml</code
+        >を<code>calibrated</code>へ変更し、測定commit、config
+        revision、sample数、測定時刻、route、Runtime、releaseを4 seriesすべてに固定する。
+      </li>
+      <li>校正manifestと匿名化結果をreviewし、raw sampleをrepositoryへ追加しない。</li>
+      <li>
+        <code>bun run check</code>を通した新commitをversioned
+        releaseとしてLARMだけへ適用する。
+      </li>
+      <li>
+        新release identityでbenchmarkとSLO comparatorを再実行し、4 seriesすべての合格を確認する。
+      </li>
+    </ol>
+
+    <h3>Checkpoint R3</h3>
+    <ul>
+      <li>
+        <code>slo.yaml</code>がstrictな4-series calibrated manifestである。
+      </li>
+      <li>各thresholdが複数runの実測とrepository外raw evidenceへ追跡できる。</li>
+      <li>校正後releaseのcanary gateが自己矛盾なく成功する。</li>
+      <li>通常・リアルタイムBindingはQwen 3.8 27Bのままで、fallbackは0である。</li>
+    </ul>
+  </section>
+
+  <section id="phase-4">
+    <h2>Phase 4: Milestone 26 Ambient shadow and canary</h2>
+    <p>
+      Ambient側のTask判断とconversationは変更せず、transportとRuntime bindingだけを段階移行します。
+      各段階の対象task、最低turn数または最低soak時間、error
+      budget、即時rollback設定を開始前に記録します。
+      実測なしに共通の数値をこの計画では捏造しません。
+    </p>
+
+    <ol>
+      <li>
+        <code>shadow-larm.sh</code
+        >とAmbient側shadowを実行し、route、Runtime、release差分を比較する。
+        差分はcatalogとintentのどちらを直すかreviewし、自動fallbackで隠さない。
+      </li>
+      <li>
+        非音声の少数taskだけを参照clientへ切り替え、期限付きAllocationとfinally releaseを確認する。
+      </li>
+      <li>事前定義した非音声soakを完了し、SLO、epoch、fallback、memory、leakを評価する。</li>
+      <li>STTと通常TTSを追加し、音声canaryとsoakを同じgateで評価する。</li>
+      <li>
+        明示routeを持つtaskだけへexpressive TTSを追加し、通常TTSとの暗黙切替がないことを確認する。
+      </li>
+      <li>
+        各段階で<code>canary-gate.sh</code>を実行し、不適合時は対象trafficだけをdirect
+        Providerへ戻す。LARM自体が不安定な場合だけrelease rollbackを追加する。
+      </li>
+      <li>
+        Ambient設定から個別port、service名、artifact
+        path参照を削除し、変更commitまたはdigestを記録する。
+      </li>
+    </ol>
+
+    <h3>Checkpoint R4</h3>
+    <ul>
+      <li>shadow差分が0、または全差分がreview済みの説明を持つ。</li>
+      <li>非音声・音声・expressiveの段階canaryがSLOとerror budgetを満たす。</li>
+      <li>soak終了後のAllocation、queue、artifact operation、Preferred process leakが0である。</li>
+      <li>Ambientの通常経路から個別Provider依存が除去され、direct経路はrollback専用である。</li>
+    </ul>
+  </section>
+
+  <section id="phase-5">
+    <h2>Phase 5: Milestone 27 Gateway-only cutover and stable promotion</h2>
+    <p>
+      Ambient canary成功後にだけ、installed済みのloopback unitを実processへ反映します。影響の小さい
+      Providerから開始し、Resident LLMを最後にします。一括restartは行いません。
+    </p>
+
+    <ol>
+      <li>
+        <code>network-converge.sh plan</code>でlistener、UFW
+        rule、対象、confirmationを保存する。
+      </li>
+      <li>
+        inactiveなQwen TTSは次回起動時にloopback unitが使われることを確認し、不要な起動を行わない。
+      </li>
+      <li>VOICEVOX、Qwen ASR、llama-swap、Resident llama-serverの順に、一つずつunitを適用する。</li>
+      <li>
+        各Provider適用後に対象portがloopbackだけでlistenすること、LARM health、該当capability
+        smoke、 Resident default、memory、Provider PIDを確認してから次へ進む。
+      </li>
+      <li>
+        全Providerのloopback化後、reviewしたdigestを指定して<code>network-converge.sh apply</code>を
+        実行し、既知のProvider LAN allow ruleだけを削除する。
+      </li>
+      <li>
+        LAN側の別hostから8080–8084への接続拒否を確認し、gnosis localのLARM Gatewayを再確認する。
+      </li>
+      <li>
+        最終<code>canary-gate.sh</code>、LARM release rollback rehearsal、Resident
+        PID監査を行う。
+      </li>
+      <li>
+        <a href="./commissioning-evidence.html">Commissioning Evidence</a>と
+        <a href="./stable-release-gate.html">Stable Release Gate</a>を最終identityへ更新する。
+      </li>
+    </ol>
+
+    <h3>Provider単位のrollback</h3>
+    <p>
+      capability smokeが失敗した場合は次のProviderへ進みません。まずLARM
+      releaseをrollbackし、それでも 回復しない場合だけ、operator
+      backupから対象Provider一つのunitを復元してlistenerを確認します。
+      direct経路が必要な場合も、<code>network-converge.sh rollback-plan</code>でreviewした一つのportと
+      限定IPv4 CIDRだけを復元します。wildcard公開や全port一括開放は行いません。
+    </p>
+
+    <h3>Checkpoint R5</h3>
+    <ul>
+      <li>port 8080–8084はloopback以外でlistenせず、Provider LAN allow ruleがない。</li>
+      <li>通常clientのdata planeはLARMだけで、direct Providerは通常設定に存在しない。</li>
+      <li>
+        repository、commissioning、SLO、Ambient canary、network gateが同一deployed release
+        commitを参照する。
+      </li>
+      <li>Qwen TTSとoptional workerは不要時にCOLDへ戻る。</li>
+      <li>未解決の逸脱、暫定threshold、manual exceptionがない。</li>
+    </ul>
+  </section>
+
+  <section id="evidence">
+    <h2>証跡の保存先と正本</h2>
+    <table>
+      <caption>
+        証跡の分離
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">証跡</th>
+          <th scope="col">保存先</th>
+          <th scope="col">Repositoryへ保存する内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">preflight・backup・network plan</th>
+          <td>operator管理のrepository外directory、mode 0600</td>
+          <td>identity、結論、逸脱の要約だけ</td>
+        </tr>
+        <tr>
+          <th scope="row">commissioning</th>
+          <td>raw command outputはrepository外</td>
+          <td><a href="./commissioning-evidence.html">Commissioning Evidence</a></td>
+        </tr>
+        <tr>
+          <th scope="row">benchmark</th>
+          <td>raw JSONと匿名化summaryを別file、mode 0600</td>
+          <td>calibrated <code>slo.yaml</code>と集約結論</td>
+        </tr>
+        <tr>
+          <th scope="row">Ambient canary</th>
+          <td>payloadを含まないaggregate evidence</td>
+          <td>対象、identity、SLO結果、rollback有無</td>
+        </tr>
+        <tr>
+          <th scope="row">Stable判定</th>
+          <td>全gateの相互参照</td>
+          <td><a href="./stable-release-gate.html">Stable Release Gate</a></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="stop-conditions">
+    <h2>共通停止条件</h2>
+    <ul>
+      <li>候補commit、deployed commit、config revision、boot epoch、releaseの対応が崩れた。</li>
+      <li>Resident ProviderのPIDまたはhealthが意図せず変化した。</li>
+      <li>credential、prompt、transcript、audio、raw logが標準出力またはGitへ混入した。</li>
+      <li>Allocation、execution、artifact operation、Preferred processのleakが残った。</li>
+      <li>SLOを満たすために未承認fallback、optional Runtime、slot増加が必要になった。</li>
+      <li>backup、rollback target、UFW読取権限、Ambient rollbackのいずれかが失われた。</li>
+      <li>network applyの補償復元後も、削除前と同じrule状態へ戻らない。</li>
+    </ul>
+  </section>
+
+  <section id="completion">
+    <h2>計画の完了条件</h2>
+    <p>
+      Checkpoint R0からR5が順番に成功し、最終release identityへ更新した
+      <a href="./stable-release-gate.html">Stable Release Gate</a
+      >に保留項目がなくなった時点で完了です。 Milestone
+      28の35B評価はこの判定を妨げず、M25の実測が開始条件を示した場合だけ別decisionとして
+      計画します。
+    </p>
+  </section>
+</article>
