@@ -1,0 +1,666 @@
+<article lang="ja">
+  <h1>LARM Production Completion 実装計画</h1>
+
+  <p>
+    <a href="./concept.html">Local AI Providerコンセプト</a>に対して残るrepository実装、
+    gnosis実機への適用、commissioning、SLO校正、Ambient client canaryを、stable昇格まで
+    一つの順序付き工程として定義します。Milestone 15–21で完成したAllocation、Gateway、artifact
+    lifecycle、release toolingを作り直さず、未収束の境界だけを閉じます。
+  </p>
+
+  <dl>
+    <dt>計画日</dt>
+    <dd><time>2026-08-29</time></dd>
+    <dt>計画状態</dt>
+    <dd>実行中。Milestone 22・25のrepository実装済み、production gateは未適用</dd>
+    <dt>対象Milestone</dt>
+    <dd>22–27。Milestone 28は任意の35B評価</dd>
+    <dt>blocking outcome</dt>
+    <dd>gnosis commissioning、SLO gate、Ambient canary、Gateway-only network境界の完了</dd>
+    <dt>Resident default</dt>
+    <dd>Qwen 3.8 27B。通常・リアルタイム・reasoning・codingの既定を変更しない</dd>
+  </dl>
+
+  <aside>
+    <p>
+      実装進捗は<a href="./implementation-completion-m22-m25.html"
+        >Milestone 22・25 Repository実装記録</a
+      >を参照してください。root権限とoperator確認を要する工程を、tool実装だけで完了とは扱いません。
+    </p>
+  </aside>
+
+  <section id="baseline">
+    <h2>監査時点のbaseline</h2>
+    <p>
+      Repository側の主要contractは実装済みで、<code>bun run check</code>は266
+      test、729 assertion、失敗0で完了しました。一方、2026年8月29日のread-only確認では、
+      <code>larm-daemon.service</code>、port
+      <code>9810</code>、
+      <code>/etc/larm/larm.env</code>が存在せず、production Gatewayは未導入でした。
+      Qwen TTSはPreferred定義に反してactiveかつenabledでした。
+    </p>
+    <p>
+      計画時のlive Provider unitはport
+      <code>8080</code
+      >から<code>8084</code>を全interfaceでlistenし、当時のhost準備
+      scriptもこれらをLAN CIDRへ許可していました。この状態は移行中のdirect Provider
+      rollbackには使えますが、コンセプトの「通常の利用側は安定Gatewayを使い、個別Provider
+      portを扱わない」という最終境界を network levelでは強制していません。
+    </p>
+
+    <table>
+      <caption>
+        残件の分類
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">現在</th>
+          <th scope="col">必要な完了状態</th>
+          <th scope="col">分類</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Gateway-only境界</th>
+          <td>個別Providerが全interfaceでlistenし、LAN allow ruleがある</td>
+          <td>Providerはloopback、通常clientはLARM endpointだけを使用</td>
+          <td>コード・設定</td>
+        </tr>
+        <tr>
+          <th scope="row">公開introspection情報</th>
+          <td>
+            <code>/runtimes</code
+            >と<code>/state</code>がbackend、endpoint、serviceなどを返す
+          </td>
+          <td>一般利用者にはcapability contractだけを返し、運用詳細はmanagement境界へ分離</td>
+          <td>API hardening</td>
+        </tr>
+        <tr>
+          <th scope="row">VOICEVOX model provenance</th>
+          <td>
+            <code>0.vvm</code>のrelease記録はREADMEのみで、checksum未固定
+          </td>
+          <td>配布元、release、SHA-256、operator同意手順を固定し、preflightで検証</td>
+          <td>Supply-chain hardening</td>
+        </tr>
+        <tr>
+          <th scope="row">Production daemon</th>
+          <td>unit、credential、listenerなし</td>
+          <td>commit固定releaseがidentity検証付きで稼働</td>
+          <td>実機適用</td>
+        </tr>
+        <tr>
+          <th scope="row">Preferred TTS</th>
+          <td>active・enabled</td>
+          <td>通常はdisabled・COLD、明示Allocationだけで起動</td>
+          <td>実機収束</td>
+        </tr>
+        <tr>
+          <th scope="row">Runtime acceptance</th>
+          <td>自動testのみ</td>
+          <td>LLM、STT、TTS、rollback、restartを実機で確認</td>
+          <td>attended gate</td>
+        </tr>
+        <tr>
+          <th scope="row">SLO</th>
+          <td>計測toolはあるがthresholdと機械判定がない</td>
+          <td>実測からversion管理値を定め、canaryが逸脱を拒否</td>
+          <td>コード・校正</td>
+        </tr>
+        <tr>
+          <th scope="row">Ambient migration</th>
+          <td>shadow・canary toolだけ実装済み</td>
+          <td>shadow、非音声、音声、soakを通過しstableへ昇格</td>
+          <td>integration gate</td>
+        </tr>
+        <tr>
+          <th scope="row">35B</th>
+          <td>未登録</td>
+          <td>必要性が実測で示された場合だけexplicit routeへ追加</td>
+          <td>任意・非blocking</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="target-state">
+    <h2>完了時の状態</h2>
+    <ul>
+      <li>
+        Ambient clientはcapabilityとrouteをLARMへ渡し、個別Provider portやservice名を保持しない。
+      </li>
+      <li>LLM、STT、TTS Providerはgnosisのloopbackだけでlistenする。</li>
+      <li>
+        LARMは既定で<code>127.0.0.1:9810</code>に留める。LAN公開が将来必要な場合は、API・management
+        token、許可CIDR、TLS終端を別decisionで同時に定義する。
+      </li>
+      <li>Qwen 3.8 27B、Qwen ASR、VOICEVOXはResidentとしてboot後に利用可能である。</li>
+      <li>27B workersとQwen TTSはCOLDを許容し、明示routeまたは許可済みfallbackでだけ起動する。</li>
+      <li>release後のidle TTLでPreferredを回収し、active AllocationがあるRuntimeは停止しない。</li>
+      <li>
+        commit、config revision、boot epoch、runtime releaseを固定した証跡でacceptanceを再現できる。
+      </li>
+      <li>SLO逸脱、fallback、epoch変化、operation leakのいずれかでcanaryがfail closedする。</li>
+      <li>stable昇格後もLARMだけをrollbackでき、Resident Providerを一括restartしない。</li>
+    </ul>
+
+    <figure>
+      <pre><code>Milestone 22  Contract and network hardening
+      ↓
+Milestone 23  Versioned production deployment
+      ↓
+Milestone 24  Runtime commissioning and recovery
+      ↓
+Milestone 25  SLO contract and calibration
+      ↓
+Milestone 26  Ambient shadow and canary
+      ↓
+Milestone 27  Gateway-only cutover and stable promotion
+
+Milestone 28  Optional 35B evaluation ── non-blocking, after Milestone 25</code></pre>
+      <figcaption>blocking pathと任意モデル評価の分離</figcaption>
+    </figure>
+  </section>
+
+  <section id="constraints">
+    <h2>全工程の制約</h2>
+    <ul>
+      <li>
+        モデルweight、binary、cache、log、prompt、transcript、音声、raw benchmarkをcommitしない。
+      </li>
+      <li>live mutationはclean commitとreview済みplanからだけ実施する。</li>
+      <li>このdual-boot hostを配備automationからrebootしない。</li>
+      <li>Resident serviceを一括restartしない。変更したunitだけを一つずつattendedで適用する。</li>
+      <li>Qwen 3.8 27BのResident default、通常・リアルタイム共通方針を変更しない。</li>
+      <li>APIから任意URL、path、service、commandを受け取る経路を追加しない。</li>
+      <li>credential値を標準出力、Spec、Git、benchmark summaryへ保存しない。</li>
+      <li>
+        firewall rule削除、service停止、traffic切替は対象とrollbackを表示してoperator確認後に行う。
+      </li>
+      <li>各Milestoneは前工程のexit criteriaを満たすまでproduction側へ進めない。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-22">
+    <h2>Milestone 22: Contract and network hardening</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>
+        stable Gatewayを通常clientの唯一のdata planeとし、運用詳細と個別portを通常経路から外す。
+      </dd>
+      <dt>変更範囲</dt>
+      <dd>Daemon公開schema、systemd unit、host network tooling、静的検査</dd>
+      <dt>live mutation</dt>
+      <dd>なし。ここではdesired stateと検証toolだけをcommitする</dd>
+    </dl>
+
+    <h3>実装項目</h3>
+    <ol>
+      <li>
+        一般向け<code>/runtimes</code>、<code>/runtimes/:id</code>、<code>/state</code>から
+        <code>deployment</code>、service、model
+        ID、個別endpointなどの運用詳細を除外します。運用上必要な情報はmanagement
+        tokenで保護したinspection responseへ分離するか、local journalだけで観測します。
+      </li>
+      <li>
+        これらのunversioned responseを狭める前に、repository内参照clientとshadow
+        evidenceでconsumerを棚卸します。運用詳細への依存がある場合は、management
+        token保護のinspection APIへ移行してから一般responseを縮小し、無告知のbreaking
+        changeにしません。
+      </li>
+      <li>
+        Allocationの公開responseは現在どおりendpointを除外し、Gateway requestは
+        <code>x-larm-allocation-id</code>とcapabilityだけで成立させます。互換用resolve
+        APIは直ちに削除せず、stable clientが利用していないことをcanary
+        evidenceで確認してからdeprecationを判断します。
+      </li>
+      <li>
+        <code>llama-server</code>、Qwen ASR、Qwen
+        TTS、VOICEVOX、llama-swapのproduction unitを
+        <code>127.0.0.1</code>
+        bindへ変更します。IPv6を使う場合もloopbackだけを明示します。
+      </li>
+      <li>
+        <code>prepare-host.sh</code>から個別Provider portの恒久LAN
+        allowを除きます。既存hostに残るruleは暗黙削除せず、現在値、削除候補、confirmation
+        digestを出すnetwork convergence toolで扱います。
+      </li>
+      <li>
+        preflightへ全Providerのlisten address、unit
+        digest、enabled・active状態、UFW読取可否を追加します。
+        privilege不足は「安全」とみなさずunknownとして記録します。
+      </li>
+      <li>
+        operations checkへ、production Provider unitのwildcard bind、Provider portのLAN
+        allow、一般introspection schemaへのdeployment詳細再混入を拒否するtestを追加します。
+      </li>
+      <li>
+        VOICEVOX COREだけでなく、運用者が取得する<code>0.vvm</code>のmodel
+        release、配布元、SHA-256、利用規約同意を必要とする手順をsource-only
+        metadataに固定します。未検証bundleはpreflightでunknownではなくfailとします。
+      </li>
+      <li>OpenAPI、参照client、API仕様、rollback手順を新しい公開境界に合わせます。</li>
+    </ol>
+
+    <h3>受入条件</h3>
+    <ul>
+      <li><code>bun run check</code>が成功する。</li>
+      <li>fixtureを使うnetwork plan testが、対象外ruleやfilesystem rootを変更しない。</li>
+      <li>一般向けRuntime・state responseにservice、endpoint、model IDが含まれない。</li>
+      <li>公開schemaに依存するconsumerの移行先があり、contract testが両境界を固定している。</li>
+      <li>
+        <code>0.vvm</code
+        >のidentityとchecksumが固定され、preflightが実fileと一致を検証する。
+      </li>
+      <li>GatewayのLLM、STT、TTS回帰testは固定Bindingを使用し続ける。</li>
+      <li>このMilestoneのcommitだけではlive Providerのbind addressを変更しない。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-23">
+    <h2>Milestone 23: Versioned production deployment</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>LARM daemon、credential、unit、release pointerをgnosisへ安全に導入する。</dd>
+      <dt>entry criteria</dt>
+      <dd>Milestone 22のclean commit、全check成功、rollback先とoperator backupの確保</dd>
+      <dt>変更対象</dt>
+      <dd>LARM daemonだけ。Resident Providerはこの工程でrestartしない</dd>
+    </dl>
+
+    <h3>手順</h3>
+    <ol>
+      <li>
+        <code>preflight-larm.sh</code>を再実行し、commit、candidate config
+        revision、disk、unit、credential、port owner、Qwen TTS driftをrepository外JSONへ保存します。
+      </li>
+      <li>
+        既存unitとrelease pointerがある場合はoperator管理領域へ退避し、復元commandを記録します。
+      </li>
+      <li>
+        <code>install-services.sh</code>を実行してunit、polkit、directory、management
+        credentialを配置します。再実行でcredentialを変更せず、Qwen
+        TTSをdisableへ収束することを確認します。
+      </li>
+      <li>
+        <code>release-larm.sh plan</code
+        >のcommit、target、dirty、cleanup候補をreviewし、必要な場合だけ表示された cleanup
+        digestを指定して<code>apply</code>します。
+      </li>
+      <li>
+        release manifestのcommit、LARM version、Bun version、lockfile digest、config revisionと、
+        <code>/health</code>のidentityが一致することを確認します。
+      </li>
+      <li>
+        Qwen
+        TTSがactiveなら、既存のdirect利用がないことをoperatorが確認した後だけstopします。disableだけを
+        完了扱いにせず、desired COLDまで確認します。
+      </li>
+    </ol>
+
+    <h3>exit criteria</h3>
+    <ul>
+      <li><code>larm-daemon.service</code>がloaded、enabled、activeである。</li>
+      <li><code>127.0.0.1:9810</code>のownerが導入したdaemonである。</li>
+      <li>credentialがregular file、mode 0640、期待owner・groupであり、値は表示されない。</li>
+      <li>
+        <code>/health</code
+        >と<code>/ready</code>がrelease identityを返す。
+      </li>
+      <li>
+        Resident ProviderのPIDが変わらず、release有効化後のdaemon boot epochがsmoke中に固定される。
+      </li>
+      <li>Qwen TTSはdisabledかつinactiveである。</li>
+    </ul>
+
+    <h3>rollback</h3>
+    <p>
+      新releaseがreadyにならなければrelease toolの自動回復を確認し、必要なら
+      <code>release-larm.sh rollback</code
+      >でLARMだけを前世代へ戻します。初回導入で前世代がない場合も、Provider processとmodel
+      dataは削除・restartせず、Ambient trafficをdirect経路のまま維持します。
+    </p>
+  </section>
+
+  <section id="milestone-24">
+    <h2>Milestone 24: Runtime commissioning and recovery</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>自動testでなく、実Runtime、GPU memory、systemd、llama-swapを含むcontractを確認する。</dd>
+      <dt>entry criteria</dt>
+      <dd>Milestone 23のdaemon identityとResident healthが安定</dd>
+      <dt>証跡</dt>
+      <dd><a href="./commissioning-evidence.html">gnosis Commissioning Evidence</a>を更新する</dd>
+    </dl>
+
+    <h3>acceptance matrix</h3>
+    <table>
+      <caption>
+        実機で必ず確認する経路
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">試験</th>
+          <th scope="col">期待結果</th>
+          <th scope="col">失敗時</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Resident LLM</th>
+          <td>
+            <code>llm-default</code>がQwen 3.8 27Bへ固定され、SSEが完了する
+          </td>
+          <td>trafficを切り替えず、releaseをrollback</td>
+        </tr>
+        <tr>
+          <th scope="row">STT</th>
+          <td>非機密sampleがQwen ASR固定Bindingで文字列を返す</td>
+          <td>voice canaryを停止</td>
+        </tr>
+        <tr>
+          <th scope="row">通常TTS</th>
+          <td>VOICEVOXがaudioとcredit headerを返す</td>
+          <td>voice canaryを停止</td>
+        </tr>
+        <tr>
+          <th scope="row">Expressive TTS</th>
+          <td>明示routeだけがQwen TTSを起動し、release後にidle回収する</td>
+          <td>Qwen TTSをstopし、Resident経路を維持</td>
+        </tr>
+        <tr>
+          <th scope="row">Artifact release</th>
+          <td>stage、activate、health failure自動rollback、明示rollbackがjournalと一致する</td>
+          <td>previous digestへ戻し、state不一致ならfail closed</td>
+        </tr>
+        <tr>
+          <th scope="row">Daemon restart</th>
+          <td>boot epochが変わり、旧Allocationが409、孤立Preferredが回収される</td>
+          <td>canary禁止、release rollback</td>
+        </tr>
+        <tr>
+          <th scope="row">Bounded execution</th>
+          <td>queue、timeout、429、cancel後のactive・queued gaugeが0へ戻る</td>
+          <td>slot値を増やさず原因修正</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>exit criteria</h3>
+    <ul>
+      <li>全試験にcommit、config revision、boot epoch、route、Runtime、releaseを記録する。</li>
+      <li>prompt、transcript、audio、raw log、credentialをevidenceへ含めない。</li>
+      <li>Resident、Preferred、artifact operation、execution queueにleakがない。</li>
+      <li>失敗を一件でも未解決のままSLO校正へ進めない。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-25">
+    <h2>Milestone 25: SLO contract and calibration</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>観測だけのbenchmarkを、version管理されたfail-closed release gateへ変える。</dd>
+      <dt>entry criteria</dt>
+      <dd>Milestone 24の機能acceptance完了</dd>
+      <dt>原則</dt>
+      <dd>実測前にthresholdを仮定しない</dd>
+    </dl>
+
+    <h3>repository実装</h3>
+    <ol>
+      <li>
+        SLO schemaにprompt class、token上限、concurrency、iteration下限、TTFB p95、total
+        p95、startup、queue、minimum memory headroom、maximum error rate、fallback許可を定義します。
+      </li>
+      <li>
+        gnosis用thresholdをversion管理するmanifestを追加します。thresholdごとに測定commit、config
+        revision、release、sample数、測定日時、rollback値を関連付けます。
+      </li>
+      <li>
+        benchmark summaryからraw output
+        pathなどhost固有・高cardinality情報を除いた匿名化結果を生成し、acceptance結果はSpec
+        HTMLへ記録します。raw sampleはrepository外のoperator管理領域へmode 0600で 保持します。
+      </li>
+      <li>
+        canary gateへSLO comparatorを追加し、identity不一致、sample不足、NaN、missing
+        metric、fallback、epoch変化、latency・memory・error率逸脱をすべて失敗にします。
+      </li>
+      <li>
+        fixtureで境界値、単位違い、古いconfig revision、部分summaryを拒否するtestを追加します。
+      </li>
+    </ol>
+
+    <h3>校正手順</h3>
+    <ol>
+      <li>固定short prompt、同一token上限、concurrency 1でwarm-upと測定runを分離する。</li>
+      <li>通常LLM、リアルタイム相当、STT、通常TTSを別seriesとして測定する。</li>
+      <li>
+        memory headroom、queue、Provider 429、gateway overhead、fallback件数を同時に記録する。
+      </li>
+      <li>
+        複数runの分布からthresholdとrollback値をreviewし、測定evidenceと同じcommitで固定する。
+      </li>
+      <li>threshold commitに対してcanary gateを再実行し、自己矛盾がないことを確認する。</li>
+    </ol>
+
+    <h3>exit criteria</h3>
+    <ul>
+      <li>thresholdがすべて実測値とevidenceを持つ。</li>
+      <li>canary gateが正常fixtureを受理し、各逸脱fixtureを個別に拒否する。</li>
+      <li>production benchmarkが同じidentityと条件で再実行可能である。</li>
+      <li>SLOを満たすためにResident defaultを暗黙にoptional modelへ変更していない。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-26">
+    <h2>Milestone 26: Ambient shadow and canary</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>上位clientをdirect ProviderからAllocation固定Gatewayへ段階移行する。</dd>
+      <dt>entry criteria</dt>
+      <dd>Milestone 25のSLO gate成功、direct rollback経路の確認</dd>
+      <dt>所有境界</dt>
+      <dd>Task判断とconversationはAmbient側、Runtime決定とBindingはLARM側</dd>
+    </dl>
+
+    <ol>
+      <li>
+        推論を行わないshadowで、既存経路とLARMのroute、Runtime、releaseを比較します。不一致は自動切替せず、
+        route catalogか上位intentのどちらを修正するか記録します。
+      </li>
+      <li>
+        参照clientを使う非音声canaryを少数taskへ限定し、期限付きAllocationと必ず実行されるreleaseを確認します。
+      </li>
+      <li>非音声soak後にSTT・通常TTSを追加し、最後に明示的なexpressive TTSだけを追加します。</li>
+      <li>
+        各段階でSLO、error budget、fallback、boot epoch、active Allocation、execution
+        queue、artifact operation、memory headroomを評価します。
+      </li>
+      <li>
+        error budget、identity、leak、fallback
+        policy、latency、memoryのいずれかが不適合なら、対象trafficだけを direct
+        Providerへ戻し、必要ならLARM releaseをrollbackします。
+      </li>
+    </ol>
+
+    <h3>exit criteria</h3>
+    <ul>
+      <li>shadow差分が0、またはreview済みの説明を持つ。</li>
+      <li>非音声と音声の両canaryがSLO gateを通過する。</li>
+      <li>soak終了時にAllocation、queue、artifact operationのleakが0である。</li>
+      <li>通常LLMとリアルタイム相当のlive BindingがQwen 3.8 27Bである。</li>
+      <li>Ambient側から個別port、service名、artifact pathへの依存が除去されている。</li>
+    </ul>
+  </section>
+
+  <section id="milestone-27">
+    <h2>Milestone 27: Gateway-only cutover and stable promotion</h2>
+    <dl>
+      <dt>目的</dt>
+      <dd>移行用direct Provider経路を閉じ、コンセプトの最終network境界を適用する。</dd>
+      <dt>entry criteria</dt>
+      <dd>Milestone 26のAmbient canary成功と、Gateway経由rollback手順のreview</dd>
+      <dt>live risk</dt>
+      <dd>Provider unit restartとfirewall rule変更を伴うためattendedで一つずつ実施</dd>
+    </dl>
+
+    <ol>
+      <li>
+        network convergence toolのplanで現在のlistener、UFW rule、変更対象、confirmation
+        digestを確認します。
+      </li>
+      <li>
+        Providerを一つずつrestartしてloopback bindを適用します。各restart後にLARM
+        health、該当capability smoke、Resident default、memoryを確認してから次へ進みます。
+      </li>
+      <li>
+        個別Provider portのLAN allow
+        ruleをreview済みdigest付きで削除し、LARMのloopback接続は維持します。
+      </li>
+      <li>
+        別hostからの接続拒否と、gnosis localからのLARM
+        Gateway成功を確認します。UFW状態を読めない場合は stableへ昇格しません。
+      </li>
+      <li>
+        最終canaryとSLO gateを実行し、stable release gateとcommissioning evidenceを更新します。
+      </li>
+    </ol>
+
+    <h3>stable Definition of Done</h3>
+    <ul>
+      <li>repository、commissioning、SLO、Ambient canaryの全gateが成功している。</li>
+      <li>port 8080–8084はloopback以外でlistenせず、LAN allow ruleがない。</li>
+      <li>通常clientが接続するdata planeはLARMだけである。</li>
+      <li>Qwen TTSとoptional workersは不要時にCOLDへ戻る。</li>
+      <li>LARM rollbackがResident Providerをrestartせず、同じGateway contractを復元する。</li>
+      <li>未解決の逸脱、暫定threshold、手動例外がない。</li>
+    </ul>
+
+    <h3>network rollback</h3>
+    <p>
+      loopback切替後の不具合では、まずLARM
+      releaseをrollbackします。それでもGatewayが回復しない場合だけ、network
+      planで保存したreview済み旧状態へ対象Provider一つを戻し、限定CIDRからの暫定direct経路を復元します。
+      wildcard公開や全port一括開放をrollback手順にしません。
+    </p>
+  </section>
+
+  <section id="milestone-28">
+    <h2>Milestone 28: Optional 35B evaluation</h2>
+    <aside>
+      <p>
+        このMilestoneはstable昇格のblocking条件ではありません。35Bが存在しなくてもコンセプトの既定経路は完成します。
+      </p>
+    </aside>
+
+    <dl>
+      <dt>開始条件</dt>
+      <dd>
+        Milestone 25の実測で、27B fast workerでは満たせない明確な速度・品質要求が示された場合だけ
+      </dd>
+      <dt>禁止事項</dt>
+      <dd>
+        <code>llm-default</code>への追加、HOT状態による自動昇格、Resident
+        27Bの停止
+      </dd>
+    </dl>
+
+    <ol>
+      <li>source、revision、license、全artifact digest、memory estimateをmanifestへ固定する。</li>
+      <li>
+        新しい<code>explicitOnly</code>
+        routeを作り、一般routeから到達できないことをschema testで証明する。
+      </li>
+      <li>Resident floorを含むstatic・live admissionで同時稼働可否を検証する。</li>
+      <li>27B fast workerと同一条件でlatency、quality、memory、startup、rollbackを比較する。</li>
+      <li>優位性と運用costがreviewで承認された場合だけproduction Registryへ登録する。</li>
+    </ol>
+
+    <h3>完了条件</h3>
+    <ul>
+      <li>35Bは明示route以外から選択されない。</li>
+      <li>fallbackにはcallerの明示許可が必要である。</li>
+      <li>Resident 27Bと音声Residentのmemory floorを侵食しない。</li>
+      <li>採用しない判断も比較条件と理由をevidenceへ残す。</li>
+    </ul>
+  </section>
+
+  <section id="deliverables">
+    <h2>成果物</h2>
+    <table>
+      <caption>
+        種別ごとの必須成果物
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">種別</th>
+          <th scope="col">成果物</th>
+          <th scope="col">検証</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">API</th>
+          <td>運用詳細を除いたRuntime schema、更新済みOpenAPI・client</td>
+          <td>strict schemaとcompatibility test</td>
+        </tr>
+        <tr>
+          <th scope="row">Network</th>
+          <td>loopback unit、plan/apply/rollback可能なnetwork convergence tool</td>
+          <td>fixture test、listen・UFW実機確認</td>
+        </tr>
+        <tr>
+          <th scope="row">Operations</th>
+          <td>拡張preflight、identity付きrelease、Preferred state収束</td>
+          <td>再実行、失敗回復、no Provider restart</td>
+        </tr>
+        <tr>
+          <th scope="row">Supply chain</th>
+          <td>VOICEVOX model bundleのsource-only identityとchecksum</td>
+          <td>metadata schemaとpreflightの実file検証</td>
+        </tr>
+        <tr>
+          <th scope="row">SLO</th>
+          <td>strict threshold schema、gnosis manifest、comparator、匿名化summary</td>
+          <td>境界fixtureとproduction calibration</td>
+        </tr>
+        <tr>
+          <th scope="row">Evidence</th>
+          <td>更新済みcommissioning evidence、stable release gate</td>
+          <td>commit・config・epoch・releaseの追跡可能性</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="definition-of-done">
+    <h2>各Milestone共通のDefinition of Done</h2>
+    <ul>
+      <li>変更理由、失敗mode、rollback、operator actionが文書化されている。</li>
+      <li>新しい設定とrequest schemaはstrictで、未知fieldを拒否する。</li>
+      <li>期限、件数、bytes、queue、retentionの新しい状態には明示上限がある。</li>
+      <li>happy pathだけでなくtimeout、cancel、restart、部分失敗、再実行をtestする。</li>
+      <li>
+        <code>bun run docs:check:fix</code
+        >と<code>bun run check</code>が成功する。
+      </li>
+      <li>実機変更前後のidentityと差分を保存し、secretとraw user dataを除外する。</li>
+      <li>完了したMilestoneだけを完了記録へ反映し、tool完成をproduction成功と表現しない。</li>
+    </ul>
+  </section>
+
+  <section id="stop-conditions">
+    <h2>停止条件</h2>
+    <p>次のいずれかに該当した時点で後続工程を停止し、原因修正またはrollbackを行います。</p>
+    <ul>
+      <li>Qwen 3.8 27B、Qwen ASR、VOICEVOXのResident healthが悪化した。</li>
+      <li>release identity、config revision、boot epochの対応が証明できない。</li>
+      <li>管理credential、prompt、transcript、audio、raw logが出力またはGitへ混入した。</li>
+      <li>Allocation、queue、artifact operation、Preferred processのleakが残った。</li>
+      <li>SLO thresholdを満たすために未承認fallbackやRuntime変更が必要になった。</li>
+      <li>firewallまたはlisten状態を検証する権限がなく、Gateway-only境界を証明できない。</li>
+      <li>rollback先が存在しない、またはrollbackを実行してもreadyを復元できない。</li>
+    </ul>
+  </section>
+</article>

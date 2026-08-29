@@ -33,9 +33,8 @@ install -d -o "${operator}" -g "${operator}" \
 
 ufw default deny incoming
 ufw default allow outgoing
-for port in 22 8080 8081 8082 8083 8084; do
-  ufw allow from "${lan_cidr}" to any port "${port}" proto tcp
-done
+ufw allow from "${lan_cidr}" to any port 22 proto tcp
 
 echo "Host prerequisites are prepared. Review 'ufw status' before running 'ufw enable'."
-echo "This script intentionally does not enable UFW, configure ROCm/TTM, or reboot."
+echo "Provider ports are loopback-only; existing legacy LAN rules require reviewed convergence."
+echo "This script intentionally does not enable UFW, remove existing rules, configure ROCm/TTM, or reboot."

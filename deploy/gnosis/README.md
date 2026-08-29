@@ -14,14 +14,17 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/prepare-host.sh`: conservative host prerequisites; no reboot and no UFW enable
 - `scripts/install-services.sh`: unitをinstallし、Resident/controlだけをenableする（restartなし）
 - `scripts/preflight-larm.sh`: secretを含めないread-only commissioning inventory
+- `scripts/network-converge.sh`: listener・UFW差分のplanとdigest確認付き限定apply・rollback
+- `scripts/verify-external-assets.ts`: operator配備VOICEVOX VVMのidentity検証
 - `scripts/release-larm.sh`: clean commitのversioned apply、rollback、review済みbounded retention
 - `scripts/verify.sh`: GPU, service, HTTP health, and memory checks
 - `scripts/smoke-larm.sh`: Resident 27B固定のAllocation、stream、release smoke
 - `scripts/smoke-voice.sh`: operator提供音声によるSTT・通常TTS smoke
-- `scripts/canary-gate.sh`: boot epoch固定と反復canary gate
+- `scripts/canary-gate.sh`: 4 seriesのSLO、boot epoch、fallback、leakを拒否するcanary gate
 - `scripts/shadow-larm.sh`: 推論せずlegacyとv1のroute・Runtime・endpointを比較
 - `scripts/fault-larm.sh`: 明示confirmationを要求するdaemon・Preferred fault harness
-- `scripts/benchmark-larm.ts`: repository外raw JSONと匿名化summaryを作るResident benchmark
+- `scripts/benchmark-larm.ts`: repository外raw JSONと匿名化summaryを分離する4 series benchmark
+- `scripts/compare-slo.ts`: version管理された`deploy/gnosis/slo.yaml`とのfail-closed比較
 
 Runtime-manager configuration is in [`../../config/gnosis`](../../config/gnosis).
 Application-owned adapters are in [`../../apps`](../../apps).
@@ -51,17 +54,26 @@ if sudo test -f /etc/systemd/system/larm-daemon.service; then
   sudo cp --preserve=mode,ownership,timestamps \
     /etc/systemd/system/larm-daemon.service "${backup_dir}/"
 fi
+if sudo test -L /srv/ai/apps/larm-current; then
+  sudo readlink /srv/ai/apps/larm-current | sudo tee "${backup_dir}/larm-current.target" >/dev/null
+fi
 sudo systemctl cat larm-daemon.service >"/tmp/larm-daemon.before.txt" || true
 ```
 
 `prepare-host.sh` installs packages, masks sleep targets, adds the service account to the GPU
-groups, creates data directories, and stages UFW rules. It does not enable UFW, configure
-ROCm/TTM, or reboot. Run it only after reviewing those host-level changes.
+groups, creates data directories, and stages only the requested LAN SSH rule. It does not enable
+UFW, remove legacy Provider rules, configure ROCm/TTM, or reboot. Run it only after reviewing those
+host-level changes. Provider rule removal is handled separately by the digest-bound network tool in
+[`../../specs/production-completion-plan.html`](../../specs/production-completion-plan.html).
+
+Do not run the apply sequence below as a stable deployment until Milestone 22 is a reviewed clean
+commit and a rollback target is available.
 
 ```bash
 cd /srv/ai/apps/local-LLM-harness
 # Host preparation, only when required:
 # sudo deploy/gnosis/scripts/prepare-host.sh
+deploy/gnosis/scripts/preflight-larm.sh
 sudo deploy/gnosis/scripts/install-services.sh
 deploy/gnosis/scripts/release-larm.sh plan
 sudo deploy/gnosis/scripts/release-larm.sh apply
@@ -70,7 +82,10 @@ sudo systemctl start llama-server.service llama-swap-worker.service \
 deploy/gnosis/scripts/verify.sh
 deploy/gnosis/scripts/smoke-larm.sh
 # LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/gnosis/scripts/smoke-voice.sh
-deploy/gnosis/scripts/canary-gate.sh
+# After production calibration has changed deploy/gnosis/slo.yaml to calibrated:
+# LARM_CANARY_EVIDENCE_DIR=/srv/ai/logs/larm-canary \
+# LARM_BENCHMARK_AUDIO_FILE=/path/to/non-sensitive.wav \
+# deploy/gnosis/scripts/canary-gate.sh
 ```
 
 `plan`の`cleanupCandidates`が空でない場合は、候補と`cleanupConfirm`をreviewしてから次のように
@@ -91,7 +106,8 @@ do not use the first-install start command as a blanket restart. The installer a
 `larm-daemon.service`はGit worktreeではなく`/srv/ai/apps/larm-current`を参照します。
 `release-larm.sh apply`はclean commitをrepository外へ展開し、frozen installと全gateを通過した後だけ
 current symlinkを原子的に切り替え、LARM daemonだけをrestartします。manifestにはcommit、LARM・Bun
-version、lockfile digest、config revision、作成時刻を保存します。前世代へ戻す操作は次の通りです。
+version、lockfile digest、config revision、作成時刻を保存し、`/health.releaseCommit`まで一致を検証します。
+前世代へ戻す操作は次の通りです。
 
 ```bash
 sudo deploy/gnosis/scripts/release-larm.sh rollback
@@ -128,9 +144,34 @@ systemctl is-active llama-server.service qwen-asr.service voicevox-tts.service
 ```
 
 This rollback does not remove `/etc/larm/larm.env`, artifact staging data, journals, or any model.
-The existing direct Provider ports remain available. Removing a first-install unit or artifact data
-is a separate destructive operator decision and is not part of the rollback command above.
+Before the Gateway-only cutover, the existing direct Provider ports remain available. After that
+cutover, use LARM release rollback first; restoring a single direct Provider and limited CIDR is a
+separate attended network rollback. Removing a first-install unit or artifact data is a separate
+destructive operator decision and is not part of the rollback command above.
 
 After a successful canary, save aggregate timing, memory, error, queue, config revision, and boot
 epoch in a new Spec HTML document. Do not commit prompts, transcripts, audio, credentials, raw model
 data, or unredacted logs.
+
+## SLO calibration and network convergence
+
+`deploy/gnosis/slo.yaml` is deliberately `uncalibrated` until all four production series have been
+measured. That state always fails the comparator. Calibration uses a repository-external raw and
+summary path; the summary contains only aggregate identity and metrics.
+
+```bash
+evidence_dir=/srv/ai/logs/larm-calibration/$(date -u +%Y%m%dT%H%M%SZ)
+install -d -m 0700 "${evidence_dir}"
+LARM_BENCHMARK_OUTPUT="${evidence_dir}/raw.json" \
+LARM_BENCHMARK_SUMMARY="${evidence_dir}/summary.json" \
+LARM_BENCHMARK_COMMIT="$(git rev-parse HEAD)" \
+LARM_BENCHMARK_SERIES=all \
+LARM_BENCHMARK_AUDIO_FILE=/path/to/non-sensitive.wav \
+bun run deploy/gnosis/scripts/benchmark-larm.ts
+```
+
+Before the final cutover, run `network-converge.sh plan`. An apply is accepted only when UFW is
+readable, all Provider listeners are already loopback-only, every Provider allow rule is an exact
+LAN-CIDR candidate, and `LARM_NETWORK_CONFIRM` equals the displayed digest. Rollback restores one
+reviewed port and an IPv4 `/24`–`/32` only; first restore that Provider's operator-backed-up unit and
+verify its network listener, then use `rollback-plan` and its separate confirmation digest.

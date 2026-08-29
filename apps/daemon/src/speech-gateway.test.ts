@@ -76,7 +76,12 @@ async function makeSpeechApp(options: Partial<AppDeps>) {
     registry,
     getState: () => observer.getState(),
     control,
-    identity: { version: "test", configRevision: "test", bootEpoch: "epoch-speech" },
+    identity: {
+      version: "test",
+      releaseCommit: "development",
+      configRevision: "test",
+      bootEpoch: "epoch-speech",
+    },
     ...options,
   });
 }

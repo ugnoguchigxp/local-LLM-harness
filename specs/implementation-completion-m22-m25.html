@@ -1,0 +1,111 @@
+<article lang="ja">
+  <h1>Milestone 22・25 Repository実装記録</h1>
+
+  <p>
+    <a href="./production-completion-plan.html">Production Completion実装計画</a>のうち、live
+    hostを変更しないrepository工程を2026年8月29日に実装した記録です。Milestone 23・24・26・27の
+    production gateと、Milestone 25の実測校正は完了扱いにしません。
+  </p>
+
+  <dl>
+    <dt>対象</dt>
+    <dd>公開contract、network desired state、external asset identity、preflight、SLO gate</dd>
+    <dt>live mutation</dt>
+    <dd>なし</dd>
+    <dt>stable判定</dt>
+    <dd>未達。root権限を要するversioned deploymentとattended network cutoverが残る</dd>
+  </dl>
+
+  <section id="contract-network">
+    <h2>Milestone 22 repository結果</h2>
+    <ul>
+      <li>
+        一般向けRuntime・state schemaをcapability中心へ縮小し、backend、node、service、model
+        ID、endpoint、resource、health detailを除外した。
+      </li>
+      <li>
+        完全な定義とstateはmanagement
+        token保護の<code>/v1/inspection/*</code>へ分離し、OpenAPIと strict contract
+        testで公開・管理境界を固定した。
+      </li>
+      <li>
+        全Provider unitを<code>127.0.0.1</code> bindへ変更し、host準備からport
+        8080–8084の新規LAN allowを除外した。installだけではlive processをrestartしない。
+      </li>
+      <li>
+        network convergence toolはlistener、IPv4・IPv6 UFW rule、対象外ruleを棚卸しし、
+        reviewしたdigestと完全一致する場合だけ既知CIDRの既知Provider ruleを削除する。
+        rollbackも一つのProviderとIPv4
+        <code>/24</code
+        >–<code>/32</code>に限定した。
+      </li>
+      <li>
+        preflightへrepository・installed unit digest、active・enabled、listen address、UFW読取可否を
+        追加した。権限不足を安全とは判定せず<code>unknown</code>として残す。
+      </li>
+      <li>
+        VOICEVOX <code>0.vvm</code>はversion 0.16.4、upstream
+        revision、bytes、SHA-256、terms、 operator同意要件を固定し、regular
+        fileとchecksumの一致をpreflightの必須条件にした。
+      </li>
+    </ul>
+  </section>
+
+  <section id="slo">
+    <h2>Milestone 25 repository結果</h2>
+    <ul>
+      <li>
+        通常LLM、リアルタイム相当、STT、通常TTSの4 seriesに対し、prompt class、token上限、
+        concurrency、sample下限、TTFB・total・startup p95、memory headroom、error率、queue、
+        Provider 429、fallback、route・Runtime・release identityをstrict schema化した。
+      </li>
+      <li>
+        benchmarkはdeployed release commitと指定commitの一致を要求し、raw sampleをmode 0600の
+        repository外fileへ、匿名化aggregate summaryを別fileへ排他的に保存する。prompt、transcript、
+        audio path、credentialは出力しない。
+      </li>
+      <li>
+        comparatorは未校正manifest、identity不一致、series欠落、sample不足、NaN、epoch変化、fallback、
+        latency・memory・error・queue・429逸脱をすべて拒否する。
+      </li>
+      <li>
+        <code>deploy/gnosis/slo.yaml</code
+        >は実測前のため意図的に<code>uncalibrated</code>であり、 production
+        comparatorは必ず失敗する。数値はversioned deployment後の実測からだけ設定する。
+      </li>
+      <li>
+        canary gateはclean worktree、daemonの<code>releaseCommit</code>、config
+        revision、boot epoch、 4-series SLO、shadow一致、voice smoke、Allocation・queue・artifact
+        operation leak 0を要求する。
+      </li>
+    </ul>
+  </section>
+
+  <section id="read-only-host">
+    <h2>同日時点のread-only host差分</h2>
+    <p>
+      2026年8月29日00:42 UTCのpreflightではLARM daemon、credential、port 9810
+      listenerは未導入でした。 既存5 Providerはactiveで、installed unitはrepository desired
+      stateと不一致、port 8080–8084はwildcard listenerでした。Qwen
+      TTSもenabledかつactiveです。非root実行ではUFWを読めず、
+      network境界は証明していません。VOICEVOX VVMの実file identityだけは固定metadataと一致しました。
+    </p>
+  </section>
+
+  <section id="verification">
+    <h2>検証と残件</h2>
+    <p>
+      strict schema、API認証・reload、external asset checksum・symlink、networkの対象限定・IPv6・
+      unsafe root、release identity、SLO境界・逸脱fixtureを自動testへ追加しました。全repository
+      gateは286 unit test・790 assertionとdeployment testを含めて成功しました。結果は<a
+        href="./stable-release-gate.html"
+        >Stable Release Gate</a
+      >へ記録します。
+    </p>
+    <p>
+      次の安全な工程はclean commitの作成、operator backup、root権限でのinstallerとversioned LARM
+      releaseです。その後にcommissioning、4-series校正、Ambient canaryを行います。Provider restartと
+      UFW変更は、対象、順序、rollback、confirmation digestをoperatorが確認するまで実行しません。
+    </p>
+  </section>
+</article>

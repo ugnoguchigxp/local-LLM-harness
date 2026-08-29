@@ -12,7 +12,7 @@ import { parseDaemonConfig } from "./config";
 import { ControlPlane, type ControlEvent } from "./controller";
 import { MetricsRegistry, RequestTracker } from "./metrics";
 import { Observer } from "./observer";
-import { createBootEpoch } from "./identity";
+import { createBootEpoch, loadReleaseCommit } from "./identity";
 import { ExecutionGate } from "./execution-gate";
 import { RuntimeReleaseManager } from "./runtime-release-manager";
 import { CatalogManager, loadCatalogGeneration } from "./catalog-manager";
@@ -27,6 +27,7 @@ const catalogGeneration = loadCatalogGeneration({
 const { registry, artifacts, releases: runtimeReleases } = catalogGeneration;
 const identity = {
   version: LARM_VERSION,
+  releaseCommit: loadReleaseCommit(process.env.LARM_RELEASE_MANIFEST),
   configRevision: catalogGeneration.revision,
   bootEpoch: createBootEpoch(),
 };

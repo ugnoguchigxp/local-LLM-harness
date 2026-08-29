@@ -60,7 +60,7 @@ routes:
 ## Allocation
 
 Allocationは要求capabilityごとのRoute、Runtime、node、endpoint、選択理由をBindingへ固定し、
-`pending | ready | failed | released | expired`の状態とTTLを持ちます。公開一覧ではendpointを隠し、
+`pending | ready | failed | released | expired`の状態とTTLを持ちます。公開Allocation responseではendpointを隠し、
 resolveまたはGatewayだけが固定endpointを使用します。daemon再起動後は再取得が必要です。
 Allocation IDとresponse headerはboot epochを持ち、旧epochのIDを明示的に拒否します。
 

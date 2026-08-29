@@ -3,23 +3,26 @@
 
   <aside>
     <p>
-      この文書はMilestone 8–14実装前の監査記録です。現在の実装状態と継続制限は
-      <a href="./implementation-completion.html">実装完了記録</a>を参照してください。
+      この文書は2026年8月28日の初回監査と、2026年8月29日のproduction completion再監査を保持する
+      累積記録です。履歴節の「未実装」は当時の状態であり、現在の残件は<a
+        href="./production-completion-plan.html"
+        >Production Completion実装計画</a
+      >を参照してください。
     </p>
   </aside>
 
   <p>
-    2026-08-28に、Spec HTML、repository README、Provider README、compatibility仕様、gnosis運用手順を
-    現行コード、Registry、artifact manifest、systemd
+    2026-08-28と2026-08-29に、Spec HTML、repository README、Provider
+    README、compatibility仕様、gnosis運用手順を現行コード、Registry、artifact manifest、systemd
     unit、配備script、実ホストの読取結果と照合しました。
     この文書は検出した不整合、修正結果、文書正本の対応を記録します。
   </p>
 
   <dl>
     <dt>状態</dt>
-    <dd>指摘修正済み・未解消の文書指摘なし</dd>
+    <dd>2026-08-29再監査の指摘修正済み・未解消の文書指摘なし</dd>
     <dt>対象日</dt>
-    <dd><time>2026-08-28</time></dd>
+    <dd><time>2026-08-28</time>、<time>2026-08-29</time></dd>
     <dt>対象</dt>
     <dd>
       <code>README.md</code
@@ -31,8 +34,208 @@
     <dd>外部projectの上流文書と、repository外にあるmodel・binaryの内容</dd>
   </dl>
 
+  <section id="implementation-follow-up">
+    <h2>2026-08-29実装後レビューで解消した指摘</h2>
+    <table>
+      <caption>
+        Milestone 22・25実装後の再照合
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">問題</th>
+          <th scope="col">修正</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Desired stateとlive state</th>
+          <td>loopback unit実装後もREADMEがrepository unitをwildcardと記述していた</td>
+          <td>repository desired stateと2026年8月29日の未適用live wildcard観測を分離した</td>
+        </tr>
+        <tr>
+          <th scope="row">公開API</th>
+          <td>API一覧が一般introspectionに運用詳細を含む旧contractのままだった</td>
+          <td>
+            capability中心responseとmanagement inspection 3 endpointを一覧・認証説明へ反映した
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Release identity</th>
+          <td>
+            計画がhealthとrelease commitの照合を要求する一方、health payloadにcommitがなかった
+          </td>
+          <td>
+            <code>releaseCommit</code
+            >をhealth、release検証、smoke、benchmark、API仕様へ一貫して追加した
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">SLO時制</th>
+          <td>tool実装をproduction校正完了と誤読できた</td>
+          <td>
+            manifestを明示的な<code>uncalibrated</code>にし、repository結果とlive
+            gateを別記録にした
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Network rollback</th>
+          <td>firewall rollbackだけでProviderのnetwork listenerまで復元できるように読めた</td>
+          <td>
+            operator backup unitを単一Providerへ先に戻し、listener確認後に限定CIDR
+            ruleを復元すると明記した
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Evidence data</th>
+          <td>benchmark summaryにrepository外raw pathが含まれ、匿名化境界が不完全だった</td>
+          <td>rawとaggregateを別fileへ分離し、summaryからhost path、prompt、audio情報を除外した</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="current-review-findings">
+    <h2>2026-08-29再監査で解消した指摘</h2>
+    <table>
+      <caption>
+        現行ドキュメントとコード・host baselineの不整合
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">問題</th>
+          <th scope="col">修正</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">正本分類</th>
+          <td>実装済みMilestone 15–21が「次期計画」と表示され、現行計画と競合していた</td>
+          <td>履歴計画へ改称し、Milestone 22–27のProduction Completion計画を現行正本へ統一</td>
+        </tr>
+        <tr>
+          <th scope="row">Network境界</th>
+          <td>一部READMEが個別Provider portを閉鎖済みのように表現していた</td>
+          <td>全interface listenとLAN ruleを移行中baselineと明記し、Gateway-only cutoverへlink</td>
+        </tr>
+        <tr>
+          <th scope="row">API情報境界</th>
+          <td>
+            <code>/runtimes</code
+            >だけでなく<code>/state</code>も運用詳細を返す点が計画から漏れていた
+          </td>
+          <td>現行API仕様へ露出範囲を明記し、両schemaの縮小をMilestone 22へ追加</td>
+        </tr>
+        <tr>
+          <th scope="row">Endpoint分類</th>
+          <td>管理APIを含む一覧captionが「公開endpoint」で、認証不要と誤読できた</td>
+          <td>
+            実装route一覧へ改称し、anonymous、Bearer、management境界と現行の運用詳細含有を明記
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Security precondition</th>
+          <td>
+            API仕様がloopback以外でAPI tokenだけ必須のように記載し、実装のmanagement
+            token必須条件が漏れていた
+          </td>
+          <td>両tokenの必須条件と、BearerがAPI token設定時に適用されることを明記</td>
+        </tr>
+        <tr>
+          <th scope="row">過去計画のNetwork分類</th>
+          <td>
+            現行コンセプト内に、推論個別portのLAN公開と通常clientのdirect
+            endpoint利用を維持する古い判断が残っていた
+          </td>
+          <td>
+            Provider loopback、通常clientのGateway使用、移行用compatibility
+            resolve、認証・CIDR・TLS付きGateway公開の別reviewに統一
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Stable gate</th>
+          <td>commissioningとcanaryだけで、SLOとGateway-only network gateが欠落していた</td>
+          <td>contract hardening、SLO calibration、network cutoverをblocking gateへ追加</td>
+        </tr>
+        <tr>
+          <th scope="row">Rollback</th>
+          <td>network cutover後も常にdirect Providerへ戻せるように読めた</td>
+          <td>
+            LARM rollbackを第一手段とし、単一Provider・限定CIDRのattended復元だけを最終手段にした
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">導入手順</th>
+          <td>
+            <code>docs/gnosis.md</code
+            >が初回daemon導入前のinstaller実行を省略していた
+          </td>
+          <td>
+            preflight後、release plan・apply前に<code>install-services.sh</code>を追加
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Evidence時制</th>
+          <td>過去preflightのdirty値を現在状態と誤認できた</td>
+          <td>観測時刻固定の証跡であり、release候補から再採取が必要と明記</td>
+        </tr>
+        <tr>
+          <th scope="row">SLO evidence</th>
+          <td>匿名化summaryの保存形式が曖昧で、Spec HTML規則との関係が不明だった</td>
+          <td>acceptance結果はSpec HTML、raw sampleはrepository外mode 0600と固定</td>
+        </tr>
+        <tr>
+          <th scope="row">VOICEVOX provenance</th>
+          <td>
+            <code>0.vvm</code
+            >のreleaseはREADMEのみで、checksumと配布元が固定されていなかった
+          </td>
+          <td>未実装のstable blockerと明記し、Milestone 22にmetadataとpreflight検証を追加</td>
+        </tr>
+        <tr>
+          <th scope="row">Unversioned API互換</th>
+          <td>一般introspection schemaを縮小する計画にconsumer移行手順がなかった</td>
+          <td>
+            consumer棚卸し、management inspection移行、contract testをbreaking
+            changeの先行条件にした
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">手順順序</th>
+          <td>
+            <code>docs/gnosis.md</code>のrelease
+            planが現行Milestoneのinstallerより前に置かれていた
+          </td>
+          <td>preflight、installer、release plan、applyの一つの順序へ統一</td>
+        </tr>
+        <tr>
+          <th scope="row">Operation entrypoint</th>
+          <td>
+            rootとdeployment READMEの実行例がread-only
+            preflightを含まず、rootとhost手順は既存unit退避を先行条件と明記していなかった
+          </td>
+          <td>
+            すべての現行導入例をpreflightから開始し、installer前のoperator管理backupを指示。
+            backup例にはdaemon unitと現行release pointer目標の両方を含めた
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Deployment entry criteria</th>
+          <td>
+            現行の運用READMEはMilestone 22完了前でもinstaller手順を実行でき、移行用wildcard
+            unitをstable候補と誤認できた
+          </td>
+          <td>
+            review済みMilestone 22 clean commitとrollback先を全現行運用手順のentry criteriaにした
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
   <section id="resolved-findings">
-    <h2>解消した指摘</h2>
+    <h2>2026-08-28初回監査で解消した指摘</h2>
     <table>
       <caption>
         文書監査で検出した問題と修正
@@ -92,7 +295,7 @@
         <tr>
           <th scope="row">API inventory</th>
           <td>v1仕様のendpoint表からunversionedの運用・互換routeが省略されていた</td>
-          <td>実装済み21 routeを一覧化し、互換request / response仕様へlink</td>
+          <td>当時の実装routeを一覧化し、互換request / response仕様へlink</td>
         </tr>
         <tr>
           <th scope="row">計画状態</th>
@@ -146,13 +349,23 @@
         </tr>
         <tr>
           <th scope="row">完了済み実装</th>
-          <td><a href="./implementation-plan.html">初期実装計画・完了記録</a></td>
-          <td>production gate未実施箇所を区別</td>
+          <td>
+            <a href="./implementation-completion.html">Milestone 8–14完了記録</a>と<a
+              href="./implementation-completion-m15-m21.html"
+              >Milestone 15–21完了記録</a
+            >
+          </td>
+          <td>repository実装とproduction gateを区別</td>
         </tr>
         <tr>
-          <th scope="row">レビュー時点の次期工程</th>
-          <td><a href="./implementation-plan-m8-m14.html">Milestone 8–14 実装計画（履歴）</a></td>
-          <td>後にrepository実装を完了。現在は履歴文書</td>
+          <th scope="row">現行実装計画</th>
+          <td><a href="./production-completion-plan.html">Production Completion実装計画</a></td>
+          <td>Milestone 22–27がblocking、35Bは任意</td>
+        </tr>
+        <tr>
+          <th scope="row">Stable昇格条件</th>
+          <td><a href="./stable-release-gate.html">Stable Release Gate</a></td>
+          <td>repository、commissioning、SLO、canary、network境界</td>
         </tr>
         <tr>
           <th scope="row">Node・Runtime・Profile・Route</th>
@@ -162,12 +375,12 @@
         <tr>
           <th scope="row">Model artifact metadata</th>
           <td><code>deploy/gnosis/models.yaml</code></td>
-          <td>単一fileだけがbytesとSHA-256を持つ無人staging対象</td>
+          <td>checksum付き単一fileと全file・snapshot digest固定directoryが無人staging対象</td>
         </tr>
         <tr>
           <th scope="row">外部source identity</th>
           <td><code>deploy/gnosis/sources.lock.yaml</code></td>
-          <td>repository、revision、version、patch</td>
+          <td>repository、revision、version、patch、operator配備VVMのbytes・SHA-256・terms</td>
         </tr>
         <tr>
           <th scope="row">Host desired service構成</th>
@@ -180,12 +393,17 @@
             実ホスト状態は<code>systemctl</code>と<code>ss</code>で別途確認
           </td>
         </tr>
+        <tr>
+          <th scope="row">最新の実機証跡</th>
+          <td><a href="./commissioning-evidence.html">Commissioning Evidence</a></td>
+          <td>観測時刻へ固定。運用直前にpreflightで更新</td>
+        </tr>
       </tbody>
     </table>
   </section>
 
   <section id="observed-host-state">
-    <h2>Review時の実ホスト観測</h2>
+    <h2>2026-08-28・29の実ホスト観測</h2>
     <p>
       読取確認ではProvider serviceの8080から8084がlistenし、Qwen TTSを含むProvider
       unitはactiveでした。
@@ -195,7 +413,7 @@
     </p>
     <aside>
       <p>
-        この節は2026-08-28の観測記録であり、現在状態の正本ではありません。運用判断の直前に
+        この節は2026-08-28・29の観測記録であり、将来の現在状態を保証しません。運用判断の直前に
         <code>systemctl is-active</code
         >、<code>systemctl is-enabled</code>、<code>ss -ltnp</code>を再実行します。
       </p>
@@ -219,7 +437,7 @@
         <tr>
           <th scope="row"><code>bun run docs:check</code></th>
           <td>成功</td>
-          <td>Spec HTML 7 files、format差分なし、lint error / warningなし</td>
+          <td>Spec HTML全files、format差分なし、lint error / warningなし</td>
         </tr>
         <tr>
           <th scope="row">Markdown監査</th>
@@ -232,7 +450,7 @@
         <tr>
           <th scope="row">実装contract照合</th>
           <td>成功</td>
-          <td>公開API 21 / 21 route、daemon environment 20 / 20項目</td>
+          <td>OpenAPI route inventory、strict schema、daemon config testによるdrift検査</td>
         </tr>
         <tr>
           <th scope="row">配備静的検証</th>
@@ -242,27 +460,60 @@
         <tr>
           <th scope="row"><code>bun run check</code></th>
           <td>成功</td>
-          <td>source-only、Spec HTML、TypeScript、148 tests、0 failures</td>
+          <td>source-only、Spec HTML、TypeScript、全test、deployment test</td>
         </tr>
       </tbody>
     </table>
   </section>
 
   <section id="remaining-limitations">
-    <h2>レビュー時点の継続制限</h2>
-    <ul>
-      <li>
-        STTとTTSの安定Gatewayはレビュー実施時点で未実装であり、resolveした個別endpointを使用していた。
-      </li>
-      <li>directory modelはAPI staging対象外である。</li>
-      <li>Resident artifactはAPIからactivationできない。</li>
-      <li>active Allocationはdaemon再起動後に復元しない。</li>
-      <li>35Bはproduction Registryへ登録していない。</li>
-      <li>
-        VOICEVOXの<code>0.vvm</code>
-        releaseはREADMEに記録されているが、file manifestとchecksumは未整備である。
-      </li>
-      <li>過去のgnosis性能値にはrepository内のraw dataがなく、再現可能なrelease gateではない。</li>
-    </ul>
+    <h2>初回レビュー時の制限と現在の扱い</h2>
+    <table>
+      <caption>
+        2026-08-28の制限を現在のcontractと混同しないための対応
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">初回レビュー時点</th>
+          <th scope="col">2026-08-29の扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>STT・TTS Gateway未実装</td>
+          <td>実装・自動test済み。実機commissioningは保留</td>
+        </tr>
+        <tr>
+          <td>Directory modelをAPI stagingできない</td>
+          <td>固定snapshot lifecycleを実装済み</td>
+        </tr>
+        <tr>
+          <td>Resident artifactをAPIから無人activationできない</td>
+          <td>Resident保護の意図した制約。attended operationを維持</td>
+        </tr>
+        <tr>
+          <td>Active Allocationをdaemon再起動後に復元しない</td>
+          <td>boot epochで旧Allocationを拒否し、clientが再取得する固定contract</td>
+        </tr>
+        <tr>
+          <td>35B未登録</td>
+          <td>意図した状態。Milestone 28の任意評価だけで扱う</td>
+        </tr>
+        <tr>
+          <td>VOICEVOX model manifest未整備</td>
+          <td>
+            外部runtime
+            bundleとしてoperatorが配備。<code>0.vvm</code>のsource、release、bytes、
+            checksum、termsをsource lockへ固定し、実file検証をpreflightへ追加済み
+          </td>
+        </tr>
+        <tr>
+          <td>過去のgnosis性能値に再現可能なraw dataがない</td>
+          <td>
+            継続制限。identity固定toolは実装済みで、production SLO実測は未校正としてfail closed
+          </td>
+        </tr>
+      </tbody>
+    </table>
   </section>
 </article>

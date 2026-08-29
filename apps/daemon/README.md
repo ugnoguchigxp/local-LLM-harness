@@ -2,7 +2,7 @@
 
 Linux Runtimeを観測・制御するLARM daemonです。既定で `config/gnosis` を読み、SystemdBackendとLlamaSwapBackendへRuntime単位でルーティングします。
 
-実装済みAPI contractの正本は[`../../specs/api.html`](../../specs/api.html)です。LLM、STT、通常TTS、表現TTSをprotocol-awareな共通Gatewayで提供し、個別Provider portを利用側へ公開しません。
+実装済みAPI contractの正本は[`../../specs/api.html`](../../specs/api.html)です。LLM、STT、通常TTS、表現TTSをprotocol-awareな共通Gatewayで提供し、通常clientは個別Provider portではなくGatewayを使用します。repositoryのProvider unitはloopback desired stateです。2026年8月29日のlive hostには移行用wildcard listenerが残り、network levelの閉鎖は[`../../specs/production-completion-plan.html`](../../specs/production-completion-plan.html)のMilestone 27で行います。
 
 ## Start
 
@@ -48,6 +48,7 @@ bun run dev
 | `LARM_SHUTDOWN_TIMEOUT_SECONDS` | `330` | operationとrequestのdrain上限 |
 | `LARM_ARTIFACT_MANIFEST` | `deploy/gnosis/models.yaml` | artifact allowlist |
 | `LARM_RELEASE_CATALOG` | `deploy/gnosis/releases.yaml` | immutable Runtime release catalog |
+| `LARM_RELEASE_MANIFEST` | 未設定 | production release commitを読むmanifest。systemd unitはcurrent release内を指定 |
 | `LARM_ARTIFACT_STAGING_ROOT` | `/srv/ai/models/.larm-staging` | 検証済みstaging data |
 | `LARM_ARTIFACT_ROLLBACK_ROOT` | `/srv/ai/models/.larm-rollback` | rollback data |
 | `LARM_ARTIFACT_STATE_ROOT` | `/var/lib/larm` | operation journal |
@@ -69,6 +70,9 @@ curl http://127.0.0.1:9810/health
 curl http://127.0.0.1:9810/runtimes
 curl http://127.0.0.1:9810/state
 curl http://127.0.0.1:9810/openapi.json
+# 完全なRuntime・state inspectionにはmanagement tokenが必要です。
+curl -H "x-larm-management-token: ${LARM_MANAGEMENT_TOKEN}" \
+  http://127.0.0.1:9810/v1/inspection/runtimes
 curl -sS -X POST http://127.0.0.1:9810/prepare \
   -H 'Content-Type: application/json' -d '{"profile":"voice"}'
 curl -sS -X POST http://127.0.0.1:9810/resolve \

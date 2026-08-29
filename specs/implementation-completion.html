@@ -3,8 +3,8 @@
 
   <p>
     <a href="./implementation-plan-m8-m14.html">Milestone 8–14 実装計画（履歴）</a
-    >に定義した工程について、 repository内で完了した実装、固定したcontract、残るattended
-    production作業を記録します。 コード実装の完了とgnosis実機への適用完了を混同しません。
+    >に定義した工程について、repository内で完了した実装、固定したcontract、残るattended
+    production作業を記録します。コード実装の完了とgnosis実機への適用完了を混同しません。
     実装後の再監査結果は<a href="./review-hardening.html">コードレビュー・Hardening記録</a
     >を参照します。
   </p>
@@ -112,8 +112,8 @@
     <h2>再起動contract</h2>
     <ul>
       <li>
-        <code>/health</code>はsoftware version、config revision、boot
-        epochを返します。
+        <code>/health</code>はsoftware version、release commit、config
+        revision、boot epochを返します。
       </li>
       <li>全HTTP responseは<code>x-larm-boot-epoch</code>を返します。</li>
       <li>Allocation IDはepochを含み、旧epochのIDを曖昧な404ではなく409で拒否します。</li>
@@ -155,7 +155,8 @@
       <li>Resident Qwen ASRはstaging-only、Preferred Qwen TTSだけが無人activation対象です。</li>
       <li>
         VOICEVOXはmodel snapshotではなく外部runtime release bundleなので、model manifestから除外し、
-        source lockとoperator配備手順で管理します。
+        source
+        lockにrelease、bytes、SHA-256、termsを固定してoperator配備手順とpreflightで管理します。
       </li>
     </ul>
   </section>
@@ -164,8 +165,8 @@
     <h2>自動検証</h2>
     <p>
       repository gateは<code>bun run check</code>です。CIもfrozen
-      install後に同じcommandを実行します。 unit testはprotocol不一致、Binding曖昧性、chunked
-      upload上限、Provider 429、queue満杯・timeout・cancel、 concurrent
+      install後に同じcommandを実行します。unit testはprotocol不一致、Binding曖昧性、chunked
+      upload上限、Provider 429、queue満杯・timeout・cancel、concurrent
       idempotency、旧epoch、Resident保護、snapshot
       hash・link・disk・中断・cleanup・rollback、lifecycle race、容量上限、strict configを含みます。
     </p>
@@ -188,7 +189,10 @@
     <aside>
       <p>
         これらはlive service、GPU負荷、実client接続を変更するため自動実行しません。
-        repository実装完了は、このattended gateの成功を意味しません。
+        repository実装完了は、このattended gateの成功を意味しません。現在の実行順、
+        network境界、SLO、canary条件は<a href="./production-completion-plan.html"
+          >Production Completion実装計画</a
+        >が優先します。
       </p>
     </aside>
   </section>

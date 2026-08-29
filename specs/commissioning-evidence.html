@@ -3,20 +3,31 @@
 
   <p>
     LARMのproduction commissioning結果を、秘密情報、prompt、transcript、audio、raw logを含めずに
-    記録する文書です。2026年8月28日のread-only preflightではdaemon未導入を確認しました。 live
-    mutationはclean commitからversioned releaseを作成するまで実施していません。
+    記録する文書です。2026年8月29日の拡張read-only preflightではdaemon未導入と、全Providerの
+    installed unit・listener差分を確認しました。live mutationはclean commitからversioned
+    releaseを作成するまで実施していません。次回採取とacceptanceの 順序は<a
+      href="./production-completion-plan.html"
+      >Production Completion実装計画</a
+    >に従います。
   </p>
 
   <dl>
     <dt>状態</dt>
     <dd>preflight完了、commissioning保留</dd>
     <dt>観測時刻</dt>
-    <dd><time>2026-08-28T15:15:18Z</time></dd>
+    <dd><time>2026-08-29T00:42:44Z</time></dd>
     <dt>観測commit</dt>
-    <dd><code>b51d7b431f7c18c8f9c38d90ec0ea2604d8a46f1</code></dd>
+    <dd><code>e2045ce11dbf0442411ade44f78f88e92df2ef31</code></dd>
     <dt>worktree</dt>
     <dd>dirty。現在の実装変更を含むためrelease apply不可</dd>
   </dl>
+
+  <aside>
+    <p>
+      このworktree値は観測時刻に固定された証跡で、現在のGit状態を表しません。運用判断では同じpreflightを
+      release候補commitから再実行し、この文書を新しい時刻とidentityで更新します。
+    </p>
+  </aside>
 
   <section id="preflight">
     <h2>Read-only preflight</h2>
@@ -51,12 +62,24 @@
         </tr>
         <tr>
           <th scope="row">Qwen TTS</th>
-          <td>active。Preferred desired stateとの差分あり</td>
+          <td>enabledかつactive。Preferred desired stateとの差分あり</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider unit・listener</th>
+          <td>5 unitすべてrepositoryと不一致。port 8080–8084はwildcard listen</td>
+        </tr>
+        <tr>
+          <th scope="row">UFW</th>
+          <td>非root preflightでは読取不可。安全とは判定せずunknown</td>
+        </tr>
+        <tr>
+          <th scope="row">VOICEVOX VVM</th>
+          <td>version 0.16.4、58,214,379 bytes、固定SHA-256と実fileが一致</td>
         </tr>
       </tbody>
     </table>
     <p>
-      raw preflight JSONはrepository外の<code>/tmp/larm-preflight-2026-08-28.json</code>へ保存しました。
+      raw preflight JSONはrepository外の<code>/tmp/larm-preflight-check.json</code>へ保存しました。
       一時領域のため恒久証跡ではなく、commissioning時にoperator管理領域へ再採取します。
     </p>
   </section>
@@ -64,7 +87,7 @@
   <section id="acceptance">
     <h2>未実施のacceptance</h2>
     <ul>
-      <li>version、config revision、boot epochを固定したhealth・ready</li>
+      <li>version、release commit、config revision、boot epochを固定したhealth・ready</li>
       <li>Qwen 3.8 27B Resident Allocationとstreaming Gateway</li>
       <li>STT、通常TTS、voice credit</li>
       <li>明示Qwen TTS起動、release、health failure自動rollback、明示rollback</li>

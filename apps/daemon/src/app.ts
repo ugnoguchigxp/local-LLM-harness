@@ -78,6 +78,30 @@ export function publicRuntime(runtime: Registry["runtimes"][number]) {
     id: runtime.id,
     capability: runtime.capability,
     protocol: runtime.protocol,
+    policy: runtime.policy,
+  };
+}
+
+export function publicClusterState(state: ClusterState) {
+  return {
+    generatedAt: state.generatedAt,
+    online: state.node.online,
+    runtimes: state.runtimes.map((runtime) => ({
+      id: runtime.id,
+      status: runtime.status,
+      class: runtime.class,
+      capability: runtime.capability,
+      observedAt: runtime.observedAt,
+      ...(runtime.health ? { health: { ok: runtime.health.ok } } : {}),
+    })),
+  };
+}
+
+function inspectionRuntime(runtime: Registry["runtimes"][number]) {
+  return {
+    id: runtime.id,
+    capability: runtime.capability,
+    protocol: runtime.protocol,
     backend: runtime.backend,
     node: runtime.node,
     policy: runtime.policy,
@@ -128,6 +152,7 @@ export function createApp(deps: AppDeps) {
   const currentRegistry = () => deps.getRegistry?.() ?? deps.registry;
   const identity = deps.identity ?? {
     version: "test",
+    releaseCommit: "development",
     configRevision: "test",
     bootEpoch: deps.control.getBootEpoch(),
   };
@@ -200,6 +225,7 @@ export function createApp(deps: AppDeps) {
   app.use("/v1/runtime-releases", requireManagement);
   app.use("/v1/runtime-releases/*", requireManagement);
   app.use("/v1/catalog/*", requireManagement);
+  app.use("/v1/inspection/*", requireManagement);
 
   const handleGateway = async (
     c: Context,
@@ -286,6 +312,7 @@ export function createApp(deps: AppDeps) {
   app.get("/health", (c) => c.json({
     status: "ok",
     version: identity.version,
+    releaseCommit: identity.releaseCommit,
     configRevision: deps.getConfigRevision?.() ?? identity.configRevision,
     bootEpoch: identity.bootEpoch,
   }));
@@ -331,6 +358,32 @@ export function createApp(deps: AppDeps) {
   });
 
   app.get("/state", (c) => {
+    if (deps.catalogManager?.isReloading) {
+      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
+    }
+    return c.json(publicClusterState(deps.getState()));
+  });
+
+  app.get("/v1/inspection/runtimes", (c) => {
+    if (deps.catalogManager?.isReloading) {
+      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
+    }
+    return c.json({ runtimes: currentRegistry().runtimes.map(inspectionRuntime) });
+  });
+
+  app.get("/v1/inspection/runtimes/:id", (c) => {
+    if (deps.catalogManager?.isReloading) {
+      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
+    }
+    const id = c.req.param("id");
+    const runtime = currentRegistry().runtimes.find((item) => item.id === id);
+    if (!runtime) {
+      return c.json(errorBody("not_found", `runtime ${id} is not in the registry`), 404);
+    }
+    return c.json(inspectionRuntime(runtime));
+  });
+
+  app.get("/v1/inspection/state", (c) => {
     if (deps.catalogManager?.isReloading) {
       return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
     }

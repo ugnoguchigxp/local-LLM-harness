@@ -17,7 +17,9 @@ cleanup() {
 trap cleanup EXIT
 
 health="$(curl -fsS --max-time 10 "${base_url}/health")"
-jq -e '.status == "ok" and (.version | length > 0) and (.configRevision | length > 0) and (.bootEpoch | length > 0)' \
+jq -e '.status == "ok" and (.version | length > 0)
+  and (.releaseCommit | test("^[a-f0-9]{40}$"))
+  and (.configRevision | length > 0) and (.bootEpoch | length > 0)' \
   <<<"${health}" >/dev/null
 
 allocation="$(curl -fsS --max-time 15 "${headers[@]}" \

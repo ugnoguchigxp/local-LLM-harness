@@ -7,6 +7,8 @@ import {
   legacyReleaseResponseSchema,
   legacyResolveResponseSchema,
   openApiDocumentSchema,
+  publicClusterStateSchema,
+  publicRuntimeSchema,
 } from "./api-contract";
 
 test("OpenAPI is generated from the public contract schemas", () => {
@@ -21,6 +23,8 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(document.components.schemas.RuntimeReleaseSelection).toBeDefined();
   expect(document.components.schemas.RuntimeReleasePlanRequest).toBeDefined();
   expect(document.components.schemas.RuntimeList).toBeDefined();
+  expect(document.components.schemas.PublicClusterState).toBeDefined();
+  expect(document.components.schemas.InspectionRuntimeList).toBeDefined();
   const operationIds = API_OPERATIONS.map(([, , operationId]) => operationId);
   expect(new Set(operationIds).size).toBe(operationIds.length);
   for (const [method, path, operationId] of API_OPERATIONS) {
@@ -39,6 +43,10 @@ test("OpenAPI is generated from the public contract schemas", () => {
     bearerAuth: [],
     managementToken: [],
   }]);
+  expect(paths["/v1/inspection/state"]?.get?.security).toEqual([{
+    bearerAuth: [],
+    managementToken: [],
+  }]);
   expect(JSON.stringify(paths["/health"]?.get)).toContain("#/components/schemas/Health");
   expect(Object.keys((paths["/health"]?.get?.responses as Record<string, unknown>))).toEqual([
     "200",
@@ -49,6 +57,28 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(JSON.stringify(paths["/v1/deployments/{runtime}/plan"]?.post))
     .toContain("#/components/schemas/RuntimeReleasePlanRequest");
   expect(JSON.stringify(paths["/v1/chat/completions"]?.post)).toContain("text/event-stream");
+});
+
+test("public runtime and state schemas reject operational detail", () => {
+  expect(publicRuntimeSchema.parse({
+    id: "qwen-general",
+    capability: ["llm.general"],
+    protocol: "openai.chat-completions.v1",
+    policy: { class: "resident" },
+  }).id).toBe("qwen-general");
+  expect(() => publicRuntimeSchema.parse({
+    id: "qwen-general",
+    capability: ["llm.general"],
+    protocol: "openai.chat-completions.v1",
+    policy: { class: "resident" },
+    deployment: { endpoint: "http://127.0.0.1:8080" },
+  })).toThrow();
+  expect(() => publicClusterStateSchema.parse({
+    generatedAt: "2026-08-29T00:00:00.000Z",
+    online: true,
+    node: { id: "gnosis" },
+    runtimes: [],
+  })).toThrow();
 });
 
 test("legacy public success schemas are strict and round-trip current responses", () => {

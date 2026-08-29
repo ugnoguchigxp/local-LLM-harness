@@ -18,11 +18,15 @@ export {
   openApiDocumentSchema,
   publicAllocationBindingSchema,
   publicAllocationSchema,
+  publicClusterStateSchema,
+  publicRuntimeSchema,
+  publicRuntimeSnapshotSchema,
   publicRuntimeReleaseSchema,
   readinessSchema,
   runtimeDeploymentPlanSchema,
   runtimeDeploymentSchema,
   runtimeListSchema,
+  inspectionRuntimeListSchema,
   runtimeReleaseListSchema,
   runtimeReleasePlanRequestSchema,
   runtimeReleaseSelectionSchema,
@@ -147,6 +151,17 @@ export {
   type RouteShadowComparison,
 } from "./route-selector";
 export { expandPrepareRequest, type ExpandPrepareResult } from "./prepare";
+export {
+  compareSlo,
+  sloBenchmarkSummarySchema,
+  sloManifestSchema,
+  sloSeriesIdSchema,
+  sloSeriesSummarySchema,
+  type SloBenchmarkSummary,
+  type SloComparison,
+  type SloFailure,
+  type SloManifest,
+} from "./slo";
 export {
   allocationRenewRequestSchema,
   allocationRequestSchema,

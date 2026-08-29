@@ -3,8 +3,16 @@
 
   <p>
     repository gateとproduction gateを混同しないための最終判定表です。コードと隔離testの完了だけでは
-    stableへ昇格せず、commissioningとAmbient client canaryの両方を要求します。
+    stableへ昇格せず、<a href="./production-completion-plan.html">Production Completion実装計画</a
+    >の blocking pathをすべて要求します。
   </p>
+
+  <dl>
+    <dt>更新日</dt>
+    <dd><time>2026-08-29</time></dd>
+    <dt>現在の判定</dt>
+    <dd>stable未達</dd>
+  </dl>
 
   <table>
     <caption>
@@ -21,7 +29,10 @@
       <tr>
         <th scope="row">Repository</th>
         <td><code>bun run check</code></td>
-        <td>合格が必要</td>
+        <td>
+          現worktreeで合格。286 unit test・790 assertionとdeployment test成功。release
+          commitでも再実行する
+        </td>
       </tr>
       <tr>
         <th scope="row">Transactional release</th>
@@ -31,13 +42,31 @@
         <td>実装済み</td>
       </tr>
       <tr>
+        <th scope="row">Contract・network hardening</th>
+        <td>
+          consumer移行済みの一般introspection縮小、loopback desired state、network convergence
+          test、VOICEVOX model bundleのchecksum検証
+        </td>
+        <td>Repository実装済み。live listener・UFW収束は未適用</td>
+      </tr>
+      <tr>
         <th scope="row">Commissioning</th>
         <td><a href="./commissioning-evidence.html">実機evidence</a></td>
         <td>保留</td>
       </tr>
       <tr>
+        <th scope="row">SLO calibration</th>
+        <td>version管理threshold、identity固定benchmark、fail-closed comparator</td>
+        <td>Schema・tool・逸脱test実装済み。manifestは実測前のため意図的に未校正</td>
+      </tr>
+      <tr>
         <th scope="row">Ambient canary</th>
         <td>shadow、参照client、restart、rollback、soak、artifact operationを含むleak 0</td>
+        <td>保留</td>
+      </tr>
+      <tr>
+        <th scope="row">Gateway-only cutover</th>
+        <td>Provider portのloopback listen、LAN allow ruleなし、local Gateway成功</td>
         <td>保留</td>
       </tr>
       <tr>
@@ -52,9 +81,10 @@
     <h2>Rollback条件</h2>
     <p>
       error budget、latency、memory headroom、fallback、epoch contract、operation
-      leakのいずれかが基準外なら、 Ambient clientをdirect
-      Providerへ戻し、<code>release-larm.sh rollback</code>でLARMだけを前世代へ戻します。
-      Provider processとmodel weightはLARM rollbackの対象にしません。
+      leakのいずれかが基準外なら、<code>release-larm.sh rollback</code>でLARMだけを前世代へ戻します。
+      Gateway-only cutover前は対象trafficをreview済みdirect Providerへ戻せます。cutover後はLARM
+      rollbackを第一手段とし、それでも復旧しない場合だけ、対象Provider一つと限定CIDRの旧network状態を
+      attendedで一時復元します。Provider processとmodel weightはLARM rollbackの対象にしません。
     </p>
   </section>
 </article>

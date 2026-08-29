@@ -34,26 +34,28 @@ systemctl_run() {
 }
 
 verify_release_health() {
-  local target="$1" deadline health expected_version expected_revision active
+  local target="$1" deadline health expected_commit expected_version expected_revision active
+  expected_commit="$(jq -er .commit "${target}/release-manifest.json")"
   expected_version="$(jq -er .larmVersion "${target}/release-manifest.json")"
   expected_revision="$(jq -er .configRevision "${target}/release-manifest.json")"
   if [[ "${test_mode}" == "1" ]]; then
     [[ "$(basename "${target}")" != "${LARM_RELEASE_TEST_UNHEALTHY_RELEASE:-}" ]] || return 1
     active="$(readlink -f -- "${current_link}" 2>/dev/null || true)"
     [[ "${active}" == "${target}" ]] || return 1
-    health="$(jq -n --arg version "$(jq -er .larmVersion "${active}/release-manifest.json")" \
+    health="$(jq -n --arg commit "$(jq -er .commit "${active}/release-manifest.json")" \
+      --arg version "$(jq -er .larmVersion "${active}/release-manifest.json")" \
       --arg revision "$(jq -er .configRevision "${active}/release-manifest.json")" \
-      '{status:"ok",version:$version,configRevision:$revision}')"
-    jq -e --arg version "${expected_version}" --arg revision "${expected_revision}" \
-      '.status == "ok" and .version == $version and .configRevision == $revision' \
+      '{status:"ok",releaseCommit:$commit,version:$version,configRevision:$revision}')"
+    jq -e --arg commit "${expected_commit}" --arg version "${expected_version}" --arg revision "${expected_revision}" \
+      '.status == "ok" and .releaseCommit == $commit and .version == $version and .configRevision == $revision' \
       <<<"${health}" >/dev/null
     return
   fi
   deadline=$((SECONDS + 60))
   while ((SECONDS < deadline)); do
     if health="$(curl -fsS --max-time 3 http://127.0.0.1:9810/health 2>/dev/null)" \
-      && jq -e --arg version "${expected_version}" --arg revision "${expected_revision}" \
-        '.status == "ok" and .version == $version and .configRevision == $revision' \
+      && jq -e --arg commit "${expected_commit}" --arg version "${expected_version}" --arg revision "${expected_revision}" \
+        '.status == "ok" and .releaseCommit == $commit and .version == $version and .configRevision == $revision' \
         <<<"${health}" >/dev/null \
       && curl -fsS --max-time 3 http://127.0.0.1:9810/ready >/dev/null; then
       return 0
@@ -236,11 +238,15 @@ else
   larm_version="$(sed -n 's/^export const LARM_VERSION = "\([^"]*\)".*/\1/p' "${staging}/packages/core/src/version.ts")"
   [[ -n "${larm_version}" && "${config_revision}" =~ ^[a-f0-9]{64}$|^test-gate-skipped$ ]] \
     || fail "release identity metadata is invalid"
+  [[ ! -e "${staging}/release-manifest.json" && ! -L "${staging}/release-manifest.json" ]] \
+    || fail "release-manifest.json is a reserved generated path"
   jq -n --arg commit "${commit}" --arg version "${larm_version}" --arg bunVersion "$(bun --version)" \
     --arg configRevision "${config_revision}" \
     --arg lockfileSha256 "${lock_digest}" --arg createdAt "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
     '{schemaVersion:1,commit:$commit,larmVersion:$version,bunVersion:$bunVersion,lockfileSha256:$lockfileSha256,configRevision:$configRevision,createdAt:$createdAt}' \
-    >"${staging}/release-manifest.json"
+    >"${staging}/.release-manifest.json.tmp"
+  chmod 0644 -- "${staging}/.release-manifest.json.tmp"
+  mv -- "${staging}/.release-manifest.json.tmp" "${staging}/release-manifest.json"
   mv -- "${staging}" "${release_dir}"
 fi
 

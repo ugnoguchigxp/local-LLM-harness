@@ -22,4 +22,13 @@ if ! command -v systemd-analyze >/dev/null 2>&1; then
 fi
 systemd-analyze verify deploy/gnosis/systemd/*.service
 
+if rg -n '0\.0\.0\.0|\[::\]' deploy/gnosis/systemd/*.service; then
+  echo "production Provider units must not use wildcard listeners" >&2
+  exit 1
+fi
+if rg -n '808[0-4]' deploy/gnosis/scripts/prepare-host.sh; then
+  echo "prepare-host.sh must not add direct Provider LAN rules" >&2
+  exit 1
+fi
+
 echo "shell, Python, and systemd checks passed"

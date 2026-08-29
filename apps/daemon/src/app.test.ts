@@ -2,6 +2,9 @@ import { expect, test } from "bun:test";
 import {
   API_OPERATIONS,
   clusterStateSchema,
+  inspectionRuntimeListSchema,
+  publicClusterStateSchema,
+  runtimeListSchema,
   type Registry,
   type RouteShadowComparison,
 } from "@larm/core";
@@ -152,6 +155,7 @@ test("GET /health", async () => {
   expect(await res.json()).toEqual({
     status: "ok",
     version: "test",
+    releaseCommit: "development",
     configRevision: "test",
     bootEpoch: "epoch-local",
   });
@@ -227,9 +231,17 @@ test("catalog reload reservation fails new allocation closed", async () => {
 test("catalog reload closes generation-dependent read APIs", async () => {
   const { app } = await makeApp(true, false, {}, {
     catalogManager: { isReloading: true } as AppDeps["catalogManager"],
+    managementToken: "manage",
   });
-  for (const path of ["/runtimes", "/runtimes/qwen-general", "/state"]) {
-    const response = await app.request(path);
+  for (const [path, headers] of [
+    ["/runtimes", undefined],
+    ["/runtimes/qwen-general", undefined],
+    ["/state", undefined],
+    ["/v1/inspection/runtimes", { "x-larm-management-token": "manage" }],
+    ["/v1/inspection/runtimes/qwen-general", { "x-larm-management-token": "manage" }],
+    ["/v1/inspection/state", { "x-larm-management-token": "manage" }],
+  ] as const) {
+    const response = await app.request(path, { headers });
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ error: { code: "catalog_reloading" } });
   }
@@ -239,10 +251,14 @@ test("GET /runtimes lists registry definitions", async () => {
   const { app } = await makeApp(true);
   const res = await app.request("/runtimes");
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { runtimes: { id: string; policy: { class: string } }[] };
+  const body = runtimeListSchema.parse(await res.json());
   expect(body.runtimes.map((r) => r.id)).toEqual(["qwen-general", "qwen-worker"]);
   expect(body.runtimes[0]?.policy.class).toBe("resident");
   expect(body.runtimes[1]?.policy.class).toBe("preferred");
+  expect(body.runtimes[0]).not.toHaveProperty("backend");
+  expect(body.runtimes[0]).not.toHaveProperty("node");
+  expect(body.runtimes[0]).not.toHaveProperty("resources");
+  expect(body.runtimes[0]).not.toHaveProperty("deployment");
 });
 
 test("GET /runtimes/:id 404", async () => {
@@ -254,12 +270,43 @@ test("GET /runtimes/:id 404", async () => {
   });
 });
 
-test("GET /state matches ClusterState schema", async () => {
+test("GET /state exposes only capability-centered state", async () => {
   const { app } = await makeApp(true);
   const res = await app.request("/state");
   expect(res.status).toBe(200);
-  const body = clusterStateSchema.parse(await res.json());
+  const body = publicClusterStateSchema.parse(await res.json());
   expect(body.runtimes.find((r) => r.id === "qwen-general")?.status).toBe("HOT");
+  expect(body).not.toHaveProperty("node");
+  expect(body.runtimes[0]).not.toHaveProperty("endpoint");
+  expect(body.runtimes[0]).not.toHaveProperty("backend");
+  expect(body.runtimes[0]?.health).not.toHaveProperty("detail");
+});
+
+test("management inspection preserves full runtime and state detail", async () => {
+  const { app } = await makeApp(true, false, {}, { managementToken: "manage" });
+  const headers = { "x-larm-management-token": "manage" };
+  const runtimesResponse = await app.request("/v1/inspection/runtimes", { headers });
+  expect(runtimesResponse.status).toBe(200);
+  const runtimes = inspectionRuntimeListSchema.parse(await runtimesResponse.json());
+  expect(runtimes.runtimes[0]?.deployment.endpoint).toBe("http://127.0.0.1:8080");
+  expect(runtimes.runtimes[0]?.backend).toBe("systemd");
+
+  const stateResponse = await app.request("/v1/inspection/state", { headers });
+  expect(stateResponse.status).toBe(200);
+  const state = clusterStateSchema.parse(await stateResponse.json());
+  expect(state.node.id).toBe("ai395-01");
+  expect(state.runtimes[0]?.endpoint).toBe("http://127.0.0.1:8080");
+});
+
+test("management inspection fails closed without management credentials", async () => {
+  const { app } = await makeApp(true, false, {}, { managementToken: "manage" });
+  for (const path of [
+    "/v1/inspection/runtimes",
+    "/v1/inspection/runtimes/qwen-general",
+    "/v1/inspection/state",
+  ]) {
+    expect((await app.request(path)).status).toBe(403);
+  }
 });
 
 test("POST /prepare is ready when resident already covers the profile", async () => {

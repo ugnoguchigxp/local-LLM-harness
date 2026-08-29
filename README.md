@@ -8,7 +8,10 @@ Qwen 3.8 27Bは通常処理とリアルタイム処理のResident defaultです�
 
 ## Repository policy
 
-Gitで管理するのは、ソースコード、設定、systemd unit、再現手順、モデル取得元とchecksumだけです。次の実体は管理しません。
+Gitで管理するのは、ソースコード、設定、systemd unit、再現手順、自動配備対象のモデル取得元とchecksumです。
+VOICEVOXの外部runtime bundleはoperatorが利用規約に同意して配備する例外です。使用中の
+<code>0.vvm</code>もrelease、配布元、bytes、SHA-256をsource-only metadataへ固定し、preflightで
+実fileとの一致をfail-closed検証します。次の実体は管理しません。
 
 - モデルweight、Hugging Face cache
 - llama.cpp、llama-swap、VOICEVOX COREなどの取得・ビルド可能な実行物
@@ -55,24 +58,38 @@ bun run docs:check:fix
 HTML文書は`<article lang="ja">`をrootとし、document固有の`html`、`head`、`body`、CSS、navigationは持たせません。詳細は[`specs/overview.html`](specs/overview.html)を参照してください。
 
 Providerの最新コンセプトは[`specs/concept.html`](specs/concept.html)、公開APIは
-[`specs/api.html`](specs/api.html)、次期工程は
-[`specs/next-implementation-plan.html`](specs/next-implementation-plan.html)、実装結果は
+[`specs/api.html`](specs/api.html)、残るproduction完了工程は
+[`specs/production-completion-plan.html`](specs/production-completion-plan.html)、実装結果は
 [`specs/implementation-completion-m15-m21.html`](specs/implementation-completion-m15-m21.html)を正本とします。
 
 daemonは既定で `config/gnosis` を読み、`127.0.0.1:9810` で待ち受けます。別構成は `LARM_CONFIG_DIR` で指定できます。
 
+repositoryのProvider unitはport 8080–8084をloopbackだけでlistenするstable desired stateです。
+2026年8月29日のlive hostには移行用wildcard unitが残っているため、通常clientはLARM Gatewayを使用し、
+review済みnetwork plan、Provider単位のrestart、capability smokeの順で段階適用します。
+
 ## gnosis operations
+
+次の手順は、Production Completion Milestone
+22の変更をreview済みclean commitへ固定し、rollback先を確保した後に実行します。
+既存unitまたはrelease pointerがある場合は、installerより前に
+[`deploy/gnosis/README.md`](deploy/gnosis/README.md)の手順でoperator管理領域へ退避します。
 
 ```bash
 cd /srv/ai/apps/local-LLM-harness
 # 必要な場合だけ、変更内容を確認してhost準備を実行:
 # sudo deploy/gnosis/scripts/prepare-host.sh
+deploy/gnosis/scripts/preflight-larm.sh
 sudo deploy/gnosis/scripts/install-services.sh
 deploy/gnosis/scripts/release-larm.sh plan
 sudo deploy/gnosis/scripts/release-larm.sh apply
 sudo systemctl start llama-server.service llama-swap-worker.service \
   qwen-asr.service voicevox-tts.service larm-daemon.service
 deploy/gnosis/scripts/verify.sh
+# SLO校正後のcanaryにはrepository外evidence directoryと非機密音声が必要です。
+# LARM_CANARY_EVIDENCE_DIR=/srv/ai/logs/larm-canary \
+# LARM_BENCHMARK_AUDIO_FILE=/path/to/non-sensitive.wav \
+# deploy/gnosis/scripts/canary-gate.sh
 ```
 
 `plan`の`cleanupConfirm`が`null`でない場合、保持上限を超える削除候補があります。表示された候補を確認し、そのdigestを`LARM_RELEASE_CLEANUP_CONFIRM`へ設定した`apply`だけが配備を続行します。

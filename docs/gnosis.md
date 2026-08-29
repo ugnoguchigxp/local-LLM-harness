@@ -18,13 +18,16 @@ state from this document alone.
 | 8084 | VOICEVOX CORE 0.17.0 | resident | low-latency speech |
 | 9810 | LARM daemon | control plane | allocation and local Gateway |
 
-The Runtime ports are configured to bind to all interfaces. `prepare-host.sh` adds UFW rules
-for TCP 22 and 8080-8084 from `192.168.0.0/24` by default, but deliberately does not enable
-UFW. Those rules are not enforced until an operator reviews `ufw status` and explicitly
-enables UFW. Runtime control and health use loopback endpoints from
+The repository-managed Runtime units bind ports 8080–8084 to loopback. `prepare-host.sh` adds
+only the reviewed SSH rule and deliberately neither enables UFW nor removes legacy rules.
+Runtime control and health use loopback endpoints from
 [`../config/gnosis/runtimes.yaml`](../config/gnosis/runtimes.yaml).
 LARM is configured as loopback-only on port 9810; expose it through an authenticated local
 adapter or deliberately reviewed reverse proxy rather than opening the port directly.
+The live host observed on 2026-08-29 still used wildcard Provider listeners. The
+[`Production Completion plan`](../specs/production-completion-plan.html) applies the loopback
+units one Provider at a time and removes only rules named by a reviewed convergence digest after
+the Ambient canary succeeds.
 
 ## Why this split
 
@@ -57,9 +60,16 @@ configuration revision, aggregate results, and location of repository-external r
 
 ## Operations
 
+Run this sequence only from the reviewed clean commit that completes the repository part of
+Production Completion Milestone 22 and has a verified rollback target.
+Before running the installer, preserve any existing unit and release pointer in the
+operator-owned backup location described in
+[`../deploy/gnosis/README.md`](../deploy/gnosis/README.md).
+
 ```bash
 cd /srv/ai/apps/local-LLM-harness
 deploy/gnosis/scripts/preflight-larm.sh
+sudo deploy/gnosis/scripts/install-services.sh
 deploy/gnosis/scripts/release-larm.sh plan
 sudo deploy/gnosis/scripts/release-larm.sh apply
 deploy/gnosis/scripts/verify.sh
@@ -67,7 +77,10 @@ deploy/gnosis/scripts/smoke-larm.sh
 deploy/gnosis/scripts/shadow-larm.sh
 # Attended voice validation only:
 # LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/gnosis/scripts/smoke-voice.sh
-LARM_CANARY_ITERATIONS=3 deploy/gnosis/scripts/canary-gate.sh
+# After calibrating deploy/gnosis/slo.yaml from the same production identity:
+# LARM_CANARY_EVIDENCE_DIR=/srv/ai/logs/larm-canary \
+# LARM_BENCHMARK_AUDIO_FILE=/path/to/non-sensitive.wav \
+# LARM_CANARY_ITERATIONS=3 deploy/gnosis/scripts/canary-gate.sh
 # Attended fault inventory; mutations require LARM_FAULT_CONFIRM=gnosis-attended:
 deploy/gnosis/scripts/fault-larm.sh plan
 systemctl is-active llama-server.service llama-swap-worker.service \
@@ -87,6 +100,9 @@ An unreviewed or changed candidate set is rejected before deletion or activation
 After the repository installer is applied, the expected enablement is Resident/control units
 enabled and `qwen-tts.service` disabled. A Preferred service may still be active temporarily
 while an explicit Allocation uses it; enabled and active are separate states.
+The latest retained host observation is recorded in
+[`commissioning-evidence.html`](../specs/commissioning-evidence.html); rerun preflight rather than
+assuming that observation is still current.
 
 LARM自身は`/srv/ai/apps/larm-releases/<commit-prefix>`へ世代固定し、
 `/srv/ai/apps/larm-current`のatomic symlinkをdaemon unitが参照します。rollbackは

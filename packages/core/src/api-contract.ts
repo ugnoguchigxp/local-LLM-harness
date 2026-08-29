@@ -14,7 +14,13 @@ import {
   resolveRequestSchema,
 } from "./api-schema";
 import { runtimeReleaseDefinitionSchema } from "./releases";
-import { clusterStateSchema, runtimeDefinitionSchema, runtimeStatusSchema } from "./schema";
+import {
+  clusterStateSchema,
+  runtimeClassSchema,
+  runtimeDefinitionSchema,
+  runtimeProtocolSchema,
+  runtimeStatusSchema,
+} from "./schema";
 
 const identifierSchema = z.string().min(1).max(192);
 
@@ -32,7 +38,33 @@ export const errorDetailSchema = z.object({
   }).strict()).optional(),
 }).strict();
 
+export const publicRuntimeSchema = z.object({
+  id: z.string().min(1).max(128),
+  capability: z.array(z.string().min(1).max(128)).min(1).max(64),
+  protocol: runtimeProtocolSchema,
+  policy: z.object({ class: runtimeClassSchema }).strict(),
+}).strict();
+
 export const runtimeListSchema = z.object({
+  runtimes: z.array(publicRuntimeSchema),
+}).strict();
+
+export const publicRuntimeSnapshotSchema = z.object({
+  id: z.string().min(1).max(128),
+  status: runtimeStatusSchema,
+  class: runtimeClassSchema,
+  capability: z.array(z.string().min(1).max(128)).min(1).max(64),
+  observedAt: z.string().datetime(),
+  health: z.object({ ok: z.boolean() }).strict().optional(),
+}).strict();
+
+export const publicClusterStateSchema = z.object({
+  generatedAt: z.string().datetime(),
+  online: z.boolean(),
+  runtimes: z.array(publicRuntimeSnapshotSchema),
+}).strict();
+
+export const inspectionRuntimeListSchema = z.object({
   runtimes: z.array(runtimeDefinitionSchema),
 }).strict();
 
@@ -43,6 +75,7 @@ export const errorResponseSchema = z.object({
 export const daemonHealthSchema = z.object({
   status: z.literal("ok"),
   version: z.string().min(1),
+  releaseCommit: z.union([z.string().regex(/^[a-f0-9]{40}$/), z.literal("development")]),
   configRevision: z.string().min(1),
   bootEpoch: z.string().min(1),
 }).strict();
@@ -238,6 +271,9 @@ export const API_OPERATIONS = [
   ["get", "/runtimes", "listRuntimes"],
   ["get", "/runtimes/{id}", "getRuntime"],
   ["get", "/state", "getState"],
+  ["get", "/v1/inspection/runtimes", "listInspectionRuntimes"],
+  ["get", "/v1/inspection/runtimes/{id}", "getInspectionRuntime"],
+  ["get", "/v1/inspection/state", "getInspectionState"],
   ["get", "/operations/{id}", "getLegacyOperation"],
   ["get", "/v1/operations/{id}", "getOperation"],
   ["post", "/v1/allocations", "createAllocation"],
@@ -274,6 +310,9 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   listRuntimes: ["200"],
   getRuntime: ["200"],
   getState: ["200"],
+  listInspectionRuntimes: ["200"],
+  getInspectionRuntime: ["200"],
+  getInspectionState: ["200"],
   getLegacyOperation: ["200"],
   getOperation: ["200"],
   createAllocation: ["200", "202"],
@@ -307,7 +346,10 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   getOpenApi: "OpenApiDocument",
   listRuntimes: "RuntimeList",
   getRuntime: "Runtime",
-  getState: "ClusterState",
+  getState: "PublicClusterState",
+  listInspectionRuntimes: "InspectionRuntimeList",
+  getInspectionRuntime: "InspectionRuntime",
+  getInspectionState: "InspectionClusterState",
   getLegacyOperation: "ControlOperation",
   getOperation: "ControlOperation",
   createAllocation: "Allocation",
@@ -345,9 +387,12 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     ErrorResponse: jsonSchema(errorResponseSchema),
     Health: jsonSchema(daemonHealthSchema),
     Readiness: jsonSchema(readinessSchema),
-    Runtime: jsonSchema(runtimeDefinitionSchema),
+    Runtime: jsonSchema(publicRuntimeSchema),
     RuntimeList: jsonSchema(runtimeListSchema),
-    ClusterState: jsonSchema(clusterStateSchema),
+    PublicClusterState: jsonSchema(publicClusterStateSchema),
+    InspectionRuntime: jsonSchema(runtimeDefinitionSchema),
+    InspectionRuntimeList: jsonSchema(inspectionRuntimeListSchema),
+    InspectionClusterState: jsonSchema(clusterStateSchema),
     AllocationRequest: jsonSchema(allocationRequestSchema),
     Allocation: jsonSchema(publicAllocationSchema),
     AllocationRenewRequest: jsonSchema(allocationRenewRequestSchema),
@@ -392,7 +437,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       || path.startsWith("/v1/artifact-operations/")
       || path.startsWith("/v1/runtime-releases")
       || path.startsWith("/v1/deployments/")
-      || path.startsWith("/v1/catalog/");
+      || path.startsWith("/v1/catalog/")
+      || path.startsWith("/v1/inspection/");
     const publicOperation = operationId === "getHealth" || operationId === "getReadiness";
     const successContent = (() => {
       if (operationId === "getMetrics") {

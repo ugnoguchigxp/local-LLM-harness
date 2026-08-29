@@ -4,9 +4,22 @@ import { join } from "node:path";
 
 export type DaemonIdentity = {
   version: string;
+  releaseCommit: string;
   configRevision: string;
   bootEpoch: string;
 };
+
+export function loadReleaseCommit(manifestPath: string | undefined): string {
+  if (!manifestPath) return "development";
+  const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
+  if (
+    typeof parsed !== "object" || parsed === null || !("commit" in parsed)
+    || typeof parsed.commit !== "string" || !/^[a-f0-9]{40}$/.test(parsed.commit)
+  ) {
+    throw new Error("release manifest commit is invalid");
+  }
+  return parsed.commit;
+}
 
 const CONFIG_FILES = ["nodes.yaml", "runtimes.yaml", "profiles.yaml", "routes.yaml"];
 

@@ -11,7 +11,7 @@
     <dt>文書状態</dt>
     <dd>現行コンセプト</dd>
     <dt>更新日</dt>
-    <dd><time>2026-08-28</time></dd>
+    <dd><time>2026-08-29</time></dd>
     <dt>対象</dt>
     <dd>local-LLM-harness / LARM Provider control plane</dd>
     <dt>上位システム</dt>
@@ -157,7 +157,10 @@ LLM / STT / TTS runtimes</code></pre>
         期限内にreadyになるか観測します。
       </li>
       <li>選択結果をleaseのallocationとして固定します。</li>
-      <li>利用側は固定されたendpoint、またはAllocation固定の安定Gatewayを通じて推論します。</li>
+      <li>
+        通常の利用側はAllocation固定の安定Gatewayを通じて推論します。固定endpointのresolveは
+        移行用compatibility contractとしてだけ維持します。
+      </li>
       <li>release後、他のleaseとidle policyを確認してPreferred Runtimeを回収します。</li>
     </ol>
 
@@ -178,7 +181,8 @@ LLM / STT / TTS runtimes</code></pre>
       <dt>Inference data plane</dt>
       <dd>
         LLM、STT、TTSはprotocolを検証し、Allocationの固定Bindingだけを使用するOpenAI互換Gatewayを
-        提供します。通常の利用側へ個別Provider portを公開しません。
+        提供します。通常の利用側へ個別Provider portを公開しないことが目標境界です。
+        実機baselineの移行用direct portはStable昇格前にloopbackへ収束させます。
       </dd>
       <dt>Artifact deployment API</dt>
       <dd>
@@ -282,9 +286,15 @@ LLM / STT / TTS runtimes</code></pre>
     </table>
     <p>
       bounded execution、boot epoch、idempotency、再起動回復、directory snapshot
-      artifactまで実装済みです。 実装結果は<a href="./implementation-completion.html"
+      artifactまで実装済みです。実装結果は<a href="./implementation-completion.html"
         >Milestone 8–14 実装完了記録</a
-      >、 live commissioningとcanaryは同文書のattended gateを参照します。35Bは登録していません。
+      >、repositoryのcontract・network・SLO tooling結果は<a
+        href="./implementation-completion-m22-m25.html"
+        >Milestone 22・25 Repository実装記録</a
+      >、残るlive network境界、commissioning、SLO校正、canaryは<a
+        href="./production-completion-plan.html"
+        >Production Completion実装計画</a
+      >を参照します。35Bは登録していません。
     </p>
   </section>
 
@@ -374,7 +384,10 @@ LLM / STT / TTS runtimes</code></pre>
         <tr>
           <th scope="row">localhostまたはLAN公開の選択</th>
           <td>踏襲・更新</td>
-          <td>control APIはloopbackを既定とし、推論portのLAN公開はUFWと明示設定で制限する</td>
+          <td>
+            LARMと個別Providerはloopbackを既定とする。LAN接続が必要な場合は個別portでなく、
+            認証、許可CIDR、TLS終端を同時に定義したGateway境界として別途reviewする
+          </td>
         </tr>
         <tr>
           <th scope="row">モデル保存先を分離する</th>

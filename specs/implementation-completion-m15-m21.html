@@ -7,6 +7,9 @@
     参照client、versioned LARM release、検証toolを実装し、計画の完了条件を再監査して不足を
     補完しました。実ホストへ変更を加える commissioningとAmbient
     traffic切替は、commit固定releaseを作成した後に実施するattended gateとして 明確に分離しています。
+    残る工程の現在の順序と追加hardeningは<a href="./production-completion-plan.html"
+      >Production Completion実装計画</a
+    >へ引き継ぎます。
   </p>
 
   <dl>
@@ -61,7 +64,7 @@
           <th scope="row">18</th>
           <td>
             immutable runtime release catalog、release状態、実stage容量plan、provider config
-            revision、 stage・activate・rollback API、crash回復可能な永続state
+            revision、stage・activate・rollback API、crash回復可能な永続state
           </td>
           <td>完了</td>
         </tr>
@@ -156,15 +159,21 @@
     <p>
       型検査、Core・Backend・Daemon・Client test、Spec HTML検査、systemd検査、source-only検査、
       installerとtransactional releaseの隔離root
-      testを<code>bun run check</code>で一括実行します。 実機値は<a
+      testを<code>bun run check</code>で一括実行します。実機値は<a
         href="./commissioning-evidence.html"
         >commissioning evidence</a
-      >へ分離し、 repository testの成功をproduction導入済みとは扱いません。
+      >へ分離し、repository testの成功をproduction導入済みとは扱いません。
     </p>
   </section>
 
   <section id="remaining-gates">
     <h2>残るattended gate</h2>
+    <p>
+      この完了記録から引き継いだgateです。network境界とSLOの追加工程を含む現行条件は<a
+        href="./production-completion-plan.html"
+        >Production Completion実装計画</a
+      >を優先します。
+    </p>
     <ol>
       <li>この変更をreviewし、clean commitとして固定する。</li>
       <li>
@@ -178,7 +187,7 @@
     <aside>
       <p>
         これらは実装不足ではなく、live process、credential、GPU
-        memory、実trafficを変更する運用gateです。 source worktreeがdirtyな状態ではrelease
+        memory、実trafficを変更する運用gateです。source worktreeがdirtyな状態ではrelease
         tool自身がapplyを拒否します。
       </p>
     </aside>

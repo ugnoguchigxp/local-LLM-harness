@@ -12,6 +12,16 @@ if [[ ! "${iterations}" =~ ^[1-9][0-9]?$ ]]; then
   echo "LARM_CANARY_ITERATIONS must be between 1 and 99" >&2
   exit 2
 fi
+evidence_dir="${LARM_CANARY_EVIDENCE_DIR:-}"
+if [[ "${evidence_dir}" != /* || "${evidence_dir}" == "${repo_root}"* || -L "${evidence_dir}" ]]; then
+  echo "LARM_CANARY_EVIDENCE_DIR must be an absolute repository-external non-symlink path" >&2
+  exit 2
+fi
+if [[ -z "${LARM_BENCHMARK_AUDIO_FILE:-}" || "${LARM_BENCHMARK_AUDIO_FILE}" != /* \
+  || ! -f "${LARM_BENCHMARK_AUDIO_FILE}" || -L "${LARM_BENCHMARK_AUDIO_FILE}" ]]; then
+  echo "LARM_BENCHMARK_AUDIO_FILE must be an absolute regular non-sensitive audio fixture" >&2
+  exit 2
+fi
 
 cd "${repo_root}"
 bun test packages/core/src/registry.test.ts packages/core/src/artifacts.test.ts >/dev/null
@@ -19,15 +29,36 @@ deploy/gnosis/scripts/shadow-larm.sh >/dev/null
 
 health_before="$(curl -fsS --max-time 10 "${base_url}/health")"
 epoch_before="$(jq -er '.bootEpoch' <<<"${health_before}")"
-started_ns="$(date +%s%N)"
-for ((iteration = 1; iteration <= iterations; iteration += 1)); do
-  bun run examples/resident-client.ts >/dev/null
-done
-elapsed_ns=$(( $(date +%s%N) - started_ns ))
+config_revision="$(jq -er '.configRevision' <<<"${health_before}")"
+deployed_commit="$(jq -er '.releaseCommit | select(test("^[a-f0-9]{40}$"))' <<<"${health_before}")"
+repository_commit="$(git rev-parse HEAD)"
+[[ "${deployed_commit}" == "${repository_commit}" ]] || {
+  echo "deployed release commit does not match the canary worktree" >&2
+  exit 1
+}
+[[ -z "$(git status --porcelain=v1 --untracked-files=normal)" ]] || {
+  echo "canary worktree must be clean" >&2
+  exit 1
+}
+install -d -m 0700 -- "${evidence_dir}"
+run_id="$(date --utc +%Y%m%dT%H%M%SZ)-${deployed_commit:0:12}"
+raw_output="${evidence_dir}/${run_id}-raw.json"
+summary_output="${evidence_dir}/${run_id}-summary.json"
+comparison_output="${evidence_dir}/${run_id}-comparison.json"
+LARM_BENCHMARK_OUTPUT="${raw_output}" \
+LARM_BENCHMARK_SUMMARY="${summary_output}" \
+LARM_BENCHMARK_COMMIT="${deployed_commit}" \
+LARM_BENCHMARK_ITERATIONS="${iterations}" \
+LARM_BENCHMARK_SERIES=all \
+LARM_BENCHMARK_AUDIO_FILE="${LARM_BENCHMARK_AUDIO_FILE}" \
+bun run deploy/gnosis/scripts/benchmark-larm.ts >/dev/null
+LARM_SLO_SUMMARY="${summary_output}" \
+LARM_SLO_EXPECTED_COMMIT="${deployed_commit}" \
+LARM_SLO_EXPECTED_CONFIG_REVISION="${config_revision}" \
+bun run deploy/gnosis/scripts/compare-slo.ts >"${comparison_output}"
+chmod 0600 -- "${comparison_output}"
 
-if [[ -n "${LARM_CANARY_AUDIO_FILE:-}" ]]; then
-  deploy/gnosis/scripts/smoke-voice.sh >/dev/null
-fi
+LARM_CANARY_AUDIO_FILE="${LARM_BENCHMARK_AUDIO_FILE}" deploy/gnosis/scripts/smoke-voice.sh >/dev/null
 
 health_after="$(curl -fsS --max-time 10 "${base_url}/health")"
 epoch_after="$(jq -er '.bootEpoch' <<<"${health_after}")"
@@ -36,9 +67,6 @@ if [[ "${epoch_before}" != "${epoch_after}" ]]; then
   exit 1
 fi
 
-duration_ms=$((elapsed_ns / 1000000))
-average_ms=$((duration_ms / iterations))
-echo "canary passed: iterations=${iterations} total_ms=${duration_ms} average_ms=${average_ms} boot_epoch=${epoch_after}"
 metrics_output="$(curl -fsS --max-time 10 "${headers[@]}" "${base_url}/metrics")"
 if awk '
   /^larm_active_allocations(\{| )/ { allocations = 1; if (($NF + 0) != 0) leaked = 1 }
@@ -53,3 +81,4 @@ else
   exit 1
 fi
 grep -E '^larm_(active_allocations|allocation|gateway|execution_|artifact_operations_active)' <<<"${metrics_output}" || true
+echo "canary passed: series=4 iterations=${iterations} commit=${deployed_commit} config_revision=${config_revision} boot_epoch=${epoch_after}"

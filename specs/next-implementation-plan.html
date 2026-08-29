@@ -1,17 +1,18 @@
 <article lang="ja">
-  <h1>LARM 次期実装計画: 運用収束とVersioned Model Release</h1>
+  <h1>LARM Milestone 15–21 実装計画（履歴）</h1>
 
   <p>
     この文書は、Milestone 8から14で実装したAllocation固定Data Plane、bounded execution、
     再起動境界、artifact snapshot lifecycleを、gnosis上の常用Providerとして収束させるための
-    Milestone 15から21を定義します。次の主目的は、新しいモデルを増やすことではなく、現行の Qwen 3.8
+    Milestone
+    15から21を定義した履歴計画です。策定時の主目的は、新しいモデルを増やすことではなく、Qwen 3.8
     27B経路を実機で証明し、allowlist済みmodel releaseをAPIから安全に選択・配備・
     rollbackできる運用contractを完成させることです。
   </p>
 
   <dl>
     <dt>文書状態</dt>
-    <dd>Repository実装完了。gnosis commissioningとAmbient canaryはattended gate待ち</dd>
+    <dd>Repository実装完了。残るlive gateはProduction Completion実装計画へ移管</dd>
     <dt>策定日</dt>
     <dd><time>2026-08-28</time></dd>
     <dt>前提実装</dt>
@@ -23,8 +24,8 @@
     <dd>Qwen 3.8 27B Resident。通常・リアルタイム・reasoning・codingを担当</dd>
     <dt>計画対象</dt>
     <dd>
-      Production commissioning、LARM release、client contract、model release catalog、 atomic
-      catalog reload、resource telemetry、fault test、実client canary
+      Production commissioning、LARM release、client contract、model release catalog、atomic catalog
+      reload、resource telemetry、fault test、実client canary
     </dd>
   </dl>
 
@@ -32,14 +33,17 @@
     <p>
       2026年8月28日にMilestone 15–21のrepository実装を完了しました。実装結果と残るlive gateは
       <a href="./implementation-completion-m15-m21.html">完了記録</a>、host preflightは
-      <a href="./commissioning-evidence.html">commissioning evidence</a>を参照してください。
+      <a href="./commissioning-evidence.html">commissioning evidence</a>、現在の着手順は<a
+        href="./production-completion-plan.html"
+        >Production Completion実装計画</a
+      >を参照してください。
     </p>
   </aside>
 
   <section id="decision">
     <h2>結論</h2>
     <p>
-      最初のblocking gateはコード追加ではなく、現在のcommitをgnosisへ導入して実測することです。 LARM
+      最初のblocking gateはコード追加ではなく、現在のcommitをgnosisへ導入して実測することです。LARM
       daemonがまだ実ホストへ導入されていない状態でcatalog reloadや追加モデルを実装しても、
       実際のstartup latency、memory peak、音声経路、rollbackの前提を検証できません。
     </p>
@@ -53,7 +57,7 @@
       <p>
         35Bはこの計画の実装対象ではありません。Qwen 3.8 27Bがリアルタイム要求を含むResident
         defaultであり続けます。35BはMilestone
-        21完了後、特定taskの速度SLOと品質下限を満たす場合にだけ、 独立したdecision
+        21完了後、特定taskの速度SLOと品質下限を満たす場合にだけ、独立したdecision
         recordを経て明示的な速度route候補として評価します。
       </p>
     </aside>
@@ -221,7 +225,7 @@ Milestone 21  Ambient client canary and stable release gate</code></pre>
     </figure>
     <p>
       Milestone 17のschema整備はMilestone
-      16と並行設計できますが、productionへ有効化する順序は固定します。 Milestone
+      16と並行設計できますが、productionへ有効化する順序は固定します。Milestone
       18以降を実装しても、Milestone 15を通過するまで実ホストの管理APIでは有効にしません。
     </p>
   </section>
@@ -244,17 +248,17 @@ Milestone 21  Ambient client canary and stable release gate</code></pre>
         port、disk headroomを記録する。secret、prompt、transcript、audioは記録しない。
       </li>
       <li>
-        既存unitを退避し、installerをdry-run相当で確認してからLARM unitだけを導入する。 Resident
+        既存unitを退避し、installerをdry-run相当で確認してからLARM unitだけを導入する。Resident
         Providerを一括restartしない。
       </li>
       <li>
         <code>/health</code
         >と<code>/ready</code>、Resident 27B Allocation、streaming
-        Gateway、 releaseを検証する。
+        Gateway、releaseを検証する。
       </li>
       <li>
         非機密sampleでSTT、通常TTS、voice creditを確認する。Qwen
-        TTSの外部直接利用がないことを確認後、 enabled driftとorphan reconciliationを検証する。
+        TTSの外部直接利用がないことを確認後、enabled driftとorphan reconciliationを検証する。
       </li>
       <li>
         Qwen TTS snapshotをstageし、Preferred
@@ -262,12 +266,12 @@ Milestone 21  Ambient client canary and stable release gate</code></pre>
       </li>
       <li>
         daemon process restartでboot
-        epochが変わり、旧Allocationが409、新Allocationがreadyになること、 execution
+        epochが変わり、旧Allocationが409、新Allocationがreadyになること、execution
         gaugeが0へ戻ることを確認する。
       </li>
       <li>
         反復canaryと短時間soakでTTFB、完了時間、startup、error率、memory peak、gateway
-        overheadを採取し、 新しいSpec HTML evidenceへ要約する。raw outputはrepository外へ保存する。
+        overheadを採取し、新しいSpec HTML evidenceへ要約する。raw outputはrepository外へ保存する。
       </li>
     </ol>
 
@@ -393,7 +397,7 @@ Milestone 21  Ambient client canary and stable release gate</code></pre>
 
     <h3>Release contract</h3>
     <p>
-      新しいrelease catalogは、Runtime ID、release ID、artifact ID集合、resource estimate、 provider
+      新しいrelease catalogは、Runtime ID、release ID、artifact ID集合、resource estimate、provider
       config revision、health contractをimmutableな一単位として持ちます。Artifact manifestは
       download元とdigestの正本、release catalogはRuntimeへ同時適用する組合せの正本です。
     </p>
@@ -482,12 +486,12 @@ Milestone 21  Ambient client canary and stable release gate</code></pre>
     <ol>
       <li>
         Registry、artifact manifest、release
-        catalogを一つの<code>CatalogGeneration</code>としてloadし、 content
+        catalogを一つの<code>CatalogGeneration</code>としてloadし、content
         digestを計算する。
       </li>
       <li>
         管理APIは設定済みdirectoryの再読込だけを要求できる。candidate generationをparse・cross
-        validateし、 diffとblock理由を返すplan phaseを持つ。
+        validateし、diffとblock理由を返すplan phaseを持つ。
       </li>
       <li>
         active Allocation、execution、artifact operation、Runtime
@@ -539,15 +543,15 @@ Milestone 21  Ambient client canary and stable release gate</code></pre>
       </li>
       <li>
         benchmark runnerはraw JSONをrepository外へ保存し、commit、config、release、prompt
-        class、token数、 concurrencyだけを匿名化summaryへ変換する。
+        class、token数、concurrencyだけを匿名化summaryへ変換する。
       </li>
       <li>
         fake Backendでprocess crash、health stall、partial stream、disk full、journal
-        corruption、reload race、 shutdown timeoutを再現するfault testを追加する。
+        corruption、reload race、shutdown timeoutを再現するfault testを追加する。
       </li>
       <li>
         attended testでdaemon kill、Preferred provider kill、network stall、artifact
-        rollbackを確認し、 Resident providerを意図せず停止しないことを監査する。
+        rollbackを確認し、Resident providerを意図せず停止しないことを監査する。
       </li>
     </ol>
 
@@ -709,7 +713,7 @@ Milestone 21  Ambient client canary and stable release gate</code></pre>
     </ol>
     <p>
       各sliceは単独で<code>bun run check</code>を通し、前sliceのpublic
-      contractを壊さない大きさにします。 live
+      contractを壊さない大きさにします。live
       stateを変更するcommitと、そのcommitを実機へ適用する操作は分離します。
     </p>
   </section>

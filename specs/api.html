@@ -3,10 +3,12 @@
 
   <p>
     この文書は、Route-aware
-    Allocation、LLM・STT・TTS共通Gateway、Artifact管理APIの実装contractです。 設計上の背景は<a
+    Allocation、LLM・STT・TTS共通Gateway、Artifact管理APIの実装contractです。設計上の背景は<a
       href="./concept.html"
       >Providerコンセプト</a
-    >、工程と受入条件は <a href="./implementation-plan.html">実装計画</a>を参照してください。
+    >、残るproduction工程と受入条件は<a href="./production-completion-plan.html"
+      >Production Completion実装計画</a
+    >を参照してください。
   </p>
 
   <dl>
@@ -17,18 +19,20 @@
     <dt>既定listen</dt>
     <dd><code>http://127.0.0.1:9810</code></dd>
     <dt>更新日</dt>
-    <dd><time>2026-08-28</time></dd>
+    <dd><time>2026-08-29</time></dd>
   </dl>
 
   <section id="security">
     <h2>Security boundary</h2>
     <ul>
       <li>
-        loopback以外でlistenする場合は<code>LARM_API_TOKEN</code>を必須とする。
+        loopback以外でlistenする場合は<code>LARM_API_TOKEN</code>と
+        <code>LARM_MANAGEMENT_TOKEN</code>をともに必須とする。
       </li>
       <li>
         <code>/health</code
-        >と<code>/ready</code>以外はBearer tokenで保護する。
+        >と<code>/ready</code>以外は、<code>LARM_API_TOKEN</code>設定時にBearer
+        tokenで保護する。
       </li>
       <li>
         Artifact、Runtime release、catalog reload管理APIは追加で
@@ -49,15 +53,25 @@
         objectは未知fieldを拒否する。タイプミスを除去して既定値へ fallbackしない。
       </li>
     </ul>
+    <aside>
+      <p>
+        この節はLARM daemonのHTTP認証境界です。2026年8月29日に観測したlive Provider unitがport
+        <code>8080</code
+        >から<code>8084</code>を全interfaceでlistenする移行状態は別のhost
+        network境界であり、Gateway-only isolationの完了を意味しません。loopback bindと既存LAN
+        ruleのlive収束は
+        <a href="./production-completion-plan.html">Production Completion実装計画</a>で行います。
+      </p>
+    </aside>
   </section>
 
   <section id="machine-contract">
     <h2>Machine-readable contract</h2>
     <p>
       <code>GET /openapi.json</code>はdaemonと同じCore schemaおよびroute
-      metadataから生成します。 全operationは実装が返す成功statusとresponse
+      metadataから生成します。全operationは実装が返す成功statusとresponse
       contentを持ち、JSON、SSE、Prometheus text、audio binaryのmedia typeを区別します。compatibility
-      APIの成功responseもstrict schemaで検証し、 実routeとの追加・削除driftと2xx response
+      APIの成功responseもstrict schemaで検証し、実routeとの追加・削除driftと2xx response
       schemaの欠落をtestで拒否します。
     </p>
   </section>
@@ -66,7 +80,7 @@
     <h2>Endpoint一覧</h2>
     <table>
       <caption>
-        実装済み公開endpoint
+        実装済みHTTP endpoint。認証不要という意味の「公開」ではない
       </caption>
       <thead>
         <tr>
@@ -99,17 +113,32 @@
         <tr>
           <td>GET</td>
           <th scope="row"><code>/runtimes</code></th>
-          <td>公開可能なRuntime定義一覧</td>
+          <td>capability中心の公開Runtime一覧</td>
         </tr>
         <tr>
           <td>GET</td>
           <th scope="row"><code>/runtimes/:id</code></th>
-          <td>公開可能なRuntime定義</td>
+          <td>capability中心の公開Runtime定義</td>
         </tr>
         <tr>
           <td>GET</td>
           <th scope="row"><code>/state</code></th>
-          <td>最終観測snapshot</td>
+          <td>node・endpoint・serviceを除いた公開観測snapshot</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/inspection/runtimes</code></th>
+          <td>management用の完全なRuntime定義一覧</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/inspection/runtimes/:id</code></th>
+          <td>management用の完全なRuntime定義</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/inspection/state</code></th>
+          <td>management用の完全なnode・Runtime snapshot</td>
         </tr>
         <tr>
           <td>GET</td>
@@ -233,6 +262,23 @@
         </tr>
       </tbody>
     </table>
+    <p>
+      <code>/health</code
+      >と<code>/ready</code>だけが常に認証不要です。Artifact、Runtime
+      release、deployment、catalog、inspectionのendpointはmanagement tokenを必要とし、その他は
+      <code>LARM_API_TOKEN</code>設定時にBearer tokenを必要とします。
+    </p>
+    <aside>
+      <p>
+        <code>/runtimes</code
+        >、<code>/runtimes/:id</code>、<code>/state</code>はcapability、protocol、
+        policy class、公開healthだけを返します。backend、service、model
+        ID、node、endpoint、resource値を 必要とする運用者はmanagement
+        token保護の<code>/v1/inspection/runtimes</code>、
+        <code>/v1/inspection/runtimes/:id</code
+        >、<code>/v1/inspection/state</code>を使用します。
+      </p>
+    </aside>
   </section>
 
   <section id="instance-identity">
@@ -240,12 +286,13 @@
     <pre><code>{
   "status": "ok",
   "version": "0.1.0",
+  "releaseCommit": "full-40-character-commit",
   "configRevision": "sha256...",
   "bootEpoch": "epoch-..."
 }</code></pre>
     <p>
       <code>GET /health</code>はpayloadやcredentialを含めず、software
-      version、Registry・artifact manifest・runtime release catalogのcontent
+      version、配備release commit、 Registry・artifact manifest・runtime release catalogのcontent
       revision、process固有boot epochを返します。content
       revisionは論理ファイル名と内容だけから計算し、同一構成を別の絶対パスへ
       配置しても変化しません。全responseにも
@@ -475,7 +522,7 @@
       <p>
         directory modelは全fileを列挙したsnapshotだけが自動staging対象です。Qwen ASRのResident
         snapshotはstage可能ですがAPIからactivationできません。最初のPreferred activation対象はQwen
-        TTSです。 VOICEVOXの外部release bundleはmodel artifact manifestではなく、runtime source
+        TTSです。VOICEVOXの外部release bundleはmodel artifact manifestではなく、runtime source
         lockとoperator手順で管理します。
       </p>
     </aside>

@@ -27,7 +27,7 @@ Environment=UBATCH_SIZE=2048
 ExecStart=/srv/ai/apps/q38rocm/run_server.sh \
   /srv/ai/models/qwen38-rocmfp4/Qwen3.8-27B-ROCmFP4-FAST.gguf \
   --profile speed \
-  --host 0.0.0.0 \
+  --host 127.0.0.1 \
   --port 8080 \
   --ctx 262144 \
   --draft-n 2 \

@@ -5,6 +5,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 base_url="${LARM_BASE_URL:-http://127.0.0.1:9810}"
 credential="${LARM_CREDENTIAL_PATH:-/etc/larm/larm.env}"
 installed_unit="${LARM_INSTALLED_UNIT:-/etc/systemd/system/larm-daemon.service}"
+external_verifier="${repo_root}/deploy/gnosis/scripts/verify-external-assets.ts"
+provider_specs=(
+  llama-server.service:8080
+  qwen-asr.service:8081
+  qwen-tts.service:8082
+  llama-swap-worker.service:8083
+  voicevox-tts.service:8084
+)
 
 commit="$(git -C "${repo_root}" rev-parse HEAD)"
 candidate_revision="$(cd "${repo_root}" && bun run apps/daemon/src/print-config-revision.ts 2>/dev/null || true)"
@@ -35,6 +43,53 @@ service_active="$(systemctl is-active larm-daemon.service 2>/dev/null || true)"
 service_enabled="$(systemctl is-enabled larm-daemon.service 2>/dev/null || true)"
 port_owner="$(ss -H -ltnp 'sport = :9810' 2>/dev/null | head -n 1 || true)"
 disk_available_bytes="$(df --output=avail -B1 /srv/ai 2>/dev/null | tail -n 1 | tr -d ' ' || printf '0')"
+provider_units='[]'
+for spec in "${provider_specs[@]}"; do
+  unit="${spec%%:*}"
+  port="${spec##*:}"
+  repository_unit="${repo_root}/deploy/gnosis/systemd/${unit}"
+  installed_provider_unit="/etc/systemd/system/${unit}"
+  repository_digest="$(sha256sum "${repository_unit}" | awk '{print $1}')"
+  installed_digest=""
+  installed_type="missing"
+  if [[ -L "${installed_provider_unit}" ]]; then
+    installed_type="symlink"
+  elif [[ -f "${installed_provider_unit}" ]]; then
+    installed_type="regular"
+    installed_digest="$(sha256sum "${installed_provider_unit}" | awk '{print $1}')"
+  elif [[ -e "${installed_provider_unit}" ]]; then
+    installed_type="other"
+  fi
+  provider_active="$(systemctl is-active "${unit}" 2>/dev/null || true)"
+  provider_enabled="$(systemctl is-enabled "${unit}" 2>/dev/null || true)"
+  provider_listener="$(ss -H -ltn "sport = :${port}" 2>/dev/null | head -n 1 || true)"
+  provider_units="$(jq -c \
+    --arg unit "${unit}" \
+    --argjson port "${port}" \
+    --arg repositoryDigest "${repository_digest}" \
+    --arg installedType "${installed_type}" \
+    --arg installedDigest "${installed_digest}" \
+    --arg active "${provider_active:-unknown}" \
+    --arg enabled "${provider_enabled:-unknown}" \
+    --arg listener "${provider_listener}" \
+    '. + [{unit:$unit,port:$port,repositoryDigest:$repositoryDigest,
+      installed:{type:$installedType,digest:$installedDigest,matchesRepository:($installedDigest != "" and $installedDigest == $repositoryDigest)},
+      active:$active,enabled:$enabled,listener:$listener}]' <<<"${provider_units}")"
+done
+
+set +e
+ufw_output="$(ufw status 2>&1)"
+ufw_rc=$?
+set -e
+ufw_readable=false
+ufw_status="unknown"
+if [[ "${ufw_rc}" -eq 0 ]] && grep -Eq '^Status: (active|inactive)$' <<<"${ufw_output}"; then
+  ufw_readable=true
+  ufw_status="$(awk '/^Status:/ {print $2; exit}' <<<"${ufw_output}")"
+fi
+ufw_provider_rules="$(awk '$1 ~ /^(8080|8081|8082|8083|8084)(\/tcp)?$/ && $0 ~ /[[:space:]]ALLOW[[:space:]]+IN[[:space:]]/ {print}' \
+  <<<"${ufw_output}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+external_assets="$(bun run "${external_verifier}")"
 
 jq -n \
   --arg timestamp "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
@@ -51,7 +106,16 @@ jq -n \
   --arg enabled "${service_enabled:-unknown}" \
   --arg portOwner "${port_owner}" \
   --argjson diskAvailableBytes "${disk_available_bytes:-0}" \
+  --argjson providers "${provider_units}" \
+  --argjson ufwReadable "${ufw_readable}" \
+  --arg ufwStatus "${ufw_status}" \
+  --argjson ufwProviderRules "${ufw_provider_rules}" \
+  --argjson externalAssets "[${external_assets}]" \
   '{timestamp:$timestamp,commit:$commit,candidateConfigRevision:$candidateConfigRevision,dirty:$dirty,daemonHealth:$health,
     credential:{type:$credentialType,mode:$credentialMode,owner:$credentialOwner},
     unit:{matchesRepository:$unitMatch,load:$load,active:$active,enabled:$enabled},
-    listener:{port:9810,description:$portOwner},disk:{path:"/srv/ai",availableBytes:$diskAvailableBytes}}'
+    listener:{port:9810,description:$portOwner},providers:$providers,
+    firewall:{readable:$ufwReadable,status:$ufwStatus,providerAllowRules:$ufwProviderRules},
+    externalAssets:$externalAssets,disk:{path:"/srv/ai",availableBytes:$diskAvailableBytes}}'
+
+[[ "$(jq -r .valid <<<"${external_assets}")" == "true" ]] || exit 1
