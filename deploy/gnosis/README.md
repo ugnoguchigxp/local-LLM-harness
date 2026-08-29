@@ -14,6 +14,7 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/prepare-host.sh`: conservative host prerequisites; no reboot and no UFW enable
 - `scripts/install-services.sh`: unitをinstallし、Resident/controlだけをenableする（restartなし）
 - `scripts/preflight-larm.sh`: secretを含めないread-only commissioning inventory
+- `scripts/backup-host-state.sh`: installed unitとcurrent pointerのdigest付きoperator backup
 - `scripts/network-converge.sh`: listener・UFW差分のplanとdigest確認付き限定apply・rollback
 - `scripts/verify-external-assets.ts`: operator配備VOICEVOX VVMのidentity検証
 - `scripts/release-larm.sh`: clean commitのversioned apply、rollback、review済みbounded retention
@@ -45,19 +46,18 @@ polkit ruleにより、このPreferred serviceのstart / stopだけを無人実�
 
 ## Apply
 
-Before overwriting an existing daemon unit, keep an operator-owned backup outside the repository:
+Before overwriting any installed unit, create an operator-owned backup outside the repository.
+The plan rejects symlinked/non-regular units; apply copies all six existing LARM/Provider units and
+the current release pointer without copying credential contents.
 
 ```bash
-backup_dir="/var/lib/larm/operator-backups/$(date -u +%Y%m%dT%H%M%SZ)"
-sudo install -d -m 0700 "${backup_dir}"
-if sudo test -f /etc/systemd/system/larm-daemon.service; then
-  sudo cp --preserve=mode,ownership,timestamps \
-    /etc/systemd/system/larm-daemon.service "${backup_dir}/"
-fi
-if sudo test -L /srv/ai/apps/larm-current; then
-  sudo readlink /srv/ai/apps/larm-current | sudo tee "${backup_dir}/larm-current.target" >/dev/null
-fi
-sudo systemctl cat larm-daemon.service >"/tmp/larm-daemon.before.txt" || true
+backup_label="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=12 HEAD)"
+backup_plan="$(env LARM_BACKUP_LABEL="${backup_label}" \
+  deploy/gnosis/scripts/backup-host-state.sh plan)"
+printf '%s\n' "${backup_plan}"
+backup_confirm="$(jq -er .confirmation <<<"${backup_plan}")"
+sudo env LARM_BACKUP_LABEL="${backup_label}" LARM_BACKUP_CONFIRM="${backup_confirm}" \
+  deploy/gnosis/scripts/backup-host-state.sh apply
 ```
 
 `prepare-host.sh` installs packages, masks sleep targets, adds the service account to the GPU
@@ -74,6 +74,7 @@ cd /srv/ai/apps/local-LLM-harness
 # Host preparation, only when required:
 # sudo deploy/gnosis/scripts/prepare-host.sh
 deploy/gnosis/scripts/preflight-larm.sh
+# Complete the reviewed backup block above before installation.
 sudo deploy/gnosis/scripts/install-services.sh
 deploy/gnosis/scripts/release-larm.sh plan
 sudo deploy/gnosis/scripts/release-larm.sh apply

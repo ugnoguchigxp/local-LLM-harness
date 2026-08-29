@@ -80,6 +80,7 @@ cd /srv/ai/apps/local-LLM-harness
 # 必要な場合だけ、変更内容を確認してhost準備を実行:
 # sudo deploy/gnosis/scripts/prepare-host.sh
 deploy/gnosis/scripts/preflight-larm.sh
+# deploy/gnosis/README.mdのdigest付きhost backupを先に作成
 sudo deploy/gnosis/scripts/install-services.sh
 deploy/gnosis/scripts/release-larm.sh plan
 sudo deploy/gnosis/scripts/release-larm.sh apply

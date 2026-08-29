@@ -69,6 +69,7 @@ operator-owned backup location described in
 ```bash
 cd /srv/ai/apps/local-LLM-harness
 deploy/gnosis/scripts/preflight-larm.sh
+# Create the reviewed, digest-bound host backup documented in deploy/gnosis/README.md.
 sudo deploy/gnosis/scripts/install-services.sh
 deploy/gnosis/scripts/release-larm.sh plan
 sudo deploy/gnosis/scripts/release-larm.sh apply
