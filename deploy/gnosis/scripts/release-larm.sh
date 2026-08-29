@@ -25,6 +25,28 @@ commit="$(git -C "${source_root}" rev-parse --verify "${release_ref}^{commit}")"
 short="${commit:0:12}"
 release_dir="${release_root}/${short}"
 
+current_release() {
+  local active
+  if [[ -L "${current_link}" ]]; then
+    active="$(readlink -f -- "${current_link}" 2>/dev/null || true)"
+    [[ "${active}" == "${release_root}/"* && -d "${active}" && ! -L "${active}" ]] \
+      || fail "current release pointer is broken or leaves the release root"
+    printf '%s\n' "${active}"
+  elif [[ -e "${current_link}" ]]; then
+    fail "current release path must be absent or a safe symlink"
+  fi
+}
+
+current_release_name() {
+  local active
+  active="$(current_release)"
+  if [[ -n "${active}" ]]; then
+    basename "${active}"
+  else
+    printf 'none\n'
+  fi
+}
+
 systemctl_run() {
   if [[ "${test_mode}" == "1" ]]; then
     printf '%s\n' "$*" >>"${state_root}/systemctl.log"
@@ -40,7 +62,7 @@ verify_release_health() {
   expected_revision="$(jq -er .configRevision "${target}/release-manifest.json")"
   if [[ "${test_mode}" == "1" ]]; then
     [[ "$(basename "${target}")" != "${LARM_RELEASE_TEST_UNHEALTHY_RELEASE:-}" ]] || return 1
-    active="$(readlink -f -- "${current_link}" 2>/dev/null || true)"
+    active="$(current_release)"
     [[ "${active}" == "${target}" ]] || return 1
     health="$(jq -n --arg commit "$(jq -er .commit "${active}/release-manifest.json")" \
       --arg version "$(jq -er .larmVersion "${active}/release-manifest.json")" \
@@ -75,9 +97,9 @@ cleanup_candidates() {
   local mode="${1:-current}" current_name previous_name protected_count=0 retained=0 retain_nonprotected
   if [[ "${mode}" == "projected" && ! -e "${release_dir}" && ! -L "${release_dir}" ]]; then
     current_name="${short}"
-    previous_name="$(basename "$(readlink -f -- "${current_link}" 2>/dev/null || printf /none)")"
+    previous_name="$(current_release_name)"
   else
-    current_name="$(basename "$(readlink -f -- "${current_link}" 2>/dev/null || printf /none)")"
+    current_name="$(current_release_name)"
     previous_name="$(basename "$(cat "${state_root}/previous" 2>/dev/null || printf /none)")"
   fi
   if [[ "${current_name}" != "none" ]] && (
@@ -118,9 +140,9 @@ remove_cleanup_candidates() {
   local candidates="$1" mode="${2:-current}" current_name previous_name
   if [[ "${mode}" == "projected" ]]; then
     current_name="${short}"
-    previous_name="$(basename "$(readlink -f -- "${current_link}" 2>/dev/null || printf /none)")"
+    previous_name="$(current_release_name)"
   else
-    current_name="$(basename "$(readlink -f -- "${current_link}" 2>/dev/null || printf /none)")"
+    current_name="$(current_release_name)"
     previous_name="$(basename "$(cat "${state_root}/previous" 2>/dev/null || printf /none)")"
   fi
   while read -r name; do
@@ -148,7 +170,7 @@ restore_previous() {
 }
 
 if [[ "${action}" == "plan" ]]; then
-  current="$(readlink -f -- "${current_link}" 2>/dev/null || true)"
+  current="$(current_release)"
   candidates="$(cleanup_candidates projected)"
   confirmation="$([[ -n "${candidates}" ]] && cleanup_digest "${candidates}" || true)"
   jq -n --arg action apply --arg commit "${commit}" --arg target "${release_dir}" \
@@ -180,7 +202,7 @@ if [[ "${action}" == "rollback" ]]; then
   previous="$(cat "${state_root}/previous" 2>/dev/null || true)"
   [[ "${previous}" == "${release_root}/"* && -d "${previous}" && ! -L "${previous}" ]] \
     || fail "no safe previous release is available"
-  active="$(readlink -f -- "${current_link}" 2>/dev/null || true)"
+  active="$(current_release)"
   temp_link="${current_link}.rollback.$$"
   ln -s -- "${previous}" "${temp_link}"
   mv -Tf -- "${temp_link}" "${current_link}"
@@ -250,7 +272,7 @@ else
   mv -- "${staging}" "${release_dir}"
 fi
 
-previous="$(readlink -f -- "${current_link}" 2>/dev/null || true)"
+previous="$(current_release)"
 previous_state_existed=0
 [[ ! -f "${state_root}/previous" ]] || previous_state_existed=1
 previous_state="$(cat "${state_root}/previous" 2>/dev/null || true)"
@@ -269,6 +291,12 @@ if ! verify_release_health "${release_dir}"; then
     restore_previous "${previous_state}" "${previous_state_existed}"
     systemctl_run restart larm-daemon.service
     verify_release_health "${previous}" || fail "new and recovered LARM releases both failed verification"
+  else
+    active="$(current_release)"
+    [[ "${active}" == "${release_dir}" ]] || fail "failed first release pointer changed unexpectedly"
+    systemctl_run stop larm-daemon.service
+    rm -- "${current_link}"
+    restore_previous "${previous_state}" "${previous_state_existed}"
   fi
   fail "new LARM release failed readiness and was rolled back"
 fi

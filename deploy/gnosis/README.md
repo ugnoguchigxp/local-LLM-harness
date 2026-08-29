@@ -118,7 +118,8 @@ sudo deploy/gnosis/scripts/release-larm.sh rollback
 確認した後に行い、health失敗時はcurrentとrollback pointerの両方を復元します。単独の`cleanup`も
 実行時に表示するdigestとの一致が必要です。credential、model、journalはrelease directory外にあり、
 upgradeとrollbackで保持されます。dirty source、symlink root、並行mutation、gate失敗はcurrent切替前に
-拒否します。
+拒否します。初回releaseのhealthが失敗して前世代がない場合はdaemonを停止し、作成したcurrent
+pointerを除去して未導入状態へ戻します。
 
 Artifact stage and activation are asynchronous. A Runtime with multiple artifacts requires all
 of them to reach `succeeded` staging operations before activation. The complete polling example

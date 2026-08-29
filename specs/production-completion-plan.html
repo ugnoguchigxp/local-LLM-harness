@@ -319,7 +319,8 @@ Milestone 28  Optional 35B evaluation ── non-blocking, after Milestone 25</c
       新releaseがreadyにならなければrelease toolの自動回復を確認し、必要なら
       <code>release-larm.sh rollback</code
       >でLARMだけを前世代へ戻します。初回導入で前世代がない場合も、Provider processとmodel
-      dataは削除・restartせず、Ambient trafficをdirect経路のまま維持します。
+      dataは削除・restartせず、daemonを停止して作成したcurrent pointerを除去し、Ambient
+      trafficをdirect経路のまま維持します。
     </p>
   </section>
 

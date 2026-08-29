@@ -27,7 +27,14 @@ run_release() {
   bash "${releaser}" "$@"
 }
 
-run_release plan | jq -e '.dirty == false and (.commit | length == 40)' >/dev/null
+run_release plan | jq -e '.dirty == false and .current == null and (.commit | length == 40)' >/dev/null
+first_commit="$(git -C "${source_root}" rev-parse HEAD)"
+if LARM_RELEASE_TEST_UNHEALTHY_RELEASE="${first_commit:0:12}" run_release apply >/dev/null 2>&1; then
+  echo "unhealthy first release unexpectedly stayed active" >&2
+  exit 1
+fi
+[[ ! -e "${test_root}/current" && ! -L "${test_root}/current" ]]
+grep -F 'stop larm-daemon.service' "${test_root}/state/systemctl.log" >/dev/null
 run_release apply >/dev/null
 first="$(readlink -f "${test_root}/current")"
 jq -e '.schemaVersion == 1 and (.lockfileSha256 | length == 64) and .configRevision == "test-gate-skipped"' \

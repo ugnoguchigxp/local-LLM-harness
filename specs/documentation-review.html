@@ -71,6 +71,15 @@
           </td>
         </tr>
         <tr>
+          <th scope="row">初回release rollback</th>
+          <td>
+            存在しないcurrent pathをplanが既存releaseと表示し、初回health失敗時にpointerが残り得た
+          </td>
+          <td>
+            safe symlinkだけをcurrentと認識し、前世代なしの失敗ではdaemon停止とpointer除去をtestした
+          </td>
+        </tr>
+        <tr>
           <th scope="row">SLO時制</th>
           <td>tool実装をproduction校正完了と誤読できた</td>
           <td>
