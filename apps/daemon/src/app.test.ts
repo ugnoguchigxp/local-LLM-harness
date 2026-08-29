@@ -349,6 +349,42 @@ test("POST /prepare 202 ensures worker when resident is COLD", async () => {
   expect(((await op.json()) as { ready: boolean }).ready).toBe(true);
 });
 
+test("direct legacy prepare keeps completed operation history bounded", async () => {
+  const directRegistry: Registry = { ...registry, routes: [] };
+  const probes = new Map<string, RuntimeHealth>([
+    ["qwen-general", probe("qwen-general", false)],
+    ["qwen-worker", probe("qwen-worker", false)],
+  ]);
+  const log = { ensure: [] as string[], stop: [] as string[] };
+  const backend = stubBackend(probes, log);
+  const observer = new Observer(directRegistry, backend);
+  await observer.tick();
+  let sequence = 0;
+  const control = new ControlPlane(directRegistry, backend, observer, {
+    historyLimit: 1,
+    idleTtlMs: 0,
+    random: () => String(++sequence),
+  });
+
+  const first = await control.prepare({ capabilities: ["llm.general"] });
+  expect(first.status).toBe(202);
+  const firstBody = first.body as { leaseId: string; operationId: string };
+  await control.flush();
+  expect(control.getOperation(firstBody.operationId)?.status).toBe("succeeded");
+  await control.release(firstBody.leaseId);
+  await control.flush();
+  await backend.stop("qwen-worker");
+  await observer.tick();
+
+  const second = await control.prepare({ capabilities: ["llm.general"] });
+  expect(second.status).toBe(202);
+  const secondBody = second.body as { operationId: string };
+  await control.flush();
+  expect(control.getOperation(firstBody.operationId)).toBeUndefined();
+  expect(control.getOperation(secondBody.operationId)?.status).toBe("succeeded");
+  expect(log.ensure).toEqual(["qwen-worker", "qwen-worker"]);
+});
+
 test("POST /resolve returns the HOT resident endpoint", async () => {
   const { app } = await makeApp(true);
   const res = await app.request("/resolve", {

@@ -48,8 +48,12 @@ test("canonicalizes external evidence paths and never overwrites output", async 
   try {
     await mkdir(repository);
     await mkdir(evidence);
+    await mkdir(join(repository, "..evidence"));
     await symlink(repository, alias);
     await expect(prepareExternalOutput(join(repository, "inside.json"), repository)).rejects.toThrow(/outside/);
+    await expect(
+      prepareExternalOutput(join(repository, "..evidence", "inside.json"), repository),
+    ).rejects.toThrow(/outside/);
     await expect(prepareExternalOutput(join(alias, "through-link.json"), repository)).rejects.toThrow(/outside/);
     await expect(prepareExternalOutput(join(root, "missing", "raw.json"), repository)).rejects.toThrow(/already exist/);
 

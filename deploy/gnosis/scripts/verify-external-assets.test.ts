@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { mkdtemp, open, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 import { stringify } from "yaml";
+import { inspectOpenedRegularFile } from "./external-asset-helpers";
 
 const verifier = resolve(import.meta.dir, "verify-external-assets.ts");
 const temporaryRoots: string[] = [];
@@ -69,6 +71,24 @@ test("rejects a symlinked external asset", async () => {
   const result = await run(await fixture({ symlink: true }));
   expect(result.exitCode).toBe(1);
   expect(result.result.actual.type).toBe("symlink");
+});
+
+test("rejects an asset path replaced after its file descriptor is opened", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-external-asset-race-"));
+  temporaryRoots.push(root);
+  const assetPath = join(root, "0.vvm");
+  const originalPath = join(root, "original.vvm");
+  await writeFile(assetPath, "original\n");
+  const handle = await open(assetPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    await rename(assetPath, originalPath);
+    await writeFile(assetPath, "replacement\n");
+    await expect(inspectOpenedRegularFile(assetPath, handle)).rejects.toThrow(
+      "external asset changed while being inspected",
+    );
+  } finally {
+    await handle.close();
+  }
 });
 
 test("rejects an asset URL that is inconsistent with the pinned version", async () => {

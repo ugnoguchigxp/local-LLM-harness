@@ -1,9 +1,8 @@
-import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, open, readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
+import { ExternalAssetInspectionError, inspectRegularFile } from "./external-asset-helpers";
 
 const sourceLockPath = resolve(
   process.env.LARM_SOURCE_LOCK ?? resolve(import.meta.dir, "../sources.lock.yaml"),
@@ -36,19 +35,6 @@ const documentSchema = z.object({
   sources: z.object({ "voicevox-vvm": vvmSchema }).passthrough(),
 }).passthrough();
 
-async function inspectRegularFile(path: string): Promise<{ bytes: number; sha256: string }> {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  const hash = createHash("sha256");
-  try {
-    const metadata = await handle.stat();
-    if (!metadata.isFile()) throw new Error("external asset must be a regular file");
-    for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk);
-    return { bytes: metadata.size, sha256: hash.digest("hex") };
-  } finally {
-    await handle.close();
-  }
-}
-
 const parsed = documentSchema.parse(parse(await readFile(sourceLockPath, "utf8")));
 const definition = parsed.sources["voicevox-vvm"];
 let actual: { type: string; bytes?: number; sha256?: string } = { type: "missing" };
@@ -76,7 +62,11 @@ try {
     actual = { type: "symlink" };
     error = "external asset must not become a symlink while being inspected";
   } else {
-    throw cause;
+    if (cause instanceof ExternalAssetInspectionError) {
+      error = cause.message;
+    } else {
+      throw cause;
+    }
   }
 }
 

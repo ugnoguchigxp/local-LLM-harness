@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chmod, link, lstat, realpath, unlink, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export type BenchmarkResponseKind = "llm" | "stt" | "tts";
 
@@ -8,7 +8,11 @@ const MAX_VALIDATED_TEXT_BYTES = 4 * 1024 * 1024;
 
 function isInside(root: string, target: string): boolean {
   const fromRoot = relative(root, target);
-  return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot));
+  return fromRoot === "" || (
+    fromRoot !== ".."
+    && !fromRoot.startsWith(`..${sep}`)
+    && !isAbsolute(fromRoot)
+  );
 }
 
 export function absoluteOutput(name: string, value: string | undefined): string {

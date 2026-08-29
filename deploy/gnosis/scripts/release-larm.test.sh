@@ -29,6 +29,14 @@ run_release() {
 
 run_release plan | jq -e '.dirty == false and .current == null and (.commit | length == 40)' >/dev/null
 first_commit="$(git -C "${source_root}" rev-parse HEAD)"
+if LARM_RELEASE_TEST_FAIL_SYSTEMCTL_ONCE='restart larm-daemon.service' \
+  run_release apply >/dev/null 2>&1; then
+  echo "first release ignored a failed systemctl restart" >&2
+  exit 1
+fi
+[[ ! -e "${test_root}/current" && ! -L "${test_root}/current" ]]
+grep -F 'stop larm-daemon.service' "${test_root}/state/systemctl.log" >/dev/null
+rm -f -- "${test_root}/state/systemctl-failure-injected"
 if LARM_RELEASE_TEST_UNHEALTHY_RELEASE="${first_commit:0:12}" run_release apply >/dev/null 2>&1; then
   echo "unhealthy first release unexpectedly stayed active" >&2
   exit 1
@@ -71,6 +79,14 @@ printf 'lock-v2\n' >"${source_root}/bun.lock"
 printf 'export const LARM_VERSION = "0.2.0";\n' >"${source_root}/packages/core/src/version.ts"
 git -C "${source_root}" add .
 git -C "${source_root}" commit -qm second
+if LARM_RELEASE_TEST_FAIL_SYSTEMCTL_ONCE='restart larm-daemon.service' \
+  run_release apply >/dev/null 2>&1; then
+  echo "upgrade ignored a failed systemctl restart" >&2
+  exit 1
+fi
+[[ "$(readlink -f "${test_root}/current")" == "${first}" ]]
+[[ ! -e "${test_root}/state/previous" ]]
+rm -f -- "${test_root}/state/systemctl-failure-injected"
 run_release apply >/dev/null
 second="$(readlink -f "${test_root}/current")"
 [[ "${second}" != "${first}" ]]
@@ -81,6 +97,26 @@ if run_release rollback >/dev/null 2>&1; then
 fi
 [[ "$(readlink -f "${test_root}/current")" == "${second}" ]]
 rm "${first}/node_modules/tampered.js"
+before_rollback_previous="$(cat "${test_root}/state/previous")"
+if LARM_RELEASE_TEST_FAIL_SYSTEMCTL_ONCE='restart larm-daemon.service' \
+  run_release rollback >/dev/null 2>&1; then
+  echo "rollback ignored a failed systemctl restart" >&2
+  exit 1
+fi
+[[ "$(readlink -f "${test_root}/current")" == "${second}" ]]
+[[ "$(cat "${test_root}/state/previous")" == "${before_rollback_previous}" ]]
+rm -f -- "${test_root}/state/systemctl-failure-injected"
+printf 'tampered active dependency\n' >"${second}/node_modules/tampered.js"
+if LARM_RELEASE_TEST_FAIL_SYSTEMCTL_ONCE='restart larm-daemon.service' \
+  run_release rollback >/dev/null 2>&1; then
+  echo "rollback restored an invalid former active release" >&2
+  exit 1
+fi
+[[ "$(readlink -f "${test_root}/current")" == "${first}" ]]
+rm "${second}/node_modules/tampered.js"
+rm -f -- "${test_root}/state/systemctl-failure-injected"
+run_release rollback >/dev/null
+[[ "$(readlink -f "${test_root}/current")" == "${second}" ]]
 run_release rollback >/dev/null
 [[ "$(readlink -f "${test_root}/current")" == "${first}" ]]
 jq -e '.larmVersion == "0.1.0" and (.configRevision | test("^[a-f0-9]{64}$"))' \
@@ -105,13 +141,21 @@ printf 'lock-v3\n' >"${source_root}/bun.lock"
 git -C "${source_root}" add bun.lock
 git -C "${source_root}" commit -qm third
 before_failure="$(readlink -f "${test_root}/current")"
+third_commit="$(git -C "${source_root}" rev-parse HEAD)"
+printf 'tampered active dependency\n' >"${before_failure}/node_modules/tampered.js"
+if run_release apply >/dev/null 2>&1; then
+  echo "release accepted an invalid active recovery source" >&2
+  exit 1
+fi
+[[ "$(readlink -f "${test_root}/current")" == "${before_failure}" ]]
+[[ ! -e "${test_root}/releases/${third_commit:0:12}" ]]
+rm "${before_failure}/node_modules/tampered.js"
 if LARM_RELEASE_FAIL_AFTER_ARCHIVE=1 run_release apply >/dev/null 2>&1; then
   echo "injected release failure unexpectedly succeeded" >&2
   exit 1
 fi
 [[ "$(readlink -f "${test_root}/current")" == "${before_failure}" ]]
 
-third_commit="$(git -C "${source_root}" rev-parse HEAD)"
 before_failure_previous="$(cat "${test_root}/state/previous")"
 if LARM_RELEASE_TEST_UNHEALTHY_RELEASE="${third_commit:0:12}" run_release apply >/dev/null 2>&1; then
   echo "unhealthy release unexpectedly stayed active" >&2

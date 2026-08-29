@@ -60,6 +60,11 @@ current_release_name() {
 systemctl_run() {
   if [[ "${test_mode}" == "1" ]]; then
     printf '%s\n' "$*" >>"${state_root}/systemctl.log"
+    if [[ "${LARM_RELEASE_TEST_FAIL_SYSTEMCTL_ONCE:-}" == "$*" \
+      && ! -e "${state_root}/systemctl-failure-injected" ]]; then
+      : >"${state_root}/systemctl-failure-injected"
+      return 1
+    fi
   else
     systemctl "$@"
   fi
@@ -306,19 +311,27 @@ if [[ "${action}" == "rollback" ]]; then
   active="$(current_release)"
   [[ -n "${active}" ]] || fail "no active release is available to roll back"
   [[ "${active}" != "${previous}" ]] || fail "previous release is already active"
+  active_recoverable=0
+  if validate_release_payload "${active}"; then
+    active_recoverable=1
+  fi
+  validate_release_payload "${previous}" \
+    || fail "previous release payload changed before rollback"
   temp_link="${current_link}.rollback.$$"
   ln -s -- "${previous}" "${temp_link}"
   mv -Tf -- "${temp_link}" "${current_link}"
   write_previous "${active}"
-  systemctl_run restart larm-daemon.service
-  if ! verify_release_health "${previous}"; then
-    if [[ "${active}" == "${release_root}/"* && -d "${active}" ]]; then
+  if ! systemctl_run restart larm-daemon.service || ! verify_release_health "${previous}"; then
+    if [[ "${active_recoverable}" -eq 1 ]] && validate_release_payload "${active}"; then
       recovery="${current_link}.recovery.$$"
       ln -s -- "${active}" "${recovery}"
       mv -Tf -- "${recovery}" "${current_link}"
       write_previous "${previous}"
-      systemctl_run restart larm-daemon.service
-      verify_release_health "${active}" || true
+      if ! systemctl_run restart larm-daemon.service || ! verify_release_health "${active}"; then
+        fail "rolled-back and recovered LARM releases both failed verification"
+      fi
+    else
+      fail "rolled-back release failed verification; the invalid former active release was not restored"
     fi
     fail "rolled-back LARM release failed identity or readiness verification"
   fi
@@ -335,6 +348,11 @@ fi
 
 [[ -z "$(git -C "${source_root}" status --porcelain=v1 --untracked-files=normal)" ]] \
   || fail "source worktree is dirty"
+previous="$(current_release)"
+if [[ -n "${previous}" ]]; then
+  validate_release_payload "${previous}" \
+    || fail "active release payload failed integrity verification"
+fi
 if [[ -e "${release_dir}" || -L "${release_dir}" ]]; then
   [[ -d "${release_dir}" && ! -L "${release_dir}" ]] || fail "existing release target is unsafe"
   validate_release_payload "${release_dir}" || fail "existing release payload failed integrity verification"
@@ -378,7 +396,13 @@ else
 fi
 validate_release_payload "${release_dir}" || fail "assembled release payload failed integrity verification"
 
-previous="$(current_release)"
+observed_previous="$(current_release)"
+[[ "${observed_previous}" == "${previous}" ]] \
+  || fail "active release pointer changed while the candidate was assembled"
+if [[ -n "${previous}" ]]; then
+  validate_release_payload "${previous}" \
+    || fail "active release payload changed while the candidate was assembled"
+fi
 previous_state_existed=0
 [[ ! -f "${state_root}/previous" ]] || previous_state_existed=1
 previous_state="$(cat "${state_root}/previous" 2>/dev/null || true)"
@@ -388,21 +412,26 @@ mv -Tf -- "${next_link}" "${current_link}"
 if [[ -n "${previous}" && "${previous}" != "${release_dir}" ]]; then
   write_previous "${previous}"
 fi
-systemctl_run restart larm-daemon.service
-if ! verify_release_health "${release_dir}"; then
+if ! systemctl_run restart larm-daemon.service || ! verify_release_health "${release_dir}"; then
   if [[ -n "${previous}" && -d "${previous}" ]]; then
+    validate_release_payload "${previous}" \
+      || fail "new release failed and the prior release is no longer a trusted recovery target"
     recovery="${current_link}.recovery.$$"
     ln -s -- "${previous}" "${recovery}"
     mv -Tf -- "${recovery}" "${current_link}"
     restore_previous "${previous_state}" "${previous_state_existed}"
-    systemctl_run restart larm-daemon.service
-    verify_release_health "${previous}" || fail "new and recovered LARM releases both failed verification"
+    if ! systemctl_run restart larm-daemon.service || ! verify_release_health "${previous}"; then
+      fail "new and recovered LARM releases both failed verification"
+    fi
   else
     active="$(current_release)"
     [[ "${active}" == "${release_dir}" ]] || fail "failed first release pointer changed unexpectedly"
-    systemctl_run stop larm-daemon.service
+    stop_failed=0
+    systemctl_run stop larm-daemon.service || stop_failed=1
     rm -- "${current_link}"
     restore_previous "${previous_state}" "${previous_state_existed}"
+    [[ "${stop_failed}" -eq 0 ]] \
+      || fail "new LARM release failed and its pointer was removed, but the daemon could not be stopped"
   fi
   fail "new LARM release failed readiness and was rolled back"
 fi

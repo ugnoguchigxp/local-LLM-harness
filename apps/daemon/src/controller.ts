@@ -755,6 +755,7 @@ export class ControlPlane {
     const abort = new AbortController();
     this.operationAborts.set(operation.id, abort);
     this.enqueue(() => this.runEnsure(operation, abort));
+    this.pruneHistory();
 
     return {
       status: 202 as const,
@@ -1059,6 +1060,7 @@ export class ControlPlane {
         }
         this.scheduleIdleReconcile();
       }
+      this.pruneHistory();
     }
   }
 
@@ -1074,6 +1076,7 @@ export class ControlPlane {
           : "operation cancelled",
       };
       this.operationAborts.delete(operation.id);
+      this.pruneHistory();
       return;
     }
     operation.status = "running";
@@ -1121,6 +1124,7 @@ export class ControlPlane {
       if (this.operationAborts.get(operation.id) === abort) {
         this.operationAborts.delete(operation.id);
       }
+      this.pruneHistory();
     }
   }
 

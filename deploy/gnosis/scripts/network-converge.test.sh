@@ -122,6 +122,15 @@ jq -e '.allowed == false and (.blockers | index("unexpected_provider_allow_rule"
   and (.unexpectedAllowRules | length == 2)' \
   <<<"$(run_tool plan)" >/dev/null
 
+write_safe_fixtures
+cat >>"${test_root}/ufw.txt" <<'EOF'
+8080/tcp                   ALLOW IN    192.168.0.0/24
+EOF
+duplicate_plan="$(run_tool plan)"
+jq -e '.allowed == false and (.blockers | index("duplicate_provider_allow_rule")) != null
+  and .duplicateAllowRules == [{port:8080,cidr:"192.168.0.0/24",count:2}]' \
+  <<<"${duplicate_plan}" >/dev/null
+
 ln -s / "${symlinked_root}"
 if LARM_NETWORK_TEST_MODE=1 LARM_NETWORK_TEST_ROOT="${symlinked_root}" \
   bash "${tool}" plan >/dev/null 2>&1; then

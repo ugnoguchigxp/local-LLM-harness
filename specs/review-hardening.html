@@ -2,7 +2,8 @@
   <h1>LARM コードレビュー・Hardening記録</h1>
 
   <p>
-    2026-08-28に、Core contract、Allocation、Gateway、Artifact lifecycle、Backend、Provider
+    2026-08-28から2026-08-29に、Core contract、Allocation、Gateway、Artifact
+    lifecycle、Backend、Provider
     adapter、gnosis運用設定を対象として、失敗復旧、競合、期限、入力境界、長期運転を再監査しました。
     この文書は検出事項と実装済み対策、回帰確認の正本です。
   </p>
@@ -100,6 +101,15 @@
           </td>
         </tr>
         <tr>
+          <th scope="row">External asset identity</th>
+          <td>外部model assetのhash計算中にpathまたはfile内容が差し替わり得る</td>
+          <td>
+            <code>O_NOFOLLOW</code
+            >で開いたdescriptorについて、hash前後のinode・size・mtime・ctimeと hash後のpath
+            inodeを再照合し、検証中の変更をfail closed
+          </td>
+        </tr>
+        <tr>
           <th scope="row">Artifact concurrency</th>
           <td>Allocation受付とactivation、共有artifactを持つRuntime同士の競合</td>
           <td>Runtime mutation reservation、共有owner確認、artifact単位の順序付き排他を実装</td>
@@ -189,6 +199,17 @@
           </td>
         </tr>
         <tr>
+          <th scope="row">Legacy operation boundedness</th>
+          <td>
+            default
+            routeがない旧互換<code>/prepare</code>経路だけ完了operationの履歴整理が遅延する
+          </td>
+          <td>
+            直接Legacy operationの作成時と全terminal遷移後に共通history
+            pruningを適用し、設定上限を維持
+          </td>
+        </tr>
+        <tr>
           <th scope="row">Backend observation</th>
           <td>一つのBackend例外がcluster snapshot全体を停止する</td>
           <td>Backendごとに失敗を隔離し、該当RuntimeだけUnknownとして観測を継続</td>
@@ -208,6 +229,36 @@
           <th scope="row">gnosis lifecycle</th>
           <td>Preferred TTSのboot常駐、LARMのsystemd権限とactive target書込権限不足</td>
           <td>installerでPreferredをdisableし、限定polkit ruleと必要なReadWritePathsだけを配備</td>
+        </tr>
+        <tr>
+          <th scope="row">Transactional release</th>
+          <td>
+            <code>systemctl restart</code
+            >失敗が<code>set -e</code>で復旧分岐を迂回し、改ざん済みのactive
+            generationを復旧元に選び得る
+          </td>
+          <td>
+            restartとhealthを一つの失敗判定へ統合し、切替前に復旧元payloadを完全検証。rollback失敗時も
+            不正な旧activeへ戻さず、初回失敗時はpointer除去とdaemon停止を確認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Network convergence</th>
+          <td>同一UFW allow ruleが重複すると、削除失敗時の補償が元の多重度を復元できない</td>
+          <td>
+            portごとの完全一致rule数をplanへ記録し、重複時は
+            <code>duplicate_provider_allow_rule</code>でmutation前に停止
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Benchmark evidence path</th>
+          <td>
+            repository内の<code>..evidence</code>のような名前を親directory参照と誤判定し、repository外として受理する
+          </td>
+          <td>
+            <code>..</code>をpath segment境界で判定し、lexical
+            pathとcanonical pathの双方でrepository内出力を拒否
+          </td>
         </tr>
         <tr>
           <th scope="row">Installer isolation</th>
@@ -247,7 +298,10 @@
         <code>bun run check</code>でsource-only、Spec
         HTML、TypeScript、全testを検証する。
       </li>
-      <li>review完了時点で266 test、729 assertionが成功し、失敗は0件。</li>
+      <li>
+        review完了時点で289 app・package test、810 assertion、11 deployment test、36 assertion、4
+        shell integration suiteが成功し、失敗は0件。
+      </li>
       <li>
         Bash scriptは<code>bash -n</code>、Python
         adapterは<code>ast.parse</code>でsyntax確認する。

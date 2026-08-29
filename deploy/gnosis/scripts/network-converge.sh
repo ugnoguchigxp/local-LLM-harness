@@ -156,7 +156,7 @@ json_lines() {
 
 make_plan() {
   local listeners firewall firewall_rc firewall_readable=false firewall_status="unknown"
-  local provider_lines wildcard_lines allow_lines unexpected_lines delete_rules blockers payload digest port
+  local provider_lines wildcard_lines allow_lines unexpected_lines duplicate_rules delete_rules blockers payload digest port count
   listeners="$(read_listeners)"
   set +e
   firewall="$(read_firewall 2>&1)"
@@ -170,12 +170,17 @@ make_plan() {
   wildcard_lines="$(wildcard_listener_lines "${listeners}")"
   allow_lines="$(awk '$1 ~ /^(8080|8081|8082|8083|8084)(\/tcp)?$/ && $0 ~ /[[:space:]]ALLOW[[:space:]]+IN[[:space:]]/ {print}' <<<"${firewall}" || true)"
   delete_rules='[]'
+  duplicate_rules='[]'
   for port in "${provider_ports[@]}"; do
-    if awk -v target="${port}/tcp" -v cidr="${lan_cidr}" \
-      '$1 == target && $2 == "ALLOW" && $3 == "IN" && $4 == cidr {found=1} END {exit !found}' \
-      <<<"${firewall}"; then
+    count="$(awk -v target="${port}/tcp" -v cidr="${lan_cidr}" \
+      '$1 == target && $2 == "ALLOW" && $3 == "IN" && $4 == cidr {count++} END {print count + 0}' \
+      <<<"${firewall}")"
+    if [[ "${count}" -eq 1 ]]; then
       delete_rules="$(jq -c --argjson port "${port}" --arg cidr "${lan_cidr}" \
         '. + [{port:$port,cidr:$cidr}]' <<<"${delete_rules}")"
+    elif [[ "${count}" -gt 1 ]]; then
+      duplicate_rules="$(jq -c --argjson port "${port}" --arg cidr "${lan_cidr}" --argjson count "${count}" \
+        '. + [{port:$port,cidr:$cidr,count:$count}]' <<<"${duplicate_rules}")"
     fi
   done
   unexpected_lines="$(while IFS= read -r line; do
@@ -194,6 +199,8 @@ make_plan() {
   [[ "${firewall_readable}" == "true" ]] || blockers="$(jq -c '. + ["ufw_unreadable"]' <<<"${blockers}")"
   [[ -z "${wildcard_lines}" ]] || blockers="$(jq -c '. + ["provider_wildcard_listener"]' <<<"${blockers}")"
   [[ -z "${unexpected_lines}" ]] || blockers="$(jq -c '. + ["unexpected_provider_allow_rule"]' <<<"${blockers}")"
+  [[ "$(jq 'length' <<<"${duplicate_rules}")" -eq 0 ]] \
+    || blockers="$(jq -c '. + ["duplicate_provider_allow_rule"]' <<<"${blockers}")"
   payload="$(jq -cn \
     --arg lanCidr "${lan_cidr}" \
     --arg firewallStatus "${firewall_status}" \
@@ -202,12 +209,14 @@ make_plan() {
     --argjson wildcardListeners "$(printf '%s' "${wildcard_lines}" | json_lines)" \
     --argjson providerAllowRules "$(printf '%s' "${allow_lines}" | json_lines)" \
     --argjson unexpectedAllowRules "$(printf '%s' "${unexpected_lines}" | json_lines)" \
+    --argjson duplicateAllowRules "${duplicate_rules}" \
     --argjson deleteRules "${delete_rules}" \
     --argjson blockers "${blockers}" \
     '{schemaVersion:1,action:"remove-legacy-provider-lan-rules",lanCidr:$lanCidr,
       firewall:{readable:$firewallReadable,status:$firewallStatus},listeners:$listeners,
       wildcardListeners:$wildcardListeners,providerAllowRules:$providerAllowRules,
-      unexpectedAllowRules:$unexpectedAllowRules,deleteRules:$deleteRules,blockers:$blockers,
+      unexpectedAllowRules:$unexpectedAllowRules,duplicateAllowRules:$duplicateAllowRules,
+      deleteRules:$deleteRules,blockers:$blockers,
       allowed:($blockers|length == 0)}')"
   digest="$(printf '%s' "${payload}" | sha256sum | awk '{print $1}')"
   jq -c --arg confirmation "${digest}" '. + {confirmation:$confirmation}' <<<"${payload}"
