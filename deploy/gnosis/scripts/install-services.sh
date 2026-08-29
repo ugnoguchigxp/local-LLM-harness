@@ -41,6 +41,8 @@ state_dir="$(target_path /var/lib/larm)"
 staging_dir="$(target_path /srv/ai/models/.larm-staging)"
 rollback_dir="$(target_path /srv/ai/models/.larm-rollback)"
 worker_dir="$(target_path /srv/ai/models/qwen38-worker)"
+worker_35b_dir="$(target_path /srv/ai/models/qwen36-35b)"
+ornith_35b_dir="$(target_path /srv/ai/models/ornith15-35b)"
 tts_dir="$(target_path /srv/ai/models/qwen-tts)"
 
 if [[ "${test_mode}" == "1" ]]; then
@@ -111,7 +113,8 @@ if [[ "${test_mode}" != "1" ]] && ! id "${operator}" >/dev/null 2>&1; then
 fi
 
 for directory in "${unit_target}" "${credential_dir}" "${polkit_dir}" "${state_dir}" \
-  "${staging_dir}" "${rollback_dir}" "${worker_dir}" "${tts_dir}"; do
+  "${staging_dir}" "${rollback_dir}" "${worker_dir}" "${worker_35b_dir}" \
+  "${ornith_35b_dir}" "${tts_dir}"; do
   safe_directory_path "${directory}" "installation directory"
 done
 
@@ -123,6 +126,8 @@ safe_install_target "${credential_path}" "credential target"
 
 install -d -o "${data_owner}" -g "${data_group}" \
   "${worker_dir}" \
+  "${worker_35b_dir}" \
+  "${ornith_35b_dir}" \
   "${tts_dir}" \
   "${staging_dir}" \
   "${rollback_dir}" \
@@ -142,8 +147,30 @@ install -o "${system_owner}" -g "${system_group}" -m 0644 \
 install -d -o "${credential_owner}" -g "${credential_group}" -m 0750 "${credential_dir}"
 if [[ ! -e "${credential_path}" ]]; then
   management_token="$(openssl rand -hex 32)"
+  api_token="$(openssl rand -hex 32)"
+  connection_signing_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
   umask 0077
-  printf 'LARM_MANAGEMENT_TOKEN=%s\n' "${management_token}" >"${credential_path}"
+  {
+    printf 'LARM_MANAGEMENT_TOKEN=%s\n' "${management_token}"
+    printf 'LARM_API_TOKEN=%s\n' "${api_token}"
+    printf 'LARM_CONNECTION_SIGNING_KEY=%s\n' "${connection_signing_key}"
+  } >"${credential_path}"
+else
+  credential_update="$(mktemp "${credential_dir}/.larm.env.XXXXXX")"
+  cp -- "${credential_path}" "${credential_update}"
+  if ! grep -Eq '^LARM_API_TOKEN=.+$' "${credential_update}"; then
+    printf 'LARM_API_TOKEN=%s\n' "$(openssl rand -hex 32)" >>"${credential_update}"
+  fi
+  if ! grep -Eq '^LARM_CONNECTION_SIGNING_KEY=.+$' "${credential_update}"; then
+    signing_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+    printf 'LARM_CONNECTION_SIGNING_KEY=%s\n' "${signing_key}" >>"${credential_update}"
+  fi
+  if ! grep -Eq '^LARM_MANAGEMENT_TOKEN=.+$' "${credential_update}"; then
+    printf 'LARM_MANAGEMENT_TOKEN=%s\n' "$(openssl rand -hex 32)" >>"${credential_update}"
+  fi
+  chown "${credential_owner}":"${credential_group}" "${credential_update}"
+  chmod 0640 "${credential_update}"
+  mv -fT -- "${credential_update}" "${credential_path}"
 fi
 chown "${credential_owner}":"${credential_group}" "${credential_path}"
 chmod 0640 "${credential_path}"
@@ -155,4 +182,4 @@ systemctl_run disable qwen-tts.service
 echo "Resident/control units enabled; preferred qwen-tts.service left disabled for on-demand use."
 echo "This script intentionally does not reboot or restart services."
 echo "Apply a changed unit explicitly, for example: systemctl restart llama-swap-worker.service"
-echo "LARM management credentials are stored in ${credential_path}."
+echo "LARM API, Agent Connection, and management credentials are stored in ${credential_path}."

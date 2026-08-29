@@ -15,6 +15,16 @@ import {
 } from "./api-schema";
 import { runtimeReleaseDefinitionSchema } from "./releases";
 import {
+  agentConnectionClaimRequestSchema,
+  agentConnectionClaimSchema,
+  agentConnectionHealthSchema,
+  agentConnectionRenewRequestSchema,
+  agentConnectionRequestSchema,
+  agentProviderHealthSchema,
+  publicAgentConnectionSchema,
+  publicAgentProfileListSchema,
+} from "./agent-connection";
+import {
   clusterStateSchema,
   runtimeClassSchema,
   runtimeDefinitionSchema,
@@ -35,6 +45,7 @@ export const errorDetailSchema = z.object({
     incrementalMemoryGB: z.number(),
     availableMemoryGB: z.number(),
     liveAvailableMemoryGB: z.number().optional(),
+    reclaimableMemoryGB: z.number().optional(),
   }).strict()).optional(),
 }).strict();
 
@@ -281,6 +292,14 @@ export const API_OPERATIONS = [
   ["post", "/v1/allocations/{id}/renew", "renewAllocation"],
   ["post", "/v1/allocations/{id}/resolve", "resolveAllocation"],
   ["delete", "/v1/allocations/{id}", "releaseAllocation"],
+  ["get", "/v1/agent-profiles", "listAgentProfiles"],
+  ["post", "/v1/agent-connections", "createAgentConnection"],
+  ["get", "/v1/agent-connections/{id}", "getAgentConnection"],
+  ["get", "/v1/agent-connections/{id}/health", "getAgentConnectionHealth"],
+  ["get", "/v1/agent-connections/{id}/providers/{name}/health", "getAgentProviderHealth"],
+  ["post", "/v1/agent-connections/{id}/claim", "claimAgentConnection"],
+  ["post", "/v1/agent-connections/{id}/renew", "renewAgentConnection"],
+  ["delete", "/v1/agent-connections/{id}", "releaseAgentConnection"],
   ["post", "/v1/chat/completions", "createChatCompletion"],
   ["post", "/v1/audio/transcriptions", "createTranscription"],
   ["post", "/v1/audio/speech", "createSpeech"],
@@ -320,6 +339,14 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   renewAllocation: ["200"],
   resolveAllocation: ["200"],
   releaseAllocation: ["200"],
+  listAgentProfiles: ["200"],
+  createAgentConnection: ["200", "202"],
+  getAgentConnection: ["200"],
+  getAgentConnectionHealth: ["200"],
+  getAgentProviderHealth: ["200"],
+  claimAgentConnection: ["200"],
+  renewAgentConnection: ["200"],
+  releaseAgentConnection: ["204"],
   createChatCompletion: ["200"],
   createTranscription: ["200"],
   createSpeech: ["200"],
@@ -357,6 +384,14 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   renewAllocation: "Allocation",
   resolveAllocation: "AllocationResolveResponse",
   releaseAllocation: "Allocation",
+  listAgentProfiles: "AgentProfileList",
+  createAgentConnection: "AgentConnection",
+  getAgentConnection: "AgentConnection",
+  getAgentConnectionHealth: "AgentConnectionHealth",
+  getAgentProviderHealth: "AgentProviderHealth",
+  claimAgentConnection: "AgentConnectionClaim",
+  renewAgentConnection: "AgentConnection",
+  releaseAgentConnection: "AgentConnection",
   createChatCompletion: "UpstreamJson",
   createTranscription: "UpstreamJson",
   createSpeech: "Binary",
@@ -398,6 +433,14 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     AllocationRenewRequest: jsonSchema(allocationRenewRequestSchema),
     AllocationResolveRequest: jsonSchema(allocationResolveRequestSchema),
     AllocationResolveResponse: jsonSchema(allocationResolveResponseSchema),
+    AgentConnectionRequest: jsonSchema(agentConnectionRequestSchema),
+    AgentConnectionRenewRequest: jsonSchema(agentConnectionRenewRequestSchema),
+    AgentConnectionClaimRequest: jsonSchema(agentConnectionClaimRequestSchema),
+    AgentProfileList: jsonSchema(publicAgentProfileListSchema),
+    AgentConnection: jsonSchema(publicAgentConnectionSchema),
+    AgentConnectionHealth: jsonSchema(agentConnectionHealthSchema),
+    AgentProviderHealth: jsonSchema(agentProviderHealthSchema),
+    AgentConnectionClaim: jsonSchema(agentConnectionClaimSchema),
     LegacyPrepareResponse: jsonSchema(legacyPrepareResponseSchema),
     LegacyResolveResponse: jsonSchema(legacyResolveResponseSchema),
     LegacyReleaseResponse: jsonSchema(legacyReleaseResponseSchema),
@@ -425,6 +468,9 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "createAllocation") return "AllocationRequest";
       if (operationId === "renewAllocation") return "AllocationRenewRequest";
       if (operationId === "resolveAllocation") return "AllocationResolveRequest";
+      if (operationId === "createAgentConnection") return "AgentConnectionRequest";
+      if (operationId === "claimAgentConnection") return "AgentConnectionClaimRequest";
+      if (operationId === "renewAgentConnection") return "AgentConnectionRenewRequest";
       if (operationId === "planRuntimeDeployment") return "RuntimeReleasePlanRequest";
       if (operationId === "activateRuntimeDeployment") return "RuntimeReleaseSelection";
       if (operationId === "reloadCatalog") return "CatalogReloadRequest";
@@ -440,6 +486,10 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       || path.startsWith("/v1/catalog/")
       || path.startsWith("/v1/inspection/");
     const publicOperation = operationId === "getHealth" || operationId === "getReadiness";
+    const providerBearerOperation = operationId === "getAgentProviderHealth"
+      || operationId === "createChatCompletion"
+      || operationId === "createTranscription"
+      || operationId === "createSpeech";
     const successContent = (() => {
       if (operationId === "getMetrics") {
         return { "text/plain": { schema: { $ref: "#/components/schemas/Metrics" } } };
@@ -457,15 +507,31 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
           "application/octet-stream": { schema: { $ref: "#/components/schemas/Binary" } },
         };
       }
+      if (operationId === "releaseAgentConnection") return undefined;
       return { "application/json": { schema: { $ref: `#/components/schemas/${successSchema}` } } };
     })();
-    const success = { description: "Success", content: successContent };
+    const success = {
+      description: "Success",
+      ...(successContent ? { content: successContent } : {}),
+    };
     paths[path] ??= {};
     paths[path]![method] = {
       operationId,
       security: publicOperation ? [] : management
         ? [{ bearerAuth: [], managementToken: [] }]
+        : providerBearerOperation
+        ? [{ bearerAuth: [] }, { providerBearer: [] }]
         : [{ bearerAuth: [] }],
+      ...((operationId === "createAgentConnection" || operationId === "renewAgentConnection")
+        ? {
+          parameters: [{
+            name: "Idempotency-Key",
+            in: "header",
+            required: true,
+            schema: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+          }],
+        }
+        : {}),
       ...(requestSchema
         ? {
           requestBody: {
@@ -478,6 +544,9 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
         ...Object.fromEntries(SUCCESS_STATUSES_BY_OPERATION[operationId].map((status) => [status, success])),
         ...(operationId === "getReadiness"
           ? { "503": { description: "Not ready", content: successContent } }
+          : {}),
+        ...(operationId === "getAgentConnectionHealth" || operationId === "getAgentProviderHealth"
+          ? { "503": { description: "Semantic provider not ready", content: successContent } }
           : {}),
         "4XX": {
           description: "Client error",
@@ -498,6 +567,11 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     components: {
       securitySchemes: {
         bearerAuth: { type: "http", scheme: "bearer" },
+        providerBearer: {
+          type: "http",
+          scheme: "bearer",
+          description: "Scoped larm_conn_v1 provider credential",
+        },
         managementToken: { type: "apiKey", in: "header", name: "x-larm-management-token" },
       },
       schemas,

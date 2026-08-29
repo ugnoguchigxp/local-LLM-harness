@@ -114,6 +114,24 @@ export class ExecutionGate {
     });
   }
 
+  tryAcquire(
+    runtime: string,
+    policy: ExecutionPolicy,
+    signal: AbortSignal,
+  ): (() => void) | undefined {
+    if (this.draining || signal.aborted) return undefined;
+    const state = this.runtimes.get(runtime) ?? { active: 0, queue: [] };
+    this.runtimes.set(runtime, state);
+    if (state.active >= policy.maxConcurrentRequests) {
+      this.emit("execution_request", runtime, "probe_busy");
+      return undefined;
+    }
+    state.active += 1;
+    this.emit("execution_request", runtime, "probe_started");
+    this.emitState(runtime, state);
+    return this.release(runtime, state, policy);
+  }
+
   snapshot(runtime: string): { active: number; queued: number } {
     const state = this.runtimes.get(runtime);
     return { active: state?.active ?? 0, queued: state?.queue.length ?? 0 };

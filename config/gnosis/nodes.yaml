@@ -1,7 +1,7 @@
 nodes:
   gnosis:
     displayName: AMD Ryzen AI MAX+ 395 / Ubuntu 26.04 / gfx1151
-    endpoint: http://127.0.0.1
+    endpoint: http://192.168.0.65
     resources:
       memoryTotalGB: 128
       reservedMemoryGB: 16

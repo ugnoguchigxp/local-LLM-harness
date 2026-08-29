@@ -1,15 +1,19 @@
 import { expect, test } from "bun:test";
 import {
   API_OPERATIONS,
+  agentConnectionClaimSchema,
+  agentConnectionHealthSchema,
   clusterStateSchema,
   inspectionRuntimeListSchema,
   publicClusterStateSchema,
+  publicAgentConnectionSchema,
+  parseAgentConnectionCatalog,
   runtimeListSchema,
   type Registry,
   type RouteShadowComparison,
 } from "@larm/core";
 import { ArtifactStoreError, type RuntimeBackend, type RuntimeHealth } from "@larm/backends";
-import { createApp, type AppDeps } from "./app";
+import { createApp, publicRuntime, type AppDeps, type FetchLike } from "./app";
 import type { ArtifactManager, ArtifactOperation } from "./artifact-manager";
 import { ControlPlane, type ControlEvent, type ControlPlaneOptions } from "./controller";
 import { MetricsRegistry, RequestTracker } from "./metrics";
@@ -88,6 +92,35 @@ const registry: Registry = {
     },
   ],
 };
+
+const agentConnectionCatalog = parseAgentConnectionCatalog({
+  version: 1,
+  audiences: {
+    loopback: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" },
+  },
+  agentProfiles: {
+    coding: {
+      description: "Test coding provider",
+      providers: [{
+        name: "llm",
+        capability: "llm.general",
+        route: "llm-default",
+        publicModel: "test-model",
+        readiness: "llm-inference",
+      }],
+    },
+  },
+}, registry);
+
+const agentApiToken = "agent-api-token";
+const agentSigningKey = new Uint8Array(32).fill(7);
+
+function agentHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    authorization: `Bearer ${agentApiToken}`,
+    ...extra,
+  };
+}
 
 function probe(
   id: string,
@@ -259,6 +292,19 @@ test("GET /runtimes lists registry definitions", async () => {
   expect(body.runtimes[0]).not.toHaveProperty("node");
   expect(body.runtimes[0]).not.toHaveProperty("resources");
   expect(body.runtimes[0]).not.toHaveProperty("deployment");
+});
+
+test("public runtime omits management-only swap group metadata", () => {
+  const runtime = registry.runtimes[1]!;
+  expect(publicRuntime({
+    ...runtime,
+    policy: { ...runtime.policy, swapGroup: "qwen-worker-slot" },
+  })).toEqual({
+    id: "qwen-worker",
+    capability: ["llm.general", "llm.reasoning"],
+    protocol: "openai.chat-completions.v1",
+    policy: { class: "preferred" },
+  });
 });
 
 test("GET /runtimes/:id 404", async () => {
@@ -1576,4 +1622,202 @@ test("POST /release stops idle preferred worker", async () => {
   expect(released.status).toBe(200);
   await control.flush();
   expect(log.stop).toEqual(["qwen-worker"]);
+});
+
+test("agent connection claims a scoped OpenAI provider and revokes generations", async () => {
+  const observed: Array<Record<string, unknown>> = [];
+  const gatewayFetch: FetchLike = async (_input, init) => {
+    const raw = init?.body instanceof Uint8Array
+      ? new TextDecoder().decode(init.body)
+      : String(init?.body);
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    observed.push(value);
+    if (value.max_tokens === 1) {
+      expect(value).toEqual({
+        model: "test-model",
+        messages: [{ role: "user", content: "0" }],
+        temperature: 0,
+        max_tokens: 1,
+        stream: false,
+      });
+      return Response.json({
+        choices: [{ index: 0, message: { role: "assistant", content: "" } }],
+        usage: { completion_tokens: 1 },
+      });
+    }
+    return Response.json({
+      choices: [{ index: 0, message: { role: "assistant", content: "done" } }],
+      usage: { completion_tokens: 1 },
+    });
+  };
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog,
+    gatewayFetch,
+  });
+
+  const profiles = await app.request("/v1/agent-profiles", { headers: agentHeaders() });
+  expect(profiles.status).toBe(200);
+  expect(await profiles.json()).toMatchObject({
+    contractVersion: "agent-connection.v1",
+    profiles: [{ id: "coding", providers: [{ model: "test-model" }] }],
+  });
+
+  const create = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "agent-create-1",
+    }),
+    body: JSON.stringify({ agentProfile: "coding", audience: "loopback" }),
+  });
+  expect(create.status).toBe(200);
+  const connection = publicAgentConnectionSchema.parse(await create.json());
+  expect(connection.status).toBe("ready");
+  expect(connection.providers[0]?.claimable).toBeTrue();
+
+  const replay = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "agent-create-1",
+    }),
+    body: JSON.stringify({ agentProfile: "coding", audience: "loopback" }),
+  });
+  expect(replay.headers.get("x-larm-idempotent-replay")).toBe("true");
+  expect((await replay.json() as { id: string }).id).toBe(connection.id);
+
+  const claimResponse = await app.request(`/v1/agent-connections/${connection.id}/claim`, {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({ format: "openai-provider-v1" }),
+  });
+  expect(claimResponse.status).toBe(200);
+  const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
+  const credential = claim.providers[0]!.credential.token;
+  expect(credential).toStartWith("larm_conn_v1.");
+
+  const providerHealth = await app.request(claim.providers[0]!.health.url, {
+    headers: { authorization: `Bearer ${credential}` },
+  });
+  expect(providerHealth.status).toBe(200);
+  expect(await providerHealth.json()).toMatchObject({ ready: true, acceptingRequests: true });
+
+  const task = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${credential}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "test-model",
+      messages: [{ role: "user", content: "perform a real task" }],
+      max_tokens: 4,
+    }),
+  });
+  expect(task.status).toBe(200);
+  expect(await task.json()).toMatchObject({ choices: [{ message: { content: "done" } }] });
+  expect(observed).toHaveLength(2);
+
+  const wrongModel = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${credential}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ model: "another-model", messages: [] }),
+  });
+  expect(wrongModel.status).toBe(400);
+  expect(observed).toHaveLength(2);
+
+  const renewedResponse = await app.request(`/v1/agent-connections/${connection.id}/renew`, {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "agent-renew-1",
+    }),
+    body: JSON.stringify({ ttlSeconds: 600 }),
+  });
+  expect(renewedResponse.status).toBe(200);
+  const revoked = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+    body: JSON.stringify({ model: "test-model", messages: [] }),
+  });
+  expect(revoked.status).toBe(401);
+
+  const nextClaim = agentConnectionClaimSchema.parse(await (await app.request(
+    `/v1/agent-connections/${connection.id}/claim`,
+    {
+      method: "POST",
+      headers: agentHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ format: "openai-provider-v1" }),
+    },
+  )).json());
+  expect(nextClaim.providers[0]!.credential.token).not.toBe(credential);
+
+  const released = await app.request(`/v1/agent-connections/${connection.id}`, {
+    method: "DELETE",
+    headers: agentHeaders(),
+  });
+  expect(released.status).toBe(204);
+  expect(await released.text()).toBe("");
+  const releasedAgain = await app.request(`/v1/agent-connections/${connection.id}`, {
+    method: "DELETE",
+    headers: agentHeaders(),
+  });
+  expect(releasedAgain.status).toBe(204);
+});
+
+test("agent semantic health rejects an HTTP-alive model that does not complete exactly one token", async () => {
+  let probes = 0;
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog,
+    gatewayFetch: async () => {
+      probes += 1;
+      return Response.json({
+        choices: [{ index: 0, message: { role: "assistant", content: "alive" } }],
+        usage: { completion_tokens: 2 },
+      });
+    },
+  });
+  const created = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "bad-semantic-model",
+    }),
+    body: JSON.stringify({ agentProfile: "coding", audience: "loopback" }),
+  });
+  expect(created.status).toBe(202);
+  const connection = publicAgentConnectionSchema.parse(await created.json());
+  expect(connection.status).toBe("probing");
+  const health = await app.request(`/v1/agent-connections/${connection.id}/health`, {
+    headers: agentHeaders(),
+  });
+  expect(health.status).toBe(503);
+  expect(health.headers.get("cache-control")).toBe("no-store");
+  expect(agentConnectionHealthSchema.parse(await health.json())).toMatchObject({
+    ready: false,
+    providers: [{ reason: "invalid_response" }],
+  });
+  expect(probes).toBe(1);
+});
+
+test("agent connection endpoints fail closed when API or signing credentials are absent", async () => {
+  const withoutApi = await makeApp(true, false, {}, {
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog,
+  });
+  expect((await withoutApi.app.request("/v1/agent-profiles")).status).toBe(503);
+  const withoutSigning = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    agentConnectionCatalog,
+  });
+  expect((await withoutSigning.app.request("/v1/agent-profiles", {
+    headers: agentHeaders(),
+  })).status).toBe(503);
 });

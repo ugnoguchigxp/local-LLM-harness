@@ -14,6 +14,9 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.recoveryGraceMs).toBe(60_000);
   expect(config.shutdownTimeoutMs).toBe(330_000);
   expect(config.telemetryMaxAgeMs).toBe(10_000);
+  expect(config.connectionReadyTimeoutMs).toBe(120_000);
+  expect(config.providerProbeTimeoutMs).toBe(15_000);
+  expect(config.connectionSigningKey).toBeUndefined();
   expect(config.configDir).toBe("/workspace/config/gnosis");
 });
 
@@ -36,6 +39,22 @@ test("daemon configuration rejects invalid numbers", () => {
   expect(() => parseDaemonConfig({ LARM_TELEMETRY_MAX_AGE_SECONDS: "0" })).toThrow(
     /LARM_TELEMETRY_MAX_AGE_SECONDS/,
   );
+  expect(() => parseDaemonConfig({ LARM_CONNECTION_READY_TIMEOUT_SECONDS: "901" })).toThrow(
+    /LARM_CONNECTION_READY_TIMEOUT_SECONDS/,
+  );
+  expect(() => parseDaemonConfig({ LARM_PROVIDER_PROBE_TIMEOUT_SECONDS: "61" })).toThrow(
+    /LARM_PROVIDER_PROBE_TIMEOUT_SECONDS/,
+  );
+});
+
+test("connection signing key is canonical unpadded base64url for 32 bytes", () => {
+  const encoded = Buffer.from(new Uint8Array(32).fill(9)).toString("base64url");
+  expect(parseDaemonConfig({ LARM_CONNECTION_SIGNING_KEY: encoded }).connectionSigningKey)
+    .toEqual(new Uint8Array(32).fill(9));
+  expect(() => parseDaemonConfig({ LARM_CONNECTION_SIGNING_KEY: "too-short" }))
+    .toThrow(/LARM_CONNECTION_SIGNING_KEY/);
+  expect(() => parseDaemonConfig({ LARM_CONNECTION_SIGNING_KEY: `${encoded}=` }))
+    .toThrow(/LARM_CONNECTION_SIGNING_KEY/);
 });
 
 test("non-loopback listeners require both API tokens", () => {

@@ -40,6 +40,11 @@ bun run dev
 | `LARM_STATE_MAX_AGE_SECONDS` | `10` | observer snapshot freshness上限 |
 | `LARM_HISTORY_LIMIT` | `1000` | memory上のterminal履歴上限 |
 | `LARM_ACTIVE_ALLOCATION_LIMIT` | `1000` | active Allocationと直接Legacy Leaseの合計上限 |
+| `LARM_API_TOKEN` | 未設定 | control API認証。Agent Connection APIではloopbackでも必須 |
+| `LARM_MANAGEMENT_TOKEN` | 未設定 | artifact、release、catalog管理用の別credential |
+| `LARM_CONNECTION_SIGNING_KEY` | 未設定 | Agent Provider短期token用の32-byte unpadded base64url鍵 |
+| `LARM_CONNECTION_READY_TIMEOUT_SECONDS` | `120` | Connection初回semantic readinessの上限 |
+| `LARM_PROVIDER_PROBE_TIMEOUT_SECONDS` | `15` | Provider単位の最小semantic probe上限 |
 | `LARM_ARTIFACT_OPERATION_LIMIT` | `64` | pending/running artifact operationの合計上限 |
 | `LARM_CONTROL_MAX_BODY_BYTES` | `65536` | control API body上限。設定可能な最大値は1 MiB |
 | `LARM_GATEWAY_MAX_BODY_BYTES` | `4194304` | LLMとTTS JSON body上限。設定可能な最大値は64 MiB |
@@ -114,7 +119,36 @@ curl -sS -X POST http://127.0.0.1:9810/v1/audio/speech \
 curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${voice_allocation_id}"
 ```
 
-速度特化Runtimeは`route`へ`llm-speed`を明示した場合だけ選択されます。fallbackはrequestで`allowFallback: true`を指定した場合だけ許可されます。
+追加27Bは`route`へ`llm-speed`、公式Q5_K_MのOrnith 35Bは`llm-35b`、ROCmFP4速度版は`llm-35b-speed`を明示した場合だけ選択されます。比較用Qwen3.6-35Bは`llm-qwen36-35b`で固定できます。`llm-default`はswapせずResident 27Bへ固定されます。fallbackはrequestで`allowFallback: true`を指定した場合だけ許可されます。同じworker swap groupの別Runtimeにactive Allocationがある場合はpreemptせず、新しい要求を拒否します。
+
+## Agent Connection API
+
+Agentは登録済みProfileとAudienceだけを指定します。`coding-default`は常駐27B、`coding-worker`は
+常駐27Bと並列に使う64K追加27B、`deep-reasoning-35b`は同じworker slotへswapする64K
+Ornith 35Bです。claimはLARM Gatewayの`baseUrl`、public `model`、Provider限定の短期token、
+semantic health URLを返します。backend portや長期API tokenは返しません。
+
+```bash
+connection_json="$(curl -fsS -X POST http://127.0.0.1:9810/v1/agent-connections \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: agent-$(date +%s)" \
+  -d '{"agentProfile":"deep-reasoning-35b","audience":"same-host"}')"
+connection_id="$(jq -er .id <<<"${connection_json}")"
+
+# GET /v1/agent-connections/:idをreadyまでpollしてからclaimします。
+curl -fsS -X POST "http://127.0.0.1:9810/v1/agent-connections/${connection_id}/claim" \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"format":"openai-provider-v1"}'
+```
+
+`/health`ではなくclaim内のProvider health URLを使用してください。LLM healthは
+`max_tokens: 1`の固定推論を行い、completion tokenがちょうど1であることまで検証します。
+成功は10秒、失敗は1秒だけcacheし、通常task queueへprobeを追加しません。
+SAAAのMac接続は[`../../docs/gnosis.md`](../../docs/gnosis.md)の直接LAN接続contractを使います。
+gnosisのproduction unitは認証を必須にした上で`0.0.0.0:9810`をlistenし、Audience
+`saaa-desktop`は`http://192.168.0.65:9810/v1`を広告します。
 
 ## Artifact operations
 

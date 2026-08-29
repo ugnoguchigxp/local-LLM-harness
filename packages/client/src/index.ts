@@ -1,11 +1,21 @@
 import {
   allocationRequestSchema,
+  agentConnectionClaimSchema,
+  agentConnectionHealthSchema,
+  agentConnectionRequestSchema,
+  agentConnectionRenewRequestSchema,
   controlOperationSchema,
   errorResponseSchema,
   publicAllocationSchema,
+  publicAgentConnectionSchema,
+  publicAgentProfileListSchema,
+  type AgentConnectionClaim,
+  type AgentConnectionHealth,
+  type AgentConnectionRequestInput,
   type AllocationRequest,
   type ControlOperation,
   type PublicAllocation,
+  type PublicAgentConnection,
 } from "@larm/core";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -160,6 +170,116 @@ export class LarmClient {
     return this.parseJson(response, publicAllocationSchema);
   }
 
+  async listAgentProfiles(signal?: AbortSignal) {
+    const response = await this.request("/v1/agent-profiles", { signal });
+    return this.parseJson(response, publicAgentProfileListSchema);
+  }
+
+  async createAgentConnection(
+    request: AgentConnectionRequestInput,
+    options: RequestOptions = {},
+  ): Promise<PublicAgentConnection> {
+    const normalized = agentConnectionRequestSchema.parse(request);
+    const response = await this.request("/v1/agent-connections", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
+      },
+      body: JSON.stringify(normalized),
+      signal: options.signal,
+    }, options.management ?? normalized.deploymentPolicy === "allow-listed");
+    return this.parseJson(response, publicAgentConnectionSchema);
+  }
+
+  async getAgentConnection(id: string, signal?: AbortSignal): Promise<PublicAgentConnection> {
+    const response = await this.request(
+      `/v1/agent-connections/${encodeURIComponent(id)}`,
+      { signal },
+    );
+    return this.parseJson(response, publicAgentConnectionSchema);
+  }
+
+  async waitForAgentConnection(
+    connection: PublicAgentConnection,
+    options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number } = {},
+  ): Promise<PublicAgentConnection> {
+    const timeoutMs = options.timeoutMs ?? this.timeoutMs;
+    const pollIntervalMs = options.pollIntervalMs ?? 250;
+    this.validatePollingOptions(timeoutMs, pollIntervalMs);
+    const deadline = Date.now() + timeoutMs;
+    let current = publicAgentConnectionSchema.parse(connection);
+    while (current.status === "pending" || current.status === "probing") {
+      if (Date.now() >= deadline) {
+        throw new LarmApiError(408, "connection_timeout", `connection ${current.id} did not become ready`, current);
+      }
+      await this.delay(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())), options.signal);
+      current = await this.getAgentConnection(current.id, options.signal);
+    }
+    if (current.status !== "ready") {
+      throw new LarmApiError(
+        409,
+        current.error?.code ?? "connection_not_ready",
+        current.error?.message ?? `connection ${current.id} ended as ${current.status}`,
+        current,
+      );
+    }
+    return current;
+  }
+
+  async getAgentConnectionHealth(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<AgentConnectionHealth> {
+    const response = await this.request(
+      `/v1/agent-connections/${encodeURIComponent(id)}/health`,
+      { signal },
+      false,
+      this.timeoutMs,
+      [503],
+    );
+    return this.parseJson(response, agentConnectionHealthSchema);
+  }
+
+  async claimAgentConnection(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<AgentConnectionClaim> {
+    const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ format: "openai-provider-v1" }),
+      signal,
+    });
+    return this.parseJson(response, agentConnectionClaimSchema);
+  }
+
+  async renewAgentConnection(
+    id: string,
+    ttlSeconds = 300,
+    options: RequestOptions = {},
+  ): Promise<PublicAgentConnection> {
+    const body = agentConnectionRenewRequestSchema.parse({ ttlSeconds });
+    const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}/renew`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
+      },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
+    return this.parseJson(response, publicAgentConnectionSchema);
+  }
+
+  async releaseAgentConnection(id: string, signal?: AbortSignal): Promise<void> {
+    const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      signal,
+    });
+    await response.body?.cancel().catch(() => undefined);
+  }
+
   async getOperation(id: string, signal?: AbortSignal) {
     return await this.getOperationWithin(id, signal, this.timeoutMs);
   }
@@ -309,6 +429,7 @@ export class LarmClient {
     init: RequestInit,
     management = false,
     timeoutMs = this.timeoutMs,
+    acceptedStatuses: readonly number[] = [],
   ): Promise<Response> {
     const headers = new Headers(init.headers);
     if (this.options.apiToken) {
@@ -353,7 +474,7 @@ export class LarmClient {
       void response.body?.cancel(error).catch(() => undefined);
       throw error;
     }
-    if (!response.ok) {
+    if (!response.ok && !acceptedStatuses.includes(response.status)) {
       const body = await response.clone().json().catch(() => undefined);
       await response.body?.cancel().catch(() => undefined);
       clearTimeout(timeout);

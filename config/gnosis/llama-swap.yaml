@@ -1,5 +1,7 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
-# Optional 256K Qwen workers. The resident ROCmFP4 provider stays on :8080.
+# Optional worker pool. General-purpose workers keep 256K context while the
+# Agent connection profiles use bounded 64K workers that can coexist with the
+# resident ROCmFP4 provider on :8080.
 
 healthCheckTimeout: 300
 logLevel: info
@@ -46,6 +48,43 @@ models:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
 
+  qwen-agent:
+    cmd: >
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
+      -m /srv/ai/models/qwen38-worker/Qwen3.8-27B-UD-Q4_K_XL.gguf
+      -md /srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      -dev Vulkan0
+      -devd Vulkan0
+      -ngl 999
+      -ngld 999
+      --fit off
+      --flash-attn on
+      --ctx-size 65536
+      --parallel 1
+      --cache-type-k q4_0
+      --cache-type-v q4_0
+      --spec-draft-type-k q4_0
+      --spec-draft-type-v q4_0
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning auto
+      --temp 0.2
+      --top-p 0.9
+      --jinja
+      --context-shift
+      --cache-reuse 256
+      --metrics
+      --no-webui
+    ttl: 300
+    aliases:
+      - qwen3.8-agent
+      - qwen-agent-worker
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
   qwen-fast:
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
@@ -82,3 +121,165 @@ models:
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
+
+  qwen36-35b:
+    cmd: >
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
+      -m /srv/ai/models/qwen36-35b/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --flash-attn on
+      --ctx-size 262144
+      --parallel 1
+      --cache-type-k q4_0
+      --cache-type-v q4_0
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning auto
+      --temp 0.2
+      --top-p 0.9
+      --jinja
+      --context-shift
+      --cache-reuse 256
+      --metrics
+      --no-webui
+    ttl: 300
+    aliases:
+      - qwen3.6-35b
+      - qwen-35b
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
+  ornith15-35b:
+    cmd: >
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
+      -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-Q5_K_M.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --flash-attn on
+      --ctx-size 262144
+      --parallel 1
+      --batch-size 2048
+      --ubatch-size 2048
+      --threads 16
+      --poll 100
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      --no-mmap
+      --cont-batching
+      --kv-unified
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning auto
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --jinja
+      --context-shift
+      --metrics
+      --no-webui
+    ttl: 300
+    aliases:
+      - ornith-1.5-35b
+      - ornith-35b
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
+  ornith15-35b-speed:
+    cmd: >
+      /srv/ai/apps/q38rocm/engine/bin/llama-server
+      -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --flash-attn on
+      --ctx-size 262144
+      --parallel 1
+      --batch-size 2048
+      --ubatch-size 2048
+      --threads 16
+      --poll 100
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      --no-mmap
+      --cont-batching
+      --kv-unified
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning auto
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --jinja
+      --context-shift
+      -ctxcp 0
+      -cram 0
+      --no-cache-prompt
+      --no-cache-idle-slots
+      --metrics
+      --no-webui
+    ttl: 300
+    aliases:
+      - ornith-1.5-35b-speed
+      - ornith-35b-speed
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
+  ornith15-35b-agent:
+    cmd: >
+      /srv/ai/apps/q38rocm/engine/bin/llama-server
+      -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --flash-attn on
+      --ctx-size 65536
+      --parallel 1
+      --batch-size 2048
+      --ubatch-size 2048
+      --threads 16
+      --poll 100
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      --no-mmap
+      --cont-batching
+      --kv-unified
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning auto
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --jinja
+      --context-shift
+      -ctxcp 0
+      -cram 0
+      --no-cache-prompt
+      --no-cache-idle-slots
+      --metrics
+      --no-webui
+    ttl: 300
+    aliases:
+      - ornith-1.5-35b-agent
+      - ornith-35b-agent
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
+groups:
+  qwen-worker-slot:
+    swap: true
+    exclusive: false
+    members:
+      - qwen-quality
+      - qwen-agent
+      - qwen-fast
+      - qwen36-35b
+      - ornith15-35b
+      - ornith15-35b-speed
+      - ornith15-35b-agent

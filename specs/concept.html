@@ -113,10 +113,19 @@ LLM / STT / TTS runtimes</code></pre>
           <td>明示route、または既定Runtimeが利用不能かつ呼出側がfallbackを許可した場合</td>
         </tr>
         <tr>
-          <th scope="row">35B candidate</th>
-          <td>特定の速度要求を持つtask向け候補</td>
-          <td>Preferred、未登録</td>
-          <td>明示的な速度特化routeだけ。既定では選択しない</td>
+          <th scope="row">Ornith-1.5-35B-A3B worker</th>
+          <td>公式Q5_K_Mの品質taskとROCmFP4の速度task</td>
+          <td>Preferred、worker slotでCOLDを許容</td>
+          <td>
+            <code>llm-35b</code
+            >または<code>llm-35b-speed</code>の明示時だけ
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3.6-35B-A3B worker</th>
+          <td>35B比較、fallback、rollback</td>
+          <td>Preferred、Ornithと同じworker slot</td>
+          <td><code>llm-qwen36-35b</code>明示、または許可済みfallbackだけ</td>
         </tr>
         <tr>
           <th scope="row">Qwen ASR</th>
@@ -142,7 +151,9 @@ LLM / STT / TTS runtimes</code></pre>
     <p>
       35Bはメインモデルではありません。35BがHOTであっても、一般的な<code>llm.general</code>要求から
       自動選択してはいけません。将来メイン候補として評価する場合も、コード内の暗黙順位ではなく、
-      version管理されたroute設定と検証結果によって昇格させます。
+      version管理されたroute設定と検証結果によって昇格させます。35B、quality 27B、fast
+      27Bは同じworker slotを共有し、active Allocationがないmemberだけを相互にswapできます。 Resident
+      27Bはslot外で常駐し、<code>llm-default</code>要求はswapを行いません。
     </p>
   </section>
 
@@ -211,7 +222,10 @@ LLM / STT / TTS runtimes</code></pre>
     <h2>LARMが所有しないもの</h2>
     <ul>
       <li>Ambient AgentのSituation判断、Conversation、Presentation、UI</li>
-      <li>TaskごとのLocal / Cloud選択やProvider設定の永続化</li>
+      <li>
+        TaskごとのLocal / Cloud選択やProvider設定の永続化。期限付きのAgent
+        Provider接続descriptor発行は上位Orchestratorとの境界APIとして別途設計する
+      </li>
       <li>CodexなどAgent Providerのthreadとsandbox</li>
       <li>tool use、memory retrieval、Knowledge管理、Coding Agent</li>
       <li>モデル推論engineの再実装</li>
@@ -294,7 +308,9 @@ LLM / STT / TTS runtimes</code></pre>
       >、残るlive network境界、commissioning、SLO校正、canaryは<a
         href="./production-completion-plan.html"
         >Production Completion実装計画</a
-      >を参照します。35Bは登録していません。
+      >を参照します。35Bと追加27Bのworker pool契約は<a href="./on-demand-llm-worker-pool.html"
+        >On-demand LLM Worker Pool契約</a
+      >を参照します。
     </p>
   </section>
 
@@ -385,8 +401,8 @@ LLM / STT / TTS runtimes</code></pre>
           <th scope="row">localhostまたはLAN公開の選択</th>
           <td>踏襲・更新</td>
           <td>
-            LARMと個別Providerはloopbackを既定とする。LAN接続が必要な場合は個別portでなく、
-            認証、許可CIDR、TLS終端を同時に定義したGateway境界として別途reviewする
+            個別Providerはloopbackを既定とする。SAAA向けLAN接続は個別portでなく、認証と許可CIDRを
+            必須にしたLARM Gatewayだけを公開する。LAN境界外へ広げる場合はTLS終端も同時にreviewする
           </td>
         </tr>
         <tr>

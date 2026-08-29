@@ -213,3 +213,132 @@ test("resident-only admission does not depend on live telemetry", () => {
   });
   expect(result.ok).toBe(true);
 });
+
+const swapRegistry: Registry = {
+  nodes: [{
+    id: "gnosis",
+    endpoint: "http://127.0.0.1",
+    resources: { memoryTotalGB: 100, reservedMemoryGB: 16 },
+  }],
+  runtimes: [
+    {
+      id: "resident-27b",
+      capability: ["llm.general"],
+      protocol: "openai.chat-completions.v1",
+      backend: "systemd",
+      node: "gnosis",
+      policy: { class: "resident" },
+      resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
+      deployment: { service: "resident.service", healthPort: 8080, endpoint: "http://127.0.0.1:8080" },
+    },
+    {
+      id: "worker-27b",
+      capability: ["llm.general"],
+      protocol: "openai.chat-completions.v1",
+      backend: "llama-swap",
+      node: "gnosis",
+      policy: { class: "preferred", swapGroup: "worker-slot" },
+      resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
+      deployment: {
+        modelId: "worker-27b",
+        listen: "http://127.0.0.1:8083",
+        endpoint: "http://127.0.0.1:8083/upstream/worker-27b",
+      },
+    },
+    {
+      id: "worker-35b",
+      capability: ["llm.general"],
+      protocol: "openai.chat-completions.v1",
+      backend: "llama-swap",
+      node: "gnosis",
+      policy: { class: "preferred", swapGroup: "worker-slot" },
+      resources: { estimatedMemoryGB: 44, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
+      deployment: {
+        modelId: "worker-35b",
+        listen: "http://127.0.0.1:8083",
+        endpoint: "http://127.0.0.1:8083/upstream/worker-35b",
+      },
+    },
+  ],
+  profiles: [],
+  routes: [],
+};
+
+function swapState(statuses: Record<string, RuntimeSnapshot["status"]>): ClusterState {
+  return {
+    generatedAt: "2026-08-29T00:00:00.000Z",
+    node: {
+      id: "gnosis",
+      online: true,
+      endpoint: "http://127.0.0.1",
+      resources: { memoryTotalGB: 100, reservedMemoryGB: 16 },
+      telemetry: {
+        status: "available",
+        observedAt: "2026-08-29T00:00:00.000Z",
+        source: "test",
+        systemMemoryTotalBytes: 100 * 1024 ** 3,
+        systemMemoryAvailableBytes: 8 * 1024 ** 3,
+      },
+    },
+    runtimes: Object.entries(statuses).map(([id, status]) => {
+      const runtime = swapRegistry.runtimes.find((item) => item.id === id)!;
+      return {
+        id,
+        status,
+        class: runtime.policy.class,
+        capability: runtime.capability,
+        node: runtime.node,
+        backend: runtime.backend,
+        endpoint: runtime.deployment.endpoint,
+        observedAt: "2026-08-29T00:00:00.000Z",
+      };
+    }),
+  };
+}
+
+test("admission replaces an idle HOT peer in the same swap group", () => {
+  const result = admitRuntimes({
+    registry: swapRegistry,
+    state: swapState({ "resident-27b": "HOT", "worker-27b": "HOT", "worker-35b": "COLD" }),
+    allocations: [],
+    candidateRuntimeIds: ["worker-35b"],
+    liveTelemetry: {
+      requiredForNonResident: true,
+      maxAgeMs: 10_000,
+      now: Date.parse("2026-08-29T00:00:01.000Z"),
+    },
+  });
+  expect(result).toEqual({
+    ok: true,
+    nodes: [{
+      node: "gnosis",
+      usableMemoryGB: 84,
+      committedMemoryGB: 40,
+      incrementalMemoryGB: 44,
+      availableMemoryGB: 44,
+      liveAvailableMemoryGB: 8,
+      reclaimableMemoryGB: 40,
+    }],
+  });
+});
+
+test("admission never swaps a peer with an active allocation", () => {
+  const active = allocation("worker-27b");
+  const result = admitRuntimes({
+    registry: swapRegistry,
+    state: swapState({ "resident-27b": "HOT", "worker-27b": "HOT", "worker-35b": "COLD" }),
+    allocations: [active],
+    candidateRuntimeIds: ["worker-35b"],
+  });
+  expect(result).toEqual(expect.objectContaining({ ok: false, reason: "memory_exhausted" }));
+});
+
+test("admission rejects two members of one swap group in one allocation", () => {
+  const result = admitRuntimes({
+    registry: swapRegistry,
+    state: swapState({ "resident-27b": "HOT", "worker-27b": "COLD", "worker-35b": "COLD" }),
+    allocations: [],
+    candidateRuntimeIds: ["worker-27b", "worker-35b"],
+  });
+  expect(result).toEqual(expect.objectContaining({ ok: false, reason: "swap_group_conflict" }));
+});

@@ -34,8 +34,10 @@ runtimes:
     node: gnosis
     policy:
       class: preferred
+      swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 40
+      maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 0
       queueTimeoutMs: 1000
@@ -44,6 +46,32 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/qwen-quality
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen-quality
+
+  qwen-worker-agent:
+    artifacts:
+      - qwen38-worker-quality
+      - qwen38-mtp
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: gnosis
+    policy:
+      class: preferred
+      swapGroup: qwen-worker-slot
+    resources:
+      estimatedMemoryGB: 28
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
+    deployment:
+      modelId: qwen-agent
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/qwen-agent
+      backendEndpoint: http://127.0.0.1:8083/upstream/qwen-agent
 
   qwen-worker-fast:
     artifacts:
@@ -57,8 +85,10 @@ runtimes:
     node: gnosis
     policy:
       class: preferred
+      swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 38
+      maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 0
       queueTimeoutMs: 1000
@@ -67,6 +97,106 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/qwen-fast
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen-fast
+
+  qwen36-35b:
+    artifacts:
+      - qwen36-35b-speed
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: gnosis
+    policy:
+      class: preferred
+      swapGroup: qwen-worker-slot
+    resources:
+      estimatedMemoryGB: 44
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
+    deployment:
+      modelId: qwen36-35b
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/qwen36-35b
+      backendEndpoint: http://127.0.0.1:8083/upstream/qwen36-35b
+
+  ornith15-35b:
+    artifacts:
+      - ornith15-35b-quality
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: gnosis
+    policy:
+      class: preferred
+      swapGroup: qwen-worker-slot
+    resources:
+      estimatedMemoryGB: 48
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
+    deployment:
+      modelId: ornith15-35b
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/ornith15-35b
+      backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-35b
+
+  ornith15-35b-speed:
+    artifacts:
+      - ornith15-35b-speed
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: gnosis
+    policy:
+      class: preferred
+      swapGroup: qwen-worker-slot
+    resources:
+      estimatedMemoryGB: 44
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
+    deployment:
+      modelId: ornith15-35b-speed
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/ornith15-35b-speed
+      backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-35b-speed
+
+  ornith15-35b-agent:
+    artifacts:
+      - ornith15-35b-speed
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: gnosis
+    policy:
+      class: preferred
+      swapGroup: qwen-worker-slot
+    resources:
+      estimatedMemoryGB: 30
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
+    deployment:
+      modelId: ornith15-35b-agent
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/ornith15-35b-agent
+      backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-35b-agent
 
   qwen-asr:
     artifacts:

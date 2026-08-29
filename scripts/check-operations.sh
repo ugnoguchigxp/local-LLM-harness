@@ -22,7 +22,12 @@ if ! command -v systemd-analyze >/dev/null 2>&1; then
 fi
 systemd-analyze verify deploy/gnosis/systemd/*.service
 
-if rg -n '0\.0\.0\.0|\[::\]' deploy/gnosis/systemd/*.service; then
+if rg -n '0\.0\.0\.0|\[::\]' \
+  deploy/gnosis/systemd/llama-server.service \
+  deploy/gnosis/systemd/llama-swap-worker.service \
+  deploy/gnosis/systemd/qwen-asr.service \
+  deploy/gnosis/systemd/qwen-tts.service \
+  deploy/gnosis/systemd/voicevox-tts.service; then
   echo "production Provider units must not use wildcard listeners" >&2
   exit 1
 fi

@@ -49,6 +49,42 @@ models:
     sha256: 50d9ce5a6da381bbcfb31061cf73df94a90e6faf8efeddee379a9cb8f1501c6e
     quantization: Q4_0
 
+  qwen36-35b-speed:
+    kind: file
+    role: preferred-llm
+    source: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF
+    revision: a483e9e6cbd595906af30beda3187c2663a1118c
+    filename: Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+    path: /srv/ai/models/qwen36-35b/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+    bytes: 22134528992
+    sha256: ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61
+    quantization: UD-Q4_K_M
+    runtime: llama.cpp-vulkan
+
+  ornith15-35b-speed:
+    kind: file
+    role: preferred-llm
+    source: https://huggingface.co/pugant/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN
+    revision: 973bf694fdec212b833432d455611361bdeb914c
+    filename: Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
+    path: /srv/ai/models/ornith15-35b/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
+    bytes: 19052439552
+    sha256: aa35045aab39163851c8584e6cf8cc6f33e8fc2ffe28ca627d3414ec66584704
+    quantization: Q4_0_ROCMFP4_STRIX_LEAN
+    runtime: q38rocm-vulkan
+
+  ornith15-35b-quality:
+    kind: file
+    role: preferred-llm
+    source: https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF
+    revision: 12393612fd4f730ff5aadc23e9b8f9648aa49ceb
+    filename: Ornith-1.5-35B-Q5_K_M.gguf
+    path: /srv/ai/models/ornith15-35b/Ornith-1.5-35B-Q5_K_M.gguf
+    bytes: 25347532544
+    sha256: 91df97de5845100e850b4b5ec5ff35695382020b880fad6f7f51787b3a953bd0
+    quantization: Q5_K_M
+    runtime: llama.cpp-vulkan
+
   qwen3-asr-main:
     kind: snapshot
     role: resident-stt

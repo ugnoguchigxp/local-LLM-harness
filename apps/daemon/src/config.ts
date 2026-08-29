@@ -16,6 +16,9 @@ export type DaemonConfig = {
   activeAllocationLimit: number;
   apiToken?: string;
   managementToken?: string;
+  connectionSigningKey?: Uint8Array;
+  connectionReadyTimeoutMs: number;
+  providerProbeTimeoutMs: number;
   gatewayTimeoutMs: number;
   controlMaxBodyBytes: number;
   gatewayMaxBodyBytes: number;
@@ -57,12 +60,26 @@ function secondsSetting(
   name: string,
   fallback: number,
   min = 0,
+  max = 2_147_483,
 ): number {
-  return numberSetting(env, name, fallback, { min, max: 2_147_483 }) * 1_000;
+  return numberSetting(env, name, fallback, { min, max }) * 1_000;
 }
 
 function optionalSecret(value: string | undefined): string | undefined {
   return value && value.length > 0 ? value : undefined;
+}
+
+function connectionSigningKey(value: string | undefined): Uint8Array | undefined {
+  const raw = optionalSecret(value);
+  if (!raw) return undefined;
+  if (!/^[A-Za-z0-9_-]{43}$/.test(raw)) {
+    throw new Error("LARM_CONNECTION_SIGNING_KEY must be unpadded base64url for exactly 32 bytes");
+  }
+  const decoded = Buffer.from(raw, "base64url");
+  if (decoded.length !== 32 || decoded.toString("base64url") !== raw) {
+    throw new Error("LARM_CONNECTION_SIGNING_KEY must be unpadded base64url for exactly 32 bytes");
+  }
+  return decoded;
 }
 
 export function parseDaemonConfig(
@@ -113,6 +130,21 @@ export function parseDaemonConfig(
     }),
     apiToken,
     managementToken,
+    connectionSigningKey: connectionSigningKey(env.LARM_CONNECTION_SIGNING_KEY),
+    connectionReadyTimeoutMs: secondsSetting(
+      env,
+      "LARM_CONNECTION_READY_TIMEOUT_SECONDS",
+      120,
+      1,
+      900,
+    ),
+    providerProbeTimeoutMs: secondsSetting(
+      env,
+      "LARM_PROVIDER_PROBE_TIMEOUT_SECONDS",
+      15,
+      1,
+      60,
+    ),
     gatewayTimeoutMs: secondsSetting(env, "LARM_GATEWAY_TIMEOUT_SECONDS", 300, 0.001),
     controlMaxBodyBytes: numberSetting(env, "LARM_CONTROL_MAX_BODY_BYTES", 64 * 1024, {
       min: 1,

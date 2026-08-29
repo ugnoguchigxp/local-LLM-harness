@@ -1,0 +1,209 @@
+<article lang="ja">
+  <h1>On-demand LLM Worker Pool 契約</h1>
+
+  <p>
+    常駐Qwen 3.8 27Bを通常・リアルタイムtaskの即時経路として保護しながら、追加27Bと
+    Ornith-1.5-35B-A3BとQwen3.6-35B-A3Bを明示要求時だけ起動するworker
+    poolの設計と実装状態を定義します。
+  </p>
+
+  <dl>
+    <dt>更新日</dt>
+    <dd><time>2026-08-29</time></dd>
+    <dt>Repository状態</dt>
+    <dd>Runtime、route、artifact、release、swap-aware admissionを実装済み</dd>
+    <dt>Live状態</dt>
+    <dd>
+      QwenとOrnithのstaging、activation、基本推論、Agent Connection経由の並列・swap・反復 semantic
+      probeを検証済み。検証後はworkerをunloadしてcold状態。production SLO commissioningは保留
+    </dd>
+    <dt>Resident default</dt>
+    <dd>Qwen 3.8 27B。worker swapの対象外</dd>
+  </dl>
+
+  <section id="topology">
+    <h2>実行topology</h2>
+    <figure>
+      <pre><code>Resident lane
+  qwen-general (Qwen 3.8 27B) ── always available, never swapped
+
+Worker slot (llama-swap :8083, one member at a time)
+  qwen-worker-quality (Qwen 3.8 27B)
+  qwen-worker-fast    (Qwen 3.8 27B)
+  qwen-worker-agent   (Qwen 3.8 27B, Agent 64K)
+  ornith15-35b        (Ornith-1.5-35B-A3B, official Q5 quality)
+  ornith15-35b-speed  (Ornith-1.5-35B-A3B, ROCmFP4 speed)
+  ornith15-35b-agent  (Ornith-1.5-35B-A3B, Agent 64K)
+  qwen36-35b          (Qwen3.6-35B-A3B, comparison/fallback)</code></pre>
+      <figcaption>Resident laneと交換可能worker slotは同時に一つずつ実行できます。</figcaption>
+    </figure>
+    <p>
+      追加27Bへtaskを割り当てると、Resident 27Bとworker 27Bの二つのinstanceで並行処理できます。
+      35B要求はworker slot内の未使用workerだけを置き換え、Resident 27Bを停止しません。
+    </p>
+  </section>
+
+  <section id="routes">
+    <h2>Route契約</h2>
+    <table>
+      <caption>
+        要求意図と固定Binding
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Route</th>
+          <th scope="col">Runtime</th>
+          <th scope="col">用途</th>
+          <th scope="col">Swap</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>llm-default</code></th>
+          <td><code>qwen-general</code></td>
+          <td>通常、リアルタイム、swap待ちを許容しないtask</td>
+          <td>なし</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm-speed</code></th>
+          <td><code>qwen-worker-fast</code></td>
+          <td>Residentと分散して実行する追加27B task</td>
+          <td>worker slot内</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm-long-context</code></th>
+          <td><code>qwen-worker-quality</code></td>
+          <td>明示された256K quality task</td>
+          <td>worker slot内</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm-agent-worker</code></th>
+          <td><code>qwen-worker-agent</code></td>
+          <td>動的Agent用64K追加27B</td>
+          <td>worker slot内</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm-35b</code></th>
+          <td><code>ornith15-35b</code></td>
+          <td>公式Q5_K_Mを使う品質重視の35B task</td>
+          <td>worker slot内</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm-35b-speed</code></th>
+          <td><code>ornith15-35b-speed</code></td>
+          <td>ROCmFP4を明示する速度重視の35B task</td>
+          <td>worker slot内</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm-qwen36-35b</code></th>
+          <td><code>qwen36-35b</code></td>
+          <td>旧35Bとの比較、明示rollback</td>
+          <td>worker slot内</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm-agent-35b</code></th>
+          <td><code>ornith15-35b-agent</code></td>
+          <td>動的Agent用64K 35B</td>
+          <td>worker slot内</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      worker
+      routeはすべて<code>explicitOnly</code>です。35Bを明示しない要求は35Bを起動しません。
+      <code>allowFallback: true</code
+      >の場合だけ、workerが利用不能な要求をResidentへ戻せます。
+    </p>
+  </section>
+
+  <section id="admission">
+    <h2>Swap-aware admission</h2>
+    <ul>
+      <li>
+        同じ<code>swapGroup</code>のHOTなpeerにactive
+        Allocationがなければ、そのmemoryを回収可能として評価します。
+      </li>
+      <li>
+        active
+        Allocationがあるpeerはpreemptせず、新しいworker要求を<code>resource_exhausted</code>で拒否します。
+      </li>
+      <li>一つのAllocationから同じswap groupの二つのRuntimeを同時要求した場合は拒否します。</li>
+      <li>
+        Runtime mutationまたはlifecycle transition中のpeerがある場合も新しいgroup
+        memberを起動しません。
+      </li>
+      <li>
+        Residentと音声Runtimeのmemory floor、host reserve、live telemetryを常に先に確保します。
+      </li>
+    </ul>
+  </section>
+
+  <section id="artifact">
+    <h2>35B artifacts</h2>
+    <p>
+      <code>ornith15-35b-quality</code>はOrnith公式の<code
+        >Q5_K_M</code
+      >
+      GGUFです。 25,347,532,544 bytesで、revisionとSHA-256を固定します。stock
+      llama.cppで実行し、MTPとngramを 無効、K/V
+      cacheをともに<code>q8_0</code>としたplain
+      decodeを<code>llm-35b</code>のprimaryに します。
+    </p>
+    <p>
+      <code>ornith15-35b-speed</code>はOrnith-1.5-35B-A3Bのgfx1151専用
+      <code>Q4_0_ROCMFP4_STRIX_LEAN</code> GGUFです。19,052,439,552 bytesで、artifact
+      revisionとSHA-256を固定します。元checkpointのMTP headを内包しますが、実測でplainより遅いため
+      MTPは起動contractで無効です。<code>ngram-mod</code>も同一requestの反復で大幅な速度低下を
+      確認したため無効にし、plain decodeを採用します。V
+      cacheの<code>turbo4</code>はfull PPLが
+      208.89へ破綻したため使用せず、K/Vともに<code>q8_0</code>です。q38rocm
+      prompt cacheのsequence再利用assertを回避するため、prompt cacheとidle-slot
+      cacheも無効です。配布物とspeculative decodingの比較根拠は<a
+        href="./ornith-1.5-35b-selection.html"
+        >Ornith-1.5-35B-A3B 配布物選定</a
+      >に固定します。
+    </p>
+    <p>
+      <code>qwen36-35b-speed</code>はQwen3.6-35B-A3Bの
+      <code>UD-Q4_K_M</code> GGUFです。取得元revision、22,134,528,992
+      bytes、SHA-256を <code>deploy/gnosis/models.yaml</code>へ固定し、<code
+        >qwen36-35b-current</code
+      >
+      releaseだけが参照します。 request
+      bodyから別URL、path、quantizationを指定することはできません。
+    </p>
+  </section>
+
+  <section id="live-gate">
+    <h2>Live適用条件</h2>
+    <ol>
+      <li>固定artifactをrepository外のmodel storeへstageし、sizeとSHA-256を検証する。</li>
+      <li>worker Allocationがないことを確認してllama-swap設定を反映する。</li>
+      <li>Resident PIDとhealthを維持したまま35Bを起動し、streaming completionを確認する。</li>
+      <li>35B解放後に追加27Bを要求し、35Bが停止して27B workerがreadyになることを確認する。</li>
+      <li>Residentとworkerへ別Allocationを作り、二つの27B instanceで並行requestを完了する。</li>
+      <li>
+        startup、TTFB、total、memory peakを実測し、一般256K workerと64K Agent workerのadmission
+        estimateを個別に校正する。
+      </li>
+    </ol>
+    <p>
+      2026-08-29に常駐27Bと64K追加27Bへの同時stream task、追加27Bから64K Ornithへのswap、初回35B
+      task、11秒後のcache miss semantic probe、二回目35B task、全Connection release後のunloadをAgent
+      Connection API経由で完了しました。全試験中ResidentのPIDとhealthを 維持しました。Agent
+      workerのcgroup peakは28 GBでした。q8_0 Value cacheへの変更後はAgent 35Bを30 GB、一般256Kの
+      公式Q5 Ornithを48 GB、ROCmFP4を44 GB、Qwenを44 GBで予約します。詳細は<a
+        href="./agent-provider-connection-implementation.html"
+        >Agent Connection実装・E2E記録</a
+      >に保存します。
+    </p>
+    <aside>
+      <p>
+        Artifact未stageの<code>existing-only</code>要求は起動に失敗します。
+        <code>allow-listed</code
+        >は管理credential付きでstagingを開始できますが、19から26
+        GB級の初回downloadを含むため即時経路とは扱いません。
+      </p>
+    </aside>
+  </section>
+</article>

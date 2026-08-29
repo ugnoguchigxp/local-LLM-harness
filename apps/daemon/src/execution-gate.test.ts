@@ -47,3 +47,13 @@ test("execution gate cancels queued callers and drain does not interrupt active 
   });
   release();
 });
+
+test("semantic probes acquire immediately and never join the request queue", async () => {
+  const gate = new ExecutionGate();
+  const signal = new AbortController().signal;
+  const release = gate.tryAcquire("runtime", policy, signal);
+  expect(release).toBeFunction();
+  expect(gate.tryAcquire("runtime", policy, signal)).toBeUndefined();
+  expect(gate.snapshot("runtime")).toEqual({ active: 1, queued: 0 });
+  release!();
+});

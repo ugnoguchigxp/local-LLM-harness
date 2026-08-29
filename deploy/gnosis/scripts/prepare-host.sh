@@ -27,6 +27,8 @@ usermod -aG render,video "${operator}"
 install -d -o "${operator}" -g "${operator}" \
   /srv/ai/models /srv/ai/apps /srv/ai/cache /srv/ai/logs \
   /srv/ai/models/qwen38-worker \
+  /srv/ai/models/qwen36-35b \
+  /srv/ai/models/ornith15-35b \
   /srv/ai/models/qwen-tts \
   /srv/ai/models/.larm-staging /srv/ai/models/.larm-rollback \
   /var/lib/larm
@@ -34,7 +36,8 @@ install -d -o "${operator}" -g "${operator}" \
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow from "${lan_cidr}" to any port 22 proto tcp
+ufw allow from "${lan_cidr}" to any port 9810 proto tcp
 
 echo "Host prerequisites are prepared. Review 'ufw status' before running 'ufw enable'."
-echo "Provider ports are loopback-only; existing legacy LAN rules require reviewed convergence."
+echo "Provider ports are loopback-only; authenticated LARM Gateway port 9810 is allowed from ${lan_cidr}."
 echo "This script intentionally does not enable UFW, remove existing rules, configure ROCm/TTM, or reboot."

@@ -304,3 +304,114 @@ test("withAllocation preserves both handler and release failures", async () => {
     expect.objectContaining({ code: "release_failed" }),
   ]);
 });
+
+test("typed agent connection client creates, polls, checks, claims, renews, and releases", async () => {
+  const requests: Request[] = [];
+  const connection = {
+    id: "aconn_epoch-test_1",
+    allocationId: allocation.id,
+    bootEpoch: "epoch-test",
+    catalogRevision: "catalog-test",
+    agentProfile: "coding-default",
+    profileRevision: "1".repeat(64),
+    audience: "same-host",
+    audienceRevision: "2".repeat(64),
+    status: "ready" as const,
+    providers: [{
+      name: "llm",
+      capability: "llm.coding",
+      route: "llm-default",
+      protocol: "openai.chat-completions.v1" as const,
+      publicModel: "coding-default",
+      readiness: "ready" as const,
+      claimable: true,
+    }],
+    createdAt: "2026-08-28T00:00:00.000Z",
+    expiresAt: "2026-08-28T00:05:00.000Z",
+  };
+  const claim = {
+    id: connection.id,
+    allocationId: connection.allocationId,
+    status: "ready",
+    audience: "same-host",
+    providers: [{
+      name: "llm",
+      capability: "llm.coding",
+      apiStyle: "openai",
+      protocol: "openai.chat-completions.v1",
+      scheme: "http",
+      host: "127.0.0.1",
+      port: 9810,
+      baseUrl: "http://127.0.0.1:9810/v1",
+      model: "coding-default",
+      health: {
+        url: `http://127.0.0.1:9810/v1/agent-connections/${connection.id}/providers/llm/health`,
+        kind: "semantic-inference",
+        maxAgeMs: 10_000,
+      },
+      credential: { type: "bearer", token: "larm_conn_v1.payload.signature", expiresAt: connection.expiresAt },
+      configuration: {
+        kind: "openai-provider-v1",
+        fields: { baseURL: "http://127.0.0.1:9810/v1", model: "coding-default" },
+        secretFields: { apiKey: "credential.token" },
+      },
+    }],
+    expiresAt: connection.expiresAt,
+  };
+  let getCount = 0;
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "api",
+    random: () => "agent-fixed",
+    fetch: async (input, init) => {
+      const request = new Request(input.toString(), init);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (request.method === "DELETE") {
+        return new Response(null, { status: 204, headers: { "x-larm-boot-epoch": "epoch-test" } });
+      }
+      if (path.endsWith("/claim")) return json(claim);
+      if (path.endsWith("/health")) {
+        return json({
+          id: connection.id,
+          status: "ready",
+          ready: false,
+          acceptingRequests: false,
+          checkedAt: "2026-08-28T00:00:01.000Z",
+          providers: [{
+            name: "llm",
+            capability: "llm.coding",
+            ready: false,
+            acceptingRequests: false,
+            reason: "provider_busy",
+          }],
+        }, "epoch-test", 503);
+      }
+      if (request.method === "GET") {
+        getCount += 1;
+        return json({ ...connection, status: "ready" });
+      }
+      if (path.endsWith("/renew")) return json(connection);
+      return json({ ...connection, status: "pending", providers: [{
+        ...connection.providers[0], readiness: "pending", claimable: false,
+      }] }, "epoch-test", 202);
+    },
+  });
+
+  const created = await client.createAgentConnection({
+    agentProfile: "coding-default",
+    audience: "same-host",
+  });
+  expect(created.status).toBe("pending");
+  expect(requests[0]?.headers.get("idempotency-key")).toBe("client_agent-fixed");
+  const ready = await client.waitForAgentConnection(created, { pollIntervalMs: 0 });
+  expect(ready.status).toBe("ready");
+  expect(getCount).toBe(1);
+  expect((await client.getAgentConnectionHealth(ready.id)).ready).toBeFalse();
+  expect((await client.claimAgentConnection(ready.id)).providers[0]?.model).toBe("coding-default");
+  await client.renewAgentConnection(ready.id, 600, { idempotencyKey: "renew-agent" });
+  expect(requests.at(-1)?.headers.get("idempotency-key")).toBe("renew-agent");
+  await client.releaseAgentConnection(ready.id);
+  expect(requests.at(-1)?.method).toBe("DELETE");
+  expect(requests.every((request) => request.headers.get("authorization") === "Bearer api")).toBeTrue();
+});

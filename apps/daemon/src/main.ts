@@ -181,6 +181,13 @@ const app = createApp({
   executionGate,
   idempotencyTtlMs: config.idempotencyTtlMs,
   idempotencyLimit: config.idempotencyLimit,
+  agentConnectionCatalog: catalogGeneration.agentConnections,
+  getAgentConnectionCatalog: () => catalogManager.generation.agentConnections,
+  connectionSigningKey: config.connectionSigningKey,
+  connectionReadyTimeoutMs: config.connectionReadyTimeoutMs,
+  providerProbeTimeoutMs: config.providerProbeTimeoutMs,
+  connectionPollIntervalMs: config.pollIntervalMs,
+  connectionHistoryLimit: config.historyLimit,
 });
 
 let ticking = false;

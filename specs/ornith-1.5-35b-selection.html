@@ -1,0 +1,245 @@
+<article lang="ja">
+  <h1>Ornith-1.5-35B-A3B 配布物選定</h1>
+
+  <p>
+    Ryzen AI MAX+ 395 / Radeon 8060S（gfx1151）でOrnith-1.5-35B-A3Bをon-demand
+    workerとして運用するため、checkpoint、量子化、MTP、ngram、配布元の差を比較し、production
+    candidateを固定します。
+  </p>
+
+  <dl>
+    <dt>決定日</dt>
+    <dd><time>2026-08-29</time></dd>
+    <dt>採用artifact</dt>
+    <dd><code>ornith-ai/Ornith-1.5-35B-A3B-GGUF</code>の公式Q5_K_M</dd>
+    <dt>量子化</dt>
+    <dd><code>Q5_K_M</code>、25,347,532,544 bytes</dd>
+    <dt>実行方式</dt>
+    <dd>
+      stock llama.cppのVulkan backend、K/V cache
+      <code>q8_0</code
+      >、MTP無効、<code>ngram-mod</code>無効のplain decode
+    </dd>
+    <dt>Resident default</dt>
+    <dd>変更なし。Qwen 3.8 27Bを通常・リアルタイム経路に維持</dd>
+  </dl>
+
+  <section id="model-quality">
+    <h2>モデル品質の根拠</h2>
+    <p>
+      Ornith公式の5-run評価では、同じ35B-A3B classのQwen3.6-35B-A3Bに対し、Terminal-Bench
+      2.1は67.8対52.5、SWE-bench Verifiedは79.0対73.4、SWE-bench Proは59.6対49.5、
+      MCP-Atlasは70.2対62.8でした。測定harnessとsampling条件はbenchmarkごとに異なるため、数値を
+      host固有SLOとしては扱いませんが、35B routeの第一候補をOrnithへ切り替える根拠にします。
+    </p>
+  </section>
+
+  <section id="distributions">
+    <h2>配布物比較</h2>
+    <table>
+      <caption>
+        2026-08-29時点で検討した主要配布物
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">配布物</th>
+          <th scope="col">形式・規模</th>
+          <th scope="col">このhostでの評価</th>
+          <th scope="col">結論</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Ornith公式 BF16 / FP8</th>
+          <td>BF16約70 GB、FP8 safetensors</td>
+          <td>256K KVとResidentを併用するworkerには重く、llama-swapの既存GGUF経路から外れる</td>
+          <td>不採用</td>
+        </tr>
+        <tr>
+          <th scope="row">Ornith公式 GGUF</th>
+          <td>Q4_K_M 21.71 GB、Q5_K_M 25.35 GB、Q6_K 29.21 GB、Q8_0 37.80 GB</td>
+          <td>Q5_K_MはPPL 5.7522、tg128 65.17 tok/sで品質と速度のbalanceが最良</td>
+          <td>品質primaryに採用</td>
+        </tr>
+        <tr>
+          <th scope="row">bartowski imatrix GGUF</th>
+          <td>IQ2からQ8まで、IQ4_XS 19.28 GB、Q4_K_M 21.86 GB</td>
+          <td>chat templateに合わせたimatrixと広い選択肢。専用ROCmFP4の変換元imatrixにも採用</td>
+          <td>品質比較の基準</td>
+        </tr>
+        <tr>
+          <th scope="row">AtomicChat AD-Q5_K-Q4_K</th>
+          <td>22.14 GB、expert down Q5_K、gate/up Q4_Kのmodel固有layout</td>
+          <td>PPL 5.7553で公式Q5と同等だが、tg128は57.82 tok/sで公式Q5より12.7%遅い</td>
+          <td>検証済み・不採用</td>
+        </tr>
+        <tr>
+          <th scope="row">公式 NVFP4 / MLX</th>
+          <td>NVIDIA Blackwell向けNVFP4、Apple Silicon向けMLX</td>
+          <td>Radeon 8060Sではnative execution pathがない</td>
+          <td>不採用</td>
+        </tr>
+        <tr>
+          <th scope="row">ROCmFP4 STRIX_LEAN</th>
+          <td>19.05 GB、約4.29 BPW、gfx1151専用</td>
+          <td>
+            同型hostの公開測定でtg128 82.45 tok/s、pp512 1161 tok/s。Qwen3.6同quantとdecode差1%以内
+          </td>
+          <td>明示speed routeに採用</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        STRIX_LEANはstock llama.cppで読めないcustom tensor typeです。source lock済み
+        <code>q38rocm</code> engineを起動contractに含め、generic
+        llama.cppへ暗黙fallbackしません。
+      </p>
+    </aside>
+  </section>
+
+  <section id="speculation">
+    <h2>MTPとngram</h2>
+    <table>
+      <caption>
+        speculative decoding方式ごとの配布依存性とproduction既定
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">方式</th>
+          <th scope="col">配布依存</th>
+          <th scope="col">観測</th>
+          <th scope="col">既定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">元checkpointのMTP</th>
+          <td>一層のNextN headをGGUF内に含む</td>
+          <td>
+            同型hostでplain 78.0 tok/s、MTP n=2はprose 59.1 tok/s。二token目のacceptance低下が支配的
+          </td>
+          <td>無効</td>
+        </tr>
+        <tr>
+          <th scope="row">第三者retrained MTP</th>
+          <td>元headだけを再学習した複数の派生配布がある</td>
+          <td>
+            acceptance改善報告はあるが、変換lineage、量子化、engineが分散し、gfx1151の再現測定がない
+          </td>
+          <td>production対象外</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>ngram-mod</code></th>
+          <td>weightや配布元に依存しないllama.cpp runtime機能</td>
+          <td>
+            約16 MBの共有hash pool。gnosisの同一deterministic request反復で72.53から8.87 tok/sへ低下
+          </td>
+          <td>無効</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      ngramはdraft tokenをtarget modelで検証するため出力品質を変えませんが、このhostとengineの
+      組合せでは反復時のlatencyが許容できません。将来のengine更新後に再測定するまでproduction
+      contractへ含めません。品質primaryのprovider config revisionは
+      <code>llama-swap-ornith15-35b-official-q5-plain-v2</code>、速度版は
+      <code>llama-swap-ornith15-35b-rocmfp4-q8kv-plain-v2</code>です。
+    </p>
+    <p>
+      後続のAgent Connection反復E2Eで、q38rocm prompt cacheが以前のsequenceを再利用する際の
+      sequence除去assertを再現しました。ROCmFP4速度版と64K Agent 35Bではprompt cache、idle-slot
+      cache、context checkpoint、RAM cacheを無効化します。変更後は成功cache失効後のsemantic
+      probeと二回目taskが同じprocessで成功しました。
+    </p>
+  </section>
+
+  <section id="host-measurements">
+    <h2>gnosis実測</h2>
+    <table>
+      <caption>
+        gfx1151単一GPU、plain decode、K/V cache q8_0の比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">pp512</th>
+          <th scope="col">tg128</th>
+          <th scope="col">PPL</th>
+          <th scope="col">条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Ornith ROCmFP4</th>
+          <td>1020.02 tok/s</td>
+          <td>69.62 tok/s</td>
+          <td>5.9547</td>
+          <td>q38rocm build 244、Vulkan、3 runs</td>
+        </tr>
+        <tr>
+          <th scope="row">AtomicChat AD-Q5_K-Q4_K</th>
+          <td>989.68 tok/s</td>
+          <td>57.82 tok/s</td>
+          <td>5.7553</td>
+          <td>llama.cpp build 10655、Vulkan、3 runs</td>
+        </tr>
+        <tr>
+          <th scope="row">公式Q5_K_M</th>
+          <td>941.10 tok/s</td>
+          <td>65.17 tok/s</td>
+          <td>5.7522</td>
+          <td>llama.cpp build 10655、Vulkan、3 runs</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      PPLはAtomicChat公開<code>eval_neutral</code>の87 chunk、context
+      4096で測りました。公式Q5は
+      AtomicChatと同等品質でdecodeが12.7%速く、ROCmFP4よりdecodeは6.4%遅い一方、PPLは3.4%低いため
+      品質primaryに採用します。ROCmFP4は明示speed routeに残します。ROCmFP4のValue cacheを
+      <code>turbo4</code
+      >にするとPPLが208.8927へ破綻したため、productionはK/Vともに
+      <code>q8_0</code>です。256K serverでも
+      <code>ngram-mod</code>有効時の同一256-token requestは1回目72.53
+      tok/s、2回目8.87 tok/sとなり、shared poolの再利用時に退行しました。plain
+      serverの同一反復は72.81、68.35 tok/sでした。固定SHA-256のartifactでQwen3.6からOrnithへの
+      swap、exact response、unloadを完了し、全工程でResident PID 471452とhealthを維持しました。
+    </p>
+  </section>
+
+  <section id="contract">
+    <h2>運用contract</h2>
+    <ul>
+      <li>
+        <code>llm-35b</code
+        >は公式Q5_K_Mの<code>ornith15-35b</code>をprimaryにする。
+      </li>
+      <li><code>llm-35b-speed</code>でROCmFP4を明示選択できる。</li>
+      <li>AtomicChat版はartifact検証と比較測定を完了したが、production catalogへ採用しない。</li>
+      <li><code>qwen36-35b</code>は同じswap groupのfallbackとして保持する。</li>
+      <li><code>llm-qwen36-35b</code>で旧modelを明示選択できる。</li>
+      <li>Resident Qwen 3.8 27Bは停止・swap・default変更の対象にしない。</li>
+      <li>
+        model、revision、bytes、SHA-256、engine、sampling、speculation方式をrelease
+        catalogで固定する。
+      </li>
+    </ul>
+  </section>
+
+  <section id="sources">
+    <h2>一次情報</h2>
+    <ul>
+      <li><code>https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B</code></li>
+      <li><code>https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF</code></li>
+      <li><code>https://huggingface.co/bartowski/Ornith-1.5-35B-A3B-GGUF</code></li>
+      <li><code>https://huggingface.co/AtomicChat/Ornith-1.5-35B-A3B-GGUF</code></li>
+      <li>
+        <code>https://huggingface.co/datasets/AtomicChat/Ornith-1.5-35B-A3B-GGUF-metrics</code>
+      </li>
+      <li><code>https://huggingface.co/datasets/AtomicChat/calib-corpora</code></li>
+      <li><code>https://huggingface.co/pugant/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN</code></li>
+      <li><code>https://github.com/ggml-org/llama.cpp/blob/master/docs/speculative.md</code></li>
+    </ul>
+  </section>
+</article>

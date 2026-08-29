@@ -25,3 +25,27 @@ await larm.withAllocation({
 音声を含む完全な例は[`../../examples/voice-client.ts`](../../examples/voice-client.ts)を参照してください。
 API tokenとmanagement tokenは別設定で、通常requestへmanagement tokenを送信しません。daemonのboot
 epochが変わった場合は自動retryせず`LarmEpochChangedError`を返し、呼出側へ再Allocationを要求します。
+
+Agent向けにはProfile一覧、Connection作成・poll、semantic health、claim、renew、releaseを型付きで
+提供します。claimされた短期tokenはLARM clientの長期control tokenと混ぜず、返された
+`baseUrl`と`model`へそのまま設定します。
+
+```ts
+const larm = new LarmClient({
+  baseUrl: "http://127.0.0.1:9810",
+  apiToken: process.env.LARM_API_TOKEN,
+});
+const created = await larm.createAgentConnection({
+  agentProfile: "deep-reasoning-35b",
+  audience: "saaa-desktop",
+});
+const ready = await larm.waitForAgentConnection(created);
+
+try {
+  const claim = await larm.claimAgentConnection(ready.id);
+  const llm = claim.providers.find((provider) => provider.name === "llm");
+  // OpenAI clientへ llm.baseUrl、llm.model、llm.credential.token を設定する。
+} finally {
+  await larm.releaseAgentConnection(ready.id);
+}
+```

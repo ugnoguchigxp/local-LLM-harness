@@ -31,6 +31,31 @@
           <td>現行正本</td>
         </tr>
         <tr>
+          <th scope="row">
+            <a href="./agent-provider-connection-api.html">Agent Provider Connection API実装仕様</a>
+          </th>
+          <td>Agent profile要求からProvider設定、短期credential、semantic readinessを返すAPI</td>
+          <td>daemon、OpenAPI、client実装・gnosis実機E2E完了</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./agent-provider-connection-implementation.html"
+              >Agent Connection実装・E2E記録</a
+            >
+          </th>
+          <td>64K Agent worker、SAAA LAN Audience、認証、semantic readinessの検証証跡</td>
+          <td>2026-08-29完了記録</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./on-demand-llm-worker-pool.html">On-demand LLM Worker Pool契約</a>
+          </th>
+          <td>Resident 27B、追加27B、35Bのroute、swap、admission、live gate</td>
+          <td>
+            Repository実装、Agent Connection経由の並列・swap・反復Ready acceptance済み。SLO gate前
+          </td>
+        </tr>
+        <tr>
           <th scope="row"><a href="./implementation-plan.html">初期実装計画・完了記録</a></th>
           <td>Milestone 0から7の計画とコード実装結果</td>
           <td>履歴。0から6のコード完了、Milestone 7の35Bは任意工程へ移管</td>
@@ -49,7 +74,10 @@
             <a href="./production-completion-plan.html">Production Completion 実装計画</a>
           </th>
           <td>残るnetwork境界、実機導入、commissioning、SLO、Ambient canaryの完了計画</td>
-          <td>現行計画。Milestone 22・25のrepository実装済み、live gateは未適用、35B評価は任意</td>
+          <td>
+            現行計画。Milestone 22・25をrepository実装済み。35B workerの基本live acceptance済み、
+            production gateは未適用
+          </td>
         </tr>
         <tr>
           <th scope="row">

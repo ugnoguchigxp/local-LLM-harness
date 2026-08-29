@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import {
   loadArtifactManifest,
+  loadAgentConnectionCatalogForRegistry,
   loadRegistry,
   loadRuntimeReleaseCatalog,
   type ArtifactDefinition,
+  type AgentConnectionCatalog,
   type CatalogReloadPlan,
   type Registry,
   type RuntimeReleaseDefinition,
@@ -29,6 +31,7 @@ export type CatalogGeneration = {
   registry: Registry;
   artifacts: ArtifactDefinition[];
   releases: RuntimeReleaseDefinition[];
+  agentConnections?: AgentConnectionCatalog;
 };
 
 export type CatalogPaths = {
@@ -57,6 +60,7 @@ export function computeCatalogGenerationRevision(input: {
   registry: Registry;
   artifacts: ArtifactDefinition[];
   releases: RuntimeReleaseDefinition[];
+  agentConnections?: AgentConnectionCatalog;
 }): string {
   return createHash("sha256").update(JSON.stringify({
     nodes: input.registry.nodes,
@@ -65,6 +69,7 @@ export function computeCatalogGenerationRevision(input: {
     routes: input.registry.routes,
     artifacts: input.artifacts,
     releases: input.releases,
+    agentConnections: input.agentConnections ?? null,
   })).digest("hex");
 }
 
@@ -72,11 +77,13 @@ export function loadCatalogGeneration(paths: CatalogPaths): CatalogGeneration {
   const registry = loadRegistry(paths.configDir);
   const artifacts = loadArtifactManifest(paths.artifactManifestPath);
   const releases = loadRuntimeReleaseCatalog(paths.releaseCatalogPath, registry, artifacts);
+  const agentConnections = loadAgentConnectionCatalogForRegistry(paths.configDir, registry);
   return {
     registry,
     artifacts,
     releases,
-    revision: computeCatalogGenerationRevision({ registry, artifacts, releases }),
+    agentConnections,
+    revision: computeCatalogGenerationRevision({ registry, artifacts, releases, agentConnections }),
   };
 }
 

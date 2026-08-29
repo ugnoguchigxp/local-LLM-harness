@@ -1,9 +1,17 @@
-import type { ClusterState, Registry, RuntimeProtocol } from "@larm/core";
+import type {
+  AgentConnectionCatalog,
+  ClusterState,
+  Registry,
+  RuntimeProtocol,
+} from "@larm/core";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   allocationRenewRequestSchema,
   allocationRequestSchema,
   allocationResolveRequestSchema,
+  agentConnectionClaimRequestSchema,
+  agentConnectionRenewRequestSchema,
+  agentConnectionRequestSchema,
   catalogReloadRequestSchema,
   createOpenApiDocument,
   prepareRequestSchema,
@@ -29,6 +37,13 @@ import {
   RuntimeReleaseManagerError,
 } from "./runtime-release-manager";
 import { CatalogManager, CatalogManagerError } from "./catalog-manager";
+import {
+  AgentConnectionController,
+  agentPrincipal,
+  type VerifiedProviderToken,
+} from "./agent-connection-controller";
+import { ConnectionTokenCodec, ConnectionTokenError } from "./connection-token";
+import { SemanticReadiness } from "./semantic-readiness";
 
 export type FetchLike = (
   input: string | URL | Request,
@@ -61,6 +76,13 @@ export type AppDeps = {
   executionGate?: ExecutionGate;
   idempotencyTtlMs?: number;
   idempotencyLimit?: number;
+  agentConnectionCatalog?: AgentConnectionCatalog;
+  getAgentConnectionCatalog?: () => AgentConnectionCatalog | undefined;
+  connectionSigningKey?: Uint8Array;
+  connectionReadyTimeoutMs?: number;
+  providerProbeTimeoutMs?: number;
+  connectionPollIntervalMs?: number;
+  connectionHistoryLimit?: number;
 };
 
 function errorBody(code: string, message: string) {
@@ -73,12 +95,25 @@ function secretMatches(actual: string | undefined, expected: string): boolean {
   return actual !== undefined && timingSafeEqual(actualDigest, expectedDigest);
 }
 
+function acceptsProviderBearer(method: string, path: string): boolean {
+  if (
+    method === "POST"
+    && new Set([
+      "/v1/chat/completions",
+      "/v1/audio/transcriptions",
+      "/v1/audio/speech",
+    ]).has(path)
+  ) return true;
+  return method === "GET"
+    && /^\/v1\/agent-connections\/[^/]+\/providers\/[^/]+\/health$/.test(path);
+}
+
 export function publicRuntime(runtime: Registry["runtimes"][number]) {
   return {
     id: runtime.id,
     capability: runtime.capability,
     protocol: runtime.protocol,
-    policy: runtime.policy,
+    policy: { class: runtime.policy.class },
   };
 }
 
@@ -167,6 +202,32 @@ export function createApp(deps: AppDeps) {
       deps.onEvent?.(event);
     },
   });
+  const currentAgentCatalog = () =>
+    deps.getAgentConnectionCatalog?.() ?? deps.agentConnectionCatalog;
+  const semanticReadiness = new SemanticReadiness({
+    control: deps.control,
+    getRegistry: currentRegistry,
+    executionGate,
+    timeoutMs: deps.providerProbeTimeoutMs ?? 15_000,
+    fetchImpl: deps.gatewayFetch,
+    now: deps.now,
+  });
+  const agentConnections = deps.connectionSigningKey
+    ? new AgentConnectionController({
+      control: deps.control,
+      getCatalog: currentAgentCatalog,
+      getCatalogRevision: () => deps.getConfigRevision?.() ?? identity.configRevision,
+      semantic: semanticReadiness,
+      tokenCodec: new ConnectionTokenCodec(deps.connectionSigningKey, deps.now),
+      readyTimeoutMs: deps.connectionReadyTimeoutMs ?? 120_000,
+      pollIntervalMs: deps.connectionPollIntervalMs ?? 500,
+      idempotencyTtlMs: deps.idempotencyTtlMs ?? 300_000,
+      idempotencyLimit: deps.idempotencyLimit ?? 1_000,
+      historyLimit: deps.connectionHistoryLimit ?? 1_000,
+      now: deps.now,
+      random: deps.random,
+    })
+    : undefined;
   type AllocationApiResult = {
     status: 200 | 202 | 400 | 403 | 404 | 409 | 503;
     body: unknown;
@@ -200,12 +261,38 @@ export function createApp(deps: AppDeps) {
     const publicPath = c.req.path === "/health" || c.req.path === "/ready";
     if (deps.apiToken && !publicPath) {
       const expected = `Bearer ${deps.apiToken}`;
-      if (!secretMatches(c.req.header("authorization"), expected)) {
+      const authorization = c.req.header("authorization");
+      const providerBearer = authorization?.startsWith("Bearer larm_conn_v1.") === true
+        && acceptsProviderBearer(c.req.method, c.req.path);
+      if (!secretMatches(authorization, expected) && !providerBearer) {
         return c.json(errorBody("unauthorized", "valid bearer token required"), 401);
       }
     }
     await next();
   });
+
+  const agentFeature = (c: Context): AgentConnectionController | Response => {
+    if (!deps.apiToken) {
+      return c.json(errorBody(
+        "connection_auth_not_configured",
+        "LARM_API_TOKEN is required for agent connection APIs",
+      ), 503);
+    }
+    if (!agentConnections) {
+      return c.json(errorBody(
+        "connection_credentials_unavailable",
+        "LARM_CONNECTION_SIGNING_KEY is required for agent connection APIs",
+      ), 503);
+    }
+    if (!currentAgentCatalog()) {
+      return c.json(errorBody(
+        "agent_connections_not_configured",
+        "agent connection catalog is unavailable",
+      ), 503);
+    }
+    return agentConnections;
+  };
+  const principal = () => agentPrincipal(deps.apiToken!);
 
   const requireManagement: MiddlewareHandler = async (c, next) => {
     if (!deps.managementToken) {
@@ -240,14 +327,83 @@ export function createApp(deps: AppDeps) {
     if (deps.control.isDraining()) {
       return c.json(errorBody("draining", "control plane is draining"), 503);
     }
-    const allocationId = c.req.header("x-larm-allocation-id");
+    const authorization = c.req.header("authorization");
+    const providerToken = authorization?.startsWith("Bearer larm_conn_v1.")
+      ? authorization.slice(7)
+      : undefined;
+    let scoped: VerifiedProviderToken | undefined;
+    if (providerToken) {
+      const feature = agentFeature(c);
+      if (feature instanceof Response) return feature;
+      try {
+        scoped = feature.verifyProviderToken(providerToken);
+      } catch (error) {
+        if (error instanceof ConnectionTokenError) {
+          return c.json(errorBody("unauthorized", error.message), 401);
+        }
+        throw error;
+      }
+      if (scoped.provider.protocol !== options.protocol) {
+        return c.json(errorBody("connection_forbidden", "provider token is not valid for this endpoint"), 403);
+      }
+      const declaredAllocation = c.req.header("x-larm-allocation-id");
+      if (declaredAllocation !== undefined && declaredAllocation !== scoped.record.allocationId) {
+        return c.json(errorBody("connection_forbidden", "allocation header does not match provider token"), 403);
+      }
+      const declaredCapability = c.req.header("x-larm-capability");
+      if (declaredCapability !== undefined && declaredCapability !== scoped.provider.capability) {
+        return c.json(errorBody("connection_forbidden", "capability header does not match provider token"), 403);
+      }
+      try {
+        const clone = c.req.raw.clone();
+        const bytes = await readBodyLimited(clone as unknown as Request, options.maxBodyBytes);
+        let modelValues: unknown[];
+        if (options.protocol === "openai.audio-transcriptions.v1") {
+          const parsedRequest = new Response(bytes, {
+            headers: {
+              "content-type": clone.headers.get("content-type") ?? "",
+            },
+          });
+          const form = await parsedRequest.formData();
+          modelValues = form.getAll("model");
+        } else {
+          let value: unknown;
+          try {
+            value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+          } catch {
+            return c.json(errorBody("bad_request", "request body must be valid UTF-8 JSON"), 400);
+          }
+          modelValues = typeof value === "object" && value !== null && !Array.isArray(value)
+            ? [(value as Record<string, unknown>).model]
+            : [];
+        }
+        if (
+          modelValues.length !== 1
+          || typeof modelValues[0] !== "string"
+          || modelValues[0] !== scoped.provider.publicModel
+        ) {
+          return c.json(errorBody(
+            "model_mismatch",
+            `model must equal ${scoped.provider.publicModel}`,
+          ), 400);
+        }
+      } catch (error) {
+        if (error instanceof RequestBodyError) {
+          return c.json(errorBody(error.code, error.message), error.status);
+        }
+        return c.json(errorBody("bad_request", "request body could not be validated"), 400);
+      }
+    }
+    const allocationId = scoped?.record.allocationId ?? c.req.header("x-larm-allocation-id");
     if (allocationId === undefined) {
       return c.json(errorBody("allocation_required", "x-larm-allocation-id is required"), 400);
     }
     if (!/^alloc_[a-zA-Z0-9._-]{1,186}$/.test(allocationId)) {
       return c.json(errorBody("bad_request", "x-larm-allocation-id is invalid"), 400);
     }
-    const requestedCapability = options.capability ?? c.req.header("x-larm-capability");
+    const requestedCapability = scoped?.provider.capability
+      ?? options.capability
+      ?? c.req.header("x-larm-capability");
     if (
       requestedCapability !== undefined
       && !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(requestedCapability)
@@ -300,6 +456,31 @@ export function createApp(deps: AppDeps) {
       random: deps.random,
       onEvent: deps.onEvent,
       revalidate: () => {
+        if (providerToken && agentConnections) {
+          try {
+            const latest = agentConnections.verifyProviderToken(providerToken);
+            if (
+              latest.record.allocationId !== allocationId
+              || latest.provider.capability !== selected.binding.capability
+              || latest.provider.protocol !== options.protocol
+            ) {
+              return {
+                ok: false as const,
+                status: 403,
+                body: errorBody("connection_forbidden", "provider token scope changed"),
+              };
+            }
+          } catch (error) {
+            return {
+              ok: false as const,
+              status: 401,
+              body: errorBody(
+                "unauthorized",
+                "provider bearer token is no longer valid",
+              ),
+            };
+          }
+        }
         const current = deps.control.resolveAllocation(allocationId, selected.binding.capability);
         if (current.status !== 200 || !("endpoint" in current.body)) {
           return { ok: false, status: current.status, body: current.body };
@@ -335,6 +516,125 @@ export function createApp(deps: AppDeps) {
   app.get("/metrics", (c) => c.text(deps.metrics?.render() ?? ""));
 
   app.get("/openapi.json", (c) => c.json(createOpenApiDocument(identity.version)));
+
+  const agentResult = (c: Context, result: {
+    status: number;
+    body: unknown;
+    replay?: boolean;
+    location?: string;
+  }): Response => {
+    if (result.replay) c.header("x-larm-idempotent-replay", "true");
+    if (result.location) c.header("location", result.location);
+    if (result.status === 202 || result.status === 503) c.header("retry-after", "1");
+    if (result.status === 204) return c.body(null, 204);
+    return c.json(result.body, result.status as 200 | 202 | 400 | 401 | 403 | 404 | 409 | 410 | 429 | 503);
+  };
+  const idempotencyKey = (c: Context): string | Response => {
+    const value = c.req.header("idempotency-key");
+    if (!value || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)) {
+      return c.json(errorBody("invalid_request", "a valid Idempotency-Key is required"), 400);
+    }
+    return value;
+  };
+
+  app.get("/v1/agent-profiles", (c) => {
+    const feature = agentFeature(c);
+    if (feature instanceof Response) return feature;
+    return agentResult(c, feature.listProfiles());
+  });
+
+  app.post("/v1/agent-connections", async (c) => {
+    const feature = agentFeature(c);
+    if (feature instanceof Response) return feature;
+    const key = idempotencyKey(c);
+    if (key instanceof Response) return key;
+    const parsed = agentConnectionRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
+    if (!parsed.success) return c.json(errorBody("invalid_request", "invalid agent connection request"), 400);
+    if (parsed.data.deploymentPolicy === "allow-listed") {
+      if (!deps.managementToken) {
+        return c.json(errorBody("management_not_configured", "allow-listed deployment is disabled"), 503);
+      }
+      if (!secretMatches(c.req.header("x-larm-management-token"), deps.managementToken)) {
+        return c.json(errorBody("forbidden", "valid management token required for deployment"), 403);
+      }
+    }
+    return agentResult(c, await feature.create(parsed.data, principal(), key));
+  });
+
+  app.get("/v1/agent-connections/:id", (c) => {
+    const feature = agentFeature(c);
+    if (feature instanceof Response) return feature;
+    return agentResult(c, feature.get(c.req.param("id"), principal()));
+  });
+
+  app.get("/v1/agent-connections/:id/health", async (c) => {
+    const feature = agentFeature(c);
+    if (feature instanceof Response) return feature;
+    c.header("cache-control", "no-store");
+    return agentResult(c, await feature.health(c.req.param("id"), principal()));
+  });
+
+  app.get("/v1/agent-connections/:id/providers/:name/health", async (c) => {
+    const feature = agentFeature(c);
+    if (feature instanceof Response) return feature;
+    c.header("cache-control", "no-store");
+    const authorization = c.req.header("authorization");
+    if (secretMatches(authorization, `Bearer ${deps.apiToken}`)) {
+      return agentResult(c, await feature.providerHealth(
+        c.req.param("id"),
+        c.req.param("name"),
+        principal(),
+      ));
+    }
+    const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
+    try {
+      const verified = feature.verifyProviderToken(token);
+      if (verified.record.id !== c.req.param("id") || verified.provider.name !== c.req.param("name")) {
+        return c.json(errorBody(
+          "connection_forbidden",
+          "provider token scope does not match this health endpoint",
+        ), 403);
+      }
+      return agentResult(c, await feature.providerHealth(c.req.param("id"), c.req.param("name")));
+    } catch (error) {
+      if (error instanceof ConnectionTokenError) {
+        return c.json(errorBody("unauthorized", error.message), 401);
+      }
+      throw error;
+    }
+  });
+
+  app.post("/v1/agent-connections/:id/claim", async (c) => {
+    const feature = agentFeature(c);
+    if (feature instanceof Response) return feature;
+    if (c.req.header("idempotency-key") !== undefined) {
+      return c.json(errorBody("invalid_request", "claim does not accept Idempotency-Key"), 400);
+    }
+    const parsed = agentConnectionClaimRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
+    if (!parsed.success) return c.json(errorBody("invalid_request", "invalid claim request"), 400);
+    return agentResult(c, await feature.claim(c.req.param("id"), principal()));
+  });
+
+  app.post("/v1/agent-connections/:id/renew", async (c) => {
+    const feature = agentFeature(c);
+    if (feature instanceof Response) return feature;
+    const key = idempotencyKey(c);
+    if (key instanceof Response) return key;
+    const parsed = agentConnectionRenewRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
+    if (!parsed.success) return c.json(errorBody("invalid_request", "invalid renewal request"), 400);
+    return agentResult(c, await feature.renew(
+      c.req.param("id"),
+      parsed.data.ttlSeconds,
+      principal(),
+      key,
+    ));
+  });
+
+  app.delete("/v1/agent-connections/:id", async (c) => {
+    const feature = agentFeature(c);
+    if (feature instanceof Response) return feature;
+    return agentResult(c, await feature.release(c.req.param("id"), principal()));
+  });
 
   app.get("/runtimes", (c) => {
     if (deps.catalogManager?.isReloading) {

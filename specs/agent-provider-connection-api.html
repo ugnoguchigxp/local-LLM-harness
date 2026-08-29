@@ -1,0 +1,1289 @@
+<article lang="ja">
+  <h1>Agent Provider Connection API 実装仕様</h1>
+
+  <p>
+    必要なAgent種別をAPIで要求し、LARMがRuntimeをAllocationした後、そのAgentが動的に設定できる
+    LLM・STT・TTS Provider接続情報を返す<code>v1</code>
+    contractを定義します。接続情報は Allocation固定のLARM
+    Gatewayを指し、llama-swapの内部portや個別Runtime endpointは通常の Agentへ公開しません。
+  </p>
+
+  <dl>
+    <dt>設計日</dt>
+    <dd><time>2026-08-29</time></dd>
+    <dt>状態</dt>
+    <dd>Repository実装・gnosis実機E2E完了</dd>
+    <dt>Contract version</dt>
+    <dd><code>agent-connection.v1</code></dd>
+    <dt>基礎contract</dt>
+    <dd>既存Allocation、Route、Gateway、boot epoch、TTL、releaseを再利用</dd>
+    <dt>実装証跡</dt>
+    <dd>
+      <a href="./agent-provider-connection-implementation.html">Agent Connection実装・E2E記録</a>
+    </dd>
+  </dl>
+
+  <aside>
+    <p>
+      このcontractはdaemon、OpenAPI、TypeScript clientへ実装済みです。公開API全体の正本は<a
+        href="./api.html"
+        >API契約</a
+      >、検証結果は実装証跡を参照してください。
+    </p>
+  </aside>
+
+  <section id="scope">
+    <h2>目的と責務境界</h2>
+    <ul>
+      <li>
+        上位Orchestratorは自然言語要求を登録済み<code>agentProfile</code>へ変換し、LARMへ要求する。
+      </li>
+      <li>
+        LARMはProfileを既存RouteとAllocationへ変換し、固定Bindingが実推論可能になった後に Provider
+        descriptorを返す。
+      </li>
+      <li>AgentはdescriptorをSDKまたは一時process設定へ適用し、LARM Gatewayを通じて推論する。</li>
+      <li>
+        Agent processの起動、sandbox、task分配、設定fileの永続化、自然言語からProfileを選ぶ推論は
+        LARMの責務外とする。
+      </li>
+    </ul>
+    <p>
+      Connectionは既存Allocationのfacadeであり、新しいRuntime leaseを追加しません。一つの
+      Connectionは一つのAllocationだけを所有し、既存Allocationの再利用や複数Connection間での共有は
+      行いません。同じResident Runtimeへ複数AllocationがBindingされることは既存capacity contractの
+      範囲で許可します。
+    </p>
+  </section>
+
+  <section id="decisions">
+    <h2>固定した設計判断</h2>
+    <ul>
+      <li>
+        requestは自由記述のmodel名、URL、host、port、Runtime IDではなく、version管理された
+        <code>agentProfile</code
+        >と<code>audience</code>だけを選ぶ。
+      </li>
+      <li>descriptorはadvertised LARM Gatewayだけを返し、backend endpointを返さない。</li>
+      <li>
+        ProviderごとにAllocation、capability、audienceへ限定した短期credentialを発行する。
+        <code>LARM_API_TOKEN</code
+        >と<code>LARM_MANAGEMENT_TOKEN</code>は複製しない。
+      </li>
+      <li>
+        Connection作成principal用のaggregate healthと、Agent用tokenで呼べるProvider単位healthを
+        分離する。
+      </li>
+      <li>
+        LLM
+        Readyは固定Binding上の<code>max_tokens: 1</code>の実推論で判定する。TCP、HTTP
+        alive、Runtimeの自己申告healthだけではReadyにしない。
+      </li>
+      <li>
+        Connection control stateはmemoryだけに保持し、daemon restart後はboot
+        epochにより全Connectionと credentialを失効する。
+      </li>
+      <li>
+        Qwen 3.8 27BはResident
+        defaultのままとする。追加27Bと35Bは明示ProfileからだけAllocationする。
+      </li>
+    </ul>
+  </section>
+
+  <section id="architecture">
+    <h2>処理構成</h2>
+    <figure>
+      <pre><code>Agent Orchestrator
+  │  POST /v1/agent-connections { agentProfile, audience }
+  ▼
+Agent Profile Registry ── requirements + route + public model alias
+  │
+  ▼
+Existing Allocation API ── admission / start / fixed binding / TTL
+  │ ready
+  ▼
+Semantic Readiness ── fixed minimal inference + bounded validation
+  │ ready
+  ▼
+Connection Claim ── advertised Gateway + provider-scoped token
+  │
+  ▼
+Agent SDK ── exact public model alias
+  │
+  ▼
+LARM Gateway ── token scope → fixed Allocation binding → Runtime</code></pre>
+      <figcaption>
+        Profile選択後のRoute、Runtime、releaseはConnection期間中に変更しません。
+      </figcaption>
+    </figure>
+  </section>
+
+  <section id="configuration">
+    <h2>設定fileとstrict schema</h2>
+    <p>
+      <code>config/gnosis/agent-connections.yaml</code>を単一の正本として追加します。top-level
+      <code>version</code
+      >は整数<code>1</code>、未知fieldは全階層で起動時またはcatalog
+      reload時に拒否します。
+      identifierは1から128文字の<code>[A-Za-z0-9][A-Za-z0-9._-]*</code>、descriptionは1から256文字、
+      Provider数はProfileごとに1から8です。
+    </p>
+
+    <pre><code>version: 1
+
+audiences:
+  same-host:
+    network: loopback
+    baseUrl: http://127.0.0.1:9810/v1
+  saaa-desktop:
+    network: host-private
+    baseUrl: http://192.168.0.65:9810/v1
+
+agentProfiles:
+  coding-default:
+    description: Resident 27B coding agent
+    providers:
+      - name: llm
+        capability: llm.coding
+        route: llm-default
+        publicModel: coding-default
+        readiness: llm-inference
+
+  coding-worker:
+    description: Parallel 27B coding worker
+    providers:
+      - name: llm
+        capability: llm.coding
+        route: llm-agent-worker
+        publicModel: coding-worker
+        readiness: llm-inference
+
+  deep-reasoning-35b:
+    description: Explicit on-demand 35B reasoning agent
+    providers:
+      - name: llm
+        capability: llm.reasoning
+        route: llm-agent-35b
+        publicModel: deep-reasoning-35b
+        readiness: llm-inference</code></pre>
+
+    <h3>Cross-validation</h3>
+    <ol>
+      <li>
+        全ProfileでProvider
+        <code>name</code
+        >と<code>capability</code>をそれぞれ重複させない。
+      </li>
+      <li>
+        <code>route</code>は既存Route
+        IDであり、そのRouteの<code>capabilities</code>にProvider
+        capabilityが含まれる。
+      </li>
+      <li>
+        Routeの全candidate Runtimeが同一protocolを持ち、Provider
+        capabilityを宣言する。fallbackを含む 一候補でも不一致ならcatalog全体を拒否する。
+      </li>
+      <li>
+        <code>publicModel</code
+        >はidentifierと同じ文字・長さ制約を持つ。同一Profile内で重複させず、
+        対象Runtimeがその値をOpenAI互換requestの<code>model</code>として受け付けることをcommissioningで
+        検証する。
+      </li>
+      <li>Protocolとreadinessは次の対応だけを許す。未知値や組合せ不一致はfail closedにする。</li>
+    </ol>
+
+    <table>
+      <caption>
+        Protocolとsemantic probeの固定対応
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Runtime protocol</th>
+          <th scope="col">readiness</th>
+          <th scope="col">許可するGateway path</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>openai.chat-completions.v1</code></td>
+          <td><code>llm-inference</code></td>
+          <td><code>POST /v1/chat/completions</code></td>
+        </tr>
+        <tr>
+          <td><code>openai.audio-transcriptions.v1</code></td>
+          <td><code>stt-transcription</code></td>
+          <td><code>POST /v1/audio/transcriptions</code></td>
+        </tr>
+        <tr>
+          <td><code>openai.audio-speech.v1</code></td>
+          <td><code>tts-speech</code></td>
+          <td><code>POST /v1/audio/speech</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Providerはresponseで<code>name</code>昇順に並べます。Profileのcanonical
+      JSONからSHA-256を算出した
+      <code>profileRevision</code>と、Audienceのcanonical JSONから算出した
+      <code>audienceRevision</code>をConnectionへ固定します。このfileは既存catalog
+      revisionとrelease identityの入力にも含めます。
+    </p>
+    <p>
+      この文書のcanonical JSONは、schema既定値を展開し、object propertyをschema記載順、record
+      keyとProvider arrayをidentifier昇順へ並べ、JavaScript
+      <code>JSON.stringify</code>相当のUTF-8・空白なしでserializeした値です。
+      YAMLの記載順やcommentはrevisionへ影響させません。
+    </p>
+    <p>
+      Allocation作成時には固定Bindingのcapability、route、Runtime、node、内部endpoint、protocol、active
+      release、runtime contract revision、catalog revisionをcanonical JSONにし、SHA-256 lowercase
+      hexの
+      <code>bindingRevision</code>を内部生成します。値はresponseへ返さず、Gateway
+      revalidationとsemantic cache失効に使用します。releaseがない場合は空string、runtime contract
+      revisionは active release digest、releaseがないRuntimeはcanonical
+      Runtime定義のSHA-256とします。 各revisionは64文字のlowercase hexです。
+    </p>
+  </section>
+
+  <section id="audiences">
+    <h2>Audience validation</h2>
+    <p>
+      <code>baseUrl</code>はabsolute HTTP(S)
+      URLで、userinfo、query、fragmentを禁止し、pathを末尾slashなしの
+      <code>/v1</code
+      >に固定します。parserから得たscheme、hostname、明示または既定portをdescriptorへ返し、
+      string分割でhostやportを生成しません。
+    </p>
+    <table>
+      <caption>
+        <code>network</code
+        >ごとの起動時条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">値</th>
+          <th scope="col">条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>loopback</code></th>
+          <td>
+            hostnameは<code>127.0.0.1</code>、<code>::1</code>、<code>localhost</code>のいずれか
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>host-private</code></th>
+          <td>
+            hostnameはloopback以外。HTTPまたはHTTPS、operator管理のhost
+            identity、許可CIDR、API・management 認証をcommissioningで確認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>tls</code></th>
+          <td>HTTPS必須。TLS証明書、Gateway認証、Gateway-only network境界をcommissioningで確認</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      requestからURLの一部も上書きできません。未登録Audienceは
+      <code>409 connection_audience_unavailable</code>です。設定fileに存在するAudienceだけを有効とし、
+      Connection作成時の値をTTL終了まで固定します。catalog reloadはactive
+      Allocationがある間は既存contract どおり拒否されるため、active
+      ConnectionのAudienceが途中で変わることはありません。
+    </p>
+    <p>
+      repository設定は<code>same-host</code>と<code>saaa-desktop</code>を登録します。後者はgnosis自身の
+      LAN identity <code>192.168.0.65</code>を使用し、claimは
+      <code>http://192.168.0.65:9810/v1</code>を広告します。SAAAは保存したhostへ直接control
+      requestを送り、claimをそのまま使用します。production
+      LARMは<code>0.0.0.0:9810</code>でlistenし、 API・management
+      tokenを必須にしてreview済みLAN CIDRだけを許可します。長期control tokenはSAAAの secret
+      store、短期Provider tokenはConnection TTL内だけ保持します。LAN境界外へ公開する場合は
+      <code>tls</code> AudienceとTLS終端を別途commissioningします。
+    </p>
+  </section>
+
+  <section id="endpoints">
+    <h2>Endpointと認証</h2>
+    <table>
+      <caption>
+        実装済みHTTP API
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Method</th>
+          <th scope="col">Path</th>
+          <th scope="col">認証</th>
+          <th scope="col">役割</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>GET</code></td>
+          <th scope="row"><code>/v1/agent-profiles</code></th>
+          <td>API token</td>
+          <td>要求可能なProfileの安全な一覧。Runtime、endpoint、releaseは含めない</td>
+        </tr>
+        <tr>
+          <td><code>POST</code></td>
+          <th scope="row"><code>/v1/agent-connections</code></th>
+          <td>API token。allow-listed時はmanagement tokenも必要</td>
+          <td>ProfileからAllocationとConnectionを作成</td>
+        </tr>
+        <tr>
+          <td><code>GET</code></td>
+          <th scope="row"><code>/v1/agent-connections/:id</code></th>
+          <td>作成principalのAPI token</td>
+          <td>secretを含まないlifecycle状態</td>
+        </tr>
+        <tr>
+          <td><code>GET</code></td>
+          <th scope="row"><code>/v1/agent-connections/:id/health</code></th>
+          <td>作成principalのAPI token</td>
+          <td>全required Providerのaggregate semantic readiness</td>
+        </tr>
+        <tr>
+          <td><code>GET</code></td>
+          <th scope="row"><code>/v1/agent-connections/:id/providers/:name/health</code></th>
+          <td>作成principalのAPI tokenまたは該当Provider token</td>
+          <td>一つのProviderだけのsemantic readiness</td>
+        </tr>
+        <tr>
+          <td><code>POST</code></td>
+          <th scope="row"><code>/v1/agent-connections/:id/claim</code></th>
+          <td>作成principalのAPI token</td>
+          <td>freshなsemantic readiness確認後にdescriptorとcredentialを取得</td>
+        </tr>
+        <tr>
+          <td><code>POST</code></td>
+          <th scope="row"><code>/v1/agent-connections/:id/renew</code></th>
+          <td>作成principalのAPI token</td>
+          <td>Allocation TTLを更新し、credential generationを進める</td>
+        </tr>
+        <tr>
+          <td><code>DELETE</code></td>
+          <th scope="row"><code>/v1/agent-connections/:id</code></th>
+          <td>作成principalのAPI token</td>
+          <td>credential失効とAllocation releaseを原子的に開始</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Connection機能はloopbackでも<code>LARM_API_TOKEN</code>を必須とし、未設定時は全endpointを
+      <code>503 connection_auth_not_configured</code>でfail closedにします。v1のprincipalは受信したAPI
+      bearer tokenのSHA-256
+      fingerprintです。<code>client</code>は監査labelであり認証主体ではありません。
+      fingerprint、API token、management tokenはresponseへ返しません。
+    </p>
+    <p>
+      正常statusはProfile一覧とConnection
+      statusが200、作成が200または202、claimとrenewが200、DELETEが204、
+      healthが200です。GETとDELETEはqueryとrequest bodyを受け付けず、全POST bodyは64
+      KiBの既存control
+      上限を適用します。Content-Type不一致、query、予期しないbodyは<code>400 invalid_request</code>です。
+    </p>
+  </section>
+
+  <section id="create">
+    <h2>Connection作成contract</h2>
+    <h3>Profile一覧response</h3>
+    <pre><code>{
+  "contractVersion": "agent-connection.v1",
+  "catalogRevision": "&lt;64 lowercase hex&gt;",
+  "profiles": [
+    {
+      "id": "coding-worker",
+      "description": "Parallel 27B coding worker",
+      "providers": [
+        {
+          "name": "llm",
+          "capability": "llm.coding",
+          "protocol": "openai.chat-completions.v1",
+          "model": "coding-worker"
+        }
+      ]
+    }
+  ],
+  "audiences": ["saaa-desktop", "same-host"]
+}</code></pre>
+    <p>
+      ProfileとProviderはID昇順、Audienceも昇順です。responseはstrict
+      schemaで、Route、Runtime、release、node、
+      endpointを含めません。<code>ETag</code>と<code>x-larm-config-revision</code>へcatalog
+      revisionを返し、
+      <code>If-None-Match</code>一致時は304です。
+    </p>
+
+    <h3>Request</h3>
+    <pre><code>POST /v1/agent-connections
+Authorization: Bearer &lt;LARM_API_TOKEN&gt;
+Idempotency-Key: agent-task-0182
+Content-Type: application/json
+
+{
+  "agentProfile": "coding-worker",
+  "audience": "same-host",
+  "client": "ambient",
+  "ttlSeconds": 900,
+  "allowFallback": false,
+  "deploymentPolicy": "existing-only"
+}</code></pre>
+    <table>
+      <caption>
+        Request field schema
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Field</th>
+          <th scope="col">必須</th>
+          <th scope="col">制約・既定値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>agentProfile</code></th>
+          <td>必須</td>
+          <td>登録済みidentifier</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>audience</code></th>
+          <td>必須</td>
+          <td>登録済みidentifier</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>client</code></th>
+          <td>任意</td>
+          <td>1から128文字のidentifier。authorizationには使わない</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>ttlSeconds</code></th>
+          <td>任意</td>
+          <td>整数1から86400、既定300</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>allowFallback</code></th>
+          <td>任意</td>
+          <td>boolean、既定false</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>deploymentPolicy</code></th>
+          <td>任意</td>
+          <td>
+            <code>existing-only</code
+            >または<code>allow-listed</code>、既定existing-only
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Bodyはstrict objectとし、未知fieldは<code>400 invalid_request</code>です。
+      <code>Idempotency-Key</code>は必須で、1から128文字の
+      <code>[A-Za-z0-9][A-Za-z0-9._:-]*</code
+      >です。scopeはprincipal、method、pathの組で、同じkeyと canonical
+      requestは同じConnectionを返し、異なるrequestへの再利用は
+      <code>409 idempotency_conflict</code>です。active
+      Connectionのentryは追い出さず、terminal後は既存
+      <code>LARM_IDEMPOTENCY_TTL_SECONDS</code>まで保持します。
+    </p>
+
+    <h3>Secretを含まないresponse</h3>
+    <pre><code>{
+  "id": "aconn_epoch_uuid",
+  "allocationId": "alloc_epoch_uuid",
+  "bootEpoch": "epoch-example",
+  "catalogRevision": "0000000000000000000000000000000000000000000000000000000000000000",
+  "agentProfile": "coding-worker",
+  "profileRevision": "1111111111111111111111111111111111111111111111111111111111111111",
+  "audience": "same-host",
+  "audienceRevision": "2222222222222222222222222222222222222222222222222222222222222222",
+  "status": "pending",
+  "providers": [
+    {
+      "name": "llm",
+      "capability": "llm.coding",
+      "route": "llm-agent-worker",
+      "protocol": "openai.chat-completions.v1",
+      "publicModel": "coding-worker",
+      "readiness": "pending",
+      "claimable": false
+    }
+  ],
+  "createdAt": "2026-08-29T05:45:00.000Z",
+  "expiresAt": "2026-08-29T06:00:00.000Z"
+}</code></pre>
+    <p>
+      Allocationと全Providerの初回semantic probeが同期完了した場合はHTTP
+      200、起動、配備、probeを待つ 場合はHTTP 202と<code>Location: /v1/agent-connections/:id</code>、
+      <code>Retry-After: 1</code
+      >を返します。事前validationまたはadmission失敗ではConnectionを作らず、既存 Allocation
+      errorをそのまま返します。作成後の非同期失敗は状態responseへ保存します。
+    </p>
+    <h3>Status response invariants</h3>
+    <ul>
+      <li>
+        <code>GET /v1/agent-connections/:id</code>はrecord保持中の全statusでHTTP
+        200を返し、作成responseと同じ base fieldを持つ。GETはsemantic probeを実行しない。
+      </li>
+      <li>
+        Provider
+        <code>readiness</code
+        >は<code>pending</code>、<code>probing</code>、
+        <code>ready</code
+        >、<code>failed</code>、<code>released</code>、<code>expired</code>のいずれか。
+        <code>claimable</code
+        >はConnectionがreadyで、fresh成功cacheがある場合だけtrue。
+      </li>
+      <li>
+        <code>error</code
+        >はfailed時だけ必須の<code>{ "code": string, "message": string }</code>、
+        <code>releasedAt</code>はreleased時だけ必須のRFC 3339
+        timestamp。それ以外ではfield自体を省略する。
+      </li>
+      <li>
+        全responseに<code>x-larm-boot-epoch</code>と<code>x-larm-config-revision</code>を付ける。
+      </li>
+    </ul>
+  </section>
+
+  <section id="state-machine">
+    <h2>状態機械と原子性</h2>
+    <p>
+      Connection IDは<code>aconn_&lt;bootEpoch&gt;_&lt;UUIDv4&gt;</code>で生成し、最大192文字です。
+      current boot epochをIDから判定できるため、旧epochと未知のcurrent IDを410と404へ分離できます。
+    </p>
+    <table>
+      <caption>
+        Connection lifecycle status
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Status</th>
+          <th scope="col">条件</th>
+          <th scope="col">遷移先</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>pending</code></th>
+          <td>所有Allocationがpending</td>
+          <td>probing、failed、released、expired</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>probing</code></th>
+          <td>Allocationはreadyだが、全Providerの初回semantic成功が未完了</td>
+          <td>ready、failed、released、expired</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>ready</code></th>
+          <td>全Providerが少なくとも一度semantic probeに成功</td>
+          <td>failed、released、expired</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>failed</code></th>
+          <td>Allocation失敗、初回probe deadline、または固定contract不一致</td>
+          <td>terminal</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>released</code></th>
+          <td>明示DELETEによりcredentialを失効しAllocationをrelease</td>
+          <td>terminal</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>expired</code></th>
+          <td>ConnectionまたはAllocation TTL満了</td>
+          <td>terminal</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <code>ready</code
+      >は初回検証済みというlifecycle状態であり、後続の10秒cacheが期限切れになっただけでは
+      <code>probing</code
+      >へ戻しません。現在の利用可否はhealthの<code>ready</code>と
+      <code>acceptingRequests</code
+      >で表します。Allocationがterminalになった場合は同じ原因へ収束します。
+    </p>
+    <ol>
+      <li>Profile、Audience、auth、idempotency、admissionをAllocation作成前に検証する。</li>
+      <li>
+        Connection IDを予約して一つのAllocationを作り、相互IDを同じcontroller
+        transactionへ登録する。
+      </li>
+      <li>
+        Allocation ready後、Providerをname昇順に検証する。freshなBinding共有cacheまたはlive
+        probeの全成功で readyへ遷移する。
+      </li>
+      <li>
+        初回probeはAllocation期限と<code>LARM_CONNECTION_READY_TIMEOUT_SECONDS</code>の早い方まで再試行する。
+        retry間隔は既存<code>LARM_STARTUP_POLL_INTERVAL_MS</code>と失敗cache
+        TTLの大きい方とする。deadline時は Connectionをfailedにし、所有Allocationをreleaseする。
+      </li>
+      <li>
+        登録後に予期しないfacade処理失敗が起きた場合も<code>finally</code>相当の処理でAllocationをreleaseし、
+        activeな孤立Allocationを残さない。
+      </li>
+    </ol>
+    <p>
+      DELETEはpending operationのcancelとAllocation releaseを行い、record保持中の再DELETEは204で
+      idempotentに成功します。renewはpending、probing、readyだけで許可し、
+      <code>{ "ttlSeconds": 1..86400 }</code>のstrict
+      bodyで既存Allocationと同様に現在時刻から期限を再計算します。renewには作成時と同じschemaの
+      <code>Idempotency-Key</code
+      >を必須とし、retryでgenerationを二重更新しません。renew成功時はcredential
+      generationを1増やし、全旧tokenを即時失効させます。
+    </p>
+    <pre><code>POST /v1/agent-connections/aconn_epoch_uuid/renew
+Authorization: Bearer &lt;LARM_API_TOKEN&gt;
+Idempotency-Key: renew-agent-task-0182
+Content-Type: application/json
+
+{ "ttlSeconds": 900 }</code></pre>
+    <p>
+      renewはHTTP 200でsecretを含まない最新Status responseを返します。DELETEはbodyなしのHTTP
+      204です。 failedへの遷移時に所有Allocationがactiveならreleaseし、transientなsemantic
+      probe失敗だけではlifecycleを failedへ変更しません。
+    </p>
+  </section>
+
+  <section id="claim">
+    <h2>接続情報Claim</h2>
+    <pre><code>POST /v1/agent-connections/aconn_epoch_uuid/claim
+Authorization: Bearer &lt;LARM_API_TOKEN&gt;
+Content-Type: application/json
+
+{
+  "format": "openai-provider-v1"
+}</code></pre>
+    <p>
+      Bodyは上記一形式だけを許すstrict objectです。claimはIdempotency-Keyを受け付けません。
+      ConnectionがreadyでもProviderの成功cacheが期限切れなら、claimは同じsemantic
+      probeを実行します。 全ProviderがfreshにReadyの場合だけHTTP
+      200を返し、それ以外はcredentialを一つも返しません。
+    </p>
+
+    <pre><code>{
+  "id": "aconn_epoch_uuid",
+  "allocationId": "alloc_epoch_uuid",
+  "status": "ready",
+  "audience": "same-host",
+  "providers": [
+    {
+      "name": "llm",
+      "capability": "llm.coding",
+      "apiStyle": "openai",
+      "protocol": "openai.chat-completions.v1",
+      "scheme": "http",
+      "host": "127.0.0.1",
+      "port": 9810,
+      "baseUrl": "http://127.0.0.1:9810/v1",
+      "model": "coding-worker",
+      "health": {
+        "url": "http://127.0.0.1:9810/v1/agent-connections/aconn_epoch_uuid/providers/llm/health",
+        "kind": "semantic-inference",
+        "maxAgeMs": 10000
+      },
+      "credential": {
+        "type": "bearer",
+        "token": "larm_conn_v1...",
+        "expiresAt": "2026-08-29T06:00:00.000Z"
+      },
+      "configuration": {
+        "kind": "openai-provider-v1",
+        "fields": {
+          "baseURL": "http://127.0.0.1:9810/v1",
+          "model": "coding-worker"
+        },
+        "secretFields": {
+          "apiKey": "credential.token"
+        }
+      }
+    }
+  ],
+  "expiresAt": "2026-08-29T06:00:00.000Z"
+}</code></pre>
+    <p>
+      <code>secretFields.apiKey</code>は同じProvider objectから読む相対field
+      pathであり、tokenをresponse内で
+      二重掲載しません。Orchestratorは<code>fields</code>と解決したsecretをLLMProvider
+      constructorへ渡します。 全claim
+      responseに<code>Cache-Control: no-store</code>と<code>Pragma: no-cache</code>を付けます。
+      credential
+      generationはConnection作成時に1で開始し、<code>iat</code>はConnection作成時刻、renew後はrenew
+      完了時刻、<code>exp</code>はConnection期限です。同じgenerationのtokenは決定的に再生成するためclaim自体が
+      安全に冪等です。plaintext tokenをstate、idempotency store、event、journalへ保存しません。
+    </p>
+  </section>
+
+  <section id="credential">
+    <h2>Scoped credentialのwire format</h2>
+    <p>
+      署名keyはAPI token、management
+      tokenと分離した<code>LARM_CONNECTION_SIGNING_KEY</code>で指定します。
+      値は43文字のpaddingなしbase64urlで、decode後ちょうど32 bytesとします。API
+      tokenまたは署名keyが未設定なら 既存daemonは起動したままConnection
+      endpointを503で無効化し、署名keyが設定済みで不正長または不正文字なら
+      daemon起動を拒否します。daemon稼働中のkey rotationは行わず、変更はrestartとして扱います。
+    </p>
+    <pre><code>larm_conn_v1.&lt;base64url(payload UTF-8 JSON)&gt;.&lt;base64url(HMAC-SHA-256)&gt;</code></pre>
+    <p>
+      JSON propertyは次の順序でserializeし、空白を含めません。時刻はUnix
+      secondsの整数で、millisecond時刻をfloorして生成します。signatureはprefixとpayload
+      segmentを<code>.</code>で連結したASCII bytesに対し、decode済み32
+      bytes keyで計算したHMAC-SHA-256です。
+    </p>
+    <pre><code>{"v":1,"epoch":"epoch-example","connection":"aconn_epoch_uuid","allocation":"alloc_epoch_uuid","provider":"llm","capability":"llm.coding","audience":"same-host","generation":1,"iat":1787982300,"exp":1787983200}</code></pre>
+    <ol>
+      <li>token長を4096 bytes以下、segment数を3、prefixを固定値として検証する。</li>
+      <li>
+        base64urlとpayload schemaをstrictに検証し、未知claim、重複JSON key、非整数時刻を拒否する。
+      </li>
+      <li>
+        signatureをconstant-time比較し、<code>iat &lt;= now &lt; exp</code>を確認する。
+      </li>
+      <li>
+        memory上のConnection、Allocation、boot
+        epoch、Provider、capability、Audience、現generation、期限と
+        payloadを毎requestで再照合する。署名だけでauthorizationを完結させない。
+      </li>
+      <li>release、expiry、renew、failed、daemon restartのいずれかで旧tokenを拒否する。</li>
+    </ol>
+    <p>
+      一つのProvider tokenは自身のProvider healthと対応Gateway pathだけを呼べます。aggregate
+      health、別Provider、
+      Allocation、renew、release、inspection、artifact、release、catalog、metrics、OpenAPIには使えません。
+      errorとaccess logにtoken、signature、API token fingerprint、probe生成内容を含めません。
+    </p>
+  </section>
+
+  <section id="gateway">
+    <h2>Gateway authorizationとmodel固定</h2>
+    <p>
+      既存Gatewayの<code>x-larm-allocation-id</code>認証に加え、Agent
+      tokenをBearerとして受け付けます。Agent token経路ではallocation
+      headerを要求せず、指定されていてもtoken claimと完全一致しなければ拒否します。 tokenのProvider
+      protocolから許可methodとpathを決め、bodyやmultipartの<code>model</code>をroute選択には
+      使用しません。
+    </p>
+    <ul>
+      <li>
+        LLM・TTS
+        JSONでは<code>model</code>がstringかつdescriptorの<code>model</code>と完全一致しなければ
+        <code>400 model_mismatch</code>とし、upstreamへ送らない。
+      </li>
+      <li>
+        STT multipartでは<code>model</code>
+        fieldを一つだけ要求し、同じ完全一致を検証する。重複fieldも拒否する。
+      </li>
+      <li>
+        一致したmodel値はそのままupstreamへ渡す。operatorは<code>publicModel</code>を各Runtimeが受理する値に設定し、
+        release commissioningで実証する。
+      </li>
+      <li>
+        tokenからConnectionの固定Bindingを取得し、既存Gateway revalidation、body上限、execution
+        gate、timeout、 client
+        cancellationを同じように適用する。別Runtimeへのfallbackやswapをrequest時に行わない。
+      </li>
+    </ul>
+    <p>
+      既存Allocation header経路の互換性は変更しません。Agent tokenと既存API
+      tokenを同じ意味として扱わず、 token prefixを認証middlewareで明示的に分岐します。
+    </p>
+  </section>
+
+  <section id="semantic-health">
+    <h2>Semantic readiness contract</h2>
+    <p>
+      Aggregate healthは全required Provider、Provider
+      healthはpathで指定した一つだけを検証します。どちらも
+      connection、allocation、epoch、catalog、release、Binding
+      freshnessを先に検証し、probeはadvertised URLへのHTTP self-callではなく、同じGateway
+      dispatchと固定Bindingを内部から使用します。これによりprotocol、 tokenizer、scheduler、model
+      forward pass、response serializationまでを通しつつ、Audience DNSやTLSの外部到達性は
+      commissioning testへ分離します。
+    </p>
+
+    <h3>LLM probe</h3>
+    <p>Requestはcode定数とし、次のJSONからfieldを追加・変更しません。</p>
+    <pre><code>{
+  "model": "&lt;provider.publicModel&gt;",
+  "messages": [{ "role": "user", "content": "0" }],
+  "temperature": 0,
+  "max_tokens": 1,
+  "stream": false
+}</code></pre>
+    <p>
+      2xx responseから次のprojectionを型と上限付きで検証します。top-level object、
+      <code>choices</code> 1から16件、少なくとも一件のinteger
+      <code>index</code>、
+      <code>message.role === "assistant"</code
+      >、<code>message.content</code>がstringまたはnull、
+      <code>usage.completion_tokens === 1</code>をすべて要求します。reasoning
+      modelでcontentが空またはnullでも、 completion tokenが1なら成功です。未知の標準OpenAI
+      fieldはprojection外として無視しますが、<code>message.content</code>は16,384文字以下、response
+      bodyは 65,536 bytes以下に制限します。必須fieldの欠落、誤型、zero token、2 token以上、malformed
+      JSON、上限超過は 失敗です。生成文字列の内容、品質、指示追従は評価しません。
+    </p>
+
+    <h3>STT・TTS probe</h3>
+    <ul>
+      <li>
+        STTはcodeで生成する16 kHz、mono、16-bit PCM、250 ms無音のWAV 8,044 bytesを
+        <code>model=&lt;publicModel&gt;</code>でtranscription endpointへ送り、2xx JSON
+        objectの
+        <code>text</code
+        >が0から4096文字のstringであることを検証する。response body上限は65,536
+        bytes。transcript内容は評価しない。
+      </li>
+      <li>
+        TTSは<code>{ "model": "&lt;publicModel&gt;", "input": "a", "response_format": "wav" }</code>
+        を送り、2xx、<code>audio/wav</code>、RIFF/WAVE header、非空data
+        chunkを検証する。response body上限は1,048,576 bytes。音質は評価しない。
+      </li>
+    </ul>
+
+    <h3>負荷制御と判定</h3>
+    <ul>
+      <li>
+        live probeは通常request用queueへ入れず、execution
+        slotを即時取得できる場合だけ実行する。同じcache keyの
+        同時probeはsingle-flightで一つに集約する。
+      </li>
+      <li>
+        成功cacheは10,000 ms、失敗cacheは1,000 ms。cache keyはboot epoch、Runtime、release、runtime
+        contract revision、protocol、public
+        model、<code>bindingRevision</code>の組とする。同じ固定Bindingを使う
+        Connection間でcacheとsingle-flightを共有し、credential renewだけでは失効させない。
+      </li>
+      <li>
+        RuntimeがBUSYでfreshな成功cacheがある場合は<code>ready: true</code>、
+        <code>acceptingRequests: false</code>。成功cacheがないBUSYは
+        <code>503 provider_probe_busy</code>とする。
+      </li>
+      <li>
+        Health endpointはCOLD Runtimeを起動せず、別workerへのswap、fallback、release
+        activationを行わない。 それらはConnection作成時のAllocation lifecycleだけが行う。
+      </li>
+      <li>
+        probeごとのdeadlineは既定15秒で、timeout時に古い成功結果を延命しない。aggregate
+        probeはProviderをname昇順に 実行し、各Providerへ個別deadlineを適用する。
+      </li>
+      <li>
+        全Connection health
+        responseに<code>Cache-Control: no-store</code>を付ける。成功はHTTP
+        200、一つでも未Readyなら HTTP 503と<code>Retry-After: 1</code>を返す。
+      </li>
+    </ul>
+
+    <pre><code>{
+  "id": "aconn_epoch_uuid",
+  "status": "ready",
+  "ready": true,
+  "acceptingRequests": true,
+  "checkedAt": "2026-08-29T06:00:00.000Z",
+  "providers": [
+    {
+      "name": "llm",
+      "capability": "llm.coding",
+      "ready": true,
+      "acceptingRequests": true,
+      "probe": {
+        "kind": "semantic-inference",
+        "protocol": "openai.chat-completions.v1",
+        "release": "qwen-worker-fast-current",
+        "latencyMs": 412,
+        "validated": true,
+        "cached": false,
+        "observedAt": "2026-08-29T06:00:00.000Z"
+      }
+    }
+  ]
+}</code></pre>
+    <p>
+      失敗時はProviderごとに<code>ready: false</code>、<code>acceptingRequests: false</code>、boundedな
+      <code>reason</code>
+      codeを返します。値は<code>connection_not_ready</code>、
+      <code>allocation_inactive</code
+      >、<code>stale_state</code>、<code>binding_changed</code>、
+      <code>provider_busy</code
+      >、<code>probe_timeout</code>、<code>upstream_status</code>、
+      <code>invalid_response</code>だけです。prompt、生成token、audio
+      payload、backend endpoint、例外stackは responseへ含めません。Agent tokenでProvider
+      healthを呼んだ場合、responseにはそのProvider一件だけを含めます。
+    </p>
+    <pre><code>{
+  "id": "aconn_epoch_uuid",
+  "status": "ready",
+  "ready": false,
+  "acceptingRequests": false,
+  "checkedAt": "2026-08-29T06:00:00.000Z",
+  "providers": [
+    {
+      "name": "llm",
+      "capability": "llm.coding",
+      "ready": false,
+      "acceptingRequests": false,
+      "reason": "probe_timeout"
+    }
+  ]
+}</code></pre>
+    <p>
+      Aggregateの<code>ready</code>と<code>acceptingRequests</code>はProvider値のlogical
+      ANDです。healthの503は 上記health
+      schemaを返し、expired、epoch不一致、auth失敗などhealthを評価できない4xxは通常のerror schemaを
+      返します。
+    </p>
+  </section>
+
+  <section id="settings">
+    <h2>運用設定と保持</h2>
+    <table>
+      <caption>
+        追加するdaemon設定
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Environment</th>
+          <th scope="col">既定</th>
+          <th scope="col">範囲・意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>LARM_CONNECTION_SIGNING_KEY</code></th>
+          <td>未設定</td>
+          <td>32 bytesをpaddingなしbase64url化したsecret。未設定時は機能無効</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_CONNECTION_READY_TIMEOUT_SECONDS</code></th>
+          <td>120</td>
+          <td>整数1から900。初回semantic readinessの合計deadline</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_PROVIDER_PROBE_TIMEOUT_SECONDS</code></th>
+          <td>15</td>
+          <td>整数1から60。各semantic probeのdeadline</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      10秒の成功cache、1秒の失敗cacheはv1 contract定数とし、環境変数にはしません。active
+      Connection件数は
+      一対一のAllocationとして既存<code>LARM_ACTIVE_ALLOCATION_LIMIT</code>へ含めます。terminal
+      Connectionは所有
+      Allocationと同じ期間、同じ<code>LARM_HISTORY_LIMIT</code>のbounded
+      historyへ保持し、active recordは追い出しません。
+    </p>
+    <p>
+      Connection、credential generation、probe cacheは永続化しません。daemon restartでは新boot
+      epochとなり、旧IDは
+      <code>410 connection_epoch_expired</code
+      >、旧tokenは401です。署名keyが同じでもmemory上のConnection照合が失敗するため
+      復元しません。shutdown drain開始後は作成、renew、claim、live probeを503で拒否し、進行中Gateway
+      requestだけを既存 drain contractで処理します。
+    </p>
+  </section>
+
+  <section id="errors">
+    <h2>Error contract</h2>
+    <table>
+      <caption>
+        利用側が分岐に使う固定error
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">HTTP</th>
+          <th scope="col">code</th>
+          <th scope="col">条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>400</td>
+          <th scope="row"><code>invalid_request</code></th>
+          <td>strict schema、header、ID、body不正</td>
+        </tr>
+        <tr>
+          <td>400</td>
+          <th scope="row"><code>model_mismatch</code></th>
+          <td>Agent requestのmodelがdescriptorと一致しない</td>
+        </tr>
+        <tr>
+          <td>401</td>
+          <th scope="row"><code>unauthorized</code></th>
+          <td>API tokenまたはAgent tokenの欠落、不正、期限切れ</td>
+        </tr>
+        <tr>
+          <td>403</td>
+          <th scope="row"><code>connection_forbidden</code></th>
+          <td>別principal、別Provider、scope外methodまたはpath</td>
+        </tr>
+        <tr>
+          <td>404</td>
+          <th scope="row"><code>unknown_agent_profile</code></th>
+          <td>ProfileがRegistryにない</td>
+        </tr>
+        <tr>
+          <td>404</td>
+          <th scope="row"><code>connection_not_found</code></th>
+          <td>現boot epoch内のIDが存在しない、またはterminal historyから削除済み</td>
+        </tr>
+        <tr>
+          <td>404</td>
+          <th scope="row"><code>connection_provider_not_found</code></th>
+          <td>作成principalが指定したProvider nameがない。Agent tokenには情報を隠して403を返す</td>
+        </tr>
+        <tr>
+          <td>409</td>
+          <th scope="row"><code>connection_audience_unavailable</code></th>
+          <td>Audienceが未登録または現在無効</td>
+        </tr>
+        <tr>
+          <td>409</td>
+          <th scope="row"><code>connection_not_ready</code></th>
+          <td>pendingまたはprobingのConnectionをclaimした</td>
+        </tr>
+        <tr>
+          <td>409</td>
+          <th scope="row"><code>connection_inactive</code></th>
+          <td>released、expired、failed resourceをrenewまたはclaimした</td>
+        </tr>
+        <tr>
+          <td>409</td>
+          <th scope="row"><code>connection_contract_changed</code></th>
+          <td>
+            固定Profile、catalog、release、<code>bindingRevision</code>が一致しない
+          </td>
+        </tr>
+        <tr>
+          <td>409</td>
+          <th scope="row"><code>idempotency_conflict</code></th>
+          <td>同じIdempotency-Keyを異なるcanonical requestへ再利用</td>
+        </tr>
+        <tr>
+          <td>410</td>
+          <th scope="row"><code>connection_expired</code></th>
+          <td>記録済みConnectionまたはAllocationが期限切れ</td>
+        </tr>
+        <tr>
+          <td>410</td>
+          <th scope="row"><code>connection_epoch_expired</code></th>
+          <td>IDが旧boot epochを含む</td>
+        </tr>
+        <tr>
+          <td>503</td>
+          <th scope="row"><code>provider_semantic_not_ready</code></th>
+          <td>最小実処理またはresponse projection検証に失敗</td>
+        </tr>
+        <tr>
+          <td>503</td>
+          <th scope="row"><code>provider_probe_busy</code></th>
+          <td>即時execution slotがなくfresh成功cacheもない</td>
+        </tr>
+        <tr>
+          <td>503</td>
+          <th scope="row"><code>provider_probe_timeout</code></th>
+          <td>semantic probeが専用deadlineを超えた</td>
+        </tr>
+        <tr>
+          <td>503</td>
+          <th scope="row"><code>connection_auth_not_configured</code></th>
+          <td>API token未設定</td>
+        </tr>
+        <tr>
+          <td>503</td>
+          <th scope="row"><code>connection_credentials_unavailable</code></th>
+          <td>署名key未設定。設定済みだが不正なkeyはdaemon起動時に拒否</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Route、memory、telemetry、Runtime capacity、deployment、swap conflict、draining、catalog
+      reloadの失敗は既存Allocation errorを保持します。healthの503 responseを除く全errorは既存の
+      <code>{ "error": { "code": "...", "message": "..." } }</code> strict schemaを使い、messageはsecret、
+      endpoint、prompt、生成内容を含まないbounded textとします。
+    </p>
+  </section>
+
+  <section id="observability">
+    <h2>Observabilityと情報境界</h2>
+    <ul>
+      <li>
+        eventは作成、初回probe、ready、claim、renew、release、expiry、failureを記録する。Connection
+        ID、 Allocation ID、Provider name、結果codeは許可し、token、signature、API token
+        fingerprintは記録しない。
+      </li>
+      <li>
+        metric labelはallowlist済みProfile、Audience、protocol、probe
+        kind、outcomeだけとし、Connection ID、 client、model生成内容をlabelにしない。
+      </li>
+      <li>
+        Profile一覧、状態、health、OpenAPIにRuntime ID、node、backend endpoint、内部port、artifact
+        pathを含めない。 management inspectionは既存認証境界を維持する。
+      </li>
+      <li>
+        credentialを含むclaimだけでなく、全Connection endpointへ
+        <code>Referrer-Policy: no-referrer</code
+        >を付け、claimとhealthには<code>Cache-Control: no-store</code>を付ける。
+      </li>
+    </ul>
+  </section>
+
+  <section id="implementation">
+    <h2>実装結果と配置</h2>
+    <ol>
+      <li>
+        <code>packages/core</code>へ設定、request、response、state、health
+        projectionのstrict schemaとProfile-to-Allocation compile、cross-validationを追加した。
+      </li>
+      <li>
+        <code>config/gnosis/agent-connections.yaml</code>をcatalog
+        load、revision、identityへ統合し、3つのProfileと<code>same-host</code>、gnosis
+        LAN用 <code>saaa-desktop</code>を登録した。
+      </li>
+      <li>
+        daemonへConnection controller、Allocation ownership、principal binding、state
+        reducer、bounded idempotency、renew、release、expiryを追加した。
+      </li>
+      <li>
+        daemon security境界へversioned HMAC token codecを追加し、test用clockとkeyを注入可能にした。
+      </li>
+      <li>
+        Gateway認証にAgent token分岐、Provider method/path scope、model固定、既存Binding
+        revalidationを追加した。
+      </li>
+      <li>
+        protocol別semantic probe、non-queuing execution acquire、cache、single-flight、初回readiness
+        workerを追加した。
+      </li>
+      <li>
+        route、strict OpenAPI schema、typed clientのcreate、poll、claim、renew、release、health
+        helperを追加した。
+      </li>
+      <li>
+        unit、integration、fixture、same-hostとSAAA Audienceのgnosis live E2Eを実施し、
+        <a href="./api.html">API契約</a>とdaemon READMEへ反映した。
+      </li>
+    </ol>
+    <p>
+      systemdとllama-swapの選択・起動は既存<code>packages/backends</code>を変更せず利用します。Agent
+      Profile
+      Registry、compile、状態規則はOS非依存なので<code>packages/core</code>へ置き、秘密鍵、HTTP
+      auth、probe実行は daemonへ置きます。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>Acceptance matrix</h2>
+    <aside>
+      <p>
+        以下はrepository testと2026-08-29のgnosis live E2Eで完了しました。実行条件と結果は<a
+          href="./agent-provider-connection-implementation.html"
+          >実装・E2E記録</a
+        >に保存します。
+      </p>
+    </aside>
+    <h3>Schema・catalog</h3>
+    <ul>
+      <li>全request、response、configでunknown field、範囲外値、重複Providerを拒否する。</li>
+      <li>
+        未知Route、capability不一致、candidate protocol不一致、readiness不一致でcatalog
+        loadを拒否する。
+      </li>
+      <li>
+        Audience URLのuserinfo、query、fragment、path、scheme、network制約をtable-driven testする。
+      </li>
+      <li>agent config変更がcatalog、profile、audience revisionへ反映される。</li>
+    </ul>
+
+    <h3>Lifecycle・resource</h3>
+    <ul>
+      <li>
+        一つのConnectionが一つのAllocationだけを所有し、失敗、DELETE、expiryで孤立Allocationを残さない。
+      </li>
+      <li>
+        全状態遷移と不正遷移、初回probe deadline、renew generation、二重DELETEをfake
+        clockで検証する。
+      </li>
+      <li>
+        createとrenewの同じIdempotency-Key
+        retryでAllocationまたはgenerationを二重更新せず、異なるbodyは409にする。
+      </li>
+      <li>daemon restart後に旧Connection IDを410、旧tokenを401にする。</li>
+    </ul>
+
+    <h3>Credential・Gateway</h3>
+    <ul>
+      <li>
+        token
+        tamper、誤key、誤epoch、誤Provider、誤capability、誤Audience、旧generation、期限切れを拒否する。
+      </li>
+      <li>Agent tokenで別Provider、別Connection、control API、aggregate healthへ到達できない。</li>
+      <li>
+        claim response内のtoken出現はProviderごとに一回で、状態、error、event、log、OpenAPI
+        exampleに実secretがない。
+      </li>
+      <li>同じgenerationでclaimを再実行すると同一tokenを返し、renew後は異なるtokenを返す。</li>
+      <li>model不一致をupstream call前に400とし、一致時はtoken固定Bindingだけへ送る。</li>
+      <li>既存Allocation header経路のGateway contract testが変更なく成功する。</li>
+    </ul>
+
+    <h3>Semantic readiness</h3>
+    <ul>
+      <li>
+        ListenerとRuntime
+        <code>/health</code>だけが200でmodel未ロードのfixtureを503にする。
+      </li>
+      <li>
+        LLM
+        probeのrequestが固定prompt、非stream、<code>temperature: 0</code>、<code>max_tokens: 1</code>と一致する。
+      </li>
+      <li>
+        completion tokenがちょうど1のresponseだけを成功にし、malformed 2xx、zero
+        token、timeoutを拒否する。
+      </li>
+      <li>healthからcold start、swap、fallbackを呼ばず、BUSY時に通常queueへprobeを追加しない。</li>
+      <li>
+        binding、runtime contract、release、boot
+        epochの変更でcacheが即時失効し、同じBindingの同時requestが 一つのlive
+        probeへsingle-flightされる。
+      </li>
+      <li>
+        multi-providerの一件失敗でaggregateを503にし、Provider token responseには一件だけを返す。
+      </li>
+      <li>Claimは全Providerにfreshな成功がない限りcredentialを一つも返さない。</li>
+    </ul>
+
+    <h3>実機flow</h3>
+    <ul>
+      <li>
+        <code>coding-default</code>はResident 27Bを使用し、swapを発生させない。
+      </li>
+      <li>
+        <code>coding-worker</code>は追加27Bを起動し、Resident
+        27Bと並行して標準OpenAI clientのtaskを完了する。
+      </li>
+      <li>
+        <code>deep-reasoning-35b</code
+        >だけが35Bを起動し、追加27Bと必要に応じてswapした後、追加のswap requestなしで
+        返されたdescriptorを使ってtaskを完了する。
+      </li>
+      <li>
+        host、port、baseUrl、model、apiKeyだけで標準OpenAI-compatible clientがstreamを完了する。
+      </li>
+      <li>Agent終了後のDELETEでPreferred Runtimeが既存idle policyにより回収される。</li>
+    </ul>
+  </section>
+
+  <section id="review-conclusion">
+    <h2>レビュー結論</h2>
+    <p>
+      API schema、認証主体、token wire format、権限matrix、状態遷移、失敗時cleanup、probe
+      request、response判定、 timeout、cache、single-flight、Audience validation、catalog
+      revision、永続化境界、error code、実装配置、受入testを
+      固定し、実装と実機E2Eを完了しました。SAAA向けにもclaim schemaは変更せず、gnosis自身のLAN
+      identityを使うadvertised URLをAudienceで固定しています。今後のwire
+      field変更はv1互換性を審査し、必要なら新しい contract versionとして扱います。
+    </p>
+  </section>
+</article>

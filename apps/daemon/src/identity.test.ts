@@ -19,7 +19,13 @@ test("config revision covers every registry file and both deployment manifests",
   try {
     await mkdir(config);
     await mkdir(relocatedConfig, { recursive: true });
-    for (const file of ["nodes.yaml", "runtimes.yaml", "profiles.yaml", "routes.yaml"]) {
+    for (const file of [
+      "nodes.yaml",
+      "runtimes.yaml",
+      "profiles.yaml",
+      "routes.yaml",
+      "agent-connections.yaml",
+    ]) {
       await writeFile(join(config, file), `${file}: original\n`);
       await writeFile(join(relocatedConfig, file), `${file}: original\n`);
     }

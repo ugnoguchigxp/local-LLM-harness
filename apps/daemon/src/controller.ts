@@ -326,7 +326,15 @@ export class ControlPlane {
     }
 
     const runtimeIds = [...new Set(bindings.map((binding) => binding.runtime))];
-    const transitioningRuntime = runtimeIds.find((runtimeId) =>
+    const lifecycleRuntimeIds = new Set(runtimeIds);
+    for (const runtimeId of runtimeIds) {
+      const swapGroup = getRuntime(this.registry, runtimeId)?.policy.swapGroup;
+      if (!swapGroup) continue;
+      for (const peer of this.registry.runtimes) {
+        if (peer.policy.swapGroup === swapGroup) lifecycleRuntimeIds.add(peer.id);
+      }
+    }
+    const transitioningRuntime = [...lifecycleRuntimeIds].find((runtimeId) =>
       this.lifecycleReservations.has(runtimeId)
     );
     if (transitioningRuntime) {
@@ -341,7 +349,7 @@ export class ControlPlane {
         },
       };
     }
-    const mutatingRuntime = runtimeIds.find((runtimeId) =>
+    const mutatingRuntime = [...lifecycleRuntimeIds].find((runtimeId) =>
       this.options.isRuntimeMutating?.(runtimeId)
     );
     if (mutatingRuntime) {

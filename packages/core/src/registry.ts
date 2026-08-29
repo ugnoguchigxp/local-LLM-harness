@@ -111,6 +111,42 @@ export function parseRegistryDocuments(input: {
         `runtimes.yaml: runtime ${runtime.id} has capabilities incompatible with ${runtime.protocol}`,
       );
     }
+    if (runtime.policy.swapGroup) {
+      if (runtime.policy.class === "resident") {
+        throw new RegistryError(
+          `runtimes.yaml: resident runtime ${runtime.id} cannot belong to swap group ${runtime.policy.swapGroup}`,
+        );
+      }
+      if (runtime.backend !== "llama-swap") {
+        throw new RegistryError(
+          `runtimes.yaml: runtime ${runtime.id} must use llama-swap to belong to swap group ${runtime.policy.swapGroup}`,
+        );
+      }
+    }
+  }
+
+  const swapGroups = new Map<string, RuntimeDefinition[]>();
+  for (const runtime of runtimes) {
+    const group = runtime.policy.swapGroup;
+    if (!group) continue;
+    const members = swapGroups.get(group) ?? [];
+    members.push(runtime);
+    swapGroups.set(group, members);
+  }
+  for (const [group, members] of swapGroups) {
+    const first = members[0];
+    if (!first || first.backend !== "llama-swap") continue;
+    for (const member of members.slice(1)) {
+      if (
+        member.backend !== "llama-swap"
+        || member.node !== first.node
+        || member.deployment.listen !== first.deployment.listen
+      ) {
+        throw new RegistryError(
+          `runtimes.yaml: swap group ${group} must share one node and llama-swap listener`,
+        );
+      }
+    }
   }
 
   for (const node of nodes) {

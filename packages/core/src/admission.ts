@@ -11,6 +11,7 @@ export type NodeAdmission = {
   incrementalMemoryGB: number;
   availableMemoryGB: number;
   liveAvailableMemoryGB?: number;
+  reclaimableMemoryGB?: number;
 };
 
 export type AdmissionResult =
@@ -20,6 +21,7 @@ export type AdmissionResult =
       reason:
         | "unknown_runtime"
         | "unknown_node"
+        | "swap_group_conflict"
         | "memory_exhausted"
         | "runtime_capacity"
         | "telemetry_unavailable"
@@ -58,19 +60,55 @@ export function admitRuntimes(input: {
     now?: number;
   };
 }): AdmissionResult {
-  const committedIds = uniqueActiveRuntimeIds(input.allocations);
+  const activeIds = uniqueActiveRuntimeIds(input.allocations);
+  const committedIds = new Set(activeIds);
   for (const runtime of input.registry.runtimes) {
     if (runtime.policy.class === "resident") {
       committedIds.add(runtime.id);
     }
   }
+
+  const candidateIds = new Set(input.candidateRuntimeIds);
+  const candidateBySwapGroup = new Map<string, string>();
+  for (const id of candidateIds) {
+    const runtime = runtimeById(input.registry, id);
+    const swapGroup = runtime?.policy.swapGroup;
+    if (!swapGroup) continue;
+    const existing = candidateBySwapGroup.get(swapGroup);
+    if (existing && existing !== id) {
+      return {
+        ok: false,
+        reason: "swap_group_conflict",
+        message: `runtimes ${existing} and ${id} cannot share allocation because swap group ${swapGroup} runs one member at a time`,
+        runtime: id,
+        node: runtime.node,
+        nodes: [],
+      };
+    }
+    candidateBySwapGroup.set(swapGroup, id);
+  }
+
+  const replaceableIds = new Set<string>();
   for (const snapshot of input.state.runtimes) {
     if (MEMORY_COMMITTED.has(snapshot.status)) {
+      const runtime = runtimeById(input.registry, snapshot.id);
+      const selectedForGroup = runtime?.policy.swapGroup
+        ? candidateBySwapGroup.get(runtime.policy.swapGroup)
+        : undefined;
+      if (
+        runtime
+        && snapshot.status === "HOT"
+        && selectedForGroup !== undefined
+        && selectedForGroup !== runtime.id
+        && !activeIds.has(runtime.id)
+      ) {
+        replaceableIds.add(runtime.id);
+        continue;
+      }
       committedIds.add(snapshot.id);
     }
   }
 
-  const candidateIds = new Set(input.candidateRuntimeIds);
   const nodeIds = new Set<string>();
   for (const id of [...committedIds, ...candidateIds]) {
     const runtime = runtimeById(input.registry, id);
@@ -109,12 +147,17 @@ export function admitRuntimes(input: {
       .reduce((total, runtime) => total + runtime.resources.estimatedMemoryGB, 0);
     const usableMemoryGB = node.resources.memoryTotalGB - node.resources.reservedMemoryGB;
     const availableMemoryGB = usableMemoryGB - committedMemoryGB;
+    const reclaimableMemoryGB = [...replaceableIds]
+      .map((id) => runtimeById(input.registry, id))
+      .filter((runtime): runtime is RuntimeDefinition => runtime?.node === nodeId)
+      .reduce((total, runtime) => total + runtime.resources.estimatedMemoryGB, 0);
     const summary: NodeAdmission = {
       node: nodeId,
       usableMemoryGB,
       committedMemoryGB,
       incrementalMemoryGB,
       availableMemoryGB,
+      ...(reclaimableMemoryGB > 0 ? { reclaimableMemoryGB } : {}),
     };
     nodes.push(summary);
     if (incrementalMemoryGB > availableMemoryGB) {
@@ -163,12 +206,13 @@ export function admitRuntimes(input: {
       // accelerator available values are live headroom, so subtracting the reserve again
       // would double-count it and incorrectly reject unified-memory hosts.
       const liveAvailableMemoryGB = Math.max(0, liveBytes / (1024 ** 3));
+      const effectiveLiveAvailableMemoryGB = liveAvailableMemoryGB + reclaimableMemoryGB;
       summary.liveAvailableMemoryGB = liveAvailableMemoryGB;
-      if (incrementalMemoryGB > liveAvailableMemoryGB) {
+      if (incrementalMemoryGB > effectiveLiveAvailableMemoryGB) {
         return {
           ok: false,
           reason: "live_memory_exhausted",
-          message: `node ${nodeId} needs ${incrementalMemoryGB} GB but live headroom is ${liveAvailableMemoryGB.toFixed(2)} GB`,
+          message: `node ${nodeId} needs ${incrementalMemoryGB} GB but live headroom plus reclaimable swap memory is ${effectiveLiveAvailableMemoryGB.toFixed(2)} GB`,
           node: nodeId,
           nodes,
         };

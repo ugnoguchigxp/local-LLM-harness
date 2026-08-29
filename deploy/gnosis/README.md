@@ -39,8 +39,10 @@ Checksummed single files and exact directory snapshots are eligible for unattend
 A snapshot fixes a sorted file list, per-file size and SHA-256, total size, file limit, and
 canonical snapshot digest. Unlisted files, links, and unsafe paths are rejected. Resident runtime
 activation remains an attended operation; Qwen TTS is the first Preferred snapshot activation target.
-The installer creates `/etc/larm/larm.env` with a local management token when it
-does not already exist. It never overwrites an existing credential.
+The installer creates `/etc/larm/larm.env` with local API, Agent Connection signing,
+and management credentials. Existing values are preserved and only missing variables
+are added. Operator-side smoke commands can load them with
+`set -a; source /etc/larm/larm.env; set +a` without printing their values.
 `qwen-tts.service`はinstallのみ行い、boot時はdisableのままです。LARMは同梱の
 polkit ruleにより、このPreferred serviceのstart / stopだけを無人実行できます。
 
@@ -61,9 +63,10 @@ sudo env LARM_BACKUP_LABEL="${backup_label}" LARM_BACKUP_CONFIRM="${backup_confi
 ```
 
 `prepare-host.sh` installs packages, masks sleep targets, adds the service account to the GPU
-groups, creates data directories, and stages only the requested LAN SSH rule. It does not enable
-UFW, remove legacy Provider rules, configure ROCm/TTM, or reboot. Run it only after reviewing those
-host-level changes. Provider rule removal is handled separately by the digest-bound network tool in
+groups, creates data directories, and stages the requested LAN SSH administration rule plus the
+authenticated LARM Gateway rule on port 9810. It does not enable UFW, remove legacy Provider rules,
+configure ROCm/TTM, or reboot. Run it only after reviewing those host-level changes. Provider rule
+removal is handled separately by the digest-bound network tool in
 [`../../specs/production-completion-plan.html`](../../specs/production-completion-plan.html).
 
 Do not run the apply sequence below as a stable deployment until Milestone 22 is a reviewed clean

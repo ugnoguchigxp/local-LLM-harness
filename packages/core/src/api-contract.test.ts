@@ -25,6 +25,8 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(document.components.schemas.RuntimeList).toBeDefined();
   expect(document.components.schemas.PublicClusterState).toBeDefined();
   expect(document.components.schemas.InspectionRuntimeList).toBeDefined();
+  expect(document.components.schemas.AgentConnection).toBeDefined();
+  expect(document.components.schemas.AgentConnectionHealth).toBeDefined();
   const operationIds = API_OPERATIONS.map(([, , operationId]) => operationId);
   expect(new Set(operationIds).size).toBe(operationIds.length);
   for (const [method, path, operationId] of API_OPERATIONS) {
@@ -35,7 +37,10 @@ test("OpenAPI is generated from the public contract schemas", () => {
     const successResponses = Object.entries(operation.responses)
       .filter(([status]) => status.startsWith("2"));
     expect(successResponses.length).toBeGreaterThan(0);
-    for (const [, response] of successResponses) expect(response.content).toBeDefined();
+    for (const [status, response] of successResponses) {
+      if (status === "204") expect(response.content).toBeUndefined();
+      else expect(response.content).toBeDefined();
+    }
   }
   const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
   expect(paths["/v1/allocations"]?.post?.requestBody).toBeDefined();
@@ -57,6 +62,13 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(JSON.stringify(paths["/v1/deployments/{runtime}/plan"]?.post))
     .toContain("#/components/schemas/RuntimeReleasePlanRequest");
   expect(JSON.stringify(paths["/v1/chat/completions"]?.post)).toContain("text/event-stream");
+  expect(paths["/v1/agent-connections"]?.post?.parameters).toBeDefined();
+  expect(paths["/v1/agent-connections/{id}/providers/{name}/health"]?.get?.security).toEqual([
+    { bearerAuth: [] },
+    { providerBearer: [] },
+  ]);
+  expect((paths["/v1/agent-connections/{id}"]?.delete?.responses as Record<string, unknown>)["204"])
+    .not.toHaveProperty("content");
 });
 
 test("public runtime and state schemas reject operational detail", () => {

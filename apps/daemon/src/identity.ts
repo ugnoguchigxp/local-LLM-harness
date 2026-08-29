@@ -50,7 +50,13 @@ export function loadReleaseCommit(manifestPath: string | undefined): string {
   return manifest.commit;
 }
 
-const CONFIG_FILES = ["nodes.yaml", "runtimes.yaml", "profiles.yaml", "routes.yaml"];
+const CONFIG_FILES = [
+  "nodes.yaml",
+  "runtimes.yaml",
+  "profiles.yaml",
+  "routes.yaml",
+  "agent-connections.yaml",
+];
 
 export function computeConfigRevision(
   configDir: string,

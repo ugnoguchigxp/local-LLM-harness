@@ -424,10 +424,21 @@
       <li><code>llm-default</code>はQwen 3.8 27B Residentを第一候補とする。</li>
       <li>
         <code>llm-speed</code
-        >と<code>llm-long-context</code>はroute idの明示指定を必要とする。
+        >、<code>llm-long-context</code>、<code>llm-35b</code>、<code>llm-35b-speed</code>はroute
+        idの明示指定を必要とする。
       </li>
       <li>fallback candidateは<code>allowFallback: true</code>の場合だけ使用する。</li>
-      <li>35Bはproduction Registryに未登録で、default routeの候補ではない。</li>
+      <li>
+        <code>llm-35b</code
+        >は公式Q5_K_MのOrnith-1.5-35B-A3Bをprimary、ROCmFP4速度版とQwen3.6-35B-A3Bを
+        明示fallbackとして選ぶ。<code>llm-35b-speed</code>ではROCmFP4を固定できる。
+        <code>llm-qwen36-35b</code
+        >では比較・rollback用Qwenを固定でき、どちらもdefault routeの候補には含めない。
+      </li>
+      <li>
+        追加27Bと35Bは一つのswap groupを共有する。同groupのactive Allocationはpreemptせず、
+        idleなHOT memberだけを次の明示要求で置き換える。
+      </li>
       <li>Resident Runtimeはstop、無人activation、resource evictionの対象にしない。</li>
     </ul>
   </section>
@@ -728,6 +739,25 @@
         </tr>
       </tbody>
     </table>
+  </section>
+
+  <section id="agent-connections">
+    <h2>Agent Provider Connection API</h2>
+    <p>
+      登録済みAgent profileからAllocationを作成し、動的なAgent設定に使用できるadvertised Gatewayの
+      host、port、base URL、public model alias、Allocation限定credentialを返すAPIを<a
+        href="./agent-provider-connection-api.html"
+        >Agent Provider Connection API実装仕様</a
+      >のcontractどおり実装しています。既存のendpoint非公開方針を維持し、llama-swap内部portや
+      個別Runtime portは通常のAgentへ返しません。ConnectionごとにProvider単位のsemantic health
+      endpointを
+      必須とし、固定Binding上の最小LLM推論（<code>max_tokens: 1</code>）とresponse検証が成功するまでReadyまたは
+      claimableとして扱いません。daemon、OpenAPI、TypeScript client、3つのLLM Profile、
+      <code>same-host</code>とgnosis LAN用<code
+        >saaa-desktop</code
+      >
+      Audienceを実装済みです。
+    </p>
   </section>
 
   <section id="compatibility">

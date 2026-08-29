@@ -62,6 +62,7 @@ const runtimeShared = {
   node: identifierSchema,
   policy: z.object({
     class: runtimeClassSchema,
+    swapGroup: identifierSchema.optional(),
   }).strict(),
   resources: z.object({
     estimatedMemoryGB: z.number().positive(),

@@ -1,5 +1,6 @@
 export { LARM_VERSION } from "./version";
 export * from "./protocol";
+export * from "./agent-connection";
 export {
   API_OPERATIONS,
   allocationResolveResponseSchema,

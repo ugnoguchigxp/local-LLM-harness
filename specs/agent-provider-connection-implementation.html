@@ -1,0 +1,238 @@
+<article lang="ja">
+  <h1>Agent Provider Connection API 実装・E2E記録</h1>
+
+  <dl>
+    <dt>実施日</dt>
+    <dd><time>2026-08-29</time></dd>
+    <dt>対象</dt>
+    <dd>
+      <code>agent-connection.v1</code>、27B並列worker、35B swap、SAAA LAN Audience
+    </dd>
+    <dt>結果</dt>
+    <dd>Repository実装とgnosis実機E2E完了</dd>
+    <dt>Production適用</dt>
+    <dd>未実施。live検証は一時daemonと現行model artifactを使用</dd>
+  </dl>
+
+  <aside>
+    <p>
+      この記録はAPIとRuntime contractの実装・実機検証結果です。systemd unitのproduction
+      release適用や別hostのSAAA
+      Macからの到達試験を完了したという記録ではありません。秘密値、prompt全文、 model出力全文、raw
+      logはrepositoryへ保存しません。
+    </p>
+  </aside>
+
+  <section id="implementation">
+    <h2>実装した境界</h2>
+    <table>
+      <caption>
+        実装単位
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Core</th>
+          <td>
+            strict Agent Profile/Audience catalog、Route・capability・protocol
+            cross-validation、全公開schema
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Lifecycle</th>
+          <td>
+            一Connection・一Allocation所有、pending/probing/ready/terminal状態、TTL、renew、release、bounded
+            idempotency
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Credential</th>
+          <td>
+            boot
+            epoch、Connection、Allocation、Provider、capability、Audience、generation、期限へ限定した
+            HMAC token
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Gateway</th>
+          <td>
+            OpenAI互換3 pathだけのProvider token認証、固定Bindingとpublic
+            modelの再検証、旧generation失効
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Readiness</th>
+          <td>
+            non-queuing、single-flight、成功10秒・失敗1秒cache、15秒上限のprotocol別semantic probe
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Contract surface</th>
+          <td>8 endpoint、OpenAPI schema、TypeScript client helper、installer生成credential</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="runtime-calibration">
+    <h2>Agent worker構成と実機校正</h2>
+    <p>
+      既存の256K一般worker contractは変更せず、Agent Connection専用に64Kの
+      <code>qwen-worker-agent</code
+      >と<code>ornith15-35b-agent</code>を追加しました。両方は
+      <code>qwen-worker-slot</code>へ所属し、同時には一方だけを実行します。常駐
+      <code>qwen-general</code>は別processのままです。
+    </p>
+    <table>
+      <caption>
+        Agent Profileから固定するRuntime
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Profile</th>
+          <th scope="col">Route</th>
+          <th scope="col">Runtime</th>
+          <th scope="col">Context</th>
+          <th scope="col">Admission</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>coding-default</code></th>
+          <td><code>llm-default</code></td>
+          <td><code>qwen-general</code></td>
+          <td>既存262K</td>
+          <td>Resident</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>coding-worker</code></th>
+          <td><code>llm-agent-worker</code></td>
+          <td><code>qwen-worker-agent</code></td>
+          <td>65,536</td>
+          <td>28 GB</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>deep-reasoning-35b</code></th>
+          <td><code>llm-agent-35b</code></td>
+          <td><code>ornith15-35b-agent</code></td>
+          <td>65,536</td>
+          <td>28 GB</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      最初の32 GB見積もりは、live accelerator headroomが30.56 GBへ変動した時にcold
+      startを拒否しました。 同じ実機で35B worker cgroup peakが18.2 GBだったため、10
+      GB弱の余裕を残す28 GBへ校正しました。
+      静的node上限と最新telemetryの両方を通過しなければ起動しない既存admission規則は維持しています。
+    </p>
+  </section>
+
+  <section id="ornith-regression">
+    <h2>35B反復推論regression</h2>
+    <p>
+      Ornithは初回probeとtaskに成功した後、成功cache失効後の二回目probeでq38rocm
+      engineが終了しました。llama-swapを介さず同一commandを再現し、prompt cacheが以前のsequenceを
+      再利用する際のsequence除去assertを終了原因として確認しました。
+    </p>
+    <p>
+      一般35BとAgent
+      35Bの両commandへ<code>-ctxcp 0</code>、<code>-cram 0</code>、
+      <code>--no-cache-prompt</code
+      >、<code>--no-cache-idle-slots</code>を固定しました。変更後は初回task、
+      11秒後のcache miss semantic probe、二回目taskが同じprocessで成功しました。healthのために長文を
+      生成せず、各live probeは引き続きcompletion一tokenだけです。
+    </p>
+  </section>
+
+  <section id="saaa">
+    <h2>SAAA接続contract</h2>
+    <p>
+      gnosisのLAN identityを<code>192.168.0.65</code>として登録し、Audience
+      <code>saaa-desktop</code
+      >を<code>network: host-private</code>、advertised URL
+      <code>http://192.168.0.65:9810/v1</code>としました。SAAAは保存したgnosis
+      hostへ直接接続し、 control APIを既定port 9810で呼びます。
+      routing設定はhostだけ、長期<code>LARM_API_TOKEN</code>はsecret
+      store、claimされたProvider tokenは Connection TTL内だけの扱いです。
+    </p>
+    <p>
+      SAAA固有のclaim
+      fieldは追加していません。既存の<code>baseUrl</code>、<code>model</code>、
+      <code>credential.token</code>をOpenAI clientへそのまま渡します。Provider
+      portはloopbackのまま、 production
+      LARMだけが<code>0.0.0.0:9810</code>でlistenします。非loopback
+      listen時はAPI・management tokenがないとdaemonが起動せず、UFWはreview済みLAN
+      CIDRだけを許可します。
+    </p>
+  </section>
+
+  <section id="live-e2e">
+    <h2>gnosis live E2E</h2>
+    <p>
+      実model artifact、常駐27B process、repositoryのllama-swap設定、一時LARM daemon、公式 OpenAI
+      JavaScript client 7.8.0を使用しました。E2E用API keyとsigning keyは一時値で、証跡へ
+      保存していません。
+    </p>
+    <ol>
+      <li>
+        <code>coding-default</code>を同期200・readyで作成し、claimのsemantic
+        healthを確認した。 llama-swapのrunning memberは空のままで、常駐27Bだけを使用した。
+      </li>
+      <li>
+        <code>coding-worker</code
+        >を202からreadyまでpollし、<code>qwen-agent</code>の起動を確認した。
+        常駐27Bと追加27Bへ公式OpenAI clientのstream taskを同時送信し、両方で非空completionを得た。
+      </li>
+      <li>
+        scoped tokenで別public modelを指定したrequestが400
+        <code>model_mismatch</code>となり、固定
+        Binding以外へ転送されないことを確認した。
+      </li>
+      <li>
+        追加27Bをreleaseし、Audience <code>saaa-desktop</code>で
+        <code>deep-reasoning-35b</code>を作成した。running memberが
+        <code>ornith15-35b-agent</code>へ置換され、claim descriptorだけでstream
+        taskを完了した。claimはgnosis LAN host <code>192.168.0.65</code>を返した。
+      </li>
+      <li>
+        11秒待って成功cacheを失効させた後、Provider healthがlive semantic probeを実行して200、
+        <code>ready: true</code
+        >、<code>cached: false</code>を返した。続く二回目taskも同じ35B
+        processで完了した。
+      </li>
+      <li>全ConnectionをDELETEし、3秒後にllama-swap running memberが空へ戻った。</li>
+    </ol>
+  </section>
+
+  <section id="verification">
+    <h2>自動検証</h2>
+    <p>
+      <code>bun run check</code
+      >でsource-only、operation、systemd、shell、Python、Spec HTML、TypeScript、 package
+      test、deployment testを一括検証します。個別にはtoken tamper・失効、lifecycle、API auth、
+      strict schema、1-token LLM/STT/TTS
+      probe、timeout、BUSY、cache、single-flight、OpenAPI、client、 installer credential生成、swap
+      group整合をtestしています。
+    </p>
+    <p>
+      最終実行はpackage 310 test・985 assertion、deployment 11 test・36 assertion、host backup、
+      installer、transactional release、network convergenceの全suiteが失敗0で完了しました。
+    </p>
+  </section>
+
+  <section id="conclusion">
+    <h2>結論</h2>
+    <p>
+      初期3 Profile、動的接続情報、短期credential、LLMとしての最小Ready判定、常駐27Bと追加27Bの
+      並列実行、27Bから35Bへのswap、SAAA LAN
+      Audienceを実装し、gnosis上の実modelで完了条件を満たしました。 Production
+      unitへの反映は通常のreview済みrelease手順で別途実施します。
+    </p>
+  </section>
+</article>

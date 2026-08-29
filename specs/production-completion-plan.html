@@ -14,7 +14,7 @@
     <dt>計画状態</dt>
     <dd>実行中。Milestone 22・25のrepository実装済み、production gateは未適用</dd>
     <dt>対象Milestone</dt>
-    <dd>22–27。Milestone 28は任意の35B評価</dd>
+    <dd>22–27。Milestone 28は35Bのlive評価</dd>
     <dt>blocking outcome</dt>
     <dd>gnosis commissioning、SLO gate、Ambient canary、Gateway-only network境界の完了</dd>
     <dt>Resident default</dt>
@@ -120,8 +120,11 @@
         </tr>
         <tr>
           <th scope="row">35B</th>
-          <td>未登録</td>
-          <td>必要性が実測で示された場合だけexplicit routeへ追加</td>
+          <td>Repository登録、artifact staging、基本swap acceptance済み。SLO評価前</td>
+          <td>
+            <code>llm-35b</code>明示時だけworker
+            slotへ起動し、27Bとの比較結果を記録
+          </td>
           <td>任意・非blocking</td>
         </tr>
       </tbody>
@@ -136,8 +139,11 @@
       </li>
       <li>LLM、STT、TTS Providerはgnosisのloopbackだけでlistenする。</li>
       <li>
-        LARMは既定で<code>127.0.0.1:9810</code>に留める。LAN公開が将来必要な場合は、API・management
-        token、許可CIDR、TLS終端を別decisionで同時に定義する。
+        LARMのproduction unitは<code>0.0.0.0:9810</code>でlistenし、gnosisのLAN
+        identity
+        <code>192.168.0.65</code>を広告する。API・management
+        tokenを必須にし、port 9810はreview済み LAN
+        CIDRだけを許可する。LAN境界外へ広げる場合はTLS終端を別decisionで必須とする。
       </li>
       <li>Qwen 3.8 27B、Qwen ASR、VOICEVOXはResidentとしてboot後に利用可能である。</li>
       <li>27B workersとQwen TTSはCOLDを許容し、明示routeまたは許可済みfallbackでだけ起動する。</li>
@@ -307,7 +313,7 @@ Milestone 28  Optional 35B evaluation ── non-blocking, after Milestone 25</c
     <h3>exit criteria</h3>
     <ul>
       <li><code>larm-daemon.service</code>がloaded、enabled、activeである。</li>
-      <li><code>127.0.0.1:9810</code>のownerが導入したdaemonである。</li>
+      <li><code>0.0.0.0:9810</code>のownerが導入したdaemonである。</li>
       <li>credentialがregular file、mode 0640、期待owner・groupであり、値は表示されない。</li>
       <li>
         <code>/health</code
@@ -521,12 +527,14 @@ Milestone 28  Optional 35B evaluation ── non-blocking, after Milestone 25</c
         health、該当capability smoke、Resident default、memoryを確認してから次へ進みます。
       </li>
       <li>
-        個別Provider portのLAN allow
-        ruleをreview済みdigest付きで削除し、LARMのloopback接続は維持します。
+        個別Provider portのLAN allow ruleをreview済みdigest付きで削除し、review済みLAN CIDRからport
+        9810へのallow ruleだけを維持します。
       </li>
       <li>
-        別hostからの接続拒否と、gnosis localからのLARM
-        Gateway成功を確認します。UFW状態を読めない場合は stableへ昇格しません。
+        別hostからProvider portへ接続できないこと、LARM Gatewayの未認証control
+        requestが401になること、 API
+        token付きrequestとclaimの短期tokenによるtaskが成功することを確認します。UFW状態を読めない場合は
+        stableへ昇格しません。
       </li>
       <li>
         最終canaryとSLO gateを実行し、stable release gateとcommissioning evidenceを更新します。
@@ -536,8 +544,11 @@ Milestone 28  Optional 35B evaluation ── non-blocking, after Milestone 25</c
     <h3>stable Definition of Done</h3>
     <ul>
       <li>repository、commissioning、SLO、Ambient canaryの全gateが成功している。</li>
-      <li>port 8080–8084はloopback以外でlistenせず、LAN allow ruleがない。</li>
-      <li>通常clientが接続するdata planeはLARMだけである。</li>
+      <li>port 8080–8084はloopback以外でlistenせず、Provider用LAN allow ruleがない。</li>
+      <li>
+        通常clientが接続するdata planeはLARMだけであり、port 9810にはreview済みLAN CIDRのallow
+        ruleと必須credentialがある。
+      </li>
       <li>Qwen TTSとoptional workersは不要時にCOLDへ戻る。</li>
       <li>LARM rollbackがResident Providerをrestartせず、同じGateway contractを復元する。</li>
       <li>未解決の逸脱、暫定threshold、手動例外がない。</li>
@@ -556,14 +567,24 @@ Milestone 28  Optional 35B evaluation ── non-blocking, after Milestone 25</c
     <h2>Milestone 28: Optional 35B evaluation</h2>
     <aside>
       <p>
-        このMilestoneはstable昇格のblocking条件ではありません。35Bが存在しなくてもコンセプトの既定経路は完成します。
+        このMilestoneはstable昇格のblocking条件ではありません。Repositoryにはon-demand workerとして
+        登録、artifact staging、基本swap acceptanceまで完了しています。管理API経由のcommissioningと
+        SLO比較が完了するまでproduction-readyとは扱いません。
       </p>
     </aside>
 
     <dl>
-      <dt>開始条件</dt>
+      <dt>Repository状態</dt>
       <dd>
-        Milestone 25の実測で、27B fast workerでは満たせない明確な速度・品質要求が示された場合だけ
+        Ornith-1.5-35B-A3B公式Q5_K_Mを<code>llm-35b</code>のprimary、ROCmFP4を
+        <code>llm-35b-speed</code>、Qwen3.6-35B-A3B
+        UD-Q4_K_Mを比較・fallbackとしてworker swap groupへ登録済み。3量子化のartifact
+        staging、速度、full PPL、256K基本推論を確認済み
+      </dd>
+      <dt>Live開始条件</dt>
+      <dd>
+        Resident rollback経路、artifact checksum、worker idle、同一identityのbenchmark入力を確認し、
+        MTP・ngram無効、K/V cache q8_0のplain provider configを反映する
       </dd>
       <dt>禁止事項</dt>
       <dd>
@@ -573,14 +594,17 @@ Milestone 28  Optional 35B evaluation ── non-blocking, after Milestone 25</c
     </dl>
 
     <ol>
-      <li>source、revision、license、全artifact digest、memory estimateをmanifestへ固定する。</li>
       <li>
-        新しい<code>explicitOnly</code>
-        routeを作り、一般routeから到達できないことをschema testで証明する。
+        固定済みsource、revision、artifact digest、Ornith公式Q5 48 GB・ROCmFP4 44 GB・Qwen 44 GB
+        memory estimateを実fileと照合する。
+      </li>
+      <li>
+        <code>explicitOnly</code
+        >の<code>llm-35b</code>が一般routeから到達できないことを再検証する。
       </li>
       <li>Resident floorを含むstatic・live admissionで同時稼働可否を検証する。</li>
       <li>27B fast workerと同一条件でlatency、quality、memory、startup、rollbackを比較する。</li>
-      <li>優位性と運用costがreviewで承認された場合だけproduction Registryへ登録する。</li>
+      <li>優位性と運用costをreviewし、不採用時はrouteを無効化してartifactをinactiveに戻す。</li>
     </ol>
 
     <h3>完了条件</h3>

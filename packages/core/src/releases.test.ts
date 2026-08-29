@@ -15,6 +15,13 @@ describe("runtime release catalog", () => {
   test("loads immutable production releases with one default per artifact runtime", () => {
     const releases = loadRuntimeReleaseCatalog(`${root}deploy/gnosis/releases.yaml`, registry, artifacts);
     expect(defaultRuntimeRelease(releases, "qwen-general")?.artifacts).toEqual(["qwen38-primary"]);
+    expect(defaultRuntimeRelease(releases, "qwen36-35b")?.artifacts).toEqual(["qwen36-35b-speed"]);
+    expect(defaultRuntimeRelease(releases, "ornith15-35b")?.artifacts).toEqual([
+      "ornith15-35b-quality",
+    ]);
+    expect(defaultRuntimeRelease(releases, "ornith15-35b-speed")?.artifacts).toEqual([
+      "ornith15-35b-speed",
+    ]);
     expect(defaultRuntimeRelease(releases, "qwen-tts")?.digest).toMatch(/^[a-f0-9]{64}$/);
   });
 

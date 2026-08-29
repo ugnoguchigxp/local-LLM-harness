@@ -29,7 +29,10 @@ rm "${symlinked_root}"
 run_installer
 credential="${test_root}/etc/larm/larm.env"
 initial_credential="$(<"${credential}")"
-[[ "${initial_credential}" =~ ^LARM_MANAGEMENT_TOKEN=[a-f0-9]{64}$ ]]
+grep -Eq '^LARM_MANAGEMENT_TOKEN=[a-f0-9]{64}$' "${credential}"
+grep -Eq '^LARM_API_TOKEN=[a-f0-9]{64}$' "${credential}"
+grep -Eq '^LARM_CONNECTION_SIGNING_KEY=[A-Za-z0-9_-]{43}$' "${credential}"
+[[ "$(wc -l <"${credential}")" -eq 3 ]]
 [[ "$(stat -c '%a' "${credential}")" == "640" ]]
 
 run_installer
@@ -47,6 +50,12 @@ grep -F "enable llama-server.service llama-swap-worker.service qwen-asr.service 
   "${systemctl_log}" >/dev/null
 grep -F "disable qwen-tts.service" "${systemctl_log}" >/dev/null
 [[ -d "${test_root}/srv/ai/models/qwen-tts" ]]
+[[ -d "${test_root}/srv/ai/models/qwen36-35b" ]]
+[[ -d "${test_root}/srv/ai/models/ornith15-35b" ]]
+grep -F "/srv/ai/models/qwen36-35b" \
+  "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
+grep -F "/srv/ai/models/ornith15-35b" \
+  "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 
 credential_target="${test_root}/credential-target"
 printf 'unchanged\n' >"${credential_target}"

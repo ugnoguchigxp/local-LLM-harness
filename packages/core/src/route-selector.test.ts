@@ -36,7 +36,7 @@ const registry: Registry = {
       protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
       node: "gnosis",
-      policy: { class: "preferred" },
+      policy: { class: "preferred", swapGroup: "qwen-worker-slot" },
       resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
         modelId: "qwen-quality",
@@ -50,7 +50,7 @@ const registry: Registry = {
       protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
       node: "gnosis",
-      policy: { class: "preferred" },
+      policy: { class: "preferred", swapGroup: "qwen-worker-slot" },
       resources: { estimatedMemoryGB: 38, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
         modelId: "qwen-fast",
@@ -64,7 +64,7 @@ const registry: Registry = {
       protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
       node: "gnosis",
-      policy: { class: "preferred" },
+      policy: { class: "preferred", swapGroup: "qwen-worker-slot" },
       resources: { estimatedMemoryGB: 48, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
         modelId: "qwen-35b-speed",
@@ -90,6 +90,15 @@ const registry: Registry = {
       explicitOnly: true,
       candidates: [
         { runtime: "qwen-worker-fast", purpose: "primary" },
+        { runtime: "qwen-general", purpose: "fallback" },
+      ],
+    },
+    {
+      id: "llm-35b",
+      capabilities: ["llm.general", "llm.coding"],
+      explicitOnly: true,
+      candidates: [
+        { runtime: "qwen-35b-speed", purpose: "primary" },
         { runtime: "qwen-general", purpose: "fallback" },
       ],
     },
@@ -231,6 +240,29 @@ test("requires explicit selection for the speed route", () => {
     runtime: "qwen-worker-fast",
     reason: "primary-startable",
   });
+});
+
+test("35B is explicit-only while the unswapped request stays on resident 27B", () => {
+  const current = state({
+    "qwen-general": "HOT",
+    "qwen-35b-speed": "COLD",
+  });
+  expect(selectRoute({
+    registry,
+    state: current,
+    routeId: "llm-default",
+    capability: "llm.general",
+    mode: "default",
+    allowFallback: false,
+  })).toMatchObject({ ok: true, runtime: "qwen-general" });
+  expect(selectRoute({
+    registry,
+    state: current,
+    routeId: "llm-35b",
+    capability: "llm.general",
+    mode: "explicit",
+    allowFallback: false,
+  })).toMatchObject({ ok: true, runtime: "qwen-35b-speed", reason: "primary-startable" });
 });
 
 test("shadow comparison reports differences without changing either result", () => {

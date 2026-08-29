@@ -1,7 +1,8 @@
 # gnosis: AI MAX+ 395 Linux provider
 
 `gnosis` is the first Linux deployment of LARM. It keeps the interactive voice path hot
-while providing one resident Qwen3.8 27B LLM and two on-demand 256K worker variants.
+while providing one resident Qwen3.8 27B LLM, a general 256K worker pool, and bounded 64K
+Agent workers that fit beside the resident model.
 
 ## Desired runtime map
 
@@ -14,20 +15,35 @@ state from this document alone.
 | 8080 | Qwen3.8-27B ROCmFP4 FAST + MTP | resident | primary reasoning/coding |
 | 8081 | Qwen3-ASR 1.7B FP16 | resident | accurate Japanese transcription |
 | 8082 | Qwen3-TTS 0.6B optimized | preferred | expressive speech |
-| 8083 | llama-swap | resident executor | on-demand 256K Q4 workers |
+| 8083 | llama-swap | resident executor | on-demand 256K general and 64K Agent workers |
 | 8084 | VOICEVOX CORE 0.17.0 | resident | low-latency speech |
-| 9810 | LARM daemon | control plane | allocation and local Gateway |
+| 9810 | LARM daemon | control plane | authenticated LAN Gateway |
 
 The repository-managed Runtime units bind ports 8080–8084 to loopback. `prepare-host.sh` adds
-only the reviewed SSH rule and deliberately neither enables UFW nor removes legacy rules.
+reviewed LAN rules for SSH administration and the authenticated LARM Gateway, and deliberately
+neither enables UFW nor removes legacy rules.
 Runtime control and health use loopback endpoints from
 [`../config/gnosis/runtimes.yaml`](../config/gnosis/runtimes.yaml).
-LARM is configured as loopback-only on port 9810; expose it through an authenticated local
-adapter or deliberately reviewed reverse proxy rather than opening the port directly.
+The production LARM unit listens on all host interfaces at port 9810, requires both API and
+management credentials, and advertises the gnosis LAN identity `192.168.0.65` to SAAA. Restrict
+port 9810 to the reviewed trusted LAN CIDR; use TLS termination before extending this boundary
+beyond that network.
 The live host observed on 2026-08-29 still used wildcard Provider listeners. The
 [`Production Completion plan`](../specs/production-completion-plan.html) applies the loopback
 units one Provider at a time and removes only rules named by a reviewed convergence digest after
 the Ambient canary succeeds.
+
+### SAAA desktop direct connection
+
+SAAA stores the gnosis host address `192.168.0.65`, calls the control API at
+`http://192.168.0.65:9810`, and requests audience `saaa-desktop`. The claim advertises
+`http://192.168.0.65:9810/v1`; SAAA passes that `baseUrl`, `model`, and short-lived
+`credential.token` to its OpenAI-compatible client without rewriting them. The long-lived
+`LARM_API_TOKEN` remains in the macOS secret store, not in routing configuration.
+
+Provider ports 8080–8084 remain loopback-only. Only the authenticated Gateway at 9810 is exposed
+to the reviewed LAN CIDR. An unauthenticated control request must return 401, while `/health` and
+`/ready` remain credential-free operational probes and do not disclose Provider endpoints.
 
 ## Why this split
 
@@ -35,6 +51,15 @@ the Ambient canary succeeds.
   interactive decode speed on gfx1151.
 - `UD-Q4_K_XL` is the quality-oriented 256K worker and `Q4_0` is its faster fallback.
   Both are loaded through llama-swap only when needed.
+- Ornith-1.5-35B-A3B uses the official Q5_K_M artifact for the quality route and the
+  gfx1151-specific ROCmFP4 STRIX_LEAN artifact for the explicit speed route. Both disable
+  MTP and ngram; Ornith KV cache uses q8_0 for both K and V after local perplexity validation.
+  `ngram-mod` stays disabled, and q38rocm prompt/idle-slot caching is disabled after a repeat-request
+  sequence assertion reproduced on gnosis. Qwen3.6-35B remains an explicit comparison and fallback
+  Runtime in the same swap group.
+- `coding-worker` and `deep-reasoning-35b` use separate 64K launch contracts. Their admission
+  reservations are 28 GB and 30 GB respectively; the latter includes the q8_0 Value cache selected
+  after perplexity validation.
 - Qwen3-ASR 1.7B stays resident: the measured error reduction was worth roughly 3 GB over
   the 0.6B fallback for voice-chat input.
 - VOICEVOX is the normal response voice because it remains real-time while the LLM is busy.

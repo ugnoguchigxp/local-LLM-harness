@@ -318,8 +318,9 @@
     <h2>継続する制限</h2>
     <p>
       directory modelは全fileとsnapshot digestを固定したmanifestだけが無人staging対象です。Resident
-      artifact activationは引き続きattended operationです。35Bはproduction
-      Registryへ登録していません。
+      artifact activationは引き続きattended operationです。35Bは明示route専用のPreferred
+      Runtimeとして登録し、Resident 27Bをswap対象にしません。35Bのlive stagingと基本swap
+      acceptanceは完了し、管理API commissioningとSLO評価が残っています。
     </p>
     <p>
       この表のgnosis対策はrepositoryのdesired stateです。実ホストへの常駐daemon導入、service

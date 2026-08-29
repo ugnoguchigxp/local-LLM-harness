@@ -18,14 +18,44 @@ test("loads the production artifact manifest and builds pinned download URLs", (
   );
   const primary = artifacts.find((artifact) => artifact.id === "qwen38-primary")!;
   const mtp = artifacts.find((artifact) => artifact.id === "qwen38-mtp")!;
+  const model35b = artifacts.find((artifact) => artifact.id === "qwen36-35b-speed")!;
+  const ornith35b = artifacts.find((artifact) => artifact.id === "ornith15-35b-quality")!;
+  const ornith35bSpeed = artifacts.find((artifact) => artifact.id === "ornith15-35b-speed")!;
   expect(isFileArtifact(primary)).toBe(true);
-  if (!isFileArtifact(primary) || !isFileArtifact(mtp)) {
+  if (
+    !isFileArtifact(primary)
+    || !isFileArtifact(mtp)
+    || !isFileArtifact(model35b)
+    || !isFileArtifact(ornith35b)
+    || !isFileArtifact(ornith35bSpeed)
+  ) {
     throw new Error("production GGUF artifacts must be files");
   }
   expect(artifactDownloadUrl(primary)).toContain(
     `/resolve/${primary.revision}/${primary.filename}`,
   );
   expect(artifactDownloadUrl(mtp)).toContain("/MTP/mtp-Qwen3.8-27B-Q4_0.gguf");
+  expect(model35b).toEqual(expect.objectContaining({
+    revision: "a483e9e6cbd595906af30beda3187c2663a1118c",
+    bytes: 22_134_528_992,
+    sha256: "ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61",
+  }));
+  expect(artifactDownloadUrl(model35b)).toContain(
+    `/resolve/${model35b.revision}/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`,
+  );
+  expect(ornith35b).toEqual(expect.objectContaining({
+    revision: "12393612fd4f730ff5aadc23e9b8f9648aa49ceb",
+    bytes: 25_347_532_544,
+    sha256: "91df97de5845100e850b4b5ec5ff35695382020b880fad6f7f51787b3a953bd0",
+  }));
+  expect(artifactDownloadUrl(ornith35b)).toContain(
+    `/resolve/${ornith35b.revision}/Ornith-1.5-35B-Q5_K_M.gguf`,
+  );
+  expect(ornith35bSpeed).toEqual(expect.objectContaining({
+    revision: "973bf694fdec212b833432d455611361bdeb914c",
+    bytes: 19_052_439_552,
+    sha256: "aa35045aab39163851c8584e6cf8cc6f33e8fc2ffe28ca627d3414ec66584704",
+  }));
 });
 
 test("rejects unsafe artifact ids and non-absolute targets", () => {

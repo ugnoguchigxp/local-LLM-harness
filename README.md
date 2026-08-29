@@ -2,9 +2,9 @@
 
 AMD Ryzen AI MAX+ 395 / Ubuntu / ROCm を中心にした、Linux-first のローカルAI Providerです。Qwen 3.8 27B、音声認識、音声合成のRuntimeをsystemdとllama-swap越しに観測・制御します。
 
-Qwen 3.8 27Bは通常処理とリアルタイム処理のResident defaultです。速度特化Runtimeは明示routeでだけ選択し、35Bはproduction Registryへ登録していません。
+Qwen 3.8 27Bは通常処理とリアルタイム処理のResident defaultです。追加27B、Ornith-1.5-35B-A3B、Qwen3.6-35B-A3Bは明示routeでだけ起動し、Residentとは別の交換可能worker slotを共有します。35Bの品質既定は公式Q5_K_MのOrnithで、gfx1151向けROCmFP4は明示的なspeed候補、Qwenは比較・fallback用に残します。
 
-通常requestは必要なcapabilityとrouteをAllocation APIへ渡します。`llm-default`は常駐27Bへ固定され、速度特化処理だけが`llm-speed`を明示します。管理APIではallowlist済みRuntime releaseをstage・plan・activate・rollbackでき、requestから任意のURL、model path、service、commandを注入することはできません。
+通常requestは必要なcapabilityとrouteをAllocation APIへ渡します。`llm-default`は常駐27Bへ固定され、追加27Bへの分散は`llm-speed`、品質重視のOrnith 35Bは`llm-35b`、ROCmFP4速度版は`llm-35b-speed`、旧Qwen 35Bとの比較は`llm-qwen36-35b`を明示します。動的Agent接続では64Kの`coding-worker`と`deep-reasoning-35b`を使い、常駐27Bとの同居とworker間swapを両立します。管理APIではallowlist済みRuntime releaseをstage・plan・activate・rollbackでき、requestから任意のURL、model path、service、commandを注入することはできません。
 
 ## Repository policy
 
@@ -61,7 +61,11 @@ Providerの最新コンセプトは[`specs/concept.html`](specs/concept.html)、
 [`specs/api.html`](specs/api.html)、残るproduction完了工程は
 [`specs/production-completion-plan.html`](specs/production-completion-plan.html)、そのattended実行順は
 [`specs/production-rollout-execution-plan.html`](specs/production-rollout-execution-plan.html)、実装結果は
-[`specs/implementation-completion-m15-m21.html`](specs/implementation-completion-m15-m21.html)を正本とします。
+[`specs/implementation-completion-m15-m21.html`](specs/implementation-completion-m15-m21.html)、on-demand LLM構成は
+[`specs/on-demand-llm-worker-pool.html`](specs/on-demand-llm-worker-pool.html)、Agent向け動的Provider接続APIは
+[`specs/agent-provider-connection-api.html`](specs/agent-provider-connection-api.html)（実装・実機E2E済み）、実装証跡は
+[`specs/agent-provider-connection-implementation.html`](specs/agent-provider-connection-implementation.html)、Ornith配布物の選定根拠は
+[`specs/ornith-1.5-35b-selection.html`](specs/ornith-1.5-35b-selection.html)を正本とします。
 
 daemonは既定で `config/gnosis` を読み、`127.0.0.1:9810` で待ち受けます。別構成は `LARM_CONFIG_DIR` で指定できます。
 

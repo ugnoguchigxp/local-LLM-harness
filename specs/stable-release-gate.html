@@ -44,8 +44,8 @@
       <tr>
         <th scope="row">Contract・network hardening</th>
         <td>
-          consumer移行済みの一般introspection縮小、loopback desired state、network convergence
-          test、VOICEVOX model bundleのchecksum検証
+          consumer移行済みの一般introspection縮小、Provider loopback desired state、認証済みLAN
+          Gateway、network convergence test、VOICEVOX model bundleのchecksum検証
         </td>
         <td>Repository実装済み。live listener・UFW収束は未適用</td>
       </tr>
@@ -66,7 +66,10 @@
       </tr>
       <tr>
         <th scope="row">Gateway-only cutover</th>
-        <td>Provider portのloopback listen、LAN allow ruleなし、local Gateway成功</td>
+        <td>
+          Provider portのloopback listenとLAN allow ruleなし、review済みCIDRから認証済みLARM
+          Gateway成功
+        </td>
         <td>保留</td>
       </tr>
       <tr>

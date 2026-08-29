@@ -34,6 +34,94 @@
     <dd>外部projectの上流文書と、repository外にあるmodel・binaryの内容</dd>
   </dl>
 
+  <section id="agent-connection-implementation-readiness">
+    <h2>2026-08-29 Agent Connection実装開始前レビュー</h2>
+    <p>
+      Agent種別のAPI要求から動的なProvider接続情報を返す追加要件について、既存Allocation、Gateway、認証、
+      catalog reload、boot epoch、27B・35B運用契約と照合しました。初稿に残っていた実装判断を解消し、
+      <a href="./agent-provider-connection-api.html">Agent Provider Connection API実装仕様</a
+      >を正本にしました。 API自体は未実装ですが、contractは実装開始可能です。
+    </p>
+    <table>
+      <caption>
+        実装開始前レビューで確定した事項
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">初稿の不足</th>
+          <th scope="col">確定内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">設定schema</th>
+          <td>ProfileとAudienceのfile、field上限、cross-validationが曖昧</td>
+          <td>単一versioned file、strict schema、Route・capability・protocol・probe対応を固定</td>
+        </tr>
+        <tr>
+          <th scope="row">Lifecycle</th>
+          <td>pendingからReadyまでの遷移、deadline、失敗cleanupが未定</td>
+          <td>6状態、Allocation一対一所有、初回probe deadline、失敗時releaseを固定</td>
+        </tr>
+        <tr>
+          <th scope="row">Credential</th>
+          <td>署名方式とclaim、restart、renew時の失効条件が不足</td>
+          <td>versioned HMAC-SHA-256 format、payload、key形式、generation、epoch照合を固定</td>
+        </tr>
+        <tr>
+          <th scope="row">権限境界</th>
+          <td>aggregate healthをAgent tokenから参照でき、Provider scopeを越え得た</td>
+          <td>作成principal用aggregateとProvider token用healthを別endpointへ分離</td>
+        </tr>
+        <tr>
+          <th scope="row">Secret response</th>
+          <td>claim exampleで同じtokenをcredentialと環境変数へ二重掲載</td>
+          <td>tokenは一回だけ返し、configurationは相対secret fieldを参照</td>
+        </tr>
+        <tr>
+          <th scope="row">Semantic health</th>
+          <td>probe payload、成功条件、timeout、cache、BUSY時挙動が未確定</td>
+          <td>
+            固定prompt、<code>max_tokens: 1</code>、1 completion
+            token、15秒、10秒cache、no-queue、 single-flightを固定
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Gateway</th>
+          <td>request modelから別Runtimeへ移動できないことの検証方法が不足</td>
+          <td>Provider tokenのmethod・path・model完全一致と固定Binding revalidationを固定</td>
+        </tr>
+        <tr>
+          <th scope="row">完了判定</th>
+          <td>正常系中心でsecurity、partial failure、restart testが不足</td>
+          <td>Schema、lifecycle、token、health、multi-provider、27B・35B実機flowのmatrixを追加</td>
+        </tr>
+        <tr>
+          <th scope="row">35B route正本</th>
+          <td>
+            APIとコンセプトにQwen3.6を<code>llm-35b</code>の単独候補とする旧記述が残存
+          </td>
+          <td>Ornith primary、Qwen比較・明示fallback、専用Qwen routeへ統一</td>
+        </tr>
+        <tr>
+          <th scope="row">Speculative decode</th>
+          <td>
+            選定文書の<code>ngram-mod</code>既定とrepositoryのplain
+            contractが不一致
+          </td>
+          <td>gnosis回帰測定、provider config revision、MTP・ngram無効へ統一</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        「実装開始可能」は設計の粒度を示し、「実装済み」を意味しません。現行endpointの正本と混同しないよう、
+        <a href="./api.html">API契約</a>には実装待ちとして明記しています。
+      </p>
+    </aside>
+  </section>
+
   <section id="implementation-follow-up">
     <h2>2026-08-29実装後レビューで解消した指摘</h2>
     <table>
@@ -347,7 +435,7 @@
         <tr>
           <th scope="row">責務とモデル方針</th>
           <td><a href="./concept.html">Providerコンセプト</a></td>
-          <td>Qwen 3.8 27B Resident default、35B未登録</td>
+          <td>Qwen 3.8 27B Resident default、追加27B・35Bは明示worker route</td>
         </tr>
         <tr>
           <th scope="row">実装済み公開API</th>
@@ -369,7 +457,7 @@
         <tr>
           <th scope="row">現行実装計画</th>
           <td><a href="./production-completion-plan.html">Production Completion実装計画</a></td>
-          <td>Milestone 22–27がblocking、35Bは任意</td>
+          <td>Milestone 22–27がblocking、35Bのperformance・SLO評価は任意</td>
         </tr>
         <tr>
           <th scope="row">Stable昇格条件</th>
@@ -418,7 +506,10 @@
       unitはactiveでした。
       一方、<code>larm-daemon.service</code>はinactiveかつ未installで、Qwen
       TTSはenabledでした。これはrepositoryが定義する次のdesired state、すなわちLARM常駐とQwen TTS
-      boot disabledへ未収束の状態です。このreviewではsystemd、UFW、processを変更していません。
+      boot
+      disabledへ未収束の状態です。2026-08-29の追加確認ではllama-swap上のOrnithがreadyでしたが、process
+      commandには比較用<code>ngram-mod</code>が残り、repositoryのplain decode
+      contractへ未restartでした。このreviewでは systemd、UFW、processを変更していません。
     </p>
     <aside>
       <p>
@@ -505,8 +596,11 @@
           <td>boot epochで旧Allocationを拒否し、clientが再取得する固定contract</td>
         </tr>
         <tr>
-          <td>35B未登録</td>
-          <td>意図した状態。Milestone 28の任意評価だけで扱う</td>
+          <td>35B SLO未評価</td>
+          <td>
+            Repository onboarding、staging、基本swap acceptance済み。Milestone
+            28で性能とmemoryを継続計測する
+          </td>
         </tr>
         <tr>
           <td>VOICEVOX model manifest未整備</td>

@@ -22,6 +22,18 @@ routes:
       - runtime: qwen-general
         purpose: fallback
 
+  llm-agent-worker:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: qwen-worker-agent
+        purpose: primary
+      - runtime: qwen-general
+        purpose: fallback
+
   llm-speed:
     capabilities:
       - llm.general
@@ -29,6 +41,60 @@ routes:
     explicitOnly: true
     candidates:
       - runtime: qwen-worker-fast
+        purpose: primary
+      - runtime: qwen-general
+        purpose: fallback
+
+  llm-35b:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: ornith15-35b
+        purpose: primary
+      - runtime: ornith15-35b-speed
+        purpose: fallback
+      - runtime: qwen36-35b
+        purpose: fallback
+      - runtime: qwen-general
+        purpose: fallback
+
+  llm-35b-speed:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: ornith15-35b-speed
+        purpose: primary
+      - runtime: ornith15-35b
+        purpose: fallback
+      - runtime: qwen-general
+        purpose: fallback
+
+  llm-agent-35b:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: ornith15-35b-agent
+        purpose: primary
+      - runtime: qwen-general
+        purpose: fallback
+
+  llm-qwen36-35b:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: qwen36-35b
         purpose: primary
       - runtime: qwen-general
         purpose: fallback
