@@ -10,6 +10,7 @@ state_root="${LARM_RELEASE_STATE_ROOT:-/var/lib/larm/releases}"
 release_ref="${LARM_RELEASE_REF:-HEAD}"
 keep="${LARM_RELEASE_KEEP:-3}"
 test_mode="${LARM_RELEASE_TEST_MODE:-0}"
+bun_bin="${LARM_BUN_BIN:-}"
 
 fail() { echo "$*" >&2; exit 1; }
 [[ "${action}" =~ ^(plan|apply|rollback|cleanup)$ ]] || fail "usage: $0 plan|apply|rollback|cleanup"
@@ -29,6 +30,17 @@ state_root="$(realpath -sm -- "${state_root}")"
 current_link="$(realpath -sm -- "${current_link}")"
 [[ -d "${source_root}/.git" && ! -L "${source_root}" ]] || fail "source must be a real Git worktree"
 source_root="$(realpath -e -- "${source_root}")"
+if [[ -z "${bun_bin}" ]]; then
+  if [[ -x /home/ugnoguchi/.bun/bin/bun ]]; then
+    bun_bin=/home/ugnoguchi/.bun/bin/bun
+  else
+    bun_bin="$(command -v bun 2>/dev/null || true)"
+  fi
+fi
+[[ "${bun_bin}" == /* && -f "${bun_bin}" && -x "${bun_bin}" ]] \
+  || fail "LARM_BUN_BIN must identify an absolute executable Bun binary"
+bun_bin="$(realpath -e -- "${bun_bin}")"
+export PATH="$(dirname -- "${bun_bin}"):${PATH}"
 commit="$(git -C "${source_root}" rev-parse --verify "${release_ref}^{commit}")"
 short="${commit:0:12}"
 release_dir="${release_root}/${short}"
@@ -147,7 +159,8 @@ validate_release_payload() {
   if [[ "${test_mode}" == "1" && "${expected_revision}" == "$(printf '0%.0s' {1..64})" ]]; then
     return 0
   fi
-  actual_revision="$(cd "${target}" && bun run apps/daemon/src/print-config-revision.ts)" || return 1
+  actual_revision="$(cd "${target}" && "${bun_bin}" run apps/daemon/src/print-config-revision.ts)" \
+    || return 1
   [[ "${actual_revision}" == "${expected_revision}" ]]
 }
 
@@ -365,8 +378,21 @@ else
   git -C "${source_root}" archive "${commit}" | tar -x -C "${staging}"
   lock_digest="$(sha256sum "${staging}/bun.lock" | awk '{print $1}')"
   if [[ "${LARM_RELEASE_SKIP_GATE:-0}" != "1" ]]; then
-    (cd "${staging}" && bun install --frozen-lockfile && bun run check)
-    config_revision="$(cd "${staging}" && bun run apps/daemon/src/print-config-revision.ts)"
+    (
+      cd "${source_root}"
+      "${bun_bin}" run check:source-only
+      "${bun_bin}" run check:operations
+    )
+    (
+      cd "${staging}"
+      "${bun_bin}" install --frozen-lockfile
+      "${bun_bin}" run docs:check
+      "${bun_bin}" run typecheck
+      "${bun_bin}" run test
+      "${bun_bin}" run test:deployment
+    )
+    config_revision="$(cd "${staging}" \
+      && "${bun_bin}" run apps/daemon/src/print-config-revision.ts)"
   elif [[ "${test_mode}" != "1" ]]; then
     fail "LARM_RELEASE_SKIP_GATE is restricted to test mode"
   else
@@ -383,7 +409,8 @@ else
     || fail "release-manifest.json is a reserved generated path"
   node_modules_sha256="$(node_modules_digest "${staging}")" \
     || fail "installed node_modules tree contains an unsafe entry"
-  jq -n --arg commit "${commit}" --arg version "${larm_version}" --arg bunVersion "$(bun --version)" \
+  jq -n --arg commit "${commit}" --arg version "${larm_version}" \
+    --arg bunVersion "$("${bun_bin}" --version)" \
     --arg configRevision "${config_revision}" \
     --arg lockfileSha256 "${lock_digest}" --arg nodeModulesSha256 "${node_modules_sha256}" \
     --arg createdAt "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \

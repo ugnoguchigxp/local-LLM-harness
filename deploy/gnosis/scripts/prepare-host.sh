@@ -7,7 +7,6 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 operator="ugnoguchi"
-lan_cidr="${LAN_CIDR:-192.168.0.0/24}"
 
 if ! id "${operator}" >/dev/null 2>&1; then
   echo "Required service account does not exist: ${operator}" >&2
@@ -33,11 +32,6 @@ install -d -o "${operator}" -g "${operator}" \
   /srv/ai/models/.larm-staging /srv/ai/models/.larm-rollback \
   /var/lib/larm
 
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow from "${lan_cidr}" to any port 22 proto tcp
-ufw allow from "${lan_cidr}" to any port 9810 proto tcp
-
-echo "Host prerequisites are prepared. Review 'ufw status' before running 'ufw enable'."
-echo "Provider ports are loopback-only; authenticated LARM Gateway port 9810 is allowed from ${lan_cidr}."
-echo "This script intentionally does not enable UFW, remove existing rules, configure ROCm/TTM, or reboot."
+echo "Host prerequisites are prepared."
+echo "This script intentionally does not change or enable UFW, configure ROCm/TTM, or reboot."
+echo "Use configure-saaa-rest-access.sh for the reviewed SAAA-to-LARM REST rule."

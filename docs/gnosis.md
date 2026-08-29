@@ -19,14 +19,14 @@ state from this document alone.
 | 8084 | VOICEVOX CORE 0.17.0 | resident | low-latency speech |
 | 9810 | LARM daemon | control plane | authenticated LAN Gateway |
 
-The repository-managed Runtime units bind ports 8080–8084 to loopback. `prepare-host.sh` adds
-reviewed LAN rules for SSH administration and the authenticated LARM Gateway, and deliberately
-neither enables UFW nor removes legacy rules.
+The repository-managed Runtime units bind ports 8080–8084 to loopback. `prepare-host.sh` installs
+host prerequisites but does not change or enable UFW. The focused SAAA REST access tool manages
+only the reviewed source-host rule for the authenticated LARM Gateway and never changes SSH rules.
 Runtime control and health use loopback endpoints from
 [`../config/gnosis/runtimes.yaml`](../config/gnosis/runtimes.yaml).
 The production LARM unit listens on all host interfaces at port 9810, requires both API and
 management credentials, and advertises the gnosis LAN identity `192.168.0.65` to SAAA. Restrict
-port 9810 to the reviewed trusted LAN CIDR; use TLS termination before extending this boundary
+port 9810 to the reviewed SAAA source host; use TLS termination before extending this boundary
 beyond that network.
 The live host observed on 2026-08-29 still used wildcard Provider listeners. The
 [`Production Completion plan`](../specs/production-completion-plan.html) applies the loopback
@@ -42,7 +42,7 @@ SAAA stores the gnosis host address `192.168.0.65`, calls the control API at
 `LARM_API_TOKEN` remains in the macOS secret store, not in routing configuration.
 
 Provider ports 8080–8084 remain loopback-only. Only the authenticated Gateway at 9810 is exposed
-to the reviewed LAN CIDR. An unauthenticated control request must return 401, while `/health` and
+to the reviewed SAAA source host. An unauthenticated control request must return 401, while `/health` and
 `/ready` remain credential-free operational probes and do not disclose Provider endpoints.
 
 ## Why this split

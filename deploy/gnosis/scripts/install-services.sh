@@ -6,7 +6,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 unit_source="${repo_root}/deploy/gnosis/systemd"
 test_mode="${LARM_INSTALL_TEST_MODE:-0}"
 install_root="${LARM_INSTALL_ROOT:-}"
+install_scope="${LARM_INSTALL_SCOPE:-all}"
 operator="ugnoguchi"
+
+if [[ "${install_scope}" != "all" && "${install_scope}" != "gateway" ]]; then
+  echo "LARM_INSTALL_SCOPE must be all or gateway" >&2
+  exit 1
+fi
 
 if [[ "${test_mode}" == "1" && -z "${install_root}" ]]; then
   echo "LARM_INSTALL_ROOT is required in test mode" >&2
@@ -69,22 +75,36 @@ systemctl_run() {
   fi
 }
 
-units=(
-  llama-server.service
-  llama-swap-worker.service
-  qwen-asr.service
-  qwen-tts.service
-  voicevox-tts.service
-  larm-daemon.service
-)
-
-enabled_units=(
-  llama-server.service
-  llama-swap-worker.service
-  qwen-asr.service
-  voicevox-tts.service
-  larm-daemon.service
-)
+if [[ "${install_scope}" == "gateway" ]]; then
+  units=(larm-daemon.service)
+  enabled_units=(larm-daemon.service)
+  data_directories=("${staging_dir}" "${rollback_dir}" "${state_dir}")
+else
+  units=(
+    llama-server.service
+    llama-swap-worker.service
+    qwen-asr.service
+    qwen-tts.service
+    voicevox-tts.service
+    larm-daemon.service
+  )
+  enabled_units=(
+    llama-server.service
+    llama-swap-worker.service
+    qwen-asr.service
+    voicevox-tts.service
+    larm-daemon.service
+  )
+  data_directories=(
+    "${worker_dir}"
+    "${worker_35b_dir}"
+    "${ornith_35b_dir}"
+    "${tts_dir}"
+    "${staging_dir}"
+    "${rollback_dir}"
+    "${state_dir}"
+  )
+fi
 
 safe_install_target() {
   local path="$1" description="$2"
@@ -112,9 +132,8 @@ if [[ "${test_mode}" != "1" ]] && ! id "${operator}" >/dev/null 2>&1; then
   exit 1
 fi
 
-for directory in "${unit_target}" "${credential_dir}" "${polkit_dir}" "${state_dir}" \
-  "${staging_dir}" "${rollback_dir}" "${worker_dir}" "${worker_35b_dir}" \
-  "${ornith_35b_dir}" "${tts_dir}"; do
+for directory in "${unit_target}" "${credential_dir}" "${polkit_dir}" \
+  "${data_directories[@]}"; do
   safe_directory_path "${directory}" "installation directory"
 done
 
@@ -124,14 +143,7 @@ done
 safe_install_target "${polkit_dir}/50-larm-runtime-control.rules" "polkit target"
 safe_install_target "${credential_path}" "credential target"
 
-install -d -o "${data_owner}" -g "${data_group}" \
-  "${worker_dir}" \
-  "${worker_35b_dir}" \
-  "${ornith_35b_dir}" \
-  "${tts_dir}" \
-  "${staging_dir}" \
-  "${rollback_dir}" \
-  "${state_dir}"
+install -d -o "${data_owner}" -g "${data_group}" "${data_directories[@]}"
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${unit_target}"
 
 for unit in "${units[@]}"; do
@@ -177,9 +189,15 @@ chmod 0640 "${credential_path}"
 
 systemctl_run daemon-reload
 systemctl_run enable "${enabled_units[@]}"
-systemctl_run disable qwen-tts.service
+if [[ "${install_scope}" == "all" ]]; then
+  systemctl_run disable qwen-tts.service
+fi
 
-echo "Resident/control units enabled; preferred qwen-tts.service left disabled for on-demand use."
+if [[ "${install_scope}" == "gateway" ]]; then
+  echo "LARM Gateway unit enabled; existing Provider units and their enablement were not changed."
+else
+  echo "Resident/control units enabled; preferred qwen-tts.service left disabled for on-demand use."
+fi
 echo "This script intentionally does not reboot or restart services."
 echo "Apply a changed unit explicitly, for example: systemctl restart llama-swap-worker.service"
 echo "LARM API, Agent Connection, and management credentials are stored in ${credential_path}."

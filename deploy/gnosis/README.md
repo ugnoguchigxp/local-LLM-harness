@@ -11,8 +11,10 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `sources.lock.yaml`: external runtime source/release pins, never built binaries
 - `systemd/`: the units installed on gnosis
 - `polkit/`: LARMにPreferred providerだけのstart / stopを許可する最小権限rule
-- `scripts/prepare-host.sh`: conservative host prerequisites; no reboot and no UFW enable
-- `scripts/install-services.sh`: unitをinstallし、Resident/controlだけをenableする（restartなし）
+- `scripts/prepare-host.sh`: conservative host prerequisites; no firewall mutation or reboot
+- `scripts/configure-saaa-rest-access.sh`: exact SAAA source hostから9810だけを許可するplan・apply・rollback
+- `scripts/install-services.sh`: unitをinstallし、Resident/controlだけをenableする（restartなし）。
+  `LARM_INSTALL_SCOPE=gateway`ではLARM Gatewayだけをinstall・enableし、既存Provider unitを変更しない
 - `scripts/preflight-larm.sh`: secretを含めないread-only commissioning inventory
 - `scripts/backup-host-state.sh`: installed unitとcurrent pointerのdigest付きoperator backup
 - `scripts/network-converge.sh`: listener・UFW差分のplanとdigest確認付き限定apply・rollback
@@ -20,6 +22,7 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/release-larm.sh`: clean commitのversioned apply、rollback、review済みbounded retention
 - `scripts/verify.sh`: GPU, service, HTTP health, and memory checks
 - `scripts/smoke-larm.sh`: Resident 27B固定のAllocation、stream、release smoke
+- `scripts/smoke-saaa-agent-connection.sh`: SAAA向け35B create・claim・SSE・release smoke
 - `scripts/smoke-voice.sh`: operator提供音声によるSTT・通常TTS smoke
 - `scripts/canary-gate.sh`: 4 seriesのSLO、boot epoch、fallback、leakを拒否するcanary gate
 - `scripts/shadow-larm.sh`: 推論せずlegacyとv1のroute・Runtime・endpointを比較
@@ -63,11 +66,34 @@ sudo env LARM_BACKUP_LABEL="${backup_label}" LARM_BACKUP_CONFIRM="${backup_confi
 ```
 
 `prepare-host.sh` installs packages, masks sleep targets, adds the service account to the GPU
-groups, creates data directories, and stages the requested LAN SSH administration rule plus the
-authenticated LARM Gateway rule on port 9810. It does not enable UFW, remove legacy Provider rules,
-configure ROCm/TTM, or reboot. Run it only after reviewing those host-level changes. Provider rule
-removal is handled separately by the digest-bound network tool in
+groups, and creates data directories. It does not change or enable UFW, configure ROCm/TTM, or
+reboot. SAAA REST access is handled separately by `configure-saaa-rest-access.sh`, which never
+changes SSH or Provider rules. Provider rule removal is handled by the separate digest-bound tool in
 [`../../specs/production-completion-plan.html`](../../specs/production-completion-plan.html).
+
+The SAAA rule requires one explicit IPv4 host, refuses an inactive or unreadable firewall, and
+rejects broader or duplicate port 9810 allow rules. Review the plan digest before applying it.
+
+```bash
+saaa_plan="$(SAAA_SOURCE_IPV4=192.168.0.x \
+  deploy/gnosis/scripts/configure-saaa-rest-access.sh plan)"
+printf '%s\n' "${saaa_plan}"
+saaa_confirm="$(jq -er .confirmation <<<"${saaa_plan}")"
+sudo env SAAA_SOURCE_IPV4=192.168.0.x LARM_SAAA_NETWORK_CONFIRM="${saaa_confirm}" \
+  deploy/gnosis/scripts/configure-saaa-rest-access.sh apply
+```
+
+Rollback is accepted only for a rule recorded as added by this tool:
+
+```bash
+saaa_rollback_plan="$(sudo env SAAA_SOURCE_IPV4=192.168.0.x \
+  deploy/gnosis/scripts/configure-saaa-rest-access.sh rollback-plan)"
+printf '%s\n' "${saaa_rollback_plan}"
+saaa_rollback_confirm="$(jq -er .confirmation <<<"${saaa_rollback_plan}")"
+sudo env SAAA_SOURCE_IPV4=192.168.0.x \
+  LARM_SAAA_NETWORK_ROLLBACK_CONFIRM="${saaa_rollback_confirm}" \
+  deploy/gnosis/scripts/configure-saaa-rest-access.sh rollback
+```
 
 Do not run the apply sequence below as a stable deployment until Milestone 22 is a reviewed clean
 commit and a rollback target is available.
@@ -85,6 +111,8 @@ sudo systemctl start llama-server.service llama-swap-worker.service \
   qwen-asr.service voicevox-tts.service larm-daemon.service  # first install only
 deploy/gnosis/scripts/verify.sh
 deploy/gnosis/scripts/smoke-larm.sh
+# After loading /etc/larm/larm.env without printing it:
+# deploy/gnosis/scripts/smoke-saaa-agent-connection.sh
 # LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/gnosis/scripts/smoke-voice.sh
 # After production calibration has changed deploy/gnosis/slo.yaml to calibrated:
 # LARM_CANARY_EVIDENCE_DIR=/srv/ai/logs/larm-canary \

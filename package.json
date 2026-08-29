@@ -6,16 +6,16 @@
   "scripts": {
     "dev": "bun run --filter @larm/daemon dev",
     "start": "bun run --filter @larm/daemon start",
-    "docs": "bun x --bun --no-install spec-html ./specs --markdown-lang ja",
-    "docs:fix": "bun x --bun --no-install spec-html fix ./specs --write",
-    "docs:format": "bun x --bun --no-install spec-html format ./specs --write",
-    "docs:check": "bun x --bun --no-install spec-html check ./specs --warnings-as-errors",
-    "docs:check:fix": "bun x --bun --no-install spec-html check ./specs --fix --warnings-as-errors",
-    "typecheck": "tsc --noEmit",
+    "docs": "bun ./node_modules/spec-html/dist/cli.js ./specs --markdown-lang ja",
+    "docs:fix": "bun ./node_modules/spec-html/dist/cli.js fix ./specs --write",
+    "docs:format": "bun ./node_modules/spec-html/dist/cli.js format ./specs --write",
+    "docs:check": "bun ./node_modules/spec-html/dist/cli.js check ./specs --warnings-as-errors",
+    "docs:check:fix": "bun ./node_modules/spec-html/dist/cli.js check ./specs --fix --warnings-as-errors",
+    "typecheck": "bun ./node_modules/typescript/bin/tsc --noEmit",
     "test": "bun test apps packages",
     "check:source-only": "bash scripts/check-source-only.sh",
     "check:operations": "bash scripts/check-operations.sh",
-    "test:deployment": "bun test deploy/gnosis/scripts/verify-external-assets.test.ts deploy/gnosis/scripts/benchmark-helpers.test.ts deploy/gnosis/scripts/benchmark-larm.test.ts deploy/gnosis/scripts/compare-slo.test.ts && bash deploy/gnosis/scripts/backup-host-state.test.sh && bash deploy/gnosis/scripts/install-services.test.sh && bash deploy/gnosis/scripts/release-larm.test.sh && bash deploy/gnosis/scripts/network-converge.test.sh",
+    "test:deployment": "bun test deploy/gnosis/scripts/verify-external-assets.test.ts deploy/gnosis/scripts/benchmark-helpers.test.ts deploy/gnosis/scripts/benchmark-larm.test.ts deploy/gnosis/scripts/compare-slo.test.ts && bash deploy/gnosis/scripts/backup-host-state.test.sh && bash deploy/gnosis/scripts/install-services.test.sh && bash deploy/gnosis/scripts/release-larm.test.sh && bash deploy/gnosis/scripts/network-converge.test.sh && bash deploy/gnosis/scripts/configure-saaa-rest-access.test.sh",
     "check": "bun run check:source-only && bun run check:operations && bun run docs:check && bun run typecheck && bun run test && bun run test:deployment"
   },
   "devDependencies": {

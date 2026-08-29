@@ -5,7 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 installer="${repo_root}/deploy/gnosis/scripts/install-services.sh"
 test_root="$(mktemp -d /tmp/larm-install-test.XXXXXX)"
 symlinked_root="${test_root}-symlink"
-trap 'rm -rf -- "${test_root}"; rm -f -- "${symlinked_root}"' EXIT
+gateway_root="${test_root}-gateway"
+trap 'rm -rf -- "${test_root}" "${gateway_root}"; rm -f -- "${symlinked_root}"' EXIT
 
 run_installer() {
   LARM_INSTALL_TEST_MODE=1 \
@@ -15,6 +16,12 @@ run_installer() {
 
 if LARM_INSTALL_TEST_MODE=1 bash "${installer}" >/dev/null 2>&1; then
   echo "installer allowed test mode without an isolated root" >&2
+  exit 1
+fi
+
+if LARM_INSTALL_TEST_MODE=1 LARM_INSTALL_ROOT="${test_root}" \
+  LARM_INSTALL_SCOPE=invalid bash "${installer}" >/dev/null 2>&1; then
+  echo "installer accepted an invalid installation scope" >&2
   exit 1
 fi
 
@@ -56,6 +63,32 @@ grep -F "/srv/ai/models/qwen36-35b" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "/srv/ai/models/ornith15-35b" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
+
+mkdir "${gateway_root}"
+LARM_INSTALL_TEST_MODE=1 \
+  LARM_INSTALL_ROOT="${gateway_root}" \
+  LARM_INSTALL_SCOPE=gateway \
+  bash "${installer}" >/dev/null
+[[ -f "${gateway_root}/etc/systemd/system/larm-daemon.service" ]]
+for unit in llama-server.service llama-swap-worker.service qwen-asr.service qwen-tts.service \
+  voicevox-tts.service; do
+  [[ ! -e "${gateway_root}/etc/systemd/system/${unit}" ]]
+done
+grep -F "enable larm-daemon.service" \
+  "${gateway_root}/var/lib/larm/install-systemctl.log" >/dev/null
+if grep -Eq 'llama-server|llama-swap-worker|qwen-asr|qwen-tts|voicevox-tts|disable' \
+  "${gateway_root}/var/lib/larm/install-systemctl.log"; then
+  echo "gateway scope changed a Provider unit" >&2
+  exit 1
+fi
+[[ ! -e "${gateway_root}/srv/ai/models/qwen38-worker" ]]
+[[ ! -e "${gateway_root}/srv/ai/models/qwen36-35b" ]]
+[[ ! -e "${gateway_root}/srv/ai/models/ornith15-35b" ]]
+[[ ! -e "${gateway_root}/srv/ai/models/qwen-tts" ]]
+[[ -d "${gateway_root}/srv/ai/models/.larm-staging" ]]
+[[ -d "${gateway_root}/srv/ai/models/.larm-rollback" ]]
+[[ -f "${gateway_root}/etc/larm/larm.env" ]]
+[[ -f "${gateway_root}/etc/polkit-1/rules.d/50-larm-runtime-control.rules" ]]
 
 credential_target="${test_root}/credential-target"
 printf 'unchanged\n' >"${credential_target}"

@@ -22,7 +22,7 @@ if ! command -v systemd-analyze >/dev/null 2>&1; then
 fi
 systemd-analyze verify deploy/gnosis/systemd/*.service
 
-if rg -n '0\.0\.0\.0|\[::\]' \
+if grep -En '0\.0\.0\.0|\[::\]' \
   deploy/gnosis/systemd/llama-server.service \
   deploy/gnosis/systemd/llama-swap-worker.service \
   deploy/gnosis/systemd/qwen-asr.service \
@@ -31,7 +31,7 @@ if rg -n '0\.0\.0\.0|\[::\]' \
   echo "production Provider units must not use wildcard listeners" >&2
   exit 1
 fi
-if rg -n '808[0-4]' deploy/gnosis/scripts/prepare-host.sh; then
+if grep -En '808[0-4]' deploy/gnosis/scripts/prepare-host.sh; then
   echo "prepare-host.sh must not add direct Provider LAN rules" >&2
   exit 1
 fi

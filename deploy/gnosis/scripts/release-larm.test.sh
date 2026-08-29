@@ -6,13 +6,16 @@ releaser="${repo_root}/deploy/gnosis/scripts/release-larm.sh"
 test_root="$(mktemp -d /tmp/larm-release-test.XXXXXX)"
 trap 'rm -rf -- "${test_root}"' EXIT
 source_root="${test_root}/source"
-mkdir -p "${source_root}/packages/core/src"
+mkdir -p "${source_root}/apps/daemon/src" "${source_root}/packages/core/src"
 git -C "${test_root}" init -q source
 git -C "${source_root}" config user.email test@example.invalid
 git -C "${source_root}" config user.name LARM-test
-printf 'lock-v1\n' >"${source_root}/bun.lock"
-printf '{"scripts":{"check":"true"}}\n' >"${source_root}/package.json"
+printf '%s\n' \
+  '{"scripts":{"check:source-only":"test -d .git","check:operations":"test -d .git","docs:check":"command -v bun >/dev/null && test ! -e .git","typecheck":"true","test":"true","test:deployment":"true"},"dependencies":{"yaml":"2.9.0"}}' \
+  >"${source_root}/package.json"
+printf 'console.log("%064d");\n' 0 >"${source_root}/apps/daemon/src/print-config-revision.ts"
 printf 'export const LARM_VERSION = "0.1.0";\n' >"${source_root}/packages/core/src/version.ts"
+(cd "${source_root}" && bun install --lockfile-only >/dev/null)
 git -C "${source_root}" add .
 git -C "${source_root}" commit -qm first
 
@@ -26,6 +29,20 @@ run_release() {
   LARM_RELEASE_STATE_ROOT="${test_root}/state" \
   bash "${releaser}" "$@"
 }
+
+run_gated_release() {
+  LARM_RELEASE_TEST_MODE=1 \
+  LARM_RELEASE_KEEP=3 \
+  LARM_RELEASE_SOURCE="${source_root}" \
+  LARM_RELEASE_ROOT="${test_root}/gated-releases" \
+  LARM_RELEASE_CURRENT="${test_root}/gated-current" \
+  LARM_RELEASE_STATE_ROOT="${test_root}/gated-state" \
+  bash "${releaser}" "$@"
+}
+
+run_gated_release apply >/dev/null
+[[ -L "${test_root}/gated-current" ]]
+[[ -f "$(readlink -f "${test_root}/gated-current")/release-manifest.json" ]]
 
 run_release plan | jq -e '.dirty == false and .current == null and (.commit | length == 40)' >/dev/null
 first_commit="$(git -C "${source_root}" rev-parse HEAD)"

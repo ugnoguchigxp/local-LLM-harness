@@ -118,6 +118,10 @@ if [[ "${ufw_rc}" -eq 0 ]] && grep -Eq '^Status: (active|inactive)$' <<<"${ufw_o
 fi
 ufw_provider_rules="$(awk '$1 ~ /^(8080|8081|8082|8083|8084)(\/tcp)?$/ && $0 ~ /[[:space:]]ALLOW[[:space:]]+IN[[:space:]]/ {print}' \
   <<<"${ufw_output}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+ufw_gateway_rules="$(awk '$1 ~ /^9810(\/tcp)?$/ && $0 ~ /[[:space:]]ALLOW[[:space:]]+IN[[:space:]]/ {print}' \
+  <<<"${ufw_output}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+ufw_ssh_rules="$(awk '$1 ~ /^22(\/tcp)?$/ && $0 ~ /[[:space:]]ALLOW[[:space:]]+IN[[:space:]]/ {print}' \
+  <<<"${ufw_output}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
 external_assets="$(bun run "${external_verifier}")"
 
 jq -n \
@@ -146,6 +150,8 @@ jq -n \
   --argjson ufwReadable "${ufw_readable}" \
   --arg ufwStatus "${ufw_status}" \
   --argjson ufwProviderRules "${ufw_provider_rules}" \
+  --argjson ufwGatewayRules "${ufw_gateway_rules}" \
+  --argjson ufwSshRules "${ufw_ssh_rules}" \
   --argjson externalAssets "[${external_assets}]" \
   '{timestamp:$timestamp,commit:$commit,candidateConfigRevision:$candidateConfigRevision,dirty:$dirty,daemonHealth:$health,
     credential:{type:$credentialType,mode:$credentialMode,owner:$credentialOwner},
@@ -153,7 +159,8 @@ jq -n \
       matchesRepository:$unitMatch,load:$load,active:$active,enabled:$enabled},
     polkit:{type:$polkitType,digest:$polkitDigest,repositoryDigest:$repositoryPolkitDigest,matchesRepository:$polkitMatch},
     listener:{port:9810,description:$portOwner},providers:$providers,
-    firewall:{readable:$ufwReadable,status:$ufwStatus,providerAllowRules:$ufwProviderRules},
+    firewall:{readable:$ufwReadable,status:$ufwStatus,providerAllowRules:$ufwProviderRules,
+      gatewayAllowRules:$ufwGatewayRules,sshAllowRules:$ufwSshRules},
     externalAssets:$externalAssets,disk:{path:"/srv/ai",availableBytes:$diskAvailableBytes}}'
 
 [[ "$(jq -r .valid <<<"${external_assets}")" == "true" ]] || exit 1
