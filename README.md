@@ -1,103 +1,228 @@
 # local-LLM-harness
 
-AMD Ryzen AI MAX+ 395 / Ubuntu / ROCm を中心にした、Linux-first のローカルAI Providerです。Qwen 3.8 27B、音声認識、音声合成のRuntimeをsystemdとllama-swap越しに観測・制御します。
+local-LLM-harness（LARM）は、Linux 上で動かす複数のローカル AI ランタイムを、ひとつの API から扱うためのコントロールプレーンです。LLM、音声認識、音声合成などのランタイムを登録し、要求に合うものを選び、起動から解放までを管理します。
 
-Qwen 3.8 27Bは通常処理とリアルタイム処理のResident defaultです。追加27B、Ornith-1.5-35B-A3B、Qwen3.6-35B-A3Bは明示routeでだけ起動し、Residentとは別の交換可能worker slotを共有します。35Bの品質既定は公式Q5_K_MのOrnithで、gfx1151向けROCmFP4は明示的なspeed候補、Qwenは比較・fallback用に残します。
+モデルや推論エンジンそのものは同梱しません。このリポジトリが管理するのは、ランタイムを安全に使い分けるためのソースコード、設定スキーマ、API、運用ロジックです。
 
-通常requestは必要なcapabilityとrouteをAllocation APIへ渡します。`llm-default`は常駐27Bへ固定され、追加27Bへの分散は`llm-speed`、品質重視のOrnith 35Bは`llm-35b`、ROCmFP4速度版は`llm-35b-speed`、旧Qwen 35Bとの比較は`llm-qwen36-35b`を明示します。動的Agent接続では64Kの`coding-worker`と`deep-reasoning-35b`を使い、常駐27Bとの同居とworker間swapを両立します。管理APIではallowlist済みRuntime releaseをstage・plan・activate・rollbackでき、requestから任意のURL、model path、service、commandを注入することはできません。
+## 何を解決するのか
 
-## Repository policy
+複数のローカル AI ランタイムを直接使う構成では、利用側がモデルごとのポート、起動方法、空きメモリ、切り替え手順を把握しなくてはなりません。LARM はそれらを設定とバックエンドの内側に閉じ込め、利用側には安定した Allocation と Gateway を提供します。
 
-Gitで管理するのは、ソースコード、設定、systemd unit、再現手順、自動配備対象のモデル取得元とchecksumです。
-VOICEVOXの外部runtime bundleはoperatorが利用規約に同意して配備する例外です。使用中の
-<code>0.vvm</code>もrelease、配布元、bytes、SHA-256をsource-only metadataへ固定し、preflightで
-実fileとの一致をfail-closed検証します。次の実体は管理しません。
+```text
+Client / Agent
+  ├─ capability と route を指定して Allocation を取得
+  └─ Allocation ID を付けて推論を要求
+                    │
+                    ▼
+                LARM daemon
+  ├─ registry / routing / admission control
+  ├─ lifecycle / health observation / release
+  └─ OpenAI-compatible Gateway
+                    │
+                    ▼
+              systemd / llama-swap
+                    │
+                    ▼
+              LLM / STT / TTS runtime
+```
 
-- モデルweight、Hugging Face cache
-- llama.cpp、llama-swap、VOICEVOX COREなどの取得・ビルド可能な実行物
-- `.exe`、`.dll`、`.so`、build directory、virtual environment
-- ログ、生成音声、一時ベンチマーク出力
+LARM のルーティングはリクエスト本文の `model` ではなく、事前に登録した capability と route を基準にします。一度選んだランタイムは Allocation の有効期間中に固定され、許可されていない fallback は行いません。
 
-実行物は `/srv/ai/apps`、モデルは `/srv/ai/models`、cacheは `/srv/ai/cache` に置きます。LARMが参照するartifactの取得元、revision、配置先、検証metadataは[`deploy/gnosis/models.yaml`](deploy/gnosis/models.yaml)が正本です。単一fileに加え、全fileのpath、bytes、SHA-256とsnapshot digestを固定したdirectory modelを無人stagingできます。Resident artifactのactivationは引き続きattended operationです。
+## 主な概念
 
-## Layout
-
-| Path | Role |
+| 用語 | 意味 |
 | --- | --- |
-| `apps/daemon` | Route、Allocation、Gateway、runtime release、catalog reloadを提供するcontrol plane |
-| `apps/qwen-asr` | OpenAI互換ASR adapter |
-| `apps/qwen-tts` | gfx1151向けQwen3-TTS設定・patch |
-| `apps/voicevox-tts` | 低遅延VOICEVOX adapter |
-| `packages/core` | OS非依存のregistry/state/planner |
-| `packages/backends` | Systemd、llama-swap、atomic state、Linux telemetry adapter |
-| `packages/client` | v1 lifecycleとGatewayを扱う参照TypeScript client |
-| `config/gnosis` | Linux production registryとllama-swap設定 |
-| `deploy/gnosis` | systemd unit、host導入、検証、model manifest |
-| `specs` | Spec HTMLで作成する設計書・仕様書・実装計画 |
+| capability | `llm.general` や `speech.stt` など、利用側が必要とする機能 |
+| runtime | 推論エンジン、プロトコル、エンドポイント、必要資源をまとめた実行単位 |
+| route | capability をどの runtime 候補へ割り当てるかを定めた規則 |
+| Allocation | 選択した runtime を一定時間固定する、期限付きの利用枠 |
+| Gateway | Allocation に従ってリクエストを転送する共通 API |
+| resident | 常駐を前提とし、LARM からの起動・停止対象にしない runtime |
+| preferred | 必要に応じて起動し、未使用時に停止できる runtime |
 
-## Development
+## できること
+
+- capability と route に基づく、決定的なランタイム選択
+- 常駐ランタイムとオンデマンドランタイムの一元管理
+- メモリ、同時実行数、キュー、swap group を考慮した admission control
+- Allocation の作成、ready 待機、更新、解放、期限切れ回収
+- OpenAI 互換の Chat Completions、音声認識、音声合成 Gateway
+- systemd と llama-swap を介した状態監視とライフサイクル制御
+- 許可リストに登録した成果物の検証、staging、切り替え、ロールバック
+- Agent 向けの短期接続情報と、用途別 provider profile の発行
+- ヘルスチェック、readiness、Prometheus メトリクス、OpenAPI 3.1 定義
+- Allocation の後始末まで扱う TypeScript クライアント
+
+## 対象外
+
+LARM は、GPU ドライバ、推論エンジン、モデルのインストーラではありません。モデルの自動選定やクラウドへの暗黙 fallback も行いません。利用するランタイム、fallback 候補、配備可能な成果物は、運用者があらかじめ設定します。
+
+また、モデルの重み、外部バイナリ、ビルド結果、キャッシュ、ログ、生成した音声は Git で管理しません。これらはリポジトリの外に配置してください。
+
+## API
+
+| 種類 | 主なエンドポイント |
+| --- | --- |
+| 稼働確認 | `GET /health`、`GET /ready` |
+| 観測 | `GET /state`、`GET /metrics` |
+| Allocation | `POST /v1/allocations`、`POST /v1/allocations/:id/renew`、`DELETE /v1/allocations/:id` |
+| LLM | `POST /v1/chat/completions` |
+| 音声 | `POST /v1/audio/transcriptions`、`POST /v1/audio/speech`、`GET /v1/audio/voices` |
+| Agent 接続 | `/v1/agent-profiles`、`/v1/agent-connections` |
+| 成果物とリリース | `/v1/artifacts`、`/v1/runtime-releases`、`/v1/deployments` |
+| API 定義 | `GET /openapi.json` |
+
+完全なリクエスト・レスポンス定義は、起動中の daemon が返す `/openapi.json` を正本として確認できます。
+
+## 必要なもの
+
+- Linux
+- [Bun](https://bun.sh/) 1.4.0
+- 別途用意した推論エンジンとモデル
+- ノード、ランタイム、プロファイル、ルートを定義した YAML 設定
+- 使用するバックエンドに応じて systemd または llama-swap
+
+## セットアップ
+
+依存関係をインストールし、リポジトリが正常な状態か確認します。
 
 ```bash
 bun install --frozen-lockfile
 bun run check
+```
+
+### 設定を用意する
+
+`LARM_CONFIG_DIR` には次のファイルが必要です。ID、サービス名、ポート、モデル名、資源量は環境に合わせて定義します。
+
+| ファイル | 内容 |
+| --- | --- |
+| `nodes.yaml` | ノードの API endpoint と利用可能なメモリ |
+| `runtimes.yaml` | capability、プロトコル、backend、endpoint、資源制限 |
+| `profiles.yaml` | 一緒に準備する capability の組み合わせ |
+| `routes.yaml` | capability ごとの primary・fallback runtime |
+| `agent-connections.yaml` | Agent に公開する provider profile と接続範囲 |
+
+成果物の自動配備を使う場合は、取得元、サイズ、checksum、配置先を artifact manifest に、runtime と成果物の組み合わせを release catalog に記述します。daemon は起動時にすべての設定を検証し、未知の項目や矛盾した参照があれば起動しません。
+
+設定の厳密なスキーマは、[`packages/core/src/schema.ts`](packages/core/src/schema.ts)、[`artifacts.ts`](packages/core/src/artifacts.ts)、[`releases.ts`](packages/core/src/releases.ts)、[`agent-connection.ts`](packages/core/src/agent-connection.ts) で確認できます。
+
+### daemon を起動する
+
+```bash
+export LARM_CONFIG_DIR=/path/to/larm-config
+export LARM_ARTIFACT_MANIFEST=/path/to/models.yaml
+export LARM_RELEASE_CATALOG=/path/to/releases.yaml
+
 bun run dev
 ```
 
-`bun run check`はsource-only、Bash・Python・systemd、Spec HTML、TypeScript、全test、installer再実行検査をCIと同じ順序で実行します。
-
-## Design documents
-
-新しい設計書、仕様書、実装計画、調査結果は`specs/`にSpec HTMLのHTML fragmentとして作成します。既存Markdownは移行するまでそのまま参照できます。
+既定では `127.0.0.1:9810` で待ち受けます。
 
 ```bash
-bun run docs
-bun run docs:check
-bun run docs:check:fix
+curl http://127.0.0.1:9810/health
+curl http://127.0.0.1:9810/ready
+curl http://127.0.0.1:9810/openapi.json
 ```
 
-HTML文書は`<article lang="ja">`をrootとし、document固有の`html`、`head`、`body`、CSS、navigationは持たせません。詳細は[`specs/overview.html`](specs/overview.html)を参照してください。
+`/health` はプロセスが応答できること、`/ready` は新しい要求を受け付けられることを表します。
 
-Providerの最新コンセプトは[`specs/concept.html`](specs/concept.html)、公開APIは
-[`specs/api.html`](specs/api.html)、残るproduction完了工程は
-[`specs/production-completion-plan.html`](specs/production-completion-plan.html)、そのattended実行順は
-[`specs/production-rollout-execution-plan.html`](specs/production-rollout-execution-plan.html)、実装結果は
-[`specs/implementation-completion-m15-m21.html`](specs/implementation-completion-m15-m21.html)、on-demand LLM構成は
-[`specs/on-demand-llm-worker-pool.html`](specs/on-demand-llm-worker-pool.html)、Agent向け動的Provider接続APIは
-[`specs/agent-provider-connection-api.html`](specs/agent-provider-connection-api.html)（実装・実機E2E済み）、実装証跡は
-[`specs/agent-provider-connection-implementation.html`](specs/agent-provider-connection-implementation.html)、Ornith配布物の選定根拠は
-[`specs/ornith-1.5-35b-selection.html`](specs/ornith-1.5-35b-selection.html)を正本とします。
+## 最初のリクエスト
 
-daemonは既定で `config/gnosis` を読み、`127.0.0.1:9810` で待ち受けます。別構成は `LARM_CONFIG_DIR` で指定できます。
+次の例は、TypeScript クライアントで Allocation の取得、ready 待機、推論、解放を行います。`LARM_ROUTE` には `routes.yaml` に登録した LLM 用 route ID を指定してください。
 
-repositoryのProvider unitはport 8080–8084をloopbackだけでlistenするstable desired stateです。
-2026年8月29日のlive hostには移行用wildcard unitが残っているため、通常clientはLARM Gatewayを使用し、
-review済みnetwork plan、Provider単位のrestart、capability smokeの順で段階適用します。
+```ts
+import { LarmClient } from "./packages/client/src/index";
 
-## gnosis operations
+const route = process.env.LARM_ROUTE;
+if (!route) throw new Error("LARM_ROUTE is required");
 
-次の手順は、Production Completion Milestone
-22の変更をreview済みclean commitへ固定し、rollback先を確保した後に実行します。
-既存unitまたはrelease pointerがある場合は、installerより前に
-[`deploy/gnosis/README.md`](deploy/gnosis/README.md)の手順でoperator管理領域へ退避します。
+const client = new LarmClient({
+  baseUrl: process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810",
+  apiToken: process.env.LARM_API_TOKEN,
+});
+
+const result = await client.withAllocation({
+  requirements: [{ capability: "llm.general", route }],
+  deploymentPolicy: "existing-only",
+  allowFallback: false,
+  ttlSeconds: 120,
+}, async (allocation, larm) => {
+  const response = await larm.chat(allocation.id, {
+    model: process.env.LARM_MODEL ?? "local",
+    stream: false,
+    messages: [{ role: "user", content: "Hello" }],
+  });
+  return await response.json();
+});
+
+console.log(JSON.stringify(result, null, 2));
+```
+
+コードをリポジトリ直下の `quickstart.ts` として保存した場合は、次のように実行できます。
 
 ```bash
-cd /srv/ai/apps/local-LLM-harness
-# 必要な場合だけ、変更内容を確認してhost準備を実行:
-# sudo deploy/gnosis/scripts/prepare-host.sh
-deploy/gnosis/scripts/preflight-larm.sh
-# deploy/gnosis/README.mdのdigest付きhost backupを先に作成
-sudo deploy/gnosis/scripts/install-services.sh
-deploy/gnosis/scripts/release-larm.sh plan
-sudo deploy/gnosis/scripts/release-larm.sh apply
-sudo systemctl start llama-server.service llama-swap-worker.service \
-  qwen-asr.service voicevox-tts.service larm-daemon.service
-deploy/gnosis/scripts/verify.sh
-# SLO校正後のcanaryにはrepository外evidence directoryと非機密音声が必要です。
-# LARM_CANARY_EVIDENCE_DIR=/srv/ai/logs/larm-canary \
-# LARM_BENCHMARK_AUDIO_FILE=/path/to/non-sensitive.wav \
-# deploy/gnosis/scripts/canary-gate.sh
+LARM_ROUTE=<route-id> LARM_MODEL=<upstream-model-id> bun quickstart.ts
 ```
 
-`plan`の`cleanupConfirm`が`null`でない場合、保持上限を超える削除候補があります。表示された候補を確認し、そのdigestを`LARM_RELEASE_CLEANUP_CONFIRM`へ設定した`apply`だけが配備を続行します。
+`withAllocation` はランタイムが ready になるまで待ち、処理の成功・失敗にかかわらず Allocation を解放します。LLM と音声を組み合わせた例は [`examples/voice-client.ts`](examples/voice-client.ts) にあります。
 
-`systemctl start`は初回導入時だけ実行します。更新時にResident serviceを一括restartしません。詳細は[`docs/gnosis.md`](docs/gnosis.md)と[`deploy/gnosis/README.md`](deploy/gnosis/README.md)を参照してください。このdual-boot hostでは、配備処理からrebootしません。
+## 主な環境変数
+
+| 環境変数 | 既定値 | 用途 |
+| --- | --- | --- |
+| `LARM_CONFIG_DIR` | リポジトリ内の既定設定 | runtime registry を置いたディレクトリ |
+| `LARM_HOST` | `127.0.0.1` | daemon の待受アドレス |
+| `LARM_PORT` | `9810` | daemon の待受ポート |
+| `LARM_API_TOKEN` | 未設定 | 通常の API を保護するトークン |
+| `LARM_MANAGEMENT_TOKEN` | 未設定 | 成果物やリリースの管理 API を保護するトークン |
+| `LARM_CONNECTION_SIGNING_KEY` | 未設定 | Agent 向け短期トークンの署名鍵 |
+| `LARM_ARTIFACT_MANIFEST` | リポジトリ内の既定 manifest | 配備可能な成果物の許可リスト |
+| `LARM_RELEASE_CATALOG` | リポジトリ内の既定 catalog | runtime のリリースカタログ |
+
+タイムアウト、body サイズ、履歴件数にも個別の環境変数があります。すべて起動時に範囲検証され、不正な値では daemon を起動しません。
+
+## セキュリティ
+
+- 既定では loopback だけで待ち受けます。
+- loopback 以外で待ち受ける場合は、`LARM_API_TOKEN` と `LARM_MANAGEMENT_TOKEN` の両方が必要です。
+- `LARM_API_TOKEN` を設定すると、`/health` と `/ready` を除く API で Bearer 認証が必要になります。
+- 成果物、リリース、catalog の管理操作には、通常の API token とは別に management token が必要です。
+- 管理 API は、リクエストから任意の URL、ファイルパス、サービス名、コマンドを受け取りません。事前に許可リストへ登録した対象だけを操作します。
+- token、署名鍵、内部 endpoint をリポジトリへコミットしないでください。
+
+## トラブルシューティング
+
+- 起動直後に終了する場合は、標準エラーに表示された YAML ファイル名と項目を確認してください。設定は fail-closed で検証されます。
+- `/health` が成功して `/ready` が `503` の場合は、observer の状態が古い、catalog の再読み込み中、または daemon が drain 中です。
+- Allocation が失敗した場合は、そのレスポンスに加えて `/state` と `/metrics` を確認してください。runtime の状態、資源不足、同時実行数、許可されていない fallback などを切り分けられます。
+- `401` または `403` の場合は API token と management token を取り違えていないか確認してください。
+
+## リポジトリ構成
+
+| パス | 内容 |
+| --- | --- |
+| `apps/daemon` | Allocation、Gateway、監視、リリース管理を提供する daemon |
+| `apps/*` | 音声認識・音声合成ランタイム向けのアダプター |
+| `packages/core` | OS に依存しない registry、routing、Allocation のロジック |
+| `packages/backends` | systemd、llama-swap、Linux telemetry との連携 |
+| `packages/client` | v1 API を扱う TypeScript クライアント |
+| `examples` | クライアントの利用例 |
+| `specs` | API、設計、実装方針の文書 |
+
+## 開発
+
+```bash
+bun run dev          # daemon を開発モードで起動
+bun run test         # テスト
+bun run typecheck    # 型検査
+bun run docs         # 設計文書をプレビュー
+bun run docs:check   # 設計文書を検査
+bun run check        # すべての検査を実行
+```
+
+変更を送る前に `bun run check` を実行してください。設計判断や仕様変更を残す場合は、`specs/` の文書も更新します。
+
+## ライセンス
+
+[MIT License](LICENSE)
