@@ -96,14 +96,55 @@
     </p>
   </section>
 
+  <section id="code-review-hardening">
+    <h2>最終code review hardening</h2>
+    <p>
+      repository実装後の再レビューで、成功HTTPを機能成功と誤認する余地、証跡の競合上書き、複数rule
+      削除の途中失敗、backup中のhost drift、既存release dependencyの改変を残存riskとして検出し、次の
+      fail-closed保証へ更新しました。
+    </p>
+    <ul>
+      <li>
+        benchmarkはLLM SSEの正常終端とJSON event、STTの非空text、TTSのcontent typeとcreditを検証し、
+        series実行中も100 ms間隔でmemory・queue telemetryを採取する。失敗時もbounded error
+        codeと途中sampleを raw evidenceへ保存してから非0終了し、passing summaryは作らない。
+      </li>
+      <li>
+        raw、summary、comparison evidenceはrepository外のcanonical pathへmode 0600で原子的に作成し、
+        既存targetを上書きしない。symlink経由でrepositoryへ戻るpathも拒否する。
+      </li>
+      <li>
+        SLO schemaはbyte値の整数性、count・latencyの物理的整合、identity形式、acceptanceとrollback
+        thresholdの順序を検証する。
+      </li>
+      <li>
+        network applyは途中のUFW失敗またはpost-check失敗時に削除済みruleを補償復元し、明示rollbackも
+        ruleの再観測まで成功条件に含める。
+      </li>
+      <li>
+        host backupはcopy後digestとcapture終了時のplan
+        identityを再検証し、途中変更またはtarget競合時に stagingだけを破棄する。
+      </li>
+      <li>
+        release manifestへdependency tree digestを追加し、既存世代の再利用とrollback前にGit source、
+        lockfile、dependency treeの内容・型・mode、version、config revisionを再検証する。
+      </li>
+      <li>
+        installerはunit、polkit、credentialのsymlink・特殊fileを、いずれのinstall
+        mutationより前に拒否する。 external
+        assetは<code>O_NOFOLLOW</code>で開き、公式version
+        URLとの整合も検証する。
+      </li>
+    </ul>
+  </section>
+
   <section id="verification">
     <h2>検証と残件</h2>
     <p>
       strict schema、API認証・reload、external asset checksum・symlink、networkの対象限定・IPv6・
       unsafe root、release identity、SLO境界・逸脱fixtureを自動testへ追加しました。全repository
-      gateは286 unit test・790 assertionとdeployment testを含めて成功しました。結果は<a
-        href="./stable-release-gate.html"
-        >Stable Release Gate</a
+      gateは288 unit test・804 assertionと、10 Bun deployment test・4 shell integration
+      suiteを含めて 成功しました。結果は<a href="./stable-release-gate.html">Stable Release Gate</a
       >へ記録します。
     </p>
     <p>

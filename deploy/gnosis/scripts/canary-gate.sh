@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 base_url="${LARM_BASE_URL:-http://127.0.0.1:9810}"
@@ -8,15 +9,21 @@ if [[ -n "${LARM_API_TOKEN:-}" ]]; then
   headers+=(-H "Authorization: Bearer ${LARM_API_TOKEN}")
 fi
 iterations="${LARM_CANARY_ITERATIONS:-3}"
-if [[ ! "${iterations}" =~ ^[1-9][0-9]?$ ]]; then
-  echo "LARM_CANARY_ITERATIONS must be between 1 and 99" >&2
+if [[ ! "${iterations}" =~ ^[3-9]$|^[1-9][0-9]$ ]]; then
+  echo "LARM_CANARY_ITERATIONS must be between 3 and 99" >&2
   exit 2
 fi
 evidence_dir="${LARM_CANARY_EVIDENCE_DIR:-}"
-if [[ "${evidence_dir}" != /* || "${evidence_dir}" == "${repo_root}"* || -L "${evidence_dir}" ]]; then
+if [[ "${evidence_dir}" != /* || "${evidence_dir}" == "${repo_root}" \
+  || "${evidence_dir}" == "${repo_root}/"* || -L "${evidence_dir}" ]]; then
   echo "LARM_CANARY_EVIDENCE_DIR must be an absolute repository-external non-symlink path" >&2
   exit 2
 fi
+if [[ "$(realpath -sm -- "${evidence_dir}")" != "$(realpath -m -- "${evidence_dir}")" ]]; then
+  echo "LARM_CANARY_EVIDENCE_DIR must not traverse symlinked path components" >&2
+  exit 2
+fi
+evidence_dir="$(realpath -sm -- "${evidence_dir}")"
 if [[ -z "${LARM_BENCHMARK_AUDIO_FILE:-}" || "${LARM_BENCHMARK_AUDIO_FILE}" != /* \
   || ! -f "${LARM_BENCHMARK_AUDIO_FILE}" || -L "${LARM_BENCHMARK_AUDIO_FILE}" ]]; then
   echo "LARM_BENCHMARK_AUDIO_FILE must be an absolute regular non-sensitive audio fixture" >&2
@@ -55,15 +62,16 @@ bun run deploy/gnosis/scripts/benchmark-larm.ts >/dev/null
 LARM_SLO_SUMMARY="${summary_output}" \
 LARM_SLO_EXPECTED_COMMIT="${deployed_commit}" \
 LARM_SLO_EXPECTED_CONFIG_REVISION="${config_revision}" \
-bun run deploy/gnosis/scripts/compare-slo.ts >"${comparison_output}"
-chmod 0600 -- "${comparison_output}"
+LARM_SLO_OUTPUT="${comparison_output}" \
+bun run deploy/gnosis/scripts/compare-slo.ts
 
 LARM_CANARY_AUDIO_FILE="${LARM_BENCHMARK_AUDIO_FILE}" deploy/gnosis/scripts/smoke-voice.sh >/dev/null
 
 health_after="$(curl -fsS --max-time 10 "${base_url}/health")"
 epoch_after="$(jq -er '.bootEpoch' <<<"${health_after}")"
-if [[ "${epoch_before}" != "${epoch_after}" ]]; then
-  echo "daemon boot epoch changed during the canary" >&2
+if ! jq -e --arg epoch "${epoch_before}" --arg revision "${config_revision}" --arg commit "${deployed_commit}" \
+  '.bootEpoch == $epoch and .configRevision == $revision and .releaseCommit == $commit' <<<"${health_after}" >/dev/null; then
+  echo "daemon boot epoch, config revision, or release commit changed during the canary" >&2
   exit 1
 fi
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
 
 action="${1:-plan}"
 lan_cidr="${LAN_CIDR:-192.168.0.0/24}"
@@ -12,6 +13,11 @@ if [[ "${test_mode}" == "1" ]]; then
     echo "LARM_NETWORK_TEST_ROOT must be an absolute non-symlink directory" >&2
     exit 2
   }
+  [[ "$(realpath -se -- "${test_root}")" == "$(realpath -e -- "${test_root}")" ]] || {
+    echo "LARM_NETWORK_TEST_ROOT must not traverse symlinked path components" >&2
+    exit 2
+  }
+  test_root="$(realpath -e -- "${test_root}")"
   ss_fixture="${test_root}/ss.txt"
   ufw_fixture="${test_root}/ufw.txt"
   apply_log="${test_root}/apply.log"
@@ -26,6 +32,11 @@ else
     echo "network state root must be an absolute non-symlink path" >&2
     exit 2
   }
+  [[ "$(realpath -sm -- "${state_root}")" == "$(realpath -m -- "${state_root}")" ]] || {
+    echo "network state root must not traverse symlinked path components" >&2
+    exit 2
+  }
+  state_root="$(realpath -sm -- "${state_root}")"
 fi
 
 read_listeners() {
@@ -49,6 +60,31 @@ run_firewall() {
     printf 'ufw' >>"${apply_log}"
     printf ' %q' "$@" >>"${apply_log}"
     printf '\n' >>"${apply_log}"
+    local operation="" cidr="" port="" argument previous=""
+    for argument in "$@"; do
+      if [[ "${previous}" == "from" ]]; then cidr="${argument}"; fi
+      if [[ "${previous}" == "port" ]]; then port="${argument}"; fi
+      [[ "${argument}" == "delete" ]] && operation="delete"
+      previous="${argument}"
+    done
+    [[ -n "${operation}" ]] || operation="allow"
+    if [[ "${operation}" == "delete" && "${port}" == "${LARM_NETWORK_TEST_FAIL_PORT:-}" ]]; then
+      return 1
+    fi
+    local temporary
+    temporary="$(mktemp "${test_root}/.ufw.XXXXXX")"
+    if [[ "${operation}" == "delete" ]]; then
+      awk -v target="${port}/tcp" -v source="${cidr}" \
+        '!( $1 == target && $2 == "ALLOW" && $3 == "IN" && $4 == source ) {print}' \
+        "${ufw_fixture}" >"${temporary}"
+    else
+      cat -- "${ufw_fixture}" >"${temporary}"
+      printf '%-27s  ALLOW IN    %s\n' "${port}/tcp" "${cidr}" >>"${temporary}"
+    fi
+    mv -T -- "${temporary}" "${ufw_fixture}"
+    if [[ "${operation}" == "delete" && "${port}" == "${LARM_NETWORK_TEST_FAIL_AFTER_DELETE_PORT:-}" ]]; then
+      return 1
+    fi
   else
     ufw "$@"
   fi
@@ -56,7 +92,11 @@ run_firewall() {
 
 save_reviewed_plan() {
   local plan="$1" confirmation="$2" target temporary
-  install -d -m 0700 -- "${state_root}"
+  if [[ "${test_mode}" == "1" ]]; then
+    install -d -m 0700 -- "${state_root}"
+  else
+    install -d -o root -g root -m 0700 -- "${state_root}"
+  fi
   target="${state_root}/before-${confirmation}.json"
   if [[ -L "${target}" || ( -e "${target}" && ! -f "${target}" ) ]]; then
     echo "refusing unsafe network state target: ${target}" >&2
@@ -76,7 +116,11 @@ save_reviewed_plan() {
 }
 
 lock_network_mutation() {
-  install -d -m 0700 -- "${state_root}"
+  if [[ "${test_mode}" == "1" ]]; then
+    install -d -m 0700 -- "${state_root}"
+  else
+    install -d -o root -g root -m 0700 -- "${state_root}"
+  fi
   exec 9>"${state_root}/network.lock"
   flock -n 9 || {
     echo "another network convergence operation is running" >&2
@@ -170,7 +214,7 @@ make_plan() {
 }
 
 validate_rollback_cidr() {
-  local cidr="$1" prefix address octet
+  local cidr="$1" prefix address octet normalized block_size
   local -a octets
   [[ "${cidr}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/(2[4-9]|3[0-2])$ ]] || return 1
   prefix="${cidr##*/}"
@@ -180,7 +224,41 @@ validate_rollback_cidr() {
   for octet in "${octets[@]}"; do
     ((10#${octet} >= 0 && 10#${octet} <= 255)) || return 1
   done
-  ((prefix >= 24 && prefix <= 32))
+  normalized="$((10#${octets[0]})).$((10#${octets[1]})).$((10#${octets[2]})).$((10#${octets[3]}))"
+  [[ "${address}" == "${normalized}" ]] || return 1
+  ((prefix >= 24 && prefix <= 32)) || return 1
+  block_size=$((1 << (32 - prefix)))
+  ((10#${octets[3]} % block_size == 0))
+}
+
+validate_rollback_cidr "${lan_cidr}" || {
+  echo "LAN_CIDR must be a canonical IPv4 /24 through /32" >&2
+  exit 2
+}
+
+restore_rules() {
+  local rules="$1" index port cidr failed=0
+  for ((index = $(jq 'length' <<<"${rules}") - 1; index >= 0; index -= 1)); do
+    port="$(jq -r ".[${index}].port" <<<"${rules}")"
+    cidr="$(jq -r ".[${index}].cidr" <<<"${rules}")"
+    if ! firewall_rule_exists "${port}" "${cidr}"; then
+      run_firewall allow from "${cidr}" to any port "${port}" proto tcp || true
+    fi
+    firewall_rule_exists "${port}" "${cidr}" || failed=1
+  done
+  [[ "${failed}" -eq 0 ]]
+}
+
+firewall_rule_exists() {
+  local port="$1" cidr="$2" firewall firewall_rc
+  set +e
+  firewall="$(read_firewall 2>&1)"
+  firewall_rc=$?
+  set -e
+  [[ "${firewall_rc}" -eq 0 ]] && grep -Eq '^Status: (active|inactive)$' <<<"${firewall}" \
+    && awk -v target="${port}/tcp" -v source="${cidr}" \
+      '$1 == target && $2 == "ALLOW" && $3 == "IN" && $4 == source {found=1} END {exit !found}' \
+      <<<"${firewall}"
 }
 
 make_rollback_plan() {
@@ -234,13 +312,33 @@ case "${action}" in
       exit 2
     }
     save_reviewed_plan "${plan}" "${expected}"
+    applied_rules='[]'
     while IFS=$'\t' read -r port cidr; do
       [[ -n "${port}" ]] || continue
-      run_firewall --force delete allow from "${cidr}" to any port "${port}" proto tcp
+      if ! run_firewall --force delete allow from "${cidr}" to any port "${port}" proto tcp; then
+        if ! firewall_rule_exists "${port}" "${cidr}"; then
+          applied_rules="$(jq -c --argjson port "${port}" --arg cidr "${cidr}" \
+            '. + [{port:$port,cidr:$cidr}]' <<<"${applied_rules}")"
+        fi
+        if restore_rules "${applied_rules}"; then
+          echo "failed to delete reviewed provider rule for port ${port}; prior deletions were restored" >&2
+        else
+          echo "failed to delete reviewed provider rule for port ${port}; automatic restoration is incomplete" >&2
+        fi
+        exit 1
+      fi
+      applied_rules="$(jq -c --argjson port "${port}" --arg cidr "${cidr}" \
+        '. + [{port:$port,cidr:$cidr}]' <<<"${applied_rules}")"
     done < <(jq -r '.deleteRules[] | [.port,.cidr] | @tsv' <<<"${plan}")
-    if [[ "${test_mode}" != "1" ]]; then
-      after="$(make_plan)"
-      [[ "$(jq '.deleteRules | length' <<<"${after}")" -eq 0 ]] || { jq . <<<"${after}" >&2; exit 1; }
+    after="$(make_plan)"
+    if [[ "$(jq -r .allowed <<<"${after}")" != "true" || "$(jq '.deleteRules | length' <<<"${after}")" -ne 0 ]]; then
+      jq . <<<"${after}" >&2
+      if restore_rules "${applied_rules}"; then
+        echo "network post-check failed; reviewed rules were restored" >&2
+      else
+        echo "network post-check failed; automatic restoration is incomplete" >&2
+      fi
+      exit 1
     fi
     jq -n --arg confirmation "${expected}" '{applied:true,confirmation:$confirmation}'
     ;;
@@ -271,6 +369,10 @@ case "${action}" in
       exit 2
     }
     run_firewall allow from "${rollback_cidr}" to any port "${rollback_port}" proto tcp
+    firewall_rule_exists "${rollback_port}" "${rollback_cidr}" || {
+      echo "restored firewall rule was not observable after rollback" >&2
+      exit 1
+    }
     jq -n --argjson port "${rollback_port}" --arg cidr "${rollback_cidr}" \
       '{restored:true,port:$port,cidr:$cidr}'
     ;;

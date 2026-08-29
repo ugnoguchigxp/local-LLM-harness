@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, rename, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { lstat } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import { LarmClient } from "../../../packages/client/src/index";
 import {
   daemonHealthSchema,
@@ -8,6 +7,12 @@ import {
   sloSeriesIdSchema,
   type SloBenchmarkSummary,
 } from "../../../packages/core/src/index";
+import {
+  absoluteOutput,
+  consumeBenchmarkResponse,
+  prepareExternalOutput,
+  writeExclusive,
+} from "./benchmark-helpers";
 
 type SeriesId = (typeof sloSeriesIdSchema.options)[number];
 type BindingIdentity = { route: string; runtime: string; release: string; fallback: boolean };
@@ -21,10 +26,17 @@ type RawSample = BindingIdentity & {
 };
 
 const repoRoot = resolve(import.meta.dir, "../../..");
-const rawOutput = externalOutput("LARM_BENCHMARK_OUTPUT");
+const rawOutput = await prepareExternalOutput(
+  absoluteOutput("LARM_BENCHMARK_OUTPUT", process.env.LARM_BENCHMARK_OUTPUT),
+  repoRoot,
+);
 const summaryOutput = process.env.LARM_BENCHMARK_SUMMARY
-  ? externalOutput("LARM_BENCHMARK_SUMMARY")
+  ? await prepareExternalOutput(
+    absoluteOutput("LARM_BENCHMARK_SUMMARY", process.env.LARM_BENCHMARK_SUMMARY),
+    repoRoot,
+  )
   : undefined;
+if (summaryOutput === rawOutput) throw new Error("benchmark raw and summary outputs must be different paths");
 const commit = process.env.LARM_BENCHMARK_COMMIT;
 if (!commit || !/^[a-f0-9]{40}$/.test(commit)) throw new Error("LARM_BENCHMARK_COMMIT must be a full commit hash");
 const iterations = boundedInteger("LARM_BENCHMARK_ITERATIONS", 5, 3, 100);
@@ -46,89 +58,112 @@ if (health.releaseCommit !== commit) {
 const client = new LarmClient({ baseUrl, apiToken: process.env.LARM_API_TOKEN });
 const rawSeries: Array<{ id: SeriesId; samples: RawSample[]; errors: Array<{ iteration: number; code: string }> }> = [];
 const summaries: SloBenchmarkSummary["series"] = [];
+let rawPublicationAttempted = false;
 
-for (const id of seriesIds) {
-  for (let warmup = 0; warmup < warmups; warmup += 1) await runSample(id, 0);
-  const samples: RawSample[] = [];
-  const errors: Array<{ iteration: number; code: string }> = [];
-  const memory = { system: Number.POSITIVE_INFINITY, accelerator: Number.POSITIVE_INFINITY };
-  let maxQueueDepth = 0;
-  const beforeMetrics = await readMetrics();
-  updateTelemetry(beforeMetrics, memory, (queue) => { maxQueueDepth = Math.max(maxQueueDepth, queue); });
-  const before429 = metricSum(beforeMetrics, /^larm_gateway_request_total(?:\{[^}]*status="429"[^}]*\})? /);
-  for (let iteration = 1; iteration <= iterations; iteration += 1) {
+try {
+  for (const id of seriesIds) {
+    for (let warmup = 0; warmup < warmups; warmup += 1) await runSample(id, 0);
+    const samples: RawSample[] = [];
+    const errors: Array<{ iteration: number; code: string }> = [];
+    const memory = { system: Number.POSITIVE_INFINITY, accelerator: Number.POSITIVE_INFINITY };
+    let maxQueueDepth = 0;
+    const beforeMetrics = await readMetrics();
+    updateTelemetry(beforeMetrics, memory, (queue) => { maxQueueDepth = Math.max(maxQueueDepth, queue); });
+    const before429 = metricSum(beforeMetrics, /^larm_gateway_request_total(?:\{[^}]*status="429"[^}]*\})? /);
+    let monitorActive = true;
+    let monitorError: unknown;
+    const monitor = (async () => {
+      while (monitorActive) {
+        try {
+          updateTelemetry(await readMetrics(), memory, (queue) => { maxQueueDepth = Math.max(maxQueueDepth, queue); });
+        } catch (cause) {
+          monitorError = cause;
+          return;
+        }
+        if (monitorActive) await Bun.sleep(100);
+      }
+    })();
     try {
-      samples.push(await runSample(id, iteration));
-    } catch (cause) {
-      errors.push({ iteration, code: errorCode(cause) });
+      for (let iteration = 1; iteration <= iterations; iteration += 1) {
+        try {
+          samples.push(await runSample(id, iteration));
+        } catch (cause) {
+          errors.push({ iteration, code: errorCode(cause) });
+        }
+      }
+    } finally {
+      monitorActive = false;
+      await monitor;
     }
-    updateTelemetry(await readMetrics(), memory, (queue) => { maxQueueDepth = Math.max(maxQueueDepth, queue); });
+    rawSeries.push({ id, samples, errors });
+    if (monitorError) throw new Error(`${id} telemetry monitor failed`, { cause: monitorError });
+    const afterMetrics = await readMetrics();
+    updateTelemetry(afterMetrics, memory, (queue) => { maxQueueDepth = Math.max(maxQueueDepth, queue); });
+    const provider429Count = Math.max(0,
+      metricSum(afterMetrics, /^larm_gateway_request_total(?:\{[^}]*status="429"[^}]*\})? /) - before429);
+    if (samples.length === 0) throw new Error(`${id} produced no successful samples`);
+    if (!Number.isFinite(memory.system) || !Number.isFinite(memory.accelerator)) {
+      throw new Error(`${id} memory telemetry is missing`);
+    }
+    const definition = seriesDefinition(id);
+    summaries.push({
+      id,
+      promptClass: definition.promptClass,
+      maxTokens: definition.maxTokens,
+      concurrency: 1,
+      iterations,
+      successes: samples.length,
+      errors: errors.length,
+      errorRate: errors.length / iterations,
+      fallbackCount: samples.filter((sample) => sample.fallback).length,
+      provider429Count,
+      maxQueueDepth,
+      bootEpochs: unique(samples.map((sample) => sample.bootEpoch)),
+      routes: unique(samples.map((sample) => sample.route)),
+      runtimes: unique(samples.map((sample) => sample.runtime)),
+      releases: unique(samples.map((sample) => sample.release)),
+      latencyMs: {
+        ttfbP95: percentile(samples.map((sample) => sample.ttfbMs), 0.95),
+        totalP95: percentile(samples.map((sample) => sample.totalMs), 0.95),
+        startupP95: percentile(samples.map((sample) => sample.startupMs), 0.95),
+      },
+      memoryHeadroomMinBytes: memory,
+    });
   }
-  const afterMetrics = await readMetrics();
-  updateTelemetry(afterMetrics, memory, (queue) => { maxQueueDepth = Math.max(maxQueueDepth, queue); });
-  const provider429Count = Math.max(0,
-    metricSum(afterMetrics, /^larm_gateway_request_total(?:\{[^}]*status="429"[^}]*\})? /) - before429);
-  if (samples.length === 0) throw new Error(`${id} produced no successful samples`);
-  if (!Number.isFinite(memory.system) || !Number.isFinite(memory.accelerator)) {
-    throw new Error(`${id} memory telemetry is missing`);
-  }
-  const definition = seriesDefinition(id);
-  summaries.push({
-    id,
-    promptClass: definition.promptClass,
-    maxTokens: definition.maxTokens,
-    concurrency: 1,
-    iterations,
-    successes: samples.length,
-    errors: errors.length,
-    errorRate: errors.length / iterations,
-    fallbackCount: samples.filter((sample) => sample.fallback).length,
-    provider429Count,
-    maxQueueDepth,
-    bootEpochs: unique(samples.map((sample) => sample.bootEpoch)),
-    routes: unique(samples.map((sample) => sample.route)),
-    runtimes: unique(samples.map((sample) => sample.runtime)),
-    releases: unique(samples.map((sample) => sample.release)),
-    latencyMs: {
-      ttfbP95: percentile(samples.map((sample) => sample.ttfbMs), 0.95),
-      totalP95: percentile(samples.map((sample) => sample.totalMs), 0.95),
-      startupP95: percentile(samples.map((sample) => sample.startupMs), 0.95),
-    },
-    memoryHeadroomMinBytes: memory,
+
+  const healthAfter = await fetchHealth();
+  if (healthAfter.bootEpoch !== health.bootEpoch) throw new Error("daemon boot epoch changed during benchmark");
+  if (healthAfter.configRevision !== health.configRevision) throw new Error("config revision changed during benchmark");
+  if (healthAfter.releaseCommit !== health.releaseCommit) throw new Error("release commit changed during benchmark");
+  const summary = sloBenchmarkSummarySchema.parse({
+    schemaVersion: 1,
+    recordedAt: new Date().toISOString(),
+    commit,
+    configRevision: health.configRevision,
+    series: summaries,
   });
-  rawSeries.push({ id, samples, errors });
+  await publishRaw("completed", summary.recordedAt);
+  if (summaryOutput) await writeExclusive(summaryOutput, JSON.stringify(summary, null, 2));
+  console.log(JSON.stringify(summary));
+} catch (cause) {
+  if (!rawPublicationAttempted) {
+    await publishRaw("failed", new Date().toISOString(), errorCode(cause));
+  }
+  throw cause;
 }
 
-const healthAfter = await fetchHealth();
-if (healthAfter.bootEpoch !== health.bootEpoch) throw new Error("daemon boot epoch changed during benchmark");
-if (healthAfter.configRevision !== health.configRevision) throw new Error("config revision changed during benchmark");
-const summary = sloBenchmarkSummarySchema.parse({
-  schemaVersion: 1,
-  recordedAt: new Date().toISOString(),
-  commit,
-  configRevision: health.configRevision,
-  series: summaries,
-});
-await writeExclusive(rawOutput, JSON.stringify({
-  schemaVersion: 1,
-  recordedAt: summary.recordedAt,
-  commit,
-  configRevision: health.configRevision,
-  warmups,
-  series: rawSeries,
-}, null, 2));
-if (summaryOutput) await writeExclusive(summaryOutput, JSON.stringify(summary, null, 2));
-console.log(JSON.stringify(summary));
-
-function externalOutput(name: string): string {
-  const output = process.env[name];
-  if (!output || !isAbsolute(output)) throw new Error(`${name} must be an absolute repository-external path`);
-  const target = resolve(output);
-  const fromRepo = relative(repoRoot, target);
-  if (fromRepo === "" || (!fromRepo.startsWith("..") && !isAbsolute(fromRepo))) {
-    throw new Error(`${name} must stay outside the repository`);
-  }
-  return target;
+async function publishRaw(status: "completed" | "failed", recordedAt: string, error?: string): Promise<void> {
+  rawPublicationAttempted = true;
+  await writeExclusive(rawOutput, JSON.stringify({
+    schemaVersion: 1,
+    status,
+    recordedAt,
+    commit,
+    configRevision: health.configRevision,
+    warmups,
+    series: rawSeries,
+    ...(error ? { error } : {}),
+  }, null, 2));
 }
 
 function boundedInteger(name: string, fallback: number, minimum: number, maximum: number): number {
@@ -137,20 +172,6 @@ function boundedInteger(name: string, fallback: number, minimum: number, maximum
     throw new Error(`${name} must be between ${minimum} and ${maximum}`);
   }
   return value;
-}
-
-async function writeExclusive(path: string, value: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  try {
-    await lstat(path);
-    throw new Error(`refusing to overwrite existing benchmark output: ${path}`);
-  } catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
-  }
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${value}\n`, { flag: "wx", mode: 0o600 });
-  await chmod(temporary, 0o600);
-  await rename(temporary, path);
 }
 
 async function fetchHealth() {
@@ -206,22 +227,8 @@ async function runSample(id: SeriesId, iteration: number): Promise<RawSample> {
       });
     }
     const status = response.status;
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("response_body_missing");
-    let firstByteAt: number | undefined;
-    let bytes = 0;
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      firstByteAt ??= performance.now();
-      bytes += chunk.value.byteLength;
-    }
-    if (!response.ok) throw new Error(`http_${status}`);
-    if (!firstByteAt || bytes === 0) throw new Error("empty_response");
-    if (id === "tts-normal") {
-      if (!response.headers.get("content-type")?.startsWith("audio/")) throw new Error("tts_content_type_invalid");
-      if (!response.headers.has("x-voicevox-credit")) throw new Error("tts_credit_missing");
-    }
+    const responseKind = id === "llm-normal" || id === "llm-realtime" ? "llm" : id === "stt" ? "stt" : "tts";
+    const { firstByteAt } = await consumeBenchmarkResponse(responseKind, response);
     const completedAt = performance.now();
     return {
       iteration,

@@ -52,10 +52,37 @@ credential_target="${test_root}/credential-target"
 printf 'unchanged\n' >"${credential_target}"
 rm "${credential}"
 ln -s "${credential_target}" "${credential}"
+unit_before="$(sha256sum "${test_root}/etc/systemd/system/larm-daemon.service" | awk '{print $1}')"
 if run_installer 2>/dev/null; then
   echo "installer accepted a symlinked credential" >&2
   exit 1
 fi
 [[ "$(<"${credential_target}")" == "unchanged" ]]
+[[ "$(sha256sum "${test_root}/etc/systemd/system/larm-daemon.service" | awk '{print $1}')" == "${unit_before}" ]]
+
+rm "${credential}"
+printf '%s\n' "${initial_credential}" >"${credential}"
+unit_target="${test_root}/etc/systemd/system/llama-server.service"
+unit_redirect="${test_root}/unit-redirect"
+printf 'unchanged unit target\n' >"${unit_redirect}"
+rm "${unit_target}"
+ln -s "${unit_redirect}" "${unit_target}"
+if run_installer 2>/dev/null; then
+  echo "installer accepted a symlinked unit target" >&2
+  exit 1
+fi
+[[ "$(<"${unit_redirect}")" == "unchanged unit target" ]]
+
+rm "${unit_target}"
+printf '[Unit]\n' >"${unit_target}"
+polkit_redirect="${test_root}/polkit-redirect"
+mkdir "${polkit_redirect}"
+rm -rf "${test_root}/etc/polkit-1/rules.d"
+ln -s "${polkit_redirect}" "${test_root}/etc/polkit-1/rules.d"
+if run_installer 2>/dev/null; then
+  echo "installer accepted a symlinked installation directory" >&2
+  exit 1
+fi
+[[ ! -e "${polkit_redirect}/50-larm-runtime-control.rules" ]]
 
 echo "deployment installer tests passed"

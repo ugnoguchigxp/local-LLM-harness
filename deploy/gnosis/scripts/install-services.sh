@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 unit_source="${repo_root}/deploy/gnosis/systemd"
@@ -83,6 +84,22 @@ enabled_units=(
   larm-daemon.service
 )
 
+safe_install_target() {
+  local path="$1" description="$2"
+  if [[ -L "${path}" || ( -e "${path}" && ! -f "${path}" ) ]]; then
+    echo "Refusing unsafe ${description}: ${path}" >&2
+    exit 1
+  fi
+}
+
+safe_directory_path() {
+  local path="$1" description="$2"
+  if [[ "$(realpath -sm -- "${path}")" != "$(realpath -m -- "${path}")" ]]; then
+    echo "Refusing symlinked ${description}: ${path}" >&2
+    exit 1
+  fi
+}
+
 if [[ "${test_mode}" != "1" && "$(id -u)" -ne 0 ]]; then
   echo "Run with sudo: sudo $0" >&2
   exit 1
@@ -92,6 +109,17 @@ if [[ "${test_mode}" != "1" ]] && ! id "${operator}" >/dev/null 2>&1; then
   echo "Required service account does not exist: ${operator}" >&2
   exit 1
 fi
+
+for directory in "${unit_target}" "${credential_dir}" "${polkit_dir}" "${state_dir}" \
+  "${staging_dir}" "${rollback_dir}" "${worker_dir}" "${tts_dir}"; do
+  safe_directory_path "${directory}" "installation directory"
+done
+
+for unit in "${units[@]}"; do
+  safe_install_target "${unit_target}/${unit}" "unit target"
+done
+safe_install_target "${polkit_dir}/50-larm-runtime-control.rules" "polkit target"
+safe_install_target "${credential_path}" "credential target"
 
 install -d -o "${data_owner}" -g "${data_group}" \
   "${worker_dir}" \
@@ -112,17 +140,10 @@ install -o "${system_owner}" -g "${system_group}" -m 0644 \
   "${polkit_dir}/50-larm-runtime-control.rules"
 
 install -d -o "${credential_owner}" -g "${credential_group}" -m 0750 "${credential_dir}"
-if [[ -L "${credential_path}" ]]; then
-  echo "Refusing symlinked credential file: ${credential_path}" >&2
-  exit 1
-fi
 if [[ ! -e "${credential_path}" ]]; then
   management_token="$(openssl rand -hex 32)"
   umask 0077
   printf 'LARM_MANAGEMENT_TOKEN=%s\n' "${management_token}" >"${credential_path}"
-elif [[ ! -f "${credential_path}" ]]; then
-  echo "Credential path is not a regular file: ${credential_path}" >&2
-  exit 1
 fi
 chown "${credential_owner}":"${credential_group}" "${credential_path}"
 chmod 0640 "${credential_path}"

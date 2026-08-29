@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { computeConfigRevision, createBootEpoch, loadReleaseCommit } from "./identity";
 
@@ -41,10 +41,29 @@ test("release identity is loaded from a strict manifest", async () => {
   const manifest = join(root, "release-manifest.json");
   try {
     expect(loadReleaseCommit(undefined)).toBe("development");
-    await writeFile(manifest, JSON.stringify({ commit: "a".repeat(40) }));
+    const valid = {
+      schemaVersion: 1,
+      commit: "a".repeat(40),
+      larmVersion: "0.1.0",
+      bunVersion: "1.4.0",
+      lockfileSha256: "b".repeat(64),
+      nodeModulesSha256: "d".repeat(64),
+      configRevision: "c".repeat(64),
+      createdAt: "2026-08-29T00:00:00Z",
+    };
+    await writeFile(manifest, JSON.stringify(valid));
     expect(loadReleaseCommit(manifest)).toBe("a".repeat(40));
-    await writeFile(manifest, JSON.stringify({ commit: "main" }));
-    expect(() => loadReleaseCommit(manifest)).toThrow(/commit is invalid/);
+    await writeFile(manifest, JSON.stringify({ ...valid, commit: "main" }));
+    expect(() => loadReleaseCommit(manifest)).toThrow(/manifest is invalid/);
+    await writeFile(manifest, JSON.stringify({ ...valid, unexpected: true }));
+    expect(() => loadReleaseCommit(manifest)).toThrow(/manifest is invalid/);
+    await writeFile(manifest, JSON.stringify({ ...valid, configRevision: "test-gate-skipped" }));
+    expect(() => loadReleaseCommit(manifest)).toThrow(/manifest is invalid/);
+    const manifestTarget = join(root, "manifest-target.json");
+    await writeFile(manifestTarget, JSON.stringify(valid));
+    await rm(manifest);
+    await symlink(manifestTarget, manifest);
+    expect(() => loadReleaseCommit(manifest)).toThrow();
   } finally {
     await rm(root, { recursive: true, force: true });
   }

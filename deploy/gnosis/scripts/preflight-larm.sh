@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 base_url="${LARM_BASE_URL:-http://127.0.0.1:9810}"
 credential="${LARM_CREDENTIAL_PATH:-/etc/larm/larm.env}"
 installed_unit="${LARM_INSTALLED_UNIT:-/etc/systemd/system/larm-daemon.service}"
 external_verifier="${repo_root}/deploy/gnosis/scripts/verify-external-assets.ts"
+repository_polkit="${repo_root}/deploy/gnosis/polkit/50-larm-runtime-control.rules"
+installed_polkit="/etc/polkit-1/rules.d/50-larm-runtime-control.rules"
 provider_specs=(
   llama-server.service:8080
   qwen-asr.service:8081
@@ -34,9 +37,35 @@ elif [[ -f "${credential}" ]]; then
 elif [[ -e "${credential}" ]]; then
   credential_type="other"
 fi
+unit_type="missing"
+unit_digest=""
+if [[ -L "${installed_unit}" ]]; then
+  unit_type="symlink"
+elif [[ -f "${installed_unit}" ]]; then
+  unit_type="regular"
+  unit_digest="$(sha256sum "${installed_unit}" | awk '{print $1}')"
+elif [[ -e "${installed_unit}" ]]; then
+  unit_type="other"
+fi
+repository_unit_digest="$(sha256sum "${repo_root}/deploy/gnosis/systemd/larm-daemon.service" | awk '{print $1}')"
 unit_match=false
-if [[ -f "${installed_unit}" ]] && cmp -s "${repo_root}/deploy/gnosis/systemd/larm-daemon.service" "${installed_unit}"; then
+if [[ "${unit_type}" == "regular" && "${unit_digest}" == "${repository_unit_digest}" ]]; then
   unit_match=true
+fi
+polkit_type="missing"
+polkit_digest=""
+if [[ -L "${installed_polkit}" ]]; then
+  polkit_type="symlink"
+elif [[ -f "${installed_polkit}" ]]; then
+  polkit_type="regular"
+  polkit_digest="$(sha256sum "${installed_polkit}" | awk '{print $1}')"
+elif [[ -e "${installed_polkit}" ]]; then
+  polkit_type="other"
+fi
+repository_polkit_digest="$(sha256sum "${repository_polkit}" | awk '{print $1}')"
+polkit_match=false
+if [[ "${polkit_type}" == "regular" && "${polkit_digest}" == "${repository_polkit_digest}" ]]; then
+  polkit_match=true
 fi
 service_load="$(systemctl show larm-daemon.service -p LoadState --value 2>/dev/null || true)"
 service_active="$(systemctl is-active larm-daemon.service 2>/dev/null || true)"
@@ -101,6 +130,13 @@ jq -n \
   --arg credentialMode "${credential_mode}" \
   --arg credentialOwner "${credential_owner}" \
   --argjson unitMatch "${unit_match}" \
+  --arg unitType "${unit_type}" \
+  --arg unitDigest "${unit_digest}" \
+  --arg repositoryUnitDigest "${repository_unit_digest}" \
+  --argjson polkitMatch "${polkit_match}" \
+  --arg polkitType "${polkit_type}" \
+  --arg polkitDigest "${polkit_digest}" \
+  --arg repositoryPolkitDigest "${repository_polkit_digest}" \
   --arg load "${service_load:-unknown}" \
   --arg active "${service_active:-unknown}" \
   --arg enabled "${service_enabled:-unknown}" \
@@ -113,7 +149,9 @@ jq -n \
   --argjson externalAssets "[${external_assets}]" \
   '{timestamp:$timestamp,commit:$commit,candidateConfigRevision:$candidateConfigRevision,dirty:$dirty,daemonHealth:$health,
     credential:{type:$credentialType,mode:$credentialMode,owner:$credentialOwner},
-    unit:{matchesRepository:$unitMatch,load:$load,active:$active,enabled:$enabled},
+    unit:{type:$unitType,digest:$unitDigest,repositoryDigest:$repositoryUnitDigest,
+      matchesRepository:$unitMatch,load:$load,active:$active,enabled:$enabled},
+    polkit:{type:$polkitType,digest:$polkitDigest,repositoryDigest:$repositoryPolkitDigest,matchesRepository:$polkitMatch},
     listener:{port:9810,description:$portOwner},providers:$providers,
     firewall:{readable:$ufwReadable,status:$ufwStatus,providerAllowRules:$ufwProviderRules},
     externalAssets:$externalAssets,disk:{path:"/srv/ai",availableBytes:$diskAvailableBytes}}'

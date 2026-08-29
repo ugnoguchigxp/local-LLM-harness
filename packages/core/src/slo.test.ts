@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { compareSlo, sloBenchmarkSummarySchema, sloManifestSchema } from "./slo";
 
 const commit = "a".repeat(40);
+const configRevision = "c".repeat(64);
 const ids = ["llm-normal", "llm-realtime", "stt", "tts-normal"] as const;
 
 function manifest() {
@@ -21,7 +22,7 @@ function manifest() {
       calibration: {
         measuredAt: "2026-08-29T00:00:00Z",
         measurementCommit: commit,
-        configRevision: "config-r1",
+        configRevision,
         sampleCount: 5,
         routes: [id === "stt" ? "stt-default" : id === "tts-normal" ? "tts-default" : "llm-default"],
         runtimes: [id === "stt" ? "qwen-asr" : id === "tts-normal" ? "voicevox-tts" : "qwen-general"],
@@ -58,7 +59,7 @@ function summary() {
     schemaVersion: 1,
     recordedAt: "2026-08-29T00:01:00Z",
     commit,
-    configRevision: "config-r1",
+    configRevision,
     series: ids.map((id) => ({
       id,
       promptClass: `${id}-fixed-control`,
@@ -106,6 +107,39 @@ describe("SLO schemas", () => {
     const inconsistent = summary();
     inconsistent.series[0]!.errors = 1;
     expect(sloBenchmarkSummarySchema.safeParse(inconsistent).success).toBeFalse();
+    const impossibleFallbacks = summary();
+    impossibleFallbacks.series[0]!.fallbackCount = 4;
+    expect(sloBenchmarkSummarySchema.safeParse(impossibleFallbacks).success).toBeFalse();
+    const impossible429s = summary();
+    impossible429s.series[0]!.provider429Count = 4;
+    expect(sloBenchmarkSummarySchema.safeParse(impossible429s).success).toBeFalse();
+    const controlCharacter = summary();
+    controlCharacter.series[0]!.routes = ["llm-default\0hidden"];
+    expect(sloBenchmarkSummarySchema.safeParse(controlCharacter).success).toBeFalse();
+    const fractionalBytes = summary();
+    fractionalBytes.series[0]!.memoryHeadroomMinBytes.system = 1_000.5;
+    expect(sloBenchmarkSummarySchema.safeParse(fractionalBytes).success).toBeFalse();
+    const impossibleLatency = summary();
+    impossibleLatency.series[0]!.latencyMs = { ttfbP95: 100, totalP95: 99, startupP95: 10 };
+    expect(sloBenchmarkSummarySchema.safeParse(impossibleLatency).success).toBeFalse();
+  });
+
+  test("rejects rollback thresholds that are less conservative than acceptance thresholds", () => {
+    const invalidMaximum = manifest();
+    invalidMaximum.series[0]!.rollback.maxTotalP95Ms = 199;
+    expect(sloManifestSchema.safeParse(invalidMaximum).success).toBeFalse();
+
+    const invalidMinimum = manifest();
+    invalidMinimum.series[0]!.rollback.minSystemMemoryHeadroomBytes = 1_001;
+    expect(sloManifestSchema.safeParse(invalidMinimum).success).toBeFalse();
+
+    const invalidFallback = manifest();
+    invalidFallback.series[0]!.rollback.allowFallback = true;
+    expect(sloManifestSchema.safeParse(invalidFallback).success).toBeFalse();
+
+    const invalidLatency = manifest();
+    invalidLatency.series[0]!.limits.maxTotalP95Ms = 99;
+    expect(sloManifestSchema.safeParse(invalidLatency).success).toBeFalse();
   });
 });
 
@@ -116,7 +150,7 @@ describe("compareSlo", () => {
       series.latencyMs = { ttfbP95: 100, totalP95: 200, startupP95: 20 };
       series.memoryHeadroomMinBytes = { system: 1_000, accelerator: 2_000 };
     }
-    expect(compareSlo(manifest(), input, { commit, configRevision: "config-r1" })).toEqual({
+    expect(compareSlo(manifest(), input, { commit, configRevision })).toEqual({
       passed: true,
       failures: [],
     });
@@ -124,7 +158,7 @@ describe("compareSlo", () => {
 
   test.each([
     ["commit mismatch", (value: ReturnType<typeof summary>) => { value.commit = "b".repeat(40); }, "commit_mismatch"],
-    ["old config", (value: ReturnType<typeof summary>) => { value.configRevision = "config-old"; }, "config_revision_mismatch"],
+    ["old config", (value: ReturnType<typeof summary>) => { value.configRevision = "d".repeat(64); }, "config_revision_mismatch"],
     ["partial summary", (value: ReturnType<typeof summary>) => { value.series.pop(); }, "series_set_mismatch"],
     ["sample shortage", (value: ReturnType<typeof summary>) => { const series = value.series[0]!; series.iterations = 2; series.successes = 2; }, "insufficient_samples"],
     ["epoch change", (value: ReturnType<typeof summary>) => { value.series[0]!.bootEpochs.push("epoch-2"); }, "boot_epoch_changed"],
@@ -137,7 +171,7 @@ describe("compareSlo", () => {
   ])("rejects %s", (_name, mutate, code) => {
     const input = summary();
     mutate(input);
-    expect(compareSlo(manifest(), input, { commit, configRevision: "config-r1" }).failures)
+    expect(compareSlo(manifest(), input, { commit, configRevision }).failures)
       .toContainEqual(expect.objectContaining({ code }));
   });
 
@@ -148,5 +182,12 @@ describe("compareSlo", () => {
       { commit },
     );
     expect(result).toEqual({ passed: false, failures: [{ code: "manifest_uncalibrated" }] });
+  });
+
+  test("rejects malformed expected release identities", () => {
+    expect(compareSlo(manifest(), summary(), { commit: "main" }).failures)
+      .toContainEqual({ code: "invalid_expected_commit" });
+    expect(compareSlo(manifest(), summary(), { commit, configRevision: "bad\nrevision" }).failures)
+      .toContainEqual({ code: "invalid_expected_config_revision" });
   });
 });

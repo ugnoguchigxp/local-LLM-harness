@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
 
-if [[ -z "${LARM_CANARY_AUDIO_FILE:-}" || ! -f "${LARM_CANARY_AUDIO_FILE}" ]]; then
-  echo "Set LARM_CANARY_AUDIO_FILE to an attended, non-sensitive audio sample" >&2
+if [[ -z "${LARM_CANARY_AUDIO_FILE:-}" || "${LARM_CANARY_AUDIO_FILE}" != /* \
+  || ! -f "${LARM_CANARY_AUDIO_FILE}" || -L "${LARM_CANARY_AUDIO_FILE}" ]]; then
+  echo "Set LARM_CANARY_AUDIO_FILE to an absolute, regular, non-sensitive audio sample" >&2
   exit 2
 fi
 

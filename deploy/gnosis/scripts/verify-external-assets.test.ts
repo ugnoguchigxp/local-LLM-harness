@@ -12,7 +12,7 @@ afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
-async function fixture(options: { mismatch?: boolean; symlink?: boolean } = {}) {
+async function fixture(options: { mismatch?: boolean; symlink?: boolean; assetUrl?: string } = {}) {
   const root = await mkdtemp(join(tmpdir(), "larm-external-assets-"));
   temporaryRoots.push(root);
   const content = new TextEncoder().encode("fixture-vvm\n");
@@ -30,10 +30,10 @@ async function fixture(options: { mismatch?: boolean; symlink?: boolean } = {}) 
         revision: "c7793d12c09e3ea0a4ae41ca2bbe8b91bb17ef61",
         path: assetPath,
         asset: {
-          url: "https://github.com/VOICEVOX/voicevox_vvm/releases/download/0.16.4/0.vvm",
+          url: options.assetUrl ?? "https://github.com/VOICEVOX/voicevox_vvm/releases/download/0.16.4/0.vvm",
           bytes: content.byteLength,
           sha256: options.mismatch ? "0".repeat(64) : createHash("sha256").update(content).digest("hex"),
-          terms: "https://voicevox.hiroshiba.jp/term/",
+          terms: "https://github.com/VOICEVOX/voicevox_vvm/blob/0.16.4/README.md",
           acceptance: "operator-required",
         },
       },
@@ -69,4 +69,16 @@ test("rejects a symlinked external asset", async () => {
   const result = await run(await fixture({ symlink: true }));
   expect(result.exitCode).toBe(1);
   expect(result.result.actual.type).toBe("symlink");
+});
+
+test("rejects an asset URL that is inconsistent with the pinned version", async () => {
+  const lockPath = await fixture({
+    assetUrl: "https://github.com/VOICEVOX/voicevox_vvm/releases/download/0.16.3/0.vvm",
+  });
+  const process = Bun.spawn(["bun", "run", verifier, "--require-valid"], {
+    env: { ...Bun.env, LARM_SOURCE_LOCK: lockPath },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  expect(await process.exited).not.toBe(0);
 });

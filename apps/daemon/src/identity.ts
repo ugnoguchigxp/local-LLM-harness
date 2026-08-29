@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type DaemonIdentity = {
@@ -11,14 +11,43 @@ export type DaemonIdentity = {
 
 export function loadReleaseCommit(manifestPath: string | undefined): string {
   if (!manifestPath) return "development";
-  const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
-  if (
-    typeof parsed !== "object" || parsed === null || !("commit" in parsed)
-    || typeof parsed.commit !== "string" || !/^[a-f0-9]{40}$/.test(parsed.commit)
-  ) {
-    throw new Error("release manifest commit is invalid");
+  const descriptor = openSync(manifestPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let parsed: unknown;
+  try {
+    if (!fstatSync(descriptor).isFile()) throw new Error("release manifest is invalid");
+    parsed = JSON.parse(readFileSync(descriptor, "utf8")) as unknown;
+  } finally {
+    closeSync(descriptor);
   }
-  return parsed.commit;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("release manifest is invalid");
+  }
+  const manifest = parsed as Record<string, unknown>;
+  const requiredKeys = [
+    "schemaVersion",
+    "commit",
+    "larmVersion",
+    "bunVersion",
+    "lockfileSha256",
+    "nodeModulesSha256",
+    "configRevision",
+    "createdAt",
+  ];
+  if (
+    Object.keys(manifest).sort().join("\n") !== [...requiredKeys].sort().join("\n")
+    || manifest.schemaVersion !== 1
+    || typeof manifest.commit !== "string" || !/^[a-f0-9]{40}$/.test(manifest.commit)
+    || typeof manifest.larmVersion !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.larmVersion)
+    || typeof manifest.bunVersion !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.bunVersion)
+    || typeof manifest.lockfileSha256 !== "string" || !/^[a-f0-9]{64}$/.test(manifest.lockfileSha256)
+    || typeof manifest.nodeModulesSha256 !== "string" || !/^[a-f0-9]{64}$/.test(manifest.nodeModulesSha256)
+    || typeof manifest.configRevision !== "string" || !/^[a-f0-9]{64}$/.test(manifest.configRevision)
+    || typeof manifest.createdAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(manifest.createdAt)
+    || Number.isNaN(Date.parse(manifest.createdAt))
+  ) {
+    throw new Error("release manifest is invalid");
+  }
+  return manifest.commit;
 }
 
 const CONFIG_FILES = ["nodes.yaml", "runtimes.yaml", "profiles.yaml", "routes.yaml"];

@@ -12,7 +12,7 @@ git -C "${source_root}" config user.email test@example.invalid
 git -C "${source_root}" config user.name LARM-test
 printf 'lock-v1\n' >"${source_root}/bun.lock"
 printf '{"scripts":{"check":"true"}}\n' >"${source_root}/package.json"
-printf 'export const LARM_VERSION = "test-1";\n' >"${source_root}/packages/core/src/version.ts"
+printf 'export const LARM_VERSION = "0.1.0";\n' >"${source_root}/packages/core/src/version.ts"
 git -C "${source_root}" add .
 git -C "${source_root}" commit -qm first
 
@@ -37,8 +37,13 @@ fi
 grep -F 'stop larm-daemon.service' "${test_root}/state/systemctl.log" >/dev/null
 run_release apply >/dev/null
 first="$(readlink -f "${test_root}/current")"
-jq -e '.schemaVersion == 1 and (.lockfileSha256 | length == 64) and .configRevision == "test-gate-skipped"' \
+jq -e '.schemaVersion == 1 and (.lockfileSha256 | length == 64) and (.nodeModulesSha256 | length == 64)
+  and (.configRevision | test("^[a-f0-9]{64}$"))' \
   "${first}/release-manifest.json" >/dev/null
+loaded_commit="$(LARM_RELEASE_MANIFEST_UNDER_TEST="${first}/release-manifest.json" bun -e \
+  'import { loadReleaseCommit } from "./apps/daemon/src/identity";
+   console.log(loadReleaseCommit(process.env.LARM_RELEASE_MANIFEST_UNDER_TEST));')"
+[[ "${loaded_commit}" == "${first_commit}" ]]
 run_release apply >/dev/null
 [[ "$(readlink -f "${test_root}/current")" == "${first}" ]]
 cp "${first}/bun.lock" "${test_root}/first-lock"
@@ -48,17 +53,37 @@ if run_release apply >/dev/null 2>&1; then
   exit 1
 fi
 cp "${test_root}/first-lock" "${first}/bun.lock"
+cp "${first}/packages/core/src/version.ts" "${test_root}/first-version"
+printf 'export const LARM_VERSION = "9.9.9";\n' >"${first}/packages/core/src/version.ts"
+if run_release apply >/dev/null 2>&1; then
+  echo "release accepted a source-modified existing generation" >&2
+  exit 1
+fi
+cp "${test_root}/first-version" "${first}/packages/core/src/version.ts"
+printf 'tampered dependency\n' >"${first}/node_modules/tampered.js"
+if run_release apply >/dev/null 2>&1; then
+  echo "release accepted a modified dependency tree" >&2
+  exit 1
+fi
+rm "${first}/node_modules/tampered.js"
 
 printf 'lock-v2\n' >"${source_root}/bun.lock"
-printf 'export const LARM_VERSION = "test-2";\n' >"${source_root}/packages/core/src/version.ts"
+printf 'export const LARM_VERSION = "0.2.0";\n' >"${source_root}/packages/core/src/version.ts"
 git -C "${source_root}" add .
 git -C "${source_root}" commit -qm second
 run_release apply >/dev/null
 second="$(readlink -f "${test_root}/current")"
 [[ "${second}" != "${first}" ]]
+printf 'tampered rollback dependency\n' >"${first}/node_modules/tampered.js"
+if run_release rollback >/dev/null 2>&1; then
+  echo "rollback accepted a modified previous dependency tree" >&2
+  exit 1
+fi
+[[ "$(readlink -f "${test_root}/current")" == "${second}" ]]
+rm "${first}/node_modules/tampered.js"
 run_release rollback >/dev/null
 [[ "$(readlink -f "${test_root}/current")" == "${first}" ]]
-jq -e '.larmVersion == "test-1" and .configRevision == "test-gate-skipped"' \
+jq -e '.larmVersion == "0.1.0" and (.configRevision | test("^[a-f0-9]{64}$"))' \
   "$(readlink -f "${test_root}/current")/release-manifest.json" >/dev/null
 
 printf 'dirty\n' >>"${source_root}/bun.lock"

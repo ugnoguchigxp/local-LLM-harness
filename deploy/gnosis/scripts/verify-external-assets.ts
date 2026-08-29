@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
@@ -21,16 +21,32 @@ const vvmSchema = z.object({
     terms: z.string().url(),
     acceptance: z.literal("operator-required"),
   }).strict(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  const expectedUrl = `https://github.com/VOICEVOX/voicevox_vvm/releases/download/${value.version}/0.vvm`;
+  if (value.asset.url !== expectedUrl) {
+    context.addIssue({ code: "custom", message: "VOICEVOX VVM asset URL must match the pinned version" });
+  }
+  const expectedTerms = `https://github.com/VOICEVOX/voicevox_vvm/blob/${value.version}/README.md`;
+  if (value.asset.terms !== expectedTerms) {
+    context.addIssue({ code: "custom", message: "VOICEVOX VVM terms must match the pinned version" });
+  }
+});
 
 const documentSchema = z.object({
   sources: z.object({ "voicevox-vvm": vvmSchema }).passthrough(),
 }).passthrough();
 
-async function sha256(path: string): Promise<string> {
+async function inspectRegularFile(path: string): Promise<{ bytes: number; sha256: string }> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) throw new Error("external asset must be a regular file");
+    for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk);
+    return { bytes: metadata.size, sha256: hash.digest("hex") };
+  } finally {
+    await handle.close();
+  }
 }
 
 const parsed = documentSchema.parse(parse(await readFile(sourceLockPath, "utf8")));
@@ -47,15 +63,21 @@ try {
   } else {
     actual = {
       type: "regular",
-      bytes: metadata.size,
-      sha256: await sha256(definition.path),
+      ...await inspectRegularFile(definition.path),
     };
     valid = actual.bytes === definition.asset.bytes && actual.sha256 === definition.asset.sha256;
     if (!valid) error = "external asset identity does not match sources.lock.yaml";
   }
 } catch (cause) {
-  if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
-  error = "external asset is missing";
+  const code = (cause as NodeJS.ErrnoException).code;
+  if (code === "ENOENT") {
+    error = "external asset is missing";
+  } else if (code === "ELOOP") {
+    actual = { type: "symlink" };
+    error = "external asset must not become a symlink while being inspected";
+  } else {
+    throw cause;
+  }
 }
 
 console.log(JSON.stringify({

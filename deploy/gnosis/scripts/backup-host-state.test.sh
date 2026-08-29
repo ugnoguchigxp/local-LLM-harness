@@ -29,7 +29,21 @@ cmp "${test_root}/etc/systemd/system/llama-server.service" "${target}/units/llam
 [[ "$(stat -c '%a' "${target}/manifest.json")" == "600" ]]
 [[ "$(<"${target}/larm-current.target")" == "/srv/ai/apps/larm-releases/old" ]]
 
-unsafe_label=20260829T010001Z-abcdef1
+changing_label=20260829T010001Z-abcdef1
+changing_plan="$(LARM_BACKUP_TEST_MODE=1 LARM_BACKUP_TEST_ROOT="${test_root}" \
+  LARM_BACKUP_ROOT="${backup_root}" LARM_BACKUP_LABEL="${changing_label}" bash "${tool}" plan)"
+changing_confirmation="$(jq -er .confirmation <<<"${changing_plan}")"
+if LARM_BACKUP_TEST_MODE=1 LARM_BACKUP_TEST_ROOT="${test_root}" \
+  LARM_BACKUP_ROOT="${backup_root}" LARM_BACKUP_LABEL="${changing_label}" \
+  LARM_BACKUP_TEST_MUTATE_AFTER_COPY_UNIT=llama-server.service \
+  LARM_BACKUP_CONFIRM="${changing_confirmation}" bash "${tool}" apply >/dev/null 2>&1; then
+  echo "host backup accepted state that changed during capture" >&2
+  exit 1
+fi
+[[ ! -e "${backup_root}/${changing_label}" ]]
+sed -i '$d' "${test_root}/etc/systemd/system/llama-server.service"
+
+unsafe_label=20260829T010002Z-abcdef1
 rm "${test_root}/etc/systemd/system/llama-server.service"
 ln -s /tmp "${test_root}/etc/systemd/system/llama-server.service"
 if LARM_BACKUP_TEST_MODE=1 LARM_BACKUP_TEST_ROOT="${test_root}" \

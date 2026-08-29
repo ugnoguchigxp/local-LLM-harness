@@ -107,7 +107,9 @@ do not use the first-install start command as a blanket restart. The installer a
 `larm-daemon.service`はGit worktreeではなく`/srv/ai/apps/larm-current`を参照します。
 `release-larm.sh apply`はclean commitをrepository外へ展開し、frozen installと全gateを通過した後だけ
 current symlinkを原子的に切り替え、LARM daemonだけをrestartします。manifestにはcommit、LARM・Bun
-version、lockfile digest、config revision、作成時刻を保存し、`/health.releaseCommit`まで一致を検証します。
+version、lockfile digest、`node_modules` tree digest、config revision、作成時刻を保存します。既存世代の
+再利用とrollbackでは、manifest、Git source tree、lockfile、dependency tree、config revisionを切替前に
+再検証し、`/health.releaseCommit`まで一致を確認します。
 前世代へ戻す操作は次の通りです。
 
 ```bash
@@ -159,7 +161,11 @@ data, or unredacted logs.
 
 `deploy/gnosis/slo.yaml` is deliberately `uncalibrated` until all four production series have been
 measured. That state always fails the comparator. Calibration uses a repository-external raw and
-summary path; the summary contains only aggregate identity and metrics.
+summary path; the summary contains only aggregate identity and metrics. Evidence files are created
+with atomic no-overwrite publication and mode 0600, including comparator output. LLM samples require
+a complete SSE `[DONE]` terminator, STT requires non-empty JSON text, and telemetry is sampled
+continuously while each series runs. A failed run still publishes its bounded raw error codes and
+partial samples before exiting nonzero; it never emits a passing aggregate summary.
 
 ```bash
 evidence_dir=/srv/ai/logs/larm-calibration/$(date -u +%Y%m%dT%H%M%SZ)
@@ -176,4 +182,6 @@ Before the final cutover, run `network-converge.sh plan`. An apply is accepted o
 readable, all Provider listeners are already loopback-only, every Provider allow rule is an exact
 LAN-CIDR candidate, and `LARM_NETWORK_CONFIRM` equals the displayed digest. Rollback restores one
 reviewed port and an IPv4 `/24`–`/32` only; first restore that Provider's operator-backed-up unit and
-verify its network listener, then use `rollback-plan` and its separate confirmation digest.
+verify its network listener, then use `rollback-plan` and its separate confirmation digest. If a
+multi-rule apply or its post-check fails, the tool restores every rule it already removed and reports
+explicitly if that compensation is incomplete.

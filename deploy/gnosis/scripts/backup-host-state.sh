@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
 
 action="${1:-plan}"
 label="${LARM_BACKUP_LABEL:-}"
@@ -21,9 +22,15 @@ fail() { echo "$*" >&2; exit 1; }
   || fail "LARM_BACKUP_LABEL must be UTC timestamp plus commit prefix"
 [[ "${backup_root}" == /* && "${backup_root}" != "/" && ! -L "${backup_root}" ]] \
   || fail "backup root must be an absolute non-symlink path"
+[[ "$(realpath -sm -- "${backup_root}")" == "$(realpath -m -- "${backup_root}")" ]] \
+  || fail "backup root must not traverse symlinked path components"
+backup_root="$(realpath -sm -- "${backup_root}")"
 if [[ "${test_mode}" == "1" ]]; then
   [[ "${test_root}" == /* && "${test_root}" != "/" && -d "${test_root}" && ! -L "${test_root}" ]] \
     || fail "LARM_BACKUP_TEST_ROOT must be an absolute non-symlink directory"
+  [[ "$(realpath -se -- "${test_root}")" == "$(realpath -e -- "${test_root}")" ]] \
+    || fail "LARM_BACKUP_TEST_ROOT must not traverse symlinked path components"
+  test_root="$(realpath -e -- "${test_root}")"
 else
   test_root=""
 fi
@@ -91,7 +98,11 @@ if [[ "${action}" == "plan" ]]; then
 fi
 
 [[ "${test_mode}" == "1" || "$(id -u)" -eq 0 ]] || fail "apply requires root"
-install -d -m 0700 -- "${backup_root}"
+if [[ "${test_mode}" == "1" ]]; then
+  install -d -m 0700 -- "${backup_root}"
+else
+  install -d -o root -g root -m 0700 -- "${backup_root}"
+fi
 exec 9>"${backup_root}/backup.lock"
 flock -n 9 || fail "another host backup is running"
 [[ ! -e "${target}" && ! -L "${target}" ]] || fail "backup target already exists"
@@ -109,9 +120,15 @@ install -d -m 0700 -- "${staging}/units"
 while IFS=$'\t' read -r unit digest; do
   [[ -n "${unit}" ]] || continue
   source="$(host_path "/etc/systemd/system/${unit}")"
+  [[ -f "${source}" && ! -L "${source}" ]] || fail "unit type changed after backup plan: ${unit}"
   [[ "$(sha256sum "${source}" | awk '{print $1}')" == "${digest}" ]] \
     || fail "unit changed after backup plan: ${unit}"
   install -m 0600 -- "${source}" "${staging}/units/${unit}"
+  [[ "$(sha256sum "${staging}/units/${unit}" | awk '{print $1}')" == "${digest}" ]] \
+    || fail "copied unit digest does not match backup plan: ${unit}"
+  if [[ "${test_mode}" == "1" && "${LARM_BACKUP_TEST_MUTATE_AFTER_COPY_UNIT:-}" == "${unit}" ]]; then
+    printf '# injected concurrent change\n' >>"${source}"
+  fi
 done < <(jq -r '.units[] | select(.type == "regular") | [.unit,.digest] | @tsv' <<<"${plan}")
 if [[ "$(jq -r .currentPointer.type <<<"${plan}")" == "symlink" ]]; then
   jq -r .currentPointer.target <<<"${plan}" >"${staging}/larm-current.target"
@@ -120,7 +137,13 @@ fi
 jq -c --arg createdAt "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
   '. + {createdAt:$createdAt}' <<<"${plan}" >"${staging}/manifest.json"
 chmod 0600 -- "${staging}/manifest.json"
-mv -- "${staging}" "${target}"
+after_plan="$(make_plan)"
+[[ "$(jq -r .confirmation <<<"${after_plan}")" == "${expected}" ]] || {
+  jq . <<<"${after_plan}" >&2
+  fail "host state changed while the backup was being captured"
+}
+[[ ! -e "${target}" && ! -L "${target}" ]] || fail "backup target appeared during capture"
+mv -T -- "${staging}" "${target}"
 trap - EXIT
 jq -n --arg target "${target}" --arg confirmation "${expected}" \
   '{backedUp:true,target:$target,confirmation:$confirmation}'

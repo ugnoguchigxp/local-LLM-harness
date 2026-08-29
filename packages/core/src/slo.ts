@@ -2,8 +2,11 @@ import { z } from "zod";
 
 const finiteNonNegative = z.number().finite().nonnegative();
 const positiveDuration = z.number().finite().positive();
-const identity = z.string().min(1).max(200);
+const byteCount = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const identity = z.string().min(1).max(200)
+  .regex(/^[^\u0000-\u001f\u007f]+$/, "identity values must not contain control characters");
 const commitSchema = z.string().regex(/^[a-f0-9]{40}$/);
+const configRevisionSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 export const sloSeriesIdSchema = z.enum([
   "llm-normal",
@@ -37,8 +40,8 @@ export const sloSeriesSummarySchema = z.object({
     startupP95: finiteNonNegative,
   }).strict(),
   memoryHeadroomMinBytes: z.object({
-    system: finiteNonNegative,
-    accelerator: finiteNonNegative,
+    system: byteCount,
+    accelerator: byteCount,
   }).strict(),
 }).strict().superRefine((value, context) => {
   if (value.successes + value.errors !== value.iterations) {
@@ -47,13 +50,22 @@ export const sloSeriesSummarySchema = z.object({
   if (Math.abs(value.errorRate - value.errors / value.iterations) > 1e-12) {
     context.addIssue({ code: "custom", message: "errorRate must equal errors divided by iterations" });
   }
+  if (value.fallbackCount > value.successes) {
+    context.addIssue({ code: "custom", message: "fallbackCount must not exceed successful iterations" });
+  }
+  if (value.provider429Count > value.iterations) {
+    context.addIssue({ code: "custom", message: "provider429Count must not exceed benchmark iterations" });
+  }
+  if (value.latencyMs.totalP95 < value.latencyMs.ttfbP95) {
+    context.addIssue({ code: "custom", message: "total p95 latency must not be below TTFB p95" });
+  }
 });
 
 export const sloBenchmarkSummarySchema = z.object({
   schemaVersion: z.literal(1),
   recordedAt: z.string().datetime({ offset: true }),
   commit: commitSchema,
-  configRevision: identity,
+  configRevision: configRevisionSchema,
   series: z.array(sloSeriesSummarySchema).min(1).max(4),
 }).strict().superRefine((value, context) => {
   const ids = value.series.map((series) => series.id);
@@ -66,8 +78,8 @@ const sloLimitsSchema = z.object({
   maxTtfbP95Ms: positiveDuration,
   maxTotalP95Ms: positiveDuration,
   maxStartupP95Ms: finiteNonNegative,
-  minSystemMemoryHeadroomBytes: finiteNonNegative,
-  minAcceleratorMemoryHeadroomBytes: finiteNonNegative,
+  minSystemMemoryHeadroomBytes: byteCount,
+  minAcceleratorMemoryHeadroomBytes: byteCount,
   maxErrorRate: z.number().finite().min(0).max(1),
   maxQueueDepth: z.number().int().min(0).max(1000),
   maxProvider429Count: z.number().int().min(0).max(1000),
@@ -83,7 +95,7 @@ const calibratedSeriesSchema = z.object({
   calibration: z.object({
     measuredAt: z.string().datetime({ offset: true }),
     measurementCommit: commitSchema,
-    configRevision: identity,
+    configRevision: configRevisionSchema,
     sampleCount: z.number().int().min(3).max(1000),
     routes: identityListSchema,
     runtimes: identityListSchema,
@@ -94,6 +106,37 @@ const calibratedSeriesSchema = z.object({
 }).strict().superRefine((value, context) => {
   if (value.calibration.sampleCount < value.minimumIterations) {
     context.addIssue({ code: "custom", message: "calibration sample count is below the minimum iteration gate" });
+  }
+  const maximums = [
+    ["maxTtfbP95Ms", value.limits.maxTtfbP95Ms, value.rollback.maxTtfbP95Ms],
+    ["maxTotalP95Ms", value.limits.maxTotalP95Ms, value.rollback.maxTotalP95Ms],
+    ["maxStartupP95Ms", value.limits.maxStartupP95Ms, value.rollback.maxStartupP95Ms],
+    ["maxErrorRate", value.limits.maxErrorRate, value.rollback.maxErrorRate],
+    ["maxQueueDepth", value.limits.maxQueueDepth, value.rollback.maxQueueDepth],
+    ["maxProvider429Count", value.limits.maxProvider429Count, value.rollback.maxProvider429Count],
+  ] as const;
+  for (const [name, limit, rollback] of maximums) {
+    if (rollback < limit) {
+      context.addIssue({ code: "custom", message: `rollback ${name} must be at least the acceptance limit` });
+    }
+  }
+  const minimums = [
+    ["minSystemMemoryHeadroomBytes", value.limits.minSystemMemoryHeadroomBytes, value.rollback.minSystemMemoryHeadroomBytes],
+    ["minAcceleratorMemoryHeadroomBytes", value.limits.minAcceleratorMemoryHeadroomBytes, value.rollback.minAcceleratorMemoryHeadroomBytes],
+  ] as const;
+  for (const [name, limit, rollback] of minimums) {
+    if (rollback > limit) {
+      context.addIssue({ code: "custom", message: `rollback ${name} must not exceed the acceptance limit` });
+    }
+  }
+  if (!value.limits.allowFallback && value.rollback.allowFallback) {
+    context.addIssue({ code: "custom", message: "rollback must not permit fallback forbidden by the acceptance limit" });
+  }
+  if (value.limits.maxTotalP95Ms < value.limits.maxTtfbP95Ms) {
+    context.addIssue({ code: "custom", message: "acceptance total p95 limit must not be below its TTFB limit" });
+  }
+  if (value.rollback.maxTotalP95Ms < value.rollback.maxTtfbP95Ms) {
+    context.addIssue({ code: "custom", message: "rollback total p95 limit must not be below its TTFB limit" });
   }
 });
 
@@ -137,7 +180,9 @@ export type SloFailure = {
 export type SloComparison = { passed: boolean; failures: SloFailure[] };
 
 function sameIdentities(left: string[], right: string[]): boolean {
-  return [...left].sort().join("\0") === [...right].sort().join("\0");
+  if (left.length !== right.length) return false;
+  const rightValues = new Set(right);
+  return left.every((value) => rightValues.has(value));
 }
 
 export function compareSlo(
@@ -146,11 +191,15 @@ export function compareSlo(
   expected: { commit: string; configRevision?: string },
 ): SloComparison {
   const failures: SloFailure[] = [];
+  if (!commitSchema.safeParse(expected.commit).success) failures.push({ code: "invalid_expected_commit" });
+  if (expected.configRevision !== undefined && !configRevisionSchema.safeParse(expected.configRevision).success) {
+    failures.push({ code: "invalid_expected_config_revision" });
+  }
   const manifestResult = sloManifestSchema.safeParse(manifestInput);
   const summaryResult = sloBenchmarkSummarySchema.safeParse(summaryInput);
   if (!manifestResult.success) failures.push({ code: "invalid_manifest" });
   if (!summaryResult.success) failures.push({ code: "invalid_summary" });
-  if (!manifestResult.success || !summaryResult.success) return { passed: false, failures };
+  if (!manifestResult.success || !summaryResult.success || failures.length > 0) return { passed: false, failures };
   const manifest = manifestResult.data;
   const summary = summaryResult.data;
   if (manifest.status !== "calibrated") {
