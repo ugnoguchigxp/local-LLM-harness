@@ -4,7 +4,7 @@
   <p>
     2026-08-28から2026-08-29に、Core contract、Allocation、Gateway、Artifact
     lifecycle、Backend、Provider
-    adapter、gnosis運用設定を対象として、失敗復旧、競合、期限、入力境界、長期運転を再監査しました。
+    adapter、local-node運用設定を対象として、失敗復旧、競合、期限、入力境界、長期運転を再監査しました。
     この文書は検出事項と実装済み対策、回帰確認の正本です。
   </p>
 
@@ -226,7 +226,7 @@
           </td>
         </tr>
         <tr>
-          <th scope="row">gnosis lifecycle</th>
+          <th scope="row">local-node lifecycle</th>
           <td>Preferred TTSのboot常駐、LARMのsystemd権限とactive target書込権限不足</td>
           <td>installerでPreferredをdisableし、限定polkit ruleと必要なReadWritePathsだけを配備</td>
         </tr>
@@ -323,7 +323,7 @@
       acceptanceは完了し、管理API commissioningとSLO評価が残っています。
     </p>
     <p>
-      この表のgnosis対策はrepositoryのdesired stateです。実ホストへの常駐daemon導入、service
+      この表のlocal-node対策はrepositoryのdesired stateです。実ホストへの常駐daemon導入、service
       enablement、Gateway-only network境界の収束は<a href="./production-completion-plan.html"
         >Production Completion実装計画</a
       >のattended gateで行います。

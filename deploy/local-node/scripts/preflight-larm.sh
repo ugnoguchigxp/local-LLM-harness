@@ -6,8 +6,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 base_url="${LARM_BASE_URL:-http://127.0.0.1:9810}"
 credential="${LARM_CREDENTIAL_PATH:-/etc/larm/larm.env}"
 installed_unit="${LARM_INSTALLED_UNIT:-/etc/systemd/system/larm-daemon.service}"
-external_verifier="${repo_root}/deploy/gnosis/scripts/verify-external-assets.ts"
-repository_polkit="${repo_root}/deploy/gnosis/polkit/50-larm-runtime-control.rules"
+external_verifier="${repo_root}/deploy/local-node/scripts/verify-external-assets.ts"
+repository_polkit="${repo_root}/deploy/local-node/polkit/50-larm-runtime-control.rules"
 installed_polkit="/etc/polkit-1/rules.d/50-larm-runtime-control.rules"
 provider_specs=(
   llama-server.service:8080
@@ -47,7 +47,7 @@ elif [[ -f "${installed_unit}" ]]; then
 elif [[ -e "${installed_unit}" ]]; then
   unit_type="other"
 fi
-repository_unit_digest="$(sha256sum "${repo_root}/deploy/gnosis/systemd/larm-daemon.service" | awk '{print $1}')"
+repository_unit_digest="$(sha256sum "${repo_root}/deploy/local-node/systemd/larm-daemon.service" | awk '{print $1}')"
 unit_match=false
 if [[ "${unit_type}" == "regular" && "${unit_digest}" == "${repository_unit_digest}" ]]; then
   unit_match=true
@@ -76,7 +76,7 @@ provider_units='[]'
 for spec in "${provider_specs[@]}"; do
   unit="${spec%%:*}"
   port="${spec##*:}"
-  repository_unit="${repo_root}/deploy/gnosis/systemd/${unit}"
+  repository_unit="${repo_root}/deploy/local-node/systemd/${unit}"
   installed_provider_unit="/etc/systemd/system/${unit}"
   repository_digest="$(sha256sum "${repository_unit}" | awk '{print $1}')"
   installed_digest=""

@@ -1,6 +1,6 @@
-# gnosis deployment
+# local-node deployment
 
-This directory is the reproducible Linux deployment for the `gnosis` AI MAX+ 395 node.
+This directory is the reproducible `local-node` Linux deployment profile for AI MAX+ 395 hardware.
 It contains metadata and launch configuration only. Model weights, virtual environments,
 build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 
@@ -9,10 +9,11 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `models.yaml`: registered artifact source and absolute runtime placement, never model data
 - `releases.yaml`: immutable Runtime-to-artifact release catalog
 - `sources.lock.yaml`: external runtime source/release pins, never built binaries
-- `systemd/`: the units installed on gnosis
+- `systemd/`: the units installed by the `local-node` profile
 - `polkit/`: LARMにPreferred providerだけのstart / stopを許可する最小権限rule
 - `scripts/prepare-host.sh`: conservative host prerequisites; no firewall mutation or reboot
 - `scripts/configure-saaa-rest-access.sh`: exact SAAA source hostから9810だけを許可するplan・apply・rollback
+- `scripts/restore-dhcp.sh`: legacy LARM固定address overlayをattended Netplanで除去してDHCPを検証
 - `scripts/install-services.sh`: unitをinstallし、Resident/controlだけをenableする（restartなし）。
   `LARM_INSTALL_SCOPE=gateway`ではLARM Gatewayだけをinstall・enableし、既存Provider unitを変更しない
 - `scripts/preflight-larm.sh`: secretを含めないread-only commissioning inventory
@@ -22,15 +23,15 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/release-larm.sh`: clean commitのversioned apply、rollback、review済みbounded retention
 - `scripts/verify.sh`: GPU, service, HTTP health, and memory checks
 - `scripts/smoke-larm.sh`: Resident 27B固定のAllocation、stream、release smoke
-- `scripts/smoke-saaa-agent-connection.sh`: SAAA向け35B create・claim・SSE・release smoke
+- `scripts/smoke-saaa-agent-connection.sh`: request-originを含むSAAA向け35B create・claim・SSE・release smoke
 - `scripts/smoke-voice.sh`: operator提供音声によるSTT・通常TTS smoke
 - `scripts/canary-gate.sh`: 4 seriesのSLO、boot epoch、fallback、leakを拒否するcanary gate
 - `scripts/shadow-larm.sh`: 推論せずlegacyとv1のroute・Runtime・endpointを比較
 - `scripts/fault-larm.sh`: 明示confirmationを要求するdaemon・Preferred fault harness
 - `scripts/benchmark-larm.ts`: repository外raw JSONと匿名化summaryを分離する4 series benchmark
-- `scripts/compare-slo.ts`: version管理された`deploy/gnosis/slo.yaml`とのfail-closed比較
+- `scripts/compare-slo.ts`: version管理された`deploy/local-node/slo.yaml`とのfail-closed比較
 
-Runtime-manager configuration is in [`../../config/gnosis`](../../config/gnosis).
+Runtime-manager configuration is in [`../../config/local-node`](../../config/local-node).
 Application-owned adapters are in [`../../apps`](../../apps).
 
 LARM artifact operations use `/srv/ai/models/.larm-staging` and
@@ -46,6 +47,13 @@ The installer creates `/etc/larm/larm.env` with local API, Agent Connection sign
 and management credentials. Existing values are preserved and only missing variables
 are added. Operator-side smoke commands can load them with
 `set -a; source /etc/larm/larm.env; set +a` without printing their values.
+It also creates non-secret audit settings in `/etc/larm/inference-audit.env`, creates
+`/etc/larm/inference-audit.key` without replacing an existing key, and creates
+`/var/lib/larm/inference-audit` with mode 0700. The daemon unit requires encrypted LLM audit
+capture, and the persistent hourly `larm-inference-audit-prune.timer` enforces the seven-day,
+10 GiB, and minimum-free-space bounds even after daemon downtime. Audit payloads are not part of
+release or host-state backups. The prune service reads only the audit settings and key; API,
+management, and Agent Connection credentials remain outside its environment.
 `qwen-tts.service`はinstallのみ行い、boot時はdisableのままです。LARMは同梱の
 polkit ruleにより、このPreferred serviceのstart / stopだけを無人実行できます。
 
@@ -58,11 +66,11 @@ the current release pointer without copying credential contents.
 ```bash
 backup_label="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short=12 HEAD)"
 backup_plan="$(env LARM_BACKUP_LABEL="${backup_label}" \
-  deploy/gnosis/scripts/backup-host-state.sh plan)"
+  deploy/local-node/scripts/backup-host-state.sh plan)"
 printf '%s\n' "${backup_plan}"
 backup_confirm="$(jq -er .confirmation <<<"${backup_plan}")"
 sudo env LARM_BACKUP_LABEL="${backup_label}" LARM_BACKUP_CONFIRM="${backup_confirm}" \
-  deploy/gnosis/scripts/backup-host-state.sh apply
+  deploy/local-node/scripts/backup-host-state.sh apply
 ```
 
 `prepare-host.sh` installs packages, masks sleep targets, adds the service account to the GPU
@@ -71,28 +79,37 @@ reboot. SAAA REST access is handled separately by `configure-saaa-rest-access.sh
 changes SSH or Provider rules. Provider rule removal is handled by the separate digest-bound tool in
 [`../../specs/production-completion-plan.html`](../../specs/production-completion-plan.html).
 
+LARM does not require or install a static host address. If the retired
+`/etc/netplan/99-larm-static-ip.yaml` overlay is still present, restore DHCP through an attended
+Netplan transaction before relying on mDNS/DNS discovery:
+
+```bash
+deploy/local-node/scripts/restore-dhcp.sh plan
+sudo deploy/local-node/scripts/restore-dhcp.sh apply
+```
+
 The SAAA rule requires one explicit IPv4 host, refuses an inactive or unreadable firewall, and
 rejects broader or duplicate port 9810 allow rules. Review the plan digest before applying it.
 
 ```bash
 saaa_plan="$(SAAA_SOURCE_IPV4=192.168.0.x \
-  deploy/gnosis/scripts/configure-saaa-rest-access.sh plan)"
+  deploy/local-node/scripts/configure-saaa-rest-access.sh plan)"
 printf '%s\n' "${saaa_plan}"
 saaa_confirm="$(jq -er .confirmation <<<"${saaa_plan}")"
 sudo env SAAA_SOURCE_IPV4=192.168.0.x LARM_SAAA_NETWORK_CONFIRM="${saaa_confirm}" \
-  deploy/gnosis/scripts/configure-saaa-rest-access.sh apply
+  deploy/local-node/scripts/configure-saaa-rest-access.sh apply
 ```
 
 Rollback is accepted only for a rule recorded as added by this tool:
 
 ```bash
 saaa_rollback_plan="$(sudo env SAAA_SOURCE_IPV4=192.168.0.x \
-  deploy/gnosis/scripts/configure-saaa-rest-access.sh rollback-plan)"
+  deploy/local-node/scripts/configure-saaa-rest-access.sh rollback-plan)"
 printf '%s\n' "${saaa_rollback_plan}"
 saaa_rollback_confirm="$(jq -er .confirmation <<<"${saaa_rollback_plan}")"
 sudo env SAAA_SOURCE_IPV4=192.168.0.x \
   LARM_SAAA_NETWORK_ROLLBACK_CONFIRM="${saaa_rollback_confirm}" \
-  deploy/gnosis/scripts/configure-saaa-rest-access.sh rollback
+  deploy/local-node/scripts/configure-saaa-rest-access.sh rollback
 ```
 
 Do not run the apply sequence below as a stable deployment until Milestone 22 is a reviewed clean
@@ -101,33 +118,33 @@ commit and a rollback target is available.
 ```bash
 cd /srv/ai/apps/local-LLM-harness
 # Host preparation, only when required:
-# sudo deploy/gnosis/scripts/prepare-host.sh
-deploy/gnosis/scripts/preflight-larm.sh
+# sudo deploy/local-node/scripts/prepare-host.sh
+deploy/local-node/scripts/preflight-larm.sh
 # Complete the reviewed backup block above before installation.
-sudo deploy/gnosis/scripts/install-services.sh
-deploy/gnosis/scripts/release-larm.sh plan
-sudo deploy/gnosis/scripts/release-larm.sh apply
+sudo deploy/local-node/scripts/install-services.sh
+deploy/local-node/scripts/release-larm.sh plan
+sudo deploy/local-node/scripts/release-larm.sh apply
 sudo systemctl start llama-server.service llama-swap-worker.service \
   qwen-asr.service voicevox-tts.service larm-daemon.service  # first install only
-deploy/gnosis/scripts/verify.sh
-deploy/gnosis/scripts/smoke-larm.sh
-# After loading /etc/larm/larm.env without printing it:
-# deploy/gnosis/scripts/smoke-saaa-agent-connection.sh
-# LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/gnosis/scripts/smoke-voice.sh
-# After production calibration has changed deploy/gnosis/slo.yaml to calibrated:
+deploy/local-node/scripts/verify.sh
+deploy/local-node/scripts/smoke-larm.sh
+# After loading /etc/larm/larm.env without printing it, use the same DHCP-aware URL as SAAA:
+# LARM_BASE_URL=http://gnosis.local:9810 deploy/local-node/scripts/smoke-saaa-agent-connection.sh
+# LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/local-node/scripts/smoke-voice.sh
+# After production calibration has changed deploy/local-node/slo.yaml to calibrated:
 # LARM_CANARY_EVIDENCE_DIR=/srv/ai/logs/larm-canary \
 # LARM_BENCHMARK_AUDIO_FILE=/path/to/non-sensitive.wav \
-# deploy/gnosis/scripts/canary-gate.sh
+# deploy/local-node/scripts/canary-gate.sh
 ```
 
 `plan`の`cleanupCandidates`が空でない場合は、候補と`cleanupConfirm`をreviewしてから次のように
 同じcommitへapplyします。digestが一致しなければ、削除も切替も行いません。
 
 ```bash
-plan_json="$(deploy/gnosis/scripts/release-larm.sh plan)"
+plan_json="$(deploy/local-node/scripts/release-larm.sh plan)"
 cleanup_confirm="$(jq -r '.cleanupConfirm // empty' <<<"${plan_json}")"
 sudo env LARM_RELEASE_CLEANUP_CONFIRM="${cleanup_confirm}" \
-  deploy/gnosis/scripts/release-larm.sh apply
+  deploy/local-node/scripts/release-larm.sh apply
 ```
 
 The installer copies and enables units but intentionally does not start or restart them. On an
@@ -144,7 +161,7 @@ version、lockfile digest、`node_modules` tree digest、config revision、作�
 前世代へ戻す操作は次の通りです。
 
 ```bash
-sudo deploy/gnosis/scripts/release-larm.sh rollback
+sudo deploy/local-node/scripts/release-larm.sh rollback
 ```
 
 保持数を超えた世代は`plan`で候補を確認し、その`cleanupConfirm`を
@@ -162,10 +179,10 @@ is in [`../../apps/daemon/README.md`](../../apps/daemon/README.md).
 推論trafficを切り替えないshadow比較と、明示confirmation付きfault matrixは次の順で実行します。
 
 ```bash
-deploy/gnosis/scripts/shadow-larm.sh
-deploy/gnosis/scripts/fault-larm.sh plan
+deploy/local-node/scripts/shadow-larm.sh
+deploy/local-node/scripts/fault-larm.sh plan
 # Reviewして対象を選んだ後だけ:
-# sudo env LARM_FAULT_CONFIRM=gnosis-attended deploy/gnosis/scripts/fault-larm.sh daemon-restart
+# sudo env LARM_FAULT_CONFIRM=local-node-attended deploy/local-node/scripts/fault-larm.sh daemon-restart
 ```
 
 Do not reboot this dual-boot host as part of deployment automation. A reboot can select
@@ -174,7 +191,7 @@ Windows and make the node unavailable. Reboot only as an explicit, attended oper
 ## Roll back LARM without touching Resident providers
 
 ```bash
-sudo deploy/gnosis/scripts/release-larm.sh rollback
+sudo deploy/local-node/scripts/release-larm.sh rollback
 systemctl is-active llama-server.service qwen-asr.service voicevox-tts.service
 ```
 
@@ -190,7 +207,7 @@ data, or unredacted logs.
 
 ## SLO calibration and network convergence
 
-`deploy/gnosis/slo.yaml` is deliberately `uncalibrated` until all four production series have been
+`deploy/local-node/slo.yaml` is deliberately `uncalibrated` until all four production series have been
 measured. That state always fails the comparator. Calibration uses a repository-external raw and
 summary path; the summary contains only aggregate identity and metrics. Evidence files are created
 with atomic no-overwrite publication and mode 0600, including comparator output. LLM samples require
@@ -206,7 +223,7 @@ LARM_BENCHMARK_SUMMARY="${evidence_dir}/summary.json" \
 LARM_BENCHMARK_COMMIT="$(git rev-parse HEAD)" \
 LARM_BENCHMARK_SERIES=all \
 LARM_BENCHMARK_AUDIO_FILE=/path/to/non-sensitive.wav \
-bun run deploy/gnosis/scripts/benchmark-larm.ts
+bun run deploy/local-node/scripts/benchmark-larm.ts
 ```
 
 Before the final cutover, run `network-converge.sh plan`. An apply is accepted only when UFW is

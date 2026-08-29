@@ -3,7 +3,7 @@
 
   <p>
     <a href="./production-completion-plan.html">Production Completion実装計画</a>で未完了の
-    Milestone 23から27を、gnosisへ安全に適用するための実行順、入力、証跡、停止条件、rollbackを
+    Milestone 23から27を、local-nodeへ安全に適用するための実行順、入力、証跡、停止条件、rollbackを
     定義します。新機能を追加する計画ではなく、実装済みのrelease、commissioning、benchmark、canary、
     network convergence toolを使ってstable昇格まで完了させるための運用計画です。
   </p>
@@ -329,7 +329,7 @@ R5  M27 Gateway-only network and stable gate passed</code></pre>
         acceptance値と、より保守的なrollback値を決める。
       </li>
       <li>
-        <code>deploy/gnosis/slo.yaml</code
+        <code>deploy/local-node/slo.yaml</code
         >を<code>calibrated</code>へ変更し、測定commit、config
         revision、sample数、測定時刻、route、Runtime、releaseを4 seriesすべてに固定する。
       </li>
@@ -421,7 +421,8 @@ R5  M27 Gateway-only network and stable gate passed</code></pre>
         実行し、既知のProvider LAN allow ruleだけを削除する。
       </li>
       <li>
-        LAN側の別hostから8080–8084への接続拒否を確認し、gnosis localのLARM Gatewayを再確認する。
+        LAN側の別hostから8080–8084への接続拒否を確認し、<code>local-node</code>上のLARM
+        Gatewayを再確認する。
       </li>
       <li>
         最終<code>canary-gate.sh</code>、LARM release rollback rehearsal、Resident

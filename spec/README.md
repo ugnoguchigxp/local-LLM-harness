@@ -13,7 +13,7 @@ LARMの既存Markdown契約資料です。
 - [../specs/next-implementation-plan.html](../specs/next-implementation-plan.html): Milestone 15–21の履歴計画
 - [../specs/implementation-completion.html](../specs/implementation-completion.html): Milestone 8–14の実装完了記録
 - [../specs/implementation-completion-m15-m21.html](../specs/implementation-completion-m15-m21.html): Milestone 15–21の実装完了記録
-- [../specs/commissioning-evidence.html](../specs/commissioning-evidence.html): gnosisの時刻固定preflightとcommissioning証跡
+- [../specs/commissioning-evidence.html](../specs/commissioning-evidence.html): local-nodeの時刻固定preflightとcommissioning証跡
 - [../specs/stable-release-gate.html](../specs/stable-release-gate.html): Stable昇格条件
 
-production desired stateは[`../config/gnosis`](../config/gnosis)、model metadataは[`../deploy/gnosis/models.yaml`](../deploy/gnosis/models.yaml)、実機運用は[`../docs/gnosis.md`](../docs/gnosis.md)を参照してください。
+production desired stateは[`../config/local-node`](../config/local-node)、model metadataは[`../deploy/local-node/models.yaml`](../deploy/local-node/models.yaml)、実機運用は[`../docs/local-node.md`](../docs/local-node.md)を参照してください。

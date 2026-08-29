@@ -1,4 +1,15 @@
 export { LARM_VERSION } from "./version";
+export {
+  inferenceAuditExpired,
+  inferenceAuditModeSchema,
+  inferenceAuditPayloadSchema,
+  inferenceAuditRecordSchema,
+  inferenceAuditStatusSchema,
+  type InferenceAuditMode,
+  type InferenceAuditPayload,
+  type InferenceAuditRecord,
+  type ParsedInferenceAuditRecord,
+} from "./inference-audit";
 export * from "./protocol";
 export * from "./agent-connection";
 export {

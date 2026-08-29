@@ -5,10 +5,12 @@ import {
   agentConnectionRequestSchema,
   agentConnectionRenewRequestSchema,
   controlOperationSchema,
+  daemonHealthSchema,
   errorResponseSchema,
   publicAllocationSchema,
   publicAgentConnectionSchema,
   publicAgentProfileListSchema,
+  readinessSchema,
   type AgentConnectionClaim,
   type AgentConnectionHealth,
   type AgentConnectionRequestInput,
@@ -47,6 +49,16 @@ export class LarmApiError extends Error {
   }
 }
 
+export class LarmClientConfigurationError extends Error {
+  constructor(
+    readonly code: "api_token_missing",
+    message: string,
+  ) {
+    super(message);
+    this.name = "LarmClientConfigurationError";
+  }
+}
+
 export class LarmEpochChangedError extends Error {
   constructor(readonly previous: string, readonly current: string) {
     super(`LARM boot epoch changed from ${previous} to ${current}; create a new Allocation`);
@@ -59,6 +71,7 @@ export class LarmClient {
   private readonly fetchImpl: FetchLike;
   private readonly timeoutMs: number;
   private bootEpoch?: string;
+  private configRevision?: string;
 
   constructor(private readonly options: LarmClientOptions) {
     const url = new URL(options.baseUrl);
@@ -78,6 +91,38 @@ export class LarmClient {
 
   get observedBootEpoch(): string | undefined {
     return this.bootEpoch;
+  }
+
+  get observedConfigRevision(): string | undefined {
+    return this.configRevision;
+  }
+
+  get hasApiToken(): boolean {
+    return Boolean(this.options.apiToken);
+  }
+
+  async getHealth(signal?: AbortSignal) {
+    const response = await this.request(
+      "/health",
+      { signal },
+      false,
+      this.timeoutMs,
+      [],
+      false,
+    );
+    return this.parseJson(response, daemonHealthSchema);
+  }
+
+  async getReadiness(signal?: AbortSignal) {
+    const response = await this.request(
+      "/ready",
+      { signal },
+      false,
+      this.timeoutMs,
+      [503],
+      false,
+    );
+    return this.parseJson(response, readinessSchema);
   }
 
   async allocate(request: AllocationRequest, options: RequestOptions = {}): Promise<PublicAllocation> {
@@ -171,6 +216,7 @@ export class LarmClient {
   }
 
   async listAgentProfiles(signal?: AbortSignal) {
+    this.requireAgentApiToken();
     const response = await this.request("/v1/agent-profiles", { signal });
     return this.parseJson(response, publicAgentProfileListSchema);
   }
@@ -179,6 +225,7 @@ export class LarmClient {
     request: AgentConnectionRequestInput,
     options: RequestOptions = {},
   ): Promise<PublicAgentConnection> {
+    this.requireAgentApiToken();
     const normalized = agentConnectionRequestSchema.parse(request);
     const response = await this.request("/v1/agent-connections", {
       method: "POST",
@@ -193,9 +240,20 @@ export class LarmClient {
   }
 
   async getAgentConnection(id: string, signal?: AbortSignal): Promise<PublicAgentConnection> {
+    this.requireAgentApiToken();
+    return await this.getAgentConnectionWithin(id, signal, this.timeoutMs);
+  }
+
+  private async getAgentConnectionWithin(
+    id: string,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
+  ): Promise<PublicAgentConnection> {
     const response = await this.request(
       `/v1/agent-connections/${encodeURIComponent(id)}`,
       { signal },
+      false,
+      timeoutMs,
     );
     return this.parseJson(response, publicAgentConnectionSchema);
   }
@@ -204,6 +262,7 @@ export class LarmClient {
     connection: PublicAgentConnection,
     options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number } = {},
   ): Promise<PublicAgentConnection> {
+    this.requireAgentApiToken();
     const timeoutMs = options.timeoutMs ?? this.timeoutMs;
     const pollIntervalMs = options.pollIntervalMs ?? 250;
     this.validatePollingOptions(timeoutMs, pollIntervalMs);
@@ -214,7 +273,14 @@ export class LarmClient {
         throw new LarmApiError(408, "connection_timeout", `connection ${current.id} did not become ready`, current);
       }
       await this.delay(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())), options.signal);
-      current = await this.getAgentConnection(current.id, options.signal);
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) throw this.connectionTimeout(current);
+      try {
+        current = await this.getAgentConnectionWithin(current.id, options.signal, remainingMs);
+      } catch (error) {
+        if (Date.now() >= deadline) throw this.connectionTimeout(current);
+        throw error;
+      }
     }
     if (current.status !== "ready") {
       throw new LarmApiError(
@@ -231,6 +297,7 @@ export class LarmClient {
     id: string,
     signal?: AbortSignal,
   ): Promise<AgentConnectionHealth> {
+    this.requireAgentApiToken();
     const response = await this.request(
       `/v1/agent-connections/${encodeURIComponent(id)}/health`,
       { signal },
@@ -245,6 +312,7 @@ export class LarmClient {
     id: string,
     signal?: AbortSignal,
   ): Promise<AgentConnectionClaim> {
+    this.requireAgentApiToken();
     const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -259,6 +327,7 @@ export class LarmClient {
     ttlSeconds = 300,
     options: RequestOptions = {},
   ): Promise<PublicAgentConnection> {
+    this.requireAgentApiToken();
     const body = agentConnectionRenewRequestSchema.parse({ ttlSeconds });
     const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}/renew`, {
       method: "POST",
@@ -273,11 +342,48 @@ export class LarmClient {
   }
 
   async releaseAgentConnection(id: string, signal?: AbortSignal): Promise<void> {
+    this.requireAgentApiToken();
     const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}`, {
       method: "DELETE",
       signal,
     });
     await response.body?.cancel().catch(() => undefined);
+  }
+
+  async withAgentConnection<T>(
+    request: AgentConnectionRequestInput,
+    handler: (
+      connection: PublicAgentConnection,
+      claim: AgentConnectionClaim,
+      client: LarmClient,
+    ) => Promise<T>,
+    options: RequestOptions & { pollIntervalMs?: number; timeoutMs?: number } = {},
+  ): Promise<T> {
+    this.requireAgentApiToken();
+    const created = await this.createAgentConnection(request, options);
+    const outcome: { ok: true; value: T } | { ok: false; error: unknown } = await (async () => {
+      try {
+        const ready = await this.waitForAgentConnection(created, options);
+        const claim = await this.claimAgentConnection(ready.id, options.signal);
+        return { ok: true as const, value: await handler(ready, claim, this) };
+      } catch (error) {
+        return { ok: false as const, error };
+      }
+    })();
+    try {
+      // Cleanup deliberately uses a fresh bounded request, even when the lifecycle signal was cancelled.
+      await this.releaseAgentConnection(created.id);
+    } catch (releaseError) {
+      if (!outcome.ok) {
+        throw new AggregateError(
+          [outcome.error, releaseError],
+          `agent connection ${created.id} failed and could not be released`,
+        );
+      }
+      throw releaseError;
+    }
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
   }
 
   async getOperation(id: string, signal?: AbortSignal) {
@@ -430,9 +536,10 @@ export class LarmClient {
     management = false,
     timeoutMs = this.timeoutMs,
     acceptedStatuses: readonly number[] = [],
+    sendApiToken = true,
   ): Promise<Response> {
     const headers = new Headers(init.headers);
-    if (this.options.apiToken) {
+    if (sendApiToken && this.options.apiToken) {
       headers.set("authorization", `Bearer ${this.options.apiToken}`);
     }
     if (management) {
@@ -467,7 +574,7 @@ export class LarmClient {
       throw error;
     }
     try {
-      this.observeEpoch(response);
+      this.observeIdentity(response);
     } catch (error) {
       clearTimeout(timeout);
       upstreamSignal?.removeEventListener("abort", onAbort);
@@ -542,7 +649,9 @@ export class LarmClient {
     });
   }
 
-  private observeEpoch(response: Response): void {
+  private observeIdentity(response: Response): void {
+    const revision = response.headers.get("x-larm-config-revision");
+    if (revision) this.configRevision = revision;
     const epoch = response.headers.get("x-larm-boot-epoch");
     if (!epoch) {
       return;
@@ -579,6 +688,24 @@ export class LarmClient {
       `operation ${id} did not complete before the client deadline`,
       operation,
     );
+  }
+
+  private connectionTimeout(connection: PublicAgentConnection): LarmApiError {
+    return new LarmApiError(
+      408,
+      "connection_timeout",
+      `connection ${connection.id} did not become ready before the client deadline`,
+      connection,
+    );
+  }
+
+  private requireAgentApiToken(): void {
+    if (!this.options.apiToken) {
+      throw new LarmClientConfigurationError(
+        "api_token_missing",
+        "LARM API token is required for Agent Connection requests; inject LARM_API_TOKEN into the client process",
+      );
+    }
   }
 
   private validatePollingOptions(timeoutMs: number, pollIntervalMs: number): void {

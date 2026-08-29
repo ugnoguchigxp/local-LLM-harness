@@ -1,6 +1,6 @@
-# gnosis: AI MAX+ 395 Linux provider
+# local-node: AI MAX+ 395 Linux provider
 
-`gnosis` is the first Linux deployment of LARM. It keeps the interactive voice path hot
+`local-node` is the first Linux deployment of LARM. It keeps the interactive voice path hot
 while providing one resident Qwen3.8 27B LLM, a general 256K worker pool, and bounded 64K
 Agent workers that fit beside the resident model.
 
@@ -23,11 +23,11 @@ The repository-managed Runtime units bind ports 8080–8084 to loopback. `prepar
 host prerequisites but does not change or enable UFW. The focused SAAA REST access tool manages
 only the reviewed source-host rule for the authenticated LARM Gateway and never changes SSH rules.
 Runtime control and health use loopback endpoints from
-[`../config/gnosis/runtimes.yaml`](../config/gnosis/runtimes.yaml).
+[`../config/local-node/runtimes.yaml`](../config/local-node/runtimes.yaml).
 The production LARM unit listens on all host interfaces at port 9810, requires both API and
-management credentials, and advertises the gnosis LAN identity `192.168.0.65` to SAAA. Restrict
-port 9810 to the reviewed SAAA source host; use TLS termination before extending this boundary
-beyond that network.
+management credentials, and derives the SAAA claim URL from the authenticated Connection request
+origin. It does not store or advertise a fixed LAN address. Restrict port 9810 to the reviewed SAAA
+source host; use TLS termination before extending this boundary beyond that network.
 The live host observed on 2026-08-29 still used wildcard Provider listeners. The
 [`Production Completion plan`](../specs/production-completion-plan.html) applies the loopback
 units one Provider at a time and removes only rules named by a reviewed convergence digest after
@@ -35,11 +35,13 @@ the Ambient canary succeeds.
 
 ### SAAA desktop direct connection
 
-SAAA stores the gnosis host address `192.168.0.65`, calls the control API at
-`http://192.168.0.65:9810`, and requests audience `saaa-desktop`. The claim advertises
-`http://192.168.0.65:9810/v1`; SAAA passes that `baseUrl`, `model`, and short-lived
-`credential.token` to its OpenAI-compatible client without rewriting them. The long-lived
-`LARM_API_TOKEN` remains in the macOS secret store, not in routing configuration.
+SAAA discovers a DHCP-aware hostname such as `gnosis.local` (or receives the current host URL from
+operator configuration), calls that control URL, and requests audience `saaa-desktop`. The claim
+uses the request's scheme, hostname or current address, and port with the canonical `/v1` path.
+SAAA passes that `baseUrl`, `model`, and short-lived `credential.token` to its OpenAI-compatible
+client without rewriting them. The long-lived `LARM_API_TOKEN` remains in the macOS secret store,
+not in routing configuration. LARM ignores `X-Forwarded-*`; a future reverse-proxy deployment needs
+a separately reviewed trusted-proxy contract.
 
 Provider ports 8080–8084 remain loopback-only. Only the authenticated Gateway at 9810 is exposed
 to the reviewed SAAA source host. An unauthenticated control request must return 401, while `/health` and
@@ -55,7 +57,7 @@ to the reviewed SAAA source host. An unauthenticated control request must return
   gfx1151-specific ROCmFP4 STRIX_LEAN artifact for the explicit speed route. Both disable
   MTP and ngram; Ornith KV cache uses q8_0 for both K and V after local perplexity validation.
   `ngram-mod` stays disabled, and q38rocm prompt/idle-slot caching is disabled after a repeat-request
-  sequence assertion reproduced on gnosis. Qwen3.6-35B remains an explicit comparison and fallback
+  sequence assertion reproduced on local-node. Qwen3.6-35B remains an explicit comparison and fallback
   Runtime in the same swap group.
 - `coding-worker` and `deep-reasoning-35b` use separate 64K launch contracts. Their admission
   reservations are 28 GB and 30 GB respectively; the latter includes the q8_0 Value cache selected
@@ -65,7 +67,7 @@ to the reviewed SAAA source host. An unauthenticated control request must return
 - VOICEVOX is the normal response voice because it remains real-time while the LLM is busy.
   Qwen3-TTS is an opt-in expressive voice because it competes with the LLM for the same GPU.
 
-## Measurements on gnosis
+## Measurements on local-node
 
 These are local acceptance measurements, not upstream performance claims.
 
@@ -89,26 +91,26 @@ Run this sequence only from the reviewed clean commit that completes the reposit
 Production Completion Milestone 22 and has a verified rollback target.
 Before running the installer, preserve any existing unit and release pointer in the
 operator-owned backup location described in
-[`../deploy/gnosis/README.md`](../deploy/gnosis/README.md).
+[`../deploy/local-node/README.md`](../deploy/local-node/README.md).
 
 ```bash
 cd /srv/ai/apps/local-LLM-harness
-deploy/gnosis/scripts/preflight-larm.sh
-# Create the reviewed, digest-bound host backup documented in deploy/gnosis/README.md.
-sudo deploy/gnosis/scripts/install-services.sh
-deploy/gnosis/scripts/release-larm.sh plan
-sudo deploy/gnosis/scripts/release-larm.sh apply
-deploy/gnosis/scripts/verify.sh
-deploy/gnosis/scripts/smoke-larm.sh
-deploy/gnosis/scripts/shadow-larm.sh
+deploy/local-node/scripts/preflight-larm.sh
+# Create the reviewed, digest-bound host backup documented in deploy/local-node/README.md.
+sudo deploy/local-node/scripts/install-services.sh
+deploy/local-node/scripts/release-larm.sh plan
+sudo deploy/local-node/scripts/release-larm.sh apply
+deploy/local-node/scripts/verify.sh
+deploy/local-node/scripts/smoke-larm.sh
+deploy/local-node/scripts/shadow-larm.sh
 # Attended voice validation only:
-# LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/gnosis/scripts/smoke-voice.sh
-# After calibrating deploy/gnosis/slo.yaml from the same production identity:
+# LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/local-node/scripts/smoke-voice.sh
+# After calibrating deploy/local-node/slo.yaml from the same production identity:
 # LARM_CANARY_EVIDENCE_DIR=/srv/ai/logs/larm-canary \
 # LARM_BENCHMARK_AUDIO_FILE=/path/to/non-sensitive.wav \
-# LARM_CANARY_ITERATIONS=3 deploy/gnosis/scripts/canary-gate.sh
-# Attended fault inventory; mutations require LARM_FAULT_CONFIRM=gnosis-attended:
-deploy/gnosis/scripts/fault-larm.sh plan
+# LARM_CANARY_ITERATIONS=3 deploy/local-node/scripts/canary-gate.sh
+# Attended fault inventory; mutations require LARM_FAULT_CONFIRM=local-node-attended:
+deploy/local-node/scripts/fault-larm.sh plan
 systemctl is-active llama-server.service llama-swap-worker.service \
   qwen-asr.service voicevox-tts.service larm-daemon.service
 systemctl is-enabled llama-server.service llama-swap-worker.service \
@@ -132,14 +134,14 @@ assuming that observation is still current.
 
 LARM自身は`/srv/ai/apps/larm-releases/<commit-prefix>`へ世代固定し、
 `/srv/ai/apps/larm-current`のatomic symlinkをdaemon unitが参照します。rollbackは
-`sudo deploy/gnosis/scripts/release-larm.sh rollback`でLARM daemonだけを前世代へ戻します。
+`sudo deploy/local-node/scripts/release-larm.sh rollback`でLARM daemonだけを前世代へ戻します。
 
 The host uses a 100 GB TTM/GTT setting. Check it with `amd-ttm` after an attended boot.
 Do not automate `reboot`: the machine is dual boot and may start Windows.
 
 The desired state leaves `qwen-tts.service` installed but disabled at boot because it is
 Preferred. LARM starts and stops only that service through the narrow rule in
-[`../deploy/gnosis/polkit/50-larm-runtime-control.rules`](../deploy/gnosis/polkit/50-larm-runtime-control.rules).
+[`../deploy/local-node/polkit/50-larm-runtime-control.rules`](../deploy/local-node/polkit/50-larm-runtime-control.rules).
 Resident provider units remain outside unattended lifecycle authorization.
 
 VOICEVOX output must be credited as `VOICEVOX:春日部つむぎ` with the current default

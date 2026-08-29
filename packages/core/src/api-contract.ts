@@ -340,7 +340,7 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   resolveAllocation: ["200"],
   releaseAllocation: ["200"],
   listAgentProfiles: ["200"],
-  createAgentConnection: ["200", "202"],
+  createAgentConnection: ["201", "202"],
   getAgentConnection: ["200"],
   getAgentConnectionHealth: ["200"],
   getAgentProviderHealth: ["200"],

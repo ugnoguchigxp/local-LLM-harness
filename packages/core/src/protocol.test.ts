@@ -8,7 +8,7 @@ const runtime = (id: string, protocol: Registry["runtimes"][number]["protocol"])
   capability: protocol === "openai.audio-speech.v1" ? ["speech.tts"] : ["llm.general"],
   protocol,
   backend: "systemd" as const,
-  node: "gnosis",
+  node: "local-node",
   policy: { class: "resident" as const },
   resources: {
     estimatedMemoryGB: 1,
@@ -21,7 +21,7 @@ const runtime = (id: string, protocol: Registry["runtimes"][number]["protocol"])
 
 const registry: Registry = {
   nodes: [{
-    id: "gnosis",
+    id: "local-node",
     endpoint: "http://127.0.0.1",
     resources: { memoryTotalGB: 128, reservedMemoryGB: 16 },
   }],
@@ -46,7 +46,7 @@ const allocation: Allocation = {
       capability: "llm.general",
       route: "llm-default",
       runtime: "llm",
-      node: "gnosis",
+      node: "local-node",
       endpoint: "http://127.0.0.1:1",
       status: "HOT",
       candidateRank: 1,
@@ -57,7 +57,7 @@ const allocation: Allocation = {
       capability: "speech.tts",
       route: "tts-default",
       runtime: "tts",
-      node: "gnosis",
+      node: "local-node",
       endpoint: "http://127.0.0.1:2",
       status: "HOT",
       candidateRank: 1,

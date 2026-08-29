@@ -3,7 +3,7 @@
 
   <p>
     <a href="./concept.html">Local AI Providerコンセプト</a>に対して残るrepository実装、
-    gnosis実機への適用、commissioning、SLO校正、Ambient client canaryを、stable昇格まで
+    local-node実機への適用、commissioning、SLO校正、Ambient client canaryを、stable昇格まで
     一つの順序付き工程として定義します。Milestone 15–21で完成したAllocation、Gateway、artifact
     lifecycle、release toolingを作り直さず、未収束の境界だけを閉じます。
   </p>
@@ -16,7 +16,7 @@
     <dt>対象Milestone</dt>
     <dd>22–27。Milestone 28は35Bのlive評価</dd>
     <dt>blocking outcome</dt>
-    <dd>gnosis commissioning、SLO gate、Ambient canary、Gateway-only network境界の完了</dd>
+    <dd>local-node commissioning、SLO gate、Ambient canary、Gateway-only network境界の完了</dd>
     <dt>Resident default</dt>
     <dd>Qwen 3.8 27B。通常・リアルタイム・reasoning・codingの既定を変更しない</dd>
   </dl>
@@ -137,13 +137,13 @@
       <li>
         Ambient clientはcapabilityとrouteをLARMへ渡し、個別Provider portやservice名を保持しない。
       </li>
-      <li>LLM、STT、TTS Providerはgnosisのloopbackだけでlistenする。</li>
+      <li>LLM、STT、TTS Providerはlocal-nodeのloopbackだけでlistenする。</li>
       <li>
-        LARMのproduction unitは<code>0.0.0.0:9810</code>でlistenし、gnosisのLAN
-        identity
-        <code>192.168.0.65</code>を広告する。API・management
-        tokenを必須にし、port 9810はreview済み LAN
-        CIDRだけを許可する。LAN境界外へ広げる場合はTLS終端を別decisionで必須とする。
+        LARMのproduction
+        unitは<code>0.0.0.0:9810</code>でlistenし、認証済みConnection
+        requestのoriginから SAAA向けGateway URLを生成する。LAN
+        IPを固定または広告設定へ保存しない。API・management tokenを必須にし、port 9810はreview済み
+        LAN CIDRだけを許可する。LAN境界外へ広げる場合はTLS終端を別decisionで必須とする。
       </li>
       <li>Qwen 3.8 27B、Qwen ASR、VOICEVOXはResidentとしてboot後に利用可能である。</li>
       <li>27B workersとQwen TTSはCOLDを許容し、明示routeまたは許可済みfallbackでだけ起動する。</li>
@@ -272,7 +272,7 @@ Milestone 28  Optional 35B evaluation ── non-blocking, after Milestone 25</c
     <h2>Milestone 23: Versioned production deployment</h2>
     <dl>
       <dt>目的</dt>
-      <dd>LARM daemon、credential、unit、release pointerをgnosisへ安全に導入する。</dd>
+      <dd>LARM daemon、credential、unit、release pointerをlocal-nodeへ安全に導入する。</dd>
       <dt>entry criteria</dt>
       <dd>Milestone 22のclean commit、全check成功、rollback先とoperator backupの確保</dd>
       <dt>変更対象</dt>
@@ -343,7 +343,9 @@ Milestone 28  Optional 35B evaluation ── non-blocking, after Milestone 25</c
       <dt>entry criteria</dt>
       <dd>Milestone 23のdaemon identityとResident healthが安定</dd>
       <dt>証跡</dt>
-      <dd><a href="./commissioning-evidence.html">gnosis Commissioning Evidence</a>を更新する</dd>
+      <dd>
+        <a href="./commissioning-evidence.html">local-node Commissioning Evidence</a>を更新する
+      </dd>
     </dl>
 
     <h3>acceptance matrix</h3>
@@ -426,7 +428,7 @@ Milestone 28  Optional 35B evaluation ── non-blocking, after Milestone 25</c
         p95、startup、queue、minimum memory headroom、maximum error rate、fallback許可を定義します。
       </li>
       <li>
-        gnosis用thresholdをversion管理するmanifestを追加します。thresholdごとに測定commit、config
+        local-node用thresholdをversion管理するmanifestを追加します。thresholdごとに測定commit、config
         revision、release、sample数、測定日時、rollback値を関連付けます。
       </li>
       <li>
@@ -652,7 +654,7 @@ Milestone 28  Optional 35B evaluation ── non-blocking, after Milestone 25</c
         </tr>
         <tr>
           <th scope="row">SLO</th>
-          <td>strict threshold schema、gnosis manifest、comparator、匿名化summary</td>
+          <td>strict threshold schema、local-node manifest、comparator、匿名化summary</td>
           <td>境界fixtureとproduction calibration</td>
         </tr>
         <tr>

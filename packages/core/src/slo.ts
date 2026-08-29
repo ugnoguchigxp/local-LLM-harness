@@ -142,14 +142,14 @@ const calibratedSeriesSchema = z.object({
 
 const uncalibratedManifestSchema = z.object({
   schemaVersion: z.literal(1),
-  node: z.literal("gnosis"),
+  node: z.literal("local-node"),
   status: z.literal("uncalibrated"),
   series: z.tuple([]),
 }).strict();
 
 const calibratedManifestSchema = z.object({
   schemaVersion: z.literal(1),
-  node: z.literal("gnosis"),
+  node: z.literal("local-node"),
   status: z.literal("calibrated"),
   series: z.array(calibratedSeriesSchema).length(4),
 }).strict().superRefine((value, context) => {

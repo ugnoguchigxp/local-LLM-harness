@@ -4,6 +4,7 @@ import {
   LocalArtifactStore,
   LocalRuntimeReleaseStateStore,
   LinuxNodeTelemetry,
+  LocalInferenceAuditStore,
   SwappableRuntimeBackend,
 } from "@larm/backends";
 import { createApp } from "./app";
@@ -17,6 +18,10 @@ import { ExecutionGate } from "./execution-gate";
 import { RuntimeReleaseManager } from "./runtime-release-manager";
 import { CatalogManager, loadCatalogGeneration } from "./catalog-manager";
 import { MutationCoordinator } from "./mutation-coordinator";
+import {
+  FileInferenceAuditRecorder,
+  loadInferenceAuditKey,
+} from "./inference-audit";
 
 const config = parseDaemonConfig();
 const catalogGeneration = loadCatalogGeneration({
@@ -64,6 +69,34 @@ const writeEvent = (event: ControlEvent) => {
     ...(event.value === undefined ? {} : { value: event.value }),
   }));
 };
+let inferenceAuditStore: LocalInferenceAuditStore | undefined;
+let inferenceAuditRecorder: FileInferenceAuditRecorder | undefined;
+if (config.inferenceAuditMode === "full-required") {
+  const key = await loadInferenceAuditKey(config.inferenceAuditKeyFile);
+  inferenceAuditStore = new LocalInferenceAuditStore({
+    root: config.inferenceAuditRoot,
+    key,
+    retentionMs: config.inferenceAuditRetentionMs,
+    maxBytes: config.inferenceAuditMaxBytes,
+    minFreeBytes: config.inferenceAuditMinFreeBytes,
+    maxResponseBytes: config.inferenceAuditMaxResponseBytes,
+  });
+  key.fill(0);
+  await inferenceAuditStore.initialize();
+  const initialPrune = await inferenceAuditStore.prune();
+  writeEvent({
+    name: "inference_audit_pruned",
+    labels: {
+      expired: String(initialPrune.expired),
+      capacity: String(initialPrune.capacity),
+      interrupted: String(initialPrune.interrupted),
+    },
+  });
+  inferenceAuditRecorder = new FileInferenceAuditRecorder({
+    store: inferenceAuditStore,
+    materializationTimeoutMs: config.inferenceAuditMaterializationTimeoutMs,
+  });
+}
 const observeEvent = (event: ControlEvent) => {
   metrics.record(event);
   if (event.name.startsWith("allocation_")) {
@@ -188,6 +221,8 @@ const app = createApp({
   providerProbeTimeoutMs: config.providerProbeTimeoutMs,
   connectionPollIntervalMs: config.pollIntervalMs,
   connectionHistoryLimit: config.historyLimit,
+  inferenceAuditMode: config.inferenceAuditMode,
+  inferenceAuditRecorder,
 });
 
 let ticking = false;
@@ -206,6 +241,28 @@ const interval = setInterval(() => {
       ticking = false;
     });
 }, config.observeIntervalMs);
+
+let auditPruneInFlight: Promise<void> | undefined;
+const auditPruneInterval = inferenceAuditStore
+  ? setInterval(() => {
+    if (auditPruneInFlight || !inferenceAuditStore) return;
+    auditPruneInFlight = inferenceAuditStore.prune().then((result) => {
+      writeEvent({
+        name: "inference_audit_pruned",
+        labels: {
+          expired: String(result.expired),
+          capacity: String(result.capacity),
+          interrupted: String(result.interrupted),
+        },
+      });
+    }).catch(() => {
+      writeEvent({ name: "inference_audit_prune_failed", labels: {} });
+    }).finally(() => {
+      auditPruneInFlight = undefined;
+    });
+  }, 60 * 60 * 1_000)
+  : undefined;
+auditPruneInterval?.unref?.();
 
 const server = Bun.serve({
   port: config.port,
@@ -244,6 +301,7 @@ async function shutdown(signal: string): Promise<void> {
   artifactManager.beginDrain();
   executionGate.beginDrain();
   clearInterval(interval);
+  if (auditPruneInterval) clearInterval(auditPruneInterval);
   clearTimeout(reconciliationTimer);
   const deadline = Date.now() + config.shutdownTimeoutMs;
   const operationsDrained = await Promise.race([
@@ -252,6 +310,7 @@ async function shutdown(signal: string): Promise<void> {
       artifactManager.flush(),
       mutationCoordinator.drain(config.shutdownTimeoutMs),
       reconciliationInFlight ?? Promise.resolve(),
+      auditPruneInFlight ?? Promise.resolve(),
     ]).then(([, , mutationDrained]) => mutationDrained),
     Bun.sleep(config.shutdownTimeoutMs).then(() => false),
   ]);

@@ -19,6 +19,10 @@ import { ControlPlane, type ControlEvent, type ControlPlaneOptions } from "./con
 import { MetricsRegistry, RequestTracker } from "./metrics";
 import { Observer } from "./observer";
 import type { RuntimeReleaseManager } from "./runtime-release-manager";
+import type {
+  InferenceAuditFinish,
+  InferenceAuditStart,
+} from "./inference-audit";
 
 const registry: Registry = {
   nodes: [
@@ -97,6 +101,25 @@ const agentConnectionCatalog = parseAgentConnectionCatalog({
   version: 1,
   audiences: {
     loopback: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" },
+  },
+  agentProfiles: {
+    coding: {
+      description: "Test coding provider",
+      providers: [{
+        name: "llm",
+        capability: "llm.general",
+        route: "llm-default",
+        publicModel: "test-model",
+        readiness: "llm-inference",
+      }],
+    },
+  },
+}, registry);
+
+const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
+  version: 1,
+  audiences: {
+    remote: { network: "host-private", baseUrl: "request-origin" },
   },
   agentProfiles: {
     coding: {
@@ -946,6 +969,231 @@ test("gateway proxies streaming chat through the allocation binding", async () =
   expect(JSON.stringify(events)).not.toContain("secret prompt");
 });
 
+test("full-required inference audit captures the exact gateway request and response", async () => {
+  let started: InferenceAuditStart | undefined;
+  let finished: InferenceAuditFinish | undefined;
+  const responseChunks: Uint8Array[] = [];
+  const { app } = await makeApp(true, false, {
+    getCatalogRevision: () => "allocation-revision",
+  }, {
+    random: () => "audited",
+    getConfigRevision: () => "newer-revision",
+    inferenceAuditMode: "full-required",
+    inferenceAuditRecorder: {
+      begin: async (input) => {
+        started = input;
+        return {
+          captureResponse: (chunk) => responseChunks.push(chunk.slice()),
+          finalize: async (input) => {
+            finished = input;
+          },
+        };
+      },
+    },
+    gatewayFetch: async () => new Response('{"ok":true}', {
+      headers: { "content-type": "application/json" },
+    }),
+  });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await created.json()) as { id: string }).id;
+  const body = '{"model":"local","messages":[{"role":"user","content":"exact secret"}]}';
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": allocationId,
+    },
+    body,
+  });
+  expect(await response.text()).toBe('{"ok":true}');
+  expect(new TextDecoder().decode(started?.requestBody)).toBe(body);
+  expect(started).toMatchObject({
+    requestId: "req_audited",
+    allocationId,
+    capability: "llm.general",
+    route: "llm-default",
+    runtime: "qwen-general",
+    configRevision: "allocation-revision",
+  });
+  expect(new TextDecoder().decode(Buffer.concat(responseChunks))).toBe('{"ok":true}');
+  expect(finished).toEqual({ outcome: "http_200", upstreamStatus: 200 });
+});
+
+test("response audit capture failure does not interrupt the client stream", async () => {
+  const events: ControlEvent[] = [];
+  let markedFailed = false;
+  let finished: InferenceAuditFinish | undefined;
+  const { app } = await makeApp(true, false, {}, {
+    random: () => "capture-failure",
+    onEvent: (event) => events.push(event),
+    inferenceAuditMode: "full-required",
+    inferenceAuditRecorder: {
+      begin: async () => ({
+        captureResponse: () => {
+          throw new Error("audit buffer unavailable");
+        },
+        markResponseCaptureFailed: () => {
+          markedFailed = true;
+        },
+        finalize: async (input) => {
+          finished = input;
+        },
+      }),
+    },
+    gatewayFetch: async () => new Response("complete response", {
+      headers: { "content-type": "text/plain" },
+    }),
+  });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await created.json()) as { id: string }).id;
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": allocationId,
+    },
+    body: '{"model":"local","messages":[]}',
+  });
+
+  expect(response.status).toBe(200);
+  expect(await response.text()).toBe("complete response");
+  expect(markedFailed).toBe(true);
+  expect(finished).toEqual({ outcome: "http_200", upstreamStatus: 200 });
+  expect(events).toContainEqual({
+    name: "inference_audit_capture_failed",
+    labels: { request: "req_capture-failure", phase: "response" },
+  });
+});
+
+test("metadata audit mode emits lifecycle events without requiring payload storage", async () => {
+  const events: ControlEvent[] = [];
+  const { app } = await makeApp(true, false, {}, {
+    random: () => "metadata-audit",
+    onEvent: (event) => events.push(event),
+    inferenceAuditMode: "metadata",
+    gatewayFetch: async () => Response.json({ ok: true }),
+  });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await created.json()) as { id: string }).id;
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": allocationId,
+    },
+    body: '{"model":"local","messages":[]}',
+  });
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ok: true });
+  expect(events).toContainEqual({
+    name: "inference_audit_started",
+    labels: { request: "req_metadata-audit", mode: "metadata" },
+  });
+  expect(events).toContainEqual({
+    name: "inference_audit_completed",
+    labels: { request: "req_metadata-audit", outcome: "http_200" },
+  });
+});
+
+test("full-required inference audit fails closed before contacting the provider", async () => {
+  let contacted = false;
+  const { app } = await makeApp(true, false, {}, {
+    inferenceAuditMode: "full-required",
+    inferenceAuditRecorder: {
+      begin: async () => {
+        throw new Error("disk unavailable");
+      },
+    },
+    gatewayFetch: async () => {
+      contacted = true;
+      return Response.json({ unexpected: true });
+    },
+  });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await created.json()) as { id: string }).id;
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": allocationId,
+    },
+    body: '{"model":"local","messages":[]}',
+  });
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    error: expect.objectContaining({ code: "inference_audit_unavailable" }),
+  });
+  expect(contacted).toBe(false);
+});
+
+test("gateway timeout cancels full-required audit materialization", async () => {
+  let contacted = false;
+  const tracker = new RequestTracker();
+  const { app } = await makeApp(true, false, {}, {
+    gatewayTimeoutMs: 5,
+    requestTracker: tracker,
+    inferenceAuditMode: "full-required",
+    inferenceAuditRecorder: {
+      begin: async (input) => await new Promise((resolve, reject) => {
+        const rejectAbort = () => reject(input.signal?.reason ?? new Error("aborted"));
+        if (input.signal?.aborted) rejectAbort();
+        else input.signal?.addEventListener("abort", rejectAbort, { once: true });
+      }),
+    },
+    gatewayFetch: async () => {
+      contacted = true;
+      return Response.json({ unexpected: true });
+    },
+  });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await created.json()) as { id: string }).id;
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": allocationId,
+    },
+    body: '{"model":"local","messages":[]}',
+  });
+  expect(response.status).toBe(504);
+  expect(await response.json()).toEqual({
+    error: expect.objectContaining({ code: "gateway_timeout" }),
+  });
+  expect(contacted).toBe(false);
+  expect(tracker.count()).toBe(0);
+});
+
 test("v1 API enforces bearer auth when configured", async () => {
   const { app } = await makeApp(true, false, {}, { apiToken: "secret" });
   const body = JSON.stringify({
@@ -1672,7 +1920,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     }),
     body: JSON.stringify({ agentProfile: "coding", audience: "loopback" }),
   });
-  expect(create.status).toBe(200);
+  expect(create.status).toBe(201);
   const connection = publicAgentConnectionSchema.parse(await create.json());
   expect(connection.status).toBe("ready");
   expect(connection.providers[0]?.claimable).toBeTrue();
@@ -1768,6 +2016,78 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     headers: agentHeaders(),
   });
   expect(releasedAgain.status).toBe(204);
+});
+
+test("agent connection derives a host-private claim from the request origin", async () => {
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: dynamicAgentConnectionCatalog,
+    gatewayFetch: async () => Response.json({
+      choices: [{ index: 0, message: { role: "assistant", content: "" } }],
+      usage: { completion_tokens: 1 },
+    }),
+  });
+  const create = await app.request("http://gnosis.local:9810/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "dynamic-origin-create",
+      "x-forwarded-host": "attacker.example",
+      "x-forwarded-proto": "https",
+    }),
+    body: JSON.stringify({ agentProfile: "coding", audience: "remote" }),
+  });
+  expect(create.status).toBe(201);
+  const connection = publicAgentConnectionSchema.parse(await create.json());
+  const claimResponse = await app.request(`/v1/agent-connections/${connection.id}/claim`, {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({ format: "openai-provider-v1" }),
+  });
+  const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
+  expect(claim.providers[0]).toMatchObject({
+    scheme: "http",
+    host: "gnosis.local",
+    port: 9810,
+    baseUrl: "http://gnosis.local:9810/v1",
+    health: {
+      url: `http://gnosis.local:9810/v1/agent-connections/${connection.id}/providers/llm/health`,
+    },
+    configuration: {
+      fields: { baseURL: "http://gnosis.local:9810/v1", model: "test-model" },
+    },
+  });
+
+  const conflictingOrigin = await app.request("http://192.168.50.23:9810/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "dynamic-origin-create",
+    }),
+    body: JSON.stringify({ agentProfile: "coding", audience: "remote" }),
+  });
+  expect(conflictingOrigin.status).toBe(409);
+  expect(await conflictingOrigin.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
+});
+
+test("host-private request-origin audiences reject loopback ingress", async () => {
+  const { app, log } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: dynamicAgentConnectionCatalog,
+  });
+  const response = await app.request("http://127.0.0.1:9810/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "loopback-origin-rejected",
+    }),
+    body: JSON.stringify({ agentProfile: "coding", audience: "remote" }),
+  });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ error: { code: "connection_audience_unavailable" } });
+  expect(log.ensure).toEqual([]);
 });
 
 test("agent semantic health rejects an HTTP-alive model that does not complete exactly one token", async () => {

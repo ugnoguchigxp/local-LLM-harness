@@ -133,7 +133,8 @@
           <th scope="row"><code>ngram-mod</code></th>
           <td>weightや配布元に依存しないllama.cpp runtime機能</td>
           <td>
-            約16 MBの共有hash pool。gnosisの同一deterministic request反復で72.53から8.87 tok/sへ低下
+            約16 MBの共有hash pool。local-nodeの同一deterministic request反復で72.53から8.87
+            tok/sへ低下
           </td>
           <td>無効</td>
         </tr>
@@ -155,7 +156,7 @@
   </section>
 
   <section id="host-measurements">
-    <h2>gnosis実測</h2>
+    <h2>local-node実測</h2>
     <table>
       <caption>
         gfx1151単一GPU、plain decode、K/V cache q8_0の比較

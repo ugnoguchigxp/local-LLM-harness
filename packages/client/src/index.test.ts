@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { LarmApiError, LarmClient, LarmEpochChangedError } from "./index";
+import {
+  LarmApiError,
+  LarmClient,
+  LarmClientConfigurationError,
+  LarmEpochChangedError,
+} from "./index";
 
 const allocation = {
   id: "alloc_epoch-test_1",
@@ -10,7 +15,7 @@ const allocation = {
     capability: "llm.general",
     route: "llm-default",
     runtime: "qwen-general",
-    node: "gnosis",
+    node: "local-node",
     status: "HOT",
     candidateRank: 1,
     fallback: false,
@@ -62,6 +67,61 @@ test("reference client rejects invalid timeout configuration", async () => {
   await expect(client.waitForOperation("op_test", { pollIntervalMs: -1 })).rejects.toThrow(
     /nonnegative finite/,
   );
+});
+
+test("public liveness omits credentials and exposes response identity", async () => {
+  const requests: Request[] = [];
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "must-not-leave-the-client",
+    fetch: async (input, init) => {
+      const request = new Request(input.toString(), init);
+      requests.push(request);
+      const headers = {
+        "content-type": "application/json",
+        "x-larm-boot-epoch": "epoch-live",
+        "x-larm-config-revision": "a".repeat(64),
+      };
+      if (new URL(request.url).pathname === "/health") {
+        return new Response(JSON.stringify({
+          status: "ok",
+          version: "0.1.0",
+          releaseCommit: "development",
+          configRevision: "a".repeat(64),
+          bootEpoch: "epoch-live",
+        }), { headers });
+      }
+      return new Response(JSON.stringify({ status: "stale", ageMs: 20_000 }), {
+        status: 503,
+        headers,
+      });
+    },
+  });
+
+  expect((await client.getHealth()).status).toBe("ok");
+  expect((await client.getReadiness()).status).toBe("stale");
+  expect(requests.every((request) => !request.headers.has("authorization"))).toBeTrue();
+  expect(client.observedBootEpoch).toBe("epoch-live");
+  expect(client.observedConfigRevision).toBe("a".repeat(64));
+  expect(client.hasApiToken).toBeTrue();
+});
+
+test("agent lifecycle reports a stable local error when the API token is absent", async () => {
+  let contacted = false;
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    fetch: async () => {
+      contacted = true;
+      throw new Error("unexpected request");
+    },
+  });
+
+  await expect(client.listAgentProfiles()).rejects.toMatchObject({
+    constructor: LarmClientConfigurationError,
+    code: "api_token_missing",
+  });
+  expect(client.hasApiToken).toBeFalse();
+  expect(contacted).toBeFalse();
 });
 
 test("reference client reports boot epoch changes instead of retrying silently", async () => {
@@ -414,4 +474,131 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   await client.releaseAgentConnection(ready.id);
   expect(requests.at(-1)?.method).toBe("DELETE");
   expect(requests.every((request) => request.headers.get("authorization") === "Bearer api")).toBeTrue();
+});
+
+test("agent connection polling deadline aborts an in-flight HTTP request", async () => {
+  const connection = {
+    id: "aconn_epoch-test_stalled",
+    allocationId: allocation.id,
+    bootEpoch: "epoch-test",
+    catalogRevision: "catalog-test",
+    agentProfile: "coding-default",
+    profileRevision: "1".repeat(64),
+    audience: "same-host",
+    audienceRevision: "2".repeat(64),
+    status: "pending" as const,
+    providers: [{
+      name: "llm",
+      capability: "llm.coding",
+      route: "llm-default",
+      protocol: "openai.chat-completions.v1" as const,
+      publicModel: "coding-default",
+      readiness: "pending" as const,
+      claimable: false,
+    }],
+    createdAt: "2026-08-28T00:00:00.000Z",
+    expiresAt: "2026-08-28T00:05:00.000Z",
+  };
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "api",
+    fetch: async (_input, init) => await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }),
+  });
+
+  const startedAt = performance.now();
+  await expect(client.waitForAgentConnection(connection, {
+    timeoutMs: 5,
+    pollIntervalMs: 0,
+  })).rejects.toMatchObject({ code: "connection_timeout" });
+  expect(performance.now() - startedAt).toBeLessThan(1_000);
+});
+
+test("withAgentConnection claims and releases with a fresh cleanup signal", async () => {
+  const requests: Request[] = [];
+  const connection = {
+    id: "aconn_epoch-test_with-helper",
+    allocationId: allocation.id,
+    bootEpoch: "epoch-test",
+    catalogRevision: "catalog-test",
+    agentProfile: "coding-default",
+    profileRevision: "1".repeat(64),
+    audience: "same-host",
+    audienceRevision: "2".repeat(64),
+    status: "ready" as const,
+    providers: [{
+      name: "llm",
+      capability: "llm.coding",
+      route: "llm-default",
+      protocol: "openai.chat-completions.v1" as const,
+      publicModel: "coding-default",
+      readiness: "ready" as const,
+      claimable: true,
+    }],
+    createdAt: "2026-08-28T00:00:00.000Z",
+    expiresAt: "2026-08-28T00:05:00.000Z",
+  };
+  const claim = {
+    id: connection.id,
+    allocationId: connection.allocationId,
+    status: "ready",
+    audience: "same-host",
+    providers: [{
+      name: "llm",
+      capability: "llm.coding",
+      apiStyle: "openai",
+      protocol: "openai.chat-completions.v1",
+      scheme: "http",
+      host: "127.0.0.1",
+      port: 9810,
+      baseUrl: "http://127.0.0.1:9810/v1",
+      model: "coding-default",
+      health: {
+        url: `http://127.0.0.1:9810/v1/agent-connections/${connection.id}/providers/llm/health`,
+        kind: "semantic-inference",
+        maxAgeMs: 10_000,
+      },
+      credential: {
+        type: "bearer",
+        token: "larm_conn_v1.payload.signature",
+        expiresAt: connection.expiresAt,
+      },
+      configuration: {
+        kind: "openai-provider-v1",
+        fields: { baseURL: "http://127.0.0.1:9810/v1", model: "coding-default" },
+        secretFields: { apiKey: "credential.token" },
+      },
+    }],
+    expiresAt: connection.expiresAt,
+  };
+  const abort = new AbortController();
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "api",
+    fetch: async (input, init) => {
+      const request = new Request(input.toString(), init);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (request.method === "DELETE") {
+        expect(request.signal.aborted).toBeFalse();
+        return new Response(null, {
+          status: 204,
+          headers: { "x-larm-boot-epoch": "epoch-test" },
+        });
+      }
+      if (path.endsWith("/claim")) return json(claim);
+      return json(connection);
+    },
+  });
+
+  await expect(client.withAgentConnection({
+    agentProfile: "coding-default",
+    audience: "same-host",
+  }, async (_ready, receivedClaim) => {
+    expect(receivedClaim.providers[0]?.model).toBe("coding-default");
+    abort.abort(new Error("cancelled"));
+    throw abort.signal.reason;
+  }, { signal: abort.signal })).rejects.toThrow("cancelled");
+  expect(requests.map((request) => request.method)).toEqual(["POST", "POST", "DELETE"]);
 });

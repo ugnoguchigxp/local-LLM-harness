@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-tool="${repo_root}/deploy/gnosis/scripts/backup-host-state.sh"
+tool="${repo_root}/deploy/local-node/scripts/backup-host-state.sh"
 test_root="$(mktemp -d /tmp/larm-backup-test.XXXXXX)"
 trap 'rm -rf -- "${test_root}"' EXIT
 mkdir -p "${test_root}/etc/systemd/system" "${test_root}/srv/ai/apps"

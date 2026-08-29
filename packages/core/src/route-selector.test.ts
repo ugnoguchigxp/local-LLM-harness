@@ -10,7 +10,7 @@ import {
 const registry: Registry = {
   nodes: [
     {
-      id: "gnosis",
+      id: "local-node",
       endpoint: "http://127.0.0.1",
       resources: { memoryTotalGB: 128, reservedMemoryGB: 16 },
     },
@@ -21,7 +21,7 @@ const registry: Registry = {
       capability: ["llm.general", "llm.reasoning", "llm.coding"],
       protocol: "openai.chat-completions.v1",
       backend: "systemd",
-      node: "gnosis",
+      node: "local-node",
       policy: { class: "resident" },
       resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
@@ -35,7 +35,7 @@ const registry: Registry = {
       capability: ["llm.general", "llm.reasoning", "llm.coding"],
       protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
-      node: "gnosis",
+      node: "local-node",
       policy: { class: "preferred", swapGroup: "qwen-worker-slot" },
       resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
@@ -49,7 +49,7 @@ const registry: Registry = {
       capability: ["llm.general", "llm.coding"],
       protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
-      node: "gnosis",
+      node: "local-node",
       policy: { class: "preferred", swapGroup: "qwen-worker-slot" },
       resources: { estimatedMemoryGB: 38, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
@@ -63,7 +63,7 @@ const registry: Registry = {
       capability: ["llm.general", "llm.coding"],
       protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
-      node: "gnosis",
+      node: "local-node",
       policy: { class: "preferred", swapGroup: "qwen-worker-slot" },
       resources: { estimatedMemoryGB: 48, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
@@ -126,7 +126,7 @@ function state(statuses: Record<string, RuntimeSnapshot["status"]>): ClusterStat
   return {
     generatedAt: "2026-08-28T00:00:00.000Z",
     node: {
-      id: "gnosis",
+      id: "local-node",
       online: true,
       endpoint: "http://127.0.0.1",
       resources: { memoryTotalGB: 128, reservedMemoryGB: 16 },

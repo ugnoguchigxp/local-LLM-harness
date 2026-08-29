@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-tool="${repo_root}/deploy/gnosis/scripts/network-converge.sh"
+tool="${repo_root}/deploy/local-node/scripts/network-converge.sh"
 test_root="$(mktemp -d /tmp/larm-network-test.XXXXXX)"
 symlinked_root="${test_root}-symlink"
 trap 'rm -rf -- "${test_root}"; rm -f -- "${symlinked_root}"' EXIT

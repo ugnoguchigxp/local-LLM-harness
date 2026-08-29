@@ -24,6 +24,22 @@ export const agentAudienceNetworkSchema = z.enum([
   "tls",
 ]);
 
+export const agentAudienceRequestOrigin = "request-origin" as const;
+
+function normalizedHostname(url: URL): string {
+  return url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost"
+    || hostname === "::1"
+    || hostname.startsWith("127.");
+}
+
+function isUnspecifiedHostname(hostname: string): boolean {
+  return hostname === "0.0.0.0" || hostname === "::";
+}
+
 function canonicalGatewayUrl(value: string, network: z.infer<typeof agentAudienceNetworkSchema>): boolean {
   try {
     const url = new URL(value);
@@ -38,9 +54,10 @@ function canonicalGatewayUrl(value: string, network: z.infer<typeof agentAudienc
     ) {
       return false;
     }
-    const isLoopback = new Set(["127.0.0.1", "::1", "localhost"]).has(url.hostname);
+    const hostname = normalizedHostname(url);
+    const isLoopback = isLoopbackHostname(hostname);
     if (network === "loopback") return isLoopback;
-    if (isLoopback) return false;
+    if (isLoopback || isUnspecifiedHostname(hostname)) return false;
     return network !== "tls" || url.protocol === "https:";
   } catch {
     return false;
@@ -51,6 +68,16 @@ const agentAudienceYamlSchema = z.object({
   network: agentAudienceNetworkSchema,
   baseUrl: z.string().min(1).max(2048),
 }).strict().superRefine((value, context) => {
+  if (value.baseUrl === agentAudienceRequestOrigin) {
+    if (value.network !== "host-private") {
+      context.addIssue({
+        code: "custom",
+        path: ["baseUrl"],
+        message: "request-origin is only valid for host-private audiences",
+      });
+    }
+    return;
+  }
   if (!canonicalGatewayUrl(value.baseUrl, value.network)) {
     context.addIssue({ code: "custom", path: ["baseUrl"], message: "baseUrl is not canonical for network" });
   }
@@ -98,6 +125,24 @@ export type AgentAudience = {
   baseUrl: string;
   revision: string;
 };
+
+export function resolveAgentAudienceBaseUrl(
+  audience: AgentAudience,
+  requestUrl: string,
+): string | undefined {
+  if (audience.baseUrl !== agentAudienceRequestOrigin) return audience.baseUrl;
+  try {
+    const url = new URL(requestUrl);
+    if (url.username || url.password) return undefined;
+    url.pathname = "/v1";
+    url.search = "";
+    url.hash = "";
+    const resolved = url.toString().replace(/\/$/, "");
+    return canonicalGatewayUrl(resolved, audience.network) ? resolved : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export type AgentProviderProfile = {
   name: string;
@@ -364,7 +409,47 @@ export const agentProviderDescriptorSchema = z.object({
     }).strict(),
     secretFields: z.object({ apiKey: z.literal("credential.token") }).strict(),
   }).strict(),
-}).strict();
+}).strict().superRefine((provider, context) => {
+  const baseUrl = new URL(provider.baseUrl);
+  const expectedScheme = baseUrl.protocol.slice(0, -1);
+  const expectedPort = baseUrl.port
+    ? Number(baseUrl.port)
+    : baseUrl.protocol === "https:"
+      ? 443
+      : 80;
+  if (
+    baseUrl.username
+    || baseUrl.password
+    || baseUrl.search
+    || baseUrl.hash
+    || baseUrl.pathname !== "/v1"
+  ) {
+    context.addIssue({ code: "custom", path: ["baseUrl"], message: "baseUrl must be a canonical /v1 URL" });
+  }
+  if (provider.scheme !== expectedScheme) {
+    context.addIssue({ code: "custom", path: ["scheme"], message: "scheme must match baseUrl" });
+  }
+  if (provider.host !== baseUrl.hostname) {
+    context.addIssue({ code: "custom", path: ["host"], message: "host must match baseUrl" });
+  }
+  if (provider.port !== expectedPort) {
+    context.addIssue({ code: "custom", path: ["port"], message: "port must match baseUrl" });
+  }
+  if (provider.configuration.fields.baseURL !== provider.baseUrl) {
+    context.addIssue({
+      code: "custom",
+      path: ["configuration", "fields", "baseURL"],
+      message: "configuration baseURL must match baseUrl",
+    });
+  }
+  if (provider.configuration.fields.model !== provider.model) {
+    context.addIssue({
+      code: "custom",
+      path: ["configuration", "fields", "model"],
+      message: "configuration model must match model",
+    });
+  }
+});
 
 export const agentConnectionClaimSchema = z.object({
   id: z.string().min(1).max(192),
@@ -373,7 +458,39 @@ export const agentConnectionClaimSchema = z.object({
   audience: agentIdentifierSchema,
   providers: z.array(agentProviderDescriptorSchema).min(1).max(8),
   expiresAt: z.string().datetime(),
-}).strict();
+}).strict().superRefine((claim, context) => {
+  const names = new Set<string>();
+  for (const [index, provider] of claim.providers.entries()) {
+    if (names.has(provider.name)) {
+      context.addIssue({ code: "custom", path: ["providers", index, "name"], message: "provider names must be unique" });
+    }
+    names.add(provider.name);
+    if (provider.credential.expiresAt !== claim.expiresAt) {
+      context.addIssue({
+        code: "custom",
+        path: ["providers", index, "credential", "expiresAt"],
+        message: "provider credential expiry must match Connection expiry",
+      });
+    }
+    const baseUrl = new URL(provider.baseUrl);
+    const healthUrl = new URL(provider.health.url);
+    const expectedPath = `${baseUrl.pathname}/agent-connections/${claim.id}/providers/${provider.name}/health`;
+    if (
+      healthUrl.origin !== baseUrl.origin
+      || healthUrl.pathname !== expectedPath
+      || healthUrl.username
+      || healthUrl.password
+      || healthUrl.search
+      || healthUrl.hash
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["providers", index, "health", "url"],
+        message: "provider health URL must match the claimed Connection and Provider",
+      });
+    }
+  }
+});
 
 export type AgentConnectionRequest = z.infer<typeof agentConnectionRequestSchema>;
 export type AgentConnectionRequestInput = z.input<typeof agentConnectionRequestSchema>;

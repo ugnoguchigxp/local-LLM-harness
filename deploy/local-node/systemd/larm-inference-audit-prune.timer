@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly LARM inference audit retention enforcement
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -45,10 +45,10 @@ case "${action}" in
   plan)
     jq -n --arg daemon "$(systemctl is-active larm-daemon.service 2>/dev/null || true)" \
       --arg preferred "$(systemctl is-active qwen-tts.service 2>/dev/null || true)" \
-      '{availableActions:["daemon-restart","preferred-kill","preferred-stall","artifact-rollback"],daemon:$daemon,preferred:$preferred,confirmation:"LARM_FAULT_CONFIRM=gnosis-attended"}'
+      '{availableActions:["daemon-restart","preferred-kill","preferred-stall","artifact-rollback"],daemon:$daemon,preferred:$preferred,confirmation:"LARM_FAULT_CONFIRM=local-node-attended"}'
     ;;
   daemon-restart)
-    [[ "${confirm}" == "gnosis-attended" ]] || { echo "attended confirmation required" >&2; exit 2; }
+    [[ "${confirm}" == "local-node-attended" ]] || { echo "attended confirmation required" >&2; exit 2; }
     before="$(pid_snapshot)"
     epoch="$(curl -fsS --max-time 5 "${base_url}/health" | jq -er .bootEpoch)"
     systemctl kill --signal=KILL larm-daemon.service
@@ -59,7 +59,7 @@ case "${action}" in
     echo "daemon restart fault passed"
     ;;
   preferred-kill)
-    [[ "${confirm}" == "gnosis-attended" ]] || { echo "attended confirmation required" >&2; exit 2; }
+    [[ "${confirm}" == "local-node-attended" ]] || { echo "attended confirmation required" >&2; exit 2; }
     systemctl is-active --quiet qwen-tts.service || { echo "qwen-tts is not active" >&2; exit 2; }
     systemctl kill --signal=KILL qwen-tts.service
     deadline=$((SECONDS + 90))
@@ -71,7 +71,7 @@ case "${action}" in
     echo "preferred provider fault injected; verify the owning Allocation operation before release"
     ;;
   preferred-stall)
-    [[ "${confirm}" == "gnosis-attended" ]] || { echo "attended confirmation required" >&2; exit 2; }
+    [[ "${confirm}" == "local-node-attended" ]] || { echo "attended confirmation required" >&2; exit 2; }
     systemctl is-active --quiet qwen-tts.service || { echo "qwen-tts is not active" >&2; exit 2; }
     before="$(pid_snapshot)"
     systemctl kill --signal=STOP qwen-tts.service
@@ -92,7 +92,7 @@ case "${action}" in
     echo "preferred provider stall and recovery passed"
     ;;
   artifact-rollback)
-    [[ "${confirm}" == "gnosis-attended" ]] || { echo "attended confirmation required" >&2; exit 2; }
+    [[ "${confirm}" == "local-node-attended" ]] || { echo "attended confirmation required" >&2; exit 2; }
     [[ -n "${LARM_MANAGEMENT_TOKEN:-}" ]] || { echo "LARM_MANAGEMENT_TOKEN is required" >&2; exit 2; }
     runtime="${LARM_FAULT_RUNTIME:-qwen-tts}"
     before="$(pid_snapshot)"

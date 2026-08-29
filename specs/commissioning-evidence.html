@@ -1,10 +1,10 @@
 <article lang="ja">
-  <h1>gnosis Commissioning Evidence</h1>
+  <h1>local-node Commissioning Evidence</h1>
 
   <p>
     LARMのproduction commissioning結果を、秘密情報、prompt、transcript、audio、raw logを含めずに
     記録する文書です。2026年8月29日にSAAA向けLARM REST Gatewayのversioned
-    release、credential、polkit、systemd、送信元host限定UFW ruleを適用し、実推論を含むGnosis
+    release、credential、polkit、systemd、送信元host限定UFW ruleを適用し、実推論を含むlocal-node
     acceptanceを完了しました。既存Providerの再配備、全runtime
     commissioning、SLO校正は今回の対象外です。 残るacceptanceの順序は<a
       href="./production-completion-plan.html"
@@ -14,7 +14,7 @@
 
   <dl>
     <dt>状態</dt>
-    <dd>Gnosis REST Gateway commissioning完了、SAAA Mac最終LAN canary待ち</dd>
+    <dd>local-node REST Gateway commissioning完了、SAAA Mac最終LAN canary待ち</dd>
     <dt>観測時刻</dt>
     <dd><time>2026-08-29T10:20:55Z</time></dd>
     <dt>deployed commit</dt>
@@ -38,7 +38,7 @@
     <h2>SAAA REST Gateway acceptance</h2>
     <table>
       <caption>
-        Gnosis側の配備・実通信結果
+        local-node側の配備・実通信結果
       </caption>
       <tbody>
         <tr>
@@ -103,11 +103,126 @@
       </tbody>
     </table>
     <p>
-      Gnosis側acceptanceはLAN audienceが返すdescriptorを使って実行しました。SAAA
+      local-node側acceptanceはLAN audienceが返すdescriptorを使って実行しました。SAAA
       Mac上のadapter実装と送信元hostからの最終canaryはSAAA ownerの責務であり、<a
         href="./saaa-rest-provider-alignment-request.html"
         >SAAA REST接続認識合わせ・実装依頼</a
       >へhandoffします。
+    </p>
+  </section>
+
+  <section id="saaa-primary-profile-revalidation">
+    <h2>SAAA primary profile再確認</h2>
+    <p>
+      <time>2026-08-29T15:23:13Z</time>に、SAAAのprimary profileを
+      <code>coding-default</code>へ戻す判断を反映し、local-node上でAgent
+      Connectionの実推論を再確認しました。 配備済みrelease自体のResident defaultは変更前からQwen 3.8
+      27Bであり、今回の修正対象はSAAA向けの 選択既定値です。
+    </p>
+    <table>
+      <caption>
+        Qwen 3.8 27B primaryの再確認結果
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">Binding</th>
+          <td>
+            <code>coding-default</code> →
+            <code>llm-default</code> →
+            <code>qwen-general</code> →
+            <code>qwen-general-current</code>、fallbackなし
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Inference</th>
+          <td>
+            semantic health、非空OpenAI-compatible
+            SSE、<code>[DONE]</code>を確認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Release</th>
+          <td>Connectionを解放し、短期Provider tokenの失効を確認</td>
+        </tr>
+        <tr>
+          <th scope="row">Runtime state</th>
+          <td><code>qwen-general</code>はHOT、3つのOrnith runtimeはすべてCOLD</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <code>deep-reasoning-35b</code
+      >は明示選択専用の任意profileとして残します。現行releaseのLAN
+      audienceは旧固定addressを返すため、DHCP対応をreleaseした後のSAAA Mac
+      canaryは引き続き未完了です。
+    </p>
+  </section>
+
+  <section id="qwen-primary-inference-cancellation">
+    <h2>Qwen primary推論キャンセル調査</h2>
+    <p>
+      <time>2026-08-29T15:28:37Z</time>に開始されたQwen Providerのtask
+      <code>742</code>は、約3,060 prompt
+      tokenの処理中に30秒で呼出元からキャンセルされました。 Provider crash、HTTP 500、OOM、GPU
+      resetではありません。
+    </p>
+    <table>
+      <caption>
+        観測結果と再現確認
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">失敗要求</th>
+          <td>
+            開始から9.05秒で2,048 token、進捗67%。開始から29.99秒で
+            <code>cancel task</code>となり、slotは正常にidleへ復帰
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Prompt内容</th>
+          <td>
+            request bodyはProvider、journald、LARM logに保存されていないため復元不可。LCP記録から、
+            約1,200 tokenが直前taskとの共通prefixで、3,060はchat templateを含むprompt全体と推定
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Gateway attribution</th>
+          <td>
+            同時刻にLARMのallocation・gateway eventは0件。ProviderのLAN listener
+            <code>0.0.0.0:8080</code>へ直接接続した経路と推定
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">単発再現</th>
+          <td>3,021 prompt token、16 output tokenは13.96秒、HTTP 200</td>
+        </tr>
+        <tr>
+          <th scope="row">連続再現</th>
+          <td>
+            2,822 token要求の直後に39.8%共通prefixを持つ3,021 token要求を実行し、13.69秒と
+            14.64秒でともにHTTP 200
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">調査時状態</th>
+          <td>
+            <code>llama-server.service</code>、LARM、Qwen healthは正常。Qwen
+            ResidentはHOT、OrnithはCOLD
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">別のmessage整形エラー</th>
+          <td>
+            <time>2026-08-29T14:28:52Z</time>に、system messageが会話先頭以外へ置かれたため chat
+            templateがHTTP 500を返した記録が1件ある。15:28のキャンセルとは別事象
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      再現しない単発のclient-side cancellationと判断します。再発時は呼出元のrequest ID、接続先port、
+      timeout設定を採取し、直接ProviderではなくLARM Agent Connection経路のgateway
+      eventと照合します。
     </p>
   </section>
 

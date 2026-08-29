@@ -1,6 +1,6 @@
 # Qwen3 ASR adapter
 
-gnosisでQwen3-ASRをOpenAI互換の`POST /v1/audio/transcriptions`として公開する薄いFastAPIアダプター。
+local-nodeでQwen3-ASRをOpenAI互換の`POST /v1/audio/transcriptions`として公開する薄いFastAPIアダプター。
 
 - 常駐モデル: `Qwen/Qwen3-ASR-1.7B`
 - dtype: FP16
@@ -23,8 +23,8 @@ python3.13 -m venv /srv/ai/apps/qwen-speech/asr/.venv
 配備時は`api.py`を`/srv/ai/apps/qwen-speech/asr/api.py`へ配置する。モデルとdtypeはsystemdの環境変数で切り替えられる。
 
 production modelのsource、revision、配置先は
-[`../../deploy/gnosis/models.yaml`](../../deploy/gnosis/models.yaml)、実行時の値は
-[`../../deploy/gnosis/systemd/qwen-asr.service`](../../deploy/gnosis/systemd/qwen-asr.service)が正本です。
+[`../../deploy/local-node/models.yaml`](../../deploy/local-node/models.yaml)、実行時の値は
+[`../../deploy/local-node/systemd/qwen-asr.service`](../../deploy/local-node/systemd/qwen-asr.service)が正本です。
 modelを変更するときは両方を、dtypeだけを変更するときはsystemd unitを更新します。directory
 modelはchecksum付きdirectory snapshotとして無人stagingできます。Resident Runtimeのactivationは
 引き続きattended operationとし、healthと精度を再検証します。

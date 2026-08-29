@@ -138,7 +138,7 @@
           <td>候補順、primary / fallback、明示専用route、Runtime capabilityを検証</td>
         </tr>
         <tr>
-          <th scope="row">gnosis Route catalog</th>
+          <th scope="row">local-node Route catalog</th>
           <td>完了</td>
           <td>LLM default / long-context / speedとSTT / TTS routeを宣言</td>
         </tr>
@@ -204,7 +204,7 @@
 
     <table>
       <caption>
-        gnosisで最初に定義するroute
+        local-nodeで最初に定義するroute
       </caption>
       <thead>
         <tr>
@@ -380,7 +380,7 @@
       "capability": "llm.general",
       "route": "llm-default",
       "runtime": "qwen-general",
-      "node": "gnosis",
+      "node": "local-node",
       "selectionReason": "primary-live"
     }
   ]
@@ -490,7 +490,7 @@ Milestone 7: Optional 35B onboarding</code></pre>
       <dd>capabilityだけの暗黙順位を廃止し、version管理されたroute policyで候補を絞る。</dd>
       <dt>主な対象</dt>
       <dd>
-        <code>packages/core</code>、<code>config/gnosis</code>
+        <code>packages/core</code>、<code>config/local-node</code>
       </dd>
     </dl>
 
@@ -567,7 +567,7 @@ Milestone 7: Optional 35B onboarding</code></pre>
     <h2>Milestone 3: Resource admission</h2>
     <dl>
       <dt>目的</dt>
-      <dd>gnosisのmemoryとRuntime slotを超える起動を開始前に拒否または待機させる。</dd>
+      <dd>local-nodeのmemoryとRuntime slotを超える起動を開始前に拒否または待機させる。</dd>
       <dt>主な対象</dt>
       <dd><code>packages/core</code>、Runtime registry、observer</dd>
     </dl>
@@ -638,7 +638,7 @@ admit when committed + incremental &lt;= usable</code></pre>
       <dt>目的</dt>
       <dd>選択、起動、推論、回収の結果を検証できる状態でproduction利用を開始する。</dd>
       <dt>主な対象</dt>
-      <dd>全component、gnosis運用手順</dd>
+      <dd>全component、local-node運用手順</dd>
     </dl>
 
     <h3>実装項目</h3>
@@ -656,7 +656,9 @@ admit when committed + incremental &lt;= usable</code></pre>
 
     <h3>production gate</h3>
     <ul>
-      <li>default route、speed route、fallback、resource rejectionのE2E testをgnosisで通す。</li>
+      <li>
+        default route、speed route、fallback、resource rejectionのE2E testをlocal-nodeで通す。
+      </li>
       <li>連続運転中にallocation leak、Preferredのstop漏れ、Resident停止がない。</li>
       <li>主要errorにoperator向けの原因と復旧手順がある。</li>
       <li>上位Ambient Agentを一clientだけGatewayへ移行し、direct endpointへ戻せる。</li>
@@ -671,7 +673,7 @@ admit when committed + incremental &lt;= usable</code></pre>
       <dt>主な対象</dt>
       <dd>
         <code>packages/core</code>、新しいdeployment Backend、<code
-          >deploy/gnosis</code
+          >deploy/local-node</code
         >
       </dd>
     </dl>
@@ -797,12 +799,12 @@ admit when committed + incremental &lt;= usable</code></pre>
           <td>model固有の起動commandや配置pathの組み立て</td>
         </tr>
         <tr>
-          <th scope="row"><code>config/gnosis</code></th>
+          <th scope="row"><code>config/local-node</code></th>
           <td>Node、Runtime、Profile、Routeのproduction desired state</td>
           <td>weight、secret、生成state</td>
         </tr>
         <tr>
-          <th scope="row"><code>deploy/gnosis</code></th>
+          <th scope="row"><code>deploy/local-node</code></th>
           <td>artifact manifest、service unit、固定helper、verification</td>
           <td>download済みmodel、binary、operation journal</td>
         </tr>
@@ -850,7 +852,7 @@ admit when committed + incremental &lt;= usable</code></pre>
           <td>容量不足、通信切断、checksum不一致、health失敗</td>
         </tr>
         <tr>
-          <th scope="row">gnosis E2E</th>
+          <th scope="row">local-node E2E</th>
           <td>実memory、GPU、startup、streaming、idle回収</td>
           <td>Resident停止、resource oversubscription、allocation leak</td>
         </tr>
@@ -949,7 +951,7 @@ admit when committed + incremental &lt;= usable</code></pre>
           </td>
         </tr>
         <tr>
-          <th scope="row">gnosis Runtime</th>
+          <th scope="row">local-node Runtime</th>
           <td>成功</td>
           <td>gfx1151、8080から8084のservice・health、memory状態</td>
         </tr>
@@ -988,7 +990,7 @@ admit when committed + incremental &lt;= usable</code></pre>
       <li>公開contractまたは運用手順を変更した場合はSpec HTMLを同じ変更で更新する。</li>
       <li>source-only検査に違反するartifactをrepositoryへ追加しない。</li>
       <li>Resident保護、timeout、cleanup、observabilityを受入条件へ含める。</li>
-      <li>gnosisへ反映する変更はrollback手順と実機verification結果を持つ。</li>
+      <li>local-nodeへ反映する変更はrollback手順と実機verification結果を持つ。</li>
     </ul>
   </section>
 

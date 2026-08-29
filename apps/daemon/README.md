@@ -1,6 +1,6 @@
 # @larm/daemon
 
-Linux Runtimeを観測・制御するLARM daemonです。既定で `config/gnosis` を読み、SystemdBackendとLlamaSwapBackendへRuntime単位でルーティングします。
+Linux Runtimeを観測・制御するLARM daemonです。既定で `config/local-node` を読み、SystemdBackendとLlamaSwapBackendへRuntime単位でルーティングします。
 
 実装済みAPI contractの正本は[`../../specs/api.html`](../../specs/api.html)です。LLM、STT、通常TTS、表現TTSをprotocol-awareな共通Gatewayで提供し、通常clientは個別Provider portではなくGatewayを使用します。repositoryのProvider unitはloopback desired stateです。2026年8月29日のlive hostには移行用wildcard listenerが残り、network levelの閉鎖は[`../../specs/production-completion-plan.html`](../../specs/production-completion-plan.html)のMilestone 27で行います。
 
@@ -14,7 +14,7 @@ bun run dev
 既定は `http://127.0.0.1:9810` です。
 
 ```bash
-export LARM_CONFIG_DIR=/srv/ai/apps/local-LLM-harness/config/gnosis
+export LARM_CONFIG_DIR=/srv/ai/apps/local-LLM-harness/config/local-node
 export LARM_PORT=9810
 export LARM_PREFERRED_IDLE_TTL_SECONDS=60
 export LARM_CONTROL_MAX_BODY_BYTES=65536
@@ -31,7 +31,7 @@ bun run dev
 | --- | ---: | --- |
 | `LARM_HOST` | `127.0.0.1` | listen address |
 | `LARM_PORT` | `9810` | listen port |
-| `LARM_CONFIG_DIR` | `config/gnosis` | Node、Runtime、Profile、Route registry |
+| `LARM_CONFIG_DIR` | `config/local-node` | Node、Runtime、Profile、Route registry |
 | `LARM_OBSERVE_INTERVAL_MS` | `2000` | Backend観測間隔 |
 | `LARM_STARTING_GRACE_SECONDS` | `300` | STARTINGからFAILEDへ移す猶予 |
 | `LARM_PREFERRED_IDLE_TTL_SECONDS` | `60` | 未使用Preferredを回収するまでの時間 |
@@ -49,10 +49,10 @@ bun run dev
 | `LARM_CONTROL_MAX_BODY_BYTES` | `65536` | control API body上限。設定可能な最大値は1 MiB |
 | `LARM_GATEWAY_MAX_BODY_BYTES` | `4194304` | LLMとTTS JSON body上限。設定可能な最大値は64 MiB |
 | `LARM_SPEECH_MAX_BODY_BYTES` | `269484032` | STT upload上限 |
-| `LARM_GATEWAY_TIMEOUT_SECONDS` | `300` | uploadからresponse完了までの上限 |
+| `LARM_GATEWAY_TIMEOUT_SECONDS` | `300` | uploadからresponse完了までの上限。監査recoveryとの競合を避ける最大値は3300秒 |
 | `LARM_SHUTDOWN_TIMEOUT_SECONDS` | `330` | operationとrequestのdrain上限 |
-| `LARM_ARTIFACT_MANIFEST` | `deploy/gnosis/models.yaml` | artifact allowlist |
-| `LARM_RELEASE_CATALOG` | `deploy/gnosis/releases.yaml` | immutable Runtime release catalog |
+| `LARM_ARTIFACT_MANIFEST` | `deploy/local-node/models.yaml` | artifact allowlist |
+| `LARM_RELEASE_CATALOG` | `deploy/local-node/releases.yaml` | immutable Runtime release catalog |
 | `LARM_RELEASE_MANIFEST` | 未設定 | production release commitを読むmanifest。systemd unitはcurrent release内を指定 |
 | `LARM_ARTIFACT_STAGING_ROOT` | `/srv/ai/models/.larm-staging` | 検証済みstaging data |
 | `LARM_ARTIFACT_ROLLBACK_ROOT` | `/srv/ai/models/.larm-rollback` | rollback data |
@@ -61,12 +61,51 @@ bun run dev
 | `LARM_IDEMPOTENCY_LIMIT` | `1000` | TTL内のidempotency key件数上限。満杯時の新規keyは503でfail closed |
 | `LARM_RECOVERY_GRACE_SECONDS` | `60` | 起動後の孤立Preferred回収猶予 |
 | `LARM_TELEMETRY_MAX_AGE_SECONDS` | `10` | Preferred起動に使用できるresource telemetry freshness |
+| `LARM_INFERENCE_AUDIT_MODE` | `off` | `off`、`metadata`、`full-required`。production unitは`full-required` |
+| `LARM_INFERENCE_AUDIT_ROOT` | `/var/lib/larm/inference-audit` | 暗号化済みLLM監査recordの保存先 |
+| `LARM_INFERENCE_AUDIT_KEY_FILE` | `/etc/larm/inference-audit.key` | 32-byte unpadded base64url鍵file |
+| `LARM_INFERENCE_AUDIT_RETENTION_SECONDS` | `604800` | 最大保持期間。7日を超える値は拒否 |
+| `LARM_INFERENCE_AUDIT_MAX_BYTES` | `10737418240` | archive総容量上限 |
+| `LARM_INFERENCE_AUDIT_MIN_FREE_BYTES` | `21474836480` | 維持するfilesystem空き容量 |
+| `LARM_INFERENCE_AUDIT_MAX_RESPONSE_BYTES` | `16777216` | requestごとのresponse保存上限。設定可能な最大値は64 MiB |
+| `LARM_INFERENCE_AUDIT_MATERIALIZATION_TIMEOUT_SECONDS` | `30` | template・token取得の上限 |
 
 数値設定は起動時に範囲検証され、不正値ではdaemonを起動しません。
 
 loopback以外でlistenする場合は`LARM_API_TOKEN`と`LARM_MANAGEMENT_TOKEN`の両方が必須です。`LARM_API_TOKEN`を設定した場合、`/health`と`/ready`以外へ`Authorization: Bearer ...`が必要です。
 loopbackでも`LARM_MANAGEMENT_TOKEN`がない場合、Artifact管理と`allow-listed`配備はfail closedで無効になります。
 Artifactの生成stateは既定で`/var/lib/larm`、stagingとrollback dataは`/srv/ai/models/.larm-*`へ置きます。
+
+## LLM inference audit
+
+`full-required`では、LLM requestの受信bytesを暗号化保存できた後にだけProviderを呼びます。同じProviderの
+`/apply-template`と`/tokenize`からrendered prompt、token ID・pieceを採取し、clientへ転送したraw
+JSON/SSE responseも最大16 MiBまで暗号化します。本文やtokenはjournald、metrics、HTTP APIには出しません。
+template・tokenizeだけが失敗した場合は理由をmetadataへ残して推論を継続し、request保存不能時は503で
+fail closedします。
+`metadata`ではpayloadを保存せず、request IDとoutcomeの監査lifecycle eventだけを出します。
+暗号payloadの認証情報にはUTC record pathとpayload種別も結び付け、別record・別種別への暗号文の
+差し替えを復号時に拒否します。response監査bufferだけが失敗した場合は`truncated`として確定し、
+client streamは中断しません。
+
+local operator CLIは既定でmetadataだけを表示します。payloadを指定した場合だけ復号します。
+
+```bash
+bun run inference:audit -- list
+bun run inference:audit -- show req_example metadata
+bun run inference:audit -- show req_example request
+bun run inference:audit -- show req_example prompt
+bun run inference:audit -- show req_example tokens
+bun run inference:audit -- show req_example response
+bun run inference:audit -- verify req_example
+bun run inference:audit -- prune
+```
+
+作成から168時間で閲覧対象外となり、daemon起動時・毎時および
+`larm-inference-audit-prune.timer`が物理削除します。10 GiBまたは空き20 GiBの制約が先に来た場合は、
+active recordを除く古い完了recordから7日未満でも削除します。鍵とarchiveはGit、release package、
+通常backupの対象外です。prune後は空になった時刻directoryも除去し、crashが完了metadataのcommit後に
+起きた場合は正常なoutcomeを維持したまま残存active markerだけを回収します。
 
 ## Control API
 
@@ -133,7 +172,7 @@ connection_json="$(curl -fsS -X POST http://127.0.0.1:9810/v1/agent-connections 
   -H "Authorization: Bearer ${LARM_API_TOKEN}" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: agent-$(date +%s)" \
-  -d '{"agentProfile":"deep-reasoning-35b","audience":"same-host"}')"
+  -d '{"agentProfile":"coding-default","audience":"same-host"}')"
 connection_id="$(jq -er .id <<<"${connection_json}")"
 
 # GET /v1/agent-connections/:idをreadyまでpollしてからclaimします。
@@ -146,9 +185,10 @@ curl -fsS -X POST "http://127.0.0.1:9810/v1/agent-connections/${connection_id}/c
 `/health`ではなくclaim内のProvider health URLを使用してください。LLM healthは
 `max_tokens: 1`の固定推論を行い、completion tokenがちょうど1であることまで検証します。
 成功は10秒、失敗は1秒だけcacheし、通常task queueへprobeを追加しません。
-SAAAのMac接続は[`../../docs/gnosis.md`](../../docs/gnosis.md)の直接LAN接続contractを使います。
-gnosisのproduction unitは認証を必須にした上で`0.0.0.0:9810`をlistenし、Audience
-`saaa-desktop`は`http://192.168.0.65:9810/v1`を広告します。
+SAAAのMac接続は[`../../docs/local-node.md`](../../docs/local-node.md)の直接LAN接続contractを使います。
+local-nodeのproduction unitは認証を必須にした上で`0.0.0.0:9810`をlistenし、Audience
+`saaa-desktop`は認証済みConnection作成requestのoriginから`/v1` URLを生成します。固定IPは
+設定せず、SAAAはmDNS/DNS名または現在のDHCP addressで到達したURLをそのまま使用します。
 
 ## Artifact operations
 
@@ -212,6 +252,6 @@ Canary後は`larm_active_allocations`、`larm_execution_active`、`larm_executio
 
 - Resident Runtimeは停止しません。
 - Preferred Runtimeだけを`prepare`とidle `release`の対象にします。
-- gnosis installerはPreferredの`qwen-tts.service`だけをstart / stopできるpolkit ruleを導入します。
+- local-node installerはPreferredの`qwen-tts.service`だけをstart / stopできるpolkit ruleを導入します。
 - Resident systemd serviceはbackendとpolkitの両方でlifecycle変更の対象外です。
 - llama-swap process自体の寿命はsystemdが管理し、daemonはmodelのload/unloadだけを委譲します。

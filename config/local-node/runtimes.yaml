@@ -8,7 +8,7 @@ runtimes:
       - llm.coding
     protocol: openai.chat-completions.v1
     backend: systemd
-    node: gnosis
+    node: local-node
     policy:
       class: resident
     resources:
@@ -31,7 +31,7 @@ runtimes:
       - llm.coding
     protocol: openai.chat-completions.v1
     backend: llama-swap
-    node: gnosis
+    node: local-node
     policy:
       class: preferred
       swapGroup: qwen-worker-slot
@@ -57,7 +57,7 @@ runtimes:
       - llm.coding
     protocol: openai.chat-completions.v1
     backend: llama-swap
-    node: gnosis
+    node: local-node
     policy:
       class: preferred
       swapGroup: qwen-worker-slot
@@ -82,7 +82,7 @@ runtimes:
       - llm.coding
     protocol: openai.chat-completions.v1
     backend: llama-swap
-    node: gnosis
+    node: local-node
     policy:
       class: preferred
       swapGroup: qwen-worker-slot
@@ -107,7 +107,7 @@ runtimes:
       - llm.coding
     protocol: openai.chat-completions.v1
     backend: llama-swap
-    node: gnosis
+    node: local-node
     policy:
       class: preferred
       swapGroup: qwen-worker-slot
@@ -132,7 +132,7 @@ runtimes:
       - llm.coding
     protocol: openai.chat-completions.v1
     backend: llama-swap
-    node: gnosis
+    node: local-node
     policy:
       class: preferred
       swapGroup: qwen-worker-slot
@@ -157,7 +157,7 @@ runtimes:
       - llm.coding
     protocol: openai.chat-completions.v1
     backend: llama-swap
-    node: gnosis
+    node: local-node
     policy:
       class: preferred
       swapGroup: qwen-worker-slot
@@ -182,7 +182,7 @@ runtimes:
       - llm.coding
     protocol: openai.chat-completions.v1
     backend: llama-swap
-    node: gnosis
+    node: local-node
     policy:
       class: preferred
       swapGroup: qwen-worker-slot
@@ -205,7 +205,7 @@ runtimes:
       - speech.stt
     protocol: openai.audio-transcriptions.v1
     backend: systemd
-    node: gnosis
+    node: local-node
     policy:
       class: resident
     resources:
@@ -223,7 +223,7 @@ runtimes:
       - speech.tts
     protocol: openai.audio-speech.v1
     backend: systemd
-    node: gnosis
+    node: local-node
     policy:
       class: resident
     resources:
@@ -243,7 +243,7 @@ runtimes:
       - speech.tts.expressive
     protocol: openai.audio-speech.v1
     backend: systemd
-    node: gnosis
+    node: local-node
     policy:
       class: preferred
     resources:

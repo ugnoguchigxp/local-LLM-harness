@@ -11,7 +11,7 @@ function allocation() {
       capability: "llm.general",
       route: "llm-default",
       runtime: "qwen-general",
-      node: "gnosis",
+      node: "local-node",
       endpoint: "http://127.0.0.1:8080",
       status: "HOT",
       candidateRank: 1,

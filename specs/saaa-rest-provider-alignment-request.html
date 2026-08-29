@@ -2,27 +2,29 @@
   <h1>SAAA Desktop LARM REST接続 認識合わせ・実装依頼</h1>
 
   <p>
-    gnosisで既に運用しているLLMを、SAAA desktopからLARM Agent Connection API経由で利用するため、
+    local-nodeで既に運用しているLLMを、SAAA desktopからLARM Agent Connection API経由で利用するため、
     SAAA
     adapterの接続方式を次のcontractへ合わせてください。新しいLLMやProviderを配備する依頼ではありません。
-    Gnosis側では<a href="./saaa-rest-connection-enablement-plan.html">REST接続有効化計画</a>に従い、
-    LARM REST Gatewayを常駐化します。
+    local-node側では<a href="./saaa-rest-connection-enablement-plan.html">REST接続有効化計画</a
+    >に従い、 LARM REST Gatewayを常駐化します。
   </p>
 
   <dl>
     <dt>Status</dt>
-    <dd>Gnosis ready; SAAA acknowledgement and LAN canary requested</dd>
+    <dd>local-node ready; SAAA acknowledgement and LAN canary requested</dd>
     <dt>Requested</dt>
     <dd><time>2026-08-29</time></dd>
     <dt>Control API</dt>
-    <dd><code>http://192.168.0.65:9810</code></dd>
+    <dd>
+      mDNS・DNS discoveryまたはoperator設定から得た<code>http://&lt;host&gt;:9810</code>
+    </dd>
     <dt>Agent profile</dt>
-    <dd><code>deep-reasoning-35b</code></dd>
+    <dd><code>coding-default</code>（Qwen 3.8 27B Resident）</dd>
     <dt>Audience</dt>
     <dd><code>saaa-desktop</code></dd>
     <dt>Allowed source</dt>
     <dd><code>192.168.0.76/32</code></dd>
-    <dt>Gnosis release</dt>
+    <dt>local-node release</dt>
     <dd><code>5ac9331a23273c4e3fd16097cfbe59050531bde6</code></dd>
     <dt>Config revision</dt>
     <dd><code>4a9326f60353e906f8752acd01ca8b6179f12d4803074c2bde5fa2f23a15a500</code></dd>
@@ -30,11 +32,16 @@
 
   <aside>
     <p>
-      Gnosis側はsystemd常駐化、credential、polkit、UFW /32 rule、create・poll・claim、semantic
+      local-node側はsystemd常駐化、credential、polkit、UFW /32 rule、create・poll・claim、semantic
       health、SSE、DELETE、短期token失効までacceptance済みです。秘密を含まない結果は<a
         href="./commissioning-evidence.html#saaa-rest-gateway-acceptance"
         >Commissioning Evidence</a
       >を参照してください。
+    </p>
+    <p>
+      <code>deep-reasoning-35b</code
+      >（Ornith-1.5-35B）は任意の比較・深い推論用profileとして残しますが、
+      SAAAのprimaryには使用しません。利用する場合はtaskごとに明示選択してください。
     </p>
   </aside>
 
@@ -45,8 +52,8 @@
       構成して推論し、終了時にConnectionを解放するadapterを実装してください。
     </p>
     <p>
-      SAAAからgnosisへの接続はTCP 9810のREST APIだけを使用します。SSH、SFTP、SCP、SSH tunnel、port
-      forwardingは使用しません。
+      SAAAからlocal-nodeへの接続はTCP 9810のREST APIだけを使用します。SSH、SFTP、SCP、SSH
+      tunnel、port forwardingは使用しません。
     </p>
   </section>
 
@@ -82,7 +89,8 @@
       </tbody>
     </table>
     <p>
-      SAAAへ渡すGnosisの長期secretはAPI tokenだけです。management token、connection signing key、
+      SAAAへ渡すlocal-nodeの長期secretはAPI tokenだけです。management token、connection signing
+      key、
       <code>/etc/larm/larm.env</code>は要求・取得・保存しないでください。
     </p>
   </section>
@@ -94,7 +102,7 @@
         一意な<code>Idempotency-Key</code>を付けて
         <code>POST /v1/agent-connections</code>を呼びます。
         <pre><code>{
-  "agentProfile": "deep-reasoning-35b",
+  "agentProfile": "coding-default",
   "audience": "saaa-desktop",
   "client": "saaa-desktop",
   "ttlSeconds": 300,
@@ -160,7 +168,7 @@
       </li>
       <li>control URLとAPI tokenを設定するSAAA側の設定名・secret保存先。</li>
       <li>adapterの実装ownerとreview commit。</li>
-      <li>Gnosis側の準備完了後にLAN canaryを実行できる時間帯。</li>
+      <li>local-node側の準備完了後にLAN canaryを実行できる時間帯。</li>
       <li>REST-only、dynamic claim、SSH不使用へのacknowledgement。</li>
     </ol>
   </section>
@@ -173,7 +181,10 @@
         認証付きでcreate、poll、claim、semantic health、SSE inference、DELETE releaseを実行します。
       </li>
       <li>claim responseだけからOpenAI clientが構成されていることを確認します。</li>
-      <li>release後にConnectionとworkerが残っていないことをGnosis側と照合します。</li>
+      <li>
+        release後にConnectionが残らず、Resident Qwen 3.8 27Bが稼働を継続していることをlocal-node側と
+        照合します。
+      </li>
     </ol>
     <p>
       証跡にはtimestamp、release commit、config revision、HTTP
@@ -187,7 +198,10 @@
     <ul>
       <li>SAAAがRESTだけでAgent Connection lifecycleを完了できる。</li>
       <li>claim responseからProvider設定を動的に構成できる。</li>
-      <li><code>deep-reasoning-35b</code>のSSE inferenceがfallbackなしで完了する。</li>
+      <li>
+        <code>coding-default</code>のSSE inferenceがfallbackなしでQwen 3.8
+        27Bにより完了する。
+      </li>
       <li>成功・失敗時ともDELETE releaseを実行し、resource leakがない。</li>
       <li>SSH、direct Provider、Cloud fallbackを使用しない。</li>
     </ul>
@@ -204,7 +218,7 @@ Implementation commit:
 LAN canary window:
 REST-only and no SSH: Acknowledged
 Dynamic claim configuration: Acknowledged
-Gnosis release: 5ac9331a23273c4e3fd16097cfbe59050531bde6
+local-node release: 5ac9331a23273c4e3fd16097cfbe59050531bde6
 Config revision: 4a9326f60353e906f8752acd01ca8b6179f12d4803074c2bde5fa2f23a15a500
 Open questions:</code></pre>
   </section>

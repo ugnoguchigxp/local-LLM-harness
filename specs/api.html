@@ -362,7 +362,7 @@
       "capability": "llm.general",
       "route": "llm-default",
       "runtime": "qwen-general",
-      "node": "gnosis",
+      "node": "local-node",
       "status": "HOT",
       "candidateRank": 1,
       "fallback": false,
@@ -542,7 +542,7 @@
   <section id="runtime-release">
     <h2>Runtime releaseとcatalog generation</h2>
     <p>
-      <code>deploy/gnosis/releases.yaml</code>は、release ID、Runtime、artifact集合、provider
+      <code>deploy/local-node/releases.yaml</code>は、release ID、Runtime、artifact集合、provider
       config revision、memory estimate、health pathを一つのimmutable
       contractとして定義します。同じIDの
       内容差し替え、未知artifact、Runtimeの現行artifactと一致しないdefault
@@ -753,7 +753,7 @@
       endpointを
       必須とし、固定Binding上の最小LLM推論（<code>max_tokens: 1</code>）とresponse検証が成功するまでReadyまたは
       claimableとして扱いません。daemon、OpenAPI、TypeScript client、3つのLLM Profile、
-      <code>same-host</code>とgnosis LAN用<code
+      <code>same-host</code>とlocal-node LAN用<code
         >saaa-desktop</code
       >
       Audienceを実装済みです。

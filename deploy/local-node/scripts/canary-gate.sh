@@ -32,7 +32,7 @@ fi
 
 cd "${repo_root}"
 bun test packages/core/src/registry.test.ts packages/core/src/artifacts.test.ts >/dev/null
-deploy/gnosis/scripts/shadow-larm.sh >/dev/null
+deploy/local-node/scripts/shadow-larm.sh >/dev/null
 
 health_before="$(curl -fsS --max-time 10 "${base_url}/health")"
 epoch_before="$(jq -er '.bootEpoch' <<<"${health_before}")"
@@ -58,14 +58,14 @@ LARM_BENCHMARK_COMMIT="${deployed_commit}" \
 LARM_BENCHMARK_ITERATIONS="${iterations}" \
 LARM_BENCHMARK_SERIES=all \
 LARM_BENCHMARK_AUDIO_FILE="${LARM_BENCHMARK_AUDIO_FILE}" \
-bun run deploy/gnosis/scripts/benchmark-larm.ts >/dev/null
+bun run deploy/local-node/scripts/benchmark-larm.ts >/dev/null
 LARM_SLO_SUMMARY="${summary_output}" \
 LARM_SLO_EXPECTED_COMMIT="${deployed_commit}" \
 LARM_SLO_EXPECTED_CONFIG_REVISION="${config_revision}" \
 LARM_SLO_OUTPUT="${comparison_output}" \
-bun run deploy/gnosis/scripts/compare-slo.ts
+bun run deploy/local-node/scripts/compare-slo.ts
 
-LARM_CANARY_AUDIO_FILE="${LARM_BENCHMARK_AUDIO_FILE}" deploy/gnosis/scripts/smoke-voice.sh >/dev/null
+LARM_CANARY_AUDIO_FILE="${LARM_BENCHMARK_AUDIO_FILE}" deploy/local-node/scripts/smoke-voice.sh >/dev/null
 
 health_after="$(curl -fsS --max-time 10 "${base_url}/health")"
 epoch_after="$(jq -er '.bootEpoch' <<<"${health_after}")"

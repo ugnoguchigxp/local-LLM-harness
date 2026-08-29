@@ -35,7 +35,7 @@
             <a href="./agent-provider-connection-api.html">Agent Provider Connection API実装仕様</a>
           </th>
           <td>Agent profile要求からProvider設定、短期credential、semantic readinessを返すAPI</td>
-          <td>daemon、OpenAPI、client実装・gnosis実機E2E完了</td>
+          <td>daemon、OpenAPI、client実装・local-node実機E2E完了</td>
         </tr>
         <tr>
           <th scope="row">
@@ -53,7 +53,9 @@
             >
           </th>
           <td>既存LLM基盤を変更しないLARM Gateway常駐化、dynamic claim、SAAA LAN受入</td>
-          <td>Gnosis Gateway配備・実通信acceptance完了。SAAA acknowledgement・Mac canary待ち</td>
+          <td>
+            local-node Gateway配備・実通信acceptance完了。SAAA acknowledgement・Mac canary待ち
+          </td>
         </tr>
         <tr>
           <th scope="row">
@@ -62,7 +64,7 @@
             >
           </th>
           <td>SAAA adapterの動的Provider設定、REST lifecycle、secret境界、LAN canary依頼</td>
-          <td>Gnosis identity・許可送信元を確定してhandoff可能</td>
+          <td>local-node identity・許可送信元を確定してhandoff可能</td>
         </tr>
         <tr>
           <th scope="row">
@@ -122,10 +124,19 @@
         </tr>
         <tr>
           <th scope="row">
-            <a href="./commissioning-evidence.html">gnosis Commissioning Evidence</a>
+            <a href="./commissioning-evidence.html">local-node Commissioning Evidence</a>
           </th>
           <td>read-only preflightと実機acceptance</td>
           <td>preflight完了、commissioning保留</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./inference-audit-log-retention-plan.html"
+              >LLM推論内容監査ログ・7日保持 実装計画</a
+            >
+          </th>
+          <td>raw request、rendered prompt、token、responseの暗号化保存と168時間TTL</td>
+          <td>現行計画。repository実装・実機cutover待ち</td>
         </tr>
         <tr>
           <th scope="row"><a href="./stable-release-gate.html">Stable Release Gate</a></th>

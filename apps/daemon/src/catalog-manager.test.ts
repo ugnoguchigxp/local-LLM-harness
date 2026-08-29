@@ -17,7 +17,7 @@ import { MutationCoordinator } from "./mutation-coordinator";
 
 const registry: Registry = {
   nodes: [{
-    id: "gnosis",
+    id: "local-node",
     endpoint: "http://127.0.0.1",
     resources: { memoryTotalGB: 64, reservedMemoryGB: 8 },
   }],
@@ -26,7 +26,7 @@ const registry: Registry = {
     capability: ["llm.general"],
     protocol: "openai.chat-completions.v1",
     backend: "systemd",
-    node: "gnosis",
+    node: "local-node",
     policy: { class: "resident" },
     resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
     deployment: { service: "resident.service", healthPort: 8080, endpoint: "http://127.0.0.1:8080" },

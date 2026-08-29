@@ -10,7 +10,7 @@ Group=ugnoguchi
 WorkingDirectory=/srv/ai/apps/local-LLM-harness
 Environment=HOME=/srv/ai/cache
 Environment=XDG_CACHE_HOME=/srv/ai/cache
-ExecStart=/srv/ai/apps/llama-swap/llama-swap --config /srv/ai/apps/local-LLM-harness/config/gnosis/llama-swap.yaml --listen 127.0.0.1:8083
+ExecStart=/srv/ai/apps/llama-swap/llama-swap --config /srv/ai/apps/local-LLM-harness/config/local-node/llama-swap.yaml --listen 127.0.0.1:8083
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=30

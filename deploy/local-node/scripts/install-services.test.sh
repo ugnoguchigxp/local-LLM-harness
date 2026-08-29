@@ -2,11 +2,12 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-installer="${repo_root}/deploy/gnosis/scripts/install-services.sh"
+installer="${repo_root}/deploy/local-node/scripts/install-services.sh"
 test_root="$(mktemp -d /tmp/larm-install-test.XXXXXX)"
 symlinked_root="${test_root}-symlink"
 gateway_root="${test_root}-gateway"
-trap 'rm -rf -- "${test_root}" "${gateway_root}"; rm -f -- "${symlinked_root}"' EXIT
+invalid_root="${test_root}-invalid"
+trap 'rm -rf -- "${test_root}" "${gateway_root}" "${invalid_root}"; rm -f -- "${symlinked_root}"' EXIT
 
 run_installer() {
   LARM_INSTALL_TEST_MODE=1 \
@@ -33,6 +34,23 @@ if LARM_INSTALL_TEST_MODE=1 LARM_INSTALL_ROOT="${symlinked_root}" \
 fi
 rm "${symlinked_root}"
 
+mkdir -p "${invalid_root}/etc/larm"
+printf 'invalid\n' >"${invalid_root}/etc/larm/inference-audit.key"
+if LARM_INSTALL_TEST_MODE=1 LARM_INSTALL_ROOT="${invalid_root}" \
+  LARM_INSTALL_SCOPE=gateway bash "${installer}" >/dev/null 2>&1; then
+  echo "installer accepted an invalid audit key" >&2
+  exit 1
+fi
+[[ ! -e "${invalid_root}/etc/systemd/system/larm-daemon.service" ]]
+rm "${invalid_root}/etc/larm/inference-audit.key"
+printf 'LARM_API_TOKEN=must-not-reach-prune\n' >"${invalid_root}/etc/larm/inference-audit.env"
+if LARM_INSTALL_TEST_MODE=1 LARM_INSTALL_ROOT="${invalid_root}" \
+  LARM_INSTALL_SCOPE=gateway bash "${installer}" >/dev/null 2>&1; then
+  echo "installer accepted a credential in the audit configuration" >&2
+  exit 1
+fi
+[[ ! -e "${invalid_root}/etc/systemd/system/larm-daemon.service" ]]
+
 run_installer
 credential="${test_root}/etc/larm/larm.env"
 initial_credential="$(<"${credential}")"
@@ -41,15 +59,27 @@ grep -Eq '^LARM_API_TOKEN=[a-f0-9]{64}$' "${credential}"
 grep -Eq '^LARM_CONNECTION_SIGNING_KEY=[A-Za-z0-9_-]{43}$' "${credential}"
 [[ "$(wc -l <"${credential}")" -eq 3 ]]
 [[ "$(stat -c '%a' "${credential}")" == "640" ]]
+audit_key="${test_root}/etc/larm/inference-audit.key"
+grep -Eq '^[A-Za-z0-9_-]{43}$' "${audit_key}"
+[[ "$(stat -c '%a' "${audit_key}")" == "640" ]]
+initial_audit_key="$(<"${audit_key}")"
+audit_config="${test_root}/etc/larm/inference-audit.env"
+grep -Fqx 'LARM_INFERENCE_AUDIT_MODE=full-required' "${audit_config}"
+grep -Fqx 'LARM_INFERENCE_AUDIT_RETENTION_SECONDS=604800' "${audit_config}"
+[[ "$(stat -c '%a' "${audit_config}")" == "640" ]]
+initial_audit_config="$(<"${audit_config}")"
 
 run_installer
 [[ "$(<"${credential}")" == "${initial_credential}" ]]
+[[ "$(<"${audit_key}")" == "${initial_audit_key}" ]]
+[[ "$(<"${audit_config}")" == "${initial_audit_config}" ]]
 
-for unit in "${repo_root}"/deploy/gnosis/systemd/*.service; do
+for unit in "${repo_root}"/deploy/local-node/systemd/*.service \
+  "${repo_root}"/deploy/local-node/systemd/*.timer; do
   cmp --silent "${unit}" "${test_root}/etc/systemd/system/$(basename "${unit}")"
 done
 cmp --silent \
-  "${repo_root}/deploy/gnosis/polkit/50-larm-runtime-control.rules" \
+  "${repo_root}/deploy/local-node/polkit/50-larm-runtime-control.rules" \
   "${test_root}/etc/polkit-1/rules.d/50-larm-runtime-control.rules"
 
 systemctl_log="${test_root}/var/lib/larm/install-systemctl.log"
@@ -59,6 +89,8 @@ grep -F "disable qwen-tts.service" "${systemctl_log}" >/dev/null
 [[ -d "${test_root}/srv/ai/models/qwen-tts" ]]
 [[ -d "${test_root}/srv/ai/models/qwen36-35b" ]]
 [[ -d "${test_root}/srv/ai/models/ornith15-35b" ]]
+[[ "$(stat -c '%a' "${test_root}/var/lib/larm/inference-audit")" == "700" ]]
+[[ -f "${test_root}/etc/systemd/system/larm-inference-audit-prune.timer" ]]
 grep -F "/srv/ai/models/qwen36-35b" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "/srv/ai/models/ornith15-35b" \
@@ -70,6 +102,8 @@ LARM_INSTALL_TEST_MODE=1 \
   LARM_INSTALL_SCOPE=gateway \
   bash "${installer}" >/dev/null
 [[ -f "${gateway_root}/etc/systemd/system/larm-daemon.service" ]]
+[[ -f "${gateway_root}/etc/systemd/system/larm-inference-audit-prune.service" ]]
+[[ -f "${gateway_root}/etc/systemd/system/larm-inference-audit-prune.timer" ]]
 for unit in llama-server.service llama-swap-worker.service qwen-asr.service qwen-tts.service \
   voicevox-tts.service; do
   [[ ! -e "${gateway_root}/etc/systemd/system/${unit}" ]]
@@ -88,7 +122,17 @@ fi
 [[ -d "${gateway_root}/srv/ai/models/.larm-staging" ]]
 [[ -d "${gateway_root}/srv/ai/models/.larm-rollback" ]]
 [[ -f "${gateway_root}/etc/larm/larm.env" ]]
+[[ -f "${gateway_root}/etc/larm/inference-audit.env" ]]
+grep -Eq '^[A-Za-z0-9_-]{43}$' "${gateway_root}/etc/larm/inference-audit.key"
+[[ "$(stat -c '%a' "${gateway_root}/var/lib/larm/inference-audit")" == "700" ]]
 [[ -f "${gateway_root}/etc/polkit-1/rules.d/50-larm-runtime-control.rules" ]]
+
+ln "${gateway_root}/etc/larm/inference-audit.key" "${gateway_root}/audit-key-hardlink"
+if LARM_INSTALL_TEST_MODE=1 LARM_INSTALL_ROOT="${gateway_root}" \
+  LARM_INSTALL_SCOPE=gateway bash "${installer}" >/dev/null 2>&1; then
+  echo "installer accepted a hard-linked audit key" >&2
+  exit 1
+fi
 
 credential_target="${test_root}/credential-target"
 printf 'unchanged\n' >"${credential_target}"

@@ -1,0 +1,650 @@
+<article lang="ja">
+  <h1>LLM推論内容監査ログ・7日保持 実装仕様</h1>
+
+  <p>
+    LARMを通るLLM推論について、clientが送信したrequest、Providerが適用したchat template後のprompt、
+    token IDとpiece、Provider
+    responseを後からrequest単位で確認できるようにします。内容は高機密の監査
+    dataとして通常のjournaldから分離し、作成から168時間を超えたrecordを自動削除します。保持期間だけで
+    disk使用量が無制限にならないよう、総bytesと空き容量にもhard limitを設けます。
+  </p>
+
+  <dl>
+    <dt>状態</dt>
+    <dd>Source implementation complete・production rollout pending</dd>
+    <dt>計画日</dt>
+    <dd><time>2026-08-29</time></dd>
+    <dt>対象</dt>
+    <dd><code>openai.chat-completions.v1</code>を使うLARM Gateway経由のLLM推論</dd>
+    <dt>既定保持期間</dt>
+    <dd>168時間</dd>
+    <dt>保存先</dt>
+    <dd><code>/var/lib/larm/inference-audit</code></dd>
+    <dt>閲覧経路</dt>
+    <dd>local operator CLIのみ。HTTP APIでは本文を返さない</dd>
+  </dl>
+
+  <aside>
+    <p>
+      promptには会話、source context、tool入出力、偶発的なsecretが含まれ得ます。この機能はdebug
+      logでは なく、明示的に有効化する短期監査archiveです。Authorization header、API
+      token、management token、
+      Provider短期tokenは保存しませんが、body内へ書かれたsecretは完全には自動判定できないため、payloadを
+      暗号化し、7日で必ず読取対象から外します。
+    </p>
+  </aside>
+
+  <section id="decision">
+    <h2>決定</h2>
+    <ol>
+      <li>
+        完全なLLM request bodyをLARM Gatewayで採取します。Provider
+        portへの直接requestは監査不能なので、 production clientをGatewayへ移行後、Provider
+        listenerをloopbackへ閉じます。
+      </li>
+      <li>
+        raw requestだけでなく、選択されたRuntimeの<code>/apply-template</code>と
+        <code>/tokenize</code>を使い、整形済みprompt、token ID、token
+        pieceを作成します。
+      </li>
+      <li>
+        request payloadとresponse payloadは暗号化し、通常event logにはrequest ID、model
+        identity、bytes、 token数、outcome、digestだけを残します。
+      </li>
+      <li>
+        hard TTLは作成時刻から168時間です。期限切れrecordは閲覧API相当のCLIから即時除外し、daemonの
+        daemonの毎時timerとsystemd timerで物理削除します。
+      </li>
+      <li>
+        10 GiBの総容量上限と20
+        GiBのfilesystem最小空き容量を初期値にします。圧迫時は古い完了recordから
+        7日未満でも削除し、なお保存できない場合は監査必須modeで新規推論をfail closedします。
+      </li>
+    </ol>
+  </section>
+
+  <section id="scope">
+    <h2>Scope</h2>
+
+    <h3>今回実装するもの</h3>
+    <ul>
+      <li>LLM chat completionのraw JSON request</li>
+      <li>同じProvider設定で生成したchat template適用済みprompt</li>
+      <li>token ID、UTF-8 pieceまたはbyte列、prompt token総数</li>
+      <li>upstreamのraw JSONまたはSSE response、HTTP status、完了・cancel・timeout結果</li>
+      <li>request、Allocation、Runtime、release、config revision、boot epochの相関情報</li>
+      <li>暗号化、local閲覧CLI、168時間TTL、容量cleanup、metadata event、systemd timer</li>
+      <li>外部clientのLARM Gateway集約とProvider portのloopback化</li>
+    </ul>
+
+    <h3>今回実装しないもの</h3>
+    <ul>
+      <li>STT音声、TTS音声、model weight、KV cacheの保存</li>
+      <li>prompt本文をjournald、Prometheus label、HTTP inspection APIへ出すこと</li>
+      <li>Cloud storage、別hostへの転送、backup対象への追加</li>
+      <li>意味を保った完全自動redaction。body内secretは暗号化と短期保持で扱う</li>
+      <li>Resident Qwen 3.8 27Bまたは任意workerのmodel artifact変更</li>
+    </ul>
+  </section>
+
+  <section id="current-state">
+    <h2>現在地と設計根拠</h2>
+    <table>
+      <caption>
+        現行実装から利用する性質
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">現状</th>
+          <th scope="col">計画での扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Gateway LLM body</th>
+          <td>
+            最大4 MiBを<code>Uint8Array</code>へbufferしてからupstreamへ転送
+          </td>
+          <td>同じbytesを転送前に監査storeへ保存</td>
+        </tr>
+        <tr>
+          <th scope="row">Gateway timeout</th>
+          <td>既定300秒</td>
+          <td>
+            監査処理も同じrequest lifecycleへ含めるが、token materializeは別のbounded deadlineを持つ
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Provider template</th>
+          <td><code>POST /apply-template</code>が実推論と同じOAI parserを使用</td>
+          <td>実際に推論へ渡るprompt文字列を取得</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider tokenizer</th>
+          <td><code>POST /tokenize</code>がIDとpieceを返却可能</td>
+          <td>
+            <code>add_special:true</code
+            >、<code>parse_special:true</code>、<code>with_pieces:true</code>で保存
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">通常event log</th>
+          <td>本文を保存せず低cardinality metadataのみ</td>
+          <td>この性質を維持し、監査payloadを別storeへ隔離</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider network</th>
+          <td>repository desired stateはloopback、live hostには移行用wildcard listenerが残る</td>
+          <td>Gateway canary後にloopbackへ収束し、記録漏れを防ぐ</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      2026年8月29日のtask 742はProviderへ直接到達したため、3,060 tokenという数値だけが残り、request
+      bodyは復元できませんでした。詳細は<a
+        href="./commissioning-evidence.html#qwen-primary-inference-cancellation"
+        >Commissioning Evidence</a
+      >を参照します。本計画は同じ欠落を再発させないためのものです。
+    </p>
+  </section>
+
+  <section id="architecture">
+    <h2>構成</h2>
+    <figure>
+      <pre><code>Client
+  │  authenticated OpenAI request
+  ▼
+LARM :9810
+  ├─ 1. bounded raw body read
+  ├─ 2. audit reservation + encrypted request write
+  ├─ 3. Provider /apply-template + /tokenize
+  ├─ 4. inference proxy + response tee
+  └─ 5. encrypted finalize + metadata commit
+             │
+             ├─ /var/lib/larm/inference-audit/&lt;UTC hour&gt;/&lt;request-id&gt;/
+             └─ prune scheduler: expiresAt / bytes / free space
+  │
+  ▼
+Provider :8080 loopback only</code></pre>
+      <figcaption>
+        Gatewayを唯一の外部推論入口にし、request IDを推論eventと監査recordで共有する
+      </figcaption>
+    </figure>
+
+    <h3>責務分割</h3>
+    <table>
+      <caption>
+        packageごとの実装責務
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">場所</th>
+          <th scope="col">責務</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>apps/daemon</code></th>
+          <td>
+            Gateway capture、request lifecycle、response tee、materialize orchestration、metrics
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>packages/backends</code></th>
+          <td>安全なfilesystem store、暗号化、atomic commit、prune、disk accounting</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>packages/core</code></th>
+          <td>OS非依存のrecord schema、policy validation、retention decision</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>deploy/local-node</code></th>
+          <td>key/root作成、systemd timer、unit hardening、network cutover、verify</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="record-format">
+    <h2>Record形式</h2>
+    <p>
+      requestごとに独立directoryを作り、active markerを置いてからpayloadを書きます。完了時に
+      metadataをatomic renameし、active markerを外します。crashで残ったpartial recordも次回起動時に
+      outcomeを<code>interrupted</code>として確定できる形にします。完了metadataのcommit後、marker削除前に
+      crashしたrecordは正常な完了結果を維持し、残存markerだけを回収します。
+    </p>
+    <pre><code>/var/lib/larm/inference-audit/2026/08/29/15/req_.../
+  active
+  metadata.json
+  request.json.gz.enc
+  prompt.txt.gz.enc
+  tokens.json.gz.enc
+  response.bin.gz.enc</code></pre>
+    <table>
+      <caption>
+        非暗号metadataに保存するfield
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">Identity</th>
+          <td>schema version、request ID、allocation ID、boot epoch、config revision</td>
+        </tr>
+        <tr>
+          <th scope="row">Selection</th>
+          <td>protocol、capability、route、Runtime、Runtime release</td>
+        </tr>
+        <tr>
+          <th scope="row">Timing</th>
+          <td>createdAt、completedAt、expiresAt</td>
+        </tr>
+        <tr>
+          <th scope="row">Sizes</th>
+          <td>request bytes、prompt chars、prompt tokens、captured response bytes</td>
+        </tr>
+        <tr>
+          <th scope="row">Integrity</th>
+          <td>
+            各plain payloadのSHA-256、encoding、key ID。nonceとauthentication tagは暗号payload内
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Result</th>
+          <td>HTTP status、finish reason、completed・cancelled・timeout・truncated・interrupted</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      raw requestは受信したUTF-8
+      bytesをそのまま保存します。JSONを再serializeした値だけを保存すると、field
+      順やescape差分が失われるためです。token
+      materialize用にはparse済みJSONを同じProviderへ渡します。
+      responseはclientへ流したbytesと同じ順序でteeし、SSEが途中で切れた場合もpartialとoutcomeを残します。
+    </p>
+  </section>
+
+  <section id="security">
+    <h2>機密性と権限</h2>
+    <ul>
+      <li>
+        root
+        directoryは0700、fileは0600、既存unitの<code>UMask=0077</code>を維持します。
+      </li>
+      <li>
+        payloadはAES-256-GCMで書込み単位に異なる96-bit nonceを使い暗号化します。AADへUTC record
+        pathとpayload種別を含め、別record・別種別への暗号文差し替えを拒否します。keyは
+        <code>/etc/larm/inference-audit.key</code>へ置き、Git、release、logへ含めません。
+      </li>
+      <li>
+        Authorization、Cookie、API key、management token、短期Provider tokenは採取対象外です。
+      </li>
+      <li>閲覧はhost local CLIだけに限定し、network APIやWeb UIを追加しません。</li>
+      <li>
+        CLIは既定でmetadataだけを表示し、<code>show &lt;request-id&gt; &lt;payload-kind&gt;</code>を
+        明示したときだけ復号します。
+      </li>
+      <li>backup script、artifact snapshot、release packageから監査rootを明示的に除外します。</li>
+      <li>
+        symlink、hard link、root置換、path traversal、non-regular fileをfail closedで拒否します。
+      </li>
+    </ul>
+    <p>
+      prompt本文に含まれるsecretを完全に推測してredactすると調査再現性を損ねます。そのためheader
+      secretを
+      構造的に除外し、bodyは完全保存・暗号化・短期TTLで扱います。将来redactionを追加する場合も、原文を
+      変更するのではなく、閲覧CLIの表示filterとして実装します。
+    </p>
+  </section>
+
+  <section id="retention">
+    <h2>Retentionと容量制御</h2>
+    <ol>
+      <li>各recordの<code>expiresAt = createdAt + 604800秒</code>を作成時に固定します。</li>
+      <li>
+        CLIは現在時刻がexpiresAt以上のrecordを表示せず、<code>prune</code>で物理削除します。
+      </li>
+      <li>
+        daemonは起動時、各requestの保存前、稼働中は毎時、期限到達済みcompleted recordを削除します。
+      </li>
+      <li>
+        <code>larm-inference-audit-prune.timer</code
+        >を1時間間隔かつ<code>Persistent=true</code>で動かし、
+        daemon停止・host停止後のfallback cleanupを行います。
+      </li>
+      <li>daemon起動時にもexpired recordと1時間以上古いpartial recordをreconcileします。</li>
+      <li>
+        総bytesまたは最小空き容量を超えた場合、active
+        recordを除きcreatedAtの古い順に削除します。7日は 最大保持期間であり、disk
+        safetyが必要なら早期削除を許可します。
+      </li>
+      <li>
+        新規request、最大response、prompt・token materialization、metadata
+        overheadを保存前に予約し、 active
+        reservationを容量削除の対象にしません。request、prompt、token、responseは各64 MiB以下、
+        production response初期値は16 MiBです。
+      </li>
+      <li>
+        削除はresolved root、record ID、regular directory、active
+        marker不存在を再検証してから実行し、 broad globや未解決環境変数を削除targetに使いません。
+      </li>
+      <li>record削除後は空のhour、day、month、year directoryをrootまで安全に回収します。</li>
+    </ol>
+    <table>
+      <caption>
+        初期上限
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">時間</th>
+          <td>168時間</td>
+        </tr>
+        <tr>
+          <th scope="row">総保存量</th>
+          <td>10 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">filesystem最小空き</th>
+          <td>20 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">1 response capture</th>
+          <td>16 MiB。超過後もclient転送は続け、recordをtruncatedとする</td>
+        </tr>
+        <tr>
+          <th scope="row">partial猶予</th>
+          <td>1時間</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="configuration">
+    <h2>設定contract</h2>
+    <table>
+      <caption>
+        監査archiveの環境設定と初期値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Environment</th>
+          <th scope="col">初期値</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>LARM_INFERENCE_AUDIT_MODE</code></th>
+          <td><code>off</code></td>
+          <td>
+            <code>off</code
+            >、<code>metadata</code>、<code
+              >full-required</code
+            >
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_INFERENCE_AUDIT_ROOT</code></th>
+          <td><code>/var/lib/larm/inference-audit</code></td>
+          <td>専用data root</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_INFERENCE_AUDIT_RETENTION_SECONDS</code></th>
+          <td><code>604800</code></td>
+          <td>hard TTL</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_INFERENCE_AUDIT_MAX_BYTES</code></th>
+          <td><code>10737418240</code></td>
+          <td>全recordの上限</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_INFERENCE_AUDIT_MIN_FREE_BYTES</code></th>
+          <td><code>21474836480</code></td>
+          <td>保存後も維持する空き容量</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_INFERENCE_AUDIT_MAX_RESPONSE_BYTES</code></th>
+          <td><code>16777216</code></td>
+          <td>request単位のresponse保存上限。設定可能な絶対上限は64 MiB</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_INFERENCE_AUDIT_KEY_FILE</code></th>
+          <td><code>/etc/larm/inference-audit.key</code></td>
+          <td><code>full-required</code>では32-byte key fileが必須</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_INFERENCE_AUDIT_MATERIALIZATION_TIMEOUT_SECONDS</code></th>
+          <td><code>30</code></td>
+          <td>template・tokenize補助取得のdeadline</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      source codeの汎用既定は<code>off</code>とし、<code
+        >local-node</code
+      >
+      production unitだけを
+      <code>full-required</code>へ明示設定します。不正値、rootがfilesystem
+      root、key不足、unsafe ownership、 retentionが7日を超える設定ではdaemonを起動しません。
+    </p>
+  </section>
+
+  <section id="implementation">
+    <h2>実装結果</h2>
+    <ol>
+      <li>
+        core schemaとpolicy parserを追加し、record identity、expiresAt、size、outcomeをstrict
+        validationしました。
+      </li>
+      <li>
+        backend storeへsecure create、record
+        path・payload種別を結ぶAES-GCM、展開上限付き復号、atomic metadata
+        commit、完了commitを保つcrash recovery、TTL・capacity pruneを実装しました。
+      </li>
+      <li>
+        Gatewayのbuffered LLM pathへcapture hookを追加しました。raw
+        requestの永続化に成功してからupstreamを 呼び、response streamをclientとstoreへteeしました。
+        response captureだけが失敗してもclient streamを継続し、recordをtruncatedとして確定します。
+      </li>
+      <li>
+        Runtime
+        endpointの<code>/apply-template</code>と<code>/tokenize</code>をboundedに呼ぶmaterializerを追加し、
+        prompt、ID、piece、token countを同じrecordへ追加します。失敗時はraw requestを保持し
+        <code>materializationError</code>を記録するようにしました。
+      </li>
+      <li>
+        local
+        CLIへ<code>list</code>、<code>show</code>、<code>verify</code>、<code>prune</code>を追加しました。
+        <code>show</code
+        >はrequest、prompt、tokens、responseを個別指定できるようにしました。
+      </li>
+      <li>
+        systemd prune service・timer、installer、運用CLI contractを追加しました。daemonとpruneは
+        非secretの<code>/etc/larm/inference-audit.env</code>だけを共有します。prune
+        serviceへAPI・management credentialを渡さず、network
+        namespaceを持たせず、<code>/var/lib/larm</code>配下だけを書き換えます。
+      </li>
+      <li>
+        repository desired stateはProviderをloopbackへ固定済みです。live hostのSAAA経路確認と
+        8080–8084の移行用listener閉鎖はproduction rolloutで実施します。
+      </li>
+      <li>
+        汎用defaultは<code>off</code>、local-node production
+        unitは<code>full-required</code>にしました。 専用test rootで暗号化round
+        trip、期限、容量、Gateway fail-closedを検証しました。
+      </li>
+    </ol>
+  </section>
+
+  <section id="failure-policy">
+    <h2>Failure policy</h2>
+    <table>
+      <caption>
+        監査処理が失敗した場合の推論・保存動作
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Failure</th>
+          <th scope="col">動作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">request保存不能</th>
+          <td><code>full-required</code>ではupstreamを呼ばず503</td>
+        </tr>
+        <tr>
+          <th scope="row">template・tokenize失敗</th>
+          <td>raw bodyとmodel identityを残し、推論は継続。recordを再materialize対象にする</td>
+        </tr>
+        <tr>
+          <th scope="row">response保存上限</th>
+          <td>保存だけを打ち切り、client streamは継続。truncatedを記録</td>
+        </tr>
+        <tr>
+          <th scope="row">response write失敗</th>
+          <td>metadata eventを出し、client streamは継続。active recordはrecovery対象</td>
+        </tr>
+        <tr>
+          <th scope="row">key不正・root unsafe</th>
+          <td>daemon startupをfail closed</td>
+        </tr>
+        <tr>
+          <th scope="row">prune失敗</th>
+          <td>新規full captureを停止し、metadata eventとmetricでoperator対応を要求</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="tests">
+    <h2>検証</h2>
+    <h3>Unit・property test</h3>
+    <ul>
+      <li>raw bodyのbyte一致、SHA-256一致、JSONのfield順・escape保持</li>
+      <li>Authorizationと全credential headerがpayload・metadata・journaldへ出ない</li>
+      <li>AES-GCM round trip、wrong key・改ざん・record間暗号文差し替えの検出</li>
+      <li>response teeがchunk順、backpressure、cancel、timeoutをclientとrecordで一致させる</li>
+      <li>168時間の直前・ちょうど・直後、clock rollback、daemon restartで同じretention decision</li>
+      <li>容量超過時のoldest-first、active保護、最小空き容量、早期削除event</li>
+      <li>
+        symlink、hard link、root、path traversal、corrupt metadata、partial recoveryをfail closed
+      </li>
+      <li>
+        materializerがchat template、thinking設定、tool call、system message順序をrequestどおり扱う
+      </li>
+    </ul>
+
+    <h3>production rollout acceptance</h3>
+    <ol>
+      <li>
+        固有markerを含む約3,000 tokenのrequestをGatewayへ送り、raw request、rendered prompt、全token
+        ID・pieceをCLIで照合します。
+      </li>
+      <li>
+        正常SSE、client cancel、30秒client timeoutを実行し、それぞれresponseとoutcomeを確認します。
+      </li>
+      <li>Provider logのprompt token数と監査recordのtoken数を同一request IDで照合します。</li>
+      <li>
+        fake clockと専用test rootで168時間を進め、expired
+        recordがlist不能かつ物理削除されることを確認します。
+      </li>
+      <li>
+        容量上限と空き容量を小さくしたtest rootで古いrecordだけが安全に削除されることを確認します。
+      </li>
+      <li>
+        daemon restart中のpartial recordがinterruptedへ収束し、Resident Provider
+        PIDが変わらないことを確認します。
+      </li>
+      <li>SAAA hostから9810が成功し、8080–8084が到達不能であることを確認します。</li>
+      <li>
+        7日soak後にexpired record 0、上限超過0、decrypt failure 0、capture gap 0を確認します。
+      </li>
+    </ol>
+  </section>
+
+  <section id="observability">
+    <h2>Observability</h2>
+    <p>本文を出さず、次のmetadata eventをjournaldへ公開します。</p>
+    <ul>
+      <li><code>inference_audit_started</code></li>
+      <li><code>inference_audit_completed</code></li>
+      <li><code>inference_audit_capture_failed</code></li>
+      <li><code>inference_audit_pruned</code></li>
+      <li><code>inference_audit_prune_failed</code></li>
+    </ul>
+    <p>
+      request IDは既存Gateway eventには残しますがPrometheus
+      labelへは入れません。prompt、response、digest、 file pathもmetric labelへ入れません。
+    </p>
+  </section>
+
+  <section id="rollout">
+    <h2>Rollout</h2>
+    <ol>
+      <li>全testと専用test rootでcleanup dry-runを通します。</li>
+      <li>host stateをbackupし、key、0700 root、prune timerを導入します。</li>
+      <li>
+        <code>metadata</code> modeでGateway経路とdisk
+        accountingをcanaryします。
+      </li>
+      <li>
+        <code>full-required</code>へ切り替え、local
+        CLIでrequest・prompt・tokens・responseを確認します。
+      </li>
+      <li>
+        SAAAをGatewayへ切り替え、同じrequest IDがclient、LARM
+        event、監査recordで一致することを確認します。
+      </li>
+      <li>
+        Provider portをloopback化し、LAN direct accessを閉じます。Resident
+        unitは一件ずつ適用します。
+      </li>
+      <li>cancel再現、retention rehearsal、24時間canary、7日soakの順に完了判定します。</li>
+    </ol>
+  </section>
+
+  <section id="rollback">
+    <h2>Rollback</h2>
+    <ol>
+      <li><code>LARM_INFERENCE_AUDIT_MODE=off</code>へ戻し、LARM daemonだけをrestartします。</li>
+      <li>Gateway inferenceとResident PIDが正常であることを確認します。</li>
+      <li>
+        prune timerは停止せず、既存の暗号化recordが期限到達まで削除され続ける状態を維持します。
+      </li>
+      <li>原因を修正後、metadata modeから再開します。</li>
+    </ol>
+    <p>
+      rollback時もProvider LAN
+      portは原則として再公開しません。Gateway自体が利用不能で緊急に戻す場合だけ、
+      送信元を限定したattended network
+      rollbackとして別に承認します。監査payloadの手動一括削除はrollbackへ 含めず、必要な場合はexact
+      rootと件数・bytesをreviewした別操作にします。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>完了条件</h2>
+    <ul>
+      <li>全LLM client requestがLARM Gatewayを通り、direct Provider requestを受け付けない。</li>
+      <li>
+        request IDからraw request、rendered prompt、token ID・piece、response、outcomeをlocal
+        CLIで取得できる。
+      </li>
+      <li>body byte、model release、template設定、token数を同じrecordで証明できる。</li>
+      <li>Authorizationとcredentialが監査root、journald、metrics、Gitへ保存されない。</li>
+      <li>期限到達recordをCLIが返さず、daemon timerまたは毎時fallback timerで物理削除する。</li>
+      <li>10 GiB上限と20 GiB最小空き容量を越えず、active recordを削除しない。</li>
+      <li>
+        capture不能時に未記録の推論を実行せず、response capture異常はclient streamを壊さない。
+      </li>
+      <li>
+        導入・rollback・retention試験でQwen 3.8 27B ResidentのPIDとhealthが意図せず変化しない。
+      </li>
+      <li>
+        <code>bun run check</code>と実機cancel・expiry・disk pressure
+        acceptanceがすべて成功する。
+      </li>
+    </ul>
+  </section>
+</article>

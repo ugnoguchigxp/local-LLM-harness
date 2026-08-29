@@ -13,7 +13,7 @@
 
   <p>
     2026-08-28と2026-08-29に、Spec HTML、repository README、Provider
-    README、compatibility仕様、gnosis運用手順を現行コード、Registry、artifact manifest、systemd
+    README、compatibility仕様、local-node運用手順を現行コード、Registry、artifact manifest、systemd
     unit、配備script、実ホストの読取結果と照合しました。
     この文書は検出した不整合、修正結果、文書正本の対応を記録します。
   </p>
@@ -27,7 +27,7 @@
     <dd>
       <code>README.md</code
       >、<code>apps/*/README.md</code>、<code>docs/</code>、<code>spec/</code>、<code>specs/</code>、<code
-        >deploy/gnosis/README.md</code
+        >deploy/local-node/README.md</code
       >
     </dd>
     <dt>非対象</dt>
@@ -110,7 +110,7 @@
             選定文書の<code>ngram-mod</code>既定とrepositoryのplain
             contractが不一致
           </td>
-          <td>gnosis回帰測定、provider config revision、MTP・ngram無効へ統一</td>
+          <td>local-node回帰測定、provider config revision、MTP・ngram無効へ統一</td>
         </tr>
       </tbody>
     </table>
@@ -265,7 +265,7 @@
         <tr>
           <th scope="row">導入手順</th>
           <td>
-            <code>docs/gnosis.md</code
+            <code>docs/local-node.md</code
             >が初回daemon導入前のinstaller実行を省略していた
           </td>
           <td>
@@ -301,7 +301,7 @@
         <tr>
           <th scope="row">手順順序</th>
           <td>
-            <code>docs/gnosis.md</code>のrelease
+            <code>docs/local-node.md</code>のrelease
             planが現行Milestoneのinstallerより前に置かれていた
           </td>
           <td>preflight、installer、release plan、applyの一つの順序へ統一</td>
@@ -411,7 +411,7 @@
         </tr>
         <tr>
           <th scope="row">Performance evidence</th>
-          <td>gnosisの精密な測定値に、repository内のraw dataと再現手順がなかった</td>
+          <td>local-nodeの精密な測定値に、repository内のraw dataと再現手順がなかった</td>
           <td>historical baselineと明示し、release gateへ使わず、将来runに必要な記録項目を追加</td>
         </tr>
       </tbody>
@@ -466,24 +466,24 @@
         </tr>
         <tr>
           <th scope="row">Node・Runtime・Profile・Route</th>
-          <td><code>config/gnosis</code></td>
+          <td><code>config/local-node</code></td>
           <td>repository desired state</td>
         </tr>
         <tr>
           <th scope="row">Model artifact metadata</th>
-          <td><code>deploy/gnosis/models.yaml</code></td>
+          <td><code>deploy/local-node/models.yaml</code></td>
           <td>checksum付き単一fileと全file・snapshot digest固定directoryが無人staging対象</td>
         </tr>
         <tr>
           <th scope="row">外部source identity</th>
-          <td><code>deploy/gnosis/sources.lock.yaml</code></td>
+          <td><code>deploy/local-node/sources.lock.yaml</code></td>
           <td>repository、revision、version、patch、operator配備VVMのbytes・SHA-256・terms</td>
         </tr>
         <tr>
           <th scope="row">Host desired service構成</th>
           <td>
-            <code>deploy/gnosis/systemd</code>と<code
-              >deploy/gnosis/scripts</code
+            <code>deploy/local-node/systemd</code>と<code
+              >deploy/local-node/scripts</code
             >
           </td>
           <td>
@@ -611,7 +611,7 @@
           </td>
         </tr>
         <tr>
-          <td>過去のgnosis性能値に再現可能なraw dataがない</td>
+          <td>過去のlocal-node性能値に再現可能なraw dataがない</td>
           <td>
             継続制限。identity固定toolは実装済みで、production SLO実測は未校正としてfail closed
           </td>

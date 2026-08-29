@@ -20,18 +20,18 @@ if ! command -v systemd-analyze >/dev/null 2>&1; then
   echo "systemd-analyze is required for unit verification" >&2
   exit 1
 fi
-systemd-analyze verify deploy/gnosis/systemd/*.service
+systemd-analyze verify deploy/local-node/systemd/*.service
 
 if grep -En '0\.0\.0\.0|\[::\]' \
-  deploy/gnosis/systemd/llama-server.service \
-  deploy/gnosis/systemd/llama-swap-worker.service \
-  deploy/gnosis/systemd/qwen-asr.service \
-  deploy/gnosis/systemd/qwen-tts.service \
-  deploy/gnosis/systemd/voicevox-tts.service; then
+  deploy/local-node/systemd/llama-server.service \
+  deploy/local-node/systemd/llama-swap-worker.service \
+  deploy/local-node/systemd/qwen-asr.service \
+  deploy/local-node/systemd/qwen-tts.service \
+  deploy/local-node/systemd/voicevox-tts.service; then
   echo "production Provider units must not use wildcard listeners" >&2
   exit 1
 fi
-if grep -En '808[0-4]' deploy/gnosis/scripts/prepare-host.sh; then
+if grep -En '808[0-4]' deploy/local-node/scripts/prepare-host.sh; then
   echo "prepare-host.sh must not add direct Provider LAN rules" >&2
   exit 1
 fi

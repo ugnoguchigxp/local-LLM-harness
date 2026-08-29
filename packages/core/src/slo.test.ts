@@ -11,7 +11,7 @@ const ids = ["llm-normal", "llm-realtime", "stt", "tts-normal"] as const;
 function manifest() {
   return {
     schemaVersion: 1,
-    node: "gnosis",
+    node: "local-node",
     status: "calibrated",
     series: ids.map((id) => ({
       id,
@@ -83,11 +83,11 @@ function summary() {
 }
 
 describe("SLO schemas", () => {
-  test("versioned gnosis manifest starts fail-closed until production calibration", async () => {
-    const path = resolve(import.meta.dir, "../../../deploy/gnosis/slo.yaml");
+  test("versioned local-node manifest starts fail-closed until production calibration", async () => {
+    const path = resolve(import.meta.dir, "../../../deploy/local-node/slo.yaml");
     expect(sloManifestSchema.parse(parse(await readFile(path, "utf8")))).toEqual({
       schemaVersion: 1,
-      node: "gnosis",
+      node: "local-node",
       status: "uncalibrated",
       series: [],
     });
@@ -177,7 +177,7 @@ describe("compareSlo", () => {
 
   test("rejects uncalibrated manifests", () => {
     const result = compareSlo(
-      { schemaVersion: 1, node: "gnosis", status: "uncalibrated", series: [] },
+      { schemaVersion: 1, node: "local-node", status: "uncalibrated", series: [] },
       summary(),
       { commit },
     );

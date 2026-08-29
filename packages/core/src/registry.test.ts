@@ -8,7 +8,7 @@ import {
   RegistryError,
 } from "../src/registry";
 
-const repoConfig = join(import.meta.dir, "../../../config/gnosis");
+const repoConfig = join(import.meta.dir, "../../../config/local-node");
 const fixtures = join(import.meta.dir, "../test/fixtures");
 
 test("loads the Linux production registry", () => {
@@ -34,7 +34,7 @@ test("loads the Linux production registry", () => {
   const agentWorkerRoute = registry.routes.find((route) => route.id === "llm-agent-worker");
   const agent35bRoute = registry.routes.find((route) => route.id === "llm-agent-35b");
 
-  expect(registry.nodes[0]?.id).toBe("gnosis");
+  expect(registry.nodes[0]?.id).toBe("local-node");
   expect(general?.backend).toBe("systemd");
   expect(general?.policy.class).toBe("resident");
   if (general?.backend === "systemd") {
@@ -164,7 +164,7 @@ function registryDocuments(routes: unknown) {
   return {
     nodesYaml: {
       nodes: {
-        gnosis: {
+        "local-node": {
           endpoint: "http://127.0.0.1",
           resources: { memoryTotalGB: 128, reservedMemoryGB: 16 },
         },
@@ -176,7 +176,7 @@ function registryDocuments(routes: unknown) {
           capability: ["llm.general"],
           protocol: "openai.chat-completions.v1",
           backend: "systemd",
-          node: "gnosis",
+          node: "local-node",
           policy: { class: "resident" },
           resources: {
             estimatedMemoryGB: 40,
@@ -285,7 +285,7 @@ test("rejects multiple default routes for the same capability", () => {
 
 test("rejects impossible node memory reservations", () => {
   const documents = registryDocuments({ routes: {} });
-  documents.nodesYaml.nodes.gnosis.resources.reservedMemoryGB = 129;
+  documents.nodesYaml.nodes["local-node"].resources.reservedMemoryGB = 129;
   expect(() => parseRegistryDocuments(documents)).toThrow(/reservedMemoryGB/);
 });
 
@@ -308,6 +308,6 @@ test("rejects a resident floor that exceeds usable node memory", () => {
   const documents = registryDocuments({ routes: {} });
   documents.runtimesYaml.runtimes["qwen-general"].resources.estimatedMemoryGB = 113;
   expect(() => parseRegistryDocuments(documents)).toThrow(
-    /resident runtimes on node gnosis require 113GB but only 112GB is usable/,
+    /resident runtimes on node local-node require 113GB but only 112GB is usable/,
   );
 });

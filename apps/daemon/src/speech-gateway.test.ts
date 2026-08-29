@@ -15,7 +15,7 @@ const runtime = (
   capability: [capability],
   protocol,
   backend: "systemd" as const,
-  node: "gnosis",
+  node: "local-node",
   policy: { class: "resident" as const },
   resources: {
     estimatedMemoryGB: 1,
@@ -32,7 +32,7 @@ const runtime = (
 
 const registry: Registry = {
   nodes: [{
-    id: "gnosis",
+    id: "local-node",
     endpoint: "http://127.0.0.1",
     resources: { memoryTotalGB: 128, reservedMemoryGB: 16 },
   }],

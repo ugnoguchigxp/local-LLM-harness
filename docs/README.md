@@ -12,10 +12,10 @@
 | [../specs/production-rollout-execution-plan.html](../specs/production-rollout-execution-plan.html) | Milestone 23–27のattended実行順、証跡、停止条件、rollback |
 | [../specs/implementation-completion.html](../specs/implementation-completion.html) | Milestone 8–14の実装結果と残るattended gate |
 | [../specs/implementation-completion-m15-m21.html](../specs/implementation-completion-m15-m21.html) | Milestone 15–21のrepository実装完了記録 |
-| [../specs/commissioning-evidence.html](../specs/commissioning-evidence.html) | 時刻固定のgnosis preflightとcommissioning証跡 |
+| [../specs/commissioning-evidence.html](../specs/commissioning-evidence.html) | 時刻固定のlocal-node preflightとcommissioning証跡 |
 | [../specs/stable-release-gate.html](../specs/stable-release-gate.html) | Stable昇格のblocking gateとrollback方針 |
 | [../specs/review-hardening.html](../specs/review-hardening.html) | 実装監査の指摘、修正、不変条件 |
 | [../specs/documentation-review.html](../specs/documentation-review.html) | 文書監査の結果と正本対応表 |
-| [gnosis.md](gnosis.md) | AI MAX+ 395実機の構成、計測、運用 |
+| [local-node.md](local-node.md) | AI MAX+ 395実機の構成、計測、運用 |
 | [../spec/README.md](../spec/README.md) | 既存Markdownのcompatibility API・architecture・data model |
-| [../deploy/gnosis/README.md](../deploy/gnosis/README.md) | Linux配備手順 |
+| [../deploy/local-node/README.md](../deploy/local-node/README.md) | Linux配備手順 |

@@ -44,6 +44,7 @@ import {
 } from "./agent-connection-controller";
 import { ConnectionTokenCodec, ConnectionTokenError } from "./connection-token";
 import { SemanticReadiness } from "./semantic-readiness";
+import type { InferenceAuditRecorder } from "./inference-audit";
 
 export type FetchLike = (
   input: string | URL | Request,
@@ -83,6 +84,8 @@ export type AppDeps = {
   providerProbeTimeoutMs?: number;
   connectionPollIntervalMs?: number;
   connectionHistoryLimit?: number;
+  inferenceAuditMode?: "off" | "metadata" | "full-required";
+  inferenceAuditRecorder?: InferenceAuditRecorder;
 };
 
 function errorBody(code: string, message: string) {
@@ -455,6 +458,16 @@ export function createApp(deps: AppDeps) {
       now: deps.now,
       random: deps.random,
       onEvent: deps.onEvent,
+      inferenceAuditMode: deps.inferenceAuditMode,
+      inferenceAuditRecorder: deps.inferenceAuditRecorder,
+      auditContext: {
+        capability: selected.binding.capability,
+        route: selected.binding.route,
+        ...(selected.binding.release ? { runtimeRelease: selected.binding.release } : {}),
+        configRevision: allocation.catalogRevision
+          ?? deps.getConfigRevision?.()
+          ?? identity.configRevision,
+      },
       revalidate: () => {
         if (providerToken && agentConnections) {
           try {
@@ -527,7 +540,7 @@ export function createApp(deps: AppDeps) {
     if (result.location) c.header("location", result.location);
     if (result.status === 202 || result.status === 503) c.header("retry-after", "1");
     if (result.status === 204) return c.body(null, 204);
-    return c.json(result.body, result.status as 200 | 202 | 400 | 401 | 403 | 404 | 409 | 410 | 429 | 503);
+    return c.json(result.body, result.status as 200 | 201 | 202 | 400 | 401 | 403 | 404 | 409 | 410 | 429 | 503);
   };
   const idempotencyKey = (c: Context): string | Response => {
     const value = c.req.header("idempotency-key");
@@ -558,7 +571,7 @@ export function createApp(deps: AppDeps) {
         return c.json(errorBody("forbidden", "valid management token required for deployment"), 403);
       }
     }
-    return agentResult(c, await feature.create(parsed.data, principal(), key));
+    return agentResult(c, await feature.create(parsed.data, principal(), key, c.req.url));
   });
 
   app.get("/v1/agent-connections/:id", (c) => {

@@ -6,8 +6,8 @@
 apps/daemon          Allocation API、LLM・STT・TTS Gateway、execution gate、観測loop、operation coordination
 packages/core        registry、Route、Allocation、admission、planner、resolve
 packages/backends    systemd、llama-swap、artifact store
-config/gnosis        production desired state
-deploy/gnosis        host setup、systemd units、artifact manifest
+config/local-node        production desired state
+deploy/local-node        host setup、systemd units、artifact manifest
 ```
 
 CoreはOS非依存の選択・状態計算に限定し、推論本文を処理しません。daemonのGatewayは

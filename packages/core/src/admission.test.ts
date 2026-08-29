@@ -7,7 +7,7 @@ import type { ClusterState, RuntimeSnapshot } from "./schema";
 const registry: Registry = {
   nodes: [
     {
-      id: "gnosis",
+      id: "local-node",
       endpoint: "http://127.0.0.1",
       resources: { memoryTotalGB: 64, reservedMemoryGB: 16 },
     },
@@ -18,7 +18,7 @@ const registry: Registry = {
       capability: ["llm.general"],
       protocol: "openai.chat-completions.v1",
       backend: "systemd",
-      node: "gnosis",
+      node: "local-node",
       policy: { class: "resident" },
       resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: { service: "resident", healthPort: 1, endpoint: "http://127.0.0.1:1" },
@@ -28,7 +28,7 @@ const registry: Registry = {
       capability: ["llm.general", "llm.coding"],
       protocol: "openai.chat-completions.v1",
       backend: "systemd",
-      node: "gnosis",
+      node: "local-node",
       policy: { class: "preferred" },
       resources: {
         estimatedMemoryGB: 24,
@@ -62,7 +62,7 @@ function state(runtimes: RuntimeSnapshot[]): ClusterState {
   return {
     generatedAt: "2026-08-28T00:00:00.000Z",
     node: {
-      id: "gnosis",
+      id: "local-node",
       online: true,
       endpoint: "http://127.0.0.1",
       resources: { memoryTotalGB: 64, reservedMemoryGB: 16 },
@@ -81,7 +81,7 @@ function allocation(runtime: string): Allocation {
       capability: "llm.general",
       route: "llm-speed",
       runtime,
-      node: "gnosis",
+      node: "local-node",
       endpoint: "http://127.0.0.1:2",
       status: "HOT",
       candidateRank: 1,
@@ -105,7 +105,7 @@ test("admission counts each runtime once across multiple capabilities", () => {
   expect(result).toEqual({
     ok: true,
     nodes: [{
-      node: "gnosis",
+      node: "local-node",
       usableMemoryGB: 48,
       committedMemoryGB: 24,
       incrementalMemoryGB: 24,
@@ -216,7 +216,7 @@ test("resident-only admission does not depend on live telemetry", () => {
 
 const swapRegistry: Registry = {
   nodes: [{
-    id: "gnosis",
+    id: "local-node",
     endpoint: "http://127.0.0.1",
     resources: { memoryTotalGB: 100, reservedMemoryGB: 16 },
   }],
@@ -226,7 +226,7 @@ const swapRegistry: Registry = {
       capability: ["llm.general"],
       protocol: "openai.chat-completions.v1",
       backend: "systemd",
-      node: "gnosis",
+      node: "local-node",
       policy: { class: "resident" },
       resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: { service: "resident.service", healthPort: 8080, endpoint: "http://127.0.0.1:8080" },
@@ -236,7 +236,7 @@ const swapRegistry: Registry = {
       capability: ["llm.general"],
       protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
-      node: "gnosis",
+      node: "local-node",
       policy: { class: "preferred", swapGroup: "worker-slot" },
       resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
@@ -250,7 +250,7 @@ const swapRegistry: Registry = {
       capability: ["llm.general"],
       protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
-      node: "gnosis",
+      node: "local-node",
       policy: { class: "preferred", swapGroup: "worker-slot" },
       resources: { estimatedMemoryGB: 44, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
@@ -268,7 +268,7 @@ function swapState(statuses: Record<string, RuntimeSnapshot["status"]>): Cluster
   return {
     generatedAt: "2026-08-29T00:00:00.000Z",
     node: {
-      id: "gnosis",
+      id: "local-node",
       online: true,
       endpoint: "http://127.0.0.1",
       resources: { memoryTotalGB: 100, reservedMemoryGB: 16 },
@@ -311,7 +311,7 @@ test("admission replaces an idle HOT peer in the same swap group", () => {
   expect(result).toEqual({
     ok: true,
     nodes: [{
-      node: "gnosis",
+      node: "local-node",
       usableMemoryGB: 84,
       committedMemoryGB: 40,
       incrementalMemoryGB: 44,

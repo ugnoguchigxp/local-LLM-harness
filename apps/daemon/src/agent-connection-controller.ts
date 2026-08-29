@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   activeAllocation,
+  resolveAgentAudienceBaseUrl,
   type AgentAudience,
   type AgentConnectionCatalog,
   type AgentConnectionClaim,
@@ -117,21 +118,29 @@ export class AgentConnectionController {
     request: AgentConnectionRequest,
     principal: string,
     idempotencyKey: string,
+    requestUrl: string,
   ): Promise<AgentConnectionApiResult> {
+    const catalog = this.options.getCatalog();
+    if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
+    const profile = catalog.profiles.find((item) => item.id === request.agentProfile);
+    if (!profile) return error("unknown_agent_profile", `agent profile ${request.agentProfile} does not exist`, 404);
+    const configuredAudience = catalog.audiences.find((item) => item.id === request.audience);
+    if (!configuredAudience) return error(
+      "connection_audience_unavailable",
+      `agent audience ${request.audience} is unavailable`,
+      409,
+    );
+    const advertisedBaseUrl = resolveAgentAudienceBaseUrl(configuredAudience, requestUrl);
+    if (!advertisedBaseUrl) return error(
+      "connection_audience_unavailable",
+      `agent audience ${request.audience} cannot use the request origin`,
+      409,
+    );
+    const audience = { ...structuredClone(configuredAudience), baseUrl: advertisedBaseUrl };
     return await this.idempotent(
       `${principal}:POST:/v1/agent-connections:${idempotencyKey}`,
-      hash(JSON.stringify(request)),
+      hash(JSON.stringify({ request, advertisedBaseUrl })),
       async () => {
-        const catalog = this.options.getCatalog();
-        if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
-        const profile = catalog.profiles.find((item) => item.id === request.agentProfile);
-        if (!profile) return error("unknown_agent_profile", `agent profile ${request.agentProfile} does not exist`, 404);
-        const audience = catalog.audiences.find((item) => item.id === request.audience);
-        if (!audience) return error(
-          "connection_audience_unavailable",
-          `agent audience ${request.audience} is unavailable`,
-          409,
-        );
         const allocated = await this.options.control.allocate({
           requirements: profile.providers.map((provider) => ({
             capability: provider.capability,
@@ -154,7 +163,7 @@ export class AgentConnectionController {
           bootEpoch: this.options.control.getBootEpoch(),
           catalogRevision: allocation.catalogRevision ?? this.options.getCatalogRevision(),
           profile: structuredClone(profile),
-          audience: structuredClone(audience),
+          audience,
           status: allocation.status === "ready" ? "probing" : "pending",
           createdAt: new Date(now).toISOString(),
           expiresAt: allocation.expiresAt,
@@ -167,7 +176,7 @@ export class AgentConnectionController {
         if (record.status === "probing") complete = await this.probeInitial(record);
         if (!complete && !isTerminal(record.status)) this.startBackground(record);
         return {
-          status: complete ? 200 : 202,
+          status: complete ? 201 : 202,
           body: this.public(record),
           location: `/v1/agent-connections/${record.id}`,
         };
@@ -518,7 +527,7 @@ export class AgentConnectionController {
     };
     this.idempotency.set(scope, entry);
     const result = await entry.result;
-    if (result.status !== 200 && result.status !== 202) {
+    if (result.status !== 201 && result.status !== 202) {
       this.idempotency.delete(scope);
     } else if (typeof result.body === "object" && result.body !== null && "id" in result.body) {
       entry.connectionId = String((result.body as { id: unknown }).id);

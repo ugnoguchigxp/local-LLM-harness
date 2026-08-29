@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-releaser="${repo_root}/deploy/gnosis/scripts/release-larm.sh"
+releaser="${repo_root}/deploy/local-node/scripts/release-larm.sh"
 test_root="$(mktemp -d /tmp/larm-release-test.XXXXXX)"
 trap 'rm -rf -- "${test_root}"' EXIT
 source_root="${test_root}/source"

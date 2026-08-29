@@ -3,7 +3,7 @@
 
   <p>
     この文書は、Route、Allocation、LLM Gateway、単一file artifact lifecycleまでを実装した
-    LARMを、gnosis上で常用できるLocal AI Providerへ進める次期計画です。次の主目的は、
+    LARMを、local-node上で常用できるLocal AI Providerへ進める次期計画です。次の主目的は、
     現行機能を実運用へ反映し、LLM、STT、TTSを同じAllocation固定の安定endpointから利用可能にすることです。
   </p>
 
@@ -114,7 +114,7 @@
   <section id="target-state">
     <h2>次期サイクルの完了状態</h2>
     <ol>
-      <li>gnosisでLARM daemonが常駐し、再現可能な検査とrollback手順を持つ。</li>
+      <li>local-nodeでLARM daemonが常駐し、再現可能な検査とrollback手順を持つ。</li>
       <li>利用側はLLM、STT、TTSの個別portを知らず、Allocation IDと安定endpointだけを使用する。</li>
       <li>Gatewayはrequest bodyからRuntime、upstream URL、pathを決定しない。</li>
       <li>Runtimeごとの同時実行数、待機数、待機時間が設定値でboundedになる。</li>
@@ -191,7 +191,7 @@ Milestone 14 Canary migration and production gate</code></pre>
     <h2>Milestone 8: Automated baseline and commissioning</h2>
     <dl>
       <dt>目的</dt>
-      <dd>現在の実装を再現可能なrelease候補にし、gnosisでLARM自身を常駐運用へ載せる。</dd>
+      <dd>現在の実装を再現可能なrelease候補にし、local-nodeでLARM自身を常駐運用へ載せる。</dd>
       <dt>優先度</dt>
       <dd>P0</dd>
     </dl>
@@ -208,7 +208,7 @@ Milestone 14 Canary migration and production gate</code></pre>
       </li>
       <li>
         Allocation作成、Resident 27B固定、Gateway stream、releaseを行う非破壊smoke scriptを
-        <code>deploy/gnosis</code>へ追加する。
+        <code>deploy/local-node</code>へ追加する。
       </li>
       <li>
         installerの再実行、credential保持、unit差分、polkit最小権限、Preferred boot
@@ -392,7 +392,9 @@ Milestone 14 Canary migration and production gate</code></pre>
         code、429、<code>Retry-After</code>へ変換する。
       </li>
       <li>active、queued、rejected、queue durationをRuntime単位の低cardinality metricにする。</li>
-      <li>gnosisのslot値は推測で決めず、各Providerの負荷試験とmemory peakを記録して設定する。</li>
+      <li>
+        local-nodeのslot値は推測で決めず、各Providerの負荷試験とmemory peakを記録して設定する。
+      </li>
     </ol>
 
     <h3>完了条件</h3>
@@ -578,12 +580,12 @@ Milestone 14 Canary migration and production gate</code></pre>
           <td>Allocation、route、model download</td>
         </tr>
         <tr>
-          <th scope="row"><code>config/gnosis</code></th>
+          <th scope="row"><code>config/local-node</code></th>
           <td>protocolと実測済みexecution capacity</td>
           <td>secret、生成state、35Bの先行登録</td>
         </tr>
         <tr>
-          <th scope="row"><code>deploy/gnosis</code></th>
+          <th scope="row"><code>deploy/local-node</code></th>
           <td>commissioning、smoke、rollback、snapshot配置準備</td>
           <td>無人reboot、Resident restart、model data</td>
         </tr>
@@ -631,7 +633,7 @@ Milestone 14 Canary migration and production gate</code></pre>
           <td>部分download、hash不一致、disk不足、journal破損、rollback失敗</td>
         </tr>
         <tr>
-          <th scope="row">gnosis E2E</th>
+          <th scope="row">local-node E2E</th>
           <td>voice profile、memory、slot、idle回収</td>
           <td>Resident停止、oversubscription、payload log、direct port依存</td>
         </tr>
@@ -651,7 +653,7 @@ Milestone 14 Canary migration and production gate</code></pre>
       <li>boot epochとidempotencyを追加する。</li>
       <li>startup reconciliationを追加する。</li>
       <li>snapshot schema、staging、activationの順に追加する。</li>
-      <li>gnosis canary設定と受入記録を追加する。</li>
+      <li>local-node canary設定と受入記録を追加する。</li>
     </ol>
     <p>
       各sliceでSpec HTML、contract
@@ -733,7 +735,7 @@ Milestone 14 Canary migration and production gate</code></pre>
       <li>request payload、audio、認証情報、model dataをrepositoryまたはlogへ保存しない。</li>
       <li>timeout、cancel、上限、cleanup、metric、rollbackを受入条件へ含める。</li>
       <li>Qwen 3.8 27B Resident保護と35B未登録を回帰testで維持する。</li>
-      <li>gnosisへの変更はattended gateで行い、rebootとResident restartを自動化しない。</li>
+      <li>local-nodeへの変更はattended gateで行い、rebootとResident restartを自動化しない。</li>
     </ul>
   </section>
 </article>

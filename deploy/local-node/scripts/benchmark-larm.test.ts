@@ -112,7 +112,7 @@ function allocation(
       capability: requirement.capability,
       route: requirement.route,
       runtime: "qwen-general",
-      node: "gnosis",
+      node: "local-node",
       status: "HOT",
       candidateRank: 1,
       fallback: false,

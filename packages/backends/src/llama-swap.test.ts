@@ -205,7 +205,7 @@ test("ignores systemd runtimes registered on this backend", async () => {
     capability: ["speech.stt"],
     protocol: "openai.audio-transcriptions.v1",
     backend: "systemd",
-    node: "gnosis",
+    node: "local-node",
     policy: { class: "resident" },
     resources: { estimatedMemoryGB: 5, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
     deployment: {

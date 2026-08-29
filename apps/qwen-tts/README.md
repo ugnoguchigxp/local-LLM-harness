@@ -1,6 +1,6 @@
 # Qwen3 TTS optimized adapter
 
-表現力を優先する発声経路。gnosisではgfx1151向けforkを固定し、ROCm向け修正をパッチとして管理する。
+表現力を優先する発声経路。local-nodeではgfx1151向けforkを固定し、ROCm向け修正をパッチとして管理する。
 
 - upstream: `https://github.com/dingausmwald/Qwen3-TTS-Openai-Fastapi`
 - pinned commit: `eb14f6e6a50445cf442979abb9203ff0d5042c43`
@@ -10,9 +10,9 @@
 - port: `8082`
 - LARM policy: Preferred。installerはboot時disabledにし、明示的な`tts-expressive` Allocationだけが起動する
 
-upstreamとrevisionの正本は[`../../deploy/gnosis/sources.lock.yaml`](../../deploy/gnosis/sources.lock.yaml)、
+upstreamとrevisionの正本は[`../../deploy/local-node/sources.lock.yaml`](../../deploy/local-node/sources.lock.yaml)、
 production modelのfile list、bytes、SHA-256、snapshot digest、active targetの正本は
-[`../../deploy/gnosis/models.yaml`](../../deploy/gnosis/models.yaml)です。Qwen TTSは最初のPreferred
+[`../../deploy/local-node/models.yaml`](../../deploy/local-node/models.yaml)です。Qwen TTSは最初のPreferred
 directory snapshot activation対象です。
 
 配備手順:

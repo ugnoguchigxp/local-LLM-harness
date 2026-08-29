@@ -6,7 +6,7 @@ audiences:
     baseUrl: http://127.0.0.1:9810/v1
   saaa-desktop:
     network: host-private
-    baseUrl: http://192.168.0.65:9810/v1
+    baseUrl: request-origin
 
 agentProfiles:
   coding-default:

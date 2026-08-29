@@ -1,4 +1,4 @@
 schemaVersion: 1
-node: gnosis
+node: local-node
 status: uncalibrated
 series: []

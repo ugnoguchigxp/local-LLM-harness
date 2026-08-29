@@ -11,6 +11,10 @@ import {
   withAbort,
 } from "./http-body";
 import type { MetricsRegistry, RequestTracker } from "./metrics";
+import type {
+  InferenceAuditCaptureSession,
+  InferenceAuditRecorder,
+} from "./inference-audit";
 
 export type FetchLike = (
   input: string | URL | Request,
@@ -45,6 +49,14 @@ export type GatewayProxyOptions = {
   now?: () => number;
   random?: () => string;
   onEvent?: (event: ControlEvent) => void;
+  inferenceAuditMode?: "off" | "metadata" | "full-required";
+  inferenceAuditRecorder?: InferenceAuditRecorder;
+  auditContext?: {
+    capability: string;
+    route: string;
+    runtimeRelease?: string;
+    configRevision: string;
+  };
 };
 
 const RESPONSE_HEADERS = [
@@ -82,6 +94,11 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   let uploadCompletion = Promise.resolve();
   let releaseSlot: (() => void) | undefined;
   let cancelUpstream: ((reason: unknown) => Promise<void>) | undefined;
+  let upstreamStatus: number | undefined;
+  let auditSession: InferenceAuditCaptureSession | undefined;
+  let auditFinalization: Promise<void> | undefined;
+  let auditResponseCaptureFailed = false;
+  let auditMetadataStarted = false;
   let finished = false;
   const finishTracked = options.requestTracker?.begin() ?? (() => undefined);
   const abortFromClient = () => {
@@ -108,6 +125,12 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       labels: { runtime: options.runtime.id, protocol: options.protocol },
       value: Math.max(0, ((options.now?.() ?? Date.now()) - startedAt) / 1_000),
     });
+    if (auditMetadataStarted) {
+      options.onEvent?.({
+        name: "inference_audit_completed",
+        labels: { request: requestId, outcome },
+      });
+    }
     options.onEvent?.({
       name: "gateway_request_completed",
       labels: {
@@ -119,27 +142,49 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       },
     });
   };
+  const finalizeAudit = (): Promise<void> => {
+    if (auditFinalization) return auditFinalization;
+    if (!auditSession) return Promise.resolve();
+    const finalOutcome = outcome;
+    const finalUpstreamStatus = upstreamStatus;
+    auditFinalization = auditSession.finalize({
+      outcome: finalOutcome,
+      upstreamStatus: finalUpstreamStatus,
+    }).then(() => {
+      options.onEvent?.({
+        name: "inference_audit_completed",
+        labels: { request: requestId, outcome: finalOutcome },
+      });
+    }).catch(() => {
+      options.onEvent?.({
+        name: "inference_audit_capture_failed",
+        labels: { request: requestId, phase: "finalize" },
+      });
+    });
+    return auditFinalization;
+  };
   timeout = setTimeout(() => {
     timedOut = true;
     outcome = "timeout";
     const reason = new Error("gateway timeout");
     abort.abort(reason);
     void cancelUpstream?.(reason).catch(() => undefined);
-    finish();
+    void finalizeAudit().finally(finish);
   }, options.timeoutMs);
   timeout.unref?.();
-  const failure = (
+  const failure = async (
     code: string,
     message: string,
     status: number,
     result: string,
     headers?: ConstructorParameters<typeof Headers>[0],
-  ) => {
+  ): Promise<Response> => {
     outcome = result;
     options.metrics?.record({
       name: "gateway_request",
       labels: { runtime: options.runtime.id, protocol: options.protocol, result },
     });
+    await finalizeAudit();
     finish();
     return jsonResponse({ error: { code, message } }, status, {
       "x-request-id": requestId,
@@ -255,6 +300,81 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     return failure("bad_request", "request body could not be read", 400, "bad_request");
   }
 
+  if (
+    options.protocol === "openai.chat-completions.v1"
+    && options.inferenceAuditMode === "metadata"
+  ) {
+    auditMetadataStarted = true;
+    options.onEvent?.({
+      name: "inference_audit_started",
+      labels: { request: requestId, mode: "metadata" },
+    });
+  }
+
+  if (
+    options.protocol === "openai.chat-completions.v1"
+    && options.inferenceAuditMode === "full-required"
+  ) {
+    if (!options.inferenceAuditRecorder || !options.auditContext || !(body instanceof Uint8Array)) {
+      options.onEvent?.({
+        name: "inference_audit_capture_failed",
+        labels: { request: requestId, phase: "begin" },
+      });
+      return failure(
+        "inference_audit_unavailable",
+        "required inference audit storage is unavailable",
+        503,
+        "audit_unavailable",
+      );
+    }
+    try {
+      auditSession = await options.inferenceAuditRecorder.begin({
+        requestId,
+        allocationId: options.allocationId,
+        capability: options.auditContext.capability,
+        route: options.auditContext.route,
+        runtime: options.runtime.id,
+        ...(options.auditContext.runtimeRelease
+          ? { runtimeRelease: options.auditContext.runtimeRelease }
+          : {}),
+        bootEpoch: options.bootEpoch,
+        configRevision: options.auditContext.configRevision,
+        endpoint: current.binding.endpoint,
+        requestBody: body,
+        signal: abort.signal,
+      });
+      options.onEvent?.({
+        name: "inference_audit_started",
+        labels: { request: requestId },
+      });
+    } catch {
+      options.onEvent?.({
+        name: "inference_audit_capture_failed",
+        labels: { request: requestId, phase: "begin" },
+      });
+      if (timedOut) {
+        return failure("gateway_timeout", "gateway request timed out", 504, "timeout");
+      }
+      if (clientSignal.aborted) {
+        return failure("request_cancelled", "client cancelled the request", 400, "client_cancelled");
+      }
+      if (options.lifecycleSignal?.aborted) {
+        return failure(
+          "allocation_inactive",
+          "allocation is no longer active",
+          409,
+          "binding_invalidated",
+        );
+      }
+      return failure(
+        "inference_audit_unavailable",
+        "required inference audit storage is unavailable",
+        503,
+        "audit_unavailable",
+      );
+    }
+  }
+
   const headers = new Headers({
     accept: options.request.headers.get("accept") ?? "application/json",
     "content-type": options.request.headers.get("content-type") ?? "application/json",
@@ -296,6 +416,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       const invalidated = options.revalidate();
       if (!invalidated.ok) {
         outcome = "binding_invalidated";
+        await finalizeAudit();
         finish();
         return jsonResponse(invalidated.body, invalidated.status, {
           "x-request-id": requestId,
@@ -316,6 +437,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   }
 
   outcome = `http_${upstream.status}`;
+  upstreamStatus = upstream.status;
   options.metrics?.record({
     name: "gateway_ttfb_seconds",
     labels: {
@@ -348,6 +470,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     responseHeaders.set("content-type", "application/json");
   }
   if (!upstream.body) {
+    await finalizeAudit();
     finish();
     return new Response(null, { status: upstream.status, headers: responseHeaders });
   }
@@ -359,9 +482,26 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       try {
         const chunk = await withAbort(reader.read(), abort.signal);
         if (chunk.done) {
+          await finalizeAudit();
           finish();
           controller.close();
           return;
+        }
+        if (auditSession && !auditResponseCaptureFailed) {
+          try {
+            auditSession.captureResponse(chunk.value);
+          } catch {
+            auditResponseCaptureFailed = true;
+            try {
+              auditSession.markResponseCaptureFailed?.();
+            } catch {
+              // Finalization is already isolated below; the client stream must continue.
+            }
+            options.onEvent?.({
+              name: "inference_audit_capture_failed",
+              labels: { request: requestId, phase: "response" },
+            });
+          }
         }
         controller.enqueue(chunk.value);
       } catch (error) {
@@ -369,6 +509,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
           outcome = "stream_error";
         }
         await reader.cancel(error).catch(() => undefined);
+        await finalizeAudit();
         finish();
         controller.error(error);
       }
@@ -379,6 +520,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       try {
         await reader.cancel(reason);
       } finally {
+        await finalizeAudit();
         finish();
       }
     },

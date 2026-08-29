@@ -2,7 +2,7 @@
   <h1>SAAA向けLARM REST接続有効化計画</h1>
 
   <p>
-    既にgnosisへ恒久配備されている常用LLM、on-demand worker、model artifactを変更せず、SAAA
+    既にlocal-nodeへ恒久配備されている常用LLM、on-demand worker、model artifactを変更せず、SAAA
     desktopがLARM Agent Connection APIをRESTで利用できるようにするための小さな接続有効化計画です。
     SAAAはprofileとaudienceを要求し、claim responseからOpenAI-compatible接続設定を動的に構成します。
   </p>
@@ -17,9 +17,7 @@
     <dt>確認済みbaseline</dt>
     <dd><code>1fe9ec9357028169ed1e54dbf6538e262fc5672b</code></dd>
     <dt>対象host</dt>
-    <dd>
-      <code>gnosis</code> / <code>192.168.0.65</code>
-    </dd>
+    <dd><code>local-node</code> / mDNS・DNSまたは現在のDHCP address</dd>
     <dt>API contract</dt>
     <dd>
       <a href="./agent-provider-connection-api.html">Agent Provider Connection API実装仕様</a>
@@ -40,9 +38,9 @@
   <section id="goal">
     <h2>今回やりたいこと</h2>
     <ol>
-      <li>gnosisでLARM daemonを常駐させ、認証付きREST APIをTCP 9810で利用可能にします。</li>
+      <li>local-nodeでLARM daemonを常駐させ、認証付きREST APIをTCP 9810で利用可能にします。</li>
       <li>
-        SAAAは<code>deep-reasoning-35b</code>と<code>saaa-desktop</code>を指定してConnectionを作成します。
+        SAAAは<code>coding-default</code>と<code>saaa-desktop</code>を指定してConnectionを作成します。
       </li>
       <li>
         SAAAはclaim
@@ -52,7 +50,7 @@
       <li>SAAAはSSE inferenceを実行し、終了時にREST DELETEでConnectionを解放します。</li>
     </ol>
     <p>
-      SAAAからgnosisへの接続はREST APIだけを使用します。SSH、SFTP、SCP、SSH tunnel、port
+      SAAAからlocal-nodeへの接続はREST APIだけを使用します。SSH、SFTP、SCP、SSH tunnel、port
       forwardingは 使用しません。
     </p>
   </section>
@@ -73,7 +71,7 @@
       <tbody>
         <tr>
           <th scope="row">常用LLM・Provider</th>
-          <td>gnosisで配備・運用済み</td>
+          <td>local-nodeで配備・運用済み</td>
           <td>変更しない</td>
         </tr>
         <tr>
@@ -108,7 +106,7 @@
         <code>larm-daemon.service</code>、credential、polkit、versioned releaseの導入
       </li>
       <li>SAAAからTCP 9810の認証付きREST APIを利用できるようにするnetwork設定</li>
-      <li>Gnosis localでのAgent Connection REST lifecycle確認</li>
+      <li><code>local-node</code>上でのAgent Connection REST lifecycle確認</li>
       <li>SAAA adapterのdynamic claim対応とMacからのLAN canary</li>
       <li>秘密情報を含まない完了報告</li>
     </ul>
@@ -172,9 +170,9 @@ POST create -> GET poll -> POST claim
           <td>Connection lifetimeのmemoryだけ</td>
         </tr>
         <tr>
-          <th scope="row">Gnosis-only secret</th>
+          <th scope="row">Node-local secret</th>
           <td>management token、connection signing key</td>
-          <td>gnosis外へ出さない</td>
+          <td>local-node外へ出さない</td>
         </tr>
       </tbody>
     </table>
@@ -190,7 +188,7 @@ POST create -> GET poll -> POST claim
       <li>長期API tokenをSAAA processへ設定するoperator secret channelを確認します。</li>
     </ol>
 
-    <h3>2. GnosisでREST Gatewayを有効化</h3>
+    <h3>2. local-nodeでREST Gatewayを有効化</h3>
     <ol>
       <li>clean commitで<code>bun run check</code>を実行します。</li>
       <li>read-only preflightと既存host stateのbackup planを保存します。</li>
@@ -212,10 +210,10 @@ POST create -> GET poll -> POST claim
       SAAA送信元から9810へのallowだけを個別にreviewし、既存ruleを変更せず適用します。SSH用ruleは追加しません。
     </p>
 
-    <h3>3. Gnosis local REST acceptance</h3>
+    <h3>3. <code>local-node</code>上のREST acceptance</h3>
     <ol>
       <li>
-        <code>deep-reasoning-35b</code>、<code>saaa-desktop</code>、
+        <code>coding-default</code>、<code>saaa-desktop</code>、
         <code>existing-only</code
         >、<code>allowFallback:false</code>でConnectionをcreateします。
       </li>
@@ -226,7 +224,10 @@ POST create -> GET poll -> POST claim
       <li>claim responseのaudience、base URL、model、health URL、expiryを検証します。</li>
       <li>短期tokenでsemantic healthとSSE inferenceを実行します。</li>
       <li>非空completionとSSE <code>[DONE]</code>を確認します。</li>
-      <li>REST DELETEが204となり、Connectionとworkerが解放されることを確認します。</li>
+      <li>
+        REST DELETEが204となり、Connectionが解放され、Resident Qwen 3.8 27Bは稼働を継続することを
+        確認します。
+      </li>
     </ol>
 
     <h3>4. SAAA adapterとLAN canary</h3>
@@ -245,11 +246,14 @@ POST create -> GET poll -> POST claim
       <li>LARM daemonがenabled・activeで、health、ready、release manifestのidentityが一致する。</li>
       <li>SAAAから9810の認証付きREST APIへ接続でき、未認証requestは401となる。</li>
       <li>
-        <code>deep-reasoning-35b</code>をfallbackなしでcreate、poll、claimし、claim
+        <code>coding-default</code>をfallbackなしでcreate、poll、claimし、claim
         responseだけから OpenAI clientを構成できる。
       </li>
-      <li>SSE inferenceが完了し、DELETE release後にConnectionとworkerのleakがない。</li>
-      <li>SAAAが長期API token以外のGnosis secretを保持しない。</li>
+      <li>
+        SSE inferenceが完了し、DELETE release後にConnectionのleakがなく、Resident Qwen 3.8 27Bが
+        HOTのままである。
+      </li>
+      <li>SAAAが長期API token以外のlocal-node secretを保持しない。</li>
       <li>SAAAからの接続・運用にSSH、SFTP、SCP、tunnel、port forwardingを使用しない。</li>
     </ul>
   </section>

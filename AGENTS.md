@@ -2,7 +2,7 @@
 
 ## Project overview
 
-local-LLM-harness (LARM) is the Linux-first control plane for local AI runtimes on the gnosis host. Keep inference engines and model weights outside this source-only repository.
+local-LLM-harness (LARM) is the Linux-first control plane for local AI runtimes, with `local-node` as its neutral deployment profile. Keep inference engines and model weights outside this source-only repository.
 
 ## Commands
 

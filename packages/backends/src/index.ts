@@ -45,3 +45,12 @@ export {
   type LinuxNodeTelemetryOptions,
   type NodeTelemetryProvider,
 } from "./linux-node-telemetry";
+export {
+  InferenceAuditStoreError,
+  LocalInferenceAuditSession,
+  LocalInferenceAuditStore,
+  type InferenceAuditBeginInput,
+  type InferenceAuditPayloadKind,
+  type InferenceAuditPruneResult,
+  type LocalInferenceAuditStoreOptions,
+} from "./inference-audit-store";

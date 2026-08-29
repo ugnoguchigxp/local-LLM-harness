@@ -12,7 +12,7 @@
     <dt>設計日</dt>
     <dd><time>2026-08-29</time></dd>
     <dt>状態</dt>
-    <dd>Repository実装・gnosis実機E2E完了</dd>
+    <dd>Repository実装・local-node実機E2E完了</dd>
     <dt>Contract version</dt>
     <dd><code>agent-connection.v1</code></dd>
     <dt>基礎contract</dt>
@@ -121,7 +121,7 @@ LARM Gateway ── token scope → fixed Allocation binding → Runtime</code><
   <section id="configuration">
     <h2>設定fileとstrict schema</h2>
     <p>
-      <code>config/gnosis/agent-connections.yaml</code>を単一の正本として追加します。top-level
+      <code>config/local-node/agent-connections.yaml</code>を単一の正本として追加します。top-level
       <code>version</code
       >は整数<code>1</code>、未知fieldは全階層で起動時またはcatalog
       reload時に拒否します。
@@ -137,7 +137,7 @@ audiences:
     baseUrl: http://127.0.0.1:9810/v1
   saaa-desktop:
     network: host-private
-    baseUrl: http://192.168.0.65:9810/v1
+    baseUrl: request-origin
 
 agentProfiles:
   coding-default:
@@ -286,20 +286,25 @@ agentProfiles:
       </tbody>
     </table>
     <p>
-      requestからURLの一部も上書きできません。未登録Audienceは
-      <code>409 connection_audience_unavailable</code>です。設定fileに存在するAudienceだけを有効とし、
-      Connection作成時の値をTTL終了まで固定します。catalog reloadはactive
+      request
+      bodyからURLを上書きできません。<code>request-origin</code>は認証済みConnection作成requestの
+      実際のscheme、authority、portだけからcanonicalな<code>/v1</code>
+      URLを生成し、 <code>X-Forwarded-*</code>は参照しません。host-private
+      Audienceをloopbackまたはwildcard
+      originから作成する要求と未登録Audienceは<code>409 connection_audience_unavailable</code>です。
+      Connection作成時に解決した値をTTL終了まで固定します。catalog reloadはactive
       Allocationがある間は既存contract どおり拒否されるため、active
       ConnectionのAudienceが途中で変わることはありません。
     </p>
     <p>
-      repository設定は<code>same-host</code>と<code>saaa-desktop</code>を登録します。後者はgnosis自身の
-      LAN identity <code>192.168.0.65</code>を使用し、claimは
-      <code>http://192.168.0.65:9810/v1</code>を広告します。SAAAは保存したhostへ直接control
-      requestを送り、claimをそのまま使用します。production
-      LARMは<code>0.0.0.0:9810</code>でlistenし、 API・management
-      tokenを必須にしてreview済みLAN CIDRだけを許可します。長期control tokenはSAAAの secret
-      store、短期Provider tokenはConnection TTL内だけ保持します。LAN境界外へ公開する場合は
+      repository設定は<code>same-host</code>と<code>saaa-desktop</code>を登録します。後者は
+      <code>request-origin</code>を使用します。SAAAはmDNS/DNS名または現在のDHCP
+      addressへ直接control requestを送り、claimはその到達先をcanonicalな<code
+        >/v1</code
+      >
+      URLとして返します。production LARMは<code>0.0.0.0:9810</code>でlistenし、
+      API・management tokenを必須にしてreview済みLAN CIDRだけを許可します。長期control tokenはSAAAの
+      secret store、短期Provider tokenはConnection TTL内だけ保持します。LAN境界外へ公開する場合は
       <code>tls</code> AudienceとTLS終端を別途commissioningします。
     </p>
   </section>
@@ -378,7 +383,7 @@ agentProfiles:
     </p>
     <p>
       正常statusはProfile一覧とConnection
-      statusが200、作成が200または202、claimとrenewが200、DELETEが204、
+      statusが200、作成が201または202、claimとrenewが200、DELETEが204、
       healthが200です。GETとDELETEはqueryとrequest bodyを受け付けず、全POST bodyは64
       KiBの既存control
       上限を適用します。Content-Type不一致、query、予期しないbodyは<code>400 invalid_request</code>です。
@@ -513,8 +518,9 @@ Content-Type: application/json
   "expiresAt": "2026-08-29T06:00:00.000Z"
 }</code></pre>
     <p>
-      Allocationと全Providerの初回semantic probeが同期完了した場合はHTTP
-      200、起動、配備、probeを待つ 場合はHTTP 202と<code>Location: /v1/agent-connections/:id</code>、
+      Allocationと全Providerの初回semantic probeが同期完了した場合はHTTP 即時readyの場合はHTTP
+      201、起動、配備、probeを待つ場合はHTTP 202と
+      <code>Location: /v1/agent-connections/:id</code>、
       <code>Retry-After: 1</code
       >を返します。事前validationまたはadmission失敗ではConnectionを作らず、既存 Allocation
       errorをそのまま返します。作成後の非同期失敗は状態responseへ保存します。
@@ -1137,8 +1143,8 @@ Content-Type: application/json
         projectionのstrict schemaとProfile-to-Allocation compile、cross-validationを追加した。
       </li>
       <li>
-        <code>config/gnosis/agent-connections.yaml</code>をcatalog
-        load、revision、identityへ統合し、3つのProfileと<code>same-host</code>、gnosis
+        <code>config/local-node/agent-connections.yaml</code>をcatalog
+        load、revision、identityへ統合し、3つのProfileと<code>same-host</code>、local-node
         LAN用 <code>saaa-desktop</code>を登録した。
       </li>
       <li>
@@ -1161,7 +1167,7 @@ Content-Type: application/json
         helperを追加した。
       </li>
       <li>
-        unit、integration、fixture、same-hostとSAAA Audienceのgnosis live E2Eを実施し、
+        unit、integration、fixture、same-hostとSAAA Audienceのlocal-node live E2Eを実施し、
         <a href="./api.html">API契約</a>とdaemon READMEへ反映した。
       </li>
     </ol>
@@ -1177,7 +1183,7 @@ Content-Type: application/json
     <h2>Acceptance matrix</h2>
     <aside>
       <p>
-        以下はrepository testと2026-08-29のgnosis live E2Eで完了しました。実行条件と結果は<a
+        以下はrepository testと2026-08-29のlocal-node live E2Eで完了しました。実行条件と結果は<a
           href="./agent-provider-connection-implementation.html"
           >実装・E2E記録</a
         >に保存します。
@@ -1281,9 +1287,10 @@ Content-Type: application/json
       API schema、認証主体、token wire format、権限matrix、状態遷移、失敗時cleanup、probe
       request、response判定、 timeout、cache、single-flight、Audience validation、catalog
       revision、永続化境界、error code、実装配置、受入testを
-      固定し、実装と実機E2Eを完了しました。SAAA向けにもclaim schemaは変更せず、gnosis自身のLAN
-      identityを使うadvertised URLをAudienceで固定しています。今後のwire
-      field変更はv1互換性を審査し、必要なら新しい contract versionとして扱います。
+      固定し、実装と実機E2Eを完了しました。SAAA向けにもclaim schemaは変更せず、認証済みrequest
+      originからadvertised URLをConnection作成時に解決します。IP addressは設定・claim contractへ
+      固定しません。今後のwire field変更はv1互換性を審査し、必要なら新しい contract
+      versionとして扱います。
     </p>
   </section>
 </article>

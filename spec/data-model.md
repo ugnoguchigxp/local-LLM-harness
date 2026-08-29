@@ -6,11 +6,11 @@ daemon再起動後にactive Allocationは復元せず、利用側が再取得し
 
 ## Node
 
-`config/gnosis/nodes.yaml`
+`config/local-node/nodes.yaml`
 
 ```yaml
 nodes:
-  gnosis:
+  local-node:
     endpoint: http://127.0.0.1
     resources:
       memoryTotalGB: 128
@@ -28,7 +28,7 @@ runtimes:
     protocol: openai.chat-completions.v1
     artifacts: [qwen38-primary]
     backend: systemd
-    node: gnosis
+    node: local-node
     policy: { class: resident }
     resources:
       estimatedMemoryGB: 40
@@ -46,7 +46,7 @@ Gateway対応Runtimeはprotocolと実行slot・queue上限が必須です。syst
 
 ## Route
 
-Routeは公開APIの安定した選択単位です。候補順、primary/fallback、明示専用かを`config/gnosis/routes.yaml`へ宣言します。
+Routeは公開APIの安定した選択単位です。候補順、primary/fallback、明示専用かを`config/local-node/routes.yaml`へ宣言します。
 
 ```yaml
 routes:

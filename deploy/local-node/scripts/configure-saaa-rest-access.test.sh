@@ -2,8 +2,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-tool="${repo_root}/deploy/gnosis/scripts/configure-saaa-rest-access.sh"
-prepare_host="${repo_root}/deploy/gnosis/scripts/prepare-host.sh"
+tool="${repo_root}/deploy/local-node/scripts/configure-saaa-rest-access.sh"
+prepare_host="${repo_root}/deploy/local-node/scripts/prepare-host.sh"
 test_root="$(mktemp -d /tmp/larm-saaa-network-test.XXXXXX)"
 symlinked_root="${test_root}-symlink"
 trap 'rm -rf -- "${test_root}"; rm -f -- "${symlinked_root}"' EXIT

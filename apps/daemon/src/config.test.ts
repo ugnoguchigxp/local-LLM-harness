@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseDaemonConfig } from "./config";
+import { parseDaemonConfig, parseInferenceAuditConfig } from "./config";
 
 test("daemon configuration has bounded production defaults", () => {
   const config = parseDaemonConfig({}, "/workspace/apps/daemon/src");
@@ -16,8 +16,15 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.telemetryMaxAgeMs).toBe(10_000);
   expect(config.connectionReadyTimeoutMs).toBe(120_000);
   expect(config.providerProbeTimeoutMs).toBe(15_000);
+  expect(config.inferenceAuditMode).toBe("off");
+  expect(config.inferenceAuditRetentionMs).toBe(7 * 24 * 60 * 60 * 1_000);
+  expect(config.inferenceAuditMaxBytes).toBe(10 * 1024 * 1024 * 1024);
+  expect(config.inferenceAuditMinFreeBytes).toBe(20 * 1024 * 1024 * 1024);
+  expect(config.inferenceAuditMaxResponseBytes).toBe(16 * 1024 * 1024);
+  expect(config.inferenceAuditRoot).toBe("/var/lib/larm/inference-audit");
+  expect(config.inferenceAuditKeyFile).toBe("/etc/larm/inference-audit.key");
   expect(config.connectionSigningKey).toBeUndefined();
-  expect(config.configDir).toBe("/workspace/config/gnosis");
+  expect(config.configDir).toBe("/workspace/config/local-node");
 });
 
 test("daemon configuration rejects invalid numbers", () => {
@@ -45,6 +52,34 @@ test("daemon configuration rejects invalid numbers", () => {
   expect(() => parseDaemonConfig({ LARM_PROVIDER_PROBE_TIMEOUT_SECONDS: "61" })).toThrow(
     /LARM_PROVIDER_PROBE_TIMEOUT_SECONDS/,
   );
+  expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_MODE: "optional" })).toThrow();
+  expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_RETENTION_SECONDS: "604801" }))
+    .toThrow(/LARM_INFERENCE_AUDIT_RETENTION_SECONDS/);
+  expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_MAX_BYTES: "0" }))
+    .toThrow(/LARM_INFERENCE_AUDIT_MAX_BYTES/);
+  expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_MAX_BYTES: String(129 * 1024 * 1024) }))
+    .toThrow(/payload reservations/);
+  expect(() => parseDaemonConfig({
+    LARM_INFERENCE_AUDIT_MAX_RESPONSE_BYTES: String(64 * 1024 * 1024 + 1),
+  })).toThrow(/LARM_INFERENCE_AUDIT_MAX_RESPONSE_BYTES/);
+  expect(() => parseDaemonConfig({ LARM_GATEWAY_TIMEOUT_SECONDS: "3600" }))
+    .toThrow(/LARM_GATEWAY_TIMEOUT_SECONDS/);
+  expect(() => parseDaemonConfig({ LARM_GATEWAY_TIMEOUT_SECONDS: "3301" }))
+    .toThrow(/LARM_GATEWAY_TIMEOUT_SECONDS/);
+  expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_ROOT: "relative/audit" }))
+    .toThrow(/absolute path/);
+  expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_KEY_FILE: "relative.key" }))
+    .toThrow(/absolute path/);
+});
+
+test("standalone audit configuration ignores unrelated daemon settings", () => {
+  const config = parseInferenceAuditConfig({
+    LARM_HOST: "0.0.0.0",
+    LARM_PORT: "invalid",
+    LARM_INFERENCE_AUDIT_MIN_FREE_BYTES: "0",
+  });
+  expect(config.inferenceAuditMinFreeBytes).toBe(0);
+  expect(config.inferenceAuditRoot).toBe("/var/lib/larm/inference-audit");
 });
 
 test("connection signing key is canonical unpadded base64url for 32 bytes", () => {

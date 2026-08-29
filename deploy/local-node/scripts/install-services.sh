@@ -3,7 +3,7 @@ set -euo pipefail
 export LC_ALL=C
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-unit_source="${repo_root}/deploy/gnosis/systemd"
+unit_source="${repo_root}/deploy/local-node/systemd"
 test_mode="${LARM_INSTALL_TEST_MODE:-0}"
 install_root="${LARM_INSTALL_ROOT:-}"
 install_scope="${LARM_INSTALL_SCOPE:-all}"
@@ -42,8 +42,11 @@ target_path() {
 unit_target="$(target_path /etc/systemd/system)"
 credential_dir="$(target_path /etc/larm)"
 credential_path="${credential_dir}/larm.env"
+audit_config_path="${credential_dir}/inference-audit.env"
+audit_key_path="${credential_dir}/inference-audit.key"
 polkit_dir="$(target_path /etc/polkit-1/rules.d)"
 state_dir="$(target_path /var/lib/larm)"
+audit_dir="$(target_path /var/lib/larm/inference-audit)"
 staging_dir="$(target_path /srv/ai/models/.larm-staging)"
 rollback_dir="$(target_path /srv/ai/models/.larm-rollback)"
 worker_dir="$(target_path /srv/ai/models/qwen38-worker)"
@@ -76,9 +79,9 @@ systemctl_run() {
 }
 
 if [[ "${install_scope}" == "gateway" ]]; then
-  units=(larm-daemon.service)
-  enabled_units=(larm-daemon.service)
-  data_directories=("${staging_dir}" "${rollback_dir}" "${state_dir}")
+  units=(larm-daemon.service larm-inference-audit-prune.service larm-inference-audit-prune.timer)
+  enabled_units=(larm-daemon.service larm-inference-audit-prune.timer)
+  data_directories=("${staging_dir}" "${rollback_dir}" "${state_dir}" "${audit_dir}")
 else
   units=(
     llama-server.service
@@ -87,6 +90,8 @@ else
     qwen-tts.service
     voicevox-tts.service
     larm-daemon.service
+    larm-inference-audit-prune.service
+    larm-inference-audit-prune.timer
   )
   enabled_units=(
     llama-server.service
@@ -94,6 +99,7 @@ else
     qwen-asr.service
     voicevox-tts.service
     larm-daemon.service
+    larm-inference-audit-prune.timer
   )
   data_directories=(
     "${worker_dir}"
@@ -103,6 +109,7 @@ else
     "${staging_dir}"
     "${rollback_dir}"
     "${state_dir}"
+    "${audit_dir}"
   )
 fi
 
@@ -110,6 +117,10 @@ safe_install_target() {
   local path="$1" description="$2"
   if [[ -L "${path}" || ( -e "${path}" && ! -f "${path}" ) ]]; then
     echo "Refusing unsafe ${description}: ${path}" >&2
+    exit 1
+  fi
+  if [[ -f "${path}" && "$(stat -c '%h' -- "${path}")" -ne 1 ]]; then
+    echo "Refusing hard-linked ${description}: ${path}" >&2
     exit 1
   fi
 }
@@ -120,6 +131,31 @@ safe_directory_path() {
     echo "Refusing symlinked ${description}: ${path}" >&2
     exit 1
   fi
+}
+
+validate_audit_config() {
+  awk '
+    BEGIN {
+      allowed["LARM_INFERENCE_AUDIT_MODE"] = "mode"
+      allowed["LARM_INFERENCE_AUDIT_ROOT"] = "path"
+      allowed["LARM_INFERENCE_AUDIT_KEY_FILE"] = "path"
+      allowed["LARM_INFERENCE_AUDIT_RETENTION_SECONDS"] = "number"
+      allowed["LARM_INFERENCE_AUDIT_MAX_BYTES"] = "number"
+      allowed["LARM_INFERENCE_AUDIT_MIN_FREE_BYTES"] = "number"
+      allowed["LARM_INFERENCE_AUDIT_MAX_RESPONSE_BYTES"] = "number"
+      allowed["LARM_INFERENCE_AUDIT_MATERIALIZATION_TIMEOUT_SECONDS"] = "number"
+    }
+    {
+      separator = index($0, "=")
+      if (separator < 2) exit 1
+      name = substr($0, 1, separator - 1)
+      value = substr($0, separator + 1)
+      if (!(name in allowed) || seen[name]++) exit 1
+      if (allowed[name] == "mode" && value !~ /^(off|metadata|full-required)$/) exit 1
+      if (allowed[name] == "path" && value !~ /^\/[A-Za-z0-9._\/-]+$/) exit 1
+      if (allowed[name] == "number" && value !~ /^[0-9]+$/) exit 1
+    }
+  ' "$1"
 }
 
 if [[ "${test_mode}" != "1" && "$(id -u)" -ne 0 ]]; then
@@ -142,8 +178,25 @@ for unit in "${units[@]}"; do
 done
 safe_install_target "${polkit_dir}/50-larm-runtime-control.rules" "polkit target"
 safe_install_target "${credential_path}" "credential target"
+safe_install_target "${audit_config_path}" "audit configuration target"
+safe_install_target "${audit_key_path}" "audit key target"
+if [[ -e "${audit_config_path}" ]] && {
+  [[ "$(stat -c '%s' -- "${audit_config_path}")" -gt 8192 ]] \
+    || ! validate_audit_config "${audit_config_path}";
+}; then
+  echo "Refusing invalid inference audit configuration: ${audit_config_path}" >&2
+  exit 1
+fi
+if [[ -e "${audit_key_path}" ]] && {
+  [[ "$(stat -c '%s' -- "${audit_key_path}")" -ne 44 ]] \
+    || ! grep -Eq '^[A-Za-z0-9_-]{43}$' "${audit_key_path}";
+}; then
+  echo "Refusing invalid inference audit key: ${audit_key_path}" >&2
+  exit 1
+fi
 
 install -d -o "${data_owner}" -g "${data_group}" "${data_directories[@]}"
+install -d -o "${data_owner}" -g "${data_group}" -m 0700 "${audit_dir}"
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${unit_target}"
 
 for unit in "${units[@]}"; do
@@ -153,7 +206,7 @@ done
 
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${polkit_dir}"
 install -o "${system_owner}" -g "${system_group}" -m 0644 \
-  "${repo_root}/deploy/gnosis/polkit/50-larm-runtime-control.rules" \
+  "${repo_root}/deploy/local-node/polkit/50-larm-runtime-control.rules" \
   "${polkit_dir}/50-larm-runtime-control.rules"
 
 install -d -o "${credential_owner}" -g "${credential_group}" -m 0750 "${credential_dir}"
@@ -187,6 +240,39 @@ fi
 chown "${credential_owner}":"${credential_group}" "${credential_path}"
 chmod 0640 "${credential_path}"
 
+if [[ ! -e "${audit_config_path}" ]]; then
+  umask 0077
+  {
+    printf 'LARM_INFERENCE_AUDIT_MODE=full-required\n'
+    printf 'LARM_INFERENCE_AUDIT_ROOT=/var/lib/larm/inference-audit\n'
+    printf 'LARM_INFERENCE_AUDIT_KEY_FILE=/etc/larm/inference-audit.key\n'
+    printf 'LARM_INFERENCE_AUDIT_RETENTION_SECONDS=604800\n'
+    printf 'LARM_INFERENCE_AUDIT_MAX_BYTES=10737418240\n'
+    printf 'LARM_INFERENCE_AUDIT_MIN_FREE_BYTES=21474836480\n'
+    printf 'LARM_INFERENCE_AUDIT_MAX_RESPONSE_BYTES=16777216\n'
+    printf 'LARM_INFERENCE_AUDIT_MATERIALIZATION_TIMEOUT_SECONDS=30\n'
+  } >"${audit_config_path}"
+fi
+if ! validate_audit_config "${audit_config_path}"; then
+  echo "Refusing invalid inference audit configuration: ${audit_config_path}" >&2
+  exit 1
+fi
+chown "${credential_owner}":"${credential_group}" "${audit_config_path}"
+chmod 0640 "${audit_config_path}"
+
+if [[ ! -e "${audit_key_path}" ]]; then
+  audit_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+  umask 0077
+  printf '%s\n' "${audit_key}" >"${audit_key_path}"
+fi
+if [[ "$(stat -c '%s' -- "${audit_key_path}")" -ne 44 ]] \
+  || ! grep -Eq '^[A-Za-z0-9_-]{43}$' "${audit_key_path}"; then
+  echo "Refusing invalid inference audit key: ${audit_key_path}" >&2
+  exit 1
+fi
+chown "${credential_owner}":"${credential_group}" "${audit_key_path}"
+chmod 0640 "${audit_key_path}"
+
 systemctl_run daemon-reload
 systemctl_run enable "${enabled_units[@]}"
 if [[ "${install_scope}" == "all" ]]; then
@@ -201,3 +287,4 @@ fi
 echo "This script intentionally does not reboot or restart services."
 echo "Apply a changed unit explicitly, for example: systemctl restart llama-swap-worker.service"
 echo "LARM API, Agent Connection, and management credentials are stored in ${credential_path}."
+echo "Inference audit settings are stored in ${audit_config_path}; the encryption key remains separate."

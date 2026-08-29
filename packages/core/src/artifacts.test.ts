@@ -14,7 +14,7 @@ import { loadRegistry } from "./registry";
 
 test("loads the production artifact manifest and builds pinned download URLs", () => {
   const artifacts = loadArtifactManifest(
-    join(import.meta.dir, "../../../deploy/gnosis/models.yaml"),
+    join(import.meta.dir, "../../../deploy/local-node/models.yaml"),
   );
   const primary = artifacts.find((artifact) => artifact.id === "qwen38-primary")!;
   const mtp = artifacts.find((artifact) => artifact.id === "qwen38-mtp")!;
@@ -254,9 +254,9 @@ test("rejects non-canonical, colliding, traversing, and digest-mismatched snapsh
 test("every production runtime artifact reference exists in the manifest", () => {
   const root = join(import.meta.dir, "../../..");
   const artifacts = new Set(
-    loadArtifactManifest(join(root, "deploy/gnosis/models.yaml")).map((artifact) => artifact.id),
+    loadArtifactManifest(join(root, "deploy/local-node/models.yaml")).map((artifact) => artifact.id),
   );
-  const registry = loadRegistry(join(root, "config/gnosis"));
+  const registry = loadRegistry(join(root, "config/local-node"));
   for (const runtime of registry.runtimes) {
     for (const artifactId of runtime.artifacts ?? []) {
       expect(artifacts.has(artifactId)).toBe(true);
@@ -266,7 +266,7 @@ test("every production runtime artifact reference exists in the manifest", () =>
 
 test("Qwen TTS service configuration consumes the manifest-managed snapshot target", () => {
   const root = join(import.meta.dir, "../../..");
-  const artifact = loadArtifactManifest(join(root, "deploy/gnosis/models.yaml"))
+  const artifact = loadArtifactManifest(join(root, "deploy/local-node/models.yaml"))
     .find((candidate) => candidate.id === "qwen3-tts-expressive");
   if (!artifact || artifact.kind !== "snapshot") {
     throw new Error("Qwen TTS snapshot artifact is missing");
@@ -276,9 +276,9 @@ test("Qwen TTS service configuration consumes the manifest-managed snapshot targ
   ) as { default_model?: string; models?: Record<string, { hf_id?: string }> };
   expect(config.models?.[config.default_model ?? ""]?.hf_id).toBe(artifact.path);
 
-  const registry = loadRegistry(join(root, "config/gnosis"));
+  const registry = loadRegistry(join(root, "config/local-node"));
   expect(registry.runtimes.find((runtime) => runtime.id === "qwen-tts")?.artifacts)
     .toContain(artifact.id);
-  expect(readFileSync(join(root, "deploy/gnosis/systemd/larm-daemon.service"), "utf8"))
+  expect(readFileSync(join(root, "deploy/local-node/systemd/larm-daemon.service"), "utf8"))
     .toContain("/srv/ai/models/qwen-tts");
 });

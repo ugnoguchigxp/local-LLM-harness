@@ -8,12 +8,12 @@ import {
 } from "./releases";
 
 const root = new URL("../../../", import.meta.url).pathname;
-const registry = loadRegistry(`${root}config/gnosis`);
-const artifacts = loadArtifactManifest(`${root}deploy/gnosis/models.yaml`);
+const registry = loadRegistry(`${root}config/local-node`);
+const artifacts = loadArtifactManifest(`${root}deploy/local-node/models.yaml`);
 
 describe("runtime release catalog", () => {
   test("loads immutable production releases with one default per artifact runtime", () => {
-    const releases = loadRuntimeReleaseCatalog(`${root}deploy/gnosis/releases.yaml`, registry, artifacts);
+    const releases = loadRuntimeReleaseCatalog(`${root}deploy/local-node/releases.yaml`, registry, artifacts);
     expect(defaultRuntimeRelease(releases, "qwen-general")?.artifacts).toEqual(["qwen38-primary"]);
     expect(defaultRuntimeRelease(releases, "qwen36-35b")?.artifacts).toEqual(["qwen36-35b-speed"]);
     expect(defaultRuntimeRelease(releases, "ornith15-35b")?.artifacts).toEqual([

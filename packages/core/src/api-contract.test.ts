@@ -88,7 +88,7 @@ test("public runtime and state schemas reject operational detail", () => {
   expect(() => publicClusterStateSchema.parse({
     generatedAt: "2026-08-29T00:00:00.000Z",
     online: true,
-    node: { id: "gnosis" },
+    node: { id: "local-node" },
     runtimes: [],
   })).toThrow();
 });
@@ -103,7 +103,7 @@ test("legacy public success schemas are strict and round-trip current responses"
   }).ready).toBeFalse();
   expect(legacyResolveResponseSchema.parse({
     runtime: "qwen-general",
-    node: "gnosis",
+    node: "local-node",
     endpoint: "http://127.0.0.1:8080",
     status: "HOT",
   }).runtime).toBe("qwen-general");

@@ -1,4 +1,5 @@
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
+import { inferenceAuditModeSchema, type InferenceAuditMode } from "@larm/core";
 
 type Environment = Record<string, string | undefined>;
 
@@ -34,7 +35,27 @@ export type DaemonConfig = {
   recoveryGraceMs: number;
   artifactOperationLimit: number;
   telemetryMaxAgeMs: number;
+  inferenceAuditMode: InferenceAuditMode;
+  inferenceAuditRoot: string;
+  inferenceAuditKeyFile: string;
+  inferenceAuditRetentionMs: number;
+  inferenceAuditMaxBytes: number;
+  inferenceAuditMinFreeBytes: number;
+  inferenceAuditMaxResponseBytes: number;
+  inferenceAuditMaterializationTimeoutMs: number;
 };
+
+export type InferenceAuditConfig = Pick<
+  DaemonConfig,
+  | "inferenceAuditMode"
+  | "inferenceAuditRoot"
+  | "inferenceAuditKeyFile"
+  | "inferenceAuditRetentionMs"
+  | "inferenceAuditMaxBytes"
+  | "inferenceAuditMinFreeBytes"
+  | "inferenceAuditMaxResponseBytes"
+  | "inferenceAuditMaterializationTimeoutMs"
+>;
 
 function numberSetting(
   env: Environment,
@@ -69,6 +90,14 @@ function optionalSecret(value: string | undefined): string | undefined {
   return value && value.length > 0 ? value : undefined;
 }
 
+function absolutePathSetting(env: Environment, name: string, fallback: string): string {
+  const value = env[name] ?? fallback;
+  if (!isAbsolute(value)) {
+    throw new Error(`${name} must be an absolute path`);
+  }
+  return resolve(value);
+}
+
 function connectionSigningKey(value: string | undefined): Uint8Array | undefined {
   const raw = optionalSecret(value);
   if (!raw) return undefined;
@@ -82,6 +111,68 @@ function connectionSigningKey(value: string | undefined): Uint8Array | undefined
   return decoded;
 }
 
+export function parseInferenceAuditConfig(
+  env: Environment = process.env,
+): InferenceAuditConfig {
+  const inferenceAuditMaxBytes = numberSetting(
+    env,
+    "LARM_INFERENCE_AUDIT_MAX_BYTES",
+    10 * 1024 * 1024 * 1024,
+    { min: 1, max: 1024 * 1024 * 1024 * 1024, integer: true },
+  );
+  const inferenceAuditMaxResponseBytes = numberSetting(
+    env,
+    "LARM_INFERENCE_AUDIT_MAX_RESPONSE_BYTES",
+    16 * 1024 * 1024,
+    { min: 1, max: 64 * 1024 * 1024, integer: true },
+  );
+  if (
+    inferenceAuditMaxBytes
+      <= inferenceAuditMaxResponseBytes + 129 * 1024 * 1024
+  ) {
+    throw new Error(
+      "LARM_INFERENCE_AUDIT_MAX_BYTES is too small for the configured audit payload reservations",
+    );
+  }
+  return {
+    inferenceAuditMode: inferenceAuditModeSchema.parse(
+      env.LARM_INFERENCE_AUDIT_MODE ?? "off",
+    ),
+    inferenceAuditRoot: absolutePathSetting(
+      env,
+      "LARM_INFERENCE_AUDIT_ROOT",
+      "/var/lib/larm/inference-audit",
+    ),
+    inferenceAuditKeyFile: absolutePathSetting(
+      env,
+      "LARM_INFERENCE_AUDIT_KEY_FILE",
+      "/etc/larm/inference-audit.key",
+    ),
+    inferenceAuditRetentionMs: secondsSetting(
+      env,
+      "LARM_INFERENCE_AUDIT_RETENTION_SECONDS",
+      7 * 24 * 60 * 60,
+      1,
+      7 * 24 * 60 * 60,
+    ),
+    inferenceAuditMaxBytes,
+    inferenceAuditMinFreeBytes: numberSetting(
+      env,
+      "LARM_INFERENCE_AUDIT_MIN_FREE_BYTES",
+      20 * 1024 * 1024 * 1024,
+      { min: 0, max: 1024 * 1024 * 1024 * 1024, integer: true },
+    ),
+    inferenceAuditMaxResponseBytes,
+    inferenceAuditMaterializationTimeoutMs: secondsSetting(
+      env,
+      "LARM_INFERENCE_AUDIT_MATERIALIZATION_TIMEOUT_SECONDS",
+      30,
+      0.001,
+      300,
+    ),
+  };
+}
+
 export function parseDaemonConfig(
   env: Environment = process.env,
   sourceDir = import.meta.dir,
@@ -92,6 +183,7 @@ export function parseDaemonConfig(
   }
   const apiToken = optionalSecret(env.LARM_API_TOKEN);
   const managementToken = optionalSecret(env.LARM_MANAGEMENT_TOKEN);
+  const inferenceAudit = parseInferenceAuditConfig(env);
   const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
   if (!loopbackHosts.has(hostname) && !apiToken) {
     throw new Error("LARM_API_TOKEN is required when LARM_HOST is not loopback");
@@ -101,7 +193,7 @@ export function parseDaemonConfig(
   }
 
   return {
-    configDir: resolve(env.LARM_CONFIG_DIR ?? join(sourceDir, "../../../config/gnosis")),
+    configDir: resolve(env.LARM_CONFIG_DIR ?? join(sourceDir, "../../../config/local-node")),
     port: numberSetting(env, "LARM_PORT", 9810, { min: 1, max: 65_535, integer: true }),
     hostname,
     observeIntervalMs: numberSetting(env, "LARM_OBSERVE_INTERVAL_MS", 2_000, {
@@ -145,7 +237,13 @@ export function parseDaemonConfig(
       1,
       60,
     ),
-    gatewayTimeoutMs: secondsSetting(env, "LARM_GATEWAY_TIMEOUT_SECONDS", 300, 0.001),
+    gatewayTimeoutMs: secondsSetting(
+      env,
+      "LARM_GATEWAY_TIMEOUT_SECONDS",
+      300,
+      0.001,
+      3_300,
+    ),
     controlMaxBodyBytes: numberSetting(env, "LARM_CONTROL_MAX_BODY_BYTES", 64 * 1024, {
       min: 1,
       max: 1024 * 1024,
@@ -165,10 +263,10 @@ export function parseDaemonConfig(
     ),
     shutdownTimeoutMs: secondsSetting(env, "LARM_SHUTDOWN_TIMEOUT_SECONDS", 330, 0.001),
     artifactManifestPath: resolve(
-      env.LARM_ARTIFACT_MANIFEST ?? join(sourceDir, "../../../deploy/gnosis/models.yaml"),
+      env.LARM_ARTIFACT_MANIFEST ?? join(sourceDir, "../../../deploy/local-node/models.yaml"),
     ),
     releaseCatalogPath: resolve(
-      env.LARM_RELEASE_CATALOG ?? join(sourceDir, "../../../deploy/gnosis/releases.yaml"),
+      env.LARM_RELEASE_CATALOG ?? join(sourceDir, "../../../deploy/local-node/releases.yaml"),
     ),
     artifactStagingRoot: resolve(
       env.LARM_ARTIFACT_STAGING_ROOT ?? "/srv/ai/models/.larm-staging",
@@ -190,5 +288,6 @@ export function parseDaemonConfig(
       integer: true,
     }),
     telemetryMaxAgeMs: secondsSetting(env, "LARM_TELEMETRY_MAX_AGE_SECONDS", 10, 0.001),
+    ...inferenceAudit,
   };
 }

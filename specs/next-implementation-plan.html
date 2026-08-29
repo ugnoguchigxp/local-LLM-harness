@@ -3,7 +3,7 @@
 
   <p>
     この文書は、Milestone 8から14で実装したAllocation固定Data Plane、bounded execution、
-    再起動境界、artifact snapshot lifecycleを、gnosis上の常用Providerとして収束させるための
+    再起動境界、artifact snapshot lifecycleを、local-node上の常用Providerとして収束させるための
     Milestone
     15から21を定義した履歴計画です。策定時の主目的は、新しいモデルを増やすことではなく、Qwen 3.8
     27B経路を実機で証明し、allowlist済みmodel releaseをAPIから安全に選択・配備・
@@ -43,7 +43,8 @@
   <section id="decision">
     <h2>結論</h2>
     <p>
-      最初のblocking gateはコード追加ではなく、現在のcommitをgnosisへ導入して実測することです。LARM
+      最初のblocking
+      gateはコード追加ではなく、現在のcommitをlocal-nodeへ導入して実測することです。LARM
       daemonがまだ実ホストへ導入されていない状態でcatalog reloadや追加モデルを実装しても、
       実際のstartup latency、memory peak、音声経路、rollbackの前提を検証できません。
     </p>
@@ -67,7 +68,7 @@
     <h2>確認したbaselineと次のgap</h2>
     <table>
       <caption>
-        repositoryとgnosisをread-onlyで照合した結果
+        repositoryとlocal-nodeをread-onlyで照合した結果
       </caption>
       <thead>
         <tr>
@@ -88,7 +89,7 @@
           <td>P0</td>
         </tr>
         <tr>
-          <th scope="row">gnosis daemon</th>
+          <th scope="row">local-node daemon</th>
           <td><code>larm-daemon.service</code>はinactiveかつnot-found</td>
           <td>既存Resident Providerを再起動せずに導入し、ready、smoke、restartを通す</td>
           <td>P0・blocking</td>
@@ -146,7 +147,7 @@
   <section id="target-state">
     <h2>Milestone 21完了時の状態</h2>
     <ol>
-      <li>LARM daemonがgnosisで常駐し、実測を含むcommissioning evidenceを持つ。</li>
+      <li>LARM daemonがlocal-nodeで常駐し、実測を含むcommissioning evidenceを持つ。</li>
       <li>LARM自身をcommit固定releaseとして導入し、Resident Runtimeに触れず前世代へ戻せる。</li>
       <li>利用側は生成されたcontractと参照clientでAllocation、renew、Gateway、releaseを扱える。</li>
       <li>
@@ -234,7 +235,7 @@ Milestone 21  Ambient client canary and stable release gate</code></pre>
     <h2>Milestone 15: Current release commissioning</h2>
     <dl>
       <dt>目的</dt>
-      <dd>現在の実装をgnosisへ安全に導入し、次の設計判断に使えるbaselineを採取する。</dd>
+      <dd>現在の実装をlocal-nodeへ安全に導入し、次の設計判断に使えるbaselineを採取する。</dd>
       <dt>優先度</dt>
       <dd>P0・後続のblocking gate</dd>
       <dt>変更種別</dt>
@@ -632,7 +633,7 @@ Milestone 21  Ambient client canary and stable release gate</code></pre>
           <td>暗黙route選択、Cloud fallback、設定永続化</td>
         </tr>
         <tr>
-          <th scope="row"><code>deploy/gnosis</code></th>
+          <th scope="row"><code>deploy/local-node</code></th>
           <td>preflight、versioned release、rollback、canary、fault runbook</td>
           <td>model weight、raw benchmark、credentialのGit保存</td>
         </tr>

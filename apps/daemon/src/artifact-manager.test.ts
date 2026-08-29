@@ -59,7 +59,7 @@ async function setup(
     : undefined;
   const registry: Registry = {
     nodes: [{
-      id: "gnosis",
+      id: "local-node",
       endpoint: "http://127.0.0.1",
       resources: { memoryTotalGB: 128, reservedMemoryGB: 16 },
     }],
@@ -69,7 +69,7 @@ async function setup(
       capability: ["llm.general"],
       protocol: "openai.chat-completions.v1",
       backend: "systemd",
-      node: "gnosis",
+      node: "local-node",
       policy: { class: "preferred" },
       resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
@@ -285,7 +285,7 @@ test("artifact manager rejects activation while another allocation uses the runt
         capability: "llm.general",
         route: "llm-speed",
         runtime: "worker",
-        node: "gnosis",
+        node: "local-node",
         endpoint: "http://127.0.0.1:8080",
         status: "HOT",
         candidateRank: 1,
@@ -569,7 +569,7 @@ test("artifact catalog replacement validates before changing the active generati
         capability: ["llm.general"],
         protocol: "openai.chat-completions.v1",
         backend: "systemd",
-        node: "gnosis",
+        node: "local-node",
         policy: { class: "preferred" },
         resources: {
           estimatedMemoryGB: 1,
