@@ -1,0 +1,914 @@
+<article lang="ja">
+  <h1>軽量日本語ASR 再選定調査・Shadow評価・試用結果</h1>
+
+  <p>
+    local-nodeの短い日本語voice-chat入力について、Qwen3-ASR 1.7Bの精度を可能な限り維持しつつ、
+    LLMとの同時実行時にaccelerator競合を減らせるASRを再選定する調査です。2026年8月31日時点の
+    upstream公式model card、repository、論文を確認し、候補をlocal shadow評価しました。shadow中は
+    production routeとserviceを変更せず、評価完了後にWhisper HIPだけを監視付きtrialへ進めています。
+  </p>
+
+  <dl>
+    <dt>状態</dt>
+    <dd>
+      CPU shadowとGPU二候補のshadowを完了。Whisper turbo HIPは性能gateを通過し、semantic quality
+      riskを承知した限定trialとして<code>stt-default</code>へ切替済み。永続的な本採用判定は保留
+    </dd>
+    <dt>現行trial</dt>
+    <dd>
+      Whisper large-v3-turbo Q5_0、whisper.cpp HIP、Resident、<code
+        >stt-default</code
+      >
+    </dd>
+    <dt>rollback</dt>
+    <dd>
+      Qwen3-ASR 1.7B、FP16、PyTorch
+      ROCmをResidentのまま保持し、<code>stt-qwen</code>で明示選択可能
+    </dd>
+    <dt>評価済み</dt>
+    <dd>ReazonSpeech k2/ESPnet、Kotoba Whisper、Whisper large-v3-turboのCPU・HIP経路</dd>
+    <dt>OSS条件</dt>
+    <dd>weight artifactとruntimeの双方がMITまたはApache-2.0であること</dd>
+  </dl>
+
+  <section id="previous-decision">
+    <h2>過去の選定を変える理由</h2>
+    <p>
+      過去の同一17 Japanese clip比較では、Qwen3-ASR 1.7BがCER 3.50%、0.6BがCER 8.93%でした。 約3
+      GBの追加常駐memoryと引き換えに5.43 percentage pointのerror削減を得たため、当時の1.7B
+      選定は妥当です。詳細はrepositoryの<code>docs/local-node.md</code>にある運用記録にあります。
+    </p>
+    <p>
+      新しい<a href="./performance-benchmark.html">単体・mixed性能診断</a>では、1.7Bは4.032秒音声を
+      単体p95 1.106秒で処理する一方、LLM・TTSとの同時実行でp95 3.015秒、RTF p50 0.741となりました。
+      error、queue、429、memory不足はなく、LLMとASRが同じintegrated acceleratorを同時使用することが
+      最大の劣化要因と推定します。今回はmodel parameter数だけでなく、CPUへ処理場所を移せることを
+      主要な選定軸にします。
+    </p>
+  </section>
+
+  <section id="requirements">
+    <h2>再選定要件</h2>
+    <ul>
+      <li>主用途である30秒未満の日本語発話を優先し、長時間・多言語は別routeへ分離可能とする。</li>
+      <li>
+        過去と同じ17
+        clipを使い、同じ正規化でCERを再計算する。upstream間の異なるCERは直接比較しない。
+      </li>
+      <li>LLM・TTSとのmixedでASR p95、LLM TTFT、LLM tokens/secを同時に比較する。</li>
+      <li>CPU実行を優先し、accelerator active timeをなくすか大幅に短縮する。</li>
+      <li>
+        完全localで、weight artifactとruntimeの双方がMITまたはApache-2.0であるsourceだけを採用する。
+        元weightと変換weightのlicenseが食い違う場合は、緩い方を推定適用せず除外する。
+      </li>
+      <li>OpenAI互換<code>POST /v1/audio/transcriptions</code>とLARMの固定Bindingを維持する。</li>
+    </ul>
+  </section>
+
+  <section id="candidates">
+    <h2>候補比較</h2>
+    <table>
+      <caption>
+        strict OSS条件を適用した候補状態
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">状態</th>
+          <th scope="col">候補</th>
+          <th scope="col">規模・実行場所</th>
+          <th scope="col">評価</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">不採用</th>
+          <td>
+            <a href="https://research.reazon.jp/blog/2024-08-01-ReazonSpeech.html"
+              >ReazonSpeech-k2-v2 int8-fp32</a
+            >
+          </td>
+          <td>159M、評価snapshot 177,205,032 bytes、CPU</td>
+          <td>
+            日本語専用、Apache-2.0、35,000時間学習、短音声向け。local CER 10.253%で品質gate不通過。
+            GPU競合を避ける性能効果の基準として保持する
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">不採用</th>
+          <td>
+            <a href="https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0">Kotoba Whisper v2.0</a>
+          </td>
+          <td>約0.8B、Q5_0 537,819,875 bytes、CPU whisper.cpp</td>
+          <td>
+            weightはApache-2.0、runtimeはMIT。local CER 7.358%、mixed p95
+            5.849秒で品質・性能ともgate不通過
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">試用</th>
+          <td>
+            <a href="https://huggingface.co/openai/whisper-large-v3-turbo"
+              >Whisper large-v3-turbo Q5_0</a
+            >
+          </td>
+          <td>809M、574,041,195 bytes、CPUまたはHIP whisper.cpp</td>
+          <td>
+            weightとruntimeはMIT。CPUはCER 2.654%でもmixed p95 6.218秒。HIPはCER 3.257%、mixed p95
+            1.186秒、LLM 26.639 tokens/sec。critical semantic
+            errorを監視しながら限定trial、本採用は保留
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">不採用</th>
+          <td>
+            <a href="https://huggingface.co/reazon-research/reazonspeech-espnet-v2"
+              >ReazonSpeech ESPnet v2</a
+            >
+          </td>
+          <td>118.85M、評価snapshot 475,803,880 bytes、PyTorch ROCm</td>
+          <td>
+            weightとruntimeはApache-2.0。外部LMなしの公式beam 20でCER 5.428%、mixed p95
+            3.627秒。beam 1はmixed p95 1.966秒まで速くなるがCER 8.685%へ悪化
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">license除外</th>
+          <td>
+            <a href="https://huggingface.co/FunAudioLLM/SenseVoiceSmall">SenseVoiceSmall</a>
+          </td>
+          <td>約0.2B、CPU GGUFあり</td>
+          <td>
+            GGUF
+            repoはApache-2.0表記だが、元weightは<code>model-license</code>。変換によって
+            upstream条件が消えるとは扱えないため試験対象外
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">license除外</th>
+          <td>
+            <a href="https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-2512-GGUF"
+              >Fun-ASR-Nano-2512 Q8</a
+            >
+          </td>
+          <td>0.8B、1,045,334,432 bytes、CPU audio.cpp</td>
+          <td>
+            HF source
+            metadataはApache-2.0だが、公式GGUFは<code>funasr-model-license-1.1</code>で、
+            model cardも変換weightが独自licenseに従うと明記するため試験対象外
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">production control</th>
+          <td>
+            <a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR 1.7B</a>
+          </td>
+          <td>1.7B、FP16、ROCm GPU</td>
+          <td>CER 3.498%、mixed p95 3.015秒、LLM mixed 21.904 tokens/sec。今回もrouteを維持</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      ReazonSpeechのint8実装とCPU command例は<a
+        href="https://github.com/k2-fsa/sherpa/blob/master/docs/source/onnx/pretrained_models/offline-transducer/zipformer-transducer-models.rst"
+        >sherpa-onnx公式文書</a
+      >にあり、1 thread実行も可能です。KotobaとWhisper turboのGGML weightは公式配布revision、
+      SHA-256、bytesを<code>models.yaml</code>へ登録し、whisper.cppもcommit固定しました。短発話はVADなし、
+      公式例に合わせたbeam size 5で比較しました。
+    </p>
+  </section>
+
+  <section id="shadow-result">
+    <h2>ReazonSpeech local Shadow結果</h2>
+    <p>
+      2026年8月31日にmodel revision
+      <code>291488c8151be24d7da4bf7af26e533fad96e407</code>、sherpa-onnx 1.13.6、int8 encoder・FP32
+      decoder/joinerをCPU 4 threadで常駐させました。performance比較は 同じ4.032秒fixture、各10
+      iteration、1 warmup除外で連続実行しました。Qwen3-ASRを含む既存 Resident
+      serviceは停止・再起動していません。
+    </p>
+    <table>
+      <caption>
+        現行Qwen GPUとReazonSpeech CPUのwarm性能比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">Qwen3-ASR 1.7B</th>
+          <th scope="col">Reazon CPU 4 thread</th>
+          <th scope="col">変化</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ASR standalone p95</th>
+          <td>1.106秒</td>
+          <td>0.068秒</td>
+          <td>93.9%短縮</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR mixed p95</th>
+          <td>3.015秒</td>
+          <td>0.141秒</td>
+          <td>95.3%短縮、約21.4倍</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR mixed RTF p50</th>
+          <td>0.741</td>
+          <td>0.032</td>
+          <td>95.7%低下</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM mixed output p50</th>
+          <td>21.904 tokens/sec</td>
+          <td>26.738 tokens/sec</td>
+          <td>22.1%向上</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM mixed total p95</th>
+          <td>3.934秒</td>
+          <td>3.228秒</td>
+          <td>17.9%短縮</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM mixed TTFT p95</th>
+          <td>0.931秒</td>
+          <td>0.751秒</td>
+          <td>19.3%短縮</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS mixed p95</th>
+          <td>0.587秒</td>
+          <td>0.493秒</td>
+          <td>16.0%短縮</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      両runとも60 request、うちmixed 30 requestでerror、429、queue、boot epoch変化は0でした。LLM
+      standalone p50は26.729と26.698 tokens/secでほぼ同じため、mixed差は基準速度の変動ではなく、
+      ASRをacceleratorから外した効果と判断します。raw reportはrepository外の
+      <code>/srv/ai/logs/larm-performance/20260831T115000Z-qwen-warm-report.json</code>と
+      <code>/srv/ai/logs/larm-performance/20260831T115700Z-reazon-4t-warm-report.json</code>です。
+    </p>
+
+    <table>
+      <caption>
+        同一17 clipの品質・CPU thread比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Runtime</th>
+          <th scope="col">CER</th>
+          <th scope="col">aggregate RTF</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen3-ASR 1.7B FP16 GPU</th>
+          <td>3.498%</td>
+          <td>0.153832</td>
+        </tr>
+        <tr>
+          <th scope="row">Reazon CPU 1 thread</th>
+          <td>10.253%</td>
+          <td>0.015939</td>
+        </tr>
+        <tr>
+          <th scope="row">Reazon CPU 2 thread</th>
+          <td>10.253%</td>
+          <td>0.009872</td>
+        </tr>
+        <tr>
+          <th scope="row">Reazon CPU 4 thread</th>
+          <td>10.253%</td>
+          <td>0.008449</td>
+        </tr>
+        <tr>
+          <th scope="row">Reazon CPU 8 thread</th>
+          <td>10.253%</td>
+          <td>0.007039</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      modified beam searchのactive path 4と8もCER 10.253%のままで、greedy
+      searchから改善しませんでした。
+      数字の漢数字化だけでなく、「帰国後→企画後」「価値があります→和歌山があります」などのsemantic
+      errorがあるため、post-processだけで品質gateを通すことはできません。
+    </p>
+    <aside>
+      <h3>CPU評価時点の判定</h3>
+      <p>
+        performance gateと初回安定性は通過しましたが、CER 4.5%以下という品質gateを5.75 percentage
+        point超過しました。ReazonSpeechは<code>stt-default</code>へ昇格させません。現行Qwen3-ASR
+        1.7Bのrouteは変更しません。
+      </p>
+    </aside>
+  </section>
+
+  <section id="strict-oss-shadow-result">
+    <h2>MIT・Apache-2.0限定 Shadow結果</h2>
+    <p>
+      2026年8月31日に、weightとruntimeの双方が許可licenseであるKotoba Whisper v2.0 Q5_0とWhisper
+      large-v3-turbo Q5_0を評価しました。runtimeはMITのwhisper.cpp
+      <code>eacbd8234c6654cdbf2c377f72b2106875479bdc</code>、CPU-only、beam size 5、Resident
+      serverです。品質は同じ17 clip、性能は同じ4.032秒fixture、1 warmup除外・10 iterationです。
+    </p>
+    <table>
+      <caption>
+        weight provenanceと品質
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">weight license・固定値</th>
+          <th scope="col">CER</th>
+          <th scope="col">aggregate RTF</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen3-ASR 1.7B control</th>
+          <td>既存production snapshot</td>
+          <td>3.498%</td>
+          <td>0.153832</td>
+        </tr>
+        <tr>
+          <th scope="row">Kotoba Whisper v2.0 Q5_0</th>
+          <td>
+            Apache-2.0、revision <code>e3a0cf6a62b9</code>、SHA-256
+            <code>4a3b92192b5d…3658</code>
+          </td>
+          <td>7.358%</td>
+          <td>0.685429、4 thread</td>
+        </tr>
+        <tr>
+          <th scope="row">Whisper large-v3-turbo Q5_0</th>
+          <td>
+            MIT、revision <code>5359861c739e</code>、SHA-256
+            <code>394221709cd5…a7e2</code>
+          </td>
+          <td>2.654%</td>
+          <td>0.325900、16 thread</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Whisper turboはCERだけならcontrolより0.844 percentage point低く、品質数値gateを通過しました。
+      一方で「帰国後→企画後」「官庁→環状」「峡谷→強国」「要求→有給」が残ります。Kotobaには
+      「NSA→NASA」や長文欠落があり、post-processだけでの修正はできません。
+    </p>
+    <table>
+      <caption>
+        現行Qwen、Reazon、strict OSS候補のwarm性能比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">Qwen GPU</th>
+          <th scope="col">Reazon CPU 4t</th>
+          <th scope="col">Kotoba CPU 16t</th>
+          <th scope="col">Whisper turbo CPU 16t</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ASR standalone p95</th>
+          <td>1.106秒</td>
+          <td>0.068秒</td>
+          <td>4.025秒</td>
+          <td>4.110秒</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR mixed p95</th>
+          <td>3.015秒</td>
+          <td>0.141秒</td>
+          <td>5.849秒</td>
+          <td>6.218秒</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR mixed RTF p50</th>
+          <td>0.741</td>
+          <td>0.032</td>
+          <td>1.417</td>
+          <td>1.447</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM mixed output p50</th>
+          <td>21.904 tokens/sec</td>
+          <td>26.738 tokens/sec</td>
+          <td>16.602 tokens/sec</td>
+          <td>16.429 tokens/sec</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM mixed total p95</th>
+          <td>3.934秒</td>
+          <td>3.228秒</td>
+          <td>5.257秒</td>
+          <td>5.300秒</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM mixed TTFT p95</th>
+          <td>0.931秒</td>
+          <td>0.751秒</td>
+          <td>1.203秒</td>
+          <td>1.216秒</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS mixed p95</th>
+          <td>0.587秒</td>
+          <td>0.493秒</td>
+          <td>0.726秒</td>
+          <td>0.696秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      4.032秒fixtureのKotoba thread sweepは8 threadで約5.45秒、16 threadで約3.90秒でした。 16
+      thread化でASR単体は短縮しましたが、mixed時にはLLM outputがstandalone比37.8%から38.5%低下し、
+      CPU分離の利点よりCPU競合が大きくなりました。4 runともerror、429、queue、boot
+      epoch変化は0です。 raw reportはrepository外の
+      <code>/srv/ai/logs/larm-performance/20260831T123450Z-kotoba-q5-t16-warm-report.json</code>、
+      <code>/srv/ai/logs/larm-performance/20260831T124231Z-whisper-turbo-q5-t16-warm-report.json</code>、品質結果は
+      同directoryの<code>20260831T122846Z-kotoba-q5-t4-eval.json</code>と
+      <code>20260831T124052Z-whisper-turbo-q5-t16-eval.json</code>です。
+    </p>
+    <aside>
+      <h3>判定</h3>
+      <p>
+        Kotobaは品質・性能gate不通過です。Whisper turboはCER gateを通るためartifactは保持しますが、
+        semantic error、ASR
+        mixed、LLM影響のgateを通らないため<code>stt-default</code>へ昇格させません。
+        このCPU評価時点ではQwen3-ASR 1.7BをResident defaultとして維持しました。後続のHIP評価と
+        利用者判断により、Whisper HIPだけを限定trialへ進めています。
+      </p>
+    </aside>
+  </section>
+
+  <section id="gpu-shortlist">
+    <h2>1.7B未満のGPU候補 再調査</h2>
+    <p>
+      2026年8月31日に「日本語対応」「GPU実行可能」「1.7B未満」「weightとASR
+      runtimeがMITまたはApache-2.0」を必須条件として公式model cardとrepositoryを再確認しました。
+      現行機はAMD Radeon
+      8060Sの<code>gfx1151</code>で、localの<code>rocminfo</code>と
+      <code>vulkaninfo</code>はそれぞれROCm deviceとRADV Vulkan
+      deviceを認識しています。
+    </p>
+    <table>
+      <caption>
+        GPU軽量候補の評価状態
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">状態</th>
+          <th scope="col">候補</th>
+          <th scope="col">規模・license</th>
+          <th scope="col">判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">試用中</th>
+          <td>
+            <a href="https://huggingface.co/openai/whisper-large-v3-turbo"
+              >Whisper large-v3-turbo Q5_0</a
+            >
+            +
+            <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp HIP</a>
+          </td>
+          <td>809M、Q5_0 574,041,195 bytes、weight/runtimeともMIT</td>
+          <td>
+            <code>gfx1151</code>向けHIP buildで17 clip CER 3.257%、ASR mixed
+            p95 1.186秒、LLM mixed 26.639
+            tokens/secを確認。性能gateは通るが、「帰国後→企画後」などの critical semantic
+            errorが残るため本採用は保留し、rollback可能な限定trialで実利用品質を観察
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">評価済・不採用</th>
+          <td>
+            <a href="https://huggingface.co/reazon-research/reazonspeech-espnet-v2"
+              >ReazonSpeech ESPnet v2</a
+            >
+            +
+            <a href="https://github.com/espnet/espnet">ESPnet ROCm</a>
+          </td>
+          <td>118.85M、ASR checkpoint 475,764,096 bytes、weight/runtimeともApache-2.0</td>
+          <td>
+            PyTorch ROCmで動作。外部LMなしの公式beam 20はCER 5.428%、mixed p95 3.627秒。beam
+            1は高速だがCER 8.685%で、品質とmixed性能を同時には満たせない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">再試験なし</th>
+          <td>
+            <a href="https://huggingface.co/Qwen/Qwen3-ASR-0.6B">Qwen3-ASR 0.6B</a>
+          </td>
+          <td>0.6B、Apache-2.0、PyTorch ROCm</td>
+          <td>
+            同じGPU実行経路で比較済み。既存17 clipのCER 8.93%で、1.7Bの3.498%から5.43 percentage
+            point悪化したため、速度確認のためだけに同じ試験を繰り返さない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">監視</th>
+          <td>
+            <a href="https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize"
+              >MOSS-Transcribe-Diarize 0.9B</a
+            >
+          </td>
+          <td>0.9B、BF16 weight 1,817,113,576 bytes、Apache-2.0</td>
+          <td>
+            2026年公開で50超の言語をsupportし、日本語を含む14言語challengeの総合1位。GPU
+            PyTorch経路とOpenAI互換serverを持つが、短発話では不要なdiarization・timestamp生成を含む。
+            日本語単独CER、AMD
+            ROCm、短発話latencyの公式値がないため、速度改善候補としては二候補より後
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">除外</th>
+          <td>
+            <a href="https://huggingface.co/openai/whisper-small">Whisper small</a>
+          </td>
+          <td>244M、Apache-2.0、whisper.cpp MITでGPU実行可能</td>
+          <td>
+            小さいが公開日本語CERはCommon Voice 15.1%、JSUT 14.2%、ReazonSpeech 41.5%。 Whisper
+            turboより大幅な品質低下が予想されるため、local artifactを追加しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">出力不適合</th>
+          <td>
+            <a href="https://huggingface.co/sbintuitions/kana-whisper">Kana Whisper</a>
+          </td>
+          <td>0.8B、MIT、Transformers GPU</td>
+          <td>
+            2026年公開のWhisper turbo
+            fine-tuneだが、出力は片仮名列です。漢字かな混じりのtranscriptを返す
+            <code>stt-default</code> contractに適合しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">品質除外</th>
+          <td>
+            <a href="https://huggingface.co/ayousanz/kodama-ja-streaming-small"
+              >Kodama Japanese Streaming Small</a
+            >
+          </td>
+          <td>140.1M、F32 560,571,260 bytes、Apache-2.0、Transformers GPU</td>
+          <td>
+            非常に軽いが、公開CERは短発話14.48%、FLEURS 14.80%、固有名詞16.95%。hallucination rateも
+            0.10から0.12で、作者自身がTransformers経路でlatencyを測らないよう注意しているため除外
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">license除外</th>
+          <td>
+            <a href="https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja"
+              >NVIDIA Parakeet TDT-CTC 0.6B Japanese</a
+            >
+          </td>
+          <td>0.6B、checkpoint 2,490,951,680 bytes、CC-BY-4.0</td>
+          <td>
+            TDTでblankをskipする高速設計で、公開CERはJSUT 6.4%、Common Voice 7.1%、TEDxJP-10K
+            9.0%だが、weightが今回許可したMIT・Apache-2.0ではないため試験しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">保留</th>
+          <td>
+            <a href="https://huggingface.co/reazon-research/reazonspeech-nemo-v2"
+              >ReazonSpeech NeMo v2</a
+            >
+          </td>
+          <td>619M、checkpoint 2,477,949,876 bytes、weight/runtimeともApache-2.0</td>
+          <td>
+            公開CERはJSUT 7.31%、Common Voice 8.81%、TEDxJP-10K 10.42%。ESPnet v2より大きく、 NVIDIA
+            NeMoのAMD ROCm経路にはCUDA graphを無効化する事例があり、先に選ぶ利点がない
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <h3>結論</h3>
+      <p>
+        二候補とも同じResident production serviceを維持したshadowで評価済みです。Whisper turbo
+        HIPは性能面で有力ですが、誤認識が意味を反転させるquality riskを解消できていません。ESPnet
+        v2はbeam 20でもquality gateを外れ、mixed性能も現行Qwenを上回りません。Whisper HIPだけを
+        <code>stt-default</code>の限定trialへ進め、Qwen3-ASR 1.7BはResident
+        rollback先として維持します。
+      </p>
+    </aside>
+  </section>
+
+  <section id="gpu-shadow-result">
+    <h2>GPU二候補のlocal Shadow結果</h2>
+    <p>
+      2026年8月31日に、Whisper model revision
+      <code>5359861c739e955e79d9a303bcbc70fb988958b1</code>とwhisper.cpp
+      <code>eacbd8234c6654cdbf2c377f72b2106875479bdc</code>をHIP
+      <code>gfx1151</code>で実行しました。ReazonSpeech ESPnet v2はmodel
+      revision <code>55332b8a20417c36a53a64708ab4b326d5602875</code>、source revision
+      <code>2d4d4762e7ee294ac8e47a177ac2e9b0e8d0d43f</code>、PyTorch
+      2.11.0+rocm7.13.0で実行しました。ESPnetの外部LMは公式loaderと同じく無効です。
+    </p>
+    <p>
+      品質は同じ17 clip・合計221.46秒、性能は同じ4.032秒fixture、1 warmup除外、各10 iterationです。
+      LLM、既定Qwen ASR、VOICEVOXは停止・再起動せずResidentのままにし、候補だけloopback shadow
+      endpointへ向けました。
+    </p>
+    <table>
+      <caption>
+        現行QwenとGPU shadowのwarm比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">Qwen 1.7B</th>
+          <th scope="col">Whisper turbo HIP</th>
+          <th scope="col">ESPnet beam 20</th>
+          <th scope="col">ESPnet beam 1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">17 clip CER</th>
+          <td>3.498%</td>
+          <td>3.257%</td>
+          <td>5.428%</td>
+          <td>8.685%</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR standalone p95</th>
+          <td>1.106秒</td>
+          <td>0.468秒</td>
+          <td>0.841秒</td>
+          <td>0.217秒</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR mixed p95</th>
+          <td>3.015秒</td>
+          <td>1.186秒</td>
+          <td>3.627秒</td>
+          <td>1.966秒</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR mixed RTF p95</th>
+          <td>約0.748</td>
+          <td>0.294</td>
+          <td>0.899</td>
+          <td>0.488</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM mixed output p50</th>
+          <td>21.904 tokens/sec</td>
+          <td>26.639 tokens/sec</td>
+          <td>23.957 tokens/sec</td>
+          <td>26.871 tokens/sec</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM mixed TTFT p95</th>
+          <td>0.931秒</td>
+          <td>0.995秒</td>
+          <td>0.802秒</td>
+          <td>0.738秒</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM mixed total p95</th>
+          <td>3.934秒</td>
+          <td>3.508秒</td>
+          <td>3.559秒</td>
+          <td>3.208秒</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS mixed p95</th>
+          <td>0.587秒</td>
+          <td>0.672秒</td>
+          <td>0.656秒</td>
+          <td>0.592秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Whisper HIPはASR mixed p95を現行比60.6%短縮し、LLM throughputを21.6%向上しました。17
+      clip全体のaggregate RTFもCPU版0.3259からHIP 0.0338へ約9.6倍高速化しています。一方で
+      「帰国後→企画後」「官庁→環状」「峡谷→強国」「要求→有給」が残り、数値CERだけでは許容できません。
+    </p>
+    <p>
+      ESPnet beam 20はbeam 1より品質が良いものの、CER 5.428%でquality gateを0.928 percentage
+      point超えます。mixed ASRも現行比20.3%遅く、LLM throughputのstandalone比低下は10.781%です。
+      beam 1は速度上限としてASR単体p95 0.217秒を示しますが、CER悪化と「心の声」の挿入があり、
+      採用対象ではありません。全performance runでerror、429、queue、boot epoch変化は0でした。
+    </p>
+    <aside>
+      <h3>Go / No-go</h3>
+      <p>
+        Whisper turbo HIPはperformance gateを通過、critical semantic quality gateを不通過です。
+        永続的な本採用gateは未通過ですが、利用者判断により、既知の誤認識を監視しQwenへ即時rollback
+        できる限定trialへ進めました。ESPnet v2 beam 20はquality、ASR mixed、LLM影響のgateを不通過の
+        ため不採用です。
+      </p>
+    </aside>
+    <p>
+      raw reportはrepository外の
+      <code>20260831T132011Z-whisper-turbo-q5-hip-eval.json</code>、 <code>20260831T132100Z-whisper-turbo-q5-hip-warm-report.json</code>、
+      <code>20260831T133912Z-reazonspeech-espnet-v2-rocm-eval.json</code>、 <code>20260831T134120Z-reazonspeech-espnet-v2-rocm-beam1-eval.json</code>、
+      <code>20260831T134200Z-reazonspeech-espnet-v2-rocm-beam1-warm-report.json</code>、
+      <code>20260831T134500Z-reazonspeech-espnet-v2-rocm-beam20-warm-report.json</code>です。
+    </p>
+  </section>
+
+  <section id="trial-deployment">
+    <h2>Whisper HIP限定trialの配備結果</h2>
+    <p>
+      2026年8月31日に<code>stt-default</code>のprimaryを<code>whisper-asr</code>、fallbackを
+      <code>qwen-asr</code
+      >へ変更しました。<code>stt-qwen</code>はQwenを直接選ぶ明示routeです。
+      Qwenのmodel、runtime、system serviceは削除・停止・再起動せず、切替前後でPID
+      2195を維持しました。 LLMとVOICEVOXも同様にPIDを維持しています。
+    </p>
+    <p>
+      root権限がない試用環境のため、Whisperはuser systemd serviceとしてloopback
+      <code>127.0.0.1:8085</code>で稼働しています。systemd user
+      lingerは無効なので、host再起動後の
+      自動復帰を本採用条件には数えません。repositoryには本配備用のsystem service
+      unitを用意し、正式採用時は privileged rollout、backup、reboot acceptanceを改めて行います。
+    </p>
+    <table>
+      <caption>
+        LARM実route経由、4.032秒fixture、1 warmup除外、各10 iteration
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">単体</th>
+          <th scope="col">LLM・ASR・TTS同時</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ASR total p95</th>
+          <td>0.470秒</td>
+          <td>1.184秒</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR RTF p95</th>
+          <td>0.117</td>
+          <td>0.294</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM output p50</th>
+          <td>26.695 tokens/sec</td>
+          <td>25.874 tokens/sec</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS total p95</th>
+          <td>0.350秒</td>
+          <td>0.625秒</td>
+        </tr>
+        <tr>
+          <th scope="row">error・429・queue</th>
+          <td>0</td>
+          <td>0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      voice profile smokeと全40 measured
+      caseは成功し、全Bindingは期待したruntime・releaseへ解決され、 config revisionとboot
+      epochは測定中不変、終了後のactive Allocationは0でした。raw reportはrepository外の
+      <code>/srv/ai/logs/larm-performance/20260831T141850Z-whisper-turbo-q5-hip-deployed-trial.json</code>です。
+    </p>
+    <aside>
+      <h3>rollback条件</h3>
+      <p>
+        意図・固有名詞・否定・数量・要求内容を変える誤認識が反復する、mixed ASR p95が継続的に1.5秒を
+        超える、provider error・429・process restart・GPU
+        memory不足が発生する、または利用者が品質低下を
+        判断した場合は、<code>stt-default</code>をQwenへ戻します。
+      </p>
+    </aside>
+  </section>
+
+  <section id="not-shortlisted">
+    <h2>今回優先しない候補</h2>
+    <table>
+      <caption>
+        除外理由
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">
+            <a href="https://huggingface.co/UsefulSensors/moonshine-tiny-ja">Moonshine Japanese</a>
+          </th>
+          <td>
+            27Mから58Mで非常に軽いが、公開CERはおおむね13.6%から18.3%。現行0.6Bより品質低下が
+            大きい可能性があり、model licenseにも年間売上条件がある
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="https://huggingface.co/reazon-research/japanese-zipformer-base-k2-rs35kh"
+              >Reazon 2025 Zipformer/Hubert base</a
+            >
+          </th>
+          <td>
+            約96から98Mで小さいが、公式平均CERは11.07%から11.46%で、評価済みk2-v2より公開精度が低い
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="https://huggingface.co/reazon-research/reazonspeech-nemo-v2"
+              >ReazonSpeech NeMo v2</a
+            >
+          </th>
+          <td>
+            GPU候補として再確認したが、約0.6B、checkpoint 2.48 GB。ESPnet v2より公開CERが低くなく、
+            AMD ROCm統合も複雑なため第三候補以下
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="evaluation-plan">
+    <h2>Shadow評価手順と次段階</h2>
+    <ol>
+      <li>
+        production routeを変更せず、ReazonSpeech-k2-v2
+        int8-fp32をrepository外へchecksum固定でstageする。完了
+      </li>
+      <li>
+        CPU thread数を1、2、4、8で比較する。VOICEVOXが16
+        threadを使うため、ASR単体最速だけで決めない。完了
+      </li>
+      <li>過去の17 clipを同じtranscript・正規化でCERを再計算する。完了</li>
+      <li>
+        単体とLLM・ASR・TTS mixedを各10回測り、現行Qwen3-ASR 1.7Bと同じreport schemaで比較する。完了
+      </li>
+      <li>
+        MIT・Apache-2.0限定条件を適用する。SenseVoiceSmallとFun-ASR-NanoのCPU
+        artifactはlicense不一致のため除外。完了
+      </li>
+      <li>
+        条件を満たすKotoba Whisper v2.0 Q5_0とWhisper large-v3-turbo Q5_0を同じ品質・mixed
+        benchmarkで評価する。完了
+      </li>
+      <li>
+        1.7B未満のGPU候補を再調査する。Whisper turbo HIPを第一候補、ReazonSpeech ESPnet v2
+        ROCmを第二候補に選定。調査完了
+      </li>
+      <li>
+        二候補を<code>gfx1151</code>上へ常駐させ、17
+        clip品質と単体・mixed性能を比較する。Whisperは performance通過・semantic
+        quality不通過、ESPnetはquality・mixed performance不通過。完了
+      </li>
+      <li>
+        Whisper
+        HIPをrollback可能な限定trialとして<code>stt-default</code>へ切替し、LARM実route経由の
+        voice smokeと各10 iterationの単体・mixed性能を確認する。完了
+      </li>
+    </ol>
+    <table>
+      <caption>
+        初回go/no-go gate
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">品質</th>
+          <td>
+            CER 4.5%以下、または現行1.7B比+1.0 percentage point以内。critical semantic errorは0
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ASR mixed性能</th>
+          <td>4.6秒級入力でp95 1.5秒以下、RTF p95 0.35以下</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM影響</th>
+          <td>mixed output tokens/secの単体比低下10%以下を目標とする</td>
+        </tr>
+        <tr>
+          <th scope="row">安定性</th>
+          <td>100 mixed requestでerror、429、process restart、Allocation leakが0</td>
+        </tr>
+        <tr>
+          <th scope="row">契約</th>
+          <td>OpenAI互換JSON、upload上限、duration上限、cancel、busy、health contractを維持</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="rollout-shape">
+    <h2>trialのroute構成</h2>
+    <p>
+      短い日本語voice入力用のWhisper HIPを<code>stt-default</code>にし、Qwen3-ASR
+      1.7Bは
+      <code>stt-qwen</code
+      >の明示routeとdefaultのfallbackへ残します。trial中は両方をResidentのままにし、
+      精度・性能・rollbackを観察します。QwenのPreferred化、停止、modelやserviceの削除は行いません。
+    </p>
+  </section>
+</article>

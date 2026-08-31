@@ -16,6 +16,8 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.telemetryMaxAgeMs).toBe(10_000);
   expect(config.connectionReadyTimeoutMs).toBe(120_000);
   expect(config.providerProbeTimeoutMs).toBe(15_000);
+  expect(config.nativeStreamConnectTimeoutMs).toBe(5_000);
+  expect(config.tlsCertFile).toBeUndefined();
   expect(config.inferenceAuditMode).toBe("off");
   expect(config.inferenceAuditRetentionMs).toBe(7 * 24 * 60 * 60 * 1_000);
   expect(config.inferenceAuditMaxBytes).toBe(10 * 1024 * 1024 * 1024);
@@ -52,6 +54,9 @@ test("daemon configuration rejects invalid numbers", () => {
   expect(() => parseDaemonConfig({ LARM_PROVIDER_PROBE_TIMEOUT_SECONDS: "61" })).toThrow(
     /LARM_PROVIDER_PROBE_TIMEOUT_SECONDS/,
   );
+  expect(() => parseDaemonConfig({ LARM_NATIVE_STREAM_CONNECT_TIMEOUT_MS: "99" })).toThrow(
+    /LARM_NATIVE_STREAM_CONNECT_TIMEOUT_MS/,
+  );
   expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_MODE: "optional" })).toThrow();
   expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_RETENTION_SECONDS: "604801" }))
     .toThrow(/LARM_INFERENCE_AUDIT_RETENTION_SECONDS/);
@@ -70,6 +75,22 @@ test("daemon configuration rejects invalid numbers", () => {
     .toThrow(/absolute path/);
   expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_KEY_FILE: "relative.key" }))
     .toThrow(/absolute path/);
+});
+
+test("TLS certificate and key paths are paired and absolute", () => {
+  expect(() => parseDaemonConfig({ LARM_TLS_CERT_FILE: "/etc/larm/tls.crt" }))
+    .toThrow(/configured together/);
+  expect(() => parseDaemonConfig({
+    LARM_TLS_CERT_FILE: "tls.crt",
+    LARM_TLS_KEY_FILE: "tls.key",
+  })).toThrow(/absolute paths/);
+  expect(parseDaemonConfig({
+    LARM_TLS_CERT_FILE: "/etc/larm/tls.crt",
+    LARM_TLS_KEY_FILE: "/etc/larm/tls.key",
+  })).toMatchObject({
+    tlsCertFile: "/etc/larm/tls.crt",
+    tlsKeyFile: "/etc/larm/tls.key",
+  });
 });
 
 test("standalone audit configuration ignores unrelated daemon settings", () => {

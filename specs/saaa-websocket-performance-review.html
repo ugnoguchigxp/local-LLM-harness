@@ -1,0 +1,331 @@
+<article lang="ja">
+  <h1>Mac無修正対応 LARM Native WebSocket 構造レビュー</h1>
+
+  <p>
+    SAAA Provider LLM WebSocket Protocol <code>saaa.llm-stream.v1</code> Reviewed /
+    Implementation-ready v2を正本として、<a href="./saaa-maximum-performance-websocket.html"
+      >LARM側実装計画</a
+    >を技術レビューした。結論は、<strong>Mac側を変更せずLARM側の変更だけでwire互換にできる</strong>。
+    ただし現行LARMはHTTP/SSE Provider relayであり、計画の実装前にnative Provider streamを成立させる
+    必要がある。SSEをWebSocketで包む実装は完成条件を満たさない。
+  </p>
+
+  <dl>
+    <dt>Mac contract適合性</dt>
+    <dd><strong>適合可能</strong>。Mac側変更要求なし</dd>
+    <dt>改訂計画の構造評点</dt>
+    <dd><strong>94 / 100</strong></dd>
+    <dt>現行実装の到達度</dt>
+    <dd><strong>35 / 100</strong>。REST controlは流用可能だが、realtime pathは未実装</dd>
+    <dt>Go / No-Go</dt>
+    <dd>計画はGo。native Provider spike成功まではprotocol広告をNo-Go</dd>
+  </dl>
+
+  <section id="verdict">
+    <h2>1. 判定</h2>
+    <p>
+      最適解は、先にLARMのrealtime topologyを
+      <code>SAAA WSS → LARM RunActor → native Provider stream</code>へ固定し、その境界へACK、resume、
+      tool、cancel、backpressure、TLSを配置する構造である。HTTP controlと非streaming
+      requestは同じdaemonに 残せるため、Mac側のallocation lifecycleを変える必要はない。
+    </p>
+    <p>
+      今回提供されたprotocol詳細により、以前の不確定事項だったbinary
+      header、field、limit、error、close
+      mappingはすべて確定した。LARM独自の軽量protocolを考案する必要はなく、むしろ独自差分を入れないことが
+      最短の相互接続経路である。
+    </p>
+  </section>
+
+  <section id="score">
+    <h2>2. 絶対評点</h2>
+    <p>
+      現行SSEとの改善率ではなく、「1対1を基本単位とするrealtime pathとして構造上の仕事が適切か」を
+      100点満点で評価する。実測性能ではなく、改訂後architectureの実装前評価である。
+    </p>
+    <table>
+      <caption>
+        改訂計画の構造評点 94 / 100
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">評価軸</th>
+          <th scope="col">配点</th>
+          <th scope="col">評点</th>
+          <th scope="col">評価</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Mac contract fidelity</th>
+          <td>20</td>
+          <td>20</td>
+          <td>subprotocol、message、limit、close codeを正本どおりserver側へ実装</td>
+        </tr>
+        <tr>
+          <th scope="row">Critical path</th>
+          <td>20</td>
+          <td>20</td>
+          <td>prewarm、1 run / connection、16 byte delta、全文再送なし、圧縮なし</td>
+        </tr>
+        <tr>
+          <th scope="row">State / integrity</th>
+          <td>20</td>
+          <td>19</td>
+          <td>
+            single owner、連続seq、incremental hash、terminal exactly-once。fixture共有が未実装
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Bound / failure ownership</th>
+          <td>20</td>
+          <td>20</td>
+          <td>64 event / 512 KiB、120秒retention、run-level fail、drainとcleanupが明確</td>
+        </tr>
+        <tr>
+          <th scope="row">Repository / deployment fit</th>
+          <td>20</td>
+          <td>15</td>
+          <td>実装境界は明確だが、native Qwen stream、WSS、full conformanceが未実証</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr>
+          <th scope="row">合計</th>
+          <td>100</td>
+          <td><strong>94</strong></td>
+          <td>構造採用。保留点は実装とcommissioningで解消する</td>
+        </tr>
+      </tfoot>
+    </table>
+  </section>
+
+  <section id="compatibility">
+    <h2>3. Mac protocolとの照合</h2>
+    <table>
+      <caption>
+        要求とLARM側対応
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Mac側固定条件</th>
+          <th scope="col">LARM側対応</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>saaa.llm-stream.v1</code></th>
+          <td>claim、upgrade、readyの三箇所でexact versionを広告・echoする</td>
+          <td>適合</td>
+        </tr>
+        <tr>
+          <th scope="row">HTTP control維持</th>
+          <td>allocation、poll、renew、release、health、non-streamingを既存RESTへ残す</td>
+          <td>適合</td>
+        </tr>
+        <tr>
+          <th scope="row">SSE bridge禁止</th>
+          <td>
+            <code>NativeLlmStreamBackend</code>を追加し、Providerまでnative eventにする
+          </td>
+          <td>設計適合、実装待ち</td>
+        </tr>
+        <tr>
+          <th scope="row">広告数までprewarm</th>
+          <td>local-node初期値は実runtime capacityに合わせ1、将来は1〜8</td>
+          <td>適合</td>
+        </tr>
+        <tr>
+          <th scope="row">active run / connection = 1</th>
+          <td>run actorをsocketへpinし、二件目をqueueしない</td>
+          <td>適合</td>
+        </tr>
+        <tr>
+          <th scope="row">16 byte binary delta</th>
+          <td>
+            <code>SAD1</code>、type 1、flags 0、header length 16、u64 BE
+            seqをexact encode
+          </td>
+          <td>適合</td>
+        </tr>
+        <tr>
+          <th scope="row">ACK / pause</th>
+          <td>累積ACK、hash検証、64 eventまたは524,288 byteでrun単位pause</td>
+          <td>適合</td>
+        </tr>
+        <tr>
+          <th scope="row">120秒resume / replay</th>
+          <td>detached run stateをmemory保持し、元seqで未ACK eventを再送</td>
+          <td>適合</td>
+        </tr>
+        <tr>
+          <th scope="row">terminalに全文なし</th>
+          <td>incremental SHA-256、contentBytes、usage、finishReasonだけを送る</td>
+          <td>適合</td>
+        </tr>
+        <tr>
+          <th scope="row">最大4 parallel tool</th>
+          <td>完成済みargumentsをtext開始前に送り、全result settle後に同runを継続</td>
+          <td>設計適合、backend実証待ち</td>
+        </tr>
+        <tr>
+          <th scope="row">非loopback WSS</th>
+          <td>TLS証明書検証、Bearer header、同一host、redirect禁止</td>
+          <td>commissioning待ち</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="strengths">
+    <h2>4. 1対1性能に対する強み</h2>
+    <ul>
+      <li>
+        一つのsocketへ一つのactive runだけを置くため、stream
+        registry、runごとのfairness、同一socket内の head-of-line schedulingをhot pathから除ける。
+      </li>
+      <li>
+        connectionをuser turnより前にprewarmし、handshake、auth、allocation bindingをprompt確定後に
+        繰り返さない。
+      </li>
+      <li>
+        deltaは16 byte fixed headerで、JSON field名、run ID、nested envelope、per-message
+        compressionを token pathへ持ち込まない。
+      </li>
+      <li>
+        terminal全文を再送せず、Macのcanonical
+        accumulatorを正本にするため、長文完了時の重複copyを避ける。
+      </li>
+      <li>
+        ACK/resumeは処理を増やすが、切断後の重複発声を防ぎつつ再生成を避ける構造上必要な処理であり、
+        16 eventまたは100 msの累積ACKでcontrol trafficをboundedにする。
+      </li>
+      <li>
+        UIの遅延をACK条件へ含めないMac設計と、run単位backpressureを行うLARM設計が一致し、遅いpaintが
+        Provider generation全体を止めない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="gaps">
+    <h2>5. 現行LARMとの差分と技術的risk</h2>
+    <table>
+      <caption>
+        実装前に閉じるgap
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Gap</th>
+          <th scope="col">影響</th>
+          <th scope="col">対応</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">現行ProviderがHTTP/SSE</th>
+          <td>最大のblocker。外面WSだけでは非準拠</td>
+          <td>native callback、IPC、WS対応runtimeまたはLARM側Provider sidecarを先行実証</td>
+        </tr>
+        <tr>
+          <th scope="row">daemonにWS handlerなし</th>
+          <td>upgrade、binary、drainを新設する必要</td>
+          <td>HonoはHTTPに維持し、Bun native WebSocketをhot pathに使う</td>
+        </tr>
+        <tr>
+          <th scope="row">protocol typeがOpenAI v1固定</th>
+          <td>registry、claim、readinessがWS能力を表現できない</td>
+          <td>
+            <code>packages/core</code>へ新protocolとstream advertisementを追加
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ExecutionGateがHTTP request単位</th>
+          <td>queued admissionやprobeがrun ownershipと衝突し得る</td>
+          <td>即時run admissionとdetached run reservationを別stateとして実装</td>
+        </tr>
+        <tr>
+          <th scope="row">full-required inference audit</th>
+          <td>全deltaのcopy、暗号化、disk writeが速度優先pathと衝突</td>
+          <td>WS target profileだけmetadata-only、payload非永続へ明示分離</td>
+        </tr>
+        <tr>
+          <th scope="row">tool callのnative継続</th>
+          <td>既存Providerがfragmented argumentsや別request再開しか持たない可能性</td>
+          <td>Phase 0で同一run continuationを実証し、できなければProvider runtimeを変更</td>
+        </tr>
+        <tr>
+          <th scope="row">WSS未commissioning</th>
+          <td>Macから非loopback LAN接続できない</td>
+          <td>証明書、hostname、trust、rotation、failure testをdeploymentへ追加</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="protocol-observations">
+    <h2>6. 詳細protocolの評価</h2>
+    <p>
+      protocol自体は、性能だけを理由にintegrityを捨てず、必要な仕事をboundedにしている点で技術的に
+      適合している。特に次の判断は維持すべきである。
+    </p>
+    <ul>
+      <li>
+        seqを全Provider
+        eventへ一列に振るため、text、tool、terminal間の順序を別channelへ分散させない。
+      </li>
+      <li>
+        <code>contentSha256</code>をACKとterminalへ持たせるため、replay
+        cursorだけが一致して本文が異なる failureを検出できる。
+      </li>
+      <li>
+        unacknowledged上限とresume retentionが固定され、切断時もmemory使用量とrun寿命が有限である。
+      </li>
+      <li>
+        run errorとconnection framing errorを分離し、一件の入力不良でprewarmed connection
+        poolを壊さない。
+      </li>
+      <li>tool argumentsを完成後に一度だけ送るため、Macへfragment assembly stateを増やさない。</li>
+    </ul>
+    <aside>
+      <p>
+        注意点は、LARMが最大8を機械的に広告しないことである。connection
+        prewarm数はHTTP同時接続数ではなく、 resident
+        modelが安全に同時生成できるrun数で決める。現行Qwen local-nodeは1を広告するのが正しい。
+      </p>
+    </aside>
+  </section>
+
+  <section id="order">
+    <h2>7. 優先順位</h2>
+    <ol>
+      <li>native Provider streamの実証。これが失敗したら他のWS実装を先行しない。</li>
+      <li>Mac正本由来のschema、golden binary/hash fixture、PWS-C01〜PWS-C19 runner。</li>
+      <li>一connection、一runのvertical sliceとmetadata-only path。</li>
+      <li>seq/hash/limit、ACK/pause、disconnect/resume。</li>
+      <li>tool continuation、pool、WSS、drain。</li>
+      <li>全conformance後にSSE routeとfixtureを削除。</li>
+    </ol>
+    <p>
+      この順序なら、最も不確実なProvider境界を最初に解消し、その後は確定済みcontractへ機械的に
+      実装を積み上げられる。Mac側には暫定fallbackや互換分岐を追加しない。
+    </p>
+  </section>
+
+  <section id="release">
+    <h2>8. Release判定</h2>
+    <p>次の三条件が揃った時点で「Mac無修正対応可能」から「実装完了」へ判定を上げる。</p>
+    <ol>
+      <li>native Qwen pathでSSE dependencyが0になっている。</li>
+      <li>MacとLARMが同じschema / golden fixtureを使い、PWS-C01〜PWS-C19が全件成功している。</li>
+      <li>
+        非loopback WSS、allocation lease、cancel、resume、30分network flapを実機で通している。
+      </li>
+    </ol>
+    <p>
+      したがって回答は「可能」である。ただし変更範囲はdaemonのWebSocket endpointだけではなく、 core
+      contract、native Provider backend、runtime configuration、TLS、tests、deploymentまで含む。
+      ここをLARM側の一つのvertical sliceとして完了すれば、Mac側修正は不要である。
+    </p>
+  </section>
+</article>

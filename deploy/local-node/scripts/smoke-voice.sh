@@ -58,7 +58,7 @@ done
 
 jq -e '
   ([.bindings[] | select(.capability == "llm.general" and .runtime == "qwen-general")] | length) == 1
-  and ([.bindings[] | select(.capability == "speech.stt" and .runtime == "qwen-asr")] | length) == 1
+  and ([.bindings[] | select(.capability == "speech.stt" and .runtime == "whisper-asr")] | length) == 1
   and ([.bindings[] | select(.capability == "speech.tts" and .runtime == "voicevox-tts")] | length) == 1
 ' <<<"${allocation}" >/dev/null
 

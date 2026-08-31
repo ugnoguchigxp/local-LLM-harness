@@ -44,7 +44,7 @@ test("file recorder stores provider-rendered prompt and token pieces", async () 
     endpoint: "http://127.0.0.1:8080/",
     requestBody: new TextEncoder().encode('{"model":"local","messages":[]}'),
   });
-  session.captureResponse(new TextEncoder().encode("data: [DONE]\n\n"));
+  session.captureResponse(new TextEncoder().encode('{"choices":[{"message":{"content":"done"}}]}'));
   await session.finalize({ outcome: "http_200", upstreamStatus: 200 });
 
   const record = await store.get("req_materialized");

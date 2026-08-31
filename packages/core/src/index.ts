@@ -11,6 +11,7 @@ export {
   type ParsedInferenceAuditRecord,
 } from "./inference-audit";
 export * from "./protocol";
+export * from "./saaa-llm-stream";
 export * from "./agent-connection";
 export {
   API_OPERATIONS,

@@ -13,6 +13,7 @@ import {
   prepareExternalOutput,
   writeExclusive,
 } from "./benchmark-helpers";
+import { runSaaaWebSocketSmoke } from "./smoke-saaa-websocket";
 
 type SeriesId = (typeof sloSeriesIdSchema.options)[number];
 type BindingIdentity = { route: string; runtime: string; release: string; fallback: boolean };
@@ -192,6 +193,43 @@ function seriesDefinition(id: SeriesId) {
 async function runSample(id: SeriesId, iteration: number): Promise<RawSample> {
   const definition = seriesDefinition(id);
   const allocationStarted = performance.now();
+  if (id === "llm-realtime") {
+    return await client.withAgentConnection({
+      agentProfile: process.env.LARM_BENCHMARK_AGENT_PROFILE ?? "coding-default",
+      audience: process.env.LARM_BENCHMARK_AGENT_AUDIENCE ?? "same-host",
+      ttlSeconds: 120,
+      allowFallback: false,
+      deploymentPolicy: "existing-only",
+    }, async (_connection, claim, larm) => {
+      const provider = claim.providers.find((candidate) => candidate.streaming);
+      if (!provider?.streaming) throw new Error("saaa_streaming_not_advertised");
+      const allocation = await larm.getAllocation(claim.allocationId);
+      const binding = allocation.bindings.find((candidate) => candidate.capability.startsWith("llm."));
+      if (!binding) throw new Error("binding_missing");
+      const startupMs = performance.now() - allocationStarted;
+      const measured = await runSaaaWebSocketSmoke({
+        url: provider.streaming.url,
+        token: provider.credential.token,
+        allocationId: claim.allocationId,
+        model: provider.model,
+        timeoutMs: 120_000,
+        prompt: "Reply with OK.",
+        maxOutputTokens: definition.maxTokens,
+      });
+      return {
+        iteration,
+        bootEpoch: allocation.bootEpoch,
+        route: binding.route,
+        runtime: binding.runtime,
+        release: binding.release ?? "unmanaged",
+        fallback: binding.fallback,
+        ttfbMs: measured.firstDeltaMs,
+        totalMs: measured.durationMs,
+        startupMs,
+        status: 101,
+      };
+    });
+  }
   return await client.withAllocation({
     requirements: [{ capability: definition.capability, route: definition.route }],
     allowFallback: false,
@@ -203,10 +241,10 @@ async function runSample(id: SeriesId, iteration: number): Promise<RawSample> {
     if (!binding) throw new Error("binding_missing");
     const requestStarted = performance.now();
     let response: Response;
-    if (id === "llm-normal" || id === "llm-realtime") {
+    if (id === "llm-normal") {
       response = await larm.chat(allocation.id, {
         model: "larm",
-        stream: true,
+        stream: false,
         max_tokens: definition.maxTokens,
         messages: [{ role: "user", content: "Reply with OK." }],
       });
@@ -227,7 +265,7 @@ async function runSample(id: SeriesId, iteration: number): Promise<RawSample> {
       });
     }
     const status = response.status;
-    const responseKind = id === "llm-normal" || id === "llm-realtime" ? "llm" : id === "stt" ? "stt" : "tts";
+    const responseKind = id === "llm-normal" ? "llm" : id === "stt" ? "stt" : "tts";
     const { firstByteAt } = await consumeBenchmarkResponse(responseKind, response);
     const completedAt = performance.now();
     return {

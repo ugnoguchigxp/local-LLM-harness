@@ -116,24 +116,28 @@ export async function consumeBenchmarkResponse(
     return { firstByteAt, bytes };
   }
 
-  if (!response.headers.get("content-type")?.startsWith("text/event-stream")) {
+  if (!response.headers.get("content-type")?.startsWith("application/json")) {
     throw new Error("llm_content_type_invalid");
   }
-  const events = body.split(/\r?\n/)
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice("data:".length).trim());
-  if (events.at(-1) !== "[DONE]") throw new Error("llm_stream_incomplete");
-  const payloads = events.slice(0, -1);
-  if (payloads.length === 0) throw new Error("llm_stream_empty");
+  let parsed: unknown;
   try {
-    for (const payload of payloads) {
-      const parsed = JSON.parse(payload);
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        throw new Error("invalid event");
-      }
-    }
+    parsed = JSON.parse(body);
   } catch {
-    throw new Error("llm_stream_invalid");
+    throw new Error("llm_response_invalid");
+  }
+  if (
+    typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
+    || !("choices" in parsed) || !Array.isArray(parsed.choices)
+    || !parsed.choices.some((choice) => {
+      if (typeof choice !== "object" || choice === null || Array.isArray(choice) || !("message" in choice)) {
+        return false;
+      }
+      const message = choice.message;
+      return typeof message === "object" && message !== null && !Array.isArray(message)
+        && "content" in message && typeof message.content === "string" && message.content.length > 0;
+    })
+  ) {
+    throw new Error("llm_response_invalid");
   }
   return { firstByteAt, bytes };
 }

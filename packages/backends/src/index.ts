@@ -54,3 +54,14 @@ export {
   type InferenceAuditPruneResult,
   type LocalInferenceAuditStoreOptions,
 } from "./inference-audit-store";
+export {
+  NATIVE_LLM_STREAM_ENCODING,
+  NATIVE_LLM_STREAM_PROTOCOL,
+  NativeLlmBackendRegistry,
+  NativeWebSocketLlmStreamBackend,
+  type NativeLlmEvent,
+  type NativeLlmStreamBackend,
+  type NativeLlmUsage,
+  type NativeWebSocketFactory,
+  type NativeWebSocketLike,
+} from "./native-llm-stream";

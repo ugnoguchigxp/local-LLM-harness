@@ -50,7 +50,9 @@ LARM のルーティングはリクエスト本文の `model` ではなく、事
 - systemd と llama-swap を介した状態監視とライフサイクル制御
 - 許可リストに登録した成果物の検証、staging、切り替え、ロールバック
 - Agent 向けの短期接続情報と、用途別 provider profile の発行
+- `saaa.llm-stream.v1` WebSocket による、ACK・再開・tool・cancel対応のLLM realtime data plane
 - ヘルスチェック、readiness、Prometheus メトリクス、OpenAPI 3.1 定義
+- LLM・ASR・TTSの単体性能と3系統同時利用時の劣化を比較する診断ベンチマーク
 - Allocation の後始末まで扱う TypeScript クライアント
 
 ## 対象外
@@ -66,7 +68,7 @@ LARM は、GPU ドライバ、推論エンジン、モデルのインストー�
 | 稼働確認 | `GET /health`、`GET /ready` |
 | 観測 | `GET /state`、`GET /metrics` |
 | Allocation | `POST /v1/allocations`、`POST /v1/allocations/:id/renew`、`DELETE /v1/allocations/:id` |
-| LLM | `POST /v1/chat/completions` |
+| LLM | 非streaming: `POST /v1/chat/completions`、realtime: `GET /v1/llm/stream` (WebSocket upgrade) |
 | 音声 | `POST /v1/audio/transcriptions`、`POST /v1/audio/speech`、`GET /v1/audio/voices` |
 | Agent 接続 | `/v1/agent-profiles`、`/v1/agent-connections` |
 | 成果物とリリース | `/v1/artifacts`、`/v1/runtime-releases`、`/v1/deployments` |
@@ -198,6 +200,35 @@ LARM_ROUTE=<route-id> LARM_MODEL=<upstream-model-id> bun quickstart.ts
 - Allocation が失敗した場合は、そのレスポンスに加えて `/state` と `/metrics` を確認してください。runtime の状態、資源不足、同時実行数、許可されていない fallback などを切り分けられます。
 - `401` または `403` の場合は API token と management token を取り違えていないか確認してください。
 
+### 推論性能を測る
+
+常駐Providerの性能診断には次を実行します。LLM、ASR、TTSを個別に測った後、3系統を一つずつ同時に
+実行し、p50・p95、LLMのTTFTと出力tokens/sec、ASR・TTSのRTF、単体比の劣化率をJSONで返します。
+ASR用音声を指定しない場合は、計測開始前に通常TTSで非機密の固定音声を生成し、メモリ上だけで使用します。
+
+```bash
+set -a
+source /etc/larm/larm.env
+set +a
+bun run perf:diagnostic
+```
+
+再現用の音声fixtureを固定し、結果をリポジトリ外へ保存する場合は次のように実行します。既存ファイルは
+上書きしません。
+
+```bash
+LARM_PERF_AUDIO_FILE=/absolute/path/to/non-sensitive.wav \
+LARM_PERF_OUTPUT=/srv/ai/logs/larm-performance/report.json \
+LARM_PERF_ITERATIONS=10 \
+bun run perf:diagnostic
+```
+
+`LARM_PERF_SCENARIOS=llm,asr,tts,mixed`で対象を絞れます。`mixed`は各Providerへの1要求を同時に
+開始する実利用干渉テストであり、同一Providerの飽和限界を探すstress testではありません。詳しい測定契約は
+[`specs/performance-benchmark.html`](specs/performance-benchmark.html)にあります。
+評価専用CPU ASRをproduction routeへ組み込まず比較するときは、loopbackのOpenAI互換endpointを
+`LARM_PERF_ASR_URL`へ指定できます。
+
 ## リポジトリ構成
 
 | パス | 内容 |
@@ -214,6 +245,7 @@ LARM_ROUTE=<route-id> LARM_MODEL=<upstream-model-id> bun quickstart.ts
 
 ```bash
 bun run dev          # daemon を開発モードで起動
+bun run perf:diagnostic # LLM・ASR・TTSの単体／同時性能診断
 bun run test         # テスト
 bun run typecheck    # 型検査
 bun run docs         # 設計文書をプレビュー

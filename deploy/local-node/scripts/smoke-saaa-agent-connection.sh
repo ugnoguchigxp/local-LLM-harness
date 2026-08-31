@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 base_url="${LARM_BASE_URL:-http://127.0.0.1:9810}"
 base_url="${base_url%/}"
 timeout_seconds="${LARM_SAAA_SMOKE_TIMEOUT_SECONDS:-600}"
@@ -185,44 +186,38 @@ jq -e --arg agentProfile "${agent_profile}" --arg audience "${agent_audience}" \
   and .providers[0].configuration.secretFields.apiKey == "credential.token"
   and .providers[0].credential.type == "bearer"
   and .providers[0].credential.expiresAt == .expiresAt
+  and .providers[0].streaming.protocol == "saaa.llm-stream.v1"
+  and .providers[0].streaming.encoding == "json-control+binary-delta-v1"
+  and .providers[0].streaming.compression == "none"
+  and .providers[0].streaming.upstreamTransport == "native"
+  and .providers[0].streaming.maxConcurrentRuns >= 1
+  and .providers[0].streaming.maxConnections == .providers[0].streaming.maxConcurrentRuns
+  and .providers[0].streaming.resumeWindowMs >= 120000
   and ($audience != "saaa-desktop" or (
     .providers[0].port == 9810
     and .providers[0].baseUrl == $requestBaseUrl
     and (.providers[0].host | IN("127.0.0.1", "::1", "localhost") | not)
+    and (.providers[0].streaming.url | startswith("wss://"))
   ))
   and (.providers[0].credential.token | length > 0)' <<<"${claim}" >/dev/null
 
-provider_base_url="$(jq -er '.providers[0].baseUrl' <<<"${claim}")"
 provider_model="$(jq -er '.providers[0].model' <<<"${claim}")"
 provider_health_url="$(jq -er '.providers[0].health.url' <<<"${claim}")"
 provider_token="$(jq -er '.providers[0].credential.token' <<<"${claim}")"
+provider_stream_url="$(jq -er '.providers[0].streaming.url' <<<"${claim}")"
+provider_allocation_id="$(jq -er '.allocationId' <<<"${claim}")"
 
 provider_health="$(curl_bearer "${provider_token}" -fsS --max-time 30 "${provider_health_url}")"
 jq -e '.name == "llm" and .ready == true and .acceptingRequests == true
   and .probe.kind == "semantic-inference" and .probe.validated == true' \
   <<<"${provider_health}" >/dev/null
 
-curl_bearer "${provider_token}" -fsS -N --max-time 300 \
-  -X POST "${provider_base_url}/chat/completions" \
-  -H 'Content-Type: application/json' \
-  -d "$(jq -cn --arg model "${provider_model}" \
-    '{model:$model,stream:true,max_tokens:32,temperature:0,
-      chat_template_kwargs:{enable_thinking:false},
-      messages:[{role:"system",content:"You are a helpful assistant."},
-        {role:"user",content:"Say hello in one short sentence."}]}')" \
-  >"${scratch_dir}/completion.sse"
-awk '
-      { sub(/\r$/, "") }
-      /^data: / && $0 != "data: [DONE]" { seen_data = 1 }
-      /^data: \[DONE\]$/ { seen_done = 1 }
-      END { if (!seen_data || !seen_done) exit 1 }
-    ' "${scratch_dir}/completion.sse"
-awk '
-    { sub(/\r$/, "") }
-    /^data: / && $0 != "data: [DONE]" { sub(/^data: /, ""); print }
-  ' "${scratch_dir}/completion.sse" \
-  | jq -s -e 'any(.[]; any(.choices[]?; ((.delta.content // .message.content // "") | length) > 0))' \
-    >/dev/null
+LARM_SAAA_STREAM_URL="${provider_stream_url}" \
+LARM_SAAA_PROVIDER_TOKEN="${provider_token}" \
+LARM_SAAA_ALLOCATION_ID="${provider_allocation_id}" \
+LARM_SAAA_MODEL="${provider_model}" \
+LARM_SAAA_SMOKE_TIMEOUT_MS="$((timeout_seconds > 300 ? 300000 : timeout_seconds * 1000))" \
+  bun run "${repo_root}/deploy/local-node/scripts/smoke-saaa-websocket.ts"
 
 release_status="$(curl_bearer "${LARM_API_TOKEN}" -sS --max-time 15 -o /dev/null -w '%{http_code}' \
   -X DELETE "${base_url}/v1/agent-connections/${connection_id}")"

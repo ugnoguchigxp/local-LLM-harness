@@ -1,0 +1,29 @@
+[Unit]
+Description=Whisper large-v3-turbo Q5 HIP OpenAI-compatible provider
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/whisper.cpp
+Environment=HOME=/srv/ai/cache
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+ExecStart=/srv/ai/apps/whisper.cpp/build-hip/bin/whisper-server -m /srv/ai/models/whisper-large-v3-turbo-ggml/ggml-large-v3-turbo-q5_0.bin -l ja -bs 5 -t 16 -nt --host 127.0.0.1 --port 8085 --inference-path /v1/audio/transcriptions
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+LimitMEMLOCK=infinity
+LimitNOFILE=65535
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/srv/ai/cache /srv/ai/logs
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -13,13 +13,15 @@ state from this document alone.
 | Port | Runtime | Policy | Purpose |
 | ---: | --- | --- | --- |
 | 8080 | Qwen3.8-27B ROCmFP4 FAST + MTP | resident | primary reasoning/coding |
-| 8081 | Qwen3-ASR 1.7B FP16 | resident | accurate Japanese transcription |
+| 8081 | Qwen3-ASR 1.7B FP16 | resident backup | explicit `stt-qwen` / default fallback |
 | 8082 | Qwen3-TTS 0.6B optimized | preferred | expressive speech |
 | 8083 | llama-swap | resident executor | on-demand 256K general and 64K Agent workers |
 | 8084 | VOICEVOX CORE 0.17.0 | resident | low-latency speech |
+| 8085 | Whisper large-v3-turbo Q5 HIP | trial resident | primary Japanese transcription |
+| 8090 | native LLM stream Provider | external resident companion | `larm.native-llm-stream.v1`, loopback only |
 | 9810 | LARM daemon | control plane | authenticated LAN Gateway |
 
-The repository-managed Runtime units bind ports 8080–8084 to loopback. `prepare-host.sh` installs
+The repository-managed Runtime units bind ports 8080–8085 to loopback. `prepare-host.sh` installs
 host prerequisites but does not change or enable UFW. The focused SAAA REST access tool manages
 only the reviewed source-host rule for the authenticated LARM Gateway and never changes SSH rules.
 Runtime control and health use loopback endpoints from
@@ -46,6 +48,23 @@ a separately reviewed trusted-proxy contract.
 Provider ports 8080–8084 remain loopback-only. Only the authenticated Gateway at 9810 is exposed
 to the reviewed SAAA source host. An unauthenticated control request must return 401, while `/health` and
 `/ready` remain credential-free operational probes and do not disclose Provider endpoints.
+
+LLM realtime output uses `saaa.llm-stream.v1` at the claim-provided
+`/v1/llm/stream` WSS URL. Port 8090 is the external runtime's native event endpoint; it is never
+exposed to SAAA and must not implement or proxy SSE. LARM probes its exact
+`larm.native-llm-stream.v1` subprotocol and requires a strict semantic readiness declaration for
+SAD1 encoding, pause/resume, cancel, tool continuation, usage, and advertised capacity before
+advertising `streaming`. The currently installed
+`llama-server` exposes only HTTP/SSE streaming, so it cannot satisfy that prerequisite by itself;
+until a native companion is commissioned, claims deliberately omit the streaming descriptor.
+After the native companion and production certificate are commissioned, run
+`bun run smoke:saaa-websocket` and then `bun run soak:saaa-websocket`. The soak gate holds the test
+for at least 30 minutes, completes at least 1,000 turns, deliberately disconnects after the first
+delta of every turn, validates exact replay through `run.resume`, reports p50/p95/p99 turn and first
+delta latency, and rejects excess peak or settled RSS growth.
+Set `LARM_BASE_URL`, `LARM_API_TOKEN`, and `LARM_SAAA_CONNECTION_ID` for the soak runner. During
+every planned disconnect it renews and reclaims that same Agent Connection, requires a newly
+rotated Provider credential, verifies the claim invariants, and resumes with the new credential.
 
 ## Why this split
 
@@ -112,11 +131,12 @@ deploy/local-node/scripts/shadow-larm.sh
 # Attended fault inventory; mutations require LARM_FAULT_CONFIRM=local-node-attended:
 deploy/local-node/scripts/fault-larm.sh plan
 systemctl is-active llama-server.service llama-swap-worker.service \
-  qwen-asr.service voicevox-tts.service larm-daemon.service
+  qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service
 systemctl is-enabled llama-server.service llama-swap-worker.service \
-  qwen-asr.service voicevox-tts.service larm-daemon.service qwen-tts.service
+  qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service qwen-tts.service
 journalctl -u llama-server.service -f
 journalctl -u qwen-asr.service -f
+journalctl -u whisper-asr.service -f
 journalctl -u voicevox-tts.service -f
 journalctl -u larm-daemon.service -f
 ```

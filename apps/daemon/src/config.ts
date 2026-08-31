@@ -7,6 +7,8 @@ export type DaemonConfig = {
   configDir: string;
   port: number;
   hostname: string;
+  tlsCertFile?: string;
+  tlsKeyFile?: string;
   observeIntervalMs: number;
   graceMs: number;
   idleTtlMs: number;
@@ -20,6 +22,7 @@ export type DaemonConfig = {
   connectionSigningKey?: Uint8Array;
   connectionReadyTimeoutMs: number;
   providerProbeTimeoutMs: number;
+  nativeStreamConnectTimeoutMs: number;
   gatewayTimeoutMs: number;
   controlMaxBodyBytes: number;
   gatewayMaxBodyBytes: number;
@@ -183,6 +186,14 @@ export function parseDaemonConfig(
   }
   const apiToken = optionalSecret(env.LARM_API_TOKEN);
   const managementToken = optionalSecret(env.LARM_MANAGEMENT_TOKEN);
+  const tlsCertFile = optionalSecret(env.LARM_TLS_CERT_FILE);
+  const tlsKeyFile = optionalSecret(env.LARM_TLS_KEY_FILE);
+  if ((tlsCertFile === undefined) !== (tlsKeyFile === undefined)) {
+    throw new Error("LARM_TLS_CERT_FILE and LARM_TLS_KEY_FILE must be configured together");
+  }
+  if (tlsCertFile && (!isAbsolute(tlsCertFile) || !isAbsolute(tlsKeyFile!))) {
+    throw new Error("LARM TLS certificate and key files must use absolute paths");
+  }
   const inferenceAudit = parseInferenceAuditConfig(env);
   const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
   if (!loopbackHosts.has(hostname) && !apiToken) {
@@ -196,6 +207,9 @@ export function parseDaemonConfig(
     configDir: resolve(env.LARM_CONFIG_DIR ?? join(sourceDir, "../../../config/local-node")),
     port: numberSetting(env, "LARM_PORT", 9810, { min: 1, max: 65_535, integer: true }),
     hostname,
+    ...(tlsCertFile && tlsKeyFile
+      ? { tlsCertFile: resolve(tlsCertFile), tlsKeyFile: resolve(tlsKeyFile) }
+      : {}),
     observeIntervalMs: numberSetting(env, "LARM_OBSERVE_INTERVAL_MS", 2_000, {
       min: 1,
       max: 2_147_483_647,
@@ -236,6 +250,12 @@ export function parseDaemonConfig(
       15,
       1,
       60,
+    ),
+    nativeStreamConnectTimeoutMs: numberSetting(
+      env,
+      "LARM_NATIVE_STREAM_CONNECT_TIMEOUT_MS",
+      5_000,
+      { min: 100, max: 30_000, integer: true },
     ),
     gatewayTimeoutMs: secondsSetting(
       env,

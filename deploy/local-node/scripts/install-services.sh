@@ -87,6 +87,7 @@ else
     llama-server.service
     llama-swap-worker.service
     qwen-asr.service
+    whisper-asr.service
     qwen-tts.service
     voicevox-tts.service
     larm-daemon.service
@@ -97,6 +98,7 @@ else
     llama-server.service
     llama-swap-worker.service
     qwen-asr.service
+    whisper-asr.service
     voicevox-tts.service
     larm-daemon.service
     larm-inference-audit-prune.timer

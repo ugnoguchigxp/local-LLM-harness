@@ -12,6 +12,7 @@ units=(
   llama-server.service
   llama-swap-worker.service
   qwen-asr.service
+  whisper-asr.service
   qwen-tts.service
   voicevox-tts.service
 )

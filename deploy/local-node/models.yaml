@@ -125,6 +125,67 @@ models:
       - { path: tokenizer_config.json, bytes: 12487, sha256: 4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c }
       - { path: vocab.json, bytes: 2776833, sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910 }
 
+  reazonspeech-k2-v2-shadow:
+    kind: snapshot
+    role: evaluation-stt
+    source: https://huggingface.co/reazon-research/reazonspeech-k2-v2
+    revision: 291488c8151be24d7da4bf7af26e533fad96e407
+    path: /srv/ai/models/reazonspeech-k2-v2
+    totalBytes: 177205032
+    maxFiles: 5
+    snapshotDigest: 4ab4b61e27027e54dd1d2b73db70ea3349a54c4a9d610c870c8bc6a2f49ec6b9
+    quantization: int8-fp32
+    runtime: sherpa-onnx-cpu
+    files:
+      - { path: README.md, bytes: 1188, sha256: 7debad4c9430f3310ad6d119fce385787c1c19f3ebc0cabe685a48dbe72a4de0 }
+      - { path: decoder-epoch-99-avg-1.onnx, bytes: 11767836, sha256: 58b18211ae06265466bfa17172dab574df94f76c8bcb61a3640c28ba860e4124 }
+      - { path: encoder-epoch-99-avg-1.int8.onnx, bytes: 154670139, sha256: 2c7bd08a8a99f9ddd0d9e458456577b1f6279214e51426f114f9eced44c54e1d }
+      - { path: joiner-epoch-99-avg-1.onnx, bytes: 10720115, sha256: d38a81d1191c9ed6de6a1719503692e07e3e973e2364adde0abae5eaaded1174 }
+      - { path: tokens.txt, bytes: 45754, sha256: 2c3ac659818a48a0c04010e0593bbc4d7c8a24a054340b01131499c05fd52def }
+
+  reazonspeech-espnet-v2-shadow:
+    kind: snapshot
+    role: evaluation-stt
+    source: https://huggingface.co/reazon-research/reazonspeech-espnet-v2
+    revision: 55332b8a20417c36a53a64708ab4b326d5602875
+    path: /srv/ai/models/reazonspeech-espnet-v2
+    totalBytes: 475803880
+    maxFiles: 6
+    snapshotDigest: 0943c0dcbd8fcb2bd508503e2a0082bad348fa6458ba78f1b692adc3f9d2529e
+    quantization: fp32
+    runtime: espnet-pytorch-rocm
+    files:
+      - { path: .gitattributes, bytes: 1519, sha256: 11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361 }
+      - { path: README.md, bytes: 1156, sha256: 5bb9e4ad635675b30a5ebf9ba376379653c16cf05fe756ee6759fe0baa03483d }
+      - { path: exp/asr_stats_raw_jp_char/train/feats_stats.npz, bytes: 1402, sha256: e7072024477dacaacefee023eb0f20909b9a364cc6a1f1a705e2911c357a9029 }
+      - { path: exp/asr_train_asr_conformer_raw_jp_char/config.yaml, bytes: 35307, sha256: b3cdd227cd79e1505f7d89d68997e281120bb3fad95b196b3be39f54445a092c }
+      - { path: exp/asr_train_asr_conformer_raw_jp_char/valid.acc.ave_10best.pth, bytes: 475764096, sha256: 50fb91cd12aed7ea9f8e7035c659c98ee3bc56b15c831f6dbbbf66b380838f5c }
+      - { path: meta.yaml, bytes: 400, sha256: a530523d90b425b4ca28d8c58c8730a3015521e0c15bbf7d2962fefee5bf938e }
+
+  kotoba-whisper-v2-q5-shadow:
+    kind: file
+    role: evaluation-stt
+    source: https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-ggml
+    revision: e3a0cf6a62b95911703cfb97d819292e058f12c3
+    filename: ggml-kotoba-whisper-v2.0-q5_0.bin
+    path: /srv/ai/models/kotoba-whisper-v2.0-ggml/ggml-kotoba-whisper-v2.0-q5_0.bin
+    bytes: 537819875
+    sha256: 4a3b92192b5d3578ff854a5876213e2e27af0c2d357492c2d14271e82c303658
+    quantization: Q5_0
+    runtime: whisper.cpp-cpu
+
+  whisper-large-v3-turbo-q5-trial:
+    kind: file
+    role: trial-resident-stt
+    source: https://huggingface.co/ggerganov/whisper.cpp
+    revision: 5359861c739e955e79d9a303bcbc70fb988958b1
+    filename: ggml-large-v3-turbo-q5_0.bin
+    path: /srv/ai/models/whisper-large-v3-turbo-ggml/ggml-large-v3-turbo-q5_0.bin
+    bytes: 574041195
+    sha256: 394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2
+    quantization: Q5_0
+    runtime: whisper.cpp-hip
+
   qwen3-tts-expressive:
     kind: snapshot
     role: preferred-tts

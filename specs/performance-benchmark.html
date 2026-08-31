@@ -1,0 +1,295 @@
+<article lang="ja">
+  <h1>LLM・ASR・TTS 性能診断ベンチマーク仕様</h1>
+
+  <p>
+    local-nodeで感じる遅延をLLM、ASR、TTSへ分解し、さらに3系統を同時利用した場合の干渉を
+    再現可能な形で比較する診断仕様です。実装は<code>deploy/local-node/scripts/performance-larm.ts</code>です。本診断は日常の原因切り分けを目的とし、release昇格を判定するSLO
+    canaryとは分離します。
+  </p>
+
+  <dl>
+    <dt>状態</dt>
+    <dd>実装・自動テスト・local-node warm-state実測完了</dd>
+    <dt>report schema</dt>
+    <dd><code>larm-performance-diagnostic</code> version 1</dd>
+    <dt>既定反復</dt>
+    <dd>warmup 1回、測定5回</dd>
+    <dt>既定route</dt>
+    <dd>
+      <code>llm-default</code
+      >、<code>stt-default</code>、<code>tts-default</code>
+    </dd>
+  </dl>
+
+  <section id="measurement-contract">
+    <h2>測定契約</h2>
+    <table>
+      <caption>
+        workloadごとの固定入力と主要指標
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">workload</th>
+          <th scope="col">入力</th>
+          <th scope="col">主要指標</th>
+          <th scope="col">読み方</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLM</th>
+          <td>
+            1から40までを順番に出力する固定prompt、既定<code>max_tokens=64</code>
+          </td>
+          <td>first byte、TTFT、total、completion token、output tokens/sec</td>
+          <td>遅延は小さいほど、tokens/secは大きいほど良い</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td>固定音声file、または測定前にTTSで一度だけ作るmemory上の固定音声</td>
+          <td>first byte、total、RTF、audio seconds/sec</td>
+          <td>RTFは小さいほど良く、1未満なら音声長より短時間で処理</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>日本語の固定文、VOICEVOX通常音声、WAV</td>
+          <td>first byte、total、生成音声長、RTF、audio seconds/sec</td>
+          <td>RTFは小さいほど良く、audio seconds/secは大きいほど良い</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      latencyと速度は各sampleを保持し、集計ではminimum、p50、p95、maximum、meanを出します。 LLM
+      token数はOpenAI互換streamの<code>usage.completion_tokens</code>を優先し、Providerがusageを
+      返さない場合だけcontent event数を代替値として明記します。ASR transcript、LLM response本文、
+      TTS音声はreportへ保存しません。
+    </p>
+  </section>
+
+  <section id="warm-state">
+    <h2>Warm state</h2>
+    <p>
+      既定対象の<code>qwen-general</code>、<code>qwen-asr</code>、<code>voicevox-tts</code>はResidentの
+      常時起動状態のまま測定します。Allocation解放でこれらを停止せず、Provider restartやmodel
+      unloadも 行いません。warmupは各scenarioの最初の要求を集計から除くだけで、Cold
+      cycleではありません。
+    </p>
+  </section>
+
+  <section id="mixed-scenario">
+    <h2>同時利用scenario</h2>
+    <p>
+      <code>mixed</code
+      >ではLLM、ASR、TTSを一つのAllocationへ束ね、各1要求を同じevent loop turnで
+      開始します。reportには実際のlaunch skewを残します。各workloadのmixed p95 total latencyと p50
+      processing speedを単体系列と比較し、正の値が劣化を表す百分率として記録します。
+    </p>
+    <p>
+      評価専用の<code>LARM_PERF_ASR_URL</code>がある場合、ASR-onlyはAllocationなしでloopback
+      endpointを直接測り、mixedはLLMとTTSだけをLARM Allocationへ固定して外部ASRを同時発射します。
+      これによりproduction routeを変更せず、CPU
+      ASRが既存workloadへ与える影響を同じschemaで比較できます。
+    </p>
+    <aside>
+      <p>
+        mixedは音声対話1セッション相当の異種Provider干渉を見る試験です。同一Providerへ複数要求を
+        投げる飽和試験、最大throughput探索、長時間soak試験ではありません。既定runtimeは各Providerの
+        <code>maxConcurrentRequests=1</code>なので、それらは別の明示的な負荷契約が必要です。
+      </p>
+    </aside>
+  </section>
+
+  <section id="observability">
+    <h2>同時に採取する観測値</h2>
+    <ul>
+      <li>最小system memory available bytes</li>
+      <li>最小accelerator memory available bytes</li>
+      <li>最大active execution数と最大queue depth</li>
+      <li>Gatewayが返したHTTP 429の増分</li>
+      <li>route、runtime、release、fallbackの実identity</li>
+      <li>daemon boot epoch、config revision、release commitの開始前後一致</li>
+    </ul>
+    <p>
+      推論error、telemetry採取error、またはdaemon identity変化が一つでもあれば<code
+        >passed=false</code
+      >
+      とし、processも非zeroで終了します。一方、性能値に合否閾値は置きません。まず同一hardware・同一
+      releaseのbaselineを複数回採取し、用途別SLOを校正してからgateへ昇格させます。
+    </p>
+  </section>
+
+  <section id="operation">
+    <h2>実行方法</h2>
+    <p>既定の4 scenarioを実行する最短手順です。</p>
+    <pre><code>set -a
+source /etc/larm/larm.env
+set +a
+bun run perf:diagnostic</code></pre>
+    <p>固定fixture、10反復、repository外証跡を使う例です。</p>
+    <pre><code>LARM_PERF_AUDIO_FILE=/absolute/path/to/non-sensitive.wav \
+LARM_PERF_OUTPUT=/srv/ai/logs/larm-performance/report.json \
+LARM_PERF_ITERATIONS=10 \
+bun run perf:diagnostic</code></pre>
+    <table>
+      <caption>
+        診断用環境変数
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">変数</th>
+          <th scope="col">既定</th>
+          <th scope="col">用途</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>LARM_PERF_SCENARIOS</code></th>
+          <td><code>all</code></td>
+          <td><code>llm,asr,tts,mixed</code>の部分集合</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_PERF_ITERATIONS</code></th>
+          <td><code>5</code></td>
+          <td>測定反復、1から100</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_PERF_WARMUPS</code></th>
+          <td><code>1</code></td>
+          <td>scenarioごとのwarmup、0から10</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_PERF_AUDIO_FILE</code></th>
+          <td>未指定</td>
+          <td>ASR用の絶対path。非WAVは音声長も指定</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_PERF_AUDIO_SECONDS</code></th>
+          <td>WAV headerから取得</td>
+          <td>非WAV fixtureの正確な音声秒数</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_PERF_OUTPUT</code></th>
+          <td>標準出力のみ</td>
+          <td>既存でないrepository外の絶対path</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>LARM_PERF_ASR_URL</code></th>
+          <td>未指定</td>
+          <td>評価専用ASRのcredentialを含まないHTTP loopback URL</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <code>LARM_PERF_ASR_ROUTE</code
+            >、<code>LARM_PERF_ASR_RUNTIME</code>、
+            <code>LARM_PERF_ASR_RELEASE</code>
+          </th>
+          <td>
+            <code>stt-shadow</code
+            >、<code>external-asr</code>、<code
+              >unmanaged</code
+            >
+          </td>
+          <td>外部ASRをreportで識別するsafe identifier</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="live-result">
+    <h2>local-node実測</h2>
+    <dl>
+      <dt>観測時刻</dt>
+      <dd><time>2026-08-31T10:04:23.853Z</time></dd>
+      <dt>deployed commit</dt>
+      <dd><code>5ac9331a23273c4e3fd16097cfbe59050531bde6</code></dd>
+      <dt>config revision</dt>
+      <dd><code>4a9326f60353e906f8752acd01ca8b6179f12d4803074c2bde5fa2f23a15a500</code></dd>
+      <dt>条件</dt>
+      <dd>
+        warmup 1回、測定5回、4.597秒のTTS生成fixture、LLM
+        <code>max_tokens=64</code>
+      </dd>
+      <dt>証跡</dt>
+      <dd><code>/srv/ai/logs/larm-performance/20260831T100316Z-report.json</code></dd>
+    </dl>
+    <table>
+      <caption>
+        単体とmixedのp50・p95比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">workload</th>
+          <th scope="col">単体</th>
+          <th scope="col">mixed</th>
+          <th scope="col">mixed劣化</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLM</th>
+          <td>TTFT p50 563 ms、total p95 3.137 s、output p50 26.685 tokens/s</td>
+          <td>TTFT p50 910 ms、total p95 3.913 s、output p50 21.356 tokens/s</td>
+          <td>total p95 +24.714%、processing speed -19.970%</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td>total p50 1.174 s、p95 1.179 s、RTF p50 0.255</td>
+          <td>total p50 3.282 s、p95 3.301 s、RTF p50 0.714</td>
+          <td>total p95 +179.959%、processing speed -64.205%</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>total p50 287 ms、p95 315 ms、RTF p50 0.062</td>
+          <td>total p50 579 ms、p95 597 ms、RTF p50 0.126</td>
+          <td>total p95 +89.606%、processing speed -50.397%</td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        正常性とresource観測
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">成功率</th>
+          <td>単体15/15、mixed 15/15、HTTP 429は0、fallbackは0</td>
+        </tr>
+        <tr>
+          <th scope="row">同時性</th>
+          <td>mixed launch skew p95 0.185 ms、最大active execution 3、最大queue depth 0</td>
+        </tr>
+        <tr>
+          <th scope="row">memory余力</th>
+          <td>
+            mixed中の最小system available 82,298,269,696 bytes、accelerator available 65,077,301,248
+            bytes
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Warm state</th>
+          <td>
+            daemon、LLM、ASR、TTSはすべて<time>2026-08-29T12:54:32Z</time>からactive、
+            <code>NRestarts=0</code>。boot epoch、config revision、release
+            commitは測定前後で一致
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      結果から、遅さはCold startではなく同時実行時のresource干渉として再現しました。特にGPUを使う
+      LLMとASRを含むmixedでASRの影響が最大です。queue、429、memory不足がないまま両方が実行中なので、
+      admission待ちではなくaccelerator computeまたはshared memory bandwidthの競合と推定します。
+      CPU版VOICEVOXも16 thread構成で約2倍へ低下しており、CPU・memory fabric側の干渉も示唆されます。
+      原因の寄与率を確定するにはLLM+ASR、LLM+TTS、ASR+TTSのpairwise測定を追加します。
+      ASRのCPU軽量候補と比較gateは<a href="./asr-alternative-evaluation.html"
+        >軽量日本語ASR 再選定調査・Shadow評価結果</a
+      >へ分離しました。
+    </p>
+    <p>
+      単体はいずれも5回のばらつきが小さく、ASRとTTSはmixedでもRTF 1未満を維持しました。LLM
+      Providerはmodelを常駐させる一方、起動引数でprompt cacheとidle slot cacheを無効化しています。
+      そのため単体TTFTはCold loadではなく毎回のprefillを含みます。raw sample、生成音声、transcript、
+      response本文はrepositoryへ保存していません。
+    </p>
+  </section>
+</article>

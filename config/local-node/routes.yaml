@@ -103,6 +103,16 @@ routes:
     capabilities:
       - speech.stt
     candidates:
+      - runtime: whisper-asr
+        purpose: primary
+      - runtime: qwen-asr
+        purpose: fallback
+
+  stt-qwen:
+    capabilities:
+      - speech.stt
+    explicitOnly: true
+    candidates:
       - runtime: qwen-asr
         purpose: primary
 

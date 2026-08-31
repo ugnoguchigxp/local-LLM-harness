@@ -141,6 +141,10 @@ test("agent claim validation rejects internally inconsistent remote descriptors"
   };
 
   expect(agentConnectionClaimSchema.parse(claim).providers[0]?.port).toBe(9810);
+  expect(agentConnectionClaimSchema.safeParse({
+    ...claim,
+    providers: [{ ...claim.providers[0]!, baseUrl: "not-a-url" }],
+  }).success).toBeFalse();
   expect(() => agentConnectionClaimSchema.parse({
     ...claim,
     providers: [{ ...claim.providers[0]!, port: 8080 }],
@@ -162,4 +166,50 @@ test("agent claim validation rejects internally inconsistent remote descriptors"
       health: { ...claim.providers[0]!.health, url: "http://127.0.0.1:9810/health" },
     }],
   })).toThrow(/health URL must match/);
+  expect(() => agentConnectionClaimSchema.parse({
+    ...claim,
+    providers: [{
+      ...claim.providers[0]!,
+      host: "127.example",
+      baseUrl: "http://127.example:9810/v1",
+      health: {
+        ...claim.providers[0]!.health,
+        url: "http://127.example:9810/v1/agent-connections/aconn_epoch-test_1/providers/llm/health",
+      },
+      configuration: {
+        ...claim.providers[0]!.configuration,
+        fields: {
+          ...claim.providers[0]!.configuration.fields,
+          baseURL: "http://127.example:9810/v1",
+        },
+      },
+      streaming: {
+        protocol: "saaa.llm-stream.v1" as const,
+        url: "ws://127.example:9810/v1/llm/stream",
+        encoding: "json-control+binary-delta-v1" as const,
+        compression: "none" as const,
+        maxConcurrentRuns: 1,
+        maxConnections: 1,
+        resumeWindowMs: 120_000,
+        upstreamTransport: "native" as const,
+      },
+    }],
+  })).toThrow(/literal loopback/);
+  expect(() => agentConnectionClaimSchema.parse({
+    ...claim,
+    providers: [{
+      ...claim.providers[0]!,
+      protocol: "openai.audio-transcriptions.v1",
+      streaming: {
+        protocol: "saaa.llm-stream.v1" as const,
+        url: "ws://192.0.2.42:9810/v1/llm/stream",
+        encoding: "json-control+binary-delta-v1" as const,
+        compression: "none" as const,
+        maxConcurrentRuns: 1,
+        maxConnections: 1,
+        resumeWindowMs: 120_000,
+        upstreamTransport: "native" as const,
+      },
+    }],
+  })).toThrow(/native SAAA streaming requires openai\.chat-completions\.v1/);
 });

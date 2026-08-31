@@ -8,9 +8,9 @@ import {
   writeExclusive,
 } from "./benchmark-helpers";
 
-test("validates completed LLM SSE, STT JSON, and TTS attribution", async () => {
-  const llm = new Response('data: {"choices":[]}\n\ndata: [DONE]\n\n', {
-    headers: { "content-type": "text/event-stream; charset=utf-8" },
+test("validates completed LLM JSON, STT JSON, and TTS attribution", async () => {
+  const llm = new Response('{"choices":[{"message":{"content":"OK"}}]}', {
+    headers: { "content-type": "application/json; charset=utf-8" },
   });
   expect((await consumeBenchmarkResponse("llm", llm, () => 42)).firstByteAt).toBe(42);
 
@@ -25,13 +25,13 @@ test("validates completed LLM SSE, STT JSON, and TTS attribution", async () => {
   expect((await consumeBenchmarkResponse("tts", tts)).bytes).toBe(3);
 });
 
-test("rejects truncated or malformed successful responses", async () => {
-  await expect(consumeBenchmarkResponse("llm", new Response('data: {"choices":[]}\n', {
-    headers: { "content-type": "text/event-stream" },
-  }))).rejects.toThrow("llm_stream_incomplete");
-  await expect(consumeBenchmarkResponse("llm", new Response("data: nope\n\ndata: [DONE]\n", {
-    headers: { "content-type": "text/event-stream" },
-  }))).rejects.toThrow("llm_stream_invalid");
+test("rejects malformed successful responses", async () => {
+  await expect(consumeBenchmarkResponse("llm", new Response('{"choices":[]}', {
+    headers: { "content-type": "application/json" },
+  }))).rejects.toThrow("llm_response_invalid");
+  await expect(consumeBenchmarkResponse("llm", new Response("not-json", {
+    headers: { "content-type": "application/json" },
+  }))).rejects.toThrow("llm_response_invalid");
   await expect(consumeBenchmarkResponse("stt", new Response('{"text":"  "}', {
     headers: { "content-type": "application/json" },
   }))).rejects.toThrow("stt_response_invalid");

@@ -54,17 +54,12 @@ done
 jq -e '.bindings[] | select(.capability == "llm.general") | .runtime == "qwen-general"' \
   <<<"${allocation}" >/dev/null
 
-curl -fsS -N --max-time 300 "${headers[@]}" \
+completion="$(curl -fsS --max-time 300 "${headers[@]}" \
   -X POST "${base_url}/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   -H "x-larm-allocation-id: ${allocation_id}" \
-  -d '{"model":"ignored-by-larm","stream":true,"max_tokens":8,"messages":[{"role":"user","content":"Reply with OK."}]}' \
-  | awk '
-      { sub(/\r$/, "") }
-      /^data: / && $0 != "data: [DONE]" { seen_data = 1 }
-      /^data: \[DONE\]$/ { seen_done = 1 }
-      END { if (!seen_data || !seen_done) exit 1 }
-    '
+  -d '{"model":"ignored-by-larm","stream":false,"max_tokens":8,"messages":[{"role":"user","content":"Reply with OK."}]}' )"
+jq -e 'any(.choices[]?; ((.message.content // "") | length) > 0)' <<<"${completion}" >/dev/null
 
 curl -fsS --max-time 10 "${headers[@]}" -X DELETE \
   "${base_url}/v1/allocations/${allocation_id}" >/dev/null

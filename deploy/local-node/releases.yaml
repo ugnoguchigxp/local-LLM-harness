@@ -85,6 +85,15 @@ runtimeReleases:
     healthPath: /health
     default: true
 
+  whisper-asr-trial:
+    runtime: whisper-asr
+    artifacts:
+      - whisper-large-v3-turbo-q5-trial
+    providerConfigRevision: whispercpp-eacbd823-hip-gfx1151-bs5-v1
+    estimatedMemoryGB: 1
+    healthPath: /health
+    default: true
+
   qwen-tts-current:
     runtime: qwen-tts
     artifacts:

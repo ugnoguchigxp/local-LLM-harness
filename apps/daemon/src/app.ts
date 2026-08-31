@@ -3,6 +3,7 @@ import type {
   ClusterState,
   Registry,
   RuntimeProtocol,
+  SaaaStreamAdvertisement,
 } from "@larm/core";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
@@ -86,6 +87,12 @@ export type AppDeps = {
   connectionHistoryLimit?: number;
   inferenceAuditMode?: "off" | "metadata" | "full-required";
   inferenceAuditRecorder?: InferenceAuditRecorder;
+  agentConnectionController?: AgentConnectionController;
+  resolveStreaming?: (input: {
+    allocationId: string;
+    provider: AgentConnectionCatalog["profiles"][number]["providers"][number];
+    audienceBaseUrl: string;
+  }) => Promise<SaaaStreamAdvertisement | undefined> | SaaaStreamAdvertisement | undefined;
 };
 
 function errorBody(code: string, message: string) {
@@ -108,7 +115,8 @@ function acceptsProviderBearer(method: string, path: string): boolean {
     ]).has(path)
   ) return true;
   return method === "GET"
-    && /^\/v1\/agent-connections\/[^/]+\/providers\/[^/]+\/health$/.test(path);
+    && (path === "/v1/llm/stream"
+      || /^\/v1\/agent-connections\/[^/]+\/providers\/[^/]+\/health$/.test(path));
 }
 
 export function publicRuntime(runtime: Registry["runtimes"][number]) {
@@ -184,7 +192,7 @@ function normalizedAllocationRequestHash(request: AllocationRequest): string {
   return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
 
-export function createApp(deps: AppDeps) {
+export function createAppComponents(deps: AppDeps) {
   const app = new Hono();
   const controlMaxBodyBytes = deps.controlMaxBodyBytes ?? 64 * 1024;
   const currentRegistry = () => deps.getRegistry?.() ?? deps.registry;
@@ -215,7 +223,7 @@ export function createApp(deps: AppDeps) {
     fetchImpl: deps.gatewayFetch,
     now: deps.now,
   });
-  const agentConnections = deps.connectionSigningKey
+  const agentConnections = deps.agentConnectionController ?? (deps.connectionSigningKey
     ? new AgentConnectionController({
       control: deps.control,
       getCatalog: currentAgentCatalog,
@@ -227,10 +235,11 @@ export function createApp(deps: AppDeps) {
       idempotencyTtlMs: deps.idempotencyTtlMs ?? 300_000,
       idempotencyLimit: deps.idempotencyLimit ?? 1_000,
       historyLimit: deps.connectionHistoryLimit ?? 1_000,
+      resolveStreaming: deps.resolveStreaming,
       now: deps.now,
       random: deps.random,
     })
-    : undefined;
+    : undefined);
   type AllocationApiResult = {
     status: 200 | 202 | 400 | 403 | 404 | 409 | 503;
     body: unknown;
@@ -357,28 +366,59 @@ export function createApp(deps: AppDeps) {
       if (declaredCapability !== undefined && declaredCapability !== scoped.provider.capability) {
         return c.json(errorBody("connection_forbidden", "capability header does not match provider token"), 403);
       }
+    }
+    let chatRequest: unknown;
+    if (options.protocol === "openai.chat-completions.v1") {
       try {
-        const clone = c.req.raw.clone();
-        const bytes = await readBodyLimited(clone as unknown as Request, options.maxBodyBytes);
+        const bytes = await readBodyLimited(c.req.raw.clone() as unknown as Request, options.maxBodyBytes);
+        chatRequest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+        if (
+          chatRequest
+          && typeof chatRequest === "object"
+          && !Array.isArray(chatRequest)
+          && (chatRequest as Record<string, unknown>).stream === true
+        ) {
+          return c.json(errorBody(
+            "streaming_requires_websocket",
+            "streaming LLM requests must use /v1/llm/stream",
+          ), 400);
+        }
+      } catch (error) {
+        if (error instanceof RequestBodyError) {
+          return c.json(errorBody(error.code, error.message), error.status);
+        }
+        return c.json(errorBody("bad_request", "request body must be valid UTF-8 JSON"), 400);
+      }
+    }
+    if (scoped) {
+      try {
         let modelValues: unknown[];
-        if (options.protocol === "openai.audio-transcriptions.v1") {
-          const parsedRequest = new Response(bytes, {
-            headers: {
-              "content-type": clone.headers.get("content-type") ?? "",
-            },
-          });
-          const form = await parsedRequest.formData();
-          modelValues = form.getAll("model");
-        } else {
-          let value: unknown;
-          try {
-            value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
-          } catch {
-            return c.json(errorBody("bad_request", "request body must be valid UTF-8 JSON"), 400);
-          }
-          modelValues = typeof value === "object" && value !== null && !Array.isArray(value)
-            ? [(value as Record<string, unknown>).model]
+        if (options.protocol === "openai.chat-completions.v1") {
+          modelValues = typeof chatRequest === "object" && chatRequest !== null && !Array.isArray(chatRequest)
+            ? [(chatRequest as Record<string, unknown>).model]
             : [];
+        } else {
+          const clone = c.req.raw.clone();
+          const bytes = await readBodyLimited(clone as unknown as Request, options.maxBodyBytes);
+          if (options.protocol === "openai.audio-transcriptions.v1") {
+            const parsedRequest = new Response(bytes, {
+              headers: {
+                "content-type": clone.headers.get("content-type") ?? "",
+              },
+            });
+            const form = await parsedRequest.formData();
+            modelValues = form.getAll("model");
+          } else {
+            let value: unknown;
+            try {
+              value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+            } catch {
+              return c.json(errorBody("bad_request", "request body must be valid UTF-8 JSON"), 400);
+            }
+            modelValues = typeof value === "object" && value !== null && !Array.isArray(value)
+              ? [(value as Record<string, unknown>).model]
+              : [];
+          }
         }
         if (
           modelValues.length !== 1
@@ -529,6 +569,11 @@ export function createApp(deps: AppDeps) {
   app.get("/metrics", (c) => c.text(deps.metrics?.render() ?? ""));
 
   app.get("/openapi.json", (c) => c.json(createOpenApiDocument(identity.version)));
+
+  app.get("/v1/llm/stream", (c) => c.json(errorBody(
+    "websocket_upgrade_required",
+    "Sec-WebSocket-Protocol: saaa.llm-stream.v1 WebSocket upgrade required",
+  ), 426));
 
   const agentResult = (c: Context, result: {
     status: number;
@@ -1066,5 +1111,9 @@ export function createApp(deps: AppDeps) {
 
   app.notFound((c) => c.json(errorBody("not_found", "not found"), 404));
 
-  return app;
+  return { app, agentConnections };
+}
+
+export function createApp(deps: AppDeps) {
+  return createAppComponents(deps).app;
 }

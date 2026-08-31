@@ -5,6 +5,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { deploymentPolicySchema } from "./api-schema";
 import type { Registry } from "./registry";
+import { isLiteralLoopbackHost, saaaStreamAdvertisementSchema } from "./saaa-llm-stream";
 import { runtimeProtocolSchema, type RuntimeProtocol } from "./schema";
 
 export const agentIdentifierSchema = z.string()
@@ -32,8 +33,7 @@ function normalizedHostname(url: URL): string {
 
 function isLoopbackHostname(hostname: string): boolean {
   return hostname === "localhost"
-    || hostname === "::1"
-    || hostname.startsWith("127.");
+    || isLiteralLoopbackHost(hostname);
 }
 
 function isUnspecifiedHostname(hostname: string): boolean {
@@ -409,8 +409,14 @@ export const agentProviderDescriptorSchema = z.object({
     }).strict(),
     secretFields: z.object({ apiKey: z.literal("credential.token") }).strict(),
   }).strict(),
+  streaming: saaaStreamAdvertisementSchema.optional(),
 }).strict().superRefine((provider, context) => {
-  const baseUrl = new URL(provider.baseUrl);
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(provider.baseUrl);
+  } catch {
+    return;
+  }
   const expectedScheme = baseUrl.protocol.slice(0, -1);
   const expectedPort = baseUrl.port
     ? Number(baseUrl.port)
@@ -449,6 +455,44 @@ export const agentProviderDescriptorSchema = z.object({
       message: "configuration model must match model",
     });
   }
+  if (provider.streaming) {
+    if (provider.protocol !== "openai.chat-completions.v1") {
+      context.addIssue({
+        code: "custom",
+        path: ["streaming"],
+        message: "native SAAA streaming requires openai.chat-completions.v1",
+      });
+    }
+    let streamUrl: URL;
+    try {
+      streamUrl = new URL(provider.streaming.url);
+    } catch {
+      return;
+    }
+    const loopback = isLiteralLoopbackHost(streamUrl.hostname);
+    if (streamUrl.origin.replace(/^ws/, "http") !== baseUrl.origin) {
+      context.addIssue({
+        code: "custom",
+        path: ["streaming", "url"],
+        message: "streaming URL origin must match baseUrl",
+      });
+    }
+    if (
+      streamUrl.pathname !== "/v1/llm/stream"
+      || streamUrl.username
+      || streamUrl.password
+      || streamUrl.search
+      || streamUrl.hash
+      || (streamUrl.protocol === "ws:" && !loopback)
+      || (streamUrl.protocol !== "ws:" && streamUrl.protocol !== "wss:")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["streaming", "url"],
+        message: "streaming URL must be canonical WSS, or WS on literal loopback",
+      });
+    }
+  }
 });
 
 export const agentConnectionClaimSchema = z.object({
@@ -472,8 +516,14 @@ export const agentConnectionClaimSchema = z.object({
         message: "provider credential expiry must match Connection expiry",
       });
     }
-    const baseUrl = new URL(provider.baseUrl);
-    const healthUrl = new URL(provider.health.url);
+    let baseUrl: URL;
+    let healthUrl: URL;
+    try {
+      baseUrl = new URL(provider.baseUrl);
+      healthUrl = new URL(provider.health.url);
+    } catch {
+      continue;
+    }
     const expectedPath = `${baseUrl.pathname}/agent-connections/${claim.id}/providers/${provider.name}/health`;
     if (
       healthUrl.origin !== baseUrl.origin

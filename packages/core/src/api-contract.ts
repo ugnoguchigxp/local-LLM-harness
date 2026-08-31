@@ -301,6 +301,7 @@ export const API_OPERATIONS = [
   ["post", "/v1/agent-connections/{id}/renew", "renewAgentConnection"],
   ["delete", "/v1/agent-connections/{id}", "releaseAgentConnection"],
   ["post", "/v1/chat/completions", "createChatCompletion"],
+  ["get", "/v1/llm/stream", "upgradeLlmStream"],
   ["post", "/v1/audio/transcriptions", "createTranscription"],
   ["post", "/v1/audio/speech", "createSpeech"],
   ["get", "/v1/audio/voices", "listVoices"],
@@ -348,6 +349,7 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   renewAgentConnection: ["200"],
   releaseAgentConnection: ["204"],
   createChatCompletion: ["200"],
+  upgradeLlmStream: ["101"],
   createTranscription: ["200"],
   createSpeech: ["200"],
   listVoices: ["200"],
@@ -393,6 +395,7 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   renewAgentConnection: "AgentConnection",
   releaseAgentConnection: "AgentConnection",
   createChatCompletion: "UpstreamJson",
+  upgradeLlmStream: "WebSocketUpgrade",
   createTranscription: "UpstreamJson",
   createSpeech: "Binary",
   listVoices: "UpstreamJson",
@@ -448,6 +451,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     OpenApiDocument: jsonSchema(openApiDocumentSchema),
     UpstreamJson: jsonSchema(upstreamJsonResponseSchema),
     Binary: { type: "string", format: "binary" },
+    WebSocketUpgrade: { type: "string", description: "saaa.llm-stream.v1 WebSocket frames" },
     ControlOperation: jsonSchema(controlOperationSchema),
     ArtifactOperation: jsonSchema(artifactOperationSchema),
     RuntimeReleaseList: jsonSchema(runtimeReleaseListSchema),
@@ -488,6 +492,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     const publicOperation = operationId === "getHealth" || operationId === "getReadiness";
     const providerBearerOperation = operationId === "getAgentProviderHealth"
       || operationId === "createChatCompletion"
+      || operationId === "upgradeLlmStream"
       || operationId === "createTranscription"
       || operationId === "createSpeech";
     const successContent = (() => {
@@ -497,9 +502,9 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "createChatCompletion") {
         return {
           "application/json": { schema: { $ref: "#/components/schemas/UpstreamJson" } },
-          "text/event-stream": { schema: { type: "string" } },
         };
       }
+      if (operationId === "upgradeLlmStream") return undefined;
       if (operationId === "createSpeech") {
         return {
           "audio/wav": { schema: { $ref: "#/components/schemas/Binary" } },

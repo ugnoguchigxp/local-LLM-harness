@@ -6,6 +6,12 @@
   "scripts": {
     "dev": "bun run --filter @larm/daemon dev",
     "start": "bun run --filter @larm/daemon start",
+    "perf:diagnostic": "bun run deploy/local-node/scripts/performance-larm.ts",
+    "conformance:saaa": "bun test packages/core/src/saaa-llm-stream.test.ts packages/backends/src/native-llm-stream.test.ts apps/daemon/src/llm-stream-session.test.ts apps/daemon/src/llm-stream-network.test.ts",
+    "smoke:saaa-websocket": "bun run deploy/local-node/scripts/smoke-saaa-websocket.ts",
+    "soak:saaa-websocket": "bun run deploy/local-node/scripts/soak-saaa-websocket.ts",
+    "benchmark:saaa-websocket": "bun run deploy/local-node/scripts/benchmark-saaa-websocket.ts",
+    "verify:saaa-native-provider": "bun run deploy/local-node/scripts/verify-saaa-native-provider.ts",
     "inference:audit": "bun run apps/daemon/src/inference-audit-cli.ts",
     "docs": "bun ./node_modules/spec-html/dist/cli.js ./specs --markdown-lang ja",
     "docs:fix": "bun ./node_modules/spec-html/dist/cli.js fix ./specs --write",
@@ -16,7 +22,7 @@
     "test": "bun test apps packages",
     "check:source-only": "bash scripts/check-source-only.sh",
     "check:operations": "bash scripts/check-operations.sh",
-    "test:deployment": "bun test deploy/local-node/scripts/verify-external-assets.test.ts deploy/local-node/scripts/benchmark-helpers.test.ts deploy/local-node/scripts/benchmark-larm.test.ts deploy/local-node/scripts/compare-slo.test.ts && bash deploy/local-node/scripts/backup-host-state.test.sh && bash deploy/local-node/scripts/install-services.test.sh && bash deploy/local-node/scripts/release-larm.test.sh && bash deploy/local-node/scripts/network-converge.test.sh && bash deploy/local-node/scripts/configure-saaa-rest-access.test.sh && bash deploy/local-node/scripts/restore-dhcp.test.sh",
+    "test:deployment": "bun test deploy/local-node/scripts/verify-external-assets.test.ts deploy/local-node/scripts/benchmark-helpers.test.ts deploy/local-node/scripts/benchmark-larm.test.ts deploy/local-node/scripts/performance-helpers.test.ts deploy/local-node/scripts/performance-larm.test.ts deploy/local-node/scripts/compare-slo.test.ts deploy/local-node/scripts/soak-saaa-websocket.test.ts && bash deploy/local-node/scripts/backup-host-state.test.sh && bash deploy/local-node/scripts/install-services.test.sh && bash deploy/local-node/scripts/release-larm.test.sh && bash deploy/local-node/scripts/network-converge.test.sh && bash deploy/local-node/scripts/configure-saaa-rest-access.test.sh && bash deploy/local-node/scripts/restore-dhcp.test.sh",
     "check": "bun run check:source-only && bun run check:operations && bun run docs:check && bun run typecheck && bun run test && bun run test:deployment"
   },
   "devDependencies": {

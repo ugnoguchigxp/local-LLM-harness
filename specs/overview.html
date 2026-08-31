@@ -68,6 +68,27 @@
         </tr>
         <tr>
           <th scope="row">
+            <a href="./saaa-maximum-performance-websocket.html"
+              >LARM saaa.llm-stream.v1 Native WebSocket 実装計画と実装証跡</a
+            >
+          </th>
+          <td>Mac正本準拠、HTTP維持、native WebSocket、ACK・resume・replay、SSE完全撤去</td>
+          <td>
+            LARM repository実装済み。native Provider、Mac共有fixture、TLS/Mac
+            commissioning待ちで未広告
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./saaa-websocket-performance-review.html"
+              >Mac無修正対応 LARM Native WebSocket 構造レビュー</a
+            >
+          </th>
+          <td>Mac contractへのserver-side適合性、native Provider blocker、実装順序の俯瞰評価</td>
+          <td>LARM側のvertical slice改訂で対応可能。構造評点94 / 100</td>
+        </tr>
+        <tr>
+          <th scope="row">
             <a href="./on-demand-llm-worker-pool.html">On-demand LLM Worker Pool契約</a>
           </th>
           <td>Resident 27B、追加27B、35Bのroute、swap、admission、live gate</td>
@@ -128,6 +149,26 @@
           </th>
           <td>read-only preflightと実機acceptance</td>
           <td>preflight完了、commissioning保留</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./performance-benchmark.html">LLM・ASR・TTS 性能診断ベンチマーク仕様</a>
+          </th>
+          <td>単体性能と3系統同時利用時の劣化を比較する測定契約・実測記録</td>
+          <td>実装・自動テスト・2026-08-31 local-node warm-state実測完了</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./asr-alternative-evaluation.html"
+              >軽量日本語ASR 再選定調査・Shadow評価・試用結果</a
+            >
+          </th>
+          <td>CPU軽量ASR候補、同一fixtureの精度、単体・mixed性能比較</td>
+          <td>
+            MIT・Apache-2.0限定のCPU・GPU shadow完了。Whisper turbo HIPをrollback可能な
+            <code>stt-default</code>限定trialへ切替、Qwen 1.7BはResident
+            backupとして維持
+          </td>
         </tr>
         <tr>
           <th scope="row">

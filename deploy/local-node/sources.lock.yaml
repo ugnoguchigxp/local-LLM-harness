@@ -32,6 +32,25 @@ sources:
     path: /srv/ai/apps/Qwen3-TTS-Openai-Fastapi
     patch: apps/qwen-tts/rocm-gfx1151.patch
 
+  whisper-cpp:
+    repository: https://github.com/ggml-org/whisper.cpp.git
+    revision: eacbd8234c6654cdbf2c377f72b2106875479bdc
+    path: /srv/ai/apps/whisper.cpp
+    builds:
+      - directory: build-hip
+        cmake:
+          - -DGGML_HIP=ON
+          - -DAMDGPU_TARGETS=gfx1151
+          - -DCMAKE_BUILD_TYPE=Release
+
+  reazonspeech-espnet-v2:
+    repository: https://github.com/reazon-research/ReazonSpeech.git
+    revision: 2d4d4762e7ee294ac8e47a177ac2e9b0e8d0d43f
+    path: /srv/ai/apps/reazonspeech-espnet-v2
+    package: pkg/espnet-asr
+    python: "3.11"
+    torch: 2.11.0+rocm7.13.0
+
   voicevox-core:
     repository: https://github.com/VOICEVOX/voicevox_core.git
     version: 0.17.0

@@ -35,10 +35,10 @@ test("OpenAPI is generated from the public contract schemas", () => {
       responses: Record<string, { content?: Record<string, unknown> }>;
     };
     const successResponses = Object.entries(operation.responses)
-      .filter(([status]) => status.startsWith("2"));
+      .filter(([status]) => status.startsWith("2") || status === "101");
     expect(successResponses.length).toBeGreaterThan(0);
     for (const [status, response] of successResponses) {
-      if (status === "204") expect(response.content).toBeUndefined();
+      if (status === "101" || status === "204") expect(response.content).toBeUndefined();
       else expect(response.content).toBeDefined();
     }
   }
@@ -61,7 +61,8 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(JSON.stringify(paths["/prepare"]?.post)).toContain("#/components/schemas/LegacyPrepareResponse");
   expect(JSON.stringify(paths["/v1/deployments/{runtime}/plan"]?.post))
     .toContain("#/components/schemas/RuntimeReleasePlanRequest");
-  expect(JSON.stringify(paths["/v1/chat/completions"]?.post)).toContain("text/event-stream");
+  expect(JSON.stringify(paths["/v1/chat/completions"]?.post)).not.toContain("text/event-stream");
+  expect(paths["/v1/llm/stream"]?.get?.responses).toHaveProperty("101");
   expect(paths["/v1/agent-connections"]?.post?.parameters).toBeDefined();
   expect(paths["/v1/agent-connections/{id}/providers/{name}/health"]?.get?.security).toEqual([
     { bearerAuth: [] },

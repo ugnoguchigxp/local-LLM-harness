@@ -12,6 +12,7 @@ installed_polkit="/etc/polkit-1/rules.d/50-larm-runtime-control.rules"
 provider_specs=(
   llama-server.service:8080
   qwen-asr.service:8081
+  whisper-asr.service:8085
   qwen-tts.service:8082
   llama-swap-worker.service:8083
   voicevox-tts.service:8084
@@ -71,6 +72,7 @@ service_load="$(systemctl show larm-daemon.service -p LoadState --value 2>/dev/n
 service_active="$(systemctl is-active larm-daemon.service 2>/dev/null || true)"
 service_enabled="$(systemctl is-enabled larm-daemon.service 2>/dev/null || true)"
 port_owner="$(ss -H -ltnp 'sport = :9810' 2>/dev/null | head -n 1 || true)"
+native_stream_listener="$(ss -H -ltnp 'sport = :8090' 2>/dev/null | head -n 1 || true)"
 disk_available_bytes="$(df --output=avail -B1 /srv/ai 2>/dev/null | tail -n 1 | tr -d ' ' || printf '0')"
 provider_units='[]'
 for spec in "${provider_specs[@]}"; do
@@ -116,7 +118,7 @@ if [[ "${ufw_rc}" -eq 0 ]] && grep -Eq '^Status: (active|inactive)$' <<<"${ufw_o
   ufw_readable=true
   ufw_status="$(awk '/^Status:/ {print $2; exit}' <<<"${ufw_output}")"
 fi
-ufw_provider_rules="$(awk '$1 ~ /^(8080|8081|8082|8083|8084)(\/tcp)?$/ && $0 ~ /[[:space:]]ALLOW[[:space:]]+IN[[:space:]]/ {print}' \
+ufw_provider_rules="$(awk '$1 ~ /^(8080|8081|8082|8083|8084|8085)(\/tcp)?$/ && $0 ~ /[[:space:]]ALLOW[[:space:]]+IN[[:space:]]/ {print}' \
   <<<"${ufw_output}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
 ufw_gateway_rules="$(awk '$1 ~ /^9810(\/tcp)?$/ && $0 ~ /[[:space:]]ALLOW[[:space:]]+IN[[:space:]]/ {print}' \
   <<<"${ufw_output}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
@@ -145,6 +147,7 @@ jq -n \
   --arg active "${service_active:-unknown}" \
   --arg enabled "${service_enabled:-unknown}" \
   --arg portOwner "${port_owner}" \
+  --arg nativeStreamListener "${native_stream_listener}" \
   --argjson diskAvailableBytes "${disk_available_bytes:-0}" \
   --argjson providers "${provider_units}" \
   --argjson ufwReadable "${ufw_readable}" \
@@ -158,7 +161,8 @@ jq -n \
     unit:{type:$unitType,digest:$unitDigest,repositoryDigest:$repositoryUnitDigest,
       matchesRepository:$unitMatch,load:$load,active:$active,enabled:$enabled},
     polkit:{type:$polkitType,digest:$polkitDigest,repositoryDigest:$repositoryPolkitDigest,matchesRepository:$polkitMatch},
-    listener:{port:9810,description:$portOwner},providers:$providers,
+    listener:{port:9810,description:$portOwner},
+    nativeStream:{port:8090,protocol:"larm.native-llm-stream.v1",listener:$nativeStreamListener},providers:$providers,
     firewall:{readable:$ufwReadable,status:$ufwStatus,providerAllowRules:$ufwProviderRules,
       gatewayAllowRules:$ufwGatewayRules,sshAllowRules:$ufwSshRules},
     externalAssets:$externalAssets,disk:{path:"/srv/ai",availableBytes:$diskAvailableBytes}}'

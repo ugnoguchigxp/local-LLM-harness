@@ -54,9 +54,9 @@ async function runBenchmark(truncated: boolean) {
       }
       if (url.pathname === "/v1/chat/completions" && request.method === "POST") {
         const body = truncated
-          ? 'data: {"choices":[{"delta":{"content":"OK"}}]}\n\n'
-          : 'data: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n\n';
-        return new Response(body, { headers: { ...headers, "content-type": "text/event-stream" } });
+          ? '{"choices":[]}'
+          : '{"choices":[{"message":{"content":"OK"}}]}';
+        return new Response(body, { headers: { ...headers, "content-type": "application/json" } });
       }
       return new Response("not found", { status: 404, headers });
     },
@@ -148,7 +148,7 @@ test("benchmark records a validated completed LLM series", async () => {
   }
 });
 
-test("benchmark fails closed when every successful HTTP stream is truncated", async () => {
+test("benchmark fails closed when every successful HTTP completion is invalid", async () => {
   const result = await runBenchmark(true);
   try {
     expect(result.exitCode).not.toBe(0);
@@ -160,9 +160,9 @@ test("benchmark fails closed when every successful HTTP stream is truncated", as
         id: "llm-normal",
         samples: [],
         errors: [
-          { iteration: 1, code: "llm_stream_incomplete" },
-          { iteration: 2, code: "llm_stream_incomplete" },
-          { iteration: 3, code: "llm_stream_incomplete" },
+          { iteration: 1, code: "llm_response_invalid" },
+          { iteration: 2, code: "llm_response_invalid" },
+          { iteration: 3, code: "llm_response_invalid" },
         ],
       }],
     });

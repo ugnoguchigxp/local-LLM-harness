@@ -904,30 +904,12 @@ test("allocation admission rejects a runtime reserved for artifact mutation", as
   });
 });
 
-test("gateway proxies streaming chat through the allocation binding", async () => {
-  const metrics = new MetricsRegistry();
-  const tracker = new RequestTracker();
-  const events: ControlEvent[] = [];
-  let upstreamUrl = "";
-  let upstreamBody = "";
+test("HTTP gateway rejects streaming chat before contacting the allocation binding", async () => {
+  let contacted = false;
   const { app } = await makeApp(true, false, {}, {
-    metrics,
-    requestTracker: tracker,
-    onEvent: (event) => events.push(event),
-    random: () => "gateway",
-    gatewayFetch: async (input, init) => {
-      upstreamUrl = String(input);
-      upstreamBody = new TextDecoder().decode(init?.body as ArrayBuffer);
-      return new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode("data: one\n\n"));
-            controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
-            controller.close();
-          },
-        }),
-        { headers: { "Content-Type": "text/event-stream" } },
-      );
+    gatewayFetch: async () => {
+      contacted = true;
+      return Response.json({ unexpected: true });
     },
   });
   const created = await app.request("/v1/allocations", {
@@ -951,22 +933,14 @@ test("gateway proxies streaming chat through the allocation binding", async () =
     }),
   });
 
-  expect(response.status).toBe(200);
-  expect(response.headers.get("content-type")).toContain("text/event-stream");
-  expect(await response.text()).toBe("data: one\n\ndata: [DONE]\n\n");
-  expect(upstreamUrl).toBe("http://127.0.0.1:8080/v1/chat/completions");
-  expect(JSON.parse(upstreamBody)).toEqual({
-    model: "local",
-    stream: true,
-    messages: [{ role: "user", content: "secret prompt" }],
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({
+    error: {
+      code: "streaming_requires_websocket",
+      message: "streaming LLM requests must use /v1/llm/stream",
+    },
   });
-  expect(tracker.count()).toBe(0);
-  expect(metrics.render()).toContain("larm_gateway_request_total");
-  expect(events.filter((event) => event.name.startsWith("gateway_")).map((event) => event.name)).toEqual([
-    "gateway_request_started",
-    "gateway_request_completed",
-  ]);
-  expect(JSON.stringify(events)).not.toContain("secret prompt");
+  expect(contacted).toBe(false);
 });
 
 test("full-required inference audit captures the exact gateway request and response", async () => {
@@ -1298,7 +1272,7 @@ test("gateway timeout terminates a stalled upstream response stream", async () =
     gatewayFetch: async () => new Response(new ReadableStream({
       pull: async () => await new Promise<void>(() => undefined),
     }), {
-      headers: { "content-type": "text/event-stream" },
+      headers: { "content-type": "application/octet-stream" },
     }),
   });
   const created = await app.request("/v1/allocations", {
@@ -1329,7 +1303,7 @@ test("gateway timeout releases an unread upstream response stream", async () => 
     requestTracker: tracker,
     gatewayTimeoutMs: 5,
     gatewayFetch: async () => new Response(new ReadableStream({ start() {} }), {
-      headers: { "content-type": "text/event-stream" },
+      headers: { "content-type": "application/octet-stream" },
     }),
   });
   const created = await app.request("/v1/allocations", {
@@ -1903,7 +1877,27 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog,
     gatewayFetch,
+    resolveStreaming: ({ audienceBaseUrl }) => ({
+      protocol: "saaa.llm-stream.v1",
+      url: `${audienceBaseUrl.replace(/^http/, "ws")}/llm/stream`,
+      encoding: "json-control+binary-delta-v1",
+      compression: "none",
+      maxConcurrentRuns: 1,
+      maxConnections: 1,
+      resumeWindowMs: 120_000,
+      upstreamTransport: "native",
+    }),
   });
+
+  const forgedProvider = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer larm_conn_v1.forged",
+      "content-type": "application/json",
+    },
+    body: "not-json",
+  });
+  expect(forgedProvider.status).toBe(401);
 
   const profiles = await app.request("/v1/agent-profiles", { headers: agentHeaders() });
   expect(profiles.status).toBe(200);
@@ -1945,6 +1939,16 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
   const credential = claim.providers[0]!.credential.token;
   expect(credential).toStartWith("larm_conn_v1.");
+  expect(claim.providers[0]!.streaming).toEqual({
+    protocol: "saaa.llm-stream.v1",
+    url: "ws://127.0.0.1:9810/v1/llm/stream",
+    encoding: "json-control+binary-delta-v1",
+    compression: "none",
+    maxConcurrentRuns: 1,
+    maxConnections: 1,
+    resumeWindowMs: 120_000,
+    upstreamTransport: "native",
+  });
 
   const providerHealth = await app.request(claim.providers[0]!.health.url, {
     headers: { authorization: `Bearer ${credential}` },

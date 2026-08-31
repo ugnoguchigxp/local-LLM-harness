@@ -45,6 +45,8 @@ bun run dev
 | `LARM_CONNECTION_SIGNING_KEY` | 未設定 | Agent Provider短期token用の32-byte unpadded base64url鍵 |
 | `LARM_CONNECTION_READY_TIMEOUT_SECONDS` | `120` | Connection初回semantic readinessの上限 |
 | `LARM_PROVIDER_PROBE_TIMEOUT_SECONDS` | `15` | Provider単位の最小semantic probe上限 |
+| `LARM_NATIVE_STREAM_CONNECT_TIMEOUT_MS` | `5000` | native LLM Provider WebSocketのready待機上限 |
+| `LARM_TLS_CERT_FILE` / `LARM_TLS_KEY_FILE` | 未設定 | 非loopback WebSocketをWSSで提供するための、対で指定する絶対path |
 | `LARM_ARTIFACT_OPERATION_LIMIT` | `64` | pending/running artifact operationの合計上限 |
 | `LARM_CONTROL_MAX_BODY_BYTES` | `65536` | control API body上限。設定可能な最大値は1 MiB |
 | `LARM_GATEWAY_MAX_BODY_BYTES` | `4194304` | LLMとTTS JSON body上限。設定可能な最大値は64 MiB |
@@ -80,7 +82,7 @@ Artifactの生成stateは既定で`/var/lib/larm`、stagingとrollback dataは`/
 
 `full-required`では、LLM requestの受信bytesを暗号化保存できた後にだけProviderを呼びます。同じProviderの
 `/apply-template`と`/tokenize`からrendered prompt、token ID・pieceを採取し、clientへ転送したraw
-JSON/SSE responseも最大16 MiBまで暗号化します。本文やtokenはjournald、metrics、HTTP APIには出しません。
+非streaming JSON responseも最大16 MiBまで暗号化します。本文やtokenはjournald、metrics、HTTP APIには出しません。
 template・tokenizeだけが失敗した場合は理由をmetadataへ残して推論を継続し、request保存不能時は503で
 fail closedします。
 `metadata`ではpayloadを保存せず、request IDとoutcomeの監査lifecycle eventだけを出します。
@@ -131,10 +133,10 @@ allocation_json="$(curl -sS -X POST http://127.0.0.1:9810/v1/allocations \
   -d '{"requirements":[{"capability":"llm.general","route":"llm-default"}],"ttlSeconds":300}')"
 allocation_id="$(jq -r .id <<<"${allocation_json}")"
 
-curl -sS -N -X POST http://127.0.0.1:9810/v1/chat/completions \
+curl -sS -X POST http://127.0.0.1:9810/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -H "x-larm-allocation-id: ${allocation_id}" \
-  -d '{"model":"local","stream":true,"messages":[{"role":"user","content":"こんにちは"}]}'
+  -d '{"model":"local","stream":false,"messages":[{"role":"user","content":"こんにちは"}]}'
 
 curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${allocation_id}"
 
@@ -157,6 +159,33 @@ curl -sS -X POST http://127.0.0.1:9810/v1/audio/speech \
 
 curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${voice_allocation_id}"
 ```
+
+LLMのrealtime data planeは`GET /v1/llm/stream`へのWebSocket upgradeだけを受理します。
+HTTPの`stream: true`は`400 streaming_requires_websocket`で拒否し、SSEへのfallbackや
+Provider SSE bridgeは行いません。claimのLLM providerに`streaming`が現れるのは、設定された
+native Providerが`larm.native-llm-stream.v1`でreadyを返した場合だけです。非loopbackのclaimは
+direct TLSを設定したWSS endpointだけを広告します。
+
+claimから取得した短期credential、Allocation ID、modelを使うend-to-end smokeは次の通りです。
+値はshell historyへ直書きせず、実行後にunsetしてください。
+
+```bash
+export LARM_SAAA_STREAM_URL="$(jq -er '.providers[] | select(.capability | startswith("llm.")) | .streaming.url' claim.json)"
+export LARM_SAAA_PROVIDER_TOKEN="$(jq -er '.providers[] | select(.capability | startswith("llm.")) | .credential.token' claim.json)"
+export LARM_SAAA_ALLOCATION_ID="$(jq -er '.allocationId' claim.json)"
+export LARM_SAAA_MODEL="$(jq -er '.providers[] | select(.capability | startswith("llm.")) | .model' claim.json)"
+bun run smoke:saaa-websocket
+## 1,000 turn、30分、各turnでrenew/claim、切断、rotated credentialによるresumeを行うgate:
+export LARM_BASE_URL=https://gnosis.local:9810
+export LARM_SAAA_CONNECTION_ID="$(jq -er '.id' claim.json)"
+bun run soak:saaa-websocket
+unset LARM_SAAA_STREAM_URL LARM_SAAA_PROVIDER_TOKEN LARM_SAAA_ALLOCATION_ID LARM_SAAA_MODEL
+unset LARM_BASE_URL LARM_SAAA_CONNECTION_ID
+```
+
+soakは既に設定済みの`LARM_API_TOKEN`をcontrol credentialとして使い、各turnで同じAgent
+Connectionをrenewしてclaimし直します。claimのConnection、Allocation、model、stream URLが変化した場合、
+またはProvider tokenがrotationしない場合はfail closedです。
 
 追加27Bは`route`へ`llm-speed`、公式Q5_K_MのOrnith 35Bは`llm-35b`、ROCmFP4速度版は`llm-35b-speed`を明示した場合だけ選択されます。比較用Qwen3.6-35Bは`llm-qwen36-35b`で固定できます。`llm-default`はswapせずResident 27Bへ固定されます。fallbackはrequestで`allowFallback: true`を指定した場合だけ許可されます。同じworker swap groupの別Runtimeにactive Allocationがある場合はpreemptせず、新しい要求を拒否します。
 
