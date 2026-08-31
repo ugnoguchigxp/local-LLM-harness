@@ -18,7 +18,7 @@ sources:
 
   q38rocm:
     repository: https://github.com/julianmb/q38rocm.git
-    revision: 9fb59a674a2fe88cc9b39274bae2b9a86bd4a2af
+    revision: 2301c54b387a25d5b39c4381b41856a4e336c7af
     path: /srv/ai/apps/q38rocm
 
   llama-swap:

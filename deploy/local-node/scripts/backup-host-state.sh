@@ -10,6 +10,7 @@ test_root="${LARM_BACKUP_TEST_ROOT:-}"
 units=(
   larm-daemon.service
   llama-server.service
+  larm-native-qwen-provider.service
   llama-swap-worker.service
   qwen-asr.service
   whisper-asr.service

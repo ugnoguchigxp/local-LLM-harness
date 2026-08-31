@@ -24,6 +24,10 @@ Environment=REPEAT_PENALTY=1.0
 Environment=SLOTS=1
 Environment=BATCH_SIZE=2048
 Environment=UBATCH_SIZE=2048
+Environment=LLAMA_SERVER_BIN=/srv/ai/apps/q38rocm/engine/bin/llama-server-larm-native
+Environment=LARM_NATIVE_ENGINE_SOCKET=/run/larm-native-qwen/engine.sock
+RuntimeDirectory=larm-native-qwen
+RuntimeDirectoryMode=0700
 ExecStart=/srv/ai/apps/q38rocm/run_server.sh \
   /srv/ai/models/qwen38-rocmfp4/Qwen3.8-27B-ROCmFP4-FAST.gguf \
   --profile speed \

@@ -83,7 +83,7 @@ cmp --silent \
   "${test_root}/etc/polkit-1/rules.d/50-larm-runtime-control.rules"
 
 systemctl_log="${test_root}/var/lib/larm/install-systemctl.log"
-grep -F "enable llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service" \
+grep -F "enable llama-server.service larm-native-qwen-provider.service llama-swap-worker.service qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service" \
   "${systemctl_log}" >/dev/null
 grep -F "disable qwen-tts.service" "${systemctl_log}" >/dev/null
 [[ -d "${test_root}/srv/ai/models/qwen-tts" ]]
@@ -104,13 +104,13 @@ LARM_INSTALL_TEST_MODE=1 \
 [[ -f "${gateway_root}/etc/systemd/system/larm-daemon.service" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-inference-audit-prune.service" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-inference-audit-prune.timer" ]]
-for unit in llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service qwen-tts.service \
+for unit in llama-server.service larm-native-qwen-provider.service llama-swap-worker.service qwen-asr.service whisper-asr.service qwen-tts.service \
   voicevox-tts.service; do
   [[ ! -e "${gateway_root}/etc/systemd/system/${unit}" ]]
 done
 grep -F "enable larm-daemon.service" \
   "${gateway_root}/var/lib/larm/install-systemctl.log" >/dev/null
-if grep -Eq 'llama-server|llama-swap-worker|qwen-asr|whisper-asr|qwen-tts|voicevox-tts|disable' \
+if grep -Eq 'llama-server|larm-native-qwen-provider|llama-swap-worker|qwen-asr|whisper-asr|qwen-tts|voicevox-tts|disable' \
   "${gateway_root}/var/lib/larm/install-systemctl.log"; then
   echo "gateway scope changed a Provider unit" >&2
   exit 1

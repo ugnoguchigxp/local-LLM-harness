@@ -85,6 +85,7 @@ if [[ "${install_scope}" == "gateway" ]]; then
 else
   units=(
     llama-server.service
+    larm-native-qwen-provider.service
     llama-swap-worker.service
     qwen-asr.service
     whisper-asr.service
@@ -96,6 +97,7 @@ else
   )
   enabled_units=(
     llama-server.service
+    larm-native-qwen-provider.service
     llama-swap-worker.service
     qwen-asr.service
     whisper-asr.service

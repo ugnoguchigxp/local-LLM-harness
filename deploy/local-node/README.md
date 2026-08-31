@@ -64,10 +64,11 @@ management, and Agent Connection credentials remain outside its environment.
 `qwen-tts.service`はinstallのみ行い、boot時はdisableのままです。LARMは同梱の
 polkit ruleにより、このPreferred serviceのstart / stopだけを無人実行できます。
 
-`qwen-general`のWebSocket capabilityは、repository外で運用するnative Provider companionが
+`qwen-general`のWebSocket capabilityは、`larm-native-qwen-provider.service`が
 loopback `ws://127.0.0.1:8090/v1/native/llm/stream`で
 `larm.native-llm-stream.v1`を受理し、SAD1 encoding、pause/resume、cancel、tool continuation、
-usage、必要capacityをすべて宣言するstrict `native.ready`を返した場合だけclaimへ現れます。現行
+usage、必要capacityをすべて宣言するstrict `native.ready`を返した場合だけclaimへ現れます。companion
+自身もpatched engineのraw semantic Unix socket IPCを受けた場合だけreadyになります。
 `llama-server`のHTTP/SSE endpointを接続してもreadyにならず、LARMはSSE bridgeへfallbackしません。
 LAN向けSAAA streamingを有効にする場合は、LARM service userが読める証明書と秘密鍵の絶対pathを
 `/etc/larm/larm.env`の`LARM_TLS_CERT_FILE`と`LARM_TLS_KEY_FILE`へ対で設定してください。
@@ -75,7 +76,7 @@ LAN向けSAAA streamingを有効にする場合は、LARM service userが読め�
 ## Apply
 
 Before overwriting any installed unit, create an operator-owned backup outside the repository.
-The plan rejects symlinked/non-regular units; apply copies all six existing LARM/Provider units and
+The plan rejects symlinked/non-regular units; apply copies the profile's LARM/Provider units and
 the current release pointer without copying credential contents.
 
 ```bash
@@ -139,7 +140,7 @@ deploy/local-node/scripts/preflight-larm.sh
 sudo deploy/local-node/scripts/install-services.sh
 deploy/local-node/scripts/release-larm.sh plan
 sudo deploy/local-node/scripts/release-larm.sh apply
-sudo systemctl start llama-server.service llama-swap-worker.service \
+sudo systemctl start llama-server.service larm-native-qwen-provider.service llama-swap-worker.service \
   qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service  # first install only
 deploy/local-node/scripts/verify.sh
 deploy/local-node/scripts/smoke-larm.sh

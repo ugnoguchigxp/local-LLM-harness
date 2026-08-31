@@ -4,7 +4,7 @@ set -euo pipefail
 action="${1:-plan}"
 base_url="${LARM_BASE_URL:-http://127.0.0.1:9810}"
 confirm="${LARM_FAULT_CONFIRM:-}"
-resident_units=(llama-server.service qwen-asr.service whisper-asr.service voicevox-tts.service)
+resident_units=(llama-server.service larm-native-qwen-provider.service qwen-asr.service whisper-asr.service voicevox-tts.service)
 management_headers=()
 if [[ -n "${LARM_API_TOKEN:-}" ]]; then
   management_headers+=(-H "Authorization: Bearer ${LARM_API_TOKEN}")

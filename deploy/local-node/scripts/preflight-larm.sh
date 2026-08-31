@@ -11,6 +11,7 @@ repository_polkit="${repo_root}/deploy/local-node/polkit/50-larm-runtime-control
 installed_polkit="/etc/polkit-1/rules.d/50-larm-runtime-control.rules"
 provider_specs=(
   llama-server.service:8080
+  larm-native-qwen-provider.service:8090
   qwen-asr.service:8081
   whisper-asr.service:8085
   qwen-tts.service:8082
