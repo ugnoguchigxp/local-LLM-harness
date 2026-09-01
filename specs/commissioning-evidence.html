@@ -146,7 +146,9 @@
         </tr>
         <tr>
           <th scope="row">Runtime state</th>
-          <td><code>qwen-general</code>はHOT、3つのOrnith runtimeはすべてCOLD</td>
+          <td>
+            <code>qwen-general</code>はHOT、3つのOrnith runtimeはすべてCOLD
+          </td>
         </tr>
       </tbody>
     </table>
@@ -154,6 +156,84 @@
       <code>deep-reasoning-35b</code>のRuntime・Routeは比較用途に残しますが、Native
       WebSocket未対応のため現行SAAA Agent Profile catalogには含めません。Profile
       APIは<code>coding-default</code>を唯一の既定値として返します。
+    </p>
+  </section>
+
+  <section id="agent-profile-default-and-native-ws-revalidation">
+    <h2>Agent Profile既定値とNative WebSocket再検証</h2>
+    <p>
+      <time>2026-09-01T04:07:14Z</time>にrelease
+      <code>38ff7d3b7c5a76fcb5bd248a2409d4a3ad8b3fe6</code>、config revision
+      <code>7cefe154f303fbac53df1b2c8092110236ca175bf726d72460d191954069fe33</code>を配備し、 接続情報API、匿名Agent
+      Connection、Native WebSocket、HTTP/WS性能を再検証しました。
+    </p>
+    <table>
+      <caption>
+        Profile選択と実通信の結果
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">Profile API</th>
+          <td>
+            <code>coding-default</code
+            >だけを返し、<code>selectionPolicy: default</code>、general・reasoning・coding、
+            <code>saaa.llm-stream.v1</code>を広告
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">省略時binding</th>
+          <td>
+            <code>agentProfile</code>を省略した匿名LAN requestが
+            <code>coding-default → llm-default → qwen-general</code>へfallbackなしで接続
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">旧35B指定</th>
+          <td>
+            <code>deep-reasoning-35b</code>は404
+            <code>unknown_agent_profile</code>。35BはCOLD、Allocationは作成されない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">匿名Native WS smoke</th>
+          <td>初delta 225 ms、完了320 ms、短期Provider credentialの解放後失効まで成功</td>
+        </tr>
+        <tr>
+          <th scope="row">HTTP JSON</th>
+          <td>
+            5/5成功。first-token相当p50 2,981.748 ms、total p95 3,006.13 ms、64 token時p50 21.464
+            token/s
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Native WS</th>
+          <td>
+            5/5 terminal integrity成功。first-token p50 368 ms、total p95 3,125 ms、completion token
+            p50 64、p50 25.963 token/s。1回は4 tokenで正常stopしたためrangeは4から64
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">比較</th>
+          <td>
+            Native WSは非streaming HTTP JSONに対してfirst-token p50を87.658%短縮し、64 token
+            throughput p50を20.961%向上。total p95は3.954%長い
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">終了状態</th>
+          <td>
+            <code>qwen-general</code
+            >はHOT、Agent用35B・追加27BはCOLD、Allocationは0
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      性能値は同一host、各1 warmup後の5 sampleです。HTTPのfirst-token相当値は非streaming JSON
+      response全体の受信時刻であり、WSだけが実際の最初のdeltaを観測します。raw
+      reportはrepository外の
+      <code>/var/tmp/larm-performance-38ff7d3.json</code
+      >へ保存し、secret、prompt、completion本文を含めていません。
     </p>
   </section>
 
