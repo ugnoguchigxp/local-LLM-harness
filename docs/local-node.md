@@ -46,10 +46,12 @@ lifecycle without a long-lived `LARM_API_TOKEN`; if configured, that token remai
 never returned in routing data. LARM ignores `X-Forwarded-*`; a future reverse-proxy deployment
 needs a separately reviewed trusted-proxy contract.
 
-Provider ports 8080–8084 remain loopback-only. Only the authenticated Gateway at 9810 is exposed
-to the reviewed SAAA source host. Anonymous requests are accepted only for Agent Profile and Agent
-Connection lifecycle routes. Other control requests return 401, while `/health` and `/ready` remain
-credential-free operational probes and do not disclose Provider endpoints.
+Provider ports 8080–8084 remain loopback-only. Only Gateway port 9810 is exposed to the reviewed
+SAAA source host. Agent Profile and Agent Connection lifecycle routes accept anonymous requests.
+The `saaa-service-harness.v2` discovery, advertised ASR health, and allocation-free ASR batch route
+also require no Bearer while `LARM_SERVICE_HARNESS_AUTH_ENABLED=false`; setting it to `true` applies
+the normal `LARM_API_TOKEN` Bearer boundary. Other control requests return 401, while `/health` and
+`/ready` remain credential-free operational probes and do not disclose Provider endpoints.
 
 LLM realtime output uses `saaa.llm-stream.v1` at the claim-provided
 `/v1/llm/stream` WS URL for the local LAN, or WSS URL for a separately configured TLS audience.

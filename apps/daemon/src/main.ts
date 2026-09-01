@@ -221,6 +221,7 @@ const appComponents = createAppComponents({
   control,
   apiToken: config.apiToken,
   allowAnonymousAgentConnections: config.allowAnonymousAgentConnections,
+  serviceHarnessAuthEnabled: config.serviceHarnessAuthEnabled,
   managementToken: config.managementToken,
   artifactManager,
   runtimeReleaseManager,

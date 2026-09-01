@@ -13,6 +13,7 @@ Environment=XDG_CACHE_HOME=/srv/ai/cache
 Environment=LARM_HOST=0.0.0.0
 Environment=LARM_PORT=9810
 Environment=LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS=true
+Environment=LARM_SERVICE_HARNESS_AUTH_ENABLED=false
 Environment=LARM_RELEASE_MANIFEST=/srv/ai/apps/larm-current/release-manifest.json
 Environment=LARM_ARTIFACT_STAGING_ROOT=/srv/ai/models/.larm-staging
 Environment=LARM_ARTIFACT_ROLLBACK_ROOT=/srv/ai/models/.larm-rollback

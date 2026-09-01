@@ -31,8 +31,9 @@
       </li>
       <li>
         <code>/health</code
-        >と<code>/ready</code>以外は、<code>LARM_API_TOKEN</code>設定時にBearer
-        tokenで保護する。
+        >と<code>/ready</code>以外は、原則として<code>LARM_API_TOKEN</code>設定時にBearer
+        tokenで保護する。Service Harness経路は
+        <code>LARM_SERVICE_HARNESS_AUTH_ENABLED</code>で独立に切り替える。
       </li>
       <li>
         Artifact、Runtime release管理APIは追加で
@@ -181,9 +182,19 @@
           <td>Allocation固定OpenAI互換Gateway</td>
         </tr>
         <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/services</code></th>
+          <td><code>saaa-service-harness.v2</code>のASR discovery</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/services/asr/health</code></th>
+          <td>広告したASR batch Gatewayのsemantic health</td>
+        </tr>
+        <tr>
           <td>POST</td>
           <th scope="row"><code>/v1/audio/transcriptions</code></th>
-          <td>Allocation固定STT stream Gateway</td>
+          <td>Allocation固定STTまたはService Harness batch Gateway</td>
         </tr>
         <tr>
           <td>POST</td>
@@ -254,7 +265,9 @@
     </table>
     <p>
       <code>/health</code
-      >と<code>/ready</code>だけが常に認証不要です。Artifact、Runtime
+      >と<code>/ready</code>は常に認証不要です。Service Harnessの3経路は
+      <code>LARM_SERVICE_HARNESS_AUTH_ENABLED=false</code
+      >ならBearer不要、<code>true</code>なら<code>LARM_API_TOKEN</code>のBearerを必要とします。Artifact、Runtime
       release、deployment、catalog、inspectionのendpointはmanagement tokenを必要とし、その他は
       <code>LARM_API_TOKEN</code>設定時にBearer tokenを必要とします。
     </p>
@@ -718,6 +731,37 @@
         </tr>
       </tbody>
     </table>
+  </section>
+
+  <section id="service-harness">
+    <h2>SAAA Service Harness v2</h2>
+    <p>
+      <code>GET /v1/services</code>はrequest originを使って到達可能な9810
+      Gatewayを広告します。 個別Runtime portの8081はloopback-onlyのままです。Native ASR
+      streamingは未実装のため
+      <code>streaming</code
+      >を広告せず、SAAAは<code>POST /v1/audio/transcriptions</code>を使用します。 Service
+      Harnessからのbatch要求にはAllocation headerを要求せず、固定したResident
+      <code>qwen-asr</code>へGateway内部で転送します。
+    </p>
+    <pre><code>{
+  "contractVersion": "saaa-service-harness.v2",
+  "revision": "bounded-revision",
+  "services": [{
+    "capability": "asr",
+    "protocol": "openai.audio-transcriptions.v1",
+    "baseUrl": "http://provider.example:9810/v1",
+    "model": "qwen3-asr-1.7b",
+    "language": "auto",
+    "healthUrl": "http://provider.example:9810/v1/services/asr/health"
+  }]
+}</code></pre>
+    <aside>
+      <p>
+        認証のoptional性はrequest単位ではなくProvider設定単位です。OFFではcredentialを要求せず、
+        ONではBearerを必須にします。local-nodeのSAAA互換設定はOFFです。
+      </p>
+    </aside>
   </section>
 
   <section id="agent-connections">

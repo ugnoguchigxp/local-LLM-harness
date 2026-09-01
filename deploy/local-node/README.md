@@ -54,6 +54,9 @@ The installer creates `/etc/larm/larm.env` with local API, Agent Connection sign
 and management credentials. Existing values are preserved and only missing variables
 are added. Operator-side smoke commands can load them with
 `set -a; source /etc/larm/larm.env; set +a` without printing their values.
+The installed daemon explicitly sets `LARM_SERVICE_HARNESS_AUTH_ENABLED=false`: SAAA can discover
+and call batch ASR without a Bearer credential while the normal control and LLM boundaries remain
+unchanged. Set it to `true` only together with a coordinated SAAA credential contract change.
 It also creates non-secret audit settings in `/etc/larm/inference-audit.env`, creates
 `/etc/larm/inference-audit.key` without replacing an existing key, and creates
 `/var/lib/larm/inference-audit` with mode 0700. The daemon unit requires encrypted LLM audit

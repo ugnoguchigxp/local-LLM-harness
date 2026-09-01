@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Registry } from "@larm/core";
+import { saaaServiceHarnessSchema, type Registry } from "@larm/core";
 import type { RuntimeBackend, RuntimeHealth } from "@larm/backends";
 import { createApp, type AppDeps } from "./app";
 import { ControlPlane } from "./controller";
@@ -95,6 +95,73 @@ async function allocate(app: ReturnType<typeof createApp>, requirements: object[
   expect(response.status).toBe(200);
   return ((await response.json()) as { id: string }).id;
 }
+
+test("Service Harness advertises batch ASR on the request origin without requiring Bearer", async () => {
+  const app = await makeSpeechApp({ apiToken: "control-token" });
+  const response = await app.request("http://provider.test:9810/v1/services");
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(saaaServiceHarnessSchema.parse(await response.json())).toEqual({
+    contractVersion: "saaa-service-harness.v2",
+    revision: "test",
+    services: [{
+      capability: "asr",
+      protocol: "openai.audio-transcriptions.v1",
+      baseUrl: "http://provider.test:9810/v1",
+      model: "qwen3-asr-1.7b",
+      language: "auto",
+      healthUrl: "http://provider.test:9810/v1/services/asr/health",
+    }],
+  });
+  const health = await app.request("http://provider.test:9810/v1/services/asr/health");
+  expect(health.status).toBe(200);
+  expect(await health.json()).toEqual({ status: "ok", model: "qwen3-asr-1.7b" });
+});
+
+test("Service Harness authentication switch requires Bearer only when enabled", async () => {
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    serviceHarnessAuthEnabled: true,
+  });
+  expect((await app.request("/v1/services")).status).toBe(401);
+  expect((await app.request("/v1/services", {
+    headers: { authorization: "Bearer wrong" },
+  })).status).toBe(401);
+  expect((await app.request("/v1/services", {
+    headers: { authorization: "Bearer control-token" },
+  })).status).toBe(200);
+  expect((await app.request("/v1/audio/transcriptions", {
+    method: "POST",
+    body: "audio",
+  })).status).toBe(401);
+});
+
+test("Service Harness batch ASR proxies without an allocation when authentication is off", async () => {
+  let target = "";
+  let uploaded = "";
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async (input, init) => {
+      target = String(input);
+      uploaded = await new Response(init?.body).text();
+      return Response.json({ text: "到達しました" });
+    },
+  });
+  const response = await app.request("/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { "content-type": "multipart/form-data; boundary=test" },
+    body: "--test\r\ncontent\r\n--test--\r\n",
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ text: "到達しました" });
+  expect(target).toBe("http://127.0.0.1:8081/v1/audio/transcriptions");
+  expect(uploaded).toContain("content");
+  expect((await app.request("/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { "x-larm-allocation-id": "alloc_existing" },
+    body: "audio",
+  })).status).toBe(401);
+});
 
 test("STT gateway streams multipart bytes to the allocated transcription runtime", async () => {
   let target = "";

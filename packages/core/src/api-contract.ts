@@ -32,6 +32,10 @@ import {
   runtimeProtocolSchema,
   runtimeStatusSchema,
 } from "./schema";
+import {
+  saaaAsrHealthSchema,
+  saaaServiceHarnessSchema,
+} from "./service-harness";
 
 const identifierSchema = z.string().min(1).max(192);
 
@@ -272,6 +276,8 @@ export const API_OPERATIONS = [
   ["delete", "/v1/allocations/{id}", "releaseAllocation"],
   ["get", "/v1/agent-profiles", "listAgentProfilesV1"],
   ["get", "/v2/agent-profiles", "listAgentProfiles"],
+  ["get", "/v1/services", "listServices"],
+  ["get", "/v1/services/asr/health", "getAsrServiceHealth"],
   ["post", "/v1/agent-connections", "createAgentConnection"],
   ["get", "/v1/agent-connections/{id}", "getAgentConnection"],
   ["get", "/v1/agent-connections/{id}/health", "getAgentConnectionHealth"],
@@ -319,6 +325,8 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   releaseAllocation: ["200"],
   listAgentProfilesV1: ["200"],
   listAgentProfiles: ["200"],
+  listServices: ["200"],
+  getAsrServiceHealth: ["200"],
   createAgentConnection: ["201", "202"],
   getAgentConnection: ["200"],
   getAgentConnectionHealth: ["200"],
@@ -364,6 +372,8 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   releaseAllocation: "Allocation",
   listAgentProfilesV1: "AgentProfileListV1",
   listAgentProfiles: "AgentProfileList",
+  listServices: "ServiceHarness",
+  getAsrServiceHealth: "AsrServiceHealth",
   createAgentConnection: "AgentConnection",
   getAgentConnection: "AgentConnection",
   getAgentConnectionHealth: "AgentConnectionHealth",
@@ -416,6 +426,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     AgentConnectionClaimRequest: jsonSchema(agentConnectionClaimRequestSchema),
     AgentProfileListV1: jsonSchema(publicAgentProfileListV1Schema),
     AgentProfileList: jsonSchema(publicAgentProfileListSchema),
+    ServiceHarness: jsonSchema(saaaServiceHarnessSchema),
+    AsrServiceHealth: jsonSchema(saaaAsrHealthSchema),
     AgentConnection: jsonSchema(publicAgentConnectionSchema),
     AgentConnectionHealth: jsonSchema(agentConnectionHealthSchema),
     AgentProviderHealth: jsonSchema(agentProviderHealthSchema),
@@ -470,6 +482,9 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       || operationId === "claimAgentConnection"
       || operationId === "renewAgentConnection"
       || operationId === "releaseAgentConnection";
+    const configurableServiceBearerOperation = operationId === "listServices"
+      || operationId === "getAsrServiceHealth"
+      || operationId === "createTranscription";
     const providerBearerOperation = operationId === "getAgentProviderHealth"
       || operationId === "createChatCompletion"
       || operationId === "upgradeLlmStream"
@@ -504,6 +519,10 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       operationId,
       security: publicOperation ? [] : management
         ? [{ bearerAuth: [], managementToken: [] }]
+        : configurableServiceBearerOperation
+        ? [{}, { bearerAuth: [] }, ...(operationId === "createTranscription"
+          ? [{ providerBearer: [] }]
+          : [])]
         : optionalAgentBearerOperation
         ? [{}, { bearerAuth: [] }]
         : providerBearerOperation

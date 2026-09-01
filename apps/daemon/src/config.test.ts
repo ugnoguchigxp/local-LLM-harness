@@ -27,6 +27,7 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.inferenceAuditKeyFile).toBe("/etc/larm/inference-audit.key");
   expect(config.connectionSigningKey).toBeUndefined();
   expect(config.allowAnonymousAgentConnections).toBeFalse();
+  expect(config.serviceHarnessAuthEnabled).toBeFalse();
   expect(config.configDir).toBe("/workspace/config/local-node");
 });
 
@@ -128,7 +129,17 @@ test("non-loopback listeners require both API tokens", () => {
   });
   expect(config.hostname).toBe("0.0.0.0");
   expect(config.allowAnonymousAgentConnections).toBeTrue();
+  expect(parseDaemonConfig({
+    LARM_SERVICE_HARNESS_AUTH_ENABLED: "true",
+    LARM_API_TOKEN: "api",
+  }).serviceHarnessAuthEnabled).toBeTrue();
+  expect(() => parseDaemonConfig({
+    LARM_SERVICE_HARNESS_AUTH_ENABLED: "true",
+  })).toThrow(/Service Harness authentication/);
   expect(() => parseDaemonConfig({
     LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS: "yes",
+  })).toThrow(/must be true or false/);
+  expect(() => parseDaemonConfig({
+    LARM_SERVICE_HARNESS_AUTH_ENABLED: "yes",
   })).toThrow(/must be true or false/);
 });

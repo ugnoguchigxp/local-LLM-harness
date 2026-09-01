@@ -177,6 +177,7 @@ LARM_ROUTE=<route-id> LARM_MODEL=<upstream-model-id> bun quickstart.ts
 | `LARM_HOST` | `127.0.0.1` | daemon の待受アドレス |
 | `LARM_PORT` | `9810` | daemon の待受ポート |
 | `LARM_API_TOKEN` | 未設定 | 通常の API を保護するトークン |
+| `LARM_SERVICE_HARNESS_AUTH_ENABLED` | `false` | SAAA Service Harness discovery・ASR health・batchにBearerを必須化 |
 | `LARM_MANAGEMENT_TOKEN` | 未設定 | 成果物やリリースの管理 API を保護するトークン |
 | `LARM_CONNECTION_SIGNING_KEY` | 未設定 | Agent 向け短期トークンの署名鍵 |
 | `LARM_ARTIFACT_MANIFEST` | リポジトリ内の既定 manifest | 配備可能な成果物の許可リスト |
@@ -189,6 +190,7 @@ LARM_ROUTE=<route-id> LARM_MODEL=<upstream-model-id> bun quickstart.ts
 - 既定では loopback だけで待ち受けます。
 - loopback 以外で待ち受ける場合は、`LARM_API_TOKEN` と `LARM_MANAGEMENT_TOKEN` の両方が必要です。
 - `LARM_API_TOKEN` を設定すると通常APIでBearer認証が必要です。local-nodeで明示的に有効化したAgent Profile・Connection lifecycleだけは長期Bearerを省略できます。
+- Service Harness認証は設定単位で切り替えます。`LARM_SERVICE_HARNESS_AUTH_ENABLED=false`ではBearer不要、`true`では`LARM_API_TOKEN`のBearerが必須です。
 - 成果物、リリース、catalog の管理操作には、通常の API token とは別に management token が必要です。
 - 管理 API は、リクエストから任意の URL、ファイルパス、サービス名、コマンドを受け取りません。事前に許可リストへ登録した対象だけを操作します。
 - token、署名鍵、内部 endpoint をリポジトリへコミットしないでください。

@@ -22,6 +22,35 @@ jq -e '.status == "ok" and (.version | length > 0)
   and (.configRevision | length > 0) and (.bootEpoch | length > 0)' \
   <<<"${health}" >/dev/null
 
+service_base_url="${base_url%/}/v1"
+services="$(curl -fsS --max-time 10 "${base_url%/}/v1/services")"
+jq -e --arg base_url "${service_base_url}" '
+  .contractVersion == "saaa-service-harness.v2"
+  and (.revision | length > 0)
+  and any(.services[]?;
+    .capability == "asr"
+    and .protocol == "openai.audio-transcriptions.v1"
+    and .baseUrl == $base_url
+    and .model == "qwen3-asr-1.7b"
+    and .language == "auto"
+    and (.streaming | not)
+    and (.healthUrl | startswith($base_url)))' <<<"${services}" >/dev/null
+asr_health_url="$(jq -er '.services[] | select(.capability == "asr") | .healthUrl' <<<"${services}")"
+curl -fsS --max-time 10 "${asr_health_url}" \
+  | jq -e '.status == "ok" and .model == "qwen3-asr-1.7b"' >/dev/null
+
+if [[ -n "${LARM_CANARY_AUDIO_FILE:-}" ]]; then
+  [[ -f "${LARM_CANARY_AUDIO_FILE}" ]] || {
+    echo "LARM_CANARY_AUDIO_FILE is not a regular file" >&2
+    exit 1
+  }
+  curl -fsS --max-time 300 -X POST "${service_base_url}/audio/transcriptions" \
+    -F "file=@${LARM_CANARY_AUDIO_FILE}" \
+    -F 'model=qwen3-asr-1.7b' \
+    -F 'language=auto' \
+    | jq -e '(.text | type == "string") and (.text | length > 0)' >/dev/null
+fi
+
 allocation="$(curl -fsS --max-time 15 "${headers[@]}" \
   -X POST "${base_url}/v1/allocations" \
   -H 'Content-Type: application/json' \
@@ -64,4 +93,4 @@ jq -e 'any(.choices[]?; ((.message.content // "") | length) > 0)' <<<"${completi
 curl -fsS --max-time 10 "${headers[@]}" -X DELETE \
   "${base_url}/v1/allocations/${allocation_id}" >/dev/null
 allocation_id=""
-echo "LARM resident Qwen 3.8 27B smoke passed"
+echo "LARM resident Qwen 3.8 27B and SAAA Service Harness smoke passed"

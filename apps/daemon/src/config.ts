@@ -19,6 +19,7 @@ export type DaemonConfig = {
   activeAllocationLimit: number;
   apiToken?: string;
   allowAnonymousAgentConnections: boolean;
+  serviceHarnessAuthEnabled: boolean;
   managementToken?: string;
   connectionSigningKey?: Uint8Array;
   connectionReadyTimeoutMs: number;
@@ -198,6 +199,11 @@ export function parseDaemonConfig(
     throw new Error("LARM_HOST must not be empty");
   }
   const apiToken = optionalSecret(env.LARM_API_TOKEN);
+  const serviceHarnessAuthEnabled = booleanSetting(
+    env,
+    "LARM_SERVICE_HARNESS_AUTH_ENABLED",
+    false,
+  );
   const managementToken = optionalSecret(env.LARM_MANAGEMENT_TOKEN);
   const tlsCertFile = optionalSecret(env.LARM_TLS_CERT_FILE);
   const tlsKeyFile = optionalSecret(env.LARM_TLS_KEY_FILE);
@@ -214,6 +220,9 @@ export function parseDaemonConfig(
   }
   if (!loopbackHosts.has(hostname) && !managementToken) {
     throw new Error("LARM_MANAGEMENT_TOKEN is required when LARM_HOST is not loopback");
+  }
+  if (serviceHarnessAuthEnabled && !apiToken) {
+    throw new Error("LARM_API_TOKEN is required when Service Harness authentication is enabled");
   }
 
   return {
@@ -253,6 +262,7 @@ export function parseDaemonConfig(
       "LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS",
       false,
     ),
+    serviceHarnessAuthEnabled,
     managementToken,
     connectionSigningKey: connectionSigningKey(env.LARM_CONNECTION_SIGNING_KEY),
     connectionReadyTimeoutMs: secondsSetting(

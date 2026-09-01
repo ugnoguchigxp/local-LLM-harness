@@ -17,6 +17,7 @@ import {
   prepareRequestSchema,
   releaseRequestSchema,
   resolveRequestSchema,
+  SAAA_SERVICE_HARNESS_CONTRACT_VERSION,
   getRuntime,
   selectProtocolBinding,
   runtimeReleasePlanRequestSchema,
@@ -56,6 +57,7 @@ export type AppDeps = {
   control: ControlPlane;
   apiToken?: string;
   allowAnonymousAgentConnections?: boolean;
+  serviceHarnessAuthEnabled?: boolean;
   managementToken?: string;
   artifactManager?: ArtifactManager;
   runtimeReleaseManager?: RuntimeReleaseManager;
@@ -126,6 +128,19 @@ function acceptsAnonymousAgentConnection(method: string, path: string): boolean 
   return method === "POST"
     && /^\/v1\/agent-connections\/[^/]+\/(claim|renew)$/.test(path);
 }
+
+function isServiceHarnessRequest(
+  method: string,
+  path: string,
+  allocationId: string | undefined,
+): boolean {
+  return (method === "GET" && (path === "/v1/services" || path === "/v1/services/asr/health"))
+    || (method === "POST" && path === "/v1/audio/transcriptions" && allocationId === undefined);
+}
+
+const SERVICE_HARNESS_ASR_RUNTIME = "qwen-asr";
+const SERVICE_HARNESS_ASR_MODEL = "qwen3-asr-1.7b";
+const SERVICE_HARNESS_ALLOCATION_ID = "alloc_service_harness";
 
 export function publicRuntime(runtime: Registry["runtimes"][number]) {
   return {
@@ -278,7 +293,13 @@ export function createAppComponents(deps: AppDeps) {
     const publicPath = c.req.path === "/health" || c.req.path === "/ready";
     const anonymousAgentConnection = deps.allowAnonymousAgentConnections === true
       && acceptsAnonymousAgentConnection(c.req.method, c.req.path);
-    if (deps.apiToken && !publicPath && !anonymousAgentConnection) {
+    const anonymousServiceHarness = deps.serviceHarnessAuthEnabled !== true
+      && isServiceHarnessRequest(
+        c.req.method,
+        c.req.path,
+        c.req.header("x-larm-allocation-id"),
+      );
+    if (deps.apiToken && !publicPath && !anonymousAgentConnection && !anonymousServiceHarness) {
       const expected = `Bearer ${deps.apiToken}`;
       const authorization = c.req.header("authorization");
       const providerBearer = authorization?.startsWith("Bearer larm_conn_v1.") === true
@@ -549,6 +570,64 @@ export function createAppComponents(deps: AppDeps) {
     });
   };
 
+  const serviceHarnessAsrBinding = () => {
+    const runtime = getRuntime(deps.registry, SERVICE_HARNESS_ASR_RUNTIME);
+    if (
+      !runtime
+      || runtime.protocol !== "openai.audio-transcriptions.v1"
+      || !runtime.capability.includes("speech.stt")
+    ) {
+      return undefined;
+    }
+    const snapshot = deps.getState().runtimes.find((candidate) => candidate.id === runtime.id);
+    if (!snapshot || (snapshot.status !== "HOT" && snapshot.status !== "BUSY")) {
+      return undefined;
+    }
+    return {
+      runtime,
+      binding: {
+        endpoint: runtime.deployment.endpoint,
+        runtime: runtime.id,
+      },
+    };
+  };
+
+  const handleServiceHarnessTranscription = async (c: Context): Promise<Response> => {
+    const selected = serviceHarnessAsrBinding();
+    if (!selected) {
+      return c.json(errorBody("asr_unavailable", "ASR service is not ready"), 503);
+    }
+    return await proxyGateway({
+      request: c.req.raw,
+      allocationId: SERVICE_HARNESS_ALLOCATION_ID,
+      protocol: "openai.audio-transcriptions.v1",
+      upstreamPath: "/v1/audio/transcriptions",
+      runtime: selected.runtime,
+      bodyMode: "stream",
+      maxBodyBytes: deps.speechMaxBodyBytes ?? 257 * 1024 * 1024,
+      timeoutMs: deps.gatewayTimeoutMs ?? 300_000,
+      bootEpoch: identity.bootEpoch,
+      executionGate,
+      fetchImpl: deps.gatewayFetch,
+      metrics: deps.metrics,
+      requestTracker: deps.requestTracker,
+      now: deps.now,
+      random: deps.random,
+      onEvent: deps.onEvent,
+      revalidate: () => {
+        const current = serviceHarnessAsrBinding();
+        if (!current) {
+          return {
+            ok: false as const,
+            status: 503,
+            body: errorBody("asr_unavailable", "ASR service is not ready"),
+          };
+        }
+        return { ok: true as const, binding: current.binding };
+      },
+    });
+  };
+
   app.get("/health", (c) => c.json({
     status: "ok",
     version: identity.version,
@@ -572,6 +651,36 @@ export function createAppComponents(deps: AppDeps) {
   app.get("/metrics", (c) => c.text(deps.metrics?.render() ?? ""));
 
   app.get("/openapi.json", (c) => c.json(createOpenApiDocument(identity.version)));
+
+  app.get("/v1/services", (c) => {
+    c.header("cache-control", "no-store");
+    const origin = new URL(c.req.url).origin;
+    const asr = getRuntime(deps.registry, SERVICE_HARNESS_ASR_RUNTIME);
+    return c.json({
+      contractVersion: SAAA_SERVICE_HARNESS_CONTRACT_VERSION,
+      revision: deps.getConfigRevision?.() ?? identity.configRevision,
+      services: asr
+        && asr.protocol === "openai.audio-transcriptions.v1"
+        && asr.capability.includes("speech.stt")
+        ? [{
+          capability: "asr" as const,
+          protocol: "openai.audio-transcriptions.v1" as const,
+          baseUrl: `${origin}/v1`,
+          model: SERVICE_HARNESS_ASR_MODEL,
+          language: "auto" as const,
+          healthUrl: `${origin}/v1/services/asr/health`,
+        }]
+        : [],
+    });
+  });
+
+  app.get("/v1/services/asr/health", (c) => {
+    c.header("cache-control", "no-store");
+    if (!serviceHarnessAsrBinding()) {
+      return c.json(errorBody("asr_unavailable", "ASR service is not ready"), 503);
+    }
+    return c.json({ status: "ok" as const, model: SERVICE_HARNESS_ASR_MODEL });
+  });
 
   app.get("/v1/llm/stream", (c) => c.json(errorBody(
     "websocket_upgrade_required",
@@ -928,12 +1037,18 @@ export function createAppComponents(deps: AppDeps) {
     maxBodyBytes: deps.gatewayMaxBodyBytes ?? 4 * 1024 * 1024,
   }));
 
-  app.post("/v1/audio/transcriptions", (c) => handleGateway(c, {
-    protocol: "openai.audio-transcriptions.v1",
-    upstreamPath: "/v1/audio/transcriptions",
-    bodyMode: "stream",
-    maxBodyBytes: deps.speechMaxBodyBytes ?? 257 * 1024 * 1024,
-  }));
+  app.post("/v1/audio/transcriptions", (c) => {
+    const providerBearer = c.req.header("authorization")?.startsWith("Bearer larm_conn_v1.") === true;
+    if (c.req.header("x-larm-allocation-id") === undefined && !providerBearer) {
+      return handleServiceHarnessTranscription(c);
+    }
+    return handleGateway(c, {
+      protocol: "openai.audio-transcriptions.v1",
+      upstreamPath: "/v1/audio/transcriptions",
+      bodyMode: "stream",
+      maxBodyBytes: deps.speechMaxBodyBytes ?? 257 * 1024 * 1024,
+    });
+  });
 
   app.post("/v1/audio/speech", (c) => handleGateway(c, {
     protocol: "openai.audio-speech.v1",

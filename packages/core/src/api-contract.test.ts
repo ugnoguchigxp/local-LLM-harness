@@ -10,6 +10,7 @@ import {
   publicClusterStateSchema,
   publicRuntimeSchema,
 } from "./api-contract";
+import { saaaServiceHarnessSchema } from "./service-harness";
 
 test("OpenAPI is generated from the public contract schemas", () => {
   const document = createOpenApiDocument("test") as {
@@ -27,6 +28,7 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(document.components.schemas.InspectionRuntimeList).toBeDefined();
   expect(document.components.schemas.AgentConnection).toBeDefined();
   expect(document.components.schemas.AgentConnectionHealth).toBeDefined();
+  expect(document.components.schemas.ServiceHarness).toBeDefined();
   const agentRequest = document.components.schemas.AgentConnectionRequest as {
     required?: string[];
     properties?: Record<string, unknown>;
@@ -74,6 +76,13 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(paths["/v1/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v2/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v1/agent-connections"]?.post?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v1/services"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v1/services/asr/health"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v1/audio/transcriptions"]?.post?.security).toEqual([
+    {},
+    { bearerAuth: [] },
+    { providerBearer: [] },
+  ]);
   expect(paths["/v1/agent-connections/{id}"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v1/agent-connections/{id}/health"]?.get?.security).toEqual([
     {},
@@ -97,6 +106,26 @@ test("OpenAPI is generated from the public contract schemas", () => {
   ]);
   expect((paths["/v1/agent-connections/{id}"]?.delete?.responses as Record<string, unknown>)["204"])
     .not.toHaveProperty("content");
+});
+
+test("SAAA Service Harness v2 schema accepts batch ASR and bounds streaming metadata", () => {
+  const batch = {
+    contractVersion: "saaa-service-harness.v2",
+    revision: "revision-1",
+    services: [{
+      capability: "asr",
+      protocol: "openai.audio-transcriptions.v1",
+      baseUrl: "http://provider.test:9810/v1",
+      model: "qwen3-asr-1.7b",
+      language: "auto",
+      healthUrl: "http://provider.test:9810/v1/services/asr/health",
+    }],
+  };
+  expect(JSON.stringify(saaaServiceHarnessSchema.parse(batch))).toBe(JSON.stringify(batch));
+  expect(() => saaaServiceHarnessSchema.parse({
+    ...batch,
+    services: [{ ...batch.services[0], streaming: { protocol: "invented" } }],
+  })).toThrow();
 });
 
 test("public runtime and state schemas reject operational detail", () => {

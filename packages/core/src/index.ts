@@ -12,6 +12,7 @@ export {
 } from "./inference-audit";
 export * from "./protocol";
 export * from "./saaa-llm-stream";
+export * from "./service-harness";
 export * from "./agent-connection";
 export {
   API_OPERATIONS,
