@@ -93,7 +93,9 @@ const llmMaxTokens = boundedInteger("LARM_PERF_LLM_MAX_TOKENS", 64, 8, 512);
 const timeoutMs = boundedInteger("LARM_PERF_TIMEOUT_MS", 300_000, 1_000, 900_000);
 const scenarios = selectedScenarios(process.env.LARM_PERF_SCENARIOS ?? "all");
 const baseUrl = process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810";
-const wsAgentProfile = safeIdentity("LARM_PERF_WS_AGENT_PROFILE", "coding-default");
+const wsAgentProfileOverride = process.env.LARM_PERF_WS_AGENT_PROFILE
+  ? safeIdentity("LARM_PERF_WS_AGENT_PROFILE", process.env.LARM_PERF_WS_AGENT_PROFILE)
+  : undefined;
 const wsAudience = safeIdentity("LARM_PERF_WS_AUDIENCE", "same-host");
 const asrOverride = optionalAsrOverride();
 const output = process.env.LARM_PERF_OUTPUT
@@ -111,7 +113,23 @@ const client = new LarmClient({
   timeoutMs,
 });
 const healthBefore = await client.getHealth();
-const needsAudio = scenarios.includes("asr") || scenarios.includes("mixed");
+const needsWebSocket = scenarios.some((scenario) => scenarioWorkloads[scenario].includes("llm-ws"));
+let wsAgentProfile: string | undefined;
+let explicitWsAgentProfile = false;
+if (needsWebSocket) {
+  const agentProfiles = await client.listAgentProfiles();
+  wsAgentProfile = wsAgentProfileOverride ?? agentProfiles.defaultAgentProfile;
+  const wsProfile = agentProfiles.profiles.find((profile) => profile.id === wsAgentProfile);
+  if (!wsProfile) throw new Error(`WebSocket Agent Profile ${wsAgentProfile} is not advertised`);
+  if (!wsAgentProfileOverride && wsProfile.selectionPolicy !== "default") {
+    throw new Error("default Agent Profile is not marked as default");
+  }
+  if (!wsProfile.providers.some((provider) => provider.streamingProtocol === "saaa.llm-stream.v1")) {
+    throw new Error(`WebSocket Agent Profile ${wsAgentProfile} does not advertise saaa.llm-stream.v1`);
+  }
+  explicitWsAgentProfile = wsProfile.selectionPolicy === "explicit-only";
+}
+const needsAudio = scenarios.some((scenario) => scenarioWorkloads[scenario].includes("asr"));
 const fixture = needsAudio ? await prepareAudioFixture() : undefined;
 const scenarioReports: Array<ReturnType<typeof aggregateScenario>> = [];
 
@@ -160,7 +178,7 @@ const report = {
     warmups,
     llmMaxTokens,
     websocket: {
-      agentProfile: wsAgentProfile,
+      agentProfile: wsAgentProfile ?? null,
       audience: wsAudience,
       runPerConnection: 1,
       latencyIncludesHandshake: true,
@@ -287,7 +305,8 @@ async function runIteration(scenario: ScenarioId, iteration: number): Promise<It
     };
     if (!needsWebSocket) return await withManagedAllocation(client);
     return await client.withAgentConnection({
-      agentProfile: wsAgentProfile,
+      agentProfile: wsAgentProfile!,
+      ...(explicitWsAgentProfile ? { explicitAgentProfile: true } : {}),
       audience: wsAudience,
       client: "larm-performance",
       ttlSeconds: Math.ceil(timeoutMs / 1_000) + 30,

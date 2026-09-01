@@ -193,17 +193,18 @@ Connectionをrenewしてclaimし直します。claimのConnection、Allocation�
 
 ## Agent Connection API
 
-Agentは登録済みProfileとAudienceだけを指定します。`coding-default`は常駐27B、`coding-worker`は
-常駐27Bと並列に使う64K追加27B、`deep-reasoning-35b`は同じworker slotへswapする64K
-Ornith 35Bです。claimはLARM Gatewayの`baseUrl`、public `model`、Provider限定の短期token、
-semantic health URLを返します。backend portや長期API tokenは返しません。
+Profile一覧は`defaultAgentProfile: "coding-default"`を返し、SAAA向けにはNative WebSocket対応済みの
+常駐Qwen 3.8 27Bだけを広告します。既定ProfileはConnection作成bodyから省略できます。workerと35Bの
+Runtime・Routeは比較用途として残しますが、Native WebSocket対応前はSAAA Agent Profileとして広告しません。
+claimはLARM Gatewayの`baseUrl`、public `model`、Provider限定の短期token、semantic health URL、
+WebSocket URLを返します。backend portや長期API tokenは返しません。
 
 ```bash
 connection_json="$(curl -fsS -X POST http://127.0.0.1:9810/v1/agent-connections \
   -H "Authorization: Bearer ${LARM_API_TOKEN}" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: agent-$(date +%s)" \
-  -d '{"agentProfile":"coding-default","audience":"same-host"}')"
+  -d '{"audience":"same-host"}')"
 connection_id="$(jq -er .id <<<"${connection_json}")"
 
 # GET /v1/agent-connections/:idをreadyまでpollしてからclaimします。

@@ -1,4 +1,5 @@
 version: 1
+defaultAgentProfile: coding-default
 
 audiences:
   same-host:
@@ -17,21 +18,4 @@ agentProfiles:
         route: llm-default
         publicModel: coding-default
         readiness: llm-inference
-
-  coding-worker:
-    description: Additional 27B coding provider with bounded 64K context on the on-demand worker slot
-    providers:
-      - name: llm
-        capability: llm.coding
-        route: llm-agent-worker
-        publicModel: coding-worker
-        readiness: llm-inference
-
-  deep-reasoning-35b:
-    description: On-demand 35B reasoning provider with bounded 64K context on the worker slot
-    providers:
-      - name: llm
-        capability: llm.reasoning
-        route: llm-agent-35b
-        publicModel: deep-reasoning-35b
-        readiness: llm-inference
+        streamingProtocol: saaa.llm-stream.v1

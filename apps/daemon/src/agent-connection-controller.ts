@@ -108,14 +108,20 @@ export class AgentConnectionController {
       body: {
         contractVersion: "agent-connection.v1",
         catalogRevision: this.options.getCatalogRevision(),
+        defaultAgentProfile: catalog.defaultAgentProfile,
         profiles: catalog.profiles.map((profile) => ({
           id: profile.id,
           description: profile.description,
+          selectionPolicy: profile.selectionPolicy,
           providers: profile.providers.map((provider) => ({
             name: provider.name,
             capability: provider.capability,
+            supportedCapabilities: provider.supportedCapabilities,
             protocol: provider.protocol,
             model: provider.publicModel,
+            ...(provider.streamingProtocol
+              ? { streamingProtocol: provider.streamingProtocol }
+              : {}),
           })),
         })),
         audiences: catalog.audiences.map((audience) => audience.id),
@@ -131,8 +137,16 @@ export class AgentConnectionController {
   ): Promise<AgentConnectionApiResult> {
     const catalog = this.options.getCatalog();
     if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
-    const profile = catalog.profiles.find((item) => item.id === request.agentProfile);
-    if (!profile) return error("unknown_agent_profile", `agent profile ${request.agentProfile} does not exist`, 404);
+    const requestedProfile = request.agentProfile ?? catalog.defaultAgentProfile;
+    const profile = catalog.profiles.find((item) => item.id === requestedProfile);
+    if (!profile) return error("unknown_agent_profile", `agent profile ${requestedProfile} does not exist`, 404);
+    if (profile.selectionPolicy === "explicit-only" && !request.explicitAgentProfile) {
+      return error(
+        "explicit_agent_profile_required",
+        `agent profile ${requestedProfile} requires explicit selection`,
+        409,
+      );
+    }
     const configuredAudience = catalog.audiences.find((item) => item.id === request.audience);
     if (!configuredAudience) return error(
       "connection_audience_unavailable",
@@ -146,9 +160,18 @@ export class AgentConnectionController {
       409,
     );
     const audience = { ...structuredClone(configuredAudience), baseUrl: advertisedBaseUrl };
+    const normalizedRequest = {
+      agentProfile: requestedProfile,
+      explicitAgentProfile: request.explicitAgentProfile,
+      audience: request.audience,
+      ...(request.client ? { client: request.client } : {}),
+      ttlSeconds: request.ttlSeconds,
+      allowFallback: request.allowFallback,
+      deploymentPolicy: request.deploymentPolicy,
+    };
     return await this.idempotent(
       `${principal}:POST:/v1/agent-connections:${idempotencyKey}`,
-      hash(JSON.stringify({ request, advertisedBaseUrl })),
+      hash(JSON.stringify({ request: normalizedRequest, advertisedBaseUrl })),
       async () => {
         const allocated = await this.options.control.allocate({
           requirements: profile.providers.map((provider) => ({

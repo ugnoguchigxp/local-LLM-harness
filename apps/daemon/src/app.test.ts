@@ -99,6 +99,7 @@ const registry: Registry = {
 
 const agentConnectionCatalog = parseAgentConnectionCatalog({
   version: 1,
+  defaultAgentProfile: "coding",
   audiences: {
     loopback: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" },
   },
@@ -118,6 +119,7 @@ const agentConnectionCatalog = parseAgentConnectionCatalog({
 
 const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
   version: 1,
+  defaultAgentProfile: "coding",
   audiences: {
     remote: { network: "host-private", baseUrl: "request-origin" },
   },
@@ -129,6 +131,36 @@ const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
         capability: "llm.general",
         route: "llm-default",
         publicModel: "test-model",
+        readiness: "llm-inference",
+      }],
+    },
+  },
+}, registry);
+
+const explicitAgentConnectionCatalog = parseAgentConnectionCatalog({
+  version: 1,
+  defaultAgentProfile: "coding",
+  audiences: {
+    loopback: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" },
+  },
+  agentProfiles: {
+    coding: {
+      description: "Default coding provider",
+      providers: [{
+        name: "llm",
+        capability: "llm.general",
+        route: "llm-default",
+        publicModel: "test-model",
+        readiness: "llm-inference",
+      }],
+    },
+    speed: {
+      description: "Explicit speed provider",
+      providers: [{
+        name: "llm",
+        capability: "llm.general",
+        route: "llm-speed",
+        publicModel: "speed-model",
         readiness: "llm-inference",
       }],
     },
@@ -1903,7 +1935,15 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   expect(profiles.status).toBe(200);
   expect(await profiles.json()).toMatchObject({
     contractVersion: "agent-connection.v1",
-    profiles: [{ id: "coding", providers: [{ model: "test-model" }] }],
+    defaultAgentProfile: "coding",
+    profiles: [{
+      id: "coding",
+      selectionPolicy: "default",
+      providers: [{
+        model: "test-model",
+        supportedCapabilities: ["llm.general", "llm.reasoning"],
+      }],
+    }],
   });
 
   const create = await app.request("/v1/agent-connections", {
@@ -1912,11 +1952,12 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
       "content-type": "application/json",
       "idempotency-key": "agent-create-1",
     }),
-    body: JSON.stringify({ agentProfile: "coding", audience: "loopback" }),
+    body: JSON.stringify({ audience: "loopback" }),
   });
   expect(create.status).toBe(201);
   const connection = publicAgentConnectionSchema.parse(await create.json());
   expect(connection.status).toBe("ready");
+  expect(connection.agentProfile).toBe("coding");
   expect(connection.providers[0]?.claimable).toBeTrue();
 
   const replay = await app.request("/v1/agent-connections", {
@@ -2020,6 +2061,52 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     headers: agentHeaders(),
   });
   expect(releasedAgain.status).toBe(204);
+});
+
+test("non-default Agent Profiles require an explicit selection signal", async () => {
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: explicitAgentConnectionCatalog,
+  });
+  const profiles = await app.request("/v1/agent-profiles", { headers: agentHeaders() });
+  expect(await profiles.json()).toMatchObject({
+    defaultAgentProfile: "coding",
+    profiles: [
+      { id: "coding", selectionPolicy: "default" },
+      { id: "speed", selectionPolicy: "explicit-only" },
+    ],
+  });
+  const rejected = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "implicit-speed-profile",
+    }),
+    body: JSON.stringify({ agentProfile: "speed", audience: "loopback" }),
+  });
+  expect(rejected.status).toBe(409);
+  expect(await rejected.json()).toMatchObject({
+    error: { code: "explicit_agent_profile_required" },
+  });
+
+  const accepted = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "explicit-speed-profile",
+    }),
+    body: JSON.stringify({
+      agentProfile: "speed",
+      explicitAgentProfile: true,
+      audience: "loopback",
+    }),
+  });
+  expect(accepted.status).toBe(202);
+  expect(await accepted.json()).toMatchObject({
+    agentProfile: "speed",
+    providers: [{ route: "llm-speed", publicModel: "speed-model" }],
+  });
 });
 
 test("agent connection derives a host-private claim from the request origin", async () => {

@@ -89,6 +89,7 @@ const agentProviderYamlSchema = z.object({
   route: agentIdentifierSchema,
   publicModel: agentIdentifierSchema,
   readiness: agentReadinessKindSchema,
+  streamingProtocol: z.literal("saaa.llm-stream.v1").optional(),
 }).strict();
 
 const agentProfileYamlSchema = z.object({
@@ -112,6 +113,7 @@ const agentProfileYamlSchema = z.object({
 
 export const agentConnectionsFileSchema = z.object({
   version: z.literal(1),
+  defaultAgentProfile: agentIdentifierSchema,
   audiences: z.record(agentIdentifierSchema, agentAudienceYamlSchema),
   agentProfiles: z.record(agentIdentifierSchema, agentProfileYamlSchema),
 }).strict();
@@ -147,21 +149,25 @@ export function resolveAgentAudienceBaseUrl(
 export type AgentProviderProfile = {
   name: string;
   capability: string;
+  supportedCapabilities: string[];
   route: string;
   publicModel: string;
   readiness: AgentReadinessKind;
   protocol: RuntimeProtocol;
+  streamingProtocol?: "saaa.llm-stream.v1";
 };
 
 export type AgentProfile = {
   id: string;
   description: string;
+  selectionPolicy: "default" | "explicit-only";
   providers: AgentProviderProfile[];
   revision: string;
 };
 
 export type AgentConnectionCatalog = {
   version: 1;
+  defaultAgentProfile: string;
   audiences: AgentAudience[];
   profiles: AgentProfile[];
 };
@@ -198,10 +204,18 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
   if (Object.keys(parsed.data.agentProfiles).length === 0) {
     throw new AgentConnectionCatalogError("agent-connections.yaml: at least one profile is required");
   }
+  if (!(parsed.data.defaultAgentProfile in parsed.data.agentProfiles)) {
+    throw new AgentConnectionCatalogError(
+      `agent-connections.yaml: default profile ${parsed.data.defaultAgentProfile} does not exist`,
+    );
+  }
 
   const runtimes = new Map(registry.runtimes.map((runtime) => [runtime.id, runtime]));
   const routes = new Map(registry.routes.map((route) => [route.id, route]));
   const profiles = Object.entries(parsed.data.agentProfiles).map(([id, profile]) => {
+    const selectionPolicy: AgentProfile["selectionPolicy"] = id === parsed.data.defaultAgentProfile
+      ? "default"
+      : "explicit-only";
     const providers = profile.providers.map((provider) => {
       const route = routes.get(provider.route);
       if (!route) {
@@ -210,6 +224,16 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
       if (!route.capabilities.includes(provider.capability)) {
         throw new AgentConnectionCatalogError(
           `agent profile ${id} route ${provider.route} does not advertise ${provider.capability}`,
+        );
+      }
+      if (selectionPolicy === "default" && route.explicitOnly) {
+        throw new AgentConnectionCatalogError(
+          `default agent profile ${id} cannot use explicit-only route ${provider.route}`,
+        );
+      }
+      if (selectionPolicy === "explicit-only" && !route.explicitOnly) {
+        throw new AgentConnectionCatalogError(
+          `non-default agent profile ${id} must use explicit-only route ${provider.route}`,
         );
       }
       const protocols = new Set<RuntimeProtocol>();
@@ -238,9 +262,26 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
           `agent profile ${id} provider ${provider.name} readiness does not match ${protocol}`,
         );
       }
-      return { ...provider, protocol };
+      if (provider.streamingProtocol) {
+        const primaryRuntimes = route.candidates
+          .filter((candidate) => candidate.purpose === "primary")
+          .map((candidate) => runtimes.get(candidate.runtime)!);
+        if (
+          primaryRuntimes.length === 0
+          || primaryRuntimes.some((runtime) => runtime.streaming?.protocol !== provider.streamingProtocol)
+        ) {
+          throw new AgentConnectionCatalogError(
+            `agent profile ${id} provider ${provider.name} streaming protocol is not supported by every primary runtime`,
+          );
+        }
+      }
+      return {
+        ...provider,
+        supportedCapabilities: [...route.capabilities].sort(),
+        protocol,
+      };
     }).sort((left, right) => left.name.localeCompare(right.name));
-    const normalized = { description: profile.description, providers };
+    const normalized = { description: profile.description, selectionPolicy, providers };
     return { id, ...normalized, revision: digest(normalized) };
   }).sort((left, right) => left.id.localeCompare(right.id));
 
@@ -250,7 +291,12 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
     revision: digest(audience),
   })).sort((left, right) => left.id.localeCompare(right.id));
 
-  return { version: 1, audiences, profiles };
+  return {
+    version: 1,
+    defaultAgentProfile: parsed.data.defaultAgentProfile,
+    audiences,
+    profiles,
+  };
 }
 
 export function loadAgentConnectionCatalogForRegistry(
@@ -280,13 +326,22 @@ export const agentConnectionStatusSchema = z.enum([
 export const agentProviderReadinessStatusSchema = agentConnectionStatusSchema;
 
 export const agentConnectionRequestSchema = z.object({
-  agentProfile: agentIdentifierSchema,
+  agentProfile: agentIdentifierSchema.optional(),
+  explicitAgentProfile: z.boolean().default(false),
   audience: agentIdentifierSchema,
   client: agentIdentifierSchema.optional(),
   ttlSeconds: z.number().int().min(1).max(86_400).default(300),
   allowFallback: z.boolean().default(false),
   deploymentPolicy: deploymentPolicySchema.default("existing-only"),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.explicitAgentProfile && !value.agentProfile) {
+    context.addIssue({
+      code: "custom",
+      path: ["agentProfile"],
+      message: "agentProfile is required when explicitAgentProfile is true",
+    });
+  }
+});
 
 export const agentConnectionRenewRequestSchema = z.object({
   ttlSeconds: z.number().int().min(1).max(86_400).default(300),
@@ -301,18 +356,52 @@ const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 export const publicAgentProfileListSchema = z.object({
   contractVersion: z.literal("agent-connection.v1"),
   catalogRevision: z.string().min(1).max(128),
+  defaultAgentProfile: agentIdentifierSchema,
   profiles: z.array(z.object({
     id: agentIdentifierSchema,
     description: z.string().min(1).max(256),
+    selectionPolicy: z.enum(["default", "explicit-only"]),
     providers: z.array(z.object({
       name: agentIdentifierSchema,
       capability: agentIdentifierSchema,
+      supportedCapabilities: z.array(agentIdentifierSchema).min(1).max(32),
       protocol: runtimeProtocolSchema,
       model: agentIdentifierSchema,
-    }).strict()).min(1).max(8),
+      streamingProtocol: z.literal("saaa.llm-stream.v1").optional(),
+    }).strict().superRefine((provider, context) => {
+      const canonical = [...new Set(provider.supportedCapabilities)].sort();
+      if (
+        !provider.supportedCapabilities.includes(provider.capability)
+        || JSON.stringify(canonical) !== JSON.stringify(provider.supportedCapabilities)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["supportedCapabilities"],
+          message: "supportedCapabilities must be sorted, unique, and include capability",
+        });
+      }
+    })).min(1).max(8),
   }).strict()),
   audiences: z.array(agentIdentifierSchema),
-}).strict();
+}).strict().superRefine((value, context) => {
+  const selected = value.profiles.filter((profile) => profile.id === value.defaultAgentProfile);
+  if (selected.length !== 1 || selected[0]?.selectionPolicy !== "default") {
+    context.addIssue({
+      code: "custom",
+      path: ["defaultAgentProfile"],
+      message: "defaultAgentProfile must name exactly one default profile",
+    });
+  }
+  if (value.profiles.some((profile) => (
+    profile.id !== value.defaultAgentProfile && profile.selectionPolicy !== "explicit-only"
+  ))) {
+    context.addIssue({
+      code: "custom",
+      path: ["profiles"],
+      message: "every non-default profile must be explicit-only",
+    });
+  }
+});
 
 export const publicAgentConnectionProviderSchema = z.object({
   name: agentIdentifierSchema,

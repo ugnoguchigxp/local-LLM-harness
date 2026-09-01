@@ -33,6 +33,18 @@
 
   <aside>
     <p>
+      <strong>2026-09-01 profile-selection correction:</strong>
+      初期handoffが<code>deep-reasoning-35b</code>をprimaryとして指定し、後の
+      <code>coding-default</code>決定をSAAA Mac
+      canaryで閉じないまま残したため、認証問題の解消後に旧35B 選択が実行された。Profile
+      APIにも既定値と明示選択policyがなく、この移行漏れを防げなかった。
+      現行contractは<code>defaultAgentProfile: coding-default</code>を返し、Native WebSocket対応済みの
+      Resident Qwen 3.8 27BだけをSAAAへ広告する。
+    </p>
+  </aside>
+
+  <aside>
+    <p>
       <strong>2026-09-01 decision update:</strong>
       local-nodeでは長期<code>LARM_API_TOKEN</code>をAgent Connection
       lifecycleの任意credentialへ変更する。
@@ -87,6 +99,17 @@
             >の<code>baseUrl</code>を<code>request-origin</code>へ変更
           </td>
           <td>DHCP変更後もSAAAが実際に到達したhostname/addressをclaimへ固定する</td>
+        </tr>
+        <tr>
+          <th scope="row">Profile selection</th>
+          <td>
+            <code>defaultAgentProfile</code
+            >、<code>selectionPolicy</code>、
+            <code>streamingProtocol</code>をProfile APIへ追加
+          </td>
+          <td>
+            通常requestはQwen 3.8 27Bへ固定し、Native WebSocket未対応profileを自動選択させない
+          </td>
         </tr>
         <tr>
           <th scope="row">Liveness</th>
@@ -201,12 +224,13 @@
         >と<code>/ready</code>は未認証、model・profile・secretを返さない。
       </li>
       <li>
-        匿名または認証済み<code>/v1/agent-profiles</code>は200と64桁小文字16進revisionを返す。
+        匿名または認証済み<code>/v1/agent-profiles</code>は200、64桁小文字16進revision、
+        <code>defaultAgentProfile: coding-default</code>を返す。
       </li>
       <li>
-        <code>deep-reasoning-35b</code>は<code>llm.reasoning</code>、
-        <code>openai.chat-completions.v1</code
-        >、<code>saaa-desktop</code>をadvertiseする。
+        SAAA向けProfile一覧は<code>coding-default</code>だけを返し、そのProviderは
+        <code>saaa.llm-stream.v1</code
+        >をadvertiseする。workerと35BはRuntime・Routeとして残すが Agent Profileには含めない。
       </li>
       <li>
         <code>saaa-desktop</code>のdata

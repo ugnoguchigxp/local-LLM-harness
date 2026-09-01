@@ -57,6 +57,21 @@ if (health.releaseCommit !== commit) {
   throw new Error(`deployed release commit ${health.releaseCommit} does not match benchmark commit ${commit}`);
 }
 const client = new LarmClient({ baseUrl, apiToken: process.env.LARM_API_TOKEN });
+let realtimeAgentProfile: string | undefined;
+let explicitRealtimeAgentProfile = false;
+if (seriesIds.includes("llm-realtime")) {
+  const profiles = await client.listAgentProfiles();
+  realtimeAgentProfile = process.env.LARM_BENCHMARK_AGENT_PROFILE ?? profiles.defaultAgentProfile;
+  const selected = profiles.profiles.find((profile) => profile.id === realtimeAgentProfile);
+  if (!selected) throw new Error(`realtime Agent Profile ${realtimeAgentProfile} is not advertised`);
+  if (!process.env.LARM_BENCHMARK_AGENT_PROFILE && selected.selectionPolicy !== "default") {
+    throw new Error("default realtime Agent Profile is not marked as default");
+  }
+  if (!selected.providers.some((provider) => provider.streamingProtocol === "saaa.llm-stream.v1")) {
+    throw new Error(`realtime Agent Profile ${realtimeAgentProfile} does not advertise saaa.llm-stream.v1`);
+  }
+  explicitRealtimeAgentProfile = selected.selectionPolicy === "explicit-only";
+}
 const rawSeries: Array<{ id: SeriesId; samples: RawSample[]; errors: Array<{ iteration: number; code: string }> }> = [];
 const summaries: SloBenchmarkSummary["series"] = [];
 let rawPublicationAttempted = false;
@@ -195,7 +210,8 @@ async function runSample(id: SeriesId, iteration: number): Promise<RawSample> {
   const allocationStarted = performance.now();
   if (id === "llm-realtime") {
     return await client.withAgentConnection({
-      agentProfile: process.env.LARM_BENCHMARK_AGENT_PROFILE ?? "coding-default",
+      agentProfile: realtimeAgentProfile!,
+      ...(explicitRealtimeAgentProfile ? { explicitAgentProfile: true } : {}),
       audience: process.env.LARM_BENCHMARK_AGENT_AUDIENCE ?? "same-host",
       ttlSeconds: 120,
       allowFallback: false,

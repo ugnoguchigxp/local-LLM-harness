@@ -5,7 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 base_url="${LARM_BASE_URL:-http://127.0.0.1:9810}"
 base_url="${base_url%/}"
 timeout_seconds="${LARM_SAAA_SMOKE_TIMEOUT_SECONDS:-600}"
-agent_profile="${LARM_AGENT_PROFILE:-coding-default}"
+agent_profile="${LARM_AGENT_PROFILE:-}"
+expected_default_agent_profile="${LARM_EXPECTED_DEFAULT_AGENT_PROFILE:-coding-default}"
 agent_capability="${LARM_AGENT_CAPABILITY:-llm.coding}"
 agent_audience="${LARM_AGENT_AUDIENCE:-saaa-desktop}"
 agent_client="${LARM_AGENT_CLIENT:-saaa-desktop}"
@@ -37,6 +38,14 @@ scratch_dir=""
   echo "LARM_AGENT_WAIT_FOR_RUNTIME_RELEASE must be 0 or 1" >&2
   exit 2
 }
+[[ "${expected_default_agent_profile}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "LARM_EXPECTED_DEFAULT_AGENT_PROFILE must be a valid Agent Profile identifier" >&2
+  exit 2
+}
+if [[ -n "${agent_profile}" && ! "${agent_profile}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+  echo "LARM_AGENT_PROFILE must be a valid Agent Profile identifier" >&2
+  exit 2
+fi
 if [[ "${wait_for_runtime_release}" == "1" && -z "${LARM_API_TOKEN:-}" ]]; then
   echo "LARM_API_TOKEN is required when LARM_AGENT_WAIT_FOR_RUNTIME_RELEASE=1" >&2
   exit 2
@@ -101,26 +110,49 @@ config_revision="$(awk '
   echo "Agent Profile response has an invalid x-larm-config-revision" >&2
   exit 1
 }
+default_agent_profile="$(jq -er '.defaultAgentProfile' "${scratch_dir}/profiles.json")"
+[[ "${default_agent_profile}" == "${expected_default_agent_profile}" ]] || {
+  echo "Agent Profile API advertised unexpected default ${default_agent_profile}" >&2
+  exit 1
+}
+explicit_agent_profile=false
+if [[ -z "${agent_profile}" ]]; then
+  agent_profile="${default_agent_profile}"
+elif [[ "${agent_profile}" != "${default_agent_profile}" ]]; then
+  explicit_agent_profile=true
+fi
 jq -e --arg agentProfile "${agent_profile}" --arg agentCapability "${agent_capability}" \
   --arg audience "${agent_audience}" \
   --arg configRevision "${config_revision}" \
+  --arg defaultAgentProfile "${default_agent_profile}" \
+  --argjson explicitAgentProfile "${explicit_agent_profile}" \
   '.contractVersion == "agent-connection.v1"
   and .catalogRevision == $configRevision
+  and .defaultAgentProfile == $defaultAgentProfile
   and (.audiences | index($audience)) != null
   and any(.profiles[]; .id == $agentProfile
+    and .selectionPolicy == (if $explicitAgentProfile then "explicit-only" else "default" end)
     and any(.providers[]; .name == "llm"
       and .capability == $agentCapability
+      and (.supportedCapabilities | index("llm.general")) != null
+      and (.supportedCapabilities | index("llm.reasoning")) != null
+      and (.supportedCapabilities | index("llm.coding")) != null
       and .protocol == "openai.chat-completions.v1"
-      and .model == $agentProfile))' \
+      and .model == $agentProfile
+      and .streamingProtocol == "saaa.llm-stream.v1"))' \
   "${scratch_dir}/profiles.json" >/dev/null
 
 connection_request="$(jq -cn \
   --arg agentProfile "${agent_profile}" \
   --arg audience "${agent_audience}" \
   --arg client "${agent_client}" \
+  --argjson explicitAgentProfile "${explicit_agent_profile}" \
   --argjson ttlSeconds "${ttl_seconds}" \
-  '{agentProfile:$agentProfile,audience:$audience,client:$client,ttlSeconds:$ttlSeconds,
-    allowFallback:false,deploymentPolicy:"existing-only"}')"
+  '{audience:$audience,client:$client,ttlSeconds:$ttlSeconds,
+    allowFallback:false,deploymentPolicy:"existing-only"}
+    + (if $explicitAgentProfile then
+      {agentProfile:$agentProfile,explicitAgentProfile:true}
+    else {} end)')"
 create_status="$(curl_control -sS --max-time 30 \
   -X POST "${base_url}/v1/agent-connections" \
   -H 'Content-Type: application/json' \

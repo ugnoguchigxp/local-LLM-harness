@@ -49,12 +49,17 @@ if (health.status !== "ok" || readiness.status !== "ready") {
   throw new Error("LARM is not ready");
 }
 const profiles = await larm.listAgentProfiles();
-if (!profiles.profiles.some(({ id }) => id === "coding-default")) {
-  throw new Error("required Agent Profile is not advertised");
+if (profiles.defaultAgentProfile !== "coding-default") {
+  throw new Error("LARM did not advertise the Resident Qwen profile as default");
+}
+const primary = profiles.profiles.find(({ id }) => id === profiles.defaultAgentProfile);
+if (primary?.selectionPolicy !== "default"
+  || primary.providers[0]?.streamingProtocol !== "saaa.llm-stream.v1"
+  || !primary.providers[0]?.supportedCapabilities.includes("llm.reasoning")) {
+  throw new Error("default Agent Profile does not advertise Native WebSocket streaming");
 }
 
 await larm.withAgentConnection({
-  agentProfile: "coding-default",
   audience: "saaa-desktop",
   client: "saaa-desktop",
   ttlSeconds: 300,

@@ -27,6 +27,15 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(document.components.schemas.InspectionRuntimeList).toBeDefined();
   expect(document.components.schemas.AgentConnection).toBeDefined();
   expect(document.components.schemas.AgentConnectionHealth).toBeDefined();
+  const agentRequest = document.components.schemas.AgentConnectionRequest as {
+    required?: string[];
+    properties?: Record<string, unknown>;
+  };
+  expect(agentRequest.required).not.toContain("agentProfile");
+  expect(agentRequest.properties).toHaveProperty("explicitAgentProfile");
+  expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("defaultAgentProfile");
+  expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("supportedCapabilities");
+  expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("streamingProtocol");
   const operationIds = API_OPERATIONS.map(([, , operationId]) => operationId);
   expect(new Set(operationIds).size).toBe(operationIds.length);
   for (const [method, path, operationId] of API_OPERATIONS) {

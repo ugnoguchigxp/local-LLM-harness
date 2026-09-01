@@ -80,6 +80,7 @@ function fixture(protocol: AgentProviderProfile["protocol"], capability: string)
   const provider: AgentProviderProfile = {
     name: "provider",
     capability,
+    supportedCapabilities: [capability],
     route: "provider-route",
     publicModel: "public-model",
     protocol,

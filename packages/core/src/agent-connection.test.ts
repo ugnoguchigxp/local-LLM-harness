@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import {
+  agentConnectionRequestSchema,
   agentConnectionClaimSchema,
   loadAgentConnectionCatalogForRegistry,
   parseAgentConnectionCatalog,
+  publicAgentProfileListSchema,
   resolveAgentAudienceBaseUrl,
 } from "./agent-connection";
 import { loadRegistry } from "./registry";
@@ -13,11 +15,8 @@ const registry = loadRegistry(configDir);
 
 test("production agent profiles compile to strict protocol-aware provider contracts", () => {
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
-  expect(catalog.profiles.map((profile) => profile.id)).toEqual([
-    "coding-default",
-    "coding-worker",
-    "deep-reasoning-35b",
-  ]);
+  expect(catalog.defaultAgentProfile).toBe("coding-default");
+  expect(catalog.profiles.map((profile) => profile.id)).toEqual(["coding-default"]);
   expect(catalog.audiences.map((audience) => audience.id)).toEqual([
     "saaa-desktop",
     "same-host",
@@ -27,13 +26,16 @@ test("production agent profiles compile to strict protocol-aware provider contra
       network: "host-private",
       baseUrl: "request-origin",
     });
-  expect(catalog.profiles.find((profile) => profile.id === "deep-reasoning-35b"))
+  expect(catalog.profiles.find((profile) => profile.id === "coding-default"))
     .toMatchObject({
+      selectionPolicy: "default",
       providers: [{
-        capability: "llm.reasoning",
-        route: "llm-agent-35b",
+        capability: "llm.coding",
+        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
+        route: "llm-default",
         protocol: "openai.chat-completions.v1",
         readiness: "llm-inference",
+        streamingProtocol: "saaa.llm-stream.v1",
       }],
     });
   expect(catalog.profiles.every((profile) => /^[a-f0-9]{64}$/.test(profile.revision))).toBeTrue();
@@ -42,6 +44,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
 test("agent profile compilation rejects unknown fields and semantic protocol drift", () => {
   const base = {
     version: 1 as const,
+    defaultAgentProfile: "coding",
     audiences: {
       local: { network: "loopback" as const, baseUrl: "http://127.0.0.1:9810/v1" },
     },
@@ -63,6 +66,20 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
   expect(() => parseAgentConnectionCatalog({ ...base, unexpected: true }, registry)).toThrow(
     /Unrecognized key/,
   );
+  expect(() => parseAgentConnectionCatalog({
+    ...base,
+    defaultAgentProfile: "missing",
+  }, registry)).toThrow(/default profile missing does not exist/);
+  expect(() => parseAgentConnectionCatalog({
+    ...base,
+    defaultAgentProfile: "speed",
+    agentProfiles: {
+      speed: {
+        ...base.agentProfiles.coding,
+        providers: [{ ...base.agentProfiles.coding.providers[0]!, route: "llm-speed" }],
+      },
+    },
+  }, registry)).toThrow(/default agent profile speed cannot use explicit-only route llm-speed/);
   expect(() => parseAgentConnectionCatalog({
     ...base,
     agentProfiles: {
@@ -106,6 +123,55 @@ test("request-origin audiences derive a canonical Gateway URL from the authentic
     audience,
     "http://0.0.0.0:9810/v1/agent-connections",
   )).toBeUndefined();
+});
+
+test("public Agent Profile metadata identifies one capable streaming default", () => {
+  const response = {
+    contractVersion: "agent-connection.v1" as const,
+    catalogRevision: "catalog-test",
+    defaultAgentProfile: "coding-default",
+    profiles: [{
+      id: "coding-default",
+      description: "Resident Qwen",
+      selectionPolicy: "default" as const,
+      providers: [{
+        name: "llm",
+        capability: "llm.coding",
+        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
+        protocol: "openai.chat-completions.v1" as const,
+        model: "coding-default",
+        streamingProtocol: "saaa.llm-stream.v1" as const,
+      }],
+    }],
+    audiences: ["saaa-desktop"],
+  };
+  expect(publicAgentProfileListSchema.parse(response).defaultAgentProfile).toBe("coding-default");
+  expect(publicAgentProfileListSchema.safeParse({
+    ...response,
+    defaultAgentProfile: "missing",
+  }).success).toBeFalse();
+  expect(publicAgentProfileListSchema.safeParse({
+    ...response,
+    profiles: [{
+      ...response.profiles[0]!,
+      providers: [{
+        ...response.profiles[0]!.providers[0]!,
+        supportedCapabilities: ["llm.reasoning"],
+      }],
+    }],
+  }).success).toBeFalse();
+});
+
+test("explicit Agent Profile selection must name the selected profile", () => {
+  expect(agentConnectionRequestSchema.safeParse({
+    audience: "same-host",
+    explicitAgentProfile: true,
+  }).success).toBeFalse();
+  expect(agentConnectionRequestSchema.safeParse({
+    agentProfile: "speed",
+    audience: "same-host",
+    explicitAgentProfile: true,
+  }).success).toBeTrue();
 });
 
 test("agent claim validation accepts canonical WS and rejects inconsistent remote descriptors", () => {

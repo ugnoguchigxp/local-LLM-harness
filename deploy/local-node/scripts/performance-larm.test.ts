@@ -47,6 +47,7 @@ test("performance diagnostic measures HTTP/WS standalone and synchronized mixed 
   let mixedLaunches = 0;
   let shadowRequests = 0;
   let websocketRuns = 0;
+  let agentProfileRequests = 0;
   const allocations = new Map<string, Array<{ capability: string; route: string }>>();
   const agentAllocations = new Map<string, string>();
   const barriers = new Map<string, {
@@ -79,6 +80,28 @@ test("performance diagnostic measures HTTP/WS standalone and synchronized mixed 
           releaseCommit,
           configRevision,
           bootEpoch: "epoch-performance",
+        }, { headers });
+      }
+      if (url.pathname === "/v1/agent-profiles") {
+        agentProfileRequests += 1;
+        return Response.json({
+          contractVersion: "agent-connection.v1",
+          catalogRevision: configRevision,
+          defaultAgentProfile: "coding-default",
+          profiles: [{
+            id: "coding-default",
+            description: "Resident Qwen",
+            selectionPolicy: "default",
+            providers: [{
+              name: "llm",
+              capability: "llm.coding",
+              supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
+              protocol: "openai.chat-completions.v1",
+              model: "coding-default",
+              streamingProtocol: "saaa.llm-stream.v1",
+            }],
+          }],
+          audiences: ["same-host"],
         }, { headers });
       }
       if (url.pathname === "/metrics") {
@@ -306,6 +329,7 @@ test("performance diagnostic measures HTTP/WS standalone and synchronized mixed 
       runtimes: ["reazonspeech-shadow"],
     });
     expect(shadowRequests).toBe(4);
+    expect(agentProfileRequests).toBe(1);
     expect(JSON.parse(await readFile(shadowOutput, "utf8"))).toEqual(shadowReport);
   } finally {
     server.stop(true);

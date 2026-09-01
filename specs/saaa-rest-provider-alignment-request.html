@@ -40,8 +40,8 @@
     </p>
     <p>
       <code>deep-reasoning-35b</code
-      >（Ornith-1.5-35B）は任意の比較・深い推論用profileとして残しますが、
-      SAAAのprimaryには使用しません。利用する場合はtaskごとに明示選択してください。
+      >（Ornith-1.5-35B）のRuntime・Routeは比較用に残しますが、Native WebSocket未対応のためSAAA
+      Agent Profile一覧には広告しません。
     </p>
   </aside>
 
@@ -101,10 +101,18 @@
     <h2>実装するREST lifecycle</h2>
     <ol>
       <li>
+        <code>GET /v1/agent-profiles</code>の<code>defaultAgentProfile</code>が
+        <code>coding-default</code
+        >、該当Profileの<code>selectionPolicy</code>が<code>default</code>、
+        <code>streamingProtocol</code
+        >が<code>saaa.llm-stream.v1</code>であり、
+        <code>supportedCapabilities</code
+        >がgeneral・reasoning・codingを含むことを確認します。
+      </li>
+      <li>
         一意な<code>Idempotency-Key</code>を付けて
         <code>POST /v1/agent-connections</code>を呼びます。
         <pre><code>{
-  "agentProfile": "coding-default",
   "audience": "saaa-desktop",
   "client": "saaa-desktop",
   "ttlSeconds": 300,
@@ -181,6 +189,10 @@
       <li>
         SAAA Macから匿名Agent Profile/Connection requestが成功し、匿名の通常control requestは401に
         なることを確認します。
+      </li>
+      <li>
+        Profile APIからQwen 3.8
+        27Bが唯一の既定Profileとして選択され、35B/workerが候補に現れないことを 確認します。
       </li>
       <li>
         長期credentialなしでcreate、poll、claimを行い、短期tokenでsemantic health、Native WebSocket

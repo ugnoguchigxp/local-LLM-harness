@@ -81,9 +81,10 @@ rotated Provider credential, verifies the claim invariants, and resumes with the
   `ngram-mod` stays disabled, and q38rocm prompt/idle-slot caching is disabled after a repeat-request
   sequence assertion reproduced on local-node. Qwen3.6-35B remains an explicit comparison and fallback
   Runtime in the same swap group.
-- `coding-worker` and `deep-reasoning-35b` use separate 64K launch contracts. Their admission
+- The worker and 35B comparison routes retain separate 64K launch contracts. Their admission
   reservations are 28 GB and 30 GB respectively; the latter includes the q8_0 Value cache selected
-  after perplexity validation.
+  after perplexity validation. They are not advertised to SAAA as Agent Profiles until they provide
+  the same Native WebSocket contract as the Resident Qwen profile.
 - Qwen3-ASR 1.7B stays resident: the measured error reduction was worth roughly 3 GB over
   the 0.6B fallback for voice-chat input.
 - VOICEVOX is the normal response voice because it remains real-time while the LLM is busy.

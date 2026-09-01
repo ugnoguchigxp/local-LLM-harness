@@ -114,7 +114,20 @@ test("agent profile discovery omits Authorization when the optional API token is
       return json({
         contractVersion: "agent-connection.v1",
         catalogRevision: "catalog-test",
-        profiles: [],
+        defaultAgentProfile: "coding-default",
+        profiles: [{
+          id: "coding-default",
+          description: "Resident Qwen",
+          selectionPolicy: "default",
+          providers: [{
+            name: "llm",
+            capability: "llm.coding",
+            supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
+            protocol: "openai.chat-completions.v1",
+            model: "coding-default",
+            streamingProtocol: "saaa.llm-stream.v1",
+          }],
+        }],
         audiences: ["same-host", "saaa-desktop"],
       });
     },
@@ -459,11 +472,17 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   });
 
   const created = await client.createAgentConnection({
-    agentProfile: "coding-default",
     audience: "same-host",
   });
   expect(created.status).toBe("pending");
   expect(requests[0]?.headers.get("idempotency-key")).toBe("client_agent-fixed");
+  expect(await requests[0]!.clone().json()).toEqual({
+    explicitAgentProfile: false,
+    audience: "same-host",
+    ttlSeconds: 300,
+    allowFallback: false,
+    deploymentPolicy: "existing-only",
+  });
   const ready = await client.waitForAgentConnection(created, { pollIntervalMs: 0 });
   expect(ready.status).toBe("ready");
   expect(getCount).toBe(1);
@@ -593,7 +612,6 @@ test("withAgentConnection claims and releases with a fresh cleanup signal", asyn
   });
 
   await expect(client.withAgentConnection({
-    agentProfile: "coding-default",
     audience: "same-host",
   }, async (_ready, receivedClaim) => {
     expect(receivedClaim.providers[0]?.model).toBe("coding-default");
