@@ -33,13 +33,14 @@
 
   <aside>
     <p>
-      <strong>2026-09-01 profile-selection correction:</strong>
+      <strong>2026-09-01 13:15 JST contract再調査:</strong>
       初期handoffが<code>deep-reasoning-35b</code>をprimaryとして指定し、後の
       <code>coding-default</code>決定をSAAA Mac
-      canaryで閉じないまま残したため、認証問題の解消後に旧35B 選択が実行された。Profile
-      APIにも既定値と明示選択policyがなく、この移行漏れを防げなかった。
-      現行contractは<code>defaultAgentProfile: coding-default</code>を返し、Native WebSocket対応済みの
-      Resident Qwen 3.8 27BだけをSAAAへ広告する。
+      canaryで閉じないまま残したため、認証問題の解消後に旧35B選択が実行された。その後、既定値と
+      Native WebSocket
+      metadataを同じ<code>agent-connection.v1</code>へ必須fieldとして追加し、旧SAAAの
+      strict parserを破壊した。13:15:47 JSTの失敗時刻にはLARM側にConnection作成、claim、WebSocket、
+      推論eventが一件もなく、SAAA内のProfile contract検証で停止したと判定した。
     </p>
   </aside>
 
@@ -76,6 +77,14 @@
       timeoutを超えたものです。固定addressを廃止し、低遅延要求はbounded generationまたは
       streamingを使用します。
     </p>
+    <p>
+      12:38から12:40
+      JSTの旧profile失敗では、<code>deep-reasoning-35b</code>によるallocation、semantic
+      probe、releaseは記録された一方、Native WebSocket openは記録されませんでした。13:15:47 JSTの
+      失敗ではallocation自体がありません。この差から、前者は35B profileにstreaming descriptorがない
+      Provider contract失敗、後者は同じv1名のresponse shapeを変更したProfile contract失敗として分離
+      しました。
+    </p>
   </section>
 
   <section id="changes">
@@ -101,15 +110,28 @@
           <td>DHCP変更後もSAAAが実際に到達したhostname/addressをclaimへ固定する</td>
         </tr>
         <tr>
-          <th scope="row">Profile selection</th>
+          <th scope="row">Versioned Profile discovery</th>
           <td>
-            <code>defaultAgentProfile</code
-            >、<code>selectionPolicy</code>、
-            <code>streamingProtocol</code>をProfile APIへ追加
+            strictな旧shapeを<code>/v1/agent-profiles</code>へ復元し、
+            <code>defaultAgentProfile</code>、selection policy、canonical
+            identity、Native WebSocket metadataは<code>/v2/agent-profiles</code>へ分離
           </td>
+          <td>同一contract version内のfield追加でstrict clientを再び壊さない</td>
+        </tr>
+        <tr>
+          <th scope="row">Bootstrap migration</th>
           <td>
-            通常requestはQwen 3.8 27Bへ固定し、Native WebSocket未対応profileを自動選択させない
+            旧<code>deep-reasoning-35b</code>をdeprecated compatibility
+            aliasとして受理し、canonical
+            <code>coding-default</code
+            >、<code>llm-default</code>、Resident Qwen 3.8 27Bへ正規化
           </td>
+          <td>旧SAAA設定を無効化せず、35B workerを起動せず、Native WebSocketを必ずclaimへ含める</td>
+        </tr>
+        <tr>
+          <th scope="row">Contract observability</th>
+          <td>Profile v1/v2提供とConnection createのaccept/rejectを秘密なしeventとして記録</td>
+          <td>Client内失敗、HTTP拒否、allocation後失敗を時刻相関で区別する</td>
         </tr>
         <tr>
           <th scope="row">Liveness</th>
@@ -224,13 +246,20 @@
         >と<code>/ready</code>は未認証、model・profile・secretを返さない。
       </li>
       <li>
-        匿名または認証済み<code>/v1/agent-profiles</code>は200、64桁小文字16進revision、
+        匿名または認証済み<code>/v1/agent-profiles</code>は200、64桁小文字16進revision、旧v1の
+        fieldだけを返す。静的な旧IDはdeprecated aliasとして存在するが、Provider modelは
+        <code>coding-default</code>である。
+      </li>
+      <li>
+        匿名または認証済み<code>/v2/agent-profiles</code>は200、
         <code>defaultAgentProfile: coding-default</code>を返す。
       </li>
       <li>
-        SAAA向けProfile一覧は<code>coding-default</code>だけを返し、そのProviderは
+        v2で選択可能な既定Profileは<code>coding-default</code>であり、そのProviderは
         <code>saaa.llm-stream.v1</code
-        >をadvertiseする。workerと35BはRuntime・Routeとして残すが Agent Profileには含めない。
+        >をadvertiseする。旧35B名は<code>canonicalProfile: coding-default</code>、
+        <code>selectionPolicy: compatibility</code
+        >、<code>deprecated: true</code>であり、35B Runtime・Routeを 選択しない。
       </li>
       <li>
         <code>saaa-desktop</code>のdata

@@ -216,7 +216,7 @@ export class LarmClient {
   }
 
   async listAgentProfiles(signal?: AbortSignal) {
-    const response = await this.request("/v1/agent-profiles", { signal });
+    const response = await this.request("/v2/agent-profiles", { signal });
     return this.parseJson(response, publicAgentProfileListSchema);
   }
 

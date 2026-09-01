@@ -112,13 +112,15 @@ test("agent profile discovery omits Authorization when the optional API token is
     fetch: async (input, init) => {
       observed = new Request(input.toString(), init);
       return json({
-        contractVersion: "agent-connection.v1",
+        contractVersion: "agent-connection.v2",
         catalogRevision: "catalog-test",
         defaultAgentProfile: "coding-default",
         profiles: [{
           id: "coding-default",
+          canonicalProfile: "coding-default",
           description: "Resident Qwen",
           selectionPolicy: "default",
+          deprecated: false,
           providers: [{
             name: "llm",
             capability: "llm.coding",
@@ -134,6 +136,7 @@ test("agent profile discovery omits Authorization when the optional API token is
   });
 
   expect((await client.listAgentProfiles()).audiences).toEqual(["same-host", "saaa-desktop"]);
+  expect(new URL(observed!.url).pathname).toBe("/v2/agent-profiles");
   expect(client.hasApiToken).toBeFalse();
   expect(observed?.headers.has("authorization")).toBeFalse();
 });

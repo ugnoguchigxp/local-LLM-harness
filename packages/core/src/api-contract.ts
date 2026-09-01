@@ -23,6 +23,7 @@ import {
   agentProviderHealthSchema,
   publicAgentConnectionSchema,
   publicAgentProfileListSchema,
+  publicAgentProfileListV1Schema,
 } from "./agent-connection";
 import {
   clusterStateSchema,
@@ -292,7 +293,8 @@ export const API_OPERATIONS = [
   ["post", "/v1/allocations/{id}/renew", "renewAllocation"],
   ["post", "/v1/allocations/{id}/resolve", "resolveAllocation"],
   ["delete", "/v1/allocations/{id}", "releaseAllocation"],
-  ["get", "/v1/agent-profiles", "listAgentProfiles"],
+  ["get", "/v1/agent-profiles", "listAgentProfilesV1"],
+  ["get", "/v2/agent-profiles", "listAgentProfiles"],
   ["post", "/v1/agent-connections", "createAgentConnection"],
   ["get", "/v1/agent-connections/{id}", "getAgentConnection"],
   ["get", "/v1/agent-connections/{id}/health", "getAgentConnectionHealth"],
@@ -340,6 +342,7 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   renewAllocation: ["200"],
   resolveAllocation: ["200"],
   releaseAllocation: ["200"],
+  listAgentProfilesV1: ["200"],
   listAgentProfiles: ["200"],
   createAgentConnection: ["201", "202"],
   getAgentConnection: ["200"],
@@ -386,6 +389,7 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   renewAllocation: "Allocation",
   resolveAllocation: "AllocationResolveResponse",
   releaseAllocation: "Allocation",
+  listAgentProfilesV1: "AgentProfileListV1",
   listAgentProfiles: "AgentProfileList",
   createAgentConnection: "AgentConnection",
   getAgentConnection: "AgentConnection",
@@ -439,6 +443,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     AgentConnectionRequest: jsonSchema(agentConnectionRequestSchema),
     AgentConnectionRenewRequest: jsonSchema(agentConnectionRenewRequestSchema),
     AgentConnectionClaimRequest: jsonSchema(agentConnectionClaimRequestSchema),
+    AgentProfileListV1: jsonSchema(publicAgentProfileListV1Schema),
     AgentProfileList: jsonSchema(publicAgentProfileListSchema),
     AgentConnection: jsonSchema(publicAgentConnectionSchema),
     AgentConnectionHealth: jsonSchema(agentConnectionHealthSchema),
@@ -490,7 +495,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       || path.startsWith("/v1/catalog/")
       || path.startsWith("/v1/inspection/");
     const publicOperation = operationId === "getHealth" || operationId === "getReadiness";
-    const optionalAgentBearerOperation = operationId === "listAgentProfiles"
+    const optionalAgentBearerOperation = operationId === "listAgentProfilesV1"
+      || operationId === "listAgentProfiles"
       || operationId === "createAgentConnection"
       || operationId === "getAgentConnection"
       || operationId === "getAgentConnectionHealth"

@@ -111,11 +111,18 @@ const agentProfileYamlSchema = z.object({
   }
 });
 
+const agentCompatibilityAliasYamlSchema = z.object({
+  canonicalProfile: agentIdentifierSchema,
+  description: z.string().min(1).max(256),
+  providerCapabilities: z.record(agentIdentifierSchema, agentIdentifierSchema).default({}),
+}).strict();
+
 export const agentConnectionsFileSchema = z.object({
   version: z.literal(1),
   defaultAgentProfile: agentIdentifierSchema,
   audiences: z.record(agentIdentifierSchema, agentAudienceYamlSchema),
   agentProfiles: z.record(agentIdentifierSchema, agentProfileYamlSchema),
+  compatibilityAliases: z.record(agentIdentifierSchema, agentCompatibilityAliasYamlSchema).default({}),
 }).strict();
 
 export type AgentReadinessKind = z.infer<typeof agentReadinessKindSchema>;
@@ -159,8 +166,10 @@ export type AgentProviderProfile = {
 
 export type AgentProfile = {
   id: string;
+  canonicalProfile: string;
   description: string;
-  selectionPolicy: "default" | "explicit-only";
+  selectionPolicy: "default" | "compatibility" | "explicit-only";
+  deprecated: boolean;
   providers: AgentProviderProfile[];
   revision: string;
 };
@@ -212,7 +221,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
 
   const runtimes = new Map(registry.runtimes.map((runtime) => [runtime.id, runtime]));
   const routes = new Map(registry.routes.map((route) => [route.id, route]));
-  const profiles = Object.entries(parsed.data.agentProfiles).map(([id, profile]) => {
+  const canonicalProfiles = Object.entries(parsed.data.agentProfiles).map(([id, profile]) => {
     const selectionPolicy: AgentProfile["selectionPolicy"] = id === parsed.data.defaultAgentProfile
       ? "default"
       : "explicit-only";
@@ -281,9 +290,59 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
         protocol,
       };
     }).sort((left, right) => left.name.localeCompare(right.name));
-    const normalized = { description: profile.description, selectionPolicy, providers };
+    const normalized = {
+      canonicalProfile: id,
+      description: profile.description,
+      selectionPolicy,
+      deprecated: false,
+      providers,
+    };
     return { id, ...normalized, revision: digest(normalized) };
-  }).sort((left, right) => left.id.localeCompare(right.id));
+  });
+
+  const profileById = new Map(canonicalProfiles.map((profile) => [profile.id, profile]));
+  const compatibilityProfiles = Object.entries(parsed.data.compatibilityAliases).map(([id, alias]) => {
+    if (profileById.has(id)) {
+      throw new AgentConnectionCatalogError(`compatibility alias ${id} conflicts with an agent profile`);
+    }
+    const canonical = profileById.get(alias.canonicalProfile);
+    if (!canonical) {
+      throw new AgentConnectionCatalogError(
+        `compatibility alias ${id} references unknown canonical profile ${alias.canonicalProfile}`,
+      );
+    }
+    if (canonical.selectionPolicy !== "default") {
+      throw new AgentConnectionCatalogError(
+        `compatibility alias ${id} must target the default agent profile`,
+      );
+    }
+    const providers = canonical.providers.map((provider) => {
+      const capability = alias.providerCapabilities[provider.name] ?? provider.capability;
+      if (!provider.supportedCapabilities.includes(capability)) {
+        throw new AgentConnectionCatalogError(
+          `compatibility alias ${id} provider ${provider.name} route ${provider.route} does not advertise ${capability}`,
+        );
+      }
+      return { ...provider, capability };
+    });
+    for (const providerName of Object.keys(alias.providerCapabilities)) {
+      if (!providers.some((provider) => provider.name === providerName)) {
+        throw new AgentConnectionCatalogError(
+          `compatibility alias ${id} overrides unknown provider ${providerName}`,
+        );
+      }
+    }
+    const normalized = {
+      canonicalProfile: canonical.id,
+      description: alias.description,
+      selectionPolicy: "compatibility" as const,
+      deprecated: true,
+      providers,
+    };
+    return { id, ...normalized, revision: digest(normalized) };
+  });
+  const profiles = [...canonicalProfiles, ...compatibilityProfiles]
+    .sort((left, right) => left.id.localeCompare(right.id));
 
   const audiences = Object.entries(parsed.data.audiences).map(([id, audience]) => ({
     id,
@@ -353,14 +412,32 @@ export const agentConnectionClaimRequestSchema = z.object({
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 
-export const publicAgentProfileListSchema = z.object({
+export const publicAgentProfileListV1Schema = z.object({
   contractVersion: z.literal("agent-connection.v1"),
+  catalogRevision: z.string().min(1).max(128),
+  profiles: z.array(z.object({
+    id: agentIdentifierSchema,
+    description: z.string().min(1).max(256),
+    providers: z.array(z.object({
+      name: agentIdentifierSchema,
+      capability: agentIdentifierSchema,
+      protocol: runtimeProtocolSchema,
+      model: agentIdentifierSchema,
+    }).strict()).min(1).max(8),
+  }).strict()),
+  audiences: z.array(agentIdentifierSchema),
+}).strict();
+
+export const publicAgentProfileListSchema = z.object({
+  contractVersion: z.literal("agent-connection.v2"),
   catalogRevision: z.string().min(1).max(128),
   defaultAgentProfile: agentIdentifierSchema,
   profiles: z.array(z.object({
     id: agentIdentifierSchema,
+    canonicalProfile: agentIdentifierSchema,
     description: z.string().min(1).max(256),
-    selectionPolicy: z.enum(["default", "explicit-only"]),
+    selectionPolicy: z.enum(["default", "compatibility", "explicit-only"]),
+    deprecated: z.boolean(),
     providers: z.array(z.object({
       name: agentIdentifierSchema,
       capability: agentIdentifierSchema,
@@ -392,13 +469,21 @@ export const publicAgentProfileListSchema = z.object({
       message: "defaultAgentProfile must name exactly one default profile",
     });
   }
-  if (value.profiles.some((profile) => (
-    profile.id !== value.defaultAgentProfile && profile.selectionPolicy !== "explicit-only"
-  ))) {
+  if (value.profiles.some((profile) => {
+    if (profile.id === value.defaultAgentProfile) {
+      return profile.canonicalProfile !== profile.id || profile.deprecated;
+    }
+    if (profile.selectionPolicy === "compatibility") {
+      return profile.canonicalProfile !== value.defaultAgentProfile || !profile.deprecated;
+    }
+    return profile.selectionPolicy !== "explicit-only"
+      || profile.canonicalProfile !== profile.id
+      || profile.deprecated;
+  })) {
     context.addIssue({
       code: "custom",
       path: ["profiles"],
-      message: "every non-default profile must be explicit-only",
+      message: "profile selection, canonical identity, or deprecation metadata is inconsistent",
     });
   }
 });

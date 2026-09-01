@@ -6,6 +6,8 @@ base_url="${LARM_BASE_URL:-http://127.0.0.1:9810}"
 base_url="${base_url%/}"
 timeout_seconds="${LARM_SAAA_SMOKE_TIMEOUT_SECONDS:-600}"
 agent_profile="${LARM_AGENT_PROFILE:-}"
+agent_profile_was_requested=false
+[[ -z "${agent_profile}" ]] || agent_profile_was_requested=true
 expected_default_agent_profile="${LARM_EXPECTED_DEFAULT_AGENT_PROFILE:-coding-default}"
 agent_capability="${LARM_AGENT_CAPABILITY:-llm.coding}"
 agent_audience="${LARM_AGENT_AUDIENCE:-saaa-desktop}"
@@ -101,7 +103,7 @@ jq -e '.status == "ready"' <<<"${readiness}" >/dev/null
 curl_control -fsS --max-time 15 \
   -D "${scratch_dir}/profiles.headers" \
   -o "${scratch_dir}/profiles.json" \
-  "${base_url}/v1/agent-profiles"
+  "${base_url}/v2/agent-profiles"
 config_revision="$(awk '
   tolower($1) == "x-larm-config-revision:" { gsub(/\r/, "", $2); value = $2 }
   END { print value }
@@ -118,27 +120,43 @@ default_agent_profile="$(jq -er '.defaultAgentProfile' "${scratch_dir}/profiles.
 explicit_agent_profile=false
 if [[ -z "${agent_profile}" ]]; then
   agent_profile="${default_agent_profile}"
-elif [[ "${agent_profile}" != "${default_agent_profile}" ]]; then
-  explicit_agent_profile=true
+fi
+selection_policy="$(jq -er --arg agentProfile "${agent_profile}" \
+  '.profiles[] | select(.id == $agentProfile) | .selectionPolicy' \
+  "${scratch_dir}/profiles.json")"
+case "${selection_policy}" in
+  default|compatibility) ;;
+  explicit-only) explicit_agent_profile=true ;;
+  *) echo "Agent Profile API advertised an invalid selection policy" >&2; exit 1 ;;
+esac
+provider_model="$(jq -er --arg agentProfile "${agent_profile}" \
+  '.profiles[] | select(.id == $agentProfile) | .providers[] | select(.name == "llm") | .model' \
+  "${scratch_dir}/profiles.json")"
+include_agent_profile=false
+if [[ "${agent_profile_was_requested}" == "true" || "${selection_policy}" != "default" ]]; then
+  include_agent_profile=true
 fi
 jq -e --arg agentProfile "${agent_profile}" --arg agentCapability "${agent_capability}" \
   --arg audience "${agent_audience}" \
   --arg configRevision "${config_revision}" \
   --arg defaultAgentProfile "${default_agent_profile}" \
-  --argjson explicitAgentProfile "${explicit_agent_profile}" \
-  '.contractVersion == "agent-connection.v1"
+  --arg selectionPolicy "${selection_policy}" \
+  --arg providerModel "${provider_model}" \
+  '.contractVersion == "agent-connection.v2"
   and .catalogRevision == $configRevision
   and .defaultAgentProfile == $defaultAgentProfile
   and (.audiences | index($audience)) != null
   and any(.profiles[]; .id == $agentProfile
-    and .selectionPolicy == (if $explicitAgentProfile then "explicit-only" else "default" end)
+    and .selectionPolicy == $selectionPolicy
+    and .canonicalProfile == (if $selectionPolicy == "compatibility" then $defaultAgentProfile else $agentProfile end)
+    and .deprecated == ($selectionPolicy == "compatibility")
     and any(.providers[]; .name == "llm"
       and .capability == $agentCapability
       and (.supportedCapabilities | index("llm.general")) != null
       and (.supportedCapabilities | index("llm.reasoning")) != null
       and (.supportedCapabilities | index("llm.coding")) != null
       and .protocol == "openai.chat-completions.v1"
-      and .model == $agentProfile
+      and .model == $providerModel
       and .streamingProtocol == "saaa.llm-stream.v1"))' \
   "${scratch_dir}/profiles.json" >/dev/null
 
@@ -147,12 +165,12 @@ connection_request="$(jq -cn \
   --arg audience "${agent_audience}" \
   --arg client "${agent_client}" \
   --argjson explicitAgentProfile "${explicit_agent_profile}" \
+  --argjson includeAgentProfile "${include_agent_profile}" \
   --argjson ttlSeconds "${ttl_seconds}" \
   '{audience:$audience,client:$client,ttlSeconds:$ttlSeconds,
     allowFallback:false,deploymentPolicy:"existing-only"}
-    + (if $explicitAgentProfile then
-      {agentProfile:$agentProfile,explicitAgentProfile:true}
-    else {} end)')"
+    + (if $includeAgentProfile then {agentProfile:$agentProfile} else {} end)
+    + (if $explicitAgentProfile then {explicitAgentProfile:true} else {} end)')"
 create_status="$(curl_control -sS --max-time 30 \
   -X POST "${base_url}/v1/agent-connections" \
   -H 'Content-Type: application/json' \
@@ -204,10 +222,11 @@ while true; do
 done
 
 jq -e --arg agentProfile "${agent_profile}" --arg audience "${agent_audience}" \
+  --arg providerModel "${provider_model}" \
   --arg requestBaseUrl "${base_url}/v1" \
   '.agentProfile == $agentProfile and .audience == $audience
   and .status == "ready" and (.providers | length == 1)
-  and .providers[0].name == "llm" and .providers[0].publicModel == $agentProfile
+  and .providers[0].name == "llm" and .providers[0].publicModel == $providerModel
   and .providers[0].claimable == true' <<<"${connection}" >/dev/null
 
 claim="$(curl_control -fsS --max-time 30 \
@@ -216,12 +235,13 @@ claim="$(curl_control -fsS --max-time 30 \
   -d '{"format":"openai-provider-v1"}')"
 
 jq -e --arg agentProfile "${agent_profile}" --arg audience "${agent_audience}" \
+  --arg providerModel "${provider_model}" \
   --arg requestBaseUrl "${base_url}/v1" \
   '.status == "ready" and .audience == $audience and (.providers | length == 1)
   and .providers[0].name == "llm" and .providers[0].apiStyle == "openai"
-  and .providers[0].model == $agentProfile
+  and .providers[0].model == $providerModel
   and .providers[0].configuration.kind == "openai-provider-v1"
-  and .providers[0].configuration.fields.model == $agentProfile
+  and .providers[0].configuration.fields.model == $providerModel
   and .providers[0].configuration.fields.baseURL == .providers[0].baseUrl
   and .providers[0].configuration.secretFields.apiKey == "credential.token"
   and .providers[0].credential.type == "bearer"

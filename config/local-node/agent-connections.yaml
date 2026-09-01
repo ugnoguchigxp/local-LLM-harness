@@ -19,3 +19,10 @@ agentProfiles:
         publicModel: coding-default
         readiness: llm-inference
         streamingProtocol: saaa.llm-stream.v1
+
+compatibilityAliases:
+  deep-reasoning-35b:
+    canonicalProfile: coding-default
+    description: Deprecated SAAA bootstrap alias routed to the resident 27B Qwen provider
+    providerCapabilities:
+      llm: llm.reasoning

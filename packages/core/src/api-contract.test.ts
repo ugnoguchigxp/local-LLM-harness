@@ -36,6 +36,8 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("defaultAgentProfile");
   expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("supportedCapabilities");
   expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("streamingProtocol");
+  expect(JSON.stringify(document.components.schemas.AgentProfileListV1)).not.toContain("defaultAgentProfile");
+  expect(JSON.stringify(document.components.schemas.AgentProfileListV1)).not.toContain("selectionPolicy");
   const operationIds = API_OPERATIONS.map(([, , operationId]) => operationId);
   expect(new Set(operationIds).size).toBe(operationIds.length);
   for (const [method, path, operationId] of API_OPERATIONS) {
@@ -74,6 +76,7 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(paths["/v1/llm/stream"]?.get?.responses).toHaveProperty("101");
   expect(paths["/v1/agent-connections"]?.post?.parameters).toBeDefined();
   expect(paths["/v1/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v2/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v1/agent-connections"]?.post?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v1/agent-connections/{id}"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v1/agent-connections/{id}/health"]?.get?.security).toEqual([

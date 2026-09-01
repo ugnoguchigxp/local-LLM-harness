@@ -161,6 +161,15 @@
 
   <section id="agent-profile-default-and-native-ws-revalidation">
     <h2>Agent Profile既定値とNative WebSocket再検証</h2>
+    <aside>
+      <p>
+        この節はlocal-node上のoperator synthetic smokeであり、SAAA Macの実アプリ成功証跡では
+        ありません。後続の13:15:47 JST実アプリ試行ではConnection作成前に
+        <code>provider-session-state: contract</code>で失敗しました。原因は同じ
+        <code>agent-connection.v1</code>へ必須fieldを追加した非互換変更と、旧static
+        profileの移行漏れ です。以下の結果をSAAA end-to-end完了と解釈してはいけません。
+      </p>
+    </aside>
     <p>
       <time>2026-09-01T04:07:14Z</time>にrelease
       <code>38ff7d3b7c5a76fcb5bd248a2409d4a3ad8b3fe6</code>、config revision
@@ -175,9 +184,9 @@
         <tr>
           <th scope="row">Profile API</th>
           <td>
-            <code>coding-default</code
-            >だけを返し、<code>selectionPolicy: default</code>、general・reasoning・coding、
-            <code>saaa.llm-stream.v1</code>を広告
+            当時の非互換なv1 responseは<code>coding-default</code>だけを返し、
+            <code>selectionPolicy: default</code>、general・reasoning・coding、
+            <code>saaa.llm-stream.v1</code>を広告。後続調査でv1 contract違反と判定
           </td>
         </tr>
         <tr>

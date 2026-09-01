@@ -6,6 +6,7 @@ import {
   loadAgentConnectionCatalogForRegistry,
   parseAgentConnectionCatalog,
   publicAgentProfileListSchema,
+  publicAgentProfileListV1Schema,
   resolveAgentAudienceBaseUrl,
 } from "./agent-connection";
 import { loadRegistry } from "./registry";
@@ -16,7 +17,10 @@ const registry = loadRegistry(configDir);
 test("production agent profiles compile to strict protocol-aware provider contracts", () => {
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
   expect(catalog.defaultAgentProfile).toBe("coding-default");
-  expect(catalog.profiles.map((profile) => profile.id)).toEqual(["coding-default"]);
+  expect(catalog.profiles.map((profile) => profile.id)).toEqual([
+    "coding-default",
+    "deep-reasoning-35b",
+  ]);
   expect(catalog.audiences.map((audience) => audience.id)).toEqual([
     "saaa-desktop",
     "same-host",
@@ -29,12 +33,26 @@ test("production agent profiles compile to strict protocol-aware provider contra
   expect(catalog.profiles.find((profile) => profile.id === "coding-default"))
     .toMatchObject({
       selectionPolicy: "default",
+      canonicalProfile: "coding-default",
+      deprecated: false,
       providers: [{
         capability: "llm.coding",
         supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
         route: "llm-default",
         protocol: "openai.chat-completions.v1",
         readiness: "llm-inference",
+        streamingProtocol: "saaa.llm-stream.v1",
+      }],
+    });
+  expect(catalog.profiles.find((profile) => profile.id === "deep-reasoning-35b"))
+    .toMatchObject({
+      canonicalProfile: "coding-default",
+      selectionPolicy: "compatibility",
+      deprecated: true,
+      providers: [{
+        capability: "llm.reasoning",
+        publicModel: "coding-default",
+        route: "llm-default",
         streamingProtocol: "saaa.llm-stream.v1",
       }],
     });
@@ -101,6 +119,25 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
     ...base,
     audiences: { local: { network: "loopback", baseUrl: "request-origin" } },
   }, registry)).toThrow(/request-origin is only valid for host-private/);
+  expect(() => parseAgentConnectionCatalog({
+    ...base,
+    compatibilityAliases: {
+      legacy: {
+        canonicalProfile: "missing",
+        description: "invalid target",
+      },
+    },
+  }, registry)).toThrow(/unknown canonical profile missing/);
+  expect(() => parseAgentConnectionCatalog({
+    ...base,
+    compatibilityAliases: {
+      legacy: {
+        canonicalProfile: "coding",
+        description: "invalid provider override",
+        providerCapabilities: { missing: "llm.general" },
+      },
+    },
+  }, registry)).toThrow(/overrides unknown provider missing/);
 });
 
 test("request-origin audiences derive a canonical Gateway URL from the authenticated ingress", () => {
@@ -127,13 +164,15 @@ test("request-origin audiences derive a canonical Gateway URL from the authentic
 
 test("public Agent Profile metadata identifies one capable streaming default", () => {
   const response = {
-    contractVersion: "agent-connection.v1" as const,
+    contractVersion: "agent-connection.v2" as const,
     catalogRevision: "catalog-test",
     defaultAgentProfile: "coding-default",
     profiles: [{
       id: "coding-default",
+      canonicalProfile: "coding-default",
       description: "Resident Qwen",
       selectionPolicy: "default" as const,
+      deprecated: false,
       providers: [{
         name: "llm",
         capability: "llm.coding",
@@ -159,6 +198,29 @@ test("public Agent Profile metadata identifies one capable streaming default", (
         supportedCapabilities: ["llm.reasoning"],
       }],
     }],
+  }).success).toBeFalse();
+});
+
+test("v1 Agent Profile discovery remains byte-shape compatible with the commissioned SAAA parser", () => {
+  const response = {
+    contractVersion: "agent-connection.v1" as const,
+    catalogRevision: "catalog-test",
+    profiles: [{
+      id: "deep-reasoning-35b",
+      description: "Legacy bootstrap alias",
+      providers: [{
+        name: "llm",
+        capability: "llm.reasoning",
+        protocol: "openai.chat-completions.v1" as const,
+        model: "coding-default",
+      }],
+    }],
+    audiences: ["saaa-desktop"],
+  };
+  expect(publicAgentProfileListV1Schema.parse(response)).toEqual(response);
+  expect(publicAgentProfileListV1Schema.safeParse({
+    ...response,
+    defaultAgentProfile: "coding-default",
   }).success).toBeFalse();
 });
 

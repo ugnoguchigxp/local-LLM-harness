@@ -82,16 +82,18 @@ test("performance diagnostic measures HTTP/WS standalone and synchronized mixed 
           bootEpoch: "epoch-performance",
         }, { headers });
       }
-      if (url.pathname === "/v1/agent-profiles") {
+      if (url.pathname === "/v2/agent-profiles") {
         agentProfileRequests += 1;
         return Response.json({
-          contractVersion: "agent-connection.v1",
+          contractVersion: "agent-connection.v2",
           catalogRevision: configRevision,
           defaultAgentProfile: "coding-default",
           profiles: [{
             id: "coding-default",
+            canonicalProfile: "coding-default",
             description: "Resident Qwen",
             selectionPolicy: "default",
+            deprecated: false,
             providers: [{
               name: "llm",
               capability: "llm.coding",

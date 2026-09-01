@@ -100,7 +100,7 @@ export class AgentConnectionController {
     random?: () => string;
   }) {}
 
-  listProfiles(): AgentConnectionApiResult {
+  listProfilesV1(): AgentConnectionApiResult {
     const catalog = this.options.getCatalog();
     if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
     return {
@@ -108,11 +108,36 @@ export class AgentConnectionController {
       body: {
         contractVersion: "agent-connection.v1",
         catalogRevision: this.options.getCatalogRevision(),
-        defaultAgentProfile: catalog.defaultAgentProfile,
         profiles: catalog.profiles.map((profile) => ({
           id: profile.id,
           description: profile.description,
+          providers: profile.providers.map((provider) => ({
+            name: provider.name,
+            capability: provider.capability,
+            protocol: provider.protocol,
+            model: provider.publicModel,
+          })),
+        })),
+        audiences: catalog.audiences.map((audience) => audience.id),
+      },
+    };
+  }
+
+  listProfilesV2(): AgentConnectionApiResult {
+    const catalog = this.options.getCatalog();
+    if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
+    return {
+      status: 200,
+      body: {
+        contractVersion: "agent-connection.v2",
+        catalogRevision: this.options.getCatalogRevision(),
+        defaultAgentProfile: catalog.defaultAgentProfile,
+        profiles: catalog.profiles.map((profile) => ({
+          id: profile.id,
+          canonicalProfile: profile.canonicalProfile,
+          description: profile.description,
           selectionPolicy: profile.selectionPolicy,
+          deprecated: profile.deprecated,
           providers: profile.providers.map((provider) => ({
             name: provider.name,
             capability: provider.capability,

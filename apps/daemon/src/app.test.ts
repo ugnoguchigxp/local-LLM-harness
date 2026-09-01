@@ -7,6 +7,8 @@ import {
   inspectionRuntimeListSchema,
   publicClusterStateSchema,
   publicAgentConnectionSchema,
+  publicAgentProfileListSchema,
+  publicAgentProfileListV1Schema,
   parseAgentConnectionCatalog,
   runtimeListSchema,
   type Registry,
@@ -42,6 +44,15 @@ const registry: Registry = {
       node: "ai395-01",
       policy: { class: "resident" },
       resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 1, queueTimeoutMs: 100 },
+      streaming: {
+        protocol: "saaa.llm-stream.v1",
+        upstreamUrl: "ws://127.0.0.1:8090/v1/native/llm/stream",
+        upstreamProtocol: "larm.native-llm-stream.v1",
+        upstreamTransport: "native",
+        maxConcurrentRuns: 1,
+        maxConnections: 1,
+        resumeWindowMs: 120_000,
+      },
       deployment: {
         service: "llama-server.service",
         healthPort: 8080,
@@ -133,6 +144,34 @@ const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
         publicModel: "test-model",
         readiness: "llm-inference",
       }],
+    },
+  },
+}, registry);
+
+const legacyAgentConnectionCatalog = parseAgentConnectionCatalog({
+  version: 1,
+  defaultAgentProfile: "coding",
+  audiences: {
+    remote: { network: "host-private", baseUrl: "request-origin" },
+  },
+  agentProfiles: {
+    coding: {
+      description: "Test coding provider",
+      providers: [{
+        name: "llm",
+        capability: "llm.general",
+        route: "llm-default",
+        publicModel: "test-model",
+        readiness: "llm-inference",
+        streamingProtocol: "saaa.llm-stream.v1",
+      }],
+    },
+  },
+  compatibilityAliases: {
+    "deep-reasoning-35b": {
+      canonicalProfile: "coding",
+      description: "Deprecated SAAA bootstrap alias",
+      providerCapabilities: { llm: "llm.reasoning" },
     },
   },
 }, registry);
@@ -1931,14 +1970,16 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   });
   expect(forgedProvider.status).toBe(401);
 
-  const profiles = await app.request("/v1/agent-profiles", { headers: agentHeaders() });
+  const profiles = await app.request("/v2/agent-profiles", { headers: agentHeaders() });
   expect(profiles.status).toBe(200);
   expect(await profiles.json()).toMatchObject({
-    contractVersion: "agent-connection.v1",
+    contractVersion: "agent-connection.v2",
     defaultAgentProfile: "coding",
     profiles: [{
       id: "coding",
+      canonicalProfile: "coding",
       selectionPolicy: "default",
+      deprecated: false,
       providers: [{
         model: "test-model",
         supportedCapabilities: ["llm.general", "llm.reasoning"],
@@ -2069,7 +2110,7 @@ test("non-default Agent Profiles require an explicit selection signal", async ()
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog: explicitAgentConnectionCatalog,
   });
-  const profiles = await app.request("/v1/agent-profiles", { headers: agentHeaders() });
+  const profiles = await app.request("/v2/agent-profiles", { headers: agentHeaders() });
   expect(await profiles.json()).toMatchObject({
     defaultAgentProfile: "coding",
     profiles: [
@@ -2107,6 +2148,141 @@ test("non-default Agent Profiles require an explicit selection signal", async ()
     agentProfile: "speed",
     providers: [{ route: "llm-speed", publicModel: "speed-model" }],
   });
+});
+
+test("commissioned v1 SAAA bootstrap migrates the legacy profile to resident native Qwen", async () => {
+  const events: ControlEvent[] = [];
+  const { app, control, log } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    allowAnonymousAgentConnections: true,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: legacyAgentConnectionCatalog,
+    onEvent: (event) => events.push(event),
+    gatewayFetch: async () => Response.json({
+      choices: [{ index: 0, message: { role: "assistant", content: "" } }],
+      usage: { completion_tokens: 1 },
+    }),
+    resolveStreaming: ({ audienceBaseUrl }) => ({
+      protocol: "saaa.llm-stream.v1",
+      url: `${audienceBaseUrl.replace(/^http/, "ws")}/llm/stream`,
+      encoding: "json-control+binary-delta-v1",
+      compression: "none",
+      maxConcurrentRuns: 1,
+      maxConnections: 1,
+      resumeWindowMs: 120_000,
+      upstreamTransport: "native",
+    }),
+  });
+
+  const legacyProfilesResponse = await app.request("/v1/agent-profiles");
+  expect(legacyProfilesResponse.status).toBe(200);
+  const legacyProfiles = publicAgentProfileListV1Schema.parse(await legacyProfilesResponse.json());
+  expect(Object.keys(legacyProfiles).sort()).toEqual([
+    "audiences",
+    "catalogRevision",
+    "contractVersion",
+    "profiles",
+  ]);
+  expect(legacyProfiles.profiles.find((profile) => profile.id === "deep-reasoning-35b"))
+    .toEqual({
+      id: "deep-reasoning-35b",
+      description: "Deprecated SAAA bootstrap alias",
+      providers: [{
+        name: "llm",
+        capability: "llm.reasoning",
+        protocol: "openai.chat-completions.v1",
+        model: "test-model",
+      }],
+    });
+
+  const modernProfiles = publicAgentProfileListSchema.parse(await (await app.request(
+    "/v2/agent-profiles",
+  )).json());
+  expect(modernProfiles.defaultAgentProfile).toBe("coding");
+  expect(modernProfiles.profiles.find((profile) => profile.id === "deep-reasoning-35b"))
+    .toMatchObject({
+      canonicalProfile: "coding",
+      selectionPolicy: "compatibility",
+      deprecated: true,
+      providers: [{
+        capability: "llm.reasoning",
+        model: "test-model",
+        streamingProtocol: "saaa.llm-stream.v1",
+      }],
+    });
+
+  const create = await app.request("http://gnosis.local:9810/v1/agent-connections", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": "legacy-saaa-create",
+    },
+    body: JSON.stringify({
+      agentProfile: "deep-reasoning-35b",
+      audience: "remote",
+      client: "saaa-desktop",
+      ttlSeconds: 300,
+      allowFallback: false,
+      deploymentPolicy: "existing-only",
+    }),
+  });
+  expect(create.status).toBe(201);
+  const connection = publicAgentConnectionSchema.parse(await create.json());
+  expect(connection).toMatchObject({
+    agentProfile: "deep-reasoning-35b",
+    status: "ready",
+    providers: [{
+      capability: "llm.reasoning",
+      route: "llm-default",
+      publicModel: "test-model",
+      claimable: true,
+    }],
+  });
+
+  const claimResponse = await app.request(`/v1/agent-connections/${connection.id}/claim`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ format: "openai-provider-v1" }),
+  });
+  expect(claimResponse.status).toBe(200);
+  const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
+  expect(claim.providers[0]).toMatchObject({
+    capability: "llm.reasoning",
+    model: "test-model",
+    streaming: {
+      protocol: "saaa.llm-stream.v1",
+      url: "ws://gnosis.local:9810/v1/llm/stream",
+      upstreamTransport: "native",
+    },
+  });
+  expect(control.getAllocation(connection.allocationId)).toMatchObject({
+    allowFallback: false,
+    deploymentPolicy: "existing-only",
+    bindings: [{
+      capability: "llm.reasoning",
+      route: "llm-default",
+      runtime: "qwen-general",
+      fallback: false,
+    }],
+  });
+  expect(log.ensure).toEqual([]);
+  expect(events).toContainEqual({
+    name: "agent_profile_catalog_served",
+    labels: { contract: "agent-connection.v1" },
+  });
+  expect(events).toContainEqual({
+    name: "agent_connection_create_accepted",
+    labels: {
+      requestedProfile: "deep-reasoning-35b",
+      status: "201",
+    },
+  });
+  expect((await app.request(`/v1/agent-connections/${connection.id}`, {
+    method: "DELETE",
+  })).status).toBe(204);
+  expect((await app.request(claim.providers[0]!.health.url, {
+    headers: { authorization: `Bearer ${claim.providers[0]!.credential.token}` },
+  })).status).toBe(401);
 });
 
 test("agent connection derives a host-private claim from the request origin", async () => {
@@ -2244,6 +2420,7 @@ test("agent connection endpoints fail closed when API or signing credentials are
     agentConnectionCatalog,
   });
   expect((await withoutApi.app.request("/v1/agent-profiles")).status).toBe(503);
+  expect((await withoutApi.app.request("/v2/agent-profiles")).status).toBe(503);
   const withoutSigning = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
     agentConnectionCatalog,
@@ -2276,6 +2453,7 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
   });
 
   expect((await app.request("/v1/agent-profiles")).status).toBe(200);
+  expect((await app.request("/v2/agent-profiles")).status).toBe(200);
   expect((await app.request("/runtimes")).status).toBe(401);
   const createdResponse = await app.request("/v1/agent-connections", {
     method: "POST",

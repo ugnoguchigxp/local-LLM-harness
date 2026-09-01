@@ -122,7 +122,7 @@ function acceptsProviderBearer(method: string, path: string): boolean {
 }
 
 function acceptsAnonymousAgentConnection(method: string, path: string): boolean {
-  if (method === "GET" && path === "/v1/agent-profiles") return true;
+  if (method === "GET" && (path === "/v1/agent-profiles" || path === "/v2/agent-profiles")) return true;
   if (method === "POST" && path === "/v1/agent-connections") return true;
   if (/^\/v1\/agent-connections\/[^/]+$/.test(path)) {
     return method === "GET" || method === "DELETE";
@@ -613,7 +613,21 @@ export function createAppComponents(deps: AppDeps) {
   app.get("/v1/agent-profiles", (c) => {
     const feature = agentFeature(c);
     if (feature instanceof Response) return feature;
-    return agentResult(c, feature.listProfiles());
+    const result = feature.listProfilesV1();
+    if (result.status === 200) {
+      deps.onEvent?.({ name: "agent_profile_catalog_served", labels: { contract: "agent-connection.v1" } });
+    }
+    return agentResult(c, result);
+  });
+
+  app.get("/v2/agent-profiles", (c) => {
+    const feature = agentFeature(c);
+    if (feature instanceof Response) return feature;
+    const result = feature.listProfilesV2();
+    if (result.status === 200) {
+      deps.onEvent?.({ name: "agent_profile_catalog_served", labels: { contract: "agent-connection.v2" } });
+    }
+    return agentResult(c, result);
   });
 
   app.post("/v1/agent-connections", async (c) => {
@@ -631,7 +645,22 @@ export function createAppComponents(deps: AppDeps) {
         return c.json(errorBody("forbidden", "valid management token required for deployment"), 403);
       }
     }
-    return agentResult(c, await feature.create(parsed.data, principal(), key, c.req.url));
+    const result = await feature.create(parsed.data, principal(), key, c.req.url);
+    const errorCode = typeof result.body === "object" && result.body !== null && "error" in result.body
+      && typeof result.body.error === "object" && result.body.error !== null && "code" in result.body.error
+      ? String(result.body.error.code)
+      : undefined;
+    deps.onEvent?.({
+      name: result.status === 201 || result.status === 202
+        ? "agent_connection_create_accepted"
+        : "agent_connection_create_rejected",
+      labels: {
+        requestedProfile: parsed.data.agentProfile ?? "(default)",
+        status: String(result.status),
+        ...(errorCode ? { code: errorCode } : {}),
+      },
+    });
+    return agentResult(c, result);
   });
 
   app.get("/v1/agent-connections/:id", (c) => {
