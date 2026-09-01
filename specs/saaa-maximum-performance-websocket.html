@@ -772,12 +772,14 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
   </section>
 
   <section id="implementation-evidence">
-    <h2>15. 2026-08-31 implementation evidence</h2>
+    <h2>15. 2026-08-31〜2026-09-01 implementation evidence</h2>
     <p>
       LARM repository内のprotocol、backend boundary、daemon session、Bun WebSocket upgrade、claim
-      advertisement、設定、smoke、benchmarkを実装した。実装が存在することとproduction cutover済みで
-      あることは分けて扱う。次表の外部gateが閉じているため、現時点のproduction claimは
-      <code>streaming</code>を広告しない。
+      advertisement、設定、smoke、benchmarkを実装し、canonical same-host endpointへcutoverした。
+      native Providerがsemantic readyである間、same-host
+      claimは<code>streaming</code>を返す。production
+      TLSを配備していないため、host-privateな<code>saaa-desktop</code>
+      claimは引き続きfail closedで <code>streaming</code>を返さない。
     </p>
     <table>
       <caption>
@@ -812,14 +814,18 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
         </tr>
         <tr>
           <th scope="row">Qwen native Provider</th>
-          <td>実装・実モデルcommissioning成功、systemd cutover待ち</td>
+          <td>実装・実モデルcommissioning・systemd cutover成功</td>
           <td>
             <code>/srv/ai/apps/q38rocm/native-provider</code>と
             <code>patches/zz-larm-native-provider.patch</code>。patched ROCmFPX engineからHTTP/SSEを
             経由しないbinary Unix socket IPCでsemantic delta、tool call、usage、cancelを取得し、
             loopback WebSocketでSAD1へ変換する。10件の疑似engine統合testに加え、Qwen 3.8
             27B実モデルで readiness、39 deltaのpause/resume、tool continuation、usage、cancel後489
-            msでのslot再利用を isolated <code>127.0.0.1:18090</code>上で確認した
+            msでのslot再利用を isolated
+            <code>127.0.0.1:18090</code>上で確認した。canonical
+            <code>larm-native-qwen-provider.service</code>をenable・起動し、
+            <code>127.0.0.1:8090</code
+            >で<code>ready: true</code>を確認した
           </td>
         </tr>
         <tr>
@@ -842,11 +848,13 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
         </tr>
         <tr>
           <th scope="row">Discovery</th>
-          <td>実装済み</td>
+          <td>実装・same-host実証済み</td>
           <td>
             native Providerのsemantic readyとcapacityを確認できた場合だけ
-            <code>streaming</code
-            >をclaimへ追加。未ready、未知runtime、TLS不足は未広告
+            <code>streaming</code>をclaimへ追加。same-host Agent
+            Connectionのcreate、claim、Provider semantic health、短期token 認証、WebSocket
+            run、release後のtoken失効を実daemonで確認した。未ready、未知runtime、
+            host-privateのTLS不足は未広告
           </td>
         </tr>
         <tr>
@@ -894,36 +902,42 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
       <p>
         2026-08-31にrollback用の既存binaryを残したまま
         <code>/srv/ai/apps/q38rocm/engine/bin/llama-server-larm-native</code>を配置し、別processで実モデル
-        commissioningを完了した。root認証を伴うhost unit
-        backup/installは非対話実行環境から適用できなかった ため、canonical
-        <code>larm-native-qwen-provider.service</code>とport 8090はまだactiveではない。 TLS
-        certificate/keyも今回のscopeでは配備しない。
+        commissioningを完了した。2026-09-01にreviewed host backup
+        <code>/var/lib/larm/operator-backups/20260901T000343Z-5a60a379eeac</code>を作成し、unitをinstall、
+        <code>llama-server.service</code>、<code>larm-native-qwen-provider.service</code>、
+        <code>larm-daemon.service</code>をactiveかつenabledへ収束させた。全release
+        gateを通過したcommit <code>5a60a379eeac2fb8c745445528b1ce86a0e9bf8d</code>をactiveにし、config
+        revision <code>9959f32a16c9e69ec22349dbfc1ead9dee2fe8fc31774f27e082b2dd59f108ae</code>を確認した。 canonical same-host E2Eは1
+        delta、3 content byte、first delta 223 ms、完了320 msでterminal integrityまで成功した。TLS
+        certificate/keyは今回のscopeでは配備しない。
       </p>
     </aside>
 
-    <h3>残るrelease blocker</h3>
+    <h3>今回のmilestone外に残す検証</h3>
+    <p>
+      Native Providerのloopback production milestoneに実装・release
+      blockerは残っていない。次の項目は 外部成果物または明示的にdeferされたcross-host production
+      gateである。
+    </p>
     <ol>
-      <li>
-        reviewed host backupを作成し、root権限でsystemd unitsをinstallして
-        <code>llama-server.service</code
-        >と<code>larm-native-qwen-provider.service</code>をrestartする。 その後canonical port
-        8090でsemantic readinessを再確認する。実装、別名binary、unit source、
-        isolated実モデルcommissioningは完了済みである。
-      </li>
       <li>
         SAAA Mac正本のgenerated JSON schema / golden fixtureをLARM fixtureと照合する。Mac成果物は本
         workspaceに存在しないため、現fixtureはLARM側実装検証用であり、共有済みとは扱わない。
       </li>
       <li>
         production certificate/keyを配備し、Mac実機でWSS、tool、cancel、resume、credential
-        rotationを確認する。TLSと1,000 turn / 30分 soakはcurrent native loopback
-        milestoneでは明示的に deferされている。
+        rotationを確認する。TLSはcurrent native loopback milestoneでは明示的にdeferされている。
+      </li>
+      <li>
+        実装済みrunnerで1,000 turn / 30分 soakを実施する。この長時間試験は今回の完了条件から
+        明示的に除外されている。
       </li>
     </ol>
     <p>
-      上記三項が完了するまでPhase 0、Phase 1共有fixture、Phase 7 TLS commissioning、Phase 8
-      cutoverと Definition of Doneは未達である。LARMはこの未達状態でWebSocket
-      capabilityを広告せず、旧SSEへ per-run fallbackしない。
+      loopback Native cutoverは完了した。上記三項が完了するまでPhase 1共有fixture、Phase 7 TLS
+      commissioningとcross-host Definition of Doneは未達である。LARMはsame-hostにだけWebSocket
+      metadataを返し、TLS未配備のhost-private claimでは返さない。どちらも旧SSEへper-run
+      fallbackしない。
     </p>
   </section>
 </article>
