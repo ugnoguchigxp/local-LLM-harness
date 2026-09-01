@@ -646,6 +646,8 @@ export function createAppComponents(deps: AppDeps) {
       }
     }
     const result = await feature.create(parsed.data, principal(), key, c.req.url);
+    const catalog = currentAgentCatalog();
+    const selectedProfile = parsed.data.agentProfile ?? catalog?.defaultAgentProfile;
     const errorCode = typeof result.body === "object" && result.body !== null && "error" in result.body
       && typeof result.body.error === "object" && result.body.error !== null && "code" in result.body.error
       ? String(result.body.error.code)
@@ -656,6 +658,8 @@ export function createAppComponents(deps: AppDeps) {
         : "agent_connection_create_rejected",
       labels: {
         requestedProfile: parsed.data.agentProfile ?? "(default)",
+        canonicalProfile: catalog?.profiles.find((profile) => profile.id === selectedProfile)
+          ?.canonicalProfile ?? "(unknown)",
         status: String(result.status),
         ...(errorCode ? { code: errorCode } : {}),
       },
@@ -673,7 +677,12 @@ export function createAppComponents(deps: AppDeps) {
     const feature = agentFeature(c);
     if (feature instanceof Response) return feature;
     c.header("cache-control", "no-store");
-    return agentResult(c, await feature.health(c.req.param("id"), principal()));
+    const result = await feature.health(c.req.param("id"), principal());
+    deps.onEvent?.({
+      name: "agent_connection_health_checked",
+      labels: { status: String(result.status) },
+    });
+    return agentResult(c, result);
   });
 
   app.get("/v1/agent-connections/:id/providers/:name/health", async (c) => {
@@ -714,7 +723,25 @@ export function createAppComponents(deps: AppDeps) {
     }
     const parsed = agentConnectionClaimRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
     if (!parsed.success) return c.json(errorBody("invalid_request", "invalid claim request"), 400);
-    return agentResult(c, await feature.claim(c.req.param("id"), principal()));
+    const result = await feature.claim(c.req.param("id"), principal());
+    const providers = typeof result.body === "object" && result.body !== null && "providers" in result.body
+      && Array.isArray(result.body.providers)
+      ? result.body.providers
+      : [];
+    const streamingProviders = providers.filter((provider) => (
+      typeof provider === "object" && provider !== null && "streaming" in provider
+    )).length;
+    deps.onEvent?.({
+      name: result.status === 200
+        ? "agent_connection_claim_accepted"
+        : "agent_connection_claim_rejected",
+      labels: {
+        status: String(result.status),
+        providers: String(providers.length),
+        streamingProviders: String(streamingProviders),
+      },
+    });
+    return agentResult(c, result);
   });
 
   app.post("/v1/agent-connections/:id/renew", async (c) => {
@@ -735,7 +762,12 @@ export function createAppComponents(deps: AppDeps) {
   app.delete("/v1/agent-connections/:id", async (c) => {
     const feature = agentFeature(c);
     if (feature instanceof Response) return feature;
-    return agentResult(c, await feature.release(c.req.param("id"), principal()));
+    const result = await feature.release(c.req.param("id"), principal());
+    deps.onEvent?.({
+      name: "agent_connection_release_completed",
+      labels: { status: String(result.status) },
+    });
+    return agentResult(c, result);
   });
 
   app.get("/runtimes", (c) => {

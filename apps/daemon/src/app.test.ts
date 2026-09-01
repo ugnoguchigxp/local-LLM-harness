@@ -2274,12 +2274,21 @@ test("commissioned v1 SAAA bootstrap migrates the legacy profile to resident nat
     name: "agent_connection_create_accepted",
     labels: {
       requestedProfile: "deep-reasoning-35b",
+      canonicalProfile: "coding",
       status: "201",
     },
+  });
+  expect(events).toContainEqual({
+    name: "agent_connection_claim_accepted",
+    labels: { status: "200", providers: "1", streamingProviders: "1" },
   });
   expect((await app.request(`/v1/agent-connections/${connection.id}`, {
     method: "DELETE",
   })).status).toBe(204);
+  expect(events).toContainEqual({
+    name: "agent_connection_release_completed",
+    labels: { status: "204" },
+  });
   expect((await app.request(claim.providers[0]!.health.url, {
     headers: { authorization: `Bearer ${claim.providers[0]!.credential.token}` },
   })).status).toBe(401);
