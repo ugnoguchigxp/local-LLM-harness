@@ -163,7 +163,7 @@ LARM :9810
   └─ 5. encrypted finalize + metadata commit
              │
              ├─ /var/lib/larm/inference-audit/&lt;UTC hour&gt;/&lt;request-id&gt;/
-             └─ prune scheduler: expiresAt / bytes / free space
+             └─ persistent systemd timer: expiresAt / bytes / free space
   │
   ▼
 Provider :8080 loopback only</code></pre>
@@ -463,6 +463,11 @@ Provider :8080 loopback only</code></pre>
         非secretの<code>/etc/larm/inference-audit.env</code>だけを共有します。prune
         serviceへAPI・management credentialを渡さず、network
         namespaceを持たせず、<code>/var/lib/larm</code>配下だけを書き換えます。
+      </li>
+      <li>
+        周期的なretention enforcementはpersistent systemd timerだけが担当します。daemonは起動時の
+        crash recoveryと、新規recordの容量予約時に必要なpruneだけを行い、同じdirectory scanを行う
+        毎時timerを内部に持ちません。
       </li>
       <li>
         repository desired stateはProviderをloopbackへ固定済みです。live hostのSAAA経路確認と

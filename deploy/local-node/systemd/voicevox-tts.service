@@ -1,8 +1,5 @@
 [Unit]
 Description=VOICEVOX CORE CPU OpenAI-compatible low-contention TTS
-After=network-online.target
-Wants=network-online.target
-
 [Service]
 Type=simple
 User=ugnoguchi

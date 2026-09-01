@@ -22,7 +22,7 @@ export type NativeLlmEvent =
   | { type: "tool-call"; callId: string; name: string; arguments: string }
   | {
       type: "completed";
-      finishReason: "stop" | "length" | "tool_calls" | "content_filter" | "other";
+      finishReason: "stop" | "length";
       usage: NativeLlmUsage | null;
     }
   | { type: "failed"; code: string; message: string; retryable: boolean };
@@ -113,7 +113,7 @@ type NativeProviderControl =
   | { type: "native.tool-call"; callId: string; name: string; arguments: string }
   | {
       type: "native.completed";
-      finishReason: "stop" | "length" | "tool_calls" | "content_filter" | "other";
+      finishReason: "stop" | "length";
       usage: NativeLlmUsage | null;
     }
   | { type: "native.failed"; code: string; message: string; retryable: boolean };
@@ -163,6 +163,7 @@ function parseNativeProviderControl(text: string): NativeProviderControl {
     && value.name.length <= 192
     && NATIVE_IDENTIFIER.test(value.name)
     && Buffer.byteLength(value.arguments, "utf8") <= 262_144
+    && validToolArguments(value.arguments)
   ) {
     return { type: "native.tool-call", callId: value.callId, name: value.name, arguments: value.arguments };
   }
@@ -170,12 +171,12 @@ function parseNativeProviderControl(text: string): NativeProviderControl {
     value.type === "native.completed"
     && Object.keys(value).length === 3
     && Object.keys(value).every((key) => ["type", "finishReason", "usage"].includes(key))
-    && ["stop", "length", "tool_calls", "content_filter", "other"].includes(String(value.finishReason))
+    && ["stop", "length"].includes(String(value.finishReason))
     && (value.usage === null || validUsage(value.usage))
   ) {
     return {
       type: "native.completed",
-      finishReason: value.finishReason as "stop" | "length" | "tool_calls" | "content_filter" | "other",
+      finishReason: value.finishReason as "stop" | "length",
       usage: value.usage as NativeLlmUsage | null,
     };
   }
@@ -224,9 +225,29 @@ function validUsage(value: unknown): value is NativeLlmUsage {
   ) {
     return false;
   }
-  return [usage.promptTokens, usage.completionTokens, usage.totalTokens].every(
-    (item) => item === null || (typeof item === "number" && Number.isSafeInteger(item) && item >= 0),
-  );
+  const validTokenCount = (item: unknown): item is number | null =>
+    item === null || (typeof item === "number" && Number.isSafeInteger(item) && item >= 0);
+  const promptTokens = usage.promptTokens;
+  const completionTokens = usage.completionTokens;
+  const totalTokens = usage.totalTokens;
+  if (
+    !validTokenCount(promptTokens)
+    || !validTokenCount(completionTokens)
+    || !validTokenCount(totalTokens)
+  ) return false;
+  return promptTokens === null
+    || completionTokens === null
+    || totalTokens === null
+    || promptTokens + completionTokens === totalTokens;
+}
+
+function validToolArguments(value: string): boolean {
+  try {
+    const parsed = parseStrictJsonValue(value);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
 }
 
 class BoundedEventQueue implements AsyncIterable<NativeLlmEvent> {

@@ -1,8 +1,5 @@
 [Unit]
 Description=Whisper large-v3-turbo Q5 HIP OpenAI-compatible provider
-After=network-online.target
-Wants=network-online.target
-
 [Service]
 Type=simple
 User=ugnoguchi

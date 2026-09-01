@@ -1,0 +1,83 @@
+<article lang="ja">
+  <h1>Daemon実装簡素化の決定記録</h1>
+
+  <p>
+    local-nodeで実際に使う運用経路を正本とし、同じ状態変更や定期処理を複数のdaemon層で実装しないための
+    決定です。2026年9月1日のsource監査を受け、実行時resourceと障害面を増やす重複を削除しました。
+  </p>
+
+  <dl>
+    <dt>決定日</dt>
+    <dd><time>2026-09-01</time></dd>
+    <dt>対象</dt>
+    <dd>LARM daemon、Provider systemd unit、local-node設定</dd>
+    <dt>原則</dt>
+    <dd>一つの責務に一つのownerを置き、未使用の動的差し替え経路を持たない</dd>
+  </dl>
+
+  <section id="decisions">
+    <h2>採用した簡素化</h2>
+    <table>
+      <caption>
+        責務ごとの唯一の実行経路と撤去対象
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">正本</th>
+          <th scope="col">削除した重複</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Catalog更新</th>
+          <td>versioned LARM releaseのcurrent切替とdaemon restart</td>
+          <td>HTTP hot reload、swappable backend、世代別rollbackとreload中分岐</td>
+        </tr>
+        <tr>
+          <th scope="row">監査log retention</th>
+          <td>persistent systemd prune timer</td>
+          <td>daemon内の毎時prune timer</td>
+        </tr>
+        <tr>
+          <th scope="row">Runtime release activation</th>
+          <td>immutable RuntimeReleaseManager</td>
+          <td>releaseを通さないArtifactManager activation API fallback</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider起動順</th>
+          <td>loopback listenerとlocal service dependency</td>
+          <td>外部networkを使わないunitのnetwork-online dependency</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider設定</th>
+          <td>明示CLI引数またはglobal defaultの一方</td>
+          <td>llama-serverの同値env、llama-swapの同値model TTL、未読込TTS server block</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="safety">
+    <h2>安全性を優先して残す処理</h2>
+    <ul>
+      <li>監査store起動時のpruneはcrash recoveryに必要なため残す。</li>
+      <li>監査record作成時のpruneは容量と空き容量をfail closedで予約するため残す。</li>
+      <li>
+        ExecutionGateは同時推論数を強制する。local-nodeのqueue上限は0なので待機timerは生成しない。
+      </li>
+      <li>
+        ASRとTTSのbody上限は、chunked bodyをframework解析前に拒否する境界として各processに残す。
+      </li>
+    </ul>
+  </section>
+
+  <section id="idempotency">
+    <h2>冪等性修正</h2>
+    <p>
+      Agent Connectionの冪等性storeは作成時の201・202だけでなく、renewの200を含む成功した全2xx
+      responseを保持します。同じrenew keyのretryは保存済みresponseを返し、credential generationと
+      Allocation TTLを二重更新しません。失敗responseは保持せず、安全な再試行を許可します。
+    </p>
+  </section>
+</article>

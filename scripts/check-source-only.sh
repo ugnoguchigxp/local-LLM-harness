@@ -8,6 +8,9 @@ failed=0
 max_source_bytes=$((5 * 1024 * 1024))
 
 while IFS= read -r -d "" file; do
+  if [[ ! -e "${file}" && ! -L "${file}" ]]; then
+    continue
+  fi
   case "${file}" in
     bin/*|*/bin/*|bin-*/*|*/bin-*/*|build/*|*/build/*|build-*/*|*/build-*/*|\
     dist/*|*/dist/*|vendor/*|*/vendor/*|models/*|*/models/*|\

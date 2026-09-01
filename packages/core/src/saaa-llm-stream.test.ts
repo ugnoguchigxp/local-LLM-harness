@@ -85,6 +85,54 @@ describe("saaa.llm-stream.v1 control JSON", () => {
     });
   });
 
+  test("accepts optional boolean Function Tool strict values without relaxing unknown fields", () => {
+    for (const strict of [undefined, false, true] as const) {
+      const tool = {
+        type: "function",
+        function: {
+          name: "web_search",
+          description: "Search the web",
+          parameters: { type: "object", properties: { query: { type: "string" } } },
+          ...(strict === undefined ? {} : { strict }),
+        },
+      };
+      const parsed = parseSaaaClientControl(JSON.stringify({
+        ...runStart,
+        tools: [tool],
+        maxToolCalls: 32,
+      }));
+      expect(parsed).toMatchObject({ type: "run.start", tools: [tool] });
+    }
+
+    const productionTools = [
+      "web_search",
+      "fetch_content",
+      "update_conversation_voice_behavior",
+    ].map((name) => ({
+      type: "function",
+      function: {
+        name,
+        parameters: { type: "object", additionalProperties: false, properties: {} },
+        strict: true,
+      },
+    }));
+    expect(parseSaaaClientControl(JSON.stringify({
+      ...runStart,
+      tools: productionTools,
+      maxToolCalls: 32,
+    }))).toMatchObject({ type: "run.start", tools: productionTools });
+
+    for (const functionPatch of [{ strict: "true" }, { unknown: true }]) {
+      expect(() => parseSaaaClientControl(JSON.stringify({
+        ...runStart,
+        tools: [{
+          type: "function",
+          function: { name: "web_search", parameters: {}, ...functionPatch },
+        }],
+      }))).toThrow(SaaaLlmStreamProtocolError);
+    }
+  });
+
   test("PWS-C06 rejects duplicate keys, trailing input, non-finite forms, and unknown fields", () => {
     expect(() => parseSaaaClientControl('{"type":"run.cancel","type":"run.cancel","runId":"run_1"}'))
       .toThrow(SaaaLlmStreamProtocolError);
@@ -127,6 +175,68 @@ describe("saaa.llm-stream.v1 control JSON", () => {
     )).toThrow(SaaaLlmStreamProtocolError);
     expect(() => parseSaaaServerControl('{"type":"run.accepted","runId":"run_1","seq":1} true'))
       .toThrow(SaaaLlmStreamProtocolError);
+  });
+
+  test("validates connection identity, equal capacities, tool arguments, usage, and public finish reasons", () => {
+    const ready = {
+      type: "connection.ready",
+      protocol: "saaa.llm-stream.v1",
+      connectionId: "connection_example",
+      upstreamTransport: "native",
+      limits: {
+        maxConcurrentRuns: 3,
+        maxConnections: 3,
+        maxActiveRunsPerConnection: 1,
+        maxUnackedEvents: 64,
+        maxUnackedBytes: 524_288,
+        resumeWindowMs: 120_000,
+        heartbeatIntervalMs: 15_000,
+      },
+    } as const;
+    expect(parseSaaaServerControl(JSON.stringify(ready))).toEqual(ready);
+    expect(() => parseSaaaServerControl(JSON.stringify({
+      ...ready,
+      connectionId: "connection.example",
+    }))).toThrow(SaaaLlmStreamProtocolError);
+    expect(() => parseSaaaServerControl(JSON.stringify({
+      ...ready,
+      limits: { ...ready.limits, maxConnections: 2 },
+    }))).toThrow(SaaaLlmStreamProtocolError);
+
+    const toolCall = {
+      type: "tool.call",
+      runId: "run_1",
+      seq: 2,
+      callId: "call_1",
+      name: "web_search",
+      arguments: '{"query":"example"}',
+    } as const;
+    expect(parseSaaaServerControl(JSON.stringify(toolCall))).toEqual(toolCall);
+    for (const argumentsValue of ['["example"]', '{"query":"a","query":"b"}', "null"]) {
+      expect(() => parseSaaaServerControl(JSON.stringify({
+        ...toolCall,
+        arguments: argumentsValue,
+      }))).toThrow(SaaaLlmStreamProtocolError);
+    }
+
+    const completed = {
+      type: "response.completed",
+      runId: "run_1",
+      seq: 3,
+      contentBytes: 0,
+      contentSha256: emptySaaaContentSha256(),
+      finishReason: "stop",
+      usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+    } as const;
+    expect(parseSaaaServerControl(JSON.stringify(completed))).toEqual(completed);
+    expect(() => parseSaaaServerControl(JSON.stringify({
+      ...completed,
+      finishReason: "tool_calls",
+    }))).toThrow(SaaaLlmStreamProtocolError);
+    expect(() => parseSaaaServerControl(JSON.stringify({
+      ...completed,
+      usage: { promptTokens: 10, completionTokens: 2, totalTokens: 11 },
+    }))).toThrow(SaaaLlmStreamProtocolError);
   });
 });
 

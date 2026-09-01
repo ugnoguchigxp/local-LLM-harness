@@ -38,7 +38,6 @@ export {
   type RuntimeDeploymentRecord,
   type RuntimeReleaseState,
 } from "./release-state-store";
-export { SwappableRuntimeBackend } from "./swappable";
 export {
   LinuxNodeTelemetry,
   parseMeminfo,

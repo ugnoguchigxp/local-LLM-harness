@@ -55,10 +55,6 @@ test("OpenAPI is generated from the public contract schemas", () => {
   }
   const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
   expect(paths["/v1/allocations"]?.post?.requestBody).toBeDefined();
-  expect(paths["/v1/catalog/reload"]?.post?.security).toEqual([{
-    bearerAuth: [],
-    managementToken: [],
-  }]);
   expect(paths["/v1/inspection/state"]?.get?.security).toEqual([{
     bearerAuth: [],
     managementToken: [],
@@ -155,11 +151,11 @@ test("legacy public success schemas are strict and round-trip current responses"
 test("public error schema is strict while allowing bounded operational details", () => {
   expect(errorResponseSchema.parse({
     error: {
-      code: "catalog_reload_blocked",
+      code: "deployment_in_progress",
       message: "blocked",
-      blockers: ["active_allocations"],
+      blockers: ["runtime_in_use"],
     },
-  }).error.blockers).toEqual(["active_allocations"]);
+  }).error.blockers).toEqual(["runtime_in_use"]);
   expect(() => errorResponseSchema.parse({
     error: { code: "bad", message: "bad", secret: "must-not-pass" },
   })).toThrow();

@@ -336,44 +336,6 @@ test("allocation pins catalog generation and active runtime release", async () =
   });
 });
 
-test("catalog reload reservation fails new allocation closed", async () => {
-  const { app, control } = await makeApp(true);
-  const reservation = control.beginCatalogReload();
-  expect(reservation.ok).toBeTrue();
-  const response = await app.request("/v1/allocations", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      requirements: [{ capability: "llm.general", route: "llm-default" }],
-      deploymentPolicy: "existing-only",
-      allowFallback: false,
-      ttlSeconds: 30,
-    }),
-  });
-  expect(response.status).toBe(503);
-  expect(await response.json()).toMatchObject({ error: { code: "catalog_reloading" } });
-  if (reservation.ok) reservation.release();
-});
-
-test("catalog reload closes generation-dependent read APIs", async () => {
-  const { app } = await makeApp(true, false, {}, {
-    catalogManager: { isReloading: true } as AppDeps["catalogManager"],
-    managementToken: "manage",
-  });
-  for (const [path, headers] of [
-    ["/runtimes", undefined],
-    ["/runtimes/qwen-general", undefined],
-    ["/state", undefined],
-    ["/v1/inspection/runtimes", { "x-larm-management-token": "manage" }],
-    ["/v1/inspection/runtimes/qwen-general", { "x-larm-management-token": "manage" }],
-    ["/v1/inspection/state", { "x-larm-management-token": "manage" }],
-  ] as const) {
-    const response = await app.request(path, { headers });
-    expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({ error: { code: "catalog_reloading" } });
-  }
-});
-
 test("GET /runtimes lists registry definitions", async () => {
   const { app } = await makeApp(true);
   const res = await app.request("/runtimes");
@@ -2090,6 +2052,28 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     },
   )).json());
   expect(nextClaim.providers[0]!.credential.token).not.toBe(credential);
+
+  const renewReplay = await app.request(`/v1/agent-connections/${connection.id}/renew`, {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "agent-renew-1",
+    }),
+    body: JSON.stringify({ ttlSeconds: 600 }),
+  });
+  expect(renewReplay.status).toBe(200);
+  expect(renewReplay.headers.get("x-larm-idempotent-replay")).toBe("true");
+  const replayedClaim = agentConnectionClaimSchema.parse(await (await app.request(
+    `/v1/agent-connections/${connection.id}/claim`,
+    {
+      method: "POST",
+      headers: agentHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ format: "openai-provider-v1" }),
+    },
+  )).json());
+  expect(replayedClaim.providers[0]!.credential.token).toBe(
+    nextClaim.providers[0]!.credential.token,
+  );
 
   const released = await app.request(`/v1/agent-connections/${connection.id}`, {
     method: "DELETE",

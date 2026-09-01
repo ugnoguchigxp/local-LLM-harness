@@ -12,7 +12,6 @@ import {
   LocalRuntimeReleaseStateStore,
   LinuxNodeTelemetry,
   LocalInferenceAuditStore,
-  SwappableRuntimeBackend,
   NativeWebSocketLlmStreamBackend,
 } from "@larm/backends";
 import { createAppComponents } from "./app";
@@ -24,7 +23,7 @@ import { Observer } from "./observer";
 import { createBootEpoch, loadReleaseCommit } from "./identity";
 import { ExecutionGate } from "./execution-gate";
 import { RuntimeReleaseManager } from "./runtime-release-manager";
-import { CatalogManager, loadCatalogGeneration } from "./catalog-manager";
+import { loadCatalogGeneration } from "./catalog-generation";
 import { MutationCoordinator } from "./mutation-coordinator";
 import {
   FileInferenceAuditRecorder,
@@ -50,7 +49,7 @@ const identity = {
   bootEpoch: createBootEpoch(),
 };
 
-const backend = new SwappableRuntimeBackend(createRuntimeBackend(registry.runtimes));
+const backend = createRuntimeBackend(registry.runtimes);
 const nativeLlmBackends = new Map<string, {
   configuration: string;
   backend: NativeWebSocketLlmStreamBackend;
@@ -164,7 +163,6 @@ const artifactStore = new LocalArtifactStore({
 });
 let artifactManager: ArtifactManager;
 let runtimeReleaseManager: RuntimeReleaseManager;
-let catalogManager: CatalogManager;
 control = new ControlPlane(registry, backend, observer, {
   bootEpoch: identity.bootEpoch,
   idleTtlMs: config.idleTtlMs,
@@ -175,7 +173,7 @@ control = new ControlPlane(registry, backend, observer, {
   stateMaxAgeMs: config.stateMaxAgeMs,
   requireFreshTelemetry: true,
   telemetryMaxAgeMs: config.telemetryMaxAgeMs,
-  getCatalogRevision: () => catalogManager?.revision ?? catalogGeneration.revision,
+  getCatalogRevision: () => catalogGeneration.revision,
   getRuntimeRelease: (runtimeId) => runtimeReleaseManager?.getActiveRelease(runtimeId),
   isRuntimeMutating: (runtimeId) => artifactManager?.isRuntimeMutating(runtimeId) ?? false,
   onEvent: observeEvent,
@@ -215,27 +213,10 @@ runtimeReleaseManager = new RuntimeReleaseManager(
   (runtimeId) => observer.getState().runtimes.find((runtime) => runtime.id === runtimeId),
 );
 await runtimeReleaseManager.initialize();
-catalogManager = new CatalogManager(
-  catalogGeneration,
-  {
-    configDir: config.configDir,
-    artifactManifestPath: config.artifactManifestPath,
-    releaseCatalogPath: config.releaseCatalogPath,
-  },
-  control,
-  observer,
-  backend,
-  artifactManager,
-  runtimeReleaseManager,
-  executionGate,
-  { onEvent: observeEvent, mutationCoordinator },
-);
-
 await observer.tick();
 
 const appComponents = createAppComponents({
   registry,
-  getRegistry: () => catalogManager.registry,
   getState: () => observer.getState(),
   control,
   apiToken: config.apiToken,
@@ -243,7 +224,6 @@ const appComponents = createAppComponents({
   managementToken: config.managementToken,
   artifactManager,
   runtimeReleaseManager,
-  catalogManager,
   metrics,
   requestTracker,
   controlMaxBodyBytes: config.controlMaxBodyBytes,
@@ -253,12 +233,10 @@ const appComponents = createAppComponents({
   stateMaxAgeMs: config.stateMaxAgeMs,
   onEvent: writeEvent,
   identity,
-  getConfigRevision: () => catalogManager.revision,
   executionGate,
   idempotencyTtlMs: config.idempotencyTtlMs,
   idempotencyLimit: config.idempotencyLimit,
   agentConnectionCatalog: catalogGeneration.agentConnections,
-  getAgentConnectionCatalog: () => catalogManager.generation.agentConnections,
   connectionSigningKey: config.connectionSigningKey,
   connectionReadyTimeoutMs: config.connectionReadyTimeoutMs,
   providerProbeTimeoutMs: config.providerProbeTimeoutMs,
@@ -269,7 +247,7 @@ const appComponents = createAppComponents({
   resolveStreaming: async ({ allocationId, provider, audienceBaseUrl, audienceNetwork }) => {
     const resolved = control.resolveAllocation(allocationId, provider.capability);
     if (resolved.status !== 200 || !("runtime" in resolved.body)) return undefined;
-    const runtime = catalogManager.registry.runtimes.find((candidate) => candidate.id === resolved.body.runtime);
+    const runtime = registry.runtimes.find((candidate) => candidate.id === resolved.body.runtime);
     if (!runtime?.streaming) return undefined;
     const streamBackend = nativeLlmBackendFor(runtime);
     if (!streamBackend || !await streamBackend.ready()) return undefined;
@@ -315,28 +293,6 @@ const interval = setInterval(() => {
       ticking = false;
     });
 }, config.observeIntervalMs);
-
-let auditPruneInFlight: Promise<void> | undefined;
-const auditPruneInterval = inferenceAuditStore
-  ? setInterval(() => {
-    if (auditPruneInFlight || !inferenceAuditStore) return;
-    auditPruneInFlight = inferenceAuditStore.prune().then((result) => {
-      writeEvent({
-        name: "inference_audit_pruned",
-        labels: {
-          expired: String(result.expired),
-          capacity: String(result.capacity),
-          interrupted: String(result.interrupted),
-        },
-      });
-    }).catch(() => {
-      writeEvent({ name: "inference_audit_prune_failed", labels: {} });
-    }).finally(() => {
-      auditPruneInFlight = undefined;
-    });
-  }, 60 * 60 * 1_000)
-  : undefined;
-auditPruneInterval?.unref?.();
 
 const server = Bun.serve<LlmStreamConnection>({
   port: config.port,
@@ -395,7 +351,7 @@ const server = Bun.serve<LlmStreamConnection>({
     if (resolved.status !== 200 || !("runtime" in resolved.body)) {
       return Response.json(resolved.body, { status: resolved.status });
     }
-    const runtime = catalogManager.registry.runtimes.find((candidate) => candidate.id === resolved.body.runtime);
+    const runtime = registry.runtimes.find((candidate) => candidate.id === resolved.body.runtime);
     const streamBackend = runtime ? nativeLlmBackendFor(runtime) : undefined;
     if (!runtime?.streaming || !streamBackend) {
       return Response.json({
@@ -543,7 +499,6 @@ async function shutdown(signal: string): Promise<void> {
   executionGate.beginDrain();
   llmStreamServer.beginDrain();
   clearInterval(interval);
-  if (auditPruneInterval) clearInterval(auditPruneInterval);
   clearTimeout(reconciliationTimer);
   const deadline = Date.now() + config.shutdownTimeoutMs;
   const operationsDrained = await Promise.race([
@@ -553,7 +508,6 @@ async function shutdown(signal: string): Promise<void> {
       mutationCoordinator.drain(config.shutdownTimeoutMs),
       llmStreamServer.shutdown(config.shutdownTimeoutMs),
       reconciliationInFlight ?? Promise.resolve(),
-      auditPruneInFlight ?? Promise.resolve(),
     ]).then(([, , mutationDrained, streamDrained]) => mutationDrained && streamDrained),
     Bun.sleep(config.shutdownTimeoutMs).then(() => false),
   ]);

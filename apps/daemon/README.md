@@ -272,7 +272,7 @@ Runtimeが参照する全artifactをstageしてからactivateします。`deploy
 
 `GET /v1/runtime-releases`は各releaseを`active`、`previous`、`staged`、`available`のいずれかで返します。`POST /v1/deployments/:runtime/plan`は実ファイルを再検証し、未stage bytes、Runtime状態、停止要否、rollback可能性、blockerを変更なしで返します。deployment stateにはactive・previous・desiredのprovider config revisionも含まれます。provider config revisionはreleaseと一緒に固定する起動contractの識別子で、APIから任意の設定内容やpathを渡すものではありません。
 
-Catalog reload、artifact stage、release activation・rollback、allow-listed起動は一つのmutation coordinatorで直列化します。競合中の変更は待たせずfail closedし、catalog切替中のrelease・deployment参照も503を返します。shutdownは新規mutationを閉じ、実行中operationを設定済み期限までdrainします。
+Artifact stage、release activation・rollback、allow-listed起動は一つのmutation coordinatorで直列化します。競合中の変更は待たせずfail closedします。Runtime catalogは起動時に一度だけ検証・固定し、設定変更はversioned LARM releaseの適用とdaemon restartで行います。shutdownは新規mutationを閉じ、実行中operationを設定済み期限までdrainします。
 
 単一fileと、全fileが列挙・検証されたdirectory snapshotをstageできます。未列挙file、symlink、危険path、checksum不一致を拒否します。Resident Runtimeの無人activationは拒否します。
 `deploymentPolicy: allow-listed`のAllocationにも同じ管理tokenが必要です。

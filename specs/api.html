@@ -19,7 +19,7 @@
     <dt>既定listen</dt>
     <dd><code>http://127.0.0.1:9810</code></dd>
     <dt>更新日</dt>
-    <dd><time>2026-08-29</time></dd>
+    <dd><time>2026-09-01</time></dd>
   </dl>
 
   <section id="security">
@@ -35,7 +35,7 @@
         tokenで保護する。
       </li>
       <li>
-        Artifact、Runtime release、catalog reload管理APIは追加で
+        Artifact、Runtime release管理APIは追加で
         <code>x-larm-management-token</code>を検証する。
       </li>
       <li>
@@ -234,16 +234,6 @@
           <td>GET</td>
           <th scope="row"><code>/v1/artifact-operations/:id</code></th>
           <td>配備operation状態</td>
-        </tr>
-        <tr>
-          <td>POST</td>
-          <th scope="row"><code>/v1/catalog/reload/plan</code></th>
-          <td>設定済みcatalog candidateの検証とblocker表示</td>
-        </tr>
-        <tr>
-          <td>POST</td>
-          <th scope="row"><code>/v1/catalog/reload</code></th>
-          <td>revision一致時のcatalog generation原子切替</td>
         </tr>
         <tr>
           <td>POST</td>
@@ -513,7 +503,7 @@
       <li>Allocationのrelease、TTL、startup deadlineをdownloadとactivationへ伝播する。</li>
       <li>operationは受付応答前にjournalへ保存し、terminal historyを設定上限内に保つ。</li>
       <li>
-        catalog reload、artifact stage、release activation・rollback、allow-listed起動は単一mutation
+        artifact stage、release activation・rollback、allow-listed起動は単一mutation
         coordinatorで直列化し、競合をfail closedする。
       </li>
     </ol>
@@ -582,14 +572,11 @@
       </li>
     </ol>
     <p>
-      catalog reloadはrequest
-      bodyからpathを受け取りません。起動時と同じ設定pathを再読込し、Registry、
-      artifact、releaseをcross validateしてcontent revisionを作ります。active Allocation、Gateway
-      execution、artifact operation、Runtime transitionがある間は切替を拒否します。reload予約後は
-      Runtime・state・release・deploymentの世代依存参照と変更を503で閉じ、世代を混在させません。Resident
-      Runtimeまたはdefault Routeを 変えるcandidateもattended
-      restartを要求します。切替失敗時はBackend、Observer、Registry、release stateを
-      旧generationへ戻します。
+      Registry、artifact、release、Agent Connection
+      catalogはdaemon起動時に一度だけ読み込み、相互検証した content
+      revisionへ固定します。設定変更はversioned LARM releaseを適用してdaemonをrestartする
+      attended操作です。稼働中のbackendやRegistryを差し替える管理APIは提供しません。これにより
+      release scriptの原子的なcurrent切替・rollbackとdaemon内の世代切替を二重に実装しません。
     </p>
   </section>
 
@@ -653,14 +640,6 @@
         <tr>
           <th scope="row"><code>active_release_conflict</code></th>
           <td>expected active releaseと永続化されたactive releaseが不一致</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>catalog_revision_conflict</code></th>
-          <td>reload呼出側のcurrent revisionが現generationと不一致</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>catalog_reload_blocked</code></th>
-          <td>Allocation、execution、operation、Resident contract差分により世代切替を拒否</td>
         </tr>
         <tr>
           <th scope="row"><code>mutation_in_progress</code></th>

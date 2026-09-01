@@ -33,6 +33,8 @@ export const SAAA_LLM_STREAM_CLOSE = Object.freeze({
 
 const identifierSchema = z.string().min(1).max(192)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+const connectionIdentifierSchema = z.string().min(1).max(160)
+  .regex(/^[A-Za-z0-9_-]+$/);
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const sequenceSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 
@@ -73,6 +75,7 @@ const functionToolSchema = z.object({
     name: identifierSchema,
     description: z.string().max(8_192).optional(),
     parameters: jsonValueSchema,
+    strict: z.boolean().optional(),
   }).strict(),
 }).strict();
 
@@ -132,7 +135,7 @@ export const saaaClientControlSchema = z.discriminatedUnion("type", [
 export const saaaConnectionReadySchema = z.object({
   type: z.literal("connection.ready"),
   protocol: z.literal(SAAA_LLM_STREAM_PROTOCOL),
-  connectionId: identifierSchema,
+  connectionId: connectionIdentifierSchema,
   upstreamTransport: z.literal("native"),
   limits: z.object({
     maxConcurrentRuns: z.number().int().min(1).max(8),
@@ -143,13 +146,29 @@ export const saaaConnectionReadySchema = z.object({
     resumeWindowMs: z.number().int().min(SAAA_LLM_STREAM_LIMITS.resumeWindowMs),
     heartbeatIntervalMs: z.literal(SAAA_LLM_STREAM_LIMITS.heartbeatIntervalMs),
   }).strict(),
-}).strict();
+}).strict().refine(
+  (value) => value.limits.maxConcurrentRuns === value.limits.maxConnections,
+  { message: "maxConnections must equal maxConcurrentRuns", path: ["limits", "maxConnections"] },
+);
 
 const usageSchema = z.object({
   promptTokens: z.number().int().nonnegative().nullable(),
   completionTokens: z.number().int().nonnegative().nullable(),
   totalTokens: z.number().int().nonnegative().nullable(),
-}).strict().nullable();
+}).strict().superRefine((usage, context) => {
+  if (
+    usage.promptTokens !== null
+    && usage.completionTokens !== null
+    && usage.totalTokens !== null
+    && usage.promptTokens + usage.completionTokens !== usage.totalTokens
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["totalTokens"],
+      message: "totalTokens must equal promptTokens + completionTokens",
+    });
+  }
+}).nullable();
 
 export const saaaRunAcceptedSchema = z.object({
   type: z.literal("run.accepted"),
@@ -169,7 +188,14 @@ export const saaaToolCallSchema = z.object({
   seq: sequenceSchema.min(1),
   callId: identifierSchema,
   name: identifierSchema,
-  arguments: z.string().max(262_144),
+  arguments: z.string().superRefine((value, context) => {
+    if (Buffer.byteLength(value, "utf8") > 262_144 || !isStrictJsonObject(value)) {
+      context.addIssue({
+        code: "custom",
+        message: "tool arguments must be one strict JSON object within 262144 bytes",
+      });
+    }
+  }),
 }).strict();
 
 const terminalShared = {
@@ -182,7 +208,7 @@ const terminalShared = {
 export const saaaResponseCompletedSchema = z.object({
   type: z.literal("response.completed"),
   ...terminalShared,
-  finishReason: z.enum(["stop", "length", "tool_calls", "content_filter", "other"]),
+  finishReason: z.enum(["stop", "length"]),
   usage: usageSchema,
 }).strict();
 
@@ -353,6 +379,15 @@ class StrictJsonScanner {
 export function parseStrictJsonValue(text: string): unknown {
   new StrictJsonScanner(text).scan();
   return JSON.parse(text) as unknown;
+}
+
+function isStrictJsonObject(text: string): boolean {
+  try {
+    const value = parseStrictJsonValue(text);
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  } catch {
+    return false;
+  }
 }
 
 export function parseSaaaClientControl(text: string): SaaaClientControl {

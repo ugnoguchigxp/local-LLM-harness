@@ -95,7 +95,6 @@ export const daemonHealthSchema = z.object({
 export const readinessSchema = z.union([
   z.object({ status: z.literal("ready") }).strict(),
   z.object({ status: z.literal("draining") }).strict(),
-  z.object({ status: z.literal("reloading") }).strict(),
   z.object({ status: z.literal("stale"), ageMs: z.number() }).strict(),
 ]);
 
@@ -245,26 +244,6 @@ export const runtimeDeploymentPlanSchema = z.object({
   blockers: z.array(z.string().min(1)),
 }).strict();
 
-export const catalogReloadPlanSchema = z.object({
-  currentRevision: z.string().min(1),
-  candidateRevision: z.string().min(1),
-  changed: z.boolean(),
-  allowed: z.boolean(),
-  blockers: z.array(z.string().min(1)),
-  summary: z.object({
-    nodes: z.number().int().nonnegative(),
-    runtimes: z.number().int().nonnegative(),
-    routes: z.number().int().nonnegative(),
-    artifacts: z.number().int().nonnegative(),
-    releases: z.number().int().nonnegative(),
-  }).strict(),
-}).strict();
-
-export const catalogReloadRequestSchema = z.object({
-  expectedCurrentRevision: z.string().min(1),
-  candidateRevision: z.string().min(1),
-}).strict();
-
 export type PublicAllocation = z.infer<typeof publicAllocationSchema>;
 export type ControlOperation = z.infer<typeof controlOperationSchema>;
 export type PublicRuntimeRelease = z.infer<typeof publicRuntimeReleaseSchema>;
@@ -272,8 +251,6 @@ export type RuntimeReleaseSelection = z.infer<typeof runtimeReleaseSelectionSche
 export type RuntimeReleasePlanRequest = z.infer<typeof runtimeReleasePlanRequestSchema>;
 export type RuntimeDeployment = z.infer<typeof runtimeDeploymentSchema>;
 export type RuntimeDeploymentPlan = z.infer<typeof runtimeDeploymentPlanSchema>;
-export type CatalogReloadPlan = z.infer<typeof catalogReloadPlanSchema>;
-export type CatalogReloadRequest = z.infer<typeof catalogReloadRequestSchema>;
 
 export const API_OPERATIONS = [
   ["get", "/health", "getHealth"],
@@ -315,8 +292,6 @@ export const API_OPERATIONS = [
   ["post", "/v1/deployments/{runtime}/plan", "planRuntimeDeployment"],
   ["post", "/v1/deployments/{runtime}/activate", "activateRuntimeDeployment"],
   ["post", "/v1/deployments/{runtime}/rollback", "rollbackRuntimeDeployment"],
-  ["post", "/v1/catalog/reload/plan", "planCatalogReload"],
-  ["post", "/v1/catalog/reload", "reloadCatalog"],
   ["post", "/prepare", "prepareLegacyLease"],
   ["post", "/resolve", "resolveLegacyLease"],
   ["post", "/release", "releaseLegacyLease"],
@@ -364,8 +339,6 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   planRuntimeDeployment: ["200"],
   activateRuntimeDeployment: ["202"],
   rollbackRuntimeDeployment: ["202"],
-  planCatalogReload: ["200"],
-  reloadCatalog: ["200"],
   prepareLegacyLease: ["200", "202"],
   resolveLegacyLease: ["200"],
   releaseLegacyLease: ["200"],
@@ -411,8 +384,6 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   planRuntimeDeployment: "RuntimeDeploymentPlan",
   activateRuntimeDeployment: "ArtifactOperation",
   rollbackRuntimeDeployment: "ArtifactOperation",
-  planCatalogReload: "CatalogReloadPlan",
-  reloadCatalog: "CatalogReloadPlan",
   prepareLegacyLease: "LegacyPrepareResponse",
   resolveLegacyLease: "LegacyResolveResponse",
   releaseLegacyLease: "LegacyReleaseResponse",
@@ -464,8 +435,6 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     RuntimeReleasePlanRequest: jsonSchema(runtimeReleasePlanRequestSchema),
     RuntimeDeployment: jsonSchema(runtimeDeploymentSchema),
     RuntimeDeploymentPlan: jsonSchema(runtimeDeploymentPlanSchema),
-    CatalogReloadPlan: jsonSchema(catalogReloadPlanSchema),
-    CatalogReloadRequest: jsonSchema(catalogReloadRequestSchema),
     PrepareRequest: jsonSchema(prepareRequestSchema),
     ResolveRequest: jsonSchema(resolveRequestSchema),
     ReleaseRequest: jsonSchema(releaseRequestSchema),
@@ -482,7 +451,6 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "renewAgentConnection") return "AgentConnectionRenewRequest";
       if (operationId === "planRuntimeDeployment") return "RuntimeReleasePlanRequest";
       if (operationId === "activateRuntimeDeployment") return "RuntimeReleaseSelection";
-      if (operationId === "reloadCatalog") return "CatalogReloadRequest";
       if (operationId === "prepareLegacyLease") return "PrepareRequest";
       if (operationId === "resolveLegacyLease") return "ResolveRequest";
       if (operationId === "releaseLegacyLease") return "ReleaseRequest";
@@ -492,7 +460,6 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       || path.startsWith("/v1/artifact-operations/")
       || path.startsWith("/v1/runtime-releases")
       || path.startsWith("/v1/deployments/")
-      || path.startsWith("/v1/catalog/")
       || path.startsWith("/v1/inspection/");
     const publicOperation = operationId === "getHealth" || operationId === "getReadiness";
     const optionalAgentBearerOperation = operationId === "listAgentProfilesV1"

@@ -43,11 +43,11 @@ export function runtimeReleaseCatalogRevision(releases: RuntimeReleaseDefinition
 }
 
 export class RuntimeReleaseManager {
-  private releases = new Map<string, RuntimeReleaseDefinition>();
-  private deployments = new Map<string, RuntimeDeploymentRecord>();
-  private pendingRuntimes = new Set<string>();
-  private stateFailures = new Set<string>();
-  private catalogRevision: string;
+  private readonly releases: Map<string, RuntimeReleaseDefinition>;
+  private readonly deployments = new Map<string, RuntimeDeploymentRecord>();
+  private readonly pendingRuntimes = new Set<string>();
+  private readonly stateFailures = new Set<string>();
+  private readonly catalogRevision: string;
 
   constructor(
     releases: RuntimeReleaseDefinition[],
@@ -57,7 +57,7 @@ export class RuntimeReleaseManager {
     private readonly getRuntimeSnapshot?: (runtimeId: string) => RuntimeSnapshot | undefined,
   ) {
     this.catalogRevision = runtimeReleaseCatalogRevision(releases);
-    this.setReleases(releases);
+    this.releases = new Map(releases.map((release) => [release.id, release]));
   }
 
   async initialize(): Promise<void> {
@@ -331,77 +331,8 @@ export class RuntimeReleaseManager {
     return operation;
   }
 
-  async replaceCatalog(releases: RuntimeReleaseDefinition[]): Promise<void> {
-    if (this.pendingRuntimes.size > 0 || this.stateFailures.size > 0 || this.artifactManager.hasActiveOperations()) {
-      throw new RuntimeReleaseManagerError(
-        "deployment_in_progress",
-        "runtime release operations are still active",
-      );
-    }
-    const candidate = new Map(releases.map((release) => [release.id, release]));
-    for (const [releaseId, current] of this.releases) {
-      const next = candidate.get(releaseId);
-      if (next && next.digest !== current.digest) {
-        throw new RuntimeReleaseManagerError(
-          "catalog_conflict",
-          `immutable release ${releaseId} changed content`,
-        );
-      }
-    }
-    for (const deployment of this.deployments.values()) {
-      for (const releaseId of [deployment.activeRelease, deployment.previousRelease]) {
-        if (!releaseId) {
-          continue;
-        }
-        const current = this.releases.get(releaseId);
-        const next = candidate.get(releaseId);
-        if (!current || !next || current.digest !== next.digest) {
-          throw new RuntimeReleaseManagerError(
-            "catalog_conflict",
-            `active or rollback release ${releaseId} changed or disappeared`,
-          );
-        }
-      }
-    }
-    const candidateRevision = runtimeReleaseCatalogRevision(releases);
-    await this.persistRevision(candidateRevision);
-    this.releases = candidate;
-    this.catalogRevision = candidateRevision;
-  }
-
-  catalogReplacementBlockers(releases: RuntimeReleaseDefinition[]): string[] {
-    const blockers: string[] = [];
-    const candidate = new Map(releases.map((release) => [release.id, release]));
-    if (this.pendingRuntimes.size > 0 || this.stateFailures.size > 0 || this.artifactManager.hasActiveOperations()) {
-      blockers.push("deployment_in_progress");
-    }
-    for (const [releaseId, current] of this.releases) {
-      const next = candidate.get(releaseId);
-      if (next && next.digest !== current.digest) {
-        blockers.push(`immutable_release_changed:${releaseId}`);
-      }
-    }
-    for (const deployment of this.deployments.values()) {
-      for (const releaseId of [deployment.activeRelease, deployment.previousRelease]) {
-        if (!releaseId) {
-          continue;
-        }
-        const current = this.releases.get(releaseId);
-        const next = candidate.get(releaseId);
-        if (!current || !next || current.digest !== next.digest) {
-          blockers.push(`active_release_changed:${releaseId}`);
-        }
-      }
-    }
-    return [...new Set(blockers)];
-  }
-
   isRuntimeMutating(runtimeId: string): boolean {
     return this.pendingRuntimes.has(runtimeId) || this.stateFailures.has(runtimeId);
-  }
-
-  private setReleases(releases: RuntimeReleaseDefinition[]): void {
-    this.releases = new Map(releases.map((release) => [release.id, release]));
   }
 
   private requireRelease(id: string): RuntimeReleaseDefinition {

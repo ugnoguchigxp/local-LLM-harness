@@ -13,7 +13,6 @@ import {
   agentConnectionClaimRequestSchema,
   agentConnectionRenewRequestSchema,
   agentConnectionRequestSchema,
-  catalogReloadRequestSchema,
   createOpenApiDocument,
   prepareRequestSchema,
   releaseRequestSchema,
@@ -37,7 +36,6 @@ import {
   RuntimeReleaseManager,
   RuntimeReleaseManagerError,
 } from "./runtime-release-manager";
-import { CatalogManager, CatalogManagerError } from "./catalog-manager";
 import {
   AgentConnectionController,
   agentPrincipal,
@@ -54,7 +52,6 @@ export type FetchLike = (
 
 export type AppDeps = {
   registry: Registry;
-  getRegistry?: () => Registry;
   getState: () => ClusterState;
   control: ControlPlane;
   apiToken?: string;
@@ -62,7 +59,6 @@ export type AppDeps = {
   managementToken?: string;
   artifactManager?: ArtifactManager;
   runtimeReleaseManager?: RuntimeReleaseManager;
-  catalogManager?: CatalogManager;
   metrics?: MetricsRegistry;
   requestTracker?: RequestTracker;
   gatewayFetch?: FetchLike;
@@ -80,7 +76,6 @@ export type AppDeps = {
   idempotencyTtlMs?: number;
   idempotencyLimit?: number;
   agentConnectionCatalog?: AgentConnectionCatalog;
-  getAgentConnectionCatalog?: () => AgentConnectionCatalog | undefined;
   connectionSigningKey?: Uint8Array;
   connectionReadyTimeoutMs?: number;
   providerProbeTimeoutMs?: number;
@@ -208,7 +203,6 @@ function normalizedAllocationRequestHash(request: AllocationRequest): string {
 export function createAppComponents(deps: AppDeps) {
   const app = new Hono();
   const controlMaxBodyBytes = deps.controlMaxBodyBytes ?? 64 * 1024;
-  const currentRegistry = () => deps.getRegistry?.() ?? deps.registry;
   const identity = deps.identity ?? {
     version: "test",
     releaseCommit: "development",
@@ -226,11 +220,9 @@ export function createAppComponents(deps: AppDeps) {
       deps.onEvent?.(event);
     },
   });
-  const currentAgentCatalog = () =>
-    deps.getAgentConnectionCatalog?.() ?? deps.agentConnectionCatalog;
   const semanticReadiness = new SemanticReadiness({
     control: deps.control,
-    getRegistry: currentRegistry,
+    getRegistry: () => deps.registry,
     executionGate,
     timeoutMs: deps.providerProbeTimeoutMs ?? 15_000,
     fetchImpl: deps.gatewayFetch,
@@ -239,7 +231,7 @@ export function createAppComponents(deps: AppDeps) {
   const agentConnections = deps.agentConnectionController ?? (deps.connectionSigningKey
     ? new AgentConnectionController({
       control: deps.control,
-      getCatalog: currentAgentCatalog,
+      getCatalog: () => deps.agentConnectionCatalog,
       getCatalogRevision: () => deps.getConfigRevision?.() ?? identity.configRevision,
       semantic: semanticReadiness,
       tokenCodec: new ConnectionTokenCodec(deps.connectionSigningKey, deps.now),
@@ -311,7 +303,7 @@ export function createAppComponents(deps: AppDeps) {
         "LARM_CONNECTION_SIGNING_KEY is required for agent connection APIs",
       ), 503);
     }
-    if (!currentAgentCatalog()) {
+    if (!deps.agentConnectionCatalog) {
       return c.json(errorBody(
         "agent_connections_not_configured",
         "agent connection catalog is unavailable",
@@ -338,7 +330,6 @@ export function createAppComponents(deps: AppDeps) {
   app.use("/v1/artifact-operations/*", requireManagement);
   app.use("/v1/runtime-releases", requireManagement);
   app.use("/v1/runtime-releases/*", requireManagement);
-  app.use("/v1/catalog/*", requireManagement);
   app.use("/v1/inspection/*", requireManagement);
 
   const handleGateway = async (
@@ -474,7 +465,7 @@ export function createAppComponents(deps: AppDeps) {
       return c.json(missing.body, missing.status);
     }
     const selected = selectProtocolBinding({
-      registry: currentRegistry(),
+      registry: deps.registry,
       allocation,
       protocol: options.protocol,
       capability: requestedCapability,
@@ -490,7 +481,7 @@ export function createAppComponents(deps: AppDeps) {
     if (resolved.status !== 200 || !("endpoint" in resolved.body)) {
       return c.json(resolved.body, resolved.status as 404 | 409 | 503);
     }
-    const runtime = getRuntime(currentRegistry(), resolved.body.runtime);
+    const runtime = getRuntime(deps.registry, resolved.body.runtime);
     if (!runtime || runtime.protocol !== options.protocol) {
       return c.json(errorBody("protocol_mismatch", "allocated runtime protocol does not match"), 409);
     }
@@ -572,9 +563,6 @@ export function createAppComponents(deps: AppDeps) {
     if (deps.control.isDraining()) {
       return c.json({ status: "draining" }, 503);
     }
-    if (deps.control.isCatalogReloading()) {
-      return c.json({ status: "reloading" }, 503);
-    }
     if (!Number.isFinite(age) || age < 0 || age > (deps.stateMaxAgeMs ?? 10_000)) {
       return c.json({ status: "stale", ageMs: age }, 503);
     }
@@ -646,7 +634,7 @@ export function createAppComponents(deps: AppDeps) {
       }
     }
     const result = await feature.create(parsed.data, principal(), key, c.req.url);
-    const catalog = currentAgentCatalog();
+    const catalog = deps.agentConnectionCatalog;
     const selectedProfile = parsed.data.agentProfile ?? catalog?.defaultAgentProfile;
     const errorCode = typeof result.body === "object" && result.body !== null && "error" in result.body
       && typeof result.body.error === "object" && result.body.error !== null && "code" in result.body.error
@@ -771,20 +759,14 @@ export function createAppComponents(deps: AppDeps) {
   });
 
   app.get("/runtimes", (c) => {
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
-    }
     return c.json({
-      runtimes: currentRegistry().runtimes.map(publicRuntime),
+      runtimes: deps.registry.runtimes.map(publicRuntime),
     });
   });
 
   app.get("/runtimes/:id", (c) => {
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
-    }
     const id = c.req.param("id");
-    const runtime = currentRegistry().runtimes.find((item) => item.id === id);
+    const runtime = deps.registry.runtimes.find((item) => item.id === id);
     if (!runtime) {
       return c.json(errorBody("not_found", `runtime ${id} is not in the registry`), 404);
     }
@@ -792,25 +774,16 @@ export function createAppComponents(deps: AppDeps) {
   });
 
   app.get("/state", (c) => {
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
-    }
     return c.json(publicClusterState(deps.getState()));
   });
 
   app.get("/v1/inspection/runtimes", (c) => {
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
-    }
-    return c.json({ runtimes: currentRegistry().runtimes.map(inspectionRuntime) });
+    return c.json({ runtimes: deps.registry.runtimes.map(inspectionRuntime) });
   });
 
   app.get("/v1/inspection/runtimes/:id", (c) => {
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
-    }
     const id = c.req.param("id");
-    const runtime = currentRegistry().runtimes.find((item) => item.id === id);
+    const runtime = deps.registry.runtimes.find((item) => item.id === id);
     if (!runtime) {
       return c.json(errorBody("not_found", `runtime ${id} is not in the registry`), 404);
     }
@@ -818,9 +791,6 @@ export function createAppComponents(deps: AppDeps) {
   });
 
   app.get("/v1/inspection/state", (c) => {
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
-    }
     return c.json(deps.getState());
   });
 
@@ -994,9 +964,6 @@ export function createAppComponents(deps: AppDeps) {
     if (!deps.artifactManager) {
       return c.json(errorBody("not_configured", "artifact management is not configured"), 503);
     }
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
-    }
     return c.json(await deps.artifactManager.stage(c.req.param("id")), 202);
   });
 
@@ -1004,18 +971,12 @@ export function createAppComponents(deps: AppDeps) {
     if (!deps.runtimeReleaseManager) {
       return c.json(errorBody("not_configured", "runtime release management is not configured"), 503);
     }
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
-    }
     return c.json({ releases: deps.runtimeReleaseManager.listPublicReleases() });
   });
 
   app.post("/v1/runtime-releases/:id/stage", async (c) => {
     if (!deps.runtimeReleaseManager) {
       return c.json(errorBody("not_configured", "runtime release management is not configured"), 503);
-    }
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
     }
     try {
       return c.json(await deps.runtimeReleaseManager.stageRelease(c.req.param("id")), 202);
@@ -1031,9 +992,6 @@ export function createAppComponents(deps: AppDeps) {
     if (!deps.runtimeReleaseManager) {
       return c.json(errorBody("not_configured", "runtime release management is not configured"), 503);
     }
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
-    }
     try {
       return c.json(deps.runtimeReleaseManager.getDeployment(c.req.param("runtime")));
     } catch (error) {
@@ -1047,9 +1005,6 @@ export function createAppComponents(deps: AppDeps) {
   app.post("/v1/deployments/:runtime/plan", async (c) => {
     if (!deps.runtimeReleaseManager) {
       return c.json(errorBody("not_configured", "runtime release management is not configured"), 503);
-    }
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
     }
     const parsed = runtimeReleasePlanRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
     if (!parsed.success) {
@@ -1070,14 +1025,8 @@ export function createAppComponents(deps: AppDeps) {
   });
 
   app.post("/v1/deployments/:runtime/activate", async (c) => {
-    if (!deps.artifactManager) {
-      return c.json(errorBody("not_configured", "artifact management is not configured"), 503);
-    }
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
-    }
     if (!deps.runtimeReleaseManager) {
-      return c.json(await deps.artifactManager.activateRuntime(c.req.param("runtime")), 202);
+      return c.json(errorBody("not_configured", "runtime release management is not configured"), 503);
     }
     const parsed = runtimeReleaseSelectionSchema.safeParse(await readJson(c, controlMaxBodyBytes));
     if (!parsed.success) {
@@ -1099,14 +1048,8 @@ export function createAppComponents(deps: AppDeps) {
   });
 
   app.post("/v1/deployments/:runtime/rollback", async (c) => {
-    if (!deps.artifactManager) {
-      return c.json(errorBody("not_configured", "artifact management is not configured"), 503);
-    }
-    if (deps.catalogManager?.isReloading) {
-      return c.json(errorBody("catalog_reloading", "runtime catalog is reloading"), 503);
-    }
     if (!deps.runtimeReleaseManager) {
-      return c.json(await deps.artifactManager.rollbackRuntime(c.req.param("runtime")), 202);
+      return c.json(errorBody("not_configured", "runtime release management is not configured"), 503);
     }
     try {
       return c.json(await deps.runtimeReleaseManager.rollback(c.req.param("runtime")), 202);
@@ -1114,45 +1057,6 @@ export function createAppComponents(deps: AppDeps) {
       if (error instanceof RuntimeReleaseManagerError) {
         const status = error.code === "runtime_not_found" ? 404 : 409;
         return c.json(errorBody(error.code, error.message), status);
-      }
-      throw error;
-    }
-  });
-
-  app.post("/v1/catalog/reload/plan", (c) => {
-    if (!deps.catalogManager) {
-      return c.json(errorBody("not_configured", "catalog reload is not configured"), 503);
-    }
-    try {
-      return c.json(deps.catalogManager.plan());
-    } catch (error) {
-      if (error instanceof CatalogManagerError) {
-        return c.json(errorBody(error.code, error.message), 409);
-      }
-      throw error;
-    }
-  });
-
-  app.post("/v1/catalog/reload", async (c) => {
-    if (!deps.catalogManager) {
-      return c.json(errorBody("not_configured", "catalog reload is not configured"), 503);
-    }
-    const parsed = catalogReloadRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
-    if (!parsed.success) {
-      return c.json(errorBody("bad_request", "invalid catalog reload request"), 400);
-    }
-    try {
-      return c.json(await deps.catalogManager.reload(
-        parsed.data.expectedCurrentRevision,
-        parsed.data.candidateRevision,
-      ));
-    } catch (error) {
-      if (error instanceof CatalogManagerError) {
-        const status = error.code === "catalog_reload_in_progress"
-          || error.code === "catalog_reload_blocked"
-          ? 503
-          : 409;
-        return c.json({ error: { code: error.code, message: error.message, blockers: error.blockers } }, status);
       }
       throw error;
     }

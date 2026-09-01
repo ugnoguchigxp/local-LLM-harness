@@ -62,6 +62,35 @@ const start: SaaaRunStart = {
 };
 
 describe("NativeWebSocketLlmStreamBackend", () => {
+  test("forwards Function Tool strict unchanged to the native Provider", async () => {
+    const socket = new FakeSocket();
+    const backend = new NativeWebSocketLlmStreamBackend("qwen", {
+      url: "ws://127.0.0.1:8090/v1/native/llm/stream",
+      createSocket: () => {
+        queueMicrotask(() => {
+          socket.emit("open");
+          socket.emit("message", { data: nativeReady() });
+        });
+        return socket;
+      },
+    });
+    const strictStart: SaaaRunStart = {
+      ...start,
+      tools: [{
+        type: "function",
+        function: {
+          name: "web_search",
+          parameters: { type: "object", properties: { query: { type: "string" } } },
+          strict: true,
+        },
+      }],
+    };
+    backend.open(strictStart, new AbortController().signal);
+    await Bun.sleep(0);
+    expect(JSON.parse(socket.sent[0] as string)).toEqual({ type: "native.run", run: strictStart });
+    await backend.cancel(strictStart.runId);
+  });
+
   test("PWS-C10 normalizes binary delta, tool, and terminal events without SSE", async () => {
     const sockets: FakeSocket[] = [];
     const backend = new NativeWebSocketLlmStreamBackend("qwen", {
@@ -187,6 +216,41 @@ describe("NativeWebSocketLlmStreamBackend", () => {
       });
       expect(await backend.ready()).toBe(false);
       expect(socket.closes.some((close) => close.code === 1002 || close.code === 1011)).toBe(true);
+    }
+  });
+
+  test("rejects malformed native tool arguments, unsupported finish reasons, and inconsistent usage", async () => {
+    const invalidControls = [
+      { type: "native.tool-call", callId: "call_1", name: "lookup", arguments: "[]" },
+      { type: "native.tool-call", callId: "call_1", name: "lookup", arguments: '{"x":1,"x":2}' },
+      { type: "native.completed", finishReason: "tool_calls", usage: null },
+      {
+        type: "native.completed",
+        finishReason: "stop",
+        usage: { promptTokens: 2, completionTokens: 3, totalTokens: 4 },
+      },
+    ];
+    for (const invalidControl of invalidControls) {
+      const socket = new FakeSocket();
+      const backend = new NativeWebSocketLlmStreamBackend("qwen", {
+        url: "ws://127.0.0.1:8090/v1/native/llm/stream",
+        createSocket: () => {
+          queueMicrotask(() => {
+            socket.emit("open");
+            socket.emit("message", { data: nativeReady() });
+          });
+          return socket;
+        },
+      });
+      const events = backend.open(start, new AbortController().signal);
+      await Bun.sleep(0);
+      socket.emit("message", { data: JSON.stringify(invalidControl) });
+      await expect(async () => {
+        for await (const _event of events) {
+          // Invalid native events must fail without reaching the public session.
+        }
+      }).toThrow("native Provider control is invalid");
+      expect(socket.closes.at(-1)?.code).toBe(1002);
     }
   });
 

@@ -45,7 +45,7 @@
     <p>
       最初のblocking
       gateはコード追加ではなく、現在のcommitをlocal-nodeへ導入して実測することです。LARM
-      daemonがまだ実ホストへ導入されていない状態でcatalog reloadや追加モデルを実装しても、
+      daemonがまだ実ホストへ導入されていない状態で動的catalog切替や追加モデルを実装しても、
       実際のstartup latency、memory peak、音声経路、rollbackの前提を検証できません。
     </p>
     <p>
@@ -183,15 +183,15 @@
       </li>
       <li>
         Active AllocationのBinding、catalog generation、active releaseは処理途中で変更しない。
-        変更後のgenerationは新規Allocationからだけ使用する。
+        catalog変更はdaemon restart後の新しいboot epochからだけ使用する。
       </li>
       <li>
         Resident artifactのAPI経由activation禁止を維持する。Resident更新は別のattended手順とし、
         rollback確認なしに自動化しない。
       </li>
       <li>
-        Catalog reloadは設定済みdirectoryだけを再読込し、request bodyからfilesystem
-        pathを受け取らない。
+        Catalogはdaemon起動時に設定済みdirectoryだけから読み込み、requestからfilesystem
+        pathや動的reloadを受け取らない。
       </li>
       <li>
         Live telemetryは静的memory reserveを置き換えない。telemetryがstaleまたは取得不能なら、
@@ -744,9 +744,9 @@ Milestone 21  Ambient client canary and stable release gate</code></pre>
           <td>commit固定releaseとatomic current pointerを使う</td>
         </tr>
         <tr>
-          <th scope="row">Catalog reload中のsplit generation</th>
+          <th scope="row">Catalog変更時のsplit generation</th>
           <td>BindingとBackend定義が食い違う</td>
-          <td>generation pin、quiescence、single coordinator、atomic swap</td>
+          <td>versioned current切替、daemon restart、boot epoch更新</td>
         </tr>
         <tr>
           <th scope="row">Model releaseの部分activation</th>

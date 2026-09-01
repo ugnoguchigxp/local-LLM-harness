@@ -1,5 +1,4 @@
 export type MutationKind =
-  | "catalog-reload"
   | "artifact-stage"
   | "runtime-activation"
   | "runtime-rollback"

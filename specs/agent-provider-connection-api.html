@@ -287,8 +287,8 @@ agentProfiles:
       URLを生成し、 <code>X-Forwarded-*</code>は参照しません。host-private
       Audienceをloopbackまたはwildcard
       originから作成する要求と未登録Audienceは<code>409 connection_audience_unavailable</code>です。
-      Connection作成時に解決した値をTTL終了まで固定します。catalog reloadはactive
-      Allocationがある間は既存contract どおり拒否されるため、active
+      Connection作成時に解決した値をTTL終了まで固定します。catalogはdaemon起動中に差し替えず、
+      設定変更時のdaemon restartで全Connectionをboot epochごと失効させるため、active
       ConnectionのAudienceが途中で変わることはありません。
     </p>
     <p>

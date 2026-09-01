@@ -187,6 +187,28 @@ async function setup(
   };
 }
 
+function activateRuntime(manager: ArtifactManager, artifactIds = ["tiny-model"]) {
+  return manager.activateRuntimeRelease(
+    "worker",
+    "test-release",
+    artifactIds,
+    "test-config",
+    "/health",
+    async () => undefined,
+  );
+}
+
+function rollbackRuntime(manager: ArtifactManager, artifactIds = ["tiny-model"]) {
+  return manager.rollbackRuntimeRelease(
+    "worker",
+    "test-release",
+    artifactIds,
+    "test-config",
+    "/health",
+    async () => undefined,
+  );
+}
+
 test("artifact manager stages, activates, health-checks, and rolls back a preferred runtime", async () => {
   const { root, target, manager } = await setup();
   try {
@@ -196,12 +218,12 @@ test("artifact manager stages, activates, health-checks, and rolls back a prefer
     await manager.flush();
     expect(manager.getOperation(staged.id)?.status).toBe("succeeded");
 
-    const activated = await manager.activateRuntime("worker");
+    const activated = await activateRuntime(manager);
     await manager.flush();
     expect(manager.getOperation(activated.id)?.status).toBe("succeeded");
     expect(await readFile(target, "utf8")).toBe("new-model");
 
-    const rolledBack = await manager.rollbackRuntime("worker");
+    const rolledBack = await rollbackRuntime(manager);
     await manager.flush();
     expect(manager.getOperation(rolledBack.id)?.status).toBe("succeeded");
     expect(await readFile(target, "utf8")).toBe("old-model");
@@ -297,7 +319,7 @@ test("artifact manager rejects activation while another allocation uses the runt
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     }];
-    const operation = await manager.activateRuntime("worker");
+    const operation = await activateRuntime(manager);
     await manager.flush();
     expect(manager.getOperation(operation.id)).toEqual(expect.objectContaining({
       status: "failed",
@@ -315,7 +337,7 @@ test("artifact manager rejects activation during a control-plane lifecycle trans
   try {
     await manager.stage("tiny-model");
     await manager.flush();
-    const operation = await manager.activateRuntime("worker");
+    const operation = await activateRuntime(manager);
     await manager.flush();
     expect(operation.status).toBe("failed");
     expect(operation.error?.code).toBe("runtime_transition_in_progress");
@@ -344,7 +366,7 @@ test("artifact manager restores the previous revision when activated runtime hea
       probes.set(runtime.id, failed);
       return failed;
     };
-    const activation = await manager.activateRuntime("worker");
+    const activation = await activateRuntime(manager);
     await manager.flush();
 
     expect(manager.getOperation(activation.id)).toEqual(expect.objectContaining({
@@ -375,7 +397,7 @@ test("artifact manager times out a stalled health probe and restores the previou
       probes.set(runtime.id, stalled);
       return stalled;
     };
-    const activation = await manager.activateRuntime("worker");
+    const activation = await activateRuntime(manager);
     await manager.flush();
     expect(activation).toMatchObject({ status: "failed", error: { code: "startup_timeout" } });
     expect(await readFile(target, "utf8")).toBe("old-model");
@@ -445,7 +467,7 @@ test("artifact manager rejects changing a shared artifact while another owner is
       httpStatus: 200,
     });
 
-    const activation = await manager.activateRuntime("worker");
+    const activation = await activateRuntime(manager);
     await manager.flush();
     expect(manager.getOperation(activation.id)).toEqual(expect.objectContaining({
       status: "failed",
@@ -461,7 +483,7 @@ test("rollback preserves a cold runtime instead of starting it", async () => {
   try {
     const staged = await store.stage(artifact);
     await store.activate(artifact, staged);
-    const rollback = await manager.rollbackRuntime("worker");
+    const rollback = await rollbackRuntime(manager);
     await manager.flush();
     expect(manager.getOperation(rollback.id)?.status).toBe("succeeded");
     expect(ensureCalls).toEqual([]);
@@ -481,7 +503,7 @@ test("rollback preflights every artifact before changing any target", async () =
     const staged = await store.stage(secondArtifact!);
     await store.activate(secondArtifact!, staged);
 
-    const rollback = await manager.rollbackRuntime("worker");
+    const rollback = await rollbackRuntime(manager, ["tiny-model", "tiny-model-two"]);
     await manager.flush();
     expect(manager.getOperation(rollback.id)).toEqual(expect.objectContaining({
       status: "failed",
@@ -549,45 +571,8 @@ test("artifact manager releases the mutation lease when failure journaling fails
     };
     await expect(manager.stage("missing-artifact")).rejects.toThrow("journal unavailable");
     expect(coordinator.current()).toBeUndefined();
-    const lease = coordinator.reserve("catalog-reload");
+    const lease = coordinator.reserve("runtime-activation");
     lease.release();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("artifact catalog replacement validates before changing the active generation", async () => {
-  const { root, manager } = await setup();
-  try {
-    const invalidRegistry: Registry = {
-      nodes: [],
-      profiles: [],
-      routes: [],
-      runtimes: [{
-        id: "invalid",
-        artifacts: ["missing-artifact"],
-        capability: ["llm.general"],
-        protocol: "openai.chat-completions.v1",
-        backend: "systemd",
-        node: "local-node",
-        policy: { class: "preferred" },
-        resources: {
-          estimatedMemoryGB: 1,
-          maxConcurrentRequests: 1,
-          maxQueuedRequests: 0,
-          queueTimeoutMs: 100,
-        },
-        deployment: {
-          service: "invalid.service",
-          healthPort: 8099,
-          endpoint: "http://127.0.0.1:8099",
-        },
-      }],
-    };
-    expect(() => manager.replaceCatalog([], invalidRegistry)).toThrow(/missing-artifact/);
-    const operation = await manager.stage("tiny-model");
-    await manager.flush();
-    expect(operation.status).toBe("succeeded");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -725,7 +710,7 @@ test("artifact operations share the global mutation coordinator and publish an a
     mutationCoordinator: coordinator,
     onOperationState: (active) => states.push(active),
   });
-  const catalog = coordinator.reserve("catalog-reload");
+  const catalog = coordinator.reserve("runtime-activation");
   const rejected = await manager.stage("tiny-model");
   expect(rejected).toMatchObject({ status: "failed", error: { code: "mutation_in_progress" } });
   catalog.release();

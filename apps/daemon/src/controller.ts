@@ -26,7 +26,7 @@ import type { Observer } from "./observer";
 
 export type Operation = {
   id: string;
-  kind: "prepare" | "allocation" | "artifact";
+  kind: "prepare" | "allocation";
   leaseId?: string;
   allocationId?: string;
   status: "pending" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out";
@@ -89,11 +89,10 @@ export class ControlPlane {
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private applyChain: Promise<void> = Promise.resolve();
   private draining = false;
-  private catalogReloading = false;
   private idSequence = 0;
 
   constructor(
-    private registry: Registry,
+    private readonly registry: Registry,
     private readonly backend: RuntimeBackend,
     private readonly observer: Observer,
     private readonly options: ControlPlaneOptions = {},
@@ -123,69 +122,6 @@ export class ControlPlane {
 
   isDraining(): boolean {
     return this.draining;
-  }
-
-  isCatalogReloading(): boolean {
-    return this.catalogReloading;
-  }
-
-  catalogReloadBlockers(): string[] {
-    this.expireDueAllocations();
-    const blockers: string[] = [];
-    if (this.draining) {
-      blockers.push("draining");
-    }
-    if (this.catalogReloading) {
-      blockers.push("catalog_reload_in_progress");
-    }
-    if (this.activeAdmissionCount() > 0) {
-      blockers.push("active_allocations");
-    }
-    if ([...this.operations.values()].some((operation) =>
-      operation.status === "pending" || operation.status === "running"
-    )) {
-      blockers.push("control_operations");
-    }
-    if (this.lifecycleReservations.size > 0) {
-      blockers.push("runtime_transition_in_progress");
-    }
-    return blockers;
-  }
-
-  beginCatalogReload():
-    | { ok: true; release: () => void }
-    | { ok: false; blockers: string[] } {
-    const blockers = this.catalogReloadBlockers();
-    if (blockers.length > 0) {
-      return { ok: false, blockers };
-    }
-    this.catalogReloading = true;
-    this.cancelIdle();
-    let released = false;
-    return {
-      ok: true,
-      release: () => {
-        if (released) {
-          return;
-        }
-        released = true;
-        this.catalogReloading = false;
-        this.scheduleIdleReconcile();
-      },
-    };
-  }
-
-  replaceRegistry(registry: Registry): void {
-    if (!this.catalogReloading) {
-      throw new Error("registry replacement requires a catalog reload reservation");
-    }
-    const blockers = this.catalogReloadBlockers().filter((blocker) =>
-      blocker !== "catalog_reload_in_progress"
-    );
-    if (blockers.length > 0) {
-      throw new Error(`registry replacement is blocked: ${blockers.join(", ")}`);
-    }
-    this.registry = registry;
   }
 
   isRuntimeTransitioning(runtimeId: string): boolean {
@@ -240,12 +176,6 @@ export class ControlPlane {
       return {
         status: 503 as const,
         body: { error: { code: "draining", message: "control plane is draining" } },
-      };
-    }
-    if (this.catalogReloading) {
-      return {
-        status: 503 as const,
-        body: { error: { code: "catalog_reloading", message: "runtime catalog is reloading" } },
       };
     }
     if (!this.hasFreshState()) {
@@ -582,12 +512,6 @@ export class ControlPlane {
         body: { error: { code: "draining", message: "control plane is draining" } },
       };
     }
-    if (this.catalogReloading) {
-      return {
-        status: 503 as const,
-        body: { error: { code: "catalog_reloading", message: "runtime catalog is reloading" } },
-      };
-    }
     const expanded = expandPrepareRequest(this.registry, request);
     if (!expanded.ok) {
       if (expanded.reason === "unknown_profile") {
@@ -869,7 +793,7 @@ export class ControlPlane {
   }
 
   async reconcileOrphanedPreferred(): Promise<string[]> {
-    if (this.draining || this.catalogReloading) {
+    if (this.draining) {
       return [];
     }
     this.expireDueAllocations();

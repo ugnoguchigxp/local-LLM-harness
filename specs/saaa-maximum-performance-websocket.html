@@ -44,6 +44,26 @@
     </p>
   </aside>
 
+  <aside>
+    <h2>2026-09-01 SAAA Function Tool契約の適合修正</h2>
+    <p>
+      SAAA実運用のFunction Toolは<code>function.strict?: boolean</code>を含む。LARM公開
+      WebSocket層とQwen native Providerの旧検証器はこのfieldをunknownとして拒否していたため、
+      省略、<code>false</code>、<code>true</code>を受理し、boolean以外とその他のunknown
+      fieldは
+      引き続き拒否するよう両層を同時に修正した。値は<code>native.run</code>とengine生成requestまで
+      変更せず伝達する。
+    </p>
+    <p>
+      同じ照合で、<code>connectionId</code>を1〜160文字の英数字・underscore・hyphenへ限定し、
+      readyの二つのcapacity値を同値に固定した。<code>tool.call.arguments</code>は重複keyのないJSON
+      object文字列だけを許可し、公開<code>response.completed.finishReason</code>は
+      <code>stop</code
+      >または<code>length</code>だけを送る。token使用量がすべて非nullの場合は合計も
+      検証する。
+    </p>
+  </aside>
+
   <section id="decisions">
     <h2>1. 固定する構造判断</h2>
     <ol>
@@ -220,7 +240,8 @@ Provider SSE ── parse / wrap ── WebSocket</code></pre>
       </li>
       <li>
         connectionは<code>Ready</code>から一つのrunだけを所有し、terminal
-        ACK後にidleへ戻る。 二件目の<code>run.start</code>はqueueせずrun-level
+        ACK後にidleへ戻る。
+        二件目の<code>run.start</code>はqueueせずrun-level
         <code>capacity</code> failureにする。
       </li>
       <li>
@@ -332,6 +353,20 @@ offset  size  field
 
   <section id="messages">
     <h2>6. Messageとstate machine</h2>
+    <p>
+      <code>run.start.tools</code>の正規形は次のとおりとする。Function内のunknown
+      fieldは拒否するが、 <code>strict</code>はunknownではなくoptional
+      booleanであり、native Providerとengineへ同じ値を渡す。
+    </p>
+    <pre><code class="language-typescript">type FunctionTool = {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters: JsonValue;
+    strict?: boolean;
+  };
+};</code></pre>
     <table>
       <caption>
         実装対象message
@@ -382,7 +417,7 @@ offset  size  field
         <tr>
           <th scope="row">LARM → SAAA</th>
           <td><code>tool.call</code></td>
-          <td>text開始前、完成済みarguments、最大4件並列</td>
+          <td>text開始前、重複keyのないJSON object文字列のarguments、最大4件並列</td>
         </tr>
         <tr>
           <th scope="row">LARM → SAAA</th>
@@ -417,6 +452,10 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
       </li>
       <li>deltaはappend-only。送信済みtextの置換、撤回、terminalでの修正を禁止する。</li>
       <li>terminalはrunごとに一つだけで、以後のeventを生成しない。</li>
+      <li>
+        正常terminalの<code>finishReason</code>は<code>stop</code>または<code>length</code>だけとし、
+        tool継続は<code>tool.call</code>へ変換してterminalとして送らない。
+      </li>
       <li>run-level validation、model、tool、timeout failureではconnectionを閉じない。</li>
       <li>framing違反だけを定義済み1002〜1011のconnection closeへ写像する。</li>
     </ul>
@@ -738,6 +777,16 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
       <li>20 byte × 10,000 deltaが250 ms以内、peak RSS増加16 MiB以下。</li>
       <li>ACK 7から8以降を同じseqでreplayし、delivery/TTS重複0。</li>
       <li>terminal hash、content byte、content field混入を確実に拒否する。</li>
+      <li>
+        Function
+        Toolの<code>strict</code>省略、<code>false</code>、<code>true</code>とSAAA本番3
+        toolを 受理し、文字列値と別のunknown fieldを拒否する。
+      </li>
+      <li>
+        tool
+        argumentsの非object・重複key、usage合計不一致、<code>stop</code>/<code>length</code>以外の
+        公開正常terminalを拒否する。
+      </li>
       <li>別connectionの1 MiB upload stallによる追加p95 5 ms以下、cancel p95 50 ms以下。</li>
       <li>ACK停止時に64 eventで該当runだけpauseし、ACK後に65から再開する。</li>
       <li>1,000 turn / 30分 / network flapでunbounded memory、zombie run、重複、欠落0。</li>
@@ -878,11 +927,12 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
           <th scope="row">Conformance</th>
           <td>repository gate成功</td>
           <td>
-            <code>bun run conformance:saaa</code>: 55 pass / 0 fail。 PWS-C01〜PWS-C19、8
-            connection / 8 runのseq分離、ACK 7→8 replay、64→65 flow control、cancel p95、native
-            upstream URL policy、strict server control、認証済みorigin bind、self-signed
-            TLSを信頼した実Bun WSS、2系統×100 run、20回の切断/resume replay、別connectionの1 MiB
-            upload stall追加p95 5 ms未満を検証
+            <code>bun run conformance:saaa</code>: 60 pass / 0 fail。
+            PWS-C01〜PWS-C19、Function Tool strict matrixと本番3 tool、8 connection / 8
+            runのseq分離、ACK 7→8 replay、64→65 flow control、cancel p95、native upstream URL
+            policy、strict server control、認証済みorigin bind、self-signed TLSを信頼した実Bun
+            WSS、2系統×100 run、20回の切断/resume replay、別connectionの1 MiB upload stall追加p95 5
+            ms未満を検証
           </td>
         </tr>
         <tr>

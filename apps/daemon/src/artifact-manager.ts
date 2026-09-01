@@ -60,12 +60,12 @@ export class ArtifactManager implements DeploymentCoordinator {
   private readonly artifactOwners = new Map<string, Set<string>>();
   private readonly mutationReservations = new Map<string, number>();
   private readonly operationAborts = new Map<string, AbortController>();
-  private additionalArtifactOwners: { runtimeId: string; artifactIds: string[] }[] = [];
+  private readonly additionalArtifactOwners: { runtimeId: string; artifactIds: string[] }[];
   private idSequence = 0;
 
   constructor(
     artifacts: ArtifactDefinition[],
-    private registry: Registry,
+    private readonly registry: Registry,
     private readonly store: LocalArtifactStore,
     private readonly backend: RuntimeBackend,
     private readonly observer: Observer,
@@ -172,28 +172,6 @@ export class ArtifactManager implements DeploymentCoordinator {
     return [...this.operations.values()].filter((operation) =>
       operation.status === "pending" || operation.status === "running"
     ).length;
-  }
-
-  replaceCatalog(
-    artifacts: ArtifactDefinition[],
-    registry: Registry,
-    additionalArtifactOwners: { runtimeId: string; artifactIds: string[] }[] = [],
-  ): void {
-    if (this.hasActiveOperations()) {
-      throw new ArtifactStoreError("deployment_in_progress", "artifact operations are still active");
-    }
-    const nextArtifacts = new Map(artifacts.map((artifact) => [artifact.id, artifact]));
-    const nextOwners = this.buildArtifactOwners(
-      nextArtifacts,
-      registry,
-      additionalArtifactOwners,
-    );
-    this.artifacts.clear();
-    for (const [artifactId, artifact] of nextArtifacts) this.artifacts.set(artifactId, artifact);
-    this.artifactOwners.clear();
-    for (const [artifactId, owners] of nextOwners) this.artifactOwners.set(artifactId, owners);
-    this.registry = registry;
-    this.additionalArtifactOwners = additionalArtifactOwners;
   }
 
   async planRuntimeActivation(runtimeId: string, artifactIds: string[]): Promise<string[]> {
@@ -370,14 +348,6 @@ export class ArtifactManager implements DeploymentCoordinator {
     }
   }
 
-  async activateRuntime(runtimeId: string): Promise<ArtifactOperation> {
-    const runtime = getRuntime(this.registry, runtimeId);
-    return await this.activateRuntimeArtifacts(
-      runtimeId,
-      this.runtimeArtifactIds(runtime),
-    );
-  }
-
   async activateRuntimeRelease(
     runtimeId: string,
     releaseId: string,
@@ -491,11 +461,6 @@ export class ArtifactManager implements DeploymentCoordinator {
         mutationLease?.release();
       }
     }
-  }
-
-  async rollbackRuntime(runtimeId: string): Promise<ArtifactOperation> {
-    const runtime = getRuntime(this.registry, runtimeId);
-    return await this.rollbackRuntimeArtifacts(runtimeId, this.runtimeArtifactIds(runtime));
   }
 
   async rollbackRuntimeRelease(

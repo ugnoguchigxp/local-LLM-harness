@@ -25,7 +25,7 @@ export class Observer {
   private tickInFlight: Promise<ClusterState> | undefined;
 
   constructor(
-    private registry: Registry,
+    private readonly registry: Registry,
     private readonly backend: RuntimeBackend,
     private readonly options: ObserverOptions = {},
   ) {
@@ -39,20 +39,6 @@ export class Observer {
 
   getState(): ClusterState {
     return this.snapshot;
-  }
-
-  async replaceRegistry(registry: Registry): Promise<ClusterState> {
-    if (this.tickInFlight) {
-      await this.tickInFlight;
-    }
-    this.registry = registry;
-    const runtimeIds = new Set(registry.runtimes.map((runtime) => runtime.id));
-    for (const runtimeId of this.startingSince.keys()) {
-      if (!runtimeIds.has(runtimeId)) {
-        this.startingSince.delete(runtimeId);
-      }
-    }
-    return await this.tick();
   }
 
   tick(): Promise<ClusterState> {

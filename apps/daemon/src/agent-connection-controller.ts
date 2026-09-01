@@ -610,7 +610,7 @@ export class AgentConnectionController {
     };
     this.idempotency.set(scope, entry);
     const result = await entry.result;
-    if (result.status !== 201 && result.status !== 202) {
+    if (result.status < 200 || result.status >= 300) {
       this.idempotency.delete(scope);
     } else if (typeof result.body === "object" && result.body !== null && "id" in result.body) {
       entry.connectionId = String((result.body as { id: unknown }).id);

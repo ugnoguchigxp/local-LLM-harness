@@ -3,7 +3,7 @@
 
   <p>
     <a href="./next-implementation-plan.html">運用収束とVersioned Model Release計画</a>に対する
-    repository実装の完了記録です。管理API、release catalog、atomic reload、resource telemetry、
+    repository実装の完了記録です。管理API、release catalog、resource telemetry、
     参照client、versioned LARM release、検証toolを実装し、計画の完了条件を再監査して不足を
     補完しました。実ホストへ変更を加える commissioningとAmbient
     traffic切替は、commit固定releaseを作成した後に実施するattended gateとして 明確に分離しています。
@@ -100,7 +100,7 @@
     <h2>固定したcontract</h2>
     <ul>
       <li>通常requestはrouteだけを指定し、release ID、URL、path、serviceを指定しない。</li>
-      <li>release変更とcatalog reloadはBearer tokenに加えてmanagement tokenを要求する。</li>
+      <li>release変更はBearer tokenに加えてmanagement tokenを要求する。</li>
       <li>
         release IDの内容はdigestでimmutableとし、activeまたはrollback対象の差し替えを拒否する。
       </li>
@@ -113,13 +113,14 @@
         headerを返す。
       </li>
       <li>
-        Resident contractを変えるcatalog reloadとResident artifact activationはattended手順へ残す。
+        catalog変更はversioned LARM releaseとdaemon restartに限定し、Resident artifact activationも
+        attended手順へ残す。
       </li>
       <li>
         live telemetryはPreferred・Elasticの新規起動だけをfail closedし、Resident経路を遮断しない。
       </li>
       <li>
-        catalog reload、artifact stage、release activation・rollback、allow-listed起動は単一mutation
+        artifact stage、release activation・rollback、allow-listed起動は単一mutation
         coordinatorで直列化し、shutdown時は新規予約を拒否してdrainする。
       </li>
       <li>LARM releaseの切替とrollbackはLARM daemonだけをrestartし、Provider unitへ伝播しない。</li>

@@ -40,7 +40,6 @@ models:
       --cache-reuse 256
       --metrics
       --no-webui
-    ttl: 300
     aliases:
       - qwen3.8-quality
       - qwen-worker
@@ -77,7 +76,6 @@ models:
       --cache-reuse 256
       --metrics
       --no-webui
-    ttl: 300
     aliases:
       - qwen3.8-agent
       - qwen-agent-worker
@@ -114,7 +112,6 @@ models:
       --cache-reuse 256
       --metrics
       --no-webui
-    ttl: 300
     aliases:
       - qwen3.8-fast
       - qwen-stable
@@ -144,7 +141,6 @@ models:
       --cache-reuse 256
       --metrics
       --no-webui
-    ttl: 300
     aliases:
       - qwen3.6-35b
       - qwen-35b
@@ -181,7 +177,6 @@ models:
       --context-shift
       --metrics
       --no-webui
-    ttl: 300
     aliases:
       - ornith-1.5-35b
       - ornith-35b
@@ -222,7 +217,6 @@ models:
       --no-cache-idle-slots
       --metrics
       --no-webui
-    ttl: 300
     aliases:
       - ornith-1.5-35b-speed
       - ornith-35b-speed
@@ -263,7 +257,6 @@ models:
       --no-cache-idle-slots
       --metrics
       --no-webui
-    ttl: 300
     aliases:
       - ornith-1.5-35b-agent
       - ornith-35b-agent

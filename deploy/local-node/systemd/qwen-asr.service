@@ -1,8 +1,5 @@
 [Unit]
 Description=Qwen3 ASR OpenAI-compatible provider
-After=network-online.target
-Wants=network-online.target
-
 [Service]
 Type=simple
 User=ugnoguchi

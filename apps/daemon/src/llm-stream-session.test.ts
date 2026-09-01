@@ -206,6 +206,39 @@ describe("LlmStreamServer", () => {
     expect(backend.starts.map((item) => item.runId)).toEqual(["run_1", "run_2"]);
   });
 
+  test("accepts the production SAAA tool set and preserves Function Tool strict", async () => {
+    const backend = new FakeBackend();
+    const server = new LlmStreamServer({ startHeartbeat: false });
+    const connection = server.createConnection(authorization(backend));
+    const socket = new FakeSocket();
+    const tools = [
+      "web_search",
+      "fetch_content",
+      "update_conversation_voice_behavior",
+    ].map((name, index) => ({
+      type: "function" as const,
+      function: {
+        name,
+        parameters: { type: "object", additionalProperties: false, properties: {} },
+        strict: index !== 1,
+      },
+    }));
+    server.open(connection, socket);
+    server.message(connection, JSON.stringify({
+      ...JSON.parse(start()),
+      tools,
+      maxToolCalls: 32,
+    }));
+    await Bun.sleep(0);
+
+    expect(jsonMessages(socket).map((message) => message.type)).toEqual([
+      "connection.ready",
+      "run.accepted",
+    ]);
+    expect(backend.starts[0]?.tools).toEqual(tools);
+    await server.shutdown(0);
+  });
+
   test("PWS-C12 isolates sequence and content across eight concurrent connections", async () => {
     const backend = new MultiRunBackend();
     const server = new LlmStreamServer({ startHeartbeat: false });

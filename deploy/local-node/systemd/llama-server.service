@@ -1,7 +1,5 @@
 [Unit]
 Description=Qwen3.8 27B Primary LLM Provider (ROCmFP4 FAST + Vulkan MTP)
-After=network-online.target
-Wants=network-online.target
 
 [Service]
 Type=simple
@@ -10,20 +8,9 @@ Group=ugnoguchi
 WorkingDirectory=/srv/ai/apps/q38rocm
 Environment=HOME=/srv/ai/cache
 Environment=XDG_CACHE_HOME=/srv/ai/cache
-Environment=PROFILE=speed
-Environment=CTX=262144
 Environment=MTP=1
-Environment=DRAFT_N=2
-Environment=DRAFT_P=0.0
-Environment=KV_K=q8_0
-Environment=KV_V=turbo4
-Environment=REASONING=auto
 Environment=REASONING_BUDGET=-1
-Environment=TEMP=0.2
-Environment=REPEAT_PENALTY=1.0
 Environment=SLOTS=1
-Environment=BATCH_SIZE=2048
-Environment=UBATCH_SIZE=2048
 Environment=LLAMA_SERVER_BIN=/srv/ai/apps/q38rocm/engine/bin/llama-server-larm-native
 Environment=LARM_NATIVE_ENGINE_SOCKET=/run/larm-native-qwen/engine.sock
 RuntimeDirectory=larm-native-qwen

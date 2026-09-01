@@ -1,5 +1,5 @@
 import { parseDaemonConfig } from "./config";
-import { loadCatalogGeneration } from "./catalog-manager";
+import { loadCatalogGeneration } from "./catalog-generation";
 
 const config = parseDaemonConfig();
 const generation = loadCatalogGeneration({

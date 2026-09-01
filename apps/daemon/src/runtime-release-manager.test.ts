@@ -235,15 +235,3 @@ test("retrying an already active immutable release converges to the prior operat
   expect(retried.id).toBe(first.id);
   expect(manager.getDeployment("qwen-tts").activeRelease).toBe("qwen-tts-r2");
 });
-
-test("runtime release manager rejects mutation of an active immutable release", async () => {
-  const { manager } = await fixture();
-  await expect(manager.replaceCatalog([{ ...releases[0]!, digest: "f".repeat(64) }, releases[1]!]))
-    .rejects.toMatchObject({ code: "catalog_conflict" });
-});
-
-test("runtime release manager rejects mutation of an inactive immutable release", async () => {
-  const { manager } = await fixture();
-  await expect(manager.replaceCatalog([releases[0]!, { ...releases[1]!, digest: "e".repeat(64) }]))
-    .rejects.toMatchObject({ code: "catalog_conflict" });
-});
