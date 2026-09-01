@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import {
   LarmApiError,
   LarmClient,
-  LarmClientConfigurationError,
   LarmEpochChangedError,
 } from "./index";
 
@@ -106,22 +105,24 @@ test("public liveness omits credentials and exposes response identity", async ()
   expect(client.hasApiToken).toBeTrue();
 });
 
-test("agent lifecycle reports a stable local error when the API token is absent", async () => {
-  let contacted = false;
+test("agent profile discovery omits Authorization when the optional API token is absent", async () => {
+  let observed: Request | undefined;
   const client = new LarmClient({
     baseUrl: "http://127.0.0.1:9810",
-    fetch: async () => {
-      contacted = true;
-      throw new Error("unexpected request");
+    fetch: async (input, init) => {
+      observed = new Request(input.toString(), init);
+      return json({
+        contractVersion: "agent-connection.v1",
+        catalogRevision: "catalog-test",
+        profiles: [],
+        audiences: ["same-host", "saaa-desktop"],
+      });
     },
   });
 
-  await expect(client.listAgentProfiles()).rejects.toMatchObject({
-    constructor: LarmClientConfigurationError,
-    code: "api_token_missing",
-  });
+  expect((await client.listAgentProfiles()).audiences).toEqual(["same-host", "saaa-desktop"]);
   expect(client.hasApiToken).toBeFalse();
-  expect(contacted).toBeFalse();
+  expect(observed?.headers.has("authorization")).toBeFalse();
 });
 
 test("reference client reports boot epoch changes instead of retrying silently", async () => {
@@ -421,7 +422,6 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   let getCount = 0;
   const client = new LarmClient({
     baseUrl: "http://127.0.0.1:9810",
-    apiToken: "api",
     random: () => "agent-fixed",
     fetch: async (input, init) => {
       const request = new Request(input.toString(), init);
@@ -473,7 +473,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   expect(requests.at(-1)?.headers.get("idempotency-key")).toBe("renew-agent");
   await client.releaseAgentConnection(ready.id);
   expect(requests.at(-1)?.method).toBe("DELETE");
-  expect(requests.every((request) => request.headers.get("authorization") === "Bearer api")).toBeTrue();
+  expect(requests.every((request) => !request.headers.has("authorization"))).toBeTrue();
 });
 
 test("agent connection polling deadline aborts an in-flight HTTP request", async () => {

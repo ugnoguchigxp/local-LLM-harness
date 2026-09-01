@@ -64,6 +64,25 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(JSON.stringify(paths["/v1/chat/completions"]?.post)).not.toContain("text/event-stream");
   expect(paths["/v1/llm/stream"]?.get?.responses).toHaveProperty("101");
   expect(paths["/v1/agent-connections"]?.post?.parameters).toBeDefined();
+  expect(paths["/v1/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v1/agent-connections"]?.post?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v1/agent-connections/{id}"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v1/agent-connections/{id}/health"]?.get?.security).toEqual([
+    {},
+    { bearerAuth: [] },
+  ]);
+  expect(paths["/v1/agent-connections/{id}/claim"]?.post?.security).toEqual([
+    {},
+    { bearerAuth: [] },
+  ]);
+  expect(paths["/v1/agent-connections/{id}/renew"]?.post?.security).toEqual([
+    {},
+    { bearerAuth: [] },
+  ]);
+  expect(paths["/v1/agent-connections/{id}"]?.delete?.security).toEqual([
+    {},
+    { bearerAuth: [] },
+  ]);
   expect(paths["/v1/agent-connections/{id}/providers/{name}/health"]?.get?.security).toEqual([
     { bearerAuth: [] },
     { providerBearer: [] },

@@ -33,7 +33,7 @@
   <aside>
     <p>
       local-node側はsystemd常駐化、credential、polkit、UFW /32 rule、create・poll・claim、semantic
-      health、SSE、DELETE、短期token失効までacceptance済みです。秘密を含まない結果は<a
+      health、Native WebSocket、DELETE、短期token失効までacceptance済みです。秘密を含まない結果は<a
         href="./commissioning-evidence.html#saaa-rest-gateway-acceptance"
         >Commissioning Evidence</a
       >を参照してください。
@@ -73,8 +73,8 @@
       <tbody>
         <tr>
           <th scope="row">Static bootstrap</th>
-          <td>control URL、長期API token、profile、audience</td>
-          <td>host設定とsecret storeへ保存</td>
+          <td>control URL、profile、audience</td>
+          <td>host設定へ保存。長期secretは不要</td>
         </tr>
         <tr>
           <th scope="row">Dynamic provider</th>
@@ -89,9 +89,11 @@
       </tbody>
     </table>
     <p>
-      SAAAへ渡すlocal-nodeの長期secretはAPI tokenだけです。management token、connection signing
+      SAAAへlocal-nodeの長期secretは渡しません。API token、management token、connection signing
       key、
-      <code>/etc/larm/larm.env</code>は要求・取得・保存しないでください。
+      <code>/etc/larm/larm.env</code
+      >は要求・取得・保存しないでください。claimされた短期Provider tokenだけを Connection
+      lifetime中のmemoryへ保持します。
     </p>
   </section>
 
@@ -130,12 +132,12 @@
       </li>
       <li>claimされたsemantic health URLを短期tokenで確認します。</li>
       <li>
-        <code>stream:true</code>で推論し、非空completionとSSE
-        <code>[DONE]</code>を確認します。
+        claimの<code>streaming.url</code>へ短期Provider
+        tokenで接続し、非空completionとterminal integrityを確認します。
       </li>
       <li>
-        成功、失敗、cancelの全経路で長期API tokenを使い
-        <code>DELETE /v1/agent-connections/:id</code>を呼び、204を成功とします。
+        成功、失敗、cancelの全経路で長期credentialなしに<code>DELETE
+        /v1/agent-connections/:id</code>を呼び、204を成功とします。
       </li>
     </ol>
   </section>
@@ -166,7 +168,7 @@
         firewall許可済み送信元<code>192.168.0.76</code>がSAAA
         Macの現行IPv4であることの確認。
       </li>
-      <li>control URLとAPI tokenを設定するSAAA側の設定名・secret保存先。</li>
+      <li>control URL、profile、audienceを設定するSAAA側の設定名。</li>
       <li>adapterの実装ownerとreview commit。</li>
       <li>local-node側の準備完了後にLAN canaryを実行できる時間帯。</li>
       <li>REST-only、dynamic claim、SSH不使用へのacknowledgement。</li>
@@ -176,9 +178,13 @@
   <section id="canary">
     <h2>LAN canary</h2>
     <ol>
-      <li>SAAA Macから未認証control requestが401になることを確認します。</li>
       <li>
-        認証付きでcreate、poll、claim、semantic health、SSE inference、DELETE releaseを実行します。
+        SAAA Macから匿名Agent Profile/Connection requestが成功し、匿名の通常control requestは401に
+        なることを確認します。
+      </li>
+      <li>
+        長期credentialなしでcreate、poll、claimを行い、短期tokenでsemantic health、Native WebSocket
+        inferenceを実行して、匿名DELETE releaseまで完了します。
       </li>
       <li>claim responseだけからOpenAI clientが構成されていることを確認します。</li>
       <li>
@@ -188,7 +194,7 @@
     </ol>
     <p>
       証跡にはtimestamp、release commit、config revision、HTTP
-      status、SSE完了、release結果だけを含め、 token、Authorization
+      status、WebSocket完了、release結果だけを含め、token、Authorization
       header、prompt、completion本文を含めないでください。
     </p>
   </section>
@@ -199,8 +205,8 @@
       <li>SAAAがRESTだけでAgent Connection lifecycleを完了できる。</li>
       <li>claim responseからProvider設定を動的に構成できる。</li>
       <li>
-        <code>coding-default</code>のSSE inferenceがfallbackなしでQwen 3.8
-        27Bにより完了する。
+        <code>coding-default</code>のNative WebSocket inferenceがfallbackなしでQwen
+        3.8 27Bにより完了する。
       </li>
       <li>成功・失敗時ともDELETE releaseを実行し、resource leakがない。</li>
       <li>SSH、direct Provider、Cloud fallbackを使用しない。</li>
@@ -212,7 +218,7 @@
     <pre><code>Status: Acknowledged | Changes Requested
 SAAA source IPv4: 192.168.0.76
 Bootstrap configuration names:
-API token secret store:
+Long-lived LARM credential: Not required
 Adapter owner:
 Implementation commit:
 LAN canary window:

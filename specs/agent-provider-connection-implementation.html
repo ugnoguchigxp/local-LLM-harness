@@ -158,12 +158,12 @@
       >を<code>network: host-private</code>、advertised URL
       sourceを<code>request-origin</code>としました。SAAAはmDNS/DNS名または現在のDHCP
       addressへ 直接接続し、control APIを既定port
-      9810で呼びます。LARMは認証済みConnection作成requestの originをcanonicalな<code
+      9810で呼びます。LARMは受理したConnection作成requestの originをcanonicalな<code
         >/v1</code
       >
       URLとしてclaimへ固定します。
-      routing設定はhostだけ、長期<code>LARM_API_TOKEN</code>はsecret
-      store、claimされたProvider tokenは Connection TTL内だけの扱いです。
+      routing設定はhostだけで、長期<code>LARM_API_TOKEN</code>はlocal-node
+      SAAAでは任意です。 claimされたProvider tokenはConnection TTL内だけの扱いです。
     </p>
     <p>
       SAAA固有のclaim

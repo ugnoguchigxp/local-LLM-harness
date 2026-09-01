@@ -287,7 +287,7 @@ agentProfiles:
     </table>
     <p>
       request
-      bodyからURLを上書きできません。<code>request-origin</code>は認証済みConnection作成requestの
+      bodyからURLを上書きできません。<code>request-origin</code>は受理したConnection作成requestの
       実際のscheme、authority、portだけからcanonicalな<code>/v1</code>
       URLを生成し、 <code>X-Forwarded-*</code>は参照しません。host-private
       Audienceをloopbackまたはwildcard
@@ -303,8 +303,9 @@ agentProfiles:
         >/v1</code
       >
       URLとして返します。production LARMは<code>0.0.0.0:9810</code>でlistenし、
-      API・management tokenを必須にしてreview済みLAN CIDRだけを許可します。長期control tokenはSAAAの
-      secret store、短期Provider tokenはConnection TTL内だけ保持します。LAN境界外へ公開する場合は
+      server設定としてAPI・management tokenを維持し、review済みLAN CIDRだけを許可します。SAAAの
+      長期control tokenは任意で、短期Provider tokenはConnection
+      TTL内だけ保持します。LAN境界外へ公開する場合は
       <code>tls</code> AudienceとTLS終端を別途commissioningします。
     </p>
     <p>
@@ -335,59 +336,61 @@ agentProfiles:
         <tr>
           <td><code>GET</code></td>
           <th scope="row"><code>/v1/agent-profiles</code></th>
-          <td>API token</td>
+          <td>local-nodeでは任意のAPI token</td>
           <td>要求可能なProfileの安全な一覧。Runtime、endpoint、releaseは含めない</td>
         </tr>
         <tr>
           <td><code>POST</code></td>
           <th scope="row"><code>/v1/agent-connections</code></th>
-          <td>API token。allow-listed時はmanagement tokenも必要</td>
+          <td>local-nodeではAPI token任意。allow-listed時はmanagement token必須</td>
           <td>ProfileからAllocationとConnectionを作成</td>
         </tr>
         <tr>
           <td><code>GET</code></td>
           <th scope="row"><code>/v1/agent-connections/:id</code></th>
-          <td>作成principalのAPI token</td>
+          <td>local-nodeではAPI token任意</td>
           <td>secretを含まないlifecycle状態</td>
         </tr>
         <tr>
           <td><code>GET</code></td>
           <th scope="row"><code>/v1/agent-connections/:id/health</code></th>
-          <td>作成principalのAPI token</td>
+          <td>local-nodeではAPI token任意</td>
           <td>全required Providerのaggregate semantic readiness</td>
         </tr>
         <tr>
           <td><code>GET</code></td>
           <th scope="row"><code>/v1/agent-connections/:id/providers/:name/health</code></th>
-          <td>作成principalのAPI tokenまたは該当Provider token</td>
+          <td>該当Provider token、または設定済みAPI token</td>
           <td>一つのProviderだけのsemantic readiness</td>
         </tr>
         <tr>
           <td><code>POST</code></td>
           <th scope="row"><code>/v1/agent-connections/:id/claim</code></th>
-          <td>作成principalのAPI token</td>
+          <td>local-nodeではAPI token任意</td>
           <td>freshなsemantic readiness確認後にdescriptorとcredentialを取得</td>
         </tr>
         <tr>
           <td><code>POST</code></td>
           <th scope="row"><code>/v1/agent-connections/:id/renew</code></th>
-          <td>作成principalのAPI token</td>
+          <td>local-nodeではAPI token任意</td>
           <td>Allocation TTLを更新し、credential generationを進める</td>
         </tr>
         <tr>
           <td><code>DELETE</code></td>
           <th scope="row"><code>/v1/agent-connections/:id</code></th>
-          <td>作成principalのAPI token</td>
+          <td>local-nodeではAPI token任意</td>
           <td>credential失効とAllocation releaseを原子的に開始</td>
         </tr>
       </tbody>
     </table>
     <p>
-      Connection機能はloopbackでも<code>LARM_API_TOKEN</code>を必須とし、未設定時は全endpointを
-      <code>503 connection_auth_not_configured</code>でfail closedにします。v1のprincipalは受信したAPI
-      bearer tokenのSHA-256
-      fingerprintです。<code>client</code>は監査labelであり認証主体ではありません。
-      fingerprint、API token、management tokenはresponseへ返しません。
+      <code>LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS=true</code>のlocal-nodeでは、Profile一覧とConnection
+      create、status、aggregate health、claim、renew、releaseを長期Bearerなしでも許可します。通常の
+      Allocation、Gateway、管理API、claim後のProvider healthとWebSocketはこの例外に含めません。
+      Connection ownershipはdeployment内の単一local
+      principalへ束ね、<code>client</code>は監査labelで
+      あって認証主体ではありません。API token、management token、principal fingerprintはresponseへ
+      返しません。
     </p>
     <p>
       正常statusはProfile一覧とConnection
@@ -430,7 +433,7 @@ agentProfiles:
 
     <h3>Request</h3>
     <pre><code>POST /v1/agent-connections
-Authorization: Bearer &lt;LARM_API_TOKEN&gt;
+[Authorization: Bearer &lt;optional LARM_API_TOKEN&gt;]
 Idempotency-Key: agent-task-0182
 Content-Type: application/json
 
@@ -1025,7 +1028,7 @@ Content-Type: application/json
         <tr>
           <td>401</td>
           <th scope="row"><code>unauthorized</code></th>
-          <td>API tokenまたはAgent tokenの欠落、不正、期限切れ</td>
+          <td>保護対象control routeのAPI token、またはProvider tokenの欠落、不正、期限切れ</td>
         </tr>
         <tr>
           <td>403</td>
@@ -1102,7 +1105,7 @@ Content-Type: application/json
         <tr>
           <td>503</td>
           <th scope="row"><code>connection_auth_not_configured</code></th>
-          <td>API token未設定</td>
+          <td>server側API token未設定。nonloopback local-nodeでは起動設定不正</td>
         </tr>
         <tr>
           <td>503</td>
@@ -1295,7 +1298,7 @@ Content-Type: application/json
       API schema、認証主体、token wire format、権限matrix、状態遷移、失敗時cleanup、probe
       request、response判定、 timeout、cache、single-flight、Audience validation、catalog
       revision、永続化境界、error code、実装配置、受入testを
-      固定し、実装と実機E2Eを完了しました。SAAA向けにもclaim schemaは変更せず、認証済みrequest
+      固定し、実装と実機E2Eを完了しました。SAAA向けにもclaim schemaは変更せず、受理したrequest
       originからadvertised URLをConnection作成時に解決します。IP addressは設定・claim contractへ
       固定しません。今後のwire field変更はv1互換性を審査し、必要なら新しい contract
       versionとして扱います。

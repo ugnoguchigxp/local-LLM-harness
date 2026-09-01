@@ -216,7 +216,6 @@ export class LarmClient {
   }
 
   async listAgentProfiles(signal?: AbortSignal) {
-    this.requireAgentApiToken();
     const response = await this.request("/v1/agent-profiles", { signal });
     return this.parseJson(response, publicAgentProfileListSchema);
   }
@@ -225,7 +224,6 @@ export class LarmClient {
     request: AgentConnectionRequestInput,
     options: RequestOptions = {},
   ): Promise<PublicAgentConnection> {
-    this.requireAgentApiToken();
     const normalized = agentConnectionRequestSchema.parse(request);
     const response = await this.request("/v1/agent-connections", {
       method: "POST",
@@ -240,7 +238,6 @@ export class LarmClient {
   }
 
   async getAgentConnection(id: string, signal?: AbortSignal): Promise<PublicAgentConnection> {
-    this.requireAgentApiToken();
     return await this.getAgentConnectionWithin(id, signal, this.timeoutMs);
   }
 
@@ -262,7 +259,6 @@ export class LarmClient {
     connection: PublicAgentConnection,
     options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number } = {},
   ): Promise<PublicAgentConnection> {
-    this.requireAgentApiToken();
     const timeoutMs = options.timeoutMs ?? this.timeoutMs;
     const pollIntervalMs = options.pollIntervalMs ?? 250;
     this.validatePollingOptions(timeoutMs, pollIntervalMs);
@@ -297,7 +293,6 @@ export class LarmClient {
     id: string,
     signal?: AbortSignal,
   ): Promise<AgentConnectionHealth> {
-    this.requireAgentApiToken();
     const response = await this.request(
       `/v1/agent-connections/${encodeURIComponent(id)}/health`,
       { signal },
@@ -312,7 +307,6 @@ export class LarmClient {
     id: string,
     signal?: AbortSignal,
   ): Promise<AgentConnectionClaim> {
-    this.requireAgentApiToken();
     const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -327,7 +321,6 @@ export class LarmClient {
     ttlSeconds = 300,
     options: RequestOptions = {},
   ): Promise<PublicAgentConnection> {
-    this.requireAgentApiToken();
     const body = agentConnectionRenewRequestSchema.parse({ ttlSeconds });
     const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}/renew`, {
       method: "POST",
@@ -342,7 +335,6 @@ export class LarmClient {
   }
 
   async releaseAgentConnection(id: string, signal?: AbortSignal): Promise<void> {
-    this.requireAgentApiToken();
     const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}`, {
       method: "DELETE",
       signal,
@@ -359,7 +351,6 @@ export class LarmClient {
     ) => Promise<T>,
     options: RequestOptions & { pollIntervalMs?: number; timeoutMs?: number } = {},
   ): Promise<T> {
-    this.requireAgentApiToken();
     const created = await this.createAgentConnection(request, options);
     const outcome: { ok: true; value: T } | { ok: false; error: unknown } = await (async () => {
       try {
@@ -697,15 +688,6 @@ export class LarmClient {
       `connection ${connection.id} did not become ready before the client deadline`,
       connection,
     );
-  }
-
-  private requireAgentApiToken(): void {
-    if (!this.options.apiToken) {
-      throw new LarmClientConfigurationError(
-        "api_token_missing",
-        "LARM API token is required for Agent Connection requests; inject LARM_API_TOKEN into the client process",
-      );
-    }
   }
 
   private validatePollingOptions(timeoutMs: number, pollIntervalMs: number): void {

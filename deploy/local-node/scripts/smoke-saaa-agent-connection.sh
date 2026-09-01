@@ -17,10 +17,6 @@ require_release_identity="${LARM_SAAA_SMOKE_REQUIRE_RELEASE_IDENTITY:-1}"
 connection_id=""
 scratch_dir=""
 
-[[ -n "${LARM_API_TOKEN:-}" ]] || {
-  echo "LARM_API_TOKEN is required" >&2
-  exit 2
-}
 [[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ && "${timeout_seconds}" -le 3600 ]] || {
   echo "LARM_SAAA_SMOKE_TIMEOUT_SECONDS must be an integer from 1 through 3600" >&2
   exit 2
@@ -41,6 +37,10 @@ scratch_dir=""
   echo "LARM_AGENT_WAIT_FOR_RUNTIME_RELEASE must be 0 or 1" >&2
   exit 2
 }
+if [[ "${wait_for_runtime_release}" == "1" && -z "${LARM_API_TOKEN:-}" ]]; then
+  echo "LARM_API_TOKEN is required when LARM_AGENT_WAIT_FOR_RUNTIME_RELEASE=1" >&2
+  exit 2
+fi
 if [[ "${agent_audience}" == "saaa-desktop" \
   && "${base_url}" =~ ^https?://(localhost|127\.[0-9.]+|\[::1\])(:[0-9]+)?$ ]]; then
   echo "LARM_BASE_URL must use the LAN hostname or current DHCP address for saaa-desktop" >&2
@@ -54,10 +54,18 @@ curl_bearer() {
   curl --config <(printf 'header = "Authorization: Bearer %s"\n' "${token}") "$@"
 }
 
+curl_control() {
+  if [[ -n "${LARM_API_TOKEN:-}" ]]; then
+    curl_bearer "${LARM_API_TOKEN}" "$@"
+  else
+    curl "$@"
+  fi
+}
+
 release_connection() {
   local status
   [[ -n "${connection_id}" ]] || return 0
-  status="$(curl_bearer "${LARM_API_TOKEN}" -sS --max-time 15 -o /dev/null -w '%{http_code}' \
+  status="$(curl_control -sS --max-time 15 -o /dev/null -w '%{http_code}' \
     -X DELETE "${base_url}/v1/agent-connections/${connection_id}" || true)"
   if [[ "${status}" != "204" ]]; then
     echo "failed to release Agent Connection during cleanup: HTTP ${status:-unavailable}" >&2
@@ -81,7 +89,7 @@ jq -e --arg requireReleaseIdentity "${require_release_identity}" \
 readiness="$(curl -fsS --max-time 10 "${base_url}/ready")"
 jq -e '.status == "ready"' <<<"${readiness}" >/dev/null
 
-curl_bearer "${LARM_API_TOKEN}" -fsS --max-time 15 \
+curl_control -fsS --max-time 15 \
   -D "${scratch_dir}/profiles.headers" \
   -o "${scratch_dir}/profiles.json" \
   "${base_url}/v1/agent-profiles"
@@ -113,7 +121,7 @@ connection_request="$(jq -cn \
   --argjson ttlSeconds "${ttl_seconds}" \
   '{agentProfile:$agentProfile,audience:$audience,client:$client,ttlSeconds:$ttlSeconds,
     allowFallback:false,deploymentPolicy:"existing-only"}')"
-create_status="$(curl_bearer "${LARM_API_TOKEN}" -sS --max-time 30 \
+create_status="$(curl_control -sS --max-time 30 \
   -X POST "${base_url}/v1/agent-connections" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: saaa-smoke-${BASHPID}-${RANDOM}" \
@@ -153,7 +161,7 @@ while true; do
         exit 1
       fi
       sleep 1
-      connection="$(curl_bearer "${LARM_API_TOKEN}" -fsS --max-time 15 \
+      connection="$(curl_control -fsS --max-time 15 \
         "${base_url}/v1/agent-connections/${connection_id}")"
       ;;
     *)
@@ -170,7 +178,7 @@ jq -e --arg agentProfile "${agent_profile}" --arg audience "${agent_audience}" \
   and .providers[0].name == "llm" and .providers[0].publicModel == $agentProfile
   and .providers[0].claimable == true' <<<"${connection}" >/dev/null
 
-claim="$(curl_bearer "${LARM_API_TOKEN}" -fsS --max-time 30 \
+claim="$(curl_control -fsS --max-time 30 \
   -X POST "${base_url}/v1/agent-connections/${connection_id}/claim" \
   -H 'Content-Type: application/json' \
   -d '{"format":"openai-provider-v1"}')"
@@ -224,14 +232,14 @@ LARM_SAAA_MODEL="${provider_model}" \
 LARM_SAAA_SMOKE_TIMEOUT_MS="$((timeout_seconds > 300 ? 300000 : timeout_seconds * 1000))" \
   bun run "${repo_root}/deploy/local-node/scripts/smoke-saaa-websocket.ts"
 
-release_status="$(curl_bearer "${LARM_API_TOKEN}" -sS --max-time 15 -o /dev/null -w '%{http_code}' \
+release_status="$(curl_control -sS --max-time 15 -o /dev/null -w '%{http_code}' \
   -X DELETE "${base_url}/v1/agent-connections/${connection_id}")"
 [[ "${release_status}" == "204" ]] || {
   echo "Agent Connection release returned HTTP ${release_status}" >&2
   exit 1
 }
 
-released_connection="$(curl_bearer "${LARM_API_TOKEN}" -fsS --max-time 15 \
+released_connection="$(curl_control -fsS --max-time 15 \
   "${base_url}/v1/agent-connections/${connection_id}")"
 jq -e --arg connectionId "${connection_id}" \
   '.id == $connectionId and .status == "released" and (.releasedAt | length > 0)' \

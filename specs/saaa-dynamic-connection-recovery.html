@@ -9,7 +9,10 @@
 
   <dl>
     <dt>対応状態</dt>
-    <dd>Repositoryのrequest-origin改修済み、clean release配備とSAAA Mac LAN canary待ち</dd>
+    <dd>
+      request-originとoptional control credentialを実装済み、clean release配備とSAAA Mac LAN
+      canary待ち
+    </dd>
     <dt>確認時刻</dt>
     <dd><time>2026-08-29T12:09:56Z</time></dd>
     <dt>稼働release</dt>
@@ -28,19 +31,31 @@
     </p>
   </aside>
 
+  <aside>
+    <p>
+      <strong>2026-09-01 decision update:</strong>
+      local-nodeでは長期<code>LARM_API_TOKEN</code>をAgent Connection
+      lifecycleの任意credentialへ変更する。
+      <code>LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS=true</code>のとき、Profile一覧、create、poll、aggregate
+      health、claim、renew、releaseを匿名で許可する。通常のcontrol・management
+      APIと、claim後に発行する 短期Provider/WebSocket
+      credentialは引き続き必須である。この決定は以下の旧必須token運用を置き換える。
+    </p>
+  </aside>
+
   <section id="root-cause">
     <h2>原因と境界</h2>
     <p>
-      観測された4ミリ秒の失敗は、SAAA
+      当時観測された4ミリ秒の失敗は、SAAA
       processに<code>LARM_API_TOKEN</code>が存在せず、HTTP request前のClient
       preflightで停止したものです。LARM daemon、LAN descriptor、推論modelの失敗では
       ありません。token値をsource、文書、chat、通常logへ埋め込む修正は行いません。
     </p>
     <p>
-      Clientは未認証livenessとcredential不在を分離して報告し、Agent Connection APIだけを
+      当時のClientは未認証livenessとcredential不在を分離して報告し、Agent Connection APIを
       <code>api_token_missing</code>でfail
-      fastさせます。credentialの実値はSAAA側の承認済みsecret
-      storeからprocess起動環境へ注入する必要があります。
+      fastさせていました。2026-09-01以降のClientはtoken省略時に Authorization headerなしでAgent
+      Connection requestを送り、local-nodeの匿名lifecycleを使用します。
     </p>
     <p>
       追加調査では、旧releaseが固定したLAN addressと現在のDHCP addressが不一致となり、claim後の data
@@ -83,8 +98,8 @@
         </tr>
         <tr>
           <th scope="row">Credential preflight</th>
-          <td>Agent APIをtokenなしで呼ぶと<code>api_token_missing</code></td>
-          <td>HTTP 401とlocal設定不備を混同せず、token値をerrorへ含めない</td>
+          <td>Agent APIはtoken省略時にAuthorization headerなしで送信</td>
+          <td>local-node匿名lifecycleを使用し、任意tokenの値をerrorやlogへ含めない</td>
         </tr>
         <tr>
           <th scope="row">Bounded poll</th>
@@ -145,7 +160,7 @@
         </tr>
         <tr>
           <th scope="row">Activation</th>
-          <td><time>2026-08-29T10:19:43Z</time>の現daemon起動時にはactive</td>
+          <td>daemonでは通常control API用にactive。SAAA Agent Connectionでは省略可能</td>
         </tr>
         <tr>
           <th scope="row">Expiry</th>
@@ -153,25 +168,28 @@
         </tr>
         <tr>
           <th scope="row">無効値</th>
-          <td>HTTP 401、error code <code>unauthorized</code></td>
+          <td>
+            匿名対象外のcontrol APIではHTTP 401、error code
+            <code>unauthorized</code>
+          </td>
         </tr>
         <tr>
           <th scope="row">Rotation</th>
           <td>
-            承認済み保守時間にSAAA secretとserver credentialを更新し、daemonとSAAA
-            processを再起動する。 単一control tokenのため切替は合同で行う
+            server credentialを更新してdaemonを再起動する。SAAAが任意tokenを保存していない場合、
+            SAAA側の合同rotationは不要
           </td>
         </tr>
         <tr>
           <th scope="row">失効</th>
-          <td>server credentialを別値へrotationすると旧値は直ちに401となる</td>
+          <td>旧値は保護対象control APIで直ちに401となる。匿名Agent lifecycleには影響しない</td>
         </tr>
       </tbody>
     </table>
     <p>
-      SAAAへ渡すsecretは長期API tokenだけです。management token、Connection signing key、serverの
-      credential file全体は渡しません。受け渡しchannelはrepositoryでは決定できないため、SAAA ownerが
-      利用するsecret storeとprocess注入方法を合同canary前に確定します。
+      local-nodeのSAAAへ長期API tokenを渡す必要はありません。設定する場合も任意であり、management
+      token、Connection signing key、serverのcredential file全体は渡しません。claimが発行する短期
+      Provider tokenだけをProvider health、Gateway、WebSocketへ使用します。
     </p>
   </section>
 
@@ -183,7 +201,7 @@
         >と<code>/ready</code>は未認証、model・profile・secretを返さない。
       </li>
       <li>
-        認証済み<code>/v1/agent-profiles</code>は200と64桁小文字16進revisionを返す。
+        匿名または認証済み<code>/v1/agent-profiles</code>は200と64桁小文字16進revisionを返す。
       </li>
       <li>
         <code>deep-reasoning-35b</code>は<code>llm.reasoning</code>、
@@ -192,11 +210,11 @@
       </li>
       <li>
         <code>saaa-desktop</code>のdata
-        planeは認証済みConnection作成requestのoriginを使用し、canonical
+        planeは受理したConnection作成requestのoriginを使用し、canonical
         pathは<code>/v1</code>、port
         contractは9810、loopbackおよびwildcardは拒否する。
       </li>
-      <li>無効またはrotation済みの長期tokenは401、期限切れ短期Provider tokenも401となる。</li>
+      <li>匿名対象外routeの無効な長期tokenは401、期限切れ短期Provider tokenも401となる。</li>
     </ul>
   </section>
 
@@ -211,8 +229,8 @@
     </p>
     <p>
       SAAA送信元<code>192.168.0.76</code>からの最終canaryは未実施です。完了条件はSAAA
-      processへ credentialを注入し、同じrevisionを観測してauthentication
-      failureなしでこのlifecycleを再実行することです。
+      processが長期 credentialなしで同じrevisionを観測し、匿名createから短期Provider
+      credential取得、WebSocket completion、releaseまでを再実行することです。
     </p>
     <p>
       追加のlocal-node検証では、Resident直接推論がHTTP 200、初回応答0.68秒、SAAA形式の短期tokenと

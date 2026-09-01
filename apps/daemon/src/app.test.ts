@@ -2200,6 +2200,16 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
   });
   expect(createdResponse.status).toBe(201);
   const created = publicAgentConnectionSchema.parse(await createdResponse.json());
+  expect((await app.request(`/v1/agent-connections/${created.id}`)).status).toBe(200);
+  expect((await app.request(`/v1/agent-connections/${created.id}/health`)).status).toBe(200);
+  expect((await app.request(`/v1/agent-connections/${created.id}/renew`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": "anonymous-renew-1",
+    },
+    body: JSON.stringify({ ttlSeconds: 600 }),
+  })).status).toBe(200);
   const claimResponse = await app.request(`/v1/agent-connections/${created.id}/claim`, {
     method: "POST",
     headers: { "content-type": "application/json" },

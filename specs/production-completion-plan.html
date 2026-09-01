@@ -140,10 +140,11 @@
       <li>LLM、STT、TTS Providerはlocal-nodeのloopbackだけでlistenする。</li>
       <li>
         LARMのproduction
-        unitは<code>0.0.0.0:9810</code>でlistenし、認証済みConnection
+        unitは<code>0.0.0.0:9810</code>でlistenし、受理したConnection
         requestのoriginから SAAA向けGateway URLを生成する。LAN
-        IPを固定または広告設定へ保存しない。API・management tokenを必須にし、port 9810はreview済み
-        LAN CIDRだけを許可する。LAN境界外へ広げる場合はTLS終端を別decisionで必須とする。
+        IPを固定または広告設定へ保存しない。serverのAPI・management tokenは維持し、Agent Connection
+        lifecycleだけは長期Bearerを任意とする。port 9810はreview済み LAN
+        CIDRだけを許可する。LAN境界外へ広げる場合はTLS終端を別decisionで必須とする。
       </li>
       <li>Qwen 3.8 27B、Qwen ASR、VOICEVOXはResidentとしてboot後に利用可能である。</li>
       <li>27B workersとQwen TTSはCOLDを許容し、明示routeまたは許可済みfallbackでだけ起動する。</li>

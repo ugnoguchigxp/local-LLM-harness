@@ -27,20 +27,20 @@ API tokenとmanagement tokenは別設定で、通常requestへmanagement token�
 epochが変わった場合は自動retryせず`LarmEpochChangedError`を返し、呼出側へ再Allocationを要求します。
 
 Agent向けにはProfile一覧、Connection作成・poll、semantic health、claim、renew、releaseを型付きで
-提供します。claimされた短期tokenはLARM clientの長期control tokenと混ぜず、返された
-`baseUrl`と`model`へそのまま設定します。Agent APIをtokenなしで呼ぶとHTTP requestを送る前に
-`LarmClientConfigurationError`（`code: "api_token_missing"`）を返します。未認証で利用できる
-`getHealth()`と`getReadiness()`はAuthorization headerを送らないため、host到達不能、host非ready、
-Client credential不在を別々に判定できます。最後に観測したresponse headerは
+提供します。claimされた短期tokenはLARM clientの任意な長期control tokenと混ぜず、返された
+`baseUrl`と`model`へそのまま設定します。Agent Connection lifecycleは`apiToken`を省略でき、Clientは
+その場合Authorization headerを送りません。local-nodeはこの匿名lifecycleを有効にしますが、通常の
+Allocation、Gateway、管理APIは引き続き認証必須です。`getHealth()`と`getReadiness()`もAuthorization
+headerを送らず、host到達不能とhost非readyを分離します。最後に観測したresponse headerは
 `observedConfigRevision`と`observedBootEpoch`で確認できます。
 
 ```ts
-const apiToken = process.env.LARM_API_TOKEN;
 const gatewayUrl = process.env.LARM_BASE_URL;
 if (!gatewayUrl) throw new Error("LARM_BASE_URL must come from host discovery or operator configuration");
 const larm = new LarmClient({
   baseUrl: gatewayUrl,
-  apiToken,
+  // 任意。local-nodeのAgent Connection lifecycleは省略可能。
+  apiToken: process.env.LARM_API_TOKEN,
 });
 
 const health = await larm.getHealth();
@@ -48,8 +48,6 @@ const readiness = await larm.getReadiness();
 if (health.status !== "ok" || readiness.status !== "ready") {
   throw new Error("LARM is not ready");
 }
-if (!apiToken) throw new Error("LARM_API_TOKEN is not injected into this process");
-
 const profiles = await larm.listAgentProfiles();
 if (!profiles.profiles.some(({ id }) => id === "coding-default")) {
   throw new Error("required Agent Profile is not advertised");

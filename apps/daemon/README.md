@@ -40,7 +40,7 @@ bun run dev
 | `LARM_STATE_MAX_AGE_SECONDS` | `10` | observer snapshot freshness上限 |
 | `LARM_HISTORY_LIMIT` | `1000` | memory上のterminal履歴上限 |
 | `LARM_ACTIVE_ALLOCATION_LIMIT` | `1000` | active Allocationと直接Legacy Leaseの合計上限 |
-| `LARM_API_TOKEN` | 未設定 | control API認証。Agent Connection APIではloopbackでも必須 |
+| `LARM_API_TOKEN` | 未設定 | 通常control API認証。匿名Agent Connectionを有効にしたlocal-nodeでも他のcontrol APIには必須 |
 | `LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS` | `false` | `true`の場合、Agent Connection lifecycleだけを長期Bearerなしで許可。claim後のprovider credentialは引き続き必須 |
 | `LARM_MANAGEMENT_TOKEN` | 未設定 | artifact、release、catalog管理用の別credential |
 | `LARM_CONNECTION_SIGNING_KEY` | 未設定 | Agent Provider短期token用の32-byte unpadded base64url鍵 |
@@ -75,7 +75,7 @@ bun run dev
 
 数値設定は起動時に範囲検証され、不正値ではdaemonを起動しません。
 
-loopback以外でlistenする場合は`LARM_API_TOKEN`と`LARM_MANAGEMENT_TOKEN`の両方が必須です。`LARM_API_TOKEN`を設定した場合、`/health`と`/ready`以外へ`Authorization: Bearer ...`が必要です。
+loopback以外でlistenする場合は`LARM_API_TOKEN`と`LARM_MANAGEMENT_TOKEN`の両方がserver設定として必須です。`LARM_API_TOKEN`を設定した場合、`/health`、`/ready`と明示的に有効化した匿名Agent Connection lifecycle以外へ`Authorization: Bearer ...`が必要です。
 loopbackでも`LARM_MANAGEMENT_TOKEN`がない場合、Artifact管理と`allow-listed`配備はfail closedで無効になります。
 Artifactの生成stateは既定で`/var/lib/larm`、stagingとrollback dataは`/srv/ai/models/.larm-*`へ置きます。
 
@@ -217,8 +217,9 @@ curl -fsS -X POST "http://127.0.0.1:9810/v1/agent-connections/${connection_id}/c
 `max_tokens: 1`の固定推論を行い、completion tokenがちょうど1であることまで検証します。
 成功は10秒、失敗は1秒だけcacheし、通常task queueへprobeを追加しません。
 SAAAのMac接続は[`../../docs/local-node.md`](../../docs/local-node.md)の直接LAN接続contractを使います。
-local-nodeのproduction unitは認証を必須にした上で`0.0.0.0:9810`をlistenし、Audience
-`saaa-desktop`は認証済みConnection作成requestのoriginから`/v1` URLを生成します。固定IPは
+local-nodeのproduction unitは通常control・management APIの認証を維持して`0.0.0.0:9810`をlistenし、
+Agent Connection lifecycleだけは長期Bearerを省略できます。Audience `saaa-desktop`は受理したConnection
+作成requestのoriginから`/v1` URLを生成します。固定IPは
 設定せず、SAAAはmDNS/DNS名または現在のDHCP addressで到達したURLをそのまま使用します。
 
 ## Artifact operations

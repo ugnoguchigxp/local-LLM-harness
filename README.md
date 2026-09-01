@@ -188,7 +188,7 @@ LARM_ROUTE=<route-id> LARM_MODEL=<upstream-model-id> bun quickstart.ts
 
 - 既定では loopback だけで待ち受けます。
 - loopback 以外で待ち受ける場合は、`LARM_API_TOKEN` と `LARM_MANAGEMENT_TOKEN` の両方が必要です。
-- `LARM_API_TOKEN` を設定すると、`/health` と `/ready` を除く API で Bearer 認証が必要になります。
+- `LARM_API_TOKEN` を設定すると通常APIでBearer認証が必要です。local-nodeで明示的に有効化したAgent Profile・Connection lifecycleだけは長期Bearerを省略できます。
 - 成果物、リリース、catalog の管理操作には、通常の API token とは別に management token が必要です。
 - 管理 API は、リクエストから任意の URL、ファイルパス、サービス名、コマンドを受け取りません。事前に許可リストへ登録した対象だけを操作します。
 - token、署名鍵、内部 endpoint をリポジトリへコミットしないでください。

@@ -490,6 +490,13 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       || path.startsWith("/v1/catalog/")
       || path.startsWith("/v1/inspection/");
     const publicOperation = operationId === "getHealth" || operationId === "getReadiness";
+    const optionalAgentBearerOperation = operationId === "listAgentProfiles"
+      || operationId === "createAgentConnection"
+      || operationId === "getAgentConnection"
+      || operationId === "getAgentConnectionHealth"
+      || operationId === "claimAgentConnection"
+      || operationId === "renewAgentConnection"
+      || operationId === "releaseAgentConnection";
     const providerBearerOperation = operationId === "getAgentProviderHealth"
       || operationId === "createChatCompletion"
       || operationId === "upgradeLlmStream"
@@ -524,6 +531,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       operationId,
       security: publicOperation ? [] : management
         ? [{ bearerAuth: [], managementToken: [] }]
+        : optionalAgentBearerOperation
+        ? [{}, { bearerAuth: [] }]
         : providerBearerOperation
         ? [{ bearerAuth: [] }, { providerBearer: [] }]
         : [{ bearerAuth: [] }],

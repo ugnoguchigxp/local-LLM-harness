@@ -41,16 +41,19 @@ SAAA discovers a DHCP-aware hostname such as `gnosis.local` (or receives the cur
 operator configuration), calls that control URL, and requests audience `saaa-desktop`. The claim
 uses the request's scheme, hostname or current address, and port with the canonical `/v1` path.
 SAAA passes that `baseUrl`, `model`, and short-lived `credential.token` to its OpenAI-compatible
-client without rewriting them. The long-lived `LARM_API_TOKEN` remains in the macOS secret store,
-not in routing configuration. LARM ignores `X-Forwarded-*`; a future reverse-proxy deployment needs
-a separately reviewed trusted-proxy contract.
+client without rewriting them. The local-node profile permits the Agent Connection control
+lifecycle without a long-lived `LARM_API_TOKEN`; if configured, that token remains optional and is
+never returned in routing data. LARM ignores `X-Forwarded-*`; a future reverse-proxy deployment
+needs a separately reviewed trusted-proxy contract.
 
 Provider ports 8080–8084 remain loopback-only. Only the authenticated Gateway at 9810 is exposed
-to the reviewed SAAA source host. An unauthenticated control request must return 401, while `/health` and
-`/ready` remain credential-free operational probes and do not disclose Provider endpoints.
+to the reviewed SAAA source host. Anonymous requests are accepted only for Agent Profile and Agent
+Connection lifecycle routes. Other control requests return 401, while `/health` and `/ready` remain
+credential-free operational probes and do not disclose Provider endpoints.
 
 LLM realtime output uses `saaa.llm-stream.v1` at the claim-provided
-`/v1/llm/stream` WSS URL. Port 8090 is the external runtime's native event endpoint; it is never
+`/v1/llm/stream` WS URL for the local LAN, or WSS URL for a separately configured TLS audience.
+Port 8090 is the external runtime's native event endpoint; it is never
 exposed to SAAA and must not implement or proxy SSE. LARM probes its exact
 `larm.native-llm-stream.v1` subprotocol and requires a strict semantic readiness declaration for
 SAD1 encoding, pause/resume, cancel, tool continuation, usage, and advertised capacity before

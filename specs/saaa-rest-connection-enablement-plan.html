@@ -38,7 +38,9 @@
   <section id="goal">
     <h2>今回やりたいこと</h2>
     <ol>
-      <li>local-nodeでLARM daemonを常駐させ、認証付きREST APIをTCP 9810で利用可能にします。</li>
+      <li>
+        local-nodeでLARM daemonを常駐させ、Agent Connection REST APIをTCP 9810で利用可能にします。
+      </li>
       <li>
         SAAAは<code>coding-default</code>と<code>saaa-desktop</code>を指定してConnectionを作成します。
       </li>
@@ -47,7 +49,9 @@
         responseの<code>baseUrl</code>、<code>model</code>、短期tokenからOpenAI
         clientを動的に 構成します。
       </li>
-      <li>SAAAはSSE inferenceを実行し、終了時にREST DELETEでConnectionを解放します。</li>
+      <li>
+        SAAAはNative WebSocket inferenceを実行し、終了時にREST DELETEでConnectionを解放します。
+      </li>
     </ol>
     <p>
       SAAAからlocal-nodeへの接続はREST APIだけを使用します。SSH、SFTP、SCP、SSH tunnel、port
@@ -105,7 +109,7 @@
       <li>
         <code>larm-daemon.service</code>、credential、polkit、versioned releaseの導入
       </li>
-      <li>SAAAからTCP 9810の認証付きREST APIを利用できるようにするnetwork設定</li>
+      <li>SAAAからTCP 9810の匿名Agent Connection REST APIを利用できるようにするnetwork設定</li>
       <li><code>local-node</code>上でのAgent Connection REST lifecycle確認</li>
       <li>SAAA adapterのdynamic claim対応とMacからのLAN canary</li>
       <li>秘密情報を含まない完了報告</li>
@@ -126,15 +130,15 @@
     <h2>接続contract</h2>
     <figure>
       <pre><code>SAAA keeps:
-  control URL + long-lived API token + profile + audience
+  control URL + profile + audience
 
 POST create -> GET poll -> POST claim
                             |
                             v
-                  dynamic baseUrl/model/short token
+                  dynamic baseUrl/model/short token/stream URL
                             |
                             v
-                    OpenAI-compatible SSE
+                    Native WebSocket inference
                             |
                             v
                        DELETE release</code></pre>
@@ -156,8 +160,8 @@ POST create -> GET poll -> POST claim
       <tbody>
         <tr>
           <th scope="row">Static bootstrap</th>
-          <td>control URL、API token、profile、audience</td>
-          <td>SAAA host設定とsecret store</td>
+          <td>control URL、profile、audience</td>
+          <td>SAAA host設定</td>
         </tr>
         <tr>
           <th scope="row">Dynamic provider</th>
@@ -185,7 +189,7 @@ POST create -> GET poll -> POST claim
     <ol>
       <li>SAAA Macの送信元IPv4を確認します。firewall ruleはこのhostだけに限定します。</li>
       <li>SAAAがREST-onlyとdynamic claim contractを受け入れることを確認します。</li>
-      <li>長期API tokenをSAAA processへ設定するoperator secret channelを確認します。</li>
+      <li>SAAAが長期API tokenなしでAgent Connection lifecycleを呼ぶことを確認します。</li>
     </ol>
 
     <h3>2. local-nodeでREST Gatewayを有効化</h3>
@@ -222,8 +226,8 @@ POST create -> GET poll -> POST claim
         >または<code>probing</code>をpollし、<code>ready</code>を待ちます。
       </li>
       <li>claim responseのaudience、base URL、model、health URL、expiryを検証します。</li>
-      <li>短期tokenでsemantic healthとSSE inferenceを実行します。</li>
-      <li>非空completionとSSE <code>[DONE]</code>を確認します。</li>
+      <li>短期tokenでsemantic healthとNative WebSocket inferenceを実行します。</li>
+      <li>非空completionとterminal integrityを確認します。</li>
       <li>
         REST DELETEが204となり、Connectionが解放され、Resident Qwen 3.8 27Bは稼働を継続することを
         確認します。
@@ -232,9 +236,11 @@ POST create -> GET poll -> POST claim
 
     <h3>4. SAAA adapterとLAN canary</h3>
     <ol>
-      <li>Operatorが長期API tokenだけを承認済みsecret channelからSAAA processへ設定します。</li>
-      <li>SAAA adapterがcreate、poll、claim、dynamic OpenAI client、SSE、releaseを実行します。</li>
-      <li>SAAA Macから9810の認証付きREST APIが成功することを確認します。</li>
+      <li>
+        SAAA adapterが長期credentialなしでcreate、poll、claim、Native
+        WebSocket、releaseを実行します。
+      </li>
+      <li>SAAA Macから9810の匿名Agent Connection REST APIが成功することを確認します。</li>
       <li>SAAAがSSH、direct Provider、保存済みdescriptorを使用していないことを確認します。</li>
       <li>双方が同じrelease commitとconfig revisionを記録します。</li>
     </ol>
@@ -244,16 +250,18 @@ POST create -> GET poll -> POST claim
     <h2>完了条件</h2>
     <ul>
       <li>LARM daemonがenabled・activeで、health、ready、release manifestのidentityが一致する。</li>
-      <li>SAAAから9810の認証付きREST APIへ接続でき、未認証requestは401となる。</li>
+      <li>
+        SAAAから9810の匿名Agent Connection REST APIへ接続でき、匿名の通常control APIは401となる。
+      </li>
       <li>
         <code>coding-default</code>をfallbackなしでcreate、poll、claimし、claim
         responseだけから OpenAI clientを構成できる。
       </li>
       <li>
-        SSE inferenceが完了し、DELETE release後にConnectionのleakがなく、Resident Qwen 3.8 27Bが
-        HOTのままである。
+        Native WebSocket inferenceが完了し、DELETE release後にConnectionのleakがなく、Resident Qwen
+        3.8 27Bが HOTのままである。
       </li>
-      <li>SAAAが長期API token以外のlocal-node secretを保持しない。</li>
+      <li>SAAAがclaimされた短期Provider token以外のlocal-node secretを保持しない。</li>
       <li>SAAAからの接続・運用にSSH、SFTP、SCP、tunnel、port forwardingを使用しない。</li>
     </ul>
   </section>
@@ -278,7 +286,7 @@ POST create -> GET poll -> POST claim
     <h2>証跡</h2>
     <p>
       full commit、config revision、boot epoch、health・ready、REST
-      status、SSE完了、release結果だけを記録します。 API token、management token、signing
+      status、WebSocket完了、release結果だけを記録します。management token、signing
       key、短期token、Authorization header、prompt、completion本文は
       標準出力、evidence、Gitへ保存しません。
     </p>
