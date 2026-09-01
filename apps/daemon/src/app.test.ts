@@ -2165,3 +2165,55 @@ test("agent connection endpoints fail closed when API or signing credentials are
     headers: agentHeaders(),
   })).status).toBe(503);
 });
+
+test("anonymous Agent Connection lifecycle still issues a scoped provider credential", async () => {
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    allowAnonymousAgentConnections: true,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog,
+    gatewayFetch: async () => Response.json({
+      choices: [{ index: 0, message: { role: "assistant", content: "" } }],
+      usage: { completion_tokens: 1 },
+    }),
+    resolveStreaming: ({ audienceBaseUrl }) => ({
+      protocol: "saaa.llm-stream.v1",
+      url: `${audienceBaseUrl.replace(/^http/, "ws")}/llm/stream`,
+      encoding: "json-control+binary-delta-v1",
+      compression: "none",
+      maxConcurrentRuns: 1,
+      maxConnections: 1,
+      resumeWindowMs: 120_000,
+      upstreamTransport: "native",
+    }),
+  });
+
+  expect((await app.request("/v1/agent-profiles")).status).toBe(200);
+  expect((await app.request("/runtimes")).status).toBe(401);
+  const createdResponse = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": "anonymous-create-1",
+    },
+    body: JSON.stringify({ agentProfile: "coding", audience: "loopback" }),
+  });
+  expect(createdResponse.status).toBe(201);
+  const created = publicAgentConnectionSchema.parse(await createdResponse.json());
+  const claimResponse = await app.request(`/v1/agent-connections/${created.id}/claim`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ format: "openai-provider-v1" }),
+  });
+  expect(claimResponse.status).toBe(200);
+  const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
+  const credential = claim.providers[0]!.credential.token;
+  expect(credential).toStartWith("larm_conn_v1.");
+  expect((await app.request(claim.providers[0]!.health.url)).status).toBe(401);
+  expect((await app.request(claim.providers[0]!.health.url, {
+    headers: { authorization: `Bearer ${credential}` },
+  })).status).toBe(200);
+  expect((await app.request(`/v1/agent-connections/${created.id}`, {
+    method: "DELETE",
+  })).status).toBe(204);
+});

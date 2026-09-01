@@ -18,6 +18,7 @@ export type DaemonConfig = {
   historyLimit: number;
   activeAllocationLimit: number;
   apiToken?: string;
+  allowAnonymousAgentConnections: boolean;
   managementToken?: string;
   connectionSigningKey?: Uint8Array;
   connectionReadyTimeoutMs: number;
@@ -87,6 +88,18 @@ function secondsSetting(
   max = 2_147_483,
 ): number {
   return numberSetting(env, name, fallback, { min, max }) * 1_000;
+}
+
+function booleanSetting(
+  env: Environment,
+  name: string,
+  fallback: boolean,
+): boolean {
+  const value = env[name];
+  if (value === undefined) return fallback;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`${name} must be true or false`);
 }
 
 function optionalSecret(value: string | undefined): string | undefined {
@@ -235,6 +248,11 @@ export function parseDaemonConfig(
       integer: true,
     }),
     apiToken,
+    allowAnonymousAgentConnections: booleanSetting(
+      env,
+      "LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS",
+      false,
+    ),
     managementToken,
     connectionSigningKey: connectionSigningKey(env.LARM_CONNECTION_SIGNING_KEY),
     connectionReadyTimeoutMs: secondsSetting(

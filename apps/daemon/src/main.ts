@@ -239,6 +239,7 @@ const appComponents = createAppComponents({
   getState: () => observer.getState(),
   control,
   apiToken: config.apiToken,
+  allowAnonymousAgentConnections: config.allowAnonymousAgentConnections,
   managementToken: config.managementToken,
   artifactManager,
   runtimeReleaseManager,

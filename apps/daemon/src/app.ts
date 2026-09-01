@@ -58,6 +58,7 @@ export type AppDeps = {
   getState: () => ClusterState;
   control: ControlPlane;
   apiToken?: string;
+  allowAnonymousAgentConnections?: boolean;
   managementToken?: string;
   artifactManager?: ArtifactManager;
   runtimeReleaseManager?: RuntimeReleaseManager;
@@ -118,6 +119,17 @@ function acceptsProviderBearer(method: string, path: string): boolean {
   return method === "GET"
     && (path === "/v1/llm/stream"
       || /^\/v1\/agent-connections\/[^/]+\/providers\/[^/]+\/health$/.test(path));
+}
+
+function acceptsAnonymousAgentConnection(method: string, path: string): boolean {
+  if (method === "GET" && path === "/v1/agent-profiles") return true;
+  if (method === "POST" && path === "/v1/agent-connections") return true;
+  if (/^\/v1\/agent-connections\/[^/]+$/.test(path)) {
+    return method === "GET" || method === "DELETE";
+  }
+  if (/^\/v1\/agent-connections\/[^/]+\/health$/.test(path)) return method === "GET";
+  return method === "POST"
+    && /^\/v1\/agent-connections\/[^/]+\/(claim|renew)$/.test(path);
 }
 
 export function publicRuntime(runtime: Registry["runtimes"][number]) {
@@ -272,7 +284,9 @@ export function createAppComponents(deps: AppDeps) {
     c.header("x-larm-boot-epoch", identity.bootEpoch);
     c.header("x-larm-config-revision", deps.getConfigRevision?.() ?? identity.configRevision);
     const publicPath = c.req.path === "/health" || c.req.path === "/ready";
-    if (deps.apiToken && !publicPath) {
+    const anonymousAgentConnection = deps.allowAnonymousAgentConnections === true
+      && acceptsAnonymousAgentConnection(c.req.method, c.req.path);
+    if (deps.apiToken && !publicPath && !anonymousAgentConnection) {
       const expected = `Bearer ${deps.apiToken}`;
       const authorization = c.req.header("authorization");
       const providerBearer = authorization?.startsWith("Bearer larm_conn_v1.") === true

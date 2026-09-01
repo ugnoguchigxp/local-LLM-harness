@@ -26,6 +26,7 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.inferenceAuditRoot).toBe("/var/lib/larm/inference-audit");
   expect(config.inferenceAuditKeyFile).toBe("/etc/larm/inference-audit.key");
   expect(config.connectionSigningKey).toBeUndefined();
+  expect(config.allowAnonymousAgentConnections).toBeFalse();
   expect(config.configDir).toBe("/workspace/config/local-node");
 });
 
@@ -119,9 +120,15 @@ test("non-loopback listeners require both API tokens", () => {
     LARM_HOST: "0.0.0.0",
     LARM_API_TOKEN: "api",
   })).toThrow(/LARM_MANAGEMENT_TOKEN/);
-  expect(parseDaemonConfig({
+  const config = parseDaemonConfig({
     LARM_HOST: "0.0.0.0",
     LARM_API_TOKEN: "api",
     LARM_MANAGEMENT_TOKEN: "management",
-  }).hostname).toBe("0.0.0.0");
+    LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS: "true",
+  });
+  expect(config.hostname).toBe("0.0.0.0");
+  expect(config.allowAnonymousAgentConnections).toBeTrue();
+  expect(() => parseDaemonConfig({
+    LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS: "yes",
+  })).toThrow(/must be true or false/);
 });

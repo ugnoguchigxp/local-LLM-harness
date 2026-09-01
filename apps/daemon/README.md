@@ -41,6 +41,7 @@ bun run dev
 | `LARM_HISTORY_LIMIT` | `1000` | memory上のterminal履歴上限 |
 | `LARM_ACTIVE_ALLOCATION_LIMIT` | `1000` | active Allocationと直接Legacy Leaseの合計上限 |
 | `LARM_API_TOKEN` | 未設定 | control API認証。Agent Connection APIではloopbackでも必須 |
+| `LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS` | `false` | `true`の場合、Agent Connection lifecycleだけを長期Bearerなしで許可。claim後のprovider credentialは引き続き必須 |
 | `LARM_MANAGEMENT_TOKEN` | 未設定 | artifact、release、catalog管理用の別credential |
 | `LARM_CONNECTION_SIGNING_KEY` | 未設定 | Agent Provider短期token用の32-byte unpadded base64url鍵 |
 | `LARM_CONNECTION_READY_TIMEOUT_SECONDS` | `120` | Connection初回semantic readinessの上限 |
