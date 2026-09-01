@@ -979,10 +979,8 @@ export class LlmStreamServer {
           this.closeConnection(connection, SAAA_LLM_STREAM_CLOSE.internal, "WebSocket ping failed");
           continue;
         }
-        if (result === 0) {
-          this.detachConnection(connection);
-          continue;
-        }
+        // Bun reports the empty ping payload length, so a successfully emitted ping returns zero.
+        // Transport failure is surfaced by an exception; connection liveness is decided by pong timeout.
         connection.awaitingPongAt = now;
         if (result < 0) connection.activeRun?.onSocketBackpressure();
       }

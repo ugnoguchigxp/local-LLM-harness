@@ -958,6 +958,30 @@ describe("LlmStreamServer", () => {
     expect(socket.closes.at(-1)?.reason).toBe("heartbeat timeout");
   });
 
+  test("PWS-C18 keeps an empty ping with a zero send status pending for pong", () => {
+    let now = 0;
+    const backend = new FakeBackend();
+    const server = new LlmStreamServer({ startHeartbeat: false, now: () => now });
+    const connection = server.createConnection(authorization(backend));
+    const socket = new FakeSocket();
+    socket.ping = () => {
+      socket.pings += 1;
+      return 0;
+    };
+    server.open(connection, socket);
+
+    now = 15_000;
+    server.heartbeatSweep();
+    expect(connection.state).toBe("ready");
+    expect(socket.pings).toBe(1);
+
+    server.pong(connection);
+    now = 30_000;
+    server.heartbeatSweep();
+    expect(connection.state).toBe("ready");
+    expect(socket.pings).toBe(2);
+  });
+
   test("PWS-C18 contains a transport ping exception and releases connection capacity", () => {
     let now = 0;
     const backend = new FakeBackend();
