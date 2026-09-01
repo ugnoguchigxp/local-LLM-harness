@@ -1,7 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { extname, isAbsolute, resolve } from "node:path";
 import { LarmApiError, LarmClient } from "../../../packages/client/src/index";
-import type { PublicAllocation } from "../../../packages/core/src/index";
+import type { AgentConnectionClaim, PublicAllocation } from "../../../packages/core/src/index";
 import { absoluteOutput, prepareExternalOutput, writeExclusive } from "./benchmark-helpers";
 import {
   consumeAsrPerformanceResponse,
@@ -12,9 +12,11 @@ import {
   wavDurationSeconds,
   type MetricSummary,
 } from "./performance-helpers";
+import { runSaaaWebSocketSmoke } from "./smoke-saaa-websocket";
 
-type WorkloadId = "llm" | "asr" | "tts";
-type ScenarioId = WorkloadId | "mixed";
+type WorkloadId = "llm" | "llm-ws" | "asr" | "tts";
+type ManagedWorkloadId = Exclude<WorkloadId, "llm-ws">;
+type ScenarioId = WorkloadId | "mixed" | "mixed-ws";
 type Identity = { route: string; runtime: string; release: string; fallback: boolean };
 type CommonSample = Identity & {
   workload: WorkloadId;
@@ -25,11 +27,13 @@ type CommonSample = Identity & {
   responseBytes: number;
 };
 type LlmSample = CommonSample & {
-  workload: "llm";
+  workload: "llm" | "llm-ws";
+  transport: "http-json" | "saaa-websocket";
   firstTokenMs: number;
   completionTokens: number;
   completionTokenSource: "usage" | "content-events";
   outputTokensPerSecond: number;
+  deltaEvents: number | null;
 };
 type AudioSample = CommonSample & {
   audioSeconds: number;
@@ -63,13 +67,19 @@ type Telemetry = {
   provider429Count: number;
   errors: string[];
 };
+type WebSocketExecution = {
+  claim: AgentConnectionClaim;
+  allocation: PublicAllocation;
+};
 
-const allScenarios = ["llm", "asr", "tts", "mixed"] as const;
+const allScenarios = ["llm", "llm-ws", "asr", "tts", "mixed", "mixed-ws"] as const;
 const scenarioWorkloads: Record<ScenarioId, WorkloadId[]> = {
   llm: ["llm"],
+  "llm-ws": ["llm-ws"],
   asr: ["asr"],
   tts: ["tts"],
   mixed: ["llm", "asr", "tts"],
+  "mixed-ws": ["llm-ws", "asr", "tts"],
 };
 const requirement = {
   llm: { capability: "llm.general", route: "llm-default" },
@@ -83,6 +93,8 @@ const llmMaxTokens = boundedInteger("LARM_PERF_LLM_MAX_TOKENS", 64, 8, 512);
 const timeoutMs = boundedInteger("LARM_PERF_TIMEOUT_MS", 300_000, 1_000, 900_000);
 const scenarios = selectedScenarios(process.env.LARM_PERF_SCENARIOS ?? "all");
 const baseUrl = process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810";
+const wsAgentProfile = safeIdentity("LARM_PERF_WS_AGENT_PROFILE", "coding-default");
+const wsAudience = safeIdentity("LARM_PERF_WS_AUDIENCE", "same-host");
 const asrOverride = optionalAsrOverride();
 const output = process.env.LARM_PERF_OUTPUT
   ? await prepareExternalOutput(absoluteOutput("LARM_PERF_OUTPUT", process.env.LARM_PERF_OUTPUT), repoRoot)
@@ -131,7 +143,7 @@ const comparisons = buildComparisons(scenarioReports);
 const passed = identityStable
   && scenarioReports.every((scenario) => scenario.errors === 0 && scenario.telemetry.errors.length === 0);
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   kind: "larm-performance-diagnostic",
   recordedAt: new Date().toISOString(),
   passed,
@@ -147,7 +159,16 @@ const report = {
     iterations,
     warmups,
     llmMaxTokens,
-    mixedConcurrency: { llm: 1, asr: 1, tts: 1 },
+    websocket: {
+      agentProfile: wsAgentProfile,
+      audience: wsAudience,
+      runPerConnection: 1,
+      latencyIncludesHandshake: true,
+    },
+    mixedConcurrency: {
+      mixed: { llm: 1, asr: 1, tts: 1 },
+      "mixed-ws": { "llm-ws": 1, asr: 1, tts: 1 },
+    },
     timeoutMs,
     asrProvider: asrOverride
       ? {
@@ -220,16 +241,25 @@ async function prepareAudioFixture(): Promise<AudioFixture> {
 
 async function runIteration(scenario: ScenarioId, iteration: number): Promise<IterationResult> {
   const workloads = scenarioWorkloads[scenario];
-  const managedWorkloads = workloads.filter((workload) => workload !== "asr" || !asrOverride);
+  const needsWebSocket = workloads.includes("llm-ws");
+  const managedWorkloads = workloads.filter(isManagedWorkload)
+    .filter((workload) => workload !== "asr" || !asrOverride);
   const allocationStarted = performance.now();
   try {
-    const measure = async (allocation: PublicAllocation | undefined, larm: LarmClient) => {
+    const measure = async (
+      allocation: PublicAllocation | undefined,
+      larm: LarmClient,
+      websocket: WebSocketExecution | undefined,
+    ) => {
       const allocationMs = performance.now() - allocationStarted;
       const batchStarted = performance.now();
       const launches: number[] = [];
       const outcomes = await Promise.all(workloads.map(async (workload) => {
         try {
-          return { ok: true as const, sample: await execute(workload, iteration, allocation, larm, launches) };
+          return {
+            ok: true as const,
+            sample: await execute(workload, iteration, allocation, websocket, larm, launches),
+          };
         } catch (cause) {
           return { ok: false as const, workload, code: errorCode(cause) };
         }
@@ -246,13 +276,27 @@ async function runIteration(scenario: ScenarioId, iteration: number): Promise<It
         errors,
       };
     };
-    if (managedWorkloads.length === 0) return await measure(undefined, client);
-    return await client.withAllocation({
-      requirements: managedWorkloads.map((workload) => requirement[workload]),
+    const withManagedAllocation = async (larm: LarmClient, websocket?: WebSocketExecution) => {
+      if (managedWorkloads.length === 0) return await measure(undefined, larm, websocket);
+      return await larm.withAllocation({
+        requirements: managedWorkloads.map((workload) => requirement[workload]),
+        allowFallback: false,
+        deploymentPolicy: "existing-only",
+        ttlSeconds: Math.ceil(timeoutMs / 1_000) + 30,
+      }, async (allocation, allocationClient) => await measure(allocation, allocationClient, websocket));
+    };
+    if (!needsWebSocket) return await withManagedAllocation(client);
+    return await client.withAgentConnection({
+      agentProfile: wsAgentProfile,
+      audience: wsAudience,
+      client: "larm-performance",
+      ttlSeconds: Math.ceil(timeoutMs / 1_000) + 30,
       allowFallback: false,
       deploymentPolicy: "existing-only",
-      ttlSeconds: Math.ceil(timeoutMs / 1_000) + 30,
-    }, measure);
+    }, async (_connection, claim, larm) => {
+      const allocation = await larm.getAllocation(claim.allocationId);
+      return await withManagedAllocation(larm, { claim, allocation });
+    });
   } catch (cause) {
     return {
       iteration,
@@ -269,10 +313,13 @@ async function execute(
   workload: WorkloadId,
   iteration: number,
   allocation: PublicAllocation | undefined,
+  websocket: WebSocketExecution | undefined,
   larm: LarmClient,
   launches: number[],
 ): Promise<WorkloadSample> {
-  const identity = workload === "asr" && asrOverride
+  const identity = workload === "llm-ws"
+    ? bindingIdentity(requiredWebSocket(websocket).allocation, workload)
+    : workload === "asr" && asrOverride
     ? asrOverride.identity
     : bindingIdentity(requiredAllocation(allocation), workload);
   if (workload === "llm") {
@@ -288,7 +335,55 @@ async function execute(
       }],
     });
     const measured = await consumeLlmPerformanceResponse(response, started);
-    return { workload, iteration, status: response.status, ...identity, ...measured };
+    return {
+      workload,
+      iteration,
+      status: response.status,
+      transport: "http-json",
+      deltaEvents: null,
+      ...identity,
+      ...measured,
+    };
+  }
+  if (workload === "llm-ws") {
+    const execution = requiredWebSocket(websocket);
+    const provider = execution.claim.providers.find((candidate) =>
+      candidate.capability.startsWith("llm.") && candidate.streaming
+    );
+    if (!provider?.streaming) throw new Error("saaa_streaming_not_advertised");
+    const started = performance.now();
+    launches.push(started);
+    const measured = await runSaaaWebSocketSmoke({
+      url: provider.streaming.url,
+      token: provider.credential.token,
+      allocationId: execution.claim.allocationId,
+      model: provider.model,
+      timeoutMs,
+      prompt: "Output the integers from 1 through 40 in order, separated by single spaces, with no other text.",
+      maxOutputTokens: llmMaxTokens,
+    });
+    const reportedCompletionTokens = measured.usage?.completionTokens;
+    const hasCompletionUsage = reportedCompletionTokens !== null
+      && reportedCompletionTokens !== undefined
+      && reportedCompletionTokens > 0;
+    const completionTokens = hasCompletionUsage
+      ? reportedCompletionTokens
+      : measured.deltas;
+    return {
+      workload,
+      iteration,
+      status: 101,
+      transport: "saaa-websocket",
+      firstByteMs: measured.firstDeltaMs,
+      firstTokenMs: measured.firstDeltaMs,
+      totalMs: measured.durationMs,
+      responseBytes: measured.contentBytes,
+      completionTokens,
+      completionTokenSource: hasCompletionUsage ? "usage" : "content-events",
+      outputTokensPerSecond: round(completionTokens / Math.max(measured.durationMs / 1_000, 0.001)),
+      deltaEvents: measured.deltas,
+      ...identity,
+    };
   }
   if (workload === "asr") {
     if (!fixture) throw new Error("audio_fixture_missing");
@@ -365,14 +460,18 @@ function aggregateWorkload(
     },
     responseBytes: summarize(samples.map((sample) => sample.responseBytes)),
   };
-  if (workload === "llm") {
-    const llm = samples.filter((sample): sample is LlmSample => sample.workload === "llm");
+  if (workload === "llm" || workload === "llm-ws") {
+    const llm = samples.filter((sample): sample is LlmSample =>
+      sample.workload === "llm" || sample.workload === "llm-ws"
+    );
     return {
       ...common,
+      transports: countValues(llm.map((sample) => sample.transport)),
       latencyMs: { ...common.latencyMs, firstToken: summarize(llm.map((sample) => sample.firstTokenMs)) },
       completionTokens: summarize(llm.map((sample) => sample.completionTokens)),
       completionTokenSources: countValues(llm.map((sample) => sample.completionTokenSource)),
       outputTokensPerSecond: summarize(llm.map((sample) => sample.outputTokensPerSecond)),
+      deltaEvents: summarize(llm.flatMap((sample) => sample.deltaEvents === null ? [] : [sample.deltaEvents])),
     };
   }
   const audio = samples.filter((sample): sample is AsrSample | TtsSample => sample.workload === workload);
@@ -385,30 +484,64 @@ function aggregateWorkload(
 }
 
 function buildComparisons(scenarioReports: Array<ReturnType<typeof aggregateScenario>>) {
-  const mixed = scenarioReports.find((scenario) => scenario.id === "mixed");
-  if (!mixed) return [];
-  return (["llm", "asr", "tts"] as const).flatMap((workload) => {
-    const standalone = scenarioReports.find((scenario) => scenario.id === workload);
-    if (!standalone) return [];
-    const standaloneWorkload = standalone.workloads[workload] as ReturnType<typeof aggregateWorkload>;
-    const mixedWorkload = mixed.workloads[workload] as ReturnType<typeof aggregateWorkload>;
-    const standaloneTotal = p95(standaloneWorkload.latencyMs.total);
-    const mixedTotal = p95(mixedWorkload.latencyMs.total);
-    const standaloneSpeed = workload === "llm"
-      ? p50("outputTokensPerSecond" in standaloneWorkload ? standaloneWorkload.outputTokensPerSecond : null)
-      : p50("audioSecondsPerSecond" in standaloneWorkload ? standaloneWorkload.audioSecondsPerSecond : null);
-    const mixedSpeed = workload === "llm"
-      ? p50("outputTokensPerSecond" in mixedWorkload ? mixedWorkload.outputTokensPerSecond : null)
-      : p50("audioSecondsPerSecond" in mixedWorkload ? mixedWorkload.audioSecondsPerSecond : null);
-    return [{
-      workload,
-      mixedVsStandalone: {
-        totalLatencyP95DegradationPercent: degradationPercent(standaloneTotal, mixedTotal, true),
+  const mixedVsStandalone = ([
+    { scenario: "mixed", workloads: ["llm", "asr", "tts"] },
+    { scenario: "mixed-ws", workloads: ["llm-ws", "asr", "tts"] },
+  ] as const).flatMap(({ scenario, workloads }) => {
+    const mixed = scenarioReports.find((candidate) => candidate.id === scenario);
+    if (!mixed) return [];
+    return workloads.flatMap((workload) => {
+      const standalone = scenarioReports.find((candidate) => candidate.id === workload);
+      if (!standalone) return [];
+      const standaloneWorkload = standalone.workloads[workload] as ReturnType<typeof aggregateWorkload>;
+      const mixedWorkload = mixed.workloads[workload] as ReturnType<typeof aggregateWorkload>;
+      const standaloneSpeed = workload === "llm" || workload === "llm-ws"
+        ? p50("outputTokensPerSecond" in standaloneWorkload ? standaloneWorkload.outputTokensPerSecond : null)
+        : p50("audioSecondsPerSecond" in standaloneWorkload ? standaloneWorkload.audioSecondsPerSecond : null);
+      const mixedSpeed = workload === "llm" || workload === "llm-ws"
+        ? p50("outputTokensPerSecond" in mixedWorkload ? mixedWorkload.outputTokensPerSecond : null)
+        : p50("audioSecondsPerSecond" in mixedWorkload ? mixedWorkload.audioSecondsPerSecond : null);
+      return [{
+        scenario,
+        workload,
+        totalLatencyP95DegradationPercent: degradationPercent(
+          p95(standaloneWorkload.latencyMs.total),
+          p95(mixedWorkload.latencyMs.total),
+          true,
+        ),
         processingSpeedP50DegradationPercent: degradationPercent(standaloneSpeed, mixedSpeed, false),
         errorRateDeltaPercentagePoints: round((mixedWorkload.errorRate - standaloneWorkload.errorRate) * 100),
-      },
-    }];
+      }];
+    });
   });
+  const http = scenarioReports.find((scenario) => scenario.id === "llm")?.workloads.llm;
+  const websocket = scenarioReports.find((scenario) => scenario.id === "llm-ws")?.workloads["llm-ws"];
+  const llmTransport = http && websocket && "outputTokensPerSecond" in http && "outputTokensPerSecond" in websocket
+    ? {
+      baseline: "llm",
+      candidate: "llm-ws",
+      firstTokenP50DegradationPercent: degradationPercent(
+        p50("firstToken" in http.latencyMs ? http.latencyMs.firstToken : null),
+        p50("firstToken" in websocket.latencyMs ? websocket.latencyMs.firstToken : null),
+        true,
+      ),
+      totalLatencyP95DegradationPercent: degradationPercent(
+        p95(http.latencyMs.total),
+        p95(websocket.latencyMs.total),
+        true,
+      ),
+      processingSpeedP50DegradationPercent: degradationPercent(
+        p50(http.outputTokensPerSecond),
+        p50(websocket.outputTokensPerSecond),
+        false,
+      ),
+      completionTokensP50: {
+        http: p50("completionTokens" in http ? http.completionTokens : null) ?? null,
+        websocket: p50("completionTokens" in websocket ? websocket.completionTokens : null) ?? null,
+      },
+    }
+    : null;
+  return { mixedVsStandalone, llmTransport };
 }
 
 async function startTelemetryMonitor(): Promise<{ telemetry: Telemetry; stop: () => Promise<void> }> {
@@ -475,7 +608,10 @@ async function startTelemetryMonitor(): Promise<{ telemetry: Telemetry; stop: ()
 }
 
 function bindingIdentity(allocation: PublicAllocation, workload: WorkloadId): Identity {
-  const binding = allocation.bindings.find((candidate) => candidate.capability === requirement[workload].capability);
+  const binding = allocation.bindings.find((candidate) => workload === "llm-ws"
+    ? candidate.capability.startsWith("llm.")
+    : candidate.capability === requirement[workload].capability
+  );
   if (!binding) throw new Error("binding_missing");
   return {
     route: binding.route,
@@ -483,6 +619,15 @@ function bindingIdentity(allocation: PublicAllocation, workload: WorkloadId): Id
     release: binding.release ?? "unmanaged",
     fallback: binding.fallback,
   };
+}
+
+function isManagedWorkload(workload: WorkloadId): workload is ManagedWorkloadId {
+  return workload !== "llm-ws";
+}
+
+function requiredWebSocket(websocket: WebSocketExecution | undefined): WebSocketExecution {
+  if (!websocket) throw new Error("saaa_connection_missing");
+  return websocket;
 }
 
 function requiredAllocation(allocation: PublicAllocation | undefined): PublicAllocation {
@@ -503,7 +648,9 @@ function selectedScenarios(value: string): ScenarioId[] {
   if (value === "all") return [...allScenarios];
   const result = value.split(",").map((item) => item.trim());
   if (result.length === 0 || result.some((item) => !allScenarios.includes(item as ScenarioId))) {
-    throw new Error("LARM_PERF_SCENARIOS must be all or a comma-separated subset of llm,asr,tts,mixed");
+    throw new Error(
+      "LARM_PERF_SCENARIOS must be all or a comma-separated subset of llm,llm-ws,asr,tts,mixed,mixed-ws",
+    );
   }
   if (new Set(result).size !== result.length) throw new Error("LARM_PERF_SCENARIOS contains duplicates");
   return allScenarios.filter((scenario) => result.includes(scenario));

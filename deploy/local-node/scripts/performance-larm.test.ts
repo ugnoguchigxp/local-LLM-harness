@@ -1,7 +1,13 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  encodeSaaaDelta,
+  SAAA_LLM_STREAM_LIMITS,
+  SAAA_LLM_STREAM_PROTOCOL,
+} from "../../../packages/core/src/index";
 
 const performanceScript = resolve(import.meta.dir, "performance-larm.ts");
 const releaseCommit = "a".repeat(40);
@@ -30,27 +36,42 @@ function wav(seconds = 1, sampleRate = 16_000): Uint8Array {
   return bytes;
 }
 
-test("performance diagnostic measures standalone and synchronized mixed workloads", async () => {
+test("performance diagnostic measures HTTP/WS standalone and synchronized mixed workloads", async () => {
   const root = await mkdtemp(join(tmpdir(), "larm-performance-integration-"));
   const fixture = join(root, "fixture.wav");
   const output = join(root, "report.json");
   const shadowOutput = join(root, "shadow-report.json");
   await writeFile(fixture, wav());
   let allocationSequence = 0;
+  let agentSequence = 0;
   let mixedLaunches = 0;
   let shadowRequests = 0;
+  let websocketRuns = 0;
   const allocations = new Map<string, Array<{ capability: string; route: string }>>();
+  const agentAllocations = new Map<string, string>();
   const barriers = new Map<string, {
     workloads: Set<string>;
     promise: Promise<void>;
     resolve: () => void;
   }>();
   const headers = { "x-larm-boot-epoch": "epoch-performance" };
-  const server = Bun.serve({
+  let serverPort = 0;
+  const server = Bun.serve<{ connected: true }>({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: async (request) => {
+    fetch: async (request, bunServer) => {
       const url = new URL(request.url);
+      if (url.pathname === "/v1/llm/stream") {
+        if (
+          request.headers.get("sec-websocket-protocol") !== SAAA_LLM_STREAM_PROTOCOL
+          || !request.headers.get("authorization")?.startsWith("Bearer ")
+        ) return new Response("invalid upgrade", { status: 400, headers });
+        if (!bunServer.upgrade(request, {
+          data: { connected: true },
+          headers: { "Sec-WebSocket-Protocol": SAAA_LLM_STREAM_PROTOCOL },
+        })) return new Response("upgrade failed", { status: 400, headers });
+        return undefined;
+      }
       if (url.pathname === "/health") {
         return Response.json({
           status: "ok",
@@ -82,10 +103,35 @@ test("performance diagnostic measures standalone and synchronized mixed workload
           headers,
         });
       }
+      if (url.pathname.startsWith("/v1/allocations/") && request.method === "GET") {
+        const id = url.pathname.split("/").at(-1)!;
+        const requirements = allocations.get(id);
+        if (!requirements) return new Response("not found", { status: 404, headers });
+        return Response.json(allocation(id, requirements, false, "existing-only", "ready"), { headers });
+      }
       if (url.pathname.startsWith("/v1/allocations/") && request.method === "DELETE") {
         const id = url.pathname.split("/").at(-1)!;
         const requirements = allocations.get(id) ?? [{ capability: "llm.general", route: "llm-default" }];
         return Response.json(allocation(id, requirements, false, "existing-only", "released"), { headers });
+      }
+      if (url.pathname === "/v1/agent-connections" && request.method === "POST") {
+        const id = `connection-${++agentSequence}`;
+        const allocationId = `agent-allocation-${agentSequence}`;
+        const requirements = [{ capability: "llm.coding", route: "llm-default" }];
+        allocations.set(allocationId, requirements);
+        agentAllocations.set(id, allocationId);
+        return Response.json(agentConnection(id, allocationId), { status: 201, headers });
+      }
+      if (url.pathname.endsWith("/claim") && request.method === "POST") {
+        const id = url.pathname.split("/").at(-2)!;
+        const allocationId = agentAllocations.get(id);
+        if (!allocationId) return new Response("not found", { status: 404, headers });
+        return Response.json(agentClaim(id, allocationId, serverPort), { headers });
+      }
+      if (url.pathname.startsWith("/v1/agent-connections/") && request.method === "DELETE") {
+        const id = url.pathname.split("/").at(-1)!;
+        agentAllocations.delete(id);
+        return new Response(null, { status: 204, headers });
       }
       const workload = url.pathname === "/v1/chat/completions" ? "llm"
         : url.pathname === "/v1/audio/transcriptions" ? "asr"
@@ -125,7 +171,46 @@ test("performance diagnostic measures standalone and synchronized mixed workload
       }
       return new Response("not found", { status: 404, headers });
     },
+    websocket: {
+      perMessageDeflate: false,
+      open(socket) {
+        socket.send(JSON.stringify({
+          type: "connection.ready",
+          protocol: SAAA_LLM_STREAM_PROTOCOL,
+          connectionId: "connection-performance",
+          upstreamTransport: "native",
+          limits: {
+            maxConcurrentRuns: 1,
+            maxConnections: 1,
+            maxActiveRunsPerConnection: 1,
+            maxUnackedEvents: SAAA_LLM_STREAM_LIMITS.maxUnackedEvents,
+            maxUnackedBytes: SAAA_LLM_STREAM_LIMITS.maxUnackedBytes,
+            resumeWindowMs: SAAA_LLM_STREAM_LIMITS.resumeWindowMs,
+            heartbeatIntervalMs: SAAA_LLM_STREAM_LIMITS.heartbeatIntervalMs,
+          },
+        }), false);
+      },
+      message(socket, wire) {
+        if (typeof wire !== "string") return;
+        const message = JSON.parse(wire) as { type?: string; runId?: string };
+        if (message.type !== "run.start" || !message.runId) return;
+        websocketRuns += 1;
+        const content = new TextEncoder().encode("1 2 3");
+        socket.send(JSON.stringify({ type: "run.accepted", runId: message.runId, seq: 1 }), false);
+        socket.send(encodeSaaaDelta(2, content), false);
+        socket.send(JSON.stringify({
+          type: "response.completed",
+          runId: message.runId,
+          seq: 3,
+          contentBytes: content.byteLength,
+          contentSha256: createHash("sha256").update(content).digest("hex"),
+          finishReason: "stop",
+          usage: { promptTokens: 10, completionTokens: 6, totalTokens: 16 },
+        }), false);
+      },
+    },
   });
+  serverPort = server.port!;
   const shadowServer = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -148,6 +233,7 @@ test("performance diagnostic measures standalone and synchronized mixed workload
         LARM_PERF_ITERATIONS: "2",
         LARM_PERF_WARMUPS: "0",
         LARM_PERF_SCENARIOS: "all",
+        LARM_API_TOKEN: "performance-test-token",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -157,20 +243,35 @@ test("performance diagnostic measures standalone and synchronized mixed workload
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
     ]);
+    if (exitCode !== 0) throw new Error(`performance child failed: ${stderr}\n${stdout}`);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     const report = JSON.parse(stdout);
     expect(report).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "larm-performance-diagnostic",
       passed: true,
       audioFixture: { source: "file", audioSeconds: 1 },
       target: { identityStable: true, releaseCommit },
     });
-    expect(report.scenarios.map((scenario: { id: string }) => scenario.id)).toEqual(["llm", "asr", "tts", "mixed"]);
-    expect(report.scenarios[3]).toMatchObject({ attempts: 6, successes: 6, errors: 0 });
-    expect(report.comparisons).toHaveLength(3);
+    expect(report.scenarios.map((scenario: { id: string }) => scenario.id)).toEqual([
+      "llm", "llm-ws", "asr", "tts", "mixed", "mixed-ws",
+    ]);
+    expect(report.scenarios[1].workloads["llm-ws"]).toMatchObject({
+      transports: { "saaa-websocket": 2 },
+      completionTokenSources: { usage: 2 },
+      deltaEvents: { p50: 1 },
+    });
+    expect(report.scenarios[4]).toMatchObject({ attempts: 6, successes: 6, errors: 0 });
+    expect(report.scenarios[5]).toMatchObject({ attempts: 6, successes: 6, errors: 0 });
+    expect(report.comparisons.mixedVsStandalone).toHaveLength(6);
+    expect(report.comparisons.llmTransport).toMatchObject({
+      baseline: "llm",
+      candidate: "llm-ws",
+      completionTokensP50: { http: 6, websocket: 6 },
+    });
     expect(mixedLaunches).toBe(2);
+    expect(websocketRuns).toBe(4);
     expect(JSON.parse(await readFile(output, "utf8"))).toEqual(report);
 
     const shadowChild = Bun.spawn(["bun", "run", performanceScript], {
@@ -230,7 +331,7 @@ function allocation(
     bindings: requirements.map((requirement) => ({
       capability: requirement.capability,
       route: requirement.route,
-      runtime: requirement.capability === "llm.general" ? "qwen-general"
+      runtime: requirement.capability.startsWith("llm.") ? "qwen-general"
         : requirement.capability === "speech.stt" ? "qwen-asr"
         : "voicevox-tts",
       node: "local-node",
@@ -245,5 +346,75 @@ function allocation(
     createdAt: now,
     expiresAt: "2026-08-31T00:10:00.000Z",
     ...(status === "released" ? { releasedAt: now } : {}),
+  };
+}
+
+function agentConnection(id: string, allocationId: string) {
+  const now = "2026-08-31T00:00:00.000Z";
+  return {
+    id,
+    allocationId,
+    bootEpoch: "epoch-performance",
+    catalogRevision: configRevision,
+    agentProfile: "coding-default",
+    profileRevision: "c".repeat(64),
+    audience: "same-host",
+    audienceRevision: "d".repeat(64),
+    status: "ready",
+    providers: [{
+      name: "llm",
+      capability: "llm.coding",
+      route: "llm-default",
+      protocol: "openai.chat-completions.v1",
+      publicModel: "coding-default",
+      readiness: "ready",
+      claimable: true,
+    }],
+    createdAt: now,
+    expiresAt: "2026-08-31T00:10:00.000Z",
+  };
+}
+
+function agentClaim(id: string, allocationId: string, port: number) {
+  const expiresAt = "2026-08-31T00:10:00.000Z";
+  const baseUrl = `http://127.0.0.1:${port}/v1`;
+  return {
+    id,
+    allocationId,
+    status: "ready",
+    audience: "same-host",
+    providers: [{
+      name: "llm",
+      capability: "llm.coding",
+      apiStyle: "openai",
+      protocol: "openai.chat-completions.v1",
+      scheme: "http",
+      host: "127.0.0.1",
+      port,
+      baseUrl,
+      model: "coding-default",
+      health: {
+        url: `${baseUrl}/agent-connections/${id}/providers/llm/health`,
+        kind: "semantic-inference",
+        maxAgeMs: 10_000,
+      },
+      credential: { type: "bearer", token: "performance-provider-token", expiresAt },
+      configuration: {
+        kind: "openai-provider-v1",
+        fields: { baseURL: baseUrl, model: "coding-default" },
+        secretFields: { apiKey: "credential.token" },
+      },
+      streaming: {
+        protocol: SAAA_LLM_STREAM_PROTOCOL,
+        url: `ws://127.0.0.1:${port}/v1/llm/stream`,
+        encoding: "json-control+binary-delta-v1",
+        compression: "none",
+        maxConcurrentRuns: 1,
+        maxConnections: 1,
+        resumeWindowMs: 120_000,
+        upstreamTransport: "native",
+      },
+    }],
+    expiresAt,
   };
 }

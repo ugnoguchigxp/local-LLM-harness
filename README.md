@@ -202,8 +202,9 @@ LARM_ROUTE=<route-id> LARM_MODEL=<upstream-model-id> bun quickstart.ts
 
 ### 推論性能を測る
 
-常駐Providerの性能診断には次を実行します。LLM、ASR、TTSを個別に測った後、3系統を一つずつ同時に
-実行し、p50・p95、LLMのTTFTと出力tokens/sec、ASR・TTSのRTF、単体比の劣化率をJSONで返します。
+常駐Providerの性能診断には次を実行します。LLMのHTTP非streamingとnative WebSocket、ASR、TTSを
+個別に測った後、HTTPまたはWebSocketのLLMと音声2系統を一つずつ同時に実行し、p50・p95、LLMの
+TTFTと出力tokens/sec、ASR・TTSのRTF、単体比の劣化率をJSONで返します。
 ASR用音声を指定しない場合は、計測開始前に通常TTSで非機密の固定音声を生成し、メモリ上だけで使用します。
 
 ```bash
@@ -223,8 +224,10 @@ LARM_PERF_ITERATIONS=10 \
 bun run perf:diagnostic
 ```
 
-`LARM_PERF_SCENARIOS=llm,asr,tts,mixed`で対象を絞れます。`mixed`は各Providerへの1要求を同時に
-開始する実利用干渉テストであり、同一Providerの飽和限界を探すstress testではありません。詳しい測定契約は
+`LARM_PERF_SCENARIOS=llm,llm-ws,asr,tts,mixed,mixed-ws`で対象を絞れます。`mixed`はHTTP
+LLM、`mixed-ws`はWebSocket LLMを音声2系統と同時に開始する実利用干渉テストであり、同一Providerの
+飽和限界を探すstress testではありません。WebSocket系列はAgent Connection準備時間をallocationへ分離し、
+run latencyにはWebSocket handshakeを含めます。詳しい測定契約は
 [`specs/performance-benchmark.html`](specs/performance-benchmark.html)にあります。
 評価専用CPU ASRをproduction routeへ組み込まず比較するときは、loopbackのOpenAI互換endpointを
 `LARM_PERF_ASR_URL`へ指定できます。
@@ -245,7 +248,7 @@ bun run perf:diagnostic
 
 ```bash
 bun run dev          # daemon を開発モードで起動
-bun run perf:diagnostic # LLM・ASR・TTSの単体／同時性能診断
+bun run perf:diagnostic # HTTP/WS LLM・ASR・TTSの単体／同時性能診断
 bun run test         # テスト
 bun run typecheck    # 型検査
 bun run docs         # 設計文書をプレビュー

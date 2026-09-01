@@ -235,8 +235,9 @@ epoch in a new Spec HTML document. Do not commit prompts, transcripts, audio, cr
 data, or unredacted logs.
 
 日常の性能切り分けには、release commit一致を要求するSLO canaryとは別に診断benchmarkを使います。
-既定ではLLM・ASR・TTSの単体系列と、3系統を同一Allocationから同時発射するmixed系列を順番に実行します。
-Resident Providerは停止・再起動せず、warmupは最初の要求を集計から除くだけです。
+既定ではHTTP非streaming LLM、native WebSocket LLM、ASR、TTSの単体系列と、HTTPまたはWebSocket
+LLMを音声2系統と同時発射する2種類のmixed系列を順番に実行します。Resident Providerは停止・再起動せず、
+warmupは最初の要求を集計から除くだけです。
 
 ```bash
 set -a
@@ -255,11 +256,16 @@ bun run benchmark:saaa-websocket
 
 固定fixtureと外部証跡を使う場合は、`LARM_PERF_AUDIO_FILE`へ絶対パス、`LARM_PERF_OUTPUT`へ既存でない
 repository外の絶対パスを指定します。反復数は`LARM_PERF_ITERATIONS`、warmup数は
-`LARM_PERF_WARMUPS`、系列は`LARM_PERF_SCENARIOS`で変更できます。
+`LARM_PERF_WARMUPS`、系列は`LARM_PERF_SCENARIOS`で変更できます。選択肢は
+`llm,llm-ws,asr,tts,mixed,mixed-ws`です。WebSocket系列は既定で`coding-default` Agent
+Connectionと`same-host` audienceを使い、`LARM_PERF_WS_AGENT_PROFILE`と
+`LARM_PERF_WS_AUDIENCE`で変更できます。Agent Connection準備時間はallocation latencyへ分離し、
+run latencyはconnection.readyまでを含むWebSocket handshakeからterminal ACKまでです。
 
 評価専用のOpenAI互換ASRをproduction Bindingの代わりに測る場合は、loopback上の
 `POST /v1/audio/transcriptions`を`LARM_PERF_ASR_URL`へ指定します。ASR-onlyではAllocationを作らず、
-mixedではLLMとTTSだけを既存LARM Allocationへ固定し、外部ASRを同時発射します。識別子は
+mixedではLLMとTTS、mixed-wsではTTSだけを通常Allocationへ固定し、後者のLLMはAgent
+Connectionを使って外部ASRと同時発射します。識別子は
 `LARM_PERF_ASR_ROUTE`、`LARM_PERF_ASR_RUNTIME`、`LARM_PERF_ASR_RELEASE`でreportへ固定します。
 外部URLはcredential、query、fragmentを含まないHTTP loopbackだけを受理します。
 

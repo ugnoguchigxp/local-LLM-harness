@@ -1,23 +1,25 @@
 <article lang="ja">
-  <h1>LLM・ASR・TTS 性能診断ベンチマーク仕様</h1>
+  <h1>HTTP/WS LLM・ASR・TTS 性能診断ベンチマーク仕様</h1>
 
   <p>
-    local-nodeで感じる遅延をLLM、ASR、TTSへ分解し、さらに3系統を同時利用した場合の干渉を
-    再現可能な形で比較する診断仕様です。実装は<code>deploy/local-node/scripts/performance-larm.ts</code>です。本診断は日常の原因切り分けを目的とし、release昇格を判定するSLO
-    canaryとは分離します。
+    local-nodeで感じる遅延をHTTP非streaming LLM、native WebSocket LLM、ASR、TTSへ分解し、
+    さらにLLMと音声2系統を同時利用した場合の干渉を再現可能な形で比較する診断仕様です。実装は
+    <code>deploy/local-node/scripts/performance-larm.ts</code
+    >です。本診断は日常の原因切り分けを目的とし、release昇格を判定するSLO canaryとは分離します。
   </p>
 
   <dl>
     <dt>状態</dt>
     <dd>実装・自動テスト・local-node warm-state実測完了</dd>
     <dt>report schema</dt>
-    <dd><code>larm-performance-diagnostic</code> version 1</dd>
+    <dd><code>larm-performance-diagnostic</code> version 2</dd>
     <dt>既定反復</dt>
     <dd>warmup 1回、測定5回</dd>
-    <dt>既定route</dt>
+    <dt>既定系列</dt>
     <dd>
-      <code>llm-default</code
-      >、<code>stt-default</code>、<code>tts-default</code>
+      <code>llm</code
+      >、<code>llm-ws</code>、<code>asr</code>、<code>tts</code>、
+      <code>mixed</code>、<code>mixed-ws</code>
     </dd>
   </dl>
 
@@ -37,12 +39,24 @@
       </thead>
       <tbody>
         <tr>
-          <th scope="row">LLM</th>
+          <th scope="row">LLM HTTP</th>
           <td>
             1から40までを順番に出力する固定prompt、既定<code>max_tokens=64</code>
           </td>
           <td>first byte、TTFT、total、completion token、output tokens/sec</td>
           <td>遅延は小さいほど、tokens/secは大きいほど良い</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM WebSocket</th>
+          <td>
+            HTTPと同じ固定prompt・token上限、<code>coding-default</code> Agent
+            Connection、1 run / connection
+          </td>
+          <td>
+            Agent Connection準備、handshake込みfirst binary delta、terminalまでのtotal、completion
+            token、delta event、output tokens/sec
+          </td>
+          <td>first deltaは小さいほど、tokens/secは大きいほど良い</td>
         </tr>
         <tr>
           <th scope="row">ASR</th>
@@ -59,10 +73,11 @@
       </tbody>
     </table>
     <p>
-      latencyと速度は各sampleを保持し、集計ではminimum、p50、p95、maximum、meanを出します。 LLM
-      token数はOpenAI互換streamの<code>usage.completion_tokens</code>を優先し、Providerがusageを
-      返さない場合だけcontent event数を代替値として明記します。ASR transcript、LLM response本文、
-      TTS音声はreportへ保存しません。
+      latencyと速度は各sampleを保持し、集計ではminimum、p50、p95、maximum、meanを出します。 LLM HTTP
+      LLMのtoken数はOpenAI互換responseの<code>usage.completion_tokens</code>、WebSocketは
+      <code>response.completed.usage.completionTokens</code>を優先し、Providerがusageを返さない場合だけ
+      content event数を代替値として明記します。ASR transcript、LLM
+      response本文、TTS音声、credentialは reportへ保存しません。
     </p>
   </section>
 
@@ -79,15 +94,17 @@
   <section id="mixed-scenario">
     <h2>同時利用scenario</h2>
     <p>
-      <code>mixed</code
-      >ではLLM、ASR、TTSを一つのAllocationへ束ね、各1要求を同じevent loop turnで
-      開始します。reportには実際のlaunch skewを残します。各workloadのmixed p95 total latencyと p50
+      <code>mixed</code>ではHTTP
+      LLM、ASR、TTSを一つのAllocationへ束ねます。
+      <code>mixed-ws</code>ではLLM用Agent
+      ConnectionとASR・TTS用Allocationを準備します。どちらも各1要求を 同じevent loop
+      turnで開始し、reportには実際のlaunch skewを残します。各workloadのmixed p95 total latencyとp50
       processing speedを単体系列と比較し、正の値が劣化を表す百分率として記録します。
     </p>
     <p>
       評価専用の<code>LARM_PERF_ASR_URL</code>がある場合、ASR-onlyはAllocationなしでloopback
-      endpointを直接測り、mixedはLLMとTTSだけをLARM Allocationへ固定して外部ASRを同時発射します。
-      これによりproduction routeを変更せず、CPU
+      endpointを直接測る。mixedはLLMとTTS、mixed-wsはTTSだけを通常Allocationへ固定し、後者のLLMは
+      Agent Connectionを使って外部ASRを同時発射する。これによりproduction routeを変更せず、CPU
       ASRが既存workloadへ与える影響を同じschemaで比較できます。
     </p>
     <aside>
@@ -120,7 +137,7 @@
 
   <section id="operation">
     <h2>実行方法</h2>
-    <p>既定の4 scenarioを実行する最短手順です。</p>
+    <p>既定の6 scenarioを実行する最短手順です。</p>
     <pre><code>set -a
 source /etc/larm/larm.env
 set +a
@@ -145,7 +162,7 @@ bun run perf:diagnostic</code></pre>
         <tr>
           <th scope="row"><code>LARM_PERF_SCENARIOS</code></th>
           <td><code>all</code></td>
-          <td><code>llm,asr,tts,mixed</code>の部分集合</td>
+          <td><code>llm,llm-ws,asr,tts,mixed,mixed-ws</code>の部分集合</td>
         </tr>
         <tr>
           <th scope="row"><code>LARM_PERF_ITERATIONS</code></th>
@@ -173,6 +190,19 @@ bun run perf:diagnostic</code></pre>
           <td>既存でないrepository外の絶対path</td>
         </tr>
         <tr>
+          <th scope="row">
+            <code>LARM_PERF_WS_AGENT_PROFILE</code>、<code
+              >LARM_PERF_WS_AUDIENCE</code
+            >
+          </th>
+          <td>
+            <code>coding-default</code>、<code
+              >same-host</code
+            >
+          </td>
+          <td>WebSocket診断に使うAgent Connection profileとaudience</td>
+        </tr>
+        <tr>
           <th scope="row"><code>LARM_PERF_ASR_URL</code></th>
           <td>未指定</td>
           <td>評価専用ASRのcredentialを含まないHTTP loopback URL</td>
@@ -196,7 +226,138 @@ bun run perf:diagnostic</code></pre>
   </section>
 
   <section id="live-result">
-    <h2>local-node実測</h2>
+    <h2>2026-09-01 native WebSocket対応後のlocal-node実測</h2>
+    <dl>
+      <dt>観測時刻</dt>
+      <dd><time>2026-09-01T00:26:18.011Z</time></dd>
+      <dt>deployed commit</dt>
+      <dd><code>be29eb3a298956b3735cb6897672b105e6677d34</code></dd>
+      <dt>config revision</dt>
+      <dd><code>9959f32a16c9e69ec22349dbfc1ead9dee2fe8fc31774f27e082b2dd59f108ae</code></dd>
+      <dt>条件</dt>
+      <dd>
+        warmup 1回、測定5回、4.597秒のTTS生成fixture、LLM
+        <code>max_tokens=64</code>。WebSocket latencyはhandshakeを含み、Agent
+        Connection準備時間は allocation latencyへ分離
+      </dd>
+      <dt>証跡</dt>
+      <dd><code>/srv/ai/logs/larm-performance/20260901T002451Z-ws-report.json</code></dd>
+    </dl>
+    <table>
+      <caption>
+        HTTP非streamingとnative WebSocketの単体比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">transport</th>
+          <th scope="col">準備時間</th>
+          <th scope="col">first token</th>
+          <th scope="col">total</th>
+          <th scope="col">出力速度</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">HTTP JSON</th>
+          <td>Allocation p50 1.277 ms、p95 1.415 ms</td>
+          <td>p50 2.985 s、p95 2.999 s</td>
+          <td>p50 2.985 s、p95 2.999 s</td>
+          <td>p50 21.443 tokens/s、completion p50 64 tokens</td>
+        </tr>
+        <tr>
+          <th scope="row">SAAA WebSocket</th>
+          <td>Agent Connection p50 6.117 ms、p95 406.893 ms</td>
+          <td>p50 367 ms、p95 377 ms</td>
+          <td>p50 2.468 s、p95 2.672 s</td>
+          <td>p50 24.015 tokens/s、completion p50 64 tokens、delta p50 23 events</td>
+        </tr>
+        <tr>
+          <th scope="row">WSの変化</th>
+          <td colspan="2">first token p50を87.704%短縮</td>
+          <td>total p95を10.912%短縮</td>
+          <td>processing speed p50を11.995%向上</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      HTTPは非streaming JSONなのでfirst byte / first tokenがcompletion後になる。WebSocketは
+      connection.readyから最初のbinary deltaまでを測るため、対話上の体感差はtotal差より大きい。5件の
+      WebSocket sampleはすべてterminal integrityとusageを検証したが、completion tokenは最小3、p50
+      64であり、1件がmodelのstopにより短く完了した。p95
+      totalとp50速度の比較では両transportのcompletion p50が64で一致していることを併記する。
+    </p>
+    <table>
+      <caption>
+        音声同時実行時のp95 totalと単体比
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">workload</th>
+          <th scope="col">単体</th>
+          <th scope="col">HTTP mixed</th>
+          <th scope="col">WebSocket mixed</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLM</th>
+          <td>HTTP 2.999 s、WS 2.672 s</td>
+          <td>3.494 s、単体HTTP比 +16.490%</td>
+          <td>3.283 s、単体WS比 +22.867%</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td>488 ms、RTF p50 0.100</td>
+          <td>1.217 s、+149.346%</td>
+          <td>1.050 s、+115.285%</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>332 ms、RTF p50 0.066</td>
+          <td>595 ms、+79.040%</td>
+          <td>629 ms、+89.405%</td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        正常性とresource観測
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">成功率</th>
+          <td>単体20/20、mixed 30/30、queue 0、HTTP 429は0、fallbackは0</td>
+        </tr>
+        <tr>
+          <th scope="row">同時性</th>
+          <td>
+            HTTP mixed launch skew p95 0.189 ms、WS mixed 0.370 ms。観測最大active executionは3
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">memory余力</th>
+          <td>
+            全系列中の最小system available 82,586,157,056 bytes、accelerator available
+            65,922,969,600 bytes
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Identity</th>
+          <td>boot epoch、config revision、release commitは測定前後で一致。telemetry errorは0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Native WebSocketはHTTP非streamingと同じresident
+      Qwen、route、releaseを使いながら、最初の表示可能
+      tokenを約2.62秒早く返した。音声同時実行では引き続きaccelerator共有によるASR劣化が最大だが、WS
+      mixedのASR p95はHTTP mixedより166 ms短かった。一方、TTS p95はWS mixedの方が34 ms長く、短い 5
+      sampleのdiagnosticであるためtransport起因とは断定しない。
+    </p>
+  </section>
+
+  <section id="previous-live-result">
+    <h2>2026-08-31 HTTP-only baseline</h2>
     <dl>
       <dt>観測時刻</dt>
       <dd><time>2026-08-31T10:04:23.853Z</time></dd>

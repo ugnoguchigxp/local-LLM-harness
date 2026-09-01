@@ -53,6 +53,11 @@ export async function runSaaaWebSocketSmoke(config: SmokeConfig): Promise<{
   outcome: "completed";
   deltas: number;
   contentBytes: number;
+  usage: {
+    promptTokens: number | null;
+    completionTokens: number | null;
+    totalTokens: number | null;
+  } | null;
   firstDeltaMs: number;
   durationMs: number;
 }> {
@@ -80,6 +85,11 @@ export async function runSaaaWebSocketSmoke(config: SmokeConfig): Promise<{
       outcome: "completed";
       deltas: number;
       contentBytes: number;
+      usage: {
+        promptTokens: number | null;
+        completionTokens: number | null;
+        totalTokens: number | null;
+      } | null;
       firstDeltaMs: number;
       durationMs: number;
     }>((resolve, reject) => {
@@ -194,6 +204,7 @@ export async function runSaaaWebSocketSmoke(config: SmokeConfig): Promise<{
               outcome: "completed",
               deltas,
               contentBytes,
+              usage: message.usage,
               firstDeltaMs: Math.round(firstDeltaAt - startedAt),
               durationMs: Math.round(performance.now() - startedAt),
             });
