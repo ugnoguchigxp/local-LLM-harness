@@ -97,15 +97,19 @@ describe("SAAA WebSocket soak configuration", () => {
     );
   });
 
-  test("rejects a non-TLS non-loopback control URL before creating a client", async () => {
-    let clientCreated = false;
-    await expect(loadSoakConfig({
+  test("accepts a cleartext non-loopback control URL for a local-network audience", async () => {
+    let clientBaseUrl = "";
+    const config = await loadSoakConfig({
       ...environment,
       LARM_BASE_URL: "http://192.0.2.10:9810",
-    }, () => {
-      clientCreated = true;
-      throw new Error("must not create client");
-    })).rejects.toThrow("LARM_BASE_URL must be canonical HTTPS, or HTTP on literal loopback");
-    expect(clientCreated).toBeFalse();
+    }, (options) => {
+      clientBaseUrl = options.baseUrl;
+      return {
+        renewAgentConnection: async () => ({} as never),
+        claimAgentConnection: async () => claim(1),
+      };
+    });
+    expect(clientBaseUrl).toBe("http://192.0.2.10:9810/");
+    expect(config.url).toBe("ws://127.0.0.1:9810/v1/llm/stream");
   });
 });

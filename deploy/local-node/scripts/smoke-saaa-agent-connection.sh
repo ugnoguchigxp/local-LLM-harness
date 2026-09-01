@@ -197,7 +197,12 @@ jq -e --arg agentProfile "${agent_profile}" --arg audience "${agent_audience}" \
     .providers[0].port == 9810
     and .providers[0].baseUrl == $requestBaseUrl
     and (.providers[0].host | IN("127.0.0.1", "::1", "localhost") | not)
-    and (.providers[0].streaming.url | startswith("wss://"))
+    and .providers[0].streaming.url == (
+      $requestBaseUrl
+      | sub("^http:"; "ws:")
+      | sub("^https:"; "wss:")
+      | . + "/llm/stream"
+    )
   ))
   and (.providers[0].credential.token | length > 0)' <<<"${claim}" >/dev/null
 

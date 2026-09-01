@@ -10,6 +10,20 @@
     必要がある。SSEをWebSocketで包む実装は完成条件を満たさない。
   </p>
 
+  <aside>
+    <h2>2026-09-01 transport decision update</h2>
+    <p>
+      このreview後、operatorはローカルLANへTLSを導入しない方針を確定した。現在の
+      <code>host-private</code> Audienceはreview済みLAN CIDR、Bearer認証、claim
+      origin bindingを境界に 平文WSを広告する。以下のWSS
+      commissioning評価は当時のreview記録であり、LAN境界外へ公開する
+      <code>tls</code> Audienceにだけ適用する。現行実装状態は<a
+        href="./saaa-maximum-performance-websocket.html"
+        >実装計画と実装証跡</a
+      >を正とする。
+    </p>
+  </aside>
+
   <dl>
     <dt>Mac contract適合性</dt>
     <dd><strong>適合可能</strong>。Mac側変更要求なし</dd>

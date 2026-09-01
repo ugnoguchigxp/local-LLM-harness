@@ -108,7 +108,7 @@ test("request-origin audiences derive a canonical Gateway URL from the authentic
   )).toBeUndefined();
 });
 
-test("agent claim validation rejects internally inconsistent remote descriptors", () => {
+test("agent claim validation accepts canonical WS and rejects inconsistent remote descriptors", () => {
   const expiresAt = "2026-08-29T12:10:00.000Z";
   const claim = {
     id: "aconn_epoch-test_1",
@@ -166,7 +166,7 @@ test("agent claim validation rejects internally inconsistent remote descriptors"
       health: { ...claim.providers[0]!.health, url: "http://127.0.0.1:9810/health" },
     }],
   })).toThrow(/health URL must match/);
-  expect(() => agentConnectionClaimSchema.parse({
+  expect(agentConnectionClaimSchema.parse({
     ...claim,
     providers: [{
       ...claim.providers[0]!,
@@ -194,7 +194,7 @@ test("agent claim validation rejects internally inconsistent remote descriptors"
         upstreamTransport: "native" as const,
       },
     }],
-  })).toThrow(/literal loopback/);
+  }).providers[0]?.streaming?.url).toBe("ws://127.example:9810/v1/llm/stream");
   expect(() => agentConnectionClaimSchema.parse({
     ...claim,
     providers: [{

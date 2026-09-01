@@ -92,6 +92,7 @@ export type AppDeps = {
     allocationId: string;
     provider: AgentConnectionCatalog["profiles"][number]["providers"][number];
     audienceBaseUrl: string;
+    audienceNetwork: AgentConnectionCatalog["audiences"][number]["network"];
   }) => Promise<SaaaStreamAdvertisement | undefined> | SaaaStreamAdvertisement | undefined;
 };
 

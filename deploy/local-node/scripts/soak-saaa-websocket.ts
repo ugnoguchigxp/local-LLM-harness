@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { LarmClient } from "../../../packages/client/src/index";
 import {
   decodeSaaaDelta,
-  isLiteralLoopbackHost,
   parseSaaaServerControl,
   SAAA_LLM_STREAM_PROTOCOL,
   type AgentConnectionClaim,
@@ -93,16 +92,15 @@ export async function loadSoakConfig(
   createClient: SoakClientFactory = (options) => new LarmClient(options),
 ): Promise<SoakConfig> {
   const baseUrl = new URL(required("LARM_BASE_URL", env));
-  const hostname = baseUrl.hostname.replace(/^\[|\]$/g, "");
   if (
     baseUrl.username
     || baseUrl.password
     || baseUrl.search
     || baseUrl.hash
     || (baseUrl.pathname !== "/" && baseUrl.pathname !== "")
-    || (baseUrl.protocol !== "https:" && !(baseUrl.protocol === "http:" && isLiteralLoopbackHost(hostname)))
+    || (baseUrl.protocol !== "http:" && baseUrl.protocol !== "https:")
   ) {
-    throw new Error("LARM_BASE_URL must be canonical HTTPS, or HTTP on literal loopback");
+    throw new Error("LARM_BASE_URL must be canonical HTTP or HTTPS");
   }
   const connectionId = required("LARM_SAAA_CONNECTION_ID", env);
   if (!/^aconn_[A-Za-z0-9._-]{1,185}$/.test(connectionId)) {

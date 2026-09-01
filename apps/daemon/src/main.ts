@@ -265,7 +265,7 @@ const appComponents = createAppComponents({
   connectionHistoryLimit: config.historyLimit,
   inferenceAuditMode: config.inferenceAuditMode,
   inferenceAuditRecorder,
-  resolveStreaming: async ({ allocationId, provider, audienceBaseUrl }) => {
+  resolveStreaming: async ({ allocationId, provider, audienceBaseUrl, audienceNetwork }) => {
     const resolved = control.resolveAllocation(allocationId, provider.capability);
     if (resolved.status !== 200 || !("runtime" in resolved.body)) return undefined;
     const runtime = catalogManager.registry.runtimes.find((candidate) => candidate.id === resolved.body.runtime);
@@ -283,6 +283,7 @@ const appComponents = createAppComponents({
         maxConcurrentRuns: capacity,
         maxConnections: capacity,
         resumeWindowMs: runtime.streaming.resumeWindowMs,
+        allowInsecureNonLoopback: audienceNetwork !== "tls",
       });
     } catch {
       return undefined;
@@ -412,6 +413,7 @@ const server = Bun.serve<LlmStreamConnection>({
         maxConcurrentRuns: capacity,
         maxConnections: capacity,
         resumeWindowMs: runtime.streaming.resumeWindowMs,
+        allowInsecureNonLoopback: verified.record.audience.network !== "tls",
       });
     } catch {
       return Response.json({ error: { code: "tls_required", message: "non-loopback LLM streaming requires WSS" } }, {

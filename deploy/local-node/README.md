@@ -70,8 +70,10 @@ loopback `ws://127.0.0.1:8090/v1/native/llm/stream`で
 usage、必要capacityをすべて宣言するstrict `native.ready`を返した場合だけclaimへ現れます。companion
 自身もpatched engineのraw semantic Unix socket IPCを受けた場合だけreadyになります。
 `llama-server`のHTTP/SSE endpointを接続してもreadyにならず、LARMはSSE bridgeへfallbackしません。
-LAN向けSAAA streamingを有効にする場合は、LARM service userが読める証明書と秘密鍵の絶対pathを
-`/etc/larm/larm.env`の`LARM_TLS_CERT_FILE`と`LARM_TLS_KEY_FILE`へ対で設定してください。
+`saaa-desktop`の`host-private` Audienceは、review済みLAN CIDR内で平文
+`ws://<LAN host>:9810/v1/llm/stream`を広告します。TLSは必須ではありません。LAN境界外へ公開する
+場合だけ、LARM service userが読める証明書と秘密鍵の絶対pathを`/etc/larm/larm.env`の
+`LARM_TLS_CERT_FILE`と`LARM_TLS_KEY_FILE`へ対で設定し、`tls` Audienceを使用してください。
 
 ## Apply
 

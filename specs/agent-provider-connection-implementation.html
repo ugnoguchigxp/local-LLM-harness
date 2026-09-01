@@ -174,6 +174,14 @@
       listen時はAPI・management tokenがないとdaemonが起動せず、UFWはreview済みLAN
       CIDRだけを許可します。
     </p>
+    <p>
+      native LLM streamがreadyなら、<code>saaa-desktop</code> claimはrequest
+      originと同じhost・portの
+      <code>ws://.../v1/llm/stream</code
+      >も返します。ローカルLANではTLSを必須にせず、短期Provider token、origin
+      binding、許可CIDRを境界とします。LAN境界外だけは<code>tls</code>
+      AudienceとWSSを 別途commissioningします。
+    </p>
   </section>
 
   <section id="live-e2e">

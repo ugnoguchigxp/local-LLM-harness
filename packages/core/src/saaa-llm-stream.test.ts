@@ -131,12 +131,24 @@ describe("saaa.llm-stream.v1 control JSON", () => {
 });
 
 describe("stream advertisement", () => {
-  test("PWS-C08 derives loopback ws and remote wss without credentials", () => {
+  test("PWS-C08 derives loopback ws, opted-in local-network ws, and remote wss without credentials", () => {
     expect(createSaaaStreamAdvertisement({
       baseUrl: "http://127.0.0.1:9810/v1",
       maxConcurrentRuns: 1,
       maxConnections: 1,
     }).url).toBe("ws://127.0.0.1:9810/v1/llm/stream");
+    expect(createSaaaStreamAdvertisement({
+      baseUrl: "http://192.0.2.1:9810/v1",
+      maxConcurrentRuns: 1,
+      maxConnections: 1,
+      allowInsecureNonLoopback: true,
+    }).url).toBe("ws://192.0.2.1:9810/v1/llm/stream");
+    expect(createSaaaStreamAdvertisement({
+      baseUrl: "http://localhost:9810/v1",
+      maxConcurrentRuns: 1,
+      maxConnections: 1,
+      allowInsecureNonLoopback: true,
+    }).url).toBe("ws://localhost:9810/v1/llm/stream");
     expect(createSaaaStreamAdvertisement({
       baseUrl: "https://larm.example/v1",
       maxConcurrentRuns: 2,
@@ -144,7 +156,7 @@ describe("stream advertisement", () => {
     }).url).toBe("wss://larm.example/v1/llm/stream");
   });
 
-  test("PWS-C09 rejects cleartext non-loopback, hostname aliases, and divergent capacities", () => {
+  test("PWS-C09 requires explicit cleartext opt-in and rejects hostname aliases and divergent capacities", () => {
     expect(() => createSaaaStreamAdvertisement({
       baseUrl: "http://192.0.2.1:9810/v1",
       maxConcurrentRuns: 1,
@@ -165,7 +177,7 @@ describe("stream advertisement", () => {
       maxConcurrentRuns: 1,
       maxConnections: 2,
     })).toThrow("equal");
-    expect(() => saaaStreamAdvertisementSchema.parse({
+    expect(saaaStreamAdvertisementSchema.parse({
       protocol: "saaa.llm-stream.v1",
       url: "ws://192.0.2.1:9810/v1/llm/stream",
       encoding: "json-control+binary-delta-v1",
@@ -174,7 +186,7 @@ describe("stream advertisement", () => {
       maxConnections: 1,
       resumeWindowMs: 120_000,
       upstreamTransport: "native",
-    })).toThrow("literal loopback");
+    }).url).toBe("ws://192.0.2.1:9810/v1/llm/stream");
     expect(saaaStreamAdvertisementSchema.safeParse({
       protocol: "saaa.llm-stream.v1",
       url: "not-a-url",

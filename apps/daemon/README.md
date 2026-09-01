@@ -163,8 +163,9 @@ curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${voice_allocation_id}"
 LLMのrealtime data planeは`GET /v1/llm/stream`へのWebSocket upgradeだけを受理します。
 HTTPの`stream: true`は`400 streaming_requires_websocket`で拒否し、SSEへのfallbackや
 Provider SSE bridgeは行いません。claimのLLM providerに`streaming`が現れるのは、設定された
-native Providerが`larm.native-llm-stream.v1`でreadyを返した場合だけです。非loopbackのclaimは
-direct TLSを設定したWSS endpointだけを広告します。
+native Providerが`larm.native-llm-stream.v1`でreadyを返した場合だけです。`host-private`
+Audienceはoperatorが管理するローカルLANを信頼境界として、HTTP originに対応する平文WS endpointも
+広告します。LAN境界外では`tls` AudienceとWSSを使用してください。
 
 claimから取得した短期credential、Allocation ID、modelを使うend-to-end smokeは次の通りです。
 値はshell historyへ直書きせず、実行後にunsetしてください。
@@ -176,7 +177,7 @@ export LARM_SAAA_ALLOCATION_ID="$(jq -er '.allocationId' claim.json)"
 export LARM_SAAA_MODEL="$(jq -er '.providers[] | select(.capability | startswith("llm.")) | .model' claim.json)"
 bun run smoke:saaa-websocket
 ## 1,000 turn、30分、各turnでrenew/claim、切断、rotated credentialによるresumeを行うgate:
-export LARM_BASE_URL=https://gnosis.local:9810
+export LARM_BASE_URL=http://gnosis.local:9810
 export LARM_SAAA_CONNECTION_ID="$(jq -er '.id' claim.json)"
 bun run soak:saaa-websocket
 unset LARM_SAAA_STREAM_URL LARM_SAAA_PROVIDER_TOKEN LARM_SAAA_ALLOCATION_ID LARM_SAAA_MODEL

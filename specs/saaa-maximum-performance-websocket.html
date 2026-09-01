@@ -28,8 +28,9 @@
     <dt>状態</dt>
     <dd>
       LARMとnative Providerを実装済み。Qwen 3.8 27Bを使うisolated loopback commissioningは成功。
-      canonical systemd cutover、Mac共有fixture、TLSを満たすまでproduction capabilityはfail
-      closedで未広告
+      canonical systemd cutoverまで完了。ローカルLANはTLSを導入しない運用decisionに更新し、
+      <code>host-private</code> claimでも平文WS
+      capabilityを広告する。Mac共有fixtureは別途照合する
     </dd>
   </dl>
 
@@ -93,9 +94,9 @@ SAAA ── HTTP health / management / non-streaming ────── LARM
 
 Realtime data plane
 SAAA connection pool
-  ├─ WSS saaa.llm-stream.v1 ─┐
-  ├─ WSS saaa.llm-stream.v1 ─┼─ LARM WebSocket server
-  └─ WSS saaa.llm-stream.v1 ─┘    ├─ auth + allocation validation
+  ├─ WS/WSS saaa.llm-stream.v1 ─┐
+  ├─ WS/WSS saaa.llm-stream.v1 ─┼─ LARM WebSocket server
+  └─ WS/WSS saaa.llm-stream.v1 ─┘    ├─ auth + allocation validation
                                    ├─ one RunActor / connection
                                    ├─ seq + hash + replay retention
                                    └─ NativeLlmStreamBackend
@@ -139,7 +140,10 @@ Provider SSE ── parse / wrap ── WebSocket</code></pre>
         </tr>
         <tr>
           <th scope="row">Deployment</th>
-          <td>TLS、service lifecycle、runtime capability、readiness、conformance evidence</td>
+          <td>
+            local-network境界、service lifecycle、runtime capability、readiness、conformance
+            evidence
+          </td>
           <td>protocolの独自variation</td>
         </tr>
       </tbody>
@@ -162,7 +166,7 @@ Provider SSE ── parse / wrap ── WebSocket</code></pre>
   "model": "local",
   "streaming": {
     "protocol": "saaa.llm-stream.v1",
-    "url": "wss://larm.example/v1/llm/stream",
+    "url": "ws://gnosis.local:9810/v1/llm/stream",
     "encoding": "json-control+binary-delta-v1",
     "compression": "none",
     "maxConcurrentRuns": 1,
@@ -179,8 +183,11 @@ Provider SSE ── parse / wrap ── WebSocket</code></pre>
       <li>実効値はruntimeの安全な同時生成数を超えてはならない。</li>
       <li>一部connectionのprewarmに失敗した場合は利用可能slotだけへ縮退する。</li>
       <li>
-        loopback以外は<code>wss</code>、literal
-        loopbackだけは<code>ws</code>を許可する。
+        <code>host-private</code> Audienceはcontrol APIと同じHTTP
+        originから<code>ws</code>を広告する。 LAN境界外の<code
+          >tls</code
+        >
+        AudienceはHTTPS/WSSを使用する。
       </li>
       <li>URLへtoken、query、fragmentを含めず、descriptorとstream URLを同一hostにする。</li>
       <li>
@@ -588,8 +595,11 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
     <p>
       local LLMのtarget
       profileではapplication-layerのprompt暗号化、delta暗号化、全文監査materializationを
-      行わない。非loopbackのtransport TLSとBearer認証はMac contractへの適合条件なので維持する。
-      これは暗号化機能を一般用途から削除する判断ではなく、WebSocket realtime routeを
+      行わない。ローカルLANはoperator管理の許可CIDRとBearer認証を境界とし、transport TLSを必須に
+      しない。これは暗号化機能を一般用途から削除する判断ではなく、LAN境界外では<code
+        >tls</code
+      >
+      Audienceを別途commissioningし、WebSocket realtime routeを
       <strong>metadata-only、payload非永続</strong>にする明示的profile分離である。
     </p>
     <ul>
@@ -647,11 +657,13 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
         </tr>
         <tr>
           <th scope="row"><code>config/local-node/</code></th>
-          <td>native protocol、stream URL、connection/capacity、TLS readiness</td>
+          <td>native protocol、stream URL、connection/capacity、Audience transport policy</td>
         </tr>
         <tr>
           <th scope="row"><code>deploy/local-node/</code></th>
-          <td>TLS、metadata-only profile、conformance runner、canary、rollback</td>
+          <td>
+            LAN CIDR、optional TLS、metadata-only profile、conformance runner、canary、rollback
+          </td>
         </tr>
         <tr>
           <th scope="row">既存SSE benchmark/smoke</th>
@@ -698,8 +710,8 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
         writer、 timeout、同一run continuationを追加する。
       </li>
       <li>
-        <strong>Phase 7 — Pool/TLS/lifecycle。</strong>
-        advertisement数prewarm、capacity縮退、heartbeat、 WSS、credential rotation、drain、service
+        <strong>Phase 7 — Pool/transport/lifecycle。</strong>
+        advertisement数prewarm、capacity縮退、heartbeat、WS/WSS、credential rotation、drain、service
         restartを実装する。
       </li>
       <li>
@@ -766,7 +778,10 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
       <li>advertised connectionがprewarmされ、active run / connectionが常に1である。</li>
       <li>binary delta overheadがexact 16 byte、terminal本文再送が0 byteである。</li>
       <li>tool、cancel、ACK、resume、terminal integrityが正本どおり動作する。</li>
-      <li>非loopbackはWSSで、payloadとsecretがlog、metric、永続監査へ出ない。</li>
+      <li>
+        host-privateは許可LAN内のWS、LAN境界外はWSSとし、payloadとsecretがlog、metric、永続監査へ
+        出ない。
+      </li>
       <li>SAAA data plane、LARM、Provider内部にSSE bridgeが残っていない。</li>
     </ul>
   </section>
@@ -776,10 +791,13 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
     <p>
       LARM repository内のprotocol、backend boundary、daemon session、Bun WebSocket upgrade、claim
       advertisement、設定、smoke、benchmarkを実装し、canonical same-host endpointへcutoverした。
-      native Providerがsemantic readyである間、same-host
-      claimは<code>streaming</code>を返す。production
-      TLSを配備していないため、host-privateな<code>saaa-desktop</code>
-      claimは引き続きfail closedで <code>streaming</code>を返さない。
+      native Providerがsemantic readyである間、same-hostとhost-privateのclaimは
+      <code>streaming</code>を返す。2026-09-01のoperator
+      decisionにより、ローカルLANではTLSを導入せず、
+      <code>saaa-desktop</code>にはrequest originと同じhost・portの<code
+        >ws</code
+      >
+      URLを返す。
     </p>
     <table>
       <caption>
@@ -838,12 +856,11 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
           </td>
         </tr>
         <tr>
-          <th scope="row">Bun transport / TLS gate</th>
-          <td>実装済み、証明書未配備</td>
+          <th scope="row">Bun transport / Audience gate</th>
+          <td>実装済み</td>
           <td>
-            exact subprotocol echo、1 MiB上限、compression無効、非loopback cleartext拒否、対になった
-            <code>LARM_TLS_CERT_FILE</code
-            >/<code>LARM_TLS_KEY_FILE</code>を実装
+            exact subprotocol echo、1 MiB上限、compression無効、host-privateの平文WS opt-in、 TLS
+            Audience向けの対になった<code>LARM_TLS_CERT_FILE</code>/<code>LARM_TLS_KEY_FILE</code>を実装
           </td>
         </tr>
         <tr>
@@ -853,8 +870,8 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
             native Providerのsemantic readyとcapacityを確認できた場合だけ
             <code>streaming</code>をclaimへ追加。same-host Agent
             Connectionのcreate、claim、Provider semantic health、短期token 認証、WebSocket
-            run、release後のtoken失効を実daemonで確認した。未ready、未知runtime、
-            host-privateのTLS不足は未広告
+            run、release後のtoken失効を実daemonで確認した。未ready、未知runtimeは未広告。
+            host-privateはTLSの有無で省略しない
           </td>
         </tr>
         <tr>
@@ -925,8 +942,8 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
         workspaceに存在しないため、現fixtureはLARM側実装検証用であり、共有済みとは扱わない。
       </li>
       <li>
-        production certificate/keyを配備し、Mac実機でWSS、tool、cancel、resume、credential
-        rotationを確認する。TLSはcurrent native loopback milestoneでは明示的にdeferされている。
+        Mac実機からhost-private WSでtool、cancel、resume、credential rotationを確認する。TLSは
+        ローカルLANの完了条件に含めず、LAN境界外へ公開する場合だけ別計画でcommissioningする。
       </li>
       <li>
         実装済みrunnerで1,000 turn / 30分 soakを実施する。この長時間試験は今回の完了条件から
@@ -934,9 +951,8 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
       </li>
     </ol>
     <p>
-      loopback Native cutoverは完了した。上記三項が完了するまでPhase 1共有fixture、Phase 7 TLS
-      commissioningとcross-host Definition of Doneは未達である。LARMはsame-hostにだけWebSocket
-      metadataを返し、TLS未配備のhost-private claimでは返さない。どちらも旧SSEへper-run
+      loopback Native cutoverは完了した。host-private claimもTLSの有無にかかわらずWebSocket
+      metadataを返す。残るcross-host確認はMac共有fixture照合とMac実機WS E2Eであり、旧SSEへper-run
       fallbackしない。
     </p>
   </section>

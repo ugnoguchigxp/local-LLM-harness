@@ -307,6 +307,14 @@ agentProfiles:
       secret store、短期Provider tokenはConnection TTL内だけ保持します。LAN境界外へ公開する場合は
       <code>tls</code> AudienceとTLS終端を別途commissioningします。
     </p>
+    <p>
+      LLM runtimeのnative streamがreadyな場合、<code>host-private</code>
+      claimはTLSの有無で <code>streaming</code>を省略しません。HTTP request
+      originには同じhost・portの <code>ws://.../v1/llm/stream</code>、HTTPS
+      originには<code>wss://...</code>を返します。 平文WSはreview済みLAN
+      CIDR内だけで使用し、LAN境界外では<code>tls</code>
+      Audienceを使用します。
+    </p>
   </section>
 
   <section id="endpoints">

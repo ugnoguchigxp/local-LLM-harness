@@ -470,20 +470,18 @@ export const saaaStreamAdvertisementSchema = z.object({
   } catch {
     return;
   }
-  const loopback = isLiteralLoopbackHost(url.hostname);
   if (
     url.pathname !== "/v1/llm/stream"
     || url.username
     || url.password
     || url.search
     || url.hash
-    || (url.protocol === "ws:" && !loopback)
     || (url.protocol !== "ws:" && url.protocol !== "wss:")
   ) {
     context.addIssue({
       code: "custom",
       path: ["url"],
-      message: "streaming URL must be canonical WSS, or WS on literal loopback",
+      message: "streaming URL must be canonical WS or WSS",
     });
   }
 });
@@ -526,6 +524,7 @@ export function createSaaaStreamAdvertisement(input: {
   maxConcurrentRuns: number;
   maxConnections: number;
   resumeWindowMs?: number;
+  allowInsecureNonLoopback?: boolean;
 }): SaaaStreamAdvertisement {
   if (
     !Number.isInteger(input.maxConcurrentRuns)
@@ -540,7 +539,7 @@ export function createSaaaStreamAdvertisement(input: {
     throw new Error("streaming base URL must be a canonical /v1 URL");
   }
   const loopback = isLiteralLoopbackHost(normalizedHostname(url));
-  if (url.protocol === "http:" && !loopback) {
+  if (url.protocol === "http:" && !loopback && !input.allowInsecureNonLoopback) {
     throw new Error("non-loopback streaming requires HTTPS/WSS");
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {

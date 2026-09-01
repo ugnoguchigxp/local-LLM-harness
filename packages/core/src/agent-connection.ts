@@ -469,7 +469,6 @@ export const agentProviderDescriptorSchema = z.object({
     } catch {
       return;
     }
-    const loopback = isLiteralLoopbackHost(streamUrl.hostname);
     if (streamUrl.origin.replace(/^ws/, "http") !== baseUrl.origin) {
       context.addIssue({
         code: "custom",
@@ -483,13 +482,12 @@ export const agentProviderDescriptorSchema = z.object({
       || streamUrl.password
       || streamUrl.search
       || streamUrl.hash
-      || (streamUrl.protocol === "ws:" && !loopback)
       || (streamUrl.protocol !== "ws:" && streamUrl.protocol !== "wss:")
     ) {
       context.addIssue({
         code: "custom",
         path: ["streaming", "url"],
-        message: "streaming URL must be canonical WSS, or WS on literal loopback",
+        message: "streaming URL must be canonical WS or WSS",
       });
     }
   }

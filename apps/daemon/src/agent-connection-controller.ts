@@ -94,6 +94,7 @@ export class AgentConnectionController {
       allocationId: string;
       provider: AgentProfile["providers"][number];
       audienceBaseUrl: string;
+      audienceNetwork: AgentAudience["network"];
     }) => Promise<SaaaStreamAdvertisement | undefined> | SaaaStreamAdvertisement | undefined;
     now?: () => number;
     random?: () => string;
@@ -263,6 +264,7 @@ export class AgentConnectionController {
             allocationId: found.allocationId,
             provider,
             audienceBaseUrl: found.audience.baseUrl,
+            audienceNetwork: found.audience.network,
           });
           if (candidate) {
             const parsed = saaaStreamAdvertisementSchema.safeParse(candidate);

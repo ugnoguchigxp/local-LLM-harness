@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   decodeSaaaDelta,
-  isLiteralLoopbackHost,
   parseSaaaServerControl,
   SAAA_LLM_STREAM_PROTOCOL,
 } from "../../../packages/core/src/index";
@@ -24,16 +23,15 @@ function required(name: string): string {
 
 export function parseSmokeConfig(): SmokeConfig {
   const url = new URL(required("LARM_SAAA_STREAM_URL"));
-  const hostname = url.hostname.replace(/^\[|\]$/g, "");
   if (
     url.username
     || url.password
     || url.search
     || url.hash
     || url.pathname !== "/v1/llm/stream"
-    || (url.protocol !== "wss:" && !(url.protocol === "ws:" && isLiteralLoopbackHost(hostname)))
+    || (url.protocol !== "ws:" && url.protocol !== "wss:")
   ) {
-    throw new Error("LARM_SAAA_STREAM_URL must be canonical WSS, or WS on literal loopback");
+    throw new Error("LARM_SAAA_STREAM_URL must be canonical WS or WSS");
   }
   const timeoutMs = Number(process.env.LARM_SAAA_SMOKE_TIMEOUT_MS ?? "30000");
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 300_000) {

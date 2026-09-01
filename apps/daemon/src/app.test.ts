@@ -2023,6 +2023,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
 });
 
 test("agent connection derives a host-private claim from the request origin", async () => {
+  const streamingAudiences: string[] = [];
   const { app } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
     connectionSigningKey: agentSigningKey,
@@ -2031,6 +2032,19 @@ test("agent connection derives a host-private claim from the request origin", as
       choices: [{ index: 0, message: { role: "assistant", content: "" } }],
       usage: { completion_tokens: 1 },
     }),
+    resolveStreaming: ({ audienceBaseUrl, audienceNetwork }) => {
+      streamingAudiences.push(audienceNetwork);
+      return {
+        protocol: "saaa.llm-stream.v1",
+        url: `${audienceBaseUrl.replace(/^http/, "ws")}/llm/stream`,
+        encoding: "json-control+binary-delta-v1",
+        compression: "none",
+        maxConcurrentRuns: 1,
+        maxConnections: 1,
+        resumeWindowMs: 120_000,
+        upstreamTransport: "native",
+      };
+    },
   });
   const create = await app.request("http://gnosis.local:9810/v1/agent-connections", {
     method: "POST",
@@ -2061,7 +2075,13 @@ test("agent connection derives a host-private claim from the request origin", as
     configuration: {
       fields: { baseURL: "http://gnosis.local:9810/v1", model: "test-model" },
     },
+    streaming: {
+      protocol: "saaa.llm-stream.v1",
+      url: "ws://gnosis.local:9810/v1/llm/stream",
+      upstreamTransport: "native",
+    },
   });
+  expect(streamingAudiences).toEqual(["host-private"]);
 
   const conflictingOrigin = await app.request("http://192.168.50.23:9810/v1/agent-connections", {
     method: "POST",
