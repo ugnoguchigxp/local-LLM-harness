@@ -15,6 +15,10 @@ release_root="${test_root}/releases"
 state_root="${test_root}/state"
 key_root="${test_root}/keys"
 current_link="${test_root}/current"
+builder_uid="$(id -u)"
+builder_gid="$(id -g)"
+builder_bun="$(command -v bun)"
+builder_cache="${test_root}/builder-cache"
 mkdir -p "${source_root}/packages/core/src" "${source_root}/apps/daemon/src" \
   "${candidate_root}" "${inbox_root}" "${release_root}" "${state_root}" "${key_root}"
 git -C "${test_root}" init -q source
@@ -36,18 +40,47 @@ chmod 0600 "${key_root}/private.pem"
 openssl pkey -in "${key_root}/private.pem" -pubout -out "${key_root}/public.pem" >/dev/null 2>&1
 chmod 0644 "${key_root}/public.pem"
 
+# The legacy release wrapper runs this suite as root, while the signed release
+# builder intentionally rejects root. Exercise the production privilege boundary
+# by dropping only builder subprocesses to the original sudo user (or nobody in a
+# root-only test environment). The source stays root-owned and read-only to that
+# subprocess; only the isolated candidate, inbox, and signing-key roots are writable.
+if [[ "${builder_uid}" -eq 0 ]]; then
+  if [[ "${SUDO_UID:-}" =~ ^[0-9]+$ && "${SUDO_GID:-}" =~ ^[0-9]+$ \
+    && "${SUDO_UID}" -ne 0 ]]; then
+    builder_uid="${SUDO_UID}"
+    builder_gid="${SUDO_GID}"
+  else
+    builder_uid="$(id -u nobody)"
+    builder_gid="$(id -g nobody)"
+  fi
+  builder_bun="${test_root}/bun"
+  install -m 0755 "$(command -v bun)" "${builder_bun}"
+  install -d -m 0700 -o "${builder_uid}" -g "${builder_gid}" "${builder_cache}"
+  chmod 0755 "${test_root}"
+  chown -R "${builder_uid}:${builder_gid}" \
+    "${candidate_root}" "${inbox_root}" "${key_root}"
+fi
+
 build() {
   local commit="$1"
   local skip_gate="${2:-0}"
-  LARM_RELEASE_BUILDER_TEST_MODE=1 \
-  LARM_RELEASE_SKIP_GATE="${skip_gate}" \
-  LARM_RELEASE_SOURCE="${source_root}" \
-  LARM_RELEASE_CANDIDATE_ROOT="${candidate_root}" \
-  LARM_RELEASE_INBOX_ROOT="${inbox_root}" \
-  LARM_RELEASE_SIGNING_KEY="${key_root}/private.pem" \
-  LARM_RELEASE_COMMIT="${commit}" \
-  LARM_BUN_BIN="$(command -v bun)" \
-  bash "${builder}"
+  local -a command=(env)
+  if [[ "$(id -u)" -eq 0 ]]; then
+    command=(setpriv --reuid "${builder_uid}" --regid "${builder_gid}" --clear-groups env \
+      GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="${source_root}")
+  fi
+  "${command[@]}" \
+    LARM_RELEASE_BUILDER_TEST_MODE=1 \
+    LARM_RELEASE_SKIP_GATE="${skip_gate}" \
+    LARM_RELEASE_SOURCE="${source_root}" \
+    LARM_RELEASE_CANDIDATE_ROOT="${candidate_root}" \
+    LARM_RELEASE_INBOX_ROOT="${inbox_root}" \
+    LARM_RELEASE_SIGNING_KEY="${key_root}/private.pem" \
+    LARM_RELEASE_COMMIT="${commit}" \
+    LARM_BUN_BIN="${builder_bun}" \
+    BUN_INSTALL_CACHE_DIR="${builder_cache}" \
+    bash "${builder}"
 }
 
 activate() {
