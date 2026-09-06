@@ -11,7 +11,9 @@
     <dt>対象endpoint</dt>
     <dd><code>POST /v1/chat/completions</code></dd>
     <dt>状態</dt>
-    <dd>Repository実装・自動test完了。local-node配備とclient canary待ち</dd>
+    <dd>
+      Repository実装・自動test・候補コードの実Provider shadow canary完了。local-node live配備待ち
+    </dd>
     <dt>互換性</dt>
     <dd>
       追加変更。非streaming HTTPと<code>GET /v1/llm/stream</code> WebSocketを変更しない
@@ -86,6 +88,64 @@
       checkを通過し、ContextStill用model本体とMTP draftのsizeおよびSHA-256も
       manifestと一致した。配備、ContextStill hostからのfirewall確認、worker起動、JSON/SSE canary、
       Queue減少はこのread-only調査では未実施であり、live受入完了とはしない。
+    </p>
+  </section>
+
+  <section id="shadow-acceptance-2026-09-06">
+    <h2>2026-09-06 候補コードshadow受入</h2>
+    <p>
+      commit <code>382dc49953a3b25576b9e0b89dc730385f25f36c</code>の候補コードを、live daemonを変更せず
+      LAN待受の一時portで起動し、productionと同じregistry、Agent Profile、llama-swap、Qwen
+      worker資産を使って汎用HTTP Agent smokeを実行した。
+    </p>
+    <table>
+      <caption>
+        secret-freeなshadow E2E結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">確認</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Activity・Profile</th>
+          <td>
+            初期・終了ともidle。<code>contextstill-background</code>はexplicit-only、model
+            <code>qwen-agent-worker</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Connection contract</th>
+          <td>fallbackなし、existing-onlyでready・claim成功。Native WebSocket広告なし</td>
+        </tr>
+        <tr>
+          <th scope="row">OpenAI JSON</th>
+          <td>HTTP成功、meaningful completionを検証</td>
+        </tr>
+        <tr>
+          <th scope="row">OpenAI SSE</th>
+          <td>
+            10 chunk、meaningful delta 8件、finish reason
+            1件、<code>[DONE]</code>を検証
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">解放</th>
+          <td>Connection released、短期credential 401、active Allocation 0、worker unload完了</td>
+        </tr>
+        <tr>
+          <th scope="row">旧静的Provider</th>
+          <td><code>127.0.0.1:44448</code>への接続0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      一時daemon、port、state、ログは受入後に停止・削除した。live
+      <code>releaseCommit</code
+      >は引き続き<code>01667fe1a4f9acc18794ae9fd4264487c1063647</code>であり、 transactional
+      applyは非対話sudo認証が利用できないため未実施である。このshadow結果をlive配備完了とは扱わない。
     </p>
   </section>
 
