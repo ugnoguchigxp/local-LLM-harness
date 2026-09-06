@@ -84,7 +84,7 @@ cmp --silent \
   "${test_root}/etc/polkit-1/rules.d/50-larm-runtime-control.rules"
 
 systemctl_log="${test_root}/var/lib/larm/install-systemctl.log"
-grep -F "enable llama-server.service larm-native-qwen-provider.service llama-swap-worker.service qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service" \
+grep -F "enable llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service" \
   "${systemctl_log}" >/dev/null
 grep -F "disable qwen-tts.service" "${systemctl_log}" >/dev/null
 [[ -d "${test_root}/srv/ai/models/qwen-tts" ]]
@@ -97,6 +97,7 @@ grep -F "disable qwen-tts.service" "${systemctl_log}" >/dev/null
 [[ -x "${test_root}/usr/local/libexec/larm/activate-larm-release" ]]
 [[ -x "${test_root}/usr/local/libexec/larm/record-larm-release-gate" ]]
 [[ -x "${test_root}/usr/local/libexec/larm/rollback-larm-release" ]]
+[[ -x "${test_root}/usr/local/libexec/larm/retire-legacy-websocket" ]]
 [[ "$(stat -c '%a' "${test_root}/var/lib/larm/release-builder/signing-key.pem")" == "600" ]]
 [[ "$(stat -c '%a' "${test_root}/etc/larm/release-signing.pub")" == "644" ]]
 openssl pkey -pubin -in "${test_root}/etc/larm/release-signing.pub" -noout >/dev/null
@@ -115,13 +116,13 @@ LARM_INSTALL_TEST_MODE=1 \
 [[ -f "${gateway_root}/etc/systemd/system/larm-inference-audit-prune.timer" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-release-activator.path" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-http-provider-monitor.timer" ]]
-for unit in llama-server.service larm-native-qwen-provider.service llama-swap-worker.service qwen-asr.service whisper-asr.service qwen-tts.service \
+for unit in llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service qwen-tts.service \
   voicevox-tts.service; do
   [[ ! -e "${gateway_root}/etc/systemd/system/${unit}" ]]
 done
 grep -F "enable larm-daemon.service" \
   "${gateway_root}/var/lib/larm/install-systemctl.log" >/dev/null
-if grep -Eq 'llama-server|larm-native-qwen-provider|llama-swap-worker|qwen-asr|whisper-asr|qwen-tts|voicevox-tts|disable' \
+if grep -Eq 'llama-server|llama-swap-worker|qwen-asr|whisper-asr|qwen-tts|voicevox-tts|disable' \
   "${gateway_root}/var/lib/larm/install-systemctl.log"; then
   echo "gateway scope changed a Provider unit" >&2
   exit 1

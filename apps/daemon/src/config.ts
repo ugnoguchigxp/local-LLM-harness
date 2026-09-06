@@ -24,7 +24,6 @@ export type DaemonConfig = {
   connectionSigningKey?: Uint8Array;
   connectionReadyTimeoutMs: number;
   providerProbeTimeoutMs: number;
-  nativeStreamConnectTimeoutMs: number;
   gatewayTimeoutMs: number;
   controlMaxBodyBytes: number;
   gatewayMaxBodyBytes: number;
@@ -278,12 +277,6 @@ export function parseDaemonConfig(
       15,
       1,
       60,
-    ),
-    nativeStreamConnectTimeoutMs: numberSetting(
-      env,
-      "LARM_NATIVE_STREAM_CONNECT_TIMEOUT_MS",
-      5_000,
-      { min: 100, max: 30_000, integer: true },
     ),
     gatewayTimeoutMs: secondsSetting(
       env,

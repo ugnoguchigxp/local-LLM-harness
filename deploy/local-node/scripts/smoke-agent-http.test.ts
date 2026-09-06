@@ -114,7 +114,6 @@ function fixtureFetch(options: {
                 supportedCapabilities: ["llm.coding"],
                 protocol: "openai.chat-completions.v1",
                 model: "coding-default",
-                streamingProtocol: "saaa.llm-stream.v1",
               }],
             },
             {

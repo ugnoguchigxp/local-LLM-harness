@@ -18,7 +18,6 @@ state from this document alone.
 | 8083 | llama-swap | resident executor | on-demand 256K general and 64K Agent workers |
 | 8084 | VOICEVOX CORE 0.17.0 | resident | low-latency speech |
 | 8085 | Whisper large-v3-turbo Q5 HIP | trial resident | primary Japanese transcription |
-| 8090 | legacy native LLM stream Provider | rollback-only companion | HTTP移行soak完了までloopbackで維持 |
 | 9810 | LARM daemon | control plane | authenticated LAN Gateway |
 
 The repository-managed Runtime units bind ports 8080–8085 to loopback. `prepare-host.sh` installs
@@ -41,30 +40,16 @@ SAAA discovers a DHCP-aware hostname such as `gnosis.local` (or receives the cur
 operator configuration) and configures `http://gnosis.local:9810/v1`, a `LARM_API_TOKEN` Bearer,
 and a public model from `GET /v1/models`. Chat uses `POST /v1/chat/completions` with SSE;
 ASR and TTS use the standard audio endpoints. No claim URL, short-lived credential, allocation
-header, or native WebSocket is required. LARM ignores `X-Forwarded-*`; a future reverse-proxy
+header is required. LARM ignores `X-Forwarded-*`; a future reverse-proxy
 deployment needs a separately reviewed trusted-proxy contract.
 
 Provider ports 8080–8085 remain loopback-only. Only Gateway port 9810 is exposed to the reviewed
 SAAA source host. Standard model and inference routes require `LARM_API_TOKEN`; `/health` and
 `/ready` remain credential-free operational probes and do not disclose Provider endpoints.
 
-The following native path is rollback-only during the HTTP migration. New consumers must not use
-it. Legacy realtime output uses `saaa.llm-stream.v1` at `/v1/llm/stream`.
-Port 8090 is the external runtime's native event endpoint; it is never
-exposed to SAAA and must not implement or proxy SSE. LARM probes its exact
-`larm.native-llm-stream.v1` subprotocol and requires a strict semantic readiness declaration for
-SAD1 encoding, pause/resume, cancel, tool continuation, usage, and advertised capacity before
-advertising `streaming`. The currently installed
-`llama-server` exposes only HTTP/SSE streaming, so it cannot satisfy that prerequisite by itself;
-until a native companion is commissioned, claims deliberately omit the streaming descriptor.
-After the native companion and production certificate are commissioned, run
-`bun run smoke:saaa-websocket` and then `bun run soak:saaa-websocket`. The soak gate holds the test
-for at least 30 minutes, completes at least 1,000 turns, deliberately disconnects after the first
-delta of every turn, validates exact replay through `run.resume`, reports p50/p95/p99 turn and first
-delta latency, and rejects excess peak or settled RSS growth.
-Set `LARM_BASE_URL`, `LARM_API_TOKEN`, and `LARM_SAAA_CONNECTION_ID` for the soak runner. During
-every planned disconnect it renews and reclaims that same Agent Connection, requires a newly
-rotated Provider credential, verifies the claim invariants, and resumes with the new credential.
+The LLM transport is only OpenAI-compatible HTTP. Non-streaming requests return JSON and streaming
+requests return SSE from the same `/v1/chat/completions` endpoint. There is no native companion,
+custom subprotocol, acknowledgement/replay state, or separate streaming port.
 
 ## Why this split
 
@@ -80,8 +65,7 @@ rotated Provider credential, verifies the claim invariants, and resumes with the
   Runtime in the same swap group.
 - The worker and 35B comparison routes retain separate 64K launch contracts. Their admission
   reservations are 28 GB and 30 GB respectively; the latter includes the q8_0 Value cache selected
-  after perplexity validation. They are not advertised to SAAA as Agent Profiles until they provide
-  the same Native WebSocket contract as the Resident Qwen profile.
+  after perplexity validation. Consumers select them through explicit public models or profiles.
 - Qwen3-ASR 1.7B stays resident: the measured error reduction was worth roughly 3 GB over
   the 0.6B fallback for voice-chat input.
 - VOICEVOX is the normal response voice because it remains real-time while the LLM is busy.
@@ -127,6 +111,10 @@ LARM_EXPECTED_RELEASE_COMMIT="${approved_commit}" bun run smoke:http-provider-li
   > /srv/ai/logs/larm-canary/http-provider.json
 sudo /usr/local/libexec/larm/record-larm-release-gate canary \
   /srv/ai/logs/larm-canary/http-provider.json
+# ContextStill一件完了証跡をconsumer gateへ記録した後も、statusはconsumer_verifiedに留まる。
+# timerの同一世代24時間soakが96 sample以上・失敗0・最大gap 30分以下となった後だけ:
+# sudo /usr/local/libexec/larm/record-larm-release-gate soak \
+#   /var/lib/larm/http-provider-soak/status.json
 deploy/local-node/scripts/shadow-larm.sh
 # Attended voice validation only:
 # LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/local-node/scripts/smoke-voice.sh

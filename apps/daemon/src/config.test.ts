@@ -16,7 +16,6 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.telemetryMaxAgeMs).toBe(10_000);
   expect(config.connectionReadyTimeoutMs).toBe(120_000);
   expect(config.providerProbeTimeoutMs).toBe(15_000);
-  expect(config.nativeStreamConnectTimeoutMs).toBe(5_000);
   expect(config.tlsCertFile).toBeUndefined();
   expect(config.inferenceAuditMode).toBe("off");
   expect(config.inferenceAuditRetentionMs).toBe(7 * 24 * 60 * 60 * 1_000);
@@ -55,9 +54,6 @@ test("daemon configuration rejects invalid numbers", () => {
   );
   expect(() => parseDaemonConfig({ LARM_PROVIDER_PROBE_TIMEOUT_SECONDS: "61" })).toThrow(
     /LARM_PROVIDER_PROBE_TIMEOUT_SECONDS/,
-  );
-  expect(() => parseDaemonConfig({ LARM_NATIVE_STREAM_CONNECT_TIMEOUT_MS: "99" })).toThrow(
-    /LARM_NATIVE_STREAM_CONNECT_TIMEOUT_MS/,
   );
   expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_MODE: "optional" })).toThrow();
   expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_RETENTION_SECONDS: "604801" }))

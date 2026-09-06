@@ -2,8 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   activeAllocation,
   resolveAgentAudienceBaseUrl,
-  saaaStreamAdvertisementSchema,
-  saaaStreamRequestMatchesAdvertisement,
   type AgentAudience,
   type AgentConnectionCatalog,
   type AgentConnectionClaim,
@@ -13,7 +11,6 @@ import {
   type AgentProfile,
   type AgentProviderHealth,
   type PublicAgentConnection,
-  type SaaaStreamAdvertisement,
 } from "@larm/core";
 import type { ControlPlane } from "./controller";
 import { ConnectionTokenCodec, ConnectionTokenError, type ConnectionTokenPayload } from "./connection-token";
@@ -90,12 +87,6 @@ export class AgentConnectionController {
     idempotencyTtlMs: number;
     idempotencyLimit: number;
     historyLimit?: number;
-    resolveStreaming?: (input: {
-      allocationId: string;
-      provider: AgentProfile["providers"][number];
-      audienceBaseUrl: string;
-      audienceNetwork: AgentAudience["network"];
-    }) => Promise<SaaaStreamAdvertisement | undefined> | SaaaStreamAdvertisement | undefined;
     now?: () => number;
     random?: () => string;
   }) {}
@@ -144,9 +135,6 @@ export class AgentConnectionController {
             supportedCapabilities: provider.supportedCapabilities,
             protocol: provider.protocol,
             model: provider.publicModel,
-            ...(provider.streamingProtocol
-              ? { streamingProtocol: provider.streamingProtocol }
-              : {}),
           })),
         })),
         audiences: catalog.audiences.map((audience) => audience.id),
@@ -304,30 +292,7 @@ export class AgentConnectionController {
     const base = new URL(found.audience.baseUrl);
     const scheme: "http" | "https" = base.protocol === "https:" ? "https" : "http";
     const port = base.port ? Number(base.port) : scheme === "https" ? 443 : 80;
-    const providers = await Promise.all(found.profile.providers.map(async (provider) => {
-      let streaming: SaaaStreamAdvertisement | undefined;
-      if (provider.protocol === "openai.chat-completions.v1") {
-        try {
-          const candidate = await this.options.resolveStreaming?.({
-            allocationId: found.allocationId,
-            provider,
-            audienceBaseUrl: found.audience.baseUrl,
-            audienceNetwork: found.audience.network,
-          });
-          if (candidate) {
-            const parsed = saaaStreamAdvertisementSchema.safeParse(candidate);
-            if (
-              parsed.success
-              && saaaStreamRequestMatchesAdvertisement(
-                `${found.audience.baseUrl}/llm/stream`,
-                parsed.data,
-              )
-            ) streaming = parsed.data;
-          }
-        } catch {
-          streaming = undefined;
-        }
-      }
+    const providers = found.profile.providers.map((provider) => {
       return {
         name: provider.name,
         capability: provider.capability,
@@ -353,9 +318,8 @@ export class AgentConnectionController {
           fields: { baseURL: found.audience.baseUrl, model: provider.publicModel },
           secretFields: { apiKey: "credential.token" as const },
         },
-        ...(streaming ? { streaming } : {}),
       };
-    }));
+    });
     const body: AgentConnectionClaim = {
       id: found.id,
       allocationId: found.allocationId,

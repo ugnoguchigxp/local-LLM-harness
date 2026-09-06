@@ -1,8 +1,17 @@
 <article lang="ja">
-  <h1>LARM <code>saaa.llm-stream.v1</code> Native WebSocket 実装計画と実装証跡</h1>
+  <h1>廃止済みLARM Native WebSocketの設計記録</h1>
+
+  <aside>
+    <p>
+      この文書は採用されなかった独自WebSocket方式の履歴であり、現行contractではない。
+      2026-09-06に実行コード、公開schema、native companion unit、smoke／soak／benchmarkを撤去した。
+      現行LLM data planeは<code>POST /v1/chat/completions</code>のOpenAI互換HTTP
+      JSON／SSEだけである。 以下は再導入を意図しない判断根拠として保存する。
+    </p>
+  </aside>
 
   <p>
-    本計画は、SAAA desktop側を変更せず、LARM側をSAAA Provider LLM WebSocket Protocol
+    以下の旧計画は、SAAA desktop側を変更せず、LARM側をSAAA Provider LLM WebSocket Protocol
     <code>saaa.llm-stream.v1</code
     >へ適合させるためのserver-side実装計画である。SAAAのLLM realtime data planeはWebSocketへ
     集約する。一方、OpenAI互換client向けHTTP Chat Completionsは、非streaming JSONとstreaming
@@ -12,8 +21,7 @@
   <dl>
     <dt>Normative contract</dt>
     <dd>
-      SAAA Provider LLM WebSocket Protocol <code>saaa.llm-stream.v1</code> Reviewed /
-      Implementation-ready v2
+      廃止済みSAAA Provider LLM WebSocket Protocol <code>saaa.llm-stream.v1</code>
     </dd>
     <dt>SAAA baseline</dt>
     <dd><code>0ec8019</code> + working tree、2026-08-31受領版</dd>
@@ -27,10 +35,7 @@
     <dd>SAAAはWebSocketのみ。HTTP互換clientには独立したSSE透過を提供</dd>
     <dt>状態</dt>
     <dd>
-      LARMとnative Providerを実装済み。Qwen 3.8 27Bを使うisolated loopback commissioningは成功。
-      canonical systemd cutoverまで完了。ローカルLANはTLSを導入しない運用decisionに更新し、
-      <code>host-private</code> claimでも平文WS
-      capabilityを広告する。Mac共有fixtureは別途照合する
+      廃止済み。実行コードとsystemd unitは現行releaseから削除され、標準HTTP JSON／SSEへ統一した
     </dd>
   </dl>
 

@@ -8,7 +8,6 @@ import {
 
 const base = {
   httpActiveWorkloads: 0,
-  nativeActiveWorkloads: 0,
   draining: false,
   observedAt: "2026-09-05T17:45:00.000Z",
   bootEpoch: "epoch-test",
@@ -29,11 +28,10 @@ test("service activity reports an advisory idle snapshot", () => {
   });
 });
 
-test("service activity combines HTTP and native workloads", () => {
+test("service activity reports active HTTP workloads", () => {
   expect(createServiceActivity({
     ...base,
-    httpActiveWorkloads: 2,
-    nativeActiveWorkloads: 3,
+    httpActiveWorkloads: 5,
   })).toMatchObject({
     state: "active",
     activeWorkloads: 5,
@@ -55,7 +53,6 @@ test("draining takes precedence without discarding the observed count", () => {
 });
 
 test("service activity rejects invalid counts and extra public fields", () => {
-  expect(() => createServiceActivity({ ...base, nativeActiveWorkloads: -1 })).toThrow(RangeError);
   expect(() => createServiceActivity({ ...base, httpActiveWorkloads: 0.5 })).toThrow(RangeError);
   expect(() => serviceActivitySchema.parse({
     ...createServiceActivity(base),

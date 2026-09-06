@@ -22,18 +22,15 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/verify-external-assets.ts`: operator配備VOICEVOX VVMのidentity検証
 - `scripts/build-larm-release.sh`: 明示したreview済みcommitを非特権で検証・bundle化し、desired intentへ署名
 - `scripts/activate-larm-release.sh`: install済みroot helper。署名・treeを再検証しatomic切替だけを実行
-- `scripts/record-larm-release-gate.sh`: HTTP canaryとconsumer一件完了の順序を状態機械で強制
+- `scripts/record-larm-release-gate.sh`: HTTP canary、consumer一件、24時間soak、旧transport撤去の順序を状態機械で強制
+- `scripts/retire-legacy-websocket.sh`: soak完了後だけ旧unitを停止・退避し、port消滅の証跡を記録
 - `scripts/rollback-larm-release.sh`: candidate codeをroot実行せず前世代へatomic rollback
 - `scripts/release-larm.sh`: 新Controller移行前の既存世代向けlegacy release helper
 - `scripts/verify.sh`: GPU, service, HTTP health, and memory checks
-- `scripts/verify-saaa-native-provider.ts`: exact native subprotocolと`native.ready`のrelease gate
 - `scripts/smoke-larm.sh`: Resident 27B固定のAllocation、stream、release smoke
 - `scripts/smoke-agent-http.ts`: 任意のAgent Profileに対するHTTP JSON/SSE・解放・token失効smoke
 - `scripts/smoke-http-provider-live.ts`: Bearer＋modelだけでLLM JSON/SSE、ASR、TTSを検証するlive smoke
-- `scripts/smoke-saaa-agent-connection.sh`: request-originを含むSAAA向けcreate・claim・WebSocket・release smoke
-- `scripts/smoke-saaa-websocket.ts`: 短期Provider credentialでnative WebSocketを検証するend-to-end smoke
-- `scripts/soak-saaa-websocket.ts`: 1,000 turn・30分・毎turn network flap/resume・latency/RSS gate
-- `scripts/benchmark-saaa-websocket.ts`: 16 byte frame codecの10,000 delta latency/RSS gate
+- `scripts/monitor-http-provider-soak.ts`: 同一Provider世代の定期smokeを永続集計し、失敗と観測gapを保持
 - `scripts/smoke-voice.sh`: operator提供音声によるSTT・通常TTS smoke
 - `scripts/canary-gate.sh`: 4 seriesのSLO、boot epoch、fallback、leakを拒否するcanary gate
 - `scripts/shadow-larm.sh`: 推論せずlegacyとv1のroute・Runtime・endpointを比較
@@ -73,16 +70,11 @@ management, and Agent Connection credentials remain outside its environment.
 `qwen-tts.service`はinstallのみ行い、boot時はdisableのままです。LARMは同梱の
 polkit ruleにより、このPreferred serviceのstart / stopだけを無人実行できます。
 
-`qwen-general`のWebSocket capabilityは、`larm-native-qwen-provider.service`が
-loopback `ws://127.0.0.1:8090/v1/native/llm/stream`で
-`larm.native-llm-stream.v1`を受理し、SAD1 encoding、pause/resume、cancel、tool continuation、
-usage、必要capacityをすべて宣言するstrict `native.ready`を返した場合だけclaimへ現れます。companion
-自身もpatched engineのraw semantic Unix socket IPCを受けた場合だけreadyになります。
-`llama-server`のHTTP/SSE endpointを接続してもreadyにならず、LARMはSSE bridgeへfallbackしません。
-`saaa-desktop`の`host-private` Audienceは、review済みLAN CIDR内で平文
-`ws://<LAN host>:9810/v1/llm/stream`を広告します。TLSは必須ではありません。LAN境界外へ公開する
-場合だけ、LARM service userが読める証明書と秘密鍵の絶対pathを`/etc/larm/larm.env`の
-`LARM_TLS_CERT_FILE`と`LARM_TLS_KEY_FILE`へ対で設定し、`tls` Audienceを使用してください。
+`qwen-general`はloopbackのOpenAI互換HTTP endpointへ接続し、GatewayがJSONまたはSSEとして転送します。
+独自WebSocket capability、native companion、ACK／再送／pause契約はありません。`saaa-desktop`の
+`host-private` Audienceも標準HTTPの`baseUrl`だけを返します。LAN境界外へ公開する場合は、LARM service
+userが読める証明書と秘密鍵の絶対pathを`/etc/larm/larm.env`の`LARM_TLS_CERT_FILE`と
+`LARM_TLS_KEY_FILE`へ対で設定し、HTTPSを使用してください。
 
 ## Apply
 
@@ -156,13 +148,11 @@ LARM_RELEASE_COMMIT="${approved_commit}" deploy/local-node/scripts/build-larm-re
 systemctl status larm-release-activator.service --no-pager
 curl -sS http://127.0.0.1:9810/v1/release-convergence \
   -H "Authorization: Bearer ${LARM_API_TOKEN}" | jq
-sudo systemctl start llama-server.service larm-native-qwen-provider.service llama-swap-worker.service \
+sudo systemctl start llama-server.service llama-swap-worker.service \
   qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service  # first install only
 deploy/local-node/scripts/verify.sh
 deploy/local-node/scripts/smoke-larm.sh
-# After loading /etc/larm/larm.env without printing it, use the same DHCP-aware URL as SAAA:
-# LARM_BASE_URL=http://gnosis.local:9810 deploy/local-node/scripts/smoke-saaa-agent-connection.sh
-# Native WebSocket広告を前提にしない汎用HTTP Agent Connection canary:
+# After loading /etc/larm/larm.env without printing it, run the HTTP Agent Connection canary:
 # LARM_BASE_URL=http://gnosis.local:9810 \
 # LARM_AGENT_PROFILE=contextstill-background \
 # LARM_AGENT_AUDIENCE=saaa-desktop \
@@ -170,19 +160,6 @@ deploy/local-node/scripts/smoke-larm.sh
 # LARM_EXPECTED_MODEL=qwen-agent-worker \
 # LARM_EXPECTED_RELEASE_COMMIT="$(git rev-parse HEAD)" \
 # bun run smoke:agent-http
-# native Providerのcommissioning後、claimをclaim.jsonへ保存してから:
-# export LARM_SAAA_STREAM_URL="$(jq -er '.providers[] | select(.streaming) | .streaming.url' claim.json)"
-# export LARM_SAAA_PROVIDER_TOKEN="$(jq -er '.providers[] | select(.streaming) | .credential.token' claim.json)"
-# export LARM_SAAA_ALLOCATION_ID="$(jq -er '.allocationId' claim.json)"
-# export LARM_SAAA_MODEL="$(jq -er '.providers[] | select(.streaming) | .model' claim.json)"
-# bun run smoke:saaa-websocket
-# 1,000 turn / 30分 gate。各turnの切断中にConnectionをrenew/claimし、token rotationを検証する:
-# export LARM_BASE_URL=https://gnosis.local:9810
-# export LARM_API_TOKEN=...  # secret storeまたは読み込んだlarm.envから設定し、表示しない
-# export LARM_SAAA_CONNECTION_ID="$(jq -er '.id' claim.json)"
-# bun run soak:saaa-websocket
-# unset LARM_SAAA_STREAM_URL LARM_SAAA_PROVIDER_TOKEN LARM_SAAA_ALLOCATION_ID LARM_SAAA_MODEL
-# unset LARM_BASE_URL LARM_API_TOKEN LARM_SAAA_CONNECTION_ID
 # LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/local-node/scripts/smoke-voice.sh
 # After production calibration has changed deploy/local-node/slo.yaml to calibrated:
 # LARM_CANARY_EVIDENCE_DIR=/srv/ai/logs/larm-canary \
@@ -191,7 +168,8 @@ deploy/local-node/scripts/smoke-larm.sh
 ```
 
 HTTP Provider canaryはsecret-free JSONをrepository外へ保存し、root管理の状態機械へ記録します。
-consumer完了証跡より前に`complete`へ進めることはできません。
+consumer完了と24時間soakの後、`sudo /usr/local/libexec/larm/retire-legacy-websocket`で旧unitを
+停止・disable・退避し、port 8090と旧OpenAPI routeの消滅を確認した場合だけ`complete`へ進みます。
 
 ```bash
 umask 077
@@ -202,6 +180,9 @@ sudo /usr/local/libexec/larm/record-larm-release-gate canary \
 # ContextStill一件完了・成果一回保存・次job境界再評価の証跡を得た後だけ:
 # sudo /usr/local/libexec/larm/record-larm-release-gate consumer \
 #   /absolute/path/to/contextstill-consumer-evidence.json
+# 同一release/config/bootで24時間、96 sample以上、失敗0、最大gap 30分以下となった後だけ:
+# sudo /usr/local/libexec/larm/record-larm-release-gate soak \
+#   /var/lib/larm/http-provider-soak/status.json
 ```
 
 consumer証跡はcanaryと同じProvider世代を固定し、次のstrict JSONとします。`configurationRevision`と
@@ -222,6 +203,11 @@ consumer証跡はcanaryと同じProvider世代を固定し、次のstrict JSON�
   "observedAt": "2026-09-06T00:00:00Z"
 }
 ```
+
+`larm-http-provider-monitor.timer`は15分ごとにcatalog、JSON、SSEを実行し、
+`/var/lib/larm/http-provider-soak/status.json`へ世代別の`sampleCount`、`failureCount`、
+`durationSeconds`、`maxGapSeconds`をatomic保存します。失敗履歴は同じ世代内の後続成功では消えず、
+release／config／bootのいずれかが変わった場合だけ新しいsoak windowを開始します。
 
 The installer copies and enables units but intentionally does not start or restart them. On an
 update, inspect the diff and restart only a changed service when its behavior must be applied;
@@ -279,7 +265,7 @@ epoch in a new Spec HTML document. Do not commit prompts, transcripts, audio, cr
 data, or unredacted logs.
 
 日常の性能切り分けには、release commit一致を要求するSLO canaryとは別に診断benchmarkを使います。
-既定ではHTTP JSON、HTTP SSE、移行比較用native WebSocket、ASR、TTSの単体系列と、各LLM transportを
+既定ではHTTP JSON、HTTP SSE、ASR、TTSの単体系列と、各LLM応答形式を
 音声2系統と同時発射するmixed系列を順番に実行します。Resident Providerは停止・再起動せず、
 warmupは最初の要求を集計から除くだけです。
 
@@ -290,26 +276,15 @@ set +a
 bun run perf:diagnostic
 ```
 
-WebSocket wire実装のlocal release gateはmodelを呼ばず、20 byte deltaを10,000回encodeして
-250 ms / peak RSS増加16 MiBの上限を検証します。protocol conformanceと合わせて実行します。
-
-```bash
-bun run conformance:saaa
-bun run benchmark:saaa-websocket
-```
-
 固定fixtureと外部証跡を使う場合は、`LARM_PERF_AUDIO_FILE`へ絶対パス、`LARM_PERF_OUTPUT`へ既存でない
 repository外の絶対パスを指定します。反復数は`LARM_PERF_ITERATIONS`、warmup数は
 `LARM_PERF_WARMUPS`、系列は`LARM_PERF_SCENARIOS`で変更できます。選択肢は
-`llm,llm-sse,llm-ws,asr,tts,mixed,mixed-sse,mixed-ws`です。WebSocket系列は既定で`coding-default` Agent
-Connectionと`same-host` audienceを使い、`LARM_PERF_WS_AGENT_PROFILE`と
-`LARM_PERF_WS_AUDIENCE`で変更できます。Agent Connection準備時間はallocation latencyへ分離し、
-run latencyはconnection.readyまでを含むWebSocket handshakeからterminal ACKまでです。
+`llm,llm-sse,asr,tts,mixed,mixed-sse`です。HTTP JSONとSSEのfirst token、全体latency、
+output tokens/secを同じProviderに対して比較します。
 
 評価専用のOpenAI互換ASRをproduction Bindingの代わりに測る場合は、loopback上の
 `POST /v1/audio/transcriptions`を`LARM_PERF_ASR_URL`へ指定します。ASR-onlyではAllocationを作らず、
-mixedではLLMとTTS、mixed-wsではTTSだけを通常Allocationへ固定し、後者のLLMはAgent
-Connectionを使って外部ASRと同時発射します。識別子は
+mixedではLLMとTTSを通常Allocationへ固定し、外部ASRと同時発射します。識別子は
 `LARM_PERF_ASR_ROUTE`、`LARM_PERF_ASR_RUNTIME`、`LARM_PERF_ASR_RELEASE`でreportへ固定します。
 外部URLはcredential、query、fragmentを含まないHTTP loopbackだけを受理します。
 
@@ -322,8 +297,8 @@ with atomic no-overwrite publication and mode 0600, including comparator output.
 a valid nonstreaming JSON completion, STT requires non-empty JSON text, and telemetry is sampled
 continuously while each series runs. A failed run still publishes its bounded raw error codes and
 partial samples before exiting nonzero; it never emits a passing aggregate summary.
-`llm-realtime`は`coding-default` Agent Connectionを作成してclaimされたWebSocketを測り、最初の
-binary deltaをTTFBとする。`llm-normal`は非streaming HTTP JSONを測る。
+`llm-realtime`はOpenAI互換HTTP SSEの最初のcontent deltaをTTFBとします。
+`llm-normal`は非streaming HTTP JSONを測ります。
 
 ```bash
 evidence_dir=/srv/ai/logs/larm-calibration/$(date -u +%Y%m%dT%H%M%SZ)

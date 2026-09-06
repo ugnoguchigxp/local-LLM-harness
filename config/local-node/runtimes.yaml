@@ -16,14 +16,6 @@ runtimes:
       maxConcurrentRequests: 1
       maxQueuedRequests: 0
       queueTimeoutMs: 1000
-    streaming:
-      protocol: saaa.llm-stream.v1
-      upstreamUrl: ws://127.0.0.1:8090/v1/native/llm/stream
-      upstreamProtocol: larm.native-llm-stream.v1
-      upstreamTransport: native
-      maxConcurrentRuns: 1
-      maxConnections: 1
-      resumeWindowMs: 120000
     deployment:
       service: llama-server.service
       healthPort: 8080

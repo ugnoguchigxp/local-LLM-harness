@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 builder="${repo_root}/deploy/local-node/scripts/build-larm-release.sh"
 activator="${repo_root}/deploy/local-node/scripts/activate-larm-release.sh"
 gate_recorder="${repo_root}/deploy/local-node/scripts/record-larm-release-gate.sh"
+legacy_ws_retirement="${repo_root}/deploy/local-node/scripts/retire-legacy-websocket.sh"
 rollback="${repo_root}/deploy/local-node/scripts/rollback-larm-release.sh"
 test_root="$(mktemp -d /tmp/larm-release-convergence.XXXXXX)"
 trap 'chmod -R u+rwX -- "${test_root}" 2>/dev/null || true; rm -rf -- "${test_root}"' EXIT
@@ -70,6 +71,18 @@ rollback_release() {
   bash "${rollback}"
 }
 
+retire_legacy_ws() {
+  LARM_LEGACY_WS_RETIRE_TEST_MODE=1 \
+  LARM_RELEASE_STATE_ROOT="${state_root}" \
+  LARM_RELEASE_CURRENT="${current_link}" \
+  LARM_LEGACY_WS_UNIT_PATH="${test_root}/systemd/larm-native-qwen-provider.service" \
+  LARM_RETIRED_UNIT_ROOT="${test_root}/retired-units" \
+  LARM_RELEASE_GATE_RECORDER="${gate_recorder}" \
+  LARM_OPENAPI_FILE="${test_root}/openapi.json" \
+  LARM_SYSTEMCTL_LOG="${test_root}/retirement-systemctl.log" \
+  bash "${legacy_ws_retirement}"
+}
+
 first_commit="$(git -C "${source_root}" rev-parse HEAD)"
 build "${first_commit}" | jq -e --arg commit "${first_commit}" '.status == "submitted" and .commit == $commit' >/dev/null
 jq -e '.schemaVersion == 1 and (.signature | length > 100)' "${inbox_root}/request.json" >/dev/null
@@ -103,7 +116,42 @@ if record_gate consumer "${test_root}/consumer-wrong-generation.json" >/dev/null
   exit 1
 fi
 record_gate consumer "${test_root}/consumer.json" >/dev/null
+jq -e '.stage == "consumer_verified" and .result == "succeeded"' "${state_root}/status.json" >/dev/null
+jq -n --arg commit "${first_commit}" --arg revision "${test_revision}" '
+  {
+    schemaVersion:1,
+    kind:"http-provider-soak",
+    ok:true,
+    releaseCommit:$commit,
+    configRevision:$revision,
+    bootEpoch:"epoch-test",
+    startedAt:"2026-09-06T00:00:00Z",
+    lastAttemptAt:"2026-09-06T01:00:00Z",
+    lastSuccessAt:"2026-09-06T01:00:00Z",
+    durationSeconds:3600,
+    sampleCount:5,
+    failureCount:0,
+    maxGapSeconds:900
+  }
+' >"${test_root}/soak.json"
+if record_gate soak "${test_root}/soak.json" >/dev/null 2>&1; then
+  echo "release convergence accepted a short HTTP soak" >&2
+  exit 1
+fi
+jq '.lastAttemptAt = "2026-09-07T00:00:00Z"
+  | .lastSuccessAt = "2026-09-07T00:00:00Z"
+  | .durationSeconds = 86400
+  | .sampleCount = 97' "${test_root}/soak.json" >"${test_root}/soak-complete.json"
+record_gate soak "${test_root}/soak-complete.json" >/dev/null
+jq -e '.stage == "soak_verified" and .result == "succeeded"' "${state_root}/status.json" >/dev/null
+mkdir -p "${test_root}/systemd" "${test_root}/retired-units"
+printf '[Unit]\nDescription=retired test unit\n' >"${test_root}/systemd/larm-native-qwen-provider.service"
+printf '%s\n' '{"paths":{"/v1/chat/completions":{}}}' >"${test_root}/openapi.json"
+retire_legacy_ws >/dev/null
 jq -e '.stage == "complete" and .result == "succeeded"' "${state_root}/status.json" >/dev/null
+[[ ! -e "${test_root}/systemd/larm-native-qwen-provider.service" ]]
+[[ -f "$(find "${test_root}/retired-units" -maxdepth 1 -type f -name 'larm-native-qwen-provider.service.*' -print -quit)" ]]
+grep -Fqx 'disable --now larm-native-qwen-provider.service' "${test_root}/retirement-systemctl.log"
 
 printf 'second\n' >>"${source_root}/bun.lock"
 git -C "${source_root}" add bun.lock

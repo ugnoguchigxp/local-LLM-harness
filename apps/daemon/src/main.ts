@@ -1,18 +1,10 @@
-import { createHash } from "node:crypto";
-import {
-  createSaaaStreamAdvertisement,
-  LARM_VERSION,
-  saaaStreamRequestMatchesAdvertisement,
-  SAAA_LLM_STREAM_LIMITS,
-  SAAA_LLM_STREAM_PROTOCOL,
-} from "@larm/core";
+import { LARM_VERSION } from "@larm/core";
 import {
   createRuntimeBackend,
   LocalArtifactStore,
   LocalRuntimeReleaseStateStore,
   LinuxNodeTelemetry,
   LocalInferenceAuditStore,
-  NativeWebSocketLlmStreamBackend,
 } from "@larm/backends";
 import { createAppComponents } from "./app";
 import { ArtifactManager } from "./artifact-manager";
@@ -29,11 +21,6 @@ import {
   FileInferenceAuditRecorder,
   loadInferenceAuditKey,
 } from "./inference-audit";
-import {
-  LlmStreamServer,
-  LlmStreamCapacityError,
-  type LlmStreamConnection,
-} from "./llm-stream-session";
 
 const config = parseDaemonConfig();
 const catalogGeneration = loadCatalogGeneration({
@@ -50,35 +37,6 @@ const identity = {
 };
 
 const backend = createRuntimeBackend(registry.runtimes);
-const nativeLlmBackends = new Map<string, {
-  configuration: string;
-  backend: NativeWebSocketLlmStreamBackend;
-}>();
-const nativeLlmBackendFor = (runtime: (typeof registry.runtimes)[number]) => {
-  if (!runtime.streaming) {
-    nativeLlmBackends.delete(runtime.id);
-    return undefined;
-  }
-  const requiredConcurrentRuns = Math.min(
-    runtime.streaming.maxConcurrentRuns,
-    runtime.streaming.maxConnections,
-    runtime.resources.maxConcurrentRequests,
-  );
-  const configuration = JSON.stringify({
-    streaming: runtime.streaming,
-    requiredConcurrentRuns,
-  });
-  const existing = nativeLlmBackends.get(runtime.id);
-  if (existing?.configuration === configuration) return existing.backend;
-  const streamBackend = new NativeWebSocketLlmStreamBackend(runtime.id, {
-    url: runtime.streaming.upstreamUrl,
-    protocol: runtime.streaming.upstreamProtocol,
-    connectTimeoutMs: config.nativeStreamConnectTimeoutMs,
-    requiredConcurrentRuns,
-  });
-  nativeLlmBackends.set(runtime.id, { configuration, backend: streamBackend });
-  return streamBackend;
-};
 const metrics = new MetricsRegistry();
 const observer = new Observer(registry, backend, {
   graceMs: config.graceMs,
@@ -215,12 +173,6 @@ runtimeReleaseManager = new RuntimeReleaseManager(
 await runtimeReleaseManager.initialize();
 await observer.tick();
 
-const llmStreamServer = new LlmStreamServer({
-  onEvent: (event) => {
-    metrics.record(event);
-    writeEvent(event);
-  },
-});
 const appComponents = createAppComponents({
   registry,
   getState: () => observer.getState(),
@@ -233,7 +185,6 @@ const appComponents = createAppComponents({
   runtimeReleaseManager,
   metrics,
   requestTracker,
-  getNativeActiveWorkloads: () => llmStreamServer.activeRunCount(),
   controlMaxBodyBytes: config.controlMaxBodyBytes,
   gatewayMaxBodyBytes: config.gatewayMaxBodyBytes,
   speechMaxBodyBytes: config.speechMaxBodyBytes,
@@ -255,32 +206,8 @@ const appComponents = createAppComponents({
   getReleaseConvergenceStatus: async () => await Bun.file(
     process.env.LARM_RELEASE_CONVERGENCE_STATUS ?? "/var/lib/larm/release-controller/status.json",
   ).json(),
-  resolveStreaming: async ({ allocationId, provider, audienceBaseUrl, audienceNetwork }) => {
-    const resolved = control.resolveAllocation(allocationId, provider.capability);
-    if (resolved.status !== 200 || !("runtime" in resolved.body)) return undefined;
-    const runtime = registry.runtimes.find((candidate) => candidate.id === resolved.body.runtime);
-    if (!runtime?.streaming) return undefined;
-    const streamBackend = nativeLlmBackendFor(runtime);
-    if (!streamBackend || !await streamBackend.ready()) return undefined;
-    const capacity = Math.min(
-      runtime.streaming.maxConcurrentRuns,
-      runtime.streaming.maxConnections,
-      runtime.resources.maxConcurrentRequests,
-    );
-    try {
-      return createSaaaStreamAdvertisement({
-        baseUrl: audienceBaseUrl,
-        maxConcurrentRuns: capacity,
-        maxConnections: capacity,
-        resumeWindowMs: runtime.streaming.resumeWindowMs,
-        allowInsecureNonLoopback: audienceNetwork !== "tls",
-      });
-    } catch {
-      return undefined;
-    }
-  },
 });
-const { app, agentConnections } = appComponents;
+const { app } = appComponents;
 
 let ticking = false;
 const interval = setInterval(() => {
@@ -299,179 +226,14 @@ const interval = setInterval(() => {
     });
 }, config.observeIntervalMs);
 
-const server = Bun.serve<LlmStreamConnection>({
+const server = Bun.serve({
   port: config.port,
   hostname: config.hostname,
   ...(config.tlsCertFile && config.tlsKeyFile
     ? { tls: { cert: Bun.file(config.tlsCertFile), key: Bun.file(config.tlsKeyFile) } }
     : {}),
-  fetch: async (request, bunServer) => {
-    const url = new URL(request.url);
-    if (url.pathname !== "/v1/llm/stream") return await app.fetch(request);
-    if (request.method !== "GET") {
-      return Response.json({ error: { code: "method_not_allowed", message: "WebSocket upgrade requires GET" } }, {
-        status: 405,
-        headers: { allow: "GET" },
-      });
-    }
-    if (url.search || url.hash) {
-      return Response.json({ error: { code: "invalid_request", message: "stream URL cannot use query or fragment" } }, {
-        status: 400,
-      });
-    }
-    if (control.isDraining()) {
-      return Response.json({ error: { code: "draining", message: "control plane is draining" } }, { status: 503 });
-    }
-    if (!agentConnections) {
-      return Response.json({
-        error: { code: "connection_credentials_unavailable", message: "stream authentication is unavailable" },
-      }, { status: 503 });
-    }
-    if (request.headers.get("sec-websocket-protocol")?.trim() !== SAAA_LLM_STREAM_PROTOCOL) {
-      return Response.json({
-        error: { code: "unsupported_protocol", message: `Sec-WebSocket-Protocol must equal ${SAAA_LLM_STREAM_PROTOCOL}` },
-      }, { status: 400 });
-    }
-    const authorization = request.headers.get("authorization");
-    const token = authorization?.startsWith("Bearer larm_conn_v1.") ? authorization.slice(7) : undefined;
-    if (!token) {
-      return Response.json({ error: { code: "unauthorized", message: "valid provider bearer token required" } }, {
-        status: 401,
-      });
-    }
-    let verified;
-    try {
-      verified = agentConnections.verifyProviderToken(token);
-    } catch {
-      return Response.json({ error: { code: "unauthorized", message: "provider bearer token is invalid" } }, {
-        status: 401,
-      });
-    }
-    if (verified.provider.protocol !== "openai.chat-completions.v1") {
-      return Response.json({ error: { code: "connection_forbidden", message: "provider token is not for LLM" } }, {
-        status: 403,
-      });
-    }
-    const resolved = control.resolveAllocation(verified.record.allocationId, verified.provider.capability);
-    if (resolved.status !== 200 || !("runtime" in resolved.body)) {
-      return Response.json(resolved.body, { status: resolved.status });
-    }
-    const runtime = registry.runtimes.find((candidate) => candidate.id === resolved.body.runtime);
-    const streamBackend = runtime ? nativeLlmBackendFor(runtime) : undefined;
-    if (!runtime?.streaming || !streamBackend) {
-      return Response.json({
-        error: { code: "native_stream_unavailable", message: "native LLM stream is not ready" },
-      }, { status: 503 });
-    }
-    let streaming;
-    try {
-      const capacity = Math.min(
-        runtime.streaming.maxConcurrentRuns,
-        runtime.streaming.maxConnections,
-        runtime.resources.maxConcurrentRequests,
-      );
-      streaming = createSaaaStreamAdvertisement({
-        baseUrl: verified.record.audience.baseUrl,
-        maxConcurrentRuns: capacity,
-        maxConnections: capacity,
-        resumeWindowMs: runtime.streaming.resumeWindowMs,
-        allowInsecureNonLoopback: verified.record.audience.network !== "tls",
-      });
-    } catch {
-      return Response.json({ error: { code: "tls_required", message: "non-loopback LLM streaming requires WSS" } }, {
-        status: 426,
-      });
-    }
-    if (!saaaStreamRequestMatchesAdvertisement(request.url, streaming)) {
-      return Response.json({
-        error: { code: "connection_origin_mismatch", message: "stream request does not match the claimed audience URL" },
-      }, { status: 403 });
-    }
-    const validate = () => {
-      try {
-        const latest = agentConnections.verifyProviderToken(token);
-        if (
-          latest.record.id !== verified.record.id
-          || latest.record.allocationId !== verified.record.allocationId
-          || latest.provider.name !== verified.provider.name
-          || latest.provider.capability !== verified.provider.capability
-        ) return false;
-      } catch {
-        return false;
-      }
-      const current = control.resolveAllocation(verified.record.allocationId, verified.provider.capability);
-      return current.status === 200
-        && "runtime" in current.body
-        && current.body.runtime === runtime.id;
-    };
-    if (!validate()) {
-      return Response.json({ error: { code: "unauthorized", message: "provider bearer token expired" } }, {
-        status: 401,
-      });
-    }
-    if (!await streamBackend.ready()) {
-      return Response.json({
-        error: { code: "native_stream_unavailable", message: "native LLM stream is not ready" },
-      }, { status: 503 });
-    }
-    if (!validate()) {
-      return Response.json({ error: { code: "unauthorized", message: "provider bearer token expired" } }, {
-        status: 401,
-      });
-    }
-    let connection: LlmStreamConnection;
-    try {
-      connection = llmStreamServer.createConnection({
-        connectionScope: `${verified.record.id}:${verified.provider.name}`,
-        allocationId: verified.record.allocationId,
-        providerName: verified.provider.name,
-        capability: verified.provider.capability,
-        publicModel: verified.provider.publicModel,
-        runtimeId: runtime.id,
-        credentialFingerprint: createHash("sha256").update(token).digest("hex"),
-        streaming,
-        backend: streamBackend,
-        validate,
-        lifecycleSignal: control.getAllocationSignal(verified.record.allocationId),
-      });
-    } catch (error) {
-      if (error instanceof LlmStreamCapacityError) {
-        return Response.json({ error: { code: "capacity", message: error.message } }, { status: 429 });
-      }
-      throw error;
-    }
-    let upgraded = false;
-    try {
-      upgraded = bunServer.upgrade(request, {
-        data: connection,
-        headers: { "Sec-WebSocket-Protocol": SAAA_LLM_STREAM_PROTOCOL },
-      });
-    } catch (error) {
-      llmStreamServer.close(connection);
-      throw error;
-    }
-    if (!upgraded) {
-      llmStreamServer.close(connection);
-      return Response.json({ error: { code: "upgrade_failed", message: "WebSocket upgrade failed" } }, {
-        status: 400,
-      });
-    }
-    return undefined;
-  },
-  websocket: {
-    maxPayloadLength: SAAA_LLM_STREAM_LIMITS.maxClientControlBytes,
-    perMessageDeflate: false,
-    open: (socket) => llmStreamServer.open(socket.data, socket),
-    message: (socket, message) => llmStreamServer.message(
-      socket.data,
-      typeof message === "string" ? message : new Uint8Array(message),
-    ),
-    drain: (socket) => llmStreamServer.drain(socket.data),
-    pong: (socket) => llmStreamServer.pong(socket.data),
-    close: (socket) => llmStreamServer.close(socket.data),
-  },
+  fetch: app.fetch,
 });
-
 console.log(`larm listening on ${config.tlsCertFile ? "https" : "http"}://${server.hostname}:${server.port}`);
 console.log(`config ${config.configDir}`);
 
@@ -502,7 +264,6 @@ async function shutdown(signal: string): Promise<void> {
   mutationCoordinator.beginDrain();
   artifactManager.beginDrain();
   executionGate.beginDrain();
-  llmStreamServer.beginDrain();
   clearInterval(interval);
   clearTimeout(reconciliationTimer);
   const deadline = Date.now() + config.shutdownTimeoutMs;
@@ -511,12 +272,10 @@ async function shutdown(signal: string): Promise<void> {
       control.flush(),
       artifactManager.flush(),
       mutationCoordinator.drain(config.shutdownTimeoutMs),
-      llmStreamServer.shutdown(config.shutdownTimeoutMs),
       reconciliationInFlight ?? Promise.resolve(),
-    ]).then(([, , mutationDrained, streamDrained]) => mutationDrained && streamDrained),
+    ]).then(([, , mutationDrained]) => mutationDrained),
     Bun.sleep(config.shutdownTimeoutMs).then(() => false),
   ]);
-  if (!operationsDrained) await llmStreamServer.shutdown(0);
   const requestsDrained = await requestTracker.drain(Math.max(0, deadline - Date.now()));
   if (!operationsDrained || !requestsDrained) {
     console.warn(`shutdown drain exceeded ${config.shutdownTimeoutMs} ms`);

@@ -5,7 +5,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { deploymentPolicySchema } from "./api-schema";
 import type { Registry } from "./registry";
-import { isLiteralLoopbackHost, saaaStreamAdvertisementSchema } from "./saaa-llm-stream";
+import { isLiteralLoopbackHost } from "./network";
 import { runtimeProtocolSchema, type RuntimeProtocol } from "./schema";
 
 export const agentIdentifierSchema = z.string()
@@ -89,7 +89,6 @@ const agentProviderYamlSchema = z.object({
   route: agentIdentifierSchema,
   publicModel: agentIdentifierSchema,
   readiness: agentReadinessKindSchema,
-  streamingProtocol: z.literal("saaa.llm-stream.v1").optional(),
 }).strict();
 
 const agentProfileYamlSchema = z.object({
@@ -161,7 +160,6 @@ export type AgentProviderProfile = {
   publicModel: string;
   readiness: AgentReadinessKind;
   protocol: RuntimeProtocol;
-  streamingProtocol?: "saaa.llm-stream.v1";
 };
 
 export type AgentProfile = {
@@ -270,19 +268,6 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
         throw new AgentConnectionCatalogError(
           `agent profile ${id} provider ${provider.name} readiness does not match ${protocol}`,
         );
-      }
-      if (provider.streamingProtocol) {
-        const primaryRuntimes = route.candidates
-          .filter((candidate) => candidate.purpose === "primary")
-          .map((candidate) => runtimes.get(candidate.runtime)!);
-        if (
-          primaryRuntimes.length === 0
-          || primaryRuntimes.some((runtime) => runtime.streaming?.protocol !== provider.streamingProtocol)
-        ) {
-          throw new AgentConnectionCatalogError(
-            `agent profile ${id} provider ${provider.name} streaming protocol is not supported by every primary runtime`,
-          );
-        }
       }
       return {
         ...provider,
@@ -444,7 +429,6 @@ export const publicAgentProfileListSchema = z.object({
       supportedCapabilities: z.array(agentIdentifierSchema).min(1).max(32),
       protocol: runtimeProtocolSchema,
       model: agentIdentifierSchema,
-      streamingProtocol: z.literal("saaa.llm-stream.v1").optional(),
     }).strict().superRefine((provider, context) => {
       const canonical = [...new Set(provider.supportedCapabilities)].sort();
       if (
@@ -583,7 +567,6 @@ export const agentProviderDescriptorSchema = z.object({
     }).strict(),
     secretFields: z.object({ apiKey: z.literal("credential.token") }).strict(),
   }).strict(),
-  streaming: saaaStreamAdvertisementSchema.optional(),
 }).strict().superRefine((provider, context) => {
   let baseUrl: URL;
   try {
@@ -628,42 +611,6 @@ export const agentProviderDescriptorSchema = z.object({
       path: ["configuration", "fields", "model"],
       message: "configuration model must match model",
     });
-  }
-  if (provider.streaming) {
-    if (provider.protocol !== "openai.chat-completions.v1") {
-      context.addIssue({
-        code: "custom",
-        path: ["streaming"],
-        message: "native SAAA streaming requires openai.chat-completions.v1",
-      });
-    }
-    let streamUrl: URL;
-    try {
-      streamUrl = new URL(provider.streaming.url);
-    } catch {
-      return;
-    }
-    if (streamUrl.origin.replace(/^ws/, "http") !== baseUrl.origin) {
-      context.addIssue({
-        code: "custom",
-        path: ["streaming", "url"],
-        message: "streaming URL origin must match baseUrl",
-      });
-    }
-    if (
-      streamUrl.pathname !== "/v1/llm/stream"
-      || streamUrl.username
-      || streamUrl.password
-      || streamUrl.search
-      || streamUrl.hash
-      || (streamUrl.protocol !== "ws:" && streamUrl.protocol !== "wss:")
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["streaming", "url"],
-        message: "streaming URL must be canonical WS or WSS",
-      });
-    }
   }
 });
 

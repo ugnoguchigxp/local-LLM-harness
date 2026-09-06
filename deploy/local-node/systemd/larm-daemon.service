@@ -1,7 +1,7 @@
 [Unit]
 Description=LARM local AI runtime control plane
-After=llama-server.service larm-native-qwen-provider.service llama-swap-worker.service
-Wants=llama-server.service larm-native-qwen-provider.service llama-swap-worker.service
+After=llama-server.service llama-swap-worker.service
+Wants=llama-server.service llama-swap-worker.service
 
 [Service]
 Type=simple

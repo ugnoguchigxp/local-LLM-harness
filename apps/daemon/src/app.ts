@@ -3,7 +3,6 @@ import type {
   ClusterState,
   Registry,
   RuntimeProtocol,
-  SaaaStreamAdvertisement,
   ServiceActivityState,
 } from "@larm/core";
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -69,7 +68,6 @@ export type AppDeps = {
   runtimeReleaseManager?: RuntimeReleaseManager;
   metrics?: MetricsRegistry;
   requestTracker?: RequestTracker;
-  getNativeActiveWorkloads?: () => number;
   gatewayFetch?: FetchLike;
   controlMaxBodyBytes?: number;
   gatewayMaxBodyBytes?: number;
@@ -95,12 +93,6 @@ export type AppDeps = {
   inferenceAuditRecorder?: InferenceAuditRecorder;
   agentConnectionController?: AgentConnectionController;
   modelBroker?: ModelBroker;
-  resolveStreaming?: (input: {
-    allocationId: string;
-    provider: AgentConnectionCatalog["profiles"][number]["providers"][number];
-    audienceBaseUrl: string;
-    audienceNetwork: AgentConnectionCatalog["audiences"][number]["network"];
-  }) => Promise<SaaaStreamAdvertisement | undefined> | SaaaStreamAdvertisement | undefined;
 };
 
 function errorBody(code: string, message: string) {
@@ -134,8 +126,7 @@ function acceptsProviderBearer(method: string, path: string): boolean {
     ]).has(path)
   ) return true;
   return method === "GET"
-    && (path === "/v1/llm/stream"
-      || /^\/v1\/agent-connections\/[^/]+\/providers\/[^/]+\/health$/.test(path));
+    && /^\/v1\/agent-connections\/[^/]+\/providers\/[^/]+\/health$/.test(path);
 }
 
 function acceptsAnonymousAgentApi(method: string, path: string): boolean {
@@ -276,7 +267,6 @@ export function createAppComponents(deps: AppDeps) {
       idempotencyTtlMs: deps.idempotencyTtlMs ?? 300_000,
       idempotencyLimit: deps.idempotencyLimit ?? 1_000,
       historyLimit: deps.connectionHistoryLimit ?? 1_000,
-      resolveStreaming: deps.resolveStreaming,
       now: deps.now,
       random: deps.random,
     })
@@ -877,14 +867,13 @@ export function createAppComponents(deps: AppDeps) {
     if (new URL(c.req.url).search || c.req.raw.body !== null) {
       return c.json(errorBody("invalid_request", "activity request cannot use query parameters or a body"), 400);
     }
-    if (!deps.requestTracker || !deps.getNativeActiveWorkloads) {
+    if (!deps.requestTracker) {
       c.header("retry-after", "1");
       return c.json(errorBody("activity_unavailable", "service activity tracking is unavailable"), 503);
     }
     const startedAt = performance.now();
     const activity = createServiceActivity({
       httpActiveWorkloads: deps.requestTracker.count(),
-      nativeActiveWorkloads: deps.getNativeActiveWorkloads(),
       draining: deps.control.isDraining(),
       observedAt: new Date(deps.now?.() ?? Date.now()).toISOString(),
       bootEpoch: identity.bootEpoch,
@@ -943,11 +932,6 @@ export function createAppComponents(deps: AppDeps) {
     }
     return c.json({ status: "ok" as const, model: SERVICE_HARNESS_ASR_MODEL });
   });
-
-  app.get("/v1/llm/stream", (c) => c.json(errorBody(
-    "websocket_upgrade_required",
-    "Sec-WebSocket-Protocol: saaa.llm-stream.v1 WebSocket upgrade required",
-  ), 426));
 
   const agentResult = (c: Context, result: {
     status: number;
@@ -1087,9 +1071,6 @@ export function createAppComponents(deps: AppDeps) {
       && Array.isArray(result.body.providers)
       ? result.body.providers
       : [];
-    const streamingProviders = providers.filter((provider) => (
-      typeof provider === "object" && provider !== null && "streaming" in provider
-    )).length;
     deps.onEvent?.({
       name: result.status === 200
         ? "agent_connection_claim_accepted"
@@ -1097,7 +1078,6 @@ export function createAppComponents(deps: AppDeps) {
       labels: {
         status: String(result.status),
         providers: String(providers.length),
-        streamingProviders: String(streamingProviders),
       },
     });
     return agentResult(c, result);

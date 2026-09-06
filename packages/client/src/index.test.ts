@@ -284,7 +284,6 @@ test("agent profile discovery omits Authorization when the optional API token is
             supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
             protocol: "openai.chat-completions.v1",
             model: "coding-default",
-            streamingProtocol: "saaa.llm-stream.v1",
           }],
         }],
         audiences: ["same-host", "saaa-desktop"],

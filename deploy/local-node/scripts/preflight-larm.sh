@@ -11,7 +11,6 @@ repository_polkit="${repo_root}/deploy/local-node/polkit/50-larm-runtime-control
 installed_polkit="/etc/polkit-1/rules.d/50-larm-runtime-control.rules"
 provider_specs=(
   llama-server.service:8080
-  larm-native-qwen-provider.service:8090
   qwen-asr.service:8081
   whisper-asr.service:8085
   qwen-tts.service:8082
@@ -73,7 +72,6 @@ service_load="$(systemctl show larm-daemon.service -p LoadState --value 2>/dev/n
 service_active="$(systemctl is-active larm-daemon.service 2>/dev/null || true)"
 service_enabled="$(systemctl is-enabled larm-daemon.service 2>/dev/null || true)"
 port_owner="$(ss -H -ltnp 'sport = :9810' 2>/dev/null | head -n 1 || true)"
-native_stream_listener="$(ss -H -ltnp 'sport = :8090' 2>/dev/null | head -n 1 || true)"
 disk_available_bytes="$(df --output=avail -B1 /srv/ai 2>/dev/null | tail -n 1 | tr -d ' ' || printf '0')"
 provider_units='[]'
 for spec in "${provider_specs[@]}"; do
@@ -148,7 +146,6 @@ jq -n \
   --arg active "${service_active:-unknown}" \
   --arg enabled "${service_enabled:-unknown}" \
   --arg portOwner "${port_owner}" \
-  --arg nativeStreamListener "${native_stream_listener}" \
   --argjson diskAvailableBytes "${disk_available_bytes:-0}" \
   --argjson providers "${provider_units}" \
   --argjson ufwReadable "${ufw_readable}" \
@@ -162,8 +159,7 @@ jq -n \
     unit:{type:$unitType,digest:$unitDigest,repositoryDigest:$repositoryUnitDigest,
       matchesRepository:$unitMatch,load:$load,active:$active,enabled:$enabled},
     polkit:{type:$polkitType,digest:$polkitDigest,repositoryDigest:$repositoryPolkitDigest,matchesRepository:$polkitMatch},
-    listener:{port:9810,description:$portOwner},
-    nativeStream:{port:8090,protocol:"larm.native-llm-stream.v1",listener:$nativeStreamListener},providers:$providers,
+    listener:{port:9810,description:$portOwner},providers:$providers,
     firewall:{readable:$ufwReadable,status:$ufwStatus,providerAllowRules:$ufwProviderRules,
       gatewayAllowRules:$ufwGatewayRules,sshAllowRules:$ufwSshRules},
     externalAssets:$externalAssets,disk:{path:"/srv/ai",availableBytes:$diskAvailableBytes}}'

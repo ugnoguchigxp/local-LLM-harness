@@ -45,7 +45,6 @@ test("production agent profiles compile to strict protocol-aware provider contra
         route: "llm-default",
         protocol: "openai.chat-completions.v1",
         readiness: "llm-inference",
-        streamingProtocol: "saaa.llm-stream.v1",
       }],
     });
   expect(catalog.profiles.find((profile) => profile.id === "deep-reasoning-35b"))
@@ -57,7 +56,6 @@ test("production agent profiles compile to strict protocol-aware provider contra
         capability: "llm.reasoning",
         publicModel: "coding-default",
         route: "llm-default",
-        streamingProtocol: "saaa.llm-stream.v1",
       }],
     });
   const contextStill = catalog.profiles.find((profile) => profile.id === "contextstill-background");
@@ -75,7 +73,6 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "llm-inference",
       }],
     });
-  expect(contextStill?.providers[0]).not.toHaveProperty("streamingProtocol");
   expect(catalog.profiles.find((profile) => profile.id === "asr-qwen"))
     .toMatchObject({
       selectionPolicy: "explicit-only",
@@ -204,7 +201,7 @@ test("request-origin audiences derive a canonical Gateway URL from the authentic
   )).toBeUndefined();
 });
 
-test("public Agent Profile metadata identifies one capable streaming default", () => {
+test("public Agent Profile metadata identifies one capable HTTP default", () => {
   const response = {
     contractVersion: "agent-connection.v2" as const,
     catalogRevision: "catalog-test",
@@ -221,7 +218,6 @@ test("public Agent Profile metadata identifies one capable streaming default", (
         supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
         protocol: "openai.chat-completions.v1" as const,
         model: "coding-default",
-        streamingProtocol: "saaa.llm-stream.v1" as const,
       }],
     }],
     audiences: ["saaa-desktop"],
@@ -278,7 +274,7 @@ test("explicit Agent Profile selection must name the selected profile", () => {
   }).success).toBeTrue();
 });
 
-test("agent claim validation accepts canonical WS and rejects inconsistent remote descriptors", () => {
+test("agent claim validation rejects inconsistent HTTP descriptors", () => {
   const expiresAt = "2026-08-29T12:10:00.000Z";
   const claim = {
     id: "aconn_epoch-test_1",
@@ -353,33 +349,6 @@ test("agent claim validation accepts canonical WS and rejects inconsistent remot
           baseURL: "http://127.example:9810/v1",
         },
       },
-      streaming: {
-        protocol: "saaa.llm-stream.v1" as const,
-        url: "ws://127.example:9810/v1/llm/stream",
-        encoding: "json-control+binary-delta-v1" as const,
-        compression: "none" as const,
-        maxConcurrentRuns: 1,
-        maxConnections: 1,
-        resumeWindowMs: 120_000,
-        upstreamTransport: "native" as const,
-      },
     }],
-  }).providers[0]?.streaming?.url).toBe("ws://127.example:9810/v1/llm/stream");
-  expect(() => agentConnectionClaimSchema.parse({
-    ...claim,
-    providers: [{
-      ...claim.providers[0]!,
-      protocol: "openai.audio-transcriptions.v1",
-      streaming: {
-        protocol: "saaa.llm-stream.v1" as const,
-        url: "ws://192.0.2.42:9810/v1/llm/stream",
-        encoding: "json-control+binary-delta-v1" as const,
-        compression: "none" as const,
-        maxConcurrentRuns: 1,
-        maxConnections: 1,
-        resumeWindowMs: 120_000,
-        upstreamTransport: "native" as const,
-      },
-    }],
-  })).toThrow(/native SAAA streaming requires openai\.chat-completions\.v1/);
+  }).providers[0]?.baseUrl).toBe("http://127.example:9810/v1");
 });

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { isLiteralLoopbackHost } from "./saaa-llm-stream";
 
 const identifierSchema = z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 const httpUrlSchema = z.string().url().refine((value) => {
@@ -24,33 +23,6 @@ export const runtimeProtocolSchema = z.enum([
   "openai.audio-speech.v1",
 ]);
 
-const nativeWebSocketUrlSchema = z.string().url().refine((value) => {
-  try {
-    const url = new URL(value);
-    const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    const loopback = isLiteralLoopbackHost(hostname);
-    return (url.protocol === "wss:" || (url.protocol === "ws:" && loopback))
-      && url.username === ""
-      && url.password === ""
-      && url.search === ""
-      && url.hash === "";
-  } catch {
-    return false;
-  }
-}, "must use wss, or ws on literal loopback, without credentials, query, or fragment");
-
-export const runtimeStreamingSchema = z.object({
-  protocol: z.literal("saaa.llm-stream.v1"),
-  upstreamUrl: nativeWebSocketUrlSchema,
-  upstreamProtocol: z.literal("larm.native-llm-stream.v1"),
-  upstreamTransport: z.literal("native"),
-  maxConcurrentRuns: z.number().int().min(1).max(8),
-  maxConnections: z.number().int().min(1).max(8),
-  resumeWindowMs: z.number().int().min(120_000).max(3_600_000),
-}).strict().refine(
-  (value) => value.maxConnections === value.maxConcurrentRuns,
-  { message: "maxConnections must equal maxConcurrentRuns", path: ["maxConnections"] },
-);
 export const runtimeStatusSchema = z.enum([
   "COLD",
   "STARTING",
@@ -104,7 +76,6 @@ const runtimeShared = {
     maxQueuedRequests: z.number().int().min(0).max(10_000),
     queueTimeoutMs: z.number().int().min(1).max(3_600_000),
   }).strict(),
-  streaming: runtimeStreamingSchema.optional(),
 };
 
 export const llamaSwapDeploymentSchema = z.object({
@@ -134,23 +105,10 @@ export const systemdRuntimeYamlSchema = z.object({
   deployment: systemdDeploymentSchema,
 }).strict();
 
-function requireLlmStreamingProtocol(
-  value: { protocol: z.infer<typeof runtimeProtocolSchema>; streaming?: z.infer<typeof runtimeStreamingSchema> },
-  context: z.RefinementCtx,
-): void {
-  if (value.streaming && value.protocol !== "openai.chat-completions.v1") {
-    context.addIssue({
-      code: "custom",
-      path: ["streaming"],
-      message: "native LLM streaming requires openai.chat-completions.v1",
-    });
-  }
-}
-
 export const runtimeYamlSchema = z.discriminatedUnion("backend", [
   llamaSwapRuntimeYamlSchema,
   systemdRuntimeYamlSchema,
-]).superRefine(requireLlmStreamingProtocol);
+]);
 
 export const llamaSwapRuntimeDefinitionSchema = llamaSwapRuntimeYamlSchema.extend({
   id: identifierSchema,
@@ -163,7 +121,7 @@ export const systemdRuntimeDefinitionSchema = systemdRuntimeYamlSchema.extend({
 export const runtimeDefinitionSchema = z.discriminatedUnion("backend", [
   llamaSwapRuntimeDefinitionSchema,
   systemdRuntimeDefinitionSchema,
-]).superRefine(requireLlmStreamingProtocol);
+]);
 
 export const workloadProfileSchema = z.object({
   id: identifierSchema,
@@ -264,7 +222,6 @@ export type RuntimeClass = z.infer<typeof runtimeClassSchema>;
 export type BackendKind = z.infer<typeof backendKindSchema>;
 export type RouteCandidatePurpose = z.infer<typeof routeCandidatePurposeSchema>;
 export type RuntimeProtocol = z.infer<typeof runtimeProtocolSchema>;
-export type RuntimeStreaming = z.infer<typeof runtimeStreamingSchema>;
 export type RuntimeStatus = z.infer<typeof runtimeStatusSchema>;
 export type ServiceState = z.infer<typeof serviceStateSchema>;
 export type NodeDefinition = z.infer<typeof nodeDefinitionSchema>;

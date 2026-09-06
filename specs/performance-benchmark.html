@@ -1,25 +1,20 @@
 <article lang="ja">
-  <h1>HTTP/WS LLM・ASR・TTS 性能診断ベンチマーク仕様</h1>
-
+  <h1>HTTP JSON／SSE LLM・ASR・TTS 性能診断ベンチマーク仕様</h1>
   <p>
-    local-nodeで感じる遅延をHTTP非streaming LLM、native WebSocket LLM、ASR、TTSへ分解し、
-    さらにLLMと音声2系統を同時利用した場合の干渉を再現可能な形で比較する診断仕様です。実装は
-    <code>deploy/local-node/scripts/performance-larm.ts</code
-    >です。本診断は日常の原因切り分けを目的とし、release昇格を判定するSLO canaryとは分離します。
+    local-nodeの遅延をOpenAI互換HTTP非streaming JSON、HTTP SSE、ASR、TTSへ分解し、
+    LLMと音声2系統を同時利用した場合の干渉を再現可能な形で比較する。
+    実装は<code>deploy/local-node/scripts/performance-larm.ts</code>であり、独自WebSocketは測定しない。
   </p>
-
   <dl>
-    <dt>状態</dt>
-    <dd>実装・自動テスト・local-node warm-state実測完了</dd>
     <dt>report schema</dt>
-    <dd><code>larm-performance-diagnostic</code> version 2</dd>
+    <dd><code>larm-performance-diagnostic</code> version 3</dd>
     <dt>既定反復</dt>
     <dd>warmup 1回、測定5回</dd>
     <dt>既定系列</dt>
     <dd>
       <code>llm</code
-      >、<code>llm-ws</code>、<code>asr</code>、<code>tts</code>、
-      <code>mixed</code>、<code>mixed-ws</code>
+      >、<code>llm-sse</code>、<code>asr</code>、<code>tts</code>、
+      <code>mixed</code>、<code>mixed-sse</code>
     </dd>
   </dl>
 
@@ -34,423 +29,93 @@
           <th scope="col">workload</th>
           <th scope="col">入力</th>
           <th scope="col">主要指標</th>
-          <th scope="col">読み方</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <th scope="row">LLM HTTP</th>
-          <td>
-            1から40までを順番に出力する固定prompt、既定<code>max_tokens=64</code>
-          </td>
-          <td>first byte、TTFT、total、completion token、output tokens/sec</td>
-          <td>遅延は小さいほど、tokens/secは大きいほど良い</td>
+          <th scope="row">LLM JSON</th>
+          <td>1から40までを出力する固定prompt、既定<code>max_tokens=64</code></td>
+          <td>first byte、total、completion tokens、output tokens/sec</td>
         </tr>
         <tr>
-          <th scope="row">LLM WebSocket</th>
-          <td>
-            HTTPと同じ固定prompt・token上限、<code>coding-default</code> Agent
-            Connection、1 run / connection
-          </td>
-          <td>
-            Agent Connection準備、handshake込みfirst binary delta、terminalまでのtotal、completion
-            token、delta event、output tokens/sec
-          </td>
-          <td>first deltaは小さいほど、tokens/secは大きいほど良い</td>
+          <th scope="row">LLM SSE</th>
+          <td>JSONと同じprompt・token上限、<code>stream=true</code></td>
+          <td>first byte、最初のcontent delta、total、delta数、output tokens/sec</td>
         </tr>
         <tr>
           <th scope="row">ASR</th>
-          <td>固定音声file、または測定前にTTSで一度だけ作るmemory上の固定音声</td>
+          <td>固定音声、または測定前にTTSで一度だけ生成するmemory上の音声</td>
           <td>first byte、total、RTF、audio seconds/sec</td>
-          <td>RTFは小さいほど良く、1未満なら音声長より短時間で処理</td>
         </tr>
         <tr>
           <th scope="row">TTS</th>
           <td>日本語の固定文、VOICEVOX通常音声、WAV</td>
-          <td>first byte、total、生成音声長、RTF、audio seconds/sec</td>
-          <td>RTFは小さいほど良く、audio seconds/secは大きいほど良い</td>
+          <td>first byte、first playable audio、total、RTF、audio seconds/sec</td>
         </tr>
       </tbody>
     </table>
     <p>
-      latencyと速度は各sampleを保持し、集計ではminimum、p50、p95、maximum、meanを出します。 LLM HTTP
-      LLMのtoken数はOpenAI互換responseの<code>usage.completion_tokens</code>、WebSocketは
-      <code>response.completed.usage.completionTokens</code>を優先し、Providerがusageを返さない場合だけ
-      content event数を代替値として明記します。ASR transcript、LLM
-      response本文、TTS音声、credentialは reportへ保存しません。
-    </p>
-  </section>
-
-  <section id="warm-state">
-    <h2>Warm state</h2>
-    <p>
-      既定対象の<code>qwen-general</code>、<code>qwen-asr</code>、<code>voicevox-tts</code>はResidentの
-      常時起動状態のまま測定します。Allocation解放でこれらを停止せず、Provider restartやmodel
-      unloadも 行いません。warmupは各scenarioの最初の要求を集計から除くだけで、Cold
-      cycleではありません。
+      LLMのtoken数は<code>usage.completion_tokens</code>を優先し、usageがない場合だけcontent
+      event数を代替値として明記する。SSEはUTF-8、event JSON、meaningful delta、finish reason、
+      <code>[DONE]</code
+      >を増分検証する。response本文、音声、credentialはreportへ保存しない。
     </p>
   </section>
 
   <section id="mixed-scenario">
     <h2>同時利用scenario</h2>
     <p>
-      <code>mixed</code>ではHTTP
-      LLM、ASR、TTSを一つのAllocationへ束ねます。
-      <code>mixed-ws</code>ではLLM用Agent
-      ConnectionとASR・TTS用Allocationを準備します。どちらも各1要求を 同じevent loop
-      turnで開始し、reportには実際のlaunch skewを残します。各workloadのmixed p95 total latencyとp50
-      processing speedを単体系列と比較し、正の値が劣化を表す百分率として記録します。
+      <code>mixed</code>はLLM
+      JSON、ASR、TTSを、<code>mixed-sse</code>はLLM SSE、ASR、TTSを
+      一つのAllocationへ束ね、同じevent loop turnで各1要求を開始する。reportにはlaunch skewと、
+      単体比のp95 total latencyおよびp50 processing speedの劣化率を残す。
     </p>
     <p>
-      評価専用の<code>LARM_PERF_ASR_URL</code>がある場合、ASR-onlyはAllocationなしでloopback
-      endpointを直接測る。mixedはLLMとTTS、mixed-wsはTTSだけを通常Allocationへ固定し、後者のLLMは
-      Agent Connectionを使って外部ASRを同時発射する。これによりproduction routeを変更せず、CPU
-      ASRが既存workloadへ与える影響を同じschemaで比較できます。
+      <code>LARM_PERF_ASR_URL</code
+      >を指定した場合、credentialを含まないloopbackのOpenAI互換ASRを production
+      Bindingの代わりに使う。mixedではLLMとTTSだけを通常Allocationへ固定し、外部ASRと
+      同時に開始する。
     </p>
-    <aside>
-      <p>
-        mixedは音声対話1セッション相当の異種Provider干渉を見る試験です。同一Providerへ複数要求を
-        投げる飽和試験、最大throughput探索、長時間soak試験ではありません。既定runtimeは各Providerの
-        <code>maxConcurrentRequests=1</code>なので、それらは別の明示的な負荷契約が必要です。
-      </p>
-    </aside>
   </section>
 
   <section id="observability">
-    <h2>同時に採取する観測値</h2>
+    <h2>観測と失敗条件</h2>
     <ul>
-      <li>最小system memory available bytes</li>
-      <li>最小accelerator memory available bytes</li>
-      <li>最大active execution数と最大queue depth</li>
-      <li>Gatewayが返したHTTP 429の増分</li>
+      <li>最小system／accelerator memory available bytes</li>
+      <li>最大active execution、最大queue depth、HTTP 429増分</li>
       <li>route、runtime、release、fallbackの実identity</li>
       <li>daemon boot epoch、config revision、release commitの開始前後一致</li>
     </ul>
     <p>
-      推論error、telemetry採取error、またはdaemon identity変化が一つでもあれば<code
-        >passed=false</code
-      >
-      とし、processも非zeroで終了します。一方、性能値に合否閾値は置きません。まず同一hardware・同一
-      releaseのbaselineを複数回採取し、用途別SLOを校正してからgateへ昇格させます。
+      推論error、telemetry
+      error、identity変化のいずれかがあれば<code>passed=false</code>かつ非zeroで
+      終了する。性能値そのものは診断reportであり、release昇格のSLO閾値は別canaryで校正する。
     </p>
   </section>
 
   <section id="operation">
     <h2>実行方法</h2>
-    <p>既定の6 scenarioを実行する最短手順です。</p>
     <pre><code>set -a
 source /etc/larm/larm.env
 set +a
 bun run perf:diagnostic</code></pre>
-    <p>固定fixture、10反復、repository外証跡を使う例です。</p>
-    <pre><code>LARM_PERF_AUDIO_FILE=/absolute/path/to/non-sensitive.wav \
-LARM_PERF_OUTPUT=/srv/ai/logs/larm-performance/report.json \
-LARM_PERF_ITERATIONS=10 \
-bun run perf:diagnostic</code></pre>
-    <table>
-      <caption>
-        診断用環境変数
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">変数</th>
-          <th scope="col">既定</th>
-          <th scope="col">用途</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <th scope="row"><code>LARM_PERF_SCENARIOS</code></th>
-          <td><code>all</code></td>
-          <td><code>llm,llm-ws,asr,tts,mixed,mixed-ws</code>の部分集合</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>LARM_PERF_ITERATIONS</code></th>
-          <td><code>5</code></td>
-          <td>測定反復、1から100</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>LARM_PERF_WARMUPS</code></th>
-          <td><code>1</code></td>
-          <td>scenarioごとのwarmup、0から10</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>LARM_PERF_AUDIO_FILE</code></th>
-          <td>未指定</td>
-          <td>ASR用の絶対path。非WAVは音声長も指定</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>LARM_PERF_AUDIO_SECONDS</code></th>
-          <td>WAV headerから取得</td>
-          <td>非WAV fixtureの正確な音声秒数</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>LARM_PERF_OUTPUT</code></th>
-          <td>標準出力のみ</td>
-          <td>既存でないrepository外の絶対path</td>
-        </tr>
-        <tr>
-          <th scope="row">
-            <code>LARM_PERF_WS_AGENT_PROFILE</code>、<code
-              >LARM_PERF_WS_AUDIENCE</code
-            >
-          </th>
-          <td>
-            <code>coding-default</code>、<code
-              >same-host</code
-            >
-          </td>
-          <td>WebSocket診断に使うAgent Connection profileとaudience</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>LARM_PERF_ASR_URL</code></th>
-          <td>未指定</td>
-          <td>評価専用ASRのcredentialを含まないHTTP loopback URL</td>
-        </tr>
-        <tr>
-          <th scope="row">
-            <code>LARM_PERF_ASR_ROUTE</code
-            >、<code>LARM_PERF_ASR_RUNTIME</code>、
-            <code>LARM_PERF_ASR_RELEASE</code>
-          </th>
-          <td>
-            <code>stt-shadow</code
-            >、<code>external-asr</code>、<code
-              >unmanaged</code
-            >
-          </td>
-          <td>外部ASRをreportで識別するsafe identifier</td>
-        </tr>
-      </tbody>
-    </table>
-  </section>
-
-  <section id="live-result">
-    <h2>2026-09-01 native WebSocket対応後のlocal-node実測</h2>
-    <dl>
-      <dt>観測時刻</dt>
-      <dd><time>2026-09-01T00:26:18.011Z</time></dd>
-      <dt>deployed commit</dt>
-      <dd><code>be29eb3a298956b3735cb6897672b105e6677d34</code></dd>
-      <dt>config revision</dt>
-      <dd><code>9959f32a16c9e69ec22349dbfc1ead9dee2fe8fc31774f27e082b2dd59f108ae</code></dd>
-      <dt>条件</dt>
-      <dd>
-        warmup 1回、測定5回、4.597秒のTTS生成fixture、LLM
-        <code>max_tokens=64</code>。WebSocket latencyはhandshakeを含み、Agent
-        Connection準備時間は allocation latencyへ分離
-      </dd>
-      <dt>証跡</dt>
-      <dd><code>/srv/ai/logs/larm-performance/20260901T002451Z-ws-report.json</code></dd>
-    </dl>
-    <table>
-      <caption>
-        HTTP非streamingとnative WebSocketの単体比較
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">transport</th>
-          <th scope="col">準備時間</th>
-          <th scope="col">first token</th>
-          <th scope="col">total</th>
-          <th scope="col">出力速度</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <th scope="row">HTTP JSON</th>
-          <td>Allocation p50 1.277 ms、p95 1.415 ms</td>
-          <td>p50 2.985 s、p95 2.999 s</td>
-          <td>p50 2.985 s、p95 2.999 s</td>
-          <td>p50 21.443 tokens/s、completion p50 64 tokens</td>
-        </tr>
-        <tr>
-          <th scope="row">SAAA WebSocket</th>
-          <td>Agent Connection p50 6.117 ms、p95 406.893 ms</td>
-          <td>p50 367 ms、p95 377 ms</td>
-          <td>p50 2.468 s、p95 2.672 s</td>
-          <td>p50 24.015 tokens/s、completion p50 64 tokens、delta p50 23 events</td>
-        </tr>
-        <tr>
-          <th scope="row">WSの変化</th>
-          <td colspan="2">first token p50を87.704%短縮</td>
-          <td>total p95を10.912%短縮</td>
-          <td>processing speed p50を11.995%向上</td>
-        </tr>
-      </tbody>
-    </table>
     <p>
-      HTTPは非streaming JSONなのでfirst byte / first tokenがcompletion後になる。WebSocketは
-      connection.readyから最初のbinary deltaまでを測るため、対話上の体感差はtotal差より大きい。5件の
-      WebSocket sampleはすべてterminal integrityとusageを検証したが、completion tokenは最小3、p50
-      64であり、1件がmodelのstopにより短く完了した。p95
-      totalとp50速度の比較では両transportのcompletion p50が64で一致していることを併記する。
-    </p>
-    <table>
-      <caption>
-        音声同時実行時のp95 totalと単体比
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">workload</th>
-          <th scope="col">単体</th>
-          <th scope="col">HTTP mixed</th>
-          <th scope="col">WebSocket mixed</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <th scope="row">LLM</th>
-          <td>HTTP 2.999 s、WS 2.672 s</td>
-          <td>3.494 s、単体HTTP比 +16.490%</td>
-          <td>3.283 s、単体WS比 +22.867%</td>
-        </tr>
-        <tr>
-          <th scope="row">ASR</th>
-          <td>488 ms、RTF p50 0.100</td>
-          <td>1.217 s、+149.346%</td>
-          <td>1.050 s、+115.285%</td>
-        </tr>
-        <tr>
-          <th scope="row">TTS</th>
-          <td>332 ms、RTF p50 0.066</td>
-          <td>595 ms、+79.040%</td>
-          <td>629 ms、+89.405%</td>
-        </tr>
-      </tbody>
-    </table>
-    <table>
-      <caption>
-        正常性とresource観測
-      </caption>
-      <tbody>
-        <tr>
-          <th scope="row">成功率</th>
-          <td>単体20/20、mixed 30/30、queue 0、HTTP 429は0、fallbackは0</td>
-        </tr>
-        <tr>
-          <th scope="row">同時性</th>
-          <td>
-            HTTP mixed launch skew p95 0.189 ms、WS mixed 0.370 ms。観測最大active executionは3
-          </td>
-        </tr>
-        <tr>
-          <th scope="row">memory余力</th>
-          <td>
-            全系列中の最小system available 82,586,157,056 bytes、accelerator available
-            65,922,969,600 bytes
-          </td>
-        </tr>
-        <tr>
-          <th scope="row">Identity</th>
-          <td>boot epoch、config revision、release commitは測定前後で一致。telemetry errorは0</td>
-        </tr>
-      </tbody>
-    </table>
-    <p>
-      Native WebSocketはHTTP非streamingと同じresident
-      Qwen、route、releaseを使いながら、最初の表示可能
-      tokenを約2.62秒早く返した。音声同時実行では引き続きaccelerator共有によるASR劣化が最大だが、WS
-      mixedのASR p95はHTTP mixedより166 ms短かった。一方、TTS p95はWS mixedの方が34 ms長く、短い 5
-      sampleのdiagnosticであるためtransport起因とは断定しない。
+      <code>LARM_PERF_SCENARIOS</code>は
+      <code>llm,llm-sse,asr,tts,mixed,mixed-sse</code>の部分集合、反復は
+      <code>LARM_PERF_ITERATIONS</code
+      >、warmupは<code>LARM_PERF_WARMUPS</code>で指定する。
+      固定音声は<code>LARM_PERF_AUDIO_FILE</code>、no-overwriteのrepository外証跡は
+      <code>LARM_PERF_OUTPUT</code>へ絶対pathで指定する。
     </p>
   </section>
 
-  <section id="previous-live-result">
-    <h2>2026-08-31 HTTP-only baseline</h2>
-    <dl>
-      <dt>観測時刻</dt>
-      <dd><time>2026-08-31T10:04:23.853Z</time></dd>
-      <dt>deployed commit</dt>
-      <dd><code>5ac9331a23273c4e3fd16097cfbe59050531bde6</code></dd>
-      <dt>config revision</dt>
-      <dd><code>4a9326f60353e906f8752acd01ca8b6179f12d4803074c2bde5fa2f23a15a500</code></dd>
-      <dt>条件</dt>
-      <dd>
-        warmup 1回、測定5回、4.597秒のTTS生成fixture、LLM
-        <code>max_tokens=64</code>
-      </dd>
-      <dt>証跡</dt>
-      <dd><code>/srv/ai/logs/larm-performance/20260831T100316Z-report.json</code></dd>
-    </dl>
-    <table>
-      <caption>
-        単体とmixedのp50・p95比較
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">workload</th>
-          <th scope="col">単体</th>
-          <th scope="col">mixed</th>
-          <th scope="col">mixed劣化</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <th scope="row">LLM</th>
-          <td>TTFT p50 563 ms、total p95 3.137 s、output p50 26.685 tokens/s</td>
-          <td>TTFT p50 910 ms、total p95 3.913 s、output p50 21.356 tokens/s</td>
-          <td>total p95 +24.714%、processing speed -19.970%</td>
-        </tr>
-        <tr>
-          <th scope="row">ASR</th>
-          <td>total p50 1.174 s、p95 1.179 s、RTF p50 0.255</td>
-          <td>total p50 3.282 s、p95 3.301 s、RTF p50 0.714</td>
-          <td>total p95 +179.959%、processing speed -64.205%</td>
-        </tr>
-        <tr>
-          <th scope="row">TTS</th>
-          <td>total p50 287 ms、p95 315 ms、RTF p50 0.062</td>
-          <td>total p50 579 ms、p95 597 ms、RTF p50 0.126</td>
-          <td>total p95 +89.606%、processing speed -50.397%</td>
-        </tr>
-      </tbody>
-    </table>
-    <table>
-      <caption>
-        正常性とresource観測
-      </caption>
-      <tbody>
-        <tr>
-          <th scope="row">成功率</th>
-          <td>単体15/15、mixed 15/15、HTTP 429は0、fallbackは0</td>
-        </tr>
-        <tr>
-          <th scope="row">同時性</th>
-          <td>mixed launch skew p95 0.185 ms、最大active execution 3、最大queue depth 0</td>
-        </tr>
-        <tr>
-          <th scope="row">memory余力</th>
-          <td>
-            mixed中の最小system available 82,298,269,696 bytes、accelerator available 65,077,301,248
-            bytes
-          </td>
-        </tr>
-        <tr>
-          <th scope="row">Warm state</th>
-          <td>
-            daemon、LLM、ASR、TTSはすべて<time>2026-08-29T12:54:32Z</time>からactive、
-            <code>NRestarts=0</code>。boot epoch、config revision、release
-            commitは測定前後で一致
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <p>
-      結果から、遅さはCold startではなく同時実行時のresource干渉として再現しました。特にGPUを使う
-      LLMとASRを含むmixedでASRの影響が最大です。queue、429、memory不足がないまま両方が実行中なので、
-      admission待ちではなくaccelerator computeまたはshared memory bandwidthの競合と推定します。
-      CPU版VOICEVOXも16 thread構成で約2倍へ低下しており、CPU・memory fabric側の干渉も示唆されます。
-      原因の寄与率を確定するにはLLM+ASR、LLM+TTS、ASR+TTSのpairwise測定を追加します。
-      ASRのCPU軽量候補と比較gateは<a href="./asr-alternative-evaluation.html"
-        >軽量日本語ASR 再選定調査・Shadow評価結果</a
-      >へ分離しました。
-    </p>
-    <p>
-      単体はいずれも5回のばらつきが小さく、ASRとTTSはmixedでもRTF 1未満を維持しました。LLM
-      Providerはmodelを常駐させる一方、起動引数でprompt cacheとidle slot cacheを無効化しています。
-      そのため単体TTFTはCold loadではなく毎回のprefillを含みます。raw sample、生成音声、transcript、
-      response本文はrepositoryへ保存していません。
-    </p>
+  <section id="acceptance">
+    <h2>実装受入</h2>
+    <ul>
+      <li>JSONとSSEが同じ公開model、route、runtime、releaseを使用する。</li>
+      <li>SSEの最初のmeaningful deltaを全文完了前に観測できる。</li>
+      <li>全6 scenarioでfallback 0、error 0、identity不変を検証できる。</li>
+      <li>独自WebSocket protocol、Agent claim、native companionへ依存しない。</li>
+    </ul>
   </section>
 </article>

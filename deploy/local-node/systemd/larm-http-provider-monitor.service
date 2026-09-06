@@ -12,12 +12,13 @@ Environment=LARM_BASE_URL=http://127.0.0.1:9810
 Environment=LARM_HTTP_MODEL=coding-default
 Environment=LARM_HTTP_SMOKE_AUDIO=0
 Environment=LARM_HTTP_SMOKE_TIMEOUT_MS=300000
-ExecStart=/home/ugnoguchi/.bun/bin/bun run /srv/ai/apps/larm-current/deploy/local-node/scripts/smoke-http-provider-live.ts
-StandardOutput=null
+Environment=LARM_HTTP_SOAK_STATE=/var/lib/larm/http-provider-soak/status.json
+ExecStart=/home/ugnoguchi/.bun/bin/bun run /srv/ai/apps/larm-current/deploy/local-node/scripts/monitor-http-provider-soak.ts
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
 ReadOnlyPaths=/srv/ai/apps/larm-current /etc/larm/larm.env
+ReadWritePaths=/var/lib/larm/http-provider-soak
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-

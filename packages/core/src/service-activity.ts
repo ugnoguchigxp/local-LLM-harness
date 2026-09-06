@@ -45,7 +45,6 @@ export type ServiceActivity = z.infer<typeof serviceActivitySchema>;
 
 export type ServiceActivityInput = {
   httpActiveWorkloads: number;
-  nativeActiveWorkloads: number;
   draining: boolean;
   observedAt: string;
   bootEpoch: string;
@@ -70,11 +69,7 @@ export function deriveServiceActivityState(
 
 export function createServiceActivity(input: ServiceActivityInput): ServiceActivity {
   const httpActiveWorkloads = workloadCount(input.httpActiveWorkloads, "httpActiveWorkloads");
-  const nativeActiveWorkloads = workloadCount(input.nativeActiveWorkloads, "nativeActiveWorkloads");
-  const activeWorkloads = workloadCount(
-    httpActiveWorkloads + nativeActiveWorkloads,
-    "activeWorkloads",
-  );
+  const activeWorkloads = workloadCount(httpActiveWorkloads, "activeWorkloads");
   const state = deriveServiceActivityState(activeWorkloads, input.draining);
   return serviceActivitySchema.parse({
     contractVersion: LARM_SERVICE_ACTIVITY_CONTRACT_VERSION,

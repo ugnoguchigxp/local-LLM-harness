@@ -12,7 +12,7 @@ export {
 } from "./inference-audit";
 export * from "./protocol";
 export * from "./openai-audio";
-export * from "./saaa-llm-stream";
+export * from "./network";
 export * from "./service-harness";
 export * from "./service-activity";
 export * from "./agent-connection";
@@ -27,6 +27,8 @@ export {
   daemonHealthSchema,
   errorDetailSchema,
   errorResponseSchema,
+  httpProviderSoakEvidenceSchema,
+  legacyWebSocketDecommissionEvidenceSchema,
   legacyPrepareResponseSchema,
   legacyReleaseResponseSchema,
   legacyResolveResponseSchema,
@@ -49,6 +51,8 @@ export {
   runtimeReleaseSelectionSchema,
   upstreamJsonResponseSchema,
   type ControlOperation,
+  type HttpProviderSoakEvidence,
+  type LegacyWebSocketDecommissionEvidence,
   type PublicAllocation,
   type PublicRuntimeRelease,
   type RuntimeDeployment,

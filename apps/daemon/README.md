@@ -46,8 +46,7 @@ bun run dev
 | `LARM_CONNECTION_SIGNING_KEY` | 未設定 | Agent Provider短期token用の32-byte unpadded base64url鍵 |
 | `LARM_CONNECTION_READY_TIMEOUT_SECONDS` | `120` | Connection初回semantic readinessの上限 |
 | `LARM_PROVIDER_PROBE_TIMEOUT_SECONDS` | `15` | Provider単位の最小semantic probe上限 |
-| `LARM_NATIVE_STREAM_CONNECT_TIMEOUT_MS` | `5000` | native LLM Provider WebSocketのready待機上限 |
-| `LARM_TLS_CERT_FILE` / `LARM_TLS_KEY_FILE` | 未設定 | 非loopback WebSocketをWSSで提供するための、対で指定する絶対path |
+| `LARM_TLS_CERT_FILE` / `LARM_TLS_KEY_FILE` | 未設定 | GatewayをHTTPSで提供するための、対で指定する絶対path |
 | `LARM_ARTIFACT_OPERATION_LIMIT` | `64` | pending/running artifact operationの合計上限 |
 | `LARM_CONTROL_MAX_BODY_BYTES` | `65536` | control API body上限。設定可能な最大値は1 MiB |
 | `LARM_GATEWAY_MAX_BODY_BYTES` | `4194304` | LLMとTTS JSON body上限。設定可能な最大値は64 MiB |
@@ -207,43 +206,17 @@ curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${voice_allocation_id}"
 ```
 
 LLM Gatewayは、`POST /v1/chat/completions`の`stream: false`にはJSON、`stream: true`には
-OpenAI互換SSE (`text/event-stream`) を返します。`GET /v1/llm/stream`への独自WebSocket upgradeは、
-HTTP consumer移行とlive受入が終わるまでrollback用に維持します。claimのLLM providerに`streaming`が現れるのは、
-設定されたnative Providerが`larm.native-llm-stream.v1`でreadyを返した場合だけであり、HTTP SSEの
-可否を表すfieldではありません。`host-private`
-Audienceはoperatorが管理するローカルLANを信頼境界として、HTTP originに対応する平文WS endpointも
-広告します。LAN境界外では`tls` AudienceとWSSを使用してください。
-
-claimから取得した短期credential、Allocation ID、modelを使うend-to-end smokeは次の通りです。
-値はshell historyへ直書きせず、実行後にunsetしてください。
-
-```bash
-export LARM_SAAA_STREAM_URL="$(jq -er '.providers[] | select(.capability | startswith("llm.")) | .streaming.url' claim.json)"
-export LARM_SAAA_PROVIDER_TOKEN="$(jq -er '.providers[] | select(.capability | startswith("llm.")) | .credential.token' claim.json)"
-export LARM_SAAA_ALLOCATION_ID="$(jq -er '.allocationId' claim.json)"
-export LARM_SAAA_MODEL="$(jq -er '.providers[] | select(.capability | startswith("llm.")) | .model' claim.json)"
-bun run smoke:saaa-websocket
-## 1,000 turn、30分、各turnでrenew/claim、切断、rotated credentialによるresumeを行うgate:
-export LARM_BASE_URL=http://gnosis.local:9810
-export LARM_SAAA_CONNECTION_ID="$(jq -er '.id' claim.json)"
-bun run soak:saaa-websocket
-unset LARM_SAAA_STREAM_URL LARM_SAAA_PROVIDER_TOKEN LARM_SAAA_ALLOCATION_ID LARM_SAAA_MODEL
-unset LARM_BASE_URL LARM_SAAA_CONNECTION_ID
-```
-
-soakは既に設定済みの`LARM_API_TOKEN`をcontrol credentialとして使い、各turnで同じAgent
-Connectionをrenewしてclaimし直します。claimのConnection、Allocation、model、stream URLが変化した場合、
-またはProvider tokenがrotationしない場合はfail closedです。
+OpenAI互換SSE (`text/event-stream`) を返します。独自WebSocket endpoint、独自ACK／再送／pause契約、
+native companionは提供しません。低遅延応答は同じHTTP接続上のSSE deltaを逐次転送して実現します。
 
 追加27Bは`route`へ`llm-speed`、公式Q5_K_MのOrnith 35Bは`llm-35b`、ROCmFP4速度版は`llm-35b-speed`を明示した場合だけ選択されます。比較用Qwen3.6-35Bは`llm-qwen36-35b`で固定できます。`llm-default`はswapせずResident 27Bへ固定されます。fallbackはrequestで`allowFallback: true`を指定した場合だけ許可されます。同じworker swap groupの別Runtimeにactive Allocationがある場合はpreemptせず、新しい要求を拒否します。
 
 ## Agent Connection API
 
-Profile一覧は`defaultAgentProfile: "coding-default"`を返し、SAAA向けにはNative WebSocket対応済みの
-常駐Qwen 3.8 27Bだけを広告します。既定ProfileはConnection作成bodyから省略できます。workerと35Bの
-Runtime・Routeは比較用途として残しますが、Native WebSocket対応前はSAAA Agent Profileとして広告しません。
-claimはLARM Gatewayの`baseUrl`、public `model`、Provider限定の短期token、semantic health URL、
-WebSocket URLを返します。backend portや長期API tokenは返しません。
+Profile一覧は`defaultAgentProfile: "coding-default"`を返します。既定ProfileはConnection作成bodyから
+省略できます。workerと35BのRuntime・Routeは用途別の公開model／profileとして明示選択できます。
+claimはLARM Gatewayの`baseUrl`、public `model`、Provider限定の短期token、semantic health URLを
+返します。backend portや長期API token、独自transport descriptorは返しません。
 
 ```bash
 connection_json="$(curl -fsS -X POST http://127.0.0.1:9810/v1/agent-connections \

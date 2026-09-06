@@ -7,7 +7,6 @@ import {
   parseRegistryDocuments,
   RegistryError,
 } from "../src/registry";
-import { runtimeStreamingSchema, runtimeYamlSchema } from "../src/schema";
 
 const repoConfig = join(import.meta.dir, "../../../config/local-node");
 const fixtures = join(import.meta.dir, "../test/fixtures");
@@ -38,15 +37,6 @@ test("loads the Linux production registry", () => {
   expect(registry.nodes[0]?.id).toBe("local-node");
   expect(general?.backend).toBe("systemd");
   expect(general?.policy.class).toBe("resident");
-  expect(general?.streaming).toEqual({
-    protocol: "saaa.llm-stream.v1",
-    upstreamUrl: "ws://127.0.0.1:8090/v1/native/llm/stream",
-    upstreamProtocol: "larm.native-llm-stream.v1",
-    upstreamTransport: "native",
-    maxConcurrentRuns: 1,
-    maxConnections: 1,
-    resumeWindowMs: 120_000,
-  });
   if (general?.backend === "systemd") {
     expect(general.deployment.healthPort).toBe(8080);
     expect(general.deployment.endpoint).toBe("http://127.0.0.1:8080");
@@ -93,57 +83,6 @@ test("loads the Linux production registry", () => {
   });
   expect(defaultRoute?.candidates.some((candidate) => candidate.runtime.includes("35b"))).toBe(false);
   expect(registry.runtimes.some((runtime) => runtime.id.includes("35b"))).toBe(true);
-});
-
-test("runtime native streaming rejects hostname lookalikes for cleartext loopback", () => {
-  expect(() => runtimeStreamingSchema.parse({
-    protocol: "saaa.llm-stream.v1",
-    upstreamUrl: "ws://127.example:8090/v1/native/llm/stream",
-    upstreamProtocol: "larm.native-llm-stream.v1",
-    upstreamTransport: "native",
-    maxConcurrentRuns: 1,
-    maxConnections: 1,
-    resumeWindowMs: 120_000,
-  })).toThrow("literal loopback");
-  expect(runtimeStreamingSchema.safeParse({
-    protocol: "saaa.llm-stream.v1",
-    upstreamUrl: "not-a-url",
-    upstreamProtocol: "larm.native-llm-stream.v1",
-    upstreamTransport: "native",
-    maxConcurrentRuns: 1,
-    maxConnections: 1,
-    resumeWindowMs: 120_000,
-  }).success).toBeFalse();
-});
-
-test("runtime native streaming cannot be attached to a non-LLM protocol", () => {
-  expect(() => runtimeYamlSchema.parse({
-    backend: "systemd",
-    capability: ["speech.stt"],
-    protocol: "openai.audio-transcriptions.v1",
-    node: "local-node",
-    policy: { class: "resident" },
-    resources: {
-      estimatedMemoryGB: 1,
-      maxConcurrentRequests: 1,
-      maxQueuedRequests: 0,
-      queueTimeoutMs: 1_000,
-    },
-    streaming: {
-      protocol: "saaa.llm-stream.v1",
-      upstreamUrl: "ws://127.0.0.1:8090/v1/native/llm/stream",
-      upstreamProtocol: "larm.native-llm-stream.v1",
-      upstreamTransport: "native",
-      maxConcurrentRuns: 1,
-      maxConnections: 1,
-      resumeWindowMs: 120_000,
-    },
-    deployment: {
-      service: "speech.service",
-      healthPort: 8080,
-      endpoint: "http://127.0.0.1:8080",
-    },
-  })).toThrow("openai.chat-completions.v1");
 });
 
 test("production swap group matches llama-swap model membership", () => {

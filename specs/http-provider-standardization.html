@@ -5,8 +5,9 @@
     APIへ移行するための実装計画です。LLMはJSONとHTTP SSE、ASRはmultipartとJSON、TTSは音声bodyを
     公開し、新しい独自WebSocketは作りません。本書は実装計画と進捗記録であり、repository内の最初の
     LLM HTTP sliceは実装済みです。ただしclient切替、live配備、consumer完了、旧経路撤去を
-    実施済みとするものではありません。2026-09-06のrepository実装ではdata planeとrelease
-    convergenceのコードまで進んだが、live配備、外部consumer受入、24時間soakは未完了です。
+    実施済みとするものではありません。2026-09-06のrepository実装ではdata plane、release
+    convergence、24時間soak recorder、旧独自WSのsource／unit撤去まで進んだが、live配備、
+    外部consumer受入、24時間soakと旧live unit退役は未完了です。
   </p>
   <dl>
     <dt>採用する公開data plane</dt>
@@ -34,7 +35,8 @@
       <code>POST /v1/chat/completions</code> JSON／SSE、内部Allocationを所有する
       <code>ModelBroker</code>、Preferred cold
       startのsingle-flight、request終了時の解放、準備中cancelを
-      LLM・ASR・TTSへ追加した。既存の明示Allocation／claim経路はrollback互換として残している。
+      LLM・ASR・TTSへ追加した。既存の明示Allocation／claim経路はHTTP管理APIとして残しているが、
+      claimから独自transport広告は削除した。
     </p>
     <ul>
       <li>
@@ -53,7 +55,7 @@
       </li>
       <li>
         <code>benchmark:http-provider</code>は同一fixture・token数でHTTP
-        SSEと旧WSを比較し、TTSは first playable
+        JSONとSSEを比較し、TTSは first playable
         audioを別計測する。<code>smoke:http-provider-live</code>はBearer＋modelだけで
         JSON、SSE、ASR、TTSを検査してsecret-free evidenceを返す。
       </li>
@@ -63,9 +65,10 @@
         testを実行しない。
       </li>
       <li>
-        live release、30 sampleのSLO校正、SAAA／ContextStill切替、Queue回復、24時間soak、WS撤去は
-        未確認である。このhostにはSAAAとContextStillのsource
-        treeがないためM4とQueue変更は外部作業である。
+        Queue回復の純粋状態機械と段階再開計画、旧WS source／test／unit definitionの撤去、
+        復旧防止checkを実装した。live release、30 sampleのSLO校正、SAAA／ContextStill切替、
+        実Queue統合、24時間soak、旧live unit退役は未確認である。このhostにはSAAAとContextStillの
+        source treeがないためM4と実Queue変更は外部作業である。
       </li>
     </ul>
     <aside>
@@ -90,7 +93,8 @@
     </p>
     <p>
       前案dynamic-provider-redesign.htmlの新WS
-      endpointとnative完全互換案は比較案として残す。今後の推奨は本書とし、既存saaa.llm-stream.v1は移行受入が終わるまで維持する。
+      endpointとnative完全互換案は非normativeな比較記録として 残す。実行sourceから既存独自WS
+      contractを削除し、再導入防止checkを全体gateへ組み込む。
     </p>
   </section>
   <section id="api-contract">
@@ -714,8 +718,9 @@ client abort / deadline / release drain
       </li>
       <li>
         <strong>default切替:</strong>
-        SAAAとContextStillの既定transportをHTTPにし、旧WSは新規Connectionを 受けないdrain
-        modeへ移す。既存runだけを期限内に完了させる。
+        SAAAとContextStillの既定transportをHTTPにし、独自WS sourceを含まないreleaseへatomicに
+        切り替える。旧companion unitはrollback
+        window中もdaemonから到達不能であり、新規通信を受けない。
       </li>
       <li>
         <strong>soak:</strong> 24時間以上、HTTP成功率、TTFT、tokens/s、cancel、slot leak、release
@@ -723,9 +728,9 @@ client abort / deadline / release drain
         connectionと新規attemptは0であることを記録する。
       </li>
       <li>
-        <strong>撤去:</strong> rollback window満了後、NativeWebSocket backend、SAAA protocol
-        schema、 <code>/v1/llm/stream</code> upgrade、native companion
-        service、WS専用scriptとtestを削除する。
+        <strong>撤去:</strong> source、schema、upgrade、unit definition、専用scriptとtestはHTTP-only
+        releaseで既に削除する。24時間soak後、固定root helperが旧installed
+        unitを停止・disable・退避し、 port 8090不在とOpenAPI route不在を証跡化する。
       </li>
     </ol>
     <p>

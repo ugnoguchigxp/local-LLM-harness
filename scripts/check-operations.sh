@@ -29,7 +29,6 @@ fi
 
 if grep -En '0\.0\.0\.0|\[::\]' \
   deploy/local-node/systemd/llama-server.service \
-  deploy/local-node/systemd/larm-native-qwen-provider.service \
   deploy/local-node/systemd/llama-swap-worker.service \
   deploy/local-node/systemd/qwen-asr.service \
   deploy/local-node/systemd/qwen-tts.service \

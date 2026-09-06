@@ -3,6 +3,8 @@ import {
   API_OPERATIONS,
   createOpenApiDocument,
   errorResponseSchema,
+  httpProviderSoakEvidenceSchema,
+  legacyWebSocketDecommissionEvidenceSchema,
   legacyPrepareResponseSchema,
   legacyReleaseResponseSchema,
   legacyResolveResponseSchema,
@@ -40,7 +42,7 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(agentRequest.properties).toHaveProperty("explicitAgentProfile");
   expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("defaultAgentProfile");
   expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("supportedCapabilities");
-  expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("streamingProtocol");
+  expect(JSON.stringify(document.components.schemas.AgentProfileList)).not.toContain("streamingProtocol");
   expect(JSON.stringify(document.components.schemas.AgentProfileListV1)).not.toContain("defaultAgentProfile");
   expect(JSON.stringify(document.components.schemas.AgentProfileListV1)).not.toContain("selectionPolicy");
   const operationIds = API_OPERATIONS.map(([, , operationId]) => operationId);
@@ -76,7 +78,7 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(JSON.stringify(paths["/v1/chat/completions"]?.post)).toContain("text/event-stream");
   expect(JSON.stringify(paths["/v1/chat/completions"]?.post?.requestBody))
     .toContain("#/components/schemas/ChatCompletionRequest");
-  expect(paths["/v1/llm/stream"]?.get?.responses).toHaveProperty("101");
+  expect(paths).not.toHaveProperty("/v1/llm/stream");
   expect(paths["/v1/agent-connections"]?.post?.parameters).toBeDefined();
   expect(paths["/v1/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v2/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
@@ -203,4 +205,53 @@ test("public error schema is strict while allowing bounded operational details",
   expect(() => errorResponseSchema.parse({
     error: { code: "bad", message: "bad", secret: "must-not-pass" },
   })).toThrow();
+});
+
+test("HTTP Provider soak evidence preserves failures for an exact generation", () => {
+  const evidence = {
+    schemaVersion: 1,
+    kind: "http-provider-soak",
+    ok: true,
+    releaseCommit: "a".repeat(40),
+    configRevision: "b".repeat(64),
+    bootEpoch: "epoch-one",
+    startedAt: "2026-09-06T00:00:00.000Z",
+    lastAttemptAt: "2026-09-07T00:00:00.000Z",
+    lastSuccessAt: "2026-09-07T00:00:00.000Z",
+    durationSeconds: 86_400,
+    sampleCount: 97,
+    failureCount: 0,
+    maxGapSeconds: 900,
+  };
+  expect(httpProviderSoakEvidenceSchema.parse(evidence).ok).toBeTrue();
+  expect(() => httpProviderSoakEvidenceSchema.parse({
+    ...evidence,
+    failureCount: 1,
+  })).toThrow();
+  expect(() => httpProviderSoakEvidenceSchema.parse({
+    ...evidence,
+    sampleCount: 0,
+  })).toThrow();
+});
+
+test("legacy WebSocket decommission evidence requires complete absence", () => {
+  const evidence = {
+    schemaVersion: 1,
+    kind: "legacy-websocket-decommission",
+    releaseCommit: "a".repeat(40),
+    configRevision: "b".repeat(64),
+    bootEpoch: "epoch-1",
+    observedAt: "2026-09-07T00:00:00.000Z",
+    serviceActive: false,
+    serviceEnabled: false,
+    port8090Listening: false,
+    installedUnitPresent: false,
+    openApiRoutePresent: false,
+    sourcePresent: false,
+  } as const;
+  expect(legacyWebSocketDecommissionEvidenceSchema.parse(evidence)).toEqual(evidence);
+  expect(legacyWebSocketDecommissionEvidenceSchema.safeParse({
+    ...evidence,
+    port8090Listening: true,
+  }).success).toBeFalse();
 });

@@ -54,7 +54,6 @@ function expectedProfiles(expected: ExpectedLiveContract): unknown {
         supportedCapabilities: provider.supportedCapabilities,
         protocol: provider.protocol,
         model: provider.publicModel,
-        ...(provider.streamingProtocol ? { streamingProtocol: provider.streamingProtocol } : {}),
       })),
     })),
     audiences: catalog.audiences.map((audience) => audience.id),

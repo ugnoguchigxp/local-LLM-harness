@@ -118,11 +118,50 @@ export const releaseConvergenceStatusSchema = z.object({
     "contract_verified",
     "canary_verified",
     "consumer_verified",
+    "soak_verified",
     "complete",
   ]),
   result: z.enum(["pending", "running", "succeeded", "failed"]),
   reason: z.string().min(1).max(256).nullable(),
   updatedAt: z.string().datetime(),
+}).strict();
+
+export const httpProviderSoakEvidenceSchema = z.object({
+  schemaVersion: z.literal(1),
+  kind: z.literal("http-provider-soak"),
+  ok: z.boolean(),
+  releaseCommit: z.string().regex(/^[a-f0-9]{40}$/),
+  configRevision: z.string().regex(/^[a-f0-9]{64}$/),
+  bootEpoch: z.string().min(1).max(128),
+  startedAt: z.string().datetime(),
+  lastAttemptAt: z.string().datetime(),
+  lastSuccessAt: z.string().datetime().nullable(),
+  durationSeconds: z.number().int().nonnegative(),
+  sampleCount: z.number().int().nonnegative(),
+  failureCount: z.number().int().nonnegative(),
+  maxGapSeconds: z.number().int().nonnegative(),
+}).strict().superRefine((value, context) => {
+  if (value.ok !== (value.sampleCount > 0 && value.failureCount === 0)) {
+    context.addIssue({ code: "custom", message: "ok must reflect samples and failures" });
+  }
+  if ((value.sampleCount === 0) !== (value.lastSuccessAt === null)) {
+    context.addIssue({ code: "custom", message: "lastSuccessAt must reflect sampleCount" });
+  }
+});
+
+export const legacyWebSocketDecommissionEvidenceSchema = z.object({
+  schemaVersion: z.literal(1),
+  kind: z.literal("legacy-websocket-decommission"),
+  releaseCommit: z.string().regex(/^[a-f0-9]{40}$/),
+  configRevision: z.string().regex(/^[a-f0-9]{64}$/),
+  bootEpoch: z.string().min(1).max(128),
+  observedAt: z.string().datetime(),
+  serviceActive: z.literal(false),
+  serviceEnabled: z.literal(false),
+  port8090Listening: z.literal(false),
+  installedUnitPresent: z.literal(false),
+  openApiRoutePresent: z.literal(false),
+  sourcePresent: z.literal(false),
 }).strict();
 
 export const publicAllocationBindingSchema = allocationBindingSchema.omit({ endpoint: true });
@@ -291,6 +330,10 @@ export type RuntimeReleasePlanRequest = z.infer<typeof runtimeReleasePlanRequest
 export type RuntimeDeployment = z.infer<typeof runtimeDeploymentSchema>;
 export type RuntimeDeploymentPlan = z.infer<typeof runtimeDeploymentPlanSchema>;
 export type ReleaseConvergenceStatus = z.infer<typeof releaseConvergenceStatusSchema>;
+export type HttpProviderSoakEvidence = z.infer<typeof httpProviderSoakEvidenceSchema>;
+export type LegacyWebSocketDecommissionEvidence = z.infer<
+  typeof legacyWebSocketDecommissionEvidenceSchema
+>;
 
 export const API_OPERATIONS = [
   ["get", "/health", "getHealth"],
@@ -325,7 +368,6 @@ export const API_OPERATIONS = [
   ["delete", "/v1/agent-connections/{id}", "releaseAgentConnection"],
   ["get", "/v1/models", "listOpenAiModels"],
   ["post", "/v1/chat/completions", "createChatCompletion"],
-  ["get", "/v1/llm/stream", "upgradeLlmStream"],
   ["post", "/v1/audio/transcriptions", "createTranscription"],
   ["post", "/v1/audio/speech", "createSpeech"],
   ["get", "/v1/audio/voices", "listVoices"],
@@ -377,7 +419,6 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   releaseAgentConnection: ["204"],
   listOpenAiModels: ["200"],
   createChatCompletion: ["200"],
-  upgradeLlmStream: ["101"],
   createTranscription: ["200"],
   createSpeech: ["200"],
   listVoices: ["200"],
@@ -427,7 +468,6 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   releaseAgentConnection: "AgentConnection",
   listOpenAiModels: "OpenAiModelList",
   createChatCompletion: "UpstreamJson",
-  upgradeLlmStream: "WebSocketUpgrade",
   createTranscription: "UpstreamJson",
   createSpeech: "Binary",
   listVoices: "UpstreamJson",
@@ -492,7 +532,6 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       description: "OpenAI-compatible Server-Sent Events, terminated by data: [DONE]",
     },
     Binary: { type: "string", format: "binary" },
-    WebSocketUpgrade: { type: "string", description: "saaa.llm-stream.v1 WebSocket frames" },
     ControlOperation: jsonSchema(controlOperationSchema),
     ReleaseConvergenceStatus: jsonSchema(releaseConvergenceStatusSchema),
     ArtifactOperation: jsonSchema(artifactOperationSchema),
@@ -544,7 +583,6 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       || operationId === "createTranscription";
     const providerBearerOperation = operationId === "getAgentProviderHealth"
       || operationId === "createChatCompletion"
-      || operationId === "upgradeLlmStream"
       || operationId === "createTranscription"
       || operationId === "createSpeech";
     const successContent = (() => {
@@ -557,7 +595,6 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
           "text/event-stream": { schema: { $ref: "#/components/schemas/ServerSentEvents" } },
         };
       }
-      if (operationId === "upgradeLlmStream") return undefined;
       if (operationId === "createSpeech") {
         return {
           "audio/wav": { schema: { $ref: "#/components/schemas/Binary" } },

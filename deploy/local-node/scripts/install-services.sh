@@ -58,12 +58,14 @@ release_dir="$(target_path /srv/ai/apps/larm-releases)"
 release_inbox_dir="$(target_path /var/lib/larm/release-inbox)"
 release_controller_dir="$(target_path /var/lib/larm/release-controller)"
 release_builder_dir="$(target_path /var/lib/larm/release-builder)"
+http_soak_dir="$(target_path /var/lib/larm/http-provider-soak)"
 release_private_key="${release_builder_dir}/signing-key.pem"
 release_public_key="${credential_dir}/release-signing.pub"
 libexec_dir="$(target_path /usr/local/libexec/larm)"
 release_activator="${libexec_dir}/activate-larm-release"
 release_gate_recorder="${libexec_dir}/record-larm-release-gate"
 release_rollback="${libexec_dir}/rollback-larm-release"
+legacy_ws_retirement="${libexec_dir}/retire-legacy-websocket"
 
 if [[ "${test_mode}" == "1" ]]; then
   data_owner="$(id -un)"
@@ -92,11 +94,10 @@ systemctl_run() {
 if [[ "${install_scope}" == "gateway" ]]; then
   units=(larm-daemon.service larm-inference-audit-prune.service larm-inference-audit-prune.timer larm-release-activator.service larm-release-activator.path larm-http-provider-monitor.service larm-http-provider-monitor.timer)
   enabled_units=(larm-daemon.service larm-inference-audit-prune.timer larm-release-activator.path larm-http-provider-monitor.timer)
-  data_directories=("${staging_dir}" "${rollback_dir}" "${state_dir}" "${audit_dir}" "${candidate_dir}" "${release_inbox_dir}" "${release_builder_dir}")
+  data_directories=("${staging_dir}" "${rollback_dir}" "${state_dir}" "${audit_dir}" "${candidate_dir}" "${release_inbox_dir}" "${release_builder_dir}" "${http_soak_dir}")
 else
   units=(
     llama-server.service
-    larm-native-qwen-provider.service
     llama-swap-worker.service
     qwen-asr.service
     whisper-asr.service
@@ -112,7 +113,6 @@ else
   )
   enabled_units=(
     llama-server.service
-    larm-native-qwen-provider.service
     llama-swap-worker.service
     qwen-asr.service
     whisper-asr.service
@@ -134,6 +134,7 @@ else
     "${candidate_dir}"
     "${release_inbox_dir}"
     "${release_builder_dir}"
+    "${http_soak_dir}"
   )
 fi
 
@@ -209,6 +210,7 @@ safe_install_target "${release_public_key}" "release public key target"
 safe_install_target "${release_activator}" "release activator target"
 safe_install_target "${release_gate_recorder}" "release gate recorder target"
 safe_install_target "${release_rollback}" "release rollback target"
+safe_install_target "${legacy_ws_retirement}" "legacy WebSocket retirement target"
 if [[ -e "${audit_config_path}" ]] && {
   [[ "$(stat -c '%s' -- "${audit_config_path}")" -gt 8192 ]] \
     || ! validate_audit_config "${audit_config_path}";
@@ -228,6 +230,7 @@ install -d -o "${data_owner}" -g "${data_group}" "${data_directories[@]}"
 install -d -o "${data_owner}" -g "${data_group}" -m 0700 "${audit_dir}"
 install -d -o "${data_owner}" -g "${data_group}" -m 0750 "${candidate_dir}"
 install -d -o "${data_owner}" -g "${data_group}" -m 0700 "${release_inbox_dir}" "${release_builder_dir}"
+install -d -o "${data_owner}" -g "${data_group}" -m 0750 "${http_soak_dir}"
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${release_dir}" "${libexec_dir}"
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${release_controller_dir}"
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${unit_target}"
@@ -242,6 +245,8 @@ install -o "${system_owner}" -g "${system_group}" -m 0755 \
   "${repo_root}/deploy/local-node/scripts/record-larm-release-gate.sh" "${release_gate_recorder}"
 install -o "${system_owner}" -g "${system_group}" -m 0755 \
   "${repo_root}/deploy/local-node/scripts/rollback-larm-release.sh" "${release_rollback}"
+install -o "${system_owner}" -g "${system_group}" -m 0755 \
+  "${repo_root}/deploy/local-node/scripts/retire-legacy-websocket.sh" "${legacy_ws_retirement}"
 
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${polkit_dir}"
 install -o "${system_owner}" -g "${system_group}" -m 0644 \

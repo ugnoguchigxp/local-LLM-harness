@@ -44,15 +44,6 @@ const registry: Registry = {
       node: "ai395-01",
       policy: { class: "resident" },
       resources: { estimatedMemoryGB: 24, maxConcurrentRequests: 1, maxQueuedRequests: 1, queueTimeoutMs: 100 },
-      streaming: {
-        protocol: "saaa.llm-stream.v1",
-        upstreamUrl: "ws://127.0.0.1:8090/v1/native/llm/stream",
-        upstreamProtocol: "larm.native-llm-stream.v1",
-        upstreamTransport: "native",
-        maxConcurrentRuns: 1,
-        maxConnections: 1,
-        resumeWindowMs: 120_000,
-      },
       deployment: {
         service: "llama-server.service",
         healthPort: 8080,
@@ -163,7 +154,6 @@ const legacyAgentConnectionCatalog = parseAgentConnectionCatalog({
         route: "llm-default",
         publicModel: "test-model",
         readiness: "llm-inference",
-        streamingProtocol: "saaa.llm-stream.v1",
       }],
     },
   },
@@ -347,15 +337,13 @@ test("GET /v1/release-convergence exposes only strict root-authored convergence 
   expect((await invalid.request("/v1/release-convergence")).status).toBe(503);
 });
 
-test("GET /v1/activity aggregates HTTP and native work without exposing internals", async () => {
+test("GET /v1/activity reports HTTP work without exposing internals", async () => {
   const tracker = new RequestTracker();
   const metrics = new MetricsRegistry();
   const events: ControlEvent[] = [];
-  let nativeActive = 2;
   const finishHttp = tracker.begin();
   const { app, control } = await makeApp(true, false, {}, {
     requestTracker: tracker,
-    getNativeActiveWorkloads: () => nativeActive,
     metrics,
     now: () => Date.parse("2026-09-05T17:45:00.000Z"),
     onEvent: (event) => events.push(event),
@@ -368,7 +356,7 @@ test("GET /v1/activity aggregates HTTP and native work without exposing internal
   expect(await activeResponse.json()).toEqual({
     contractVersion: "larm-service-activity.v1",
     state: "active",
-    activeWorkloads: 3,
+    activeWorkloads: 1,
     observedAt: "2026-09-05T17:45:00.000Z",
     validForMs: 1_000,
     retryAfterMs: 1_000,
@@ -379,15 +367,14 @@ test("GET /v1/activity aggregates HTTP and native work without exposing internal
   expect(events.at(-1)).toMatchObject({
     name: "service_activity_observed_state_changed",
     labels: { state: "active" },
-    value: 3,
+    value: 1,
   });
-  expect(metrics.render()).toContain("larm_service_activity_observed_active_workloads 3");
+  expect(metrics.render()).toContain("larm_service_activity_observed_active_workloads 1");
   expect(metrics.render()).toContain('larm_service_activity_observation_seconds_count{state="active"} 1');
   await app.request("/v1/activity");
   expect(events).toHaveLength(1);
 
   finishHttp();
-  nativeActive = 0;
   const idleResponse = await app.request("/v1/activity");
   expect(idleResponse.headers.has("retry-after")).toBeFalse();
   expect(await idleResponse.json()).toMatchObject({ state: "idle", activeWorkloads: 0 });
@@ -420,7 +407,6 @@ test("service activity is fail-closed, rejects query input, and follows agent AP
   const secured = (await makeApp(true, false, {}, {
     apiToken: "secret",
     requestTracker: tracker,
-    getNativeActiveWorkloads: () => 0,
   })).app;
   const unauthorized = await secured.request("/v1/activity");
   expect(unauthorized.status).toBe(401);
@@ -438,7 +424,6 @@ test("service activity is fail-closed, rejects query input, and follows agent AP
     apiToken: "secret",
     allowAnonymousAgentConnections: true,
     requestTracker: tracker,
-    getNativeActiveWorkloads: () => 0,
   })).app;
   expect((await anonymous.request("/v1/activity")).status).toBe(200);
 });
@@ -455,7 +440,6 @@ test("service activity observes a live Gateway request until its response closes
   });
   const { app } = await makeApp(true, false, {}, {
     requestTracker: tracker,
-    getNativeActiveWorkloads: () => 0,
     gatewayFetch: async () => {
       markUpstreamStarted?.();
       await upstreamReleased;
@@ -516,6 +500,12 @@ test("GET /openapi.json exposes the machine-readable v1 contract", async () => {
       },
     }),
   );
+});
+
+test("legacy proprietary WebSocket endpoint is absent", async () => {
+  const { app } = await makeApp(true);
+  const response = await app.request("/v1/llm/stream");
+  expect(response.status).toBe(404);
 });
 
 test("OpenAPI operation inventory cannot drift from daemon routes", async () => {
@@ -2484,16 +2474,6 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog,
     gatewayFetch,
-    resolveStreaming: ({ audienceBaseUrl }) => ({
-      protocol: "saaa.llm-stream.v1",
-      url: `${audienceBaseUrl.replace(/^http/, "ws")}/llm/stream`,
-      encoding: "json-control+binary-delta-v1",
-      compression: "none",
-      maxConcurrentRuns: 1,
-      maxConnections: 1,
-      resumeWindowMs: 120_000,
-      upstreamTransport: "native",
-    }),
   });
 
   const forgedProvider = await app.request("/v1/chat/completions", {
@@ -2557,16 +2537,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
   const credential = claim.providers[0]!.credential.token;
   expect(credential).toStartWith("larm_conn_v1.");
-  expect(claim.providers[0]!.streaming).toEqual({
-    protocol: "saaa.llm-stream.v1",
-    url: "ws://127.0.0.1:9810/v1/llm/stream",
-    encoding: "json-control+binary-delta-v1",
-    compression: "none",
-    maxConcurrentRuns: 1,
-    maxConnections: 1,
-    resumeWindowMs: 120_000,
-    upstreamTransport: "native",
-  });
+  expect(claim.providers[0]).not.toHaveProperty("streaming");
 
   const providerHealth = await app.request(claim.providers[0]!.health.url, {
     headers: { authorization: `Bearer ${credential}` },
@@ -2725,7 +2696,7 @@ test("non-default Agent Profiles require an explicit selection signal", async ()
   });
 });
 
-test("commissioned v1 SAAA bootstrap migrates the legacy profile to resident native Qwen", async () => {
+test("commissioned v1 SAAA bootstrap migrates the legacy profile to standard HTTP", async () => {
   const events: ControlEvent[] = [];
   const { app, control, log } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
@@ -2734,16 +2705,6 @@ test("commissioned v1 SAAA bootstrap migrates the legacy profile to resident nat
     agentConnectionCatalog: legacyAgentConnectionCatalog,
     onEvent: (event) => events.push(event),
     gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
-    resolveStreaming: ({ audienceBaseUrl }) => ({
-      protocol: "saaa.llm-stream.v1",
-      url: `${audienceBaseUrl.replace(/^http/, "ws")}/llm/stream`,
-      encoding: "json-control+binary-delta-v1",
-      compression: "none",
-      maxConcurrentRuns: 1,
-      maxConnections: 1,
-      resumeWindowMs: 120_000,
-      upstreamTransport: "native",
-    }),
   });
 
   const legacyProfilesResponse = await app.request("/v1/agent-profiles");
@@ -2779,7 +2740,6 @@ test("commissioned v1 SAAA bootstrap migrates the legacy profile to resident nat
       providers: [{
         capability: "llm.reasoning",
         model: "test-model",
-        streamingProtocol: "saaa.llm-stream.v1",
       }],
     });
 
@@ -2821,11 +2781,6 @@ test("commissioned v1 SAAA bootstrap migrates the legacy profile to resident nat
   expect(claim.providers[0]).toMatchObject({
     capability: "llm.reasoning",
     model: "test-model",
-    streaming: {
-      protocol: "saaa.llm-stream.v1",
-      url: "ws://gnosis.local:9810/v1/llm/stream",
-      upstreamTransport: "native",
-    },
   });
   expect(control.getAllocation(connection.allocationId)).toMatchObject({
     allowFallback: false,
@@ -2852,7 +2807,7 @@ test("commissioned v1 SAAA bootstrap migrates the legacy profile to resident nat
   });
   expect(events).toContainEqual({
     name: "agent_connection_claim_accepted",
-    labels: { status: "200", providers: "1", streamingProviders: "1" },
+    labels: { status: "200", providers: "1" },
   });
   expect((await app.request(`/v1/agent-connections/${connection.id}`, {
     method: "DELETE",
@@ -2867,25 +2822,11 @@ test("commissioned v1 SAAA bootstrap migrates the legacy profile to resident nat
 });
 
 test("agent connection derives a host-private claim from the request origin", async () => {
-  const streamingAudiences: string[] = [];
   const { app } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog: dynamicAgentConnectionCatalog,
     gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
-    resolveStreaming: ({ audienceBaseUrl, audienceNetwork }) => {
-      streamingAudiences.push(audienceNetwork);
-      return {
-        protocol: "saaa.llm-stream.v1",
-        url: `${audienceBaseUrl.replace(/^http/, "ws")}/llm/stream`,
-        encoding: "json-control+binary-delta-v1",
-        compression: "none",
-        maxConcurrentRuns: 1,
-        maxConnections: 1,
-        resumeWindowMs: 120_000,
-        upstreamTransport: "native",
-      };
-    },
   });
   const create = await app.request("http://gnosis.local:9810/v1/agent-connections", {
     method: "POST",
@@ -2916,13 +2857,7 @@ test("agent connection derives a host-private claim from the request origin", as
     configuration: {
       fields: { baseURL: "http://gnosis.local:9810/v1", model: "test-model" },
     },
-    streaming: {
-      protocol: "saaa.llm-stream.v1",
-      url: "ws://gnosis.local:9810/v1/llm/stream",
-      upstreamTransport: "native",
-    },
   });
-  expect(streamingAudiences).toEqual(["host-private"]);
 
   const conflictingOrigin = await app.request("http://192.168.50.23:9810/v1/agent-connections", {
     method: "POST",
@@ -3015,16 +2950,6 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog,
     gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
-    resolveStreaming: ({ audienceBaseUrl }) => ({
-      protocol: "saaa.llm-stream.v1",
-      url: `${audienceBaseUrl.replace(/^http/, "ws")}/llm/stream`,
-      encoding: "json-control+binary-delta-v1",
-      compression: "none",
-      maxConcurrentRuns: 1,
-      maxConnections: 1,
-      resumeWindowMs: 120_000,
-      upstreamTransport: "native",
-    }),
   });
 
   expect((await app.request("/v1/agent-profiles")).status).toBe(200);

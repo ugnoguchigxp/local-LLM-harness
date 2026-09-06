@@ -18,7 +18,6 @@ agentProfiles:
         route: llm-default
         publicModel: coding-default
         readiness: llm-inference
-        streamingProtocol: saaa.llm-stream.v1
   contextstill-background:
     description: ContextStill background Qwen 3.8 27B provider
     providers:

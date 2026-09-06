@@ -36,8 +36,9 @@
         releaseで行う。
       </li>
       <li>
-        <code>openai.chat-completions.v1</code>は非streaming JSONとHTTP SSEの両方を含む。
-        Native WebSocketの<code>streamingProtocol</code>をHTTP SSE対応判定に使わない。
+        <code>openai.chat-completions.v1</code>は非streaming JSONとHTTP SSEの両方を含む。 HTTP
+        SSE対応はChat Completionsの標準<code>stream</code>
+        fieldで判定する。
       </li>
       <li>
         <code>/health</code
@@ -129,6 +130,8 @@
   -&gt; contract verified
   -&gt; provider canary verified
   -&gt; consumer job verified
+  -&gt; 24-hour HTTP soak verified
+  -&gt; legacy WebSocket service retired
   -&gt; complete</code></pre>
       <figcaption>
         途中状態と失敗理由を永続化し、<code>consumer job verified</code>より前を作業完了として扱わない。
@@ -148,8 +151,9 @@
       <li>
         statusは<code>validated</code>、<code>approved</code>、<code>activated</code>、
         <code>contract_verified</code
-        >、<code>canary_verified</code>、<code>consumer_verified</code>を単調に進め、
-        failure stage、bounded reason、observed releaseをsecretなしで記録する。
+        >、<code>canary_verified</code>、<code>consumer_verified</code>、<code>soak_verified</code>、
+        <code>complete</code>を単調に進め、 failure stage、bounded
+        reason、observed releaseをsecretなしで記録する。
       </li>
     </ul>
     <h3>権限境界</h3>
@@ -274,15 +278,11 @@
   <section id="live-contract-gate">
     <h2>P1: live contract gate</h2>
     <p>
-      現在のsmokeはResident AllocationのJSON/SSEと、SAAA ProfileのNative WebSocketを別々に検証する。
-      非Nativeの<code>contextstill-background</code>を、Agent
-      Connectionの短期credentialでHTTP SSEまで通すgateがない。この空白を汎用HTTP Provider
-      smokeで埋める。
+      従来のsmokeはResident Allocationと独自transportを別々に検証していた。
+      <code>contextstill-background</code>をAgent Connectionの短期credentialでHTTP
+      SSEまで通す 汎用HTTP Provider smokeへ置換する。
     </p>
-    <p>
-      新しいgateはprofile、audience、期待model、期待release identityを引数化し、Native
-      WebSocket広告の 有無に依存せず次を検証する。
-    </p>
+    <p>新しいgateはprofile、audience、期待model、期待release identityを引数化し、次を検証する。</p>
     <ul>
       <li>
         desired commitと<code>/health.releaseCommit</code>、manifest config revisionの一致
@@ -462,8 +462,12 @@
         <code>/v1/release-convergence</code>、canary→consumer順序gateを実装した。
       </li>
       <li>
-        <code>larm-http-provider-monitor.timer</code>は9810のcatalog、JSON、SSEを検査し、
-        <code>44448</code>を監視しない。
+        <code>larm-http-provider-monitor.timer</code>は9810のcatalog、JSON、SSEを検査し、同一
+        release／config／boot世代のsample、失敗、最大gapを永続化する。24時間、96
+        sample以上、失敗0、最大gap
+        30分以下まで<code>soak_verified</code>へ進めず、<code>44448</code>を監視しない。
+        さらに旧WebSocket unitの停止・disable・退避、port 8090不在、旧OpenAPI route不在を
+        同一世代の証跡として記録した後だけ<code>complete</code>へ進める。
       </li>
       <li>
         <code>packages/core/src/provider-recovery.ts</code
@@ -473,7 +477,7 @@
     </ul>
     <p>
       repository完了はlive完了ではない。rootによるinstall／activation、live identity、HTTP canary、
-      ContextStill sourceへの状態機械組込み、実job一件完了が残る。
+      ContextStill sourceへの状態機械組込み、実job一件完了、24時間soakが残る。
     </p>
   </section>
 
@@ -522,7 +526,10 @@
         <code>/v1/release-convergence</code>へsecret-free statusを公開し、HTTP Provider
         canary evidenceより前に consumer
         evidenceを受理しないgateを追加した。ContextStill一件完了、成果一回保存、次job境界の
-        Activity再評価が揃うまで<code>complete</code>にならない。
+        Activity再評価後は<code>consumer_verified</code>となり、さらに同一世代の24時間HTTP
+        soakが揃うまで<code>soak_verified</code>にならない。旧WebSocket
+        serviceの撤去証跡を root
+        recorderが受理するまで<code>complete</code>にならない。
       </li>
       <li>
         定期監視は<code>larm-http-provider-monitor.timer</code>から9810のmodel

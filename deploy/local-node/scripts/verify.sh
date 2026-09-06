@@ -5,7 +5,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
 services=(
   llama-server.service
-  larm-native-qwen-provider.service
   llama-swap-worker.service
   qwen-asr.service
   whisper-asr.service

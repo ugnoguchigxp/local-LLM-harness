@@ -22,6 +22,7 @@ export interface ProviderRecoveryRelease {
     | "contract_verified"
     | "canary_verified"
     | "consumer_verified"
+    | "soak_verified"
     | "complete";
   result: "pending" | "running" | "succeeded" | "failed";
 }
@@ -83,6 +84,7 @@ export type ProviderRecoveryPlan =
 const CANARY_VERIFIED_STAGES = new Set<ProviderRecoveryRelease["stage"]>([
   "canary_verified",
   "consumer_verified",
+  "soak_verified",
   "complete",
 ]);
 
