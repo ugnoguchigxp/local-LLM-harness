@@ -3,7 +3,7 @@
 
   <p>
     ContextStillの継続処理を、LARMの標準OpenAI互換HTTP APIへ接続するための実装指示です。 旧Agent
-    Connection、claim、短期credential、独自WebSocketを新経路の依存にしません。
+    Connection、claim、短期credential、専用transportを新経路の依存にしません。
     ContextStillは通常のOpenAI互換clientとして<code>:9810/v1</code>へ接続し、LARM内部のmodel
     brokerがResidentまたはPreferred Runtimeの選択、起動、参照数、回収を担当します。
   </p>
@@ -154,7 +154,7 @@
       activityは予約ではなくsnapshotです。idle確認直後にSAAA
       workloadが始まるraceは許容し、実行中jobは
       一度だけ完了させます。ただし次jobはfreshな境界確認まで開始しません。process、画面focus、heartbeat、
-      callbackや旧WebSocketの接続状態からactivityを推測しません。
+      callbackや旧transportの接続状態からactivityを推測しません。
     </p>
   </section>
 
@@ -252,7 +252,7 @@
       <li>
         旧<code>larm-agent-connection</code>設定を通常OpenAI Providerへ自動変換しない。
       </li>
-      <li>新経路から従来Provider、旧static port、独自WSへ暗黙fallbackしない。</li>
+      <li>新経路から従来Provider、旧static port、旧transportへ暗黙fallbackしない。</li>
       <li>
         Provider種別を明示的に戻せばrollbackできるよう、job result schemaをProvider非依存に保つ。
       </li>
@@ -268,7 +268,9 @@
         旧設定fixtureが変更なしで読み込め、新HTTP variantはbase
         URL、secret参照、modelをstrict検証する。
       </li>
-      <li>独自Profile、Connection、claim、WSを持たないHTTP fixtureでJSONとSSEを完了する。</li>
+      <li>
+        独自Profile、Connection、claim、旧transportを持たないHTTP fixtureでJSONとSSEを完了する。
+      </li>
       <li>
         SSEの任意chunk境界、tool
         delta、finish、<code>[DONE]</code>、途中切断、cancelを検証する。
@@ -309,7 +311,7 @@
       <li>
         ContextStill実jobを一件完了し、一度だけ保存、次境界確認、release identityを証跡化する。
       </li>
-      <li>24時間のHTTP経路soak後、利用が0の旧WS・claim consumer codeを削除する。</li>
+      <li>24時間のHTTP経路soak後、利用が0の旧transport・claim consumer codeを削除する。</li>
     </ol>
     <p>
       完了はsource test、push、shadow E2E、HTTP canaryだけではありません。承認済みcommitとlive

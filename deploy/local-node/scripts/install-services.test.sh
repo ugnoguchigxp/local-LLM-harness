@@ -51,6 +51,12 @@ if LARM_INSTALL_TEST_MODE=1 LARM_INSTALL_ROOT="${invalid_root}" \
 fi
 [[ ! -e "${invalid_root}/etc/systemd/system/larm-daemon.service" ]]
 
+mkdir -p "${test_root}/etc/systemd/system"
+printf '[Unit]\nDescription=obsolete native Provider\n' \
+  >"${test_root}/etc/systemd/system/larm-native-qwen-provider.service"
+mkdir -p "${test_root}/usr/local/libexec/larm"
+printf '#!/usr/bin/env bash\n' \
+  >"${test_root}/usr/local/libexec/larm/retire-legacy-websocket"
 run_installer
 credential="${test_root}/etc/larm/larm.env"
 initial_credential="$(<"${credential}")"
@@ -97,7 +103,9 @@ grep -F "disable qwen-tts.service" "${systemctl_log}" >/dev/null
 [[ -x "${test_root}/usr/local/libexec/larm/activate-larm-release" ]]
 [[ -x "${test_root}/usr/local/libexec/larm/record-larm-release-gate" ]]
 [[ -x "${test_root}/usr/local/libexec/larm/rollback-larm-release" ]]
-[[ -x "${test_root}/usr/local/libexec/larm/retire-legacy-websocket" ]]
+[[ ! -e "${test_root}/usr/local/libexec/larm/retire-legacy-websocket" ]]
+[[ ! -e "${test_root}/etc/systemd/system/larm-native-qwen-provider.service" ]]
+grep -F "disable --now larm-native-qwen-provider.service" "${systemctl_log}" >/dev/null
 [[ "$(stat -c '%a' "${test_root}/var/lib/larm/release-builder/signing-key.pem")" == "600" ]]
 [[ "$(stat -c '%a' "${test_root}/etc/larm/release-signing.pub")" == "644" ]]
 openssl pkey -pubin -in "${test_root}/etc/larm/release-signing.pub" -noout >/dev/null
@@ -106,7 +114,9 @@ grep -F "/srv/ai/models/qwen36-35b" \
 grep -F "/srv/ai/models/ornith15-35b" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 
-mkdir "${gateway_root}"
+mkdir -p "${gateway_root}/etc/systemd/system"
+printf '[Unit]\nDescription=obsolete native Provider\n' \
+  >"${gateway_root}/etc/systemd/system/larm-native-qwen-provider.service"
 LARM_INSTALL_TEST_MODE=1 \
   LARM_INSTALL_ROOT="${gateway_root}" \
   LARM_INSTALL_SCOPE=gateway \
@@ -122,11 +132,14 @@ for unit in llama-server.service llama-swap-worker.service qwen-asr.service whis
 done
 grep -F "enable larm-daemon.service" \
   "${gateway_root}/var/lib/larm/install-systemctl.log" >/dev/null
-if grep -Eq 'llama-server|llama-swap-worker|qwen-asr|whisper-asr|qwen-tts|voicevox-tts|disable' \
+if grep -Eq 'llama-server|llama-swap-worker|qwen-asr|whisper-asr|qwen-tts|voicevox-tts' \
   "${gateway_root}/var/lib/larm/install-systemctl.log"; then
   echo "gateway scope changed a Provider unit" >&2
   exit 1
 fi
+[[ ! -e "${gateway_root}/etc/systemd/system/larm-native-qwen-provider.service" ]]
+grep -F "disable --now larm-native-qwen-provider.service" \
+  "${gateway_root}/var/lib/larm/install-systemctl.log" >/dev/null
 [[ ! -e "${gateway_root}/srv/ai/models/qwen38-worker" ]]
 [[ ! -e "${gateway_root}/srv/ai/models/qwen36-35b" ]]
 [[ ! -e "${gateway_root}/srv/ai/models/ornith15-35b" ]]

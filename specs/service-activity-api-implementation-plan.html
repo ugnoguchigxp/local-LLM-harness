@@ -62,14 +62,10 @@
         HTTP LLM・ASR・TTS
         requestは共通<code>RequestTracker</code>と<code>ExecutionGate</code>を通る。
       </li>
-      <li>
-        Native LLM WebSocket runは<code>LlmStreamServer</code>内部のruntime別active
-        countで管理される。
-      </li>
     </ul>
     <p>
-      着手時点ではactivity公開API、Native WebSocketの公開用active count、
-      <code>contextstill-background</code> Profileがありませんでした。着手前のlive
+      着手時点ではactivity公開APIと<code>contextstill-background</code>
+      Profileがありませんでした。着手前のlive
       <code>GET /v2/agent-profiles</code
       >は<code>coding-default</code>とdeprecated compatibility aliasだけを
       返します。
@@ -88,11 +84,7 @@
         <code>apps/daemon/src/app.ts</code>へ認証、no-store、入力拒否を含む
         <code>GET /v1/activity</code>を追加した。
       </li>
-      <li>
-        HTTPは既存<code>RequestTracker</code>、Native WebSocketは非terminal
-        runだけを数える
-        <code>LlmStreamServer.activeRunCount()</code>で集約した。
-      </li>
+      <li>HTTP利用者requestを既存<code>RequestTracker</code>で集約した。</li>
       <li>
         <code>config/local-node/agent-connections.yaml</code>へ明示選択専用
         <code>contextstill-background</code>
@@ -172,16 +164,6 @@
           <th scope="row">HTTP LLM・ASR・TTS</th>
           <td>含める</td>
           <td>Gateway受理からresponse body完了、cancel、errorまで</td>
-        </tr>
-        <tr>
-          <th scope="row">SAAA Native WebSocket run</th>
-          <td>含める</td>
-          <td><code>run.start</code>受理からterminalまたは強制終了まで</td>
-        </tr>
-        <tr>
-          <th scope="row">WebSocket connectionだけがopen</th>
-          <td>除外</td>
-          <td>active runがなければidle</td>
         </tr>
         <tr>
           <th scope="row">Agent Connection・Allocationだけが存在</th>
@@ -280,8 +262,8 @@ Accept: application/json</code></pre>
       closedでactive相当に扱います。active、draining、503では<code>Retry-After: 1</code>を返します。
     </p>
     <p>
-      <code>activeWorkloads</code>はHTTP利用者request数とNative WebSocket active
-      run数の合計です。 client数、Provider別内訳、model、Runtime、prompt、Connection
+      <code>activeWorkloads</code
+      >はHTTP利用者request数です。client数、Provider別内訳、model、Runtime、prompt、Connection
       IDは返しません。
     </p>
   </section>
@@ -319,11 +301,8 @@ Accept: application/json</code></pre>
       <pre><code>HTTP LLM / ASR / TTS
   └─ proxyGateway ── RequestTracker.count()
 
-Native LLM WebSocket
-  └─ LlmStreamServer.activeRunCount()
-
 GET /v1/activity
-  └─ activeWorkloads = HTTP count + Native run count
+  └─ activeWorkloads = HTTP request count
        ├─ 0 → idle
        ├─ &gt;0 → active
        └─ control drain → draining</code></pre>
@@ -354,17 +333,7 @@ GET /v1/activity
         <code>proxyGateway</code>を通らないため、このcountへ入りません。
       </li>
       <li>
-        <code>LlmStreamServer</code
-        >へread-onlyな<code>activeRunCount()</code>を追加する。open中だがidleな
-        WebSocket connectionは数えない。
-      </li>
-      <li>
-        run terminal、cancel、provider failure、resume window終了、shutdownの全経路でcountが0へ戻る
-        既存<code>release()</code>不変条件をtestする。
-      </li>
-      <li>
-        <code>LlmStreamServer</code>をapp component作成前に構築し、activity
-        handlerへread-only callbackを注入する。global mutable counterを新設しない。
+        response完了、cancel、Provider failure、shutdownの全経路でcountが0へ戻ることをtestする。
       </li>
     </ul>
 
@@ -406,8 +375,7 @@ GET /v1/activity
         非default Profileなので既存schemaにより<code>explicit-only</code>となる。
       </li>
       <li>
-        <code>streamingProtocol</code>は指定しない。このfieldはSAAA Native
-        WebSocketの広告専用で、 ContextStillは通常HTTPからJSONまたはOpenAI互換SSEを要求できる。
+        claimの<code>baseUrl</code>からJSONまたはOpenAI互換SSEを要求する。
       </li>
       <li>
         <code>allowFallback: false</code>によりResident
@@ -515,8 +483,8 @@ Content-Type: application/json
         </tr>
         <tr>
           <th scope="row">M2 Activity集約</th>
-          <td>HTTP count再利用、Native run count公開、state導出</td>
-          <td>HTTP、WS、同時実行、全terminalでcountが一致</td>
+          <td>HTTP count再利用、state導出</td>
+          <td>JSON、SSE、同時実行、全terminalでcountが一致</td>
           <td>source完了</td>
         </tr>
         <tr>
@@ -554,9 +522,9 @@ Content-Type: application/json
       <li>初期値はidle、countは0、responseはstrictでno-store。</li>
       <li>一つまたは複数のHTTP Gateway request中はcountが増え、全response完了後に0へ戻る。</li>
       <li>queued HTTP requestもGateway requestの生存期間としてactiveに含まれる。</li>
-      <li>Native run startで増え、complete、cancel、failure、shutdownで必ず減る。</li>
-      <li>idle WebSocket、semantic probe、health、activity GETはcountを増やさない。</li>
-      <li>HTTPとNative runの同時実行は合計値を返す。</li>
+      <li>JSON／SSE request開始で増え、complete、cancel、failure、shutdownで必ず減る。</li>
+      <li>semantic probe、health、activity GETはcountを増やさない。</li>
+      <li>複数HTTP requestの同時実行は合計値を返す。</li>
       <li>drain中はcountに関係なくstateがdrainingになる。</li>
       <li>unknown query、body付きGET、無効credentialを拒否する。</li>
     </ul>
@@ -578,7 +546,7 @@ Content-Type: application/json
     <ol>
       <li>workloadなしでactivityがidle、0を返す。</li>
       <li>HTTP LLM、ASR、TTSを個別に実行し、それぞれの実行中だけactiveとなる。</li>
-      <li>SAAA Native WebSocket run中にactive、idle connectionだけの状態でidleとなる。</li>
+      <li>SAAAのHTTP SSE request中だけactiveとなる。</li>
       <li>
         複数data plane同時実行で<code>activeWorkloads</code>が期待値と一致する。
       </li>
@@ -587,7 +555,7 @@ Content-Type: application/json
       <li>別workload開始後、ContextStillは現在job完了後に次jobを開始せずConnectionを解放する。</li>
       <li>release後にworkerが既定idle TTL内でCOLDへ戻る。</li>
       <li>試験中のfallback、OOM、Provider crash、credential leakが0である。</li>
-      <li>既存SAAA WebSocket、ASR Service Harness、Agent Connection smokeがすべて成功する。</li>
+      <li>SAAA HTTP SSE、ASR Service Harness、Agent Connection smokeがすべて成功する。</li>
     </ol>
   </section>
 

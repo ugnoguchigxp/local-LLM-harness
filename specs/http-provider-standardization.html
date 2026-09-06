@@ -1,13 +1,14 @@
 <article lang="ja">
   <h1>OpenAI互換HTTP Provider移行 実装計画</h1>
   <p>
-    2026-09-06。SAAAとContextStillのLLM利用を、LARM独自WebSocketから固定URLのOpenAI互換HTTP
+    2026-09-06。SAAAとContextStillのLLM利用を、LARM独自transportから固定URLのOpenAI互換HTTP
     APIへ移行するための実装計画です。LLMはJSONとHTTP SSE、ASRはmultipartとJSON、TTSは音声bodyを
-    公開し、新しい独自WebSocketは作りません。本書は実装計画と進捗記録であり、repository内の最初の
+    公開し、新しい独自transportは作りません。本書は実装計画と進捗記録であり、repository内の最初の
     LLM HTTP sliceは実装済みです。ただしclient切替、live配備、consumer完了、旧経路撤去を
     実施済みとするものではありません。2026-09-06のrepository実装ではdata plane、release
-    convergence、24時間soak recorder、旧独自WSのsource／unit撤去まで進んだが、live配備、
-    外部consumer受入、24時間soakと旧live unit退役は未完了です。
+    convergence、24時間soak recorder、旧独自transportのsource／unit
+    definition撤去まで進んだが、live配備、 外部consumer受入、24時間soakと旧installed
+    unit削除は未完了です。
   </p>
   <dl>
     <dt>採用する公開data plane</dt>
@@ -23,7 +24,8 @@
     <dd>SAAA、ContextStill、LARM client、live canary、性能診断、運用監視</dd>
     <dt>完了の定義</dt>
     <dd>
-      live HTTP契約と性能gate、SAAA受入、ContextStill job一件の成果保存、旧WS通信0件をすべて満たす
+      live HTTP契約と性能gate、SAAA受入、ContextStill
+      job一件の成果保存、旧transport通信0件をすべて満たす
     </dd>
   </dl>
   <section id="implementation-status">
@@ -62,13 +64,15 @@
       <li>
         非特権builder、署名済みdesired intent、root activator、atomic rollback、機械可読status、
         canary→consumerの順序gate、9810 JSON/SSE定期監視をrepositoryへ実装した。rootは候補コードや
-        testを実行しない。
+        testを実行しない。builderは全gate後にdev dependencyを除去し、production dependencyだけを
+        release bundleへ含める。
       </li>
       <li>
-        Queue回復の純粋状態機械と段階再開計画、旧WS source／test／unit definitionの撤去、
-        復旧防止checkを実装した。live release、30 sampleのSLO校正、SAAA／ContextStill切替、
-        実Queue統合、24時間soak、旧live unit退役は未確認である。このhostにはSAAAとContextStillの
-        source treeがないためM4と実Queue変更は外部作業である。
+        Queue回復の純粋状態機械と段階再開計画、旧transport source／test／unit definitionの撤去を
+        実装した。live release、30 sampleのSLO校正、SAAA／ContextStill切替、
+        実Queue統合、24時間soak、旧installed
+        unit削除は未確認である。このhostにはSAAAとContextStillの source
+        treeがないためM4と実Queue変更は外部作業である。
       </li>
     </ul>
     <aside>
@@ -83,7 +87,7 @@
     <h2>推奨</h2>
     <p>
       LLMの公開推論APIはOpenAI互換Chat CompletionsのJSONとHTTP
-      SSEへ統一し、新規の独自WSは作らない。ASR・TTSもOpenAI互換のHTTP
+      SSEへ統一し、新規の独自transportは作らない。ASR・TTSもOpenAI互換のHTTP
       endpointを基準にする。OpenAIサービスへの送信へ切り替える意味ではなく、ローカルengineを一般的なclientで利用できるAPIにする方針である。
     </p>
     <p>
@@ -92,9 +96,8 @@
       API、Realtime APIの全面再実装を今回の完了条件へ追加しない。
     </p>
     <p>
-      前案dynamic-provider-redesign.htmlの新WS
-      endpointとnative完全互換案は非normativeな比較記録として 残す。実行sourceから既存独自WS
-      contractを削除し、再導入防止checkを全体gateへ組み込む。
+      以前検討した独自transport案は廃止し、専用仕様書と実行sourceをrepositoryから削除する。
+      公開contractはOpenAI互換HTTP APIだけを正本とする。
     </p>
   </section>
   <section id="api-contract">
@@ -141,13 +144,13 @@
     </p>
     <p>
       ASRで結果をSSE配信しても、マイク音声を連続送信するRealtime
-      ASRにはならない。まず発話区間をVADまたはpush-to-talkで確定して送る構成を採る。連続字幕や同時双方向音声が必須になった場合は、標準的なRealtime/WebRTC等を別途評価し、独自WSを再発明しない。
+      ASRにはならない。まず発話区間をVADまたはpush-to-talkで確定して送る構成を採る。連続字幕や同時双方向音声が必須になった場合は、標準的なRealtime/WebRTC等を別途評価し、独自transportを再発明しない。
     </p>
   </section>
   <section id="latency">
     <h2>速度の判断</h2>
     <p>
-      WSは通信方式であり、推論速度を自動的に上げない。SSEも生成途中から返せる。今回、同model・同prompt・同GPU条件でのWS対SSEの速度差は測定していないため、「SSEが同速」「WSは必ず遅い」とは断定しない。現状は独自経路の維持コストが確認できる一方、そのコストに見合う速度改善の証拠を今回確認できていない。
+      双方向transportは通信方式であり、推論速度を自動的に上げない。SSEも生成途中から返せる。今回、同model・同prompt・同GPU条件での旧transport対SSEの速度差は測定していないため、同速・低速とは断定しない。独自経路の維持コストに見合う速度改善の証拠は確認できていない。
     </p>
     <pre><code>発話終了 → VAD確定 → ASR確定 → LLMの最初の発話可能な句
          → TTSの最初の音声 → clientで再生開始</code></pre>
@@ -208,7 +211,7 @@
     </p>
     <p>
       Rust consumer、GPU
-      engine、model資産、業務DBを一括で書き換えない。LLMのnative専用companionとengine改変は、HTTP受入後に依存がないものだけを廃止する。WSを使わなくなったことだけを理由に、ROCm/MTP対応まで削除しない。
+      engine、model資産、業務DBを一括で書き換えない。LLMのnative専用companionとengine改変は、HTTP受入後に依存がないものだけを廃止する。専用transportを使わなくなったことだけを理由に、ROCm/MTP対応まで削除しない。
     </p>
   </section>
   <section id="current-state">
@@ -257,13 +260,9 @@
           </td>
         </tr>
         <tr>
-          <th scope="row">Native WS</th>
-          <td>
-            <code>main.ts</code
-            >、<code>llm-stream-session.ts</code>、native backend、別systemd service、
-            専用benchmark／smoke／soakが一つの独立経路を構成する。
-          </td>
-          <td>HTTP受入中だけ互換経路として凍結し、client通信0件とrollback window後に削除する。</td>
+          <th scope="row">専用transport</th>
+          <td>実行source、別systemd service、専用benchmark／smoke／soakを削除済み。</td>
+          <td>公開contractは標準HTTP APIだけとする。</td>
         </tr>
         <tr>
           <th scope="row">ASR</th>
@@ -290,9 +289,10 @@
     </table>
     <aside>
       <p>
-        既存の性能文書でWSはHTTP JSONより早く最初のtokenを返したが、HTTP側が非streamingだったため、
-        WS対HTTP SSEの比較にはなっていない。移行判断には同一model、prompt、max tokens、warm state、
-        concurrencyでHTTP SSEとWSを比較する。
+        既存の性能文書で旧transportはHTTP
+        JSONより早く最初のtokenを返したが、HTTP側が非streamingだったため、 HTTP
+        SSEとの比較にはなっていない。移行判断には同一model、prompt、max tokens、warm state、
+        concurrencyでHTTP SSEを測定する。
       </p>
     </aside>
   </section>
@@ -575,9 +575,7 @@ client abort / deadline / release drain
             >、<code>deploy/local-node/scripts/performance-larm.ts</code>、
             <code>deploy/local-node/slo.yaml</code>
           </td>
-          <td>
-            JSON／SSE／error／tool call fixture、HTTP SSE対旧WSの同条件report、review済みSLO。
-          </td>
+          <td>JSON／SSE／error／tool call fixture、HTTP SSEの同条件report、review済みSLO。</td>
         </tr>
         <tr>
           <th scope="row">M1</th>
@@ -638,9 +636,9 @@ client abort / deadline / release drain
         </tr>
         <tr>
           <th scope="row">M7</th>
-          <td>独自WSの停止と削除</td>
-          <td>native core／backend／session、upgrade、config、systemd、WS scripts／tests</td>
-          <td>WS通信0件、24時間HTTP soak、rollback window満了後に専用依存を削除。</td>
+          <td>専用transportの削除</td>
+          <td>native core／backend／session、upgrade、config、systemd、専用scripts／tests</td>
+          <td>専用実装と依存をrepositoryから削除。</td>
         </tr>
       </tbody>
     </table>
@@ -652,7 +650,8 @@ client abort / deadline / release drain
       </li>
       <li>pinした標準SDKで互換試験する。curlだけの成功をSDK互換完了にしない。</li>
       <li>
-        旧WS benchmarkは撤去前の一回だけ公平な比較に使い、準備、model load、TTFT、totalを分離する。
+        旧transport benchmarkは撤去前の一回だけ公平な比較に使い、準備、model
+        load、TTFT、totalを分離する。
       </li>
     </ul>
     <h3>M1-M3: LARM data plane</h3>
@@ -699,7 +698,7 @@ client abort / deadline / release drain
     <ol>
       <li>
         <strong>測定:</strong> 現行releaseでHTTP
-        SSEと旧WSの公平なbaselineを取り、機能差、TTFT、total、
+        SSEと旧transportの公平なbaselineを取り、機能差、TTFT、total、
         tokens/s、cancel、memory、GPU競合を保存する。
       </li>
       <li>
@@ -718,32 +717,31 @@ client abort / deadline / release drain
       </li>
       <li>
         <strong>default切替:</strong>
-        SAAAとContextStillの既定transportをHTTPにし、独自WS sourceを含まないreleaseへatomicに
+        SAAAとContextStillの既定transportをHTTPにし、独自transport sourceを含まないreleaseへatomicに
         切り替える。旧companion unitはrollback
         window中もdaemonから到達不能であり、新規通信を受けない。
       </li>
       <li>
         <strong>soak:</strong> 24時間以上、HTTP成功率、TTFT、tokens/s、cancel、slot leak、release
-        identity、 consumer完了を監視する。旧WSのactive
+        identity、 consumer完了を監視する。旧transportのactive
         connectionと新規attemptは0であることを記録する。
       </li>
       <li>
         <strong>撤去:</strong> source、schema、upgrade、unit definition、専用scriptとtestはHTTP-only
-        releaseで既に削除する。24時間soak後、固定root helperが旧installed
-        unitを停止・disable・退避し、 port 8090不在とOpenAPI route不在を証跡化する。
+        releaseで削除する。旧installed unitはroot installerが停止・disable・削除する。
       </li>
     </ol>
     <p>
       rollback単位はreleaseとconsumer設定を揃える。HTTP releaseでidentity、contract、SSE
       terminal、性能gate、
       consumer成果保存のいずれかが失敗した場合、Queueを止め、consumerを直前の確認済み経路へ戻し、LARMを
-      previous releaseへatomicに戻す。旧WS sourceを削除した後はWSへ戻さず、確認済みHTTP previous
-      releaseへ戻す。
+      previous releaseへatomicに戻す。旧transport sourceを削除した後はそれへ戻さず、確認済みHTTP
+      previous releaseへ戻す。
     </p>
     <p>
-      撤去前に止めるのは<code>larm-native-qwen-provider.service</code>と専用WS広告である。Resident
-      QwenのHTTP engine、MTP、ROCmFP4 assetはHTTP性能gateを満たす限り維持する。外部model
-      weightsやengine binaryを repository削除と同時に消去しない。
+      削除対象は<code>larm-native-qwen-provider.service</code>である。Resident QwenのHTTP
+      engine、MTP、ROCmFP4 assetはHTTP性能gateを満たす限り維持する。外部model weightsやengine
+      binaryを repository削除と同時に消去しない。
     </p>
   </section>
   <section id="verification">
@@ -824,11 +822,12 @@ client abort / deadline / release drain
         failure回数へ加算しない。
       </li>
       <li>
-        clientから旧<code>:44448</code>、<code>/v1/llm/stream</code>、native
+        clientから旧<code>:44448</code>やnative
         companionへの接続が0件である。
       </li>
       <li>
-        24時間soakとrollback windowを完了し、独自WSの広告、service、source、test依存を撤去する。
+        24時間soakとrollback
+        windowを完了し、独自transportの広告、service、source、test依存を撤去する。
       </li>
     </ul>
     <p>

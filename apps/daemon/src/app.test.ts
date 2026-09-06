@@ -502,12 +502,6 @@ test("GET /openapi.json exposes the machine-readable v1 contract", async () => {
   );
 });
 
-test("legacy proprietary WebSocket endpoint is absent", async () => {
-  const { app } = await makeApp(true);
-  const response = await app.request("/v1/llm/stream");
-  expect(response.status).toBe(404);
-});
-
 test("OpenAPI operation inventory cannot drift from daemon routes", async () => {
   const { app } = await makeApp(true);
   const actual = app.routes

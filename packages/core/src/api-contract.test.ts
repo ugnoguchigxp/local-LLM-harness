@@ -4,7 +4,6 @@ import {
   createOpenApiDocument,
   errorResponseSchema,
   httpProviderSoakEvidenceSchema,
-  legacyWebSocketDecommissionEvidenceSchema,
   legacyPrepareResponseSchema,
   legacyReleaseResponseSchema,
   legacyResolveResponseSchema,
@@ -78,7 +77,6 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(JSON.stringify(paths["/v1/chat/completions"]?.post)).toContain("text/event-stream");
   expect(JSON.stringify(paths["/v1/chat/completions"]?.post?.requestBody))
     .toContain("#/components/schemas/ChatCompletionRequest");
-  expect(paths).not.toHaveProperty("/v1/llm/stream");
   expect(paths["/v1/agent-connections"]?.post?.parameters).toBeDefined();
   expect(paths["/v1/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v2/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
@@ -232,26 +230,4 @@ test("HTTP Provider soak evidence preserves failures for an exact generation", (
     ...evidence,
     sampleCount: 0,
   })).toThrow();
-});
-
-test("legacy WebSocket decommission evidence requires complete absence", () => {
-  const evidence = {
-    schemaVersion: 1,
-    kind: "legacy-websocket-decommission",
-    releaseCommit: "a".repeat(40),
-    configRevision: "b".repeat(64),
-    bootEpoch: "epoch-1",
-    observedAt: "2026-09-07T00:00:00.000Z",
-    serviceActive: false,
-    serviceEnabled: false,
-    port8090Listening: false,
-    installedUnitPresent: false,
-    openApiRoutePresent: false,
-    sourcePresent: false,
-  } as const;
-  expect(legacyWebSocketDecommissionEvidenceSchema.parse(evidence)).toEqual(evidence);
-  expect(legacyWebSocketDecommissionEvidenceSchema.safeParse({
-    ...evidence,
-    port8090Listening: true,
-  }).success).toBeFalse();
 });

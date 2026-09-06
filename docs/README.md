@@ -13,7 +13,7 @@
 | [../specs/implementation-completion.html](../specs/implementation-completion.html) | Milestone 8–14の実装結果と残るattended gate |
 | [../specs/implementation-completion-m15-m21.html](../specs/implementation-completion-m15-m21.html) | Milestone 15–21のrepository実装完了記録 |
 | [../specs/commissioning-evidence.html](../specs/commissioning-evidence.html) | 時刻固定のlocal-node preflightとcommissioning証跡 |
-| [../specs/saaa-maximum-performance-websocket.html](../specs/saaa-maximum-performance-websocket.html) | 廃止した独自WebSocket案の非normative設計記録 |
+| [../specs/http-provider-standardization.html](../specs/http-provider-standardization.html) | OpenAI互換HTTP Provider移行の正本 |
 | [../specs/stable-release-gate.html](../specs/stable-release-gate.html) | Stable昇格のblocking gateとrollback方針 |
 | [../specs/review-hardening.html](../specs/review-hardening.html) | 実装監査の指摘、修正、不変条件 |
 | [../specs/documentation-review.html](../specs/documentation-review.html) | 文書監査の結果と正本対応表 |

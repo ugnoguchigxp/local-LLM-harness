@@ -5,7 +5,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 builder="${repo_root}/deploy/local-node/scripts/build-larm-release.sh"
 activator="${repo_root}/deploy/local-node/scripts/activate-larm-release.sh"
 gate_recorder="${repo_root}/deploy/local-node/scripts/record-larm-release-gate.sh"
-legacy_ws_retirement="${repo_root}/deploy/local-node/scripts/retire-legacy-websocket.sh"
 rollback="${repo_root}/deploy/local-node/scripts/rollback-larm-release.sh"
 test_root="$(mktemp -d /tmp/larm-release-convergence.XXXXXX)"
 trap 'chmod -R u+rwX -- "${test_root}" 2>/dev/null || true; rm -rf -- "${test_root}"' EXIT
@@ -21,10 +20,15 @@ mkdir -p "${source_root}/packages/core/src" "${source_root}/apps/daemon/src" \
 git -C "${test_root}" init -q source
 git -C "${source_root}" config user.email test@example.invalid
 git -C "${source_root}" config user.name LARM-test
-printf '%s\n' '{"scripts":{"check":"true"}}' >"${source_root}/package.json"
-printf 'lock\n' >"${source_root}/bun.lock"
+printf '%s\n' '{"scripts":{"check":"true"},"dependencies":{"zod":"4.4.3"},"devDependencies":{"typescript":"5.9.2"}}' \
+  >"${source_root}/package.json"
 printf 'export const LARM_VERSION = "1.0.0";\n' >"${source_root}/packages/core/src/version.ts"
 printf 'console.log("%064d");\n' 0 >"${source_root}/apps/daemon/src/print-config-revision.ts"
+(cd "${source_root}" && bun install --lockfile-only >/dev/null)
+if [[ -d "${source_root}/node_modules" ]]; then
+  find -P "${source_root}/node_modules" -mindepth 1 -depth -delete
+  rmdir "${source_root}/node_modules"
+fi
 git -C "${source_root}" add .
 git -C "${source_root}" commit -qm first
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${key_root}/private.pem" >/dev/null 2>&1
@@ -34,8 +38,9 @@ chmod 0644 "${key_root}/public.pem"
 
 build() {
   local commit="$1"
+  local skip_gate="${2:-0}"
   LARM_RELEASE_BUILDER_TEST_MODE=1 \
-  LARM_RELEASE_SKIP_GATE=1 \
+  LARM_RELEASE_SKIP_GATE="${skip_gate}" \
   LARM_RELEASE_SOURCE="${source_root}" \
   LARM_RELEASE_CANDIDATE_ROOT="${candidate_root}" \
   LARM_RELEASE_INBOX_ROOT="${inbox_root}" \
@@ -71,20 +76,10 @@ rollback_release() {
   bash "${rollback}"
 }
 
-retire_legacy_ws() {
-  LARM_LEGACY_WS_RETIRE_TEST_MODE=1 \
-  LARM_RELEASE_STATE_ROOT="${state_root}" \
-  LARM_RELEASE_CURRENT="${current_link}" \
-  LARM_LEGACY_WS_UNIT_PATH="${test_root}/systemd/larm-native-qwen-provider.service" \
-  LARM_RETIRED_UNIT_ROOT="${test_root}/retired-units" \
-  LARM_RELEASE_GATE_RECORDER="${gate_recorder}" \
-  LARM_OPENAPI_FILE="${test_root}/openapi.json" \
-  LARM_SYSTEMCTL_LOG="${test_root}/retirement-systemctl.log" \
-  bash "${legacy_ws_retirement}"
-}
-
 first_commit="$(git -C "${source_root}" rev-parse HEAD)"
 build "${first_commit}" | jq -e --arg commit "${first_commit}" '.status == "submitted" and .commit == $commit' >/dev/null
+[[ -d "${candidate_root}/${first_commit}/node_modules/zod" ]]
+[[ ! -e "${candidate_root}/${first_commit}/node_modules/typescript" ]]
 jq -e '.schemaVersion == 1 and (.signature | length > 100)' "${inbox_root}/request.json" >/dev/null
 jq -e --arg commit "${first_commit}" '.schemaVersion == 2 and .commit == $commit and (.payloadSha256 | length == 64)' \
   "${candidate_root}/${first_commit}/release-manifest.json" >/dev/null
@@ -143,21 +138,13 @@ jq '.lastAttemptAt = "2026-09-07T00:00:00Z"
   | .durationSeconds = 86400
   | .sampleCount = 97' "${test_root}/soak.json" >"${test_root}/soak-complete.json"
 record_gate soak "${test_root}/soak-complete.json" >/dev/null
-jq -e '.stage == "soak_verified" and .result == "succeeded"' "${state_root}/status.json" >/dev/null
-mkdir -p "${test_root}/systemd" "${test_root}/retired-units"
-printf '[Unit]\nDescription=retired test unit\n' >"${test_root}/systemd/larm-native-qwen-provider.service"
-printf '%s\n' '{"paths":{"/v1/chat/completions":{}}}' >"${test_root}/openapi.json"
-retire_legacy_ws >/dev/null
 jq -e '.stage == "complete" and .result == "succeeded"' "${state_root}/status.json" >/dev/null
-[[ ! -e "${test_root}/systemd/larm-native-qwen-provider.service" ]]
-[[ -f "$(find "${test_root}/retired-units" -maxdepth 1 -type f -name 'larm-native-qwen-provider.service.*' -print -quit)" ]]
-grep -Fqx 'disable --now larm-native-qwen-provider.service' "${test_root}/retirement-systemctl.log"
 
 printf 'second\n' >>"${source_root}/bun.lock"
 git -C "${source_root}" add bun.lock
 git -C "${source_root}" commit -qm second
 second_commit="$(git -C "${source_root}" rev-parse HEAD)"
-build "${second_commit}" >/dev/null
+build "${second_commit}" 1 >/dev/null
 jq '.intent.commit = "0000000000000000000000000000000000000000"' \
   "${inbox_root}/request.json" >"${inbox_root}/tampered.json"
 mv -fT "${inbox_root}/tampered.json" "${inbox_root}/request.json"
@@ -167,7 +154,7 @@ if activate >/dev/null 2>&1; then
 fi
 [[ "$(readlink -f "${current_link}")" == "${release_root}/${first_commit:0:12}" ]]
 
-build "${second_commit}" >/dev/null
+build "${second_commit}" 1 >/dev/null
 chmod u+w "${candidate_root}/${second_commit}/bun.lock"
 printf 'tampered\n' >>"${candidate_root}/${second_commit}/bun.lock"
 if activate >/dev/null 2>&1; then
@@ -178,7 +165,7 @@ fi
 chmod -R u+rwX "${candidate_root}/${second_commit}"
 rm -rf "${candidate_root}/${second_commit}"
 
-build "${second_commit}" >/dev/null
+build "${second_commit}" 1 >/dev/null
 if LARM_RELEASE_TEST_FAIL_CONTRACT=1 activate >/dev/null 2>&1; then
   echo "activator kept a release that failed its contract gate" >&2
   exit 1

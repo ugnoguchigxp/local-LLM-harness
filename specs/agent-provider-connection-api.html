@@ -148,8 +148,7 @@ agentProfiles:
         capability: llm.coding
         route: llm-default
         publicModel: coding-default
-        readiness: llm-inference
-        streamingProtocol: saaa.llm-stream.v1</code></pre>
+        readiness: llm-inference</code></pre>
 
     <h3>Cross-validation</h3>
     <ol>
@@ -220,8 +219,10 @@ agentProfiles:
       <code>openai.chat-completions.v1</code
       >は<code>stream: false</code>または省略時のJSONと、
       <code>stream: true</code>時のOpenAI互換SSEを同じGateway pathで提供します。
-      <code>streamingProtocol</code>は追加のSAAA Native
-      WebSocketを広告するfieldであり、HTTP SSEの 可否を表しません。
+      claimは二次transport
+      descriptorを返さず、Providerの<code>baseUrl</code>、
+      <code>protocol</code
+      >、<code>model</code>、短期credentialだけを返します。
     </p>
     <p>
       Providerはresponseで<code>name</code>昇順に並べます。Profileのcanonical
@@ -311,12 +312,11 @@ agentProfiles:
       <code>tls</code> AudienceとTLS終端を別途commissioningします。
     </p>
     <p>
-      LLM runtimeのnative streamがreadyな場合、<code>host-private</code>
-      claimはTLSの有無で <code>streaming</code>を省略しません。HTTP request
-      originには同じhost・portの <code>ws://.../v1/llm/stream</code>、HTTPS
-      originには<code>wss://...</code>を返します。 平文WSはreview済みLAN
-      CIDR内だけで使用し、LAN境界外では<code>tls</code>
-      Audienceを使用します。
+      <code>host-private</code> claimはrequest originと同じhost・portのHTTP
+      <code>baseUrl</code>を返します。LAN境界外では<code
+        >tls</code
+      >
+      Audienceを選び、同じ OpenAI互換endpointをHTTPSで提供します。
     </p>
   </section>
 
@@ -388,7 +388,7 @@ agentProfiles:
     <p>
       <code>LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS=true</code>のlocal-nodeでは、Profile一覧とConnection
       create、status、aggregate health、claim、renew、releaseを長期Bearerなしでも許可します。通常の
-      Allocation、Gateway、管理API、claim後のProvider healthとWebSocketはこの例外に含めません。
+      Allocation、Gateway、管理API、claim後のProvider healthと推論requestはこの例外に含めません。
       Connection ownershipはdeployment内の単一local
       principalへ束ね、<code>client</code>は監査labelで
       あって認証主体ではありません。API token、management token、principal fingerprintはresponseへ
@@ -421,8 +421,7 @@ agentProfiles:
           "capability": "llm.coding",
           "supportedCapabilities": ["llm.coding", "llm.general", "llm.reasoning"],
           "protocol": "openai.chat-completions.v1",
-          "model": "coding-default",
-          "streamingProtocol": "saaa.llm-stream.v1"
+          "model": "coding-default"
         }
       ]
     }
@@ -735,16 +734,6 @@ Content-Type: application/json
         "secretFields": {
           "apiKey": "credential.token"
         }
-      },
-      "streaming": {
-        "protocol": "saaa.llm-stream.v1",
-        "url": "ws://127.0.0.1:9810/v1/llm/stream",
-        "encoding": "json-control+binary-delta-v1",
-        "compression": "none",
-        "maxConcurrentRuns": 1,
-        "maxConnections": 1,
-        "resumeWindowMs": 120000,
-        "upstreamTransport": "native"
       }
     }
   ],
@@ -1316,8 +1305,8 @@ Content-Type: application/json
         Qwen 3.8 27Bを使用してswapを発生させない。
       </li>
       <li>
-        workerと35BのRuntime・Routeは比較用途に残るが、Native WebSocket contractを満たすまでSAAA
-        Agent Profile一覧へ広告しない。
+        workerと35BのRuntime・Routeは比較用途に残り、明示選択policyとHTTP contractを満たすものだけを
+        Agent Profile一覧へ広告する。
       </li>
       <li>
         host、port、baseUrl、model、apiKeyだけで標準OpenAI-compatible clientがstreamを完了する。

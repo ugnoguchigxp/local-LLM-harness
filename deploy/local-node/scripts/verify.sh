@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-
 services=(
   llama-server.service
   llama-swap-worker.service
@@ -53,11 +51,6 @@ for port in "${ports[@]}"; do
     failed=1
   fi
 done
-
-echo "Native LLM WebSocket Provider"
-if ! bun run "${repo_root}/deploy/local-node/scripts/verify-saaa-native-provider.ts"; then
-  failed=1
-fi
 
 echo "Memory"
 if command -v amd-ttm >/dev/null; then

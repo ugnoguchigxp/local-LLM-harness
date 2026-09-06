@@ -22,8 +22,7 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/verify-external-assets.ts`: operator配備VOICEVOX VVMのidentity検証
 - `scripts/build-larm-release.sh`: 明示したreview済みcommitを非特権で検証・bundle化し、desired intentへ署名
 - `scripts/activate-larm-release.sh`: install済みroot helper。署名・treeを再検証しatomic切替だけを実行
-- `scripts/record-larm-release-gate.sh`: HTTP canary、consumer一件、24時間soak、旧transport撤去の順序を状態機械で強制
-- `scripts/retire-legacy-websocket.sh`: soak完了後だけ旧unitを停止・退避し、port消滅の証跡を記録
+- `scripts/record-larm-release-gate.sh`: HTTP canary、consumer一件、24時間soakの順序を状態機械で強制
 - `scripts/rollback-larm-release.sh`: candidate codeをroot実行せず前世代へatomic rollback
 - `scripts/release-larm.sh`: 新Controller移行前の既存世代向けlegacy release helper
 - `scripts/verify.sh`: GPU, service, HTTP health, and memory checks
@@ -71,7 +70,7 @@ management, and Agent Connection credentials remain outside its environment.
 polkit ruleにより、このPreferred serviceのstart / stopだけを無人実行できます。
 
 `qwen-general`はloopbackのOpenAI互換HTTP endpointへ接続し、GatewayがJSONまたはSSEとして転送します。
-独自WebSocket capability、native companion、ACK／再送／pause契約はありません。`saaa-desktop`の
+公開data planeはHTTPだけです。`saaa-desktop`の
 `host-private` Audienceも標準HTTPの`baseUrl`だけを返します。LAN境界外へ公開する場合は、LARM service
 userが読める証明書と秘密鍵の絶対pathを`/etc/larm/larm.env`の`LARM_TLS_CERT_FILE`と
 `LARM_TLS_KEY_FILE`へ対で設定し、HTTPSを使用してください。
@@ -168,8 +167,7 @@ deploy/local-node/scripts/smoke-larm.sh
 ```
 
 HTTP Provider canaryはsecret-free JSONをrepository外へ保存し、root管理の状態機械へ記録します。
-consumer完了と24時間soakの後、`sudo /usr/local/libexec/larm/retire-legacy-websocket`で旧unitを
-停止・disable・退避し、port 8090と旧OpenAPI routeの消滅を確認した場合だけ`complete`へ進みます。
+consumer完了後、同じProvider世代の24時間soakが合格すると`complete`へ進みます。
 
 ```bash
 umask 077
@@ -209,14 +207,16 @@ consumer証跡はcanaryと同じProvider世代を固定し、次のstrict JSON�
 `durationSeconds`、`maxGapSeconds`をatomic保存します。失敗履歴は同じ世代内の後続成功では消えず、
 release／config／bootのいずれかが変わった場合だけ新しいsoak windowを開始します。
 
-The installer copies and enables units but intentionally does not start or restart them. On an
+The installer copies and enables units but intentionally does not start or restart current units. It
+stops, disables, and removes the obsolete `larm-native-qwen-provider.service` unit when present. On an
 update, inspect the diff and restart only a changed service when its behavior must be applied;
 do not use the first-install start command as a blanket restart. The installer always converges
 `qwen-tts.service` to disabled without stopping an active process.
 
 `larm-daemon.service`はGit worktreeではなく`/srv/ai/apps/larm-current`を参照します。builderは
 `/srv/ai/apps/larm-candidates/&lt;full-commit&gt;`でfrozen installと全gateを非特権実行し、modeを固定したtree
-digestとconfig revisionをmanifestへ保存します。root activatorは`/etc/larm/release-signing.pub`だけを信頼し、
+digestとconfig revisionをmanifestへ保存します。全gate後はdev dependencyを除去してproduction dependencyだけを
+再installします。root activatorは`/etc/larm/release-signing.pub`だけを信頼し、
 候補をroot所有releaseへcopy後にdigestを再検証します。`/health`、`/ready`、OpenAPI、model catalog、Activity、
 Profile catalogの軽量contractが不一致なら前世代へ自動rollbackします。実推論は非特権の
 `smoke:http-provider-live`が行います。

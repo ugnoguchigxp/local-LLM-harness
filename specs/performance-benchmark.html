@@ -3,7 +3,7 @@
   <p>
     local-nodeの遅延をOpenAI互換HTTP非streaming JSON、HTTP SSE、ASR、TTSへ分解し、
     LLMと音声2系統を同時利用した場合の干渉を再現可能な形で比較する。
-    実装は<code>deploy/local-node/scripts/performance-larm.ts</code>であり、独自WebSocketは測定しない。
+    実装は<code>deploy/local-node/scripts/performance-larm.ts</code>であり、公開HTTP APIだけを測定する。
   </p>
   <dl>
     <dt>report schema</dt>
@@ -115,7 +115,7 @@ bun run perf:diagnostic</code></pre>
       <li>JSONとSSEが同じ公開model、route、runtime、releaseを使用する。</li>
       <li>SSEの最初のmeaningful deltaを全文完了前に観測できる。</li>
       <li>全6 scenarioでfallback 0、error 0、identity不変を検証できる。</li>
-      <li>独自WebSocket protocol、Agent claim、native companionへ依存しない。</li>
+      <li>専用transport、Agent claim、native companionへ依存しない。</li>
     </ul>
   </section>
 </article>

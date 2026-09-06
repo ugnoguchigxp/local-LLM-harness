@@ -105,8 +105,8 @@
     <p>
       local-node側acceptanceはLAN audienceが返すdescriptorを使って実行しました。SAAA
       Mac上のadapter実装と送信元hostからの最終canaryはSAAA ownerの責務であり、<a
-        href="./saaa-rest-provider-alignment-request.html"
-        >SAAA REST接続認識合わせ・実装依頼</a
+        href="./saaa-http-provider-migration-request.html"
+        >SAAA OpenAI互換HTTP Provider移行依頼</a
       >へhandoffします。
     </p>
   </section>
@@ -153,8 +153,8 @@
       </tbody>
     </table>
     <p>
-      <code>deep-reasoning-35b</code>のRuntime・Routeは比較用途に残しますが、Native
-      WebSocket未対応のため現行SAAA Agent Profile catalogには含めません。Profile
+      <code>deep-reasoning-35b</code
+      >のRuntime・Routeは比較用途に残しますが、自動選択対象には 含めません。Profile
       APIは<code>coding-default</code>を唯一の既定値として返します。
     </p>
   </section>
@@ -169,7 +169,7 @@
     </p>
     <table>
       <caption>
-        Contract shape、compatibility routing、Native WebSocketの結果
+        Contract shapeとcompatibility routingの過去記録
       </caption>
       <tbody>
         <tr>
@@ -193,21 +193,21 @@
           <th scope="row">既定smoke</th>
           <td>
             profile省略から<code>llm-default → qwen-general</code>、fallbackなし、claimのstreaming
-            Provider 1件、Native WS初delta 219 ms、完了313 ms、release 204
+            Provider 1件、旧transport初delta 219 ms、完了313 ms、release 204
           </td>
         </tr>
         <tr>
           <th scope="row">旧bootstrap smoke</th>
           <td>
             v1形式の静的<code>deep-reasoning-35b</code>指定を明示選択flagなしで受理し、canonical
-            <code>coding-default → llm-default → qwen-general</code>へ正規化。Native WS初delta 216 ms、完了311
+            <code>coding-default → llm-default → qwen-general</code>へ正規化。旧transport初delta 216 ms、完了311
             ms、release 204
           </td>
         </tr>
         <tr>
           <th scope="row">段階別event</th>
           <td>
-            Profile提供、create 201、claim 200、streaming Provider 1件、WS
+            Profile提供、create 201、claim 200、streaming Provider 1件、旧transport
             open・run・completed・close、 allocation release、Connection release 204を時系列で確認
           </td>
         </tr>
@@ -216,7 +216,7 @@
           <td>5/5成功、first-token相当p50 2,985.285 ms、total p95 2,994.889 ms</td>
         </tr>
         <tr>
-          <th scope="row">Native WS性能</th>
+          <th scope="row">廃止済みtransport性能</th>
           <td>
             5/5 terminal integrity成功、first-token p50 366 ms、total p95 2,464
             ms。first-tokenはHTTP JSON比87.740%短縮
@@ -225,15 +225,15 @@
       </tbody>
     </table>
     <p>
-      性能runではHTTPは全sample 64 completion token、WSは4 sampleが3 tokenで正常stopし、1 sampleが64
-      tokenでした。そのためtransport間のthroughput p50は比較せず、WS 64 token sampleの実測値 25.974
-      token/sだけを参考値とします。raw reportはrepository外の
+      性能runではHTTPは全sample 64 completion token、旧transportは4 sampleが3 tokenで正常stopし、1
+      sampleが64 tokenでした。そのためtransport間のthroughput p50は比較せず、旧transportの64 token
+      sample実測値25.974 token/sだけを参考値とします。raw reportはrepository外の
       <code>/var/tmp/larm-performance-ee48c3d.json</code>です。
     </p>
   </section>
 
-  <section id="agent-profile-default-and-native-ws-revalidation">
-    <h2>Agent Profile既定値とNative WebSocket再検証</h2>
+  <section id="agent-profile-default-and-retired-transport-revalidation">
+    <h2>Agent Profile既定値と廃止済みtransportの過去記録</h2>
     <aside>
       <p>
         この節はlocal-node上のoperator synthetic smokeであり、SAAA Macの実アプリ成功証跡では
@@ -247,7 +247,7 @@
       <time>2026-09-01T04:07:14Z</time>にrelease
       <code>38ff7d3b7c5a76fcb5bd248a2409d4a3ad8b3fe6</code>、config revision
       <code>7cefe154f303fbac53df1b2c8092110236ca175bf726d72460d191954069fe33</code>を配備し、 接続情報API、匿名Agent
-      Connection、Native WebSocket、HTTP/WS性能を再検証しました。
+      Connection、当時の専用transport、HTTP性能を再検証しました。
     </p>
     <table>
       <caption>
@@ -258,8 +258,8 @@
           <th scope="row">Profile API</th>
           <td>
             当時の非互換なv1 responseは<code>coding-default</code>だけを返し、
-            <code>selectionPolicy: default</code>、general・reasoning・coding、
-            <code>saaa.llm-stream.v1</code>を広告。後続調査でv1 contract違反と判定
+            <code>selectionPolicy: default</code>、general・reasoning・codingを広告。
+            後続調査でv1 contract違反と判定
           </td>
         </tr>
         <tr>
@@ -277,7 +277,7 @@
           </td>
         </tr>
         <tr>
-          <th scope="row">匿名Native WS smoke</th>
+          <th scope="row">匿名の旧transport smoke</th>
           <td>初delta 225 ms、完了320 ms、短期Provider credentialの解放後失効まで成功</td>
         </tr>
         <tr>
@@ -288,7 +288,7 @@
           </td>
         </tr>
         <tr>
-          <th scope="row">Native WS</th>
+          <th scope="row">廃止済みtransport</th>
           <td>
             5/5 terminal integrity成功。first-token p50 368 ms、total p95 3,125 ms、completion token
             p50 64、p50 25.963 token/s。1回は4 tokenで正常stopしたためrangeは4から64
@@ -297,8 +297,8 @@
         <tr>
           <th scope="row">比較</th>
           <td>
-            Native WSは非streaming HTTP JSONに対してfirst-token p50を87.658%短縮し、64 token
-            throughput p50を20.961%向上。total p95は3.954%長い
+            当時の専用transportは非streaming HTTP JSONに対してfirst-token p50を87.658%短縮し、64
+            token throughput p50を20.961%向上。total p95は3.954%長い
           </td>
         </tr>
         <tr>
@@ -312,7 +312,7 @@
     </table>
     <p>
       性能値は同一host、各1 warmup後の5 sampleです。HTTPのfirst-token相当値は非streaming JSON
-      response全体の受信時刻であり、WSだけが実際の最初のdeltaを観測します。raw
+      response全体の受信時刻であり、当時の専用transportだけが実際の最初のdeltaを観測しました。raw
       reportはrepository外の
       <code>/var/tmp/larm-performance-38ff7d3.json</code
       >へ保存し、secret、prompt、completion本文を含めていません。

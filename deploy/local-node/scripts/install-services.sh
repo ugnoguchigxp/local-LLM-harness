@@ -65,7 +65,9 @@ libexec_dir="$(target_path /usr/local/libexec/larm)"
 release_activator="${libexec_dir}/activate-larm-release"
 release_gate_recorder="${libexec_dir}/record-larm-release-gate"
 release_rollback="${libexec_dir}/rollback-larm-release"
-legacy_ws_retirement="${libexec_dir}/retire-legacy-websocket"
+obsolete_native_provider_unit="larm-native-qwen-provider.service"
+obsolete_native_provider_target="${unit_target}/${obsolete_native_provider_unit}"
+obsolete_retirement_helper="${libexec_dir}/retire-legacy-websocket"
 
 if [[ "${test_mode}" == "1" ]]; then
   data_owner="$(id -un)"
@@ -210,7 +212,8 @@ safe_install_target "${release_public_key}" "release public key target"
 safe_install_target "${release_activator}" "release activator target"
 safe_install_target "${release_gate_recorder}" "release gate recorder target"
 safe_install_target "${release_rollback}" "release rollback target"
-safe_install_target "${legacy_ws_retirement}" "legacy WebSocket retirement target"
+safe_install_target "${obsolete_native_provider_target}" "obsolete Provider unit target"
+safe_install_target "${obsolete_retirement_helper}" "obsolete retirement helper target"
 if [[ -e "${audit_config_path}" ]] && {
   [[ "$(stat -c '%s' -- "${audit_config_path}")" -gt 8192 ]] \
     || ! validate_audit_config "${audit_config_path}";
@@ -245,8 +248,6 @@ install -o "${system_owner}" -g "${system_group}" -m 0755 \
   "${repo_root}/deploy/local-node/scripts/record-larm-release-gate.sh" "${release_gate_recorder}"
 install -o "${system_owner}" -g "${system_group}" -m 0755 \
   "${repo_root}/deploy/local-node/scripts/rollback-larm-release.sh" "${release_rollback}"
-install -o "${system_owner}" -g "${system_group}" -m 0755 \
-  "${repo_root}/deploy/local-node/scripts/retire-legacy-websocket.sh" "${legacy_ws_retirement}"
 
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${polkit_dir}"
 install -o "${system_owner}" -g "${system_group}" -m 0644 \
@@ -331,6 +332,11 @@ chown "${system_owner}":"${system_group}" "${public_update}"
 chmod 0644 "${public_update}"
 mv -fT -- "${public_update}" "${release_public_key}"
 
+if [[ -f "${obsolete_native_provider_target}" ]]; then
+  systemctl_run disable --now "${obsolete_native_provider_unit}"
+  rm -f -- "${obsolete_native_provider_target}"
+fi
+rm -f -- "${obsolete_retirement_helper}"
 systemctl_run daemon-reload
 systemctl_run enable "${enabled_units[@]}"
 if [[ "${install_scope}" == "all" ]]; then
@@ -343,6 +349,7 @@ else
   echo "Resident/control units enabled; preferred qwen-tts.service left disabled for on-demand use."
 fi
 echo "This script intentionally does not reboot or restart services."
+echo "The obsolete native Provider unit, when present, was stopped, disabled, and removed."
 echo "Apply a changed unit explicitly, for example: systemctl restart llama-swap-worker.service"
 echo "LARM API, Agent Connection, and management credentials are stored in ${credential_path}."
 echo "Inference audit settings are stored in ${audit_config_path}; the encryption key remains separate."

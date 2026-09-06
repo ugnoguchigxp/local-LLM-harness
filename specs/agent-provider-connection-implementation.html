@@ -126,9 +126,9 @@
       </tbody>
     </table>
     <p>
-      現行SAAA Agent Profile catalogはNative
-      WebSocket対応済みの<code>coding-default</code>だけを
-      広告します。workerと35BのRuntime・Routeは比較用途として残しますが、SAAAの自動選択対象には
+      現行Agent Profile catalogはHTTP
+      contractを満たす<code>coding-default</code>を既定として
+      広告します。workerと35BのRuntime・Routeは比較用途として残しますが、自動選択対象には
       含めません。
     </p>
     <p>
@@ -181,12 +181,13 @@
       CIDRだけを許可します。
     </p>
     <p>
-      native LLM streamがreadyなら、<code>saaa-desktop</code> claimはrequest
-      originと同じhost・portの
-      <code>ws://.../v1/llm/stream</code
-      >も返します。ローカルLANではTLSを必須にせず、短期Provider token、origin
-      binding、許可CIDRを境界とします。LAN境界外だけは<code>tls</code>
-      AudienceとWSSを 別途commissioningします。
+      <code>saaa-desktop</code> claimはrequest
+      originと同じhost・portのOpenAI互換HTTP
+      <code>baseUrl</code>を返します。ローカルLANでは短期Provider
+      token、origin binding、許可CIDRを 境界とし、LAN境界外では<code
+        >tls</code
+      >
+      AudienceとHTTPSを使用します。
     </p>
   </section>
 
@@ -217,7 +218,7 @@
         <code>deep-reasoning-35b</code>を作成した。running memberが
         <code>ornith15-35b-agent</code>へ置換され、claim descriptorだけでstream
         taskを完了した。この初期E2Eでは当時のLAN addressを返したが、固定address contractは後続の
-        <a href="./saaa-dynamic-connection-recovery.html">動的接続改修</a>で廃止した。
+        後続の動的接続改修で廃止した。
       </li>
       <li>
         11秒待って成功cacheを失効させた後、Provider healthがlive semantic probeを実行して200、

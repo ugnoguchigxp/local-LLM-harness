@@ -118,7 +118,6 @@ export const releaseConvergenceStatusSchema = z.object({
     "contract_verified",
     "canary_verified",
     "consumer_verified",
-    "soak_verified",
     "complete",
   ]),
   result: z.enum(["pending", "running", "succeeded", "failed"]),
@@ -148,21 +147,6 @@ export const httpProviderSoakEvidenceSchema = z.object({
     context.addIssue({ code: "custom", message: "lastSuccessAt must reflect sampleCount" });
   }
 });
-
-export const legacyWebSocketDecommissionEvidenceSchema = z.object({
-  schemaVersion: z.literal(1),
-  kind: z.literal("legacy-websocket-decommission"),
-  releaseCommit: z.string().regex(/^[a-f0-9]{40}$/),
-  configRevision: z.string().regex(/^[a-f0-9]{64}$/),
-  bootEpoch: z.string().min(1).max(128),
-  observedAt: z.string().datetime(),
-  serviceActive: z.literal(false),
-  serviceEnabled: z.literal(false),
-  port8090Listening: z.literal(false),
-  installedUnitPresent: z.literal(false),
-  openApiRoutePresent: z.literal(false),
-  sourcePresent: z.literal(false),
-}).strict();
 
 export const publicAllocationBindingSchema = allocationBindingSchema.omit({ endpoint: true });
 export const publicAllocationSchema = z.object({
@@ -331,9 +315,6 @@ export type RuntimeDeployment = z.infer<typeof runtimeDeploymentSchema>;
 export type RuntimeDeploymentPlan = z.infer<typeof runtimeDeploymentPlanSchema>;
 export type ReleaseConvergenceStatus = z.infer<typeof releaseConvergenceStatusSchema>;
 export type HttpProviderSoakEvidence = z.infer<typeof httpProviderSoakEvidenceSchema>;
-export type LegacyWebSocketDecommissionEvidence = z.infer<
-  typeof legacyWebSocketDecommissionEvidenceSchema
->;
 
 export const API_OPERATIONS = [
   ["get", "/health", "getHealth"],

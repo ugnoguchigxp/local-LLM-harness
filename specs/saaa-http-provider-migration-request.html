@@ -7,12 +7,12 @@
   <section id="request-1">
     <h2>依頼の目的</h2>
     <p>
-      SAAA側を先行して整備し、独自WebSocketを必須とせず、一般的なOpenAI互換HTTP
+      SAAA側を先行して整備し、専用transportを必須とせず、一般的なOpenAI互換HTTP
       Providerで会話と音声機能が動作する状態にしてください。
     </p>
     <p>
       LLMはChat
-      CompletionsのJSON／SSE、ASRは音声アップロードと文字起こしJSON、TTSはHTTPの音声応答を基本契約にします。独自WSや新しいAgent
+      CompletionsのJSON／SSE、ASRは音声アップロードと文字起こしJSON、TTSはHTTPの音声応答を基本契約にします。旧専用transportや新しいAgent
       Session
       protocolを追加する方針にはしません。OpenAIのクラウドサービスへ切り替える依頼ではなく、ローカルを含むProviderの接続契約を一般化する依頼です。
     </p>
@@ -40,7 +40,7 @@
       <li><code>src-tauri/src/providers/openai_compatible.rs</code>：URLとcredentialの解決。</li>
       <li>
         <code>src-tauri/src/providers/dynamic_lan/validate.rs</code
-        >、<code>service_harness.rs</code>：独自WSの広告・形式に依存する検証。
+        >、<code>service_harness.rs</code>：旧transportの広告・形式に依存する検証。
       </li>
       <li>
         <code>src-tauri/src/providers/agent_session.rs</code
@@ -99,8 +99,8 @@
     </p>
     <p>
       HTTP
-      Providerの利用可否を、独自WSの<code>streamingProtocol</code>、<code>streaming.url</code>、SAD1、native
-      upstream、ACK／resumeの有無で判定しないでください。HTTP能力を持つ設定はWS広告がなくても受理します。ただし、認証、固定model、URL検証を緩めて受理してはいけません。
+      Providerの利用可否を、旧transportの<code>streamingProtocol</code>、<code>streaming.url</code>、SAD1、native
+      upstream、ACK／resumeの有無で判定しないでください。HTTP能力を持つ設定は旧transport広告がなくても受理します。ただし、認証、固定model、URL検証を緩めて受理してはいけません。
     </p>
     <p>
       旧static経路<code>:44448</code>への自動fallbackやport監視を追加しないでください。401や契約不一致を理由に認証なし・別Providerへ自動的に切り替えないでください。接続先のoriginを越えてcredentialを転送しないでください。
@@ -165,7 +165,7 @@
     </p>
     <p>
       連続音声のRealtime
-      ASRを新規実装する依頼ではありません。現行WSに依存するライブ字幕等がある場合は利用箇所を示し、HTTPで代替できる範囲と失う体験を報告してください。ASR結果をSSEで返すことを、音声の連続入力対応と呼ばないでください。
+      ASRを新規実装する依頼ではありません。旧transportに依存するライブ字幕等がある場合は利用箇所を示し、HTTPで代替できる範囲と失う体験を報告してください。ASR結果をSSEで返すことを、音声の連続入力対応と呼ばないでください。
     </p>
   </section>
   <section id="request-6">
@@ -198,7 +198,7 @@
     <h2>5. 設定、接続確認、障害からの復旧</h2>
     <ul>
       <li>
-        通常のHTTP Provider設定ではWS URL、独自protocol、allocation IDを入力させない。base
+        通常のHTTP Provider設定では旧transport URL、独自protocol、allocation IDを入力させない。base
         URL、model、認証と必要な音声設定を基本にする。ローカルProviderも設定できる名称・説明にする。
       </li>
       <li>
@@ -209,7 +209,7 @@
         >一覧取得と推論可能性を分ける。modelを明示できるProviderに一覧endpointがないことだけで利用不能にせず、短い実処理で接続を検証する。ASRは固定音声、TTSは短い固定文を用い、通常の接続確認で不要なマイク収録を要求しない。
       </li>
       <li>
-        接続不能、起動待ち、混雑、認証不正、model不一致、protocol不一致、途中切断を区別して表示する。WS未接続の表示をHTTP
+        接続不能、起動待ち、混雑、認証不正、model不一致、protocol不一致、途中切断を区別して表示する。旧transport未接続の表示をHTTP
         Providerへ流用しない。
       </li>
       <li>
@@ -229,7 +229,7 @@
     <h2>6. 実装順と旧経路の扱い</h2>
     <ol>
       <li>
-        最新の差分とWS依存箇所、既存HTTP処理を棚卸しし、現状の機能・失敗・性能のbaselineを保存する。
+        最新の差分と旧transport依存箇所、既存HTTP処理を棚卸しし、現状の機能・失敗・性能のbaselineを保存する。
       </li>
       <li>通常ProviderのChat Completions SSEとtool継続を実装し、fixtureで会話を完走させる。</li>
       <li>
@@ -239,11 +239,11 @@
       <li>ASR、TTS、設定UI、接続確認、cancelを共通HTTP契約へ揃える。</li>
       <li>対象clientの会話・音声・設定移行を検証し、HTTPを通常経路にする。</li>
       <li>
-        移行対象で使われなくなった独自WSの設定・表示・実行依存を外す。旧経路は切替検証中の明示的な退避用途に限り、新規機能を追加しない。
+        移行対象で使われなくなった旧transportの設定・表示・実行依存を外す。旧経路は切替検証中の明示的な退避用途に限り、新規機能を追加しない。
       </li>
     </ol>
     <p>
-      他の連携がWSを使っている場合は、依存があるまま無差別に削除しないでください。廃止対象と残存依存を報告し、今回のHTTP経路へ旧WSを暗黙fallbackさせないでください。関係のないAgent
+      他の連携が旧transportを使っている場合は、依存があるまま無差別に削除しないでください。廃止対象と残存依存を報告し、今回のHTTP経路へ旧transportを暗黙fallbackさせないでください。関係のないAgent
       Session機能の削除も、この依頼だけを根拠に行わないでください。
     </p>
   </section>
@@ -252,7 +252,7 @@
     <p>
       LARM本番が未配備でも先行できるよう、実socketを使うローカルfixture
       serverでHTTP応答と遅延・切断を再現してください。通常Provider
-      fixtureは独自Session・Activity・Profile・claim・WSを実装せず、その状態で三APIを利用できることを確認します。
+      fixtureは独自Session・Activity・Profile・claim・旧transportを実装せず、その状態で三APIを利用できることを確認します。
     </p>
     <p>
       必須ケースは、正常な会話、tool往復、UTF-8／SSE分割、usage-only
@@ -304,7 +304,7 @@
             >
           </td>
           <td>
-            HTTP用判定へ更新後、接続先・期待release・各実処理・cleanupの結果を記録。旧WS合格条件をそのまま使わない
+            HTTP用判定へ更新後、接続先・期待release・各実処理・cleanupの結果を記録。旧transport合格条件をそのまま使わない
           </td>
         </tr>
       </tbody>
@@ -341,7 +341,7 @@
           <td>SAAA先行整備</td>
           <td>
             SAAA担当。通常ProviderとLARMを同じHTTP
-            clientで利用し、fixtureによる会話・tool・ASR・TTS・割り込み、設定移行、既存checkを通過。新経路は独自WS・Session・claim不要。到達状態は「SAAA
+            clientで利用し、fixtureによる会話・tool・ASR・TTS・割り込み、設定移行、既存checkを通過。新経路は旧transport・Session・claim不要。到達状態は「SAAA
             HTTP対応完了／LARM live統合待ち」と明記
           </td>
         </tr>
@@ -370,7 +370,7 @@
       HTTP対応で失う既存のライブ字幕・resume等が見つかった場合は、該当する利用場面と代替案を具体的に報告してください。認証の緩和、外部送信先やモデルの無断変更、履歴の破棄で移行を成立させないでください。
     </p>
     <p>
-      納品には、変更概要、対応APIと非対応機能、設定移行、検証コマンドと結果、性能比較、既存WSからの移行状況、LARM側への必要事項、未達条件を含めてください。LARM未配備を理由にSAAA単体で進められる実装・fixture検証を止めず、外部依存を切り分けて完了させてください。
+      納品には、変更概要、対応APIと非対応機能、設定移行、検証コマンドと結果、性能比較、既存transportからの移行状況、LARM側への必要事項、未達条件を含めてください。LARM未配備を理由にSAAA単体で進められる実装・fixture検証を止めず、外部依存を切り分けて完了させてください。
     </p>
   </section>
   <section id="request-11">
@@ -383,7 +383,7 @@
       <li>OpenAI ASR：https://developers.openai.com/api/docs/guides/speech-to-text</li>
       <li>OpenAI TTS：https://developers.openai.com/api/docs/guides/text-to-speech</li>
       <li>
-        LARM側の方針文書：<code>specs/http-provider-standardization.html</code>、<code>specs/dynamic-provider-redesign.html</code>。本依頼のHTTP統一方針を、前案の新規WS提案より優先します。
+        LARM側の方針文書：<code>specs/http-provider-standardization.html</code>。本依頼のHTTP統一方針を正本とします。
       </li>
     </ul>
   </section>

@@ -15,9 +15,8 @@ else
 fi
 
 fail() { echo "$*" >&2; exit 1; }
-[[ "${gate}" == "canary" || "${gate}" == "consumer" || "${gate}" == "soak" \
-  || "${gate}" == "decommission" ]] \
-  || fail "usage: $0 canary|consumer|soak|decommission /absolute/path/to/evidence.json"
+[[ "${gate}" == "canary" || "${gate}" == "consumer" || "${gate}" == "soak" ]] \
+  || fail "usage: $0 canary|consumer|soak /absolute/path/to/evidence.json"
 [[ "${evidence}" == /* && -f "${evidence}" && ! -L "${evidence}" && "$(stat -c '%h' -- "${evidence}")" -eq 1 ]] \
   || fail "evidence must be an absolute regular single-link file"
 [[ "$(stat -c '%s' -- "${evidence}")" -le 65536 ]] || fail "evidence is too large"
@@ -117,31 +116,6 @@ elif [[ "${gate}" == "soak" ]]; then
   ' "${validated_evidence}" >/dev/null || fail "HTTP Provider soak evidence is invalid"
   jq -e '.stage == "consumer_verified" and .result == "succeeded"' \
     "${state_root}/status.json" >/dev/null || fail "soak cannot be recorded before consumer verification"
-  stage=soak_verified
-else
-  canary_evidence="${state_root}/canary-evidence.json"
-  [[ -f "${canary_evidence}" && ! -L "${canary_evidence}" ]] \
-    || fail "recorded HTTP Provider canary evidence is unavailable"
-  canary_revision="$(jq -er .configRevision "${canary_evidence}")"
-  canary_epoch="$(jq -er .bootEpoch "${canary_evidence}")"
-  jq -e --arg commit "${live_commit}" --arg revision "${canary_revision}" --arg epoch "${canary_epoch}" '
-    keys == ["bootEpoch","configRevision","installedUnitPresent","kind","observedAt","openApiRoutePresent","port8090Listening","releaseCommit","schemaVersion","serviceActive","serviceEnabled","sourcePresent"]
-    and .schemaVersion == 1
-    and .kind == "legacy-websocket-decommission"
-    and .releaseCommit == $commit
-    and .configRevision == $revision
-    and .bootEpoch == $epoch
-    and (.observedAt | type == "string")
-    and (.observedAt | fromdateiso8601 | type == "number")
-    and .serviceActive == false
-    and .serviceEnabled == false
-    and .port8090Listening == false
-    and .installedUnitPresent == false
-    and .openApiRoutePresent == false
-    and .sourcePresent == false
-  ' "${validated_evidence}" >/dev/null || fail "legacy WebSocket decommission evidence is invalid"
-  jq -e '.stage == "soak_verified" and .result == "succeeded"' \
-    "${state_root}/status.json" >/dev/null || fail "decommission cannot be recorded before soak verification"
   stage=complete
 fi
 

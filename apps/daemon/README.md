@@ -206,8 +206,8 @@ curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${voice_allocation_id}"
 ```
 
 LLM Gatewayは、`POST /v1/chat/completions`の`stream: false`にはJSON、`stream: true`には
-OpenAI互換SSE (`text/event-stream`) を返します。独自WebSocket endpoint、独自ACK／再送／pause契約、
-native companionは提供しません。低遅延応答は同じHTTP接続上のSSE deltaを逐次転送して実現します。
+OpenAI互換SSE (`text/event-stream`) を返します。低遅延応答は同じHTTP接続上のSSE deltaを
+逐次転送して実現します。
 
 追加27Bは`route`へ`llm-speed`、公式Q5_K_MのOrnith 35Bは`llm-35b`、ROCmFP4速度版は`llm-35b-speed`を明示した場合だけ選択されます。比較用Qwen3.6-35Bは`llm-qwen36-35b`で固定できます。`llm-default`はswapせずResident 27Bへ固定されます。fallbackはrequestで`allowFallback: true`を指定した場合だけ許可されます。同じworker swap groupの別Runtimeにactive Allocationがある場合はpreemptせず、新しい要求を拒否します。
 

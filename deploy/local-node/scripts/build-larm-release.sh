@@ -92,8 +92,15 @@ else
   else
     (
       cd "${staging}"
-      "${bun_bin}" install --frozen-lockfile
-      "${bun_bin}" run check
+      "${bun_bin}" install --frozen-lockfile >&2
+      "${bun_bin}" run check >&2
+      [[ -d node_modules && ! -L node_modules ]] || fail "dependency tree is unsafe"
+      find -P node_modules -mindepth 1 -depth -delete
+      rmdir node_modules
+      "${bun_bin}" install --frozen-lockfile --production >&2
+      if find -P node_modules -type d -name ws -print -quit | grep -q .; then
+        fail "production dependency tree contains a disallowed transport package"
+      fi
     )
     config_revision="$(cd "${staging}" && "${bun_bin}" run apps/daemon/src/print-config-revision.ts)"
   fi

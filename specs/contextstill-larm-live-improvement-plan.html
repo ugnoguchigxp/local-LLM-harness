@@ -2,7 +2,7 @@
   <h1>ContextStill向けLARM HTTP Provider live改善方針</h1>
 
   <p>
-    2026-09-06の<a href="./http-sse-provider-compatibility.html#live-investigation-2026-09-06"
+    2026-09-06の<a href="./http-provider-standardization.html#implementation-status"
       >live未到達調査</a
     >で確認したrelease不一致を解消し、同じ種類の不成立を配備時に検知するための改善方針です。
     ContextStill専用endpointは追加せず、Service Activity、公開model catalog、OpenAI互換Chat
@@ -131,7 +131,6 @@
   -&gt; provider canary verified
   -&gt; consumer job verified
   -&gt; 24-hour HTTP soak verified
-  -&gt; legacy WebSocket service retired
   -&gt; complete</code></pre>
       <figcaption>
         途中状態と失敗理由を永続化し、<code>consumer job verified</code>より前を作業完了として扱わない。
@@ -151,7 +150,7 @@
       <li>
         statusは<code>validated</code>、<code>approved</code>、<code>activated</code>、
         <code>contract_verified</code
-        >、<code>canary_verified</code>、<code>consumer_verified</code>、<code>soak_verified</code>、
+        >、<code>canary_verified</code>、<code>consumer_verified</code>、
         <code>complete</code>を単調に進め、 failure stage、bounded
         reason、observed releaseをsecretなしで記録する。
       </li>
@@ -465,9 +464,7 @@
         <code>larm-http-provider-monitor.timer</code>は9810のcatalog、JSON、SSEを検査し、同一
         release／config／boot世代のsample、失敗、最大gapを永続化する。24時間、96
         sample以上、失敗0、最大gap
-        30分以下まで<code>soak_verified</code>へ進めず、<code>44448</code>を監視しない。
-        さらに旧WebSocket unitの停止・disable・退避、port 8090不在、旧OpenAPI route不在を
-        同一世代の証跡として記録した後だけ<code>complete</code>へ進める。
+        30分以下になるまで<code>complete</code>へ進めず、<code>44448</code>を監視しない。
       </li>
       <li>
         <code>packages/core/src/provider-recovery.ts</code
@@ -527,9 +524,7 @@
         canary evidenceより前に consumer
         evidenceを受理しないgateを追加した。ContextStill一件完了、成果一回保存、次job境界の
         Activity再評価後は<code>consumer_verified</code>となり、さらに同一世代の24時間HTTP
-        soakが揃うまで<code>soak_verified</code>にならない。旧WebSocket
-        serviceの撤去証跡を root
-        recorderが受理するまで<code>complete</code>にならない。
+        soakが揃った場合だけ<code>complete</code>になる。
       </li>
       <li>
         定期監視は<code>larm-http-provider-monitor.timer</code>から9810のmodel

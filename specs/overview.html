@@ -32,12 +32,10 @@
         </tr>
         <tr>
           <th scope="row">
-            <a href="./http-sse-provider-compatibility.html"
-              >HTTP SSE Provider互換 実装仕様・記録</a
-            >
+            <a href="./http-provider-standardization.html">OpenAI互換HTTP Provider移行 実装計画</a>
           </th>
-          <td>OpenAI互換JSON・SSEとSAAA Native WebSocketの並存contract</td>
-          <td>Repository実装・自動test完了。local-node配備とclient canary待ち</td>
+          <td>LLM JSON／SSE、ASR、TTS、release収束、consumer受入のHTTP-only正本</td>
+          <td>Repository実装・自動test完了。local-node配備とconsumer canary待ち</td>
         </tr>
         <tr>
           <th scope="row">
@@ -97,44 +95,12 @@
         </tr>
         <tr>
           <th scope="row">
-            <a href="./saaa-rest-connection-enablement-plan.html"
-              >SAAA向けLARM REST接続有効化計画</a
+            <a href="./saaa-http-provider-migration-request.html"
+              >SAAA OpenAI互換HTTP Provider移行依頼</a
             >
           </th>
-          <td>既存LLM基盤を変更しないLARM Gateway常駐化、dynamic claim、SAAA LAN受入</td>
-          <td>
-            local-node Gateway配備・実通信acceptance完了。SAAA acknowledgement・Mac canary待ち
-          </td>
-        </tr>
-        <tr>
-          <th scope="row">
-            <a href="./saaa-rest-provider-alignment-request.html"
-              >SAAA REST接続認識合わせ・実装依頼</a
-            >
-          </th>
-          <td>SAAA adapterの動的Provider設定、REST lifecycle、secret境界、LAN canary依頼</td>
-          <td>local-node identity・許可送信元を確定してhandoff可能</td>
-        </tr>
-        <tr>
-          <th scope="row">
-            <a href="./saaa-maximum-performance-websocket.html"
-              >LARM saaa.llm-stream.v1 Native WebSocket 実装計画と実装証跡</a
-            >
-          </th>
-          <td>Mac正本準拠、Native WebSocket、ACK・resume・replay、独立したHTTP SSE互換</td>
-          <td>
-            LARM repository実装済み。native Providerとsame-host E2Eを実証済み。
-            host-privateはローカルLAN向け平文WSを広告し、Mac共有fixture/E2E確認待ち
-          </td>
-        </tr>
-        <tr>
-          <th scope="row">
-            <a href="./saaa-websocket-performance-review.html"
-              >Mac無修正対応 LARM Native WebSocket 構造レビュー</a
-            >
-          </th>
-          <td>Mac contractへのserver-side適合性、native Provider blocker、実装順序の俯瞰評価</td>
-          <td>LARM側のvertical slice改訂で対応可能。構造評点94 / 100</td>
+          <td>base URL、Bearer、modelだけでSAAAを標準HTTP APIへ接続する実装依頼</td>
+          <td>SAAA application組込みとMac canary待ち</td>
         </tr>
         <tr>
           <th scope="row">
