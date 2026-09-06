@@ -11,6 +11,8 @@ release_ref="${LARM_RELEASE_REF:-HEAD}"
 keep="${LARM_RELEASE_KEEP:-3}"
 test_mode="${LARM_RELEASE_TEST_MODE:-0}"
 bun_bin="${LARM_BUN_BIN:-}"
+version_regex='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+jq_version_regex="${version_regex%\$}\\z"
 
 fail() { echo "$*" >&2; exit 1; }
 [[ "${action}" =~ ^(plan|apply|rollback|cleanup)$ ]] || fail "usage: $0 plan|apply|rollback|cleanup"
@@ -85,17 +87,17 @@ systemctl_run() {
 validate_release_manifest() {
   local target="$1"
   [[ -f "${target}/release-manifest.json" && ! -L "${target}/release-manifest.json" ]] || return 1
-  jq -e '
+  jq -e --arg versionRegex "${jq_version_regex}" '
     keys == ["bunVersion","commit","configRevision","createdAt","larmVersion","lockfileSha256","nodeModulesSha256","schemaVersion"]
     and .schemaVersion == 1
-    and (.commit | type == "string" and test("^[a-f0-9]{40}$"))
-    and (.larmVersion | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$"))
-    and (.bunVersion | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$"))
-    and (.lockfileSha256 | type == "string" and test("^[a-f0-9]{64}$"))
-    and (.nodeModulesSha256 | type == "string" and test("^[a-f0-9]{64}$"))
-    and (.configRevision | type == "string" and test("^[a-f0-9]{64}$"))
+    and (.commit | type == "string" and test("^[a-f0-9]{40}\\z"))
+    and (.larmVersion | type == "string" and test($versionRegex))
+    and (.bunVersion | type == "string" and test($versionRegex))
+    and (.lockfileSha256 | type == "string" and test("^[a-f0-9]{64}\\z"))
+    and (.nodeModulesSha256 | type == "string" and test("^[a-f0-9]{64}\\z"))
+    and (.configRevision | type == "string" and test("^[a-f0-9]{64}\\z"))
     and (.createdAt | type == "string"
-      and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+      and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z")
       and (fromdateiso8601 | type == "number"))
   ' "${target}/release-manifest.json" >/dev/null
 }
@@ -165,7 +167,8 @@ validate_release_payload() {
 }
 
 verify_release_health() {
-  local target="$1" mode="${2:-identity}" deadline health expected_commit expected_version expected_revision active
+  local target="$1" mode="${2:-identity}" deadline health readiness expected_commit expected_version expected_revision active
+  local identity_ready=0
   [[ "${mode}" == "identity" || "${mode}" == "contract" ]] || return 1
   validate_release_manifest "${target}" || return 1
   expected_commit="$(jq -er .commit "${target}/release-manifest.json")"
@@ -181,7 +184,11 @@ verify_release_health() {
       '{status:"ok",releaseCommit:$commit,version:$version,configRevision:$revision}')"
     jq -e --arg commit "${expected_commit}" --arg version "${expected_version}" --arg revision "${expected_revision}" \
       '.status == "ok" and .releaseCommit == $commit and .version == $version and .configRevision == $revision' \
-      <<<"${health}" >/dev/null
+      <<<"${health}" >/dev/null || return 1
+    if [[ "${mode}" == "contract" \
+      && "$(basename "${target}")" == "${LARM_RELEASE_TEST_CONTRACT_FAILURE_RELEASE:-}" ]]; then
+      return 1
+    fi
     return
   fi
   deadline=$((SECONDS + 60))
@@ -190,15 +197,17 @@ verify_release_health() {
       && jq -e --arg commit "${expected_commit}" --arg version "${expected_version}" --arg revision "${expected_revision}" \
         '.status == "ok" and .releaseCommit == $commit and .version == $version and .configRevision == $revision' \
         <<<"${health}" >/dev/null \
-      && curl -fsS --max-time 3 http://127.0.0.1:9810/ready >/dev/null \
-      && { [[ "${mode}" == "identity" ]] \
-        || LARM_VERIFY_RELEASE_DIR="${target}" LARM_VERIFY_BASE_URL=http://127.0.0.1:9810 \
-          "${bun_bin}" run "${source_root}/deploy/local-node/scripts/verify-live-contract.ts" >/dev/null 2>&1; }; then
-      return 0
+      && readiness="$(curl -fsS --max-time 3 http://127.0.0.1:9810/ready 2>/dev/null)" \
+      && jq -e '.status == "ready"' <<<"${readiness}" >/dev/null; then
+      identity_ready=1
+      break
     fi
     sleep 1
   done
-  return 1
+  [[ "${identity_ready}" -eq 1 ]] || return 1
+  [[ "${mode}" == "contract" ]] || return 0
+  LARM_VERIFY_RELEASE_DIR="${target}" LARM_VERIFY_BASE_URL=http://127.0.0.1:9810 \
+    "${bun_bin}" run "${target}/deploy/local-node/scripts/verify-live-contract.ts" >/dev/null
 }
 
 release_dirs() {
@@ -406,7 +415,7 @@ else
   [[ "${LARM_RELEASE_FAIL_AFTER_ARCHIVE:-0}" != "1" || "${test_mode}" != "1" ]] \
     || fail "injected release failure"
   larm_version="$(sed -n 's/^export const LARM_VERSION = "\([^"]*\)".*/\1/p' "${staging}/packages/core/src/version.ts")"
-  [[ "${larm_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ \
+  [[ "${larm_version}" =~ ${version_regex} \
     && "${config_revision}" =~ ^[a-f0-9]{64}$ ]] \
     || fail "release identity metadata is invalid"
   [[ ! -e "${staging}/release-manifest.json" && ! -L "${staging}/release-manifest.json" ]] \
@@ -464,7 +473,7 @@ if ! systemctl_run restart larm-daemon.service || ! verify_release_health "${rel
     [[ "${stop_failed}" -eq 0 ]] \
       || fail "new LARM release failed and its pointer was removed, but the daemon could not be stopped"
   fi
-  fail "new LARM release failed readiness and was rolled back"
+  fail "new LARM release failed activation verification and was rolled back"
 fi
 if [[ -n "${apply_cleanup_candidates}" ]]; then
   remove_cleanup_candidates "${apply_cleanup_candidates}" projected

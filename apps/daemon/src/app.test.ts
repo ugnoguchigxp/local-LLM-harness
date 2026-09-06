@@ -217,17 +217,33 @@ function agentHeaders(extra: Record<string, string> = {}): Record<string, string
 }
 
 function validLlmSemanticProbeResponse(init?: RequestInit): Response {
-  const body = JSON.parse(String(init?.body)) as { stream?: boolean };
+  const body = JSON.parse(String(init?.body)) as { model: string; stream?: boolean };
   if (body.stream === true) {
     return new Response([
-      'data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"0"},"finish_reason":null}]}\n\n',
-      'data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+      `data: ${JSON.stringify({
+        id: "chatcmpl-probe",
+        object: "chat.completion.chunk",
+        created: 1,
+        model: body.model,
+        choices: [{ index: 0, delta: { content: "0" }, finish_reason: null }],
+      })}\n\n`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-probe",
+        object: "chat.completion.chunk",
+        created: 1,
+        model: body.model,
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      })}\n\n`,
       "data: [DONE]\n\n",
     ].join(""), { headers: { "content-type": "text/event-stream; charset=utf-8" } });
   }
   return Response.json({
-    choices: [{ index: 0, message: { role: "assistant", content: "" } }],
-    usage: { completion_tokens: 1 },
+    id: "chatcmpl-probe",
+    object: "chat.completion",
+    created: 1,
+    model: body.model,
+    choices: [{ index: 0, message: { role: "assistant", content: "0" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   });
 }
 
@@ -1900,6 +1916,7 @@ test("allocation fails closed while startup reconciliation is stopping its runti
 test("legacy lease is detached if its backing allocation expires", async () => {
   let now = Date.now();
   const { app, control } = await makeApp(true, false, { now: () => now });
+  now = Date.now();
   expect((await app.request("/prepare", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

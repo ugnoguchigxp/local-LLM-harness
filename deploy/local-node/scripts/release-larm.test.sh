@@ -174,6 +174,12 @@ fi
 [[ "$(readlink -f "${test_root}/current")" == "${before_failure}" ]]
 
 before_failure_previous="$(cat "${test_root}/state/previous")"
+if LARM_RELEASE_TEST_CONTRACT_FAILURE_RELEASE="${third_commit:0:12}" run_release apply >/dev/null 2>&1; then
+  echo "release with a failing post-activation contract unexpectedly stayed active" >&2
+  exit 1
+fi
+[[ "$(readlink -f "${test_root}/current")" == "${before_failure}" ]]
+[[ "$(cat "${test_root}/state/previous")" == "${before_failure_previous}" ]]
 if LARM_RELEASE_TEST_UNHEALTHY_RELEASE="${third_commit:0:12}" run_release apply >/dev/null 2>&1; then
   echo "unhealthy release unexpectedly stayed active" >&2
   exit 1

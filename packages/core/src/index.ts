@@ -192,6 +192,11 @@ export {
   type ResolveRequest,
 } from "./api-schema";
 export {
+  inspectOpenAiChatCompletionJson,
+  type OpenAiChatCompletionJsonFailureReason,
+  type OpenAiChatCompletionJsonInspection,
+} from "./openai-json";
+export {
   inspectOpenAiChatCompletionSse,
   type OpenAiChatCompletionSseFailureReason,
   type OpenAiChatCompletionSseInspection,

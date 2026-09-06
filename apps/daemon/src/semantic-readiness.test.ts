@@ -97,14 +97,18 @@ function validLlmProbeResponse(init?: RequestInit): Response {
   const body = JSON.parse(String(init?.body)) as { stream?: boolean };
   if (body.stream === true) {
     return new Response([
-      'data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"0"},"finish_reason":null}]}\n\n',
-      'data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+      'data: {"id":"chatcmpl-probe","object":"chat.completion.chunk","created":1,"model":"public-model","choices":[{"index":0,"delta":{"content":"0"},"finish_reason":null}]}\n\n',
+      'data: {"id":"chatcmpl-probe","object":"chat.completion.chunk","created":1,"model":"public-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
       "data: [DONE]\n\n",
     ].join(""), { headers: { "content-type": "text/event-stream; charset=utf-8" } });
   }
   return Response.json({
-    choices: [{ index: 0, message: { role: "assistant", content: null } }],
-    usage: { completion_tokens: 1 },
+    id: "chatcmpl-probe",
+    object: "chat.completion",
+    created: 1,
+    model: "public-model",
+    choices: [{ index: 0, message: { role: "assistant", content: "0" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   });
 }
 
@@ -233,8 +237,12 @@ test("concurrent semantic health checks share one fixed-binding probe", async ()
   const second = readiness.check({ allocationId: "alloc-b", provider });
   expect(calls).toBe(1);
   resolveFetch(Response.json({
-    choices: [{ index: 0, message: { role: "assistant", content: "" } }],
-    usage: { completion_tokens: 1 },
+    id: "chatcmpl-probe",
+    object: "chat.completion",
+    created: 1,
+    model: "public-model",
+    choices: [{ index: 0, message: { role: "assistant", content: "0" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   }));
   expect((await first).ready).toBeTrue();
   expect((await second).ready).toBeTrue();
@@ -301,8 +309,12 @@ test("LLM semantic readiness requires both one-token JSON and OpenAI SSE", async
       timeoutMs: 100,
       fetchImpl: async () => call++ === 0
         ? Response.json({
-          choices: [{ index: 0, message: { role: "assistant", content: "" } }],
-          usage: { completion_tokens: 1 },
+          id: "chatcmpl-probe",
+          object: "chat.completion",
+          created: 1,
+          model: "public-model",
+          choices: [{ index: 0, message: { role: "assistant", content: "0" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
         })
         : response,
     });
@@ -311,4 +323,65 @@ test("LLM semantic readiness requires both one-token JSON and OpenAI SSE", async
       reason: "invalid_response",
     });
   }
+});
+
+test("semantic readiness rejects successful responses with mismatched media types and cancels their bodies", async () => {
+  const { registry, control, provider } = fixture("openai.chat-completions.v1", "llm.general");
+  let cancelled = false;
+  const readiness = new SemanticReadiness({
+    control,
+    getRegistry: () => registry,
+    executionGate: new ExecutionGate(),
+    timeoutMs: 100,
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({
+          id: "chatcmpl-probe",
+          object: "chat.completion",
+          created: 1,
+          model: "public-model",
+          choices: [{ index: 0, message: { role: "assistant", content: "0" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        })));
+      },
+      cancel() {
+        cancelled = true;
+        return new Promise<void>(() => undefined);
+      },
+    }), { headers: { "content-type": "text/plain" } }),
+  });
+  expect(await readiness.check({ allocationId: "alloc", provider })).toMatchObject({
+    ready: false,
+    reason: "invalid_response",
+  });
+  expect(cancelled).toBeTrue();
+});
+
+test("semantic readiness cancels a response rejected by its declared size", async () => {
+  const { registry, control, provider } = fixture("openai.chat-completions.v1", "llm.general");
+  let cancelled = false;
+  const readiness = new SemanticReadiness({
+    control,
+    getRegistry: () => registry,
+    executionGate: new ExecutionGate(),
+    timeoutMs: 100,
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{}"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }), {
+      headers: {
+        "content-type": "application/json",
+        "content-length": "65537",
+      },
+    }),
+  });
+  expect(await readiness.check({ allocationId: "alloc", provider })).toMatchObject({
+    ready: false,
+    reason: "invalid_response",
+  });
+  expect(cancelled).toBeTrue();
 });

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   getRuntime,
+  inspectOpenAiChatCompletionJson,
   inspectOpenAiChatCompletionSse,
   type AgentProviderHealth,
   type AgentProviderProfile,
@@ -25,6 +26,10 @@ type CachedProbe = {
 const JSON_LIMIT = 65_536;
 const AUDIO_LIMIT = 1_048_576;
 
+function cancelResponseBody(response: Response, reason: string): void {
+  void response.body?.cancel(new Error(reason)).catch(() => undefined);
+}
+
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -35,7 +40,10 @@ async function responseBytes(
   signal: AbortSignal,
 ): Promise<Uint8Array> {
   const length = Number(response.headers.get("content-length"));
-  if (Number.isFinite(length) && length > limit) throw new Error("response_too_large");
+  if (Number.isFinite(length) && length > limit) {
+    cancelResponseBody(response, "response_too_large");
+    throw new Error("response_too_large");
+  }
   if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -103,28 +111,19 @@ function validWav(bytes: Uint8Array): boolean {
   return false;
 }
 
-function validLlm(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const object = value as Record<string, unknown>;
-  if (typeof object.usage !== "object" || object.usage === null || Array.isArray(object.usage)) return false;
-  if ((object.usage as Record<string, unknown>).completion_tokens !== 1) return false;
-  if (!Array.isArray(object.choices) || object.choices.length < 1 || object.choices.length > 16) return false;
-  return object.choices.some((choice) => {
-    if (typeof choice !== "object" || choice === null || Array.isArray(choice)) return false;
-    const item = choice as Record<string, unknown>;
-    if (!Number.isInteger(item.index)) return false;
-    if (typeof item.message !== "object" || item.message === null || Array.isArray(item.message)) return false;
-    const message = item.message as Record<string, unknown>;
-    return message.role === "assistant"
-      && (message.content === null
-        || (typeof message.content === "string" && message.content.length <= 16_384));
-  });
-}
-
 function validTranscription(value: unknown): boolean {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     && typeof (value as Record<string, unknown>).text === "string"
     && ((value as Record<string, unknown>).text as string).length <= 4_096;
+}
+
+function mediaType(response: Response): string | undefined {
+  return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+}
+
+function rejectResponseBody(response: Response, reason: string): false {
+  cancelResponseBody(response, reason);
+  return false;
 }
 
 export class SemanticReadiness {
@@ -259,7 +258,7 @@ export class SemanticReadiness {
           abort.signal,
         );
         if (!response.ok) {
-          await response.body?.cancel(new Error("semantic probe upstream status")).catch(() => undefined);
+          cancelResponseBody(response, "semantic probe upstream status");
           return this.remember(resolved.key, this.failure(input.provider, "upstream_status"), false);
         }
         const valid = await this.validate(input.provider, response, abort.signal, format);
@@ -343,21 +342,33 @@ export class SemanticReadiness {
     format: "json" | "sse" | "default",
   ): Promise<boolean> {
     if (provider.protocol === "openai.audio-speech.v1") {
-      if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith("audio/wav")) return false;
+      if (mediaType(response) !== "audio/wav") {
+        return rejectResponseBody(response, "semantic probe content type mismatch");
+      }
       return validWav(await responseBytes(response, AUDIO_LIMIT, signal));
     }
-    const bytes = await responseBytes(response, JSON_LIMIT, signal);
     if (provider.protocol === "openai.chat-completions.v1" && format === "sse") {
-      const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-      return contentType === "text/event-stream" && inspectOpenAiChatCompletionSse(bytes).ok;
+      if (mediaType(response) !== "text/event-stream") {
+        return rejectResponseBody(response, "semantic probe content type mismatch");
+      }
+      const inspected = inspectOpenAiChatCompletionSse(await responseBytes(response, JSON_LIMIT, signal));
+      return inspected.ok;
     }
+    if (mediaType(response) !== "application/json") {
+      return rejectResponseBody(response, "semantic probe content type mismatch");
+    }
+    const bytes = await responseBytes(response, JSON_LIMIT, signal);
     let value: unknown;
     try {
-      value = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+      value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
     } catch {
       return false;
     }
-    return provider.protocol === "openai.chat-completions.v1" ? validLlm(value) : validTranscription(value);
+    if (provider.protocol !== "openai.chat-completions.v1") return validTranscription(value);
+    const inspected = inspectOpenAiChatCompletionJson(value);
+    return inspected.ok
+      && inspected.textChoices > 0
+      && inspected.completionTokens === 1;
   }
 
   private failure(provider: AgentProviderProfile, reason: AgentProviderHealth["reason"]): AgentProviderHealth {

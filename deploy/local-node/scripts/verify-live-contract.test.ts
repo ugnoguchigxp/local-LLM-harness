@@ -125,3 +125,54 @@ test("post-activation contract rejects live catalog drift", async () => {
   expect(error).toBeInstanceOf(Error);
   expect((error as Error).message).toBe("live Agent Profile catalog does not match the candidate release");
 });
+
+test("post-activation contract rejects non-origin URLs and lookalike JSON media types before activation passes", async () => {
+  let calls = 0;
+  const invalidBase = await verifyLiveContract({
+    baseUrl: "file:///tmp/larm",
+    expected,
+    fetch: async () => {
+      calls += 1;
+      return response("/health");
+    },
+  }).catch((cause: unknown) => cause);
+  expect((invalidBase as Error).message).toBe("baseUrl must use HTTP or HTTPS");
+  expect(calls).toBe(0);
+
+  const invalidType = await verifyLiveContract({
+    baseUrl: "http://127.0.0.1:9810",
+    expected,
+    fetch: async () => new Response(JSON.stringify({
+      status: "ok",
+      version: expected.version,
+      releaseCommit: expected.commit,
+      configRevision: expected.configRevision,
+      bootEpoch: "epoch",
+    }), { headers: { "content-type": "application/jsonx" } }),
+  }).catch((cause: unknown) => cause);
+  expect((invalidType as Error).message).toBe("/health returned the wrong content type");
+});
+
+test("post-activation contract rejects malformed semantic versions before any request", async () => {
+  let calls = 0;
+  for (const version of [
+    "01.2.3",
+    "1.02.3",
+    "1.2.03",
+    "1.2.3-",
+    "1.2.3-alpha..1",
+    "1.2.3-01",
+    "1.2.3\n",
+  ]) {
+    const error = await verifyLiveContract({
+      baseUrl: "http://127.0.0.1:9810",
+      expected: { ...expected, version },
+      fetch: async () => {
+        calls += 1;
+        return response("/health");
+      },
+    }).catch((cause: unknown) => cause);
+    expect((error as Error).message).toBe("expected release identity is invalid");
+  }
+  expect(calls).toBe(0);
+});

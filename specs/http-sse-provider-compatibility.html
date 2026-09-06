@@ -147,6 +147,14 @@
       >は引き続き<code>01667fe1a4f9acc18794ae9fd4264487c1063647</code>であり、 transactional
       applyは非対話sudo認証が利用できないため未実施である。このshadow結果をlive配備完了とは扱わない。
     </p>
+    <p>
+      最終code review後にも同じ実Provider E2Eを再実行した。JSONとSSEの必須identity、全choice
+      finish、stream内model一貫性を追加した検査で、SSE 10 chunk、meaningful delta 8件、finish reason
+      1件、<code>[DONE]</code>を確認した。llama.cppは要求した公開aliasではなく解決後GGUF名を
+      response modelへ返すため、公開modelの固定はProfileとclaim descriptorで行い、responseでは
+      nonemptyかつstream内で一貫することを検証する。終了時はAllocation 0、worker 0、旧port接続0、
+      一時資産0を再確認した。
+    </p>
   </section>
 
   <section id="contract">
@@ -243,6 +251,15 @@
       <li>成功した非SSE upstream responseを502で拒否する。</li>
       <li>Agent Connectionの短期credentialとclaim modelだけでSSE completionを完了する。</li>
       <li>
+        JSONは<code>chat.completion</code>、SSEは<code>chat.completion.chunk</code>の必須identity、
+        model、choice index、messageまたはdelta、公式finish reasonを検証する。
+      </li>
+      <li>
+        SSEでは同一stream中のID、model、生成時刻を固定し、全choiceのfinish後に
+        <code>[DONE]</code
+        >へ到達することを必須にする。finish後のchoice再開を拒否する。
+      </li>
+      <li>
         OpenAPIがJSONと<code>text/event-stream</code>の両成功responseを広告する。
       </li>
       <li>既存のNative WebSocket、非streaming、timeout、cancel、audit testが回帰しない。</li>
@@ -251,5 +268,32 @@
       live受入ではContextStillとNightWorkersから各一件を実行し、先頭event、<code>[DONE]</code>、
       Connection解放、Activityのactiveからidleへの復帰を確認する。source変更だけでは配備完了としない。
     </p>
+  </section>
+
+  <section id="review-hardening-2026-09-06">
+    <h2>2026-09-06 最終code review強化</h2>
+    <ul>
+      <li>
+        JSONとSSEの構造検査を<code>packages/core</code>へ集約し、unknown
+        fieldやrole-only eventを meaningful outputとして誤認しないようにした。function call、tool
+        call、reasoning extensionは 型と実データを確認して数える。
+      </li>
+      <li>
+        readinessとattended smokeは厳密なmedia type、fatal UTF-8、bounded body、response
+        modelの存在と stream内一貫性をfail
+        closedで確認する。要求aliasはProviderが解決後model名へ正規化できるため、
+        公開modelの固定はProfileとclaim descriptor間で検証する。media typeまたは宣言sizeの不一致時は
+        未読bodyをcancelする。
+      </li>
+      <li>
+        post-activation検査はdaemon
+        identityとreadyの成立を待ってから一度だけ実行し、失敗診断を保持する。
+        検証コードは作業treeではなく候補release自身から起動し、契約不一致時はrollbackする。
+      </li>
+      <li>
+        release
+        identityのversionは先頭zero、不完全なprerelease、空identifierを拒否する限定SemVerとした。
+      </li>
+    </ul>
   </section>
 </article>

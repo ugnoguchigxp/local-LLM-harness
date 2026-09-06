@@ -1,7 +1,7 @@
 import {
   agentProviderHealthSchema,
+  inspectOpenAiChatCompletionJson,
   inspectOpenAiChatCompletionSse,
-  type AgentProviderProfile,
 } from "../../../packages/core/src/index";
 import { LarmClient } from "../../../packages/client/src/index";
 
@@ -47,6 +47,11 @@ export type AgentHttpSmokeResult = {
 };
 
 const MAX_PROVIDER_RESPONSE_BYTES = 4 * 1024 * 1024;
+const MAX_PROVIDER_HEALTH_BYTES = 64 * 1024;
+
+type AgentProfiles = Awaited<ReturnType<LarmClient["listAgentProfiles"]>>;
+type AdvertisedProfile = AgentProfiles["profiles"][number];
+type AdvertisedProvider = AdvertisedProfile["providers"][number];
 
 function integerOption(value: number | undefined, fallback: number, name: string, maximum: number): number {
   const selected = value ?? fallback;
@@ -57,9 +62,9 @@ function integerOption(value: number | undefined, fallback: number, name: string
 }
 
 function selectedProfile(
-  profiles: Awaited<ReturnType<LarmClient["listAgentProfiles"]>>,
+  profiles: AgentProfiles,
   id: string,
-): Awaited<ReturnType<LarmClient["listAgentProfiles"]>>["profiles"][number] {
+): AdvertisedProfile {
   const profile = profiles.profiles.find((candidate) => candidate.id === id);
   if (!profile) throw new Error(`Agent Profile is not advertised: ${id}`);
   if (profile.deprecated) throw new Error(`Agent Profile is deprecated: ${id}`);
@@ -67,29 +72,31 @@ function selectedProfile(
 }
 
 function selectedProvider(
-  profile: ReturnType<typeof selectedProfile>,
+  profile: AdvertisedProfile,
   name: string,
-): AgentProviderProfile {
+): AdvertisedProvider {
   const provider = profile.providers.find((candidate) => candidate.name === name);
   if (!provider) throw new Error(`Agent Provider is not advertised by ${profile.id}: ${name}`);
   if (provider.protocol !== "openai.chat-completions.v1") {
     throw new Error(`Agent Provider does not use OpenAI Chat Completions: ${name}`);
   }
-  return {
-    name: provider.name,
-    capability: provider.capability,
-    supportedCapabilities: provider.supportedCapabilities,
-    route: "advertised-only",
-    publicModel: provider.model,
-    protocol: provider.protocol,
-    readiness: "llm-inference",
-    ...(provider.streamingProtocol ? { streamingProtocol: provider.streamingProtocol } : {}),
-  };
+  return provider;
+}
+
+function mediaType(response: Response): string | undefined {
+  return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+}
+
+function cancelResponseBody(response: Response, reason: string): void {
+  void response.body?.cancel(new Error(reason)).catch(() => undefined);
 }
 
 async function responseBytes(response: Response, limit = MAX_PROVIDER_RESPONSE_BYTES): Promise<Uint8Array> {
   const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > limit) throw new Error("provider_response_too_large");
+  if (Number.isFinite(declared) && declared > limit) {
+    cancelResponseBody(response, "provider_response_too_large");
+    throw new Error("provider_response_too_large");
+  }
   if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -130,32 +137,31 @@ async function providerRequest(
 }
 
 function validateJsonCompletion(bytes: Uint8Array): void {
-  let value: unknown;
+  const inspected = inspectOpenAiChatCompletionJson(parseJson(bytes, "OpenAI JSON completion response"));
+  if (!inspected.ok) throw new Error(`OpenAI JSON completion is invalid: ${inspected.reason}`);
+  if (inspected.textChoices === 0) {
+    throw new Error("OpenAI JSON completion contains no content or reasoning content");
+  }
+}
+
+function parseJson(bytes: Uint8Array, label: string): unknown {
   try {
-    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
   } catch {
-    throw new Error("OpenAI JSON completion response is not valid UTF-8 JSON");
+    throw new Error(`${label} is not valid UTF-8 JSON`);
   }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("OpenAI JSON completion response is not an object");
-  }
-  const choices = (value as Record<string, unknown>).choices;
-  const meaningful = Array.isArray(choices) && choices.some((choice) => {
-    if (!choice || typeof choice !== "object" || Array.isArray(choice)) return false;
-    const message = (choice as Record<string, unknown>).message;
-    if (!message || typeof message !== "object" || Array.isArray(message)) return false;
-    const record = message as Record<string, unknown>;
-    return [record.content, record.reasoning_content].some(
-      (part) => typeof part === "string" && part.length > 0,
-    );
-  });
-  if (!meaningful) throw new Error("OpenAI JSON completion contains no content or reasoning content");
 }
 
 export async function runAgentHttpSmoke(options: AgentHttpSmokeOptions): Promise<AgentHttpSmokeResult> {
   const timeoutMs = integerOption(options.timeoutMs, 300_000, "timeoutMs", 3_600_000);
   const ttlSeconds = integerOption(options.ttlSeconds, 300, "ttlSeconds", 86_400);
   const providerName = options.provider ?? "llm";
+  if (
+    options.expectedReleaseCommit
+    && (options.expectedReleaseCommit.length !== 40 || !/^[a-f0-9]{40}$/.test(options.expectedReleaseCommit))
+  ) {
+    throw new Error("expectedReleaseCommit must be a full lowercase Git commit");
+  }
   const fetchImpl = options.fetch ?? fetch;
   const larm = new LarmClient({
     baseUrl: options.baseUrl,
@@ -190,8 +196,8 @@ export async function runAgentHttpSmoke(options: AgentHttpSmokeOptions): Promise
   }
   const profile = selectedProfile(profiles, options.agentProfile);
   const advertised = selectedProvider(profile, providerName);
-  if (options.expectedModel && advertised.publicModel !== options.expectedModel) {
-    throw new Error(`model drift: expected ${options.expectedModel}, got ${advertised.publicModel}`);
+  if (options.expectedModel && advertised.model !== options.expectedModel) {
+    throw new Error(`model drift: expected ${options.expectedModel}, got ${advertised.model}`);
   }
 
   let connectionId: string | undefined;
@@ -215,24 +221,44 @@ export async function runAgentHttpSmoke(options: AgentHttpSmokeOptions): Promise
       throw new Error("Agent Connection catalog revision drifted during creation");
     }
     const connectionProvider = connection.providers.find((candidate) => candidate.name === providerName);
-    if (!connectionProvider?.claimable || connectionProvider.publicModel !== advertised.publicModel) {
+    if (!connectionProvider?.claimable || connectionProvider.publicModel !== advertised.model) {
       throw new Error("Agent Connection provider does not match its advertised profile");
     }
 
     const claim = await larm.claimAgentConnection(connection.id);
     const provider = claim.providers.find((candidate) => candidate.name === providerName);
-    if (!provider || provider.model !== advertised.publicModel) {
+    if (!provider || provider.model !== advertised.model) {
       throw new Error("claimed Agent Provider does not match its advertised profile");
     }
     const credential = provider.credential.token;
 
     const providerHealth = await providerRequest(fetchImpl, provider.health.url, credential, timeoutMs);
     if (!providerHealth.ok) {
-      await providerHealth.body?.cancel().catch(() => undefined);
+      cancelResponseBody(providerHealth, "claimed Provider health returned an error");
       throw new Error(`claimed Provider health returned HTTP ${providerHealth.status}`);
     }
-    const semanticHealth = agentProviderHealthSchema.parse(await providerHealth.json());
-    if (!semanticHealth.ready || !semanticHealth.acceptingRequests || !semanticHealth.probe?.validated) {
+    if (mediaType(providerHealth) !== "application/json") {
+      cancelResponseBody(providerHealth, "claimed Provider health returned the wrong content type");
+      throw new Error("claimed Provider health returned the wrong content type");
+    }
+    const parsedHealth = agentProviderHealthSchema.safeParse(parseJson(
+      await responseBytes(providerHealth, MAX_PROVIDER_HEALTH_BYTES),
+      "claimed Provider health",
+    ));
+    if (!parsedHealth.success) throw new Error("claimed Provider health violated its schema");
+    const semanticHealth = parsedHealth.data;
+    const healthAgeMs = (options.now?.() ?? Date.now()) - Date.parse(semanticHealth.probe?.observedAt ?? "");
+    if (
+      semanticHealth.name !== provider.name
+      || semanticHealth.capability !== provider.capability
+      || !semanticHealth.ready
+      || !semanticHealth.acceptingRequests
+      || !semanticHealth.probe?.validated
+      || semanticHealth.probe.protocol !== provider.protocol
+      || !Number.isFinite(healthAgeMs)
+      || healthAgeMs < -provider.health.maxAgeMs
+      || healthAgeMs > provider.health.maxAgeMs
+    ) {
       throw new Error("claimed Provider did not pass semantic readiness");
     }
 
@@ -249,11 +275,11 @@ export async function runAgentHttpSmoke(options: AgentHttpSmokeOptions): Promise
       }),
     });
     if (!jsonResponse.ok) {
-      await jsonResponse.body?.cancel().catch(() => undefined);
+      cancelResponseBody(jsonResponse, "OpenAI JSON completion returned an error");
       throw new Error(`OpenAI JSON completion returned HTTP ${jsonResponse.status}`);
     }
-    if (!(jsonResponse.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
-      await jsonResponse.body?.cancel().catch(() => undefined);
+    if (mediaType(jsonResponse) !== "application/json") {
+      cancelResponseBody(jsonResponse, "OpenAI JSON completion returned the wrong content type");
       throw new Error("OpenAI JSON completion returned the wrong content type");
     }
     validateJsonCompletion(await responseBytes(jsonResponse));
@@ -270,12 +296,11 @@ export async function runAgentHttpSmoke(options: AgentHttpSmokeOptions): Promise
       }),
     });
     if (!sseResponse.ok) {
-      await sseResponse.body?.cancel().catch(() => undefined);
+      cancelResponseBody(sseResponse, "OpenAI SSE completion returned an error");
       throw new Error(`OpenAI SSE completion returned HTTP ${sseResponse.status}`);
     }
-    const sseContentType = sseResponse.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-    if (sseContentType !== "text/event-stream") {
-      await sseResponse.body?.cancel().catch(() => undefined);
+    if (mediaType(sseResponse) !== "text/event-stream") {
+      cancelResponseBody(sseResponse, "OpenAI SSE completion returned the wrong content type");
       throw new Error("OpenAI SSE completion returned the wrong content type");
     }
     const sse = inspectOpenAiChatCompletionSse(await responseBytes(sseResponse));
@@ -288,7 +313,7 @@ export async function runAgentHttpSmoke(options: AgentHttpSmokeOptions): Promise
       throw new Error("released Agent Connection is not observable as released");
     }
     const revoked = await providerRequest(fetchImpl, provider.health.url, credential, Math.min(timeoutMs, 15_000));
-    await revoked.body?.cancel().catch(() => undefined);
+    cancelResponseBody(revoked, "released Provider credential check completed");
     if (revoked.status !== 401) throw new Error(`released Provider credential returned HTTP ${revoked.status}`);
 
     const finalActivity = await larm.getServiceActivity();

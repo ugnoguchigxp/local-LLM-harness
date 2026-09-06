@@ -10,6 +10,14 @@ import {
 import { loadCatalogGeneration } from "../../../apps/daemon/src/catalog-generation";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+const VERSION_IDENTIFIER = "(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)";
+const VERSION_PATTERN = new RegExp(
+  `^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-${VERSION_IDENTIFIER}(?:\\.${VERSION_IDENTIFIER})*)?$`,
+);
+
+function validVersion(value: string): boolean {
+  return VERSION_PATTERN.exec(value)?.[0] === value;
+}
 
 export type ExpectedLiveContract = {
   commit: string;
@@ -53,6 +61,14 @@ function expectedProfiles(expected: ExpectedLiveContract): unknown {
   };
 }
 
+function mediaType(response: Response): string | undefined {
+  return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+}
+
+function cancelResponseBody(response: Response, reason: string): void {
+  void response.body?.cancel(new Error(reason)).catch(() => undefined);
+}
+
 async function requestJson(
   fetchImpl: FetchLike,
   baseUrl: string,
@@ -64,16 +80,16 @@ async function requestJson(
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
+    cancelResponseBody(response, `${path} returned an error`);
     throw new Error(`${path} returned HTTP ${response.status}`);
   }
-  if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
-    await response.body?.cancel().catch(() => undefined);
+  if (mediaType(response) !== "application/json") {
+    cancelResponseBody(response, `${path} returned the wrong content type`);
     throw new Error(`${path} returned the wrong content type`);
   }
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > 1_048_576) {
-    await response.body?.cancel().catch(() => undefined);
+    cancelResponseBody(response, `${path} response is too large`);
     throw new Error(`${path} response is too large`);
   }
   if (!response.body) throw new Error(`${path} returned an empty body`);
@@ -115,8 +131,20 @@ export async function verifyLiveContract(options: {
   now?: () => number;
 }): Promise<LiveContractResult> {
   const url = new URL(options.baseUrl);
-  if (url.username || url.password || url.search || url.hash) {
-    throw new Error("baseUrl must not contain credentials, query, or fragment");
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("baseUrl must use HTTP or HTTPS");
+  }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
+    throw new Error("baseUrl must be an origin without credentials, path, query, or fragment");
+  }
+  if (
+    options.expected.commit.length !== 40
+    || !/^[a-f0-9]{40}$/.test(options.expected.commit)
+    || !validVersion(options.expected.version)
+    || options.expected.configRevision.length !== 64
+    || !/^[a-f0-9]{64}$/.test(options.expected.configRevision)
+  ) {
+    throw new Error("expected release identity is invalid");
   }
   const baseUrl = url.toString().replace(/\/+$/, "");
   const timeoutMs = options.timeoutMs ?? 3_000;
@@ -175,9 +203,10 @@ export async function expectedContractFromRelease(releaseDir: string): Promise<E
   const version = manifest.larmVersion;
   const configRevision = manifest.configRevision;
   if (
-    typeof commit !== "string" || !/^[a-f0-9]{40}$/.test(commit)
-    || typeof version !== "string" || version.length === 0
-    || typeof configRevision !== "string" || !/^[a-f0-9]{64}$/.test(configRevision)
+    typeof commit !== "string" || commit.length !== 40 || !/^[a-f0-9]{40}$/.test(commit)
+    || typeof version !== "string" || !validVersion(version)
+    || typeof configRevision !== "string" || configRevision.length !== 64
+    || !/^[a-f0-9]{64}$/.test(configRevision)
   ) {
     throw new Error("release manifest identity is invalid");
   }

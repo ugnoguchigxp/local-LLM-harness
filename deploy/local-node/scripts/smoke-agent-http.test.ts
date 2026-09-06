@@ -21,7 +21,12 @@ function json(value: unknown, status = 200): Response {
   });
 }
 
-function fixtureFetch(options: { badSse?: boolean } = {}): {
+function fixtureFetch(options: {
+  badSse?: boolean;
+  badJson?: boolean;
+  badHealthType?: boolean;
+  badHealthIdentity?: boolean;
+} = {}): {
   fetch: AgentHttpSmokeFetch;
   requests: Array<{ url: string; method: string; body?: unknown }>;
   released: () => boolean;
@@ -172,8 +177,8 @@ function fixtureFetch(options: { badSse?: boolean } = {}): {
       }
       if (url.toString() === providerHealthUrl) {
         if (authorization !== `Bearer ${providerToken}` || released) return json({ error: "unauthorized" }, 401);
-        return json({
-          name: "llm",
+        const healthBody = {
+          name: options.badHealthIdentity ? "other" : "llm",
           capability: "llm.coding",
           ready: true,
           acceptingRequests: true,
@@ -185,19 +190,36 @@ function fixtureFetch(options: { badSse?: boolean } = {}): {
             cached: true,
             observedAt,
           },
-        });
+        };
+        return options.badHealthType
+          ? new Response(JSON.stringify(healthBody), { headers: { "content-type": "application/jsonx" } })
+          : json(healthBody);
       }
       if (url.pathname === "/v1/chat/completions" && authorization === `Bearer ${providerToken}`) {
         const body = await request.json() as { stream?: boolean };
         recorded.body = body;
         if (!body.stream) {
-          return json({ choices: [{ index: 0, message: { role: "assistant", content: "OK" } }] });
+          return json(options.badJson
+            ? {
+              id: "chatcmpl-smoke",
+              object: "chat.completion",
+              created: 1,
+              model: "qwen-agent-worker",
+              choices: [{ index: 0, message: { role: "user", content: "OK" }, finish_reason: "stop" }],
+            }
+            : {
+              id: "chatcmpl-smoke",
+              object: "chat.completion",
+              created: 1,
+              model: "qwen-agent-worker",
+              choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+            });
         }
         const value = options.badSse
-          ? 'data: {"choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n'
+          ? 'data: {"id":"chatcmpl-smoke","object":"chat.completion.chunk","created":1,"model":"qwen-agent-worker","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n'
           : [
-            'data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"OK"}}]}\n\n',
-            'data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+            'data: {"id":"chatcmpl-smoke","object":"chat.completion.chunk","created":1,"model":"qwen-agent-worker","choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":null}]}\n\n',
+            'data: {"id":"chatcmpl-smoke","object":"chat.completion.chunk","created":1,"model":"qwen-agent-worker","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
             "data: [DONE]\n\n",
           ].join("");
         return new Response(value, { headers: { "content-type": "text/event-stream" } });
@@ -259,5 +281,50 @@ test("generic Agent HTTP smoke rejects an empty incomplete stream and still rele
   expect(error).toBeInstanceOf(Error);
   expect((error as Error).message).toContain("missing_delta");
   expect((error as Error).message).not.toContain(providerToken);
+  expect(fixture.released()).toBeTrue();
+});
+
+test("generic Agent HTTP smoke rejects malformed JSON completions and still releases", async () => {
+  const fixture = fixtureFetch({ badJson: true });
+  const error = await runAgentHttpSmoke({
+    baseUrl: "http://larm.test:9810",
+    agentProfile: "contextstill-background",
+    audience: "saaa-desktop",
+    client: "contextstill",
+    fetch: fixture.fetch,
+    now: () => Date.parse(observedAt),
+  }).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("invalid_message");
+  expect(fixture.released()).toBeTrue();
+});
+
+test("generic Agent HTTP smoke requires an exact JSON media type for Provider health", async () => {
+  const fixture = fixtureFetch({ badHealthType: true });
+  const error = await runAgentHttpSmoke({
+    baseUrl: "http://larm.test:9810",
+    agentProfile: "contextstill-background",
+    audience: "saaa-desktop",
+    client: "contextstill",
+    fetch: fixture.fetch,
+    now: () => Date.parse(observedAt),
+  }).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("wrong content type");
+  expect(fixture.released()).toBeTrue();
+});
+
+test("generic Agent HTTP smoke binds semantic health to the claimed Provider", async () => {
+  const fixture = fixtureFetch({ badHealthIdentity: true });
+  const error = await runAgentHttpSmoke({
+    baseUrl: "http://larm.test:9810",
+    agentProfile: "contextstill-background",
+    audience: "saaa-desktop",
+    client: "contextstill",
+    fetch: fixture.fetch,
+    now: () => Date.parse(observedAt),
+  }).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("did not pass semantic readiness");
   expect(fixture.released()).toBeTrue();
 });

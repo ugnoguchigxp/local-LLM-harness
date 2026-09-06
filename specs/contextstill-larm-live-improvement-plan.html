@@ -123,8 +123,8 @@
       </li>
       <li>
         claimされたbase URL、model、短期Bearerだけで、短いJSON completionとHTTP SSE
-        completionを行う。
-        SSEは有効なdelta一件以上と終端<code>data: [DONE]</code>を必須にする。
+        completionを行う。 SSEは有効なdelta一件以上、全choiceのfinish
+        reason、終端<code>data: [DONE]</code>を必須にする。
       </li>
       <li>
         Connectionを解放してtoken失効、active allocation
@@ -292,6 +292,12 @@
         reason、終端<code>[DONE]</code>を検証する。
       </li>
       <li>
+        最終code reviewでJSON検査器を共通化し、必須response identity、stream内model一貫性、choice
+        index、finish状態遷移を追加した。要求aliasは解決後model名へ正規化可能とし、公開modelはProfileと
+        claim descriptor間で固定する。厳密なmedia typeとfatal
+        UTF-8を使い、拒否した未読bodyをcancelする。
+      </li>
+      <li>
         LLM semantic readinessをJSONとSSEの二段probeへ変更し、同じ固定Bindingとexecution
         slotの中で両方が成功した場合だけclaim可能にした。
       </li>
@@ -307,6 +313,10 @@
         Profile全体の一致を確認する。新releaseの不一致は既存のtransactional
         rollbackを発火し、旧releaseへのrecovery確認は後方互換のidentity・ready検査を使う。
       </li>
+      <li>
+        release gateは候補release内の検証コードを一度だけ実行し、release versionを限定SemVerとして
+        検証する。契約失敗を60秒間再試行して診断を隠す挙動を廃止した。
+      </li>
     </ul>
     <p>ContextStill向けattended canaryは次のsecret-free設定で実行する。</p>
     <pre><code>LARM_BASE_URL=http://&lt;local-node-lan-address&gt;:9810 \
@@ -316,6 +326,12 @@ LARM_AGENT_CLIENT=contextstill \
 LARM_EXPECTED_MODEL=qwen-agent-worker \
 LARM_EXPECTED_RELEASE_COMMIT=&lt;approved-commit&gt; \
 bun run smoke:agent-http</code></pre>
+    <p>
+      最終code review後のshadow再受入でも、JSON、SSE 10 chunk、meaningful delta 8件、finish reason
+      1件、<code>[DONE]</code>、release、token 401、Activity
+      idleを確認した。cleanup後はAllocation、worker、 旧静的Provider
+      port接続、一時資産がすべて0である。
+    </p>
   </section>
 
   <section id="acceptance">
@@ -326,7 +342,9 @@ bun run smoke:agent-http</code></pre>
         ContextStill hostからActivity、Profile、create、claim、JSON、SSE、DELETEがすべて成功する。
       </li>
       <li>
-        SSEは有効deltaと<code>[DONE]</code>を受信し、成功JSONをSSE成功として扱わない。
+        SSEは一貫したchunk
+        identity、有効delta、全choiceのfinish、<code>[DONE]</code>を受信し、
+        成功JSONをSSE成功として扱わない。
       </li>
       <li>
         Connection解放後にtokenが拒否され、active workload、Allocation、execution slotが0へ戻る。
