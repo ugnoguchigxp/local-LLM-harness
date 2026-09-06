@@ -24,6 +24,7 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/verify.sh`: GPU, service, HTTP health, and memory checks
 - `scripts/verify-saaa-native-provider.ts`: exact native subprotocolと`native.ready`のrelease gate
 - `scripts/smoke-larm.sh`: Resident 27B固定のAllocation、stream、release smoke
+- `scripts/smoke-agent-http.ts`: 任意のAgent Profileに対するHTTP JSON/SSE・解放・token失効smoke
 - `scripts/smoke-saaa-agent-connection.sh`: request-originを含むSAAA向けcreate・claim・WebSocket・release smoke
 - `scripts/smoke-saaa-websocket.ts`: 短期Provider credentialでnative WebSocketを検証するend-to-end smoke
 - `scripts/soak-saaa-websocket.ts`: 1,000 turn・30分・毎turn network flap/resume・latency/RSS gate
@@ -151,6 +152,14 @@ deploy/local-node/scripts/verify.sh
 deploy/local-node/scripts/smoke-larm.sh
 # After loading /etc/larm/larm.env without printing it, use the same DHCP-aware URL as SAAA:
 # LARM_BASE_URL=http://gnosis.local:9810 deploy/local-node/scripts/smoke-saaa-agent-connection.sh
+# Native WebSocket広告を前提にしない汎用HTTP Agent Connection canary:
+# LARM_BASE_URL=http://gnosis.local:9810 \
+# LARM_AGENT_PROFILE=contextstill-background \
+# LARM_AGENT_AUDIENCE=saaa-desktop \
+# LARM_AGENT_CLIENT=contextstill \
+# LARM_EXPECTED_MODEL=qwen-agent-worker \
+# LARM_EXPECTED_RELEASE_COMMIT="$(git rev-parse HEAD)" \
+# bun run smoke:agent-http
 # native Providerのcommissioning後、claimをclaim.jsonへ保存してから:
 # export LARM_SAAA_STREAM_URL="$(jq -er '.providers[] | select(.streaming) | .streaming.url' claim.json)"
 # export LARM_SAAA_PROVIDER_TOKEN="$(jq -er '.providers[] | select(.streaming) | .credential.token' claim.json)"
@@ -191,7 +200,9 @@ do not use the first-install start command as a blanket restart. The installer a
 current symlinkを原子的に切り替え、LARM daemonだけをrestartします。manifestにはcommit、LARM・Bun
 version、lockfile digest、`node_modules` tree digest、config revision、作成時刻を保存します。既存世代の
 再利用とrollbackでは、manifest、Git source tree、lockfile、dependency tree、config revisionを切替前に
-再検証し、`/health.releaseCommit`まで一致を確認します。
+再検証し、`/health.releaseCommit`まで一致を確認します。新releaseのpost-activation gateはさらに
+`/ready`、`/v1/activity`、候補設定から導出した`/v2/agent-profiles`全体を照合し、不一致なら自動で
+前世代へ戻します。実推論を伴う`smoke:agent-http`は切替後のattended canaryとして実行します。
 前世代へ戻す操作は次の通りです。
 
 ```bash

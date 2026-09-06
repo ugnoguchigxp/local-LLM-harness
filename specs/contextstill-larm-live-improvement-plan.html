@@ -1,0 +1,345 @@
+<article lang="ja">
+  <h1>ContextStill向けLARM HTTP Provider live改善方針</h1>
+
+  <p>
+    2026-09-06の<a href="./http-sse-provider-compatibility.html#live-investigation-2026-09-06"
+      >live未到達調査</a
+    >で確認したrelease不一致を解消し、同じ種類の不成立を配備時に検知するための改善方針です。
+    ContextStill専用endpointは追加せず、Service Activity、Agent Connection、OpenAI互換Chat
+    Completionsという既存の汎用contractを強化します。
+  </p>
+
+  <dl>
+    <dt>最優先目標</dt>
+    <dd>対応済みreleaseをliveへ配備し、ContextStill ProfileのJSONとHTTP SSEを実通信で受入する</dd>
+    <dt>再発防止目標</dt>
+    <dd>release identity、公開contract、Provider意味互換、client設定の四層でfail closedにする</dd>
+    <dt>Repository実装状態</dt>
+    <dd>
+      2026-09-06にSSE semantic readiness、汎用HTTP Agent smoke、release後contract gateを実装済み。
+      live配備と実Provider canaryは未完了
+    </dd>
+    <dt>対象外</dt>
+    <dd>自動本番配備、ContextStill専用API、Provider portのLAN公開、静的Providerへの暗黙fallback</dd>
+  </dl>
+
+  <section id="decisions">
+    <h2>固定する判断</h2>
+    <ol>
+      <li>
+        今回の復旧は新たなSSE実装ではなく、対応済みcommitまたは承認済み後続commitのtransactional
+        releaseで行う。
+      </li>
+      <li>
+        <code>openai.chat-completions.v1</code>は非streaming JSONとHTTP SSEの両方を含む。
+        Native WebSocketの<code>streamingProtocol</code>をHTTP SSE対応判定に使わない。
+      </li>
+      <li>
+        <code>/health</code
+        >と<code>/ready</code>だけでは配備成功にしない。Activity、Profile、短期Bearer、
+        claim model、JSON、SSE、releaseまでを一つのlive contract gateにする。
+      </li>
+      <li>
+        source HEADとliveの単純な不一致は即時自動配備の理由にしない。承認済みdesired commitとlive
+        <code>releaseCommit</code>の不一致を警告・停止条件にする。
+      </li>
+      <li>
+        clientはfail closedを維持するが、待機理由を一つの
+        <code>waiting_for_dynamic_provider</code
+        >へ潰さず、運用者が故障層を判別できる状態を公開する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="priority">
+    <h2>優先順位</h2>
+    <table>
+      <caption>
+        実施順と完了条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">優先度</th>
+          <th scope="col">施策</th>
+          <th scope="col">完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">P0</th>
+          <td>対応済みLARM releaseの配備とContextStill Profile canary</td>
+          <td>JSON、SSE、Connection解放、Queue一件完了</td>
+        </tr>
+        <tr>
+          <th scope="row">P1</th>
+          <td>release後の汎用HTTP Agent Connection gateを追加</td>
+          <td>旧releaseとProfile欠落を本番利用前に自動拒否</td>
+        </tr>
+        <tr>
+          <th scope="row">P1</th>
+          <td>LLM semantic readinessへSSE conformanceを追加</td>
+          <td>SSE非対応Providerをclaim可能にしない</td>
+        </tr>
+        <tr>
+          <th scope="row">P1</th>
+          <td>desired release drift監査と待機理由の可観測化</td>
+          <td>不一致または401・404・SSE違反を無言で放置しない</td>
+        </tr>
+        <tr>
+          <th scope="row">P2</th>
+          <td>定期canaryと運用証跡の標準化</td>
+          <td>正常時は静かにし、状態変化と失敗だけを通知</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="recovery">
+    <h2>P0: 即時復旧</h2>
+    <ol>
+      <li>調査記録をreviewしてcommitし、release元worktreeをcleanにする。</li>
+      <li>
+        <code>release-larm.sh plan</code>を再実行し、target
+        commit、現在のrelease、cleanup対象、確認digestを operatorが照合する。
+      </li>
+      <li>
+        既存のtransactional
+        <code>apply</code>を実行し、失敗時の自動rollbackを維持する。
+      </li>
+      <li>
+        <code>/health</code
+        >の<code>releaseCommit</code>と<code>configRevision</code>が候補manifestと一致し、
+        <code>bootEpoch</code>が旧値から変化したことを確認する。
+      </li>
+      <li>
+        ContextStill hostと同じLAN経路から<code>/v1/activity</code>が200、
+        <code>/v2/agent-profiles</code
+        >に<code>contextstill-background</code>が一意に存在することを確認する。
+      </li>
+      <li>
+        Activityがidleのときだけ同Profileを<code>explicitAgentProfile: true</code>、
+        <code>allowFallback: false</code
+        >、<code>deploymentPolicy: existing-only</code>で作成する。
+      </li>
+      <li>
+        claimされたbase URL、model、短期Bearerだけで、短いJSON completionとHTTP SSE
+        completionを行う。
+        SSEは有効なdelta一件以上と終端<code>data: [DONE]</code>を必須にする。
+      </li>
+      <li>
+        Connectionを解放してtoken失効、active allocation
+        0、workerのidle回収を確認してから、ContextStillの LLM必須jobを一件だけ実行する。
+      </li>
+      <li>
+        次job境界でActivityを再確認し、旧<code>127.0.0.1:44448</code>への接続が0件であることを確認する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="live-contract-gate">
+    <h2>P1: live contract gate</h2>
+    <p>
+      現在のsmokeはResident AllocationのJSON/SSEと、SAAA ProfileのNative WebSocketを別々に検証する。
+      非Nativeの<code>contextstill-background</code>を、Agent
+      Connectionの短期credentialでHTTP SSEまで通すgateがない。この空白を汎用HTTP Provider
+      smokeで埋める。
+    </p>
+    <p>
+      新しいgateはprofile、audience、期待model、期待release identityを引数化し、Native
+      WebSocket広告の 有無に依存せず次を検証する。
+    </p>
+    <ul>
+      <li>
+        desired commitと<code>/health.releaseCommit</code>、manifest config revisionの一致
+      </li>
+      <li>Activityのstrict schema、freshness、idle条件</li>
+      <li>Profileのselection policy、deprecated、protocol、public model、Audience</li>
+      <li>create、ready poll、claim、provider health、JSON completion、HTTP SSE completion</li>
+      <li>
+        SSEのstatus、media type、event区切り、chunk JSON、delta、finish、<code
+          >[DONE]</code
+        >
+      </li>
+      <li>release後のtoken 401、Allocation・execution slot漏れなし、worker idle回収</li>
+    </ul>
+    <aside>
+      <p>
+        tokenはprocess memoryまたはmode 0700の一時directoryだけで扱い、標準出力、journal、証跡JSONへ
+        書かない。cleanupはsignalと途中失敗を含む全経路で実行する。
+      </p>
+    </aside>
+    <p>
+      release script自身には、推論を伴わない軽量post-activation contract検査を追加する。release
+      identity、ready、Activity、catalog
+      revision、設定済みProfile全体のいずれかが候補releaseと異なる場合は
+      自動rollbackする。OpenAPIの<code>text/event-stream</code>広告はrelease前の自動testで固定する。
+      モデルloadを伴うHTTP Provider smokeはattended canaryとして直後に実行する。
+    </p>
+  </section>
+
+  <section id="semantic-readiness">
+    <h2>P1: Provider意味互換の強化</h2>
+    <p>
+      現行のLLM semantic readinessは<code>stream: false</code>の一token
+      JSONだけを検証するため、Providerが HTTP SSEを返せなくてもclaim可能になる。Chat Completions
+      Providerには、短いSSE probeを追加する。
+    </p>
+    <ul>
+      <li>
+        <code>stream: true</code
+        >、<code>max_tokens: 1</code>、<code>Accept: text/event-stream</code>を使用する。
+      </li>
+      <li>
+        200とSSE media type、bounded bytes、valid
+        UTF-8、少なくとも一つのchunk、<code>[DONE]</code>を検証する。
+      </li>
+      <li>
+        JSON probeとSSE
+        probeが両方成功した場合だけ<code>ready: true</code>にする。
+      </li>
+      <li>probe結果は現行と同様に短時間cacheし、同時health requestは一つへ集約する。</li>
+      <li>
+        timeout、client切断、Allocation失効時はupstream bodyをcancelし、execution
+        slotを必ず解放する。
+      </li>
+    </ul>
+    <p>
+      Gatewayは引き続きSSE
+      bytesを再構成せず透過する。runtime中の形式違反はstreamをabortし、metricsへ
+      boundedなreasonを記録するが、不正なeventを補正したり<code>[DONE]</code>を捏造したりしない。
+    </p>
+  </section>
+
+  <section id="drift-observability">
+    <h2>P1: release driftと待機理由の可観測化</h2>
+    <ul>
+      <li>
+        operatorが承認したdesired commitをrepository外のroot管理stateへ記録し、live
+        <code>releaseCommit</code>との差をread-only auditで検出する。
+      </li>
+      <li>source HEADとの差だけでは自動切替しない。未reviewのcommitを本番へ流さない。</li>
+      <li>
+        <code>release_identity_mismatch</code>、<code>activity_unauthorized</code>、
+        <code>profile_missing</code
+        >、<code>connection_rejected</code>、<code>sse_contract_failure</code>を区別する。
+      </li>
+      <li>
+        ContextStillはQueueをfail closedで保持しつつ、現在理由、最終HTTP
+        status、失敗段階、最終成功時刻を secretなしで状態表示する。
+      </li>
+      <li>同一失敗を毎pollでlogせず、状態遷移時と低頻度の継続警告だけを記録する。</li>
+      <li>
+        LARM metricsにはstream request結果、upstream media type mismatch、client cancel、timeout、
+        release identityをbounded labelで追加し、request IDやConnection IDをlabelにしない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="contextstill">
+    <h2>P1: ContextStill側の改善</h2>
+    <ul>
+      <li>
+        resident daemonの実効設定でProvider kind、control
+        host、Profile、Audienceをstartup時に記録する。
+      </li>
+      <li>
+        <code>/v1/activity</code>へqueryとbodyを送らず、optional
+        bearerは設定時だけ送る。
+      </li>
+      <li>
+        401、404、invalid schema、stale activityをidleへ読み替えず、静的Providerへfallbackしない。
+      </li>
+      <li>
+        claimのbase URL、model、tokenを上書き・永続化せず、Connection世代をまたいで再利用しない。
+      </li>
+      <li>
+        SSE response bodyの完了または失敗までtimeoutを維持し、次jobの前にActivityを再確認する。
+      </li>
+      <li>再試行は上限付きexponential backoffとjitterを使い、Queue item自体はclaimしない。</li>
+    </ul>
+  </section>
+
+  <section id="rollout">
+    <h2>導入順序</h2>
+    <ol>
+      <li><strong>復旧:</strong> 現行候補を配備し、手動のContextStill HTTP canaryを完了する。</li>
+      <li>
+        <strong>gate実装:</strong> 汎用HTTP Provider
+        smokeと軽量post-activation検査をrepositoryへ追加する。
+      </li>
+      <li>
+        <strong>readiness:</strong> SSE semantic probeを追加し、失敗fixtureとcancel・timeout
+        testを固定する。
+      </li>
+      <li><strong>client可観測化:</strong> ContextStillの待機reasonと実効設定表示を追加する。</li>
+      <li>
+        <strong>定期確認:</strong>
+        低頻度canaryを実行し、正常時は通知せず、変化・失敗時だけ通知する。
+      </li>
+    </ol>
+    <p>
+      P1実装を待ってP0復旧を遅らせない。最初のlive受入はattendedで行い、受入後にだけContextStillの
+      Queueを一件ずつ再開する。
+    </p>
+  </section>
+
+  <section id="implementation-2026-09-06">
+    <h2>2026-09-06 Repository実装記録</h2>
+    <ul>
+      <li>
+        <code>packages/core/src/openai-sse.ts</code>にboundedなOpenAI SSE検査器を追加し、valid
+        UTF-8、SSE field、chunk JSON、meaningful delta、finish
+        reason、終端<code>[DONE]</code>を検証する。
+      </li>
+      <li>
+        LLM semantic readinessをJSONとSSEの二段probeへ変更し、同じ固定Bindingとexecution
+        slotの中で両方が成功した場合だけclaim可能にした。
+      </li>
+      <li>
+        <code>deploy/local-node/scripts/smoke-agent-http.ts</code>を追加した。Profile
+        discovery、create、ready、claim、semantic health、JSON、SSE、release、token
+        401、最終Activityを
+        secret-freeな一つの結果として検証する。途中失敗でもConnectionを解放する。
+      </li>
+      <li>
+        <code>deploy/local-node/scripts/verify-live-contract.ts</code>をrelease後gateへ組み込み、候補manifestと live
+        identity、Activity、Agent
+        Profile全体の一致を確認する。新releaseの不一致は既存のtransactional
+        rollbackを発火し、旧releaseへのrecovery確認は後方互換のidentity・ready検査を使う。
+      </li>
+    </ul>
+    <p>ContextStill向けattended canaryは次のsecret-free設定で実行する。</p>
+    <pre><code>LARM_BASE_URL=http://&lt;local-node-lan-address&gt;:9810 \
+LARM_AGENT_PROFILE=contextstill-background \
+LARM_AGENT_AUDIENCE=saaa-desktop \
+LARM_AGENT_CLIENT=contextstill \
+LARM_EXPECTED_MODEL=qwen-agent-worker \
+LARM_EXPECTED_RELEASE_COMMIT=&lt;approved-commit&gt; \
+bun run smoke:agent-http</code></pre>
+  </section>
+
+  <section id="acceptance">
+    <h2>最終受入条件とrollback</h2>
+    <ul>
+      <li>desired commit、live release、catalog revision、boot epochが証跡上で一貫する。</li>
+      <li>
+        ContextStill hostからActivity、Profile、create、claim、JSON、SSE、DELETEがすべて成功する。
+      </li>
+      <li>
+        SSEは有効deltaと<code>[DONE]</code>を受信し、成功JSONをSSE成功として扱わない。
+      </li>
+      <li>
+        Connection解放後にtokenが拒否され、active workload、Allocation、execution slotが0へ戻る。
+      </li>
+      <li>ContextStillのLLM必須jobが一件完了し、次job境界でActivityが再評価される。</li>
+      <li>
+        Provider portおよび旧<code>127.0.0.1:44448</code>へのclient接続が0件である。
+      </li>
+    </ul>
+    <p>
+      release identity、Activity、Profile、Provider
+      health、JSON、SSEのいずれかが失敗した場合はQueueを fail closedのまま維持する。LARM
+      releaseを既存のtransactional rollbackで戻し、client側の静的 Providerへ暗黙fallbackしない。
+    </p>
+  </section>
+</article>

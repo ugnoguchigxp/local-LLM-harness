@@ -165,7 +165,8 @@ validate_release_payload() {
 }
 
 verify_release_health() {
-  local target="$1" deadline health expected_commit expected_version expected_revision active
+  local target="$1" mode="${2:-identity}" deadline health expected_commit expected_version expected_revision active
+  [[ "${mode}" == "identity" || "${mode}" == "contract" ]] || return 1
   validate_release_manifest "${target}" || return 1
   expected_commit="$(jq -er .commit "${target}/release-manifest.json")"
   expected_version="$(jq -er .larmVersion "${target}/release-manifest.json")"
@@ -189,7 +190,10 @@ verify_release_health() {
       && jq -e --arg commit "${expected_commit}" --arg version "${expected_version}" --arg revision "${expected_revision}" \
         '.status == "ok" and .releaseCommit == $commit and .version == $version and .configRevision == $revision' \
         <<<"${health}" >/dev/null \
-      && curl -fsS --max-time 3 http://127.0.0.1:9810/ready >/dev/null; then
+      && curl -fsS --max-time 3 http://127.0.0.1:9810/ready >/dev/null \
+      && { [[ "${mode}" == "identity" ]] \
+        || LARM_VERIFY_RELEASE_DIR="${target}" LARM_VERIFY_BASE_URL=http://127.0.0.1:9810 \
+          "${bun_bin}" run "${source_root}/deploy/local-node/scripts/verify-live-contract.ts" >/dev/null 2>&1; }; then
       return 0
     fi
     sleep 1
@@ -439,7 +443,7 @@ mv -Tf -- "${next_link}" "${current_link}"
 if [[ -n "${previous}" && "${previous}" != "${release_dir}" ]]; then
   write_previous "${previous}"
 fi
-if ! systemctl_run restart larm-daemon.service || ! verify_release_health "${release_dir}"; then
+if ! systemctl_run restart larm-daemon.service || ! verify_release_health "${release_dir}" contract; then
   if [[ -n "${previous}" && -d "${previous}" ]]; then
     validate_release_payload "${previous}" \
       || fail "new release failed and the prior release is no longer a trusted recovery target"

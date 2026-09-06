@@ -223,7 +223,8 @@ curl -fsS -X POST "http://127.0.0.1:9810/v1/agent-connections/${connection_id}/c
 ```
 
 `/health`ではなくclaim内のProvider health URLを使用してください。LLM healthは
-`max_tokens: 1`の固定推論を行い、completion tokenがちょうど1であることまで検証します。
+`max_tokens: 1`の固定推論をJSONとHTTP SSEの両形式で行い、JSONのcompletion tokenがちょうど1、
+SSEのmedia type、meaningful delta、`data: [DONE]`まで検証します。
 成功は10秒、失敗は1秒だけcacheし、通常task queueへprobeを追加しません。
 SAAAのMac接続は[`../../docs/local-node.md`](../../docs/local-node.md)の直接LAN接続contractを使います。
 local-nodeのproduction unitは通常control・management APIの認証を維持して`0.0.0.0:9810`をlistenし、

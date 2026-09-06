@@ -18,6 +18,77 @@
     </dd>
   </dl>
 
+  <section id="live-investigation-2026-09-06">
+    <h2>2026-09-06 live未到達調査</h2>
+    <p>
+      ContextStillからHTTP SSEを利用できない事象を、source、release pointer、live HTTP応答、
+      daemon実装、systemd、Provider資産の順にread-onlyで照合した。根本原因はSSE event処理ではなく、
+      SSE対応前のreleaseがliveで動作し続けていることだった。
+    </p>
+    <table>
+      <caption>
+        2026-09-06T08:39:03Zまでの確認結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">確認対象</th>
+          <th scope="col">実測</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">source HEAD</th>
+          <td><code>b8f74b28ed530410ad50995b0811de40dbaca591</code>、clean</td>
+          <td>SSE、Activity、ContextStill Profileを含む</td>
+        </tr>
+        <tr>
+          <th scope="row">live release pointer</th>
+          <td><code>/srv/ai/apps/larm-releases/01667fe1a4f9</code></td>
+          <td>sourceと不一致</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /health</code></th>
+          <td>HTTP 200、<code>releaseCommit: 01667fe1a4f9acc18794ae9fd4264487c1063647</code></td>
+          <td>旧releaseであることを外部契約から確認</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /v1/activity</code></th>
+          <td>HTTP 401 <code>unauthorized</code></td>
+          <td>ContextStillはfail closedでConnection作成前に待機する</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /v2/agent-profiles</code></th>
+          <td><code>contextstill-background</code>なし</td>
+          <td>目的のProfileをdiscoveryできない</td>
+        </tr>
+        <tr>
+          <th scope="row">ContextStill Connection作成</th>
+          <td>HTTP 404 <code>unknown_agent_profile</code></td>
+          <td>SSE request以前に停止する</td>
+        </tr>
+        <tr>
+          <th scope="row">旧liveでのSSE再現</th>
+          <td>HTTP 400 <code>streaming_requires_websocket</code>、JSON応答</td>
+          <td>旧実装が<code>stream: true</code>をProviderへ送る前に拒否する</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      liveログではContextStill clientが旧default Profileの非streaming Chat Completionsを複数回 HTTP
+      200で完了している。このため、LAN到達性、Agent Connection全体、resident Provider全体の
+      障害ではない。目的のProfile、Activity、HTTP SSEだけがlive release差分により欠落している。
+    </p>
+    <p>
+      release planは<code>b8f74b28ed53</code>を次のtargetとし、cleanup対象
+      <code>ee48c3dc9c30</code>と確認digest
+      <code>fbac1c432f65c213769f95f361a0faccbabd5e1ee4f56b4b090c89d3b7dd5890</code>を返した。 候補sourceはfull
+      checkを通過し、ContextStill用model本体とMTP draftのsizeおよびSHA-256も
+      manifestと一致した。配備、ContextStill hostからのfirewall確認、worker起動、JSON/SSE canary、
+      Queue減少はこのread-only調査では未実施であり、live受入完了とはしない。
+    </p>
+  </section>
+
   <section id="contract">
     <h2>応答形式contract</h2>
     <table>

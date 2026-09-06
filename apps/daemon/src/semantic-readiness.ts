@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   getRuntime,
+  inspectOpenAiChatCompletionSse,
   type AgentProviderHealth,
   type AgentProviderProfile,
   type Registry,
@@ -249,15 +250,23 @@ export class SemanticReadiness {
     }
     const startedAt = this.now();
     try {
-      const response = await withAbort(
-        this.send(input.provider, resolved.endpoint, abort.signal),
-        abort.signal,
-      );
-      if (!response.ok) {
-        return this.remember(resolved.key, this.failure(input.provider, "upstream_status"), false);
+      const formats = input.provider.protocol === "openai.chat-completions.v1"
+        ? ["json", "sse"] as const
+        : ["default"] as const;
+      for (const format of formats) {
+        const response = await withAbort(
+          this.send(input.provider, resolved.endpoint, abort.signal, format),
+          abort.signal,
+        );
+        if (!response.ok) {
+          await response.body?.cancel(new Error("semantic probe upstream status")).catch(() => undefined);
+          return this.remember(resolved.key, this.failure(input.provider, "upstream_status"), false);
+        }
+        const valid = await this.validate(input.provider, response, abort.signal, format);
+        if (!valid) {
+          return this.remember(resolved.key, this.failure(input.provider, "invalid_response"), false);
+        }
       }
-      const valid = await this.validate(input.provider, response, abort.signal);
-      if (!valid) return this.remember(resolved.key, this.failure(input.provider, "invalid_response"), false);
       const observedAt = new Date(this.now()).toISOString();
       return this.remember(resolved.key, {
         name: input.provider.name,
@@ -283,18 +292,27 @@ export class SemanticReadiness {
     }
   }
 
-  private async send(provider: AgentProviderProfile, endpoint: string, signal: AbortSignal): Promise<Response> {
+  private async send(
+    provider: AgentProviderProfile,
+    endpoint: string,
+    signal: AbortSignal,
+    format: "json" | "sse" | "default",
+  ): Promise<Response> {
     const base = endpoint.replace(/\/+$/, "");
     if (provider.protocol === "openai.chat-completions.v1") {
+      const stream = format === "sse";
       return await (this.options.fetchImpl ?? fetch)(`${base}/v1/chat/completions`, {
         method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json" },
+        headers: {
+          "content-type": "application/json",
+          accept: stream ? "text/event-stream" : "application/json",
+        },
         body: JSON.stringify({
           model: provider.publicModel,
           messages: [{ role: "user", content: "0" }],
           temperature: 0,
           max_tokens: 1,
-          stream: false,
+          stream,
         }),
         signal,
       });
@@ -322,12 +340,17 @@ export class SemanticReadiness {
     provider: AgentProviderProfile,
     response: Response,
     signal: AbortSignal,
+    format: "json" | "sse" | "default",
   ): Promise<boolean> {
     if (provider.protocol === "openai.audio-speech.v1") {
       if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith("audio/wav")) return false;
       return validWav(await responseBytes(response, AUDIO_LIMIT, signal));
     }
     const bytes = await responseBytes(response, JSON_LIMIT, signal);
+    if (provider.protocol === "openai.chat-completions.v1" && format === "sse") {
+      const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+      return contentType === "text/event-stream" && inspectOpenAiChatCompletionSse(bytes).ok;
+    }
     let value: unknown;
     try {
       value = JSON.parse(new TextDecoder().decode(bytes)) as unknown;

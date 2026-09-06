@@ -191,3 +191,8 @@ export {
   type ReleaseRequest,
   type ResolveRequest,
 } from "./api-schema";
+export {
+  inspectOpenAiChatCompletionSse,
+  type OpenAiChatCompletionSseFailureReason,
+  type OpenAiChatCompletionSseInspection,
+} from "./openai-sse";

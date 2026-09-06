@@ -93,6 +93,21 @@ function fixture(protocol: AgentProviderProfile["protocol"], capability: string)
   return { registry, control, provider, setStatus: (value: "HOT" | "BUSY") => { status = value; } };
 }
 
+function validLlmProbeResponse(init?: RequestInit): Response {
+  const body = JSON.parse(String(init?.body)) as { stream?: boolean };
+  if (body.stream === true) {
+    return new Response([
+      'data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"0"},"finish_reason":null}]}\n\n',
+      'data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+      "data: [DONE]\n\n",
+    ].join(""), { headers: { "content-type": "text/event-stream; charset=utf-8" } });
+  }
+  return Response.json({
+    choices: [{ index: 0, message: { role: "assistant", content: null } }],
+    usage: { completion_tokens: 1 },
+  });
+}
+
 test("STT semantic probe sends the fixed 8,044-byte silence WAV", async () => {
   const { registry, control, provider } = fixture("openai.audio-transcriptions.v1", "speech.stt");
   let calls = 0;
@@ -156,12 +171,9 @@ test("BUSY uses only a fresh successful cache and probe deadlines cannot stall",
     getRegistry: () => registry,
     executionGate: new ExecutionGate(),
     timeoutMs: 100,
-    fetchImpl: async () => {
+    fetchImpl: async (_input, init) => {
       calls += 1;
-      return Response.json({
-        choices: [{ index: 0, message: { role: "assistant", content: null } }],
-        usage: { completion_tokens: 1 },
-      });
+      return validLlmProbeResponse(init);
     },
   });
   expect((await readiness.check({ allocationId: "alloc", provider })).acceptingRequests).toBeTrue();
@@ -171,7 +183,7 @@ test("BUSY uses only a fresh successful cache and probe deadlines cannot stall",
     acceptingRequests: false,
     probe: { cached: true },
   });
-  expect(calls).toBe(1);
+  expect(calls).toBe(2);
 
   const coldCache = new SemanticReadiness({
     control,
@@ -209,8 +221,11 @@ test("concurrent semantic health checks share one fixed-binding probe", async ()
     getRegistry: () => registry,
     executionGate: new ExecutionGate(),
     timeoutMs: 100,
-    fetchImpl: async () => {
+    fetchImpl: async (_input, init) => {
       calls += 1;
+      if ((JSON.parse(String(init?.body)) as { stream?: boolean }).stream === true) {
+        return validLlmProbeResponse(init);
+      }
       return await response;
     },
   });
@@ -223,5 +238,77 @@ test("concurrent semantic health checks share one fixed-binding probe", async ()
   }));
   expect((await first).ready).toBeTrue();
   expect((await second).ready).toBeTrue();
-  expect(calls).toBe(1);
+  expect(calls).toBe(2);
+});
+
+test("LLM semantic readiness requires both one-token JSON and OpenAI SSE", async () => {
+  const { registry, control, provider } = fixture("openai.chat-completions.v1", "llm.general");
+  const requests: Array<{ accept: string | null; body: unknown }> = [];
+  const valid = new SemanticReadiness({
+    control,
+    getRegistry: () => registry,
+    executionGate: new ExecutionGate(),
+    timeoutMs: 100,
+    fetchImpl: async (_input, init) => {
+      requests.push({
+        accept: new Headers(init?.headers).get("accept"),
+        body: JSON.parse(String(init?.body)) as unknown,
+      });
+      return validLlmProbeResponse(init);
+    },
+  });
+  expect(await valid.check({ allocationId: "alloc", provider })).toMatchObject({
+    ready: true,
+    probe: { validated: true },
+  });
+  expect(requests).toEqual([
+    {
+      accept: "application/json",
+      body: {
+        model: "public-model",
+        messages: [{ role: "user", content: "0" }],
+        temperature: 0,
+        max_tokens: 1,
+        stream: false,
+      },
+    },
+    {
+      accept: "text/event-stream",
+      body: {
+        model: "public-model",
+        messages: [{ role: "user", content: "0" }],
+        temperature: 0,
+        max_tokens: 1,
+        stream: true,
+      },
+    },
+  ]);
+
+  for (const response of [
+    new Response("data: not-json\n\ndata: [DONE]\n\n", {
+      headers: { "content-type": "text/event-stream" },
+    }),
+    new Response('data: {"choices":[{"index":0,"delta":{"content":"0"}}]}\n\n', {
+      headers: { "content-type": "text/event-stream" },
+    }),
+    Response.json({ unexpected: true }),
+  ]) {
+    let call = 0;
+    const invalid = new SemanticReadiness({
+      control,
+      getRegistry: () => registry,
+      executionGate: new ExecutionGate(),
+      timeoutMs: 100,
+      fetchImpl: async () => call++ === 0
+        ? Response.json({
+          choices: [{ index: 0, message: { role: "assistant", content: "" } }],
+          usage: { completion_tokens: 1 },
+        })
+        : response,
+    });
+    expect(await invalid.check({ allocationId: "alloc", provider })).toMatchObject({
+      ready: false,
+      reason: "invalid_response",
+    });
+  }
 });

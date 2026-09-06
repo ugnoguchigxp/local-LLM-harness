@@ -216,6 +216,21 @@ function agentHeaders(extra: Record<string, string> = {}): Record<string, string
   };
 }
 
+function validLlmSemanticProbeResponse(init?: RequestInit): Response {
+  const body = JSON.parse(String(init?.body)) as { stream?: boolean };
+  if (body.stream === true) {
+    return new Response([
+      'data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"0"},"finish_reason":null}]}\n\n',
+      'data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+      "data: [DONE]\n\n",
+    ].join(""), { headers: { "content-type": "text/event-stream; charset=utf-8" } });
+  }
+  return Response.json({
+    choices: [{ index: 0, message: { role: "assistant", content: "" } }],
+    usage: { completion_tokens: 1 },
+  });
+}
+
 function probe(
   id: string,
   live: boolean,
@@ -2114,17 +2129,15 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     const value = JSON.parse(raw) as Record<string, unknown>;
     observed.push(value);
     if (value.max_tokens === 1) {
-      expect(value).toEqual({
+      const expected = {
         model: "test-model",
         messages: [{ role: "user", content: "0" }],
         temperature: 0,
         max_tokens: 1,
-        stream: false,
-      });
-      return Response.json({
-        choices: [{ index: 0, message: { role: "assistant", content: "" } }],
-        usage: { completion_tokens: 1 },
-      });
+        stream: value.stream,
+      };
+      expect(value).toEqual(expected);
+      return validLlmSemanticProbeResponse(init);
     }
     if (value.stream === true) {
       return new Response('data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n', {
@@ -2245,7 +2258,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   });
   expect(task.status).toBe(200);
   expect(await task.json()).toMatchObject({ choices: [{ message: { content: "done" } }] });
-  expect(observed).toHaveLength(2);
+  expect(observed).toHaveLength(3);
 
   const streamingTask = await app.request("/v1/chat/completions", {
     method: "POST",
@@ -2262,7 +2275,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   expect(streamingTask.status).toBe(200);
   expect(streamingTask.headers.get("content-type")).toBe("text/event-stream");
   expect(await streamingTask.text()).toEndWith("data: [DONE]\n\n");
-  expect(observed).toHaveLength(3);
+  expect(observed).toHaveLength(4);
 
   const wrongModel = await app.request("/v1/chat/completions", {
     method: "POST",
@@ -2273,7 +2286,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     body: JSON.stringify({ model: "another-model", messages: [] }),
   });
   expect(wrongModel.status).toBe(400);
-  expect(observed).toHaveLength(3);
+  expect(observed).toHaveLength(4);
 
   const renewedResponse = await app.request(`/v1/agent-connections/${connection.id}/renew`, {
     method: "POST",
@@ -2390,10 +2403,7 @@ test("commissioned v1 SAAA bootstrap migrates the legacy profile to resident nat
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog: legacyAgentConnectionCatalog,
     onEvent: (event) => events.push(event),
-    gatewayFetch: async () => Response.json({
-      choices: [{ index: 0, message: { role: "assistant", content: "" } }],
-      usage: { completion_tokens: 1 },
-    }),
+    gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
     resolveStreaming: ({ audienceBaseUrl }) => ({
       protocol: "saaa.llm-stream.v1",
       url: `${audienceBaseUrl.replace(/^http/, "ws")}/llm/stream`,
@@ -2532,10 +2542,7 @@ test("agent connection derives a host-private claim from the request origin", as
     apiToken: agentApiToken,
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog: dynamicAgentConnectionCatalog,
-    gatewayFetch: async () => Response.json({
-      choices: [{ index: 0, message: { role: "assistant", content: "" } }],
-      usage: { completion_tokens: 1 },
-    }),
+    gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
     resolveStreaming: ({ audienceBaseUrl, audienceNetwork }) => {
       streamingAudiences.push(audienceNetwork);
       return {
@@ -2677,10 +2684,7 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
     allowAnonymousAgentConnections: true,
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog,
-    gatewayFetch: async () => Response.json({
-      choices: [{ index: 0, message: { role: "assistant", content: "" } }],
-      usage: { completion_tokens: 1 },
-    }),
+    gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
     resolveStreaming: ({ audienceBaseUrl }) => ({
       protocol: "saaa.llm-stream.v1",
       url: `${audienceBaseUrl.replace(/^http/, "ws")}/llm/stream`,
