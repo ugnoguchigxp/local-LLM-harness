@@ -1,3 +1,5 @@
+import { OpenAiChatCompletionSseInspector } from "../../../packages/core/src/index";
+
 export type MetricSummary = {
   min: number;
   p50: number;
@@ -20,6 +22,7 @@ export type LlmPerformance = TimedBody & {
 };
 
 export type AudioPerformance = TimedBody & {
+  firstPlayableAudioMs: number;
   audioSeconds: number;
   realtimeFactor: number;
   audioSecondsPerSecond: number;
@@ -130,6 +133,62 @@ export async function consumeLlmPerformanceResponse(
   };
 }
 
+export async function consumeLlmSsePerformanceResponse(
+  response: Response,
+  requestStarted: number,
+  now: () => number = () => performance.now(),
+): Promise<LlmPerformance & { deltaEvents: number }> {
+  if (!response.headers.get("content-type")?.startsWith("text/event-stream")) {
+    throw new Error("llm_sse_content_type_invalid");
+  }
+  if (!response.ok) throw new Error(`http_${response.status}`);
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("response_body_missing");
+  const inspector = new OpenAiChatCompletionSseInspector();
+  let firstByteAt: number | undefined;
+  let firstTokenAt: number | undefined;
+  let lastByteAt: number | undefined;
+  let previousDeltas = 0;
+  let responseBytes = 0;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    if (chunk.value.byteLength === 0) continue;
+    const receivedAt = now();
+    firstByteAt ??= receivedAt;
+    lastByteAt = receivedAt;
+    responseBytes += chunk.value.byteLength;
+    if (responseBytes > MAX_TEXT_RESPONSE_BYTES) {
+      await reader.cancel(new Error("response_too_large")).catch(() => undefined);
+      throw new Error("response_too_large");
+    }
+    const progress = inspector.push(chunk.value);
+    if (!progress.ok) {
+      await reader.cancel(new Error(progress.reason)).catch(() => undefined);
+      throw new Error(`llm_sse_${progress.reason}`);
+    }
+    if (progress.deltas > previousDeltas) firstTokenAt ??= receivedAt;
+    previousDeltas = progress.deltas;
+  }
+  const inspected = inspector.finish();
+  if (!inspected.ok) throw new Error(`llm_sse_${inspected.reason}`);
+  if (firstByteAt === undefined || firstTokenAt === undefined || lastByteAt === undefined) {
+    throw new Error("empty_response");
+  }
+  const totalMs = round(lastByteAt - requestStarted);
+  const completionTokens = inspector.getCompletionTokens() ?? inspected.deltas;
+  return {
+    firstByteMs: round(firstByteAt - requestStarted),
+    firstTokenMs: round(firstTokenAt - requestStarted),
+    totalMs,
+    responseBytes,
+    completionTokens,
+    completionTokenSource: inspector.getCompletionTokens() === undefined ? "content-events" : "usage",
+    outputTokensPerSecond: round(completionTokens / Math.max(totalMs / 1_000, 0.001)),
+    deltaEvents: inspected.deltas,
+  };
+}
+
 export async function consumeAsrPerformanceResponse(
   response: Response,
   requestStarted: number,
@@ -166,15 +225,82 @@ export async function consumeTtsPerformanceResponse(
     throw new Error("tts_content_type_invalid");
   }
   if (!response.headers.has("x-voicevox-credit")) throw new Error("tts_credit_missing");
-  const body = await readBody(response, MAX_AUDIO_RESPONSE_BYTES, requestStarted, now);
+  const body = await readWavBody(response, MAX_AUDIO_RESPONSE_BYTES, requestStarted, now);
   const audioSeconds = wavDurationSeconds(body.bytes);
   return {
     ...body.timing,
+    firstPlayableAudioMs: body.firstPlayableAudioMs,
     audioSeconds: round(audioSeconds),
     realtimeFactor: round(body.timing.totalMs / (audioSeconds * 1_000)),
     audioSecondsPerSecond: round(audioSeconds / (body.timing.totalMs / 1_000)),
     audio: body.bytes,
   };
+}
+
+async function readWavBody(
+  response: Response,
+  maximumBytes: number,
+  requestStarted: number,
+  now: () => number,
+): Promise<{ timing: TimedBody; firstPlayableAudioMs: number; bytes: Uint8Array }> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("response_body_missing");
+  let firstByteAt: number | undefined;
+  let firstPlayableAt: number | undefined;
+  let lastByteAt: number | undefined;
+  let size = 0;
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    if (chunk.value.byteLength === 0) continue;
+    const receivedAt = now();
+    firstByteAt ??= receivedAt;
+    lastByteAt = receivedAt;
+    size += chunk.value.byteLength;
+    if (size > maximumBytes) throw new Error("response_too_large");
+    chunks.push(chunk.value);
+    if (firstPlayableAt === undefined && size <= 1024 * 1024) {
+      const prefix = concatenate(chunks, size);
+      if (hasPlayableWavPrefix(prefix)) firstPlayableAt = receivedAt;
+    }
+  }
+  if (!response.ok) throw new Error(`http_${response.status}`);
+  if (firstByteAt === undefined || lastByteAt === undefined || size === 0) throw new Error("empty_response");
+  const bytes = concatenate(chunks, size);
+  wavDurationSeconds(bytes);
+  firstPlayableAt ??= lastByteAt;
+  return {
+    timing: {
+      firstByteMs: round(firstByteAt - requestStarted),
+      totalMs: round(lastByteAt - requestStarted),
+      responseBytes: size,
+    },
+    firstPlayableAudioMs: round(firstPlayableAt - requestStarted),
+    bytes,
+  };
+}
+
+function hasPlayableWavPrefix(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 12 || ascii(bytes, 0, 4) !== "RIFF" || ascii(bytes, 8, 4) !== "WAVE") return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 12;
+  while (offset + 8 <= bytes.byteLength) {
+    const size = view.getUint32(offset + 4, true);
+    if (ascii(bytes, offset, 4) === "data") return size > 0 && bytes.byteLength > offset + 8;
+    offset += 8 + size + (size % 2);
+  }
+  return false;
+}
+
+function concatenate(chunks: Uint8Array[], size: number): Uint8Array {
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 async function readBody(

@@ -18,7 +18,7 @@ state from this document alone.
 | 8083 | llama-swap | resident executor | on-demand 256K general and 64K Agent workers |
 | 8084 | VOICEVOX CORE 0.17.0 | resident | low-latency speech |
 | 8085 | Whisper large-v3-turbo Q5 HIP | trial resident | primary Japanese transcription |
-| 8090 | native LLM stream Provider | external resident companion | `larm.native-llm-stream.v1`, loopback only |
+| 8090 | legacy native LLM stream Provider | rollback-only companion | HTTP移行soak完了までloopbackで維持 |
 | 9810 | LARM daemon | control plane | authenticated LAN Gateway |
 
 The repository-managed Runtime units bind ports 8080–8085 to loopback. `prepare-host.sh` installs
@@ -27,34 +27,29 @@ only the reviewed source-host rule for the authenticated LARM Gateway and never 
 Runtime control and health use loopback endpoints from
 [`../config/local-node/runtimes.yaml`](../config/local-node/runtimes.yaml).
 The production LARM unit listens on all host interfaces at port 9810, requires both API and
-management credentials, and derives the SAAA claim URL from the authenticated Connection request
-origin. It does not store or advertise a fixed LAN address. Restrict port 9810 to the reviewed SAAA
+management credentials. Standard consumers configure its URL directly and send a Bearer token with
+the public model ID; they do not need Profile discovery, claim, or allocation. Restrict port 9810 to the reviewed SAAA
 source host; use TLS termination before extending this boundary beyond that network.
 The live host observed on 2026-08-29 still used wildcard Provider listeners. The
 [`Production Completion plan`](../specs/production-completion-plan.html) applies the loopback
 units one Provider at a time and removes only rules named by a reviewed convergence digest after
 the Ambient canary succeeds.
 
-### SAAA desktop direct connection
+### SAAA desktop direct HTTP connection
 
 SAAA discovers a DHCP-aware hostname such as `gnosis.local` (or receives the current host URL from
-operator configuration), calls that control URL, and requests audience `saaa-desktop`. The claim
-uses the request's scheme, hostname or current address, and port with the canonical `/v1` path.
-SAAA passes that `baseUrl`, `model`, and short-lived `credential.token` to its OpenAI-compatible
-client without rewriting them. The local-node profile permits the Agent Connection control
-lifecycle without a long-lived `LARM_API_TOKEN`; if configured, that token remains optional and is
-never returned in routing data. LARM ignores `X-Forwarded-*`; a future reverse-proxy deployment
-needs a separately reviewed trusted-proxy contract.
+operator configuration) and configures `http://gnosis.local:9810/v1`, a `LARM_API_TOKEN` Bearer,
+and a public model from `GET /v1/models`. Chat uses `POST /v1/chat/completions` with SSE;
+ASR and TTS use the standard audio endpoints. No claim URL, short-lived credential, allocation
+header, or native WebSocket is required. LARM ignores `X-Forwarded-*`; a future reverse-proxy
+deployment needs a separately reviewed trusted-proxy contract.
 
-Provider ports 8080–8084 remain loopback-only. Only Gateway port 9810 is exposed to the reviewed
-SAAA source host. Agent Profile and Agent Connection lifecycle routes accept anonymous requests.
-The `saaa-service-harness.v2` discovery, advertised ASR health, and allocation-free ASR batch route
-also require no Bearer while `LARM_SERVICE_HARNESS_AUTH_ENABLED=false`; setting it to `true` applies
-the normal `LARM_API_TOKEN` Bearer boundary. Other control requests return 401, while `/health` and
+Provider ports 8080–8085 remain loopback-only. Only Gateway port 9810 is exposed to the reviewed
+SAAA source host. Standard model and inference routes require `LARM_API_TOKEN`; `/health` and
 `/ready` remain credential-free operational probes and do not disclose Provider endpoints.
 
-LLM realtime output uses `saaa.llm-stream.v1` at the claim-provided
-`/v1/llm/stream` WS URL for the local LAN, or WSS URL for a separately configured TLS audience.
+The following native path is rollback-only during the HTTP migration. New consumers must not use
+it. Legacy realtime output uses `saaa.llm-stream.v1` at `/v1/llm/stream`.
 Port 8090 is the external runtime's native event endpoint; it is never
 exposed to SAAA and must not implement or proxy SSE. LARM probes its exact
 `larm.native-llm-stream.v1` subprotocol and requires a strict semantic readiness declaration for
@@ -123,10 +118,15 @@ cd /srv/ai/apps/local-LLM-harness
 deploy/local-node/scripts/preflight-larm.sh
 # Create the reviewed, digest-bound host backup documented in deploy/local-node/README.md.
 sudo deploy/local-node/scripts/install-services.sh
-deploy/local-node/scripts/release-larm.sh plan
-sudo deploy/local-node/scripts/release-larm.sh apply
+approved_commit="$(git rev-parse HEAD)" # review済み完全commitと照合
+LARM_RELEASE_COMMIT="${approved_commit}" deploy/local-node/scripts/build-larm-release.sh
+systemctl status larm-release-activator.service --no-pager
 deploy/local-node/scripts/verify.sh
 deploy/local-node/scripts/smoke-larm.sh
+LARM_EXPECTED_RELEASE_COMMIT="${approved_commit}" bun run smoke:http-provider-live \
+  > /srv/ai/logs/larm-canary/http-provider.json
+sudo /usr/local/libexec/larm/record-larm-release-gate canary \
+  /srv/ai/logs/larm-canary/http-provider.json
 deploy/local-node/scripts/shadow-larm.sh
 # Attended voice validation only:
 # LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/local-node/scripts/smoke-voice.sh
@@ -147,9 +147,8 @@ journalctl -u voicevox-tts.service -f
 journalctl -u larm-daemon.service -f
 ```
 
-If `release-larm.sh plan` returns cleanup candidates, review them and pass its
-`cleanupConfirm` value through `LARM_RELEASE_CLEANUP_CONFIRM` to the matching `apply`.
-An unreviewed or changed candidate set is rejected before deletion or activation.
+`complete`へ進むには、ContextStill job一件の完了、成果一回保存、次job境界でのActivity再評価を示す
+consumer evidenceを最後に記録する必要があります。source HEADやbranch名はdesired stateとして使いません。
 
 After the repository installer is applied, the expected enablement is Resident/control units
 enabled and `qwen-tts.service` disabled. A Preferred service may still be active temporarily
@@ -160,7 +159,7 @@ assuming that observation is still current.
 
 LARM自身は`/srv/ai/apps/larm-releases/<commit-prefix>`へ世代固定し、
 `/srv/ai/apps/larm-current`のatomic symlinkをdaemon unitが参照します。rollbackは
-`sudo deploy/local-node/scripts/release-larm.sh rollback`でLARM daemonだけを前世代へ戻します。
+`sudo /usr/local/libexec/larm/rollback-larm-release`でLARM daemonだけを前世代へ戻します。
 
 The host uses a 100 GB TTM/GTT setting. Check it with `amd-ttm` after an attended boot.
 Do not automate `reboot`: the machine is dual boot and may start Windows.

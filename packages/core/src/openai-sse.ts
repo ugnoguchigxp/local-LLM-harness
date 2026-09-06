@@ -23,16 +23,40 @@ export type OpenAiChatCompletionSseInspection =
     reason: OpenAiChatCompletionSseFailureReason;
   };
 
-const FINISH_REASONS = new Set(["stop", "length", "tool_calls", "content_filter", "function_call"]);
-
-function decode(input: string | Uint8Array): string | undefined {
-  if (typeof input === "string") return input;
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(input);
-  } catch {
-    return undefined;
+export type OpenAiChatCompletionSseProgress =
+  | {
+    ok: true;
+    chunks: number;
+    deltas: number;
+    finishReasons: number;
+    done: boolean;
   }
-}
+  | {
+    ok: false;
+    reason: OpenAiChatCompletionSseFailureReason;
+  };
+
+export type OpenAiChatCompletionSseChunk = {
+  id: string;
+  object: "chat.completion.chunk";
+  created: number;
+  model: string;
+  choices: Array<{
+    index: number;
+    delta: Record<string, unknown>;
+    finish_reason: string | null;
+    [key: string]: unknown;
+  }>;
+  usage?: {
+    completion_tokens: number;
+    prompt_tokens: number;
+    total_tokens: number;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+};
+
+const FINISH_REASONS = new Set(["stop", "length", "tool_calls", "content_filter", "function_call"]);
 
 function inspectDelta(delta: Record<string, unknown>): { valid: boolean; meaningful: boolean } {
   if (
@@ -113,6 +137,7 @@ function inspectChunk(value: unknown): {
   model: string;
   created: number;
   choices: Array<{ index: number; meaningful: boolean; finished: boolean }>;
+  completionTokens?: number;
 } | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const chunk = value as Record<string, unknown>;
@@ -129,6 +154,7 @@ function inspectChunk(value: unknown): {
         model: chunk.model,
         created: chunk.created as number,
         choices: [],
+        completionTokens: (chunk.usage as Record<string, unknown>).completion_tokens as number,
       }
       : undefined;
   }
@@ -165,24 +191,109 @@ function inspectChunk(value: unknown): {
   };
 }
 
-export function inspectOpenAiChatCompletionSse(
-  input: string | Uint8Array,
-): OpenAiChatCompletionSseInspection {
-  const decoded = decode(input);
-  if (decoded === undefined) return { ok: false, reason: "invalid_utf8" };
-  if (decoded.length === 0) return { ok: false, reason: "empty_stream" };
-  const blocks = decoded.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n\n");
-  let chunks = 0;
-  let deltas = 0;
-  let finishReasons = 0;
-  let id: string | undefined;
-  let model: string | undefined;
-  let created: number | undefined;
-  const seenIndexes = new Set<number>();
-  const finishedIndexes = new Set<number>();
-  let done = false;
-  for (const block of blocks) {
-    if (block.length === 0) continue;
+export class OpenAiChatCompletionSseInspector {
+  private readonly decoder = new TextDecoder("utf-8", { fatal: true });
+  private buffer = "";
+  private pendingCr = false;
+  private failed?: OpenAiChatCompletionSseFailureReason;
+  private finalized = false;
+  private receivedCharacters = 0;
+  private chunks = 0;
+  private deltas = 0;
+  private finishReasons = 0;
+  private id?: string;
+  private model?: string;
+  private created?: number;
+  private readonly seenIndexes = new Set<number>();
+  private readonly finishedIndexes = new Set<number>();
+  private done = false;
+  private completionTokens?: number;
+
+  constructor(private readonly onChunk?: (chunk: OpenAiChatCompletionSseChunk) => void) {}
+
+  getCompletionTokens(): number | undefined {
+    return this.completionTokens;
+  }
+
+  push(input: string | Uint8Array): OpenAiChatCompletionSseProgress {
+    if (this.failed) return { ok: false, reason: this.failed };
+    if (this.finalized) return this.fail("data_after_done");
+    let decoded: string | undefined;
+    if (typeof input === "string") {
+      decoded = input;
+    } else {
+      try {
+        decoded = this.decoder.decode(input, { stream: true });
+      } catch {
+        return this.fail("invalid_utf8");
+      }
+    }
+    this.receivedCharacters += decoded.length;
+    this.appendNormalized(decoded, false);
+    this.processCompleteBlocks();
+    return this.progress();
+  }
+
+  finish(): OpenAiChatCompletionSseInspection {
+    if (this.failed) return { ok: false, reason: this.failed };
+    if (this.finalized) return this.finalInspection();
+    this.finalized = true;
+    try {
+      const decoded = this.decoder.decode();
+      this.receivedCharacters += decoded.length;
+      this.appendNormalized(decoded, true);
+    } catch {
+      return this.fail("invalid_utf8");
+    }
+    this.processCompleteBlocks();
+    if (!this.failed && this.buffer.length > 0) {
+      const block = this.buffer;
+      this.buffer = "";
+      this.consumeBlock(block);
+    }
+    return this.finalInspection();
+  }
+
+  private appendNormalized(decoded: string, final: boolean): void {
+    let index = 0;
+    if (this.pendingCr) {
+      this.buffer += "\n";
+      this.pendingCr = false;
+      if (decoded.startsWith("\n")) index = 1;
+    }
+    for (; index < decoded.length; index += 1) {
+      const character = decoded[index]!;
+      if (character !== "\r") {
+        this.buffer += character;
+        continue;
+      }
+      if (index + 1 < decoded.length) {
+        if (decoded[index + 1] === "\n") index += 1;
+        this.buffer += "\n";
+      } else if (final) {
+        this.buffer += "\n";
+      } else {
+        this.pendingCr = true;
+      }
+    }
+    if (final && this.pendingCr) {
+      this.buffer += "\n";
+      this.pendingCr = false;
+    }
+  }
+
+  private processCompleteBlocks(): void {
+    while (!this.failed) {
+      const separator = this.buffer.indexOf("\n\n");
+      if (separator < 0) return;
+      const block = this.buffer.slice(0, separator);
+      this.buffer = this.buffer.slice(separator + 2);
+      this.consumeBlock(block);
+    }
+  }
+
+  private consumeBlock(block: string): void {
+    if (block.length === 0 || this.failed) return;
     const data: string[] = [];
     for (const line of block.split("\n")) {
       if (line.length === 0 || line.startsWith(":")) continue;
@@ -196,50 +307,116 @@ export function inspectOpenAiChatCompletionSse(
         continue;
       }
       if (/^(event|id|retry):/.test(line)) continue;
-      return { ok: false, reason: "invalid_sse_field" };
+      this.fail("invalid_sse_field");
+      return;
     }
-    if (data.length === 0) continue;
-    if (done) return { ok: false, reason: "data_after_done" };
+    if (data.length === 0) return;
+    if (this.done) {
+      this.fail("data_after_done");
+      return;
+    }
     const payload = data.join("\n");
     if (payload === "[DONE]") {
-      done = true;
-      continue;
+      this.done = true;
+      return;
     }
     let value: unknown;
     try {
       value = JSON.parse(payload) as unknown;
     } catch {
-      return { ok: false, reason: "invalid_json" };
+      this.fail("invalid_json");
+      return;
     }
     const inspected = inspectChunk(value);
-    if (!inspected) return { ok: false, reason: "invalid_chunk" };
+    if (!inspected) {
+      this.fail("invalid_chunk");
+      return;
+    }
     if (
-      (id !== undefined && inspected.id !== id)
-      || (model !== undefined && inspected.model !== model)
-      || (created !== undefined && inspected.created !== created)
-    ) return { ok: false, reason: "invalid_chunk" };
-    id ??= inspected.id;
-    model ??= inspected.model;
-    created ??= inspected.created;
-    chunks += 1;
+      (this.id !== undefined && inspected.id !== this.id)
+      || (this.model !== undefined && inspected.model !== this.model)
+      || (this.created !== undefined && inspected.created !== this.created)
+    ) {
+      this.fail("invalid_chunk");
+      return;
+    }
+    this.id ??= inspected.id;
+    this.model ??= inspected.model;
+    this.created ??= inspected.created;
+    if (inspected.completionTokens !== undefined) {
+      if (this.completionTokens !== undefined && this.completionTokens !== inspected.completionTokens) {
+        this.fail("invalid_chunk");
+        return;
+      }
+      this.completionTokens = inspected.completionTokens;
+    }
+    this.chunks += 1;
     for (const choice of inspected.choices) {
-      if (finishedIndexes.has(choice.index)) return { ok: false, reason: "invalid_chunk" };
-      seenIndexes.add(choice.index);
-      if (choice.meaningful) deltas += 1;
+      if (this.finishedIndexes.has(choice.index)) {
+        this.fail("invalid_chunk");
+        return;
+      }
+      this.seenIndexes.add(choice.index);
+      if (choice.meaningful) this.deltas += 1;
       if (choice.finished) {
-        finishReasons += 1;
-        finishedIndexes.add(choice.index);
+        this.finishReasons += 1;
+        this.finishedIndexes.add(choice.index);
       }
     }
+    this.onChunk?.(value as OpenAiChatCompletionSseChunk);
   }
-  if (deltas === 0) return { ok: false, reason: "missing_delta" };
-  if (!done) return { ok: false, reason: "missing_done" };
-  if (finishReasons === 0 || [...seenIndexes].some((index) => !finishedIndexes.has(index))) {
-    return { ok: false, reason: "missing_finish" };
+
+  private progress(): OpenAiChatCompletionSseProgress {
+    return this.failed
+      ? { ok: false, reason: this.failed }
+      : {
+        ok: true,
+        chunks: this.chunks,
+        deltas: this.deltas,
+        finishReasons: this.finishReasons,
+        done: this.done,
+      };
   }
-  const orderedIndexes = [...seenIndexes].sort((left, right) => left - right);
-  if (orderedIndexes.some((index, position) => index !== position) || id === undefined || model === undefined) {
-    return { ok: false, reason: "invalid_chunk" };
+
+  private fail(reason: OpenAiChatCompletionSseFailureReason): { ok: false; reason: OpenAiChatCompletionSseFailureReason } {
+    this.failed ??= reason;
+    return { ok: false, reason: this.failed };
   }
-  return { ok: true, id, model, chunks, deltas, finishReasons };
+
+  private finalInspection(): OpenAiChatCompletionSseInspection {
+    if (this.failed) return { ok: false, reason: this.failed };
+    if (this.receivedCharacters === 0) return this.fail("empty_stream");
+    if (this.deltas === 0) return this.fail("missing_delta");
+    if (!this.done) return this.fail("missing_done");
+    if (
+      this.finishReasons === 0
+      || [...this.seenIndexes].some((index) => !this.finishedIndexes.has(index))
+    ) {
+      return this.fail("missing_finish");
+    }
+    const orderedIndexes = [...this.seenIndexes].sort((left, right) => left - right);
+    if (
+      orderedIndexes.some((index, position) => index !== position)
+      || this.id === undefined
+      || this.model === undefined
+    ) {
+      return this.fail("invalid_chunk");
+    }
+    return {
+      ok: true,
+      id: this.id,
+      model: this.model,
+      chunks: this.chunks,
+      deltas: this.deltas,
+      finishReasons: this.finishReasons,
+    };
+  }
+}
+
+export function inspectOpenAiChatCompletionSse(
+  input: string | Uint8Array,
+): OpenAiChatCompletionSseInspection {
+  const inspector = new OpenAiChatCompletionSseInspector();
+  const progress = inspector.push(input);
+  return progress.ok ? inspector.finish() : progress;
 }

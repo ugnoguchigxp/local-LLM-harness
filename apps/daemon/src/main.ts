@@ -252,6 +252,9 @@ const appComponents = createAppComponents({
   connectionHistoryLimit: config.historyLimit,
   inferenceAuditMode: config.inferenceAuditMode,
   inferenceAuditRecorder,
+  getReleaseConvergenceStatus: async () => await Bun.file(
+    process.env.LARM_RELEASE_CONVERGENCE_STATUS ?? "/var/lib/larm/release-controller/status.json",
+  ).json(),
   resolveStreaming: async ({ allocationId, provider, audienceBaseUrl, audienceNetwork }) => {
     const resolved = control.resolveAllocation(allocationId, provider.capability);
     if (resolved.status !== 200 || !("runtime" in resolved.body)) return undefined;

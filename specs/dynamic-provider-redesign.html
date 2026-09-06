@@ -1,0 +1,401 @@
+<article lang="ja">
+  <h1>動的Provider再設計案：WSとHTTP SSEを一つの推論経路で提供する</h1>
+  <p>
+    2026-09-06。状態は設計提案。現行コードとliveを読み取り調査した。実装、配備、推論canary、consumer完了の検証は今回行っていない。既存の未commit文書は変更しない。
+  </p>
+  <section id="conclusion">
+    <h2>結論</h2>
+    <p>
+      Rustの全面撤去を先に行う根拠はない。LARM本体は既にBun／TypeScriptであり、調査した推論系はllama.cpp派生のC++
+      engineとTypeScriptのnative
+      companionで構成される。ContextStillのRust実装にはProvider不通を通常の試行回数に加算する設計があるが、これは言語変更では解決しない。
+    </p>
+    <p>
+      推奨は、Bun／TypeScriptの単一Gatewayで接続・実行枠・中断を管理し、同じllama-serverのHTTP
+      SSEを入力としてJSON、SSE、WSを提供する構成である。モデル・ROCm対応資産を維持し、独自native
+      WS経路の必要性を再審査する。上流llama.cppへの置換も、現在の量子化・MTP・GPU対応を同条件で確認してから判断する。
+    </p>
+    <p>
+      この簡素化案は既存SAAAのnative
+      WS契約と同一ではない。クライアントも変更する新しい契約として提案する。既存契約を維持する場合の案も後述する。回答が未確定なら、この文書によって現行契約が変更されたとは扱わない。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>確認した事実と構造上の問題</h2>
+    <table>
+      <caption>
+        今回の調査結果。ContextStillのコードはMac checkout、本番応答とLARMコードはgnosisで確認した
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">確認結果</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">配備</th>
+          <td>
+            source HEADは1b5e427d5d655e7fb8d2abf10ff46a113f6ae2e0。live pointerとGET
+            /healthは01667fe1a4f9acc18794ae9fd4264487c1063647。/v1/activityへの認証なしGETは401。
+          </td>
+          <td>現在もrelease不一致がある。WS/SSEの言語を替えてもこの障害は残る。</td>
+        </tr>
+        <tr>
+          <th scope="row">二つの推論経路</th>
+          <td>
+            residentはHTTP :8080とnative WS :8090、native engine
+            socketを利用する。contextstill-backgroundはllama-swap配下のqwen-agent-workerで、WSを広告していない。
+          </td>
+          <td>
+            WSとHTTPで異なるmodel
+            binding・Provider能力を持つ。HTTP成功がWS成功を証明せず、その逆も同じ。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">追加のWS要件</th>
+          <td>
+            saaa-maximum-performance-websocket.htmlはSSE変換禁止、SAD1
+            binary、ACK、再送、pause/resume、tool継続を要求する。
+          </td>
+          <td>
+            単なるWSホスティングより広い要件。実装・試験・配備対象が増える。複雑さへの寄与は設計上の評価であり、全障害の直接原因と断定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Queue</th>
+          <td>
+            finding_executor.rsのmark_retryingは8回でpausedとnext_run_at=nullにする。episode_executor/progress.rsもmax_attempts到達で同様。通常の実行選択はpausedにnext_run_atがある場合だけ再開する。
+          </td>
+          <td>
+            Providerが復旧しても、この通常選択経路では再開しない。本番DBの件数や全復旧経路は今回未調査。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">root境界</th>
+          <td>
+            release-larm.shはrootを要求した後、候補のbun install、test、配備test、config
+            revision計算を実行する。
+          </td>
+          <td>このスクリプトをNOPASSWDで開放する案は採用しない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      参照実装：LARMのconfig/local-node/runtimes.yaml、agent-connections.yaml、apps/daemon/src/llm-stream-session.ts、packages/backends/src/native-llm-stream.ts、deploy/local-node/systemd/*.service。ContextStillのcrates/context-stilld/src/domains/queue_lifecycle/finding_executor.rs、episode_executor/progress.rs、executor.rs。
+    </p>
+  </section>
+  <section id="expectations">
+    <h2>期待する利用体験</h2>
+    <ol>
+      <li>利用者は固定の9810へProfileを要求する。内部portやモデルprocessを探さない。</li>
+      <li>Gatewayがモデルの準備と実行枠を管理し、準備中・混雑・認証不正を区別して返す。</li>
+      <li>claimした同じProfile・model bindingで、JSON、HTTP SSE、WSのいずれかを選ぶ。</li>
+      <li>切断、中断、Provider再起動時に実行枠が解放され、再取得によって次の仕事を実行できる。</li>
+      <li>
+        Provider復旧後はinfra待機中の仕事を自動再開する。業務結果の保存を確認して初めて完了にする。
+      </li>
+    </ol>
+    <p>
+      動的とは接続権限・実行枠・モデル割当を動的にすること。入口のportまで毎回変更する必要はない。旧static経路44448は使用も監視もしない。
+    </p>
+  </section>
+  <section id="architecture">
+    <h2>推奨構成</h2>
+    <figure>
+      <pre><code>ContextStill / SAAA / その他のclient
+             │ Agent Connection → claim
+             ▼
+      Gateway :9810（Bun / TypeScript、非特権）
+        ├─ POST /v1/chat/completions → JSON または SSE
+        └─ WS /v2/llm/stream        → versioned JSON event
+             │
+      共通Run管理：認証・binding・実行枠・deadline・cancel
+             │
+      一つのupstream adapter（HTTP SSE）
+             │
+      llama-server（loopback、モデル世代を固定）
+
+      必要な追加モデルのみ、同じadapterからllama-swapへ
+      release reconciler / 固定root activatorは実行経路の外</code></pre>
+      <figcaption>
+        新WS endpointとprotocol名は提案。既存saaa.llm-stream.v1をそのまま名乗らない。
+      </figcaption>
+    </figure>
+    <p>
+      最初の検証はresident Qwen 3.8
+      27B一つ、推論同時実行1、Gateway内待ち行列0で行う。これは検証条件であり、ContextStillをresidentへ無断で切り替える指示ではない。次に既存のcontextstill-backgroundのworker
+      Profileで同じ三方式を検証する。モデルの品質・context長・利用優先度を暗黙に変更しない。
+    </p>
+    <p>
+      Gatewayへ無制限の仕事Queueを追加しない。永続jobと再試行はconsumerが所有し、Gatewayは即時実行枠だけを所有する。モデル起動はProfile単位でsingle-flightにし、Connection
+      leaseと実推論枠を区別する。claimしただけで推論枠を占有しない。
+    </p>
+    <p>
+      Activityは表示と待機判断の補助にする。idleを見てからConnectionを作る間に競合するため、最終判断はGatewayのatomic
+      admissionで行う。busyは故障ではなく、bounded Retry-Afterを返す。
+    </p>
+    <p>
+      通常の運用要素はGateway、engine、必要時のmodel
+      manager、consumer。新たなRedis、Kubernetes、汎用workflow基盤は導入しない。既存coreのschema、Profile、認証、GPU資源制約は再利用を優先する。
+    </p>
+  </section>
+  <section id="transport-contract">
+    <h2>WS・SSE共通の実行契約</h2>
+    <p>
+      各Runはrequest ID、principal、connection ID、release digest、profile revision、model
+      binding、provider
+      epoch、deadlineを固定する。transportは出力形式のみを担当し、終端判定とcleanupは共通Run管理が一度だけ行う。
+    </p>
+    <table>
+      <caption>
+        共通動作と方式ごとの差
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">HTTP JSON / SSE</th>
+          <th scope="col">新WS</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">入力</th>
+          <td>Chat Completions request。streamで形式を選択。</td>
+          <td>startに同じmessages、model、tools等を含める。1 socketにつきactive runは1件。</td>
+        </tr>
+        <tr>
+          <th scope="row">出力</th>
+          <td>共通の増分parserでupstreamを検証。SSEはchunkを逐次出力し、JSONは上限付きで集約。</td>
+          <td>
+            accepted、delta、tool_call_delta、completed、failed、cancelledをversion管理されたJSONで返す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">成功</th>
+          <td>正常finishと終端を確認。SSEは正常完了時だけ[DONE]。途中EOFを成功にしない。</td>
+          <td>run ID付きのcompletedのみ成功。socket closeだけでは成功にしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">中断</th>
+          <td>HTTP切断をAbortSignalへ伝える。</td>
+          <td>cancelまたはsocket切断を同じAbortSignalへ伝える。</td>
+        </tr>
+        <tr>
+          <th scope="row">遅いclient</th>
+          <td>Web Streamsのbackpressureと総byte上限を適用。</td>
+          <td>sendの戻り値とdrainを扱う。send=-1はenqueue済みなので同じframeを再送しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">再接続</th>
+          <td>初期版は同じ生成途中への復帰を保証しない。</td>
+          <td>
+            初期版はresume非対応を明示。新しいclaimで新規Runを開始。自動再生成を途中応答へ継ぎ足さない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      parserはUTF-8とSSE recordの任意位置での分割、複数choice、tool
+      argumentsの増分、reasoningとcontentの区別を保持する。対応していないfieldは黙って削除しない。profileで許可する機能を明示し、unsupportedを推論前に返す。toolはconsumerが実行し、結果を含む次の推論requestで継続する。
+    </p>
+    <p>
+      上流SSEのreaderを止めることはGPU推論のpauseを保証しない。buffer上限または送信停滞deadlineでupstreamをcancelする。cancel完了まで実行枠を再利用せず、停止を確認できないengineはquarantineして別Runを重ねない。nativeのKV状態保持・token単位pauseは広告しない。
+    </p>
+    <p>
+      headers送信前の異常は通常のHTTP error。SSE開始後はerror
+      eventと異常終端として記録し、成功のfinishや[DONE]を合成しない。consumerは正常終端まで検査する。JSON集約も途中EOFなら502とする。
+    </p>
+    <p>
+      実行中の接続更新でRunのbindingを差し替えない。tokenはadmission時に検証し、lease
+      expiry・明示失効・drainは既定deadlineに従ってRunへ伝播する。daemon
+      restartで旧epochのclaimを失効し、clientが再取得する契約を共通SDKへまとめる。
+    </p>
+    <p>
+      HTTPとdesktop WSは短期Bearerを使用する。browser
+      WSが必要ならOrigin検証付きの短期一回ticketを事前取得し、最初の認証frameまで推論を開始しない。長期secretをURLへ入れない。内部engineを直接公開しない。
+    </p>
+  </section>
+  <section id="native-compatibility">
+    <h2>既存SAAAと完全互換にする場合</h2>
+    <p>
+      現行PWS-DEC-08はSSE
+      bridgeを禁止するため、推奨案を既存v1互換と呼ぶことはできない。完全互換が必要なら、既存native
+      engine eventを共通Run管理の入力にする。WSは既存SAD1・ACK・再送契約を維持し、同じeventからHTTP
+      JSONとSSEを生成する。
+    </p>
+    <p>
+      この案でもroot配備境界とQueue回復の修正は必要である。またworkerを含めたengine側でnative
+      eventが必要となり、tool
+      call、usage、finish、reasoningの意味変換を検証する必要がある。初期実装量は増える。native
+      resumeを維持したまま、標準HTTP Providerだけに置換できるとは約束しない。
+    </p>
+    <p>
+      Rust撤去とnative要件撤去は別の判断である。既存consumerのDB・業務処理を書き直すと移行範囲が増えるため、まずProvider
+      clientとinfra回復処理に変更を限定する。
+    </p>
+  </section>
+  <section id="queue-recovery">
+    <h2>Provider復旧とQueue再開</h2>
+    <p>
+      release identity、process boot epoch、Provider
+      healthの回復世代を区別する。同一process内の一時障害からの復旧もあり得るため、commit変更だけを復旧条件にしない。
+    </p>
+    <pre><code>healthy → unavailable → probing（1件のみ）→ healthy
+                         └─ 失敗 → unavailable + backoff
+
+job: pending → running → completed（結果保存済み）
+               ├─ infra障害 → waiting_provider → pending
+               └─ 業務上の失敗 → job用retry / failed</code></pre>
+    <ul>
+      <li>
+        接続不能、503、起動待ち、busyはjob
+        failureへ加算しない。infra_attempts、next_probe_at、reasonを別管理する。指数backoffとjitter、上限時間を設ける。
+      </li>
+      <li>
+        401、Profile不一致、release不一致はconfiguration
+        blockedとして扱い、通常の短周期retryに混ぜない。設定変更と低頻度の再検証で回復を確認する。
+      </li>
+      <li>
+        Providerの軽量健康確認後、claimと実推論canaryを1件実行する。失敗したら追加jobを再開しない。回復probeは通常jobの選択とは独立に動かす。
+      </li>
+      <li>
+        既存pausedはprovider_unavailable_exhausted等の明示的なinfra理由、手動停止なし、有効lockなし、という条件をconsumer所有のDB
+        transactionで照合する。LARMがconsumer DBを直接更新しない。
+      </li>
+      <li>
+        canary成功後は対象jobを1件だけ許可し、その結果保存後に少量ずつ戻す。許可する件数と実行並列数は別で、engine
+        capacityを超えない。
+      </li>
+      <li>
+        手動paused、業務失敗、実行中jobは触らない。復旧を待つjob自身しかprobeを開始できない循環依存を作らない。
+      </li>
+      <li>
+        再試行はat-least-onceを前提とし、job
+        IDと処理versionをキーに結果保存を冪等化する。推論の再実行可能性と業務成果物の重複防止を分ける。
+      </li>
+    </ul>
+  </section>
+  <section id="release-convergence">
+    <h2>配備からconsumer完了まで</h2>
+    <p>
+      承認済みdesired
+      releaseを保持する提案は維持する。ただし一つの巨大な状態列だけにせず、releaseの検証段階とProvider健康状態、consumer受入を別に永続化する。過去にcanary成功した記録を、現在も健康であることの代用にしない。
+    </p>
+    <ol>
+      <li>
+        非特権builderが承認対象commitを検証・構築。独立した承認者がcommit、bundle digest、config
+        digest、engine/model資産digest、単調増加する配備番号を署名する。builderに承認秘密鍵を渡さない。
+      </li>
+      <li>
+        事前導入された固定activatorが署名と対象host、digestを検証し、root所有の領域へ取り込む。symlink・hardlink・特殊file・path
+        traversalを拒否し、取り込み後にdigestを再検証して変更競合を閉じる。
+      </li>
+      <li>
+        activatorは固定のunitをrestartするだけとし、candidateのshell、test、hook、unit
+        fileをrootで実行しない。実行runtimeも信頼済み固定pathから使用する。candidate本体はsystemdのUser指定で非特権実行する。
+      </li>
+      <li>
+        旧Runを期限付きでdrainしてatomic
+        pointer切替。単一Gatewayのrestartには接続切断があり、atomic切替を無停止と呼ばない。clientの再取得を受入条件にする。
+      </li>
+      <li>
+        独立した非特権verifierがlive
+        identity、Activity、Profile、claim、JSON、SSE、WSを検証する。検査結果は配備番号とdigestへ結びつけ、candidateからの自己申告だけを証拠にしない。
+      </li>
+      <li>
+        canary成功後、consumerが指定された1件を処理・保存し、job ID、release digest、provider
+        epoch、result IDを含むackを返す。gatewayのHTTP 200やQueue件数減少だけを完了条件にしない。
+      </li>
+    </ol>
+    <p>
+      identity・contract不一致と新release起因のprotocol
+      canary失敗は前世代へrollbackする。外部の一時的Provider不通やconsumer設定障害は原因を記録して未達を維持し、同じreleaseの再配備・rollbackを無限に繰り返さない。自動activationは配備番号ごとに1回、自動rollbackも1回まで。再承認または明示的な再試行操作を要求する状態を保存する。
+    </p>
+    <p>
+      root
+      helperと信頼鍵の初回導入は管理者による基盤変更が必要である。アプリの配備承認を受け取る経路と、root権限そのものを自動付与する経路を混同しない。
+    </p>
+  </section>
+  <section id="acceptance">
+    <h2>実装順と受入</h2>
+    <p>
+      Controllerを全部完成させてから推論を試す順番にはしない。最初に1 model・1 Gateway・1
+      Runの縦断試作で三方式を実証し、権限境界とdesired
+      releaseを整えてliveへ進める。各段階は未到達のまま次の段階の成功を名乗らない。
+    </p>
+    <table>
+      <caption>
+        実行計画。新規test名・script名は実装時に追加する提案であり、現時点では存在しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">検証</th>
+          <th scope="col">合格条件と失敗時動作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1. fixture</th>
+          <td>新規 bun test apps/daemon/src/unified-inference.test.ts</td>
+          <td>
+            JSON/SSE/WSで同じ意味の結果。分割UTF-8、tool、途中EOF、timeout、cancel、slow
+            reader、競合をdeterministic fixtureで検査。不成立なら実Providerへ進めない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">2. isolated実Provider</th>
+          <td>新規 bun run smoke:provider-unified。対象URL・Profile・期待releaseを必須にする。</td>
+          <td>
+            residentとworkerを順に検証。WS/SSE交互100件、同時要求のadmission、cancel後の次Run成功、終了時RunとConnection残留0。品質・TTFT・throughputを同model・設定のbaselineと比較する。異常時は候補だけを停止。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">3. 配備境界</th>
+          <td>新規 bun run test:release-boundary</td>
+          <td>
+            誤署名、digest改変、file競合、旧配備番号、restart失敗、activator途中停止を拒否または復元。candidate
+            codeのroot実行0。異常時はliveを維持。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">4. live</th>
+          <td>
+            既存 bun run smoke:agent-http と、新規WS smokeをconsumer
+            hostから実行。両方で期待releaseを照合。
+          </td>
+          <td>
+            9810→Activity/Profile→Connection→claim→JSON/SSE/WS完了→release。identity/protocol不一致はrollbackし、consumer再開を止める。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">5. consumer</th>
+          <td>新規consumer側受入コマンド。対象job IDと期待releaseを入力。</td>
+          <td>
+            ContextStillはSSEで1件の結果保存、SAAAはWSで1件の応答完了。前者のack前にrelease全体をcompleteにしない。障害時は未達理由を保持。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">6. 復旧・継続</th>
+          <td>
+            隔離環境でProvider停止・復旧、Gateway再起動、token失効、手動paused混在を注入。その後24時間soak。
+          </td>
+          <td>
+            再claim成功、infra
+            jobのみ段階再開、通常failure増加0、成果物重複0、実行枠漏れ0。性能目標はbaseline測定後に固定し、未測定の数値を保証しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      実装変更後の既存回帰gateはbun run check。文書のみの今回の検証はbun run docs:check:fixおよびbun
+      run docs:check。既存のsmoke:saaa-websocketはnative v1検査なので、新WSの合格証拠に流用しない。
+    </p>
+    <p>
+      監視はcontrol到達性、Profile
+      contract、model準備状態、admission、protocol別の正常終端、consumerの最終成功時刻を分けて表示する。canaryはquotaを持ち、常時業務を押しのけない。正常時の定期通知は不要で、意味のある状態変化と未達を通知する。
+    </p>
+  </section>
+</article>

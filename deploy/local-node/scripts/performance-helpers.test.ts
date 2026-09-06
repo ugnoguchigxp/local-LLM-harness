@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   consumeAsrPerformanceResponse,
   consumeLlmPerformanceResponse,
+  consumeLlmSsePerformanceResponse,
   consumeTtsPerformanceResponse,
   degradationPercent,
   summarize,
@@ -50,6 +51,35 @@ test("measures validated LLM, ASR, and TTS responses", async () => {
   ), 100, () => times.shift() ?? 120);
   expect(llm).toMatchObject({ firstByteMs: 10, firstTokenMs: 10, completionTokens: 8, completionTokenSource: "usage" });
 
+  const metadata = {
+    id: "chatcmpl-performance",
+    object: "chat.completion.chunk",
+    created: 1,
+    model: "coding-default",
+  };
+  const sseEvents = [
+    `data: ${JSON.stringify({ ...metadata, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`,
+    `data: ${JSON.stringify({ ...metadata, choices: [{ index: 0, delta: { content: "OK" }, finish_reason: null }] })}\n\n`,
+    `data: ${JSON.stringify({ ...metadata, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`,
+    `data: ${JSON.stringify({ ...metadata, choices: [], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } })}\n\n`,
+    "data: [DONE]\n\n",
+  ];
+  let eventIndex = 0;
+  const sse = await consumeLlmSsePerformanceResponse(new Response(new ReadableStream({
+    pull(controller) {
+      const value = sseEvents[eventIndex++];
+      if (value === undefined) controller.close();
+      else controller.enqueue(new TextEncoder().encode(value));
+    },
+  }), { headers: { "content-type": "text/event-stream" } }), 100, () => 110 + eventIndex * 10);
+  expect(sse).toMatchObject({
+    firstByteMs: 20,
+    firstTokenMs: 30,
+    completionTokens: 1,
+    completionTokenSource: "usage",
+    deltaEvents: 1,
+  });
+
   const asr = await consumeAsrPerformanceResponse(new Response('{"text":"性能テスト"}', {
     headers: { "content-type": "application/json" },
   }), 100, 2, () => 200);
@@ -58,7 +88,13 @@ test("measures validated LLM, ASR, and TTS responses", async () => {
   const tts = await consumeTtsPerformanceResponse(new Response(wav(2), {
     headers: { "content-type": "audio/wav", "x-voicevox-credit": "VOICEVOX" },
   }), 100, () => 300);
-  expect(tts).toMatchObject({ totalMs: 200, audioSeconds: 2, realtimeFactor: 0.1, audioSecondsPerSecond: 10 });
+  expect(tts).toMatchObject({
+    totalMs: 200,
+    firstPlayableAudioMs: 200,
+    audioSeconds: 2,
+    realtimeFactor: 0.1,
+    audioSecondsPerSecond: 10,
+  });
 });
 
 test("rejects malformed LLM and responses that could not be evaluated", async () => {

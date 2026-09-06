@@ -75,7 +75,8 @@ run_installer
 [[ "$(<"${audit_config}")" == "${initial_audit_config}" ]]
 
 for unit in "${repo_root}"/deploy/local-node/systemd/*.service \
-  "${repo_root}"/deploy/local-node/systemd/*.timer; do
+  "${repo_root}"/deploy/local-node/systemd/*.timer \
+  "${repo_root}"/deploy/local-node/systemd/*.path; do
   cmp --silent "${unit}" "${test_root}/etc/systemd/system/$(basename "${unit}")"
 done
 cmp --silent \
@@ -91,6 +92,14 @@ grep -F "disable qwen-tts.service" "${systemctl_log}" >/dev/null
 [[ -d "${test_root}/srv/ai/models/ornith15-35b" ]]
 [[ "$(stat -c '%a' "${test_root}/var/lib/larm/inference-audit")" == "700" ]]
 [[ -f "${test_root}/etc/systemd/system/larm-inference-audit-prune.timer" ]]
+[[ -f "${test_root}/etc/systemd/system/larm-release-activator.path" ]]
+[[ -f "${test_root}/etc/systemd/system/larm-http-provider-monitor.timer" ]]
+[[ -x "${test_root}/usr/local/libexec/larm/activate-larm-release" ]]
+[[ -x "${test_root}/usr/local/libexec/larm/record-larm-release-gate" ]]
+[[ -x "${test_root}/usr/local/libexec/larm/rollback-larm-release" ]]
+[[ "$(stat -c '%a' "${test_root}/var/lib/larm/release-builder/signing-key.pem")" == "600" ]]
+[[ "$(stat -c '%a' "${test_root}/etc/larm/release-signing.pub")" == "644" ]]
+openssl pkey -pubin -in "${test_root}/etc/larm/release-signing.pub" -noout >/dev/null
 grep -F "/srv/ai/models/qwen36-35b" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "/srv/ai/models/ornith15-35b" \
@@ -104,6 +113,8 @@ LARM_INSTALL_TEST_MODE=1 \
 [[ -f "${gateway_root}/etc/systemd/system/larm-daemon.service" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-inference-audit-prune.service" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-inference-audit-prune.timer" ]]
+[[ -f "${gateway_root}/etc/systemd/system/larm-release-activator.path" ]]
+[[ -f "${gateway_root}/etc/systemd/system/larm-http-provider-monitor.timer" ]]
 for unit in llama-server.service larm-native-qwen-provider.service llama-swap-worker.service qwen-asr.service whisper-asr.service qwen-tts.service \
   voicevox-tts.service; do
   [[ ! -e "${gateway_root}/etc/systemd/system/${unit}" ]]

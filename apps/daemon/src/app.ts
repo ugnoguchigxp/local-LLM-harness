@@ -14,10 +14,13 @@ import {
   agentConnectionClaimRequestSchema,
   agentConnectionRenewRequestSchema,
   agentConnectionRequestSchema,
+  audioSpeechRequestSchema,
   createOpenApiDocument,
   createServiceActivity,
+  chatCompletionRequestSchema,
   prepareRequestSchema,
   releaseRequestSchema,
+  releaseConvergenceStatusSchema,
   resolveRequestSchema,
   SAAA_SERVICE_HARNESS_CONTRACT_VERSION,
   getRuntime,
@@ -47,6 +50,7 @@ import {
 import { ConnectionTokenCodec, ConnectionTokenError } from "./connection-token";
 import { SemanticReadiness } from "./semantic-readiness";
 import type { InferenceAuditRecorder } from "./inference-audit";
+import { ModelBroker, ModelBrokerError } from "./model-broker";
 
 export type FetchLike = (
   input: string | URL | Request,
@@ -77,6 +81,7 @@ export type AppDeps = {
   onEvent?: (event: ControlEvent) => void;
   identity?: DaemonIdentity;
   getConfigRevision?: () => string;
+  getReleaseConvergenceStatus?: () => Promise<unknown> | unknown;
   executionGate?: ExecutionGate;
   idempotencyTtlMs?: number;
   idempotencyLimit?: number;
@@ -89,6 +94,7 @@ export type AppDeps = {
   inferenceAuditMode?: "off" | "metadata" | "full-required";
   inferenceAuditRecorder?: InferenceAuditRecorder;
   agentConnectionController?: AgentConnectionController;
+  modelBroker?: ModelBroker;
   resolveStreaming?: (input: {
     allocationId: string;
     provider: AgentConnectionCatalog["profiles"][number]["providers"][number];
@@ -99,6 +105,17 @@ export type AppDeps = {
 
 function errorBody(code: string, message: string) {
   return { error: { code, message } };
+}
+
+function openAiErrorBody(code: string, message: string, param: string | null = null) {
+  return {
+    error: {
+      message,
+      type: "invalid_request_error",
+      param,
+      code,
+    },
+  };
 }
 
 function secretMatches(actual: string | undefined, expected: string): boolean {
@@ -264,6 +281,18 @@ export function createAppComponents(deps: AppDeps) {
       random: deps.random,
     })
     : undefined);
+  const modelBroker = deps.modelBroker ?? (deps.agentConnectionCatalog
+    ? new ModelBroker(deps.control, deps.agentConnectionCatalog, {
+      startupTimeoutMs: deps.connectionReadyTimeoutMs ?? 120_000,
+      pollIntervalMs: deps.connectionPollIntervalMs ?? 50,
+      leaseTtlSeconds: Math.min(
+        86_400,
+        Math.max(1, Math.ceil(((deps.connectionReadyTimeoutMs ?? 120_000) + (deps.gatewayTimeoutMs ?? 300_000)) / 1_000) + 60),
+      ),
+      now: deps.now,
+      onEvent: deps.onEvent,
+    })
+    : undefined);
   type AllocationApiResult = {
     status: 200 | 202 | 400 | 403 | 404 | 409 | 503;
     body: unknown;
@@ -300,6 +329,7 @@ export function createAppComponents(deps: AppDeps) {
     const anonymousAgentConnection = deps.allowAnonymousAgentConnections === true
       && acceptsAnonymousAgentApi(c.req.method, c.req.path);
     const anonymousServiceHarness = deps.serviceHarnessAuthEnabled !== true
+      && c.req.header("authorization") === undefined
       && isServiceHarnessRequest(
         c.req.method,
         c.req.path,
@@ -372,6 +402,7 @@ export function createAppComponents(deps: AppDeps) {
     if (deps.control.isDraining()) {
       return c.json(errorBody("draining", "control plane is draining"), 503);
     }
+    const declaredAllocationId = c.req.header("x-larm-allocation-id");
     const authorization = c.req.header("authorization");
     const providerToken = authorization?.startsWith("Bearer larm_conn_v1.")
       ? authorization.slice(7)
@@ -391,8 +422,7 @@ export function createAppComponents(deps: AppDeps) {
       if (scoped.provider.protocol !== options.protocol) {
         return c.json(errorBody("connection_forbidden", "provider token is not valid for this endpoint"), 403);
       }
-      const declaredAllocation = c.req.header("x-larm-allocation-id");
-      if (declaredAllocation !== undefined && declaredAllocation !== scoped.record.allocationId) {
+      if (declaredAllocationId !== undefined && declaredAllocationId !== scoped.record.allocationId) {
         return c.json(errorBody("connection_forbidden", "allocation header does not match provider token"), 403);
       }
       const declaredCapability = c.req.header("x-larm-capability");
@@ -401,10 +431,12 @@ export function createAppComponents(deps: AppDeps) {
       }
     }
     let chatRequest: unknown;
+    let chatRequestBytes: Uint8Array | undefined;
     let chatResponseFormat: "sse" | undefined;
     if (options.protocol === "openai.chat-completions.v1") {
       try {
         const bytes = await readBodyLimited(c.req.raw.clone() as unknown as Request, options.maxBodyBytes);
+        chatRequestBytes = bytes;
         chatRequest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
         if (
           chatRequest
@@ -419,6 +451,65 @@ export function createAppComponents(deps: AppDeps) {
           return c.json(errorBody(error.code, error.message), error.status);
         }
         return c.json(errorBody("bad_request", "request body must be valid UTF-8 JSON"), 400);
+      }
+    }
+    let directModel: string | undefined;
+    let directRequestBytes: Uint8Array | undefined;
+    let directSpeechFormat: string | undefined;
+    if (!scoped && declaredAllocationId === undefined && modelBroker) {
+      if (options.protocol === "openai.audio-speech.v1") {
+        try {
+          directRequestBytes = await readBodyLimited(
+            c.req.raw.clone() as unknown as Request,
+            options.maxBodyBytes,
+          );
+          const parsed = audioSpeechRequestSchema.safeParse(JSON.parse(
+            new TextDecoder("utf-8", { fatal: true }).decode(directRequestBytes),
+          ));
+          if (!parsed.success) {
+            return c.json(openAiErrorBody(
+              "invalid_request",
+              "model and input are required",
+              parsed.error.issues.some((issue) => issue.path[0] === "model") ? "model" : null,
+            ), 400);
+          }
+          directModel = parsed.data.model;
+          directSpeechFormat = parsed.data.response_format;
+        } catch (error) {
+          if (error instanceof RequestBodyError) {
+            return c.json(openAiErrorBody(error.code, error.message), error.status);
+          }
+          return c.json(openAiErrorBody("invalid_request", "request body must be valid UTF-8 JSON"), 400);
+        }
+      } else if (options.protocol === "openai.audio-transcriptions.v1") {
+        try {
+          directRequestBytes = await readBodyLimited(
+            c.req.raw.clone() as unknown as Request,
+            options.maxBodyBytes,
+          );
+          const parsedRequest = new Response(directRequestBytes, {
+            headers: { "content-type": c.req.header("content-type") ?? "" },
+          });
+          const form = await parsedRequest.formData();
+          const models = form.getAll("model");
+          const files = form.getAll("file");
+          if (
+            models.length !== 1
+            || typeof models[0] !== "string"
+            || models[0].length === 0
+          ) {
+            return c.json(openAiErrorBody("invalid_request", "exactly one model field is required", "model"), 400);
+          }
+          if (files.length !== 1 || !(files[0] instanceof Blob) || files[0].size === 0) {
+            return c.json(openAiErrorBody("invalid_request", "exactly one non-empty file is required", "file"), 400);
+          }
+          directModel = models[0];
+        } catch (error) {
+          if (error instanceof RequestBodyError) {
+            return c.json(openAiErrorBody(error.code, error.message), error.status);
+          }
+          return c.json(openAiErrorBody("invalid_request", "request must be valid multipart form data"), 400);
+        }
       }
     }
     if (scoped) {
@@ -468,7 +559,117 @@ export function createAppComponents(deps: AppDeps) {
         return c.json(errorBody("bad_request", "request body could not be validated"), 400);
       }
     }
-    const allocationId = scoped?.record.allocationId ?? c.req.header("x-larm-allocation-id");
+    if (
+      !scoped
+      && declaredAllocationId === undefined
+      && modelBroker
+      && options.bodyMode !== "none"
+    ) {
+      if (options.protocol === "openai.chat-completions.v1") {
+        const parsed = chatCompletionRequestSchema.safeParse(chatRequest);
+        if (!parsed.success) {
+          return c.json(openAiErrorBody(
+            "invalid_request",
+            "model and messages are required",
+            parsed.error.issues.some((issue) => issue.path[0] === "model") ? "model" : null,
+          ), 400);
+        }
+        directModel = parsed.data.model;
+        directRequestBytes = chatRequestBytes;
+      }
+      if (!directModel || !directRequestBytes) {
+        return c.json(openAiErrorBody(
+          "invalid_request",
+          "a model is required for this endpoint",
+          "model",
+        ), 400);
+      }
+      let lease;
+      try {
+        lease = await modelBroker.acquire(directModel, options.protocol, c.req.raw.signal);
+      } catch (error) {
+        if (error instanceof ModelBrokerError) {
+          if (error.retryAfterSeconds) c.header("retry-after", String(error.retryAfterSeconds));
+          return c.json(openAiErrorBody(
+            error.code,
+            error.message,
+            error.code === "model_not_found" ? "model" : null,
+          ), error.status);
+        }
+        throw error;
+      }
+      const runtime = getRuntime(deps.registry, lease.runtime);
+      if (!runtime || runtime.protocol !== options.protocol) {
+        await lease.close();
+        return c.json(openAiErrorBody(
+          "model_unavailable",
+          "resolved model runtime does not support Chat Completions",
+          "model",
+        ), 503);
+      }
+      try {
+        return await proxyGateway({
+          request: c.req.raw,
+          requestBody: directRequestBytes,
+          allocationId: lease.allocationId,
+          protocol: options.protocol,
+          upstreamPath: options.upstreamPath,
+          runtime,
+          bodyMode: "buffered",
+          maxBodyBytes: options.maxBodyBytes,
+          timeoutMs: deps.gatewayTimeoutMs ?? 300_000,
+          bootEpoch: identity.bootEpoch,
+          executionGate,
+          fetchImpl: deps.gatewayFetch,
+          metrics: deps.metrics,
+          requestTracker: deps.requestTracker,
+          lifecycleSignal: lease.lifecycleSignal,
+          now: deps.now,
+          random: deps.random,
+          onEvent: deps.onEvent,
+          inferenceAuditMode: deps.inferenceAuditMode,
+          inferenceAuditRecorder: deps.inferenceAuditRecorder,
+          auditContext: {
+            capability: lease.capability,
+            route: lease.route,
+            ...(lease.release ? { runtimeRelease: lease.release } : {}),
+            configRevision: lease.catalogRevision
+              ?? deps.getConfigRevision?.()
+              ?? identity.configRevision,
+          },
+          responseFormat: chatResponseFormat,
+          validateChatResponse: options.protocol === "openai.chat-completions.v1",
+          validateTranscriptionResponse: options.protocol === "openai.audio-transcriptions.v1",
+          validateSpeechResponse: options.protocol === "openai.audio-speech.v1",
+          expectedSpeechFormat: directSpeechFormat,
+          expectedModel: directModel,
+          errorFormat: "openai",
+          onFinish: () => lease.close(),
+          revalidate: () => {
+            const current = deps.control.resolveAllocation(lease.allocationId, lease.capability);
+            if (current.status !== 200 || !("endpoint" in current.body)) {
+              return {
+                ok: false,
+                status: current.status,
+                body: openAiErrorBody("model_unavailable", "model binding is no longer ready", "model"),
+              };
+            }
+            if (current.body.runtime !== lease.runtime || current.body.endpoint !== lease.endpoint) {
+              return {
+                ok: false,
+                status: 409,
+                body: openAiErrorBody("model_binding_changed", "model binding changed", "model"),
+              };
+            }
+            return { ok: true, binding: current.body };
+          },
+        });
+      } catch (error) {
+        await lease.close();
+        throw error;
+      }
+    }
+    const allocationId = scoped?.record.allocationId ?? declaredAllocationId;
     if (allocationId === undefined) {
       return c.json(errorBody("allocation_required", "x-larm-allocation-id is required"), 400);
     }
@@ -513,6 +714,7 @@ export function createAppComponents(deps: AppDeps) {
 
     return await proxyGateway({
       request: c.req.raw,
+      ...(chatRequestBytes ? { requestBody: chatRequestBytes } : {}),
       allocationId,
       protocol: options.protocol,
       upstreamPath: options.upstreamPath,
@@ -540,6 +742,8 @@ export function createAppComponents(deps: AppDeps) {
           ?? identity.configRevision,
       },
       responseFormat: chatResponseFormat,
+      validateTranscriptionResponse: options.protocol === "openai.audio-transcriptions.v1",
+      validateSpeechResponse: options.protocol === "openai.audio-speech.v1",
       revalidate: () => {
         if (providerToken && agentConnections) {
           try {
@@ -640,6 +844,22 @@ export function createAppComponents(deps: AppDeps) {
     configRevision: deps.getConfigRevision?.() ?? identity.configRevision,
     bootEpoch: identity.bootEpoch,
   }));
+
+  app.get("/v1/release-convergence", async (c) => {
+    c.header("cache-control", "no-store");
+    if (!deps.getReleaseConvergenceStatus) {
+      return c.json(errorBody("release_convergence_unavailable", "release convergence status is not configured"), 503);
+    }
+    try {
+      const parsed = releaseConvergenceStatusSchema.safeParse(await deps.getReleaseConvergenceStatus());
+      if (!parsed.success) {
+        return c.json(errorBody("release_convergence_invalid", "release convergence status is invalid"), 503);
+      }
+      return c.json(parsed.data);
+    } catch {
+      return c.json(errorBody("release_convergence_unavailable", "release convergence status is unavailable"), 503);
+    }
+  });
 
   app.get("/ready", (c) => {
     const generated = Date.parse(deps.getState().generatedAt);
@@ -1072,6 +1292,16 @@ export function createAppComponents(deps: AppDeps) {
     return c.json(body, result.status as 200 | 404 | 409);
   });
 
+  app.get("/v1/models", (c) => {
+    if (!modelBroker) {
+      return c.json(openAiErrorBody(
+        "model_catalog_unavailable",
+        "OpenAI-compatible model catalog is not configured",
+      ), 503);
+    }
+    return c.json(modelBroker.listModels());
+  });
+
   app.post("/v1/chat/completions", (c) => handleGateway(c, {
     protocol: "openai.chat-completions.v1",
     upstreamPath: "/v1/chat/completions",
@@ -1081,7 +1311,8 @@ export function createAppComponents(deps: AppDeps) {
 
   app.post("/v1/audio/transcriptions", (c) => {
     const providerBearer = c.req.header("authorization")?.startsWith("Bearer larm_conn_v1.") === true;
-    if (c.req.header("x-larm-allocation-id") === undefined && !providerBearer) {
+    const bearer = c.req.header("authorization")?.startsWith("Bearer ") === true;
+    if (c.req.header("x-larm-allocation-id") === undefined && !providerBearer && !bearer) {
       return handleServiceHarnessTranscription(c);
     }
     return handleGateway(c, {

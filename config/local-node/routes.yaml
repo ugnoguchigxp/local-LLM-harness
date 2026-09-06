@@ -123,9 +123,18 @@ routes:
       - runtime: voicevox-tts
         purpose: primary
 
+  tts-voicevox:
+    capabilities:
+      - speech.tts
+    explicitOnly: true
+    candidates:
+      - runtime: voicevox-tts
+        purpose: primary
+
   tts-expressive:
     capabilities:
       - speech.tts.expressive
+    explicitOnly: true
     candidates:
       - runtime: qwen-tts
         purpose: primary

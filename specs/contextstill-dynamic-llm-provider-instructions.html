@@ -1,291 +1,110 @@
 <article lang="ja">
-  <h1>ContextStill 動的LLM Provider適用 実装指示書</h1>
+  <h1>ContextStill HTTP Provider・Queue回復 実装指示書</h1>
 
   <p>
-    LARMの利用者workloadがない時間をContextStillの継続処理へ使うため、ContextStillにLARM Agent
-    Connection方式の動的LLM Providerを追加する実装指示です。ContextStillの従来Provider経路と
-    SAAAを含む既存利用者の経路は変更せず、設定で明示した場合だけ新経路を使用します。
+    ContextStillの継続処理を、LARMの標準OpenAI互換HTTP APIへ接続するための実装指示です。 旧Agent
+    Connection、claim、短期credential、独自WebSocketを新経路の依存にしません。
+    ContextStillは通常のOpenAI互換clientとして<code>:9810/v1</code>へ接続し、LARM内部のmodel
+    brokerがResidentまたはPreferred Runtimeの選択、起動、参照数、回収を担当します。
   </p>
 
   <dl>
     <dt>作成日</dt>
     <dd><time>2026-09-06</time></dd>
-    <dt>状態</dt>
+    <dt>改訂状態</dt>
+    <dd>HTTP統一版。LARM repository実装済み、ContextStill application組込みと実機検証待ち</dd>
+    <dt>標準endpoint</dt>
     <dd>
-      LARM activity API、Profile、型付きclient実装済み。ContextStill application組込みと配備待ち
+      <code>GET /v1/models</code>、<code>POST /v1/chat/completions</code>
     </dd>
-    <dt>対象contract</dt>
+    <dt>ContextStill既定model</dt>
     <dd>
-      <code>larm-service-activity.v1</code>、
-      <code>agent-connection.v2</code> discovery、<code
-        >agent-connection.v1</code
-      >
-      lifecycle
+      <code>qwen-agent-worker</code>（Qwen 3.8 27B、Preferred worker、同時request数1）
     </dd>
-    <dt>ContextStill既定Runtime</dt>
-    <dd><code>qwen-worker-agent</code>（Qwen 3.8 27B、64K、Preferred worker）</dd>
-    <dt>SAAA既定Runtime</dt>
-    <dd><code>qwen-general</code>（Qwen 3.8 27B、Resident。変更しない）</dd>
+    <dt>認証</dt>
+    <dd><code>Authorization: Bearer &lt;LARM_API_TOKEN&gt;</code></dd>
   </dl>
 
   <aside>
     <p>
-      <strong>固定判断:</strong> ContextStillが動作するときは、SAAA用Residentを使い回さず、
-      <code>llm-agent-worker</code> Routeで二つ目のQwen 3.8
-      27Bを起動します。二つ目はResidentへ
-      変更せず、ContextStillのConnectionが存在する間だけHOTにします。現在のjob完了後にLARMの別
-      workloadを検出したとき、またはContextStillの処理待ちがなくなったときはConnectionを解放します。
+      <strong>旧版からの破壊的変更:</strong>
+      <code>larm-agent-connection</code> adapter、Profile
+      discovery、create、poll、claim、renew、DELETEは
+      実装しません。保存済み旧設定は明示的に無効として扱い、自動fallbackやcredential転送を行わず、
+      下記の通常OpenAI Provider設定へ移行します。
     </p>
   </aside>
 
-  <section id="requirements">
-    <h2>要求と非要求</h2>
-    <h3>必須要求</h3>
-    <ul>
-      <li>LARM Service Activity APIがactiveまたはdrainingの間、新しいLLM処理を開始しない。</li>
-      <li>Activity APIがidleで処理対象がある間、ContextStillは一件ずつ継続して処理する。</li>
-      <li>
-        ContextStillへ<code>larm-agent-connection</code> Provider
-        adapterを追加し、claimで得た
-        <code>baseURL</code
-        >、<code>model</code>、短期<code>apiKey</code>をOpenAI互換clientへ適用する。
-      </li>
-      <li>従来Providerの設定schema、生成処理、保存済み設定、既定動作を変更しない。</li>
-      <li>
-        SAAAの<code>coding-default</code> Profile、Resident Route、Native
-        WebSocket経路を変更しない。
-      </li>
-      <li>停止、失敗、cancel、process終了の全経路でAgent Connectionを解放する。</li>
-    </ul>
-
-    <h3>今回行わないこと</h3>
-    <ul>
-      <li>
-        ContextStillからProvider port
-        <code>8080</code
-        >または<code>8083</code>へ直接接続しない。
-      </li>
-      <li>二つ目のQwenを新しいResidentとして登録しない。</li>
-      <li>SAAA process、画面focus、session、heartbeat、callbackからactivityを推測しない。</li>
-      <li>動的Provider失敗時に、同じjobを従来Providerへ暗黙に再送しない。</li>
-      <li>
-        ContextStillのために<code>saaa.llm-stream.v1</code>を実装しない。背景処理は同じHTTP
-        Chat Completions endpointへ要求した形式に応じてJSONまたはOpenAI互換SSEを使う。
-      </li>
-    </ul>
-  </section>
-
-  <section id="current-state">
-    <h2>現状と変更点</h2>
-    <p>
-      LARMには、Profile discovery、Allocation、semantic readiness、短期credential、renew、releaseを
-      一体化した<a href="./agent-provider-connection-api.html">Agent Provider Connection API</a>が
-      実装済みです。本指示に基づくLARM source変更により、現在の
-      <code>config/local-node/agent-connections.yaml</code
-      >にはSAAA向け<code>coding-default</code>を維持した
-      まま、ContextStill向けworker Profileも追加されています。
-    </p>
-    <p>
-      実装は二箇所に分けます。LARM側は明示選択専用Profileを一つ追加し、ContextStill側は既存Provider
-      abstractionへ新adapterを追加します。従来adapterを改造して動的接続を混在させてはいけません。
-    </p>
-    <figure>
-      <pre><code>SAAA ── coding-default ── llm-default ── qwen-general (Resident, 常時HOT)
-
-ContextStill
-  ├─ legacy Provider adapter ── 従来接続（挙動を維持）
-  └─ larm-agent-connection adapter
-       └─ contextstill-background ── llm-agent-worker
-            └─ qwen-worker-agent (Preferred, 使用時だけHOT)</code></pre>
-      <figcaption>
-        SAAAとContextStillのProvider lifecycleを分離し、ContextStillの背景処理がResident slotを占有
-        しない構成です。
-      </figcaption>
-    </figure>
-  </section>
-
-  <section id="larm-configuration">
-    <h2>LARM側の実装指示</h2>
-    <h3>Agent Profileを追加する</h3>
-    <p>
-      <code>config/local-node/agent-connections.yaml</code
-      >の<code>agentProfiles</code>へ次を追加します。
-      既存<code>defaultAgentProfile: coding-default</code>と<code>coding-default</code>定義は一文字も
-      変更しません。
-    </p>
-    <pre><code>  contextstill-background:
-    description: ContextStill background Qwen 3.8 27B provider
-    providers:
-      - name: llm
-        capability: llm.coding
-        route: llm-agent-worker
-        publicModel: qwen-agent-worker
-        readiness: llm-inference</code></pre>
-    <p>
-      <code>streamingProtocol</code
-      >は指定しません。<code>llm-agent-worker</code>は
-      <code>explicitOnly: true</code
-      >で、primaryは<code>qwen-worker-agent</code>、fallbackは
-      <code>qwen-general</code>です。ContextStillはConnection作成時に<code
-        >allowFallback: false</code
-      >
-      を指定するため、SAAA用Residentへ暗黙に流れません。
-    </p>
-
-    <h3>Runtimeとllama-swap設定は維持する</h3>
-    <ul>
-      <li>
-        <code>qwen-worker-agent</code>の64K context、推定28
-        GB、同時request数1を維持する。
-      </li>
-      <li>
-        <code>qwen-worker-slot</code
-        >は一度に一memberだけHOTという既存制約を維持する。
-      </li>
-      <li>
-        <code>qwen-agent</code>の既存alias
-        <code>qwen-agent-worker</code>をpublic modelに使う。
-      </li>
-      <li>ContextStill用の新port、LAN listener、systemd Resident unitを追加しない。</li>
-      <li>worker artifactが未stageの場合、ContextStillからdownloadやactivationを開始しない。</li>
-    </ul>
-    <p>
-      64Kを超える入力が実際に必要だと測定された場合だけ、別の明示Profileを
-      <code>llm-long-context</code>へ追加します。初期実装から256K
-      workerを選ぶと推定40 GBとなり、
-      background用途に不要なmemory帯域と起動costを使うため採用しません。
-    </p>
-  </section>
-
-  <section id="contextstill-adapter">
-    <h2>ContextStill側 Provider adapter実装</h2>
-    <h3>設定</h3>
-    <p>
-      現行設定をそのままparseできることを必須とし、動的Providerは新しいdiscriminated variantとして
-      追加します。名称は例示であり、ContextStillの既存命名規則に合わせて構いません。
-    </p>
+  <section id="contract">
+    <h2>固定する接続契約</h2>
     <pre><code>{
   "provider": {
-    "kind": "larm-agent-connection",
-    "controlBaseURL": "http://gnosis.local:9810",
-    "agentProfile": "contextstill-background",
-    "audience": "saaa-desktop",
-    "ttlSeconds": 300,
-    "requestTimeoutMs": 300000
+    "kind": "openai-compatible",
+    "baseURL": "http://gnosis.local:9810/v1",
+    "apiKeyEnv": "LARM_API_TOKEN",
+    "model": "qwen-agent-worker",
+    "requestTimeoutMs": 300000,
+    "stream": true
   }
 }</code></pre>
     <ul>
       <li>
-        ContextStillがlocal-node上で動く場合は<code>audience: same-host</code>とloopbackの
-        <code>controlBaseURL</code>を使う。SAAAと同じMacまたはLAN hostなら
-        <code>audience: saaa-desktop</code>を使う。
+        同一hostでは<code>http://127.0.0.1:9810/v1</code>、LANでは管理済みDNS名を使う。
       </li>
       <li>
-        <code>controlBaseURL</code>はmDNS/DNS名または現在到達できるDHCP
-        addressを設定し、Provider
-        claimの<code>baseURL</code>は設定で上書きしない。
+        engine port
+        <code>8080</code
+        >、<code>8083</code>や旧static port
+        <code>44448</code>へ直接接続しない。
       </li>
+      <li>API keyを設定file、DB、telemetry、error、通常logへ保存しない。</li>
+      <li>接続先originを越えてAuthorizationを転送しない。redirectは追跡しない。</li>
       <li>
-        長期<code>LARM_API_TOKEN</code>はlocal-nodeの匿名Agent
-        lifecycleでは省略する。
+        modelは<code>GET /v1/models</code>の公開IDと完全一致させ、engine固有model名へ変換しない。
       </li>
-      <li>短期Provider tokenをfile、DB、telemetry、error、通常logへ保存しない。</li>
+      <li>HTTP keep-alive clientをprocess単位で再利用し、jobごとのTCP/TLS接続作成を避ける。</li>
     </ul>
-
-    <h3>Connection確立手順</h3>
-    <ol>
-      <li>
-        <code>GET /health</code
-        >と<code>GET /ready</code>をbounded timeoutで確認する。
-        <code>/ready</code>が503なら背景処理を開始せずbackoffする。
-      </li>
-      <li>
-        起動時およびcatalog
-        revision変更後に<code>GET /v2/agent-profiles</code>を取得し、contractが
-        <code>agent-connection.v2</code
-        >、Profileが<code>explicit-only</code>、Provider protocolが
-        <code>openai.chat-completions.v1</code>であることを検証する。
-      </li>
-      <li>
-        一意でretry中は不変の<code>Idempotency-Key</code>を付け、次のbodyでConnectionを作る。
-        HTTP 201と202の両方を成功として扱う。
-      </li>
-    </ol>
-    <pre><code>POST /v1/agent-connections
-Idempotency-Key: contextstill-&lt;run-id&gt;-&lt;attempt-id&gt;
-Content-Type: application/json
-
-{
-  "agentProfile": "contextstill-background",
-  "explicitAgentProfile": true,
-  "audience": "saaa-desktop",
-  "client": "contextstill",
-  "ttlSeconds": 300,
-  "allowFallback": false,
-  "deploymentPolicy": "existing-only"
-}</code></pre>
-    <ol>
-      <li>
-        202または非readyならresponseのConnection
-        IDを使い、<code>pending</code>または
-        <code>probing</code>の間だけbounded
-        pollする。<code>failed</code>、<code>released</code>、
-        <code>expired</code>は成功へ戻らない。
-      </li>
-      <li>
-        ready後、<code>POST /v1/agent-connections/:id/claim</code>へ
-        <code>{"format":"openai-provider-v1"}</code>を送り、<code
-          >llm</code
-        >
-        Providerを一件取得する。 claimへ<code>Idempotency-Key</code>を付けない。
-      </li>
-      <li>
-        claim全体をstrictに検証し、<code>configuration.fields.baseURL</code>、
-        <code>configuration.fields.model</code
-        >、<code>credential.token</code>だけを新しいOpenAI互換client
-        instanceへ渡す。値を環境変数やglobal singletonへ書き込まない。
-      </li>
-    </ol>
-
-    <h3>推論、renew、解放</h3>
-    <ul>
-      <li>
-        <code>POST {baseURL}/chat/completions</code
-        >を使用し、<code>model</code>はclaim値と完全一致、
-        <code>Authorization: Bearer {credential.token}</code>を付ける。
-      </li>
-      <li>
-        ContextStillの既存adapterが要求する形式を維持する。<code>stream: false</code>または省略時は
-        JSON、<code>stream: true</code>時はOpenAI互換SSEを同じLARM HTTP
-        Gatewayから受け取る。 SAAA専用Native WebSocketをContextStillから流用しない。
-      </li>
-      <li>一つのworkerへ同時に複数requestを送らず、ContextStill内部queueもconcurrency 1にする。</li>
-      <li>
-        継続処理中はTTL 300秒に対して180秒を目安にrenewする。renewごとに新しい
-        <code>Idempotency-Key</code>を使い、成功直後にclaimを取り直してOpenAI
-        clientを交換する。 renew前のtokenは再利用しない。
-      </li>
-      <li>
-        queueが空、job境界で別workloadを検出、明示停止、未回復error、process shutdownのいずれかで
-        新規jobを停止し、ConnectionをDELETEする。実行中jobはactivity変化だけでは中断しない。
-      </li>
-      <li>
-        DELETEはhandlerの<code>finally</code>相当から独立した短いtimeoutで実行する。処理用
-        AbortSignalをcleanupへ再利用しない。
-      </li>
-    </ul>
+    <p>
+      LARM側は公開modelからRouteを厳密に一つ決めます。Residentは即時利用し、Preferred
+      workerは必要時だけ起動します。割当IDや内部portをContextStillへ公開しません。
+    </p>
   </section>
 
-  <section id="service-activity">
-    <h2>LARM Service Activityによるjob gate</h2>
+  <section id="request-flow">
+    <h2>低遅延のrequest flow</h2>
+    <ol>
+      <li>
+        process起動時にbounded
+        timeoutで<code>GET /health</code>、<code>GET /ready</code>、
+        <code>GET /v1/models</code>を確認する。jobごとにcatalogを取得しない。
+      </li>
+      <li>
+        job境界で<code>GET /v1/activity</code>を確認し、active、draining、errorなら開始しない。
+      </li>
+      <li>
+        <code>POST /v1/chat/completions</code
+        >へ<code>stream: true</code>で送信し、最初の有意味な
+        <code>choices[].delta.content</code>またはtool deltaから処理を開始する。
+      </li>
+      <li>
+        SSEをUTF-8 byte streamとして増分parseし、CRLF、任意chunk境界、複数data行を処理する。
+        <code>finish_reason</code
+        >と<code>[DONE]</code>の両方を確認するまで成功にしない。
+      </li>
+      <li>
+        利用者cancel、timeout、process shutdownではHTTP bodyをabortし、LARM側の内部参照解放を待たず
+        UIまたはrunnerを先に解放する。次jobは同じresponse streamを再利用しない。
+      </li>
+      <li>job結果を一度だけ永続化した後、次jobをdequeueする前にactivityを再確認する。</li>
+    </ol>
     <p>
-      ContextStillは<a href="./service-activity-api-implementation-plan.html"
-        >LARM Service Activity API・ContextStill連携 実装計画</a
-      >の<code>GET /v1/activity</code>をjob境界で使用します。activityはSAAAのapplication状態ではなく、
-      LARM Gatewayを通るHTTP LLM・ASR・TTS requestとNative LLM WebSocket active runの合計です。
-      Provider daemonが起動中、Agent Connectionが存在、WebSocketがidle
-      openという理由だけではactiveにしません。
+      JSON応答は非stream処理と小さいsystem task用に残します。最速応答を必要とする通常推論ではSSEを
+      既定にし、全文完成を待ってからUIや後段処理へ渡しません。ContextStill内のLLM並列度は1です。
     </p>
+  </section>
+
+  <section id="activity-gate">
+    <h2>Activityによるjob境界制御</h2>
     <table>
       <caption>
         ContextStill runner状態遷移
@@ -302,246 +121,201 @@ Content-Type: application/json
         <tr>
           <th scope="row"><code>INHIBITED</code></th>
           <td>activityがactive、draining、またはAPI error</td>
-          <td>queueへの蓄積だけ。LLM requestとConnection作成は禁止</td>
+          <td>queueへの蓄積だけ</td>
           <td>freshなidle response</td>
         </tr>
         <tr>
-          <th scope="row"><code>STARTING</code></th>
-          <td>activityがidleかつqueue非空</td>
-          <td>Profile検証、Connection作成、ready待ち、claim</td>
-          <td>claim成功、timeout、error</td>
+          <th scope="row"><code>READY</code></th>
+          <td>activityがidle、model catalog確認済み</td>
+          <td>一件だけdequeueしてHTTP request開始</td>
+          <td>request開始、Provider error、queue空</td>
         </tr>
         <tr>
           <th scope="row"><code>RUNNING</code></th>
-          <td>claim成功</td>
-          <td>concurrency 1で一件を処理し、次job前にactivityを再確認</td>
-          <td>job境界でactive、queue空、停止、未回復error</td>
+          <td>HTTP request開始</td>
+          <td>一件をstream処理して一度だけ保存</td>
+          <td>完了、cancel、途中切断</td>
         </tr>
         <tr>
-          <th scope="row"><code>STOPPING</code></th>
-          <td>RUNNINGまたはSTARTINGの終了条件</td>
-          <td>dequeue停止、Connection DELETE</td>
-          <td>cleanup完了またはcleanup timeout</td>
+          <th scope="row"><code>BOUNDARY_CHECK</code></th>
+          <td>現在jobの永続化完了</td>
+          <td>activityとProvider世代を再確認</td>
+          <td>READY、INHIBITED、RECOVERING</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>RECOVERING</code></th>
+          <td>infra起因pauseと新しい正常Provider世代</td>
+          <td>段階的なpause解除</td>
+          <td>canary成功または再度infra error</td>
         </tr>
       </tbody>
     </table>
     <p>
-      activity
-      responseはsnapshotであり予約ではありません。idle取得後に別workloadが開始するraceは許容し、
-      実行中ContextStill jobは完了させます。response bodyを閉じた後、次jobの前にactivityを再確認し、
-      activeならConnectionを解放して待機します。SAAAからの通知、heartbeat、callbackは使用しません。
-    </p>
-  </section>
-
-  <section id="compatibility">
-    <h2>従来方式の互換性</h2>
-    <ul>
-      <li>
-        既存設定に<code>kind</code>がない場合の解釈を変えず、従来adapterを選ぶ。
-      </li>
-      <li>従来ProviderのURL、model、API key、streaming、retry、timeout既定値を変更しない。</li>
-      <li>保存済み設定のmigrationを必須にせず、新variantを選んだ利用者だけ新fieldを要求する。</li>
-      <li>
-        <code>larm-agent-connection</code
-        >から従来Providerへのfallbackは、別の明示設定がある場合でもjob境界 でだけ許可する。request
-        timeout後の同一jobを自動再送しない。
-      </li>
-      <li>
-        Provider種別を戻すだけで従来方式へrollbackできるよう、データ形式をProvider固有に変更しない。
-      </li>
-    </ul>
-  </section>
-
-  <section id="capacity-decision">
-    <h2>Qwen 3.8二基構成の判断</h2>
-    <table>
-      <caption>
-        local-nodeの静的memory admission
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">項目</th>
-          <th scope="col">予約量</th>
-          <th scope="col">扱い</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <th scope="row">物理統合memory</th>
-          <td>128 GB</td>
-          <td>node定義</td>
-        </tr>
-        <tr>
-          <th scope="row">host reserve</th>
-          <td>16 GB</td>
-          <td>LLMへ割り当てない</td>
-        </tr>
-        <tr>
-          <th scope="row">Resident floor</th>
-          <td>47 GB</td>
-          <td>Qwen 40 GB、Qwen ASR 5 GB、Whisper 1 GB、VOICEVOX 1 GB</td>
-        </tr>
-        <tr>
-          <th scope="row">ContextStill worker</th>
-          <td>28 GB</td>
-          <td>Qwen 3.8 27B、64K</td>
-        </tr>
-        <tr>
-          <th scope="row">admission後の余力</th>
-          <td>37 GB</td>
-          <td>112 GB usable − 47 GB − 28 GB</td>
-        </tr>
-      </tbody>
-    </table>
-    <p>
-      静的見積りでは二基を安全に収容でき、既存の<a href="./on-demand-llm-worker-pool.html"
-        >On-demand LLM Worker Pool契約</a
-      >でもResident 27Bと64K worker 27Bの同時taskを実機検証済みです。このため、ContextStillが処理中
-      の二基構成を採用します。ただし起動ごとにLARM admissionがlive telemetryを確認し、不足時は
-      <code>resource_exhausted</code>を返してfail
-      closedにします。見積りを根拠に強制起動してはいけません。
-    </p>
-    <p>
-      二基目の目的は単一jobの速度向上ではなく、SAAA用Residentの即時性、execution slot、context
-      cacheを
-      背景処理から分離することです。ContextStill内の並列度は1のままとし、二基へ同じjobを複製しません。
+      activityは予約ではなくsnapshotです。idle確認直後にSAAA
+      workloadが始まるraceは許容し、実行中jobは
+      一度だけ完了させます。ただし次jobはfreshな境界確認まで開始しません。process、画面focus、heartbeat、
+      callbackや旧WebSocketの接続状態からactivityを推測しません。
     </p>
   </section>
 
   <section id="failure-policy">
-    <h2>失敗処理</h2>
+    <h2>失敗分類とretry</h2>
     <table>
       <caption>
-        代表的な応答とContextStillの動作
+        代表的な失敗と処理
       </caption>
       <thead>
         <tr>
           <th scope="col">条件</th>
+          <th scope="col">分類</th>
           <th scope="col">動作</th>
         </tr>
       </thead>
       <tbody>
         <tr>
+          <th scope="row">接続不能、HTTP 502／503、起動待ち</th>
+          <td><code>provider_unavailable</code></td>
+          <td>business attemptを増やさず、jitter付きbounded backoff</td>
+        </tr>
+        <tr>
           <th scope="row">HTTP 429</th>
-          <td>
-            <code>Retry-After</code
-            >を尊重して同じConnectionでjobを再予約する。並列度を増やさない
-          </td>
+          <td><code>provider_busy</code></td>
+          <td><code>Retry-After</code>を尊重し、並列度を増やさない</td>
         </tr>
         <tr>
-          <th scope="row">HTTP 503</th>
-          <td>jitter付きbounded backoff。次回のactivity確認まで新規jobを開始しない</td>
+          <th scope="row">HTTP 401／403</th>
+          <td><code>configuration_error</code></td>
+          <td>retryせず停止し、secretまたはaudience修正を要求</td>
         </tr>
         <tr>
-          <th scope="row">Provider token 401</th>
-          <td>一回だけclaimを取り直す。再度401ならConnectionを解放して再作成する</td>
+          <th scope="row">model mismatch 400／404</th>
+          <td><code>contract_error</code></td>
+          <td>retryや別modelへのfallbackをせず停止</td>
         </tr>
         <tr>
-          <th scope="row">Connection 410</th>
-          <td>daemon boot epoch変更として古い状態を破棄し、新しいConnectionを作成する</td>
+          <th scope="row">
+            SSE途中切断、無効JSON、<code>[DONE]</code>欠落
+          </th>
+          <td><code>incomplete_response</code></td>
+          <td>結果を保存せず、同一jobの重複副作用を防いで再予約</td>
         </tr>
         <tr>
-          <th scope="row">model mismatch 400</th>
-          <td>claim値を使っていない実装bugとしてretryせず停止する</td>
-        </tr>
-        <tr>
-          <th scope="row">resource exhausted</th>
-          <td>従来ProviderやResidentへ迂回せず、queueを保持して次のidle windowで再試行する</td>
-        </tr>
-        <tr>
-          <th scope="row">job境界でservice active</th>
-          <td>新規jobとnetwork retryを開始せず、Connectionを解放してINHIBITEDへ遷移する</td>
+          <th scope="row">利用者cancel</th>
+          <td><code>cancelled</code></td>
+          <td>business failureにせず終了し、自動再送しない</td>
         </tr>
       </tbody>
     </table>
     <p>
-      再試行はjob ID、attempt、Connection ID、error codeだけを構造化記録します。prompt、completion、
-      Authorization、claim body、screen由来データを通常logへ含めません。
+      Provider不通をjob自身の失敗回数へ加算しません。infra retry
+      budgetだけを別に記録し、上限到達時は
+      <code>provider_unavailable_exhausted</code
+      >としてpauseします。prompt、completion、Authorizationを 通常logへ含めません。
     </p>
+  </section>
+
+  <section id="queue-recovery">
+    <h2>Provider世代回復後のQueue自動再開</h2>
+    <p>
+      <code>GET /health</code
+      >の<code>releaseCommit</code>、<code>configRevision</code>、
+      <code>bootEpoch</code
+      >を組にしてProvider世代として保存し、<code>GET
+      /v1/release-convergence</code>のdesired／observed
+      release一致とstageを照合します。どちらかの
+      endpointが未提供、schema不一致、releaseが<code>canary_verified</code>未満なら回復判定をfail
+      closedにします。
+    </p>
+    <ol>
+      <li>pause originがinfraで、reasonがallowlist内のjobだけを候補にする。</li>
+      <li>手動pause、入力不正、認証不正、契約不一致、business failureのjobは解除しない。</li>
+      <li>最後に失敗した世代と異なる正常世代を検出し、JSONとSSEの固定canaryを一度通す。</li>
+      <li>最古の候補を一件だけ再開し、business attemptは増やさずrecovery attemptを記録する。</li>
+      <li>
+        一件が保存まで完了し、次job境界を再確認できた後だけ、再開幅を1、2、4の上限付きで広げる。
+      </li>
+      <li>再度infra失敗したら新規解除を止め、解除済み未実行jobを同じinfra reasonでpauseへ戻す。</li>
+    </ol>
+    <p>
+      世代値だけの変化は復旧成功ではありません。完了証跡にはjob IDのhash、完了状態、
+      <code>persistenceCount: 1</code>、次境界再確認、release
+      identityを含め、本文やsecretを含めません。
+    </p>
+  </section>
+
+  <section id="compatibility">
+    <h2>移行とrollback</h2>
+    <ul>
+      <li>
+        既存Provider adapterと保存済み設定は読み込み可能なまま維持し、新variantを明示選択する。
+      </li>
+      <li>
+        旧<code>larm-agent-connection</code>設定を通常OpenAI Providerへ自動変換しない。
+      </li>
+      <li>新経路から従来Provider、旧static port、独自WSへ暗黙fallbackしない。</li>
+      <li>
+        Provider種別を明示的に戻せばrollbackできるよう、job result schemaをProvider非依存に保つ。
+      </li>
+      <li>新規機能、再接続改善、性能改善はHTTP経路だけへ追加する。</li>
+    </ul>
   </section>
 
   <section id="acceptance">
     <h2>受入条件</h2>
     <h3>ContextStill単体test</h3>
     <ol>
-      <li>既存設定fixtureが変更なしで読み込まれ、従来Providerへのrequest snapshotが変化しない。</li>
       <li>
-        activity API error、invalid response、active、drainingではConnection作成もLLM
-        requestも発生しない。
+        旧設定fixtureが変更なしで読み込め、新HTTP variantはbase
+        URL、secret参照、modelをstrict検証する。
       </li>
-      <li>freshなidle確認後に一つだけConnectionを作り、201と202の両経路でclaimまで進む。</li>
-      <li>claimのbaseURL、model、tokenがOpenAI clientへそのまま適用され、tokenはlogへ出ない。</li>
-      <li>renew後にclaimを取り直し、旧clientと旧tokenを破棄する。</li>
-      <li>job境界のactive、推論error、cancel、shutdownの全経路でDELETEを一回以上試行する。</li>
-      <li>実行中に別workloadが始まっても現在jobは一度だけ完了し、次jobの開始前に解放する。</li>
-      <li>429、503、401、410を上記policyどおり処理し、暗黙の従来Provider fallbackを行わない。</li>
+      <li>独自Profile、Connection、claim、WSを持たないHTTP fixtureでJSONとSSEを完了する。</li>
+      <li>
+        SSEの任意chunk境界、tool
+        delta、finish、<code>[DONE]</code>、途中切断、cancelを検証する。
+      </li>
+      <li>Provider不通でbusiness attemptが増えず、infra起因だけが専用reasonでpauseされる。</li>
+      <li>同一世代や未検証世代でpause解除せず、新しいcanary済み世代で最初の一件だけ解除する。</li>
+      <li>手動・business起因pauseを解除せず、canary失敗時は段階展開を停止する。</li>
+      <li>一件のresultが一度だけ保存され、次job開始前にactivityを再確認する。</li>
     </ol>
 
-    <h3>LARM repository test</h3>
+    <h3>LARM repository・実機canary</h3>
     <ol>
       <li>
-        Profile catalog testで<code>contextstill-background</code>が
-        <code>selectionPolicy: explicit-only</code
-        >、Routeが<code>llm-agent-worker</code>、modelが
-        <code>qwen-agent-worker</code>であることを固定する。
+        <code>GET /v1/models</code
+        >に<code>qwen-agent-worker</code>が一意に掲載される。
       </li>
       <li>
-        Profile省略時の既定が引き続き<code>coding-default</code>であることを固定する。
+        allocation
+        headerなしでJSONとSSEが完了し、SSEはfinishと<code>[DONE]</code>を返す。
       </li>
+      <li>公開modelがPreferred Routeへ一致し、同時request数1と内部参照解放を確認する。</li>
       <li>
-        <code>explicitAgentProfile: false</code>でContextStill
-        Profileが409、trueで受理されることを検証する。
+        <code>:44448</code
+        >を監視せず、<code>:9810</code>のcatalog、JSON、SSEを監視する。
       </li>
-      <li><code>allowFallback: false</code>でResidentへfallbackしないことを検証する。</li>
-      <li>
-        Profile追加後も既存SAAA entryのshapeと意味が変わらず、catalog revisionだけが更新される。
-      </li>
-    </ol>
-
-    <h3>local-node実機canary</h3>
-    <ol>
-      <li>
-        開始前に<code>qwen-general</code>がHOT、<code>qwen-worker-agent</code>がCOLDであることを確認する。
-      </li>
-      <li>
-        ContextStill Profileをcreate、poll、claimし、Bindingが
-        <code>llm-agent-worker → qwen-worker-agent</code>、fallback falseであることを確認する。
-      </li>
-      <li>claimされたHTTP ProviderでJSONとSSEの両completionを要求どおり完了する。</li>
-      <li>
-        実行中に<code>qwen-general</code>のPID、health、SAAA Native WebSocket
-        readinessが維持され、二つの Qwen Runtimeが同時に存在することを確認する。
-      </li>
-      <li>
-        ContextStill job中に別workloadを開始し、現在job完了後は次jobを開始せずConnectionを解放する。
-      </li>
-      <li>
-        release後、既定idle TTL内にworkerがCOLDとなり、ResidentはHOTのままであることを確認する。
-      </li>
-      <li>
-        試験中の429、OOM、Provider crashが0で、systemとaccelerator memory headroomを記録する。
-      </li>
+      <li>署名済みreleaseをroot activatorが切替え、identity一致とcanary完了を記録する。</li>
+      <li>ContextStillのinfra起因paused jobを一件だけ再開し、保存一回と次境界確認を記録する。</li>
     </ol>
   </section>
 
-  <section id="implementation-order">
+  <section id="completion">
     <h2>実装順序と完了定義</h2>
     <ol>
-      <li>ContextStillにactivity gateと従来経路の回帰testを先に追加する。</li>
-      <li>LARM catalogへContextStill Profileを追加し、repository testと文書checkを通す。</li>
-      <li>ContextStillへAgent Connection adapterとstrict claim validationを追加する。</li>
-      <li>fake LARMでlifecycle、renew、cancel、cleanup、error policyを完走する。</li>
-      <li>local-nodeへcatalogだけを反映し、SAAA既定Profileが不変であることをcanaryする。</li>
-      <li>ContextStillを明示opt-inして二基構成canaryを行い、memory headroomを確認する。</li>
+      <li>共通OpenAI HTTP client、SSE parser、cancel、設定schemaを単体fixtureで完成させる。</li>
+      <li>activity gateと失敗分類を接続し、business attemptとinfra retryを分離する。</li>
+      <li>Provider世代監視と一件からの段階的Queue回復を実装する。</li>
+      <li>LARMの署名済みreleaseをliveへ収束させ、JSON／SSE canaryを通す。</li>
       <li>
-        十分なidle
-        windowで継続運転し、別workload開始時のjob境界切替を複数回確認してから既定化を判断する。
+        ContextStill実jobを一件完了し、一度だけ保存、次境界確認、release identityを証跡化する。
       </li>
+      <li>24時間のHTTP経路soak後、利用が0の旧WS・claim consumer codeを削除する。</li>
     </ol>
     <p>
-      完了は「ContextStillが動的Providerを一度呼べた」時点ではありません。従来方式の無変更、service
-      active時の次job抑止、短期credential更新、全終了経路のrelease、workerのidle回収、Residentの即時性を
-      自動testと実機canaryの両方で確認した時点とします。
+      完了はsource test、push、shadow E2E、HTTP canaryだけではありません。承認済みcommitとlive
+      identityが 一致し、JSON／SSE
+      canary、ContextStill実job一件、保存一回、次境界確認まで揃った時点です。
+      それまでは実装を完了扱いせず、旧経路も削除しません。
     </p>
   </section>
 </article>

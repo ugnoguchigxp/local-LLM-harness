@@ -126,7 +126,45 @@ curl -sS -X POST http://127.0.0.1:9810/resolve \
   -H 'Content-Type: application/json' -d '{"capability":"llm.general"}'
 ```
 
-## v1 Allocation and Gateway
+## OpenAI互換HTTP Gateway
+
+`LARM_API_TOKEN`を標準Bearerとして指定し、公開modelだけでChat Completionsを利用できます。
+`GET /v1/models`は内部runtime、port、artifact pathを公開しません。LARMはmodelをcatalog上の
+capability／routeへ解決し、内部Allocationの取得、cold startのsingle-flight、固定binding、解放を
+リクエストの内側で行います。
+
+```bash
+curl -sS http://127.0.0.1:9810/v1/models \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}"
+
+curl -sS -X POST http://127.0.0.1:9810/v1/chat/completions \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"coding-default","stream":false,"messages":[{"role":"user","content":"こんにちは"}]}'
+
+# OpenAI互換SSE。-Nでcurlの受信bufferingを無効化します。
+curl -sS -N -X POST http://127.0.0.1:9810/v1/chat/completions \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: text/event-stream' \
+  -d '{"model":"coding-default","stream":true,"messages":[{"role":"user","content":"こんにちは"}]}'
+
+curl -sS -X POST http://127.0.0.1:9810/v1/audio/transcriptions \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" \
+  -F 'model=qwen3-asr-1.7b' -F 'response_format=json' -F 'file=@sample.wav'
+
+curl -sS -X POST http://127.0.0.1:9810/v1/audio/speech \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"voicevox-core","input":"こんにちは","voice":"Kasukabe_Tsumugi","response_format":"wav"}' \
+  -o response.wav
+```
+
+公開modelは、deprecatedでないAgent ProfileのLLM・ASR・TTS Providerから構築します。
+同じ公開modelを異なるrouteへ重複定義した場合は起動時に拒否します。既定の
+`coding-default`はResident Qwen 3.8 27Bへ、`qwen-agent-worker`は明示選択のworker routeへ解決します。
+
+## 明示Allocation Gateway（互換・高度用途）
 
 ```bash
 allocation_json="$(curl -sS -X POST http://127.0.0.1:9810/v1/allocations \
@@ -169,8 +207,8 @@ curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${voice_allocation_id}"
 ```
 
 LLM Gatewayは、`POST /v1/chat/completions`の`stream: false`にはJSON、`stream: true`には
-OpenAI互換SSE (`text/event-stream`) を返します。SAAA向けの低遅延realtime data planeは、引き続き
-`GET /v1/llm/stream`へのWebSocket upgradeです。claimのLLM providerに`streaming`が現れるのは、
+OpenAI互換SSE (`text/event-stream`) を返します。`GET /v1/llm/stream`への独自WebSocket upgradeは、
+HTTP consumer移行とlive受入が終わるまでrollback用に維持します。claimのLLM providerに`streaming`が現れるのは、
 設定されたnative Providerが`larm.native-llm-stream.v1`でreadyを返した場合だけであり、HTTP SSEの
 可否を表すfieldではありません。`host-private`
 Audienceはoperatorが管理するローカルLANを信頼境界として、HTTP originに対応する平文WS endpointも

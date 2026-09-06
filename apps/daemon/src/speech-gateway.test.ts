@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { saaaServiceHarnessSchema, type Registry } from "@larm/core";
+import {
+  parseAgentConnectionCatalog,
+  saaaServiceHarnessSchema,
+  type Registry,
+} from "@larm/core";
 import type { RuntimeBackend, RuntimeHealth } from "@larm/backends";
 import { createApp, type AppDeps } from "./app";
 import { ControlPlane } from "./controller";
@@ -46,10 +50,41 @@ const registry: Registry = {
   routes: [
     { id: "llm-default", capabilities: ["llm.general"], explicitOnly: false, candidates: [{ runtime: "qwen-general", purpose: "primary" }] },
     { id: "stt-default", capabilities: ["speech.stt"], explicitOnly: false, candidates: [{ runtime: "qwen-asr", purpose: "primary" }] },
+    { id: "stt-qwen", capabilities: ["speech.stt"], explicitOnly: true, candidates: [{ runtime: "qwen-asr", purpose: "primary" }] },
     { id: "tts-default", capabilities: ["speech.tts"], explicitOnly: false, candidates: [{ runtime: "voicevox", purpose: "primary" }] },
     { id: "tts-expressive", capabilities: ["speech.tts.expressive"], explicitOnly: false, candidates: [{ runtime: "qwen-tts", purpose: "primary" }] },
   ],
 };
+
+const speechAgentCatalog = parseAgentConnectionCatalog({
+  version: 1,
+  defaultAgentProfile: "voice",
+  audiences: {
+    loopback: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" },
+  },
+  agentProfiles: {
+    voice: {
+      description: "Default speech provider",
+      providers: [{
+        name: "tts",
+        capability: "speech.tts",
+        route: "tts-default",
+        publicModel: "voicevox-core",
+        readiness: "tts-speech",
+      }],
+    },
+    asr: {
+      description: "Explicit ASR provider",
+      providers: [{
+        name: "asr",
+        capability: "speech.stt",
+        route: "stt-qwen",
+        publicModel: "qwen3-asr-1.7b",
+        readiness: "stt-transcription",
+      }],
+    },
+  },
+}, registry);
 
 async function makeSpeechApp(options: Partial<AppDeps>) {
   const health = (id: string): RuntimeHealth => ({
@@ -82,6 +117,7 @@ async function makeSpeechApp(options: Partial<AppDeps>) {
       configRevision: "test",
       bootEpoch: "epoch-speech",
     },
+    agentConnectionCatalog: speechAgentCatalog,
     ...options,
   });
 }
@@ -161,6 +197,119 @@ test("Service Harness batch ASR proxies without an allocation when authenticatio
     headers: { "x-larm-allocation-id": "alloc_existing" },
     body: "audio",
   })).status).toBe(401);
+  expect((await app.request("/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { authorization: "Bearer wrong" },
+    body: "audio",
+  })).status).toBe(401);
+});
+
+test("standard Bearer transcription resolves its model without an allocation header", async () => {
+  let target = "";
+  let internalHeader: string | null = "unexpected";
+  let uploadedModel = "";
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async (input, init) => {
+      target = String(input);
+      internalHeader = new Headers(init?.headers).get("x-larm-allocation-id");
+      const request = new Response(init?.body, {
+        headers: { "content-type": new Headers(init?.headers).get("content-type") ?? "" },
+      });
+      uploadedModel = String((await request.formData()).get("model"));
+      return Response.json({ text: "標準API" });
+    },
+  });
+  const form = new FormData();
+  form.append("model", "qwen3-asr-1.7b");
+  form.append("file", new Blob(["audio"], { type: "audio/wav" }), "sample.wav");
+  const response = await app.request("/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { authorization: "Bearer control-token" },
+    body: form,
+  });
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ text: "標準API" });
+  expect(target).toBe("http://127.0.0.1:8081/v1/audio/transcriptions");
+  expect(uploadedModel).toBe("qwen3-asr-1.7b");
+  expect(internalHeader).toBeNull();
+});
+
+test("standard transcription rejects a successful upstream response with an invalid public contract", async () => {
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async () => Response.json({ transcript: "wrong field" }),
+  });
+  const form = new FormData();
+  form.append("model", "qwen3-asr-1.7b");
+  form.append("file", new Blob(["audio"], { type: "audio/wav" }), "sample.wav");
+  const response = await app.request("/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { authorization: "Bearer control-token" },
+    body: form,
+  });
+
+  expect(response.status).toBe(502);
+  expect(await response.json()).toEqual({
+    error: expect.objectContaining({ code: "upstream_response_invalid", type: "server_error" }),
+  });
+});
+
+test("standard Bearer speech resolves its model and rejects a model for another protocol", async () => {
+  const targets: string[] = [];
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async (input) => {
+      targets.push(String(input));
+      return new Response("RIFF", { headers: { "content-type": "audio/wav" } });
+    },
+  });
+  const response = await app.request("/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer control-token",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ model: "voicevox-core", input: "こんにちは", voice: "1" }),
+  });
+  expect(response.status).toBe(200);
+  expect(await response.text()).toBe("RIFF");
+  expect(targets).toEqual(["http://127.0.0.1:8084/v1/audio/speech"]);
+
+  const mismatch = await app.request("/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer control-token",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ model: "qwen3-asr-1.7b", input: "wrong endpoint" }),
+  });
+  expect(mismatch.status).toBe(404);
+  expect(await mismatch.json()).toEqual({
+    error: expect.objectContaining({ code: "model_not_found", param: "model" }),
+  });
+  expect(targets).toHaveLength(1);
+});
+
+test("standard speech rejects an upstream media type that disagrees with response_format", async () => {
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async () => Response.json({ error: "not audio" }),
+  });
+  const response = await app.request("/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer control-token",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ model: "voicevox-core", input: "こんにちは", response_format: "wav" }),
+  });
+
+  expect(response.status).toBe(502);
+  expect(await response.json()).toEqual({
+    error: expect.objectContaining({ code: "upstream_response_format_mismatch", type: "server_error" }),
+  });
 });
 
 test("STT gateway streams multipart bytes to the allocated transcription runtime", async () => {

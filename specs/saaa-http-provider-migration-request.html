@@ -1,0 +1,390 @@
+<article lang="ja">
+  <h1>SAAA実装依頼：LLM・ASR・TTSをOpenAI互換HTTP APIへ統一する</h1>
+  <p>
+    作成日：2026-09-06<br />
+    対象：SAAAのProvider設定、推論client、音声入出力、接続確認、関連テスト・仕様書
+  </p>
+  <section id="request-1">
+    <h2>依頼の目的</h2>
+    <p>
+      SAAA側を先行して整備し、独自WebSocketを必須とせず、一般的なOpenAI互換HTTP
+      Providerで会話と音声機能が動作する状態にしてください。
+    </p>
+    <p>
+      LLMはChat
+      CompletionsのJSON／SSE、ASRは音声アップロードと文字起こしJSON、TTSはHTTPの音声応答を基本契約にします。独自WSや新しいAgent
+      Session
+      protocolを追加する方針にはしません。OpenAIのクラウドサービスへ切り替える依頼ではなく、ローカルを含むProviderの接続契約を一般化する依頼です。
+    </p>
+    <p>
+      目的は、利用できるProviderを増やし、接続・復旧の複雑さを減らしながら、短い待ち時間で会話できることです。通信方式の名称だけで高速と判断せず、実際の応答・音声再生までの時間を測定してください。
+    </p>
+  </section>
+  <section id="request-2">
+    <h2>今回の範囲と作業上の注意</h2>
+    <p>
+      SAAAのHTTP
+      client、設定・保存・検証、Provider解決、会話stream、tool継続、ASR、TTS、cancel、接続表示、テスト、仕様書を対象とします。Rust／Tauriを維持して構いません。言語の置換は目的に含めません。
+    </p>
+    <p>
+      LARMの本番配備、root activator、推論engineの改造、モデル交換、ContextStill
+      Queueの変更は対象外です。会話履歴・memory・toolの業務仕様を変えず、transport変更による影響を既存の境界で吸収してください。設定の形式変更が必要な場合は、既存データを保持した移行と後方読み取りを用意してください。
+    </p>
+    <p>
+      調査時点のSAAAには、Provider設定・認証・runtime・UIと、新規agent_session関連に未commit変更があります。作業開始時に最新の差分を確認し、既存変更を削除・上書きせずに整合させてください。以下のファイル情報は調査の入口であり、最新構成を優先してください。
+    </p>
+    <ul>
+      <li>
+        <code>src-tauri/src/providers/stream/</code>：通常のProvider実行、LARM・dynamic LAN経路。
+      </li>
+      <li><code>src-tauri/src/providers/openai_compatible.rs</code>：URLとcredentialの解決。</li>
+      <li>
+        <code>src-tauri/src/providers/dynamic_lan/validate.rs</code
+        >、<code>service_harness.rs</code>：独自WSの広告・形式に依存する検証。
+      </li>
+      <li>
+        <code>src-tauri/src/providers/agent_session.rs</code
+        >、<code>agent_session/sse.rs</code>：追加中の独自Session／event stream。Chat
+        Completions SSEと同一ではありません。
+      </li>
+      <li>
+        <code>src-tauri/src/voice/cloud_asr.rs</code
+        >、<code>network_asr.rs</code>：既存のHTTP ASR。
+      </li>
+      <li>
+        <code>src-tauri/src/voice/cloud_tts.rs</code>：既存のHTTP
+        TTS。調査時のartifact経路は音声を集約してファイル化しています。
+      </li>
+      <li>
+        Provider設定のRust
+        model、保存・validation、<code>src/lib/</code>のschema、設定画面、日英翻訳、IPC契約。
+      </li>
+    </ul>
+  </section>
+  <section id="request-3">
+    <h2>1. LARMを通常のOpenAI互換HTTP Providerとして接続する</h2>
+    <p>
+      LARM固有のbootstrapを挟まず、利用者が設定するbase URL、model、認証だけで三APIを利用します。
+    </p>
+    <table>
+      <caption>
+        ProviderとLARM内部の責務
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">層</th>
+          <th scope="col">入力</th>
+          <th scope="col">責務</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>SAAA</td>
+          <td>base URL、公開model、認証。TTSはvoice等も設定</td>
+          <td>
+            LARMのActivity、Profile、Agent Connection、独自Sessionを要求せず、HTTP APIを直接利用
+          </td>
+        </tr>
+        <tr>
+          <td>LARM</td>
+          <td>標準HTTP requestのBearer tokenとmodel</td>
+          <td>公開modelから内部Routeを選び、Runtime起動、参照数、回収を管理</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      SAAAはLARMのProfile、Agent
+      Connection、claim、allocation、lease、短期credentialを実装しません。
+      これらは旧経路のrollback期間だけ残し、新HTTP経路の接続条件や正常性指標にしないでください。
+    </p>
+    <p>
+      HTTP
+      Providerの利用可否を、独自WSの<code>streamingProtocol</code>、<code>streaming.url</code>、SAD1、native
+      upstream、ACK／resumeの有無で判定しないでください。HTTP能力を持つ設定はWS広告がなくても受理します。ただし、認証、固定model、URL検証を緩めて受理してはいけません。
+    </p>
+    <p>
+      旧static経路<code>:44448</code>への自動fallbackやport監視を追加しないでください。401や契約不一致を理由に認証なし・別Providerへ自動的に切り替えないでください。接続先のoriginを越えてcredentialを転送しないでください。
+    </p>
+  </section>
+  <section id="request-4">
+    <h2>2. LLMをChat Completions JSON／SSEへ移行する</h2>
+    <p>
+      <code>POST /v1/chat/completions</code
+      >を利用し、通常会話は<code>stream: true</code>とします。JSONを使う既存の非stream処理も、同じmodel・認証・error処理で維持してください。
+    </p>
+    <p>
+      base
+      URLから操作URLを組み立てる規則を一か所にまとめ、<code>/v1/v1</code>等の重複を防いでください。既存設定のendpoint形式を明示的に移行し、proxy配下のprefixを勝手に消さないでください。
+    </p>
+    <p>SSE実装の受入条件は次のとおりです。</p>
+    <ul>
+      <li>
+        HTTP chunk境界とSSE
+        event境界を同一視せず、UTF-8途中分割、複数eventの同時受信、改行形式、commentを処理する。
+      </li>
+      <li>
+        <code>choices[].delta.content</code
+        >を逐次表示する。roleだけのchunk、空delta、usage-only
+        chunkを誤って不正扱いしない。互換性のために未知の追加fieldだけで拒否せず、必要fieldと意味を検証する。
+      </li>
+      <li>
+        正常なfinishと<code>[DONE]</code>を確認し、途中EOFや不正JSONを成功にしない。<code>stop</code>、<code>tool_calls</code>、<code>length</code>を区別し、長さ上限到達を自然終了と同じ表示・扱いにしない。
+      </li>
+      <li>
+        tool callのargumentsをcall
+        index／IDごとに組み立て、完了するまでtoolを実行しない。既存のtool許可、回数制限、memory／recall規則を維持し、結果を次のChat
+        Completionsへ渡して会話を続ける。
+      </li>
+      <li>
+        reasoningが返るProviderでは表示・音声用contentと混ぜない。<code>reasoning_effort</code>、token上限、structured
+        output等は既存利用を棚卸しし、Providerが対応する範囲で送る。非対応機能を黙って無視して成功扱いにしない。
+      </li>
+      <li>
+        途中応答へ再生成を継ぎ足さず、独自ACK・resume・Session作成を成功条件にしない。SSEであることを理由にLast-Event-IDによる再開を仮定しない。
+      </li>
+    </ul>
+    <p>
+      現行のAgent Session SSEは別APIです。そのevent形式をChat
+      Completions対応の代用にせず、通常のOpenAI互換Providerが独自Session
+      endpointを持たなくても動作することをテストしてください。
+    </p>
+  </section>
+  <section id="request-5">
+    <h2>3. ASRを一般的なHTTP音声アップロードへ揃える</h2>
+    <p>
+      <code>POST /v1/audio/transcriptions</code
+      >へmultipartで<code>file</code>、<code>model</code>を送り、基本応答はJSONの<code>text</code>とします。language等は必要かつ対応する場合に指定してください。
+    </p>
+    <p>
+      既存のHTTP処理を活用し、通常ProviderとLARM由来のProviderで同じ処理を使ってください。現行<code>cloud_asr.rs</code>の<code>verbose_json</code>固定は見直し、<code>text</code>だけのJSONでも利用可能にします。language、segments、no_speech_probがないことだけで失敗にしないでください。
+    </p>
+    <p>
+      録音・VAD・push-to-talkの既存機能を維持し、発話区間を確定してアップロードします。sample
+      rate、channel、WAV
+      encoding、音量、無音、長い発話、cancelを検証してください。無音や空文字は会話入力を生成せず、Providerの接続障害と区別します。
+    </p>
+    <p>
+      連続音声のRealtime
+      ASRを新規実装する依頼ではありません。現行WSに依存するライブ字幕等がある場合は利用箇所を示し、HTTPで代替できる範囲と失う体験を報告してください。ASR結果をSSEで返すことを、音声の連続入力対応と呼ばないでください。
+    </p>
+  </section>
+  <section id="request-6">
+    <h2>4. TTSをHTTP音声応答へ揃える</h2>
+    <p>
+      <code>POST /v1/audio/speech</code
+      >へ<code>model</code>、<code>input</code>、<code>voice</code>、対応する<code>response_format</code>等を送り、音声bodyを再生してください。SSEや独自binary
+      frameを必須にしません。標準的な音声responseを受けるために、独自の<code>stream: true</code>を必須送信しないでください。
+    </p>
+    <p>
+      初期対象はWAVとPCMとし、実装したformatだけを設定で選べるようにしてください。PCMはsample
+      rate、channel、sample
+      formatを明確にし、byte列だけから推測しないでください。Providerの返す音声仕様との不一致は検知してください。
+    </p>
+    <p>
+      対話再生は、逐次音声を返すProviderなら全bodyの受信・ファイル保存を待たずに開始します。既存のartifact保存機能は維持して構いませんが、会話再生の必須前処理にはしないでください。buffered
+      responseのProviderも利用できるようにし、受信の分割だけでengineの生成待ちが短くなるとは扱わないでください。
+    </p>
+    <p>
+      LLMの全文を待たず、発話可能な句単位で合成・再生を進めてください。tokenごとのTTS
+      requestや無制限の先読みQueueは避け、順序を保ちます。tool
+      argumentsやreasoningを読み上げないこと、句の切れ目で日本語の読み・韻律が崩れないことを確認してください。
+    </p>
+    <p>
+      利用者の割り込みでは、再生を停止し、未再生の句を破棄し、関連LLM／TTS
+      requestをcancelします。前turnの遅延応答が新turnの表示・再生へ混ざらないようにしてください。
+    </p>
+  </section>
+  <section id="request-7">
+    <h2>5. 設定、接続確認、障害からの復旧</h2>
+    <ul>
+      <li>
+        通常のHTTP Provider設定ではWS URL、独自protocol、allocation IDを入力させない。base
+        URL、model、認証と必要な音声設定を基本にする。ローカルProviderも設定できる名称・説明にする。
+      </li>
+      <li>
+        既存credential保管を維持し、tokenを設定JSON、log、画面へ露出しない。ユーザーが選ぶ認証なしの設定は維持するが、認証失敗後の暗黙の認証解除は行わない。
+      </li>
+      <li>
+        <code>/models</code
+        >一覧取得と推論可能性を分ける。modelを明示できるProviderに一覧endpointがないことだけで利用不能にせず、短い実処理で接続を検証する。ASRは固定音声、TTSは短い固定文を用い、通常の接続確認で不要なマイク収録を要求しない。
+      </li>
+      <li>
+        接続不能、起動待ち、混雑、認証不正、model不一致、protocol不一致、途中切断を区別して表示する。WS未接続の表示をHTTP
+        Providerへ流用しない。
+      </li>
+      <li>
+        429／503はRetry-After等を使った上限付きbackoffとcancel可能な待機にする。401／403や設定不正を短周期で再試行しない。
+      </li>
+      <li>
+        LARMのrelease identityまたはboot
+        epoch変更後は、次requestを通常HTTPで新規開始する。応答開始前の再試行と、途中応答・tool実行後の再試行を区別する。外部副作用を持つtoolをtransport
+        retryで二重実行しない。
+      </li>
+      <li>
+        HTTP切断とengine計算停止の保証を分ける。client側の待機・再生停止は確認し、Provider側の停止保証が未検証ならその状態を報告する。
+      </li>
+    </ul>
+  </section>
+  <section id="request-8">
+    <h2>6. 実装順と旧経路の扱い</h2>
+    <ol>
+      <li>
+        最新の差分とWS依存箇所、既存HTTP処理を棚卸しし、現状の機能・失敗・性能のbaselineを保存する。
+      </li>
+      <li>通常ProviderのChat Completions SSEとtool継続を実装し、fixtureで会話を完走させる。</li>
+      <li>
+        LARMもbase URL、Bearer
+        token、公開modelだけで同じclientへ設定し、独自discoveryなしで動作させる。
+      </li>
+      <li>ASR、TTS、設定UI、接続確認、cancelを共通HTTP契約へ揃える。</li>
+      <li>対象clientの会話・音声・設定移行を検証し、HTTPを通常経路にする。</li>
+      <li>
+        移行対象で使われなくなった独自WSの設定・表示・実行依存を外す。旧経路は切替検証中の明示的な退避用途に限り、新規機能を追加しない。
+      </li>
+    </ol>
+    <p>
+      他の連携がWSを使っている場合は、依存があるまま無差別に削除しないでください。廃止対象と残存依存を報告し、今回のHTTP経路へ旧WSを暗黙fallbackさせないでください。関係のないAgent
+      Session機能の削除も、この依頼だけを根拠に行わないでください。
+    </p>
+  </section>
+  <section id="request-9">
+    <h2>7. 検証</h2>
+    <p>
+      LARM本番が未配備でも先行できるよう、実socketを使うローカルfixture
+      serverでHTTP応答と遅延・切断を再現してください。通常Provider
+      fixtureは独自Session・Activity・Profile・claim・WSを実装せず、その状態で三APIを利用できることを確認します。
+    </p>
+    <p>
+      必須ケースは、正常な会話、tool往復、UTF-8／SSE分割、usage-only
+      chunk、途中EOF、429／503、401、model不一致、応答前後のcancel、遅い音声配信、buffered音声、ASRのtext-only
+      JSON、無音、Provider再起動後の次request、前turn応答の混入防止、旧設定の読み込みです。
+    </p>
+    <table>
+      <caption>
+        検証コマンドと合格条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">コマンド</th>
+          <th scope="col">用途と合格条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>cargo test --manifest-path src-tauri/Cargo.toml providers::</code></td>
+          <td>
+            Providerの既存テストと追加HTTP契約テストが成功。対象moduleの実際のtest件数を確認し、0件実行を合格にしない
+          </td>
+        </tr>
+        <tr>
+          <td><code>cargo test --manifest-path src-tauri/Cargo.toml voice::</code></td>
+          <td>ASR・TTS・cancelの既存および追加テストが成功</td>
+        </tr>
+        <tr>
+          <td><code>bun run test:frontend</code></td>
+          <td>設定・翻訳・stream表示の回帰がない</td>
+        </tr>
+        <tr>
+          <td><code>bun run check</code></td>
+          <td>型、整形、clippy、IPC、品質契約、既存全体テストが成功</td>
+        </tr>
+        <tr>
+          <td><code>bun run build</code></td>
+          <td>frontendと関連生成物のbuildが成功</td>
+        </tr>
+        <tr>
+          <td><code>bun run spec:check</code></td>
+          <td>仕様書の検査が成功</td>
+        </tr>
+        <tr>
+          <td>
+            <code>bun run larm:preflight</code
+            >、<code>bun run larm:canary</code>、<code
+              >bun run larm:report</code
+            >
+          </td>
+          <td>
+            HTTP用判定へ更新後、接続先・期待release・各実処理・cleanupの結果を記録。旧WS合格条件をそのまま使わない
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      上記コマンドは調査時点のpackage
+      scriptsとmodule構成に基づきます。変更後の構成に合わせて必要なtargetを追加し、実行した正確なコマンドを記録してください。既存checkの失敗は変更由来と既存要因を区別し、skipで成功に見せないでください。
+    </p>
+    <p>
+      性能は同model・同prompt・同音声・同GPU条件で比較し、cold／warm、単独／競合を分けてください。LLMの最初のcontent、ASR確定、TTSの最初の再生可能音声、実際の再生開始、発話終了から再生開始のp50／p95を記録します。role-only
+      chunk、heartbeat、reasoning tokenを返答開始に数えないでください。
+    </p>
+    <p>
+      まずbaselineと必要な対話品質から許容遅延を設定し、その値に対して判定してください。未測定の速度目標を捏造せず、比較できない条件は未測定とします。fixtureで通信の逐次処理を確認しても、実engineの速度を証明したことにはしません。
+    </p>
+    <p>
+      失敗時は層と再現条件を記録し、修正後に該当ケースを再実行してください。一時的な実Provider障害の確認再試行は回数を決めて行い、合格するまで無制限に繰り返さないでください。外部要因が残る場合は未達項目と必要な変更を記録します。
+    </p>
+  </section>
+  <section id="request-10">
+    <h2>8. 責任分担と完了条件</h2>
+    <table>
+      <caption>
+        担当範囲と段階別の完了条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">区分</th>
+          <th scope="col">担当と完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>SAAA先行整備</td>
+          <td>
+            SAAA担当。通常ProviderとLARMを同じHTTP
+            clientで利用し、fixtureによる会話・tool・ASR・TTS・割り込み、設定移行、既存checkを通過。新経路は独自WS・Session・claim不要。到達状態は「SAAA
+            HTTP対応完了／LARM live統合待ち」と明記
+          </td>
+        </tr>
+        <tr>
+          <td>LARM提供側</td>
+          <td>
+            LARM担当。承認済みreleaseの配備、公開model
+            catalog、HTTP認証・三API、engineの能力・cancel・資源管理を提供。SAAA担当が独断でroot配備・engine変更をしない
+          </td>
+        </tr>
+        <tr>
+          <td>実機統合</td>
+          <td>
+            LARM準備後に実施。SAAAからHTTPで会話とtoolを完了し、ASR→LLM→TTSを再生まで確認。中断とProvider復旧後の次turn成功、内部参照のcleanup、期待releaseを確認して「SAAA–LARM実機統合完了」とする
+          </td>
+        </tr>
+        <tr>
+          <td>システム全体</td>
+          <td>
+            別工程。ContextStillの実job結果保存、Queue回復、release収束の検証も必要。SAAA単体の合格で全体の本番稼働完了と報告しない
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      HTTP対応で失う既存のライブ字幕・resume等が見つかった場合は、該当する利用場面と代替案を具体的に報告してください。認証の緩和、外部送信先やモデルの無断変更、履歴の破棄で移行を成立させないでください。
+    </p>
+    <p>
+      納品には、変更概要、対応APIと非対応機能、設定移行、検証コマンドと結果、性能比較、既存WSからの移行状況、LARM側への必要事項、未達条件を含めてください。LARM未配備を理由にSAAA単体で進められる実装・fixture検証を止めず、外部依存を切り分けて完了させてください。
+    </p>
+  </section>
+  <section id="request-11">
+    <h2>参考資料</h2>
+    <ul>
+      <li>
+        OpenAI Chat Completions
+        streaming：https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events
+      </li>
+      <li>OpenAI ASR：https://developers.openai.com/api/docs/guides/speech-to-text</li>
+      <li>OpenAI TTS：https://developers.openai.com/api/docs/guides/text-to-speech</li>
+      <li>
+        LARM側の方針文書：<code>specs/http-provider-standardization.html</code>、<code>specs/dynamic-provider-redesign.html</code>。本依頼のHTTP統一方針を、前案の新規WS提案より優先します。
+      </li>
+    </ul>
+  </section>
+</article>

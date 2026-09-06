@@ -8,11 +8,14 @@ import {
   daemonHealthSchema,
   errorResponseSchema,
   LARM_SERVICE_ACTIVITY_VALID_FOR_MS,
+  openAiModelListSchema,
   publicAllocationSchema,
   publicAgentConnectionSchema,
   publicAgentProfileListSchema,
   readinessSchema,
+  releaseConvergenceStatusSchema,
   serviceActivitySchema,
+  OpenAiChatCompletionSseInspector,
   type AgentConnectionClaim,
   type AgentConnectionHealth,
   type AgentConnectionRequestInput,
@@ -21,6 +24,9 @@ import {
   type PublicAllocation,
   type PublicAgentConnection,
   type ServiceActivity,
+  type OpenAiModelList,
+  type OpenAiChatCompletionSseChunk,
+  type ReleaseConvergenceStatus,
 } from "@larm/core";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -65,8 +71,15 @@ export class LarmClientConfigurationError extends Error {
 
 export class LarmEpochChangedError extends Error {
   constructor(readonly previous: string, readonly current: string) {
-    super(`LARM boot epoch changed from ${previous} to ${current}; create a new Allocation`);
+    super(`LARM boot epoch changed from ${previous} to ${current}; start a new request lifecycle`);
     this.name = "LarmEpochChangedError";
+  }
+}
+
+export class LarmStreamProtocolError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "LarmStreamProtocolError";
   }
 }
 
@@ -127,6 +140,11 @@ export class LarmClient {
       false,
     );
     return this.parseJson(response, readinessSchema);
+  }
+
+  async getReleaseConvergenceStatus(signal?: AbortSignal): Promise<ReleaseConvergenceStatus> {
+    const response = await this.request("/v1/release-convergence", { signal });
+    return this.parseJson(response, releaseConvergenceStatusSchema);
   }
 
   async getServiceActivity(signal?: AbortSignal): Promise<ServiceActivity> {
@@ -491,6 +509,88 @@ export class LarmClient {
     }
     if (!outcome.ok) throw outcome.error;
     return outcome.value;
+  }
+
+  async listOpenAiModels(signal?: AbortSignal): Promise<OpenAiModelList> {
+    const response = await this.request("/v1/models", { signal });
+    return this.parseJson(response, openAiModelListSchema);
+  }
+
+  createChatCompletion(body: unknown, options: RequestOptions = {}): Promise<Response> {
+    return this.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
+  }
+
+  async *streamChatCompletion(
+    body: Record<string, unknown>,
+    options: RequestOptions = {},
+  ): AsyncGenerator<OpenAiChatCompletionSseChunk> {
+    const response = await this.createChatCompletion({ ...body, stream: true }, options);
+    const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (contentType !== "text/event-stream") {
+      await response.body?.cancel(new Error("stream content type mismatch")).catch(() => undefined);
+      throw new LarmStreamProtocolError(
+        "stream_content_type_invalid",
+        "Chat Completions stream did not return text/event-stream",
+      );
+    }
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new LarmStreamProtocolError("stream_body_missing", "Chat Completions stream has no body");
+    }
+    const pending: OpenAiChatCompletionSseChunk[] = [];
+    const inspector = new OpenAiChatCompletionSseInspector((chunk) => pending.push(chunk));
+    let completed = false;
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        const progress = inspector.push(next.value);
+        if (!progress.ok) {
+          throw new LarmStreamProtocolError(
+            `stream_${progress.reason}`,
+            `Chat Completions stream failed validation: ${progress.reason}`,
+          );
+        }
+        while (pending.length > 0) yield pending.shift()!;
+      }
+      const inspected = inspector.finish();
+      if (!inspected.ok) {
+        throw new LarmStreamProtocolError(
+          `stream_${inspected.reason}`,
+          `Chat Completions stream failed validation: ${inspected.reason}`,
+        );
+      }
+      while (pending.length > 0) yield pending.shift()!;
+      completed = true;
+    } finally {
+      if (!completed) await reader.cancel(new Error("stream consumer stopped")).catch(() => undefined);
+      reader.releaseLock();
+    }
+  }
+
+  createAudioTranscription(
+    body: RequestInit["body"],
+    options: RequestOptions = {},
+  ): Promise<Response> {
+    return this.request("/v1/audio/transcriptions", {
+      method: "POST",
+      body,
+      signal: options.signal,
+    });
+  }
+
+  createSpeech(body: unknown, options: RequestOptions = {}): Promise<Response> {
+    return this.request("/v1/audio/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
   }
 
   chat(allocationId: string, body: unknown, options: RequestOptions = {}): Promise<Response> {

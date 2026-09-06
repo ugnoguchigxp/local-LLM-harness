@@ -6,17 +6,16 @@ local-LLM-harness（LARM）は、Linux 上で動かす複数のローカル AI �
 
 ## 何を解決するのか
 
-複数のローカル AI ランタイムを直接使う構成では、利用側がモデルごとのポート、起動方法、空きメモリ、切り替え手順を把握しなくてはなりません。LARM はそれらを設定とバックエンドの内側に閉じ込め、利用側には安定した Allocation と Gateway を提供します。
+複数のローカル AI ランタイムを直接使う構成では、利用側がモデルごとのポート、起動方法、空きメモリ、切り替え手順を把握しなくてはなりません。LARM はそれらを設定とバックエンドの内側に閉じ込め、通常の利用側にはOpenAI互換Gatewayを、管理・高度用途には明示的なAllocationを提供します。
 
 ```text
 Client / Agent
-  ├─ capability と route を指定して Allocation を取得
-  └─ Allocation ID を付けて推論を要求
+  └─ Bearer、公開model、通常のOpenAI互換requestで推論を要求
                     │
                     ▼
                 LARM daemon
-  ├─ registry / routing / admission control
-  ├─ lifecycle / health observation / release
+  ├─ 公開modelから内部Allocationを取得するModel Broker
+  ├─ registry / routing / admission / lifecycle
   └─ OpenAI-compatible Gateway
                     │
                     ▼
@@ -26,7 +25,7 @@ Client / Agent
               LLM / STT / TTS runtime
 ```
 
-LARM のルーティングはリクエスト本文の `model` ではなく、事前に登録した capability と route を基準にします。一度選んだランタイムは Allocation の有効期間中に固定され、許可されていない fallback は行いません。
+公開APIではリクエスト本文の `model` を、事前登録された一つの capability と routeへ解決します。Model Brokerが内部Allocationを取得し、一度選んだランタイムをリクエスト完了まで固定します。未登録modelや許可されていないfallbackは推論開始前に拒否します。
 
 ## 主な概念
 
@@ -47,10 +46,11 @@ LARM のルーティングはリクエスト本文の `model` ではなく、事
 - メモリ、同時実行数、キュー、swap group を考慮した admission control
 - Allocation の作成、ready 待機、更新、解放、期限切れ回収
 - OpenAI 互換の Chat Completions、音声認識、音声合成 Gateway
+- `GET /v1/models`と、Bearer＋公開modelだけで利用できるChat Completions JSON／HTTP SSE
 - systemd と llama-swap を介した状態監視とライフサイクル制御
 - 許可リストに登録した成果物の検証、staging、切り替え、ロールバック
 - Agent 向けの短期接続情報と、用途別 provider profile の発行
-- `saaa.llm-stream.v1` WebSocket による、ACK・再開・tool・cancel対応のLLM realtime data plane
+- HTTP移行のrollback期間に限って維持する`saaa.llm-stream.v1` WebSocket互換経路
 - ヘルスチェック、readiness、Prometheus メトリクス、OpenAPI 3.1 定義
 - LLM・ASR・TTSの単体性能と3系統同時利用時の劣化を比較する診断ベンチマーク
 - Allocation の後始末まで扱う TypeScript クライアント
@@ -68,7 +68,9 @@ LARM は、GPU ドライバ、推論エンジン、モデルのインストー�
 | 稼働確認 | `GET /health`、`GET /ready` |
 | 観測 | `GET /state`、`GET /metrics` |
 | Allocation | `POST /v1/allocations`、`POST /v1/allocations/:id/renew`、`DELETE /v1/allocations/:id` |
-| LLM | 非streaming: `POST /v1/chat/completions`、realtime: `GET /v1/llm/stream` (WebSocket upgrade) |
+| モデル一覧 | `GET /v1/models` |
+| LLM | JSON／HTTP SSE: `POST /v1/chat/completions` |
+| 旧LLM互換 | `GET /v1/llm/stream` (移行期間だけのWebSocket upgrade) |
 | 音声 | `POST /v1/audio/transcriptions`、`POST /v1/audio/speech`、`GET /v1/audio/voices` |
 | Agent 接続 | `/v1/agent-profiles`、`/v1/agent-connections` |
 | 成果物とリリース | `/v1/artifacts`、`/v1/runtime-releases`、`/v1/deployments` |
@@ -131,43 +133,33 @@ curl http://127.0.0.1:9810/openapi.json
 
 ## 最初のリクエスト
 
-次の例は、TypeScript クライアントで Allocation の取得、ready 待機、推論、解放を行います。`LARM_ROUTE` には `routes.yaml` に登録した LLM 用 route ID を指定してください。
+通常の利用側はAllocationを扱いません。固定base URL、Bearer、公開modelだけでHTTP SSEを逐次処理します。
 
 ```ts
 import { LarmClient } from "./packages/client/src/index";
-
-const route = process.env.LARM_ROUTE;
-if (!route) throw new Error("LARM_ROUTE is required");
 
 const client = new LarmClient({
   baseUrl: process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810",
   apiToken: process.env.LARM_API_TOKEN,
 });
 
-const result = await client.withAllocation({
-  requirements: [{ capability: "llm.general", route }],
-  deploymentPolicy: "existing-only",
-  allowFallback: false,
-  ttlSeconds: 120,
-}, async (allocation, larm) => {
-  const response = await larm.chat(allocation.id, {
-    model: process.env.LARM_MODEL ?? "local",
-    stream: false,
-    messages: [{ role: "user", content: "Hello" }],
-  });
-  return await response.json();
-});
-
-console.log(JSON.stringify(result, null, 2));
+for await (const event of client.streamChatCompletion({
+  model: process.env.LARM_MODEL ?? "coding-default",
+  messages: [{ role: "user", content: "Hello" }],
+})) {
+  for (const choice of event.choices) {
+    if (typeof choice.delta.content === "string") process.stdout.write(choice.delta.content);
+  }
+}
 ```
 
 コードをリポジトリ直下の `quickstart.ts` として保存した場合は、次のように実行できます。
 
 ```bash
-LARM_ROUTE=<route-id> LARM_MODEL=<upstream-model-id> bun quickstart.ts
+LARM_MODEL=coding-default bun quickstart.ts
 ```
 
-`withAllocation` はランタイムが ready になるまで待ち、処理の成功・失敗にかかわらず Allocation を解放します。LLM と音声を組み合わせた例は [`examples/voice-client.ts`](examples/voice-client.ts) にあります。
+Model Brokerが内部Allocationの取得・固定・解放を行います。明示Allocationは管理・高度用途にだけ残します。LLM全文を待たず句単位でTTSを開始する音声例は [`examples/voice-client.ts`](examples/voice-client.ts) にあります。
 
 ## 主な環境変数
 
@@ -204,8 +196,8 @@ LARM_ROUTE=<route-id> LARM_MODEL=<upstream-model-id> bun quickstart.ts
 
 ### 推論性能を測る
 
-常駐Providerの性能診断には次を実行します。LLMのHTTP非streamingとnative WebSocket、ASR、TTSを
-個別に測った後、HTTPまたはWebSocketのLLMと音声2系統を一つずつ同時に実行し、p50・p95、LLMの
+常駐Providerの性能診断には次を実行します。LLMのHTTP JSON、HTTP SSE、移行比較用native WebSocket、ASR、TTSを
+個別に測った後、各LLM transportと音声2系統を一つずつ同時に実行し、p50・p95、LLMの
 TTFTと出力tokens/sec、ASR・TTSのRTF、単体比の劣化率をJSONで返します。
 ASR用音声を指定しない場合は、計測開始前に通常TTSで非機密の固定音声を生成し、メモリ上だけで使用します。
 
@@ -226,8 +218,9 @@ LARM_PERF_ITERATIONS=10 \
 bun run perf:diagnostic
 ```
 
-`LARM_PERF_SCENARIOS=llm,llm-ws,asr,tts,mixed,mixed-ws`で対象を絞れます。`mixed`はHTTP
-LLM、`mixed-ws`はWebSocket LLMを音声2系統と同時に開始する実利用干渉テストであり、同一Providerの
+`LARM_PERF_SCENARIOS=llm,llm-sse,llm-ws,asr,tts,mixed,mixed-sse,mixed-ws`で対象を絞れます。`mixed-sse`はHTTP SSE、
+`mixed-ws`はWebSocket LLMを音声2系統と同時に開始する実利用干渉テストです。公平な移行比較だけを行う場合は
+`bun run benchmark:http-provider`を使います。同一Providerの
 飽和限界を探すstress testではありません。WebSocket系列はAgent Connection準備時間をallocationへ分離し、
 run latencyにはWebSocket handshakeを含めます。詳しい測定契約は
 [`specs/performance-benchmark.html`](specs/performance-benchmark.html)にあります。

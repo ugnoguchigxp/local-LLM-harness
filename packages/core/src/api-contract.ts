@@ -37,12 +37,15 @@ import {
   saaaServiceHarnessSchema,
 } from "./service-harness";
 import { serviceActivitySchema } from "./service-activity";
+import { openAiModelListSchema } from "./openai-model-catalog";
 
 const identifierSchema = z.string().min(1).max(192);
 
 export const errorDetailSchema = z.object({
   code: z.string().min(1).max(128),
   message: z.string().min(1),
+  type: z.string().min(1).max(128).optional(),
+  param: z.string().min(1).max(128).nullable().optional(),
   blockers: z.array(z.string().min(1)).optional(),
   admission: z.array(z.object({
     node: z.string().min(1),
@@ -103,6 +106,25 @@ export const readinessSchema = z.union([
   z.object({ status: z.literal("stale"), ageMs: z.number() }).strict(),
 ]);
 
+export const releaseConvergenceStatusSchema = z.object({
+  schemaVersion: z.literal(1),
+  operationId: z.string().regex(/^[a-f0-9]{64}$/),
+  desiredRelease: z.string().regex(/^[a-f0-9]{40}$/),
+  observedRelease: z.string().regex(/^[a-f0-9]{40}$/).nullable(),
+  stage: z.enum([
+    "approved",
+    "validated",
+    "activated",
+    "contract_verified",
+    "canary_verified",
+    "consumer_verified",
+    "complete",
+  ]),
+  result: z.enum(["pending", "running", "succeeded", "failed"]),
+  reason: z.string().min(1).max(256).nullable(),
+  updatedAt: z.string().datetime(),
+}).strict();
+
 export const publicAllocationBindingSchema = allocationBindingSchema.omit({ endpoint: true });
 export const publicAllocationSchema = z.object({
   id: z.string().min(1).max(192),
@@ -159,6 +181,13 @@ export const chatCompletionRequestSchema = z.object({
   model: z.string().min(1),
   messages: z.array(z.record(z.string(), z.unknown())),
   stream: z.boolean().optional(),
+}).passthrough();
+export const audioSpeechRequestSchema = z.object({
+  model: z.string().min(1),
+  input: z.string().min(1),
+  voice: z.string().min(1).optional(),
+  response_format: z.string().min(1).optional(),
+  speed: z.number().positive().optional(),
 }).passthrough();
 export const openApiDocumentSchema = z.object({
   openapi: z.literal("3.1.0"),
@@ -261,6 +290,7 @@ export type RuntimeReleaseSelection = z.infer<typeof runtimeReleaseSelectionSche
 export type RuntimeReleasePlanRequest = z.infer<typeof runtimeReleasePlanRequestSchema>;
 export type RuntimeDeployment = z.infer<typeof runtimeDeploymentSchema>;
 export type RuntimeDeploymentPlan = z.infer<typeof runtimeDeploymentPlanSchema>;
+export type ReleaseConvergenceStatus = z.infer<typeof releaseConvergenceStatusSchema>;
 
 export const API_OPERATIONS = [
   ["get", "/health", "getHealth"],
@@ -276,6 +306,7 @@ export const API_OPERATIONS = [
   ["get", "/v1/inspection/state", "getInspectionState"],
   ["get", "/operations/{id}", "getLegacyOperation"],
   ["get", "/v1/operations/{id}", "getOperation"],
+  ["get", "/v1/release-convergence", "getReleaseConvergence"],
   ["post", "/v1/allocations", "createAllocation"],
   ["get", "/v1/allocations/{id}", "getAllocation"],
   ["post", "/v1/allocations/{id}/renew", "renewAllocation"],
@@ -292,6 +323,7 @@ export const API_OPERATIONS = [
   ["post", "/v1/agent-connections/{id}/claim", "claimAgentConnection"],
   ["post", "/v1/agent-connections/{id}/renew", "renewAgentConnection"],
   ["delete", "/v1/agent-connections/{id}", "releaseAgentConnection"],
+  ["get", "/v1/models", "listOpenAiModels"],
   ["post", "/v1/chat/completions", "createChatCompletion"],
   ["get", "/v1/llm/stream", "upgradeLlmStream"],
   ["post", "/v1/audio/transcriptions", "createTranscription"],
@@ -326,6 +358,7 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   getInspectionState: ["200"],
   getLegacyOperation: ["200"],
   getOperation: ["200"],
+  getReleaseConvergence: ["200"],
   createAllocation: ["200", "202"],
   getAllocation: ["200"],
   renewAllocation: ["200"],
@@ -342,6 +375,7 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   claimAgentConnection: ["200"],
   renewAgentConnection: ["200"],
   releaseAgentConnection: ["204"],
+  listOpenAiModels: ["200"],
   createChatCompletion: ["200"],
   upgradeLlmStream: ["101"],
   createTranscription: ["200"],
@@ -374,6 +408,7 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   getInspectionState: "InspectionClusterState",
   getLegacyOperation: "ControlOperation",
   getOperation: "ControlOperation",
+  getReleaseConvergence: "ReleaseConvergenceStatus",
   createAllocation: "Allocation",
   getAllocation: "Allocation",
   renewAllocation: "Allocation",
@@ -390,6 +425,7 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   claimAgentConnection: "AgentConnectionClaim",
   renewAgentConnection: "AgentConnection",
   releaseAgentConnection: "AgentConnection",
+  listOpenAiModels: "OpenAiModelList",
   createChatCompletion: "UpstreamJson",
   upgradeLlmStream: "WebSocketUpgrade",
   createTranscription: "UpstreamJson",
@@ -448,6 +484,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     Metrics: jsonSchema(metricsResponseSchema),
     OpenApiDocument: jsonSchema(openApiDocumentSchema),
     ChatCompletionRequest: jsonSchema(chatCompletionRequestSchema),
+    AudioSpeechRequest: jsonSchema(audioSpeechRequestSchema),
+    OpenAiModelList: jsonSchema(openAiModelListSchema),
     UpstreamJson: jsonSchema(upstreamJsonResponseSchema),
     ServerSentEvents: {
       type: "string",
@@ -456,6 +494,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     Binary: { type: "string", format: "binary" },
     WebSocketUpgrade: { type: "string", description: "saaa.llm-stream.v1 WebSocket frames" },
     ControlOperation: jsonSchema(controlOperationSchema),
+    ReleaseConvergenceStatus: jsonSchema(releaseConvergenceStatusSchema),
     ArtifactOperation: jsonSchema(artifactOperationSchema),
     RuntimeReleaseList: jsonSchema(runtimeReleaseListSchema),
     RuntimeReleaseSelection: jsonSchema(runtimeReleaseSelectionSchema),
@@ -475,6 +514,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "resolveAllocation") return "AllocationResolveRequest";
       if (operationId === "createAgentConnection") return "AgentConnectionRequest";
       if (operationId === "createChatCompletion") return "ChatCompletionRequest";
+      if (operationId === "createSpeech") return "AudioSpeechRequest";
       if (operationId === "claimAgentConnection") return "AgentConnectionClaimRequest";
       if (operationId === "renewAgentConnection") return "AgentConnectionRenewRequest";
       if (operationId === "planRuntimeDeployment") return "RuntimeReleasePlanRequest";

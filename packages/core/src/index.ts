@@ -11,6 +11,7 @@ export {
   type ParsedInferenceAuditRecord,
 } from "./inference-audit";
 export * from "./protocol";
+export * from "./openai-audio";
 export * from "./saaa-llm-stream";
 export * from "./service-harness";
 export * from "./service-activity";
@@ -19,6 +20,8 @@ export {
   API_OPERATIONS,
   allocationResolveResponseSchema,
   artifactOperationSchema,
+  chatCompletionRequestSchema,
+  audioSpeechRequestSchema,
   controlOperationSchema,
   createOpenApiDocument,
   daemonHealthSchema,
@@ -36,6 +39,7 @@ export {
   publicRuntimeSnapshotSchema,
   publicRuntimeReleaseSchema,
   readinessSchema,
+  releaseConvergenceStatusSchema,
   runtimeDeploymentPlanSchema,
   runtimeDeploymentSchema,
   runtimeListSchema,
@@ -51,6 +55,7 @@ export {
   type RuntimeDeploymentPlan,
   type RuntimeReleasePlanRequest,
   type RuntimeReleaseSelection,
+  type ReleaseConvergenceStatus,
 } from "./api-contract";
 export {
   defaultRuntimeRelease,
@@ -198,6 +203,35 @@ export {
 } from "./openai-json";
 export {
   inspectOpenAiChatCompletionSse,
+  OpenAiChatCompletionSseInspector,
   type OpenAiChatCompletionSseFailureReason,
   type OpenAiChatCompletionSseInspection,
+  type OpenAiChatCompletionSseProgress,
+  type OpenAiChatCompletionSseChunk,
 } from "./openai-sse";
+export {
+  createOpenAiModelCatalog,
+  getOpenAiModel,
+  listOpenAiModels,
+  openAiModelListSchema,
+  openAiModelSchema,
+  OpenAiModelCatalogError,
+  type OpenAiModel,
+  type OpenAiModelBinding,
+  type OpenAiModelCatalog,
+  type OpenAiModelList,
+} from "./openai-model-catalog";
+export {
+  INFRA_PROVIDER_PAUSE_REASONS,
+  isInfraProviderPause,
+  planProviderRecovery,
+  providerGenerationKey,
+  type InfraProviderPauseReason,
+  type ProviderGeneration,
+  type ProviderRecoveryCanary,
+  type ProviderRecoveryInput,
+  type ProviderRecoveryPlan,
+  type ProviderRecoveryRelease,
+  type ProviderRecoveryWave,
+  type RecoverablePausedJob,
+} from "./provider-recovery";

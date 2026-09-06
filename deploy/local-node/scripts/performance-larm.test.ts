@@ -182,6 +182,24 @@ test("performance diagnostic measures HTTP/WS standalone and synchronized mixed 
           if (barrier.workloads.size !== 3) return new Response("not concurrent", { status: 503, headers });
         }
         if (workload === "llm") {
+          const body = await request.json() as { stream?: boolean };
+          if (body.stream === true) {
+            const chunk = (choices: unknown[], usage?: Record<string, number>) => `data: ${JSON.stringify({
+              id: "chatcmpl-performance",
+              object: "chat.completion.chunk",
+              created: 1,
+              model: "larm",
+              choices,
+              ...(usage ? { usage } : {}),
+            })}\n\n`;
+            return new Response([
+              chunk([{ index: 0, delta: { role: "assistant" }, finish_reason: null }]),
+              chunk([{ index: 0, delta: { content: "1 2 3" }, finish_reason: null }]),
+              chunk([{ index: 0, delta: {}, finish_reason: "stop" }]),
+              chunk([], { prompt_tokens: 10, completion_tokens: 6, total_tokens: 16 }),
+              "data: [DONE]\n\n",
+            ].join(""), { headers: { ...headers, "content-type": "text/event-stream" } });
+          }
           return new Response(
             '{"choices":[{"message":{"content":"1 2 3"}}],"usage":{"completion_tokens":6}}',
             { headers: { ...headers, "content-type": "application/json" } },
@@ -273,29 +291,35 @@ test("performance diagnostic measures HTTP/WS standalone and synchronized mixed 
     expect(exitCode).toBe(0);
     const report = JSON.parse(stdout);
     expect(report).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "larm-performance-diagnostic",
       passed: true,
       audioFixture: { source: "file", audioSeconds: 1 },
       target: { identityStable: true, releaseCommit },
     });
     expect(report.scenarios.map((scenario: { id: string }) => scenario.id)).toEqual([
-      "llm", "llm-ws", "asr", "tts", "mixed", "mixed-ws",
+      "llm", "llm-sse", "llm-ws", "asr", "tts", "mixed", "mixed-sse", "mixed-ws",
     ]);
-    expect(report.scenarios[1].workloads["llm-ws"]).toMatchObject({
+    expect(report.scenarios[1].workloads["llm-sse"]).toMatchObject({
+      transports: { "http-sse": 2 },
+      completionTokenSources: { usage: 2 },
+      deltaEvents: { p50: 1 },
+    });
+    expect(report.scenarios[2].workloads["llm-ws"]).toMatchObject({
       transports: { "saaa-websocket": 2 },
       completionTokenSources: { usage: 2 },
       deltaEvents: { p50: 1 },
     });
-    expect(report.scenarios[4]).toMatchObject({ attempts: 6, successes: 6, errors: 0 });
     expect(report.scenarios[5]).toMatchObject({ attempts: 6, successes: 6, errors: 0 });
-    expect(report.comparisons.mixedVsStandalone).toHaveLength(6);
+    expect(report.scenarios[6]).toMatchObject({ attempts: 6, successes: 6, errors: 0 });
+    expect(report.scenarios[7]).toMatchObject({ attempts: 6, successes: 6, errors: 0 });
+    expect(report.comparisons.mixedVsStandalone).toHaveLength(9);
     expect(report.comparisons.llmTransport).toMatchObject({
-      baseline: "llm",
+      baseline: "llm-sse",
       candidate: "llm-ws",
-      completionTokensP50: { http: 6, websocket: 6 },
+      completionTokensP50: { httpSse: 6, websocket: 6 },
     });
-    expect(mixedLaunches).toBe(2);
+    expect(mixedLaunches).toBe(4);
     expect(websocketRuns).toBe(4);
     expect(JSON.parse(await readFile(output, "utf8"))).toEqual(report);
 

@@ -1,4 +1,11 @@
-import type { RuntimeDefinition, RuntimeProtocol } from "@larm/core";
+import {
+  inspectOpenAiChatCompletionJson,
+  inspectOpenAiTranscriptionJson,
+  isOpenAiSpeechMediaType,
+  OpenAiChatCompletionSseInspector,
+  type RuntimeDefinition,
+  type RuntimeProtocol,
+} from "@larm/core";
 import type { ControlEvent } from "./controller";
 import {
   ExecutionGate,
@@ -37,6 +44,7 @@ export type GatewayProxyOptions = {
   upstreamPath: string;
   runtime: RuntimeDefinition;
   bodyMode: "buffered" | "stream" | "none";
+  requestBody?: Uint8Array;
   maxBodyBytes: number;
   timeoutMs: number;
   bootEpoch: string;
@@ -58,6 +66,14 @@ export type GatewayProxyOptions = {
     configRevision: string;
   };
   responseFormat?: "sse";
+  validateChatResponse?: boolean;
+  validateTranscriptionResponse?: boolean;
+  validateSpeechResponse?: boolean;
+  expectedSpeechFormat?: string;
+  expectedModel?: string;
+  maxResponseBytes?: number;
+  errorFormat?: "larm" | "openai";
+  onFinish?: () => void | Promise<void>;
 };
 
 const RESPONSE_HEADERS = [
@@ -66,6 +82,8 @@ const RESPONSE_HEADERS = [
   "content-length",
   "content-type",
   "retry-after",
+  "x-audio-sample-format",
+  "x-audio-sample-rate",
   "x-voicevox-credit",
 ];
 
@@ -120,6 +138,19 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     clientSignal.removeEventListener("abort", abortFromClient);
     options.lifecycleSignal?.removeEventListener("abort", abortFromLifecycle);
     releaseSlot?.();
+    try {
+      void Promise.resolve(options.onFinish?.()).catch(() => {
+        options.onEvent?.({
+          name: "gateway_finish_callback_failed",
+          labels: { request: requestId },
+        });
+      });
+    } catch {
+      options.onEvent?.({
+        name: "gateway_finish_callback_failed",
+        labels: { request: requestId },
+      });
+    }
     finishTracked();
     options.metrics?.record({
       name: "gateway_duration_seconds",
@@ -187,7 +218,17 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     });
     await finalizeAudit();
     finish();
-    return jsonResponse({ error: { code, message } }, status, {
+    const body = options.errorFormat === "openai"
+      ? {
+        error: {
+          message,
+          type: status === 429 ? "rate_limit_error" : status >= 500 ? "server_error" : "invalid_request_error",
+          param: null,
+          code,
+        },
+      }
+      : { error: { code, message } };
+    return jsonResponse(body, status, {
       "x-request-id": requestId,
       "x-larm-boot-epoch": options.bootEpoch,
       ...Object.fromEntries(new Headers(headers)),
@@ -269,7 +310,12 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
 
   let body: RequestInit["body"];
   try {
-    if (options.bodyMode === "buffered") {
+    if (options.requestBody) {
+      if (options.bodyMode !== "buffered") {
+        throw new Error("a prepared request body requires buffered body mode");
+      }
+      body = options.requestBody;
+    } else if (options.bodyMode === "buffered") {
       body = await readBodyLimited(options.request, options.maxBodyBytes, abort.signal);
     } else if (options.bodyMode === "stream") {
       const limited = limitedRequestStream(
@@ -463,6 +509,23 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       "upstream_protocol_error",
     );
   }
+  if (
+    options.validateSpeechResponse
+    && options.protocol === "openai.audio-speech.v1"
+    && upstream.ok
+    && !isOpenAiSpeechMediaType(
+      upstream.headers.get("content-type") ?? "",
+      options.expectedSpeechFormat,
+    )
+  ) {
+    await upstream.body?.cancel(new Error("upstream returned the wrong audio format")).catch(() => undefined);
+    return failure(
+      "upstream_response_format_mismatch",
+      "upstream speech response media type does not match response_format",
+      502,
+      "upstream_protocol_error",
+    );
+  }
   outcome = `http_${upstream.status}`;
   options.metrics?.record({
     name: "gateway_request",
@@ -490,6 +553,124 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     responseHeaders.set("cache-control", "no-cache, no-transform");
     responseHeaders.set("x-accel-buffering", "no");
   }
+  if (
+    options.validateChatResponse
+    && options.protocol === "openai.chat-completions.v1"
+    && options.responseFormat !== "sse"
+    && upstream.ok
+  ) {
+    if (
+      upstream.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
+      !== "application/json"
+    ) {
+      await upstream.body?.cancel(new Error("upstream did not return JSON")).catch(() => undefined);
+      return failure(
+        "upstream_response_format_mismatch",
+        "upstream did not return application/json for a non-streaming chat request",
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    let responseBody: Uint8Array;
+    let parsed: unknown;
+    try {
+      responseBody = await readBodyLimited(
+        upstream as unknown as Request,
+        options.maxResponseBytes ?? 16 * 1024 * 1024,
+        abort.signal,
+      );
+      parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody)) as unknown;
+    } catch {
+      return failure(
+        "upstream_response_invalid",
+        "upstream returned an invalid or oversized chat completion",
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    const inspected = inspectOpenAiChatCompletionJson(parsed);
+    if (!inspected.ok || (options.expectedModel !== undefined && inspected.model !== options.expectedModel)) {
+      return failure(
+        "upstream_response_invalid",
+        "upstream returned a chat completion that does not match the public contract",
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    if (auditSession && !auditResponseCaptureFailed) {
+      try {
+        auditSession.captureResponse(responseBody);
+      } catch {
+        auditResponseCaptureFailed = true;
+        try {
+          auditSession.markResponseCaptureFailed?.();
+        } catch {
+          // Finalization remains isolated; response validation must not expose audit failures.
+        }
+        options.onEvent?.({
+          name: "inference_audit_capture_failed",
+          labels: { request: requestId, phase: "response" },
+        });
+      }
+    }
+    options.onEvent?.({
+      name: "gateway_json_terminal_verified",
+      labels: { request: requestId, runtime: options.runtime.id },
+    });
+    await finalizeAudit();
+    finish();
+    return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
+  }
+  if (
+    options.validateTranscriptionResponse
+    && options.protocol === "openai.audio-transcriptions.v1"
+    && upstream.ok
+  ) {
+    if (
+      upstream.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
+      !== "application/json"
+    ) {
+      await upstream.body?.cancel(new Error("upstream did not return JSON")).catch(() => undefined);
+      return failure(
+        "upstream_response_format_mismatch",
+        "upstream did not return application/json for a transcription request",
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    let responseBody: Uint8Array;
+    let parsed: unknown;
+    try {
+      responseBody = await readBodyLimited(
+        upstream as unknown as Request,
+        options.maxResponseBytes ?? 4 * 1024 * 1024,
+        abort.signal,
+      );
+      parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody)) as unknown;
+    } catch {
+      return failure(
+        "upstream_response_invalid",
+        "upstream returned an invalid or oversized transcription",
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    if (!inspectOpenAiTranscriptionJson(parsed).ok) {
+      return failure(
+        "upstream_response_invalid",
+        "upstream transcription does not match the public contract",
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    options.onEvent?.({
+      name: "gateway_json_terminal_verified",
+      labels: { request: requestId, runtime: options.runtime.id },
+    });
+    await finalizeAudit();
+    finish();
+    return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
+  }
   if (!upstream.body) {
     await finalizeAudit();
     finish();
@@ -497,16 +678,73 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   }
 
   const reader = upstream.body.getReader();
+  const sseInspector = options.responseFormat === "sse" && upstream.ok
+    ? new OpenAiChatCompletionSseInspector()
+    : undefined;
+  let firstMeaningfulOutputObserved = false;
+  const failStreamProtocol = async (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    reason: string,
+  ): Promise<void> => {
+    outcome = `stream_protocol_${reason}`;
+    options.metrics?.record({
+      name: "gateway_stream_protocol_error",
+      labels: { runtime: options.runtime.id, reason },
+    });
+    options.onEvent?.({
+      name: "gateway_stream_protocol_error",
+      labels: { request: requestId, runtime: options.runtime.id, reason },
+    });
+    const error = new Error(`upstream SSE contract failed: ${reason}`);
+    await reader.cancel(error).catch(() => undefined);
+    await finalizeAudit();
+    finish();
+    controller.error(error);
+  };
   cancelUpstream = async (reason) => await reader.cancel(reason);
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
         const chunk = await withAbort(reader.read(), abort.signal);
         if (chunk.done) {
+          const inspected = sseInspector?.finish();
+          if (inspected && !inspected.ok) {
+            await failStreamProtocol(controller, inspected.reason);
+            return;
+          }
+          if (inspected?.ok) {
+            if (options.expectedModel !== undefined && inspected.model !== options.expectedModel) {
+              await failStreamProtocol(controller, "model_mismatch");
+              return;
+            }
+            options.onEvent?.({
+              name: "gateway_stream_terminal_verified",
+              labels: { request: requestId, runtime: options.runtime.id },
+            });
+          }
           await finalizeAudit();
           finish();
           controller.close();
           return;
+        }
+        const progress = sseInspector?.push(chunk.value);
+        if (progress && !progress.ok) {
+          await failStreamProtocol(controller, progress.reason);
+          return;
+        }
+        if (progress?.ok && progress.deltas > 0 && !firstMeaningfulOutputObserved) {
+          firstMeaningfulOutputObserved = true;
+          const elapsed = Math.max(0, ((options.now?.() ?? Date.now()) - startedAt) / 1_000);
+          options.metrics?.record({
+            name: "gateway_first_meaningful_output_seconds",
+            labels: { runtime: options.runtime.id, protocol: options.protocol },
+            value: elapsed,
+          });
+          options.onEvent?.({
+            name: "gateway_first_meaningful_output",
+            labels: { request: requestId, runtime: options.runtime.id },
+            value: elapsed,
+          });
         }
         if (auditSession && !auditResponseCaptureFailed) {
           try {

@@ -18,9 +18,12 @@ test("production agent profiles compile to strict protocol-aware provider contra
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
   expect(catalog.defaultAgentProfile).toBe("coding-default");
   expect(catalog.profiles.map((profile) => profile.id)).toEqual([
+    "asr-qwen",
     "coding-default",
     "contextstill-background",
     "deep-reasoning-35b",
+    "tts-default",
+    "tts-expressive",
   ]);
   expect(catalog.audiences.map((audience) => audience.id)).toEqual([
     "saaa-desktop",
@@ -73,6 +76,28 @@ test("production agent profiles compile to strict protocol-aware provider contra
       }],
     });
   expect(contextStill?.providers[0]).not.toHaveProperty("streamingProtocol");
+  expect(catalog.profiles.find((profile) => profile.id === "asr-qwen"))
+    .toMatchObject({
+      selectionPolicy: "explicit-only",
+      providers: [{
+        capability: "speech.stt",
+        route: "stt-qwen",
+        protocol: "openai.audio-transcriptions.v1",
+        publicModel: "qwen3-asr-1.7b",
+        readiness: "stt-transcription",
+      }],
+    });
+  expect(catalog.profiles.find((profile) => profile.id === "tts-default"))
+    .toMatchObject({
+      selectionPolicy: "explicit-only",
+      providers: [{
+        capability: "speech.tts",
+        route: "tts-voicevox",
+        protocol: "openai.audio-speech.v1",
+        publicModel: "voicevox-core",
+        readiness: "tts-speech",
+      }],
+    });
   expect(catalog.profiles.every((profile) => /^[a-f0-9]{64}$/.test(profile.revision))).toBeTrue();
 });
 

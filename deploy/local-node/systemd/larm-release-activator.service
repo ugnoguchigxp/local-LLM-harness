@@ -1,0 +1,17 @@
+[Unit]
+Description=Activate a signed and pre-validated LARM release
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /usr/local/libexec/larm/activate-larm-release
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/srv/ai/apps/larm-candidates /etc/larm/release-signing.pub
+ReadWritePaths=/srv/ai/apps/larm-releases /srv/ai/apps/larm-current /var/lib/larm/release-inbox /var/lib/larm/release-controller
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

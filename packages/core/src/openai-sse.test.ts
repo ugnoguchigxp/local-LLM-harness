@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { inspectOpenAiChatCompletionSse } from "./openai-sse";
+import {
+  inspectOpenAiChatCompletionSse,
+  OpenAiChatCompletionSseInspector,
+} from "./openai-sse";
 
 const metadata = {
   id: "chatcmpl-test",
@@ -57,6 +60,35 @@ test("accepts schema roles and recognized reasoning and tool deltas", () => {
     event({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }),
     "data: [DONE]\n\n",
   ].join(""))).toEqual({ ...successfulInspection, deltas: 2 });
+});
+
+test("incrementally validates arbitrary UTF-8 and CRLF chunk boundaries", () => {
+  const source = [
+    event({ choices: [{ index: 0, delta: { content: "こんにちは" }, finish_reason: null }] }),
+    event({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }),
+    "data: [DONE]\n\n",
+  ].join("").replaceAll("\n", "\r\n");
+  const bytes = new TextEncoder().encode(source);
+  const inspector = new OpenAiChatCompletionSseInspector();
+  let sawMeaningfulDelta = false;
+  for (let index = 0; index < bytes.length; index += 1) {
+    const progress = inspector.push(bytes.subarray(index, index + 1));
+    expect(progress.ok).toBeTrue();
+    if (progress.ok && progress.deltas > 0) sawMeaningfulDelta = true;
+  }
+  expect(sawMeaningfulDelta).toBeTrue();
+  expect(inspector.finish()).toEqual({
+    ...successfulInspection,
+    chunks: 2,
+  });
+});
+
+test("incremental validation rejects an incomplete EOF", () => {
+  const inspector = new OpenAiChatCompletionSseInspector();
+  expect(inspector.push(event({
+    choices: [{ index: 0, delta: { content: "partial" }, finish_reason: null }],
+  }))).toEqual(expect.objectContaining({ ok: true, deltas: 1 }));
+  expect(inspector.finish()).toEqual({ ok: false, reason: "missing_done" });
 });
 
 test("rejects malformed, incomplete, and post-terminal streams", () => {

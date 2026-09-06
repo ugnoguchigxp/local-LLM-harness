@@ -320,6 +320,33 @@ test("GET /health", async () => {
   expect(res.headers.get("x-larm-boot-epoch")).toBe("epoch-local");
 });
 
+test("GET /v1/release-convergence exposes only strict root-authored convergence state", async () => {
+  const status = {
+    schemaVersion: 1 as const,
+    operationId: "a".repeat(64),
+    desiredRelease: "b".repeat(40),
+    observedRelease: "b".repeat(40),
+    stage: "contract_verified" as const,
+    result: "succeeded" as const,
+    reason: null,
+    updatedAt: "2026-09-06T12:00:00.000Z",
+  };
+  const configured = (await makeApp(true, false, {}, {
+    getReleaseConvergenceStatus: () => status,
+  })).app;
+  const response = await configured.request("/v1/release-convergence");
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toEqual(status);
+
+  const unavailable = (await makeApp(true)).app;
+  expect((await unavailable.request("/v1/release-convergence")).status).toBe(503);
+  const invalid = (await makeApp(true, false, {}, {
+    getReleaseConvergenceStatus: () => ({ ...status, unexpected: "field" }),
+  })).app;
+  expect((await invalid.request("/v1/release-convergence")).status).toBe(503);
+});
+
 test("GET /v1/activity aggregates HTTP and native work without exposing internals", async () => {
   const tracker = new RequestTracker();
   const metrics = new MetricsRegistry();
@@ -471,11 +498,24 @@ test("GET /openapi.json exposes the machine-readable v1 contract", async () => {
   expect(response.status).toBe(200);
   const document = await response.json() as {
     openapi: string;
-    paths: Record<string, unknown>;
+    paths: Record<string, Record<string, {
+      security?: Array<Record<string, unknown>>;
+      responses?: Record<string, unknown>;
+    }>>;
   };
   expect(document.openapi).toBe("3.1.0");
   expect(document.paths["/v1/allocations"]).toBeDefined();
   expect(document.paths["/v1/runtime-releases"]).toBeDefined();
+  expect(document.paths["/v1/models"]?.get?.security).toEqual([{ bearerAuth: [] }]);
+  expect(document.paths["/v1/models"]?.get?.responses?.["200"]).toEqual(
+    expect.objectContaining({
+      content: {
+        "application/json": {
+          schema: { $ref: "#/components/schemas/OpenAiModelList" },
+        },
+      },
+    }),
+  );
 });
 
 test("OpenAPI operation inventory cannot drift from daemon routes", async () => {
@@ -1113,12 +1153,244 @@ test("allocation admission rejects a runtime reserved for artifact mutation", as
   });
 });
 
+test("OpenAI-compatible model catalog uses standard bearer auth and hides runtime details", async () => {
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    agentConnectionCatalog,
+  });
+
+  expect((await app.request("/v1/models")).status).toBe(401);
+  const response = await app.request("/v1/models", { headers: agentHeaders() });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    object: "list",
+    data: [{ id: "test-model", object: "model", created: 0, owned_by: "larm" }],
+  });
+  expect(JSON.stringify(await (await app.request("/v1/models", { headers: agentHeaders() })).json()))
+    .not.toContain("qwen-general");
+});
+
+test("standard Chat Completions needs only bearer and model and releases its internal allocation", async () => {
+  const upstream: { url?: string; body?: unknown; allocationHeader?: string | null } = {};
+  const events: ControlEvent[] = [];
+  const { app, control } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    agentConnectionCatalog,
+    onEvent: (event) => events.push(event),
+    gatewayFetch: async (input, init) => {
+      upstream.url = input.toString();
+      upstream.body = JSON.parse(new TextDecoder().decode(init?.body as Uint8Array)) as unknown;
+      upstream.allocationHeader = new Headers(init?.headers).get("x-larm-allocation-id");
+      return Response.json({
+        id: "chatcmpl-direct",
+        object: "chat.completion",
+        created: 1,
+        model: "test-model",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "ok" },
+          finish_reason: "stop",
+        }],
+      });
+    },
+  });
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({
+      model: "test-model",
+      messages: [{ role: "user", content: "hello" }],
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual(expect.objectContaining({
+    object: "chat.completion",
+    model: "test-model",
+  }));
+  await Bun.sleep(0);
+  expect(upstream.url).toBe("http://127.0.0.1:8080/v1/chat/completions");
+  expect(upstream.body).toEqual({
+    model: "test-model",
+    messages: [{ role: "user", content: "hello" }],
+  });
+  expect(upstream.allocationHeader).toBeNull();
+  expect(control.getActiveAllocationCount()).toBe(0);
+  expect(events).toContainEqual(expect.objectContaining({
+    name: "model_broker_prepare_completed",
+    labels: expect.objectContaining({ model: "test-model", runtime: "qwen-general" }),
+  }));
+});
+
+test("standard Chat Completions streams SSE and single-flights preferred model startup", async () => {
+  const expected = [
+    'data: {"id":"chatcmpl-direct","object":"chat.completion.chunk","created":1,"model":"speed-model","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n',
+    'data: {"id":"chatcmpl-direct","object":"chat.completion.chunk","created":1,"model":"speed-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+    "data: [DONE]\n\n",
+  ].join("");
+  const { app, control, log } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    agentConnectionCatalog: explicitAgentConnectionCatalog,
+    gatewayFetch: async () => new Response(expected, {
+      headers: { "content-type": "text/event-stream; charset=utf-8" },
+    }),
+  });
+  const invoke = () => app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({
+      model: "speed-model",
+      messages: [{ role: "user", content: "hello" }],
+      stream: true,
+    }),
+  });
+
+  const firstPending = invoke();
+  const secondPending = invoke();
+  const first = await firstPending;
+  expect(first.headers.get("content-type")).toBe("text/event-stream; charset=utf-8");
+  expect(await first.text()).toBe(expected);
+  const second = await secondPending;
+  expect(await second.text()).toBe(expected);
+  await Bun.sleep(0);
+  expect(log.ensure).toEqual(["qwen-worker"]);
+  expect(control.getActiveAllocationCount()).toBe(0);
+});
+
+test("standard Chat Completions rejects unknown models before allocation or upstream contact", async () => {
+  let contacted = false;
+  const { app, control } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    agentConnectionCatalog,
+    gatewayFetch: async () => {
+      contacted = true;
+      return Response.json({ unexpected: true });
+    },
+  });
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({ model: "missing", messages: [] }),
+  });
+  expect(response.status).toBe(404);
+  expect(await response.json()).toEqual({
+    error: {
+      message: "model missing is not available",
+      type: "invalid_request_error",
+      param: "model",
+      code: "model_not_found",
+    },
+  });
+  expect(contacted).toBeFalse();
+  expect(control.getActiveAllocationCount()).toBe(0);
+});
+
+test("standard Chat Completions rejects a JSON response with public model drift", async () => {
+  const { app, control } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    agentConnectionCatalog,
+    gatewayFetch: async () => Response.json({
+      id: "chatcmpl-drift",
+      object: "chat.completion",
+      created: 1,
+      model: "internal-runtime-name",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: "must not escape" },
+        finish_reason: "stop",
+      }],
+    }),
+  });
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({
+      model: "test-model",
+      messages: [{ role: "user", content: "hello" }],
+    }),
+  });
+
+  expect(response.status).toBe(502);
+  expect(await response.json()).toEqual({
+    error: {
+      message: "upstream returned a chat completion that does not match the public contract",
+      type: "server_error",
+      param: null,
+      code: "upstream_response_invalid",
+    },
+  });
+  expect(control.getActiveAllocationCount()).toBe(0);
+});
+
+test("standard Chat Completions cancels an unreferenced cold start without leaking an allocation", async () => {
+  const probes = new Map<string, RuntimeHealth>([
+    ["qwen-general", probe("qwen-general", true)],
+    ["qwen-worker", probe("qwen-worker", false)],
+  ]);
+  let ensureStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    ensureStarted = resolve;
+  });
+  let startupCancelled = false;
+  const backend: RuntimeBackend = {
+    list: async () => [...probes.values()],
+    health: async (id) => probes.get(id) ?? probe(id, false),
+    ensure: async (_runtime, signal) => {
+      ensureStarted();
+      await new Promise<void>((_resolve, reject) => {
+        const cancel = () => {
+          startupCancelled = true;
+          reject(signal?.reason ?? new Error("cancelled"));
+        };
+        if (signal?.aborted) cancel();
+        else signal?.addEventListener("abort", cancel, { once: true });
+      });
+      throw new Error("unreachable");
+    },
+    stop: async () => undefined,
+  };
+  const observer = new Observer(registry, backend);
+  await observer.tick();
+  const control = new ControlPlane(registry, backend, observer, {
+    idleTtlMs: 0,
+    random: () => "cancelled",
+    onRouteShadowComparison: () => undefined,
+  });
+  const app = createApp({
+    registry,
+    getState: () => observer.getState(),
+    control,
+    apiToken: agentApiToken,
+    agentConnectionCatalog: explicitAgentConnectionCatalog,
+    connectionPollIntervalMs: 1,
+  });
+  const abort = new AbortController();
+  const pending = app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({
+      model: "speed-model",
+      messages: [{ role: "user", content: "hello" }],
+      stream: true,
+    }),
+    signal: abort.signal,
+  });
+
+  await started;
+  abort.abort(new Error("client disconnected"));
+  expect((await pending).status).toBe(400);
+  await control.flush();
+  expect(startupCancelled).toBeTrue();
+  expect(control.getActiveAllocationCount()).toBe(0);
+});
+
 test("HTTP gateway streams OpenAI-compatible SSE in the requested format", async () => {
   const upstreamRequest: { accept?: string; body?: unknown } = {};
   const encoder = new TextEncoder();
   const expected = [
-    'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n',
-    'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+    'data: {"id":"chatcmpl-gateway","object":"chat.completion.chunk","created":1,"model":"local","choices":[{"index":0,"delta":{"content":"hel"},"finish_reason":null}]}\n\n',
+    'data: {"id":"chatcmpl-gateway","object":"chat.completion.chunk","created":1,"model":"local","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":null}]}\n\n',
+    'data: {"id":"chatcmpl-gateway","object":"chat.completion.chunk","created":1,"model":"local","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
     "data: [DONE]\n\n",
   ];
   const { app } = await makeApp(true, false, {}, {
@@ -1167,6 +1439,43 @@ test("HTTP gateway streams OpenAI-compatible SSE in the requested format", async
     messages: [{ role: "user", content: "secret prompt" }],
   });
   expect(await response.text()).toBe(expected.join(""));
+});
+
+test("HTTP gateway fails an incomplete SSE EOF instead of recording success", async () => {
+  const events: ControlEvent[] = [];
+  const { app } = await makeApp(true, false, {}, {
+    onEvent: (event) => events.push(event),
+    gatewayFetch: async () => new Response(
+      'data: {"id":"chatcmpl-partial","object":"chat.completion.chunk","created":1,"model":"local","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}\n\n',
+      { headers: { "content-type": "text/event-stream" } },
+    ),
+  });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await created.json()) as { id: string }).id;
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": allocationId,
+    },
+    body: JSON.stringify({ model: "local", messages: [], stream: true }),
+  });
+
+  expect(response.status).toBe(200);
+  await expect(response.text()).rejects.toThrow("missing_done");
+  expect(events).toContainEqual(expect.objectContaining({
+    name: "gateway_stream_protocol_error",
+    labels: expect.objectContaining({ reason: "missing_done" }),
+  }));
+  expect(events).not.toContainEqual(expect.objectContaining({
+    name: "gateway_stream_terminal_verified",
+  }));
 });
 
 test("HTTP gateway rejects a successful non-SSE upstream response to a streaming chat", async () => {
@@ -2157,7 +2466,11 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
       return validLlmSemanticProbeResponse(init);
     }
     if (value.stream === true) {
-      return new Response('data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n', {
+      return new Response([
+        'data: {"id":"chatcmpl-agent","object":"chat.completion.chunk","created":1,"model":"test-model","choices":[{"index":0,"delta":{"content":"done"},"finish_reason":null}]}\n\n',
+        'data: {"id":"chatcmpl-agent","object":"chat.completion.chunk","created":1,"model":"test-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+        "data: [DONE]\n\n",
+      ].join(""), {
         headers: { "content-type": "text/event-stream" },
       });
     }

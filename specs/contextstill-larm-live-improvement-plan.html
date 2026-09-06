@@ -5,22 +5,27 @@
     2026-09-06の<a href="./http-sse-provider-compatibility.html#live-investigation-2026-09-06"
       >live未到達調査</a
     >で確認したrelease不一致を解消し、同じ種類の不成立を配備時に検知するための改善方針です。
-    ContextStill専用endpointは追加せず、Service Activity、Agent Connection、OpenAI互換Chat
-    Completionsという既存の汎用contractを強化します。
+    ContextStill専用endpointは追加せず、Service Activity、公開model catalog、OpenAI互換Chat
+    Completionsという汎用HTTP contractへ統一します。Agent
+    Connectionとclaimは新consumerの依存にしません。
   </p>
 
   <dl>
     <dt>最優先目標</dt>
-    <dd>対応済みreleaseをliveへ配備し、ContextStill ProfileのJSONとHTTP SSEを実通信で受入する</dd>
+    <dd>対応済みreleaseをliveへ配備し、Bearer＋modelだけのJSONとHTTP SSEを実通信で受入する</dd>
     <dt>再発防止目標</dt>
     <dd>release identity、公開contract、Provider意味互換、client設定の四層でfail closedにする</dd>
     <dt>Repository実装状態</dt>
     <dd>
-      2026-09-06にSSE semantic readiness、汎用HTTP Agent smoke、release後contract gateを実装し、
-      production Provider資産を使うshadow canaryまで完了。live配備はsudo認証待ち
+      2026-09-06に標準LLM／ASR／TTS API、model broker、厳密なSSE client、署名済みdesired release、
+      root activator、収束status、HTTP
+      canary、Queue回復の純粋状態機械を実装。live配備と実consumer組込み待ち
     </dd>
     <dt>対象外</dt>
-    <dd>自動本番配備、ContextStill専用API、Provider portのLAN公開、静的Providerへの暗黙fallback</dd>
+    <dd>
+      未承認のsource HEAD自動配備、ContextStill専用API、Provider
+      portのLAN公開、静的Providerへの暗黙fallback
+    </dd>
   </dl>
 
   <section id="decisions">
@@ -36,8 +41,9 @@
       </li>
       <li>
         <code>/health</code
-        >と<code>/ready</code>だけでは配備成功にしない。Activity、Profile、短期Bearer、
-        claim model、JSON、SSE、releaseまでを一つのlive contract gateにする。
+        >と<code>/ready</code>だけでは配備成功にしない。release
+        identity、公開model、通常Bearer、 JSON、SSE、consumer一件完了までを一つのlive contract
+        gateにする。
       </li>
       <li>
         source HEADとliveの単純な不一致は即時自動配備の理由にしない。承認済みdesired commitとlive
@@ -48,6 +54,135 @@
         <code>waiting_for_dynamic_provider</code
         >へ潰さず、運用者が故障層を判別できる状態を公開する。
       </li>
+    </ol>
+  </section>
+
+  <section id="root-cause-2026-09-06">
+    <h2>根本原因分析</h2>
+    <p>
+      直接原因は、対応済みsourceが<code>1b5e427d5d655e7fb8d2abf10ff46a113f6ae2e0</code>まで進んだ一方、 live
+      daemonが<code>01667fe1a4f9acc18794ae9fd4264487c1063647</code>を実行し続けたrelease
+      driftである。旧releaseは<code>/v1/activity</code>をHTTP 401で拒否し、
+      <code>contextstill-background</code
+      >をcatalogに持たないため、ContextStillはConnection作成前に fail closedとなる。
+    </p>
+    <table>
+      <caption>
+        障害を継続させた制御上の原因
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">層</th>
+          <th scope="col">現状</th>
+          <th scope="col">根本的な欠落</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Release intent</th>
+          <td>Git commitと人手の依頼書だけが配備対象を示す</td>
+          <td>承認済みdesired commitを機械が継続監視できる正本がない</td>
+        </tr>
+        <tr>
+          <th scope="row">Privileged activation</th>
+          <td><code>release-larm.sh apply</code>は対話的root権限を要求する</td>
+          <td>承認とactivationの安全な自動handoffがなく、作業者交代で停止する</td>
+        </tr>
+        <tr>
+          <th scope="row">Completion gate</th>
+          <td>repository testとshadow canaryはlive切替なしでも成功する</td>
+          <td>live identityとconsumer一件完了を満たすまで「完了」を拒否する共通状態がない</td>
+        </tr>
+        <tr>
+          <th scope="row">Consumer recovery</th>
+          <td>一時的なProvider不通でも再試行上限後にjobがpausedへ固定される</td>
+          <td>Provider世代の回復を検知してinfra起因jobだけを安全に再開する経路がない</td>
+        </tr>
+        <tr>
+          <th scope="row">Health semantics</th>
+          <td>
+            旧static port <code>44448</code>の不在が障害根拠として扱われる
+          </td>
+          <td>標準HTTPのcatalog、JSON、SSE、consumer完了で測る統一runbookがない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      したがって、単発のsudo実行だけでは今回を復旧できても再発を防げない。また現行
+      <code>release-larm.sh</code
+      >をそのままNOPASSWD化してはならない。候補repositoryのinstall、test、
+      scriptをrootで実行する経路を非特権利用者へ開くことになり、任意コード実行境界を壊すためである。
+    </p>
+  </section>
+
+  <section id="release-convergence-controller">
+    <h2>恒久対策: 承認済みRelease収束Controller</h2>
+    <p>
+      source、desired、live、consumerを次の一つの状態機械で管理する。source HEADを自動配備せず、
+      保護されたrelease intentに完全commit IDが承認された場合だけ収束を開始する。
+    </p>
+    <figure>
+      <pre><code>reviewed commit
+  -&gt; validated bundle
+  -&gt; approved desired release
+  -&gt; activated live release
+  -&gt; contract verified
+  -&gt; provider canary verified
+  -&gt; consumer job verified
+  -&gt; complete</code></pre>
+      <figcaption>
+        途中状態と失敗理由を永続化し、<code>consumer job verified</code>より前を作業完了として扱わない。
+      </figcaption>
+    </figure>
+    <h3>Release intentと状態</h3>
+    <ul>
+      <li>
+        repository外のroot管理領域へ、完全commit ID、manifest digest、承認者またはtrusted signer、
+        承認時刻を持つimmutableなrelease intentを置く。
+      </li>
+      <li>
+        reconcilerは<code>desiredRelease</code>と<code>/health.releaseCommit</code>を比較し、不一致を
+        <code>pending_activation</code
+        >として保持する。単発logだけで済ませず、metricsとread-only statusで公開する。
+      </li>
+      <li>
+        statusは<code>validated</code>、<code>approved</code>、<code>activated</code>、
+        <code>contract_verified</code
+        >、<code>canary_verified</code>、<code>consumer_verified</code>を単調に進め、
+        failure stage、bounded reason、observed releaseをsecretなしで記録する。
+      </li>
+    </ul>
+    <h3>権限境界</h3>
+    <ul>
+      <li>
+        candidate展開、依存install、全test、manifest生成は<code>ugnoguchi</code>権限のbuilderが行い、
+        rootはcandidate codeを実行しない。
+      </li>
+      <li>
+        root activatorは固定実装で、trusted intent、path、owner、mode、manifestとtree
+        digestを再検証し、 atomic symlink切替と<code>larm-daemon.service</code>
+        restartだけを行う。
+      </li>
+      <li>
+        post-activation contract gateと推論canaryはdaemon利用者権限で実行する。失敗結果だけをroot
+        activatorへ返し、 activatorは前世代へrollbackする。
+      </li>
+      <li>
+        無人配備が必要ならprotected CIがrelease
+        intentへ署名し、hostはallowlistした公開鍵だけを信頼する。 任意のworktree
+        HEAD、branch名、環境変数で承認を代用しない。
+      </li>
+    </ul>
+    <h3>収束と失敗動作</h3>
+    <ol>
+      <li>同じdesired commitの重複要求は同一operationとして扱い、二重restartしない。</li>
+      <li>assembly中はliveを変更せず、activationは既存lockの内側で一度だけ行う。</li>
+      <li>identityまたは軽量contract不一致は自動rollbackし、desiredを未達のまま保持する。</li>
+      <li>JSONまたはSSE canary失敗もrollbackし、ContextStill Queueを再開しない。</li>
+      <li>
+        成功時だけ<code>canary_verified</code>へ進め、consumerの一件完了を別の最終ackとして待つ。
+      </li>
+      <li>一定時間収束しない場合は状態遷移時と低頻度継続警告だけを通知する。</li>
     </ol>
   </section>
 
@@ -72,18 +207,18 @@
         </tr>
         <tr>
           <th scope="row">P1</th>
-          <td>release後の汎用HTTP Agent Connection gateを追加</td>
-          <td>旧releaseとProfile欠落を本番利用前に自動拒否</td>
+          <td>非特権builderとroot activatorを分離したRelease収束Controller</td>
+          <td>承認済みdesired commitへ自動収束し、失敗stageを保持</td>
         </tr>
         <tr>
           <th scope="row">P1</th>
-          <td>LLM semantic readinessへSSE conformanceを追加</td>
-          <td>SSE非対応Providerをclaim可能にしない</td>
+          <td>liveからconsumerまでの共通completion gate</td>
+          <td>Queue一件完了前に完了を報告できない</td>
         </tr>
         <tr>
           <th scope="row">P1</th>
-          <td>desired release drift監査と待機理由の可観測化</td>
-          <td>不一致または401・404・SSE違反を無言で放置しない</td>
+          <td>infra retryとjob failureを分離したQueue自動回復</td>
+          <td>Provider復旧後に対象jobだけ段階的にwaitingへ戻る</td>
         </tr>
         <tr>
           <th scope="row">P2</th>
@@ -256,6 +391,19 @@
         SSE response bodyの完了または失敗までtimeoutを維持し、次jobの前にActivityを再確認する。
       </li>
       <li>再試行は上限付きexponential backoffとjitterを使い、Queue item自体はclaimしない。</li>
+      <li>
+        Provider取得失敗をjob実行失敗のattempt budgetへ加算しない。
+        <code>provider_unavailable_exhausted</code
+        >は終端pausedではなく、Provider世代の変化を待つrecoverable状態にする。
+      </li>
+      <li>
+        LARMの<code>releaseCommit</code>、<code>configRevision</code>、<code>bootEpoch</code>でProvider世代を識別し、
+        新世代のActivity、Profile、canary成功後に同理由のjobだけをwaitingへ戻す。
+      </li>
+      <li>
+        自動回復は最初に一件、その成功後にbounded batchへ広げる。LLM response、入力、永続化など
+        Provider可用性以外の失敗265件は自動対象に含めない。
+      </li>
     </ul>
   </section>
 
@@ -264,17 +412,24 @@
     <ol>
       <li><strong>復旧:</strong> 現行候補を配備し、手動のContextStill HTTP canaryを完了する。</li>
       <li>
-        <strong>gate実装:</strong> 汎用HTTP Provider
-        smokeと軽量post-activation検査をrepositoryへ追加する。
+        <strong>状態正本:</strong> root管理のrelease intentとsecret-freeな収束status
+        schemaを追加する。
       </li>
       <li>
-        <strong>readiness:</strong> SSE semantic probeを追加し、失敗fixtureとcancel・timeout
-        testを固定する。
+        <strong>権限分離:</strong> 非特権builderとcandidate codeを実行しないroot
+        activatorへrelease処理を分割する。
       </li>
-      <li><strong>client可観測化:</strong> ContextStillの待機reasonと実効設定表示を追加する。</li>
       <li>
-        <strong>定期確認:</strong>
-        低頻度canaryを実行し、正常時は通知せず、変化・失敗時だけ通知する。
+        <strong>収束制御:</strong>
+        approved、activated、contract、canary、consumerの各gateを状態機械で接続する。
+      </li>
+      <li>
+        <strong>Queue回復:</strong> Provider世代回復後、infra起因paused
+        jobを一件canaryから段階再開する。
+      </li>
+      <li>
+        <strong>監視移行:</strong> static port監視を廃止し、9810のcatalog、JSON、SSE、consumer
+        completionをSLIにする。
       </li>
     </ol>
     <p>
@@ -283,8 +438,47 @@
     </p>
   </section>
 
+  <section id="implementation-current">
+    <h2>標準HTTP統一のRepository実装記録</h2>
+    <ul>
+      <li>
+        <code>GET /v1/models</code>、LLM JSON／SSE、ASR multipart、TTS
+        audioを通常Bearerと公開modelだけで 呼べる。事前allocation、Profile、claim
+        headerを要求しない。
+      </li>
+      <li>
+        model brokerが公開modelから内部Routeを一意に解決し、Residentの即時利用、Preferredの
+        single-flight起動、参照数、cancel／完了後の解放を管理する。
+      </li>
+      <li>
+        SSEはUTF-8／CRLF／任意chunk境界、tool
+        delta、finish、<code>[DONE]</code>を増分検証し、 invalid
+        EOFを成功にしない。clientは検証済みchunkをAsyncIteratorで直ちに渡す。
+      </li>
+      <li>音声例はASR→LLM SSE→句単位TTSをpipeline化し、LLM全文完成前に最初の発話を合成する。</li>
+      <li>
+        非特権builder、署名済みdesired intent、候補コードを実行しないroot activator、atomic
+        rollback、
+        <code>/v1/release-convergence</code>、canary→consumer順序gateを実装した。
+      </li>
+      <li>
+        <code>larm-http-provider-monitor.timer</code>は9810のcatalog、JSON、SSEを検査し、
+        <code>44448</code>を監視しない。
+      </li>
+      <li>
+        <code>packages/core/src/provider-recovery.ts</code
+        >は新しいcanary済みProvider世代でinfra起因pauseだけを
+        1、2、4件と段階再開し、同一世代、手動pause、business pause、失敗waveをfail closedにする。
+      </li>
+    </ul>
+    <p>
+      repository完了はlive完了ではない。rootによるinstall／activation、live identity、HTTP canary、
+      ContextStill sourceへの状態機械組込み、実job一件完了が残る。
+    </p>
+  </section>
+
   <section id="implementation-2026-09-06">
-    <h2>2026-09-06 Repository実装記録</h2>
+    <h2>標準HTTP統一前のAgent Connection参考実装記録</h2>
     <ul>
       <li>
         <code>packages/core/src/openai-sse.ts</code>にboundedなOpenAI SSE検査器を追加し、valid
@@ -317,8 +511,26 @@
         release gateは候補release内の検証コードを一度だけ実行し、release versionを限定SemVerとして
         検証する。契約失敗を60秒間再試行して診断を隠す挙動を廃止した。
       </li>
+      <li>
+        後続の恒久実装で、非特権<code>build-larm-release.sh</code>とinstall済みroot
+        <code>activate-larm-release</code
+        >へ分離した。builderは明示した完全commitだけを検証・buildし、 tree
+        digestを含むmanifestとdesired intentへ署名する。rootは候補をcopy後に署名・digestを再検証し、
+        候補コードやtestを実行せずatomic切替、軽量contract、失敗時rollbackだけを行う。
+      </li>
+      <li>
+        <code>/v1/release-convergence</code>へsecret-free statusを公開し、HTTP Provider
+        canary evidenceより前に consumer
+        evidenceを受理しないgateを追加した。ContextStill一件完了、成果一回保存、次job境界の
+        Activity再評価が揃うまで<code>complete</code>にならない。
+      </li>
+      <li>
+        定期監視は<code>larm-http-provider-monitor.timer</code>から9810のmodel
+        catalog、JSON、SSEを検査する。 旧static port
+        <code>44448</code>は監視しない。
+      </li>
     </ul>
-    <p>ContextStill向けattended canaryは次のsecret-free設定で実行する。</p>
+    <p>次の旧Agent Connection canaryはrollback期間の比較専用であり、新経路の完了条件ではない。</p>
     <pre><code>LARM_BASE_URL=http://&lt;local-node-lan-address&gt;:9810 \
 LARM_AGENT_PROFILE=contextstill-background \
 LARM_AGENT_AUDIENCE=saaa-desktop \
@@ -339,23 +551,22 @@ bun run smoke:agent-http</code></pre>
     <ul>
       <li>desired commit、live release、catalog revision、boot epochが証跡上で一貫する。</li>
       <li>
-        ContextStill hostからActivity、Profile、create、claim、JSON、SSE、DELETEがすべて成功する。
+        ContextStill hostからActivity、model
+        catalog、Bearer認証、JSON、SSEが独自bootstrapなしで成功する。
       </li>
       <li>
         SSEは一貫したchunk
         identity、有効delta、全choiceのfinish、<code>[DONE]</code>を受信し、
         成功JSONをSSE成功として扱わない。
       </li>
-      <li>
-        Connection解放後にtokenが拒否され、active workload、Allocation、execution slotが0へ戻る。
-      </li>
+      <li>HTTP完了またはcancel後にactive workload、内部Allocation、execution slotが0へ戻る。</li>
       <li>ContextStillのLLM必須jobが一件完了し、次job境界でActivityが再評価される。</li>
       <li>
         Provider portおよび旧<code>127.0.0.1:44448</code>へのclient接続が0件である。
       </li>
     </ul>
     <p>
-      release identity、Activity、Profile、Provider
+      release identity、Activity、model catalog、Provider
       health、JSON、SSEのいずれかが失敗した場合はQueueを fail closedのまま維持する。LARM
       releaseを既存のtransactional rollbackで戻し、client側の静的 Providerへ暗黙fallbackしない。
     </p>

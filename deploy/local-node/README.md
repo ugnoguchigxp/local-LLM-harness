@@ -20,11 +20,16 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/backup-host-state.sh`: installed unitとcurrent pointerのdigest付きoperator backup
 - `scripts/network-converge.sh`: listener・UFW差分のplanとdigest確認付き限定apply・rollback
 - `scripts/verify-external-assets.ts`: operator配備VOICEVOX VVMのidentity検証
-- `scripts/release-larm.sh`: clean commitのversioned apply、rollback、review済みbounded retention
+- `scripts/build-larm-release.sh`: 明示したreview済みcommitを非特権で検証・bundle化し、desired intentへ署名
+- `scripts/activate-larm-release.sh`: install済みroot helper。署名・treeを再検証しatomic切替だけを実行
+- `scripts/record-larm-release-gate.sh`: HTTP canaryとconsumer一件完了の順序を状態機械で強制
+- `scripts/rollback-larm-release.sh`: candidate codeをroot実行せず前世代へatomic rollback
+- `scripts/release-larm.sh`: 新Controller移行前の既存世代向けlegacy release helper
 - `scripts/verify.sh`: GPU, service, HTTP health, and memory checks
 - `scripts/verify-saaa-native-provider.ts`: exact native subprotocolと`native.ready`のrelease gate
 - `scripts/smoke-larm.sh`: Resident 27B固定のAllocation、stream、release smoke
 - `scripts/smoke-agent-http.ts`: 任意のAgent Profileに対するHTTP JSON/SSE・解放・token失効smoke
+- `scripts/smoke-http-provider-live.ts`: Bearer＋modelだけでLLM JSON/SSE、ASR、TTSを検証するlive smoke
 - `scripts/smoke-saaa-agent-connection.sh`: request-originを含むSAAA向けcreate・claim・WebSocket・release smoke
 - `scripts/smoke-saaa-websocket.ts`: 短期Provider credentialでnative WebSocketを検証するend-to-end smoke
 - `scripts/soak-saaa-websocket.ts`: 1,000 turn・30分・毎turn network flap/resume・latency/RSS gate
@@ -134,8 +139,9 @@ sudo env SAAA_SOURCE_IPV4=192.168.0.x \
   deploy/local-node/scripts/configure-saaa-rest-access.sh rollback
 ```
 
-Do not run the apply sequence below as a stable deployment until Milestone 22 is a reviewed clean
-commit and a rollback target is available.
+通常のreleaseは、review済み完全commitから非特権builderがbundleを作り、署名済みdesired intentを
+root activatorへ渡します。activatorは候補コードやtestを実行せず、署名、manifest、tree digestを再検証して
+atomic切替とdaemon restartだけを行います。
 
 ```bash
 cd /srv/ai/apps/local-LLM-harness
@@ -144,8 +150,12 @@ cd /srv/ai/apps/local-LLM-harness
 deploy/local-node/scripts/preflight-larm.sh
 # Complete the reviewed backup block above before installation.
 sudo deploy/local-node/scripts/install-services.sh
-deploy/local-node/scripts/release-larm.sh plan
-sudo deploy/local-node/scripts/release-larm.sh apply
+approved_commit="$(git rev-parse HEAD)" # review済みの完全commitと照合する
+LARM_RELEASE_COMMIT="${approved_commit}" deploy/local-node/scripts/build-larm-release.sh
+# larm-release-activator.pathが署名済みintentを検出してroot activatorへ引き継ぐ。
+systemctl status larm-release-activator.service --no-pager
+curl -sS http://127.0.0.1:9810/v1/release-convergence \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" | jq
 sudo systemctl start llama-server.service larm-native-qwen-provider.service llama-swap-worker.service \
   qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service  # first install only
 deploy/local-node/scripts/verify.sh
@@ -180,14 +190,37 @@ deploy/local-node/scripts/smoke-larm.sh
 # deploy/local-node/scripts/canary-gate.sh
 ```
 
-`plan`の`cleanupCandidates`が空でない場合は、候補と`cleanupConfirm`をreviewしてから次のように
-同じcommitへapplyします。digestが一致しなければ、削除も切替も行いません。
+HTTP Provider canaryはsecret-free JSONをrepository外へ保存し、root管理の状態機械へ記録します。
+consumer完了証跡より前に`complete`へ進めることはできません。
 
 ```bash
-plan_json="$(deploy/local-node/scripts/release-larm.sh plan)"
-cleanup_confirm="$(jq -r '.cleanupConfirm // empty' <<<"${plan_json}")"
-sudo env LARM_RELEASE_CLEANUP_CONFIRM="${cleanup_confirm}" \
-  deploy/local-node/scripts/release-larm.sh apply
+umask 077
+LARM_EXPECTED_RELEASE_COMMIT="${approved_commit}" \
+  bun run smoke:http-provider-live > /srv/ai/logs/larm-canary/http-provider.json
+sudo /usr/local/libexec/larm/record-larm-release-gate canary \
+  /srv/ai/logs/larm-canary/http-provider.json
+# ContextStill一件完了・成果一回保存・次job境界再評価の証跡を得た後だけ:
+# sudo /usr/local/libexec/larm/record-larm-release-gate consumer \
+#   /absolute/path/to/contextstill-consumer-evidence.json
+```
+
+consumer証跡はcanaryと同じProvider世代を固定し、次のstrict JSONとします。`configurationRevision`と
+`bootEpoch`が保存済みcanaryと一致しない証跡、手動・業務pauseの解除結果、二重保存は受理されません。
+
+```json
+{
+  "schemaVersion": 1,
+  "kind": "consumer-completion",
+  "consumer": "contextstill",
+  "desiredRelease": "<40桁commit>",
+  "configurationRevision": "<64桁config revision>",
+  "bootEpoch": "<canaryと同じepoch>",
+  "jobIdSha256": "<64桁hash>",
+  "result": "completed",
+  "persistenceCount": 1,
+  "nextBoundaryActivityRechecked": true,
+  "observedAt": "2026-09-06T00:00:00Z"
+}
 ```
 
 The installer copies and enables units but intentionally does not start or restart them. On an
@@ -195,27 +228,22 @@ update, inspect the diff and restart only a changed service when its behavior mu
 do not use the first-install start command as a blanket restart. The installer always converges
 `qwen-tts.service` to disabled without stopping an active process.
 
-`larm-daemon.service`はGit worktreeではなく`/srv/ai/apps/larm-current`を参照します。
-`release-larm.sh apply`はclean commitをrepository外へ展開し、frozen installと全gateを通過した後だけ
-current symlinkを原子的に切り替え、LARM daemonだけをrestartします。manifestにはcommit、LARM・Bun
-version、lockfile digest、`node_modules` tree digest、config revision、作成時刻を保存します。既存世代の
-再利用とrollbackでは、manifest、Git source tree、lockfile、dependency tree、config revisionを切替前に
-再検証し、`/health.releaseCommit`まで一致を確認します。新releaseのpost-activation gateはさらに
-`/ready`、`/v1/activity`、候補設定から導出した`/v2/agent-profiles`全体を照合し、不一致なら自動で
-前世代へ戻します。実推論を伴う`smoke:agent-http`は切替後のattended canaryとして実行します。
-前世代へ戻す操作は次の通りです。
+`larm-daemon.service`はGit worktreeではなく`/srv/ai/apps/larm-current`を参照します。builderは
+`/srv/ai/apps/larm-candidates/&lt;full-commit&gt;`でfrozen installと全gateを非特権実行し、modeを固定したtree
+digestとconfig revisionをmanifestへ保存します。root activatorは`/etc/larm/release-signing.pub`だけを信頼し、
+候補をroot所有releaseへcopy後にdigestを再検証します。`/health`、`/ready`、OpenAPI、model catalog、Activity、
+Profile catalogの軽量contractが不一致なら前世代へ自動rollbackします。実推論は非特権の
+`smoke:http-provider-live`が行います。
+
+旧`release-larm.sh apply`はrollback期間の既存世代向け互換手段であり、新しい自動配備経路には使いません。
+前世代へ戻す操作は、固定install済みrollback helperを使います。
 
 ```bash
-sudo deploy/local-node/scripts/release-larm.sh rollback
+sudo /usr/local/libexec/larm/rollback-larm-release
 ```
 
-保持数を超えた世代は`plan`で候補を確認し、その`cleanupConfirm`を
-`LARM_RELEASE_CLEANUP_CONFIRM`へ明示した`apply`だけが削除します。削除は新世代のidentityとreadinessを
-確認した後に行い、health失敗時はcurrentとrollback pointerの両方を復元します。単独の`cleanup`も
-実行時に表示するdigestとの一致が必要です。credential、model、journalはrelease directory外にあり、
-upgradeとrollbackで保持されます。dirty source、symlink root、並行mutation、gate失敗はcurrent切替前に
-拒否します。初回releaseのhealthが失敗して前世代がない場合はdaemonを停止し、作成したcurrent
-pointerを除去して未導入状態へ戻します。
+credential、model、journalはrelease directory外にあり、upgradeとrollbackで保持されます。dirty source、
+暗黙HEAD、未署名intent、symlink escape、並行mutation、digest不一致、contract失敗は拒否します。
 
 Artifact stage and activation are asynchronous. A Runtime with multiple artifacts requires all
 of them to reach `succeeded` staging operations before activation. The complete polling example
@@ -236,7 +264,7 @@ Windows and make the node unavailable. Reboot only as an explicit, attended oper
 ## Roll back LARM without touching Resident providers
 
 ```bash
-sudo deploy/local-node/scripts/release-larm.sh rollback
+sudo /usr/local/libexec/larm/rollback-larm-release
 systemctl is-active llama-server.service qwen-asr.service whisper-asr.service voicevox-tts.service
 ```
 
@@ -251,8 +279,8 @@ epoch in a new Spec HTML document. Do not commit prompts, transcripts, audio, cr
 data, or unredacted logs.
 
 日常の性能切り分けには、release commit一致を要求するSLO canaryとは別に診断benchmarkを使います。
-既定ではHTTP非streaming LLM、native WebSocket LLM、ASR、TTSの単体系列と、HTTPまたはWebSocket
-LLMを音声2系統と同時発射する2種類のmixed系列を順番に実行します。Resident Providerは停止・再起動せず、
+既定ではHTTP JSON、HTTP SSE、移行比較用native WebSocket、ASR、TTSの単体系列と、各LLM transportを
+音声2系統と同時発射するmixed系列を順番に実行します。Resident Providerは停止・再起動せず、
 warmupは最初の要求を集計から除くだけです。
 
 ```bash
@@ -273,7 +301,7 @@ bun run benchmark:saaa-websocket
 固定fixtureと外部証跡を使う場合は、`LARM_PERF_AUDIO_FILE`へ絶対パス、`LARM_PERF_OUTPUT`へ既存でない
 repository外の絶対パスを指定します。反復数は`LARM_PERF_ITERATIONS`、warmup数は
 `LARM_PERF_WARMUPS`、系列は`LARM_PERF_SCENARIOS`で変更できます。選択肢は
-`llm,llm-ws,asr,tts,mixed,mixed-ws`です。WebSocket系列は既定で`coding-default` Agent
+`llm,llm-sse,llm-ws,asr,tts,mixed,mixed-sse,mixed-ws`です。WebSocket系列は既定で`coding-default` Agent
 Connectionと`same-host` audienceを使い、`LARM_PERF_WS_AGENT_PROFILE`と
 `LARM_PERF_WS_AUDIENCE`で変更できます。Agent Connection準備時間はallocation latencyへ分離し、
 run latencyはconnection.readyまでを含むWebSocket handshakeからterminal ACKまでです。

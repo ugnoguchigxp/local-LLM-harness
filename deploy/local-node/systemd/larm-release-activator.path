@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for a signed LARM desired release
+
+[Path]
+PathChanged=/var/lib/larm/release-inbox/request.json
+Unit=larm-release-activator.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,834 @@
+<article lang="ja">
+  <h1>OpenAI互換HTTP Provider移行 実装計画</h1>
+  <p>
+    2026-09-06。SAAAとContextStillのLLM利用を、LARM独自WebSocketから固定URLのOpenAI互換HTTP
+    APIへ移行するための実装計画です。LLMはJSONとHTTP SSE、ASRはmultipartとJSON、TTSは音声bodyを
+    公開し、新しい独自WebSocketは作りません。本書は実装計画と進捗記録であり、repository内の最初の
+    LLM HTTP sliceは実装済みです。ただしclient切替、live配備、consumer完了、旧経路撤去を
+    実施済みとするものではありません。2026-09-06のrepository実装ではdata planeとrelease
+    convergenceのコードまで進んだが、live配備、外部consumer受入、24時間soakは未完了です。
+  </p>
+  <dl>
+    <dt>採用する公開data plane</dt>
+    <dd><code>http(s)://&lt;larm-host&gt;:9810/v1</code>のOpenAI互換HTTP API</dd>
+    <dt>LLM応答</dt>
+    <dd>
+      <code>stream=false</code
+      >はJSON、<code>stream=true</code>はHTTP SSE
+    </dd>
+    <dt>既定モデル</dt>
+    <dd>常駐Qwen 3.8 27B。realtime用途を含め、speed系モデルは明示選択時だけ使う</dd>
+    <dt>移行対象</dt>
+    <dd>SAAA、ContextStill、LARM client、live canary、性能診断、運用監視</dd>
+    <dt>完了の定義</dt>
+    <dd>
+      live HTTP契約と性能gate、SAAA受入、ContextStill job一件の成果保存、旧WS通信0件をすべて満たす
+    </dd>
+  </dl>
+  <section id="implementation-status">
+    <h2>実装状況</h2>
+    <p>
+      2026-09-06時点で、M1、M2、M3、M5のrepository実装を完了した。公開model catalog、
+      <code>GET /v1/models</code
+      >、通常Bearerとrequestの<code>model</code>だけで呼べる
+      <code>POST /v1/chat/completions</code> JSON／SSE、内部Allocationを所有する
+      <code>ModelBroker</code>、Preferred cold
+      startのsingle-flight、request終了時の解放、準備中cancelを
+      LLM・ASR・TTSへ追加した。既存の明示Allocation／claim経路はrollback互換として残している。
+    </p>
+    <ul>
+      <li>
+        model alias解決は<code>packages/core/src/openai-model-catalog.ts</code>、調停は
+        <code>apps/daemon/src/model-broker.ts</code>へ分離した。
+      </li>
+      <li>
+        chat bodyは一度だけ上限付きで読み、検証済みbytesをGatewayへ渡す。SSE response bodyは
+        bufferせず逐次検査・転送し、途中EOF、model
+        drift、finish欠落、<code>[DONE]</code>欠落を 成功として記録しない。
+      </li>
+      <li>
+        ASR multipart/JSON、TTS request/audio media type、OpenAI error、標準clientの増分SSE
+        iterator、 句単位TTS開始例を追加した。model一覧、標準JSON、同時SSE、unknown model、cold
+        start中のclient切断、内部Allocation残留0をcontract testで確認した。
+      </li>
+      <li>
+        <code>benchmark:http-provider</code>は同一fixture・token数でHTTP
+        SSEと旧WSを比較し、TTSは first playable
+        audioを別計測する。<code>smoke:http-provider-live</code>はBearer＋modelだけで
+        JSON、SSE、ASR、TTSを検査してsecret-free evidenceを返す。
+      </li>
+      <li>
+        非特権builder、署名済みdesired intent、root activator、atomic rollback、機械可読status、
+        canary→consumerの順序gate、9810 JSON/SSE定期監視をrepositoryへ実装した。rootは候補コードや
+        testを実行しない。
+      </li>
+      <li>
+        live release、30 sampleのSLO校正、SAAA／ContextStill切替、Queue回復、24時間soak、WS撤去は
+        未確認である。このhostにはSAAAとContextStillのsource
+        treeがないためM4とQueue変更は外部作業である。
+      </li>
+    </ul>
+    <aside>
+      <p>
+        この段階の正確な表現は「標準HTTP data
+        planeと安全なrelease収束経路をrepositoryへ実装済み」である。
+        live稼働、性能改善、移行完了とは扱わない。
+      </p>
+    </aside>
+  </section>
+  <section id="recommendation">
+    <h2>推奨</h2>
+    <p>
+      LLMの公開推論APIはOpenAI互換Chat CompletionsのJSONとHTTP
+      SSEへ統一し、新規の独自WSは作らない。ASR・TTSもOpenAI互換のHTTP
+      endpointを基準にする。OpenAIサービスへの送信へ切り替える意味ではなく、ローカルengineを一般的なclientで利用できるAPIにする方針である。
+    </p>
+    <p>
+      OpenAI互換は業界の全機能共通規格ではない。対応endpoint、SDK version、model
+      alias、受理field、応答形式、error、cancel動作を明記した互換範囲を固定する。必要のないResponses
+      API、Realtime APIの全面再実装を今回の完了条件へ追加しない。
+    </p>
+    <p>
+      前案dynamic-provider-redesign.htmlの新WS
+      endpointとnative完全互換案は比較案として残す。今後の推奨は本書とし、既存saaa.llm-stream.v1は移行受入が終わるまで維持する。
+    </p>
+  </section>
+  <section id="api-contract">
+    <h2>公開API</h2>
+    <table>
+      <caption>
+        共通化するのはHTTP APIと認証。音声の応答までSSEへ統一しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">API</th>
+          <th scope="col">初期対応</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLM</th>
+          <td>POST /v1/chat/completions</td>
+          <td>
+            stream=falseはJSON、stream=trueはChat Completions形式のSSE。tool
+            calling、必要なstructured outputを同条件で検証する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td>POST /v1/audio/transcriptions</td>
+          <td>
+            multipartの録音または発話区間を受け、JSONのtextを返す。対応する場合だけ文字起こし結果のstreamingを広告する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>POST /v1/audio/speech</td>
+          <td>
+            input、model、voice、response_format等を受け、音声bodyを返す。低遅延用途ではPCM/WAVを候補にし、engineが対応する場合は逐次返却する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      新規の独自binary frame、ACK、resume、Provider専用client実装を要求しない。標準SDKでbase
+      URL、credential、modelと通常の音声設定を指定して動作することを受入基準にする。modelやvoiceの能力差は残るため、URL変更だけで全機能が完全に同じになるとは約束しない。
+    </p>
+    <p>
+      ASRで結果をSSE配信しても、マイク音声を連続送信するRealtime
+      ASRにはならない。まず発話区間をVADまたはpush-to-talkで確定して送る構成を採る。連続字幕や同時双方向音声が必須になった場合は、標準的なRealtime/WebRTC等を別途評価し、独自WSを再発明しない。
+    </p>
+  </section>
+  <section id="latency">
+    <h2>速度の判断</h2>
+    <p>
+      WSは通信方式であり、推論速度を自動的に上げない。SSEも生成途中から返せる。今回、同model・同prompt・同GPU条件でのWS対SSEの速度差は測定していないため、「SSEが同速」「WSは必ず遅い」とは断定しない。現状は独自経路の維持コストが確認できる一方、そのコストに見合う速度改善の証拠を今回確認できていない。
+    </p>
+    <pre><code>発話終了 → VAD確定 → ASR確定 → LLMの最初の発話可能な句
+         → TTSの最初の音声 → clientで再生開始</code></pre>
+    <p>
+      測るのは接続速度だけでなく、この全体のp50/p95である。LLMのTTFTは最初のcontentを基準にし、role-only
+      chunk、heartbeat、reasoning tokenを返答開始に数えない。音声はHTTP
+      headers到着でなく実際の再生開始を測る。
+    </p>
+    <ul>
+      <li>
+        model常駐と適切なprewarmを使い、毎回のモデルロードとConnection再作成を避ける。LLM・ASR・TTSの同時常駐は実メモリとGPU競合を計測してから決める。
+      </li>
+      <li>
+        HTTP接続を再利用し、proxy、Gateway、SDKの全層で全文bufferingを避ける。SSEの正常終端と途中EOFを区別する。
+      </li>
+      <li>
+        LLMの全文を待たず、発話可能な句単位でTTSへ渡す。句長は速度だけでなく読み・韻律・文脈を評価して決め、tokenごとのTTS
+        requestにはしない。
+      </li>
+      <li>
+        TTS生成と音声再生を重ねる。先読みQueueは上限を持ち、発話順序を保つ。割り込み時は再生停止・後続破棄・LLM/TTS
+        requestのabortを行う。
+      </li>
+      <li>
+        通信の中断とengineの計算停止を区別する。engineが即時停止できない場合は計算終了まで枠を保持し、その制約を明示する。
+      </li>
+    </ul>
+  </section>
+  <section id="current-audio">
+    <h2>現行音声実装で分かったこと</h2>
+    <p>
+      gnosisのsource HEAD 1b5e427d5d655e7fb8d2abf10ff46a113f6ae2e0で確認した。Qwen
+      ASRのapps/qwen-asr/api.pyは既に/v1/audio/transcriptionsを持ち、uploadを保存した後にmodel.transcribeを実行する。promptは非対応、temperatureは0だけを受理する。全OpenAI機能互換とは言えない。
+    </p>
+    <p>
+      apps/voicevox-tts/voicevox_api.pyも/v1/audio/speechを持つ。synthesizer.synthesisでwav_bytes全体を生成してからResponseを返すため、現在の実装は生成途中の音声配信ではない。stream=trueも拒否する。生成後のWAVを小分けで送っても、初回音声の生成待ちは減らない。
+    </p>
+    <p>
+      したがって音声はAPIを一から作り直すより、既存adapterの互換範囲、音声format、buffering、errorを整理する。VOICEVOXで低遅延が不足する場合は句単位合成を測定し、それでも不足するときに初めて逐次生成engineを比較する。Qwen
+      TTSを含む全音声engineの速度・対応機能の網羅調査は今回していない。
+    </p>
+  </section>
+  <section id="boundaries">
+    <h2>残す責務と減らす責務</h2>
+    <p>
+      Gatewayは固定9810でHTTP推論を受け、model
+      aliasを内部engineへ解決する。短期credential、Profile、実行枠、モデル準備、idle
+      unload、推論cancelの共通管理を維持する。動的ProviderとHTTP APIは両立する。
+    </p>
+    <p>
+      Agent Connectionの作成・更新が必要なら、起動・更新時に行う薄いbootstrapへ閉じ込める。LLM
+      tokenごとの制御や独自stream decoderをclientへ持たせない。将来、通常のOpenAI-compatible
+      Provider設定だけで使える統合を検討する際も、認証範囲やlease規則を黙って緩めない。
+    </p>
+    <p>
+      非特権builderとroot activatorの分離、承認済みdesired release、live identity、Provider回復とjob
+      retryの分離、consumer結果保存による完了確認は引き続き必要である。HTTPへ替えてもrelease不一致やpaused固定は自然には解消しない。
+    </p>
+    <p>
+      Rust consumer、GPU
+      engine、model資産、業務DBを一括で書き換えない。LLMのnative専用companionとengine改変は、HTTP受入後に依存がないものだけを廃止する。WSを使わなくなったことだけを理由に、ROCm/MTP対応まで削除しない。
+    </p>
+  </section>
+  <section id="current-state">
+    <h2>現行実装と構造上の差分</h2>
+    <table>
+      <caption>
+        2026-09-06のrepository実装から確認した移行対象
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">層</th>
+          <th scope="col">現状</th>
+          <th scope="col">必要な変更</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">HTTP endpoint</th>
+          <td>
+            <code>apps/daemon/src/app.ts</code
+            >にchat、transcriptions、speechが既に存在する。
+          </td>
+          <td>engine adapterは再利用し、公開認証とmodel解決を標準client向けにする。</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM routing</th>
+          <td>
+            chatは<code>x-larm-allocation-id</code>または事前claimの短期Bearerを要求する。
+          </td>
+          <td>
+            通常Bearerとrequestの<code>model</code>からLARM内部でroute、runtime、leaseを解決する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">request処理</th>
+          <td>
+            chat bodyをmodel／stream判定のためにcloneから読み、Gatewayが元bodyを再度bufferする。
+          </td>
+          <td>一度だけbounded parseし、検証済みbytesをupstreamへ渡して二重読込をなくす。</td>
+        </tr>
+        <tr>
+          <th scope="row">SSE</th>
+          <td>upstream bodyを逐次転送し、readinessとsmokeにはJSON／SSE検査器がある。</td>
+          <td>
+            streamをbufferせず、最初の意味あるdelta、正常finish、<code>[DONE]</code>を増分観測する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Native WS</th>
+          <td>
+            <code>main.ts</code
+            >、<code>llm-stream-session.ts</code>、native backend、別systemd service、
+            専用benchmark／smoke／soakが一つの独立経路を構成する。
+          </td>
+          <td>HTTP受入中だけ互換経路として凍結し、client通信0件とrollback window後に削除する。</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td>
+            Qwen ASRは既にOpenAI風のaudio transcriptions multipartを受けるが、prompt等の対応範囲は
+            限定される。
+          </td>
+          <td>対応fieldとerrorを明示し、非対応値を推論前に標準errorで拒否する。</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>VOICEVOX adapterは全WAV生成後に返し、native streamingを行わない。</td>
+          <td>API互換と生成方式を分離し、まず句単位requestで体感遅延を下げる。</td>
+        </tr>
+        <tr>
+          <th scope="row">性能基準</th>
+          <td>
+            <code>deploy/local-node/slo.yaml</code
+            >は<code>uncalibrated</code>である。
+          </td>
+          <td>HTTP SSEの同条件baselineを採取し、承認済み値をrelease gateへ登録する。</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        既存の性能文書でWSはHTTP JSONより早く最初のtokenを返したが、HTTP側が非streamingだったため、
+        WS対HTTP SSEの比較にはなっていない。移行判断には同一model、prompt、max tokens、warm state、
+        concurrencyでHTTP SSEとWSを比較する。
+      </p>
+    </aside>
+  </section>
+  <section id="target-architecture">
+    <h2>目標構成</h2>
+    <figure>
+      <pre><code>SAAA / ContextStill / standard OpenAI client
+  │  Authorization: Bearer &lt;scoped token&gt;
+  │  model: coding-default / explicit optional model
+  ▼
+LARM :9810/v1
+  ├─ GET  /models
+  ├─ POST /chat/completions       → JSON / SSE
+  ├─ POST /audio/transcriptions  → JSON
+  └─ POST /audio/speech          → audio body
+       │
+       ▼
+  Auth scope → compatibility validation → Model Broker
+       → Execution Gate → HTTP adapter → loopback engine
+                              │
+             resident Qwen 3.8 27B / llama-swap / ASR / TTS
+
+Control plane: Registry、release identity、readiness、lease
+Release plane: non-root builder → signed desired → root activator</code></pre>
+      <figcaption>
+        公開clientからはmodelと標準HTTP契約だけを見せる。Allocation、runtime
+        port、systemd、llama-swapは LARM内部の実装詳細とする。
+      </figcaption>
+    </figure>
+    <h3>Model Broker</h3>
+    <p>
+      <code>ModelBroker.acquire(model, principal, signal)</code>をdaemonの共通入口にする。OS非依存のalias、
+      route、scope判定は<code>packages/core</code>、systemd／llama-swapによる起動と停止は
+      <code>packages/backends</code>、requestとleaseの調停はdaemonに置く。
+    </p>
+    <ol>
+      <li>Bearerを検証し、principalに許可されたmodelか判定する。</li>
+      <li>
+        公開aliasを完全に一つのrouteへ解決し、request中はbindingとrelease identityを固定する。
+      </li>
+      <li>
+        ResidentがHOTなら直ちにbindingを返す。既定の<code>coding-default</code>は常にこの経路を使う。
+      </li>
+      <li>
+        Preferredがcoldなら同一modelの起動をsingle-flight化し、service-owned leaseを一つだけ作る。
+        model load中にExecution Gateの推論枠を占有しない。
+      </li>
+      <li>
+        ready後に既存Execution Gateへ進み、<code>maxConcurrentRequests</code>とbounded
+        queueを適用する。 初期値は推論同時実行1、Gateway queue 0を維持する。
+      </li>
+      <li>
+        active requestをreference countし、最終request完了後にidle
+        TTLを開始する。処理中、SSE送信中、 cancel確認中はleaseを解放しない。
+      </li>
+    </ol>
+    <p>
+      model起動がclient deadline内に終わらない場合は、OpenAI形式のerror bodyとHTTP 503、bounded
+      <code>Retry-After</code>を返す。Gateway内に永続job
+      queueを作らない。job、再試行、成果保存はconsumerが 所有する。
+    </p>
+    <h3>一要求の状態機械</h3>
+    <pre><code>received
+  → authenticated
+  → contract_validated
+  → model_resolving
+  → provider_ready
+  → execution_admitted
+  → upstream_started
+  → first_meaningful_output
+  → terminal_verified
+  → slot_released
+
+client abort / deadline / release drain
+  → upstream_cancel_requested
+  → engine_stopped_or_quarantined
+  → slot_released</code></pre>
+    <p>
+      HTTP connection
+      closeだけを成功にしない。JSONは有効なcompletionとfinish、SSEは意味あるdelta、全choiceの
+      finish、正常な<code>[DONE]</code>を成功条件にする。upstreamが停止確認を返さない場合はruntimeをquarantineし、
+      同じ実行枠へ別requestを重ねない。
+    </p>
+  </section>
+  <section id="compatibility-profile">
+    <h2>互換profileと認証</h2>
+    <p>
+      互換性は「OpenAI互換」という名前だけで判断せず、<code>larm.openai-http.v1</code>として次のsubsetを
+      contract fixtureとOpenAPIへ固定する。基準は公式の<a
+        href="https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create"
+        >Chat Completions作成</a
+      >、<a
+        href="https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events"
+        >Chat Completions streaming events</a
+      >、<a
+        href="https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create"
+        >audio transcriptions</a
+      >、<a
+        href="https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create"
+        >audio speech</a
+      >とする。
+    </p>
+    <table>
+      <caption>
+        初期公開contract
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">API</th>
+          <th scope="col">必須対応</th>
+          <th scope="col">初期対象外または条件付き</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>GET /v1/models</code></th>
+          <td>principalが利用可能な公開model ID、object、owned_byを返す。</td>
+          <td>内部runtime ID、port、artifact path、secretは返さない。</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/chat/completions</code></th>
+          <td>
+            model、messages、stream、max completion
+            tokens、temperature、top_p、stop、tools、tool_choice、 response_format。JSONとSSEでtool
+            callとfinishの意味を一致させる。
+          </td>
+          <td>
+            multimodal input、audio output、logprobs、n &gt;
+            1はengineごとのconformance完了まで明示的に拒否する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/audio/transcriptions</code></th>
+          <td>file、model、language、response_format、temperature=0。JSON textを基準にする。</td>
+          <td>
+            prompt、word timestamp、連続マイク入力、Realtime
+            transcriptionは対応を広告したengineだけに限定する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/audio/speech</code></th>
+          <td>model、input、voice、response_format、speed。正しいmedia typeと音声formatを返す。</td>
+          <td>engineが生成途中のbyteを返せない場合、native streaming対応を広告しない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <ul>
+      <li>
+        JSON successは<code>chat.completion</code>、SSE
+        chunkは<code>chat.completion.chunk</code>とし、
+        同一stream内のid、created、modelを固定する。
+      </li>
+      <li>
+        <code>stream=true</code>ではHTTP
+        200、<code>Content-Type: text/event-stream</code>、
+        <code>Cache-Control: no-cache, no-transform</code
+        >、<code>X-Accel-Buffering: no</code>を使用する。
+      </li>
+      <li>
+        streaming開始前の異常はHTTP statusとJSON errorで返す。開始後の異常では成功finishや
+        <code>[DONE]</code>を合成せず、streamを異常終端させる。
+      </li>
+      <li>
+        errorは<code>{"error":{"message","type","param","code"}}</code>を基準にし、429／503には
+        適切な<code>Retry-After</code>を付ける。独自診断は<code>x-larm-*</code>response
+        headerへ限定する。
+      </li>
+      <li>
+        未対応fieldを黙って削除しない。invalid UTF-8、途中EOF、finish欠落、model
+        identity変化を成功にしない。
+      </li>
+    </ul>
+    <p>
+      standard
+      clientからは<code>Authorization: Bearer</code>だけを要求する。daemonはroot管理のcredential
+      fileからtoken
+      hash、principal、許可model、許可endpoint、expiryを読み、平文tokenをlogやrepositoryへ
+      保存しない。management APIのtoken、Provider loopback credential、client data-plane
+      tokenは別secretにする。
+    </p>
+    <p>
+      Agent Connection APIと短期claim tokenは移行期間だけ残せるが、新しいHTTP clientは依存しない。
+    </p>
+  </section>
+  <section id="latency-gates">
+    <h2>低遅延実装と性能gate</h2>
+    <table>
+      <caption>
+        遅延要因をcritical pathから外す実装
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">区間</th>
+          <th scope="col">実装</th>
+          <th scope="col">計測</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">認証・parse</th>
+          <td>
+            hash lookup、bounded body一回読込、schema一回検証。request cloneと二重JSON
+            parseを廃止する。
+          </td>
+          <td><code>gateway_validation_seconds</code></td>
+        </tr>
+        <tr>
+          <th scope="row">model準備</th>
+          <td>
+            既定QwenをResidentで常駐。Preferred起動はsingle-flight、warmとcoldを別系列にする。
+          </td>
+          <td><code>model_prepare_seconds</code>、warm/cold label</td>
+        </tr>
+        <tr>
+          <th scope="row">admission</th>
+          <td>実行枠1、既定queue 0。busyを故障扱いせず429とRetry-Afterで返す。</td>
+          <td><code>execution_wait_seconds</code>、active、queued</td>
+        </tr>
+        <tr>
+          <th scope="row">upstream</th>
+          <td>loopback HTTP connectionを再利用し、内部portをclientへ公開しない。</td>
+          <td><code>upstream_headers_seconds</code></td>
+        </tr>
+        <tr>
+          <th scope="row">SSE転送</th>
+          <td>backpressureを使い、completion全体を集約せずchunk到着ごとに転送する。</td>
+          <td>upstream first deltaとclient enqueueの差</td>
+        </tr>
+        <tr>
+          <th scope="row">推論</th>
+          <td>
+            現行MTP、flash attention、prompt cache／cache reuseを維持し、変更はA/B後だけ採用する。
+          </td>
+          <td>prompt eval、TTFT、tokens/s、accepted draft率</td>
+        </tr>
+        <tr>
+          <th scope="row">音声pipeline</th>
+          <td>ASR確定後すぐLLM SSEを開始し、発話可能な句ごとにTTSへ渡して生成と再生を重ねる。</td>
+          <td>発話終了から最初の再生可能audioまで</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      現在のSLO manifestは未校正なので、M0で同一hardware、model、prompt、output token、warm state、
+      concurrencyのHTTP SSE baselineを最低30 sample採取し、reviewed commitとconfig
+      revisionに結び付ける。
+    </p>
+    <ul>
+      <li>warm HTTP SSEの成功30/30、fallback 0、途中EOF 0、finish欠落0。</li>
+      <li>Gateway追加TTFT p95は20 ms以下、または計測精度を含む承認済み同host baseline以下。</li>
+      <li>warm TTFT p95は採用baselineから10%を超えて悪化しない。</li>
+      <li>output tokens/s p50は採用baselineから5%を超えて悪化しない。</li>
+      <li>cancelからExecution Gate解放までをengine別に校正し、超過時は次requestを開始しない。</li>
+      <li>cold startup、long prompt prefill、tool call、mixed ASR／LLM／TTSを別系列にする。</li>
+      <li>
+        音声はHTTP headersではなく、clientがdecodeして再生可能になった時刻をfirst audioとする。
+      </li>
+    </ul>
+  </section>
+  <section id="work-packages">
+    <h2>実装work package</h2>
+    <table>
+      <caption>
+        依存順の作業、主な変更箇所、完了条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID</th>
+          <th scope="col">作業</th>
+          <th scope="col">主な対象</th>
+          <th scope="col">完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">M0</th>
+          <td>HTTP互換fixtureと公平な性能baseline</td>
+          <td>
+            <code>packages/core/src/openai-*.ts</code
+            >、<code>deploy/local-node/scripts/performance-larm.ts</code>、
+            <code>deploy/local-node/slo.yaml</code>
+          </td>
+          <td>
+            JSON／SSE／error／tool call fixture、HTTP SSE対旧WSの同条件report、review済みSLO。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">M1</th>
+          <td>標準認証、model catalog、互換schema</td>
+          <td>
+            <code>packages/core</code>、daemon config／app、<code
+              >packages/client</code
+            >
+          </td>
+          <td>Bearer＋modelだけで3推論APIを呼べ、allocation headerなしのcontract testが通る。</td>
+        </tr>
+        <tr>
+          <th scope="row">M2</th>
+          <td>Model Brokerと統一HTTP実行経路</td>
+          <td>
+            新規<code>apps/daemon/src/model-broker.ts</code>、Gateway、Control Plane
+            adapter、backends
+          </td>
+          <td>
+            Resident即時binding、Preferred single-flight、lease renew／idle
+            release、cancel、drain、quarantine。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">M3</th>
+          <td>streaming proxyと観測</td>
+          <td>
+            <code>gateway.ts</code>、増分SSE inspector、metrics、inference
+            audit
+          </td>
+          <td>
+            最初のdeltaをbufferせず、正常終端、途中EOF、slow client、abortを区別してslot解放。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">M4</th>
+          <td>SAAAとContextStillのHTTP client移行</td>
+          <td>
+            <a href="./saaa-http-provider-migration-request.html">SAAA移行依頼</a>、ContextStill
+            client／Queue
+          </td>
+          <td>SAAAのtool継続／cancel、ContextStillのjob一件と成果保存がliveで成功。</td>
+        </tr>
+        <tr>
+          <th scope="row">M5</th>
+          <td>ASR／TTS互換と音声pipeline最適化</td>
+          <td>Qwen ASR、VOICEVOX、Qwen TTS adapter、voice client</td>
+          <td>標準fixture、format、sample rate、voice、error、abortとend-to-first-audio gate。</td>
+        </tr>
+        <tr>
+          <th scope="row">M6</th>
+          <td>live release収束、Queue回復、監視切替</td>
+          <td>
+            <a href="./contextstill-larm-live-improvement-plan.html">Release収束計画</a>、consumer
+            recovery
+          </td>
+          <td>desired＝live、HTTP canary、infra起因paused jobの段階再開、旧static port監視0。</td>
+        </tr>
+        <tr>
+          <th scope="row">M7</th>
+          <td>独自WSの停止と削除</td>
+          <td>native core／backend／session、upgrade、config、systemd、WS scripts／tests</td>
+          <td>WS通信0件、24時間HTTP soak、rollback window満了後に専用依存を削除。</td>
+        </tr>
+      </tbody>
+    </table>
+    <h3>M0: contractとbaseline</h3>
+    <ul>
+      <li>
+        request／response schemaを<code>packages/core</code>へ置き、model
+        aliasとengine固有変換を分ける。
+      </li>
+      <li>pinした標準SDKで互換試験する。curlだけの成功をSDK互換完了にしない。</li>
+      <li>
+        旧WS benchmarkは撤去前の一回だけ公平な比較に使い、準備、model load、TTFT、totalを分離する。
+      </li>
+    </ul>
+    <h3>M1-M3: LARM data plane</h3>
+    <ul>
+      <li>
+        認証、contract、model解決、proxyを小さな責務へ分割し、既存Allocation
+        modeも同じproxyへ合流させる。
+      </li>
+      <li>
+        responseの公開model identityはrequest aliasへ固定し、内部model pathやllama-swap
+        IDを漏らさない。
+      </li>
+      <li>readinessはJSONとSSEを同じbindingで検査し、process healthだけを準備完了にしない。</li>
+      <li>
+        logsはrequest ID、principal、public
+        model、runtime、release、phase、outcome、durationを既定にし、
+        prompt、生成本文、audio、Bearerを保存しない。
+      </li>
+    </ul>
+    <h3>M4-M6: consumerと本番収束</h3>
+    <ul>
+      <li>
+        SAAAはbase URL、API
+        key、modelを設定し、<code>stream=true</code>のdeltaを逐次UI／TTSへ渡す。
+      </li>
+      <li>
+        ContextStillはclaimと旧static Provider参照を外し、HTTP
+        errorをauthentication、configuration、loading、 busy、transient upstream、invalid
+        responseへ分類する。
+      </li>
+      <li>
+        Provider不通、loading、busyをjob failure
+        attemptへ加算しない。Provider世代回復後に対象job一件だけを
+        再開し、手動pausedと業務失敗は自動再開しない。
+      </li>
+      <li>
+        source HEADではなく承認済みdesired releaseを配備し、live identity、HTTP
+        contract、canary、consumer 完了前にreleaseを完了扱いしない。
+      </li>
+    </ul>
+  </section>
+  <section id="migration">
+    <h2>段階導入とrollback</h2>
+    <ol>
+      <li>
+        <strong>測定:</strong> 現行releaseでHTTP
+        SSEと旧WSの公平なbaselineを取り、機能差、TTFT、total、
+        tokens/s、cancel、memory、GPU競合を保存する。
+      </li>
+      <li>
+        <strong>shadow:</strong> allocation header不要のHTTP modeをfeature
+        flagで有効化し、loopbackとconsumer hostから標準SDK contractを実行する。旧client
+        trafficはまだ変えない。
+      </li>
+      <li>
+        <strong>SAAA canary:</strong> 一つの設定または一つの利用者だけをHTTP SSEへ切り替え、tool
+        continuation、 interrupt、長文、途中切断、再試行を検証する。
+      </li>
+      <li>
+        <strong>ContextStill canary:</strong> Queueをfail closedのままHTTP
+        Providerを検査し、対象job一件だけを
+        再開する。業務成果の永続化と次job境界の再評価まで確認する。
+      </li>
+      <li>
+        <strong>default切替:</strong>
+        SAAAとContextStillの既定transportをHTTPにし、旧WSは新規Connectionを 受けないdrain
+        modeへ移す。既存runだけを期限内に完了させる。
+      </li>
+      <li>
+        <strong>soak:</strong> 24時間以上、HTTP成功率、TTFT、tokens/s、cancel、slot leak、release
+        identity、 consumer完了を監視する。旧WSのactive
+        connectionと新規attemptは0であることを記録する。
+      </li>
+      <li>
+        <strong>撤去:</strong> rollback window満了後、NativeWebSocket backend、SAAA protocol
+        schema、 <code>/v1/llm/stream</code> upgrade、native companion
+        service、WS専用scriptとtestを削除する。
+      </li>
+    </ol>
+    <p>
+      rollback単位はreleaseとconsumer設定を揃える。HTTP releaseでidentity、contract、SSE
+      terminal、性能gate、
+      consumer成果保存のいずれかが失敗した場合、Queueを止め、consumerを直前の確認済み経路へ戻し、LARMを
+      previous releaseへatomicに戻す。旧WS sourceを削除した後はWSへ戻さず、確認済みHTTP previous
+      releaseへ戻す。
+    </p>
+    <p>
+      撤去前に止めるのは<code>larm-native-qwen-provider.service</code>と専用WS広告である。Resident
+      QwenのHTTP engine、MTP、ROCmFP4 assetはHTTP性能gateを満たす限り維持する。外部model
+      weightsやengine binaryを repository削除と同時に消去しない。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証commandと証跡</h2>
+    <p>実装時に次のscriptを追加または置換する。名称は計画上の固定名とする。</p>
+    <table>
+      <caption>
+        自動化するgate
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">command</th>
+          <th scope="col">役割</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>bun run test:http-provider-contract</code></th>
+          <td>
+            secret不要fixtureでmodels、chat JSON／SSE、tool call、ASR、TTS、error、abortを検証する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>bun run benchmark:http-provider</code></th>
+          <td>
+            固定fixtureでwarm／cold／mixedのphase別遅延、tokens/s、memory、identityをJSONに保存する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>bun run smoke:http-provider-live</code></th>
+          <td>
+            明示したlive URL、principal、model、expected
+            releaseで実engineのJSON／SSE／audioを検査する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>bun run check</code></th>
+          <td>source-only、operations、docs、types、unit、deployment全体の回帰gate。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      live証跡はrepository外へ保存し、timestamp、完全commit、config revision、boot epoch、public
+      model、resolved runtime／release、fixture digest、sample count、p50／p95、error
+      count、consumer job IDのhashを含める。 prompt本文、生成本文、audio、tokenは保存しない。
+    </p>
+    <p>
+      <code>bun run test:http-provider-contract</code>はmodel catalog、LLM JSON／SSE、ASR、TTS、
+      error、cancel、client
+      iteratorのgateとして実装済みである。<code>benchmark:http-provider</code>と
+      <code>smoke:http-provider-live</code>も実装済みだが、実modelでのlive
+      evidenceはまだ取得していない。 実装中の全体回帰gateは
+      <code>bun run check</code
+      >、文書のgateは<code>bun run docs:check:fix</code>と
+      <code>bun run docs:check</code>とする。
+    </p>
+  </section>
+  <section id="definition-of-done">
+    <h2>最終受入条件</h2>
+    <ul>
+      <li>標準OpenAI clientがbase URL、Bearer、modelだけでLLM JSONとHTTP SSEを利用できる。</li>
+      <li>
+        SSEは最初のmeaningful deltaを逐次受信し、stable identity、tool
+        delta、finish、<code>[DONE]</code>を contract
+        fixtureと実modelの両方で満たす。
+      </li>
+      <li>ASRとTTSが対応field、media type、sample rate、voice、error、abortの受入を満たす。</li>
+      <li>Qwen 3.8 27BがResident既定であり、warm requestにmodel startupが発生しない。</li>
+      <li>HTTP SSEの校正済みTTFT、tokens/s、cancel、mixed workload SLOをlive releaseが満たす。</li>
+      <li>
+        desired commit、live release、catalog revision、boot epoch、実runtime releaseが一貫する。
+      </li>
+      <li>SAAAのtool継続とinterruptがHTTP SSEで成功する。</li>
+      <li>ContextStillのLLM必須job一件が完了し、業務成果が一度だけ保存される。</li>
+      <li>
+        <code>provider_unavailable_exhausted</code
+        >等のinfra起因jobがProvider世代回復後に一件から段階再開し、 Provider障害をjob
+        failure回数へ加算しない。
+      </li>
+      <li>
+        clientから旧<code>:44448</code>、<code>/v1/llm/stream</code>、native
+        companionへの接続が0件である。
+      </li>
+      <li>
+        24時間soakとrollback windowを完了し、独自WSの広告、service、source、test依存を撤去する。
+      </li>
+    </ul>
+    <p>
+      以上のいずれかが未達なら「HTTP実装済み」または「shadow成功」とは記録できても、移行完了とは扱わない。
+      とくにlive identityとconsumer成果保存は省略しない。
+    </p>
+  </section>
+</article>

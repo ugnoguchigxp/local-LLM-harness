@@ -27,6 +27,30 @@ agentProfiles:
         route: llm-agent-worker
         publicModel: qwen-agent-worker
         readiness: llm-inference
+  asr-qwen:
+    description: Resident Qwen3 ASR OpenAI-compatible provider
+    providers:
+      - name: asr
+        capability: speech.stt
+        route: stt-qwen
+        publicModel: qwen3-asr-1.7b
+        readiness: stt-transcription
+  tts-default:
+    description: Resident VOICEVOX OpenAI-compatible speech provider
+    providers:
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        readiness: tts-speech
+  tts-expressive:
+    description: Explicit Qwen3 expressive speech provider
+    providers:
+      - name: tts
+        capability: speech.tts.expressive
+        route: tts-expressive
+        publicModel: qwen3-tts-expressive
+        readiness: tts-speech
 
 compatibilityAliases:
   deep-reasoning-35b:

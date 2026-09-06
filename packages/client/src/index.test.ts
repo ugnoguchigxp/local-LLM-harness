@@ -3,6 +3,7 @@ import {
   LarmApiError,
   LarmClient,
   LarmEpochChangedError,
+  LarmStreamProtocolError,
 } from "./index";
 
 const allocation = {
@@ -55,6 +56,162 @@ test("reference client sends idempotency and always releases withAllocation", as
   expect(result).toBe("qwen-general");
   expect(requests[0]?.headers.get("idempotency-key")).toBe("client_fixed");
   expect(requests[1]?.method).toBe("DELETE");
+});
+
+test("reference client calls the standard model catalog and Chat Completions without allocation headers", async () => {
+  const requests: Request[] = [];
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "standard-token",
+    fetch: async (input, init) => {
+      const request = new Request(input.toString(), init);
+      requests.push(request);
+      if (new URL(request.url).pathname === "/v1/models") {
+        return json({
+          object: "list",
+          data: [{ id: "coding-default", object: "model", created: 0, owned_by: "larm" }],
+        });
+      }
+      return json({
+        id: "chatcmpl-test",
+        object: "chat.completion",
+        created: 1,
+        model: "coding-default",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "ok" },
+          finish_reason: "stop",
+        }],
+      });
+    },
+  });
+
+  expect((await client.listOpenAiModels()).data[0]?.id).toBe("coding-default");
+  const response = await client.createChatCompletion({
+    model: "coding-default",
+    messages: [{ role: "user", content: "hello" }],
+  });
+  expect((await response.json() as { model: string }).model).toBe("coding-default");
+  expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+    "/v1/models",
+    "/v1/chat/completions",
+  ]);
+  expect(requests.every((request) => request.headers.get("authorization") === "Bearer standard-token"))
+    .toBeTrue();
+  expect(requests.every((request) => !request.headers.has("x-larm-allocation-id"))).toBeTrue();
+});
+
+test("reference client reads the strict release convergence status with the API bearer", async () => {
+  let observed: Request | undefined;
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "status-token",
+    fetch: async (input, init) => {
+      observed = new Request(input.toString(), init);
+      return json({
+        schemaVersion: 1,
+        operationId: "a".repeat(64),
+        desiredRelease: "b".repeat(40),
+        observedRelease: "b".repeat(40),
+        stage: "canary_verified",
+        result: "succeeded",
+        reason: null,
+        updatedAt: "2026-09-06T00:00:00.000Z",
+      });
+    },
+  });
+
+  expect((await client.getReleaseConvergenceStatus()).stage).toBe("canary_verified");
+  expect(new URL(observed!.url).pathname).toBe("/v1/release-convergence");
+  expect(observed?.headers.get("authorization")).toBe("Bearer status-token");
+});
+
+test("reference client yields validated Chat Completions SSE chunks incrementally", async () => {
+  const encoder = new TextEncoder();
+  const chunk = (choices: unknown[]) => `data: ${JSON.stringify({
+    id: "chatcmpl-stream",
+    object: "chat.completion.chunk",
+    created: 1,
+    model: "coding-default",
+    choices,
+  })}\r\n\r\n`;
+  const wire = encoder.encode([
+    chunk([{ index: 0, delta: { role: "assistant" }, finish_reason: null }]),
+    chunk([{ index: 0, delta: { content: "こ" }, finish_reason: null }]),
+    chunk([{ index: 0, delta: { content: "んにちは。" }, finish_reason: null }]),
+    chunk([{ index: 0, delta: {}, finish_reason: "stop" }]),
+    "data: [DONE]\r\n\r\n",
+  ].join(""));
+  let cancelled = false;
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "stream-token",
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let index = 0; index < wire.byteLength; index += 3) {
+          controller.enqueue(wire.slice(index, index + 3));
+        }
+        controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }), { headers: { "content-type": "text/event-stream" } }),
+  });
+
+  const chunks = [];
+  for await (const event of client.streamChatCompletion({
+    model: "coding-default",
+    messages: [{ role: "user", content: "hello" }],
+  })) chunks.push(event);
+  expect(chunks).toHaveLength(4);
+  expect(chunks[1]?.choices[0]?.delta.content).toBe("こ");
+  expect(chunks[3]?.choices[0]?.finish_reason).toBe("stop");
+  expect(cancelled).toBe(false);
+});
+
+test("reference client fails closed when a Chat Completions SSE terminal is missing", async () => {
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    fetch: async () => new Response(
+      'data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"x"},"finish_reason":null}]}\n\n',
+      { headers: { "content-type": "text/event-stream" } },
+    ),
+  });
+  const consume = async () => {
+    for await (const _event of client.streamChatCompletion({ model: "m", messages: [] })) {
+      // Consume the validated prefix; success still requires the terminal contract.
+    }
+  };
+  await expect(consume()).rejects.toBeInstanceOf(LarmStreamProtocolError);
+});
+
+test("reference client calls standard transcription and speech without allocation headers", async () => {
+  const requests: Request[] = [];
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "standard-token",
+    fetch: async (input, init) => {
+      const request = new Request(input.toString(), init);
+      requests.push(request);
+      return new Response("ok", { headers: { "content-type": "application/octet-stream" } });
+    },
+  });
+  const form = new FormData();
+  form.append("model", "qwen3-asr-1.7b");
+  form.append("file", new Blob(["audio"]), "sample.wav");
+  await client.createAudioTranscription(form);
+  await client.createSpeech({ model: "voicevox-core", input: "hello" });
+
+  expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+    "/v1/audio/transcriptions",
+    "/v1/audio/speech",
+  ]);
+  expect(requests.every((request) => request.headers.get("authorization") === "Bearer standard-token"))
+    .toBeTrue();
+  expect(requests.every((request) => !request.headers.has("x-larm-allocation-id"))).toBeTrue();
+  expect(requests[0]?.headers.get("content-type")).toStartWith("multipart/form-data; boundary=");
+  expect(await requests[1]?.json()).toEqual({ model: "voicevox-core", input: "hello" });
 });
 
 test("reference client rejects invalid timeout configuration", async () => {

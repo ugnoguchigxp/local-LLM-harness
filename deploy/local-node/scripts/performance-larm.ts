@@ -6,6 +6,7 @@ import { absoluteOutput, prepareExternalOutput, writeExclusive } from "./benchma
 import {
   consumeAsrPerformanceResponse,
   consumeLlmPerformanceResponse,
+  consumeLlmSsePerformanceResponse,
   consumeTtsPerformanceResponse,
   degradationPercent,
   summarize,
@@ -14,9 +15,9 @@ import {
 } from "./performance-helpers";
 import { runSaaaWebSocketSmoke } from "./smoke-saaa-websocket";
 
-type WorkloadId = "llm" | "llm-ws" | "asr" | "tts";
+type WorkloadId = "llm" | "llm-sse" | "llm-ws" | "asr" | "tts";
 type ManagedWorkloadId = Exclude<WorkloadId, "llm-ws">;
-type ScenarioId = WorkloadId | "mixed" | "mixed-ws";
+type ScenarioId = WorkloadId | "mixed" | "mixed-sse" | "mixed-ws";
 type Identity = { route: string; runtime: string; release: string; fallback: boolean };
 type CommonSample = Identity & {
   workload: WorkloadId;
@@ -27,8 +28,8 @@ type CommonSample = Identity & {
   responseBytes: number;
 };
 type LlmSample = CommonSample & {
-  workload: "llm" | "llm-ws";
-  transport: "http-json" | "saaa-websocket";
+  workload: "llm" | "llm-sse" | "llm-ws";
+  transport: "http-json" | "http-sse" | "saaa-websocket";
   firstTokenMs: number;
   completionTokens: number;
   completionTokenSource: "usage" | "content-events";
@@ -41,7 +42,7 @@ type AudioSample = CommonSample & {
   audioSecondsPerSecond: number;
 };
 type AsrSample = AudioSample & { workload: "asr" };
-type TtsSample = AudioSample & { workload: "tts" };
+type TtsSample = AudioSample & { workload: "tts"; firstPlayableAudioMs: number };
 type WorkloadSample = LlmSample | AsrSample | TtsSample;
 type IterationResult = {
   iteration: number;
@@ -72,17 +73,20 @@ type WebSocketExecution = {
   allocation: PublicAllocation;
 };
 
-const allScenarios = ["llm", "llm-ws", "asr", "tts", "mixed", "mixed-ws"] as const;
+const allScenarios = ["llm", "llm-sse", "llm-ws", "asr", "tts", "mixed", "mixed-sse", "mixed-ws"] as const;
 const scenarioWorkloads: Record<ScenarioId, WorkloadId[]> = {
   llm: ["llm"],
+  "llm-sse": ["llm-sse"],
   "llm-ws": ["llm-ws"],
   asr: ["asr"],
   tts: ["tts"],
   mixed: ["llm", "asr", "tts"],
+  "mixed-sse": ["llm-sse", "asr", "tts"],
   "mixed-ws": ["llm-ws", "asr", "tts"],
 };
 const requirement = {
   llm: { capability: "llm.general", route: "llm-default" },
+  "llm-sse": { capability: "llm.general", route: "llm-default" },
   asr: { capability: "speech.stt", route: "stt-default" },
   tts: { capability: "speech.tts", route: "tts-default" },
 } as const;
@@ -161,7 +165,7 @@ const comparisons = buildComparisons(scenarioReports);
 const passed = identityStable
   && scenarioReports.every((scenario) => scenario.errors === 0 && scenario.telemetry.errors.length === 0);
 const report = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   kind: "larm-performance-diagnostic",
   recordedAt: new Date().toISOString(),
   passed,
@@ -185,6 +189,7 @@ const report = {
     },
     mixedConcurrency: {
       mixed: { llm: 1, asr: 1, tts: 1 },
+      "mixed-sse": { "llm-sse": 1, asr: 1, tts: 1 },
       "mixed-ws": { "llm-ws": 1, asr: 1, tts: 1 },
     },
     timeoutMs,
@@ -341,25 +346,32 @@ async function execute(
     : workload === "asr" && asrOverride
     ? asrOverride.identity
     : bindingIdentity(requiredAllocation(allocation), workload);
-  if (workload === "llm") {
+  if (workload === "llm" || workload === "llm-sse") {
     const started = performance.now();
     launches.push(started);
+    const streaming = workload === "llm-sse";
     const response = await larm.chat(requiredAllocation(allocation).id, {
       model: "larm",
-      stream: false,
+      stream: streaming,
+      ...(streaming ? { stream_options: { include_usage: true } } : {}),
       max_tokens: llmMaxTokens,
       messages: [{
         role: "user",
         content: "Output the integers from 1 through 40 in order, separated by single spaces, with no other text.",
       }],
     });
-    const measured = await consumeLlmPerformanceResponse(response, started);
+    const measured = streaming
+      ? await consumeLlmSsePerformanceResponse(response, started)
+      : await consumeLlmPerformanceResponse(response, started);
+    const deltaEvents = "deltaEvents" in measured && typeof measured.deltaEvents === "number"
+      ? measured.deltaEvents
+      : null;
     return {
       workload,
       iteration,
       status: response.status,
-      transport: "http-json",
-      deltaEvents: null,
+      transport: streaming ? "http-sse" : "http-json",
+      deltaEvents,
       ...identity,
       ...measured,
     };
@@ -479,9 +491,9 @@ function aggregateWorkload(
     },
     responseBytes: summarize(samples.map((sample) => sample.responseBytes)),
   };
-  if (workload === "llm" || workload === "llm-ws") {
+  if (workload === "llm" || workload === "llm-sse" || workload === "llm-ws") {
     const llm = samples.filter((sample): sample is LlmSample =>
-      sample.workload === "llm" || sample.workload === "llm-ws"
+      sample.workload === "llm" || sample.workload === "llm-sse" || sample.workload === "llm-ws"
     );
     return {
       ...common,
@@ -494,8 +506,18 @@ function aggregateWorkload(
     };
   }
   const audio = samples.filter((sample): sample is AsrSample | TtsSample => sample.workload === workload);
+  const audioLatency = workload === "tts"
+    ? {
+      ...common.latencyMs,
+      firstPlayableAudio: summarize(
+        audio.filter((sample): sample is TtsSample => sample.workload === "tts")
+          .map((sample) => sample.firstPlayableAudioMs),
+      ),
+    }
+    : common.latencyMs;
   return {
     ...common,
+    latencyMs: audioLatency,
     audioSeconds: summarize(audio.map((sample) => sample.audioSeconds)),
     realtimeFactor: summarize(audio.map((sample) => sample.realtimeFactor)),
     audioSecondsPerSecond: summarize(audio.map((sample) => sample.audioSecondsPerSecond)),
@@ -505,6 +527,7 @@ function aggregateWorkload(
 function buildComparisons(scenarioReports: Array<ReturnType<typeof aggregateScenario>>) {
   const mixedVsStandalone = ([
     { scenario: "mixed", workloads: ["llm", "asr", "tts"] },
+    { scenario: "mixed-sse", workloads: ["llm-sse", "asr", "tts"] },
     { scenario: "mixed-ws", workloads: ["llm-ws", "asr", "tts"] },
   ] as const).flatMap(({ scenario, workloads }) => {
     const mixed = scenarioReports.find((candidate) => candidate.id === scenario);
@@ -514,10 +537,10 @@ function buildComparisons(scenarioReports: Array<ReturnType<typeof aggregateScen
       if (!standalone) return [];
       const standaloneWorkload = standalone.workloads[workload] as ReturnType<typeof aggregateWorkload>;
       const mixedWorkload = mixed.workloads[workload] as ReturnType<typeof aggregateWorkload>;
-      const standaloneSpeed = workload === "llm" || workload === "llm-ws"
+      const standaloneSpeed = workload === "llm" || workload === "llm-sse" || workload === "llm-ws"
         ? p50("outputTokensPerSecond" in standaloneWorkload ? standaloneWorkload.outputTokensPerSecond : null)
         : p50("audioSecondsPerSecond" in standaloneWorkload ? standaloneWorkload.audioSecondsPerSecond : null);
-      const mixedSpeed = workload === "llm" || workload === "llm-ws"
+      const mixedSpeed = workload === "llm" || workload === "llm-sse" || workload === "llm-ws"
         ? p50("outputTokensPerSecond" in mixedWorkload ? mixedWorkload.outputTokensPerSecond : null)
         : p50("audioSecondsPerSecond" in mixedWorkload ? mixedWorkload.audioSecondsPerSecond : null);
       return [{
@@ -533,11 +556,11 @@ function buildComparisons(scenarioReports: Array<ReturnType<typeof aggregateScen
       }];
     });
   });
-  const http = scenarioReports.find((scenario) => scenario.id === "llm")?.workloads.llm;
+  const http = scenarioReports.find((scenario) => scenario.id === "llm-sse")?.workloads["llm-sse"];
   const websocket = scenarioReports.find((scenario) => scenario.id === "llm-ws")?.workloads["llm-ws"];
   const llmTransport = http && websocket && "outputTokensPerSecond" in http && "outputTokensPerSecond" in websocket
     ? {
-      baseline: "llm",
+      baseline: "llm-sse",
       candidate: "llm-ws",
       firstTokenP50DegradationPercent: degradationPercent(
         p50("firstToken" in http.latencyMs ? http.latencyMs.firstToken : null),
@@ -555,7 +578,7 @@ function buildComparisons(scenarioReports: Array<ReturnType<typeof aggregateScen
         false,
       ),
       completionTokensP50: {
-        http: p50("completionTokens" in http ? http.completionTokens : null) ?? null,
+        httpSse: p50("completionTokens" in http ? http.completionTokens : null) ?? null,
         websocket: p50("completionTokens" in websocket ? websocket.completionTokens : null) ?? null,
       },
     }
@@ -668,7 +691,7 @@ function selectedScenarios(value: string): ScenarioId[] {
   const result = value.split(",").map((item) => item.trim());
   if (result.length === 0 || result.some((item) => !allScenarios.includes(item as ScenarioId))) {
     throw new Error(
-      "LARM_PERF_SCENARIOS must be all or a comma-separated subset of llm,llm-ws,asr,tts,mixed,mixed-ws",
+      "LARM_PERF_SCENARIOS must be all or a comma-separated subset of llm,llm-sse,llm-ws,asr,tts,mixed,mixed-sse,mixed-ws",
     );
   }
   if (new Set(result).size !== result.length) throw new Error("LARM_PERF_SCENARIOS contains duplicates");
