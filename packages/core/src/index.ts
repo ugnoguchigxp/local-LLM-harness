@@ -211,8 +211,10 @@ export {
 export {
   inspectOpenAiChatCompletionSse,
   OpenAiChatCompletionSseInspector,
+  OpenAiChatCompletionSseNormalizer,
   type OpenAiChatCompletionSseFailureReason,
   type OpenAiChatCompletionSseInspection,
+  type OpenAiChatCompletionSseNormalization,
   type OpenAiChatCompletionSseProgress,
   type OpenAiChatCompletionSseChunk,
 } from "./openai-sse";

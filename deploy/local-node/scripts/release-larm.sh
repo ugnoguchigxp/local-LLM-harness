@@ -168,6 +168,7 @@ validate_release_payload() {
 
 verify_release_health() {
   local target="$1" mode="${2:-identity}" deadline health readiness expected_commit expected_version expected_revision active
+  local api_token
   local identity_ready=0
   [[ "${mode}" == "identity" || "${mode}" == "contract" ]] || return 1
   validate_release_manifest "${target}" || return 1
@@ -207,7 +208,15 @@ verify_release_health() {
   [[ "${identity_ready}" -eq 1 ]] || return 1
   [[ "${mode}" == "contract" ]] || return 0
   LARM_VERIFY_RELEASE_DIR="${target}" LARM_VERIFY_BASE_URL=http://127.0.0.1:9810 \
-    "${bun_bin}" run "${target}/deploy/local-node/scripts/verify-live-contract.ts" >/dev/null
+    "${bun_bin}" run "${target}/deploy/local-node/scripts/verify-live-contract.ts" >/dev/null \
+    || return 1
+  api_token="$(sed -n 's/^LARM_API_TOKEN=//p' /etc/larm/larm.env | head -n 1)"
+  [[ -n "${api_token}" ]] || return 1
+  LARM_BASE_URL=http://127.0.0.1:9810 \
+    LARM_API_TOKEN="${api_token}" \
+    LARM_EXPECTED_RELEASE_COMMIT="${expected_commit}" \
+    LARM_HTTP_SMOKE_TIMEOUT_MS=300000 \
+    "${bun_bin}" run "${target}/deploy/local-node/scripts/smoke-http-provider-live.ts" >/dev/null
 }
 
 release_dirs() {

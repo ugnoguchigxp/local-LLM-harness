@@ -22,6 +22,8 @@ python3.13 -m venv /srv/ai/apps/qwen-speech/asr/.venv
 
 配備時は`api.py`を`/srv/ai/apps/qwen-speech/asr/api.py`へ配置する。モデルとdtypeはsystemdの環境変数で切り替えられる。
 
+非発話入力は成功応答`{"text":""}`として扱い、言語を検出できなかった場合は`language`を省略する。
+
 production modelのsource、revision、配置先は
 [`../../deploy/local-node/models.yaml`](../../deploy/local-node/models.yaml)、実行時の値は
 [`../../deploy/local-node/systemd/qwen-asr.service`](../../deploy/local-node/systemd/qwen-asr.service)が正本です。

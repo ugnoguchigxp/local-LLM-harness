@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   inspectOpenAiChatCompletionSse,
   OpenAiChatCompletionSseInspector,
+  OpenAiChatCompletionSseNormalizer,
 } from "./openai-sse";
 
 const metadata = {
@@ -80,6 +81,37 @@ test("incrementally validates arbitrary UTF-8 and CRLF chunk boundaries", () => 
   expect(inspector.finish()).toEqual({
     ...successfulInspection,
     chunks: 2,
+  });
+});
+
+test("normalizes internal model names and unstable creation times incrementally", () => {
+  const source = [
+    'data: {"id":"chatcmpl-runtime","object":"chat.completion.chunk","created":10,"model":"internal.gguf","choices":[{"index":0,"delta":{"role":"assistant","content":null},"finish_reason":null}]}\r\n\r\n',
+    'data: {"id":"chatcmpl-runtime","object":"chat.completion.chunk","created":11,"model":"internal.gguf","choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":null}]}\r\n\r\n',
+    'data: {"id":"chatcmpl-runtime","object":"chat.completion.chunk","created":11,"model":"internal.gguf","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\r\n\r\n',
+    "data: [DONE]\r\n\r\n",
+  ].join("");
+  const bytes = new TextEncoder().encode(source);
+  const normalizer = new OpenAiChatCompletionSseNormalizer("coding-default");
+  const output: Uint8Array[] = [];
+  for (let index = 0; index < bytes.length; index += 1) {
+    const result = normalizer.push(bytes.subarray(index, index + 1));
+    expect(result.ok).toBeTrue();
+    if (result.ok) output.push(...result.output);
+  }
+  const final = normalizer.finish();
+  expect(final.ok).toBeTrue();
+  if (final.ok) output.push(...final.output);
+  const normalized = output.map((chunk) => new TextDecoder().decode(chunk)).join("");
+  expect(normalized).not.toContain("internal.gguf");
+  expect(normalized).not.toContain('"created":11');
+  expect(inspectOpenAiChatCompletionSse(normalized)).toEqual({
+    ok: true,
+    id: "chatcmpl-runtime",
+    model: "coding-default",
+    chunks: 3,
+    deltas: 1,
+    finishReasons: 1,
   });
 });
 

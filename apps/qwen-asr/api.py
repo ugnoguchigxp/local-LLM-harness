@@ -264,19 +264,22 @@ def transcriptions(
             )[0]
 
         text = result.text.strip()
-        detected_language = result.language
+        detected_language = result.language.strip() if isinstance(result.language, str) else ""
         if response_format == "text":
             return PlainTextResponse(text)
         if response_format == "verbose_json":
-            return JSONResponse(
-                {
-                    "task": "transcribe",
-                    "language": detected_language,
-                    "duration": duration,
-                    "text": text,
-                }
-            )
-        return JSONResponse({"text": text, "language": detected_language})
+            response = {
+                "task": "transcribe",
+                "duration": duration,
+                "text": text,
+            }
+            if detected_language:
+                response["language"] = detected_language
+            return JSONResponse(response)
+        response = {"text": text}
+        if detected_language:
+            response["language"] = detected_language
+        return JSONResponse(response)
     except HTTPException:
         raise
     except Exception as exc:

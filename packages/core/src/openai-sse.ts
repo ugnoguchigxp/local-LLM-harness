@@ -36,6 +36,10 @@ export type OpenAiChatCompletionSseProgress =
     reason: OpenAiChatCompletionSseFailureReason;
   };
 
+export type OpenAiChatCompletionSseNormalization =
+  | { ok: true; output: Uint8Array[] }
+  | { ok: false; reason: OpenAiChatCompletionSseFailureReason };
+
 export type OpenAiChatCompletionSseChunk = {
   id: string;
   object: "chat.completion.chunk";
@@ -57,6 +61,166 @@ export type OpenAiChatCompletionSseChunk = {
 };
 
 const FINISH_REASONS = new Set(["stop", "length", "tool_calls", "content_filter", "function_call"]);
+
+export class OpenAiChatCompletionSseNormalizer {
+  private readonly decoder = new TextDecoder("utf-8", { fatal: true });
+  private readonly encoder = new TextEncoder();
+  private buffer = "";
+  private pendingCr = false;
+  private failed?: OpenAiChatCompletionSseFailureReason;
+  private finalized = false;
+  private created?: number;
+
+  constructor(private readonly publicModel: string) {
+    if (publicModel.length === 0) throw new Error("publicModel must not be empty");
+  }
+
+  push(input: string | Uint8Array): OpenAiChatCompletionSseNormalization {
+    if (this.failed) return { ok: false, reason: this.failed };
+    if (this.finalized) return this.fail("data_after_done");
+    let decoded: string;
+    if (typeof input === "string") {
+      decoded = input;
+    } else {
+      try {
+        decoded = this.decoder.decode(input, { stream: true });
+      } catch {
+        return this.fail("invalid_utf8");
+      }
+    }
+    this.appendNormalized(decoded, false);
+    return this.processCompleteBlocks();
+  }
+
+  finish(): OpenAiChatCompletionSseNormalization {
+    if (this.failed) return { ok: false, reason: this.failed };
+    if (this.finalized) return { ok: true, output: [] };
+    this.finalized = true;
+    try {
+      this.appendNormalized(this.decoder.decode(), true);
+    } catch {
+      return this.fail("invalid_utf8");
+    }
+    const result = this.processCompleteBlocks();
+    if (!result.ok || this.buffer.length === 0) return result;
+    const output = [...result.output];
+    const block = this.buffer;
+    this.buffer = "";
+    const normalized = this.normalizeBlock(block);
+    if (this.failed) return { ok: false, reason: this.failed };
+    if (normalized) output.push(normalized);
+    return { ok: true, output };
+  }
+
+  private appendNormalized(decoded: string, final: boolean): void {
+    let index = 0;
+    if (this.pendingCr) {
+      this.buffer += "\n";
+      this.pendingCr = false;
+      if (decoded.startsWith("\n")) index = 1;
+    }
+    for (; index < decoded.length; index += 1) {
+      const character = decoded[index]!;
+      if (character !== "\r") {
+        this.buffer += character;
+        continue;
+      }
+      if (index + 1 < decoded.length) {
+        if (decoded[index + 1] === "\n") index += 1;
+        this.buffer += "\n";
+      } else if (final) {
+        this.buffer += "\n";
+      } else {
+        this.pendingCr = true;
+      }
+    }
+    if (final && this.pendingCr) {
+      this.buffer += "\n";
+      this.pendingCr = false;
+    }
+  }
+
+  private processCompleteBlocks(): OpenAiChatCompletionSseNormalization {
+    const output: Uint8Array[] = [];
+    while (!this.failed) {
+      const separator = this.buffer.indexOf("\n\n");
+      if (separator < 0) break;
+      const block = this.buffer.slice(0, separator);
+      this.buffer = this.buffer.slice(separator + 2);
+      const normalized = this.normalizeBlock(block);
+      if (normalized) output.push(normalized);
+    }
+    return this.failed ? { ok: false, reason: this.failed } : { ok: true, output };
+  }
+
+  private normalizeBlock(block: string): Uint8Array | undefined {
+    if (block.length === 0) return undefined;
+    const data: string[] = [];
+    const metadata: string[] = [];
+    for (const line of block.split("\n")) {
+      if (line.length === 0 || line.startsWith(":")) {
+        metadata.push(line);
+        continue;
+      }
+      if (line === "data") {
+        data.push("");
+        continue;
+      }
+      if (line.startsWith("data:")) {
+        const value = line.slice(5);
+        data.push(value.startsWith(" ") ? value.slice(1) : value);
+        continue;
+      }
+      if (/^(event|id|retry):/.test(line)) {
+        metadata.push(line);
+        continue;
+      }
+      this.fail("invalid_sse_field");
+      return undefined;
+    }
+    if (data.length === 0) return this.encoder.encode(`${block}\n\n`);
+    const payload = data.join("\n");
+    if (payload === "[DONE]") {
+      return this.encoder.encode([...metadata, "data: [DONE]"].join("\n") + "\n\n");
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(payload) as unknown;
+    } catch {
+      this.fail("invalid_json");
+      return undefined;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      this.fail("invalid_chunk");
+      return undefined;
+    }
+    const chunk = value as Record<string, unknown>;
+    if (
+      typeof chunk.model !== "string"
+      || chunk.model.length === 0
+      || !Number.isSafeInteger(chunk.created)
+      || (chunk.created as number) < 0
+    ) {
+      this.fail("invalid_chunk");
+      return undefined;
+    }
+    this.created ??= chunk.created as number;
+    chunk.model = this.publicModel;
+    chunk.created = this.created;
+    return this.encoder.encode([
+      ...metadata,
+      `data: ${JSON.stringify(chunk)}`,
+    ].join("\n") + "\n\n");
+  }
+
+  private fail(reason: OpenAiChatCompletionSseFailureReason): {
+    ok: false;
+    reason: OpenAiChatCompletionSseFailureReason;
+  } {
+    this.failed ??= reason;
+    return { ok: false, reason: this.failed };
+  }
+}
 
 function inspectDelta(delta: Record<string, unknown>): { valid: boolean; meaningful: boolean } {
   if (

@@ -222,6 +222,8 @@ Profile catalogの軽量contractが不一致なら前世代へ自動rollbackし�
 `smoke:http-provider-live`が行います。
 
 旧`release-larm.sh apply`はrollback期間の既存世代向け互換手段であり、新しい自動配備経路には使いません。
+互換手段で切り替える場合も、release identityとcatalogの検証後に実ProviderへLLM JSON/SSE、
+silence WAVによるASR、TTSのlive canaryを実行し、いずれかの失敗時は前世代へ自動rollbackします。
 前世代へ戻す操作は、固定install済みrollback helperを使います。
 
 ```bash

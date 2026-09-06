@@ -3,6 +3,7 @@ import {
   inspectOpenAiTranscriptionJson,
   isOpenAiSpeechMediaType,
   OpenAiChatCompletionSseInspector,
+  OpenAiChatCompletionSseNormalizer,
   type RuntimeDefinition,
   type RuntimeProtocol,
 } from "@larm/core";
@@ -591,13 +592,18 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       );
     }
     const inspected = inspectOpenAiChatCompletionJson(parsed);
-    if (!inspected.ok || (options.expectedModel !== undefined && inspected.model !== options.expectedModel)) {
+    if (!inspected.ok) {
       return failure(
         "upstream_response_invalid",
         "upstream returned a chat completion that does not match the public contract",
         502,
         "upstream_protocol_error",
       );
+    }
+    if (options.expectedModel !== undefined) {
+      (parsed as Record<string, unknown>).model = options.expectedModel;
+      responseBody = new TextEncoder().encode(JSON.stringify(parsed));
+      responseHeaders.set("content-length", String(responseBody.byteLength));
     }
     if (auditSession && !auditResponseCaptureFailed) {
       try {
@@ -657,6 +663,17 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         "upstream_protocol_error",
       );
     }
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const transcription = parsed as Record<string, unknown>;
+      if (
+        transcription.language === null
+        || (typeof transcription.language === "string" && transcription.language.trim().length === 0)
+      ) {
+        delete transcription.language;
+        responseBody = new TextEncoder().encode(JSON.stringify(transcription));
+        responseHeaders.set("content-length", String(responseBody.byteLength));
+      }
+    }
     if (!inspectOpenAiTranscriptionJson(parsed).ok) {
       return failure(
         "upstream_response_invalid",
@@ -683,6 +700,10 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   const sseInspector = options.responseFormat === "sse" && upstream.ok
     ? new OpenAiChatCompletionSseInspector()
     : undefined;
+  const sseNormalizer = sseInspector && options.expectedModel !== undefined
+    ? new OpenAiChatCompletionSseNormalizer(options.expectedModel)
+    : undefined;
+  if (sseNormalizer) responseHeaders.delete("content-length");
   let firstMeaningfulOutputObserved = false;
   const failStreamProtocol = async (
     controller: ReadableStreamDefaultController<Uint8Array>,
@@ -703,12 +724,64 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     finish();
     controller.error(error);
   };
+  const enqueueSseOutput = async (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    output: Uint8Array[],
+  ): Promise<boolean> => {
+    for (const bytes of output) {
+      const progress = sseInspector?.push(bytes);
+      if (progress && !progress.ok) {
+        await failStreamProtocol(controller, progress.reason);
+        return false;
+      }
+      if (progress?.ok && progress.deltas > 0 && !firstMeaningfulOutputObserved) {
+        firstMeaningfulOutputObserved = true;
+        const elapsed = Math.max(0, ((options.now?.() ?? Date.now()) - startedAt) / 1_000);
+        options.metrics?.record({
+          name: "gateway_first_meaningful_output_seconds",
+          labels: { runtime: options.runtime.id, protocol: options.protocol },
+          value: elapsed,
+        });
+        options.onEvent?.({
+          name: "gateway_first_meaningful_output",
+          labels: { request: requestId, runtime: options.runtime.id },
+          value: elapsed,
+        });
+      }
+      if (auditSession && !auditResponseCaptureFailed) {
+        try {
+          auditSession.captureResponse(bytes);
+        } catch {
+          auditResponseCaptureFailed = true;
+          try {
+            auditSession.markResponseCaptureFailed?.();
+          } catch {
+            // Finalization is already isolated; the client stream must continue.
+          }
+          options.onEvent?.({
+            name: "inference_audit_capture_failed",
+            labels: { request: requestId, phase: "response" },
+          });
+        }
+      }
+      controller.enqueue(bytes);
+    }
+    return true;
+  };
   cancelUpstream = async (reason) => await reader.cancel(reason);
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
         const chunk = await withAbort(reader.read(), abort.signal);
         if (chunk.done) {
+          if (sseNormalizer) {
+            const normalized = sseNormalizer.finish();
+            if (!normalized.ok) {
+              await failStreamProtocol(controller, normalized.reason);
+              return;
+            }
+            if (!await enqueueSseOutput(controller, normalized.output)) return;
+          }
           const inspected = sseInspector?.finish();
           if (inspected && !inspected.ok) {
             await failStreamProtocol(controller, inspected.reason);
@@ -729,42 +802,13 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
           controller.close();
           return;
         }
-        const progress = sseInspector?.push(chunk.value);
-        if (progress && !progress.ok) {
-          await failStreamProtocol(controller, progress.reason);
+        const normalized = sseNormalizer?.push(chunk.value);
+        if (normalized && !normalized.ok) {
+          await failStreamProtocol(controller, normalized.reason);
           return;
         }
-        if (progress?.ok && progress.deltas > 0 && !firstMeaningfulOutputObserved) {
-          firstMeaningfulOutputObserved = true;
-          const elapsed = Math.max(0, ((options.now?.() ?? Date.now()) - startedAt) / 1_000);
-          options.metrics?.record({
-            name: "gateway_first_meaningful_output_seconds",
-            labels: { runtime: options.runtime.id, protocol: options.protocol },
-            value: elapsed,
-          });
-          options.onEvent?.({
-            name: "gateway_first_meaningful_output",
-            labels: { request: requestId, runtime: options.runtime.id },
-            value: elapsed,
-          });
-        }
-        if (auditSession && !auditResponseCaptureFailed) {
-          try {
-            auditSession.captureResponse(chunk.value);
-          } catch {
-            auditResponseCaptureFailed = true;
-            try {
-              auditSession.markResponseCaptureFailed?.();
-            } catch {
-              // Finalization is already isolated below; the client stream must continue.
-            }
-            options.onEvent?.({
-              name: "inference_audit_capture_failed",
-              labels: { request: requestId, phase: "response" },
-            });
-          }
-        }
-        controller.enqueue(chunk.value);
+        const output = normalized?.output ?? [chunk.value];
+        if (!await enqueueSseOutput(controller, output)) return;
       } catch (error) {
         if (!timedOut && !clientSignal.aborted && !options.lifecycleSignal?.aborted) {
           outcome = "stream_error";

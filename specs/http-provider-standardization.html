@@ -186,6 +186,12 @@
       ASRのapps/qwen-asr/api.pyは既に/v1/audio/transcriptionsを持ち、uploadを保存した後にmodel.transcribeを実行する。promptは非対応、temperatureは0だけを受理する。全OpenAI機能互換とは言えない。
     </p>
     <p>
+      非発話入力はerrorではなく空transcriptです。adapterは<code>{"text":""}</code>を返し、言語を
+      検出できない場合は空文字列や<code>null</code>を返さず<code>language</code>を省略します。Gatewayも
+      移行中のadapterが返す空languageを省略してから公開契約を検証します。release切替後は固定silence
+      WAVを含むJSON、SSE、ASR、TTSのlive canaryを実Providerへ実行し、失敗時は切替を受理しません。
+    </p>
+    <p>
       apps/voicevox-tts/voicevox_api.pyも/v1/audio/speechを持つ。synthesizer.synthesisでwav_bytes全体を生成してからResponseを返すため、現在の実装は生成途中の音声配信ではない。stream=trueも拒否する。生成後のWAVを小分けで送っても、初回音声の生成待ちは減らない。
     </p>
     <p>

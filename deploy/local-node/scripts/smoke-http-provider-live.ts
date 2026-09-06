@@ -212,7 +212,9 @@ export async function runHttpProviderLiveSmoke(
     const transcription = inspectOpenAiTranscriptionJson(parseJson(
       await responseBytes(transcriptionResponse, TEXT_LIMIT),
     ));
-    if (!transcription.ok) throw new Error("transcription_invalid");
+    if (!transcription.ok || transcription.text !== "") {
+      throw new Error("transcription_non_speech_invalid");
+    }
 
     const speechResponse = await client.createSpeech({
       model: ttsModel,

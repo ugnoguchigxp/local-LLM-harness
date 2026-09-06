@@ -217,7 +217,7 @@ test("standard Bearer transcription resolves its model without an allocation hea
         headers: { "content-type": new Headers(init?.headers).get("content-type") ?? "" },
       });
       uploadedModel = String((await request.formData()).get("model"));
-      return Response.json({ text: "標準API" });
+      return Response.json({ text: "", language: "" });
     },
   });
   const form = new FormData();
@@ -230,7 +230,7 @@ test("standard Bearer transcription resolves its model without an allocation hea
   });
 
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ text: "標準API" });
+  expect(await response.json()).toEqual({ text: "" });
   expect(target).toBe("http://127.0.0.1:8081/v1/audio/transcriptions");
   expect(uploadedModel).toBe("qwen3-asr-1.7b");
   expect(internalHeader).toBeNull();

@@ -1328,7 +1328,14 @@ test("standard Chat Completions needs only bearer and model and releases its int
 });
 
 test("standard Chat Completions streams SSE and single-flights preferred model startup", async () => {
+  const upstream = [
+    'data: {"id":"chatcmpl-direct","object":"chat.completion.chunk","created":1,"model":"internal-worker.gguf","choices":[{"index":0,"delta":{"role":"assistant","content":null},"finish_reason":null}]}\n\n',
+    'data: {"id":"chatcmpl-direct","object":"chat.completion.chunk","created":2,"model":"internal-worker.gguf","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n',
+    'data: {"id":"chatcmpl-direct","object":"chat.completion.chunk","created":2,"model":"internal-worker.gguf","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+    "data: [DONE]\n\n",
+  ].join("");
   const expected = [
+    'data: {"id":"chatcmpl-direct","object":"chat.completion.chunk","created":1,"model":"speed-model","choices":[{"index":0,"delta":{"role":"assistant","content":null},"finish_reason":null}]}\n\n',
     'data: {"id":"chatcmpl-direct","object":"chat.completion.chunk","created":1,"model":"speed-model","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n',
     'data: {"id":"chatcmpl-direct","object":"chat.completion.chunk","created":1,"model":"speed-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
     "data: [DONE]\n\n",
@@ -1336,7 +1343,7 @@ test("standard Chat Completions streams SSE and single-flights preferred model s
   const { app, control, log } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
     agentConnectionCatalog: explicitAgentConnectionCatalog,
-    gatewayFetch: async () => new Response(expected, {
+    gatewayFetch: async () => new Response(upstream, {
       headers: { "content-type": "text/event-stream; charset=utf-8" },
     }),
   });
@@ -1390,7 +1397,7 @@ test("standard Chat Completions rejects unknown models before allocation or upst
   expect(control.getActiveAllocationCount()).toBe(0);
 });
 
-test("standard Chat Completions rejects a JSON response with public model drift", async () => {
+test("standard Chat Completions normalizes the internal JSON model name", async () => {
   const { app, control } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
     agentConnectionCatalog,
@@ -1415,14 +1422,17 @@ test("standard Chat Completions rejects a JSON response with public model drift"
     }),
   });
 
-  expect(response.status).toBe(502);
+  expect(response.status).toBe(200);
   expect(await response.json()).toEqual({
-    error: {
-      message: "upstream returned a chat completion that does not match the public contract",
-      type: "server_error",
-      param: null,
-      code: "upstream_response_invalid",
-    },
+    id: "chatcmpl-drift",
+    object: "chat.completion",
+    created: 1,
+    model: "test-model",
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: "must not escape" },
+      finish_reason: "stop",
+    }],
   });
   expect(control.getActiveAllocationCount()).toBe(0);
 });
