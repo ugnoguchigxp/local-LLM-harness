@@ -31,6 +31,17 @@
     </p>
   </aside>
 
+  <aside>
+    <p>
+      <strong>2026-09-06再確認:</strong> Queue executorは動作していますが、稼働設定が旧static
+      Provider
+      <code>127.0.0.1:44448</code
+      >を選択しているため、動的Providerのsource実装だけでは
+      LLM必須jobを処理できません。以下の変更にはapplication codeだけでなく、実際にresident daemonが
+      読む設定の切替と再起動後の確認を含めます。
+    </p>
+  </aside>
+
   <section id="required-change">
     <h2>必須変更</h2>
     <ol>
@@ -62,6 +73,43 @@
         activity変化だけで中断しない。
       </li>
     </ol>
+  </section>
+
+  <section id="provider-cutover">
+    <h2>Provider選択と配備の必須変更</h2>
+    <ol>
+      <li>
+        LLM必須Queueを処理するresident daemonの有効設定で、Provider kindを
+        <code>larm-agent-connection</code
+        >へ明示的に切り替える。adapterを実装しただけで未選択の状態を 完了と報告しない。
+      </li>
+      <li>
+        <code>controlBaseURL</code
+        >、<code>agentProfile: contextstill-background</code>、実行hostに対応する
+        <code>audience</code>、bounded
+        timeoutを設定する。claimされた<code>baseURL</code>、model、短期tokenを
+        static値で上書きしない。
+      </li>
+      <li>
+        動的Provider選択中は<code>127.0.0.1:44448</code>へ一度も接続しない。旧static
+        Provider設定と adapterは従来方式を明示選択した場合だけ保持する。
+      </li>
+      <li>
+        activityの認証はLARM contractどおりoptional
+        bearerとする。tokenが設定されている場合だけ送信し、 401をidleとして扱ったりstatic
+        Providerへfallbackしたりしない。
+      </li>
+      <li>
+        startup時に選択済みProvider kind、control host、Agent
+        Profile、audienceをsecretなしで一度記録する。 Queue
+        statusだけでなく、LLM必須jobがどのProvider adapterを使用するかを運用確認可能にする。
+      </li>
+    </ol>
+    <p>
+      LARM側の公開contractはContextStill専用に分岐させません。NightWorkersなど他のclientも同じ Agent
+      Connection、短期credential、OpenAI互換JSON/SSEを使用します。Profileはresource routingを
+      明示する設定であり、client固有のAPI endpointではありません。
+    </p>
   </section>
 
   <section id="contract">
@@ -152,6 +200,13 @@
       <li>queueが空の間はactivityをpollしない。</li>
       <li>従来Providerのfixture、routing、request snapshotが変化しない。</li>
       <li>sourceと文書から旧<code>/availability</code>依存が除去されている。</li>
+      <li>
+        production相当設定でLLM必須jobを一件実行し、Agent Connection create、claim、HTTP
+        completion、DELETEを観測する。
+      </li>
+      <li>
+        動的Providerのtest中に<code>127.0.0.1:44448</code>への接続試行が0件である。
+      </li>
     </ul>
   </section>
 
@@ -173,7 +228,9 @@
     <p>
       ContextStillのtestと文書checkが成功し、旧availability endpointへの依存がなく、freshなidle
       responseだけでProvider取得へ進むことをfake LARMで確認できた時点でsource修正完了です。恒久的な
-      Queue自動消化の有効化は、LARMのlive配備と別途行うJSON応答品質canaryの合格後に実施してください。
+      Queue自動消化の有効化は、LARMのlive配備と、実際のresident daemon設定から行うJSONまたはSSE
+      応答品質canaryの合格後に実施してください。完了報告には、選択されたProvider kind、LARM release
+      commit、Profile discovery結果、LLM必須job一件のConnection lifecycleを含めてください。
     </p>
   </section>
 </article>
