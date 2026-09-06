@@ -48,6 +48,7 @@ function expectedProfiles(expected: ExpectedLiveContract): unknown {
       description: profile.description,
       selectionPolicy: profile.selectionPolicy,
       deprecated: profile.deprecated,
+      schedulingPriority: profile.schedulingPriority ?? 0,
       providers: profile.providers.map((provider) => ({
         name: provider.name,
         capability: provider.capability,

@@ -24,6 +24,7 @@ const expected: ExpectedLiveContract = {
       description: "resident",
       selectionPolicy: "default",
       deprecated: false,
+      schedulingPriority: 3_000,
       revision: "2".repeat(64),
       providers: [{
         name: "llm",
@@ -73,6 +74,7 @@ function response(path: string, model = "coding-default"): Response {
         description: "resident",
         selectionPolicy: "default",
         deprecated: false,
+        schedulingPriority: 3_000,
         providers: [{
           name: "llm",
           capability: "llm.coding",

@@ -18,7 +18,9 @@ current_link="${test_root}/current"
 builder_uid="$(id -u)"
 builder_gid="$(id -g)"
 builder_bun="$(command -v bun)"
+builder_home=""
 builder_cache="${test_root}/builder-cache"
+builder_config="${test_root}/builder-config"
 mkdir -p "${source_root}/packages/core/src" "${source_root}/apps/daemon/src" \
   "${candidate_root}" "${inbox_root}" "${release_root}" "${state_root}" "${key_root}"
 git -C "${test_root}" init -q source
@@ -54,12 +56,21 @@ if [[ "${builder_uid}" -eq 0 ]]; then
     builder_uid="$(id -u nobody)"
     builder_gid="$(id -g nobody)"
   fi
+  builder_home="$(getent passwd "${builder_uid}" | cut -d: -f6)"
+  if [[ "${builder_home}" != /* || ! -d "${builder_home}" ]]; then
+    builder_home="${test_root}/builder-home"
+    install -d -m 0700 -o "${builder_uid}" -g "${builder_gid}" "${builder_home}"
+  fi
   builder_bun="${test_root}/bun"
   install -m 0755 "$(command -v bun)" "${builder_bun}"
-  install -d -m 0700 -o "${builder_uid}" -g "${builder_gid}" "${builder_cache}"
+  install -d -m 0700 -o "${builder_uid}" -g "${builder_gid}" \
+    "${builder_cache}" "${builder_config}"
   chmod 0755 "${test_root}"
   chown -R "${builder_uid}:${builder_gid}" \
     "${candidate_root}" "${inbox_root}" "${key_root}"
+else
+  builder_home="$(getent passwd "${builder_uid}" | cut -d: -f6)"
+  install -d -m 0700 "${builder_cache}" "${builder_config}"
 fi
 
 build() {
@@ -80,6 +91,8 @@ build() {
     LARM_RELEASE_COMMIT="${commit}" \
     LARM_BUN_BIN="${builder_bun}" \
     BUN_INSTALL_CACHE_DIR="${builder_cache}" \
+    HOME="${builder_home}" \
+    XDG_CONFIG_HOME="${builder_config}" \
     bash "${builder}"
 }
 
