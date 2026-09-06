@@ -1,0 +1,124 @@
+<article lang="ja">
+  <h1>LARM HTTP SSE Provider互換 実装仕様・記録</h1>
+
+  <p>
+    OpenAI互換clientがAgent ConnectionでclaimしたLLM Providerへ、requestで指定した形式の応答を
+    要求できるようにする。SAAAのNative WebSocketを既定の低遅延経路として維持しながら、ContextStill、
+    NightWorkersなどのHTTP clientには同じProviderのJSONとServer-Sent Eventsを提供する。
+  </p>
+
+  <dl>
+    <dt>対象endpoint</dt>
+    <dd><code>POST /v1/chat/completions</code></dd>
+    <dt>状態</dt>
+    <dd>Repository実装・自動test完了。local-node配備とclient canary待ち</dd>
+    <dt>互換性</dt>
+    <dd>
+      追加変更。非streaming HTTPと<code>GET /v1/llm/stream</code> WebSocketを変更しない
+    </dd>
+  </dl>
+
+  <section id="contract">
+    <h2>応答形式contract</h2>
+    <table>
+      <caption>
+        Chat Completions requestと成功response
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Request</th>
+          <th scope="col">Response media type</th>
+          <th scope="col">用途</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>stream: false</code>または省略</td>
+          <td><code>application/json</code></td>
+          <td>一括応答、structured output、従来client</td>
+        </tr>
+        <tr>
+          <td><code>stream: true</code></td>
+          <td><code>text/event-stream</code></td>
+          <td>OpenAI互換SSE client</td>
+        </tr>
+        <tr>
+          <td>WebSocket upgrade</td>
+          <td><code>saaa.llm-stream.v1</code></td>
+          <td>SAAA Native realtime data plane</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      SSE requestはupstreamへ<code>Accept: text/event-stream</code>を送り、event
+      byte列を解釈・再構成せず
+      透過する。成功responseが<code>text/event-stream</code>でなければ
+      <code>502 upstream_response_format_mismatch</code>としてfail closedにする。upstreamの非2xx
+      responseはOpenAI互換errorを伝えられるよう、元のstatusと許可headerを透過する。
+    </p>
+  </section>
+
+  <section id="connection">
+    <h2>Agent Connectionからの利用</h2>
+    <ol>
+      <li>clientはAgent Profileを選択してConnectionを作り、ready後にclaimする。</li>
+      <li>
+        claimの<code>baseUrl</code>、<code>model</code>、<code>credential.token</code>だけを使用する。
+      </li>
+      <li>
+        <code>POST {baseUrl}/chat/completions</code>へBearer credentialと要求する
+        <code>stream</code>値を送る。
+      </li>
+      <li>
+        JSON
+        bodyまたはSSEの<code>[DONE]</code>まで読み終えてからConnectionをrenewまたはreleaseする。
+      </li>
+    </ol>
+    <aside>
+      <p>
+        claimの<code>streaming</code>およびProfileの<code>streamingProtocol</code>はSAAA
+        Native WebSocketの広告である。HTTP
+        SSEは<code>openai.chat-completions.v1</code>の標準応答形式なので、
+        これらのfieldがないContextStill Profileでも使用できる。
+      </p>
+    </aside>
+  </section>
+
+  <section id="safety">
+    <h2>Lifecycleと安全境界</h2>
+    <ul>
+      <li>API token + Allocation headerと短期Provider credentialの両認証経路を維持する。</li>
+      <li>Provider credentialではclaimされたmodel、capability、Allocationへ固定する。</li>
+      <li>SSE応答中もExecutionGateのslotとService Activityのactive countを保持する。</li>
+      <li>
+        client切断、Allocation失効、release、daemon drain、total timeoutをupstreamへ伝播する。
+      </li>
+      <li>responseをbufferせず、upstream chunkをReadableStreamとして順次返す。</li>
+      <li>
+        SSE成功応答には<code>Cache-Control: no-cache, no-transform</code>と
+        <code>X-Accel-Buffering: no</code>を保証する。
+      </li>
+      <li>Provider個別portは公開せず、Gatewayの認証・割当境界を迂回させない。</li>
+    </ul>
+  </section>
+
+  <section id="verification">
+    <h2>自動testと受入条件</h2>
+    <ul>
+      <li>
+        <code>stream: true</code>がupstreamへ到達し、Accept header、SSE media
+        type、分割eventを維持する。
+      </li>
+      <li>成功した非SSE upstream responseを502で拒否する。</li>
+      <li>Agent Connectionの短期credentialとclaim modelだけでSSE completionを完了する。</li>
+      <li>
+        OpenAPIがJSONと<code>text/event-stream</code>の両成功responseを広告する。
+      </li>
+      <li>既存のNative WebSocket、非streaming、timeout、cancel、audit testが回帰しない。</li>
+    </ul>
+    <p>
+      live受入ではContextStillとNightWorkersから各一件を実行し、先頭event、<code>[DONE]</code>、
+      Connection解放、Activityのactiveからidleへの復帰を確認する。source変更だけでは配備完了としない。
+    </p>
+  </section>
+</article>

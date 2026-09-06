@@ -1,0 +1,621 @@
+<article lang="ja">
+  <h1>LARM Service Activity API・ContextStill連携 実装計画・記録</h1>
+
+  <p>
+    local-LLM-harness（LARM）が現在利用中かを集約して返すread-only APIと、ContextStillが
+    idleを確認した後に既存Agent Connection APIから動的LLM Providerを要求するための公開境界について、
+    計画とsource実装結果を記録します。Profile availability、resource予約、SAAA
+    application状態の推測は行いません。
+  </p>
+
+  <dl>
+    <dt>計画日</dt>
+    <dd><time>2026-09-06</time></dd>
+    <dt>source実装日</dt>
+    <dd><time>2026-09-06</time></dd>
+    <dt>状態</dt>
+    <dd>LARM source実装・自動test完了。local-node配備とContextStill applicationへの組込み待ち</dd>
+    <dt>新規contract</dt>
+    <dd><code>larm-service-activity.v1</code></dd>
+    <dt>新規endpoint</dt>
+    <dd><code>GET /v1/activity</code></dd>
+    <dt>再利用するcontract</dt>
+    <dd>
+      <code>agent-connection.v2</code> discovery、<code
+        >agent-connection.v1</code
+      >
+      lifecycle
+    </dd>
+  </dl>
+
+  <aside>
+    <p>
+      <strong>固定判断:</strong> activity APIは「LARMを通って現在実行中の利用者workload数」だけを
+      返します。Providerを確保できるかは判定しません。ContextStillはidle responseを得た後、既存の
+      Agent Connectionを作成し、その時点のresource admissionに従います。
+    </p>
+  </aside>
+
+  <section id="baseline">
+    <h2>着手時点に確認した実装</h2>
+    <ul>
+      <li>
+        Profile discovery、Connection create、status poll、semantic
+        readiness、claim、renew、releaseは 実装済みである。
+      </li>
+      <li>
+        Agent Connection createはProfileを既存Allocationへ変換し、COLDなPreferred RuntimeをBackendで
+        起動する。
+      </li>
+      <li>
+        claimはOpenAI互換の<code>baseURL</code>、public
+        <code>model</code>、Provider限定の短期Bearer tokenを返す。
+      </li>
+      <li>
+        <code>llm-agent-worker</code> Routeと<code
+          >qwen-worker-agent</code
+        >
+        Runtimeは登録済みで、Resident
+        <code>qwen-general</code>と同時に動作できる。
+      </li>
+      <li>
+        HTTP LLM・ASR・TTS
+        requestは共通<code>RequestTracker</code>と<code>ExecutionGate</code>を通る。
+      </li>
+      <li>
+        Native LLM WebSocket runは<code>LlmStreamServer</code>内部のruntime別active
+        countで管理される。
+      </li>
+    </ul>
+    <p>
+      着手時点ではactivity公開API、Native WebSocketの公開用active count、
+      <code>contextstill-background</code> Profileがありませんでした。着手前のlive
+      <code>GET /v2/agent-profiles</code
+      >は<code>coding-default</code>とdeprecated compatibility aliasだけを
+      返します。
+    </p>
+  </section>
+
+  <section id="implementation-record">
+    <h2>source実装記録</h2>
+    <ul>
+      <li>
+        <code>packages/core/src/service-activity.ts</code>へstrict discriminated
+        schema、型、state導出、snapshot生成を追加し、state、count、retry値の矛盾を
+        schema境界で拒否するようにした。
+      </li>
+      <li>
+        <code>apps/daemon/src/app.ts</code>へ認証、no-store、入力拒否を含む
+        <code>GET /v1/activity</code>を追加した。
+      </li>
+      <li>
+        HTTPは既存<code>RequestTracker</code>、Native WebSocketは非terminal
+        runだけを数える
+        <code>LlmStreamServer.activeRunCount()</code>で集約した。
+      </li>
+      <li>
+        <code>config/local-node/agent-connections.yaml</code>へ明示選択専用
+        <code>contextstill-background</code>
+        Profileを追加した。既定Profileは変更していない。
+      </li>
+      <li>
+        <code>@larm/client</code
+        >へstrictな<code>getServiceActivity()</code>を追加した。request timeoutをcontract
+        TTL以下に制限し、
+        期限切れまたは許容範囲を超える未来時刻のsnapshotは<code>activity_stale</code>としてfail
+        closedにする。activity確認から既存Agent Connection作成、claim済みProvider
+        requestまでのContextStill向け例もREADMEへ追加した。
+      </li>
+      <li>
+        <code>activeWorkloads</code
+        >をlast-observedであることを名前に含むgauge、観測時間をstateだけで分けたhistogramとして公開し、
+        log
+        eventは観測stateが変わったときだけ記録する。workload数をlabelへ入れず、pollごとのlog増加を
+        避ける。
+      </li>
+      <li>
+        このhostにはContextStill applicationのsource treeがないため、application固有queue runnerへの
+        組込みは本repositoryの成果物に含めない。公開contract、型付きclient、Profile、利用例をhandoff境界とする。
+      </li>
+      <li>
+        <code>bun run check</code
+        >によるsource-only、運用、文書、型検査、apps・packages 414件、deployment 19件のtestが
+        すべて成功した。
+      </li>
+    </ul>
+  </section>
+
+  <section id="scope">
+    <h2>目的と責務境界</h2>
+    <h3>実装すること</h3>
+    <ul>
+      <li>LARM経由の利用者推論workloadが一件以上あるかを、service全体で集約する。</li>
+      <li>idle、active、drainingを小さなversioned responseとして返す。</li>
+      <li>ContextStillがjob境界でactivityを読み、idleの場合だけProvider取得へ進む。</li>
+      <li>
+        ContextStill用の明示Profileから既存<code>qwen-worker-agent</code>を動的起動し、claimされたProvider
+        構成を返す。
+      </li>
+      <li>従来ProviderとSAAAの<code>coding-default</code>経路を変更しない。</li>
+    </ul>
+
+    <h3>実装しないこと</h3>
+    <ul>
+      <li>activity GETによるRuntime選択、memory admission、artifact確認、resource予約。</li>
+      <li>Profileごとのavailability判定や<code>currentConnectionId</code> query。</li>
+      <li>SAAA process、UI focus、session、heartbeat、callbackの観測。</li>
+      <li>実行中ContextStill jobのpreemption。</li>
+      <li>利用開始時のYAML書換えやcatalog hot reload。</li>
+      <li>Provider portへの直接requestをsupported activityとして追跡すること。</li>
+    </ul>
+  </section>
+
+  <section id="activity-definition">
+    <h2>activityの定義</h2>
+    <p>
+      activityはservice processやProvider daemonが起動しているかではなく、LARMの公開data planeを通る
+      利用者workloadが処理中かで決めます。Resident Runtimeが常時HOTでも、requestがなければidleです。
+    </p>
+    <table>
+      <caption>
+        activityへ含める処理と除外する処理
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">処理</th>
+          <th scope="col">activity</th>
+          <th scope="col">計数期間</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">HTTP LLM・ASR・TTS</th>
+          <td>含める</td>
+          <td>Gateway受理からresponse body完了、cancel、errorまで</td>
+        </tr>
+        <tr>
+          <th scope="row">SAAA Native WebSocket run</th>
+          <td>含める</td>
+          <td><code>run.start</code>受理からterminalまたは強制終了まで</td>
+        </tr>
+        <tr>
+          <th scope="row">WebSocket connectionだけがopen</th>
+          <td>除外</td>
+          <td>active runがなければidle</td>
+        </tr>
+        <tr>
+          <th scope="row">Agent Connection・Allocationだけが存在</th>
+          <td>除外</td>
+          <td>Providerを予約していても推論がなければidle</td>
+        </tr>
+        <tr>
+          <th scope="row">semantic・health・observer probe</th>
+          <td>除外</td>
+          <td>内部正常性確認は利用者workloadではない</td>
+        </tr>
+        <tr>
+          <th scope="row">activity、profile、control API</th>
+          <td>除外</td>
+          <td>制御request自体でactiveにしない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      production desired stateでは個別Provider portをloopbackに限定し、通常clientはLARM Gatewayを
+      使用します。Gatewayを迂回する直接requestはこのcontractの保証外です。移行中hostで直接listenerが
+      残る場合は、activity APIを排他保証として使用しません。
+    </p>
+  </section>
+
+  <section id="api-contract">
+    <h2>Service Activity API contract</h2>
+    <h3>Request</h3>
+    <pre><code>GET /v1/activity
+Accept: application/json</code></pre>
+    <p>
+      query parameterとrequest bodyは受け付けません。未知queryはHTTP 400
+      <code>invalid_request</code
+      >とします。Responseには常に<code>Cache-Control: no-store</code>を付けます。
+    </p>
+
+    <h3>Idle response</h3>
+    <pre><code>{
+  "contractVersion": "larm-service-activity.v1",
+  "state": "idle",
+  "activeWorkloads": 0,
+  "observedAt": "2026-09-05T17:45:00.000Z",
+  "validForMs": 1000,
+  "retryAfterMs": 0,
+  "reservationGuaranteed": false,
+  "bootEpoch": "epoch-...",
+  "configRevision": "..."
+}</code></pre>
+
+    <h3>Active response</h3>
+    <pre><code>{
+  "contractVersion": "larm-service-activity.v1",
+  "state": "active",
+  "activeWorkloads": 2,
+  "observedAt": "2026-09-05T17:45:01.000Z",
+  "validForMs": 1000,
+  "retryAfterMs": 1000,
+  "reservationGuaranteed": false,
+  "bootEpoch": "epoch-...",
+  "configRevision": "..."
+}</code></pre>
+
+    <h3>State semantics</h3>
+    <table>
+      <caption>
+        Activity state
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">state</th>
+          <th scope="col">条件</th>
+          <th scope="col">ContextStill動作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>idle</code></th>
+          <td><code>activeWorkloads === 0</code>かつdrain中ではない</td>
+          <td>Connection作成または次jobへ進める</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>active</code></th>
+          <td><code>activeWorkloads &gt; 0</code></td>
+          <td><code>retryAfterMs</code>以降に再確認する</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>draining</code></th>
+          <td>daemon shutdown drain中</td>
+          <td>新規処理を開始せず長いbackoffへ移る</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      正常なdomain stateはすべてHTTP 200です。schema生成や内部counter取得に失敗した場合だけHTTP
+      500、 activity機能が構成されていない場合はHTTP 503とします。ContextStillは200以外をfail
+      closedでactive相当に扱います。active、draining、503では<code>Retry-After: 1</code>を返します。
+    </p>
+    <p>
+      <code>activeWorkloads</code>はHTTP利用者request数とNative WebSocket active
+      run数の合計です。 client数、Provider別内訳、model、Runtime、prompt、Connection
+      IDは返しません。
+    </p>
+  </section>
+
+  <section id="advisory">
+    <h2>Snapshotと既存admissionの関係</h2>
+    <p>
+      activity
+      responseは取得時点のsnapshotであり、利用権や予約ではありません。idle取得後に別clientが
+      requestを開始するraceは正常です。<code>reservationGuaranteed: false</code>を恒久contractとします。
+    </p>
+    <ol>
+      <li>ContextStillがjobを持つ間だけ<code>GET /v1/activity</code>を呼ぶ。</li>
+      <li>
+        <code>state: idle</code>ならAgent
+        Connectionを作成または既存Connectionを再利用する。
+      </li>
+      <li>
+        Connection
+        createは既存admissionでmemory、telemetry、swap、capacity、transitionを再判定する。
+      </li>
+      <li>admission拒否はactivity stateと矛盾せず、ContextStillは待機へ戻る。</li>
+      <li>job完了後、次jobをdequeueする前にactivityを再確認する。</li>
+    </ol>
+    <p>
+      ContextStill実行中に他workloadが開始した場合、現在のjobは完了させます。次のjobは開始せず、
+      ContextStillのConnectionを解放してactivityがidleへ戻るまで待ちます。長時間の競合を避けるため、
+      ContextStill requestには既存のbounded timeoutと生成上限を必須とします。
+    </p>
+  </section>
+
+  <section id="implementation-architecture">
+    <h2>LARM実装構成</h2>
+    <figure>
+      <pre><code>HTTP LLM / ASR / TTS
+  └─ proxyGateway ── RequestTracker.count()
+
+Native LLM WebSocket
+  └─ LlmStreamServer.activeRunCount()
+
+GET /v1/activity
+  └─ activeWorkloads = HTTP count + Native run count
+       ├─ 0 → idle
+       ├─ &gt;0 → active
+       └─ control drain → draining</code></pre>
+      <figcaption>
+        Runtime observerのHOTは起動状態でありactivityではないため、集計値へ加えません。
+      </figcaption>
+    </figure>
+
+    <h3>Core contract</h3>
+    <ul>
+      <li>
+        <code>packages/core/src/service-activity.ts</code>を追加し、response schema、state
+        enum、型、純粋な state導出関数を置く。
+      </li>
+      <li><code>packages/core/src/index.ts</code>からschemaと型をexportする。</li>
+      <li>
+        <code>packages/core/src/api-contract.ts</code>へoperation ID
+        <code>getServiceActivity</code>とOpenAPI schemaを追加する。
+      </li>
+      <li>fieldはstrictにし、未知field、負数、非整数count、不正日時を拒否する。</li>
+    </ul>
+
+    <h3>Daemon activity source</h3>
+    <ul>
+      <li>
+        既存<code>RequestTracker.count()</code>をHTTP利用者workload数として再利用する。semantic
+        probeは
+        <code>proxyGateway</code>を通らないため、このcountへ入りません。
+      </li>
+      <li>
+        <code>LlmStreamServer</code
+        >へread-onlyな<code>activeRunCount()</code>を追加する。open中だがidleな
+        WebSocket connectionは数えない。
+      </li>
+      <li>
+        run terminal、cancel、provider failure、resume window終了、shutdownの全経路でcountが0へ戻る
+        既存<code>release()</code>不変条件をtestする。
+      </li>
+      <li>
+        <code>LlmStreamServer</code>をapp component作成前に構築し、activity
+        handlerへread-only callbackを注入する。global mutable counterを新設しない。
+      </li>
+    </ul>
+
+    <h3>HTTP routeと認証</h3>
+    <ul>
+      <li>
+        <code>apps/daemon/src/app.ts</code
+        >へ<code>GET /v1/activity</code>を追加する。
+      </li>
+      <li>
+        <code>LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS=true</code>の場合だけ、Agent Profileと同じLAN境界で
+        anonymous GETを許可する。それ以外は通常Bearerを必須とする。
+      </li>
+      <li>活動の内訳、Runtime名、client名、Connection IDをlogへ記録しない。</li>
+      <li>
+        eventのlabelはboundedなstateだけ、countはgaugeまたはevent
+        value、durationはstate別histogramへ記録する。同一stateのpollではeventを反復記録しない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="provider-profile">
+    <h2>ContextStill用Provider構成</h2>
+    <p>
+      Profileはdaemon起動時にcatalogへ読み込みます。ContextStill利用開始時にYAMLを変更せず、Connection
+      createがRuntime構成を動的に変えます。既存<code>defaultAgentProfile: coding-default</code>は維持し、
+      次の明示Profileだけを追加します。
+    </p>
+    <pre><code>  contextstill-background:
+    description: ContextStill background Qwen 3.8 27B provider
+    providers:
+      - name: llm
+        capability: llm.coding
+        route: llm-agent-worker
+        publicModel: qwen-agent-worker
+        readiness: llm-inference</code></pre>
+    <ul>
+      <li>
+        非default Profileなので既存schemaにより<code>explicit-only</code>となる。
+      </li>
+      <li>
+        <code>streamingProtocol</code>は指定しない。このfieldはSAAA Native
+        WebSocketの広告専用で、 ContextStillは通常HTTPからJSONまたはOpenAI互換SSEを要求できる。
+      </li>
+      <li>
+        <code>allowFallback: false</code>によりResident
+        <code>qwen-general</code>へ迂回しない。
+      </li>
+      <li>
+        <code>deploymentPolicy: existing-only</code>によりContextStillからartifact配備を開始しない。
+      </li>
+      <li>workerはConnection中だけAllocationされ、release後は既存idle policyでCOLDへ戻る。</li>
+    </ul>
+  </section>
+
+  <section id="contextstill-flow">
+    <h2>ContextStill実装手順</h2>
+    <ol>
+      <li>queueが空の間はactivity APIをpollしない。</li>
+      <li>
+        queue非空時に<code>GET /v1/activity</code>を最大1
+        Hz、jitter付きで呼び、strict response validationを行う。
+      </li>
+      <li>
+        <code>active</code
+        >または<code>draining</code>、HTTP error、invalid
+        responseでは待機する。
+      </li>
+      <li>
+        <code>idle</code
+        >かつ<code>activeWorkloads === 0</code>なら、未確立の場合だけ次のConnectionを作る。
+      </li>
+    </ol>
+    <pre><code>POST /v1/agent-connections
+Idempotency-Key: contextstill-&lt;run-id&gt;-&lt;attempt-id&gt;
+Content-Type: application/json
+
+{
+  "agentProfile": "contextstill-background",
+  "explicitAgentProfile": true,
+  "audience": "saaa-desktop",
+  "client": "contextstill",
+  "ttlSeconds": 300,
+  "allowFallback": false,
+  "deploymentPolicy": "existing-only"
+}</code></pre>
+    <ol>
+      <li>201または202を受理し、readyまでbounded pollしてclaimする。</li>
+      <li>
+        claimの<code>baseURL</code>、<code>model</code>、短期tokenをOpenAI互換clientへそのまま渡す。
+      </li>
+      <li>
+        一件をconcurrency 1で処理し、JSONまたはSSEの要求形式にかかわらずresponse
+        bodyを最後まで閉じる。
+      </li>
+      <li>次jobの前にactivityを再確認する。</li>
+      <li>
+        activeならConnectionをDELETEして待機する。idleならConnectionをrenewしながら次jobへ進める。
+      </li>
+      <li>queue空、error、cancel、shutdownでも独立したcleanup signalでConnectionをDELETEする。</li>
+    </ol>
+    <p>
+      TypeScript実装では既存<code>@larm/client</code>へ<code>getServiceActivity()</code>を追加し、Agent
+      Connection
+      lifecycleは既存methodを再利用します。ContextStillが別言語の場合もOpenAPI生成schemaを
+      正本とし、独自fieldや固定Provider URLを持ちません。
+    </p>
+  </section>
+
+  <section id="compatibility-security">
+    <h2>互換性とsecurity</h2>
+    <ul>
+      <li>既存endpoint、Profile、claim、credential、Gateway responseを変更しない。</li>
+      <li>
+        新Profile追加によりcatalog
+        revisionとProfile配列は変わるが、既存entryのshapeと意味は維持する。
+      </li>
+      <li>
+        従来Provider adapterは設定と挙動を維持し、新adapterを選んだ場合だけactivity APIを使用する。
+      </li>
+      <li>activity responseはcredential、model、Runtime、他clientのidentityを含まない。</li>
+      <li>responseとerrorに<code>Cache-Control: no-store</code>を付ける。</li>
+      <li>短期Provider tokenをactivity request、query、logへ含めない。</li>
+      <li>active countを利用者数やtask内容と解釈しない。</li>
+    </ul>
+  </section>
+
+  <section id="milestones">
+    <h2>実装Milestone</h2>
+    <table>
+      <caption>
+        実装順序、成果物、完了条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Milestone</th>
+          <th scope="col">変更</th>
+          <th scope="col">完了条件</th>
+          <th scope="col">状態</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">M1 Contract</th>
+          <td>core schema、型、OpenAPI operation、API文書</td>
+          <td>schemaとoperation inventory testが成功</td>
+          <td>source完了</td>
+        </tr>
+        <tr>
+          <th scope="row">M2 Activity集約</th>
+          <td>HTTP count再利用、Native run count公開、state導出</td>
+          <td>HTTP、WS、同時実行、全terminalでcountが一致</td>
+          <td>source完了</td>
+        </tr>
+        <tr>
+          <th scope="row">M3 Endpoint</th>
+          <td><code>GET /v1/activity</code>、認証、no-store、event</td>
+          <td>idle、active、draining、invalid queryをcontract testで固定</td>
+          <td>source完了</td>
+        </tr>
+        <tr>
+          <th scope="row">M4 Provider</th>
+          <td>ContextStill Profile、client method、既存dynamic lifecycle再利用</td>
+          <td>explicit Profileがworkerへ固定されclaimを返す</td>
+          <td>source完了</td>
+        </tr>
+        <tr>
+          <th scope="row">M5 ContextStill</th>
+          <td>poll、job境界gate、renew、release、従来adapter互換</td>
+          <td>idle時だけjobを開始しactive時は次jobを開始しない</td>
+          <td>client境界完了、application組込み待ち</td>
+        </tr>
+        <tr>
+          <th scope="row">M6 Canary</th>
+          <td>local-node配備、二基構成、切替、memory・latency採取</td>
+          <td>SAAA経路不変、worker idle回収、OOM・fallback 0</td>
+          <td>配備待ち</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="tests">
+    <h2>必須test</h2>
+    <h3>Activity contract</h3>
+    <ul>
+      <li>初期値はidle、countは0、responseはstrictでno-store。</li>
+      <li>一つまたは複数のHTTP Gateway request中はcountが増え、全response完了後に0へ戻る。</li>
+      <li>queued HTTP requestもGateway requestの生存期間としてactiveに含まれる。</li>
+      <li>Native run startで増え、complete、cancel、failure、shutdownで必ず減る。</li>
+      <li>idle WebSocket、semantic probe、health、activity GETはcountを増やさない。</li>
+      <li>HTTPとNative runの同時実行は合計値を返す。</li>
+      <li>drain中はcountに関係なくstateがdrainingになる。</li>
+      <li>unknown query、body付きGET、無効credentialを拒否する。</li>
+    </ul>
+
+    <h3>ProviderとContextStill</h3>
+    <ul>
+      <li>Profile省略時は引き続き<code>coding-default</code>となる。</li>
+      <li>ContextStill Profileは明示指定なしで409、明示指定ありで受理される。</li>
+      <li>Bindingは<code>llm-agent-worker → qwen-worker-agent</code>、fallback falseとなる。</li>
+      <li>claim値だけでJSONとSSEの両completionを要求どおり完了できる。</li>
+      <li>active response中はConnection createとjob開始を呼ばない。</li>
+      <li>現在jobの完了後にactiveならConnectionを解放する。</li>
+      <li>従来Provider fixtureとrequest snapshotが変化しない。</li>
+    </ul>
+  </section>
+
+  <section id="live-acceptance">
+    <h2>local-node受入条件</h2>
+    <ol>
+      <li>workloadなしでactivityがidle、0を返す。</li>
+      <li>HTTP LLM、ASR、TTSを個別に実行し、それぞれの実行中だけactiveとなる。</li>
+      <li>SAAA Native WebSocket run中にactive、idle connectionだけの状態でidleとなる。</li>
+      <li>
+        複数data plane同時実行で<code>activeWorkloads</code>が期待値と一致する。
+      </li>
+      <li>idleを読んだContextStillがConnectionを作り、workerをCOLDからHOTへ起動する。</li>
+      <li>Resident QwenをHOTのまま維持し、ContextStill workerとの二基構成で一件を完了する。</li>
+      <li>別workload開始後、ContextStillは現在job完了後に次jobを開始せずConnectionを解放する。</li>
+      <li>release後にworkerが既定idle TTL内でCOLDへ戻る。</li>
+      <li>試験中のfallback、OOM、Provider crash、credential leakが0である。</li>
+      <li>既存SAAA WebSocket、ASR Service Harness、Agent Connection smokeがすべて成功する。</li>
+    </ol>
+  </section>
+
+  <section id="rollout">
+    <h2>配備とrollback</h2>
+    <ol>
+      <li>LARM側M1からM4を実装し、ContextStill未接続のままrepository testを通す。</li>
+      <li>daemonをreview済み手順で更新し、activity APIと既存Provider smokeを確認する。</li>
+      <li>ContextStillを明示opt-inし、短いqueueでcanaryする。</li>
+      <li>二基構成時のsystem・accelerator memory headroomと既存workload latencyを採取する。</li>
+      <li>十分な反復後にContextStillの継続queueを有効化する。</li>
+    </ol>
+    <p>
+      rollbackはContextStillのProvider kindを従来adapterへ戻し、activity
+      pollを無効化します。LARM側の
+      新endpointと追加Profileは既存clientから参照されないため残置可能です。catalog
+      rollbackが必要な場合はProfileを除去した旧config revisionへdaemonを戻します。Resident
+      RuntimeとSAAA defaultは全段階で変更しません。
+    </p>
+  </section>
+
+  <section id="done">
+    <h2>完了定義</h2>
+    <p>
+      LARMが全supported data planeの利用者workloadを漏れなく集計し、ContextStillがidle
+      responseを読んだjob境界だけで既存動的Providerを要求できることを、自動testとlocal-node
+      canaryの両方で確認した時点を完了とします。activity
+      GETだけの成功、Profile公開だけの成功、worker単体推論だけの成功では完了にしません。
+    </p>
+  </section>
+</article>

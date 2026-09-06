@@ -36,6 +36,7 @@ import {
   saaaAsrHealthSchema,
   saaaServiceHarnessSchema,
 } from "./service-harness";
+import { serviceActivitySchema } from "./service-activity";
 
 const identifierSchema = z.string().min(1).max(192);
 
@@ -154,6 +155,11 @@ export const legacyReleaseResponseSchema = z.object({
 
 export const metricsResponseSchema = z.string();
 export const upstreamJsonResponseSchema = z.record(z.string(), z.unknown());
+export const chatCompletionRequestSchema = z.object({
+  model: z.string().min(1),
+  messages: z.array(z.record(z.string(), z.unknown())),
+  stream: z.boolean().optional(),
+}).passthrough();
 export const openApiDocumentSchema = z.object({
   openapi: z.literal("3.1.0"),
   info: z.object({ title: z.string().min(1), version: z.string().min(1) }).strict(),
@@ -259,6 +265,7 @@ export type RuntimeDeploymentPlan = z.infer<typeof runtimeDeploymentPlanSchema>;
 export const API_OPERATIONS = [
   ["get", "/health", "getHealth"],
   ["get", "/ready", "getReadiness"],
+  ["get", "/v1/activity", "getServiceActivity"],
   ["get", "/metrics", "getMetrics"],
   ["get", "/openapi.json", "getOpenApi"],
   ["get", "/runtimes", "listRuntimes"],
@@ -308,6 +315,7 @@ type ApiOperationId = typeof API_OPERATIONS[number][2];
 const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> = {
   getHealth: ["200"],
   getReadiness: ["200"],
+  getServiceActivity: ["200"],
   getMetrics: ["200"],
   getOpenApi: ["200"],
   listRuntimes: ["200"],
@@ -355,6 +363,7 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
 const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   getHealth: "Health",
   getReadiness: "Readiness",
+  getServiceActivity: "ServiceActivity",
   getMetrics: "Metrics",
   getOpenApi: "OpenApiDocument",
   listRuntimes: "RuntimeList",
@@ -410,6 +419,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     ErrorResponse: jsonSchema(errorResponseSchema),
     Health: jsonSchema(daemonHealthSchema),
     Readiness: jsonSchema(readinessSchema),
+    ServiceActivity: jsonSchema(serviceActivitySchema),
     Runtime: jsonSchema(publicRuntimeSchema),
     RuntimeList: jsonSchema(runtimeListSchema),
     PublicClusterState: jsonSchema(publicClusterStateSchema),
@@ -437,7 +447,12 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     LegacyReleaseResponse: jsonSchema(legacyReleaseResponseSchema),
     Metrics: jsonSchema(metricsResponseSchema),
     OpenApiDocument: jsonSchema(openApiDocumentSchema),
+    ChatCompletionRequest: jsonSchema(chatCompletionRequestSchema),
     UpstreamJson: jsonSchema(upstreamJsonResponseSchema),
+    ServerSentEvents: {
+      type: "string",
+      description: "OpenAI-compatible Server-Sent Events, terminated by data: [DONE]",
+    },
     Binary: { type: "string", format: "binary" },
     WebSocketUpgrade: { type: "string", description: "saaa.llm-stream.v1 WebSocket frames" },
     ControlOperation: jsonSchema(controlOperationSchema),
@@ -459,6 +474,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "renewAllocation") return "AllocationRenewRequest";
       if (operationId === "resolveAllocation") return "AllocationResolveRequest";
       if (operationId === "createAgentConnection") return "AgentConnectionRequest";
+      if (operationId === "createChatCompletion") return "ChatCompletionRequest";
       if (operationId === "claimAgentConnection") return "AgentConnectionClaimRequest";
       if (operationId === "renewAgentConnection") return "AgentConnectionRenewRequest";
       if (operationId === "planRuntimeDeployment") return "RuntimeReleasePlanRequest";
@@ -476,6 +492,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     const publicOperation = operationId === "getHealth" || operationId === "getReadiness";
     const optionalAgentBearerOperation = operationId === "listAgentProfilesV1"
       || operationId === "listAgentProfiles"
+      || operationId === "getServiceActivity"
       || operationId === "createAgentConnection"
       || operationId === "getAgentConnection"
       || operationId === "getAgentConnectionHealth"
@@ -497,6 +514,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "createChatCompletion") {
         return {
           "application/json": { schema: { $ref: "#/components/schemas/UpstreamJson" } },
+          "text/event-stream": { schema: { $ref: "#/components/schemas/ServerSentEvents" } },
         };
       }
       if (operationId === "upgradeLlmStream") return undefined;
@@ -510,9 +528,25 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "releaseAgentConnection") return undefined;
       return { "application/json": { schema: { $ref: `#/components/schemas/${successSchema}` } } };
     })();
+    const activityNoStoreHeader = operationId === "getServiceActivity"
+      ? {
+        description: "Activity snapshots and errors must not be cached",
+        schema: { type: "string", const: "no-store" },
+      }
+      : undefined;
+    const activityHeaders = activityNoStoreHeader
+      ? {
+        "Cache-Control": activityNoStoreHeader,
+        "Retry-After": {
+          description: "Whole seconds before polling again; present for active, draining, and unavailable states",
+          schema: { type: "integer", minimum: 1 },
+        },
+      }
+      : undefined;
     const success = {
       description: "Success",
       ...(successContent ? { content: successContent } : {}),
+      ...(activityHeaders ? { headers: activityHeaders } : {}),
     };
     paths[path] ??= {};
     paths[path]![method] = {
@@ -554,12 +588,25 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
         ...(operationId === "getAgentConnectionHealth" || operationId === "getAgentProviderHealth"
           ? { "503": { description: "Semantic provider not ready", content: successContent } }
           : {}),
+        ...(operationId === "getServiceActivity"
+          ? {
+            "503": {
+              description: "Activity tracking unavailable",
+              headers: activityHeaders,
+              content: {
+                "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } },
+              },
+            },
+          }
+          : {}),
         "4XX": {
           description: "Client error",
+          ...(activityNoStoreHeader ? { headers: { "Cache-Control": activityNoStoreHeader } } : {}),
           content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
         },
         "5XX": {
           description: "Service error",
+          ...(activityNoStoreHeader ? { headers: { "Cache-Control": activityNoStoreHeader } } : {}),
           content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
         },
       },

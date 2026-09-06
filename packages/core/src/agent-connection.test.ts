@@ -19,6 +19,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
   expect(catalog.defaultAgentProfile).toBe("coding-default");
   expect(catalog.profiles.map((profile) => profile.id)).toEqual([
     "coding-default",
+    "contextstill-background",
     "deep-reasoning-35b",
   ]);
   expect(catalog.audiences.map((audience) => audience.id)).toEqual([
@@ -56,6 +57,22 @@ test("production agent profiles compile to strict protocol-aware provider contra
         streamingProtocol: "saaa.llm-stream.v1",
       }],
     });
+  const contextStill = catalog.profiles.find((profile) => profile.id === "contextstill-background");
+  expect(contextStill)
+    .toMatchObject({
+      canonicalProfile: "contextstill-background",
+      selectionPolicy: "explicit-only",
+      deprecated: false,
+      providers: [{
+        capability: "llm.coding",
+        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
+        route: "llm-agent-worker",
+        protocol: "openai.chat-completions.v1",
+        publicModel: "qwen-agent-worker",
+        readiness: "llm-inference",
+      }],
+    });
+  expect(contextStill?.providers[0]).not.toHaveProperty("streamingProtocol");
   expect(catalog.profiles.every((profile) => /^[a-f0-9]{64}$/.test(profile.revision))).toBeTrue();
 });
 

@@ -13,6 +13,7 @@ export {
 export * from "./protocol";
 export * from "./saaa-llm-stream";
 export * from "./service-harness";
+export * from "./service-activity";
 export * from "./agent-connection";
 export {
   API_OPERATIONS,

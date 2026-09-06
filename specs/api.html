@@ -179,7 +179,7 @@
         <tr>
           <td>POST</td>
           <th scope="row"><code>/v1/chat/completions</code></th>
-          <td>Allocation固定OpenAI互換Gateway</td>
+          <td>Allocation固定OpenAI互換Gateway。JSONとSSEをrequestに応じて提供</td>
         </tr>
         <tr>
           <td>GET</td>
@@ -456,7 +456,13 @@
       別Runtimeやupstreamを選択しません。
     </p>
     <ul>
-      <li>streamingとnon-streaming responseを透過する。</li>
+      <li>
+        Chat
+        Completionsはrequestの<code>stream</code>に従い、<code>false</code>または省略時は
+        <code>application/json</code
+        >、<code>true</code>時はOpenAI互換
+        <code>text/event-stream</code>を透過する。
+      </li>
       <li>STT uploadは全量をmemoryへbufferせず、転送中に上限を検証する。</li>
       <li>
         TTS audio、content type、VOICEVOX
@@ -700,6 +706,12 @@
         <tr>
           <th scope="row"><code>request_upload_incomplete</code></th>
           <td>ProviderがSTT request bodyを最後まで受信せず、responseを安全に採用できない</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>upstream_response_format_mismatch</code></th>
+          <td>
+            <code>stream: true</code>の成功responseをProviderがSSEで返さなかった
+          </td>
         </tr>
         <tr>
           <th scope="row"><code>unsafe_snapshot</code></th>

@@ -1,0 +1,179 @@
+<article lang="ja">
+  <h1>ContextStill Service Activity契約整合 修正依頼書</h1>
+
+  <p>
+    ContextStillの動的LLM Provider実装を、SAAAおよびlocal-LLM-harness（LARM）で確定した service
+    activity契約へ合わせるための修正依頼です。SAAAとLARMの契約は変更せず、ContextStill側の
+    activity取得処理、test、関連文書を修正してください。
+  </p>
+
+  <dl>
+    <dt>依頼日</dt>
+    <dd><time>2026-09-06</time></dd>
+    <dt>依頼先</dt>
+    <dd>ContextStill</dd>
+    <dt>対象実装</dt>
+    <dd>
+      <code>crates/context-stilld/src/domains/queue_lifecycle/dynamic_provider.rs</code>
+    </dd>
+    <dt>正本contract</dt>
+    <dd><code>larm-service-activity.v1</code></dd>
+    <dt>正本endpoint</dt>
+    <dd><code>GET /v1/activity</code></dd>
+  </dl>
+
+  <aside>
+    <p>
+      <strong>固定判断:</strong>
+      <code>/v2/agent-profiles/:profile/availability</code>は使用せず、LARM全体の利用状況を
+      <code>/v1/activity</code>で確認します。Profile discoveryとAgent Connection
+      lifecycleは従来どおり 使用します。
+    </p>
+  </aside>
+
+  <section id="required-change">
+    <h2>必須変更</h2>
+    <ol>
+      <li>
+        activity取得先を
+        <code>GET /v2/agent-profiles/contextstill-background/availability</code>から
+        <code>GET /v1/activity</code>へ変更する。
+      </li>
+      <li>
+        <code>audience</code
+        >と<code>currentConnectionId</code>のqueryをactivity requestから削除する。
+        <code>/v1/activity</code>はqueryとrequest bodyを受け付けない。
+      </li>
+      <li>
+        responseをstrictに検証し、未知field、契約version不一致、stateとcountの矛盾、期限切れ、許容範囲を
+        超える未来時刻をfail closedで待機扱いにする。
+      </li>
+      <li>
+        freshな<code>state: idle</code>かつ<code>activeWorkloads === 0</code>の場合だけ、新しいAgent
+        Connectionまたは次jobへ進む。
+      </li>
+      <li>
+        <code>active</code
+        >、<code>draining</code>、非200、timeout、通信error、invalid
+        responseでは Connection作成も新規job開始も行わない。
+      </li>
+      <li>
+        Provider response bodyを閉じた後、次jobをdequeueする前にactivityを再確認する。実行中jobは
+        activity変化だけで中断しない。
+      </li>
+    </ol>
+  </section>
+
+  <section id="contract">
+    <h2>受信するresponse</h2>
+    <pre><code>{
+  "contractVersion": "larm-service-activity.v1",
+  "state": "idle",
+  "activeWorkloads": 0,
+  "observedAt": "2026-09-06T12:34:56.789Z",
+  "validForMs": 1000,
+  "retryAfterMs": 0,
+  "reservationGuaranteed": false,
+  "bootEpoch": "epoch-...",
+  "configRevision": "..."
+}</code></pre>
+
+    <table>
+      <caption>
+        ContextStill側の判定
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">動作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>idle</code>かつcount 0</th>
+          <td>Connection作成または次jobへ進む</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>active</code></th>
+          <td><code>retryAfterMs</code>以降に再確認する</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>draining</code></th>
+          <td>新規処理を開始せず待機する</td>
+        </tr>
+        <tr>
+          <th scope="row">errorまたはinvalid response</th>
+          <td>fail closedで待機する</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      activityはsnapshotであり予約ではありません。idle確認後のConnection作成は、既存LARM admissionに
+      よって改めて判定されます。Connectionが存在するだけではactiveにならないため、現在Connectionの
+      allocationを除外する<code>currentConnectionId</code>処理は不要です。
+    </p>
+  </section>
+
+  <section id="preserve">
+    <h2>変更しないこと</h2>
+    <ul>
+      <li>SAAAへの通知、callback、webhookを追加しない。</li>
+      <li>
+        <code>GET /v2/agent-profiles</code>による<code
+          >contextstill-background</code
+        >
+        discoveryは維持する。
+      </li>
+      <li>
+        <code>POST /v1/agent-connections</code
+        >、poll、claim、renew、DELETEのlifecycleは維持する。
+      </li>
+      <li>
+        <code>allowFallback: false</code
+        >と<code>deploymentPolicy: existing-only</code>を維持する。
+      </li>
+      <li>従来の静的Providerへ暗黙にfallbackしない。</li>
+      <li>短期credentialとclaimされたendpointを永続化しない。</li>
+    </ul>
+  </section>
+
+  <section id="tests">
+    <h2>必須test</h2>
+    <ul>
+      <li>
+        activity
+        requestのpathが正確に<code>/v1/activity</code>で、queryとbodyがない。
+      </li>
+      <li>idleかつcount 0の場合だけConnection createが一回呼ばれる。</li>
+      <li>
+        active、draining、HTTP error、timeout、未知field、stale responseではcreateが呼ばれない。
+      </li>
+      <li>Provider response body完了後、次jobの前に再確認する。</li>
+      <li>queueが空の間はactivityをpollしない。</li>
+      <li>従来Providerのfixture、routing、request snapshotが変化しない。</li>
+      <li>sourceと文書から旧<code>/availability</code>依存が除去されている。</li>
+    </ul>
+  </section>
+
+  <section id="documentation">
+    <h2>文書更新</h2>
+    <p>
+      ContextStill側の
+      <code>spec/docs/local-llm-harness-background-availability-change-request.html</code>と
+      <code>spec/docs/larm-dynamic-provider-contextstill-implementation-plan.html</code>を本契約へ更新してください。
+      完了報告では、LARMにProfile単位のavailability
+      APIが必要という記述を残さず、live配備待ちの対象を
+      <code>contextstill-background</code>
+      Profileと<code>GET /v1/activity</code>に統一してください。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>完了条件</h2>
+    <p>
+      ContextStillのtestと文書checkが成功し、旧availability endpointへの依存がなく、freshなidle
+      responseだけでProvider取得へ進むことをfake LARMで確認できた時点でsource修正完了です。恒久的な
+      Queue自動消化の有効化は、LARMのlive配備と別途行うJSON応答品質canaryの合格後に実施してください。
+    </p>
+  </section>
+</article>

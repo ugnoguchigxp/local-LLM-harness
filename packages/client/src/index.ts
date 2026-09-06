@@ -7,10 +7,12 @@ import {
   controlOperationSchema,
   daemonHealthSchema,
   errorResponseSchema,
+  LARM_SERVICE_ACTIVITY_VALID_FOR_MS,
   publicAllocationSchema,
   publicAgentConnectionSchema,
   publicAgentProfileListSchema,
   readinessSchema,
+  serviceActivitySchema,
   type AgentConnectionClaim,
   type AgentConnectionHealth,
   type AgentConnectionRequestInput,
@@ -18,6 +20,7 @@ import {
   type ControlOperation,
   type PublicAllocation,
   type PublicAgentConnection,
+  type ServiceActivity,
 } from "@larm/core";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -29,6 +32,7 @@ export type LarmClientOptions = {
   fetch?: FetchLike;
   timeoutMs?: number;
   random?: () => string;
+  now?: () => number;
 };
 
 export type RequestOptions = {
@@ -123,6 +127,26 @@ export class LarmClient {
       false,
     );
     return this.parseJson(response, readinessSchema);
+  }
+
+  async getServiceActivity(signal?: AbortSignal): Promise<ServiceActivity> {
+    const response = await this.request(
+      "/v1/activity",
+      { signal },
+      false,
+      Math.min(this.timeoutMs, LARM_SERVICE_ACTIVITY_VALID_FOR_MS),
+    );
+    const activity = await this.parseJson(response, serviceActivitySchema);
+    const ageMs = (this.options.now?.() ?? Date.now()) - Date.parse(activity.observedAt);
+    if (!Number.isFinite(ageMs) || ageMs < -activity.validForMs || ageMs > activity.validForMs) {
+      throw new LarmApiError(
+        503,
+        "activity_stale",
+        "LARM service activity snapshot is outside its validity window",
+        activity,
+      );
+    }
+    return activity;
   }
 
   async allocate(request: AllocationRequest, options: RequestOptions = {}): Promise<PublicAllocation> {

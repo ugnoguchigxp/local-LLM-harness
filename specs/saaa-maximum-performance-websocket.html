@@ -4,9 +4,9 @@
   <p>
     本計画は、SAAA desktop側を変更せず、LARM側をSAAA Provider LLM WebSocket Protocol
     <code>saaa.llm-stream.v1</code
-    >へ適合させるためのserver-side実装計画である。HTTPはallocation、
-    poll、renew、release、health、管理および非streaming requestへ限定して維持し、LLMのrealtime data
-    planeはWebSocketへ集約する。target profileではSAAA、LARM、Provider内部のSSEを廃止する。
+    >へ適合させるためのserver-side実装計画である。SAAAのLLM realtime data planeはWebSocketへ
+    集約する。一方、OpenAI互換client向けHTTP Chat Completionsは、非streaming JSONとstreaming
+    SSEの両方を互換data planeとして提供する。SAAA Native経路ではSSE変換を行わない。
   </p>
 
   <dl>
@@ -22,9 +22,9 @@
     <dt>既定model</dt>
     <dd>Qwen 3.8 27B resident。速度優先modelへ暗黙に変更しない</dd>
     <dt>HTTPの役割</dt>
-    <dd>control、health、管理、非streamingのみ</dd>
+    <dd>control、health、管理、JSON Chat Completions、OpenAI互換SSE</dd>
     <dt>Realtimeの役割</dt>
-    <dd>WebSocketのみ。SSE fallbackおよびSSE bridgeなし</dd>
+    <dd>SAAAはWebSocketのみ。HTTP互換clientには独立したSSE透過を提供</dd>
     <dt>状態</dt>
     <dd>
       LARMとnative Providerを実装済み。Qwen 3.8 27Bを使うisolated loopback commissioningは成功。
@@ -72,13 +72,16 @@
         ACK、resume、error、close codeをLARM都合で別名化または簡略化しない。
       </li>
       <li>
-        <strong>Controlとrealtime dataを分離する。</strong> allocation lifecycleは既存RESTを維持し、
-        prompt、delta、tool、terminal、cancel、ACK、resumeはWebSocketだけを通す。
+        <strong>SAAAのControlとrealtime dataを分離する。</strong> allocation
+        lifecycleは既存RESTを維持し、
+        SAAAのprompt、delta、tool、terminal、cancel、ACK、resumeはWebSocketだけを通す。HTTP互換clientは
+        同じAllocationに固定されたChat Completionsを使用できる。
       </li>
       <li>
-        <strong>Providerまでnative化する。</strong> LARMの外面だけでなく、LARMから推論runtimeまで
-        SSE
-        framing、<code>text/event-stream</code>、<code>[DONE]</code>を残さない。
+        <strong>SAAA経路をProviderまでnative化する。</strong> SAAA WebSocketから推論runtimeまでの
+        経路にはSSE
+        framing、<code>text/event-stream</code>、<code>[DONE]</code>変換を残さない。
+        独立したHTTP互換経路のSSE透過には影響させない。
       </li>
       <li>
         <strong>connection poolとrunを1対1に固定する。</strong> 広告値までprewarmするが、一つの
@@ -215,10 +218,11 @@ Provider SSE ── parse / wrap ── WebSocket</code></pre>
         capabilityを広告しない。
       </li>
       <li>
-        既存HTTP chat completionsの<code>stream: false</code>は維持する。
+        HTTP chat
+        completionsの<code>stream: false</code>または省略時はJSONを維持する。
         <code>stream: true</code
-        >は<code>400 streaming_requires_websocket</code>で拒否し、
-        <code>text/event-stream</code>を返さない。
+        >はOpenAI互換<code>text/event-stream</code>として透過し、SAAAには Native
+        WebSocketを広告する。
       </li>
     </ul>
   </section>
@@ -706,7 +710,10 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
         </tr>
         <tr>
           <th scope="row">既存SSE benchmark/smoke</th>
-          <td>WebSocket conformanceへ置換し、target cutover後にSSE fixtureとrouteを削除</td>
+          <td>
+            SAAA性能評価はWebSocket conformanceへ置換する。HTTP互換SSEのfixtureとGateway routeは
+            独立した回帰testとして維持する
+          </td>
         </tr>
       </tbody>
     </table>
@@ -755,7 +762,7 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
       </li>
       <li>
         <strong>Phase 8 — Conformance/cutover。</strong> PWS-C01〜PWS-C19と30分network flapを通し、
-        LARM target profileのSSE route、fixture、benchmarkを削除する。
+        SAAA adapterのSSE fallback設定を削除する。LARMのHTTP互換SSE routeは維持する。
       </li>
     </ol>
   </section>
@@ -791,12 +798,12 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
       <li>ACK停止時に64 eventで該当runだけpauseし、ACK後に65から再開する。</li>
       <li>1,000 turn / 30分 / network flapでunbounded memory、zombie run、重複、欠落0。</li>
       <li>
-        Provider内部を含め<code>text/event-stream</code>、SSE parser、<code
+        SAAA Native WebSocket経路では<code>text/event-stream</code>、SSE parser、<code
           >[DONE]</code
         >
-        dependencyが0。
+        dependencyが0。独立したHTTP互換SSE経路はこの性能測定へ含めない。
       </li>
-      <li>HTTP allocation lifecycle、health、管理、非streaming requestの回帰がない。</li>
+      <li>HTTP allocation lifecycle、health、管理、JSONおよびSSE requestの回帰がない。</li>
     </ul>
     <p>
       controlled Harnessでrelease buildを1,000反復以上実行し、p50、p95、p99、peak/settled
@@ -813,8 +820,8 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
         一つのtest allocationだけへ広告し、Mac
         canaryでprewarm、run、tool、cancel、resumeを確認する。
       </li>
-      <li>全LLM allocationへ広告し、SSE利用数が0であることを観測する。</li>
-      <li>target profileからLLM SSE route、fixture、benchmark、設定を削除する。</li>
+      <li>全SAAA LLM allocationへ広告し、SAAA clientのSSE利用数が0であることを観測する。</li>
+      <li>SAAA target profileからSSE fallback設定を削除し、HTTP互換Gatewayは維持する。</li>
     </ol>
     <p>
       rollbackは旧release全体へ戻す。v1と異なるfieldや意味を同じsubprotocolへ混ぜず、旧SSEへ per-run
@@ -831,7 +838,7 @@ Non-terminal / Terminal → Detached（最大120秒）→ Resumed / Expired</cod
         host-privateは許可LAN内のWS、LAN境界外はWSSとし、payloadとsecretがlog、metric、永続監査へ
         出ない。
       </li>
-      <li>SAAA data plane、LARM、Provider内部にSSE bridgeが残っていない。</li>
+      <li>SAAA data planeとNative Provider経路にSSE bridgeが残っていない。</li>
     </ul>
   </section>
 

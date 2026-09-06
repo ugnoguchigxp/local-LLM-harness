@@ -24,6 +24,17 @@
     </p>
   </aside>
 
+  <aside>
+    <h2>2026-09-06 HTTP compatibility update</h2>
+    <p>
+      SAAA Native WebSocket経路をSSEで包装しない判断は維持する。一方、ContextStill、NightWorkersなど
+      OpenAI互換HTTP
+      client向けの<code>POST /v1/chat/completions</code>は、独立した互換経路として
+      JSONとSSEを要求どおり返す。以下のSSE削除はSAAA adapterのfallbackとNative経路内のbridgeを指し、
+      公開HTTP互換endpointの削除を意味しない。
+    </p>
+  </aside>
+
   <dl>
     <dt>Mac contract適合性</dt>
     <dd><strong>適合可能</strong>。Mac側変更要求なし</dd>
@@ -318,7 +329,7 @@
       <li>一connection、一runのvertical sliceとmetadata-only path。</li>
       <li>seq/hash/limit、ACK/pause、disconnect/resume。</li>
       <li>tool continuation、pool、WSS、drain。</li>
-      <li>全conformance後にSSE routeとfixtureを削除。</li>
+      <li>全conformance後にSAAA adapterのSSE fallbackを削除。HTTP互換SSE fixtureは維持。</li>
     </ol>
     <p>
       この順序なら、最も不確実なProvider境界を最初に解消し、その後は確定済みcontractへ機械的に

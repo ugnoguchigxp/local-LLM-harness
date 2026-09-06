@@ -90,7 +90,17 @@ completion="$(curl -fsS --max-time 300 "${headers[@]}" \
   -d '{"model":"ignored-by-larm","stream":false,"max_tokens":8,"messages":[{"role":"user","content":"Reply with OK."}]}' )"
 jq -e 'any(.choices[]?; ((.message.content // "") | length) > 0)' <<<"${completion}" >/dev/null
 
+streaming_completion="$(curl -fsS -N --max-time 300 "${headers[@]}" \
+  -X POST "${base_url}/v1/chat/completions" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: text/event-stream' \
+  -H "x-larm-allocation-id: ${allocation_id}" \
+  -d '{"model":"ignored-by-larm","stream":true,"max_tokens":8,"messages":[{"role":"user","content":"Reply with OK."}]}' )"
+grep -Fqx 'data: [DONE]' <<<"${streaming_completion}"
+sed -n 's/^data: \({.*}\)$/\1/p' <<<"${streaming_completion}" \
+  | jq -s -e 'length > 0 and all(.[]; type == "object")' >/dev/null
+
 curl -fsS --max-time 10 "${headers[@]}" -X DELETE \
   "${base_url}/v1/allocations/${allocation_id}" >/dev/null
 allocation_id=""
-echo "LARM resident Qwen 3.8 27B and SAAA Service Harness smoke passed"
+echo "LARM resident Qwen 3.8 27B JSON/SSE and SAAA Service Harness smoke passed"

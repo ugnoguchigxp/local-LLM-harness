@@ -215,6 +215,12 @@ runtimeReleaseManager = new RuntimeReleaseManager(
 await runtimeReleaseManager.initialize();
 await observer.tick();
 
+const llmStreamServer = new LlmStreamServer({
+  onEvent: (event) => {
+    metrics.record(event);
+    writeEvent(event);
+  },
+});
 const appComponents = createAppComponents({
   registry,
   getState: () => observer.getState(),
@@ -227,6 +233,7 @@ const appComponents = createAppComponents({
   runtimeReleaseManager,
   metrics,
   requestTracker,
+  getNativeActiveWorkloads: () => llmStreamServer.activeRunCount(),
   controlMaxBodyBytes: config.controlMaxBodyBytes,
   gatewayMaxBodyBytes: config.gatewayMaxBodyBytes,
   speechMaxBodyBytes: config.speechMaxBodyBytes,
@@ -271,12 +278,6 @@ const appComponents = createAppComponents({
   },
 });
 const { app, agentConnections } = appComponents;
-const llmStreamServer = new LlmStreamServer({
-  onEvent: (event) => {
-    metrics.record(event);
-    writeEvent(event);
-  },
-});
 
 let ticking = false;
 const interval = setInterval(() => {

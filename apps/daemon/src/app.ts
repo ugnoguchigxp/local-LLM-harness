@@ -4,6 +4,7 @@ import type {
   Registry,
   RuntimeProtocol,
   SaaaStreamAdvertisement,
+  ServiceActivityState,
 } from "@larm/core";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
@@ -14,6 +15,7 @@ import {
   agentConnectionRenewRequestSchema,
   agentConnectionRequestSchema,
   createOpenApiDocument,
+  createServiceActivity,
   prepareRequestSchema,
   releaseRequestSchema,
   resolveRequestSchema,
@@ -63,6 +65,7 @@ export type AppDeps = {
   runtimeReleaseManager?: RuntimeReleaseManager;
   metrics?: MetricsRegistry;
   requestTracker?: RequestTracker;
+  getNativeActiveWorkloads?: () => number;
   gatewayFetch?: FetchLike;
   controlMaxBodyBytes?: number;
   gatewayMaxBodyBytes?: number;
@@ -118,7 +121,8 @@ function acceptsProviderBearer(method: string, path: string): boolean {
       || /^\/v1\/agent-connections\/[^/]+\/providers\/[^/]+\/health$/.test(path));
 }
 
-function acceptsAnonymousAgentConnection(method: string, path: string): boolean {
+function acceptsAnonymousAgentApi(method: string, path: string): boolean {
+  if (method === "GET" && path === "/v1/activity") return true;
   if (method === "GET" && (path === "/v1/agent-profiles" || path === "/v2/agent-profiles")) return true;
   if (method === "POST" && path === "/v1/agent-connections") return true;
   if (/^\/v1\/agent-connections\/[^/]+$/.test(path)) {
@@ -270,6 +274,7 @@ export function createAppComponents(deps: AppDeps) {
     expiresAt: number;
     settled: boolean;
   }>();
+  let lastObservedActivityState: ServiceActivityState | undefined;
   const pruneIdempotency = () => {
     const now = deps.now?.() ?? Date.now();
     for (const [key, entry] of idempotency) {
@@ -290,9 +295,10 @@ export function createAppComponents(deps: AppDeps) {
   app.use("*", async (c, next) => {
     c.header("x-larm-boot-epoch", identity.bootEpoch);
     c.header("x-larm-config-revision", deps.getConfigRevision?.() ?? identity.configRevision);
+    if (c.req.path === "/v1/activity") c.header("cache-control", "no-store");
     const publicPath = c.req.path === "/health" || c.req.path === "/ready";
     const anonymousAgentConnection = deps.allowAnonymousAgentConnections === true
-      && acceptsAnonymousAgentConnection(c.req.method, c.req.path);
+      && acceptsAnonymousAgentApi(c.req.method, c.req.path);
     const anonymousServiceHarness = deps.serviceHarnessAuthEnabled !== true
       && isServiceHarnessRequest(
         c.req.method,
@@ -395,6 +401,7 @@ export function createAppComponents(deps: AppDeps) {
       }
     }
     let chatRequest: unknown;
+    let chatResponseFormat: "sse" | undefined;
     if (options.protocol === "openai.chat-completions.v1") {
       try {
         const bytes = await readBodyLimited(c.req.raw.clone() as unknown as Request, options.maxBodyBytes);
@@ -405,10 +412,7 @@ export function createAppComponents(deps: AppDeps) {
           && !Array.isArray(chatRequest)
           && (chatRequest as Record<string, unknown>).stream === true
         ) {
-          return c.json(errorBody(
-            "streaming_requires_websocket",
-            "streaming LLM requests must use /v1/llm/stream",
-          ), 400);
+          chatResponseFormat = "sse";
         }
       } catch (error) {
         if (error instanceof RequestBodyError) {
@@ -535,6 +539,7 @@ export function createAppComponents(deps: AppDeps) {
           ?? deps.getConfigRevision?.()
           ?? identity.configRevision,
       },
+      responseFormat: chatResponseFormat,
       revalidate: () => {
         if (providerToken && agentConnections) {
           try {
@@ -646,6 +651,43 @@ export function createAppComponents(deps: AppDeps) {
       return c.json({ status: "stale", ageMs: age }, 503);
     }
     return c.json({ status: "ready" });
+  });
+
+  app.get("/v1/activity", (c) => {
+    if (new URL(c.req.url).search || c.req.raw.body !== null) {
+      return c.json(errorBody("invalid_request", "activity request cannot use query parameters or a body"), 400);
+    }
+    if (!deps.requestTracker || !deps.getNativeActiveWorkloads) {
+      c.header("retry-after", "1");
+      return c.json(errorBody("activity_unavailable", "service activity tracking is unavailable"), 503);
+    }
+    const startedAt = performance.now();
+    const activity = createServiceActivity({
+      httpActiveWorkloads: deps.requestTracker.count(),
+      nativeActiveWorkloads: deps.getNativeActiveWorkloads(),
+      draining: deps.control.isDraining(),
+      observedAt: new Date(deps.now?.() ?? Date.now()).toISOString(),
+      bootEpoch: identity.bootEpoch,
+      configRevision: deps.getConfigRevision?.() ?? identity.configRevision,
+    });
+    deps.metrics?.setGauge("service_activity_observed_active_workloads", {}, activity.activeWorkloads);
+    deps.metrics?.record({
+      name: "service_activity_observation_seconds",
+      labels: { state: activity.state },
+      value: Math.max(0, (performance.now() - startedAt) / 1_000),
+    });
+    if (activity.state !== lastObservedActivityState) {
+      lastObservedActivityState = activity.state;
+      deps.onEvent?.({
+        name: "service_activity_observed_state_changed",
+        labels: { state: activity.state },
+        value: activity.activeWorkloads,
+      });
+    }
+    if (activity.retryAfterMs > 0) {
+      c.header("retry-after", String(Math.max(1, Math.ceil(activity.retryAfterMs / 1_000))));
+    }
+    return c.json(activity);
   });
 
   app.get("/metrics", (c) => c.text(deps.metrics?.render() ?? ""));

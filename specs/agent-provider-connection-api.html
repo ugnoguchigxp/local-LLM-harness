@@ -217,6 +217,13 @@ agentProfiles:
       </tbody>
     </table>
     <p>
+      <code>openai.chat-completions.v1</code
+      >は<code>stream: false</code>または省略時のJSONと、
+      <code>stream: true</code>時のOpenAI互換SSEを同じGateway pathで提供します。
+      <code>streamingProtocol</code>は追加のSAAA Native
+      WebSocketを広告するfieldであり、HTTP SSEの 可否を表しません。
+    </p>
+    <p>
       Providerはresponseで<code>name</code>昇順に並べます。Profileのcanonical
       JSONからSHA-256を算出した
       <code>profileRevision</code>と、Audienceのcanonical JSONから算出した

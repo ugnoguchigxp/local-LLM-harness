@@ -139,6 +139,13 @@ curl -sS -X POST http://127.0.0.1:9810/v1/chat/completions \
   -H "x-larm-allocation-id: ${allocation_id}" \
   -d '{"model":"local","stream":false,"messages":[{"role":"user","content":"こんにちは"}]}'
 
+# OpenAI互換SSE。-Nでcurlの受信bufferingを無効化します。
+curl -sS -N -X POST http://127.0.0.1:9810/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: text/event-stream' \
+  -H "x-larm-allocation-id: ${allocation_id}" \
+  -d '{"model":"local","stream":true,"messages":[{"role":"user","content":"こんにちは"}]}'
+
 curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${allocation_id}"
 
 voice_allocation_json="$(curl -sS -X POST http://127.0.0.1:9810/v1/allocations \
@@ -161,10 +168,11 @@ curl -sS -X POST http://127.0.0.1:9810/v1/audio/speech \
 curl -sS -X DELETE "http://127.0.0.1:9810/v1/allocations/${voice_allocation_id}"
 ```
 
-LLMのrealtime data planeは`GET /v1/llm/stream`へのWebSocket upgradeだけを受理します。
-HTTPの`stream: true`は`400 streaming_requires_websocket`で拒否し、SSEへのfallbackや
-Provider SSE bridgeは行いません。claimのLLM providerに`streaming`が現れるのは、設定された
-native Providerが`larm.native-llm-stream.v1`でreadyを返した場合だけです。`host-private`
+LLM Gatewayは、`POST /v1/chat/completions`の`stream: false`にはJSON、`stream: true`には
+OpenAI互換SSE (`text/event-stream`) を返します。SAAA向けの低遅延realtime data planeは、引き続き
+`GET /v1/llm/stream`へのWebSocket upgradeです。claimのLLM providerに`streaming`が現れるのは、
+設定されたnative Providerが`larm.native-llm-stream.v1`でreadyを返した場合だけであり、HTTP SSEの
+可否を表すfieldではありません。`host-private`
 Audienceはoperatorが管理するローカルLANを信頼境界として、HTTP originに対応する平文WS endpointも
 広告します。LAN境界外では`tls` AudienceとWSSを使用してください。
 

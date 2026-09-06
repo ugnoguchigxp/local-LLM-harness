@@ -169,6 +169,68 @@ function jsonMessages(socket: FakeSocket): Array<Record<string, unknown>> {
 }
 
 describe("LlmStreamServer", () => {
+  test("activeRunCount excludes idle sockets and terminal replay retention", async () => {
+    const backend = new FakeBackend();
+    const server = new LlmStreamServer({ startHeartbeat: false });
+    const connection = server.createConnection(authorization(backend));
+    const socket = new FakeSocket();
+
+    expect(server.activeRunCount()).toBe(0);
+    server.open(connection, socket);
+    expect(server.activeRunCount()).toBe(0);
+    server.message(connection, start());
+    expect(server.activeRunCount()).toBe(1);
+
+    backend.queue.push({ type: "completed", finishReason: "stop", usage: null });
+    await Bun.sleep(0);
+    expect(server.activeRunCount()).toBe(0);
+
+    const terminal = jsonMessages(socket).at(-1)!;
+    server.message(connection, JSON.stringify({
+      type: "run.ack",
+      runId: "run_1",
+      ackSeq: terminal.seq,
+      contentSha256: terminal.contentSha256,
+    }));
+    expect(server.activeRunCount()).toBe(0);
+    await server.shutdown(0);
+  });
+
+  test("activeRunCount returns to zero after cancel, provider failure, and forced shutdown", async () => {
+    const cancelledBackend = new FakeBackend();
+    const cancelledServer = new LlmStreamServer({ startHeartbeat: false });
+    const cancelledConnection = cancelledServer.createConnection(authorization(cancelledBackend));
+    cancelledServer.open(cancelledConnection, new FakeSocket());
+    cancelledServer.message(cancelledConnection, start("run_cancelled"));
+    expect(cancelledServer.activeRunCount()).toBe(1);
+    cancelledServer.message(cancelledConnection, JSON.stringify({
+      type: "run.cancel",
+      runId: "run_cancelled",
+    }));
+    await Bun.sleep(0);
+    expect(cancelledServer.activeRunCount()).toBe(0);
+    await cancelledServer.shutdown(0);
+
+    const failedBackend = new FakeBackend();
+    const failedServer = new LlmStreamServer({ startHeartbeat: false });
+    const failedConnection = failedServer.createConnection(authorization(failedBackend));
+    failedServer.open(failedConnection, new FakeSocket());
+    failedServer.message(failedConnection, start("run_failed"));
+    failedBackend.queue.push({ type: "failed", code: "provider", message: "failed", retryable: true });
+    await Bun.sleep(0);
+    expect(failedServer.activeRunCount()).toBe(0);
+    await failedServer.shutdown(0);
+
+    const shutdownBackend = new FakeBackend();
+    const shutdownServer = new LlmStreamServer({ startHeartbeat: false });
+    const shutdownConnection = shutdownServer.createConnection(authorization(shutdownBackend));
+    shutdownServer.open(shutdownConnection, new FakeSocket());
+    shutdownServer.message(shutdownConnection, start("run_shutdown"));
+    expect(shutdownServer.activeRunCount()).toBe(1);
+    expect(await shutdownServer.shutdown(0)).toBe(false);
+    expect(shutdownServer.activeRunCount()).toBe(0);
+  });
+
   test("PWS-C12 runs accepted -> binary delta -> completed and releases only after terminal ACK", async () => {
     const backend = new FakeBackend();
     const server = new LlmStreamServer({ startHeartbeat: false, random: () => "1" });

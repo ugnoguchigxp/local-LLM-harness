@@ -57,6 +57,7 @@ export type GatewayProxyOptions = {
     runtimeRelease?: string;
     configRevision: string;
   };
+  responseFormat?: "sse";
 };
 
 const RESPONSE_HEADERS = [
@@ -376,7 +377,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   }
 
   const headers = new Headers({
-    accept: options.request.headers.get("accept") ?? "application/json",
+    accept: options.responseFormat === "sse"
+      ? "text/event-stream"
+      : options.request.headers.get("accept") ?? "application/json",
     "content-type": options.request.headers.get("content-type") ?? "application/json",
     "x-request-id": requestId,
   });
@@ -436,7 +439,6 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     return failure("upstream_unavailable", "upstream request failed", 502, "upstream_error");
   }
 
-  outcome = `http_${upstream.status}`;
   upstreamStatus = upstream.status;
   options.metrics?.record({
     name: "gateway_ttfb_seconds",
@@ -447,6 +449,21 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     },
     value: ((options.now?.() ?? Date.now()) - startedAt) / 1_000,
   });
+  if (
+    options.responseFormat === "sse"
+    && upstream.ok
+    && upstream.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
+      !== "text/event-stream"
+  ) {
+    await upstream.body?.cancel(new Error("upstream did not return an SSE response")).catch(() => undefined);
+    return failure(
+      "upstream_response_format_mismatch",
+      "upstream did not return text/event-stream for a streaming chat request",
+      502,
+      "upstream_protocol_error",
+    );
+  }
+  outcome = `http_${upstream.status}`;
   options.metrics?.record({
     name: "gateway_request",
     labels: {
@@ -468,6 +485,10 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   }
   if (!responseHeaders.has("content-type")) {
     responseHeaders.set("content-type", "application/json");
+  }
+  if (options.responseFormat === "sse" && upstream.ok) {
+    responseHeaders.set("cache-control", "no-cache, no-transform");
+    responseHeaders.set("x-accel-buffering", "no");
   }
   if (!upstream.body) {
     await finalizeAudit();

@@ -141,6 +141,103 @@ test("agent profile discovery omits Authorization when the optional API token is
   expect(observed?.headers.has("authorization")).toBeFalse();
 });
 
+test("reference client reads strict service activity and uses the optional control bearer", async () => {
+  let observed: Request | undefined;
+  const now = Date.parse("2026-09-05T17:45:00.500Z");
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "activity-token",
+    now: () => now,
+    fetch: async (input, init) => {
+      observed = new Request(input.toString(), init);
+      return json({
+        contractVersion: "larm-service-activity.v1",
+        state: "idle",
+        activeWorkloads: 0,
+        observedAt: "2026-09-05T17:45:00.000Z",
+        validForMs: 1_000,
+        retryAfterMs: 0,
+        reservationGuaranteed: false,
+        bootEpoch: "epoch-test",
+        configRevision: "revision-test",
+      });
+    },
+  });
+
+  expect(await client.getServiceActivity()).toMatchObject({ state: "idle", activeWorkloads: 0 });
+  expect(new URL(observed!.url).pathname).toBe("/v1/activity");
+  expect(observed?.headers.get("authorization")).toBe("Bearer activity-token");
+});
+
+test("reference client rejects non-contract service activity responses", async () => {
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    fetch: async () => json({
+      contractVersion: "larm-service-activity.v1",
+      state: "idle",
+      activeWorkloads: 0,
+      observedAt: "2026-09-05T17:45:00.000Z",
+      validForMs: 1_000,
+      retryAfterMs: 0,
+      reservationGuaranteed: false,
+      bootEpoch: "epoch-test",
+      configRevision: "revision-test",
+      runtimes: ["qwen-general"],
+    }),
+  });
+
+  await expect(client.getServiceActivity()).rejects.toThrow();
+});
+
+test("reference client fails closed on expired or implausibly future activity", async () => {
+  const now = Date.parse("2026-09-05T17:45:02.000Z");
+  for (const observedAt of [
+    "2026-09-05T17:45:00.999Z",
+    "2026-09-05T17:45:03.001Z",
+  ]) {
+    const client = new LarmClient({
+      baseUrl: "http://127.0.0.1:9810",
+      now: () => now,
+      fetch: async () => json({
+        contractVersion: "larm-service-activity.v1",
+        state: "idle",
+        activeWorkloads: 0,
+        observedAt,
+        validForMs: 1_000,
+        retryAfterMs: 0,
+        reservationGuaranteed: false,
+        bootEpoch: "epoch-test",
+        configRevision: "revision-test",
+      }),
+    });
+    await expect(client.getServiceActivity()).rejects.toMatchObject({
+      constructor: LarmApiError,
+      code: "activity_stale",
+      status: 503,
+    });
+  }
+});
+
+test("reference client fails closed when its activity clock is invalid", async () => {
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    now: () => Number.NaN,
+    fetch: async () => json({
+      contractVersion: "larm-service-activity.v1",
+      state: "idle",
+      activeWorkloads: 0,
+      observedAt: "2026-09-05T17:45:00.000Z",
+      validForMs: 1_000,
+      retryAfterMs: 0,
+      reservationGuaranteed: false,
+      bootEpoch: "epoch-test",
+      configRevision: "revision-test",
+    }),
+  });
+
+  await expect(client.getServiceActivity()).rejects.toMatchObject({ code: "activity_stale" });
+});
+
 test("reference client reports boot epoch changes instead of retrying silently", async () => {
   let calls = 0;
   const client = new LarmClient({

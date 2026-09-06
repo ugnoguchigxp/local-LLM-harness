@@ -289,6 +289,151 @@ test("GET /health", async () => {
   expect(res.headers.get("x-larm-boot-epoch")).toBe("epoch-local");
 });
 
+test("GET /v1/activity aggregates HTTP and native work without exposing internals", async () => {
+  const tracker = new RequestTracker();
+  const metrics = new MetricsRegistry();
+  const events: ControlEvent[] = [];
+  let nativeActive = 2;
+  const finishHttp = tracker.begin();
+  const { app, control } = await makeApp(true, false, {}, {
+    requestTracker: tracker,
+    getNativeActiveWorkloads: () => nativeActive,
+    metrics,
+    now: () => Date.parse("2026-09-05T17:45:00.000Z"),
+    onEvent: (event) => events.push(event),
+  });
+
+  const activeResponse = await app.request("/v1/activity");
+  expect(activeResponse.status).toBe(200);
+  expect(activeResponse.headers.get("cache-control")).toBe("no-store");
+  expect(activeResponse.headers.get("retry-after")).toBe("1");
+  expect(await activeResponse.json()).toEqual({
+    contractVersion: "larm-service-activity.v1",
+    state: "active",
+    activeWorkloads: 3,
+    observedAt: "2026-09-05T17:45:00.000Z",
+    validForMs: 1_000,
+    retryAfterMs: 1_000,
+    reservationGuaranteed: false,
+    bootEpoch: "epoch-local",
+    configRevision: "test",
+  });
+  expect(events.at(-1)).toMatchObject({
+    name: "service_activity_observed_state_changed",
+    labels: { state: "active" },
+    value: 3,
+  });
+  expect(metrics.render()).toContain("larm_service_activity_observed_active_workloads 3");
+  expect(metrics.render()).toContain('larm_service_activity_observation_seconds_count{state="active"} 1');
+  await app.request("/v1/activity");
+  expect(events).toHaveLength(1);
+
+  finishHttp();
+  nativeActive = 0;
+  const idleResponse = await app.request("/v1/activity");
+  expect(idleResponse.headers.has("retry-after")).toBeFalse();
+  expect(await idleResponse.json()).toMatchObject({ state: "idle", activeWorkloads: 0 });
+  expect(events.at(-1)).toMatchObject({
+    name: "service_activity_observed_state_changed",
+    labels: { state: "idle" },
+    value: 0,
+  });
+
+  control.beginDrain();
+  const drainingResponse = await app.request("/v1/activity");
+  expect(drainingResponse.status).toBe(200);
+  expect(drainingResponse.headers.get("retry-after")).toBe("1");
+  expect(await drainingResponse.json()).toMatchObject({ state: "draining", activeWorkloads: 0 });
+  expect(events.at(-1)).toMatchObject({
+    name: "service_activity_observed_state_changed",
+    labels: { state: "draining" },
+    value: 0,
+  });
+});
+
+test("service activity is fail-closed, rejects query input, and follows agent API auth", async () => {
+  const unavailable = (await makeApp(true)).app;
+  const unavailableResponse = await unavailable.request("/v1/activity");
+  expect(unavailableResponse.status).toBe(503);
+  expect(unavailableResponse.headers.get("cache-control")).toBe("no-store");
+  expect(unavailableResponse.headers.get("retry-after")).toBe("1");
+
+  const tracker = new RequestTracker();
+  const secured = (await makeApp(true, false, {}, {
+    apiToken: "secret",
+    requestTracker: tracker,
+    getNativeActiveWorkloads: () => 0,
+  })).app;
+  const unauthorized = await secured.request("/v1/activity");
+  expect(unauthorized.status).toBe(401);
+  expect(unauthorized.headers.get("cache-control")).toBe("no-store");
+  expect((await secured.request("/v1/activity?profile=contextstill-background", {
+    headers: { authorization: "Bearer secret" },
+  })).status).toBe(400);
+  expect((await secured.request(new Request("http://localhost/v1/activity", {
+    method: "GET",
+    headers: { authorization: "Bearer secret" },
+    body: "not-allowed",
+  }))).status).toBe(400);
+
+  const anonymous = (await makeApp(true, false, {}, {
+    apiToken: "secret",
+    allowAnonymousAgentConnections: true,
+    requestTracker: tracker,
+    getNativeActiveWorkloads: () => 0,
+  })).app;
+  expect((await anonymous.request("/v1/activity")).status).toBe(200);
+});
+
+test("service activity observes a live Gateway request until its response closes", async () => {
+  const tracker = new RequestTracker();
+  let markUpstreamStarted: (() => void) | undefined;
+  const upstreamStarted = new Promise<void>((resolve) => {
+    markUpstreamStarted = resolve;
+  });
+  let releaseUpstream: (() => void) | undefined;
+  const upstreamReleased = new Promise<void>((resolve) => {
+    releaseUpstream = resolve;
+  });
+  const { app } = await makeApp(true, false, {}, {
+    requestTracker: tracker,
+    getNativeActiveWorkloads: () => 0,
+    gatewayFetch: async () => {
+      markUpstreamStarted?.();
+      await upstreamReleased;
+      return Response.json({ choices: [] });
+    },
+  });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await created.json()) as { id: string }).id;
+  const gatewayResponse = app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": allocationId,
+    },
+    body: JSON.stringify({ model: "test", messages: [] }),
+  });
+  await upstreamStarted;
+  expect(await (await app.request("/v1/activity")).json()).toMatchObject({
+    state: "active",
+    activeWorkloads: 1,
+  });
+  releaseUpstream?.();
+  await (await gatewayResponse).body?.cancel();
+  await Bun.sleep(0);
+  expect(await (await app.request("/v1/activity")).json()).toMatchObject({
+    state: "idle",
+    activeWorkloads: 0,
+  });
+});
+
 test("GET /openapi.json exposes the machine-readable v1 contract", async () => {
   const { app } = await makeApp(true);
   const response = await app.request("/openapi.json");
@@ -937,12 +1082,26 @@ test("allocation admission rejects a runtime reserved for artifact mutation", as
   });
 });
 
-test("HTTP gateway rejects streaming chat before contacting the allocation binding", async () => {
-  let contacted = false;
+test("HTTP gateway streams OpenAI-compatible SSE in the requested format", async () => {
+  const upstreamRequest: { accept?: string; body?: unknown } = {};
+  const encoder = new TextEncoder();
+  const expected = [
+    'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+    "data: [DONE]\n\n",
+  ];
   const { app } = await makeApp(true, false, {}, {
-    gatewayFetch: async () => {
-      contacted = true;
-      return Response.json({ unexpected: true });
+    gatewayFetch: async (_input, init) => {
+      upstreamRequest.accept = new Headers(init?.headers).get("accept") ?? undefined;
+      upstreamRequest.body = JSON.parse(new TextDecoder().decode(init?.body as Uint8Array)) as unknown;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const event of expected) controller.enqueue(encoder.encode(event));
+          controller.close();
+        },
+      }), {
+        headers: { "content-type": "text/event-stream; charset=utf-8" },
+      });
     },
   });
   const created = await app.request("/v1/allocations", {
@@ -966,14 +1125,81 @@ test("HTTP gateway rejects streaming chat before contacting the allocation bindi
     }),
   });
 
-  expect(response.status).toBe(400);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toBe("text/event-stream; charset=utf-8");
+  expect(response.headers.get("cache-control")).toBe("no-cache, no-transform");
+  expect(response.headers.get("x-accel-buffering")).toBe("no");
+  expect(upstreamRequest.accept).toBe("text/event-stream");
+  expect(upstreamRequest.body).toEqual({
+    model: "local",
+    stream: true,
+    messages: [{ role: "user", content: "secret prompt" }],
+  });
+  expect(await response.text()).toBe(expected.join(""));
+});
+
+test("HTTP gateway rejects a successful non-SSE upstream response to a streaming chat", async () => {
+  const { app } = await makeApp(true, false, {}, {
+    gatewayFetch: async () => Response.json({ unexpected: true }),
+  });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await created.json()) as { id: string }).id;
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": allocationId,
+    },
+    body: JSON.stringify({ model: "local", messages: [], stream: true }),
+  });
+
+  expect(response.status).toBe(502);
   expect(await response.json()).toEqual({
     error: {
-      code: "streaming_requires_websocket",
-      message: "streaming LLM requests must use /v1/llm/stream",
+      code: "upstream_response_format_mismatch",
+      message: "upstream did not return text/event-stream for a streaming chat request",
     },
   });
-  expect(contacted).toBe(false);
+});
+
+test("HTTP gateway preserves an upstream JSON error for a streaming chat request", async () => {
+  const { app } = await makeApp(true, false, {}, {
+    gatewayFetch: async () => Response.json({
+      error: { code: "provider_busy", message: "try later" },
+    }, {
+      status: 429,
+      headers: { "retry-after": "2" },
+    }),
+  });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-default" }],
+    }),
+  });
+  const allocationId = ((await created.json()) as { id: string }).id;
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": allocationId,
+    },
+    body: JSON.stringify({ model: "local", messages: [], stream: true }),
+  });
+
+  expect(response.status).toBe(429);
+  expect(response.headers.get("content-type")).toStartWith("application/json");
+  expect(response.headers.get("retry-after")).toBe("2");
+  expect(await response.json()).toEqual({
+    error: { code: "provider_busy", message: "try later" },
+  });
 });
 
 test("full-required inference audit captures the exact gateway request and response", async () => {
@@ -1900,6 +2126,11 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
         usage: { completion_tokens: 1 },
       });
     }
+    if (value.stream === true) {
+      return new Response('data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n', {
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
     return Response.json({
       choices: [{ index: 0, message: { role: "assistant", content: "done" } }],
       usage: { completion_tokens: 1 },
@@ -2016,6 +2247,23 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   expect(await task.json()).toMatchObject({ choices: [{ message: { content: "done" } }] });
   expect(observed).toHaveLength(2);
 
+  const streamingTask = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${credential}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "test-model",
+      messages: [{ role: "user", content: "stream a real task" }],
+      stream: true,
+    }),
+  });
+  expect(streamingTask.status).toBe(200);
+  expect(streamingTask.headers.get("content-type")).toBe("text/event-stream");
+  expect(await streamingTask.text()).toEndWith("data: [DONE]\n\n");
+  expect(observed).toHaveLength(3);
+
   const wrongModel = await app.request("/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -2025,7 +2273,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     body: JSON.stringify({ model: "another-model", messages: [] }),
   });
   expect(wrongModel.status).toBe(400);
-  expect(observed).toHaveLength(2);
+  expect(observed).toHaveLength(3);
 
   const renewedResponse = await app.request(`/v1/agent-connections/${connection.id}/renew`, {
     method: "POST",

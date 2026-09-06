@@ -72,3 +72,56 @@ await larm.withAgentConnection({
   // callbackの成功・失敗・cancel後にConnectionは独立したbounded requestでreleaseされる。
 });
 ```
+
+ContextStillの背景jobは、queueが空でないときだけService Activityを確認し、`idle`の場合に限って明示
+ProfileからProviderを取得します。Activityはsnapshotであり予約ではないため、Connection作成時のadmission
+failureも通常の待機条件として扱います。実行中jobは中断せず、response bodyを閉じてから次jobの前に再確認
+してください。`getServiceActivity()`はcontract TTLを超えた応答と許容範囲を超える未来時刻を
+`activity_stale`としてfail closedにします。
+
+```ts
+async function runContextStillJob(): Promise<void> {
+  const activity = await larm.getServiceActivity().catch(() => undefined);
+  if (!activity || activity.state !== "idle" || activity.activeWorkloads !== 0) {
+    return; // fail closed。retryAfterMs以降にqueueを再確認する。
+  }
+
+  await larm.withAgentConnection({
+    agentProfile: "contextstill-background",
+    explicitAgentProfile: true,
+    audience: "saaa-desktop", // same hostなら same-host
+    client: "contextstill",
+    ttlSeconds: 300,
+    allowFallback: false,
+    deploymentPolicy: "existing-only",
+  }, async (_connection, claim) => {
+    const provider = claim.providers.find(({ name }) => name === "llm");
+    if (!provider || provider.protocol !== "openai.chat-completions.v1") {
+      throw new Error("ContextStill LLM provider is unavailable");
+    }
+    const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${provider.credential.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        messages: [{ role: "user", content: "background job" }],
+        stream: false, // trueなら同じendpointからOpenAI互換SSEを受信できる。
+      }),
+      signal: AbortSignal.timeout(300_000),
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`ContextStill Provider returned ${response.status}`);
+    }
+    await response.json(); // bodyを閉じてからConnectionを解放する。
+  });
+}
+```
+
+`openai.chat-completions.v1` Providerは要求形式を維持します。`stream: false`または省略時はJSON、
+`stream: true`時は`text/event-stream`です。SSEを選んだ場合は`[DONE]`まで読み、response bodyを
+閉じてからConnectionをrenewまたはreleaseしてください。claimの`streaming` fieldはSAAA Native
+WebSocketの広告専用であり、HTTP SSEを使用するためには必要ありません。

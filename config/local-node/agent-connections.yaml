@@ -19,6 +19,14 @@ agentProfiles:
         publicModel: coding-default
         readiness: llm-inference
         streamingProtocol: saaa.llm-stream.v1
+  contextstill-background:
+    description: ContextStill background Qwen 3.8 27B provider
+    providers:
+      - name: llm
+        capability: llm.coding
+        route: llm-agent-worker
+        publicModel: qwen-agent-worker
+        readiness: llm-inference
 
 compatibilityAliases:
   deep-reasoning-35b:

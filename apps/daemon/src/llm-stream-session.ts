@@ -987,6 +987,14 @@ export class LlmStreamServer {
     }
   }
 
+  activeRunCount(): number {
+    let active = 0;
+    for (const run of this.runs.values()) {
+      if (!run.isTerminal) active += 1;
+    }
+    return active;
+  }
+
   beginDrain(): void {
     if (this.draining) return;
     this.draining = true;

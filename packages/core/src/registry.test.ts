@@ -149,7 +149,7 @@ test("runtime native streaming cannot be attached to a non-LLM protocol", () => 
 test("production swap group matches llama-swap model membership", () => {
   const registry = loadRegistry(repoConfig);
   const configured = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8")) as {
-    models: Record<string, { cmd: string }>;
+    models: Record<string, { cmd: string; aliases?: string[] }>;
     groups: Record<string, {
       swap: boolean;
       exclusive: boolean;
@@ -182,6 +182,7 @@ test("production swap group matches llama-swap model membership", () => {
   expect(ornithSpeedCommand).toContain("--no-cache-prompt");
   expect(ornithSpeedCommand).toContain("--no-cache-idle-slots");
   expect(agentWorkerCommand).toContain("--ctx-size 65536");
+  expect(configured.models["qwen-agent"]?.aliases).toContain("qwen-agent-worker");
   expect(agent35bCommand).toContain("--ctx-size 65536");
   expect(agent35bCommand).not.toContain("ngram");
   expect(agent35bCommand).toContain("--cache-type-v q8_0");

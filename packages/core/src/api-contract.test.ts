@@ -29,6 +29,9 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(document.components.schemas.AgentConnection).toBeDefined();
   expect(document.components.schemas.AgentConnectionHealth).toBeDefined();
   expect(document.components.schemas.ServiceHarness).toBeDefined();
+  expect(document.components.schemas.ServiceActivity).toBeDefined();
+  expect(document.components.schemas.ChatCompletionRequest).toBeDefined();
+  expect(document.components.schemas.ServerSentEvents).toBeDefined();
   const agentRequest = document.components.schemas.AgentConnectionRequest as {
     required?: string[];
     properties?: Record<string, unknown>;
@@ -70,11 +73,23 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(JSON.stringify(paths["/prepare"]?.post)).toContain("#/components/schemas/LegacyPrepareResponse");
   expect(JSON.stringify(paths["/v1/deployments/{runtime}/plan"]?.post))
     .toContain("#/components/schemas/RuntimeReleasePlanRequest");
-  expect(JSON.stringify(paths["/v1/chat/completions"]?.post)).not.toContain("text/event-stream");
+  expect(JSON.stringify(paths["/v1/chat/completions"]?.post)).toContain("text/event-stream");
+  expect(JSON.stringify(paths["/v1/chat/completions"]?.post?.requestBody))
+    .toContain("#/components/schemas/ChatCompletionRequest");
   expect(paths["/v1/llm/stream"]?.get?.responses).toHaveProperty("101");
   expect(paths["/v1/agent-connections"]?.post?.parameters).toBeDefined();
   expect(paths["/v1/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v2/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v1/activity"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(JSON.stringify(paths["/v1/activity"]?.get)).toContain("#/components/schemas/ServiceActivity");
+  const activityResponses = paths["/v1/activity"]?.get?.responses as Record<
+    string,
+    { headers?: Record<string, unknown> }
+  >;
+  expect(activityResponses["200"]?.headers?.["Cache-Control"]).toBeDefined();
+  expect(activityResponses["503"]?.headers?.["Retry-After"]).toBeDefined();
+  expect(activityResponses["4XX"]?.headers?.["Cache-Control"]).toBeDefined();
+  expect(activityResponses["5XX"]?.headers?.["Cache-Control"]).toBeDefined();
   expect(paths["/v1/agent-connections"]?.post?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v1/services"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v1/services/asr/health"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
