@@ -22,6 +22,8 @@ type QueueEntry = {
   reject: (error: ExecutionGateError) => void;
   signal: AbortSignal;
   queuedAt: number;
+  priority: number;
+  sequence: number;
   timeout: ReturnType<typeof setTimeout>;
   onAbort: () => void;
 };
@@ -31,6 +33,7 @@ type RuntimeGate = { active: number; queue: QueueEntry[] };
 export class ExecutionGate {
   private readonly runtimes = new Map<string, RuntimeGate>();
   private draining = false;
+  private sequence = 0;
 
   constructor(
     private readonly options: {
@@ -56,6 +59,7 @@ export class ExecutionGate {
     runtime: string,
     policy: ExecutionPolicy,
     signal: AbortSignal,
+    priority = 0,
   ): Promise<() => void> {
     if (this.draining) {
       throw new ExecutionGateError("draining", "execution gate is draining");
@@ -87,6 +91,9 @@ export class ExecutionGate {
       entry.reject = reject;
       entry.signal = signal;
       entry.queuedAt = this.now();
+      entry.priority = priority;
+      this.sequence += 1;
+      entry.sequence = this.sequence;
       entry.onAbort = () => {
         if (!this.removeQueued(state, entry)) {
           return;
@@ -110,6 +117,9 @@ export class ExecutionGate {
       entry.timeout.unref?.();
       signal.addEventListener("abort", entry.onAbort, { once: true });
       state.queue.push(entry);
+      state.queue.sort((left, right) =>
+        right.priority - left.priority || left.sequence - right.sequence
+      );
       this.emitState(runtime, state);
     });
   }
@@ -174,7 +184,7 @@ export class ExecutionGate {
       }
       state.active += 1;
       this.emit("execution_queue_seconds", runtime, "started", (this.now() - entry.queuedAt) / 1_000);
-      this.emit("execution_request", runtime, "started");
+      this.emit("execution_request", runtime, "started", undefined, entry.priority);
       entry.resolve(this.release(runtime, state, policy));
     }
   }
@@ -194,8 +204,18 @@ export class ExecutionGate {
     entry.signal.removeEventListener("abort", entry.onAbort);
   }
 
-  private emit(name: string, runtime: string, result: string, value?: number): void {
-    this.options.onEvent?.({ name, labels: { runtime, result }, value });
+  private emit(
+    name: string,
+    runtime: string,
+    result: string,
+    value?: number,
+    priority?: number,
+  ): void {
+    this.options.onEvent?.({
+      name,
+      labels: { runtime, result, ...(priority === undefined ? {} : { priority: String(priority) }) },
+      value,
+    });
   }
 
   private emitState(runtime: string, state: RuntimeGate): void {

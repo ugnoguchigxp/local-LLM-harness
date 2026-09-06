@@ -19,7 +19,7 @@ import {
   type AgentConnectionClaim,
   type AgentConnectionHealth,
   type AgentConnectionRequestInput,
-  type AllocationRequest,
+  type AllocationRequestInput,
   type ControlOperation,
   type PublicAllocation,
   type PublicAgentConnection,
@@ -167,7 +167,7 @@ export class LarmClient {
     return activity;
   }
 
-  async allocate(request: AllocationRequest, options: RequestOptions = {}): Promise<PublicAllocation> {
+  async allocate(request: AllocationRequestInput, options: RequestOptions = {}): Promise<PublicAllocation> {
     const normalized = allocationRequestSchema.parse(request);
     const response = await this.request("/v1/allocations", {
       method: "POST",
@@ -208,7 +208,7 @@ export class LarmClient {
     this.validatePollingOptions(timeoutMs, pollIntervalMs);
     const deadline = Date.now() + timeoutMs;
     let current = allocation;
-    while (current.status === "pending") {
+    while (current.status === "waiting" || current.status === "pending") {
       if (Date.now() >= deadline) {
         throw new LarmApiError(
           408,
@@ -483,7 +483,7 @@ export class LarmClient {
   }
 
   async withAllocation<T>(
-    request: AllocationRequest,
+    request: AllocationRequestInput,
     handler: (allocation: PublicAllocation, client: LarmClient) => Promise<T>,
     options: RequestOptions & { pollIntervalMs?: number; timeoutMs?: number } = {},
   ): Promise<T> {

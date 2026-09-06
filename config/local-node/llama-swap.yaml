@@ -79,6 +79,7 @@ models:
     aliases:
       - qwen3.8-agent
       - qwen-agent-worker
+      - qwen-nightworker
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1

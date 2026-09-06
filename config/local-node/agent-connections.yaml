@@ -12,6 +12,7 @@ audiences:
 agentProfiles:
   coding-default:
     description: Resident 27B coding provider without a worker-slot swap
+    schedulingPriority: 3000
     providers:
       - name: llm
         capability: llm.coding
@@ -20,11 +21,21 @@ agentProfiles:
         readiness: llm-inference
   contextstill-background:
     description: ContextStill background Qwen 3.8 27B provider
+    schedulingPriority: 1000
     providers:
       - name: llm
         capability: llm.coding
         route: llm-agent-worker
         publicModel: qwen-agent-worker
+        readiness: llm-inference
+  nightworker-background:
+    description: NightWorker background Qwen 3.8 27B provider
+    schedulingPriority: 2000
+    providers:
+      - name: llm
+        capability: llm.coding
+        route: llm-agent-worker
+        publicModel: qwen-nightworker
         readiness: llm-inference
   asr-qwen:
     description: Resident Qwen3 ASR OpenAI-compatible provider

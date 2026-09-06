@@ -25,6 +25,7 @@ export type OpenAiModelBinding = {
   capability: string;
   route: string;
   protocol: RuntimeProtocol;
+  schedulingPriority: number;
   profileIds: string[];
 };
 
@@ -62,6 +63,11 @@ export function createOpenAiModelCatalog(
             `public model ${provider.publicModel} resolves to conflicting Provider bindings`,
           );
         }
+        if (existing.schedulingPriority !== (profile.schedulingPriority ?? 0)) {
+          throw new OpenAiModelCatalogError(
+            `public model ${provider.publicModel} resolves to conflicting scheduling priorities`,
+          );
+        }
         if (!existing.profileIds.includes(profile.id)) {
           existing.profileIds.push(profile.id);
           existing.profileIds.sort();
@@ -73,6 +79,7 @@ export function createOpenAiModelCatalog(
         capability: provider.capability,
         route: provider.route,
         protocol: provider.protocol,
+        schedulingPriority: profile.schedulingPriority ?? 0,
         profileIds: [profile.id],
       });
     }

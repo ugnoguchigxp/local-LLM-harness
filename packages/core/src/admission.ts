@@ -1,4 +1,4 @@
-import type { Allocation } from "./allocation";
+import { admittedAllocation, type Allocation } from "./allocation";
 import type { Registry } from "./registry";
 import type { ClusterState, RuntimeDefinition } from "./schema";
 
@@ -35,7 +35,7 @@ export type AdmissionResult =
 function uniqueActiveRuntimeIds(allocations: Allocation[]): Set<string> {
   const ids = new Set<string>();
   for (const allocation of allocations) {
-    if (allocation.status !== "pending" && allocation.status !== "ready") {
+    if (!admittedAllocation(allocation.status)) {
       continue;
     }
     for (const binding of allocation.bindings) {
@@ -227,7 +227,7 @@ export function admitRuntimes(input: {
     }
     const activeCount = input.allocations.filter(
       (allocation) =>
-        (allocation.status === "pending" || allocation.status === "ready") &&
+        admittedAllocation(allocation.status) &&
         allocation.bindings.some((binding) => binding.runtime === runtimeId),
     ).length;
     if (activeCount >= runtime.resources.maxConcurrentAllocations) {

@@ -84,6 +84,7 @@ export {
 } from "./artifacts";
 export {
   activeAllocation,
+  admittedAllocation,
   allocationBindingSchema,
   allocationErrorSchema,
   allocationSchema,
@@ -182,6 +183,8 @@ export {
 } from "./slo";
 export {
   allocationRenewRequestSchema,
+  allocationCapacityPolicySchema,
+  allocationPrioritySchema,
   allocationRequestSchema,
   allocationRequirementSchema,
   allocationResolveRequestSchema,
@@ -190,7 +193,9 @@ export {
   releaseRequestSchema,
   resolveRequestSchema,
   type AllocationRenewRequest,
+  type AllocationCapacityPolicy,
   type AllocationRequest,
+  type AllocationRequestInput,
   type AllocationRequirement,
   type AllocationResolveRequest,
   type DeploymentPolicy,

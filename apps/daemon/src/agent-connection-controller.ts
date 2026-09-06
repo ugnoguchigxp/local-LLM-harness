@@ -129,6 +129,7 @@ export class AgentConnectionController {
           description: profile.description,
           selectionPolicy: profile.selectionPolicy,
           deprecated: profile.deprecated,
+          schedulingPriority: profile.schedulingPriority ?? 0,
           providers: profile.providers.map((provider) => ({
             name: provider.name,
             capability: provider.capability,
@@ -195,6 +196,8 @@ export class AgentConnectionController {
           ttlSeconds: request.ttlSeconds,
           allowFallback: request.allowFallback,
           deploymentPolicy: request.deploymentPolicy,
+          priority: profile.schedulingPriority ?? 0,
+          capacityPolicy: "wait",
         });
         if (allocated.status !== 200 && allocated.status !== 202) {
           return { status: allocated.status, body: allocated.body };

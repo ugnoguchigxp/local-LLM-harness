@@ -1,8 +1,14 @@
 import { z } from "zod";
-import { allocationRequirementSchema, deploymentPolicySchema } from "./api-schema";
+import {
+  allocationCapacityPolicySchema,
+  allocationPrioritySchema,
+  allocationRequirementSchema,
+  deploymentPolicySchema,
+} from "./api-schema";
 import { runtimeStatusSchema } from "./schema";
 
 export const allocationStatusSchema = z.enum([
+  "waiting",
   "pending",
   "ready",
   "failed",
@@ -39,6 +45,8 @@ export const allocationSchema = z
     bindings: z.array(allocationBindingSchema).min(1).max(16),
     allowFallback: z.boolean(),
     deploymentPolicy: deploymentPolicySchema,
+    priority: allocationPrioritySchema.optional(),
+    capacityPolicy: allocationCapacityPolicySchema.optional(),
     createdAt: z.string().datetime(),
     expiresAt: z.string().datetime(),
     operationId: z.string().min(1).max(192).optional(),
@@ -88,5 +96,9 @@ export function createAllocationId(bootEpoch: string, random?: () => string): st
 }
 
 export function activeAllocation(status: AllocationStatus): boolean {
+  return status === "waiting" || status === "pending" || status === "ready";
+}
+
+export function admittedAllocation(status: AllocationStatus): boolean {
   return status === "pending" || status === "ready";
 }

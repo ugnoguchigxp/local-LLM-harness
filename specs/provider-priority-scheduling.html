@@ -1,0 +1,149 @@
+<article lang="ja">
+  <h1>動的Provider優先度・非preemptive切替仕様</h1>
+
+  <p>
+    SAAA、NightWorker、ContextStillが同じLARMの同一Runtimeまたはswap groupで競合する場合の、
+    Allocation待機とRuntime実行待機の順序を定義します。実行中の推論は中断せず、現在のAllocation
+    または実行枠が解放された境界で、待機中の最優先要求へ切り替えます。競合しないResident laneと
+    worker laneは直列化せず、従来どおり並行利用できます。
+  </p>
+
+  <dl>
+    <dt>更新日</dt>
+    <dd><time>2026-09-06</time></dd>
+    <dt>Repository状態</dt>
+    <dd>Control Plane、Model Broker、Agent Connection、Execution Gate、local-node設定へ実装済み</dd>
+    <dt>Live状態</dt>
+    <dd>
+      <code>01667fe</code>から新releaseへの更新とconsumer実機canary待ち
+    </dd>
+  </dl>
+
+  <section id="policy">
+    <h2>優先度policy</h2>
+    <table>
+      <caption>
+        local-nodeの初期優先度
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Consumer</th>
+          <th scope="col">Profile／公開model</th>
+          <th scope="col">優先度</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">SAAA</th>
+          <td><code>coding-default</code></td>
+          <td><code>3000</code></td>
+        </tr>
+        <tr>
+          <th scope="row">NightWorker</th>
+          <td>
+            <code>nightworker-background</code>／<code
+              >qwen-nightworker</code
+            >
+          </td>
+          <td><code>2000</code></td>
+        </tr>
+        <tr>
+          <th scope="row">ContextStill</th>
+          <td>
+            <code>contextstill-background</code>／<code
+              >qwen-agent-worker</code
+            >
+          </td>
+          <td><code>1000</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      大きい整数を先に選び、同値は待機開始順のFIFOとします。値域は
+      <code>-1000000</code
+      >から<code>1000000</code>で、初期値の間隔を1000空けるため、
+      前後や中間へconsumerを追加しても既存値を振り直す必要はありません。
+    </p>
+  </section>
+
+  <section id="ownership">
+    <h2>優先度の決定元</h2>
+    <p>
+      通常のOpenAI互換HTTP要求では、request headerやbodyから優先度を受け取りません。
+      daemonが検証済みAgent Profileの<code>schedulingPriority</code>を公開model
+      bindingへ固定し、 Model Brokerの内部Allocationへ渡します。Agent
+      Connectionも選択済みProfileの値を使います。 管理・高度用途の明示Allocation
+      APIだけは、認証済みrequestの<code>priority</code>と
+      <code>capacityPolicy</code>を受け取ります。
+    </p>
+  </section>
+
+  <section id="state-machine">
+    <h2>Allocation状態と切替</h2>
+    <ol>
+      <li>
+        空きがあれば従来どおり<code>pending</code>または<code>ready</code>へ進みます。
+      </li>
+      <li>
+        <code>capacityPolicy: wait</code>で同一Runtimeまたはswap groupが使用中なら、
+        Allocationを<code>waiting</code>としてTTL内だけ保持します。
+      </li>
+      <li>
+        より高い優先要求が到着しても、<code>ready</code>または実行中の要求をpreemptしません。
+      </li>
+      <li>
+        解放、失敗、期限切れの境界で待機列を再評価し、優先度降順、同値FIFOでadmissionを再実行します。
+      </li>
+      <li>
+        選ばれたRuntimeがswap groupの別memberなら、既存のbackend ensureによりidle memberを停止して
+        対象memberを起動し、readiness確認後に<code>ready</code>へ進めます。
+      </li>
+    </ol>
+    <p>
+      資源不足、telemetry不明、mutation中など、使用中Allocationの解放だけでは解消しない拒否理由を
+      無条件に待機へ変換しません。待機Allocationもactive上限、TTL、daemon drainの対象です。
+    </p>
+  </section>
+
+  <section id="execution">
+    <h2>Runtime実行待機</h2>
+    <p>
+      同じRuntimeへ複数requestが到着した場合も、実行中requestの完了後に優先度降順、同値FIFOで
+      次のrequestを開始します。local-nodeのLLM Runtimeは最大16件、120秒まで待機できます。
+      queue満杯、timeout、cancel、drainは従来どおり失敗として返し、active requestはdrain開始だけでは
+      中断しません。
+    </p>
+  </section>
+
+  <section id="compatibility">
+    <h2>互換性と利用方法</h2>
+    <ul>
+      <li>
+        従来の明示Allocationは既定の<code>capacityPolicy: reject</code>、<code>priority: 0</code>です。
+      </li>
+      <li>
+        SAAAは<code>coding-default</code>を使い、Resident
+        Qwenを既定とする方針を維持します。
+      </li>
+      <li>
+        NightWorkerは<code>qwen-nightworker</code>、ContextStillは<code>qwen-agent-worker</code>を使います。
+      </li>
+      <li>優先度はQoS順序であり認可境界ではありません。modelとtokenの認可は別に維持します。</li>
+    </ul>
+  </section>
+
+  <section id="acceptance">
+    <h2>受入条件</h2>
+    <ol>
+      <li>ContextStill相当のactive Allocationへ高優先要求を追加してもactive状態を維持する。</li>
+      <li>解放後、SAAA、NightWorker、ContextStillの順に待機Allocationが昇格する。</li>
+      <li>同じRuntimeの実行待機でも同じ優先順となり、同値はFIFOになる。</li>
+      <li>waiting中のcancel、TTL満了、daemon drainでRuntimeを新規起動しない。</li>
+      <li>HTTP JSON、SSE、ASR、TTS、Connection credential失効の既存contract testが回帰しない。</li>
+      <li>
+        live
+        daemonの<code>releaseCommit</code>が新releaseと一致した後、SAAA実機canaryを再実行する。
+      </li>
+    </ol>
+  </section>
+</article>

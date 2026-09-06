@@ -20,6 +20,30 @@ test("execution gate is FIFO and never exceeds the runtime policy", async () => 
   expect(gate.snapshot("runtime")).toEqual({ active: 0, queued: 0 });
 });
 
+test("execution gate promotes higher priorities after active work releases", async () => {
+  const gate = new ExecutionGate();
+  const signal = new AbortController().signal;
+  const queuedPolicy = { ...policy, maxQueuedRequests: 3, queueTimeoutMs: 1_000 };
+  const releaseActive = await gate.acquire("runtime", queuedPolicy, signal, 1_000);
+  const contextStill = gate.acquire("runtime", queuedPolicy, signal, 1_000)
+    .then((release) => ({ name: "contextstill", release }));
+  const nightWorker = gate.acquire("runtime", queuedPolicy, signal, 2_000)
+    .then((release) => ({ name: "nightworker", release }));
+  const saaa = gate.acquire("runtime", queuedPolicy, signal, 3_000)
+    .then((release) => ({ name: "saaa", release }));
+
+  releaseActive();
+  const first = await Promise.race([contextStill, nightWorker, saaa]);
+  expect(first.name).toBe("saaa");
+  first.release();
+  const second = await Promise.race([contextStill, nightWorker]);
+  expect(second.name).toBe("nightworker");
+  second.release();
+  const third = await contextStill;
+  expect(third.name).toBe("contextstill");
+  third.release();
+});
+
 test("execution gate rejects a full queue and times out bounded waits", async () => {
   const gate = new ExecutionGate();
   const signal = new AbortController().signal;

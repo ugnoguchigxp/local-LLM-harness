@@ -1,5 +1,6 @@
 import {
   activeAllocation,
+  admittedAllocation,
   admitRuntimes,
   createAllocationId,
   createLeaseId,
@@ -87,6 +88,7 @@ export class ControlPlane {
   private readonly operationAborts = new Map<string, AbortController>();
   private readonly lifecycleReservations = new Set<string>();
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private waitingTimer: ReturnType<typeof setTimeout> | undefined;
   private applyChain: Promise<void> = Promise.resolve();
   private draining = false;
   private idSequence = 0;
@@ -109,9 +111,10 @@ export class ControlPlane {
   beginDrain(): void {
     this.draining = true;
     this.cancelIdle();
+    this.cancelWaitingPromotion();
     const reason = new Error("control plane is draining");
     for (const allocation of this.allocations.values()) {
-      if (allocation.status === "pending") {
+      if (allocation.status === "waiting" || allocation.status === "pending") {
         void this.releaseAllocation(allocation.id);
       }
     }
@@ -267,7 +270,16 @@ export class ControlPlane {
     const transitioningRuntime = [...lifecycleRuntimeIds].find((runtimeId) =>
       this.lifecycleReservations.has(runtimeId)
     );
-    if (transitioningRuntime) {
+    const waitsForCapacity = request.capacityPolicy === "wait";
+    const conflictsWithAdmitted = this.hasResourceConflict(
+      runtimeIds,
+      (allocation) => admittedAllocation(allocation.status),
+    );
+    const conflictsWithWaiter = this.hasResourceConflict(
+      runtimeIds,
+      (allocation) => allocation.status === "waiting",
+    );
+    if (transitioningRuntime && !(waitsForCapacity && conflictsWithAdmitted)) {
       this.emit("allocation_rejected", { reason: "runtime_transition_in_progress" });
       return {
         status: 409 as const,
@@ -297,7 +309,7 @@ export class ControlPlane {
     const admission = admitRuntimes({
       registry: this.registry,
       state: this.observer.getState(),
-      allocations: [...this.allocations.values()],
+      allocations: this.admittedAllocations(),
       candidateRuntimeIds: runtimeIds,
       ...(this.options.requireFreshTelemetry
         ? {
@@ -309,7 +321,13 @@ export class ControlPlane {
         }
         : {}),
     });
-    if (!admission.ok) {
+    const capacityBlocked = !admission.ok && conflictsWithAdmitted;
+    const waiting = waitsForCapacity && (
+      conflictsWithWaiter
+      || (transitioningRuntime !== undefined && conflictsWithAdmitted)
+      || capacityBlocked
+    );
+    if (!admission.ok && !waiting) {
       this.emit("allocation_rejected", { reason: admission.reason });
       return {
         status: 409 as const,
@@ -332,7 +350,9 @@ export class ControlPlane {
       bootEpoch: this.getBootEpoch(),
       catalogRevision: this.options.getCatalogRevision?.(),
       client: request.client,
-      status: request.deploymentPolicy === "existing-only" &&
+      status: waiting
+        ? "waiting"
+        : request.deploymentPolicy === "existing-only" &&
         bindings.every((binding) => binding.status === "HOT" || binding.status === "BUSY")
         ? "ready"
         : "pending",
@@ -340,12 +360,17 @@ export class ControlPlane {
       bindings,
       allowFallback: request.allowFallback,
       deploymentPolicy: request.deploymentPolicy,
+      priority: request.priority,
+      capacityPolicy: request.capacityPolicy,
       createdAt: new Date(now).toISOString(),
       expiresAt: new Date(now + request.ttlSeconds * 1000).toISOString(),
     };
     this.allocations.set(allocation.id, allocation);
     this.allocationLifecycleAborts.set(allocation.id, new AbortController());
-    this.emit("allocation_pending", this.allocationLabels(allocation));
+    this.emit(
+      allocation.status === "waiting" ? "allocation_waiting" : "allocation_pending",
+      this.allocationLabels(allocation),
+    );
     this.scheduleAllocationExpiry(allocation);
     this.cancelIdle();
 
@@ -358,10 +383,9 @@ export class ControlPlane {
       };
     }
 
-    const deadline = Math.min(
-      Date.parse(allocation.expiresAt),
-      now + (this.options.startupTimeoutMs ?? 300_000),
-    );
+    const deadline = allocation.status === "waiting"
+      ? Date.parse(allocation.expiresAt)
+      : this.allocationStartupDeadline(allocation);
     const operation: Operation = {
       id: this.createOperationId(),
       kind: "allocation",
@@ -372,10 +396,15 @@ export class ControlPlane {
       ensure: runtimeIds,
       createdAt: new Date(now).toISOString(),
       deadlineAt: new Date(deadline).toISOString(),
+      phase: allocation.status === "waiting" ? "waiting-for-capacity" : "scheduled",
     };
     allocation.operationId = operation.id;
     this.operations.set(operation.id, operation);
-    this.enqueue(() => this.runAllocationEnsure(allocation, operation, deadline));
+    if (allocation.status === "waiting") {
+      this.enqueue(() => this.promoteWaitingAllocations());
+    } else {
+      this.enqueue(() => this.runAllocationEnsure(allocation, operation, deadline));
+    }
     this.pruneHistory();
 
     return {
@@ -426,7 +455,7 @@ export class ControlPlane {
     }
     if (allocation.status !== "ready") {
       return {
-        status: allocation.status === "pending" ? 503 as const : 409 as const,
+        status: activeAllocation(allocation.status) ? 503 as const : 409 as const,
         body: {
           error: {
             code: "allocation_not_ready",
@@ -500,6 +529,7 @@ export class ControlPlane {
       }
     }
     this.emit(`allocation_${terminal}`, this.allocationLabels(allocation));
+    this.enqueue(() => this.promoteWaitingAllocations());
     this.scheduleIdleReconcile();
     this.pruneHistory();
     return { status: 200 as const, body: allocation };
@@ -541,6 +571,8 @@ export class ControlPlane {
         allowFallback: true,
         ttlSeconds: 86_400,
         deploymentPolicy: "existing-only",
+        priority: 0,
+        capacityPolicy: "reject",
       });
       if (allocated.status !== 200 && allocated.status !== 202) {
         return allocated;
@@ -991,6 +1023,7 @@ export class ControlPlane {
           // The idle reconcile still applies resident protection when observation fails.
         }
         this.scheduleIdleReconcile();
+        this.enqueue(() => this.promoteWaitingAllocations());
       }
       this.pruneHistory();
     }
@@ -1116,6 +1149,177 @@ export class ControlPlane {
     return this.getActiveAllocationCount() + directLegacyLeases;
   }
 
+  private admittedAllocations(): Allocation[] {
+    return [...this.allocations.values()].filter((allocation) =>
+      admittedAllocation(allocation.status)
+    );
+  }
+
+  private allocationResourceKeys(runtimeIds: string[]): Set<string> {
+    const keys = new Set<string>();
+    for (const runtimeId of runtimeIds) {
+      keys.add(`runtime:${runtimeId}`);
+      const swapGroup = getRuntime(this.registry, runtimeId)?.policy.swapGroup;
+      if (swapGroup) keys.add(`swap:${swapGroup}`);
+    }
+    return keys;
+  }
+
+  private hasResourceConflict(
+    runtimeIds: string[],
+    predicate: (allocation: Allocation) => boolean,
+  ): boolean {
+    const requested = this.allocationResourceKeys(runtimeIds);
+    return [...this.allocations.values()].some((allocation) => {
+      if (!predicate(allocation)) return false;
+      const existing = this.allocationResourceKeys(
+        allocation.bindings.map((binding) => binding.runtime),
+      );
+      return [...requested].some((key) => existing.has(key));
+    });
+  }
+
+  private allocationStartupDeadline(allocation: Allocation): number {
+    return Math.min(
+      Date.parse(allocation.expiresAt),
+      this.now() + (this.options.startupTimeoutMs ?? 300_000),
+    );
+  }
+
+  private allocationAdmission(allocation: Allocation) {
+    return admitRuntimes({
+      registry: this.registry,
+      state: this.observer.getState(),
+      allocations: this.admittedAllocations(),
+      candidateRuntimeIds: [...new Set(allocation.bindings.map((binding) => binding.runtime))],
+      ...(this.options.requireFreshTelemetry
+        ? {
+          liveTelemetry: {
+            requiredForNonResident: true,
+            maxAgeMs: this.options.telemetryMaxAgeMs ?? 10_000,
+            now: this.now(),
+          },
+        }
+        : {}),
+    });
+  }
+
+  private async promoteWaitingAllocations(): Promise<void> {
+    if (this.draining) return;
+    if (!this.hasFreshState()) {
+      try {
+        await this.observer.tick();
+      } catch {
+        this.scheduleWaitingPromotion();
+        return;
+      }
+      if (!this.hasFreshState()) {
+        this.scheduleWaitingPromotion();
+        return;
+      }
+    }
+    const waiting = [...this.allocations.values()]
+      .filter((allocation) => allocation.status === "waiting")
+      .sort((left, right) => {
+        const byPriority = (right.priority ?? 0) - (left.priority ?? 0);
+        if (byPriority !== 0) return byPriority;
+        const byCreated = Date.parse(left.createdAt) - Date.parse(right.createdAt);
+        return byCreated !== 0 ? byCreated : left.id.localeCompare(right.id);
+      });
+    let retryNeeded = false;
+    for (const allocation of waiting) {
+      if (allocation.status !== "waiting" || Date.parse(allocation.expiresAt) <= this.now()) {
+        continue;
+      }
+      const runtimeIds = [...new Set(allocation.bindings.map((binding) => binding.runtime))];
+      const lifecycleRuntimeIds = new Set(runtimeIds);
+      for (const runtimeId of runtimeIds) {
+        const swapGroup = getRuntime(this.registry, runtimeId)?.policy.swapGroup;
+        if (!swapGroup) continue;
+        for (const peer of this.registry.runtimes) {
+          if (peer.policy.swapGroup === swapGroup) lifecycleRuntimeIds.add(peer.id);
+        }
+      }
+      if ([...lifecycleRuntimeIds].some((runtimeId) =>
+        this.lifecycleReservations.has(runtimeId) || this.options.isRuntimeMutating?.(runtimeId)
+      )) {
+        retryNeeded = true;
+        continue;
+      }
+      const admission = this.allocationAdmission(allocation);
+      if (!admission.ok) {
+        if (!this.hasResourceConflict(
+          runtimeIds,
+          (candidate) => admittedAllocation(candidate.status),
+        )) {
+          retryNeeded = true;
+        }
+        continue;
+      }
+      const state = this.observer.getState();
+      for (const binding of allocation.bindings) {
+        const snapshot = state.runtimes.find((runtime) => runtime.id === binding.runtime);
+        if (snapshot) binding.status = snapshot.status;
+      }
+      const operation = allocation.operationId
+        ? this.operations.get(allocation.operationId)
+        : undefined;
+      const ready = allocation.deploymentPolicy === "existing-only"
+        && allocation.bindings.every((binding) =>
+          binding.status === "HOT" || binding.status === "BUSY"
+        );
+      allocation.status = ready ? "ready" : "pending";
+      this.emit("allocation_admitted", this.allocationLabels(allocation));
+      if (ready) {
+        if (operation) {
+          operation.status = "succeeded";
+          operation.ready = true;
+          operation.phase = "runtime-ready";
+          operation.completedAt = this.isoNow();
+        }
+        this.emit("allocation_ready", this.allocationLabels(allocation));
+        continue;
+      }
+      if (!operation) {
+        allocation.status = "failed";
+        allocation.error = {
+          code: "operation_missing",
+          message: "waiting allocation lost its startup operation",
+        };
+        this.allocationLifecycleAborts.get(allocation.id)?.abort(new Error("allocation failed"));
+        continue;
+      }
+      const deadline = this.allocationStartupDeadline(allocation);
+      operation.deadlineAt = new Date(deadline).toISOString();
+      operation.phase = "scheduled";
+      await this.runAllocationEnsure(allocation, operation, deadline);
+    }
+    this.pruneHistory();
+    if (retryNeeded) this.scheduleWaitingPromotion();
+  }
+
+  private scheduleWaitingPromotion(): void {
+    if (
+      this.draining
+      || this.waitingTimer
+      || ![...this.allocations.values()].some((allocation) => allocation.status === "waiting")
+    ) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (this.waitingTimer === timer) this.waitingTimer = undefined;
+      this.enqueue(() => this.promoteWaitingAllocations());
+    }, this.options.pollIntervalMs ?? 500);
+    timer.unref?.();
+    this.waitingTimer = timer;
+  }
+
+  private cancelWaitingPromotion(): void {
+    if (!this.waitingTimer) return;
+    clearTimeout(this.waitingTimer);
+    this.waitingTimer = undefined;
+  }
+
   private scheduleIdleReconcile(): void {
     if (this.draining) {
       return;
@@ -1212,6 +1416,7 @@ export class ControlPlane {
       releases: [...new Set(allocation.bindings.map((binding) => binding.release ?? "unmanaged"))].join(","),
       fallback: String(allocation.bindings.some((binding) => binding.fallback)),
       reasons: [...new Set(allocation.bindings.map((binding) => binding.selectionReason))].join(","),
+      priority: String(allocation.priority ?? 0),
     };
   }
 

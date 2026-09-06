@@ -22,6 +22,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "coding-default",
     "contextstill-background",
     "deep-reasoning-35b",
+    "nightworker-background",
     "tts-default",
     "tts-expressive",
   ]);
@@ -39,6 +40,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
       selectionPolicy: "default",
       canonicalProfile: "coding-default",
       deprecated: false,
+      schedulingPriority: 3000,
       providers: [{
         capability: "llm.coding",
         supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
@@ -52,6 +54,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
       canonicalProfile: "coding-default",
       selectionPolicy: "compatibility",
       deprecated: true,
+      schedulingPriority: 3000,
       providers: [{
         capability: "llm.reasoning",
         publicModel: "coding-default",
@@ -64,6 +67,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
       canonicalProfile: "contextstill-background",
       selectionPolicy: "explicit-only",
       deprecated: false,
+      schedulingPriority: 1000,
       providers: [{
         capability: "llm.coding",
         supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
@@ -72,6 +76,11 @@ test("production agent profiles compile to strict protocol-aware provider contra
         publicModel: "qwen-agent-worker",
         readiness: "llm-inference",
       }],
+    });
+  expect(catalog.profiles.find((profile) => profile.id === "nightworker-background"))
+    .toMatchObject({
+      schedulingPriority: 2000,
+      providers: [{ publicModel: "qwen-nightworker", route: "llm-agent-worker" }],
     });
   expect(catalog.profiles.find((profile) => profile.id === "asr-qwen"))
     .toMatchObject({

@@ -1103,6 +1103,127 @@ test("v1 admission enforces declared runtime allocation capacity", async () => {
   });
 });
 
+test("waiting allocations replace an idle swap peer by priority without preempting active work", async () => {
+  const priorityRegistry: Registry = {
+    nodes: [{
+      id: "local-node",
+      endpoint: "http://127.0.0.1",
+      resources: { memoryTotalGB: 100, reservedMemoryGB: 16 },
+    }],
+    profiles: [],
+    runtimes: [
+      {
+        id: "resident",
+        capability: ["llm.general"],
+        protocol: "openai.chat-completions.v1",
+        backend: "systemd",
+        node: "local-node",
+        policy: { class: "resident" },
+        resources: {
+          estimatedMemoryGB: 40,
+          maxConcurrentRequests: 1,
+          maxQueuedRequests: 1,
+          queueTimeoutMs: 1_000,
+        },
+        deployment: {
+          service: "resident.service",
+          healthPort: 8080,
+          endpoint: "http://127.0.0.1:8080",
+        },
+      },
+      ...["contextstill", "nightworker", "saaa"].map((id, index) => ({
+        id,
+        capability: ["llm.general"],
+        protocol: "openai.chat-completions.v1" as const,
+        backend: "llama-swap" as const,
+        node: "local-node",
+        policy: { class: "preferred" as const, swapGroup: "worker-slot" },
+        resources: {
+          estimatedMemoryGB: index === 2 ? 44 : 40,
+          maxConcurrentAllocations: 1,
+          maxConcurrentRequests: 1,
+          maxQueuedRequests: 1,
+          queueTimeoutMs: 1_000,
+        },
+        deployment: {
+          modelId: id,
+          listen: "http://127.0.0.1:8083",
+          endpoint: `http://127.0.0.1:8083/upstream/${id}`,
+        },
+      })),
+    ],
+    routes: ["contextstill", "nightworker", "saaa"].map((id) => ({
+      id: `llm-${id}`,
+      capabilities: ["llm.general"],
+      explicitOnly: true,
+      candidates: [{ runtime: id, purpose: "primary" as const }],
+    })),
+  };
+  const probes = new Map<string, RuntimeHealth>([
+    ["resident", probe("resident", true)],
+    ["contextstill", probe("contextstill", true)],
+    ["nightworker", probe("nightworker", false)],
+    ["saaa", probe("saaa", false)],
+  ]);
+  const ensured: string[] = [];
+  const backend: RuntimeBackend = {
+    list: async () => [...probes.values()],
+    health: async (id) => probes.get(id) ?? probe(id, false),
+    ensure: async (runtime) => {
+      ensured.push(runtime.id);
+      for (const peer of ["contextstill", "nightworker", "saaa"]) {
+        probes.set(peer, probe(peer, peer === runtime.id));
+      }
+      return probes.get(runtime.id)!;
+    },
+    stop: async (id) => {
+      probes.set(id, probe(id, false));
+    },
+  };
+  const observer = new Observer(priorityRegistry, backend);
+  await observer.tick();
+  const control = new ControlPlane(priorityRegistry, backend, observer, {
+    startupTimeoutMs: 1_000,
+    pollIntervalMs: 1,
+  });
+  const request = (client: string, priority: number) => ({
+    requirements: [{ capability: "llm.general", route: `llm-${client}` }],
+    client,
+    allowFallback: false,
+    ttlSeconds: 60,
+    deploymentPolicy: "existing-only" as const,
+    priority,
+    capacityPolicy: "wait" as const,
+  });
+
+  const contextStill = await control.allocate(request("contextstill", 1_000));
+  const nightWorker = await control.allocate(request("nightworker", 2_000));
+  const saaa = await control.allocate(request("saaa", 3_000));
+  expect(contextStill.body).toMatchObject({ status: "ready", priority: 1_000 });
+  expect(nightWorker.body).toMatchObject({ status: "waiting", priority: 2_000 });
+  expect(saaa.body).toMatchObject({ status: "waiting", priority: 3_000 });
+  expect(ensured).toEqual([]);
+
+  await control.releaseAllocation((contextStill.body as { id: string }).id);
+  await control.flush();
+  expect(ensured).toEqual(["saaa"]);
+  expect(control.getAllocation((saaa.body as { id: string }).id)?.status).toBe("ready");
+  expect(control.getAllocation((nightWorker.body as { id: string }).id)?.status).toBe("waiting");
+
+  await control.releaseAllocation((saaa.body as { id: string }).id);
+  await control.flush();
+  expect(ensured).toEqual(["saaa", "nightworker"]);
+  expect(control.getAllocation((nightWorker.body as { id: string }).id)?.status).toBe("ready");
+
+  const finalContextStill = await control.allocate(request("contextstill", 1_000));
+  expect(finalContextStill.body).toMatchObject({ status: "waiting" });
+  control.beginDrain();
+  await control.flush();
+  expect(control.getAllocation((finalContextStill.body as { id: string }).id)?.status)
+    .toBe("released");
+  expect(ensured).toEqual(["saaa", "nightworker"]);
+});
+
 test("control plane bounds active allocations even when runtime capacity is unbounded", async () => {
   const { app } = await makeApp(true, false, { maxActiveAllocations: 1 });
   const create = () => app.request("/v1/allocations", {

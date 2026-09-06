@@ -63,6 +63,8 @@ for await (const event of larm.streamChatCompletion({
 ContextStillの背景jobは固定LARM URL、Bearer、`qwen-agent-worker` modelで通常のChat Completionsを使います。
 旧static portやclaim済みURLを永続化しません。Provider取得・loading・busyはjob failure attemptへ加算せず、
 LARMのrelease/config/boot identityが変わった後のcanary成功時だけinfra起因paused jobを一件から再開します。
+NightWorkerは`qwen-nightworker`を使います。daemon側のProfile優先度はSAAA 3000、NightWorker 2000、
+ContextStill 1000で、実行中jobの完了後に高い値から次のProviderまたは実行枠へ進みます。
 
 ```ts
 async function runContextStillJob(): Promise<void> {

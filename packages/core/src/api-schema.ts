@@ -33,6 +33,10 @@ export const allocationRequirementSchema = z.object({
 
 export const deploymentPolicySchema = z.enum(["existing-only", "allow-listed"]);
 
+export const allocationCapacityPolicySchema = z.enum(["reject", "wait"]);
+
+export const allocationPrioritySchema = z.number().int().min(-1_000_000).max(1_000_000);
+
 export const allocationRequestSchema = z
   .object({
     requirements: z.array(allocationRequirementSchema).min(1).max(16),
@@ -40,6 +44,8 @@ export const allocationRequestSchema = z
     allowFallback: z.boolean().default(false),
     ttlSeconds: z.number().int().min(1).max(86_400).default(300),
     deploymentPolicy: deploymentPolicySchema.default("existing-only"),
+    priority: allocationPrioritySchema.default(0),
+    capacityPolicy: allocationCapacityPolicySchema.default("reject"),
   }).strict()
   .refine(
     (value) => new Set(value.requirements.map((requirement) => requirement.capability)).size
@@ -60,6 +66,8 @@ export type ReleaseRequest = z.infer<typeof releaseRequestSchema>;
 export type ResolveRequest = z.infer<typeof resolveRequestSchema>;
 export type AllocationRequirement = z.infer<typeof allocationRequirementSchema>;
 export type DeploymentPolicy = z.infer<typeof deploymentPolicySchema>;
+export type AllocationCapacityPolicy = z.infer<typeof allocationCapacityPolicySchema>;
 export type AllocationRequest = z.infer<typeof allocationRequestSchema>;
+export type AllocationRequestInput = z.input<typeof allocationRequestSchema>;
 export type AllocationResolveRequest = z.infer<typeof allocationResolveRequestSchema>;
 export type AllocationRenewRequest = z.infer<typeof allocationRenewRequestSchema>;

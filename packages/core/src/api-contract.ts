@@ -5,6 +5,8 @@ import {
 } from "./allocation";
 import {
   allocationRequirementSchema,
+  allocationCapacityPolicySchema,
+  allocationPrioritySchema,
   allocationRenewRequestSchema,
   allocationRequestSchema,
   allocationResolveRequestSchema,
@@ -159,6 +161,8 @@ export const publicAllocationSchema = z.object({
   bindings: z.array(publicAllocationBindingSchema).min(1).max(16),
   allowFallback: z.boolean(),
   deploymentPolicy: deploymentPolicySchema,
+  priority: allocationPrioritySchema.optional(),
+  capacityPolicy: allocationCapacityPolicySchema.optional(),
   createdAt: z.string().datetime(),
   expiresAt: z.string().datetime(),
   operationId: z.string().min(1).max(192).optional(),

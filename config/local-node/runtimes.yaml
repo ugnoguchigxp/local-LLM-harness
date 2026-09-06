@@ -14,8 +14,8 @@ runtimes:
     resources:
       estimatedMemoryGB: 40
       maxConcurrentRequests: 1
-      maxQueuedRequests: 0
-      queueTimeoutMs: 1000
+      maxQueuedRequests: 16
+      queueTimeoutMs: 120000
     deployment:
       service: llama-server.service
       healthPort: 8080
@@ -39,8 +39,8 @@ runtimes:
       estimatedMemoryGB: 40
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
-      maxQueuedRequests: 0
-      queueTimeoutMs: 1000
+      maxQueuedRequests: 16
+      queueTimeoutMs: 120000
     deployment:
       modelId: qwen-quality
       listen: http://127.0.0.1:8083
@@ -65,8 +65,8 @@ runtimes:
       estimatedMemoryGB: 28
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
-      maxQueuedRequests: 0
-      queueTimeoutMs: 1000
+      maxQueuedRequests: 16
+      queueTimeoutMs: 120000
     deployment:
       modelId: qwen-agent
       listen: http://127.0.0.1:8083
@@ -90,8 +90,8 @@ runtimes:
       estimatedMemoryGB: 38
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
-      maxQueuedRequests: 0
-      queueTimeoutMs: 1000
+      maxQueuedRequests: 16
+      queueTimeoutMs: 120000
     deployment:
       modelId: qwen-fast
       listen: http://127.0.0.1:8083
@@ -115,8 +115,8 @@ runtimes:
       estimatedMemoryGB: 44
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
-      maxQueuedRequests: 0
-      queueTimeoutMs: 1000
+      maxQueuedRequests: 16
+      queueTimeoutMs: 120000
     deployment:
       modelId: qwen36-35b
       listen: http://127.0.0.1:8083
@@ -140,8 +140,8 @@ runtimes:
       estimatedMemoryGB: 48
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
-      maxQueuedRequests: 0
-      queueTimeoutMs: 1000
+      maxQueuedRequests: 16
+      queueTimeoutMs: 120000
     deployment:
       modelId: ornith15-35b
       listen: http://127.0.0.1:8083
@@ -165,8 +165,8 @@ runtimes:
       estimatedMemoryGB: 44
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
-      maxQueuedRequests: 0
-      queueTimeoutMs: 1000
+      maxQueuedRequests: 16
+      queueTimeoutMs: 120000
     deployment:
       modelId: ornith15-35b-speed
       listen: http://127.0.0.1:8083
@@ -190,8 +190,8 @@ runtimes:
       estimatedMemoryGB: 30
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
-      maxQueuedRequests: 0
-      queueTimeoutMs: 1000
+      maxQueuedRequests: 16
+      queueTimeoutMs: 120000
     deployment:
       modelId: ornith15-35b-agent
       listen: http://127.0.0.1:8083

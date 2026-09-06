@@ -93,6 +93,7 @@ const agentProviderYamlSchema = z.object({
 
 const agentProfileYamlSchema = z.object({
   description: z.string().min(1).max(256),
+  schedulingPriority: z.number().int().min(-1_000_000).max(1_000_000).default(0),
   providers: z.array(agentProviderYamlSchema).min(1).max(8),
 }).strict().superRefine((value, context) => {
   for (const field of ["name", "capability", "publicModel"] as const) {
@@ -168,6 +169,7 @@ export type AgentProfile = {
   description: string;
   selectionPolicy: "default" | "compatibility" | "explicit-only";
   deprecated: boolean;
+  schedulingPriority?: number;
   providers: AgentProviderProfile[];
   revision: string;
 };
@@ -280,6 +282,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
       description: profile.description,
       selectionPolicy,
       deprecated: false,
+      schedulingPriority: profile.schedulingPriority,
       providers,
     };
     return { id, ...normalized, revision: digest(normalized) };
@@ -322,6 +325,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
       description: alias.description,
       selectionPolicy: "compatibility" as const,
       deprecated: true,
+      schedulingPriority: canonical.schedulingPriority,
       providers,
     };
     return { id, ...normalized, revision: digest(normalized) };
@@ -423,6 +427,7 @@ export const publicAgentProfileListSchema = z.object({
     description: z.string().min(1).max(256),
     selectionPolicy: z.enum(["default", "compatibility", "explicit-only"]),
     deprecated: z.boolean(),
+    schedulingPriority: z.number().int().min(-1_000_000).max(1_000_000).optional(),
     providers: z.array(z.object({
       name: agentIdentifierSchema,
       capability: agentIdentifierSchema,

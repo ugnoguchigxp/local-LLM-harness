@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { allocationSchema } from "./allocation";
+import { allocationRequestSchema } from "./api-schema";
 
 function allocation() {
   return {
@@ -32,4 +33,18 @@ test("validates complete one-to-one allocation bindings", () => {
     ...allocation(),
     bindings: [{ ...allocation().bindings[0], route: "llm-speed" }],
   })).toThrow(/match a declared/);
+});
+
+test("allocation scheduling defaults preserve rejection and accept bounded priorities", () => {
+  const request = allocationRequestSchema.parse({
+    requirements: [{ capability: "llm.general", route: "llm-default" }],
+  });
+  expect(request).toMatchObject({ priority: 0, capacityPolicy: "reject" });
+  expect(allocationRequestSchema.parse({
+    ...request,
+    priority: 3_000,
+    capacityPolicy: "wait",
+  })).toMatchObject({ priority: 3_000, capacityPolicy: "wait" });
+  expect(allocationRequestSchema.safeParse({ ...request, priority: 1_000_001 }).success)
+    .toBeFalse();
 });

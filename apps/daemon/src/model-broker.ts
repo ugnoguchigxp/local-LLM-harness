@@ -33,6 +33,7 @@ export type ModelBrokerLease = {
   endpoint: string;
   release?: string;
   catalogRevision?: string;
+  priority: number;
   lifecycleSignal?: AbortSignal;
   close(): Promise<void>;
 };
@@ -204,6 +205,7 @@ export class ModelBroker {
       ...(resolved.allocation.catalogRevision
         ? { catalogRevision: resolved.allocation.catalogRevision }
         : {}),
+      priority: resolved.allocation.priority ?? descriptor.schedulingPriority,
       lifecycleSignal: this.control.getAllocationSignal(resolved.allocation.id),
       close: async () => {
         if (closed) return;
@@ -228,6 +230,8 @@ export class ModelBroker {
       allowFallback: false,
       ttlSeconds: this.leaseTtlSeconds,
       deploymentPolicy: "existing-only",
+      priority: entry.descriptor.schedulingPriority,
+      capacityPolicy: "wait",
     });
     if (result.status !== 200 && result.status !== 202) {
       throw brokerFailure(result.status, result.body);
@@ -266,7 +270,7 @@ export class ModelBroker {
         });
         return { allocation, binding };
       }
-      if (allocation.status !== "pending") {
+      if (allocation.status !== "pending" && allocation.status !== "waiting") {
         throw brokerFailure(503, allocation.error ? { error: allocation.error } : undefined);
       }
       if (this.now() >= deadline) {

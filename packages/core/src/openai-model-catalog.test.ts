@@ -14,6 +14,7 @@ function catalog(
     capability?: string;
     route?: string;
     deprecated?: boolean;
+    schedulingPriority?: number;
     protocol?: "openai.chat-completions.v1" | "openai.audio-transcriptions.v1" | "openai.audio-speech.v1";
   }>,
 ): AgentConnectionCatalog {
@@ -27,6 +28,7 @@ function catalog(
       description: binding.profile,
       selectionPolicy: index === 0 ? "default" : "explicit-only",
       deprecated: binding.deprecated ?? false,
+      schedulingPriority: binding.schedulingPriority,
       revision: `revision-${index}`,
       providers: [{
         name: "llm",
@@ -63,6 +65,7 @@ test("OpenAI model catalog lists stable public models without internal bindings"
     capability: "llm.coding",
     route: "llm-agent-worker",
     protocol: "openai.chat-completions.v1",
+    schedulingPriority: 0,
     profileIds: ["agent"],
   });
 });
@@ -112,4 +115,15 @@ test("OpenAI model catalog rejects one public model mapped to different routes",
     { profile: "coding", model: "coding-default", route: "llm-default" },
     { profile: "speed", model: "coding-default", route: "llm-speed" },
   ]))).toThrow(OpenAiModelCatalogError);
+});
+
+test("OpenAI model catalog carries server-owned priority and rejects ambiguous duplicates", () => {
+  const models = createOpenAiModelCatalog(catalog([
+    { profile: "saaa", model: "coding-default", schedulingPriority: 3_000 },
+  ]));
+  expect(models.models[0]?.schedulingPriority).toBe(3_000);
+  expect(() => createOpenAiModelCatalog(catalog([
+    { profile: "first", model: "shared", schedulingPriority: 1_000 },
+    { profile: "second", model: "shared", schedulingPriority: 2_000 },
+  ]))).toThrow(/conflicting scheduling priorities/);
 });

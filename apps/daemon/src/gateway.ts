@@ -54,6 +54,7 @@ export type GatewayProxyOptions = {
   metrics?: MetricsRegistry;
   requestTracker?: RequestTracker;
   lifecycleSignal?: AbortSignal;
+  priority?: number;
   now?: () => number;
   random?: () => string;
   onEvent?: (event: ControlEvent) => void;
@@ -260,6 +261,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       options.runtime.id,
       options.runtime.resources,
       abort.signal,
+      options.priority ?? 0,
     );
   } catch (error) {
     if (timedOut) {

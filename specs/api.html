@@ -333,6 +333,17 @@
       <li><code>ttlSeconds</code>は1から86400で、既定値は300。</li>
       <li><code>allowFallback</code>の既定値は偽。</li>
       <li>
+        <code>priority</code
+        >は<code>-1000000</code>から<code>1000000</code>の整数で、既定値は0。
+        大きい値を先に選ぶ。
+      </li>
+      <li>
+        <code>capacityPolicy</code
+        >は<code>reject</code>または<code>wait</code>で、既定値は
+        <code>reject</code>。waitは同一Runtimeまたはswap groupのactive
+        Allocation解放だけを待つ。
+      </li>
+      <li>
         <code>deploymentPolicy</code
         >は<code>existing-only</code>または<code>allow-listed</code>。
       </li>
@@ -357,6 +368,8 @@
   "bootEpoch": "epoch-example",
   "catalogRevision": "sha256...",
   "status": "ready",
+  "priority": 0,
+  "capacityPolicy": "reject",
   "requirements": [
     { "capability": "llm.general", "route": "llm-default" }
   ],
@@ -393,6 +406,8 @@
 
     <h3>Status</h3>
     <dl>
+      <dt><code>waiting</code></dt>
+      <dd>使用中のRuntimeまたはswap group解放を優先度付き待機列で待っている</dd>
       <dt><code>pending</code></dt>
       <dd>配備、起動、readiness待機中</dd>
       <dt><code>ready</code></dt>
@@ -412,6 +427,8 @@
       <code>succeeded</code
       >、<code>failed</code>、<code>cancelled</code>、
       <code>timed_out</code
+      >を返します。優先度付き待機は<code>waiting-for-capacity</code>、admission後は
+      <code>scheduled</code
       >を返します。<code>allow-listed</code>配備では
       <code>checking-artifacts</code>、<code>staging-artifacts</code>、
       <code>stopping-runtime</code>、<code>activating-artifacts</code>、
@@ -440,7 +457,10 @@
       </li>
       <li>
         追加27Bと35Bは一つのswap groupを共有する。同groupのactive Allocationはpreemptせず、
-        idleなHOT memberだけを次の明示要求で置き換える。
+        <code>capacityPolicy: reject</code>は従来どおり拒否する。
+        <code>capacityPolicy: wait</code
+        >は解放後に<code>priority</code>降順、同値FIFOで昇格し、 idleなHOT
+        memberだけを置き換える。
       </li>
       <li>Resident Runtimeはstop、無人activation、resource evictionの対象にしない。</li>
     </ul>
@@ -478,7 +498,7 @@
       <li>
         Runtimeごとの<code>maxConcurrentRequests</code>、<code>maxQueuedRequests</code>、
         <code>queueTimeoutMs</code
-        >でFIFO実行枠を制御する。満杯と待機timeoutは<code>429</code>と
+        >で実行枠を制御する。待機列はAllocationの優先度降順、同値FIFOとし、満杯と待機timeoutは<code>429</code>と
         <code>Retry-After</code>を返す。
       </li>
       <li>実行開始直前にAllocation、epoch、observer freshness、固定Runtimeを再検証する。</li>
