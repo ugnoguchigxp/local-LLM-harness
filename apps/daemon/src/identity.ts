@@ -23,24 +23,30 @@ export function loadReleaseCommit(manifestPath: string | undefined): string {
     throw new Error("release manifest is invalid");
   }
   const manifest = parsed as Record<string, unknown>;
-  const requiredKeys = [
+  const commonKeys = [
     "schemaVersion",
     "commit",
     "larmVersion",
     "bunVersion",
-    "lockfileSha256",
-    "nodeModulesSha256",
     "configRevision",
     "createdAt",
   ];
+  const requiredKeys = manifest.schemaVersion === 1
+    ? [...commonKeys, "lockfileSha256", "nodeModulesSha256"]
+    : manifest.schemaVersion === 2
+      ? [...commonKeys, "payloadSha256"]
+      : [];
   if (
     Object.keys(manifest).sort().join("\n") !== [...requiredKeys].sort().join("\n")
-    || manifest.schemaVersion !== 1
+    || (manifest.schemaVersion !== 1 && manifest.schemaVersion !== 2)
     || typeof manifest.commit !== "string" || !/^[a-f0-9]{40}$/.test(manifest.commit)
     || typeof manifest.larmVersion !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.larmVersion)
     || typeof manifest.bunVersion !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.bunVersion)
-    || typeof manifest.lockfileSha256 !== "string" || !/^[a-f0-9]{64}$/.test(manifest.lockfileSha256)
-    || typeof manifest.nodeModulesSha256 !== "string" || !/^[a-f0-9]{64}$/.test(manifest.nodeModulesSha256)
+    || (manifest.schemaVersion === 1
+      && (typeof manifest.lockfileSha256 !== "string" || !/^[a-f0-9]{64}$/.test(manifest.lockfileSha256)
+        || typeof manifest.nodeModulesSha256 !== "string" || !/^[a-f0-9]{64}$/.test(manifest.nodeModulesSha256)))
+    || (manifest.schemaVersion === 2
+      && (typeof manifest.payloadSha256 !== "string" || !/^[a-f0-9]{64}$/.test(manifest.payloadSha256)))
     || typeof manifest.configRevision !== "string" || !/^[a-f0-9]{64}$/.test(manifest.configRevision)
     || typeof manifest.createdAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(manifest.createdAt)
     || Number.isNaN(Date.parse(manifest.createdAt))

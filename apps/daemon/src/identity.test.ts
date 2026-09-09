@@ -59,6 +59,19 @@ test("release identity is loaded from a strict manifest", async () => {
     };
     await writeFile(manifest, JSON.stringify(valid));
     expect(loadReleaseCommit(manifest)).toBe("a".repeat(40));
+    const signedArchive = {
+      schemaVersion: 2,
+      commit: "e".repeat(40),
+      larmVersion: "0.1.0",
+      bunVersion: "1.4.0",
+      configRevision: "c".repeat(64),
+      payloadSha256: "f".repeat(64),
+      createdAt: "2026-09-09T00:00:00Z",
+    };
+    await writeFile(manifest, JSON.stringify(signedArchive));
+    expect(loadReleaseCommit(manifest)).toBe("e".repeat(40));
+    await writeFile(manifest, JSON.stringify({ ...signedArchive, lockfileSha256: "b".repeat(64) }));
+    expect(() => loadReleaseCommit(manifest)).toThrow(/manifest is invalid/);
     await writeFile(manifest, JSON.stringify({ ...valid, commit: "main" }));
     expect(() => loadReleaseCommit(manifest)).toThrow(/manifest is invalid/);
     await writeFile(manifest, JSON.stringify({ ...valid, unexpected: true }));
