@@ -17,6 +17,7 @@ import {
   createOpenApiDocument,
   createServiceActivity,
   chatCompletionRequestSchema,
+  embeddingRequestSchema,
   prepareRequestSchema,
   releaseRequestSchema,
   releaseConvergenceStatusSchema,
@@ -28,6 +29,7 @@ import {
   runtimeReleaseSelectionSchema,
   type Allocation,
   type AllocationRequest,
+  type EmbeddingRequest,
 } from "@larm/core";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import type { ControlEvent, ControlPlane } from "./controller";
@@ -71,6 +73,7 @@ export type AppDeps = {
   gatewayFetch?: FetchLike;
   controlMaxBodyBytes?: number;
   gatewayMaxBodyBytes?: number;
+  embeddingMaxBodyBytes?: number;
   gatewayTimeoutMs?: number;
   speechMaxBodyBytes?: number;
   stateMaxAgeMs?: number;
@@ -123,6 +126,7 @@ function acceptsProviderBearer(method: string, path: string): boolean {
       "/v1/chat/completions",
       "/v1/audio/transcriptions",
       "/v1/audio/speech",
+      "/v1/embed",
     ]).has(path)
   ) return true;
   return method === "GET"
@@ -131,7 +135,10 @@ function acceptsProviderBearer(method: string, path: string): boolean {
 
 function acceptsAnonymousAgentApi(method: string, path: string): boolean {
   if (method === "GET" && path === "/v1/activity") return true;
-  if (method === "GET" && (path === "/v1/agent-profiles" || path === "/v2/agent-profiles")) return true;
+  if (
+    method === "GET"
+    && (path === "/v1/agent-profiles" || path === "/v2/agent-profiles" || path === "/v3/agent-profiles")
+  ) return true;
   if (method === "POST" && path === "/v1/agent-connections") return true;
   if (/^\/v1\/agent-connections\/[^/]+$/.test(path)) {
     return method === "GET" || method === "DELETE";
@@ -183,6 +190,7 @@ function inspectionRuntime(runtime: Registry["runtimes"][number]) {
     id: runtime.id,
     capability: runtime.capability,
     protocol: runtime.protocol,
+    ...(runtime.embedding ? { embedding: runtime.embedding } : {}),
     backend: runtime.backend,
     node: runtime.node,
     policy: runtime.policy,
@@ -420,9 +428,38 @@ export function createAppComponents(deps: AppDeps) {
         return c.json(errorBody("connection_forbidden", "capability header does not match provider token"), 403);
       }
     }
+    if (options.protocol === "larm.embedding.v1" && !scoped) {
+      return c.json(errorBody(
+        "connection_provider_token_required",
+        "embedding requests require a claimed provider bearer token",
+      ), 401);
+    }
     let chatRequest: unknown;
     let chatRequestBytes: Uint8Array | undefined;
     let chatResponseFormat: "sse" | undefined;
+    let embeddingRequest: EmbeddingRequest | undefined;
+    let embeddingRequestBytes: Uint8Array | undefined;
+    if (options.protocol === "larm.embedding.v1") {
+      try {
+        const bytes = await readBodyLimited(c.req.raw.clone() as unknown as Request, options.maxBodyBytes);
+        const parsed = embeddingRequestSchema.safeParse(JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        ));
+        if (!parsed.success) {
+          return c.json(errorBody(
+            "invalid_embedding_request",
+            "texts, explicit type, normalize=true, and priority are required",
+          ), 400);
+        }
+        embeddingRequest = parsed.data;
+        embeddingRequestBytes = new TextEncoder().encode(JSON.stringify(parsed.data));
+      } catch (error) {
+        if (error instanceof RequestBodyError) {
+          return c.json(errorBody(error.code, error.message), error.status);
+        }
+        return c.json(errorBody("bad_request", "request body must be valid UTF-8 JSON"), 400);
+      }
+    }
     if (options.protocol === "openai.chat-completions.v1") {
       try {
         const bytes = await readBodyLimited(c.req.raw.clone() as unknown as Request, options.maxBodyBytes);
@@ -505,7 +542,9 @@ export function createAppComponents(deps: AppDeps) {
     if (scoped) {
       try {
         let modelValues: unknown[];
-        if (options.protocol === "openai.chat-completions.v1") {
+        if (options.protocol === "larm.embedding.v1") {
+          modelValues = [scoped.provider.publicModel];
+        } else if (options.protocol === "openai.chat-completions.v1") {
           modelValues = typeof chatRequest === "object" && chatRequest !== null && !Array.isArray(chatRequest)
             ? [(chatRequest as Record<string, unknown>).model]
             : [];
@@ -702,10 +741,26 @@ export function createAppComponents(deps: AppDeps) {
     if (!runtime || runtime.protocol !== options.protocol) {
       return c.json(errorBody("protocol_mismatch", "allocated runtime protocol does not match"), 409);
     }
+    if (options.protocol === "larm.embedding.v1") {
+      if (
+        !embeddingRequest
+        || !embeddingRequestBytes
+        || !scoped?.provider.embeddingSpace
+        || !runtime.embedding
+        || JSON.stringify(scoped.provider.embeddingSpace) !== JSON.stringify(runtime.embedding)
+      ) {
+        return c.json(errorBody(
+          "embedding_space_mismatch",
+          "claimed and resolved embedding spaces do not match",
+        ), 409);
+      }
+    }
 
     return await proxyGateway({
       request: c.req.raw,
-      ...(chatRequestBytes ? { requestBody: chatRequestBytes } : {}),
+      ...((embeddingRequestBytes ?? chatRequestBytes)
+        ? { requestBody: embeddingRequestBytes ?? chatRequestBytes }
+        : {}),
       allocationId,
       protocol: options.protocol,
       upstreamPath: options.upstreamPath,
@@ -736,6 +791,9 @@ export function createAppComponents(deps: AppDeps) {
       responseFormat: chatResponseFormat,
       validateTranscriptionResponse: options.protocol === "openai.audio-transcriptions.v1",
       validateSpeechResponse: options.protocol === "openai.audio-speech.v1",
+      ...(embeddingRequest && runtime.embedding
+        ? { validateEmbeddingResponse: { request: embeddingRequest, space: runtime.embedding } }
+        : {}),
       revalidate: () => {
         if (providerToken && agentConnections) {
           try {
@@ -975,6 +1033,16 @@ export function createAppComponents(deps: AppDeps) {
     return agentResult(c, result);
   });
 
+  app.get("/v3/agent-profiles", (c) => {
+    const feature = agentFeature(c);
+    if (feature instanceof Response) return feature;
+    const result = feature.listProfilesV3();
+    if (result.status === 200) {
+      deps.onEvent?.({ name: "agent_profile_catalog_served", labels: { contract: "agent-connection.v3" } });
+    }
+    return agentResult(c, result);
+  });
+
   app.post("/v1/agent-connections", async (c) => {
     const feature = agentFeature(c);
     if (feature instanceof Response) return feature;
@@ -1068,7 +1136,7 @@ export function createAppComponents(deps: AppDeps) {
     }
     const parsed = agentConnectionClaimRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
     if (!parsed.success) return c.json(errorBody("invalid_request", "invalid claim request"), 400);
-    const result = await feature.claim(c.req.param("id"), principal());
+    const result = await feature.claim(c.req.param("id"), principal(), parsed.data.format);
     const providers = typeof result.body === "object" && result.body !== null && "providers" in result.body
       && Array.isArray(result.body.providers)
       ? result.body.providers
@@ -1310,6 +1378,13 @@ export function createAppComponents(deps: AppDeps) {
     upstreamPath: "/v1/audio/speech",
     bodyMode: "buffered",
     maxBodyBytes: deps.gatewayMaxBodyBytes ?? 4 * 1024 * 1024,
+  }));
+
+  app.post("/v1/embed", (c) => handleGateway(c, {
+    protocol: "larm.embedding.v1",
+    upstreamPath: "/embed",
+    bodyMode: "buffered",
+    maxBodyBytes: deps.embeddingMaxBodyBytes ?? 2 * 1024 * 1024,
   }));
 
   app.get("/v1/audio/voices", (c) => handleGateway(c, {

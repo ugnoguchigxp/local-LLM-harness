@@ -11,6 +11,7 @@ export {
   type ParsedInferenceAuditRecord,
 } from "./inference-audit";
 export * from "./protocol";
+export * from "./embedding";
 export * from "./openai-audio";
 export * from "./network";
 export * from "./service-harness";

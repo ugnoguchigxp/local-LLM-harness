@@ -1,6 +1,7 @@
 import {
   allocationRequestSchema,
   agentConnectionClaimSchema,
+  agentConnectionClaimRequestSchema,
   agentConnectionHealthSchema,
   agentConnectionRequestSchema,
   agentConnectionRenewRequestSchema,
@@ -12,11 +13,16 @@ import {
   publicAllocationSchema,
   publicAgentConnectionSchema,
   publicAgentProfileListSchema,
+  publicAgentProfileListV3Schema,
   readinessSchema,
   releaseConvergenceStatusSchema,
   serviceActivitySchema,
   OpenAiChatCompletionSseInspector,
+  embeddingAgentProviderDescriptorSchema,
+  embeddingRequestSchema,
+  inspectEmbeddingResponse,
   type AgentConnectionClaim,
+  type AgentConnectionClaimRequest,
   type AgentConnectionHealth,
   type AgentConnectionRequestInput,
   type AllocationRequestInput,
@@ -27,7 +33,14 @@ import {
   type OpenAiModelList,
   type OpenAiChatCompletionSseChunk,
   type ReleaseConvergenceStatus,
+  type EmbeddingRequest,
+  type EmbeddingResponse,
 } from "@larm/core";
+
+export type EmbeddingAgentProvider = Extract<
+  AgentConnectionClaim["providers"][number],
+  { apiStyle: "larm-embedding" }
+>;
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -262,6 +275,11 @@ export class LarmClient {
     return this.parseJson(response, publicAgentProfileListSchema);
   }
 
+  async listAgentProfilesV3(signal?: AbortSignal) {
+    const response = await this.request("/v3/agent-profiles", { signal });
+    return this.parseJson(response, publicAgentProfileListV3Schema);
+  }
+
   async createAgentConnection(
     request: AgentConnectionRequestInput,
     options: RequestOptions = {},
@@ -347,13 +365,17 @@ export class LarmClient {
 
   async claimAgentConnection(
     id: string,
+    formatOrSignal: AgentConnectionClaimRequest["format"] | AbortSignal = "openai-provider-v1",
     signal?: AbortSignal,
   ): Promise<AgentConnectionClaim> {
+    const format = typeof formatOrSignal === "string" ? formatOrSignal : "openai-provider-v1";
+    const requestSignal = typeof formatOrSignal === "string" ? signal : formatOrSignal;
+    const body = agentConnectionClaimRequestSchema.parse({ format });
     const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ format: "openai-provider-v1" }),
-      signal,
+      body: JSON.stringify(body),
+      signal: requestSignal,
     });
     return this.parseJson(response, agentConnectionClaimSchema);
   }
@@ -391,13 +413,21 @@ export class LarmClient {
       claim: AgentConnectionClaim,
       client: LarmClient,
     ) => Promise<T>,
-    options: RequestOptions & { pollIntervalMs?: number; timeoutMs?: number } = {},
+    options: RequestOptions & {
+      pollIntervalMs?: number;
+      timeoutMs?: number;
+      claimFormat?: AgentConnectionClaimRequest["format"];
+    } = {},
   ): Promise<T> {
     const created = await this.createAgentConnection(request, options);
     const outcome: { ok: true; value: T } | { ok: false; error: unknown } = await (async () => {
       try {
         const ready = await this.waitForAgentConnection(created, options);
-        const claim = await this.claimAgentConnection(ready.id, options.signal);
+        const claim = await this.claimAgentConnection(
+          ready.id,
+          options.claimFormat,
+          options.signal,
+        );
         return { ok: true as const, value: await handler(ready, claim, this) };
       } catch (error) {
         return { ok: false as const, error };
@@ -514,6 +544,72 @@ export class LarmClient {
   async listOpenAiModels(signal?: AbortSignal): Promise<OpenAiModelList> {
     const response = await this.request("/v1/models", { signal });
     return this.parseJson(response, openAiModelListSchema);
+  }
+
+  async embed(
+    claimedProvider: EmbeddingAgentProvider,
+    input: EmbeddingRequest,
+    signal?: AbortSignal,
+  ): Promise<EmbeddingResponse> {
+    const provider = embeddingAgentProviderDescriptorSchema.parse(claimedProvider);
+    const request = embeddingRequestSchema.parse(input);
+    const abort = new AbortController();
+    const onAbort = () => abort.abort(signal?.reason);
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+    const timeout = setTimeout(
+      () => abort.abort(new Error("LARM embedding client timeout")),
+      this.timeoutMs,
+    );
+    timeout.unref?.();
+    try {
+      const response = await this.fetchImpl(provider.endpoint, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${provider.credential.token}`,
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify(request),
+        redirect: "manual",
+        signal: abort.signal,
+      });
+      if (response.status >= 300 && response.status < 400) {
+        await response.body?.cancel(new Error("provider redirect is forbidden")).catch(() => undefined);
+        throw new LarmApiError(502, "provider_redirect_forbidden", "embedding provider returned a redirect");
+      }
+      const bytes = await this.readResponseLimited(response, 2 * 1024 * 1024);
+      let value: unknown;
+      try {
+        value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+      } catch {
+        throw new LarmApiError(502, "embedding_response_invalid", "embedding provider returned invalid JSON");
+      }
+      if (!response.ok) {
+        const parsed = errorResponseSchema.safeParse(value);
+        throw new LarmApiError(
+          response.status,
+          parsed.success ? parsed.data.error.code : "embedding_http_error",
+          parsed.success ? parsed.data.error.message : `embedding provider returned HTTP ${response.status}`,
+        );
+      }
+      const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+      if (mediaType !== "application/json") {
+        throw new LarmApiError(502, "embedding_response_invalid", "embedding provider did not return JSON");
+      }
+      const inspected = inspectEmbeddingResponse({ value, request, space: provider.embeddingSpace });
+      if (!inspected.ok) {
+        throw new LarmApiError(
+          502,
+          `embedding_${inspected.reason}`,
+          "embedding provider response does not match the claimed semantic space",
+        );
+      }
+      return inspected.response;
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   createChatCompletion(body: unknown, options: RequestOptions = {}): Promise<Response> {
@@ -777,6 +873,41 @@ export class LarmClient {
       throw new LarmEpochChangedError(previous, epoch);
     }
     this.bootEpoch = epoch;
+  }
+
+  private async readResponseLimited(response: Response, maxBytes: number): Promise<Uint8Array> {
+    const declared = response.headers.get("content-length");
+    if (declared && /^\d+$/.test(declared) && Number(declared) > maxBytes) {
+      await response.body?.cancel(new Error("embedding response too large")).catch(() => undefined);
+      throw new LarmApiError(502, "embedding_response_too_large", "embedding provider response is too large");
+    }
+    if (!response.body) return new Uint8Array();
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        total += next.value.byteLength;
+        if (total > maxBytes) {
+          throw new LarmApiError(502, "embedding_response_too_large", "embedding provider response is too large");
+        }
+        chunks.push(next.value);
+      }
+    } catch (error) {
+      await reader.cancel(error).catch(() => undefined);
+      throw error;
+    } finally {
+      reader.releaseLock();
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
   }
 
   private async parseJson<T>(response: Response, schema: { parse(input: unknown): T }): Promise<T> {

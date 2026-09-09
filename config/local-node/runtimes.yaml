@@ -275,3 +275,46 @@ runtimes:
       service: qwen-tts.service
       healthPort: 8082
       endpoint: http://127.0.0.1:8082
+
+  multilingual-e5-small:
+    artifacts:
+      - multilingual-e5-small-onnx-qint8
+    capability:
+      - embedding.multilingual-e5-small
+    protocol: larm.embedding.v1
+    embedding:
+      contractVersion: larm-embedding.v1
+      workload: embedding
+      model:
+        id: intfloat/multilingual-e5-small
+        revision: 614241f622f53c4eeff9890bdc4f31cfecc418b3
+        artifactDigest: 63bc913284590439c0fdadcd5f61ee9ad9630591075314bc975fb190983ed62c
+      dimension: 384
+      inputTypes:
+        - query
+        - passage
+      prefixes:
+        query: "query: "
+        passage: "passage: "
+      normalization: l2
+      tokenization:
+        kind: sentencepiece-bpe
+        tokenizerDigest: 0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39
+        maxTokens: 512
+        truncation: end
+        pooling: mean
+    backend: systemd
+    node: local-node
+    policy:
+      class: preferred
+    resources:
+      estimatedMemoryGB: 1
+      maxConcurrentAllocations: 8
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 32
+      queueTimeoutMs: 30000
+    deployment:
+      service: larm-embedding.service
+      healthPort: 44512
+      healthPath: /health
+      endpoint: http://127.0.0.1:44512

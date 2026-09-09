@@ -54,6 +54,23 @@ test("health accepts healthy status from a running systemd service", async () =>
   }
 });
 
+test("health accepts an embedding daemon ready response", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      return Response.json({ ready: true, modelLoaded: true, service: "embeddingd" });
+    },
+  });
+  try {
+    const backend = new SystemdBackend([definition(server.port!)], {
+      queryService: async () => "Running",
+    });
+    expect((await backend.health("qwen-tts")).healthOk).toBe(true);
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("preferred systemd runtime starts and stops through systemctl control", async () => {
   const actions: string[] = [];
   const server = Bun.serve({

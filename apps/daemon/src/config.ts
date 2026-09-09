@@ -27,6 +27,7 @@ export type DaemonConfig = {
   gatewayTimeoutMs: number;
   controlMaxBodyBytes: number;
   gatewayMaxBodyBytes: number;
+  embeddingMaxBodyBytes: number;
   speechMaxBodyBytes: number;
   shutdownTimeoutMs: number;
   artifactManifestPath: string;
@@ -295,6 +296,12 @@ export function parseDaemonConfig(
       "LARM_GATEWAY_MAX_BODY_BYTES",
       4 * 1024 * 1024,
       { min: 1, max: 64 * 1024 * 1024, integer: true },
+    ),
+    embeddingMaxBodyBytes: numberSetting(
+      env,
+      "LARM_EMBEDDING_MAX_BODY_BYTES",
+      2 * 1024 * 1024,
+      { min: 1, max: 16 * 1024 * 1024, integer: true },
     ),
     speechMaxBodyBytes: numberSetting(
       env,

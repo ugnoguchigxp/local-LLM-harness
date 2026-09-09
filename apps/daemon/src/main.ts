@@ -187,6 +187,7 @@ const appComponents = createAppComponents({
   requestTracker,
   controlMaxBodyBytes: config.controlMaxBodyBytes,
   gatewayMaxBodyBytes: config.gatewayMaxBodyBytes,
+  embeddingMaxBodyBytes: config.embeddingMaxBodyBytes,
   speechMaxBodyBytes: config.speechMaxBodyBytes,
   gatewayTimeoutMs: config.gatewayTimeoutMs,
   stateMaxAgeMs: config.stateMaxAgeMs,

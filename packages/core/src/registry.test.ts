@@ -33,6 +33,10 @@ test("loads the Linux production registry", () => {
   const route35bSpeed = registry.routes.find((route) => route.id === "llm-35b-speed");
   const agentWorkerRoute = registry.routes.find((route) => route.id === "llm-agent-worker");
   const agent35bRoute = registry.routes.find((route) => route.id === "llm-agent-35b");
+  const embedding = registry.runtimes.find((runtime) => runtime.id === "multilingual-e5-small");
+  const embeddingRoute = registry.routes.find((route) =>
+    route.id === "embedding-multilingual-e5-small"
+  );
 
   expect(registry.nodes[0]?.id).toBe("local-node");
   expect(general?.backend).toBe("systemd");
@@ -83,6 +87,22 @@ test("loads the Linux production registry", () => {
   });
   expect(defaultRoute?.candidates.some((candidate) => candidate.runtime.includes("35b"))).toBe(false);
   expect(registry.runtimes.some((runtime) => runtime.id.includes("35b"))).toBe(true);
+  expect(embedding).toMatchObject({
+    protocol: "larm.embedding.v1",
+    policy: { class: "preferred" },
+    embedding: {
+      model: {
+        id: "intfloat/multilingual-e5-small",
+        revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      },
+      dimension: 384,
+      normalization: "l2",
+    },
+  });
+  expect(embeddingRoute).toMatchObject({
+    explicitOnly: true,
+    candidates: [{ runtime: "multilingual-e5-small", purpose: "primary" }],
+  });
 });
 
 test("production swap group matches llama-swap model membership", () => {
@@ -303,6 +323,14 @@ test("rejects capabilities that do not match the runtime protocol", () => {
   const documents = registryDocuments({ routes: {} });
   documents.runtimesYaml.runtimes["qwen-general"].capability = ["speech.stt"];
   expect(() => parseRegistryDocuments(documents)).toThrow(/incompatible/);
+});
+
+test("embedding runtimes require a declared semantic space", () => {
+  const documents = registryDocuments({ routes: {} });
+  const runtime = documents.runtimesYaml.runtimes["qwen-general"] as Record<string, unknown>;
+  runtime.capability = ["embedding.test"];
+  runtime.protocol = "larm.embedding.v1";
+  expect(() => parseRegistryDocuments(documents)).toThrow(/must declare its embedding space/);
 });
 
 test("rejects a resident floor that exceeds usable node memory", () => {

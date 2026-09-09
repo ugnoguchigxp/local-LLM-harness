@@ -53,6 +53,7 @@ worker_dir="$(target_path /srv/ai/models/qwen38-worker)"
 worker_35b_dir="$(target_path /srv/ai/models/qwen36-35b)"
 ornith_35b_dir="$(target_path /srv/ai/models/ornith15-35b)"
 tts_dir="$(target_path /srv/ai/models/qwen-tts)"
+embedding_dir="$(target_path /srv/ai/models/multilingual-e5-small-onnx-qint8)"
 candidate_dir="$(target_path /srv/ai/apps/larm-candidates)"
 release_dir="$(target_path /srv/ai/apps/larm-releases)"
 release_inbox_dir="$(target_path /var/lib/larm/release-inbox)"
@@ -104,6 +105,7 @@ else
     qwen-asr.service
     whisper-asr.service
     qwen-tts.service
+    larm-embedding.service
     voicevox-tts.service
     larm-daemon.service
     larm-inference-audit-prune.service
@@ -129,6 +131,7 @@ else
     "${worker_35b_dir}"
     "${ornith_35b_dir}"
     "${tts_dir}"
+    "${embedding_dir}"
     "${staging_dir}"
     "${rollback_dir}"
     "${state_dir}"
@@ -340,13 +343,13 @@ rm -f -- "${obsolete_retirement_helper}"
 systemctl_run daemon-reload
 systemctl_run enable "${enabled_units[@]}"
 if [[ "${install_scope}" == "all" ]]; then
-  systemctl_run disable qwen-tts.service
+  systemctl_run disable qwen-tts.service larm-embedding.service
 fi
 
 if [[ "${install_scope}" == "gateway" ]]; then
   echo "LARM Gateway unit enabled; existing Provider units and their enablement were not changed."
 else
-  echo "Resident/control units enabled; preferred qwen-tts.service left disabled for on-demand use."
+  echo "Resident/control units enabled; preferred qwen-tts.service and larm-embedding.service left disabled for on-demand use."
 fi
 echo "This script intentionally does not reboot or restart services."
 echo "The obsolete native Provider unit, when present, was stopped, disabled, and removed."

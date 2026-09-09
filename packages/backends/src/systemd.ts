@@ -5,7 +5,7 @@ import { isSystemdRuntime } from "@larm/core";
 import { LifecycleError, type RuntimeBackend, type RuntimeHealth } from "./types";
 import { responseTextLimited } from "./http";
 
-const HEALTH_OK = /"status"\s*:\s*"(?:ok|healthy)"/i;
+const HEALTH_OK = /(?:"status"\s*:\s*"(?:ok|healthy)"|"ready"\s*:\s*true)/i;
 const MAX_COMMAND_OUTPUT = 64 * 1024;
 
 function throwIfAborted(signal?: AbortSignal): void {

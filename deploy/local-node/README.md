@@ -12,6 +12,7 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `systemd/`: the units installed by the `local-node` profile
 - `polkit/`: LARMにPreferred providerだけのstart / stopを許可する最小権限rule
 - `scripts/prepare-host.sh`: conservative host prerequisites; no firewall mutation or reboot
+- `scripts/prepare-embedding-runtime.sh`: 固定source revisionからrepository外へEmbedding binaryをbuild
 - `scripts/configure-saaa-rest-access.sh`: exact SAAA source hostから9810だけを許可するplan・apply・rollback
 - `scripts/restore-dhcp.sh`: legacy LARM固定address overlayをattended Netplanで除去してDHCPを検証
 - `scripts/install-services.sh`: unitをinstallし、Resident/controlだけをenableする（restartなし）。
@@ -66,8 +67,10 @@ capture, and the persistent hourly `larm-inference-audit-prune.timer` enforces t
 10 GiB, and minimum-free-space bounds even after daemon downtime. Audit payloads are not part of
 release or host-state backups. The prune service reads only the audit settings and key; API,
 management, and Agent Connection credentials remain outside its environment.
-`qwen-tts.service`はinstallのみ行い、boot時はdisableのままです。LARMは同梱の
-polkit ruleにより、このPreferred serviceのstart / stopだけを無人実行できます。
+`qwen-tts.service`と`larm-embedding.service`はinstallのみ行い、boot時はdisableのままです。LARMは同梱の
+polkit ruleにより、これらPreferred serviceのstart / stopだけを無人実行できます。Embeddingモデルは
+`intfloat/multilingual-e5-small` revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`の
+ONNX/QInt8 snapshotへ固定され、artifact stagingが全6ファイルのsize・SHA-256・snapshot digestを検証します。
 
 `qwen-general`はloopbackのOpenAI互換HTTP endpointへ接続し、GatewayがJSONまたはSSEとして転送します。
 公開data planeはHTTPだけです。`saaa-desktop`の
@@ -138,6 +141,8 @@ atomic切替とdaemon restartだけを行います。
 cd /srv/ai/apps/local-LLM-harness
 # Host preparation, only when required:
 # sudo deploy/local-node/scripts/prepare-host.sh
+# As ugnoguchi, prepare the pinned external Embedding runtime when required:
+# deploy/local-node/scripts/prepare-embedding-runtime.sh
 deploy/local-node/scripts/preflight-larm.sh
 # Complete the reviewed backup block above before installation.
 sudo deploy/local-node/scripts/install-services.sh
@@ -159,6 +164,8 @@ deploy/local-node/scripts/smoke-larm.sh
 # LARM_EXPECTED_MODEL=qwen-agent-worker \
 # LARM_EXPECTED_RELEASE_COMMIT="$(git rev-parse HEAD)" \
 # bun run smoke:agent-http
+# Embedding model staging・release activation後のquery/pass、renew、revoke、release canary:
+# LARM_EXPECTED_RELEASE_COMMIT="$(git rev-parse HEAD)" bun run smoke:embedding
 # LARM_CANARY_AUDIO_FILE=/path/to/non-sensitive.wav deploy/local-node/scripts/smoke-voice.sh
 # After production calibration has changed deploy/local-node/slo.yaml to calibrated:
 # LARM_CANARY_EVIDENCE_DIR=/srv/ai/logs/larm-canary \
@@ -207,11 +214,11 @@ consumer証跡はcanaryと同じProvider世代を固定し、次のstrict JSON�
 `durationSeconds`、`maxGapSeconds`をatomic保存します。失敗履歴は同じ世代内の後続成功では消えず、
 release／config／bootのいずれかが変わった場合だけ新しいsoak windowを開始します。
 
-The installer copies and enables units but intentionally does not start or restart current units. It
+The installer copies and enables Resident/control units but intentionally does not start or restart current units. It
 stops, disables, and removes the obsolete `larm-native-qwen-provider.service` unit when present. On an
 update, inspect the diff and restart only a changed service when its behavior must be applied;
 do not use the first-install start command as a blanket restart. The installer always converges
-`qwen-tts.service` to disabled without stopping an active process.
+`qwen-tts.service` and `larm-embedding.service` to disabled without stopping an active process.
 
 `larm-daemon.service`はGit worktreeではなく`/srv/ai/apps/larm-current`を参照します。builderは
 `/srv/ai/apps/larm-candidates/&lt;full-commit&gt;`でfrozen installと全gateを非特権実行し、modeを固定したtree

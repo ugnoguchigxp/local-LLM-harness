@@ -1,6 +1,13 @@
 # Source/release identities used to reconstruct binaries under /srv/ai/apps.
 # No artifact from these projects is vendored into this repository.
 sources:
+  local-llm:
+    repository: https://github.com/ugnoguchigxp/local-llm.git
+    revision: d2f40a755fdda85c87274b0724a62de7250d8526
+    path: /srv/ai/apps/local-llm
+    package: embedding
+    modelManifest: models/manifests/multilingual-e5-small-onnx-qint8.json
+
   llama-cpp:
     repository: https://github.com/ggml-org/llama.cpp.git
     revision: cb300598d5f90189cb69d2702f4930aaf99d32a2

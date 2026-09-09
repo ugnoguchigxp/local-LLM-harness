@@ -1,6 +1,6 @@
 # local-LLM-harness
 
-local-LLM-harness（LARM）は、Linux 上で動かす複数のローカル AI ランタイムを、ひとつの API から扱うためのコントロールプレーンです。LLM、音声認識、音声合成などのランタイムを登録し、要求に合うものを選び、起動から解放までを管理します。
+local-LLM-harness（LARM）は、Linux 上で動かす複数のローカル AI ランタイムを、ひとつの API から扱うためのコントロールプレーンです。LLM、Embedding、音声認識、音声合成などのランタイムを登録し、要求に合うものを選び、起動から解放までを管理します。
 
 モデルや推論エンジンそのものは同梱しません。このリポジトリが管理するのは、ランタイムを安全に使い分けるためのソースコード、設定スキーマ、API、運用ロジックです。
 
@@ -50,6 +50,7 @@ Client / Agent
 - systemd と llama-swap を介した状態監視とライフサイクル制御
 - 許可リストに登録した成果物の検証、staging、切り替え、ロールバック
 - Agent 向けの短期接続情報と、用途別 provider profile の発行
+- query / passageを明示する、固定semantic spaceの動的Embedding Provider
 - 独自transportを持たないOpenAI互換HTTP JSON／SSE経路
 - ヘルスチェック、readiness、Prometheus メトリクス、OpenAPI 3.1 定義
 - LLM・ASR・TTSの単体性能と3系統同時利用時の劣化を比較する診断ベンチマーク
@@ -71,7 +72,8 @@ LARM は、GPU ドライバ、推論エンジン、モデルのインストー�
 | モデル一覧 | `GET /v1/models` |
 | LLM | JSON／HTTP SSE: `POST /v1/chat/completions` |
 | 音声 | `POST /v1/audio/transcriptions`、`POST /v1/audio/speech`、`GET /v1/audio/voices` |
-| Agent 接続 | `/v1/agent-profiles`、`/v1/agent-connections` |
+| Embedding | `GET /v3/agent-profiles`で契約を発見し、Agent Connection claim後に`POST /v1/embed` |
+| Agent 接続 | `/v1/agent-profiles`、`/v2/agent-profiles`、`/v3/agent-profiles`、`/v1/agent-connections` |
 | 成果物とリリース | `/v1/artifacts`、`/v1/runtime-releases`、`/v1/deployments` |
 | API 定義 | `GET /openapi.json` |
 
@@ -159,6 +161,12 @@ LARM_MODEL=coding-default bun quickstart.ts
 ```
 
 Model Brokerが内部Allocationの取得・固定・解放を行います。明示Allocationは管理・高度用途にだけ残します。LLM全文を待たず句単位でTTSを開始する音声例は [`examples/voice-client.ts`](examples/voice-client.ts) にあります。
+
+Embeddingは短期Agent Connection専用です。`contextstill-embedding`を明示選択し、
+`larm-embedding-provider-v1`形式でclaimしてください。claimにはendpoint、短期Bearer、
+`intfloat/multilingual-e5-small`の固定revision、artifact digest、384次元、prefix、L2正規化、
+tokenization / truncation契約、capacityが含まれます。TypeScript clientの`embed`はclaimのendpointだけを使い、
+応答の件数・次元・有限値・L2 normを再検証します。
 
 ## 主な環境変数
 

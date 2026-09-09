@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { deploymentPolicySchema } from "./api-schema";
+import { embeddingSpaceSchema, type EmbeddingSpace } from "./embedding";
 import type { Registry } from "./registry";
 import { isLiteralLoopbackHost } from "./network";
 import { runtimeProtocolSchema, type RuntimeProtocol } from "./schema";
@@ -17,6 +18,7 @@ export const agentReadinessKindSchema = z.enum([
   "llm-inference",
   "stt-transcription",
   "tts-speech",
+  "embedding",
 ]);
 
 export const agentAudienceNetworkSchema = z.enum([
@@ -161,6 +163,7 @@ export type AgentProviderProfile = {
   publicModel: string;
   readiness: AgentReadinessKind;
   protocol: RuntimeProtocol;
+  embeddingSpace?: EmbeddingSpace;
 };
 
 export type AgentProfile = {
@@ -195,6 +198,7 @@ function digest(value: unknown): string {
 function expectedReadiness(protocol: RuntimeProtocol): AgentReadinessKind {
   if (protocol === "openai.chat-completions.v1") return "llm-inference";
   if (protocol === "openai.audio-transcriptions.v1") return "stt-transcription";
+  if (protocol === "larm.embedding.v1") return "embedding";
   return "tts-speech";
 }
 
@@ -246,6 +250,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
         );
       }
       const protocols = new Set<RuntimeProtocol>();
+      const embeddingSpaces: EmbeddingSpace[] = [];
       for (const candidate of route.candidates) {
         const runtime = runtimes.get(candidate.runtime);
         if (!runtime) {
@@ -259,6 +264,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
           );
         }
         protocols.add(runtime.protocol);
+        if (runtime.embedding) embeddingSpaces.push(runtime.embedding);
       }
       if (protocols.size !== 1) {
         throw new AgentConnectionCatalogError(
@@ -266,6 +272,21 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
         );
       }
       const protocol = [...protocols][0]!;
+      let embeddingSpace: EmbeddingSpace | undefined;
+      if (protocol === "larm.embedding.v1") {
+        if (embeddingSpaces.length !== route.candidates.length) {
+          throw new AgentConnectionCatalogError(
+            `agent profile ${id} route ${provider.route} has an embedding candidate without an embedding space`,
+          );
+        }
+        const canonicalSpace = JSON.stringify(embeddingSpaces[0]);
+        if (embeddingSpaces.some((space) => JSON.stringify(space) !== canonicalSpace)) {
+          throw new AgentConnectionCatalogError(
+            `agent profile ${id} route ${provider.route} candidates do not share one embedding space`,
+          );
+        }
+        embeddingSpace = structuredClone(embeddingSpaces[0]);
+      }
       if (provider.readiness !== expectedReadiness(protocol)) {
         throw new AgentConnectionCatalogError(
           `agent profile ${id} provider ${provider.name} readiness does not match ${protocol}`,
@@ -275,8 +296,15 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
         ...provider,
         supportedCapabilities: [...route.capabilities].sort(),
         protocol,
+        ...(embeddingSpace ? { embeddingSpace } : {}),
       };
     }).sort((left, right) => left.name.localeCompare(right.name));
+    const embeddingProviders = providers.filter((provider) => provider.protocol === "larm.embedding.v1");
+    if (embeddingProviders.length > 0 && embeddingProviders.length !== providers.length) {
+      throw new AgentConnectionCatalogError(
+        `agent profile ${id} must not mix embedding and non-embedding providers`,
+      );
+    }
     const normalized = {
       canonicalProfile: id,
       description: profile.description,
@@ -396,7 +424,7 @@ export const agentConnectionRenewRequestSchema = z.object({
 }).strict();
 
 export const agentConnectionClaimRequestSchema = z.object({
-  format: z.literal("openai-provider-v1"),
+  format: z.enum(["openai-provider-v1", "larm-embedding-provider-v1"]),
 }).strict();
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -477,6 +505,74 @@ export const publicAgentProfileListSchema = z.object({
   }
 });
 
+export const publicAgentProfileListV3Schema = z.object({
+  contractVersion: z.literal("agent-connection.v3"),
+  catalogRevision: z.string().min(1).max(128),
+  defaultAgentProfile: agentIdentifierSchema,
+  profiles: z.array(z.object({
+    id: agentIdentifierSchema,
+    canonicalProfile: agentIdentifierSchema,
+    description: z.string().min(1).max(256),
+    selectionPolicy: z.enum(["default", "compatibility", "explicit-only"]),
+    deprecated: z.boolean(),
+    schedulingPriority: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+    providers: z.array(z.object({
+      name: agentIdentifierSchema,
+      capability: agentIdentifierSchema,
+      supportedCapabilities: z.array(agentIdentifierSchema).min(1).max(32),
+      protocol: runtimeProtocolSchema,
+      model: agentIdentifierSchema,
+      embeddingSpace: embeddingSpaceSchema.optional(),
+    }).strict().superRefine((provider, context) => {
+      const canonical = [...new Set(provider.supportedCapabilities)].sort();
+      if (
+        !provider.supportedCapabilities.includes(provider.capability)
+        || JSON.stringify(canonical) !== JSON.stringify(provider.supportedCapabilities)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["supportedCapabilities"],
+          message: "supportedCapabilities must be sorted, unique, and include capability",
+        });
+      }
+      if ((provider.protocol === "larm.embedding.v1") !== (provider.embeddingSpace !== undefined)) {
+        context.addIssue({
+          code: "custom",
+          path: ["embeddingSpace"],
+          message: "embeddingSpace must be present exactly for embedding providers",
+        });
+      }
+    })).min(1).max(8),
+  }).strict()),
+  audiences: z.array(agentIdentifierSchema),
+}).strict().superRefine((value, context) => {
+  const selected = value.profiles.filter((profile) => profile.id === value.defaultAgentProfile);
+  if (selected.length !== 1 || selected[0]?.selectionPolicy !== "default") {
+    context.addIssue({
+      code: "custom",
+      path: ["defaultAgentProfile"],
+      message: "defaultAgentProfile must name exactly one default profile",
+    });
+  }
+  if (value.profiles.some((profile) => {
+    if (profile.id === value.defaultAgentProfile) {
+      return profile.canonicalProfile !== profile.id || profile.deprecated;
+    }
+    if (profile.selectionPolicy === "compatibility") {
+      return profile.canonicalProfile !== value.defaultAgentProfile || !profile.deprecated;
+    }
+    return profile.selectionPolicy !== "explicit-only"
+      || profile.canonicalProfile !== profile.id
+      || profile.deprecated;
+  })) {
+    context.addIssue({
+      code: "custom",
+      path: ["profiles"],
+      message: "profile selection, canonical identity, or deprecation metadata is inconsistent",
+    });
+  }
+});
+
 export const publicAgentConnectionProviderSchema = z.object({
   name: agentIdentifierSchema,
   capability: agentIdentifierSchema,
@@ -524,6 +620,13 @@ export const agentProviderHealthSchema = z.object({
   ready: z.boolean(),
   acceptingRequests: z.boolean(),
   reason: agentProviderHealthReasonSchema.optional(),
+  capacity: z.object({
+    ready: z.boolean(),
+    activeRequests: z.number().int().nonnegative(),
+    queueDepth: z.number().int().nonnegative(),
+    maxQueuedRequests: z.number().int().nonnegative(),
+    retryAfterMs: z.number().int().nonnegative(),
+  }).strict().optional(),
   probe: z.object({
     kind: z.literal("semantic-inference"),
     protocol: runtimeProtocolSchema,
@@ -548,7 +651,11 @@ export const agentProviderDescriptorSchema = z.object({
   name: agentIdentifierSchema,
   capability: agentIdentifierSchema,
   apiStyle: z.literal("openai"),
-  protocol: runtimeProtocolSchema,
+  protocol: z.enum([
+    "openai.chat-completions.v1",
+    "openai.audio-transcriptions.v1",
+    "openai.audio-speech.v1",
+  ]),
   scheme: z.enum(["http", "https"]),
   host: z.string().min(1).max(255),
   port: z.number().int().min(1).max(65_535),
@@ -619,12 +726,89 @@ export const agentProviderDescriptorSchema = z.object({
   }
 });
 
+export const embeddingAgentProviderDescriptorSchema = z.object({
+  name: agentIdentifierSchema,
+  capability: agentIdentifierSchema,
+  apiStyle: z.literal("larm-embedding"),
+  protocol: z.literal("larm.embedding.v1"),
+  scheme: z.enum(["http", "https"]),
+  host: z.string().min(1).max(255),
+  port: z.number().int().min(1).max(65_535),
+  baseUrl: z.string().url(),
+  endpoint: z.string().url(),
+  model: agentIdentifierSchema,
+  embeddingSpace: embeddingSpaceSchema,
+  capacity: z.object({
+    ready: z.literal(true),
+    activeRequests: z.number().int().nonnegative(),
+    queueDepth: z.number().int().nonnegative(),
+    maxQueuedRequests: z.number().int().nonnegative(),
+    retryAfterMs: z.number().int().nonnegative(),
+  }).strict(),
+  health: z.object({
+    url: z.string().url(),
+    kind: z.literal("semantic-inference"),
+    maxAgeMs: z.literal(10_000),
+  }).strict(),
+  credential: z.object({
+    type: z.literal("bearer"),
+    token: z.string().min(1).max(4096),
+    expiresAt: z.string().datetime(),
+  }).strict(),
+  configuration: z.object({
+    kind: z.literal("larm-embedding-provider-v1"),
+    fields: z.object({
+      daemonURL: z.string().url(),
+      model: agentIdentifierSchema,
+      dimension: z.number().int().positive(),
+    }).strict(),
+    secretFields: z.object({ accessToken: z.literal("credential.token") }).strict(),
+  }).strict(),
+}).strict().superRefine((provider, context) => {
+  let baseUrl: URL;
+  let endpoint: URL;
+  try {
+    baseUrl = new URL(provider.baseUrl);
+    endpoint = new URL(provider.endpoint);
+  } catch {
+    return;
+  }
+  const expectedScheme = baseUrl.protocol.slice(0, -1);
+  const expectedPort = baseUrl.port ? Number(baseUrl.port) : baseUrl.protocol === "https:" ? 443 : 80;
+  if (baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash || baseUrl.pathname !== "/v1") {
+    context.addIssue({ code: "custom", path: ["baseUrl"], message: "baseUrl must be a canonical /v1 URL" });
+  }
+  if (
+    endpoint.origin !== baseUrl.origin
+    || endpoint.pathname !== "/v1/embed"
+    || endpoint.username
+    || endpoint.password
+    || endpoint.search
+    || endpoint.hash
+  ) {
+    context.addIssue({ code: "custom", path: ["endpoint"], message: "endpoint must be the base origin /v1/embed" });
+  }
+  if (provider.scheme !== expectedScheme || provider.host !== baseUrl.hostname || provider.port !== expectedPort) {
+    context.addIssue({ code: "custom", path: ["baseUrl"], message: "scheme, host, and port must match baseUrl" });
+  }
+  if (
+    provider.configuration.fields.daemonURL !== provider.baseUrl
+    || provider.configuration.fields.model !== provider.model
+    || provider.configuration.fields.dimension !== provider.embeddingSpace.dimension
+  ) {
+    context.addIssue({ code: "custom", path: ["configuration", "fields"], message: "configuration must match the claimed provider" });
+  }
+});
+
 export const agentConnectionClaimSchema = z.object({
   id: z.string().min(1).max(192),
   allocationId: z.string().min(1).max(192),
   status: z.literal("ready"),
   audience: agentIdentifierSchema,
-  providers: z.array(agentProviderDescriptorSchema).min(1).max(8),
+  providers: z.array(z.union([
+    agentProviderDescriptorSchema,
+    embeddingAgentProviderDescriptorSchema,
+  ])).min(1).max(8),
   expiresAt: z.string().datetime(),
 }).strict().superRefine((claim, context) => {
   const names = new Set<string>();
@@ -673,3 +857,4 @@ export type PublicAgentConnection = z.infer<typeof publicAgentConnectionSchema>;
 export type AgentConnectionHealth = z.infer<typeof agentConnectionHealthSchema>;
 export type AgentProviderHealth = z.infer<typeof agentProviderHealthSchema>;
 export type AgentConnectionClaim = z.infer<typeof agentConnectionClaimSchema>;
+export type AgentConnectionClaimRequest = z.infer<typeof agentConnectionClaimRequestSchema>;

@@ -32,6 +32,9 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(document.components.schemas.ServiceHarness).toBeDefined();
   expect(document.components.schemas.ServiceActivity).toBeDefined();
   expect(document.components.schemas.ChatCompletionRequest).toBeDefined();
+  expect(document.components.schemas.AgentProfileListV3).toBeDefined();
+  expect(document.components.schemas.EmbeddingRequest).toBeDefined();
+  expect(document.components.schemas.EmbeddingResponse).toBeDefined();
   expect(document.components.schemas.ServerSentEvents).toBeDefined();
   const agentRequest = document.components.schemas.AgentConnectionRequest as {
     required?: string[];
@@ -80,6 +83,10 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(paths["/v1/agent-connections"]?.post?.parameters).toBeDefined();
   expect(paths["/v1/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v2/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v3/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v1/embed"]?.post?.security).toEqual([{ providerBearer: [] }]);
+  expect(JSON.stringify(paths["/v1/embed"]?.post?.requestBody))
+    .toContain("#/components/schemas/EmbeddingRequest");
   expect(paths["/v1/activity"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(JSON.stringify(paths["/v1/activity"]?.get)).toContain("#/components/schemas/ServiceActivity");
   const activityResponses = paths["/v1/activity"]?.get?.responses as Record<

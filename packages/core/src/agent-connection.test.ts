@@ -7,6 +7,7 @@ import {
   parseAgentConnectionCatalog,
   publicAgentProfileListSchema,
   publicAgentProfileListV1Schema,
+  publicAgentProfileListV3Schema,
   resolveAgentAudienceBaseUrl,
 } from "./agent-connection";
 import { loadRegistry } from "./registry";
@@ -21,6 +22,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "asr-qwen",
     "coding-default",
     "contextstill-background",
+    "contextstill-embedding",
     "deep-reasoning-35b",
     "nightworker-background",
     "tts-default",
@@ -75,6 +77,27 @@ test("production agent profiles compile to strict protocol-aware provider contra
         protocol: "openai.chat-completions.v1",
         publicModel: "qwen-agent-worker",
         readiness: "llm-inference",
+      }],
+    });
+  expect(catalog.profiles.find((profile) => profile.id === "contextstill-embedding"))
+    .toMatchObject({
+      selectionPolicy: "explicit-only",
+      schedulingPriority: 1500,
+      providers: [{
+        capability: "embedding.multilingual-e5-small",
+        protocol: "larm.embedding.v1",
+        publicModel: "multilingual-e5-small",
+        readiness: "embedding",
+        embeddingSpace: {
+          model: {
+            id: "intfloat/multilingual-e5-small",
+            revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+          },
+          dimension: 384,
+          prefixes: { query: "query: ", passage: "passage: " },
+          normalization: "l2",
+          tokenization: { maxTokens: 512, truncation: "end", pooling: "mean" },
+        },
       }],
     });
   expect(catalog.profiles.find((profile) => profile.id === "nightworker-background"))
@@ -246,6 +269,70 @@ test("public Agent Profile metadata identifies one capable HTTP default", () => 
       }],
     }],
   }).success).toBeFalse();
+});
+
+test("v3 discovery carries the immutable embedding space without changing v2", () => {
+  const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
+  const embedding = catalog.profiles.find((profile) => profile.id === "contextstill-embedding")!;
+  const response = {
+    contractVersion: "agent-connection.v3" as const,
+    catalogRevision: "catalog-test",
+    defaultAgentProfile: catalog.defaultAgentProfile,
+    profiles: catalog.profiles.map((profile) => ({
+      id: profile.id,
+      canonicalProfile: profile.canonicalProfile,
+      description: profile.description,
+      selectionPolicy: profile.selectionPolicy,
+      deprecated: profile.deprecated,
+      schedulingPriority: profile.schedulingPriority,
+      providers: profile.providers.map((provider) => ({
+        name: provider.name,
+        capability: provider.capability,
+        supportedCapabilities: provider.supportedCapabilities,
+        protocol: provider.protocol,
+        model: provider.publicModel,
+        ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
+      })),
+    })),
+    audiences: catalog.audiences.map((audience) => audience.id),
+  };
+  expect(publicAgentProfileListV3Schema.parse(response).profiles)
+    .toContainEqual(expect.objectContaining({ id: embedding.id }));
+  expect(publicAgentProfileListSchema.safeParse({
+    ...response,
+    contractVersion: "agent-connection.v2",
+  }).success).toBeFalse();
+});
+
+test("embedding failover candidates must preserve the exact semantic space", () => {
+  const primary = registry.runtimes.find((runtime) => runtime.id === "multilingual-e5-small")!;
+  const fake = structuredClone(primary);
+  fake.id = "mismatched-embedding";
+  fake.embedding = { ...fake.embedding!, dimension: 768 };
+  const mismatchedRegistry = structuredClone(registry);
+  mismatchedRegistry.runtimes.push(fake);
+  const route = mismatchedRegistry.routes.find((candidate) =>
+    candidate.id === "embedding-multilingual-e5-small"
+  )!;
+  route.explicitOnly = false;
+  route.candidates.push({ runtime: fake.id, purpose: "primary" });
+  expect(() => parseAgentConnectionCatalog({
+    version: 1,
+    defaultAgentProfile: "embedding",
+    audiences: { local: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" } },
+    agentProfiles: {
+      embedding: {
+        description: "embedding",
+        providers: [{
+          name: "embedding",
+          capability: "embedding.multilingual-e5-small",
+          route: "embedding-multilingual-e5-small",
+          publicModel: "multilingual-e5-small",
+          readiness: "embedding",
+        }],
+      },
+    },
+  }, mismatchedRegistry)).toThrow(/do not share one embedding space/);
 });
 
 test("v1 Agent Profile discovery remains byte-shape compatible with the commissioned SAAA parser", () => {

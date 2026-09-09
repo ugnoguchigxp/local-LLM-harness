@@ -1,6 +1,15 @@
 # Runtime releases combine immutable artifact entries into one deployable unit.
 # Model data stays outside this repository; every artifact is pinned in models.yaml.
 runtimeReleases:
+  multilingual-e5-small-current:
+    runtime: multilingual-e5-small
+    artifacts:
+      - multilingual-e5-small-onnx-qint8
+    providerConfigRevision: local-llm-embedding-d2f40a755f-qint8-v1
+    estimatedMemoryGB: 1
+    healthPath: /health
+    default: true
+
   qwen-general-current:
     runtime: qwen-general
     artifacts:

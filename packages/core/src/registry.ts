@@ -104,11 +104,24 @@ export function parseRegistryDocuments(input: {
       if (runtime.protocol === "openai.audio-transcriptions.v1") {
         return capability === "speech.stt";
       }
+      if (runtime.protocol === "larm.embedding.v1") {
+        return capability.startsWith("embedding.");
+      }
       return capability.startsWith("speech.tts");
     });
     if (!compatible) {
       throw new RegistryError(
         `runtimes.yaml: runtime ${runtime.id} has capabilities incompatible with ${runtime.protocol}`,
+      );
+    }
+    if (runtime.protocol === "larm.embedding.v1" && !runtime.embedding) {
+      throw new RegistryError(
+        `runtimes.yaml: embedding runtime ${runtime.id} must declare its embedding space`,
+      );
+    }
+    if (runtime.protocol !== "larm.embedding.v1" && runtime.embedding) {
+      throw new RegistryError(
+        `runtimes.yaml: non-embedding runtime ${runtime.id} cannot declare an embedding space`,
       );
     }
     if (runtime.policy.swapGroup) {

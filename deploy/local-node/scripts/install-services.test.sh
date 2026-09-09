@@ -92,8 +92,9 @@ cmp --silent \
 systemctl_log="${test_root}/var/lib/larm/install-systemctl.log"
 grep -F "enable llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service" \
   "${systemctl_log}" >/dev/null
-grep -F "disable qwen-tts.service" "${systemctl_log}" >/dev/null
+grep -F "disable qwen-tts.service larm-embedding.service" "${systemctl_log}" >/dev/null
 [[ -d "${test_root}/srv/ai/models/qwen-tts" ]]
+[[ -d "${test_root}/srv/ai/models/multilingual-e5-small-onnx-qint8" ]]
 [[ -d "${test_root}/srv/ai/models/qwen36-35b" ]]
 [[ -d "${test_root}/srv/ai/models/ornith15-35b" ]]
 [[ "$(stat -c '%a' "${test_root}/var/lib/larm/inference-audit")" == "700" ]]
@@ -113,6 +114,8 @@ grep -F "/srv/ai/models/qwen36-35b" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "/srv/ai/models/ornith15-35b" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
+grep -F "/srv/ai/models/multilingual-e5-small-onnx-qint8" \
+  "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 
 mkdir -p "${gateway_root}/etc/systemd/system"
 printf '[Unit]\nDescription=obsolete native Provider\n' \
@@ -126,7 +129,7 @@ LARM_INSTALL_TEST_MODE=1 \
 [[ -f "${gateway_root}/etc/systemd/system/larm-inference-audit-prune.timer" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-release-activator.path" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-http-provider-monitor.timer" ]]
-for unit in llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service qwen-tts.service \
+for unit in llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service qwen-tts.service larm-embedding.service \
   voicevox-tts.service; do
   [[ ! -e "${gateway_root}/etc/systemd/system/${unit}" ]]
 done

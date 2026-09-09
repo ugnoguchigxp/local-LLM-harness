@@ -138,3 +138,11 @@ routes:
     candidates:
       - runtime: qwen-tts
         purpose: primary
+
+  embedding-multilingual-e5-small:
+    capabilities:
+      - embedding.multilingual-e5-small
+    explicitOnly: true
+    candidates:
+      - runtime: multilingual-e5-small
+        purpose: primary

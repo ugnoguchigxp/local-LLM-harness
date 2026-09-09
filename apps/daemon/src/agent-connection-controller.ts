@@ -99,7 +99,7 @@ export class AgentConnectionController {
       body: {
         contractVersion: "agent-connection.v1",
         catalogRevision: this.options.getCatalogRevision(),
-        profiles: catalog.profiles.map((profile) => ({
+        profiles: this.legacyProfiles(catalog).map((profile) => ({
           id: profile.id,
           description: profile.description,
           providers: profile.providers.map((provider) => ({
@@ -123,6 +123,35 @@ export class AgentConnectionController {
         contractVersion: "agent-connection.v2",
         catalogRevision: this.options.getCatalogRevision(),
         defaultAgentProfile: catalog.defaultAgentProfile,
+        profiles: this.legacyProfiles(catalog).map((profile) => ({
+          id: profile.id,
+          canonicalProfile: profile.canonicalProfile,
+          description: profile.description,
+          selectionPolicy: profile.selectionPolicy,
+          deprecated: profile.deprecated,
+          schedulingPriority: profile.schedulingPriority ?? 0,
+          providers: profile.providers.map((provider) => ({
+            name: provider.name,
+            capability: provider.capability,
+            supportedCapabilities: provider.supportedCapabilities,
+            protocol: provider.protocol,
+            model: provider.publicModel,
+          })),
+        })),
+        audiences: catalog.audiences.map((audience) => audience.id),
+      },
+    };
+  }
+
+  listProfilesV3(): AgentConnectionApiResult {
+    const catalog = this.options.getCatalog();
+    if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
+    return {
+      status: 200,
+      body: {
+        contractVersion: "agent-connection.v3",
+        catalogRevision: this.options.getCatalogRevision(),
+        defaultAgentProfile: catalog.defaultAgentProfile,
         profiles: catalog.profiles.map((profile) => ({
           id: profile.id,
           canonicalProfile: profile.canonicalProfile,
@@ -136,6 +165,7 @@ export class AgentConnectionController {
             supportedCapabilities: provider.supportedCapabilities,
             protocol: provider.protocol,
             model: provider.publicModel,
+            ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
           })),
         })),
         audiences: catalog.audiences.map((audience) => audience.id),
@@ -275,7 +305,11 @@ export class AgentConnectionController {
     return { status: health.ready ? 200 : 503, body: health };
   }
 
-  async claim(id: string, principal: string): Promise<AgentConnectionApiResult> {
+  async claim(
+    id: string,
+    principal: string,
+    format: "openai-provider-v1" | "larm-embedding-provider-v1",
+  ): Promise<AgentConnectionApiResult> {
     const found = this.owned(id, principal);
     if ("body" in found) return found;
     this.refreshLifecycle(found);
@@ -288,6 +322,15 @@ export class AgentConnectionController {
       }
       return error("connection_inactive", `connection ${id} is ${found.status}`, 409);
     }
+    const embedding = found.profile.providers[0]?.protocol === "larm.embedding.v1";
+    const expectedFormat = embedding ? "larm-embedding-provider-v1" : "openai-provider-v1";
+    if (format !== expectedFormat) {
+      return error(
+        "claim_format_mismatch",
+        `connection ${id} requires claim format ${expectedFormat}`,
+        409,
+      );
+    }
     const current = await this.healthRecord(found);
     if (current.status !== 200) {
       return error("provider_semantic_not_ready", "one or more providers are not semantically ready", 503);
@@ -295,7 +338,58 @@ export class AgentConnectionController {
     const base = new URL(found.audience.baseUrl);
     const scheme: "http" | "https" = base.protocol === "https:" ? "https" : "http";
     const port = base.port ? Number(base.port) : scheme === "https" ? 443 : 80;
+    const health = (current.body as AgentConnectionHealth).providers;
+    if (
+      embedding
+      && (
+        health.some((provider) => !provider.capacity)
+        || found.profile.providers.some((provider) => !provider.embeddingSpace)
+      )
+    ) {
+      return error("provider_capacity_unavailable", "embedding provider capacity is unavailable", 503);
+    }
     const providers = found.profile.providers.map((provider) => {
+      const providerHealth = health.find((item) => item.name === provider.name);
+      if (provider.protocol === "larm.embedding.v1") {
+        const embeddingSpace = provider.embeddingSpace!;
+        const capacity = providerHealth!.capacity!;
+        return {
+          name: provider.name,
+          capability: provider.capability,
+          apiStyle: "larm-embedding" as const,
+          protocol: "larm.embedding.v1" as const,
+          scheme,
+          host: base.hostname,
+          port,
+          baseUrl: found.audience.baseUrl,
+          endpoint: `${base.origin}/v1/embed`,
+          model: provider.publicModel,
+          embeddingSpace,
+          capacity: {
+            ...capacity,
+            ready: true as const,
+          },
+          health: {
+            url: `${found.audience.baseUrl}/agent-connections/${found.id}/providers/${provider.name}/health`,
+            kind: "semantic-inference" as const,
+            maxAgeMs: 10_000 as const,
+          },
+          credential: {
+            type: "bearer" as const,
+            token: this.providerToken(found, provider.name, provider.capability),
+            expiresAt: found.expiresAt,
+          },
+          configuration: {
+            kind: "larm-embedding-provider-v1" as const,
+            fields: {
+              daemonURL: found.audience.baseUrl,
+              model: provider.publicModel,
+              dimension: embeddingSpace.dimension,
+            },
+            secretFields: { accessToken: "credential.token" as const },
+          },
+        };
+      }
       return {
         name: provider.name,
         capability: provider.capability,
@@ -629,5 +723,11 @@ export class AgentConnectionController {
 
   private now(): number {
     return this.options.now?.() ?? Date.now();
+  }
+
+  private legacyProfiles(catalog: AgentConnectionCatalog): AgentProfile[] {
+    return catalog.profiles.filter((profile) =>
+      profile.providers.every((provider) => provider.protocol !== "larm.embedding.v1")
+    );
   }
 }

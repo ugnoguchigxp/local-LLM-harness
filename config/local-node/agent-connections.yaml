@@ -61,6 +61,15 @@ agentProfiles:
         route: tts-expressive
         publicModel: qwen3-tts-expressive
         readiness: tts-speech
+  contextstill-embedding:
+    description: Dynamic multilingual E5 query and passage embedding provider
+    schedulingPriority: 1500
+    providers:
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        readiness: embedding
 
 compatibilityAliases:
   deep-reasoning-35b:

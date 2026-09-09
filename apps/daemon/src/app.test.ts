@@ -2775,6 +2775,247 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   expect(releasedAgain.status).toBe(204);
 });
 
+test("embedding Agent Connection claims, validates, renews, and releases a scoped provider", async () => {
+  const embeddingSpace = {
+    contractVersion: "larm-embedding.v1" as const,
+    workload: "embedding" as const,
+    model: {
+      id: "intfloat/multilingual-e5-small",
+      revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      artifactDigest: "6".repeat(64),
+    },
+    dimension: 384,
+    inputTypes: ["query", "passage"] as ["query", "passage"],
+    prefixes: { query: "query: ", passage: "passage: " },
+    normalization: "l2" as const,
+    tokenization: {
+      kind: "sentencepiece-bpe",
+      tokenizerDigest: "0".repeat(64),
+      maxTokens: 512,
+      truncation: "end" as const,
+      pooling: "mean" as const,
+    },
+  };
+  const embeddingRegistry = structuredClone(registry);
+  embeddingRegistry.runtimes.push({
+    id: "embedding-runtime",
+    capability: ["embedding.multilingual-e5-small"],
+    protocol: "larm.embedding.v1",
+    embedding: embeddingSpace,
+    backend: "systemd",
+    node: "ai395-01",
+    policy: { class: "preferred" },
+    resources: {
+      estimatedMemoryGB: 1,
+      maxConcurrentAllocations: 8,
+      maxConcurrentRequests: 1,
+      maxQueuedRequests: 4,
+      queueTimeoutMs: 500,
+    },
+    deployment: {
+      service: "larm-embedding.service",
+      healthPort: 44512,
+      healthPath: "/health",
+      endpoint: "http://127.0.0.1:44512",
+    },
+  });
+  embeddingRegistry.routes.push({
+    id: "embedding-route",
+    capabilities: ["embedding.multilingual-e5-small"],
+    explicitOnly: true,
+    candidates: [{ runtime: "embedding-runtime", purpose: "primary" }],
+  });
+  const catalog = parseAgentConnectionCatalog({
+    version: 1,
+    defaultAgentProfile: "coding",
+    audiences: { loopback: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" } },
+    agentProfiles: {
+      coding: {
+        description: "Test coding provider",
+        providers: [{
+          name: "llm",
+          capability: "llm.general",
+          route: "llm-default",
+          publicModel: "test-model",
+          readiness: "llm-inference",
+        }],
+      },
+      embedding: {
+        description: "Test embedding provider",
+        providers: [{
+          name: "embedding",
+          capability: "embedding.multilingual-e5-small",
+          route: "embedding-route",
+          publicModel: "multilingual-e5-small",
+          readiness: "embedding",
+        }],
+      },
+    },
+  }, embeddingRegistry);
+  const probes = new Map<string, RuntimeHealth>([
+    ["qwen-general", probe("qwen-general", true)],
+    ["qwen-worker", probe("qwen-worker", false)],
+    ["embedding-runtime", probe("embedding-runtime", true)],
+  ]);
+  const log = { ensure: [] as string[], stop: [] as string[] };
+  const backend = stubBackend(probes, log);
+  const observer = new Observer(embeddingRegistry, backend);
+  await observer.tick();
+  const control = new ControlPlane(embeddingRegistry, backend, observer, {
+    idleTtlMs: 0,
+    random: () => "embedding-fixed",
+    onRouteShadowComparison: () => undefined,
+  });
+  let responseMode: "valid" | "wrong-dimension" | "redirect" = "valid";
+  const upstream: Array<{ path: string; body?: unknown }> = [];
+  const gatewayFetch: FetchLike = async (input, init) => {
+    expect(init?.redirect).toBe("manual");
+    const path = new URL(String(input)).pathname;
+    const body = init?.body ? JSON.parse(
+      init.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init.body),
+    ) as Record<string, unknown> : undefined;
+    upstream.push({ path, ...(body ? { body } : {}) });
+    if (path === "/health") {
+      return Response.json({
+        ready: true,
+        modelLoaded: true,
+        service: "embeddingd",
+        activeRequests: 0,
+        queueDepth: 0,
+      });
+    }
+    if (responseMode === "redirect") {
+      return new Response(null, { status: 307, headers: { location: "http://example.invalid/embed" } });
+    }
+    const type = body?.type === "passage" ? "passage" : "query";
+    const dimension = responseMode === "wrong-dimension" ? 383 : 384;
+    return Response.json({
+      embeddings: [[1, ...Array.from({ length: dimension - 1 }, () => 0)]],
+      dimension,
+      count: 1,
+      type,
+      normalize: true,
+      queueWaitMs: 0,
+      encodeMs: 1,
+    });
+  };
+  const app = createApp({
+    registry: embeddingRegistry,
+    getState: () => observer.getState(),
+    control,
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: catalog,
+    gatewayFetch,
+  });
+
+  const legacyProfiles = await app.request("/v2/agent-profiles", { headers: agentHeaders() });
+  expect((await legacyProfiles.json() as { profiles: Array<{ id: string }> }).profiles)
+    .not.toContainEqual(expect.objectContaining({ id: "embedding" }));
+  const profiles = await app.request("/v3/agent-profiles", { headers: agentHeaders() });
+  const profileBody = await profiles.json() as {
+    contractVersion: string;
+    profiles: Array<{ id: string; providers: unknown[] }>;
+  };
+  expect(profileBody.contractVersion).toBe("agent-connection.v3");
+  expect(profileBody.profiles.find((profile) => profile.id === "embedding")).toMatchObject({
+    id: "embedding",
+    providers: [{
+      protocol: "larm.embedding.v1",
+      embeddingSpace: { dimension: 384 },
+    }],
+  });
+
+  const created = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "embed-create" }),
+    body: JSON.stringify({
+      agentProfile: "embedding",
+      explicitAgentProfile: true,
+      audience: "loopback",
+      ttlSeconds: 60,
+    }),
+  });
+  expect(created.status).toBe(201);
+  const connection = publicAgentConnectionSchema.parse(await created.json());
+  expect(connection).toMatchObject({
+    status: "ready",
+    providers: [{ protocol: "larm.embedding.v1", claimable: true }],
+  });
+  expect(upstream.slice(0, 3).map((entry) => entry.path)).toEqual(["/health", "/embed", "/embed"]);
+
+  const wrongFormat = await app.request(`/v1/agent-connections/${connection.id}/claim`, {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({ format: "openai-provider-v1" }),
+  });
+  expect(wrongFormat.status).toBe(409);
+  const claimResponse = await app.request(`/v1/agent-connections/${connection.id}/claim`, {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({ format: "larm-embedding-provider-v1" }),
+  });
+  expect(claimResponse.status).toBe(200);
+  const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
+  const provider = claim.providers[0]!;
+  expect(provider).toMatchObject({
+    apiStyle: "larm-embedding",
+    endpoint: "http://127.0.0.1:9810/v1/embed",
+    model: "multilingual-e5-small",
+    embeddingSpace: {
+      model: { revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3" },
+      dimension: 384,
+    },
+    capacity: { ready: true, queueDepth: 0, maxQueuedRequests: 4 },
+  });
+  const credential = provider.credential.token;
+
+  expect((await app.request("/v1/embed", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({ texts: ["blocked"], type: "query", normalize: true, priority: "normal" }),
+  })).status).toBe(401);
+  expect((await app.request("/v1/embed", {
+    method: "POST",
+    headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+    body: JSON.stringify({ texts: ["missing type"], normalize: true, priority: "normal" }),
+  })).status).toBe(400);
+
+  const embedded = await app.request("/v1/embed", {
+    method: "POST",
+    headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+    body: JSON.stringify({ texts: ["document"], type: "passage", normalize: true, priority: "normal" }),
+  });
+  expect(embedded.status).toBe(200);
+  expect(await embedded.json()).toMatchObject({ dimension: 384, count: 1, type: "passage" });
+
+  responseMode = "wrong-dimension";
+  expect((await app.request("/v1/embed", {
+    method: "POST",
+    headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+    body: JSON.stringify({ texts: ["query"], type: "query", normalize: true, priority: "low" }),
+  })).status).toBe(502);
+  responseMode = "redirect";
+  expect((await app.request("/v1/embed", {
+    method: "POST",
+    headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+    body: JSON.stringify({ texts: ["query"], type: "query", normalize: true, priority: "low" }),
+  })).status).toBe(502);
+
+  const released = await app.request(`/v1/agent-connections/${connection.id}`, {
+    method: "DELETE",
+    headers: agentHeaders(),
+  });
+  expect(released.status).toBe(204);
+  await control.flush();
+  expect(log.stop).toContain("embedding-runtime");
+  expect((await app.request("/v1/embed", {
+    method: "POST",
+    headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+    body: JSON.stringify({ texts: ["revoked"], type: "query", normalize: true, priority: "low" }),
+  })).status).toBe(401);
+});
+
 test("non-default Agent Profiles require an explicit selection signal", async () => {
   const { app } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,

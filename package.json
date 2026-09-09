@@ -11,6 +11,7 @@
     "test:http-provider-contract": "bun test packages/core/src/openai-audio.test.ts packages/core/src/openai-json.test.ts packages/core/src/openai-sse.test.ts packages/core/src/openai-model-catalog.test.ts packages/core/src/provider-recovery.test.ts apps/daemon/src/app.test.ts apps/daemon/src/speech-gateway.test.ts packages/client/src/index.test.ts",
     "smoke:agent-http": "bun run deploy/local-node/scripts/smoke-agent-http.ts",
     "smoke:http-provider-live": "bun run deploy/local-node/scripts/smoke-http-provider-live.ts",
+    "smoke:embedding": "bun run deploy/local-node/scripts/smoke-embedding.ts",
     "inference:audit": "bun run apps/daemon/src/inference-audit-cli.ts",
     "docs": "bun ./node_modules/spec-html/dist/cli.js ./specs --markdown-lang ja",
     "docs:fix": "bun ./node_modules/spec-html/dist/cli.js fix ./specs --write",

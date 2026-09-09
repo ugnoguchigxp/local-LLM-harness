@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import {
   getRuntime,
+  inspectEmbeddingResponse,
   inspectOpenAiChatCompletionJson,
   inspectOpenAiChatCompletionSse,
+  type EmbeddingRequest,
   type AgentProviderHealth,
   type AgentProviderProfile,
   type Registry,
@@ -25,6 +27,10 @@ type CachedProbe = {
 
 const JSON_LIMIT = 65_536;
 const AUDIO_LIMIT = 1_048_576;
+
+type ProbeFormat = "json" | "sse" | "default" | "query" | "passage";
+
+type EmbeddingCapacity = NonNullable<AgentProviderHealth["capacity"]>;
 
 function cancelResponseBody(response: Response, reason: string): void {
   void response.body?.cancel(new Error(reason)).catch(() => undefined);
@@ -249,8 +255,16 @@ export class SemanticReadiness {
     }
     const startedAt = this.now();
     try {
+      const capacity = input.provider.protocol === "larm.embedding.v1"
+        ? await this.embeddingCapacity(resolved.endpoint, resolved.runtime!, abort.signal)
+        : undefined;
+      if (input.provider.protocol === "larm.embedding.v1" && !capacity) {
+        return this.remember(resolved.key, this.failure(input.provider, "invalid_response"), false);
+      }
       const formats = input.provider.protocol === "openai.chat-completions.v1"
         ? ["json", "sse"] as const
+        : input.provider.protocol === "larm.embedding.v1"
+          ? ["query", "passage"] as const
         : ["default"] as const;
       for (const format of formats) {
         const response = await withAbort(
@@ -271,7 +285,8 @@ export class SemanticReadiness {
         name: input.provider.name,
         capability: input.provider.capability,
         ready: true,
-        acceptingRequests: !resolved.busy,
+        acceptingRequests: !resolved.busy && (capacity?.retryAfterMs ?? 0) === 0,
+        ...(capacity ? { capacity } : {}),
         probe: {
           kind: "semantic-inference",
           protocol: input.provider.protocol,
@@ -295,7 +310,7 @@ export class SemanticReadiness {
     provider: AgentProviderProfile,
     endpoint: string,
     signal: AbortSignal,
-    format: "json" | "sse" | "default",
+    format: ProbeFormat,
   ): Promise<Response> {
     const base = endpoint.replace(/\/+$/, "");
     if (provider.protocol === "openai.chat-completions.v1") {
@@ -314,6 +329,7 @@ export class SemanticReadiness {
           stream,
         }),
         signal,
+        redirect: "manual",
       });
     }
     if (provider.protocol === "openai.audio-transcriptions.v1") {
@@ -325,6 +341,22 @@ export class SemanticReadiness {
         headers: { accept: "application/json" },
         body: form,
         signal,
+        redirect: "manual",
+      });
+    }
+    if (provider.protocol === "larm.embedding.v1") {
+      const request: EmbeddingRequest = {
+        texts: [format === "passage" ? "readiness passage" : "readiness query"],
+        type: format === "passage" ? "passage" : "query",
+        normalize: true,
+        priority: "low",
+      };
+      return await (this.options.fetchImpl ?? fetch)(`${base}/embed`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(request),
+        signal,
+        redirect: "manual",
       });
     }
     return await (this.options.fetchImpl ?? fetch)(`${base}/v1/audio/speech`, {
@@ -332,6 +364,7 @@ export class SemanticReadiness {
       headers: { "content-type": "application/json", accept: "audio/wav" },
       body: JSON.stringify({ model: provider.publicModel, input: "a", response_format: "wav" }),
       signal,
+      redirect: "manual",
     });
   }
 
@@ -339,7 +372,7 @@ export class SemanticReadiness {
     provider: AgentProviderProfile,
     response: Response,
     signal: AbortSignal,
-    format: "json" | "sse" | "default",
+    format: ProbeFormat,
   ): Promise<boolean> {
     if (provider.protocol === "openai.audio-speech.v1") {
       if (mediaType(response) !== "audio/wav") {
@@ -364,6 +397,16 @@ export class SemanticReadiness {
     } catch {
       return false;
     }
+    if (provider.protocol === "larm.embedding.v1") {
+      if (!provider.embeddingSpace || (format !== "query" && format !== "passage")) return false;
+      const request: EmbeddingRequest = {
+        texts: [format === "passage" ? "readiness passage" : "readiness query"],
+        type: format,
+        normalize: true,
+        priority: "low",
+      };
+      return inspectEmbeddingResponse({ value, request, space: provider.embeddingSpace }).ok;
+    }
     if (provider.protocol !== "openai.chat-completions.v1") return validTranscription(value);
     const inspected = inspectOpenAiChatCompletionJson(value);
     return inspected.ok
@@ -378,6 +421,55 @@ export class SemanticReadiness {
       ready: false,
       acceptingRequests: false,
       reason,
+    };
+  }
+
+  private async embeddingCapacity(
+    endpoint: string,
+    runtime: NonNullable<ReturnType<typeof getRuntime>>,
+    signal: AbortSignal,
+  ): Promise<EmbeddingCapacity | undefined> {
+    const response = await withAbort((this.options.fetchImpl ?? fetch)(`${endpoint.replace(/\/+$/, "")}/health`, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal,
+      redirect: "manual",
+    }), signal);
+    if (!response.ok || mediaType(response) !== "application/json") {
+      cancelResponseBody(response, "embedding health contract failed");
+      return undefined;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(
+        await responseBytes(response, JSON_LIMIT, signal),
+      )) as unknown;
+    } catch {
+      return undefined;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const health = value as Record<string, unknown>;
+    if (
+      health.ready !== true
+      || health.modelLoaded !== true
+      || health.service !== "embeddingd"
+      || !Number.isInteger(health.activeRequests)
+      || Number(health.activeRequests) < 0
+      || Number(health.activeRequests) > 100_000
+      || !Number.isInteger(health.queueDepth)
+      || Number(health.queueDepth) < 0
+      || Number(health.queueDepth) > 100_000
+    ) return undefined;
+    const activeRequests = Number(health.activeRequests);
+    const queueDepth = Number(health.queueDepth);
+    const saturated = activeRequests >= runtime.resources.maxConcurrentRequests
+      && queueDepth >= runtime.resources.maxQueuedRequests;
+    return {
+      ready: true,
+      activeRequests,
+      queueDepth,
+      maxQueuedRequests: runtime.resources.maxQueuedRequests,
+      retryAfterMs: saturated ? runtime.resources.queueTimeoutMs : 0,
     };
   }
 

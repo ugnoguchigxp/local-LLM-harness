@@ -1,6 +1,25 @@
 # Model binaries live under /srv/ai/models and are deliberately not part of this repository.
 # Pin the source revision here; record a checksum after each deliberate model replacement.
 models:
+  multilingual-e5-small-onnx-qint8:
+    kind: snapshot
+    role: preferred-embedding
+    source: https://huggingface.co/intfloat/multilingual-e5-small
+    revision: 614241f622f53c4eeff9890bdc4f31cfecc418b3
+    path: /srv/ai/models/multilingual-e5-small-onnx-qint8
+    totalBytes: 140499868
+    maxFiles: 6
+    snapshotDigest: 63bc913284590439c0fdadcd5f61ee9ad9630591075314bc975fb190983ed62c
+    quantization: QInt8
+    runtime: fastembed-5.17.4-ort
+    files:
+      - { path: config.json, sourcePath: onnx/config.json, bytes: 653, sha256: bbb7c1333fc4b3e27fbc9cd5d2070aabcc1d4dfb99917c3633e772f97545a6b6 }
+      - { path: model.onnx, sourcePath: onnx/model_qint8_avx512_vnni.onnx, bytes: 118346824, sha256: dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88 }
+      - { path: sentencepiece.bpe.model, sourcePath: onnx/sentencepiece.bpe.model, bytes: 5069051, sha256: cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865 }
+      - { path: special_tokens_map.json, sourcePath: onnx/special_tokens_map.json, bytes: 167, sha256: d05497f1da52c5e09554c0cd874037a083e1dc1b9cfd48034d1c717f1afc07a7 }
+      - { path: tokenizer.json, sourcePath: onnx/tokenizer.json, bytes: 17082730, sha256: 0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39 }
+      - { path: tokenizer_config.json, sourcePath: onnx/tokenizer_config.json, bytes: 443, sha256: a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b }
+
   qwen38-primary:
     kind: file
     role: resident-llm

@@ -1,0 +1,28 @@
+[Unit]
+Description=LARM multilingual E5 embedding provider
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/local-llm
+Environment=HOME=/srv/ai/cache
+Environment=HF_HOME=/srv/ai/cache/huggingface
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+Environment=RUST_LOG=embedding=info
+ExecStart=/usr/bin/env -- /srv/ai/apps/local-llm/target/release/embedding --host 127.0.0.1 --port 44512 --model-dir /srv/ai/models/multilingual-e5-small-onnx-qint8 --manifest /srv/ai/apps/local-llm/models/manifests/multilingual-e5-small-onnx-qint8.json --request-timeout-seconds 30 --max-batch-size 64 --intra-threads 4
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+LimitNOFILE=65535
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/srv/ai/cache /srv/ai/logs
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,5 @@
 import {
+  inspectEmbeddingResponse,
   inspectOpenAiChatCompletionJson,
   inspectOpenAiTranscriptionJson,
   isOpenAiSpeechMediaType,
@@ -6,6 +7,8 @@ import {
   OpenAiChatCompletionSseNormalizer,
   type RuntimeDefinition,
   type RuntimeProtocol,
+  type EmbeddingRequest,
+  type EmbeddingSpace,
 } from "@larm/core";
 import type { ControlEvent } from "./controller";
 import {
@@ -71,6 +74,10 @@ export type GatewayProxyOptions = {
   validateChatResponse?: boolean;
   validateTranscriptionResponse?: boolean;
   validateSpeechResponse?: boolean;
+  validateEmbeddingResponse?: {
+    request: EmbeddingRequest;
+    space: EmbeddingSpace;
+  };
   expectedSpeechFormat?: string;
   expectedModel?: string;
   maxResponseBytes?: number;
@@ -441,6 +448,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       headers,
       body,
       signal: abort.signal,
+      redirect: "manual",
     };
     if (options.bodyMode === "stream" && body) {
       init.duplex = "half";
@@ -498,6 +506,15 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     },
     value: ((options.now?.() ?? Date.now()) - startedAt) / 1_000,
   });
+  if (upstream.status >= 300 && upstream.status < 400) {
+    await upstream.body?.cancel(new Error("upstream redirect is forbidden")).catch(() => undefined);
+    return failure(
+      "upstream_redirect_forbidden",
+      "upstream redirects are not allowed",
+      502,
+      "upstream_protocol_error",
+    );
+  }
   if (
     options.responseFormat === "sse"
     && upstream.ok
@@ -555,6 +572,67 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   if (options.responseFormat === "sse" && upstream.ok) {
     responseHeaders.set("cache-control", "no-cache, no-transform");
     responseHeaders.set("x-accel-buffering", "no");
+  }
+  if (
+    options.validateEmbeddingResponse
+    && options.protocol === "larm.embedding.v1"
+    && upstream.ok
+  ) {
+    if (
+      upstream.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
+      !== "application/json"
+    ) {
+      await upstream.body?.cancel(new Error("upstream did not return JSON")).catch(() => undefined);
+      return failure(
+        "upstream_response_format_mismatch",
+        "upstream did not return application/json for an embedding request",
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    let responseBody: Uint8Array;
+    let parsed: unknown;
+    try {
+      responseBody = await readBodyLimited(
+        upstream as unknown as Request,
+        options.maxResponseBytes ?? 2 * 1024 * 1024,
+        abort.signal,
+      );
+      parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody)) as unknown;
+    } catch {
+      return failure(
+        "upstream_response_invalid",
+        "upstream returned an invalid or oversized embedding response",
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    const inspected = inspectEmbeddingResponse({
+      value: parsed,
+      request: options.validateEmbeddingResponse.request,
+      space: options.validateEmbeddingResponse.space,
+    });
+    if (!inspected.ok) {
+      return failure(
+        "upstream_response_invalid",
+        `upstream embedding response failed ${inspected.reason}`,
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    options.onEvent?.({
+      name: "gateway_embedding_verified",
+      labels: {
+        request: requestId,
+        runtime: options.runtime.id,
+        modelRevision: options.validateEmbeddingResponse.space.model.revision,
+        dimension: String(options.validateEmbeddingResponse.space.dimension),
+        inputType: options.validateEmbeddingResponse.request.type,
+      },
+    });
+    await finalizeAudit();
+    finish();
+    return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
   }
   if (
     options.validateChatResponse

@@ -26,7 +26,9 @@ import {
   publicAgentConnectionSchema,
   publicAgentProfileListSchema,
   publicAgentProfileListV1Schema,
+  publicAgentProfileListV3Schema,
 } from "./agent-connection";
+import { embeddingRequestSchema, embeddingResponseSchema } from "./embedding";
 import {
   clusterStateSchema,
   runtimeClassSchema,
@@ -342,6 +344,7 @@ export const API_OPERATIONS = [
   ["delete", "/v1/allocations/{id}", "releaseAllocation"],
   ["get", "/v1/agent-profiles", "listAgentProfilesV1"],
   ["get", "/v2/agent-profiles", "listAgentProfiles"],
+  ["get", "/v3/agent-profiles", "listAgentProfilesV3"],
   ["get", "/v1/services", "listServices"],
   ["get", "/v1/services/asr/health", "getAsrServiceHealth"],
   ["post", "/v1/agent-connections", "createAgentConnection"],
@@ -355,6 +358,7 @@ export const API_OPERATIONS = [
   ["post", "/v1/chat/completions", "createChatCompletion"],
   ["post", "/v1/audio/transcriptions", "createTranscription"],
   ["post", "/v1/audio/speech", "createSpeech"],
+  ["post", "/v1/embed", "createEmbedding"],
   ["get", "/v1/audio/voices", "listVoices"],
   ["get", "/v1/artifact-operations/{id}", "getArtifactOperation"],
   ["post", "/v1/artifacts/{id}/stage", "stageArtifact"],
@@ -393,6 +397,7 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   releaseAllocation: ["200"],
   listAgentProfilesV1: ["200"],
   listAgentProfiles: ["200"],
+  listAgentProfilesV3: ["200"],
   listServices: ["200"],
   getAsrServiceHealth: ["200"],
   createAgentConnection: ["201", "202"],
@@ -406,6 +411,7 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   createChatCompletion: ["200"],
   createTranscription: ["200"],
   createSpeech: ["200"],
+  createEmbedding: ["200"],
   listVoices: ["200"],
   getArtifactOperation: ["200"],
   stageArtifact: ["202"],
@@ -442,6 +448,7 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   releaseAllocation: "Allocation",
   listAgentProfilesV1: "AgentProfileListV1",
   listAgentProfiles: "AgentProfileList",
+  listAgentProfilesV3: "AgentProfileListV3",
   listServices: "ServiceHarness",
   getAsrServiceHealth: "AsrServiceHealth",
   createAgentConnection: "AgentConnection",
@@ -455,6 +462,7 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   createChatCompletion: "UpstreamJson",
   createTranscription: "UpstreamJson",
   createSpeech: "Binary",
+  createEmbedding: "EmbeddingResponse",
   listVoices: "UpstreamJson",
   getArtifactOperation: "ArtifactOperation",
   stageArtifact: "ArtifactOperation",
@@ -497,6 +505,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     AgentConnectionClaimRequest: jsonSchema(agentConnectionClaimRequestSchema),
     AgentProfileListV1: jsonSchema(publicAgentProfileListV1Schema),
     AgentProfileList: jsonSchema(publicAgentProfileListSchema),
+    AgentProfileListV3: jsonSchema(publicAgentProfileListV3Schema),
     ServiceHarness: jsonSchema(saaaServiceHarnessSchema),
     AsrServiceHealth: jsonSchema(saaaAsrHealthSchema),
     AgentConnection: jsonSchema(publicAgentConnectionSchema),
@@ -510,6 +519,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     OpenApiDocument: jsonSchema(openApiDocumentSchema),
     ChatCompletionRequest: jsonSchema(chatCompletionRequestSchema),
     AudioSpeechRequest: jsonSchema(audioSpeechRequestSchema),
+    EmbeddingRequest: jsonSchema(embeddingRequestSchema),
+    EmbeddingResponse: jsonSchema(embeddingResponseSchema),
     OpenAiModelList: jsonSchema(openAiModelListSchema),
     UpstreamJson: jsonSchema(upstreamJsonResponseSchema),
     ServerSentEvents: {
@@ -539,6 +550,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "createAgentConnection") return "AgentConnectionRequest";
       if (operationId === "createChatCompletion") return "ChatCompletionRequest";
       if (operationId === "createSpeech") return "AudioSpeechRequest";
+      if (operationId === "createEmbedding") return "EmbeddingRequest";
       if (operationId === "claimAgentConnection") return "AgentConnectionClaimRequest";
       if (operationId === "renewAgentConnection") return "AgentConnectionRenewRequest";
       if (operationId === "planRuntimeDeployment") return "RuntimeReleasePlanRequest";
@@ -556,6 +568,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     const publicOperation = operationId === "getHealth" || operationId === "getReadiness";
     const optionalAgentBearerOperation = operationId === "listAgentProfilesV1"
       || operationId === "listAgentProfiles"
+      || operationId === "listAgentProfilesV3"
       || operationId === "getServiceActivity"
       || operationId === "createAgentConnection"
       || operationId === "getAgentConnection"
@@ -570,6 +583,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       || operationId === "createChatCompletion"
       || operationId === "createTranscription"
       || operationId === "createSpeech";
+    const providerOnlyOperation = operationId === "createEmbedding";
     const successContent = (() => {
       if (operationId === "getMetrics") {
         return { "text/plain": { schema: { $ref: "#/components/schemas/Metrics" } } };
@@ -615,6 +629,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       operationId,
       security: publicOperation ? [] : management
         ? [{ bearerAuth: [], managementToken: [] }]
+        : providerOnlyOperation
+        ? [{ providerBearer: [] }]
         : configurableServiceBearerOperation
         ? [{}, { bearerAuth: [] }, ...(operationId === "createTranscription"
           ? [{ providerBearer: [] }]

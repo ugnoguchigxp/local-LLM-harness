@@ -28,10 +28,31 @@ function wav(dataBytes = 2): Uint8Array {
 
 function fixture(protocol: AgentProviderProfile["protocol"], capability: string) {
   let status: "HOT" | "BUSY" = "HOT";
+  const embeddingSpace = protocol === "larm.embedding.v1" ? {
+    contractVersion: "larm-embedding.v1" as const,
+    workload: "embedding" as const,
+    model: {
+      id: "intfloat/multilingual-e5-small",
+      revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      artifactDigest: "6".repeat(64),
+    },
+    dimension: 384,
+    inputTypes: ["query", "passage"] as ["query", "passage"],
+    prefixes: { query: "query: ", passage: "passage: " },
+    normalization: "l2" as const,
+    tokenization: {
+      kind: "sentencepiece-bpe",
+      tokenizerDigest: "0".repeat(64),
+      maxTokens: 512,
+      truncation: "end" as const,
+      pooling: "mean" as const,
+    },
+  } : undefined;
   const runtime = {
     id: "provider-runtime",
     capability: [capability],
     protocol,
+    ...(embeddingSpace ? { embedding: embeddingSpace } : {}),
     backend: "systemd" as const,
     node: "node",
     policy: { class: "resident" as const },
@@ -88,10 +109,108 @@ function fixture(protocol: AgentProviderProfile["protocol"], capability: string)
       ? "llm-inference"
       : protocol === "openai.audio-transcriptions.v1"
       ? "stt-transcription"
+      : protocol === "larm.embedding.v1"
+      ? "embedding"
       : "tts-speech",
+    ...(embeddingSpace ? { embeddingSpace } : {}),
   };
   return { registry, control, provider, setStatus: (value: "HOT" | "BUSY") => { status = value; } };
 }
+
+function embeddingResponse(type: "query" | "passage", dimension = 384): Response {
+  return Response.json({
+    embeddings: [[1, ...Array.from({ length: dimension - 1 }, () => 0)]],
+    dimension,
+    count: 1,
+    type,
+    normalize: true,
+    queueWaitMs: 0,
+    encodeMs: 1,
+  });
+}
+
+test("embedding readiness validates capacity plus query and passage canaries", async () => {
+  const { registry, control, provider } = fixture(
+    "larm.embedding.v1",
+    "embedding.multilingual-e5-small",
+  );
+  const requests: Array<{ path: string; body?: unknown; redirect?: RequestInit["redirect"] }> = [];
+  const readiness = new SemanticReadiness({
+    control,
+    getRegistry: () => registry,
+    executionGate: new ExecutionGate(),
+    timeoutMs: 100,
+    fetchImpl: async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      requests.push({
+        path,
+        ...(init?.body ? { body: JSON.parse(String(init.body)) as unknown } : {}),
+        redirect: init?.redirect,
+      });
+      if (path === "/health") {
+        return Response.json({
+          ready: true,
+          modelLoaded: true,
+          service: "embeddingd",
+          activeRequests: 0,
+          queueDepth: 0,
+        });
+      }
+      const body = JSON.parse(String(init?.body)) as { type: "query" | "passage" };
+      return embeddingResponse(body.type);
+    },
+  });
+  expect(await readiness.check({ allocationId: "alloc", provider })).toMatchObject({
+    ready: true,
+    acceptingRequests: true,
+    capacity: {
+      ready: true,
+      activeRequests: 0,
+      queueDepth: 0,
+      maxQueuedRequests: 0,
+      retryAfterMs: 0,
+    },
+    probe: { protocol: "larm.embedding.v1", validated: true },
+  });
+  expect(requests).toEqual([
+    { path: "/health", redirect: "manual" },
+    {
+      path: "/embed",
+      redirect: "manual",
+      body: { texts: ["readiness query"], type: "query", normalize: true, priority: "low" },
+    },
+    {
+      path: "/embed",
+      redirect: "manual",
+      body: { texts: ["readiness passage"], type: "passage", normalize: true, priority: "low" },
+    },
+  ]);
+
+  let embedCalls = 0;
+  const mismatch = new SemanticReadiness({
+    control,
+    getRegistry: () => registry,
+    executionGate: new ExecutionGate(),
+    timeoutMs: 100,
+    fetchImpl: async (input) => {
+      if (new URL(String(input)).pathname === "/health") {
+        return Response.json({
+          ready: true,
+          modelLoaded: true,
+          service: "embeddingd",
+          activeRequests: 0,
+          queueDepth: 0,
+        });
+      }
+      embedCalls += 1;
+      return embeddingResponse(embedCalls === 1 ? "query" : "query");
+    },
+  });
+  expect(await mismatch.check({ allocationId: "alloc", provider })).toMatchObject({
+    ready: false,
+    reason: "invalid_response",
+  });
+});
 
 function validLlmProbeResponse(init?: RequestInit): Response {
   const body = JSON.parse(String(init?.body)) as { stream?: boolean };

@@ -1,0 +1,286 @@
+<article lang="ja">
+  <h1>LARM 動的Embeddingホスト実装仕様</h1>
+
+  <p>
+    本仕様は、EmbeddingをLARMの動的workloadとして登録し、Agent Connectionの短期lease、 semantic
+    readiness、claim、renew、releaseへ統合する実装契約を定める。Consumerは固定portや cloud
+    fallbackを保持せず、LARMが返すendpointと短期credentialだけを使用する。
+  </p>
+
+  <section id="fixed-contract">
+    <h2>決定事項</h2>
+    <table>
+      <caption>
+        Embedding semantic spaceの固定値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">固定値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">workload protocol</th>
+          <td><code>larm.embedding.v1</code></td>
+        </tr>
+        <tr>
+          <th scope="row">公開model</th>
+          <td><code>multilingual-e5-small</code></td>
+        </tr>
+        <tr>
+          <th scope="row">model identity</th>
+          <td><code>intfloat/multilingual-e5-small</code></td>
+        </tr>
+        <tr>
+          <th scope="row">revision</th>
+          <td><code>614241f622f53c4eeff9890bdc4f31cfecc418b3</code></td>
+        </tr>
+        <tr>
+          <th scope="row">形式</th>
+          <td>ONNX / QInt8</td>
+        </tr>
+        <tr>
+          <th scope="row">snapshot digest</th>
+          <td><code>63bc913284590439c0fdadcd5f61ee9ad9630591075314bc975fb190983ed62c</code></td>
+        </tr>
+        <tr>
+          <th scope="row">次元</th>
+          <td>384</td>
+        </tr>
+        <tr>
+          <th scope="row">入力prefix</th>
+          <td>
+            <code>query: </code>および<code
+              >passage: </code
+            >
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">normalization</th>
+          <td>L2</td>
+        </tr>
+        <tr>
+          <th scope="row">tokenization</th>
+          <td>SentencePiece BPE、最大512 token、末尾切り詰め、mean pooling</td>
+        </tr>
+        <tr>
+          <th scope="row">runtime class</th>
+          <td>Preferred。leaseがないときは停止可能</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      semantic spaceを構成するmodel、revision、artifact digest、dimension、prefix、normalization、
+      tokenizer digest、最大token数、truncation、poolingは一つの不可分な契約である。
+      routeに複数候補を置く場合、全候補がこの契約と完全一致しなければcatalogを読み込まない。
+    </p>
+  </section>
+
+  <section id="public-api">
+    <h2>公開APIと互換性</h2>
+    <table>
+      <caption>
+        公開API、用途、認証境界
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">API</th>
+          <th scope="col">役割</th>
+          <th scope="col">認証</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>GET /v3/agent-profiles</code></th>
+          <td>Embedding spaceを含むprofile discovery</td>
+          <td>構成に従うcontrol bearerまたは許可済みanonymous discovery</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/agent-connections</code></th>
+          <td>明示profileから短期leaseを作成</td>
+          <td>Agent Connection境界</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /v1/agent-connections/:id</code></th>
+          <td>pending、probing、ready、terminal状態をpoll</td>
+          <td>所有principal</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/agent-connections/:id/claim</code></th>
+          <td><code>larm-embedding-provider-v1</code> descriptorを発行</td>
+          <td>所有principal</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/agent-connections/:id/renew</code></th>
+          <td>期限更新と旧credential世代の失効</td>
+          <td>所有principal</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>DELETE /v1/agent-connections/:id</code></th>
+          <td>解放、credential失効、idle Preferred停止</td>
+          <td>所有principal</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/embed</code></th>
+          <td>queryまたはpassageのEmbedding実行</td>
+          <td>claimで発行したprovider bearerのみ</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      既存の<code>/v1/agent-profiles</code>と<code>/v2/agent-profiles</code>はEmbedding
+      profileを返さず、 従来のOpenAI
+      Providerだけを同じshapeで返す。EmbeddingはOpenAI互換を名乗らず、
+      query固定の<code>/v1/embeddings</code>も公開しない。LARMの実行APIはConsumer固有名を含まない。
+    </p>
+  </section>
+
+  <section id="lifecycle">
+    <h2>ライフサイクル</h2>
+    <figure>
+      <pre>Consumer
+  ├─ discover v3
+  ├─ create explicit contextstill-embedding lease
+  ├─ poll until semantic ready
+  │    └─ LARM starts larm-embedding.service when COLD
+  │         ├─ GET upstream /health and validate capacity
+  │         ├─ POST upstream /embed with type=query
+  │         └─ POST upstream /embed with type=passage
+  ├─ claim short-lived provider descriptor
+  ├─ POST /v1/embed using the scoped bearer
+  ├─ renew before expiry; the previous token generation is revoked
+  └─ release in finally; token is revoked and idle Preferred runtime may stop</pre>
+      <figcaption>Embedding専用leaseの正常系。readinessはHTTP aliveだけでは成立しない。</figcaption>
+    </figure>
+    <p>
+      claimはGatewayのbase URLとEmbedding endpoint、公開model、完全なsemantic space、
+      <code>ready</code>、active request数、queue depth、最大queue、retry
+      hint、lease期限を返す。
+      Consumerは実行開始前にreadyと期限を確認し、処理中は必要に応じてrenewする。release、期限切れ、
+      daemon boot epoch変更、binding変更のいずれでもtokenを拒否する。
+    </p>
+  </section>
+
+  <section id="execution-contract">
+    <h2>実行契約</h2>
+    <p>
+      requestは1件以上64件以下の非空<code>texts</code>、明示的な
+      <code>type</code
+      >（<code>query</code>または<code>passage</code>）、
+      <code>normalize: true</code
+      >、明示的なpriorityだけを受理する。未知field、type省略、
+      normalize無効、body上限超過はupstreamへ送らず拒否する。
+    </p>
+    <p>
+      LARMは成功responseをbuffer上限内で読み、JSON media type、件数、入力種別、384次元、
+      全要素の有限性、各vectorのL2 normを検証してから返す。redirectはfollowしない。
+      response不一致時はfail
+      closedとし、別model、別dimension、cloud、固定loopbackへのfallbackは行わない。
+    </p>
+  </section>
+
+  <section id="security-observability">
+    <h2>安全性と観測</h2>
+    <ul>
+      <li>
+        provider tokenはboot
+        epoch、Connection、Allocation、Provider、capability、Audience、generation、期限へ署名で束縛する。
+      </li>
+      <li>
+        token、署名鍵、完全claim、入力本文、vectorを通常logやLLM inference auditへ保存しない。
+      </li>
+      <li>
+        非secret eventはrequest ID、Allocation、runtime、protocol、outcome、latencyを記録できる。
+      </li>
+      <li>
+        service activityはEmbedding gateway requestを他のHTTP workloadと同じactive countへ含める。
+      </li>
+      <li>
+        gateway execution gateが同時実行数、queue上限、queue timeout、release時cancelを適用する。
+      </li>
+      <li>
+        semantic readiness cacheは10秒以内とし、host offline、stale binding、invalid
+        responseをreadyとして再利用しない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="deployment-rollback">
+    <h2>配備とrollback</h2>
+    <ol>
+      <li>
+        <code>deploy/local-node/scripts/prepare-embedding-runtime.sh</code>をoperatorとして実行し、固定source
+        commitからrepository外へRust binaryをbuildする。
+      </li>
+      <li>
+        LARM artifact APIで固定ONNX/QInt8 snapshotをstageし、6ファイルのsizeとSHA-256を検証する。
+      </li>
+      <li><code>multilingual-e5-small-current</code> releaseをactivateする。</li>
+      <li>
+        unitとpolkit
+        ruleをinstallする。<code>larm-embedding.service</code>はboot時disabledのままにする。
+      </li>
+      <li>
+        LARM
+        releaseを適用し、<code>bun run smoke:embedding</code>でquery、passage、renew、旧token失効、release後失効を確認する。
+      </li>
+    </ol>
+    <p>
+      rollbackはLARMの前releaseへ戻し、新規Connectionの受付を旧catalogへ戻す。active
+      claimはreleaseまたは boot epoch変更で失効する。Embedding unitは停止・disableできるが、model
+      snapshotの削除はrollbackに含めない。 modelやcredentialをrelease
+      directoryへ置かないため、Gateway rollbackで破壊しない。
+    </p>
+  </section>
+
+  <section id="acceptance-tests">
+    <h2>受入試験</h2>
+    <table>
+      <caption>
+        動的Embeddingホストの受入条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">分類</th>
+          <th scope="col">合格条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">契約</th>
+          <td>v3だけがEmbedding spaceを公開し、v1/v2 shapeが変わらない。</td>
+        </tr>
+        <tr>
+          <th scope="row">正常系</th>
+          <td>create、semantic ready、claim、query、passage、renew、releaseが完了する。</td>
+        </tr>
+        <tr>
+          <th scope="row">意味互換</th>
+          <td>384次元、件数、type、有限値、L2 normが一致する。</td>
+        </tr>
+        <tr>
+          <th scope="row">不一致排除</th>
+          <td>dimensionまたはsemantic spaceの異なる候補・responseを拒否する。</td>
+        </tr>
+        <tr>
+          <th scope="row">認証</th>
+          <td>
+            control bearerだけのEmbedding実行、偽造token、更新前token、release後tokenを拒否する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">障害</th>
+          <td>
+            HTTP aliveでもquery/pass canary不正ならreadyにならず、redirect、offline、stale
+            bindingでfail closedとなる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">回帰</th>
+          <td>LLM、STT、TTS、artifact、deployment、既存Agent Connection testが通る。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+</article>

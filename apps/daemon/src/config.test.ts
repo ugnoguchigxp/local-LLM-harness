@@ -6,6 +6,7 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.port).toBe(9810);
   expect(config.controlMaxBodyBytes).toBe(64 * 1024);
   expect(config.gatewayMaxBodyBytes).toBe(4 * 1024 * 1024);
+  expect(config.embeddingMaxBodyBytes).toBe(2 * 1024 * 1024);
   expect(config.speechMaxBodyBytes).toBe(257 * 1024 * 1024);
   expect(config.idempotencyTtlMs).toBe(300_000);
   expect(config.idempotencyLimit).toBe(1_000);
@@ -35,6 +36,9 @@ test("daemon configuration rejects invalid numbers", () => {
   expect(() => parseDaemonConfig({ LARM_PORT: "70000" })).toThrow(/LARM_PORT/);
   expect(() => parseDaemonConfig({ LARM_GATEWAY_MAX_BODY_BYTES: "0" })).toThrow(
     /LARM_GATEWAY_MAX_BODY_BYTES/,
+  );
+  expect(() => parseDaemonConfig({ LARM_EMBEDDING_MAX_BODY_BYTES: "0" })).toThrow(
+    /LARM_EMBEDDING_MAX_BODY_BYTES/,
   );
   expect(() => parseDaemonConfig({ LARM_CONTROL_MAX_BODY_BYTES: String(1024 * 1024 + 1) }))
     .toThrow(/LARM_CONTROL_MAX_BODY_BYTES/);

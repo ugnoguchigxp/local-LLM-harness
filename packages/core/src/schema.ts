@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { embeddingSpaceSchema } from "./embedding";
 
 const identifierSchema = z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 const httpUrlSchema = z.string().url().refine((value) => {
@@ -21,6 +22,7 @@ export const runtimeProtocolSchema = z.enum([
   "openai.chat-completions.v1",
   "openai.audio-transcriptions.v1",
   "openai.audio-speech.v1",
+  "larm.embedding.v1",
 ]);
 
 export const runtimeStatusSchema = z.enum([
@@ -63,6 +65,7 @@ export const nodeDefinitionSchema = z.object({
 const runtimeShared = {
   capability: uniqueStringList,
   protocol: runtimeProtocolSchema,
+  embedding: embeddingSpaceSchema.optional(),
   artifacts: uniqueStringList.optional(),
   node: identifierSchema,
   policy: z.object({

@@ -751,6 +751,116 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   expect(requests.every((request) => !request.headers.has("authorization"))).toBeTrue();
 });
 
+test("typed embedding client uses the claimed endpoint and semantic-space contract", async () => {
+  const expiresAt = "2026-08-28T00:05:00.000Z";
+  const claim = {
+    id: "aconn_epoch-test_embedding",
+    allocationId: "alloc_epoch-test_embedding",
+    status: "ready" as const,
+    audience: "same-host",
+    providers: [{
+      name: "embedding",
+      capability: "embedding.multilingual-e5-small",
+      apiStyle: "larm-embedding" as const,
+      protocol: "larm.embedding.v1" as const,
+      scheme: "http" as const,
+      host: "127.0.0.1",
+      port: 9810,
+      baseUrl: "http://127.0.0.1:9810/v1",
+      endpoint: "http://127.0.0.1:9810/v1/embed",
+      model: "multilingual-e5-small",
+      embeddingSpace: {
+        contractVersion: "larm-embedding.v1" as const,
+        workload: "embedding" as const,
+        model: {
+          id: "intfloat/multilingual-e5-small",
+          revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+          artifactDigest: "6".repeat(64),
+        },
+        dimension: 384,
+        inputTypes: ["query", "passage"] as ["query", "passage"],
+        prefixes: { query: "query: ", passage: "passage: " },
+        normalization: "l2" as const,
+        tokenization: {
+          kind: "sentencepiece-bpe",
+          tokenizerDigest: "0".repeat(64),
+          maxTokens: 512,
+          truncation: "end" as const,
+          pooling: "mean" as const,
+        },
+      },
+      capacity: {
+        ready: true as const,
+        activeRequests: 0,
+        queueDepth: 0,
+        maxQueuedRequests: 32,
+        retryAfterMs: 0,
+      },
+      health: {
+        url: "http://127.0.0.1:9810/v1/agent-connections/aconn_epoch-test_embedding/providers/embedding/health",
+        kind: "semantic-inference" as const,
+        maxAgeMs: 10_000 as const,
+      },
+      credential: { type: "bearer" as const, token: "larm_conn_v1.payload.signature", expiresAt },
+      configuration: {
+        kind: "larm-embedding-provider-v1" as const,
+        fields: {
+          daemonURL: "http://127.0.0.1:9810/v1",
+          model: "multilingual-e5-small",
+          dimension: 384,
+        },
+        secretFields: { accessToken: "credential.token" as const },
+      },
+    }],
+    expiresAt,
+  };
+  const requests: Request[] = [];
+  let wrongDimension = false;
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "control-token",
+    fetch: async (input, init) => {
+      const request = new Request(input.toString(), init);
+      requests.push(request);
+      if (new URL(request.url).pathname.endsWith("/claim")) return json(claim);
+      const dimension = wrongDimension ? 383 : 384;
+      return json({
+        embeddings: [[1, ...Array.from({ length: dimension - 1 }, () => 0)]],
+        dimension,
+        count: 1,
+        type: "passage",
+        normalize: true,
+        queueWaitMs: 0,
+        encodeMs: 1,
+      });
+    },
+  });
+  const claimed = await client.claimAgentConnection(
+    claim.id,
+    "larm-embedding-provider-v1",
+  );
+  expect(await requests[0]!.clone().json()).toEqual({ format: "larm-embedding-provider-v1" });
+  const provider = claimed.providers[0]!;
+  if (provider.apiStyle !== "larm-embedding") throw new Error("expected embedding provider");
+  const result = await client.embed(provider, {
+    texts: ["document"],
+    type: "passage",
+    normalize: true,
+    priority: "normal",
+  });
+  expect(result).toMatchObject({ dimension: 384, type: "passage" });
+  expect(requests[1]?.url).toBe(provider.endpoint);
+  expect(requests[1]?.headers.get("authorization")).toBe(`Bearer ${provider.credential.token}`);
+  expect(requests[1]?.redirect).toBe("manual");
+  expect(await requests[1]!.clone().json()).toEqual({
+    texts: ["document"], type: "passage", normalize: true, priority: "normal",
+  });
+  wrongDimension = true;
+  await expect(client.embed(provider, {
+    texts: ["document"], type: "passage", normalize: true, priority: "low",
+  })).rejects.toMatchObject({ code: "embedding_dimension_mismatch", responseBody: undefined });
+});
+
 test("agent connection polling deadline aborts an in-flight HTTP request", async () => {
   const connection = {
     id: "aconn_epoch-test_stalled",

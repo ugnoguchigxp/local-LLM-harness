@@ -29,6 +29,7 @@ install -d -o "${operator}" -g "${operator}" \
   /srv/ai/models/qwen36-35b \
   /srv/ai/models/ornith15-35b \
   /srv/ai/models/qwen-tts \
+  /srv/ai/models/multilingual-e5-small-onnx-qint8 \
   /srv/ai/models/.larm-staging /srv/ai/models/.larm-rollback \
   /var/lib/larm
 
