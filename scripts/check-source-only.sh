@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel)"
+if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  repository_mode="git"
+else
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  repository_mode="archive"
+fi
 cd "${repo_root}"
 
 failed=0
 max_source_bytes=$((5 * 1024 * 1024))
+
+list_source_files() {
+  if [[ "${repository_mode}" == "git" ]]; then
+    git ls-files --cached --others --exclude-standard -z
+  else
+    find -P . -mindepth 1 \( -type f -o -type l \) \
+      ! -path './node_modules/*' -printf '%P\0'
+  fi
+}
 
 while IFS= read -r -d "" file; do
   if [[ ! -e "${file}" && ! -L "${file}" ]]; then
@@ -29,7 +43,7 @@ while IFS= read -r -d "" file; do
     echo "repository file exceeds 5 MiB source limit: ${file} (${size} bytes)" >&2
     failed=1
   fi
-done < <(git ls-files --cached --others --exclude-standard -z)
+done < <(list_source_files)
 
 if (( failed != 0 )); then
   exit 1
