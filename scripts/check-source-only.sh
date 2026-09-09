@@ -17,7 +17,7 @@ list_source_files() {
     git ls-files --cached --others --exclude-standard -z
   else
     find -P . -mindepth 1 \( -type f -o -type l \) \
-      ! -path './node_modules/*' -printf '%P\0'
+      ! -path '*/node_modules/*' -printf '%P\0'
   fi
 }
 
