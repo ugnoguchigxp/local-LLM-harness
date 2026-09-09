@@ -280,5 +280,5 @@ test("Qwen TTS service configuration consumes the manifest-managed snapshot targ
   expect(registry.runtimes.find((runtime) => runtime.id === "qwen-tts")?.artifacts)
     .toContain(artifact.id);
   expect(readFileSync(join(root, "deploy/local-node/systemd/larm-daemon.service"), "utf8"))
-    .toContain("/srv/ai/models/qwen-tts");
+    .toContain("ReadWritePaths=/srv/ai/cache /srv/ai/logs /srv/ai/models /var/lib/larm");
 });
