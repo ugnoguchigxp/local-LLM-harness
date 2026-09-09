@@ -168,16 +168,17 @@ export async function runEmbeddingSmoke(options: {
 
 if (import.meta.main) {
   const baseUrl = process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810";
-  runEmbeddingSmoke({
-    baseUrl,
-    ...(process.env.LARM_API_TOKEN ? { apiToken: process.env.LARM_API_TOKEN } : {}),
-    ...(process.env.LARM_EXPECTED_RELEASE_COMMIT
-      ? { expectedReleaseCommit: process.env.LARM_EXPECTED_RELEASE_COMMIT }
-      : {}),
-  }).then((result) => {
+  try {
+    const result = await runEmbeddingSmoke({
+      baseUrl,
+      ...(process.env.LARM_API_TOKEN ? { apiToken: process.env.LARM_API_TOKEN } : {}),
+      ...(process.env.LARM_EXPECTED_RELEASE_COMMIT
+        ? { expectedReleaseCommit: process.env.LARM_EXPECTED_RELEASE_COMMIT }
+        : {}),
+    });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  }).catch((error) => {
+  } catch (error) {
     process.stderr.write(`embedding smoke failed: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
-  });
+  }
 }
