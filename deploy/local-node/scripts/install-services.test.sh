@@ -110,11 +110,7 @@ grep -F "disable --now larm-native-qwen-provider.service" "${systemctl_log}" >/d
 [[ "$(stat -c '%a' "${test_root}/var/lib/larm/release-builder/signing-key.pem")" == "600" ]]
 [[ "$(stat -c '%a' "${test_root}/etc/larm/release-signing.pub")" == "644" ]]
 openssl pkey -pubin -in "${test_root}/etc/larm/release-signing.pub" -noout >/dev/null
-grep -F "/srv/ai/models/qwen36-35b" \
-  "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
-grep -F "/srv/ai/models/ornith15-35b" \
-  "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
-grep -F "/srv/ai/models/multilingual-e5-small-onnx-qint8" \
+grep -F "ReadWritePaths=/srv/ai/cache /srv/ai/logs /srv/ai/models /var/lib/larm" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 
 mkdir -p "${gateway_root}/etc/systemd/system"
