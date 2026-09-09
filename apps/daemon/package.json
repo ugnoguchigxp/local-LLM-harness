@@ -9,6 +9,7 @@
   "dependencies": {
     "@larm/backends": "workspace:*",
     "@larm/core": "workspace:*",
-    "hono": "^4"
+    "hono": "^4",
+    "zod": "^4.4.3"
   }
 }
