@@ -187,6 +187,7 @@ if [[ ! -e "${release}" && ! -L "${release}" ]]; then
   staging="$(mktemp -d "${release_root}/.activating-${short}.XXXXXX")"
   cp -a --no-preserve=ownership -- "${candidate}/." "${staging}/"
   chown -R root:root -- "${staging}" 2>/dev/null || [[ "${test_mode}" == "1" ]]
+  chmod 0755 -- "${staging}"
   find -P "${staging}" -type d -exec chmod go-w {} +
   find -P "${staging}" -type f -exec chmod go-w {} +
   safe_tree "${staging}" || { write_status "validated" "failed" "unsafe_copied_tree"; fail "copied candidate tree is unsafe"; }

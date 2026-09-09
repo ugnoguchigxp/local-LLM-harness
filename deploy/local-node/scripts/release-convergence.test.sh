@@ -131,6 +131,7 @@ jq -e --arg commit "${first_commit}" '.schemaVersion == 2 and .commit == $commit
   "${candidate_root}/${first_commit}/release-manifest.json" >/dev/null
 activate >/dev/null
 [[ "$(readlink -f "${current_link}")" == "${release_root}/${first_commit:0:12}" ]]
+[[ "$(stat -c '%a' "${release_root}/${first_commit:0:12}")" == "755" ]]
 jq -e --arg commit "${first_commit}" '.stage == "contract_verified" and .result == "succeeded" and .desiredRelease == $commit and .observedRelease == $commit' \
   "${state_root}/status.json" >/dev/null
 [[ ! -e "${inbox_root}/request.json" ]]
