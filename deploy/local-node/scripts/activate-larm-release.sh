@@ -43,7 +43,7 @@ request="${inbox_root}/request.json"
 
 work="$(mktemp -d "${state_root}/.activation.XXXXXX")"
 staging=""
-trap 'rm -rf -- "${work:-}" "${staging:-}" "${current_link}.next.$$" "${current_link}.recovery.$$"' EXIT
+trap 'rm -rf -- "${work:-}" "${staging:-}" "${release_root}/.current-next.$$" "${release_root}/.current-recovery.$$"' EXIT
 jq -e '
   keys == ["intent","schemaVersion","signature"]
   and .schemaVersion == 1
@@ -218,7 +218,7 @@ if [[ "${previous}" == "${release}" ]]; then
   rm -f -- "${request}"
   exit 0
 fi
-next="${current_link}.next.$$"
+next="${release_root}/.current-next.$$"
 ln -s -- "${release}" "${next}"
 mv -Tf -- "${next}" "${current_link}"
 if [[ -n "${previous}" ]]; then
@@ -229,7 +229,7 @@ fi
 write_status "activated" "running" "" "${commit}"
 if ! systemctl_run restart larm-daemon.service || ! verify_health "${release}"; then
   if [[ -n "${previous}" && -d "${previous}" && ! -L "${previous}" ]]; then
-    recovery="${current_link}.recovery.$$"
+    recovery="${release_root}/.current-recovery.$$"
     ln -s -- "${previous}" "${recovery}"
     mv -Tf -- "${recovery}" "${current_link}"
     systemctl_run restart larm-daemon.service || true
