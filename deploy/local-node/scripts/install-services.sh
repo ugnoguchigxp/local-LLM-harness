@@ -60,6 +60,8 @@ release_inbox_dir="$(target_path /var/lib/larm/release-inbox)"
 release_controller_dir="$(target_path /var/lib/larm/release-controller)"
 release_builder_dir="$(target_path /var/lib/larm/release-builder)"
 http_soak_dir="$(target_path /var/lib/larm/http-provider-soak)"
+context_source_dir="$(target_path /srv/ai/context-sources)"
+context_snapshot_dir="$(target_path /srv/ai/context-snapshots)"
 release_private_key="${release_builder_dir}/signing-key.pem"
 release_public_key="${credential_dir}/release-signing.pub"
 libexec_dir="$(target_path /usr/local/libexec/larm)"
@@ -97,7 +99,7 @@ systemctl_run() {
 if [[ "${install_scope}" == "gateway" ]]; then
   units=(larm-daemon.service larm-inference-audit-prune.service larm-inference-audit-prune.timer larm-release-activator.service larm-release-activator.path larm-http-provider-monitor.service larm-http-provider-monitor.timer)
   enabled_units=(larm-daemon.service larm-inference-audit-prune.timer larm-release-activator.path larm-http-provider-monitor.timer)
-  data_directories=("${staging_dir}" "${rollback_dir}" "${state_dir}" "${audit_dir}" "${candidate_dir}" "${release_inbox_dir}" "${release_builder_dir}" "${http_soak_dir}")
+  data_directories=("${staging_dir}" "${rollback_dir}" "${state_dir}" "${audit_dir}" "${candidate_dir}" "${release_inbox_dir}" "${release_builder_dir}" "${http_soak_dir}" "${context_source_dir}" "${context_snapshot_dir}")
 else
   units=(
     llama-server.service
@@ -140,6 +142,8 @@ else
     "${release_inbox_dir}"
     "${release_builder_dir}"
     "${http_soak_dir}"
+    "${context_source_dir}"
+    "${context_snapshot_dir}"
   )
 fi
 
@@ -237,6 +241,8 @@ install -d -o "${data_owner}" -g "${data_group}" -m 0700 "${audit_dir}"
 install -d -o "${data_owner}" -g "${data_group}" -m 0750 "${candidate_dir}"
 install -d -o "${data_owner}" -g "${data_group}" -m 0700 "${release_inbox_dir}" "${release_builder_dir}"
 install -d -o "${data_owner}" -g "${data_group}" -m 0750 "${http_soak_dir}"
+install -d -o "${data_owner}" -g "${data_group}" -m 0700 "${context_source_dir}"
+install -d -o "${data_owner}" -g "${data_group}" -m 0700 "${context_snapshot_dir}"
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${release_dir}" "${libexec_dir}"
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${release_controller_dir}"
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${unit_target}"

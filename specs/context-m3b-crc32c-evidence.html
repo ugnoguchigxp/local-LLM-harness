@@ -1,0 +1,177 @@
+<article lang="ja">
+  <h1>Qwen 3.8 quality CRC32C snapshot M3b Go証跡</h1>
+  <dl>
+    <dt>観測日</dt>
+    <dd><time>2026-09-10</time> UTC</dd>
+    <dt>対象release</dt>
+    <dd><code>qwen-worker-quality-current</code></dd>
+    <dt>model identity</dt>
+    <dd>
+      Qwen3.8-27B-UD-Q4_K_XL、artifact digest
+      <code>3f227079003add2511437e5b1e94812e363385225bf6a9b47b0054a72bc8b01e</code>
+    </dd>
+    <dt>engine identity</dt>
+    <dd>
+      stock llama.cpp <code>b10655-cb300598d</code>、binary digest
+      <code>87b4670ab668312e004bde7c68c2e7b7b843c4789dc200b34153fa2faf2f593e</code>
+    </dd>
+    <dt>判定</dt>
+    <dd>
+      <strong>M3b Go</strong>。認定範囲は同一prefixまたは未見suffixを持つsession continuationである
+    </dd>
+  </dl>
+
+  <section id="scope">
+    <h2>試験条件と契約</h2>
+    <ul>
+      <li>
+        context 262,144、parallel
+        1、K／Vとも<code>q4_0</code>、temperature 0、seed 424242、次128
+        tokenを固定した。
+      </li>
+      <li>
+        通常serviceと分離したloopback serverおよびrepository外の0700 rootを用い、常駐QwenとLARM
+        daemonを停止しなかった。
+      </li>
+      <li>
+        snapshotは64 MiB chunkごとのCRC32C、strict manifest、atomic rename、fsyncで包み、restore
+        APIを呼ぶ前に全chunkを検証した。
+      </li>
+      <li>
+        保存したpromptと同じか、それをprefixに持つ未見suffixだけを再利用対象とする。保存列より短い
+        promptへの巻戻しはcache hit契約に含めず、通常prefillへ安全にfallbackする。
+      </li>
+      <li>
+        CRC32Cは偶発破損検出用である。機密性、悪意ある改ざんへの真正性、暗号学的衝突耐性は非目標とする。
+      </li>
+    </ul>
+  </section>
+
+  <section id="matrix">
+    <h2>容量、正しさ、再起動</h2>
+    <table>
+      <caption>
+        prefix長別の実測
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">prefix token</th>
+          <th scope="col">cold prefill</th>
+          <th scope="col">snapshot</th>
+          <th scope="col">chunk</th>
+          <th scope="col">同process</th>
+          <th scope="col">再起動後</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">8,192</th>
+          <td>42,398 ms</td>
+          <td>308,119,104 bytes</td>
+          <td>5</td>
+          <td>128 token × 5完全一致</td>
+          <td>CRC 52 ms、prompt 1 token、digest一致</td>
+        </tr>
+        <tr>
+          <th scope="row">65,536</th>
+          <td>483,951 ms</td>
+          <td>1,366,689,344 bytes</td>
+          <td>21</td>
+          <td>128 token × 5完全一致</td>
+          <td>CRC 228 ms、prompt 1 token、digest一致</td>
+        </tr>
+        <tr>
+          <th scope="row">229,376</th>
+          <td>3,097,552 ms</td>
+          <td>4,391,175,744 bytes</td>
+          <td>66</td>
+          <td>128 token × 5完全一致</td>
+          <td>CRC 577 ms、prompt 1 token、digest一致</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      実測三点は<code>snapshotBytes = 156894784 + 18460 × tokenCount</code>に一致する。20,000,000
+      token相当は369,356,894,784 bytes、約343.99 GiBである。512 GiB hard quotaには約168.01
+      GiBの余裕があり、ユーザー条件の400 GB超を許容する構成で20M targetを収容できる。
+    </p>
+  </section>
+
+  <section id="faults">
+    <h2>破損とidentity fault</h2>
+    <p>
+      single bit、multiple bit、1 byte truncate、64 MiB chunk脱落、chunk境界入替、manifest
+      欠落、不正manifest、別principal、別runtime、別release、別engine fenceの11種類を注入した。
+      全11種類をslot restore前に拒否し、破損snapshotをquarantineした。復元失敗時もsnapshotを
+      invalidateし、immutable sourceから再構成するdaemon testが合格した。
+    </p>
+  </section>
+
+  <section id="performance">
+    <h2>性能gate</h2>
+    <table>
+      <caption>
+        最大229,376-token snapshot、20反復
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">経路</th>
+          <th scope="col">p50</th>
+          <th scope="col">p95</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">raw restore</th>
+          <td>461.76 ms</td>
+          <td>472.22 ms</td>
+          <td>比較baseline</td>
+        </tr>
+        <tr>
+          <th scope="row">fresh store CRC全走査 + restore</th>
+          <td>947.88 ms</td>
+          <td>1,003.64 ms</td>
+          <td>cold prefillの0.033%以下で合格</td>
+        </tr>
+        <tr>
+          <th scope="row">検証済みinode + restore</th>
+          <td>463.55 ms</td>
+          <td>478.55 ms</td>
+          <td>raw比101.34%、110% gate合格</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      daemon起動時は2 MiB以下のmanifestとfile metadataだけを読む。400 GB全体をstartup
+      scanせず、使用する
+      snapshotだけを初回restore前に全CRC検証し、同一process内ではdevice、inode、size、ctimeが不変なら検証済み
+      identityを再利用する。上記cold値はfresh storeでの測定であり、OS page
+      cache状態を厳密には固定していない。
+    </p>
+  </section>
+
+  <section id="decision">
+    <h2>Go判定と制限</h2>
+    <ul>
+      <li>
+        <code>qwen-worker-quality</code
+        >だけに<code>session-snapshot</code>認定を付与する。
+      </li>
+      <li>
+        global flag、runtime policy、release certification、HOT／BUSY状態の積でだけ有効にする。
+      </li>
+      <li>
+        CRC native module、snapshot root、identity、quotaのいずれかが不成立ならsource
+        rebuildを継続する。
+      </li>
+      <li>
+        512 GiBを事前確保せず、90%で見込writeを含め80%以下までGCし、256 GiB free floorを守る。
+      </li>
+      <li>
+        任意KV blockの連結、短いpromptへの巻戻し、暗号学的保護、background prewarmは認定外である。
+      </li>
+      <li>本判定はローカル実験機能のtechnical Goである。長期soakは要求せず、利用者が試用する。</li>
+    </ul>
+  </section>
+</article>

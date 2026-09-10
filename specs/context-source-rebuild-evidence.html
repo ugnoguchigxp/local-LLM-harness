@@ -1,0 +1,118 @@
+<article lang="ja">
+  <h1>Managed Context source-rebuild適合証跡</h1>
+  <dl>
+    <dt>観測日</dt>
+    <dd>2026-09-09 UTC</dd>
+    <dt>対象</dt>
+    <dd>Qwen3.8 27B residentとquality worker、LARM Managed Context M0–M2</dd>
+    <dt>結果</dt>
+    <dd>合格。production公開modeは<code>source-rebuild</code>だけとする。</dd>
+  </dl>
+  <section id="identity">
+    <h2>固定identity</h2>
+    <table>
+      <caption>
+        release certificationへ固定するruntime identity
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">profile</th>
+          <th scope="col">値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">resident engine</th>
+          <td>
+            <code>b244-0fc9568</code>、binary SHA-256
+            <code>8be744716785ba4c460533661d7308dfd383ea4d6eb9c09f6e5f7f88814e8752</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">resident model</th>
+          <td><code>fb89c78d2be91cdb68eaaaa45b1270710bf34aa721dc1f0b9e3aa7b98d2e1da9</code></td>
+        </tr>
+        <tr>
+          <th scope="row">resident chat template</th>
+          <td><code>701ba13a085c0c1b5e05414dec1aa3069904f962beee36f0899e441720b83974</code></td>
+        </tr>
+        <tr>
+          <th scope="row">quality engine</th>
+          <td>
+            <code>b10655-cb300598d</code>、binary SHA-256
+            <code>87b4670ab668312e004bde7c68c2e7b7b843c4789dc200b34153fa2faf2f593e</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">quality model</th>
+          <td><code>3f227079003add2511437e5b1e94812e363385225bf6a9b47b0054a72bc8b01e</code></td>
+        </tr>
+        <tr>
+          <th scope="row">quality chat template</th>
+          <td><code>12827f24b742ea4e80cdc12dbcf9622227056b9f797252a3149263d4f9aaadce</code></td>
+        </tr>
+        <tr>
+          <th scope="row">tokenizer probe</th>
+          <td><code>2b8fb66a999b663503e2f1e04939d5c00a06f6d4c16d9cbf4f36bc66792ecd2d</code>（両profile一致）</td>
+        </tr>
+        <tr>
+          <th scope="row">context limit</th>
+          <td>両profileとも262,144 token</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="results">
+    <h2>試験結果</h2>
+    <ul>
+      <li>Core／Backend／Daemon API／Clientを含む全app／package試験432件が成功した。</li>
+      <li>
+        deployment test 29件と全shell deployment
+        testを含む<code>bun run check</code>が成功した。
+      </li>
+      <li>
+        strict schema、deterministic selection、required budget、tokenizer mismatch、lifecycle epoch
+        fenceを検証した。
+      </li>
+      <li>
+        Source token数はlive canonical tokenizerによるsidecar
+        attestationと登録値を照合し、自己申告だけでは 20M境界を通過できない。実Chat
+        promptもtemplate適用後に再計数し、過少申告を422で拒否した。
+      </li>
+      <li>
+        sourceはprincipal別opaque handle、SHA-256、UTF-8、size、symlink／inode再検証でfail
+        closedした。512 GiB source quota、256 GiB free floor、process間provision
+        lockもwrite前に検証した。
+      </li>
+      <li>
+        materializationはExecutionGate取得とrelease再検証の後にだけ行い、Active
+        Viewは一回でconsumeした。
+      </li>
+      <li>runtime policyはSource Set 20,000,000 token、Active View上限225,280 tokenを固定した。</li>
+      <li>
+        別port／一時stateのlive daemonでresidentを<code>ACTIVE</code>、cold
+        quality workerを
+        <code>STANDBY</code
+        >と観測し、両方の公開modeが<code>source-rebuild</code>だけであることを確認した。
+      </li>
+      <li>
+        再監査後のlive resident Chatでattested sourceからone-shot Viewをconsumeした。Active
+        Viewは910 token、template適用後promptは1,083 token、GatewayはHTTP 200、operationは
+        <code>source_rebuild_materialized</code>で成功し、ContextとAllocationをreleaseした。
+      </li>
+      <li>
+        live metricでactivation、active runtime、operation、materialization時間、prefill
+        token、cache miss、 source-only cache byteを確認した。
+      </li>
+    </ul>
+  </section>
+  <aside>
+    <p>
+      tokenizer
+      digestは固定した多言語5入力に対する<code>/tokenize</code>応答のcanonical
+      SHA-256であり、<code>bun run context:source:conformance</code>で再測定できる。
+      source本文、credential、生成本文は証跡へ保存していない。KV snapshot試験は別証跡であり、
+      productionのverified modeを自動では拡張しない。
+    </p>
+  </aside>
+</article>

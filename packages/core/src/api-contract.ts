@@ -42,6 +42,17 @@ import {
 } from "./service-harness";
 import { serviceActivitySchema } from "./service-activity";
 import { openAiModelListSchema } from "./openai-model-catalog";
+import {
+  contextActivationStateSchema,
+  contextDescriptorSchema,
+  contextMaterializationModeSchema,
+  contextOperationSchema,
+  contextRegistrationRequestSchema,
+  contextViewItemSchema,
+  contextViewOmissionSchema,
+  contextViewRequestSchema,
+  contextViewStateSchema,
+} from "./context";
 
 const identifierSchema = z.string().min(1).max(192);
 
@@ -312,6 +323,53 @@ export const runtimeDeploymentPlanSchema = z.object({
   blockers: z.array(z.string().min(1)),
 }).strict();
 
+export const publicContextDescriptorSchema = contextDescriptorSchema.omit({ principal: true });
+export const contextListSchema = z.object({
+  contexts: z.array(publicContextDescriptorSchema),
+  nextCursor: z.string().min(1).max(512).optional(),
+}).strict();
+export const contextRuntimeStatusSchema = z.object({
+  runtime: z.string().min(1).max(128),
+  release: z.string().min(1).max(128).optional(),
+  state: contextActivationStateSchema,
+  reason: z.string().min(1).max(128),
+  modes: z.array(contextMaterializationModeSchema).max(4),
+  leaseEpoch: z.number().int().nonnegative(),
+  quota: z.object({
+    sourceTokensUsed: z.number().int().nonnegative(),
+    sourceTokensLimit: z.number().int().nonnegative(),
+    sourceBytesUsed: z.number().int().nonnegative(),
+    sourceBytesLimit: z.number().int().nonnegative(),
+    ramCacheMaxBytes: z.number().int().nonnegative(),
+    nvmeCacheMaxBytes: z.number().int().nonnegative(),
+    filesystemFreeFloorBytes: z.number().int().nonnegative(),
+  }).strict().optional(),
+}).strict();
+export const contextStatusSchema = z.object({
+  enabled: z.boolean(),
+  state: contextActivationStateSchema,
+  runtimes: z.array(contextRuntimeStatusSchema),
+}).strict();
+export const publicContextViewSchema = z.object({
+  id: z.string().min(1).max(192),
+  operationId: z.string().min(1).max(192),
+  allocationId: z.string().min(1).max(192),
+  runtime: z.string().min(1).max(128),
+  release: z.string().min(1).max(128),
+  state: contextViewStateSchema,
+  mode: z.enum(["source-rebuild", "session-snapshot"]),
+  tokenCount: z.number().int().nonnegative(),
+  inputBudgetTokens: z.number().int().nonnegative(),
+  orderedItems: z.array(contextViewItemSchema).max(512),
+  omitted: z.array(contextViewOmissionSchema).max(512),
+  createdAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+}).strict();
+export const publicContextOperationSchema = contextOperationSchema.omit({
+  principal: true,
+  idempotencyKeyDigest: true,
+});
+
 export type PublicAllocation = z.infer<typeof publicAllocationSchema>;
 export type ControlOperation = z.infer<typeof controlOperationSchema>;
 export type PublicRuntimeRelease = z.infer<typeof publicRuntimeReleaseSchema>;
@@ -342,6 +400,12 @@ export const API_OPERATIONS = [
   ["post", "/v1/allocations/{id}/renew", "renewAllocation"],
   ["post", "/v1/allocations/{id}/resolve", "resolveAllocation"],
   ["delete", "/v1/allocations/{id}", "releaseAllocation"],
+  ["get", "/v1/context-status", "getContextStatus"],
+  ["post", "/v1/contexts", "createContext"],
+  ["get", "/v1/contexts", "listContexts"],
+  ["delete", "/v1/contexts/{id}", "deleteContext"],
+  ["post", "/v1/context-views", "createContextView"],
+  ["get", "/v1/context-operations/{id}", "getContextOperation"],
   ["get", "/v1/agent-profiles", "listAgentProfilesV1"],
   ["get", "/v2/agent-profiles", "listAgentProfiles"],
   ["get", "/v3/agent-profiles", "listAgentProfilesV3"],
@@ -395,6 +459,12 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   renewAllocation: ["200"],
   resolveAllocation: ["200"],
   releaseAllocation: ["200"],
+  getContextStatus: ["200"],
+  createContext: ["200", "201"],
+  listContexts: ["200"],
+  deleteContext: ["204"],
+  createContextView: ["200", "201"],
+  getContextOperation: ["200"],
   listAgentProfilesV1: ["200"],
   listAgentProfiles: ["200"],
   listAgentProfilesV3: ["200"],
@@ -446,6 +516,12 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   renewAllocation: "Allocation",
   resolveAllocation: "AllocationResolveResponse",
   releaseAllocation: "Allocation",
+  getContextStatus: "ContextStatus",
+  createContext: "ContextDescriptor",
+  listContexts: "ContextList",
+  deleteContext: "ContextDescriptor",
+  createContextView: "ContextView",
+  getContextOperation: "ContextOperation",
   listAgentProfilesV1: "AgentProfileListV1",
   listAgentProfiles: "AgentProfileList",
   listAgentProfilesV3: "AgentProfileListV3",
@@ -500,6 +576,13 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     AllocationRenewRequest: jsonSchema(allocationRenewRequestSchema),
     AllocationResolveRequest: jsonSchema(allocationResolveRequestSchema),
     AllocationResolveResponse: jsonSchema(allocationResolveResponseSchema),
+    ContextStatus: jsonSchema(contextStatusSchema),
+    ContextRegistrationRequest: jsonSchema(contextRegistrationRequestSchema),
+    ContextDescriptor: jsonSchema(publicContextDescriptorSchema),
+    ContextList: jsonSchema(contextListSchema),
+    ContextViewRequest: jsonSchema(contextViewRequestSchema),
+    ContextView: jsonSchema(publicContextViewSchema),
+    ContextOperation: jsonSchema(publicContextOperationSchema),
     AgentConnectionRequest: jsonSchema(agentConnectionRequestSchema),
     AgentConnectionRenewRequest: jsonSchema(agentConnectionRenewRequestSchema),
     AgentConnectionClaimRequest: jsonSchema(agentConnectionClaimRequestSchema),
@@ -547,6 +630,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "createAllocation") return "AllocationRequest";
       if (operationId === "renewAllocation") return "AllocationRenewRequest";
       if (operationId === "resolveAllocation") return "AllocationResolveRequest";
+      if (operationId === "createContext") return "ContextRegistrationRequest";
+      if (operationId === "createContextView") return "ContextViewRequest";
       if (operationId === "createAgentConnection") return "AgentConnectionRequest";
       if (operationId === "createChatCompletion") return "ChatCompletionRequest";
       if (operationId === "createSpeech") return "AudioSpeechRequest";
@@ -601,7 +686,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
           "application/octet-stream": { schema: { $ref: "#/components/schemas/Binary" } },
         };
       }
-      if (operationId === "releaseAgentConnection") return undefined;
+      if (operationId === "releaseAgentConnection" || operationId === "deleteContext") return undefined;
       return { "application/json": { schema: { $ref: `#/components/schemas/${successSchema}` } } };
     })();
     const activityNoStoreHeader = operationId === "getServiceActivity"
@@ -640,7 +725,25 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
         : providerBearerOperation
         ? [{ bearerAuth: [] }, { providerBearer: [] }]
         : [{ bearerAuth: [] }],
-      ...((operationId === "createAgentConnection" || operationId === "renewAgentConnection")
+      ...(operationId === "listContexts"
+        ? {
+          parameters: [{
+            name: "cursor",
+            in: "query",
+            required: false,
+            schema: { type: "string", minLength: 1, maxLength: 512 },
+          }, {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 500, default: 100 },
+          }],
+        }
+        : ((operationId === "createAgentConnection"
+        || operationId === "renewAgentConnection"
+        || operationId === "createContext"
+        || operationId === "createContextView"
+        || operationId === "deleteContext")
         ? {
           parameters: [{
             name: "Idempotency-Key",
@@ -649,7 +752,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
             schema: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
           }],
         }
-        : {}),
+        : {})),
       ...(requestSchema
         ? {
           requestBody: {

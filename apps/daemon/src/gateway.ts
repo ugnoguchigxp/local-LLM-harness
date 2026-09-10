@@ -37,6 +37,17 @@ export type GatewayBinding = {
   runtime: string;
 };
 
+export class GatewayRequestPreparationError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "GatewayRequestPreparationError";
+  }
+}
+
 type Revalidation =
   | { ok: true; binding: GatewayBinding }
   | { ok: false; status: number; body: unknown };
@@ -49,6 +60,7 @@ export type GatewayProxyOptions = {
   runtime: RuntimeDefinition;
   bodyMode: "buffered" | "stream" | "none";
   requestBody?: Uint8Array;
+  prepareRequestBody?: (body: Uint8Array, signal: AbortSignal) => Promise<Uint8Array>;
   maxBodyBytes: number;
   timeoutMs: number;
   bootEpoch: string;
@@ -83,6 +95,7 @@ export type GatewayProxyOptions = {
   maxResponseBytes?: number;
   errorFormat?: "larm" | "openai";
   onFinish?: () => void | Promise<void>;
+  onTerminal?: (result: { outcome: string; upstreamStatus?: number }) => void | Promise<void>;
 };
 
 const RESPONSE_HEADERS = [
@@ -146,21 +159,48 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     clearTimeout(timeout);
     clientSignal.removeEventListener("abort", abortFromClient);
     options.lifecycleSignal?.removeEventListener("abort", abortFromLifecycle);
-    releaseSlot?.();
-    try {
-      void Promise.resolve(options.onFinish?.()).catch(() => {
+    const releaseExecution = releaseSlot;
+    releaseSlot = undefined;
+    if (options.onTerminal) {
+      void (async () => {
+        try {
+          await options.onTerminal!({ outcome, upstreamStatus });
+        } catch {
+          options.onEvent?.({
+            name: "gateway_terminal_callback_failed",
+            labels: { request: requestId },
+          });
+        } finally {
+          releaseExecution?.();
+        }
+        try {
+          await options.onFinish?.();
+        } catch {
+          options.onEvent?.({
+            name: "gateway_finish_callback_failed",
+            labels: { request: requestId },
+          });
+        } finally {
+          finishTracked();
+        }
+      })();
+    } else {
+      releaseExecution?.();
+      try {
+        void Promise.resolve(options.onFinish?.()).catch(() => {
+          options.onEvent?.({
+            name: "gateway_finish_callback_failed",
+            labels: { request: requestId },
+          });
+        });
+      } catch {
         options.onEvent?.({
           name: "gateway_finish_callback_failed",
           labels: { request: requestId },
         });
-      });
-    } catch {
-      options.onEvent?.({
-        name: "gateway_finish_callback_failed",
-        labels: { request: requestId },
-      });
+      }
+      finishTracked();
     }
-    finishTracked();
     options.metrics?.record({
       name: "gateway_duration_seconds",
       labels: { runtime: options.runtime.id, protocol: options.protocol },
@@ -341,6 +381,16 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       uploadCompletion = limited.completion;
       void uploadCompletion.catch(() => undefined);
     }
+    if (options.prepareRequestBody) {
+      if (options.bodyMode !== "buffered" || !(body instanceof Uint8Array)) {
+        throw new GatewayRequestPreparationError(
+          400,
+          "context_request_invalid",
+          "context materialization requires a buffered request body",
+        );
+      }
+      body = await options.prepareRequestBody(body, abort.signal);
+    }
   } catch (error) {
     if (timedOut) {
       return failure("gateway_timeout", "gateway request timed out", 504, "timeout");
@@ -352,6 +402,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       return failure("allocation_inactive", "allocation is no longer active", 409, "binding_invalidated");
     }
     if (error instanceof RequestBodyError) {
+      return failure(error.code, error.message, error.status, error.code);
+    }
+    if (error instanceof GatewayRequestPreparationError) {
       return failure(error.code, error.message, error.status, error.code);
     }
     return failure("bad_request", "request body could not be read", 400, "bad_request");

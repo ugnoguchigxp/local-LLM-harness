@@ -22,6 +22,16 @@ routes:
       - runtime: qwen-general
         purpose: fallback
 
+  llm-saaa-kv-mem:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: qwen-worker-quality
+        purpose: primary
+
   llm-agent-worker:
     capabilities:
       - llm.general

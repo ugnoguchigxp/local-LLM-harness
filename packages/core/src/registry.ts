@@ -124,6 +124,18 @@ export function parseRegistryDocuments(input: {
         `runtimes.yaml: non-embedding runtime ${runtime.id} cannot declare an embedding space`,
       );
     }
+    if (runtime.context?.class === "managed-context") {
+      if (runtime.protocol !== "openai.chat-completions.v1") {
+        throw new RegistryError(
+          `runtimes.yaml: managed context runtime ${runtime.id} must use Chat Completions`,
+        );
+      }
+      if (!runtime.capability.includes("llm.reasoning")) {
+        throw new RegistryError(
+          `runtimes.yaml: managed context runtime ${runtime.id} must declare llm.reasoning`,
+        );
+      }
+    }
     if (runtime.policy.swapGroup) {
       if (runtime.policy.class === "resident") {
         throw new RegistryError(

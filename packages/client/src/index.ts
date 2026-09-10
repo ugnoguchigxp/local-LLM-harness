@@ -6,11 +6,18 @@ import {
   agentConnectionRequestSchema,
   agentConnectionRenewRequestSchema,
   controlOperationSchema,
+  contextListSchema,
+  contextRegistrationRequestSchema,
+  contextStatusSchema,
+  contextViewRequestSchema,
   daemonHealthSchema,
   errorResponseSchema,
   LARM_SERVICE_ACTIVITY_VALID_FOR_MS,
   openAiModelListSchema,
   publicAllocationSchema,
+  publicContextDescriptorSchema,
+  publicContextOperationSchema,
+  publicContextViewSchema,
   publicAgentConnectionSchema,
   publicAgentProfileListSchema,
   publicAgentProfileListV3Schema,
@@ -27,6 +34,8 @@ import {
   type AgentConnectionRequestInput,
   type AllocationRequestInput,
   type ControlOperation,
+  type ContextRegistrationRequest,
+  type ContextViewRequest,
   type PublicAllocation,
   type PublicAgentConnection,
   type ServiceActivity,
@@ -268,6 +277,68 @@ export class LarmClient {
       signal,
     });
     return this.parseJson(response, publicAllocationSchema);
+  }
+
+  async getContextStatus(signal?: AbortSignal) {
+    const response = await this.request("/v1/context-status", { signal });
+    return this.parseJson(response, contextStatusSchema);
+  }
+
+  async registerContext(
+    input: ContextRegistrationRequest,
+    options: RequestOptions = {},
+  ) {
+    const request = contextRegistrationRequestSchema.parse(input);
+    const response = await this.request("/v1/contexts", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
+      },
+      body: JSON.stringify(request),
+      signal: options.signal,
+    });
+    return this.parseJson(response, publicContextDescriptorSchema);
+  }
+
+  async listContexts(options: { signal?: AbortSignal; cursor?: string; limit?: number } = {}) {
+    const query = new URLSearchParams();
+    if (options.cursor) query.set("cursor", options.cursor);
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    const response = await this.request(`/v1/contexts${query.size > 0 ? `?${query}` : ""}`, {
+      signal: options.signal,
+    });
+    return this.parseJson(response, contextListSchema);
+  }
+
+  async deleteContext(id: string, options: RequestOptions = {}): Promise<void> {
+    const response = await this.request(`/v1/contexts/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: {
+        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
+      },
+      signal: options.signal,
+    });
+    await response.body?.cancel().catch(() => undefined);
+  }
+
+  async createContextView(input: ContextViewRequest, options: RequestOptions = {}) {
+    const request = contextViewRequestSchema.parse(input);
+    const response = await this.request("/v1/context-views", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
+      },
+      body: JSON.stringify(request),
+      signal: options.signal,
+    });
+    return this.parseJson(response, publicContextViewSchema);
+  }
+
+  async getContextOperation(id: string, signal?: AbortSignal) {
+    const response = await this.request(`/v1/context-operations/${encodeURIComponent(id)}`, { signal });
+    return this.parseJson(response, publicContextOperationSchema);
   }
 
   async listAgentProfiles(signal?: AbortSignal) {
@@ -691,6 +762,26 @@ export class LarmClient {
 
   chat(allocationId: string, body: unknown, options: RequestOptions = {}): Promise<Response> {
     return this.gateway("/v1/chat/completions", allocationId, body, options);
+  }
+
+  chatWithContext(
+    allocationId: string,
+    viewId: string,
+    body: unknown,
+    capability?: string,
+    options: RequestOptions = {},
+  ): Promise<Response> {
+    return this.request("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-larm-allocation-id": allocationId,
+        "x-larm-context-view-id": viewId,
+        ...(capability ? { "x-larm-capability": capability } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
   }
 
   speech(allocationId: string, body: unknown, options: RequestOptions = {}): Promise<Response> {

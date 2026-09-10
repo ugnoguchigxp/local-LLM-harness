@@ -10,6 +10,7 @@ import {
   publicAgentProfileListV3Schema,
   resolveAgentAudienceBaseUrl,
 } from "./agent-connection";
+import { createOpenAiModelCatalog, getOpenAiModel } from "./openai-model-catalog";
 import { loadRegistry } from "./registry";
 
 const configDir = join(import.meta.dir, "../../../config/local-node");
@@ -25,6 +26,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "contextstill-embedding",
     "deep-reasoning-35b",
     "nightworker-background",
+    "saaa-qwen38-kv-mem",
     "tts-default",
     "tts-expressive",
   ]);
@@ -78,6 +80,28 @@ test("production agent profiles compile to strict protocol-aware provider contra
         publicModel: "qwen-agent-worker",
         readiness: "llm-inference",
       }],
+    });
+  expect(catalog.profiles.find((profile) => profile.id === "saaa-qwen38-kv-mem"))
+    .toMatchObject({
+      canonicalProfile: "saaa-qwen38-kv-mem",
+      selectionPolicy: "explicit-only",
+      deprecated: false,
+      schedulingPriority: 3000,
+      providers: [{
+        capability: "llm.coding",
+        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
+        route: "llm-saaa-kv-mem",
+        protocol: "openai.chat-completions.v1",
+        publicModel: "qwen3.8-kv-mem",
+        readiness: "llm-inference",
+      }],
+    });
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "qwen3.8-kv-mem"))
+    .toMatchObject({
+      capability: "llm.coding",
+      route: "llm-saaa-kv-mem",
+      schedulingPriority: 3000,
+      profileIds: ["saaa-qwen38-kv-mem"],
     });
   expect(catalog.profiles.find((profile) => profile.id === "contextstill-embedding"))
     .toMatchObject({

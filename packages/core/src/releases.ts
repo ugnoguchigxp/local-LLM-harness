@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { ArtifactDefinition } from "./artifacts";
+import { contextCertificationSchema } from "./context";
 import { getRuntime, type Registry } from "./registry";
 
 const identifierSchema = z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
@@ -18,6 +19,7 @@ const runtimeReleaseYamlSchema = z.object({
   estimatedMemoryGB: z.number().positive(),
   healthPath: z.string().min(1).max(256).startsWith("/").default("/health"),
   default: z.boolean().default(false),
+  contextCertification: contextCertificationSchema.optional(),
 }).strict();
 
 const runtimeReleasesFileSchema = z.object({
@@ -47,6 +49,7 @@ function releaseDigest(release: Omit<RuntimeReleaseDefinition, "digest">): strin
     estimatedMemoryGB: release.estimatedMemoryGB,
     healthPath: release.healthPath,
     default: release.default,
+    contextCertification: release.contextCertification ?? null,
   })).digest("hex");
 }
 
@@ -84,6 +87,35 @@ export function parseRuntimeReleaseCatalog(
         `releases.yaml: release ${release.id} memory estimate exceeds the static runtime admission bound`,
       );
     }
+    if (release.contextCertification) {
+      const contextPolicy = runtime.context;
+      if (contextPolicy?.class !== "managed-context") {
+        throw new RuntimeReleaseCatalogError(
+          `releases.yaml: release ${release.id} certifies context for a runtime that is not managed-context`,
+        );
+      }
+      if (release.contextCertification.providerConfigRevision !== release.providerConfigRevision) {
+        throw new RuntimeReleaseCatalogError(
+          `releases.yaml: release ${release.id} context certification providerConfigRevision must match the release`,
+        );
+      }
+      if (
+        release.contextCertification.contextLimitTokens
+          <= contextPolicy.outputReserveTokens + contextPolicy.safetyMarginTokens
+      ) {
+        throw new RuntimeReleaseCatalogError(
+          `releases.yaml: release ${release.id} context limit has no usable input budget`,
+        );
+      }
+      const disallowed = release.contextCertification.verifiedModes.filter(
+        (mode) => !contextPolicy.allowedModes.includes(mode),
+      );
+      if (disallowed.length > 0) {
+        throw new RuntimeReleaseCatalogError(
+          `releases.yaml: release ${release.id} certifies disallowed context modes: ${disallowed.join(", ")}`,
+        );
+      }
+    }
     if ((runtime.artifacts?.length ?? 0) === 0) {
       throw new RuntimeReleaseCatalogError(
         `releases.yaml: runtime ${runtime.id} does not declare release-managed artifact targets`,
@@ -108,6 +140,16 @@ export function parseRuntimeReleaseCatalog(
         );
       }
       targets.add(artifact.path);
+    }
+    if (release.contextCertification) {
+      const artifactDigests = release.artifacts.map((artifactId) => artifactsById.get(artifactId))
+        .filter((artifact): artifact is ArtifactDefinition => artifact !== undefined)
+        .map((artifact) => artifact.kind === "file" ? artifact.sha256.toLowerCase() : artifact.snapshotDigest.toLowerCase());
+      if (!artifactDigests.includes(release.contextCertification.modelArtifactDigest)) {
+        throw new RuntimeReleaseCatalogError(
+          `releases.yaml: release ${release.id} context modelArtifactDigest is not one of its artifacts`,
+        );
+      }
     }
     const runtimeTargets = new Set((runtime.artifacts ?? []).map((artifactId) => {
       const artifact = artifactsById.get(artifactId);

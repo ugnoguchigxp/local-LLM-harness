@@ -32,6 +32,7 @@ test("loads the Linux production registry", () => {
   const route35b = registry.routes.find((route) => route.id === "llm-35b");
   const route35bSpeed = registry.routes.find((route) => route.id === "llm-35b-speed");
   const agentWorkerRoute = registry.routes.find((route) => route.id === "llm-agent-worker");
+  const saaaKvMemRoute = registry.routes.find((route) => route.id === "llm-saaa-kv-mem");
   const agent35bRoute = registry.routes.find((route) => route.id === "llm-agent-35b");
   const embedding = registry.runtimes.find((runtime) => runtime.id === "multilingual-e5-small");
   const embeddingRoute = registry.routes.find((route) =>
@@ -81,6 +82,11 @@ test("loads the Linux production registry", () => {
     runtime: "qwen-worker-agent",
     purpose: "primary",
   });
+  expect(saaaKvMemRoute).toMatchObject({
+    explicitOnly: true,
+    candidates: [{ runtime: "qwen-worker-quality", purpose: "primary" }],
+  });
+  expect(saaaKvMemRoute?.candidates).toHaveLength(1);
   expect(agent35bRoute?.candidates[0]).toEqual({
     runtime: "ornith15-35b-agent",
     purpose: "primary",

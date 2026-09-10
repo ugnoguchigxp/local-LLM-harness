@@ -11,6 +11,21 @@ runtimes:
     node: local-node
     policy:
       class: resident
+    context:
+      class: managed-context
+      activation: when-hosted
+      sourceTokenLimit: 20000000
+      materializedRetentionTargetTokens: 20000000
+      outputReserveTokens: 32768
+      safetyMarginTokens: 4096
+      ramCacheMaxBytes: 4294967296
+      nvmeCacheMaxBytes: 0
+      filesystemFreeFloorBytes: 274877906944
+      cacheHighWatermark: 0.9
+      cacheLowWatermark: 0.8
+      operationTimeoutMs: 3300000
+      allowedModes:
+        - source-rebuild
     resources:
       estimatedMemoryGB: 40
       maxConcurrentRequests: 1
@@ -35,6 +50,22 @@ runtimes:
     policy:
       class: preferred
       swapGroup: qwen-worker-slot
+    context:
+      class: managed-context
+      activation: when-hosted
+      sourceTokenLimit: 20000000
+      materializedRetentionTargetTokens: 20000000
+      outputReserveTokens: 32768
+      safetyMarginTokens: 4096
+      ramCacheMaxBytes: 4294967296
+      nvmeCacheMaxBytes: 549755813888
+      filesystemFreeFloorBytes: 274877906944
+      cacheHighWatermark: 0.9
+      cacheLowWatermark: 0.8
+      operationTimeoutMs: 3300000
+      allowedModes:
+        - source-rebuild
+        - session-snapshot
     resources:
       estimatedMemoryGB: 40
       maxConcurrentAllocations: 1

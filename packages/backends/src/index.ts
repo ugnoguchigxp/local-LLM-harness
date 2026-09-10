@@ -53,3 +53,28 @@ export {
   type InferenceAuditPruneResult,
   type LocalInferenceAuditStoreOptions,
 } from "./inference-audit-store";
+export {
+  ContextStoreError,
+  LocalContextMetadataStore,
+  LocalContextSourceStore,
+  type ContextMetadataState,
+  type ContextSource,
+  type ContextSourceProvider,
+  type ContextSourceTokenization,
+} from "./context-store";
+export {
+  CONTEXT_TOKENIZER_PROBE_CORPUS,
+  ContextTokenizerError,
+  LlamaContextTokenizer,
+  type ContextTokenizerIdentity,
+} from "./context-tokenizer";
+export {
+  ContextSnapshotStoreError,
+  LocalContextSnapshotStore,
+  type SnapshotCommitInput,
+  type SnapshotExpectation,
+} from "./context-snapshot-store";
+export {
+  ContextSlotError,
+  LlamaContextSlotAdapter,
+} from "./context-slot";

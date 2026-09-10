@@ -17,6 +17,8 @@ import {
   createOpenApiDocument,
   createServiceActivity,
   chatCompletionRequestSchema,
+  contextRegistrationRequestSchema,
+  contextViewRequestSchema,
   embeddingRequestSchema,
   prepareRequestSchema,
   releaseRequestSchema,
@@ -37,7 +39,7 @@ import type { ArtifactManager } from "./artifact-manager";
 import type { MetricsRegistry, RequestTracker } from "./metrics";
 import type { DaemonIdentity } from "./identity";
 import { ExecutionGate } from "./execution-gate";
-import { proxyGateway } from "./gateway";
+import { GatewayRequestPreparationError, proxyGateway } from "./gateway";
 import { readBodyLimited, RequestBodyError } from "./http-body";
 import {
   RuntimeReleaseManager,
@@ -52,6 +54,10 @@ import { ConnectionTokenCodec, ConnectionTokenError } from "./connection-token";
 import { SemanticReadiness } from "./semantic-readiness";
 import type { InferenceAuditRecorder } from "./inference-audit";
 import { ModelBroker, ModelBrokerError } from "./model-broker";
+import {
+  ContextController,
+  ContextControllerError,
+} from "./context-controller";
 
 export type FetchLike = (
   input: string | URL | Request,
@@ -96,6 +102,7 @@ export type AppDeps = {
   inferenceAuditRecorder?: InferenceAuditRecorder;
   agentConnectionController?: AgentConnectionController;
   modelBroker?: ModelBroker;
+  contextController?: ContextController;
 };
 
 function errorBody(code: string, message: string) {
@@ -367,6 +374,28 @@ export function createAppComponents(deps: AppDeps) {
     return agentConnections;
   };
   const principal = () => agentPrincipal(deps.apiToken!);
+  const contextFeature = (c: Context): ContextController | Response => {
+    if (!deps.apiToken) {
+      return c.json(errorBody(
+        "context_auth_not_configured",
+        "LARM_API_TOKEN is required for context APIs",
+      ), 503);
+    }
+    if (!deps.contextController) {
+      return c.json(errorBody(
+        "context_not_configured",
+        "managed context is not configured",
+      ), 503);
+    }
+    return deps.contextController;
+  };
+
+  const contextError = (c: Context, error: unknown): Response => {
+    if (error instanceof ContextControllerError) {
+      return c.json(errorBody(error.code, error.message), error.status);
+    }
+    throw error;
+  };
 
   const requireManagement: MiddlewareHandler = async (c, next) => {
     if (!deps.managementToken) {
@@ -401,6 +430,18 @@ export function createAppComponents(deps: AppDeps) {
       return c.json(errorBody("draining", "control plane is draining"), 503);
     }
     const declaredAllocationId = c.req.header("x-larm-allocation-id");
+    const contextViewId = c.req.header("x-larm-context-view-id");
+    if (contextViewId !== undefined) {
+      if (options.protocol !== "openai.chat-completions.v1") {
+        return c.json(errorBody("context_request_invalid", "context views are valid only for Chat Completions"), 400);
+      }
+      if (!/^view_[a-zA-Z0-9._-]{1,186}$/.test(contextViewId)) {
+        return c.json(errorBody("context_request_invalid", "x-larm-context-view-id is invalid"), 400);
+      }
+      if (declaredAllocationId === undefined) {
+        return c.json(errorBody("allocation_required", "context views require x-larm-allocation-id"), 400);
+      }
+    }
     const authorization = c.req.header("authorization");
     const providerToken = authorization?.startsWith("Bearer larm_conn_v1.")
       ? authorization.slice(7)
@@ -741,6 +782,19 @@ export function createAppComponents(deps: AppDeps) {
     if (!runtime || runtime.protocol !== options.protocol) {
       return c.json(errorBody("protocol_mismatch", "allocated runtime protocol does not match"), 409);
     }
+    if (
+      options.protocol === "openai.chat-completions.v1"
+      && !contextViewId
+      && runtime.context?.class === "managed-context"
+    ) {
+      const event = { name: "context_bypass", labels: { reason: "view_not_requested" } };
+      deps.metrics?.record(event);
+      deps.onEvent?.(event);
+    }
+    const release = selected.binding.release;
+    if (contextViewId && !release) {
+      return c.json(errorBody("context_view_stale", "allocated runtime has no release binding"), 409);
+    }
     if (options.protocol === "larm.embedding.v1") {
       if (
         !embeddingRequest
@@ -760,6 +814,44 @@ export function createAppComponents(deps: AppDeps) {
       request: c.req.raw,
       ...((embeddingRequestBytes ?? chatRequestBytes)
         ? { requestBody: embeddingRequestBytes ?? chatRequestBytes }
+        : {}),
+      ...(contextViewId
+        ? {
+          prepareRequestBody: async (body: Uint8Array, signal: AbortSignal) => {
+            const feature = contextFeature(c);
+            if (feature instanceof Response) {
+              throw new GatewayRequestPreparationError(
+                feature.status,
+                "context_not_configured",
+                "managed context is not configured",
+              );
+            }
+            try {
+              return await feature.prepareChatRequest({
+                viewId: contextViewId,
+                principal: principal(),
+                allocationId,
+                runtime: runtime.id,
+                release: release!,
+                requestBody: body,
+                signal,
+              });
+            } catch (error) {
+              if (error instanceof ContextControllerError) {
+                throw new GatewayRequestPreparationError(error.status, error.code, error.message);
+              }
+              throw error;
+            }
+          },
+          onTerminal: async (result: { outcome: string; upstreamStatus?: number }) => {
+            const feature = contextFeature(c);
+            if (feature instanceof Response) return;
+            await feature.finishChat(
+              contextViewId,
+              result.outcome === "http_200" && result.upstreamStatus === 200,
+            );
+          },
+        }
         : {}),
       allocationId,
       protocol: options.protocol,
@@ -991,6 +1083,90 @@ export function createAppComponents(deps: AppDeps) {
       return c.json(errorBody("asr_unavailable", "ASR service is not ready"), 503);
     }
     return c.json({ status: "ok" as const, model: SERVICE_HARNESS_ASR_MODEL });
+  });
+
+  app.get("/v1/context-status", (c) => {
+    const feature = contextFeature(c);
+    if (feature instanceof Response) return feature;
+    c.header("cache-control", "no-store");
+    return c.json(feature.statuses(principal()));
+  });
+
+  app.post("/v1/contexts", async (c) => {
+    const feature = contextFeature(c);
+    if (feature instanceof Response) return feature;
+    const key = idempotencyKey(c);
+    if (key instanceof Response) return key;
+    const parsed = contextRegistrationRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
+    if (!parsed.success) {
+      return c.json(errorBody("context_request_invalid", "invalid context descriptor"), 400);
+    }
+    try {
+      const result = await feature.register(parsed.data, principal(), key);
+      if (result.replay) c.header("x-larm-idempotent-replay", "true");
+      c.header("location", `/v1/contexts/${encodeURIComponent(result.descriptor.id)}`);
+      return c.json(result.descriptor, result.replay ? 200 : 201);
+    } catch (error) {
+      return contextError(c, error);
+    }
+  });
+
+  app.get("/v1/contexts", (c) => {
+    const feature = contextFeature(c);
+    if (feature instanceof Response) return feature;
+    try {
+      const rawLimit = c.req.query("limit");
+      return c.json(feature.list(principal(), {
+        ...(c.req.query("cursor") ? { cursor: c.req.query("cursor") } : {}),
+        ...(rawLimit !== undefined ? { limit: Number(rawLimit) } : {}),
+      }));
+    } catch (error) {
+      return contextError(c, error);
+    }
+  });
+
+  app.delete("/v1/contexts/:id", async (c) => {
+    const feature = contextFeature(c);
+    if (feature instanceof Response) return feature;
+    const key = idempotencyKey(c);
+    if (key instanceof Response) return key;
+    try {
+      const result = await feature.delete(principal(), c.req.param("id"), key);
+      if (result.replay) c.header("x-larm-idempotent-replay", "true");
+      return c.body(null, 204);
+    } catch (error) {
+      return contextError(c, error);
+    }
+  });
+
+  app.post("/v1/context-views", async (c) => {
+    const feature = contextFeature(c);
+    if (feature instanceof Response) return feature;
+    const key = idempotencyKey(c);
+    if (key instanceof Response) return key;
+    const parsed = contextViewRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
+    if (!parsed.success) {
+      return c.json(errorBody("context_request_invalid", "invalid context view request"), 400);
+    }
+    try {
+      const result = await feature.createView(parsed.data, principal(), key);
+      if (result.replay) c.header("x-larm-idempotent-replay", "true");
+      c.header("location", `/v1/context-views/${encodeURIComponent(result.view.id)}`);
+      return c.json(result.view, result.replay ? 200 : 201);
+    } catch (error) {
+      return contextError(c, error);
+    }
+  });
+
+  app.get("/v1/context-operations/:id", (c) => {
+    const feature = contextFeature(c);
+    if (feature instanceof Response) return feature;
+    try {
+      c.header("cache-control", "no-store");
+      return c.json(feature.getOperation(principal(), c.req.param("id")));
+    } catch (error) {
+      return contextError(c, error);
+    }
   });
 
   const agentResult = (c: Context, result: {

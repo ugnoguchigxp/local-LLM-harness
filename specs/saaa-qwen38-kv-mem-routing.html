@@ -1,0 +1,91 @@
+<article lang="ja">
+  <h1>SAAA Qwen 3.8 KV:mem Provider選択仕様</h1>
+  <p>
+    更新日：2026-09-10。SAAAのQwen 3.8要求だけを、20M source retentionとbounded session
+    snapshotを利用できるon-demand Providerへ接続する。<dfn>KV:mem</dfn>は暫定名称である。
+  </p>
+
+  <section id="decision">
+    <h2>決定</h2>
+    <table>
+      <caption>
+        consumer別の固定経路
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">consumer／用途</th>
+          <th scope="col">公開選択</th>
+          <th scope="col">route</th>
+          <th scope="col">runtime／KV方式</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">SAAAでQwen 3.8 KV:memを使う要求</th>
+          <td><code>model: qwen3.8-kv-mem</code></td>
+          <td><code>llm-saaa-kv-mem</code></td>
+          <td><code>qwen-worker-quality</code>／managed-context snapshot</td>
+        </tr>
+        <tr>
+          <th scope="row">ContextStill</th>
+          <td><code>model: qwen-agent-worker</code></td>
+          <td><code>llm-agent-worker</code></td>
+          <td><code>qwen-worker-agent</code>／従来KV</td>
+        </tr>
+        <tr>
+          <th scope="row">通常の既定利用</th>
+          <td><code>model: coding-default</code></td>
+          <td><code>llm-default</code></td>
+          <td><code>qwen-general</code>／常駐Provider</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      SAAAは標準OpenAI互換<code>POST /v1/chat/completions</code>のmodelとして
+      <code>qwen3.8-kv-mem</code>を送る。Agent Connectionを利用するconsumerは
+      <code>saaa-qwen38-kv-mem</code
+      >を<code>explicitAgentProfile: true</code>で選べる。
+    </p>
+  </section>
+
+  <section id="activation">
+    <h2>Activationと非fallback</h2>
+    <ul>
+      <li>専用routeは<code>explicitOnly: true</code>であり、既定routeにはしない。</li>
+      <li>
+        候補は<code>qwen-worker-quality</code>一つだけとし、通常KV
+        Providerへ黙ってfallbackしない。
+      </li>
+      <li>requestがない間はllama-swap管理のon-demand workerとし、常駐defaultは変更しない。</li>
+      <li>
+        snapshot利用はglobal flag、runtime policy、release certification、HOT／BUSY、Context Viewの
+        全条件を満たす場合だけ有効である。Viewなしrequestは同じhost上の通常推論として処理する。
+      </li>
+    </ul>
+  </section>
+
+  <section id="storage">
+    <h2>名称と保存境界</h2>
+    <p>
+      <code>KV:mem</code
+      >は公開model／routeを区別するための暫定ラベルであり、20M token分をRAMへ
+      常時展開する意味ではない。RAM cacheは4 GiB、NVMe hard quotaは512 GiBであり、CRC32C chunk
+      envelope、lazy verification、watermark GC、256 GiB filesystem free floorを適用する。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>受入条件</h2>
+    <ol>
+      <li>
+        <code>qwen3.8-kv-mem</code>が専用routeからquality workerだけへ解決される。
+      </li>
+      <li>ContextStillのprofile、model、route、runtimeに変更がない。</li>
+      <li>既定<code>coding-default</code>は常駐Qwenのままである。</li>
+      <li>repository全checkと文書checkが合格する。</li>
+      <li>
+        7日間soakは要求しない。利用者試用中の異常はauditとstatusで確認し、kill switchで戻せる。
+      </li>
+    </ol>
+  </section>
+</article>

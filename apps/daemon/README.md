@@ -52,6 +52,15 @@ bun run dev
 | `LARM_GATEWAY_MAX_BODY_BYTES` | `4194304` | LLMとTTS JSON body上限。設定可能な最大値は64 MiB |
 | `LARM_SPEECH_MAX_BODY_BYTES` | `269484032` | STT upload上限 |
 | `LARM_GATEWAY_TIMEOUT_SECONDS` | `300` | uploadからresponse完了までの上限。監査recoveryとの競合を避ける最大値は3300秒 |
+| `LARM_CONTEXT_ENABLED` | `false` | Managed Context全体のkill switch。API tokenも必須 |
+| `LARM_CONTEXT_METADATA_ROOT` | `/var/lib/larm/contexts` | principal-scoped metadata state |
+| `LARM_CONTEXT_SOURCE_ROOT` | `/srv/ai/context-sources` | attestation済みimmutable source root |
+| `LARM_CONTEXT_SOURCE_MAX_TOTAL_BYTES` | `549755813888` | source全体のhard quota |
+| `LARM_CONTEXT_SNAPSHOT_ENABLED` | `false` | 認定済みsession snapshotだけを許可する独立kill switch |
+| `LARM_CONTEXT_SNAPSHOT_ROOT` | `/srv/ai/context-snapshots` | 0700のCRC32C snapshot cache root |
+| `LARM_CONTEXT_SNAPSHOT_MAX_BYTES` | `549755813888` | snapshot、pending、quarantineを含むhard quota |
+| `LARM_CONTEXT_SNAPSHOT_FREE_FLOOR_BYTES` | `274877906944` | snapshot filesystemのfree floor |
+| `LARM_CONTEXT_SNAPSHOT_MAX_WRITE_BYTES` | `5368709120` | slot save一件の事前予約上限 |
 | `LARM_SHUTDOWN_TIMEOUT_SECONDS` | `330` | operationとrequestのdrain上限 |
 | `LARM_ARTIFACT_MANIFEST` | `deploy/local-node/models.yaml` | artifact allowlist |
 | `LARM_RELEASE_CATALOG` | `deploy/local-node/releases.yaml` | immutable Runtime release catalog |

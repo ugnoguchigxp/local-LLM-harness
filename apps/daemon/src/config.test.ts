@@ -28,6 +28,17 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.connectionSigningKey).toBeUndefined();
   expect(config.allowAnonymousAgentConnections).toBeFalse();
   expect(config.serviceHarnessAuthEnabled).toBeFalse();
+  expect(config.contextEnabled).toBeFalse();
+  expect(config.contextMetadataRoot).toBe("/var/lib/larm/contexts");
+  expect(config.contextSourceRoot).toBe("/srv/ai/context-sources");
+  expect(config.contextSourceMaxBytes).toBe(256 * 1024 * 1024);
+  expect(config.contextSourceMaxTotalBytes).toBe(512 * 1024 * 1024 * 1024);
+  expect(config.contextMaterializedMaxBytes).toBe(64 * 1024 * 1024);
+  expect(config.contextSnapshotEnabled).toBeFalse();
+  expect(config.contextSnapshotRoot).toBe("/srv/ai/context-snapshots");
+  expect(config.contextSnapshotMaxBytes).toBe(512 * 1024 * 1024 * 1024);
+  expect(config.contextSnapshotFreeFloorBytes).toBe(256 * 1024 * 1024 * 1024);
+  expect(config.contextSnapshotMaxWriteBytes).toBe(5 * 1024 * 1024 * 1024);
   expect(config.configDir).toBe("/workspace/config/local-node");
 });
 
@@ -77,6 +88,18 @@ test("daemon configuration rejects invalid numbers", () => {
     .toThrow(/absolute path/);
   expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_KEY_FILE: "relative.key" }))
     .toThrow(/absolute path/);
+  expect(() => parseDaemonConfig({ LARM_CONTEXT_SOURCE_ROOT: "relative/context" }))
+    .toThrow(/absolute path/);
+  expect(() => parseDaemonConfig({ LARM_CONTEXT_MATERIALIZED_MAX_BYTES: "0" }))
+    .toThrow(/LARM_CONTEXT_MATERIALIZED_MAX_BYTES/);
+  expect(() => parseDaemonConfig({ LARM_CONTEXT_SOURCE_MAX_TOTAL_BYTES: "0" }))
+    .toThrow(/LARM_CONTEXT_SOURCE_MAX_TOTAL_BYTES/);
+  expect(() => parseDaemonConfig({
+    LARM_CONTEXT_ENABLED: "true",
+    LARM_CONTEXT_SNAPSHOT_ENABLED: "true",
+    LARM_API_TOKEN: "test",
+    LARM_CONTEXT_SNAPSHOT_ROOT: "/srv/ai/context-sources/cache",
+  })).toThrow(/must not overlap/);
 });
 
 test("TLS certificate and key paths are paired and absolute", () => {
@@ -142,4 +165,15 @@ test("non-loopback listeners require both API tokens", () => {
   expect(() => parseDaemonConfig({
     LARM_SERVICE_HARNESS_AUTH_ENABLED: "yes",
   })).toThrow(/must be true or false/);
+});
+
+test("managed context requires an API token even on loopback", () => {
+  expect(() => parseDaemonConfig({ LARM_CONTEXT_ENABLED: "true" }))
+    .toThrow(/LARM_API_TOKEN/);
+  expect(parseDaemonConfig({
+    LARM_CONTEXT_ENABLED: "true",
+    LARM_API_TOKEN: "api",
+  }).contextEnabled).toBeTrue();
+  expect(() => parseDaemonConfig({ LARM_CONTEXT_SNAPSHOT_ENABLED: "true" }))
+    .toThrow(/LARM_CONTEXT_ENABLED/);
 });

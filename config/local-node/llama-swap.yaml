@@ -30,6 +30,7 @@ models:
       --cache-type-v q4_0
       --spec-draft-type-k q4_0
       --spec-draft-type-v q4_0
+      --slot-save-path /srv/ai/context-snapshots
       --host 127.0.0.1
       --port ${PORT}
       --reasoning auto

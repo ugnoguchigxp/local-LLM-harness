@@ -101,6 +101,100 @@ test("reference client calls the standard model catalog and Chat Completions wit
   expect(requests.every((request) => !request.headers.has("x-larm-allocation-id"))).toBeTrue();
 });
 
+test("reference client exposes the managed context lifecycle", async () => {
+  const requests: Request[] = [];
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "context-token",
+    random: () => "fixed",
+    fetch: async (input, init) => {
+      const request = new Request(input.toString(), init);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path === "/v1/context-status") {
+        return json({
+          enabled: true,
+          state: "ACTIVE",
+          runtimes: [{
+            runtime: "qwen-general",
+            release: "qwen-general-current",
+            state: "ACTIVE",
+            reason: "eligible_runtime_hot",
+            modes: ["source-rebuild"],
+            leaseEpoch: 1,
+          }],
+        });
+      }
+      if (path === "/v1/contexts" && request.method === "POST") {
+        return json({
+          schemaVersion: 1,
+          id: "ctx-a",
+          version: "v1",
+          sourceHandle: "source-a",
+          sourceDigest: "a".repeat(64),
+          classification: "internal",
+          byteCount: 13,
+          tokenCount: 20,
+          tokenizerDigest: "b".repeat(64),
+          state: "active",
+          createdAt: "2026-09-09T00:00:00.000Z",
+          updatedAt: "2026-09-09T00:00:00.000Z",
+        }, "epoch-test", 201);
+      }
+      if (path === "/v1/context-views") {
+        return json({
+          id: "view-a",
+          operationId: "ctxop-a",
+          allocationId: "alloc-a",
+          runtime: "qwen-general",
+          release: "qwen-general-current",
+          state: "ready",
+          mode: "source-rebuild",
+          tokenCount: 30,
+          inputBudgetTokens: 800,
+          orderedItems: [{
+            contextId: "ctx-a",
+            version: "v1",
+            required: true,
+            utility: 1,
+            tokenCount: 20,
+            sourceDigest: "a".repeat(64),
+          }],
+          omitted: [],
+          createdAt: "2026-09-09T00:00:00.000Z",
+          expiresAt: "2026-09-09T00:05:00.000Z",
+        }, "epoch-test", 201);
+      }
+      return json({ ok: true });
+    },
+  });
+  expect((await client.getContextStatus()).runtimes[0]?.state).toBe("ACTIVE");
+  await client.registerContext({
+    id: "ctx-a",
+    version: "v1",
+    sourceHandle: "source-a",
+    sourceDigest: "a".repeat(64),
+    classification: "internal",
+    byteCount: 13,
+    tokenCount: 20,
+    tokenizerDigest: "b".repeat(64),
+  });
+  const view = await client.createContextView({
+    allocationId: "alloc-a",
+    runtime: "qwen-general",
+    baseInputTokens: 10,
+    maxInputTokens: 800,
+    deadline: "2026-09-09T00:05:00.000Z",
+    canonicalizationVersion: "context-view-v1",
+    items: [{ contextId: "ctx-a", version: "v1", required: true, utility: 1 }],
+  });
+  await client.chatWithContext("alloc-a", view.id, { model: "test", messages: [] }, "llm.reasoning");
+  expect(requests[1]?.headers.get("idempotency-key")).toBe("client_fixed");
+  expect(requests[3]?.headers.get("x-larm-context-view-id")).toBe("view-a");
+  expect(requests.every((request) => request.headers.get("authorization") === "Bearer context-token"))
+    .toBeTrue();
+});
+
 test("reference client reads the strict release convergence status with the API bearer", async () => {
   let observed: Request | undefined;
   const client = new LarmClient({

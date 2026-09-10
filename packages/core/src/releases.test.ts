@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { loadArtifactManifest } from "./artifacts";
 import { loadRegistry } from "./registry";
 import {
@@ -22,6 +24,32 @@ describe("runtime release catalog", () => {
     expect(defaultRuntimeRelease(releases, "ornith15-35b-speed")?.artifacts).toEqual([
       "ornith15-35b-speed",
     ]);
+    expect(registry.runtimes.find((runtime) => runtime.id === "qwen-general")?.context)
+      .toMatchObject({ class: "managed-context", sourceTokenLimit: 20_000_000 });
+    expect(registry.runtimes.find((runtime) => runtime.id === "qwen-worker-quality")?.context)
+      .toMatchObject({
+        class: "managed-context",
+        materializedRetentionTargetTokens: 20_000_000,
+        nvmeCacheMaxBytes: 512 * 1024 * 1024 * 1024,
+      });
+    const sourceEvidenceDigest = createHash("sha256")
+      .update(readFileSync(`${root}specs/context-source-rebuild-evidence.html`))
+      .digest("hex");
+    expect(defaultRuntimeRelease(releases, "qwen-general")?.contextCertification?.evidenceDigest)
+      .toBe(sourceEvidenceDigest);
+    const snapshotEvidenceDigest = createHash("sha256")
+      .update(readFileSync(`${root}specs/context-m3b-crc32c-evidence.html`))
+      .digest("hex");
+    expect(defaultRuntimeRelease(releases, "qwen-worker-quality")?.contextCertification)
+      .toMatchObject({
+        profile: "qwen38-quality-crc32c-v1",
+        providerConfigRevision: "llama-swap-qwen-quality-snapshot-v2",
+        stateFormat: "llama-slot-crc32c-v1",
+        cacheTypeK: "q4_0",
+        cacheTypeV: "q4_0",
+        verifiedModes: ["source-rebuild", "session-snapshot"],
+        evidenceDigest: snapshotEvidenceDigest,
+      });
     expect(defaultRuntimeRelease(releases, "qwen-tts")?.digest).toMatch(/^[a-f0-9]{64}$/);
   });
 

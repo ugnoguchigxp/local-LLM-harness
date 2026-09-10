@@ -1,0 +1,218 @@
+<article lang="ja">
+  <h1>Managed Context実装完了トレーサビリティ</h1>
+  <dl>
+    <dt>監査日</dt>
+    <dd><time>2026-09-10</time></dd>
+    <dt>対象</dt>
+    <dd>高度推論LLM連動型Virtual Context Activation仕様のM0–M6とVC-R01–R13</dd>
+    <dt>結論</dt>
+    <dd>
+      M0–M2とCRC32C snapshotのM3b／M4実装は完了し、Qwen 3.8 qualityのlive conformanceでtechnical
+      Goを得た。raw snapshotのM3a No-GoはCRC32C envelope、strict identity、atomic commit、
+      quarantine、source-rebuild fallbackで閉じた。M5 background最適化は初期経路へ接続しない。
+    </dd>
+  </dl>
+
+  <section id="closed-gaps">
+    <h2>再監査で閉じた実装差分</h2>
+    <ul>
+      <li>
+        Source Providerがcanonical tokenizerのdigestと実token数をsidecar
+        attestationへ固定し、登録APIの 自己申告値だけでは20M admissionを通過できないようにした。
+      </li>
+      <li>
+        generation直前に認定runtimeのchat templateを適用して全promptを再tokenizeし、呼出側が
+        <code>baseInputTokens</code>を過少申告しても225,280
+        token上限を迂回できないようにした。
+      </li>
+      <li>
+        live runtimeのengine build、chat template、tokenizer behavior、context
+        limitを周期probeし、認定releaseと 一致したHOT／BUSY
+        runtimeだけをACTIVE／BUSYにするようにした。
+      </li>
+      <li>
+        Context mutationのpath-scoped idempotency、100件既定・500件上限のcursor pagination、
+        materialization operation照会を実装した。
+      </li>
+      <li>
+        source byte quota、filesystem free floor、process間provision lock、optional source
+        drift、deadline、cancel、 metadata commit rollback、bounded operation retentionを実装した。
+      </li>
+      <li>
+        activation、operation、materialization時間、prefill token、cache miss、bypass、cache
+        byteのmetricを追加した。
+      </li>
+      <li>
+        64 MiB chunk CRC32C、native self-test、atomic commit、lazy verification、破損隔離、512 GiB
+        quota、90%／80% GC、256 GiB free floor、応答完了後saveを実装した。
+      </li>
+    </ul>
+  </section>
+
+  <section id="milestones">
+    <h2>Milestone判定</h2>
+    <table>
+      <caption>
+        計画と実装結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Milestone</th>
+          <th scope="col">状態</th>
+          <th scope="col">完了根拠</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">M0</th>
+          <td>完了</td>
+          <td>
+            strict schema、pure planner、compatibility key、activation state machine、境界test
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">M1</th>
+          <td>完了</td>
+          <td>
+            global kill switch、Observer freshness、live identity probe、lease epoch、drain fencing
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">M2</th>
+          <td>完了</td>
+          <td>
+            attested Source Provider、20M admission、Active View、source rebuild、Control API、typed
+            client、operation観測
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">M3a</th>
+          <td>Raw経路No-Go判定完了</td>
+          <td>
+            容量式と復元時間を実測。tampered snapshot受理により必須integrity条件を不合格とした
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">M3b</th>
+          <td>Go</td>
+          <td>
+            全11 faultをrestore前拒否、3長でexact
+            continuationと再起動後<code>prompt_n=1</code>、 warm
+            p95はraw比101.34%
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">M4</th>
+          <td>実装・認定完了</td>
+          <td>quality workerだけに512 GiB bounded storeとrelease-bound session modeを接続</td>
+        </tr>
+        <tr>
+          <th scope="row">M5</th>
+          <td>初期scope外</td>
+          <td>background prewarmは無効・未接続。foreground requestとterminal saveだけを認定</td>
+        </tr>
+        <tr>
+          <th scope="row">M6</th>
+          <td>対象外</td>
+          <td>experimental blendはproduction critical path外で、認証もroute接続も行っていない</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="requirements">
+    <h2>Requirement判定</h2>
+    <table>
+      <caption>
+        VC-R01–R13の閉鎖状態
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID</th>
+          <th scope="col">判定</th>
+          <th scope="col">根拠またはgate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">VC-R01</th>
+          <td>Pass</td>
+          <td>既定disabled。false時はstore初期化と追加timerなし</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R02</th>
+          <td>Pass</td>
+          <td>fresh Observer、release、live context identityの積でactivation</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R03</th>
+          <td>Pass</td>
+          <td>deterministic planner、required超過422、optional omission</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R04</th>
+          <td>Pass</td>
+          <td>attested 20M境界と実chat promptの225,280再検証</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R05</th>
+          <td>Pass</td>
+          <td>最大長実測式で20Mは343.99 GiB、512 GiB quota内に収容</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R06</th>
+          <td>Pass</td>
+          <td>principal、Allocation、runtime、release、lease epoch、one-shot consumeを照合</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R07</th>
+          <td>Pass</td>
+          <td>identity変更でactivation不可。quality releaseだけにsnapshot modeを認定</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R08</th>
+          <td>Pass</td>
+          <td>drainとexpiryでview／operationをcancelし、snapshot／RAM handleは作成しない</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R09</th>
+          <td>Pass</td>
+          <td>CRC32C fault全拒否、exact continuation、最大長とrestart matrixが合格</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R10</th>
+          <td>Pass</td>
+          <td>principal scope、opaque handle、no-follow、digest、quota lockのnegative test</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R11</th>
+          <td>Pass</td>
+          <td>viewなしGatewayは独立。snapshotなし時は常にsource rebuild</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R12</th>
+          <td>Pass</td>
+          <td>full repository testで既存route、swap、priority、Agent Connectionを回帰検証</td>
+        </tr>
+        <tr>
+          <th scope="row">VC-R13</th>
+          <td>Implementation pass</td>
+          <td>
+            自動check、再実行可能conformance、live canary証跡を整備。長期soakは要求せず、
+            利用者試用で異常を観測する
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="rollout-boundary">
+    <h2>実装完了とrolloutの境界</h2>
+    <p>
+      この監査はsource、設定、test、運用scriptの実装完了を判定する。長期soakは受入条件から除外し、
+      稼働serviceへの署名release反映後は利用者が試用する。試用中もstatus、audit、CRC拒否、kill
+      switch、 source-rebuild
+      fallbackを利用でき、異常時にcandidateを安全に止められることを運用条件とする。
+    </p>
+  </section>
+</article>

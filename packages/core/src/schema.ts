@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { embeddingSpaceSchema } from "./embedding";
+import { runtimeContextPolicySchema } from "./context";
 
 const identifierSchema = z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 const httpUrlSchema = z.string().url().refine((value) => {
@@ -65,6 +66,7 @@ export const nodeDefinitionSchema = z.object({
 const runtimeShared = {
   capability: uniqueStringList,
   protocol: runtimeProtocolSchema,
+  context: runtimeContextPolicySchema.optional(),
   embedding: embeddingSpaceSchema.optional(),
   artifacts: uniqueStringList.optional(),
   node: identifierSchema,

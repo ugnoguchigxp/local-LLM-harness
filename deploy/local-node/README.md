@@ -173,6 +173,42 @@ deploy/local-node/scripts/smoke-larm.sh
 # deploy/local-node/scripts/canary-gate.sh
 ```
 
+Managed Contextは認定済みのreasoning runtimeがhost中のときだけActiveになります。source本文は
+control APIへinlineせず、API tokenと同じprincipal scopeへ先にprovisionします。コマンドはlive
+runtimeのcanonical tokenizerでattestationを作成し、本文を表示せず、登録に使うhandle、SHA-256、
+byte数、token数、tokenizer digestだけを返します。
+
+```bash
+set -a
+source /etc/larm/larm.env
+set +a
+bun run context:source:provision provision policy-v7 /absolute/path/to/policy.txt
+curl -sS http://127.0.0.1:9810/v1/context-status \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" | jq
+```
+
+既定tokenizer endpointはresidentの<code>http://127.0.0.1:8080</code>です。別の認定runtimeを使う場合は
+<code>LARM_CONTEXT_TOKENIZER_ENDPOINT</code>をそのloopback endpointへ設定します。Provisionは512 GiBの
+source byte quotaと256 GiB filesystem free floorをprocess間lock内で検査します。登録bodyの
+<code>byteCount</code>、<code>tokenCount</code>、<code>tokenizerDigest</code>はコマンド出力を使用し、daemon側で
+attestationと再照合されます。
+
+Source Set quotaはprincipalあたり20,000,000 tokenです。一回のActive Viewは262,144 contextから
+32,768 output reserveと4,096 safety marginを引いた最大225,280 tokenであり、20M全体を一度に
+attentionへ載せる意味ではありません。qwen-worker-qualityのsnapshot上限は512 GiB、filesystem
+free floorは256 GiBです。snapshot modeはreleaseのconformance認証がある場合だけ公開します。
+snapshotは64 MiB chunk CRC32Cで偶発破損をrestore前に検出し、破損時は隔離してsource rebuildへ
+戻ります。daemon起動時はmanifestだけを読み、本文は使用時に一度検証します。認定範囲は保存prefixに
+未見suffixを加えるsession continuationであり、短いpromptへの巻戻しや任意KV block連結ではありません。
+
+隔離Qwen workerでM3bを再実行する場合は、専用の絶対slot rootを指定して次を実行します。
+
+```bash
+LARM_CONTEXT_SPIKE_ENDPOINT=http://127.0.0.1:59001 \
+LARM_CONTEXT_SPIKE_SLOT_SAVE_PATH=/srv/ai/context-m3b-isolated \
+  bun run context:kv:conformance
+```
+
 HTTP Provider canaryはsecret-free JSONをrepository外へ保存し、root管理の状態機械へ記録します。
 consumer完了後、同じProvider世代の24時間soakが合格すると`complete`へ進みます。
 

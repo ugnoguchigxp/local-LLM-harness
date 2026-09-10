@@ -12,8 +12,18 @@ Environment=HOME=/srv/ai/cache
 Environment=XDG_CACHE_HOME=/srv/ai/cache
 Environment=LARM_HOST=0.0.0.0
 Environment=LARM_PORT=9810
+Environment=LARM_GATEWAY_TIMEOUT_SECONDS=3300
 Environment=LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS=true
 Environment=LARM_SERVICE_HARNESS_AUTH_ENABLED=false
+Environment=LARM_CONTEXT_ENABLED=true
+Environment=LARM_CONTEXT_METADATA_ROOT=/var/lib/larm/contexts
+Environment=LARM_CONTEXT_SOURCE_ROOT=/srv/ai/context-sources
+Environment=LARM_CONTEXT_SOURCE_MAX_TOTAL_BYTES=549755813888
+Environment=LARM_CONTEXT_SNAPSHOT_ENABLED=true
+Environment=LARM_CONTEXT_SNAPSHOT_ROOT=/srv/ai/context-snapshots
+Environment=LARM_CONTEXT_SNAPSHOT_MAX_BYTES=549755813888
+Environment=LARM_CONTEXT_SNAPSHOT_FREE_FLOOR_BYTES=274877906944
+Environment=LARM_CONTEXT_SNAPSHOT_MAX_WRITE_BYTES=5368709120
 Environment=LARM_RELEASE_MANIFEST=/srv/ai/apps/larm-current/release-manifest.json
 Environment=LARM_ARTIFACT_STAGING_ROOT=/srv/ai/models/.larm-staging
 Environment=LARM_ARTIFACT_ROLLBACK_ROOT=/srv/ai/models/.larm-rollback
@@ -42,7 +52,7 @@ PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
 ReadOnlyPaths=/srv/ai/apps/larm-current
-ReadWritePaths=/srv/ai/cache /srv/ai/logs /srv/ai/models /var/lib/larm
+ReadWritePaths=/srv/ai/cache /srv/ai/context-snapshots /srv/ai/context-sources /srv/ai/logs /srv/ai/models /var/lib/larm
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]

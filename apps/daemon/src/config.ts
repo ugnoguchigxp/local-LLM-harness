@@ -48,6 +48,17 @@ export type DaemonConfig = {
   inferenceAuditMinFreeBytes: number;
   inferenceAuditMaxResponseBytes: number;
   inferenceAuditMaterializationTimeoutMs: number;
+  contextEnabled: boolean;
+  contextMetadataRoot: string;
+  contextSourceRoot: string;
+  contextSourceMaxBytes: number;
+  contextSourceMaxTotalBytes: number;
+  contextMaterializedMaxBytes: number;
+  contextSnapshotEnabled: boolean;
+  contextSnapshotRoot: string;
+  contextSnapshotMaxBytes: number;
+  contextSnapshotFreeFloorBytes: number;
+  contextSnapshotMaxWriteBytes: number;
 };
 
 export type InferenceAuditConfig = Pick<
@@ -214,6 +225,14 @@ export function parseDaemonConfig(
     throw new Error("LARM TLS certificate and key files must use absolute paths");
   }
   const inferenceAudit = parseInferenceAuditConfig(env);
+  const contextEnabled = booleanSetting(env, "LARM_CONTEXT_ENABLED", false);
+  const contextSnapshotEnabled = booleanSetting(env, "LARM_CONTEXT_SNAPSHOT_ENABLED", false);
+  const contextMetadataRoot = absolutePathSetting(env, "LARM_CONTEXT_METADATA_ROOT", "/var/lib/larm/contexts");
+  const contextSourceRoot = absolutePathSetting(env, "LARM_CONTEXT_SOURCE_ROOT", "/srv/ai/context-sources");
+  const contextSnapshotRoot = absolutePathSetting(env, "LARM_CONTEXT_SNAPSHOT_ROOT", "/srv/ai/context-snapshots");
+  const overlaps = (left: string, right: string) => left === right
+    || left.startsWith(`${right}/`)
+    || right.startsWith(`${left}/`);
   const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
   if (!loopbackHosts.has(hostname) && !apiToken) {
     throw new Error("LARM_API_TOKEN is required when LARM_HOST is not loopback");
@@ -223,6 +242,18 @@ export function parseDaemonConfig(
   }
   if (serviceHarnessAuthEnabled && !apiToken) {
     throw new Error("LARM_API_TOKEN is required when Service Harness authentication is enabled");
+  }
+  if (contextEnabled && !apiToken) {
+    throw new Error("LARM_API_TOKEN is required when managed context is enabled");
+  }
+  if (contextSnapshotEnabled && !contextEnabled) {
+    throw new Error("LARM_CONTEXT_ENABLED must be true when context snapshots are enabled");
+  }
+  if (contextSnapshotEnabled && (
+    overlaps(contextSnapshotRoot, contextMetadataRoot)
+    || overlaps(contextSnapshotRoot, contextSourceRoot)
+  )) {
+    throw new Error("LARM_CONTEXT_SNAPSHOT_ROOT must not overlap managed context metadata or sources");
   }
 
   return {
@@ -336,6 +367,47 @@ export function parseDaemonConfig(
       integer: true,
     }),
     telemetryMaxAgeMs: secondsSetting(env, "LARM_TELEMETRY_MAX_AGE_SECONDS", 10, 0.001),
+    contextEnabled,
+    contextMetadataRoot,
+    contextSourceRoot,
+    contextSourceMaxBytes: numberSetting(
+      env,
+      "LARM_CONTEXT_SOURCE_MAX_BYTES",
+      256 * 1024 * 1024,
+      { min: 1, max: 2 * 1024 * 1024 * 1024, integer: true },
+    ),
+    contextSourceMaxTotalBytes: numberSetting(
+      env,
+      "LARM_CONTEXT_SOURCE_MAX_TOTAL_BYTES",
+      512 * 1024 * 1024 * 1024,
+      { min: 1, max: 2 * 1024 * 1024 * 1024 * 1024, integer: true },
+    ),
+    contextMaterializedMaxBytes: numberSetting(
+      env,
+      "LARM_CONTEXT_MATERIALIZED_MAX_BYTES",
+      64 * 1024 * 1024,
+      { min: 1, max: 2 * 1024 * 1024 * 1024, integer: true },
+    ),
+    contextSnapshotEnabled,
+    contextSnapshotRoot,
+    contextSnapshotMaxBytes: numberSetting(
+      env,
+      "LARM_CONTEXT_SNAPSHOT_MAX_BYTES",
+      512 * 1024 * 1024 * 1024,
+      { min: 1, max: 2 * 1024 * 1024 * 1024 * 1024, integer: true },
+    ),
+    contextSnapshotFreeFloorBytes: numberSetting(
+      env,
+      "LARM_CONTEXT_SNAPSHOT_FREE_FLOOR_BYTES",
+      256 * 1024 * 1024 * 1024,
+      { min: 0, max: 2 * 1024 * 1024 * 1024 * 1024, integer: true },
+    ),
+    contextSnapshotMaxWriteBytes: numberSetting(
+      env,
+      "LARM_CONTEXT_SNAPSHOT_MAX_WRITE_BYTES",
+      5 * 1024 * 1024 * 1024,
+      { min: 1, max: 16 * 1024 * 1024 * 1024, integer: true },
+    ),
     ...inferenceAudit,
   };
 }

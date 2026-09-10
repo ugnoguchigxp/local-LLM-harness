@@ -18,12 +18,14 @@
         "@larm/backends": "workspace:*",
         "@larm/core": "workspace:*",
         "hono": "^4",
+        "zod": "^4.4.3",
       },
     },
     "packages/backends": {
       "name": "@larm/backends",
       "dependencies": {
         "@larm/core": "workspace:*",
+        "@node-rs/crc32": "1.10.7",
       },
     },
     "packages/client": {
@@ -62,6 +64,34 @@
     "@larm/core": ["@larm/core@workspace:packages/core"],
 
     "@larm/daemon": ["@larm/daemon@workspace:apps/daemon"],
+
+    "@node-rs/crc32": ["@node-rs/crc32@1.10.7", "", { "optionalDependencies": { "@node-rs/crc32-android-arm-eabi": "1.10.7", "@node-rs/crc32-android-arm64": "1.10.7", "@node-rs/crc32-darwin-arm64": "1.10.7", "@node-rs/crc32-darwin-x64": "1.10.7", "@node-rs/crc32-freebsd-x64": "1.10.7", "@node-rs/crc32-linux-arm-gnueabihf": "1.10.7", "@node-rs/crc32-linux-arm64-gnu": "1.10.7", "@node-rs/crc32-linux-arm64-musl": "1.10.7", "@node-rs/crc32-linux-x64-gnu": "1.10.7", "@node-rs/crc32-linux-x64-musl": "1.10.7", "@node-rs/crc32-win32-arm64-msvc": "1.10.7", "@node-rs/crc32-win32-ia32-msvc": "1.10.7", "@node-rs/crc32-win32-x64-msvc": "1.10.7" } }, "sha512-OwuyRAe9Lj0GoFVBFzTS6bTAV4i+Xd68sYbNUmLnI1GVkQIqVb9mzNrpKSZkBFiQD73CdMB/uKYsvk2bxq/eZg=="],
+
+    "@node-rs/crc32-android-arm-eabi": ["@node-rs/crc32-android-arm-eabi@1.10.7", "", { "os": "android", "cpu": "arm" }, "sha512-mWNghDkwgoc5uJhhPx/LbgLoNAxnq6Sfz4pTxi4NWG7s5l+dPe7K+L4kXb0oOfwl3Yq3Ro7CNPGLrU4cmTXhaA=="],
+
+    "@node-rs/crc32-android-arm64": ["@node-rs/crc32-android-arm64@1.10.7", "", { "os": "android", "cpu": "arm64" }, "sha512-lLUVm2H5HrSm/g2379JBRsSr5RCDqobP6I5sxZd+wSq6WBH2b6goilNYhxbss8gYQZLCJA09EvyFkZFFU9VuAQ=="],
+
+    "@node-rs/crc32-darwin-arm64": ["@node-rs/crc32-darwin-arm64@1.10.7", "", { "os": "darwin", "cpu": "arm64" }, "sha512-8slhmrRa3B3/z+MnLgST+lR5T0Oic60YTQ3S9OIHP259GiktlmdYyebhAvy0bBcyCuScLDcW0EB3sXxWw1TCbQ=="],
+
+    "@node-rs/crc32-darwin-x64": ["@node-rs/crc32-darwin-x64@1.10.7", "", { "os": "darwin", "cpu": "x64" }, "sha512-+RkQ2+jSWco0WqSPq7GWJlJwmJpIGA79OoToGTSAsqgypkls4i3PlexVTPrfepuHn3whpa4GrmjvLbRm5RXgCQ=="],
+
+    "@node-rs/crc32-freebsd-x64": ["@node-rs/crc32-freebsd-x64@1.10.7", "", { "os": "freebsd", "cpu": "x64" }, "sha512-yqtsf23JCO1gYt3/Rkk5aoVn1rINk/J7//A9EKwGstNpBBlN3t0JKD3QpGzEnqc1vS72lEvIeO9sO3XiH+hJWw=="],
+
+    "@node-rs/crc32-linux-arm-gnueabihf": ["@node-rs/crc32-linux-arm-gnueabihf@1.10.7", "", { "os": "linux", "cpu": "arm" }, "sha512-AB/I1GO9LDIIHiur2bexqPy30740AmBjEhO8ij9k9desVO41dN5/ddTU2+xbf9TYt2XXvku1qYbtf5YHAAVFAw=="],
+
+    "@node-rs/crc32-linux-arm64-gnu": ["@node-rs/crc32-linux-arm64-gnu@1.10.7", "", { "os": "linux", "cpu": "arm64" }, "sha512-0lPFuudkW+bpeXUZAqz6FSml6Z2JvF52UGSALvnDS8Qyg3wKBNWjcXy78Pw1wiIGao/AAFFr74I3OwCMzYujuQ=="],
+
+    "@node-rs/crc32-linux-arm64-musl": ["@node-rs/crc32-linux-arm64-musl@1.10.7", "", { "os": "linux", "cpu": "arm64" }, "sha512-lx5m7iCmdXPGigG7AI5NiawWsiJ1HwR/w6PV8XN48HNsgzdjar0ISB8TSLtJpq+jFcj10Wcz3Rt43RA72652Vg=="],
+
+    "@node-rs/crc32-linux-x64-gnu": ["@node-rs/crc32-linux-x64-gnu@1.10.7", "", { "os": "linux", "cpu": "x64" }, "sha512-If3ogA9D2XKKb8vHttu+jl3BTWT7UCTgmrXmUAwQABH45iK32AZ9OoMcrg2rWKKXgGpG6x3IslFBgzdOkObDnA=="],
+
+    "@node-rs/crc32-linux-x64-musl": ["@node-rs/crc32-linux-x64-musl@1.10.7", "", { "os": "linux", "cpu": "x64" }, "sha512-XxuxZYJhQBlo2rRnyOOummZSyBdC+jHpXWM9XSWs1LWfsgc36IauKY+XXRAJwKwefx8lwmMjqp6T/Zq9frU87w=="],
+
+    "@node-rs/crc32-win32-arm64-msvc": ["@node-rs/crc32-win32-arm64-msvc@1.10.7", "", { "os": "win32", "cpu": "arm64" }, "sha512-Rs8TGuvxgpkteSLhPqAb3DOqqRO1jiYghdMxozl+P3Ftep1hTWL8+gwYF5dtu1BtdOJpz23A+8GehSuwl96MrQ=="],
+
+    "@node-rs/crc32-win32-ia32-msvc": ["@node-rs/crc32-win32-ia32-msvc@1.10.7", "", { "os": "win32", "cpu": "ia32" }, "sha512-G/xNcmblMH6Z7KBX02XJPJj2UGo6eTgFa+r5ZU17O8V5P9iQLrKqs/T7Sz40otDxazD1maSXT/zA8Q7rBu2/3g=="],
+
+    "@node-rs/crc32-win32-x64-msvc": ["@node-rs/crc32-win32-x64-msvc@1.10.7", "", { "os": "win32", "cpu": "x64" }, "sha512-1uXrMu17uz12WPdii84NXmoQsoPdmSQViyCMJPu0KQuwnhErQCA4PoGK+dih9jY0mrcLuzR1r5wXVaE049fJ6w=="],
 
     "@sidvind/better-ajv-errors": ["@sidvind/better-ajv-errors@5.0.0", "", { "dependencies": { "kleur": "^4.1.0" }, "peerDependencies": { "ajv": "^7.0.0 || ^8.0.0" } }, "sha512-FeI/V2KGtOaDX+r0akidCGYy79lVR4YnAqk1GFgZFuHADErCAEmtZL4+IdCAcDXHqfZsII3fs9DrfC1pIR+19w=="],
 

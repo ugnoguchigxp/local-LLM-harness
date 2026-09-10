@@ -122,8 +122,9 @@
         従来の明示Allocationは既定の<code>capacityPolicy: reject</code>、<code>priority: 0</code>です。
       </li>
       <li>
-        SAAAは<code>coding-default</code>を使い、Resident
-        Qwenを既定とする方針を維持します。
+        通常の既定は<code>coding-default</code>とResident
+        Qwenを維持します。SAAAがQwen 3.8の
+        KV:mem実験経路を要求するときだけ<code>qwen3.8-kv-mem</code>を明示選択します。
       </li>
       <li>
         NightWorkerは<code>qwen-nightworker</code>、ContextStillは<code>qwen-agent-worker</code>を使います。
