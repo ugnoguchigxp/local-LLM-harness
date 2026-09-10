@@ -199,6 +199,22 @@ snapshotは64 MiB chunkごとのCRC32Cでrestore前に偶発破損を検出し�
 `LARM_CONTEXT_ENABLED=false`で全体、`LARM_CONTEXT_SNAPSHOT_ENABLED=false`でsnapshotだけを停止できます。
 7日間soakは受入条件ではなく、利用者試用中は`GET /v1/context-status`、audit、metricsで観測します。
 
+容量を増やす場合、現構造は<strong>2 TiB付近を速度優先の実用上限候補、4 TiB付近を未認定の実験上限候補</strong>と
+見積もります。これは故障する境界ではなく、flat directory走査、使用量集計、foreground GCの遅延が目立ち始める
+可能性がある範囲です。M3b実測の20,000,000 token = 369,356,894,784 bytes（343.99 GiB）を同じmodel、
+KV dtype、layoutのまま線形換算すると、2 TiBは約119.07M token相当、4 TiBは約238.15M token相当です。
+
+| 容量 | 同条件でのKV相当token数 | 現在の扱い |
+| ---: | ---: | --- |
+| 343.99 GiB | 20.00M | M3b実測baseline |
+| 約1.68 TiB | 100.00M | 現行token schema上限 |
+| 2 TiB | 約119.07M | byte設定parser上限。全量利用にはtoken schema変更と再認定が必要 |
+| 4 TiB | 約238.15M | 現在は設定不可。index／GC再設計後の実験対象 |
+
+この換算値は保存容量の目安であり、一つのattention windowの長さ、保存できるsource本文量、性能保証ではありません。
+現在の512 GiB既定値と20M policyは変更しません。段階的な拡張案とGo／No-Go条件は
+[`specs/kv-mem-capacity-expansion.html`](specs/kv-mem-capacity-expansion.html)に分離しています。
+
 完全な選択仕様は
 [`specs/saaa-qwen38-kv-mem-routing.html`](specs/saaa-qwen38-kv-mem-routing.html)、Context lifecycleと
 API contractは[`specs/capability-gated-virtual-context.html`](specs/capability-gated-virtual-context.html)を

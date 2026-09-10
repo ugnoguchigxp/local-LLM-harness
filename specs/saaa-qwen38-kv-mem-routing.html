@@ -72,6 +72,15 @@
       常時展開する意味ではない。RAM cacheは4 GiB、NVMe hard quotaは512 GiBであり、CRC32C chunk
       envelope、lazy verification、watermark GC、256 GiB filesystem free floorを適用する。
     </p>
+    <p>
+      現構造の容量拡張は2 TiB付近を速度優先の実用上限候補、4 TiB付近を未認定の実験上限候補とする。
+      M3b実測からの同条件換算では、それぞれ約119.07M token相当、約238.15M token相当である。ただし
+      現行token schemaは100M、byte設定parserは2
+      TiBが上限であり、既定値や認定範囲を拡大したものではない。 詳細は<a
+        href="./kv-mem-capacity-expansion.html"
+        >KV:mem容量拡張設計</a
+      >に定める。
+    </p>
   </section>
 
   <section id="acceptance">
