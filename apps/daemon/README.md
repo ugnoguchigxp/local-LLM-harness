@@ -174,6 +174,34 @@ curl -sS -X POST http://127.0.0.1:9810/v1/audio/speech \
 routeへ解決します。優先度はSAAA 3000、NightWorker 2000、ContextStill 1000です。実行中requestは
 preemptせず、解放後の次枠を高い値から選び、同値はFIFOです。
 
+## KV:mem Provider経路
+
+`KV:mem`はSAAA向けManaged Context実験経路の暫定名称です。公開model
+`qwen3.8-kv-mem`は、明示専用route `llm-saaa-kv-mem`から`qwen-worker-quality`だけへ解決します。
+fallback候補を持たないため、snapshot非対応のResidentやContextStill workerへ黙って切り替わりません。
+通常の`coding-default`はResidentを維持し、ContextStillの`qwen-agent-worker`は
+`qwen-worker-agent`上の従来KVを維持します。
+
+Model Broker経由の通常Chatはsnapshot対応hostをon-demand起動しますが、Viewなしでは通常推論です。
+Managed Contextをmaterializeするrequestは、明示Allocationと同じprincipalでContext Viewを作成し、Chatへ
+`x-larm-allocation-id`、`x-larm-capability`、`x-larm-context-view-id`を渡します。controllerはViewを
+Allocation、runtime、release、model binding、TTL、lease epochへbindし、一回だけconsumeします。
+
+`GET /v1/context-status`はruntimeごとの`ACTIVE`、`STANDBY`、`DISABLED`、認定mode、quotaと理由を返します。
+snapshot利用には次の条件がすべて必要です。
+
+- `LARM_CONTEXT_ENABLED=true`
+- `LARM_CONTEXT_SNAPSHOT_ENABLED=true`
+- runtimeがManaged Context opt-in済み
+- active releaseが`session-snapshot`認定済み
+- 対象runtimeが`HOT`または`BUSY`
+- View、principal、Allocation、release identityが一致
+
+snapshotは64 MiB CRC32C envelope、temporary write、fsync、atomic rename、lazy verificationで管理します。
+破損、identity drift、quota不足ではrestoreせず隔離し、source rebuildへ戻します。任意KV blockの連結、短いpromptへの
+巻戻し、暗号学的改ざん耐性、background prewarmは認定範囲外です。詳細は
+[`../../specs/saaa-qwen38-kv-mem-routing.html`](../../specs/saaa-qwen38-kv-mem-routing.html)を参照してください。
+
 ## 明示Allocation Gateway（互換・高度用途）
 
 ```bash

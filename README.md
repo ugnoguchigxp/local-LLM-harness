@@ -71,6 +71,7 @@ LARM は、GPU ドライバ、推論エンジン、モデルのインストー�
 | Allocation | `POST /v1/allocations`、`POST /v1/allocations/:id/renew`、`DELETE /v1/allocations/:id` |
 | モデル一覧 | `GET /v1/models` |
 | LLM | JSON／HTTP SSE: `POST /v1/chat/completions` |
+| KV:mem | `GET /v1/context-status`、`POST /v1/contexts`、`POST /v1/context-views`、`GET /v1/context-operations/:id` |
 | 音声 | `POST /v1/audio/transcriptions`、`POST /v1/audio/speech`、`GET /v1/audio/voices` |
 | Embedding | `GET /v3/agent-profiles`で契約を発見し、Agent Connection claim後に`POST /v1/embed` |
 | Agent 接続 | `/v1/agent-profiles`、`/v2/agent-profiles`、`/v3/agent-profiles`、`/v1/agent-connections` |
@@ -161,6 +162,47 @@ LARM_MODEL=coding-default bun quickstart.ts
 ```
 
 Model Brokerが内部Allocationの取得・固定・解放を行います。明示Allocationは管理・高度用途にだけ残します。LLM全文を待たず句単位でTTSを開始する音声例は [`examples/voice-client.ts`](examples/voice-client.ts) にあります。
+
+## KV:mem（実験機能）
+
+`KV:mem`は、SAAAがQwen 3.8の大規模source集合から必要なContext Viewを選び、認定済みProviderの
+KV snapshotを再利用する経路の暫定名称です。20M tokenを一つのattention windowまたはRAMへ常駐させる
+機能ではありません。sourceとして最大20,000,000 tokenを保持し、一回のViewではQwen 3.8の実際の
+context上限からoutput reserveとsafety marginを引いた範囲だけをmaterializeします。
+
+| 用途 | 公開model | 内部route / runtime | KV方式 |
+| --- | --- | --- | --- |
+| SAAA Qwen 3.8 KV:mem | `qwen3.8-kv-mem` | `llm-saaa-kv-mem` / `qwen-worker-quality` | source rebuild＋認定済みsession snapshot |
+| ContextStill | `qwen-agent-worker` | `llm-agent-worker` / `qwen-worker-agent` | 従来KV |
+| 通常の既定利用 | `coding-default` | `llm-default` / `qwen-general` | 常駐Provider |
+
+SAAAのProvider設定では、既存のbase URLとBearerを維持してmodelだけを明示します。このmodelは
+on-demandで起動し、通常KV Providerへfallbackしません。
+
+```json
+{
+  "model": "qwen3.8-kv-mem",
+  "messages": [{ "role": "user", "content": "質問" }],
+  "stream": true
+}
+```
+
+model選択だけではsnapshotを作成・restoreしません。Viewなしrequestはsnapshot対応host上の通常推論です。
+KV:memを実際に利用する高度経路では、`llm-saaa-kv-mem`の明示Allocationを取得し、事前provision済みsourceを
+`POST /v1/contexts`へ登録して、同じAllocationへ`POST /v1/context-views`でViewをbindします。Chat requestには
+`x-larm-allocation-id`、`x-larm-capability: llm.coding`、`x-larm-context-view-id`をすべて指定します。
+Viewは一回だけconsumeされ、principal、model、runtime release、Allocation、期限が違えばfail closedで拒否されます。
+
+snapshotは64 MiB chunkごとのCRC32Cでrestore前に偶発破損を検出します。破損snapshotは隔離してsource rebuildへ
+戻します。NVMe hard quotaは512 GiB、high/low watermarkは90%/80%、filesystem free floorは256 GiB、RAM cache
+上限は4 GiBです。400 GiB超をdaemon起動時に全走査せず、使用するsnapshotだけをlazy検証します。
+`LARM_CONTEXT_ENABLED=false`で全体、`LARM_CONTEXT_SNAPSHOT_ENABLED=false`でsnapshotだけを停止できます。
+7日間soakは受入条件ではなく、利用者試用中は`GET /v1/context-status`、audit、metricsで観測します。
+
+完全な選択仕様は
+[`specs/saaa-qwen38-kv-mem-routing.html`](specs/saaa-qwen38-kv-mem-routing.html)、Context lifecycleと
+API contractは[`specs/capability-gated-virtual-context.html`](specs/capability-gated-virtual-context.html)を
+参照してください。
 
 Embeddingは短期Agent Connection専用です。`contextstill-embedding`を明示選択し、
 `larm-embedding-provider-v1`形式でclaimしてください。claimにはendpoint、短期Bearer、

@@ -173,6 +173,25 @@ deploy/local-node/scripts/smoke-larm.sh
 # deploy/local-node/scripts/canary-gate.sh
 ```
 
+## KV:memの試用と運用
+
+`KV:mem`はSAAAのQwen 3.8要求に限定して明示選択するManaged Context経路の暫定名称です。
+SAAAの標準HTTP Provider設定では公開modelを`qwen3.8-kv-mem`にします。このmodelは
+`llm-saaa-kv-mem`から`qwen-worker-quality`だけへ解決され、request時にon-demand起動します。
+fallbackはありません。ContextStillは`qwen-agent-worker`を維持し、`qwen-worker-agent`の従来KVを使用します。
+通常の`coding-default`もResident Qwenのままです。
+
+```bash
+curl -sS -X POST http://127.0.0.1:9810/v1/chat/completions \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3.8-kv-mem","stream":false,"messages":[{"role":"user","content":"こんにちは"}]}'
+```
+
+このrequestはsnapshot対応hostの選択確認には使えますが、Context Viewを指定しないためsnapshot自体は利用しません。
+KVをmaterializeする場合は`llm-saaa-kv-mem`の明示Allocationを維持したままContext Viewを作成し、同じ
+Chat requestへ`x-larm-allocation-id`と`x-larm-context-view-id`を渡します。
+
 Managed Contextは認定済みのreasoning runtimeがhost中のときだけActiveになります。source本文は
 control APIへinlineせず、API tokenと同じprincipal scopeへ先にprovisionします。コマンドはlive
 runtimeのcanonical tokenizerでattestationを作成し、本文を表示せず、登録に使うhandle、SHA-256、
@@ -200,6 +219,22 @@ free floorは256 GiBです。snapshot modeはreleaseのconformance認証があ�
 snapshotは64 MiB chunk CRC32Cで偶発破損をrestore前に検出し、破損時は隔離してsource rebuildへ
 戻ります。daemon起動時はmanifestだけを読み、本文は使用時に一度検証します。認定範囲は保存prefixに
 未見suffixを加えるsession continuationであり、短いpromptへの巻戻しや任意KV block連結ではありません。
+
+7日間soakはKV:memの受入条件ではありません。利用者試用中は次を確認し、異常時はsnapshot kill switchから
+先に停止します。
+
+```bash
+curl -sS http://127.0.0.1:9810/v1/context-status \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" | jq
+
+# snapshotだけを停止する場合
+# systemd overrideまたはunit設定で LARM_CONTEXT_SNAPSHOT_ENABLED=false としてdaemonをrestart
+# Managed Context全体を停止する場合は LARM_CONTEXT_ENABLED=false
+```
+
+CRC拒否、identity drift、source rebuild fallback、quota、filesystem free floor、daemonの
+release/config/boot identityを観測します。KV:memのGo条件とconsumer分離は
+[`../../specs/saaa-qwen38-kv-mem-routing.html`](../../specs/saaa-qwen38-kv-mem-routing.html)を参照してください。
 
 隔離Qwen workerでM3bを再実行する場合は、専用の絶対slot rootを指定して次を実行します。
 
