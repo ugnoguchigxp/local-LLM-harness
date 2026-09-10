@@ -1,8 +1,16 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rmdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalContextMetadataStore, LocalContextSourceStore } from "./context-store";
+
+test("context backend declares its direct production package imports", () => {
+  const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    dependencies?: Record<string, string>;
+  };
+  expect(manifest.dependencies?.zod).toBe("^4.4.3");
+});
 
 test("context metadata is saved and loaded atomically", async () => {
   const root = await mkdtemp(join(tmpdir(), "larm-context-metadata-"));
