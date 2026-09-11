@@ -66,9 +66,11 @@ test("live HTTP Provider smoke validates allocation-free JSON, SSE, ASR, and TTS
         const body = await request.json() as {
           stream?: boolean;
           model: string;
+          max_tokens?: number;
           response_format?: { type?: string; json_schema?: { strict?: boolean; schema?: unknown } };
         };
         if (body.stream) {
+          expect(body.max_tokens).toBe(256);
           const chunk = (choices: unknown[], usage?: unknown) => `data: ${JSON.stringify({
             id: "chatcmpl-smoke",
             object: "chat.completion.chunk",
@@ -88,6 +90,7 @@ test("live HTTP Provider smoke validates allocation-free JSON, SSE, ASR, and TTS
           type: "json_schema",
           json_schema: { strict: true, schema: expect.any(Object) },
         });
+        expect(body.max_tokens).toBe(256);
         return Response.json({
           id: "chatcmpl-smoke",
           object: "chat.completion",

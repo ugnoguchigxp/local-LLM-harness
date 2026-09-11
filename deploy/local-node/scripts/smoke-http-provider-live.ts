@@ -199,12 +199,15 @@ export async function runHttpProviderLiveSmoke(
     }
   }
 
-  const prompt = "Return a JSON object whose only field is ok with the boolean value true.";
+  const jsonPrompt = "Return a JSON object whose only field is ok with the boolean value true.";
   const jsonResponse = await client.createChatCompletion({
     model: options.model,
-    messages: [{ role: "user", content: prompt }],
+    messages: [{ role: "user", content: jsonPrompt }],
     temperature: 0,
-    max_tokens: 32,
+    // Reasoning-capable Qwen profiles can spend dozens of tokens before
+    // emitting the schema-constrained content. Keep the canary bounded while
+    // leaving enough room to require finish_reason=stop instead of length.
+    max_tokens: 256,
     stream: false,
     response_format: {
       type: "json_schema",
@@ -230,9 +233,9 @@ export async function runHttpProviderLiveSmoke(
 
   const sseResponse = await client.createChatCompletion({
     model: options.model,
-    messages: [{ role: "user", content: prompt }],
+    messages: [{ role: "user", content: "Reply with OK." }],
     temperature: 0,
-    max_tokens: 8,
+    max_tokens: 256,
     stream: true,
     stream_options: { include_usage: true },
   });
