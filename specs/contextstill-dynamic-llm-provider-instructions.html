@@ -103,6 +103,64 @@
     </p>
   </section>
 
+  <section id="structured-queue-output">
+    <h2>Finding・Episodeの構造化出力contract</h2>
+    <p>
+      Finding、Episode、procedure生成はpromptだけでJSON形状を要求してはなりません。job種別ごとの完全な
+      JSON
+      SchemaをOpenAI互換<code>response_format</code>へ設定し、LARMを介してProviderのgrammar
+      samplingへ渡します。次は最小形であり、実装では各jobの必須field、enum、配列上限をすべて記述します。
+    </p>
+    <pre><code>{
+  "model": "qwen-agent-worker",
+  "messages": [{ "role": "user", "content": "..." }],
+  "stream": false,
+  "max_tokens": 2000,
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "contextstill_episode",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["procedures"],
+        "properties": {
+          "procedures": {
+            "type": "array",
+            "items": { "type": "object" }
+          }
+        }
+      }
+    }
+  }
+}</code></pre>
+    <ul>
+      <li>
+        <code>max_tokens</code
+        >は全job共通値にせず、schemaから見積もったtask別上限を使う。上の2000は
+        protocol例であり、測定なしの既定値ではない。
+      </li>
+      <li>
+        request、queue待機、前処理のdeadlineを分離し、生成deadlineは観測tokens/秒と出力上限から決める。
+        LARM Gatewayの上限より短いconsumer deadlineも明示的に記録する。
+      </li>
+      <li>
+        HTTP
+        200だけを成功条件にしない。全choiceの<code>finish_reason=stop</code>、assistant
+        contentのJSON parse、同じschemaでの再検証、enumとprocedureの業務制約を順に確認する。
+      </li>
+      <li>
+        <code>finish_reason=length</code>、終端欠落、schema不一致は部分成果を保存せず
+        <code>incomplete_response</code>へ分類する。prompt強化だけで再試行しない。
+      </li>
+      <li>
+        2026-09-11のLARM修正以降、Bun固有の5分upstream idle timeoutは無効である。旧releaseからの
+        <code>upstream_unavailable</code>を新releaseのProvider停止と同一集計へ混ぜない。
+      </li>
+    </ul>
+  </section>
+
   <section id="activity-gate">
     <h2>Activityによるjob境界制御</h2>
     <table>

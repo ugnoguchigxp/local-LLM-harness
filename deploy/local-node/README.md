@@ -13,7 +13,8 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `polkit/`: LARMにPreferred providerだけのstart / stopを許可する最小権限rule
 - `scripts/prepare-host.sh`: conservative host prerequisites; no firewall mutation or reboot
 - `scripts/prepare-embedding-runtime.sh`: 固定source revisionからrepository外へEmbedding binaryをbuild
-- `scripts/configure-saaa-rest-access.sh`: exact SAAA source hostから9810だけを許可するplan・apply・rollback
+- `scripts/configure-larm-lan-access.sh`: 現在のLAN prefixを動的検出し、LANから9810だけを許可するplan・apply・rollback
+- `scripts/configure-saaa-rest-access.sh`: 旧exact-host ruleの互換運用・rollback用
 - `scripts/restore-dhcp.sh`: legacy LARM固定address overlayをattended Netplanで除去してDHCPを検証
 - `scripts/install-services.sh`: unitをinstallし、Resident/controlだけをenableする（restartなし）。
   `LARM_INSTALL_SCOPE=gateway`ではLARM Gatewayだけをinstall・enableし、既存Provider unitを変更しない
@@ -96,7 +97,7 @@ sudo env LARM_BACKUP_LABEL="${backup_label}" LARM_BACKUP_CONFIRM="${backup_confi
 
 `prepare-host.sh` installs packages, masks sleep targets, adds the service account to the GPU
 groups, and creates data directories. It does not change or enable UFW, configure ROCm/TTM, or
-reboot. SAAA REST access is handled separately by `configure-saaa-rest-access.sh`, which never
+reboot. LAN REST access is handled separately by `configure-larm-lan-access.sh`, which never
 changes SSH or Provider rules. Provider rule removal is handled by the separate digest-bound tool in
 [`../../specs/production-completion-plan.html`](../../specs/production-completion-plan.html).
 
@@ -109,28 +110,29 @@ deploy/local-node/scripts/restore-dhcp.sh plan
 sudo deploy/local-node/scripts/restore-dhcp.sh apply
 ```
 
-The SAAA rule requires one explicit IPv4 host, refuses an inactive or unreadable firewall, and
-rejects broader or duplicate port 9810 allow rules. Review the plan digest before applying it.
+The LAN rule does not fix an address, prefix, or interface in source. It derives the current
+default-route interface and its sole global RFC1918 IPv4 prefix, refuses an inactive or unreadable
+firewall, and rejects ambiguous network discovery, duplicate LAN rules, or Gateway rules outside
+the discovered prefix. `LARM_LAN_INTERFACE` is only an attended override when multiple default-route
+interfaces make automatic discovery impossible. Review the discovered values and plan digest before
+applying it.
 
 ```bash
-saaa_plan="$(SAAA_SOURCE_IPV4=192.168.0.x \
-  deploy/local-node/scripts/configure-saaa-rest-access.sh plan)"
-printf '%s\n' "${saaa_plan}"
-saaa_confirm="$(jq -er .confirmation <<<"${saaa_plan}")"
-sudo env SAAA_SOURCE_IPV4=192.168.0.x LARM_SAAA_NETWORK_CONFIRM="${saaa_confirm}" \
-  deploy/local-node/scripts/configure-saaa-rest-access.sh apply
+lan_plan="$(sudo deploy/local-node/scripts/configure-larm-lan-access.sh plan)"
+printf '%s\n' "${lan_plan}"
+lan_confirm="$(jq -er .confirmation <<<"${lan_plan}")"
+sudo env LARM_LAN_NETWORK_CONFIRM="${lan_confirm}" \
+  deploy/local-node/scripts/configure-larm-lan-access.sh apply
 ```
 
 Rollback is accepted only for a rule recorded as added by this tool:
 
 ```bash
-saaa_rollback_plan="$(sudo env SAAA_SOURCE_IPV4=192.168.0.x \
-  deploy/local-node/scripts/configure-saaa-rest-access.sh rollback-plan)"
-printf '%s\n' "${saaa_rollback_plan}"
-saaa_rollback_confirm="$(jq -er .confirmation <<<"${saaa_rollback_plan}")"
-sudo env SAAA_SOURCE_IPV4=192.168.0.x \
-  LARM_SAAA_NETWORK_ROLLBACK_CONFIRM="${saaa_rollback_confirm}" \
-  deploy/local-node/scripts/configure-saaa-rest-access.sh rollback
+lan_rollback_plan="$(sudo deploy/local-node/scripts/configure-larm-lan-access.sh rollback-plan)"
+printf '%s\n' "${lan_rollback_plan}"
+lan_rollback_confirm="$(jq -er .confirmation <<<"${lan_rollback_plan}")"
+sudo env LARM_LAN_NETWORK_ROLLBACK_CONFIRM="${lan_rollback_confirm}" \
+  deploy/local-node/scripts/configure-larm-lan-access.sh rollback
 ```
 
 通常のreleaseは、review済み完全commitから非特権builderがbundleを作り、署名済みdesired intentを

@@ -21,14 +21,15 @@ state from this document alone.
 | 9810 | LARM daemon | control plane | authenticated LAN Gateway |
 
 The repository-managed Runtime units bind ports 8080–8085 to loopback. `prepare-host.sh` installs
-host prerequisites but does not change or enable UFW. The focused SAAA REST access tool manages
-only the reviewed source-host rule for the authenticated LARM Gateway and never changes SSH rules.
+host prerequisites but does not change or enable UFW. The focused LAN REST access tool dynamically
+discovers the active RFC1918 prefix and manages only port 9810 for the authenticated LARM Gateway;
+it never changes SSH rules.
 Runtime control and health use loopback endpoints from
 [`../config/local-node/runtimes.yaml`](../config/local-node/runtimes.yaml).
 The production LARM unit listens on all host interfaces at port 9810, requires both API and
 management credentials. Standard consumers configure its URL directly and send a Bearer token with
-the public model ID; they do not need Profile discovery, claim, or allocation. Restrict port 9810 to the reviewed SAAA
-source host; use TLS termination before extending this boundary beyond that network.
+the public model ID; they do not need Profile discovery, claim, or allocation. Restrict port 9810 to
+the currently reviewed LAN prefix; use TLS termination before extending this boundary beyond that network.
 The live host observed on 2026-08-29 still used wildcard Provider listeners. The
 [`Production Completion plan`](../specs/production-completion-plan.html) applies the loopback
 units one Provider at a time and removes only rules named by a reviewed convergence digest after
@@ -43,8 +44,8 @@ ASR and TTS use the standard audio endpoints. No claim URL, short-lived credenti
 header is required. LARM ignores `X-Forwarded-*`; a future reverse-proxy
 deployment needs a separately reviewed trusted-proxy contract.
 
-Provider ports 8080–8085 remain loopback-only. Only Gateway port 9810 is exposed to the reviewed
-SAAA source host. Standard model and inference routes require `LARM_API_TOKEN`; `/health` and
+Provider ports 8080–8085 remain loopback-only. Only Gateway port 9810 is exposed to the dynamically
+discovered and reviewed LAN prefix. Standard model and inference routes require `LARM_API_TOKEN`; `/health` and
 `/ready` remain credential-free operational probes and do not disclose Provider endpoints.
 
 The LLM transport is only OpenAI-compatible HTTP. Non-streaming requests return JSON and streaming

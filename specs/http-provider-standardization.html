@@ -470,6 +470,11 @@ client abort / deadline / release drain
         未対応fieldを黙って削除しない。invalid UTF-8、途中EOF、finish欠落、model
         identity変化を成功にしない。
       </li>
+      <li>
+        Bunのupstream <code>fetch</code>では既定5分のsocket idle
+        timeoutを無効にし、Gatewayの明示的な whole-request deadlineへ一本化する。非streaming
+        LLMがresponse完成までbyteを返さない時間を Provider不通へ誤分類しない。
+      </li>
     </ul>
     <p>
       standard
@@ -718,7 +723,8 @@ client abort / deadline / release drain
       </li>
       <li>
         <strong>ContextStill canary:</strong> Queueをfail closedのままHTTP
-        Providerを検査し、対象job一件だけを
+        Providerを検査する。OpenAI形式の<code>response_format.type=json_schema</code>で固定schemaの
+        completionを検証した後、対象job一件だけを
         再開する。業務成果の永続化と次job境界の再評価まで確認する。
       </li>
       <li>

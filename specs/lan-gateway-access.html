@@ -1,0 +1,62 @@
+<article lang="ja">
+  <h1>LARM Gateway LANアクセス方針</h1>
+
+  <p>
+    local-nodeのLARM Gatewayは、DHCPで変化するhost addressや特定client addressをsourceへ固定せず、
+    現在接続中のLANからTCP 9810へ到達可能にします。Provider port 8080–8085、SSH、その他の受信規則は
+    この変更の対象外です。
+  </p>
+
+  <section id="boundary">
+    <h2>境界</h2>
+    <dl>
+      <dt>公開対象</dt>
+      <dd>LARM GatewayのTCP 9810のみ</dd>
+      <dt>接続元</dt>
+      <dd>適用時に検出・reviewした、既定経路interfaceのRFC1918 IPv4 prefix</dd>
+      <dt>認証</dt>
+      <dd>推論・catalog・control APIは既存のBearer token要件を維持する</dd>
+      <dt>対象外</dt>
+      <dd>Internet、IPv6、Provider direct port、SSHおよび他のservice</dd>
+    </dl>
+  </section>
+
+  <section id="discovery">
+    <h2>動的検出</h2>
+    <ol>
+      <li>IPv4 default routeからinterfaceを一意に決める。</li>
+      <li>そのinterfaceにあるglobal IPv4 addressが一つだけであることを確認する。</li>
+      <li>addressとprefix lengthからcanonical network CIDRを計算する。</li>
+      <li>CIDR全体がRFC1918範囲内であることを確認する。</li>
+      <li>
+        interface、address、prefix、UFW差分をplanに含め、全体をconfirmation digestへ固定する。
+      </li>
+    </ol>
+    <p>
+      複数のdefault routeまたはglobal IPv4 addressがある場合は推測しません。operatorが経路を確認した
+      ときだけ<code>LARM_LAN_INTERFACE</code>でinterfaceを選択できます。planとapplyの間にaddress、
+      prefix、interfaceまたはUFW状態が変わるとdigestが一致しないため、変更せず停止します。
+    </p>
+  </section>
+
+  <section id="apply-rollback">
+    <h2>適用とrollback</h2>
+    <pre><code>plan="$(sudo deploy/local-node/scripts/configure-larm-lan-access.sh plan)"
+printf '%s\n' "${plan}"
+confirm="$(jq -er .confirmation &lt;&lt;&lt;"${plan}")"
+sudo env LARM_LAN_NETWORK_CONFIRM="${confirm}" \
+  deploy/local-node/scripts/configure-larm-lan-access.sh apply</code></pre>
+    <p>
+      applyは検出CIDRから9810/tcpへのallowだけを追加し、既存のより限定的なhost ruleは削除しません。
+      rollbackはこのtoolが追加したCIDR ruleを状態記録で特定できる場合だけ削除します。
+    </p>
+  </section>
+
+  <aside>
+    <p>
+      LAN
+      prefixを許可してもアプリケーション認証は省略しません。管理外networkへ接続した後に自動適用せず、
+      新しいplanに表示されたinterfaceとCIDRをoperatorが確認します。
+    </p>
+  </aside>
+</article>

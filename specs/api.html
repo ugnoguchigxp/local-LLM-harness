@@ -441,7 +441,9 @@
   <section id="routing-guarantees">
     <h2>Route選択保証</h2>
     <ul>
-      <li><code>llm-default</code>はQwen 3.8 27B Residentを第一候補とする。</li>
+      <li>
+        <code>llm-default</code>はQwen 3.8 27B Residentを第一候補とする。
+      </li>
       <li>
         <code>llm-speed</code
         >、<code>llm-long-context</code>、<code>llm-35b</code>、<code>llm-35b-speed</code>はroute
@@ -483,6 +485,13 @@
         >、<code>true</code>時はOpenAI互換
         <code>text/event-stream</code>を透過する。
       </li>
+      <li>
+        Chat
+        Completionsの<code>response_format</code>は<code>text</code>、
+        <code>json_object</code
+        >、OpenAI形式の<code>json_schema</code>を受理し、schemaを含むrequest
+        bodyを変更せずProviderへ転送する。
+      </li>
       <li>STT uploadは全量をmemoryへbufferせず、転送中に上限を検証する。</li>
       <li>
         TTS audio、content type、VOICEVOX
@@ -494,6 +503,10 @@
       <li>client disconnectをupstreamへ伝播する。</li>
       <li>body sizeとtotal timeoutを環境変数で制限する。</li>
       <li>total timeoutはrequest upload、upstream接続、response streamの全区間へ適用する。</li>
+      <li>
+        Bun固有のupstream socket idle timeoutは無効にし、長い非streaming生成を5分前後で切断しない。
+        停滞を含む全体上限はGatewayのAbortControllerだけで判定する。
+      </li>
       <li>stream開始後の別Runtime retryは行わない。</li>
       <li>
         Runtimeごとの<code>maxConcurrentRequests</code>、<code>maxQueuedRequests</code>、
@@ -718,6 +731,13 @@
         <tr>
           <th scope="row"><code>gateway_timeout</code></th>
           <td>Gatewayの全区間deadlineを超過</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>upstream_transport_timeout</code></th>
+          <td>
+            Gateway deadlineまたは明示cancelとは独立してupstream transportがtimeout。HTTP 504と
+            <code>gateway_upstream_fetch_failed.reason=timeout</code>で公開する
+          </td>
         </tr>
         <tr>
           <th scope="row"><code>body_too_large</code></th>

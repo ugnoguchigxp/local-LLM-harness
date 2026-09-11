@@ -1,7 +1,7 @@
 node_modules/
 *.tsbuildinfo
 .cache/
-
+AGENTS.md
 # Generated/downloaded programs and build output
 bin/
 bin-*/

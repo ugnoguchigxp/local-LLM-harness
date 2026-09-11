@@ -35,4 +35,4 @@ install -d -o "${operator}" -g "${operator}" \
 
 echo "Host prerequisites are prepared."
 echo "This script intentionally does not change or enable UFW, configure ROCm/TTM, or reboot."
-echo "Use configure-saaa-rest-access.sh for the reviewed SAAA-to-LARM REST rule."
+echo "Use configure-larm-lan-access.sh for reviewed, dynamically discovered LAN-to-LARM access."
