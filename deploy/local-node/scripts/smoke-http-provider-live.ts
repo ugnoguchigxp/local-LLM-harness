@@ -72,6 +72,30 @@ function mediaType(response: Response): string {
   return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 }
 
+function isSchemaCanaryCompletion(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const choices = (value as Record<string, unknown>).choices;
+  if (!Array.isArray(choices) || choices.length !== 1) return false;
+  const choice = choices[0];
+  if (!choice || typeof choice !== "object" || Array.isArray(choice)) return false;
+  const record = choice as Record<string, unknown>;
+  if (record.finish_reason !== "stop") return false;
+  const message = record.message;
+  if (!message || typeof message !== "object" || Array.isArray(message)) return false;
+  const content = (message as Record<string, unknown>).content;
+  if (typeof content !== "string") return false;
+  try {
+    const structured = JSON.parse(content) as unknown;
+    return !!structured
+      && typeof structured === "object"
+      && !Array.isArray(structured)
+      && (structured as Record<string, unknown>).ok === true
+      && Object.keys(structured as Record<string, unknown>).length === 1;
+  } catch {
+    return false;
+  }
+}
+
 async function responseBytes(response: Response, limit: number): Promise<Uint8Array> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > limit) {
@@ -175,19 +199,34 @@ export async function runHttpProviderLiveSmoke(
     }
   }
 
-  const prompt = "Reply with OK.";
+  const prompt = "Return a JSON object whose only field is ok with the boolean value true.";
   const jsonResponse = await client.createChatCompletion({
     model: options.model,
     messages: [{ role: "user", content: prompt }],
     temperature: 0,
-    max_tokens: 8,
+    max_tokens: 32,
     stream: false,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "larm_live_canary",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["ok"],
+          properties: { ok: { type: "boolean", const: true } },
+        },
+      },
+    },
   });
   if (mediaType(jsonResponse) !== "application/json") throw new Error("json_media_type_invalid");
-  const json = inspectOpenAiChatCompletionJson(parseJson(await responseBytes(jsonResponse, TEXT_LIMIT)));
+  const jsonValue = parseJson(await responseBytes(jsonResponse, TEXT_LIMIT));
+  const json = inspectOpenAiChatCompletionJson(jsonValue);
   if (!json.ok || json.model !== options.model || json.textChoices < 1) {
     throw new Error("json_completion_invalid");
   }
+  if (!isSchemaCanaryCompletion(jsonValue)) throw new Error("json_schema_completion_invalid");
 
   const sseResponse = await client.createChatCompletion({
     model: options.model,

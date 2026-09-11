@@ -217,10 +217,24 @@ export const legacyReleaseResponseSchema = z.object({
 
 export const metricsResponseSchema = z.string();
 export const upstreamJsonResponseSchema = z.record(z.string(), z.unknown());
+export const chatCompletionResponseFormatSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text") }).passthrough(),
+  z.object({ type: z.literal("json_object") }).passthrough(),
+  z.object({
+    type: z.literal("json_schema"),
+    json_schema: z.object({
+      name: z.string().min(1).max(128).optional(),
+      description: z.string().max(1024).optional(),
+      strict: z.boolean().optional(),
+      schema: z.record(z.string(), z.unknown()),
+    }).passthrough(),
+  }).passthrough(),
+]);
 export const chatCompletionRequestSchema = z.object({
   model: z.string().min(1),
   messages: z.array(z.record(z.string(), z.unknown())),
   stream: z.boolean().optional(),
+  response_format: chatCompletionResponseFormatSchema.optional(),
 }).passthrough();
 export const audioSpeechRequestSchema = z.object({
   model: z.string().min(1),

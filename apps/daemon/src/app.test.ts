@@ -1327,6 +1327,60 @@ test("standard Chat Completions needs only bearer and model and releases its int
   }));
 });
 
+test("standard Chat Completions preserves JSON Schema and disables Bun's upstream idle timeout", async () => {
+  let upstreamBody: unknown;
+  let upstreamTimeout: number | boolean | undefined;
+  const responseFormat = {
+    type: "json_schema",
+    json_schema: {
+      name: "procedure",
+      strict: true,
+      schema: {
+        type: "object",
+        required: ["steps"],
+        properties: {
+          steps: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+  };
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    agentConnectionCatalog,
+    gatewayFetch: async (_input, init) => {
+      upstreamBody = JSON.parse(new TextDecoder().decode(init?.body as Uint8Array)) as unknown;
+      upstreamTimeout = init?.timeout;
+      return Response.json({
+        id: "chatcmpl-schema",
+        object: "chat.completion",
+        created: 1,
+        model: "test-model",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: '{"steps":["done"]}' },
+          finish_reason: "stop",
+        }],
+      });
+    },
+  });
+  const request = {
+    model: "test-model",
+    messages: [{ role: "user", content: "return a procedure" }],
+    max_tokens: 4_000,
+    response_format: responseFormat,
+  };
+
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify(request),
+  });
+
+  expect(response.status).toBe(200);
+  expect(upstreamBody).toEqual(request);
+  expect(upstreamTimeout).toBeFalse();
+});
+
 test("standard Chat Completions streams SSE and single-flights preferred model startup", async () => {
   const upstream = [
     'data: {"id":"chatcmpl-direct","object":"chat.completion.chunk","created":1,"model":"internal-worker.gguf","choices":[{"index":0,"delta":{"role":"assistant","content":null},"finish_reason":null}]}\n\n',
@@ -1837,6 +1891,37 @@ test("full-required inference audit fails closed before contacting the provider"
     error: expect.objectContaining({ code: "inference_audit_unavailable" }),
   });
   expect(contacted).toBe(false);
+});
+
+test("upstream transport timeouts are reported separately from provider unavailability", async () => {
+  const events: ControlEvent[] = [];
+  const transportTimeout = new Error("The operation timed out") as Error & { code: string };
+  transportTimeout.name = "AbortError";
+  transportTimeout.code = "ABORT_ERR";
+  const { app, control } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    agentConnectionCatalog,
+    onEvent: (event) => events.push(event),
+    gatewayFetch: async () => {
+      throw new Error("fetch failed", { cause: transportTimeout });
+    },
+  });
+
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({ model: "test-model", messages: [] }),
+  });
+
+  expect(response.status).toBe(504);
+  expect(await response.json()).toEqual({
+    error: expect.objectContaining({ code: "upstream_transport_timeout" }),
+  });
+  expect(events).toContainEqual({
+    name: "gateway_upstream_fetch_failed",
+    labels: expect.objectContaining({ reason: "timeout", runtime: "qwen-general" }),
+  });
+  expect(control.getActiveAllocationCount()).toBe(0);
 });
 
 test("gateway timeout cancels full-required audit materialization", async () => {

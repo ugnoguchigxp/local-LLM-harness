@@ -27,9 +27,14 @@ import type {
   InferenceAuditRecorder,
 } from "./inference-audit";
 
+export type GatewayFetchRequestInit = RequestInit & {
+  /** Bun-specific socket idle timeout. LARM owns the whole-request deadline. */
+  timeout?: number | boolean;
+};
+
 export type FetchLike = (
   input: string | URL | Request,
-  init?: RequestInit,
+  init?: GatewayFetchRequestInit,
 ) => Promise<Response>;
 
 export type GatewayBinding = {
@@ -121,6 +126,57 @@ function jsonResponse(
       ...Object.fromEntries(new Headers(headers)),
     },
   });
+}
+
+type UpstreamTransportFailure = "timeout" | "connection_closed" | "aborted" | "unknown";
+
+function errorProperties(error: unknown): { name?: string; code?: string; message?: string; cause?: unknown } {
+  if (!error || typeof error !== "object") return {};
+  const value = error as { name?: unknown; code?: unknown; message?: unknown; cause?: unknown };
+  return {
+    ...(typeof value.name === "string" ? { name: value.name } : {}),
+    ...(typeof value.code === "string" ? { code: value.code } : {}),
+    ...(typeof value.message === "string" ? { message: value.message } : {}),
+    ...(value.cause === undefined ? {} : { cause: value.cause }),
+  };
+}
+
+function classifyUpstreamTransportFailure(error: unknown): UpstreamTransportFailure {
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; current !== undefined && current !== null && depth < 4; depth += 1) {
+    if (seen.has(current)) break;
+    seen.add(current);
+    const properties = errorProperties(current);
+    const name = properties.name?.toLowerCase() ?? "";
+    const code = properties.code?.toUpperCase() ?? "";
+    const message = properties.message?.toLowerCase() ?? "";
+    if (
+      name.includes("timeout")
+      || code === "ETIMEDOUT"
+      || code === "UND_ERR_HEADERS_TIMEOUT"
+      || code === "UND_ERR_BODY_TIMEOUT"
+      || message.includes("timed out")
+      || message.includes("timeout")
+    ) {
+      return "timeout";
+    }
+    if (
+      code === "CONNECTIONCLOSED"
+      || code === "ECONNRESET"
+      || code === "ECONNREFUSED"
+      || code === "EHOSTUNREACH"
+      || code === "ENETUNREACH"
+      || code === "EPIPE"
+      || message.includes("connection closed")
+      || message.includes("socket connection was closed")
+    ) {
+      return "connection_closed";
+    }
+    if (name === "aborterror" || code === "ABORT_ERR") return "aborted";
+    current = properties.cause;
+  }
+  return "unknown";
 }
 
 export async function proxyGateway(options: GatewayProxyOptions): Promise<Response> {
@@ -496,12 +552,16 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   const target = `${endpoint}${options.upstreamPath}`;
   let upstream: Response;
   try {
-    const init: RequestInit & { duplex?: "half" } = {
+    const init: GatewayFetchRequestInit & { duplex?: "half" } = {
       method: options.request.method,
       headers,
       body,
       signal: abort.signal,
       redirect: "manual",
+      // Bun otherwise applies a five-minute socket-idle timeout. A non-streaming
+      // local LLM can legitimately send no response bytes for longer than that.
+      // The gateway timer above remains the single whole-request deadline.
+      timeout: false,
     };
     if (options.bodyMode === "stream" && body) {
       init.duplex = "half";
@@ -515,7 +575,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       throw error;
     }
     upstream = response;
-  } catch {
+  } catch (error) {
     if (bodyLimitError) {
       return failure(bodyLimitError.code, bodyLimitError.message, bodyLimitError.status, bodyLimitError.code);
     }
@@ -544,6 +604,26 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         "upstream did not consume the complete request body",
         502,
         "upload_incomplete",
+      );
+    }
+    const transportFailure = classifyUpstreamTransportFailure(error);
+    const failureEvent: ControlEvent = {
+      name: "gateway_upstream_fetch_failed",
+      labels: {
+        request: requestId,
+        runtime: options.runtime.id,
+        protocol: options.protocol,
+        reason: transportFailure,
+      },
+    };
+    options.metrics?.record(failureEvent);
+    options.onEvent?.(failureEvent);
+    if (transportFailure === "timeout") {
+      return failure(
+        "upstream_transport_timeout",
+        "upstream transport timed out",
+        504,
+        "upstream_timeout",
       );
     }
     return failure("upstream_unavailable", "upstream request failed", 502, "upstream_error");

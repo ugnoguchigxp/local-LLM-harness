@@ -39,7 +39,11 @@ import type { ArtifactManager } from "./artifact-manager";
 import type { MetricsRegistry, RequestTracker } from "./metrics";
 import type { DaemonIdentity } from "./identity";
 import { ExecutionGate } from "./execution-gate";
-import { GatewayRequestPreparationError, proxyGateway } from "./gateway";
+import {
+  GatewayRequestPreparationError,
+  proxyGateway,
+  type FetchLike as GatewayFetchLike,
+} from "./gateway";
 import { readBodyLimited, RequestBodyError } from "./http-body";
 import {
   RuntimeReleaseManager,
@@ -59,10 +63,7 @@ import {
   ContextControllerError,
 } from "./context-controller";
 
-export type FetchLike = (
-  input: string | URL | Request,
-  init?: RequestInit,
-) => Promise<Response>;
+export type FetchLike = GatewayFetchLike;
 
 export type AppDeps = {
   registry: Registry;

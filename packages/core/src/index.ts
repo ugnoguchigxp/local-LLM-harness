@@ -68,6 +68,7 @@ export {
   allocationResolveResponseSchema,
   artifactOperationSchema,
   chatCompletionRequestSchema,
+  chatCompletionResponseFormatSchema,
   audioSpeechRequestSchema,
   controlOperationSchema,
   createOpenApiDocument,

@@ -63,7 +63,11 @@ test("live HTTP Provider smoke validates allocation-free JSON, SSE, ASR, and TTS
         })),
       }, { headers: { "x-larm-boot-epoch": "epoch-live" } });
       if (path === "/v1/chat/completions") {
-        const body = await request.json() as { stream?: boolean; model: string };
+        const body = await request.json() as {
+          stream?: boolean;
+          model: string;
+          response_format?: { type?: string; json_schema?: { strict?: boolean; schema?: unknown } };
+        };
         if (body.stream) {
           const chunk = (choices: unknown[], usage?: unknown) => `data: ${JSON.stringify({
             id: "chatcmpl-smoke",
@@ -80,12 +84,20 @@ test("live HTTP Provider smoke validates allocation-free JSON, SSE, ASR, and TTS
             "data: [DONE]\n\n",
           ].join(""), { headers: { "content-type": "text/event-stream", "x-larm-boot-epoch": "epoch-live" } });
         }
+        expect(body.response_format).toMatchObject({
+          type: "json_schema",
+          json_schema: { strict: true, schema: expect.any(Object) },
+        });
         return Response.json({
           id: "chatcmpl-smoke",
           object: "chat.completion",
           created: 1,
           model: body.model,
-          choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+          choices: [{
+            index: 0,
+            message: { role: "assistant", content: '{"ok":true}' },
+            finish_reason: "stop",
+          }],
           usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
         }, { headers: { "x-larm-boot-epoch": "epoch-live" } });
       }
@@ -120,6 +132,45 @@ test("live HTTP Provider smoke validates allocation-free JSON, SSE, ASR, and TTS
     },
   });
   expect(requestPaths).toHaveLength(7);
+});
+
+test("live HTTP Provider smoke rejects content that violates the JSON Schema canary", async () => {
+  await expect(runHttpProviderLiveSmoke({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "secret",
+    model: "coding-default",
+    includeAudio: false,
+    fetch: async (input, init) => {
+      const request = input instanceof Request
+        ? new Request(input, init)
+        : new Request(input.toString(), init);
+      const path = new URL(request.url).pathname;
+      if (path === "/health") return Response.json({
+        status: "ok",
+        version: "1.0.0",
+        releaseCommit,
+        configRevision,
+        bootEpoch: "epoch-live",
+      });
+      if (path === "/ready") return Response.json({ status: "ready" });
+      if (path === "/v1/models") return Response.json({
+        object: "list",
+        data: [{ id: "coding-default", object: "model", created: 0, owned_by: "larm" }],
+      });
+      if (path === "/v1/chat/completions") return Response.json({
+        id: "chatcmpl-smoke",
+        object: "chat.completion",
+        created: 1,
+        model: "coding-default",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "not-json" },
+          finish_reason: "stop",
+        }],
+      });
+      return new Response("not found", { status: 404 });
+    },
+  })).rejects.toThrow("json_schema_completion_invalid");
 });
 
 test("live HTTP Provider smoke rejects speech hallucinated from silence", async () => {
@@ -171,7 +222,11 @@ test("live HTTP Provider smoke rejects speech hallucinated from silence", async 
           object: "chat.completion",
           created: 1,
           model: body.model,
-          choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+          choices: [{
+            index: 0,
+            message: { role: "assistant", content: '{"ok":true}' },
+            finish_reason: "stop",
+          }],
         });
       }
       if (path === "/v1/audio/transcriptions") return Response.json({ text: "Thank you." });

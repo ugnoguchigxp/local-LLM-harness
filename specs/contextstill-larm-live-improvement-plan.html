@@ -102,7 +102,8 @@
         <tr>
           <th scope="row">Health semantics</th>
           <td>
-            旧static port <code>44448</code>の不在が障害根拠として扱われる
+            旧static port
+            <code>44448</code>の不在が障害根拠として扱われる
           </td>
           <td>標準HTTPのcatalog、JSON、SSE、consumer完了で測る統一runbookがない</td>
         </tr>
@@ -114,6 +115,120 @@
       >をそのままNOPASSWD化してはならない。候補repositoryのinstall、test、
       scriptをrootで実行する経路を非特権利用者へ開くことになり、任意コード実行境界を壊すためである。
     </p>
+  </section>
+
+  <section id="queue-failure-reassessment-2026-09-11">
+    <h2>2026-09-11 Queue失敗のlive再診断</h2>
+    <p>
+      ContextStillで観測された<code>HTTP 502 upstream_unavailable</code>を、直ちにRuntime停止または
+      Provider可用性障害とみなしてはならない。2026-09-10 03:22:23から2026-09-11 00:24:39
+      UTCまでのlive journal、service状態、Bun 1.4.0のlocal型定義を照合すると、長い非streaming
+      生成がBun固有の既定5分socket idle timeoutへ到達し、そのtransport timeoutをLARMが
+      <code>upstream_unavailable</code>へ誤分類したことが第一原因である。
+    </p>
+    <table>
+      <caption>
+        live Gateway完了結果のsnapshot
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Runtime</th>
+          <th scope="col"><code>http_200</code></th>
+          <th scope="col"><code>upstream_error</code></th>
+          <th scope="col"><code>client_cancelled</code></th>
+          <th scope="col">upstream errorまでの時間</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>qwen-general</code></th>
+          <td>116</td>
+          <td>58</td>
+          <td>0</td>
+          <td>全58件が240–301秒、平均266秒</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>qwen-worker-agent</code></th>
+          <td>173</td>
+          <td>44</td>
+          <td>48</td>
+          <td>全44件が240–297秒、平均263秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <ul>
+      <li>
+        同期間に<code>larm-daemon.service</code>、<code>llama-server.service</code>、
+        <code>llama-swap-worker.service</code
+        >のrestartはすべて0で、確認時の<code>/health</code>と
+        <code>/ready</code>も正常だった。
+      </li>
+      <li>
+        2026-09-11 00:10:44 UTCにResidentとworkerへ開始したrequestは、両方とも00:14:54に
+        250秒で<code>upstream_error</code>になった。同じworker
+        requestをllama-swapは HTTP 499、4分9.688秒として記録しており、Provider自身の503またはprocess
+        crashではなく、llama-swapのHTTP clientであるLARMからのcancelを示す。
+      </li>
+      <li>
+        live LARM Gatewayのdeadlineは3300秒だが、Bun
+        1.4.0の<code>fetch</code>は省略時に5分のsocket idle
+        timeoutを別に適用する。非streaming生成はresponse完成までbyteを返さないため、LARM自身の
+        deadlineより先にBunの下位timeoutが発火する。
+      </li>
+      <li>
+        ContextStill自身の約300秒deadlineと<code>max_tokens: 4000</code>の競合も残る。ただし今回の502は、
+        LARM内のupstream <code>fetch</code>が先に例外となり、catch-allの
+        <code>upstream_unavailable</code>を返した経路と整合する。
+      </li>
+    </ul>
+    <aside>
+      <p>
+        <strong>暫定結論:</strong>
+        502はLLM精度問題ではないが、現証跡だけで独立したRuntime可用性障害とも
+        断定できない。Bunの暗黙idle timeoutを無効にしてLARM Gateway deadlineへ一本化し、transport
+        timeout、consumer cancel、process restart、health failure、接続拒否を別の結果へ分離する。
+      </p>
+    </aside>
+    <h3>構造化出力と時間budgetの修正順</h3>
+    <ol>
+      <li>
+        ContextStill Queueから<code>coding-default</code>を外し、設計済みの
+        <code>qwen-agent-worker</code
+        >一経路、同時request数1、fallbackなしへ戻す。ただし少数かつ
+        502・skipが混在した完了数だけからResident model固有の精度劣化とは断定しない。
+      </li>
+      <li>
+        FindingとEpisodeのrequestへOpenAI形式の
+        <code>response_format.type=json_schema</code>と完全なschemaを送る。LARMはChat
+        Completionの未知fieldを 保持してrequest bodyを転送し、local workerのllama.cpp
+        buildも同形式をgrammarへ変換できる。
+      </li>
+      <li>
+        schema適用後も<code>finish_reason</code>、JSON
+        parse、必須field、enum、procedure意味制約を検証する。
+        <code>finish_reason=length</code>または終端欠落は結果を保存せず、
+        <code>incomplete_response</code>として再予約する。
+      </li>
+      <li>
+        <code>max_tokens: 4000</code
+        >を固定したまま約300秒の全体deadlineに収める設計をやめる。観測された 13–15 token/秒では4000
+        tokenだけで約267–308秒を要し得る。task別の出力上限を縮めるか、
+        前処理とqueue待機を含むdeadlineをworst-case生成時間より十分長くする。
+      </li>
+      <li>
+        LARM Gatewayのupstream
+        <code>fetch</code
+        >へ<code>timeout: false</code>を明示し、Bunの暗黙idle
+        timeoutを無効にする。独立したtransport timeoutはHTTP 504
+        <code>upstream_transport_timeout</code>とbounded reason
+        telemetryへ分類する。repository実装と 回帰testは2026-09-11に追加済みで、live
+        release反映後に長時間canaryを行う。
+      </li>
+      <li>
+        <code>identity_unavailable</code
+        >はLLMへ投入せず、identity生成または入力前提を回復する別queueとして扱う。
+      </li>
+    </ol>
   </section>
 
   <section id="release-convergence-controller">

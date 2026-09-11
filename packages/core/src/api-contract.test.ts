@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   API_OPERATIONS,
+  chatCompletionRequestSchema,
   createOpenApiDocument,
   errorResponseSchema,
   httpProviderSoakEvidenceSchema,
@@ -128,6 +129,37 @@ test("OpenAPI is generated from the public contract schemas", () => {
   ]);
   expect((paths["/v1/agent-connections/{id}"]?.delete?.responses as Record<string, unknown>)["204"])
     .not.toHaveProperty("content");
+});
+
+test("Chat Completions contract validates schema-constrained response formats", () => {
+  const request = {
+    model: "qwen-agent-worker",
+    messages: [{ role: "user", content: "return a procedure" }],
+    response_format: {
+      type: "json_schema" as const,
+      json_schema: {
+        name: "procedure",
+        strict: true,
+        schema: {
+          type: "object",
+          required: ["steps"],
+          properties: {
+            steps: { type: "array", items: { type: "string" } },
+          },
+        },
+      },
+    },
+  };
+
+  expect(chatCompletionRequestSchema.parse(request)).toEqual(request);
+  expect(chatCompletionRequestSchema.safeParse({
+    ...request,
+    response_format: { type: "json_schema", json_schema: { name: "missing-schema" } },
+  }).success).toBeFalse();
+  expect(chatCompletionRequestSchema.safeParse({
+    ...request,
+    response_format: { type: "yaml" },
+  }).success).toBeFalse();
 });
 
 test("SAAA Service Harness v2 schema accepts batch ASR and bounds streaming metadata", () => {
