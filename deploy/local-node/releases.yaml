@@ -64,6 +64,16 @@ runtimeReleases:
     healthPath: /health
     default: true
 
+  qwen-worker-agent-efficientthink-v1:
+    runtime: qwen-worker-agent-efficientthink
+    artifacts:
+      - qwen38-worker-efficientthink-q3
+      - qwen38-efficientthink-mtp
+    providerConfigRevision: llama-swap-efficientthink-q3-agent-64k-v1
+    estimatedMemoryGB: 28
+    healthPath: /health
+    default: true
+
   qwen-worker-fast-current:
     runtime: qwen-worker-fast
     artifacts:

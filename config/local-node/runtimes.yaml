@@ -104,6 +104,32 @@ runtimes:
       endpoint: http://127.0.0.1:8083/upstream/qwen-agent
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen-agent
 
+  qwen-worker-agent-efficientthink:
+    artifacts:
+      - qwen38-worker-efficientthink-q3
+      - qwen38-efficientthink-mtp
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: local-node
+    policy:
+      class: preferred
+      swapGroup: qwen-worker-slot
+    resources:
+      estimatedMemoryGB: 28
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 16
+      queueTimeoutMs: 120000
+    deployment:
+      modelId: qwen-agent-efficientthink
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/qwen-agent-efficientthink
+      backendEndpoint: http://127.0.0.1:8083/upstream/qwen-agent-efficientthink
+
   qwen-worker-fast:
     artifacts:
       - qwen38-worker-fast
