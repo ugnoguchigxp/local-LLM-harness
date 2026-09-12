@@ -20,7 +20,7 @@ agentProfiles:
         publicModel: coding-default
         readiness: llm-inference
   saaa-qwen38-kv-mem:
-    description: Explicit on-demand SAAA Qwen 3.8 27B Provider using the experimental KV:mem path
+    description: SAAA voice and decision preset with Qwen 3.8 27B KV:mem
     schedulingPriority: 3000
     providers:
       - name: llm
@@ -28,6 +28,21 @@ agentProfiles:
         route: llm-saaa-kv-mem
         publicModel: qwen3.8-kv-mem
         readiness: llm-inference
+      - name: decision-default
+        capability: llm.decision.default
+        route: llm-decision-default
+        publicModel: saaa-decision-default
+        readiness: llm-inference
+      - name: asr
+        capability: speech.stt
+        route: stt-qwen
+        publicModel: saaa-qwen3-asr-1.7b
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: saaa-voicevox-core
+        readiness: tts-speech
   contextstill-background:
     description: ContextStill background Qwen 3.8 27B provider
     schedulingPriority: 1000
