@@ -13,8 +13,9 @@
   <dl>
     <dt>文書状態</dt>
     <dd>
-      実装中。LARM client refresh primitiveと三tier Agent Profile contract testは完了。 model
-      artifactの選定とContextStill source repositoryの配置は未完了
+      LARMの<code>decision-default</code>経路は実装・production有効化・live検証まで完了。
+      <code>decision-fast</code>はGemma
+      termsのoperator受諾待ち、consumer統合はContextStill／DeepStill source repositoryの配置待ち
     </dd>
     <dt>対象</dt>
     <dd>LARM、ContextStill／DeepStill Decision Client、独立ML Compute MCP service</dd>
@@ -30,7 +31,11 @@
 
   <section id="implementation-progress">
     <h2>実装進捗</h2>
-    <p>2026年9月12日に、hostとproduction configを変更しない最初の実装単位を完了した。</p>
+    <p>
+      2026年9月12日に、Qwen 3.5
+      2Bを使う<code>decision-default</code>のsource、artifact、 runtime
+      lifecycle、署名付きproduction release、認証済みlive canaryを完了した。
+    </p>
     <ul>
       <li>
         <code>LarmClient.refreshAgentConnection</code>を追加した。renewで旧provider
@@ -48,16 +53,36 @@
         一つのAgent Profileへcompileできるcontract testを追加した。
       </li>
       <li>
+        Qwen 3.5 2B Q4_K_Mをrepository外の<code>/srv/ai/models/qwen35-decision/</code>へ配置し、
+        pinned revision、byte数、SHA-256をartifact／release catalogへ登録した。
+      </li>
+      <li>
+        <code>qwen35-decision</code> runtime、<code
+          >llm-decision-default</code
+        >
+        explicit route、 <code>contextstill-decision-default-canary</code> Agent
+        Profileをproductionへ追加した。 既存default routeとresident Qwen 27Bは変更していない。
+      </li>
+      <li>
+        llama-swapでは2Bを<code>qwen-decision-slot</code>へ分離した。
+        <code>swap: false</code
+        >かつ<code>exclusive: false</code>とし、27B worker
+        groupとの同時常駐を許しながら、 LARM Allocationのrelease／expiry後はunload可能なままにした。
+      </li>
+      <li>
+        署名付きrelease <code>f4cfb95674ee41ae75609019a1cf4c5bc18d6455</code>をproductionへ有効化した。
+        Agent Connectionのcreate、claim、JSON、SSE、release、credential revocationがliveで成功した。
+      </li>
+      <li>
         ContextStill／DeepStill source repositoryはhost上に見つからなかったため、WP1のconsumer実装は
         repository配置待ちである。LARMへapplication固有Decision contractを仮置きしていない。
       </li>
     </ul>
 
-    <h3>未採用のartifact候補identity</h3>
+    <h3>artifact identityと採用状態</h3>
     <table>
       <caption>
-        remote
-        metadataだけを確認した候補。manifest追加、download、license受諾、runtime有効化は未実施
+        remote metadata、local file identity、production activationの状態
       </caption>
       <thead>
         <tr>
@@ -94,7 +119,60 @@
             <code>Qwen3.5-2B-Q4_K_M.gguf</code>、1,280,835,840 bytes、SHA-256
             <code>aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223</code>
           </td>
-          <td>Q4_0／Q4_K_Mのquality、RSS、CPU／Vulkan比較</td>
+          <td>Q4_K_M／Vulkanをproduction採用。長期qualityと4K／8K比較は継続評価</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Qwen 3.5 2B live evidence</h3>
+    <table>
+      <caption>
+        production release
+        <code>f4cfb95674ee41ae75609019a1cf4c5bc18d6455</code
+        >で採取
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">検証</th>
+          <th scope="col">結果</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">isolated structured decode</th>
+          <td>load約0.59秒、prompt約1,093 tok/s、completion 73.08 tok/s</td>
+          <td>schema成功。100 tok/s仮説は不成立</td>
+        </tr>
+        <tr>
+          <th scope="row">Agent Provider lifecycle</th>
+          <td>create／claim／JSON／SSE／release／credential revocationが成功</td>
+          <td>on-demand hosting経路を合格</td>
+        </tr>
+        <tr>
+          <th scope="row">27Bとの同時常駐</th>
+          <td>
+            <code>qwen-agent-efficientthink</code>の実request中に2B
+            allocationが2.497秒でreadyとなり、 両runtimeが同時に<code
+              >ready</code
+            >
+          </td>
+          <td>worker終了待ちを解消</td>
+        </tr>
+        <tr>
+          <th scope="row">application schema</th>
+          <td>
+            strict JSON
+            Schemaで<code>schemaVersion</code>、有限<code>action</code>、0〜1
+            <code>confidence</code>、bounded
+            <code>reasonCodes</code>を生成後にも再検証
+          </td>
+          <td>live合格</td>
+        </tr>
+        <tr>
+          <th scope="row">同時decode</th>
+          <td>27B request中のstructured completionは約4.50秒</td>
+          <td>動作は成功。干渉率のp50／p95は固定datasetで追加測定が必要</td>
         </tr>
       </tbody>
     </table>
