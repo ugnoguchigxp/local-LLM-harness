@@ -55,6 +55,14 @@ routes:
       - runtime: qwen-general
         purpose: fallback
 
+  llm-decision-default:
+    capabilities:
+      - llm.decision.default
+    explicitOnly: true
+    candidates:
+      - runtime: qwen35-decision
+        purpose: primary
+
   llm-35b:
     capabilities:
       - llm.general

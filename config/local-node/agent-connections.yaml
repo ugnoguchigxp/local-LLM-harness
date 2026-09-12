@@ -37,6 +37,15 @@ agentProfiles:
         route: llm-agent-worker
         publicModel: qwen-agent-worker
         readiness: llm-inference
+  contextstill-decision-default-canary:
+    description: Explicit Qwen 3.5 2B ContextStill decision Provider canary
+    schedulingPriority: 1000
+    providers:
+      - name: decision-default
+        capability: llm.decision.default
+        route: llm-decision-default
+        publicModel: decision-default
+        readiness: llm-inference
   nightworker-background:
     description: NightWorker background Qwen 3.8 27B provider
     schedulingPriority: 2000

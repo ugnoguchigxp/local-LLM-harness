@@ -34,6 +34,69 @@ function json(body: unknown, epoch = "epoch-test", status = 200): Response {
   });
 }
 
+function decisionConnectionFixture(
+  id: string,
+  expiresAt: string,
+  claimExpiresAt = expiresAt,
+) {
+  const connection = {
+    id,
+    allocationId: allocation.id,
+    bootEpoch: "epoch-test",
+    catalogRevision: "catalog-test",
+    agentProfile: "contextstill-explore",
+    profileRevision: "1".repeat(64),
+    audience: "same-host",
+    audienceRevision: "2".repeat(64),
+    status: "ready" as const,
+    providers: [{
+      name: "decision-default",
+      capability: "llm.decision.default",
+      route: "llm-decision-default",
+      protocol: "openai.chat-completions.v1" as const,
+      publicModel: "decision-default",
+      readiness: "ready" as const,
+      claimable: true,
+    }],
+    createdAt: "2026-08-28T00:00:00.000Z",
+    expiresAt,
+  };
+  const claim = {
+    id,
+    allocationId: connection.allocationId,
+    status: "ready",
+    audience: connection.audience,
+    providers: [{
+      name: "decision-default",
+      capability: "llm.decision.default",
+      apiStyle: "openai",
+      protocol: "openai.chat-completions.v1",
+      scheme: "http",
+      host: "127.0.0.1",
+      port: 9810,
+      baseUrl: "http://127.0.0.1:9810/v1",
+      model: "decision-default",
+      health: {
+        url: `http://127.0.0.1:9810/v1/agent-connections/${id}/providers/decision-default/health`,
+        kind: "semantic-inference",
+        maxAgeMs: 10_000,
+      },
+      credential: {
+        type: "bearer",
+        token: "larm_conn_v1.refreshed.signature",
+        expiresAt: claimExpiresAt,
+      },
+      configuration: {
+        kind: "openai-provider-v1",
+        fields: { baseURL: "http://127.0.0.1:9810/v1", model: "decision-default" },
+        secretFields: { apiKey: "credential.token" },
+      },
+    }],
+    expiresAt: claimExpiresAt,
+  };
+  return { connection, claim };
+}
+
 test("reference client sends idempotency and always releases withAllocation", async () => {
   const requests: Request[] = [];
   const client = new LarmClient({
@@ -843,6 +906,62 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   await client.releaseAgentConnection(ready.id);
   expect(requests.at(-1)?.method).toBe("DELETE");
   expect(requests.every((request) => !request.headers.has("authorization"))).toBeTrue();
+});
+
+test("agent connection refresh renews before reclaiming a coherent provider credential", async () => {
+  const requests: Request[] = [];
+  const { connection, claim } = decisionConnectionFixture(
+    "aconn_epoch-test_refresh",
+    "2026-08-28T00:10:00.000Z",
+  );
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    fetch: async (input, init) => {
+      const request = new Request(input.toString(), init);
+      requests.push(request);
+      return new URL(request.url).pathname.endsWith("/renew")
+        ? json(connection)
+        : json(claim);
+    },
+  });
+
+  const refreshed = await client.refreshAgentConnection(connection.id, {
+    ttlSeconds: 600,
+    claimFormat: "openai-provider-v1",
+    idempotencyKey: "refresh-contextstill",
+  });
+
+  expect(refreshed.connection.expiresAt).toBe(connection.expiresAt);
+  expect(refreshed.claim.providers[0]?.credential.token).toBe("larm_conn_v1.refreshed.signature");
+  expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+    `/v1/agent-connections/${connection.id}/renew`,
+    `/v1/agent-connections/${connection.id}/claim`,
+  ]);
+  expect(requests[0]?.headers.get("idempotency-key")).toBe("refresh-contextstill");
+  expect(await requests[0]!.clone().json()).toEqual({ ttlSeconds: 600 });
+  expect(await requests[1]!.clone().json()).toEqual({ format: "openai-provider-v1" });
+});
+
+test("agent connection refresh rejects a stale claim", async () => {
+  const { connection, claim } = decisionConnectionFixture(
+    "aconn_epoch-test_refresh-mismatch",
+    "2026-08-28T00:10:00.000Z",
+    "2026-08-28T00:05:00.000Z",
+  );
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    fetch: async (input, init) => {
+      const request = new Request(input.toString(), init);
+      return new URL(request.url).pathname.endsWith("/renew")
+        ? json(connection)
+        : json(claim);
+    },
+  });
+
+  await expect(client.refreshAgentConnection(connection.id)).rejects.toMatchObject({
+    status: 502,
+    code: "connection_refresh_mismatch",
+  });
 });
 
 test("typed embedding client uses the claimed endpoint and semantic-space contract", async () => {

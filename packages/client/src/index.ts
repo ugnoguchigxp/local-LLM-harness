@@ -69,6 +69,16 @@ export type RequestOptions = {
   management?: boolean;
 };
 
+export type AgentConnectionRefreshOptions = RequestOptions & {
+  ttlSeconds?: number;
+  claimFormat?: AgentConnectionClaimRequest["format"];
+};
+
+export type RefreshedAgentConnection = {
+  connection: PublicAgentConnection;
+  claim: AgentConnectionClaim;
+};
+
 export class LarmApiError extends Error {
   constructor(
     readonly status: number,
@@ -467,6 +477,36 @@ export class LarmClient {
       signal: options.signal,
     });
     return this.parseJson(response, publicAgentConnectionSchema);
+  }
+
+  async refreshAgentConnection(
+    id: string,
+    options: AgentConnectionRefreshOptions = {},
+  ): Promise<RefreshedAgentConnection> {
+    const connection = await this.renewAgentConnection(
+      id,
+      options.ttlSeconds,
+      options,
+    );
+    const claim = await this.claimAgentConnection(
+      id,
+      options.claimFormat,
+      options.signal,
+    );
+    if (
+      claim.id !== connection.id
+      || claim.allocationId !== connection.allocationId
+      || claim.audience !== connection.audience
+      || claim.expiresAt !== connection.expiresAt
+    ) {
+      throw new LarmApiError(
+        502,
+        "connection_refresh_mismatch",
+        `renewed connection ${connection.id} did not match its refreshed claim`,
+        { connection, claim },
+      );
+    }
+    return { connection, claim };
   }
 
   async releaseAgentConnection(id: string, signal?: AbortSignal): Promise<void> {

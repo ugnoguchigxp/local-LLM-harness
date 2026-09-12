@@ -121,6 +121,37 @@ models:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
 
+  qwen35-decision:
+    cmd: >
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
+      -m /srv/ai/models/qwen35-decision/Qwen3.5-2B-Q4_K_M.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --flash-attn on
+      --ctx-size 4096
+      --parallel 1
+      --batch-size 512
+      --ubatch-size 512
+      --threads 16
+      --poll 100
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning off
+      --temp 0
+      --top-p 1
+      --jinja
+      --metrics
+      --no-webui
+    aliases:
+      - qwen3.5-2b-decision
+      - decision-default
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
   qwen36-35b:
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server

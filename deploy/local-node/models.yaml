@@ -68,6 +68,18 @@ models:
     sha256: 50d9ce5a6da381bbcfb31061cf73df94a90e6faf8efeddee379a9cb8f1501c6e
     quantization: Q4_0
 
+  qwen35-2b-q4-k-m:
+    kind: file
+    role: preferred-decision-llm
+    source: https://huggingface.co/unsloth/Qwen3.5-2B-GGUF
+    revision: f6d5376be1edb4d416d56da11e5397a961aca8ae
+    filename: Qwen3.5-2B-Q4_K_M.gguf
+    path: /srv/ai/models/qwen35-decision/Qwen3.5-2B-Q4_K_M.gguf
+    bytes: 1280835840
+    sha256: aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223
+    quantization: Q4_K_M
+    runtime: llama.cpp-vulkan
+
   qwen36-35b-speed:
     kind: file
     role: preferred-llm

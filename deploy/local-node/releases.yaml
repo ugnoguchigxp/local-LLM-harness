@@ -73,6 +73,15 @@ runtimeReleases:
     estimatedMemoryGB: 38
     healthPath: /health
     default: true
+  qwen35-decision-current:
+    runtime: qwen35-decision
+    artifacts:
+      - qwen35-2b-q4-k-m
+    providerConfigRevision: llama-swap-qwen35-2b-q4-k-m-decision-4k-v1
+    estimatedMemoryGB: 4
+    healthPath: /health
+    default: true
+
 
   qwen36-35b-current:
     runtime: qwen36-35b
