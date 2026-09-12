@@ -163,4 +163,55 @@
       </li>
     </ol>
   </section>
+
+  <section id="live-verification">
+    <h2>本番検証</h2>
+    <p>
+      2026-09-12にrelease <code>be5e86272165f4e13e69f4da204b1425486c6070</code>を署名付きで有効化し、
+      <code>http://gnosis.local:9810</code>からaudience
+      <code>saaa-desktop</code>、 Profile
+      <code>saaa-qwen38-kv-mem</code>のAgent Connectionを作成した。作成から約10.0秒で
+      四Providerがreadyになった。
+    </p>
+    <table>
+      <caption>
+        request-scoped Providerのsemantic readiness
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Provider</th>
+          <th scope="col">model</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>tts</code></th>
+          <td><code>voicevox-core</code></td>
+          <td>WAV probe validated、ready</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>asr</code></th>
+          <td><code>qwen3-asr-1.7b</code></td>
+          <td>fixed-silence transcription probe validated、ready</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>decision-default</code></th>
+          <td><code>decision-default</code></td>
+          <td>JSON／SSE probe validated、ready</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm</code></th>
+          <td><code>qwen3.8-kv-mem</code></td>
+          <td>JSON／SSE probe validated、ready</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      同じConnectionの保持中にllama-swap上で<code>qwen-quality</code>と
+      <code>qwen35-decision</code
+      >が同時にreadyであることを確認した。Connection解放後は四Providerの credentialがすべてHTTP
+      401となり、request scope外で再利用できないことも確認した。
+    </p>
+  </section>
 </article>
