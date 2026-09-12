@@ -31,17 +31,20 @@ agentProfiles:
       - name: decision-default
         capability: llm.decision.default
         route: llm-decision-default
-        publicModel: saaa-decision-default
+        publicModel: decision-default
+        publishModel: false
         readiness: llm-inference
       - name: asr
         capability: speech.stt
         route: stt-qwen
-        publicModel: saaa-qwen3-asr-1.7b
+        publicModel: qwen3-asr-1.7b
+        publishModel: false
         readiness: stt-transcription
       - name: tts
         capability: speech.tts
         route: tts-voicevox
-        publicModel: saaa-voicevox-core
+        publicModel: voicevox-core
+        publishModel: false
         readiness: tts-speech
   contextstill-background:
     description: ContextStill background Qwen 3.8 27B provider

@@ -71,19 +71,19 @@
       <tbody>
         <tr>
           <th scope="row"><code>tts</code></th>
-          <td><code>saaa-voicevox-core</code></td>
+          <td><code>voicevox-core</code></td>
           <td><code>tts-voicevox</code></td>
           <td><code>voicevox-tts</code> resident</td>
         </tr>
         <tr>
           <th scope="row"><code>asr</code></th>
-          <td><code>saaa-qwen3-asr-1.7b</code></td>
+          <td><code>qwen3-asr-1.7b</code></td>
           <td><code>stt-qwen</code></td>
           <td><code>qwen-asr</code> resident</td>
         </tr>
         <tr>
           <th scope="row"><code>decision-default</code></th>
-          <td><code>saaa-decision-default</code></td>
+          <td><code>decision-default</code></td>
           <td><code>llm-decision-default</code></td>
           <td><code>qwen35-decision</code> on-demand</td>
         </tr>
@@ -109,6 +109,10 @@
       <li>
         ProfileのpriorityはSAAAの既存値3000を四Providerすべてへ適用する。既存のContextStill、
         NightWorker、default Profileのpriorityとrouteは変更しない。
+      </li>
+      <li>
+        ASR、TTS、2Bはupstreamが受理する既存の正規model名を再利用する。SAAA profileからは標準 model
+        catalogへ重複publishせず、既存modelのrouteとpriorityを変更しない。
       </li>
       <li>
         単独の<code>model: qwen3.8-kv-mem</code>

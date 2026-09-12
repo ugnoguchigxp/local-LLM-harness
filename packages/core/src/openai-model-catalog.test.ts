@@ -14,6 +14,7 @@ function catalog(
     capability?: string;
     route?: string;
     deprecated?: boolean;
+    publishModel?: boolean;
     schedulingPriority?: number;
     protocol?: "openai.chat-completions.v1" | "openai.audio-transcriptions.v1" | "openai.audio-speech.v1";
   }>,
@@ -36,6 +37,7 @@ function catalog(
         supportedCapabilities: [binding.capability ?? "llm.coding"],
         route: binding.route ?? "llm-default",
         publicModel: binding.model,
+        publishModel: binding.publishModel ?? true,
         readiness: binding.protocol === "openai.audio-transcriptions.v1"
           ? "stt-transcription"
           : binding.protocol === "openai.audio-speech.v1"
@@ -126,4 +128,17 @@ test("OpenAI model catalog carries server-owned priority and rejects ambiguous d
     { profile: "first", model: "shared", schedulingPriority: 1_000 },
     { profile: "second", model: "shared", schedulingPriority: 2_000 },
   ]))).toThrow(/conflicting scheduling priorities/);
+});
+
+test("composed Agent Profiles can reuse an upstream model without republishing it", () => {
+  const models = createOpenAiModelCatalog(catalog([
+    { profile: "standalone", model: "shared", schedulingPriority: 1_000 },
+    { profile: "preset", model: "shared", schedulingPriority: 3_000, publishModel: false },
+  ]));
+
+  expect(models.models).toEqual([expect.objectContaining({
+    id: "shared",
+    schedulingPriority: 1_000,
+    profileIds: ["standalone"],
+  })]);
 });

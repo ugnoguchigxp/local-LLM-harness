@@ -109,7 +109,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
           supportedCapabilities: ["speech.stt"],
           route: "stt-qwen",
           protocol: "openai.audio-transcriptions.v1",
-          publicModel: "saaa-qwen3-asr-1.7b",
+          publicModel: "qwen3-asr-1.7b",
+          publishModel: false,
           readiness: "stt-transcription",
         },
         {
@@ -118,7 +119,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
           supportedCapabilities: ["llm.decision.default"],
           route: "llm-decision-default",
           protocol: "openai.chat-completions.v1",
-          publicModel: "saaa-decision-default",
+          publicModel: "decision-default",
+          publishModel: false,
           readiness: "llm-inference",
         },
         {
@@ -136,7 +138,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
           supportedCapabilities: ["speech.tts"],
           route: "tts-voicevox",
           protocol: "openai.audio-speech.v1",
-          publicModel: "saaa-voicevox-core",
+          publicModel: "voicevox-core",
+          publishModel: false,
           readiness: "tts-speech",
         },
       ],
@@ -148,32 +151,32 @@ test("production agent profiles compile to strict protocol-aware provider contra
       schedulingPriority: 3000,
       profileIds: ["saaa-qwen38-kv-mem"],
     });
-  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "saaa-decision-default"))
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "decision-default"))
     .toMatchObject({
       capability: "llm.decision.default",
       route: "llm-decision-default",
-      schedulingPriority: 3000,
-      profileIds: ["saaa-qwen38-kv-mem"],
+      schedulingPriority: 1000,
+      profileIds: ["contextstill-decision-default-canary"],
     });
   expect(getOpenAiModel(
     createOpenAiModelCatalog(catalog),
-    "saaa-qwen3-asr-1.7b",
+    "qwen3-asr-1.7b",
     "openai.audio-transcriptions.v1",
   )).toMatchObject({
     capability: "speech.stt",
     route: "stt-qwen",
-    schedulingPriority: 3000,
-    profileIds: ["saaa-qwen38-kv-mem"],
+    schedulingPriority: 0,
+    profileIds: ["asr-qwen"],
   });
   expect(getOpenAiModel(
     createOpenAiModelCatalog(catalog),
-    "saaa-voicevox-core",
+    "voicevox-core",
     "openai.audio-speech.v1",
   )).toMatchObject({
     capability: "speech.tts",
     route: "tts-voicevox",
-    schedulingPriority: 3000,
-    profileIds: ["saaa-qwen38-kv-mem"],
+    schedulingPriority: 0,
+    profileIds: ["tts-default"],
   });
   expect(catalog.profiles.find((profile) => profile.id === "contextstill-embedding"))
     .toMatchObject({
