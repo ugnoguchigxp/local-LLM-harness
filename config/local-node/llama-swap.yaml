@@ -334,6 +334,12 @@ models:
       - ROCR_VISIBLE_DEVICES=-1
 
 groups:
+  qwen-decision-slot:
+    swap: false
+    exclusive: false
+    members:
+      - qwen35-decision
+
   qwen-worker-slot:
     swap: true
     exclusive: false

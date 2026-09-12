@@ -137,12 +137,19 @@ test("production swap group matches llama-swap model membership", () => {
     }>;
   };
   const group = configured.groups["qwen-worker-slot"];
+  const decisionGroup = configured.groups["qwen-decision-slot"];
   const expected = registry.runtimes
     .filter((runtime) => runtime.policy.swapGroup === "qwen-worker-slot")
     .map((runtime) => runtime.backend === "llama-swap" ? runtime.deployment.modelId : runtime.id)
     .sort();
   expect(group).toEqual(expect.objectContaining({ swap: true, exclusive: false }));
   expect([...group!.members].sort()).toEqual(expected);
+  expect(decisionGroup).toEqual({
+    swap: false,
+    exclusive: false,
+    members: ["qwen35-decision"],
+  });
+  expect(group!.members).not.toContain("qwen35-decision");
   const ornithCommand = configured.models["ornith15-35b"]?.cmd ?? "";
   const ornithSpeedCommand = configured.models["ornith15-35b-speed"]?.cmd ?? "";
   const agentWorkerCommand = configured.models["qwen-agent"]?.cmd ?? "";
