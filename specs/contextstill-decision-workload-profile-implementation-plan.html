@@ -1,0 +1,1151 @@
+<article lang="ja">
+  <h1>ContextStill Decision Workload Profile 実装計画</h1>
+
+  <p>
+    本計画は、ContextStill／DeepStillの探索workloadだけに動的なDecision cascadeを追加し、
+    通常会話、SAAA、NightWorker、既存ContextStill
+    background処理には影響させないための実装順序を定義する。 LARMにはmodel lifecycleとresource
+    controlだけを追加し、探索の意味判断、confidence escalation、
+    budget、branch終了はconsumer側へ残す。FunctionGemma 270Mはshadowから開始し、Qwen 3.5 2Bも
+    host実測とquality gateを通過するまでproduction判断へ使わない。
+  </p>
+
+  <dl>
+    <dt>文書状態</dt>
+    <dd>
+      LARMの<code>decision-default</code>経路は実装・production有効化・live検証まで完了。
+      <code>decision-fast</code>はGemma
+      termsのoperator受諾待ち、consumer統合はContextStill／DeepStill source repositoryの配置待ち
+    </dd>
+    <dt>対象</dt>
+    <dd>LARM、ContextStill／DeepStill Decision Client、独立ML Compute MCP service</dd>
+    <dt>非対象</dt>
+    <dd>global探索mode、既存default modelの変更、model weightのrepository格納、任意code実行MCP</dd>
+    <dt>前提評価</dt>
+    <dd>
+      <a href="./contextstill-decision-workload-profile-evaluation.html"
+        >ContextStill Decision Workload Profile／ML Compute MCP 検討・検証</a
+      >
+    </dd>
+  </dl>
+
+  <section id="implementation-progress">
+    <h2>実装進捗</h2>
+    <p>
+      2026年9月12日に、Qwen 3.5
+      2Bを使う<code>decision-default</code>のsource、artifact、 runtime
+      lifecycle、署名付きproduction release、認証済みlive canaryを完了した。
+    </p>
+    <ul>
+      <li>
+        <code>LarmClient.refreshAgentConnection</code>を追加した。renewで旧provider
+        tokenが失効した直後に 再claimし、connection ID、Allocation
+        ID、audience、expiryが一致する組だけを返す。
+      </li>
+      <li>
+        stale generationのclaimを<code>connection_refresh_mismatch</code>として拒否するclient
+        testを追加した。
+      </li>
+      <li>
+        <code>contextstill-explore</code>が、三つのprimary-only explicit routeと
+        <code>llm.decision.fast</code
+        >、<code>llm.decision.default</code>、<code>llm.general</code>から
+        一つのAgent Profileへcompileできるcontract testを追加した。
+      </li>
+      <li>
+        Qwen 3.5 2B Q4_K_Mをrepository外の<code>/srv/ai/models/qwen35-decision/</code>へ配置し、
+        pinned revision、byte数、SHA-256をartifact／release catalogへ登録した。
+      </li>
+      <li>
+        <code>qwen35-decision</code> runtime、<code
+          >llm-decision-default</code
+        >
+        explicit route、 <code>contextstill-decision-default-canary</code> Agent
+        Profileをproductionへ追加した。 既存default routeとresident Qwen 27Bは変更していない。
+      </li>
+      <li>
+        llama-swapでは2Bを<code>qwen-decision-slot</code>へ分離した。
+        <code>swap: false</code
+        >かつ<code>exclusive: false</code>とし、27B worker
+        groupとの同時常駐を許しながら、 LARM Allocationのrelease／expiry後はunload可能なままにした。
+      </li>
+      <li>
+        署名付きrelease <code>f4cfb95674ee41ae75609019a1cf4c5bc18d6455</code>をproductionへ有効化した。
+        Agent Connectionのcreate、claim、JSON、SSE、release、credential revocationがliveで成功した。
+      </li>
+      <li>
+        ContextStill／DeepStill source repositoryはhost上に見つからなかったため、WP1のconsumer実装は
+        repository配置待ちである。LARMへapplication固有Decision contractを仮置きしていない。
+      </li>
+    </ul>
+
+    <h3>artifact identityと採用状態</h3>
+    <table>
+      <caption>
+        remote metadata、local file identity、production activationの状態
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">role</th>
+          <th scope="col">repository／revision</th>
+          <th scope="col">file identity</th>
+          <th scope="col">次のgate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">decision-fast候補</th>
+          <td>
+            <a
+              href="https://huggingface.co/ggml-org/functiongemma-270m-it-GGUF/tree/2566ce14aedfc14fdd0de955ba67346425e67126"
+              ><code>ggml-org/functiongemma-270m-it-GGUF</code></a
+            >、<code>2566ce14aedfc14fdd0de955ba67346425e67126</code>
+          </td>
+          <td>
+            <code>functiongemma-270m-it-q8_0.gguf</code>、291,557,792 bytes、SHA-256
+            <code>83940d4dd9676710856f43523bed096164a595a96f6b34771610a03937de5270</code>
+          </td>
+          <td>Gemma termsのoperator受諾記録とnative tool-call互換性</td>
+        </tr>
+        <tr>
+          <th scope="row">decision-default候補</th>
+          <td>
+            <a
+              href="https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/tree/f6d5376be1edb4d416d56da11e5397a961aca8ae"
+              ><code>unsloth/Qwen3.5-2B-GGUF</code></a
+            >、<code>f6d5376be1edb4d416d56da11e5397a961aca8ae</code>
+          </td>
+          <td>
+            <code>Qwen3.5-2B-Q4_K_M.gguf</code>、1,280,835,840 bytes、SHA-256
+            <code>aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223</code>
+          </td>
+          <td>Q4_K_M／Vulkanをproduction採用。長期qualityと4K／8K比較は継続評価</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Qwen 3.5 2B live evidence</h3>
+    <table>
+      <caption>
+        production release
+        <code>f4cfb95674ee41ae75609019a1cf4c5bc18d6455</code
+        >で採取
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">検証</th>
+          <th scope="col">結果</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">isolated structured decode</th>
+          <td>load約0.59秒、prompt約1,093 tok/s、completion 73.08 tok/s</td>
+          <td>schema成功。100 tok/s仮説は不成立</td>
+        </tr>
+        <tr>
+          <th scope="row">Agent Provider lifecycle</th>
+          <td>create／claim／JSON／SSE／release／credential revocationが成功</td>
+          <td>on-demand hosting経路を合格</td>
+        </tr>
+        <tr>
+          <th scope="row">27Bとの同時常駐</th>
+          <td>
+            <code>qwen-agent-efficientthink</code>の実request中に2B
+            allocationが2.497秒でreadyとなり、 両runtimeが同時に<code
+              >ready</code
+            >
+          </td>
+          <td>worker終了待ちを解消</td>
+        </tr>
+        <tr>
+          <th scope="row">application schema</th>
+          <td>
+            strict JSON
+            Schemaで<code>schemaVersion</code>、有限<code>action</code>、0〜1
+            <code>confidence</code>、bounded
+            <code>reasonCodes</code>を生成後にも再検証
+          </td>
+          <td>live合格</td>
+        </tr>
+        <tr>
+          <th scope="row">同時decode</th>
+          <td>27B request中のstructured completionは約4.50秒</td>
+          <td>動作は成功。干渉率のp50／p95は固定datasetで追加測定が必要</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="outcome">
+    <h2>実装後の到達状態</h2>
+    <ol>
+      <li>
+        探索開始時だけ、明示指定の<code>contextstill-explore</code> Agent Profileから TTL
+        300秒のAgent Connectionを作成する。
+      </li>
+      <li>
+        同じconnectionから<code>decision-fast</code>、<code>decision-default</code>、
+        <code>llm-general</code>の三つの公開providerを取得する。
+      </li>
+      <li>
+        deterministic pre-checkの後、FunctionGemma 270M、Qwen 3.5 2B、resident Qwen 27Bの順に、
+        consumerが明示的にescalateする。LARM route fallbackに意味判断を持たせない。
+      </li>
+      <li>
+        探索中はSession Managerがconnectionをrenewし、終了時にreleaseする。heartbeat断でもexpiryし、
+        Qwen 3.5 2Bはllama-swapのidle TTL後にunload可能になる。
+      </li>
+      <li>
+        small modelが失敗、timeout、不正出力、未校正、または未昇格でも、既存探索経路は継続する。
+        small model availabilityを探索可否の条件にしない。
+      </li>
+      <li>
+        shadow outcomeを、bounded ML Compute MCPの評価、校正、ranking、clusteringへ再利用できる。
+        MCPはLARM schedulerやper-candidate hot pathを置換しない。
+      </li>
+    </ol>
+  </section>
+
+  <section id="decisions">
+    <h2>確定する設計判断</h2>
+    <table>
+      <caption>
+        原案へ反映する改善点
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">論点</th>
+          <th scope="col">採用する実装</th>
+          <th scope="col">採用しない実装</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">workload選択</th>
+          <td>既存Agent Profileを明示指定し、短期Agent Connectionへ固定する。</td>
+          <td>
+            global探索ON／OFF、<code>X-LARM-Profile</code>、第三のprofile機構
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">warm lifecycle</th>
+          <td>既存AllocationのTTL、renew、release、expiry、llama-swap idle TTLを使う。</td>
+          <td>別のWorkload Leaseやmodel固有lease API</td>
+        </tr>
+        <tr>
+          <th scope="row">cascade</th>
+          <td>Decision Clientがschema、risk、calibrationから次providerを選ぶ。</td>
+          <td>availability用route fallbackでconfidence escalationを表現する。</td>
+        </tr>
+        <tr>
+          <th scope="row">termination</th>
+          <td>budget、連続低gain、未探索候補数を使うdeterministic state machineが所有する。</td>
+          <td>modelの<code>stop_branch</code>を最終命令として実行する。</td>
+        </tr>
+        <tr>
+          <th scope="row">FunctionGemma</th>
+          <td>CPU resident、初期shadow only。native tool-callとJSON Schemaを比較する。</td>
+          <td>zero-shot confidenceだけによるproduction skip</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.5 2B</th>
+          <td>4Kから開始するQ4候補を隔離routeで実測し、合格後にwarm tierへ入れる。</td>
+          <td>2 GB、100 tok/sという未測定値をadmission値やSLOに使う。</td>
+        </tr>
+        <tr>
+          <th scope="row">UMA直列化</th>
+          <td>同時decode実験で干渉が確認された場合だけgeneric execution domainを追加する。</td>
+          <td>swap groupで同時常駐まで禁止する、または測定前に常時直列化する。</td>
+        </tr>
+        <tr>
+          <th scope="row">ML計算</th>
+          <td>独立serviceの有限個のtyped MCP Toolsと、dataset／report Resourcesにする。</td>
+          <td>任意Python、shell、notebook、自由なestimator class、model主導GPU割当</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="boundaries">
+    <h2>repositoryと責務の境界</h2>
+    <table>
+      <caption>
+        componentごとの変更責務
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">component</th>
+          <th scope="col">実装するもの</th>
+          <th scope="col">実装しないもの</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LARM</th>
+          <td>
+            runtime、route、Agent
+            Profile、artifact／release、lifecycle、admission、必要時のexecution domain
+          </td>
+          <td>Decision schemaの意味、threshold、exploration budget、actual outcome判定</td>
+        </tr>
+        <tr>
+          <th scope="row">ContextStill／DeepStill</th>
+          <td>
+            Decision contract、Session Manager、cascade、validation、risk gate、executor、shadow
+            record、feature flag
+          </td>
+          <td>model process起動、runtime memory admission</td>
+        </tr>
+        <tr>
+          <th scope="row">ML Compute service</th>
+          <td>
+            dataset handle、bounded algorithm、calibration artifact、evaluation report、MCP facade
+          </td>
+          <td>LARM lease authority、filesystem pathの直接受付、hot pathの必須依存</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        現在のworkspaceではLARM
+        sourceだけを確認でき、<code>/srv/ai/apps</code>配下にContextStill／DeepStillの
+        source
+        repositoryは見つからなかった。そのためconsumer側の論理module名とcontractは本計画で固定するが、
+        最終file pathはWP0で実repositoryへ対応付ける。LARM内に仮のconsumer実装を置かない。
+      </p>
+    </aside>
+  </section>
+
+  <section id="architecture">
+    <h2>target architecture</h2>
+    <figure>
+      <pre><code>exploration start
+  │
+  ├─ deterministic pre-check ── duplicate / scheme / budgetはcodeで確定
+  │
+  ├─ create Agent Connection
+  │    profile=contextstill-explore, explicit=true, ttl=300
+  │    allowFallback=false, deploymentPolicy=allow-listed
+  │
+  └─ Decision Session Manager ── renew at TTL/3 with jitter
+       │
+       ├─ decision-fast      FunctionGemma 270M / CPU / initially shadow
+       │       └─ strict validation + low-risk action gate
+       ├─ decision-default   Qwen 3.5 2B / llama-swap / exploration warm
+       │       └─ strict validation + calibrated action gate
+       └─ llm-general        resident Qwen 27B / teacher and final fallback
+               │
+               ▼
+       deterministic executor / budget / termination
+               │
+               ├─ redacted shadow record ── evaluation dataset
+               └─ release connection ── 2B becomes unload eligible</code></pre>
+      <figcaption>
+        Agent Connectionはprovider
+        bindingとlifecycleを固定する。各推論結果を受理するかはconsumerだけが決める。
+      </figcaption>
+    </figure>
+  </section>
+
+  <section id="contracts">
+    <h2>先に固定するcontract</h2>
+
+    <h3>Agent Connection request</h3>
+    <pre><code>{
+  "agentProfile": "contextstill-explore",
+  "explicitAgentProfile": true,
+  "audience": "same-host",
+  "client": "contextstill",
+  "ttlSeconds": 300,
+  "allowFallback": false,
+  "deploymentPolicy": "allow-listed"
+}</code></pre>
+    <p>
+      数分を超える探索では<code>withAgentConnection</code>へrenew機能がないため、専用Session
+      Managerが
+      create、wait、claim、renew、releaseを順に管理する。renewはTTLの3分の1を基準にjitterを加え、
+      同一sessionに複数timerを作らない。終了、cancel、例外ではfresh bounded requestでreleaseを試み、
+      release失敗時もexpiryを最後の安全網にする。
+    </p>
+
+    <h3>LARM Agent Profile</h3>
+    <pre><code>agentProfiles:
+  contextstill-explore:
+    description: Explicit ContextStill and DeepStill exploration decision providers
+    schedulingPriority: 1000
+    providers:
+      - name: decision-fast
+        capability: llm.decision.fast
+        route: llm-decision-fast
+        publicModel: decision-fast
+        readiness: llm-inference
+      - name: decision-default
+        capability: llm.decision.default
+        route: llm-decision-default
+        publicModel: decision-default
+        readiness: llm-inference
+      - name: llm-general
+        capability: llm.general
+        route: llm-contextstill-general
+        publicModel: qwen-contextstill-general
+        readiness: llm-inference</code></pre>
+    <p>
+      三つのrouteは<code>explicitOnly: true</code>かつprimary一件だけにする。tier変更をroute
+      fallbackで 隠さず、evaluation recordへ実際に選んだtierを残す。legacy
+      <code>profiles.yaml</code>は変更しない。
+    </p>
+
+    <h3>Decision v1</h3>
+    <pre><code>{
+  "schemaVersion": "contextstill-explore-decision.v1",
+  "action": "fetch",
+  "confidence": 0.91,
+  "novelty": 0.81,
+  "relevance": 0.92,
+  "expectedKnowledgeGain": 0.77,
+  "reasonCode": "high_value_source"
+}</code></pre>
+    <ul>
+      <li>
+        actionは<code>skip</code>、<code>fetch</code>、<code>extract</code>、<code>expand</code>、
+        <code>requery</code
+        >、<code>escalate</code>だけにする。
+      </li>
+      <li>
+        JSON Schema constrained decodingに加え、duplicate keyを拒否できるparserとstrict Zod
+        schemaを使う。 未知field、trailing data、NaN、Infinity、0〜1外、version不一致を拒否する。
+      </li>
+      <li>
+        <code>thinking: false</code>、temperature 0、input 4K、output 128
+        tokenから開始する。 live検証で48 tokenではreasoningだけで空contentになったため、原案の64
+        tokenは初期値にしない。
+      </li>
+      <li>
+        HTTP非2xx、timeout、空content、<code>finish_reason=length</code>、schema不正、未校正actionは
+        すべて明示的なescalation reasonへ正規化する。
+      </li>
+      <li>
+        modelのconfidenceは直接実行thresholdにしない。action別calibration artifactとpolicy versionを
+        risk gateへ入力する。
+      </li>
+    </ul>
+
+    <h3>失敗時の動作</h3>
+    <table>
+      <caption>
+        fail-openとfail-closedの境界
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">失敗</th>
+          <th scope="col">動作</th>
+          <th scope="col">安全性</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">explore profile準備失敗</th>
+          <td>small tierを使わず、既存のdeterministic／general探索経路を継続する。</td>
+          <td>探索可用性についてfail open</td>
+        </tr>
+        <tr>
+          <th scope="row">fast出力不正／未昇格</th>
+          <td>defaultへ進み、shadowではfast actionを実行しない。</td>
+          <td>判定についてfail closed</td>
+        </tr>
+        <tr>
+          <th scope="row">default出力不正／未校正skip</th>
+          <td>generalまたは既存codeへ進む。</td>
+          <td>情報損失についてfail closed</td>
+        </tr>
+        <tr>
+          <th scope="row">renew失敗</th>
+          <td>expiry時刻前に新規decision受付を止め、既存経路へdegradeし、releaseを試みる。</td>
+          <td>期限切れtokenを使わない。</td>
+        </tr>
+        <tr>
+          <th scope="row">ML MCP停止</th>
+          <td>online探索を継続し、offline evaluationだけを延期する。</td>
+          <td>MCPをhot path必須依存にしない。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="work-packages">
+    <h2>実装work package</h2>
+    <p>
+      repository全体のMilestone 22〜28とは番号を共有せず、本機能内のWP0〜WP8として管理する。
+      各WPはexit criteriaを満たすまで次のproduction段階へ進めない。
+    </p>
+    <figure>
+      <pre><code>WP0 ownership / baseline
+ ├─ WP1 consumer contract / replay
+ └─ WP2 LARM catalog scaffold
+       └─ WP3 artifact / runtime staging
+             └─ WP4 resource interference experiment
+                   ├─ no interference ───────────────┐
+                   └─ interference → executionDomain │
+                                                     ▼
+WP1 + WP3 + WP4 ────────────────────────────────→ WP5 shadow
+                                                         │
+                                    WP6 ML MCP / evaluator
+                                                         │
+                                                         ▼
+                                                  WP7 limited activation
+                                                         │
+                                                         ▼
+                                                  WP8 fine-tune study</code></pre>
+      <figcaption>
+        WP8はoptionalで、base modelのproduction昇格条件ではない。ML MCPはshadow
+        datasetができてから作る。
+      </figcaption>
+    </figure>
+
+    <h3>WP0: ownership、baseline、feature flag</h3>
+    <p><strong>目的:</strong> repositoryをまたぐcontractとrollback authorityを最初に固定する。</p>
+    <ul>
+      <li>
+        ContextStill／DeepStill source repositoryとtest commandを特定し、module対応表を記録する。
+      </li>
+      <li>
+        consumerに<code>off</code>、<code>shadow</code>、<code>limited</code>、<code>active</code>の
+        一つのversioned feature
+        flagを定義する。既定値は<code>off</code>にする。
+      </li>
+      <li>LARM、consumer、ML serviceそれぞれのownerと、promotion／rollback実行者を決める。</li>
+      <li>
+        現行ContextStillのaccuracy、fetch数、27B call数、latency、resource
+        SLOを固定datasetでbaseline化する。
+      </li>
+    </ul>
+    <p>
+      <strong>Exit:</strong> source位置、owner、baseline artifact digest、feature
+      flag既定値、rollback責任者が review済みである。hostやproduction configは変更しない。
+    </p>
+
+    <h3>WP1: consumer Decision contractとreplay harness</h3>
+    <p><strong>目的:</strong> modelを増やす前に、判断の意味と失敗動作をcodeで固定する。</p>
+    <ul>
+      <li>
+        論理module <code>decision-contract</code>へJSON Schema、strict
+        validator、duplicate-key rejection、 canonical serializationを実装する。
+      </li>
+      <li>
+        <code>decision-policy</code>へaction別risk class、calibration
+        lookup、escalation reason、 deterministic termination state machineを実装する。
+      </li>
+      <li>
+        <code>decision-client</code>へprovider adapter、timeout、non-thinking
+        request、finish reason確認、 tool-call／content normalizationを実装する。
+      </li>
+      <li>
+        <code>decision-session</code>へAgent Connection lifecycleとTTL/3
+        heartbeatを実装する。 create／waitに失敗した場合は既存探索経路へ戻す。
+      </li>
+      <li>
+        <code>decision-evaluation-store</code>へredacted append-only recordとschema
+        migrationを実装する。 Prometheus labelへtrace IDやcandidate IDを入れない。
+      </li>
+      <li>
+        現行27Bまたはfixtureをproviderにしたreplay testを作り、model
+        processなしでも全分岐を検証する。
+      </li>
+    </ul>
+    <p>
+      <strong>Exit:</strong> invalid JSON、duplicate key、unknown
+      enum、length終了、timeout、cancel、renew失敗、 double releaseを含むunit／integration
+      testが成功し、<code>shadow</code>ではmodel actionが一件もexecutorへ
+      到達しない。
+    </p>
+
+    <h3>WP2: LARM catalog scaffold</h3>
+    <p><strong>目的:</strong>既存contractだけで三providerのbindingを表現する。</p>
+    <ul>
+      <li>
+        <code>config/local-node/runtimes.yaml</code>へ<code>functiongemma-decision</code>と
+        <code>qwen35-decision</code
+        >を追加する。capabilityはそれぞれ<code>llm.decision.fast</code>と
+        <code>llm.decision.default</code>にする。
+      </li>
+      <li>
+        <code>config/local-node/routes.yaml</code>へ三つのexplicit-only routeを追加する。
+        すべてprimary一件で、decision tier間fallbackは置かない。
+      </li>
+      <li>
+        <code>config/local-node/agent-connections.yaml</code
+        >へ<code>contextstill-explore</code>を追加する。 default
+        profileと既存profileは変更しない。
+      </li>
+      <li>
+        <code>config/local-node/profiles.yaml</code>は意図的に変更しないことをreview
+        checklistへ残す。
+      </li>
+      <li>
+        registry、Agent Connection catalog、explicit selection、public model、atomic
+        preparationのtestを追加する。
+      </li>
+    </ul>
+    <p>
+      <strong>Exit:</strong> config parseとAgent Profile list／create contract
+      testが成功し、既存default route、 resident Qwen 27B、profile
+      revisionが意図せず変わっていない。artifact未配置の段階ではproductionへactivateしない。
+    </p>
+
+    <h3>WP3: model artifactと隔離runtime staging</h3>
+    <p><strong>目的:</strong> identityを固定したmodelをproduction trafficから隔離して測る。</p>
+    <ol>
+      <li>
+        operatorがFunctionGemmaとQwen 3.5
+        2Bの配布元、revision、license、量子化を選び、termsを受諾する。
+        GGUFごとにbytesとSHA-256を記録する。weightをGitへ入れない。
+      </li>
+      <li>
+        <code>deploy/local-node/models.yaml</code
+        >へartifact、<code>deploy/local-node/releases.yaml</code>へ immutable runtime
+        releaseを追加する。checksum未確定のplaceholderはmergeしない。
+      </li>
+      <li>
+        FunctionGemmaはCPU専用systemd providerとして4K context、parallel 1、loopback
+        bindで起動する。 service unit、installerのunit／directory allowlist、install
+        testを更新する。
+      </li>
+      <li>
+        Qwen 3.5 2Bは<code>config/local-node/llama-swap.yaml</code>へ独立model IDとして追加し、
+        4Kから開始する。既存<code>qwen-worker-slot</code>へ入れず、27Bとの同時常駐を許す。
+      </li>
+      <li>
+        未使用port、read-only model path、cache path、cgroup／systemd
+        memory制約をpreflightで確認する。 port番号はhost
+        inventory後に確定し、本文の推測値で固定しない。
+      </li>
+      <li>
+        semantic canaryを追加し、JSON Schema、native
+        tool-call、<code>thinking: false</code>、128 token上限、 malformed
+        output、cold／warm startを固定prompt setで検証する。
+      </li>
+    </ol>
+    <p>
+      <strong>Exit:</strong> artifact identity、license evidence、provider config
+      revision、cold／warm latency、 peak RSS／UMA、schema-valid率が外部evidence
+      artifactとして保存され、認証済みexplicit route以外から到達できない。
+    </p>
+
+    <h3>WP4: resource interferenceと条件付きexecution domain</h3>
+    <p><strong>目的:</strong> UMA hostで必要な範囲だけdecode concurrencyを制御する。</p>
+    <ol>
+      <li>
+        27B単独、2B単独、27B＋2B同時の固定seed benchmarkを同じcommitとconfig revisionで採取する。
+      </li>
+      <li>
+        p50／p95／p99、TTFB、prefill、decode、system available memory、accelerator／UMA、GPU busy、
+        token throughput、429、queue depthを比較する。
+      </li>
+      <li>
+        同時実行が既存SLOを破る、memory floorを破る、または単独比でp95 latency／throughputを10%以上
+        悪化させる場合だけ<code>executionDomain</code>実装へ進む。
+      </li>
+      <li>
+        条件を満たさない場合はruntime別Execution Gateを維持し、不要なqueue latencyを増やさない。
+      </li>
+    </ol>
+    <details>
+      <summary>execution domainが必要な場合のLARM変更</summary>
+      <ul>
+        <li>
+          <code>packages/core/src/schema.ts</code>のruntime resourcesへoptional
+          <code>executionDomain</code>を追加する。
+        </li>
+        <li>
+          <code>packages/core/src/registry.ts</code>で、同じdomainが同一nodeに属し、
+          <code>maxConcurrentRequests</code>、queue
+          limit、timeoutを共有することを検証する。
+        </li>
+        <li>
+          <code>apps/daemon/src/execution-gate.ts</code>は内部queue keyを
+          <code>executionDomain ?? runtime.id</code>にする。QueueEntryには実runtime
+          IDを保持し、event相関を失わない。
+        </li>
+        <li>
+          <code>tryAcquire</code>を含むsemantic
+          readinessも同じdomainを尊重する。 priority、cancel、timeout、drainの既存意味は変えない。
+        </li>
+        <li>
+          <code>apps/daemon/src/metrics.ts</code>へ有限cardinalityの<code
+            >execution_domain</code
+          >
+          label／gaugeを追加する。
+        </li>
+        <li>
+          cross-runtime FIFO、priority、release、policy mismatch、probe busy、metricsをtestする。
+        </li>
+      </ul>
+    </details>
+    <p>
+      <strong>Exit:</strong>実測結果と分岐判断を記録し、どちらの構成でもresident
+      27B、ASR、TTSの既存SLOと memory floorを満たす。FunctionGemma CPU laneはUMA LLM execution
+      domainへ入れない。
+    </p>
+
+    <h3>WP5: counterfactual shadow</h3>
+    <p><strong>目的:</strong> 情報を捨てずにsmall tierの精度とcostを測る。</p>
+    <ul>
+      <li>
+        <code>shadow</code>をsource
+        type、language、topic、新旧knowledge、duplicate難度で層化して開始する。
+      </li>
+      <li>
+        fast／defaultの提案に関係なく、baseline／teacherの判断と実際のfetch／extractを実行する。
+        small modelのskipでもcounterfactual outcomeを失わない。
+      </li>
+      <li>
+        recordへprofile revision、schema／policy version、public model、runtime release、config
+        revision、 finish reason、latency、escalation、teacher action、actual knowledge
+        gainを記録する。
+      </li>
+      <li>
+        raw本文は既存の暗号化・短期auditへ限定し、長期datasetはhash、redaction、provenance、retention、
+        opt-outを持つ。
+      </li>
+      <li>
+        profile準備失敗、connection expiry、runtime crash、429、timeout、daemon epoch変更をfault
+        injectionする。
+      </li>
+    </ul>
+    <p>
+      <strong>Exit:</strong>少なくともvaluable candidate
+      600件を含む固定holdoutができ、schema-valid率、 false skip、valuable-source
+      recall、escalation、cost、tail latencyをtier／stratum別に再計算できる。
+    </p>
+
+    <h3>WP6: bounded ML Compute MCP</h3>
+    <p><strong>目的:</strong> shadow datasetから再現可能な評価／校正artifactを作る。</p>
+    <ul>
+      <li>
+        LARM repositoryとは別のserviceとして、<code>rank_candidates</code>、
+        <code>cluster_candidates</code>、<code>calibrate_decisions</code>、
+        <code>evaluate_cascade</code>を実装する。
+      </li>
+      <li>
+        Tool inputはdataset handle、algorithm enum、fixed seed、bounded
+        rows／dimension／bytes／timeだけを受ける。 outputはJSON Schema、artifact digest、library
+        version、metrics、warningを持つ。
+      </li>
+      <li>
+        datasetとreportはMCP Resourcesとしてread-only公開し、filesystem
+        path、URL、SQLを直接受け付けない。
+      </li>
+      <li>
+        auth、principal、quota、concurrency、timeout、memory／thread cgroup、auditを実装する。
+        modelがresource limitを上書きできないようにする。
+      </li>
+      <li>
+        長時間batchはclient対応時だけTasks extensionを使い、未対応client向けの同期bounded
+        subsetを維持する。
+      </li>
+      <li>
+        novelty featureをonlineで使う場合は同じpure libraryまたはtyped internal HTTPを呼び、
+        per-candidate処理をMCP round tripへ依存させない。
+      </li>
+    </ul>
+    <p>
+      <strong>Exit:</strong>同じdataset
+      handle、policy、seedから同一digestのreportを再生成でき、unauthorized、
+      over-limit、timeout、cancel、malformed inputがfail closedになる。Phase
+      1ではCPU中心とし、LARMへ MCP protocolや<code>ml.compute</code>
+      runtimeを追加しない。
+    </p>
+
+    <h3>WP7: limited activationとpromotion</h3>
+    <p><strong>目的:</strong> actionの非対称riskに従い、権限を小さく段階昇格する。</p>
+    <ol>
+      <li>
+        fast
+        tierは<code>fetch</code>、<code>extract</code>、<code>expand</code>、
+        <code>requery</code>の低risk positive
+        actionだけをlimitedで受理する。
+      </li>
+      <li>
+        default
+        tierの<code>skip</code>は専用gateを通過するまでgeneral／既存codeへescalateする。
+        fast tierへproduction skip権限を与えない。
+      </li>
+      <li>
+        1%、10%、50%、100%の層化canaryを順に行う。各段階でquality、tail latency、resource、 error
+        budgetを再評価し、自動昇格はしない。
+      </li>
+      <li>
+        各段階でshadow control groupを残し、policy driftとsource distribution shiftを検出する。
+      </li>
+    </ol>
+    <p>
+      <strong>Exit:</strong>後述のpromotion gateを満たし、operator review、rollback
+      rehearsal、release evidenceを
+      完了したactionだけを<code>active</code>にする。branch終了は最後までdeterministic
+      codeが所有する。
+    </p>
+
+    <h3>WP8: optional FunctionGemma fine-tune</h3>
+    <p><strong>目的:</strong> provenance付きdatasetが十分な場合だけdomain tuningの価値を測る。</p>
+    <ul>
+      <li>
+        training、calibration、固定holdoutをentity／topic／timeで分離し、data leakageを検査する。
+      </li>
+      <li>baseとfine-tuned modelを同じprompt、parser、policy、resource gateで比較する。</li>
+      <li>
+        model artifact、training code、dataset digest、hyperparameter、licenseを再現可能に記録する。
+      </li>
+      <li>fine-tune結果にもWP7と同じpromotion gateを適用し、改善がなければbase shadowへ戻す。</li>
+    </ul>
+    <p>
+      <strong>Exit:</strong>
+      qualityまたはcostに統計的かつ運用上意味のある改善がある場合だけ新release候補にする。
+      このWPはWP7をblockしない。
+    </p>
+  </section>
+
+  <section id="file-plan">
+    <h2>LARM変更file計画</h2>
+    <table>
+      <caption>
+        予定する変更と条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">file／領域</th>
+          <th scope="col">変更</th>
+          <th scope="col">条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>config/local-node/runtimes.yaml</code></th>
+          <td>fast／default runtime、capability、resource envelope、deploymentを追加</td>
+          <td>WP2、未activate</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>config/local-node/routes.yaml</code></th>
+          <td>三つのprimary-only explicit routeを追加</td>
+          <td>WP2</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>config/local-node/agent-connections.yaml</code></th>
+          <td><code>contextstill-explore</code>三provider profileを追加</td>
+          <td>WP2</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>deploy/local-node/models.yaml</code></th>
+          <td>pinned revision、bytes、SHA-256、quantization、external pathを追加</td>
+          <td>operator検証後だけ</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>deploy/local-node/releases.yaml</code></th>
+          <td>二runtimeのimmutable releaseとprovider config revisionを追加</td>
+          <td>artifact identity確定後</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>config/local-node/llama-swap.yaml</code></th>
+          <td>Qwen 3.5 2Bの4K model command、alias、CPU／Vulkan候補を追加</td>
+          <td>WP3の勝者だけ</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>deploy/local-node/systemd/</code></th>
+          <td>FunctionGemma loopback CPU provider unitを追加</td>
+          <td>WP3</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>deploy/local-node/scripts/install-services.sh</code>とtest</th>
+          <td>unit、model directory、safe install target、enable方針を追加</td>
+          <td>WP3。shadow前は自動enableしない選択をreview</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>deploy/local-node/scripts/</code></th>
+          <td>
+            artifact verify、decision semantic canary、resource interference benchmarkとtestを追加
+          </td>
+          <td>WP3〜WP4</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <code>packages/core/src/schema.ts</code>、<code
+              >registry.ts</code
+            >
+          </th>
+          <td>optional execution domainと整合検証</td>
+          <td>干渉gateを満たした場合だけ</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <code>apps/daemon/src/execution-gate.ts</code
+            >、<code>gateway.ts</code>、<code
+              >metrics.ts</code
+            >
+          </th>
+          <td>cross-runtime gate key、event相関、domain gauge</td>
+          <td>干渉gateを満たした場合だけ</td>
+        </tr>
+        <tr>
+          <th scope="row">対応する<code>*.test.ts</code>／deployment test</th>
+          <td>schema、route、profile、lifecycle、benchmark、conditional domainのregression test</td>
+          <td>各code変更と同じPR</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="evaluation-record">
+    <h2>評価recordとartifact</h2>
+    <pre><code>traceId, candidateIdHash, observedAt
+workloadProfile, profileRevision, decisionSchemaVersion, policyVersion
+sourceType, language, topicBucket, inputFeatureDigest
+modelRole, publicModel, runtimeRelease, providerConfigRevision
+rawDecision, validationResult, finishReason, escalationReason
+queueMs, prefillMs, decodeMs, totalMs, promptTokens, completionTokens
+teacherAction, executedAction, actualOutcome, knowledgeGain, humanAudit
+calibrationArtifactDigest, datasetRevision</code></pre>
+    <ul>
+      <li>
+        runtime内部IDをprovider tokenへ新たに公開せず、request IDを使ってLARM
+        auditとoperator側でjoinする。
+      </li>
+      <li>raw本文と長期featureを分離し、redaction後のrecordだけをML serviceへ渡す。</li>
+      <li>
+        write時にschema versionを検証し、partial recordや未知versionをtraining inputへ混ぜない。
+      </li>
+      <li>
+        teacher一致率は補助値とし、actual knowledge gainと人手auditを最終quality labelにする。
+      </li>
+    </ul>
+  </section>
+
+  <section id="gates">
+    <h2>promotion gate</h2>
+    <table>
+      <caption>
+        全条件を満たすまでaction権限を昇格しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">分類</th>
+          <th scope="col">必須条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">dataset</th>
+          <td>
+            valuable candidate 600件以上、主要stratumに欠落なし、固定holdout、provenance確認済み
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">loss prevention</th>
+          <td>valuable-source recall 99.5%以上、false-skip率の片側95%信頼上限0.5%以下</td>
+        </tr>
+        <tr>
+          <th scope="row">contract</th>
+          <td>
+            schema-valid率99.9%以上。空content、length、unknown enumを別集計し、すべてescalateする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">latency</th>
+          <td>fast warm p95 500 ms以下かつ27B p95の20%以下。hard caseのp95／p99が既存SLO内</td>
+        </tr>
+        <tr>
+          <th scope="row">resource</th>
+          <td>resident 27B、ASR、TTSのSLOとmemory floorを維持し、queue／429 budget内</td>
+        </tr>
+        <tr>
+          <th scope="row">cascade value</th>
+          <td>limited activationで27B call 50%以上削減、total GPU busy time 30%以上削減</td>
+        </tr>
+        <tr>
+          <th scope="row">operations</th>
+          <td>
+            expiry、crash、daemon restart、token失効、MCP停止のfault testとrollback rehearsal成功
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      sample不足時は自己申告confidenceや平均一致率で代用しない。binomial
+      boundを先に使い、十分なdataが 得られた後だけisotonic regression等を比較する。source
+      distributionが大きく変わった場合は
+      <code>active</code
+      >から<code>shadow</code>へ戻して再校正する。
+    </p>
+  </section>
+
+  <section id="test-matrix">
+    <h2>test matrix</h2>
+    <table>
+      <caption>
+        層別の必須検証
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">層</th>
+          <th scope="col">主なtest</th>
+          <th scope="col">成功条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">consumer unit</th>
+          <td>parser、Zod、risk gate、termination、heartbeat、idempotent cleanup</td>
+          <td>不正／未校正判断がexecutorへ到達しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM unit</th>
+          <td>runtime capability、explicit route、profile revision、claim、expiry</td>
+          <td>既存default contractを変更せず三providerをclaimできる。</td>
+        </tr>
+        <tr>
+          <th scope="row">deployment</th>
+          <td>checksum、regular file、unit sandbox、loopback、port、health、semantic canary</td>
+          <td>未pin／不正artifactと非loopback公開を拒否する。</td>
+        </tr>
+        <tr>
+          <th scope="row">live resource</th>
+          <td>cold／warm、4K／8K、CPU／Vulkan、単独／同時decode、long soak</td>
+          <td>resource gateと既存SLOを満たす。</td>
+        </tr>
+        <tr>
+          <th scope="row">shadow replay</th>
+          <td>層化dataset、teacher、actual outcome、counterfactual skip、drift</td>
+          <td>同じartifactからmetricsを再現できる。</td>
+        </tr>
+        <tr>
+          <th scope="row">ML MCP</th>
+          <td>schema、auth、quota、timeout、cancel、determinism、task／sync parity</td>
+          <td>任意code／pathを実行できず、bounded resultだけ返す。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="rollout">
+    <h2>rolloutとrollback</h2>
+
+    <h3>rollout順</h3>
+    <ol>
+      <li>
+        repository testだけをmergeし、feature
+        flagは<code>off</code>のままにする。
+      </li>
+      <li>artifactをstagingし、explicit routeの認証済みsemantic canaryだけを実行する。</li>
+      <li>
+        consumerを<code>shadow</code>にし、small tierの結果を実行しない。
+      </li>
+      <li>promotion gate後に低risk positive actionを1%から限定受理する。</li>
+      <li>各段階をreviewし、skipは別の明示承認後にだけ昇格する。</li>
+    </ol>
+
+    <h3>rollback順</h3>
+    <ol>
+      <li>
+        consumer feature flagを<code>off</code>へ戻し、新規small-tier
+        decision受付を止める。
+      </li>
+      <li>active Agent Connectionをbest-effort releaseし、失敗時はTTL expiryを待つ。</li>
+      <li>Qwen 3.5 2Bをidle TTLでunloadさせる。resident 27Bと既存routeは変更しない。</li>
+      <li>LARM config／runtime releaseを直前の署名済みreleaseへ戻す。</li>
+      <li>必要な場合だけFunctionGemma unitを停止し、evidenceとfailure reasonを保存する。</li>
+    </ol>
+    <aside>
+      <p>
+        rollbackはdatasetを削除しない。新規writeを停止し、保持policyに従って隔離する。 model
+        process停止より先にconsumer flagを戻すことで、途中のexplorationを壊さない。
+      </p>
+    </aside>
+  </section>
+
+  <section id="pr-sequence">
+    <h2>推奨PR分割</h2>
+    <ol>
+      <li>
+        <strong>Consumer PR A:</strong> Decision v1、validator、policy、fixture replay。flagはoff。
+      </li>
+      <li>
+        <strong>LARM PR A:</strong> runtime／route／Agent Profile catalogとcontract
+        test。host未変更。
+      </li>
+      <li>
+        <strong>LARM PR B:</strong> verified artifact／release、provider unit、installer、semantic
+        canary。
+      </li>
+      <li>
+        <strong>Evidence change:</strong> operator staging、benchmark、干渉判定。source
+        commitと分離して保存。
+      </li>
+      <li>
+        <strong>LARM PR C:</strong> 干渉gateを満たした場合だけexecution
+        domain。満たさなければ作らない。
+      </li>
+      <li>
+        <strong>Consumer PR B:</strong> Session Manager、shadow recorder、fault
+        integration。flagはshadow。
+      </li>
+      <li>
+        <strong>ML service PR A:</strong> bounded evaluator／calibrator、MCP
+        Tools／Resources、auth／quota。
+      </li>
+      <li>
+        <strong>Policy PR:</strong> signed calibration digestとlimited action
+        allowlist。operator承認必須。
+      </li>
+    </ol>
+    <p>
+      config、binary identity、live evidence、semantic
+      policyを一つのPRへ混ぜない。各PRは単独rollback可能にし、 model weight、benchmark raw
+      data、generated reportをsource repositoryへcommitしない。
+    </p>
+  </section>
+
+  <section id="definition-of-done">
+    <h2>Definition of Done</h2>
+    <ol>
+      <li>
+        探索workload以外では新providerが選択されず、既存default modelはresident Qwen 3.8
+        27Bのままである。
+      </li>
+      <li>探索ごとにAgent Connectionを作成、renew、releaseでき、heartbeat断でexpiryする。</li>
+      <li>small tier停止時も既存ContextStill探索が継続し、global mode変更を必要としない。</li>
+      <li>
+        invalid／uncalibrated output、model出力によるbranch終了、任意tool実行がすべて拒否される。
+      </li>
+      <li>
+        artifact、runtime release、profile、schema、policy、calibration、dataset
+        revisionを相関できる。
+      </li>
+      <li>
+        promotion gateとfault injectionを通過し、同じreleaseに対するrollback rehearsalが成功する。
+      </li>
+      <li>ML MCPが停止してもonline探索は継続し、同じinputから再現可能なbounded reportを返せる。</li>
+      <li>
+        LARM変更ごとに<code>bun run check</code>、文書変更ごとに<code>bun run docs:check</code>が成功する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="first-actions">
+    <h2>最初に着手する順序</h2>
+    <ol>
+      <li>
+        ContextStill／DeepStill repositoryをworkspaceへ配置し、WP0のmodule／owner対応表を確定する。
+      </li>
+      <li>Decision v1とreplay fixtureをconsumer側へ実装し、27Bだけでrecord contractを作る。</li>
+      <li>model artifact候補のlicense、revision、GGUF、SHA-256をoperatorが確定する。</li>
+      <li>LARM PR Aを作り、未activateのcatalog contractをtestする。</li>
+      <li>隔離runtimeをstagingし、4K／8K、CPU／Vulkan、tool-call／JSON Schemaを測る。</li>
+      <li>resource干渉の結果からexecution domainの要否を決め、shadowへ進む。</li>
+    </ol>
+    <p>
+      したがって最初のcode変更はmodel downloadやscheduler拡張ではなく、consumerのDecision contractと
+      replay harnessである。ここを先に固定すれば、FunctionGemma、Qwen 3.5 2B、将来のfine-tuned
+      modelを 同じgateで比較できる。
+    </p>
+  </section>
+</article>

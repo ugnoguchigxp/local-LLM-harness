@@ -64,6 +64,16 @@ runtimeReleases:
     healthPath: /health
     default: true
 
+  qwen-worker-agent-efficientthink-v1:
+    runtime: qwen-worker-agent-efficientthink
+    artifacts:
+      - qwen38-worker-efficientthink-q3
+      - qwen38-efficientthink-mtp
+    providerConfigRevision: llama-swap-efficientthink-q3-agent-64k-v1
+    estimatedMemoryGB: 28
+    healthPath: /health
+    default: true
+
   qwen-worker-fast-current:
     runtime: qwen-worker-fast
     artifacts:
@@ -73,6 +83,15 @@ runtimeReleases:
     estimatedMemoryGB: 38
     healthPath: /health
     default: true
+  qwen35-decision-current:
+    runtime: qwen35-decision
+    artifacts:
+      - qwen35-2b-q4-k-m
+    providerConfigRevision: llama-swap-qwen35-2b-q4-k-m-decision-4k-v1
+    estimatedMemoryGB: 4
+    healthPath: /health
+    default: true
+
 
   qwen36-35b-current:
     runtime: qwen36-35b

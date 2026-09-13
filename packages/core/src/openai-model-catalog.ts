@@ -56,6 +56,7 @@ export function createOpenAiModelCatalog(
   for (const profile of catalog.profiles) {
     if (profile.deprecated) continue;
     for (const provider of profile.providers) {
+      if (provider.publishModel === false) continue;
       if (!provider.protocol.startsWith("openai.")) continue;
       const existing = bindings.get(provider.publicModel);
       if (existing) {

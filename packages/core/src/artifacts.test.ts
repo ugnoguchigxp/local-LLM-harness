@@ -19,6 +19,7 @@ test("loads the production artifact manifest and builds pinned download URLs", (
   const primary = artifacts.find((artifact) => artifact.id === "qwen38-primary")!;
   const mtp = artifacts.find((artifact) => artifact.id === "qwen38-mtp")!;
   const model35b = artifacts.find((artifact) => artifact.id === "qwen36-35b-speed")!;
+  const decisionDefault = artifacts.find((artifact) => artifact.id === "qwen35-2b-q4-k-m")!;
   const ornith35b = artifacts.find((artifact) => artifact.id === "ornith15-35b-quality")!;
   const ornith35bSpeed = artifacts.find((artifact) => artifact.id === "ornith15-35b-speed")!;
   expect(isFileArtifact(primary)).toBe(true);
@@ -26,6 +27,7 @@ test("loads the production artifact manifest and builds pinned download URLs", (
     !isFileArtifact(primary)
     || !isFileArtifact(mtp)
     || !isFileArtifact(model35b)
+    || !isFileArtifact(decisionDefault)
     || !isFileArtifact(ornith35b)
     || !isFileArtifact(ornith35bSpeed)
   ) {
@@ -42,6 +44,15 @@ test("loads the production artifact manifest and builds pinned download URLs", (
   }));
   expect(artifactDownloadUrl(model35b)).toContain(
     `/resolve/${model35b.revision}/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`,
+  );
+  expect(decisionDefault).toEqual(expect.objectContaining({
+    revision: "f6d5376be1edb4d416d56da11e5397a961aca8ae",
+    bytes: 1_280_835_840,
+    sha256: "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
+    quantization: "Q4_K_M",
+  }));
+  expect(artifactDownloadUrl(decisionDefault)).toContain(
+    `/resolve/${decisionDefault.revision}/Qwen3.5-2B-Q4_K_M.gguf`,
   );
   expect(ornith35b).toEqual(expect.objectContaining({
     revision: "12393612fd4f730ff5aadc23e9b8f9648aa49ceb",

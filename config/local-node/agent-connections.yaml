@@ -20,7 +20,7 @@ agentProfiles:
         publicModel: coding-default
         readiness: llm-inference
   saaa-qwen38-kv-mem:
-    description: Explicit on-demand SAAA Qwen 3.8 27B Provider using the experimental KV:mem path
+    description: SAAA voice and decision preset with Qwen 3.8 27B KV:mem
     schedulingPriority: 3000
     providers:
       - name: llm
@@ -28,6 +28,24 @@ agentProfiles:
         route: llm-saaa-kv-mem
         publicModel: qwen3.8-kv-mem
         readiness: llm-inference
+      - name: decision-default
+        capability: llm.decision.default
+        route: llm-decision-default
+        publicModel: decision-default
+        publishModel: false
+        readiness: llm-inference
+      - name: asr
+        capability: speech.stt
+        route: stt-qwen
+        publicModel: qwen3-asr-1.7b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
   contextstill-background:
     description: ContextStill background Qwen 3.8 27B provider
     schedulingPriority: 1000
@@ -36,6 +54,15 @@ agentProfiles:
         capability: llm.coding
         route: llm-agent-worker
         publicModel: qwen-agent-worker
+        readiness: llm-inference
+  contextstill-decision-default-canary:
+    description: Explicit Qwen 3.5 2B ContextStill decision Provider canary
+    schedulingPriority: 1000
+    providers:
+      - name: decision-default
+        capability: llm.decision.default
+        route: llm-decision-default
+        publicModel: decision-default
         readiness: llm-inference
   nightworker-background:
     description: NightWorker background Qwen 3.8 27B provider

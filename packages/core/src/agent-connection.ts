@@ -90,6 +90,7 @@ const agentProviderYamlSchema = z.object({
   capability: agentIdentifierSchema,
   route: agentIdentifierSchema,
   publicModel: agentIdentifierSchema,
+  publishModel: z.boolean().default(true),
   readiness: agentReadinessKindSchema,
 }).strict();
 
@@ -161,6 +162,7 @@ export type AgentProviderProfile = {
   supportedCapabilities: string[];
   route: string;
   publicModel: string;
+  publishModel?: boolean;
   readiness: AgentReadinessKind;
   protocol: RuntimeProtocol;
   embeddingSpace?: EmbeddingSpace;

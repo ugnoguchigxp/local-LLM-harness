@@ -23,6 +23,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "asr-qwen",
     "coding-default",
     "contextstill-background",
+    "contextstill-decision-default-canary",
     "contextstill-embedding",
     "deep-reasoning-35b",
     "nightworker-background",
@@ -81,20 +82,67 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "llm-inference",
       }],
     });
+  expect(catalog.profiles.find((profile) => profile.id === "contextstill-decision-default-canary"))
+    .toMatchObject({
+      selectionPolicy: "explicit-only",
+      schedulingPriority: 1000,
+      providers: [{
+        name: "decision-default",
+        capability: "llm.decision.default",
+        supportedCapabilities: ["llm.decision.default"],
+        route: "llm-decision-default",
+        protocol: "openai.chat-completions.v1",
+        publicModel: "decision-default",
+        readiness: "llm-inference",
+      }],
+    });
   expect(catalog.profiles.find((profile) => profile.id === "saaa-qwen38-kv-mem"))
     .toMatchObject({
       canonicalProfile: "saaa-qwen38-kv-mem",
       selectionPolicy: "explicit-only",
       deprecated: false,
       schedulingPriority: 3000,
-      providers: [{
-        capability: "llm.coding",
-        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
-        route: "llm-saaa-kv-mem",
-        protocol: "openai.chat-completions.v1",
-        publicModel: "qwen3.8-kv-mem",
-        readiness: "llm-inference",
-      }],
+      providers: [
+        {
+          name: "asr",
+          capability: "speech.stt",
+          supportedCapabilities: ["speech.stt"],
+          route: "stt-qwen",
+          protocol: "openai.audio-transcriptions.v1",
+          publicModel: "qwen3-asr-1.7b",
+          publishModel: false,
+          readiness: "stt-transcription",
+        },
+        {
+          name: "decision-default",
+          capability: "llm.decision.default",
+          supportedCapabilities: ["llm.decision.default"],
+          route: "llm-decision-default",
+          protocol: "openai.chat-completions.v1",
+          publicModel: "decision-default",
+          publishModel: false,
+          readiness: "llm-inference",
+        },
+        {
+          name: "llm",
+          capability: "llm.coding",
+          supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
+          route: "llm-saaa-kv-mem",
+          protocol: "openai.chat-completions.v1",
+          publicModel: "qwen3.8-kv-mem",
+          readiness: "llm-inference",
+        },
+        {
+          name: "tts",
+          capability: "speech.tts",
+          supportedCapabilities: ["speech.tts"],
+          route: "tts-voicevox",
+          protocol: "openai.audio-speech.v1",
+          publicModel: "voicevox-core",
+          publishModel: false,
+          readiness: "tts-speech",
+        },
+      ],
     });
   expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "qwen3.8-kv-mem"))
     .toMatchObject({
@@ -103,6 +151,33 @@ test("production agent profiles compile to strict protocol-aware provider contra
       schedulingPriority: 3000,
       profileIds: ["saaa-qwen38-kv-mem"],
     });
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "decision-default"))
+    .toMatchObject({
+      capability: "llm.decision.default",
+      route: "llm-decision-default",
+      schedulingPriority: 1000,
+      profileIds: ["contextstill-decision-default-canary"],
+    });
+  expect(getOpenAiModel(
+    createOpenAiModelCatalog(catalog),
+    "qwen3-asr-1.7b",
+    "openai.audio-transcriptions.v1",
+  )).toMatchObject({
+    capability: "speech.stt",
+    route: "stt-qwen",
+    schedulingPriority: 0,
+    profileIds: ["asr-qwen"],
+  });
+  expect(getOpenAiModel(
+    createOpenAiModelCatalog(catalog),
+    "voicevox-core",
+    "openai.audio-speech.v1",
+  )).toMatchObject({
+    capability: "speech.tts",
+    route: "tts-voicevox",
+    schedulingPriority: 0,
+    profileIds: ["tts-default"],
+  });
   expect(catalog.profiles.find((profile) => profile.id === "contextstill-embedding"))
     .toMatchObject({
       selectionPolicy: "explicit-only",
@@ -233,6 +308,133 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
       },
     },
   }, registry)).toThrow(/overrides unknown provider missing/);
+});
+
+test("ContextStill exploration compiles as one explicit three-tier Agent Profile", () => {
+  const decisionRegistry = structuredClone(registry);
+  const general = decisionRegistry.runtimes.find((runtime) => runtime.id === "qwen-general")!;
+  decisionRegistry.runtimes.push(
+    {
+      ...structuredClone(general),
+      id: "functiongemma-decision",
+      capability: ["llm.decision.fast"],
+      artifacts: ["functiongemma-270m-q8"],
+      policy: { class: "resident" },
+      resources: {
+        estimatedMemoryGB: 1,
+        maxConcurrentRequests: 1,
+        maxQueuedRequests: 16,
+        queueTimeoutMs: 120_000,
+      },
+    },
+    {
+      ...structuredClone(general),
+      id: "qwen35-decision",
+      capability: ["llm.decision.default"],
+      artifacts: ["qwen35-2b-q4-k-m"],
+      policy: { class: "preferred" },
+      resources: {
+        estimatedMemoryGB: 4,
+        maxConcurrentAllocations: 1,
+        maxConcurrentRequests: 1,
+        maxQueuedRequests: 16,
+        queueTimeoutMs: 120_000,
+      },
+    },
+  );
+  decisionRegistry.routes.push(
+    {
+      id: "llm-decision-fast",
+      capabilities: ["llm.decision.fast"],
+      explicitOnly: true,
+      candidates: [{ runtime: "functiongemma-decision", purpose: "primary" }],
+    },
+    {
+      id: "llm-decision-default",
+      capabilities: ["llm.decision.default"],
+      explicitOnly: true,
+      candidates: [{ runtime: "qwen35-decision", purpose: "primary" }],
+    },
+    {
+      id: "llm-contextstill-general",
+      capabilities: ["llm.general"],
+      explicitOnly: true,
+      candidates: [{ runtime: "qwen-general", purpose: "primary" }],
+    },
+  );
+
+  const catalog = parseAgentConnectionCatalog({
+    version: 1,
+    defaultAgentProfile: "coding-default",
+    audiences: {
+      "same-host": { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" },
+    },
+    agentProfiles: {
+      "coding-default": {
+        description: "default",
+        providers: [{
+          name: "llm",
+          capability: "llm.coding",
+          route: "llm-default",
+          publicModel: "coding-default",
+          readiness: "llm-inference",
+        }],
+      },
+      "contextstill-explore": {
+        description: "request-scoped ContextStill exploration decision cascade",
+        schedulingPriority: 1000,
+        providers: [
+          {
+            name: "decision-fast",
+            capability: "llm.decision.fast",
+            route: "llm-decision-fast",
+            publicModel: "decision-fast",
+            readiness: "llm-inference",
+          },
+          {
+            name: "decision-default",
+            capability: "llm.decision.default",
+            route: "llm-decision-default",
+            publicModel: "decision-default",
+            readiness: "llm-inference",
+          },
+          {
+            name: "llm-general",
+            capability: "llm.general",
+            route: "llm-contextstill-general",
+            publicModel: "qwen-contextstill-general",
+            readiness: "llm-inference",
+          },
+        ],
+      },
+    },
+  }, decisionRegistry);
+
+  expect(catalog.profiles.find((profile) => profile.id === "contextstill-explore"))
+    .toMatchObject({
+      selectionPolicy: "explicit-only",
+      schedulingPriority: 1000,
+      providers: [
+        {
+          name: "decision-default",
+          capability: "llm.decision.default",
+          route: "llm-decision-default",
+          publicModel: "decision-default",
+        },
+        {
+          name: "decision-fast",
+          capability: "llm.decision.fast",
+          route: "llm-decision-fast",
+          publicModel: "decision-fast",
+        },
+        {
+          name: "llm-general",
+          capability: "llm.general",
+          route: "llm-contextstill-general",
+          publicModel: "qwen-contextstill-general",
+        },
+      ],
+    });
 });
 
 test("request-origin audiences derive a canonical Gateway URL from the authenticated ingress", () => {

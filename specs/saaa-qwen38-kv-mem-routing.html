@@ -1,8 +1,9 @@
 <article lang="ja">
-  <h1>SAAA Qwen 3.8 KV:mem Provider選択仕様</h1>
+  <h1>SAAA Voice・Decision・Qwen 3.8 KV:mem Provider Preset仕様</h1>
   <p>
-    更新日：2026-09-10。SAAAのQwen 3.8要求だけを、20M source retentionとbounded session
-    snapshotを利用できるon-demand Providerへ接続する。<dfn>KV:mem</dfn>は暫定名称である。
+    更新日：2026-09-12。SAAA sessionだけをTTS、ASR、Qwen 3.5 2B Decision、20M source
+    retentionとbounded session snapshotを利用できるQwen 3.8 27Bへ同時接続する。
+    <dfn>KV:mem</dfn>は暫定名称である。
   </p>
 
   <section id="decision">
@@ -20,6 +21,12 @@
         </tr>
       </thead>
       <tbody>
+        <tr>
+          <th scope="row">SAAA Provider preset</th>
+          <td><code>agentProfile: saaa-qwen38-kv-mem</code></td>
+          <td>四つの明示routeを一つのAgent Connectionへ固定</td>
+          <td>TTS、ASR、2B Decision、Qwen 3.8 27B KV:mem</td>
+        </tr>
         <tr>
           <th scope="row">SAAAでQwen 3.8 KV:memを使う要求</th>
           <td><code>model: qwen3.8-kv-mem</code></td>
@@ -44,8 +51,50 @@
       SAAAは標準OpenAI互換<code>POST /v1/chat/completions</code>のmodelとして
       <code>qwen3.8-kv-mem</code>を送る。Agent Connectionを利用するconsumerは
       <code>saaa-qwen38-kv-mem</code
-      >を<code>explicitAgentProfile: true</code>で選べる。
+      >を<code>explicitAgentProfile: true</code>で選ぶ。後者は四Providerを同じTTL、renew、release
+      lifecycleへ束ね、27Bと2Bをrequest時にon-demand hostする。
     </p>
+
+    <table>
+      <caption>
+        <code>saaa-qwen38-kv-mem</code
+        >がclaimするProvider
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">name</th>
+          <th scope="col">public model</th>
+          <th scope="col">route</th>
+          <th scope="col">runtime</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>tts</code></th>
+          <td><code>voicevox-core</code></td>
+          <td><code>tts-voicevox</code></td>
+          <td><code>voicevox-tts</code> resident</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>asr</code></th>
+          <td><code>qwen3-asr-1.7b</code></td>
+          <td><code>stt-qwen</code></td>
+          <td><code>qwen-asr</code> resident</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>decision-default</code></th>
+          <td><code>decision-default</code></td>
+          <td><code>llm-decision-default</code></td>
+          <td><code>qwen35-decision</code> on-demand</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm</code></th>
+          <td><code>qwen3.8-kv-mem</code></td>
+          <td><code>llm-saaa-kv-mem</code></td>
+          <td><code>qwen-worker-quality</code> on-demand／managed-context</td>
+        </tr>
+      </tbody>
+    </table>
   </section>
 
   <section id="activation">
@@ -57,6 +106,19 @@
         Providerへ黙ってfallbackしない。
       </li>
       <li>requestがない間はllama-swap管理のon-demand workerとし、常駐defaultは変更しない。</li>
+      <li>
+        ProfileのpriorityはSAAAの既存値3000を四Providerすべてへ適用する。既存のContextStill、
+        NightWorker、default Profileのpriorityとrouteは変更しない。
+      </li>
+      <li>
+        ASR、TTS、2Bはupstreamが受理する既存の正規model名を再利用する。SAAA profileからは標準 model
+        catalogへ重複publishせず、既存modelのrouteとpriorityを変更しない。
+      </li>
+      <li>
+        単独の<code>model: qwen3.8-kv-mem</code>
+        requestはLLMだけを確保する。四Providerを一括確保する SAAA sessionはAgent Connection
+        Profileを明示選択する。
+      </li>
       <li>
         snapshot利用はglobal flag、runtime policy、release certification、HOT／BUSY、Context Viewの
         全条件を満たす場合だけ有効である。Viewなしrequestは同じhost上の通常推論として処理する。
@@ -89,6 +151,10 @@
       <li>
         <code>qwen3.8-kv-mem</code>が専用routeからquality workerだけへ解決される。
       </li>
+      <li>
+        <code>saaa-qwen38-kv-mem</code
+        >をcreateするとTTS、ASR、2B、27Bの四Providerがclaim可能になり、 2Bと27Bが同時にhostされる。
+      </li>
       <li>ContextStillのprofile、model、route、runtimeに変更がない。</li>
       <li>既定<code>coding-default</code>は常駐Qwenのままである。</li>
       <li>repository全checkと文書checkが合格する。</li>
@@ -96,5 +162,56 @@
         7日間soakは要求しない。利用者試用中の異常はauditとstatusで確認し、kill switchで戻せる。
       </li>
     </ol>
+  </section>
+
+  <section id="live-verification">
+    <h2>本番検証</h2>
+    <p>
+      2026-09-12にrelease <code>be5e86272165f4e13e69f4da204b1425486c6070</code>を署名付きで有効化し、
+      <code>http://gnosis.local:9810</code>からaudience
+      <code>saaa-desktop</code>、 Profile
+      <code>saaa-qwen38-kv-mem</code>のAgent Connectionを作成した。作成から約10.0秒で
+      四Providerがreadyになった。
+    </p>
+    <table>
+      <caption>
+        request-scoped Providerのsemantic readiness
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Provider</th>
+          <th scope="col">model</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>tts</code></th>
+          <td><code>voicevox-core</code></td>
+          <td>WAV probe validated、ready</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>asr</code></th>
+          <td><code>qwen3-asr-1.7b</code></td>
+          <td>fixed-silence transcription probe validated、ready</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>decision-default</code></th>
+          <td><code>decision-default</code></td>
+          <td>JSON／SSE probe validated、ready</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm</code></th>
+          <td><code>qwen3.8-kv-mem</code></td>
+          <td>JSON／SSE probe validated、ready</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      同じConnectionの保持中にllama-swap上で<code>qwen-quality</code>と
+      <code>qwen35-decision</code
+      >が同時にreadyであることを確認した。Connection解放後は四Providerの credentialがすべてHTTP
+      401となり、request scope外で再利用できないことも確認した。
+    </p>
   </section>
 </article>

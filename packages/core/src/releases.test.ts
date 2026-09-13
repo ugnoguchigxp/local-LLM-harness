@@ -50,6 +50,10 @@ describe("runtime release catalog", () => {
         verifiedModes: ["source-rebuild", "session-snapshot"],
         evidenceDigest: snapshotEvidenceDigest,
       });
+    expect(defaultRuntimeRelease(releases, "qwen-worker-agent-efficientthink")).toMatchObject({
+      id: "qwen-worker-agent-efficientthink-v1",
+      artifacts: ["qwen38-worker-efficientthink-q3", "qwen38-efficientthink-mtp"],
+    });
     expect(defaultRuntimeRelease(releases, "qwen-tts")?.digest).toMatch(/^[a-f0-9]{64}$/);
   });
 

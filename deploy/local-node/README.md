@@ -183,6 +183,11 @@ SAAAの標準HTTP Provider設定では公開modelを`qwen3.8-kv-mem`にします
 fallbackはありません。ContextStillは`qwen-agent-worker`を維持し、`qwen-worker-agent`の従来KVを使用します。
 通常の`coding-default`もResident Qwenのままです。
 
+SAAA session全体はAgent Profile `saaa-qwen38-kv-mem`を明示選択します。一つのAgent Connectionが
+`tts`（VoiceVox）、`asr`（Qwen3 ASR）、`decision-default`（Qwen 3.5 2B）、`llm`（Qwen 3.8 27B
+KV:mem）の四Providerを同じTTLへ固定します。単独の標準Chat requestはこのpresetを暗黙には起動しません。
+consumerはclaimで返されたProviderごとのmodelと短期credentialを使用し、session終了時にConnectionをreleaseします。
+
 ```bash
 curl -sS -X POST http://127.0.0.1:9810/v1/chat/completions \
   -H "Authorization: Bearer ${LARM_API_TOKEN}" \

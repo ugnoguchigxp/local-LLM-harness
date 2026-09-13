@@ -44,6 +44,31 @@ models:
     quantization: UD-Q4_K_XL
     runtime: llama.cpp-vulkan
 
+  qwen38-worker-efficientthink-q3:
+    kind: file
+    role: preferred-llm
+    source: https://huggingface.co/nerkyor/Qwen3.8-27B-EfficientThink-Uncensored-K3-Opus5-Grok4.6-GPT5.6Sol-SFT-SimPO-DFlash2-GGUF
+    revision: 89ca4ad45e41197dc58e8ddd1ffc8197ebc69bf5
+    filename: Qwen3.8-27B-EfficientThink-SimPO-Q3-LynnStyle.gguf
+    sourcePath: Q3-LynnStyle/Qwen3.8-27B-EfficientThink-SimPO-Q3-LynnStyle.gguf
+    path: /srv/ai/models/qwen38-efficientthink/Qwen3.8-27B-EfficientThink-SimPO-Q3-LynnStyle.gguf
+    bytes: 17032184960
+    sha256: 89bb7b2ef82dd758f001f2c7d58e035f9188d2c0ccb35ef42fb56f51870f6e48
+    quantization: Q3-LynnStyle
+    runtime: llama.cpp-vulkan
+
+  qwen38-efficientthink-mtp:
+    kind: file
+    role: mtp-draft
+    source: https://huggingface.co/nerkyor/Qwen3.8-27B-EfficientThink-Uncensored-K3-Opus5-Grok4.6-GPT5.6Sol-SFT-SimPO-DFlash2-GGUF
+    revision: 89ca4ad45e41197dc58e8ddd1ffc8197ebc69bf5
+    filename: mtp-Qwen3.8-27B-Q4_0.gguf
+    sourcePath: Q3-LynnStyle/mtp-Qwen3.8-27B-Q4_0.gguf
+    path: /srv/ai/models/qwen38-efficientthink/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
+    bytes: 1680271648
+    sha256: 051a1764cff8c4f3ee6ae8b00593a0364c7539c67fa50ffc58f3f96509fca38e
+    quantization: Q4_0
+
   qwen38-worker-fast:
     kind: file
     role: preferred-llm
@@ -67,6 +92,18 @@ models:
     bytes: 1369590656
     sha256: 50d9ce5a6da381bbcfb31061cf73df94a90e6faf8efeddee379a9cb8f1501c6e
     quantization: Q4_0
+
+  qwen35-2b-q4-k-m:
+    kind: file
+    role: preferred-decision-llm
+    source: https://huggingface.co/unsloth/Qwen3.5-2B-GGUF
+    revision: f6d5376be1edb4d416d56da11e5397a961aca8ae
+    filename: Qwen3.5-2B-Q4_K_M.gguf
+    path: /srv/ai/models/qwen35-decision/Qwen3.5-2B-Q4_K_M.gguf
+    bytes: 1280835840
+    sha256: aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223
+    quantization: Q4_K_M
+    runtime: llama.cpp-vulkan
 
   qwen36-35b-speed:
     kind: file
