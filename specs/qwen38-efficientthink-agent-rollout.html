@@ -89,6 +89,29 @@
     </table>
   </section>
 
+  <section id="rollout-evidence-section" aria-labelledby="rollout-evidence">
+    <h2 id="rollout-evidence">2026-09-12 local-node切替証跡</h2>
+    <ul>
+      <li>
+        署名release <code>a9460b5801b4c3832cb3e992f939c7d95a1f921c</code>を有効化し、
+        activatorのcontract検証は<code>succeeded</code>で完了した。
+      </li>
+      <li>
+        公開model <code>qwen-agent-worker</code>のcanaryはHTTP 200で
+        <code>EFFICIENT_OK</code>を返し、EfficientThink
+        releaseへfallbackなしで割り当てられた。
+      </li>
+      <li>
+        ContextStill backgroundの最初の実要求は、prompt 1,661 tokensを含む処理を
+        <code>qwen-worker-agent-efficientthink-v1</code>で完了し、HTTP 200となった。
+      </li>
+      <li>
+        <code>qwen-worker-quality-current</code>はBaseと従来MTPを参照したままで、
+        <code>qwen38-quality-crc32c-v1</code> certificationも維持されている。
+      </li>
+    </ul>
+  </section>
+
   <section id="rollback-section" aria-labelledby="rollback">
     <h2 id="rollback">停止条件とrollback</h2>
     <p>

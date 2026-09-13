@@ -18,6 +18,12 @@ describe("runtime release catalog", () => {
     const releases = loadRuntimeReleaseCatalog(`${root}deploy/local-node/releases.yaml`, registry, artifacts);
     expect(defaultRuntimeRelease(releases, "qwen-general")?.artifacts).toEqual(["qwen38-primary"]);
     expect(defaultRuntimeRelease(releases, "qwen36-35b")?.artifacts).toEqual(["qwen36-35b-speed"]);
+    expect(defaultRuntimeRelease(releases, "qwen35-decision")).toMatchObject({
+      id: "qwen35-decision-current",
+      artifacts: ["qwen35-2b-q4-k-m"],
+      providerConfigRevision: "llama-swap-qwen35-2b-q4-k-m-decision-4k-v1",
+      estimatedMemoryGB: 4,
+    });
     expect(defaultRuntimeRelease(releases, "ornith15-35b")?.artifacts).toEqual([
       "ornith15-35b-quality",
     ]);

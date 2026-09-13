@@ -1,0 +1,499 @@
+<article lang="ja">
+  <h1>Qwen3.8-27B モデル・local-nodeホスト共有プロファイル</h1>
+
+  <p>
+    この文書は、別のLLMまたは運用担当者へ現在のQwen3.8-27B配備を説明するための、
+    秘密情報を含まない共有用プロファイルです。上流モデルの仕様、repository管理のdesired
+    state、実機のpoint-in-time観測を分離して記録します。
+  </p>
+
+  <dl>
+    <dt>観測時刻</dt>
+    <dd><time>2026-09-11 14:06 UTC</time></dd>
+    <dt>repository commit</dt>
+    <dd><code>ebe3ba830f8f2dbd2ea2754ad4cb26da1821fd53</code></dd>
+    <dt>deployed LARM release</dt>
+    <dd>
+      <code>82c6150a3437e5b3d7498e0931d61a5fd55eb179</code>、config revision
+      <code>6f446f1d2d6ef5ea689ab5a165db1e923086d665488f285484fe88fbeb9ed15e</code>
+    </dd>
+    <dt>観測対象</dt>
+    <dd>
+      <code>gnosis</code>上の常駐LLM、on-demand worker、LARM
+      Gateway、CPU・GPU・memory
+    </dd>
+    <dt>秘密情報</dt>
+    <dd>API token、management credential、prompt、応答本文、利用者情報は記録しない</dd>
+  </dl>
+
+  <aside>
+    <p>
+      最も重要な識別点は、上流のQwen3.8-27Bが画像・動画も扱うVLMである一方、現在の
+      local-node配備はvision projectorを持たず、APIも<code>vision: false</code>、
+      <code>audio: false</code
+      >を返すテキスト専用LLMであることです。また、公式BF16 checkpointを
+      そのままserveしているのではなく、第三者が変換した量子化GGUFをchecksum固定して使用します。
+    </p>
+  </aside>
+
+  <section id="upstream-model">
+    <h2>上流モデルの性質</h2>
+    <p>
+      <a href="https://huggingface.co/Qwen/Qwen3.8-27B">Qwen公式model card</a>によれば、
+      Qwen3.8-27Bはpre-trainingとpost-training済みのdense causal language modelです。
+      coding、professional work、research、長時間のagent taskを主対象とし、thinkingの有効・無効、
+      <code>reasoning_effort</code>、過去turnのthinking保持をchat
+      templateで制御できます。
+    </p>
+    <table>
+      <caption>
+        公式model cardとlocal GGUF headerで一致を確認した主要仕様
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">規模</th>
+          <td>27.32B parameters。MoEではなくdense model</td>
+        </tr>
+        <tr>
+          <th scope="row">基本stack</th>
+          <td>
+            64層。16回の反復ごとに、3 × Gated DeltaNet + FFN、1 × Gated Attention + FFNを配置する
+            hybrid linear／full-attention構造
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">hidden・FFN</th>
+          <td>hidden dimension 5,120、FFN intermediate dimension 17,408</td>
+        </tr>
+        <tr>
+          <th scope="row">full attention</th>
+          <td>Q head 24、KV head 4、head dimension 256、RoPE dimension 64</td>
+        </tr>
+        <tr>
+          <th scope="row">Gated DeltaNet</th>
+          <td>V head 48、QK head 16、head dimension 128</td>
+        </tr>
+        <tr>
+          <th scope="row">tokenizer</th>
+          <td>248,320 padded vocabulary</td>
+        </tr>
+        <tr>
+          <th scope="row">context</th>
+          <td>native 262,144 tokens。上流はRoPE scalingで最大1,000,000 tokensへの拡張を案内する</td>
+        </tr>
+        <tr>
+          <th scope="row">MTP</th>
+          <td>Multi-Token Predictionを複数stepで学習。local runtimeではspeculative decodeへ利用</td>
+        </tr>
+        <tr>
+          <th scope="row">上流modality</th>
+          <td>text、image、video。vision encoderを含むVLM</td>
+        </tr>
+        <tr>
+          <th scope="row">license</th>
+          <td>Apache-2.0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      localのworker GGUF headerは<code>general.architecture=qwen35</code>、
+      <code>block_count=65</code
+      >、<code>nextn_predict_layers=1</code>を持ちます。公式が示すcore
+      stackは64層であるため、GGUFの65という値を「core transformer層が65」と読み替えません。
+      これはruntime表現がnext-token prediction用要素を含むため、と解釈するのが妥当です。
+    </p>
+  </section>
+
+  <section id="resident-artifact">
+    <h2>現在の常駐artifact</h2>
+    <table>
+      <caption>
+        <code>qwen-general</code
+        >のrelease identity
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">artifact</th>
+          <td><code>Qwen3.8-27B-ROCmFP4-FAST.gguf</code></td>
+        </tr>
+        <tr>
+          <th scope="row">source</th>
+          <td>
+            <a href="https://huggingface.co/julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF"
+              >julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF</a
+            >、revision <code>1e67b67e0e23324a29a7a4449279685fac364b37</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">size</th>
+          <td>14,562,236,384 bytes、約13.56 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">checksum</th>
+          <td><code>fb89c78d2be91cdb68eaaaa45b1270710bf34aa721dc1f0b9e3aa7b98d2e1da9</code></td>
+        </tr>
+        <tr>
+          <th scope="row">quantization</th>
+          <td><code>ROCmFP4_FAST</code>。通常の公式BF16 weightではない</td>
+        </tr>
+        <tr>
+          <th scope="row">runtime</th>
+          <td>
+            custom <code>q38rocm</code> engine、
+            <code>llama-server-larm-native</code> build
+            <code>b244-0fc9568</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実行device</th>
+          <td>
+            <code>Vulkan0</code>、Radeon 8060S。全layerをGPU側へoffload
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">local modality</th>
+          <td>text only。vision projectorなし、server reportはvision／audioともにfalse</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <code>ROCmFP4</code
+      >はartifactと専用kernelの形式名ですが、現在のprocessは
+      <code>-dev Vulkan0</code>で起動します。したがって「標準ROCm
+      backendで公式Qwen weightをserve」ではなく、 「Strix Halo向けcustom FP4
+      GGUFを専用engineのVulkan deviceでserve」と説明するのが正確です。 custom quant
+      typeを含むため、vanilla llama.cppとの互換性を前提にしません。
+    </p>
+  </section>
+
+  <section id="resident-runtime">
+    <h2>常駐runtime設定</h2>
+    <table>
+      <caption>
+        実processとprovider APIで確認した主要launch parameter
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">context・slot</th>
+          <td>262,144 tokens、parallel 1、同時実行1 request、queue上限16</td>
+        </tr>
+        <tr>
+          <th scope="row">batch</th>
+          <td>logical batch 2,048、physical micro-batch 2,048、CPU thread 16</td>
+        </tr>
+        <tr>
+          <th scope="row">KV cache</th>
+          <td>
+            K=<code>q8_0</code>、V=<code>turbo4</code>、unified
+            KV
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">speculative decode</th>
+          <td>
+            MTP有効、最大2 draft tokens、minimum probability 0.0。Qwen向けstrict
+            verificationは無効で、 engineはgreedy outputがnon-speculative
+            decodeと一致しない可能性を起動時に警告する
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">sampling default</th>
+          <td>
+            temperature 0.2、top-k 20、top-p 0.95、min-p 0.05、presence penalty 0、repeat penalty
+            1.0
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">thinking</th>
+          <td>
+            <code>reasoning=auto</code>、thinking既定on、reasoning budget無制限。
+            chat
+            templateは<code>xhigh</code>、<code>medium</code>、<code>low</code>を受理する
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">cache policy</th>
+          <td>prompt cache、idle-slot cache、RAM checkpoint cacheを無効化</td>
+        </tr>
+        <tr>
+          <th scope="row">memory contract</th>
+          <td>
+            LARM reservation 40 GB。以前のservice lifetimeでcgroup process memory peak 14.1
+            GBを記録したが、 これはGTTとKVを含む配備全体の占有量ではない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">service</th>
+          <td><code>llama-server.service</code>、boot enabled、restart on failure</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        上流model cardのthinking推奨値はtemperature 1.0、top-p 0.95、top-k 20、min-p 0.0です。
+        local既定のtemperature 0.2とmin-p 0.05は対話・coding用途向けの運用選択であり、公式benchmark
+        条件ではありません。公式scoreをこの量子化・sampling設定の実測scoreとして扱わないでください。
+      </p>
+    </aside>
+  </section>
+
+  <section id="worker-pool">
+    <h2>on-demand Qwen worker</h2>
+    <p>
+      常駐modelとは別に<code>llama-swap</code>がworkerを必要時に起動します。worker
+      slotは一つで、 Qwen quality、Agent、fast、比較用35Bは相互排他的です。TTLは300秒ですが、常駐
+      <code>qwen-general</code>はswap対象外です。
+    </p>
+    <table>
+      <caption>
+        Qwen3.8 worker variant
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">runtime</th>
+          <th scope="col">weight</th>
+          <th scope="col">context</th>
+          <th scope="col">KV</th>
+          <th scope="col">用途</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>qwen-worker-quality</code></th>
+          <td>
+            <code>UD-Q4_K_XL</code> 17,559,178,144 bytes + MTP Q4_0
+            1,369,590,656 bytes
+          </td>
+          <td>262,144</td>
+          <td>K/V q4_0、session snapshot対応</td>
+          <td>long context、quality、KV:mem試験</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>qwen-worker-agent</code></th>
+          <td>qualityと同じ<code>UD-Q4_K_XL</code> + MTP</td>
+          <td>65,536</td>
+          <td>K/V q4_0</td>
+          <td>ContextStill、NightWorker。常駐modelと共存しやすい28 GB reservation</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>qwen-worker-fast</code></th>
+          <td><code>Q4_0</code> 16,056,478,688 bytes + MTP</td>
+          <td>262,144</td>
+          <td>K/V q4_0</td>
+          <td>速度を明示選択するfallback</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      workerは通常のllama.cpp Vulkan buildを使い、MTP weightを別GGUFで読み込みます。観測時は
+      <code>qwen-agent</code>がinternal port
+      <code>58003</code>でreadyでした。これは一時的な内部状態であり、
+      clientはこのportへ直接接続しません。
+    </p>
+  </section>
+
+  <section id="host">
+    <h2>ホスト構成</h2>
+    <table>
+      <caption>
+        <time>2026-09-11 14:06 UTC</time
+        >の実機観測
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">hostname</th>
+          <td>
+            <code>gnosis</code>、LAN discovery名は通常<code
+              >gnosis.local</code
+            >
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">APU</th>
+          <td>AMD Ryzen AI MAX+ 395、16 cores／32 threads、最大約5.19 GHz</td>
+        </tr>
+        <tr>
+          <th scope="row">GPU</th>
+          <td>
+            integrated Radeon 8060S、Strix
+            Halo、<code>gfx1151</code>、amdgpu driver
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">memory</th>
+          <td>128 GB搭載、OS認識121 GiB。LARMは16 GBをreserveし112 GBをruntime計画に利用</td>
+        </tr>
+        <tr>
+          <th scope="row">GPU memory model</th>
+          <td>2,048 MiB visible VRAM aperture + 102,400 MiB TTM/GTT shared memory</td>
+        </tr>
+        <tr>
+          <th scope="row">storage</th>
+          <td>1.8 TB NVMe、Linux root 1.4 TB ext4。観測時は約1.2 TB available</td>
+        </tr>
+        <tr>
+          <th scope="row">OS</th>
+          <td>Ubuntu 26.04.1 LTS、Linux 7.0.0-31-generic、x86_64</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      これはdiscrete GPUの専用VRAMへ全てを収める構成ではありません。CPUとiGPUが同じLPDDR memoryを
+      共有し、amdgpuの100 GB GTT設定を通じて大きなmodelとKV cacheを載せます。観測時は常駐modelと 64K
+      Agent workerが同時にloadされ、GTT 62,335 MiB使用、system memory 47 GiB available、GPU
+      temperature 59 °Cでした。GPU activity 100%とsocket power約35
+      Wは観測瞬間のloadであり、固定仕様ではありません。
+    </p>
+  </section>
+
+  <section id="serving">
+    <h2>servingとnetwork境界</h2>
+    <figure>
+      <pre><code>LAN client / other agent
+  │ OpenAI-compatible HTTP + Bearer token
+  ▼
+LARM Gateway  gnosis.local:9810/v1
+  ├─ coding-default ───────────► resident Qwen3.8 27B  127.0.0.1:8080
+  ├─ qwen3.8-kv-mem ───────────► quality worker       llama-swap :8083
+  ├─ qwen-agent-worker ────────► 64K Agent worker     llama-swap :8083
+  └─ qwen-nightworker ─────────► 64K Agent worker     llama-swap :8083</code></pre>
+      <figcaption>公開Gatewayとloopback-only Providerの関係</figcaption>
+    </figure>
+    <ul>
+      <li>外部clientのbase URLは同一LAN内の<code>http://gnosis.local:9810/v1</code>。</li>
+      <li>認証は<code>Authorization: Bearer &lt;LARM_API_TOKEN&gt;</code>。token値は共有文書へ書かない。</li>
+      <li>Chatは<code>POST /v1/chat/completions</code>。非streamはJSON、streamはSSE。</li>
+      <li>通常の公開modelは<code>coding-default</code>で、常駐Qwenへ固定する。</li>
+      <li>
+        Provider port 8080とllama-swap 8083はloopback-only。clientへ内部portやweight
+        pathを公開しない。
+      </li>
+      <li>Gatewayは全interfaceの9810でlistenするため、LAN firewallとBearer認証を境界にする。</li>
+      <li>
+        fallbackはrequest側が明示的に許可した場合だけ。通常requestを黙って別modelへ切り替えない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="context-semantics">
+    <h2>contextの意味と制限</h2>
+    <ul>
+      <li>modelが一度にattentionへ載せるnative windowは262,144 tokensで、入力と出力の合計です。</li>
+      <li>LARMは出力32,768 tokensと安全margin 4,096 tokensを別途reserveする契約を持ちます。</li>
+      <li>
+        registryの<code>sourceTokenLimit=20,000,000</code>はManaged
+        Contextへ登録できるsource側の上限です。 20M tokensを同時にmodel
+        attentionへ載せる意味ではありません。
+      </li>
+      <li>
+        <code>qwen3.8-kv-mem</code>のsession
+        snapshotは認定済みKV状態の保存・復元であり、native attention
+        windowそのものを20Mへ拡張する機能ではありません。
+      </li>
+      <li>
+        常駐runtimeはsource rebuildのみ、quality workerはsource rebuildとsession
+        snapshotを認定します。
+      </li>
+    </ul>
+  </section>
+
+  <section id="performance">
+    <h2>性能の読み方</h2>
+    <table>
+      <caption>
+        <time>2026-09-11 14:16 UTC</time
+        >の現行process累積metrics
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">runtime</th>
+          <th scope="col">prompt</th>
+          <th scope="col">decode</th>
+          <th scope="col">母数</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">resident <code>ROCmFP4_FAST</code></th>
+          <td>170.454 tokens/s</td>
+          <td>14.379 tokens/s</td>
+          <td>719,713 prompt tokens、413,456 generated tokens</td>
+        </tr>
+        <tr>
+          <th scope="row">64K Agent <code>UD-Q4_K_XL</code></th>
+          <td>194.727 tokens/s</td>
+          <td>22.755 tokens/s</td>
+          <td>27,065 prompt tokens、37,895 generated tokens</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      residentの累積値は2026-09-09 06:02 UTCに起動したprocess、Agent値は2026-09-11 13:42
+      UTCに起動したprocessのcounterを、処理秒数で割った値です。current resident
+      serviceは起動時に約4.35秒でmodel load完了を記録しました。個別の長い生成例はdecode 14.46–15.40
+      tokens/s、短い8-token応答では20.53 tokens/sでした。MTP acceptance、context長、cache
+      reuse、同じiGPU上のworker負荷により変動します。
+    </p>
+    <p>
+      256K quality workerは現行artifactの独立した累積metricsを保存していません。64K
+      Agentとweight、engine、MTP、 KV
+      quantizationは同じですが、context上限とsnapshot設定が違うため、Agent値をそのままquality実測値とはしません。
+      Q4_0 fast artifactの2026-08-28 direct-service実測は、256-token生成で20.13–29.84
+      tokens/s、prompt 68.17–93.21 tokens/sでした。これは同じweightとMTP
+      n=2を使うhistorical参考値であり、現行
+      <code>qwen-worker-fast</code> releaseの同条件再測定ではありません。
+    </p>
+    <p>
+      旧releaseの2026-08-31固定64-token Gateway診断では、単独LLMのp50が26.685 output tokens/s、first
+      token p50が563 ms、LLM・ASR・TTS同時実行では21.356 output tokens/sでした。この値もhistorical
+      baselineであり、現在の長文workload、公式BF16、上流benchmarkのいずれとも同一条件ではありません。
+    </p>
+  </section>
+
+  <section id="handoff">
+    <h2>別のLLMへ渡す短縮context</h2>
+    <pre><code>We host Qwen3.8-27B locally on a single AMD Ryzen AI MAX+ 395 (Strix Halo) machine.
+Host: 16C/32T CPU, integrated Radeon 8060S gfx1151, 128 GB unified RAM, Ubuntu 26.04.1,
+Linux 7.0.0-31. The iGPU uses a 2 GB visible VRAM aperture plus a 100 GB amdgpu TTM/GTT
+shared-memory allocation; this is not a discrete-VRAM server.
+
+The default resident model is a third-party quantized Qwen3.8-27B GGUF:
+Qwen3.8-27B-ROCmFP4-FAST.gguf, ROCmFP4_FAST, 14,562,236,384 bytes, SHA-256
+fb89c78d2be91cdb68eaaaa45b1270710bf34aa721dc1f0b9e3aa7b98d2e1da9.
+It runs in a custom q38rocm/llama.cpp-derived engine on Vulkan0, fully GPU-offloaded,
+with one slot, 262,144-token context, batch/ubatch 2048, K KV=q8_0, V KV=turbo4,
+MTP speculative decoding up to 2 draft tokens, thinking/reasoning=auto, and temp=0.2.
+The local deployment is TEXT ONLY (vision=false, audio=false), even though the upstream
+Qwen3.8-27B checkpoint is a native vision-language model.
+
+The upstream language model is dense, about 27.32B parameters, hidden size 5120,
+64 core layers using a hybrid Gated DeltaNet/full-attention layout, 248,320-token padded
+vocabulary, and a native 262,144-token context. Do not treat upstream benchmark scores as
+measurements of this quantized local build.
+
+LARM exposes an OpenAI-compatible gateway at http://gnosis.local:9810/v1 on the reviewed
+private LAN. Use Authorization: Bearer &lt;token&gt;, model=coding-default, and
+POST /v1/chat/completions. JSON and SSE streaming are supported. Internal providers are
+loopback-only: resident Qwen on 127.0.0.1:8080 and llama-swap on 127.0.0.1:8083.
+
+An on-demand worker pool offers a 256K UD-Q4_K_XL quality route, a 64K UD-Q4_K_XL Agent
+route, and a 256K Q4_0 speed route. Only one worker-slot model is loaded at once; it can
+coexist with the resident model. Public model names are coding-default (resident),
+qwen3.8-kv-mem (quality/snapshot experiment), qwen-agent-worker, and qwen-nightworker.
+The LARM 20M source-token limit is a managed-source budget, NOT a 20M attention window.</code></pre>
+  </section>
+
+  <section id="repository-sources">
+    <h2>repository内の正本</h2>
+    <ul>
+      <li><code>config/local-node/nodes.yaml</code></li>
+      <li><code>config/local-node/runtimes.yaml</code></li>
+      <li><code>config/local-node/llama-swap.yaml</code></li>
+      <li><code>config/local-node/agent-connections.yaml</code></li>
+      <li><code>deploy/local-node/models.yaml</code></li>
+      <li><code>deploy/local-node/systemd/llama-server.service</code></li>
+      <li><a href="./saaa-qwen38-kv-mem-routing.html">SAAA Qwen 3.8 KV:mem Provider選択仕様</a></li>
+      <li><a href="./performance-benchmark.html">LLM・ASR・TTS性能診断benchmark仕様</a></li>
+    </ul>
+  </section>
+</article>

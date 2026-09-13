@@ -31,10 +31,12 @@ test("loads the Linux production registry", () => {
   const efficientAgent = registry.runtimes.find(
     (runtime) => runtime.id === "qwen-worker-agent-efficientthink",
   );
+  const decisionDefault = registry.runtimes.find((runtime) => runtime.id === "qwen35-decision");
   const agent35b = registry.runtimes.find((runtime) => runtime.id === "ornith15-35b-agent");
   const route35b = registry.routes.find((route) => route.id === "llm-35b");
   const route35bSpeed = registry.routes.find((route) => route.id === "llm-35b-speed");
   const agentWorkerRoute = registry.routes.find((route) => route.id === "llm-agent-worker");
+  const decisionDefaultRoute = registry.routes.find((route) => route.id === "llm-decision-default");
   const saaaKvMemRoute = registry.routes.find((route) => route.id === "llm-saaa-kv-mem");
   const agent35bRoute = registry.routes.find((route) => route.id === "llm-agent-35b");
   const embedding = registry.runtimes.find((runtime) => runtime.id === "multilingual-e5-small");
@@ -62,6 +64,22 @@ test("loads the Linux production registry", () => {
     swapGroup: "qwen-worker-slot",
   });
   expect(agentWorker?.resources.estimatedMemoryGB).toBe(28);
+  expect(decisionDefault).toMatchObject({
+    backend: "llama-swap",
+    capability: ["llm.decision.default"],
+    policy: { class: "preferred" },
+    resources: {
+      estimatedMemoryGB: 4,
+      maxConcurrentAllocations: 1,
+      maxConcurrentRequests: 1,
+      maxQueuedRequests: 16,
+      queueTimeoutMs: 5000,
+    },
+    deployment: {
+      modelId: "qwen35-decision",
+      endpoint: "http://127.0.0.1:8083/upstream/qwen35-decision",
+    },
+  });
   expect(efficientAgent).toMatchObject({
     resources: { estimatedMemoryGB: 28 },
     deployment: { modelId: "qwen-agent-efficientthink" },
@@ -96,6 +114,11 @@ test("loads the Linux production registry", () => {
   expect(agentWorkerRoute?.candidates[1]).toEqual({
     runtime: "qwen-worker-agent",
     purpose: "fallback",
+  });
+  expect(decisionDefaultRoute).toMatchObject({
+    explicitOnly: true,
+    capabilities: ["llm.decision.default"],
+    candidates: [{ runtime: "qwen35-decision", purpose: "primary" }],
   });
   expect(saaaKvMemRoute).toMatchObject({
     explicitOnly: true,
@@ -154,6 +177,7 @@ test("production swap group matches llama-swap model membership", () => {
   const ornithSpeedCommand = configured.models["ornith15-35b-speed"]?.cmd ?? "";
   const agentWorkerCommand = configured.models["qwen-agent"]?.cmd ?? "";
   const efficientAgentCommand = configured.models["qwen-agent-efficientthink"]?.cmd ?? "";
+  const decisionDefaultCommand = configured.models["qwen35-decision"]?.cmd ?? "";
   const agent35bCommand = configured.models["ornith15-35b-agent"]?.cmd ?? "";
   expect(ornithCommand).toContain("/srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server");
   expect(ornithCommand).toContain("Ornith-1.5-35B-Q5_K_M.gguf");
@@ -178,6 +202,11 @@ test("production swap group matches llama-swap model membership", () => {
   expect(efficientAgentCommand).toContain(
     "/srv/ai/models/qwen38-efficientthink/MTP/mtp-Qwen3.8-27B-Q4_0.gguf",
   );
+  expect(decisionDefaultCommand).toContain("Qwen3.5-2B-Q4_K_M.gguf");
+  expect(decisionDefaultCommand).toContain("--ctx-size 4096");
+  expect(decisionDefaultCommand).toContain("--reasoning off");
+  expect(decisionDefaultCommand).toContain("--temp 0");
+  expect(group?.members).not.toContain("qwen35-decision");
   expect(agent35bCommand).toContain("--ctx-size 65536");
   expect(agent35bCommand).not.toContain("ngram");
   expect(agent35bCommand).toContain("--cache-type-v q8_0");

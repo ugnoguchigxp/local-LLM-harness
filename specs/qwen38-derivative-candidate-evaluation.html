@@ -1,0 +1,470 @@
+<article lang="ja">
+  <h1>Qwen3.8-27B派生モデル候補 事前評価</h1>
+
+  <p>
+    この文書は、2026-09-11時点で提示されたEfficientThink、Qwopus3.8-27B-Flash、
+    Signal-3.8-27B、Dirk／Sharp template、NEO-CODER-MAXを、local-nodeの64K Agent
+    worker候補として導入前に評価した記録です。上流model cardの作者計測とlocal-nodeの実測を区別し、
+    先行3 artifactは2026-09-12に外部stagingへ取得しました。runtime設定と常駐
+    <code>coding-default</code>は変更していません。
+  </p>
+
+  <dl>
+    <dt>評価日</dt>
+    <dd><time>2026-09-11</time>〜<time>2026-09-12</time></dd>
+    <dt>local baseline</dt>
+    <dd>
+      64K Agent worker、Qwen3.8-27B <code>UD-Q4_K_XL</code> + Base専用MTP
+      <code>Q4_0</code>、Vulkan、draft最大2、parallel 1
+    </dd>
+    <dt>baseline実測</dt>
+    <dd>prompt 194.727 tokens/s、decode 22.755 tokens/sのprocess累積値</dd>
+    <dt>一次判断</dt>
+    <dd>候補群は試験に値するが、提示された根拠だけでは常駐modelの置換を正当化しない</dd>
+  </dl>
+
+  <aside>
+    <p>
+      結論は「候補選定は良いが、証拠の読み方と実験順を修正する」です。64K workerで隔離して
+      A/Bし、成功task数を総経過時間で割る方針は妥当です。一方、Q3-LynnStyleの78/100を
+      Baseからの改善量として扱うこと、QwopusのNVIDIA・10 parallel値をこのStrix Haloへ移すこと、
+      Sharpの2.7倍をdecode速度と読むことはできません。
+    </p>
+  </aside>
+
+  <section id="acquisition">
+    <h2>取得済みartifact</h2>
+    <p>
+      重みはsource-only repositoryの外にある<code>/srv/ai/models/.larm-staging</code>へ保存した。
+      配布repositoryのrevisionを固定し、byte数とSHA-256を検証済みである。
+    </p>
+    <table>
+      <caption>
+        2026-09-12の取得・整合性検証記録
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">revision</th>
+          <th scope="col">artifact</th>
+          <th scope="col">bytes</th>
+          <th scope="col">SHA-256</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">EfficientThink main</th>
+          <td><code>89ca4ad45e41197dc58e8ddd1ffc8197ebc69bf5</code></td>
+          <td><code>Qwen3.8-27B-EfficientThink-SimPO-Q3-LynnStyle.gguf</code></td>
+          <td>17,032,184,960</td>
+          <td><code>89bb7b2ef82dd758f001f2c7d58e035f9188d2c0ccb35ef42fb56f51870f6e48</code></td>
+        </tr>
+        <tr>
+          <th scope="row">EfficientThink MTP</th>
+          <td><code>89ca4ad45e41197dc58e8ddd1ffc8197ebc69bf5</code></td>
+          <td><code>mtp-Qwen3.8-27B-Q4_0.gguf</code></td>
+          <td>1,680,271,648</td>
+          <td><code>051a1764cff8c4f3ee6ae8b00593a0364c7539c67fa50ffc58f3f96509fca38e</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Signal</th>
+          <td><code>b2fe488fe47d81e60554cf0ad3a9766d14cb4bbc</code></td>
+          <td><code>Signal-3.8-27B-AP-Q4_K_XL.gguf</code></td>
+          <td>17,558,644,288</td>
+          <td><code>9fd23a692b9d93d09f528dd1e73b67cbb1c54696418a1e6e534563a9c0c36377</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Sharp template</th>
+          <td><code>85461fc118aaf25e7319c7ecf2481f944aac3a32</code></td>
+          <td><code>chat_template.jinja</code></td>
+          <td>30,411</td>
+          <td><code>cdff39fb26b60dc90faa292e726655c6b21f62db497846e02e4c4bbab942a84a</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      GGUF headerも確認した。EfficientThink mainは851 tensorsでMTPを内蔵せず、専用sidecarを
+      <code>-md</code>で組み合わせる。Signalは866 tensorsで
+      <code>qwen35.nextn_predict_layers</code>
+      metadataを持つため、別のBase用sidecarは指定しない。
+    </p>
+  </section>
+
+  <section id="local-smoke-results">
+    <h2>local-node初期実測</h2>
+    <p>
+      2026-09-12にVulkan版<code>llama-server</code> build 10655、commit
+      <code>cb300598d</code>で、64K、parallel 1、KV q4_0、temperature
+      0.2、top-p 0.9、 reasoning effort
+      <code>medium</code>を明示して比較した。throughput armは同じCoding
+      promptを 128 completion
+      tokensまで3回生成した探索試験である。LARMの実ジョブが開始前後とも0だったrunだけを
+      採用し、競合を検出したrunは除外した。
+    </p>
+    <table>
+      <caption>
+        3 × 128 tokensのクリーンrunと機能スモーク
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">arm</th>
+          <th scope="col">MTP</th>
+          <th scope="col">cold prompt tokens</th>
+          <th scope="col">decode tokens/s</th>
+          <th scope="col">draft acceptance</th>
+          <th scope="col">機能スモーク</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Base stock</th>
+          <td>sidecar、draft 2</td>
+          <td>61</td>
+          <td>24.822</td>
+          <td>83.5%</td>
+          <td>現行production arm</td>
+        </tr>
+        <tr>
+          <th scope="row">Base + Sharp v22.5</th>
+          <td>sidecar、draft 2</td>
+          <td>216</td>
+          <td>24.857</td>
+          <td>81.6%</td>
+          <td>Python構文、tool call、strict JSON合格</td>
+        </tr>
+        <tr>
+          <th scope="row">EfficientThink Q3-LynnStyle</th>
+          <td>専用sidecar、draft 2</td>
+          <td>61</td>
+          <td>25.279</td>
+          <td>76.9%</td>
+          <td>Python構文、tool call、strict JSON合格</td>
+        </tr>
+        <tr>
+          <th scope="row">Signal AP-Q4_K_XL</th>
+          <td>内蔵、draft 3</td>
+          <td>61</td>
+          <td>24.424</td>
+          <td>72.5%</td>
+          <td>draft 2でPython構文、tool call、strict JSON合格</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Base比はSharp +0.1%、EfficientThink +1.8%、Signal draft 3 -1.6%であり、この短いpromptでは
+      全て同等域である。Signal draft 2の単発runは22.961 tokens/s、acceptance 77.8%で、draft 3より
+      遅かった。作者がQ8_0、greedy、200 tokensで示したSignal +10%は、このAP-Q4_K_XL、sampling、
+      Coding promptでは再現しなかった。
+    </p>
+    <p>
+      Sharpはraw decodeを速めなかった。また同じuser promptのcold promptがBaseの61から216 tokensへ
+      増えたため、短いturnではprefill費用が増える。Sharpの価値は生成token数またはtask wall timeを
+      減らせるかでのみ判定する。EfficientThinkも速度昇格ではなく、作者が報告したCoding成功率改善を
+      paired repo taskで再現できるかを次のgateとする。
+    </p>
+    <aside>
+      <p>
+        この試験はload互換性と初期性能のscreeningで、Coding品質試験ではない。128 tokensで全armが
+        length stopしたため、回答の短さも比較していない。常駐既定値やLARM releaseは変更しない。
+      </p>
+    </aside>
+    <p>
+      有効なJSON evidenceは
+      <code>/srv/ai/evidence/qwen38-candidates/20260912</code>に保存した。GPU競合が入ったSharp
+      3回runは<code>base-sharp-throughput-3x128.contaminated.json</code>として保持し、集計から除外した。
+    </p>
+  </section>
+
+  <section id="ranking">
+    <h2>修正後の評価と試験順</h2>
+    <table>
+      <caption>
+        local-nodeにおける情報価値と導入riskを合わせた順序
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">順序</th>
+          <th scope="col">候補</th>
+          <th scope="col">評価</th>
+          <th scope="col">主な理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">対照実験</th>
+          <td>現行Base + Sharp template</td>
+          <td>最初に実施する価値が高い</td>
+          <td>同一weightでtemplate効果を分離でき、追加weightのdownloadが不要</td>
+        </tr>
+        <tr>
+          <th scope="row">1</th>
+          <td>EfficientThink Q3-LynnStyle + 専用MTP</td>
+          <td>有望なquality候補</td>
+          <td>約17 GBで現行weightと近い容量。Coding改善のBase対照信号が候補中で最も明瞭</td>
+        </tr>
+        <tr>
+          <th scope="row">2</th>
+          <td>Signal AP-Q4_K_XL + 内蔵MTP</td>
+          <td>有望な完了時間候補</td>
+          <td>同じStrix Halo + Vulkanの相対計測があり、現行と近い16.35 GiB tierがある</td>
+        </tr>
+        <tr>
+          <th scope="row">3</th>
+          <td>Qwopus Q5_K_M + 内蔵MTP</td>
+          <td>有望だが現在は条件付き</td>
+          <td>Agent向け信号は強いが、Python indentation既知不具合と対照不足を先に解消する</td>
+        </tr>
+        <tr>
+          <th scope="row">保留</th>
+          <td>NEO-CODER-MAX</td>
+          <td>後回し</td>
+          <td>掲載Coding表は派生model自身のBase対照成績として読めず、採用根拠が不足</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この順序は、先に安価な対照を取り、次に能力と完了時間の二つの仮説を別々に検証するものです。
+      最終的な一番手を事前に確定するものではありません。純粋にCoding正解率を優先するなら
+      EfficientThink、成功task／時間を優先するならSignalまたはSharpが先に勝つ可能性があります。
+    </p>
+  </section>
+
+  <section id="efficient-think">
+    <h2>EfficientThink</h2>
+    <p>
+      <a
+        href="https://huggingface.co/nerkyor/Qwen3.8-27B-EfficientThink-Uncensored-K3-Opus5-Grok4.6-GPT5.6Sol-SFT-SimPO-DFlash2"
+        >作者のmodel card</a
+      >は、同一protocolのdynamic FP8 + DFlash2、2 GPU、concurrency 24、xhigh条件で、
+      LiveCodeBenchをBase 69/100から74/100へ、Hardを20/46から24/46へ改善したと報告します。
+      timeout／request errorも6から2へ減っています。この結果はCoding候補として試す十分な理由です。
+    </p>
+    <p>
+      ただし、同じ比較で平均reasoningは12,167から12,514へ2.9%増え、P50も増加し、総経過時間は
+      2,060秒から2,067秒でほぼ不変でした。したがって、これは「Codingの提出成功率が改善した」信号であり、
+      「考える量もwall timeも減った」証拠ではありません。MMLU 500問は90.2%から88.4%へ 1.8
+      points低下しており、全面的な能力向上でもありません。
+    </p>
+    <p>
+      Q3-LynnStyleのLiveCodeBench 78/100は同model内のquant tier評価です。Base 69/100との比較は
+      dynamic FP8 + DFlash2という別artifact条件であり、Q3-LynnStyleがBaseの同等quantより9 points
+      強いことを示しません。一方、
+      <a
+        href="https://huggingface.co/nerkyor/Qwen3.8-27B-EfficientThink-Uncensored-K3-Opus5-Grok4.6-GPT5.6Sol-SFT-SimPO-DFlash2-GGUF/tree/main/Q3-LynnStyle"
+        >Q3-LynnStyle GGUF</a
+      >は約17 GBで、現行17,559,178,144-byte workerと近い容量です。このため、因果比較ではなく
+      「同程度の保存・memory費用で使う完成品候補」として最初に試すことには合理性があります。
+    </p>
+    <p>
+      EfficientThinkは専用のMTP sidecarを公開しており、Q4_0版は1,680,271,648 bytes、SHA-256
+      <code>051a1764cff8c4f3ee6ae8b00593a0364c7539c67fa50ffc58f3f96509fca38e</code>です。 現行Base sidecarの1,369,590,656
+      bytes、SHA-256
+      <code>50d9ce5a6da381bbcfb31061cf73df94a90e6faf8efeddee379a9cb8f1501c6e</code>
+      とは別物なので、現行MTPを流用しません。作者がload確認したのはDGX Sparkであり、local-nodeの
+      Vulkan buildでは組合せを改めて検証します。
+    </p>
+  </section>
+
+  <section id="signal">
+    <h2>Signal-3.8-27B</h2>
+    <p>
+      <a href="https://huggingface.co/agentionai/Signal-3.8-27B-GGUF">作者のmodel card</a>は、
+      BaseとSignalのQ8_0を同じStrix Halo + Vulkanで比較しています。200-token greedy出力では、 draft
+      3のproseが10%、JSONが20%、draft 4のJSONが22%速く、JSON acceptanceはdraft 3で
+      72%から94%へ上がったと報告します。候補中、local-node hardwareへの外挿riskが最も小さい
+      throughput信号です。
+    </p>
+    <p>
+      ただし現在のworkerはdraft最大2で、公開値はdraft 3または4です。tool callはJSONを含みますが、
+      coding agentの全生成が200-tokenの純粋なJSONではないため、JSON
+      +20〜22%をtask全体へ適用しません。 またCoding answerの中央値とP90は各11%、Coding
+      reasoning中央値は26%短い一方、品質の定量確認は 小規模GSM8Kとstyle
+      prompt中心で、repo修復のBase対照試験はありません。
+    </p>
+    <p>
+      したがってSignalは「より賢いmodel」ではなく、「同等成功率ならtask完了を速めるmodel」という
+      仮説で評価します。最初の候補は現行に近い<code>AP-Q4_K_XL</code> 16.35
+      GiBとし、 draft最大2、3、4を別条件として扱います。
+    </p>
+  </section>
+
+  <section id="qwopus">
+    <h2>Qwopus3.8-27B-Flash</h2>
+    <p>
+      <a href="https://huggingface.co/Jackrong/Qwopus3.8-27B-Flash">作者のmodel card</a>は、
+      同一Q5_K_M + MTP条件でdecode 8.284から9.347 tokens/s、MTP acceptance 66.1%から
+      80.7%を報告します。14件のAgent batteryは13件成功で、実file・shell toolを使った点も
+      実用途に近い信号です。
+    </p>
+    <p>
+      この数値はRTX 5090、V100、GB10を含む環境で、throughput比較はcontext 327,680、parallel 10です。
+      各表とdeviceの対応も全ては明記されていません。13/14 batteryはRTX 5090上の一回実行でBase
+      armがなく、 作者自身が楽観寄りになり得る一回のdemonstrationと説明しています。さらにPython
+      codingで不正なindentationを
+      出す既知不具合があり、修正中です。coding-default候補ではこの不具合をblocking項目とします。
+    </p>
+    <p>
+      <a href="https://huggingface.co/Jackrong/Qwopus3.8-27B-Flash-GGUF/tree/main">公開GGUF</a>はMTP
+      headをmain GGUFへ内蔵し、Q5_K_Mは19.5 GBです。公開benchmarkへ近づける初回再現試験では
+      Q5_K_Mを使い、現行Base用<code>-md</code>
+      sidecarは指定しません。MMLU-ProはBaseより1.45 points
+      低いため、Agent用途で勝っても汎用常駐modelへ自動昇格させません。
+    </p>
+  </section>
+
+  <section id="sharp">
+    <h2>Dirk／Sharp template</h2>
+    <p>
+      <a href="https://huggingface.co/peculiar-ragdoll/Dirk-Qwen3.8-27B-GGUF">Dirkのmodel card</a
+      >は、 Base weightとMTP tensorは変更せず、Sharp chat templateだけをGGUF
+      metadataへ差し替えたと説明します。
+      25件のSWE-bench-Liveで、stockとSharpの両方が解けた部分集合に限るmedian fix
+      timeはstockの37%ですが、 全体のsolve数はstockより1件少ない結果です。
+    </p>
+    <p>
+      37%はdecode tokens/sが2.7倍になった意味ではありません。取得したSharp v22.5は既定の reasoning
+      effortを<code>medium</code>にするため、現行埋め込みtemplateの運用上の既定
+      <code>xhigh</code
+      >とは推論量のpolicyも異なり得ます。templateそのものだけを比較するA/Bでは、
+      両armへ<code>medium</code>を明示します。
+      「両方が解けた問題だけ」という条件付きmedianにはsurvivorship biasもあります。
+    </p>
+    <p>
+      それでも、local Vulkan
+      <code>llama-server</code
+      >は<code>--chat-template-file</code>を備えるため、 現行64K worker
+      weightを使った安価な対照実験が可能です。serverの再起動・reloadは必要であり、template
+      digest、system／developer message、tool schema、tool call parser、reasoning
+      field、SSEの認定も変わります。
+      常駐<code>coding-default</code>へ直接適用せず、別のcandidate
+      releaseとして試します。
+    </p>
+  </section>
+
+  <section id="neo">
+    <h2>NEO-CODER-MAX</h2>
+    <p>
+      <a
+        href="https://huggingface.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF"
+        >公開model card</a
+      >にはTerminal Bench 2.1の73.0、SWE-bench Proの61.7などが掲載されていますが、表の列名は
+      <code>Qwen3.8-27B</code
+      >であり、派生model対Baseの同条件比較ではありません。名称、ARC系の作者計測、 human
+      testingの説明だけでは、現在のcoding workerより成功task／時間が上がると判断できません。
+      比較可能なterminal／repo batteryが出るまで保留します。
+    </p>
+  </section>
+
+  <section id="throughput">
+    <h2>tok/sの期待値をどう扱うか</h2>
+    <table>
+      <caption>
+        現行22.755 decode tokens/sに作者の相対値を機械適用した参考値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">機械換算</th>
+          <th scope="col">評価上の扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Sharp</th>
+          <td>約22.8 tokens/s付近</td>
+          <td>weightは同じなのでraw decodeより生成token数とtask wall timeを見る</td>
+        </tr>
+        <tr>
+          <th scope="row">EfficientThink</th>
+          <td>換算不能</td>
+          <td>Strix Halo + Vulkanの同条件throughputがなく、実測前に点予測しない</td>
+        </tr>
+        <tr>
+          <th scope="row">Signal prose draft 3</th>
+          <td>約25.0 tokens/s</td>
+          <td>同hardwareの+10%を掛けただけ。Q8_0、greedy 200 tokens、draft 3という別条件</td>
+        </tr>
+        <tr>
+          <th scope="row">Signal JSON draft 3／4</th>
+          <td>約27.3／27.8 tokens/s</td>
+          <td>純粋な短いJSONの上限仮説で、coding task全体の予測ではない</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwopus</th>
+          <td>約25.7 tokens/s</td>
+          <td>NVIDIA・parallel 10の+12.8%を掛けただけで、local-node予測には使わない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      20.5 tokens/sをhard floor、21.5 tokens/sを望ましい最低値とする案は、明瞭な早期停止条件としては
+      妥当です。しかし採用条件にはしません。decodeが少し下がっても生成token数、turn数、失敗taskの浪費が
+      減れば成功task／時間は上がるためです。
+    </p>
+  </section>
+
+  <section id="evaluation-contract">
+    <h2>実機試験で固定する判定契約</h2>
+    <ol>
+      <li>
+        stock Baseを同じ64K、KV q4_0、parallel 1、sampling、thinking effort、tool
+        harnessで再測定する。
+      </li>
+      <li>
+        template、weight、quantization、MTP、draft長は一度に一要因だけ変える。完成品candidate比較を行う場合は
+        複数要因が変わったことを明記する。
+      </li>
+      <li>
+        各artifactのMTP方式をheaderと起動logで検証する。EfficientThinkは専用sidecar、SignalとQwopusは
+        内蔵headを用い、Base用sidecarを混用しない。
+      </li>
+      <li>
+        benchmark前にPython indentation、system／developer role、tool schema、tool call round-trip、
+        structured JSON、reasoning content、SSE終端、64K境界をfail-fastで確認する。
+      </li>
+      <li>
+        同じrepo task集合を複数seedでpaired実行し、成功数、総wall time、生成token、turn数、MTP
+        acceptance、 timeout、loop、構文不良を全て保存する。失敗caseだけを再試行しない。
+      </li>
+      <li>
+        第一指標を<code>successful tasks / total elapsed hour</code>とし、pass rateを独立したblocking
+        gateにする。 少数taskでの単純な「+5
+        points」は1件差に過ぎない場合があるため、信頼区間とpaired差も確認する。
+      </li>
+    </ol>
+    <p>
+      初回探索では「pass
+      rateがBaseを下回らず、成功task／時間が15%以上改善」を昇格候補の目安とします。
+      これは導入前の仮説であり、task数と分散を見て固定gateを校正します。勝者だけを256KとROCmFP4_FAST
+      変換評価へ進め、常駐既定値の変更は別のrelease gateで判断します。
+    </p>
+  </section>
+
+  <section id="source-quality">
+    <h2>証拠の限界</h2>
+    <ul>
+      <li>候補の数値は全てmodel作者または配布者の自己申告で、local-nodeによる再現値ではない。</li>
+      <li>
+        hardware、runtime、quant、parallel数、sampling、thinking effortが候補間で一致していない。
+      </li>
+      <li>
+        LiveCodeBench、MMLU、短いJSON、Agent batteryは異なる能力を測り、順位へ単純合算できない。
+      </li>
+      <li>
+        fine-tuneの学習data全体を再監査できない候補があり、license表示だけでdata
+        provenanceを証明しない。
+      </li>
+      <li>
+        公開repositoryは更新され得るため、試験時はrevision、filename、byte数、SHA-256を固定する。
+      </li>
+    </ul>
+  </section>
+
+  <footer>
+    <p>
+      現行model、host、runtime、実測の詳細は
+      <a href="./qwen38-model-and-host-profile.html">Qwen3.8-27B モデル・ホスト共有プロファイル</a
+      >を参照。
+    </p>
+  </footer>
+</article>

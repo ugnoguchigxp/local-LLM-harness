@@ -13,6 +13,8 @@
 | [../specs/implementation-completion.html](../specs/implementation-completion.html) | Milestone 8–14の実装結果と残るattended gate |
 | [../specs/implementation-completion-m15-m21.html](../specs/implementation-completion-m15-m21.html) | Milestone 15–21のrepository実装完了記録 |
 | [../specs/commissioning-evidence.html](../specs/commissioning-evidence.html) | 時刻固定のlocal-node preflightとcommissioning証跡 |
+| [../specs/qwen38-model-and-host-profile.html](../specs/qwen38-model-and-host-profile.html) | Qwen3.8-27Bの上流仕様、量子化artifact、実行設定、local-nodeホストの共有用プロファイル |
+| [../specs/qwen38-derivative-candidate-evaluation.html](../specs/qwen38-derivative-candidate-evaluation.html) | Qwen3.8-27B派生候補の証拠評価、試験順、64K worker A/B契約 |
 | [../specs/http-provider-standardization.html](../specs/http-provider-standardization.html) | OpenAI互換HTTP Provider移行の正本 |
 | [../specs/stable-release-gate.html](../specs/stable-release-gate.html) | Stable昇格のblocking gateとrollback方針 |
 | [../specs/review-hardening.html](../specs/review-hardening.html) | 実装監査の指摘、修正、不変条件 |
