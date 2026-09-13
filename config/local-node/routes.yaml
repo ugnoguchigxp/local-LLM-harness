@@ -39,8 +39,10 @@ routes:
       - llm.coding
     explicitOnly: true
     candidates:
-      - runtime: qwen-worker-agent
+      - runtime: qwen-worker-agent-efficientthink
         purpose: primary
+      - runtime: qwen-worker-agent
+        purpose: fallback
       - runtime: qwen-general
         purpose: fallback
 

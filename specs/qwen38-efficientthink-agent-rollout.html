@@ -1,0 +1,125 @@
+<article lang="ja">
+  <h1>Qwen 3.8 EfficientThink Agent worker切替記録</h1>
+
+  <p>
+    Agent向け64K workerのprimaryを、Qwen3.8-27B Base UD-Q4_K_XLから EfficientThink
+    Q3-LynnStyleと専用MTPの組合せへ切り替える。
+    256Kの<code>qwen-worker-quality</code>と<code>llm-saaa-kv-mem</code>は変更しない。
+  </p>
+
+  <section id="decision-section" aria-labelledby="decision">
+    <h2 id="decision">判断</h2>
+    <table>
+      <caption>
+        切替対象ごとの処置と理由
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">処置</th>
+          <th scope="col">理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>llm-agent-worker</code></th>
+          <td>EfficientThinkをprimary、既存Baseを第1fallbackにする</td>
+          <td>実機3回のdecode中央値25.279 tok/sとCoding機能試験通過を確認したため</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm-saaa-kv-mem</code></th>
+          <td>既存Baseの256K runtimeを維持する</td>
+          <td>
+            保存KV stateの互換性はモデル、chat template、engine build、cache形式に依存するため
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>qwen-worker-fast</code></th>
+          <td>変更しない</td>
+          <td>今回の評価範囲をAgent workerに限定するため</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="isolation-section" aria-labelledby="isolation">
+    <h2 id="isolation">分離構成</h2>
+    <ul>
+      <li>
+        新runtimeは<code>qwen-worker-agent-efficientthink</code>、llama-swap
+        modelは<code>qwen-agent-efficientthink</code>とする。
+      </li>
+      <li>context上限は64K、MTP draft n-maxは2、KV cacheはQ4_0とする。</li>
+      <li>
+        既存の<code>qwen-worker-agent</code>とそのBase
+        artifactは上書きせず、rollback可能なfallbackとして残す。
+      </li>
+      <li>
+        EfficientThink artifactは専用ディレクトリへ配置し、BaseおよびKV
+        snapshot用artifactと混在させない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="artifacts-section" aria-labelledby="artifacts">
+    <h2 id="artifacts">固定artifact</h2>
+    <table>
+      <caption>
+        配備対象artifactのファイル名と固定digest
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">役割</th>
+          <th scope="col">ファイル</th>
+          <th scope="col">SHA-256</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Main</th>
+          <td><code>Qwen3.8-27B-EfficientThink-SimPO-Q3-LynnStyle.gguf</code></td>
+          <td><code>89bb7b2ef82dd758f001f2c7d58e035f9188d2c0ccb35ef42fb56f51870f6e48</code></td>
+        </tr>
+        <tr>
+          <th scope="row">MTP</th>
+          <td><code>mtp-Qwen3.8-27B-Q4_0.gguf</code></td>
+          <td><code>051a1764cff8c4f3ee6ae8b00593a0364c7539c67fa50ffc58f3f96509fca38e</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="rollout-evidence-section" aria-labelledby="rollout-evidence">
+    <h2 id="rollout-evidence">2026-09-12 local-node切替証跡</h2>
+    <ul>
+      <li>
+        署名release <code>a9460b5801b4c3832cb3e992f939c7d95a1f921c</code>を有効化し、
+        activatorのcontract検証は<code>succeeded</code>で完了した。
+      </li>
+      <li>
+        公開model <code>qwen-agent-worker</code>のcanaryはHTTP 200で
+        <code>EFFICIENT_OK</code>を返し、EfficientThink
+        releaseへfallbackなしで割り当てられた。
+      </li>
+      <li>
+        ContextStill backgroundの最初の実要求は、prompt 1,661 tokensを含む処理を
+        <code>qwen-worker-agent-efficientthink-v1</code>で完了し、HTTP 200となった。
+      </li>
+      <li>
+        <code>qwen-worker-quality-current</code>はBaseと従来MTPを参照したままで、
+        <code>qwen38-quality-crc32c-v1</code> certificationも維持されている。
+      </li>
+    </ul>
+  </section>
+
+  <section id="rollback-section" aria-labelledby="rollback">
+    <h2 id="rollback">停止条件とrollback</h2>
+    <p>
+      起動、OpenAI互換応答、tool call、JSON契約のいずれかが失敗した場合は、
+      <code>llm-agent-worker</code
+      >のprimaryを既存<code>qwen-worker-agent</code>へ戻す。
+      <code>qwen-worker-quality</code
+      >と既存snapshotは切替対象外なので、Agent切替を理由に再生成しない。
+    </p>
+  </section>
+</article>
