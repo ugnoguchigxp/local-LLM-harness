@@ -225,8 +225,8 @@ async function inspectSse(response: Response): Promise<{ chunks: number; deltas:
 
 function positiveInteger(value: number | undefined, fallback: number): number {
   const result = value ?? fallback;
-  if (!Number.isInteger(result) || result < 1 || result > 3_600_000) {
-    throw new Error("timeoutMs must be an integer from 1 through 3600000");
+  if (!Number.isInteger(result) || result < 1 || result > 7_200_000) {
+    throw new Error("timeoutMs must be an integer from 1 through 7200000");
   }
   return result;
 }

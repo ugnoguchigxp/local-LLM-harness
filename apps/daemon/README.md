@@ -51,7 +51,7 @@ bun run dev
 | `LARM_CONTROL_MAX_BODY_BYTES` | `65536` | control API body上限。設定可能な最大値は1 MiB |
 | `LARM_GATEWAY_MAX_BODY_BYTES` | `4194304` | LLMとTTS JSON body上限。設定可能な最大値は64 MiB |
 | `LARM_SPEECH_MAX_BODY_BYTES` | `269484032` | STT upload上限 |
-| `LARM_GATEWAY_TIMEOUT_SECONDS` | `300` | uploadからresponse完了までの上限。監査recoveryとの競合を避ける最大値は3300秒 |
+| `LARM_GATEWAY_TIMEOUT_SECONDS` | `300` | uploadからresponse完了までの上限。長文canaryを含む最大値は7200秒 |
 | `LARM_CONTEXT_ENABLED` | `false` | Managed Context全体のkill switch。API tokenも必須 |
 | `LARM_CONTEXT_METADATA_ROOT` | `/var/lib/larm/contexts` | principal-scoped metadata state |
 | `LARM_CONTEXT_SOURCE_ROOT` | `/srv/ai/context-sources` | attestation済みimmutable source root |

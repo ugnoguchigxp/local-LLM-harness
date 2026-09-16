@@ -82,9 +82,9 @@ test("daemon configuration rejects invalid numbers", () => {
   expect(() => parseDaemonConfig({
     LARM_INFERENCE_AUDIT_MAX_RESPONSE_BYTES: String(64 * 1024 * 1024 + 1),
   })).toThrow(/LARM_INFERENCE_AUDIT_MAX_RESPONSE_BYTES/);
-  expect(() => parseDaemonConfig({ LARM_GATEWAY_TIMEOUT_SECONDS: "3600" }))
-    .toThrow(/LARM_GATEWAY_TIMEOUT_SECONDS/);
-  expect(() => parseDaemonConfig({ LARM_GATEWAY_TIMEOUT_SECONDS: "3301" }))
+  expect(parseDaemonConfig({ LARM_GATEWAY_TIMEOUT_SECONDS: "7200" }).gatewayTimeoutMs)
+    .toBe(7_200_000);
+  expect(() => parseDaemonConfig({ LARM_GATEWAY_TIMEOUT_SECONDS: "7201" }))
     .toThrow(/LARM_GATEWAY_TIMEOUT_SECONDS/);
   expect(() => parseDaemonConfig({ LARM_INFERENCE_AUDIT_ROOT: "relative/audit" }))
     .toThrow(/absolute path/);

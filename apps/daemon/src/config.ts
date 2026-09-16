@@ -326,7 +326,7 @@ export function parseDaemonConfig(
       "LARM_GATEWAY_TIMEOUT_SECONDS",
       300,
       0.001,
-      3_300,
+      7_200,
     ),
     controlMaxBodyBytes: numberSetting(env, "LARM_CONTROL_MAX_BODY_BYTES", 64 * 1024, {
       min: 1,
