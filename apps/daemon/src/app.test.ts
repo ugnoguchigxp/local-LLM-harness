@@ -1329,6 +1329,48 @@ test("standard Chat Completions needs only bearer and model and releases its int
   }));
 });
 
+test("exclusive Chat Completions requires the separate management credential", async () => {
+  let upstreamCalls = 0;
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    managementToken: "manage",
+    agentConnectionCatalog,
+    gatewayFetch: async () => {
+      upstreamCalls += 1;
+      return Response.json({
+        id: "chatcmpl-exclusive",
+        object: "chat.completion",
+        created: 1,
+        model: "test-model",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "OK" },
+          finish_reason: "stop",
+        }],
+      });
+    },
+  });
+  const request = (managementToken?: string) => app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "x-larm-exclusive-execution": "true",
+      ...(managementToken ? { "x-larm-management-token": managementToken } : {}),
+    }),
+    body: JSON.stringify({
+      model: "test-model",
+      messages: [{ role: "user", content: "Reply with OK." }],
+    }),
+  });
+
+  expect((await request()).status).toBe(403);
+  expect(upstreamCalls).toBe(0);
+  const accepted = await request("manage");
+  expect(accepted.status).toBe(200);
+  await accepted.arrayBuffer();
+  expect(upstreamCalls).toBe(1);
+});
+
 test("Qwen 3.8 requests disable implicit thinking and normalize named tool choice", async () => {
   let upstreamBody: Record<string, unknown> | undefined;
   const { app } = await makeApp(true, false, {}, {
@@ -1376,13 +1418,30 @@ test("Qwen 3.8 requests disable implicit thinking and normalize named tool choic
     }),
   });
   expect(response.status).toBe(200);
+  await response.arrayBuffer();
   expect(upstreamBody).toMatchObject({
     model: "qwen3.8",
     chat_template_kwargs: { enable_thinking: false },
     tool_choice: "required",
+    "speculative.n_max": 0,
     tools: [{ function: { name: "read_context" } }],
   });
   expect((upstreamBody?.tools as unknown[])).toHaveLength(1);
+
+  const exact = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-larm-allocation-id": allocationId },
+    body: JSON.stringify({
+      model: "qwen3.8",
+      messages: [{ role: "user", content: "Reply with just OK." }],
+      temperature: 0,
+    }),
+  });
+  expect(exact.status).toBe(200);
+  expect(upstreamBody).toMatchObject({
+    grammar: 'root ::= "OK"',
+    "speculative.n_max": 0,
+  });
 });
 
 test("Qwen 3.8 preserves explicit reasoning controls and rejects unknown named tools", async () => {

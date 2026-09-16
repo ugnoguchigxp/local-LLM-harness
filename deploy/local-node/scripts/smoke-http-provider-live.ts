@@ -10,6 +10,7 @@ import { wavDurationSeconds } from "./performance-helpers";
 export type HttpProviderLiveSmokeOptions = {
   baseUrl: string;
   apiToken: string;
+  managementToken?: string;
   model: string;
   asrModel?: string;
   ttsModel?: string;
@@ -422,16 +423,30 @@ export async function runHttpProviderLiveSmoke(
     if (!Number.isSafeInteger(requestedTokens) || requestedTokens < 1 || requestedTokens > 225_280) {
       throw new Error("longInputTokens must be an integer from 1 through 225280");
     }
+    if (!options.managementToken) {
+      throw new Error("managementToken is required for exclusive long-input execution");
+    }
     await waitForExclusiveIdle(options);
-    const response = await client.createChatCompletion({
-      model: options.model,
-      messages: [{
-        role: "user",
-        content: `${" token".repeat(requestedTokens)}\nReply with just OK.`,
-      }],
-      temperature: 0,
-      max_tokens: 32,
-      stream: false,
+    const fetchImpl = options.fetch ?? fetch;
+    const response = await fetchImpl(`${options.baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${options.apiToken}`,
+        "content-type": "application/json",
+        "x-larm-exclusive-execution": "true",
+        "x-larm-management-token": options.managementToken,
+      },
+      body: JSON.stringify({
+        model: options.model,
+        messages: [{
+          role: "user",
+          content: `${" token".repeat(requestedTokens)}\nReply with just OK.`,
+        }],
+        temperature: 0,
+        max_tokens: 32,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const value = parseJson(await responseBytes(response, TEXT_LIMIT));
     const observed = observedPromptTokens(value);
@@ -526,6 +541,9 @@ if (import.meta.main) {
     const result = await runHttpProviderLiveSmoke({
       baseUrl: process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810",
       apiToken: process.env.LARM_API_TOKEN ?? "",
+      ...(process.env.LARM_MANAGEMENT_TOKEN
+        ? { managementToken: process.env.LARM_MANAGEMENT_TOKEN }
+        : {}),
       model: process.env.LARM_HTTP_MODEL ?? "coding-default",
       ...(process.env.LARM_HTTP_ASR_MODEL ? { asrModel: process.env.LARM_HTTP_ASR_MODEL } : {}),
       ...(process.env.LARM_HTTP_TTS_MODEL ? { ttsModel: process.env.LARM_HTTP_TTS_MODEL } : {}),

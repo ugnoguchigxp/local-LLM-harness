@@ -100,3 +100,29 @@ test("runtime quarantine rejects queued and new work until stop confirmation cle
   const releaseAfterConfirmation = await gate.acquire("runtime", policy, signal);
   releaseAfterConfirmation();
 });
+
+test("exclusive execution drains active work and blocks every runtime until release", async () => {
+  const gate = new ExecutionGate();
+  const signal = new AbortController().signal;
+  const roomyPolicy = { ...policy, queueTimeoutMs: 1_000 };
+  const releaseActive = await gate.acquire("worker", roomyPolicy, signal);
+  const queued = gate.acquire("worker", roomyPolicy, signal);
+  const exclusive = gate.acquireExclusive("resident", roomyPolicy, signal, 3_000);
+
+  await expect(gate.acquire("other", roomyPolicy, signal)).rejects.toMatchObject({
+    code: "exclusive_execution",
+  });
+  expect(gate.tryAcquire("probe", roomyPolicy, signal)).toBeUndefined();
+  expect(gate.totals()).toEqual({ active: 1, queued: 2 });
+
+  releaseActive();
+  const releaseExclusive = await exclusive;
+  expect(gate.snapshot("resident")).toEqual({ active: 1, queued: 0 });
+  expect(gate.snapshot("worker")).toEqual({ active: 0, queued: 1 });
+  releaseExclusive();
+
+  const releaseQueued = await queued;
+  expect(gate.snapshot("worker")).toEqual({ active: 1, queued: 0 });
+  releaseQueued();
+  expect(gate.totals()).toEqual({ active: 0, queued: 0 });
+});

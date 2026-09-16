@@ -112,6 +112,59 @@ index 95db28e..fb7bbd6 100644
 +            **self._generation_kwargs(),
          ):
              yield chunk, sr
+diff --git a/api/main.py b/api/main.py
+index a0fab6c..3f2e728 100644
+--- a/api/main.py
++++ b/api/main.py
+@@ -41,6 +41,7 @@ WORKERS = int(os.getenv("WORKERS", "1"))
+ # Backend configuration
+ TTS_BACKEND = os.getenv("TTS_BACKEND", "official")
+ TTS_WARMUP_ON_START = os.getenv("TTS_WARMUP_ON_START", "false").lower() == "true"
++TTS_PRELOAD_ON_START = os.getenv("TTS_PRELOAD_ON_START", "true").lower() == "true"
+ GPU_KEEPALIVE_INTERVAL = int(os.getenv("GPU_KEEPALIVE_INTERVAL", "0"))
+ 
+ # CORS configuration
+@@ -82,21 +83,25 @@ async def lifespan(app: FastAPI):
+         logger.info(f"Voice Studio: http://{display_host}:{PORT}/voice-studio")
+     logger.info(boundary)
+ 
+-    # Pre-load the TTS backend
+-    try:
+-        from .backends import initialize_backend
+-        logger.info(f"Initializing TTS backend: {TTS_BACKEND}")
+-        backend = await initialize_backend(warmup=TTS_WARMUP_ON_START)
+-        logger.info(f"TTS backend '{backend.get_backend_name()}' loaded successfully!")
+-        logger.info(f"Model: {backend.get_model_id()}")
+-
+-        device_info = backend.get_device_info()
+-        if device_info.get("gpu_available"):
+-            logger.info(f"GPU: {device_info.get('gpu_name')}")
+-            logger.info(f"VRAM: {device_info.get('vram_total')}")
+-    except Exception as e:
+-        logger.warning(f"Backend initialization delayed: {e}")
+-        logger.info("Backend will be loaded on first request.")
++    # Compiled ROCm providers may need minutes to warm up. Allow metadata
++    # endpoints to become available first and initialize on first synthesis.
++    if TTS_PRELOAD_ON_START:
++        try:
++            from .backends import initialize_backend
++            logger.info(f"Initializing TTS backend: {TTS_BACKEND}")
++            backend = await initialize_backend(warmup=TTS_WARMUP_ON_START)
++            logger.info(f"TTS backend '{backend.get_backend_name()}' loaded successfully!")
++            logger.info(f"Model: {backend.get_model_id()}")
++
++            device_info = backend.get_device_info()
++            if device_info.get("gpu_available"):
++                logger.info(f"GPU: {device_info.get('gpu_name')}")
++                logger.info(f"VRAM: {device_info.get('vram_total')}")
++        except Exception as e:
++            logger.warning(f"Backend initialization delayed: {e}")
++            logger.info("Backend will be loaded on first request.")
++    else:
++        logger.info("Backend preload disabled; synthesis initializes the model on demand.")
+ 
+     # GPU keepalive: periodic matmul to prevent AMD DPM idle downclocking
+     keepalive_task = None
 diff --git a/api/routers/openai_compatible.py b/api/routers/openai_compatible.py
 index 056c6fd..0000000 100644
 --- a/api/routers/openai_compatible.py
@@ -126,3 +179,15 @@ index 056c6fd..0000000 100644
  }
  
  # Add language-specific model mappings
+@@ -566,7 +567,10 @@ async def list_voices():
+     default_languages = ["English", "Chinese", "Japanese", "Korean", "German", "French", "Spanish", "Russian", "Portuguese", "Italian"]
+ 
+     try:
+-        backend = await get_tts_backend()
++        # Voice metadata is configuration-only. Do not trigger multi-minute
++        # model compilation when this is the first request after a cold start.
++        from ..backends import get_backend
++        backend = get_backend()
+         speakers = backend.get_supported_voices()
+         languages = backend.get_supported_languages()
+ 

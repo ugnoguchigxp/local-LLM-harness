@@ -12,6 +12,7 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONPATH=/srv/ai/apps/Qwen3-TTS-Openai-Fastapi
 Environment=TTS_CONFIG=/srv/ai/apps/Qwen3-TTS-Openai-Fastapi/config.production.yaml
 Environment=TTS_BACKEND=optimized
+Environment=TTS_PRELOAD_ON_START=false
 Environment=HOST=127.0.0.1
 Environment=PORT=8082
 Environment=WORKERS=1

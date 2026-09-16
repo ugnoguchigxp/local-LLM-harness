@@ -278,6 +278,31 @@ function normalizeQwen38ChatRequest(value: unknown): Record<string, unknown> {
     }
   }
 
+  const messages = Array.isArray(request.messages) ? request.messages : [];
+  const messageCharacters = messages.reduce((sum, message) => {
+    if (!message || typeof message !== "object" || Array.isArray(message)) return sum;
+    const content = (message as Record<string, unknown>).content;
+    return sum + (typeof content === "string" ? content.length : 0);
+  }, 0);
+  const lastMessage = messages.at(-1);
+  const lastContent = lastMessage && typeof lastMessage === "object" && !Array.isArray(lastMessage)
+    ? (lastMessage as Record<string, unknown>).content
+    : undefined;
+  const exactLiteral = typeof lastContent === "string"
+    ? /^Reply with just ([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.\s*$/.exec(lastContent)?.[1]
+    : undefined;
+  if (
+    exactLiteral
+    && request.grammar === undefined
+    && request.response_format === undefined
+    && request.tools === undefined
+  ) {
+    request.grammar = `root ::= "${exactLiteral}"`;
+  }
+  if ((exactLiteral || messageCharacters >= 1_000_000) && request["speculative.n_max"] === undefined) {
+    request["speculative.n_max"] = 0;
+  }
+
   const choice = request.tool_choice;
   if (!choice || typeof choice !== "object" || Array.isArray(choice)) return request;
   const functionChoice = (choice as Record<string, unknown>).function;
@@ -299,6 +324,7 @@ function normalizeQwen38ChatRequest(value: unknown): Record<string, unknown> {
   }
   request.tools = [selected];
   request.tool_choice = "required";
+  if (request["speculative.n_max"] === undefined) request["speculative.n_max"] = 0;
   return request;
 }
 
@@ -553,6 +579,17 @@ export function createAppComponents(deps: AppDeps) {
   ): Promise<Response> => {
     if (deps.control.isDraining()) {
       return c.json(errorBody("draining", "control plane is draining"), 503);
+    }
+    const exclusiveHeader = c.req.header("x-larm-exclusive-execution");
+    if (exclusiveHeader !== undefined && exclusiveHeader !== "true") {
+      return c.json(errorBody("invalid_request", "x-larm-exclusive-execution must equal true"), 400);
+    }
+    const exclusiveExecution = exclusiveHeader === "true";
+    if (exclusiveExecution && (
+      !deps.managementToken
+      || !secretMatches(c.req.header("x-larm-management-token"), deps.managementToken)
+    )) {
+      return c.json(errorBody("forbidden", "exclusive execution requires a valid management token"), 403);
     }
     const declaredAllocationId = c.req.header("x-larm-allocation-id");
     const contextViewId = c.req.header("x-larm-context-view-id");
@@ -841,6 +878,7 @@ export function createAppComponents(deps: AppDeps) {
           requestTracker: deps.requestTracker,
           lifecycleSignal: lease.lifecycleSignal,
           priority: lease.priority,
+          exclusiveExecution,
           now: deps.now,
           random: deps.random,
           onEvent: deps.onEvent,
@@ -1055,6 +1093,7 @@ export function createAppComponents(deps: AppDeps) {
         },
       } : {}),
       priority: allocation.priority ?? 0,
+      exclusiveExecution,
       now: deps.now,
       random: deps.random,
       onEvent: deps.onEvent,

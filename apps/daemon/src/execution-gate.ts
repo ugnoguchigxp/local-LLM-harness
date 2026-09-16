@@ -8,7 +8,7 @@ export type ExecutionPolicy = {
 
 export class ExecutionGateError extends Error {
   constructor(
-    readonly code: "queue_full" | "queue_timeout" | "request_cancelled" | "draining" | "runtime_quarantined",
+    readonly code: "queue_full" | "queue_timeout" | "request_cancelled" | "draining" | "runtime_quarantined" | "exclusive_execution",
     message: string,
     readonly retryAfterSeconds?: number,
   ) {
@@ -30,11 +30,29 @@ type QueueEntry = {
 
 type RuntimeGate = { active: number; queue: QueueEntry[] };
 
+type ExclusiveEntry = {
+  runtime: string;
+  policy: ExecutionPolicy;
+  signal: AbortSignal;
+  priority: number;
+  queuedAt: number;
+  phase: "pending" | "active";
+  resolve: (release: () => void) => void;
+  reject: (error: ExecutionGateError) => void;
+  timeout?: ReturnType<typeof setTimeout>;
+  onAbort?: () => void;
+};
+
 export class ExecutionGate {
   private readonly runtimes = new Map<string, RuntimeGate>();
   private readonly quarantinedRuntimes = new Set<string>();
   private draining = false;
   private sequence = 0;
+  private exclusive?: ExclusiveEntry;
+  private readonly heldPromotions = new Map<string, {
+    state: RuntimeGate;
+    policy: ExecutionPolicy;
+  }>();
 
   constructor(
     private readonly options: {
@@ -46,6 +64,12 @@ export class ExecutionGate {
 
   beginDrain(): void {
     this.draining = true;
+    if (this.exclusive?.phase === "pending") {
+      const entry = this.exclusive;
+      this.clearExclusiveListeners(entry);
+      this.exclusive = undefined;
+      entry.reject(new ExecutionGateError("draining", "execution gate is draining"));
+    }
     for (const [runtime, state] of this.runtimes) {
       for (const entry of state.queue.splice(0)) {
         this.removeEntryListeners(entry);
@@ -98,6 +122,13 @@ export class ExecutionGate {
     }
     if (signal.aborted) {
       throw new ExecutionGateError("request_cancelled", "request was cancelled while waiting");
+    }
+    if (this.exclusive) {
+      throw new ExecutionGateError(
+        "exclusive_execution",
+        `exclusive execution is reserved by runtime ${this.exclusive.runtime}`,
+        1,
+      );
     }
     const state = this.runtimes.get(runtime) ?? { active: 0, queue: [] };
     this.runtimes.set(runtime, state);
@@ -156,12 +187,77 @@ export class ExecutionGate {
     });
   }
 
+  async acquireExclusive(
+    runtime: string,
+    policy: ExecutionPolicy,
+    signal: AbortSignal,
+    priority = 0,
+  ): Promise<() => void> {
+    if (this.draining) {
+      throw new ExecutionGateError("draining", "execution gate is draining");
+    }
+    if (this.quarantinedRuntimes.has(runtime)) {
+      throw new ExecutionGateError(
+        "runtime_quarantined",
+        `runtime ${runtime} is quarantined pending backend stop confirmation`,
+      );
+    }
+    if (signal.aborted) {
+      throw new ExecutionGateError("request_cancelled", "request was cancelled while waiting");
+    }
+    if (this.exclusive) {
+      throw new ExecutionGateError(
+        "exclusive_execution",
+        `exclusive execution is already reserved by runtime ${this.exclusive.runtime}`,
+        1,
+      );
+    }
+
+    const state = this.runtimes.get(runtime) ?? { active: 0, queue: [] };
+    this.runtimes.set(runtime, state);
+    return await new Promise<() => void>((resolve, reject) => {
+      const entry: ExclusiveEntry = {
+        runtime,
+        policy,
+        signal,
+        priority,
+        queuedAt: this.now(),
+        phase: "pending",
+        resolve,
+        reject,
+      };
+      entry.onAbort = () => {
+        if (this.exclusive !== entry || entry.phase !== "pending") return;
+        this.clearExclusiveListeners(entry);
+        this.exclusive = undefined;
+        reject(new ExecutionGateError("request_cancelled", "request was cancelled while waiting"));
+        this.resumeHeldPromotions();
+      };
+      entry.timeout = setTimeout(() => {
+        if (this.exclusive !== entry || entry.phase !== "pending") return;
+        this.clearExclusiveListeners(entry);
+        this.exclusive = undefined;
+        reject(new ExecutionGateError(
+          "queue_timeout",
+          `exclusive execution wait exceeded ${policy.queueTimeoutMs}ms`,
+          Math.max(1, Math.ceil(policy.queueTimeoutMs / 1_000)),
+        ));
+        this.resumeHeldPromotions();
+      }, policy.queueTimeoutMs);
+      entry.timeout.unref?.();
+      signal.addEventListener("abort", entry.onAbort, { once: true });
+      this.exclusive = entry;
+      this.emit("execution_request", runtime, "exclusive_pending", undefined, priority);
+      this.promoteExclusive();
+    });
+  }
+
   tryAcquire(
     runtime: string,
     policy: ExecutionPolicy,
     signal: AbortSignal,
   ): (() => void) | undefined {
-    if (this.draining || this.quarantinedRuntimes.has(runtime) || signal.aborted) return undefined;
+    if (this.draining || this.exclusive || this.quarantinedRuntimes.has(runtime) || signal.aborted) return undefined;
     const state = this.runtimes.get(runtime) ?? { active: 0, queue: [] };
     this.runtimes.set(runtime, state);
     if (state.active >= policy.maxConcurrentRequests) {
@@ -186,7 +282,7 @@ export class ExecutionGate {
       active += state.active;
       queued += state.queue.length;
     }
-    return { active, queued };
+    return { active, queued: queued + (this.exclusive?.phase === "pending" ? 1 : 0) };
   }
 
   private release(runtime: string, state: RuntimeGate, policy: ExecutionPolicy): () => void {
@@ -198,9 +294,50 @@ export class ExecutionGate {
       released = true;
       state.active = Math.max(0, state.active - 1);
       this.emit("execution_request", runtime, "completed");
-      this.promote(runtime, state, policy);
+      if (this.exclusive) {
+        this.heldPromotions.set(runtime, { state, policy });
+        this.promoteExclusive();
+      } else {
+        this.promote(runtime, state, policy);
+      }
       this.emitState(runtime, state);
     };
+  }
+
+  private promoteExclusive(): void {
+    const entry = this.exclusive;
+    if (!entry || entry.phase !== "pending" || this.totals().active !== 0) return;
+    this.clearExclusiveListeners(entry);
+    entry.phase = "active";
+    const state = this.runtimes.get(entry.runtime)!;
+    state.active += 1;
+    this.emit("execution_queue_seconds", entry.runtime, "exclusive_started", (this.now() - entry.queuedAt) / 1_000);
+    this.emit("execution_request", entry.runtime, "exclusive_started", undefined, entry.priority);
+    this.emitState(entry.runtime, state);
+    let released = false;
+    entry.resolve(() => {
+      if (released) return;
+      released = true;
+      state.active = Math.max(0, state.active - 1);
+      if (this.exclusive === entry) this.exclusive = undefined;
+      this.emit("execution_request", entry.runtime, "exclusive_completed");
+      this.emitState(entry.runtime, state);
+      this.resumeHeldPromotions();
+    });
+  }
+
+  private clearExclusiveListeners(entry: ExclusiveEntry): void {
+    if (entry.timeout) clearTimeout(entry.timeout);
+    if (entry.onAbort) entry.signal.removeEventListener("abort", entry.onAbort);
+  }
+
+  private resumeHeldPromotions(): void {
+    const held = [...this.heldPromotions.entries()];
+    this.heldPromotions.clear();
+    for (const [runtime, { state, policy }] of held) {
+      this.promote(runtime, state, policy);
+      this.emitState(runtime, state);
+    }
   }
 
   private promote(runtime: string, state: RuntimeGate, policy: ExecutionPolicy): void {

@@ -78,6 +78,7 @@ export type GatewayProxyOptions = {
   attemptSignal?: AbortSignal;
   requestId?: string;
   priority?: number;
+  exclusiveExecution?: boolean;
   now?: () => number;
   random?: () => string;
   onEvent?: (event: ControlEvent) => void;
@@ -382,12 +383,19 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   });
 
   try {
-    releaseSlot = await options.executionGate.acquire(
+    releaseSlot = await (options.exclusiveExecution
+      ? options.executionGate.acquireExclusive(
+        options.runtime.id,
+        options.runtime.resources,
+        abort.signal,
+        options.priority ?? 0,
+      )
+      : options.executionGate.acquire(
       options.runtime.id,
       options.runtime.resources,
       abort.signal,
       options.priority ?? 0,
-    );
+      ));
   } catch (error) {
     if (timedOut) {
       return failure("gateway_timeout", "gateway request timed out", 504, "timeout");
@@ -411,7 +419,11 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       return failure("allocation_inactive", "allocation is no longer active", 409, "binding_invalidated");
     }
     if (error instanceof ExecutionGateError) {
-      const status = error.code === "draining" || error.code === "runtime_quarantined" ? 503 : 429;
+      const status = error.code === "draining"
+          || error.code === "runtime_quarantined"
+          || error.code === "exclusive_execution"
+        ? 503
+        : 429;
       const headers = error.retryAfterSeconds
         ? { "retry-after": String(error.retryAfterSeconds) }
         : undefined;

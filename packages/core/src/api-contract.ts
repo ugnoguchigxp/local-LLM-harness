@@ -822,6 +822,22 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
             schema: { type: "string", minLength: 1, maxLength: 128 },
           }],
         }
+        : operationId === "createChatCompletion"
+        ? {
+          parameters: [{
+            name: "X-LARM-Exclusive-Execution",
+            in: "header",
+            required: false,
+            description: "Set to true for a management-authorized request that drains active execution and excludes all other runtimes until completion.",
+            schema: { type: "string", const: "true" },
+          }, {
+            name: "X-LARM-Management-Token",
+            in: "header",
+            required: false,
+            description: "Required when X-LARM-Exclusive-Execution is true.",
+            schema: { type: "string", minLength: 1 },
+          }],
+        }
         : operationId === "listVoices"
         ? {
           parameters: [{

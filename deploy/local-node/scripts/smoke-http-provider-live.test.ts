@@ -31,6 +31,7 @@ test("live HTTP Provider smoke validates allocation-free JSON, SSE, ASR, and TTS
   const result = await runHttpProviderLiveSmoke({
     baseUrl: "http://127.0.0.1:9810",
     apiToken: "secret",
+    managementToken: "manage",
     model: "coding-default",
     expectedReleaseCommit: releaseCommit,
     fetch: async (input, init) => {
@@ -347,6 +348,7 @@ test("live HTTP Provider smoke verifies two tool turns and a long resident reque
   const result = await runHttpProviderLiveSmoke({
     baseUrl: "http://127.0.0.1:9810",
     apiToken: "secret",
+    managementToken: "manage",
     model: "qwen3.8",
     includeAudio: false,
     includeToolRoundTrip: true,
@@ -365,6 +367,11 @@ test("live HTTP Provider smoke verifies two tool turns and a long resident reque
       if (path !== "/v1/chat/completions") return new Response("not found", { status: 404 });
       chatRequests += 1;
       const body = await request.json() as Record<string, unknown>;
+      const contentForHeaders = String((body.messages as Array<Record<string, unknown>>).at(-1)?.content ?? "");
+      if (contentForHeaders.includes(" token token token")) {
+        expect(request.headers.get("x-larm-exclusive-execution")).toBe("true");
+        expect(request.headers.get("x-larm-management-token")).toBe("manage");
+      }
       if (body.stream === true) {
         const event = (choices: unknown[]) => `data: ${JSON.stringify({
           id: "chatcmpl-stream", object: "chat.completion.chunk", created: 1, model: "qwen3.8", choices,
@@ -424,6 +431,7 @@ test("long-input idle gate refuses to send the payload when execution metrics ar
   await expect(runHttpProviderLiveSmoke({
     baseUrl: "http://127.0.0.1:9810",
     apiToken: "secret",
+    managementToken: "manage",
     model: "qwen3.8",
     includeAudio: false,
     includeToolRoundTrip: false,

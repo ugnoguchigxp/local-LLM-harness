@@ -9,6 +9,7 @@ WorkingDirectory=/srv/ai/apps/q38rocm
 Environment=HOME=/srv/ai/cache
 Environment=XDG_CACHE_HOME=/srv/ai/cache
 Environment=MTP=1
+Environment=MTP_STRICT=1
 Environment=REASONING_BUDGET=-1
 Environment=SLOTS=1
 Environment=LLAMA_SERVER_BIN=/srv/ai/apps/q38rocm/engine/bin/llama-server-larm-native
@@ -24,9 +25,9 @@ ExecStart=/srv/ai/apps/q38rocm/run_server.sh \
   --draft-n 2 \
   --draft-p 0.0 \
   --batch 2048 \
-  --ubatch 2048 \
+  --ubatch 1024 \
   --kv-k q8_0 \
-  --kv-v turbo4 \
+  --kv-v q8_0 \
   --temp 0.2 \
   --repeat-penalty 1.0 \
   --reasoning auto \

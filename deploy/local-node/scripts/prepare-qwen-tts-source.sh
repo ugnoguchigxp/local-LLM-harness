@@ -9,10 +9,21 @@ expected_revision="eb14f6e6a50445cf442979abb9203ff0d5042c43"
 patch_file="${repo_root}/apps/qwen-tts/rocm-gfx1151.patch"
 config_file="${repo_root}/apps/qwen-tts/config.production.yaml"
 
+# Tests exercise the complete apply/verify path against an isolated temporary
+# Git checkout. Production callers cannot override repository-owned inputs.
+if [[ "${LARM_QWEN_TTS_PREPARE_TEST_MODE:-0}" == "1" ]]; then
+  [[ "${source_root}" == /tmp/* ]] \
+    || { echo "test mode source must be below /tmp" >&2; exit 1; }
+  expected_revision="${LARM_QWEN_TTS_EXPECTED_REVISION:?test revision is required}"
+  patch_file="${LARM_QWEN_TTS_PATCH_FILE:?test patch is required}"
+  config_file="${LARM_QWEN_TTS_CONFIG_FILE:?test config is required}"
+fi
+
 fail() { echo "$*" >&2; exit 1; }
 unmanaged_changes() {
   git -C "${source_root}" status --porcelain=v1 --untracked-files=normal \
     | awk '$2 != "config.production.yaml" \
+      && $2 != "api/main.py" \
       && $2 != "api/backends/optimized_backend.py" \
       && $2 != "api/routers/openai_compatible.py"'
 }
@@ -37,6 +48,7 @@ elif [[ "${action}" == "apply" ]]; then
   # applying the repository-owned patch atomically. Only the two patch-owned
   # files are restored; unrelated checkout state remains fail-closed above.
   git -C "${source_root}" restore --source=HEAD --worktree -- \
+    api/main.py \
     api/backends/optimized_backend.py \
     api/routers/openai_compatible.py
   git -C "${source_root}" apply --check "${patch_file}" \
@@ -65,5 +77,15 @@ if [[ "${action}" == "apply" ]]; then
   install -m 0644 "${config_file}" "${target}"
 fi
 
-printf '{"valid":true,"revision":"%s","patchApplied":true,"aliasesVerified":true}\n' \
-  "${expected_revision}"
+target="${source_root}/config.production.yaml"
+[[ -f "${target}" && ! -L "${target}" ]] \
+  || fail "Qwen TTS production config is missing or unsafe"
+cmp -s -- "${config_file}" "${target}" \
+  || fail "Qwen TTS production config differs from the repository version"
+config_mode="$(stat -c '%a' -- "${target}")"
+[[ "${config_mode}" == "644" ]] \
+  || fail "Qwen TTS production config mode is ${config_mode}; expected 644"
+config_sha256="$(sha256sum -- "${target}" | awk '{print $1}')"
+
+printf '{"valid":true,"revision":"%s","patchApplied":true,"aliasesVerified":true,"configVerified":true,"configMode":"0644","configSha256":"%s"}\n' \
+  "${expected_revision}" "${config_sha256}"
