@@ -205,6 +205,10 @@ bun run smoke:http-provider-live</code></pre>
         compileを開始しない。 音声生成要求が初回model初期化を行う。
       </li>
       <li>
+        公開HTTP serverのidle timeoutは無効化し、cold activationと長時間推論のdeadlineは Model
+        BrokerとGatewayが管理する。Bun既定の10秒socket timeoutで準備中の接続を切断しない。
+      </li>
+      <li>
         source verifierは配備済み<code>config.production.yaml</code>のbyte一致とmode
         <code>0644</code
         >を必須とし、内容改変・mode改変fixtureを実際のapply/verify経路で拒否する。

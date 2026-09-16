@@ -312,6 +312,10 @@ const interval = setInterval(() => {
 const server = Bun.serve({
   port: config.port,
   hostname: config.hostname,
+  // Model activation and long-running inference own their deadlines. Bun's
+  // default 10-second socket timeout would otherwise terminate cold starts
+  // before ModelBroker can return a structured response.
+  idleTimeout: config.httpIdleTimeoutSeconds,
   ...(config.tlsCertFile && config.tlsKeyFile
     ? { tls: { cert: Bun.file(config.tlsCertFile), key: Bun.file(config.tlsKeyFile) } }
     : {}),

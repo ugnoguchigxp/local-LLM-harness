@@ -4,6 +4,7 @@ import { parseDaemonConfig, parseInferenceAuditConfig } from "./config";
 test("daemon configuration has bounded production defaults", () => {
   const config = parseDaemonConfig({}, "/workspace/apps/daemon/src");
   expect(config.port).toBe(9810);
+  expect(config.httpIdleTimeoutSeconds).toBe(0);
   expect(config.controlMaxBodyBytes).toBe(64 * 1024);
   expect(config.gatewayMaxBodyBytes).toBe(4 * 1024 * 1024);
   expect(config.embeddingMaxBodyBytes).toBe(2 * 1024 * 1024);
@@ -43,6 +44,9 @@ test("daemon configuration has bounded production defaults", () => {
 test("daemon configuration rejects invalid numbers", () => {
   expect(() => parseDaemonConfig({ LARM_PORT: "NaN" })).toThrow(/LARM_PORT/);
   expect(() => parseDaemonConfig({ LARM_PORT: "70000" })).toThrow(/LARM_PORT/);
+  expect(() => parseDaemonConfig({ LARM_HTTP_IDLE_TIMEOUT_SECONDS: "256" })).toThrow(
+    /LARM_HTTP_IDLE_TIMEOUT_SECONDS/,
+  );
   expect(() => parseDaemonConfig({ LARM_GATEWAY_MAX_BODY_BYTES: "0" })).toThrow(
     /LARM_GATEWAY_MAX_BODY_BYTES/,
   );

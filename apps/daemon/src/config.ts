@@ -7,6 +7,7 @@ export type DaemonConfig = {
   configDir: string;
   port: number;
   hostname: string;
+  httpIdleTimeoutSeconds: number;
   tlsCertFile?: string;
   tlsKeyFile?: string;
   observeIntervalMs: number;
@@ -265,6 +266,11 @@ export function parseDaemonConfig(
     configDir: resolve(env.LARM_CONFIG_DIR ?? join(sourceDir, "../../../config/local-node")),
     port: numberSetting(env, "LARM_PORT", 9810, { min: 1, max: 65_535, integer: true }),
     hostname,
+    httpIdleTimeoutSeconds: numberSetting(env, "LARM_HTTP_IDLE_TIMEOUT_SECONDS", 0, {
+      min: 0,
+      max: 255,
+      integer: true,
+    }),
     ...(tlsCertFile && tlsKeyFile
       ? { tlsCertFile: resolve(tlsCertFile), tlsKeyFile: resolve(tlsKeyFile) }
       : {}),
