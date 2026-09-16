@@ -54,11 +54,6 @@ export type DaemonConfig = {
   contextSourceMaxBytes: number;
   contextSourceMaxTotalBytes: number;
   contextMaterializedMaxBytes: number;
-  contextSnapshotEnabled: boolean;
-  contextSnapshotRoot: string;
-  contextSnapshotMaxBytes: number;
-  contextSnapshotFreeFloorBytes: number;
-  contextSnapshotMaxWriteBytes: number;
   personalStateEnabled: boolean;
   personalStateJournalRoot: string;
   personalStateReceiptTtlMs: number;
@@ -230,10 +225,8 @@ export function parseDaemonConfig(
   const inferenceAudit = parseInferenceAuditConfig(env);
   const contextEnabled = booleanSetting(env, "LARM_CONTEXT_ENABLED", false);
   const personalStateEnabled = booleanSetting(env, "LARM_PERSONAL_STATE_ENABLED", false);
-  const contextSnapshotEnabled = booleanSetting(env, "LARM_CONTEXT_SNAPSHOT_ENABLED", false);
   const contextMetadataRoot = absolutePathSetting(env, "LARM_CONTEXT_METADATA_ROOT", "/var/lib/larm/contexts");
   const contextSourceRoot = absolutePathSetting(env, "LARM_CONTEXT_SOURCE_ROOT", "/srv/ai/context-sources");
-  const contextSnapshotRoot = absolutePathSetting(env, "LARM_CONTEXT_SNAPSHOT_ROOT", "/srv/ai/context-snapshots");
   const personalStateJournalRoot = absolutePathSetting(
     env,
     "LARM_PERSONAL_STATE_JOURNAL_ROOT",
@@ -264,18 +257,8 @@ export function parseDaemonConfig(
   if (
     overlaps(personalStateJournalRoot, contextMetadataRoot)
     || overlaps(personalStateJournalRoot, contextSourceRoot)
-    || overlaps(personalStateJournalRoot, contextSnapshotRoot)
   ) {
     throw new Error("LARM_PERSONAL_STATE_JOURNAL_ROOT must not overlap context data roots");
-  }
-  if (contextSnapshotEnabled && !contextEnabled) {
-    throw new Error("LARM_CONTEXT_ENABLED must be true when context snapshots are enabled");
-  }
-  if (contextSnapshotEnabled && (
-    overlaps(contextSnapshotRoot, contextMetadataRoot)
-    || overlaps(contextSnapshotRoot, contextSourceRoot)
-  )) {
-    throw new Error("LARM_CONTEXT_SNAPSHOT_ROOT must not overlap managed context metadata or sources");
   }
 
   return {
@@ -409,26 +392,6 @@ export function parseDaemonConfig(
       "LARM_CONTEXT_MATERIALIZED_MAX_BYTES",
       64 * 1024 * 1024,
       { min: 1, max: 2 * 1024 * 1024 * 1024, integer: true },
-    ),
-    contextSnapshotEnabled,
-    contextSnapshotRoot,
-    contextSnapshotMaxBytes: numberSetting(
-      env,
-      "LARM_CONTEXT_SNAPSHOT_MAX_BYTES",
-      512 * 1024 * 1024 * 1024,
-      { min: 1, max: 2 * 1024 * 1024 * 1024 * 1024, integer: true },
-    ),
-    contextSnapshotFreeFloorBytes: numberSetting(
-      env,
-      "LARM_CONTEXT_SNAPSHOT_FREE_FLOOR_BYTES",
-      256 * 1024 * 1024 * 1024,
-      { min: 0, max: 2 * 1024 * 1024 * 1024 * 1024, integer: true },
-    ),
-    contextSnapshotMaxWriteBytes: numberSetting(
-      env,
-      "LARM_CONTEXT_SNAPSHOT_MAX_WRITE_BYTES",
-      5 * 1024 * 1024 * 1024,
-      { min: 1, max: 16 * 1024 * 1024 * 1024, integer: true },
     ),
     personalStateEnabled,
     personalStateJournalRoot,

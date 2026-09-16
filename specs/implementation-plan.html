@@ -218,14 +218,8 @@
         <tr>
           <th scope="row"><code>llm-default</code></th>
           <td><code>qwen-general</code></td>
-          <td>呼出側が許可した場合だけ<code>qwen-worker-quality</code></td>
+          <td>なし</td>
           <td>通常、リアルタイム、reasoning、codingの既定経路</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>llm-long-context</code></th>
-          <td><code>qwen-worker-quality</code></td>
-          <td>呼出側が許可した場合だけ<code>qwen-general</code></td>
-          <td>長いcontextが明示された場合だけ</td>
         </tr>
         <tr>
           <th scope="row"><code>llm-speed</code></th>
@@ -267,8 +261,6 @@
     candidates:
       - runtime: qwen-general
         purpose: primary
-      - runtime: qwen-worker-quality
-        purpose: fallback
   llm-speed:
     capabilities: [llm.general, llm.coding]
     explicitOnly: true

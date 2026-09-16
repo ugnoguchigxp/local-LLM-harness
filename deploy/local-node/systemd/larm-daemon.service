@@ -22,11 +22,6 @@ Environment=LARM_PERSONAL_STATE_JOURNAL_ROOT=/var/lib/larm/personal-state
 Environment=LARM_CONTEXT_METADATA_ROOT=/var/lib/larm/contexts
 Environment=LARM_CONTEXT_SOURCE_ROOT=/srv/ai/context-sources
 Environment=LARM_CONTEXT_SOURCE_MAX_TOTAL_BYTES=549755813888
-Environment=LARM_CONTEXT_SNAPSHOT_ENABLED=true
-Environment=LARM_CONTEXT_SNAPSHOT_ROOT=/srv/ai/context-snapshots
-Environment=LARM_CONTEXT_SNAPSHOT_MAX_BYTES=549755813888
-Environment=LARM_CONTEXT_SNAPSHOT_FREE_FLOOR_BYTES=274877906944
-Environment=LARM_CONTEXT_SNAPSHOT_MAX_WRITE_BYTES=5368709120
 Environment=LARM_RELEASE_MANIFEST=/srv/ai/apps/larm-current/release-manifest.json
 Environment=LARM_ARTIFACT_STAGING_ROOT=/srv/ai/models/.larm-staging
 Environment=LARM_ARTIFACT_ROLLBACK_ROOT=/srv/ai/models/.larm-rollback
@@ -55,7 +50,7 @@ PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
 ReadOnlyPaths=/srv/ai/apps/larm-current
-ReadWritePaths=/srv/ai/cache /srv/ai/context-snapshots /srv/ai/context-sources /srv/ai/logs /srv/ai/models /var/lib/larm
+ReadWritePaths=/srv/ai/cache /srv/ai/context-sources /srv/ai/logs /srv/ai/models /var/lib/larm
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]

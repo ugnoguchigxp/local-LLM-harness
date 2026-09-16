@@ -31,7 +31,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "deep-reasoning-35b",
     "nightworker-background",
     "saaa-backchannel-default",
-    "saaa-qwen38-kv-mem",
+    "saaa-qwen38",
     "tts-default",
     "tts-expressive",
   ]);
@@ -135,9 +135,9 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "llm-inference",
       }],
     });
-  expect(catalog.profiles.find((profile) => profile.id === "saaa-qwen38-kv-mem"))
+  expect(catalog.profiles.find((profile) => profile.id === "saaa-qwen38"))
     .toMatchObject({
-      canonicalProfile: "saaa-qwen38-kv-mem",
+      canonicalProfile: "saaa-qwen38",
       selectionPolicy: "explicit-only",
       deprecated: false,
       schedulingPriority: 3000,
@@ -166,9 +166,9 @@ test("production agent profiles compile to strict protocol-aware provider contra
           name: "llm",
           capability: "llm.coding",
           supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
-          route: "llm-saaa-kv-mem",
+          route: "llm-saaa-qwen38",
           protocol: "openai.chat-completions.v1",
-          publicModel: "qwen3.8-kv-mem",
+          publicModel: "qwen3.8",
           readiness: "llm-inference",
         },
         {
@@ -183,12 +183,12 @@ test("production agent profiles compile to strict protocol-aware provider contra
         },
       ],
     });
-  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "qwen3.8-kv-mem"))
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "qwen3.8"))
     .toMatchObject({
       capability: "llm.coding",
-      route: "llm-saaa-kv-mem",
+      route: "llm-saaa-qwen38",
       schedulingPriority: 3000,
-      profileIds: ["saaa-qwen38-kv-mem"],
+      profileIds: ["saaa-qwen38"],
     });
   expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "decision-default"))
     .toMatchObject({

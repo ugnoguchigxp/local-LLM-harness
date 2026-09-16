@@ -1,0 +1,56 @@
+<article lang="ja">
+  <h1>Managed Context source rebuild契約</h1>
+  <p>
+    Managed Contextは、認証済みprincipalへ紐づく検証済みsourceから一回限りのContext Viewを構成し、
+    Chat requestへ本文を挿入する。materialization
+    modeは<code>source-rebuild</code>だけとし、推論runtimeの KV
+    stateをdiskへ保存、復元、再利用しない。
+  </p>
+
+  <section id="scope">
+    <h2>残す機能</h2>
+    <ul>
+      <li>sourceのprovision、digestとtokenizer identityの検証、principal単位のquota。</li>
+      <li>Allocation、runtime release、lease epoch、期限へbindしたContext View。</li>
+      <li>output reserveとsafety marginを差し引いた厳密な入力token budget。</li>
+      <li>一回だけのView consume、source driftとbinding driftのfail-closed拒否。</li>
+      <li>Personal Stateのattempt、forget、runtime slot erase契約。</li>
+    </ul>
+  </section>
+
+  <section id="removed">
+    <h2>廃止した機能</h2>
+    <ul>
+      <li>session snapshotのsave、restore、manifest、CRC、quarantine、GC。</li>
+      <li>snapshot用runtime、release、route、公開model、Agent Profile。</li>
+      <li>snapshot root、512 GiB hard quota、watermark、最大write量のdaemon設定。</li>
+      <li>llama.cppのslot save pathとsnapshot conformance script。</li>
+    </ul>
+    <p>
+      <code>/srv/ai/context-snapshots</code
+      >はdaemonおよびworkerの書込許可対象ではなく、installerも作成しない。
+      既存host上のdirectoryは配備時に停止中であることを確認してから削除できる。
+    </p>
+  </section>
+
+  <section id="contract">
+    <h2>runtime契約</h2>
+    <p>
+      local-nodeではresident <code>qwen-general</code>だけがManaged
+      Contextを提供する。認定modeは <code>source-rebuild</code>であり、Context
+      View付きChatでもprovider requestへslot固定やprompt cache強制を 追加しない。SAAAの公開model
+      <code>qwen3.8</code>は同runtimeへ解決する。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>受入条件</h2>
+    <ul>
+      <li>repositoryにsnapshot store、save/restore adapter、snapshot環境変数が残らない。</li>
+      <li>production registryとllama-swap groupに廃止runtimeが残らない。</li>
+      <li>Context APIとPersonal Stateがsource rebuildだけで全testを通過する。</li>
+      <li>service unitとinstallerがsnapshot directoryを作成もwrite許可もしない。</li>
+      <li>既存snapshot dataを削除しても通常推論とManaged Contextが成立する。</li>
+    </ul>
+  </section>
+</article>

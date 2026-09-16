@@ -1,0 +1,174 @@
+<article lang="ja">
+  <h1>SAAA Provider実機障害の是正と配備後受入</h1>
+  <p>
+    SAAA実機で確認したQwen 3.8 KV:memの再要求timeout、Qwen TTSの公開model拒否、 VOICEVOX PCMとvoice
+    discoveryの不整合を是正する。ソース修正完了と配備後の実機合格は
+    別の状態として管理し、旧稼働release <code>be5e86272165f4e13e69f4da204b1425486c6070</code>の
+    結果を新しいソースの合格証跡として扱わない。
+  </p>
+
+  <section id="qwen38-provider">
+    <h2>Qwen 3.8通常Provider</h2>
+    <p>
+      SAAAはAgent Profile <code>saaa-qwen38</code>、公開model
+      <code>qwen3.8</code>、 route
+      <code>llm-saaa-qwen38</code>を使用する。このrouteはresident runtime
+      <code>qwen-general</code
+      >だけを候補に持つ。<code>qwen3.8-kv-mem</code>は公開catalog、
+      Profile、利用候補、fallback候補へ含めない。
+    </p>
+    <table>
+      <caption>
+        通常Qwen 3.8のcontextと実行上限
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">通常推論の契約値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">context window</th>
+          <td>262,144 token</td>
+        </tr>
+        <tr>
+          <th scope="row">実入力上限</th>
+          <td>225,280 token</td>
+        </tr>
+        <tr>
+          <th scope="row">出力予約</th>
+          <td>32,768 token</td>
+        </tr>
+        <tr>
+          <th scope="row">安全余白</th>
+          <td>4,096 token</td>
+        </tr>
+        <tr>
+          <th scope="row">同時実行数</th>
+          <td>1 request</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        225,280は262,144から32,768と4,096を引いた値である。Managed Contextのsource上限、
+        materialization、永続化方式、容量拡張の保証はこの通常推論契約に含めず、別gateで扱う。
+      </p>
+    </aside>
+  </section>
+
+  <section id="kv-retirement">
+    <h2>永続KV snapshot経路の廃止</h2>
+    <p>
+      timeoutを起こした専用Providerをroutingから外すだけではなく、snapshot store、slot
+      save／restore、専用 runtimeとrelease、disk
+      quota、systemd書込許可、installerのdirectory作成、conformance scriptを削除する。 Managed
+      Contextは<code>source-rebuild</code>だけを維持し、source本文を検証してrequestへ挿入する。
+      詳細契約は<a href="./managed-context-source-rebuild.html"
+        >Managed Context source rebuild契約</a
+      >に定める。
+    </p>
+  </section>
+
+  <section id="qwen-tts-alias">
+    <h2>Qwen TTS公開名</h2>
+    <p>
+      公開名<code>qwen3-tts-expressive</code>は、upstreamのOpenAI互換routerとoptimized
+      backendの
+      両方の固定<code>MODEL_MAPPING</code>で受理し、内部の<code>qwen3-tts</code>および
+      <code>0.6B-CustomVoice</code>へ解決する。YAMLのmodel keyだけに依存しない。
+      配備時は固定upstream revisionへ<code>apps/qwen-tts/rocm-gfx1151.patch</code>を適用し、
+      <code>config.production.yaml</code>を設置してからserviceを起動する。
+    </p>
+  </section>
+
+  <section id="audio-contract">
+    <h2>音声契約</h2>
+    <ul>
+      <li><code>GET /v1/audio/voices?model=...</code>は通常Bearer、bodyなしで解決する。</li>
+      <li>WAVは<code>audio/wav</code>を返す。</li>
+      <li>PCMは<code>audio/pcm;rate=24000;channels=1;format=s16le</code>を返す。</li>
+      <li>PCM bodyは空でなく、byte数が2の倍数である。</li>
+      <li>
+        <code>X-Audio-Sample-Rate: 24000</code
+        >と<code>X-Audio-Sample-Format: s16le</code>を返す。
+      </li>
+    </ul>
+  </section>
+
+  <section id="live-acceptance">
+    <h2>配備後の実機受入</h2>
+    <ol>
+      <li>
+        <code>/health</code>のrelease
+        commitが配備対象commitと一致することを確認する。
+      </li>
+      <li>
+        <code>/v1/models</code
+        >に<code>qwen3.8</code>があり、<code>qwen3.8-kv-mem</code>がないことを確認する。
+      </li>
+      <li>通常Qwen 3.8で長文入力、二回のtool callとtool結果返却、その後の終端応答を完走する。</li>
+      <li>
+        VOICEVOXとQwen TTSのそれぞれでbodyなしvoice一覧、WAV、24 kHz mono s16le PCMを確認する。
+      </li>
+      <li>
+        <code>tts-expressive</code>のAgent
+        Connectionがreadyになり、claimしたProviderでも同じ検査を行う。
+      </li>
+    </ol>
+    <pre><code>LARM_EXPECTED_RELEASE_COMMIT="$(git rev-parse HEAD)" \
+LARM_HTTP_MODEL=qwen3.8 \
+LARM_HTTP_SMOKE_AUDIO=0 \
+LARM_HTTP_SMOKE_TOOL_ROUND_TRIP=1 \
+LARM_HTTP_LONG_INPUT_TOKENS=225000 \
+bun run smoke:http-provider-live
+
+LARM_EXPECTED_RELEASE_COMMIT="$(git rev-parse HEAD)" \
+LARM_HTTP_MODEL=qwen3.8 \
+LARM_HTTP_TTS_MODEL=voicevox-core \
+LARM_HTTP_TTS_VOICE=Kasukabe_Tsumugi \
+LARM_HTTP_SMOKE_TOOL_ROUND_TRIP=0 \
+bun run smoke:http-provider-live
+
+LARM_EXPECTED_RELEASE_COMMIT="$(git rev-parse HEAD)" \
+LARM_HTTP_MODEL=qwen3.8 \
+LARM_HTTP_TTS_MODEL=qwen3-tts-expressive \
+LARM_HTTP_TTS_VOICE=Ono_Anna \
+LARM_HTTP_SMOKE_TOOL_ROUND_TRIP=0 \
+bun run smoke:http-provider-live</code></pre>
+    <p>
+      各commandのJSON結果をrepository外のcanary evidence directoryへ保存する。ソースのunit
+      test合格だけで 実機合格へ変更せず、release identity、音声header、body検査、tool
+      round-tripの結果が揃った時点で合格とする。
+    </p>
+  </section>
+
+  <section id="status">
+    <h2>現在の状態</h2>
+    <table>
+      <caption>
+        ソース修正と配備後実機検証の状態
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">区分</th>
+          <th scope="col">状態</th>
+          <th scope="col">根拠</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ソース</th>
+          <td>実装済み、検査中</td>
+          <td>routing、upstream alias、voice GET、PCM検証、live smoke</td>
+        </tr>
+        <tr>
+          <th scope="row">配備後実機</th>
+          <td>未実施</td>
+          <td>新release commitを配備した実機証跡が必要</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+</article>

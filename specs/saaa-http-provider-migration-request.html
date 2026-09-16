@@ -113,18 +113,15 @@
       >を利用し、通常会話は<code>stream: true</code>とします。JSONを使う既存の非stream処理も、同じmodel・認証・error処理で維持してください。
     </p>
     <aside>
-      <h3>Qwen 3.8のKV:mem選択</h3>
+      <h3>Qwen 3.8の選択</h3>
       <p>
         SAAAからQwen 3.8を利用する設定では、公開model
-        <code>qwen3.8-kv-mem</code>を明示指定します。このmodelだけがon-demandの
-        <code>qwen-worker-quality</code
-        >へ解決され、暫定名称<dfn>KV:mem</dfn>のmanaged-context
-        snapshot経路を利用できます。通常の<code>coding-default</code>へfallbackして成功扱いにはしません。
+        <code>qwen3.8</code>を明示指定します。このmodelはresident
+        <code>qwen-general</code>へ解決され、他workerへfallbackしません。
       </p>
       <p>
-        <code>KV:mem</code>は選択可能な実験経路の名称であり、400
-        GiB級の全dataをRAMへ常駐させる意味ではありません。
-        ContextStillは<code>contextstill-background</code>／<code>qwen-agent-worker</code>を維持し、従来KVを利用します。
+        Managed Contextを使う場合もmaterializationはsource rebuildだけです。
+        ContextStillは<code>contextstill-background</code>／<code>qwen-agent-worker</code>を維持します。
       </p>
     </aside>
     <p>

@@ -317,6 +317,6 @@ test("Qwen TTS service configuration consumes the manifest-managed snapshot targ
     .toContain(artifact.id);
   const daemonUnit = readFileSync(join(root, "deploy/local-node/systemd/larm-daemon.service"), "utf8");
   expect(daemonUnit)
-    .toContain("ReadWritePaths=/srv/ai/cache /srv/ai/context-snapshots /srv/ai/context-sources /srv/ai/logs /srv/ai/models /var/lib/larm");
+    .toContain("ReadWritePaths=/srv/ai/cache /srv/ai/context-sources /srv/ai/logs /srv/ai/models /var/lib/larm");
   expect(daemonUnit).toContain("Environment=LARM_CONNECTION_READY_TIMEOUT_SECONDS=300");
 });

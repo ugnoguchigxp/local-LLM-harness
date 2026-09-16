@@ -19,14 +19,14 @@ agentProfiles:
         route: llm-default
         publicModel: coding-default
         readiness: llm-inference
-  saaa-qwen38-kv-mem:
-    description: SAAA voice and decision preset with Qwen 3.8 27B KV:mem
+  saaa-qwen38:
+    description: SAAA voice and decision preset with the resident Qwen 3.8 27B provider
     schedulingPriority: 3000
     providers:
       - name: llm
         capability: llm.coding
-        route: llm-saaa-kv-mem
-        publicModel: qwen3.8-kv-mem
+        route: llm-saaa-qwen38
+        publicModel: qwen3.8
         readiness: llm-inference
       - name: decision-default
         capability: llm.decision.default

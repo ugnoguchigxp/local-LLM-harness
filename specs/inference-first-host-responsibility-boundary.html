@@ -680,11 +680,8 @@ Inference runtimes
       </tbody>
     </table>
     <p>
-      disk snapshotは推論高速化の手段であって必須機能ではない。現行既定の512 GiB quotaと最大5
-      GiB単位のwriteは、 inference-first
-      profileでは既定無効とする。追加disk購入を前提にせず、既存storageで利用する場合も I/O rate
-      limit、foreground activity gate、 index-based quota accountingを受入条件にし、request
-      pathや定期loopで全directoryを走査しない。
+      永続KV snapshotは廃止し、inference-first profileもsource rebuildだけを使用する。
+      追加disk購入やKV cache用storage予約を前提にしない。
     </p>
   </section>
 
@@ -784,7 +781,8 @@ Inference runtimes
         <tr>
           <th scope="row">深いContext推論</th>
           <td>
-            <code>qwen3.8-kv-mem</code>でquality workerとManaged Contextを明示選択
+            <code>qwen3.8</code>でresident Qwenとsource-rebuild Managed
+            Contextを明示選択
           </td>
           <td>resident LLMとのcross-runtime実行排他は未実装</td>
         </tr>
@@ -833,8 +831,8 @@ Inference runtimes
       <li>
         通常のSAAA会話はresident
         <code>coding-default</code>、ASR一系統、VOICEVOXを使用する。
-        <code>saaa-qwen38-kv-mem</code
-        >を全sessionの既定にせず、長いContextや複数passで再利用効果がある場合だけ選ぶ。
+        <code>saaa-qwen38</code>を使用し、長いContextが必要な場合はsource-rebuild
+        Viewを明示する。
       </li>
       <li>
         SAAAの背景jobは<code>GET /v1/activity</code>がidleのときだけ一件開始し、短い出力上限を設定する。

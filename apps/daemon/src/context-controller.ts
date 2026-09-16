@@ -20,11 +20,9 @@ import {
   type RuntimeReleaseDefinition,
 } from "@larm/core";
 import type {
-  LocalContextSnapshotStore,
   ContextSourceProvider,
   ContextTokenizerIdentity,
   LocalContextMetadataStore,
-  LlamaContextSlotAdapter,
 } from "@larm/backends";
 import type { ControlEvent } from "./controller";
 
@@ -67,8 +65,6 @@ export type ContextRuntimeStatus = {
     sourceTokensLimit: number;
     sourceBytesUsed: number;
     sourceBytesLimit: number;
-    ramCacheMaxBytes: number;
-    nvmeCacheMaxBytes: number;
     filesystemFreeFloorBytes: number;
   };
 };
@@ -87,10 +83,6 @@ type ContextControllerOptions = {
       signal?: AbortSignal,
     ): Promise<number>;
   };
-  snapshotEnabled?: boolean;
-  snapshotStore?: LocalContextSnapshotStore;
-  slotAdapter?: Pick<LlamaContextSlotAdapter, "save" | "restore">;
-  snapshotMaxWriteBytes?: number;
   getState: () => ClusterState;
   getAllocation: (id: string) => Allocation | undefined;
   getActiveRelease: (runtime: string) => string | undefined;
@@ -159,20 +151,6 @@ export class ContextController {
   private readonly views = new Map<string, ActiveContextView>();
   private readonly operations = new Map<string, ContextOperation>();
   private readonly materializingViews = new Set<string>();
-  private readonly snapshotSaveCandidates = new Map<string, {
-    endpoint: string;
-    slotId: number;
-    principalScope: string;
-    runtime: string;
-    release: string;
-    compatibilityKey: string;
-    viewDigest: string;
-    requestDigest: string;
-    viewId: string;
-    attemptId?: string;
-    sourceDigests: string[];
-    dataEpoch: number;
-  }>();
   private readonly runtimeEpochs = new Map<string, { fingerprint: string; epoch: number }>();
   private readonly runtimeProbes = new Map<string, {
     release: string;
@@ -299,8 +277,6 @@ export class ContextController {
           sourceTokensLimit: runtime.context.sourceTokenLimit,
           sourceBytesUsed: descriptors.reduce((total, item) => total + item.byteCount, 0),
           sourceBytesLimit: this.options.sourceMaxTotalBytes,
-          ramCacheMaxBytes: runtime.context.ramCacheMaxBytes,
-          nvmeCacheMaxBytes: runtime.context.nvmeCacheMaxBytes,
           filesystemFreeFloorBytes: runtime.context.filesystemFreeFloorBytes,
         },
       };
@@ -524,13 +500,6 @@ export class ContextController {
           && view.orderedItems.some((item) => item.contextId === id)
           && view.state === "ready"
         );
-        if (this.options.snapshotStore) {
-          await this.options.snapshotStore.deleteByDependency({
-            principalScope: this.options.snapshotStore.principalScope(principal),
-            viewIds: affectedViews.map((view) => view.id),
-            sourceDigests: removed.map(([, descriptor]) => descriptor.sourceDigest),
-          });
-        }
         for (const [key] of removed) this.descriptors.delete(key);
         try {
           await this.persist();
@@ -544,7 +513,6 @@ export class ContextController {
         }
         for (const view of affectedViews) {
           view.state = "invalid";
-          this.snapshotSaveCandidates.delete(view.id);
         }
         this.emit("context_deleted", { result: "deleted" }, deleted);
       }
@@ -984,14 +952,6 @@ export class ContextController {
           }
         }
       }
-      if (this.options.snapshotStore) {
-        await this.options.snapshotStore.deleteByDependency({
-          principalScope: this.options.snapshotStore.principalScope(input.principal),
-          viewIds,
-          attemptIds: input.attemptIds,
-          sourceDigests: [...sourceDigests],
-        });
-      }
       if (removed.length > 0) {
         for (const { key } of removed) this.descriptors.delete(key);
         try {
@@ -1004,7 +964,6 @@ export class ContextController {
       for (const view of affectedViews) {
         view.state = "invalid";
         this.materializingViews.delete(view.id);
-        this.snapshotSaveCandidates.delete(view.id);
         this.updateOperation(view.operationId, "cancelled", "personal_state_forgotten");
       }
       return plan;
@@ -1072,10 +1031,6 @@ export class ContextController {
         "chat request does not match the request measured for this view",
       );
     }
-    const snapshotViewDigest = view.requestDigest
-      ? view.viewDigest
-      : bindContextViewDigest(view.viewDigest, requestDigest);
-
     this.materializingViews.add(view.id);
     this.updateOperation(view.operationId, "running");
     const deadlineSignal = AbortSignal.timeout(Math.max(1, Date.parse(view.expiresAt) - this.now()));
@@ -1083,50 +1038,6 @@ export class ContextController {
       ? AbortSignal.any([input.signal, deadlineSignal])
       : deadlineSignal;
     const runtime = this.options.registry.runtimes.find((candidate) => candidate.id === input.runtime);
-    const release = this.releases.get(input.release);
-    const managedPolicy = runtime?.context?.class === "managed-context" ? runtime.context : undefined;
-    const snapshotEligible = this.options.snapshotEnabled === true
-      && this.options.snapshotStore !== undefined
-      && this.options.slotAdapter !== undefined
-      && managedPolicy !== undefined
-      && managedPolicy.nvmeCacheMaxBytes > 0
-      && managedPolicy.allowedModes.includes("session-snapshot")
-      && release?.contextCertification?.verifiedModes.includes("session-snapshot") === true;
-    let snapshotHit = false;
-    if (snapshotEligible) {
-      const principalScope = this.options.snapshotStore!.principalScope(input.principal);
-      const verified = await this.options.snapshotStore!.findAndVerify({
-        principalScope,
-        runtime: input.runtime,
-        release: input.release,
-        compatibilityKey: view.compatibilityKey,
-        viewDigest: snapshotViewDigest,
-        maxBytes: managedPolicy!.nvmeCacheMaxBytes,
-      }, materializationSignal).catch(() => ({ hit: false as const, reason: "verification_failed" }));
-      if (verified.hit) {
-        try {
-          await this.options.slotAdapter!.restore(
-            runtime!.deployment.endpoint,
-            0,
-            verified.filename,
-            materializationSignal,
-          );
-          snapshotHit = true;
-          this.emit("context_cache_hits", { runtime: input.runtime, mode: "session-snapshot" });
-          this.emit("context_snapshot_verification_seconds", {
-            runtime: input.runtime,
-            cached: verified.cached ? "true" : "false",
-          }, verified.verificationMs / 1_000);
-        } catch {
-          await this.options.snapshotStore!.invalidate(verified.manifest);
-          this.emit("context_cache_misses", { runtime: input.runtime, reason: "snapshot_restore_failed" });
-        }
-      } else {
-        this.emit("context_cache_misses", { runtime: input.runtime, reason: verified.reason });
-      }
-    } else {
-      this.emit("context_cache_misses", { runtime: input.runtime, reason: "snapshot_not_certified" });
-    }
     const blocks: string[] = [];
     let totalBytes = input.requestBody.byteLength;
     for (const item of view.orderedItems) {
@@ -1235,10 +1146,6 @@ export class ContextController {
       this.updateOperation(view.operationId, "failed", "context_view_stale");
       throw new ContextControllerError(409, "context_view_stale", "context runtime no longer exists");
     }
-    if (snapshotEligible) {
-      request.id_slot = 0;
-      request.cache_prompt = true;
-    }
     const outputFields = [request.max_tokens, request.max_completion_tokens]
       .filter((value) => value !== undefined);
     if (outputFields.some((value) => !Number.isSafeInteger(value) || (value as number) < 1)) {
@@ -1325,82 +1232,18 @@ export class ContextController {
     view.state = "consumed";
     this.materializingViews.delete(view.id);
     const operation = this.operations.get(view.operationId);
-    if (operation) operation.mode = snapshotHit ? "session-snapshot" : "source-rebuild";
+    if (operation) operation.mode = "source-rebuild";
     this.updateOperation(
       view.operationId,
       "succeeded",
-      snapshotHit ? "snapshot_restored" : "source_rebuild_materialized",
+      "source_rebuild_materialized",
     );
-    if (snapshotEligible && !snapshotHit) {
-      this.snapshotSaveCandidates.set(view.id, {
-        endpoint: runtime.deployment.endpoint,
-        slotId: 0,
-        principalScope: this.options.snapshotStore!.principalScope(input.principal),
-        runtime: input.runtime,
-        release: input.release,
-        compatibilityKey: view.compatibilityKey,
-        viewDigest: snapshotViewDigest,
-        requestDigest,
-        viewId: view.id,
-        ...(input.attemptId ? { attemptId: input.attemptId } : {}),
-        sourceDigests: view.orderedItems.map((item) => item.sourceDigest),
-        dataEpoch: view.dataEpoch ?? 0,
-      });
-    }
     this.emit("context_prefill_tokens", { runtime: input.runtime, source: "active_view" }, actualInputTokens);
     this.emit("context_view_consumed", {
       runtime: input.runtime,
-      mode: snapshotHit ? "session-snapshot" : "source-rebuild",
+      mode: "source-rebuild",
     });
     return prepared;
-  }
-
-  async finishChat(viewId: string, succeeded: boolean): Promise<void> {
-    await this.serialized(async () => {
-      const candidate = this.snapshotSaveCandidates.get(viewId);
-      this.snapshotSaveCandidates.delete(viewId);
-      if (!candidate || !succeeded || !this.options.snapshotStore || !this.options.slotAdapter) return;
-      const pending = this.options.snapshotStore.pendingFilename();
-      const signal = AbortSignal.timeout(600_000);
-      const started = performance.now();
-      try {
-        await this.options.snapshotStore.preflight(
-          this.options.snapshotMaxWriteBytes ?? 5 * 1024 * 1024 * 1024,
-          candidate.principalScope,
-        );
-        const saved = await this.options.slotAdapter.save(
-          candidate.endpoint,
-          candidate.slotId,
-          pending,
-          signal,
-        );
-        const manifest = await this.options.snapshotStore.commitPending(pending, {
-          principalScope: candidate.principalScope,
-          runtime: candidate.runtime,
-          release: candidate.release,
-          compatibilityKey: candidate.compatibilityKey,
-          viewDigest: candidate.viewDigest,
-          tokenCount: saved.nTokens,
-          dependencies: {
-            requestDigest: candidate.requestDigest,
-            viewId: candidate.viewId,
-            ...(candidate.attemptId ? { attemptId: candidate.attemptId } : {}),
-            sourceDigests: candidate.sourceDigests,
-            dataEpoch: candidate.dataEpoch,
-          },
-        }, signal);
-        if (manifest.snapshotBytes !== saved.nBytes) {
-          throw new Error("slot save byte count does not match committed snapshot");
-        }
-        this.emit("context_snapshot_saved", { runtime: candidate.runtime, mode: "session-snapshot" });
-        this.emit("context_snapshot_save_seconds", { runtime: candidate.runtime }, (performance.now() - started) / 1_000);
-        this.emit("context_cache_bytes", { runtime: candidate.runtime, tier: "nvme" }, manifest.snapshotBytes);
-      } catch {
-        await this.options.snapshotStore.discardPending(pending);
-        this.emit("context_snapshot_save_failed", { runtime: candidate.runtime });
-        this.emit("context_snapshot_save_seconds", { runtime: candidate.runtime, result: "failed" }, (performance.now() - started) / 1_000);
-      }
-    });
   }
 
   getOperation(
@@ -1524,9 +1367,6 @@ export class ContextController {
       draining: this.options.isDraining(),
     });
     const active = derived.state === "ACTIVE" || derived.state === "BUSY";
-    const modes = this.options.snapshotEnabled === true
-      ? derived.modes
-      : derived.modes.filter((mode) => mode !== "session-snapshot");
     const fingerprint = active
       ? `active:${activeRelease ?? "none"}`
       : `inactive:${derived.state}:${activeRelease ?? "none"}`;
@@ -1537,7 +1377,7 @@ export class ContextController {
       runtime: runtimeId,
       ...(activeRelease ? { release: activeRelease } : {}),
       ...derived,
-      modes,
+      modes: derived.modes,
       ...(derived.reason === "context_probe_pending" && probe?.reason
         ? { reason: probe.reason }
         : {}),
@@ -1552,7 +1392,6 @@ export class ContextController {
         view.state = "expired";
         this.updateOperation(view.operationId, "cancelled", "context_view_expired");
         this.materializingViews.delete(id);
-        this.snapshotSaveCandidates.delete(id);
         this.views.delete(id);
       }
     }

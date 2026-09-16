@@ -341,3 +341,80 @@ test("live HTTP Provider smoke rejects speech hallucinated from silence", async 
     },
   })).rejects.toThrow("transcription_non_speech_invalid");
 });
+
+test("live HTTP Provider smoke verifies two tool turns and a long resident request", async () => {
+  let chatRequests = 0;
+  const result = await runHttpProviderLiveSmoke({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "secret",
+    model: "qwen3.8",
+    includeAudio: false,
+    includeToolRoundTrip: true,
+    longInputTokens: 100,
+    fetch: async (input, init) => {
+      const request = input instanceof Request ? new Request(input, init) : new Request(input.toString(), init);
+      const path = new URL(request.url).pathname;
+      if (path === "/health") return Response.json({
+        status: "ok", version: "1", releaseCommit, configRevision, bootEpoch: "epoch-live",
+      });
+      if (path === "/ready") return Response.json({ status: "ready" });
+      if (path === "/v1/models") return Response.json({
+        object: "list",
+        data: [{ id: "qwen3.8", object: "model", created: 0, owned_by: "larm" }],
+      });
+      if (path !== "/v1/chat/completions") return new Response("not found", { status: 404 });
+      chatRequests += 1;
+      const body = await request.json() as Record<string, unknown>;
+      if (body.stream === true) {
+        const event = (choices: unknown[]) => `data: ${JSON.stringify({
+          id: "chatcmpl-stream", object: "chat.completion.chunk", created: 1, model: "qwen3.8", choices,
+        })}\n\n`;
+        return new Response(`${event([{ index: 0, delta: { content: "OK" }, finish_reason: null }])}${event([{ index: 0, delta: {}, finish_reason: "stop" }])}data: [DONE]\n\n`, {
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      const messages = body.messages as Array<Record<string, unknown>>;
+      const toolChoice = body.tool_choice as Record<string, unknown> | string | undefined;
+      const selected = typeof toolChoice === "object"
+        ? ((toolChoice.function as Record<string, unknown> | undefined)?.name as string | undefined)
+        : undefined;
+      if (selected) {
+        return Response.json({
+          id: `chatcmpl-${selected}`,
+          object: "chat.completion",
+          created: 1,
+          model: "qwen3.8",
+          choices: [{
+            index: 0,
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [{ id: `call-${selected}`, type: "function", function: { name: selected, arguments: "{}" } }],
+            },
+            finish_reason: "tool_calls",
+          }],
+          usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 },
+        });
+      }
+      const content = String(messages.at(-1)?.content ?? "");
+      const schema = body.response_format !== undefined;
+      const long = content.includes(" token token token");
+      return Response.json({
+        id: "chatcmpl-text",
+        object: "chat.completion",
+        created: 1,
+        model: "qwen3.8",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: schema ? '{"ok":true}' : "OK" },
+          finish_reason: "stop",
+        }],
+        usage: { prompt_tokens: long ? 101 : 5, completion_tokens: 1, total_tokens: long ? 102 : 6 },
+      });
+    },
+  });
+
+  expect(result.toolRoundTrip).toEqual({ calls: 2, terminalValidated: true });
+  expect(result.longInput).toEqual({ requestedTokens: 100, observedPromptTokens: 101 });
+  expect(chatRequests).toBe(7);
+});

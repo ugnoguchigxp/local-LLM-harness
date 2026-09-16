@@ -69,14 +69,7 @@ export {
   type ContextTokenizerIdentity,
 } from "./context-tokenizer";
 export {
-  ContextSnapshotStoreError,
-  LocalContextSnapshotStore,
-  type SnapshotCommitInput,
-  type SnapshotExpectation,
-} from "./context-snapshot-store";
-export {
   ContextSlotError,
-  LlamaContextSlotAdapter,
   LlamaContextSlotEraseAdapter,
 } from "./context-slot";
 export {

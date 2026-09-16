@@ -136,10 +136,10 @@
         </tr>
         <tr>
           <th scope="row">
-            <a href="./saaa-qwen38-kv-mem-routing.html">SAAA Qwen 3.8 KV:mem Provider選択仕様</a>
+            <a href="./managed-context-source-rebuild.html">Managed Context source rebuild契約</a>
           </th>
-          <td>SAAAだけが明示選択するon-demand snapshot ProviderとContextStill従来KVの分離</td>
-          <td>Repository設定・自動test実装済み。利用者試用待ち</td>
+          <td>永続KV snapshot廃止後のsource検証、View binding、materialization契約</td>
+          <td>Repository実装・自動test完了。local-node配備時に旧snapshot dataを削除する</td>
         </tr>
         <tr>
           <th scope="row">
@@ -172,15 +172,6 @@
         </tr>
         <tr>
           <th scope="row">
-            <a href="./kv-mem-context-injection-alternative.html"
-              >KV:Mem代替：選択的Context注入 実験設計</a
-            >
-          </th>
-          <td>現行snapshot経路の実装分析、Ctx:mem仮説、最小A/B、Go／No-Go条件</td>
-          <td>実験設計。既存source-rebuildを使う比較試験待ち</td>
-        </tr>
-        <tr>
-          <th scope="row">
             <a href="./qwen38-model-and-host-profile.html"
               >Qwen3.8-27B モデル・ホスト共有プロファイル</a
             >
@@ -196,13 +187,6 @@
           </th>
           <td>EfficientThink、Signal、Qwopus、Sharp、NEOの証拠評価と64K A/B契約</td>
           <td>2026-09-12 初期実測済み。常駐runtime未変更</td>
-        </tr>
-        <tr>
-          <th scope="row">
-            <a href="./kv-mem-capacity-expansion.html">KV:mem容量拡張設計</a>
-          </th>
-          <td>512 GiB baselineを維持しながら2–4 TiBを評価する段階計画と速度保護gate</td>
-          <td>計画。容量拡張は未実装、現行既定値への変更なし</td>
         </tr>
         <tr>
           <th scope="row">

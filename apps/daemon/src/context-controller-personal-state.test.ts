@@ -3,11 +3,10 @@ import type { ActiveContextView, ClusterState, ContextDescriptor, Registry } fro
 import type {
   ContextSourceProvider,
   LocalContextMetadataStore,
-  LocalContextSnapshotStore,
 } from "@larm/backends";
 import { ContextController } from "./context-controller";
 
-test("Personal State invalidation retains registry ownership when snapshot deletion fails", async () => {
+test("Personal State invalidation removes registry ownership and durable planned views", async () => {
   const now = "2026-09-16T00:00:00.000Z";
   const descriptor: ContextDescriptor = {
     schemaVersion: 1,
@@ -24,18 +23,10 @@ test("Personal State invalidation retains registry ownership when snapshot delet
     createdAt: now,
     updatedAt: now,
   };
-  let failSnapshotDeletion = true;
   const metadataStore = {
     load: async () => [descriptor],
     save: async () => undefined,
   } as unknown as LocalContextMetadataStore;
-  const snapshotStore = {
-    principalScope: () => "c".repeat(64),
-    deleteByDependency: async () => {
-      if (failSnapshotDeletion) throw new Error("snapshot deletion failed");
-      return { removedEntries: 0, removedBytes: 0 };
-    },
-  } as unknown as LocalContextSnapshotStore;
   const registry: Registry = {
     nodes: [{
       id: "node-1",
@@ -56,7 +47,6 @@ test("Personal State invalidation retains registry ownership when snapshot delet
       identity: async () => { throw new Error("unused"); },
       countChatTokens: async () => { throw new Error("unused"); },
     },
-    snapshotStore,
     getState: () => ({ generatedAt: now } as ClusterState),
     getAllocation: () => undefined,
     getActiveRelease: () => undefined,
@@ -70,12 +60,8 @@ test("Personal State invalidation retains registry ownership when snapshot delet
   });
   await controller.initialize();
 
-  await expect(controller.delete(descriptor.principal, descriptor.id, "delete-failure"))
-    .rejects.toThrow("snapshot deletion failed");
-  expect(controller.list(descriptor.principal).contexts).toHaveLength(1);
-
   let planned = false;
-  await expect(controller.invalidatePersonalState({
+  const invalidated = await controller.invalidatePersonalState({
     principal: descriptor.principal,
     contextIds: [descriptor.id],
     sourceHandles: [],
@@ -83,16 +69,8 @@ test("Personal State invalidation retains registry ownership when snapshot delet
     planned = true;
     expect(plan.descriptors).toEqual([descriptor]);
     expect(controller.list(descriptor.principal).contexts).toHaveLength(1);
-  })).rejects.toThrow("snapshot deletion failed");
-  expect(planned).toBeTrue();
-  expect(controller.list(descriptor.principal).contexts).toHaveLength(1);
-
-  failSnapshotDeletion = false;
-  const invalidated = await controller.invalidatePersonalState({
-    principal: descriptor.principal,
-    contextIds: [descriptor.id],
-    sourceHandles: [],
   });
+  expect(planned).toBeTrue();
   expect(invalidated.descriptors).toEqual([descriptor]);
   expect(controller.list(descriptor.principal).contexts).toHaveLength(0);
 

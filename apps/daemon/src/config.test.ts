@@ -34,11 +34,6 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.contextSourceMaxBytes).toBe(256 * 1024 * 1024);
   expect(config.contextSourceMaxTotalBytes).toBe(512 * 1024 * 1024 * 1024);
   expect(config.contextMaterializedMaxBytes).toBe(64 * 1024 * 1024);
-  expect(config.contextSnapshotEnabled).toBeFalse();
-  expect(config.contextSnapshotRoot).toBe("/srv/ai/context-snapshots");
-  expect(config.contextSnapshotMaxBytes).toBe(512 * 1024 * 1024 * 1024);
-  expect(config.contextSnapshotFreeFloorBytes).toBe(256 * 1024 * 1024 * 1024);
-  expect(config.contextSnapshotMaxWriteBytes).toBe(5 * 1024 * 1024 * 1024);
   expect(config.personalStateEnabled).toBeFalse();
   expect(config.personalStateJournalRoot).toBe("/var/lib/larm/personal-state");
   expect(config.personalStateReceiptTtlMs).toBe(24 * 60 * 60 * 1_000);
@@ -97,12 +92,6 @@ test("daemon configuration rejects invalid numbers", () => {
     .toThrow(/LARM_CONTEXT_MATERIALIZED_MAX_BYTES/);
   expect(() => parseDaemonConfig({ LARM_CONTEXT_SOURCE_MAX_TOTAL_BYTES: "0" }))
     .toThrow(/LARM_CONTEXT_SOURCE_MAX_TOTAL_BYTES/);
-  expect(() => parseDaemonConfig({
-    LARM_CONTEXT_ENABLED: "true",
-    LARM_CONTEXT_SNAPSHOT_ENABLED: "true",
-    LARM_API_TOKEN: "test",
-    LARM_CONTEXT_SNAPSHOT_ROOT: "/srv/ai/context-sources/cache",
-  })).toThrow(/must not overlap/);
 });
 
 test("TLS certificate and key paths are paired and absolute", () => {
@@ -177,8 +166,6 @@ test("managed context requires an API token even on loopback", () => {
     LARM_CONTEXT_ENABLED: "true",
     LARM_API_TOKEN: "api",
   }).contextEnabled).toBeTrue();
-  expect(() => parseDaemonConfig({ LARM_CONTEXT_SNAPSHOT_ENABLED: "true" }))
-    .toThrow(/LARM_CONTEXT_ENABLED/);
   expect(() => parseDaemonConfig({ LARM_PERSONAL_STATE_ENABLED: "true" }))
     .toThrow(/LARM_CONTEXT_ENABLED/);
   expect(() => parseDaemonConfig({

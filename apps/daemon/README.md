@@ -56,11 +56,6 @@ bun run dev
 | `LARM_CONTEXT_METADATA_ROOT` | `/var/lib/larm/contexts` | principal-scoped metadata state |
 | `LARM_CONTEXT_SOURCE_ROOT` | `/srv/ai/context-sources` | attestation済みimmutable source root |
 | `LARM_CONTEXT_SOURCE_MAX_TOTAL_BYTES` | `549755813888` | source全体のhard quota |
-| `LARM_CONTEXT_SNAPSHOT_ENABLED` | `false` | 認定済みsession snapshotだけを許可する独立kill switch |
-| `LARM_CONTEXT_SNAPSHOT_ROOT` | `/srv/ai/context-snapshots` | 0700のCRC32C snapshot cache root |
-| `LARM_CONTEXT_SNAPSHOT_MAX_BYTES` | `549755813888` | snapshot、pending、quarantineを含むhard quota |
-| `LARM_CONTEXT_SNAPSHOT_FREE_FLOOR_BYTES` | `274877906944` | snapshot filesystemのfree floor |
-| `LARM_CONTEXT_SNAPSHOT_MAX_WRITE_BYTES` | `5368709120` | slot save一件の事前予約上限 |
 | `LARM_SHUTDOWN_TIMEOUT_SECONDS` | `330` | operationとrequestのdrain上限 |
 | `LARM_ARTIFACT_MANIFEST` | `deploy/local-node/models.yaml` | artifact allowlist |
 | `LARM_RELEASE_CATALOG` | `deploy/local-node/releases.yaml` | immutable Runtime release catalog |
@@ -177,33 +172,20 @@ curl -sS 'http://127.0.0.1:9810/v1/audio/voices?model=voicevox-core' \
 routeへ解決します。優先度はSAAA 3000、NightWorker 2000、ContextStill 1000です。実行中requestは
 preemptせず、解放後の次枠を高い値から選び、同値はFIFOです。
 
-## KV:mem Provider経路
+## SAAA Qwen 3.8 Provider経路
 
-`KV:mem`はSAAA向けManaged Context実験経路の暫定名称です。公開model
-`qwen3.8-kv-mem`は、明示専用route `llm-saaa-kv-mem`から`qwen-worker-quality`だけへ解決します。
-fallback候補を持たないため、snapshot非対応のResidentやContextStill workerへ黙って切り替わりません。
-通常の`coding-default`はResidentを維持し、ContextStillの`qwen-agent-worker`は
-`qwen-worker-agent`上の従来KVを維持します。
+公開model `qwen3.8`は、明示専用route `llm-saaa-qwen38`からresident `qwen-general`だけへ
+解決します。廃止した永続KV snapshot経路や他workerへのfallbackはありません。
+通常の`coding-default`も同じResidentを維持します。
 
-Model Broker経由の通常Chatはsnapshot対応hostをon-demand起動しますが、Viewなしでは通常推論です。
+Model Broker経由の通常Chatはresident hostで通常推論します。
 Managed Contextをmaterializeするrequestは、明示Allocationと同じprincipalでContext Viewを作成し、Chatへ
 `x-larm-allocation-id`、`x-larm-capability`、`x-larm-context-view-id`を渡します。controllerはViewを
 Allocation、runtime、release、model binding、TTL、lease epochへbindし、一回だけconsumeします。
 
 `GET /v1/context-status`はruntimeごとの`ACTIVE`、`STANDBY`、`DISABLED`、認定mode、quotaと理由を返します。
-snapshot利用には次の条件がすべて必要です。
-
-- `LARM_CONTEXT_ENABLED=true`
-- `LARM_CONTEXT_SNAPSHOT_ENABLED=true`
-- runtimeがManaged Context opt-in済み
-- active releaseが`session-snapshot`認定済み
-- 対象runtimeが`HOT`または`BUSY`
-- View、principal、Allocation、release identityが一致
-
-snapshotは64 MiB CRC32C envelope、temporary write、fsync、atomic rename、lazy verificationで管理します。
-破損、identity drift、quota不足ではrestoreせず隔離し、source rebuildへ戻します。任意KV blockの連結、短いpromptへの
-巻戻し、暗号学的改ざん耐性、background prewarmは認定範囲外です。詳細は
-[`../../specs/saaa-qwen38-kv-mem-routing.html`](../../specs/saaa-qwen38-kv-mem-routing.html)を参照してください。
+認定modeは`source-rebuild`だけです。Context sourceを検証してrequestへ挿入し、永続KV cacheは作成しません。詳細は
+[`../../specs/saaa-provider-runtime-remediation.html`](../../specs/saaa-provider-runtime-remediation.html)を参照してください。
 
 ## 明示Allocation Gateway（互換・高度用途）
 

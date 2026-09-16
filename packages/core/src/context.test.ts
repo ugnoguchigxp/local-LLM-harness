@@ -16,14 +16,9 @@ const policy: ManagedContextPolicy = managedContextPolicySchema.parse({
   class: "managed-context",
   activation: "when-hosted",
   sourceTokenLimit: 20_000_000,
-  materializedRetentionTargetTokens: 20_000_000,
   outputReserveTokens: 100,
   safetyMarginTokens: 20,
-  ramCacheMaxBytes: 1024,
-  nvmeCacheMaxBytes: 2048,
   filesystemFreeFloorBytes: 512,
-  cacheHighWatermark: 0.9,
-  cacheLowWatermark: 0.8,
   operationTimeoutMs: 1000,
   allowedModes: ["source-rebuild"],
 });
@@ -59,18 +54,10 @@ function descriptor(id: string, tokenCount: number): ContextDescriptor {
 }
 
 describe("managed context policy", () => {
-  test("requires source rebuild and ordered watermarks", () => {
+  test("requires source rebuild", () => {
     expect(managedContextPolicySchema.safeParse({
       ...policy,
       allowedModes: ["session-snapshot"],
-      cacheLowWatermark: 0.95,
-    }).success).toBe(false);
-  });
-
-  test("requires state identity for persisted modes", () => {
-    expect(contextCertificationSchema.safeParse({
-      ...certification,
-      verifiedModes: ["source-rebuild", "session-snapshot"],
     }).success).toBe(false);
   });
 });

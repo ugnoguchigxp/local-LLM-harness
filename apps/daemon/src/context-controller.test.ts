@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,9 +10,7 @@ import {
 } from "@larm/core";
 import {
   LocalContextMetadataStore,
-  LocalContextSnapshotStore,
   LocalContextSourceStore,
-  LlamaContextSlotAdapter,
 } from "@larm/backends";
 import { ContextController } from "./context-controller";
 
@@ -29,14 +27,9 @@ const runtime: Registry["runtimes"][number] = {
     class: "managed-context",
     activation: "when-hosted",
     sourceTokenLimit: 20_000_000,
-    materializedRetentionTargetTokens: 20_000_000,
     outputReserveTokens: 100,
     safetyMarginTokens: 20,
-    ramCacheMaxBytes: 0,
-    nvmeCacheMaxBytes: 512 * 1024 ** 3,
     filesystemFreeFloorBytes: 256 * 1024 ** 3,
-    cacheHighWatermark: 0.9,
-    cacheLowWatermark: 0.8,
     operationTimeoutMs: 600_000,
     allowedModes: ["source-rebuild"],
   },
@@ -88,8 +81,6 @@ async function fixture(options: {
   chatTokens?: number;
   identityMatches?: boolean;
   countChatTokens?: (signal?: AbortSignal) => Promise<number>;
-  snapshot?: boolean;
-  restoreFails?: boolean;
 } = {}) {
   const parent = await mkdtemp(join(tmpdir(), "larm-context-controller-"));
   const source = new LocalContextSourceStore(join(parent, "sources"));
@@ -105,15 +96,6 @@ async function fixture(options: {
   let status: ClusterState["runtimes"][number]["status"] = "HOT";
   const fixtureRuntime = structuredClone(runtime);
   const fixtureRelease = structuredClone(release);
-  if (options.snapshot) {
-    if (fixtureRuntime.context?.class === "managed-context") {
-      fixtureRuntime.context.allowedModes.push("session-snapshot");
-    }
-    fixtureRelease.contextCertification!.verifiedModes.push("session-snapshot");
-    fixtureRelease.contextCertification!.stateFormat = "llama-slot-v1";
-    fixtureRelease.contextCertification!.cacheTypeK = "q4_0";
-    fixtureRelease.contextCertification!.cacheTypeV = "q4_0";
-  }
   const fixtureRegistry = { ...registry, runtimes: [fixtureRuntime] };
   const state = (): ClusterState => ({
     generatedAt: new Date(now).toISOString(),
@@ -158,23 +140,6 @@ async function fixture(options: {
     createdAt: new Date(now).toISOString(),
     expiresAt: new Date(now + 3_600_000).toISOString(),
   };
-  const snapshotStore = options.snapshot
-    ? new LocalContextSnapshotStore(join(parent, "snapshots"), { maxBytes: 1024 * 1024, freeFloorBytes: 1 })
-    : undefined;
-  let restoreCalls = 0;
-  let restoreFails = options.restoreFails ?? false;
-  const slotAdapter = options.snapshot ? {
-    save: async (_endpoint: string, _slot: number, filename: string) => {
-      const content = "slot-state";
-      await writeFile(join(snapshotStore!.root, filename), content, { mode: 0o600 });
-      return { nTokens: 30, nBytes: Buffer.byteLength(content) };
-    },
-    restore: async () => {
-      restoreCalls += 1;
-      if (restoreFails) throw new Error("injected restore failure");
-      return { nTokens: 30, nBytes: 10 };
-    },
-  } as LlamaContextSlotAdapter : undefined;
   let randomSequence = 0;
   const controller = new ContextController({
     enabled: true,
@@ -197,10 +162,6 @@ async function fixture(options: {
     },
     getState: state,
     getAllocation: (id) => id === allocation.id ? allocation : undefined,
-    snapshotEnabled: options.snapshot,
-    snapshotStore,
-    slotAdapter,
-    snapshotMaxWriteBytes: 1024,
     getActiveRelease: () => fixtureRelease.id,
     isDraining: () => false,
     stateMaxAgeMs: 10_000,
@@ -222,8 +183,6 @@ async function fixture(options: {
     allocation,
     runtime: fixtureRuntime,
     release: fixtureRelease,
-    restoreCalls: () => restoreCalls,
-    setRestoreFails: (value: boolean) => { restoreFails = value; },
     setStatus: (value: typeof status) => { status = value; },
     advance: (milliseconds: number) => { now += milliseconds; },
   };
@@ -349,75 +308,6 @@ test("registered source is planned, materialized once, and bound to the lifecycl
     release: release.id,
     requestBody: body,
   })).rejects.toMatchObject({ code: "context_view_consumed" });
-});
-
-test("certified CRC32C snapshot is saved after a source rebuild and restored on the next matching view", async () => {
-  const value = await fixture({ snapshot: true });
-  await value.controller.register({
-    id: "ctx-a",
-    version: "v1",
-    sourceHandle: "source-a",
-    sourceDigest: value.provisioned.digest,
-    classification: "internal",
-    byteCount: value.provisioned.bytes,
-    tokenCount: 20,
-    tokenizerDigest,
-  }, value.principal, "register-snapshot");
-  const request = {
-    allocationId: value.allocation.id,
-    runtime: value.runtime.id,
-    baseInputTokens: 10,
-    maxInputTokens: 800,
-    deadline: "2026-09-09T00:05:00.000Z",
-    canonicalizationVersion: "context-view-v1" as const,
-    items: [{ contextId: "ctx-a", version: "v1", required: true, utility: 1 }],
-  };
-  const body = new TextEncoder().encode(JSON.stringify({
-    model: "test",
-    messages: [{ role: "user", content: "answer" }],
-  }));
-  const first = await value.controller.createView(request, value.principal, "view-snapshot-1");
-  const firstPrepared = JSON.parse(new TextDecoder().decode(await value.controller.prepareChatRequest({
-    viewId: first.view.id,
-    principal: value.principal,
-    allocationId: value.allocation.id,
-    runtime: value.runtime.id,
-    release: value.release.id,
-    requestBody: body,
-  })));
-  expect(firstPrepared).toMatchObject({ id_slot: 0, cache_prompt: true });
-  await value.controller.finishChat(first.view.id, true);
-
-  const second = await value.controller.createView(request, value.principal, "view-snapshot-2");
-  await value.controller.prepareChatRequest({
-    viewId: second.view.id,
-    principal: value.principal,
-    allocationId: value.allocation.id,
-    runtime: value.runtime.id,
-    release: value.release.id,
-    requestBody: body,
-  });
-  expect(value.restoreCalls()).toBe(1);
-  expect(value.controller.getOperation(value.principal, second.view.operationId)).toMatchObject({
-    mode: "session-snapshot",
-    state: "succeeded",
-    outcome: "snapshot_restored",
-  });
-
-  value.setRestoreFails(true);
-  const third = await value.controller.createView(request, value.principal, "view-snapshot-3");
-  await value.controller.prepareChatRequest({
-    viewId: third.view.id,
-    principal: value.principal,
-    allocationId: value.allocation.id,
-    runtime: value.runtime.id,
-    release: value.release.id,
-    requestBody: body,
-  });
-  expect(value.controller.getOperation(value.principal, third.view.operationId)).toMatchObject({
-    mode: "source-rebuild",
-    outcome: "source_rebuild_materialized",
-  });
 });
 
 test("registration rejects caller-claimed token counts and final chat is canonically recounted", async () => {

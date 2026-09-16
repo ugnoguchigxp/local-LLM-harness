@@ -1,37 +1,30 @@
 import { expect, test } from "bun:test";
-import { LlamaContextSlotAdapter } from "./context-slot";
+import { LlamaContextSlotEraseAdapter } from "./context-slot";
 
-test("llama slot adapter validates save and restore counters", async () => {
+test("llama slot erase adapter clears the live runtime slot", async () => {
   const originalFetch = globalThis.fetch;
-  const requests: string[] = [];
-  globalThis.fetch = (async (input, init) => {
-    requests.push(`${init?.method} ${input}`);
-    const action = new URL(input.toString()).searchParams.get("action");
-    return Response.json(action === "save"
-      ? { n_saved: 123, n_written: 456 }
-      : { n_restored: 123, n_read: 456 });
-  }) as typeof fetch;
+  let request: { url: string; method?: string } | undefined;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    request = { url: input.toString(), method: init?.method };
+    return new Response(null, { status: 204 });
+  }) as unknown as typeof fetch;
   try {
-    const adapter = new LlamaContextSlotAdapter();
-    expect(await adapter.save("http://127.0.0.1:59001", 0, "pending-a.bin"))
-      .toEqual({ nTokens: 123, nBytes: 456 });
-    expect(await adapter.restore("http://127.0.0.1:59001", 0, "snapshot-a.bin"))
-      .toEqual({ nTokens: 123, nBytes: 456 });
-    expect(requests).toEqual([
-      "POST http://127.0.0.1:59001/slots/0?action=save",
-      "POST http://127.0.0.1:59001/slots/0?action=restore",
-    ]);
+    await new LlamaContextSlotEraseAdapter().erase("http://127.0.0.1:59001", 0);
+    expect(request).toEqual({
+      url: "http://127.0.0.1:59001/slots/0?action=erase",
+      method: "POST",
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("llama slot adapter fails closed on invalid responses", async () => {
+test("llama slot erase adapter fails closed when the runtime rejects cleanup", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async () => Response.json({ n_saved: 0, n_written: 0 })) as unknown as typeof fetch;
+  globalThis.fetch = (async () => new Response(null, { status: 503 })) as unknown as typeof fetch;
   try {
-    await expect(new LlamaContextSlotAdapter().save("http://127.0.0.1:59001", 0, "pending-a.bin"))
-      .rejects.toMatchObject({ code: "slot_response_invalid" });
+    await expect(new LlamaContextSlotEraseAdapter().erase("http://127.0.0.1:59001", 0))
+      .rejects.toMatchObject({ code: "slot_unavailable" });
   } finally {
     globalThis.fetch = originalFetch;
   }

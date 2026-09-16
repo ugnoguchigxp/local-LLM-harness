@@ -71,7 +71,7 @@ LARM は、GPU ドライバ、推論エンジン、モデルのインストー�
 | Allocation | `POST /v1/allocations`、`POST /v1/allocations/:id/renew`、`DELETE /v1/allocations/:id` |
 | モデル一覧 | `GET /v1/models` |
 | LLM | JSON／HTTP SSE: `POST /v1/chat/completions` |
-| KV:mem | `GET /v1/context-status`、`POST /v1/contexts`、`POST /v1/context-views`、`GET /v1/context-operations/:id` |
+| Managed Context | `GET /v1/context-status`、`POST /v1/contexts`、`POST /v1/context-views`、`GET /v1/context-operations/:id` |
 | 音声 | `POST /v1/audio/transcriptions`、`POST /v1/audio/speech`、`GET /v1/audio/voices` |
 | Embedding | `GET /v3/agent-profiles`で契約を発見し、Agent Connection claim後に`POST /v1/embed` |
 | Agent 接続 | `/v1/agent-profiles`、`/v2/agent-profiles`、`/v3/agent-profiles`、`/v1/agent-connections` |
@@ -163,61 +163,40 @@ LARM_MODEL=coding-default bun quickstart.ts
 
 Model Brokerが内部Allocationの取得・固定・解放を行います。明示Allocationは管理・高度用途にだけ残します。LLM全文を待たず句単位でTTSを開始する音声例は [`examples/voice-client.ts`](examples/voice-client.ts) にあります。
 
-## KV:mem（実験機能）
+## Qwen 3.8通常ProviderとManaged Context
 
-`KV:mem`は、SAAAがQwen 3.8の大規模source集合から必要なContext Viewを選び、認定済みProviderの
-KV snapshotを再利用する経路の暫定名称です。20M tokenを一つのattention windowまたはRAMへ常駐させる
-機能ではありません。sourceとして最大20,000,000 tokenを保持し、一回のViewではQwen 3.8の実際の
-context上限からoutput reserveとsafety marginを引いた範囲だけをmaterializeします。
+永続KV snapshot方式は実機でtool結果後の再要求が`503 model_loading_timeout`になることを確認したため廃止しました。
+専用公開model、Agent Profile、route、runtime、release、snapshot storeは存在しません。SAAAは通常のresident
+Qwen 3.8を使用し、Managed Contextが必要な場合もsource本文をrequestへ再構築する方式だけを使用します。
 
 | 用途 | 公開model | 内部route / runtime | KV方式 |
 | --- | --- | --- | --- |
-| SAAA Qwen 3.8 KV:mem | `qwen3.8-kv-mem` | `llm-saaa-kv-mem` / `qwen-worker-quality` | source rebuild＋認定済みsession snapshot |
+| SAAA Qwen 3.8 | `qwen3.8` | `llm-saaa-qwen38` / `qwen-general` | resident通常推論 |
 | ContextStill | `qwen-agent-worker` | `llm-agent-worker` / `qwen-worker-agent` | 従来KV |
 | 通常の既定利用 | `coding-default` | `llm-default` / `qwen-general` | 常駐Provider |
 
-SAAAのProvider設定では、既存のbase URLとBearerを維持してmodelだけを明示します。このmodelは
-on-demandで起動し、通常KV Providerへfallbackしません。
+SAAAのProvider設定では、既存のbase URLとBearerを維持してmodelだけを明示します。
 
 ```json
 {
-  "model": "qwen3.8-kv-mem",
+  "model": "qwen3.8",
   "messages": [{ "role": "user", "content": "質問" }],
   "stream": true
 }
 ```
 
-model選択だけではsnapshotを作成・restoreしません。Viewなしrequestはsnapshot対応host上の通常推論です。
-KV:memを実際に利用する高度経路では、`llm-saaa-kv-mem`の明示Allocationを取得し、事前provision済みsourceを
+通常Providerのcontext windowは262,144 token、実入力上限は225,280 token、output reserveは32,768 token、
+safety marginは4,096 token、同時実行数は1です。Managed Contextは別機能です。事前provision済みsourceを
 `POST /v1/contexts`へ登録して、同じAllocationへ`POST /v1/context-views`でViewをbindします。Chat requestには
 `x-larm-allocation-id`、`x-larm-capability: llm.coding`、`x-larm-context-view-id`をすべて指定します。
 Viewは一回だけconsumeされ、principal、model、runtime release、Allocation、期限が違えばfail closedで拒否されます。
 
-snapshotは64 MiB chunkごとのCRC32Cでrestore前に偶発破損を検出します。破損snapshotは隔離してsource rebuildへ
-戻します。NVMe hard quotaは512 GiB、high/low watermarkは90%/80%、filesystem free floorは256 GiB、RAM cache
-上限は4 GiBです。400 GiB超をdaemon起動時に全走査せず、使用するsnapshotだけをlazy検証します。
-`LARM_CONTEXT_ENABLED=false`で全体、`LARM_CONTEXT_SNAPSHOT_ENABLED=false`でsnapshotだけを停止できます。
-7日間soakは受入条件ではなく、利用者試用中は`GET /v1/context-status`、audit、metricsで観測します。
+`LARM_CONTEXT_ENABLED=false`でManaged Context全体を停止できます。source storeのquotaとfilesystem
+free floorはsource本文の保護にだけ使用し、KV cache用のdisk予約は行いません。
 
-容量を増やす場合、現構造は<strong>2 TiB付近を速度優先の実用上限候補、4 TiB付近を未認定の実験上限候補</strong>と
-見積もります。これは故障する境界ではなく、flat directory走査、使用量集計、foreground GCの遅延が目立ち始める
-可能性がある範囲です。M3b実測の20,000,000 token = 369,356,894,784 bytes（343.99 GiB）を同じmodel、
-KV dtype、layoutのまま線形換算すると、2 TiBは約119.07M token相当、4 TiBは約238.15M token相当です。
-
-| 容量 | 同条件でのKV相当token数 | 現在の扱い |
-| ---: | ---: | --- |
-| 343.99 GiB | 20.00M | M3b実測baseline |
-| 約1.68 TiB | 100.00M | 現行token schema上限 |
-| 2 TiB | 約119.07M | byte設定parser上限。全量利用にはtoken schema変更と再認定が必要 |
-| 4 TiB | 約238.15M | 現在は設定不可。index／GC再設計後の実験対象 |
-
-この換算値は保存容量の目安であり、一つのattention windowの長さ、保存できるsource本文量、性能保証ではありません。
-現在の512 GiB既定値と20M policyは変更しません。段階的な拡張案とGo／No-Go条件は
-[`specs/kv-mem-capacity-expansion.html`](specs/kv-mem-capacity-expansion.html)に分離しています。
-
-完全な選択仕様は
-[`specs/saaa-qwen38-kv-mem-routing.html`](specs/saaa-qwen38-kv-mem-routing.html)、Context lifecycleと
-API contractは[`specs/capability-gated-virtual-context.html`](specs/capability-gated-virtual-context.html)を
+切替と受入仕様は
+[`specs/saaa-provider-runtime-remediation.html`](specs/saaa-provider-runtime-remediation.html)、Context lifecycleと
+API contractは[`specs/managed-context-source-rebuild.html`](specs/managed-context-source-rebuild.html)を
 参照してください。
 
 Personal Stateの製品経路はManaged Contextとは別の`LARM_PERSONAL_STATE_ENABLED` gateで既定OFFです。

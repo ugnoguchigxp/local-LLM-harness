@@ -66,17 +66,17 @@ LARMのrelease/config/boot identityが変わった後のcanary成功時だけinf
 NightWorkerは`qwen-nightworker`を使います。daemon側のProfile優先度はSAAA 3000、NightWorker 2000、
 ContextStill 1000で、実行中jobの完了後に高い値から次のProviderまたは実行枠へ進みます。
 
-## SAAA KV:mem選択
+## SAAA Qwen 3.8選択
 
-SAAAがQwen 3.8のKV:mem実験経路を要求する場合は`qwen3.8-kv-mem`を明示します。これは
-`qwen-worker-quality`専用のon-demand modelで、通常KV Providerへのfallbackはありません。
+SAAAは`qwen3.8`を明示します。これはresident `qwen-general`専用の通常modelで、廃止した
+永続KV snapshot Providerやworker Providerへのfallbackはありません。
 
 ```ts
 for await (const event of larm.streamChatCompletion({
-  model: "qwen3.8-kv-mem",
+  model: "qwen3.8",
   messages: [{ role: "user", content: "hello" }],
 })) {
-  // Viewなしの場合もsnapshot対応hostを選ぶが、推論自体は通常Chatとして実行される。
+  // resident Qwen 3.8で通常Chatとして実行される。
 }
 ```
 

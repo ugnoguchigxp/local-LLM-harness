@@ -18,8 +18,6 @@
     "context:source:provision": "bun run apps/daemon/src/context-source-cli.ts",
     "context:source:conformance": "bun run deploy/local-node/scripts/context-source-conformance.ts",
     "personal-state:conformance": "bun run deploy/local-node/scripts/personal-state-conformance.ts",
-    "context:kv:conformance": "bun run deploy/local-node/scripts/context-kv-conformance.ts",
-    "context:kv:restart-conformance": "bun run deploy/local-node/scripts/context-kv-restart-conformance.ts",
     "docs": "bun ./node_modules/spec-html/dist/cli.js ./specs --markdown-lang ja",
     "docs:fix": "bun ./node_modules/spec-html/dist/cli.js fix ./specs --write",
     "docs:format": "bun ./node_modules/spec-html/dist/cli.js format ./specs --write",

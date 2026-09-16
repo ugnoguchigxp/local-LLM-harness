@@ -17,9 +17,6 @@ test("loads the Linux production registry", () => {
   const asr = registry.runtimes.find((runtime) => runtime.id === "qwen-asr");
   const realtimeTts = registry.runtimes.find((runtime) => runtime.id === "voicevox-tts");
   const expressiveTts = registry.runtimes.find((runtime) => runtime.id === "qwen-tts");
-  const qualityWorker = registry.runtimes.find(
-    (runtime) => runtime.id === "qwen-worker-quality",
-  );
   const defaultRoute = registry.routes.find((route) => route.id === "llm-default");
   const speedRoute = registry.routes.find((route) => route.id === "llm-speed");
   const model35b = registry.runtimes.find((runtime) => runtime.id === "qwen36-35b");
@@ -42,7 +39,6 @@ test("loads the Linux production registry", () => {
   const backchannelDefaultRoute = registry.routes.find((route) =>
     route.id === "llm-backchannel-default"
   );
-  const saaaKvMemRoute = registry.routes.find((route) => route.id === "llm-saaa-kv-mem");
   const agent35bRoute = registry.routes.find((route) => route.id === "llm-agent-35b");
   const embedding = registry.runtimes.find((runtime) => runtime.id === "multilingual-e5-small");
   const embeddingRoute = registry.routes.find((route) =>
@@ -59,8 +55,6 @@ test("loads the Linux production registry", () => {
   expect(asr?.capability).toContain("speech.stt");
   expect(realtimeTts?.capability).toContain("speech.tts");
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");
-  expect(qualityWorker?.backend).toBe("llama-swap");
-  expect(qualityWorker?.policy.swapGroup).toBe("qwen-worker-slot");
   expect(model35b?.policy).toEqual({ class: "preferred", swapGroup: "qwen-worker-slot" });
   expect(ornith35b?.policy).toEqual({ class: "preferred", swapGroup: "qwen-worker-slot" });
   expect(ornith35b?.resources.estimatedMemoryGB).toBe(48);
@@ -113,6 +107,7 @@ test("loads the Linux production registry", () => {
     runtime: "qwen-general",
     purpose: "primary",
   });
+  expect(defaultRoute?.candidates).toHaveLength(1);
   expect(defaultRoute?.explicitOnly).toBe(false);
   expect(speedRoute?.explicitOnly).toBe(true);
   expect(route35b?.explicitOnly).toBe(true);
@@ -144,11 +139,6 @@ test("loads the Linux production registry", () => {
     capabilities: ["llm.backchannel.classifier"],
     candidates: [{ runtime: "lfm25-backchannel-jp", purpose: "primary" }],
   });
-  expect(saaaKvMemRoute).toMatchObject({
-    explicitOnly: true,
-    candidates: [{ runtime: "qwen-worker-quality", purpose: "primary" }],
-  });
-  expect(saaaKvMemRoute?.candidates).toHaveLength(1);
   expect(agent35bRoute?.candidates[0]).toEqual({
     runtime: "ornith15-35b-agent",
     purpose: "primary",
@@ -171,6 +161,30 @@ test("loads the Linux production registry", () => {
     explicitOnly: true,
     candidates: [{ runtime: "multilingual-e5-small", purpose: "primary" }],
   });
+});
+
+test("resident Qwen 3.8 exposes the certified 256K request budget independently of managed source capacity", () => {
+  const registry = loadRegistry(repoConfig);
+  const runtime = registry.runtimes.find((candidate) => candidate.id === "qwen-general");
+  expect(runtime).toMatchObject({
+    policy: { class: "resident" },
+    context: {
+      outputReserveTokens: 32_768,
+      safetyMarginTokens: 4_096,
+      sourceTokenLimit: 20_000_000,
+    },
+    resources: { maxConcurrentRequests: 1 },
+  });
+  const releases = parseYaml(readFileSync(join(repoConfig, "../../deploy/local-node/releases.yaml"), "utf8")) as {
+    runtimeReleases: Record<string, { contextCertification?: { contextLimitTokens: number } }>;
+  };
+  const contextLimit = releases.runtimeReleases["qwen-general-current"]?.contextCertification?.contextLimitTokens;
+  expect(contextLimit).toBe(262_144);
+  if (runtime?.context?.class !== "managed-context" || contextLimit === undefined) {
+    throw new Error("resident context contract is unavailable");
+  }
+  expect(contextLimit - runtime.context.outputReserveTokens - runtime.context.safetyMarginTokens)
+    .toBe(225_280);
 });
 
 test("production swap group matches llama-swap model membership", () => {

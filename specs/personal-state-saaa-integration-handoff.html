@@ -355,8 +355,8 @@
     <pre><code>umask 077
 LARM_PERSONAL_STATE_PROVIDER_TOKEN="${claimed_provider_token}" \
 LARM_PERSONAL_STATE_ALLOCATION_ID="${allocation_id}" \
-LARM_PERSONAL_STATE_RUNTIME="qwen-worker-quality" \
-LARM_PERSONAL_STATE_MODEL="qwen3.8-kv-mem" \
+LARM_PERSONAL_STATE_RUNTIME="qwen-general" \
+LARM_PERSONAL_STATE_MODEL="qwen3.8" \
   bun run personal-state:conformance \
   &gt; /srv/ai/logs/larm-canary/personal-state.json</code></pre>
     <p>
@@ -376,11 +376,17 @@ LARM_PERSONAL_STATE_MODEL="qwen3.8-kv-mem" \
           >Personal State製品接続・忘却保証 改善実装計画</a
         >
       </li>
-      <li><a href="./capability-gated-virtual-context.html">Virtual Context Activation仕様</a></li>
+      <li>
+        <a href="./managed-context-source-rebuild.html">Managed Context source rebuild契約</a>
+      </li>
       <li>
         <a href="./context-implementation-traceability.html">Managed Context実装トレーサビリティ</a>
       </li>
-      <li><a href="./saaa-qwen38-kv-mem-routing.html">SAAA Qwen 3.8 KV:mem Provider選択仕様</a></li>
+      <li>
+        <a href="./saaa-provider-runtime-remediation.html"
+          >SAAA Provider実機障害の是正と配備後受入</a
+        >
+      </li>
     </ul>
   </section>
 

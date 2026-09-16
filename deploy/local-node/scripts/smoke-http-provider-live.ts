@@ -16,6 +16,8 @@ export type HttpProviderLiveSmokeOptions = {
   ttsVoice?: string;
   expectedReleaseCommit?: string;
   includeAudio?: boolean;
+  includeToolRoundTrip?: boolean;
+  longInputTokens?: number;
   timeoutMs?: number;
   fetch?: NonNullable<LarmClientOptions["fetch"]>;
 };
@@ -32,6 +34,8 @@ export type HttpProviderLiveSmokeResult = {
   model: string;
   jsonValidated: true;
   sse: { chunks: number; deltas: number; finishReasons: number };
+  toolRoundTrip?: null | { calls: number; terminalValidated: true };
+  longInput?: null | { requestedTokens: number; observedPromptTokens: number };
   audio: null | {
     asrModel: string;
     transcriptionValidated: true;
@@ -108,6 +112,38 @@ function isShortTextCanaryCompletion(value: unknown): boolean {
   if (!message || typeof message !== "object" || Array.isArray(message)) return false;
   const content = (message as Record<string, unknown>).content;
   return typeof content === "string" && content.trim() === "OK";
+}
+
+function completionMessage(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("completion_invalid");
+  const choices = (value as Record<string, unknown>).choices;
+  const choice = Array.isArray(choices) ? choices[0] : undefined;
+  if (!choice || typeof choice !== "object" || Array.isArray(choice)) throw new Error("completion_invalid");
+  const message = (choice as Record<string, unknown>).message;
+  if (!message || typeof message !== "object" || Array.isArray(message)) throw new Error("completion_invalid");
+  return message as Record<string, unknown>;
+}
+
+function firstToolCall(message: Record<string, unknown>, expectedName: string): Record<string, unknown> {
+  const calls = message.tool_calls;
+  const call = Array.isArray(calls) ? calls[0] : undefined;
+  if (!call || typeof call !== "object" || Array.isArray(call)) throw new Error("tool_call_missing");
+  const record = call as Record<string, unknown>;
+  const fn = record.function;
+  if (!fn || typeof fn !== "object" || Array.isArray(fn)
+    || (fn as Record<string, unknown>).name !== expectedName
+    || typeof record.id !== "string") {
+    throw new Error("tool_call_invalid");
+  }
+  return record;
+}
+
+function observedPromptTokens(value: unknown): number {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
+  const usage = (value as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return 0;
+  const tokens = (usage as Record<string, unknown>).prompt_tokens;
+  return typeof tokens === "number" && Number.isSafeInteger(tokens) ? tokens : 0;
 }
 
 async function responseBytes(response: Response, limit: number): Promise<Uint8Array> {
@@ -280,6 +316,85 @@ export async function runHttpProviderLiveSmoke(
   });
   const sse = await inspectSse(sseResponse);
 
+  let toolRoundTrip: HttpProviderLiveSmokeResult["toolRoundTrip"] = null;
+  if (options.includeToolRoundTrip ?? false) {
+    const tools = ["read_context", "lookup_status"].map((name) => ({
+      type: "function",
+      function: {
+        name,
+        description: `Invoke ${name} for the live round-trip check.`,
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+      },
+    }));
+    const messages: Record<string, unknown>[] = [{
+      role: "user",
+      content: "Call read_context.",
+    }];
+    const invoke = async (name: string) => {
+      const response = await client.createChatCompletion({
+        model: options.model,
+        messages,
+        tools,
+        tool_choice: { type: "function", function: { name } },
+        temperature: 0,
+        max_tokens: 256,
+        stream: false,
+      });
+      const value = parseJson(await responseBytes(response, TEXT_LIMIT));
+      if (!inspectOpenAiChatCompletionJson(value).ok) throw new Error("tool_completion_invalid");
+      const message = completionMessage(value);
+      const call = firstToolCall(message, name);
+      messages.push(message, {
+        role: "tool",
+        tool_call_id: call.id,
+        content: JSON.stringify({ ok: true, tool: name }),
+      });
+    };
+    await invoke("read_context");
+    messages.push({ role: "user", content: "Call lookup_status." });
+    await invoke("lookup_status");
+    messages.push({ role: "user", content: "Reply with just OK." });
+    const terminalResponse = await client.createChatCompletion({
+      model: options.model,
+      messages,
+      tools,
+      tool_choice: "none",
+      temperature: 0,
+      max_tokens: 256,
+      stream: false,
+    });
+    const terminal = parseJson(await responseBytes(terminalResponse, TEXT_LIMIT));
+    if (!inspectOpenAiChatCompletionJson(terminal).ok || !isShortTextCanaryCompletion(terminal)) {
+      throw new Error("tool_round_trip_terminal_invalid");
+    }
+    toolRoundTrip = { calls: 2, terminalValidated: true };
+  }
+
+  let longInput: HttpProviderLiveSmokeResult["longInput"] = null;
+  if ((options.longInputTokens ?? 0) > 0) {
+    const requestedTokens = options.longInputTokens!;
+    if (!Number.isSafeInteger(requestedTokens) || requestedTokens < 1 || requestedTokens > 225_280) {
+      throw new Error("longInputTokens must be an integer from 1 through 225280");
+    }
+    const response = await client.createChatCompletion({
+      model: options.model,
+      messages: [{
+        role: "user",
+        content: `${" token".repeat(requestedTokens)}\nReply with just OK.`,
+      }],
+      temperature: 0,
+      max_tokens: 32,
+      stream: false,
+    });
+    const value = parseJson(await responseBytes(response, TEXT_LIMIT));
+    const observed = observedPromptTokens(value);
+    if (!inspectOpenAiChatCompletionJson(value).ok || !isShortTextCanaryCompletion(value)
+      || observed < Math.floor(requestedTokens * 0.9)) {
+      throw new Error("long_input_completion_invalid");
+    }
+    longInput = { requestedTokens, observedPromptTokens: observed };
+  }
+
   let audio: HttpProviderLiveSmokeResult["audio"] = null;
   if (options.includeAudio ?? true) {
     const asrModel = options.asrModel ?? "qwen3-asr-1.7b";
@@ -353,6 +468,8 @@ export async function runHttpProviderLiveSmoke(
     model: options.model,
     jsonValidated: true,
     sse,
+    toolRoundTrip,
+    longInput,
     audio,
   };
 }
@@ -370,6 +487,8 @@ if (import.meta.main) {
         ? { expectedReleaseCommit: process.env.LARM_EXPECTED_RELEASE_COMMIT }
         : {}),
       includeAudio: process.env.LARM_HTTP_SMOKE_AUDIO !== "0",
+      includeToolRoundTrip: process.env.LARM_HTTP_SMOKE_TOOL_ROUND_TRIP !== "0",
+      longInputTokens: Number(process.env.LARM_HTTP_LONG_INPUT_TOKENS ?? 0),
       timeoutMs: Number(process.env.LARM_HTTP_SMOKE_TIMEOUT_MS ?? 300_000),
     });
     console.log(JSON.stringify(result));

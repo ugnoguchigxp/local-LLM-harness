@@ -7,14 +7,9 @@ const digestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const byteCountSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const tokenCountSchema = z.number().int().nonnegative().max(100_000_000);
 
-export const contextMaterializationModeSchema = z.enum([
-  "source-rebuild",
-  "exact-prefix",
-  "session-snapshot",
-  "selective-blend",
-]);
+export const contextMaterializationModeSchema = z.literal("source-rebuild");
 
-const uniqueModesSchema = z.array(contextMaterializationModeSchema).min(1).max(4)
+const uniqueModesSchema = z.array(contextMaterializationModeSchema).min(1).max(1)
   .refine((items) => new Set(items).size === items.length, "context modes must be unique");
 
 const disabledContextPolicySchema = z.object({
@@ -25,24 +20,12 @@ export const managedContextPolicySchema = z.object({
   class: z.literal("managed-context"),
   activation: z.literal("when-hosted"),
   sourceTokenLimit: z.number().int().min(1).max(100_000_000),
-  materializedRetentionTargetTokens: z.number().int().min(1).max(100_000_000),
   outputReserveTokens: z.number().int().min(1).max(1_000_000),
   safetyMarginTokens: z.number().int().min(0).max(1_000_000),
-  ramCacheMaxBytes: byteCountSchema,
-  nvmeCacheMaxBytes: byteCountSchema,
   filesystemFreeFloorBytes: byteCountSchema,
-  cacheHighWatermark: z.number().min(0.01).max(1),
-  cacheLowWatermark: z.number().min(0).max(0.99),
   operationTimeoutMs: z.number().int().min(1).max(3_600_000),
   allowedModes: uniqueModesSchema,
 }).strict().superRefine((value, context) => {
-  if (value.cacheLowWatermark >= value.cacheHighWatermark) {
-    context.addIssue({
-      code: "custom",
-      path: ["cacheLowWatermark"],
-      message: "cacheLowWatermark must be less than cacheHighWatermark",
-    });
-  }
   if (!value.allowedModes.includes("source-rebuild")) {
     context.addIssue({
       code: "custom",
@@ -64,31 +47,10 @@ export const contextCertificationSchema = z.object({
   chatTemplateDigest: digestSchema,
   engineBuild: z.string().min(1).max(256),
   providerConfigRevision: contextIdentifierSchema,
-  stateFormat: contextIdentifierSchema.optional(),
-  cacheTypeK: contextIdentifierSchema.optional(),
-  cacheTypeV: contextIdentifierSchema.optional(),
   contextLimitTokens: z.number().int().min(1).max(100_000_000),
   verifiedModes: uniqueModesSchema,
   evidenceDigest: digestSchema,
-}).strict().superRefine((value, context) => {
-  const persistsState = value.verifiedModes.some((mode) =>
-    mode === "exact-prefix" || mode === "session-snapshot" || mode === "selective-blend"
-  );
-  if (persistsState && !value.stateFormat) {
-    context.addIssue({
-      code: "custom",
-      path: ["stateFormat"],
-      message: "stateFormat is required for persisted context modes",
-    });
-  }
-  if (persistsState && (!value.cacheTypeK || !value.cacheTypeV)) {
-    context.addIssue({
-      code: "custom",
-      path: ["cacheTypeK"],
-      message: "cacheTypeK and cacheTypeV are required for persisted context modes",
-    });
-  }
-});
+}).strict();
 
 export const contextClassificationSchema = z.enum([
   "public",
@@ -184,7 +146,7 @@ export const contextOperationSchema = z.object({
   idempotencyKeyDigest: digestSchema,
   viewId: z.string().min(1).max(192),
   fence: z.number().int().nonnegative(),
-  mode: z.enum(["source-rebuild", "session-snapshot"]),
+  mode: z.literal("source-rebuild"),
   state: z.enum(["pending", "running", "succeeded", "failed", "cancelled"]),
   deadline: z.string().datetime(),
   createdAt: z.string().datetime(),
@@ -235,9 +197,6 @@ export function contextCompatibilityKey(input: {
     chatTemplateDigest: input.certification.chatTemplateDigest,
     engineBuild: input.certification.engineBuild,
     providerConfigRevision: input.certification.providerConfigRevision,
-    stateFormat: input.certification.stateFormat ?? null,
-    cacheTypeK: input.certification.cacheTypeK ?? null,
-    cacheTypeV: input.certification.cacheTypeV ?? null,
     contextLimitTokens: input.certification.contextLimitTokens,
     principalScope: input.principalScope,
   }));

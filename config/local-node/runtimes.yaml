@@ -15,14 +15,9 @@ runtimes:
       class: managed-context
       activation: when-hosted
       sourceTokenLimit: 20000000
-      materializedRetentionTargetTokens: 20000000
       outputReserveTokens: 32768
       safetyMarginTokens: 4096
-      ramCacheMaxBytes: 4294967296
-      nvmeCacheMaxBytes: 0
       filesystemFreeFloorBytes: 274877906944
-      cacheHighWatermark: 0.9
-      cacheLowWatermark: 0.8
       operationTimeoutMs: 3300000
       allowedModes:
         - source-rebuild
@@ -35,48 +30,6 @@ runtimes:
       service: llama-server.service
       healthPort: 8080
       endpoint: http://127.0.0.1:8080
-
-  qwen-worker-quality:
-    artifacts:
-      - qwen38-worker-quality
-      - qwen38-mtp
-    capability:
-      - llm.general
-      - llm.reasoning
-      - llm.coding
-    protocol: openai.chat-completions.v1
-    backend: llama-swap
-    node: local-node
-    policy:
-      class: preferred
-      swapGroup: qwen-worker-slot
-    context:
-      class: managed-context
-      activation: when-hosted
-      sourceTokenLimit: 20000000
-      materializedRetentionTargetTokens: 20000000
-      outputReserveTokens: 32768
-      safetyMarginTokens: 4096
-      ramCacheMaxBytes: 4294967296
-      nvmeCacheMaxBytes: 549755813888
-      filesystemFreeFloorBytes: 274877906944
-      cacheHighWatermark: 0.9
-      cacheLowWatermark: 0.8
-      operationTimeoutMs: 3300000
-      allowedModes:
-        - source-rebuild
-        - session-snapshot
-    resources:
-      estimatedMemoryGB: 40
-      maxConcurrentAllocations: 1
-      maxConcurrentRequests: 1
-      maxQueuedRequests: 16
-      queueTimeoutMs: 120000
-    deployment:
-      modelId: qwen-quality
-      listen: http://127.0.0.1:8083
-      endpoint: http://127.0.0.1:8083/upstream/qwen-quality
-      backendEndpoint: http://127.0.0.1:8083/upstream/qwen-quality
 
   qwen-worker-agent:
     artifacts:

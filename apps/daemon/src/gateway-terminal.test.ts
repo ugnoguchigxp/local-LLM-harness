@@ -5,7 +5,7 @@ import { proxyGateway } from "./gateway";
 import { RequestTracker } from "./metrics";
 
 const runtime = {
-  id: "qwen-worker-quality",
+  id: "qwen-worker-agent",
   capability: ["llm.reasoning"],
   protocol: "openai.chat-completions.v1",
   backend: "llama-swap",
@@ -18,10 +18,10 @@ const runtime = {
     queueTimeoutMs: 1_000,
   },
   deployment: {
-    modelId: "qwen-quality",
+    modelId: "qwen-agent",
     listen: "http://127.0.0.1:8083",
-    endpoint: "http://127.0.0.1:8083/upstream/qwen-quality",
-    backendEndpoint: "http://127.0.0.1:8083/upstream/qwen-quality",
+    endpoint: "http://127.0.0.1:8083/upstream/qwen-agent",
+    backendEndpoint: "http://127.0.0.1:8083/upstream/qwen-agent",
   },
 } as RuntimeDefinition;
 

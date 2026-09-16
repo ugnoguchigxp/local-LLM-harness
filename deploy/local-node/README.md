@@ -175,22 +175,20 @@ deploy/local-node/scripts/smoke-larm.sh
 # deploy/local-node/scripts/canary-gate.sh
 ```
 
-## KV:memの試用と運用
+## SAAA Qwen 3.8通常Providerの運用
 
-`KV:mem`はSAAAのQwen 3.8要求に限定して明示選択するManaged Context経路の暫定名称です。
-SAAAの標準HTTP Provider設定では公開modelを`qwen3.8-kv-mem`にします。このmodelは
-`llm-saaa-kv-mem`から`qwen-worker-quality`だけへ解決され、request時にon-demand起動します。
-fallbackはありません。ContextStillは`qwen-agent-worker`を維持し、`qwen-worker-agent`の従来KVを使用します。
-通常の`coding-default`もResident Qwenのままです。
+SAAAの標準HTTP Provider設定では公開modelを`qwen3.8`にします。このmodelは
+`llm-saaa-qwen38`からresident `qwen-general`だけへ解決されます。廃止した永続KV snapshot経路は
+利用対象にもfallbackにもなりません。通常の`coding-default`も同じResidentです。
 
-SAAA session全体はAgent Profile `saaa-qwen38-kv-mem`を明示選択します。一つのAgent Connectionが
+SAAA session全体はAgent Profile `saaa-qwen38`を明示選択します。一つのAgent Connectionが
 `tts`（VoiceVox）、`asr`（Qwen3 ASR）、`decision-default`（Qwen 3.5 2B）、`llm`（Qwen 3.8 27B
-KV:mem）の四Providerを同じTTLへ固定します。単独の標準Chat requestはこのpresetを暗黙には起動しません。
+通常Qwen 3.8）の四Providerを同じTTLへ固定します。単独の標準Chat requestはこのpresetを暗黙には起動しません。
 consumerはclaimで返されたProviderごとのmodelと短期credentialを使用し、session終了時にConnectionをreleaseします。
 
 Personal State製品contractは別gateです。systemd unitは
 `LARM_PERSONAL_STATE_ENABLED=false`と`LARM_PERSONAL_STATE_JOURNAL_ROOT=/var/lib/larm/personal-state`を
-明示し、通常のKV:mem試用だけでは有効になりません。SAAA側のDelivery adapter、transactional outbox、
+明示し、通常のManaged Context利用だけでは有効になりません。SAAA側のDelivery adapter、transactional outbox、
 late-output／tool-side-effect fenceとrollback rehearsalが完了するまで既定値を維持します。接続contractは
 [`../../specs/personal-state-saaa-integration-handoff.html`](../../specs/personal-state-saaa-integration-handoff.html)
 を参照してください。
@@ -199,12 +197,11 @@ late-output／tool-side-effect fenceとrollback rehearsalが完了するまで�
 curl -sS -X POST http://127.0.0.1:9810/v1/chat/completions \
   -H "Authorization: Bearer ${LARM_API_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen3.8-kv-mem","stream":false,"messages":[{"role":"user","content":"こんにちは"}]}'
+  -d '{"model":"qwen3.8","stream":false,"messages":[{"role":"user","content":"こんにちは"}]}'
 ```
 
-このrequestはsnapshot対応hostの選択確認には使えますが、Context Viewを指定しないためsnapshot自体は利用しません。
-KVをmaterializeする場合は`llm-saaa-kv-mem`の明示Allocationを維持したままContext Viewを作成し、同じ
-Chat requestへ`x-larm-allocation-id`と`x-larm-context-view-id`を渡します。
+通常requestのcontext windowは262,144 token、実入力上限は225,280 token、output reserveは32,768 token、
+safety marginは4,096 token、同時実行数は1です。Managed Contextのsource容量保証は別gate・別受入として扱います。
 
 Managed Contextは認定済みのreasoning runtimeがhost中のときだけActiveになります。source本文は
 control APIへinlineせず、API tokenと同じprincipal scopeへ先にprovisionします。コマンドはlive
@@ -231,14 +228,14 @@ Personal State scopeを付与しません。
 umask 077
 LARM_PERSONAL_STATE_PROVIDER_TOKEN="${claimed_provider_token}" \
 LARM_PERSONAL_STATE_ALLOCATION_ID="${allocation_id}" \
-LARM_PERSONAL_STATE_RUNTIME="qwen-worker-quality" \
-LARM_PERSONAL_STATE_MODEL="qwen3.8-kv-mem" \
+LARM_PERSONAL_STATE_RUNTIME="qwen-general" \
+LARM_PERSONAL_STATE_MODEL="qwen3.8" \
   bun run personal-state:conformance \
   > /srv/ai/logs/larm-canary/personal-state.json
 ```
 
 この成功だけでは製品gateを開きません。response切断、daemon／SAAA再起動、cross-subject、release変更、
-snapshot OFF／ON、backend abort無視を含むfault injectionとSAAA製品harnessの合格後に限り、明示的に
+backend abort無視を含むfault injectionとSAAA製品harnessの合格後に限り、明示的に
 `LARM_PERSONAL_STATE_ENABLED=true`へ変更します。
 
 既定tokenizer endpointはresidentの<code>http://127.0.0.1:8080</code>です。別の認定runtimeを使う場合は
@@ -249,35 +246,19 @@ attestationと再照合されます。
 
 Source Set quotaはprincipalあたり20,000,000 tokenです。一回のActive Viewは262,144 contextから
 32,768 output reserveと4,096 safety marginを引いた最大225,280 tokenであり、20M全体を一度に
-attentionへ載せる意味ではありません。qwen-worker-qualityのsnapshot上限は512 GiB、filesystem
-free floorは256 GiBです。snapshot modeはreleaseのconformance認証がある場合だけ公開します。
-snapshotは64 MiB chunk CRC32Cで偶発破損をrestore前に検出し、破損時は隔離してsource rebuildへ
-戻ります。daemon起動時はmanifestだけを読み、本文は使用時に一度検証します。認定範囲は保存prefixに
-未見suffixを加えるsession continuationであり、短いpromptへの巻戻しや任意KV block連結ではありません。
-
-7日間soakはKV:memの受入条件ではありません。利用者試用中は次を確認し、異常時はsnapshot kill switchから
-先に停止します。
+attentionへ載せる意味ではありません。materialization modeはsource rebuildだけで、KV stateをdiskへ保存しません。
+source storeのfilesystem free floorは256 GiBです。利用者試用中は次を確認し、異常時はManaged Context全体を停止します。
 
 ```bash
 curl -sS http://127.0.0.1:9810/v1/context-status \
   -H "Authorization: Bearer ${LARM_API_TOKEN}" | jq
 
-# snapshotだけを停止する場合
-# systemd overrideまたはunit設定で LARM_CONTEXT_SNAPSHOT_ENABLED=false としてdaemonをrestart
-# Managed Context全体を停止する場合は LARM_CONTEXT_ENABLED=false
+# systemd overrideまたはunit設定で LARM_CONTEXT_ENABLED=false としてdaemonをrestart
 ```
 
-CRC拒否、identity drift、source rebuild fallback、quota、filesystem free floor、daemonの
-release/config/boot identityを観測します。KV:memのGo条件とconsumer分離は
-[`../../specs/saaa-qwen38-kv-mem-routing.html`](../../specs/saaa-qwen38-kv-mem-routing.html)を参照してください。
-
-隔離Qwen workerでM3bを再実行する場合は、専用の絶対slot rootを指定して次を実行します。
-
-```bash
-LARM_CONTEXT_SPIKE_ENDPOINT=http://127.0.0.1:59001 \
-LARM_CONTEXT_SPIKE_SLOT_SAVE_PATH=/srv/ai/context-m3b-isolated \
-  bun run context:kv:conformance
-```
+identity drift、source検証、quota、filesystem free floor、daemonのrelease/config/boot identityを観測します。
+廃止判断とconsumer分離は[`../../specs/saaa-provider-runtime-remediation.html`](../../specs/saaa-provider-runtime-remediation.html)
+を参照してください。
 
 HTTP Provider canaryはsecret-free JSONをrepository外へ保存し、root管理の状態機械へ記録します。
 consumer完了後、同じProvider世代の24時間soakが合格すると`complete`へ進みます。

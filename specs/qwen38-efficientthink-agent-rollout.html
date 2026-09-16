@@ -3,8 +3,8 @@
 
   <p>
     Agent向け64K workerのprimaryを、Qwen3.8-27B Base UD-Q4_K_XLから EfficientThink
-    Q3-LynnStyleと専用MTPの組合せへ切り替える。
-    256Kの<code>qwen-worker-quality</code>と<code>llm-saaa-kv-mem</code>は変更しない。
+    Q3-LynnStyleと専用MTPの組合せへ切り替える。 この記録後、永続KV snapshot用の256K quality
+    workerは廃止された。
   </p>
 
   <section id="decision-section" aria-labelledby="decision">
@@ -27,13 +27,6 @@
           <td>実機3回のdecode中央値25.279 tok/sとCoding機能試験通過を確認したため</td>
         </tr>
         <tr>
-          <th scope="row"><code>llm-saaa-kv-mem</code></th>
-          <td>既存Baseの256K runtimeを維持する</td>
-          <td>
-            保存KV stateの互換性はモデル、chat template、engine build、cache形式に依存するため
-          </td>
-        </tr>
-        <tr>
           <th scope="row"><code>qwen-worker-fast</code></th>
           <td>変更しない</td>
           <td>今回の評価範囲をAgent workerに限定するため</td>
@@ -54,10 +47,7 @@
         既存の<code>qwen-worker-agent</code>とそのBase
         artifactは上書きせず、rollback可能なfallbackとして残す。
       </li>
-      <li>
-        EfficientThink artifactは専用ディレクトリへ配置し、BaseおよびKV
-        snapshot用artifactと混在させない。
-      </li>
+      <li>EfficientThink artifactは専用ディレクトリへ配置し、Base artifactと混在させない。</li>
     </ul>
   </section>
 
@@ -105,10 +95,6 @@
         ContextStill backgroundの最初の実要求は、prompt 1,661 tokensを含む処理を
         <code>qwen-worker-agent-efficientthink-v1</code>で完了し、HTTP 200となった。
       </li>
-      <li>
-        <code>qwen-worker-quality-current</code>はBaseと従来MTPを参照したままで、
-        <code>qwen38-quality-crc32c-v1</code> certificationも維持されている。
-      </li>
     </ul>
   </section>
 
@@ -117,9 +103,8 @@
     <p>
       起動、OpenAI互換応答、tool call、JSON契約のいずれかが失敗した場合は、
       <code>llm-agent-worker</code
-      >のprimaryを既存<code>qwen-worker-agent</code>へ戻す。
-      <code>qwen-worker-quality</code
-      >と既存snapshotは切替対象外なので、Agent切替を理由に再生成しない。
+      >のprimaryを既存<code>qwen-worker-agent</code>へ戻す。 永続KV
+      snapshot経路は後続判断で廃止済みであり、このrollback対象には含めない。
     </p>
   </section>
 </article>

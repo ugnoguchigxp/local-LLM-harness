@@ -259,16 +259,6 @@
       </thead>
       <tbody>
         <tr>
-          <th scope="row"><code>qwen-worker-quality</code></th>
-          <td>
-            <code>UD-Q4_K_XL</code> 17,559,178,144 bytes + MTP Q4_0
-            1,369,590,656 bytes
-          </td>
-          <td>262,144</td>
-          <td>K/V q4_0、session snapshot対応</td>
-          <td>long context、quality、KV:mem試験</td>
-        </tr>
-        <tr>
           <th scope="row"><code>qwen-worker-agent</code></th>
           <td>qualityと同じ<code>UD-Q4_K_XL</code> + MTP</td>
           <td>65,536</td>
@@ -354,7 +344,7 @@
   ▼
 LARM Gateway  gnosis.local:9810/v1
   ├─ coding-default ───────────► resident Qwen3.8 27B  127.0.0.1:8080
-  ├─ qwen3.8-kv-mem ───────────► quality worker       llama-swap :8083
+  ├─ qwen3.8 ──────────────────► resident Qwen3.8 27B  127.0.0.1:8080
   ├─ qwen-agent-worker ────────► 64K Agent worker     llama-swap :8083
   └─ qwen-nightworker ─────────► 64K Agent worker     llama-swap :8083</code></pre>
       <figcaption>公開Gatewayとloopback-only Providerの関係</figcaption>
@@ -385,15 +375,8 @@ LARM Gateway  gnosis.local:9810/v1
         Contextへ登録できるsource側の上限です。 20M tokensを同時にmodel
         attentionへ載せる意味ではありません。
       </li>
-      <li>
-        <code>qwen3.8-kv-mem</code>のsession
-        snapshotは認定済みKV状態の保存・復元であり、native attention
-        windowそのものを20Mへ拡張する機能ではありません。
-      </li>
-      <li>
-        常駐runtimeはsource rebuildのみ、quality workerはsource rebuildとsession
-        snapshotを認定します。
-      </li>
+      <li>Managed Contextの認定modeは常駐runtime上のsource rebuildだけです。</li>
+      <li>推論runtimeのKV stateをdiskへ保存または復元しません。</li>
     </ul>
   </section>
 
@@ -476,10 +459,10 @@ private LAN. Use Authorization: Bearer &lt;token&gt;, model=coding-default, and
 POST /v1/chat/completions. JSON and SSE streaming are supported. Internal providers are
 loopback-only: resident Qwen on 127.0.0.1:8080 and llama-swap on 127.0.0.1:8083.
 
-An on-demand worker pool offers a 256K UD-Q4_K_XL quality route, a 64K UD-Q4_K_XL Agent
-route, and a 256K Q4_0 speed route. Only one worker-slot model is loaded at once; it can
+An on-demand worker pool offers a 64K UD-Q4_K_XL Agent route and a 256K Q4_0 speed route.
+Only one worker-slot model is loaded at once; it can
 coexist with the resident model. Public model names are coding-default (resident),
-qwen3.8-kv-mem (quality/snapshot experiment), qwen-agent-worker, and qwen-nightworker.
+qwen3.8 (resident SAAA), qwen-agent-worker, and qwen-nightworker.
 The LARM 20M source-token limit is a managed-source budget, NOT a 20M attention window.</code></pre>
   </section>
 
@@ -492,7 +475,11 @@ The LARM 20M source-token limit is a managed-source budget, NOT a 20M attention 
       <li><code>config/local-node/agent-connections.yaml</code></li>
       <li><code>deploy/local-node/models.yaml</code></li>
       <li><code>deploy/local-node/systemd/llama-server.service</code></li>
-      <li><a href="./saaa-qwen38-kv-mem-routing.html">SAAA Qwen 3.8 KV:mem Provider選択仕様</a></li>
+      <li>
+        <a href="./saaa-provider-runtime-remediation.html"
+          >SAAA Provider実機障害の是正と配備後受入</a
+        >
+      </li>
       <li><a href="./performance-benchmark.html">LLM・ASR・TTS性能診断benchmark仕様</a></li>
     </ul>
   </section>

@@ -19,7 +19,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/srv/ai/cache /srv/ai/context-snapshots /srv/ai/logs
+ReadWritePaths=/srv/ai/cache /srv/ai/logs
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]

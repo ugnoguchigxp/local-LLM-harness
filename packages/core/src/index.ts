@@ -37,16 +37,6 @@ export {
   type RuntimeContextPolicy,
 } from "./context";
 export {
-  CONTEXT_SNAPSHOT_CHUNK_BYTES,
-  CONTEXT_SNAPSHOT_MAX_CHUNKS,
-  contextSnapshotChunkSchema,
-  contextSnapshotLookupKey,
-  contextSnapshotManifestSchema,
-  validateContextSnapshotIdentity,
-  type ContextSnapshotChunk,
-  type ContextSnapshotManifest,
-} from "./context-snapshot";
-export {
   inferenceAuditExpired,
   inferenceAuditModeSchema,
   inferenceAuditPayloadSchema,

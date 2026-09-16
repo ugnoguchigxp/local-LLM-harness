@@ -7,29 +7,15 @@ routes:
     candidates:
       - runtime: qwen-general
         purpose: primary
-      - runtime: qwen-worker-quality
-        purpose: fallback
 
-  llm-long-context:
+  llm-saaa-qwen38:
     capabilities:
       - llm.general
       - llm.reasoning
       - llm.coding
     explicitOnly: true
     candidates:
-      - runtime: qwen-worker-quality
-        purpose: primary
       - runtime: qwen-general
-        purpose: fallback
-
-  llm-saaa-kv-mem:
-    capabilities:
-      - llm.general
-      - llm.reasoning
-      - llm.coding
-    explicitOnly: true
-    candidates:
-      - runtime: qwen-worker-quality
         purpose: primary
 
   llm-agent-worker:

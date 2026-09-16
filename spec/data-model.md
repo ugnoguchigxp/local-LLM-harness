@@ -54,7 +54,6 @@ routes:
     capabilities: [llm.general, llm.reasoning, llm.coding]
     candidates:
       - { runtime: qwen-general, purpose: primary }
-      - { runtime: qwen-worker-quality, purpose: fallback }
 ```
 
 ## Allocation

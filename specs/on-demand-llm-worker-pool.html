@@ -28,7 +28,6 @@
   qwen-general (Qwen 3.8 27B) ── always available, never swapped
 
 Worker slot (llama-swap :8083, one member at a time)
-  qwen-worker-quality (Qwen 3.8 27B)
   qwen-worker-fast    (Qwen 3.8 27B)
   qwen-worker-agent   (Qwen 3.8 27B, Agent 64K)
   ornith15-35b        (Ornith-1.5-35B-A3B, official Q5 quality)
@@ -68,12 +67,6 @@ Worker slot (llama-swap :8083, one member at a time)
           <th scope="row"><code>llm-speed</code></th>
           <td><code>qwen-worker-fast</code></td>
           <td>Residentと分散して実行する追加27B task</td>
-          <td>worker slot内</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>llm-long-context</code></th>
-          <td><code>qwen-worker-quality</code></td>
-          <td>明示された256K quality task</td>
           <td>worker slot内</td>
         </tr>
         <tr>

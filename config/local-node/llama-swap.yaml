@@ -1,6 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
-# Optional worker pool. General-purpose workers keep 256K context while the
-# Agent connection profiles use bounded 64K workers that can coexist with the
+# Optional worker pool. Agent connection profiles use bounded 64K workers that can coexist with the
 # resident ROCmFP4 provider on :8080.
 
 healthCheckTimeout: 300
@@ -11,43 +10,6 @@ globalTTL: 300
 unloadTimeout: 30
 
 models:
-  qwen-quality:
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/qwen38-worker/Qwen3.8-27B-UD-Q4_K_XL.gguf
-      -md /srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
-      --spec-type draft-mtp
-      --spec-draft-n-max 2
-      -dev Vulkan0
-      -devd Vulkan0
-      -ngl 999
-      -ngld 999
-      --fit off
-      --flash-attn on
-      --ctx-size 262144
-      --parallel 1
-      --cache-type-k q4_0
-      --cache-type-v q4_0
-      --spec-draft-type-k q4_0
-      --spec-draft-type-v q4_0
-      --slot-save-path /srv/ai/context-snapshots
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning auto
-      --temp 0.2
-      --top-p 0.9
-      --jinja
-      --context-shift
-      --cache-reuse 256
-      --metrics
-      --no-webui
-    aliases:
-      - qwen3.8-quality
-      - qwen-worker
-    env:
-      - HIP_VISIBLE_DEVICES=-1
-      - ROCR_VISIBLE_DEVICES=-1
-
   qwen-agent:
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
@@ -438,7 +400,6 @@ groups:
     swap: true
     exclusive: false
     members:
-      - qwen-quality
       - qwen-agent
       - qwen-agent-efficientthink
       - qwen-fast

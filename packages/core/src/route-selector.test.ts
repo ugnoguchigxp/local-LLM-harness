@@ -31,7 +31,7 @@ const registry: Registry = {
       },
     },
     {
-      id: "qwen-worker-quality",
+      id: "qwen-worker-large",
       capability: ["llm.general", "llm.reasoning", "llm.coding"],
       protocol: "openai.chat-completions.v1",
       backend: "llama-swap",
@@ -39,9 +39,9 @@ const registry: Registry = {
       policy: { class: "preferred", swapGroup: "qwen-worker-slot" },
       resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
       deployment: {
-        modelId: "qwen-quality",
+        modelId: "qwen-large",
         listen: "http://127.0.0.1:8083",
-        endpoint: "http://127.0.0.1:8083/upstream/qwen-quality",
+        endpoint: "http://127.0.0.1:8083/upstream/qwen-large",
       },
     },
     {
@@ -81,7 +81,7 @@ const registry: Registry = {
       explicitOnly: false,
       candidates: [
         { runtime: "qwen-general", purpose: "primary" },
-        { runtime: "qwen-worker-quality", purpose: "fallback" },
+        { runtime: "qwen-worker-large", purpose: "fallback" },
       ],
     },
     {
@@ -145,7 +145,7 @@ test("default route keeps the resident primary even when optional models are hot
     registry,
     state: state({
       "qwen-general": "HOT",
-      "qwen-worker-quality": "HOT",
+      "qwen-worker-large": "HOT",
       "qwen-worker-fast": "HOT",
       "qwen-35b-speed": "HOT",
     }),
@@ -169,7 +169,7 @@ test("does not use an available fallback without caller permission", () => {
     registry,
     state: state({
       "qwen-general": "COLD",
-      "qwen-worker-quality": "COLD",
+      "qwen-worker-large": "COLD",
     }),
     routeId: "llm-default",
     capability: "llm.general",
@@ -190,7 +190,7 @@ test("selects a declared fallback when the resident is unavailable and fallback 
     registry,
     state: state({
       "qwen-general": "COLD",
-      "qwen-worker-quality": "COLD",
+      "qwen-worker-large": "COLD",
     }),
     routeId: "llm-default",
     capability: "llm.general",
@@ -200,7 +200,7 @@ test("selects a declared fallback when the resident is unavailable and fallback 
 
   expect(result).toMatchObject({
     ok: true,
-    runtime: "qwen-worker-quality",
+    runtime: "qwen-worker-large",
     status: "COLD",
     candidateRank: 2,
     fallback: true,
@@ -272,7 +272,7 @@ test("shadow comparison reports differences without changing either result", () 
   }
   const selected = selectRoute({
     registry,
-    state: state({ "qwen-general": "COLD", "qwen-worker-quality": "COLD" }),
+    state: state({ "qwen-general": "COLD", "qwen-worker-large": "COLD" }),
     routeId: route.id,
     capability: "llm.general",
     mode: "default",
@@ -289,9 +289,9 @@ test("shadow comparison reports differences without changing either result", () 
     capability: "llm.general",
     route: "llm-default",
     legacyRuntime: undefined,
-    routeRuntime: "qwen-worker-quality",
+    routeRuntime: "qwen-worker-large",
     legacyOutcome: "error:not_ready",
-    routeOutcome: "runtime:qwen-worker-quality",
+    routeOutcome: "runtime:qwen-worker-large",
     matches: false,
   });
 });

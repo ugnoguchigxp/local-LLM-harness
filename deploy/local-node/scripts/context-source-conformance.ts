@@ -41,7 +41,7 @@ async function identity(endpoint: string) {
 }
 
 const endpoints = (process.env.LARM_CONTEXT_SOURCE_ENDPOINTS
-  ?? "http://127.0.0.1:8080,http://127.0.0.1:8083/upstream/qwen-quality")
+  ?? "http://127.0.0.1:8080")
   .split(",")
   .filter(Boolean);
 const identities = [];

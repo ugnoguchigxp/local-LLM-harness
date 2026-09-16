@@ -1035,7 +1035,7 @@ export function createAppComponents(deps: AppDeps) {
           },
         } : {}),
       },
-      ...(contextViewId || personalAttempt ? {
+      ...(personalAttempt ? {
         onTerminal: async (result: { outcome: string; upstreamStatus?: number }) => {
           if (personalAttempt && personalAttemptController && attemptSubjectDigest) {
             await personalAttemptController.finishAttempt({
@@ -1051,12 +1051,6 @@ export function createAppComponents(deps: AppDeps) {
               transportClosed: !/^http_[1-5][0-9]{2}$/.test(result.outcome),
               outcome: result.outcome,
             });
-          }
-          if (contextViewId && deps.contextController) {
-            await deps.contextController.finishChat(
-              contextViewId,
-              result.outcome === "http_200" && result.upstreamStatus === 200,
-            );
           }
         },
       } : {}),

@@ -7,9 +7,7 @@ import {
   LocalInferenceAuditStore,
   LocalContextMetadataStore,
   LocalContextSourceStore,
-  LocalContextSnapshotStore,
   LlamaContextTokenizer,
-  LlamaContextSlotAdapter,
   LlamaContextSlotEraseAdapter,
   LocalPersonalStateJournal,
 } from "@larm/backends";
@@ -182,29 +180,8 @@ runtimeReleaseManager = new RuntimeReleaseManager(
 await runtimeReleaseManager.initialize();
 await observer.tick();
 
-let contextSnapshotStore: LocalContextSnapshotStore | undefined;
-if (config.contextSnapshotEnabled) {
-  try {
-    contextSnapshotStore = new LocalContextSnapshotStore(config.contextSnapshotRoot, {
-      maxBytes: config.contextSnapshotMaxBytes,
-      freeFloorBytes: config.contextSnapshotFreeFloorBytes,
-      highWatermark: 0.9,
-      lowWatermark: 0.8,
-      perPrincipalMaxBytes: config.contextSnapshotMaxBytes,
-    });
-    await contextSnapshotStore.initialize();
-  } catch (error) {
-    contextSnapshotStore = undefined;
-    writeEvent({
-      name: "context_snapshot_disabled",
-      labels: { reason: error instanceof Error ? error.name : "initialization_failed" },
-    });
-  }
-}
-
 const contextSourceStore = new LocalContextSourceStore(config.contextSourceRoot);
 const contextTokenizer = new LlamaContextTokenizer();
-const contextSlotAdapter = contextSnapshotStore ? new LlamaContextSlotAdapter() : undefined;
 const contextController = new ContextController({
   enabled: config.contextEnabled,
   registry,
@@ -212,10 +189,6 @@ const contextController = new ContextController({
   metadataStore: new LocalContextMetadataStore(config.contextMetadataRoot),
   sourceProvider: contextSourceStore,
   tokenizer: contextTokenizer,
-  snapshotEnabled: contextSnapshotStore !== undefined,
-  snapshotStore: contextSnapshotStore,
-  slotAdapter: contextSlotAdapter,
-  snapshotMaxWriteBytes: config.contextSnapshotMaxWriteBytes,
   getState: () => observer.getState(),
   getAllocation: (id) => control.getAllocation(id),
   getActiveRelease: (runtime) => runtimeReleaseManager.getActiveRelease(runtime),
@@ -248,17 +221,6 @@ const updateContextMetrics = async () => {
         status.state === state ? 1 : 0,
       );
     }
-    metrics.setGauge("context_cache_bytes", { runtime: status.runtime, tier: "ram" }, 0);
-    metrics.setGauge(
-      "context_cache_bytes",
-      { runtime: status.runtime, tier: "nvme" },
-      contextSnapshotStore ? await contextSnapshotStore.usageBytes() : 0,
-    );
-    metrics.setGauge(
-      "context_invalid_entries",
-      { runtime: status.runtime, reason: "snapshot_quarantined_or_recovered" },
-      contextSnapshotStore?.stats().invalidEntries ?? 0,
-    );
   }
   metrics.setGauge(
     "context_active_runtimes",
