@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import {
   chmod,
   copyFile,
+  mkdir,
   mkdtemp,
   readFile,
   readdir,
@@ -213,4 +214,47 @@ test("store rejects broadened record permissions", async () => {
   await session.finalize({ outcome: "http_200", upstreamStatus: 200 });
   await chmod(join(session.path, "metadata.json"), 0o644);
   await expect(store.list()).rejects.toMatchObject({ code: "audit_record_corrupt" });
+});
+
+test("Personal State dependency erasure removes only matching terminal audit payloads", async () => {
+  const { store } = await fixture();
+  const personalState = {
+    subjectDigest: "a".repeat(64),
+    attemptId: "attempt-1",
+    viewId: "view_1",
+    requestDigest: "b".repeat(64),
+    sourceDigests: ["c".repeat(64)],
+    dataEpoch: 4,
+  };
+  const matching = await store.begin(
+    { ...beginInput("req_personal"), personalState },
+    new TextEncoder().encode('{"secret":true}'),
+  );
+  await matching.finalize({ outcome: "http_200", upstreamStatus: 200 });
+  const other = await store.begin(
+    { ...beginInput("req_other"), personalState: { ...personalState, attemptId: "attempt-2" } },
+    new TextEncoder().encode("{}"),
+  );
+  await other.finalize({ outcome: "http_200", upstreamStatus: 200 });
+
+  expect(await store.erasePersonalState({
+    subjectDigest: personalState.subjectDigest,
+    attemptIds: ["attempt-1"],
+  })).toEqual({ removed: 1, active: 0 });
+  expect(await store.personalStateAbsent({
+    subjectDigest: personalState.subjectDigest,
+    attemptIds: ["attempt-1"],
+  })).toBe(true);
+  expect((await store.list()).map((record) => record.requestId)).toEqual(["req_other"]);
+});
+
+test("Personal State erasure fails closed on an unattributed partial audit record", async () => {
+  const { root, store } = await fixture();
+  const orphan = join(root, "2026", "09", "13", "00", "req_orphan");
+  await mkdir(orphan, { recursive: true, mode: 0o700 });
+  await writeFile(join(orphan, "request.json.gz.enc"), "orphan payload", { mode: 0o600 });
+  await expect(store.erasePersonalState({ subjectDigest: "a".repeat(64) }))
+    .rejects.toMatchObject({ code: "audit_record_corrupt" });
+  await expect(store.personalStateAbsent({ subjectDigest: "a".repeat(64) }))
+    .rejects.toMatchObject({ code: "audit_record_corrupt" });
 });

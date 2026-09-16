@@ -1,0 +1,569 @@
+<article lang="ja">
+  <h1>SAAA向けLARM LLM・ASR・TTS API契約 回答</h1>
+  <p>
+    確認日：2026-09-16。対象はlocal-LLM-harnessの現在のrepository実装であり、live hostの
+    配備release、実モデル応答、GPU／CPU容量、LAN経路は今回確認していない。本書の
+    「実装済み」はsourceと自動testで確認できた範囲を指し、live commissioning完了を意味しない。
+  </p>
+
+  <section id="summary">
+    <h2>結論</h2>
+    <p>
+      通常のBearer認証、base URL、request
+      bodyの<code>model</code>だけでLLM、ASR、TTSを呼ぶ data
+      planeはrepositoryへ実装済みである。Profile、claim、Allocation headerは通常推論には
+      必須ではない。Chat CompletionsのJSONとSSE、ASRのmultipart＋JSON、TTSの音声bodyを同じ
+      Gatewayで扱う。
+    </p>
+    <p>
+      ただし、交換可能なProvider契約として完成しているとはまだ扱わない。モデル別のtools、 Structured
+      Outputs、<code>reasoning_effort</code>、token上限、ASR形式、TTS
+      voice／音声形式を
+      機械可読に広告する契約がなく、未対応parameterをLARMが一貫して事前拒否していない。
+      また、通常data plane用の機能別状態取得とTTS voice discoveryは不足している。
+    </p>
+    <table>
+      <caption>
+        依頼項目の判定
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">判定</th>
+          <th scope="col">要点</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">通常HTTPによる三API</th>
+          <td>repository実装済み、live未確認</td>
+          <td>通常Bearer＋modelで内部Allocationを自動取得・解放する</td>
+        </tr>
+        <tr>
+          <th scope="row">Chat Completions SSEの欠落防止</th>
+          <td>repository実装済み</td>
+          <td>delta、tool fragment、finish、DONEを検査し、途中EOFをstream errorにする</td>
+        </tr>
+        <tr>
+          <th scope="row">モデル別能力の広告と事前拒否</th>
+          <td>要修正</td>
+          <td>
+            現行<code>/v1/models</code>はmodel
+            IDだけで、requestは多くをupstreamへ透過する
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ASRの標準JSON</th>
+          <td>repository実装済み、live未確認</td>
+          <td>
+            <code>text</code
+            >必須。language等は任意で、独自metadataは必須でない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">TTSのvoice／形式広告</th>
+          <td>一部実装、要修正</td>
+          <td>adapter情報はあるが、通常clientがmodel別に取得する安定契約がない</td>
+        </tr>
+        <tr>
+          <th scope="row">通常推論とpersonal-state拡張の分離</th>
+          <td>概ね実装済み、契約明文化が必要</td>
+          <td>通常推論にLARM headerは不要。拡張は同等のcloud fallbackを保証しない</td>
+        </tr>
+        <tr>
+          <th scope="row">機能別状態とfallback追跡</th>
+          <td>要修正</td>
+          <td>error分類はあるが、通常client向けの機械可読なmodel別状態snapshotがない</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="standard-data-plane">
+    <h2>1. 通常推論data plane</h2>
+    <p>
+      基準base URLはLARMが返す値をそのまま使う。Agent Connectionが返す値は末尾
+      <code>/v1</code
+      >であるため、例えば<code>https://larm.example/v1</code>へ
+      <code>/chat/completions</code
+      >を連結する。clientが常に<code>/v1</code>を追加してはいけない。
+      operatorがorigin形式を設定する場合はfull path
+      <code>/v1/chat/completions</code
+      >を使用する。どちらの設定形式を採るかはSAAA内で一つに正規化し、 proxy prefixを削除しない。
+    </p>
+    <table>
+      <caption>
+        通常推論で確認した公開面
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">機能</th>
+          <th scope="col">request</th>
+          <th scope="col">response</th>
+          <th scope="col">現在の制約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLM</th>
+          <td><code>POST /v1/chat/completions</code>、JSONのmodelとmessages</td>
+          <td><code>stream</code> false／省略はJSON、trueはSSE</td>
+          <td>model別parameter能力は未広告</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td><code>POST /v1/audio/transcriptions</code>、multipartのmodelと非空file</td>
+          <td>JSONの<code>text</code>。language等は任意</td>
+          <td>通常Gatewayの保証対象はJSON。Realtime入力ではない</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>
+            <code>POST /v1/audio/speech</code>、model、input、任意のvoiceとresponse_format
+          </td>
+          <td>要求形式に合う音声body</td>
+          <td>model別voice／形式広告とlive conformanceが不足</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      global API tokenを使う通常経路では<code>Authorization: Bearer &lt;token&gt;</code>を送る。
+      requestに<code>x-larm-allocation-id</code>がなく、公開model
+      catalogが設定されていれば、LARMの Model
+      Brokerが内部Allocationを作成し、準備完了を待ち、request終了時に参照を解放する。
+      <code>allowFallback: false</code
+      >で取得するため、通常経路は別の公開modelへ暗黙に置換しない。
+    </p>
+    <aside>
+      <h3>認証と広告の区別</h3>
+      <p>
+        固定base URLとglobal API tokenをoperatorがSAAAへ設定する場合、Profile／claimは不要である。
+        LARMから短期のscoped credentialとbase URLを動的に取得したい場合だけAgent Connectionの
+        create、claim、renewが必要になる。後者は標準推論APIではなくbootstrap／割り当てAPIである。
+      </p>
+    </aside>
+  </section>
+
+  <section id="llm-sse">
+    <h2>2. LLM JSON、SSE、モデル差</h2>
+    <p>
+      「Gatewayを通すとtool／reasoning SSEが欠落するためJSONへ固定する」というrepository上の
+      制約は解消済みである。GatewayはSSEをbufferせず転送し、UTF-8とCRLFの分割、comment、複数event、
+      role-only chunk、content、reasoning content、function call、分割されたtool callを検査する。
+      <code>finish_reason</code
+      >はstop、length、tool_calls、content_filter、function_callを区別し、
+      全choiceのfinishと<code>[DONE]</code>がないEOFを正常終了にしない。
+    </p>
+    <p>
+      LARMはtool argumentsを実行用に組み立てないが、index／ID／function fragmentを欠落させず
+      clientへ渡す。SAAAがcall indexまたはIDごとにargumentsを組み立て、finish後に一度だけtoolを
+      実行する。stream開始後に形式違反または途中切断が分かった場合、既に返したHTTP
+      statusは変更せず、 response
+      streamをerror終端する。SAAAは単なるEOFを成功とせず、finishとDONEの両方を確認する。
+    </p>
+    <table>
+      <caption>
+        モデル差に関する現在の保証
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">機能</th>
+          <th scope="col">Gateway実装</th>
+          <th scope="col">公開契約の状態</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">SSE</th>
+          <td>転送・正規化・終端検証あり</td>
+          <td>全公開chat modelで使う設計。live実モデル試験は未実施</td>
+        </tr>
+        <tr>
+          <th scope="row">function tools</th>
+          <td>request透過、JSON／SSE response検証あり</td>
+          <td>model別の対応可否は未広告。live tool round tripが必要</td>
+        </tr>
+        <tr>
+          <th scope="row">Structured Outputs</th>
+          <td><code>response_format.type=json_schema</code>のschema検証と透過testあり</td>
+          <td>upstream／model別の実効保証は未広告</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>reasoning_effort</code></th>
+          <td>passthrough fieldとしてupstreamへ到達し得る</td>
+          <td>対応値、変換、拒否契約なし。保証外</td>
+        </tr>
+        <tr>
+          <th scope="row">出力token上限</th>
+          <td><code>max_tokens</code>の透過testあり</td>
+          <td><code>max_completion_tokens</code>との使い分けとmodel上限は未広告</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      現在のrequest schemaは未知fieldを許容する。したがって、LARMが未対応parameterを常に
+      <code>400 unsupported_parameter</code
+      >として返す保証はまだない。upstreamが無視するか、upstream固有の
+      errorを返す場合がある。これは交換可能なProvider契約にする前の修正対象である。
+    </p>
+  </section>
+
+  <section id="audio">
+    <h2>3. ASR・TTSのモデル固有契約</h2>
+    <h3>ASR</h3>
+    <p>
+      公開model <code>qwen3-asr-1.7b</code>のadapterはWAVを含むfile
+      uploadを受ける。公開の最小保証は
+      WAV入力と<code>{"text":"..."}</code>である。検出できた場合だけlanguageを追加し、空または
+      nullのlanguageはGatewayが除去する。<code>verbose_json</code>ではtask、duration、textと任意の
+      languageを返す。話者分離、speaker ID、segment単位の保証はない。
+    </p>
+    <p>
+      adapterはplain textも生成できるが、現在の通常Gatewayは成功ASR
+      responseをJSONとして検査するため、
+      <code>response_format=text</code
+      >は公開保証に含めない。未対応形式をrequest前に拒否せず、後段で format
+      mismatchになる点は修正対象である。
+    </p>
+    <h3>TTS</h3>
+    <table>
+      <caption>
+        repositoryから確認できたTTS能力
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">model</th>
+          <th scope="col">voice</th>
+          <th scope="col">形式</th>
+          <th scope="col">逐次返却</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>voicevox-core</code></th>
+          <td>既定Kasukabe_Tsumugi。Shikoku_Metan、Zundamon、Kasukabe_Tsumugi、Amehare_Hau</td>
+          <td>WAV、PCM。PCMはmono、s16leで実sample rateをheaderとmedia typeに返す</td>
+          <td>非対応。engineが全文を合成してからbodyを返す</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>qwen3-tts-expressive</code></th>
+          <td>Aiden、Ono_Annaほか設定済み9 voice</td>
+          <td>公開Gatewayとして保証する形式を未固定</td>
+          <td>upstream設定にstream生成項目はあるがlive conformance未確認</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Gateway自体はupstreamの音声bodyを全量bufferせず転送するため、upstreamが早期に音声chunkを返せば
+      clientは全文生成前に再生できる。ただしVOICEVOXでは最初のbyteが全文合成後である。24 kHz、mono、
+      16-bit little-endian PCMのうち、現行VOICEVOX adapterはmonoとs16leを検査するがsample rateを 24
+      kHzへ固定検証していない。24 kHzを共通保証にするにはadapterのfail-closed検査とlive
+      fixtureが必要である。
+    </p>
+    <p>
+      <code>GET /v1/audio/voices</code
+      >は存在するが、通常Bearer＋modelだけで使う安定したmodel別discoveryに
+      なっていない。現行のbodyなし経路は内部Allocationを自動取得せず、明示Allocationがなければ
+      <code>allocation_required</code
+      >となる。SAAAの固定voiceを外す前に、このendpointまたはmodel catalogの
+      どちらを正本にするかをLARM側で決める。
+    </p>
+  </section>
+
+  <section id="personal-state-boundary">
+    <h2>4. 通常推論とLARM personal-state拡張の境界</h2>
+    <table>
+      <caption>
+        portableな契約とLARM拡張
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">利用形態</th>
+          <th scope="col">必要な入力</th>
+          <th scope="col">保証</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">通常Chat Completions</th>
+          <td>Bearer、model、messagesと通常parameter</td>
+          <td>応答生成。LARM context／attempt receipt／削除保証は含まない</td>
+        </tr>
+        <tr>
+          <th scope="row">context view使用</th>
+          <td>
+            明示Allocation、<code>x-larm-context-view-id</code>、対応するcontext
+            APIとrelease binding
+          </td>
+          <td>固定viewを対象runtimeへmaterializeし、requestへ結び付ける</td>
+        </tr>
+        <tr>
+          <th scope="row">generation attempt使用</th>
+          <td>
+            明示Allocationまたはclaimed
+            Provider、<code>x-larm-attempt-id</code>、personal-state権限
+          </td>
+          <td>forwarded／terminal／cancel／stop stateを別APIのreceiptとして確認する</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この確認で、通常経路に<code>x-larm-attempt-id</code>だけを付けた場合にheaderが無視され得る問題を
+      修正した。現在は明示Allocationまたはclaimed Providerがなければ
+      <code>400 allocation_required</code
+      >で拒否し、独自保証がないのに通常成功へ見える状態を防ぐ。
+    </p>
+    <p>
+      contextをSAAAが通常の<code>messages</code>へ展開すれば、会話生成に必要なtext文脈はcloudへ持ち運べる。
+      一方、source digest、data epoch、固定view identity、snapshot／slotの再利用、attempt
+      receipt、backend停止確認、 forget
+      operation、削除完了証跡はmessagesだけでは維持できない。これらを要求したturnは、cloud切替後に
+      同等成功として扱わず、保証低下を利用者または上位state machineへ返す。
+    </p>
+  </section>
+
+  <section id="status-errors-leases">
+    <h2>5. 稼働状態、error、cancel、lease、fallback</h2>
+    <table>
+      <caption>
+        通常推論で観測できる主な分類
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">状態</th>
+          <th scope="col">現行の観測方法</th>
+          <th scope="col">retry</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">未対応model</th>
+          <td><code>404 model_not_found</code></td>
+          <td>設定変更まで不可</td>
+        </tr>
+        <tr>
+          <th scope="row">準備中</th>
+          <td>通常callは内部で待機。deadline後は<code>503 model_loading_timeout</code></td>
+          <td><code>Retry-After: 1</code>付き。client側総予算内だけ再試行</td>
+        </tr>
+        <tr>
+          <th scope="row">容量不足／queue満杯</th>
+          <td>
+            <code>429 allocation_capacity</code
+            >、<code>resource_exhausted</code>、
+            <code>queue_full</code>または<code
+              >queue_timeout</code
+            >
+          </td>
+          <td>Retry-Afterを尊重し、表示・tool・再生開始前だけ再試行候補</td>
+        </tr>
+        <tr>
+          <th scope="row">upstream障害</th>
+          <td><code>502 upstream_unavailable</code>またはprotocol／response不正</td>
+          <td>副作用開始前に限って別Provider候補</td>
+        </tr>
+        <tr>
+          <th scope="row">timeout</th>
+          <td>
+            <code>504 gateway_timeout</code>または<code
+              >upstream_transport_timeout</code
+            >
+          </td>
+          <td>結果が表示・実行されていないことを確認できる場合だけ候補</td>
+        </tr>
+        <tr>
+          <th scope="row">draining／quarantine</th>
+          <td><code>503</code>、codeで原因を区別</td>
+          <td>release収束またはoperator復旧後</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <code>Retry-After</code>はModel Brokerの一部の429／503、execution
+      queueの429、upstreamが返した
+      headerで保持される。ただし全503に付く保証はない。通常client向けには
+      available、preparing、capacity、failed、unsupportedをrequest前に取得するmodel別endpointがなく、
+      <code>/v1/models</code
+      >は静的なID一覧、<code>/v1/activity</code>はdaemon全体のidle／active／drainingである。
+      Agent ConnectionのProvider healthはより詳細だが、通常data planeとは別のbootstrap契約である。
+    </p>
+    <p>
+      HTTP requestのabortは待機queue、upstream fetch、response
+      readerへ伝播し、LARMの実行枠と内部参照を
+      解放する。これでclient待機は止まるが、各engineが計算を直ちに停止したことまでは共通保証しない。
+      personal-state attempt cancelはbackend stop
+      stateをreceiptに残せるため、通常abortより強いLARM拡張である。
+    </p>
+    <p>
+      通常三APIの内部leaseはLARM所有で、SAAAによるrenew／releaseは不要である。明示Allocationではrenewと
+      release
+      APIを使う。releaseは記録が保持される間は再実行しても200を返すが、boot変更または履歴削除後の
+      永続的な冪等性は保証しない。
+    </p>
+    <p>
+      通常Model
+      Brokerは公開modelを別modelへfallbackしない。responseの<code>model</code>は要求した公開modelへ
+      正規化され、<code>x-request-id</code>と<code>x-larm-boot-epoch</code>を返す。内部route／runtimeは監査eventへ残るが、
+      cloudへの切替理由を表す公開fieldはないため、SAAAがProvider試行履歴、切替理由、実際に採用したmodelを
+      turn単位で記録する。
+    </p>
+  </section>
+
+  <section id="examples">
+    <h2>request／response例</h2>
+    <p>以下はbase URLが既に<code>/v1</code>を含む場合の例である。</p>
+    <pre><code>curl -sS "$LARM_BASE_URL/chat/completions" \
+  -H "Authorization: Bearer $LARM_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"coding-default",
+    "messages":[{"role":"user","content":"JSONで短く答えてください"}],
+    "stream":false
+  }'</code></pre>
+    <pre><code>{
+  "id":"chatcmpl-...",
+  "object":"chat.completion",
+  "created":1789516800,
+  "model":"coding-default",
+  "choices":[{
+    "index":0,
+    "message":{"role":"assistant","content":"..."},
+    "finish_reason":"stop"
+  }]
+}</code></pre>
+    <pre><code>curl -N "$LARM_BASE_URL/chat/completions" \
+  -H "Authorization: Bearer $LARM_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"coding-default",
+    "messages":[{"role":"user","content":"短く答えてください"}],
+    "stream":true
+  }'
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1789516800,"model":"coding-default","choices":[{"index":0,"delta":{"content":"..."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1789516800,"model":"coding-default","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]</code></pre>
+    <pre><code>curl -sS "$LARM_BASE_URL/audio/transcriptions" \
+  -H "Authorization: Bearer $LARM_API_TOKEN" \
+  -F model=qwen3-asr-1.7b \
+  -F response_format=json \
+  -F file=@sample.wav
+
+{"text":"こんにちは","language":"ja"}</code></pre>
+    <pre><code>curl -sS "$LARM_BASE_URL/audio/speech" \
+  -H "Authorization: Bearer $LARM_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"voicevox-core",
+    "input":"こんにちは",
+    "voice":"Kasukabe_Tsumugi",
+    "response_format":"wav"
+  }' \
+  --output speech.wav</code></pre>
+  </section>
+
+  <section id="required-changes">
+    <h2>LARM側の必要な変更と依存関係</h2>
+    <ol>
+      <li>
+        公開model manifestへprotocolとmodel別能力を追加する。LLMはSSE、tools、JSON Schema、
+        reasoning effortの対応値、token parameter名と上限、ASRは入力／応答形式と言語／話者metadata、
+        TTSは既定voice、voice一覧、音声形式、sample仕様、native streamingを表す。
+      </li>
+      <li>
+        manifestを<code>GET /v1/models</code>のnamespaced
+        extensionまたはversion付きLARM endpointで公開し、
+        同じmanifestからrequestを事前検証する。未対応fieldは
+        <code>400 unsupported_parameter</code
+        >、値違反は<code>400 invalid_value</code>としてparam名を返す。
+      </li>
+      <li>
+        <code>GET /v1/audio/voices?model=...</code>を通常Bearerで利用可能にするか、model
+        manifestを唯一の
+        voice正本にする。bodyなしrequestでも内部Allocationを要求しない静的catalogが望ましい。
+      </li>
+      <li>
+        model別statusをavailable、preparing、capacity、failed、unsupportedで返し、snapshot時刻、
+        有効期限、retry可能性、Retry-Afterを定義する。LLM、ASR、TTSを別々に評価し、一機能の障害で
+        catalog全体を使用不能にしない。
+      </li>
+      <li>
+        OpenAPIへASR multipart、OpenAI形式error、SSE終端条件、音声media
+        type／header、capability／status
+        schemaを追加する。現在の<code>/openapi.json</code>はASR request
+        bodyとmodel差を十分に表さない。
+      </li>
+      <li>
+        live conformanceへtool arguments分割、reasoning delta、Structured Outputs、途中EOF、WAV
+        ASR、 24 kHz mono s16le PCM、TTS first playable byte、cancel後のengine停止状態を追加する。
+      </li>
+    </ol>
+    <table>
+      <caption>
+        主な依存関係
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">変更</th>
+          <th scope="col">依存先</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLM能力の保証</th>
+          <td>
+            各llama.cpp releaseと各model templateの実挙動。特にtools、grammar、reasoning field
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen TTS能力</th>
+          <td>固定upstream revisionのrequest schema、既定voice、format、stream実装のlive確認</td>
+        </tr>
+        <tr>
+          <th scope="row">24 kHz PCM保証</th>
+          <td>VOICEVOX／Qwen TTS出力のadapter検査とfixture</td>
+        </tr>
+        <tr>
+          <th scope="row">cancel計算停止</th>
+          <td>HTTP切断を各engineが生成停止へ結び付けることの実測とbackend別status</td>
+        </tr>
+        <tr>
+          <th scope="row">cloud fallback追跡</th>
+          <td>SAAAのturn state、tool／表示／再生開始境界、Provider試行予算</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="joint-acceptance">
+    <h2>共同受入の順序</h2>
+    <ol>
+      <li>固定release identityのLARMで三APIの通常Bearer conformanceを実行する。</li>
+      <li>LLM JSON、SSE、tool round trip、Structured Outputs、途中切断をmodelごとに確認する。</li>
+      <li>ASR WAVとTTS WAV／PCM、voice discovery、first playable byte、cancelを確認する。</li>
+      <li>「ASRだけcloud」「TTSだけ別Provider」を独立した選択stateで確認する。</li>
+      <li>ローカルLLMの429／503時だけ、総timeoutと試行予算内でcloudへ切り替える。</li>
+      <li>
+        表示、tool実行、音声再生のいずれか開始後は自動再生成せず、重複副作用がないことを確認する。
+      </li>
+      <li>personal-state保証を要求したturnでは、cloud切替が同等成功に見えないことを確認する。</li>
+    </ol>
+  </section>
+
+  <section id="references">
+    <h2>現在の資料</h2>
+    <ul>
+      <li><a href="http-provider-standardization.html">OpenAI互換HTTP Provider移行 実装計画</a></li>
+      <li><a href="agent-provider-connection-api.html">Agent Provider Connection API仕様</a></li>
+      <li><a href="saaa-http-provider-migration-request.html">SAAA実装依頼：HTTP API統一</a></li>
+      <li>
+        <a href="personal-state-saaa-integration-handoff.html">personal-state SAAA統合handoff</a>
+      </li>
+      <li><code>GET /openapi.json</code>：現在のmachine-readable API inventory</li>
+      <li><code>examples/voice-client.ts</code>：ASR→LLM SSE→句単位TTSのreference flow</li>
+      <li><code>deploy/local-node/scripts/smoke-http-provider-live.ts</code>：三APIのlive smoke</li>
+    </ul>
+  </section>
+</article>

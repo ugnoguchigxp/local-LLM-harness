@@ -12,6 +12,16 @@ const tokenPayloadSchema = z.object({
   generation: z.number().int().positive(),
   iat: z.number().int().nonnegative(),
   exp: z.number().int().positive(),
+  subject: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  scopes: z.array(z.enum([
+    "context.source.provision",
+    "context.measure",
+    "context.view.create",
+    "context.generate",
+    "context.attempt.cancel",
+    "context.forget",
+    "context.operation.read",
+  ])).max(7).optional(),
 }).strict();
 
 export type ConnectionTokenPayload = z.infer<typeof tokenPayloadSchema>;

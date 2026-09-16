@@ -65,4 +65,19 @@ describe("context snapshot manifest", () => {
       maxBytes: manifest.snapshotBytes - 1,
     })).toBe("oversize");
   });
+
+  test("v2 binds request, view, source, attempt, and data epoch dependencies", () => {
+    expect(contextSnapshotManifestSchema.safeParse({ ...manifest, schemaVersion: 2 }).success).toBe(false);
+    expect(contextSnapshotManifestSchema.parse({
+      ...manifest,
+      schemaVersion: 2,
+      dependencies: {
+        requestDigest: "d".repeat(64),
+        viewId: "view_1",
+        attemptId: "attempt-1",
+        sourceDigests: ["e".repeat(64)],
+        dataEpoch: 3,
+      },
+    }).dependencies).toMatchObject({ viewId: "view_1", dataEpoch: 3 });
+  });
 });

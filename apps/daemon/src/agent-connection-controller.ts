@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   activeAllocation,
+  personalStateSubjectDigest,
   resolveAgentAudienceBaseUrl,
   type AgentAudience,
   type AgentConnectionCatalog,
@@ -16,6 +17,16 @@ import type { ControlPlane } from "./controller";
 import { ConnectionTokenCodec, ConnectionTokenError, type ConnectionTokenPayload } from "./connection-token";
 import type { SemanticReadiness } from "./semantic-readiness";
 
+const PERSONAL_STATE_SCOPES = [
+  "context.source.provision",
+  "context.measure",
+  "context.view.create",
+  "context.generate",
+  "context.attempt.cancel",
+  "context.forget",
+  "context.operation.read",
+] as const;
+
 type ConnectionRecord = {
   id: string;
   allocationId: string;
@@ -30,6 +41,7 @@ type ConnectionRecord = {
   readyDeadline: number;
   generation: number;
   tokenIssuedAt: number;
+  personalStateAuthorized: boolean;
   releasedAt?: string;
   error?: { code: string; message: string };
 };
@@ -87,6 +99,7 @@ export class AgentConnectionController {
     idempotencyTtlMs: number;
     idempotencyLimit: number;
     historyLimit?: number;
+    personalStateAvailable?: boolean;
     now?: () => number;
     random?: () => string;
   }) {}
@@ -178,6 +191,7 @@ export class AgentConnectionController {
     principal: string,
     idempotencyKey: string,
     requestUrl: string,
+    personalStateAuthorized = false,
   ): Promise<AgentConnectionApiResult> {
     const catalog = this.options.getCatalog();
     if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
@@ -215,7 +229,7 @@ export class AgentConnectionController {
     };
     return await this.idempotent(
       `${principal}:POST:/v1/agent-connections:${idempotencyKey}`,
-      hash(JSON.stringify({ request: normalizedRequest, advertisedBaseUrl })),
+      hash(JSON.stringify({ request: normalizedRequest, advertisedBaseUrl, personalStateAuthorized })),
       async () => {
         const allocated = await this.options.control.allocate({
           requirements: profile.providers.map((provider) => ({
@@ -248,6 +262,7 @@ export class AgentConnectionController {
           readyDeadline: Math.min(Date.parse(allocation.expiresAt), now + this.options.readyTimeoutMs),
           generation: 1,
           tokenIssuedAt: Math.floor(now / 1_000),
+          personalStateAuthorized,
         };
         this.records.set(record.id, record);
         let complete = false;
@@ -309,9 +324,17 @@ export class AgentConnectionController {
     id: string,
     principal: string,
     format: "openai-provider-v1" | "larm-embedding-provider-v1",
+    personalStateAuthorized = false,
   ): Promise<AgentConnectionApiResult> {
     const found = this.owned(id, principal);
     if ("body" in found) return found;
+    if (found.personalStateAuthorized && !personalStateAuthorized) {
+      return error(
+        "connection_auth_required",
+        "standard bearer authentication is required to claim Personal State scopes",
+        401,
+      );
+    }
     this.refreshLifecycle(found);
     if (found.status === "pending" || found.status === "probing") {
       return error("connection_not_ready", `connection ${id} is ${found.status}`, 409);
@@ -423,6 +446,13 @@ export class AgentConnectionController {
       status: "ready",
       audience: found.audience.id,
       providers,
+      ...(this.personalStateAuthorized(found) ? {
+        contextControl: {
+          contractVersion: "larm-personal-state.v1" as const,
+          subjectDigest: personalStateSubjectDigest(found.principal),
+          scopes: [...PERSONAL_STATE_SCOPES],
+        },
+      } : {}),
       expiresAt: found.expiresAt,
     };
     return { status: 200, body };
@@ -626,7 +656,19 @@ export class AgentConnectionController {
       generation: record.generation,
       iat: record.tokenIssuedAt,
       exp: Math.floor(Date.parse(record.expiresAt) / 1_000),
+      ...(this.personalStateAuthorized(record, provider) ? {
+        subject: personalStateSubjectDigest(record.principal),
+        scopes: [...PERSONAL_STATE_SCOPES],
+      } : {}),
     });
+  }
+
+  private personalStateAuthorized(record: ConnectionRecord, providerName?: string): boolean {
+    if (!this.options.personalStateAvailable || !record.personalStateAuthorized) return false;
+    const providers = providerName === undefined
+      ? record.profile.providers
+      : record.profile.providers.filter((provider) => provider.name === providerName);
+    return providers.some((provider) => provider.protocol === "openai.chat-completions.v1");
   }
 
   private owned(id: string, principal: string): ConnectionRecord | AgentConnectionApiResult {

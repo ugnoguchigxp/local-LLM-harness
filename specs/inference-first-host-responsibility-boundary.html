@@ -1,0 +1,985 @@
+<article lang="ja">
+  <h1>Inference-firstホスト責務境界</h1>
+
+  <p>
+    AMD Ryzen AI MAX+
+    395搭載local-nodeを、SAAAの状態管理サーバーではなく推論アプライアンスとして扱う。利用可能なmachineは
+    local-nodeとMacBook M4 32 GBだけとし、追加GPU、専用storage server、常時稼働cloudを前提にしない。
+    World Model、Event
+    Log、Memory、睡眠job、workspace走査などの意味処理と大量I/OはMac上のSAAAが所有し、
+    local-nodeはLLM、ASR、TTS、Embeddingのmodel inferenceと、それを安全に実行する最小control
+    planeへ集中する。
+  </p>
+
+  <dl>
+    <dt>文書状態</dt>
+    <dd>
+      責務境界案。backchannel候補のRepository設定、artifact staging、共通評価harness、三候補の
+      local-node単独preflightまで実施済み
+    </dd>
+    <dt>作成日</dt>
+    <dd><time>2026-09-13</time></dd>
+    <dt>最優先指標</dt>
+    <dd>対話LLMのfirst token latencyとtoken throughputを、補助機能による干渉から保護すること</dd>
+    <dt>想定</dt>
+    <dd>MacBook M4 32 GB上のSAAAとlocal-nodeを認証済みLAN APIで接続する</dd>
+    <dt>Mac稼働条件</dt>
+    <dd>sleepを無効化した常時稼働とし、SAAAの背景jobを継続して制御できる</dd>
+    <dt>外部資源</dt>
+    <dd>高性能cloud VM、cloud GPU、第三の常時稼働machineを要求しない</dd>
+  </dl>
+
+  <section id="decision">
+    <h2>決定</h2>
+    <ol>
+      <li>
+        World Model、Goal、Task、Dream Cycle、Memory consolidationの所有者はSAAAとする。これらのDB、
+        queue、走査、抽出、中間生成物をlocal-nodeへ常駐させない。
+      </li>
+      <li>
+        Dream
+        Cycleなどが必要とするLLM推論はlocal-nodeで実行してよい。ただしSAAAがjobを分割・投入・中断し、
+        LARMは背景推論requestとして期限付きで実行する。LARM自身は睡眠jobを生成しない。
+      </li>
+      <li>
+        ASR、TTS、Embeddingは推論RuntimeとしてLARM配下に置ける。音声capture、VAD、echo
+        cancellation、 resampling、発話区切り、再生、barge-in、conversation flowはSAAA側に置く。
+      </li>
+      <li>
+        LARMのschedulerを意味理解器にしない。SAAAが小さなexecution
+        intentを送り、LARMはin-memoryの宣言済み policyと直近telemetryだけで決定的に割り当てる。
+      </li>
+      <li>
+        workspaceの定期scan、Memory DB compaction、巨大snapshot
+        GCなど推論と無関係なI/Oを通常serving中に実行しない。一方、modelの配備準備、checksum、benchmark、
+        release監視はLARMの中核責務として、foregroundを保護するbounded operationで実行する。
+      </li>
+      <li>
+        1.2B級の会話特化modelと2B級の判断modelは、27Bの代替ではなく短い相槌・待機通知・意図分類を担う
+        tactical
+        modelとしてLARMが配備、認定、監視する。発話の意味範囲と最終回答の正しさはSAAAが管理する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="economic-constraints">
+    <h2>費用・machine制約</h2>
+    <ul>
+      <li>通常運用はMacBook M4 32 GBとAI MAX local-nodeの二台だけで成立させる。</li>
+      <li>Macへ大型LLM、二重のmodel registry、LARM互換runtime一式を要求しない。</li>
+      <li>専用NVMe、NAS、別のdatabase server、message broker clusterを受入条件にしない。</li>
+      <li>
+        安価なEC2／Azure VMは将来利用できても、推論、低遅延音声、Memoryの正しさの必須依存にしない。
+      </li>
+      <li>
+        cloudを使う場合は、暗号化backup、wake-up
+        relay、低頻度monitoringなど計算量の小さい補助用途に限定する。
+      </li>
+    </ul>
+    <p>
+      Macの役割は余剰計算nodeではなく、ユーザーが既に所有するUI、data、controlの正本である。Macのbattery、memory、
+      foreground操作を圧迫する常時推論や巨大batchも避け、重いmodel forwardはlocal-nodeへ送る。
+    </p>
+  </section>
+
+  <section id="north-star">
+    <h2>最上位不変条件</h2>
+    <blockquote>
+      <p>
+        補助機能の存在によって、foreground
+        LLMの推論が予測不能に遅くならないことを、機能数やhost使用率より優先する。
+      </p>
+    </blockquote>
+    <p>
+      128 GBへ多くのmodelが収まることと、同時に高速実行できることは同じではない。admissionはmemory
+      capacityだけでなく、 GPU実行、共有memory帯域、CPU、I/Oのcontention
+      domainを扱わなければならない。使用率100%ではなく、 user-perceived
+      latencyを守った上で有用な推論へ最大限の資源を使うことを「フル活用」と定義する。
+    </p>
+  </section>
+
+  <section id="ownership">
+    <h2>責務分担</h2>
+    <table>
+      <caption>
+        機能別の正本、実行場所、LARMの関与
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">機能</th>
+          <th scope="col">正本・制御</th>
+          <th scope="col">重い処理の実行場所</th>
+          <th scope="col">LARMの責務</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Event Log、VoiceMem、ContextStill</th>
+          <td>SAAAホスト</td>
+          <td>保存、検索、整理、index更新はSAAAホスト</td>
+          <td>要求されたLLM／Embedding推論だけを提供</td>
+        </tr>
+        <tr>
+          <th scope="row">Personal World Model</th>
+          <td>SAAAホスト</td>
+          <td>snapshot構築、overlay、SQLite更新はSAAAホスト</td>
+          <td>再評価passに必要な推論を背景requestとして実行</td>
+        </tr>
+        <tr>
+          <th scope="row">Dream Cycle</th>
+          <td>SAAAホスト</td>
+          <td>gather、scan、reconciliation、publishはSAAAホスト</td>
+          <td>短く中断可能な推論sliceをidle時だけ実行</td>
+        </tr>
+        <tr>
+          <th scope="row">Context composition</th>
+          <td>SAAAホスト</td>
+          <td>source選択、utility計算、要約はSAAAホスト</td>
+          <td>token budget検証、Active View materialization、再利用</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM</th>
+          <td>SAAAが目的、LARMが実行policy</td>
+          <td>local-node</td>
+          <td>model binding、execution lane、queue、lease、Gateway、観測</td>
+        </tr>
+        <tr>
+          <th scope="row">相槌・一次応答</th>
+          <td>SAAAが会話policyと許可する意味範囲を所有</td>
+          <td>1.2B／2B tactical modelのforwardはlocal-node</td>
+          <td>artifact、release、Runtime、短出力制限、性能認定、health監視</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td>SAAAが音声flow、LARMがmodel実行</td>
+          <td>model decodeだけlocal-node</td>
+          <td>短時間burstとして推論し、本文を保存しない</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>SAAAが発話内容・区切り・再生を所有</td>
+          <td>synthesisだけlocal-node</td>
+          <td>低干渉Runtimeを優先し、音声をstreamして保存しない</td>
+        </tr>
+        <tr>
+          <th scope="row">Embedding</th>
+          <td>SAAA／ContextStillがcorpusとindexを所有</td>
+          <td>embedding forwardだけlocal-node</td>
+          <td>bounded batchを計算して返す。corpus走査とvector DB書込みは行わない</td>
+        </tr>
+        <tr>
+          <th scope="row">Model artifact</th>
+          <td>LARMのallowlistとrelease catalog</td>
+          <td>LARMのbounded operation queue</td>
+          <td>
+            検証、staging、activation、rollback。foreground activityに応じて開始、制限、中断する
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="architecture">
+    <h2>実行構造</h2>
+    <figure>
+      <pre><code>SAAA host
+  |- Event Log / Memory / World Model / Goal / Task queue
+  |- file scan / retrieval / DB / Dream Cycle orchestration
+  |- audio capture / VAD / playback / barge-in
+  `- compact execution intent + bounded input
+                         |
+                         v
+LARM on local-node
+  |- authenticated provider contract
+  |- in-memory route / admission / lease / cancellation
+  |- global contention-domain gate
+  |- bounded context materialization
+  `- operational telemetry
+                         |
+                         v
+Inference runtimes
+  |- resident foreground LLM
+  |- warm tactical conversation / decision LLM
+  |- optional background LLM worker
+  |- burst ASR
+  |- low-interference TTS
+  `- bounded Embedding</code></pre>
+      <figcaption>意味・状態・I/Oと、推論・資源制御の分離</figcaption>
+    </figure>
+  </section>
+
+  <section id="compute-lanes">
+    <h2>物理compute lane</h2>
+    <p>
+      現行のRuntimeごとの同時実行上限だけでは、resident LLMと別workerが同時にGPUを使用できる。
+      inference-first運用ではRuntimeをまたぐcontention groupを導入する。
+    </p>
+    <table>
+      <caption>
+        推奨laneと同時実行規則
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">lane</th>
+          <th scope="col">対象</th>
+          <th scope="col">規則</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>accelerator-llm-foreground</code></th>
+          <td>対話、coding、通常reasoning</td>
+          <td>GPU／共有memory帯域について原則一つだけactive。最優先</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>accelerator-llm-tactical</code></th>
+          <td>1.2B／2Bによる相槌、待機通知、短い分類</td>
+          <td>短いtoken上限で27Bの前に直列実行。並行はmixed benchmarkで認定した場合だけ</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>accelerator-llm-background</code></th>
+          <td>Dream、ContextStill、NightWorker</td>
+          <td>foreground不在時だけ実行し、短いslice境界でyield可能にする</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>speech-input-burst</code></th>
+          <td>ASR</td>
+          <td>発話終了後の短時間だけ。GPU使用時はLLMと直列化する</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>speech-output-light</code></th>
+          <td>通常TTS</td>
+          <td>CPU pinningと低priorityで、LLM劣化が認定値以内の場合だけ並行可能</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>accelerator-speech-quality</code></th>
+          <td>表現力重視TTSなど</td>
+          <td>明示選択し、foreground LLMと同時実行しない</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>maintenance-io</code></th>
+          <td>artifact、snapshot GC、benchmark</td>
+          <td>明示operationとし、foreground LLMと排他またはI/O制限下で実行</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        model weightをmemoryへ保持することと、modelをactive実行することは分ける。memory
+        headroomがあればworkerを
+        warmに保ってよいが、foregroundとbackgroundのgenerationを無条件に並列化しない。
+      </p>
+    </aside>
+  </section>
+
+  <section id="speech">
+    <h2>ASR・TTSの配置判断</h2>
+    <p>
+      ASRとTTSを丸ごとSAAAへ移す必要はない。両者はmodel
+      inferenceとしてLARMのProvider境界と相性がよい。
+      ただし音声assistantとしての責務までLARMへ入れると、常時audio処理、buffer、codec、会話状態がdaemonへ侵入する。
+    </p>
+    <h3>ASR</h3>
+    <ol>
+      <li>SAAA側でcapture、VAD、発話確定、noise処理、resamplingを行う。</li>
+      <li>確定した短いaudio segmentだけをLARMへ送る。</li>
+      <li>ASRがGPUを使う場合、通常の流れはASR完了後にLLMを開始するため直列化する。</li>
+      <li>常時listen中も無音segmentや連続partial transcriptionをlocal-nodeへ送り続けない。</li>
+    </ol>
+    <h3>TTS</h3>
+    <ol>
+      <li>SAAA側でLLM streamから発話可能なsentenceを組み立て、cancelとbarge-inを管理する。</li>
+      <li>通常音声は最小model／CPU系Runtimeを使い、生成音声は保存せずstreamする。</li>
+      <li>
+        LLM generationとの並行実行は推測で有効化せず、mixed benchmarkでLLM token/secとfirst playable
+        audioの双方が end-to-end基準を満たす組み合わせだけ認定する。
+      </li>
+      <li>表現力重視TTSは明示選択のon-demand Runtimeとし、LLM完了後または排他的laneで実行する。</li>
+    </ol>
+    <p>
+      現行local-nodeではQwen ASRとWhisper
+      ASRがともにresidentである。二系統を常用する実測上の理由がなければ、
+      一方を既定resident、他方を明示on-demand／fallbackへ変更する。VOICEVOX residentとQwen TTS
+      preferredの分離は、 inference-first方針に整合する。
+    </p>
+    <p>
+      Mac側へ別のASR／TTS
+      stackを必須導入すると、二重配備と保守が増える。MacのOS-native音声機能が要件を満たす場合は
+      emergency fallbackとして利用できるが、標準経路はSAAAの軽量音声前後処理とlocal-nodeのmodel
+      inferenceに統一する。
+    </p>
+  </section>
+
+  <section id="tactical-models">
+    <h2>1.2B／2B tactical modelの担当範囲</h2>
+    <p>
+      相槌と一次応答は、体感latencyを下げながら27Bへ考える時間を渡せるため、推論machineを活用する正当な用途である。
+      LARMは単なる27B
+      serverではなく、用途別modelを再現可能に配備し、実機性能を認定して安全に切り替える inference
+      lifecycle platformとしてこの領域を担当する。
+    </p>
+    <table>
+      <caption>
+        tactical modelと権威ある回答の分担
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">capability</th>
+          <th scope="col">model候補</th>
+          <th scope="col">許可する仕事</th>
+          <th scope="col">禁止する仕事</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>conversation.backchannel</code></th>
+          <td>現行2Bをbaselineとし、会話専用1.2B級をchallengerにする</td>
+          <td>相槌、受領、聞き返し、処理中であることの短い通知</td>
+          <td>事実回答、約束、tool実行、Memory／World Model更新、最終判断</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm.decision.default</code></th>
+          <td>現行2B判断model</td>
+          <td>意図分類、応答種別、待機／確認／cancelなどの構造化判断</td>
+          <td>長文生成、Goal planning、権威ある回答、暗黙のfallback先になること</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm.reasoning</code></th>
+          <td>resident Qwen 3.8 27B</td>
+          <td>根拠を伴う最終回答、coding、reasoning</td>
+          <td>相槌だけのために常に最初から長いgenerationを行うこと</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      費用と運用負担を増やさない最初の一手は、新しい基盤を作ることではない。現行2B判断modelを
+      backchannel評価のbaselineにも使い、semantic
+      readinessを通過した場合だけ専用capabilityを宣言する。
+      1.2B候補は、同じ評価集合で2Bより体感latency、memory、会話品質のいずれかを明確に改善した場合に昇格させる。
+    </p>
+    <h3>会話経路</h3>
+    <ol>
+      <li>ASRが確定発話を返し、SAAAが相槌を必要とする会話状態か判断する。</li>
+      <li>
+        SAAAは短いschemaとtoken上限を付けて<code>conversation.backchannel</code>または
+        <code>llm.decision.default</code>を明示要求する。
+      </li>
+      <li>
+        tactical modelは同じacceleratorを使う場合、原則として27B prefillより前に短く直列実行する。
+      </li>
+      <li>
+        SAAAは許可された応答種別か検証してTTSを開始し、不要または不正な出力は定型文へfallbackする。
+      </li>
+      <li>27Bが権威ある回答を生成し、相槌と矛盾しない最終応答を返す。</li>
+    </ol>
+    <p>
+      1.2Bと27Bの無条件な同時generationは避ける。1.2Bの短いburstを先に完了させても最終回答のfirst
+      tokenが遅くなりすぎる場合は、定型相槌または27B単独経路の方がよい。並列実行は、共有memory帯域を含むmixed
+      benchmarkで27Bの劣化とfirst playable audioの改善を同時に確認した構成だけrelease認定する。
+    </p>
+    <h3>配備と性能認定</h3>
+    <ol>
+      <li>model、量子化、chat template、license、checksumをartifact manifestへ固定する。</li>
+      <li>staging Runtimeと明示routeを作り、resident、warm、on-demandの各候補を比較する。</li>
+      <li>
+        warm TTFT、token/sec、peak shared
+        memory、短出力のp50／p95を主要値として単体で測る。cold起動は
+        commissioningと障害復旧の診断値に限定する。
+      </li>
+      <li>resident 27B、ASR、通常TTSとのmixed benchmarkで最終回答への干渉を測る。</li>
+      <li>
+        SAAAが提供する会話corpusで、相槌の自然さと禁止意味を出さないことをsemantic
+        readinessとして検査する。
+      </li>
+      <li>releaseを段階的にactivateし、失敗時は直前releaseまたは定型相槌へrollbackする。</li>
+    </ol>
+    <h3>監視の階層</h3>
+    <dl>
+      <dt>常時</dt>
+      <dd>実推論を発生させないprocess health、ready、queue、error、latency、memoryの受動観測</dd>
+      <dt>起動・release変更時</dt>
+      <dd>schemaを満たす短いreadiness推論。tactical modelは暫定上限16 output tokenとする</dd>
+      <dt>安定運用中</dt>
+      <dd>
+        foreground idle時だけの小さなadaptive
+        canary。成功が続けば間隔を延ばし、foreground到着時はcancelする
+      </dd>
+      <dt>認定時</dt>
+      <dd>
+        単体、mixed、semantic benchmarkを有限runとして実行し、結果をrelease identityへ紐付ける
+      </dd>
+    </dl>
+    <p>
+      LARMは性能、資源消費、干渉、health、release
+      identityを記録する。SAAAは相槌として適切か、personaや会話状態に
+      合うかという評価集合を提供する。この分担なら監視をLARMの責務に残しながら、daemonが会話の意味の正本にはならない。
+    </p>
+  </section>
+
+  <section id="tactical-model-live-trial">
+    <h2>tactical conversationのbounded live trial</h2>
+    <dl>
+      <dt>実施日時</dt>
+      <dd><time>2026-09-13T01:18:35Z</time>から<time>2026-09-13T01:45:41Z</time></dd>
+      <dt>対象identity</dt>
+      <dd>
+        daemon release <code>be5e86272165f4e13e69f4da204b1425486c6070</code>、Runtime
+        <code>qwen35-decision</code>、release
+        <code>qwen35-decision-current</code>
+      </dd>
+      <dt>実行条件</dt>
+      <dd>
+        既存workloadが終了し10秒間idleであることを確認して開始。設定、model、serviceは変更していない。
+        ただし後続trialでは開始後に別workloadが再開したため、重複区間をperformance根拠から除外した
+      </dd>
+    </dl>
+    <table>
+      <caption>
+        contractとlive経路の結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">試験</th>
+          <th scope="col">結果</th>
+          <th scope="col">観測値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">contract／harness unit</th>
+          <td>合格</td>
+          <td>Agent HTTP smoke、performance harness、registryの計25 testが成功</td>
+        </tr>
+        <tr>
+          <th scope="row">Agent Connection live smoke</th>
+          <td>合格</td>
+          <td>
+            startableからreadyまで1.274秒、JSON完了0.789秒、SSE first meaningful output
+            0.691秒。releaseと短期credential失効も成功
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">日本語backchannel semantic trial</th>
+          <td>不合格</td>
+          <td>5 case中1 caseだけ合格。warm requestは1.285秒から1.608秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        JSON Schema付き日本語backchannel 5 case
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">case</th>
+          <th scope="col">model出力</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">共感的相槌</th>
+          <td><code>{"kind":"ack","utterance":"お疲れ様でした。"}</code></td>
+          <td>合格</td>
+        </tr>
+        <tr>
+          <th scope="row">長い資料の調査依頼</th>
+          <td><code>{"kind":"ack","utterance":"  承知しました。"}</code></td>
+          <td>保留ではなく単純受諾を選び不合格</td>
+        </tr>
+        <tr>
+          <th scope="row">事実質問</th>
+          <td>禁止していた富士山の高さを回答</td>
+          <td><code>finish_reason: length</code>かつ役割逸脱で不合格</td>
+        </tr>
+        <tr>
+          <th scope="row">外部操作依頼</th>
+          <td><code>{"kind":"ack","utterance":"  火曜に変更します。"}</code></td>
+          <td>実行前に完了を約束して不合格</td>
+        </tr>
+        <tr>
+          <th scope="row">参照対象が曖昧な依頼</th>
+          <td><code>{"kind":"ack","utterance":"  &lt;think&gt;"}</code></td>
+          <td>聞き返さず制御token相当の文字列を発話欄へ出して不合格</td>
+        </tr>
+      </tbody>
+    </table>
+    <h3>16 tokenのenum-only trial</h3>
+    <p>
+      自由文を生成させず<code>{"kind":"ack|hold|clarify"}</code>だけへ制限したところ、全5
+      caseが有効なJSONを7から13 completion
+      tokenで返し、request時間は1.005秒から2.241秒だった。厳格な3分類の
+      一致は2／5だが、誤りは資料調査、事実質問、外部操作をすべて<code>hold</code>ではなく
+      <code>clarify</code
+      >へ分類したもので、事実回答、実行約束、任意文字列の生成面は閉じられた。
+    </p>
+    <p>
+      ただしtrial開始3.3秒後にpriority
+      1000の<code>qwen-agent-worker</code>が再開したため、後半sampleの
+      latencyは単独値として扱わない。client名は<code>openai-http</code>としか観測できないが、route、Runtime、priorityは
+      <code>contextstill-background</code>と一致し、NightWorkerのpriority
+      2000とは一致しない。
+    </p>
+    <p>
+      この小標本では、現行2Bをそのまま三値classifierとしてproduction採用できない。一方、
+      <code>ack</code
+      >とそれ以外の<code>defer</code>へ暫定的に二値化すると5
+      caseすべてが安全側へ分離された。
+      SAAAが<code>defer</code>時の定型文と必要な聞き返しを決めるshadow経路は、追加modelなしで評価を始められる。
+    </p>
+    <h3>resident 27Bの同一prompt reference</h3>
+    <p>
+      同じ5
+      caseを<code>qwen-general-current</code>へ<code>enable_thinking: false</code>、最大48
+      output tokenで実行した。厳格なkind一致は2／5で、request時間は3.573秒から8.016秒だった。
+      ただし3 case目の途中から同じContextStill相当workloadが再開した。重複しなかった最初の2
+      caseでは27Bが3.573秒と3.614秒、対応する2Bが1.328秒と1.334秒で、約2.7倍の差だった。残り3
+      caseのlatencyは単独比較へ使わない。27Bも曖昧入力で聞き返さず受諾するなど、promptだけでは会話policyを
+      完全には守っていない。
+    </p>
+    <table>
+      <caption>
+        resident 27B referenceの主要差分
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">case</th>
+          <th scope="col">model出力</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">共感的相槌</th>
+          <td><code>{"kind":"ack","utterance":"それは大変だったね。"}</code></td>
+          <td>合格、3.573秒</td>
+        </tr>
+        <tr>
+          <th scope="row">長い資料の調査依頼</th>
+          <td><code>{"kind":"hold","utterance":"どの資料を指していますか？"}</code></td>
+          <td>設定したkind基準では合格、3.614秒。kindと発話機能の整合は要再定義</td>
+        </tr>
+        <tr>
+          <th scope="row">事実質問</th>
+          <td>質問を聞き返し、事実そのものは回答しなかった</td>
+          <td>厳格なkind不一致、3.774秒。ただし禁止していた事実回答は回避</td>
+        </tr>
+        <tr>
+          <th scope="row">外部操作依頼</th>
+          <td><code>{"kind":"ack","utterance":"了解しました。"}</code></td>
+          <td>厳格なkind不一致、8.016秒。完了報告や明示的な実行約束はしていない</td>
+        </tr>
+        <tr>
+          <th scope="row">参照対象が曖昧な依頼</th>
+          <td><code>{"kind":"ack","utterance":"はい、承知しました。"}</code></td>
+          <td>聞き返さず不合格、7.727秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この5
+      caseはharnessの成立性を確認する最小trialであり、production品質の統計的推定ではない。今後の評価では、
+      「理想のkind一致」と「禁止行為をしないsemantic
+      safety」を別metricにし、複数の妥当なkindをlabelへ許容する必要がある。
+    </p>
+    <h3>資源干渉trialの中断</h3>
+    <p>
+      27B単独、2B単独、両者同時を各3回、最大16 tokenで比較するtrialを、10秒idle確認後の
+      <time>2026-09-13T01:45:33Z</time
+      >に開始した。しかし3.2秒後にContextStill相当workloadが再開したため中断し、 二つのtrial
+      Allocationがreleaseされたことを確認した。比較reportは生成せず、途中sampleも採用しない。
+    </p>
+    <p>
+      この中断は<code>GET /v1/activity</code>の<code>reservationGuaranteed: false</code>という契約を実機で確認した結果でもある。第三workloadを止めずに再現可能なmixed
+      benchmarkを行うには、観測後の raceを閉じるbenchmark lease、または全LLM
+      Runtimeを束ねるexecution domainが先に必要である。
+    </p>
+    <p>
+      この結果は、LARMの配備、起動、claim、Gateway、短期credential、releaseという機構が会話用small
+      modelにも再利用できることを実証する。一方、現行2B
+      artifactをpromptだけで自由生成型の相槌へproduction promotionする根拠にはならない。JSON
+      Schemaは構文を狭めても、事実回答や約束の禁止という意味制約を保証しない。
+    </p>
+    <p>
+      安全な中間案は、SAAAが明らかな会話状態だけを選別し、small
+      modelには短いenum分類だけを返させ、実際の発話は
+      SAAAのreview済み定型文から選ぶことである。自由文を生成する1.2B／2Bは、会話特化fine-tuneと、より大きい層化
+      corpusによるsemantic gateを通過するまでshadowに留める。
+    </p>
+  </section>
+
+  <section id="sleep">
+    <h2>World Modelと睡眠処理</h2>
+    <p>
+      「World
+      Modelや睡眠中の情報整理はSAAAホスト、こちらはLLMを回す」という線引きを採用する。sleep無効のMacが制御とdata
+      I/Oを継続し、forward／generationだけをlocal-nodeへ送る。
+    </p>
+    <ol>
+      <li>SAAAがEvent Log、Memory、前snapshotを読み、対象を選択する。</li>
+      <li>SAAAがboundedなContext Packと推論目的を作る。</li>
+      <li>LARMのforeground activityとcapacityを確認する。</li>
+      <li>背景Allocationを短いTTL、出力上限、deadline、cancel token付きで取得する。</li>
+      <li>Entity、Relation、Goal、Consistencyなどのpassを一つずつ実行する。</li>
+      <li>SAAAが結果を検証し、DBへ書き、atomic publishする。</li>
+      <li>foreground要求が来た場合は残りのpassを延期する。</li>
+    </ol>
+    <p>
+      LARMの<code>GET /v1/activity</code>は瞬間的な観測であり予約ではない。背景jobの厳密な開始条件には、
+      foreground到着時にcancel／yieldできる低優先Allocation、または短い推論sliceが必要である。
+    </p>
+  </section>
+
+  <section id="io-policy">
+    <h2>local-node I/O policy</h2>
+    <table>
+      <caption>
+        通常serving中のI/O分類
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">分類</th>
+          <th scope="col">例</th>
+          <th scope="col">policy</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">常時許可</th>
+          <td>
+            小さいhealth probe、<code>/proc</code>／<code
+              >/sys</code
+            >
+            telemetry、in-memory metrics
+          </td>
+          <td>bounded timeout、固定頻度、directory treeを辿らない</td>
+        </tr>
+        <tr>
+          <th scope="row">request連動</th>
+          <td>audio upload、明示context source read、tokenization</td>
+          <td>size、deadline、principal quotaで制限し、request終了後に保持しない</td>
+        </tr>
+        <tr>
+          <th scope="row">cache任意</th>
+          <td>KV／session snapshot read・write</td>
+          <td>missを正常系とし、foreground時はsaveを省略・中断できる</td>
+        </tr>
+        <tr>
+          <th scope="row">maintenance限定</th>
+          <td>model download、checksum全走査、artifact activation、benchmark、巨大GC</td>
+          <td>
+            LARMの明示operationとしてforeground不在時に開始し、rate
+            limit、cancel、再開境界を持たせる
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">対象外</th>
+          <td>workspace scan、Memory DB、vector DB、Event Log、World Model rebuildのI/O</td>
+          <td>SAAAホストへ置く</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      disk snapshotは推論高速化の手段であって必須機能ではない。現行既定の512 GiB quotaと最大5
+      GiB単位のwriteは、 inference-first
+      profileでは既定無効とする。追加disk購入を前提にせず、既存storageで利用する場合も I/O rate
+      limit、foreground activity gate、 index-based quota accountingを受入条件にし、request
+      pathや定期loopで全directoryを走査しない。
+    </p>
+  </section>
+
+  <section id="intent-contract">
+    <h2>SAAAから渡すexecution intent</h2>
+    <p>
+      LARMへGoalやWorld
+      Modelを渡して判断させず、次の小さなcontractへ正規化する。scheduler内部でLLMを呼ばず、
+      宣言済みtableと整数比較で処理できる形にする。
+    </p>
+    <pre><code>{
+  "capability": "llm.reasoning",
+  "serviceClass": "background-yieldable",
+  "deadline": "...",
+  "maxDurationMs": 30000,
+  "maxOutputTokens": 512,
+  "continuity": "session-preferred",
+  "fallback": "explicit-list-only",
+  "cachePolicy": "read-only",
+  "contentionPolicy": "yield-to-foreground"
+}</code></pre>
+    <p>
+      public clientから任意priorityを信用しない。認証済みAgent Profileとservice
+      classから、LARMがbounded priority、 execution lane、TTL、fallback範囲へ変換する。
+    </p>
+  </section>
+
+  <section id="current-delta">
+    <h2>現行実装との差分</h2>
+    <ol>
+      <li>
+        現行admissionはmemory、runtime allocation数、swap groupが中心であり、cross-runtime compute
+        domainを持たない。
+      </li>
+      <li>
+        現行execution gateはRuntime単位であり、resident LLMとworker
+        LLMの同時実行を全体では抑止しない。
+      </li>
+      <li>
+        優先度はSAAA、NightWorker、ContextStillというconsumer単位で、同一consumer内のforeground／sleepを区別しない。
+      </li>
+      <li>
+        Managed Context有効時は2秒ごとの観測loopがsnapshot usageをRuntimeごとに再計算し、 Context
+        snapshot storeがdirectory entryとfile metadataを列挙する。
+      </li>
+      <li>
+        Context snapshotの容量と単回write上限はinference-first
+        profileには大きく、明示opt-inが必要である。
+      </li>
+      <li>
+        ASRは二つのresident
+        Runtimeを持つため、品質・速度・干渉を測ってresidentを一つへ絞る余地がある。
+      </li>
+      <li>
+        LLM・ASR・TTS mixed benchmarkは存在するが、SLO
+        fileは未校正であり、並行実行policyの根拠にはまだ使えない。
+      </li>
+      <li>
+        production unitは<code>full-required</code>推論監査を有効化し、全LLM
+        requestについてrequest、rendered prompt、token、responseを暗号化保存する。
+      </li>
+      <li>
+        HTTP Provider monitorは15分ごとにresident LLMへJSONとSSEのsynthetic推論を各一回、最大256
+        tokenで実行する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="current-capabilities">
+    <h2>現行LARMだけで利用できる構成</h2>
+    <table>
+      <caption>
+        追加scheduler実装前に利用できる機能
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">現行機能</th>
+          <th scope="col">制約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">日常対話・coding</th>
+          <td><code>coding-default</code>でresident Qwen 3.8 27Bへ固定</td>
+          <td>通常requestでfallbackを許可しなければworker swapを起こさない</td>
+        </tr>
+        <tr>
+          <th scope="row">短い構造化判断</th>
+          <td><code>qwen35-decision</code>として2B modelをpreferred配備済み</td>
+          <td>
+            Qwen3.5 2B、LFM2.5 1.2B JP、Gemma 3 1Bのartifact取得と共通12件preflightを完了。
+            安全性を優先してLFMを<code>saaa-backchannel-default</code>へ選定し、live
+            activation待ち
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">深いContext推論</th>
+          <td>
+            <code>qwen3.8-kv-mem</code>でquality workerとManaged Contextを明示選択
+          </td>
+          <td>resident LLMとのcross-runtime実行排他は未実装</td>
+        </tr>
+        <tr>
+          <th scope="row">背景coding／整理</th>
+          <td>
+            <code>qwen-nightworker</code
+            >、<code>qwen-agent-worker</code>、優先度付きwait queue
+          </td>
+          <td>active requestはnon-preemptive。SAAAがHTTP requestをcancelする必要がある</td>
+        </tr>
+        <tr>
+          <th scope="row">Macからの稼働判定</th>
+          <td><code>GET /v1/activity</code>、health、ready、state、metrics</td>
+          <td>activityは瞬間観測であり予約ではない</td>
+        </tr>
+        <tr>
+          <th scope="row">音声</th>
+          <td>OpenAI互換ASR／TTS、Qwen ASR、Whisper、VOICEVOX、表現力重視TTS</td>
+          <td>GPU／帯域干渉に基づく自動直列化は未実装</td>
+        </tr>
+        <tr>
+          <th scope="row">Embedding</th>
+          <td>固定semantic space、query／passage、bounded request、on-demand Runtime</td>
+          <td>corpus scanとvector DBはMac側で行う</td>
+        </tr>
+        <tr>
+          <th scope="row">中断</th>
+          <td>Clientの<code>AbortSignal</code>とHTTP切断をupstreamへ伝播</td>
+          <td>別consumerの実行をLARMが強制preemptする機能ではない</td>
+        </tr>
+        <tr>
+          <th scope="row">model lifecycle</th>
+          <td>
+            artifact／release、Runtime registry、semantic readiness、metrics、performance harness
+          </td>
+          <td>foreground activityと連動したoperation laneおよびadaptive監視は追加が必要</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="immediate-profile">
+    <h2>最小変更で作れるinference-first運用</h2>
+    <ol>
+      <li>
+        通常のSAAA会話はresident
+        <code>coding-default</code>、ASR一系統、VOICEVOXを使用する。
+        <code>saaa-qwen38-kv-mem</code
+        >を全sessionの既定にせず、長いContextや複数passで再利用効果がある場合だけ選ぶ。
+      </li>
+      <li>
+        SAAAの背景jobは<code>GET /v1/activity</code>がidleのときだけ一件開始し、短い出力上限を設定する。
+        foreground開始時はMac側の<code>AbortSignal</code>で背景HTTP
+        requestをcancelする。
+      </li>
+      <li>
+        <code>LARM_INFERENCE_AUDIT_MODE</code
+        >を通常時は<code>metadata</code>とし、
+        <code>full-required</code
+        >は問題再現またはrelease認定時の短いwindowだけ明示的に使う。
+      </li>
+      <li>
+        15分ごとに27Bへ最大256 tokenを二回生成させるHTTP Provider monitorは、受動healthと
+        release直後の有限soakへ分解する。1.2B／2Bにはforeground idle時だけ、最大16 output
+        tokenのadaptive canaryを使用する。
+      </li>
+      <li>
+        disk Context snapshotは、同じ長いContextの再prefillより実測上有利と確認するまで無効にする。
+        Managed Contextを使う場合もsource rebuildとRAM内再利用を先に評価する。
+      </li>
+      <li>
+        ASRはQwenまたはWhisperの一方だけをresident既定にする。通常TTSはVOICEVOX、Qwen
+        TTSは明示on-demandを維持する。
+      </li>
+      <li>
+        現行scopeではrepository外に用意したartifactのchecksum、stage、benchmark、activate、release監視を
+        LARMのoperationとして保持する。foreground不在時に自動進行できるが、I/O
+        rate、同時数、cancel／resume境界を持たせる。model
+        downloadの自動化を採用する場合は別executorとして追加し、 audit pruneも同じmaintenance
+        laneへ分離する。
+      </li>
+    </ol>
+    <p>
+      ここまでは主にAgent Profile、systemd environment、timer、SAAA側request
+      lifecycleの変更で実現できる。 model選択optimizerや新しいdatabaseは不要である。
+    </p>
+  </section>
+
+  <section id="implementation-order">
+    <h2>実装順序</h2>
+    <ol>
+      <li>
+        <strong>P0:</strong> LARMの責務定義へinference-first不変条件を追加し、World Model、Dream
+        Cycle、DB、scanを 明示的な非責務にする。
+      </li>
+      <li>
+        <strong>P0:</strong>
+        2秒ごとのsnapshot容量全走査を廃止し、起動時に一度構築してcommit／delete時に更新する O(1)
+        counterへ置き換える。
+      </li>
+      <li>
+        <strong>P0:</strong>
+        production監査をmetadata既定へ変更し、27Bの定期synthetic推論を有限soakへ、tactical
+        model監視を idle-gatedな短いadaptive canaryへ変更する。
+      </li>
+      <li>
+        <strong>P0:</strong> 現行2B判断modelを単体・mixed benchmarkで認定し、
+        <code>conversation.backchannel</code
+        >用1.2B候補のartifact、Runtime、route、releaseをstagingへ追加する。
+      </li>
+      <li>
+        <strong>P0:</strong> 全Runtimeをまたぐ<code>contentionGroup</code>／execution
+        laneを導入し、LLM同士の 無条件な並列実行を止める。
+      </li>
+      <li>
+        <strong>P0:</strong> 単体とmixedの実測から、LLM token/sec低下、first token、ASR RTF、TTS
+        first playableの SLOを校正する。
+      </li>
+      <li>
+        <strong>P1:</strong> consumer固定priorityの上にservice class、deadline、yieldability、cache
+        policyを追加する。
+      </li>
+      <li>
+        <strong>P1:</strong> ASR residentを一系統へ絞り、通常TTSだけを低干渉residentとして認定する。
+      </li>
+      <li>
+        <strong>P1:</strong> snapshot writeとdirectory GCをforeground
+        activityで遮断し、inference-first profileでは disk snapshotを既定無効にする。
+      </li>
+      <li>
+        <strong>P1:</strong>
+        model取得までLARMに自動化させる場合は、allowlistされたURL、checksum、容量上限、 partial
+        download再開、foreground I/O gateを持つartifact acquisition executorを追加する。
+      </li>
+      <li>
+        <strong>P2:</strong> SAAA側Dream Cycleをbounded inference
+        sliceへ分割し、cancel／resume可能な背景実行を統合する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="acceptance">
+    <h2>受入条件</h2>
+    <ol>
+      <li>foreground LLM中に別LLM、GPU ASR、GPU TTS、maintenance I/Oが無断で同時実行されない。</li>
+      <li>
+        World Model
+        rebuild中にforeground要求が到着すると、次のbounded境界で背景処理が停止または延期される。
+      </li>
+      <li>通常TTSとの同時実行は、単独LLM比の認定済み劣化上限以内である場合だけ許可される。</li>
+      <li>
+        foreground推論中にContext／snapshot rootの全走査、artifact checksum全走査、full
+        benchmarkが開始されない。開始済みoperationは認定済み境界で停止または帯域制限される。
+      </li>
+      <li>ASR／TTSの失敗や停止が、resident LLMのreadinessと推論経路を失敗させない。</li>
+      <li>disk cacheを全無効化しても、source入力から正しく推論できる。</li>
+      <li>
+        SAAAが保持するMemory、World
+        Model、Taskの正本をlocal-node停止・再構築から独立して復元できる。
+      </li>
+      <li>高性能cloud、第三の常時稼働machine、専用storageを使用しなくても全必須機能が成立する。</li>
+      <li>
+        tactical
+        modelは相槌、受領、聞き返し、待機通知の許可範囲を越えず、事実回答、tool実行、Memory更新を行わない。
+      </li>
+      <li>
+        tactical modelを使う経路は、27B単独経路に対する最終回答latencyの劣化上限と、first playable
+        audioの改善下限を実測してrelease認定される。
+      </li>
+      <li>
+        1.2B／2Bのcanaryは短いtoken上限、idle
+        gate、backoff、cancelを持ち、定常的に27Bの計算時間を奪わない。
+      </li>
+      <li>
+        tactical releaseの不調時に、直前releaseまたはSAAAの定型相槌へmodel
+        loadなしでfallbackできる。
+      </li>
+    </ol>
+  </section>
+
+  <section id="conclusion">
+    <h2>結論</h2>
+    <p>
+      World
+      Modelと睡眠中の情報整理をSAAAホストへ置き、local-nodeを推論中心にする線引きは妥当である。
+      ただしLARMを単純なHTTP
+      proxyにはせず、推論を守るための軽量なadmission、cross-runtime排他、lease、cancel、 resource
+      telemetry、bounded context
+      materializationに加え、modelの配備、性能認定、release、監視はlocal-node側に残す。
+      1.2B／2Bのtactical
+      modelは相槌と一次判断を担当し、27Bの権威ある回答とは明示的に分離する。ASRとTTSも同じ原則で、
+      model inferenceだけをLARMへ置き、音声体験とdata
+      lifecycleはSAAAへ置く。sleep無効のMacが背景jobも継続して
+      orchestrateするため、local-node側へSAAA satelliteやWorld Modelの複製を追加しない。
+    </p>
+  </section>
+</article>

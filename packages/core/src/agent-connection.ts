@@ -811,6 +811,20 @@ export const agentConnectionClaimSchema = z.object({
     agentProviderDescriptorSchema,
     embeddingAgentProviderDescriptorSchema,
   ])).min(1).max(8),
+  contextControl: z.object({
+    contractVersion: z.literal("larm-personal-state.v1"),
+    subjectDigest: sha256Schema,
+    scopes: z.array(z.enum([
+      "context.source.provision",
+      "context.measure",
+      "context.view.create",
+      "context.generate",
+      "context.attempt.cancel",
+      "context.forget",
+      "context.operation.read",
+    ])).length(7)
+      .refine((items) => new Set(items).size === items.length, "Personal State scopes must be unique"),
+  }).strict().optional(),
   expiresAt: z.string().datetime(),
 }).strict().superRefine((claim, context) => {
   const names = new Set<string>();

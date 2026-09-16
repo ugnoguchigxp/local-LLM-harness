@@ -77,4 +77,9 @@ export {
 export {
   ContextSlotError,
   LlamaContextSlotAdapter,
+  LlamaContextSlotEraseAdapter,
 } from "./context-slot";
+export {
+  LocalPersonalStateJournal,
+  PersonalStateJournalError,
+} from "./personal-state-journal";

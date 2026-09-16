@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rmdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rmdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalContextMetadataStore, LocalContextSourceStore } from "./context-store";
@@ -32,6 +32,8 @@ test("context metadata is saved and loaded atomically", async () => {
   };
   await store.save([descriptor]);
   expect(await store.load()).toEqual([descriptor]);
+  await expect(store.save([descriptor, descriptor]))
+    .rejects.toMatchObject({ code: "context_state_corrupt" });
 });
 
 test("context stores reject symlink roots", async () => {
@@ -105,4 +107,63 @@ test("local sources reject symbolic links and oversize files", async () => {
     .rejects.toMatchObject({ code: "context_source_too_large" });
   await expect(store.provision("principal-a", "too-large", "12345", 4, tokenizations))
     .rejects.toMatchObject({ code: "context_source_too_large" });
+});
+
+test("immutable provisioning preserves attestations, rejects drift, and removes orphan attestations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-context-source-immutable-"));
+  const store = new LocalContextSourceStore(root);
+  const content = "immutable personal state";
+  const digest = new Bun.CryptoHasher("sha256").update(content).digest("hex");
+  const options = {
+    maxSourceBytes: 1024,
+    maxTotalBytes: 4096,
+    filesystemFreeFloorBytes: 0,
+    tokenizations: [{ tokenizerDigest: "b".repeat(64), tokenCount: 3 }],
+  };
+  expect((await store.provisionImmutable(
+    "principal-a", "ps_source", content, digest, options,
+  )).replay).toBe(false);
+  expect((await store.provisionImmutable(
+    "principal-a", "ps_source", content, digest, options,
+  )).replay).toBe(true);
+  const extendedOptions = {
+    ...options,
+    tokenizations: [{ tokenizerDigest: "c".repeat(64), tokenCount: 4 }],
+  };
+  expect((await store.provisionImmutable(
+    "principal-a", "ps_source", content, digest, extendedOptions,
+  )).replay).toBe(true);
+  expect((await store.read("principal-a", "ps_source", digest, 1024)).tokenizations).toEqual([
+    { tokenizerDigest: "b".repeat(64), tokenCount: 3 },
+    { tokenizerDigest: "c".repeat(64), tokenCount: 4 },
+  ]);
+  await expect(store.provisionImmutable(
+    "principal-a",
+    "ps_source",
+    content,
+    digest,
+    { ...options, tokenizations: [{ tokenizerDigest: "b".repeat(64), tokenCount: 5 }] },
+  )).rejects.toMatchObject({ code: "context_source_immutable_conflict" });
+  const changed = "different";
+  const changedDigest = new Bun.CryptoHasher("sha256").update(changed).digest("hex");
+  await expect(store.provisionImmutable(
+    "principal-a", "ps_source", changed, changedDigest, options,
+  )).rejects.toMatchObject({ code: "context_source_immutable_conflict" });
+
+  const principalDirectory = join(
+    root,
+    new Bun.CryptoHasher("sha256").update("principal-a").digest("hex"),
+  );
+  await unlink(join(principalDirectory, "ps_source.txt"));
+  expect(await store.absent("principal-a", "ps_source")).toBe(false);
+  await store.delete("principal-a", "ps_source");
+  expect(await store.absent("principal-a", "ps_source")).toBe(true);
+
+  await store.provisionImmutable("principal-a", "ps_corrupt", content, digest, options);
+  await writeFile(join(principalDirectory, "ps_corrupt.txt.json"), "not-json\n");
+  await expect(store.provisionImmutable(
+    "principal-a", "ps_corrupt", content, digest, options,
+  )).rejects.toMatchObject({ code: "context_source_attestation_invalid" });
+  expect(await readFile(join(principalDirectory, "ps_corrupt.txt"), "utf8")).toBe(content);
+  expect(await readFile(join(principalDirectory, "ps_corrupt.txt.json"), "utf8")).toBe("not-json\n");
 });

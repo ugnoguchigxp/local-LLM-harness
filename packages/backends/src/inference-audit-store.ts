@@ -81,6 +81,14 @@ export type InferenceAuditBeginInput = {
   bootEpoch: string;
   configRevision: string;
   createdAt?: string;
+  personalState?: {
+    subjectDigest: string;
+    attemptId: string;
+    viewId?: string;
+    requestDigest: string;
+    sourceDigests: string[];
+    dataEpoch: number;
+  };
 };
 
 export type LocalInferenceAuditStoreOptions = {
@@ -397,6 +405,7 @@ export class LocalInferenceAuditStore {
         requestBytes: requestBody.byteLength,
         responseBytes: 0,
         responseTruncated: false,
+        ...(input.personalState ? { personalState: input.personalState } : {}),
         payloads: {},
       });
       await this.writeAtomic(join(recordPath, "active"), new Uint8Array());
@@ -549,6 +558,65 @@ export class LocalInferenceAuditStore {
     return record.metadata;
   }
 
+  async erasePersonalState(input: {
+    subjectDigest: string;
+    attemptIds?: string[];
+    requestIds?: string[];
+    viewIds?: string[];
+    sourceDigests?: string[];
+  }): Promise<{ removed: number; active: number }> {
+    await this.initialize();
+    const attemptIds = new Set(input.attemptIds ?? []);
+    const requestIds = new Set(input.requestIds ?? []);
+    const viewIds = new Set(input.viewIds ?? []);
+    const sourceDigests = new Set(input.sourceDigests ?? []);
+    const hasSpecificTargets = attemptIds.size + requestIds.size + viewIds.size + sourceDigests.size > 0;
+    const matches = (record: StoredRecord): boolean => {
+      const binding = record.metadata.personalState;
+      if (!binding || binding.subjectDigest !== input.subjectDigest) return false;
+      if (!hasSpecificTargets) return true;
+      return requestIds.has(record.metadata.requestId)
+        || attemptIds.has(binding.attemptId)
+        || (binding.viewId !== undefined && viewIds.has(binding.viewId))
+        || binding.sourceDigests.some((digest) => sourceDigests.has(digest));
+    };
+    const candidates = (await this.scanRecords(false, true)).filter(matches);
+    let removed = 0;
+    let active = 0;
+    for (const record of candidates) {
+      if (record.active || this.activeRecordPaths.has(record.path)) {
+        active += 1;
+        continue;
+      }
+      await this.removeRecord(record.path);
+      removed += 1;
+    }
+    return { removed, active };
+  }
+
+  async personalStateAbsent(input: {
+    subjectDigest: string;
+    attemptIds?: string[];
+    requestIds?: string[];
+    viewIds?: string[];
+    sourceDigests?: string[];
+  }): Promise<boolean> {
+    const attemptIds = new Set(input.attemptIds ?? []);
+    const requestIds = new Set(input.requestIds ?? []);
+    const viewIds = new Set(input.viewIds ?? []);
+    const sourceDigests = new Set(input.sourceDigests ?? []);
+    const hasSpecificTargets = attemptIds.size + requestIds.size + viewIds.size + sourceDigests.size > 0;
+    return !(await this.scanRecords(false, true)).some((record) => {
+      const binding = record.metadata.personalState;
+      if (!binding || binding.subjectDigest !== input.subjectDigest) return false;
+      if (!hasSpecificTargets) return true;
+      return requestIds.has(record.metadata.requestId)
+        || attemptIds.has(binding.attemptId)
+        || (binding.viewId !== undefined && viewIds.has(binding.viewId))
+        || binding.sourceDigests.some((digest) => sourceDigests.has(digest));
+    });
+  }
+
   async prune(requiredBytes = 0): Promise<InferenceAuditPruneResult> {
     if (!Number.isSafeInteger(requiredBytes) || requiredBytes < 0) {
       throw new InferenceAuditStoreError("audit_capacity_exhausted", "audit reservation is invalid");
@@ -673,7 +741,7 @@ export class LocalInferenceAuditStore {
     }
   }
 
-  private async scanRecords(cleanupOrphans = false): Promise<StoredRecord[]> {
+  private async scanRecords(cleanupOrphans = false, rejectOrphans = false): Promise<StoredRecord[]> {
     const records: StoredRecord[] = [];
     const walk = async (path: string, depth: number): Promise<void> => {
       const entries = await readdir(path, { withFileTypes: true });
@@ -703,7 +771,13 @@ export class LocalInferenceAuditStore {
               const directory = await lstat(child);
               if (cleanupOrphans && this.now() - directory.mtimeMs >= this.partialGraceMs) {
                 await rm(child, { recursive: true, force: false });
+                await this.syncDirectory(dirname(child));
                 await this.removeEmptyTimeAncestors(child);
+              } else if (rejectOrphans) {
+                throw new InferenceAuditStoreError(
+                  "audit_record_corrupt",
+                  "unattributed inference audit payload prevents absence verification",
+                );
               }
               continue;
             }
@@ -848,6 +922,7 @@ export class LocalInferenceAuditStore {
     }
     try {
       await rm(path, { recursive: true, force: false });
+      await this.syncDirectory(dirname(path));
       await this.removeEmptyTimeAncestors(path);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -888,6 +963,7 @@ export class LocalInferenceAuditStore {
       try {
         await this.validateDirectory(current);
         await rmdir(current);
+        await this.syncDirectory(parent);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code === "ENOENT") {
@@ -898,6 +974,15 @@ export class LocalInferenceAuditStore {
         throw error;
       }
       current = parent;
+    }
+  }
+
+  private async syncDirectory(path: string): Promise<void> {
+    const directory = await open(path, constants.O_RDONLY | constants.O_DIRECTORY);
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
     }
   }
 }

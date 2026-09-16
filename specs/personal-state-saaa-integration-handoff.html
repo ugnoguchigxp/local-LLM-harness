@@ -1,0 +1,413 @@
+<article lang="ja">
+  <h1>Personal State LARM–SAAA 製品接続handoff</h1>
+
+  <p>
+    SAAAの<code>UnavailableDelivery</code>をLARMの製品用Personal State
+    contractへ置換するための 接続正本です。LARM側source、OpenAPI、typed
+    client、自動testは実装済みです。local-nodeの
+    <code>LARM_PERSONAL_STATE_ENABLED</code
+    >は既定で<code>false</code>のため、合成dataによる
+    conformanceとSAAA側outbox／late-output fenceの受入が完了するまで実ユーザーdataを送りません。
+  </p>
+
+  <dl>
+    <dt>contract version</dt>
+    <dd><code>larm-personal-state.v1</code></dd>
+    <dt>作成日</dt>
+    <dd><time>2026-09-13</time></dd>
+    <dt>LARM状態</dt>
+    <dd>Repository実装・自動test完了。local-node配備／実機conformance待ち</dd>
+    <dt>SAAA状態</dt>
+    <dd>
+      製品HTTP adapter、transactional outbox、late-output
+      fence、製品harnessを実装。合成HTTP試験を実施し、実機の全受入は未完了
+    </dd>
+  </dl>
+
+  <aside>
+    <p>
+      <strong>認可原則:</strong> SAAAがowner
+      ID、principal、検証済みflagを自己申告して認可に使うことは できません。Agent Connection
+      claimに含まれる短期Provider Bearerと
+      <code>contextControl.subjectDigest</code>を使用します。本文、Bearer、owner IDをlogやmetric
+      labelへ 出力しないでください。
+    </p>
+  </aside>
+
+  <section id="authentication">
+    <h2>認証とidentity binding</h2>
+    <ol>
+      <li>
+        通常BearerでSAAA用Agent ProfileのAgent
+        Connectionを作成し、ready後のclaimにも同じ通常Bearerを
+        使用します。匿名ConnectionにはPersonal State
+        scopeを付与せず、認証済みConnectionとは別主体として
+        取得、claim、renew、releaseの所有権を検査します。匿名経路は<code>Authorization</code>を
+        省略したrequestだけに適用し、不正なcredentialを匿名へdowngradeしません。
+      </li>
+      <li>
+        claimのOpenAI Chat Completions
+        Providerが返す<code>credential.token</code>を、以下の全requestへ
+        <code>Authorization: Bearer …</code>として付与します。
+      </li>
+      <li>
+        claimの<code>allocationId</code>と<code>contextControl.subjectDigest</code>をlocal
+        ownerへbindして 保護領域へ保存します。owner文字列そのものをLARMへ送信しません。
+      </li>
+      <li>
+        <code>GET /v1/personal-state/capability</code>でsubject、Allocation、runtime、release、lease、
+        credential期限、tokenizer、chat template、input／output／source／byte予算を照合します。
+      </li>
+      <li>
+        Connection renew後は新しいProvider tokenを使用します。release／lease
+        identity変更後は再計測します。
+      </li>
+    </ol>
+    <p>
+      tokenはsubject、Connection generation、Allocation、Provider、capability、audience、期限、7個の
+      Personal State
+      scopeへ署名されています。別subject／別Allocationのreceiptは<code>401</code>または
+      <code>403</code>で拒否されます。
+    </p>
+  </section>
+
+  <section id="endpoints">
+    <h2>確定HTTP resource</h2>
+    <table>
+      <caption>
+        製品adapterが使用するendpoint
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">method／path</th>
+          <th scope="col">用途</th>
+          <th scope="col">再送・照会key</th>
+          <th scope="col">成功response</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>GET /v1/personal-state/capability</code></th>
+          <td>認証主体と認定runtime identity／budgetの取得</td>
+          <td>Allocation ID、runtime header</td>
+          <td><code>PersonalStateCapability</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/context-sources</code></th>
+          <td>UTF-8原文のbounded immutable provision</td>
+          <td>SAAA発行<code>incarnation</code></td>
+          <td><code>SourceProvisionReceipt</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /v1/context-source-operations/{incarnation}</code></th>
+          <td>応答紛失後のsource receipt照会</td>
+          <td><code>incarnation</code></td>
+          <td><code>SourceProvisionReceipt</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/contexts</code></th>
+          <td>provision receiptと一致するimmutable context登録</td>
+          <td><code>Idempotency-Key</code>、context ID／version</td>
+          <td>既存<code>ContextDescriptor</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/context-measurements</code></th>
+          <td>messages、tools、生成fieldを含むcanonical template計測</td>
+          <td>SAAA発行<code>measurementId</code></td>
+          <td><code>CanonicalMeasurementReceipt</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /v1/context-measurements/{id}</code></th>
+          <td>計測response紛失後の照会</td>
+          <td><code>measurementId</code></td>
+          <td><code>CanonicalMeasurementReceipt</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v2/context-views</code></th>
+          <td>計測requestとexact recountへbindしたone-shot View作成</td>
+          <td>
+            <code>viewRequestId</code>と<code
+              >Idempotency-Key</code
+            >
+          </td>
+          <td>既存<code>ContextView</code>のv2 binding</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /v2/context-views/{viewRequestId}</code></th>
+          <td>View作成response紛失後のdurable receipt照会</td>
+          <td><code>viewRequestId</code></td>
+          <td><code>PersonalStateViewReceipt</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/chat/completions</code></th>
+          <td>Viewとcaller attemptへbindした生成</td>
+          <td><code>X-LARM-Attempt-ID</code></td>
+          <td>OpenAI互換JSON／SSE</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /v1/generation-attempts/{id}</code></th>
+          <td>accepted、forwarded、terminal outcome、停止状態の照会</td>
+          <td><code>attemptId</code></td>
+          <td><code>GenerationAttempt</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/generation-attempts/{id}/cancel</code></th>
+          <td>transport取消とbackend slot停止／隔離</td>
+          <td><code>attemptId</code></td>
+          <td><code>GenerationAttempt</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/context-forget-operations</code></th>
+          <td>tombstone-firstの多層忘却</td>
+          <td>SAAA発行<code>forgetId</code></td>
+          <td><code>ForgetOperation</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /v1/context-forget-operations/{id}</code></th>
+          <td>応答紛失／部分失敗後のphase照会</td>
+          <td><code>forgetId</code></td>
+          <td><code>ForgetOperation</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      strict schemaの正本は<code>GET /openapi.json</code>です。LARM TypeScript
+      consumerは
+      <code>@larm/client</code>の<code>getPersonalStateCapability</code>、
+      <code>provisionContextSource</code>、<code>registerPersonalStateContext</code>、
+      <code>createContextMeasurement</code>、<code>createPersonalStateView</code>、
+      <code>chatPersonalState</code>、attempt／forget各methodを使用できます。
+    </p>
+  </section>
+
+  <section id="delivery">
+    <h2>配送・登録contract</h2>
+    <p>
+      source POSTは<code>Content-Type: text/plain; charset=utf-8</code>と、
+      <code>X-LARM-Source-Incarnation</code>、<code>X-LARM-Allocation-ID</code>、
+      <code>X-LARM-Runtime</code
+      >、<code>X-LARM-Source-Digest</code>を要求します。digestは送信UTF-8 bytesの
+      SHA-256です。LARMはbyte上限を本文展開前後に検査し、認定runtimeのcanonical tokenizerでtoken数を
+      計測してからsourceとattestationをそれぞれfsync＋atomic
+      renameでpublishします。途中停止による片側だけの
+      状態は同じincarnationの再送で照合・修復し、forgetは両fileのabsenceを別々に確認します。
+    </p>
+    <ul>
+      <li>同じsubject＋incarnation＋本文の再送は同じsource handleを返します。</li>
+      <li>
+        同じincarnationを異なるdigestへbindする再送は<code>409 incarnation_conflict</code>です。
+      </li>
+      <li>
+        登録fieldは成功したprovision receiptと完全一致し、Provider
+        tokenのAllocationに属する必要があります。
+      </li>
+      <li>
+        response receipt期限後もlive sourceのincarnation
+        indexは保持し、孤立sourceをforget可能にします。
+      </li>
+      <li>
+        成功済みforgetのreceipt期限後も構造化tombstoneを保持し、同じtargetの再作成を拒否します。
+      </li>
+    </ul>
+  </section>
+
+  <section id="measurement-view">
+    <h2>canonical measurementとView v2</h2>
+    <ol>
+      <li>
+        generationへ送る完全なrequest
+        objectを<code>request</code>として計測します。
+      </li>
+      <li>LARMはmessages、tools、tool choice等をchat templateへ適用したtoken数を返します。</li>
+      <li>View候補はrequiredを先に、optionalをutility降順・ID順でexact recountして決定します。</li>
+      <li>View作成時とgeneration直前にcanonical request digestを再照合します。</li>
+      <li>
+        release、lease epoch、tokenizer、chat template、data epochの変更時はstaleとして拒否します。
+      </li>
+      <li>ready Viewはdaemon再起動時にinvalidとなり、durable receiptだけが照会可能です。</li>
+    </ol>
+    <p>
+      <code>viewRequestId</code>とHTTP
+      <code>Idempotency-Key</code>はnetwork送信前にoutboxへ保存し、同じ組を
+      再利用します。どちらか一方を別requestへ再利用すると<code>409 request_digest_mismatch</code>です。
+    </p>
+  </section>
+
+  <section id="attempts">
+    <h2>generation attemptと遅延output fence</h2>
+    <p>
+      Chat
+      requestへ<code>X-LARM-Allocation-ID</code>、<code>X-LARM-Attempt-ID</code>、View利用時は
+      <code>X-LARM-Context-View-ID</code>を付けます。attempt
+      IDは送信前にoutboxへ保存し、responseの
+      <code>X-Request-ID</code>とは別に管理します。同じattempt
+      IDを別requestへ再利用できません。
+    </p>
+    <table>
+      <caption>
+        停止stateの意味
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">stopState</th>
+          <th scope="col">意味</th>
+          <th scope="col">SAAAの扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>cancel_requested</code></th>
+          <td>取消をjournalへ保存済み</td>
+          <td>結果を使用せず、停止照会を継続</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>transport_closed</code></th>
+          <td>HTTP transportは閉じたがbackend停止は未証明</td>
+          <td>成功扱いしない</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>backend_stopped</code></th>
+          <td>slot erase成功を確認</td>
+          <td>remote stop完了として照合可能</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>stop_unknown</code></th>
+          <td>backend停止を証明できない</td>
+          <td>同じruntimeを再利用せず、cancel／forgetを同じIDで再送</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LARMは<code>stop_unknown</code>のruntimeをexecution
+      gateで隔離し、通常推論を含む後続requestを
+      <code>503 runtime_quarantined</code>で拒否します。slot
+      absenceを確認した再取消／forgetだけが隔離を
+      解除します。SAAAはforeground復帰やforget開始後の遅延response、表示、projection保存、tool副作用を
+      local attempt fenceで拒否する必要があります。
+    </p>
+  </section>
+
+  <section id="forget">
+    <h2>forget完了条件</h2>
+    <p>
+      forget requestには把握している<code>incarnation</code>、context ID、source
+      handle、attempt IDをすべて 含めます。LARMは最初にsubject data
+      epochを進め、構造化tombstoneをfsyncします。その後、
+      <code>attempts</code
+      >、<code>views</code>、<code>runtime</code>、<code>snapshots</code>、
+      <code>registry</code
+      >、<code>sources</code>、<code>audit</code>を個別に処理します。
+    </p>
+    <ul>
+      <li>
+        全phaseが<code>absent</code>で<code>absenceVerified=true</code>のときだけ成功です。
+      </li>
+      <li>
+        <code>result_unknown</code
+        >、<code>failed</code>、<code>stop_unknown</code>をcleanup完了として扱いません。
+      </li>
+      <li>
+        同じforget IDの再送は完了済みphaseを含む同じoperationを照合し、未完了cleanupを再試行します。
+      </li>
+      <li>Personal State製品gateがOFFでもforgetとreceipt照会は利用可能です。</li>
+      <li>
+        保証はlive file、attestation、registry、snapshot、RAM slot、audit payloadの論理absenceです。
+      </li>
+      <li>物理媒体上のsecure eraseやhost管理者に対する機密性は保証しません。</li>
+    </ul>
+  </section>
+
+  <section id="saaa-work">
+    <h2>SAAA側の必須実装</h2>
+    <ol>
+      <li>
+        Delivery
+        traitへ全endpointとreceipt照会を実装し、<code>UnavailableDelivery</code>を置換する。
+      </li>
+      <li>
+        incarnation、measurement、view request、attempt、forget IDを送信前にtransactional
+        outboxへ保存する。
+      </li>
+      <li>response紛失時は新IDを生成せず、GET照会または同じIDの再送でreconcileする。</li>
+      <li>
+        owner–subject bindingとProvider tokenをKeychain相当の保護領域で扱い、診断へ露出しない。
+      </li>
+      <li>
+        request本文／tools、release、lease、tokenizer、template変更時にmeasurementとViewを再作成する。
+      </li>
+      <li>attempt fenceより後のoutput、projection、tool callを永続化・表示しない。</li>
+      <li>
+        登録、source、snapshot、slot、audit、remote
+        stopを別fieldで保存し、全absenceまでcleanupを継続する。
+      </li>
+      <li>全Provider／外部subprocessを列挙し、未対応経路へPersonal Stateを送らない。</li>
+    </ol>
+  </section>
+
+  <section id="acceptance">
+    <h2>rollout前の受入</h2>
+    <p>
+      claimed Provider tokenを環境へ渡し、repository外の証跡先で次の合成data
+      conformanceを実行します。
+      scriptはsource作成、同内容再送、receipt照会、登録、tools込み計測、View、実generation、attempt照会、
+      全層forgetを一巡し、cleanup失敗時はpassを出しません。
+    </p>
+    <pre><code>umask 077
+LARM_PERSONAL_STATE_PROVIDER_TOKEN="${claimed_provider_token}" \
+LARM_PERSONAL_STATE_ALLOCATION_ID="${allocation_id}" \
+LARM_PERSONAL_STATE_RUNTIME="qwen-worker-quality" \
+LARM_PERSONAL_STATE_MODEL="qwen3.8-kv-mem" \
+  bun run personal-state:conformance \
+  &gt; /srv/ai/logs/larm-canary/personal-state.json</code></pre>
+    <p>
+      通常成功だけでなく、source／View／cancel／forget各responseの切断、SAAAとdaemon再起動、異内容再送、
+      cross-subject、release変更、snapshot OFF／ON、backend abort無視をfault injectionで確認します。
+      SAAA製品harness、人手確認済みgold、local-node live conformance、rollback
+      rehearsalが揃った後だけ
+      <code>LARM_PERSONAL_STATE_ENABLED=true</code>を明示設定します。
+    </p>
+  </section>
+
+  <section id="references">
+    <h2>関連文書</h2>
+    <ul>
+      <li>
+        <a href="./personal-state-product-connection-remediation-plan.html"
+          >Personal State製品接続・忘却保証 改善実装計画</a
+        >
+      </li>
+      <li><a href="./capability-gated-virtual-context.html">Virtual Context Activation仕様</a></li>
+      <li>
+        <a href="./context-implementation-traceability.html">Managed Context実装トレーサビリティ</a>
+      </li>
+      <li><a href="./saaa-qwen38-kv-mem-routing.html">SAAA Qwen 3.8 KV:mem Provider選択仕様</a></li>
+    </ul>
+  </section>
+
+  <section id="saaa-live-followup">
+    <h2>2026-09-13 SAAA接続と実機確認の追記</h2>
+    <p>
+      SAAAはSQLite v18のoutbox、短期Provider tokenとKeychainによるowner–subject binding、View
+      v2、attempt取消、多層forgetを接続した。配送応答紛失、別subject拒否、配送中forget、future破棄、OFF、部分cleanupを合成HTTP試験で検証した。
+    </p>
+    <p>
+      分離した一時daemonと合成sourceを使い、常駐27B qwen-generalでprovision、登録、計測、View
+      v2、generation completedまで通過した。forgetはruntime
+      phaseだけstop_unknownで、全体はresult_unknownのまま。エンジンがslot actionへHTTP
+      501を返したため、完了扱いにしていない。
+    </p>
+    <p>
+      slot actionには明示したslot-save-pathが必要。service定義へ保存先を追加し、q38rocm
+      launcherのspeed profileがこの引数を捨てない修正と回帰試験を用意した。cache
+      reuseは有効化しない。実際のservice適用と再起動には管理者認証が必要で、未適用である。
+    </p>
+    <p>
+      Personal State journalのboot epochはUUID契約のため、接頭辞付きdaemon
+      IDを渡さず、journalの既存UUID発行を利用するようmain.tsを修正した。起動とtypecheckを確認した。
+    </p>
+    <p>
+      一時daemonのorphan回収が別consumerのworkerを停止した記録があったためhealthを回復し、以降は検証daemonの回収猶予を86400秒とした。本番を共有する追加controllerに既存runtimeの自動回収を任せない。本来のworker品質経路は別推論とのスロット競合により受入待ち。SAAAの人手確認済みgold、snapshot
+      ON/OFF、全race、性能比較も未完了であり、既定OFFを維持する。
+    </p>
+  </section>
+</article>

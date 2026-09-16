@@ -32,11 +32,16 @@ test("loads the Linux production registry", () => {
     (runtime) => runtime.id === "qwen-worker-agent-efficientthink",
   );
   const decisionDefault = registry.runtimes.find((runtime) => runtime.id === "qwen35-decision");
+  const lfmBackchannel = registry.runtimes.find((runtime) => runtime.id === "lfm25-backchannel-jp");
+  const gemmaBackchannel = registry.runtimes.find((runtime) => runtime.id === "gemma3-backchannel");
   const agent35b = registry.runtimes.find((runtime) => runtime.id === "ornith15-35b-agent");
   const route35b = registry.routes.find((route) => route.id === "llm-35b");
   const route35bSpeed = registry.routes.find((route) => route.id === "llm-35b-speed");
   const agentWorkerRoute = registry.routes.find((route) => route.id === "llm-agent-worker");
   const decisionDefaultRoute = registry.routes.find((route) => route.id === "llm-decision-default");
+  const backchannelDefaultRoute = registry.routes.find((route) =>
+    route.id === "llm-backchannel-default"
+  );
   const saaaKvMemRoute = registry.routes.find((route) => route.id === "llm-saaa-kv-mem");
   const agent35bRoute = registry.routes.find((route) => route.id === "llm-agent-35b");
   const embedding = registry.runtimes.find((runtime) => runtime.id === "multilingual-e5-small");
@@ -66,7 +71,7 @@ test("loads the Linux production registry", () => {
   expect(agentWorker?.resources.estimatedMemoryGB).toBe(28);
   expect(decisionDefault).toMatchObject({
     backend: "llama-swap",
-    capability: ["llm.decision.default"],
+    capability: ["llm.decision.default", "llm.backchannel.classifier"],
     policy: { class: "preferred" },
     resources: {
       estimatedMemoryGB: 4,
@@ -79,6 +84,20 @@ test("loads the Linux production registry", () => {
       modelId: "qwen35-decision",
       endpoint: "http://127.0.0.1:8083/upstream/qwen35-decision",
     },
+  });
+  expect(lfmBackchannel).toMatchObject({
+    artifacts: ["lfm25-1.2b-jp-q4-k-m"],
+    capability: ["llm.backchannel.classifier"],
+    policy: { class: "preferred", swapGroup: "backchannel-llm-slot" },
+    resources: { estimatedMemoryGB: 3 },
+    deployment: { modelId: "lfm25-backchannel-jp" },
+  });
+  expect(gemmaBackchannel).toMatchObject({
+    artifacts: ["gemma3-1b-it-q4-k-m"],
+    capability: ["llm.backchannel.classifier"],
+    policy: { class: "preferred", swapGroup: "backchannel-llm-slot" },
+    resources: { estimatedMemoryGB: 3 },
+    deployment: { modelId: "gemma3-backchannel" },
   });
   expect(efficientAgent).toMatchObject({
     resources: { estimatedMemoryGB: 28 },
@@ -120,6 +139,11 @@ test("loads the Linux production registry", () => {
     capabilities: ["llm.decision.default"],
     candidates: [{ runtime: "qwen35-decision", purpose: "primary" }],
   });
+  expect(backchannelDefaultRoute).toMatchObject({
+    explicitOnly: true,
+    capabilities: ["llm.backchannel.classifier"],
+    candidates: [{ runtime: "lfm25-backchannel-jp", purpose: "primary" }],
+  });
   expect(saaaKvMemRoute).toMatchObject({
     explicitOnly: true,
     candidates: [{ runtime: "qwen-worker-quality", purpose: "primary" }],
@@ -152,7 +176,12 @@ test("loads the Linux production registry", () => {
 test("production swap group matches llama-swap model membership", () => {
   const registry = loadRegistry(repoConfig);
   const configured = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8")) as {
-    models: Record<string, { cmd: string; aliases?: string[] }>;
+    models: Record<string, {
+      cmd: string;
+      aliases?: string[];
+      ttl?: number;
+      filters?: { setParams?: Record<string, unknown> };
+    }>;
     groups: Record<string, {
       swap: boolean;
       exclusive: boolean;
@@ -161,6 +190,7 @@ test("production swap group matches llama-swap model membership", () => {
   };
   const group = configured.groups["qwen-worker-slot"];
   const decisionGroup = configured.groups["qwen-decision-slot"];
+  const backchannelGroup = configured.groups["backchannel-llm-slot"];
   const expected = registry.runtimes
     .filter((runtime) => runtime.policy.swapGroup === "qwen-worker-slot")
     .map((runtime) => runtime.backend === "llama-swap" ? runtime.deployment.modelId : runtime.id)
@@ -172,12 +202,21 @@ test("production swap group matches llama-swap model membership", () => {
     exclusive: false,
     members: ["qwen35-decision"],
   });
+  expect(backchannelGroup).toEqual({
+    swap: true,
+    exclusive: false,
+    members: ["lfm25-backchannel-jp", "gemma3-backchannel"],
+  });
   expect(group!.members).not.toContain("qwen35-decision");
+  expect(group!.members).not.toContain("lfm25-backchannel-jp");
+  expect(group!.members).not.toContain("gemma3-backchannel");
   const ornithCommand = configured.models["ornith15-35b"]?.cmd ?? "";
   const ornithSpeedCommand = configured.models["ornith15-35b-speed"]?.cmd ?? "";
   const agentWorkerCommand = configured.models["qwen-agent"]?.cmd ?? "";
   const efficientAgentCommand = configured.models["qwen-agent-efficientthink"]?.cmd ?? "";
   const decisionDefaultCommand = configured.models["qwen35-decision"]?.cmd ?? "";
+  const lfmBackchannelCommand = configured.models["lfm25-backchannel-jp"]?.cmd ?? "";
+  const gemmaBackchannelCommand = configured.models["gemma3-backchannel"]?.cmd ?? "";
   const agent35bCommand = configured.models["ornith15-35b-agent"]?.cmd ?? "";
   expect(ornithCommand).toContain("/srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server");
   expect(ornithCommand).toContain("Ornith-1.5-35B-Q5_K_M.gguf");
@@ -206,6 +245,29 @@ test("production swap group matches llama-swap model membership", () => {
   expect(decisionDefaultCommand).toContain("--ctx-size 4096");
   expect(decisionDefaultCommand).toContain("--reasoning off");
   expect(decisionDefaultCommand).toContain("--temp 0");
+  expect(lfmBackchannelCommand).toContain("LFM2.5-1.2B-JP-Q4_K_M.gguf");
+  expect(lfmBackchannelCommand).toContain("--repeat-penalty 1.05");
+  expect(configured.models["lfm25-backchannel-jp"]?.ttl).toBe(0);
+  expect(configured.models["lfm25-backchannel-jp"]?.filters?.setParams).toEqual({
+    temperature: 0,
+    top_p: 1,
+    max_tokens: 16,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "backchannel_decision",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: { kind: { type: "string", enum: ["ack", "defer"] } },
+          required: ["kind"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+  expect(gemmaBackchannelCommand).toContain("gemma-3-1b-it-Q4_K_M.gguf");
+  expect(gemmaBackchannelCommand).toContain("--ctx-size 4096");
   expect(group?.members).not.toContain("qwen35-decision");
   expect(agent35bCommand).toContain("--ctx-size 65536");
   expect(agent35bCommand).not.toContain("ngram");

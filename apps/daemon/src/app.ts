@@ -19,6 +19,10 @@ import {
   chatCompletionRequestSchema,
   contextRegistrationRequestSchema,
   contextViewRequestSchema,
+  canonicalMeasurementRequestSchema,
+  forgetRequestSchema,
+  personalStateSubjectDigest,
+  personalStateViewRequestSchema,
   embeddingRequestSchema,
   prepareRequestSchema,
   releaseRequestSchema,
@@ -62,6 +66,10 @@ import {
   ContextController,
   ContextControllerError,
 } from "./context-controller";
+import {
+  PersonalStateController,
+  PersonalStateControllerError,
+} from "./personal-state-controller";
 
 export type FetchLike = GatewayFetchLike;
 
@@ -104,6 +112,8 @@ export type AppDeps = {
   agentConnectionController?: AgentConnectionController;
   modelBroker?: ModelBroker;
   contextController?: ContextController;
+  personalStateController?: PersonalStateController;
+  personalStateMaxSourceBytes?: number;
 };
 
 function errorBody(code: string, message: string) {
@@ -127,6 +137,10 @@ function secretMatches(actual: string | undefined, expected: string): boolean {
   return actual !== undefined && timingSafeEqual(actualDigest, expectedDigest);
 }
 
+function isPersonalStateApiPath(path: string): boolean {
+  return /^(?:\/v1\/(?:personal-state\/capability|context-sources|context-source-operations\/[^/]+|context-measurements(?:\/[^/]+)?|generation-attempts\/[^/]+(?:\/cancel)?|context-forget-operations(?:\/[^/]+)?)|\/v2\/context-views(?:\/[^/]+)?)$/.test(path);
+}
+
 function acceptsProviderBearer(method: string, path: string): boolean {
   if (
     method === "POST"
@@ -137,6 +151,10 @@ function acceptsProviderBearer(method: string, path: string): boolean {
       "/v1/embed",
     ]).has(path)
   ) return true;
+  if (isPersonalStateApiPath(path)) {
+    return method === "GET" || method === "POST";
+  }
+  if (method === "POST" && path === "/v1/contexts") return true;
   return method === "GET"
     && /^\/v1\/agent-connections\/[^/]+\/providers\/[^/]+\/health$/.test(path);
 }
@@ -283,6 +301,7 @@ export function createAppComponents(deps: AppDeps) {
       idempotencyTtlMs: deps.idempotencyTtlMs ?? 300_000,
       idempotencyLimit: deps.idempotencyLimit ?? 1_000,
       historyLimit: deps.connectionHistoryLimit ?? 1_000,
+      personalStateAvailable: deps.personalStateController !== undefined,
       now: deps.now,
       random: deps.random,
     })
@@ -331,8 +350,10 @@ export function createAppComponents(deps: AppDeps) {
     c.header("x-larm-boot-epoch", identity.bootEpoch);
     c.header("x-larm-config-revision", deps.getConfigRevision?.() ?? identity.configRevision);
     if (c.req.path === "/v1/activity") c.header("cache-control", "no-store");
+    if (isPersonalStateApiPath(c.req.path)) c.header("cache-control", "no-store");
     const publicPath = c.req.path === "/health" || c.req.path === "/ready";
     const anonymousAgentConnection = deps.allowAnonymousAgentConnections === true
+      && c.req.header("authorization") === undefined
       && acceptsAnonymousAgentApi(c.req.method, c.req.path);
     const anonymousServiceHarness = deps.serviceHarnessAuthEnabled !== true
       && c.req.header("authorization") === undefined
@@ -375,6 +396,32 @@ export function createAppComponents(deps: AppDeps) {
     return agentConnections;
   };
   const principal = () => agentPrincipal(deps.apiToken!);
+  const agentRequestPrincipal = (c: Context) => secretMatches(
+      c.req.header("authorization"),
+      `Bearer ${deps.apiToken}`,
+    )
+    ? principal()
+    : agentPrincipal("larm-anonymous-agent-connection");
+  const contextCaller = (c: Context): { principal: string; scoped?: VerifiedProviderToken } | Response => {
+    const authorization = c.req.header("authorization");
+    if (deps.apiToken && secretMatches(authorization, `Bearer ${deps.apiToken}`)) {
+      return { principal: principal() };
+    }
+    if (authorization?.startsWith("Bearer larm_conn_v1.")) {
+      const feature = agentFeature(c);
+      if (feature instanceof Response) return feature;
+      try {
+        const scoped = feature.verifyProviderToken(authorization.slice(7));
+        return { principal: scoped.record.principal, scoped };
+      } catch (error) {
+        if (error instanceof ConnectionTokenError) {
+          return c.json(errorBody("unauthorized", error.message), 401);
+        }
+        throw error;
+      }
+    }
+    return { principal: principal() };
+  };
   const contextFeature = (c: Context): ContextController | Response => {
     if (!deps.apiToken) {
       return c.json(errorBody(
@@ -395,6 +442,42 @@ export function createAppComponents(deps: AppDeps) {
     if (error instanceof ContextControllerError) {
       return c.json(errorBody(error.code, error.message), error.status);
     }
+    throw error;
+  };
+  const personalStateFeature = (
+    c: Context,
+    scope: import("@larm/core").PersonalStateScope,
+    allocationId?: string,
+  ): { controller: PersonalStateController; caller: VerifiedProviderToken } | Response => {
+    if (!deps.personalStateController) {
+      return c.json(errorBody("personal_state_disabled", "Personal State delivery is disabled"), 503);
+    }
+    const caller = contextCaller(c);
+    if (caller instanceof Response) return caller;
+    if (!caller.scoped) {
+      return c.json(errorBody(
+        "connection_provider_token_required",
+        "Personal State APIs require a claimed provider bearer token",
+      ), 401);
+    }
+    if (
+      caller.scoped.provider.protocol !== "openai.chat-completions.v1"
+      || caller.scoped.payload.subject !== personalStateSubjectDigest(caller.principal)
+      || !caller.scoped.payload.scopes?.includes(scope)
+    ) {
+      return c.json(errorBody("connection_forbidden", `provider token lacks ${scope}`), 403);
+    }
+    if (allocationId !== undefined && caller.scoped.record.allocationId !== allocationId) {
+      return c.json(errorBody("connection_forbidden", "allocation does not match provider token"), 403);
+    }
+    return { controller: deps.personalStateController, caller: caller.scoped };
+  };
+
+  const personalStateError = (c: Context, error: unknown): Response => {
+    if (error instanceof PersonalStateControllerError) {
+      return c.json(errorBody(error.code, error.message), error.status);
+    }
+    if (error instanceof ContextControllerError) return contextError(c, error);
     throw error;
   };
 
@@ -432,6 +515,7 @@ export function createAppComponents(deps: AppDeps) {
     }
     const declaredAllocationId = c.req.header("x-larm-allocation-id");
     const contextViewId = c.req.header("x-larm-context-view-id");
+    const attemptId = c.req.header("x-larm-attempt-id");
     if (contextViewId !== undefined) {
       if (options.protocol !== "openai.chat-completions.v1") {
         return c.json(errorBody("context_request_invalid", "context views are valid only for Chat Completions"), 400);
@@ -469,6 +553,12 @@ export function createAppComponents(deps: AppDeps) {
       if (declaredCapability !== undefined && declaredCapability !== scoped.provider.capability) {
         return c.json(errorBody("connection_forbidden", "capability header does not match provider token"), 403);
       }
+    }
+    if (attemptId !== undefined && declaredAllocationId === undefined && !scoped) {
+      return c.json(errorBody(
+        "allocation_required",
+        "generation attempts require an explicit allocation or claimed provider",
+      ), 400);
     }
     if (options.protocol === "larm.embedding.v1" && !scoped) {
       return c.json(errorBody(
@@ -796,6 +886,36 @@ export function createAppComponents(deps: AppDeps) {
     if (contextViewId && !release) {
       return c.json(errorBody("context_view_stale", "allocated runtime has no release binding"), 409);
     }
+    let personalAttempt: Awaited<ReturnType<PersonalStateController["beginAttempt"]>> | undefined;
+    let personalAttemptController: PersonalStateController | undefined;
+    if (attemptId !== undefined) {
+      if (
+        options.protocol !== "openai.chat-completions.v1"
+        || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(attemptId)
+        || !release
+        || !chatRequest
+        || typeof chatRequest !== "object"
+        || Array.isArray(chatRequest)
+      ) {
+        return c.json(errorBody("personal_state_request_invalid", "generation attempt headers are invalid"), 400);
+      }
+      const feature = personalStateFeature(c, "context.generate", allocationId);
+      if (feature instanceof Response) return feature;
+      try {
+        personalAttemptController = feature.controller;
+        personalAttempt = await feature.controller.beginAttempt({
+          principal: feature.caller.record.principal,
+          attemptId,
+          allocationId,
+          runtime: runtime.id,
+          release,
+          ...(contextViewId ? { viewId: contextViewId } : {}),
+          request: chatRequest as Record<string, unknown>,
+        });
+      } catch (error) {
+        return personalStateError(c, error);
+      }
+    }
     if (options.protocol === "larm.embedding.v1") {
       if (
         !embeddingRequest
@@ -811,6 +931,14 @@ export function createAppComponents(deps: AppDeps) {
       }
     }
 
+    const requestPrincipal = scoped?.record.principal
+      ?? ((contextViewId || personalAttempt) ? principal() : undefined);
+    const viewAuditBinding = contextViewId
+      ? deps.contextController?.viewPersonalStateBinding(requestPrincipal!, contextViewId)
+      : undefined;
+    const attemptSubjectDigest = personalAttempt
+      ? personalStateSubjectDigest(requestPrincipal!)
+      : undefined;
     return await proxyGateway({
       request: c.req.raw,
       ...((embeddingRequestBytes ?? chatRequestBytes)
@@ -830,10 +958,11 @@ export function createAppComponents(deps: AppDeps) {
             try {
               return await feature.prepareChatRequest({
                 viewId: contextViewId,
-                principal: principal(),
+                principal: requestPrincipal!,
                 allocationId,
                 runtime: runtime.id,
                 release: release!,
+                ...(personalAttempt ? { attemptId: personalAttempt.attempt.attemptId } : {}),
                 requestBody: body,
                 signal,
               });
@@ -843,14 +972,6 @@ export function createAppComponents(deps: AppDeps) {
               }
               throw error;
             }
-          },
-          onTerminal: async (result: { outcome: string; upstreamStatus?: number }) => {
-            const feature = contextFeature(c);
-            if (feature instanceof Response) return;
-            await feature.finishChat(
-              contextViewId,
-              result.outcome === "http_200" && result.upstreamStatus === 200,
-            );
           },
         }
         : {}),
@@ -867,6 +988,16 @@ export function createAppComponents(deps: AppDeps) {
       metrics: deps.metrics,
       requestTracker: deps.requestTracker,
       lifecycleSignal: deps.control.getAllocationSignal(allocationId),
+      ...(personalAttempt ? {
+        requestId: personalAttempt.attempt.larmRequestId,
+        attemptSignal: personalAttempt.signal,
+        onForwarded: async () => {
+          await personalAttemptController!.markAttemptForwarded(
+            attemptSubjectDigest!,
+            personalAttempt!.attempt.attemptId,
+          );
+        },
+      } : {}),
       priority: allocation.priority ?? 0,
       now: deps.now,
       random: deps.random,
@@ -880,7 +1011,42 @@ export function createAppComponents(deps: AppDeps) {
         configRevision: allocation.catalogRevision
           ?? deps.getConfigRevision?.()
           ?? identity.configRevision,
+        ...(personalAttempt && attemptSubjectDigest ? {
+          personalState: {
+            subjectDigest: attemptSubjectDigest,
+            attemptId: personalAttempt.attempt.attemptId,
+            ...(contextViewId ? { viewId: contextViewId } : {}),
+            requestDigest: personalAttempt.attempt.requestDigest,
+            sourceDigests: viewAuditBinding?.sourceDigests ?? [],
+            dataEpoch: personalAttempt.attempt.dataEpoch,
+          },
+        } : {}),
       },
+      ...(contextViewId || personalAttempt ? {
+        onTerminal: async (result: { outcome: string; upstreamStatus?: number }) => {
+          if (personalAttempt && personalAttemptController && attemptSubjectDigest) {
+            await personalAttemptController.finishAttempt({
+              subjectDigest: attemptSubjectDigest,
+              attemptId: personalAttempt.attempt.attemptId,
+              succeeded: result.outcome === "http_200" && result.upstreamStatus === 200,
+              cancelled: [
+                "attempt_cancelled",
+                "client_cancelled",
+                "timeout",
+                "binding_invalidated",
+              ].includes(result.outcome),
+              transportClosed: !/^http_[1-5][0-9]{2}$/.test(result.outcome),
+              outcome: result.outcome,
+            });
+          }
+          if (contextViewId && deps.contextController) {
+            await deps.contextController.finishChat(
+              contextViewId,
+              result.outcome === "http_200" && result.upstreamStatus === 200,
+            );
+          }
+        },
+      } : {}),
       responseFormat: chatResponseFormat,
       validateTranscriptionResponse: options.protocol === "openai.audio-transcriptions.v1",
       validateSpeechResponse: options.protocol === "openai.audio-speech.v1",
@@ -1089,13 +1255,17 @@ export function createAppComponents(deps: AppDeps) {
   app.get("/v1/context-status", (c) => {
     const feature = contextFeature(c);
     if (feature instanceof Response) return feature;
+    const caller = contextCaller(c);
+    if (caller instanceof Response) return caller;
     c.header("cache-control", "no-store");
-    return c.json(feature.statuses(principal()));
+    return c.json(feature.statuses(caller.principal));
   });
 
   app.post("/v1/contexts", async (c) => {
     const feature = contextFeature(c);
     if (feature instanceof Response) return feature;
+    const caller = contextCaller(c);
+    if (caller instanceof Response) return caller;
     const key = idempotencyKey(c);
     if (key instanceof Response) return key;
     const parsed = contextRegistrationRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
@@ -1103,7 +1273,23 @@ export function createAppComponents(deps: AppDeps) {
       return c.json(errorBody("context_request_invalid", "invalid context descriptor"), 400);
     }
     try {
-      const result = await feature.register(parsed.data, principal(), key);
+      const result = caller.scoped
+        ? await (() => {
+          const personal = personalStateFeature(
+            c,
+            "context.source.provision",
+            caller.scoped.record.allocationId,
+          );
+          if (personal instanceof Response) return personal;
+          return personal.controller.registerContext({
+            principal: caller.principal,
+            allocationId: caller.scoped.record.allocationId,
+            request: parsed.data,
+            idempotencyKey: key,
+          });
+        })()
+        : await feature.register(parsed.data, caller.principal, key);
+      if (result instanceof Response) return result;
       if (result.replay) c.header("x-larm-idempotent-replay", "true");
       c.header("location", `/v1/contexts/${encodeURIComponent(result.descriptor.id)}`);
       return c.json(result.descriptor, result.replay ? 200 : 201);
@@ -1115,9 +1301,11 @@ export function createAppComponents(deps: AppDeps) {
   app.get("/v1/contexts", (c) => {
     const feature = contextFeature(c);
     if (feature instanceof Response) return feature;
+    const caller = contextCaller(c);
+    if (caller instanceof Response) return caller;
     try {
       const rawLimit = c.req.query("limit");
-      return c.json(feature.list(principal(), {
+      return c.json(feature.list(caller.principal, {
         ...(c.req.query("cursor") ? { cursor: c.req.query("cursor") } : {}),
         ...(rawLimit !== undefined ? { limit: Number(rawLimit) } : {}),
       }));
@@ -1129,10 +1317,12 @@ export function createAppComponents(deps: AppDeps) {
   app.delete("/v1/contexts/:id", async (c) => {
     const feature = contextFeature(c);
     if (feature instanceof Response) return feature;
+    const caller = contextCaller(c);
+    if (caller instanceof Response) return caller;
     const key = idempotencyKey(c);
     if (key instanceof Response) return key;
     try {
-      const result = await feature.delete(principal(), c.req.param("id"), key);
+      const result = await feature.delete(caller.principal, c.req.param("id"), key);
       if (result.replay) c.header("x-larm-idempotent-replay", "true");
       return c.body(null, 204);
     } catch (error) {
@@ -1143,14 +1333,19 @@ export function createAppComponents(deps: AppDeps) {
   app.post("/v1/context-views", async (c) => {
     const feature = contextFeature(c);
     if (feature instanceof Response) return feature;
+    const caller = contextCaller(c);
+    if (caller instanceof Response) return caller;
     const key = idempotencyKey(c);
     if (key instanceof Response) return key;
     const parsed = contextViewRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
     if (!parsed.success) {
       return c.json(errorBody("context_request_invalid", "invalid context view request"), 400);
     }
+    if (caller.scoped && caller.scoped.record.allocationId !== parsed.data.allocationId) {
+      return c.json(errorBody("connection_forbidden", "allocation does not match provider token"), 403);
+    }
     try {
-      const result = await feature.createView(parsed.data, principal(), key);
+      const result = await feature.createView(parsed.data, caller.principal, key);
       if (result.replay) c.header("x-larm-idempotent-replay", "true");
       c.header("location", `/v1/context-views/${encodeURIComponent(result.view.id)}`);
       return c.json(result.view, result.replay ? 200 : 201);
@@ -1162,9 +1357,11 @@ export function createAppComponents(deps: AppDeps) {
   app.get("/v1/context-operations/:id", (c) => {
     const feature = contextFeature(c);
     if (feature instanceof Response) return feature;
+    const caller = contextCaller(c);
+    if (caller instanceof Response) return caller;
     try {
       c.header("cache-control", "no-store");
-      return c.json(feature.getOperation(principal(), c.req.param("id")));
+      return c.json(feature.getOperation(caller.principal, c.req.param("id")));
     } catch (error) {
       return contextError(c, error);
     }
@@ -1189,6 +1386,211 @@ export function createAppComponents(deps: AppDeps) {
     }
     return value;
   };
+
+  app.get("/v1/personal-state/capability", async (c) => {
+    const allocationId = c.req.header("x-larm-allocation-id") ?? c.req.query("allocationId");
+    const runtime = c.req.header("x-larm-runtime") ?? c.req.query("runtime");
+    if (!allocationId || !runtime) {
+      return c.json(errorBody("personal_state_request_invalid", "allocationId and runtime are required"), 400);
+    }
+    const feature = personalStateFeature(c, "context.operation.read", allocationId);
+    if (feature instanceof Response) return feature;
+    try {
+      c.header("cache-control", "no-store");
+      return c.json(await feature.controller.capability({
+        principal: feature.caller.record.principal,
+        allocationId,
+        runtime,
+        credentialExpiresAt: feature.caller.record.expiresAt,
+      }));
+    } catch (error) {
+      return personalStateError(c, error);
+    }
+  });
+
+  app.post("/v1/context-sources", async (c) => {
+    const incarnation = c.req.header("x-larm-source-incarnation");
+    const allocationId = c.req.header("x-larm-allocation-id");
+    const runtime = c.req.header("x-larm-runtime");
+    const sourceDigest = c.req.header("x-larm-source-digest");
+    if (
+      !incarnation
+      || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(incarnation)
+      || !allocationId
+      || !runtime
+      || !sourceDigest
+      || !/^[a-f0-9]{64}$/.test(sourceDigest)
+    ) {
+      return c.json(errorBody("personal_state_request_invalid", "source delivery headers are invalid"), 400);
+    }
+    const contentType = c.req.header("content-type") ?? "";
+    if (!/^text\/plain\s*;\s*charset\s*=\s*(?:utf-8|"utf-8")\s*$/i.test(contentType)) {
+      return c.json(errorBody(
+        "personal_state_request_invalid",
+        "source must use Content-Type text/plain; charset=utf-8",
+      ), 400);
+    }
+    const feature = personalStateFeature(c, "context.source.provision", allocationId);
+    if (feature instanceof Response) return feature;
+    let content: string;
+    try {
+      const bytes = await readBodyLimited(
+        c.req.raw,
+        deps.personalStateMaxSourceBytes ?? 256 * 1024 * 1024,
+      );
+      content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch (error) {
+      if (error instanceof RequestBodyError) return c.json(errorBody(error.code, error.message), error.status);
+      return c.json(errorBody("personal_state_request_invalid", "source must be valid UTF-8"), 400);
+    }
+    try {
+      const result = await feature.controller.provision({
+        principal: feature.caller.record.principal,
+        incarnation,
+        allocationId,
+        runtime,
+        sourceDigest,
+        content,
+      });
+      c.header("cache-control", "no-store");
+      if (result.replay) c.header("x-larm-idempotent-replay", "true");
+      c.header("location", `/v1/context-source-operations/${encodeURIComponent(incarnation)}`);
+      return c.json(result.receipt, result.replay ? 200 : 201);
+    } catch (error) {
+      return personalStateError(c, error);
+    }
+  });
+
+  app.get("/v1/context-source-operations/:incarnation", async (c) => {
+    const feature = personalStateFeature(c, "context.operation.read");
+    if (feature instanceof Response) return feature;
+    try {
+      c.header("cache-control", "no-store");
+      return c.json(await feature.controller.provisionReceipt(
+        feature.caller.record.principal,
+        c.req.param("incarnation"),
+      ));
+    } catch (error) {
+      return personalStateError(c, error);
+    }
+  });
+
+  app.post("/v1/context-measurements", async (c) => {
+    const parsed = canonicalMeasurementRequestSchema.safeParse(await readJson(
+      c,
+      deps.gatewayMaxBodyBytes ?? 4 * 1024 * 1024,
+    ));
+    if (!parsed.success) {
+      return c.json(errorBody("personal_state_request_invalid", "invalid canonical measurement request"), 400);
+    }
+    const feature = personalStateFeature(c, "context.measure", parsed.data.allocationId);
+    if (feature instanceof Response) return feature;
+    try {
+      const result = await feature.controller.measure(feature.caller.record.principal, parsed.data);
+      c.header("cache-control", "no-store");
+      if (result.replay) c.header("x-larm-idempotent-replay", "true");
+      c.header("location", `/v1/context-measurements/${encodeURIComponent(result.receipt.measurementId)}`);
+      return c.json(result.receipt, result.replay ? 200 : 201);
+    } catch (error) {
+      return personalStateError(c, error);
+    }
+  });
+
+  app.get("/v1/context-measurements/:id", async (c) => {
+    const feature = personalStateFeature(c, "context.operation.read");
+    if (feature instanceof Response) return feature;
+    try {
+      c.header("cache-control", "no-store");
+      return c.json(await feature.controller.measurementReceipt(feature.caller.record.principal, c.req.param("id")));
+    } catch (error) {
+      return personalStateError(c, error);
+    }
+  });
+
+  app.post("/v2/context-views", async (c) => {
+    const key = idempotencyKey(c);
+    if (key instanceof Response) return key;
+    const parsed = personalStateViewRequestSchema.safeParse(await readJson(
+      c,
+      deps.gatewayMaxBodyBytes ?? 4 * 1024 * 1024,
+    ));
+    if (!parsed.success) {
+      return c.json(errorBody("personal_state_request_invalid", "invalid Context View v2 request"), 400);
+    }
+    const feature = personalStateFeature(c, "context.view.create", parsed.data.allocationId);
+    if (feature instanceof Response) return feature;
+    try {
+      const result = await feature.controller.createView(feature.caller.record.principal, parsed.data, key);
+      c.header("cache-control", "no-store");
+      if (result.replay) c.header("x-larm-idempotent-replay", "true");
+      c.header("location", `/v2/context-views/${encodeURIComponent(parsed.data.viewRequestId)}`);
+      return c.json(result.view, result.replay ? 200 : 201);
+    } catch (error) {
+      return personalStateError(c, error);
+    }
+  });
+
+  app.get("/v2/context-views/:id", async (c) => {
+    const feature = personalStateFeature(c, "context.operation.read");
+    if (feature instanceof Response) return feature;
+    try {
+      c.header("cache-control", "no-store");
+      return c.json(await feature.controller.viewReceipt(feature.caller.record.principal, c.req.param("id")));
+    } catch (error) {
+      return personalStateError(c, error);
+    }
+  });
+
+  app.get("/v1/generation-attempts/:id", async (c) => {
+    const feature = personalStateFeature(c, "context.operation.read");
+    if (feature instanceof Response) return feature;
+    try {
+      c.header("cache-control", "no-store");
+      return c.json(await feature.controller.attemptReceipt(feature.caller.record.principal, c.req.param("id")));
+    } catch (error) {
+      return personalStateError(c, error);
+    }
+  });
+
+  app.post("/v1/generation-attempts/:id/cancel", async (c) => {
+    const feature = personalStateFeature(c, "context.attempt.cancel");
+    if (feature instanceof Response) return feature;
+    try {
+      c.header("cache-control", "no-store");
+      return c.json(await feature.controller.cancelAttempt(feature.caller.record.principal, c.req.param("id")));
+    } catch (error) {
+      return personalStateError(c, error);
+    }
+  });
+
+  app.post("/v1/context-forget-operations", async (c) => {
+    const parsed = forgetRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
+    if (!parsed.success) {
+      return c.json(errorBody("personal_state_request_invalid", "invalid forget request"), 400);
+    }
+    const feature = personalStateFeature(c, "context.forget");
+    if (feature instanceof Response) return feature;
+    try {
+      const result = await feature.controller.forget(feature.caller.record.principal, parsed.data);
+      c.header("cache-control", "no-store");
+      if (result.replay) c.header("x-larm-idempotent-replay", "true");
+      c.header("location", `/v1/context-forget-operations/${encodeURIComponent(result.operation.forgetId)}`);
+      return c.json(result.operation, result.operation.state === "succeeded" ? 200 : 202);
+    } catch (error) {
+      return personalStateError(c, error);
+    }
+  });
+
+  app.get("/v1/context-forget-operations/:id", async (c) => {
+    const feature = personalStateFeature(c, "context.operation.read");
+    if (feature instanceof Response) return feature;
+    try {
+      c.header("cache-control", "no-store");
+      return c.json(await feature.controller.forgetReceipt(feature.caller.record.principal, c.req.param("id")));
+    } catch (error) {
+      return personalStateError(c, error);
+    }
+  });
 
   app.get("/v1/agent-profiles", (c) => {
     const feature = agentFeature(c);
@@ -1235,7 +1637,13 @@ export function createAppComponents(deps: AppDeps) {
         return c.json(errorBody("forbidden", "valid management token required for deployment"), 403);
       }
     }
-    const result = await feature.create(parsed.data, principal(), key, c.req.url);
+    const result = await feature.create(
+      parsed.data,
+      agentRequestPrincipal(c),
+      key,
+      c.req.url,
+      secretMatches(c.req.header("authorization"), `Bearer ${deps.apiToken}`),
+    );
     const catalog = deps.agentConnectionCatalog;
     const selectedProfile = parsed.data.agentProfile ?? catalog?.defaultAgentProfile;
     const errorCode = typeof result.body === "object" && result.body !== null && "error" in result.body
@@ -1260,14 +1668,14 @@ export function createAppComponents(deps: AppDeps) {
   app.get("/v1/agent-connections/:id", (c) => {
     const feature = agentFeature(c);
     if (feature instanceof Response) return feature;
-    return agentResult(c, feature.get(c.req.param("id"), principal()));
+    return agentResult(c, feature.get(c.req.param("id"), agentRequestPrincipal(c)));
   });
 
   app.get("/v1/agent-connections/:id/health", async (c) => {
     const feature = agentFeature(c);
     if (feature instanceof Response) return feature;
     c.header("cache-control", "no-store");
-    const result = await feature.health(c.req.param("id"), principal());
+    const result = await feature.health(c.req.param("id"), agentRequestPrincipal(c));
     deps.onEvent?.({
       name: "agent_connection_health_checked",
       labels: { status: String(result.status) },
@@ -1313,7 +1721,12 @@ export function createAppComponents(deps: AppDeps) {
     }
     const parsed = agentConnectionClaimRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
     if (!parsed.success) return c.json(errorBody("invalid_request", "invalid claim request"), 400);
-    const result = await feature.claim(c.req.param("id"), principal(), parsed.data.format);
+    const result = await feature.claim(
+      c.req.param("id"),
+      agentRequestPrincipal(c),
+      parsed.data.format,
+      secretMatches(c.req.header("authorization"), `Bearer ${deps.apiToken}`),
+    );
     const providers = typeof result.body === "object" && result.body !== null && "providers" in result.body
       && Array.isArray(result.body.providers)
       ? result.body.providers
@@ -1340,7 +1753,7 @@ export function createAppComponents(deps: AppDeps) {
     return agentResult(c, await feature.renew(
       c.req.param("id"),
       parsed.data.ttlSeconds,
-      principal(),
+      agentRequestPrincipal(c),
       key,
     ));
   });
@@ -1348,7 +1761,7 @@ export function createAppComponents(deps: AppDeps) {
   app.delete("/v1/agent-connections/:id", async (c) => {
     const feature = agentFeature(c);
     if (feature instanceof Response) return feature;
-    const result = await feature.release(c.req.param("id"), principal());
+    const result = await feature.release(c.req.param("id"), agentRequestPrincipal(c));
     deps.onEvent?.({
       name: "agent_connection_release_completed",
       labels: { status: String(result.status) },

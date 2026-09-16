@@ -160,6 +160,7 @@ runtimes:
       - qwen35-2b-q4-k-m
     capability:
       - llm.decision.default
+      - llm.backchannel.classifier
     protocol: openai.chat-completions.v1
     backend: llama-swap
     node: local-node
@@ -176,6 +177,52 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/qwen35-decision
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen35-decision
+
+  lfm25-backchannel-jp:
+    artifacts:
+      - lfm25-1.2b-jp-q4-k-m
+    capability:
+      - llm.backchannel.classifier
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: local-node
+    policy:
+      class: preferred
+      swapGroup: backchannel-llm-slot
+    resources:
+      estimatedMemoryGB: 3
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 16
+      queueTimeoutMs: 5000
+    deployment:
+      modelId: lfm25-backchannel-jp
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/lfm25-backchannel-jp
+      backendEndpoint: http://127.0.0.1:8083/upstream/lfm25-backchannel-jp
+
+  gemma3-backchannel:
+    artifacts:
+      - gemma3-1b-it-q4-k-m
+    capability:
+      - llm.backchannel.classifier
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: local-node
+    policy:
+      class: preferred
+      swapGroup: backchannel-llm-slot
+    resources:
+      estimatedMemoryGB: 3
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 16
+      queueTimeoutMs: 5000
+    deployment:
+      modelId: gemma3-backchannel
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/gemma3-backchannel
+      backendEndpoint: http://127.0.0.1:8083/upstream/gemma3-backchannel
 
   qwen36-35b:
     artifacts:

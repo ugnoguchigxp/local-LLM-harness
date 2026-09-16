@@ -10,6 +10,8 @@ import {
   LocalContextSnapshotStore,
   LlamaContextTokenizer,
   LlamaContextSlotAdapter,
+  LlamaContextSlotEraseAdapter,
+  LocalPersonalStateJournal,
 } from "@larm/backends";
 import { createAppComponents } from "./app";
 import { ArtifactManager } from "./artifact-manager";
@@ -27,6 +29,7 @@ import {
   loadInferenceAuditKey,
 } from "./inference-audit";
 import { ContextController } from "./context-controller";
+import { PersonalStateController } from "./personal-state-controller";
 
 const config = parseDaemonConfig();
 const catalogGeneration = loadCatalogGeneration({
@@ -199,16 +202,19 @@ if (config.contextSnapshotEnabled) {
   }
 }
 
+const contextSourceStore = new LocalContextSourceStore(config.contextSourceRoot);
+const contextTokenizer = new LlamaContextTokenizer();
+const contextSlotAdapter = contextSnapshotStore ? new LlamaContextSlotAdapter() : undefined;
 const contextController = new ContextController({
   enabled: config.contextEnabled,
   registry,
   releases: runtimeReleases,
   metadataStore: new LocalContextMetadataStore(config.contextMetadataRoot),
-  sourceProvider: new LocalContextSourceStore(config.contextSourceRoot),
-  tokenizer: new LlamaContextTokenizer(),
+  sourceProvider: contextSourceStore,
+  tokenizer: contextTokenizer,
   snapshotEnabled: contextSnapshotStore !== undefined,
   snapshotStore: contextSnapshotStore,
-  slotAdapter: contextSnapshotStore ? new LlamaContextSlotAdapter() : undefined,
+  slotAdapter: contextSlotAdapter,
   snapshotMaxWriteBytes: config.contextSnapshotMaxWriteBytes,
   getState: () => observer.getState(),
   getAllocation: (id) => control.getAllocation(id),
@@ -266,6 +272,22 @@ if (config.contextEnabled) {
   await updateContextMetrics();
 }
 
+const personalStateController = new PersonalStateController({
+  enabled: config.personalStateEnabled,
+  journal: new LocalPersonalStateJournal(config.personalStateJournalRoot),
+  context: contextController,
+  sourceStore: contextSourceStore,
+  tokenizer: contextTokenizer,
+  auditStore: inferenceAuditStore,
+  slotAdapter: new LlamaContextSlotEraseAdapter(),
+  sourceMaxBytes: config.contextSourceMaxBytes,
+  sourceMaxTotalBytes: config.contextSourceMaxTotalBytes,
+  receiptTtlMs: config.personalStateReceiptTtlMs,
+  quarantineRuntime: (runtime) => executionGate.quarantineRuntime(runtime),
+  clearRuntimeQuarantine: (runtime) => executionGate.clearRuntimeQuarantine(runtime),
+});
+await personalStateController.initialize();
+
 const appComponents = createAppComponents({
   registry,
   getState: () => observer.getState(),
@@ -298,6 +320,8 @@ const appComponents = createAppComponents({
   inferenceAuditMode: config.inferenceAuditMode,
   inferenceAuditRecorder,
   contextController,
+  personalStateController,
+  personalStateMaxSourceBytes: config.contextSourceMaxBytes,
   getReleaseConvergenceStatus: async () => await Bun.file(
     process.env.LARM_RELEASE_CONVERGENCE_STATUS ?? "/var/lib/larm/release-controller/status.json",
   ).json(),

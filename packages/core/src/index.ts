@@ -1,4 +1,5 @@
 export { LARM_VERSION } from "./version";
+export * from "./personal-state";
 export {
   activeContextViewSchema,
   contextOperationSchema,

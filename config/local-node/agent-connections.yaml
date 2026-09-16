@@ -64,6 +64,42 @@ agentProfiles:
         route: llm-decision-default
         publicModel: decision-default
         readiness: llm-inference
+  contextstill-backchannel-qwen35-2b:
+    description: Explicit Qwen 3.5 2B backchannel classifier candidate
+    schedulingPriority: 1000
+    providers:
+      - name: backchannel
+        capability: llm.backchannel.classifier
+        route: llm-backchannel-qwen35-2b
+        publicModel: backchannel-qwen35-2b
+        readiness: llm-inference
+  contextstill-backchannel-lfm25-jp-1.2b:
+    description: Explicit Japanese-tuned LFM 2.5 1.2B backchannel classifier candidate
+    schedulingPriority: 1000
+    providers:
+      - name: backchannel
+        capability: llm.backchannel.classifier
+        route: llm-backchannel-lfm25-jp-1.2b
+        publicModel: backchannel-lfm25-jp-1.2b
+        readiness: llm-inference
+  contextstill-backchannel-gemma3-1b:
+    description: Explicit Gemma 3 1B multilingual backchannel classifier candidate
+    schedulingPriority: 1000
+    providers:
+      - name: backchannel
+        capability: llm.backchannel.classifier
+        route: llm-backchannel-gemma3-1b
+        publicModel: backchannel-gemma3-1b
+        readiness: llm-inference
+  saaa-backchannel-default:
+    description: SAAA default backchannel classifier using Japanese-tuned LFM 2.5 1.2B
+    schedulingPriority: 3000
+    providers:
+      - name: backchannel
+        capability: llm.backchannel.classifier
+        route: llm-backchannel-default
+        publicModel: backchannel-default
+        readiness: llm-inference
   nightworker-background:
     description: NightWorker background Qwen 3.8 27B provider
     schedulingPriority: 2000

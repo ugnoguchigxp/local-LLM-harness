@@ -8,7 +8,7 @@ export type ExecutionPolicy = {
 
 export class ExecutionGateError extends Error {
   constructor(
-    readonly code: "queue_full" | "queue_timeout" | "request_cancelled" | "draining",
+    readonly code: "queue_full" | "queue_timeout" | "request_cancelled" | "draining" | "runtime_quarantined",
     message: string,
     readonly retryAfterSeconds?: number,
   ) {
@@ -32,6 +32,7 @@ type RuntimeGate = { active: number; queue: QueueEntry[] };
 
 export class ExecutionGate {
   private readonly runtimes = new Map<string, RuntimeGate>();
+  private readonly quarantinedRuntimes = new Set<string>();
   private draining = false;
   private sequence = 0;
 
@@ -55,6 +56,31 @@ export class ExecutionGate {
     }
   }
 
+  quarantineRuntime(runtime: string): void {
+    this.quarantinedRuntimes.add(runtime);
+    const state = this.runtimes.get(runtime);
+    if (!state) return;
+    for (const entry of state.queue.splice(0)) {
+      this.removeEntryListeners(entry);
+      entry.reject(new ExecutionGateError(
+        "runtime_quarantined",
+        `runtime ${runtime} is quarantined pending backend stop confirmation`,
+      ));
+    }
+    this.emit("execution_request", runtime, "runtime_quarantined");
+    this.emitState(runtime, state);
+  }
+
+  clearRuntimeQuarantine(runtime: string): void {
+    if (this.quarantinedRuntimes.delete(runtime)) {
+      this.emit("execution_request", runtime, "runtime_quarantine_cleared");
+    }
+  }
+
+  isRuntimeQuarantined(runtime: string): boolean {
+    return this.quarantinedRuntimes.has(runtime);
+  }
+
   async acquire(
     runtime: string,
     policy: ExecutionPolicy,
@@ -63,6 +89,12 @@ export class ExecutionGate {
   ): Promise<() => void> {
     if (this.draining) {
       throw new ExecutionGateError("draining", "execution gate is draining");
+    }
+    if (this.quarantinedRuntimes.has(runtime)) {
+      throw new ExecutionGateError(
+        "runtime_quarantined",
+        `runtime ${runtime} is quarantined pending backend stop confirmation`,
+      );
     }
     if (signal.aborted) {
       throw new ExecutionGateError("request_cancelled", "request was cancelled while waiting");
@@ -129,7 +161,7 @@ export class ExecutionGate {
     policy: ExecutionPolicy,
     signal: AbortSignal,
   ): (() => void) | undefined {
-    if (this.draining || signal.aborted) return undefined;
+    if (this.draining || this.quarantinedRuntimes.has(runtime) || signal.aborted) return undefined;
     const state = this.runtimes.get(runtime) ?? { active: 0, queue: [] };
     this.runtimes.set(runtime, state);
     if (state.active >= policy.maxConcurrentRequests) {
@@ -172,7 +204,7 @@ export class ExecutionGate {
   }
 
   private promote(runtime: string, state: RuntimeGate, policy: ExecutionPolicy): void {
-    while (!this.draining && state.active < policy.maxConcurrentRequests) {
+    while (!this.draining && !this.quarantinedRuntimes.has(runtime) && state.active < policy.maxConcurrentRequests) {
       const entry = state.queue.shift();
       if (!entry) {
         return;

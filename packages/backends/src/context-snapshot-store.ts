@@ -108,6 +108,13 @@ export type SnapshotExpectation = {
 export type SnapshotCommitInput = Omit<SnapshotExpectation, "maxBytes"> & {
   tokenCount: number;
   createdAt?: string;
+  dependencies?: {
+    requestDigest: string;
+    viewId: string;
+    attemptId?: string;
+    sourceDigests: string[];
+    dataEpoch: number;
+  };
 };
 
 export class LocalContextSnapshotStore {
@@ -176,17 +183,20 @@ export class LocalContextSnapshotStore {
     }
     const entries = await readdir(this.root, { withFileTypes: true });
     const committedFiles = new Set<string>();
+    let cleaned = false;
     for (const entry of entries) {
       if (entry.isSymbolicLink() || !entry.isFile()) {
         this.invalidEntries += 1;
         continue;
       }
       if (PENDING_PATTERN.test(entry.name)) {
-        await unlink(join(this.root, entry.name));
+        await this.unlinkForDeletion(join(this.root, entry.name));
+        cleaned = true;
         continue;
       }
       if (/^\.ctxsnap-[a-f0-9]{64}\.[a-f0-9-]{36}\.tmp$/.test(entry.name)) {
-        await unlink(join(this.root, entry.name));
+        await this.unlinkForDeletion(join(this.root, entry.name));
+        cleaned = true;
         continue;
       }
       if (!/^ctxsnap-[a-f0-9]{64}\.json$/.test(entry.name)) continue;
@@ -205,14 +215,17 @@ export class LocalContextSnapshotStore {
         committedFiles.add(this.filename(manifest.entryId));
       } catch {
         this.invalidEntries += 1;
-        await unlink(join(this.root, entry.name)).catch(() => undefined);
+        await this.unlinkForDeletion(join(this.root, entry.name));
+        cleaned = true;
       }
     }
     for (const entry of entries) {
       if (!/^ctxsnap-[a-f0-9]{64}\.bin$/.test(entry.name) || committedFiles.has(entry.name)) continue;
-      await unlink(join(this.root, entry.name)).catch(() => undefined);
+      await this.unlinkForDeletion(join(this.root, entry.name));
+      cleaned = true;
       this.invalidEntries += 1;
     }
+    if (cleaned) await this.syncDirectory();
     this.initialized = true;
   }
 
@@ -282,12 +295,13 @@ export class LocalContextSnapshotStore {
     let removedEntries = 0;
     let removedBytes = 0;
     const candidates = [...this.manifests.values()].sort((left, right) =>
-      Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.entryId.localeCompare(right.entryId)
+      Date.parse(left.createdAt) - Date.parse(right.createdAt)
+      || (left.entryId < right.entryId ? -1 : left.entryId > right.entryId ? 1 : 0)
     );
     for (const manifest of candidates) {
       if (usage <= targetBytes) break;
-      await unlink(join(this.root, this.filename(manifest.entryId))).catch(() => undefined);
-      await unlink(join(this.root, `${manifest.entryId}.json`)).catch(() => undefined);
+      await this.unlinkForDeletion(join(this.root, this.filename(manifest.entryId)));
+      await this.unlinkForDeletion(join(this.root, `${manifest.entryId}.json`));
       this.manifests.delete(contextSnapshotLookupKey(manifest));
       this.verified.delete(manifest.entryId);
       usage = Math.max(0, usage - manifest.snapshotBytes);
@@ -301,9 +315,9 @@ export class LocalContextSnapshotStore {
       quarantined.sort((left, right) => left.metadata.mtimeMs - right.metadata.mtimeMs);
       for (const { entry, metadata } of quarantined) {
         if (usage <= targetBytes) break;
-        await unlink(join(this.root, entry.name)).catch(() => undefined);
+        await this.unlinkForDeletion(join(this.root, entry.name));
         const pair = entry.name.replace(/\.bin(\.quarantine-[a-f0-9-]{36})$/, ".json$1");
-        await unlink(join(this.root, pair)).catch(() => undefined);
+        await this.unlinkForDeletion(join(this.root, pair));
         usage = Math.max(0, usage - metadata.size);
         removedEntries += 1;
         removedBytes += metadata.size;
@@ -322,12 +336,155 @@ export class LocalContextSnapshotStore {
 
   async discardPending(pendingFilename: string): Promise<void> {
     if (!PENDING_PATTERN.test(pendingFilename)) return;
-    await unlink(join(this.root, pendingFilename)).catch(() => undefined);
+    await this.initialize();
+    await this.unlinkForDeletion(join(this.root, pendingFilename));
+    await this.syncDirectory();
   }
 
   async invalidate(manifest: ContextSnapshotManifest): Promise<void> {
     await this.initialize();
     await this.quarantine(manifest);
+  }
+
+  async deleteByDependency(input: {
+    principalScope: string;
+    requestDigests?: string[];
+    viewIds?: string[];
+    attemptIds?: string[];
+    sourceDigests?: string[];
+  }): Promise<{ removedEntries: number; removedBytes: number }> {
+    await this.initialize();
+    const requestDigests = new Set(input.requestDigests ?? []);
+    const viewIds = new Set(input.viewIds ?? []);
+    const attemptIds = new Set(input.attemptIds ?? []);
+    const sourceDigests = new Set(input.sourceDigests ?? []);
+    const hasSpecificTargets = requestDigests.size + viewIds.size + attemptIds.size + sourceDigests.size > 0;
+    const matches = (manifest: ContextSnapshotManifest): boolean => {
+      if (manifest.principalScope !== input.principalScope) return false;
+      if (!hasSpecificTargets || !manifest.dependencies) return true;
+      return requestDigests.has(manifest.dependencies.requestDigest)
+        || viewIds.has(manifest.dependencies.viewId)
+        || (manifest.dependencies.attemptId !== undefined
+          && attemptIds.has(manifest.dependencies.attemptId))
+        || manifest.dependencies.sourceDigests.some((digest) => sourceDigests.has(digest));
+    };
+    const candidates = [...this.manifests.values()].filter(matches);
+    let removedBytes = 0;
+    let removedEntries = 0;
+    for (const manifest of candidates) {
+      await this.unlinkForDeletion(join(this.root, this.filename(manifest.entryId)));
+      await this.unlinkForDeletion(join(this.root, `${manifest.entryId}.json`));
+      this.manifests.delete(contextSnapshotLookupKey(manifest));
+      this.verified.delete(manifest.entryId);
+      removedBytes += manifest.snapshotBytes;
+      removedEntries += 1;
+    }
+    const entries = await readdir(this.root, { withFileTypes: true });
+    const knownEntryIds = new Set([...this.manifests.values()].map((manifest) => manifest.entryId));
+    for (const entry of entries) {
+      const raw = entry.name.match(/^(ctxsnap-[a-f0-9]{64})\.(?:bin|json)$/);
+      if (!PENDING_PATTERN.test(entry.name) && !raw) continue;
+      if (!entry.isFile() || entry.isSymbolicLink()) {
+        throw new ContextSnapshotStoreError(
+          "snapshot_file_unsafe",
+          "uncommitted snapshot data is not a regular file",
+        );
+      }
+      if (PENDING_PATTERN.test(entry.name) || !knownEntryIds.has(raw![1]!)) {
+        throw new ContextSnapshotStoreError(
+          "snapshot_manifest_invalid",
+          "uncommitted snapshot data cannot be attributed to a principal",
+        );
+      }
+    }
+    const quarantineNames = new Set(entries
+      .filter((entry) => entry.isFile() && !entry.isSymbolicLink())
+      .map((entry) => entry.name));
+    for (const entry of entries) {
+      const matched = entry.name.match(
+        /^(ctxsnap-[a-f0-9]{64})\.bin(\.quarantine-[a-f0-9-]{36})$/,
+      );
+      if (!matched || !entry.isFile() || entry.isSymbolicLink()) continue;
+      if (!quarantineNames.has(`${matched[1]}.json${matched[2]}`)) {
+        throw new ContextSnapshotStoreError(
+          "snapshot_manifest_invalid",
+          "quarantined snapshot cannot be attributed to a principal",
+        );
+      }
+    }
+    for (const entry of entries) {
+      const matched = entry.name.match(
+        /^(ctxsnap-[a-f0-9]{64})\.json(\.quarantine-[a-f0-9-]{36})$/,
+      );
+      if (!matched || !entry.isFile() || entry.isSymbolicLink()) continue;
+      const manifest = await this.readManifest(join(this.root, entry.name));
+      if (manifest.entryId !== matched[1]) {
+        throw new ContextSnapshotStoreError(
+          "snapshot_manifest_invalid",
+          "quarantined snapshot manifest identity is invalid",
+        );
+      }
+      if (!matches(manifest)) continue;
+      const snapshotPath = join(this.root, `${matched[1]}.bin${matched[2]}`);
+      try {
+        const metadata = await lstat(snapshotPath);
+        if (!metadata.isFile() || metadata.isSymbolicLink()) {
+          throw new ContextSnapshotStoreError(
+            "snapshot_file_unsafe",
+            "quarantined snapshot is not a regular file",
+          );
+        }
+        removedBytes += metadata.size;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      await this.unlinkForDeletion(snapshotPath);
+      await this.unlinkForDeletion(join(this.root, entry.name));
+      removedEntries += 1;
+    }
+    if (removedEntries > 0) {
+      const directory = await open(this.root, constants.O_RDONLY | constants.O_DIRECTORY);
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    }
+    return { removedEntries, removedBytes };
+  }
+
+  private async unlinkForDeletion(path: string): Promise<void> {
+    try {
+      await unlink(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw new ContextSnapshotStoreError(
+        "snapshot_io_failed",
+        `snapshot deletion failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async renameForQuarantine(source: string, target: string): Promise<boolean> {
+    try {
+      await rename(source, target);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw new ContextSnapshotStoreError(
+        "snapshot_io_failed",
+        `snapshot quarantine failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async syncDirectory(): Promise<void> {
+    const directory = await open(this.root, constants.O_RDONLY | constants.O_DIRECTORY);
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
   }
 
   async commitPending(
@@ -368,7 +525,7 @@ export class LocalContextSnapshotStore {
       throw new ContextSnapshotStoreError("snapshot_file_unsafe", "snapshot size changed during checksum");
     }
     const manifest = contextSnapshotManifestSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: input.dependencies ? 2 : 1,
       algorithm: "crc32c",
       entryId,
       principalScope: input.principalScope,
@@ -382,6 +539,7 @@ export class LocalContextSnapshotStore {
       chunks,
       state: "committed",
       createdAt: input.createdAt ?? new Date(this.options.now?.() ?? Date.now()).toISOString(),
+      ...(input.dependencies ? { dependencies: input.dependencies } : {}),
     });
     const existing = this.manifests.get(contextSnapshotLookupKey(manifest));
     if (existing) {
@@ -586,14 +744,19 @@ export class LocalContextSnapshotStore {
 
   private async quarantine(manifest: ContextSnapshotManifest): Promise<void> {
     const suffix = `.quarantine-${crypto.randomUUID()}`;
-    await rename(
-      join(this.root, this.filename(manifest.entryId)),
-      join(this.root, `${manifest.entryId}.bin${suffix}`),
-    ).catch(() => undefined);
-    await rename(
+    const manifestMoved = await this.renameForQuarantine(
       join(this.root, `${manifest.entryId}.json`),
       join(this.root, `${manifest.entryId}.json${suffix}`),
-    ).catch(() => undefined);
+    );
+    if (manifestMoved) {
+      await this.renameForQuarantine(
+        join(this.root, this.filename(manifest.entryId)),
+        join(this.root, `${manifest.entryId}.bin${suffix}`),
+      );
+    } else {
+      await this.unlinkForDeletion(join(this.root, this.filename(manifest.entryId)));
+    }
+    await this.syncDirectory();
     this.manifests.delete(contextSnapshotLookupKey(manifest));
     this.verified.delete(manifest.entryId);
     this.invalidEntries += 1;

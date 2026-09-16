@@ -141,3 +141,88 @@ test("CRC32C snapshot store evicts oldest entries down to its low watermark", as
   expect(await store.usageBytes()).toBe(0);
   expect(store.stats().entries).toBe(0);
 });
+
+test("snapshot dependency deletion removes matching v2 and conservative legacy principal entries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-context-snapshot-dependency-"));
+  const store = new LocalContextSnapshotStore(root, { maxBytes: 1024 * 1024, freeFloorBytes: 1 });
+  await store.initialize();
+  const pendingV2 = store.pendingFilename();
+  await writeFile(join(root, pendingV2), "123456789");
+  await store.commitPending(pendingV2, {
+    ...expectation,
+    tokenCount: 9,
+    dependencies: {
+      requestDigest: "d".repeat(64),
+      viewId: "view_1",
+      attemptId: "attempt-1",
+      sourceDigests: ["e".repeat(64)],
+      dataEpoch: 2,
+    },
+  });
+  const pendingLegacy = store.pendingFilename();
+  await writeFile(join(root, pendingLegacy), "abcdefghi");
+  await store.commitPending(pendingLegacy, {
+    ...expectation,
+    viewDigest: "f".repeat(64),
+    tokenCount: 9,
+  });
+  expect((await store.deleteByDependency({
+    principalScope: expectation.principalScope,
+    sourceDigests: ["e".repeat(64)],
+  })).removedEntries).toBe(2);
+  expect(store.stats().entries).toBe(0);
+  expect(await store.usageBytes()).toBe(0);
+});
+
+test("snapshot dependency deletion fails closed when a committed file cannot be removed", async () => {
+  const value = await committedStore();
+  const snapshotPath = join(value.root, value.store.filename(value.manifest.entryId));
+  await unlink(snapshotPath);
+  await mkdir(snapshotPath);
+  await expect(value.store.deleteByDependency({
+    principalScope: expectation.principalScope,
+  })).rejects.toMatchObject({ code: "snapshot_io_failed" });
+  expect(value.store.stats().entries).toBe(1);
+});
+
+test("snapshot dependency deletion fails closed on unattributed pending and orphan data", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-context-snapshot-unattributed-"));
+  const store = new LocalContextSnapshotStore(root, { maxBytes: 1024 * 1024, freeFloorBytes: 1 });
+  await store.initialize();
+  const pending = store.pendingFilename();
+  await writeFile(join(root, pending), "pending personal state");
+  await expect(store.deleteByDependency({ principalScope: expectation.principalScope }))
+    .rejects.toMatchObject({ code: "snapshot_manifest_invalid" });
+  await store.discardPending(pending);
+
+  const orphan = `ctxsnap-${"9".repeat(64)}.bin`;
+  await writeFile(join(root, orphan), "orphan personal state");
+  await expect(store.deleteByDependency({ principalScope: expectation.principalScope }))
+    .rejects.toMatchObject({ code: "snapshot_manifest_invalid" });
+});
+
+test("snapshot dependency deletion removes only quarantined entries owned by the target principal", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-context-snapshot-quarantine-scope-"));
+  const store = new LocalContextSnapshotStore(root, { maxBytes: 1024 * 1024, freeFloorBytes: 1 });
+  await store.initialize();
+  const otherExpectation = {
+    ...expectation,
+    principalScope: "d".repeat(64),
+    viewDigest: "e".repeat(64),
+  };
+  for (const item of [expectation, otherExpectation]) {
+    const pending = store.pendingFilename();
+    await writeFile(join(root, pending), "123456789");
+    const manifest = await store.commitPending(pending, { ...item, tokenCount: 9 });
+    await writeFile(join(root, store.filename(manifest.entryId)), "923456789");
+    expect(await store.findAndVerify({ ...item, maxBytes: 1024 }))
+      .toEqual({ hit: false, reason: "crc_mismatch" });
+  }
+  expect(await store.usageBytes()).toBe(18);
+  expect(await store.deleteByDependency({ principalScope: expectation.principalScope }))
+    .toEqual({ removedEntries: 1, removedBytes: 9 });
+  expect(await store.usageBytes()).toBe(9);
+  expect(await store.deleteByDependency({ principalScope: otherExpectation.principalScope }))
+    .toEqual({ removedEntries: 1, removedBytes: 9 });
+  expect(await store.usageBytes()).toBe(0);
+});

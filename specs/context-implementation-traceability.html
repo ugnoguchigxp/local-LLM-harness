@@ -2,7 +2,7 @@
   <h1>Managed Context実装完了トレーサビリティ</h1>
   <dl>
     <dt>監査日</dt>
-    <dd><time>2026-09-10</time></dd>
+    <dd><time>2026-09-13</time></dd>
     <dt>対象</dt>
     <dd>高度推論LLM連動型Virtual Context Activation仕様のM0–M6とVC-R01–R13</dd>
     <dt>結論</dt>
@@ -10,6 +10,8 @@
       M0–M2とCRC32C snapshotのM3b／M4実装は完了し、Qwen 3.8 qualityのlive conformanceでtechnical
       Goを得た。raw snapshotのM3a No-GoはCRC32C envelope、strict identity、atomic commit、
       quarantine、source-rebuild fallbackで閉じた。M5 background最適化は初期経路へ接続しない。
+      Personal State製品contractについてVC-R06、VC-R08、VC-R10を再監査し、LARM
+      repository実装はPass、 SAAA組込みとlocal-node live受入までは製品gateをNo-Goとする。
     </dd>
   </dl>
 
@@ -161,8 +163,11 @@
         </tr>
         <tr>
           <th scope="row">VC-R06</th>
-          <td>Pass</td>
-          <td>principal、Allocation、runtime、release、lease epoch、one-shot consumeを照合</td>
+          <td>Repository Pass／製品gate No-Go</td>
+          <td>
+            stable subject、scope、Connection、Allocation、runtime、release、lease epoch、one-shot
+            consumeを照合。SAAA owner bindingとrenew試験はlive gate
+          </td>
         </tr>
         <tr>
           <th scope="row">VC-R07</th>
@@ -171,8 +176,11 @@
         </tr>
         <tr>
           <th scope="row">VC-R08</th>
-          <td>Pass</td>
-          <td>drainとexpiryでview／operationをcancelし、snapshot／RAM handleは作成しない</td>
+          <td>Repository Pass／製品gate No-Go</td>
+          <td>
+            drain／expiryに加え、tombstone-first forgetでattempt、View、snapshot、RAM
+            slot、source、auditを個別にabsence確認。backend停止と競合のlive fault injectionは未実施
+          </td>
         </tr>
         <tr>
           <th scope="row">VC-R09</th>
@@ -181,8 +189,11 @@
         </tr>
         <tr>
           <th scope="row">VC-R10</th>
-          <td>Pass</td>
-          <td>principal scope、opaque handle、no-follow、digest、quota lockのnegative test</td>
+          <td>Repository Pass／製品gate No-Go</td>
+          <td>
+            provider Bearerのsubject／7 scope、opaque handle、no-follow、immutable digest、quota
+            lock、 cross-subject negative testを実装。SAAA late-output／tool副作用fenceは受入待ち
+          </td>
         </tr>
         <tr>
           <th scope="row">VC-R11</th>
@@ -204,6 +215,37 @@
         </tr>
       </tbody>
     </table>
+  </section>
+
+  <section id="personal-state-reassessment">
+    <h2>Personal State追加再監査</h2>
+    <p>
+      <code>DELETE /v1/contexts/:id</code
+      >は既存consumer向けの登録解除であり、依存snapshotとRAM
+      stateは失効するが、source本文、attestation、監査payload、実行中generationの停止完了までを保証する
+      APIではない。Personal Stateは<code>POST /v1/context-forget-operations</code>を使用し、subject data
+      epochとdurable tombstoneを先にcommitしてから各層のabsenceを照合する。
+    </p>
+    <ul>
+      <li>
+        snapshot manifest v2はrequest、View、attempt、source digest、data
+        epochを依存として保持する。
+      </li>
+      <li>
+        forgetとterminal snapshot saveは同じmutation fenceで直列化し、旧epochのcommitを拒否する。
+      </li>
+      <li>
+        停止不明runtimeはexecution gateで隔離し、slot eraseを確認した再取消／forgetだけが解除する。
+      </li>
+      <li>
+        source、attestation、registry、View、snapshot、RAM slot、auditは別phaseとしてabsenceを返す。
+      </li>
+      <li>
+        仕様、SAAA側の必須実装、live受入は
+        <a href="./personal-state-product-connection-remediation-plan.html">改善実装計画</a>と
+        <a href="./personal-state-saaa-integration-handoff.html">製品接続handoff</a>を正本とする。
+      </li>
+    </ul>
   </section>
 
   <section id="rollout-boundary">

@@ -44,6 +44,15 @@ export const inferenceAuditRecordSchema = z.object({
   promptCharacters: z.number().int().nonnegative().optional(),
   promptTokens: z.number().int().nonnegative().optional(),
   materializationError: z.string().min(1).max(256).optional(),
+  personalState: z.object({
+    subjectDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    attemptId: z.string().min(1).max(128)
+      .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/),
+    viewId: z.string().min(1).max(192).optional(),
+    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    sourceDigests: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(512),
+    dataEpoch: z.number().int().nonnegative(),
+  }).strict().optional(),
   payloads: z.object({
     request: inferenceAuditPayloadSchema.optional(),
     prompt: inferenceAuditPayloadSchema.optional(),

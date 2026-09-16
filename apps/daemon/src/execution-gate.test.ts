@@ -81,3 +81,22 @@ test("semantic probes acquire immediately and never join the request queue", asy
   expect(gate.snapshot("runtime")).toEqual({ active: 1, queued: 0 });
   release!();
 });
+
+test("runtime quarantine rejects queued and new work until stop confirmation clears it", async () => {
+  const gate = new ExecutionGate();
+  const signal = new AbortController().signal;
+  const release = await gate.acquire("runtime", policy, signal);
+  const queued = gate.acquire("runtime", policy, signal);
+  gate.quarantineRuntime("runtime");
+  await expect(queued).rejects.toMatchObject({ code: "runtime_quarantined" });
+  expect(gate.isRuntimeQuarantined("runtime")).toBeTrue();
+  expect(gate.tryAcquire("runtime", policy, signal)).toBeUndefined();
+  await expect(gate.acquire("runtime", policy, signal)).rejects.toMatchObject({
+    code: "runtime_quarantined",
+  });
+  release();
+  gate.clearRuntimeQuarantine("runtime");
+  expect(gate.isRuntimeQuarantined("runtime")).toBeFalse();
+  const releaseAfterConfirmation = await gate.acquire("runtime", policy, signal);
+  releaseAfterConfirmation();
+});

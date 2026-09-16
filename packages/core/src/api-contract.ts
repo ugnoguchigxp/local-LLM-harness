@@ -53,6 +53,17 @@ import {
   contextViewRequestSchema,
   contextViewStateSchema,
 } from "./context";
+import {
+  canonicalMeasurementReceiptSchema,
+  canonicalMeasurementRequestSchema,
+  forgetOperationSchema,
+  forgetRequestSchema,
+  generationAttemptSchema,
+  personalStateCapabilitySchema,
+  personalStateViewRequestSchema,
+  personalStateViewReceiptSchema,
+  sourceProvisionReceiptSchema,
+} from "./personal-state";
 
 const identifierSchema = z.string().min(1).max(192);
 
@@ -372,6 +383,9 @@ export const publicContextViewSchema = z.object({
   release: z.string().min(1).max(128),
   state: contextViewStateSchema,
   mode: z.enum(["source-rebuild", "session-snapshot"]),
+  canonicalizationVersion: z.enum(["context-view-v1", "context-view-v2"]).optional(),
+  requestDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  dataEpoch: z.number().int().nonnegative().optional(),
   tokenCount: z.number().int().nonnegative(),
   inputBudgetTokens: z.number().int().nonnegative(),
   orderedItems: z.array(contextViewItemSchema).max(512),
@@ -420,6 +434,17 @@ export const API_OPERATIONS = [
   ["delete", "/v1/contexts/{id}", "deleteContext"],
   ["post", "/v1/context-views", "createContextView"],
   ["get", "/v1/context-operations/{id}", "getContextOperation"],
+  ["get", "/v1/personal-state/capability", "getPersonalStateCapability"],
+  ["post", "/v1/context-sources", "provisionContextSource"],
+  ["get", "/v1/context-source-operations/{incarnation}", "getContextSourceOperation"],
+  ["post", "/v1/context-measurements", "createContextMeasurement"],
+  ["get", "/v1/context-measurements/{id}", "getContextMeasurement"],
+  ["post", "/v2/context-views", "createContextViewV2"],
+  ["get", "/v2/context-views/{id}", "getContextViewV2"],
+  ["get", "/v1/generation-attempts/{id}", "getGenerationAttempt"],
+  ["post", "/v1/generation-attempts/{id}/cancel", "cancelGenerationAttempt"],
+  ["post", "/v1/context-forget-operations", "createContextForgetOperation"],
+  ["get", "/v1/context-forget-operations/{id}", "getContextForgetOperation"],
   ["get", "/v1/agent-profiles", "listAgentProfilesV1"],
   ["get", "/v2/agent-profiles", "listAgentProfiles"],
   ["get", "/v3/agent-profiles", "listAgentProfilesV3"],
@@ -479,6 +504,17 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   deleteContext: ["204"],
   createContextView: ["200", "201"],
   getContextOperation: ["200"],
+  getPersonalStateCapability: ["200"],
+  provisionContextSource: ["200", "201"],
+  getContextSourceOperation: ["200"],
+  createContextMeasurement: ["200", "201"],
+  getContextMeasurement: ["200"],
+  createContextViewV2: ["200", "201"],
+  getContextViewV2: ["200"],
+  getGenerationAttempt: ["200"],
+  cancelGenerationAttempt: ["200"],
+  createContextForgetOperation: ["200", "202"],
+  getContextForgetOperation: ["200"],
   listAgentProfilesV1: ["200"],
   listAgentProfiles: ["200"],
   listAgentProfilesV3: ["200"],
@@ -536,6 +572,17 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   deleteContext: "ContextDescriptor",
   createContextView: "ContextView",
   getContextOperation: "ContextOperation",
+  getPersonalStateCapability: "PersonalStateCapability",
+  provisionContextSource: "SourceProvisionReceipt",
+  getContextSourceOperation: "SourceProvisionReceipt",
+  createContextMeasurement: "CanonicalMeasurementReceipt",
+  getContextMeasurement: "CanonicalMeasurementReceipt",
+  createContextViewV2: "ContextView",
+  getContextViewV2: "PersonalStateViewReceipt",
+  getGenerationAttempt: "GenerationAttempt",
+  cancelGenerationAttempt: "GenerationAttempt",
+  createContextForgetOperation: "ForgetOperation",
+  getContextForgetOperation: "ForgetOperation",
   listAgentProfilesV1: "AgentProfileListV1",
   listAgentProfiles: "AgentProfileList",
   listAgentProfilesV3: "AgentProfileListV3",
@@ -597,6 +644,15 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     ContextViewRequest: jsonSchema(contextViewRequestSchema),
     ContextView: jsonSchema(publicContextViewSchema),
     ContextOperation: jsonSchema(publicContextOperationSchema),
+    PersonalStateCapability: jsonSchema(personalStateCapabilitySchema),
+    SourceProvisionReceipt: jsonSchema(sourceProvisionReceiptSchema),
+    CanonicalMeasurementRequest: jsonSchema(canonicalMeasurementRequestSchema),
+    CanonicalMeasurementReceipt: jsonSchema(canonicalMeasurementReceiptSchema),
+    PersonalStateViewRequest: jsonSchema(personalStateViewRequestSchema),
+    PersonalStateViewReceipt: jsonSchema(personalStateViewReceiptSchema),
+    GenerationAttempt: jsonSchema(generationAttemptSchema),
+    ForgetRequest: jsonSchema(forgetRequestSchema),
+    ForgetOperation: jsonSchema(forgetOperationSchema),
     AgentConnectionRequest: jsonSchema(agentConnectionRequestSchema),
     AgentConnectionRenewRequest: jsonSchema(agentConnectionRenewRequestSchema),
     AgentConnectionClaimRequest: jsonSchema(agentConnectionClaimRequestSchema),
@@ -646,6 +702,9 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "resolveAllocation") return "AllocationResolveRequest";
       if (operationId === "createContext") return "ContextRegistrationRequest";
       if (operationId === "createContextView") return "ContextViewRequest";
+      if (operationId === "createContextMeasurement") return "CanonicalMeasurementRequest";
+      if (operationId === "createContextViewV2") return "PersonalStateViewRequest";
+      if (operationId === "createContextForgetOperation") return "ForgetRequest";
       if (operationId === "createAgentConnection") return "AgentConnectionRequest";
       if (operationId === "createChatCompletion") return "ChatCompletionRequest";
       if (operationId === "createSpeech") return "AudioSpeechRequest";
@@ -681,8 +740,20 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     const providerBearerOperation = operationId === "getAgentProviderHealth"
       || operationId === "createChatCompletion"
       || operationId === "createTranscription"
-      || operationId === "createSpeech";
-    const providerOnlyOperation = operationId === "createEmbedding";
+      || operationId === "createSpeech"
+      || operationId === "createContext";
+    const providerOnlyOperation = operationId === "createEmbedding"
+      || operationId === "getPersonalStateCapability"
+      || operationId === "provisionContextSource"
+      || operationId === "getContextSourceOperation"
+      || operationId === "createContextMeasurement"
+      || operationId === "getContextMeasurement"
+      || operationId === "createContextViewV2"
+      || operationId === "getContextViewV2"
+      || operationId === "getGenerationAttempt"
+      || operationId === "cancelGenerationAttempt"
+      || operationId === "createContextForgetOperation"
+      || operationId === "getContextForgetOperation";
     const successContent = (() => {
       if (operationId === "getMetrics") {
         return { "text/plain": { schema: { $ref: "#/components/schemas/Metrics" } } };
@@ -739,7 +810,45 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
         : providerBearerOperation
         ? [{ bearerAuth: [] }, { providerBearer: [] }]
         : [{ bearerAuth: [] }],
-      ...(operationId === "listContexts"
+      ...(operationId === "getPersonalStateCapability"
+        ? {
+          parameters: [{
+            name: "X-LARM-Allocation-ID",
+            in: "header",
+            required: true,
+            schema: { type: "string", minLength: 1, maxLength: 192 },
+          }, {
+            name: "X-LARM-Runtime",
+            in: "header",
+            required: true,
+            schema: { type: "string", minLength: 1, maxLength: 128 },
+          }],
+        }
+        : operationId === "provisionContextSource"
+        ? {
+          parameters: [{
+            name: "X-LARM-Source-Incarnation",
+            in: "header",
+            required: true,
+            schema: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+          }, {
+            name: "X-LARM-Allocation-ID",
+            in: "header",
+            required: true,
+            schema: { type: "string", minLength: 1, maxLength: 192 },
+          }, {
+            name: "X-LARM-Runtime",
+            in: "header",
+            required: true,
+            schema: { type: "string", minLength: 1, maxLength: 128 },
+          }, {
+            name: "X-LARM-Source-Digest",
+            in: "header",
+            required: true,
+            schema: { type: "string", pattern: "^[a-f0-9]{64}$" },
+          }],
+        }
+        : operationId === "listContexts"
         ? {
           parameters: [{
             name: "cursor",
@@ -757,6 +866,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
         || operationId === "renewAgentConnection"
         || operationId === "createContext"
         || operationId === "createContextView"
+        || operationId === "createContextViewV2"
         || operationId === "deleteContext")
         ? {
           parameters: [{
@@ -767,7 +877,14 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
           }],
         }
         : {})),
-      ...(requestSchema
+      ...(operationId === "provisionContextSource"
+        ? {
+          requestBody: {
+            required: true,
+            content: { "text/plain; charset=utf-8": { schema: { type: "string" } } },
+          },
+        }
+        : requestSchema
         ? {
           requestBody: {
             required: true,

@@ -13,7 +13,7 @@
     <dt>作成日</dt>
     <dd><time>2026-09-09</time></dd>
     <dt>最終改訂</dt>
-    <dd><time>2026-09-10</time></dd>
+    <dd><time>2026-09-13</time></dd>
     <dt>状態</dt>
     <dd>
       M0–M4実装・再監査完了。raw snapshotのM3a No-GoをCRC32C envelopeで閉じ、M3b technical
@@ -56,6 +56,14 @@
       >
       に記録する。自己申告token数の排除、実chat prompt再tokenize、live identity probe、operation
       API、 pagination、source byte quotaを追加し、M0–M2の契約差分を閉じた。
+    </p>
+    <p>
+      Personal State製品接続向けには、provider credentialへbindしたstable subject、immutable source
+      provision、canonical measurement、View v2、durable generation attempt、全層forgetを追加した。
+      製品contractと残るSAAA／live gateは
+      <a href="./personal-state-saaa-integration-handoff.html">LARM–SAAA製品接続handoff</a
+      >に固定する。 この追加は通常Provider、Viewなし推論、Resident Qwen 3.8
+      27Bの既定経路を変更しない。
     </p>
   </section>
 
@@ -913,7 +921,10 @@ viewDigest = sha256(canonicalizationVersion + ordered token digests)</code></pre
         </tr>
         <tr>
           <th scope="row"><code>DELETE /v1/contexts/:id</code></th>
-          <td>登録解除、materialization失効、snapshot unlinkとtombstone</td>
+          <td>
+            互換登録解除、materialization／依存snapshot／RAM
+            state失効。source本文と監査の全層消去ではない
+          </td>
           <td>利用可</td>
         </tr>
         <tr>
@@ -940,6 +951,15 @@ viewDigest = sha256(canonicalizationVersion + ordered token digests)</code></pre
       OpenAPI schema、Zod schema、runtime
       validatorを同じsourceから生成し、文書だけのcontractにしません。
     </p>
+    <aside>
+      <p>
+        <strong>Personal State境界:</strong> source本文、attestation、registry、View、snapshot、RAM
+        slot、監査payload、generation停止をまとめて処理する場合は、provider Bearer専用の
+        <code>POST /v1/context-forget-operations</code>を使用する。これはtombstoneを先に永続化し、
+        feature gateがOFFでも再送・照会できるdurable operationである。互換DELETEの成功を全層forgetの
+        証明として扱わない。
+      </p>
+    </aside>
     <h3>View作成request／response</h3>
     <pre><code>POST /v1/context-views
 Authorization: Bearer ...

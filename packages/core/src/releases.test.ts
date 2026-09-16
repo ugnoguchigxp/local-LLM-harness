@@ -24,6 +24,17 @@ describe("runtime release catalog", () => {
       providerConfigRevision: "llama-swap-qwen35-2b-q4-k-m-decision-4k-v1",
       estimatedMemoryGB: 4,
     });
+    expect(defaultRuntimeRelease(releases, "lfm25-backchannel-jp")).toMatchObject({
+      id: "lfm25-backchannel-jp-current",
+      artifacts: ["lfm25-1.2b-jp-q4-k-m"],
+      providerConfigRevision: "llama-swap-lfm25-1.2b-jp-q4-k-m-backchannel-4k-warm-schema-v3",
+      estimatedMemoryGB: 3,
+    });
+    expect(defaultRuntimeRelease(releases, "gemma3-backchannel")).toMatchObject({
+      id: "gemma3-backchannel-current",
+      artifacts: ["gemma3-1b-it-q4-k-m"],
+      estimatedMemoryGB: 3,
+    });
     expect(defaultRuntimeRelease(releases, "ornith15-35b")?.artifacts).toEqual([
       "ornith15-35b-quality",
     ]);

@@ -160,13 +160,18 @@ export const activeContextViewSchema = z.object({
   release: contextIdentifierSchema,
   compatibilityKey: digestSchema,
   viewDigest: digestSchema,
-  canonicalizationVersion: z.literal("context-view-v1"),
+  canonicalizationVersion: z.union([
+    z.literal("context-view-v1"),
+    z.literal("context-view-v2"),
+  ]),
   baseInputTokens: tokenCountSchema,
   inputBudgetTokens: tokenCountSchema,
   tokenCount: tokenCountSchema,
   orderedItems: z.array(contextViewItemSchema).max(512),
   omitted: z.array(contextViewOmissionSchema).max(512),
   leaseEpoch: z.number().int().nonnegative(),
+  requestDigest: digestSchema.optional(),
+  dataEpoch: z.number().int().nonnegative().optional(),
   state: contextViewStateSchema,
   createdAt: z.string().datetime(),
   expiresAt: z.string().datetime(),
@@ -269,7 +274,7 @@ export function planActiveContextView(input: {
   certification: ContextCertification;
   baseInputTokens: number;
   maxInputTokens: number;
-  canonicalizationVersion: "context-view-v1";
+  canonicalizationVersion: "context-view-v1" | "context-view-v2";
   candidates: ContextPlanCandidate[];
   omissions?: ContextViewOmission[];
 }): ContextPlanResult {

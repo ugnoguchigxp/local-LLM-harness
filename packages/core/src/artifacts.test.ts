@@ -20,6 +20,8 @@ test("loads the production artifact manifest and builds pinned download URLs", (
   const mtp = artifacts.find((artifact) => artifact.id === "qwen38-mtp")!;
   const model35b = artifacts.find((artifact) => artifact.id === "qwen36-35b-speed")!;
   const decisionDefault = artifacts.find((artifact) => artifact.id === "qwen35-2b-q4-k-m")!;
+  const lfmBackchannel = artifacts.find((artifact) => artifact.id === "lfm25-1.2b-jp-q4-k-m")!;
+  const gemmaBackchannel = artifacts.find((artifact) => artifact.id === "gemma3-1b-it-q4-k-m")!;
   const ornith35b = artifacts.find((artifact) => artifact.id === "ornith15-35b-quality")!;
   const ornith35bSpeed = artifacts.find((artifact) => artifact.id === "ornith15-35b-speed")!;
   expect(isFileArtifact(primary)).toBe(true);
@@ -28,6 +30,8 @@ test("loads the production artifact manifest and builds pinned download URLs", (
     || !isFileArtifact(mtp)
     || !isFileArtifact(model35b)
     || !isFileArtifact(decisionDefault)
+    || !isFileArtifact(lfmBackchannel)
+    || !isFileArtifact(gemmaBackchannel)
     || !isFileArtifact(ornith35b)
     || !isFileArtifact(ornith35bSpeed)
   ) {
@@ -53,6 +57,24 @@ test("loads the production artifact manifest and builds pinned download URLs", (
   }));
   expect(artifactDownloadUrl(decisionDefault)).toContain(
     `/resolve/${decisionDefault.revision}/Qwen3.5-2B-Q4_K_M.gguf`,
+  );
+  expect(lfmBackchannel).toEqual(expect.objectContaining({
+    revision: "170ae1cecf0e74b0b25bd704047160fba9f613c6",
+    bytes: 730_895_296,
+    sha256: "608beed14e975a4edd8932c42ac3e64cf1c97da4ee2c5f2c7b6bfbcdb1a90680",
+    quantization: "Q4_K_M",
+  }));
+  expect(artifactDownloadUrl(lfmBackchannel)).toContain(
+    `/resolve/${lfmBackchannel.revision}/LFM2.5-1.2B-JP-Q4_K_M.gguf`,
+  );
+  expect(gemmaBackchannel).toEqual(expect.objectContaining({
+    revision: "f9c28bcd85737ffc5aef028638d3341d49869c27",
+    bytes: 806_058_240,
+    sha256: "8ccc5cd1f1b3602548715ae25a66ed73fd5dc68a210412eea643eb20eb75a135",
+    quantization: "Q4_K_M",
+  }));
+  expect(artifactDownloadUrl(gemmaBackchannel)).toContain(
+    `/resolve/${gemmaBackchannel.revision}/gemma-3-1b-it-Q4_K_M.gguf`,
   );
   expect(ornith35b).toEqual(expect.objectContaining({
     revision: "12393612fd4f730ff5aadc23e9b8f9648aa49ceb",

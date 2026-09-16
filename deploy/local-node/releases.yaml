@@ -92,6 +92,24 @@ runtimeReleases:
     healthPath: /health
     default: true
 
+  lfm25-backchannel-jp-current:
+    runtime: lfm25-backchannel-jp
+    artifacts:
+      - lfm25-1.2b-jp-q4-k-m
+    providerConfigRevision: llama-swap-lfm25-1.2b-jp-q4-k-m-backchannel-4k-warm-schema-v3
+    estimatedMemoryGB: 3
+    healthPath: /health
+    default: true
+
+  gemma3-backchannel-current:
+    runtime: gemma3-backchannel
+    artifacts:
+      - gemma3-1b-it-q4-k-m
+    providerConfigRevision: llama-swap-gemma3-1b-it-q4-k-m-backchannel-4k-v1
+    estimatedMemoryGB: 3
+    healthPath: /health
+    default: true
+
 
   qwen36-35b-current:
     runtime: qwen36-35b

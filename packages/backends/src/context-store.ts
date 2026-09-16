@@ -21,7 +21,12 @@ import { z } from "zod";
 const metadataStateSchema = z.object({
   schemaVersion: z.literal(1),
   descriptors: z.array(contextDescriptorSchema).max(100_000),
-}).strict();
+}).strict().refine((value) => {
+  const keys = value.descriptors.map((descriptor) =>
+    `${descriptor.principal}\0${descriptor.id}\0${descriptor.version}`
+  );
+  return new Set(keys).size === keys.length;
+}, { path: ["descriptors"], message: "context descriptor identities must be unique" });
 
 const sourceTokenizationSchema = z.object({
   tokenizerDigest: z.string().regex(/^[a-f0-9]{64}$/),
@@ -55,7 +60,8 @@ export class ContextStoreError extends Error {
       | "context_source_attestation_invalid"
       | "context_source_quota_exceeded"
       | "context_source_free_floor"
-      | "context_source_provision_busy",
+      | "context_source_provision_busy"
+      | "context_source_immutable_conflict",
     message: string,
   ) {
     super(message);
@@ -377,6 +383,140 @@ export class LocalContextSourceStore implements ContextSourceProvider {
     }
   }
 
+  async provisionImmutable(
+    principal: string,
+    sourceHandle: string,
+    content: string,
+    expectedDigest: string,
+    options: {
+      maxSourceBytes: number;
+      maxTotalBytes: number;
+      filesystemFreeFloorBytes: number;
+      tokenizations: ContextSourceTokenization[];
+    },
+  ): Promise<{ digest: string; bytes: number; replay: boolean }> {
+    const encoded = new TextEncoder().encode(content);
+    const digest = createHash("sha256").update(encoded).digest("hex");
+    if (digest !== expectedDigest) {
+      throw new ContextStoreError(
+        "context_source_digest_mismatch",
+        "uploaded source digest does not match the declared digest",
+      );
+    }
+    await this.initialize();
+    const lock = join(this.root, ".provision.lock");
+    try {
+      await mkdir(lock, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new ContextStoreError(
+          "context_source_provision_busy",
+          "another context source provision is in progress",
+        );
+      }
+      throw error;
+    }
+    try {
+      const path = this.sourcePath(principal, sourceHandle);
+      let existing = false;
+      try {
+        const metadata = await lstat(path);
+        if (!metadata.isFile() || metadata.isSymbolicLink()) {
+          throw new ContextStoreError("context_source_unsafe", "context source must be a regular file");
+        }
+        existing = true;
+        let source: ContextSource;
+        try {
+          source = await this.read(principal, sourceHandle, digest, options.maxSourceBytes);
+        } catch (error) {
+          if (error instanceof ContextStoreError && error.code === "context_source_digest_mismatch") {
+            throw new ContextStoreError(
+              "context_source_immutable_conflict",
+              "source handle is already bound to different immutable content",
+            );
+          }
+          throw error;
+        }
+        const tokenizations = new Map(
+          source.tokenizations.map((tokenization) => [tokenization.tokenizerDigest, tokenization]),
+        );
+        let changed = false;
+        for (const tokenization of options.tokenizations) {
+          const current = tokenizations.get(tokenization.tokenizerDigest);
+          if (current && current.tokenCount !== tokenization.tokenCount) {
+            throw new ContextStoreError(
+              "context_source_immutable_conflict",
+              "source handle has conflicting canonical tokenization metadata",
+            );
+          }
+          if (!current) {
+            tokenizations.set(tokenization.tokenizerDigest, tokenization);
+            changed = true;
+          }
+        }
+        if (!changed) return { digest, bytes: source.bytes, replay: true };
+        const attestation = sourceAttestationSchema.parse({
+          schemaVersion: 1,
+          sourceDigest: digest,
+          bytes: source.bytes,
+          tokenizations: [...tokenizations.values()],
+        });
+        await atomicWrite(
+          await this.ensurePrincipalDirectory(principal, false),
+          this.attestationPath(principal, sourceHandle),
+          new TextEncoder().encode(`${JSON.stringify(attestation)}\n`),
+        );
+        return { digest, bytes: source.bytes, replay: true };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (encoded.byteLength > options.maxSourceBytes) {
+        throw new ContextStoreError(
+          "context_source_too_large",
+          `context source exceeds ${options.maxSourceBytes} bytes`,
+        );
+      }
+      if (!existing && await this.usageBytes() + encoded.byteLength > options.maxTotalBytes) {
+        throw new ContextStoreError(
+          "context_source_quota_exceeded",
+          `context source quota of ${options.maxTotalBytes} bytes would be exceeded`,
+        );
+      }
+      if (!existing && await this.availableBytes() - encoded.byteLength < options.filesystemFreeFloorBytes) {
+        throw new ContextStoreError(
+          "context_source_free_floor",
+          `context source write would violate filesystem free floor ${options.filesystemFreeFloorBytes}`,
+        );
+      }
+      try {
+        const result = await this.provision(
+          principal,
+          sourceHandle,
+          content,
+          options.maxSourceBytes,
+          options.tokenizations,
+        );
+        return { ...result, replay: false };
+      } catch (error) {
+        if (!existing) {
+          try {
+            await this.delete(principal, sourceHandle);
+          } catch (cleanupError) {
+            throw new ContextStoreError(
+              "context_source_immutable_conflict",
+              `new immutable source cleanup failed after commit error: ${
+                cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+              }`,
+            );
+          }
+        }
+        throw error;
+      }
+    } finally {
+      await rmdir(lock).catch(() => undefined);
+    }
+  }
+
   async read(
     principal: string,
     sourceHandle: string,
@@ -467,21 +607,53 @@ export class LocalContextSourceStore implements ContextSourceProvider {
   }
 
   async delete(principal: string, sourceHandle: string): Promise<void> {
+    await this.initialize();
+    let directory: string;
     try {
-      await this.initialize();
-      await this.ensurePrincipalDirectory(principal, false);
-      const path = this.sourcePath(principal, sourceHandle);
-      const metadata = await lstat(path);
-      if (!metadata.isFile() || metadata.isSymbolicLink()) {
-        throw new ContextStoreError("context_source_unsafe", "context source must be a regular file");
-      }
-      await unlink(path);
-      await unlink(this.attestationPath(principal, sourceHandle)).catch((error) => {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      });
+      directory = await this.ensurePrincipalDirectory(principal, false);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      if (error instanceof ContextStoreError && error.code === "context_source_not_found") return;
       throw error;
     }
+    let removed = false;
+    for (const path of [
+      this.sourcePath(principal, sourceHandle),
+      this.attestationPath(principal, sourceHandle),
+    ]) {
+      try {
+        const metadata = await lstat(path);
+        if (!metadata.isFile() || metadata.isSymbolicLink()) {
+          throw new ContextStoreError("context_source_unsafe", "context source entry must be a regular file");
+        }
+        await unlink(path);
+        removed = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    if (removed) {
+      const handle = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY);
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    }
+  }
+
+  async absent(principal: string, sourceHandle: string): Promise<boolean> {
+    await this.initialize();
+    for (const path of [
+      this.sourcePath(principal, sourceHandle),
+      this.attestationPath(principal, sourceHandle),
+    ]) {
+      try {
+        await lstat(path);
+        return false;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    return true;
   }
 }

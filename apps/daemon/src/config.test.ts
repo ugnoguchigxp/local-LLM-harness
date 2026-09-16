@@ -39,6 +39,9 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.contextSnapshotMaxBytes).toBe(512 * 1024 * 1024 * 1024);
   expect(config.contextSnapshotFreeFloorBytes).toBe(256 * 1024 * 1024 * 1024);
   expect(config.contextSnapshotMaxWriteBytes).toBe(5 * 1024 * 1024 * 1024);
+  expect(config.personalStateEnabled).toBeFalse();
+  expect(config.personalStateJournalRoot).toBe("/var/lib/larm/personal-state");
+  expect(config.personalStateReceiptTtlMs).toBe(24 * 60 * 60 * 1_000);
   expect(config.configDir).toBe("/workspace/config/local-node");
 });
 
@@ -176,4 +179,20 @@ test("managed context requires an API token even on loopback", () => {
   }).contextEnabled).toBeTrue();
   expect(() => parseDaemonConfig({ LARM_CONTEXT_SNAPSHOT_ENABLED: "true" }))
     .toThrow(/LARM_CONTEXT_ENABLED/);
+  expect(() => parseDaemonConfig({ LARM_PERSONAL_STATE_ENABLED: "true" }))
+    .toThrow(/LARM_CONTEXT_ENABLED/);
+  expect(() => parseDaemonConfig({
+    LARM_PERSONAL_STATE_ENABLED: "true",
+    LARM_CONTEXT_ENABLED: "true",
+    LARM_API_TOKEN: "api",
+  })).toThrow(/LARM_CONNECTION_SIGNING_KEY/);
+  expect(parseDaemonConfig({
+    LARM_PERSONAL_STATE_ENABLED: "true",
+    LARM_CONTEXT_ENABLED: "true",
+    LARM_API_TOKEN: "api",
+    LARM_CONNECTION_SIGNING_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  }).personalStateEnabled).toBeTrue();
+  expect(() => parseDaemonConfig({
+    LARM_PERSONAL_STATE_JOURNAL_ROOT: "/srv/ai/context-sources/personal-state",
+  })).toThrow(/must not overlap/);
 });

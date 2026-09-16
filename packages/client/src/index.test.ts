@@ -1199,3 +1199,262 @@ test("withAgentConnection claims and releases with a fresh cleanup signal", asyn
   }, { signal: abort.signal })).rejects.toThrow("cancelled");
   expect(requests.map((request) => request.method)).toEqual(["POST", "POST", "DELETE"]);
 });
+
+test("Personal State client uses the claimed provider credential for every durable lifecycle API", async () => {
+  const requests: Request[] = [];
+  const digest = "a".repeat(64);
+  const subjectDigest = "b".repeat(64);
+  const createdAt = "2026-09-13T00:00:00.000Z";
+  const expiresAt = "2026-09-13T00:10:00.000Z";
+  const scopes = [
+    "context.source.provision",
+    "context.measure",
+    "context.view.create",
+    "context.generate",
+    "context.attempt.cancel",
+    "context.forget",
+    "context.operation.read",
+  ];
+  const sourceReceipt = {
+    contractVersion: "larm-personal-state.v1",
+    operationId: "psop-source",
+    incarnation: "inc-1",
+    subjectDigest,
+    allocationId: "alloc-1",
+    runtime: "runtime-1",
+    release: "release-1",
+    sourceHandle: "ps-source",
+    sourceDigest: digest,
+    byteCount: 6,
+    tokenCount: 2,
+    tokenizerDigest: "c".repeat(64),
+    chatTemplateDigest: "d".repeat(64),
+    leaseEpoch: 1,
+    dataEpoch: 0,
+    state: "succeeded",
+    createdAt,
+    updatedAt: createdAt,
+    expiresAt,
+  };
+  const measurementReceipt = {
+    contractVersion: "larm-personal-state.v1",
+    measurementId: "measure-1",
+    subjectDigest,
+    allocationId: "alloc-1",
+    runtime: "runtime-1",
+    release: "release-1",
+    requestDigest: "e".repeat(64),
+    baseInputTokens: 10,
+    maxInputTokens: 100,
+    tokenizerDigest: "c".repeat(64),
+    chatTemplateDigest: "d".repeat(64),
+    leaseEpoch: 1,
+    dataEpoch: 0,
+    createdAt,
+    expiresAt,
+  };
+  const descriptor = {
+    schemaVersion: 1,
+    id: "ctx-1",
+    version: "v1",
+    sourceHandle: sourceReceipt.sourceHandle,
+    sourceDigest: digest,
+    classification: "restricted",
+    byteCount: sourceReceipt.byteCount,
+    tokenCount: sourceReceipt.tokenCount,
+    tokenizerDigest: sourceReceipt.tokenizerDigest,
+    state: "active",
+    createdAt,
+    updatedAt: createdAt,
+  };
+  const view = {
+    id: "view-1",
+    operationId: "ctxop-1",
+    allocationId: "alloc-1",
+    runtime: "runtime-1",
+    release: "release-1",
+    state: "ready",
+    mode: "source-rebuild",
+    canonicalizationVersion: "context-view-v2",
+    requestDigest: measurementReceipt.requestDigest,
+    dataEpoch: 0,
+    tokenCount: 12,
+    inputBudgetTokens: 100,
+    orderedItems: [],
+    omitted: [],
+    createdAt,
+    expiresAt,
+  };
+  const viewReceipt = {
+    contractVersion: "larm-personal-state.v1",
+    viewRequestId: "view-request-1",
+    subjectDigest,
+    requestDigest: measurementReceipt.requestDigest,
+    planDigest: "f".repeat(64),
+    idempotencyKeyDigest: "1".repeat(64),
+    viewId: view.id,
+    operationId: view.operationId,
+    allocationId: view.allocationId,
+    runtime: view.runtime,
+    release: view.release,
+    bootEpoch: "11111111-1111-4111-8111-111111111111",
+    dataEpoch: 0,
+    state: "ready",
+    createdAt,
+    updatedAt: createdAt,
+    expiresAt,
+  };
+  const attempt = {
+    contractVersion: "larm-personal-state.v1",
+    attemptId: "attempt-1",
+    subjectDigest,
+    allocationId: "alloc-1",
+    runtime: "runtime-1",
+    release: "release-1",
+    viewId: view.id,
+    requestDigest: measurementReceipt.requestDigest,
+    larmRequestId: "req-1",
+    dataEpoch: 0,
+    state: "cancelled",
+    stopState: "backend_stopped",
+    createdAt,
+    updatedAt: createdAt,
+    terminalAt: createdAt,
+    outcome: "backend_stopped",
+  };
+  const phase = { state: "absent", updatedAt: createdAt, affected: 0 };
+  const forget = {
+    contractVersion: "larm-personal-state.v1",
+    forgetId: "forget-1",
+    operationId: "psop-forget",
+    subjectDigest,
+    requestDigest: digest,
+    targets: { incarnation: "inc-1", contextIds: [], sourceHandles: [], attemptIds: [] },
+    fenceEpoch: 1,
+    state: "succeeded",
+    phases: {
+      attempts: phase,
+      views: phase,
+      runtime: phase,
+      snapshots: phase,
+      registry: phase,
+      sources: phase,
+      audit: phase,
+    },
+    absenceVerified: true,
+    createdAt,
+    updatedAt: createdAt,
+    completedAt: createdAt,
+    expiresAt,
+  };
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "must-not-replace-provider",
+    fetch: async (input, init) => {
+      const request = new Request(input.toString(), init);
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      if (path === "/v1/personal-state/capability") {
+        return json({
+          contractVersion: "larm-personal-state.v1",
+          bootEpoch: "11111111-1111-4111-8111-111111111111",
+          subjectDigest,
+          allocationId: "alloc-1",
+          runtime: "runtime-1",
+          release: "release-1",
+          leaseEpoch: 1,
+          leaseExpiresAt: expiresAt,
+          credentialExpiresAt: expiresAt,
+          tokenizerDigest: "c".repeat(64),
+          chatTemplateDigest: "d".repeat(64),
+          contextLimitTokens: 1000,
+          outputReserveTokens: 100,
+          safetyMarginTokens: 10,
+          sourceTokenLimit: 10_000,
+          maxSourceBytes: 1024,
+          maxTotalSourceBytes: 4096,
+          maxMaterializedBytes: 2048,
+          scopes,
+        });
+      }
+      if (path === "/v1/context-sources" || path.includes("context-source-operations")) {
+        return json(sourceReceipt, "epoch-test", request.method === "POST" ? 201 : 200);
+      }
+      if (path === "/v1/contexts") return json(descriptor, "epoch-test", 201);
+      if (path === "/v1/context-measurements" || path.includes("context-measurements/")) {
+        return json(measurementReceipt, "epoch-test", request.method === "POST" ? 201 : 200);
+      }
+      if (path === "/v2/context-views") return json(view, "epoch-test", 201);
+      if (path.includes("/v2/context-views/")) return json(viewReceipt);
+      if (path === "/v1/chat/completions") return json({ id: "completion-1" });
+      if (path.includes("generation-attempts")) return json(attempt);
+      if (path.includes("context-forget-operations")) return json(forget);
+      throw new Error(`unexpected request ${request.method} ${path}`);
+    },
+  });
+  const options = { providerToken: "larm_conn_v1.payload.signature" };
+  await client.getPersonalStateCapability("alloc-1", "runtime-1", options);
+  await client.provisionContextSource({
+    incarnation: "inc-1",
+    allocationId: "alloc-1",
+    runtime: "runtime-1",
+    sourceDigest: digest,
+    content: "source",
+  }, options);
+  await client.getContextSourceOperation("inc-1", options);
+  await client.registerPersonalStateContext({
+    id: "ctx-1",
+    version: "v1",
+    sourceHandle: sourceReceipt.sourceHandle,
+    sourceDigest: digest,
+    classification: "restricted",
+    byteCount: sourceReceipt.byteCount,
+    tokenCount: sourceReceipt.tokenCount,
+    tokenizerDigest: sourceReceipt.tokenizerDigest,
+  }, { ...options, idempotencyKey: "register-key" });
+  const chatRequest = { model: "model-1", messages: [{ role: "user", content: "hello" }] };
+  await client.createContextMeasurement({
+    measurementId: "measure-1",
+    allocationId: "alloc-1",
+    runtime: "runtime-1",
+    maxInputTokens: 100,
+    request: chatRequest,
+  }, options);
+  await client.getContextMeasurement("measure-1", options);
+  await client.createPersonalStateView({
+    viewRequestId: "view-request-1",
+    measurementId: "measure-1",
+    allocationId: "alloc-1",
+    runtime: "runtime-1",
+    maxInputTokens: 100,
+    deadline: expiresAt,
+    canonicalizationVersion: "context-view-v2",
+    request: chatRequest,
+    items: [{ contextId: "ctx-1", version: "v1", required: true, utility: 1 }],
+  }, { ...options, idempotencyKey: "view-key" });
+  await client.getPersonalStateViewReceipt("view-request-1", options);
+  await client.chatPersonalState({
+    allocationId: "alloc-1",
+    attemptId: "attempt-1",
+    viewId: "view-1",
+    body: chatRequest,
+  }, options);
+  await client.getGenerationAttempt("attempt-1", options);
+  await client.cancelGenerationAttempt("attempt-1", options);
+  await client.forgetPersonalState({ forgetId: "forget-1", incarnation: "inc-1" }, options);
+  await client.getForgetOperation("forget-1", options);
+
+  expect(requests).toHaveLength(13);
+  expect(requests.every((request) =>
+    request.headers.get("authorization") === "Bearer larm_conn_v1.payload.signature"
+  )).toBe(true);
+  const sourceRequest = requests.find((request) => new URL(request.url).pathname === "/v1/context-sources")!;
+  expect(sourceRequest.headers.get("x-larm-source-incarnation")).toBe("inc-1");
+  expect(sourceRequest.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+  const viewRequest = requests.find((request) => new URL(request.url).pathname === "/v2/context-views")!;
+  expect(viewRequest.headers.get("idempotency-key")).toBe("view-key");
+  const registrationRequest = requests.find((request) => new URL(request.url).pathname === "/v1/contexts")!;
+  expect(registrationRequest.headers.get("idempotency-key")).toBe("register-key");
+  const generationRequest = requests.find((request) => new URL(request.url).pathname === "/v1/chat/completions")!;
+  expect(generationRequest.headers.get("x-larm-attempt-id")).toBe("attempt-1");
+});

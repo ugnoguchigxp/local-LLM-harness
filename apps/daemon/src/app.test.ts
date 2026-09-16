@@ -10,6 +10,7 @@ import {
   publicAgentProfileListSchema,
   publicAgentProfileListV1Schema,
   parseAgentConnectionCatalog,
+  personalStateSubjectDigest,
   runtimeListSchema,
   type Registry,
   type RouteShadowComparison,
@@ -25,6 +26,7 @@ import type {
   InferenceAuditFinish,
   InferenceAuditStart,
 } from "./inference-audit";
+import type { PersonalStateController } from "./personal-state-controller";
 
 const registry: Registry = {
   nodes: [
@@ -1423,6 +1425,39 @@ test("standard Chat Completions streams SSE and single-flights preferred model s
   expect(control.getActiveAllocationCount()).toBe(0);
 });
 
+test("standard Chat Completions rejects personal-state attempt headers without an explicit allocation", async () => {
+  let contacted = false;
+  const { app, control } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    agentConnectionCatalog,
+    gatewayFetch: async () => {
+      contacted = true;
+      return Response.json({ unexpected: true });
+    },
+  });
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "x-larm-attempt-id": "attempt-standard-1",
+    }),
+    body: JSON.stringify({
+      model: "test-model",
+      messages: [{ role: "user", content: "hello" }],
+    }),
+  });
+
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({
+    error: {
+      code: "allocation_required",
+      message: "generation attempts require an explicit allocation or claimed provider",
+    },
+  });
+  expect(contacted).toBeFalse();
+  expect(control.getActiveAllocationCount()).toBe(0);
+});
+
 test("standard Chat Completions rejects unknown models before allocation or upstream contact", async () => {
   let contacted = false;
   const { app, control } = await makeApp(true, false, {}, {
@@ -2681,9 +2716,41 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   };
   const { app } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
+    allowAnonymousAgentConnections: true,
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog,
     gatewayFetch,
+    personalStateController: {
+      capability: async (input: { principal: string; allocationId: string; runtime: string }) => ({
+        contractVersion: "larm-personal-state.v1",
+        bootEpoch: "00000000-0000-4000-8000-000000000001",
+        subjectDigest: personalStateSubjectDigest(input.principal),
+        allocationId: input.allocationId,
+        runtime: input.runtime,
+        release: "release-test",
+        leaseEpoch: 1,
+        leaseExpiresAt: "2026-09-13T00:10:00.000Z",
+        credentialExpiresAt: "2026-09-13T00:10:00.000Z",
+        tokenizerDigest: "a".repeat(64),
+        chatTemplateDigest: "b".repeat(64),
+        contextLimitTokens: 262_144,
+        outputReserveTokens: 32_768,
+        safetyMarginTokens: 4_096,
+        sourceTokenLimit: 20_000_000,
+        maxSourceBytes: 268_435_456,
+        maxTotalSourceBytes: 549_755_813_888,
+        maxMaterializedBytes: 268_435_456,
+        scopes: [
+          "context.source.provision",
+          "context.measure",
+          "context.view.create",
+          "context.generate",
+          "context.attempt.cancel",
+          "context.forget",
+          "context.operation.read",
+        ],
+      }),
+    } as unknown as PersonalStateController,
   });
 
   const forgedProvider = await app.request("/v1/chat/completions", {
@@ -2727,6 +2794,26 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   expect(connection.agentProfile).toBe("coding");
   expect(connection.providers[0]?.claimable).toBeTrue();
 
+  const unauthenticatedClaim = await app.request(`/v1/agent-connections/${connection.id}/claim`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ format: "openai-provider-v1" }),
+  });
+  expect(unauthenticatedClaim.status).toBe(403);
+  expect((await app.request(`/v1/agent-connections/${connection.id}`)).status).toBe(403);
+  expect((await app.request(`/v1/agent-connections/${connection.id}/health`)).status).toBe(403);
+  expect((await app.request(`/v1/agent-connections/${connection.id}/renew`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": "anonymous-renew-authenticated-connection",
+    },
+    body: JSON.stringify({ ttlSeconds: 600 }),
+  })).status).toBe(403);
+  expect((await app.request(`/v1/agent-connections/${connection.id}`, {
+    method: "DELETE",
+  })).status).toBe(403);
+
   const replay = await app.request("/v1/agent-connections", {
     method: "POST",
     headers: agentHeaders({
@@ -2748,6 +2835,61 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   const credential = claim.providers[0]!.credential.token;
   expect(credential).toStartWith("larm_conn_v1.");
   expect(claim.providers[0]).not.toHaveProperty("streaming");
+  expect(claim.contextControl).toMatchObject({
+    contractVersion: "larm-personal-state.v1",
+    scopes: [
+      "context.source.provision",
+      "context.measure",
+      "context.view.create",
+      "context.generate",
+      "context.attempt.cancel",
+      "context.forget",
+      "context.operation.read",
+    ],
+  });
+
+  const staticCredential = await app.request("/v1/personal-state/capability", {
+    headers: agentHeaders({
+      "x-larm-allocation-id": claim.allocationId,
+      "x-larm-runtime": "qwen-general",
+    }),
+  });
+  expect(staticCredential.status).toBe(401);
+  const contextCapability = await app.request("/v1/personal-state/capability", {
+    headers: {
+      authorization: `Bearer ${credential}`,
+      "x-larm-allocation-id": claim.allocationId,
+      "x-larm-runtime": "qwen-general",
+    },
+  });
+  expect(contextCapability.status).toBe(200);
+  expect(await contextCapability.json()).toMatchObject({
+    subjectDigest: claim.contextControl!.subjectDigest,
+    allocationId: claim.allocationId,
+  });
+
+  const legacyContextList = await app.request("/v1/contexts", {
+    headers: { authorization: `Bearer ${credential}` },
+  });
+  expect(legacyContextList.status).toBe(401);
+
+  const ambiguousSourceEncoding = await app.request("/v1/context-sources", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${credential}`,
+      "content-type": "text/plain",
+      "x-larm-source-incarnation": "source-without-charset",
+      "x-larm-allocation-id": claim.allocationId,
+      "x-larm-runtime": "qwen-general",
+      "x-larm-source-digest": "a".repeat(64),
+    },
+    body: "synthetic",
+  });
+  expect(ambiguousSourceEncoding.status).toBe(400);
+  expect(ambiguousSourceEncoding.headers.get("cache-control")).toBe("no-store");
+  expect(await ambiguousSourceEncoding.json()).toMatchObject({
+    error: { code: "personal_state_request_invalid" },
+  });
 
   const providerHealth = await app.request(claim.providers[0]!.health.url, {
     headers: { authorization: `Bearer ${credential}` },
@@ -2992,6 +3134,7 @@ test("embedding Agent Connection claims, validates, renews, and releases a scope
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog: catalog,
     gatewayFetch,
+    personalStateController: {} as PersonalStateController,
   });
 
   const legacyProfiles = await app.request("/v2/agent-profiles", { headers: agentHeaders() });
@@ -3054,6 +3197,12 @@ test("embedding Agent Connection claims, validates, renews, and releases a scope
     capacity: { ready: true, queueDepth: 0, maxQueuedRequests: 4 },
   });
   const credential = provider.credential.token;
+  expect(claim.contextControl).toBeUndefined();
+  const embeddingCredentialPayload = JSON.parse(
+    Buffer.from(credential.split(".")[1]!, "base64url").toString("utf8"),
+  ) as Record<string, unknown>;
+  expect(embeddingCredentialPayload).not.toHaveProperty("subject");
+  expect(embeddingCredentialPayload).not.toHaveProperty("scopes");
 
   expect((await app.request("/v1/embed", {
     method: "POST",
@@ -3401,10 +3550,14 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog,
     gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
+    personalStateController: {} as PersonalStateController,
   });
 
   expect((await app.request("/v1/agent-profiles")).status).toBe(200);
   expect((await app.request("/v2/agent-profiles")).status).toBe(200);
+  expect((await app.request("/v1/agent-profiles", {
+    headers: { authorization: "Bearer invalid" },
+  })).status).toBe(401);
   expect((await app.request("/runtimes")).status).toBe(401);
   const createdResponse = await app.request("/v1/agent-connections", {
     method: "POST",
@@ -3416,6 +3569,9 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
   });
   expect(createdResponse.status).toBe(201);
   const created = publicAgentConnectionSchema.parse(await createdResponse.json());
+  expect((await app.request(`/v1/agent-connections/${created.id}`, {
+    headers: agentHeaders(),
+  })).status).toBe(403);
   expect((await app.request(`/v1/agent-connections/${created.id}`)).status).toBe(200);
   expect((await app.request(`/v1/agent-connections/${created.id}/health`)).status).toBe(200);
   expect((await app.request(`/v1/agent-connections/${created.id}/renew`, {
@@ -3435,6 +3591,12 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
   const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
   const credential = claim.providers[0]!.credential.token;
   expect(credential).toStartWith("larm_conn_v1.");
+  expect(claim.contextControl).toBeUndefined();
+  const credentialPayload = JSON.parse(
+    Buffer.from(credential.split(".")[1]!, "base64url").toString("utf8"),
+  ) as Record<string, unknown>;
+  expect(credentialPayload).not.toHaveProperty("subject");
+  expect(credentialPayload).not.toHaveProperty("scopes");
   expect((await app.request(claim.providers[0]!.health.url)).status).toBe(401);
   expect((await app.request(claim.providers[0]!.health.url, {
     headers: { authorization: `Bearer ${credential}` },

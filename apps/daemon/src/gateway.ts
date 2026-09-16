@@ -75,6 +75,8 @@ export type GatewayProxyOptions = {
   metrics?: MetricsRegistry;
   requestTracker?: RequestTracker;
   lifecycleSignal?: AbortSignal;
+  attemptSignal?: AbortSignal;
+  requestId?: string;
   priority?: number;
   now?: () => number;
   random?: () => string;
@@ -86,6 +88,14 @@ export type GatewayProxyOptions = {
     route: string;
     runtimeRelease?: string;
     configRevision: string;
+    personalState?: {
+      subjectDigest: string;
+      attemptId: string;
+      viewId?: string;
+      requestDigest: string;
+      sourceDigests: string[];
+      dataEpoch: number;
+    };
   };
   responseFormat?: "sse";
   validateChatResponse?: boolean;
@@ -101,6 +111,7 @@ export type GatewayProxyOptions = {
   errorFormat?: "larm" | "openai";
   onFinish?: () => void | Promise<void>;
   onTerminal?: (result: { outcome: string; upstreamStatus?: number }) => void | Promise<void>;
+  onForwarded?: () => void | Promise<void>;
 };
 
 const RESPONSE_HEADERS = [
@@ -180,7 +191,7 @@ function classifyUpstreamTransportFailure(error: unknown): UpstreamTransportFail
 }
 
 export async function proxyGateway(options: GatewayProxyOptions): Promise<Response> {
-  const requestId = `req_${(options.random ?? (() => crypto.randomUUID()))()}`;
+  const requestId = options.requestId ?? `req_${(options.random ?? (() => crypto.randomUUID()))()}`;
   const startedAt = options.now?.() ?? Date.now();
   const clientSignal = options.request.signal;
   const abort = new AbortController();
@@ -206,6 +217,10 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     outcome = "binding_invalidated";
     abort.abort(options.lifecycleSignal?.reason ?? new Error("allocation is no longer active"));
   };
+  const abortFromAttempt = () => {
+    outcome = "attempt_cancelled";
+    abort.abort(options.attemptSignal?.reason ?? new Error("generation attempt cancelled"));
+  };
   let timeout: ReturnType<typeof setTimeout>;
   const finish = () => {
     if (finished) {
@@ -215,6 +230,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     clearTimeout(timeout);
     clientSignal.removeEventListener("abort", abortFromClient);
     options.lifecycleSignal?.removeEventListener("abort", abortFromLifecycle);
+    options.attemptSignal?.removeEventListener("abort", abortFromAttempt);
     const releaseExecution = releaseSlot;
     releaseSlot = undefined;
     if (options.onTerminal) {
@@ -350,6 +366,11 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   } else {
     options.lifecycleSignal?.addEventListener("abort", abortFromLifecycle, { once: true });
   }
+  if (options.attemptSignal?.aborted) {
+    abortFromAttempt();
+  } else {
+    options.attemptSignal?.addEventListener("abort", abortFromAttempt, { once: true });
+  }
   options.onEvent?.({
     name: "gateway_request_started",
     labels: {
@@ -374,6 +395,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     if (clientSignal.aborted) {
       return failure("request_cancelled", "client cancelled the request", 400, "client_cancelled");
     }
+    if (options.attemptSignal?.aborted) {
+      return failure("request_cancelled", "generation attempt was cancelled", 409, "attempt_cancelled");
+    }
     if (options.lifecycleSignal?.aborted) {
       const invalidated = options.revalidate();
       if (!invalidated.ok) {
@@ -387,7 +411,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       return failure("allocation_inactive", "allocation is no longer active", 409, "binding_invalidated");
     }
     if (error instanceof ExecutionGateError) {
-      const status = error.code === "draining" ? 503 : 429;
+      const status = error.code === "draining" || error.code === "runtime_quarantined" ? 503 : 429;
       const headers = error.retryAfterSeconds
         ? { "retry-after": String(error.retryAfterSeconds) }
         : undefined;
@@ -454,6 +478,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     if (clientSignal.aborted) {
       return failure("request_cancelled", "client cancelled the request", 400, "client_cancelled");
     }
+    if (options.attemptSignal?.aborted) {
+      return failure("request_cancelled", "generation attempt was cancelled", 409, "attempt_cancelled");
+    }
     if (options.lifecycleSignal?.aborted) {
       return failure("allocation_inactive", "allocation is no longer active", 409, "binding_invalidated");
     }
@@ -505,6 +532,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
           : {}),
         bootEpoch: options.bootEpoch,
         configRevision: options.auditContext.configRevision,
+        ...(options.auditContext.personalState
+          ? { personalState: options.auditContext.personalState }
+          : {}),
         endpoint: current.binding.endpoint,
         requestBody: body,
         signal: abort.signal,
@@ -523,6 +553,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       }
       if (clientSignal.aborted) {
         return failure("request_cancelled", "client cancelled the request", 400, "client_cancelled");
+      }
+      if (options.attemptSignal?.aborted) {
+        return failure("request_cancelled", "generation attempt was cancelled", 409, "attempt_cancelled");
       }
       if (options.lifecycleSignal?.aborted) {
         return failure(
@@ -552,6 +585,8 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   const target = `${endpoint}${options.upstreamPath}`;
   let upstream: Response;
   try {
+    abort.signal.throwIfAborted();
+    await options.onForwarded?.();
     const init: GatewayFetchRequestInit & { duplex?: "half" } = {
       method: options.request.method,
       headers,
@@ -584,6 +619,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     }
     if (clientSignal.aborted) {
       return failure("request_cancelled", "client cancelled the request", 400, "client_cancelled");
+    }
+    if (options.attemptSignal?.aborted) {
+      return failure("request_cancelled", "generation attempt was cancelled", 409, "attempt_cancelled");
     }
     if (options.lifecycleSignal?.aborted) {
       const invalidated = options.revalidate();
@@ -1021,7 +1059,12 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         const output = normalized?.output ?? [chunk.value];
         if (!await enqueueSseOutput(controller, output)) return;
       } catch (error) {
-        if (!timedOut && !clientSignal.aborted && !options.lifecycleSignal?.aborted) {
+        if (
+          !timedOut
+          && !clientSignal.aborted
+          && !options.lifecycleSignal?.aborted
+          && !options.attemptSignal?.aborted
+        ) {
           outcome = "stream_error";
         }
         await reader.cancel(error).catch(() => undefined);

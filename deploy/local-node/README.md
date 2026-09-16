@@ -188,6 +188,13 @@ SAAA session全体はAgent Profile `saaa-qwen38-kv-mem`を明示選択します�
 KV:mem）の四Providerを同じTTLへ固定します。単独の標準Chat requestはこのpresetを暗黙には起動しません。
 consumerはclaimで返されたProviderごとのmodelと短期credentialを使用し、session終了時にConnectionをreleaseします。
 
+Personal State製品contractは別gateです。systemd unitは
+`LARM_PERSONAL_STATE_ENABLED=false`と`LARM_PERSONAL_STATE_JOURNAL_ROOT=/var/lib/larm/personal-state`を
+明示し、通常のKV:mem試用だけでは有効になりません。SAAA側のDelivery adapter、transactional outbox、
+late-output／tool-side-effect fenceとrollback rehearsalが完了するまで既定値を維持します。接続contractは
+[`../../specs/personal-state-saaa-integration-handoff.html`](../../specs/personal-state-saaa-integration-handoff.html)
+を参照してください。
+
 ```bash
 curl -sS -X POST http://127.0.0.1:9810/v1/chat/completions \
   -H "Authorization: Bearer ${LARM_API_TOKEN}" \
@@ -212,6 +219,27 @@ bun run context:source:provision provision policy-v7 /absolute/path/to/policy.tx
 curl -sS http://127.0.0.1:9810/v1/context-status \
   -H "Authorization: Bearer ${LARM_API_TOKEN}" | jq
 ```
+
+Personal Stateのlive受入では通常API tokenではなく、SAAA用Agent Connectionがclaimした短期Provider tokenを
+使用します。合成sourceだけで次の有限conformanceを実行し、JSON証跡をrepository外へ保存します。scriptは
+provision再送・照会、登録、tools込み計測、View v2、実generation、attempt照合、全層forgetを一巡し、途中失敗時も
+同じIDでcleanupを試みます。
+このProvider tokenを得るAgent Connectionの作成とclaim自体には通常Bearerが必要です。匿名Connectionのclaimには
+Personal State scopeを付与しません。
+
+```bash
+umask 077
+LARM_PERSONAL_STATE_PROVIDER_TOKEN="${claimed_provider_token}" \
+LARM_PERSONAL_STATE_ALLOCATION_ID="${allocation_id}" \
+LARM_PERSONAL_STATE_RUNTIME="qwen-worker-quality" \
+LARM_PERSONAL_STATE_MODEL="qwen3.8-kv-mem" \
+  bun run personal-state:conformance \
+  > /srv/ai/logs/larm-canary/personal-state.json
+```
+
+この成功だけでは製品gateを開きません。response切断、daemon／SAAA再起動、cross-subject、release変更、
+snapshot OFF／ON、backend abort無視を含むfault injectionとSAAA製品harnessの合格後に限り、明示的に
+`LARM_PERSONAL_STATE_ENABLED=true`へ変更します。
 
 既定tokenizer endpointはresidentの<code>http://127.0.0.1:8080</code>です。別の認定runtimeを使う場合は
 <code>LARM_CONTEXT_TOKENIZER_ENDPOINT</code>をそのloopback endpointへ設定します。Provisionは512 GiBの

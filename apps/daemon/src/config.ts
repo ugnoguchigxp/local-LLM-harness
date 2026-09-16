@@ -59,6 +59,9 @@ export type DaemonConfig = {
   contextSnapshotMaxBytes: number;
   contextSnapshotFreeFloorBytes: number;
   contextSnapshotMaxWriteBytes: number;
+  personalStateEnabled: boolean;
+  personalStateJournalRoot: string;
+  personalStateReceiptTtlMs: number;
 };
 
 export type InferenceAuditConfig = Pick<
@@ -226,10 +229,16 @@ export function parseDaemonConfig(
   }
   const inferenceAudit = parseInferenceAuditConfig(env);
   const contextEnabled = booleanSetting(env, "LARM_CONTEXT_ENABLED", false);
+  const personalStateEnabled = booleanSetting(env, "LARM_PERSONAL_STATE_ENABLED", false);
   const contextSnapshotEnabled = booleanSetting(env, "LARM_CONTEXT_SNAPSHOT_ENABLED", false);
   const contextMetadataRoot = absolutePathSetting(env, "LARM_CONTEXT_METADATA_ROOT", "/var/lib/larm/contexts");
   const contextSourceRoot = absolutePathSetting(env, "LARM_CONTEXT_SOURCE_ROOT", "/srv/ai/context-sources");
   const contextSnapshotRoot = absolutePathSetting(env, "LARM_CONTEXT_SNAPSHOT_ROOT", "/srv/ai/context-snapshots");
+  const personalStateJournalRoot = absolutePathSetting(
+    env,
+    "LARM_PERSONAL_STATE_JOURNAL_ROOT",
+    "/var/lib/larm/personal-state",
+  );
   const overlaps = (left: string, right: string) => left === right
     || left.startsWith(`${right}/`)
     || right.startsWith(`${left}/`);
@@ -245,6 +254,19 @@ export function parseDaemonConfig(
   }
   if (contextEnabled && !apiToken) {
     throw new Error("LARM_API_TOKEN is required when managed context is enabled");
+  }
+  if (personalStateEnabled && !contextEnabled) {
+    throw new Error("LARM_CONTEXT_ENABLED must be true when Personal State delivery is enabled");
+  }
+  if (personalStateEnabled && !connectionSigningKey(env.LARM_CONNECTION_SIGNING_KEY)) {
+    throw new Error("LARM_CONNECTION_SIGNING_KEY is required when Personal State delivery is enabled");
+  }
+  if (
+    overlaps(personalStateJournalRoot, contextMetadataRoot)
+    || overlaps(personalStateJournalRoot, contextSourceRoot)
+    || overlaps(personalStateJournalRoot, contextSnapshotRoot)
+  ) {
+    throw new Error("LARM_PERSONAL_STATE_JOURNAL_ROOT must not overlap context data roots");
   }
   if (contextSnapshotEnabled && !contextEnabled) {
     throw new Error("LARM_CONTEXT_ENABLED must be true when context snapshots are enabled");
@@ -407,6 +429,15 @@ export function parseDaemonConfig(
       "LARM_CONTEXT_SNAPSHOT_MAX_WRITE_BYTES",
       5 * 1024 * 1024 * 1024,
       { min: 1, max: 16 * 1024 * 1024 * 1024, integer: true },
+    ),
+    personalStateEnabled,
+    personalStateJournalRoot,
+    personalStateReceiptTtlMs: secondsSetting(
+      env,
+      "LARM_PERSONAL_STATE_RECEIPT_TTL_SECONDS",
+      24 * 60 * 60,
+      60,
+      7 * 24 * 60 * 60,
     ),
     ...inferenceAudit,
   };

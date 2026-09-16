@@ -105,6 +105,30 @@ models:
     quantization: Q4_K_M
     runtime: llama.cpp-vulkan
 
+  lfm25-1.2b-jp-q4-k-m:
+    kind: file
+    role: evaluation-backchannel-llm
+    source: https://huggingface.co/LiquidAI/LFM2.5-1.2B-JP-GGUF
+    revision: 170ae1cecf0e74b0b25bd704047160fba9f613c6
+    filename: LFM2.5-1.2B-JP-Q4_K_M.gguf
+    path: /srv/ai/models/lfm25-1.2b-jp/LFM2.5-1.2B-JP-Q4_K_M.gguf
+    bytes: 730895296
+    sha256: 608beed14e975a4edd8932c42ac3e64cf1c97da4ee2c5f2c7b6bfbcdb1a90680
+    quantization: Q4_K_M
+    runtime: llama.cpp-vulkan
+
+  gemma3-1b-it-q4-k-m:
+    kind: file
+    role: evaluation-backchannel-llm
+    source: https://huggingface.co/ggml-org/gemma-3-1b-it-GGUF
+    revision: f9c28bcd85737ffc5aef028638d3341d49869c27
+    filename: gemma-3-1b-it-Q4_K_M.gguf
+    path: /srv/ai/models/gemma3-1b-it/gemma-3-1b-it-Q4_K_M.gguf
+    bytes: 806058240
+    sha256: 8ccc5cd1f1b3602548715ae25a66ed73fd5dc68a210412eea643eb20eb75a135
+    quantization: Q4_K_M
+    runtime: llama.cpp-vulkan
+
   qwen36-35b-speed:
     kind: file
     role: preferred-llm

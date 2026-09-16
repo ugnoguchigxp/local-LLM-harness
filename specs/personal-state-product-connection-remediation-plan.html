@@ -1,0 +1,869 @@
+<article lang="ja">
+  <h1>Personal State製品接続・忘却保証 改善実装計画</h1>
+
+  <p>
+    SAAAのPersonal Stateをlocal-LLM-harness（LARM）のManaged Contextへ接続する前に、原文配送、
+    canonical計測、認証主体、忘却、snapshot、推論取消の契約差分を閉じるための実装計画です。
+    LARM内部に存在するsource store、Context View、session snapshot、HTTP取消伝播を再利用しますが、
+    内部機能の存在を製品接続完了とは扱いません。
+  </p>
+
+  <dl>
+    <dt>作成日</dt>
+    <dd><time>2026-09-13</time></dd>
+    <dt>対象baseline</dt>
+    <dd><code>631c15ad84eacb757770c92b21d647743cfeae6c</code></dd>
+    <dt>状態</dt>
+    <dd>
+      LARM repository実装・自動test完了。SAAA組込み、local-node配備、合成data実機受入までは Personal
+      Stateの実ユーザーsource接続はNo-Go
+    </dd>
+    <dt>対象consumer</dt>
+    <dd>SAAA Personal State</dd>
+    <dt>関連仕様</dt>
+    <dd>
+      <a href="./capability-gated-virtual-context.html"
+        >高度推論LLM連動型Virtual Context Activation仕様</a
+      >、
+      <a href="./context-implementation-traceability.html"
+        >Managed Context実装完了トレーサビリティ</a
+      >、 <a href="./saaa-qwen38-kv-mem-routing.html">SAAA Qwen 3.8 KV:mem Provider Preset仕様</a>、
+      <a href="./personal-state-saaa-integration-handoff.html">LARM–SAAA製品接続handoff</a>
+    </dd>
+  </dl>
+
+  <aside>
+    <p>
+      <strong>出荷判断:</strong> 合成sourceによる全受入条件が完了するまで、Personal State製品配送を
+      有効化しません。通常のResident Qwen 3.8 27B、Viewなし推論、既存SAAA Provider、
+      ContextStill経路は変更しません。
+    </p>
+  </aside>
+
+  <section id="assessment">
+    <h2>採用する指摘と実装上の位置付け</h2>
+    <table>
+      <caption>
+        改善対象
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID</th>
+          <th scope="col">改善対象</th>
+          <th scope="col">現状</th>
+          <th scope="col">完了時の保証</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">PS-01</th>
+          <td>Macからのsource配送と応答紛失後の照合</td>
+          <td>ホスト絶対pathを読むCLIだけで、同じhandleへの異内容は上書きされる</td>
+          <td>同一incarnationの再送は同じreceipt、異内容は拒否し、再起動後も結果を照会できる</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-02</th>
+          <td>View作成前のcanonical入力計測</td>
+          <td>最終materializationは再計測するが、consumer用の事前計測とrequest bindingがない</td>
+          <td>
+            messages、tools、template、Context包装を含む計測をrequest digestと認定identityへ固定する
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">PS-03</th>
+          <td>SAAA owner、LARM principal、Agent Connection、Allocationの結合</td>
+          <td>
+            短期Provider tokenとContext API tokenが別で、Context
+            principalはdaemonの単一tokenから導出される
+          </td>
+          <td>LARM発行subjectとscope付きcredentialで全操作を同じAllocation lifecycleへ結ぶ</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-04</th>
+          <td>登録absenceとsource／attestation absenceの分離</td>
+          <td>Context DELETEはmetadataを削除するがsource storeを消去しない</td>
+          <td>各層の状態を個別に観測し、全対象がabsenceになるまでforgetを成功にしない</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-05</th>
+          <td>base messagesを含むsnapshotとRAM stateの失効</td>
+          <td>snapshot lookupはbase本文digestを持たず、Context DELETEはsnapshotを失効しない</td>
+          <td>
+            request、source、View、attemptの依存関係からdiskとRAMの影響stateを列挙して失効する
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">PS-06</th>
+          <td>HTTP取消と遠隔generation停止確認</td>
+          <td>AbortSignalは伝播するが、attempt単位の取消receiptと停止照会がない</td>
+          <td>取消受付、transport切断、backend停止確認、停止不明を別状態として永続化する</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-07</th>
+          <td>推論監査payloadの忘却</td>
+          <td>local-nodeはrequest、prompt、tokens、responseを最大7日保持する</td>
+          <td>forget対象と監査recordを結び、削除または暗号鍵破棄とabsence照会を行う</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-08</th>
+          <td>forget中の新規複製作成防止</td>
+          <td>materialization後のsnapshot候補がDELETE後にcommitされ得る</td>
+          <td>durable tombstoneと単調増加data epochで、forget開始後のcommitを全層で拒否する</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-09</th>
+          <td>operationとidempotency receiptの再起動耐性</td>
+          <td>Context View、operation、idempotency entryはdaemon memoryだけに存在する</td>
+          <td>配送、忘却、generationの結果を期限付きjournalへ保存し、再起動後も照合できる</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="goals">
+    <h2>目的と非目標</h2>
+    <h3>目的</h3>
+    <ul>
+      <li>応答紛失、consumer再起動、LARM再起動を通常の回復可能状態として扱う。</li>
+      <li>
+        認証主体、Allocation、runtime、release、tokenizer、chat template、lease
+        epochを一つの証跡へ結ぶ。
+      </li>
+      <li>forgetを単一DELETEの成否ではなく、依存data全体に対するdurable operationとして扱う。</li>
+      <li>取消後の遅延結果をSAAAで拒否し、LARMでは遠隔計算の停止状態を可能な範囲で証明する。</li>
+      <li>全失敗経路をfail closedにし、実ユーザーsourceを孤立させない。</li>
+    </ul>
+
+    <h3>非目標</h3>
+    <ul>
+      <li>物理媒体上のsecure erase、同一host管理者からの機密保護、暗号学的snapshot完全性。</li>
+      <li>LARMによるPersonal Stateの意味選択、relevance判定、Knowledge生成。</li>
+      <li>モデルweight、inference engine、生成mediaをrepositoryへ格納すること。</li>
+      <li>通常ProviderへPersonal Stateを暗黙注入すること。</li>
+      <li>停止確認不能なbackendについて、transport切断だけを遠隔停止完了とみなすこと。</li>
+    </ul>
+  </section>
+
+  <section id="fixed-decisions">
+    <h2>着手時に固定する設計判断</h2>
+    <ol>
+      <li>
+        Personal State製品接続は既定無効の独立gateにします。Managed Context全体のkill
+        switchをOFFにしても、 forget、operation照会、absence照会は利用可能にします。
+      </li>
+      <li>
+        callerが送るowner
+        IDや検証済みbooleanをprincipalの根拠にしません。LARMが発行し署名した安定subjectを Agent
+        Connection、Allocation、Context、source、attemptへ伝播します。
+      </li>
+      <li>
+        sourceはimmutableにします。同じsubjectとincarnationに同じdigestを再送した場合だけreplayとし、
+        異なるdigestはHTTP 409相当の固定errorで拒否します。
+      </li>
+      <li>
+        consumer申告の<code>baseInputTokens</code>だけで製品Viewを作りません。LARM発行のmeasurement
+        receiptを要求し、generation時のrequest digestと再照合します。
+      </li>
+      <li>
+        forgetはtombstoneを最初にcommitします。削除処理が途中で失敗しても、対象sourceを新しいView、
+        generation、snapshot、audit recordへ使用できません。
+      </li>
+      <li>
+        登録解除、source unlink、snapshot失効、RAM
+        state解放、audit消去、generation停止は別phaseとして
+        保存し、すべての必要phaseがabsenceを返すまで成功にしません。
+      </li>
+      <li>
+        LARMのrequest IDとSAAA発行attempt IDを分けます。SAAA発行IDは再送・再起動照合のkey、LARM IDは
+        daemon内の実行証跡keyです。
+      </li>
+    </ol>
+  </section>
+
+  <section id="target-flow">
+    <h2>目標lifecycle</h2>
+    <figure>
+      <pre><code>SAAA local owner
+  -&gt; authenticated Agent Connection / stable LARM subject
+  -&gt; source provision with incarnation
+  -&gt; durable provision receipt
+  -&gt; canonical measurement of messages + tools + context envelope
+  -&gt; measurement-bound one-shot Context View
+  -&gt; generation attempt with caller attempt ID
+  -&gt; terminal result or explicit cancel reconciliation
+
+Forget request
+  -&gt; durable tombstone and data-epoch fence
+  -&gt; stop or quarantine affected generation attempts
+  -&gt; invalidate View and pending snapshot commit
+  -&gt; clear or retire affected RAM slot
+  -&gt; unlink dependent snapshots
+  -&gt; remove source and attestation
+  -&gt; remove or crypto-shred inference audit payloads
+  -&gt; verify every required absence
+  -&gt; durable forget receipt</code></pre>
+      <figcaption>
+        配送と忘却はどちらもconsumer応答の成否ではなく、LARMのdurable receiptを正本にします。
+      </figcaption>
+    </figure>
+  </section>
+
+  <section id="contract-models">
+    <h2>追加・更新する公開contract</h2>
+    <p>
+      HTTP pathとstrict schemaはMilestone
+      P0で<code>GET /openapi.json</code>へ固定しました。以下のresourceと
+      endpointの対応、header、再送規則は
+      <a href="./personal-state-saaa-integration-handoff.html">LARM–SAAA製品接続handoff</a
+      >を正本とします。
+    </p>
+    <table>
+      <caption>
+        公開resourceと必須field
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">resource</th>
+          <th scope="col">主な入力</th>
+          <th scope="col">主な出力</th>
+          <th scope="col">永続性</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>ContextSubjectCapability</code></th>
+          <td>Agent Connectionの認証済みsubject、requested scope</td>
+          <td>subject fingerprint、Allocation、runtime、release、scope、期限、boot epoch</td>
+          <td>Connection renew中は安定。新Connectionへの再bindには同じsubjectの証明が必要</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>SourceProvisionOperation</code></th>
+          <td>incarnation、expected digest／bytes、対象Allocation／runtime、UTF-8本文stream</td>
+          <td>
+            operation ID、source handle／digest、bytes、tokens、tokenizer identity、state、期限
+          </td>
+          <td>receipt retention内でdaemon再起動後も照会可能</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>CanonicalMeasurementReceipt</code></th>
+          <td>完全なmessages、tools、生成に影響するfield、候補Context、Allocation binding</td>
+          <td>
+            request digest、base／envelope／total token、tokenizer／template／release、lease
+            epoch、期限
+          </td>
+          <td>requestまたはidentity変更時は再利用不可</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>ContextViewV2</code></th>
+          <td>measurement ID、Context候補、required、utility、deadline</td>
+          <td>選択項目、omission、request digest、data epoch、one-shot credential</td>
+          <td>短命。再起動後に再利用せず、結果照会だけ可能</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GenerationAttempt</code></th>
+          <td>caller attempt ID、View、Allocation、request digest</td>
+          <td>LARM request ID、accepted／forwarded／cancel状態、時刻、terminal outcome</td>
+          <td>結果照合期間中は再起動後も照会可能</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>ForgetOperation</code></th>
+          <td>forget ID、incarnation／context／source／attempt target、期待subject</td>
+          <td>phase別状態、absence evidence、停止不明、完了時刻、保持期限</td>
+          <td>完了receiptとtombstoneは再起動後も保持</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>共通状態とerror</h3>
+    <ul>
+      <li>
+        operation
+        stateは<code>accepted</code>、<code>running</code>、<code>succeeded</code>、
+        <code>failed</code
+        >、<code>cancelled</code>、<code>result_unknown</code>へ限定します。
+      </li>
+      <li>
+        generation停止は<code>cancel_requested</code>、<code>transport_closed</code>、
+        <code>backend_stopped</code
+        >、<code>stop_unknown</code>を別fieldで表します。
+      </li>
+      <li>
+        固定errorには<code>incarnation_conflict</code>、<code>measurement_stale</code>、
+        <code>request_digest_mismatch</code>、<code>subject_mismatch</code>、
+        <code>forget_in_progress</code
+        >、<code>remote_stop_unknown</code>を含めます。
+      </li>
+      <li>
+        全照会responseへ<code>Cache-Control: no-store</code>、boot epoch、contract
+        versionを含めます。
+      </li>
+      <li>token、本文、local owner IDをerror、metric label、通常logへ出しません。</li>
+    </ul>
+  </section>
+
+  <section id="identity">
+    <h2>認証主体と権限scope</h2>
+    <p>
+      現在の単一<code>LARM_API_TOKEN</code>由来principalはmanagement互換経路として残し、Personal
+      Stateの 製品contractには使用しません。Agent ConnectionのclaimへContext control
+      descriptorを追加し、 同じ署名基盤で次の最小scopeを発行します。
+    </p>
+    <ul>
+      <li><code>context.source.provision</code></li>
+      <li><code>context.measure</code></li>
+      <li><code>context.view.create</code></li>
+      <li><code>context.generate</code></li>
+      <li><code>context.attempt.cancel</code></li>
+      <li><code>context.forget</code></li>
+      <li><code>context.operation.read</code></li>
+    </ul>
+    <p>
+      credentialはsubject、Connection、Allocation、許可runtime／release、scope、期限へbindします。
+      Connection renewはsubjectを維持し、Allocation release、subject失効、release切替、lease
+      epoch変更時は 古いmeasurement、View、attempt
+      credentialを拒否します。SAAAはローカルownerとsubject fingerprintの
+      対応を保存しますが、その対応をLARMへ自己申告して認可には使用しません。
+    </p>
+  </section>
+
+  <section id="storage">
+    <h2>永続stateと依存関係</h2>
+    <table>
+      <caption>
+        repository外stateの変更
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">store</th>
+          <th scope="col">変更</th>
+          <th scope="col">忘却時のabsence条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">operation journal</th>
+          <td>
+            strict schema、fsync、atomic rename、bounded retention、restart
+            recoveryを持つ共通journalを追加
+          </td>
+          <td>receipt自体は本文を持たず、retention後にGC可能</td>
+        </tr>
+        <tr>
+          <th scope="row">source store</th>
+          <td>immutable content、attestation、incarnation indexを一つのcommit単位として扱う</td>
+          <td>本文、attestation、temporary file、indexのlive referenceがすべて不在</td>
+        </tr>
+        <tr>
+          <th scope="row">Context registry</th>
+          <td>削除済みIDを即時消去せず、subject data epoch付きtombstoneを保持</td>
+          <td>active descriptorが0で、古いepochから再登録できない</td>
+        </tr>
+        <tr>
+          <th scope="row">snapshot store</th>
+          <td>manifest v2へrequest digest、View、attempt、source digest集合、data epochを追加</td>
+          <td>対象依存を含むcommitted、pending、quarantine entryが0</td>
+        </tr>
+        <tr>
+          <th scope="row">runtime slot</th>
+          <td>attemptとslot leaseを対応付け、clear、worker retire、または再起動でfence</td>
+          <td>対象epochのslot leaseがなく、backendが停止または新epochで再初期化済み</td>
+        </tr>
+        <tr>
+          <th scope="row">inference audit</th>
+          <td>subject、View、attempt、source digest集合、classificationをmetadataへ追加</td>
+          <td>対象recordと暗号化payloadが不在。物理secure eraseは保証外</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      data epochはsubjectごとに単調増加させます。upload開始、source
+      commit、View作成、materialization、 upstream送信、snapshot save、audit finalizeの各side
+      effect直前にepochを再照合します。
+      forgetがepochを進めた後、古いcallbackは成功responseを得ていても新しい永続dataをcommitできません。
+    </p>
+  </section>
+
+  <section id="work-packages">
+    <h2>package別実装責務</h2>
+    <table>
+      <caption>
+        source配置
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">配置</th>
+          <th scope="col">実装内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>packages/core</code></th>
+          <td>
+            versioned schema、digest canonicalization、scope、operation state machine、forget
+            phase、 absence判定、epoch fence、pure plannerを実装する。OS
+            pathやsystemd概念は置かない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>packages/backends</code></th>
+          <td>
+            streaming source commit、durable journal、dependency index、snapshot targeted
+            invalidation、 audit targeted removal、llama slot stop／clear adapterを実装する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>apps/daemon</code></th>
+          <td>
+            scoped auth、公開HTTP handler、controller orchestration、request digest再照合、gateway
+            attempt lifecycle、forget coordinator、restart reconciliation、bounded
+            metricsを実装する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>packages/client</code></th>
+          <td>
+            provision／measurement／View／attempt／forgetのstrict client、同じIDでのpoll、timeoutと
+            cleanup用fresh signal、boot epoch変更処理を追加する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <code>config/local-node</code>／<code>deploy/local-node</code>
+          </th>
+          <td>
+            既定OFF gate、scope付きAgent Profile、repository外directory、systemd権限、preflight、
+            合成data conformance、rollout／rollback手順を追加する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">SAAA repository</th>
+          <td>
+            Delivery adapter、owner-subject binding、transactional outbox、receipt recovery、late
+            output fence、 forget UI／state machine、製品harnessを実装する。LARM
+            repositoryから直接変更しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="milestones">
+    <h2>実装Milestone</h2>
+    <table>
+      <caption>
+        依存順とexit gate
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Milestone</th>
+          <th scope="col">実装</th>
+          <th scope="col">exit gate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">P0: contract固定</th>
+          <td>
+            threat inventory、subject、resource schema、error、retention、HTTP
+            path、OpenAPIを固定し、 既存Context DELETEの意味と新forget operationの境界を決める。
+          </td>
+          <td>
+            core schemaとcontract testが先に失敗する状態で追加され、LARM／SAAA
+            ownerが同じfixtureを承認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P1: durable identity／journal</th>
+          <td>
+            stable subject、scope付きtoken、operation journal、data epoch、tombstone、restart
+            recoveryを実装する。
+          </td>
+          <td>別subject、期限切れ、renew、release、daemon killのnegative testが合格</td>
+        </tr>
+        <tr>
+          <th scope="row">P2: source配送</th>
+          <td>
+            bounded UTF-8 upload、canonical tokenization、immutable commit、incarnation照会、 orphan
+            recovery、source absenceを実装する。
+          </td>
+          <td>通常、同内容再送、異内容再送、応答切断、双方再起動、配送中forgetが合格</td>
+        </tr>
+        <tr>
+          <th scope="row">P3: measurement-bound View</th>
+          <td>
+            messages、tools、Context包装を含むcanonical計測、request digest、identity-bound
+            receipt、 View v2、generation直前の再照合を実装する。
+          </td>
+          <td>境界token、request変更、release／tokenizer変更でstale receiptを必ず拒否</td>
+        </tr>
+        <tr>
+          <th scope="row">P4: dependency index／forget</th>
+          <td>
+            source、registry、View、snapshot、RAM slot、auditを横断するdependency indexとforget
+            coordinatorを 実装する。cleanup APIはfeature OFF中も維持する。
+          </td>
+          <td>全phaseのabsence evidenceとpost-forget commit 0件をrestart込みで確認</td>
+        </tr>
+        <tr>
+          <th scope="row">P5: generation停止照合</th>
+          <td>
+            caller attempt ID、durable attempt state、明示cancel、backend stop
+            probeを実装する。停止確認不能時は slotまたはworkerを隔離し、同じexecution
+            capacityを再利用しない。
+          </td>
+          <td>
+            取消受付、停止確認、停止不明が区別され、遅延responseとtool副作用がSAAAで拒否される
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P6: typed client／SAAA接続</th>
+          <td>
+            LARM clientを公開contractへ合わせ、SAAAのUnavailable
+            adapterを製品Deliveryとoutboxへ置換する。
+          </td>
+          <td>SAAA再起動後にprovision、generation、forgetを同じIDから再照合できる</td>
+        </tr>
+        <tr>
+          <th scope="row">P7: local-node受入／rollout</th>
+          <td>
+            合成data live canary、cold／warm、snapshot
+            OFF／ON、release変更、負荷試験を実施し、証跡を保存する。
+          </td>
+          <td>全gate合格、reviewer承認、rollback rehearsal完了後だけ製品gateを有効化</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="implementation-result">
+    <h2>2026-09-13 LARM repository実装結果</h2>
+    <table>
+      <caption>
+        指摘ごとのsource実装状態
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID</th>
+          <th scope="col">実装結果</th>
+          <th scope="col">残る外部gate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">PS-01</th>
+          <td>
+            provider Bearer専用のbounded UTF-8 source POST、incarnation照会、canonical token
+            receipt、immutable conflict、同内容replay、source実体に対する破損または欠落attestationの
+            fail-closed拒否、attestationだけが残ったorphanの安全な再作成、principal隔離を実装
+          </td>
+          <td>Macからのresponse切断fault injectionとSAAA outbox復旧</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-02</th>
+          <td>
+            caller measurement ID、request digest、release／lease／tokenizer／template／data
+            epoch付きの exact chat-template計測とView v2再計測を実装
+          </td>
+          <td>実tokenizerで日本語・tools・境界tokenのlive fixture</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-03</th>
+          <td>
+            通常Bearerで作成・claimしたAgent Connectionだけにstable subject digestと7
+            scopeを追加し、Personal State全routeをConnection、Allocation、Chat
+            Providerへbind。匿名Connectionは別主体として所有権を分離し、匿名claimはsubject／scopeを持たず、
+            capabilityへ期限・認定identity・budgetを追加
+          </td>
+          <td>SAAA owner–subject保護保存とrenew／reconnect試験</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-04</th>
+          <td>
+            feature OFFでも動作するtombstone-first
+            forget、破壊前に解決済みsource／View依存をjournalへ
+            保存する再試行可能な削除plan、registry、source、attestationの個別削除とabsence判定、provision
+            receiptからの孤立source回収を実装。snapshot削除をregistry
+            commitより先に行い、永続planから 追加したViewも同一bootのready stateで無効化
+          </td>
+          <td>途中unlink／daemon killを含む実filesystem fault injection</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-05</th>
+          <td>
+            snapshot manifest v2へrequest／View／attempt／source／data
+            epoch依存を保存し、対象・legacy
+            snapshotを保守的に削除。quarantine済みentryはprincipal帰属を
+            検証し、pending／orphanを含めて帰属不能なら成功扱いしない。隔離はmanifestを先に移動して
+            raw binaryが追跡不能になる部分失敗を防ぎ、pending saveとforgetを同じmutation
+            fenceへ直列化
+          </td>
+          <td>snapshot OFF／ON、base-only固有文字列、daemon／backend再起動のlive確認</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-06</th>
+          <td>
+            durable attempt、明示cancel、transport close、slot erase、stop
+            unknownを分離。停止不明runtimeを execution
+            gateで隔離し、再取消／forgetで停止確認できた場合だけ解除
+          </td>
+          <td>SAAA late-output／tool副作用fenceとbackend abort無視の実機試験</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-07</th>
+          <td>
+            inference auditへsubject／attempt／View／request／source／epoch依存を付与し、active
+            recordとmetadataを失った未帰属payloadを成功扱いしないtargeted
+            erase／absenceを実装。recordと空の時刻directoryの削除をdirectory fsyncで永続化
+          </td>
+          <td>暗号化payloadを含むlive audit retention試験</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-08</th>
+          <td>
+            subject data epoch、構造化durable tombstone、source／View／attemptのmutation直列化、
+            generation完了後snapshot saveとの同一fenceを実装
+          </td>
+          <td>各side effect位置でのprocess kill fault injection</td>
+        </tr>
+        <tr>
+          <th scope="row">PS-09</th>
+          <td>
+            provision、measurement、View result、attempt、forgetをstrict JSON
+            journalへ本文なしで保存し、 file／directory fsyncとatomic rename、restart
+            reconciliation、期限付きGCを実装
+          </td>
+          <td>実daemon kill、journal容量上限、保持期限後の運用確認</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      typed
+      clientと<code>personal-state:conformance</code>も追加しました。conformanceは合成sourceの
+      provision、再送、照会、登録、tools込み計測、View、実generation、attempt
+      reconciliation、全層forgetを
+      一巡します。repository自動testの成功はlocal-node実機停止確認やSAAA製品接続の代替ではありません。
+    </p>
+  </section>
+
+  <section id="detailed-tests">
+    <h2>必須test matrix</h2>
+    <table>
+      <caption>
+        指摘から導く受入scenario
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">scenario</th>
+          <th scope="col">判定方法</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">配送</th>
+          <td>通常成功、同内容再送、異内容再送、response切断、SAAA／LARM再起動、同時writer</td>
+          <td>incarnationから同じreceiptを取得し、重複sourceと孤立temporary fileが0</td>
+        </tr>
+        <tr>
+          <th scope="row">認可</th>
+          <td>別subject、別Allocation、期限切れ、renew、release、release変更、boot epoch変更</td>
+          <td>
+            本文、receipt、measurement、View、attempt、forget結果のcross-subject取得がすべて拒否
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">計測</th>
+          <td>日本語、空messages、複数system形式、tool定義、複数source、予算境界、本文変更</td>
+          <td>
+            事前receiptとgeneration直前計測のidentity／digest関係が一致し、required超過を明示拒否
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">forget</th>
+          <td>feature OFF、再送、応答切断、再起動、登録前失敗、部分unlink、共有source</td>
+          <td>
+            registry、source、attestation、snapshot、slot、auditを別々に検査し、必要absenceが揃うまで未完了
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">競合</th>
+          <td>
+            upload中、View作成中、materialization中、generation中、response後snapshot save前のforget
+          </td>
+          <td>tombstone以後に対象epochのsource、snapshot、audit finalizeがcommitされない</td>
+        </tr>
+        <tr>
+          <th scope="row">snapshot</th>
+          <td>固有文字列をbaseだけ、sourceだけ、両方へ配置し、snapshot OFF／ONと再起動を反復</td>
+          <td>
+            manifest dependencyとslot identityで非再利用を証明し、回答文字列の不出現だけに依存しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">generation取消</th>
+          <td>
+            foreground復帰、forget、取消response紛失、upstream abort無視、遅延response、SAAA再起動
+          </td>
+          <td>
+            local取消、transport切断、backend停止を別時刻で記録し、同時generation上限を超えない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">監査</th>
+          <td>
+            request、materialized prompt、tokens、partial／complete responseを含むrecordのforget
+          </td>
+          <td>対象metadata、暗号化payload、temporary file、復号可能key referenceが0</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      unit testはpure state machineとschema境界、integration testはfault injectionとrestart、live
+      conformanceは実tokenizer、chat template、llama backend停止確認を担当します。秘密文字列が回答へ
+      出なかったことだけをforget、snapshot失効、遠隔停止の証明には使用しません。
+    </p>
+  </section>
+
+  <section id="migration">
+    <h2>migrationと後方互換</h2>
+    <ul>
+      <li>
+        現行Context APIとCLIは運用互換として残しますが、Personal
+        State製品adapterからは使用しません。 deprecated表示と移行期限はP0で固定します。
+      </li>
+      <li>
+        dependencyを持たないsnapshot manifest v1はPersonal State
+        v2から参照しません。製品gateを開く前に 隔離または全削除し、実行結果だけを証跡へ残します。
+      </li>
+      <li>
+        subject／View／attempt linkを持たない既存inference audit
+        recordは対象指定forgetができません。
+        rollout時に保持期限満了を待つか、operator承認で全recordを削除してから製品gateを開きます。
+      </li>
+      <li>
+        既存source／attestationは自動的に製品subjectへ帰属させません。合成fixture以外は明示reprovisionを
+        要求し、任意IDコピーによるowner移行を禁止します。
+      </li>
+      <li>
+        現行仕様の「Context DELETEでsnapshot unlinkとtombstone」と実装差を解消します。登録解除だけの
+        互換操作と、全複製を対象とするforget operationを文書とOpenAPIで明確に分けます。
+      </li>
+    </ul>
+  </section>
+
+  <section id="observability">
+    <h2>監視と証跡</h2>
+    <ul>
+      <li>operation state、phase、runtime、結果codeだけをbounded metric labelに使用する。</li>
+      <li>
+        source digest、subject、incarnation、attempt IDはmetric
+        labelへ入れず、必要なら暗号化監査へ保存する。
+      </li>
+      <li>
+        provision bytes／tokens、measurement drift、forget phase秒数、cancel送信秒数、remote
+        stop秒数を分離する。
+      </li>
+      <li>取消送信p95 100 ms目標と、backend停止までの時間を同じSLOに混ぜない。</li>
+      <li>tokenと本文を通常log、error message、test snapshot、repository証跡へ出さない。</li>
+      <li>
+        live evidenceは合成ID、release digest、boot epoch、config revision、集計値だけを保存する。
+      </li>
+    </ul>
+  </section>
+
+  <section id="saaa-handoff">
+    <h2>SAAA側handoff</h2>
+    <p>
+      LARMの公開contractだけでは製品接続は完了しません。SAAAは同じMilestoneで次を実装し、個別issueとして
+      追跡します。
+    </p>
+    <ul>
+      <li>ローカルownerとLARM subject fingerprintのbindingをKeychain相当の保護領域へ保存する。</li>
+      <li>incarnation、attempt ID、forget IDをnetwork送信前にtransactional outboxへcommitする。</li>
+      <li>応答紛失時は新IDで再実行せず、同じIDのreceiptを照会してから次状態へ進む。</li>
+      <li>認証renew、release変更、request本文／tools変更時にmeasurementとViewを作り直す。</li>
+      <li>
+        foreground復帰とforget後の遅延output、永続化、表示、tool副作用をattempt fenceで拒否する。
+      </li>
+      <li>
+        登録absence、source absence、snapshot／slot safety、audit absence、remote
+        stopを別fieldで保存する。
+      </li>
+      <li>全Providerと外部coding subprocessを列挙し、非対応経路へPersonal Stateを送らない。</li>
+      <li>
+        有限runnerの製品harnessと人手確認済みgoldを用意し、モデル自身による自己採点で代用しない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="risks">
+    <h2>主なriskと対策</h2>
+    <table>
+      <caption>
+        実装前に閉じるrisk
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">risk</th>
+          <th scope="col">対策</th>
+          <th scope="col">No-Go条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">backendがremote stopを証明できない</th>
+          <td>専用worker／slotを隔離し、idle probeまたはworker retire後にだけcapacityを再利用</td>
+          <td>停止不明のslotで次のPersonal State generationを開始する</td>
+        </tr>
+        <tr>
+          <th scope="row">sourceとattestationのpartial commit</th>
+          <td>directoryまたはmanifest単位のatomic publishとrestart orphan recovery</td>
+          <td>同じincarnationが二つのlive digestを指す</td>
+        </tr>
+        <tr>
+          <th scope="row">forget対象indexの欠落</th>
+          <td>commit前にdependency recordを必須化し、未知legacy stateは全体隔離</td>
+          <td>依存を証明できないsnapshot／audit recordを製品gate下で再利用する</td>
+        </tr>
+        <tr>
+          <th scope="row">大量source計測のlatency</th>
+          <td>
+            bounded candidate数、digest cache、exact final recount、期限付きreceiptを測定してSLO化
+          </td>
+          <td>近似値だけでrequired入力をacceptする</td>
+        </tr>
+        <tr>
+          <th scope="row">operation journal肥大化</th>
+          <td>本文を保存せず、per-subject／global quotaと完了receipt retentionを設定</td>
+          <td>quota超過時に新規dataを受理してreceiptだけ失う</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="definition-of-done">
+    <h2>製品接続のDefinition of Done</h2>
+    <ol>
+      <li>PS-01からPS-09までのcontract、実装、typed client、negative testがすべて存在する。</li>
+      <li>合成sourceで通常、response紛失、双方再起動、forget競合、cross-subject試験が合格する。</li>
+      <li>snapshot、RAM slot、推論監査を含むabsence evidenceを機械判定できる。</li>
+      <li>remote stop不明時に同じslot／workerで次generationを開始しない。</li>
+      <li>SAAAのoutbox recoveryとlate output／tool side-effect拒否が製品harnessで合格する。</li>
+      <li>
+        snapshot OFF／ON、cold／warm、release／tokenizer変更を含むlocal-node live canaryが合格する。
+      </li>
+      <li>
+        <code>bun run check</code
+        >と追加conformanceが成功し、秘密dataを含まない証跡がreview済みである。
+      </li>
+      <li>
+        <a href="./capability-gated-virtual-context.html">Virtual Context仕様</a>と
+        <a href="./context-implementation-traceability.html">実装完了トレーサビリティ</a>を更新し、
+        Context DELETE、VC-R06、VC-R08、VC-R10の判定を製品contractに合わせて再監査する。
+      </li>
+      <li>rollback rehearsal後にだけPersonal State製品gateを明示的に有効化する。</li>
+    </ol>
+  </section>
+</article>

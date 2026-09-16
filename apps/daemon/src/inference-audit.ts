@@ -18,6 +18,14 @@ export type InferenceAuditStart = {
   endpoint: string;
   requestBody: Uint8Array;
   signal?: AbortSignal;
+  personalState?: {
+    subjectDigest: string;
+    attemptId: string;
+    viewId?: string;
+    requestDigest: string;
+    sourceDigests: string[];
+    dataEpoch: number;
+  };
 };
 
 export type InferenceAuditFinish = {
@@ -163,6 +171,7 @@ export class FileInferenceAuditRecorder implements InferenceAuditRecorder {
       ...(input.runtimeRelease ? { runtimeRelease: input.runtimeRelease } : {}),
       bootEpoch: input.bootEpoch,
       configRevision: input.configRevision,
+      ...(input.personalState ? { personalState: input.personalState } : {}),
     }, input.requestBody);
     try {
       await this.materialize(

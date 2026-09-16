@@ -65,6 +65,38 @@ routes:
       - runtime: qwen35-decision
         purpose: primary
 
+  llm-backchannel-qwen35-2b:
+    capabilities:
+      - llm.backchannel.classifier
+    explicitOnly: true
+    candidates:
+      - runtime: qwen35-decision
+        purpose: primary
+
+  llm-backchannel-default:
+    capabilities:
+      - llm.backchannel.classifier
+    explicitOnly: true
+    candidates:
+      - runtime: lfm25-backchannel-jp
+        purpose: primary
+
+  llm-backchannel-lfm25-jp-1.2b:
+    capabilities:
+      - llm.backchannel.classifier
+    explicitOnly: true
+    candidates:
+      - runtime: lfm25-backchannel-jp
+        purpose: primary
+
+  llm-backchannel-gemma3-1b:
+    capabilities:
+      - llm.backchannel.classifier
+    explicitOnly: true
+    candidates:
+      - runtime: gemma3-backchannel
+        purpose: primary
+
   llm-35b:
     capabilities:
       - llm.general

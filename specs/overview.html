@@ -26,6 +26,24 @@
           <td>現行正本</td>
         </tr>
         <tr>
+          <th scope="row">
+            <a href="./inference-first-host-responsibility-boundary.html"
+              >Inference-firstホスト責務境界</a
+            >
+          </th>
+          <td>MacBookとAI MAXの二台だけでSAAA側の状態・I/Oとlocal-node側の推論を分離する設計案</td>
+          <td>責務境界案。実装前</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./backchannel-model-candidate-selection.html"
+              >Backchannel小型モデル候補・選択仕様</a
+            >
+          </th>
+          <td>Qwen3.5 2B、LFM2.5 1.2B JP、Gemma 3 1Bの明示選択と共通日本語評価contract</td>
+          <td>Repository設定・harness実装済み。追加artifact取得と実機評価待ち</td>
+        </tr>
+        <tr>
           <th scope="row"><a href="./api.html">LARM v1 API仕様</a></th>
           <td>実装済み公開API contract</td>
           <td>現行正本</td>
@@ -122,6 +140,44 @@
           </th>
           <td>SAAAだけが明示選択するon-demand snapshot ProviderとContextStill従来KVの分離</td>
           <td>Repository設定・自動test実装済み。利用者試用待ち</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./personal-state-product-connection-remediation-plan.html"
+              >Personal State製品接続・忘却保証 改善実装計画</a
+            >
+          </th>
+          <td>
+            source配送、canonical計測、identity、forget、snapshot、generation停止の閉鎖計画と実装結果
+          </td>
+          <td>Repository実装・自動test完了。SAAA組込みとlocal-node実機受入まではNo-Go</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./personal-state-saaa-integration-handoff.html"
+              >Personal State LARM–SAAA 製品接続handoff</a
+            >
+          </th>
+          <td>確定HTTP contract、再送・照合規則、SAAA必須実装、合成data conformance手順</td>
+          <td>LARM側実装済み。SAAA Delivery／outbox／late-output fenceとlive受入待ち</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./saaa-contextstill-memory-architecture.html"
+              >SAAA・ContextStill統合メモリーアーキテクチャ</a
+            >
+          </th>
+          <td>個人Memory、文書Knowledge、Tool Registry、Context Pack、LARM cacheの責務分離</td>
+          <td>設計案。SAAA・ContextStill側のcontract合意と段階実装待ち</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./kv-mem-context-injection-alternative.html"
+              >KV:Mem代替：選択的Context注入 実験設計</a
+            >
+          </th>
+          <td>現行snapshot経路の実装分析、Ctx:mem仮説、最小A/B、Go／No-Go条件</td>
+          <td>実験設計。既存source-rebuildを使う比較試験待ち</td>
         </tr>
         <tr>
           <th scope="row">

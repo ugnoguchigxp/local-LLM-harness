@@ -220,6 +220,20 @@ KV dtype、layoutのまま線形換算すると、2 TiBは約119.07M token相当
 API contractは[`specs/capability-gated-virtual-context.html`](specs/capability-gated-virtual-context.html)を
 参照してください。
 
+Personal Stateの製品経路はManaged Contextとは別の`LARM_PERSONAL_STATE_ENABLED` gateで既定OFFです。
+認証済みAgent Connectionの短期Provider Bearerだけがsource provision、canonical measurement、View v2、
+generation attempt、全層forgetを利用できます。通常のAPI tokenはこの製品contractには使えません。
+Personal State scopeは、通常Bearerで作成したAgent Connectionにだけ付与されます。匿名作成した
+Connectionのclaimには`contextControl`、subject、Personal State scopeを含めません。匿名Connectionと
+認証済みConnectionは別主体として所有権を検査し、相互の取得、claim、renew、releaseを許可しません。
+匿名経路は`Authorization`を省略したrequestだけに適用し、不正なcredentialを匿名へdowngradeしません。
+SAAA側のDelivery／outbox／late-output fenceとlocal-nodeの合成data受入が完了するまで、実ユーザーsourceを
+接続しないでください。確定contractは
+[`specs/personal-state-saaa-integration-handoff.html`](specs/personal-state-saaa-integration-handoff.html)、
+指摘別の実装結果と残るgateは
+[`specs/personal-state-product-connection-remediation-plan.html`](specs/personal-state-product-connection-remediation-plan.html)
+にあります。
+
 Embeddingは短期Agent Connection専用です。`contextstill-embedding`を明示選択し、
 `larm-embedding-provider-v1`形式でclaimしてください。claimにはendpoint、短期Bearer、
 `intfloat/multilingual-e5-small`の固定revision、artifact digest、384次元、prefix、L2正規化、
@@ -235,6 +249,8 @@ tokenization / truncation契約、capacityが含まれます。TypeScript client
 | `LARM_PORT` | `9810` | daemon の待受ポート |
 | `LARM_API_TOKEN` | 未設定 | 通常の API を保護するトークン |
 | `LARM_SERVICE_HARNESS_AUTH_ENABLED` | `false` | SAAA Service Harness discovery・ASR health・batchにBearerを必須化 |
+| `LARM_PERSONAL_STATE_ENABLED` | `false` | scope付きProvider credentialによるPersonal State製品contractを有効化 |
+| `LARM_PERSONAL_STATE_JOURNAL_ROOT` | `/var/lib/larm/personal-state` | 本文を含まないoperation receipt、tombstone、data epochの永続先 |
 | `LARM_MANAGEMENT_TOKEN` | 未設定 | 成果物やリリースの管理 API を保護するトークン |
 | `LARM_CONNECTION_SIGNING_KEY` | 未設定 | Agent 向け短期トークンの署名鍵 |
 | `LARM_ARTIFACT_MANIFEST` | リポジトリ内の既定 manifest | 配備可能な成果物の許可リスト |

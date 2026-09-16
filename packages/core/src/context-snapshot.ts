@@ -15,7 +15,7 @@ export const contextSnapshotChunkSchema = z.object({
 }).strict();
 
 export const contextSnapshotManifestSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.union([z.literal(1), z.literal(2)]),
   algorithm: z.literal("crc32c"),
   entryId: identifierSchema,
   principalScope: digestSchema,
@@ -29,7 +29,21 @@ export const contextSnapshotManifestSchema = z.object({
   chunks: z.array(contextSnapshotChunkSchema).min(1).max(CONTEXT_SNAPSHOT_MAX_CHUNKS),
   state: z.literal("committed"),
   createdAt: z.string().datetime(),
+  dependencies: z.object({
+    requestDigest: digestSchema,
+    viewId: identifierSchema,
+    attemptId: identifierSchema.optional(),
+    sourceDigests: z.array(digestSchema).max(512),
+    dataEpoch: z.number().int().nonnegative(),
+  }).strict().optional(),
 }).strict().superRefine((value, context) => {
+  if (value.schemaVersion === 2 && !value.dependencies) {
+    context.addIssue({
+      code: "custom",
+      path: ["dependencies"],
+      message: "snapshot manifest v2 requires dependencies",
+    });
+  }
   let total = 0;
   for (let index = 0; index < value.chunks.length; index += 1) {
     const chunk = value.chunks[index]!;

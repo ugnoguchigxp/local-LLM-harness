@@ -1,0 +1,749 @@
+<article lang="ja">
+  <h1>SAAA・ContextStill統合メモリーアーキテクチャ</h1>
+
+  <p>
+    SAAAへ搭載する個人メモリー、ContextStillのナレッジベース、LARMのManaged Contextを、
+    一つの巨大な保存層へ統合せず協調させるための設計です。目的は大量の情報を常時LLMへ渡すことではなく、
+    各turnで必要な事実、手順、tool、現在状態だけを、出典と有効性を保ったままActive
+    Contextへ供給することです。
+  </p>
+
+  <dl>
+    <dt>設計日</dt>
+    <dd><time>2026-09-16</time></dd>
+    <dt>判定</dt>
+    <dd>三つの正本を分離し、SAAAのContext Composerで統合する構成を採用する</dd>
+    <dt>個人状態の正本</dt>
+    <dd>SAAA Memory Store</dd>
+    <dt>文書・共有知識の正本</dt>
+    <dd>ContextStill Knowledge Base</dd>
+    <dt>推論とcacheの正本</dt>
+    <dd>LARM。ただし意味記憶は保持しない</dd>
+  </dl>
+
+  <aside>
+    <p>
+      <strong>中心原則:</strong> LLMのattention weightを外部systemから直接指定することはできません。
+      systemが制御するのは、参照可能な候補の検索、有限Contextへの選択、配置、出典、更新、忘却です。
+      KV stateはこのread pathを速くする再生成可能なcacheであり、Memoryの正本ではありません。
+    </p>
+  </aside>
+
+  <section id="decision">
+    <h2>採用する構成</h2>
+    <figure>
+      <pre><code>User turn / Event / Tool result
+              |
+              v
+SAAA
+  |- Event Journal ............. 観測した原記録とtool結果
+  |- Personal Memory Store ..... 嗜好、約束、個人episode、procedure overlay
+  |- Working State ............. 現在のgoal、task、未解決事項、短期状態
+  |- Tool Registry ............. 実在するtool schema、権限、version
+  `- Context Composer
+       |- SAAA Memory retrieval
+       |- ContextStill retrieval ----&gt; documents / findings / procedures
+       |- tool search / describe
+       |- conflict and policy gate
+       `- token-budgeted Context Pack
+                         |
+                         v
+LARM
+  |- identity / token budget / immutable source verification
+  |- source rebuild / exact-prefix reuse / optional session cache
+  `- bounded inference
+                         |
+                         v
+LLM response / tool call / memory proposal
+              |
+              `----&gt; SAAA write gate ----&gt; journal / memory revision</code></pre>
+      <figcaption>
+        SAAAが意味と個人状態、ContextStillが文書知識、LARMが推論資源を所有します。
+      </figcaption>
+    </figure>
+    <p>
+      SAAAは検索結果を一つの永続DBへ複製統合しません。各正本から候補を取得し、同じ候補形式へ正規化して、
+      requestごとに短命なContext Packを作ります。Context PackはMemoryではなく、あるquery時点のread
+      modelです。
+    </p>
+  </section>
+
+  <section id="ownership">
+    <h2>正本と責務</h2>
+    <table>
+      <caption>
+        情報の種類ごとの単一authoritative owner
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">情報</th>
+          <th scope="col">正本</th>
+          <th scope="col">理由</th>
+          <th scope="col">他systemでの保持</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">会話、操作、tool結果の原記録</th>
+          <td>SAAA Event Journal</td>
+          <td>利用者、session、取消、tool副作用を同じtransaction境界で扱うため</td>
+          <td>必要部分だけ短命なContext Packへ投影</td>
+        </tr>
+        <tr>
+          <th scope="row">個人の嗜好、関係、約束、訂正</th>
+          <td>SAAA Personal Memory</td>
+          <td>subject分離、UI、確認、訂正、forgetをSAAAが所有するため</td>
+          <td>ContextStillへ自動publishしない</td>
+        </tr>
+        <tr>
+          <th scope="row">現在のgoal、task、未解決事項</th>
+          <td>SAAA Working State</td>
+          <td>長期Memoryではなく実行状態であり、頻繁に変化するため</td>
+          <td>期限付きsummaryだけContextへ渡す</td>
+        </tr>
+        <tr>
+          <th scope="row">文書、source chunk、Finding、一般化procedure</th>
+          <td>ContextStill</td>
+          <td>corpus、出典、index、再処理lifecycleを既に所有するため</td>
+          <td>SAAAはversion付き参照と任意の短命cacheだけ保持</td>
+        </tr>
+        <tr>
+          <th scope="row">利用可能なtool schema、権限、version</th>
+          <td>SAAA Tool Registry／実connector manifest</td>
+          <td>自由文Memoryより実行時contractを優先する必要があるため</td>
+          <td>LLMには選択したtoolだけをrequestのtools fieldで渡す</td>
+        </tr>
+        <tr>
+          <th scope="row">toolの一般的な使い方</th>
+          <td>review済みSkill／ContextStill Procedure</td>
+          <td>schemaと説明資料を分離し、出典とversionを持たせるため</td>
+          <td>SAAAの個人procedure overlayから設定だけ上書き</td>
+        </tr>
+        <tr>
+          <th scope="row">推論用source、Active View、KV state</th>
+          <td>LARM</td>
+          <td>token budget、runtime identity、cache互換性、推論資源を検証するため</td>
+          <td>すべてsourceから再生成可能にする</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      SAAAがContextStillの文書本文をPersonal
+      Memoryとして複製したり、ContextStillが個人の会話履歴を暗黙に
+      corpus化したりしません。横断利用は<code>authority + record ID + version + digest</code>を持つ参照で行います。
+    </p>
+  </section>
+
+  <section id="memory-types">
+    <h2>SAAAで保持するMemoryの種類</h2>
+    <table>
+      <caption>
+        保存期間とprompt投入方法を混同しないための型
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">型</th>
+          <th scope="col">例</th>
+          <th scope="col">更新規則</th>
+          <th scope="col">既定のContext投入</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>working</code></th>
+          <td>現在の目的、直前のtool結果、未回答の質問</td>
+          <td>session／taskに属し、TTLまたはtask完了で失効</td>
+          <td>対象taskではrequired</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>preference</code></th>
+          <td>回答形式、生活上の嗜好、既定設定</td>
+          <td>訂正時は上書きせず新revisionでsupersede</td>
+          <td>queryに関係するときだけ</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>commitment</code></th>
+          <td>約束、期限、依頼済み事項</td>
+          <td>open、fulfilled、cancelled、overdueを明示</td>
+          <td>期限、人物、taskが関係するとき優先</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>personal-claim</code></th>
+          <td>所有物、所属、家族関係、利用環境</td>
+          <td>evidence、confidence、有効期間、反証を保持</td>
+          <td>entity一致と有効期間を満たす場合</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>personal-episode</code></th>
+          <td>過去の出来事、試行、判断と結果</td>
+          <td>原eventへの参照を必須とし、要約は再生成可能</td>
+          <td>類似問題、人物、期間に関係するとき</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>procedure-overlay</code></th>
+          <td>利用者固有のtool設定、承認済みの作業順</td>
+          <td>base procedureとtool versionへbind</td>
+          <td>該当tool／intentを選択した場合</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>knowledge-ref</code></th>
+          <td>ContextStillのFinding、文書、Procedureへのbookmark</td>
+          <td>本文を正本化せずauthority参照を更新</td>
+          <td>ContextStillから現versionを解決できた場合</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Goal、Task、World ModelはMemory recordへ押し込めず、独自の状態機械を正本にします。
+      Memoryは過去と安定した状態、Taskは実行中の義務、World
+      Modelは複数recordから構成した現在認識です。
+    </p>
+  </section>
+
+  <section id="record-model">
+    <h2>共通Memory envelope</h2>
+    <p>
+      本文だけのvector chunkを正本にせず、すべてのMemoryをversioned recordとして保存します。
+      kind固有payloadは別schemaで検証し、embedding、要約、検索indexは削除・再生成可能なprojectionにします。
+    </p>
+    <pre><code>{
+  "memoryId": "mem_...",
+  "subjectId": "local-owner-subject",
+  "kind": "preference | commitment | personal-claim | personal-episode | procedure-overlay | knowledge-ref",
+  "revision": 4,
+  "status": "active | superseded | disputed | expired | forgotten",
+  "payload": { "kindSpecific": "strict schema" },
+  "entities": ["entity:person:...", "entity:project:..."],
+  "evidence": [
+    { "authority": "saaa-event", "recordId": "evt_...", "version": 1, "digest": "sha256..." }
+  ],
+  "confidence": "asserted | observed | inferred | disputed",
+  "importance": "normal | high | critical",
+  "validFrom": "...",
+  "validTo": null,
+  "observedAt": "...",
+  "expiresAt": null,
+  "sensitivity": "normal | sensitive | restricted",
+  "retention": "session | bounded | durable | explicit-only",
+  "supersedes": "mem_...@3",
+  "createdAt": "...",
+  "updatedAt": "..."
+}</code></pre>
+    <ul>
+      <li>
+        <code>asserted</code
+        >は利用者の明示発言、<code>observed</code>は検証済みtool結果を表します。
+      </li>
+      <li>
+        <code>inferred</code>を確定事実と同じ強さで回答へ使用しません。
+      </li>
+      <li>訂正と矛盾は過去recordを破壊せず、revision、valid time、statusで表現します。</li>
+      <li>検索時刻と事実の有効時刻を分け、古い嗜好や既に完了した約束を現在形で提示しません。</li>
+      <li>
+        各書込みはidempotency keyと期待revisionを要求し、並行turnによるlost updateを防ぎます。
+      </li>
+    </ul>
+  </section>
+
+  <section id="event-journal">
+    <h2>Event JournalとMemory projection</h2>
+    <p>
+      会話やtool結果をそのまま「記憶」にしません。SAAAは最初にEvent Journalへappendし、そのeventから
+      Memory
+      candidateを抽出します。原記録と解釈結果を分けることで、抽出modelを変更してもMemoryを再評価でき、
+      誤った要約だけを訂正できます。
+    </p>
+    <figure>
+      <pre><code>conversation / tool result / user correction
+  -&gt; append immutable event
+  -&gt; deterministic candidate extraction + optional LLM proposal
+  -&gt; write policy
+       |- transient -----------------&gt; Working State + TTL
+       |- explicit remember --------&gt; durable Memory revision
+       |- verified observation -----&gt; typed Memory revision
+       |- model inference ----------&gt; pending candidate
+       `- sensitive / ambiguous ----&gt; user confirmation
+  -&gt; index projections
+  -&gt; later consolidation / contradiction check</code></pre>
+      <figcaption>LLMはMemoryを書き込まず、候補を提案し、SAAAのpolicyがcommitします。</figcaption>
+    </figure>
+  </section>
+
+  <section id="write-policy">
+    <h2>覚えるものを決めるWrite Gate</h2>
+    <table>
+      <caption>
+        情報源ごとの既定動作
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力</th>
+          <th scope="col">既定動作</th>
+          <th scope="col">禁止事項</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">「覚えて」「今後は」の明示指示</th>
+          <td>scope、kind、sensitivityを検査して即時commitし、receiptを返す</td>
+          <td>曖昧な対象範囲を勝手に拡張しない</td>
+        </tr>
+        <tr>
+          <th scope="row">利用者による訂正</th>
+          <td>既存recordをsupersedeし、新revisionをactiveにする</td>
+          <td>古いrecordを検索結果へactiveとして混在させない</td>
+        </tr>
+        <tr>
+          <th scope="row">検証済みtool観測</th>
+          <td>tool identityと結果digestをevidenceにして、許可されたkindだけcommit</td>
+          <td>失敗、部分結果、取消後の遅延結果を成功事実として保存しない</td>
+        </tr>
+        <tr>
+          <th scope="row">会話からの暗黙推定</th>
+          <td>pending candidateまたは短いTTL。再観測か利用者確認で昇格</td>
+          <td>性格、健康、信条など高影響の推測を自動確定しない</td>
+        </tr>
+        <tr>
+          <th scope="row">一時的な作業情報</th>
+          <td>Working Stateへ保存し、task終了時に破棄またはepisode候補へ要約</td>
+          <td>長期Memoryへ無条件に移送しない</td>
+        </tr>
+        <tr>
+          <th scope="row">ContextStill検索結果</th>
+          <td>そのturnで利用し、必要ならknowledge-refだけをbookmark</td>
+          <td>検索結果本文を個人Memoryの新しい事実として複製しない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      「再利用価値がある」「十分安定している」「出典がある」「保存してよい」の四条件を満たさない候補は、
+      長期Memoryへ昇格させません。Memory件数の多さではなく、誤記憶をContextへ入れないprecisionを優先します。
+    </p>
+  </section>
+
+  <section id="retrieval">
+    <h2>RetrievalとContext Composer</h2>
+    <p>
+      各turnでSAAAがqueryからintent、entity、time、task、必要tool
+      capabilityを抽出し、三経路を並行検索します。
+      最初から全Memoryをpromptへ入れず、明らかな候補だけprefetchし、追加情報が必要ならLLMが検索toolを呼びます。
+    </p>
+    <ol>
+      <li>現在のsubject、session、task、取消epochを固定する。</li>
+      <li>Working Stateから現在goal、open commitment、直前のtool結果を取得する。</li>
+      <li>SAAA Memoryをkeyword、entity、time、必要ならembeddingで検索する。</li>
+      <li>ContextStillを文書scope、source、期間、knowledge kind付きで検索する。</li>
+      <li>Tool Registryをcapabilityで検索し、実在するtoolの最新schemaだけを取得する。</li>
+      <li>権限、subject、forget tombstone、valid time、status、tool versionでhard filterする。</li>
+      <li>
+        authority、query relevance、entity一致、freshness、confidence、task continuity、token
+        costでrerankする。
+      </li>
+      <li>同じclaimの重複をまとめ、矛盾するrecordは隠さず一つのconflict setとして扱う。</li>
+      <li>
+        required itemを先に置き、optional itemをtoken budgetへpackしてContext Packを確定する。
+      </li>
+    </ol>
+    <p>
+      vector類似度を単独の真理判定に使いません。識別子一致、現在task、時間、authority、利用者の訂正を
+      semantic similarityより強いsignalとして扱います。初期実装では検索経路ごとの上位候補を統合する
+      rank fusionで十分であり、学習済みrerankerは評価集合ができてから導入します。
+    </p>
+  </section>
+
+  <section id="context-pack">
+    <h2>Context Pack contract</h2>
+    <p>
+      Context PackはSAAAが一回の推論用に生成するimmutable manifestです。本文だけでなく、出典、型、
+      version、digest、選択理由、token見積りを持ちます。LARMへ渡すときは選択itemをimmutable
+      sourceとして provisionし、既存Context
+      Viewの<code>required</code>と<code>utility</code>へ写像できます。
+    </p>
+    <pre><code>{
+  "schemaVersion": "saaa-context-pack.v1",
+  "packId": "cp_...",
+  "subjectDigest": "sha256...",
+  "queryDigest": "sha256...",
+  "taskId": "task_...",
+  "asOf": "...",
+  "budgets": {
+    "maxInputTokens": 225280,
+    "reservedOutputTokens": 32768,
+    "memoryTokens": 24000,
+    "knowledgeTokens": 48000,
+    "toolTokens": 12000
+  },
+  "items": [{
+    "authority": "saaa-memory | contextstill | tool-registry",
+    "recordId": "...",
+    "version": "...",
+    "digest": "sha256...",
+    "kind": "...",
+    "required": false,
+    "utility": 0.82,
+    "confidence": "asserted",
+    "validAt": "...",
+    "tokenEstimate": 640,
+    "rendering": "data-block"
+  }],
+  "omitted": [{ "recordId": "...", "reason": "budget | stale | unauthorized | superseded" }]
+}</code></pre>
+    <p>Context内は次の境界を守ります。</p>
+    <ol>
+      <li>system policy、tool schema、Memory／Knowledge本文を別sectionにする。</li>
+      <li>MemoryとContextStill本文は原則として命令ではなくdataとして包装する。</li>
+      <li>
+        実tool schemaはMemory本文から復元せず、requestの<code>tools</code>
+        fieldへ渡す。
+      </li>
+      <li>重要recordを長い文書中へ埋めず、短いtyped summaryとevidence参照を併記する。</li>
+      <li>回答がMemoryに依存した場合、UIや内部traceから根拠recordへ戻れるようにする。</li>
+    </ol>
+  </section>
+
+  <section id="tool-memory">
+    <h2>Toolの使い方を覚える仕組み</h2>
+    <p>
+      Tool
+      Memoryは一枚の自由文ではなく、実行contract、review済みprocedure、個人overlay、実行履歴を分離します。
+      古いprocedureが最新schemaを上書きすると危険なため、次の優先順位を固定します。
+    </p>
+    <ol>
+      <li>
+        <strong>Tool Registry:</strong> tool名、JSON Schema、権限、side
+        effect、version、availabilityの正本。
+      </li>
+      <li>
+        <strong>Trusted Procedure:</strong> intent、前提条件、手順、成功条件、rollback、対応tool
+        version。
+      </li>
+      <li>
+        <strong>Personal Overlay:</strong> 利用者固有の既定値、承認規則、保存先。base
+        procedureを参照する。
+      </li>
+      <li>
+        <strong>Execution Ledger:</strong>
+        実行request、result、取消、失敗分類。学習材料であり直接の命令ではない。
+      </li>
+    </ol>
+    <p>
+      実行時は<code>tool.search(intent)</code>で候補を探し、<code>tool.describe(id)</code>で最新schemaを取得し、
+      対応versionのprocedureとoverlayだけをContextへ加えます。LLMが提案した未review手順や、ContextStillの未信頼文書を、
+      side effectのある自動実行権限へ昇格させません。
+    </p>
+  </section>
+
+  <section id="contextstill-integration">
+    <h2>ContextStillとの統合境界</h2>
+    <p>
+      ContextStillはdocument、chunk、Finding、Episode、Procedureとそのprovenanceを所有します。SAAAは
+      <code>KnowledgeProvider</code>
+      adapterを通して検索し、結果を共通Candidateへ変換します。
+    </p>
+    <pre><code>KnowledgeProvider.search({
+  query,
+  kinds,
+  sourceScopes,
+  entityIds,
+  validAt,
+  limit
+}) -&gt; [{
+  authority,
+  recordId,
+  version,
+  digest,
+  kind,
+  text,
+  sourceRefs,
+  score,
+  validFrom,
+  validTo
+}]</code></pre>
+    <ul>
+      <li>
+        SAAAのpersonal claimとContextStillのFindingが一致しても、一つのrecordへmergeしません。
+      </li>
+      <li>
+        個人固有の注釈はSAAAの<code>knowledge-ref</code>またはoverlayとして保存します。
+      </li>
+      <li>
+        一般化できるprocedureをSAAAからContextStillへ送る場合は、明示publish、個人情報除去、reviewを要求します。
+      </li>
+      <li>
+        ContextStillのrecord更新・削除時はversionまたはdigest不一致でSAAAのbookmark
+        cacheを失効させます。
+      </li>
+      <li>
+        ContextStill停止時もSAAAの個人Memory、Working State、tool
+        schemaだけで縮退動作できるようにします。
+      </li>
+    </ul>
+  </section>
+
+  <section id="consolidation">
+    <h2>ConsolidationとDream処理</h2>
+    <p>
+      背景consolidationはMemoryの正しさに必須の同期処理にしません。foreground writeは常にEvent
+      Journalと typed Memoryだけで完了し、idle時に次のbounded jobを一件ずつ実行します。
+    </p>
+    <ul>
+      <li>重複候補のcluster化と既存recordへのevidence追加。</li>
+      <li>期限切れWorking Stateのepisode候補化または破棄。</li>
+      <li>矛盾、古いtool version、未完了commitmentの検出。</li>
+      <li>長いepisodeの短いretrieval summary生成。</li>
+      <li>FTS、embedding、entity link projectionの差分再構築。</li>
+    </ul>
+    <p>
+      LLMが生成したsummaryやrelationはpending
+      projectionとしてschema、evidence、対象revisionを検証してからpublishします。
+      foregroundが始まればjobをcancelまたは延期し、古いepochの結果をcommitしません。
+    </p>
+  </section>
+
+  <section id="forget">
+    <h2>訂正、Retention、Forget</h2>
+    <ol>
+      <li>forget対象をMemory ID、event範囲、subject、source参照のいずれかで解決する。</li>
+      <li>
+        SAAAへtombstoneと単調増加data epochを先にcommitし、新しいContext Packへの採用を止める。
+      </li>
+      <li>
+        Memory record、event payload、summary、embedding、FTS、entity
+        link、短命cacheを依存indexから除去する。
+      </li>
+      <li>
+        Personal StateとしてLARMへ配送済みなら既存の多層forget
+        operationを実行し、source、View、slot、snapshot、auditのabsenceを確認する。
+      </li>
+      <li>
+        ContextStillが個人sourceの正本を所有する場合だけ、認可されたdeleteを依頼する。共有知識なら参照だけを切る。
+      </li>
+      <li>応答紛失後も同じforget IDで再照会し、全phaseがabsenceになるまで完了扱いにしない。</li>
+    </ol>
+    <p>
+      provenance維持のために必要な最小tombstoneは本文、entity、自由文を含めず、再作成を拒否するtarget
+      digest、 fence
+      epoch、完了状態だけを保持します。単なる検索index削除をforget完了とはみなしません。
+    </p>
+  </section>
+
+  <section id="storage">
+    <h2>初期storage構成</h2>
+    <p>
+      SAAA側は最初から別graph DBや分散vector DBを導入せず、単一owner向けSQLiteを正本にします。
+      metadataと小さいtextはSQLite、巨大なimmutable payloadだけcontent-addressed local
+      blobへ分離します。
+    </p>
+    <table>
+      <caption>
+        最小の永続tableとprojection
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">分類</th>
+          <th scope="col">内容</th>
+          <th scope="col">正本か</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>events</code></th>
+          <td>append-only envelope、payload参照、subject、session、attempt、timestamp</td>
+          <td>正本</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <code>memories</code>／<code
+              >memory_revisions</code
+            >
+          </th>
+          <td>typed payload、valid time、status、retention、sensitivity</td>
+          <td>正本</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <code>evidence_links</code>／<code
+              >entity_links</code
+            >
+          </th>
+          <td>record間の出典とentity関係</td>
+          <td>evidence linkは正本、検索用linkは再生成可能</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <code>working_state</code>／<code>commitments</code>
+          </th>
+          <td>task状態、期限、完了状態、TTL</td>
+          <td>正本</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <code>knowledge_refs</code>／<code>tool_overlays</code>
+          </th>
+          <td>外部authorityのversion付き参照と個人設定</td>
+          <td>SAAA固有部分だけ正本</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <code>fts_projection</code>／<code>embedding_projection</code>
+          </th>
+          <td>検索用textとvector</td>
+          <td>再生成可能</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <code>outbox</code>／<code>tombstones</code>
+          </th>
+          <td>ContextStill・LARM連携の再送とforget fence</td>
+          <td>正本</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      初期検索はSQLite FTS、entity、time
+      filterを中心にします。embeddingは精度評価後に追加し、規模がSQLiteの bounded
+      scanを越えた場合だけ専用vector indexを導入します。vector DBを導入してもMemory
+      recordの正本にはしません。
+    </p>
+  </section>
+
+  <section id="failure">
+    <h2>縮退とFailure policy</h2>
+    <table>
+      <caption>
+        一部systemが利用できない場合の挙動
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">障害</th>
+          <th scope="col">動作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ContextStill停止</th>
+          <td>個人Memory、Working State、Tool Registryだけで継続し、知識検索不足を明示する</td>
+        </tr>
+        <tr>
+          <th scope="row">embedding index停止</th>
+          <td>FTS、entity、time検索へfallbackし、Memory自体は利用可能にする</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM Managed Context停止</th>
+          <td>SAAAがboundedなContext Pack本文を通常Chat requestへ直接含める</td>
+        </tr>
+        <tr>
+          <th scope="row">KV snapshot miss／破損</th>
+          <td>source rebuildへfallbackし、回答の意味を変えない</td>
+        </tr>
+        <tr>
+          <th scope="row">矛盾Memory</th>
+          <td>一方を暗黙採用せず、authorityとvalid timeで解決できなければ利用者へ確認する</td>
+        </tr>
+        <tr>
+          <th scope="row">write結果不明</th>
+          <td>同じidempotency keyで照会し、新しいMemory IDを発行して再実行しない</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="evaluation">
+    <h2>評価指標</h2>
+    <p>
+      cache hit率や保存量だけでMemory品質を評価しません。同じtask集合でMemoryなし、SAAA Memoryのみ、
+      ContextStill併用、KV cache併用を比較します。
+    </p>
+    <ul>
+      <li>
+        <strong>Recall:</strong> 必要なMemory／KnowledgeがContext
+        Packまたは検索toolで取得された割合。
+      </li>
+      <li><strong>Precision:</strong> 取得したitemのうち回答やtool選択に実際に必要だった割合。</li>
+      <li><strong>Staleness:</strong> superseded、期限切れ、古いtool versionを利用した件数。</li>
+      <li>
+        <strong>Contradiction handling:</strong>
+        矛盾を黙って一方へ固定せず、正しく解決・確認できた割合。
+      </li>
+      <li>
+        <strong>Write precision:</strong> 自動commitしたMemoryのうち利用者訂正や削除を受けた割合。
+      </li>
+      <li><strong>Tool success:</strong> schema違反、誤tool選択、不要なside effect、retry回数。</li>
+      <li>
+        <strong>Context cost:</strong> injected tokens、TTFT、prefill時間、回答品質当たりのtoken数。
+      </li>
+      <li>
+        <strong>Forget completeness:</strong> tombstone後の再採用0件と、全projection／LARM
+        replicaのabsence。
+      </li>
+      <li><strong>Provenance:</strong> Memory依存claimから有効なevidenceへ辿れる割合。</li>
+    </ul>
+  </section>
+
+  <section id="rollout">
+    <h2>実装順序</h2>
+    <ol>
+      <li>
+        <strong>M0: contract。</strong> Memory kind、record envelope、authority reference、Context
+        Pack、 forget target、tool registry境界を固定する。
+      </li>
+      <li>
+        <strong>M1: SAAA最小Memory。</strong> SQLite Event Journal、typed Memory、Working
+        State、FTS、 明示remember／correct／forget、read UIを実装する。
+      </li>
+      <li>
+        <strong>M2: Retrieval。</strong> entity・time・FTS検索、conflict set、budgeted Context
+        Composer、 <code>memory.search</code>／<code
+          >memory.get</code
+        >
+        toolを実装する。
+      </li>
+      <li>
+        <strong>M3: ContextStill連携。</strong> KnowledgeProvider
+        adapter、version付きknowledge-ref、 source citation、停止時fallbackを実装する。
+      </li>
+      <li>
+        <strong>M4: Tool Memory。</strong> tool search／describe、review済みprocedure、personal
+        overlay、 execution ledgerからの候補抽出を実装する。
+      </li>
+      <li>
+        <strong>M5: 安全な自動記憶。</strong> pending candidate、重複・矛盾検出、sensitivity
+        policy、 bounded consolidationをshadow評価してから有効化する。
+      </li>
+      <li>
+        <strong>M6: 推論最適化。</strong> source rebuildをbaselineに、RAM prefix cacheとsession
+        snapshotが task成功率を変えずTTFTを改善すると実測できた場合だけ有効化する。
+      </li>
+    </ol>
+    <aside>
+      <p>
+        最初の利用可能版はM1からM3です。graph DB、巨大vector DB、自律Dream Cycle、512
+        GiB超のKV保存は 初期Memory systemの成立条件ではありません。
+      </p>
+    </aside>
+  </section>
+
+  <section id="non-goals">
+    <h2>非目標</h2>
+    <ul>
+      <li>全会話と全Knowledgeを毎turnのpromptへ投入すること。</li>
+      <li>SAAAとContextStillのDBを双方向同期して同じ事実の正本を二つ作ること。</li>
+      <li>embedding類似度だけで事実性、重要度、保存可否を決めること。</li>
+      <li>LLMへ無検証のMemory書込み権限やtool実行権限を与えること。</li>
+      <li>KV snapshotをLong-term Memory、forget保証、knowledge sourceの代替にすること。</li>
+      <li>background consolidationが停止するとforeground会話も停止する構成にすること。</li>
+    </ul>
+  </section>
+
+  <section id="conclusion">
+    <h2>結論</h2>
+    <p>
+      構築すべきものは巨大なKV Memoryではなく、SAAAを中心とする
+      <strong>provenance-aware Context Composer</strong
+      >です。SAAAは個人Memoryと現在状態、ContextStillは 文書Knowledge、Tool
+      Registryは実行contract、LARMはbounded inferenceとcacheを所有します。
+      この分離により、必要なときだけ必要な情報へattention可能なContextを作りながら、訂正、出典、権限、forget、
+      tool versionを失わずに運用できます。
+    </p>
+  </section>
+</article>

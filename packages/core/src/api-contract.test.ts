@@ -86,6 +86,21 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(paths["/v2/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v3/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v1/embed"]?.post?.security).toEqual([{ providerBearer: [] }]);
+  expect(paths["/v1/context-sources"]?.post?.security).toEqual([{ providerBearer: [] }]);
+  const sourceRequestBody = paths["/v1/context-sources"]?.post?.requestBody as
+    | { content?: Record<string, unknown> }
+    | undefined;
+  expect(sourceRequestBody?.content).toHaveProperty(
+    "text/plain; charset=utf-8",
+  );
+  expect(paths["/v2/context-views/{id}"]?.get?.security).toEqual([{ providerBearer: [] }]);
+  expect(paths["/v1/contexts"]?.post?.security).toEqual([
+    { bearerAuth: [] },
+    { providerBearer: [] },
+  ]);
+  expect(paths["/v2/context-views"]?.post?.parameters).toBeDefined();
+  expect(document.components.schemas.PersonalStateCapability).toBeDefined();
+  expect(document.components.schemas.ForgetOperation).toBeDefined();
   expect(JSON.stringify(paths["/v1/embed"]?.post?.requestBody))
     .toContain("#/components/schemas/EmbeddingRequest");
   expect(paths["/v1/activity"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);

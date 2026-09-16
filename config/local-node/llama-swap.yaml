@@ -184,6 +184,93 @@ models:
     aliases:
       - qwen3.5-2b-decision
       - decision-default
+      - backchannel-qwen35-2b
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
+  lfm25-backchannel-jp:
+    # LARM owns lifecycle through the SAAA Agent Connection. Do not let the
+    # proxy's independent idle timer evict this model while that connection is
+    # being renewed; LARM still unloads it after release or expiry.
+    ttl: 0
+    filters:
+      setParams:
+        temperature: 0
+        top_p: 1
+        max_tokens: 16
+        response_format:
+          type: json_schema
+          json_schema:
+            name: backchannel_decision
+            strict: true
+            schema:
+              type: object
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - ack
+                    - defer
+              required:
+                - kind
+              additionalProperties: false
+    cmd: >
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
+      -m /srv/ai/models/lfm25-1.2b-jp/LFM2.5-1.2B-JP-Q4_K_M.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --flash-attn on
+      --ctx-size 4096
+      --parallel 1
+      --batch-size 512
+      --ubatch-size 512
+      --threads 16
+      --poll 100
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning off
+      --temp 0
+      --top-p 1
+      --repeat-penalty 1.05
+      --jinja
+      --metrics
+      --no-webui
+    aliases:
+      - backchannel-lfm25-jp-1.2b
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
+  gemma3-backchannel:
+    cmd: >
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
+      -m /srv/ai/models/gemma3-1b-it/gemma-3-1b-it-Q4_K_M.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --flash-attn on
+      --ctx-size 4096
+      --parallel 1
+      --batch-size 512
+      --ubatch-size 512
+      --threads 16
+      --poll 100
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning off
+      --temp 0
+      --top-p 1
+      --jinja
+      --metrics
+      --no-webui
+    aliases:
+      - backchannel-gemma3-1b
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
@@ -339,6 +426,13 @@ groups:
     exclusive: false
     members:
       - qwen35-decision
+
+  backchannel-llm-slot:
+    swap: true
+    exclusive: false
+    members:
+      - lfm25-backchannel-jp
+      - gemma3-backchannel
 
   qwen-worker-slot:
     swap: true

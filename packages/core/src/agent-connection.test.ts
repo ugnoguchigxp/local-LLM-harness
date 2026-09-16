@@ -22,11 +22,15 @@ test("production agent profiles compile to strict protocol-aware provider contra
   expect(catalog.profiles.map((profile) => profile.id)).toEqual([
     "asr-qwen",
     "coding-default",
+    "contextstill-backchannel-gemma3-1b",
+    "contextstill-backchannel-lfm25-jp-1.2b",
+    "contextstill-backchannel-qwen35-2b",
     "contextstill-background",
     "contextstill-decision-default-canary",
     "contextstill-embedding",
     "deep-reasoning-35b",
     "nightworker-background",
+    "saaa-backchannel-default",
     "saaa-qwen38-kv-mem",
     "tts-default",
     "tts-expressive",
@@ -96,6 +100,41 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "llm-inference",
       }],
     });
+  for (const [profileId, route, publicModel] of [
+    ["contextstill-backchannel-qwen35-2b", "llm-backchannel-qwen35-2b", "backchannel-qwen35-2b"],
+    ["contextstill-backchannel-lfm25-jp-1.2b", "llm-backchannel-lfm25-jp-1.2b", "backchannel-lfm25-jp-1.2b"],
+    ["contextstill-backchannel-gemma3-1b", "llm-backchannel-gemma3-1b", "backchannel-gemma3-1b"],
+  ] as const) {
+    expect(catalog.profiles.find((profile) => profile.id === profileId)).toMatchObject({
+      selectionPolicy: "explicit-only",
+      schedulingPriority: 1000,
+      providers: [{
+        name: "backchannel",
+        capability: "llm.backchannel.classifier",
+        supportedCapabilities: ["llm.backchannel.classifier"],
+        route,
+        protocol: "openai.chat-completions.v1",
+        publicModel,
+        readiness: "llm-inference",
+      }],
+    });
+  }
+  expect(catalog.profiles.find((profile) => profile.id === "saaa-backchannel-default"))
+    .toMatchObject({
+      canonicalProfile: "saaa-backchannel-default",
+      selectionPolicy: "explicit-only",
+      deprecated: false,
+      schedulingPriority: 3000,
+      providers: [{
+        name: "backchannel",
+        capability: "llm.backchannel.classifier",
+        supportedCapabilities: ["llm.backchannel.classifier"],
+        route: "llm-backchannel-default",
+        protocol: "openai.chat-completions.v1",
+        publicModel: "backchannel-default",
+        readiness: "llm-inference",
+      }],
+    });
   expect(catalog.profiles.find((profile) => profile.id === "saaa-qwen38-kv-mem"))
     .toMatchObject({
       canonicalProfile: "saaa-qwen38-kv-mem",
@@ -157,6 +196,13 @@ test("production agent profiles compile to strict protocol-aware provider contra
       route: "llm-decision-default",
       schedulingPriority: 1000,
       profileIds: ["contextstill-decision-default-canary"],
+    });
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "backchannel-default"))
+    .toMatchObject({
+      capability: "llm.backchannel.classifier",
+      route: "llm-backchannel-default",
+      schedulingPriority: 3000,
+      profileIds: ["saaa-backchannel-default"],
     });
   expect(getOpenAiModel(
     createOpenAiModelCatalog(catalog),
