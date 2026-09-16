@@ -439,6 +439,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   }
 
   let body: RequestInit["body"];
+  let expectedSpeechFormat = options.expectedSpeechFormat;
   try {
     if (options.requestBody) {
       if (options.bodyMode !== "buffered") {
@@ -470,6 +471,17 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         );
       }
       body = await options.prepareRequestBody(body, abort.signal);
+    }
+    if (
+      options.protocol === "openai.audio-speech.v1"
+      && expectedSpeechFormat === undefined
+      && body instanceof Uint8Array
+    ) {
+      const speech = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown;
+      if (speech && typeof speech === "object" && !Array.isArray(speech)) {
+        const format = (speech as Record<string, unknown>).response_format;
+        if (typeof format === "string") expectedSpeechFormat = format;
+      }
     }
   } catch (error) {
     if (timedOut) {
@@ -706,7 +718,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     && upstream.ok
     && !isOpenAiSpeechMediaType(
       upstream.headers.get("content-type") ?? "",
-      options.expectedSpeechFormat,
+      expectedSpeechFormat,
     )
   ) {
     await upstream.body?.cancel(new Error("upstream returned the wrong audio format")).catch(() => undefined);
@@ -736,6 +748,16 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     if (value !== null) {
       responseHeaders.set(name, value);
     }
+  }
+  if (
+    options.validateSpeechResponse
+    && options.protocol === "openai.audio-speech.v1"
+    && upstream.ok
+    && expectedSpeechFormat?.toLowerCase() === "pcm"
+  ) {
+    responseHeaders.set("content-type", "audio/pcm;rate=24000;channels=1;format=s16le");
+    responseHeaders.set("x-audio-sample-rate", "24000");
+    responseHeaders.set("x-audio-sample-format", "s16le");
   }
   if (!responseHeaders.has("content-type")) {
     responseHeaders.set("content-type", "application/json");

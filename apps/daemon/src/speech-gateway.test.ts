@@ -395,6 +395,25 @@ test("standard Bearer speech accepts parameterized PCM media types", async () =>
   expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([0, 1]));
 });
 
+test("standard Bearer speech supplies the fixed PCM metadata when upstream omits it", async () => {
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async () => new Response(new Uint8Array([0, 0, 1, 0]), {
+      headers: { "content-type": "audio/pcm" },
+    }),
+  });
+  const response = await app.request("/v1/audio/speech", {
+    method: "POST",
+    headers: { authorization: "Bearer control-token", "content-type": "application/json" },
+    body: JSON.stringify({ model: "voicevox-core", input: "test", response_format: "pcm" }),
+  });
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toBe("audio/pcm;rate=24000;channels=1;format=s16le");
+  expect(response.headers.get("x-audio-sample-rate")).toBe("24000");
+  expect(response.headers.get("x-audio-sample-format")).toBe("s16le");
+  expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([0, 0, 1, 0]));
+});
+
 test("STT gateway streams multipart bytes to the allocated transcription runtime", async () => {
   let target = "";
   let uploaded = "";
