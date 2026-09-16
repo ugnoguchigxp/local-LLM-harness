@@ -25,7 +25,7 @@ ExecStart=/srv/ai/apps/q38rocm/run_server.sh \
   --draft-n 2 \
   --draft-p 0.0 \
   --batch 2048 \
-  --ubatch 1024 \
+  --ubatch 512 \
   --kv-k q8_0 \
   --kv-v q8_0 \
   --temp 0.2 \

@@ -197,7 +197,7 @@ bun run smoke:http-provider-live</code></pre>
         client固有の transport timeoutは無効化し、明示した最大3,600秒のdeadlineだけを適用する。
       </li>
       <li>
-        resident Qwenはstrict MTP、<code>ubatch=1024</code>、q8_0/q8_0
+        resident Qwenはstrict MTP、<code>ubatch=512</code>、q8_0/q8_0
         KVとし、named tool、厳密literal、
         100万文字以上の長文はrequest単位でspeculationを無効化する。厳密literal要求は同値なGBNF制約へ変換する。
       </li>

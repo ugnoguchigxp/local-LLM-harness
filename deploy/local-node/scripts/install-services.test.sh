@@ -179,6 +179,7 @@ fi
 rm "${credential}"
 printf '%s\n' "${initial_credential}" >"${credential}"
 unit_target="${test_root}/etc/systemd/system/llama-server.service"
+grep -F -- "--ubatch 512" "${unit_target}" >/dev/null
 unit_redirect="${test_root}/unit-redirect"
 printf 'unchanged unit target\n' >"${unit_redirect}"
 rm "${unit_target}"
