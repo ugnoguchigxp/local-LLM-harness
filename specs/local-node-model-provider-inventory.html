@@ -1,0 +1,452 @@
+<article lang="ja">
+  <h1>local-node モデル資産・Provider準備状況一覧</h1>
+
+  <dl>
+    <dt>棚卸日</dt>
+    <dd><time>2026-09-16</time></dd>
+    <dt>Repository基準</dt>
+    <dd><code>da0566cc94114efd610186d8d91d6ac356918603</code></dd>
+    <dt>稼働release</dt>
+    <dd><code>e69dc6eaed706ff53a65ace5b0365b0a4758e67d</code></dd>
+    <dt>モデルstore</dt>
+    <dd><code>/srv/ai/models</code>、使用量約205 GiB</dd>
+  </dl>
+
+  <p>
+    この文書は、local-nodeに存在するモデルweightと、LARMからProviderとして要求できる状態を一枚で
+    見渡すためのpoint-in-time棚卸である。weight本体はsource-only repositoryへcommitせず、
+    <code>/srv/ai/models</code
+    >に置く。固定revision、byte数、digestの正本は、登録済みartifactについては
+    <code>deploy/local-node/models.yaml</code>とする。
+  </p>
+
+  <p>
+    棚卸時点では、LLM 10構成と音声・Embedding
+    5構成がProvider準備済みである。これとは別に、7モデル群が
+    ダウンロード済み・未Provider化、2つの大規模LLM weightが評価stagingにある。
+  </p>
+
+  <section id="status-definition">
+    <h2>状態の定義</h2>
+    <dl>
+      <dt>Provider準備済み</dt>
+      <dd>
+        必要artifactが存在し、Runtime、model releaseまたは外部runtime
+        bundle、routeがRepositoryに定義されている。 Agent
+        Profileがある場合は公開model名も併記する。現在processがHOTであることや、直近canaryの合格を
+        意味しない。
+      </dd>
+      <dt>ダウンロード済み・未Provider化</dt>
+      <dd>
+        完全なweightまたはsnapshotは存在するが、Runtime、release、routeのいずれかがなく、通常requestからは
+        選択できない。
+      </dd>
+      <dt>評価staging</dt>
+      <dd>
+        <code>.larm-staging</code>内に比較試験用資産があるが、production
+        catalogや公開routeへ採用していない。
+      </dd>
+      <dt>補助artifact</dt>
+      <dd>MTP draft、speech tokenizer、templateなど、単独Providerにはならない資産。</dd>
+    </dl>
+    <aside>
+      <p>
+        「Provider準備済み」と「既定」は異なる。例えばQwen 3.8
+        ROCmFP4はRuntimeとreleaseを維持しているが、
+        SAAAや通常LLMの既定profileからは外れている。また、llama-swap配下のモデルは要求時だけ起動し、解放後に
+        COLDへ戻り得る。
+      </p>
+    </aside>
+  </section>
+
+  <section id="provider-ready-llm">
+    <h2>Provider準備済みLLM</h2>
+    <table>
+      <caption>
+        artifactから公開選択経路まで揃っているLLM
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル・形式</th>
+          <th scope="col">Runtime／release</th>
+          <th scope="col">選択経路</th>
+          <th scope="col">位置付け</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen 3.8 27B Q4_0 + Q4_0 MTP</th>
+          <td>
+            <code>qwen-worker-fast</code>／<code
+              >qwen-worker-fast-current</code
+            >
+          </td>
+          <td>
+            <code>llm-default</code
+            >、<code>llm-saaa-qwen38</code>、<code>llm-agent-worker</code>、
+            <code>llm-speed</code
+            >。公開名<code>coding-default</code>、<code>qwen3.8</code>、
+            <code>qwen-agent-worker</code>
+          </td>
+          <td><strong>標準</strong>。128K、MTP付き、llama-swap on-demand</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.8 27B UD-Q4_K_XL + Q4_0 MTP</th>
+          <td>
+            <code>qwen-worker-agent</code>／<code
+              >qwen-worker-agent-current</code
+            >
+          </td>
+          <td><code>llm-agent-worker</code> fallback</td>
+          <td>品質寄りworker。明示primaryではない</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.8 27B EfficientThink Q3-LynnStyle + MTP</th>
+          <td>
+            <code>qwen-worker-agent-efficientthink</code>／
+            <code>qwen-worker-agent-efficientthink-v1</code>
+          </td>
+          <td><code>llm-agent-worker</code> fallback</td>
+          <td>派生候補。標準worker障害時の第三候補</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.8 27B ROCmFP4 FAST</th>
+          <td>
+            <code>qwen-general</code>／<code
+              >qwen-general-current</code
+            >
+          </td>
+          <td>
+            <code>llm-35b</code
+            >、<code>llm-35b-speed</code>、<code
+              >llm-agent-35b</code
+            >
+            fallback
+          </td>
+          <td>Runtimeは維持。通常・SAAA profileでは不採用</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.5 2B Q4_K_M</th>
+          <td>
+            <code>qwen35-decision</code>／<code
+              >qwen35-decision-current</code
+            >
+          </td>
+          <td>
+            <code>llm-decision-default</code
+            >、<code>llm-backchannel-qwen35-2b</code>。公開名
+            <code>decision-default</code>、<code
+              >backchannel-qwen35-2b</code
+            >
+          </td>
+          <td>小型decision Provider。backchannelは比較baseline</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM2.5 1.2B JP Q4_K_M</th>
+          <td>
+            <code>lfm25-backchannel-jp</code>／<code
+              >lfm25-backchannel-jp-current</code
+            >
+          </td>
+          <td>
+            <code>llm-backchannel-default</code>。公開名<code
+              >backchannel-default</code
+            >
+          </td>
+          <td>
+            <strong>SAAA backchannel標準</strong
+            >。短い<code>ack</code>／<code>defer</code>判定
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Gemma 3 1B IT Q4_K_M</th>
+          <td>
+            <code>gemma3-backchannel</code>／<code
+              >gemma3-backchannel-current</code
+            >
+          </td>
+          <td>
+            <code>llm-backchannel-gemma3-1b</code>、公開名<code
+              >backchannel-gemma3-1b</code
+            >
+          </td>
+          <td>明示比較候補。既定ではない</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.6 35B-A3B UD-Q4_K_M</th>
+          <td>
+            <code>qwen36-35b</code>／<code
+              >qwen36-35b-current</code
+            >
+          </td>
+          <td>
+            <code>llm-qwen36-35b</code> primary、<code
+              >llm-35b</code
+            >
+            fallback
+          </td>
+          <td>明示選択35B比較Provider</td>
+        </tr>
+        <tr>
+          <th scope="row">Ornith 1.5 35B-A3B Q5_K_M</th>
+          <td>
+            <code>ornith15-35b</code>／<code
+              >ornith15-35b-current</code
+            >
+          </td>
+          <td><code>llm-35b</code> primary</td>
+          <td>35B品質profile</td>
+        </tr>
+        <tr>
+          <th scope="row">Ornith 1.5 35B ROCmFP4 STRIX_LEAN</th>
+          <td>
+            <code>ornith15-35b-speed</code
+            >、<code>ornith15-35b-agent</code>／対応するcurrent release
+          </td>
+          <td>
+            <code>llm-35b-speed</code>、<code
+              >llm-agent-35b</code
+            >
+            primary
+          </td>
+          <td>35B速度・agent profile</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="provider-ready-other">
+    <h2>Provider準備済み音声・Embedding</h2>
+    <table>
+      <caption>
+        LLM以外の利用可能なProvider構成
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">機能・モデル</th>
+          <th scope="col">Runtime／release</th>
+          <th scope="col">route・公開名</th>
+          <th scope="col">備考</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">STT: Whisper large-v3-turbo Q5_0</th>
+          <td>
+            <code>whisper-asr</code>／<code
+              >whisper-asr-trial</code
+            >
+          </td>
+          <td><code>stt-default</code> primary</td>
+          <td>whisper.cpp HIP backend</td>
+        </tr>
+        <tr>
+          <th scope="row">STT: Qwen3-ASR 1.7B</th>
+          <td>
+            <code>qwen-asr</code>／<code
+              >qwen-asr-current</code
+            >
+          </td>
+          <td>
+            <code>stt-qwen</code>、公開名<code
+              >qwen3-asr-1.7b</code
+            >
+          </td>
+          <td>SAAA profileのASR</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS: VOICEVOX</th>
+          <td><code>voicevox-tts</code>／外部runtime bundle</td>
+          <td>
+            <code>tts-default</code>、公開名<code
+              >voicevox-core</code
+            >
+          </td>
+          <td>model manifestではなくruntime sourceで管理</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS: Qwen3-TTS 0.6B CustomVoice</th>
+          <td>
+            <code>qwen-tts</code>／<code
+              >qwen-tts-current</code
+            >
+          </td>
+          <td>
+            <code>tts-expressive</code>、公開名<code
+              >qwen3-tts-expressive</code
+            >
+          </td>
+          <td>明示選択。cold start時間に注意</td>
+        </tr>
+        <tr>
+          <th scope="row">Embedding: multilingual-e5-small ONNX QInt8</th>
+          <td>
+            <code>multilingual-e5-small</code>／<code
+              >multilingual-e5-small-current</code
+            >
+          </td>
+          <td>
+            <code>embedding-multilingual-e5-small</code>、公開名
+            <code>multilingual-e5-small</code>
+          </td>
+          <td>動的systemd Provider</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="downloaded-only">
+    <h2>ダウンロード済み・未Provider化</h2>
+    <table>
+      <caption>
+        weightは存在するが公開request経路が完成していない資産
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル</th>
+          <th scope="col">配置・形式</th>
+          <th scope="col">台帳状態</th>
+          <th scope="col">不足しているもの</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LFM2.5-8B-A1B</th>
+          <td><code>/srv/ai/models/lfm25-8b-a1b</code>、BF16、約16 GiB</td>
+          <td>
+            公式revision <code>5dd22602c2e9f6a097b1de4c4efe0658b605015c</code>を取得し、weight
+            SHA-256照合済み。artifact manifest未登録
+          </td>
+          <td>実行backend選定、Runtime、release、route、評価・受入</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3.5-4B</th>
+          <td><code>/srv/ai/models/qwen35-4b</code>、BF16、約8.8 GiB</td>
+          <td>
+            公式revision <code>851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a</code>を取得し、分割weight
+            SHA-256照合済み。artifact manifest未登録
+          </td>
+          <td>実行backend選定、Runtime、release、route、評価・受入</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-ASR 0.6B</th>
+          <td><code>/srv/ai/models/qwen-asr/Qwen3-ASR-0.6B</code>、約1.9 GB</td>
+          <td><code>qwen3-asr-fallback</code>としてartifact manifest登録済み</td>
+          <td>0.6B専用Runtime、release、route</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-TTS 1.7B CustomVoice</th>
+          <td><code>/srv/ai/models/qwen-tts/Qwen3-TTS-12Hz-1.7B-CustomVoice</code>、約4.5 GB</td>
+          <td>snapshot存在。現行manifestは0.6Bだけを固定</td>
+          <td>revision・snapshot digest固定、backend mapping、Runtime、release、route、cold受入</td>
+        </tr>
+        <tr>
+          <th scope="row">ReazonSpeech K2 v2</th>
+          <td><code>/srv/ai/models/reazonspeech-k2-v2</code>、int8／FP32、約170 MiB</td>
+          <td><code>reazonspeech-k2-v2-shadow</code>としてmanifest登録済み</td>
+          <td>production Runtime、release、route。評価用shadow資産</td>
+        </tr>
+        <tr>
+          <th scope="row">ReazonSpeech ESPnet v2</th>
+          <td><code>/srv/ai/models/reazonspeech-espnet-v2</code>、FP32、約454 MiB</td>
+          <td><code>reazonspeech-espnet-v2-shadow</code>としてmanifest登録済み</td>
+          <td>production Runtime、release、route。評価用shadow資産</td>
+        </tr>
+        <tr>
+          <th scope="row">Kotoba Whisper v2.0 Q5_0</th>
+          <td><code>/srv/ai/models/kotoba-whisper-v2.0-ggml</code>、約513 MiB</td>
+          <td><code>kotoba-whisper-v2-q5-shadow</code>としてmanifest登録済み</td>
+          <td>production Runtime、release、route。評価用shadow資産</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="staged-candidates">
+    <h2>評価stagingと補助資産</h2>
+    <table>
+      <caption>
+        model store内にあるが、公開Providerとして数えない資産
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">資産</th>
+          <th scope="col">状態</th>
+          <th scope="col">扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">AtomicChat Ornith 1.5 35B AD-Q5_K-Q4_K</th>
+          <td><code>.larm-staging/ornith15-35b-atomicchat</code>、約22.1 GB</td>
+          <td>比較測定済みだがproduction catalogへ不採用</td>
+        </tr>
+        <tr>
+          <th scope="row">Signal 3.8 27B AP-Q4_K_XL</th>
+          <td><code>.larm-staging/qwen38-signal-ap-q4-k-xl</code>、約17.6 GB</td>
+          <td>派生モデル評価用。公開routeなし</td>
+        </tr>
+        <tr>
+          <th scope="row">Sharp chat template</th>
+          <td><code>.larm-staging/qwen38-sharp-template</code></td>
+          <td>templateだけの比較資産。単独weightではない</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.8 MTP draft</th>
+          <td>標準worker用約1.37 GB、EfficientThink用約1.68 GB</td>
+          <td>対応するmain modelと一緒に使う補助artifact</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-TTS speech tokenizer</th>
+          <td>0.6B／1.7B snapshot内に各約682 MB</td>
+          <td>TTS snapshotの構成要素。独立Providerではない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <code>.larm-staging</code>は約117
+      GiBを使用する。ここには有効artifactのsymlink先と比較候補、同一weightの
+      複製が混在するため、top-level directoryの容量を単純合算して「モデル総量」としない。
+    </p>
+  </section>
+
+  <section id="live-snapshot">
+    <h2>棚卸時のservice状態</h2>
+    <p>
+      2026-09-16の確認時点では、<code>larm-daemon</code>、<code>llama-swap-worker</code>、
+      <code>llama-server</code
+      >、<code>qwen-asr</code>、<code>whisper-asr</code>、<code>voicevox-tts</code>がactiveだった。
+      <code>qwen-tts</code
+      >と<code>larm-embedding</code>はinactiveだったが、unitとProvider定義は存在する。
+      これは瞬間的なHOT／COLD観測であり、上表の準備判定を変更しない。
+    </p>
+  </section>
+
+  <section id="maintenance">
+    <h2>更新時の確認順</h2>
+    <ol>
+      <li>
+        <code>/srv/ai/models</code>で完全なweight、snapshot、symlink先を確認する。
+      </li>
+      <li>
+        <code>deploy/local-node/models.yaml</code>でrevision、byte数、digest、roleを確認する。
+      </li>
+      <li>
+        <code>config/local-node/runtimes.yaml</code
+        >と<code>deploy/local-node/releases.yaml</code>を照合する。
+      </li>
+      <li>
+        <code>config/local-node/routes.yaml</code>と<code>config/local-node/agent-connections.yaml</code>で
+        利用者から選択可能か確認する。
+      </li>
+      <li>Provider化した候補はsemantic canaryを通し、この一覧の状態と棚卸日を更新する。</li>
+    </ol>
+    <aside>
+      <p>
+        weightが存在するだけでProvider準備済みへ昇格させない。逆に、systemd
+        unitが一時的にinactiveでも、
+        artifactと構成が固定されてon-demand起動できるものはProvider準備済みとして扱う。
+      </p>
+    </aside>
+  </section>
+</article>
