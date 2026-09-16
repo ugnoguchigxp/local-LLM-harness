@@ -5,7 +5,7 @@
 - upstream: `https://github.com/dingausmwald/Qwen3-TTS-Openai-Fastapi`
 - pinned commit: `eb14f6e6a50445cf442979abb9203ff0d5042c43`
 - production model: `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`
-- public/upstream API model key: `qwen3-tts-expressive`
+- public API alias: `qwen3-tts-expressive`（internal config keyは`0.6B-CustomVoice`）
 - comparison model: `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`（production Registry対象外）
 - service: `qwen-tts.service`
 - port: `8082`
@@ -29,6 +29,7 @@ install -m 0644 /srv/ai/apps/local-LLM-harness/apps/qwen-tts/config.production.y
 パッチは次を行う。
 
 - `TTS_CONFIG`による設定パス指定
+- OpenAI互換routerとbackendの両方で`qwen3-tts-expressive`公開aliasを受理
 - gfx1151で失敗する`torch.multinomial`のCPU fallback
 - forkの現行APIに存在しない`compile_talker`引数の除去
 - temperature等の生成設定を通常生成・stream生成へ渡す

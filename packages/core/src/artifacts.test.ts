@@ -307,8 +307,10 @@ test("Qwen TTS service configuration consumes the manifest-managed snapshot targ
   const config = parseYaml(
     readFileSync(join(root, "apps/qwen-tts/config.production.yaml"), "utf8"),
   ) as { default_model?: string; models?: Record<string, { hf_id?: string }> };
-  expect(config.default_model).toBe("qwen3-tts-expressive");
+  expect(config.default_model).toBe("0.6B-CustomVoice");
   expect(config.models?.[config.default_model ?? ""]?.hf_id).toBe(artifact.path);
+  const qwenPatch = readFileSync(join(root, "apps/qwen-tts/rocm-gfx1151.patch"), "utf8");
+  expect(qwenPatch.match(/\+    "qwen3-tts-expressive":/g)).toHaveLength(2);
 
   const registry = loadRegistry(join(root, "config/local-node"));
   expect(registry.runtimes.find((runtime) => runtime.id === "qwen-tts")?.artifacts)

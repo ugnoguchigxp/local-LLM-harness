@@ -52,7 +52,17 @@ index 95db28e..fb7bbd6 100644
  
  def load_config() -> dict:
      if CONFIG_PATH.exists():
-@@ -59,10 +100,26 @@ class OptimizedQwen3TTSBackend:
+@@ -23,8 +64,9 @@ def load_config() -> dict:
+ # Model mapping: OpenAI model name -> our model key
+ MODEL_MAPPING = {
+     "tts-1": "0.6B-CustomVoice",
+     "tts-1-hd": "1.7B-CustomVoice",
+     "qwen3-tts": "0.6B-CustomVoice",
++    "qwen3-tts-expressive": "0.6B-CustomVoice",
+     "qwen3-tts-hd": "1.7B-CustomVoice",
+ }
+ 
+@@ -59,10 +101,26 @@ class OptimizedQwen3TTSBackend:
      def get_current_model_key(self) -> Optional[str]:
          return self.current_model_key
  
@@ -79,7 +89,7 @@ index 95db28e..fb7bbd6 100644
          if self.current_model_key == model_key and self.model is not None:
              return
  
-@@ -121,7 +178,6 @@ class OptimizedQwen3TTSBackend:
+@@ -121,7 +179,6 @@ class OptimizedQwen3TTSBackend:
                      compile_mode=opt.get("compile_mode", "max-autotune"),
                      use_fast_codebook=opt.get("use_fast_codebook", True),
                      compile_codebook_predictor=opt.get("compile_codebook_predictor", True),
@@ -87,7 +97,7 @@ index 95db28e..fb7bbd6 100644
                  )
                  logger.info(f"torch.compile enabled: mode={opt.get('compile_mode', 'max-autotune')}, fast_codebook={opt.get('use_fast_codebook', True)}")
  
-@@ -256,6 +312,7 @@ class OptimizedQwen3TTSBackend:
+@@ -256,6 +313,7 @@ class OptimizedQwen3TTSBackend:
              language=language,
              speaker=voice,
              instruct=instruct,
@@ -95,10 +105,24 @@ index 95db28e..fb7bbd6 100644
          )
  
          audio = wavs[0]
-@@ -304,5 +361,6 @@ class OptimizedQwen3TTSBackend:
+@@ -304,5 +362,6 @@ class OptimizedQwen3TTSBackend:
              instruct=instruct,
              emit_every_frames=emit_every_frames,
              decode_window_frames=decode_window_frames,
 +            **self._generation_kwargs(),
          ):
              yield chunk, sr
+diff --git a/api/routers/openai_compatible.py b/api/routers/openai_compatible.py
+index 056c6fd..0000000 100644
+--- a/api/routers/openai_compatible.py
++++ b/api/routers/openai_compatible.py
+@@ -147,8 +147,9 @@ for lang_code in LANGUAGE_CODE_MAPPING.keys():
+ # Model name mapping (OpenAI -> internal)
+ MODEL_MAPPING = {
+     "tts-1": "qwen3-tts",
+     "tts-1-hd": "qwen3-tts",
+     "qwen3-tts": "qwen3-tts",
++    "qwen3-tts-expressive": "qwen3-tts",
+ }
+ 
+ # Add language-specific model mappings

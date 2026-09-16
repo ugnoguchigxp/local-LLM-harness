@@ -15,7 +15,7 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.recoveryGraceMs).toBe(60_000);
   expect(config.shutdownTimeoutMs).toBe(330_000);
   expect(config.telemetryMaxAgeMs).toBe(10_000);
-  expect(config.connectionReadyTimeoutMs).toBe(120_000);
+  expect(config.connectionReadyTimeoutMs).toBe(300_000);
   expect(config.providerProbeTimeoutMs).toBe(15_000);
   expect(config.tlsCertFile).toBeUndefined();
   expect(config.inferenceAuditMode).toBe("off");

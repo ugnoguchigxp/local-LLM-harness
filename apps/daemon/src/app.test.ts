@@ -2702,16 +2702,24 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     }
     if (value.stream === true) {
       return new Response([
-        'data: {"id":"chatcmpl-agent","object":"chat.completion.chunk","created":1,"model":"test-model","choices":[{"index":0,"delta":{"content":"done"},"finish_reason":null}]}\n\n',
-        'data: {"id":"chatcmpl-agent","object":"chat.completion.chunk","created":1,"model":"test-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+        'data: {"id":"chatcmpl-agent","object":"chat.completion.chunk","created":1,"model":"/models/internal.gguf","choices":[{"index":0,"delta":{"content":"done"},"finish_reason":null}]}\n\n',
+        'data: {"id":"chatcmpl-agent","object":"chat.completion.chunk","created":1,"model":"/models/internal.gguf","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
         "data: [DONE]\n\n",
       ].join(""), {
         headers: { "content-type": "text/event-stream" },
       });
     }
     return Response.json({
-      choices: [{ index: 0, message: { role: "assistant", content: "done" } }],
-      usage: { completion_tokens: 1 },
+      id: "chatcmpl-agent",
+      object: "chat.completion",
+      created: 1,
+      model: "/models/internal.gguf",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: "done" },
+        finish_reason: "stop",
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     });
   };
   const { app } = await makeApp(true, false, {}, {
@@ -2910,7 +2918,10 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     }),
   });
   expect(task.status).toBe(200);
-  expect(await task.json()).toMatchObject({ choices: [{ message: { content: "done" } }] });
+  expect(await task.json()).toMatchObject({
+    model: "test-model",
+    choices: [{ message: { content: "done" } }],
+  });
   expect(observed).toHaveLength(3);
 
   const streamingTask = await app.request("/v1/chat/completions", {
@@ -2927,7 +2938,10 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
   });
   expect(streamingTask.status).toBe(200);
   expect(streamingTask.headers.get("content-type")).toBe("text/event-stream");
-  expect(await streamingTask.text()).toEndWith("data: [DONE]\n\n");
+  const streamingBody = await streamingTask.text();
+  expect(streamingBody).toEndWith("data: [DONE]\n\n");
+  expect(streamingBody).toContain('"model":"test-model"');
+  expect(streamingBody).not.toContain("/models/internal.gguf");
   expect(observed).toHaveLength(4);
 
   const wrongModel = await app.request("/v1/chat/completions", {

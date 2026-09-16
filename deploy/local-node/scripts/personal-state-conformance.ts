@@ -25,7 +25,7 @@ const attemptId = `ps-attempt-${runId}`;
 const forgetId = `ps-forget-${runId}`;
 const content = `Synthetic Personal State conformance source. nonce=${runId}`;
 const sourceDigest = sha256(content);
-const client = new LarmClient({ baseUrl, timeoutMs: 120_000 });
+const client = new LarmClient({ baseUrl, timeoutMs: 330_000 });
 const options = { providerToken };
 let sourceHandle: string | undefined;
 let primaryError: unknown;

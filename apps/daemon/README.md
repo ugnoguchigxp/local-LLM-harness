@@ -44,7 +44,7 @@ bun run dev
 | `LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS` | `false` | `true`の場合、Agent Connection lifecycleだけを長期Bearerなしで許可。claim後のprovider credentialは引き続き必須 |
 | `LARM_MANAGEMENT_TOKEN` | 未設定 | artifact、release、catalog管理用の別credential |
 | `LARM_CONNECTION_SIGNING_KEY` | 未設定 | Agent Provider短期token用の32-byte unpadded base64url鍵 |
-| `LARM_CONNECTION_READY_TIMEOUT_SECONDS` | `120` | Connection初回semantic readinessの上限 |
+| `LARM_CONNECTION_READY_TIMEOUT_SECONDS` | `300` | Connection初回semantic readinessの上限 |
 | `LARM_PROVIDER_PROBE_TIMEOUT_SECONDS` | `15` | Provider単位の最小semantic probe上限 |
 | `LARM_TLS_CERT_FILE` / `LARM_TLS_KEY_FILE` | 未設定 | GatewayをHTTPSで提供するための、対で指定する絶対path |
 | `LARM_ARTIFACT_OPERATION_LIMIT` | `64` | pending/running artifact operationの合計上限 |

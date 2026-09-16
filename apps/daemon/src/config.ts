@@ -321,7 +321,7 @@ export function parseDaemonConfig(
     connectionReadyTimeoutMs: secondsSetting(
       env,
       "LARM_CONNECTION_READY_TIMEOUT_SECONDS",
-      120,
+      300,
       1,
       900,
     ),

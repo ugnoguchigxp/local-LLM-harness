@@ -296,7 +296,7 @@ export function createAppComponents(deps: AppDeps) {
       getCatalogRevision: () => deps.getConfigRevision?.() ?? identity.configRevision,
       semantic: semanticReadiness,
       tokenCodec: new ConnectionTokenCodec(deps.connectionSigningKey, deps.now),
-      readyTimeoutMs: deps.connectionReadyTimeoutMs ?? 120_000,
+      readyTimeoutMs: deps.connectionReadyTimeoutMs ?? 300_000,
       pollIntervalMs: deps.connectionPollIntervalMs ?? 500,
       idempotencyTtlMs: deps.idempotencyTtlMs ?? 300_000,
       idempotencyLimit: deps.idempotencyLimit ?? 1_000,
@@ -308,11 +308,11 @@ export function createAppComponents(deps: AppDeps) {
     : undefined);
   const modelBroker = deps.modelBroker ?? (deps.agentConnectionCatalog
     ? new ModelBroker(deps.control, deps.agentConnectionCatalog, {
-      startupTimeoutMs: deps.connectionReadyTimeoutMs ?? 120_000,
+      startupTimeoutMs: deps.connectionReadyTimeoutMs ?? 300_000,
       pollIntervalMs: deps.connectionPollIntervalMs ?? 50,
       leaseTtlSeconds: Math.min(
         86_400,
-        Math.max(1, Math.ceil(((deps.connectionReadyTimeoutMs ?? 120_000) + (deps.gatewayTimeoutMs ?? 300_000)) / 1_000) + 60),
+        Math.max(1, Math.ceil(((deps.connectionReadyTimeoutMs ?? 300_000) + (deps.gatewayTimeoutMs ?? 300_000)) / 1_000) + 60),
       ),
       now: deps.now,
       onEvent: deps.onEvent,
@@ -1061,8 +1061,11 @@ export function createAppComponents(deps: AppDeps) {
         },
       } : {}),
       responseFormat: chatResponseFormat,
+      validateChatResponse: scoped !== undefined
+        && options.protocol === "openai.chat-completions.v1",
       validateTranscriptionResponse: options.protocol === "openai.audio-transcriptions.v1",
       validateSpeechResponse: options.protocol === "openai.audio-speech.v1",
+      ...(scoped ? { expectedModel: scoped.provider.publicModel } : {}),
       ...(embeddingRequest && runtime.embedding
         ? { validateEmbeddingResponse: { request: embeddingRequest, space: runtime.embedding } }
         : {}),

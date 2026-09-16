@@ -213,5 +213,66 @@
       >が同時にreadyであることを確認した。Connection解放後は四Providerの credentialがすべてHTTP
       401となり、request scope外で再利用できないことも確認した。
     </p>
+    <h3>多様化したLLM Provider検証</h3>
+    <p>
+      2026-09-16に同じ稼働releaseへloopback IPで再接続し、専用のlive matrixを新規Connection
+      2世代で実行した。Agent Connectionの標準smokeは約67秒で完了し、続く各7ケース、合計14ケースは
+      すべて合格した。
+      したがって、workerがreadyになった後の本文生成、構造化出力、長文脈参照、tool往復は利用可能である。
+      一方、以前に観測したcold start時の120秒timeoutはこの結果だけでは解消済みと判定しない。
+    </p>
+    <table>
+      <caption>
+        release
+        <code>be5e862…</code
+        >でのKV:mem LLM live matrix
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ケース</th>
+          <th scope="col">反復数／時間</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">英語短文の可視本文</th>
+          <td>各世代3回、計6回／2.4–2.9秒</td>
+          <td>
+            毎回<code>stop</code>、本文<code
+              >OK</code
+            >
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">日本語の可視本文</th>
+          <td>2回／3.6–3.7秒</td>
+          <td>指定語を含む本文あり</td>
+        </tr>
+        <tr>
+          <th scope="row">JSON Schema</th>
+          <td>2回／9.8–9.9秒</td>
+          <td>制約済みJSONを検証</td>
+        </tr>
+        <tr>
+          <th scope="row">長いprefixからのneedle recall</th>
+          <td>2回／19.5–20.6秒</td>
+          <td>256 synthetic record後の値を再現</td>
+        </tr>
+        <tr>
+          <th scope="row">function tool往復</th>
+          <td>各世代2要求／9.8秒</td>
+          <td>tool選択、引数、tool結果後の可視回答を検証</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        この検証で、scoped
+        ProviderのJSON応答に公開名<code>qwen3.8-kv-mem</code>ではなく
+        upstreamの内部モデルパスが残る契約不整合も検出した。GatewayはJSONとSSEを検査し、
+        claimした公開モデル名へ正規化する。live matrixは以後、この項目も判定する。
+      </p>
+    </aside>
   </section>
 </article>

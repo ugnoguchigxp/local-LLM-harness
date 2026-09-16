@@ -275,12 +275,12 @@
     <p>
       稼働release <code>be5e862…</code>ではQwen TTSの公開model
       <code>qwen3-tts-expressive</code
-      >をupstreamが<code>400 invalid_model</code>で拒否した。
-      原因はupstream設定のmodel
-      keyが<code>0.6B-CustomVoice</code>のまま公開名と不一致だったためである。
-      現在のsourceではdefault model
-      keyも<code>qwen3-tts-expressive</code>へ統一し、readiness probeと 通常speech
-      requestが同じ公開名をupstreamまで使用する。
+      >をupstreamが<code>400 invalid_model</code>で拒否した。 原因はupstream
+      APIの固定<code>MODEL_MAPPING</code>が公開名を受理しないためであり、YAMLのmodel
+      key変更だけでは解消しない。現在のsource patchではOpenAI互換routerとoptimized backendの両方へ
+      <code>qwen3-tts-expressive</code>aliasを追加し、内部key
+      <code>0.6B-CustomVoice</code>へ解決する。readiness probeと通常speech
+      requestは同じ公開名を使用する。
     </p>
     <p>
       Gateway自体はupstreamの音声bodyを全量bufferせず転送するため、upstreamが早期に音声chunkを返せば

@@ -139,7 +139,7 @@ export class ModelBroker {
     private readonly options: ModelBrokerOptions = {},
   ) {
     this.catalog = createOpenAiModelCatalog(catalog);
-    this.startupTimeoutMs = options.startupTimeoutMs ?? 120_000;
+    this.startupTimeoutMs = options.startupTimeoutMs ?? 300_000;
     this.pollIntervalMs = options.pollIntervalMs ?? 50;
     this.leaseTtlSeconds = options.leaseTtlSeconds ?? 900;
     this.now = options.now ?? Date.now;
