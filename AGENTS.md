@@ -31,3 +31,9 @@ When design decisions, specifications, implementation plans, or research results
 - Keep systemd and llama-swap integrations in `packages/backends`.
 - Qwen 3.8 27B remains the resident default, including realtime tasks. Optional speed-oriented models require explicit selection.
 - Do not commit model weights, binaries, build output, caches, logs, or generated media.
+
+## Related repositories
+
+- SAAA is expected at `../SAAA` and its canonical repository is `https://github.com/ugnoguchigxp/SAAA`.
+- Before inspecting or relying on the SAAA implementation, check the `../SAAA` worktree. If it is clean, run `git pull --ff-only` in that directory and inspect the updated revision.
+- If `../SAAA` is missing, clone the canonical repository there. If its worktree is not clean or a fast-forward pull is not possible, do not overwrite, reset, stash, or merge its changes; report the condition and resolve it before treating the checkout as current.

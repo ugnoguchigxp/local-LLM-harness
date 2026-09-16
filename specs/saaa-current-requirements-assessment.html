@@ -1,0 +1,178 @@
+<article lang="ja">
+  <h1>SAAAがLARMへ求める現行要件の照合</h1>
+  <dl>
+    <dt>調査日</dt>
+    <dd><time>2026-09-16</time></dd>
+    <dt>SAAA調査対象</dt>
+    <dd><code>278b64497c9b9978c4826e69ef275d25f308bde2</code></dd>
+    <dt>LARM調査対象</dt>
+    <dd><code>848925d</code></dd>
+    <dt>判定</dt>
+    <dd>主要なソース是正は進んでいるが、修正版releaseの配備identityを固定した共同実機受入が残る</dd>
+  </dl>
+
+  <p>
+    SAAAの最新要求は、旧WebSocket前提のMVP 2.6 readiness資料ではなく、
+    <code>spec/docs/larm-live-feature-verification.md</code>にある2026-09-16の実機検証を正本として読む。
+    この検証は稼働release <code>be5e86272165f4e13e69f4da204b1425486c6070</code>に対するもので、
+    現在のLARMソースより古い。したがって、旧releaseの失敗を現在のソース不具合と断定せず、
+    ソース対応済みと配備後未検証を分ける。
+  </p>
+
+  <section id="immediate-requests">
+    <h2>直近の確認事項</h2>
+    <table>
+      <caption>
+        SAAAが明示した6項目とLARM側の現状
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">SAAAの要求</th>
+          <th scope="col">LARMソースの対応</th>
+          <th scope="col">残る出口条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">release identityと音声API</th>
+          <td>修正版releaseを固定し、bodyなしvoice一覧、WAV、24 kHz mono s16le PCMを実機で通す</td>
+          <td>
+            voice discovery、PCM metadata正規化、live smokeを実装済み。
+            <a href="./saaa-provider-runtime-remediation.html">Provider実機障害の是正と配備後受入</a
+            >に受入手順がある
+          </td>
+          <td>配備commit一致を確認したうえでVOICEVOXとQwen TTSを再実行する</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen TTS公開名</th>
+          <td>
+            <code>qwen3-tts-expressive</code>をupstream modelへ正しく写像し、通常推論と
+            <code>tts-expressive</code> Connection readinessを通す
+          </td>
+          <td>
+            routerとbackendのalias patch、固定source revision、production configの内容・mode検査、
+            cold metadata経路を追加済み
+          </td>
+          <td>管理patchを適用した外部checkoutからcold／warm双方を配備後に再確認する</td>
+        </tr>
+        <tr>
+          <th scope="row">短文canaryの空本文</th>
+          <td><code>coding-default</code>がstopかつ空本文となる条件を解消する</td>
+          <td>
+            通常Qwen 3.8要求へ、明示的reasoning指定がない場合だけ
+            <code>enable_thinking: false</code>を補う正規化を追加済み
+          </td>
+          <td>可視本文を要求するstrict canaryを修正版releaseで合格させる</td>
+        </tr>
+        <tr>
+          <th scope="row">Managed Contextの連続要求</th>
+          <td>
+            tool呼出し後の再要求が<code>model_loading_timeout</code>にならないことを確認する
+          </td>
+          <td>
+            専用<code>qwen3.8-kv-mem</code> Providerと永続KV
+            snapshotを廃止し、resident Qwen 3.8と source rebuildへ統合済み。<a
+              href="./managed-context-source-rebuild.html"
+              >source rebuild契約</a
+            >を参照
+          </td>
+          <td>通常Qwen 3.8で複数tool往復と長文要求を排他的な実機gate下で完走する</td>
+        </tr>
+        <tr>
+          <th scope="row">Personal State認可</th>
+          <td>
+            scoped tokenでcapability、source、measurement、View、attempt、forgetを通し、
+            Allocationなしattempt headerを通常成功に見せない
+          </td>
+          <td>
+            製品API、subject binding、attempt／forget journalとfail-closed gateを実装済み。
+            <a href="./personal-state-saaa-integration-handoff.html">製品接続handoff</a
+            >に契約を固定している
+          </td>
+          <td>
+            SAAAの製品harnessを用いた実機conformance、取消、遅延出力拒否、forget
+            absence確認を完了する
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">容量不足の分類</th>
+          <td>
+            HTTP statusだけでなく安定したerror
+            codeで容量不足を判定し、SAAAのfallback分類と一致させる
+          </td>
+          <td>
+            <code>resource_exhausted</code
+            >と<code>allocation_capacity</code>をLARM内で容量不足として扱う
+          </td>
+          <td>
+            SAAA側は観測済みの409をcodeベースで分類する必要がある。共同fixtureで429／409／503の責務を固定する
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="stable-boundary">
+    <h2>SAAAが期待する安定境界</h2>
+    <ul>
+      <li>
+        通常data planeはOpenAI互換HTTPの
+        <code>POST /v1/chat/completions</code>、<code>POST /v1/audio/transcriptions</code>、
+        <code>POST /v1/audio/speech</code>で利用できること。
+      </li>
+      <li>
+        LLMはJSONとSSE、分割tool arguments、tool結果からの継続、finish reason、
+        <code>[DONE]</code>、途中切断の失敗判定を保証すること。
+      </li>
+      <li>
+        ASR、LLM、TTSは独立して選択・fallbackでき、一機能の停止で他機能を利用不能にしないこと。
+      </li>
+      <li>
+        model、voice、形式、対応parameter、ready／busy／unavailable、retry目安を機械判定できること。
+      </li>
+      <li>
+        通常推論とPersonal
+        State拡張を分離し、独自保証を要求したturnを保証なしの通常成功へ降格しないこと。
+      </li>
+      <li>
+        create、renew、release、cancelを冪等かつ期限付きにし、HTTP切断と遠隔計算停止を別状態として照会できること。
+      </li>
+    </ul>
+    <p>
+      LARM側の回答と未完了境界は
+      <a href="./saaa-larm-api-contract-response.html">SAAA向けAPI契約回答</a>にまとまっている。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>共同受入で必要な証跡</h2>
+    <ol>
+      <li>配備release commitと検証対象source commitを一致させる。</li>
+      <li>公開modelごとに短文、SSE、tool往復、Structured Outputs、途中切断を確認する。</li>
+      <li>ASR、voice discovery、WAV、PCM、TTS初回音声、cancelをcold／warmで確認する。</li>
+      <li>
+        Connectionのcreate、ready、claim、renew、releaseと、更新・解放後credentialの失効を確認する。
+      </li>
+      <li>
+        Personal
+        Stateは合成sourceでsubject分離、応答紛失、再起動、取消、遅延応答、全層forgetを確認する。
+      </li>
+      <li>
+        容量不足、起動待ち、429／409／503、retry budget、機能単位fallbackを共同fixtureで確認する。
+      </li>
+      <li>秘密、本文、credential、allocation IDを証跡へ残さず、未確認項目を成功へ丸めない。</li>
+    </ol>
+  </section>
+
+  <aside>
+    <h2>古い資料の扱い</h2>
+    <p>
+      SAAAの<code>mvp-2.6-release-evidence.html</code>と旧operations
+      runbookは、WebSocket経路と旧canary
+      commandを前提とする履歴資料である。G1／G2／G3という安全思想は参考になるが、現在の実行手順や現行API要求には使わない。
+      現行判断はHTTP API review、2026-09-16 live verification、Personal
+      State製品接続記録を優先する。
+    </p>
+  </aside>
+</article>
