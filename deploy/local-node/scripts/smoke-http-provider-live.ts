@@ -447,7 +447,10 @@ export async function runHttpProviderLiveSmoke(
         stream: false,
       }),
       signal: AbortSignal.timeout(timeoutMs),
-    });
+      // Bun otherwise applies its own shorter transport timeout before the
+      // explicit canary deadline, cancelling large prompt evaluation early.
+      timeout: false,
+    } as RequestInit & { timeout: false });
     const value = parseJson(await responseBytes(response, TEXT_LIMIT));
     const observed = observedPromptTokens(value);
     if (!inspectOpenAiChatCompletionJson(value).ok || !isShortTextCanaryCompletion(value)

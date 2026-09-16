@@ -193,7 +193,8 @@ bun run smoke:http-provider-live</code></pre>
     <ul>
       <li>
         長文canaryは管理token付き<code>X-LARM-Exclusive-Execution: true</code>を使う。Execution
-        Gateは既存実行をdrainし、排他要求の完了まで全runtimeの新規実行を拒否する。
+        Gateは既存実行をdrainし、排他要求の完了まで全runtimeの新規実行を拒否する。canary
+        client固有の transport timeoutは無効化し、明示した最大3,600秒のdeadlineだけを適用する。
       </li>
       <li>
         resident Qwenはstrict MTP、<code>ubatch=1024</code>、q8_0/q8_0

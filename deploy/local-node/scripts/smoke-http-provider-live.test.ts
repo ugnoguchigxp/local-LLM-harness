@@ -371,6 +371,7 @@ test("live HTTP Provider smoke verifies two tool turns and a long resident reque
       if (contentForHeaders.includes(" token token token")) {
         expect(request.headers.get("x-larm-exclusive-execution")).toBe("true");
         expect(request.headers.get("x-larm-management-token")).toBe("manage");
+        expect((init as RequestInit & { timeout?: boolean }).timeout).toBeFalse();
       }
       if (body.stream === true) {
         const event = (choices: unknown[]) => `data: ${JSON.stringify({
