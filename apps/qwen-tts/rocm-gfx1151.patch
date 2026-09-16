@@ -165,6 +165,24 @@ index a0fab6c..3f2e728 100644
  
      # GPU keepalive: periodic matmul to prevent AMD DPM idle downclocking
      keepalive_task = None
+@@ -263,12 +268,14 @@ async def health_check():
+ 
+         backend = get_backend()
+         device_info = backend.get_device_info()
++        backend_ready = backend.is_ready()
++        accepting_requests = backend_ready or not TTS_PRELOAD_ON_START
+ 
+         return {
+-            "status": "healthy" if backend.is_ready() else "initializing",
++            "status": "healthy" if accepting_requests else "initializing",
+             "backend": {
+                 "name": backend.get_backend_name(),
+                 "model_id": backend.get_model_id(),
+-                "ready": backend.is_ready(),
++                "ready": backend_ready,
+             },
+             "device": {
+                 "type": device_info.get("device"),
 diff --git a/api/routers/openai_compatible.py b/api/routers/openai_compatible.py
 index 056c6fd..0000000 100644
 --- a/api/routers/openai_compatible.py

@@ -202,7 +202,8 @@ bun run smoke:http-provider-live</code></pre>
       </li>
       <li>
         Qwen TTSはmodel preloadより先にHTTP metadata endpointを公開し、voices取得ではmodel
-        compileを開始しない。 音声生成要求が初回model初期化を行う。
+        compileを開始しない。lazy
+        preload時のhealthは要求受付可能として扱い、音声生成要求が初回model初期化を行う。
       </li>
       <li>
         公開HTTP serverのidle timeoutは無効化し、cold activationと長時間推論のdeadlineは Model
