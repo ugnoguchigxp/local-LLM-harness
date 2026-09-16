@@ -163,14 +163,14 @@ test("loads the Linux production registry", () => {
   });
 });
 
-test("resident Qwen 3.8 exposes the certified 256K request budget independently of managed source capacity", () => {
+test("resident Qwen 3.8 exposes the certified 125K request budget independently of managed source capacity", () => {
   const registry = loadRegistry(repoConfig);
   const runtime = registry.runtimes.find((candidate) => candidate.id === "qwen-general");
   expect(runtime).toMatchObject({
     policy: { class: "resident" },
     context: {
-      outputReserveTokens: 32_768,
-      safetyMarginTokens: 4_096,
+      outputReserveTokens: 4_096,
+      safetyMarginTokens: 1_976,
       sourceTokenLimit: 20_000_000,
     },
     resources: { maxConcurrentRequests: 1 },
@@ -179,12 +179,12 @@ test("resident Qwen 3.8 exposes the certified 256K request budget independently 
     runtimeReleases: Record<string, { contextCertification?: { contextLimitTokens: number } }>;
   };
   const contextLimit = releases.runtimeReleases["qwen-general-current"]?.contextCertification?.contextLimitTokens;
-  expect(contextLimit).toBe(262_144);
+  expect(contextLimit).toBe(131_072);
   if (runtime?.context?.class !== "managed-context" || contextLimit === undefined) {
     throw new Error("resident context contract is unavailable");
   }
   expect(contextLimit - runtime.context.outputReserveTokens - runtime.context.safetyMarginTokens)
-    .toBe(225_280);
+    .toBe(125_000);
 });
 
 test("production swap group matches llama-swap model membership", () => {

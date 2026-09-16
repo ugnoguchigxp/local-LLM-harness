@@ -13,18 +13,18 @@ runtimeReleases:
     runtime: qwen-general
     artifacts:
       - qwen38-primary
-    providerConfigRevision: llama-server-qwen38-rocmfp4-v1
+    providerConfigRevision: llama-server-qwen38-rocmfp4-125k-v1
     estimatedMemoryGB: 40
     healthPath: /health
     default: true
     contextCertification:
-      profile: qwen38-resident-source-v1
+      profile: qwen38-resident-125k-v1
       modelArtifactDigest: fb89c78d2be91cdb68eaaaa45b1270710bf34aa721dc1f0b9e3aa7b98d2e1da9
       tokenizerDigest: 2b8fb66a999b663503e2f1e04939d5c00a06f6d4c16d9cbf4f36bc66792ecd2d
       chatTemplateDigest: 701ba13a085c0c1b5e05414dec1aa3069904f962beee36f0899e441720b83974
       engineBuild: b244-0fc9568-bin-8be744716785ba4c460533661d7308dfd383ea4d6eb9c09f6e5f7f88814e8752
-      providerConfigRevision: llama-server-qwen38-rocmfp4-v1
-      contextLimitTokens: 262144
+      providerConfigRevision: llama-server-qwen38-rocmfp4-125k-v1
+      contextLimitTokens: 131072
       verifiedModes:
         - source-rebuild
       evidenceDigest: 8cf0e1a1af3ebfed789b61f6372e57f2b0a35fb18e5dc8a766bc9a724b867bb2

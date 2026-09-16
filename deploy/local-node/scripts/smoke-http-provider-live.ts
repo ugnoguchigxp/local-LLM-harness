@@ -420,8 +420,8 @@ export async function runHttpProviderLiveSmoke(
   let longInput: HttpProviderLiveSmokeResult["longInput"] = null;
   if ((options.longInputTokens ?? 0) > 0) {
     const requestedTokens = options.longInputTokens!;
-    if (!Number.isSafeInteger(requestedTokens) || requestedTokens < 1 || requestedTokens > 225_280) {
-      throw new Error("longInputTokens must be an integer from 1 through 225280");
+    if (!Number.isSafeInteger(requestedTokens) || requestedTokens < 1 || requestedTokens > 125_000) {
+      throw new Error("longInputTokens must be an integer from 1 through 125000");
     }
     if (!options.managementToken) {
       throw new Error("managementToken is required for exclusive long-input execution");

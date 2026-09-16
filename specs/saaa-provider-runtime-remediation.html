@@ -30,19 +30,19 @@
       <tbody>
         <tr>
           <th scope="row">context window</th>
-          <td>262,144 token</td>
+          <td>131,072 token</td>
         </tr>
         <tr>
           <th scope="row">実入力上限</th>
-          <td>225,280 token</td>
+          <td>125,000 token</td>
         </tr>
         <tr>
           <th scope="row">出力予約</th>
-          <td>32,768 token</td>
+          <td>4,096 token</td>
         </tr>
         <tr>
           <th scope="row">安全余白</th>
-          <td>4,096 token</td>
+          <td>1,976 token</td>
         </tr>
         <tr>
           <th scope="row">同時実行数</th>
@@ -52,7 +52,7 @@
     </table>
     <aside>
       <p>
-        225,280は262,144から32,768と4,096を引いた値である。Managed Contextのsource上限、
+        125,000は131,072から4,096と1,976を引いた値である。Managed Contextのsource上限、
         materialization、永続化方式、容量拡張の保証はこの通常推論契約に含めず、別gateで扱う。
       </p>
     </aside>
@@ -121,9 +121,10 @@
 LARM_HTTP_MODEL=qwen3.8 \
 LARM_HTTP_SMOKE_AUDIO=0 \
 LARM_HTTP_SMOKE_TOOL_ROUND_TRIP=1 \
-LARM_HTTP_LONG_INPUT_TOKENS=225000 \
+LARM_HTTP_LONG_INPUT_TOKENS=125000 \
 LARM_HTTP_LONG_INPUT_IDLE_SECONDS=15 \
 LARM_HTTP_LONG_INPUT_IDLE_TIMEOUT_MS=300000 \
+LARM_HTTP_SMOKE_TIMEOUT_MS=7200000 \
 LARM_MANAGEMENT_TOKEN="${LARM_MANAGEMENT_TOKEN}" \
 bun run smoke:http-provider-live
 
@@ -200,6 +201,11 @@ bun run smoke:http-provider-live</code></pre>
         resident Qwenはstrict MTP、<code>ubatch=256</code>、q8_0/q8_0
         KVとし、named tool、厳密literal、
         100万文字以上の長文はrequest単位でspeculationを無効化する。厳密literal要求は同値なGBNF制約へ変換する。
+      </li>
+      <li>
+        実機ではphysical ubatch 1,024が約65k、512が約113kでVulkan device lossとなった。
+        通常提供値は131,072 token window、125,000
+        token入力へ固定し、256kをproduction受入条件から外す。
       </li>
       <li>
         Qwen TTSはmodel preloadより先にHTTP metadata endpointを公開し、voices取得ではmodel

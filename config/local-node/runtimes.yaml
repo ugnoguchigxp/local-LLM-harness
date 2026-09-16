@@ -15,8 +15,8 @@ runtimes:
       class: managed-context
       activation: when-hosted
       sourceTokenLimit: 20000000
-      outputReserveTokens: 32768
-      safetyMarginTokens: 4096
+      outputReserveTokens: 4096
+      safetyMarginTokens: 1976
       filesystemFreeFloorBytes: 274877906944
       operationTimeoutMs: 3300000
       allowedModes:

@@ -21,7 +21,7 @@ ExecStart=/srv/ai/apps/q38rocm/run_server.sh \
   --profile speed \
   --host 127.0.0.1 \
   --port 8080 \
-  --ctx 262144 \
+  --ctx 131072 \
   --draft-n 2 \
   --draft-p 0.0 \
   --batch 2048 \

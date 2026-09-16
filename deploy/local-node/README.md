@@ -200,8 +200,8 @@ curl -sS -X POST http://127.0.0.1:9810/v1/chat/completions \
   -d '{"model":"qwen3.8","stream":false,"messages":[{"role":"user","content":"こんにちは"}]}'
 ```
 
-通常requestのcontext windowは262,144 token、実入力上限は225,280 token、output reserveは32,768 token、
-safety marginは4,096 token、同時実行数は1です。Managed Contextのsource容量保証は別gate・別受入として扱います。
+通常requestのcontext windowは131,072 token、実入力上限は125,000 token、output reserveは4,096 token、
+safety marginは1,976 token、同時実行数は1です。Managed Contextのsource容量保証は別gate・別受入として扱います。
 
 Managed Contextは認定済みのreasoning runtimeがhost中のときだけActiveになります。source本文は
 control APIへinlineせず、API tokenと同じprincipal scopeへ先にprovisionします。コマンドはlive
@@ -244,8 +244,8 @@ source byte quotaと256 GiB filesystem free floorをprocess間lock内で検査�
 <code>byteCount</code>、<code>tokenCount</code>、<code>tokenizerDigest</code>はコマンド出力を使用し、daemon側で
 attestationと再照合されます。
 
-Source Set quotaはprincipalあたり20,000,000 tokenです。一回のActive Viewは262,144 contextから
-32,768 output reserveと4,096 safety marginを引いた最大225,280 tokenであり、20M全体を一度に
+Source Set quotaはprincipalあたり20,000,000 tokenです。一回のActive Viewは131,072 contextから
+4,096 output reserveと1,976 safety marginを引いた最大125,000 tokenであり、20M全体を一度に
 attentionへ載せる意味ではありません。materialization modeはsource rebuildだけで、KV stateをdiskへ保存しません。
 source storeのfilesystem free floorは256 GiBです。利用者試用中は次を確認し、異常時はManaged Context全体を停止します。
 
