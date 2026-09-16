@@ -200,6 +200,10 @@ if [[ "${test_mode}" != "1" ]] && ! id "${operator}" >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ "${install_scope}" == "all" && "${test_mode}" != "1" ]]; then
+  bash "${repo_root}/deploy/local-node/scripts/prepare-qwen-tts-source.sh" apply >/dev/null
+fi
+
 for directory in "${unit_target}" "${credential_dir}" "${polkit_dir}" \
   "${libexec_dir}" "${release_dir}" "${release_controller_dir}" "${data_directories[@]}"; do
   safe_directory_path "${directory}" "installation directory"

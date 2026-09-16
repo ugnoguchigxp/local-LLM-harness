@@ -273,7 +273,10 @@ export class SemanticReadiness {
         );
         if (!response.ok) {
           cancelResponseBody(response, "semantic probe upstream status");
-          return this.remember(resolved.key, this.failure(input.provider, "upstream_status"), false);
+          const reason = [400, 404, 405, 422].includes(response.status)
+            ? "provider_contract_mismatch"
+            : "upstream_status";
+          return this.remember(resolved.key, this.failure(input.provider, reason), false);
         }
         const valid = await this.validate(input.provider, response, abort.signal, format);
         if (!valid) {

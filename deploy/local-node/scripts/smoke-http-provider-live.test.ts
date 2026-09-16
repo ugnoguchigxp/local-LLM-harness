@@ -418,3 +418,50 @@ test("live HTTP Provider smoke verifies two tool turns and a long resident reque
   expect(result.longInput).toEqual({ requestedTokens: 100, observedPromptTokens: 101 });
   expect(chatRequests).toBe(7);
 });
+
+test("long-input idle gate refuses to send the payload when execution metrics are unavailable", async () => {
+  let longInputSent = false;
+  await expect(runHttpProviderLiveSmoke({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "secret",
+    model: "qwen3.8",
+    includeAudio: false,
+    includeToolRoundTrip: false,
+    longInputTokens: 100,
+    longInputIdleSeconds: 1,
+    fetch: async (input, init) => {
+      const request = input instanceof Request ? new Request(input, init) : new Request(input.toString(), init);
+      const path = new URL(request.url).pathname;
+      if (path === "/metrics") return new Response("not found", { status: 404 });
+      if (path === "/health") return Response.json({
+        status: "ok", version: "1", releaseCommit, configRevision, bootEpoch: "epoch-live",
+      });
+      if (path === "/ready") return Response.json({ status: "ready" });
+      if (path === "/v1/models") return Response.json({
+        object: "list", data: [{ id: "qwen3.8", object: "model", created: 0, owned_by: "larm" }],
+      });
+      if (path !== "/v1/chat/completions") return new Response("not found", { status: 404 });
+      const body = await request.json() as Record<string, unknown>;
+      const content = String((body.messages as Array<Record<string, unknown>>)[0]?.content ?? "");
+      if (content.includes(" token token token")) longInputSent = true;
+      if (body.stream === true) {
+        return new Response([
+          'data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"qwen3.8","choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":null}]}\n\n',
+          'data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"qwen3.8","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+          "data: [DONE]\n\n",
+        ].join(""), { headers: { "content-type": "text/event-stream" } });
+      }
+      const schema = body.response_format !== undefined;
+      return Response.json({
+        id: "c", object: "chat.completion", created: 1, model: "qwen3.8",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: schema ? '{"ok":true}' : "OK" },
+          finish_reason: "stop",
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }, { headers: { "content-type": "application/json" } });
+    },
+  })).rejects.toThrow("idle gate metrics returned HTTP 404");
+  expect(longInputSent).toBeFalse();
+});

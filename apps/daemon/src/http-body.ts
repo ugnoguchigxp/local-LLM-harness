@@ -1,6 +1,6 @@
 export class RequestBodyError extends Error {
   constructor(
-    readonly code: "bad_request" | "body_too_large",
+    readonly code: "bad_request" | "body_too_large" | "invalid_request" | "invalid_tool_choice",
     message: string,
     readonly status: 400 | 413,
   ) {

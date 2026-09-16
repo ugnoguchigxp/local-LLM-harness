@@ -1329,6 +1329,99 @@ test("standard Chat Completions needs only bearer and model and releases its int
   }));
 });
 
+test("Qwen 3.8 requests disable implicit thinking and normalize named tool choice", async () => {
+  let upstreamBody: Record<string, unknown> | undefined;
+  const { app } = await makeApp(true, false, {}, {
+    gatewayFetch: async (_input, init) => {
+      upstreamBody = JSON.parse(new TextDecoder().decode(init?.body as Uint8Array)) as Record<string, unknown>;
+      return Response.json({
+        id: "chatcmpl-tool",
+        object: "chat.completion",
+        created: 1,
+        model: "qwen3.8",
+        choices: [{
+          index: 0,
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "call-read",
+              type: "function",
+              function: { name: "read_context", arguments: "{}" },
+            }],
+          },
+          finish_reason: "tool_calls",
+        }],
+      });
+    },
+  });
+  const allocation = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ requirements: [{ capability: "llm.general", route: "llm-default" }] }),
+  });
+  const allocationId = ((await allocation.json()) as { id: string }).id;
+  const tools = ["read_context", "lookup_status"].map((name) => ({
+    type: "function",
+    function: { name, parameters: { type: "object", properties: {} } },
+  }));
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-larm-allocation-id": allocationId },
+    body: JSON.stringify({
+      model: "qwen3.8",
+      messages: [{ role: "user", content: "Call read_context." }],
+      tools,
+      tool_choice: { type: "function", function: { name: "read_context" } },
+    }),
+  });
+  expect(response.status).toBe(200);
+  expect(upstreamBody).toMatchObject({
+    model: "qwen3.8",
+    chat_template_kwargs: { enable_thinking: false },
+    tool_choice: "required",
+    tools: [{ function: { name: "read_context" } }],
+  });
+  expect((upstreamBody?.tools as unknown[])).toHaveLength(1);
+});
+
+test("Qwen 3.8 preserves explicit reasoning controls and rejects unknown named tools", async () => {
+  let upstreamBody: Record<string, unknown> | undefined;
+  const { app } = await makeApp(true, false, {}, {
+    gatewayFetch: async (_input, init) => {
+      upstreamBody = JSON.parse(new TextDecoder().decode(init?.body as Uint8Array)) as Record<string, unknown>;
+      return Response.json({ choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }] });
+    },
+  });
+  const allocation = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ requirements: [{ capability: "llm.general", route: "llm-default" }] }),
+  });
+  const allocationId = ((await allocation.json()) as { id: string }).id;
+  const headers = { "content-type": "application/json", "x-larm-allocation-id": allocationId };
+  const reasoned = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ model: "qwen3.8", messages: [], reasoning_effort: "medium" }),
+  });
+  expect(reasoned.status).toBe(200);
+  expect(upstreamBody).not.toHaveProperty("chat_template_kwargs");
+
+  const invalid = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: "qwen3.8",
+      messages: [],
+      tools: [{ type: "function", function: { name: "declared" } }],
+      tool_choice: { type: "function", function: { name: "missing" } },
+    }),
+  });
+  expect(invalid.status).toBe(400);
+  expect(await invalid.json()).toMatchObject({ error: { code: "invalid_tool_choice" } });
+});
+
 test("standard Chat Completions preserves JSON Schema and disables Bun's upstream idle timeout", async () => {
   let upstreamBody: unknown;
   let upstreamTimeout: number | boolean | undefined;
@@ -3537,6 +3630,33 @@ test("agent semantic health rejects an HTTP-alive model that does not complete e
   expect(agentConnectionHealthSchema.parse(await health.json())).toMatchObject({
     ready: false,
     providers: [{ reason: "invalid_response" }],
+  });
+  expect(probes).toBe(1);
+});
+
+test("agent connection fails immediately when a provider rejects the fixed readiness request", async () => {
+  let probes = 0;
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog,
+    gatewayFetch: async () => {
+      probes += 1;
+      return Response.json({ error: { code: "invalid_model" } }, { status: 400 });
+    },
+  });
+  const created = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "provider-contract-mismatch",
+    }),
+    body: JSON.stringify({ agentProfile: "coding", audience: "loopback" }),
+  });
+  expect(created.status).toBe(202);
+  expect(publicAgentConnectionSchema.parse(await created.json())).toMatchObject({
+    status: "failed",
+    error: { code: "provider_contract_mismatch" },
   });
   expect(probes).toBe(1);
 });

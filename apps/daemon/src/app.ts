@@ -261,6 +261,47 @@ function normalizedAllocationRequestHash(request: AllocationRequest): string {
   return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
 
+function normalizeQwen38ChatRequest(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RequestBodyError("invalid_request", "chat request must be a JSON object", 400);
+  }
+  const request = structuredClone(value as Record<string, unknown>);
+  if (request.model !== "qwen3.8") return request;
+
+  const template = request.chat_template_kwargs;
+  if (request.reasoning_effort === undefined) {
+    if (template === undefined) {
+      request.chat_template_kwargs = { enable_thinking: false };
+    } else if (template && typeof template === "object" && !Array.isArray(template)) {
+      const kwargs = template as Record<string, unknown>;
+      if (kwargs.enable_thinking === undefined) kwargs.enable_thinking = false;
+    }
+  }
+
+  const choice = request.tool_choice;
+  if (!choice || typeof choice !== "object" || Array.isArray(choice)) return request;
+  const functionChoice = (choice as Record<string, unknown>).function;
+  const name = functionChoice && typeof functionChoice === "object" && !Array.isArray(functionChoice)
+    ? (functionChoice as Record<string, unknown>).name
+    : undefined;
+  const tools = request.tools;
+  if (typeof name !== "string" || !Array.isArray(tools)) {
+    throw new RequestBodyError("invalid_tool_choice", "named tool_choice must reference a declared function", 400);
+  }
+  const selected = tools.find((tool) => {
+    if (!tool || typeof tool !== "object" || Array.isArray(tool)) return false;
+    const fn = (tool as Record<string, unknown>).function;
+    return fn && typeof fn === "object" && !Array.isArray(fn)
+      && (fn as Record<string, unknown>).name === name;
+  });
+  if (!selected) {
+    throw new RequestBodyError("invalid_tool_choice", `tool_choice function ${name} is not declared`, 400);
+  }
+  request.tools = [selected];
+  request.tool_choice = "required";
+  return request;
+}
+
 export function createAppComponents(deps: AppDeps) {
   const app = new Hono();
   const controlMaxBodyBytes = deps.controlMaxBodyBytes ?? 64 * 1024;
@@ -597,6 +638,8 @@ export function createAppComponents(deps: AppDeps) {
         const bytes = await readBodyLimited(c.req.raw.clone() as unknown as Request, options.maxBodyBytes);
         chatRequestBytes = bytes;
         chatRequest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+        chatRequest = normalizeQwen38ChatRequest(chatRequest);
+        chatRequestBytes = new TextEncoder().encode(JSON.stringify(chatRequest));
         if (
           chatRequest
           && typeof chatRequest === "object"

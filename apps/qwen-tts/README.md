@@ -16,15 +16,19 @@ production modelのfile list、bytes、SHA-256、snapshot digest、active target
 [`../../deploy/local-node/models.yaml`](../../deploy/local-node/models.yaml)です。Qwen TTSは最初のPreferred
 directory snapshot activation対象です。
 
-配備手順:
+配備手順（固定revision、patch適用、両alias、production configをfail-closedで検査する）:
 
 ```bash
 git clone https://github.com/dingausmwald/Qwen3-TTS-Openai-Fastapi.git /srv/ai/apps/Qwen3-TTS-Openai-Fastapi
 git -C /srv/ai/apps/Qwen3-TTS-Openai-Fastapi checkout eb14f6e6a50445cf442979abb9203ff0d5042c43
-git -C /srv/ai/apps/Qwen3-TTS-Openai-Fastapi apply /srv/ai/apps/local-LLM-harness/apps/qwen-tts/rocm-gfx1151.patch
-install -m 0644 /srv/ai/apps/local-LLM-harness/apps/qwen-tts/config.production.yaml \
-  /srv/ai/apps/Qwen3-TTS-Openai-Fastapi/config.production.yaml
+bash deploy/local-node/scripts/prepare-qwen-tts-source.sh apply
+bash deploy/local-node/scripts/prepare-qwen-tts-source.sh verify
 ```
+
+`install-services.sh`の`all` scopeも同じ`apply` gateを実行する。外部checkoutが別revision、管理外変更あり、
+patch未適用、router/backendいずれかのalias欠落ならunit設置前に停止する。`preflight-larm.sh`は`verify`
+gateを再実行し、稼働前driftを検出する。過去の手動作業でpatch管理対象2ファイルだけが部分適用状態に
+なっている場合、`apply` gateはその2ファイルを固定revisionへ戻してからpatch全体を原子的に適用する。
 
 パッチは次を行う。
 

@@ -7,6 +7,7 @@ base_url="${LARM_BASE_URL:-http://127.0.0.1:9810}"
 credential="${LARM_CREDENTIAL_PATH:-/etc/larm/larm.env}"
 installed_unit="${LARM_INSTALLED_UNIT:-/etc/systemd/system/larm-daemon.service}"
 external_verifier="${repo_root}/deploy/local-node/scripts/verify-external-assets.ts"
+qwen_tts_verifier="${repo_root}/deploy/local-node/scripts/prepare-qwen-tts-source.sh"
 repository_polkit="${repo_root}/deploy/local-node/polkit/50-larm-runtime-control.rules"
 installed_polkit="/etc/polkit-1/rules.d/50-larm-runtime-control.rules"
 provider_specs=(
@@ -124,6 +125,7 @@ ufw_gateway_rules="$(awk '$1 ~ /^9810(\/tcp)?$/ && $0 ~ /[[:space:]]ALLOW[[:spac
 ufw_ssh_rules="$(awk '$1 ~ /^22(\/tcp)?$/ && $0 ~ /[[:space:]]ALLOW[[:space:]]+IN[[:space:]]/ {print}' \
   <<<"${ufw_output}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
 external_assets="$(bun run "${external_verifier}")"
+qwen_tts_source="$(bash "${qwen_tts_verifier}" verify)"
 
 jq -n \
   --arg timestamp "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
@@ -153,7 +155,7 @@ jq -n \
   --argjson ufwProviderRules "${ufw_provider_rules}" \
   --argjson ufwGatewayRules "${ufw_gateway_rules}" \
   --argjson ufwSshRules "${ufw_ssh_rules}" \
-  --argjson externalAssets "[${external_assets}]" \
+  --argjson externalAssets "[${external_assets},${qwen_tts_source}]" \
   '{timestamp:$timestamp,commit:$commit,candidateConfigRevision:$candidateConfigRevision,dirty:$dirty,daemonHealth:$health,
     credential:{type:$credentialType,mode:$credentialMode,owner:$credentialOwner},
     unit:{type:$unitType,digest:$unitDigest,repositoryDigest:$repositoryUnitDigest,
@@ -165,3 +167,4 @@ jq -n \
     externalAssets:$externalAssets,disk:{path:"/srv/ai",availableBytes:$diskAvailableBytes}}'
 
 [[ "$(jq -r .valid <<<"${external_assets}")" == "true" ]] || exit 1
+[[ "$(jq -r .valid <<<"${qwen_tts_source}")" == "true" ]] || exit 1

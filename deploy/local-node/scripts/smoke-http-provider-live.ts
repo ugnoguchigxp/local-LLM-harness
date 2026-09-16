@@ -18,6 +18,8 @@ export type HttpProviderLiveSmokeOptions = {
   includeAudio?: boolean;
   includeToolRoundTrip?: boolean;
   longInputTokens?: number;
+  longInputIdleSeconds?: number;
+  longInputIdleTimeoutMs?: number;
   timeoutMs?: number;
   fetch?: NonNullable<LarmClientOptions["fetch"]>;
 };
@@ -228,6 +230,50 @@ function positiveInteger(value: number | undefined, fallback: number): number {
   return result;
 }
 
+function metricSum(text: string, name: string): { found: boolean; value: number } {
+  let found = false;
+  let value = 0;
+  for (const line of text.split("\n")) {
+    if (!line.startsWith(`${name}{`) && !line.startsWith(`${name} `)) continue;
+    const parsed = Number(line.trim().split(/\s+/).at(-1));
+    if (!Number.isFinite(parsed)) continue;
+    found = true;
+    value += parsed;
+  }
+  return { found, value };
+}
+
+async function waitForExclusiveIdle(options: HttpProviderLiveSmokeOptions): Promise<void> {
+  const idleSeconds = options.longInputIdleSeconds ?? 0;
+  if (idleSeconds === 0) return;
+  if (!Number.isInteger(idleSeconds) || idleSeconds < 1 || idleSeconds > 300) {
+    throw new Error("longInputIdleSeconds must be an integer from 1 through 300");
+  }
+  const timeoutMs = positiveInteger(options.longInputIdleTimeoutMs, 300_000);
+  const fetchImpl = options.fetch ?? fetch;
+  const deadline = Date.now() + timeoutMs;
+  let idleSince: number | undefined;
+  while (Date.now() < deadline) {
+    const response = await fetchImpl(`${options.baseUrl.replace(/\/+$/, "")}/metrics`, {
+      headers: { authorization: `Bearer ${options.apiToken}` },
+      signal: AbortSignal.timeout(Math.min(5_000, Math.max(1, deadline - Date.now()))),
+    });
+    if (!response.ok) throw new Error(`idle gate metrics returned HTTP ${response.status}`);
+    const metrics = await response.text();
+    const active = metricSum(metrics, "larm_execution_active");
+    const queued = metricSum(metrics, "larm_execution_queued");
+    if (!active.found || !queued.found) throw new Error("idle gate metrics are incomplete");
+    if (active.value === 0 && queued.value === 0) {
+      idleSince ??= Date.now();
+      if (Date.now() - idleSince >= idleSeconds * 1_000) return;
+    } else {
+      idleSince = undefined;
+    }
+    await Bun.sleep(Math.min(1_000, Math.max(1, deadline - Date.now())));
+  }
+  throw new Error(`no sustained idle ${idleSeconds}s within ${Math.round(timeoutMs / 1_000)}s`);
+}
+
 export async function runHttpProviderLiveSmoke(
   options: HttpProviderLiveSmokeOptions,
 ): Promise<HttpProviderLiveSmokeResult> {
@@ -376,6 +422,7 @@ export async function runHttpProviderLiveSmoke(
     if (!Number.isSafeInteger(requestedTokens) || requestedTokens < 1 || requestedTokens > 225_280) {
       throw new Error("longInputTokens must be an integer from 1 through 225280");
     }
+    await waitForExclusiveIdle(options);
     const response = await client.createChatCompletion({
       model: options.model,
       messages: [{
@@ -489,6 +536,9 @@ if (import.meta.main) {
       includeAudio: process.env.LARM_HTTP_SMOKE_AUDIO !== "0",
       includeToolRoundTrip: process.env.LARM_HTTP_SMOKE_TOOL_ROUND_TRIP !== "0",
       longInputTokens: Number(process.env.LARM_HTTP_LONG_INPUT_TOKENS ?? 0),
+      longInputIdleSeconds: Number(process.env.LARM_HTTP_LONG_INPUT_IDLE_SECONDS
+        ?? (Number(process.env.LARM_HTTP_LONG_INPUT_TOKENS ?? 0) > 0 ? 15 : 0)),
+      longInputIdleTimeoutMs: Number(process.env.LARM_HTTP_LONG_INPUT_IDLE_TIMEOUT_MS ?? 300_000),
       timeoutMs: Number(process.env.LARM_HTTP_SMOKE_TIMEOUT_MS ?? 300_000),
     });
     console.log(JSON.stringify(result));

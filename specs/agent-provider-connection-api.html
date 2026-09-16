@@ -654,7 +654,9 @@ Content-Type: application/json
       <li>
         初回probeはAllocation期限と<code>LARM_CONNECTION_READY_TIMEOUT_SECONDS</code>の早い方まで再試行する。
         retry間隔は既存<code>LARM_STARTUP_POLL_INTERVAL_MS</code>と失敗cache
-        TTLの大きい方とする。deadline時は Connectionをfailedにし、所有Allocationをreleaseする。
+        TTLの大きい方とする。ただし固定probeへのHTTP 400、404、405、422は
+        <code>provider_contract_mismatch</code>として再試行せず、Connectionを直ちにfailedにして
+        所有Allocationをreleaseする。deadline時もConnectionをfailedにして所有Allocationをreleaseする。
       </li>
       <li>
         登録後に予期しないfacade処理失敗が起きた場合も<code>finally</code>相当の処理でAllocationをreleaseし、
@@ -944,6 +946,7 @@ Content-Type: application/json
       >、<code>stale_state</code>、<code>binding_changed</code>、
       <code>provider_busy</code
       >、<code>probe_timeout</code>、<code>upstream_status</code>、
+      <code>provider_contract_mismatch</code>、
       <code>invalid_response</code>だけです。prompt、生成token、audio
       payload、backend endpoint、例外stackは responseへ含めません。Agent tokenでProvider
       healthを呼んだ場合、responseにはそのProvider一件だけを含めます。

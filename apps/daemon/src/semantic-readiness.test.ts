@@ -286,6 +286,24 @@ test("TTS semantic probe validates audio/wav and a nonempty RIFF data chunk", as
   });
 });
 
+test("TTS semantic probe classifies fixed request rejection as a contract mismatch", async () => {
+  const { registry, control, provider } = fixture("openai.audio-speech.v1", "speech.tts");
+  const readiness = new SemanticReadiness({
+    control,
+    getRegistry: () => registry,
+    executionGate: new ExecutionGate(),
+    timeoutMs: 100,
+    fetchImpl: async () => Response.json(
+      { error: { code: "invalid_model", message: "unsupported model" } },
+      { status: 400 },
+    ),
+  });
+  expect(await readiness.check({ allocationId: "alloc", provider })).toMatchObject({
+    ready: false,
+    reason: "provider_contract_mismatch",
+  });
+});
+
 test("BUSY uses only a fresh successful cache and probe deadlines cannot stall", async () => {
   const { registry, control, provider, setStatus } = fixture("openai.chat-completions.v1", "llm.general");
   let calls = 0;

@@ -269,7 +269,7 @@ export class AgentConnectionController {
         if (record.status === "probing") complete = await this.probeInitial(record);
         if (!complete && !isTerminal(record.status)) this.startBackground(record);
         return {
-          status: complete ? 201 : 202,
+          status: record.status === "ready" ? 201 : 202,
           body: this.public(record),
           location: `/v1/agent-connections/${record.id}`,
         };
@@ -555,6 +555,18 @@ export class AgentConnectionController {
     const health = await this.healthRecord(record);
     if (health.status === 200) {
       record.status = "ready";
+      return true;
+    }
+    const providers = (health.body as AgentConnectionHealth).providers;
+    const mismatch = providers.find((provider) => provider.reason === "provider_contract_mismatch");
+    if (mismatch) {
+      record.status = "failed";
+      record.error = {
+        code: "provider_contract_mismatch",
+        message: `provider ${mismatch.name} rejected its fixed readiness contract`,
+      };
+      await this.options.control.releaseAllocation(record.allocationId);
+      this.pruneHistory();
       return true;
     }
     return false;

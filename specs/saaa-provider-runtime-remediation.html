@@ -122,6 +122,8 @@ LARM_HTTP_MODEL=qwen3.8 \
 LARM_HTTP_SMOKE_AUDIO=0 \
 LARM_HTTP_SMOKE_TOOL_ROUND_TRIP=1 \
 LARM_HTTP_LONG_INPUT_TOKENS=225000 \
+LARM_HTTP_LONG_INPUT_IDLE_SECONDS=15 \
+LARM_HTTP_LONG_INPUT_IDLE_TIMEOUT_MS=300000 \
 bun run smoke:http-provider-live
 
 LARM_EXPECTED_RELEASE_COMMIT="$(git rev-parse HEAD)" \
@@ -144,6 +146,41 @@ bun run smoke:http-provider-live</code></pre>
     </p>
   </section>
 
+  <section id="reinspection-2026-09-16">
+    <h2>2026-09-16実機再検査を受けた追加是正</h2>
+    <p>
+      release <code>01d0e6f30c114ae8e0c575c3dcefa7f360a412de</code>の再検査では、catalog、JSON
+      Schema、SSE、Qwen TTS内部modelは合格した一方、外部Qwen TTS checkoutへ管理patchが未適用で、
+      公開aliasと<code>tts-expressive</code>
+      Connectionが失敗した。短文JSONはreasoningだけを返し、 named tool choice
+      objectはbackendで型不一致となった。225,000 token試験は同一GPUの別workerと競合し、 Vulkan
+      device loss後に復旧したため、単独時の合否とは扱わない。
+    </p>
+    <ul>
+      <li>
+        <code>prepare-qwen-tts-source.sh</code>は固定revision、managed
+        patch、router/backend両aliasを検査し、 installerの<code
+          >all</code
+        >
+        scopeでpatchとproduction configを適用する。preflightでも同じ状態を再検査する。
+      </li>
+      <li>
+        Qwen
+        3.8の通常要求は明示的reasoning指定がない場合だけ<code>enable_thinking: false</code>を補い、
+        named tool
+        choiceは対象tool一件と<code>required</code>へ意味保存変換する。
+      </li>
+      <li>
+        固定semantic probeへのHTTP 400、404、405、422はcontract mismatchとして即時terminal
+        failureにする。
+      </li>
+      <li>
+        長文canaryは全LARM executionのactive/queuedが15秒連続0であることを送信前条件とし、
+        300秒以内に成立しなければ長文要求を送らず失敗する。
+      </li>
+    </ul>
+  </section>
+
   <section id="status">
     <h2>現在の状態</h2>
     <table>
@@ -160,13 +197,13 @@ bun run smoke:http-provider-live</code></pre>
       <tbody>
         <tr>
           <th scope="row">ソース</th>
-          <td>実装済み、検査中</td>
-          <td>routing、upstream alias、voice GET、PCM検証、live smoke</td>
+          <td>再検査是正を実装、検査中</td>
+          <td>外部source gate、terminal probe分類、Qwen request正規化、長文idle gate</td>
         </tr>
         <tr>
           <th scope="row">配備後実機</th>
-          <td>未実施</td>
-          <td>新release commitを配備した実機証跡が必要</td>
+          <td>再合格待ち</td>
+          <td>修正版releaseで公開TTS、Connection、短文、tool、無競合225kを再実施する</td>
         </tr>
       </tbody>
     </table>

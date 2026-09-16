@@ -613,6 +613,7 @@ export const agentProviderHealthReasonSchema = z.enum([
   "provider_busy",
   "probe_timeout",
   "upstream_status",
+  "provider_contract_mismatch",
   "invalid_response",
 ]);
 
