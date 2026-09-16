@@ -9,7 +9,7 @@ WorkingDirectory=/srv/ai/apps/q38rocm
 Environment=HOME=/srv/ai/cache
 Environment=XDG_CACHE_HOME=/srv/ai/cache
 Environment=MTP=1
-Environment=MTP_STRICT=1
+Environment=STRICT_MTP=1
 Environment=REASONING_BUDGET=-1
 Environment=SLOTS=1
 Environment=LLAMA_SERVER_BIN=/srv/ai/apps/q38rocm/engine/bin/llama-server-larm-native
