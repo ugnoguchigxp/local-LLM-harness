@@ -96,6 +96,20 @@ function isSchemaCanaryCompletion(value: unknown): boolean {
   }
 }
 
+function isShortTextCanaryCompletion(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const choices = (value as Record<string, unknown>).choices;
+  if (!Array.isArray(choices) || choices.length !== 1) return false;
+  const choice = choices[0];
+  if (!choice || typeof choice !== "object" || Array.isArray(choice)) return false;
+  const record = choice as Record<string, unknown>;
+  if (record.finish_reason !== "stop") return false;
+  const message = record.message;
+  if (!message || typeof message !== "object" || Array.isArray(message)) return false;
+  const content = (message as Record<string, unknown>).content;
+  return typeof content === "string" && content.trim() === "OK";
+}
+
 async function responseBytes(response: Response, limit: number): Promise<Uint8Array> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > limit) {
@@ -133,6 +147,17 @@ function parseJson(bytes: Uint8Array): unknown {
   } catch {
     throw new Error("response_json_invalid");
   }
+}
+
+function voiceNames(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const voices = (value as Record<string, unknown>).voices;
+  if (!Array.isArray(voices)) return [];
+  return voices.flatMap((voice) => {
+    if (!voice || typeof voice !== "object" || Array.isArray(voice)) return [];
+    const name = (voice as Record<string, unknown>).name;
+    return typeof name === "string" && name.length > 0 ? [name] : [];
+  });
 }
 
 async function inspectSse(response: Response): Promise<{ chunks: number; deltas: number; finishReasons: number }> {
@@ -231,6 +256,20 @@ export async function runHttpProviderLiveSmoke(
   }
   if (!isSchemaCanaryCompletion(jsonValue)) throw new Error("json_schema_completion_invalid");
 
+  const shortResponse = await client.createChatCompletion({
+    model: options.model,
+    messages: [{ role: "user", content: "Reply with just OK." }],
+    temperature: 0,
+    max_tokens: 256,
+    stream: false,
+  });
+  if (mediaType(shortResponse) !== "application/json") throw new Error("short_json_media_type_invalid");
+  const shortValue = parseJson(await responseBytes(shortResponse, TEXT_LIMIT));
+  const short = inspectOpenAiChatCompletionJson(shortValue);
+  if (!short.ok || short.model !== options.model || !isShortTextCanaryCompletion(shortValue)) {
+    throw new Error("short_text_completion_invalid");
+  }
+
   const sseResponse = await client.createChatCompletion({
     model: options.model,
     messages: [{ role: "user", content: "Reply with OK." }],
@@ -245,6 +284,7 @@ export async function runHttpProviderLiveSmoke(
   if (options.includeAudio ?? true) {
     const asrModel = options.asrModel ?? "qwen3-asr-1.7b";
     const ttsModel = options.ttsModel ?? "voicevox-core";
+    const ttsVoice = options.ttsVoice ?? "Kasukabe_Tsumugi";
     const form = new FormData();
     form.append("model", asrModel);
     form.append("response_format", "json");
@@ -258,16 +298,39 @@ export async function runHttpProviderLiveSmoke(
       throw new Error("transcription_non_speech_invalid");
     }
 
+    const voicesResponse = await client.listVoices(ttsModel);
+    if (mediaType(voicesResponse) !== "application/json") throw new Error("tts_voices_media_type_invalid");
+    const voices = voiceNames(parseJson(await responseBytes(voicesResponse, TEXT_LIMIT)));
+    if (!voices.includes(ttsVoice)) throw new Error("tts_voice_not_advertised");
+
     const speechResponse = await client.createSpeech({
       model: ttsModel,
       input: "疎通確認です。",
-      voice: options.ttsVoice ?? "Kasukabe_Tsumugi",
+      voice: ttsVoice,
       response_format: "wav",
     });
     const speechMediaType = mediaType(speechResponse);
     if (!isOpenAiSpeechMediaType(speechMediaType, "wav")) throw new Error("tts_media_type_invalid");
     const speech = await responseBytes(speechResponse, AUDIO_LIMIT);
     const durationSeconds = wavDurationSeconds(speech);
+
+    const pcmResponse = await client.createSpeech({
+      model: ttsModel,
+      input: "疎通確認です。",
+      voice: ttsVoice,
+      response_format: "pcm",
+    });
+    if (!isOpenAiSpeechMediaType(pcmResponse.headers.get("content-type") ?? "", "pcm")) {
+      throw new Error("tts_pcm_media_type_invalid");
+    }
+    if (pcmResponse.headers.get("x-audio-sample-rate") !== "24000") {
+      throw new Error("tts_pcm_sample_rate_invalid");
+    }
+    if (pcmResponse.headers.get("x-audio-sample-format") !== "s16le") {
+      throw new Error("tts_pcm_sample_format_invalid");
+    }
+    const pcm = await responseBytes(pcmResponse, AUDIO_LIMIT);
+    if (pcm.byteLength === 0 || pcm.byteLength % 2 !== 0) throw new Error("tts_pcm_body_invalid");
     audio = {
       asrModel,
       transcriptionValidated: true,

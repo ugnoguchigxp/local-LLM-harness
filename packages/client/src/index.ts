@@ -994,6 +994,13 @@ export class LarmClient {
     });
   }
 
+  listVoices(model: string, options: RequestOptions = {}): Promise<Response> {
+    const query = new URLSearchParams({ model });
+    return this.request(`/v1/audio/voices?${query.toString()}`, {
+      signal: options.signal,
+    });
+  }
+
   chat(allocationId: string, body: unknown, options: RequestOptions = {}): Promise<Response> {
     return this.gateway("/v1/chat/completions", allocationId, body, options);
   }

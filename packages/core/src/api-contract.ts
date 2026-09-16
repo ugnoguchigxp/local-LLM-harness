@@ -824,6 +824,15 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
             schema: { type: "string", minLength: 1, maxLength: 128 },
           }],
         }
+        : operationId === "listVoices"
+        ? {
+          parameters: [{
+            name: "model",
+            in: "query",
+            required: true,
+            schema: { type: "string", minLength: 1 },
+          }],
+        }
         : operationId === "provisionContextSource"
         ? {
           parameters: [{

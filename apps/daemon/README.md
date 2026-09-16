@@ -166,6 +166,9 @@ curl -sS -X POST http://127.0.0.1:9810/v1/audio/speech \
   -H 'Content-Type: application/json' \
   -d '{"model":"voicevox-core","input":"こんにちは","voice":"Kasukabe_Tsumugi","response_format":"wav"}' \
   -o response.wav
+
+curl -sS 'http://127.0.0.1:9810/v1/audio/voices?model=voicevox-core' \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}"
 ```
 
 公開modelは、deprecatedでないAgent ProfileのLLM・ASR・TTS Providerから構築します。

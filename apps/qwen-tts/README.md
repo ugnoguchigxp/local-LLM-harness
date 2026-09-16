@@ -5,6 +5,7 @@
 - upstream: `https://github.com/dingausmwald/Qwen3-TTS-Openai-Fastapi`
 - pinned commit: `eb14f6e6a50445cf442979abb9203ff0d5042c43`
 - production model: `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`
+- public/upstream API model key: `qwen3-tts-expressive`
 - comparison model: `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`（production Registry対象外）
 - service: `qwen-tts.service`
 - port: `8082`

@@ -343,7 +343,7 @@ test("reference client fails closed when a Chat Completions SSE terminal is miss
   await expect(consume()).rejects.toBeInstanceOf(LarmStreamProtocolError);
 });
 
-test("reference client calls standard transcription and speech without allocation headers", async () => {
+test("reference client calls standard audio endpoints without allocation headers", async () => {
   const requests: Request[] = [];
   const client = new LarmClient({
     baseUrl: "http://127.0.0.1:9810",
@@ -359,16 +359,20 @@ test("reference client calls standard transcription and speech without allocatio
   form.append("file", new Blob(["audio"]), "sample.wav");
   await client.createAudioTranscription(form);
   await client.createSpeech({ model: "voicevox-core", input: "hello" });
+  await client.listVoices("voicevox-core");
 
   expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
     "/v1/audio/transcriptions",
     "/v1/audio/speech",
+    "/v1/audio/voices",
   ]);
   expect(requests.every((request) => request.headers.get("authorization") === "Bearer standard-token"))
     .toBeTrue();
   expect(requests.every((request) => !request.headers.has("x-larm-allocation-id"))).toBeTrue();
   expect(requests[0]?.headers.get("content-type")).toStartWith("multipart/form-data; boundary=");
   expect(await requests[1]?.json()).toEqual({ model: "voicevox-core", input: "hello" });
+  expect(new URL(requests[2]!.url).searchParams.get("model")).toBe("voicevox-core");
+  expect(requests[2]?.method).toBe("GET");
 });
 
 test("reference client rejects invalid timeout configuration", async () => {

@@ -169,7 +169,7 @@ runtimeReleases:
     runtime: qwen-tts
     artifacts:
       - qwen3-tts-expressive
-    providerConfigRevision: qwen-tts-0.6b-v1
+    providerConfigRevision: qwen-tts-0.6b-v2-public-model
     estimatedMemoryGB: 5
     healthPath: /health
     default: true

@@ -312,6 +312,89 @@ test("standard speech rejects an upstream media type that disagrees with respons
   });
 });
 
+test("standard Bearer voice discovery resolves the model from the query without a GET body", async () => {
+  let target = "";
+  let method = "";
+  let body: RequestInit["body"] = "unexpected";
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async (input, init) => {
+      target = String(input);
+      method = init?.method ?? "";
+      body = init?.body;
+      return Response.json({ voices: [{ name: "Kasukabe_Tsumugi" }] });
+    },
+  });
+
+  const response = await app.request("/v1/audio/voices?model=voicevox-core", {
+    headers: { authorization: "Bearer control-token" },
+  });
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ voices: [{ name: "Kasukabe_Tsumugi" }] });
+  expect(target).toBe("http://127.0.0.1:8084/v1/audio/voices?model=voicevox-core");
+  expect(method).toBe("GET");
+  expect(body).toBeUndefined();
+});
+
+test("standard Bearer voice discovery requires exactly one model query parameter", async () => {
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async () => Response.json({ voices: [] }),
+  });
+  const headers = { authorization: "Bearer control-token" };
+
+  const missing = await app.request("/v1/audio/voices", { headers });
+  expect(missing.status).toBe(400);
+  expect(await missing.json()).toEqual({
+    error: expect.objectContaining({ code: "invalid_request", param: "model" }),
+  });
+
+  const duplicate = await app.request(
+    "/v1/audio/voices?model=voicevox-core&model=voicevox-core",
+    { headers },
+  );
+  expect(duplicate.status).toBe(400);
+
+  const unexpected = await app.request(
+    "/v1/audio/voices?model=voicevox-core&extra=true",
+    { headers },
+  );
+  expect(unexpected.status).toBe(400);
+});
+
+test("standard Bearer speech accepts parameterized PCM media types", async () => {
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async () => new Response(new Uint8Array([0, 1]), {
+      headers: {
+        "content-type": "audio/pcm;rate=24000;channels=1;format=s16le",
+        "x-audio-sample-rate": "24000",
+        "x-audio-sample-format": "s16le",
+      },
+    }),
+  });
+  const response = await app.request("/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer control-token",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "voicevox-core",
+      input: "接続を確認しました。",
+      voice: "Kasukabe_Tsumugi",
+      response_format: "pcm",
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toBe("audio/pcm;rate=24000;channels=1;format=s16le");
+  expect(response.headers.get("x-audio-sample-rate")).toBe("24000");
+  expect(response.headers.get("x-audio-sample-format")).toBe("s16le");
+  expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([0, 1]));
+});
+
 test("STT gateway streams multipart bytes to the allocated transcription runtime", async () => {
   let target = "";
   let uploaded = "";

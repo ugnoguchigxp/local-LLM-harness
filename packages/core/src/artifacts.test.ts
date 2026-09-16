@@ -307,11 +307,14 @@ test("Qwen TTS service configuration consumes the manifest-managed snapshot targ
   const config = parseYaml(
     readFileSync(join(root, "apps/qwen-tts/config.production.yaml"), "utf8"),
   ) as { default_model?: string; models?: Record<string, { hf_id?: string }> };
+  expect(config.default_model).toBe("qwen3-tts-expressive");
   expect(config.models?.[config.default_model ?? ""]?.hf_id).toBe(artifact.path);
 
   const registry = loadRegistry(join(root, "config/local-node"));
   expect(registry.runtimes.find((runtime) => runtime.id === "qwen-tts")?.artifacts)
     .toContain(artifact.id);
-  expect(readFileSync(join(root, "deploy/local-node/systemd/larm-daemon.service"), "utf8"))
+  const daemonUnit = readFileSync(join(root, "deploy/local-node/systemd/larm-daemon.service"), "utf8");
+  expect(daemonUnit)
     .toContain("ReadWritePaths=/srv/ai/cache /srv/ai/context-snapshots /srv/ai/context-sources /srv/ai/logs /srv/ai/models /var/lib/larm");
+  expect(daemonUnit).toContain("Environment=LARM_CONNECTION_READY_TIMEOUT_SECONDS=300");
 });

@@ -200,6 +200,25 @@
         </tr>
       </tbody>
     </table>
+    <aside>
+      <h3>空本文のlive観測とrelease canary</h3>
+      <p>
+        稼働release
+        <code>be5e862…</code
+        >では短い英語指示に対し、本文を生成せず終了する事例が二種類
+        観測された。<code>finish_reason=length</code>かつ256 token消費の事例は、1024
+        tokenでの再試行に
+        成功したため上限不足と整合する。一方、<code>finish_reason=stop</code>、生成3
+        token、本文空の事例は token上限では説明できず、別のmodel／template挙動として扱う。
+      </p>
+      <p>
+        release後のHTTP Provider live smokeは、Structured OutputsとSSEに加えて、再現入力
+        <code>Reply with just OK.</code>を非stream
+        JSONで送る。HTTP正常終了だけでは合格にせず、
+        <code>finish_reason=stop</code
+        >と可視本文<code>OK</code>を要求し、stop＋空本文を明示的に失敗させる。
+      </p>
+    </aside>
     <p>
       現在のrequest schemaは未知fieldを許容する。したがって、LARMが未対応parameterを常に
       <code>400 unsupported_parameter</code
@@ -254,6 +273,16 @@
       </tbody>
     </table>
     <p>
+      稼働release <code>be5e862…</code>ではQwen TTSの公開model
+      <code>qwen3-tts-expressive</code
+      >をupstreamが<code>400 invalid_model</code>で拒否した。
+      原因はupstream設定のmodel
+      keyが<code>0.6B-CustomVoice</code>のまま公開名と不一致だったためである。
+      現在のsourceではdefault model
+      keyも<code>qwen3-tts-expressive</code>へ統一し、readiness probeと 通常speech
+      requestが同じ公開名をupstreamまで使用する。
+    </p>
+    <p>
       Gateway自体はupstreamの音声bodyを全量bufferせず転送するため、upstreamが早期に音声chunkを返せば
       clientは全文生成前に再生できる。ただしVOICEVOXでは最初のbyteが全文合成後である。24 kHz、mono、
       16-bit little-endian PCMのうち、現行VOICEVOX adapterはmonoとs16leを検査するがsample rateを 24
@@ -261,12 +290,10 @@
       fixtureが必要である。
     </p>
     <p>
-      <code>GET /v1/audio/voices</code
-      >は存在するが、通常Bearer＋modelだけで使う安定したmodel別discoveryに
-      なっていない。現行のbodyなし経路は内部Allocationを自動取得せず、明示Allocationがなければ
-      <code>allocation_required</code
-      >となる。SAAAの固定voiceを外す前に、このendpointまたはmodel catalogの
-      どちらを正本にするかをLARM側で決める。
+      <code>GET /v1/audio/voices?model=...</code>は通常Bearerだけでmodelを解決し、GET
+      bodyなしで内部Allocationを取得・解放する。 model
+      queryは必須かつ一つに限定し、上流のvoice一覧へ透過する。SAAAの固定voiceを外す際は
+      このendpointをmodel別voice discoveryの正本として使用できる。
     </p>
   </section>
 
@@ -343,7 +370,10 @@
         </tr>
         <tr>
           <th scope="row">準備中</th>
-          <td>通常callは内部で待機。deadline後は<code>503 model_loading_timeout</code></td>
+          <td>
+            通常callは内部で待機。local-nodeの接続・Model Broker待機は300秒で、deadline後は
+            <code>503 model_loading_timeout</code>
+          </td>
           <td><code>Retry-After: 1</code>付き。client側総予算内だけ再試行</td>
         </tr>
         <tr>
@@ -480,9 +510,8 @@ data: [DONE]</code></pre>
         >、値違反は<code>400 invalid_value</code>としてparam名を返す。
       </li>
       <li>
-        <code>GET /v1/audio/voices?model=...</code>を通常Bearerで利用可能にするか、model
-        manifestを唯一の
-        voice正本にする。bodyなしrequestでも内部Allocationを要求しない静的catalogが望ましい。
+        <code>GET /v1/audio/voices?model=...</code>を通常Bearerで利用可能にする。これは実装済みで、
+        bodyなしrequestからmodel別Bindingを自動取得して上流voice catalogを返す。
       </li>
       <li>
         model別statusをavailable、preparing、capacity、failed、unsupportedで返し、snapshot時刻、

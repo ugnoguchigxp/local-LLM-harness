@@ -121,6 +121,12 @@ test("OpenAPI is generated from the public contract schemas", () => {
     { bearerAuth: [] },
     { providerBearer: [] },
   ]);
+  expect(paths["/v1/audio/voices"]?.get?.parameters).toEqual([{
+    name: "model",
+    in: "query",
+    required: true,
+    schema: { type: "string", minLength: 1 },
+  }]);
   expect(paths["/v1/agent-connections/{id}"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v1/agent-connections/{id}/health"]?.get?.security).toEqual([
     {},

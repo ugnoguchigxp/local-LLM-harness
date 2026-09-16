@@ -1,6 +1,6 @@
-default_model: 0.6B-CustomVoice
+default_model: qwen3-tts-expressive
 models:
-  0.6B-CustomVoice:
+  qwen3-tts-expressive:
     hf_id: /srv/ai/models/qwen-tts/Qwen3-TTS-12Hz-0.6B-CustomVoice
     type: customvoice
 optimization:

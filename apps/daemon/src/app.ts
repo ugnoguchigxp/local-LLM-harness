@@ -616,7 +616,18 @@ export function createAppComponents(deps: AppDeps) {
     let directRequestBytes: Uint8Array | undefined;
     let directSpeechFormat: string | undefined;
     if (!scoped && declaredAllocationId === undefined && modelBroker) {
-      if (options.protocol === "openai.audio-speech.v1") {
+      if (options.protocol === "openai.audio-speech.v1" && options.bodyMode === "none") {
+        const searchParams = new URL(c.req.url).searchParams;
+        const models = searchParams.getAll("model");
+        if (models.length !== 1 || models[0]!.length === 0 || [...searchParams].length !== 1) {
+          return c.json(openAiErrorBody(
+            "invalid_request",
+            "exactly one model query parameter and no other query parameters are required",
+            "model",
+          ), 400);
+        }
+        directModel = models[0];
+      } else if (options.protocol === "openai.audio-speech.v1") {
         try {
           directRequestBytes = await readBodyLimited(
             c.req.raw.clone() as unknown as Request,
@@ -724,7 +735,6 @@ export function createAppComponents(deps: AppDeps) {
       !scoped
       && declaredAllocationId === undefined
       && modelBroker
-      && options.bodyMode !== "none"
     ) {
       if (options.protocol === "openai.chat-completions.v1") {
         const parsed = chatCompletionRequestSchema.safeParse(chatRequest);
@@ -738,7 +748,7 @@ export function createAppComponents(deps: AppDeps) {
         directModel = parsed.data.model;
         directRequestBytes = chatRequestBytes;
       }
-      if (!directModel || !directRequestBytes) {
+      if (!directModel || (options.bodyMode !== "none" && !directRequestBytes)) {
         return c.json(openAiErrorBody(
           "invalid_request",
           "a model is required for this endpoint",
@@ -771,12 +781,14 @@ export function createAppComponents(deps: AppDeps) {
       try {
         return await proxyGateway({
           request: c.req.raw,
-          requestBody: directRequestBytes,
+          ...(directRequestBytes ? { requestBody: directRequestBytes } : {}),
           allocationId: lease.allocationId,
           protocol: options.protocol,
-          upstreamPath: options.upstreamPath,
+          upstreamPath: options.bodyMode === "none"
+            ? `${options.upstreamPath}${new URL(c.req.url).search}`
+            : options.upstreamPath,
           runtime,
-          bodyMode: "buffered",
+          bodyMode: options.bodyMode === "none" ? "none" : "buffered",
           maxBodyBytes: options.maxBodyBytes,
           timeoutMs: deps.gatewayTimeoutMs ?? 300_000,
           bootEpoch: identity.bootEpoch,
@@ -802,7 +814,8 @@ export function createAppComponents(deps: AppDeps) {
           responseFormat: chatResponseFormat,
           validateChatResponse: options.protocol === "openai.chat-completions.v1",
           validateTranscriptionResponse: options.protocol === "openai.audio-transcriptions.v1",
-          validateSpeechResponse: options.protocol === "openai.audio-speech.v1",
+          validateSpeechResponse: options.protocol === "openai.audio-speech.v1"
+            && options.bodyMode !== "none",
           expectedSpeechFormat: directSpeechFormat,
           expectedModel: directModel,
           errorFormat: "openai",
