@@ -18,6 +18,7 @@ test("loads the Linux production registry", () => {
   const realtimeTts = registry.runtimes.find((runtime) => runtime.id === "voicevox-tts");
   const expressiveTts = registry.runtimes.find((runtime) => runtime.id === "qwen-tts");
   const defaultRoute = registry.routes.find((route) => route.id === "llm-default");
+  const saaaRoute = registry.routes.find((route) => route.id === "llm-saaa-qwen38");
   const speedRoute = registry.routes.find((route) => route.id === "llm-speed");
   const model35b = registry.runtimes.find((runtime) => runtime.id === "qwen36-35b");
   const ornith35b = registry.runtimes.find((runtime) => runtime.id === "ornith15-35b");
@@ -25,6 +26,7 @@ test("loads the Linux production registry", () => {
     (runtime) => runtime.id === "ornith15-35b-speed",
   );
   const agentWorker = registry.runtimes.find((runtime) => runtime.id === "qwen-worker-agent");
+  const fastWorker = registry.runtimes.find((runtime) => runtime.id === "qwen-worker-fast");
   const efficientAgent = registry.runtimes.find(
     (runtime) => runtime.id === "qwen-worker-agent-efficientthink",
   );
@@ -63,6 +65,11 @@ test("loads the Linux production registry", () => {
     swapGroup: "qwen-worker-slot",
   });
   expect(agentWorker?.resources.estimatedMemoryGB).toBe(28);
+  expect(fastWorker).toMatchObject({
+    capability: ["llm.general", "llm.reasoning", "llm.coding"],
+    resources: { estimatedMemoryGB: 28 },
+    deployment: { modelId: "qwen-fast" },
+  });
   expect(decisionDefault).toMatchObject({
     backend: "llama-swap",
     capability: ["llm.decision.default", "llm.backchannel.classifier"],
@@ -104,12 +111,18 @@ test("loads the Linux production registry", () => {
   expect(agent35b?.resources.estimatedMemoryGB).toBe(30);
   expect(registry.profiles.some((profile) => profile.id === "voice-expressive")).toBe(true);
   expect(defaultRoute?.candidates[0]).toEqual({
-    runtime: "qwen-general",
+    runtime: "qwen-worker-fast",
     purpose: "primary",
   });
   expect(defaultRoute?.candidates).toHaveLength(1);
   expect(defaultRoute?.explicitOnly).toBe(false);
   expect(speedRoute?.explicitOnly).toBe(true);
+  expect(speedRoute?.candidates).toEqual([
+    { runtime: "qwen-worker-fast", purpose: "primary" },
+  ]);
+  expect(saaaRoute?.candidates).toEqual([
+    { runtime: "qwen-worker-fast", purpose: "primary" },
+  ]);
   expect(route35b?.explicitOnly).toBe(true);
   expect(route35b?.candidates[0]).toEqual({ runtime: "ornith15-35b", purpose: "primary" });
   expect(route35b?.candidates[1]).toEqual({
@@ -122,13 +135,20 @@ test("loads the Linux production registry", () => {
     purpose: "primary",
   });
   expect(agentWorkerRoute?.candidates[0]).toEqual({
-    runtime: "qwen-worker-agent-efficientthink",
+    runtime: "qwen-worker-fast",
     purpose: "primary",
   });
   expect(agentWorkerRoute?.candidates[1]).toEqual({
     runtime: "qwen-worker-agent",
     purpose: "fallback",
   });
+  expect(agentWorkerRoute?.candidates[2]).toEqual({
+    runtime: "qwen-worker-agent-efficientthink",
+    purpose: "fallback",
+  });
+  for (const route of [defaultRoute, saaaRoute, agentWorkerRoute, speedRoute]) {
+    expect(route?.candidates.some((candidate) => candidate.runtime === "qwen-general")).toBe(false);
+  }
   expect(decisionDefaultRoute).toMatchObject({
     explicitOnly: true,
     capabilities: ["llm.decision.default"],
@@ -227,6 +247,7 @@ test("production swap group matches llama-swap model membership", () => {
   const ornithCommand = configured.models["ornith15-35b"]?.cmd ?? "";
   const ornithSpeedCommand = configured.models["ornith15-35b-speed"]?.cmd ?? "";
   const agentWorkerCommand = configured.models["qwen-agent"]?.cmd ?? "";
+  const fastWorkerCommand = configured.models["qwen-fast"]?.cmd ?? "";
   const efficientAgentCommand = configured.models["qwen-agent-efficientthink"]?.cmd ?? "";
   const decisionDefaultCommand = configured.models["qwen35-decision"]?.cmd ?? "";
   const lfmBackchannelCommand = configured.models["lfm25-backchannel-jp"]?.cmd ?? "";
@@ -248,6 +269,12 @@ test("production swap group matches llama-swap model membership", () => {
   expect(ornithSpeedCommand).toContain("--no-cache-idle-slots");
   expect(agentWorkerCommand).toContain("--ctx-size 65536");
   expect(configured.models["qwen-agent"]?.aliases).toContain("qwen-agent-worker");
+  expect(fastWorkerCommand).toContain("Qwen3.8-27B-Q4_0.gguf");
+  expect(fastWorkerCommand).toContain("/srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf");
+  expect(fastWorkerCommand).toContain("--spec-type draft-mtp");
+  expect(fastWorkerCommand).toContain("--ctx-size 131072");
+  expect(fastWorkerCommand).toContain("--batch-size 2048");
+  expect(fastWorkerCommand).toContain("--ubatch-size 256");
   expect(efficientAgentCommand).toContain("--ctx-size 65536");
   expect(efficientAgentCommand).toContain(
     "Qwen3.8-27B-EfficientThink-SimPO-Q3-LynnStyle.gguf",

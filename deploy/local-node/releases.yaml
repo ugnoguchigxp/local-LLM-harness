@@ -54,8 +54,8 @@ runtimeReleases:
     artifacts:
       - qwen38-worker-fast
       - qwen38-mtp
-    providerConfigRevision: llama-swap-qwen-fast-v1
-    estimatedMemoryGB: 38
+    providerConfigRevision: llama-swap-qwen-q4-0-mtp-128k-ubatch256-v2
+    estimatedMemoryGB: 28
     healthPath: /health
     default: true
   qwen35-decision-current:

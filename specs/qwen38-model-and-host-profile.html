@@ -36,6 +36,17 @@
     </p>
   </aside>
 
+  <aside>
+    <p>
+      <strong>2026-09-16運用更新:</strong> SAAAの<code>qwen3.8</code>、既定
+      <code>coding-default</code>、背景Agentの標準経路は、Q4_0
+      weightとBase専用MTPを使う
+      <code>qwen-worker-fast</code>へ移行した。contextは131,072、batch 2,048、ubatch
+      256である。 以下のresident ROCmFP4記録はartifactとserviceの履歴として残すが、Agent
+      Profileの候補には採用しない。
+    </p>
+  </aside>
+
   <section id="upstream-model">
     <h2>上流モデルの性質</h2>
     <p>
@@ -268,9 +279,9 @@
         <tr>
           <th scope="row"><code>qwen-worker-fast</code></th>
           <td><code>Q4_0</code> 16,056,478,688 bytes + MTP</td>
-          <td>262,144</td>
+          <td>131,072</td>
           <td>K/V q4_0</td>
-          <td>速度を明示選択するfallback</td>
+          <td>SAAA、既定Coding、ContextStillの標準worker</td>
         </tr>
       </tbody>
     </table>
@@ -459,10 +470,13 @@ private LAN. Use Authorization: Bearer &lt;token&gt;, model=coding-default, and
 POST /v1/chat/completions. JSON and SSE streaming are supported. Internal providers are
 loopback-only: resident Qwen on 127.0.0.1:8080 and llama-swap on 127.0.0.1:8083.
 
-An on-demand worker pool offers a 64K UD-Q4_K_XL Agent route and a 256K Q4_0 speed route.
+An on-demand worker pool uses the 128K Q4_0 model with its Base MTP sidecar as the standard
+SAAA, coding-default, and background Agent route. A 64K UD-Q4_K_XL Agent remains available
+as a fallback.
 Only one worker-slot model is loaded at once; it can
-coexist with the resident model. Public model names are coding-default (resident),
-qwen3.8 (resident SAAA), qwen-agent-worker, and qwen-nightworker.
+coexist with the resident model. Public model names are coding-default (Q4_0 MTP worker),
+qwen3.8 (Q4_0 MTP worker for SAAA), qwen-agent-worker, and qwen-nightworker. The resident
+ROCmFP4 artifact and service remain installed but are not selected by these Agent Profiles.
 The LARM 20M source-token limit is a managed-source budget, NOT a 20M attention window.</code></pre>
   </section>
 

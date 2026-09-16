@@ -96,8 +96,10 @@ models:
       -ngld 999
       --fit off
       --flash-attn on
-      --ctx-size 262144
+      --ctx-size 131072
       --parallel 1
+      --batch-size 2048
+      --ubatch-size 256
       --cache-type-k q4_0
       --cache-type-v q4_0
       --spec-draft-type-k q4_0

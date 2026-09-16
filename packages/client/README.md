@@ -68,7 +68,7 @@ ContextStill 1000で、実行中jobの完了後に高い値から次のProvider�
 
 ## SAAA Qwen 3.8選択
 
-SAAAは`qwen3.8`を明示します。これはresident `qwen-general`専用の通常modelで、廃止した
+SAAAは`qwen3.8`を明示します。これは標準`qwen-worker-fast`（Qwen 3.8 27B Q4_0、128K、MTP）専用の通常modelで、廃止した
 永続KV snapshot Providerやworker Providerへのfallbackはありません。
 
 ```ts
@@ -76,7 +76,7 @@ for await (const event of larm.streamChatCompletion({
   model: "qwen3.8",
   messages: [{ role: "user", content: "hello" }],
 })) {
-  // resident Qwen 3.8で通常Chatとして実行される。
+  // Q4_0 128K + MTP workerで通常Chatとして実行される。
 }
 ```
 

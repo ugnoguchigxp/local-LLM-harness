@@ -1,0 +1,85 @@
+<article lang="ja">
+  <h1>Qwen3.8-27B Q4_0 128K MTP標準Profile決定</h1>
+
+  <p>
+    2026-09-16以降、local-nodeのSAAAメイン思考、既定Coding、背景Agentの標準LLMを Unsloth Qwen3.8-27B
+    Q4_0とBase専用MTP sidecarの組合せに統一する。ROCmFP4 artifactと resident
+    serviceは削除しないが、これらのAgent Profileからは選択しない。
+  </p>
+
+  <section id="standard-configuration">
+    <h2>標準構成</h2>
+    <dl>
+      <dt>main weight</dt>
+      <dd><code>Qwen3.8-27B-Q4_0.gguf</code>、16,056,478,688 bytes</dd>
+      <dt>MTP</dt>
+      <dd><code>mtp-Qwen3.8-27B-Q4_0.gguf</code>、draft最大2 token</dd>
+      <dt>engine</dt>
+      <dd>llama.cpp Vulkan、全layer offload、parallel 1</dd>
+      <dt>context</dt>
+      <dd>131,072 tokens</dd>
+      <dt>batch</dt>
+      <dd>batch 2,048、ubatch 256</dd>
+      <dt>KV</dt>
+      <dd>K/Vともに<code>q4_0</code></dd>
+    </dl>
+  </section>
+
+  <section id="profile-resolution">
+    <h2>Profile解決</h2>
+    <table>
+      <caption>
+        公開ProfileからQ4_0 MTP workerへの標準解決
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">公開用途</th>
+          <th scope="col">route</th>
+          <th scope="col">primary runtime</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>coding-default</code></th>
+          <td><code>llm-default</code></td>
+          <td><code>qwen-worker-fast</code></td>
+        </tr>
+        <tr>
+          <th scope="row">SAAA <code>qwen3.8</code></th>
+          <td><code>llm-saaa-qwen38</code></td>
+          <td><code>qwen-worker-fast</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>qwen-agent-worker</code></th>
+          <td><code>llm-agent-worker</code></td>
+          <td><code>qwen-worker-fast</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="evidence-and-boundary">
+    <h2>根拠と境界</h2>
+    <p>
+      同一hostの直接試験ではPython構文、named tool call、strict JSON、短文生成が合格し、
+      125,018-token入力をHTTP 200、本文<code>OK</code>、115.41 prompt
+      tokens/sで完走した。 256K枠の機能試験も合格し、長文試験は104K
+      token超まで障害なく進行した時点で運用判断により停止した。
+      したがって標準上限は安全余裕と待ち時間を優先して128Kとする。
+    </p>
+    <p>
+      ROCmFP4の重み、artifact registry、resident serviceはロールバック資料として維持する。ただし
+      <code>llm-default</code
+      >、<code>llm-saaa-qwen38</code>、<code>llm-agent-worker</code>、
+      <code>llm-speed</code>の候補には含めない。
+    </p>
+  </section>
+
+  <section id="future-candidate">
+    <h2>次期候補</h2>
+    <p>
+      <code>Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf</code>を未検証候補として保持する。今回の配備には
+      含めず、取得、tool call、品質、Vulkan性能、MTP acceptanceの実機検証も行わない。
+    </p>
+  </section>
+</article>

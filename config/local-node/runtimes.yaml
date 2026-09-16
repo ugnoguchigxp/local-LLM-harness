@@ -89,6 +89,7 @@ runtimes:
       - qwen38-mtp
     capability:
       - llm.general
+      - llm.reasoning
       - llm.coding
     protocol: openai.chat-completions.v1
     backend: llama-swap
@@ -97,7 +98,7 @@ runtimes:
       class: preferred
       swapGroup: qwen-worker-slot
     resources:
-      estimatedMemoryGB: 38
+      estimatedMemoryGB: 28
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16

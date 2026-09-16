@@ -178,8 +178,9 @@ deploy/local-node/scripts/smoke-larm.sh
 ## SAAA Qwen 3.8通常Providerの運用
 
 SAAAの標準HTTP Provider設定では公開modelを`qwen3.8`にします。このmodelは
-`llm-saaa-qwen38`からresident `qwen-general`だけへ解決されます。廃止した永続KV snapshot経路は
-利用対象にもfallbackにもなりません。通常の`coding-default`も同じResidentです。
+`llm-saaa-qwen38`から標準`qwen-worker-fast`だけへ解決されます。workerはQwen 3.8 27B
+Q4_0、128K context、Base専用MTP sidecar、draft最大2 tokenを使用します。廃止した永続KV snapshot経路と
+resident ROCmFP4は利用対象にもfallbackにもなりません。通常の`coding-default`も同じQ4_0 MTP workerです。
 
 SAAA session全体はAgent Profile `saaa-qwen38`を明示選択します。一つのAgent Connectionが
 `tts`（VoiceVox）、`asr`（Qwen3 ASR）、`decision-default`（Qwen 3.5 2B）、`llm`（Qwen 3.8 27B

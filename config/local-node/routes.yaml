@@ -5,7 +5,7 @@ routes:
       - llm.reasoning
       - llm.coding
     candidates:
-      - runtime: qwen-general
+      - runtime: qwen-worker-fast
         purpose: primary
 
   llm-saaa-qwen38:
@@ -15,7 +15,7 @@ routes:
       - llm.coding
     explicitOnly: true
     candidates:
-      - runtime: qwen-general
+      - runtime: qwen-worker-fast
         purpose: primary
 
   llm-agent-worker:
@@ -25,11 +25,11 @@ routes:
       - llm.coding
     explicitOnly: true
     candidates:
-      - runtime: qwen-worker-agent-efficientthink
+      - runtime: qwen-worker-fast
         purpose: primary
       - runtime: qwen-worker-agent
         purpose: fallback
-      - runtime: qwen-general
+      - runtime: qwen-worker-agent-efficientthink
         purpose: fallback
 
   llm-speed:
@@ -40,8 +40,6 @@ routes:
     candidates:
       - runtime: qwen-worker-fast
         purpose: primary
-      - runtime: qwen-general
-        purpose: fallback
 
   llm-decision-default:
     capabilities:

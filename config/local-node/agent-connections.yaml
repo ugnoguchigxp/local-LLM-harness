@@ -11,7 +11,7 @@ audiences:
 
 agentProfiles:
   coding-default:
-    description: Resident 27B coding provider without a worker-slot swap
+    description: Standard Qwen 3.8 27B Q4_0 128K worker with MTP
     schedulingPriority: 3000
     providers:
       - name: llm
@@ -20,7 +20,7 @@ agentProfiles:
         publicModel: coding-default
         readiness: llm-inference
   saaa-qwen38:
-    description: SAAA voice and decision preset with the resident Qwen 3.8 27B provider
+    description: SAAA voice and decision preset with the Qwen 3.8 27B Q4_0 128K MTP worker
     schedulingPriority: 3000
     providers:
       - name: llm
