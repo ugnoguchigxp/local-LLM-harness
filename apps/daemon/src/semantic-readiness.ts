@@ -150,7 +150,10 @@ export class SemanticReadiness {
     if (!resolved.ok) return undefined;
     const cached = this.cache.get(resolved.key);
     if (!cached || cached.expiresAt <= this.now()) return undefined;
-    return { ...cached.health, probe: cached.health.probe ? { ...cached.health.probe, cached: true } : undefined };
+    return this.withExecutionCapacity(
+      { ...cached.health, probe: cached.health.probe ? { ...cached.health.probe, cached: true } : undefined },
+      resolved.runtime!,
+    );
   }
 
   async check(input: SemanticProbeInput): Promise<AgentProviderHealth> {
@@ -159,19 +162,19 @@ export class SemanticReadiness {
     const cached = this.cache.get(resolved.key);
     if (cached && cached.expiresAt > this.now()) {
       if (resolved.busy && cached.successful) {
-        return {
+        return this.withExecutionCapacity({
           ...cached.health,
           acceptingRequests: false,
           probe: cached.health.probe ? { ...cached.health.probe, cached: true } : undefined,
-        };
+        }, resolved.runtime!);
       }
       if (resolved.busy) {
         return this.failure(input.provider, "provider_busy");
       }
-      return {
+      return this.withExecutionCapacity({
         ...cached.health,
         probe: cached.health.probe ? { ...cached.health.probe, cached: true } : undefined,
-      };
+      }, resolved.runtime!);
     }
     if (resolved.busy) {
       return this.remember(resolved.key, this.failure(input.provider, "provider_busy"), false);
@@ -255,10 +258,10 @@ export class SemanticReadiness {
     }
     const startedAt = this.now();
     try {
-      const capacity = input.provider.protocol === "larm.embedding.v1"
+      const upstreamCapacity = input.provider.protocol === "larm.embedding.v1"
         ? await this.embeddingCapacity(resolved.endpoint, resolved.runtime!, abort.signal)
         : undefined;
-      if (input.provider.protocol === "larm.embedding.v1" && !capacity) {
+      if (input.provider.protocol === "larm.embedding.v1" && !upstreamCapacity) {
         return this.remember(resolved.key, this.failure(input.provider, "invalid_response"), false);
       }
       const formats = input.provider.protocol === "openai.chat-completions.v1"
@@ -284,12 +287,11 @@ export class SemanticReadiness {
         }
       }
       const observedAt = new Date(this.now()).toISOString();
-      return this.remember(resolved.key, {
+      const health = this.withExecutionCapacity({
         name: input.provider.name,
         capability: input.provider.capability,
         ready: true,
-        acceptingRequests: !resolved.busy && (capacity?.retryAfterMs ?? 0) === 0,
-        ...(capacity ? { capacity } : {}),
+        acceptingRequests: !resolved.busy,
         probe: {
           kind: "semantic-inference",
           protocol: input.provider.protocol,
@@ -299,7 +301,8 @@ export class SemanticReadiness {
           cached: false,
           observedAt,
         },
-      }, true);
+      }, resolved.runtime!, 1);
+      return this.remember(resolved.key, health, true);
     } catch (error) {
       const reason = abort.signal.aborted ? "probe_timeout" : "invalid_response";
       return this.remember(resolved.key, this.failure(input.provider, reason), false);
@@ -307,6 +310,33 @@ export class SemanticReadiness {
       clearTimeout(timeout);
       release();
     }
+  }
+
+  private withExecutionCapacity(
+    health: AgentProviderHealth,
+    runtime: NonNullable<ReturnType<typeof getRuntime>>,
+    excludeActive = 0,
+  ): AgentProviderHealth {
+    if (!health.ready) return health;
+    const snapshot = this.options.executionGate.snapshot(runtime.id);
+    const activeRequests = Math.max(0, snapshot.active - excludeActive);
+    const queueDepth = snapshot.queued;
+    const saturated = activeRequests >= runtime.resources.maxConcurrentRequests
+      && queueDepth >= runtime.resources.maxQueuedRequests;
+    return {
+      ...health,
+      acceptingRequests: health.acceptingRequests && !saturated,
+      capacity: {
+        ready: true,
+        activeRequests,
+        maxConcurrentRequests: runtime.resources.maxConcurrentRequests,
+        queueDepth,
+        maxQueuedRequests: runtime.resources.maxQueuedRequests,
+        queueTimeoutMs: runtime.resources.queueTimeoutMs,
+        retryAfterMs: saturated ? runtime.resources.queueTimeoutMs : 0,
+        completionGuaranteed: false,
+      },
+    };
   }
 
   private async send(
@@ -470,9 +500,12 @@ export class SemanticReadiness {
     return {
       ready: true,
       activeRequests,
+      maxConcurrentRequests: runtime.resources.maxConcurrentRequests,
       queueDepth,
       maxQueuedRequests: runtime.resources.maxQueuedRequests,
+      queueTimeoutMs: runtime.resources.queueTimeoutMs,
       retryAfterMs: saturated ? runtime.resources.queueTimeoutMs : 0,
+      completionGuaranteed: false,
     };
   }
 

@@ -612,7 +612,7 @@ test("public Agent Profile metadata identifies one capable HTTP default", () => 
   }).success).toBeFalse();
 });
 
-test("v3 discovery carries the immutable embedding space without changing v2", () => {
+test("v3 discovery carries embedding space and context budgets without changing v2", () => {
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
   const embedding = catalog.profiles.find((profile) => profile.id === "contextstill-embedding")!;
   const response = {
@@ -633,12 +633,24 @@ test("v3 discovery carries the immutable embedding space without changing v2", (
         protocol: provider.protocol,
         model: provider.publicModel,
         ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
+        ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
       })),
     })),
     audiences: catalog.audiences.map((audience) => audience.id),
   };
   expect(publicAgentProfileListV3Schema.parse(response).profiles)
     .toContainEqual(expect.objectContaining({ id: embedding.id }));
+  expect(publicAgentProfileListV3Schema.parse(response).profiles)
+    .toContainEqual(expect.objectContaining({
+      id: "contextstill-background-64k",
+      providers: [expect.objectContaining({
+        contextWindow: {
+          maxTokens: 65_536,
+          outputReserveTokens: 4_096,
+          safetyMarginTokens: 1_976,
+        },
+      })],
+    }));
   expect(publicAgentProfileListSchema.safeParse({
     ...response,
     contractVersion: "agent-connection.v2",

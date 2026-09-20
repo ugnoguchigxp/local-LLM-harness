@@ -118,6 +118,11 @@ const agentConnectionCatalog = parseAgentConnectionCatalog({
         route: "llm-default",
         publicModel: "test-model",
         readiness: "llm-inference",
+        contextWindow: {
+          maxTokens: 65_536,
+          outputReserveTokens: 4_096,
+          safetyMarginTokens: 1_976,
+        },
       }],
     },
   },
@@ -3062,6 +3067,22 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     } as unknown as PersonalStateController,
   });
 
+  const discovery = await app.request("/v3/agent-profiles", { headers: agentHeaders() });
+  expect(discovery.status).toBe(200);
+  expect(await discovery.json()).toMatchObject({
+    contractVersion: "agent-connection.v3",
+    profiles: [{
+      id: "coding",
+      providers: [{
+        contextWindow: {
+          maxTokens: 65_536,
+          outputReserveTokens: 4_096,
+          safetyMarginTokens: 1_976,
+        },
+      }],
+    }],
+  });
+
   const forgedProvider = await app.request("/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -3204,7 +3225,20 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     headers: { authorization: `Bearer ${credential}` },
   });
   expect(providerHealth.status).toBe(200);
-  expect(await providerHealth.json()).toMatchObject({ ready: true, acceptingRequests: true });
+  expect(await providerHealth.json()).toMatchObject({
+    ready: true,
+    acceptingRequests: true,
+    capacity: {
+      ready: true,
+      activeRequests: 0,
+      maxConcurrentRequests: 1,
+      queueDepth: 0,
+      maxQueuedRequests: 1,
+      queueTimeoutMs: 100,
+      retryAfterMs: 0,
+      completionGuaranteed: false,
+    },
+  });
 
   const task = await app.request("/v1/chat/completions", {
     method: "POST",

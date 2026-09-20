@@ -166,9 +166,12 @@ test("embedding readiness validates capacity plus query and passage canaries", a
     capacity: {
       ready: true,
       activeRequests: 0,
+      maxConcurrentRequests: 1,
       queueDepth: 0,
       maxQueuedRequests: 0,
+      queueTimeoutMs: 10,
       retryAfterMs: 0,
+      completionGuaranteed: false,
     },
     probe: { protocol: "larm.embedding.v1", validated: true },
   });
@@ -389,10 +392,11 @@ test("concurrent semantic health checks share one fixed-binding probe", async ()
 test("LLM semantic readiness requires both one-token JSON and OpenAI SSE", async () => {
   const { registry, control, provider } = fixture("openai.chat-completions.v1", "llm.general");
   const requests: Array<{ accept: string | null; body: unknown }> = [];
+  const executionGate = new ExecutionGate();
   const valid = new SemanticReadiness({
     control,
     getRegistry: () => registry,
-    executionGate: new ExecutionGate(),
+    executionGate,
     timeoutMs: 100,
     fetchImpl: async (_input, init) => {
       requests.push({
@@ -404,6 +408,16 @@ test("LLM semantic readiness requires both one-token JSON and OpenAI SSE", async
   });
   expect(await valid.check({ allocationId: "alloc", provider })).toMatchObject({
     ready: true,
+    acceptingRequests: true,
+    capacity: {
+      activeRequests: 0,
+      maxConcurrentRequests: 1,
+      queueDepth: 0,
+      maxQueuedRequests: 0,
+      queueTimeoutMs: 10,
+      retryAfterMs: 0,
+      completionGuaranteed: false,
+    },
     probe: { validated: true },
   });
   expect(requests).toEqual([
@@ -428,6 +442,27 @@ test("LLM semantic readiness requires both one-token JSON and OpenAI SSE", async
       },
     },
   ]);
+
+  const release = await executionGate.acquire(
+    "provider-runtime",
+    registry.runtimes[0]!.resources,
+    new AbortController().signal,
+  );
+  expect(await valid.check({ allocationId: "alloc", provider })).toMatchObject({
+    ready: true,
+    acceptingRequests: false,
+    capacity: {
+      activeRequests: 1,
+      maxConcurrentRequests: 1,
+      queueDepth: 0,
+      maxQueuedRequests: 0,
+      queueTimeoutMs: 10,
+      retryAfterMs: 10,
+      completionGuaranteed: false,
+    },
+    probe: { cached: true },
+  });
+  release();
 
   for (const response of [
     new Response("data: not-json\n\ndata: [DONE]\n\n", {

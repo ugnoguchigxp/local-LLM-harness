@@ -117,8 +117,8 @@
     <h2>runtimeとdaemon所有権</h2>
     <p>
       64K routeは<code>qwen-contextstill-64k</code>、128K
-      routeは<code>qwen-worker-fast</code>だけを候補に持つ。両者は同じQwen3.8-27B Q4_0
-      main weight、同じQ4_0 MTP、batch設定、KV型を使い、Context Windowだけを変える。
+      routeは<code>qwen-worker-fast</code>だけを候補に持つ。両者は同じQwen3.8-27B
+      Q4_0 main weight、同じQ4_0 MTP、batch設定、KV型を使い、Context Windowだけを変える。
       fallbackは置かないため、128K要求が64K backendへ暗黙降格しない。両runtimeは既存の
       <code>qwen-worker-slot</code> swap
       groupを共有し、同時にloadされない。したがって新しいdaemon lifecycle、session-to-slot
@@ -137,6 +137,20 @@ llama-server ... --ctx-size 131072 --parallel 1 --batch-size 2048 --ubatch-size 
 
   <section id="migration">
     <h2>ContextStill移行</h2>
+    <p>
+      Consumerは認証済み<code>GET /v3/agent-profiles</code>を正本として、各Chat
+      Providerの<code>contextWindow.maxTokens</code>、<code>outputReserveTokens</code>、
+      <code>safetyMarginTokens</code
+      >を取得する。旧<code>/v2/agent-profiles</code>は互換shapeを維持するため、 context
+      budgetを広告しない。catalog discoveryは静的なrequest受付保証ではなく、実行時の受付可否は Agent
+      Connection作成後のsemantic healthとadmission結果で判定する。provider healthの
+      <code>capacity</code
+      >は<code>maxConcurrentRequests</code>、<code>activeRequests</code>、
+      <code>maxQueuedRequests</code
+      >、<code>queueDepth</code>、<code>queueTimeoutMs</code>を返し、
+      <code>completionGuaranteed</code
+      >は常に<code>false</code>とする。
+    </p>
     <ol>
       <li>最終Chat Completions bodyを組み立てた後、Qwen tokenizerでprompt tokenを数える。</li>
       <li>
@@ -169,6 +183,14 @@ llama-server ... --ctx-size 131072 --parallel 1 --batch-size 2048 --ubatch-size 
       groupに属することを検証する。巨大modelを使う新規benchmarkは設定変更をliveへ配備していないため
       実行しない。256K tierを追加する前に、同一artifactとMTPで125K超の完走、TTFT、peak memory、
       ContextStill job品質を記録し、専用releaseとfail-closed routeを追加する必要がある。
+    </p>
+    <p>
+      contract testは<code>/v3/agent-profiles</code>が64K tierの三つのcontext
+      budget値を欠落なく返し、 strict client
+      schemaが同じ値を検証することを固定する。これにより設定に値が存在してもpublic
+      discoveryから脱落する退行を検出する。 semantic readiness
+      testは実行slotが埋まった時点で<code>acceptingRequests=false</code>、
+      非zeroの<code>retryAfterMs</code>となることも検証する。
     </p>
   </section>
 </article>

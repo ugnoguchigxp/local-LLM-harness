@@ -179,6 +179,7 @@ export class AgentConnectionController {
             protocol: provider.protocol,
             model: provider.publicModel,
             ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
+            ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
           })),
         })),
         audiences: catalog.audiences.map((audience) => audience.id),

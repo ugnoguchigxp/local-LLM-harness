@@ -598,6 +598,14 @@ export const publicAgentProfileListV3Schema = z.object({
       protocol: runtimeProtocolSchema,
       model: agentIdentifierSchema,
       embeddingSpace: embeddingSpaceSchema.optional(),
+      contextWindow: z.object({
+        maxTokens: z.number().int().min(1).max(1_000_000),
+        outputReserveTokens: z.number().int().min(1).max(1_000_000),
+        safetyMarginTokens: z.number().int().min(0).max(1_000_000),
+      }).strict().refine(
+        (value) => value.outputReserveTokens + value.safetyMarginTokens < value.maxTokens,
+        "output reserve and safety margin must leave a positive input budget",
+      ).optional(),
     }).strict().superRefine((provider, context) => {
       const canonical = [...new Set(provider.supportedCapabilities)].sort();
       if (
@@ -615,6 +623,13 @@ export const publicAgentProfileListV3Schema = z.object({
           code: "custom",
           path: ["embeddingSpace"],
           message: "embeddingSpace must be present exactly for embedding providers",
+        });
+      }
+      if (provider.contextWindow && provider.protocol !== "openai.chat-completions.v1") {
+        context.addIssue({
+          code: "custom",
+          path: ["contextWindow"],
+          message: "contextWindow is only valid for Chat Completions providers",
         });
       }
     })).min(1).max(8),
@@ -699,9 +714,12 @@ export const agentProviderHealthSchema = z.object({
   capacity: z.object({
     ready: z.boolean(),
     activeRequests: z.number().int().nonnegative(),
+    maxConcurrentRequests: z.number().int().positive(),
     queueDepth: z.number().int().nonnegative(),
     maxQueuedRequests: z.number().int().nonnegative(),
+    queueTimeoutMs: z.number().int().nonnegative(),
     retryAfterMs: z.number().int().nonnegative(),
+    completionGuaranteed: z.literal(false),
   }).strict().optional(),
   probe: z.object({
     kind: z.literal("semantic-inference"),
@@ -817,9 +835,12 @@ export const embeddingAgentProviderDescriptorSchema = z.object({
   capacity: z.object({
     ready: z.literal(true),
     activeRequests: z.number().int().nonnegative(),
+    maxConcurrentRequests: z.number().int().positive(),
     queueDepth: z.number().int().nonnegative(),
     maxQueuedRequests: z.number().int().nonnegative(),
+    queueTimeoutMs: z.number().int().nonnegative(),
     retryAfterMs: z.number().int().nonnegative(),
+    completionGuaranteed: z.literal(false),
   }).strict(),
   health: z.object({
     url: z.string().url(),

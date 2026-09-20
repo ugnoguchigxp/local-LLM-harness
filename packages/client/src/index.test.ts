@@ -458,6 +458,48 @@ test("agent profile discovery omits Authorization when the optional API token is
   expect(observed?.headers.has("authorization")).toBeFalse();
 });
 
+test("v3 agent profile discovery preserves advertised Chat Completions context budgets", async () => {
+  let observed: Request | undefined;
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    apiToken: "profile-token",
+    fetch: async (input, init) => {
+      observed = new Request(input.toString(), init);
+      return json({
+        contractVersion: "agent-connection.v3",
+        catalogRevision: "catalog-test",
+        defaultAgentProfile: "coding",
+        profiles: [{
+          id: "coding",
+          canonicalProfile: "coding",
+          description: "Coding provider",
+          selectionPolicy: "default",
+          deprecated: false,
+          schedulingPriority: 0,
+          providers: [{
+            name: "llm",
+            capability: "llm.coding",
+            supportedCapabilities: ["llm.coding"],
+            protocol: "openai.chat-completions.v1",
+            model: "qwen-agent-worker",
+            contextWindow: {
+              maxTokens: 65_536,
+              outputReserveTokens: 4_096,
+              safetyMarginTokens: 1_976,
+            },
+          }],
+        }],
+        audiences: ["same-host"],
+      });
+    },
+  });
+
+  expect((await client.listAgentProfilesV3()).profiles[0]!.providers[0]!.contextWindow)
+    .toEqual({ maxTokens: 65_536, outputReserveTokens: 4_096, safetyMarginTokens: 1_976 });
+  expect(new URL(observed!.url).pathname).toBe("/v3/agent-profiles");
+  expect(observed!.headers.get("authorization")).toBe("Bearer profile-token");
+});
+
 test("reference client reads strict service activity and uses the optional control bearer", async () => {
   let observed: Request | undefined;
   const now = Date.parse("2026-09-05T17:45:00.500Z");
@@ -1009,9 +1051,12 @@ test("typed embedding client uses the claimed endpoint and semantic-space contra
       capacity: {
         ready: true as const,
         activeRequests: 0,
+        maxConcurrentRequests: 1,
         queueDepth: 0,
         maxQueuedRequests: 32,
+        queueTimeoutMs: 1_000,
         retryAfterMs: 0,
+        completionGuaranteed: false as const,
       },
       health: {
         url: "http://127.0.0.1:9810/v1/agent-connections/aconn_epoch-test_embedding/providers/embedding/health",
