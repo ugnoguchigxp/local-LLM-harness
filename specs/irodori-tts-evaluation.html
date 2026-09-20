@@ -1,0 +1,336 @@
+<article lang="ja">
+  <h1>Irodori-TTS v4.1 Anime／MeanFlow 実機評価</h1>
+  <p>
+    <strong>一行結論:</strong> 現状はVOICEVOX CPUを低遅延の主経路として維持し、Irodori
+    Animeは品質確認用の任意経路に限定する。Anime CPUは遅すぎ、MeanFlow
+    CPUも対話基準を満たさず、ROCmはPyTorchランタイムのsegfaultで未評価である。
+  </p>
+
+  <section id="scope">
+    <h2>実行条件と再現性</h2>
+    <dl>
+      <dt>実行日</dt>
+      <dd>2026-09-18 UTC</dd>
+      <dt>LARM</dt>
+      <dd><code>a92d4ab8a3ad6a120b2b008a8a36013ec3a3195f</code>、開始時clean</dd>
+      <dt>ホスト</dt>
+      <dd>
+        Ubuntu Linux kernel 7.0.0-31、Ryzen AI MAX+ 395（16 core / 32 thread）、Radeon
+        8060S（gfx1151）、RAM 121 GiB
+      </dd>
+      <dt>共存状態</dt>
+      <dd>
+        Qwen 3.8
+        27B、ASR、VOICEVOX等の既存常駐processを停止せず測定した。すべてco-residentであり、isolated測定は安全上未実施。
+      </dd>
+      <dt>Irodori-TTS</dt>
+      <dd><code>89f9d8fbd4d51ea019867ee1197725ede1df13c5</code></dd>
+      <dt>Irodori-TTS-Server</dt>
+      <dd><code>61012c760f22f7b4a6c21c5c5f8f9e148120b6f9</code></dd>
+      <dt>audio.cpp</dt>
+      <dd><code>518550862785bc46d482517643001a6165170135</code></dd>
+      <dt>Anime checkpoint</dt>
+      <dd>
+        <code>phasefield-audio/Irodori-TTS-v4.1-Anime@6b259f5b…</code>。公式safetensors SHA-256
+        <code>5630aa0a…</code>、audio.cpp Q8 GGUF SHA-256
+        <code>cef628aa…</code>
+      </dd>
+      <dt>MeanFlow checkpoint</dt>
+      <dd><code>Aratako/Irodori-TTS-v4.1-Small-MF@ccc78f5d…</code></dd>
+    </dl>
+    <p>
+      Linux CPU上で公式PyTorch、audio.cpp
+      Q8、MeanFlowの音声生成が成功したため、Windows限定ではないことを実機確認した。モデル、cache、生成音声はsource
+      repository外に置いた。
+    </p>
+  </section>
+
+  <section id="coverage">
+    <h2>実行できた構成・できなかった構成</h2>
+    <table>
+      <caption>
+        対象profileごとの実行可否と測定範囲
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">結果</th>
+          <th scope="col">備考</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">VOICEVOX CPU</th>
+          <td>完了</td>
+          <td>12文×5回、16 thread、direct</td>
+        </tr>
+        <tr>
+          <th scope="row">Anime audio.cpp CPU Q8</th>
+          <td>完了</td>
+          <td>12文×1回、40 step、16 thread。thread scalingも実施</td>
+        </tr>
+        <tr>
+          <th scope="row">Anime公式PyTorch CPU FP32</th>
+          <td>smoke完了</td>
+          <td>短文warm 1回。40 step</td>
+        </tr>
+        <tr>
+          <th scope="row">MeanFlow公式PyTorch CPU FP32</th>
+          <td>完了</td>
+          <td>12文×5回、4 step</td>
+        </tr>
+        <tr>
+          <th scope="row">Anime／MeanFlow PyTorch ROCm BF16</th>
+          <td>未実施</td>
+          <td>
+            PyTorch 2.10.0+ROCm 7.1で1要素tensorのCPU→GPU転送からexit
+            139。モデル固有でないため回避改造せず中止
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">固定参照／latent／Speaker Inversion</th>
+          <td>未実施</td>
+          <td>同意済み参照音声が未提供</td>
+        </tr>
+        <tr>
+          <th scope="row">LoRA</th>
+          <td>未実施</td>
+          <td>自動実行対象外。読み修正は辞書を優先</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="latency">
+    <h2>速度比較</h2>
+    <p>
+      Tierは依頼書どおりshort＋mediumのwarm値で判定する。IrodoriのHTTP応答は完成WAVを返すためTTFBとTTFAがほぼ同じであり、native
+      frame streamingとしては扱わない。
+    </p>
+    <table>
+      <caption>
+        short＋medium corpusにおけるwarm latencyと実時間係数
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">回数</th>
+          <th scope="col">TTFA p50</th>
+          <th scope="col">TTFA p95</th>
+          <th scope="col">RTF p50</th>
+          <th scope="col">RTF p95</th>
+          <th scope="col">Tier</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">VOICEVOX CPU</th>
+          <td>40</td>
+          <td>0.195 s</td>
+          <td>0.327 s</td>
+          <td>0.078</td>
+          <td>0.103</td>
+          <td>A</td>
+        </tr>
+        <tr>
+          <th scope="row">Anime audio.cpp CPU Q8</th>
+          <td>8</td>
+          <td>7.492 s</td>
+          <td>15.510 s</td>
+          <td>2.447</td>
+          <td>3.175</td>
+          <td>D</td>
+        </tr>
+        <tr>
+          <th scope="row">Anime PyTorch CPU FP32</th>
+          <td>1 short</td>
+          <td>6.145 s</td>
+          <td>6.145 s</td>
+          <td>2.793</td>
+          <td>2.793</td>
+          <td>D</td>
+        </tr>
+        <tr>
+          <th scope="row">MeanFlow PyTorch CPU FP32</th>
+          <td>40</td>
+          <td>2.647 s</td>
+          <td>3.956 s</td>
+          <td>0.825</td>
+          <td>1.114</td>
+          <td>D</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      長文を含む全12文では、Anime Q8のTTFA
+      p95は35.548秒、MeanFlowは9.025秒、VOICEVOXは1.007秒だった。Anime Q8のcold CLI
+      smokeは2.20秒の音声にprocess全体6.50秒、生成部RTF 2.47、peak RSS約1.86 GiB。公式Anime CPU
+      runtime loadは10.58秒、MeanFlow CPU runtime loadはcache済み条件で4.80秒だった。
+    </p>
+  </section>
+
+  <section id="threads">
+    <h2>CPU thread scaling</h2>
+    <table>
+      <caption>
+        Anime audio.cpp CPU Q8のthread数別短文生成性能
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">audio.cpp thread</th>
+          <th scope="col">2.20秒短文の生成時間</th>
+          <th scope="col">RTF</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">4</th>
+          <td>10.932 s</td>
+          <td>4.969</td>
+        </tr>
+        <tr>
+          <th scope="row">8</th>
+          <td>6.443 s</td>
+          <td>2.929</td>
+        </tr>
+        <tr>
+          <th scope="row">16</th>
+          <td>6.082 s</td>
+          <td>2.765</td>
+        </tr>
+        <tr>
+          <th scope="row">32</th>
+          <td>6.903 s</td>
+          <td>3.138</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>このホストでは16 threadが最良で、SMTを含む32 threadは逆に遅くなった。</p>
+  </section>
+
+  <section id="quality">
+    <h2>品質・誤読・破綻</h2>
+    <p>
+      自動ASRは既存Whisperを全sampleへ適用し、疑わしい箇所を既存Qwen ASRでも再確認した。Anime
+      Q8は12件中11件が内容一致または句読点・数字表記だけの差だった。<code>multi-02</code>の「接続」はWhisperが「施術」、Qwenが「手術」と認識し、重大な誤読候補とする。
+    </p>
+    <p>
+      MeanFlowは大半が内容一致したが、<code>long-03</code>の中間文がWhisperでは脱落し、Qwenでは意味不明な別文として認識された。長文破綻1件として人間確認が必要である。NaN、無音、HTTP
+      error、途中停止は今回の成功runでは検出しなかった。
+    </p>
+    <p>
+      人間評価用音声はrepository外の<code>/srv/ai/results/larm/tts/20260918-irodori-anime-audiocpp-cpu-q8-c1/audio/</code>および<code>/srv/ai/results/larm/tts/20260918-irodori-mf-pytorch-cpu-c1/audio/</code>にある。主観的な自然さ、好ましさ、アニメ調適合性、話者一貫性は未採点であり、採否を自動指標だけで確定しない。
+    </p>
+  </section>
+
+  <section id="concurrency">
+    <h2>同時実行</h2>
+    <table>
+      <caption>
+        VOICEVOXとMeanFlowのconcurrency別実効TTFA
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">concurrency</th>
+          <th scope="col">short＋medium TTFA p95</th>
+          <th scope="col">error</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">VOICEVOX CPU</th>
+          <td>1</td>
+          <td>0.327 s</td>
+          <td>0 / 60</td>
+        </tr>
+        <tr>
+          <th scope="row">VOICEVOX CPU</th>
+          <td>2</td>
+          <td>1.070 s</td>
+          <td>0 / 12</td>
+        </tr>
+        <tr>
+          <th scope="row">VOICEVOX CPU</th>
+          <td>4</td>
+          <td>1.873 s</td>
+          <td>0 / 12</td>
+        </tr>
+        <tr>
+          <th scope="row">MeanFlow CPU</th>
+          <td>1</td>
+          <td>3.956 s</td>
+          <td>0 / 60</td>
+        </tr>
+        <tr>
+          <th scope="row">MeanFlow CPU</th>
+          <td>2</td>
+          <td>15.687 s</td>
+          <td>0 / 12</td>
+        </tr>
+        <tr>
+          <th scope="row">MeanFlow CPU</th>
+          <td>4</td>
+          <td>29.139 s</td>
+          <td>0 / 12</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      両serverとも要求は失敗せず待ち行列化したが、MeanFlowは実効的に直列化され、concurrency増加がそのまま待ち時間へ現れた。表のRTF／TTFAはclientから見たqueue待ちを含む。per-process
+      memory増加と厳密なthroughput窓は未計測。
+    </p>
+  </section>
+
+  <section id="dictionary">
+    <h2>辞書A/B</h2>
+    <p>
+      Anime Q8で同一display
+      textをrawとspokenに分け、各7件を生成した。rawでは<code>contextStill</code>、<code>DeepStill</code>、SQLite、PostgreSQL、pgvector、MCP、Qwen、ROCm、SAAAに明瞭な誤読候補が出た。spokenでは6件がASR上で明瞭に改善し、LARMはrawでも正しかったため同等だった。速度はrawのRTF
+      p50 2.585、spoken
+      2.716で、展開後の文字数増加による小さな悪化がある。読み辞書は必須だがアクセント核の保証にはならない。
+    </p>
+  </section>
+
+  <section id="integration">
+    <h2>LARM境界と共存</h2>
+    <p>
+      VOICEVOXの固定短文5回でdirect TTFA p50 119.7 ms、LARM経由135.0
+      msだった。観測上の追加overheadは約15.3 ms（p50差）、p95差は約20.1
+      msである。IrodoriはLARMのproduction
+      routingへ追加していないため、Irodoriのend-to-end差は未測定。
+    </p>
+    <p>
+      外部requestからcheckpoint、adapter、参照音声pathを受け取らせず、将来統合時は検証済みのvoice
+      profile IDをserver-side assetへ解決する。既存のdefault TTSとroutingは今回変更していない。
+    </p>
+  </section>
+
+  <section id="recommendation">
+    <h2>推奨Provider構成</h2>
+    <ol>
+      <li>VOICEVOX CPUを相槌・通知・通常対話の主TTSとして維持する。</li>
+      <li>
+        Irodori Animeはproduction
+        defaultにせず、人間評価と固定話者評価のための明示選択式・非同期または高品質発話候補に留める。
+      </li>
+      <li>
+        MeanFlow CPUはAnimeより速いがTier
+        Dかつ長文破綻候補があるため、VOICEVOXの低遅延代替にはしない。
+      </li>
+      <li>
+        PyTorch
+        ROCmの単純tensor転送segfaultをホストruntime／wheel整合性として先に解消し、その後にAnime
+        BF16とMeanFlow BF16を再測定する。
+      </li>
+    </ol>
+    <aside>
+      <h2>既知リスクと未検証事項</h2>
+      <p>
+        ROCm、固定参照音声、事前計算latent、Speaker Inversion、3
+        seedの話者ばらつき、主観MOS、LUFS、文結合境界、isolated負荷、IrodoriのLARM経由、消費電力は未検証。したがってIrodori
+        Animeの「高品質発話専用」採用もまだ条件付き候補であり、確定採用ではない。
+      </p>
+    </aside>
+  </section>
+</article>

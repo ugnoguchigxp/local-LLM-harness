@@ -55,6 +55,32 @@ agentProfiles:
         route: llm-agent-worker
         publicModel: qwen-agent-worker
         readiness: llm-inference
+  contextstill-background-64k:
+    description: Explicit ContextStill background tier for requests that fit the 64K budget
+    schedulingPriority: 1000
+    providers:
+      - name: llm
+        capability: llm.coding
+        route: llm-contextstill-64k
+        publicModel: qwen-contextstill-64k
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 65536
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+  contextstill-background-128k:
+    description: Explicit ContextStill background tier for requests that exceed the 64K budget
+    schedulingPriority: 1000
+    providers:
+      - name: llm
+        capability: llm.coding
+        route: llm-contextstill-128k
+        publicModel: qwen-contextstill-128k
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 131072
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
   contextstill-decision-default-canary:
     description: Explicit Qwen 3.5 2B ContextStill decision Provider canary
     schedulingPriority: 1000

@@ -225,4 +225,6 @@ if LARM_RELEASE_TEST_MODE=1 LARM_RELEASE_SKIP_GATE=1 \
   echo "release accepted a symlinked release root" >&2
   exit 1
 fi
+grep -Fq 'deadline=$((SECONDS + 360))' "${releaser}"
+
 echo "transactional LARM release tests passed"

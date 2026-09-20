@@ -28,6 +28,8 @@ import {
 } from "./inference-audit";
 import { ContextController } from "./context-controller";
 import { PersonalStateController } from "./personal-state-controller";
+import { GatewayLifecycle, type GatewayLifecycleState } from "./gateway-lifecycle";
+import { verifyGatewayStartup } from "./gateway-startup";
 
 const config = parseDaemonConfig();
 const catalogGeneration = loadCatalogGeneration({
@@ -75,6 +77,36 @@ const writeEvent = (event: ControlEvent) => {
     ...(event.value === undefined ? {} : { value: event.value }),
   }));
 };
+const gatewayStates: GatewayLifecycleState[] = ["starting", "verifying", "ready", "draining", "failed"];
+const gatewayLifecycle = new GatewayLifecycle({
+  bootEpoch: identity.bootEpoch,
+  configRevision: identity.configRevision,
+  onTransition: (transition) => {
+    for (const state of gatewayStates) {
+      metrics.setGauge("gateway_readiness", { state }, transition.to === state ? 1 : 0);
+    }
+    writeEvent({
+      name: "gateway_readiness_transition",
+      labels: {
+        from: transition.from,
+        to: transition.to,
+        reason: transition.reason,
+        bootEpoch: transition.bootEpoch,
+        configRevision: transition.configRevision,
+        ...(transition.listener ? { listener: transition.listener } : {}),
+      },
+    });
+  },
+});
+metrics.setGauge("gateway_readiness", { state: "starting" }, 1);
+writeEvent({
+  name: "daemon_starting",
+  labels: {
+    bootEpoch: identity.bootEpoch,
+    configRevision: identity.configRevision,
+    releaseCommit: identity.releaseCommit,
+  },
+});
 let inferenceAuditStore: LocalInferenceAuditStore | undefined;
 let inferenceAuditRecorder: FileInferenceAuditRecorder | undefined;
 if (config.inferenceAuditMode === "full-required") {
@@ -250,6 +282,7 @@ const personalStateController = new PersonalStateController({
 });
 await personalStateController.initialize();
 
+const startupProbeToken = crypto.randomUUID();
 const appComponents = createAppComponents({
   registry,
   getState: () => observer.getState(),
@@ -284,11 +317,29 @@ const appComponents = createAppComponents({
   contextController,
   personalStateController,
   personalStateMaxSourceBytes: config.contextSourceMaxBytes,
+  getGatewayReadiness: () => gatewayLifecycle.snapshot(),
+  startupProbeToken,
   getReleaseConvergenceStatus: async () => await Bun.file(
     process.env.LARM_RELEASE_CONVERGENCE_STATUS ?? "/var/lib/larm/release-controller/status.json",
   ).json(),
 });
-const { app } = appComponents;
+const { app, modelBroker } = appComponents;
+
+const notifySystemd = async (...args: string[]): Promise<void> => {
+  if (!process.env.NOTIFY_SOCKET) return;
+  const child = Bun.spawn([
+    "/usr/bin/systemd-notify",
+    `--pid=${process.pid}`,
+    ...args,
+  ], { stdout: "ignore", stderr: "pipe" });
+  const [code, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stderr).text(),
+  ]);
+  if (code !== 0) {
+    throw new Error(`systemd readiness notification failed: ${stderr.trim() || `exit ${code}`}`);
+  }
+};
 
 let ticking = false;
 const interval = setInterval(() => {
@@ -309,20 +360,87 @@ const interval = setInterval(() => {
     });
 }, config.observeIntervalMs);
 
-const server = Bun.serve({
-  port: config.port,
-  hostname: config.hostname,
-  // Model activation and long-running inference own their deadlines. Bun's
-  // default 10-second socket timeout would otherwise terminate cold starts
-  // before ModelBroker can return a structured response.
-  idleTimeout: config.httpIdleTimeoutSeconds,
-  ...(config.tlsCertFile && config.tlsKeyFile
-    ? { tls: { cert: Bun.file(config.tlsCertFile), key: Bun.file(config.tlsKeyFile) } }
-    : {}),
-  fetch: app.fetch,
+const server = (() => {
+  try {
+    return Bun.serve({
+      port: config.port,
+      hostname: config.hostname,
+      // Model activation and long-running inference own their deadlines. Bun's
+      // default 10-second socket timeout would otherwise terminate cold starts
+      // before ModelBroker can return a structured response.
+      idleTimeout: config.httpIdleTimeoutSeconds,
+      ...(config.tlsCertFile && config.tlsKeyFile
+        ? { tls: { cert: Bun.file(config.tlsCertFile), key: Bun.file(config.tlsKeyFile) } }
+        : {}),
+      fetch: app.fetch,
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    gatewayLifecycle.listenerVerificationFailed("listener_bind_failed");
+    writeEvent({
+      name: "listener_bind_failed",
+      labels: {
+        bootEpoch: identity.bootEpoch,
+        configRevision: identity.configRevision,
+        reason,
+      },
+    });
+    throw error;
+  }
+})();
+const listenerUrl = `${config.tlsCertFile ? "https" : "http"}://${server.hostname}:${server.port}`;
+gatewayLifecycle.listenerBound(listenerUrl);
+writeEvent({
+  name: "listener_bound",
+  labels: {
+    bootEpoch: identity.bootEpoch,
+    configRevision: identity.configRevision,
+    listener: listenerUrl,
+  },
 });
-console.log(`larm listening on ${config.tlsCertFile ? "https" : "http"}://${server.hostname}:${server.port}`);
+console.log(`larm listening on ${listenerUrl}`);
 console.log(`config ${config.configDir}`);
+
+try {
+  if (!modelBroker) throw new Error("OpenAI-compatible model broker is not configured");
+  const probeHost = config.hostname === "0.0.0.0" || config.hostname === "::"
+    ? "localhost"
+    : config.hostname;
+  await verifyGatewayStartup({
+    baseUrl: process.env.LARM_STARTUP_PROBE_BASE_URL
+      ?? `${config.tlsCertFile ? "https" : "http"}://${probeHost}:${server.port}`,
+    apiToken: config.apiToken,
+    model: process.env.LARM_REQUIRED_CHAT_MODEL ?? "qwen-agent-worker",
+    startupProbeToken,
+    timeoutMs: config.connectionReadyTimeoutMs,
+  });
+  gatewayLifecycle.listenerVerified();
+  await notifySystemd(
+    "--ready",
+    `--status=LARM ready; bootEpoch=${identity.bootEpoch}; configRevision=${identity.configRevision}`,
+  );
+  writeEvent({
+    name: "listener_accept_verified",
+    labels: {
+      bootEpoch: identity.bootEpoch,
+      configRevision: identity.configRevision,
+      model: process.env.LARM_REQUIRED_CHAT_MODEL ?? "qwen-agent-worker",
+    },
+  });
+} catch (error) {
+  const reason = error instanceof Error ? error.message : String(error);
+  gatewayLifecycle.listenerVerificationFailed("listener_verification_failed");
+  writeEvent({
+    name: "listener_accept_failed",
+    labels: {
+      bootEpoch: identity.bootEpoch,
+      configRevision: identity.configRevision,
+      reason,
+    },
+  });
+  server.stop(true);
+  throw error;
+}
 
 let reconciliationInFlight: Promise<void> | undefined;
 const reconciliationTimer = setTimeout(() => {
@@ -346,6 +464,10 @@ async function shutdown(signal: string): Promise<void> {
     return;
   }
   shuttingDown = true;
+  gatewayLifecycle.beginDrain(signal);
+  await notifySystemd("--stopping", `--status=LARM draining after ${signal}`).catch((error) => {
+    console.warn(error instanceof Error ? error.message : String(error));
+  });
   console.log(`received ${signal}; draining`);
   control.beginDrain();
   contextController.beginDrain();

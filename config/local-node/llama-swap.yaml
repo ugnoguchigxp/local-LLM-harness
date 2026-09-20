@@ -121,6 +121,43 @@ models:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
 
+  qwen-contextstill-64k:
+    cmd: >
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
+      -m /srv/ai/models/qwen38-worker/Qwen3.8-27B-Q4_0.gguf
+      -md /srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      -dev Vulkan0
+      -devd Vulkan0
+      -ngl 999
+      -ngld 999
+      --fit off
+      --flash-attn on
+      --ctx-size 65536
+      --parallel 1
+      --batch-size 2048
+      --ubatch-size 256
+      --cache-type-k q4_0
+      --cache-type-v q4_0
+      --spec-draft-type-k q4_0
+      --spec-draft-type-v q4_0
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning auto
+      --temp 0.2
+      --top-p 0.9
+      --jinja
+      --context-shift
+      --cache-reuse 256
+      --metrics
+      --no-webui
+    aliases:
+      - qwen3.8-contextstill-64k
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
   qwen35-decision:
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
@@ -405,6 +442,7 @@ groups:
       - qwen-agent
       - qwen-agent-efficientthink
       - qwen-fast
+      - qwen-contextstill-64k
       - qwen36-35b
       - ornith15-35b
       - ornith15-35b-speed

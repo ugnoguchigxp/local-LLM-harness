@@ -120,6 +120,14 @@ export const errorResponseSchema = z.object({
 
 export const daemonHealthSchema = z.object({
   status: z.literal("ok"),
+  ready: z.literal(true).optional(),
+  readiness: z.object({
+    state: z.literal("ready"),
+    ready: z.literal(true),
+    changedAt: z.string().datetime(),
+    reason: z.string().min(1).max(256),
+    listener: z.string().url().optional(),
+  }).strict().optional(),
   version: z.string().min(1),
   releaseCommit: z.union([z.string().regex(/^[a-f0-9]{40}$/), z.literal("development")]),
   configRevision: z.string().min(1),
@@ -129,6 +137,7 @@ export const daemonHealthSchema = z.object({
 export const readinessSchema = z.union([
   z.object({ status: z.literal("ready") }).strict(),
   z.object({ status: z.literal("draining") }).strict(),
+  z.object({ status: z.enum(["starting", "verifying", "failed", "draining"]), reason: z.string().min(1) }).strict(),
   z.object({ status: z.literal("stale"), ageMs: z.number() }).strict(),
 ]);
 

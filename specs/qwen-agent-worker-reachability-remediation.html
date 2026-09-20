@@ -1,0 +1,243 @@
+<article lang="ja">
+  <h1>qwen-agent-worker 到達不能の調査と Gateway readiness 修正</h1>
+
+  <p>
+    2026-09-19 21:38 JSTから2026-09-20 21:58 JSTにContextStillで観測された
+    <code>192.168.0.130:9810</code>へのTCP接続失敗を調査した。LARM process、listener、
+    model登録、credential、release reloadは障害の発生源ではない。失敗requestのpacketは LARM
+    hostへ到達しておらず、障害条件はContextStill hostの送信経路または同一LAN上の
+    neighbor解決までに一意に局在する。これとは別に、従来のLARMはprocess livenessを
+    readinessとして誤認できたため、listenerと実chat routeを検証するlifecycle gateを追加した。
+  </p>
+
+  <section id="target-generation">
+    <h2>対象generation</h2>
+    <dl>
+      <dt>releaseCommit</dt>
+      <dd><code>e69dc6eaed706ff53a65ace5b0365b0a4758e67d</code></dd>
+      <dt>bootEpoch</dt>
+      <dd><code>epoch-fc16ffa8-66c3-433d-a0f9-1af9cd863d8f</code></dd>
+      <dt>configRevision</dt>
+      <dd><code>7b21ef45d0d196d804db97941446d3d3f88e7c5657186f377528f934882868e8</code></dd>
+    </dl>
+  </section>
+
+  <section id="incident-timeline">
+    <h2>復元した時系列</h2>
+    <table>
+      <caption>
+        障害対象generationのprocess、network、request時系列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">時刻</th>
+          <th scope="col">観測</th>
+          <th scope="col">判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>2026-09-16 15:43:11 UTC</td>
+          <td>systemdが現releaseのprocessを起動。</td>
+          <td>障害窓より約69時間前。</td>
+        </tr>
+        <tr>
+          <td>2026-09-16 15:43:13.684 UTC</td>
+          <td><code>0.0.0.0:9810</code>をbind。起動から2.192秒。</td>
+          <td>同じPID 45280とbootEpochが調査終了時まで継続。</td>
+        </tr>
+        <tr>
+          <td>2026-09-16 15:43:14 UTC</td>
+          <td>release activatorのidentity/contract確認が成功。</td>
+          <td>config reload、rollback、restartは以後発生していない。</td>
+        </tr>
+        <tr>
+          <td>2026-09-19 12:38:02 UTC〜2026-09-20 12:57:54 UTC</td>
+          <td>daemonの10秒周期probeを8,750件確認。30秒超のjournal gapは0。</td>
+          <td>process停止、host sleep、CPU停止を否定。</td>
+        </tr>
+        <tr>
+          <td>同期間</td>
+          <td>
+            systemd-networkdのlink down、carrier loss、route変更は0。routerからのLAN packetは継続。
+          </td>
+          <td>LARM hostのWi-Fi、192.168.0.130/24、default routeは維持。</td>
+        </tr>
+        <tr>
+          <td>同期間</td>
+          <td>UFW rule fileの最終変更は2026-09-10。port 9810のblock logは0。</td>
+          <td>障害境界でのfirewall reloadを否定。</td>
+        </tr>
+        <tr>
+          <td>2026-09-20 12:56:47.546 UTC</td>
+          <td>
+            <code>qwen-agent-worker</code> requestが到着し、9.518秒でroute準備完了。
+          </td>
+          <td>TCP到達後はmodel routeが正常に起動。</td>
+        </tr>
+        <tr>
+          <td>2026-09-20 12:56:57.064〜12:56:59.191 UTC</td>
+          <td>request <code>req_939e052e-cffb-4a0d-b96d-370ddc2f7a46</code>がHTTP 200。</td>
+          <td>提示された成功証跡とserver journalが一致。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="cause">
+    <h2>原因判定</h2>
+    <p>
+      OS code 65の<code>HostUnreachable</code>はmacOS側connectで返り、HTTP
+      response、LARM request ID、 LARM ingress eventが存在しない。対してLARM process、wildcard
+      listener、host route、Wi-Fi carrier、
+      firewall構成は同じ時間に連続していた。この組合せから、直接原因はContextStill hostの
+      route/neighbor状態またはLARM
+      hostへ入る前のLAN経路である。LARM内のcredential不足、model未登録、 model cold
+      startならTCP接続後にHTTPまたはserver eventが残るため、このerror chainの原因にはならない。
+    </p>
+    <aside>
+      ContextStill source treeとhost shellはこのworktreeに存在せず、同hostのroute table、ARP/ND
+      cache、 sleep/wake journalを取得できなかった。したがって、ContextStill
+      host内部でroute消失とneighbor失敗の どちらかを選ぶ最終判定だけは未完である。再発時は同hostで
+      <code>route -n get 192.168.0.130</code
+      >、<code>arp -an</code>、interface状態を同時採取する。
+    </aside>
+  </section>
+
+  <section id="readiness-fix">
+    <h2>LARM側の設計欠陥と修正</h2>
+    <p>
+      従来の<code>/health</code>はprocessがHTTPを処理できれば無条件に200/okを返し、
+      <code>/ready</code
+      >はobserver鮮度しか検査しなかった。systemdも<code>Type=simple</code>だったため、
+      process起動からbindまで約2.2秒、さらにroute受付確認までの状態をreadyから区別できなかった。
+    </p>
+    <ul>
+      <li>
+        <code>starting → verifying → ready → draining</code
+        >と<code>failed</code>の明示lifecycleを追加。
+      </li>
+      <li>
+        9810 bind後、同じlistenerで認証付きmodel
+        catalogと<code>qwen-agent-worker</code>実chatを確認してからready。
+      </li>
+      <li>starting、failed、draining中はhealth/readyと新規data-plane requestを503にする。</li>
+      <li>
+        systemdを<code>Type=notify</code>へ変更し、実chat
+        canary成功後だけ<code>READY=1</code>を通知。
+      </li>
+      <li>shutdownではsocket停止前にnot-readyへ遷移し、既存requestをdrain。</li>
+      <li>
+        release activationのreload開始・成功・rollbackを時刻、commit、revision付きでjournalへ記録。
+      </li>
+    </ul>
+  </section>
+
+  <section id="tests">
+    <h2>再現とtest</h2>
+    <p>
+      修正前は新しいlifecycle testがmodule不存在で失敗した。修正後は、bind前、bind後の検証中、
+      verification失敗、ready、drainの各境界を時刻や外部networkに依存せず検査する。 app
+      testはnot-ready中のhealth、ready、chatがすべて503であり、ready遷移後のみ200になることを確認する。
+      stability verifier testはmacOS code 65相当のerror chainをTCP connect errorとして独立集計する。
+    </p>
+    <pre><code>bun test apps/daemon/src/gateway-lifecycle.test.ts apps/daemon/src/app.test.ts
+bun test deploy/local-node/scripts/verify-qwen-agent-worker-stability.test.ts
+bun run typecheck
+bash deploy/local-node/scripts/install-services.test.sh
+bash deploy/local-node/scripts/release-larm.test.sh
+bash deploy/local-node/scripts/release-convergence.test.sh</code></pre>
+  </section>
+
+  <section id="operations">
+    <h2>観測方法</h2>
+    <pre><code>journalctl -u larm-daemon.service -o cat |
+  jq -c 'select(.event == "gateway_readiness_transition"
+    or .event == "listener_bound"
+    or .event == "listener_accept_verified"
+    or .event == "listener_bind_failed"
+    or .event == "listener_accept_failed")'
+
+curl -fsS -H "Authorization: Bearer $LARM_TOKEN" \
+  http://192.168.0.130:9810/metrics |
+  grep '^larm_gateway_readiness'
+
+LARM_BASE_URL=http://192.168.0.130:9810 \
+LARM_TOKEN="$LARM_TOKEN" \
+bun run verify:qwen-agent-worker-stability</code></pre>
+    <p>
+      transition logにはtimestamp、bootEpoch、configRevision、状態、理由、listenerを含む。
+      bind/accept失敗とrelease reloadにも専用eventを持たせる。Authorization headerやtokenは
+      log、metric、検証JSONへ保存しない。
+    </p>
+  </section>
+
+  <section id="live-validation">
+    <h2>実環境への導入とE2E検証</h2>
+    <p>
+      修正版commit <code>beee10b6c62281b09d9f1cc90e4abb654982b5ef</code>を署名candidate経路で 2026-09-20
+      14:26:31 UTCに本番へ導入した。新bootEpochは
+      <code>epoch-2a152425-5693-4a89-82a8-344e9b82762f</code>、configRevisionは
+      <code>7b21ef45d0d196d804db97941446d3d3f88e7c5657186f377528f934882868e8</code>である。
+      processは14:26:28.502に開始、14:26:29.599に9810をbindしてverifyingへ遷移し、 実chat
+      canary完了後の14:26:31.383にだけreadyとなった。systemdも同時点で
+      <code>Type=notify</code>の起動完了を認識した。
+    </p>
+    <table>
+      <caption>
+        修正版のlive検証結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">検証</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>実TCP listenerの自動E2E</td>
+          <td>
+            not-ready、chat canary、ready、chat 100件、drain、同一port rebind、再readyを全件成功。
+          </td>
+        </tr>
+        <tr>
+          <td>隔離portの実qwen-agent-worker 100件</td>
+          <td>
+            2026-09-20 14:15:35.508〜14:23:45.810 UTC、100成功、0失敗、TCP connect error 0。
+            latencyはmin 486.877ms、p50 498.771ms、p95 557.006ms、p99 136806.4ms、 max
+            171702.187ms。tailは既存長時間jobとの共有GPU待ちである。
+          </td>
+        </tr>
+        <tr>
+          <td>本番LAN addressのready/health 100件</td>
+          <td>
+            2026-09-20 14:31:02 UTC、HTTP 200が100件、connect failure 0。 connect
+            latencyは0.052〜0.124ms、totalは0.107〜1.790ms。
+          </td>
+        </tr>
+        <tr>
+          <td>本番LAN addressのchat連続試行</td>
+          <td>
+            38件連続HTTP 200、TCP connect error 0。その後、先着したContextStill長時間jobにより
+            1件が120秒のHTTP queue timeout。timeout延長、retry、優先度偽装は行っていない。
+          </td>
+        </tr>
+        <tr>
+          <td>通常gate</td>
+          <td>
+            typecheck、docs、source/operations gate、475 unit/integration、41 deployment、全shell
+            test成功。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LARM
+      hostでは<code>192.168.0.180</code>から9810への確立済みTCP接続を確認したが、同hostは
+      port 22を拒否しておりshell実行経路がない。そのため「同じContextStill hostから」の新規100
+      chatだけは
+      未完である。再開に必要なのは同hostでcommandを実行する手段と、単一slotを約3分間業務jobから空ける
+      保守窓である。これはLARM ready/listenerの未bindとは別の明示blockerである。
+    </p>
+  </section>
+</article>

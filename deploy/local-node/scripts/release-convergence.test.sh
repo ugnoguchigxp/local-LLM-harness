@@ -136,6 +136,12 @@ jq -e --arg commit "${first_commit}" '.stage == "contract_verified" and .result 
   "${state_root}/status.json" >/dev/null
 [[ ! -e "${inbox_root}/request.json" ]]
 grep -Fqx 'restart larm-daemon.service' "${state_root}/systemctl.log"
+jq -se --arg commit "${first_commit}" '
+  length == 2
+  and .[0].event == "config_reload_started" and .[0].result == "running"
+  and .[1].event == "config_reload_completed" and .[1].result == "succeeded"
+  and all(.[]; .releaseCommit == $commit and (.configRevision | length == 64))
+' "${state_root}/activation-events.jsonl" >/dev/null
 
 test_revision="$(printf '0%.0s' {1..64})"
 jq -n --arg commit "${first_commit}" --arg revision "${test_revision}" --arg epoch "epoch-test" \
@@ -228,5 +234,7 @@ rollback_release >/dev/null
 [[ "$(cat "${state_root}/previous")" == "${release_root}/${second_commit:0:12}" ]]
 jq -e --arg commit "${first_commit}" '.stage == "activated" and .result == "failed" and .reason == "manual_rollback" and .observedRelease == $commit' \
   "${state_root}/status.json" >/dev/null
+
+grep -Fq 'for _attempt in {1..360}; do' "${activator}"
 
 echo "signed release convergence tests passed"

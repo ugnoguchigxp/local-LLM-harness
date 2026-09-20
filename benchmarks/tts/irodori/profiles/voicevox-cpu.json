@@ -1,0 +1,11 @@
+{
+  "id": "voicevox-cpu",
+  "backend": "voicevox-core",
+  "device": "cpu",
+  "precision": "fp32",
+  "url": "http://127.0.0.1:8084/v1/audio/speech",
+  "model": "voicevox-core",
+  "voice": "Kasukabe_Tsumugi",
+  "responseFormat": "wav",
+  "nativeStreaming": false
+}

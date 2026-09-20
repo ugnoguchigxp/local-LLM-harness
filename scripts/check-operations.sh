@@ -24,8 +24,13 @@ if ! command -v systemd-analyze >/dev/null 2>&1; then
 fi
 systemd-analyze verify deploy/local-node/systemd/*.service
 
-if grep -En 'network-online\.target' deploy/local-node/systemd/*.service; then
-  echo "loopback-only LARM services must not depend on network-online.target" >&2
+if grep -En 'network-online\.target' \
+  deploy/local-node/systemd/llama-server.service \
+  deploy/local-node/systemd/llama-swap-worker.service \
+  deploy/local-node/systemd/qwen-asr.service \
+  deploy/local-node/systemd/qwen-tts.service \
+  deploy/local-node/systemd/voicevox-tts.service; then
+  echo "loopback-only Provider services must not depend on network-online.target" >&2
   exit 1
 fi
 

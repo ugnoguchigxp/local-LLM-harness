@@ -1,10 +1,11 @@
 [Unit]
 Description=LARM local AI runtime control plane
-After=llama-server.service llama-swap-worker.service
-Wants=llama-server.service llama-swap-worker.service
+After=network-online.target llama-server.service llama-swap-worker.service
+Wants=network-online.target llama-server.service llama-swap-worker.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
 User=ugnoguchi
 Group=ugnoguchi
 WorkingDirectory=/srv/ai/apps/larm-current
@@ -14,6 +15,7 @@ Environment=LARM_HOST=0.0.0.0
 Environment=LARM_PORT=9810
 Environment=LARM_GATEWAY_TIMEOUT_SECONDS=7200
 Environment=LARM_CONNECTION_READY_TIMEOUT_SECONDS=300
+Environment=LARM_REQUIRED_CHAT_MODEL=qwen-agent-worker
 Environment=LARM_ALLOW_ANONYMOUS_AGENT_CONNECTIONS=true
 Environment=LARM_SERVICE_HARNESS_AUTH_ENABLED=false
 Environment=LARM_CONTEXT_ENABLED=true
@@ -36,9 +38,9 @@ Environment=LARM_INFERENCE_AUDIT_MAX_RESPONSE_BYTES=16777216
 EnvironmentFile=/etc/larm/larm.env
 EnvironmentFile=-/etc/larm/inference-audit.env
 ExecStart=/home/ugnoguchi/.bun/bin/bun run /srv/ai/apps/larm-current/apps/daemon/src/main.ts
-Restart=on-failure
+Restart=always
 RestartSec=5
-TimeoutStartSec=30
+TimeoutStartSec=330
 TimeoutStopSec=360
 KillSignal=SIGTERM
 LimitNOFILE=65535

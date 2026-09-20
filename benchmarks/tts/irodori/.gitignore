@@ -1,0 +1,5 @@
+results/
+*.wav
+*.pcm
+*.flac
+*.mp3

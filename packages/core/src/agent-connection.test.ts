@@ -4,6 +4,7 @@ import {
   agentConnectionRequestSchema,
   agentConnectionClaimSchema,
   loadAgentConnectionCatalogForRegistry,
+  matchAgentProfileContextWindow,
   parseAgentConnectionCatalog,
   publicAgentProfileListSchema,
   publicAgentProfileListV1Schema,
@@ -26,6 +27,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "contextstill-backchannel-lfm25-jp-1.2b",
     "contextstill-backchannel-qwen35-2b",
     "contextstill-background",
+    "contextstill-background-128k",
+    "contextstill-background-64k",
     "contextstill-decision-default-canary",
     "contextstill-embedding",
     "deep-reasoning-35b",
@@ -84,6 +87,32 @@ test("production agent profiles compile to strict protocol-aware provider contra
         protocol: "openai.chat-completions.v1",
         publicModel: "qwen-agent-worker",
         readiness: "llm-inference",
+      }],
+    });
+  expect(catalog.profiles.find((profile) => profile.id === "contextstill-background-64k"))
+    .toMatchObject({
+      selectionPolicy: "explicit-only",
+      providers: [{
+        route: "llm-contextstill-64k",
+        publicModel: "qwen-contextstill-64k",
+        contextWindow: {
+          maxTokens: 65_536,
+          outputReserveTokens: 4_096,
+          safetyMarginTokens: 1_976,
+        },
+      }],
+    });
+  expect(catalog.profiles.find((profile) => profile.id === "contextstill-background-128k"))
+    .toMatchObject({
+      selectionPolicy: "explicit-only",
+      providers: [{
+        route: "llm-contextstill-128k",
+        publicModel: "qwen-contextstill-128k",
+        contextWindow: {
+          maxTokens: 131_072,
+          outputReserveTokens: 4_096,
+          safetyMarginTokens: 1_976,
+        },
       }],
     });
   expect(catalog.profiles.find((profile) => profile.id === "contextstill-decision-default-canary"))
@@ -273,6 +302,46 @@ test("production agent profiles compile to strict protocol-aware provider contra
       }],
     });
   expect(catalog.profiles.every((profile) => /^[a-f0-9]{64}$/.test(profile.revision))).toBeTrue();
+});
+
+test("ContextStill context tiers choose the smallest complete request budget", () => {
+  const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
+  const profileIds = ["contextstill-background-64k", "contextstill-background-128k"];
+
+  expect(matchAgentProfileContextWindow({
+    catalog,
+    profileIds,
+    promptTokens: 1_661,
+    requestedOutputTokens: 4_000,
+  })?.profile.id).toBe("contextstill-background-64k");
+
+  expect(matchAgentProfileContextWindow({
+    catalog,
+    profileIds,
+    promptTokens: 59_464,
+    requestedOutputTokens: 4_096,
+  })?.profile.id).toBe("contextstill-background-64k");
+
+  expect(matchAgentProfileContextWindow({
+    catalog,
+    profileIds,
+    promptTokens: 59_465,
+    requestedOutputTokens: 4_096,
+  })?.profile.id).toBe("contextstill-background-128k");
+
+  expect(matchAgentProfileContextWindow({
+    catalog,
+    profileIds,
+    promptTokens: 125_001,
+    requestedOutputTokens: 4_096,
+  })).toBeUndefined();
+
+  expect(matchAgentProfileContextWindow({
+    catalog,
+    profileIds,
+    promptTokens: 1,
+    requestedOutputTokens: 4_097,
+  })).toBeUndefined();
 });
 
 test("agent profile compilation rejects unknown fields and semantic protocol drift", () => {

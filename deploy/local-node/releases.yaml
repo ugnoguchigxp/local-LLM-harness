@@ -58,6 +58,15 @@ runtimeReleases:
     estimatedMemoryGB: 28
     healthPath: /health
     default: true
+  qwen-contextstill-64k-current:
+    runtime: qwen-contextstill-64k
+    artifacts:
+      - qwen38-worker-fast
+      - qwen38-mtp
+    providerConfigRevision: llama-swap-qwen-q4-0-mtp-contextstill-64k-v1
+    estimatedMemoryGB: 28
+    healthPath: /health
+    default: true
   qwen35-decision-current:
     runtime: qwen35-decision
     artifacts:

@@ -1,0 +1,16 @@
+{
+  "id": "irodori-anime-audiocpp-cpu-q8",
+  "backend": "audio.cpp",
+  "device": "cpu",
+  "precision": "q8_0",
+  "url": "http://127.0.0.1:18088/v1/audio/speech",
+  "model": "irodori-anime-q8",
+  "responseFormat": "wav",
+  "nativeStreaming": false,
+  "options": { "no_ref": true, "num_inference_steps": 40 },
+  "revisions": {
+    "audio.cpp": "518550862785bc46d482517643001a6165170135",
+    "modelRepo": "audio-cpp/audio.cpp-gguf@f36105bcd4a7db785249e1b08a35781cc4274014",
+    "modelSha256": "cef628aa1ce784993025789c24d05b4b9e60fa039d40453bc8bdea32f4cb99e7"
+  }
+}

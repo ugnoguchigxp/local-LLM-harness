@@ -92,6 +92,14 @@ const agentProviderYamlSchema = z.object({
   publicModel: agentIdentifierSchema,
   publishModel: z.boolean().default(true),
   readiness: agentReadinessKindSchema,
+  contextWindow: z.object({
+    maxTokens: z.number().int().min(1).max(1_000_000),
+    outputReserveTokens: z.number().int().min(1).max(1_000_000),
+    safetyMarginTokens: z.number().int().min(0).max(1_000_000),
+  }).strict().refine(
+    (value) => value.outputReserveTokens + value.safetyMarginTokens < value.maxTokens,
+    "output reserve and safety margin must leave a positive input budget",
+  ).optional(),
 }).strict();
 
 const agentProfileYamlSchema = z.object({
@@ -166,7 +174,66 @@ export type AgentProviderProfile = {
   readiness: AgentReadinessKind;
   protocol: RuntimeProtocol;
   embeddingSpace?: EmbeddingSpace;
+  contextWindow?: AgentProviderContextWindow;
 };
+
+export type AgentProviderContextWindow = {
+  maxTokens: number;
+  outputReserveTokens: number;
+  safetyMarginTokens: number;
+};
+
+export type ContextWindowProfileMatch = {
+  profile: AgentProfile;
+  provider: AgentProviderProfile;
+  requiredTokens: number;
+  inputBudgetTokens: number;
+};
+
+/**
+ * Selects the smallest explicitly advertised context tier that can hold the
+ * complete request budget. Token counting remains the consumer's responsibility
+ * because it owns the final system prompt, tool schemas, history, and retrieval.
+ */
+export function matchAgentProfileContextWindow(input: {
+  catalog: AgentConnectionCatalog;
+  profileIds: string[];
+  promptTokens: number;
+  requestedOutputTokens: number;
+}): ContextWindowProfileMatch | undefined {
+  if (!Number.isInteger(input.promptTokens) || input.promptTokens < 0) {
+    throw new RangeError("promptTokens must be a non-negative integer");
+  }
+  if (!Number.isInteger(input.requestedOutputTokens) || input.requestedOutputTokens < 1) {
+    throw new RangeError("requestedOutputTokens must be a positive integer");
+  }
+  const allowed = new Set(input.profileIds);
+  const candidates = input.catalog.profiles.flatMap((profile) =>
+    allowed.has(profile.id)
+      ? profile.providers.flatMap((provider) => {
+        const window = provider.contextWindow;
+        if (!window || input.requestedOutputTokens > window.outputReserveTokens) return [];
+        const requiredTokens = input.promptTokens
+          + input.requestedOutputTokens
+          + window.safetyMarginTokens;
+        if (requiredTokens > window.maxTokens) return [];
+        return [{
+          profile,
+          provider,
+          requiredTokens,
+          inputBudgetTokens: window.maxTokens
+            - window.outputReserveTokens
+            - window.safetyMarginTokens,
+        }];
+      })
+      : []
+  );
+  return candidates.sort((left, right) =>
+    left.provider.contextWindow!.maxTokens - right.provider.contextWindow!.maxTokens
+      || left.profile.id.localeCompare(right.profile.id)
+      || left.provider.name.localeCompare(right.provider.name)
+  )[0];
+}
 
 export type AgentProfile = {
   id: string;
@@ -274,6 +341,11 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
         );
       }
       const protocol = [...protocols][0]!;
+      if (provider.contextWindow && protocol !== "openai.chat-completions.v1") {
+        throw new AgentConnectionCatalogError(
+          `agent profile ${id} provider ${provider.name} contextWindow requires Chat Completions`,
+        );
+      }
       let embeddingSpace: EmbeddingSpace | undefined;
       if (protocol === "larm.embedding.v1") {
         if (embeddingSpaces.length !== route.candidates.length) {
@@ -299,6 +371,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
         supportedCapabilities: [...route.capabilities].sort(),
         protocol,
         ...(embeddingSpace ? { embeddingSpace } : {}),
+        ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
       };
     }).sort((left, right) => left.name.localeCompare(right.name));
     const embeddingProviders = providers.filter((provider) => provider.protocol === "larm.embedding.v1");

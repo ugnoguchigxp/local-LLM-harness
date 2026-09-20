@@ -1,0 +1,7 @@
+{"id":"dict-saaa","category":"dictionary","display_text":"SAAAを起動しました。","spoken_text":"サーを起動しました。","expected_reading":"サーヲキドウシマシタ"}
+{"id":"dict-larm","category":"dictionary","display_text":"LARMが応答します。","spoken_text":"ラームが応答します。"}
+{"id":"dict-context","category":"dictionary","display_text":"contextStillからDeepStillへ切り替えます。","spoken_text":"コンテキストスティルからディープスティルへ切り替えます。"}
+{"id":"dict-qwen","category":"dictionary","display_text":"Qwen 27Bを使います。","spoken_text":"クウェン二十七ビーを使います。"}
+{"id":"dict-rocm","category":"dictionary","display_text":"ROCmで実行します。","spoken_text":"ロックエムで実行します。"}
+{"id":"dict-db","category":"dictionary","display_text":"SQLiteとPostgreSQLとpgvectorを確認します。","spoken_text":"エスキューライトとポストグレスキューエルとピージーベクターを確認します。"}
+{"id":"dict-protocol","category":"dictionary","display_text":"MCPとA2Aを有効にします。","spoken_text":"エムシーピーとエーツーエーを有効にします。"}

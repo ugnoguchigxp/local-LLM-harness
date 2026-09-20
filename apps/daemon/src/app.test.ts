@@ -27,6 +27,8 @@ import type {
   InferenceAuditStart,
 } from "./inference-audit";
 import type { PersonalStateController } from "./personal-state-controller";
+import { GatewayLifecycle } from "./gateway-lifecycle";
+import { verifyGatewayStartup } from "./gateway-startup";
 
 const registry: Registry = {
   nodes: [
@@ -304,6 +306,7 @@ test("GET /health", async () => {
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
     status: "ok",
+    ready: true,
     version: "test",
     releaseCommit: "development",
     configRevision: "test",
@@ -2174,6 +2177,152 @@ test("v1 API enforces bearer auth when configured", async () => {
   })).status).toBe(200);
   expect((await app.request("/state")).status).toBe(401);
   expect((await app.request("/health")).status).toBe(200);
+});
+
+test("health and chat stay not-ready until the listener lifecycle is verified", async () => {
+  let state: import("./gateway-lifecycle").GatewayReadiness = {
+    state: "starting",
+    ready: false,
+    changedAt: "2026-09-20T00:00:00.000Z",
+    reason: "process_starting",
+  };
+  const { app } = await makeApp(true, false, {}, {
+    getGatewayReadiness: () => state,
+    startupProbeToken: "startup-probe-test-token",
+  });
+  const health = await app.request("/health");
+  expect(health.status).toBe(503);
+  expect(await health.json()).toMatchObject({
+    status: "starting",
+    ready: false,
+    readiness: { reason: "process_starting" },
+  });
+  expect((await app.request("/ready")).status).toBe(503);
+  const chat = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  expect(chat.status).toBe(503);
+  expect(await chat.json()).toEqual({
+    error: { code: "gateway_not_ready", message: "LARM Gateway is not ready" },
+  });
+
+  state = {
+    state: "verifying",
+    ready: false,
+    changedAt: "2026-09-20T00:00:00.500Z",
+    reason: "listener_bound",
+  };
+  expect((await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  })).status).toBe(503);
+  expect((await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-startup-probe": "startup-probe-test-token",
+    },
+    body: "{}",
+  })).status).toBe(400);
+
+  state = {
+    state: "ready",
+    ready: true,
+    changedAt: "2026-09-20T00:00:01.000Z",
+    reason: "listener_verified",
+  };
+  expect((await app.request("/health")).status).toBe(200);
+  expect((await app.request("/ready")).status).toBe(200);
+});
+
+test("E2E: the real TCP listener never publishes ready before chat works and survives rebind", async () => {
+  const token = "e2e-api-token";
+  const chatBody = JSON.stringify({
+    model: "test-model",
+    messages: [{ role: "user", content: "Reply with OK." }],
+    max_tokens: 8,
+    temperature: 0,
+  });
+  const makeGeneration = async (port: number) => {
+    const lifecycle = new GatewayLifecycle({
+      bootEpoch: `epoch-e2e-${port}`,
+      configRevision: "revision-e2e",
+    });
+    const startupProbeToken = crypto.randomUUID();
+    const { app } = await makeApp(true, false, {}, {
+      apiToken: token,
+      agentConnectionCatalog,
+      getGatewayReadiness: () => lifecycle.snapshot(),
+      startupProbeToken,
+      gatewayFetch: async () => Response.json({
+        id: "chatcmpl-e2e",
+        object: "chat.completion",
+        created: 1,
+        model: "test-model",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "OK" },
+          finish_reason: "stop",
+        }],
+      }),
+    });
+    const server = Bun.serve({ hostname: "127.0.0.1", port, fetch: app.fetch });
+    const baseUrl = `http://127.0.0.1:${server.port}`;
+    lifecycle.listenerBound(baseUrl);
+    return { lifecycle, startupProbeToken, server, baseUrl };
+  };
+  const requestChat = (baseUrl: string) => fetch(`${baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: chatBody,
+  });
+
+  let generation = await makeGeneration(0);
+  expect((await fetch(`${generation.baseUrl}/health`)).status).toBe(503);
+  expect((await requestChat(generation.baseUrl)).status).toBe(503);
+  await verifyGatewayStartup({
+    baseUrl: generation.baseUrl,
+    apiToken: token,
+    model: "test-model",
+    startupProbeToken: generation.startupProbeToken,
+    timeoutMs: 5_000,
+  });
+  generation.lifecycle.listenerVerified();
+  expect((await fetch(`${generation.baseUrl}/health`)).status).toBe(200);
+
+  for (let index = 0; index < 100; index += 1) {
+    const response = await requestChat(generation.baseUrl);
+    expect(response.status).toBe(200);
+    await response.body?.cancel();
+  }
+
+  const reboundPort = generation.server.port;
+  if (reboundPort === undefined) throw new Error("E2E listener did not expose its bound port");
+  generation.lifecycle.beginDrain("e2e_restart");
+  expect((await fetch(`${generation.baseUrl}/health`)).status).toBe(503);
+  expect((await requestChat(generation.baseUrl)).status).toBe(503);
+  generation.server.stop(true);
+
+  generation = await makeGeneration(reboundPort);
+  expect((await fetch(`${generation.baseUrl}/health`)).status).toBe(503);
+  await verifyGatewayStartup({
+    baseUrl: generation.baseUrl,
+    apiToken: token,
+    model: "test-model",
+    startupProbeToken: generation.startupProbeToken,
+    timeoutMs: 5_000,
+  });
+  generation.lifecycle.listenerVerified();
+  expect((await fetch(`${generation.baseUrl}/health`)).status).toBe(200);
+  expect((await requestChat(generation.baseUrl)).status).toBe(200);
+  generation.lifecycle.beginDrain("e2e_complete");
+  generation.server.stop(true);
 });
 
 test("gateway rejects oversized requests before contacting upstream", async () => {

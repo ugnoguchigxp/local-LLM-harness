@@ -131,7 +131,8 @@ curl http://127.0.0.1:9810/ready
 curl http://127.0.0.1:9810/openapi.json
 ```
 
-`/health` はプロセスが応答できること、`/ready` は新しい要求を受け付けられることを表します。
+`/health` と `/ready` は、listener bind、必須model route、起動時chat canaryが完了して新しい要求を
+受け付けられる場合だけ200を返します。起動・検証・drain中は503です。
 
 ## 最初のリクエスト
 

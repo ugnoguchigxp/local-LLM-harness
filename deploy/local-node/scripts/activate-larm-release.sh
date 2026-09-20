@@ -135,6 +135,25 @@ systemctl_run() {
   fi
 }
 
+log_activation_event() {
+  local event="$1" result="${2:-running}" observed="${3:-}"
+  local message
+  message="$(jq -cn \
+    --arg timestamp "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg event "${event}" \
+    --arg releaseCommit "${commit}" \
+    --arg configRevision "$(jq -er .configRevision "${candidate}/release-manifest.json")" \
+    --arg result "${result}" \
+    --arg observedRelease "${observed}" \
+    '{timestamp:$timestamp,event:$event,releaseCommit:$releaseCommit,configRevision:$configRevision,
+      result:$result,observedRelease:($observedRelease|if length > 0 then . else null end)}')"
+  if [[ "${test_mode}" == "1" ]]; then
+    printf '%s\n' "${message}" >>"${state_root}/activation-events.jsonl"
+  else
+    logger --tag larm-release-activator -- "${message}"
+  fi
+}
+
 verify_health() {
   local target="$1" expected_commit expected_revision expected_version health ready openapi models activity profiles token=""
   expected_commit="$(jq -er .commit "${target}/release-manifest.json")"
@@ -144,7 +163,10 @@ verify_health() {
     [[ "${LARM_RELEASE_TEST_FAIL_CONTRACT:-0}" != "1" ]]
     return
   fi
-  for _attempt in {1..30}; do
+  # The daemon performs a real chat canary before READY.  A busy single-slot
+  # worker can legitimately need most of TimeoutStartSec (330s), so activation
+  # must not roll back a healthy generation after the former 30-second window.
+  for _attempt in {1..360}; do
     if health="$(curl -fsS --max-time 3 http://127.0.0.1:9810/health 2>/dev/null)" \
       && ready="$(curl -fsS --max-time 3 http://127.0.0.1:9810/ready 2>/dev/null)" \
       && jq -e --arg commit "${expected_commit}" --arg revision "${expected_revision}" --arg version "${expected_version}" \
@@ -228,6 +250,7 @@ if [[ -n "${previous}" ]]; then
   mv -fT -- "${work}/previous" "${state_root}/previous"
 fi
 write_status "activated" "running" "" "${commit}"
+log_activation_event "config_reload_started" "running" "${commit}"
 if ! systemctl_run restart larm-daemon.service || ! verify_health "${release}"; then
   if [[ -n "${previous}" && -d "${previous}" && ! -L "${previous}" ]]; then
     recovery="${release_root}/.current-recovery.$$"
@@ -243,8 +266,10 @@ if ! systemctl_run restart larm-daemon.service || ! verify_health "${release}"; 
     observed="$(jq -r '.commit // empty' "${previous}/release-manifest.json")"
   fi
   write_status "contract_verified" "failed" "activation_contract_failure_rolled_back" "${observed}"
+  log_activation_event "config_reload_completed" "failed" "${observed}"
   fail "release activation failed contract verification and was rolled back"
 fi
 write_status "contract_verified" "succeeded" "" "${commit}"
+log_activation_event "config_reload_completed" "succeeded" "${commit}"
 rm -f -- "${request}"
 echo "LARM release ${short} passed trusted activation and lightweight contract verification"

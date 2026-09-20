@@ -66,6 +66,28 @@ LARMのrelease/config/boot identityが変わった後のcanary成功時だけinf
 NightWorkerは`qwen-nightworker`を使います。daemon側のProfile優先度はSAAA 3000、NightWorker 2000、
 ContextStill 1000で、実行中jobの完了後に高い値から次のProviderまたは実行枠へ進みます。
 
+新規ContextStill統合では、最終的に送るsystem prompt、tool schema、履歴、検索結果、現在入力を実modelの
+tokenizerで数え、`promptTokens + max_tokens + safetyMarginTokens`で最小tierを選びます。`max_tokens`の
+既定上限は4,096、safety marginは1,976 tokenです。59,464 input token以下は
+`qwen-contextstill-64k`、59,465〜125,000 input tokenは`qwen-contextstill-128k`を指定します。
+両tierは同じQwen3.8-27B Q4_0 main weightとMTPを使い、windowだけが異なります。
+125,000 input tokenを超える要求は、履歴を暗黙に削らずfail closedにします。現行hostには受入済み256K
+Providerがないため、`qwen-contextstill-256k`は公開しません。既存`qwen-agent-worker`は互換modelとして
+維持されますが、Context Windowによる選択contractを表さないため新規consumerでは使用しません。
+
+```ts
+function contextStillModel(promptTokens: number, maxOutputTokens: number): string {
+  if (!Number.isInteger(promptTokens) || promptTokens < 0) throw new Error("invalid prompt token count");
+  if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 4096) {
+    throw new Error("unsupported ContextStill output budget");
+  }
+  const required = promptTokens + maxOutputTokens + 1976;
+  if (required <= 65536) return "qwen-contextstill-64k";
+  if (required <= 131072) return "qwen-contextstill-128k";
+  throw new Error(`ContextStill request needs ${required} tokens; largest accepted window is 131072`);
+}
+```
+
 ## SAAA Qwen 3.8選択
 
 SAAAは`qwen3.8`を明示します。これは標準`qwen-worker-fast`（Qwen 3.8 27B Q4_0、128K、MTP）専用の通常modelで、廃止した

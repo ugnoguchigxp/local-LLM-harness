@@ -192,7 +192,10 @@ verify_release_health() {
     fi
     return
   fi
-  deadline=$((SECONDS + 60))
+  # The daemon publishes READY only after a real chat canary. Keep this above
+  # the unit's 330-second TimeoutStartSec so a busy worker is not rolled back
+  # while the readiness contract is still being verified.
+  deadline=$((SECONDS + 360))
   while ((SECONDS < deadline)); do
     if health="$(curl -fsS --max-time 3 http://127.0.0.1:9810/health 2>/dev/null)" \
       && jq -e --arg commit "${expected_commit}" --arg version "${expected_version}" --arg revision "${expected_revision}" \

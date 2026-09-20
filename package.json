@@ -8,11 +8,14 @@
     "start": "bun run --filter @larm/daemon start",
     "perf:diagnostic": "bun run deploy/local-node/scripts/performance-larm.ts",
     "benchmark:http-provider": "LARM_PERF_SCENARIOS=llm,llm-sse,mixed,mixed-sse bun run deploy/local-node/scripts/performance-larm.ts",
+    "bench:tts:irodori": "bun run benchmarks/tts/irodori/src/bench.ts",
+    "bench:tts:report": "bun run benchmarks/tts/irodori/src/report.ts",
     "eval:backchannel": "bun run deploy/local-node/scripts/evaluate-backchannel-candidates.ts",
     "preflight:backchannel": "bun run deploy/local-node/scripts/preflight-backchannel-models.ts",
     "test:http-provider-contract": "bun test packages/core/src/openai-audio.test.ts packages/core/src/openai-json.test.ts packages/core/src/openai-sse.test.ts packages/core/src/openai-model-catalog.test.ts packages/core/src/provider-recovery.test.ts apps/daemon/src/app.test.ts apps/daemon/src/speech-gateway.test.ts packages/client/src/index.test.ts",
     "smoke:agent-http": "bun run deploy/local-node/scripts/smoke-agent-http.ts",
     "smoke:http-provider-live": "bun run deploy/local-node/scripts/smoke-http-provider-live.ts",
+    "verify:qwen-agent-worker-stability": "bun run deploy/local-node/scripts/verify-qwen-agent-worker-stability.ts",
     "smoke:embedding": "bun deploy/local-node/scripts/smoke-embedding.ts",
     "inference:audit": "bun run apps/daemon/src/inference-audit-cli.ts",
     "context:source:provision": "bun run apps/daemon/src/context-source-cli.ts",
@@ -27,7 +30,7 @@
     "test": "bun test apps packages",
     "check:source-only": "bash scripts/check-source-only.sh",
     "check:operations": "bash scripts/check-operations.sh",
-    "test:deployment": "bun test deploy/local-node/scripts/verify-external-assets.test.ts deploy/local-node/scripts/benchmark-helpers.test.ts deploy/local-node/scripts/benchmark-larm.test.ts deploy/local-node/scripts/evaluate-backchannel-candidates.test.ts deploy/local-node/scripts/preflight-backchannel-models.test.ts deploy/local-node/scripts/performance-helpers.test.ts deploy/local-node/scripts/performance-larm.test.ts deploy/local-node/scripts/compare-slo.test.ts deploy/local-node/scripts/smoke-agent-http.test.ts deploy/local-node/scripts/smoke-http-provider-live.test.ts deploy/local-node/scripts/monitor-http-provider-soak.test.ts deploy/local-node/scripts/verify-live-contract.test.ts && bash deploy/local-node/scripts/backup-host-state.test.sh && bash deploy/local-node/scripts/prepare-qwen-tts-source.test.sh && bash deploy/local-node/scripts/install-services.test.sh && bash deploy/local-node/scripts/release-larm.test.sh && bash deploy/local-node/scripts/release-convergence.test.sh && bash deploy/local-node/scripts/network-converge.test.sh && bash deploy/local-node/scripts/configure-saaa-rest-access.test.sh && bash deploy/local-node/scripts/configure-larm-lan-access.test.sh && bash deploy/local-node/scripts/restore-dhcp.test.sh",
+    "test:deployment": "bun test benchmarks/tts/irodori/tests deploy/local-node/scripts/verify-external-assets.test.ts deploy/local-node/scripts/benchmark-helpers.test.ts deploy/local-node/scripts/benchmark-larm.test.ts deploy/local-node/scripts/evaluate-backchannel-candidates.test.ts deploy/local-node/scripts/preflight-backchannel-models.test.ts deploy/local-node/scripts/performance-helpers.test.ts deploy/local-node/scripts/performance-larm.test.ts deploy/local-node/scripts/compare-slo.test.ts deploy/local-node/scripts/smoke-agent-http.test.ts deploy/local-node/scripts/smoke-http-provider-live.test.ts deploy/local-node/scripts/monitor-http-provider-soak.test.ts deploy/local-node/scripts/verify-qwen-agent-worker-stability.test.ts deploy/local-node/scripts/verify-live-contract.test.ts && bash deploy/local-node/scripts/backup-host-state.test.sh && bash deploy/local-node/scripts/prepare-qwen-tts-source.test.sh && bash deploy/local-node/scripts/install-services.test.sh && bash deploy/local-node/scripts/release-larm.test.sh && bash deploy/local-node/scripts/release-convergence.test.sh && bash deploy/local-node/scripts/network-converge.test.sh && bash deploy/local-node/scripts/configure-saaa-rest-access.test.sh && bash deploy/local-node/scripts/configure-larm-lan-access.test.sh && bash deploy/local-node/scripts/restore-dhcp.test.sh",
     "check": "bun run check:source-only && bun run check:operations && bun run docs:check && bun run typecheck && bun run test && bun run test:deployment"
   },
   "devDependencies": {

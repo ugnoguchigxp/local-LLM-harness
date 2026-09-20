@@ -1,0 +1,16 @@
+{
+  "id": "irodori-mf-pytorch-cpu",
+  "backend": "Irodori-TTS-Server",
+  "device": "cpu",
+  "precision": "fp32",
+  "url": "http://127.0.0.1:18090/v1/audio/speech",
+  "model": "irodori-tts",
+  "responseFormat": "wav",
+  "nativeStreaming": false,
+  "irodori": { "no_ref": true, "num_steps": 4, "caption": "落ち着いて親しみやすい、自然な女性音声" },
+  "revisions": {
+    "Irodori-TTS": "89f9d8fbd4d51ea019867ee1197725ede1df13c5",
+    "Irodori-TTS-Server": "61012c760f22f7b4a6c21c5c5f8f9e148120b6f9",
+    "model": "Aratako/Irodori-TTS-v4.1-Small-MF@ccc78f5d480b6e51b69b2d5042a14c4da04fea6e"
+  }
+}

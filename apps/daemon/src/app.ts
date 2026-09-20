@@ -70,6 +70,7 @@ import {
   PersonalStateController,
   PersonalStateControllerError,
 } from "./personal-state-controller";
+import type { GatewayReadiness } from "./gateway-lifecycle";
 
 export type FetchLike = GatewayFetchLike;
 
@@ -114,6 +115,8 @@ export type AppDeps = {
   contextController?: ContextController;
   personalStateController?: PersonalStateController;
   personalStateMaxSourceBytes?: number;
+  getGatewayReadiness?: () => GatewayReadiness;
+  startupProbeToken?: string;
 };
 
 function errorBody(code: string, message: string) {
@@ -437,6 +440,25 @@ export function createAppComponents(deps: AppDeps) {
       if (!secretMatches(authorization, expected) && !providerBearer) {
         return c.json(errorBody("unauthorized", "valid bearer token required"), 401);
       }
+    }
+    const gatewayReadiness = deps.getGatewayReadiness?.();
+    if (
+      gatewayReadiness
+      && !gatewayReadiness.ready
+      && new Set([
+        "/v1/chat/completions",
+        "/v1/audio/transcriptions",
+        "/v1/audio/speech",
+        "/v1/embed",
+      ]).has(c.req.path)
+      && !(
+        gatewayReadiness.state === "verifying"
+        && deps.startupProbeToken
+        && secretMatches(c.req.header("x-larm-startup-probe"), deps.startupProbeToken)
+      )
+    ) {
+      c.header("retry-after", "1");
+      return c.json(errorBody("gateway_not_ready", "LARM Gateway is not ready"), 503);
     }
     await next();
   });
@@ -1238,13 +1260,18 @@ export function createAppComponents(deps: AppDeps) {
     });
   };
 
-  app.get("/health", (c) => c.json({
-    status: "ok",
-    version: identity.version,
-    releaseCommit: identity.releaseCommit,
-    configRevision: deps.getConfigRevision?.() ?? identity.configRevision,
-    bootEpoch: identity.bootEpoch,
-  }));
+  app.get("/health", (c) => {
+    const gateway = deps.getGatewayReadiness?.();
+    return c.json({
+      status: gateway && !gateway.ready ? gateway.state : "ok",
+      ready: gateway?.ready ?? true,
+      ...(gateway ? { readiness: gateway } : {}),
+      version: identity.version,
+      releaseCommit: identity.releaseCommit,
+      configRevision: deps.getConfigRevision?.() ?? identity.configRevision,
+      bootEpoch: identity.bootEpoch,
+    }, gateway && !gateway.ready ? 503 : 200);
+  });
 
   app.get("/v1/release-convergence", async (c) => {
     c.header("cache-control", "no-store");
@@ -1263,6 +1290,10 @@ export function createAppComponents(deps: AppDeps) {
   });
 
   app.get("/ready", (c) => {
+    const gateway = deps.getGatewayReadiness?.();
+    if (gateway && !gateway.ready) {
+      return c.json({ status: gateway.state, reason: gateway.reason }, 503);
+    }
     const generated = Date.parse(deps.getState().generatedAt);
     const age = (deps.now?.() ?? Date.now()) - generated;
     if (deps.control.isDraining()) {
@@ -2218,7 +2249,7 @@ export function createAppComponents(deps: AppDeps) {
 
   app.notFound((c) => c.json(errorBody("not_found", "not found"), 404));
 
-  return { app, agentConnections };
+  return { app, agentConnections, modelBroker };
 }
 
 export function createApp(deps: AppDeps) {

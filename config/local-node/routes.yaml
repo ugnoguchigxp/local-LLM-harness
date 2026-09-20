@@ -32,6 +32,29 @@ routes:
       - runtime: qwen-worker-agent-efficientthink
         purpose: fallback
 
+  # ContextStill chooses one of these explicit tiers from its final prompt
+  # token count. Keeping them separate prevents a 128K request from silently
+  # falling back to a 64K runtime.
+  llm-contextstill-64k:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: qwen-contextstill-64k
+        purpose: primary
+
+  llm-contextstill-128k:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: qwen-worker-fast
+        purpose: primary
+
   llm-speed:
     capabilities:
       - llm.general

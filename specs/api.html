@@ -288,13 +288,23 @@
     <h2>Process identity</h2>
     <pre><code>{
   "status": "ok",
+  "ready": true,
+  "readiness": {
+    "state": "ready",
+    "ready": true,
+    "changedAt": "2026-09-20T12:56:59.191Z",
+    "reason": "listener_verified",
+    "listener": "http://0.0.0.0:9810"
+  },
   "version": "0.1.0",
   "releaseCommit": "full-40-character-commit",
   "configRevision": "sha256...",
   "bootEpoch": "epoch-..."
 }</code></pre>
     <p>
-      <code>GET /health</code>はpayloadやcredentialを含めず、software
+      <code>GET /health</code>はlistenerと必須chat
+      routeの実canaryが成功した場合だけ200/okを返し、
+      起動中、検証中、失敗、drain中は503を返します。payloadやcredentialを含めず、software
       version、配備release commit、 Registry・artifact manifest・runtime release catalogのcontent
       revision、process固有boot epochを返します。content
       revisionは論理ファイル名と内容だけから計算し、同一構成を別の絶対パスへ

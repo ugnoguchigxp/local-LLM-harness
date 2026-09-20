@@ -27,6 +27,7 @@ test("loads the Linux production registry", () => {
   );
   const agentWorker = registry.runtimes.find((runtime) => runtime.id === "qwen-worker-agent");
   const fastWorker = registry.runtimes.find((runtime) => runtime.id === "qwen-worker-fast");
+  const contextStill64 = registry.runtimes.find((runtime) => runtime.id === "qwen-contextstill-64k");
   const efficientAgent = registry.runtimes.find(
     (runtime) => runtime.id === "qwen-worker-agent-efficientthink",
   );
@@ -37,6 +38,8 @@ test("loads the Linux production registry", () => {
   const route35b = registry.routes.find((route) => route.id === "llm-35b");
   const route35bSpeed = registry.routes.find((route) => route.id === "llm-35b-speed");
   const agentWorkerRoute = registry.routes.find((route) => route.id === "llm-agent-worker");
+  const contextStill64Route = registry.routes.find((route) => route.id === "llm-contextstill-64k");
+  const contextStill128Route = registry.routes.find((route) => route.id === "llm-contextstill-128k");
   const decisionDefaultRoute = registry.routes.find((route) => route.id === "llm-decision-default");
   const backchannelDefaultRoute = registry.routes.find((route) =>
     route.id === "llm-backchannel-default"
@@ -69,6 +72,11 @@ test("loads the Linux production registry", () => {
     capability: ["llm.general", "llm.reasoning", "llm.coding"],
     resources: { estimatedMemoryGB: 28 },
     deployment: { modelId: "qwen-fast" },
+  });
+  expect(contextStill64).toMatchObject({
+    artifacts: ["qwen38-worker-fast", "qwen38-mtp"],
+    resources: { estimatedMemoryGB: 28 },
+    deployment: { modelId: "qwen-contextstill-64k" },
   });
   expect(decisionDefault).toMatchObject({
     backend: "llama-swap",
@@ -146,6 +154,15 @@ test("loads the Linux production registry", () => {
     runtime: "qwen-worker-agent-efficientthink",
     purpose: "fallback",
   });
+  expect(contextStill64Route).toMatchObject({
+    explicitOnly: true,
+    candidates: [{ runtime: "qwen-contextstill-64k", purpose: "primary" }],
+  });
+  expect(contextStill128Route).toMatchObject({
+    explicitOnly: true,
+    candidates: [{ runtime: "qwen-worker-fast", purpose: "primary" }],
+  });
+  expect(contextStill64?.policy.swapGroup).toBe(fastWorker?.policy.swapGroup);
   for (const route of [defaultRoute, saaaRoute, agentWorkerRoute, speedRoute]) {
     expect(route?.candidates.some((candidate) => candidate.runtime === "qwen-general")).toBe(false);
   }
@@ -248,6 +265,7 @@ test("production swap group matches llama-swap model membership", () => {
   const ornithSpeedCommand = configured.models["ornith15-35b-speed"]?.cmd ?? "";
   const agentWorkerCommand = configured.models["qwen-agent"]?.cmd ?? "";
   const fastWorkerCommand = configured.models["qwen-fast"]?.cmd ?? "";
+  const contextStill64Command = configured.models["qwen-contextstill-64k"]?.cmd ?? "";
   const efficientAgentCommand = configured.models["qwen-agent-efficientthink"]?.cmd ?? "";
   const decisionDefaultCommand = configured.models["qwen35-decision"]?.cmd ?? "";
   const lfmBackchannelCommand = configured.models["lfm25-backchannel-jp"]?.cmd ?? "";
@@ -275,6 +293,12 @@ test("production swap group matches llama-swap model membership", () => {
   expect(fastWorkerCommand).toContain("--ctx-size 131072");
   expect(fastWorkerCommand).toContain("--batch-size 2048");
   expect(fastWorkerCommand).toContain("--ubatch-size 256");
+  expect(contextStill64Command).toContain("Qwen3.8-27B-Q4_0.gguf");
+  expect(contextStill64Command).toContain("/srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf");
+  expect(contextStill64Command).toContain("--spec-type draft-mtp");
+  expect(contextStill64Command).toContain("--ctx-size 65536");
+  expect(contextStill64Command).toContain("--batch-size 2048");
+  expect(contextStill64Command).toContain("--ubatch-size 256");
   expect(efficientAgentCommand).toContain("--ctx-size 65536");
   expect(efficientAgentCommand).toContain(
     "Qwen3.8-27B-EfficientThink-SimPO-Q3-LynnStyle.gguf",

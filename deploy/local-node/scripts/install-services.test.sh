@@ -115,6 +115,10 @@ grep -F "ReadWritePaths=/srv/ai/cache /srv/ai/context-sources /srv/ai/logs /srv/
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "Environment=LARM_CONNECTION_READY_TIMEOUT_SECONDS=300" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
+grep -F "Environment=LARM_REQUIRED_CHAT_MODEL=qwen-agent-worker" \
+  "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
+grep -F "Type=notify" "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
+grep -F "After=network-online.target" "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "ReadWritePaths=/srv/ai/cache /srv/ai/logs" \
   "${test_root}/etc/systemd/system/llama-swap-worker.service" >/dev/null
 

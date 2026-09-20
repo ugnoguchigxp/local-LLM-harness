@@ -1,0 +1,174 @@
+<article lang="ja">
+  <h1>ContextStill Context Window tier選択の再評価と実装</h1>
+
+  <p>
+    ContextStill向けに64K、64K、256Kを一つの<code>llama-server</code>へ固定配置する案を、現行の
+    LARM、実機binary、workload証跡に照らして再評価した。結論は<strong>固定3 slot案を不採用</strong
+    >とし、 ContextStillが最終promptをtokenizeして、受入済みの64Kまたは128K
+    Providerのうち最小のtierを 明示選択する。125,000 input tokenを超える要求は、受入済み256K
+    Providerが追加されるまでfail closedとする。
+  </p>
+
+  <section id="evidence">
+    <h2>判断根拠</h2>
+    <table>
+      <caption>
+        添付案と現行実装の照合
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">観点</th>
+          <th scope="col">確認結果</th>
+          <th scope="col">判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ContextStill実要求</th>
+          <td>完了証跡のpromptは1,661 token、既存出力上限は4,000 token</td>
+          <td>通常jobに256K予約は不要。64Kに十分収まる。</td>
+        </tr>
+        <tr>
+          <th scope="row">現行標準Provider</th>
+          <td>Qwen3.8-27B Q4_0 + MTP、131,072 context、125,000 input受入済み</td>
+          <td>64Kを超える実要求の昇格先は128Kとする。</td>
+        </tr>
+        <tr>
+          <th scope="row">256K証跡</th>
+          <td>機能試験は成功したが、長文試験は104K token超で運用停止。現行daemonも131,072設定。</td>
+          <td>production tierとしては未受入。model名も公開しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">llama.cpp build 10655</th>
+          <td>
+            <code>--parallel</code
+            >、<code>--kv-unified</code>、<code>--cont-batching</code>はあるが、<code>--kv-unified-per-slot</code>はない。
+          </td>
+          <td>64K / 64K / 256Kの非対称なslot物理上限を添付コマンドでは保証できない。</td>
+        </tr>
+        <tr>
+          <th scope="row">TTFTとmemory</th>
+          <td>
+            ContextStillはbackground優先度1000。128GB unified
+            memory上でresident、ASR、TTSも共存する。
+          </td>
+          <td>全要求に384K KVを常時確保せず、最小tierだけをswap group内でloadする。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="contract">
+    <h2>選択contract</h2>
+    <p>
+      <code>promptTokens</code>はsystem prompt、tool
+      schema、会話履歴、検索結果、現在入力を、実modelと同じ
+      tokenizerで数えた合計である。consumerは送信直前の最終bodyから次を計算する。
+    </p>
+    <pre><code>requiredTokens = promptTokens + requestedMaxOutputTokens + safetyMarginTokens</code></pre>
+    <table>
+      <caption>
+        公開するContextStill tier
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Profile</th>
+          <th scope="col">Model</th>
+          <th scope="col">window</th>
+          <th scope="col">output reserve</th>
+          <th scope="col">safety margin</th>
+          <th scope="col">最大input</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>contextstill-background-64k</code></th>
+          <td><code>qwen-contextstill-64k</code></td>
+          <td>65,536</td>
+          <td>4,096</td>
+          <td>1,976</td>
+          <td>59,464</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>contextstill-background-128k</code></th>
+          <td><code>qwen-contextstill-128k</code></td>
+          <td>131,072</td>
+          <td>4,096</td>
+          <td>1,976</td>
+          <td>125,000</td>
+        </tr>
+      </tbody>
+    </table>
+    <ol>
+      <li><code>requestedMaxOutputTokens</code>が4,096を超える場合は不適合とする。</li>
+      <li><code>requiredTokens &lt;= 65,536</code>なら64Kを選ぶ。</li>
+      <li>それ以外で<code>requiredTokens &lt;= 131,072</code>なら128Kを選ぶ。</li>
+      <li>それ以外は必要量と最大許容量を返して失敗する。暗黙truncateはしない。</li>
+    </ol>
+    <p>
+      LARM
+      coreの<code>matchAgentProfileContextWindow</code>はこの判定を型付きで実装し、設定された候補のうち
+      完全なrequest budgetを収容する最小windowを返す。token数そのものの算出は、最終promptを所有する
+      ContextStillの責務である。
+    </p>
+  </section>
+
+  <section id="runtime">
+    <h2>runtimeとdaemon所有権</h2>
+    <p>
+      64K routeは<code>qwen-contextstill-64k</code>、128K
+      routeは<code>qwen-worker-fast</code>だけを候補に持つ。両者は同じQwen3.8-27B Q4_0
+      main weight、同じQ4_0 MTP、batch設定、KV型を使い、Context Windowだけを変える。
+      fallbackは置かないため、128K要求が64K backendへ暗黙降格しない。両runtimeは既存の
+      <code>qwen-worker-slot</code> swap
+      groupを共有し、同時にloadされない。したがって新しいdaemon lifecycle、session-to-slot
+      mapping、KVを正本とする会話状態は追加しない。
+    </p>
+    <details>
+      <summary>生成される主要起動引数</summary>
+      <pre><code># 64K tier
+llama-server ... --ctx-size 65536 --parallel 1 --cache-type-k q4_0 --cache-type-v q4_0 ...
+
+# 128K tier
+llama-server ... --ctx-size 131072 --parallel 1 --batch-size 2048 --ubatch-size 256 \
+  --cache-type-k q4_0 --cache-type-v q4_0 ...</code></pre>
+    </details>
+  </section>
+
+  <section id="migration">
+    <h2>ContextStill移行</h2>
+    <ol>
+      <li>最終Chat Completions bodyを組み立てた後、Qwen tokenizerでprompt tokenを数える。</li>
+      <li>
+        上記contractで<code>qwen-contextstill-64k</code>または<code>qwen-contextstill-128k</code>を選ぶ。
+      </li>
+      <li>
+        <code>/v1/models</code>に選択modelがなければjob
+        failureへ数えず、Provider unavailableとして再試行する。
+      </li>
+      <li>
+        選択modelを通常の<code>/v1/chat/completions</code>へ送る。既存のpriority
+        1000とqueue契約を維持する。
+      </li>
+      <li>
+        125,000 inputを超えたら履歴削除をせず、明示的な圧縮policyまたは将来の受入済みlong
+        tierへ委ねる。
+      </li>
+    </ol>
+    <p>
+      既存の<code>contextstill-background</code>と<code>qwen-agent-worker</code>は破壊的に改名せず互換用に残す。
+      新規consumerだけが明示tierへ移行する。
+    </p>
+  </section>
+
+  <section id="verification">
+    <h2>検証範囲と残課題</h2>
+    <p>
+      unit testは1,661 + 4,000 tokenが64Kを選ぶこと、59,464 inputの境界、64K超の128K昇格、
+      125,000超とoutput reserve超過の拒否、各routeが単一candidateであること、両runtimeが同じswap
+      groupに属することを検証する。巨大modelを使う新規benchmarkは設定変更をliveへ配備していないため
+      実行しない。256K tierを追加する前に、同一artifactとMTPで125K超の完走、TTFT、peak memory、
+      ContextStill job品質を記録し、専用releaseとfail-closed routeを追加する必要がある。
+    </p>
+  </section>
+</article>

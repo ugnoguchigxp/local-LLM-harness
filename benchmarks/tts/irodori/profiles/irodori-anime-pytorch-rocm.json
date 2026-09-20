@@ -1,0 +1,16 @@
+{
+  "id": "irodori-anime-pytorch-rocm",
+  "backend": "Irodori-TTS-Server",
+  "device": "rocm",
+  "precision": "bf16",
+  "url": "http://127.0.0.1:18089/v1/audio/speech",
+  "model": "irodori-tts",
+  "responseFormat": "wav",
+  "nativeStreaming": false,
+  "irodori": { "no_ref": true, "num_steps": 40, "caption": "落ち着いて親しみやすい、自然なアニメ調の女性音声" },
+  "revisions": {
+    "Irodori-TTS": "89f9d8fbd4d51ea019867ee1197725ede1df13c5",
+    "Irodori-TTS-Server": "61012c760f22f7b4a6c21c5c5f8f9e148120b6f9",
+    "model": "phasefield-audio/Irodori-TTS-v4.1-Anime@6b259f5baa5e236b3d14cbd1f8555ca87d92b530"
+  }
+}

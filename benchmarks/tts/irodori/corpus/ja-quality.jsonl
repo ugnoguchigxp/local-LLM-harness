@@ -1,0 +1,31 @@
+{"id":"short-01","category":"short","display_text":"はい、了解です。","spoken_text":"はい、了解です。"}
+{"id":"short-02","category":"short","display_text":"少々お待ちください。","spoken_text":"少々お待ちください。"}
+{"id":"short-03","category":"short","display_text":"本当ですか？","spoken_text":"本当ですか？"}
+{"id":"short-04","category":"short","display_text":"やったー！成功です。","spoken_text":"やったー！成功です。"}
+{"id":"short-05","category":"short","display_text":"すみません。","spoken_text":"すみません。"}
+{"id":"conv-01","category":"conversation","display_text":"今日の予定を確認して、次にやることを一緒に決めましょう。","spoken_text":"今日の予定を確認して、次にやることを一緒に決めましょう。"}
+{"id":"conv-02","category":"conversation","display_text":"処理が終わりました。結果を画面に表示しますね。","spoken_text":"処理が終わりました。結果を画面に表示しますね。"}
+{"id":"conv-03","category":"conversation","display_text":"この設定で問題なければ、そのまま次へ進めてもいいですか？","spoken_text":"この設定で問題なければ、そのまま次へ進めてもいいですか？"}
+{"id":"conv-04","category":"conversation","display_text":"うーん……少し難しいですが、別の方法を試してみます。","spoken_text":"うーん……少し難しいですが、別の方法を試してみます。"}
+{"id":"conv-05","category":"conversation","display_text":"「保存しました」と表示されたら、ウィンドウを閉じてください。","spoken_text":"保存しました、と表示されたら、ウィンドウを閉じてください。"}
+{"id":"long-01","category":"long","display_text":"現在の状態を確認したところ、ネットワーク接続は正常ですが、応答に少し時間がかかっています。急いで再起動せず、このまま数秒待ってから、もう一度結果を確認しましょう。","spoken_text":"現在の状態を確認したところ、ネットワーク接続は正常ですが、応答に少し時間がかかっています。急いで再起動せず、このまま数秒待ってから、もう一度結果を確認しましょう。"}
+{"id":"long-02","category":"long","display_text":"ご指定の条件で検索を行い、候補を三件に絞り込みました。最初の案は速度を優先し、二番目の案は品質を優先します。最後の案は両者のバランスを取った構成です。","spoken_text":"ご指定の条件で検索を行い、候補を三件に絞り込みました。最初の案は速度を優先し、二番目の案は品質を優先します。最後の案は両者のバランスを取った構成です。"}
+{"id":"long-03","category":"long","display_text":"バックアップが完了するまでは電源を切らないでください。進捗が百パーセントになったあと、整合性の確認を行います。すべて正常なら、安全に終了できることをお知らせします。","spoken_text":"バックアップが完了するまでは電源を切らないでください。進捗が百パーセントになったあと、整合性の確認を行います。すべて正常なら、安全に終了できることをお知らせします。"}
+{"id":"number-01","category":"number","display_text":"会議は2026年9月18日の14:30からです。","spoken_text":"会議は二千二十六年九月十八日の十四時三十分からです。","expected_reading":"カイギハニセンニジュウロクネンクガツジュウハチニチノジュウヨジサンジュップンカラデス"}
+{"id":"number-02","category":"number","display_text":"価格は12,800円で、割引率は15%です。","spoken_text":"価格は一万二千八百円で、割引率は十五パーセントです。"}
+{"id":"number-03","category":"number","display_text":"音声は48kHz、メモリは128GBです。","spoken_text":"音声は四十八キロヘルツ、メモリは百二十八ギガバイトです。"}
+{"id":"tech-01","category":"technical","display_text":"SAAAを起動しました。","spoken_text":"サーを起動しました。","expected_reading":"サーヲキドウシマシタ"}
+{"id":"tech-02","category":"technical","display_text":"LARMがTTS Providerを選択します。","spoken_text":"ラームがティーティーエスプロバイダーを選択します。"}
+{"id":"tech-03","category":"technical","display_text":"contextStillとDeepStillを切り替えます。","spoken_text":"コンテキストスティルとディープスティルを切り替えます。"}
+{"id":"tech-04","category":"technical","display_text":"Qwen 27Bを128GBの環境で動かします。","spoken_text":"クウェン二十七ビーを百二十八ギガバイトの環境で動かします。"}
+{"id":"tech-05","category":"technical","display_text":"ROCmでGPU推論を実行します。","spoken_text":"ロックエムでジーピーユー推論を実行します。"}
+{"id":"tech-06","category":"technical","display_text":"SQLiteからPostgreSQLへ移行します。","spoken_text":"エスキューライトからポストグレスキューエルへ移行します。"}
+{"id":"tech-07","category":"technical","display_text":"pgvectorのインデックスを更新します。","spoken_text":"ピージーベクターのインデックスを更新します。"}
+{"id":"tech-08","category":"technical","display_text":"MCPとA2Aの接続を確認します。","spoken_text":"エムシーピーとエーツーエーの接続を確認します。"}
+{"id":"tech-09","category":"technical","display_text":"バージョン4.1のAPIを使います。","spoken_text":"バージョン四点一のエーピーアイを使います。"}
+{"id":"reading-01","category":"ambiguous-reading","display_text":"明日は市場へ行きます。","spoken_text":"明日は市場へ行きます。","expected_reading":"アシタハイチバヘイキマス"}
+{"id":"reading-02","category":"ambiguous-reading","display_text":"人気のない夜道を歩く。","spoken_text":"ひとけのない夜道を歩く。","expected_reading":"ヒトケノナイヤミチヲアルク"}
+{"id":"emoji-01","category":"emoji-style","display_text":"えっ、本当に？😳 すごいね！✨","spoken_text":"えっ、本当に？😳 すごいね！✨"}
+{"id":"emoji-02","category":"emoji-style","display_text":"ふふっ🤭、それなら安心したよ。","spoken_text":"ふふっ🤭、それなら安心したよ。"}
+{"id":"multi-01","category":"multi-sentence","display_text":"準備ができました。最初の処理を始めます。終わったらお知らせします。","spoken_text":"準備ができました。最初の処理を始めます。終わったらお知らせします。"}
+{"id":"multi-02","category":"multi-sentence","display_text":"接続を確認します。少し待ってください……はい、正常です！次へ進みましょう。","spoken_text":"接続を確認します。少し待ってください……はい、正常です！次へ進みましょう。"}

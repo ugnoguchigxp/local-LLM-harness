@@ -1,0 +1,602 @@
+<article lang="ja">
+  <h1>Ternary Bonsai 2 27B 実機評価 Phase 1–3</h1>
+
+  <section id="executive-summary">
+    <h2>1. Executive Summary</h2>
+    <ol>
+      <li>
+        Ryzen AI MAX+ 395 / Radeon 8060S 上で Bonsai 2 PQ2_0、PTQ1_0、第三者 MTP、第三者 DFlash2
+        の実動作を確認した。
+      </li>
+      <li>
+        stock llama.cpp は PQ2_0 / PTQ1_0 と Bonsai 固有 Hadamard 処理に非対応であり、PrismML
+        系の専用 runtime が必要である。
+      </li>
+      <li>素の PQ2_0 decode は 21.7 tok/s で、同条件の Qwen 3.8 27B（13.8 tok/s）より 57%速い。</li>
+      <li>MTP 付き Bonsai は 128 token で 33.9 tok/s、2048 token で 39.8 tok/s を記録した。</li>
+      <li>
+        現行 Qwen MTP の 26.1 tok/s に対し decode は速いが、Bonsai MTP の TTFT は約 559 ms で Qwen
+        の約 239 ms より遅い。
+      </li>
+      <li>
+        PQ2_0 の prefill は 1K–16K で Qwen より約
+        25–27%遅く、長い会話履歴を毎回読む用途では不利である。
+      </li>
+      <li>
+        PQ2_0 は現行 Qwen artifact の 49.5%、PTQ1_0 は 40.8%のファイルサイズであり、「現行 model の
+        1/3以下」という仮説は成立しない。
+      </li>
+      <li>
+        第三者 MTP は実用候補、DFlash2 は追加約 2.06 GBに対して MTP
+        より遅く、この実機では第一候補にしない。
+      </li>
+      <li>
+        Phase 1–3 の速度ゲートは通過し、AGI論考1件ではQwenが文章品質で優位だった。50問 A/B、128K
+        context、agentic coding は未評価である。
+      </li>
+      <li>
+        全面移行はせず、別 runtime・別 Provider として追加し、ContextStill 作文 A/B
+        を次の採用ゲートにする。
+      </li>
+    </ol>
+  </section>
+
+  <section id="environment">
+    <h2>実行環境と分離方針</h2>
+    <dl>
+      <dt>実行日</dt>
+      <dd>2026-09-19 UTC</dd>
+      <dt>OS / kernel</dt>
+      <dd>Ubuntu 26.04.1 LTS / Linux 7.0.0-31-generic</dd>
+      <dt>CPU / GPU</dt>
+      <dd>AMD Ryzen AI MAX+ 395（16 core / 32 thread）/ Radeon 8060S（gfx1151、40 CU）</dd>
+      <dt>memory</dt>
+      <dd>物理 128 GB、OS認識 121 GiB。ROCm の shared GTT pool は 102400 MiB。</dd>
+      <dt>ROCm</dt>
+      <dd>HIP 7.15.26333、rocminfo runtime 1.21、rocm-smi library 7.8.0</dd>
+      <dt>現行 Qwen runtime</dt>
+      <dd>
+        llama.cpp 派生 build 244 / commit <code>0fc9568</code>、Vulkan
+        backend、全 layer offload、MTP。
+      </dd>
+      <dt>Bonsai base runtime</dt>
+      <dd>
+        公式 Bonsai-demo が固定する Prism llama.cpp
+        <code>prism-b10709-9a9394a</code>、ROCm build。
+      </dd>
+      <dt>Bonsai speculative runtime</dt>
+      <dd>
+        第三者 DFlash2 repository が固定する Prism llama.cpp sourceを別 directoryに HIP / gfx1151
+        向け build。既存 runtime は変更していない。
+      </dd>
+    </dl>
+    <p>
+      runtime は <code>/srv/ai/apps/bonsai2-eval</code> と
+      <code>/srv/ai/apps/bonsai2-speculative</code>、weight は
+      <code>/srv/ai/models/bonsai2-27b</code> に置き、この source repository から分離した。既存
+      Qwen の model、systemd unit、設定、binary は変更していない。競合しない測定では Qwen process
+      を一時停止し、trapで必ず再開した。 最終確認時点で既存 Qwen endpoint は
+      <code>status: ok</code> である。
+    </p>
+  </section>
+
+  <section id="compatibility">
+    <h2>Phase 1: runtime / format 対応</h2>
+    <table>
+      <caption>
+        構成別の実動作確認
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">結果</th>
+          <th scope="col">backend / 注意点</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">stock llama.cpp</th>
+          <td>非対応</td>
+          <td>PQ2_0 / PTQ1_0 と Bonsai 用 inverse Hadamard が未実装。</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai PQ2_0</th>
+          <td>動作</td>
+          <td>Prism ROCm、gfx1151、全 layer offload。CPU fallbackなし。</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai PTQ1_0</th>
+          <td>動作</td>
+          <td>Prism ROCm、gfx1151、全 layer offload。CPU fallbackなし。</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai + MTP</th>
+          <td>動作</td>
+          <td>第三者作成の統合 GGUF。公式 Bonsai 配布物ではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai + DFlash2</th>
+          <td>動作</td>
+          <td>第三者 draft model と対応 fork。公式 Bonsai 配布物ではない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      公式配布と制約は
+      <a href="https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf">PrismML model card</a>
+      および <a href="https://github.com/PrismML-Eng/Bonsai-demo">Bonsai-demo</a> を参照した。MTP と
+      DFlash2 はそれぞれ
+      <a href="https://huggingface.co/ProCreations/Ternary-Bonsai-2-27B-MTP">ProCreations MTP</a>、
+      <a href="https://huggingface.co/ProCreations/Ternary-Bonsai-2-27B-DFlash2"
+        >ProCreations DFlash2</a
+      >
+      の実験的 artifact である。 信頼境界が異なるため、LARMへの組み込み時は revision と SHA-256
+      を固定する。
+    </p>
+  </section>
+
+  <section id="performance">
+    <h2>2. Performance Table</h2>
+    <p>
+      base測定は <code>llama-bench</code>、全 layer offload、flash
+      attention、batch 2048、ubatch 256、16 thread、 KV
+      <code>q8_0/q8_0</code
+      >、warm-up後3回の中央値である。speculative測定は同じ短い日本語prompt、greedy、 prompt
+      cache無効で、128 tokenはwarm-up後3回の中央値、2048 tokenは1回である。
+    </p>
+    <table>
+      <caption>
+        weight、memory、TTFT、速度、電力
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Model</th>
+          <th scope="col">Weight</th>
+          <th scope="col">GPU shared memory</th>
+          <th scope="col">TTFT</th>
+          <th scope="col">Prefill 1K / 4K / 16K</th>
+          <th scope="col">Decode 128 / 512 / 2048</th>
+          <th scope="col">Power / energy</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen 3.8 27B ROCmFP4 base</th>
+          <td>14.56 GB</td>
+          <td>未分離測定</td>
+          <td>未測定</td>
+          <td>258.4 / 251.2 / 227.9 tok/s</td>
+          <td>13.87 / 13.87 / 13.80 tok/s</td>
+          <td>53.1 W、約3.85 J/token</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai 2 PQ2_0 base</th>
+          <td>7.21 GB</td>
+          <td>7.8 GB GTT（total 8.0 GB）</td>
+          <td>約531 ms（初回1回）</td>
+          <td>188.2 / 184.7 / 171.4 tok/s</td>
+          <td>21.54 / 21.98 / 21.71 tok/s</td>
+          <td>54.0 W、約2.49 J/token</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai 2 PTQ1_0 base</th>
+          <td>5.95 GB</td>
+          <td>未測定</td>
+          <td>未測定</td>
+          <td>171.8 / 167.6 / 157.0 tok/s</td>
+          <td>15.04 / 15.23 / 15.09 tok/s</td>
+          <td>54.0 W、約3.58 J/token</td>
+        </tr>
+        <tr>
+          <th scope="row">現行 Qwen + MTP</th>
+          <td>14.56 GB内蔵</td>
+          <td>未分離測定</td>
+          <td>239 ms</td>
+          <td>base欄参照</td>
+          <td>26.12 tok/s（128）、26.12 tok/s（2048）</td>
+          <td>54.1 W、約2.07 J/token</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai + MTP</th>
+          <td>7.66 GB統合</td>
+          <td>8.7 GB GTT（total 8.9 GB）</td>
+          <td>559 ms</td>
+          <td>未測定</td>
+          <td>33.92 tok/s（128）、39.78 tok/s（2048）</td>
+          <td>56.1 W、約1.41 J/token</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai PQ2_0 + DFlash2</th>
+          <td>7.21 + 2.06 GB</td>
+          <td>10.4 GB GTT（total 10.7 GB）</td>
+          <td>554 ms</td>
+          <td>未測定</td>
+          <td>27.82 tok/s（128）、36.70 tok/s（2048）</td>
+          <td>56.0 W、約1.53 J/token</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        Wは壁コンセント値ではなく <code>rocm-smi</code> の Socket Graphics
+        Package power の定常時点サンプル、 J/tokenはその値を2048-token
+        decode速度で除した参考値である。統合電力量ではない。 speculative
+        streamingは複数tokenをburst送信するため、SSE
+        event間隔から得る瞬間最大値は採用せず、serverの生成timingを使った。
+      </p>
+    </aside>
+  </section>
+
+  <section id="speculative">
+    <h2>Phase 3: Speculative Decoding</h2>
+    <table>
+      <caption>
+        acceptance と追加memory
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">生成長</th>
+          <th scope="col">acceptance</th>
+          <th scope="col">平均 draft 長</th>
+          <th scope="col">所見</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen MTP</th>
+          <td>128</td>
+          <td>75 / 104 = 72.1%</td>
+          <td>未出力</td>
+          <td>短い対話のTTFTが最良。</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen MTP</th>
+          <td>2048</td>
+          <td>1220 / 1640 = 74.4%</td>
+          <td>未出力</td>
+          <td>26.12 tok/sで安定。</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai MTP</th>
+          <td>128</td>
+          <td>72 / 110 = 65.5%</td>
+          <td>2.31</td>
+          <td>33.92 tok/s。</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai MTP</th>
+          <td>2048</td>
+          <td>1287 / 1520 = 84.7%</td>
+          <td>2.69</td>
+          <td>39.78 tok/s。今回の最速構成。</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai DFlash2</th>
+          <td>128</td>
+          <td>79 / 141 = 56.0%</td>
+          <td>2.68</td>
+          <td>27.82 tok/s。</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai DFlash2</th>
+          <td>2048</td>
+          <td>1463 / 1749 = 83.6%</td>
+          <td>3.51</td>
+          <td>36.70 tok/s。memory増加に対しMTPに届かない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      40 tok/sには測定誤差内でほぼ到達したが、60
+      tok/sは未達である。128-token応答ではMTPの速度向上よりTTFTの悪化が目立つ。
+      output品質への影響は同一回答の意味比較をまだ行っていないため判定しない。
+    </p>
+  </section>
+
+  <section id="quality">
+    <h2>3. Quality Table</h2>
+    <table>
+      <caption>
+        Phase 1–3終了時点の品質評価範囲
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Category</th>
+          <th scope="col">Qwen 3.8</th>
+          <th scope="col">Bonsai</th>
+          <th scope="col">Difference</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">日本語 smoke</th>
+          <td>正常</td>
+          <td>正常な日本語を生成</td>
+          <td>合否判定のみ。優劣は未評価。</td>
+        </tr>
+        <tr>
+          <th scope="row">ContextStill 作文</th>
+          <td>AGI論考1件: 73 / 100</td>
+          <td>AGI論考1件: 60 / 100</td>
+          <td>Qwen優位。ただし非blindの単発評価。</td>
+        </tr>
+        <tr>
+          <th scope="row">Reasoning / Coding</th>
+          <td>未採点</td>
+          <td>未採点</td>
+          <td>50問 A/B で評価予定。</td>
+        </tr>
+        <tr>
+          <th scope="row">Tool Calling</th>
+          <td>未採点</td>
+          <td>未採点</td>
+          <td>JSON validityを含め未評価。</td>
+        </tr>
+        <tr>
+          <th scope="row">Long context quality</th>
+          <td>未採点</td>
+          <td>未採点</td>
+          <td>16K超の検索・保持試験は未実施。</td>
+        </tr>
+      </tbody>
+    </table>
+    <h3>AGI 3000-token論考の予備比較</h3>
+    <p>
+      同一prompt、temperature 0.7、top-p 0.9、top-k 40、repeat penalty 1.05、seed
+      20260919、thinking無効、最大3000
+      tokenで1件ずつ生成した。採点はmodel名を把握した非blind評価であり、
+      一般化できる品質benchmarkではない。
+    </p>
+    <table>
+      <caption>
+        同一promptによる長文生成の速度と完結性
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Model</th>
+          <th scope="col">出力token</th>
+          <th scope="col">壁時計</th>
+          <th scope="col">Decode</th>
+          <th scope="col">終了</th>
+          <th scope="col">MTP acceptance</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen 3.8 + MTP</th>
+          <td>2400</td>
+          <td>124.71秒</td>
+          <td>19.37 tok/s</td>
+          <td>自然終了、結論まで完結</td>
+          <td>1131 / 2522 = 44.8%</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai PQ2_0 + MTP</th>
+          <td>3000</td>
+          <td>117.69秒</td>
+          <td>25.70 tok/s</td>
+          <td>length、結論の列挙途中で切断</td>
+          <td>1326 / 3344 = 39.7%</td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        作文品質の予備採点
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">評価軸</th>
+          <th scope="col">配点</th>
+          <th scope="col">Qwen</th>
+          <th scope="col">Bonsai</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">完結性・指示追従</th>
+          <td>20</td>
+          <td>18</td>
+          <td>8</td>
+        </tr>
+        <tr>
+          <th scope="row">中心主張・論理構成</th>
+          <td>20</td>
+          <td>15</td>
+          <td>16</td>
+        </tr>
+        <tr>
+          <th scope="row">事実精度・慎重さ</th>
+          <td>20</td>
+          <td>10</td>
+          <td>12</td>
+        </tr>
+        <tr>
+          <th scope="row">日本語の自然さ</th>
+          <td>15</td>
+          <td>12</td>
+          <td>7</td>
+        </tr>
+        <tr>
+          <th scope="row">具体性・反論処理</th>
+          <td>15</td>
+          <td>11</td>
+          <td>11</td>
+        </tr>
+        <tr>
+          <th scope="row">簡潔さ・非重複</th>
+          <td>10</td>
+          <td>7</td>
+          <td>6</td>
+        </tr>
+        <tr>
+          <th scope="row">合計</th>
+          <td>100</td>
+          <td>73</td>
+          <td>60</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Qwenは全体を完結させ、日本語も概ね自然だったが、「ヤン・レクサス」という人名誤記と、実在を確認できない
+      「ジャコブズの補完性／ジョナサン・ジャコブズ」を事実のように記したため、事実精度を低く採点した。
+      Bonsaiは「能力の民主化と責任の非対称性」という中心主張が明快だった一方、
+      <code>構造的变化</code
+      >、<code>個人 맞춤형</code>、<code>境界線が模糊</code>、
+      <code>是不相容れ</code
+      >など中国語・韓国語断片が混入し、最後は結論途中で切れた。
+      この1件では、速度はBonsai、納品可能な文章としての品質はQwenを選ぶ。
+    </p>
+    <h3>長文生成時のmemory</h3>
+    <p>
+      Bonsaiは <code>amd-smi process</code> でprocess帰属memory 9.56 GB（8.91
+      GiB）、うちGTT 9.35 GB、Linux RSS 1.61 GBだった。Unified Memoryのためこれらは単純加算しない。
+      QwenはVulkan processで
+      <code>amd-smi process</code> に個別表示されず、生成中のhost全体はVRAM + GTT
+      29.56 GBだったが、常駐ASR / TTS等を含むためQwen単独値として扱わない。Qwen weight
+      artifactは14.56
+      GBである。比較可能な根拠から、Bonsaiのmodel実行memoryが小さいことは支持されるが、今回のQwen単独runtime
+      memoryは未確定である。
+    </p>
+    <aside>
+      <p>
+        最初のQwen試行ではthinkingを無効化しなかったため、3000
+        tokenを非表示reasoningに使い切り、本文が空になった。
+        150.15秒を要したが作文比較から除外した。Provider化では
+        <code>enable_thinking=false</code>
+        を明示する必要がある。
+      </p>
+    </aside>
+  </section>
+
+  <section id="agent-result">
+    <h2>4. Agent Result</h2>
+    <p>
+      未実施。速度ゲート後に進むという段階方針に従い、既存projectのisolated worktreeを使う5–10
+      task評価は次段階へ延期した。
+    </p>
+  </section>
+
+  <section id="long-context">
+    <h2>5. Long Context Result</h2>
+    <p>
+      16K prefill速度までは測定済み。32K / 64K / 128K / 256K の速度、peak
+      memory、検索品質は未測定である。
+      初期ゲートでBonsaiのprefillが約25%遅いことが判明し、全長を3構成×3回実行する前に一度結果をレビューする方針とした。
+      数値は推測で補完しない。
+    </p>
+  </section>
+
+  <section id="saaa">
+    <h2>6. SAAA suitability</h2>
+    <p>
+      短い会話では現行QwenのTTFTが有利であり、Bonsaiを即時の全面代替にはしない。Bonsai
+      MTPは生成開始後34–40 tok/sを示し、 30 tok/s基準は満たした。約8.9 GBのshared GPU
+      memoryで動作したため他model同時常駐の余地は大きいが、 ASR / TTS / embedding /
+      軽量LLMとの同時負荷試験と常時稼働時の電力量は未実施である。
+    </p>
+  </section>
+
+  <section id="larm-integration">
+    <h2>7. LARM integration</h2>
+    <ul>
+      <li>既存Qwen Providerをresident defaultとして維持する。</li>
+      <li>
+        Bonsaiは専用 Prism runtime、専用port、専用model
+        directory、固定SHA-256を持つ別Providerにする。
+      </li>
+      <li>
+        初期候補は PQ2_0 + MTP。PTQ1_0は小さいがdecode優位が小さく、DFlash2はmemory効率でMTPに劣る。
+      </li>
+      <li>
+        stock llama.cpp互換を宣言せず、runtime capabilityに
+        <code>bonsai-hadamard</code> と speculative方式を明示する。
+      </li>
+      <li>
+        第三者 speculative artifact は自動取得せず、明示的opt-inとprovenance記録を必須にする。
+      </li>
+      <li>今回LARM registryや既存起動設定への変更は行っていない。</li>
+    </ul>
+  </section>
+
+  <section id="recommendation">
+    <h2>8. Recommendation</h2>
+    <table>
+      <caption>
+        現時点の用途別判断
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">判断</th>
+          <th scope="col">根拠</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">SAAA短応答</th>
+          <td>Qwen 3.8を維持</td>
+          <td>TTFTが約239 ms対559 ms。</td>
+        </tr>
+        <tr>
+          <th scope="row">長めの文章生成</th>
+          <td>現時点はQwen。Bonsai MTPはA/B継続</td>
+          <td>Bonsaiは高速・省memoryだが、予備作文で言語混入と未完結。</td>
+        </tr>
+        <tr>
+          <th scope="row">長contextの都度prefill</th>
+          <td>Qwen 3.8寄り</td>
+          <td>1K–16K prefillでBonsaiが約25–27%遅い。</td>
+        </tr>
+        <tr>
+          <th scope="row">Agentic coding</th>
+          <td>保留</td>
+          <td>完遂率評価前。</td>
+        </tr>
+        <tr>
+          <th scope="row">memory制約下の補完Provider</th>
+          <td>Bonsai候補</td>
+          <td>Qwen artifactの約半分、実行時約8.9 GB。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      次は ContextStill に近い日本語作文20件を temperature / sampler / promptを揃えてblind A/Bし、
+      Bonsai MTPが品質非劣性を満たした場合に限って64K・128Kとco-residencyへ進む。
+      現時点の結論は「作文の既定値はQwenを維持し、Bonsaiは長文生成とmemory効率を狙う実験Providerとして検証継続」である。
+    </p>
+  </section>
+
+  <section id="hypotheses">
+    <h2>仮説の初期判定</h2>
+    <dl>
+      <dt>仮説1: 1/3以下で品質同等</dt>
+      <dd>サイズ部分は棄却。作文1件では品質同等も不成立だが、サンプル不足。</dd>
+      <dt>仮説2: agentic codingで誤差蓄積</dt>
+      <dd>未評価。</dd>
+      <dt>仮説3: bandwidth削減でdecode高速化</dt>
+      <dd>支持。base PQ2_0は同条件Qwen baseより57%高速。</dd>
+      <dt>仮説4: MTP / DFlash2で40–60 tok/s</dt>
+      <dd>部分支持。MTPで39.78 tok/s、60 tok/sは未達。</dd>
+      <dt>仮説5: 他model同時常駐への余裕</dt>
+      <dd>memory容量面は有望だが、同時負荷時の性能は未評価。</dd>
+    </dl>
+  </section>
+
+  <section id="artifacts">
+    <h2>再現用artifact</h2>
+    <ul>
+      <li>生のbenchmark結果: <code>/srv/ai/benchmarks/bonsai2-2026-09-19/</code></li>
+      <li>stream測定script: <code>scripts/measure-llama-stream.py</code></li>
+      <li>PQ2_0 SHA-256: <code>3907dc…62ec1</code></li>
+      <li>PTQ1_0 SHA-256: <code>53107f…33ee3</code></li>
+      <li>MTP SHA-256: <code>3cb3…31dd4</code></li>
+      <li>DFlash2 SHA-256: <code>9dd11…deb9a</code></li>
+    </ul>
+    <p>
+      未測定値を空想で埋めず、条件の異なる <code>llama-bench</code> base値とHTTP
+      speculative値を明記して分離した。
+    </p>
+  </section>
+</article>
