@@ -54,8 +54,8 @@ runtimeReleases:
     artifacts:
       - qwen38-worker-fast
       - qwen38-mtp
-    providerConfigRevision: llama-swap-qwen-q4-0-mtp-128k-ubatch256-v2
-    estimatedMemoryGB: 28
+    providerConfigRevision: llama-swap-qwen-q4-0-mtp-225k-ubatch256-v1
+    estimatedMemoryGB: 36
     healthPath: /health
     default: true
   qwen-contextstill-64k-current:
@@ -80,7 +80,7 @@ runtimeReleases:
     runtime: lfm25-backchannel-jp
     artifacts:
       - lfm25-1.2b-jp-q4-k-m
-    providerConfigRevision: llama-swap-lfm25-1.2b-jp-q4-k-m-backchannel-4k-warm-schema-v3
+    providerConfigRevision: llama-swap-lfm25-1.2b-jp-q4-k-m-backchannel-64k-warm-schema-v1
     estimatedMemoryGB: 3
     healthPath: /health
     default: true

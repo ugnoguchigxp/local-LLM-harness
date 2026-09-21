@@ -1,0 +1,84 @@
+<article lang="ja">
+  <h1>SAAA 会話モデル・Context Window 接続仕様</h1>
+
+  <p>
+    SAAAの会話セッションは、LARM Agent Connection APIが返すclaimを接続情報の正本とする。
+    SAAA実装へmodel ID、endpoint、短期credential、context windowを重複して固定しない。
+  </p>
+
+  <section id="model-roles" aria-labelledby="roles">
+    <h2 id="roles">モデルの役割</h2>
+    <table>
+      <caption>
+        SAAA会話セッションで取得するProviderと責務
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Provider</th>
+          <th scope="col">モデル</th>
+          <th scope="col">役割</th>
+          <th scope="col">Context window</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>backchannel</code></th>
+          <td>LFM 2.5 1.2B JP</td>
+          <td>
+            相槌の<code>ack</code>／<code>defer</code>判定だけを行う
+          </td>
+          <td>65,536 token</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>llm</code></th>
+          <td>Qwen 3.8 27B Q4_0 + MTP</td>
+          <td>会話本文、推論、tool call、tool結果を受けた最終回答を生成する</td>
+          <td>230,400 token（225 Ki token）</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>asr</code></th>
+          <td>Qwen3 ASR 1.7B</td>
+          <td>既存の音声認識</td>
+          <td>非該当</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>tts</code></th>
+          <td>VOICEVOX</td>
+          <td>既存の音声合成</td>
+          <td>非該当</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="connection-contract" aria-labelledby="contract">
+    <h2 id="contract">接続契約</h2>
+    <ul>
+      <li>SAAAは明示profile <code>saaa-qwen38</code>を要求する。</li>
+      <li>claimは四Providerのmodel、protocol、Gateway URL、短期credentialを返す。</li>
+      <li>
+        Chat Completions
+        Providerのclaimは<code>contextWindow</code>を返し、SAAAは値を検証してsessionへ保持する。
+      </li>
+      <li>
+        Qwenのinput budgetは230,400からoutput reserve 4,096とsafety margin 1,976を引いた224,328
+        tokenとする。
+      </li>
+      <li>
+        LFMのinput budgetは65,536からoutput reserve 512とsafety margin 1,024を引いた64,000
+        tokenとする。
+      </li>
+      <li>
+        LFMは回答本文、tool権限、完了判定、最終回答の書き換えを所有しない。最終回答はQwen本文を既存TTSへ渡す。
+      </li>
+    </ul>
+  </section>
+
+  <aside>
+    <p>
+      旧profile <code>saaa-qwen38-kv-mem</code>と旧Provider
+      <code>decision-default</code>はこの接続経路では使用しない。 ContextStill用のQwen
+      3.5 2B decision Providerは別用途として残す。
+    </p>
+  </aside>
+</article>

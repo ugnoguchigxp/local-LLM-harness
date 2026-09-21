@@ -424,6 +424,7 @@ export class AgentConnectionController {
         port,
         baseUrl: found.audience.baseUrl,
         model: provider.publicModel,
+        ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
         health: {
           url: `${found.audience.baseUrl}/agent-connections/${found.id}/providers/${provider.name}/health`,
           kind: "semantic-inference" as const,

@@ -98,7 +98,7 @@ runtimes:
       class: preferred
       swapGroup: qwen-worker-slot
     resources:
-      estimatedMemoryGB: 28
+      estimatedMemoryGB: 36
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16

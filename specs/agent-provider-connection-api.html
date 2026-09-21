@@ -337,7 +337,7 @@ agentProfiles:
       <tbody>
         <tr>
           <td><code>GET</code></td>
-          <th scope="row"><code>/v1/agent-profiles</code></th>
+          <th scope="row"><code>/v3/agent-profiles</code></th>
           <td>local-nodeでは任意のAPI token</td>
           <td>要求可能なProfileの安全な一覧。Runtime、endpoint、releaseは含めない</td>
         </tr>
@@ -407,21 +407,29 @@ agentProfiles:
     <h2>Connection作成contract</h2>
     <h3>Profile一覧response</h3>
     <pre><code>{
-  "contractVersion": "agent-connection.v1",
+  "contractVersion": "agent-connection.v3",
   "catalogRevision": "&lt;64 lowercase hex&gt;",
   "defaultAgentProfile": "coding-default",
   "profiles": [
     {
       "id": "coding-default",
+      "canonicalProfile": "coding-default",
       "description": "Resident 27B coding agent",
       "selectionPolicy": "default",
+      "deprecated": false,
+      "schedulingPriority": 3000,
       "providers": [
         {
           "name": "llm",
           "capability": "llm.coding",
           "supportedCapabilities": ["llm.coding", "llm.general", "llm.reasoning"],
           "protocol": "openai.chat-completions.v1",
-          "model": "coding-default"
+          "model": "coding-default",
+          "contextWindow": {
+            "maxTokens": 230400,
+            "outputReserveTokens": 4096,
+            "safetyMarginTokens": 1976
+          }
         }
       ]
     }
@@ -439,6 +447,12 @@ agentProfiles:
       task分類に使用できるRoute能力です。Resident
       Qwenはgeneral、reasoning、codingの全てを広告します。
     </p>
+    <p>
+      <code>contextWindow</code>はProfile直下ではなく、Chat Completions
+      Providerごとの任意fieldです。音声Providerには付けません。複数Providerを持つProfileは一つの
+      Connectionとして一括claimし、consumerは<code>providers</code>から<code>name</code>で必要なProviderを
+      選びます。Connection作成時にProvider subsetだけを要求するwire fieldはありません。
+    </p>
 
     <h3>Request</h3>
     <pre><code>POST /v1/agent-connections
@@ -447,8 +461,10 @@ Idempotency-Key: agent-task-0182
 Content-Type: application/json
 
 {
-  "audience": "same-host",
-  "client": "ambient",
+  "agentProfile": "saaa-qwen38",
+  "explicitAgentProfile": true,
+  "audience": "saaa-desktop",
+  "client": "saaa-desktop",
   "ttlSeconds": 900,
   "allowFallback": false,
   "deploymentPolicy": "existing-only"
@@ -510,6 +526,15 @@ Content-Type: application/json
         </tr>
       </tbody>
     </table>
+    <p>
+      request bodyに<code>agentProfile</code>が存在する場合はその値を使用し、
+      <code>defaultAgentProfile</code
+      >は省略時だけ使用します。明示指定をdefaultで上書きしません。
+      <code>saaa-qwen38</code>のような<code
+        >explicit-only</code
+      >
+      Profileには <code>explicitAgentProfile: true</code>が必須です。
+    </p>
     <p>
       Bodyはstrict objectとし、未知fieldは<code>400 invalid_request</code>です。
       非既定Profileを<code>explicitAgentProfile: true</code>なしで要求すると
@@ -655,7 +680,8 @@ Content-Type: application/json
         初回probeはAllocation期限と<code>LARM_CONNECTION_READY_TIMEOUT_SECONDS</code>の早い方まで再試行する。
         retry間隔は既存<code>LARM_STARTUP_POLL_INTERVAL_MS</code>と失敗cache
         TTLの大きい方とする。ただし固定probeへのHTTP 400、404、405、422は
-        <code>provider_contract_mismatch</code>として再試行せず、Connectionを直ちにfailedにして
+        <code>provider_contract_mismatch</code
+        >として再試行せず、Connectionを直ちにfailedにして
         所有Allocationをreleaseする。deadline時もConnectionをfailedにして所有Allocationをreleaseする。
       </li>
       <li>
@@ -717,6 +743,11 @@ Content-Type: application/json
       "port": 9810,
       "baseUrl": "http://127.0.0.1:9810/v1",
       "model": "coding-default",
+      "contextWindow": {
+        "maxTokens": 230400,
+        "outputReserveTokens": 4096,
+        "safetyMarginTokens": 1976
+      },
       "health": {
         "url": "http://127.0.0.1:9810/v1/agent-connections/aconn_epoch_uuid/providers/llm/health",
         "kind": "semantic-inference",
@@ -751,6 +782,13 @@ Content-Type: application/json
       generationはConnection作成時に1で開始し、<code>iat</code>はConnection作成時刻、renew後はrenew
       完了時刻、<code>exp</code>はConnection期限です。同じgenerationのtokenは決定的に再生成するためclaim自体が
       安全に冪等です。plaintext tokenをstate、idempotency store、event、journalへ保存しません。
+    </p>
+    <p>
+      Chat Completions
+      Providerに設定された<code>contextWindow</code>はdiscoveryとclaimの両方へ同じ値を
+      返します。<code>baseUrl</code>と<code>configuration.fields.baseURL</code>、
+      <code>model</code
+      >と<code>configuration.fields.model</code>はそれぞれ一致しなければなりません。
     </p>
   </section>
 

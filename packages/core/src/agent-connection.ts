@@ -755,6 +755,14 @@ export const agentProviderDescriptorSchema = z.object({
   port: z.number().int().min(1).max(65_535),
   baseUrl: z.string().url(),
   model: agentIdentifierSchema,
+  contextWindow: z.object({
+    maxTokens: z.number().int().min(1).max(1_000_000),
+    outputReserveTokens: z.number().int().min(1).max(1_000_000),
+    safetyMarginTokens: z.number().int().min(0).max(1_000_000),
+  }).strict().refine(
+    (value) => value.outputReserveTokens + value.safetyMarginTokens < value.maxTokens,
+    "output reserve and safety margin must leave a positive input budget",
+  ).optional(),
   health: z.object({
     url: z.string().url(),
     kind: z.literal("semantic-inference"),
@@ -816,6 +824,13 @@ export const agentProviderDescriptorSchema = z.object({
       code: "custom",
       path: ["configuration", "fields", "model"],
       message: "configuration model must match model",
+    });
+  }
+  if (provider.contextWindow && provider.protocol !== "openai.chat-completions.v1") {
+    context.addIssue({
+      code: "custom",
+      path: ["contextWindow"],
+      message: "contextWindow is only valid for Chat Completions providers",
     });
   }
 });

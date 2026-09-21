@@ -143,6 +143,11 @@ const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
         route: "llm-default",
         publicModel: "test-model",
         readiness: "llm-inference",
+        contextWindow: {
+          maxTokens: 65_536,
+          outputReserveTokens: 4_096,
+          safetyMarginTokens: 1_976,
+        },
       }],
     },
   },
@@ -3800,6 +3805,11 @@ test("agent connection derives a host-private claim from the request origin", as
     host: "gnosis.local",
     port: 9810,
     baseUrl: "http://gnosis.local:9810/v1",
+    contextWindow: {
+      maxTokens: 65_536,
+      outputReserveTokens: 4_096,
+      safetyMarginTokens: 1_976,
+    },
     health: {
       url: `http://gnosis.local:9810/v1/agent-connections/${connection.id}/providers/llm/health`,
     },

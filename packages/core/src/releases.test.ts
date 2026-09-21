@@ -17,6 +17,10 @@ describe("runtime release catalog", () => {
   test("loads immutable production releases with one default per artifact runtime", () => {
     const releases = loadRuntimeReleaseCatalog(`${root}deploy/local-node/releases.yaml`, registry, artifacts);
     expect(defaultRuntimeRelease(releases, "qwen-general")?.artifacts).toEqual(["qwen38-primary"]);
+    expect(defaultRuntimeRelease(releases, "qwen-worker-fast")).toMatchObject({
+      id: "qwen-worker-fast-current",
+      providerConfigRevision: "llama-swap-qwen-q4-0-mtp-225k-ubatch256-v1",
+    });
     expect(defaultRuntimeRelease(releases, "qwen36-35b")?.artifacts).toEqual(["qwen36-35b-speed"]);
     expect(defaultRuntimeRelease(releases, "qwen35-decision")).toMatchObject({
       id: "qwen35-decision-current",
@@ -27,7 +31,7 @@ describe("runtime release catalog", () => {
     expect(defaultRuntimeRelease(releases, "lfm25-backchannel-jp")).toMatchObject({
       id: "lfm25-backchannel-jp-current",
       artifacts: ["lfm25-1.2b-jp-q4-k-m"],
-      providerConfigRevision: "llama-swap-lfm25-1.2b-jp-q4-k-m-backchannel-4k-warm-schema-v3",
+      providerConfigRevision: "llama-swap-lfm25-1.2b-jp-q4-k-m-backchannel-64k-warm-schema-v1",
       estimatedMemoryGB: 3,
     });
     expect(defaultRuntimeRelease(releases, "gemma3-backchannel")).toMatchObject({

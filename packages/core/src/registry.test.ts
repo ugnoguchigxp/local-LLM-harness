@@ -70,7 +70,7 @@ test("loads the Linux production registry", () => {
   expect(agentWorker?.resources.estimatedMemoryGB).toBe(28);
   expect(fastWorker).toMatchObject({
     capability: ["llm.general", "llm.reasoning", "llm.coding"],
-    resources: { estimatedMemoryGB: 28 },
+    resources: { estimatedMemoryGB: 36 },
     deployment: { modelId: "qwen-fast" },
   });
   expect(contextStill64).toMatchObject({
@@ -290,7 +290,7 @@ test("production swap group matches llama-swap model membership", () => {
   expect(fastWorkerCommand).toContain("Qwen3.8-27B-Q4_0.gguf");
   expect(fastWorkerCommand).toContain("/srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf");
   expect(fastWorkerCommand).toContain("--spec-type draft-mtp");
-  expect(fastWorkerCommand).toContain("--ctx-size 131072");
+  expect(fastWorkerCommand).toContain("--ctx-size 230400");
   expect(fastWorkerCommand).toContain("--batch-size 2048");
   expect(fastWorkerCommand).toContain("--ubatch-size 256");
   expect(contextStill64Command).toContain("Qwen3.8-27B-Q4_0.gguf");
@@ -311,6 +311,7 @@ test("production swap group matches llama-swap model membership", () => {
   expect(decisionDefaultCommand).toContain("--reasoning off");
   expect(decisionDefaultCommand).toContain("--temp 0");
   expect(lfmBackchannelCommand).toContain("LFM2.5-1.2B-JP-Q4_K_M.gguf");
+  expect(lfmBackchannelCommand).toContain("--ctx-size 65536");
   expect(lfmBackchannelCommand).toContain("--repeat-penalty 1.05");
   expect(configured.models["lfm25-backchannel-jp"]?.ttl).toBe(0);
   expect(configured.models["lfm25-backchannel-jp"]?.filters?.setParams).toEqual({

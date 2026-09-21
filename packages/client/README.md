@@ -90,7 +90,7 @@ function contextStillModel(promptTokens: number, maxOutputTokens: number): strin
 
 ## SAAA Qwen 3.8選択
 
-SAAAは`qwen3.8`を明示します。これは標準`qwen-worker-fast`（Qwen 3.8 27B Q4_0、128K、MTP）専用の通常modelで、廃止した
+SAAAは`qwen3.8`を明示します。これは標準`qwen-worker-fast`（Qwen 3.8 27B Q4_0、225K、MTP）専用の通常modelで、廃止した
 永続KV snapshot Providerやworker Providerへのfallbackはありません。
 
 ```ts

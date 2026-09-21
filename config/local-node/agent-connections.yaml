@@ -11,7 +11,7 @@ audiences:
 
 agentProfiles:
   coding-default:
-    description: Standard Qwen 3.8 27B Q4_0 128K worker with MTP
+    description: Standard Qwen 3.8 27B Q4_0 225K worker with MTP
     schedulingPriority: 3000
     providers:
       - name: llm
@@ -19,8 +19,12 @@ agentProfiles:
         route: llm-default
         publicModel: coding-default
         readiness: llm-inference
+        contextWindow:
+          maxTokens: 230400
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
   saaa-qwen38:
-    description: SAAA voice and decision preset with the Qwen 3.8 27B Q4_0 128K MTP worker
+    description: SAAA conversation preset with LFM 2.5 1.2B backchannel and Qwen 3.8 27B 225K reasoning
     schedulingPriority: 3000
     providers:
       - name: llm
@@ -28,12 +32,20 @@ agentProfiles:
         route: llm-saaa-qwen38
         publicModel: qwen3.8
         readiness: llm-inference
-      - name: decision-default
-        capability: llm.decision.default
-        route: llm-decision-default
-        publicModel: decision-default
+        contextWindow:
+          maxTokens: 230400
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: backchannel
+        capability: llm.backchannel.classifier
+        route: llm-backchannel-default
+        publicModel: backchannel-default
         publishModel: false
         readiness: llm-inference
+        contextWindow:
+          maxTokens: 65536
+          outputReserveTokens: 512
+          safetyMarginTokens: 1024
       - name: asr
         capability: speech.stt
         route: stt-qwen

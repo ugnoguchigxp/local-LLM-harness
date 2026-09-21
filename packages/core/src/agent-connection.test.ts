@@ -59,6 +59,11 @@ test("production agent profiles compile to strict protocol-aware provider contra
         route: "llm-default",
         protocol: "openai.chat-completions.v1",
         readiness: "llm-inference",
+        contextWindow: {
+          maxTokens: 230_400,
+          outputReserveTokens: 4_096,
+          safetyMarginTokens: 1_976,
+        },
       }],
     });
   expect(catalog.profiles.find((profile) => profile.id === "deep-reasoning-35b"))
@@ -182,14 +187,19 @@ test("production agent profiles compile to strict protocol-aware provider contra
           readiness: "stt-transcription",
         },
         {
-          name: "decision-default",
-          capability: "llm.decision.default",
-          supportedCapabilities: ["llm.decision.default"],
-          route: "llm-decision-default",
+          name: "backchannel",
+          capability: "llm.backchannel.classifier",
+          supportedCapabilities: ["llm.backchannel.classifier"],
+          route: "llm-backchannel-default",
           protocol: "openai.chat-completions.v1",
-          publicModel: "decision-default",
+          publicModel: "backchannel-default",
           publishModel: false,
           readiness: "llm-inference",
+          contextWindow: {
+            maxTokens: 65_536,
+            outputReserveTokens: 512,
+            safetyMarginTokens: 1_024,
+          },
         },
         {
           name: "llm",
@@ -199,6 +209,11 @@ test("production agent profiles compile to strict protocol-aware provider contra
           protocol: "openai.chat-completions.v1",
           publicModel: "qwen3.8",
           readiness: "llm-inference",
+          contextWindow: {
+            maxTokens: 230_400,
+            outputReserveTokens: 4_096,
+            safetyMarginTokens: 1_976,
+          },
         },
         {
           name: "tts",
@@ -740,6 +755,11 @@ test("agent claim validation rejects inconsistent HTTP descriptors", () => {
       port: 9810,
       baseUrl: "http://192.0.2.42:9810/v1",
       model: "deep-reasoning-35b",
+      contextWindow: {
+        maxTokens: 230_400,
+        outputReserveTokens: 4_096,
+        safetyMarginTokens: 1_976,
+      },
       health: {
         url: "http://192.0.2.42:9810/v1/agent-connections/aconn_epoch-test_1/providers/llm/health",
         kind: "semantic-inference" as const,
@@ -755,7 +775,14 @@ test("agent claim validation rejects inconsistent HTTP descriptors", () => {
     expiresAt,
   };
 
-  expect(agentConnectionClaimSchema.parse(claim).providers[0]?.port).toBe(9810);
+  expect(agentConnectionClaimSchema.parse(claim).providers[0]).toMatchObject({
+    port: 9810,
+    contextWindow: {
+      maxTokens: 230_400,
+      outputReserveTokens: 4_096,
+      safetyMarginTokens: 1_976,
+    },
+  });
   expect(agentConnectionClaimSchema.safeParse({
     ...claim,
     providers: [{ ...claim.providers[0]!, baseUrl: "not-a-url" }],

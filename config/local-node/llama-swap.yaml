@@ -96,7 +96,7 @@ models:
       -ngld 999
       --fit off
       --flash-attn on
-      --ctx-size 131072
+      --ctx-size 230400
       --parallel 1
       --batch-size 2048
       --ubatch-size 256
@@ -223,7 +223,7 @@ models:
       -ngl 999
       --fit off
       --flash-attn on
-      --ctx-size 4096
+      --ctx-size 65536
       --parallel 1
       --batch-size 512
       --ubatch-size 512

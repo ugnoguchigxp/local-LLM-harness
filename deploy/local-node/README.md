@@ -179,13 +179,14 @@ deploy/local-node/scripts/smoke-larm.sh
 
 SAAAの標準HTTP Provider設定では公開modelを`qwen3.8`にします。このmodelは
 `llm-saaa-qwen38`から標準`qwen-worker-fast`だけへ解決されます。workerはQwen 3.8 27B
-Q4_0、128K context、Base専用MTP sidecar、draft最大2 tokenを使用します。廃止した永続KV snapshot経路と
+Q4_0、225K context（230,400 token）、Base専用MTP sidecar、draft最大2 tokenを使用します。廃止した永続KV snapshot経路と
 resident ROCmFP4は利用対象にもfallbackにもなりません。通常の`coding-default`も同じQ4_0 MTP workerです。
 
 SAAA session全体はAgent Profile `saaa-qwen38`を明示選択します。一つのAgent Connectionが
-`tts`（VoiceVox）、`asr`（Qwen3 ASR）、`decision-default`（Qwen 3.5 2B）、`llm`（Qwen 3.8 27B
-通常Qwen 3.8）の四Providerを同じTTLへ固定します。単独の標準Chat requestはこのpresetを暗黙には起動しません。
-consumerはclaimで返されたProviderごとのmodelと短期credentialを使用し、session終了時にConnectionをreleaseします。
+`tts`（VoiceVox）、`asr`（Qwen3 ASR）、`backchannel`（LFM 2.5 1.2B JP、64K）、`llm`（Qwen 3.8 27B、225K）
+の四Providerを同じTTLへ固定します。単独の標準Chat requestはこのpresetを暗黙には起動しません。
+consumerはclaimで返されたProviderごとのmodel、短期credential、Chat Completionsのcontext windowを使用し、
+session終了時にConnectionをreleaseします。
 
 Personal State製品contractは別gateです。systemd unitは
 `LARM_PERSONAL_STATE_ENABLED=false`と`LARM_PERSONAL_STATE_JOURNAL_ROOT=/var/lib/larm/personal-state`を
