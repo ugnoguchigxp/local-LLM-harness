@@ -114,6 +114,8 @@ grep -F "disable --now larm-native-qwen-provider.service" "${systemctl_log}" >/d
 openssl pkey -pubin -in "${test_root}/etc/larm/release-signing.pub" -noout >/dev/null
 grep -F "ReadWritePaths=/srv/ai/cache /srv/ai/context-sources /srv/ai/logs /srv/ai/models /var/lib/larm" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
+grep -F "/var/lib/larm/provider-config" \
+  "${test_root}/etc/systemd/system/larm-release-activator.service" >/dev/null
 grep -F "Environment=LARM_CONNECTION_READY_TIMEOUT_SECONDS=300" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "Environment=LARM_REQUIRED_CHAT_MODEL=qwen-agent-worker" \

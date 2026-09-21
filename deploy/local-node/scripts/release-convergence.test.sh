@@ -225,6 +225,14 @@ chmod -R u+rwX "${candidate_root}/${second_commit}"
 rm -rf "${candidate_root}/${second_commit}"
 
 build "${second_commit}" 1 >/dev/null
+if LARM_RELEASE_TEST_FAIL_PROVIDER_CONFIG=1 activate >/dev/null 2>&1; then
+  echo "activator kept a release whose Provider config could not be published" >&2
+  exit 1
+fi
+[[ "$(readlink -f "${current_link}")" == "${release_root}/${first_commit:0:12}" ]]
+jq -e '.stage == "contract_verified" and .result == "failed" and .reason == "activation_rollback_failed"' \
+  "${state_root}/status.json" >/dev/null
+
 if LARM_RELEASE_TEST_FAIL_CONTRACT=1 activate >/dev/null 2>&1; then
   echo "activator kept a release that failed its contract gate" >&2
   exit 1

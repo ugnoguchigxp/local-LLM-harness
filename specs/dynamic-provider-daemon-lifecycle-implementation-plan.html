@@ -351,6 +351,10 @@ interface RuntimeBackend {
         IDとgenerationの片側指定を拒否し、revisionとの結合を必須にする。
       </li>
       <li>停止失敗instanceは次回acquire時にcleanupを再試行し、失敗状態を再利用しない。</li>
+      <li>
+        release activatorのsandboxへProvider設定directoryだけを書込許可し、設定publish失敗もcurrent
+        pointer、旧設定、旧daemonのtransactional rollback対象にする。
+      </li>
     </ul>
   </section>
 

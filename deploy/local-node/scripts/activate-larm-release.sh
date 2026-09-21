@@ -141,6 +141,9 @@ systemctl_run() {
 
 publish_provider_config() {
   local target="$1" source tmp
+  if [[ "${test_mode}" == "1" && "${LARM_RELEASE_TEST_FAIL_PROVIDER_CONFIG:-0}" == "1" ]]; then
+    return 1
+  fi
   source="${target}/config/local-node/llama-swap.yaml"
   [[ -f "${source}" && ! -L "${source}" && "$(stat -c '%h' -- "${source}")" -eq 1 ]] \
     || fail "verified release has no safe llama-swap provider config"
@@ -254,8 +257,16 @@ write_status "validated" "running"
 
 previous="$(current_release || true)"
 if [[ "${previous}" == "${release}" ]]; then
-  publish_provider_config "${release}"
-  verify_health "${release}" || { write_status "contract_verified" "failed" "contract_failure" "${commit}"; fail "active release contract verification failed"; }
+  if ! publish_provider_config "${release}"; then
+    write_status "contract_verified" "failed" "provider_config_publish_failed" "${commit}"
+    fail "active release provider config publication failed"
+  fi
+  if ! verify_health "${release}"; then
+    if ! systemctl_run restart larm-daemon.service || ! verify_health "${release}"; then
+      write_status "contract_verified" "failed" "contract_failure" "${commit}"
+      fail "active release contract verification failed"
+    fi
+  fi
   write_status "contract_verified" "succeeded" "" "${commit}"
   rm -f -- "${request}"
   exit 0
@@ -273,14 +284,17 @@ if [[ -n "${previous}" ]]; then
 fi
 write_status "activated" "running" "" "${commit}"
 log_activation_event "config_reload_started" "running" "${commit}"
-publish_provider_config "${release}"
-if ! systemctl_run restart larm-daemon.service || ! verify_health "${release}"; then
+if ! publish_provider_config "${release}" \
+  || ! systemctl_run restart larm-daemon.service \
+  || ! verify_health "${release}"; then
+  rollback_ok=1
   if [[ -n "${previous}" && -d "${previous}" && ! -L "${previous}" ]]; then
     recovery="${release_root}/.current-recovery.$$"
     ln -s -- "${previous}" "${recovery}"
     mv -Tf -- "${recovery}" "${current_link}"
-    publish_provider_config "${previous}"
-    systemctl_run restart larm-daemon.service || true
+    publish_provider_config "${previous}" || rollback_ok=0
+    systemctl_run restart larm-daemon.service || rollback_ok=0
+    verify_health "${previous}" || rollback_ok=0
   else
     rm -f -- "${current_link}"
     if [[ -f "${work}/provider-config.previous" ]]; then
@@ -296,7 +310,9 @@ if ! systemctl_run restart larm-daemon.service || ! verify_health "${release}"; 
   if [[ -n "${previous}" && -f "${previous}/release-manifest.json" ]]; then
     observed="$(jq -r '.commit // empty' "${previous}/release-manifest.json")"
   fi
-  write_status "contract_verified" "failed" "activation_contract_failure_rolled_back" "${observed}"
+  reason="activation_contract_failure_rolled_back"
+  [[ "${rollback_ok}" == "1" ]] || reason="activation_rollback_failed"
+  write_status "contract_verified" "failed" "${reason}" "${observed}"
   log_activation_event "config_reload_completed" "failed" "${observed}"
   fail "release activation failed contract verification and was rolled back"
 fi
