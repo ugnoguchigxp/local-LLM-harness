@@ -1,6 +1,17 @@
-import type { LlamaSwapRuntimeDefinition, RuntimeDefinition, ServiceState } from "@larm/core";
-import { isLlamaSwapRuntime } from "@larm/core";
-import { LifecycleError, type RuntimeBackend, type RuntimeHealth } from "./types";
+import type {
+  LlamaSwapRuntimeDefinition,
+  ProviderInstance,
+  ProviderRevision,
+  RuntimeDefinition,
+  ServiceState,
+} from "@larm/core";
+import { deriveStatus, isLlamaSwapRuntime, providerInstanceId } from "@larm/core";
+import {
+  LifecycleError,
+  type ProviderInstanceHealth,
+  type RuntimeBackend,
+  type RuntimeHealth,
+} from "./types";
 import { responseTextLimited } from "./http";
 
 const HEALTH_OK = /"status"\s*:\s*"ok"/;
@@ -107,6 +118,11 @@ export class LlamaSwapBackend implements RuntimeBackend {
   private readonly readyTimeoutMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly request: LlamaSwapRequest;
+  private readonly instances = new Map<string, {
+    instance: ProviderInstance;
+    runtime: LlamaSwapRuntimeDefinition;
+  }>();
+  private readonly generations = new Map<string, number>();
 
   constructor(runtimes: RuntimeDefinition[], options: LlamaSwapBackendOptions = {}) {
     this.runtimes = new Map(
@@ -190,12 +206,90 @@ export class LlamaSwapBackend implements RuntimeBackend {
     return this.health(runtime.id, signal);
   }
 
+  async listInstances(): Promise<ProviderInstanceHealth[]> {
+    return Promise.all([...this.instances.keys()].map((id) => this.healthInstance(id)));
+  }
+
+  async ensureInstance(
+    revision: ProviderRevision,
+    runtime: RuntimeDefinition,
+    signal?: AbortSignal,
+  ): Promise<ProviderInstance> {
+    if (!isLlamaSwapRuntime(runtime) || revision.backend !== "llama-swap") {
+      throw new LifecycleError("start_failed", `${runtime.id} is not a llama-swap revision`);
+    }
+    if (revision.runtimeId !== runtime.id) {
+      throw new LifecycleError("start_failed", "provider revision does not match runtime");
+    }
+    const existing = [...this.instances.values()].find(
+      (record) => record.instance.revision === revision.revision,
+    );
+    if (existing) return existing.instance;
+    const conflicting = [...this.instances.values()].find(
+      (record) => record.instance.runtimeId === runtime.id,
+    );
+    if (conflicting) {
+      throw new LifecycleError(
+        "revision_conflict",
+        `runtime ${runtime.id} already has a different provider revision`,
+      );
+    }
+    throwIfAborted(signal);
+    this.runtimes.set(runtime.id, runtime);
+    await this.load(runtime, signal);
+    await this.waitHealthy(runtime, signal);
+    const generation = (this.generations.get(runtime.id) ?? 0) + 1;
+    this.generations.set(runtime.id, generation);
+    const instance: ProviderInstance = {
+      id: providerInstanceId(revision, generation),
+      runtimeId: runtime.id,
+      revision: revision.revision,
+      generation,
+      node: runtime.node,
+      endpoint: runtime.deployment.endpoint,
+      backendEndpoint: runtime.deployment.backendEndpoint ?? runtime.deployment.endpoint,
+      status: "HOT",
+      createdAt: new Date().toISOString(),
+    };
+    this.instances.set(instance.id, { instance, runtime });
+    return instance;
+  }
+
+  async healthInstance(instanceId: string): Promise<ProviderInstanceHealth> {
+    const record = this.instances.get(instanceId);
+    if (!record) {
+      throw new LifecycleError("access_denied", `provider instance ${instanceId} is unknown`);
+    }
+    const health = await this.health(record.runtime.id);
+    const status = deriveStatus({ ...health, startingGraceExpired: false });
+    record.instance.status = status;
+    return { ...record.instance, ...health, status };
+  }
+
+  async drainInstance(instanceId: string, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    if (!this.instances.has(instanceId)) {
+      throw new LifecycleError("access_denied", `provider instance ${instanceId} is unknown`);
+    }
+  }
+
+  async stopInstance(instanceId: string): Promise<void> {
+    const record = this.instances.get(instanceId);
+    if (!record) return;
+    await this.unload(record.runtime);
+    this.instances.delete(instanceId);
+  }
+
   async stop(runtimeId: string): Promise<void> {
     const runtime = this.runtimes.get(runtimeId);
     if (!runtime) {
       throw new LifecycleError("stop_failed", `runtime ${runtimeId} is not registered`);
     }
     this.assertControllable(runtime, "stop");
+    await this.unload(runtime);
+  }
+
+  private async unload(runtime: LlamaSwapRuntimeDefinition): Promise<void> {
     const url = joinListen(
       runtime.deployment.listen,
       `/api/models/unload/${encodeURIComponent(runtime.deployment.modelId)}`,

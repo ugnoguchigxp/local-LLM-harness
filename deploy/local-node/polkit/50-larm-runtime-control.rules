@@ -1,10 +1,17 @@
-// Permit the unprivileged LARM daemon to start and stop only the declared
-// preferred systemd provider. Resident providers remain outside this rule.
+// Permit the unprivileged LARM daemon to manage only catalog-declared Provider
+// units. The supervisor and LARM control plane are deliberately excluded.
 polkit.addRule(function(action, subject) {
     if (
         subject.user === "ugnoguchi"
         && action.id === "org.freedesktop.systemd1.manage-units"
-        && ["qwen-tts.service", "larm-embedding.service"].indexOf(action.lookup("unit")) !== -1
+        && [
+            "llama-server.service",
+            "qwen-asr.service",
+            "whisper-asr.service",
+            "voicevox-tts.service",
+            "qwen-tts.service",
+            "larm-embedding.service"
+        ].indexOf(action.lookup("unit")) !== -1
         && ["start", "stop"].indexOf(action.lookup("verb")) !== -1
     ) {
         return polkit.Result.YES;

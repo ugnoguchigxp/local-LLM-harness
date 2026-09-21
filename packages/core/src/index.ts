@@ -1,4 +1,13 @@
 export { LARM_VERSION } from "./version";
+export {
+  compileProviderRevision,
+  managedWarmPolicy,
+  providerInstanceId,
+  providerInstanceSchema,
+  providerRevisionSchema,
+  type ProviderInstance,
+  type ProviderRevision,
+} from "./provider-lifecycle";
 export * from "./personal-state";
 export {
   activeContextViewSchema,
@@ -90,6 +99,7 @@ export {
   runtimeDeploymentSchema,
   runtimeListSchema,
   inspectionRuntimeListSchema,
+  inspectionProviderInstanceListSchema,
   runtimeReleaseListSchema,
   runtimeReleasePlanRequestSchema,
   runtimeReleaseSelectionSchema,

@@ -20,6 +20,7 @@ export {
 } from "./systemd";
 export {
   LifecycleError,
+  type ProviderInstanceHealth,
   type RuntimeBackend,
   type RuntimeHealth,
   type RuntimeInstance,

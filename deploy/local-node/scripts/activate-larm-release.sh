@@ -10,6 +10,7 @@ if [[ "${test_mode}" == "1" ]]; then
   current_link="${LARM_RELEASE_CURRENT:?required in test mode}"
   state_root="${LARM_RELEASE_STATE_ROOT:?required in test mode}"
   public_key="${LARM_RELEASE_PUBLIC_KEY:?required in test mode}"
+  provider_config_root="${LARM_PROVIDER_CONFIG_ROOT:?required in test mode}"
 else
   [[ "$(id -u)" -eq 0 ]] || { echo "release activator must run as root" >&2; exit 1; }
   candidate_root=/srv/ai/apps/larm-candidates
@@ -18,15 +19,18 @@ else
   current_link=/srv/ai/apps/larm-current
   state_root=/var/lib/larm/release-controller
   public_key=/etc/larm/release-signing.pub
+  provider_config_root=/var/lib/larm/provider-config
 fi
 
 fail() { echo "$*" >&2; exit 1; }
-for path in "${candidate_root}" "${inbox_root}" "${release_root}" "${current_link}" "${state_root}" "${public_key}"; do
+for path in "${candidate_root}" "${inbox_root}" "${release_root}" "${current_link}" "${state_root}" "${public_key}" "${provider_config_root}"; do
   [[ "${path}" == /* && "${path}" != "/" ]] || fail "release activator paths must be absolute and non-root"
 done
 for root in "${candidate_root}" "${inbox_root}" "${release_root}" "${state_root}"; do
   [[ -d "${root}" && ! -L "${root}" ]] || fail "release activator root is missing or unsafe: ${root}"
 done
+[[ -d "${provider_config_root}" && ! -L "${provider_config_root}" ]] \
+  || fail "provider config root is missing or unsafe"
 [[ -f "${public_key}" && ! -L "${public_key}" && "$(stat -c '%h' -- "${public_key}")" -eq 1 ]] \
   || fail "release public key is missing or unsafe"
 if [[ "${test_mode}" != "1" ]]; then
@@ -135,6 +139,20 @@ systemctl_run() {
   fi
 }
 
+publish_provider_config() {
+  local target="$1" source tmp
+  source="${target}/config/local-node/llama-swap.yaml"
+  [[ -f "${source}" && ! -L "${source}" && "$(stat -c '%h' -- "${source}")" -eq 1 ]] \
+    || fail "verified release has no safe llama-swap provider config"
+  [[ "$(stat -c '%s' -- "${source}")" -le 1048576 ]] \
+    || fail "llama-swap provider config is too large"
+  tmp="$(mktemp "${provider_config_root}/.llama-swap.XXXXXX")"
+  cp -- "${source}" "${tmp}"
+  chmod 0644 "${tmp}"
+  if [[ "${test_mode}" != "1" ]]; then chown root:root "${tmp}"; fi
+  mv -fT -- "${tmp}" "${provider_config_root}/llama-swap.yaml"
+}
+
 log_activation_event() {
   local event="$1" result="${2:-running}" observed="${3:-}"
   local message
@@ -236,10 +254,14 @@ write_status "validated" "running"
 
 previous="$(current_release || true)"
 if [[ "${previous}" == "${release}" ]]; then
+  publish_provider_config "${release}"
   verify_health "${release}" || { write_status "contract_verified" "failed" "contract_failure" "${commit}"; fail "active release contract verification failed"; }
   write_status "contract_verified" "succeeded" "" "${commit}"
   rm -f -- "${request}"
   exit 0
+fi
+if [[ -f "${provider_config_root}/llama-swap.yaml" && ! -L "${provider_config_root}/llama-swap.yaml" ]]; then
+  cp -- "${provider_config_root}/llama-swap.yaml" "${work}/provider-config.previous"
 fi
 next="${release_root}/.current-next.$$"
 ln -s -- "${release}" "${next}"
@@ -251,14 +273,23 @@ if [[ -n "${previous}" ]]; then
 fi
 write_status "activated" "running" "" "${commit}"
 log_activation_event "config_reload_started" "running" "${commit}"
+publish_provider_config "${release}"
 if ! systemctl_run restart larm-daemon.service || ! verify_health "${release}"; then
   if [[ -n "${previous}" && -d "${previous}" && ! -L "${previous}" ]]; then
     recovery="${release_root}/.current-recovery.$$"
     ln -s -- "${previous}" "${recovery}"
     mv -Tf -- "${recovery}" "${current_link}"
+    publish_provider_config "${previous}"
     systemctl_run restart larm-daemon.service || true
   else
     rm -f -- "${current_link}"
+    if [[ -f "${work}/provider-config.previous" ]]; then
+      cp -- "${work}/provider-config.previous" "${provider_config_root}/.llama-swap.restore.$$"
+      chmod 0644 "${provider_config_root}/.llama-swap.restore.$$"
+      mv -fT -- "${provider_config_root}/.llama-swap.restore.$$" "${provider_config_root}/llama-swap.yaml"
+    else
+      rm -f -- "${provider_config_root}/llama-swap.yaml"
+    fi
     systemctl_run stop larm-daemon.service || true
   fi
   observed=""

@@ -90,9 +90,10 @@ cmp --silent \
   "${test_root}/etc/polkit-1/rules.d/50-larm-runtime-control.rules"
 
 systemctl_log="${test_root}/var/lib/larm/install-systemctl.log"
-grep -F "enable llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service" \
+grep -F "enable llama-swap-worker.service larm-daemon.service" \
   "${systemctl_log}" >/dev/null
-grep -F "disable qwen-tts.service larm-embedding.service" "${systemctl_log}" >/dev/null
+grep -F "disable llama-server.service qwen-asr.service whisper-asr.service voicevox-tts.service qwen-tts.service larm-embedding.service" \
+  "${systemctl_log}" >/dev/null
 [[ -d "${test_root}/srv/ai/models/qwen-tts" ]]
 [[ -d "${test_root}/srv/ai/models/multilingual-e5-small-onnx-qint8" ]]
 [[ -d "${test_root}/srv/ai/models/qwen36-35b" ]]
@@ -119,8 +120,16 @@ grep -F "Environment=LARM_REQUIRED_CHAT_MODEL=qwen-agent-worker" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "Type=notify" "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "After=network-online.target" "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
+if grep -Fq "Wants=network-online.target llama-server.service" \
+  "${test_root}/etc/systemd/system/larm-daemon.service"; then
+  echo "LARM daemon still starts a Provider directly through Wants=" >&2
+  exit 1
+fi
 grep -F "ReadWritePaths=/srv/ai/cache /srv/ai/logs" \
   "${test_root}/etc/systemd/system/llama-swap-worker.service" >/dev/null
+grep -F -- "--config /var/lib/larm/provider-config/llama-swap.yaml --watch-config" \
+  "${test_root}/etc/systemd/system/llama-swap-worker.service" >/dev/null
+[[ -f "${test_root}/var/lib/larm/provider-config/llama-swap.yaml" ]]
 
 mkdir -p "${gateway_root}/etc/systemd/system"
 printf '[Unit]\nDescription=obsolete native Provider\n' \

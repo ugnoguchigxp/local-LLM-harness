@@ -27,7 +27,25 @@
             >
           </th>
           <td>LFM 1.2B相槌、Qwen 27B推論、claim由来の接続・context契約</td>
-          <td>Repository実装済み。local-node配備とlive canary待ち</td>
+          <td>local-nodeへ配備済み。Agent Connection、JSON、SSE、releaseをlive検証済み</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./dynamic-provider-daemon-lifecycle.html"
+              >動的 Provider Daemon ライフサイクル仕様</a
+            >
+          </th>
+          <td>全ProfileのProviderをrevision単位で起動、共有、drain、停止する制御プレーン契約</td>
+          <td>基盤実装済み。revision併存と実機probeはrollout gate</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="./dynamic-provider-daemon-lifecycle-implementation-plan.html"
+              >動的 Provider Daemon ライフサイクル実装計画</a
+            >
+          </th>
+          <td>Core型、Backend、Instance Manager、移行、E2E、rollbackの作業計画</td>
+          <td>WP1、WP2、WP5の基盤とmanaged policy移行を実装済み</td>
         </tr>
         <tr>
           <th scope="row"><a href="./concept.html">Local AI Provider コンセプト</a></th>

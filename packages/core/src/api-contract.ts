@@ -1,8 +1,9 @@
 import { z } from "zod";
 import {
-  allocationBindingSchema,
+  allocationBindingObjectSchema,
   allocationStatusSchema,
 } from "./allocation";
+import { providerInstanceSchema } from "./provider-lifecycle";
 import {
   allocationRequirementSchema,
   allocationCapacityPolicySchema,
@@ -114,6 +115,19 @@ export const inspectionRuntimeListSchema = z.object({
   runtimes: z.array(runtimeDefinitionSchema),
 }).strict();
 
+export const inspectionProviderInstanceListSchema = z.object({
+  instances: z.array(z.object({
+    instance: providerInstanceSchema,
+    refs: z.object({
+      allocation: z.number().int().nonnegative(),
+      request: z.number().int().nonnegative(),
+      mutation: z.number().int().nonnegative(),
+    }).strict(),
+    warmRefs: z.number().int().nonnegative(),
+    idleDeadline: z.string().datetime().optional(),
+  }).strict()),
+}).strict();
+
 export const errorResponseSchema = z.object({
   error: errorDetailSchema,
 }).strict();
@@ -183,7 +197,12 @@ export const httpProviderSoakEvidenceSchema = z.object({
   }
 });
 
-export const publicAllocationBindingSchema = allocationBindingSchema.omit({ endpoint: true });
+export const publicAllocationBindingSchema = allocationBindingObjectSchema.omit({
+  endpoint: true,
+  providerRevision: true,
+  instanceId: true,
+  instanceGeneration: true,
+});
 export const publicAllocationSchema = z.object({
   id: z.string().min(1).max(192),
   bootEpoch: z.string().min(1).max(128),
@@ -427,6 +446,7 @@ export const API_OPERATIONS = [
   ["get", "/v1/inspection/runtimes", "listInspectionRuntimes"],
   ["get", "/v1/inspection/runtimes/{id}", "getInspectionRuntime"],
   ["get", "/v1/inspection/state", "getInspectionState"],
+  ["get", "/v1/inspection/provider-instances", "listInspectionProviderInstances"],
   ["get", "/operations/{id}", "getLegacyOperation"],
   ["get", "/v1/operations/{id}", "getOperation"],
   ["get", "/v1/release-convergence", "getReleaseConvergence"],
@@ -497,6 +517,7 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   listInspectionRuntimes: ["200"],
   getInspectionRuntime: ["200"],
   getInspectionState: ["200"],
+  listInspectionProviderInstances: ["200"],
   getLegacyOperation: ["200"],
   getOperation: ["200"],
   getReleaseConvergence: ["200"],
@@ -565,6 +586,7 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   listInspectionRuntimes: "InspectionRuntimeList",
   getInspectionRuntime: "InspectionRuntime",
   getInspectionState: "InspectionClusterState",
+  listInspectionProviderInstances: "InspectionProviderInstanceList",
   getLegacyOperation: "ControlOperation",
   getOperation: "ControlOperation",
   getReleaseConvergence: "ReleaseConvergenceStatus",
@@ -639,6 +661,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     InspectionRuntime: jsonSchema(runtimeDefinitionSchema),
     InspectionRuntimeList: jsonSchema(inspectionRuntimeListSchema),
     InspectionClusterState: jsonSchema(clusterStateSchema),
+    InspectionProviderInstanceList: jsonSchema(inspectionProviderInstanceListSchema),
     AllocationRequest: jsonSchema(allocationRequestSchema),
     Allocation: jsonSchema(publicAllocationSchema),
     AllocationRenewRequest: jsonSchema(allocationRenewRequestSchema),

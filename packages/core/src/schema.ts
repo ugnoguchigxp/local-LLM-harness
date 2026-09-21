@@ -72,6 +72,11 @@ const runtimeShared = {
   node: identifierSchema,
   policy: z.object({
     class: runtimeClassSchema,
+    lifecycle: z.literal("managed").optional(),
+    warm: z.object({
+      minInstances: z.number().int().min(0).max(1),
+      idleTtlSeconds: z.number().int().min(0).max(86_400),
+    }).strict().optional(),
     swapGroup: identifierSchema.optional(),
   }).strict(),
   resources: z.object({

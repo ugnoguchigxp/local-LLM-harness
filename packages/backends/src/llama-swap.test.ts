@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { deriveStatus, type LlamaSwapRuntimeDefinition, type RuntimeDefinition } from "@larm/core";
+import {
+  compileProviderRevision,
+  deriveStatus,
+  type LlamaSwapRuntimeDefinition,
+  type RuntimeDefinition,
+} from "@larm/core";
 import { LlamaSwapBackend, parseRunning } from "./llama-swap";
 import { LifecycleError } from "./types";
 
@@ -171,6 +176,29 @@ test("ensure loads a preferred model and stop unloads it", async () => {
     const after = await backend.health("qwen-worker");
     expect(after.healthOk).toBe(false);
     expect(after.service).toBe("Stopped");
+  } finally {
+    fake.server.stop(true);
+  }
+});
+
+test("instance lifecycle manages a resident revision without legacy protection", async () => {
+  const fake = fakeSwap({ states: new Map([["qwen-general", "stopped"]]) });
+  try {
+    const runtime = definition(fake.listen, "resident");
+    const backend = new LlamaSwapBackend([runtime], {
+      readyTimeoutMs: 2_000,
+      sleep: async () => undefined,
+    });
+    const revision = compileProviderRevision({ runtime, runtimeRelease: "resident-r1" });
+    const instance = await backend.ensureInstance(revision, runtime);
+    expect(instance.revision).toBe(revision.revision);
+    expect((await backend.healthInstance(instance.id)).healthOk).toBeTrue();
+    const replacement = compileProviderRevision({ runtime, runtimeRelease: "resident-r2" });
+    await expect(backend.ensureInstance(replacement, runtime)).rejects.toMatchObject({
+      code: "revision_conflict",
+    });
+    await backend.stopInstance(instance.id);
+    expect(fake.unloads).toEqual(["qwen-general"]);
   } finally {
     fake.server.stop(true);
   }

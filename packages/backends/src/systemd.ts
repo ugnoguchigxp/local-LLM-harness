@@ -1,8 +1,19 @@
 import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
-import type { RuntimeDefinition, ServiceState, SystemdRuntimeDefinition } from "@larm/core";
-import { isSystemdRuntime } from "@larm/core";
-import { LifecycleError, type RuntimeBackend, type RuntimeHealth } from "./types";
+import type {
+  ProviderInstance,
+  ProviderRevision,
+  RuntimeDefinition,
+  ServiceState,
+  SystemdRuntimeDefinition,
+} from "@larm/core";
+import { deriveStatus, isSystemdRuntime, providerInstanceId } from "@larm/core";
+import {
+  LifecycleError,
+  type ProviderInstanceHealth,
+  type RuntimeBackend,
+  type RuntimeHealth,
+} from "./types";
 import { responseTextLimited } from "./http";
 
 const HEALTH_OK = /(?:"status"\s*:\s*"(?:ok|healthy)"|"ready"\s*:\s*true)/i;
@@ -44,6 +55,11 @@ export class SystemdBackend implements RuntimeBackend {
   private readonly queryService: (service: string) => Promise<ServiceState>;
   private readonly control: SystemdServiceControl;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly instances = new Map<string, {
+    instance: ProviderInstance;
+    runtime: SystemdRuntimeDefinition;
+  }>();
+  private readonly generations = new Map<string, number>();
 
   constructor(runtimes: RuntimeDefinition[], options: SystemdBackendOptions = {}) {
     this.runtimes = new Map(
@@ -112,6 +128,81 @@ export class SystemdBackend implements RuntimeBackend {
     const health = await this.health(runtime.id);
     throwIfAborted(signal);
     return health;
+  }
+
+  async listInstances(): Promise<ProviderInstanceHealth[]> {
+    return Promise.all([...this.instances.keys()].map((id) => this.healthInstance(id)));
+  }
+
+  async ensureInstance(
+    revision: ProviderRevision,
+    runtime: RuntimeDefinition,
+    signal?: AbortSignal,
+  ): Promise<ProviderInstance> {
+    if (!isSystemdRuntime(runtime) || revision.backend !== "systemd") {
+      throw new LifecycleError("start_failed", `${runtime.id} is not a systemd revision`);
+    }
+    if (revision.runtimeId !== runtime.id) {
+      throw new LifecycleError("start_failed", "provider revision does not match runtime");
+    }
+    const existing = [...this.instances.values()].find(
+      (record) => record.instance.revision === revision.revision,
+    );
+    if (existing) return existing.instance;
+    const conflicting = [...this.instances.values()].find(
+      (record) => record.instance.runtimeId === runtime.id,
+    );
+    if (conflicting) {
+      throw new LifecycleError(
+        "revision_conflict",
+        `runtime ${runtime.id} already has a different provider revision`,
+      );
+    }
+    throwIfAborted(signal);
+    this.runtimes.set(runtime.id, runtime);
+    await this.control.start(runtime.deployment.service, signal);
+    throwIfAborted(signal);
+    await this.waitHealthy(runtime, signal);
+    const generation = (this.generations.get(runtime.id) ?? 0) + 1;
+    this.generations.set(runtime.id, generation);
+    const instance: ProviderInstance = {
+      id: providerInstanceId(revision, generation),
+      runtimeId: runtime.id,
+      revision: revision.revision,
+      generation,
+      node: runtime.node,
+      endpoint: runtime.deployment.endpoint,
+      backendEndpoint: runtime.deployment.backendEndpoint ?? runtime.deployment.endpoint,
+      status: "HOT",
+      createdAt: new Date().toISOString(),
+    };
+    this.instances.set(instance.id, { instance, runtime });
+    return instance;
+  }
+
+  async healthInstance(instanceId: string): Promise<ProviderInstanceHealth> {
+    const record = this.instances.get(instanceId);
+    if (!record) {
+      throw new LifecycleError("access_denied", `provider instance ${instanceId} is unknown`);
+    }
+    const health = await this.health(record.runtime.id);
+    const status = deriveStatus({ ...health, startingGraceExpired: false });
+    record.instance.status = status;
+    return { ...record.instance, ...health, status };
+  }
+
+  async drainInstance(instanceId: string, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    if (!this.instances.has(instanceId)) {
+      throw new LifecycleError("access_denied", `provider instance ${instanceId} is unknown`);
+    }
+  }
+
+  async stopInstance(instanceId: string): Promise<void> {
+    const record = this.instances.get(instanceId);
+    if (!record) return;
+    await this.control.stop(record.runtime.deployment.service);
+    this.instances.delete(instanceId);
   }
 
   async stop(runtimeId: string): Promise<void> {

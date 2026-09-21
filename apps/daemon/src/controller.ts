@@ -5,6 +5,7 @@ import {
   createAllocationId,
   createLeaseId,
   compareRouteSelection,
+  compileProviderRevision,
   expandPrepareRequest,
   findDefaultRoute,
   getRuntime,
@@ -20,10 +21,12 @@ import {
   type Registry,
   type ResolveResult,
   type RouteShadowComparison,
+  type RuntimeReleaseDefinition,
 } from "@larm/core";
 import type { RuntimeBackend } from "@larm/backends";
 import { ArtifactStoreError, LifecycleError } from "@larm/backends";
 import type { Observer } from "./observer";
+import { ProviderInstanceManager, type ProviderInstanceInspection } from "./provider-instance-manager";
 
 export type Operation = {
   id: string;
@@ -75,6 +78,7 @@ export type ControlPlaneOptions = {
   telemetryMaxAgeMs?: number;
   getCatalogRevision?: () => string;
   getRuntimeRelease?: (runtimeId: string) => string | undefined;
+  getRuntimeReleaseDefinition?: (runtimeId: string) => RuntimeReleaseDefinition | undefined;
 };
 
 export class ControlPlane {
@@ -87,6 +91,7 @@ export class ControlPlane {
   private readonly allocationLifecycleAborts = new Map<string, AbortController>();
   private readonly operationAborts = new Map<string, AbortController>();
   private readonly lifecycleReservations = new Set<string>();
+  private readonly providerInstances: ProviderInstanceManager;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private waitingTimer: ReturnType<typeof setTimeout> | undefined;
   private applyChain: Promise<void> = Promise.resolve();
@@ -98,7 +103,51 @@ export class ControlPlane {
     private readonly backend: RuntimeBackend,
     private readonly observer: Observer,
     private readonly options: ControlPlaneOptions = {},
-  ) {}
+  ) {
+    this.providerInstances = new ProviderInstanceManager(backend, {
+      idleTtlMs: options.idleTtlMs,
+      now: options.now,
+      onEvent: (name, labels) => options.onEvent?.({ name, labels }),
+    });
+  }
+
+  getProviderInstances(): ProviderInstanceInspection[] {
+    return this.providerInstances.inspect();
+  }
+
+  retainProviderRequest(allocationId: string, capability: string, requestId: string): string | undefined {
+    const allocation = this.allocations.get(allocationId);
+    if (!allocation || allocation.status !== "ready") return undefined;
+    const instanceId = allocation.bindings.find(
+      (binding) => binding.capability === capability,
+    )?.instanceId;
+    if (!instanceId) return undefined;
+    this.providerInstances.retainRequest(instanceId, requestId);
+    return instanceId;
+  }
+
+  releaseProviderRequest(instanceId: string | undefined, requestId: string): void {
+    if (instanceId) this.providerInstances.releaseRequest(instanceId, requestId);
+  }
+
+  async reconcileProviderInstances(signal?: AbortSignal): Promise<void> {
+    const state = await this.observer.tick();
+    for (const runtime of this.registry.runtimes) {
+      const release = this.options.getRuntimeReleaseDefinition?.(runtime.id)
+        ?? this.options.getRuntimeRelease?.(runtime.id);
+      if (runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0) {
+        await this.providerInstances.ensureWarm(runtime, release, signal);
+        continue;
+      }
+      const status = state.runtimes.find((item) => item.id === runtime.id)?.status;
+      if (status === "HOT" || status === "BUSY") {
+        const recoveryRef = `recovery:${runtime.id}`;
+        await this.providerInstances.acquire(runtime, recoveryRef, release, signal);
+        this.providerInstances.releaseAllocation(recoveryRef);
+      }
+    }
+    await this.observer.tick();
+  }
 
   getLeases(): Lease[] {
     return [...this.leases.values()];
@@ -112,6 +161,7 @@ export class ControlPlane {
     this.draining = true;
     this.cancelIdle();
     this.cancelWaitingPromotion();
+    this.providerInstances.close();
     const reason = new Error("control plane is draining");
     for (const allocation of this.allocations.values()) {
       if (allocation.status === "waiting" || allocation.status === "pending") {
@@ -255,6 +305,18 @@ export class ControlPlane {
         fallback: selected.fallback,
         selectionReason: selected.reason,
         release: this.options.getRuntimeRelease?.(selected.runtime),
+        providerRevision: (() => {
+          const runtime = getRuntime(this.registry, selected.runtime);
+          const release = this.options.getRuntimeReleaseDefinition?.(selected.runtime);
+          return runtime
+            ? compileProviderRevision(release
+              ? { runtime, release }
+              : {
+                runtime,
+                runtimeRelease: this.options.getRuntimeRelease?.(selected.runtime),
+              }).revision
+            : undefined;
+        })(),
       });
     }
 
@@ -366,6 +428,25 @@ export class ControlPlane {
       expiresAt: new Date(now + request.ttlSeconds * 1000).toISOString(),
     };
     this.allocations.set(allocation.id, allocation);
+    for (const binding of allocation.bindings) {
+      const instance = this.providerInstances.retainExisting(
+        binding.runtime,
+        allocation.id,
+        binding.providerRevision,
+      );
+      if (instance) {
+        binding.instanceId = instance.id;
+        binding.instanceGeneration = instance.generation;
+        binding.endpoint = instance.endpoint;
+      }
+    }
+    if (
+      allocation.status === "ready"
+      && this.backend.ensureInstance
+      && allocation.bindings.some((binding) => binding.instanceId === undefined)
+    ) {
+      allocation.status = "pending";
+    }
     this.allocationLifecycleAborts.set(allocation.id, new AbortController());
     this.emit(
       allocation.status === "waiting" ? "allocation_waiting" : "allocation_pending",
@@ -521,6 +602,7 @@ export class ControlPlane {
     this.allocationAborts.get(id)?.abort(new Error(`allocation ${terminal}`));
     this.allocationLifecycleAborts.get(id)?.abort(new Error(`allocation ${terminal}`));
     this.detachLegacyAllocation(id);
+    this.providerInstances.releaseAllocation(id);
     if (allocation.operationId) {
       const operation = this.operations.get(allocation.operationId);
       if (operation && (operation.status === "pending" || operation.status === "running")) {
@@ -846,6 +928,7 @@ export class ControlPlane {
         || runtime.policy.class !== "preferred"
         || snapshot.status !== "HOT"
         || allocated.has(runtime.id)
+        || this.providerInstances.hasRuntime(runtime.id)
         || runtime.capability.some((capability) => legacyCapabilities.has(capability))
         || this.options.isRuntimeMutating?.(runtime.id)
       ) {
@@ -927,9 +1010,22 @@ export class ControlPlane {
           throw new Error(`runtime ${runtimeId} disappeared from registry`);
         }
         const status = this.observer.getState().runtimes.find((item) => item.id === runtimeId)?.status;
-        if (status === "COLD") {
+        if (status === "COLD" || this.backend.ensureInstance) {
           operation.phase = "starting-runtime";
-          await this.backend.ensure(runtime, abort.signal);
+          const instance = await this.providerInstances.acquire(
+            runtime,
+            allocation.id,
+            this.options.getRuntimeReleaseDefinition?.(runtimeId)
+              ?? this.options.getRuntimeRelease?.(runtimeId),
+            abort.signal,
+          );
+          for (const binding of allocation.bindings) {
+            if (binding.runtime !== runtimeId) continue;
+            binding.providerRevision = instance.revision;
+            binding.instanceId = instance.id;
+            binding.instanceGeneration = instance.generation;
+            binding.endpoint = instance.endpoint;
+          }
         }
       }
 
@@ -985,6 +1081,7 @@ export class ControlPlane {
       }
     } catch (err) {
       if (!activeAllocation(allocation.status)) {
+        this.providerInstances.releaseAllocation(allocation.id);
         return;
       }
       const error = deadlineExceeded
@@ -1017,6 +1114,7 @@ export class ControlPlane {
         this.allocationAborts.delete(allocation.id);
       }
       if (!activeAllocation(allocation.status)) {
+        this.providerInstances.releaseAllocation(allocation.id);
         try {
           await this.observer.tick();
         } catch {
@@ -1096,6 +1194,7 @@ export class ControlPlane {
   private async runStop(ids: string[]): Promise<void> {
     await this.observer.tick();
     for (const runtimeId of ids) {
+      if (this.providerInstances.hasRuntime(runtimeId)) continue;
       if (this.lifecycleReservations.has(runtimeId)) {
         continue;
       }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { SystemdRuntimeDefinition } from "@larm/core";
+import { compileProviderRevision, type SystemdRuntimeDefinition } from "@larm/core";
 import { SystemdBackend, parseSystemctlState } from "./systemd";
 
 function definition(
@@ -117,6 +117,32 @@ test("resident systemd runtime is lifecycle protected", async () => {
   });
   await expect(backend.ensure(runtime)).rejects.toMatchObject({ code: "resident_protected" });
   await expect(backend.stop(runtime.id)).rejects.toMatchObject({ code: "resident_protected" });
+});
+
+test("instance lifecycle starts and stops a resident revision under warm-policy control", async () => {
+  const actions: string[] = [];
+  const server = Bun.serve({ port: 0, fetch: () => Response.json({ status: "ok" }) });
+  try {
+    const runtime = definition(server.port!, "resident");
+    const backend = new SystemdBackend([runtime], {
+      queryService: async () => "Running",
+      control: {
+        start: async (service) => { actions.push(`start:${service}`); },
+        stop: async (service) => { actions.push(`stop:${service}`); },
+      },
+      sleep: async () => undefined,
+    });
+    const revision = compileProviderRevision({ runtime, runtimeRelease: "asr-r1" });
+    const instance = await backend.ensureInstance(revision, runtime);
+    const replacement = compileProviderRevision({ runtime, runtimeRelease: "asr-r2" });
+    await expect(backend.ensureInstance(replacement, runtime)).rejects.toMatchObject({
+      code: "revision_conflict",
+    });
+    await backend.stopInstance(instance.id);
+    expect(actions).toEqual(["start:qwen-asr.service", "stop:qwen-asr.service"]);
+  } finally {
+    server.stop(true);
+  }
 });
 
 test("ensure stops before health polling when caller cancellation follows start", async () => {

@@ -1,7 +1,7 @@
 [Unit]
 Description=LARM local AI runtime control plane
-After=network-online.target llama-server.service llama-swap-worker.service
-Wants=network-online.target llama-server.service llama-swap-worker.service
+After=network-online.target llama-swap-worker.service
+Wants=network-online.target llama-swap-worker.service
 
 [Service]
 Type=notify

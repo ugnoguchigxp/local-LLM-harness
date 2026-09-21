@@ -4,6 +4,7 @@ import {
   agentConnectionClaimSchema,
   agentConnectionHealthSchema,
   clusterStateSchema,
+  inspectionProviderInstanceListSchema,
   inspectionRuntimeListSchema,
   publicClusterStateSchema,
   publicAgentConnectionSchema,
@@ -613,6 +614,12 @@ test("management inspection preserves full runtime and state detail", async () =
   const state = clusterStateSchema.parse(await stateResponse.json());
   expect(state.node.id).toBe("ai395-01");
   expect(state.runtimes[0]?.endpoint).toBe("http://127.0.0.1:8080");
+
+  const instancesResponse = await app.request("/v1/inspection/provider-instances", { headers });
+  expect(instancesResponse.status).toBe(200);
+  expect(inspectionProviderInstanceListSchema.parse(await instancesResponse.json())).toEqual({
+    instances: [],
+  });
 });
 
 test("management inspection fails closed without management credentials", async () => {
@@ -621,6 +628,7 @@ test("management inspection fails closed without management credentials", async 
     "/v1/inspection/runtimes",
     "/v1/inspection/runtimes/qwen-general",
     "/v1/inspection/state",
+    "/v1/inspection/provider-instances",
   ]) {
     expect((await app.request(path)).status).toBe(403);
   }
@@ -825,6 +833,74 @@ test("v1 allocation binds the resident default and resolves a fixed endpoint", a
   expect((await released.json()) as { status: string }).toEqual(
     expect.objectContaining({ status: "released" }),
   );
+});
+
+test("instance-aware backend adopts a HOT runtime before an allocation becomes ready", async () => {
+  const probes = new Map<string, RuntimeHealth>([
+    ["qwen-general", probe("qwen-general", true)],
+    ["qwen-worker", probe("qwen-worker", true)],
+  ]);
+  let ensures = 0;
+  let instanceStops = 0;
+  const lifecycleLog = { ensure: [] as string[], stop: [] as string[] };
+  const backend: RuntimeBackend = {
+    ...stubBackend(probes, lifecycleLog),
+    ensureInstance: async (revision, runtime) => {
+      ensures += 1;
+      return {
+        id: `instance-${ensures}`,
+        runtimeId: runtime.id,
+        revision: revision.revision,
+        generation: ensures,
+        node: runtime.node,
+        endpoint: runtime.deployment.endpoint,
+        backendEndpoint: runtime.deployment.backendEndpoint ?? runtime.deployment.endpoint,
+        status: "HOT",
+        createdAt: new Date(0).toISOString(),
+      };
+    },
+    stopInstance: async () => { instanceStops += 1; },
+  };
+  const observer = new Observer(registry, backend);
+  await observer.tick();
+  const control = new ControlPlane(registry, backend, observer, {
+    random: () => "instance-aware",
+    idleTtlMs: 0,
+  });
+  const app = createApp({ registry, getState: () => observer.getState(), control });
+  const created = await app.request("/v1/allocations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      requirements: [{ capability: "llm.general", route: "llm-speed" }],
+      ttlSeconds: 120,
+    }),
+  });
+  expect(created.status).toBe(202);
+  const publicPending = (await created.json()) as { bindings: Record<string, unknown>[] };
+  expect(publicPending.bindings[0]).not.toHaveProperty("providerRevision");
+  expect(publicPending.bindings[0]).not.toHaveProperty("instanceId");
+  expect(publicPending.bindings[0]).not.toHaveProperty("instanceGeneration");
+  await control.flush();
+  const allocation = control.getAllocations()[0]!;
+  expect(allocation.status).toBe("ready");
+  expect(allocation.bindings[0]).toMatchObject({
+    instanceId: "instance-1",
+    instanceGeneration: 1,
+  });
+  expect(allocation.bindings[0]?.providerRevision).toMatch(/^[a-f0-9]{64}$/);
+  expect(ensures).toBe(1);
+  const instanceId = control.retainProviderRequest(
+    allocation.id,
+    "llm.general",
+    "request-active",
+  );
+  await control.releaseAllocation(allocation.id);
+  expect(await control.reconcileOrphanedPreferred()).toEqual([]);
+  expect(lifecycleLog.stop).toEqual([]);
+  control.releaseProviderRequest(instanceId, "request-active");
+  await Bun.sleep(0);
+  expect(instanceStops).toBe(1);
 });
 
 test("v1 explicit speed allocation starts and pins the preferred runtime", async () => {

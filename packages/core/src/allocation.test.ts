@@ -35,6 +35,27 @@ test("validates complete one-to-one allocation bindings", () => {
   })).toThrow(/match a declared/);
 });
 
+test("validates provider instance identity as one coherent binding", () => {
+  const binding = allocation().bindings[0]!;
+  expect(() => allocationSchema.parse({
+    ...allocation(),
+    bindings: [{ ...binding, instanceId: "pinst-a" }],
+  })).toThrow(/supplied together/);
+  expect(() => allocationSchema.parse({
+    ...allocation(),
+    bindings: [{ ...binding, instanceId: "pinst-a", instanceGeneration: 1 }],
+  })).toThrow(/providerRevision/);
+  expect(allocationSchema.safeParse({
+    ...allocation(),
+    bindings: [{
+      ...binding,
+      providerRevision: "a".repeat(64),
+      instanceId: "pinst-a",
+      instanceGeneration: 1,
+    }],
+  }).success).toBeTrue();
+});
+
 test("allocation scheduling defaults preserve rejection and accept bounded priorities", () => {
   const request = allocationRequestSchema.parse({
     requirements: [{ capability: "llm.general", route: "llm-default" }],

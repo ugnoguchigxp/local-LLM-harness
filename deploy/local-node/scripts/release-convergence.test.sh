@@ -13,6 +13,7 @@ candidate_root="${test_root}/candidates"
 inbox_root="${test_root}/inbox"
 release_root="${test_root}/releases"
 state_root="${test_root}/state"
+provider_config_root="${test_root}/provider-config"
 key_root="${test_root}/keys"
 current_link="${test_root}/current"
 builder_uid="$(id -u)"
@@ -22,7 +23,7 @@ builder_home=""
 builder_cache="${test_root}/builder-cache"
 builder_config="${test_root}/builder-config"
 mkdir -p "${source_root}/packages/core/src" "${source_root}/apps/daemon/src" \
-  "${candidate_root}" "${inbox_root}" "${release_root}" "${state_root}" "${key_root}"
+  "${source_root}/config/local-node" "${candidate_root}" "${inbox_root}" "${release_root}" "${state_root}" "${key_root}" "${provider_config_root}"
 git -C "${test_root}" init -q source
 git -C "${source_root}" config user.email test@example.invalid
 git -C "${source_root}" config user.name LARM-test
@@ -30,6 +31,7 @@ printf '%s\n' '{"scripts":{"check":"true"},"dependencies":{"zod":"4.4.3"},"devDe
   >"${source_root}/package.json"
 printf 'export const LARM_VERSION = "1.0.0";\n' >"${source_root}/packages/core/src/version.ts"
 printf 'console.log("%064d");\n' 0 >"${source_root}/apps/daemon/src/print-config-revision.ts"
+printf 'models:\n  test-model:\n    cmd: test-v1\n' >"${source_root}/config/local-node/llama-swap.yaml"
 (cd "${source_root}" && bun install --lockfile-only >/dev/null)
 if [[ -d "${source_root}/node_modules" ]]; then
   find -P "${source_root}/node_modules" -mindepth 1 -depth -delete
@@ -104,6 +106,7 @@ activate() {
   LARM_RELEASE_CURRENT="${current_link}" \
   LARM_RELEASE_STATE_ROOT="${state_root}" \
   LARM_RELEASE_PUBLIC_KEY="${key_root}/public.pem" \
+  LARM_PROVIDER_CONFIG_ROOT="${provider_config_root}" \
   bash "${activator}"
 }
 
@@ -119,6 +122,7 @@ rollback_release() {
   LARM_RELEASE_ROOT="${release_root}" \
   LARM_RELEASE_CURRENT="${current_link}" \
   LARM_RELEASE_STATE_ROOT="${state_root}" \
+  LARM_PROVIDER_CONFIG_ROOT="${provider_config_root}" \
   bash "${rollback}"
 }
 
@@ -135,6 +139,7 @@ activate >/dev/null
 jq -e --arg commit "${first_commit}" '.stage == "contract_verified" and .result == "succeeded" and .desiredRelease == $commit and .observedRelease == $commit' \
   "${state_root}/status.json" >/dev/null
 [[ ! -e "${inbox_root}/request.json" ]]
+grep -Fq 'cmd: test-v1' "${provider_config_root}/llama-swap.yaml"
 grep -Fqx 'restart larm-daemon.service' "${state_root}/systemctl.log"
 jq -se --arg commit "${first_commit}" '
   length == 2
@@ -194,7 +199,8 @@ record_gate soak "${test_root}/soak-complete.json" >/dev/null
 jq -e '.stage == "complete" and .result == "succeeded"' "${state_root}/status.json" >/dev/null
 
 printf 'second\n' >>"${source_root}/bun.lock"
-git -C "${source_root}" add bun.lock
+sed -i 's/test-v1/test-v2/' "${source_root}/config/local-node/llama-swap.yaml"
+git -C "${source_root}" add bun.lock config/local-node/llama-swap.yaml
 git -C "${source_root}" commit -qm second
 second_commit="$(git -C "${source_root}" rev-parse HEAD)"
 build "${second_commit}" 1 >/dev/null
@@ -224,13 +230,16 @@ if LARM_RELEASE_TEST_FAIL_CONTRACT=1 activate >/dev/null 2>&1; then
   exit 1
 fi
 [[ "$(readlink -f "${current_link}")" == "${release_root}/${first_commit:0:12}" ]]
+grep -Fq 'cmd: test-v1' "${provider_config_root}/llama-swap.yaml"
 jq -e --arg commit "${first_commit}" '.stage == "contract_verified" and .result == "failed" and .observedRelease == $commit' \
   "${state_root}/status.json" >/dev/null
 
 activate >/dev/null
 [[ "$(readlink -f "${current_link}")" == "${release_root}/${second_commit:0:12}" ]]
+grep -Fq 'cmd: test-v2' "${provider_config_root}/llama-swap.yaml"
 rollback_release >/dev/null
 [[ "$(readlink -f "${current_link}")" == "${release_root}/${first_commit:0:12}" ]]
+grep -Fq 'cmd: test-v1' "${provider_config_root}/llama-swap.yaml"
 [[ "$(cat "${state_root}/previous")" == "${release_root}/${second_commit:0:12}" ]]
 jq -e --arg commit "${first_commit}" '.stage == "activated" and .result == "failed" and .reason == "manual_rollback" and .observedRelease == $commit' \
   "${state_root}/status.json" >/dev/null

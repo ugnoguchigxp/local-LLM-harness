@@ -68,8 +68,11 @@ capture, and the persistent hourly `larm-inference-audit-prune.timer` enforces t
 10 GiB, and minimum-free-space bounds even after daemon downtime. Audit payloads are not part of
 release or host-state backups. The prune service reads only the audit settings and key; API,
 management, and Agent Connection credentials remain outside its environment.
-`qwen-tts.service`と`larm-embedding.service`はinstallのみ行い、boot時はdisableのままです。LARMは同梱の
-polkit ruleにより、これらPreferred serviceのstart / stopだけを無人実行できます。Embeddingモデルは
+個別Provider unitはinstallのみ行い、boot時はdisableのままです。Qwen 3.8 resident defaultを含め、LARMが
+managed warm policyとConnection参照に従ってstart / stopします。常駐する`llama-swap-worker.service`は
+Provider supervisorであり、検証済みreleaseから`/var/lib/larm/provider-config/llama-swap.yaml`へ原子的に
+公開された設定を`--watch-config`で追跡します。LARMは同梱のpolkit ruleによりProvider serviceのstart / stopを
+無人実行できます。Embeddingモデルは
 `intfloat/multilingual-e5-small` revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`の
 ONNX/QInt8 snapshotへ固定され、artifact stagingが全6ファイルのsize・SHA-256・snapshot digestを検証します。
 
@@ -154,8 +157,7 @@ LARM_RELEASE_COMMIT="${approved_commit}" deploy/local-node/scripts/build-larm-re
 systemctl status larm-release-activator.service --no-pager
 curl -sS http://127.0.0.1:9810/v1/release-convergence \
   -H "Authorization: Bearer ${LARM_API_TOKEN}" | jq
-sudo systemctl start llama-server.service llama-swap-worker.service \
-  qwen-asr.service whisper-asr.service voicevox-tts.service larm-daemon.service  # first install only
+sudo systemctl start llama-swap-worker.service larm-daemon.service  # first install only
 deploy/local-node/scripts/verify.sh
 deploy/local-node/scripts/smoke-larm.sh
 # After loading /etc/larm/larm.env without printing it, run the HTTP Agent Connection canary:

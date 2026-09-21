@@ -507,6 +507,9 @@ export class AgentConnectionController {
     }
     this.refreshLifecycle(record);
     const provider = record.profile.providers.find((item) => item.name === payload.provider);
+    const binding = this.options.control.getAllocation(record.allocationId)?.bindings.find(
+      (item) => item.capability === provider?.capability,
+    );
     if (
       record.status !== "ready"
       || !provider
@@ -517,6 +520,9 @@ export class AgentConnectionController {
       || payload.generation !== record.generation
       || payload.iat !== record.tokenIssuedAt
       || payload.exp !== Math.floor(Date.parse(record.expiresAt) / 1_000)
+      || payload.providerRevision !== binding?.providerRevision
+      || payload.instanceId !== binding?.instanceId
+      || payload.instanceGeneration !== binding?.instanceGeneration
     ) {
       throw new ConnectionTokenError("invalid_token", "provider bearer token is no longer valid");
     }
@@ -659,6 +665,9 @@ export class AgentConnectionController {
   }
 
   private providerToken(record: ConnectionRecord, provider: string, capability: string): string {
+    const binding = this.options.control.getAllocation(record.allocationId)?.bindings.find(
+      (item) => item.capability === capability,
+    );
     return this.options.tokenCodec.sign({
       v: 1,
       epoch: record.bootEpoch,
@@ -670,6 +679,11 @@ export class AgentConnectionController {
       generation: record.generation,
       iat: record.tokenIssuedAt,
       exp: Math.floor(Date.parse(record.expiresAt) / 1_000),
+      ...(binding?.providerRevision ? { providerRevision: binding.providerRevision } : {}),
+      ...(binding?.instanceId ? { instanceId: binding.instanceId } : {}),
+      ...(binding?.instanceGeneration
+        ? { instanceGeneration: binding.instanceGeneration }
+        : {}),
       ...(this.personalStateAuthorized(record, provider) ? {
         subject: personalStateSubjectDigest(record.principal),
         scopes: [...PERSONAL_STATE_SCOPES],

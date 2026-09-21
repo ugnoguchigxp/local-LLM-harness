@@ -40,3 +40,13 @@ test("connection tokens reject signed but noncanonical or unknown payload fields
   const whitespaceSignature = createHmac("sha256", key).update(whitespaceSigned).digest("base64url");
   expect(() => codec.verify(`${whitespaceSigned}.${whitespaceSignature}`)).toThrow(/canonical/);
 });
+
+test("connection tokens require complete instance identity", () => {
+  const codec = new ConnectionTokenCodec(key, () => 1_787_982_400_000);
+  expect(() => codec.sign({ ...payload, instanceId: "pinst-a" })).toThrow(/supplied together/);
+  expect(() => codec.sign({
+    ...payload,
+    instanceId: "pinst-a",
+    instanceGeneration: 1,
+  })).toThrow(/providerRevision/);
+});

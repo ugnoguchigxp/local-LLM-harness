@@ -66,6 +66,41 @@ test("gateway retains the execution slot until the terminal snapshot callback fi
   expect(tracker.count()).toBe(0);
 });
 
+test("gateway runs finish callback only after a streaming response terminates", async () => {
+  let finishes = 0;
+  const response = await proxyGateway({
+    request: new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "qwen", messages: [] }),
+    }),
+    allocationId: "allocation-1",
+    protocol: "openai.chat-completions.v1",
+    upstreamPath: "/v1/chat/completions",
+    runtime,
+    bodyMode: "buffered",
+    maxBodyBytes: 1024,
+    timeoutMs: 1_000,
+    bootEpoch: "boot-1",
+    executionGate: new ExecutionGate(),
+    revalidate: () => ({
+      ok: true,
+      binding: { endpoint: runtime.deployment.endpoint, runtime: runtime.id },
+    }),
+    fetchImpl: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("chunk"));
+        controller.close();
+      },
+    })),
+    onFinish: () => { finishes += 1; },
+  });
+  expect(finishes).toBe(0);
+  expect(await response.text()).toBe("chunk");
+  await Bun.sleep(0);
+  expect(finishes).toBe(1);
+});
+
 test("generation attempt cancellation is observable and terminates the upstream transport", async () => {
   const gate = new ExecutionGate();
   const attempt = new AbortController();

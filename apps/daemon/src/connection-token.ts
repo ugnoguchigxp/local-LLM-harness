@@ -10,6 +10,9 @@ const tokenPayloadSchema = z.object({
   capability: z.string().min(1).max(128),
   audience: z.string().min(1).max(128),
   generation: z.number().int().positive(),
+  providerRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  instanceId: z.string().min(1).max(192).optional(),
+  instanceGeneration: z.number().int().positive().optional(),
   iat: z.number().int().nonnegative(),
   exp: z.number().int().positive(),
   subject: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -22,7 +25,22 @@ const tokenPayloadSchema = z.object({
     "context.forget",
     "context.operation.read",
   ])).max(7).optional(),
-}).strict();
+}).strict().superRefine((payload, context) => {
+  if ((payload.instanceId === undefined) !== (payload.instanceGeneration === undefined)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "instanceId and instanceGeneration must be supplied together",
+      path: [payload.instanceId === undefined ? "instanceId" : "instanceGeneration"],
+    });
+  }
+  if (payload.instanceId !== undefined && payload.providerRevision === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "providerRevision is required for an instance token",
+      path: ["providerRevision"],
+    });
+  }
+});
 
 export type ConnectionTokenPayload = z.infer<typeof tokenPayloadSchema>;
 

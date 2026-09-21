@@ -231,7 +231,13 @@ function inspectionRuntime(runtime: Registry["runtimes"][number]) {
 export function publicAllocation(allocation: Allocation) {
   return {
     ...allocation,
-    bindings: allocation.bindings.map(({ endpoint: _endpoint, ...binding }) => binding),
+    bindings: allocation.bindings.map(({
+      endpoint: _endpoint,
+      providerRevision: _providerRevision,
+      instanceId: _instanceId,
+      instanceGeneration: _instanceGeneration,
+      ...binding
+    }) => binding),
   };
 }
 
@@ -1055,7 +1061,20 @@ export function createAppComponents(deps: AppDeps) {
     const attemptSubjectDigest = personalAttempt
       ? personalStateSubjectDigest(requestPrincipal!)
       : undefined;
-    return await proxyGateway({
+    const providerRequestId = `provider-request-${deps.random?.() ?? crypto.randomUUID()}`;
+    const providerInstanceId = deps.control.retainProviderRequest?.(
+      allocationId,
+      selected.binding.capability,
+      providerRequestId,
+    );
+    let providerRequestReleased = false;
+    const releaseProviderRequest = () => {
+      if (providerRequestReleased) return;
+      providerRequestReleased = true;
+      deps.control.releaseProviderRequest?.(providerInstanceId, providerRequestId);
+    };
+    try {
+      return await proxyGateway({
       request: c.req.raw,
       ...((embeddingRequestBytes ?? chatRequestBytes)
         ? { requestBody: embeddingRequestBytes ?? chatRequestBytes }
@@ -1158,6 +1177,7 @@ export function createAppComponents(deps: AppDeps) {
           }
         },
       } : {}),
+      onFinish: releaseProviderRequest,
       responseFormat: chatResponseFormat,
       validateChatResponse: scoped !== undefined
         && options.protocol === "openai.chat-completions.v1",
@@ -1199,7 +1219,11 @@ export function createAppComponents(deps: AppDeps) {
         }
         return { ok: true, binding: current.body };
       },
-    });
+      });
+    } catch (error) {
+      releaseProviderRequest();
+      throw error;
+    }
   };
 
   const serviceHarnessAsrBinding = () => {
@@ -1926,6 +1950,10 @@ export function createAppComponents(deps: AppDeps) {
 
   app.get("/v1/inspection/state", (c) => {
     return c.json(deps.getState());
+  });
+
+  app.get("/v1/inspection/provider-instances", (c) => {
+    return c.json({ instances: deps.control.getProviderInstances() });
   });
 
   app.get("/operations/:id", (c) => {

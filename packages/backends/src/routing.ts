@@ -1,8 +1,13 @@
-import type { RuntimeDefinition } from "@larm/core";
+import type { ProviderInstance, ProviderRevision, RuntimeDefinition } from "@larm/core";
 import { isLlamaSwapRuntime } from "@larm/core";
 import { LlamaSwapBackend, type LlamaSwapBackendOptions } from "./llama-swap";
 import { SystemdBackend, type SystemdBackendOptions } from "./systemd";
-import { LifecycleError, type RuntimeBackend, type RuntimeHealth } from "./types";
+import {
+  LifecycleError,
+  type ProviderInstanceHealth,
+  type RuntimeBackend,
+  type RuntimeHealth,
+} from "./types";
 
 export type CreateRuntimeBackendOptions = {
   llamaSwap?: LlamaSwapBackendOptions;
@@ -19,6 +24,8 @@ const missing = (runtimeId: string): RuntimeHealth => ({
 });
 
 export class RoutingBackend implements RuntimeBackend {
+  private readonly instanceRoutes = new Map<string, RuntimeBackend>();
+
   constructor(private readonly routes: Map<string, RuntimeBackend>) {}
 
   async list(): Promise<RuntimeHealth[]> {
@@ -68,6 +75,54 @@ export class RoutingBackend implements RuntimeBackend {
       throw new LifecycleError("stop_failed", `runtime ${runtimeId} is not registered`);
     }
     return backend.stop(runtimeId);
+  }
+
+  async listInstances(): Promise<ProviderInstanceHealth[]> {
+    const unique = [...new Set(this.routes.values())];
+    const nested = await Promise.all(unique.map((backend) => backend.listInstances?.() ?? []));
+    for (let index = 0; index < unique.length; index += 1) {
+      for (const instance of nested[index] ?? []) {
+        this.instanceRoutes.set(instance.id, unique[index]!);
+      }
+    }
+    return nested.flat();
+  }
+
+  async ensureInstance(
+    revision: ProviderRevision,
+    runtime: RuntimeDefinition,
+    signal?: AbortSignal,
+  ): Promise<ProviderInstance> {
+    const backend = this.routes.get(revision.runtimeId);
+    if (!backend?.ensureInstance) {
+      throw new LifecycleError("start_failed", `runtime ${revision.runtimeId} has no instance backend`);
+    }
+    const instance = await backend.ensureInstance(revision, runtime, signal);
+    this.instanceRoutes.set(instance.id, backend);
+    return instance;
+  }
+
+  async healthInstance(instanceId: string): Promise<ProviderInstanceHealth> {
+    const backend = this.instanceRoutes.get(instanceId);
+    if (!backend?.healthInstance) {
+      throw new LifecycleError("access_denied", `provider instance ${instanceId} is unknown`);
+    }
+    return backend.healthInstance(instanceId);
+  }
+
+  async drainInstance(instanceId: string, signal?: AbortSignal): Promise<void> {
+    const backend = this.instanceRoutes.get(instanceId);
+    if (!backend?.drainInstance) {
+      throw new LifecycleError("access_denied", `provider instance ${instanceId} is unknown`);
+    }
+    await backend.drainInstance(instanceId, signal);
+  }
+
+  async stopInstance(instanceId: string): Promise<void> {
+    const backend = this.instanceRoutes.get(instanceId);
+    if (!backend?.stopInstance) return;
+    await backend.stopInstance(instanceId);
+    this.instanceRoutes.delete(instanceId);
   }
 }
 

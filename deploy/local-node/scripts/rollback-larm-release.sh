@@ -7,17 +7,21 @@ if [[ "${test_mode}" == "1" ]]; then
   release_root="${LARM_RELEASE_ROOT:?required in test mode}"
   current_link="${LARM_RELEASE_CURRENT:?required in test mode}"
   state_root="${LARM_RELEASE_STATE_ROOT:?required in test mode}"
+  provider_config_root="${LARM_PROVIDER_CONFIG_ROOT:?required in test mode}"
 else
   [[ "$(id -u)" -eq 0 ]] || { echo "release rollback must run as root" >&2; exit 1; }
   release_root=/srv/ai/apps/larm-releases
   current_link=/srv/ai/apps/larm-current
   state_root=/var/lib/larm/release-controller
+  provider_config_root=/var/lib/larm/provider-config
 fi
 
 fail() { echo "$*" >&2; exit 1; }
 for root in "${release_root}" "${state_root}"; do
   [[ -d "${root}" && ! -L "${root}" ]] || fail "release rollback root is missing or unsafe"
 done
+[[ -d "${provider_config_root}" && ! -L "${provider_config_root}" ]] \
+  || fail "provider config root is missing or unsafe"
 [[ -L "${current_link}" && -f "${state_root}/previous" && ! -L "${state_root}/previous" ]] \
   || fail "active or previous release pointer is unavailable"
 exec 9>"${state_root}/activation.lock"
@@ -73,12 +77,30 @@ verify_health() {
 work="$(mktemp -d "${state_root}/.rollback.XXXXXX")"
 trap 'rm -rf -- "${work}" "${current_link}.rollback.$$" "${current_link}.recovery.$$"' EXIT
 rollback_link="${current_link}.rollback.$$"
+provider_source="${previous}/config/local-node/llama-swap.yaml"
+[[ -f "${provider_source}" && ! -L "${provider_source}" ]] \
+  || fail "previous release provider config is missing or unsafe"
+if [[ -e "${provider_config_root}/llama-swap.yaml" && -L "${provider_config_root}/llama-swap.yaml" ]]; then
+  fail "active provider config is a symbolic link"
+fi
+if [[ -f "${provider_config_root}/llama-swap.yaml" ]]; then
+  cp -- "${provider_config_root}/llama-swap.yaml" "${work}/provider-config.active"
+fi
 ln -s -- "${previous}" "${rollback_link}"
 mv -Tf -- "${rollback_link}" "${current_link}"
+cp -- "${provider_source}" "${provider_config_root}/.llama-swap.rollback.$$"
+chmod 0644 "${provider_config_root}/.llama-swap.rollback.$$"
+if [[ "${test_mode}" != "1" ]]; then chown root:root "${provider_config_root}/.llama-swap.rollback.$$"; fi
+mv -fT -- "${provider_config_root}/.llama-swap.rollback.$$" "${provider_config_root}/llama-swap.yaml"
 if ! systemctl_run restart larm-daemon.service || ! verify_health "${previous}"; then
   recovery="${current_link}.recovery.$$"
   ln -s -- "${active}" "${recovery}"
   mv -Tf -- "${recovery}" "${current_link}"
+  if [[ -f "${work}/provider-config.active" ]]; then
+    cp -- "${work}/provider-config.active" "${provider_config_root}/.llama-swap.recovery.$$"
+    chmod 0644 "${provider_config_root}/.llama-swap.recovery.$$"
+    mv -fT -- "${provider_config_root}/.llama-swap.recovery.$$" "${provider_config_root}/llama-swap.yaml"
+  fi
   systemctl_run restart larm-daemon.service || true
   fail "previous release failed verification; active release was restored"
 fi

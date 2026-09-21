@@ -16,7 +16,7 @@ export const allocationStatusSchema = z.enum([
   "expired",
 ]);
 
-export const allocationBindingSchema = z.object({
+export const allocationBindingObjectSchema = z.object({
   capability: z.string().min(1).max(128),
   route: z.string().min(1).max(128),
   runtime: z.string().min(1).max(128),
@@ -27,7 +27,27 @@ export const allocationBindingSchema = z.object({
   fallback: z.boolean(),
   selectionReason: z.string().min(1).max(128),
   release: z.string().min(1).max(128).optional(),
+  providerRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  instanceId: z.string().min(1).max(192).optional(),
+  instanceGeneration: z.number().int().positive().optional(),
 }).strict();
+
+export const allocationBindingSchema = allocationBindingObjectSchema.superRefine((binding, context) => {
+  if ((binding.instanceId === undefined) !== (binding.instanceGeneration === undefined)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "instanceId and instanceGeneration must be supplied together",
+      path: [binding.instanceId === undefined ? "instanceId" : "instanceGeneration"],
+    });
+  }
+  if (binding.instanceId !== undefined && binding.providerRevision === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "providerRevision is required for an instance binding",
+      path: ["providerRevision"],
+    });
+  }
+});
 
 export const allocationErrorSchema = z.object({
   code: z.string().min(1),

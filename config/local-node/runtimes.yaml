@@ -11,6 +11,10 @@ runtimes:
     node: local-node
     policy:
       class: resident
+      lifecycle: managed
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 60
     context:
       class: managed-context
       activation: when-hosted
@@ -44,6 +48,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 28
@@ -70,6 +76,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 28
@@ -96,6 +104,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 36
@@ -122,6 +132,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 28
@@ -146,6 +158,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 4
       maxConcurrentAllocations: 1
@@ -168,6 +182,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: backchannel-llm-slot
     resources:
       estimatedMemoryGB: 3
@@ -191,6 +207,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: backchannel-llm-slot
     resources:
       estimatedMemoryGB: 3
@@ -216,6 +234,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 44
@@ -241,6 +261,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 48
@@ -266,6 +288,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 44
@@ -291,6 +315,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 30
@@ -313,7 +339,9 @@ runtimes:
     backend: systemd
     node: local-node
     policy:
-      class: resident
+      class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 5
       maxConcurrentRequests: 1
@@ -333,7 +361,9 @@ runtimes:
     backend: systemd
     node: local-node
     policy:
-      class: resident
+      class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 1
       maxConcurrentRequests: 1
@@ -351,7 +381,9 @@ runtimes:
     backend: systemd
     node: local-node
     policy:
-      class: resident
+      class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 1
       maxConcurrentRequests: 1
@@ -372,6 +404,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 5
       maxConcurrentRequests: 1
@@ -413,6 +447,8 @@ runtimes:
     node: local-node
     policy:
       class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 1
       maxConcurrentAllocations: 8

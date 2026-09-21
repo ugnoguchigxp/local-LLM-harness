@@ -1,0 +1,497 @@
+<article lang="ja">
+  <h1>動的 Provider Daemon ライフサイクル実装計画</h1>
+
+  <p>
+    本計画は、LARMが全Agent ProfileのProvider Daemonをrevision単位で起動、共有、drain、停止し、
+    Provider設定変更の正常手順から手動<code>systemctl restart</code>を除くための実装順序を定義する。
+    設計上の不変条件は<a href="./dynamic-provider-daemon-lifecycle.html"
+      >動的 Provider Daemon ライフサイクル仕様</a
+    >を正本とする。
+  </p>
+
+  <dl>
+    <dt>文書状態</dt>
+    <dd>基盤実装済み。production rolloutとrevision併存probeは未実施</dd>
+    <dt>対象repository</dt>
+    <dd><code>local-LLM-harness</code></dd>
+    <dt>対象backend</dt>
+    <dd>
+      <code>llama-swap</code>、<code>systemd</code>
+    </dd>
+    <dt>非対象</dt>
+    <dd>model weightの格納、SAAA固有の会話判断、外部から任意commandを渡すAPI</dd>
+  </dl>
+
+  <aside>
+    <p>
+      2026-09-21時点で、canonical ProviderRevision、instance単位Backend互換API、single-flight
+      Instance Manager、allocation／request／mutation参照、instance別idle停止、warm policy、claim
+      credentialのgeneration固定、management inspection、全production runtimeのmanaged
+      policy化を実装した。 個別systemd Providerはboot
+      enableから外し、LARMが起動・停止する。llama-swap設定は検証済みreleaseから 安定pathへatomic
+      publishし、supervisorは<code>--watch-config</code>で追跡する。
+    </p>
+    <p>
+      revision固有llama-swap model entryの新旧併存、systemd templateの動的port、durable instance
+      journal、実machineでのconfig reload中request継続probeはrollout
+      gateとして残る。これらが完了するまで、
+      「activeな旧revisionを保持したまま新revisionへ無停止移行」の完了を宣言しない。
+    </p>
+  </aside>
+
+  <section id="current-gap">
+    <h2>現状と不足</h2>
+    <table>
+      <caption>
+        現行実装からの差分
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">現状</th>
+          <th scope="col">到達状態</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Backend identity</th>
+          <td>
+            <code>ensure(runtime)</code>、<code
+              >stop(runtimeId)</code
+            >
+          </td>
+          <td>
+            <code>ensure(revision)</code>、<code
+              >stop(instanceId)</code
+            >
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Allocation binding</th>
+          <td>runtimeとreleaseだけを固定</td>
+          <td>provider revision、instance、generation、endpointを固定</td>
+        </tr>
+        <tr>
+          <th scope="row">idle stop</th>
+          <td>Control Plane全体で一つのtimer</td>
+          <td>instanceごとの参照数とidle deadline</td>
+        </tr>
+        <tr>
+          <th scope="row">resident</th>
+          <td>Backendがstart／stopを拒否</td>
+          <td>LARM管理下でwarm policyが最低instance数を指定</td>
+        </tr>
+        <tr>
+          <th scope="row">llama-swap設定</th>
+          <td>source worktreeの静的YAMLをprocess起動時に読む</td>
+          <td>検証済みreleaseから世代付きentryを原子的に反映</td>
+        </tr>
+        <tr>
+          <th scope="row">systemd Provider</th>
+          <td>固定unit、固定port</td>
+          <td>templateまたはtransient instance、動的loopback endpoint</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="invariants">
+    <h2>先に固定する不変条件</h2>
+    <ol>
+      <li>署名・検証済みrelease catalogにないlaunch specを実行しない。</li>
+      <li>公開APIからcommand、binary path、model path、systemd unit名を注入できない。</li>
+      <li>Allocation作成時にProvider revisionを固定し、途中で新generationへ差し替えない。</li>
+      <li>claimは全required Providerのsemantic readiness成功後だけcredentialを返す。</li>
+      <li>使用中instance、request終了処理中instance、mutation中instanceを停止しない。</li>
+      <li>新revisionの起動失敗は旧revisionの既存leaseへ影響させない。</li>
+      <li>公開claimのGateway URLとmodel aliasは維持し、内部instance endpointを公開しない。</li>
+      <li>
+        credential、launch environment、model pathをevent、journal、public inspectionへ出さない。
+      </li>
+    </ol>
+  </section>
+
+  <section id="target-types">
+    <h2>導入する型とBackend契約</h2>
+    <pre><code>type ProviderRevision = {
+  runtimeId: string;
+  runtimeRelease: string;
+  revision: string;          // canonical SHA-256
+  backend: "llama-swap" | "systemd";
+  protocol: RuntimeProtocol;
+  artifacts: string[];
+  launchSpecDigest: string;
+  resourceSpecDigest: string;
+};
+
+type ProviderInstance = {
+  id: string;
+  runtimeId: string;
+  revision: string;
+  generation: number;
+  node: string;
+  endpoint: string;
+  backendEndpoint: string;
+  status: RuntimeStatus;
+  createdAt: string;
+};
+
+interface RuntimeBackend {
+  listInstances(): Promise&lt;ProviderInstanceHealth[]&gt;;
+  ensure(revision: ProviderRevision, signal?: AbortSignal): Promise&lt;ProviderInstance&gt;;
+  health(instanceId: string): Promise&lt;ProviderInstanceHealth&gt;;
+  drain(instanceId: string, signal?: AbortSignal): Promise&lt;void&gt;;
+  stop(instanceId: string): Promise&lt;void&gt;;
+}</code></pre>
+    <p>
+      <code>AllocationBinding</code
+      >へ<code>providerRevision</code>、<code>instanceId</code>、
+      <code>instanceGeneration</code>を追加する。public
+      responseでは既存の安全なfieldだけを返し、内部identityは management inspectionに限定する。
+    </p>
+  </section>
+
+  <section id="work-packages">
+    <h2>Work package</h2>
+
+    <section id="wp0">
+      <h3>WP0: Characterizationとcontract固定</h3>
+      <p>
+        現行挙動を変更する前に、cold start、共有、release、idle stop、swap
+        group、resident保護、daemon再起動時の orphan処理をcharacterization testへ固定する。
+      </p>
+      <ul>
+        <li><code>apps/daemon/src/controller.test.ts</code>: instance共有とrelease競合の現状test</li>
+        <li>
+          <code>packages/backends/src/llama-swap.test.ts</code>: load／unload APIとconfig reloadの実測fixture
+        </li>
+        <li><code>packages/backends/src/systemd.test.ts</code>: 固定unit lifecycleの現状test</li>
+        <li>llama-swapのconfig reloadがloaded modelを維持するかを実binaryでprobeする</li>
+      </ul>
+      <p>
+        config reloadでloaded modelが破棄される場合、同一supervisorでのhot reloadを採用せず、A/B
+        supervisor generationを使う。WP0の結果をWP3開始条件とする。
+      </p>
+    </section>
+
+    <section id="wp1">
+      <h3>WP1: Core schemaとrevision compiler</h3>
+      <ul>
+        <li>
+          <code>packages/core/src/schema.ts</code>へmanaged lifecycleとwarm policyを追加する。
+        </li>
+        <li>
+          <code>packages/core/src/releases.ts</code>でruntime releaseとlaunch specからcanonical
+          revisionを生成する。
+        </li>
+        <li><code>packages/core/src/allocation.ts</code>へinstance binding identityを追加する。</li>
+        <li>canonical JSON、sorted collection、digest domain separationを固定する。</li>
+      </ul>
+      <pre><code>policy:
+  lifecycle: managed
+  warm:
+    minInstances: 1
+    idleTtlSeconds: 60
+  swapGroup: qwen-worker-slot</code></pre>
+      <p>
+        移行中は既存<code>class</code>を互換fieldとして維持し、<code>resident</code>を<code>minInstances: 1</code>、<code>preferred</code>を<code>minInstances: 0</code>へcompileする。現行の単一instance
+        backendでは<code>minInstances</code>を0または1に制限する。
+      </p>
+    </section>
+
+    <section id="wp2">
+      <h3>WP2: Provider Instance Manager</h3>
+      <p>
+        <code>apps/daemon</code>へProvider Instance Managerを追加し、Control
+        Planeからprocess lifecycleを分離する。
+      </p>
+      <ul>
+        <li>revisionごとのsingle-flight ensure</li>
+        <li>allocation ref、active request ref、mutation ref、warm refの独立管理</li>
+        <li>instanceごとのidle timer</li>
+        <li>停止直前のgenerationと参照数再検証</li>
+        <li>複合Profile ensure失敗時の共有を壊さないrollback</li>
+      </ul>
+      <p>
+        <code>apps/daemon/src/controller.ts</code
+        >の単一<code>idleTimer</code>とruntime ID単位の
+        <code>lifecycleReservations</code>は、instance ID単位の状態へ段階的に置換する。
+      </p>
+    </section>
+
+    <section id="wp3">
+      <h3>WP3: llama-swap revision supervisor</h3>
+      <ul>
+        <li>
+          source
+          worktreeの<code>llama-swap.yaml</code>をruntime正本として直接参照しない。
+        </li>
+        <li>検証済みProviderRevisionから内部model entryを生成する。</li>
+        <li>内部model IDを<code>&lt;runtime&gt;-&lt;revision-prefix&gt;</code>として衝突を防ぐ。</li>
+        <li>configを安全な専用directoryへatomic renameで公開する。</li>
+        <li>新旧entryを併存させ、旧instanceの参照がゼロになってからunload・削除する。</li>
+      </ul>
+      <p>
+        第一候補は<code>--watch-config</code>を使用する一つのsupervisorである。WP0でgeneration分離を保証できない場合は、
+        loopback listen addressを分けたA/B supervisorをsystemd templateとして生成し、Gateway
+        bindingで選択する。
+      </p>
+    </section>
+
+    <section id="wp4">
+      <h3>WP4: systemd Provider instance化</h3>
+      <ul>
+        <li>
+          <code>larm-provider@.service</code>またはtransient
+          unitのどちらかを一つに統一する。
+        </li>
+        <li>
+          instance
+          specは<code>/run/larm/provider-instances/</code>配下のroot-ownedまたは厳格な専用権限で管理する。
+        </li>
+        <li>loopback port allocatorへ予約、衝突検査、再起動後reconcileを実装する。</li>
+        <li>
+          Provider commandはrelease catalogからだけ生成し、instance IDからshell
+          commandを組み立てない。
+        </li>
+        <li>stopはdrain完了、request refゼロ、generation一致後だけ実行する。</li>
+      </ul>
+      <p>
+        最初に<code>qwen-tts</code>など既存preferred systemd
+        runtimeを移し、その後Qwen ASRとVOICEVOXを移す。 音声Profileの互換性を維持するため、公開model
+        aliasとGateway endpointは変更しない。
+      </p>
+    </section>
+
+    <section id="wp5">
+      <h3>WP5: Generation-aware GatewayとAgent Connection</h3>
+      <ul>
+        <li>Gateway resolveをAllocation bindingのinstance endpointへ固定する。</li>
+        <li>semantic readiness cache keyへrevisionとinstance generationを含める。</li>
+        <li>renewは同じinstance generationを維持し、再配置が必要なら新Connectionを要求させる。</li>
+        <li>
+          claim credentialへ既存のallocation／provider scopeに加えてgeneration bindingを署名する。
+        </li>
+        <li>
+          release後は新requestを拒否し、進行中requestのterminal処理後にrequest refを解放する。
+        </li>
+      </ul>
+      <p>
+        <code>GET /v3/agent-profiles</code
+        >とclaimの公開shapeは変更しない。内部revisionをconsumerへ選択させない。
+      </p>
+    </section>
+
+    <section id="wp6">
+      <h3>WP6: Reconcile、journal、障害復旧</h3>
+      <ul>
+        <li>instance ID、revision、endpoint、owner generationをdurable journalへ記録する。</li>
+        <li>起動時にsupervisor／systemdの実instanceとjournalを照合する。</li>
+        <li>未知instanceは即時killせず、drain状態を確認してbounded orphan cleanupする。</li>
+        <li>warm policy対象は再adoptし、それ以外の参照なしinstanceは停止する。</li>
+        <li>破損journal、port再利用、半端なconfig generationはfail closedにする。</li>
+      </ul>
+      <p>
+        Agent Connectionはboot epochを跨いで復活させない。control
+        plane再起動後は旧credentialを失効させつつ、 Provider
+        instanceだけを安全に再発見または停止する。
+      </p>
+    </section>
+
+    <section id="wp7">
+      <h3>WP7: Observabilityとoperator API</h3>
+      <ul>
+        <li>
+          management inspectionへinstance ID、revision prefix、ref種別、idle deadline、warm
+          reasonを追加する。
+        </li>
+        <li>public healthには内部path、command、credentialを追加しない。</li>
+        <li>ensure、reuse、drain、stop、rollback、orphan cleanupをbounded labelでevent化する。</li>
+        <li>
+          instance count、cold-start latency、idle-stop latency、revision overlapをmetric化する。
+        </li>
+      </ul>
+    </section>
+
+    <section id="wp8">
+      <h3>WP8: Production profile移行</h3>
+      <ol>
+        <li>明示canary Profileでllama-swap generation管理を有効化する。</li>
+        <li><code>saaa-qwen38</code>のQwenとLFMへ適用する。</li>
+        <li>preferred systemd Providerへ適用する。</li>
+        <li>Qwen ASRとVOICEVOXをmanaged warm policyへ移す。</li>
+        <li>Qwen 3.8 resident defaultを<code>minInstances: 1</code>へ移す。</li>
+        <li>
+          全runtime移行後に<code>resident_protected</code>と旧class
+          compilerを削除する。
+        </li>
+      </ol>
+    </section>
+  </section>
+
+  <section id="review-hardening">
+    <h2>実装レビューで追加した安全化</h2>
+    <ul>
+      <li>
+        共有single-flightではcallerごとにcancelを分離し、最後のwaiterだけがBackend起動を中断する。
+      </li>
+      <li>
+        固定model ID／固定systemd unitを使う移行期間は、同一runtimeの異revision並行起動を
+        <code>revision_conflict</code>として拒否し、新世代の誤停止を防ぐ。
+      </li>
+      <li>
+        streaming requestの参照はResponse生成時ではなく、stream terminal callback後に解放する。
+      </li>
+      <li>
+        startup orphan reconcileはInstance Manager管理中runtimeをlegacy
+        stopせず、request参照中のProviderを保護する。
+      </li>
+      <li>
+        tokenとallocationではinstance
+        IDとgenerationの片側指定を拒否し、revisionとの結合を必須にする。
+      </li>
+      <li>停止失敗instanceは次回acquire時にcleanupを再試行し、失敗状態を再利用しない。</li>
+    </ul>
+  </section>
+
+  <section id="file-plan">
+    <h2>主な変更ファイル</h2>
+    <table>
+      <caption>
+        実装場所と責務
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">場所</th>
+          <th scope="col">変更</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>packages/core/src/schema.ts</code></th>
+          <td>managed lifecycle、warm policy、instance schema</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>packages/core/src/releases.ts</code></th>
+          <td>Provider revision compilerとdigest</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>packages/core/src/allocation.ts</code></th>
+          <td>revision／instance binding invariant</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>packages/backends/src/types.ts</code></th>
+          <td>instance単位Backend API</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>packages/backends/src/llama-swap.ts</code></th>
+          <td>世代付きentry、instance health、unload</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>packages/backends/src/systemd.ts</code></th>
+          <td>template／transient instance、port、drain</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>apps/daemon/src/controller.ts</code></th>
+          <td>AllocationからInstance Managerへの委譲</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>apps/daemon/src/agent-connection-controller.ts</code></th>
+          <td>generation固定health／claim</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>deploy/local-node/systemd/</code></th>
+          <td>supervisorとProvider template unit</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>config/local-node/</code></th>
+          <td>warm policyとrevision sourceへの段階移行</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="test-plan">
+    <h2>テスト計画</h2>
+    <h3>Unit／contract</h3>
+    <ul>
+      <li>同一launch specは同じrevision、1 field変更は異なるrevisionになる。</li>
+      <li>二つのAllocationが同じinstanceを共有し、片方のreleaseで停止しない。</li>
+      <li>最後の参照解放だけがidle timerを開始する。</li>
+      <li>idle timer発火と新規Allocationの競合で使用中instanceを停止しない。</li>
+      <li>新旧revisionを同じruntime IDで混同しない。</li>
+      <li>複合Profileの部分失敗が共有instanceを停止しない。</li>
+    </ul>
+    <h3>Backend integration</h3>
+    <ul>
+      <li>llama-swapへ新entry追加中も旧model requestが完了する。</li>
+      <li>旧entry unload後、旧endpointへrequestできない。</li>
+      <li>systemd instanceが動的portで起動、health、drain、stopする。</li>
+      <li>daemon crash後にinstanceを再発見し、重複起動しない。</li>
+    </ul>
+    <h3>Profile E2E</h3>
+    <ul>
+      <li>
+        <code>saaa-qwen38</code>:
+        Qwen、LFM、ASR、TTSをcoldから起動してclaimする。
+      </li>
+      <li>LLM JSON／SSE、ASR、TTSを実行し、release後にpolicyどおり停止する。</li>
+      <li>ContextStill、decision、embedding、expressive TTSの既存Profileを回帰検証する。</li>
+      <li>credential失効、ログ非漏洩、old generation拒否を確認する。</li>
+    </ul>
+  </section>
+
+  <section id="rollout">
+    <h2>Rolloutとrollback</h2>
+    <ol>
+      <li>shadow inventoryで新Instance Managerの判断と現行controllerの判断を比較する。</li>
+      <li>明示canaryだけを新Backendへ送り、cold startとidle stop evidenceを保存する。</li>
+      <li>SAAA Profileを有効化し、新旧revision overlapと音声経路を監視する。</li>
+      <li>
+        各段階で24時間以上のorphan、unexpected stop、credential errorがゼロであることをgateにする。
+      </li>
+      <li>
+        rollback時は新規Allocationを旧catalog
+        generationへ戻し、新generationをdrainしてから停止する。
+      </li>
+    </ol>
+    <p>
+      rollbackで使用中instanceを強制停止しない。旧supervisor configと旧systemd
+      unitは、全新generation leaseが terminalになるまで削除しない。
+    </p>
+  </section>
+
+  <section id="pull-requests">
+    <h2>推奨Pull Request分割</h2>
+    <ol>
+      <li>Characterization testとProviderRevision schema</li>
+      <li>Instance ManagerとBackend互換adapter</li>
+      <li>llama-swap generation supervisor</li>
+      <li>Allocation／Gateway generation binding</li>
+      <li>systemd Provider instance化</li>
+      <li>reconcile、journal、inspection</li>
+      <li>SAAA／音声Profile migration</li>
+      <li>resident warm policy migrationと旧contract削除</li>
+    </ol>
+    <p>
+      各PRは<code>bun run check</code>を通し、public
+      API互換性とrollback可能性を維持する。model weight、binary、 build output、live
+      logはcommitしない。
+    </p>
+  </section>
+
+  <section id="done">
+    <h2>完了条件</h2>
+    <ul>
+      <li>全production Profileでcold start、共有、release、idle stop E2Eが成功する。</li>
+      <li>Provider config変更時にllama-swap supervisorと無関係なProviderを再起動しない。</li>
+      <li>Qwen resident defaultをwarm維持しながら、revision更新時にLARMがdrain・再生成できる。</li>
+      <li>通常runbookから手動Provider再起動手順が削除される。</li>
+      <li>
+        旧<code>resident_protected</code>とruntime
+        ID単位stopがproduction経路からなくなる。
+      </li>
+      <li>障害注入、credential非漏洩、release rollbackを含む署名済みlive canaryが成功する。</li>
+    </ul>
+  </section>
+</article>

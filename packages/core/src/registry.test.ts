@@ -60,11 +60,23 @@ test("loads the Linux production registry", () => {
   expect(asr?.capability).toContain("speech.stt");
   expect(realtimeTts?.capability).toContain("speech.tts");
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");
-  expect(model35b?.policy).toEqual({ class: "preferred", swapGroup: "qwen-worker-slot" });
-  expect(ornith35b?.policy).toEqual({ class: "preferred", swapGroup: "qwen-worker-slot" });
+  expect(model35b?.policy).toEqual({
+    class: "preferred",
+    lifecycle: "managed",
+    warm: { minInstances: 0, idleTtlSeconds: 60 },
+    swapGroup: "qwen-worker-slot",
+  });
+  expect(ornith35b?.policy).toEqual({
+    class: "preferred",
+    lifecycle: "managed",
+    warm: { minInstances: 0, idleTtlSeconds: 60 },
+    swapGroup: "qwen-worker-slot",
+  });
   expect(ornith35b?.resources.estimatedMemoryGB).toBe(48);
   expect(ornith35bSpeed?.policy).toEqual({
     class: "preferred",
+    lifecycle: "managed",
+    warm: { minInstances: 0, idleTtlSeconds: 60 },
     swapGroup: "qwen-worker-slot",
   });
   expect(agentWorker?.resources.estimatedMemoryGB).toBe(28);

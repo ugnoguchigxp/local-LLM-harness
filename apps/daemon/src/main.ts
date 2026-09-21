@@ -172,6 +172,10 @@ control = new ControlPlane(registry, backend, observer, {
   telemetryMaxAgeMs: config.telemetryMaxAgeMs,
   getCatalogRevision: () => catalogGeneration.revision,
   getRuntimeRelease: (runtimeId) => runtimeReleaseManager?.getActiveRelease(runtimeId),
+  getRuntimeReleaseDefinition: (runtimeId) => {
+    const active = runtimeReleaseManager?.getActiveRelease(runtimeId);
+    return active ? runtimeReleases.find((release) => release.id === active) : undefined;
+  },
   isRuntimeMutating: (runtimeId) => artifactManager?.isRuntimeMutating(runtimeId) ?? false,
   onEvent: observeEvent,
   deploymentCoordinator: {
@@ -340,6 +344,8 @@ const notifySystemd = async (...args: string[]): Promise<void> => {
     throw new Error(`systemd readiness notification failed: ${stderr.trim() || `exit ${code}`}`);
   }
 };
+
+await control.reconcileProviderInstances();
 
 let ticking = false;
 const interval = setInterval(() => {

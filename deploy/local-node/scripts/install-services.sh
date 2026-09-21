@@ -60,6 +60,7 @@ release_inbox_dir="$(target_path /var/lib/larm/release-inbox)"
 release_controller_dir="$(target_path /var/lib/larm/release-controller)"
 release_builder_dir="$(target_path /var/lib/larm/release-builder)"
 http_soak_dir="$(target_path /var/lib/larm/http-provider-soak)"
+provider_config_dir="$(target_path /var/lib/larm/provider-config)"
 context_source_dir="$(target_path /srv/ai/context-sources)"
 release_private_key="${release_builder_dir}/signing-key.pem"
 release_public_key="${credential_dir}/release-signing.pub"
@@ -117,11 +118,7 @@ else
     larm-http-provider-monitor.timer
   )
   enabled_units=(
-    llama-server.service
     llama-swap-worker.service
-    qwen-asr.service
-    whisper-asr.service
-    voicevox-tts.service
     larm-daemon.service
     larm-inference-audit-prune.timer
     larm-release-activator.path
@@ -246,6 +243,7 @@ install -d -o "${data_owner}" -g "${data_group}" -m 0750 "${http_soak_dir}"
 install -d -o "${data_owner}" -g "${data_group}" -m 0700 "${context_source_dir}"
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${release_dir}" "${libexec_dir}"
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${release_controller_dir}"
+install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${provider_config_dir}"
 install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${unit_target}"
 
 for unit in "${units[@]}"; do
@@ -263,6 +261,11 @@ install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${polkit_dir}"
 install -o "${system_owner}" -g "${system_group}" -m 0644 \
   "${repo_root}/deploy/local-node/polkit/50-larm-runtime-control.rules" \
   "${polkit_dir}/50-larm-runtime-control.rules"
+if [[ ! -e "${provider_config_dir}/llama-swap.yaml" ]]; then
+  install -o "${system_owner}" -g "${system_group}" -m 0644 \
+    "${repo_root}/config/local-node/llama-swap.yaml" \
+    "${provider_config_dir}/llama-swap.yaml"
+fi
 
 install -d -o "${credential_owner}" -g "${credential_group}" -m 0750 "${credential_dir}"
 if [[ ! -e "${credential_path}" ]]; then
@@ -350,16 +353,17 @@ rm -f -- "${obsolete_retirement_helper}"
 systemctl_run daemon-reload
 systemctl_run enable "${enabled_units[@]}"
 if [[ "${install_scope}" == "all" ]]; then
-  systemctl_run disable qwen-tts.service larm-embedding.service
+  systemctl_run disable llama-server.service qwen-asr.service whisper-asr.service \
+    voicevox-tts.service qwen-tts.service larm-embedding.service
 fi
 
 if [[ "${install_scope}" == "gateway" ]]; then
   echo "LARM Gateway unit enabled; existing Provider units and their enablement were not changed."
 else
-  echo "Resident/control units enabled; preferred qwen-tts.service and larm-embedding.service left disabled for on-demand use."
+  echo "Control and Provider supervisor units enabled; all Provider daemons left disabled for LARM-managed lifecycle."
 fi
 echo "This script intentionally does not reboot or restart services."
 echo "The obsolete native Provider unit, when present, was stopped, disabled, and removed."
-echo "Apply a changed unit explicitly, for example: systemctl restart llama-swap-worker.service"
+echo "Provider daemons are started and stopped by LARM policy; do not enable them directly."
 echo "LARM API, Agent Connection, and management credentials are stored in ${credential_path}."
 echo "Inference audit settings are stored in ${audit_config_path}; the encryption key remains separate."

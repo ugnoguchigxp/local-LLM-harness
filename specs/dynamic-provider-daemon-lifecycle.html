@@ -1,0 +1,180 @@
+<article lang="ja">
+  <h1>動的 Provider Daemon ライフサイクル仕様</h1>
+
+  <p>
+    LARMは全Agent Profileについて、Provider
+    Daemonの選択、起動、readiness、割当、停止、revision更新を 所有する。利用者がsystemd
+    unit、llama-swap本体、または個別Providerを手動再起動して設定を反映する運用を 正常系に含めない。
+  </p>
+
+  <section id="scope">
+    <h2>責務境界</h2>
+    <table>
+      <caption>
+        常駐可能な層と動的管理対象
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">層</th>
+          <th scope="col">ライフサイクル</th>
+          <th scope="col">責務</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LARM control plane</th>
+          <td>常駐またはblue-green更新</td>
+          <td>Catalog、Allocation、lease、revision、Gatewayを管理する</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider supervisor</th>
+          <td>常駐可能</td>
+          <td>Provider processをrevision単位で生成、監視、停止する</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider Daemon</th>
+          <td>LARM管理</td>
+          <td>LLM、ASR、TTS、Embeddingなどの実推論を提供する</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <q>resident</q>はLARMの制御外という意味ではなく、warm
+      policyが最低一instanceの維持を要求するという意味に 限定する。Qwen 3.8 27Bはresident
+      defaultとしてwarmに保てるが、drain、revision切替、障害復旧ではLARMが
+      明示的に停止・再生成できなければならない。
+    </p>
+  </section>
+
+  <section id="revision">
+    <h2>不変Provider revision</h2>
+    <p>
+      Allocationはruntime IDだけでなく、起動に必要な完全なProvider
+      revisionを固定する。revisionは少なくとも次を digest対象にする。
+    </p>
+    <ul>
+      <li>artifactとmodel weightの識別子</li>
+      <li>実行ファイルと引数</li>
+      <li>context window、batch、KV cache、reasoningなどのProvider設定</li>
+      <li>protocol、health probe、resource上限</li>
+      <li>公開model aliasと内部binding</li>
+    </ul>
+    <p>
+      Backend
+      APIは<code>ensure(runtime)</code>と<code>stop(runtimeId)</code>ではなく、概念上
+      <code>ensure(revision)</code>からinstance
+      identityを返し、<code>stop(instanceId)</code>する形へ移行する。 Gateway
+      bindingとclaim credentialはinstance generationへ固定し、同じruntime
+      IDの新旧revisionを混同しない。
+    </p>
+  </section>
+
+  <section id="lifecycle">
+    <h2>状態機械</h2>
+    <ol>
+      <li>Profileを解決し、必要な全Provider revisionを一つのAllocationへ固定する。</li>
+      <li>各revisionの既存instanceを再利用するか、Provider supervisorへ生成を要求する。</li>
+      <li>全Providerのprotocol固有semantic readinessが成功するまでclaimを許可しない。</li>
+      <li>Connection、request、background operationの参照をinstanceごとに数える。</li>
+      <li>最後の参照解放後、warm policyのidle TTLまたは最低instance数に従って停止を予約する。</li>
+      <li>停止直前に参照数とgenerationを再確認し、使用中instanceを停止しない。</li>
+      <li>
+        新revisionは新規Allocationだけへ割り当て、旧revisionは既存leaseを完了してから停止する。
+      </li>
+    </ol>
+    <aside>
+      <p>
+        Profileが複数Providerを持つ場合も同じtransactionで扱う。一つでも起動またはreadinessに失敗したらcredentialを
+        発行せず、このConnectionが新規生成した未共有instanceを回収する。
+      </p>
+    </aside>
+  </section>
+
+  <section id="supervisors">
+    <h2>Backend別の実装方針</h2>
+    <h3>llama-swap</h3>
+    <p>
+      <code>--watch-config</code
+      >の追加だけを最終解としない。署名済みreleaseから生成した不変のrevision entryを
+      supervisorへ原子的に追加し、内部model IDへrevision
+      digestを含める。新しいAllocationは新entryをloadし、旧entryは
+      参照がゼロになるまで残す。最後の参照解放後にunloadし、安全になってからentryを削除する。これにより
+      llama-swapプロセス自体を再起動せず、225Kへの変更などを世代分離して反映できる。
+    </p>
+    <h3>systemd</h3>
+    <p>
+      固定された単一unitを直接参照する構成から、revision specを入力にするtemplate
+      unitまたはtransient unitへ移行する。 ASR、TTSを含む各instanceに一意なinstance IDとloopback
+      endpointを割り当て、LARMがstart、health、drain、stopを 実行する。固定公開portはLARM
+      Gatewayだけが所有する。
+    </p>
+  </section>
+
+  <section id="configuration">
+    <h2>設定とreleaseの反映</h2>
+    <ul>
+      <li>Provider設定はsource worktreeから直接読まず、検証済みrelease manifestから取得する。</li>
+      <li>
+        release activationは新catalog generationを公開し、既存Allocationのbindingを書き換えない。
+      </li>
+      <li>設定変更のためにProvider supervisorを再起動しない。</li>
+      <li>
+        同一port競合を避けるため、Provider instanceは動的loopback
+        portまたはrevision固有socketを使用する。
+      </li>
+      <li>起動失敗時は新generationだけを失敗させ、旧generationを継続する。</li>
+      <li>
+        control plane更新はProvider
+        processから独立し、再起動してもinstanceを再発見してleaseを復元する。
+      </li>
+    </ul>
+  </section>
+
+  <section id="migration">
+    <h2>段階的移行</h2>
+    <ol>
+      <li>
+        <strong>整合化:</strong> llama-swapとsystemdの設定参照を検証済みreleaseへ移し、source
+        worktreeへの依存を除く。
+      </li>
+      <li>
+        <strong>revision化:</strong> launch spec digest、instance
+        ID、generationをBackend契約とAllocation bindingへ追加する。
+      </li>
+      <li>
+        <strong>無停止更新:</strong> llama-swapへrevision
+        entryを原子的に追加し、新旧generationのdrainを実装する。
+      </li>
+      <li>
+        <strong>音声Provider:</strong> ASRとTTSをtemplate/transient systemd instanceへ移し、Profile
+        leaseで起動・停止する。
+      </li>
+      <li>
+        <strong>policy統一:</strong> <code>resident_protected</code>を廃止し、warm
+        policyと管理権限を分離する。
+      </li>
+      <li>
+        <strong>復旧:</strong> control plane再起動時のinstance再発見、孤児停止、binding
+        generation照合を実装する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="acceptance">
+    <h2>受け入れ条件</h2>
+    <ul>
+      <li>任意のAgent Profileをcold状態から要求し、全Providerが自動起動してclaim可能になる。</li>
+      <li>Connection release後、共有参照がなければpolicyどおり全Providerを自動停止する。</li>
+      <li>Provider設定を更新しても、supervisorと無関係なProviderを再起動しない。</li>
+      <li>新旧revisionの同時leaseでbinding、credential、health、監査が混線しない。</li>
+      <li>使用中revisionは停止せず、新規要求だけを新revisionへ送る。</li>
+      <li>
+        ASR、TTS、LLM、Embeddingの全protocolでcold start、共有、release、idle stopをE2E検証する。
+      </li>
+      <li>
+        Qwen resident defaultはwarm policyで維持しつつ、LARMによるdrainとrevision切替が可能である。
+      </li>
+      <li>通常運用手順に手動<code>systemctl restart</code>を含めない。</li>
+    </ul>
+  </section>
+</article>
