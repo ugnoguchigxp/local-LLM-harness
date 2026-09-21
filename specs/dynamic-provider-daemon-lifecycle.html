@@ -44,6 +44,12 @@
       defaultとしてwarmに保てるが、drain、revision切替、障害復旧ではLARMが
       明示的に停止・再生成できなければならない。
     </p>
+    <p>
+      local-nodeではsystemdでホストするQwen、ASR、TTS、Embedding
+      daemonをすべて<code>minInstances: 1</code>でWarm待機させる。llama-swap
+      supervisorも常駐するが、VRAMを共有する内部model entryはProfile参照に応じて
+      load／unloadし、全modelの同時ロードをWarm待機とは定義しない。
+    </p>
   </section>
 
   <section id="revision">
@@ -168,9 +174,7 @@
       <li>Provider設定を更新しても、supervisorと無関係なProviderを再起動しない。</li>
       <li>新旧revisionの同時leaseでbinding、credential、health、監査が混線しない。</li>
       <li>使用中revisionは停止せず、新規要求だけを新revisionへ送る。</li>
-      <li>
-        ASR、TTS、LLM、Embeddingの全protocolでcold start、共有、release、idle stopをE2E検証する。
-      </li>
+      <li>全protocolでWarm daemonの再利用、共有、release、障害後の自動再生成をE2E検証する。</li>
       <li>
         Qwen resident defaultはwarm policyで維持しつつ、LARMによるdrainとrevision切替が可能である。
       </li>

@@ -319,7 +319,10 @@ interface RuntimeBackend {
         <li>明示canary Profileでllama-swap generation管理を有効化する。</li>
         <li><code>saaa-qwen38</code>のQwenとLFMへ適用する。</li>
         <li>preferred systemd Providerへ適用する。</li>
-        <li>Qwen ASRとVOICEVOXをmanaged warm policyへ移す。</li>
+        <li>
+          全systemd Providerを<code>minInstances: 1</code>のmanaged warm
+          policyへ移す。
+        </li>
         <li>Qwen 3.8 resident defaultを<code>minInstances: 1</code>へ移す。</li>
         <li>
           全runtime移行後に<code>resident_protected</code>と旧class
@@ -436,10 +439,10 @@ interface RuntimeBackend {
     <h3>Profile E2E</h3>
     <ul>
       <li>
-        <code>saaa-qwen38</code>:
-        Qwen、LFM、ASR、TTSをcoldから起動してclaimする。
+        <code>saaa-qwen38</code>: Warm待機するQwen、ASR、TTSを再利用し、LFMとQwen
+        worker modelを必要時にloadしてclaimする。
       </li>
-      <li>LLM JSON／SSE、ASR、TTSを実行し、release後にpolicyどおり停止する。</li>
+      <li>LLM JSON／SSE、ASR、TTSを実行し、release後もhost daemonのWarm floorを維持する。</li>
       <li>ContextStill、decision、embedding、expressive TTSの既存Profileを回帰検証する。</li>
       <li>credential失効、ログ非漏洩、old generation拒否を確認する。</li>
     </ul>

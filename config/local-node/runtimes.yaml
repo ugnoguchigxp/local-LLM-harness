@@ -341,7 +341,7 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm: { minInstances: 1, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 5
       maxConcurrentRequests: 1
@@ -363,7 +363,7 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm: { minInstances: 1, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 1
       maxConcurrentRequests: 1
@@ -383,7 +383,7 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm: { minInstances: 1, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 1
       maxConcurrentRequests: 1
@@ -405,7 +405,7 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm: { minInstances: 1, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 5
       maxConcurrentRequests: 1
@@ -448,7 +448,7 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm: { minInstances: 1, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 1
       maxConcurrentAllocations: 8
