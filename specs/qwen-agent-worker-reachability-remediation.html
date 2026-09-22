@@ -240,4 +240,41 @@ bun run verify:qwen-agent-worker-stability</code></pre>
       保守窓である。これはLARM ready/listenerの未bindとは別の明示blockerである。
     </p>
   </section>
+
+  <section id="saaa-client-observability-2026-09-22">
+    <h2>2026-09-22 SAAAクライアント側の再発防止</h2>
+    <p>
+      12:30:05 UTCの失敗では、SAAAの画面上のerrorだけからTCP接続前と応答途中切断を区別できず、
+      request本文も保存されていなかった。12:33:28 UTCに起動した一時的なPython転送processは
+      失敗時点には存在しないため、恒久経路として扱わない。SAAAのLARM voice経路は、認証付き Harness
+      endpoint <code>9810</code>だけを利用し、直接provider
+      endpointへの迂回を禁止する。
+    </p>
+    <ul>
+      <li>
+        provider requestごとに本文を含まないrequest IDを払い出し、
+        <code>prepared</code
+        >、<code>sending</code>、<code>headers-received</code>、
+        <code>response-started</code
+        >、<code>completed</code>または<code>failed</code>をDBへ記録する。
+      </li>
+      <li>
+        記録対象はprovider session、model、認証情報とqueryを除いたendpoint、transport種別、 HTTP
+        statusまたはfailure分類、割当IDである。prompt、応答本文、Authorizationは保存しない。
+      </li>
+      <li>
+        request送信時の接続失敗を<code>connect</code>、response
+        body受信開始後の切断を
+        <code>response-interrupted</code>として利用者向けerrorでも区別する。
+      </li>
+      <li>
+        保存済みassistant messageとTTS deliveryを一意制約で結び、同じrun/messageの最終音声を
+        二重queueしない。deliveryはqueued、completed、failed、cancelledの終端状態まで追跡する。
+      </li>
+    </ul>
+    <aside>
+      この変更はSAAAクライアントの観測性とroute制約を修正するもので、Qwen resident default、 LARM
+      Gateway、model weight、推論engineの設定は変更しない。
+    </aside>
+  </section>
 </article>
