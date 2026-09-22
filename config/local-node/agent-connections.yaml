@@ -23,29 +23,19 @@ agentProfiles:
           maxTokens: 230400
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
-  saaa-qwen38:
-    description: SAAA conversation preset with LFM 2.5 1.2B backchannel and Qwen 3.8 27B 225K reasoning
+  saaa-conversation-gemma4:
+    description: SAAA warm conversation preset with Gemma 4 E4B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding
     schedulingPriority: 3000
     providers:
       - name: llm
-        capability: llm.coding
-        route: llm-saaa-qwen38
-        publicModel: qwen3.8
+        capability: llm.general
+        route: llm-saaa-gemma4
+        publicModel: gemma4-e4b
         readiness: llm-inference
         contextWindow:
           maxTokens: 230400
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
-      - name: backchannel
-        capability: llm.backchannel.classifier
-        route: llm-backchannel-default
-        publicModel: backchannel-default
-        publishModel: false
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 65536
-          outputReserveTokens: 512
-          safetyMarginTokens: 1024
       - name: asr
         capability: speech.stt
         route: stt-qwen
@@ -58,6 +48,74 @@ agentProfiles:
         publicModel: voicevox-core
         publishModel: false
         readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+  saaa-conversation-ornith15:
+    description: Explicit SAAA conversation candidate with Ornith 1.5 35B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding
+    schedulingPriority: 3000
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-saaa-ornith15
+        publicModel: ornith-1.5-35b-conversation
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 230400
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-qwen
+        publicModel: qwen3-asr-1.7b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+  saaa-qwen38:
+    description: Compatibility profile ID for the SAAA Gemma 4 warm conversation preset
+    schedulingPriority: 3000
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-saaa-gemma4
+        publicModel: gemma4-e4b
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 230400
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-qwen
+        publicModel: qwen3-asr-1.7b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
   contextstill-background:
     description: ContextStill background Qwen 3.8 27B provider
     schedulingPriority: 1000

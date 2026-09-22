@@ -222,6 +222,56 @@ runtimes:
       endpoint: http://127.0.0.1:8083/upstream/gemma3-backchannel
       backendEndpoint: http://127.0.0.1:8083/upstream/gemma3-backchannel
 
+  gemma4-conversation:
+    artifacts:
+      - gemma4-e4b-it-qat-q4-0
+    capability:
+      - llm.general
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      swapGroup: conversation-llm-slot
+    resources:
+      estimatedMemoryGB: 20
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 16
+      queueTimeoutMs: 30000
+    deployment:
+      modelId: gemma4-conversation
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/gemma4-conversation
+      backendEndpoint: http://127.0.0.1:8083/upstream/gemma4-conversation
+
+  ornith15-conversation:
+    artifacts:
+      - ornith15-35b-quality
+    capability:
+      - llm.general
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      swapGroup: conversation-llm-slot
+    resources:
+      estimatedMemoryGB: 48
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 16
+      queueTimeoutMs: 120000
+    deployment:
+      modelId: ornith15-conversation
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/ornith15-conversation
+      backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-conversation
+
   qwen36-35b:
     artifacts:
       - qwen36-35b-speed

@@ -26,6 +26,7 @@ import {
 import type { RuntimeBackend } from "@larm/backends";
 import { ArtifactStoreError, LifecycleError } from "@larm/backends";
 import type { Observer } from "./observer";
+import { AllocationLifecycleError } from "./allocation-lifecycle";
 import { ProviderInstanceManager, type ProviderInstanceInspection } from "./provider-instance-manager";
 
 export type Operation = {
@@ -76,9 +77,17 @@ export type ControlPlaneOptions = {
   onRouteShadowComparison?: (comparison: RouteShadowComparison) => void;
   requireFreshTelemetry?: boolean;
   telemetryMaxAgeMs?: number;
+  foregroundPriorityThreshold?: number;
+  providerSwitchHoldMs?: number;
   getCatalogRevision?: () => string;
   getRuntimeRelease?: (runtimeId: string) => string | undefined;
   getRuntimeReleaseDefinition?: (runtimeId: string) => RuntimeReleaseDefinition | undefined;
+};
+
+type ProviderSwitchHold = {
+  runtime: string;
+  priority: number;
+  until: number;
 };
 
 export class ControlPlane {
@@ -91,6 +100,7 @@ export class ControlPlane {
   private readonly allocationLifecycleAborts = new Map<string, AbortController>();
   private readonly operationAborts = new Map<string, AbortController>();
   private readonly lifecycleReservations = new Set<string>();
+  private readonly providerSwitchHolds = new Map<string, ProviderSwitchHold>();
   private readonly providerInstances: ProviderInstanceManager;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private waitingTimer: ReturnType<typeof setTimeout> | undefined;
@@ -333,13 +343,18 @@ export class ControlPlane {
       this.lifecycleReservations.has(runtimeId)
     );
     const waitsForCapacity = request.capacityPolicy === "wait";
+    const providerSwitchHoldUntil = this.providerSwitchHoldUntil(
+      runtimeIds,
+      request.priority ?? 0,
+    );
     const conflictsWithAdmitted = this.hasResourceConflict(
       runtimeIds,
       (allocation) => admittedAllocation(allocation.status),
     );
     const conflictsWithWaiter = this.hasResourceConflict(
       runtimeIds,
-      (allocation) => allocation.status === "waiting",
+      (allocation) => allocation.status === "waiting"
+        && (allocation.priority ?? 0) >= (request.priority ?? 0),
     );
     if (transitioningRuntime && !(waitsForCapacity && conflictsWithAdmitted)) {
       this.emit("allocation_rejected", { reason: "runtime_transition_in_progress" });
@@ -368,6 +383,7 @@ export class ControlPlane {
         },
       };
     }
+    this.preemptLowerPriorityConflicts(request.priority ?? 0, runtimeIds);
     const admission = admitRuntimes({
       registry: this.registry,
       state: this.observer.getState(),
@@ -388,15 +404,23 @@ export class ControlPlane {
       conflictsWithWaiter
       || (transitioningRuntime !== undefined && conflictsWithAdmitted)
       || capacityBlocked
+      || providerSwitchHoldUntil !== undefined
     );
-    if (!admission.ok && !waiting) {
-      this.emit("allocation_rejected", { reason: admission.reason });
+    if ((!admission.ok || providerSwitchHoldUntil !== undefined) && !waiting) {
+      const held = providerSwitchHoldUntil !== undefined;
+      const reason = held ? "provider_switch_hold" : admission.ok ? "resource_exhausted" : admission.reason;
+      const message = held
+        ? "provider switch is held for foreground reuse"
+        : admission.ok
+        ? "runtime resources are unavailable"
+        : admission.message;
+      this.emit("allocation_rejected", { reason });
       return {
         status: 409 as const,
         body: {
           error: {
             code: "resource_exhausted",
-            message: admission.message,
+            message,
             admission: admission.nodes,
           },
         },
@@ -538,7 +562,7 @@ export class ControlPlane {
       return {
         status: activeAllocation(allocation.status) ? 503 as const : 409 as const,
         body: {
-          error: {
+          error: allocation.error ?? {
             code: "allocation_not_ready",
             message: `allocation ${id} is ${allocation.status}`,
           },
@@ -588,7 +612,11 @@ export class ControlPlane {
     return { status: 200 as const, body: binding };
   }
 
-  async releaseAllocation(id: string, terminal: "released" | "expired" = "released") {
+  async releaseAllocation(
+    id: string,
+    terminal: "released" | "expired" = "released",
+    reason?: Error,
+  ) {
     const allocation = this.allocations.get(id);
     if (!allocation) {
       return this.allocationLookupError(id);
@@ -596,13 +624,21 @@ export class ControlPlane {
     if (allocation.status === "released" || allocation.status === "expired") {
       return { status: 200 as const, body: allocation };
     }
+    const wasAdmitted = admittedAllocation(allocation.status);
     allocation.status = terminal;
     allocation.releasedAt = this.isoNow();
+    if (reason instanceof AllocationLifecycleError) {
+      allocation.error = { code: reason.code, message: reason.message };
+    }
     this.clearAllocationTimer(id);
-    this.allocationAborts.get(id)?.abort(new Error(`allocation ${terminal}`));
-    this.allocationLifecycleAborts.get(id)?.abort(new Error(`allocation ${terminal}`));
+    const lifecycleReason = reason ?? new Error(`allocation ${terminal}`);
+    this.allocationAborts.get(id)?.abort(lifecycleReason);
+    this.allocationLifecycleAborts.get(id)?.abort(lifecycleReason);
     this.detachLegacyAllocation(id);
     this.providerInstances.releaseAllocation(id);
+    if (wasAdmitted && (allocation.priority ?? 0) >= this.foregroundPriorityThreshold()) {
+      this.holdForegroundProviders(allocation);
+    }
     if (allocation.operationId) {
       const operation = this.operations.get(allocation.operationId);
       if (operation && (operation.status === "pending" || operation.status === "running")) {
@@ -1264,6 +1300,84 @@ export class ControlPlane {
     return keys;
   }
 
+  private foregroundPriorityThreshold(): number {
+    return this.options.foregroundPriorityThreshold ?? 3_000;
+  }
+
+  private providerSwitchHoldMs(): number {
+    return this.options.providerSwitchHoldMs ?? 300_000;
+  }
+
+  private preemptLowerPriorityConflicts(priority: number, runtimeIds: string[]): void {
+    if (priority < this.foregroundPriorityThreshold()) return;
+    const requested = this.allocationResourceKeys(runtimeIds);
+    const victims = [...this.allocations.values()]
+      .filter((allocation) => {
+        if (!admittedAllocation(allocation.status) || (allocation.priority ?? 0) >= priority) return false;
+        const allocated = this.allocationResourceKeys(
+          allocation.bindings.map((binding) => binding.runtime),
+        );
+        return [...requested].some((key) => allocated.has(key));
+      });
+    for (const allocation of victims) {
+      this.emit("allocation_preempted", {
+        allocation: allocation.id,
+        client: allocation.client ?? "unknown",
+        reason: "higher_priority_foreground_task",
+        priority: String(allocation.priority ?? 0),
+        preemptingPriority: String(priority),
+      });
+      void this.releaseAllocation(
+        allocation.id,
+        "released",
+        new AllocationLifecycleError(
+          "foreground_preempted",
+          "request stopped because a higher-priority foreground task requires the provider",
+        ),
+      );
+    }
+  }
+
+  private holdForegroundProviders(allocation: Allocation): void {
+    const duration = this.providerSwitchHoldMs();
+    if (duration <= 0) return;
+    const until = this.now() + duration;
+    for (const binding of allocation.bindings) {
+      const swapGroup = getRuntime(this.registry, binding.runtime)?.policy.swapGroup;
+      if (!swapGroup) continue;
+      const current = this.providerSwitchHolds.get(swapGroup);
+      const hold: ProviderSwitchHold = {
+        runtime: binding.runtime,
+        priority: allocation.priority ?? 0,
+        until: Math.max(until, current?.until ?? 0),
+      };
+      this.providerSwitchHolds.set(swapGroup, hold);
+      this.emit("provider_switch_hold_started", {
+        swapGroup,
+        runtime: hold.runtime,
+        priority: String(hold.priority),
+        until: new Date(hold.until).toISOString(),
+      });
+    }
+  }
+
+  private providerSwitchHoldUntil(runtimeIds: string[], priority: number): number | undefined {
+    const now = this.now();
+    let blockedUntil: number | undefined;
+    for (const [swapGroup, hold] of this.providerSwitchHolds) {
+      if (hold.until <= now) {
+        this.providerSwitchHolds.delete(swapGroup);
+        continue;
+      }
+      const requested = runtimeIds.filter((runtimeId) =>
+        getRuntime(this.registry, runtimeId)?.policy.swapGroup === swapGroup
+      );
+      if (requested.length === 0 || requested.includes(hold.runtime) || priority >= hold.priority) continue;
+      blockedUntil = Math.max(blockedUntil ?? 0, hold.until);
+    }
+    return blockedUntil;
+  }
+
   private hasResourceConflict(
     runtimeIds: string[],
     predicate: (allocation: Allocation) => boolean,
@@ -1325,12 +1439,23 @@ export class ControlPlane {
         const byCreated = Date.parse(left.createdAt) - Date.parse(right.createdAt);
         return byCreated !== 0 ? byCreated : left.id.localeCompare(right.id);
       });
-    let retryNeeded = false;
+    let retryDelayMs: number | undefined;
+    const requestRetry = (delayMs = this.options.pollIntervalMs ?? 500) => {
+      retryDelayMs = Math.min(retryDelayMs ?? Number.POSITIVE_INFINITY, delayMs);
+    };
     for (const allocation of waiting) {
       if (allocation.status !== "waiting" || Date.parse(allocation.expiresAt) <= this.now()) {
         continue;
       }
       const runtimeIds = [...new Set(allocation.bindings.map((binding) => binding.runtime))];
+      const providerSwitchHoldUntil = this.providerSwitchHoldUntil(
+        runtimeIds,
+        allocation.priority ?? 0,
+      );
+      if (providerSwitchHoldUntil !== undefined) {
+        requestRetry(Math.max(1, providerSwitchHoldUntil - this.now()));
+        continue;
+      }
       const lifecycleRuntimeIds = new Set(runtimeIds);
       for (const runtimeId of runtimeIds) {
         const swapGroup = getRuntime(this.registry, runtimeId)?.policy.swapGroup;
@@ -1342,7 +1467,7 @@ export class ControlPlane {
       if ([...lifecycleRuntimeIds].some((runtimeId) =>
         this.lifecycleReservations.has(runtimeId) || this.options.isRuntimeMutating?.(runtimeId)
       )) {
-        retryNeeded = true;
+        requestRetry();
         continue;
       }
       const admission = this.allocationAdmission(allocation);
@@ -1351,7 +1476,7 @@ export class ControlPlane {
           runtimeIds,
           (candidate) => admittedAllocation(candidate.status),
         )) {
-          retryNeeded = true;
+          requestRetry();
         }
         continue;
       }
@@ -1394,10 +1519,10 @@ export class ControlPlane {
       await this.runAllocationEnsure(allocation, operation, deadline);
     }
     this.pruneHistory();
-    if (retryNeeded) this.scheduleWaitingPromotion();
+    if (retryDelayMs !== undefined) this.scheduleWaitingPromotion(retryDelayMs);
   }
 
-  private scheduleWaitingPromotion(): void {
+  private scheduleWaitingPromotion(delayMs = this.options.pollIntervalMs ?? 500): void {
     if (
       this.draining
       || this.waitingTimer
@@ -1408,7 +1533,7 @@ export class ControlPlane {
     const timer = setTimeout(() => {
       if (this.waitingTimer === timer) this.waitingTimer = undefined;
       this.enqueue(() => this.promoteWaitingAllocations());
-    }, this.options.pollIntervalMs ?? 500);
+    }, delayMs);
     timer.unref?.();
     this.waitingTimer = timer;
   }

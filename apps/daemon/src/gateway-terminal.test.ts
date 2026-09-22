@@ -3,6 +3,7 @@ import type { RuntimeDefinition } from "@larm/core";
 import { ExecutionGate } from "./execution-gate";
 import { proxyGateway } from "./gateway";
 import { RequestTracker } from "./metrics";
+import { AllocationLifecycleError } from "./allocation-lifecycle";
 
 const runtime = {
   id: "qwen-worker-agent",
@@ -149,5 +150,56 @@ test("generation attempt cancellation is observable and terminates the upstream 
   await Bun.sleep(0);
   expect(forwarded).toBe(1);
   expect(terminal).toEqual({ outcome: "attempt_cancelled" });
+  expect(gate.snapshot(runtime.id)).toEqual({ active: 0, queued: 0 });
+});
+
+test("foreground preemption returns a distinctive retryable ContextStill error", async () => {
+  const gate = new ExecutionGate();
+  const lifecycle = new AbortController();
+  let markFetchStarted: (() => void) | undefined;
+  const fetchStarted = new Promise<void>((resolve) => { markFetchStarted = resolve; });
+  const pending = proxyGateway({
+    request: new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "qwen-agent-worker", messages: [], stream: false }),
+    }),
+    allocationId: "allocation-contextstill",
+    protocol: "openai.chat-completions.v1",
+    upstreamPath: "/v1/chat/completions",
+    runtime,
+    bodyMode: "buffered",
+    maxBodyBytes: 1024,
+    timeoutMs: 1_000,
+    bootEpoch: "boot-1",
+    executionGate: gate,
+    lifecycleSignal: lifecycle.signal,
+    requestId: "req_contextstill-1",
+    revalidate: () => ({ ok: true, binding: { endpoint: runtime.deployment.endpoint, runtime: runtime.id } }),
+    fetchImpl: async (_input, init) => {
+      markFetchStarted?.();
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        const abort = () => reject(signal?.reason ?? new Error("aborted"));
+        if (signal?.aborted) abort();
+        else signal?.addEventListener("abort", abort, { once: true });
+      });
+    },
+  });
+  await fetchStarted;
+  lifecycle.abort(new AllocationLifecycleError(
+    "foreground_preempted",
+    "request stopped because a higher-priority foreground task requires the provider",
+  ));
+  const response = await pending;
+  expect(response.status).toBe(409);
+  expect(response.headers.get("retry-after")).toBe("1");
+  expect(response.headers.get("x-larm-preemption-reason")).toBe("higher-priority-foreground-task");
+  expect(await response.json()).toEqual({
+    error: {
+      code: "foreground_preempted",
+      message: "request stopped because a higher-priority foreground task requires the provider",
+    },
+  });
   expect(gate.snapshot(runtime.id)).toEqual({ active: 0, queued: 0 });
 });

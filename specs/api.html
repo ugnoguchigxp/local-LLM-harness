@@ -468,11 +468,12 @@
         >では比較・rollback用Qwenを固定でき、どちらもdefault routeの候補には含めない。
       </li>
       <li>
-        追加27Bと35Bは一つのswap groupを共有する。同groupのactive Allocationはpreemptせず、
-        <code>capacityPolicy: reject</code>は従来どおり拒否する。
+        追加27Bと35Bは一つのswap groupを共有する。優先度3000以上のforeground Allocationは
+        同groupの低優先active Allocationを<code>foreground_preempted</code>で停止する。
+        それ以外の<code>capacityPolicy: reject</code>は従来どおり拒否する。
         <code>capacityPolicy: wait</code
-        >は解放後に<code>priority</code>降順、同値FIFOで昇格し、 idleなHOT
-        memberだけを置き換える。
+        >は解放後に<code>priority</code>降順、同値FIFOで昇格する。foreground解放後300秒は
+        同じRuntimeを保持し、別memberへの切替を保留する。
       </li>
       <li>Resident Runtimeはstop、無人activation、resource evictionの対象にしない。</li>
     </ul>

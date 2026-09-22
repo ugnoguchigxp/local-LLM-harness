@@ -1194,7 +1194,7 @@ test("v1 admission enforces declared runtime allocation capacity", async () => {
   });
 });
 
-test("waiting allocations replace an idle swap peer by priority without preempting active work", async () => {
+test("foreground allocations preempt conflicting background work and retain priority order", async () => {
   const priorityRegistry: Registry = {
     nodes: [{
       id: "local-node",
@@ -1271,17 +1271,20 @@ test("waiting allocations replace an idle swap peer by priority without preempti
       probes.set(id, probe(id, false));
     },
   };
-  const observer = new Observer(priorityRegistry, backend);
+  let now = Date.now();
+  const observer = new Observer(priorityRegistry, backend, { now: () => now });
   await observer.tick();
   const control = new ControlPlane(priorityRegistry, backend, observer, {
     startupTimeoutMs: 1_000,
     pollIntervalMs: 1,
+    providerSwitchHoldMs: 300_000,
+    now: () => now,
   });
   const request = (client: string, priority: number) => ({
     requirements: [{ capability: "llm.general", route: `llm-${client}` }],
     client,
     allowFallback: false,
-    ttlSeconds: 60,
+    ttlSeconds: 600,
     deploymentPolicy: "existing-only" as const,
     priority,
     capacityPolicy: "wait" as const,
@@ -1289,19 +1292,33 @@ test("waiting allocations replace an idle swap peer by priority without preempti
 
   const contextStill = await control.allocate(request("contextstill", 1_000));
   const nightWorker = await control.allocate(request("nightworker", 2_000));
-  const saaa = await control.allocate(request("saaa", 3_000));
   expect(contextStill.body).toMatchObject({ status: "ready", priority: 1_000 });
+  const contextStillId = (contextStill.body as { id: string }).id;
+  const contextStillSignal = control.getAllocationSignal(contextStillId);
+  const saaa = await control.allocate(request("saaa", 3_000));
   expect(nightWorker.body).toMatchObject({ status: "waiting", priority: 2_000 });
-  expect(saaa.body).toMatchObject({ status: "waiting", priority: 3_000 });
-  expect(ensured).toEqual([]);
-
-  await control.releaseAllocation((contextStill.body as { id: string }).id);
+  expect(contextStillSignal?.aborted).toBeTrue();
+  expect(control.getAllocation(contextStillId)).toMatchObject({
+    status: "released",
+    error: {
+      code: "foreground_preempted",
+      message: "request stopped because a higher-priority foreground task requires the provider",
+    },
+  });
+  expect(saaa.body).toMatchObject({ status: "pending", priority: 3_000 });
   await control.flush();
   expect(ensured).toEqual(["saaa"]);
   expect(control.getAllocation((saaa.body as { id: string }).id)?.status).toBe("ready");
   expect(control.getAllocation((nightWorker.body as { id: string }).id)?.status).toBe("waiting");
 
   await control.releaseAllocation((saaa.body as { id: string }).id);
+  await control.flush();
+  expect(ensured).toEqual(["saaa"]);
+  expect(control.getAllocation((nightWorker.body as { id: string }).id)?.status).toBe("waiting");
+
+  now += 300_001;
+  await (control as unknown as { promoteWaitingAllocations(): Promise<void> })
+    .promoteWaitingAllocations();
   await control.flush();
   expect(ensured).toEqual(["saaa", "nightworker"]);
   expect(control.getAllocation((nightWorker.body as { id: string }).id)?.status).toBe("ready");

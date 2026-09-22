@@ -1,0 +1,275 @@
+<article lang="ja">
+  <h1>local-node 会話モデル候補の実機選定</h1>
+
+  <p>
+    Qwen3.8-27Bの会話時生成速度を改善するため、Ryzen AI MAX+ 395、Radeon 8060S、 121 GiB usable
+    UMAのlocal-nodeで、小型・効率型モデルを同一のllama.cpp Vulkan環境で比較した。
+    会話既定の第一候補はGemma 4 E4B IT、知識・agent品質を優先する明示経路は
+    Ornith-1.5-35B-A3Bとする。SAAAの会話profileではGemma 4を試験採用し、Qwen3.8-27Bの resident
+    defaultは変更しない。
+  </p>
+
+  <dl>
+    <dt>測定日</dt>
+    <dd><time>2026-09-22</time></dd>
+    <dt>host</dt>
+    <dd>AMD Ryzen AI MAX+ 395、Radeon 8060S（gfx1151）、121 GiB usable UMA</dd>
+    <dt>runtime</dt>
+    <dd>llama.cpp build 10655、commit <code>cb300598d</code>、Vulkan RADV</dd>
+    <dt>共通条件</dt>
+    <dd>
+      全layerを<code>Vulkan0</code>へoffload、flash attention有効、parallel
+      1、K/V cache
+      <code>q8_0</code>、prompt 512、generation 128、3反復
+    </dd>
+  </dl>
+
+  <section id="decision">
+    <h2>結論</h2>
+    <ol>
+      <li>
+        <strong>会話既定候補: Gemma 4 E4B IT QAT Q4_0、plain decode。</strong>
+        約5.14 GBで、実機decode 58.65 tok/s。短い日本語会話は0.85秒で完了し、
+        reasoning本文を生成せずに回答できた。MTPはこのhostでは無効にする。
+      </li>
+      <li>
+        <strong>品質重視の明示経路: Ornith-1.5-35B-A3B Q5_K_M。</strong>
+        既存実測65.17 tok/s、今回の日本語会話65.76 tok/s。回答は最も充実していたが、
+        reasoningを含む232 tokenを生成して3.51秒かかり、短い会話の既定には冗長である。
+      </li>
+      <li>
+        <strong>軽量fallback: Qwen3.5-4B Q4_K_M。</strong>
+        約2.73 GB、plain decode 63.13 tok/s。短い日本語会話を1.42秒で完了した。
+        Gemmaより小さくQwen系運用知識を再利用できる一方、今回の会話では回答の内容がやや薄い。
+      </li>
+    </ol>
+    <aside>
+      <p>
+        Gemma 4 E4BのE4Bは「4B totalのMoE」を意味しない。実GGUFは約7.46B parametersで、 小型dense
+        decoderへPer-Layer Embeddingsを加え、実効4B級を狙う構造である。
+        公式資料もE2B／E4Bをefficient architecture、26B A4BだけをMoEとして区別している。
+      </p>
+    </aside>
+  </section>
+
+  <section id="measurements">
+    <h2>同一hostの測定結果</h2>
+    <table>
+      <caption>
+        plain decodeのllama-bench比較と一件の日本語会話スモーク
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル・量子化</th>
+          <th scope="col">GGUF size</th>
+          <th scope="col">pp512</th>
+          <th scope="col">tg128</th>
+          <th scope="col">日本語会話</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Gemma 4 E4B IT QAT Q4_0</th>
+          <td>5,154,941,280 bytes</td>
+          <td>1,837.72 tok/s</td>
+          <td>58.65 tok/s</td>
+          <td>30 token、0.85秒、decode 50.14 tok/s、reasoningなし</td>
+          <td>会話既定の第一候補</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3.5-4B Q4_K_M</th>
+          <td>2,729,969,664 bytes</td>
+          <td>1,891.72 tok/s</td>
+          <td>63.13 tok/s</td>
+          <td>38 token、1.42秒、decode 54.68 tok/s、reasoningなし</td>
+          <td>軽量fallback</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM2.5-8B-A1B Q4_K_M</th>
+          <td>5,147,326,208 bytes</td>
+          <td>2,856.60 tok/s</td>
+          <td>69.89 tok/s</td>
+          <td>256 tokenをreasoningだけで消費し、回答本文なし</td>
+          <td>会話既定から除外</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3.5-9B Q4_K_M</th>
+          <td>5,669,554,176 bytes</td>
+          <td>997.00 tok/s</td>
+          <td>16.25 tok/s</td>
+          <td>未実施</td>
+          <td>速度不足で除外</td>
+        </tr>
+        <tr>
+          <th scope="row">Ornith-1.5-35B-A3B Q5_K_M</th>
+          <td>25,347,532,544 bytes</td>
+          <td>941.10 tok/s</td>
+          <td>65.17 tok/s</td>
+          <td>232 token、3.51秒、decode 65.76 tok/s、reasoningあり</td>
+          <td>品質重視の明示経路</td>
+        </tr>
+        <tr>
+          <th scope="row">現行Qwen3.8-27B</th>
+          <td>artifactにより約14.6–16.1 GB</td>
+          <td>既存条件により約170–195 tok/s</td>
+          <td>既存実測約22.8–26.7 tok/s</td>
+          <td>今回の比較対象baseline</td>
+          <td>会話既定からの置換候補</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      live会話は「休日に何もする気が起きないときの無理のない気分転換」を日本語で尋ね、
+      自然で簡潔な日本語、思考過程を出さないことをsystem instructionで指定した。
+      一件の定性スモークであり、品質順位を確定する統計試験ではない。
+    </p>
+  </section>
+
+  <section id="gemma-mtp">
+    <h2>Gemma 4 E4BのMTP判定</h2>
+    <p>
+      Gemma 4は公式のdedicated draft modelを持つため、Q8_0 MTP sidecar、draft最大2 tokenでも
+      同じ日本語promptを試した。22／92 draft tokenだけが受理され、acceptanceは23.9%、
+      decodeはplainの50.14から46.95 tok/sへ低下し、totalは0.85秒から1.71秒へ伸びた。
+      このhostの会話profileではMTPを無効にする。将来runtime更新後に再測定する場合も、
+      tok/sではなく同一出力長のwall timeとacceptanceを判定値にする。
+    </p>
+  </section>
+
+  <section id="candidate-notes">
+    <h2>候補ごとの意味</h2>
+    <h3>Gemma 4 E4B IT</h3>
+    <p>
+      公式QAT Q4_0 GGUFを使用した。128K context、system role、function calling、thinking modeを
+      公式に備える。今回の<code>reasoning off</code>ではreasoning
+      tokenを出さず、短い会話に適した。 約5
+      GBなので常駐27Bや音声runtimeと共存させやすい。ただし日本語会話、事実質問、拒否、 tool
+      callを含むlocal corpusの合格まではproduction既定としない。
+    </p>
+    <h3>Qwen3.5-4B</h3>
+    <p>
+      小容量と60 tok/s級decodeは魅力である。公式benchmark上は小型ながら知識・reasoningが強く、
+      201言語を対象とする。会話専用の第一候補ではGemmaに譲るが、Qwen互換のchat／tool contract、
+      memory最小化、短い事実応答を重視する場合の比較対象に残す。
+    </p>
+    <h3>LFM2.5-8B-A1B</h3>
+    <p>
+      速度は最速で、日本語を公式対象に含む。一方、公式model card自身が全assistant turnに明示的な
+      chain of thoughtを含むreasoning modelと説明する。今回もreasoning off指定で抑止できず、
+      128／256 token上限をreasoningだけで使い切った。backchannel分類や専用templateとは別に、
+      自由会話の既定へは採用しない。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>導入前の受入試験</h2>
+    <ol>
+      <li>
+        Gemma 4 E4B、Qwen3.5-4B、現行Qwen3.8-27Bを、thinking off、同一sampling、同一token上限で
+        blind比較する。
+      </li>
+      <li>
+        日本語の雑談、共感、要約、言い換え、日常知識、曖昧質問、知らない固有名詞、multi-turn参照を
+        各10件以上含める。
+      </li>
+      <li>
+        第一指標をfirst content token、回答完了wall time、不要reasoning token、回答選好率とする。
+        raw tok/sだけで採用しない。
+      </li>
+      <li>
+        system／developer instruction、JSON Schema、tool call round-trip、SSE終了、16Kと64K
+        contextを fail-fastで検証する。
+      </li>
+      <li>
+        Gemmaが品質gateを通れば<code>llm.conversation</code>専用routeへstageし、coding、research、
+        長文reasoningはQwen3.8またはOrnithへ明示的に残す。
+      </li>
+    </ol>
+  </section>
+
+  <section id="saaa-profile">
+    <h2>SAAA試験profileへの反映</h2>
+    <p>
+      <code>saaa-conversation-gemma4</code>を、Gemma 4 E4B、Qwen3-ASR 1.7B、VOICEVOX、
+      multilingual-e5-smallの4 providerから成る明示profileとして追加する。SAAAはAgent Connection
+      APIで4 providerを一括claimし、connectionをrenewしている間はLARMがallocationを
+      保持する。Gemmaのllama-swap TTLは0とし、独立したidle evictionを行わず、connectionの
+      releaseまたは失効をprovider lifetimeの境界とする。
+    </p>
+    <p>
+      LLM providerは既存Qwenと同じ<code>230400</code>
+      tokenのKV容量とclaim上限を確保し、 output reserve 4096、safety margin
+      1976を別枠で宣言する。Gemma 4のnative contextを超える領域は
+      extrapolationとなるため、容量確保と長文品質保証は同一視しない。
+    </p>
+    <p>
+      LFM 2.5 1.2B backchannelはこのprofileから外す。モデルと明示routeは比較試験用に残すが、SAAAの
+      起動・renewでは選択しない。移行中に保存済み設定が旧IDを送ってもLFMを再起動しないよう、
+      <code>saaa-qwen38</code>は同じ4-provider構成への互換IDとする。
+    </p>
+    <table>
+      <caption>
+        SAAAがclaimするprovider
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">name</th>
+          <th scope="col">protocol</th>
+          <th scope="col">runtime</th>
+          <th scope="col">lifetime</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">llm</th>
+          <td><code>openai.chat-completions.v1</code></td>
+          <td>Gemma 4 E4B</td>
+          <td rowspan="4">SAAA Agent Connectionのleaseとrenewに従う</td>
+        </tr>
+        <tr>
+          <th scope="row">asr</th>
+          <td><code>openai.audio-transcriptions.v1</code></td>
+          <td>Qwen3-ASR 1.7B</td>
+        </tr>
+        <tr>
+          <th scope="row">tts</th>
+          <td><code>openai.audio-speech.v1</code></td>
+          <td>VOICEVOX Core</td>
+        </tr>
+        <tr>
+          <th scope="row">embedding</th>
+          <td><code>larm.embedding.v1</code></td>
+          <td>multilingual-e5-small</td>
+        </tr>
+      </tbody>
+    </table>
+    <h3>次候補 Ornith 1.5 の待機準備</h3>
+    <p>
+      次の比較候補として<code>saaa-conversation-ornith15</code>を用意する。公式Q5_K_Mを 225K
+      KV、reasoning offで固定し、ASR、TTS、embeddingはGemma profileと同じproviderを使う。
+      routeはfallbackを持たない<code>llm-saaa-ornith15</code>へ固定する。既定profileは変更せず、
+      SAAAがこのprofileを明示した場合だけ起動し、connectionのreleaseまたは失効で停止可能にする。
+    </p>
+  </section>
+
+  <section id="sources">
+    <h2>一次情報</h2>
+    <ul>
+      <li><a href="https://ai.google.dev/gemma/docs/core">Google: Gemma 4 model overview</a></li>
+      <li>
+        <a href="https://huggingface.co/google/gemma-4-E4B-it">Google: Gemma 4 E4B IT model card</a>
+      </li>
+      <li>
+        <a href="https://huggingface.co/google/gemma-4-E4B-it-qat-q4_0-gguf"
+          >Google: Gemma 4 E4B IT QAT Q4_0 GGUF</a
+        >
+      </li>
+      <li><a href="https://arxiv.org/abs/2607.02770">Gemma 4 Technical Report</a></li>
+      <li><a href="https://huggingface.co/Qwen/Qwen3.5-4B">Qwen3.5-4B model card</a></li>
+      <li><a href="https://huggingface.co/Qwen/Qwen3.5-9B">Qwen3.5-9B model card</a></li>
+      <li><a href="https://huggingface.co/LiquidAI/LFM2.5-8B-A1B">LFM2.5-8B-A1B model card</a></li>
+      <li><a href="./ornith-1.5-35b-selection.html">Ornith-1.5-35B-A3B 配布物選定</a></li>
+    </ul>
+  </section>
+</article>

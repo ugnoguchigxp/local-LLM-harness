@@ -18,6 +18,22 @@ routes:
       - runtime: qwen-worker-fast
         purpose: primary
 
+  llm-saaa-gemma4:
+    capabilities:
+      - llm.general
+    explicitOnly: true
+    candidates:
+      - runtime: gemma4-conversation
+        purpose: primary
+
+  llm-saaa-ornith15:
+    capabilities:
+      - llm.general
+    explicitOnly: true
+    candidates:
+      - runtime: ornith15-conversation
+        purpose: primary
+
   llm-agent-worker:
     capabilities:
       - llm.general

@@ -26,6 +26,7 @@ import type {
   InferenceAuditCaptureSession,
   InferenceAuditRecorder,
 } from "./inference-audit";
+import { AllocationLifecycleError } from "./allocation-lifecycle";
 
 export type GatewayFetchRequestInit = RequestInit & {
   /** Bun-specific socket idle timeout. LARM owns the whole-request deadline. */
@@ -356,6 +357,37 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       ...Object.fromEntries(new Headers(headers)),
     });
   };
+  const lifecycleFailure = async (): Promise<Response> => {
+    const reason = options.lifecycleSignal?.reason;
+    if (reason instanceof AllocationLifecycleError) {
+      return await failure(
+        reason.code,
+        reason.message,
+        reason.status,
+        reason.code,
+        {
+          "retry-after": String(reason.retryAfterSeconds),
+          "x-larm-preemption-reason": "higher-priority-foreground-task",
+        },
+      );
+    }
+    const invalidated = options.revalidate();
+    if (!invalidated.ok) {
+      outcome = "binding_invalidated";
+      await finalizeAudit();
+      finish();
+      return jsonResponse(invalidated.body, invalidated.status, {
+        "x-request-id": requestId,
+        "x-larm-boot-epoch": options.bootEpoch,
+      });
+    }
+    return await failure(
+      "allocation_inactive",
+      "allocation is no longer active",
+      409,
+      "binding_invalidated",
+    );
+  };
 
   if (clientSignal.aborted) {
     abortFromClient();
@@ -407,16 +439,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       return failure("request_cancelled", "generation attempt was cancelled", 409, "attempt_cancelled");
     }
     if (options.lifecycleSignal?.aborted) {
-      const invalidated = options.revalidate();
-      if (!invalidated.ok) {
-        outcome = "binding_invalidated";
-        finish();
-        return jsonResponse(invalidated.body, invalidated.status, {
-          "x-request-id": requestId,
-          "x-larm-boot-epoch": options.bootEpoch,
-        });
-      }
-      return failure("allocation_inactive", "allocation is no longer active", 409, "binding_invalidated");
+      return lifecycleFailure();
     }
     if (error instanceof ExecutionGateError) {
       const status = error.code === "draining"
@@ -506,7 +529,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       return failure("request_cancelled", "generation attempt was cancelled", 409, "attempt_cancelled");
     }
     if (options.lifecycleSignal?.aborted) {
-      return failure("allocation_inactive", "allocation is no longer active", 409, "binding_invalidated");
+      return lifecycleFailure();
     }
     if (error instanceof RequestBodyError) {
       return failure(error.code, error.message, error.status, error.code);
@@ -582,12 +605,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         return failure("request_cancelled", "generation attempt was cancelled", 409, "attempt_cancelled");
       }
       if (options.lifecycleSignal?.aborted) {
-        return failure(
-          "allocation_inactive",
-          "allocation is no longer active",
-          409,
-          "binding_invalidated",
-        );
+        return lifecycleFailure();
       }
       return failure(
         "inference_audit_unavailable",
@@ -648,17 +666,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       return failure("request_cancelled", "generation attempt was cancelled", 409, "attempt_cancelled");
     }
     if (options.lifecycleSignal?.aborted) {
-      const invalidated = options.revalidate();
-      if (!invalidated.ok) {
-        outcome = "binding_invalidated";
-        await finalizeAudit();
-        finish();
-        return jsonResponse(invalidated.body, invalidated.status, {
-          "x-request-id": requestId,
-          "x-larm-boot-epoch": options.bootEpoch,
-        });
-      }
-      return failure("allocation_inactive", "allocation is no longer active", 409, "binding_invalidated");
+      return lifecycleFailure();
     }
     if (uploadError) {
       return failure(

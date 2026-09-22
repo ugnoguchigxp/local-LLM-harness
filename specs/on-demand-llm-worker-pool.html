@@ -117,11 +117,14 @@ Worker slot (llama-swap :8083, one member at a time)
         Allocationがなければ、そのmemoryを回収可能として評価します。
       </li>
       <li>
-        active Allocationがあるpeerはpreemptしません。既定の明示Allocationは
+        active Allocationがあるpeerは通常preemptしません。ただし優先度3000以上のforeground
+        Allocationは、競合する低優先Allocationを<code>foreground_preempted</code>で停止します。
+        既定の明示Allocationは
         <code>resource_exhausted</code
         >で拒否し、動的Providerの<code>capacityPolicy: wait</code>要求は
         優先度付き待機列へ入れ、peer解放後に昇格します。
       </li>
+      <li>foreground解放後300秒は、同じswap groupの別Providerへの切替を保留します。</li>
       <li>一つのAllocationから同じswap groupの二つのRuntimeを同時要求した場合は拒否します。</li>
       <li>
         Runtime mutationまたはlifecycle transition中のpeerがある場合も新しいgroup

@@ -374,12 +374,6 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
         ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
       };
     }).sort((left, right) => left.name.localeCompare(right.name));
-    const embeddingProviders = providers.filter((provider) => provider.protocol === "larm.embedding.v1");
-    if (embeddingProviders.length > 0 && embeddingProviders.length !== providers.length) {
-      throw new AgentConnectionCatalogError(
-        `agent profile ${id} must not mix embedding and non-embedding providers`,
-      );
-    }
     const normalized = {
       canonicalProfile: id,
       description: profile.description,

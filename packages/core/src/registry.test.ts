@@ -255,6 +255,7 @@ test("production swap group matches llama-swap model membership", () => {
     }>;
   };
   const group = configured.groups["qwen-worker-slot"];
+  const conversationGroup = configured.groups["conversation-llm-slot"];
   const decisionGroup = configured.groups["qwen-decision-slot"];
   const backchannelGroup = configured.groups["backchannel-llm-slot"];
   const expected = registry.runtimes
@@ -263,6 +264,12 @@ test("production swap group matches llama-swap model membership", () => {
     .sort();
   expect(group).toEqual(expect.objectContaining({ swap: true, exclusive: false }));
   expect([...group!.members].sort()).toEqual(expected);
+  const expectedConversation = registry.runtimes
+    .filter((runtime) => runtime.policy.swapGroup === "conversation-llm-slot")
+    .map((runtime) => runtime.backend === "llama-swap" ? runtime.deployment.modelId : runtime.id)
+    .sort();
+  expect(conversationGroup).toEqual(expect.objectContaining({ swap: true, exclusive: false }));
+  expect([...conversationGroup!.members].sort()).toEqual(expectedConversation);
   expect(decisionGroup).toEqual({
     swap: false,
     exclusive: false,

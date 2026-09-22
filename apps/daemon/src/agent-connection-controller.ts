@@ -346,8 +346,10 @@ export class AgentConnectionController {
       }
       return error("connection_inactive", `connection ${id} is ${found.status}`, 409);
     }
-    const embedding = found.profile.providers[0]?.protocol === "larm.embedding.v1";
-    const expectedFormat = embedding ? "larm-embedding-provider-v1" : "openai-provider-v1";
+    const embeddingOnly = found.profile.providers.every(
+      (provider) => provider.protocol === "larm.embedding.v1",
+    );
+    const expectedFormat = embeddingOnly ? "larm-embedding-provider-v1" : "openai-provider-v1";
     if (format !== expectedFormat) {
       return error(
         "claim_format_mismatch",
@@ -363,13 +365,13 @@ export class AgentConnectionController {
     const scheme: "http" | "https" = base.protocol === "https:" ? "https" : "http";
     const port = base.port ? Number(base.port) : scheme === "https" ? 443 : 80;
     const health = (current.body as AgentConnectionHealth).providers;
-    if (
-      embedding
-      && (
-        health.some((provider) => !provider.capacity)
-        || found.profile.providers.some((provider) => !provider.embeddingSpace)
-      )
-    ) {
+    const embeddingUnavailable = found.profile.providers
+      .filter((provider) => provider.protocol === "larm.embedding.v1")
+      .some((provider) =>
+        !provider.embeddingSpace
+        || !health.find((item) => item.name === provider.name)?.capacity
+      );
+    if (embeddingUnavailable) {
       return error("provider_capacity_unavailable", "embedding provider capacity is unavailable", 503);
     }
     const providers = found.profile.providers.map((provider) => {

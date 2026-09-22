@@ -94,6 +94,24 @@ runtimeReleases:
     healthPath: /health
     default: true
 
+  gemma4-conversation-current:
+    runtime: gemma4-conversation
+    artifacts:
+      - gemma4-e4b-it-qat-q4-0
+    providerConfigRevision: llama-swap-gemma4-e4b-qat-q4-0-conversation-225k-plain-v2
+    estimatedMemoryGB: 20
+    healthPath: /health
+    default: true
+
+  ornith15-conversation-current:
+    runtime: ornith15-conversation
+    artifacts:
+      - ornith15-35b-quality
+    providerConfigRevision: llama-swap-ornith15-35b-official-q5-conversation-225k-reasoning-off-v2
+    estimatedMemoryGB: 48
+    healthPath: /health
+    default: true
+
 
   qwen36-35b-current:
     runtime: qwen36-35b

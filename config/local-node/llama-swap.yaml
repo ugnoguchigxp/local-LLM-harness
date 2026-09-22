@@ -276,6 +276,83 @@ models:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
 
+  gemma4-conversation:
+    # The SAAA Agent Connection owns this provider's lifetime. Keep llama-swap
+    # from applying an independent idle eviction while SAAA renews the lease;
+    # LARM unloads the provider when the connection is released or expires.
+    ttl: 0
+    cmd: >
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
+      -m /srv/ai/models/gemma4-e4b-it-gguf/gemma-4-E4B_q4_0-it.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --flash-attn on
+      --ctx-size 230400
+      --parallel 1
+      --batch-size 2048
+      --ubatch-size 512
+      --threads 16
+      --poll 100
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning off
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --jinja
+      --context-shift
+      --cache-reuse 256
+      --metrics
+      --no-webui
+    aliases:
+      - gemma4-e4b
+      - conversation-default
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
+  ornith15-conversation:
+    # Candidate only: this model starts exclusively through the explicit SAAA
+    # Agent Connection and remains loaded while that connection is renewed.
+    ttl: 0
+    cmd: >
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
+      -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-Q5_K_M.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --flash-attn on
+      --ctx-size 230400
+      --parallel 1
+      --batch-size 2048
+      --ubatch-size 2048
+      --threads 16
+      --poll 100
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      --no-mmap
+      --cont-batching
+      --kv-unified
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning off
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --jinja
+      --context-shift
+      --cache-reuse 256
+      --metrics
+      --no-webui
+    aliases:
+      - ornith-1.5-35b-conversation
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
   qwen36-35b:
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
@@ -422,6 +499,13 @@ models:
       - ROCR_VISIBLE_DEVICES=-1
 
 groups:
+  conversation-llm-slot:
+    swap: true
+    exclusive: false
+    members:
+      - gemma4-conversation
+      - ornith15-conversation
+
   qwen-decision-slot:
     swap: false
     exclusive: false

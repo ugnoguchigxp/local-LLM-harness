@@ -792,7 +792,7 @@ Inference runtimes
             <code>qwen-nightworker</code
             >、<code>qwen-agent-worker</code>、優先度付きwait queue
           </td>
-          <td>active requestはnon-preemptive。SAAAがHTTP requestをcancelする必要がある</td>
+          <td>SAAA優先度3000は低優先active requestを専用理由付きでpreemptする</td>
         </tr>
         <tr>
           <th scope="row">Macからの稼働判定</th>
@@ -812,7 +812,7 @@ Inference runtimes
         <tr>
           <th scope="row">中断</th>
           <td>Clientの<code>AbortSignal</code>とHTTP切断をupstreamへ伝播</td>
-          <td>別consumerの実行をLARMが強制preemptする機能ではない</td>
+          <td>SAAA foreground要求に限りLARMが低優先Allocationを強制preemptする</td>
         </tr>
         <tr>
           <th scope="row">model lifecycle</th>

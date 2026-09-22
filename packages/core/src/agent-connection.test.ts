@@ -34,6 +34,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "deep-reasoning-35b",
     "nightworker-background",
     "saaa-backchannel-default",
+    "saaa-conversation-gemma4",
+    "saaa-conversation-ornith15",
     "saaa-qwen38",
     "tts-default",
     "tts-expressive",
@@ -169,13 +171,14 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "llm-inference",
       }],
     });
-  expect(catalog.profiles.find((profile) => profile.id === "saaa-qwen38"))
-    .toMatchObject({
-      canonicalProfile: "saaa-qwen38",
-      selectionPolicy: "explicit-only",
-      deprecated: false,
-      schedulingPriority: 3000,
-      providers: [
+  for (const profileId of ["saaa-conversation-gemma4", "saaa-qwen38"]) {
+    expect(catalog.profiles.find((profile) => profile.id === profileId))
+      .toMatchObject({
+        canonicalProfile: profileId,
+        selectionPolicy: "explicit-only",
+        deprecated: false,
+        schedulingPriority: 3000,
+        providers: [
         {
           name: "asr",
           capability: "speech.stt",
@@ -187,27 +190,23 @@ test("production agent profiles compile to strict protocol-aware provider contra
           readiness: "stt-transcription",
         },
         {
-          name: "backchannel",
-          capability: "llm.backchannel.classifier",
-          supportedCapabilities: ["llm.backchannel.classifier"],
-          route: "llm-backchannel-default",
-          protocol: "openai.chat-completions.v1",
-          publicModel: "backchannel-default",
+          name: "embedding",
+          capability: "embedding.multilingual-e5-small",
+          supportedCapabilities: ["embedding.multilingual-e5-small"],
+          route: "embedding-multilingual-e5-small",
+          protocol: "larm.embedding.v1",
+          publicModel: "multilingual-e5-small",
           publishModel: false,
-          readiness: "llm-inference",
-          contextWindow: {
-            maxTokens: 65_536,
-            outputReserveTokens: 512,
-            safetyMarginTokens: 1_024,
-          },
+          readiness: "embedding",
+          embeddingSpace: { dimension: 384 },
         },
         {
           name: "llm",
-          capability: "llm.coding",
-          supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
-          route: "llm-saaa-qwen38",
+          capability: "llm.general",
+          supportedCapabilities: ["llm.general"],
+          route: "llm-saaa-gemma4",
           protocol: "openai.chat-completions.v1",
-          publicModel: "qwen3.8",
+          publicModel: "gemma4-e4b",
           readiness: "llm-inference",
           contextWindow: {
             maxTokens: 230_400,
@@ -225,14 +224,44 @@ test("production agent profiles compile to strict protocol-aware provider contra
           publishModel: false,
           readiness: "tts-speech",
         },
+        ],
+      });
+  }
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "gemma4-e4b"))
+    .toMatchObject({
+      capability: "llm.general",
+      route: "llm-saaa-gemma4",
+      schedulingPriority: 3000,
+      profileIds: ["saaa-conversation-gemma4", "saaa-qwen38"],
+    });
+  expect(catalog.profiles.find((profile) => profile.id === "saaa-conversation-ornith15"))
+    .toMatchObject({
+      canonicalProfile: "saaa-conversation-ornith15",
+      selectionPolicy: "explicit-only",
+      schedulingPriority: 3000,
+      providers: [
+        { name: "asr", route: "stt-qwen", protocol: "openai.audio-transcriptions.v1" },
+        { name: "embedding", route: "embedding-multilingual-e5-small", protocol: "larm.embedding.v1" },
+        {
+          name: "llm",
+          route: "llm-saaa-ornith15",
+          protocol: "openai.chat-completions.v1",
+          publicModel: "ornith-1.5-35b-conversation",
+          contextWindow: {
+            maxTokens: 230_400,
+            outputReserveTokens: 4_096,
+            safetyMarginTokens: 1_976,
+          },
+        },
+        { name: "tts", route: "tts-voicevox", protocol: "openai.audio-speech.v1" },
       ],
     });
-  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "qwen3.8"))
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "ornith-1.5-35b-conversation"))
     .toMatchObject({
-      capability: "llm.coding",
-      route: "llm-saaa-qwen38",
+      capability: "llm.general",
+      route: "llm-saaa-ornith15",
       schedulingPriority: 3000,
-      profileIds: ["saaa-qwen38"],
+      profileIds: ["saaa-conversation-ornith15"],
     });
   expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "decision-default"))
     .toMatchObject({

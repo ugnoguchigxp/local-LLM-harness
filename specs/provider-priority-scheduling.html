@@ -1,16 +1,16 @@
 <article lang="ja">
-  <h1>動的Provider優先度・非preemptive切替仕様</h1>
+  <h1>動的Provider優先度・foreground preemption仕様</h1>
 
   <p>
     SAAA、NightWorker、ContextStillが同じLARMの同一Runtimeまたはswap groupで競合する場合の、
-    Allocation待機とRuntime実行待機の順序を定義します。実行中の推論は中断せず、現在のAllocation
-    または実行枠が解放された境界で、待機中の最優先要求へ切り替えます。競合しないResident laneと
-    worker laneは直列化せず、従来どおり並行利用できます。
+    Allocation待機とRuntime実行待機の順序を定義します。SAAA相当のforeground要求は競合する
+    低優先Allocationをただちに停止してProviderを取得します。それ以外は解放境界で待機中の
+    最優先要求へ切り替えます。競合しないResident laneとworker laneは従来どおり並行利用できます。
   </p>
 
   <dl>
     <dt>更新日</dt>
-    <dd><time>2026-09-06</time></dd>
+    <dd><time>2026-09-21</time></dd>
     <dt>Repository状態</dt>
     <dd>Control Plane、Model Broker、Agent Connection、Execution Gate、local-node設定へ実装済み</dd>
     <dt>Live状態</dt>
@@ -89,7 +89,10 @@
         Allocationを<code>waiting</code>としてTTL内だけ保持します。
       </li>
       <li>
-        より高い優先要求が到着しても、<code>ready</code>または実行中の要求をpreemptしません。
+        優先度<code>3000</code>以上のforeground要求が到着した場合、同じRuntimeまたはswap
+        groupを
+        使用する低優先Allocationをただちに<code>released</code>へ遷移させます。低優先の待機要求も
+        foregroundのadmissionを妨げません。
       </li>
       <li>
         解放、失敗、期限切れの境界で待機列を再評価し、優先度降順、同値FIFOでadmissionを再実行します。
@@ -98,10 +101,29 @@
         選ばれたRuntimeがswap groupの別memberなら、既存のbackend ensureによりidle memberを停止して
         対象memberを起動し、readiness確認後に<code>ready</code>へ進めます。
       </li>
+      <li>
+        foreground Allocationの解放後300秒間は、そのRuntimeを同じswap groupの別Providerへ
+        切り替えません。同じRuntimeの再利用と同等以上の優先度要求は待たせません。
+      </li>
     </ol>
     <p>
       資源不足、telemetry不明、mutation中など、使用中Allocationの解放だけでは解消しない拒否理由を
       無条件に待機へ変換しません。待機Allocationもactive上限、TTL、daemon drainの対象です。
+    </p>
+  </section>
+
+  <section id="preemption-error">
+    <h2>ContextStillへ返す停止理由</h2>
+    <p>
+      foreground preemptionで停止した非streaming Gateway要求はHTTP
+      <code>409</code>と
+      <code>foreground_preempted</code>を返します。本文のmessageは
+      <code>request stopped because a higher-priority foreground task requires the provider</code>です。
+      応答には<code>Retry-After: 1</code>と
+      <code>X-LARM-Preemption-Reason: higher-priority-foreground-task</code>を付けます。
+      Allocation取得・resolveでも同じerrorを保持し、監査event
+      <code>allocation_preempted</code
+      >のreasonは<code>higher_priority_foreground_task</code>です。
     </p>
   </section>
 
@@ -136,8 +158,12 @@
   <section id="acceptance">
     <h2>受入条件</h2>
     <ol>
-      <li>ContextStill相当のactive Allocationへ高優先要求を追加してもactive状態を維持する。</li>
-      <li>解放後、SAAA、NightWorker、ContextStillの順に待機Allocationが昇格する。</li>
+      <li>
+        ContextStill相当のactive
+        AllocationへSAAA要求を追加すると、専用理由を残してただちに停止する。
+      </li>
+      <li>SAAAは低優先のactiveおよびwaiting Allocationを追い越して昇格する。</li>
+      <li>SAAA解放後300秒は別Providerへ切り替えず、経過後に優先度順で待機Allocationを昇格する。</li>
       <li>同じRuntimeの実行待機でも同じ優先順となり、同値はFIFOになる。</li>
       <li>waiting中のcancel、TTL満了、daemon drainでRuntimeを新規起動しない。</li>
       <li>HTTP JSON、SSE、ASR、TTS、Connection credential失効の既存contract testが回帰しない。</li>
