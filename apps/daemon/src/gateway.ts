@@ -1,4 +1,5 @@
 import {
+  audioVoiceDiscoverySchema,
   inspectEmbeddingResponse,
   inspectOpenAiChatCompletionJson,
   inspectOpenAiTranscriptionJson,
@@ -103,6 +104,7 @@ export type GatewayProxyOptions = {
   validateChatResponse?: boolean;
   validateTranscriptionResponse?: boolean;
   validateSpeechResponse?: boolean;
+  validateVoiceCatalogResponse?: boolean;
   validateEmbeddingResponse?: {
     request: EmbeddingRequest;
     space: EmbeddingSpace;
@@ -785,6 +787,52 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   if (options.responseFormat === "sse" && upstream.ok) {
     responseHeaders.set("cache-control", "no-cache, no-transform");
     responseHeaders.set("x-accel-buffering", "no");
+  }
+  if (
+    options.validateVoiceCatalogResponse
+    && options.protocol === "openai.audio-speech.v1"
+    && upstream.ok
+  ) {
+    if (
+      upstream.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
+      !== "application/json"
+    ) {
+      await upstream.body?.cancel(new Error("upstream did not return JSON")).catch(() => undefined);
+      return failure(
+        "upstream_response_format_mismatch",
+        "upstream did not return application/json for voice discovery",
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    let responseBody: Uint8Array;
+    let parsed: unknown;
+    try {
+      responseBody = await readBodyLimited(
+        upstream as unknown as Request,
+        options.maxResponseBytes ?? 4 * 1024 * 1024,
+        abort.signal,
+      );
+      parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody)) as unknown;
+    } catch {
+      return failure(
+        "upstream_response_invalid",
+        "upstream returned an invalid or oversized voice catalog",
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    if (!audioVoiceDiscoverySchema.safeParse(parsed).success) {
+      return failure(
+        "upstream_response_invalid",
+        "upstream voice catalog does not match the public contract",
+        502,
+        "upstream_protocol_error",
+      );
+    }
+    await finalizeAudit();
+    finish();
+    return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
   }
   if (
     options.validateEmbeddingResponse

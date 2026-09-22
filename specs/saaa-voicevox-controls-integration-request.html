@@ -1,0 +1,243 @@
+<article lang="ja">
+  <h1>SAAA実装依頼：VOICEVOX話者・スタイル・韻律制御を製品音声設定へ接続する</h1>
+
+  <p>
+    以下は、SAAA repositoryでそのまま実装担当へ渡すための作業プロンプトです。LARMに実装済みの
+    VOICEVOX voice catalogと話者・スタイル・話速・ピッチ・抑揚制御を、SAAAの既存HTTP TTSおよび
+    LARM音声Sessionの両経路へ安全に接続してください。
+  </p>
+
+  <dl>
+    <dt>作成日</dt>
+    <dd><time>2026-09-22</time></dd>
+    <dt>SAAA調査基準</dt>
+    <dd>
+      <code>main@7d5d0df</code
+      >。着手時は必ず最新revisionと作業ツリーを再確認すること
+    </dd>
+    <dt>LARM正本</dt>
+    <dd>
+      <a href="./api.html">LARM v1 API仕様</a>、
+      <a href="./voicevox-control-api-implementation-plan.html"
+        >VOICEVOX話者・スタイル・韻律制御API 実装計画</a
+      >
+    </dd>
+  </dl>
+
+  <section id="prompt">
+    <h2>実装担当へ渡すプロンプト</h2>
+
+    <p>
+      SAAAの最新mainを対象に、LARMの<code>voicevox-core</code>が提供する話者・スタイル・韻律制御を
+      製品音声設定へ実装してください。調査、実装、テスト、コードレビュー、ドキュメント更新まで行い、
+      改善点が残らない状態でcommit可能な差分にしてください。LARM側のsource、local-node配備、root
+      service、モデルassetは変更しないでください。
+    </p>
+
+    <h3>作業開始時の確認</h3>
+    <ol>
+      <li>
+        SAAAの作業ツリー、現在branch、最新revision、repository内の指示ファイルを確認してください。
+        既存の未commit変更があれば削除、reset、stash、上書きをせず、その変更と共存してください。
+      </li>
+      <li>
+        ファイル名は調査時点の入口として扱い、最新の構成を優先してください。少なくとも
+        <code>src-tauri/src/models/provider_settings.rs</code>、
+        <code>src-tauri/src/persistence/settings/provider_validation.rs</code>、
+        <code>src-tauri/src/voice/cloud_tts.rs</code>、
+        <code>src-tauri/src/providers/larm_voice/audio.rs</code>、
+        <code>src/lib/settingsTypes.ts</code>、<code>src/lib/providerSchemas.ts</code>、
+        <code>src/features/settings/ProviderCard.tsx</code
+        >、Harness音声設定、HTTP音声テストを確認してください。
+      </li>
+      <li>
+        SAAAの既存の句単位合成、順序保証、再生、cancel、barge-in、遅延turn拒否、credential保管を維持し、
+        今回の設定追加を理由に別の音声pipelineを作らないでください。
+      </li>
+    </ol>
+
+    <h3>LARM API contract</h3>
+    <p>話者一覧は通常のTTSと同じbase URL・Bearer credentialを使って取得します。</p>
+    <pre><code>GET /v1/audio/voices?model=voicevox-core
+Authorization: Bearer &lt;token&gt;</code></pre>
+    <p>
+      rich
+      catalogの各voiceには<code>id</code>、<code>display_name</code>、
+      <code>voice_presentation</code
+      >、<code>default_style</code>、<code>styles</code>、
+      <code>capabilities</code
+      >、<code>credit</code>が含まれ、response全体に
+      <code>default_voice</code
+      >があります。既存互換の簡易voice一覧が返るProviderも壊さないでください。
+      JSON本文には上限を設け、redirectを追跡せず、credentialを別originへ転送しないでください。
+    </p>
+    <pre><code>POST /v1/audio/speech
+Authorization: Bearer &lt;token&gt;
+Content-Type: application/json
+
+{
+  "model": "voicevox-core",
+  "input": "本日の予定をご案内します。",
+  "voice": "Kasukabe_Tsumugi",
+  "style": "normal",
+  "response_format": "wav",
+  "speed": 1.1,
+  "pitch_scale": 0.03,
+  "intonation_scale": 1.15
+}</code></pre>
+    <table>
+      <caption>
+        VOICEVOX制御値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">field</th>
+          <th scope="col">範囲</th>
+          <th scope="col">省略時</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>voice</code></th>
+          <td>catalogに存在する具体的なvoice ID</td>
+          <td><code>default_voice</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>style</code></th>
+          <td>選択voiceに属するstyle ID</td>
+          <td>voiceの<code>default_style</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>speed</code></th>
+          <td>0.5以上2.0以下</td>
+          <td>1.0</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>pitch_scale</code></th>
+          <td>-0.15以上0.15以下</td>
+          <td>0.0</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>intonation_scale</code></th>
+          <td>0.0以上2.0以下</td>
+          <td>1.0</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>必須実装</h3>
+    <ol>
+      <li>
+        RustとTypeScriptのTTS設定contractへ、optionalなstyle、speed、pitch scale、intonation scaleを
+        型付きで追加してください。永続化JSONは既存設定をそのまま読める加算的変更とし、未設定値を保存時に
+        勝手に具体値へ書き換えないでください。finite
+        number、上限・下限、文字列の空白・control文字をRustと
+        TypeScriptの両境界で同じように検証してください。
+      </li>
+      <li>
+        通常の<code>cloud-tts</code>経路と、LARM音声Sessionから組み立てる一時TTS設定の両方に値を伝播し、
+        <code>cloud_tts.rs</code>のspeech requestでsnake_case wire
+        fieldとして送信してください。未設定fieldは
+        JSONから省略し、VOICEVOX以外のmodelへVOICEVOX専用fieldを暗黙に送らないでください。
+      </li>
+      <li>
+        <code>voicevox-core</code>ではvoice
+        catalogを取得し、設定画面で表示名付きの具体的なvoiceと、その
+        voiceに属するstyleを選択できるようにしてください。catalog取得失敗時も保存済みIDを失わず、手入力または
+        再試行可能な状態を維持してください。catalogからvoiceが消えた場合は無言で別話者へ切り替えず、利用者に
+        不整合を示したうえで<code>default_voice</code>へ戻す操作を提供してください。
+      </li>
+      <li>
+        <code>voice_presentation</code
+        >は表示補助だけに使ってください。「男性」「女性」から非決定的に話者を
+        選ばず、保存・送信する値は具体的なvoice
+        IDにしてください。ピッチ変更を話者切替の代用にしないでください。
+      </li>
+      <li>
+        speed、pitch、intonationはcatalogのcapability範囲をUIへ反映し、数値入力と操作結果を確認できる表示を
+        用意してください。catalog未取得時もLARMの固定範囲を越える値を保存できないようにしてください。
+        styleを変えたときにvoiceを変えず、voiceを変えたときは新voiceのdefault
+        styleへ明示的に更新してください。
+      </li>
+      <li>
+        接続確認では保存済みのvoice・style・韻律値を使った短い合成を行ってください。400の
+        <code>invalid_voice_style</code>、<code>invalid_request</code>、
+        <code>unsupported_parameter</code
+        >を設定不整合として提示し、401、429、502、timeout、cancelと区別して
+        ください。音声本文、Bearer、会話本文をlog、metric label、設定JSONへ記録しないでください。
+      </li>
+      <li>
+        日本語・英語の設定ラベル、説明、validation
+        error、アクセシビリティを更新してください。既存のWAV／PCM、 24 kHz mono s16le、incremental
+        decode、artifact cleanup、再生停止動作を回帰させないでください。
+      </li>
+    </ol>
+
+    <h3>テスト要件</h3>
+    <ul>
+      <li>旧設定JSONが変更なしで読み込め、既定のvoice-only requestが従来どおり生成されること。</li>
+      <li>
+        4つの新fieldが通常HTTP TTSとLARM Session TTSの両方で正確にwire
+        requestへ入り、未設定時は省略されること。
+      </li>
+      <li>
+        speed 0.5／2.0、pitch -0.15／0.15、intonation
+        0.0／2.0を受理し、境界外、NaN、infinity、型違いを拒否すること。
+      </li>
+      <li>
+        catalogのdefault、voice/style従属、追加field、簡易互換response、malformed
+        JSON、過大response、401、timeoutを fixtureで検証すること。
+      </li>
+      <li>
+        voice変更時のstyle reset、catalog消失時の保存値維持、feminine／masculine表示と具体的voice
+        ID保存をUI testで 検証すること。
+      </li>
+      <li>
+        cancelとbarge-in後に前turnの音声が再生されず、設定追加後も句の順序とlate-output
+        fenceが維持されること。
+      </li>
+      <li>
+        repositoryの標準checkをすべて通すこと。LARM実機が未配備でもunit／fixture実装を止めず、live試験だけを明確に
+        分離すること。
+      </li>
+    </ul>
+
+    <h3>実機受入</h3>
+    <p>
+      LARMの対応releaseがlocal-nodeへ配備された後にだけ、operator明示のlive
+      testを実行してください。catalogから
+      2話者以上と複数styleを選び、default、speed変更、pitch変更、intonation変更のWAV再生を確認します。
+      追加VVMが未stagingなら、catalogに存在しない男性系voiceを合格条件に含めません。実機試験で得た音声、token、
+      生responseはrepositoryへcommitせず、結果にはrevision、選択voice/style、成功可否、latencyだけを残してください。
+    </p>
+
+    <h3>完了報告</h3>
+    <p>
+      最終報告には、変更した設定contract、catalog取得とfallback、request
+      mapping、UI挙動、migration、実行したtestと 結果、未実施のlive
+      gate、LARM側へ必要な追加事項を含めてください。自動test成功とlocal-node実機受入を混同せず、
+      未配備または追加VVM未同意を「実装失敗」とも「本番完了」とも扱わないでください。
+    </p>
+  </section>
+
+  <section id="known-current-state">
+    <h2>調査時点のSAAA差分</h2>
+    <ul>
+      <li>
+        <code>CloudTtsProviderSettings</code>はmodel、voice、response
+        format、authenticationを保持しますが、 style、speed、pitch、intonationをまだ保持しません。
+      </li>
+      <li>
+        <code>cloud_tts.rs</code>はspeech
+        requestへmodel、input、voice、response_formatだけを送信します。
+      </li>
+      <li>
+        Harness設定は<code>ttsVoice</code>だけを保持し、LARM音声Sessionの一時TTS設定もvoiceだけを引き継ぎます。
+      </li>
+      <li>
+        既存HTTP音声pipelineにはbounded response、WAV／PCM検証、incremental decode、cancel、native
+        playbackの test基盤があります。これを拡張し、別実装へ置換しません。
+      </li>
+    </ul>
+  </section>
+</article>

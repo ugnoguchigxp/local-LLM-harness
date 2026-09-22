@@ -1,0 +1,440 @@
+<article lang="ja">
+  <h1>VOICEVOX話者・スタイル・韻律制御API 実装計画</h1>
+
+  <p>
+    LARMの<code>POST /v1/audio/speech</code>に、VOICEVOXの話者、スタイル、話速、
+    ピッチ、抑揚を明示的に制御するcontractを追加する計画です。既存のOpenAI互換requestと
+    <code>Kasukabe_Tsumugi</code
+    >等のvoice指定を維持しつつ、複数VVMから男性系・女性系を含む
+    具体的な話者を選べるcatalogへ拡張します。
+  </p>
+
+  <dl>
+    <dt>計画日</dt>
+    <dd><time>2026-09-22</time></dd>
+    <dt>状態</dt>
+    <dd>
+      WP1〜WP3と複数VVM source境界を実装。男性系4.vvmはidentity固定済み、operator同意・staging・
+      local-node配備待ち
+    </dd>
+    <dt>対象endpoint</dt>
+    <dd>
+      <code>POST /v1/audio/speech</code>、<code>GET /v1/audio/voices</code>
+    </dd>
+    <dt>対象Provider</dt>
+    <dd><code>voicevox-core</code></dd>
+  </dl>
+
+  <aside>
+    <p>
+      <strong>固定判断:</strong> 話者の男性系・女性系の切替はピッチ加工ではなく、catalogから具体的な
+      <code>voice</code
+      >を選択して行います。<code>pitch_scale</code>は選んだ話者の範囲内で声の高さを
+      微調整する機能です。表示上の分類は<code>voice_presentation</code>
+      metadataとし、生成requestで 「男性」「女性」だけを指定して話者を非決定的に選ばせません。
+    </p>
+  </aside>
+
+  <section id="implementation-record">
+    <h2>Source実装記録</h2>
+    <ul>
+      <li>
+        Core schema、OpenAPI、typed clientへstyle、speed、pitch、intonationとvoice
+        catalogを追加しました。
+      </li>
+      <li>
+        Gatewayは通常Bearer、Allocation、claimのspeech bodyを同じschemaで検証し、VOICEVOX固有fieldを
+        他modelへ送った場合は<code>unsupported_parameter</code>で拒否します。
+      </li>
+      <li>
+        Adapterはロード済みVVM metadataからtalk styleを列挙し、従来voice名・数値style IDとの互換性を
+        維持してAudioQueryへ3種の韻律値を反映します。
+      </li>
+      <li>
+        必須VVMと任意VVMを分離し、任意assetが未stagingなら既存構成で起動し、存在する場合はidentity
+        driftをfail closedにする検証へ拡張しました。
+      </li>
+      <li>
+        男性系話者を含む公式<code>4.vvm</code>のversion、配布URL、bytes、SHA-256、termsをsource
+        lockへ 固定しました。asset本体は利用規約へのoperator同意前に取得しません。
+      </li>
+      <li>
+        実装後reviewで、voice catalogのdefault・重複・制御範囲整合、Gatewayのcatalog response検証、
+        明示AllocationのProvider別field拒否、VVM
+        symlink拒否、任意assetの起動前identity検証を追加しました。
+        systemdは外部checkout内のcopyではなく、選択中LARM releaseのadapter sourceを直接実行します。
+      </li>
+    </ul>
+  </section>
+
+  <section id="baseline">
+    <h2>着手時点の現在地</h2>
+    <ul>
+      <li>
+        公開speech
+        schemaは<code>model</code>、<code>input</code>、<code>voice</code>、
+        <code>response_format</code
+        >、<code>speed</code>を受け付けます。
+      </li>
+      <li>
+        VOICEVOX
+        adapterは<code>speed</code>を<code>AudioQuery.speed_scale</code>へ反映し、
+        WAVまたは24 kHz mono s16le PCMを返します。
+      </li>
+      <li>
+        現在の<code>voice</code>は話者名とVOICEVOXの<code>style_id</code>を兼ねています。
+        <code>style</code
+        >、<code>pitch_scale</code>、<code>intonation_scale</code>は公開していません。
+      </li>
+      <li>
+        現行<code>0.vvm</code>で広告するのは四国めたん、ずんだもん、春日部つむぎ、雨晴はうの
+        4 voiceです。男性系話者へ切り替えるには、利用条件と配布identityを固定した追加VVMが必要です。
+      </li>
+      <li>
+        <code>GET /v1/audio/voices</code
+        >は<code>name</code>、<code>style_id</code>、
+        <code>credit</code>だけを返します。
+      </li>
+    </ul>
+  </section>
+
+  <section id="scope">
+    <h2>採用範囲</h2>
+    <table>
+      <caption>
+        今回実装する高優先度の制御
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">field</th>
+          <th scope="col">意味</th>
+          <th scope="col">default</th>
+          <th scope="col">公開範囲</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>voice</code></th>
+          <td>安定した話者ID</td>
+          <td><code>Kasukabe_Tsumugi</code></td>
+          <td>catalogに存在するID。従来名と数値style IDも互換入力として維持</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>style</code></th>
+          <td>同一話者内のノーマル、ささやき等</td>
+          <td>話者catalogの<code>default_style</code></td>
+          <td>選択した話者に属するstyle IDまたは安定名</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>speed</code></th>
+          <td>話速倍率</td>
+          <td><code>1.0</code></td>
+          <td>
+            <code>0.5</code
+            >以上<code>2.0</code>以下
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>pitch_scale</code></th>
+          <td>VOICEVOX nativeの声高補正</td>
+          <td><code>0.0</code></td>
+          <td>
+            <code>-0.15</code
+            >以上<code>0.15</code>以下
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>intonation_scale</code></th>
+          <td>抑揚倍率</td>
+          <td><code>1.0</code></td>
+          <td>
+            <code>0.0</code
+            >以上<code>2.0</code>以下
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <code>volume_scale</code>、前後無音、sample rate、stereo、辞書、accent
+      phrase編集、previewは
+      今回の実装範囲に含めません。今回のcontractと計測が安定した後の別変更とします。
+    </p>
+  </section>
+
+  <section id="contract">
+    <h2>Request contract</h2>
+    <pre><code>POST /v1/audio/speech
+Authorization: Bearer &lt;token&gt;
+Content-Type: application/json
+
+{
+  "model": "voicevox-core",
+  "input": "本日の予定をご案内します。",
+  "voice": "Kasukabe_Tsumugi",
+  "style": "normal",
+  "response_format": "wav",
+  "speed": 1.1,
+  "pitch_scale": 0.03,
+  "intonation_scale": 1.15
+}</code></pre>
+
+    <h3>解決規則</h3>
+    <ol>
+      <li>
+        <code>voice</code>をcatalogの安定した話者IDとして解決します。
+      </li>
+      <li>
+        <code>style</code
+        >があれば、その話者に属するstyleへ解決します。省略時は
+        <code>default_style</code>を使用します。
+      </li>
+      <li>
+        従来の<code>voice: "Kasukabe_Tsumugi"</code>は同じ音声へ解決します。数値文字列による
+        <code>style_id</code
+        >指定も互換入力として受理しますが、新規clientには広告しません。
+      </li>
+      <li>
+        <code>voice</code
+        >と<code>style</code>の組合せがcatalogにない場合は、合成を開始せずHTTP
+        400 <code>invalid_voice_style</code>を返します。
+      </li>
+      <li>
+        数値fieldはfinite numberだけを受理します。NaN、infinity、文字列への暗黙変換、範囲外値は HTTP
+        400 <code>invalid_request</code>とし、clampしません。
+      </li>
+      <li>
+        VOICEVOX以外のmodelへ<code>style</code>、<code>pitch_scale</code>、
+        <code>intonation_scale</code>を送った場合、黙って無視せずHTTP 400
+        <code>unsupported_parameter</code>とします。
+      </li>
+    </ol>
+
+    <h3>合成への対応付け</h3>
+    <pre><code>query = synthesizer.create_audio_query(input, resolved_style_id)
+query.speed_scale = speed
+query.pitch_scale = pitch_scale
+query.intonation_scale = intonation_scale
+audio = synthesizer.synthesis(query, resolved_style_id)</code></pre>
+    <p>
+      既存のWAV／PCM response、busy時の429、非日本語・native streaming・instructの拒否、
+      <code>X-VOICEVOX-Credit</code
+      >は変更しません。creditは解決済み話者に対応する正式表記を返します。
+    </p>
+  </section>
+
+  <section id="catalog">
+    <h2>Voice catalog contract</h2>
+    <p>
+      <code>GET /v1/audio/voices?model=voicevox-core</code>を加算的に拡張します。既存client向けの
+      <code>name</code
+      >、<code>style_id</code>、<code>credit</code>を残し、新規clientは
+      <code>id</code
+      >、<code>styles</code>、<code>default_style</code>、<code>capabilities</code>を使用します。
+    </p>
+    <pre><code>{
+  "voices": [
+    {
+      "id": "Kasukabe_Tsumugi",
+      "name": "Kasukabe_Tsumugi",
+      "display_name": "春日部つむぎ",
+      "speaker_uuid": "...",
+      "voice_presentation": "feminine",
+      "language": "ja",
+      "default_style": "normal",
+      "style_id": 8,
+      "styles": [
+        { "id": "normal", "display_name": "ノーマル", "style_id": 8 }
+      ],
+      "capabilities": {
+        "speed": { "minimum": 0.5, "maximum": 2.0, "default": 1.0 },
+        "pitch_scale": { "minimum": -0.15, "maximum": 0.15, "default": 0.0 },
+        "intonation_scale": { "minimum": 0.0, "maximum": 2.0, "default": 1.0 }
+      },
+      "credit": "VOICEVOX:春日部つむぎ"
+    }
+  ]
+}</code></pre>
+    <ul>
+      <li>
+        <code>voice_presentation</code
+        >は<code>masculine</code>、<code>feminine</code>、
+        <code>androgynous</code
+        >、<code>unspecified</code>のいずれかとし、LARMが音声から推定しません。
+        配布元metadataで確定できない場合は<code>unspecified</code>です。
+      </li>
+      <li>
+        UIはpresentationで候補を絞れますが、speech requestには最終的に具体的な
+        <code>voice</code
+        >と必要なら<code>style</code>を送ります。
+      </li>
+      <li>
+        voice、style、credit、VVM identityの静的catalogをsource管理し、startup時に実際にロードした
+        model metadataと照合します。不一致ならそのvoiceを広告せず、service readinessを失敗させます。
+      </li>
+    </ul>
+  </section>
+
+  <section id="assets">
+    <h2>男性系・女性系voice asset</h2>
+    <p>
+      repositoryへVVM
+      binaryをcommitしません。追加VVMは既存<code>voicevox-vvm</code>と同様に、
+      配布URL、release version、bytes、SHA-256、terms URL、operator同意要件を
+      <code>deploy/local-node/sources.lock.yaml</code>へ固定します。
+    </p>
+    <ol>
+      <li>公式配布物から、少なくとも男性系1話者と女性系1話者を含む候補VVMを選定します。</li>
+      <li>各話者・styleの利用条件、credit表記、商用利用等の制約を確認します。</li>
+      <li>source lockと外部asset検証へ各VVMのidentityを追加します。</li>
+      <li>
+        systemdは単一<code>VVM_PATH</code>ではなく検証済みVVM
+        directoryまたは明示manifestを渡し、 adapterが起動時に全対象をロードします。
+      </li>
+      <li>
+        追加後もCPU memory、startup時間、短文TTFA、既存話者のRTFを測定し、resident LLM・ASRとの
+        共存SLOを満たすことを確認します。
+      </li>
+    </ol>
+  </section>
+
+  <section id="work-packages">
+    <h2>実装順序</h2>
+    <table>
+      <caption>
+        Work packageと完了条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">WP</th>
+          <th scope="col">変更</th>
+          <th scope="col">主な対象</th>
+          <th scope="col">完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">WP1 Contract</th>
+          <td>
+            speech schemaへstyle、pitch、intonationと範囲を追加し、voice catalog
+            responseを型付けする
+          </td>
+          <td>
+            <code>packages/core</code>、OpenAPI、<code
+              >packages/client</code
+            >
+          </td>
+          <td>schema境界、生成OpenAPI、client requestのunit testが成功する</td>
+        </tr>
+        <tr>
+          <th scope="row">WP2 Adapter</th>
+          <td>話者・style resolver、3種の韻律値反映、明示error、catalog、creditを実装する</td>
+          <td><code>apps/voicevox-tts</code></td>
+          <td>各fieldがAudioQueryへ正しく反映され、不正組合せを合成前に拒否する</td>
+        </tr>
+        <tr>
+          <th scope="row">WP3 Gateway</th>
+          <td>
+            bodyのbyte-preserving forward、model別unsupported parameter、response検査を固定する
+          </td>
+          <td><code>apps/daemon</code></td>
+          <td>global token、Allocation、claim credentialの全経路で同じcontractになる</td>
+        </tr>
+        <tr>
+          <th scope="row">WP4 Assets</th>
+          <td>複数VVM manifest、検証、起動時load、男性系voiceを追加する</td>
+          <td><code>deploy/local-node</code>、source lock、systemd</td>
+          <td>不正assetでは起動せず、正しいassetだけがcatalogに出る</td>
+        </tr>
+        <tr>
+          <th scope="row">WP5 Conformance</th>
+          <td>合成音声、metadata、性能、credit、rollbackを実機検証する</td>
+          <td>smoke、benchmark、運用文書</td>
+          <td>受入条件を満たし、既定voiceの回帰がない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      WP1からWP3までは既存<code>0.vvm</code>だけでsource実装できます。WP4は利用条件へのoperator同意を
+      伴うため独立した配備gateとし、同意前に自動downloadしません。WP5を通るまで既定voiceは
+      <code>Kasukabe_Tsumugi</code>から変更しません。
+    </p>
+  </section>
+
+  <section id="tests">
+    <h2>Test plan</h2>
+    <ul>
+      <li>
+        Schema: default、省略可能性、各境界値、境界外、NaN／infinity、型違い、未知voice、
+        他話者のstyleを拒否します。
+      </li>
+      <li>
+        Adapter unit: resolver、legacy voice、数値style ID、default style、credit、busy、WAV、PCMを
+        mock synthesizerで検証します。
+      </li>
+      <li>
+        Gateway integration: 新fieldを変更せずupstreamへ転送し、VOICEVOX以外の非対応modelで silent
+        ignoreが起きないことを確認します。
+      </li>
+      <li>
+        Catalog: 広告された全voice・styleで短文合成が成功し、style IDとcreditが一致することを
+        data-driven testで確認します。
+      </li>
+      <li>
+        Audio inspection: WAV header、24
+        kHz、mono、s16le、非空durationを確認します。pitchとintonationは
+        音声内容の完全一致でなく、request値がAudioQueryへ渡ることと出力が有限・非空であることを
+        contract testにします。
+      </li>
+      <li>
+        Compatibility: fieldを追加しない既存requestのaudio format、credit、default
+        voiceが変わらないことを golden fixtureで確認します。
+      </li>
+      <li>
+        Performance: 既存4話者と追加話者について短文TTFA、RTF、RSS、startup時間を測り、単体と
+        resident LLM実行中の両方で比較します。
+      </li>
+    </ul>
+  </section>
+
+  <section id="acceptance">
+    <h2>受入条件</h2>
+    <ol>
+      <li>既存requestが変更なしで同じ既定話者、形式、creditを返す。</li>
+      <li>catalogから選んだ任意のvoiceとstyleでWAVおよびPCMを生成できる。</li>
+      <li>少なくとも男性系1話者と女性系1話者を、具体的なvoice IDで決定的に切り替えられる。</li>
+      <li>speed、pitch、intonationのdefaultと上下限がOpenAPI、catalog、adapterで一致する。</li>
+      <li>
+        範囲外、未知voice、無効なvoice/style組合せ、非対応modelのfieldを明示的な400で拒否する。
+      </li>
+      <li>すべての生成responseが正しいVOICEVOX creditを返す。</li>
+      <li><code>bun run check</code>とattended voice smokeが成功する。</li>
+      <li>既定VOICEVOX経路のlatency／RTFが配備前baselineから許容範囲を超えて悪化しない。</li>
+    </ol>
+  </section>
+
+  <section id="rollout">
+    <h2>Rolloutとrollback</h2>
+    <ol>
+      <li>WP1からWP3をsourceへ導入し、既存VVMだけで後方互換canaryを行います。</li>
+      <li>追加VVMをstagingし、checksumと利用条件同意をpreflightで確認します。</li>
+      <li>voice catalogを確認後、各voice・styleの短文WAV／PCM canaryと性能測定を行います。</li>
+      <li>consumer UIはcatalog取得後に具体的なvoice IDを保存し、表示分類だけを保存しません。</li>
+      <li>
+        問題時は追加VVM
+        manifestを外し、既存<code>0.vvm</code>だけの構成へ戻します。
+      </li>
+    </ol>
+    <p>
+      Rollbackで公開schemaのoptional
+      fieldは残せますが、catalogに存在しない追加voiceは400になります。
+      そのためconsumerは保存済みvoiceがcatalogから消えた場合、catalogの
+      <code>default_voice</code>へ明示的に戻す必要があります。
+    </p>
+    <p>
+      Consumer側の実装範囲と受入条件は、
+      <a href="./saaa-voicevox-controls-integration-request.html"
+        >SAAA実装依頼：VOICEVOX話者・スタイル・韻律制御</a
+      >として引き渡します。
+    </p>
+  </section>
+</article>

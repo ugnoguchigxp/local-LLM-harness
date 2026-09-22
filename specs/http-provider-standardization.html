@@ -440,7 +440,10 @@ client abort / deadline / release drain
         </tr>
         <tr>
           <th scope="row"><code>POST /v1/audio/speech</code></th>
-          <td>model、input、voice、response_format、speed。正しいmedia typeと音声formatを返す。</td>
+          <td>
+            model、input、voice、response_format、speed。VOICEVOXはstyle、pitch_scale、
+            intonation_scaleも受け付ける。正しいmedia typeと音声formatを返す。
+          </td>
           <td>engineが生成途中のbyteを返せない場合、native streaming対応を広告しない。</td>
         </tr>
       </tbody>

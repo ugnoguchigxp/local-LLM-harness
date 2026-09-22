@@ -375,6 +375,36 @@ test("reference client calls standard audio endpoints without allocation headers
   expect(requests[2]?.method).toBe("GET");
 });
 
+test("reference client parses the typed voice catalog", async () => {
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    fetch: async () => Response.json({
+      default_voice: "Kasukabe_Tsumugi",
+      voices: [{
+        id: "Kasukabe_Tsumugi",
+        name: "Kasukabe_Tsumugi",
+        display_name: "春日部つむぎ",
+        speaker_uuid: "35b2c544-660e-401e-b503-0e14c635303a",
+        voice_presentation: "feminine",
+        language: "ja",
+        default_style: "normal",
+        style_id: 8,
+        styles: [{ id: "normal", display_name: "ノーマル", style_id: 8 }],
+        capabilities: {
+          speed: { minimum: 0.5, maximum: 2, default: 1 },
+          pitch_scale: { minimum: -0.15, maximum: 0.15, default: 0 },
+          intonation_scale: { minimum: 0, maximum: 2, default: 1 },
+        },
+        credit: "VOICEVOX:春日部つむぎ",
+      }],
+    }),
+  });
+
+  const catalog = await client.getVoicevoxCatalog();
+  expect(catalog.default_voice).toBe("Kasukabe_Tsumugi");
+  expect(catalog.voices[0]?.styles[0]?.style_id).toBe(8);
+});
+
 test("reference client rejects invalid timeout configuration", async () => {
   expect(() => new LarmClient({
     baseUrl: "http://127.0.0.1:9810",

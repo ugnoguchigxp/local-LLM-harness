@@ -158,5 +158,6 @@ Preferred. LARM starts and stops only that service through the narrow rule in
 [`../deploy/local-node/polkit/50-larm-runtime-control.rules`](../deploy/local-node/polkit/50-larm-runtime-control.rules).
 Resident provider units remain outside unattended lifecycle authorization.
 
-VOICEVOX output must be credited as `VOICEVOX:春日部つむぎ` with the current default
-speaker. If the speaker changes, update the displayed credit accordingly.
+VOICEVOX output must display the decoded `X-VOICEVOX-Credit` value returned for the selected
+speaker. The current default is `VOICEVOX:春日部つむぎ`; clients must not hard-code that value
+when another catalog voice is selected.

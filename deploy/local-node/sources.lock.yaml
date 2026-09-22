@@ -68,9 +68,23 @@ sources:
     version: 0.16.4
     revision: c7793d12c09e3ea0a4ae41ca2bbe8b91bb17ef61
     path: /srv/ai/apps/voicevox-core-0.17.0/runtime/models/vvms/0.vvm
+    required: true
     asset:
       url: https://github.com/VOICEVOX/voicevox_vvm/releases/download/0.16.4/0.vvm
       bytes: 58214379
       sha256: 917e592cae92a02fb7668bd9e168df4e39c8ab2f5302c2be71906c70ec4e2df2
+      terms: https://github.com/VOICEVOX/voicevox_vvm/blob/0.16.4/README.md
+      acceptance: operator-required
+
+  voicevox-vvm-masculine:
+    repository: https://github.com/VOICEVOX/voicevox_vvm.git
+    version: 0.16.4
+    revision: c7793d12c09e3ea0a4ae41ca2bbe8b91bb17ef61
+    path: /srv/ai/apps/voicevox-core-0.17.0/runtime/models/vvms/4.vvm
+    required: false
+    asset:
+      url: https://github.com/VOICEVOX/voicevox_vvm/releases/download/0.16.4/4.vvm
+      bytes: 58211265
+      sha256: da5aaad87d5b7ea5b346def2e610cc63e64a90088bb0fc2d27fb63a622113953
       terms: https://github.com/VOICEVOX/voicevox_vvm/blob/0.16.4/README.md
       acceptance: operator-required

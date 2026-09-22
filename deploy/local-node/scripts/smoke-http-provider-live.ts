@@ -488,6 +488,9 @@ export async function runHttpProviderLiveSmoke(
       input: "疎通確認です。",
       voice: ttsVoice,
       response_format: "wav",
+      ...(ttsModel === "voicevox-core"
+        ? { style: "normal", speed: 1.05, pitch_scale: 0.01, intonation_scale: 1.05 }
+        : {}),
     });
     const speechMediaType = mediaType(speechResponse);
     if (!isOpenAiSpeechMediaType(speechMediaType, "wav")) throw new Error("tts_media_type_invalid");

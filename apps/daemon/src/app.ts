@@ -675,6 +675,9 @@ export function createAppComponents(deps: AppDeps) {
     let chatRequest: unknown;
     let chatRequestBytes: Uint8Array | undefined;
     let chatResponseFormat: "sse" | undefined;
+    let speechRequest: ReturnType<typeof audioSpeechRequestSchema.parse> | undefined;
+    let speechRequestBytes: Uint8Array | undefined;
+    let voicevoxOnlyParameter: string | undefined;
     let embeddingRequest: EmbeddingRequest | undefined;
     let embeddingRequestBytes: Uint8Array | undefined;
     if (options.protocol === "larm.embedding.v1") {
@@ -720,6 +723,51 @@ export function createAppComponents(deps: AppDeps) {
         return c.json(errorBody("bad_request", "request body must be valid UTF-8 JSON"), 400);
       }
     }
+    if (options.protocol === "openai.audio-speech.v1" && options.bodyMode !== "none") {
+      try {
+        speechRequestBytes = await readBodyLimited(
+          c.req.raw.clone() as unknown as Request,
+          options.maxBodyBytes,
+        );
+        const parsed = audioSpeechRequestSchema.safeParse(JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(speechRequestBytes),
+        ));
+        if (!parsed.success) {
+          const issue = parsed.error.issues[0];
+          return c.json(openAiErrorBody(
+            "invalid_request",
+            "speech request parameters are invalid",
+            typeof issue?.path[0] === "string" ? issue.path[0] : null,
+          ), 400);
+        }
+        speechRequest = parsed.data;
+        if (
+          parsed.data.model === "voicevox-core"
+          && parsed.data.speed !== undefined
+          && (parsed.data.speed < 0.5 || parsed.data.speed > 2)
+        ) {
+          return c.json(openAiErrorBody(
+            "invalid_request",
+            "speed must be between 0.5 and 2 for voicevox-core",
+            "speed",
+          ), 400);
+        }
+        voicevoxOnlyParameter = ["style", "pitch_scale", "intonation_scale"]
+          .find((name) => parsed.data[name as keyof typeof parsed.data] !== undefined);
+        if (voicevoxOnlyParameter && parsed.data.model !== "voicevox-core") {
+          return c.json(openAiErrorBody(
+            "unsupported_parameter",
+            `${voicevoxOnlyParameter} is supported only by voicevox-core`,
+            voicevoxOnlyParameter,
+          ), 400);
+        }
+      } catch (error) {
+        if (error instanceof RequestBodyError) {
+          return c.json(openAiErrorBody(error.code, error.message), error.status);
+        }
+        return c.json(openAiErrorBody("invalid_request", "request body must be valid UTF-8 JSON"), 400);
+      }
+    }
     let directModel: string | undefined;
     let directRequestBytes: Uint8Array | undefined;
     let directSpeechFormat: string | undefined;
@@ -736,29 +784,9 @@ export function createAppComponents(deps: AppDeps) {
         }
         directModel = models[0];
       } else if (options.protocol === "openai.audio-speech.v1") {
-        try {
-          directRequestBytes = await readBodyLimited(
-            c.req.raw.clone() as unknown as Request,
-            options.maxBodyBytes,
-          );
-          const parsed = audioSpeechRequestSchema.safeParse(JSON.parse(
-            new TextDecoder("utf-8", { fatal: true }).decode(directRequestBytes),
-          ));
-          if (!parsed.success) {
-            return c.json(openAiErrorBody(
-              "invalid_request",
-              "model and input are required",
-              parsed.error.issues.some((issue) => issue.path[0] === "model") ? "model" : null,
-            ), 400);
-          }
-          directModel = parsed.data.model;
-          directSpeechFormat = parsed.data.response_format;
-        } catch (error) {
-          if (error instanceof RequestBodyError) {
-            return c.json(openAiErrorBody(error.code, error.message), error.status);
-          }
-          return c.json(openAiErrorBody("invalid_request", "request body must be valid UTF-8 JSON"), 400);
-        }
+        directRequestBytes = speechRequestBytes;
+        directModel = speechRequest?.model;
+        directSpeechFormat = speechRequest?.response_format;
       } else if (options.protocol === "openai.audio-transcriptions.v1") {
         try {
           directRequestBytes = await readBodyLimited(
@@ -792,13 +820,15 @@ export function createAppComponents(deps: AppDeps) {
     }
     if (scoped) {
       try {
-        let modelValues: unknown[];
+        let modelValues: unknown[] = [];
         if (options.protocol === "larm.embedding.v1") {
           modelValues = [scoped.provider.publicModel];
         } else if (options.protocol === "openai.chat-completions.v1") {
           modelValues = typeof chatRequest === "object" && chatRequest !== null && !Array.isArray(chatRequest)
             ? [(chatRequest as Record<string, unknown>).model]
             : [];
+        } else if (options.protocol === "openai.audio-speech.v1") {
+          modelValues = speechRequest ? [speechRequest.model] : [];
         } else {
           const clone = c.req.raw.clone();
           const bytes = await readBodyLimited(clone as unknown as Request, options.maxBodyBytes);
@@ -810,16 +840,6 @@ export function createAppComponents(deps: AppDeps) {
             });
             const form = await parsedRequest.formData();
             modelValues = form.getAll("model");
-          } else {
-            let value: unknown;
-            try {
-              value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
-            } catch {
-              return c.json(errorBody("bad_request", "request body must be valid UTF-8 JSON"), 400);
-            }
-            modelValues = typeof value === "object" && value !== null && !Array.isArray(value)
-              ? [(value as Record<string, unknown>).model]
-              : [];
           }
         }
         if (
@@ -925,6 +945,8 @@ export function createAppComponents(deps: AppDeps) {
           validateTranscriptionResponse: options.protocol === "openai.audio-transcriptions.v1",
           validateSpeechResponse: options.protocol === "openai.audio-speech.v1"
             && options.bodyMode !== "none",
+          validateVoiceCatalogResponse: options.protocol === "openai.audio-speech.v1"
+            && options.bodyMode === "none",
           expectedSpeechFormat: directSpeechFormat,
           expectedModel: directModel,
           errorFormat: "openai",
@@ -986,6 +1008,13 @@ export function createAppComponents(deps: AppDeps) {
         ? 404
         : 409;
       return c.json(errorBody(selected.reason, selected.reason.replaceAll("_", " ")), status);
+    }
+    if (voicevoxOnlyParameter && selected.binding.capability !== "speech.tts") {
+      return c.json(openAiErrorBody(
+        "unsupported_parameter",
+        `${voicevoxOnlyParameter} is not supported by the allocated TTS provider`,
+        voicevoxOnlyParameter,
+      ), 400);
     }
     const resolved = deps.control.resolveAllocation(allocationId, selected.binding.capability);
     if (resolved.status !== 200 || !("endpoint" in resolved.body)) {
@@ -1076,8 +1105,8 @@ export function createAppComponents(deps: AppDeps) {
     try {
       return await proxyGateway({
       request: c.req.raw,
-      ...((embeddingRequestBytes ?? chatRequestBytes)
-        ? { requestBody: embeddingRequestBytes ?? chatRequestBytes }
+      ...((embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes)
+        ? { requestBody: embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes }
         : {}),
       ...(contextViewId
         ? {
@@ -1182,7 +1211,10 @@ export function createAppComponents(deps: AppDeps) {
       validateChatResponse: scoped !== undefined
         && options.protocol === "openai.chat-completions.v1",
       validateTranscriptionResponse: options.protocol === "openai.audio-transcriptions.v1",
-      validateSpeechResponse: options.protocol === "openai.audio-speech.v1",
+      validateSpeechResponse: options.protocol === "openai.audio-speech.v1"
+        && options.bodyMode !== "none",
+      validateVoiceCatalogResponse: options.protocol === "openai.audio-speech.v1"
+        && options.bodyMode === "none",
       ...(scoped ? { expectedModel: scoped.provider.publicModel } : {}),
       ...(embeddingRequest && runtime.embedding
         ? { validateEmbeddingResponse: { request: embeddingRequest, space: runtime.embedding } }

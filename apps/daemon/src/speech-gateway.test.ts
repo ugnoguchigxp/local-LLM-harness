@@ -292,6 +292,88 @@ test("standard Bearer speech resolves its model and rejects a model for another 
   expect(targets).toHaveLength(1);
 });
 
+test("standard speech forwards bounded VOICEVOX style and prosody controls", async () => {
+  let forwarded: unknown;
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async (_input, init) => {
+      forwarded = JSON.parse(await new Response(init?.body).text());
+      return new Response("RIFF", { headers: { "content-type": "audio/wav" } });
+    },
+  });
+  const response = await app.request("/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer control-token",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "voicevox-core",
+      input: "こんにちは",
+      voice: "Shikoku_Metan",
+      style: "sweet",
+      speed: 1.1,
+      pitch_scale: 0.03,
+      intonation_scale: 1.2,
+      response_format: "wav",
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  expect(forwarded).toEqual({
+    model: "voicevox-core",
+    input: "こんにちは",
+    voice: "Shikoku_Metan",
+    style: "sweet",
+    speed: 1.1,
+    pitch_scale: 0.03,
+    intonation_scale: 1.2,
+    response_format: "wav",
+  });
+});
+
+test("speech rejects out-of-range controls and VOICEVOX-only fields on other models", async () => {
+  let calls = 0;
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async () => {
+      calls += 1;
+      return new Response("RIFF", { headers: { "content-type": "audio/wav" } });
+    },
+  });
+  const request = (body: object) => app.request("/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer control-token",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const range = await request({ model: "voicevox-core", input: "test", pitch_scale: 0.2 });
+  expect(range.status).toBe(400);
+  expect(await range.json()).toEqual({
+    error: expect.objectContaining({ code: "invalid_request", param: "pitch_scale" }),
+  });
+
+  const speed = await request({ model: "voicevox-core", input: "test", speed: 2.1 });
+  expect(speed.status).toBe(400);
+  expect(await speed.json()).toEqual({
+    error: expect.objectContaining({ code: "invalid_request", param: "speed" }),
+  });
+
+  const unsupported = await request({
+    model: "qwen3-tts-expressive",
+    input: "test",
+    intonation_scale: 1.2,
+  });
+  expect(unsupported.status).toBe(400);
+  expect(await unsupported.json()).toEqual({
+    error: expect.objectContaining({ code: "unsupported_parameter", param: "intonation_scale" }),
+  });
+  expect(calls).toBe(0);
+});
+
 test("standard speech rejects an upstream media type that disagrees with response_format", async () => {
   const app = await makeSpeechApp({
     apiToken: "control-token",
@@ -322,7 +404,7 @@ test("standard Bearer voice discovery resolves the model from the query without 
       target = String(input);
       method = init?.method ?? "";
       body = init?.body;
-      return Response.json({ voices: [{ name: "Kasukabe_Tsumugi" }] });
+      return Response.json({ voices: [{ id: "Kasukabe_Tsumugi", name: "Kasukabe_Tsumugi" }] });
     },
   });
 
@@ -331,10 +413,26 @@ test("standard Bearer voice discovery resolves the model from the query without 
   });
 
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ voices: [{ name: "Kasukabe_Tsumugi" }] });
+  expect(await response.json()).toEqual({
+    voices: [{ id: "Kasukabe_Tsumugi", name: "Kasukabe_Tsumugi" }],
+  });
   expect(target).toBe("http://127.0.0.1:8084/v1/audio/voices?model=voicevox-core");
   expect(method).toBe("GET");
   expect(body).toBeUndefined();
+});
+
+test("voice discovery rejects an invalid upstream catalog", async () => {
+  const app = await makeSpeechApp({
+    apiToken: "control-token",
+    gatewayFetch: async () => Response.json({ voices: [{ name: "missing-id" }] }),
+  });
+  const response = await app.request("/v1/audio/voices?model=voicevox-core", {
+    headers: { authorization: "Bearer control-token" },
+  });
+  expect(response.status).toBe(502);
+  expect(await response.json()).toEqual({
+    error: expect.objectContaining({ code: "upstream_response_invalid" }),
+  });
 });
 
 test("standard Bearer voice discovery requires exactly one model query parameter", async () => {
@@ -533,6 +631,21 @@ test("TTS gateway uses explicit capability selection and preserves provider head
   expect(await normal.text()).toBe("RIFF");
   expect(normal.headers.get("x-voicevox-credit")).toContain("VOICEVOX");
   expect(targets).toEqual(["http://127.0.0.1:8084/v1/audio/speech"]);
+
+  const unsupported = await app.request("/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-larm-allocation-id": allocationId,
+      "x-larm-capability": "speech.tts.expressive",
+    },
+    body: JSON.stringify({ model: "voicevox-core", input: "test", pitch_scale: 0.03 }),
+  });
+  expect(unsupported.status).toBe(400);
+  expect(await unsupported.json()).toEqual({
+    error: expect.objectContaining({ code: "unsupported_parameter", param: "pitch_scale" }),
+  });
+  expect(targets).toHaveLength(1);
 });
 
 test("speech gateway preserves provider 429 and Retry-After", async () => {
@@ -551,7 +664,7 @@ test("speech gateway preserves provider 429 and Retry-After", async () => {
       "content-type": "application/json",
       "x-larm-allocation-id": allocationId,
     },
-    body: "{}",
+    body: JSON.stringify({ model: "voicevox-core", input: "test" }),
   });
   expect(response.status).toBe(429);
   expect(response.headers.get("retry-after")).toBe("2");

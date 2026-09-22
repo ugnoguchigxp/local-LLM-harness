@@ -4,15 +4,18 @@ Description=VOICEVOX CORE CPU OpenAI-compatible low-contention TTS
 Type=simple
 User=ugnoguchi
 Group=ugnoguchi
-WorkingDirectory=/srv/ai/apps/voicevox-core-0.17.0
+WorkingDirectory=/srv/ai/apps/larm-current/apps/voicevox-tts
 Environment=HOME=/srv/ai/cache
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=VOICEVOX_RUNTIME_ROOT=/srv/ai/apps/voicevox-core-0.17.0/runtime
 Environment=VOICEVOX_THREADS=16
 Environment=VOICEVOX_DEFAULT_VOICE=Kasukabe_Tsumugi
 Environment=VOICEVOX_MAX_REQUEST_BYTES=65536
+Environment=VOICEVOX_VVM_FILES=0.vvm
+Environment=VOICEVOX_OPTIONAL_VVM_FILES=4.vvm
 Environment=OMP_NUM_THREADS=16
 Environment=OPENBLAS_NUM_THREADS=16
+ExecStartPre=/home/ugnoguchi/.bun/bin/bun run /srv/ai/apps/larm-current/deploy/local-node/scripts/verify-external-assets.ts --require-valid
 ExecStart=/srv/ai/apps/voicevox-core-0.17.0/.venv/bin/uvicorn voicevox_api:app --host 127.0.0.1 --port 8084 --workers 1
 Restart=on-failure
 RestartSec=5

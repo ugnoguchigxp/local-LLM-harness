@@ -1,5 +1,6 @@
 import {
   allocationRequestSchema,
+  audioVoiceListSchema,
   agentConnectionClaimSchema,
   agentConnectionClaimRequestSchema,
   agentConnectionHealthSchema,
@@ -38,6 +39,8 @@ import {
   embeddingRequestSchema,
   inspectEmbeddingResponse,
   type AgentConnectionClaim,
+  type AudioSpeechRequest,
+  type AudioVoiceList,
   type AgentConnectionClaimRequest,
   type AgentConnectionHealth,
   type AgentConnectionRequestInput,
@@ -985,7 +988,7 @@ export class LarmClient {
     });
   }
 
-  createSpeech(body: unknown, options: RequestOptions = {}): Promise<Response> {
+  createSpeech(body: AudioSpeechRequest, options: RequestOptions = {}): Promise<Response> {
     return this.request("/v1/audio/speech", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -999,6 +1002,10 @@ export class LarmClient {
     return this.request(`/v1/audio/voices?${query.toString()}`, {
       signal: options.signal,
     });
+  }
+
+  async getVoicevoxCatalog(options: RequestOptions = {}): Promise<AudioVoiceList> {
+    return this.parseJson(await this.listVoices("voicevox-core", options), audioVoiceListSchema);
   }
 
   chat(allocationId: string, body: unknown, options: RequestOptions = {}): Promise<Response> {

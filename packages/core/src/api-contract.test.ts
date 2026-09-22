@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import {
   API_OPERATIONS,
+  audioSpeechRequestSchema,
+  audioVoiceDiscoverySchema,
+  audioVoiceListSchema,
   chatCompletionRequestSchema,
   createOpenApiDocument,
   errorResponseSchema,
@@ -33,6 +36,9 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(document.components.schemas.ServiceHarness).toBeDefined();
   expect(document.components.schemas.ServiceActivity).toBeDefined();
   expect(document.components.schemas.ChatCompletionRequest).toBeDefined();
+  expect(document.components.schemas.AudioSpeechRequest).toBeDefined();
+  expect(document.components.schemas.AudioVoiceList).toBeDefined();
+  expect(document.components.schemas.AudioVoiceDiscovery).toBeDefined();
   expect(document.components.schemas.AgentProfileListV3).toBeDefined();
   expect(document.components.schemas.EmbeddingRequest).toBeDefined();
   expect(document.components.schemas.EmbeddingResponse).toBeDefined();
@@ -127,6 +133,9 @@ test("OpenAPI is generated from the public contract schemas", () => {
     required: true,
     schema: { type: "string", minLength: 1 },
   }]);
+  expect(JSON.stringify(paths["/v1/audio/voices"]?.get)).toContain(
+    "#/components/schemas/AudioVoiceDiscovery",
+  );
   expect(paths["/v1/agent-connections/{id}"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v1/agent-connections/{id}/health"]?.get?.security).toEqual([
     {},
@@ -150,6 +159,83 @@ test("OpenAPI is generated from the public contract schemas", () => {
   ]);
   expect((paths["/v1/agent-connections/{id}"]?.delete?.responses as Record<string, unknown>)["204"])
     .not.toHaveProperty("content");
+});
+
+test("speech controls have finite bounded contracts", () => {
+  const base = { model: "voicevox-core", input: "こんにちは" };
+  expect(audioSpeechRequestSchema.parse({
+    ...base,
+    voice: "Kasukabe_Tsumugi",
+    style: "normal",
+    speed: 0.5,
+    pitch_scale: -0.15,
+    intonation_scale: 0,
+  })).toMatchObject({ style: "normal", speed: 0.5, pitch_scale: -0.15, intonation_scale: 0 });
+  expect(audioSpeechRequestSchema.parse({
+    ...base,
+    style: 8,
+    speed: 2,
+    pitch_scale: 0.15,
+    intonation_scale: 2,
+  }).style).toBe(8);
+  for (const invalid of [
+    { speed: 0 },
+    { pitch_scale: -0.151 },
+    { pitch_scale: 0.151 },
+    { intonation_scale: -0.01 },
+    { intonation_scale: 2.01 },
+  ]) {
+    expect(audioSpeechRequestSchema.safeParse({ ...base, ...invalid }).success).toBeFalse();
+  }
+});
+
+test("voice catalog exposes deterministic selection and control capabilities", () => {
+  const catalog = {
+    default_voice: "Kasukabe_Tsumugi",
+    voices: [{
+      id: "Kasukabe_Tsumugi",
+      name: "Kasukabe_Tsumugi",
+      display_name: "春日部つむぎ",
+      speaker_uuid: "35b2c544-660e-401e-b503-0e14c635303a",
+      voice_presentation: "feminine",
+      language: "ja",
+      default_style: "normal",
+      style_id: 8,
+      styles: [{ id: "normal", display_name: "ノーマル", style_id: 8 }],
+      capabilities: {
+        speed: { minimum: 0.5, maximum: 2, default: 1 },
+        pitch_scale: { minimum: -0.15, maximum: 0.15, default: 0 },
+        intonation_scale: { minimum: 0, maximum: 2, default: 1 },
+      },
+      credit: "VOICEVOX:春日部つむぎ",
+    }],
+  };
+  expect(audioVoiceListSchema.parse(catalog).voices[0]?.default_style).toBe("normal");
+  const missingDefault = { ...catalog, default_voice: "missing" };
+  expect(audioVoiceListSchema.safeParse(missingDefault).success).toBeFalse();
+  expect(audioVoiceDiscoverySchema.safeParse(missingDefault).success).toBeFalse();
+  expect(audioVoiceListSchema.safeParse({
+    ...catalog,
+    voices: [{ ...catalog.voices[0], default_style: "missing" }],
+  }).success).toBeFalse();
+  expect(audioVoiceListSchema.safeParse({
+    ...catalog,
+    voices: [{
+      ...catalog.voices[0],
+      capabilities: {
+        ...catalog.voices[0]!.capabilities,
+        speed: { minimum: 2, maximum: 0.5, default: 1 },
+      },
+    }],
+  }).success).toBeFalse();
+  expect(audioVoiceListSchema.safeParse({
+    ...catalog,
+    voices: [catalog.voices[0], { ...catalog.voices[0] }],
+  }).success).toBeFalse();
+  expect(audioVoiceDiscoverySchema.parse({
+    voices: [{ id: "Ryan", name: "Ryan", language: "Japanese" }],
+    languages: ["Japanese"],
+  }).voices[0]?.name).toBe("Ryan");
 });
 
 test("Chat Completions contract validates schema-constrained response formats", () => {
