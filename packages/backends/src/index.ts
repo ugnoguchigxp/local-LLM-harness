@@ -77,3 +77,12 @@ export {
   LocalPersonalStateJournal,
   PersonalStateJournalError,
 } from "./personal-state-journal";
+export {
+  DEFAULT_GENERATED_IMAGE_MAX_BYTES,
+  DEFAULT_GENERATED_IMAGE_TARGET_BYTES,
+  GeneratedImageArtifactRetention,
+  GeneratedImageRetentionError,
+  type GeneratedImageArtifactRetentionOptions,
+  type GeneratedImagePruneResult,
+  type StoredGeneratedImageArtifact,
+} from "./generated-image-retention";

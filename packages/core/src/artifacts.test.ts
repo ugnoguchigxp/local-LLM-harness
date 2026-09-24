@@ -85,10 +85,13 @@ test("loads the production artifact manifest and builds pinned download URLs", (
     `/resolve/${ornith35b.revision}/Ornith-1.5-35B-Q5_K_M.gguf`,
   );
   expect(ornith35bSpeed).toEqual(expect.objectContaining({
-    revision: "973bf694fdec212b833432d455611361bdeb914c",
-    bytes: 19_052_439_552,
-    sha256: "aa35045aab39163851c8584e6cf8cc6f33e8fc2ffe28ca627d3414ec66584704",
+    revision: "a0db6d02a557324a04cecd3feb0ab3f08565521e",
+    bytes: 19_052_438_944,
+    sha256: "0f907917a1bfe4e0ca0d281e5709dcf34b6277063e94fab29491bb5c80fda696",
   }));
+  expect(artifactDownloadUrl(ornith35bSpeed)).toContain(
+    `/resolve/${ornith35bSpeed.revision}/Ornith-1.5-35B-A3B-ROCmFP4.gguf`,
+  );
 });
 
 test("rejects unsafe artifact ids and non-absolute targets", () => {
@@ -317,6 +320,6 @@ test("Qwen TTS service configuration consumes the manifest-managed snapshot targ
     .toContain(artifact.id);
   const daemonUnit = readFileSync(join(root, "deploy/local-node/systemd/larm-daemon.service"), "utf8");
   expect(daemonUnit)
-    .toContain("ReadWritePaths=/srv/ai/cache /srv/ai/context-sources /srv/ai/logs /srv/ai/models /var/lib/larm");
+    .toContain("ReadWritePaths=/srv/ai/apps/larm-trials/20260924-ace-step15/.cache/acestep/tmp/api_audio /srv/ai/cache /srv/ai/context-sources /srv/ai/data/generated/images /srv/ai/data/generated/music /srv/ai/logs /srv/ai/models /var/lib/larm");
   expect(daemonUnit).toContain("Environment=LARM_CONNECTION_READY_TIMEOUT_SECONDS=300");
 });

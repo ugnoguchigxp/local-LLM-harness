@@ -58,6 +58,21 @@ export type DaemonConfig = {
   personalStateEnabled: boolean;
   personalStateJournalRoot: string;
   personalStateReceiptTtlMs: number;
+  musicProviderEndpoint?: string;
+  musicProviderApiKey?: string;
+  musicArtifactRoot: string;
+  musicPollIntervalMs: number;
+  musicMaxAudioBytes: number;
+  musicArtifactRetentionMs: number;
+  musicWavRetentionMs: number;
+  musicArtifactMaxBytes: number;
+  musicFavoriteMaxBytes: number;
+  musicPruneIntervalMs: number;
+  musicUpstreamOutputRoot?: string;
+  imageArtifactRoot: string;
+  imageArtifactMaxBytes: number;
+  imageArtifactTargetBytes: number;
+  imagePruneIntervalMs: number;
 };
 
 export type InferenceAuditConfig = Pick<
@@ -233,6 +248,48 @@ export function parseDaemonConfig(
     "LARM_PERSONAL_STATE_JOURNAL_ROOT",
     "/var/lib/larm/personal-state",
   );
+  const musicProviderEndpoint = optionalSecret(env.LARM_MUSIC_PROVIDER_ENDPOINT);
+  const musicUpstreamOutputRoot = optionalSecret(env.LARM_MUSIC_UPSTREAM_OUTPUT_ROOT);
+  const musicArtifactMaxBytes = numberSetting(
+    env,
+    "LARM_MUSIC_ARTIFACT_MAX_BYTES",
+    50 * 1024 * 1024 * 1024,
+    { min: 1024 * 1024, max: 1024 * 1024 * 1024 * 1024, integer: true },
+  );
+  const musicFavoriteMaxBytes = numberSetting(
+    env,
+    "LARM_MUSIC_FAVORITE_MAX_BYTES",
+    30 * 1024 * 1024 * 1024,
+    { min: 1024 * 1024, max: 1024 * 1024 * 1024 * 1024, integer: true },
+  );
+  if (musicFavoriteMaxBytes > musicArtifactMaxBytes) {
+    throw new Error("LARM_MUSIC_FAVORITE_MAX_BYTES must not exceed LARM_MUSIC_ARTIFACT_MAX_BYTES");
+  }
+  const imageArtifactMaxBytes = numberSetting(
+    env,
+    "LARM_IMAGE_ARTIFACT_MAX_BYTES",
+    20_000_000_000,
+    { min: 1, max: 1024 * 1024 * 1024 * 1024, integer: true },
+  );
+  const imageArtifactTargetBytes = numberSetting(
+    env,
+    "LARM_IMAGE_ARTIFACT_TARGET_BYTES",
+    18_000_000_000,
+    { min: 0, max: 1024 * 1024 * 1024 * 1024, integer: true },
+  );
+  if (imageArtifactTargetBytes >= imageArtifactMaxBytes) {
+    throw new Error("LARM_IMAGE_ARTIFACT_TARGET_BYTES must be less than LARM_IMAGE_ARTIFACT_MAX_BYTES");
+  }
+  if (musicProviderEndpoint) {
+    const endpoint = new URL(musicProviderEndpoint);
+    if (!new Set(["http:", "https:"]).has(endpoint.protocol)
+      || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+      throw new Error("LARM_MUSIC_PROVIDER_ENDPOINT must use http or https without credentials, query, or fragment");
+    }
+  }
+  if (musicUpstreamOutputRoot && !isAbsolute(musicUpstreamOutputRoot)) {
+    throw new Error("LARM_MUSIC_UPSTREAM_OUTPUT_ROOT must be an absolute path");
+  }
   const overlaps = (left: string, right: string) => left === right
     || left.startsWith(`${right}/`)
     || right.startsWith(`${left}/`);
@@ -407,6 +464,64 @@ export function parseDaemonConfig(
       24 * 60 * 60,
       60,
       7 * 24 * 60 * 60,
+    ),
+    ...(musicProviderEndpoint ? { musicProviderEndpoint } : {}),
+    musicProviderApiKey: optionalSecret(env.LARM_MUSIC_PROVIDER_API_KEY),
+    musicArtifactRoot: absolutePathSetting(
+      env,
+      "LARM_MUSIC_ARTIFACT_ROOT",
+      "/var/lib/larm/music",
+    ),
+    musicPollIntervalMs: numberSetting(env, "LARM_MUSIC_POLL_INTERVAL_MS", 1_000, {
+      min: 100,
+      max: 60_000,
+      integer: true,
+    }),
+    musicMaxAudioBytes: numberSetting(
+      env,
+      "LARM_MUSIC_MAX_AUDIO_BYTES",
+      512 * 1024 * 1024,
+      { min: 1, max: 2 * 1024 * 1024 * 1024, integer: true },
+    ),
+    musicArtifactRetentionMs: secondsSetting(
+      env,
+      "LARM_MUSIC_ARTIFACT_RETENTION_SECONDS",
+      24 * 60 * 60,
+      60,
+      30 * 24 * 60 * 60,
+    ),
+    musicWavRetentionMs: secondsSetting(
+      env,
+      "LARM_MUSIC_WAV_RETENTION_SECONDS",
+      60 * 60,
+      60,
+      24 * 60 * 60,
+    ),
+    musicArtifactMaxBytes,
+    musicFavoriteMaxBytes,
+    musicPruneIntervalMs: secondsSetting(
+      env,
+      "LARM_MUSIC_PRUNE_INTERVAL_SECONDS",
+      5 * 60,
+      10,
+      24 * 60 * 60,
+    ),
+    ...(musicUpstreamOutputRoot
+      ? { musicUpstreamOutputRoot: resolve(musicUpstreamOutputRoot) }
+      : {}),
+    imageArtifactRoot: absolutePathSetting(
+      env,
+      "LARM_IMAGE_ARTIFACT_ROOT",
+      "/srv/ai/data/generated/images",
+    ),
+    imageArtifactMaxBytes,
+    imageArtifactTargetBytes,
+    imagePruneIntervalMs: secondsSetting(
+      env,
+      "LARM_IMAGE_PRUNE_INTERVAL_SECONDS",
+      5 * 60,
+      10,
+      24 * 60 * 60,
     ),
     ...inferenceAudit,
   };

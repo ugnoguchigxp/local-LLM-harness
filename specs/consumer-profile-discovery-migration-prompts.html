@@ -1,0 +1,147 @@
+<article lang="ja">
+  <h1>SAAA・ContextStill向け公開Profile Discovery改修依頼プロンプト</h1>
+
+  <p>
+    以下の二つのsectionは、それぞれのrepositoryを担当する実装agentへそのまま渡せる改修依頼である。
+    LARMの正本contractは<code>GET /v3/agent-profiles?profile=&lt;selector&gt;</code>であり、Consumerは内部 Profile
+    ID、endpoint、modelをハードコードせずresponseから取得する。
+  </p>
+
+  <section id="contract">
+    <h2>共通contract</h2>
+    <table>
+      <caption>
+        公開selectorと解決結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">selector</th>
+          <th scope="col">具体Agent Profile</th>
+          <th scope="col">追加service</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>contextStill</code></th>
+          <td><code>contextstill-background</code></td>
+          <td>なし</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>SAAA</code></th>
+          <td><code>saaa-conversation-ornith15</code></td>
+          <td>なし</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>SAAA-w-Image</code></th>
+          <td><code>saaa-conversation-ornith15</code></td>
+          <td><code>image</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>SAAA-w-music</code></th>
+          <td><code>saaa-conversation-ornith15</code></td>
+          <td><code>music</code></td>
+        </tr>
+        <tr>
+          <th scope="row"><code>vulnWorkbench</code></th>
+          <td><code>coding-default</code></td>
+          <td>なし</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      成功responseは<code>contractVersion: agent-connection.v3</code>、要求値と同じ
+      <code>requestedProfile</code
+      >、一件だけの<code>profiles</code>を返す。各Providerは
+      <code>name</code
+      >、<code>capability</code>、<code>protocol</code>、相対
+      <code>endpoint</code
+      >、<code>model</code>を持つ。ImageとMusicは
+      <code>profiles[0].services</code>に入り、Agent Connectionのclaim対象にはしない。
+    </p>
+  </section>
+
+  <section id="saaa-prompt">
+    <h2>SAAA向けプロンプト</h2>
+    <pre><code>SAAAのLARM discoveryを公開Profile selector contractへ移行してください。
+
+要件:
+1. 通常会話は GET {controlOrigin}/v3/agent-profiles?profile=SAAA を呼ぶ。
+2. 画像生成sessionはprofile=SAAA-w-Image、音楽生成sessionはprofile=SAAA-w-musicを指定する。
+3. URL APIでqueryを構築し、未escapeの文字列連結を使わない。
+4. contractVersion == "agent-connection.v3"、requestedProfileが要求値と完全一致、profiles.length == 1を必須にする。
+5. profiles[0].idをPOST /v1/agent-connectionsのagentProfileへ渡し、内部IDをsourceへハードコードしない。
+6. Providerをnameで索引化し、endpointとmodelをresponseから読む。必須nameはllm、backchannel、asr、tts、embedding。
+7. protocolとendpointを厳密検証する:
+   openai.chat-completions.v1=/v1/chat/completions
+   openai.audio-transcriptions.v1=/v1/audio/transcriptions
+   openai.audio-speech.v1=/v1/audio/speech
+   larm.embedding.v1=/v1/embed
+8. endpointはLARM control originへ解決する。絶対URL、別origin、userinfo、query、fragment、path traversalを拒否する。
+9. claim後は短期credentialとclaimのbaseUrlを実行時の正本にする。discoveryのmodelとclaimが矛盾したらfail closedする。
+10. SAAA-w-Imageはservicesのimageについてprotocol=larm.image-generation.v1、endpoint=/v1/images/generations、model=qwen-image-2.1を検証する。
+11. SAAA-w-musicはservicesのmusicについてprotocol=larm.music-generation.v1、endpoint=/v1/music/generations、model=ace-step-1.5を検証する。
+12. 通常SAAAはservicesが空でなければ拒否する。未知・重複name、欠落、空modelも拒否する。
+13. LARM_API_TOKENは既存のsecret経路だけで扱い、ログ、設定JSON、SQLite、診断へ出さない。
+
+必須test:
+- mock HTTP serverでrequest lineにprofile=SAAAがexactly one回含まれること。
+- SAAA-w-ImageとSAAA-w-musicのqueryを別testで固定すること。
+- 5 Providerのendpoint/modelを順序に依存せずnameで選ぶこと。
+- requestedProfile不一致、profiles 0件/複数、protocol/endpoint不一致、model欠落、別originを拒否するnegative test。
+- discoveryで得たprofiles[0].idがConnection create bodyへ渡る統合test。
+- claimとのmodel不一致時に推論を開始しないtest。
+- freeze対象を変更する場合はAGENTS.md指定の回帰testとfreeze更新を実施すること。
+
+完了条件:
+- fixtureだけでなく隔離またはlive LARM daemonでdiscovery、create、poll、claim、LLM/ASR/TTS/Embedding整合、releaseを完走する。
+- Image/Musicはservice契約を確認し、対応APIの成功または明示的unavailableを記録する。
+- 実装、test、Spec HTML、運用文書を同じ変更で更新し、秘密値を証跡へ残さない。</code></pre>
+  </section>
+
+  <section id="contextstill-prompt">
+    <h2>ContextStill向けプロンプト</h2>
+    <pre><code>ContextStillのLARM Agent Connection discoveryをv3公開Profile selectorへ移行してください。
+
+要件:
+1. GET {controlBaseUrl}/v3/agent-profiles?profile=contextStill を使用し、旧GET /v2/agent-profiles依存を削除する。
+2. queryはURL APIで構築し、profileをexactly one回だけ送る。
+3. contractVersion == "agent-connection.v3"、requestedProfile == "contextStill"、profiles.length == 1を必須にする。
+4. profiles[0]はdeprecated == false、selectionPolicy == "explicit-only"、id == canonicalProfileでなければfail closedする。
+5. profiles[0].idをruntime内の具体agentProfileとして保持し、POST /v1/agent-connectionsへ渡す。内部IDを固定しない。
+6. providersはllm一件を必須にし、protocol=openai.chat-completions.v1、endpoint=/v1/chat/completions、model非空を検証する。
+7. endpointはcontrol originへ安全に解決する。絶対URL、別origin、userinfo、query、fragment、path traversalを拒否する。
+8. claim後はclaimの短期credential、baseUrl、modelを実行時の正本にし、discoveryと矛盾したら推論を開始しない。
+9. catalogRevisionはservice activityのconfigRevision整合検査に使い、boot epoch変更時はConnectionを作り直す。
+10. CONTEXT_STILL_LARM_API_TOKENは既存secret経路だけで扱い、ログ、DB、settings responseへ出さない。
+
+必須test:
+- request lineがGET /v3/agent-profiles?profile=contextStillであること。
+- responseの具体profile ID、endpoint、modelがConnection createとclaim検証へ伝播する統合test。
+- requestedProfile不一致、profiles 0件/複数、deprecated、selectionPolicy不一致、endpoint/protocol不一致、空modelを拒否するtest。
+- 401、404 unknown_agent_profile、catalogRevision不一致、timeoutを既存のretry分類へ正しく写像するtest。
+- createの201/202、poll、semantic health、claim、renew、releaseを維持する回帰test。
+- TypeScript workerへ動的LARM targetを渡さず、Rust resident lifecycleを維持するtest。
+
+完了条件:
+- mockだけでなく隔離またはlive LARM daemonでselector discoveryからConnection releaseまで一件を完走する。
+- 成果保存は一回だけにし、失敗時に静的Providerへ暗黙fallbackせず次job境界まで安全に待機する。
+- 実装、Rust test、設定migration、管理UI表示、Spec HTMLを更新し、従来設定を安全に移行する。</code></pre>
+  </section>
+
+  <section id="e2e">
+    <h2>LARM側E2E受入条件</h2>
+    <ul>
+      <li>
+        5 selectorすべてを実daemon routerへGETし、HTTP 200、要求selectorのecho、一件解決を確認する。
+      </li>
+      <li>SAAA系は5 Providerの相対endpointとmodelを完全一致で検証する。</li>
+      <li>Image/Music selectorは基本Providerを維持し、対応serviceだけを一件追加する。</li>
+      <li>ContextStillとvulnWorkbenchは所定のLLM endpoint/modelへ解決する。</li>
+      <li>未知selectorは404、重複profileと余分なqueryは400にする。</li>
+      <li>
+        OpenAPI、TypeScript client schema、daemon
+        response、設定catalogの四者を同じcontractに固定する。
+      </li>
+    </ul>
+  </section>
+</article>

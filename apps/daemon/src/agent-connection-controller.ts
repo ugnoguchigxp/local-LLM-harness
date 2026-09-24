@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   activeAllocation,
+  agentProviderEndpoint,
   personalStateSubjectDigest,
   resolveAgentAudienceBaseUrl,
   type AgentAudience,
@@ -156,16 +157,27 @@ export class AgentConnectionController {
     };
   }
 
-  listProfilesV3(): AgentConnectionApiResult {
+  listProfilesV3(profileId?: string): AgentConnectionApiResult {
     const catalog = this.options.getCatalog();
     if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
+    const selector = profileId
+      ? catalog.profileSelectors.find((candidate) => candidate.id === profileId)
+      : undefined;
+    const selectedProfileId = selector?.agentProfile ?? profileId;
+    const profiles = selectedProfileId
+      ? catalog.profiles.filter((profile) => profile.id === selectedProfileId)
+      : catalog.profiles;
+    if (profileId && profiles.length === 0) {
+      return error("unknown_agent_profile", `agent profile ${profileId} does not exist`, 404);
+    }
     return {
       status: 200,
       body: {
         contractVersion: "agent-connection.v3",
         catalogRevision: this.options.getCatalogRevision(),
         defaultAgentProfile: catalog.defaultAgentProfile,
-        profiles: catalog.profiles.map((profile) => ({
+        ...(profileId ? { requestedProfile: profileId } : {}),
+        profiles: profiles.map((profile) => ({
           id: profile.id,
           canonicalProfile: profile.canonicalProfile,
           description: profile.description,
@@ -177,10 +189,12 @@ export class AgentConnectionController {
             capability: provider.capability,
             supportedCapabilities: provider.supportedCapabilities,
             protocol: provider.protocol,
+            endpoint: agentProviderEndpoint(provider.protocol),
             model: provider.publicModel,
             ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
             ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
           })),
+          services: selector?.services ?? [],
         })),
         audiences: catalog.audiences.map((audience) => audience.id),
       },

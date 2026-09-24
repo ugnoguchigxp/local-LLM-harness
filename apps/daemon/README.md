@@ -2,6 +2,27 @@
 
 Linux Runtimeを観測・制御するLARM daemonです。既定で `config/local-node` を読み、SystemdBackendとLlamaSwapBackendへRuntime単位でルーティングします。
 
+## ACE-Step music generation
+
+`LARM_MUSIC_PROVIDER_ENDPOINT` に ACE-Step 1.5 API の base URL を設定すると、非同期 Music API が有効になります。出力形式の既定は MP3 です。成果物の合計上限50 GiBは通常20 GiBとお気に入り30 GiBに分けます。通常成果物は既定で24時間、WAVだけは1時間保持し、各枠を超えると古いものから削除します。お気に入りはTTLの対象外です。掃除は起動時、生成完了後、5分ごとに実行されます。
+
+```bash
+curl -sS -X POST http://127.0.0.1:9810/v1/music/generations \
+  -H 'Authorization: Bearer <larm-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"cinematic electronic ambient music","durationSeconds":30,"instrumental":true}'
+```
+
+応答の `Location` を poll するか、その末尾に `/events` を付けて購読します。完了結果には認証付きの `audioUrl` と `metadataUrl` が含まれます。音声は JSON 内の base64 ではなく、binary response としてダウンロードします。
+
+保存制御は `LARM_MUSIC_ARTIFACT_RETENTION_SECONDS`、`LARM_MUSIC_WAV_RETENTION_SECONDS`、`LARM_MUSIC_ARTIFACT_MAX_BYTES`、`LARM_MUSIC_PRUNE_INTERVAL_SECONDS` で変更できます。ACE-Step がローカル一時ファイルを残す構成では、その専用ディレクトリを `LARM_MUSIC_UPSTREAM_OUTPUT_ROOT` に設定すると、LARMへの取り込み後に元ファイルも削除します。安全のため、このルート外のパスやシンボリックリンクは削除しません。
+
+SAAA は生成完了後に `PUT /v1/music/generations/{id}/favorite` を呼ぶと楽曲をお気に入り枠へ移せます。`GET /v1/music/favorites` の `audioUrl`、または `GET /v1/music/favorites/{id}/audio` から daemon 再起動後も楽曲を取得・再生できます。音声取得はHTTP Rangeに対応するため、途中シークも可能です。`DELETE /v1/music/generations/{id}/favorite` で通常保持へ戻せます。お気に入り枠は `LARM_MUSIC_FAVORITE_MAX_BYTES`（既定30 GiB）で変更できます。
+
+## Generated image artifacts
+
+生成画像は既定で `/srv/ai/data/generated/images` の専用poolへ保存します。上限は20,000,000,000 bytes、超過時は古いartifactから18,000,000,000 bytes以下になるまで画像とmetadataを一括削除します。掃除は起動時と5分ごとに実行します。`GET /v1/image-artifacts` で一覧、`GET /v1/image-artifacts/{id}` でmetadata、末尾の `/content` で画像binary、`DELETE /v1/image-artifacts/{id}` で削除できます。filesystem pathはAPIへ公開しません。
+
 実装済みAPI contractの正本は[`../../specs/api.html`](../../specs/api.html)です。LLM、STT、通常TTS、表現TTSをprotocol-awareな共通Gatewayで提供し、通常clientは個別Provider portではなくGatewayを使用します。repositoryのProvider unitはloopback desired stateです。2026年8月29日のlive hostには移行用wildcard listenerが残り、network levelの閉鎖は[`../../specs/production-completion-plan.html`](../../specs/production-completion-plan.html)のMilestone 27で行います。
 
 ## Start
@@ -77,6 +98,10 @@ bun run dev
 | `LARM_INFERENCE_AUDIT_MIN_FREE_BYTES` | `21474836480` | 維持するfilesystem空き容量 |
 | `LARM_INFERENCE_AUDIT_MAX_RESPONSE_BYTES` | `16777216` | requestごとのresponse保存上限。設定可能な最大値は64 MiB |
 | `LARM_INFERENCE_AUDIT_MATERIALIZATION_TIMEOUT_SECONDS` | `30` | template・token取得の上限 |
+| `LARM_IMAGE_ARTIFACT_ROOT` | `/srv/ai/data/generated/images` | 生成画像専用poolの絶対path |
+| `LARM_IMAGE_ARTIFACT_MAX_BYTES` | `20000000000` | 生成画像poolのhard limit |
+| `LARM_IMAGE_ARTIFACT_TARGET_BYTES` | `18000000000` | 容量超過時に削減するlow watermark。hard limit未満が必須 |
+| `LARM_IMAGE_PRUNE_INTERVAL_SECONDS` | `300` | 生成画像poolの定期掃除間隔 |
 
 数値設定は起動時に範囲検証され、不正値ではdaemonを起動しません。
 

@@ -406,6 +406,32 @@ agentProfiles:
   <section id="create">
     <h2>Connection作成contract</h2>
     <h3>Profile一覧response</h3>
+    <p>
+      <code>GET /v3/agent-profiles</code>は全Profileを返す。Consumerは通常、
+      <code>GET /v3/agent-profiles?profile=SAAA</code>のように公開<code
+        >profile</code
+      >
+      selectorを一つ指定する。selectorは<code>contextStill</code>、<code>SAAA</code>、
+      <code>SAAA-w-Image</code
+      >、<code>SAAA-w-music</code>、<code>vulnWorkbench</code>であり、
+      responseの<code>requestedProfile</code>へechoし、<code>profiles</code>配列を具体的なAgent
+      Profile一件へ解決する。不明なProfileは
+      <code>404 unknown_agent_profile</code
+      >とし、重複した<code>profile</code>または他のqueryは
+      <code>400 invalid_request</code
+      >とする。このfilterは発見結果だけを限定し、Connectionや Allocationを作成しない。
+    </p>
+    <p>
+      各Providerは相対<code>endpoint</code>と<code>model</code>を必ず返す。ImageとMusicはAgent
+      Connectionのclaim対象ではないため、Providerへ混ぜず、選択したProfileの
+      <code>services</code
+      >へ返す。<code>SAAA-w-Image</code>は
+      <code>/v1/images/generations</code>と<code>qwen-image-2.1</code>、
+      <code>SAAA-w-music</code>は<code>/v1/music/generations</code>と
+      <code>ace-step-1.5</code>を広告する。Consumerはresponseの具体的な
+      <code>profiles[0].id</code
+      >をConnection作成時の<code>agentProfile</code>へ使用する。
+    </p>
     <pre><code>{
   "contractVersion": "agent-connection.v3",
   "catalogRevision": "&lt;64 lowercase hex&gt;",
@@ -424,6 +450,7 @@ agentProfiles:
           "capability": "llm.coding",
           "supportedCapabilities": ["llm.coding", "llm.general", "llm.reasoning"],
           "protocol": "openai.chat-completions.v1",
+          "endpoint": "/v1/chat/completions",
           "model": "coding-default",
           "contextWindow": {
             "maxTokens": 230400,
@@ -431,7 +458,8 @@ agentProfiles:
             "safetyMarginTokens": 1976
           }
         }
-      ]
+      ],
+      "services": []
     }
   ],
   "audiences": ["saaa-desktop", "same-host"]
@@ -440,8 +468,16 @@ agentProfiles:
       <code>defaultAgentProfile</code>は通常のSAAA
       requestが選ぶ唯一の既定値です。ProfileとProviderは
       ID昇順、Audienceも昇順です。responseはstrict schemaで、Route、Runtime、release、node、
-      endpointを含めません。<code>ETag</code>と<code>x-larm-config-revision</code>へcatalog
-      revisionを返し、 <code>If-None-Match</code>一致時は304です。
+      絶対endpointを含めません。各Providerはprotocolに対応する固定の相対
+      <code>endpoint</code>（<code>/v1/chat/completions</code>、
+      <code>/v1/audio/transcriptions</code>、<code>/v1/audio/speech</code>、
+      <code>/v1/embed</code>）と公開<code
+        >model</code
+      >
+      IDを返します。
+      <code>ETag</code
+      >と<code>x-larm-config-revision</code>へcatalog revisionを返し、
+      <code>If-None-Match</code>一致時は304です。
       <code>capability</code
       >はAllocationに使用する固定要件、<code>supportedCapabilities</code>はSAAAが
       task分類に使用できるRoute能力です。Resident

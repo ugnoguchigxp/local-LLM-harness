@@ -1,0 +1,159 @@
+<article lang="ja">
+  <h1>Qwen 3.5 2B 会話・Tool use 評価</h1>
+
+  <p>
+    Qwen 3.5 2B Q4_K_Mを、相槌判断、簡単な日本語会話、単発Tool useに使えるか評価した。
+    評価日は2026年9月24日で、Ryzen AI MAX+ 395 / Radeon
+    8060S環境の既存サービスと共存させた状態で実行した。
+  </p>
+
+  <section id="target">
+    <h2>対象</h2>
+    <table>
+      <caption>
+        評価対象モデルと実行設定
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">モデル</th>
+          <td>Qwen3.5-2B-Q4_K_M.gguf</td>
+        </tr>
+        <tr>
+          <th scope="row">サイズ</th>
+          <td>1,280,835,840 bytes</td>
+        </tr>
+        <tr>
+          <th scope="row">SHA256</th>
+          <td><code>aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223</code></td>
+        </tr>
+        <tr>
+          <th scope="row">runtime</th>
+          <td>llama.cpp Vulkan build 10655 / commit <code>cb300598d</code></td>
+        </tr>
+        <tr>
+          <th scope="row">context</th>
+          <td>4,096 tokens</td>
+        </tr>
+        <tr>
+          <th scope="row">推論設定</th>
+          <td>thinking off、temperature 0、parallel 1、Q8 K/V cache</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="results">
+    <h2>結果</h2>
+    <table>
+      <caption>
+        会話、Tool use、分類試験の結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">試験</th>
+          <th scope="col">結果</th>
+          <th scope="col">観察</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>簡単な会話</td>
+          <td>合格</td>
+          <td>短い自然な日本語を返し、不要なToolを呼ばなかった。</td>
+        </tr>
+        <tr>
+          <td>会話履歴の継続</td>
+          <td>合格</td>
+          <td>直前の疲労と資料完成を踏まえて応答した。ただし表現に軽い重複があった。</td>
+        </tr>
+        <tr>
+          <td>Tool自動選択</td>
+          <td>合格</td>
+          <td>
+            天気依頼から<code>get_weather</code>を選び、東京とtomorrowを正しく設定した。
+          </td>
+        </tr>
+        <tr>
+          <td>Tool結果の応答化</td>
+          <td>合格</td>
+          <td>Tool結果の晴れ、27℃を自然な日本語に変換した。</td>
+        </tr>
+        <tr>
+          <td>不足引数の確認</td>
+          <td>合格</td>
+          <td>会議変更を実行せず、タイトル、日付、開始時刻を質問した。</td>
+        </tr>
+        <tr>
+          <td>強制Tool・厳格JSON</td>
+          <td>合格</td>
+          <td>関数名、パス引数、JSON Schemaの値を正確に生成した。</td>
+        </tr>
+        <tr>
+          <td>相槌安全分類</td>
+          <td>11/12</td>
+          <td>全12件でSchemaは有効。待機発話1件をackではなく安全側のdeferに分類した。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="latency">
+    <h2>レイテンシ</h2>
+    <table>
+      <caption>
+        会話と分類の応答レイテンシ
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ワークロード</th>
+          <th scope="col">サンプル</th>
+          <th scope="col">TTFC中央値</th>
+          <th scope="col">全体中央値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>短い日本語会話、最大64 tokens</td>
+          <td>5</td>
+          <td>124.9 ms</td>
+          <td>282.8 ms</td>
+        </tr>
+        <tr>
+          <td>Ornith/Gemma比較用の長いプロンプト、512 tokens</td>
+          <td>3</td>
+          <td>269.0 ms</td>
+          <td>4,598.3 ms</td>
+        </tr>
+        <tr>
+          <td>相槌JSON分類</td>
+          <td>12</td>
+          <td>非streaming</td>
+          <td>695 ms</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      512-token試験は全件がlength終了であり、総時間から見た実効生成速度はおよそ112～122
+      tok/sだった。 短文会話の初回サンプルにはウォームアップを含み、TTFCは116.5～260.2
+      msの範囲だった。 LARM経由の相槌分類はProvider準備に1,516
+      msを要しており、常時ホットでない構成では最初の相槌には遅すぎる。
+    </p>
+  </section>
+
+  <section id="decision">
+    <h2>判断</h2>
+    <p>
+      LFM 1.2Bの代わりに、Qwen 3.5 2Bを簡単な会話、相槌の安全分類、単発Tool callへ使う価値がある。
+      ただし4K contextと軽い表現重複があるため、長い会話、複数Toolの計画、重要な判断には使わない。
+      相槌タイミング自体はVADと決定論的な状態機械で決め、Qwenはack/defer分類または表現生成に限定する。
+      Tool実行前にはSchema検証と権限ポリシーを必須とし、複雑な依頼はGemma4またはOrnithへdeferする。
+    </p>
+  </section>
+
+  <aside>
+    <p>
+      生データは<code>/srv/ai/logs/qwen35-2b-evaluation/20260924T-current/</code>に保存した。
+      対話・Tool試験は<code>deploy/local-node/scripts/evaluate-qwen35-interaction.ts</code>で再実行できる。
+    </p>
+  </aside>
+</article>

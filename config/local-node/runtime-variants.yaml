@@ -1,0 +1,21 @@
+version: 1
+baseProfile: saaa-conversation-ornith15
+groups:
+  accelerator-media-heavy:
+    exclusive: true
+    minimumAvailableMemoryGB: 16
+variants:
+  music:
+    capability: media.music.generate
+    service: larm-music-ace-step.service
+    healthUrl: http://127.0.0.1:8090/health
+    group: accelerator-media-heavy
+    estimatedMemoryGB: 18
+    idleTtlSeconds: 300
+  image:
+    capability: media.image.generate
+    service: larm-image-qwen21.service
+    healthUrl: http://127.0.0.1:8091/health
+    group: accelerator-media-heavy
+    estimatedMemoryGB: 34
+    idleTtlSeconds: 120

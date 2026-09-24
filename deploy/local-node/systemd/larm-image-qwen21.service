@@ -1,0 +1,31 @@
+[Unit]
+Description=LARM on-demand Qwen-Image 2.1 variant
+After=network.target
+Conflicts=larm-music-ace-step.service
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/larm-current
+Environment=HOME=/srv/ai/cache
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+Environment=TOKENIZERS_PARALLELISM=false
+ExecStart=/srv/ai/apps/qwen-image-2.1-runtime/.venv/bin/python -u /srv/ai/apps/larm-current/deploy/local-node/providers/qwen-image21-provider.py --host 127.0.0.1 --port 8091 --model /srv/ai/models/Qwen/Qwen-Image-2.1 --artifact-root /srv/ai/data/generated/images
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=60
+KillSignal=SIGINT
+LimitMEMLOCK=infinity
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/srv/ai/models /srv/ai/apps/qwen-image-2.1-runtime /srv/ai/apps/larm-current
+ReadWritePaths=/srv/ai/cache /srv/ai/logs /srv/ai/data/generated/images
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

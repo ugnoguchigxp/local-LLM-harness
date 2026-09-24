@@ -63,6 +63,8 @@ export * from "./network";
 export * from "./service-harness";
 export * from "./service-activity";
 export * from "./agent-connection";
+export * from "./music";
+export * from "./image-artifact";
 export {
   API_OPERATIONS,
   allocationResolveResponseSchema,

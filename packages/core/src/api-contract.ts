@@ -31,6 +31,19 @@ import {
 } from "./agent-connection";
 import { embeddingRequestSchema, embeddingResponseSchema } from "./embedding";
 import {
+  musicArtifactMetadataSchema,
+  musicFavoriteListSchema,
+  musicFavoriteSchema,
+  musicGenerationJobSchema,
+  musicGenerationRequestSchema,
+  musicProviderListSchema,
+} from "./music";
+import {
+  imageArtifactDeleteSchema,
+  imageArtifactListSchema,
+  imageArtifactSchema,
+} from "./image-artifact";
+import {
   clusterStateSchema,
   runtimeClassSchema,
   runtimeDefinitionSchema,
@@ -568,6 +581,23 @@ export const API_OPERATIONS = [
   ["post", "/v1/audio/transcriptions", "createTranscription"],
   ["post", "/v1/audio/speech", "createSpeech"],
   ["post", "/v1/embed", "createEmbedding"],
+  ["get", "/v1/music/providers", "listMusicProviders"],
+  ["post", "/v1/music/generations", "createMusicGeneration"],
+  ["get", "/v1/music/generations/{id}", "getMusicGeneration"],
+  ["delete", "/v1/music/generations/{id}", "cancelMusicGeneration"],
+  ["get", "/v1/music/generations/{id}/events", "getMusicGenerationEvents"],
+  ["get", "/v1/music/generations/{id}/audio", "getMusicGenerationAudio"],
+  ["get", "/v1/music/generations/{id}/metadata", "getMusicGenerationMetadata"],
+  ["get", "/v1/music/favorites", "listMusicFavorites"],
+  ["get", "/v1/music/favorites/{id}", "getMusicFavorite"],
+  ["get", "/v1/music/favorites/{id}/audio", "getMusicFavoriteAudio"],
+  ["get", "/v1/music/favorites/{id}/metadata", "getMusicFavoriteMetadata"],
+  ["put", "/v1/music/generations/{id}/favorite", "favoriteMusicGeneration"],
+  ["delete", "/v1/music/generations/{id}/favorite", "unfavoriteMusicGeneration"],
+  ["get", "/v1/image-artifacts", "listImageArtifacts"],
+  ["get", "/v1/image-artifacts/{id}", "getImageArtifact"],
+  ["get", "/v1/image-artifacts/{id}/content", "getImageArtifactContent"],
+  ["delete", "/v1/image-artifacts/{id}", "deleteImageArtifact"],
   ["get", "/v1/audio/voices", "listVoices"],
   ["get", "/v1/artifact-operations/{id}", "getArtifactOperation"],
   ["post", "/v1/artifacts/{id}/stage", "stageArtifact"],
@@ -639,6 +669,23 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   createTranscription: ["200"],
   createSpeech: ["200"],
   createEmbedding: ["200"],
+  listMusicProviders: ["200"],
+  createMusicGeneration: ["202"],
+  getMusicGeneration: ["200"],
+  cancelMusicGeneration: ["200"],
+  getMusicGenerationEvents: ["200"],
+  getMusicGenerationAudio: ["200", "206"],
+  getMusicGenerationMetadata: ["200"],
+  listMusicFavorites: ["200"],
+  getMusicFavorite: ["200"],
+  getMusicFavoriteAudio: ["200", "206"],
+  getMusicFavoriteMetadata: ["200"],
+  favoriteMusicGeneration: ["200"],
+  unfavoriteMusicGeneration: ["204"],
+  listImageArtifacts: ["200"],
+  getImageArtifact: ["200"],
+  getImageArtifactContent: ["200"],
+  deleteImageArtifact: ["200"],
   listVoices: ["200"],
   getArtifactOperation: ["200"],
   stageArtifact: ["202"],
@@ -708,6 +755,23 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   createTranscription: "UpstreamJson",
   createSpeech: "Binary",
   createEmbedding: "EmbeddingResponse",
+  listMusicProviders: "MusicProviderList",
+  createMusicGeneration: "MusicGenerationJob",
+  getMusicGeneration: "MusicGenerationJob",
+  cancelMusicGeneration: "MusicGenerationJob",
+  getMusicGenerationEvents: "ServerSentEvents",
+  getMusicGenerationAudio: "Binary",
+  getMusicGenerationMetadata: "MusicArtifactMetadata",
+  listMusicFavorites: "MusicFavoriteList",
+  getMusicFavorite: "MusicFavorite",
+  getMusicFavoriteAudio: "Binary",
+  getMusicFavoriteMetadata: "MusicArtifactMetadata",
+  favoriteMusicGeneration: "MusicFavorite",
+  unfavoriteMusicGeneration: "MusicFavorite",
+  listImageArtifacts: "ImageArtifactList",
+  getImageArtifact: "ImageArtifact",
+  getImageArtifactContent: "Binary",
+  deleteImageArtifact: "ImageArtifactDelete",
   listVoices: "AudioVoiceDiscovery",
   getArtifactOperation: "ArtifactOperation",
   stageArtifact: "ArtifactOperation",
@@ -785,6 +849,15 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     AudioVoiceDiscovery: jsonSchema(audioVoiceDiscoverySchema),
     EmbeddingRequest: jsonSchema(embeddingRequestSchema),
     EmbeddingResponse: jsonSchema(embeddingResponseSchema),
+    MusicGenerationRequest: jsonSchema(musicGenerationRequestSchema),
+    MusicGenerationJob: jsonSchema(musicGenerationJobSchema),
+    MusicProviderList: jsonSchema(musicProviderListSchema),
+    MusicArtifactMetadata: jsonSchema(musicArtifactMetadataSchema),
+    MusicFavorite: jsonSchema(musicFavoriteSchema),
+    MusicFavoriteList: jsonSchema(musicFavoriteListSchema),
+    ImageArtifact: jsonSchema(imageArtifactSchema),
+    ImageArtifactList: jsonSchema(imageArtifactListSchema),
+    ImageArtifactDelete: jsonSchema(imageArtifactDeleteSchema),
     OpenAiModelList: jsonSchema(openAiModelListSchema),
     UpstreamJson: jsonSchema(upstreamJsonResponseSchema),
     ServerSentEvents: {
@@ -820,6 +893,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "createChatCompletion") return "ChatCompletionRequest";
       if (operationId === "createSpeech") return "AudioSpeechRequest";
       if (operationId === "createEmbedding") return "EmbeddingRequest";
+      if (operationId === "createMusicGeneration") return "MusicGenerationRequest";
       if (operationId === "claimAgentConnection") return "AgentConnectionClaimRequest";
       if (operationId === "renewAgentConnection") return "AgentConnectionRenewRequest";
       if (operationId === "planRuntimeDeployment") return "RuntimeReleasePlanRequest";
@@ -882,7 +956,29 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
           "application/octet-stream": { schema: { $ref: "#/components/schemas/Binary" } },
         };
       }
-      if (operationId === "releaseAgentConnection" || operationId === "deleteContext") return undefined;
+      if (operationId === "getMusicGenerationEvents") {
+        return {
+          "text/event-stream": { schema: { $ref: "#/components/schemas/ServerSentEvents" } },
+        };
+      }
+      if (operationId === "getMusicGenerationAudio" || operationId === "getMusicFavoriteAudio") {
+        return {
+          "audio/wav": { schema: { $ref: "#/components/schemas/Binary" } },
+          "audio/flac": { schema: { $ref: "#/components/schemas/Binary" } },
+          "audio/mpeg": { schema: { $ref: "#/components/schemas/Binary" } },
+        };
+      }
+      if (operationId === "getImageArtifactContent") {
+        return {
+          "image/webp": { schema: { $ref: "#/components/schemas/Binary" } },
+          "image/png": { schema: { $ref: "#/components/schemas/Binary" } },
+        };
+      }
+      if (
+        operationId === "releaseAgentConnection"
+        || operationId === "deleteContext"
+        || operationId === "unfavoriteMusicGeneration"
+      ) return undefined;
       return { "application/json": { schema: { $ref: `#/components/schemas/${successSchema}` } } };
     })();
     const activityNoStoreHeader = operationId === "getServiceActivity"
@@ -958,6 +1054,22 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
             in: "query",
             required: true,
             schema: { type: "string", minLength: 1 },
+          }],
+        }
+        : operationId === "listAgentProfilesV3"
+        ? {
+          parameters: [{
+            name: "profile",
+            in: "query",
+            required: false,
+            description: "Resolve a public consumer profile selector and return its concrete agent profile, providers, and optional services.",
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 128,
+              pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+              enum: ["contextStill", "SAAA", "SAAA-w-Image", "SAAA-w-music", "vulnWorkbench"],
+            },
           }],
         }
         : operationId === "provisionContextSource"

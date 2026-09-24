@@ -1,0 +1,216 @@
+<article lang="ja">
+  <h1>ローカルAI基本セットとオンデマンドRuntime Variant</h1>
+
+  <p>
+    利用者から見えるAgent Profileと基本的な会話能力を変えず、音楽生成、画像生成、OCR、CVなどの
+    accelerator workloadだけを必要時に追加する。内部実装ではこれをprofile切替ではなく、同一profileへ
+    capabilityを一時追加するRuntime Variantとして扱う。基本応答セットとmusic/image
+    Variantのrepository設定、on-demand systemd
+    unit、排他起動scriptは更新済みで、隔離portを使った実モデルE2Eにも合格した。production serviceの
+    install、restart、切替はまだ行っていない。
+  </p>
+
+  <section id="principles">
+    <h2>設計原則</h2>
+    <ul>
+      <li>会話、Tool use、音声入出力、Embeddingからなる基本セットはvariant切替中も維持する。</li>
+      <li>Agent Profile、認証主体、会話session ID、公開model IDはvariantで変更しない。</li>
+      <li>
+        Variantは追加capability、resource lease、lifecycleを束ねたoverlayであり、別profileではない。
+      </li>
+      <li>
+        重量級Variantは同時に一つだけ起動し、固定swap groupではなく明示的なaccelerator
+        leaseで排他する。
+      </li>
+      <li>Linux、ROCm allocator、一時bufferのため、起動後も20 GB以上のlive headroomを残す。</li>
+      <li>Variantの失敗やOOM予兆で基本セットを停止せず、Variantだけをrollbackする。</li>
+    </ul>
+  </section>
+
+  <section id="base-set">
+    <h2>基本セット</h2>
+    <table>
+      <caption>
+        128 GB unified memoryでSAAA session中に確保する基本Runtimeと保守的な予約値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Runtime</th>
+          <th scope="col">役割</th>
+          <th scope="col">予約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Ornith 1.5 35B ROCmFP4</th>
+          <td>通常会話、推論、coding。1 slot、128K、MTP n4/p0.6</td>
+          <td>40 GB</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.5 2B</th>
+          <td>
+            64K、短い分類、単発Tool、backchannel decision。Agent Connectionのsession中だけ維持
+          </td>
+          <td>8 GB</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen ASR</th>
+          <td>主要STT。観測済みpeakを踏まえて現行5 GB定義を引き上げる</td>
+          <td>10 GB</td>
+        </tr>
+        <tr>
+          <th scope="row">Whisper ASR</th>
+          <td>STT fallback</td>
+          <td>1 GB</td>
+        </tr>
+        <tr>
+          <th scope="row">VOICEVOX</th>
+          <td>低干渉TTS</td>
+          <td>1 GB</td>
+        </tr>
+        <tr>
+          <th scope="row">multilingual E5</th>
+          <td>Embedding</td>
+          <td>1 GB</td>
+        </tr>
+        <tr>
+          <th scope="row">Linux・安全予約</th>
+          <td>kernel、page cache、ROCm allocator、一時buffer</td>
+          <td>16 GB</td>
+        </tr>
+        <tr>
+          <th scope="row">合計</th>
+          <td>Variant未起動</td>
+          <td>77 GB</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      基本セットの名目headroomは51 GBである。このうち20
+      GBは利用不能な安全床として扱い、Variantへ割り当てる 通常上限を31 GBとする。Qwen expressive
+      TTSを常時起動する場合は別途5 GBを予約する。
+    </p>
+  </section>
+
+  <section id="variants">
+    <h2>Runtime Variant</h2>
+    <table>
+      <caption>
+        基本セットへ追加できるCapability Overlay
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Variant</th>
+          <th scope="col">追加capability</th>
+          <th scope="col">追加予約</th>
+          <th scope="col">起動中合計</th>
+          <th scope="col">名目残量</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>music</code></th>
+          <td>ACE-Step 1.5、batch 1、loopback port 8090</td>
+          <td>18 GB</td>
+          <td>95 GB</td>
+          <td>33 GB</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>image</code></th>
+          <td>Qwen-Image 2.1 BF16、GPU denoise + CPU FP32 VAE、batch 1、loopback port 8091</td>
+          <td>34 GB</td>
+          <td>111 GB</td>
+          <td>17 GB</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>ocr</code></th>
+          <td>VLM OCR、文書layout理解</td>
+          <td>16 GB</td>
+          <td>93 GB</td>
+          <td>35 GB</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>cv</code></th>
+          <td>object detection、tracking、軽量vision pipeline</td>
+          <td>8 GB</td>
+          <td>85 GB</td>
+          <td>43 GB</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>expressive-tts</code></th>
+          <td>Qwen expressive TTS</td>
+          <td>5 GB</td>
+          <td>82 GB</td>
+          <td>46 GB</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        現在取得済みのQwen-Image 2.1 BF16は512角生成時に約32.4 GBを割り当てたため、34 GBで予約する。
+        2026-09-24のmixed E2EではOrnith、Qwen 2B、音声系を維持したまま生成し、完了時のsystem
+        availableは約30 GiBだった。静的名目残量だけでは16 GiBとなるため、起動直前の
+        <code>MemAvailable</code>がVariant予約と16 GiB hard
+        floorの合計以上であることも検査する。
+      </p>
+    </aside>
+  </section>
+
+  <section id="admission">
+    <h2>Admissionと排他</h2>
+    <ol>
+      <li>呼出元は同じAgent Profileのまま、必要な追加capabilityを要求する。</li>
+      <li>LARMは基本セット、要求Variant、20 GB安全床を含む静的予算を検査する。</li>
+      <li>freshなsystem memory、accelerator memory、service activityを検査する。</li>
+      <li>競合する重量級Variantがあれば、新規jobをqueueするか既存job完了後に切り替える。</li>
+      <li>対象Runtimeをloadし、semantic readiness成功後だけjobを開始する。</li>
+      <li>job完了後は短いidle TTLを適用し、期限後にVariantだけをunloadする。</li>
+      <li>load、health、推論、unloadのいずれかが失敗しても基本セットへ収束させる。</li>
+    </ol>
+    <p>
+      <code>music</code
+      >、<code>image</code>、<code>ocr</code>は同じ
+      <code>accelerator-media-heavy</code
+      >排他groupに置く。軽量<code>cv</code>と
+      <code>expressive-tts</code
+      >はmemory上は併存可能でも、foreground音声SLOを満たすことをmixed benchmarkで
+      認定するまでは重量級Variantと同時実行しない。
+    </p>
+  </section>
+
+  <section id="scheduling">
+    <h2>Scheduling</h2>
+    <ul>
+      <li>ASRと短いQwen 2B decisionをforeground最優先とする。</li>
+      <li>Ornithの音声応答をmedia generationより優先する。</li>
+      <li>画像・音楽生成は非同期jobとし、音声活動中はstep境界でyieldまたは開始を遅延する。</li>
+      <li>OCRは対話で結果を待つ場合があるため短文jobを優先し、長い文書は非同期化する。</li>
+      <li>同一Variant内もbatch 1を既定とし、複数生成要求はqueueする。</li>
+    </ul>
+  </section>
+
+  <section id="public-contract">
+    <h2>公開契約</h2>
+    <p>
+      Variant名をroutingの正本にせず、要求capabilityから内部Variantを選ぶ。これによりmodelやruntimeを将来交換しても
+      Agent Profileを変更せずに済む。公開状態には利用可能capability、Variantの
+      <code>cold</code
+      >、<code>loading</code>、<code>ready</code>、<code>busy</code>、推定ready時間を含める。
+      非同期jobは取消、進捗、成果物取得、失敗理由を提供し、provider固有pathをconsumerへ公開しない。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>導入条件</h2>
+    <ul>
+      <li>Ornith 1×128Kの実測peakとMTP性能を再測定する。</li>
+      <li>Qwen 2B 64Kの予約値を実測し、Tool use回帰試験を行う。</li>
+      <li>Qwen ASRの定義を観測peak以上へ修正する。</li>
+      <li>
+        各Variant単独と、ASR・Ornith応答を含むmixed workloadでTTFC、RTF、peak memoryを測定する。
+      </li>
+      <li>image Variantは総使用量108 GB未満、その他は100 GB未満を目標にする。</li>
+      <li>OOM、cancel、provider crash後に基本セットへ自動収束することをfault試験する。</li>
+    </ul>
+  </section>
+</article>

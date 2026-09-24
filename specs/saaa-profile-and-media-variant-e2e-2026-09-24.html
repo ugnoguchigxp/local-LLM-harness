@@ -1,0 +1,150 @@
+<article lang="ja">
+  <h1>SAAA Ornith/Qwen 2B Profile・Media Variant E2E 2026-09-24</h1>
+
+  <p>
+    production serviceを変更せず、Ornith、llama-swap、LARMを隔離port 18080、18083、19810へ起動し、
+    新しいSAAA Profileとmusic/image Variantを実モデルで検証した。productionのLARM、Qwen 3.8、
+    llama-swap、ASR、TTS、Embeddingは検証中も稼働を維持し、終了後に隔離processをすべて停止した。
+  </p>
+
+  <section id="profiles">
+    <h2>Profile contract</h2>
+    <ul>
+      <li><code>saaa-conversation-ornith15</code>のclaimは1回で5 Providerを返した。</li>
+      <li>
+        Provider名は<code>asr</code>、<code>backchannel</code>、<code>embedding</code>、<code>llm</code>、<code>tts</code>だった。
+      </li>
+      <li>Ornithは131,072 token、Qwen 2Bは65,536 tokenのcontext windowを広告した。</li>
+      <li>
+        <code>saaa-qwen38</code>はGemma 4をmain LLMとするfrozen legacy
+        contractへ戻した。
+      </li>
+    </ul>
+  </section>
+
+  <section id="llm-results">
+    <h2>LLM結果</h2>
+    <table>
+      <caption>
+        Claim済みProviderをGateway経由で呼び出した実測
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Provider</th>
+          <th scope="col">試験</th>
+          <th scope="col">結果</th>
+          <th scope="col">TTFT</th>
+          <th scope="col">速度</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen 3.5 2B</th>
+          <td>短い日本語相槌</td>
+          <td>「そうですよね。」</td>
+          <td>70.5 ms</td>
+          <td>134.2 tok/s相当</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.5 2B</th>
+          <td>現在時刻Tool選択</td>
+          <td><code>get_current_time({"timezone":"Asia/Tokyo"})</code>、429.6 ms</td>
+          <td>—</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <th scope="row">Ornith 1.5 35B</th>
+          <td>通常日本語応答、thinking OFF</td>
+          <td>78 output tokens、正常な可視本文</td>
+          <td>154.9 ms</td>
+          <td>75.1 tok/s</td>
+        </tr>
+        <tr>
+          <th scope="row">Ornith 1.5 35B</th>
+          <td>thinking auto、512 token上限</td>
+          <td>全tokenがreasoningとなり可視本文なし</td>
+          <td>最初のreasoning delta 163.4 ms</td>
+          <td>73.74 tok/s engine decode</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        SAAAの通常応答は<code>chat_template_kwargs.enable_thinking=false</code>を明示する必要がある。
+        若干の思考が必要なrequestだけthinkingを有効化し、その場合は十分なreasoning budgetと
+        可視本文が得られない場合の再試行条件を設ける。
+      </p>
+    </aside>
+  </section>
+
+  <section id="multimodal-results">
+    <h2>ASR・TTS・Embedding</h2>
+    <table>
+      <caption>
+        同じAgent Connectionでclaimした非LLM Providerの結果
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">Embedding</th>
+          <td>384次元、L2 normalize、encode 16.81 ms、wall 30 ms</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>VOICEVOXで103,980 bytesのWAVを445 msで生成</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td>生成WAVをQwen ASRへ入力し「これは音声認識の確認です。」を607 msで復元</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="variants">
+    <h2>Media Variant</h2>
+    <table>
+      <caption>
+        基本Profileを維持したmixed環境でのon-demand Variant E2E
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Variant</th>
+          <th scope="col">入力</th>
+          <th scope="col">結果</th>
+          <th scope="col">時間</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">music</th>
+          <td>ACE-Step turbo、5秒、instrumental、fast、seed 4242</td>
+          <td>MP3 82,988 bytes。LARM Music APIから再取得成功</td>
+          <td>generation 15.252秒、wall 16.233秒</td>
+        </tr>
+        <tr>
+          <th scope="row">image</th>
+          <td>Qwen-Image 2.1、512角、4 steps、seed 4242</td>
+          <td>WebP 47,382 bytes。LARM artifact APIから同一SHA-256で再取得成功</td>
+          <td>provider 36.438秒、wall 37.582秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      music停止後にimageを起動し、<code>accelerator-media-heavy</code>排他を守った。image完了時は
+      system used約91 GiB、available約30 GiBだった。4 stepsはtransportと保存経路のcanaryであり、
+      品質用の既定40 stepsとは区別する。
+    </p>
+  </section>
+
+  <section id="deployment-status">
+    <h2>適用状態とrollback</h2>
+    <p>
+      repositoryにはProfile、Ornith unit、Variant manifest、music/image
+      unit、排他起動scriptを用意した。 ただしroot権限が必要なhost backup applyとsystemd unit
+      installは、このsessionでは非対話sudoが利用できず 実行していない。productionは既存release
+      <code>3738af6b576472e6bd56e34275494a1bc54fb2ba</code>のままで、検証終了時に全serviceがactive、
+      Gatewayがreadyであることを確認した。production適用前のrollback pointは既存
+      <code>saaa-qwen38</code>と現行release pointerである。
+    </p>
+  </section>
+</article>

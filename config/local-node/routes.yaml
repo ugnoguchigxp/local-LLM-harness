@@ -5,7 +5,7 @@ routes:
       - llm.reasoning
       - llm.coding
     candidates:
-      - runtime: qwen-worker-fast
+      - runtime: ornith-general
         purpose: primary
 
   llm-saaa-qwen38:
@@ -15,7 +15,7 @@ routes:
       - llm.coding
     explicitOnly: true
     candidates:
-      - runtime: qwen-worker-fast
+      - runtime: ornith-general
         purpose: primary
 
   llm-saaa-gemma4:
@@ -31,7 +31,7 @@ routes:
       - llm.general
     explicitOnly: true
     candidates:
-      - runtime: ornith15-conversation
+      - runtime: ornith-general
         purpose: primary
 
   llm-agent-worker:
@@ -96,12 +96,21 @@ routes:
       - runtime: qwen35-decision
         purpose: primary
 
+  llm-saaa-qwen35-2b:
+    capabilities:
+      - llm.decision.default
+      - llm.backchannel.classifier
+    explicitOnly: true
+    candidates:
+      - runtime: qwen35-decision
+        purpose: primary
+
   llm-backchannel-default:
     capabilities:
       - llm.backchannel.classifier
     explicitOnly: true
     candidates:
-      - runtime: lfm25-backchannel-jp
+      - runtime: qwen35-decision
         purpose: primary
 
   llm-backchannel-lfm25-jp-1.2b:
@@ -133,7 +142,7 @@ routes:
         purpose: fallback
       - runtime: qwen36-35b
         purpose: fallback
-      - runtime: qwen-general
+      - runtime: qwen-worker-fast
         purpose: fallback
 
   llm-35b-speed:
@@ -147,7 +156,7 @@ routes:
         purpose: primary
       - runtime: ornith15-35b
         purpose: fallback
-      - runtime: qwen-general
+      - runtime: qwen-worker-fast
         purpose: fallback
 
   llm-agent-35b:
@@ -159,7 +168,7 @@ routes:
     candidates:
       - runtime: ornith15-35b-agent
         purpose: primary
-      - runtime: qwen-general
+      - runtime: qwen-worker-fast
         purpose: fallback
 
   llm-qwen36-35b:
@@ -171,7 +180,7 @@ routes:
     candidates:
       - runtime: qwen36-35b
         purpose: primary
-      - runtime: qwen-general
+      - runtime: qwen-worker-fast
         purpose: fallback
 
   stt-default:

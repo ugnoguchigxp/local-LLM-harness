@@ -91,6 +91,19 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(paths["/v1/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v2/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v3/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v3/agent-profiles"]?.get?.parameters).toEqual([{
+    name: "profile",
+    in: "query",
+    required: false,
+    description: "Resolve a public consumer profile selector and return its concrete agent profile, providers, and optional services.",
+    schema: {
+      type: "string",
+      minLength: 1,
+      maxLength: 128,
+      pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+      enum: ["contextStill", "SAAA", "SAAA-w-Image", "SAAA-w-music", "vulnWorkbench"],
+    },
+  }]);
   expect(paths["/v1/embed"]?.post?.security).toEqual([{ providerBearer: [] }]);
   expect(paths["/v1/context-sources"]?.post?.security).toEqual([{ providerBearer: [] }]);
   const sourceRequestBody = paths["/v1/context-sources"]?.post?.requestBody as

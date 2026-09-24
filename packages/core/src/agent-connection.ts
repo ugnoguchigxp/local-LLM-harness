@@ -14,6 +14,31 @@ export const agentIdentifierSchema = z.string()
   .max(128)
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 
+export const agentProviderEndpointSchema = z.enum([
+  "/v1/chat/completions",
+  "/v1/audio/transcriptions",
+  "/v1/audio/speech",
+  "/v1/embed",
+]);
+
+export const agentProfileSelectorIdSchema = z.enum([
+  "contextStill",
+  "SAAA",
+  "SAAA-w-Image",
+  "SAAA-w-music",
+  "vulnWorkbench",
+]);
+export type AgentProfileSelectorId = z.infer<typeof agentProfileSelectorIdSchema>;
+
+export function agentProviderEndpoint(protocol: RuntimeProtocol): z.infer<typeof agentProviderEndpointSchema> {
+  switch (protocol) {
+    case "openai.chat-completions.v1": return "/v1/chat/completions";
+    case "openai.audio-transcriptions.v1": return "/v1/audio/transcriptions";
+    case "openai.audio-speech.v1": return "/v1/audio/speech";
+    case "larm.embedding.v1": return "/v1/embed";
+  }
+}
+
 export const agentReadinessKindSchema = z.enum([
   "llm-inference",
   "stt-transcription",
@@ -128,11 +153,36 @@ const agentCompatibilityAliasYamlSchema = z.object({
   providerCapabilities: z.record(agentIdentifierSchema, agentIdentifierSchema).default({}),
 }).strict();
 
+export const agentProfileServiceSchema = z.object({
+  name: agentIdentifierSchema,
+  capability: agentIdentifierSchema,
+  protocol: z.enum(["larm.image-generation.v1", "larm.music-generation.v1"]),
+  endpoint: z.enum(["/v1/images/generations", "/v1/music/generations"]),
+  model: agentIdentifierSchema,
+}).strict().superRefine((service, context) => {
+  const expected = service.protocol === "larm.image-generation.v1"
+    ? "/v1/images/generations"
+    : "/v1/music/generations";
+  if (service.endpoint !== expected) {
+    context.addIssue({ code: "custom", path: ["endpoint"], message: "endpoint must match protocol" });
+  }
+});
+
+const agentProfileSelectorYamlSchema = z.object({
+  agentProfile: agentIdentifierSchema,
+  services: z.array(agentProfileServiceSchema).max(8).default([]),
+}).strict().superRefine((selector, context) => {
+  if (new Set(selector.services.map((service) => service.name)).size !== selector.services.length) {
+    context.addIssue({ code: "custom", path: ["services"], message: "service names must be unique" });
+  }
+});
+
 export const agentConnectionsFileSchema = z.object({
   version: z.literal(1),
   defaultAgentProfile: agentIdentifierSchema,
   audiences: z.record(agentIdentifierSchema, agentAudienceYamlSchema),
   agentProfiles: z.record(agentIdentifierSchema, agentProfileYamlSchema),
+  profileSelectors: z.partialRecord(agentProfileSelectorIdSchema, agentProfileSelectorYamlSchema).default({}),
   compatibilityAliases: z.record(agentIdentifierSchema, agentCompatibilityAliasYamlSchema).default({}),
 }).strict();
 
@@ -251,6 +301,11 @@ export type AgentConnectionCatalog = {
   defaultAgentProfile: string;
   audiences: AgentAudience[];
   profiles: AgentProfile[];
+  profileSelectors: Array<{
+    id: string;
+    agentProfile: string;
+    services: Array<z.infer<typeof agentProfileServiceSchema>>;
+  }>;
 };
 
 export class AgentConnectionCatalogError extends Error {
@@ -430,6 +485,15 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
   const profiles = [...canonicalProfiles, ...compatibilityProfiles]
     .sort((left, right) => left.id.localeCompare(right.id));
 
+  const profileSelectors = Object.entries(parsed.data.profileSelectors).map(([id, selector]) => {
+    if (!profiles.some((profile) => profile.id === selector.agentProfile)) {
+      throw new AgentConnectionCatalogError(
+        `profile selector ${id} references unknown agent profile ${selector.agentProfile}`,
+      );
+    }
+    return { id, ...selector, services: structuredClone(selector.services) };
+  }).sort((left, right) => left.id.localeCompare(right.id));
+
   const audiences = Object.entries(parsed.data.audiences).map(([id, audience]) => ({
     id,
     ...audience,
@@ -441,6 +505,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
     defaultAgentProfile: parsed.data.defaultAgentProfile,
     audiences,
     profiles,
+    profileSelectors,
   };
 }
 
@@ -578,6 +643,7 @@ export const publicAgentProfileListV3Schema = z.object({
   contractVersion: z.literal("agent-connection.v3"),
   catalogRevision: z.string().min(1).max(128),
   defaultAgentProfile: agentIdentifierSchema,
+  requestedProfile: agentIdentifierSchema.optional(),
   profiles: z.array(z.object({
     id: agentIdentifierSchema,
     canonicalProfile: agentIdentifierSchema,
@@ -590,6 +656,7 @@ export const publicAgentProfileListV3Schema = z.object({
       capability: agentIdentifierSchema,
       supportedCapabilities: z.array(agentIdentifierSchema).min(1).max(32),
       protocol: runtimeProtocolSchema,
+      endpoint: agentProviderEndpointSchema,
       model: agentIdentifierSchema,
       embeddingSpace: embeddingSpaceSchema.optional(),
       contextWindow: z.object({
@@ -626,16 +693,31 @@ export const publicAgentProfileListV3Schema = z.object({
           message: "contextWindow is only valid for Chat Completions providers",
         });
       }
+      if (provider.endpoint !== agentProviderEndpoint(provider.protocol)) {
+        context.addIssue({
+          code: "custom",
+          path: ["endpoint"],
+          message: "endpoint must match protocol",
+        });
+      }
     })).min(1).max(8),
+    services: z.array(agentProfileServiceSchema).max(8),
   }).strict()),
   audiences: z.array(agentIdentifierSchema),
 }).strict().superRefine((value, context) => {
   const selected = value.profiles.filter((profile) => profile.id === value.defaultAgentProfile);
-  if (selected.length !== 1 || selected[0]?.selectionPolicy !== "default") {
+  if (!value.requestedProfile && (selected.length !== 1 || selected[0]?.selectionPolicy !== "default")) {
     context.addIssue({
       code: "custom",
       path: ["defaultAgentProfile"],
       message: "defaultAgentProfile must name exactly one default profile",
+    });
+  }
+  if (value.requestedProfile && value.profiles.length !== 1) {
+    context.addIssue({
+      code: "custom",
+      path: ["profiles"],
+      message: "a requested profile must resolve to exactly one agent profile",
     });
   }
   if (value.profiles.some((profile) => {

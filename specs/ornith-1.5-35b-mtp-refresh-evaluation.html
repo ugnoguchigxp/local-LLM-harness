@@ -1,0 +1,309 @@
+<article lang="ja">
+  <h1>Ornith-1.5-35B-A3B MTP refresh再評価</h1>
+
+  <p>
+    Ryzen AI MAX+ 395 / Radeon 8060S / 128 GBのlocal-nodeで、Aug-24 MTP refreshを含む ROCmFP4
+    artifactをMTP OFF、MTP ONの順に測定しました。更新artifactの導入とMTP有効化は完了
+    しましたが、公開値105.6 tok/sは再現していません。speed routeは明示選択のままとし、Gemma 4や
+    Resident Qwenを置き換えません。
+  </p>
+
+  <dl>
+    <dt>測定日</dt>
+    <dd><time>2026-09-24</time></dd>
+    <dt>モデル</dt>
+    <dd><code>Ornith-1.5-35B-A3B</code>、約34.8B total / 3B active</dd>
+    <dt>artifact</dt>
+    <dd><code>Ornith-1.5-35B-A3B-ROCmFP4.gguf</code>、19,052,438,944 bytes</dd>
+    <dt>SHA-256</dt>
+    <dd><code>0f907917a1bfe4e0ca0d281e5709dcf34b6277063e94fab29491bb5c80fda696</code></dd>
+    <dt>配布revision</dt>
+    <dd><code>a0db6d02a557324a04cecd3feb0ab3f08565521e</code></dd>
+    <dt>量子化</dt>
+    <dd><code>Q4_0_ROCMFP4_STRIX_LEAN</code>、約4.29 BPW</dd>
+    <dt>取得方法</dt>
+    <dd>
+      <code>halofpx pull ornith-1.5-35b</code>。本体とBF16 vision projectorのSHA検証に成功
+    </dd>
+  </dl>
+
+  <section id="method">
+    <h2>測定条件</h2>
+    <ul>
+      <li>backendはVulkan0、Mesa RADV STRIX_HALO、context 131,072、slot 1です。</li>
+      <li>
+        K/V cacheはともに<code>q8_0</code>、Flash Attention有効、batch
+        2048、ubatch 1024です。
+      </li>
+      <li>同じcoding promptをtemperature 0で256 output tokensずつ3回生成しました。</li>
+      <li>MTP ONは<code>draft-mtp</code>、draft depth 4、p-min 0.6です。</li>
+      <li>serverは条件ごとに終了して新規起動し、warmup requestを集計から除外しました。</li>
+      <li>
+        Resident providerはactiveのままです。停止による完全分離はsudo認証が必要なため未測定です。
+      </li>
+    </ul>
+  </section>
+
+  <section id="results">
+    <h2>主要結果</h2>
+    <table>
+      <caption>
+        q38rocm v1.5.3、llama.cpp build 244 / commit 0fc9568、Vulkan0
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">prompt</th>
+          <th scope="col">decode</th>
+          <th scope="col">draft acceptance</th>
+          <th scope="col">system GTT peak</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">MTP OFF</th>
+          <td>295.2 tok/s</td>
+          <td>67.9 tok/s</td>
+          <td>対象外</td>
+          <td>52.14 GB</td>
+        </tr>
+        <tr>
+          <th scope="row">MTP ON n4/p0.6</th>
+          <td>277.7 tok/s</td>
+          <td>72.2 tok/s</td>
+          <td>79.2%、mean accepted length 2.64–2.84</td>
+          <td>54.49 GB</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      MTPはbareより6.2%速いものの、目標90–110 tok/sへ達しません。低レベル
+      <code>llama-bench</code>のbare tg256は70.81 ± 0.22
+      tok/sで、基本推論は指定された正常範囲 70–80
+      tok/sの下端に入ります。server測定との差は約4%です。GPU busy sysfsは推論前から常時
+      100%を返したため利用率指標として無効であり、値だけをraw telemetryに保持します。
+    </p>
+  </section>
+
+  <section id="engine-matrix">
+    <h2>engine切り分け</h2>
+    <table>
+      <caption>
+        同じartifact、Vulkan0、同じ256-token coding workload
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">engine</th>
+          <th scope="col">MTP OFF</th>
+          <th scope="col">MTP ON</th>
+          <th scope="col">acceptance</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">build 244 / 0fc9568</th>
+          <td>67.9</td>
+          <td>72.2</td>
+          <td>79.2%</td>
+          <td>採用。更新headを認識するが公開性能未達</td>
+        </tr>
+        <tr>
+          <th scope="row">build 215 / 12f8b7e</th>
+          <td>66.8</td>
+          <td>69.3</td>
+          <td>80.4%</td>
+          <td>旧lineageで改善なし</td>
+        </tr>
+        <tr>
+          <th scope="row">HaloFPX 1.7.0 build 11475 / 334f10d81</th>
+          <td>71.2</td>
+          <td>47.3</td>
+          <td>20.6%</td>
+          <td>custom tensor警告とMTP退行のため不採用</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      旧artifactの既知SHA
+      <code>b42fb74cd32ce3ab5fc0b10214ae7b4030d852f49b749dcdd0e5ad6b35e1510f</code>は使用していません。
+      したがって今回のMTP未達を旧quant混入とは判定しません。engineと公開測定workloadの差、常駐
+      providerとのメモリ帯域競合が残る原因候補です。
+    </p>
+  </section>
+
+  <section id="ttfc">
+    <h2>Streaming first-character latency</h2>
+    <p>
+      同じ常駐service併存条件でOpenAI互換SSEを3回ずつ測定しました。HTTP request送信直前から、最初の
+      SSE、最初のreasoning文字、最初の表示用<code>content</code>文字までをmonotonic
+      clockで計測して います。warmupは集計外、temperature 0、上限512 output tokensです。
+    </p>
+    <table>
+      <caption>
+        各値は3回の中央値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">最初のSSE</th>
+          <th scope="col">最初のreasoning文字</th>
+          <th scope="col">最初の表示文字</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">MTP OFF / reasoning auto</th>
+          <td>206 ms</td>
+          <td>206 ms</td>
+          <td>4,154 ms</td>
+        </tr>
+        <tr>
+          <th scope="row">MTP ON / reasoning auto</th>
+          <td>216 ms</td>
+          <td>216 ms</td>
+          <td>512 token内に未到達</td>
+        </tr>
+        <tr>
+          <th scope="row">MTP OFF / thinking off</th>
+          <td>209 ms</td>
+          <td>対象外</td>
+          <td>209 ms</td>
+        </tr>
+        <tr>
+          <th scope="row">MTP ON / thinking off</th>
+          <td>224 ms</td>
+          <td>対象外</td>
+          <td>224 ms</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      MTPはthinking-offの最初の表示文字を約15 ms遅くする一方、同じrunの継続decodeを67.99から 72.13
+      tok/sへ改善しました。reasoning autoは通信上の最初の文字こそ約0.2秒ですが、表示本文を
+      数秒遅延させます。リアルタイム会話routeはrequestで<code>enable_thinking: false</code>を固定し、
+      reasoning tokenを表示本文のTTFCとして数えません。
+    </p>
+  </section>
+
+  <section id="quality">
+    <h2>生成品質</h2>
+    <p>
+      MTP OFFはPython構文、必須tool call、strict JSON schemaの3試験に合格しました。MTP ONはtool
+      callとstrict JSON schemaに合格しましたが、Python試験は説明を続けて512-token上限へ達し、閉じた
+      code fenceを返さなかったため失敗しました。文字化けや反復崩壊は観測していませんが、Gemma 4
+      代替判定にはSAAA会話fixtureと長文coding品質の追加比較が必要です。
+    </p>
+  </section>
+
+  <section id="gemma4-comparison">
+    <h2>Gemma 4 conversation runtimeとの比較</h2>
+    <p>
+      productionの<code>gemma4-conversation</code>と同じQAT-Q4_0 artifact、stock
+      llama.cpp build 10655 / commit <code>cb300598d</code>、Vulkan0、q8_0
+      K/V、reasoning offで測定しました。 設定は230,400 contextを要求しますが、model native
+      contextが131,072のためserverは131,072へ
+      capしました。したがってOrnithのTTFC測定と実効contextは同じです。
+    </p>
+    <table>
+      <caption>
+        Resident Qwenと音声serviceが常駐した同じhost条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">Gemma 4 E4B</th>
+          <th scope="col">Ornith MTP n4/p0.6</th>
+          <th scope="col">優位</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">最初の表示文字、中央値</th>
+          <td>139 ms</td>
+          <td>224 ms</td>
+          <td>Gemma 4、85 ms短い</td>
+        </tr>
+        <tr>
+          <th scope="row">最初の表示文字、最小–最大</th>
+          <td>63–141 ms</td>
+          <td>220–225 ms</td>
+          <td>Gemma 4</td>
+        </tr>
+        <tr>
+          <th scope="row">256-token decode</th>
+          <td>57.6 tok/s</td>
+          <td>72.1 tok/s</td>
+          <td>Ornith、25.3%高速</td>
+        </tr>
+        <tr>
+          <th scope="row">system GTT peak</th>
+          <td>37.63 GB</td>
+          <td>54.49 GB</td>
+          <td>Gemma 4</td>
+        </tr>
+        <tr>
+          <th scope="row">artifact size</th>
+          <td>5,154,941,280 bytes</td>
+          <td>19,052,438,944 bytes</td>
+          <td>Gemma 4</td>
+        </tr>
+        <tr>
+          <th scope="row">model ready</th>
+          <td>約1.7秒</td>
+          <td>約3.2秒</td>
+          <td>Gemma 4</td>
+        </tr>
+        <tr>
+          <th scope="row">機能probe</th>
+          <td>Python、tool call、JSON schemaすべて合格</td>
+          <td>tool callとJSON合格、Pythonはtoken上限で未完</td>
+          <td>Gemma 4</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Gemma 4は最初の反応、memory、cold load、出力制御で優位です。Ornithは最初の文字まで約85 ms
+      遅い一方、長い回答のdecodeは約25%高速です。リアルタイム会話defaultはGemma 4を維持し、
+      Ornithは長文・coding・agent task用の明示candidateに留めます。Gemma 4のraw evidenceは
+      <code>/srv/ai/logs/gemma4-comparison/20260924T140000Z</code>です。
+    </p>
+  </section>
+
+  <section id="decision">
+    <h2>運用判断</h2>
+    <ul>
+      <li>
+        refresh artifactを<code>ornith15-35b-speed</code>と64K Agent
+        runtimeへ固定します。
+      </li>
+      <li>
+        MTPは要求どおり<code>n4/p0.6</code>で有効化しますが、明示routeに限定します。
+      </li>
+      <li>品質primaryの公式Q5_K_M、Resident Qwen、Gemma 4会話routeは変更しません。</li>
+      <li>
+        90 tok/s未満のため公開性能再現gateは不合格です。完全分離試験とengine更新後に再評価します。
+      </li>
+    </ul>
+  </section>
+
+  <section id="evidence">
+    <h2>証跡</h2>
+    <p>
+      repository外raw evidenceは
+      <code>/srv/ai/logs/ornith15-mtp/20260924T121500Z</code>、TTFCを含む再測定は
+      <code>/srv/ai/logs/ornith15-mtp/20260924T132000Z</code>、低レベルbare結果は
+      <code>/srv/ai/logs/ornith15-mtp/llama-bench-20260924T123500Z.json</code>です。再実行入口は
+      <code>deploy/local-node/scripts/benchmark-ornith15-mtp.sh</code>です。
+    </p>
+  </section>
+
+  <section id="sources">
+    <h2>一次情報</h2>
+    <ul>
+      <li><code>https://github.com/julianmb/halofpx</code></li>
+      <li><code>https://huggingface.co/julianmb/Ornith-1.5-35B-A3B-ROCmFP4-GGUF</code></li>
+      <li><code>https://github.com/julianmb/q38rocm/releases</code></li>
+    </ul>
+  </section>
+</article>

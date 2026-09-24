@@ -10,6 +10,8 @@ import {
   publicAgentConnectionSchema,
   publicAgentProfileListSchema,
   publicAgentProfileListV1Schema,
+  loadAgentConnectionCatalogForRegistry,
+  loadRegistry,
   parseAgentConnectionCatalog,
   personalStateSubjectDigest,
   runtimeListSchema,
@@ -30,6 +32,10 @@ import type {
 import type { PersonalStateController } from "./personal-state-controller";
 import { GatewayLifecycle } from "./gateway-lifecycle";
 import { verifyGatewayStartup } from "./gateway-startup";
+import type { ImageArtifactManager } from "./image-artifact-manager";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const registry: Registry = {
   nodes: [
@@ -324,6 +330,174 @@ test("GET /health", async () => {
     bootEpoch: "epoch-local",
   });
   expect(res.headers.get("x-larm-boot-epoch")).toBe("epoch-local");
+});
+
+test("v3 public profile selectors return exact provider and service endpoints with models", async () => {
+  const configDir = join(import.meta.dir, "../../../config/local-node");
+  const productionRegistry = loadRegistry(configDir);
+  const productionCatalog = loadAgentConnectionCatalogForRegistry(configDir, productionRegistry);
+  const probes = new Map<string, RuntimeHealth>();
+  const log = { ensure: [] as string[], stop: [] as string[] };
+  const backend = stubBackend(probes, log);
+  const observer = new Observer(productionRegistry, backend);
+  await observer.tick();
+  const control = new ControlPlane(productionRegistry, backend, observer, {
+    idleTtlMs: 0,
+    random: () => "selector-e2e",
+    onRouteShadowComparison: () => undefined,
+  });
+  const app = createApp({
+    registry: productionRegistry,
+    getState: () => observer.getState(),
+    control,
+    apiToken: agentApiToken,
+    allowAnonymousAgentConnections: true,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: productionCatalog,
+  });
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+
+  const expected = {
+    contextStill: {
+      id: "contextstill-background",
+      providers: [{ name: "llm", endpoint: "/v1/chat/completions", model: "qwen-agent-worker" }],
+      services: [],
+    },
+    SAAA: {
+      id: "saaa-conversation-ornith15",
+      providers: [
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
+        { name: "backchannel", endpoint: "/v1/chat/completions", model: "qwen3.5-2b-fast-response" },
+        { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
+        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-35b" },
+        { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
+      ],
+      services: [],
+    },
+    "SAAA-w-Image": {
+      id: "saaa-conversation-ornith15",
+      providers: [
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
+        { name: "backchannel", endpoint: "/v1/chat/completions", model: "qwen3.5-2b-fast-response" },
+        { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
+        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-35b" },
+        { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
+      ],
+      services: [{ name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1" }],
+    },
+    "SAAA-w-music": {
+      id: "saaa-conversation-ornith15",
+      providers: [
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
+        { name: "backchannel", endpoint: "/v1/chat/completions", model: "qwen3.5-2b-fast-response" },
+        { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
+        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-35b" },
+        { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
+      ],
+      services: [{ name: "music", endpoint: "/v1/music/generations", model: "ace-step-1.5" }],
+    },
+    vulnWorkbench: {
+      id: "coding-default",
+      providers: [{ name: "llm", endpoint: "/v1/chat/completions", model: "coding-default" }],
+      services: [],
+    },
+  } as const;
+
+  try {
+    for (const [requestedProfile, selected] of Object.entries(expected)) {
+      const requestUrl = new URL("/v3/agent-profiles", baseUrl);
+      requestUrl.searchParams.set("profile", requestedProfile);
+      const response = await fetch(requestUrl);
+      expect(response.status).toBe(200);
+      const body = await response.json() as {
+        requestedProfile: string;
+        profiles: Array<{
+          id: string;
+          providers: Array<{ name: string; endpoint: string; model: string }>;
+          services: Array<{ name: string; endpoint: string; model: string }>;
+        }>;
+      };
+      expect(body.requestedProfile).toBe(requestedProfile);
+      expect(body.profiles).toHaveLength(1);
+      expect(body.profiles[0]!.id).toBe(selected.id);
+      expect(body.profiles[0]!.providers.map(({ name, endpoint, model }) => ({ name, endpoint, model })))
+        .toEqual([...selected.providers]);
+      expect(body.profiles[0]!.services.map(({ name, endpoint, model }) => ({ name, endpoint, model })))
+        .toEqual([...selected.services]);
+    }
+    expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=unknown`)).status).toBe(404);
+    expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=SAAA&profile=contextStill`)).status).toBe(400);
+    expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=SAAA&extra=true`)).status).toBe(400);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("generated image artifact APIs list, describe, stream, and delete files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-image-api-"));
+  const path = join(root, "image.webp");
+  const body = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+  await writeFile(path, body);
+  let deleted = false;
+  const image = {
+    id: "image_01",
+    createdAt: "2026-09-24T01:02:03.000Z",
+    format: "webp" as const,
+    mimeType: "image/webp" as const,
+    width: 512,
+    height: 512,
+    hasAlpha: false,
+    bytes: body.byteLength,
+    sha256: "a".repeat(64),
+    contentUrl: "/v1/image-artifacts/image_01/content",
+  };
+  const manager = {
+    list: async () => ({
+      images: deleted ? [] : [image],
+      totalBytes: deleted ? 0 : body.byteLength,
+      maxBytes: 20_000_000_000,
+      targetBytes: 18_000_000_000,
+    }),
+    get: async (id: string) => !deleted && id === image.id ? image : undefined,
+    content: async (id: string) => !deleted && id === image.id ? {
+      path,
+      filename: "image.webp",
+      mimeType: "image/webp" as const,
+      bytes: body.byteLength,
+      sha256: image.sha256,
+    } : undefined,
+    delete: async (id: string) => {
+      if (deleted || id !== image.id) return false;
+      deleted = true;
+      return true;
+    },
+  } as unknown as ImageArtifactManager;
+  try {
+    const { app } = await makeApp(true, false, {}, { imageArtifactManager: manager });
+    const list = await app.request("/v1/image-artifacts");
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({ images: [{ id: image.id }] });
+    expect((await app.request(`/v1/image-artifacts/${image.id}`)).status).toBe(200);
+    const content = await app.request(image.contentUrl);
+    expect(content.status).toBe(200);
+    expect(content.headers.get("content-type")).toBe("image/webp");
+    expect(new Uint8Array(await content.arrayBuffer())).toEqual(body);
+    const removed = await app.request(`/v1/image-artifacts/${image.id}`, { method: "DELETE" });
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toEqual({ id: image.id, deleted: true });
+    expect((await app.request(`/v1/image-artifacts/${image.id}`)).status).toBe(404);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("generated image artifact APIs fail closed when storage is unavailable", async () => {
+  const { app } = await makeApp(true);
+  expect((await app.request("/v1/image-artifacts")).status).toBe(503);
+  expect((await app.request("/v1/image-artifacts/missing")).status).toBe(503);
+  expect((await app.request("/v1/image-artifacts/missing/content")).status).toBe(503);
+  expect((await app.request("/v1/image-artifacts/missing", { method: "DELETE" })).status).toBe(503);
 });
 
 test("GET /v1/release-convergence exposes only strict root-authored convergence state", async () => {
@@ -3172,6 +3346,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
     profiles: [{
       id: "coding",
       providers: [{
+        endpoint: "/v1/chat/completions",
         contextWindow: {
           maxTokens: 65_536,
           outputReserveTokens: 4_096,
@@ -3180,6 +3355,33 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
       }],
     }],
   });
+
+  const selectedDiscovery = await app.request(
+    "/v3/agent-profiles?profile=coding",
+    { headers: agentHeaders() },
+  );
+  expect(selectedDiscovery.status).toBe(200);
+  const selectedBody = await selectedDiscovery.json() as { profiles: Array<{ id: string }> };
+  expect(selectedBody.profiles).toHaveLength(1);
+  expect(selectedBody.profiles[0]).toMatchObject({ id: "coding" });
+
+  const missingDiscovery = await app.request(
+    "/v3/agent-profiles?profile=missing",
+    { headers: agentHeaders() },
+  );
+  expect(missingDiscovery.status).toBe(404);
+  expect(await missingDiscovery.json()).toEqual({
+    error: { code: "unknown_agent_profile", message: "agent profile missing does not exist" },
+  });
+
+  expect((await app.request(
+    "/v3/agent-profiles?profile=coding&profile=speed",
+    { headers: agentHeaders() },
+  )).status).toBe(400);
+  expect((await app.request(
+    "/v3/agent-profiles?profile=coding&client=contextstill",
+    { headers: agentHeaders() },
+  )).status).toBe(400);
 
   const forgedProvider = await app.request("/v1/chat/completions", {
     method: "POST",
@@ -3597,6 +3799,7 @@ test("embedding Agent Connection claims, validates, renews, and releases a scope
     id: "embedding",
     providers: [{
       protocol: "larm.embedding.v1",
+      endpoint: "/v1/embed",
       embeddingSpace: { dimension: 384 },
     }],
   });

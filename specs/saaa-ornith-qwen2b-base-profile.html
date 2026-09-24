@@ -1,0 +1,100 @@
+<article lang="ja">
+  <h1>SAAA Ornith 35B + Qwen 2B基本応答プロファイル</h1>
+
+  <p>
+    SAAAの基本応答を、常駐Ornith 1.5 35Bとsession連動Qwen 3.5 2Bの組合せへ変更する。 従来の常駐Qwen
+    3.8 27Bは外し、必要なbackground workload向けの明示的な llama-swap
+    Runtimeとしてのみ残す。本書はrepository desired stateを定義するもので、 production
+    serviceのinstallまたはrestartを記録するものではない。
+  </p>
+
+  <section id="decision">
+    <h2>決定</h2>
+    <table>
+      <caption>
+        基本応答を構成するLLM Runtimeの役割、context、lifecycle、予約memory
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">役割</th>
+          <th scope="col">Runtime</th>
+          <th scope="col">Context</th>
+          <th scope="col">Lifecycle</th>
+          <th scope="col">予約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">通常会話・推論・coding</th>
+          <td>Ornith-1.5-35B-A3B ROCmFP4、MTP n4/p0.6</td>
+          <td>131,072 token</td>
+          <td>resident、1 slot</td>
+          <td>40 GB</td>
+        </tr>
+        <tr>
+          <th scope="row">短応答・相槌判断・単純Tool選択</th>
+          <td>Qwen 3.5 2B Q4_K_M</td>
+          <td>65,536 token</td>
+          <td>Agent Connection session中にlease</td>
+          <td>8 GB</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="artifact">
+    <h2>Ornith artifact gate</h2>
+    <p>
+      resident Runtimeは2026-08-24 MTP refresh後のartifactだけを使用する。SHA-256は
+      <code>0f907917a1bfe4e0ca0d281e5709dcf34b6277063e94fab29491bb5c80fda696</code>である。 旧artifact
+      <code>b42fb74cd32ce3ab5fc0b10214ae7b4030d852f49b749dcdd0e5ad6b35e1510f</code>は MTP評価にもproduction activationにも使用しない。
+    </p>
+  </section>
+
+  <section id="profile-contract">
+    <h2>Agent Profile contract</h2>
+    <p>
+      canonical profileは<code>saaa-conversation-ornith15</code>とし、Ornith、Qwen 2B、Qwen
+      ASR、 VOICEVOX、multilingual E5を一つのConnection TTLへ束ねる。旧SAAAとの復旧経路である
+      <code>saaa-qwen38</code>はGemma 4構成のfrozen legacy
+      profileとして保存し、意味を変更しない。
+      SAAAは新profileがcatalogに存在しない場合だけlegacyを選び、claimに<code>backchannel</code>が
+      なければ全LLM処理をlegacyの<code>llm</code>へ送る。
+    </p>
+  </section>
+
+  <section id="routing">
+    <h2>Routingと分離</h2>
+    <ul>
+      <li>
+        <code>llm-default</code>とSAAAのmain LLM
+        routeは<code>ornith-general</code>だけへ解決する。
+      </li>
+      <li>Qwen 2BはSAAA専用routeから解決し、Agent Connection release後はunload可能にする。</li>
+      <li>Qwen 3.8 workerはContextStill、NightWorker、明示的speed routeのために残す。</li>
+      <li>Gemma 4 profileは比較・fallback検証用の明示選択肢として残し、基本セットには含めない。</li>
+      <li>Legacy profile IDはin-placeで別モデルへ転用せず、rollback可能な契約として凍結する。</li>
+    </ul>
+  </section>
+
+  <section id="activation">
+    <h2>Activation gate</h2>
+    <ol>
+      <li>registry、Agent Profile、systemd unit、release manifestの静的検証を通す。</li>
+      <li>production適用前に現行unitとrelease pointerをoperator-owned backupへ保存する。</li>
+      <li>Ornith SHA-256を再検証し、MTP OFF baselineの後にn4/p0.6を測る。</li>
+      <li>
+        128–512 output tokenでTTFC、prompt処理、decode、MTP acceptance、RAM、GPU使用率を記録する。
+      </li>
+      <li>
+        SAAAからOrnith main応答、Qwen 2B短応答、ASR、TTS、Embeddingを同一sessionでcanaryする。
+      </li>
+    </ol>
+    <aside>
+      <p>
+        現時点のlocal MTP実測は公開目標の100–106 tok/sへ未到達である。設定切替はモデル速度の
+        合格を意味しないため、性能差は別のbenchmark証跡として継続追跡する。
+      </p>
+    </aside>
+  </section>
+</article>

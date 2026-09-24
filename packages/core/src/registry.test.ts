@@ -13,7 +13,7 @@ const fixtures = join(import.meta.dir, "../test/fixtures");
 
 test("loads the Linux production registry", () => {
   const registry = loadRegistry(repoConfig);
-  const general = registry.runtimes.find((runtime) => runtime.id === "qwen-general");
+  const general = registry.runtimes.find((runtime) => runtime.id === "ornith-general");
   const asr = registry.runtimes.find((runtime) => runtime.id === "qwen-asr");
   const realtimeTts = registry.runtimes.find((runtime) => runtime.id === "voicevox-tts");
   const expressiveTts = registry.runtimes.find((runtime) => runtime.id === "qwen-tts");
@@ -98,7 +98,7 @@ test("loads the Linux production registry", () => {
     capability: ["llm.decision.default", "llm.backchannel.classifier"],
     policy: { class: "preferred" },
     resources: {
-      estimatedMemoryGB: 4,
+      estimatedMemoryGB: 8,
       maxConcurrentAllocations: 1,
       maxConcurrentRequests: 1,
       maxQueuedRequests: 16,
@@ -134,7 +134,7 @@ test("loads the Linux production registry", () => {
   expect(agent35b?.resources.estimatedMemoryGB).toBe(30);
   expect(registry.profiles.some((profile) => profile.id === "voice-expressive")).toBe(true);
   expect(defaultRoute?.candidates[0]).toEqual({
-    runtime: "qwen-worker-fast",
+    runtime: "ornith-general",
     purpose: "primary",
   });
   expect(defaultRoute?.candidates).toHaveLength(1);
@@ -144,7 +144,7 @@ test("loads the Linux production registry", () => {
     { runtime: "qwen-worker-fast", purpose: "primary" },
   ]);
   expect(saaaRoute?.candidates).toEqual([
-    { runtime: "qwen-worker-fast", purpose: "primary" },
+    { runtime: "ornith-general", purpose: "primary" },
   ]);
   expect(route35b?.explicitOnly).toBe(true);
   expect(route35b?.candidates[0]).toEqual({ runtime: "ornith15-35b", purpose: "primary" });
@@ -189,13 +189,16 @@ test("loads the Linux production registry", () => {
   expect(backchannelDefaultRoute).toMatchObject({
     explicitOnly: true,
     capabilities: ["llm.backchannel.classifier"],
-    candidates: [{ runtime: "lfm25-backchannel-jp", purpose: "primary" }],
+    candidates: [{ runtime: "qwen35-decision", purpose: "primary" }],
   });
   expect(agent35bRoute?.candidates[0]).toEqual({
     runtime: "ornith15-35b-agent",
     purpose: "primary",
   });
-  expect(defaultRoute?.candidates.some((candidate) => candidate.runtime.includes("35b"))).toBe(false);
+  expect(defaultRoute?.candidates).toEqual([
+    { runtime: "ornith-general", purpose: "primary" },
+  ]);
+  expect(registry.runtimes.some((runtime) => runtime.id === "qwen-general")).toBe(false);
   expect(registry.runtimes.some((runtime) => runtime.id.includes("35b"))).toBe(true);
   expect(embedding).toMatchObject({
     protocol: "larm.embedding.v1",
@@ -215,9 +218,9 @@ test("loads the Linux production registry", () => {
   });
 });
 
-test("resident Qwen 3.8 exposes the certified 125K request budget independently of managed source capacity", () => {
+test("resident Ornith exposes the configured 128K window and keeps certification gated", () => {
   const registry = loadRegistry(repoConfig);
-  const runtime = registry.runtimes.find((candidate) => candidate.id === "qwen-general");
+  const runtime = registry.runtimes.find((candidate) => candidate.id === "ornith-general");
   expect(runtime).toMatchObject({
     policy: { class: "resident" },
     context: {
@@ -230,13 +233,45 @@ test("resident Qwen 3.8 exposes the certified 125K request budget independently 
   const releases = parseYaml(readFileSync(join(repoConfig, "../../deploy/local-node/releases.yaml"), "utf8")) as {
     runtimeReleases: Record<string, { contextCertification?: { contextLimitTokens: number } }>;
   };
-  const contextLimit = releases.runtimeReleases["qwen-general-current"]?.contextCertification?.contextLimitTokens;
-  expect(contextLimit).toBe(131_072);
-  if (runtime?.context?.class !== "managed-context" || contextLimit === undefined) {
+  const release = releases.runtimeReleases["ornith-general-current"];
+  expect(release?.contextCertification).toBeUndefined();
+  if (runtime?.context?.class !== "managed-context") {
     throw new Error("resident context contract is unavailable");
   }
-  expect(contextLimit - runtime.context.outputReserveTokens - runtime.context.safetyMarginTokens)
+  expect(131_072 - runtime.context.outputReserveTokens - runtime.context.safetyMarginTokens)
     .toBe(125_000);
+});
+
+test("production media variants are exclusive, bounded, and remain outside the base profile", () => {
+  const variants = parseYaml(
+    readFileSync(join(repoConfig, "runtime-variants.yaml"), "utf8"),
+  ) as {
+    baseProfile: string;
+    groups: Record<string, { exclusive: boolean; minimumAvailableMemoryGB: number }>;
+    variants: Record<string, {
+      group: string;
+      service: string;
+      healthUrl: string;
+      estimatedMemoryGB: number;
+    }>;
+  };
+  expect(variants.baseProfile).toBe("saaa-conversation-ornith15");
+  expect(variants.groups["accelerator-media-heavy"]).toEqual({
+    exclusive: true,
+    minimumAvailableMemoryGB: 16,
+  });
+  expect(variants.variants.music).toMatchObject({
+    group: "accelerator-media-heavy",
+    service: "larm-music-ace-step.service",
+    healthUrl: "http://127.0.0.1:8090/health",
+    estimatedMemoryGB: 18,
+  });
+  expect(variants.variants.image).toMatchObject({
+    group: "accelerator-media-heavy",
+    service: "larm-image-qwen21.service",
+    healthUrl: "http://127.0.0.1:8091/health",
+    estimatedMemoryGB: 34,
+  });
 });
 
 test("production swap group matches llama-swap model membership", () => {
@@ -300,13 +335,18 @@ test("production swap group matches llama-swap model membership", () => {
   expect(ornithCommand).toContain("--cache-type-v q8_0");
   expect(ornithCommand).not.toContain("turbo4");
   expect(ornithSpeedCommand).toContain("/srv/ai/apps/q38rocm/engine/bin/llama-server");
-  expect(ornithSpeedCommand).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");
+  expect(ornithSpeedCommand).toContain("Ornith-1.5-35B-A3B-ROCmFP4.gguf");
   expect(ornithSpeedCommand).toContain("--cache-type-v q8_0");
   expect(ornithSpeedCommand).not.toContain("turbo4");
   expect(ornithSpeedCommand).not.toContain("ngram");
-  expect(ornithSpeedCommand).not.toContain("draft-mtp");
+  expect(ornithSpeedCommand).toContain("--spec-type draft-mtp");
+  expect(ornithSpeedCommand).toContain("--spec-draft-n-max 4");
+  expect(ornithSpeedCommand).toContain("--spec-draft-p-min 0.6");
   expect(ornithSpeedCommand).toContain("--no-cache-prompt");
   expect(ornithSpeedCommand).toContain("--no-cache-idle-slots");
+  expect(agent35bCommand).toContain("--spec-type draft-mtp");
+  expect(agent35bCommand).toContain("--spec-draft-n-max 4");
+  expect(agent35bCommand).toContain("--spec-draft-p-min 0.6");
   expect(agentWorkerCommand).toContain("--ctx-size 65536");
   expect(configured.models["qwen-agent"]?.aliases).toContain("qwen-agent-worker");
   expect(fastWorkerCommand).toContain("Qwen3.8-27B-Q4_0.gguf");
@@ -329,7 +369,8 @@ test("production swap group matches llama-swap model membership", () => {
     "/srv/ai/models/qwen38-efficientthink/MTP/mtp-Qwen3.8-27B-Q4_0.gguf",
   );
   expect(decisionDefaultCommand).toContain("Qwen3.5-2B-Q4_K_M.gguf");
-  expect(decisionDefaultCommand).toContain("--ctx-size 4096");
+  expect(decisionDefaultCommand).toContain("--ctx-size 65536");
+  expect(configured.models["qwen35-decision"]?.ttl).toBe(0);
   expect(decisionDefaultCommand).toContain("--reasoning off");
   expect(decisionDefaultCommand).toContain("--temp 0");
   expect(lfmBackchannelCommand).toContain("LFM2.5-1.2B-JP-Q4_K_M.gguf");

@@ -1,0 +1,173 @@
+<article lang="ja">
+  <h1>Music Generation Provider Phase 1</h1>
+  <p>
+    LARM は音楽生成を LLM、ASR、TTS、Embedding とは独立した capability として扱う。最初の provider
+    は ACE-Step 1.5 の公式非同期 HTTP API を adapter 経由で利用し、上流固有の task
+    ID、ファイルパス、パラメータ名を公開 API から隔離する。
+  </p>
+  <section id="decisions">
+    <h2>決定</h2>
+    <ul>
+      <li>
+        <code>POST /v1/music/generations</code> はジョブを登録し、HTTP 202 とジョブ表現を返す。
+      </li>
+      <li><code>GET /v1/music/generations/:id</code> は状態と、完了時のみ成果物 URL を返す。</li>
+      <li>
+        <code>GET /v1/music/generations/:id/events</code> は実測できる phase だけを SSE
+        で通知する。推測した進捗率は返さない。
+      </li>
+      <li>
+        <code>DELETE /v1/music/generations/:id</code>
+        は待機中または実行中のジョブをキャンセルし、キャンセル後の成果物を公開しない。
+      </li>
+      <li>既定 concurrency は 1 とし、GPU を使う生成を直列化する。</li>
+      <li>
+        出力形式の既定は、非圧縮 WAV ではなく <code>mp3</code> とする。
+      </li>
+      <li>SAAA は完了済み楽曲をお気に入りへ指定し、daemon 再起動後も一覧からリプレイできる。</li>
+    </ul>
+  </section>
+  <section id="file-delivery">
+    <h2>ファイル受け渡し</h2>
+    <p>
+      ジョブ結果にはホスト内部の
+      <code>audioPath</code> を含めない。代わりに認証対象の
+      <code>audioUrl</code> と
+      <code>metadataUrl</code> を返す。クライアントは通常の bearer token
+      を付けて音声をストリームダウンロードする。この方式は JSON への base64 埋め込みを避け、180
+      秒音源でもメモリと応答サイズを増幅せず、LAN 越しのクライアントにもローカルパスを漏らさない。
+    </p>
+    <table>
+      <caption>
+        Music API が返す成果物の取得方法
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">URL</th>
+          <th scope="col">Content-Type</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>音声</td>
+          <td><code>/v1/music/generations/:id/audio</code></td>
+          <td>
+            <code>audio/wav</code
+            >、<code>audio/flac</code>、または
+            <code>audio/mpeg</code>
+          </td>
+        </tr>
+        <tr>
+          <td>再現用情報</td>
+          <td><code>/v1/music/generations/:id/metadata</code></td>
+          <td><code>application/json</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        Phase 1 では Range request と期限付き URL は提供しない。LARM の bearer
+        認証を必須にできるため、URL
+        自体を資格情報にしない。将来ブラウザへの大規模配信が必要になった場合は、同じ
+        <code>audioUrl</code> 契約の裏側を object storage または Range
+        対応配信へ差し替えられる。
+      </p>
+    </aside>
+  </section>
+  <section id="artifacts-and-reproducibility">
+    <h2>成果物と再現性</h2>
+    <p>
+      音声と metadata は <code>LARM_MUSIC_ARTIFACT_ROOT/YYYY/MM/&lt;job-id&gt;/</code> の
+      <code>output.&lt;format&gt;</code> と
+      <code>metadata.json</code> に保存する。metadata には
+      prompt、lyrics、seed、model、生成オプション、生成時間、音声時間、RTF、上流 task ID
+      を含める。絶対ファイルパスはダウンロードする metadata に含めない。
+    </p>
+    <p>
+      掃除は daemon 起動時、生成完了後、既定5分間隔で行う。MP3 と FLAC は既定24時間、WAV
+      は既定1時間だけ保持する。全形式の合計50 GiBは通常20 GiBとお気に入り30 GiBに分け、
+      各枠を超えた場合は古い完成済み成果物から削除する。お気に入りは通常TTLの対象外だが、30 GiB枠を
+      超えれば古いお気に入りから削除する。実行中ジョブは削除対象から保護し、クラッシュで残った一時ファイルも保持期限後に回収する。
+      削除済みジョブの URL は永続リンクではなく、以後 404 を返す。
+    </p>
+    <h3>お気に入り API</h3>
+    <dl>
+      <dt><code>PUT /v1/music/generations/:id/favorite</code></dt>
+      <dd>完了済み楽曲を冪等にお気に入りへ登録し、再生用 URL を返す。</dd>
+      <dt><code>GET /v1/music/favorites</code></dt>
+      <dd>お気に入りを登録日時の新しい順に返す。保存済み metadata から起動時に復元する。</dd>
+      <dt><code>GET /v1/music/favorites/:id</code></dt>
+      <dd>お気に入り1件と、音声・metadataの取得URLを返す。</dd>
+      <dt><code>GET /v1/music/favorites/:id/audio</code></dt>
+      <dd>
+        音声ファイルを返す。HTTP Rangeに対応し、SAAAからのストリーム再生と途中シークに利用できる。
+      </dd>
+      <dt><code>GET /v1/music/favorites/:id/metadata</code></dt>
+      <dd>再現用metadataをJSONファイルとして返す。</dd>
+      <dt><code>DELETE /v1/music/generations/:id/favorite</code></dt>
+      <dd>お気に入りを解除し、通常の保持期限と20 GiB枠へ戻す。</dd>
+    </dl>
+  </section>
+  <section id="ace-step-adapter">
+    <h2>ACE-Step adapter</h2>
+    <p>
+      adapter は
+      <code>/release_task</code
+      >、<code>/query_result</code>、<code>/v1/audio</code>
+      を使用する。上流が返した音声 URL は設定済み ACE-Step origin と一致する場合だけ取得し、SSRF
+      を防止する。出力は最大バイト数で制限する。品質指定は Phase 1 では inference steps と thinking
+      の安全な既定値へ変換する。
+    </p>
+    <p>
+      ACE-Step の出力専用 root を明示設定した場合、音声を LARM
+      管理領域へ取り込んだ後に上流の一時ファイルも 削除する。削除対象は realpath が設定 root
+      内にある通常ファイルだけとし、root 外パス、root 自体、
+      シンボリックリンクは拒否する。未設定時は上流ファイルに触れない。
+    </p>
+    <p>
+      reference audio は共通 schema に予約するが、この adapter ではまだ受け付けない。外部 URL
+      の直接取得は SSRF と再現性の問題があるため、今後は LARM 管理下への upload を先に行い artifact
+      ID で参照する。
+    </p>
+  </section>
+  <section id="configuration">
+    <h2>設定</h2>
+    <dl>
+      <dt><code>LARM_MUSIC_PROVIDER_ENDPOINT</code></dt>
+      <dd>ACE-Step API の base URL。未設定なら Music API は 503 を返す。</dd>
+      <dt><code>LARM_MUSIC_PROVIDER_API_KEY</code></dt>
+      <dd>任意の ACE-Step bearer token。</dd>
+      <dt><code>LARM_MUSIC_ARTIFACT_ROOT</code></dt>
+      <dd>成果物 root。既定は <code>/var/lib/larm/music</code>。</dd>
+      <dt><code>LARM_MUSIC_POLL_INTERVAL_MS</code></dt>
+      <dd>上流ジョブ確認間隔。既定は 1000 ms。</dd>
+      <dt><code>LARM_MUSIC_MAX_AUDIO_BYTES</code></dt>
+      <dd>単一出力の上限。既定は 512 MiB。</dd>
+      <dt><code>LARM_MUSIC_ARTIFACT_RETENTION_SECONDS</code></dt>
+      <dd>MP3、FLAC、および通常の成果物の保持期限。既定は 86400 秒。</dd>
+      <dt><code>LARM_MUSIC_WAV_RETENTION_SECONDS</code></dt>
+      <dd>WAV の短期保持期限。既定は 3600 秒。</dd>
+      <dt><code>LARM_MUSIC_ARTIFACT_MAX_BYTES</code></dt>
+      <dd>成果物 root 全体の容量上限。既定は 50 GiB。</dd>
+      <dt><code>LARM_MUSIC_FAVORITE_MAX_BYTES</code></dt>
+      <dd>全体上限のうちお気に入り専用枠。既定は 30 GiB。通常枠は全体上限との差分になる。</dd>
+      <dt><code>LARM_MUSIC_PRUNE_INTERVAL_SECONDS</code></dt>
+      <dd>定期掃除の間隔。既定は 300 秒。</dd>
+      <dt><code>LARM_MUSIC_UPSTREAM_OUTPUT_ROOT</code></dt>
+      <dd>
+        任意の ACE-Step 出力専用 root。設定時だけ、取り込み済みの上流一時ファイルを安全に削除する。
+      </dd>
+    </dl>
+  </section>
+  <section id="remaining-work">
+    <h2>残課題</h2>
+    <ul>
+      <li>ACE-Step runtime の systemd 配備、ROCm 実機 commissioning、モデル revision の固定。</li>
+      <li>ジョブ journal と daemon 再起動後の状態復旧。ファイル retention は実装済み。</li>
+      <li>reference audio の認証付き upload と artifact ID 化。</li>
+      <li>実音声ヘッダーからの duration 検証、Range request、benchmark command。</li>
+      <li>既存 allocation と unified-memory admission への music runtime 統合。</li>
+    </ul>
+  </section>
+</article>

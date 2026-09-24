@@ -1,5 +1,5 @@
 [Unit]
-Description=Qwen3.8 27B Primary LLM Provider (ROCmFP4 FAST + Vulkan MTP)
+Description=Ornith 1.5 35B Primary LLM Provider (ROCmFP4 + Vulkan MTP)
 
 [Service]
 Type=simple
@@ -8,29 +8,38 @@ Group=ugnoguchi
 WorkingDirectory=/srv/ai/apps/q38rocm
 Environment=HOME=/srv/ai/cache
 Environment=XDG_CACHE_HOME=/srv/ai/cache
-Environment=MTP=1
-Environment=STRICT_MTP=1
-Environment=REASONING_BUDGET=-1
-Environment=SLOTS=1
-Environment=LLAMA_SERVER_BIN=/srv/ai/apps/q38rocm/engine/bin/llama-server-larm-native
-Environment=LARM_NATIVE_ENGINE_SOCKET=/run/larm-native-qwen/engine.sock
-RuntimeDirectory=larm-native-qwen
-RuntimeDirectoryMode=0700
-ExecStart=/srv/ai/apps/q38rocm/run_server.sh \
-  /srv/ai/models/qwen38-rocmfp4/Qwen3.8-27B-ROCmFP4-FAST.gguf \
-  --profile speed \
+ExecStart=/srv/ai/apps/q38rocm/engine/bin/llama-server \
+  -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf \
+  -dev Vulkan0 \
+  -ngl 999 \
+  --fit off \
+  --flash-attn on \
   --host 127.0.0.1 \
   --port 8080 \
-  --ctx 131072 \
-  --draft-n 2 \
-  --draft-p 0.0 \
-  --batch 2048 \
-  --ubatch 256 \
-  --kv-k q8_0 \
-  --kv-v q8_0 \
-  --temp 0.2 \
-  --repeat-penalty 1.0 \
+  --ctx-size 131072 \
+  --parallel 1 \
+  --batch-size 2048 \
+  --ubatch-size 1024 \
+  --threads 16 \
+  --poll 100 \
+  --cache-type-k q8_0 \
+  --cache-type-v q8_0 \
+  --no-mmap \
+  --cont-batching \
+  --kv-unified \
   --reasoning auto \
+  --temp 0.6 \
+  --top-p 0.95 \
+  --top-k 20 \
+  --jinja \
+  --context-shift \
+  --spec-type draft-mtp \
+  --spec-draft-n-max 4 \
+  --spec-draft-p-min 0.6 \
+  -ctxcp 0 \
+  -cram 0 \
+  --no-cache-prompt \
+  --no-cache-idle-slots \
   --slot-save-path /srv/ai/cache/personal-state-slots \
   --metrics \
   --no-webui

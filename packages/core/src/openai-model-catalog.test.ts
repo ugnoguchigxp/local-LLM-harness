@@ -22,6 +22,7 @@ function catalog(
   return {
     version: 1,
     defaultAgentProfile: bindings[0]?.profile ?? "default",
+    profileSelectors: [],
     audiences: [],
     profiles: bindings.map((binding, index) => ({
       id: binding.profile,

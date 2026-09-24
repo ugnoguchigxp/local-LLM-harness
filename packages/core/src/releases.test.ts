@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { loadArtifactManifest } from "./artifacts";
 import { loadRegistry } from "./registry";
 import {
@@ -16,7 +14,12 @@ const artifacts = loadArtifactManifest(`${root}deploy/local-node/models.yaml`);
 describe("runtime release catalog", () => {
   test("loads immutable production releases with one default per artifact runtime", () => {
     const releases = loadRuntimeReleaseCatalog(`${root}deploy/local-node/releases.yaml`, registry, artifacts);
-    expect(defaultRuntimeRelease(releases, "qwen-general")?.artifacts).toEqual(["qwen38-primary"]);
+    expect(defaultRuntimeRelease(releases, "ornith-general")).toMatchObject({
+      id: "ornith-general-current",
+      artifacts: ["ornith15-35b-speed"],
+      providerConfigRevision: "llama-server-ornith15-rocmfp4-128k-mtp-n4-p06-v1",
+      estimatedMemoryGB: 40,
+    });
     expect(defaultRuntimeRelease(releases, "qwen-worker-fast")).toMatchObject({
       id: "qwen-worker-fast-current",
       providerConfigRevision: "llama-swap-qwen-q4-0-mtp-225k-ubatch256-v1",
@@ -25,8 +28,8 @@ describe("runtime release catalog", () => {
     expect(defaultRuntimeRelease(releases, "qwen35-decision")).toMatchObject({
       id: "qwen35-decision-current",
       artifacts: ["qwen35-2b-q4-k-m"],
-      providerConfigRevision: "llama-swap-qwen35-2b-q4-k-m-decision-4k-v1",
-      estimatedMemoryGB: 4,
+      providerConfigRevision: "llama-swap-qwen35-2b-q4-k-m-decision-64k-v2",
+      estimatedMemoryGB: 8,
     });
     expect(defaultRuntimeRelease(releases, "lfm25-backchannel-jp")).toMatchObject({
       id: "lfm25-backchannel-jp-current",
@@ -45,13 +48,10 @@ describe("runtime release catalog", () => {
     expect(defaultRuntimeRelease(releases, "ornith15-35b-speed")?.artifacts).toEqual([
       "ornith15-35b-speed",
     ]);
-    expect(registry.runtimes.find((runtime) => runtime.id === "qwen-general")?.context)
+    expect(registry.runtimes.find((runtime) => runtime.id === "ornith-general")?.context)
       .toMatchObject({ class: "managed-context", sourceTokenLimit: 20_000_000 });
-    const sourceEvidenceDigest = createHash("sha256")
-      .update(readFileSync(`${root}specs/context-source-rebuild-evidence.html`))
-      .digest("hex");
-    expect(defaultRuntimeRelease(releases, "qwen-general")?.contextCertification?.evidenceDigest)
-      .toBe(sourceEvidenceDigest);
+    expect(defaultRuntimeRelease(releases, "ornith-general")?.contextCertification)
+      .toBeUndefined();
     expect(defaultRuntimeRelease(releases, "qwen-worker-agent-efficientthink")).toMatchObject({
       id: "qwen-worker-agent-efficientthink-v1",
       artifacts: ["qwen38-worker-efficientthink-q3", "qwen38-efficientthink-mtp"],
@@ -63,7 +63,7 @@ describe("runtime release catalog", () => {
     expect(() => parseRuntimeReleaseCatalog({
       runtimeReleases: {
         first: {
-          runtime: "qwen-general",
+          runtime: "ornith-general",
           artifacts: ["missing"],
           providerConfigRevision: "v1",
           estimatedMemoryGB: 40,
@@ -73,8 +73,8 @@ describe("runtime release catalog", () => {
     }, registry, artifacts)).toThrow(/unknown artifact/);
 
     const current = {
-      runtime: "qwen-general",
-      artifacts: ["qwen38-primary"],
+      runtime: "ornith-general",
+      artifacts: ["ornith15-35b-speed"],
       providerConfigRevision: "v1",
       estimatedMemoryGB: 40,
       default: true,
@@ -102,8 +102,8 @@ describe("runtime release catalog", () => {
     expect(() => parseRuntimeReleaseCatalog({
       runtimeReleases: {
         oversized: {
-          runtime: "qwen-general",
-          artifacts: ["qwen38-primary"],
+          runtime: "ornith-general",
+          artifacts: ["ornith15-35b-speed"],
           providerConfigRevision: "v1",
           estimatedMemoryGB: 10_000,
           default: true,

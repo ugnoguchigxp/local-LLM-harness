@@ -1,0 +1,334 @@
+<article lang="ja">
+  <h1>Qwen-Image-2.1 local取得・ROCm試用・画像artifact API</h1>
+
+  <p>
+    2026年9月24日にQwen-Image-2.1をRyzen AI MAX+ 395へ取得し、LARMへ組み込む前の manual smoke
+    testを実施した記録です。model、runtime、生成物はsource repository外へ置き、 production
+    routeと常駐serviceは変更していません。生成job APIはProvider実装時の提案、画像artifactの
+    一覧・取得・削除と容量制御は実装済みcontractです。
+  </p>
+
+  <dl>
+    <dt>判定</dt>
+    <dd>
+      GPUでtext encoderとdenoise、CPU FP32でVAE decodeするhybrid構成なら有効なPNGを生成できる。
+      gfx1151のROCm VAE decodeは現時点で不正出力となるため採用しない
+    </dd>
+    <dt>model</dt>
+    <dd><code>Qwen/Qwen-Image-2.1</code></dd>
+    <dt>revision</dt>
+    <dd><code>790c92633540aa0cb11d9abf19eb46d861714758</code></dd>
+    <dt>取得量</dt>
+    <dd>28 files、33,134,949,212 bytes</dd>
+    <dt>保存先</dt>
+    <dd><code>/srv/ai/models/Qwen/Qwen-Image-2.1</code></dd>
+    <dt>license</dt>
+    <dd>
+      <a href="https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE"
+        >Qwen Research License Agreement</a
+      >。研究・評価目的のnon-commercial利用に限定され、commercial利用には別licenseが必要
+    </dd>
+  </dl>
+
+  <section id="environment">
+    <h2>検証環境</h2>
+    <table>
+      <caption>
+        local smoke test環境
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">Host</th>
+          <td>AMD Ryzen AI MAX+ 395、Radeon 8060S、gfx1151、128GB unified memory</td>
+        </tr>
+        <tr>
+          <th scope="row">Kernel</th>
+          <td><code>Linux 7.0.0-31-generic</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Python</th>
+          <td><code>3.11.16</code></td>
+        </tr>
+        <tr>
+          <th scope="row">PyTorch</th>
+          <td><code>2.11.0+rocm7.13.0</code>、AMD gfx1151 wheel</td>
+        </tr>
+        <tr>
+          <th scope="row">Transformers</th>
+          <td><code>5.17.0</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Diffusers</th>
+          <td>
+            <code>0.41.0.dev0</code>、commit
+            <code>e0118ade2f60234c41bacf40330a7e2f61108849</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Precision</th>
+          <td>text encoder・transformerはBF16、採用可能なVAE decodeはCPU FP32</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      専用runtimeは<code>/srv/ai/apps/qwen-image-2.1-runtime/.venv</code>へ置いた。GPU認識後に 4096角BF16
+      matrix multiplicationを実行し、Radeon 8060Sで完走することを先に確認した。 Qwen公式の<a
+        href="https://github.com/QwenLM/Qwen-Image-2.1"
+        >repository</a
+      >はPyTorch 2.4以上、Transformers 5.17以上、Diffusers mainを要求する。
+    </p>
+  </section>
+
+  <section id="results">
+    <h2>試用結果</h2>
+    <p>
+      promptは「雨の未来的な東京の夜景」を表す同一英文、seedは<code>12345</code>とした。
+      これは単発のmanual smoke testであり、3回以上のwarm runを行う正式benchmarkではない。
+      既存のLLM、ASR、TTS serviceを停止せずに実行したため、絶対性能値は専有実行より低くなり得る。
+    </p>
+    <table>
+      <caption>
+        同一host上のQwen-Image-2.1 manual result
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Resolution</th>
+          <th scope="col">Steps</th>
+          <th scope="col">VAE</th>
+          <th scope="col">時間</th>
+          <th scope="col">torch peak</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>512 × 512</td>
+          <td>4</td>
+          <td>GPU BF16</td>
+          <td>218.39秒</td>
+          <td>35.24GB allocated</td>
+          <td>完走。初回MIOpen準備を含み、4 stepsのため品質不足</td>
+        </tr>
+        <tr>
+          <td>512 × 512</td>
+          <td>40</td>
+          <td>GPU BF16</td>
+          <td>62.16秒</td>
+          <td>34.26GB allocated</td>
+          <td>latentはfiniteだがVAE decodeでNaNとなり無効</td>
+        </tr>
+        <tr>
+          <td>512 × 512</td>
+          <td>40</td>
+          <td>GPU FP32</td>
+          <td>279.06秒</td>
+          <td>38.66GB allocated</td>
+          <td>finiteだが規則的なband・grid artifactがあり無効</td>
+        </tr>
+        <tr>
+          <td>1024 × 1024</td>
+          <td>40</td>
+          <td>GPU FP32</td>
+          <td>1,403.22秒</td>
+          <td>55.12GB allocated</td>
+          <td>denoiseは495秒、decode後にband・grid artifactがあり無効</td>
+        </tr>
+        <tr>
+          <td>512 × 512</td>
+          <td>40</td>
+          <td>CPU FP32</td>
+          <td>65.73秒</td>
+          <td>denoise開始時約32.44GB allocated</td>
+          <td>有効。GPU denoise 59.33秒、CPU decode 6.40秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      採用可能なsampleは
+      <code>/srv/ai/data/generated/images/qwen-image-2.1-smoke/qwen-image-2.1-512-seed12345-steps40-vae-cpu-fp32.png</code>に保存した。modeはRGBA、sizeは512 × 512、file
+      sizeは548,455 bytes。metadata JSONも同じbase
+      nameで保存した。生成結果には日本の夜の街路、傘を差す歩行者、濡れた路面の反射が明瞭に現れ、
+      promptへの基本的な追従を確認できる。
+    </p>
+    <p>
+      同じ512角sampleをlossy WebPへ変換した結果、RGB quality 40は29,732 bytes、alphaを保持した RGBA
+      quality 25は29,488 bytesだった。この実測に基づき既定出力をWebPとし、encoder qualityを
+      段階調整して30,000 bytes以下を目標にする。画像内容によって達成できない場合があるため30KBは
+      hard
+      limitではなくtargetであり、APIは実際の<code>bytes</code>を返す。
+    </p>
+    <aside>
+      <p>
+        model loadはrunにより約11.4〜20.9秒、GPU移動後のmodel allocationは約32.4GBだった。 512角40
+        stepsのlatentは全stepでfiniteだった一方、同一latentのGPU VAE decodeだけが壊れ、CPU
+        decodeでは正常画像になった。この結果からmodel weightやschedulerではなく、gfx1151上の MIOpen
+        VAE convolution経路を主要因と判断する。
+      </p>
+    </aside>
+  </section>
+
+  <section id="api-delivery">
+    <h2>APIでの画像返却</h2>
+    <p>
+      既定はbase64ではなく、LARMが管理するgenerated artifactの認証付きURLとする。生成にはqueue待ちと
+      1分以上の推論があり得るため、<code>POST /v1/images/generations</code>はjobを作成して
+      <code>202 Accepted</code
+      >を返し、clientは状態取得後に画像binaryを別requestで受け取る。 filesystem pathは公開しない。
+    </p>
+    <pre><code>{
+  "provider": "qwen-image-2.1",
+  "prompt": "A futuristic Japanese city at night",
+  "width": 512,
+  "height": 512,
+  "seed": 12345,
+  "steps": 40,
+  "output": {
+    "format": "webp",
+    "delivery": "url"
+  }
+}</code></pre>
+    <p>
+      直接Provider指定の代わりに<code>quality</code>を指定できるようにし、初期contractでは
+      <code>provider</code
+      >と<code>quality</code>のexactly
+      oneを要求する。曖昧な優先順位を作らない。
+    </p>
+    <pre><code>HTTP/1.1 202 Accepted
+Location: /v1/image-generations/imggen_01K...
+
+{
+  "id": "imggen_01K...",
+  "object": "image_generation",
+  "status": "queued",
+  "createdAt": "2026-09-24T04:00:00.000Z",
+  "pollUrl": "/v1/image-generations/imggen_01K..."
+}</code></pre>
+    <p>完了後の<code>GET /v1/image-generations/:id</code>は次の形にする。</p>
+    <pre><code>{
+  "id": "imggen_01K...",
+  "object": "image_generation",
+  "status": "succeeded",
+  "provider": "qwen-image-2.1",
+  "model": "Qwen/Qwen-Image-2.1",
+  "modelRevision": "790c92633540aa0cb11d9abf19eb46d861714758",
+  "createdAt": "2026-09-24T04:00:00.000Z",
+  "completedAt": "2026-09-24T04:01:06.000Z",
+  "durationMs": 65733,
+  "width": 512,
+  "height": 512,
+  "seed": 12345,
+  "steps": 40,
+  "images": [
+    {
+      "artifactId": "img_01K...",
+      "mimeType": "image/webp",
+      "width": 512,
+      "height": 512,
+      "hasAlpha": true,
+      "bytes": 29732,
+      "sha256": "...",
+      "url": "/v1/image-artifacts/img_01K.../content",
+      "expiresAt": "2026-09-25T04:01:06.000Z"
+    }
+  ]
+}</code></pre>
+    <p>
+      content endpointは認証を要求し、<code>Content-Type: image/webp</code>、
+      <code>Content-Length</code
+      >、<code>ETag</code>を付けてbinaryを返す。既定はlossy WebP、30,000
+      bytes以下を目標に qualityを調整する。PNGは明示指定時だけ使用する。opaque artifact
+      IDから専用root内のfileを 解決し、requestから出力pathを受け取らない。
+    </p>
+    <details>
+      <summary>inline base64互換</summary>
+      <p>
+        <code>output.delivery: "b64_json"</code
+        >は単一requestで完結したいclient向けに許可できるが、
+        <code>n = 1</code
+        >と小さい最大bytesへ制限する。base64はbinaryより約33%大きく、daemon・proxy・
+        clientで追加copyが発生し、JSON logへの混入riskもあるため既定にはしない。
+      </p>
+    </details>
+    <p>
+      job状態は<code>queued</code>、<code>running</code>、<code>succeeded</code>、<code>failed</code>、
+      <code>cancelled</code
+      >に限定する。<code>Idempotency-Key</code>、取消、retention TTL、queue
+      position、 stage別時間を保持し、必要ならSSE progress
+      endpointを追加する。model配布物を管理する既存の
+      <code>LocalArtifactStore</code
+      >と生成outputのretentionは責務が異なるため、generated artifact用storeを 分離する。
+    </p>
+    <h3>実装済みartifact操作と容量制御</h3>
+    <table>
+      <caption>
+        生成画像artifact API
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Method</th>
+          <th scope="col">Path</th>
+          <th scope="col">Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>GET</td>
+          <td><code>/v1/image-artifacts</code></td>
+          <td>一覧とpool使用量・上限</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <td><code>/v1/image-artifacts/:id</code></td>
+          <td>metadata取得</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <td><code>/v1/image-artifacts/:id/content</code></td>
+          <td>WebPまたはPNG binary取得</td>
+        </tr>
+        <tr>
+          <td>DELETE</td>
+          <td><code>/v1/image-artifacts/:id</code></td>
+          <td>画像とmetadataを一括削除</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      保存rootは既定で<code>/srv/ai/data/generated/images</code>、hard limitは20,000,000,000
+      bytes、 low watermarkは18,000,000,000
+      bytesとする。起動時と5分ごと、および将来の生成書込み予約時に poolを検査し、hard
+      limitを超える場合は作成日時が古いartifact directoryからlow watermarkまで
+      削除する。画像だけを消してmetadataを残すことはせず、symlinkやroot外pathは拒否する。
+    </p>
+    <pre><code>{
+  "images": [{
+    "id": "img_01K...",
+    "createdAt": "2026-09-24T04:01:06.000Z",
+    "format": "webp",
+    "mimeType": "image/webp",
+    "width": 512,
+    "height": 512,
+    "hasAlpha": false,
+    "bytes": 29732,
+    "sha256": "...",
+    "contentUrl": "/v1/image-artifacts/img_01K.../content"
+  }],
+  "totalBytes": 30112,
+  "maxBytes": 20000000000,
+  "targetBytes": 18000000000
+}</code></pre>
+  </section>
+
+  <section id="next">
+    <h2>Provider実装前の次の確認</h2>
+    <ol>
+      <li>GPU denoise + CPU FP32 VAEをbaselineとして512角を3回以上warm計測する。</li>
+      <li>1024角はCPU decodeで再計測し、GPU VAEの1,403秒結果を性能値として採用しない。</li>
+      <li>MIOpen更新、VAE tiling、別backendでgfx1151 GPU decodeの正当性と速度を比較する。</li>
+      <li>
+        Qwen Research Licenseのnon-commercial制限をProvider metadataとroute admissionへ反映する。
+      </li>
+      <li>生成output storeと非同期job contractをmock backendで先にtestする。</li>
+    </ol>
+  </section>
+</article>

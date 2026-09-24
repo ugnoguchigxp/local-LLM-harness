@@ -1,0 +1,36 @@
+[Unit]
+Description=LARM on-demand ACE-Step 1.5 music variant
+After=network.target
+Conflicts=larm-image-qwen21.service
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/larm-trials/20260924-ace-step15
+Environment=HOME=/srv/ai/cache
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+Environment=ACESTEP_CHECKPOINTS_DIR=/srv/ai/models/ace-step-1.5
+Environment=ACESTEP_CONFIG_PATH=acestep-v15-turbo
+Environment=ACESTEP_INIT_LLM=false
+Environment=ACESTEP_LM_BACKEND=pt
+Environment=MIOPEN_FIND_MODE=FAST
+Environment=TOKENIZERS_PARALLELISM=false
+ExecStart=/srv/ai/apps/larm-trials/20260924-ace-step15/.venv/bin/python -u acestep/api_server.py --host 127.0.0.1 --port 8090
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=240
+TimeoutStopSec=60
+KillSignal=SIGINT
+LimitMEMLOCK=infinity
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/srv/ai/models /srv/ai/apps/larm-trials/20260924-ace-step15
+ReadWritePaths=/srv/ai/cache /srv/ai/logs /srv/ai/apps/larm-trials/20260924-ace-step15/.cache
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

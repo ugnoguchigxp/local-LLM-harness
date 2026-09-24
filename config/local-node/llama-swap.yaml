@@ -159,6 +159,9 @@ models:
       - ROCR_VISIBLE_DEVICES=-1
 
   qwen35-decision:
+    # The SAAA Agent Connection owns this lightweight provider's lifetime.
+    # LARM releases it with the connection; llama-swap must not evict it first.
+    ttl: 0
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
       -m /srv/ai/models/qwen35-decision/Qwen3.5-2B-Q4_K_M.gguf
@@ -166,7 +169,7 @@ models:
       -ngl 999
       --fit off
       --flash-attn on
-      --ctx-size 4096
+      --ctx-size 65536
       --parallel 1
       --batch-size 512
       --ubatch-size 512
@@ -421,7 +424,7 @@ models:
   ornith15-35b-speed:
     cmd: >
       /srv/ai/apps/q38rocm/engine/bin/llama-server
-      -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
+      -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -445,6 +448,9 @@ models:
       --top-k 20
       --jinja
       --context-shift
+      --spec-type draft-mtp
+      --spec-draft-n-max 4
+      --spec-draft-p-min 0.6
       -ctxcp 0
       -cram 0
       --no-cache-prompt
@@ -461,7 +467,7 @@ models:
   ornith15-35b-agent:
     cmd: >
       /srv/ai/apps/q38rocm/engine/bin/llama-server
-      -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
+      -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -485,6 +491,9 @@ models:
       --top-k 20
       --jinja
       --context-shift
+      --spec-type draft-mtp
+      --spec-draft-n-max 4
+      --spec-draft-p-min 0.6
       -ctxcp 0
       -cram 0
       --no-cache-prompt

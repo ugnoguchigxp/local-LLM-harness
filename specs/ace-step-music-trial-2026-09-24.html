@@ -1,0 +1,184 @@
+<article lang="ja">
+  <h1>ACE-Step 1.5 ROCm 音楽生成試行 2026-09-24</h1>
+  <p>
+    Ryzen AI MAX+ 395（Radeon 8060S、gfx1151）上で ACE-Step 1.5 turbo を使用し、30秒の instrumental
+    を1曲生成した実測記録である。モデルと生成物は source-only repository の外に配置した。
+  </p>
+
+  <section id="request">
+    <h2>生成条件</h2>
+    <table>
+      <caption>
+        ACE-Stepへ渡した固定生成条件
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">Prompt</th>
+          <td>
+            Cinematic electronic ambient music, slow evolving synthesizers, deep bass, subtle
+            percussion, no vocals, 120 BPM.
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Model</th>
+          <td><code>acestep-v15-turbo</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Duration</th>
+          <td>30秒</td>
+        </tr>
+        <tr>
+          <th scope="row">Seed</th>
+          <td>12345</td>
+        </tr>
+        <tr>
+          <th scope="row">Inference steps</th>
+          <td>8</td>
+        </tr>
+        <tr>
+          <th scope="row">LM planning</th>
+          <td>無効</td>
+        </tr>
+        <tr>
+          <th scope="row">Output</th>
+          <td>WAV、48 kHz、stereo、16-bit PCM</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="result">
+    <h2>生成結果</h2>
+    <table>
+      <caption>
+        生成時間と成果物
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">実音声長</th>
+          <td>30.000秒</td>
+        </tr>
+        <tr>
+          <th scope="row">ACE-Step内部生成時間</th>
+          <td>30.52秒</td>
+        </tr>
+        <tr>
+          <th scope="row">API end-to-end時間</th>
+          <td>36.18秒</td>
+        </tr>
+        <tr>
+          <th scope="row">内部RTF</th>
+          <td>1.017</td>
+        </tr>
+        <tr>
+          <th scope="row">end-to-end RTF</th>
+          <td>1.206</td>
+        </tr>
+        <tr>
+          <th scope="row">end-to-end速度</th>
+          <td>0.829倍 realtime</td>
+        </tr>
+        <tr>
+          <th scope="row">ファイルサイズ</th>
+          <td>5,760,044 bytes（5.49 MiB）</td>
+        </tr>
+        <tr>
+          <th scope="row">SHA-256</th>
+          <td><code>753cd98d9d0a76cf16439260cded7c21ca9596e8f559a09c977b216f19e779ec</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="memory">
+    <h2>メモリ</h2>
+    <table>
+      <caption>
+        ACE-Step server PIDを0.5秒間隔で採取したメモリ値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">生成前</th>
+          <th scope="col">平均</th>
+          <th scope="col">ピーク</th>
+          <th scope="col">ピーク増分</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ROCm割当量</th>
+          <td>12.02 GiB</td>
+          <td>13.04 GiB</td>
+          <td>17.67 GiB</td>
+          <td>5.65 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">Process RSS</th>
+          <td>1.15 GiB</td>
+          <td>2.36 GiB</td>
+          <td>2.61 GiB</td>
+          <td>1.46 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">System available低下</th>
+          <td>38.36 GiB</td>
+          <td>—</td>
+          <td>31.98 GiB</td>
+          <td>6.38 GiB</td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        Strix Haloはunified memory構成なので、ROCm割当量とRSSは加算して総使用量として扱わない。
+        計測中に別の画像生成プロセスがGPUを使用していたため、時間とsystem
+        available低下は保守的な参考値である。 ACE-Step PID単位のROCm割当ピークは分離して採取した。
+      </p>
+    </aside>
+  </section>
+
+  <section id="audio-analysis">
+    <h2>音声の特徴</h2>
+    <table>
+      <caption>
+        生成WAVから算出した信号特性
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">推定テンポ</th>
+          <td>119.68 BPM</td>
+        </tr>
+        <tr>
+          <th scope="row">RMS</th>
+          <td>-16.90 dBFS</td>
+        </tr>
+        <tr>
+          <th scope="row">Peak</th>
+          <td>-1.00 dBFS</td>
+        </tr>
+        <tr>
+          <th scope="row">Crest factor</th>
+          <td>15.90 dB</td>
+        </tr>
+        <tr>
+          <th scope="row">平均spectral centroid</th>
+          <td>745 Hz</td>
+        </tr>
+        <tr>
+          <th scope="row">250 Hz未満のenergy</th>
+          <td>91.21%</td>
+        </tr>
+        <tr>
+          <th scope="row">2 kHz以上のenergy</th>
+          <td>0.08%</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      指定どおりボーカルなしのcinematic electronic ambientで、120 BPMに近い周期を持つ。
+      信号分析上は低域が非常に強く、高域を抑えた暗く重い音色である。slow synthとdeep bassを中心に、
+      percussionを控えめに置く用途に適する。
+    </p>
+  </section>
+</article>

@@ -11,7 +11,7 @@ audiences:
 
 agentProfiles:
   coding-default:
-    description: Standard Qwen 3.8 27B Q4_0 225K worker with MTP
+    description: Resident Ornith 1.5 35B ROCmFP4 128K provider with MTP
     schedulingPriority: 3000
     providers:
       - name: llm
@@ -20,7 +20,7 @@ agentProfiles:
         publicModel: coding-default
         readiness: llm-inference
         contextWindow:
-          maxTokens: 230400
+          maxTokens: 131072
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
   saaa-conversation-gemma4:
@@ -55,16 +55,26 @@ agentProfiles:
         publishModel: false
         readiness: embedding
   saaa-conversation-ornith15:
-    description: Explicit SAAA conversation candidate with Ornith 1.5 35B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding
+    description: SAAA base response set with resident Ornith 1.5 35B, Qwen 3.5 2B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding
     schedulingPriority: 3000
     providers:
       - name: llm
         capability: llm.general
         route: llm-saaa-ornith15
-        publicModel: ornith-1.5-35b-conversation
+        publicModel: ornith-1.5-35b
         readiness: llm-inference
         contextWindow:
-          maxTokens: 230400
+          maxTokens: 131072
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: backchannel
+        capability: llm.backchannel.classifier
+        route: llm-saaa-qwen35-2b
+        publicModel: qwen3.5-2b-fast-response
+        publishModel: false
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 65536
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
       - name: asr
@@ -86,7 +96,7 @@ agentProfiles:
         publishModel: false
         readiness: embedding
   saaa-qwen38:
-    description: Compatibility profile ID for the SAAA Gemma 4 warm conversation preset
+    description: Frozen legacy compatibility profile for the SAAA Gemma 4 warm conversation preset
     schedulingPriority: 3000
     providers:
       - name: llm
@@ -188,7 +198,7 @@ agentProfiles:
         publicModel: backchannel-gemma3-1b
         readiness: llm-inference
   saaa-backchannel-default:
-    description: SAAA default backchannel classifier using Japanese-tuned LFM 2.5 1.2B
+    description: SAAA default backchannel and lightweight decision provider using Qwen 3.5 2B
     schedulingPriority: 3000
     providers:
       - name: backchannel
@@ -238,6 +248,30 @@ agentProfiles:
         route: embedding-multilingual-e5-small
         publicModel: multilingual-e5-small
         readiness: embedding
+
+profileSelectors:
+  contextStill:
+    agentProfile: contextstill-background
+  SAAA:
+    agentProfile: saaa-conversation-ornith15
+  SAAA-w-Image:
+    agentProfile: saaa-conversation-ornith15
+    services:
+      - name: image
+        capability: media.image.generate
+        protocol: larm.image-generation.v1
+        endpoint: /v1/images/generations
+        model: qwen-image-2.1
+  SAAA-w-music:
+    agentProfile: saaa-conversation-ornith15
+    services:
+      - name: music
+        capability: media.music.generate
+        protocol: larm.music-generation.v1
+        endpoint: /v1/music/generations
+        model: ace-step-1.5
+  vulnWorkbench:
+    agentProfile: coding-default
 
 compatibilityAliases:
   deep-reasoning-35b:

@@ -80,7 +80,7 @@ while true; do
   esac
 done
 
-jq -e '.bindings[] | select(.capability == "llm.general") | .runtime == "qwen-general"' \
+jq -e '.bindings[] | select(.capability == "llm.general") | .runtime == "ornith-general"' \
   <<<"${allocation}" >/dev/null
 
 completion="$(curl -fsS --max-time 300 "${headers[@]}" \
@@ -103,4 +103,4 @@ sed -n 's/^data: \({.*}\)$/\1/p' <<<"${streaming_completion}" \
 curl -fsS --max-time 10 "${headers[@]}" -X DELETE \
   "${base_url}/v1/allocations/${allocation_id}" >/dev/null
 allocation_id=""
-echo "LARM resident Qwen 3.8 27B JSON/SSE and SAAA Service Harness smoke passed"
+echo "LARM resident Ornith 1.5 35B JSON/SSE and SAAA Service Harness smoke passed"

@@ -156,12 +156,12 @@ models:
   ornith15-35b-speed:
     kind: file
     role: preferred-llm
-    source: https://huggingface.co/pugant/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN
-    revision: 973bf694fdec212b833432d455611361bdeb914c
-    filename: Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
-    path: /srv/ai/models/ornith15-35b/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
-    bytes: 19052439552
-    sha256: aa35045aab39163851c8584e6cf8cc6f33e8fc2ffe28ca627d3414ec66584704
+    source: https://huggingface.co/julianmb/Ornith-1.5-35B-A3B-ROCmFP4-GGUF
+    revision: a0db6d02a557324a04cecd3feb0ab3f08565521e
+    filename: Ornith-1.5-35B-A3B-ROCmFP4.gguf
+    path: /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
+    bytes: 19052438944
+    sha256: 0f907917a1bfe4e0ca0d281e5709dcf34b6277063e94fab29491bb5c80fda696
     quantization: Q4_0_ROCMFP4_STRIX_LEAN
     runtime: q38rocm-vulkan
 

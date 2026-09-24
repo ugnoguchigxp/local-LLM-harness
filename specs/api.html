@@ -71,9 +71,9 @@
     <p>
       <code>GET /openapi.json</code>はdaemonと同じCore schemaおよびroute
       metadataから生成します。全operationは実装が返す成功statusとresponse
-      contentを持ち、JSON、SSE、Prometheus text、audio binaryのmedia typeを区別します。compatibility
-      APIの成功responseもstrict schemaで検証し、実routeとの追加・削除driftと2xx response
-      schemaの欠落をtestで拒否します。
+      contentを持ち、JSON、SSE、Prometheus text、audio・image binaryのmedia
+      typeを区別します。compatibility APIの成功responseもstrict
+      schemaで検証し、実routeとの追加・削除driftと2xx response schemaの欠落をtestで拒否します。
     </p>
   </section>
 
@@ -207,6 +207,26 @@
           <td>GET</td>
           <th scope="row"><code>/v1/audio/voices</code></th>
           <td>固定TTS Bindingのvoice、style、制御範囲、credit一覧</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/image-artifacts</code></th>
+          <td>生成画像一覧と20GB pool使用量</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/image-artifacts/:id</code></th>
+          <td>生成画像metadata</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <th scope="row"><code>/v1/image-artifacts/:id/content</code></th>
+          <td>生成画像のWebPまたはPNG binary</td>
+        </tr>
+        <tr>
+          <td>DELETE</td>
+          <th scope="row"><code>/v1/image-artifacts/:id</code></th>
+          <td>生成画像artifact一式の削除</td>
         </tr>
         <tr>
           <td>POST</td>

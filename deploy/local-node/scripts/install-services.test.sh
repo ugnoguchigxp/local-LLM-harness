@@ -92,7 +92,7 @@ cmp --silent \
 systemctl_log="${test_root}/var/lib/larm/install-systemctl.log"
 grep -F "enable llama-swap-worker.service larm-daemon.service" \
   "${systemctl_log}" >/dev/null
-grep -F "disable llama-server.service qwen-asr.service whisper-asr.service voicevox-tts.service qwen-tts.service larm-embedding.service" \
+grep -F "disable llama-server.service qwen-asr.service whisper-asr.service voicevox-tts.service qwen-tts.service larm-embedding.service larm-music-ace-step.service larm-image-qwen21.service" \
   "${systemctl_log}" >/dev/null
 [[ -d "${test_root}/srv/ai/models/qwen-tts" ]]
 [[ -d "${test_root}/srv/ai/models/multilingual-e5-small-onnx-qint8" ]]
@@ -112,7 +112,8 @@ grep -F "disable --now larm-native-qwen-provider.service" "${systemctl_log}" >/d
 [[ "$(stat -c '%a' "${test_root}/var/lib/larm/release-builder/signing-key.pem")" == "600" ]]
 [[ "$(stat -c '%a' "${test_root}/etc/larm/release-signing.pub")" == "644" ]]
 openssl pkey -pubin -in "${test_root}/etc/larm/release-signing.pub" -noout >/dev/null
-grep -F "ReadWritePaths=/srv/ai/cache /srv/ai/context-sources /srv/ai/logs /srv/ai/models /var/lib/larm" \
+[[ -d "${test_root}/srv/ai/data/generated/images" ]]
+grep -F "ReadWritePaths=/srv/ai/apps/larm-trials/20260924-ace-step15/.cache/acestep/tmp/api_audio /srv/ai/cache /srv/ai/context-sources /srv/ai/data/generated/images /srv/ai/data/generated/music /srv/ai/logs /srv/ai/models /var/lib/larm" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "/var/lib/larm/provider-config" \
   "${test_root}/etc/systemd/system/larm-release-activator.service" >/dev/null
@@ -146,7 +147,7 @@ LARM_INSTALL_TEST_MODE=1 \
 [[ -f "${gateway_root}/etc/systemd/system/larm-release-activator.path" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-http-provider-monitor.timer" ]]
 for unit in llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service qwen-tts.service larm-embedding.service \
-  voicevox-tts.service; do
+  voicevox-tts.service larm-music-ace-step.service larm-image-qwen21.service; do
   [[ ! -e "${gateway_root}/etc/systemd/system/${unit}" ]]
 done
 grep -F "enable larm-daemon.service" \
@@ -194,8 +195,11 @@ fi
 rm "${credential}"
 printf '%s\n' "${initial_credential}" >"${credential}"
 unit_target="${test_root}/etc/systemd/system/llama-server.service"
-grep -F -- "--ubatch 256" "${unit_target}" >/dev/null
-grep -F -- "--ctx 131072" "${unit_target}" >/dev/null
+grep -F -- "Ornith-1.5-35B-A3B-ROCmFP4.gguf" "${unit_target}" >/dev/null
+grep -F -- "--ubatch-size 1024" "${unit_target}" >/dev/null
+grep -F -- "--ctx-size 131072" "${unit_target}" >/dev/null
+grep -F -- "--spec-draft-n-max 4" "${unit_target}" >/dev/null
+grep -F -- "--spec-draft-p-min 0.6" "${unit_target}" >/dev/null
 unit_redirect="${test_root}/unit-redirect"
 printf 'unchanged unit target\n' >"${unit_redirect}"
 rm "${unit_target}"

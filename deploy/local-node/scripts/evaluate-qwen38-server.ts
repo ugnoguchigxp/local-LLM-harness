@@ -20,6 +20,7 @@ const label = requiredLabel("QWEN_EVAL_LABEL");
 const mode = evaluationMode("QWEN_EVAL_MODE");
 const iterations = boundedInteger("QWEN_EVAL_ITERATIONS", 3, 1, 20);
 const maxTokens = boundedInteger("QWEN_EVAL_MAX_TOKENS", 192, 64, 1_024);
+const throughputTemperature = boundedNumber("QWEN_EVAL_TEMPERATURE", 0.2, 0, 2);
 const timeoutMs = boundedInteger("QWEN_EVAL_TIMEOUT_MS", 300_000, 10_000, 900_000);
 const output = await prepareExternalOutput(
   absoluteOutput("QWEN_EVAL_OUTPUT", process.env.QWEN_EVAL_OUTPUT),
@@ -42,7 +43,7 @@ if (mode !== "functional") {
     const response = await chat({
       max_tokens: maxTokens,
       seed: 20260912 + iteration,
-      temperature: 0.2,
+      temperature: throughputTemperature,
       top_p: 0.9,
       messages: [{
         role: "user",
@@ -64,13 +65,30 @@ const tool = mode === "throughput" ? null : await toolCallCheck();
 const structured = mode === "throughput" ? null : await structuredOutputCheck();
 const passed = (syntax?.passed ?? true) && (tool?.passed ?? true) && (structured?.passed ?? true)
   && samples.every((item) => item.status === 200 && item.completionTokens > 0);
+const sampleDraftTokens = samples.reduce((total, item) => total + (item.draftTokens ?? 0), 0);
+const sampleAcceptedDraftTokens = samples.reduce(
+  (total, item) => total + (item.acceptedDraftTokens ?? 0),
+  0,
+);
+const draftTokens = (delta?.draftTokens ?? 0) > 0 ? delta!.draftTokens : sampleDraftTokens;
+const acceptedDraftTokens = (delta?.draftTokens ?? 0) > 0
+  ? delta!.acceptedDraftTokens
+  : sampleAcceptedDraftTokens;
 const report = {
   schemaVersion: 1,
   kind: "qwen38-direct-server-evaluation",
   recordedAt: new Date().toISOString(),
   label,
   target: { baseUrl, health, props: selectedProps(props) },
-  configuration: { mode, iterations, maxTokens, timeoutMs, contextClass: "64K", reasoningEffort: "medium" },
+  configuration: {
+    mode,
+    iterations,
+    maxTokens,
+    timeoutMs,
+    contextClass: "64K",
+    reasoningEffort: "medium",
+    throughputTemperature,
+  },
   passed,
   throughput: {
     samples,
@@ -81,9 +99,9 @@ const report = {
       predictedTokens: delta?.predictedTokens ?? null,
       predictedSeconds: delta ? round(delta.predictedSeconds) : null,
       predictedTokensPerSecond: delta ? rate(delta.predictedTokens, delta.predictedSeconds) : null,
-      draftTokens: delta?.draftTokens ?? null,
-      acceptedDraftTokens: delta?.acceptedDraftTokens ?? null,
-      draftAcceptance: delta ? ratio(delta.acceptedDraftTokens, delta.draftTokens) : null,
+      draftTokens,
+      acceptedDraftTokens,
+      draftAcceptance: ratio(acceptedDraftTokens, draftTokens),
     },
   },
   functional: { pythonSyntax: syntax, toolCall: tool, structuredOutput: structured },
@@ -229,8 +247,8 @@ async function metricSnapshot() {
     promptSeconds: metric(text, "llamacpp:prompt_seconds_total"),
     predictedTokens: metric(text, "llamacpp:tokens_predicted_total"),
     predictedSeconds: metric(text, "llamacpp:tokens_predicted_seconds_total"),
-    draftTokens: metric(text, "llamacpp:spec_decode_num_draft_tokens_total"),
-    acceptedDraftTokens: metric(text, "llamacpp:spec_decode_num_accepted_tokens_total"),
+    draftTokens: optionalMetric(text, "llamacpp:spec_decode_num_draft_tokens_total"),
+    acceptedDraftTokens: optionalMetric(text, "llamacpp:spec_decode_num_accepted_tokens_total"),
   };
 }
 
@@ -238,6 +256,14 @@ function metric(text: string, name: string): number {
   const line = text.split("\n").find((value) => value.startsWith(`${name} `));
   const value = Number(line?.trim().split(/\s+/).at(-1));
   if (!Number.isFinite(value)) throw new Error(`metric ${name} is missing`);
+  return value;
+}
+
+function optionalMetric(text: string, name: string): number {
+  const line = text.split("\n").find((value) => value.startsWith(`${name} `));
+  if (!line) return 0;
+  const value = Number(line.trim().split(/\s+/).at(-1));
+  if (!Number.isFinite(value)) throw new Error(`metric ${name} is invalid`);
   return value;
 }
 
@@ -352,6 +378,14 @@ function requiredLabel(name: string): string {
 function boundedInteger(name: string, fallback: number, minimum: number, maximum: number): number {
   const value = Number(process.env[name] ?? fallback);
   if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
+
+function boundedNumber(name: string, fallback: number, minimum: number, maximum: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
     throw new Error(`${name} must be between ${minimum} and ${maximum}`);
   }
   return value;

@@ -12,6 +12,7 @@ const expected: ExpectedLiveContract = {
   agentConnections: {
     version: 1,
     defaultAgentProfile: "coding-default",
+    profileSelectors: [],
     audiences: [{
       id: "saaa-desktop",
       network: "host-private",

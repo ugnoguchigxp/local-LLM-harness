@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   agentConnectionRequestSchema,
   agentConnectionClaimSchema,
+  agentProviderEndpoint,
   loadAgentConnectionCatalogForRegistry,
   matchAgentProfileContextWindow,
   parseAgentConnectionCatalog,
@@ -17,9 +18,43 @@ import { loadRegistry } from "./registry";
 const configDir = join(import.meta.dir, "../../../config/local-node");
 const registry = loadRegistry(configDir);
 
+test("agent provider protocols map to stable public endpoint paths", () => {
+  expect(agentProviderEndpoint("openai.chat-completions.v1")).toBe("/v1/chat/completions");
+  expect(agentProviderEndpoint("openai.audio-transcriptions.v1")).toBe("/v1/audio/transcriptions");
+  expect(agentProviderEndpoint("openai.audio-speech.v1")).toBe("/v1/audio/speech");
+  expect(agentProviderEndpoint("larm.embedding.v1")).toBe("/v1/embed");
+});
+
 test("production agent profiles compile to strict protocol-aware provider contracts", () => {
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
   expect(catalog.defaultAgentProfile).toBe("coding-default");
+  expect(catalog.profileSelectors).toEqual([
+    { id: "contextStill", agentProfile: "contextstill-background", services: [] },
+    { id: "SAAA", agentProfile: "saaa-conversation-ornith15", services: [] },
+    {
+      id: "SAAA-w-Image",
+      agentProfile: "saaa-conversation-ornith15",
+      services: [{
+        name: "image",
+        capability: "media.image.generate",
+        protocol: "larm.image-generation.v1",
+        endpoint: "/v1/images/generations",
+        model: "qwen-image-2.1",
+      }],
+    },
+    {
+      id: "SAAA-w-music",
+      agentProfile: "saaa-conversation-ornith15",
+      services: [{
+        name: "music",
+        capability: "media.music.generate",
+        protocol: "larm.music-generation.v1",
+        endpoint: "/v1/music/generations",
+        model: "ace-step-1.5",
+      }],
+    },
+    { id: "vulnWorkbench", agentProfile: "coding-default", services: [] },
+  ]);
   expect(catalog.profiles.map((profile) => profile.id)).toEqual([
     "asr-qwen",
     "coding-default",
@@ -62,7 +97,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
         protocol: "openai.chat-completions.v1",
         readiness: "llm-inference",
         contextWindow: {
-          maxTokens: 230_400,
+          maxTokens: 131_072,
           outputReserveTokens: 4_096,
           safetyMarginTokens: 1_976,
         },
@@ -234,21 +269,33 @@ test("production agent profiles compile to strict protocol-aware provider contra
       schedulingPriority: 3000,
       profileIds: ["saaa-conversation-gemma4", "saaa-qwen38"],
     });
-  expect(catalog.profiles.find((profile) => profile.id === "saaa-conversation-ornith15"))
-    .toMatchObject({
-      canonicalProfile: "saaa-conversation-ornith15",
+  for (const profileId of ["saaa-conversation-ornith15"]) {
+    expect(catalog.profiles.find((profile) => profile.id === profileId))
+      .toMatchObject({
+      canonicalProfile: profileId,
       selectionPolicy: "explicit-only",
       schedulingPriority: 3000,
       providers: [
         { name: "asr", route: "stt-qwen", protocol: "openai.audio-transcriptions.v1" },
+        {
+          name: "backchannel",
+          route: "llm-saaa-qwen35-2b",
+          protocol: "openai.chat-completions.v1",
+          publicModel: "qwen3.5-2b-fast-response",
+          contextWindow: {
+            maxTokens: 65_536,
+            outputReserveTokens: 4_096,
+            safetyMarginTokens: 1_976,
+          },
+        },
         { name: "embedding", route: "embedding-multilingual-e5-small", protocol: "larm.embedding.v1" },
         {
           name: "llm",
           route: "llm-saaa-ornith15",
           protocol: "openai.chat-completions.v1",
-          publicModel: "ornith-1.5-35b-conversation",
+          publicModel: "ornith-1.5-35b",
           contextWindow: {
-            maxTokens: 230_400,
+            maxTokens: 131_072,
             outputReserveTokens: 4_096,
             safetyMarginTokens: 1_976,
           },
@@ -256,7 +303,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
         { name: "tts", route: "tts-voicevox", protocol: "openai.audio-speech.v1" },
       ],
     });
-  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "ornith-1.5-35b-conversation"))
+  }
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "ornith-1.5-35b"))
     .toMatchObject({
       capability: "llm.general",
       route: "llm-saaa-ornith15",
@@ -415,6 +463,29 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
   );
   expect(() => parseAgentConnectionCatalog({
     ...base,
+    profileSelectors: { unknownConsumer: { agentProfile: "coding" } },
+  }, registry)).toThrow(/Invalid key in record/);
+  expect(() => parseAgentConnectionCatalog({
+    ...base,
+    profileSelectors: { SAAA: { agentProfile: "missing" } },
+  }, registry)).toThrow(/profile selector SAAA references unknown agent profile missing/);
+  expect(() => parseAgentConnectionCatalog({
+    ...base,
+    profileSelectors: {
+      "SAAA-w-Image": {
+        agentProfile: "coding",
+        services: [{
+          name: "image",
+          capability: "media.image.generate",
+          protocol: "larm.image-generation.v1",
+          endpoint: "/v1/music/generations",
+          model: "qwen-image-2.1",
+        }],
+      },
+    },
+  }, registry)).toThrow(/endpoint must match protocol/);
+  expect(() => parseAgentConnectionCatalog({
+    ...base,
     defaultAgentProfile: "missing",
   }, registry)).toThrow(/default profile missing does not exist/);
   expect(() => parseAgentConnectionCatalog({
@@ -471,7 +542,7 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
 
 test("ContextStill exploration compiles as one explicit three-tier Agent Profile", () => {
   const decisionRegistry = structuredClone(registry);
-  const general = decisionRegistry.runtimes.find((runtime) => runtime.id === "qwen-general")!;
+  const general = decisionRegistry.runtimes.find((runtime) => runtime.id === "ornith-general")!;
   decisionRegistry.runtimes.push(
     {
       ...structuredClone(general),
@@ -518,7 +589,7 @@ test("ContextStill exploration compiles as one explicit three-tier Agent Profile
       id: "llm-contextstill-general",
       capabilities: ["llm.general"],
       explicitOnly: true,
-      candidates: [{ runtime: "qwen-general", purpose: "primary" }],
+      candidates: [{ runtime: "ornith-general", purpose: "primary" }],
     },
   );
 
@@ -675,10 +746,12 @@ test("v3 discovery carries embedding space and context budgets without changing 
         capability: provider.capability,
         supportedCapabilities: provider.supportedCapabilities,
         protocol: provider.protocol,
+        endpoint: agentProviderEndpoint(provider.protocol),
         model: provider.publicModel,
         ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
         ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
       })),
+      services: [],
     })),
     audiences: catalog.audiences.map((audience) => audience.id),
   };

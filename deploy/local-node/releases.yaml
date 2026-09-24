@@ -9,25 +9,14 @@ runtimeReleases:
     estimatedMemoryGB: 1
     healthPath: /health
     default: true
-  qwen-general-current:
-    runtime: qwen-general
+  ornith-general-current:
+    runtime: ornith-general
     artifacts:
-      - qwen38-primary
-    providerConfigRevision: llama-server-qwen38-rocmfp4-125k-v1
+      - ornith15-35b-speed
+    providerConfigRevision: llama-server-ornith15-rocmfp4-128k-mtp-n4-p06-v1
     estimatedMemoryGB: 40
     healthPath: /health
     default: true
-    contextCertification:
-      profile: qwen38-resident-125k-v1
-      modelArtifactDigest: fb89c78d2be91cdb68eaaaa45b1270710bf34aa721dc1f0b9e3aa7b98d2e1da9
-      tokenizerDigest: 2b8fb66a999b663503e2f1e04939d5c00a06f6d4c16d9cbf4f36bc66792ecd2d
-      chatTemplateDigest: 701ba13a085c0c1b5e05414dec1aa3069904f962beee36f0899e441720b83974
-      engineBuild: b244-0fc9568-bin-8be744716785ba4c460533661d7308dfd383ea4d6eb9c09f6e5f7f88814e8752
-      providerConfigRevision: llama-server-qwen38-rocmfp4-125k-v1
-      contextLimitTokens: 131072
-      verifiedModes:
-        - source-rebuild
-      evidenceDigest: 8cf0e1a1af3ebfed789b61f6372e57f2b0a35fb18e5dc8a766bc9a724b867bb2
 
   qwen-worker-agent-current:
     runtime: qwen-worker-agent
@@ -71,8 +60,8 @@ runtimeReleases:
     runtime: qwen35-decision
     artifacts:
       - qwen35-2b-q4-k-m
-    providerConfigRevision: llama-swap-qwen35-2b-q4-k-m-decision-4k-v1
-    estimatedMemoryGB: 4
+    providerConfigRevision: llama-swap-qwen35-2b-q4-k-m-decision-64k-v2
+    estimatedMemoryGB: 8
     healthPath: /health
     default: true
 
@@ -135,7 +124,7 @@ runtimeReleases:
     runtime: ornith15-35b-speed
     artifacts:
       - ornith15-35b-speed
-    providerConfigRevision: llama-swap-ornith15-35b-rocmfp4-q8kv-plain-v2
+    providerConfigRevision: llama-swap-ornith15-35b-rocmfp4-aug24-mtp-n4-p06-v3
     estimatedMemoryGB: 44
     healthPath: /health
     default: true
@@ -144,7 +133,7 @@ runtimeReleases:
     runtime: ornith15-35b-agent
     artifacts:
       - ornith15-35b-speed
-    providerConfigRevision: llama-swap-ornith15-35b-agent-64k-q8kv-no-prompt-cache-v2
+    providerConfigRevision: llama-swap-ornith15-35b-agent-64k-aug24-mtp-n4-p06-v3
     estimatedMemoryGB: 30
     healthPath: /health
     default: true
@@ -154,7 +143,7 @@ runtimeReleases:
     artifacts:
       - qwen3-asr-main
     providerConfigRevision: qwen-asr-1.7b-v1
-    estimatedMemoryGB: 5
+    estimatedMemoryGB: 10
     healthPath: /health
     default: true
 

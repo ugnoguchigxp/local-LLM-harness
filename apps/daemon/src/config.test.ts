@@ -38,6 +38,20 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.personalStateEnabled).toBeFalse();
   expect(config.personalStateJournalRoot).toBe("/var/lib/larm/personal-state");
   expect(config.personalStateReceiptTtlMs).toBe(24 * 60 * 60 * 1_000);
+  expect(config.musicProviderEndpoint).toBeUndefined();
+  expect(config.musicArtifactRoot).toBe("/var/lib/larm/music");
+  expect(config.musicPollIntervalMs).toBe(1_000);
+  expect(config.musicMaxAudioBytes).toBe(512 * 1024 * 1024);
+  expect(config.musicArtifactRetentionMs).toBe(24 * 60 * 60 * 1_000);
+  expect(config.musicWavRetentionMs).toBe(60 * 60 * 1_000);
+  expect(config.musicArtifactMaxBytes).toBe(50 * 1024 * 1024 * 1024);
+  expect(config.musicFavoriteMaxBytes).toBe(30 * 1024 * 1024 * 1024);
+  expect(config.musicPruneIntervalMs).toBe(5 * 60 * 1_000);
+  expect(config.musicUpstreamOutputRoot).toBeUndefined();
+  expect(config.imageArtifactRoot).toBe("/srv/ai/data/generated/images");
+  expect(config.imageArtifactMaxBytes).toBe(20_000_000_000);
+  expect(config.imageArtifactTargetBytes).toBe(18_000_000_000);
+  expect(config.imagePruneIntervalMs).toBe(5 * 60 * 1_000);
   expect(config.configDir).toBe("/workspace/config/local-node");
 });
 
@@ -92,6 +106,32 @@ test("daemon configuration rejects invalid numbers", () => {
     .toThrow(/absolute path/);
   expect(() => parseDaemonConfig({ LARM_CONTEXT_SOURCE_ROOT: "relative/context" }))
     .toThrow(/absolute path/);
+  expect(() => parseDaemonConfig({ LARM_MUSIC_ARTIFACT_ROOT: "relative/music" }))
+    .toThrow(/absolute path/);
+  expect(() => parseDaemonConfig({ LARM_MUSIC_UPSTREAM_OUTPUT_ROOT: "relative/output" }))
+    .toThrow(/absolute path/);
+  expect(() => parseDaemonConfig({ LARM_IMAGE_ARTIFACT_ROOT: "relative/images" }))
+    .toThrow(/absolute path/);
+  expect(() => parseDaemonConfig({ LARM_IMAGE_ARTIFACT_MAX_BYTES: "0" }))
+    .toThrow(/LARM_IMAGE_ARTIFACT_MAX_BYTES/);
+  expect(() => parseDaemonConfig({
+    LARM_IMAGE_ARTIFACT_MAX_BYTES: "1000",
+    LARM_IMAGE_ARTIFACT_TARGET_BYTES: "1000",
+  })).toThrow(/LARM_IMAGE_ARTIFACT_TARGET_BYTES/);
+  expect(() => parseDaemonConfig({ LARM_IMAGE_PRUNE_INTERVAL_SECONDS: "9" }))
+    .toThrow(/LARM_IMAGE_PRUNE_INTERVAL_SECONDS/);
+  expect(() => parseDaemonConfig({ LARM_MUSIC_ARTIFACT_RETENTION_SECONDS: "59" }))
+    .toThrow(/LARM_MUSIC_ARTIFACT_RETENTION_SECONDS/);
+  expect(() => parseDaemonConfig({ LARM_MUSIC_WAV_RETENTION_SECONDS: "59" }))
+    .toThrow(/LARM_MUSIC_WAV_RETENTION_SECONDS/);
+  expect(() => parseDaemonConfig({ LARM_MUSIC_ARTIFACT_MAX_BYTES: "1023" }))
+    .toThrow(/LARM_MUSIC_ARTIFACT_MAX_BYTES/);
+  expect(() => parseDaemonConfig({
+    LARM_MUSIC_ARTIFACT_MAX_BYTES: String(20 * 1024 * 1024),
+    LARM_MUSIC_FAVORITE_MAX_BYTES: String(30 * 1024 * 1024),
+  })).toThrow(/LARM_MUSIC_FAVORITE_MAX_BYTES/);
+  expect(() => parseDaemonConfig({ LARM_MUSIC_PROVIDER_ENDPOINT: "ftp://localhost:8001" }))
+    .toThrow(/LARM_MUSIC_PROVIDER_ENDPOINT/);
   expect(() => parseDaemonConfig({ LARM_CONTEXT_MATERIALIZED_MAX_BYTES: "0" }))
     .toThrow(/LARM_CONTEXT_MATERIALIZED_MAX_BYTES/);
   expect(() => parseDaemonConfig({ LARM_CONTEXT_SOURCE_MAX_TOTAL_BYTES: "0" }))

@@ -21,6 +21,9 @@ Environment=LARM_SERVICE_HARNESS_AUTH_ENABLED=false
 Environment=LARM_CONTEXT_ENABLED=true
 Environment=LARM_PERSONAL_STATE_ENABLED=false
 Environment=LARM_PERSONAL_STATE_JOURNAL_ROOT=/var/lib/larm/personal-state
+Environment=LARM_MUSIC_PROVIDER_ENDPOINT=http://127.0.0.1:8090
+Environment=LARM_MUSIC_ARTIFACT_ROOT=/srv/ai/data/generated/music
+Environment=LARM_MUSIC_UPSTREAM_OUTPUT_ROOT=/srv/ai/apps/larm-trials/20260924-ace-step15/.cache/acestep/tmp/api_audio
 Environment=LARM_CONTEXT_METADATA_ROOT=/var/lib/larm/contexts
 Environment=LARM_CONTEXT_SOURCE_ROOT=/srv/ai/context-sources
 Environment=LARM_CONTEXT_SOURCE_MAX_TOTAL_BYTES=549755813888
@@ -52,7 +55,7 @@ PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
 ReadOnlyPaths=/srv/ai/apps/larm-current
-ReadWritePaths=/srv/ai/cache /srv/ai/context-sources /srv/ai/logs /srv/ai/models /var/lib/larm
+ReadWritePaths=/srv/ai/apps/larm-trials/20260924-ace-step15/.cache/acestep/tmp/api_audio /srv/ai/cache /srv/ai/context-sources /srv/ai/data/generated/images /srv/ai/data/generated/music /srv/ai/logs /srv/ai/models /var/lib/larm
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]

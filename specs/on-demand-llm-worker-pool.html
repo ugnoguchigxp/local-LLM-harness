@@ -149,17 +149,19 @@ Worker slot (llama-swap :8083, one member at a time)
     </p>
     <p>
       <code>ornith15-35b-speed</code>はOrnith-1.5-35B-A3Bのgfx1151専用
-      <code>Q4_0_ROCMFP4_STRIX_LEAN</code> GGUFです。19,052,439,552 bytesで、artifact
-      revisionとSHA-256を固定します。元checkpointのMTP headを内包しますが、実測でplainより遅いため
-      MTPは起動contractで無効です。<code>ngram-mod</code>も同一requestの反復で大幅な速度低下を
-      確認したため無効にし、plain decodeを採用します。V
-      cacheの<code>turbo4</code>はfull PPLが
+      <code>Q4_0_ROCMFP4_STRIX_LEAN</code> GGUFです。Aug-24 MTP refreshを含む 19,052,438,944
+      bytesのartifact revisionとSHA-256 <code>0f907917a1bfe4e0ca0d281e5709dcf34b6277063e94fab29491bb5c80fda696</code>を固定します。
+      速度版と64K Agent版はMTP
+      <code>n4/p0.6</code>を起動contractに含めます。ただしlocal-nodeの
+      2026-09-24再測定は公開105.6 tok/sを再現せず、72.2 tok/sに留まったため、明示speed
+      routeのままとしdefaultへ昇格しません。<code>ngram-mod</code>は同一requestの反復で大幅な速度低下を
+      確認したため無効です。V cacheの<code>turbo4</code>はfull PPLが
       208.89へ破綻したため使用せず、K/Vともに<code>q8_0</code>です。q38rocm
       prompt cacheのsequence再利用assertを回避するため、prompt cacheとidle-slot
       cacheも無効です。配布物とspeculative decodingの比較根拠は<a
         href="./ornith-1.5-35b-selection.html"
         >Ornith-1.5-35B-A3B 配布物選定</a
-      >に固定します。
+      >と<a href="./ornith-1.5-35b-mtp-refresh-evaluation.html">MTP refresh再評価</a>に固定します。
     </p>
     <p>
       <code>qwen36-35b-speed</code>はQwen3.6-35B-A3Bの

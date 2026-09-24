@@ -511,6 +511,7 @@ test("v3 agent profile discovery preserves advertised Chat Completions context b
             capability: "llm.coding",
             supportedCapabilities: ["llm.coding"],
             protocol: "openai.chat-completions.v1",
+            endpoint: "/v1/chat/completions",
             model: "qwen-agent-worker",
             contextWindow: {
               maxTokens: 65_536,
@@ -518,6 +519,7 @@ test("v3 agent profile discovery preserves advertised Chat Completions context b
               safetyMarginTokens: 1_976,
             },
           }],
+          services: [],
         }],
         audiences: ["same-host"],
       });
@@ -528,6 +530,9 @@ test("v3 agent profile discovery preserves advertised Chat Completions context b
     .toEqual({ maxTokens: 65_536, outputReserveTokens: 4_096, safetyMarginTokens: 1_976 });
   expect(new URL(observed!.url).pathname).toBe("/v3/agent-profiles");
   expect(observed!.headers.get("authorization")).toBe("Bearer profile-token");
+
+  await client.listAgentProfilesV3("SAAA");
+  expect(new URL(observed!.url).searchParams.get("profile")).toBe("SAAA");
 });
 
 test("reference client reads strict service activity and uses the optional control bearer", async () => {

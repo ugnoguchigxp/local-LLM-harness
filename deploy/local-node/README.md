@@ -38,6 +38,9 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/fault-larm.sh`: 明示confirmationを要求するdaemon・Preferred fault harness
 - `scripts/benchmark-larm.ts`: repository外raw JSONと匿名化summaryを分離する4 series benchmark
 - `scripts/performance-larm.ts`: LLM・ASR・TTSの単体性能と3系統同時利用時の劣化を比較する診断benchmark
+- `scripts/benchmark-ornith15-mtp.sh`: refresh済みOrnith ROCmFP4をMTP OFF/ONの順に比較する診断benchmark
+- `scripts/evaluate-streaming-ttfc.ts`: SSE先頭、reasoning先頭、表示用content先頭を分離するTTFC測定
+- `scripts/evaluate-qwen35-interaction.ts`: Qwen 3.5 2Bの会話、Tool自動選択、確認質問、Tool結果応答、TTFCを評価
 - `scripts/reazonspeech_shadow_api.py`: production routeを変えずCPU ASRを比較する評価専用endpoint
 - `scripts/reazonspeech_espnet_shadow_api.py`: ReazonSpeech ESPnet v2をROCmで比較する評価専用endpoint
 - `scripts/compare-slo.ts`: version管理された`deploy/local-node/slo.yaml`とのfail-closed比較
@@ -68,7 +71,7 @@ capture, and the persistent hourly `larm-inference-audit-prune.timer` enforces t
 10 GiB, and minimum-free-space bounds even after daemon downtime. Audit payloads are not part of
 release or host-state backups. The prune service reads only the audit settings and key; API,
 management, and Agent Connection credentials remain outside its environment.
-個別Provider unitはinstallのみ行い、boot時はdisableのままです。Qwen、ASR、TTS、Embeddingのhost daemonは
+個別Provider unitはinstallのみ行い、boot時はdisableのままです。Ornith、ASR、TTS、Embeddingのhost daemonは
 LARMのmanaged warm policy（`minInstances: 1`）で起動・維持します。常駐する`llama-swap-worker.service`は
 Provider supervisorであり、検証済みreleaseから`/var/lib/larm/provider-config/llama-swap.yaml`へ原子的に
 公開された設定を`--watch-config`で追跡します。LARMは同梱のpolkit ruleによりProvider serviceのstart / stopを
@@ -77,7 +80,7 @@ load／unloadします。Embeddingモデルは
 `intfloat/multilingual-e5-small` revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`の
 ONNX/QInt8 snapshotへ固定され、artifact stagingが全6ファイルのsize・SHA-256・snapshot digestを検証します。
 
-`qwen-general`はloopbackのOpenAI互換HTTP endpointへ接続し、GatewayがJSONまたはSSEとして転送します。
+`ornith-general`はloopbackのOpenAI互換HTTP endpointへ接続し、GatewayがJSONまたはSSEとして転送します。
 公開data planeはHTTPだけです。`saaa-desktop`の
 `host-private` Audienceも標準HTTPの`baseUrl`だけを返します。LAN境界外へ公開する場合は、LARM service
 userが読める証明書と秘密鍵の絶対pathを`/etc/larm/larm.env`の`LARM_TLS_CERT_FILE`と
@@ -178,18 +181,40 @@ deploy/local-node/scripts/smoke-larm.sh
 # deploy/local-node/scripts/canary-gate.sh
 ```
 
-## SAAA Qwen 3.8通常Providerの運用
+## SAAA Ornith 35B + Qwen 2B基本応答セットの運用
 
-SAAAの標準HTTP Provider設定では公開modelを`qwen3.8`にします。このmodelは
-`llm-saaa-qwen38`から標準`qwen-worker-fast`だけへ解決されます。workerはQwen 3.8 27B
-Q4_0、225K context（230,400 token）、Base専用MTP sidecar、draft最大2 tokenを使用します。廃止した永続KV snapshot経路と
-resident ROCmFP4は利用対象にもfallbackにもなりません。通常の`coding-default`も同じQ4_0 MTP workerです。
+SAAAの標準会話LLMは公開model `ornith-1.5-35b`です。`llm-saaa-ornith15`は
+systemd管理の`ornith-general`だけへ解決され、Aug-24 MTP refresh後のROCmFP4 artifact、128K
+context、MTP n4/p0.6を使用します。`coding-default`も同じresident Ornithへ解決されます。
+旧Qwen 3.8は常駐せず、ContextStillやNightWorkerの明示的なworker routeで必要時だけloadします。
 
-SAAA session全体はAgent Profile `saaa-qwen38`を明示選択します。一つのAgent Connectionが
-`tts`（VoiceVox）、`asr`（Qwen3 ASR）、`backchannel`（LFM 2.5 1.2B JP、64K）、`llm`（Qwen 3.8 27B、225K）
-の四Providerを同じTTLへ固定します。単独の標準Chat requestはこのpresetを暗黙には起動しません。
+SAAA session全体はAgent Profile `saaa-conversation-ornith15`を選択します。旧client向けの
+`saaa-qwen38`はGemma 4構成のfrozen legacy profileとして内容を変更せず残します。一つの
+Agent Connectionが`tts`（VOICEVOX）、`asr`（Qwen3 ASR）、`backchannel`（Qwen 3.5 2B、64K）、
+`embedding`（multilingual E5）、`llm`（Ornith 1.5 35B、128K）を同じTTLへ固定します。Qwen 2Bは
+profile session中だけ維持し、常駐Qwen 3.8はありません。新profileがcatalogにない旧LARMへ接続する場合、
+SAAAは`saaa-qwen38`へfallbackし、claimに存在するProviderだけを使用します。`llm`だけを必須とし、
+`backchannel`がなければ短応答も`llm`へ送ります。
 consumerはclaimで返されたProviderごとのmodel、短期credential、Chat Completionsのcontext windowを使用し、
 session終了時にConnectionをreleaseします。
+
+## Media Runtime Variant
+
+`music`と`image`は同じ`accelerator-media-heavy`排他groupに属し、同時には起動しません。
+基本Agent Profileは`saaa-conversation-ornith15`のままで、必要な生成capabilityだけをon-demandで追加します。
+
+```bash
+deploy/local-node/scripts/runtime-variant.sh start music
+deploy/local-node/scripts/runtime-variant.sh stop music
+deploy/local-node/scripts/runtime-variant.sh start image
+deploy/local-node/scripts/runtime-variant.sh stop image
+```
+
+musicはACE-Stepをloopback port 8090へ起動し、LARMの`/v1/music/*` APIから利用します。imageは
+Qwen-Image 2.1をloopback port 8091へ起動し、GPU denoiseとCPU FP32 VAE decodeを行います。
+生成物は`/srv/ai/data/generated/images`へ書き、LARMの認証付き`/v1/image-artifacts/*`から取得します。
+起動scriptは反対側のVariantを停止し、Variant予約に加えて16 GiBの`MemAvailable` floorを要求します。
+両unitはinstall後もdisabledで、明示起動されるまでmemoryを消費しません。
 
 Personal State製品contractは別gateです。systemd unitは
 `LARM_PERSONAL_STATE_ENABLED=false`と`LARM_PERSONAL_STATE_JOURNAL_ROOT=/var/lib/larm/personal-state`を
@@ -202,7 +227,7 @@ late-output／tool-side-effect fenceとrollback rehearsalが完了するまで�
 curl -sS -X POST http://127.0.0.1:9810/v1/chat/completions \
   -H "Authorization: Bearer ${LARM_API_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen3.8","stream":false,"messages":[{"role":"user","content":"こんにちは"}]}'
+  -d '{"model":"ornith-1.5-35b","stream":false,"messages":[{"role":"user","content":"こんにちは"}]}'
 ```
 
 通常requestのcontext windowは131,072 token、実入力上限は125,000 token、output reserveは4,096 token、
@@ -233,8 +258,8 @@ Personal State scopeを付与しません。
 umask 077
 LARM_PERSONAL_STATE_PROVIDER_TOKEN="${claimed_provider_token}" \
 LARM_PERSONAL_STATE_ALLOCATION_ID="${allocation_id}" \
-LARM_PERSONAL_STATE_RUNTIME="qwen-general" \
-LARM_PERSONAL_STATE_MODEL="qwen3.8" \
+LARM_PERSONAL_STATE_RUNTIME="ornith-general" \
+LARM_PERSONAL_STATE_MODEL="ornith-1.5-35b" \
   bun run personal-state:conformance \
   > /srv/ai/logs/larm-canary/personal-state.json
 ```

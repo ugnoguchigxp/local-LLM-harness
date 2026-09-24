@@ -1,8 +1,8 @@
 # local-node: AI MAX+ 395 Linux provider
 
 `local-node` is the first Linux deployment of LARM. It keeps the interactive voice path hot
-while providing one resident Qwen3.8 27B LLM, a general 256K worker pool, and bounded 64K
-Agent workers that fit beside the resident model.
+while providing one resident Ornith 1.5 35B LLM, a session-scoped Qwen 3.5 2B response helper,
+and explicit Qwen 3.8 worker pools for background tasks.
 
 ## Desired runtime map
 
@@ -12,10 +12,10 @@ state from this document alone.
 
 | Port | Runtime | Policy | Purpose |
 | ---: | --- | --- | --- |
-| 8080 | Qwen3.8-27B ROCmFP4 FAST + MTP | resident | primary reasoning/coding |
+| 8080 | Ornith-1.5-35B-A3B ROCmFP4 + MTP n4/p0.6 | resident | primary conversation/reasoning/coding, 128K |
 | 8081 | Qwen3-ASR 1.7B FP16 | resident backup | explicit `stt-qwen` / default fallback |
 | 8082 | Qwen3-TTS 0.6B optimized | preferred | expressive speech |
-| 8083 | llama-swap | resident executor | on-demand 256K general and 64K Agent workers |
+| 8083 | llama-swap | resident executor | session-scoped Qwen 2B 64K and on-demand Qwen 3.8 workers |
 | 8084 | VOICEVOX CORE 0.17.0 | resident | low-latency speech |
 | 8085 | Whisper large-v3-turbo Q5 HIP | trial resident | primary Japanese transcription |
 | 9810 | LARM daemon | control plane | authenticated LAN Gateway |
@@ -54,13 +54,18 @@ custom subprotocol, acknowledgement/replay state, or separate streaming port.
 
 ## Why this split
 
-- The ROCmFP4 build is the primary because the goal is Qwen3.8-27B quality with maximum
-  interactive decode speed on gfx1151.
+- The refreshed Ornith ROCmFP4 build is the resident primary. It uses the artifact whose SHA-256 is
+  `0f907917a1bfe4e0ca0d281e5709dcf34b6277063e94fab29491bb5c80fda696`, 128K context, and MTP n4/p0.6.
+- Qwen 3.5 2B supplies short responses, backchannel decisions, and simple tool selection at 64K.
+  Agent Connection owns its lifetime; it is not a separate boot-resident LLM.
+- Qwen 3.8 is no longer the resident default. Its general and Agent workers remain explicit,
+  on-demand routes for background compatibility.
 - `UD-Q4_K_XL` is the quality-oriented 256K worker and `Q4_0` is its faster fallback.
   Both are loaded through llama-swap only when needed.
 - Ornith-1.5-35B-A3B uses the official Q5_K_M artifact for the quality route and the
-  gfx1151-specific ROCmFP4 STRIX_LEAN artifact for the explicit speed route. Both disable
-  MTP and ngram; Ornith KV cache uses q8_0 for both K and V after local perplexity validation.
+  Aug-24 MTP-refresh gfx1151 ROCmFP4 STRIX_LEAN artifact for the explicit speed route.
+  The quality route keeps MTP disabled; the refreshed speed and Agent routes use MTP n4/p0.6.
+  Ornith KV cache uses q8_0 for both K and V after local perplexity validation.
   `ngram-mod` stays disabled, and q38rocm prompt/idle-slot caching is disabled after a repeat-request
   sequence assertion reproduced on local-node. Qwen3.6-35B remains an explicit comparison and fallback
   Runtime in the same swap group.

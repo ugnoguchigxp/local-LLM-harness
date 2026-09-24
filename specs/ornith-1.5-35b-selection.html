@@ -7,6 +7,16 @@
     candidateを固定します。
   </p>
 
+  <aside>
+    <p>
+      <strong>2026-09-24更新:</strong> speed routeはAug-24 MTP refresh artifactへ更新し、MTP
+      <code>n4/p0.6</code>を有効化しました。artifactと実測結果は<a
+        href="./ornith-1.5-35b-mtp-refresh-evaluation.html"
+        >MTP refresh再評価</a
+      >を参照してください。品質primaryの公式Q5_K_MとResident defaultは変更しません。
+    </p>
+  </aside>
+
   <dl>
     <dt>決定日</dt>
     <dd><time>2026-08-29</time></dd>
@@ -119,7 +129,7 @@
           <td>
             同型hostでplain 78.0 tok/s、MTP n=2はprose 59.1 tok/s。二token目のacceptance低下が支配的
           </td>
-          <td>無効</td>
+          <td>旧artifactでは無効。Aug-24 refresh speed routeではn4/p0.6</td>
         </tr>
         <tr>
           <th scope="row">第三者retrained MTP</th>
@@ -144,8 +154,8 @@
       ngramはdraft tokenをtarget modelで検証するため出力品質を変えませんが、このhostとengineの
       組合せでは反復時のlatencyが許容できません。将来のengine更新後に再測定するまでproduction
       contractへ含めません。品質primaryのprovider config revisionは
-      <code>llama-swap-ornith15-35b-official-q5-plain-v2</code>、速度版は
-      <code>llama-swap-ornith15-35b-rocmfp4-q8kv-plain-v2</code>です。
+      <code>llama-swap-ornith15-35b-official-q5-plain-v2</code>、refresh後の速度版は
+      <code>llama-swap-ornith15-35b-rocmfp4-aug24-mtp-n4-p06-v3</code>です。
     </p>
     <p>
       後続のAgent Connection反復E2Eで、q38rocm prompt cacheが以前のsequenceを再利用する際の

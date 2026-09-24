@@ -30,6 +30,8 @@ import { ContextController } from "./context-controller";
 import { PersonalStateController } from "./personal-state-controller";
 import { GatewayLifecycle, type GatewayLifecycleState } from "./gateway-lifecycle";
 import { verifyGatewayStartup } from "./gateway-startup";
+import { AceStepMusicProvider, MusicGenerationManager } from "./music-manager";
+import { ImageArtifactManager } from "./image-artifact-manager";
 
 const config = parseDaemonConfig();
 const catalogGeneration = loadCatalogGeneration({
@@ -287,6 +289,30 @@ const personalStateController = new PersonalStateController({
 await personalStateController.initialize();
 
 const startupProbeToken = crypto.randomUUID();
+const musicManager = config.musicProviderEndpoint
+  ? new MusicGenerationManager(new AceStepMusicProvider({
+    endpoint: config.musicProviderEndpoint,
+    apiKey: config.musicProviderApiKey,
+    pollIntervalMs: config.musicPollIntervalMs,
+    maxAudioBytes: config.musicMaxAudioBytes,
+    upstreamOutputRoot: config.musicUpstreamOutputRoot,
+  }), {
+    artifactRoot: config.musicArtifactRoot,
+    concurrency: 1,
+    retentionMs: config.musicArtifactRetentionMs,
+    wavRetentionMs: config.musicWavRetentionMs,
+    maxArtifactBytes: config.musicArtifactMaxBytes,
+    favoriteMaxArtifactBytes: config.musicFavoriteMaxBytes,
+    pruneIntervalMs: config.musicPruneIntervalMs,
+  })
+  : undefined;
+await musicManager?.initialize();
+const imageArtifactManager = new ImageArtifactManager(config.imageArtifactRoot, {
+  maxBytes: config.imageArtifactMaxBytes,
+  targetBytes: config.imageArtifactTargetBytes,
+  pruneIntervalMs: config.imagePruneIntervalMs,
+});
+await imageArtifactManager.initialize();
 const appComponents = createAppComponents({
   registry,
   getState: () => observer.getState(),
@@ -323,6 +349,8 @@ const appComponents = createAppComponents({
   personalStateMaxSourceBytes: config.contextSourceMaxBytes,
   getGatewayReadiness: () => gatewayLifecycle.snapshot(),
   startupProbeToken,
+  musicManager,
+  imageArtifactManager,
   getReleaseConvergenceStatus: async () => await Bun.file(
     process.env.LARM_RELEASE_CONVERGENCE_STATUS ?? "/var/lib/larm/release-controller/status.json",
   ).json(),
@@ -481,6 +509,8 @@ async function shutdown(signal: string): Promise<void> {
   artifactManager.beginDrain();
   executionGate.beginDrain();
   clearInterval(interval);
+  musicManager?.close();
+  imageArtifactManager.close();
   clearTimeout(reconciliationTimer);
   const deadline = Date.now() + config.shutdownTimeoutMs;
   const operationsDrained = await Promise.race([

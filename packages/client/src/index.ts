@@ -1,5 +1,6 @@
 import {
   allocationRequestSchema,
+  agentProfileSelectorIdSchema,
   audioVoiceListSchema,
   agentConnectionClaimSchema,
   agentConnectionClaimRequestSchema,
@@ -44,6 +45,7 @@ import {
   type AgentConnectionClaimRequest,
   type AgentConnectionHealth,
   type AgentConnectionRequestInput,
+  type AgentProfileSelectorId,
   type AllocationRequestInput,
   type ControlOperation,
   type ContextRegistrationRequest,
@@ -553,8 +555,20 @@ export class LarmClient {
     return this.parseJson(response, publicAgentProfileListSchema);
   }
 
-  async listAgentProfilesV3(signal?: AbortSignal) {
-    const response = await this.request("/v3/agent-profiles", { signal });
+  async listAgentProfilesV3(signal?: AbortSignal): Promise<ReturnType<typeof publicAgentProfileListV3Schema.parse>>;
+  async listAgentProfilesV3(
+    profile: AgentProfileSelectorId,
+    signal?: AbortSignal,
+  ): Promise<ReturnType<typeof publicAgentProfileListV3Schema.parse>>;
+  async listAgentProfilesV3(profileOrSignal?: string | AbortSignal, signal?: AbortSignal) {
+    const profile = typeof profileOrSignal === "string"
+      ? agentProfileSelectorIdSchema.parse(profileOrSignal)
+      : undefined;
+    const requestSignal = typeof profileOrSignal === "string" ? signal : profileOrSignal;
+    const path = profile
+      ? `/v3/agent-profiles?profile=${encodeURIComponent(profile)}`
+      : "/v3/agent-profiles";
+    const response = await this.request(path, { signal: requestSignal });
     return this.parseJson(response, publicAgentProfileListV3Schema);
   }
 
