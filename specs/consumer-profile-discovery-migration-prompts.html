@@ -33,12 +33,12 @@
         </tr>
         <tr>
           <th scope="row"><code>SAAA-w-Image</code></th>
-          <td><code>saaa-conversation-ornith15</code></td>
+          <td><code>saaa-conversation-ornith15-image</code></td>
           <td><code>image</code></td>
         </tr>
         <tr>
           <th scope="row"><code>SAAA-w-music</code></th>
-          <td><code>saaa-conversation-ornith15</code></td>
+          <td><code>saaa-conversation-ornith15-music</code></td>
           <td><code>music</code></td>
         </tr>
         <tr>
@@ -86,6 +86,7 @@
 必須test:
 - mock HTTP serverでrequest lineにprofile=SAAAがexactly one回含まれること。
 - SAAA-w-ImageとSAAA-w-musicのqueryを別testで固定すること。
+- SAAA、SAAA-w-Image、SAAA-w-musicが互いに異なるprofiles[0].idを返し、そのIDがConnection create bodyと作成結果に保持されること。
 - 5 Providerのendpoint/modelを順序に依存せずnameで選ぶこと。
 - requestedProfile不一致、profiles 0件/複数、protocol/endpoint不一致、model欠落、別originを拒否するnegative test。
 - discoveryで得たprofiles[0].idがConnection create bodyへ渡る統合test。

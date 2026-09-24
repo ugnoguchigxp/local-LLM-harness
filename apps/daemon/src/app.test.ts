@@ -376,7 +376,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
       services: [],
     },
     "SAAA-w-Image": {
-      id: "saaa-conversation-ornith15",
+      id: "saaa-conversation-ornith15-image",
       providers: [
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
         { name: "backchannel", endpoint: "/v1/chat/completions", model: "qwen3.5-2b-fast-response" },
@@ -387,7 +387,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
       services: [{ name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1" }],
     },
     "SAAA-w-music": {
-      id: "saaa-conversation-ornith15",
+      id: "saaa-conversation-ornith15-music",
       providers: [
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
         { name: "backchannel", endpoint: "/v1/chat/completions", model: "qwen3.5-2b-fast-response" },
@@ -3901,10 +3901,24 @@ test("embedding Agent Connection claims, validates, renews, and releases a scope
 });
 
 test("non-default Agent Profiles require an explicit selection signal", async () => {
+  const variantCatalog = structuredClone(explicitAgentConnectionCatalog);
+  const speedProfile = variantCatalog.profiles.find((profile) => profile.id === "speed")!;
+  variantCatalog.profiles.push(
+    {
+      ...structuredClone(speedProfile),
+      id: "saaa-conversation-ornith15-image",
+      canonicalProfile: "saaa-conversation-ornith15-image",
+    },
+    {
+      ...structuredClone(speedProfile),
+      id: "saaa-conversation-ornith15-music",
+      canonicalProfile: "saaa-conversation-ornith15-music",
+    },
+  );
   const { app } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
     connectionSigningKey: agentSigningKey,
-    agentConnectionCatalog: explicitAgentConnectionCatalog,
+    agentConnectionCatalog: variantCatalog,
   });
   const profiles = await app.request("/v2/agent-profiles", { headers: agentHeaders() });
   expect(await profiles.json()).toMatchObject({
@@ -3912,6 +3926,8 @@ test("non-default Agent Profiles require an explicit selection signal", async ()
     profiles: [
       { id: "coding", selectionPolicy: "default" },
       { id: "speed", selectionPolicy: "explicit-only" },
+      { id: "saaa-conversation-ornith15-image", selectionPolicy: "explicit-only" },
+      { id: "saaa-conversation-ornith15-music", selectionPolicy: "explicit-only" },
     ],
   });
   const rejected = await app.request("/v1/agent-connections", {
@@ -3944,6 +3960,22 @@ test("non-default Agent Profiles require an explicit selection signal", async ()
     agentProfile: "speed",
     providers: [{ route: "llm-speed", publicModel: "speed-model" }],
   });
+
+  for (const agentProfile of [
+    "saaa-conversation-ornith15-image",
+    "saaa-conversation-ornith15-music",
+  ]) {
+    const variant = await app.request("/v1/agent-connections", {
+      method: "POST",
+      headers: agentHeaders({
+        "content-type": "application/json",
+        "idempotency-key": `explicit-${agentProfile}`,
+      }),
+      body: JSON.stringify({ agentProfile, explicitAgentProfile: true, audience: "loopback" }),
+    });
+    expect(variant.status).toBe(202);
+    expect(await variant.json()).toMatchObject({ agentProfile });
+  }
 });
 
 test("commissioned v1 SAAA bootstrap migrates the legacy profile to standard HTTP", async () => {

@@ -33,7 +33,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     { id: "SAAA", agentProfile: "saaa-conversation-ornith15", services: [] },
     {
       id: "SAAA-w-Image",
-      agentProfile: "saaa-conversation-ornith15",
+      agentProfile: "saaa-conversation-ornith15-image",
       services: [{
         name: "image",
         capability: "media.image.generate",
@@ -44,7 +44,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     },
     {
       id: "SAAA-w-music",
-      agentProfile: "saaa-conversation-ornith15",
+      agentProfile: "saaa-conversation-ornith15-music",
       services: [{
         name: "music",
         capability: "media.music.generate",
@@ -71,6 +71,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "saaa-backchannel-default",
     "saaa-conversation-gemma4",
     "saaa-conversation-ornith15",
+    "saaa-conversation-ornith15-image",
+    "saaa-conversation-ornith15-music",
     "saaa-qwen38",
     "tts-default",
     "tts-expressive",
@@ -269,7 +271,11 @@ test("production agent profiles compile to strict protocol-aware provider contra
       schedulingPriority: 3000,
       profileIds: ["saaa-conversation-gemma4", "saaa-qwen38"],
     });
-  for (const profileId of ["saaa-conversation-ornith15"]) {
+  for (const profileId of [
+    "saaa-conversation-ornith15",
+    "saaa-conversation-ornith15-image",
+    "saaa-conversation-ornith15-music",
+  ]) {
     expect(catalog.profiles.find((profile) => profile.id === profileId))
       .toMatchObject({
       canonicalProfile: profileId,
@@ -309,7 +315,11 @@ test("production agent profiles compile to strict protocol-aware provider contra
       capability: "llm.general",
       route: "llm-saaa-ornith15",
       schedulingPriority: 3000,
-      profileIds: ["saaa-conversation-ornith15"],
+      profileIds: [
+        "saaa-conversation-ornith15",
+        "saaa-conversation-ornith15-image",
+        "saaa-conversation-ornith15-music",
+      ],
     });
   expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "decision-default"))
     .toMatchObject({

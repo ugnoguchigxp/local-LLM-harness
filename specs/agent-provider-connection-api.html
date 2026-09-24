@@ -430,7 +430,12 @@ agentProfiles:
       <code>SAAA-w-music</code>は<code>/v1/music/generations</code>と
       <code>ace-step-1.5</code>を広告する。Consumerはresponseの具体的な
       <code>profiles[0].id</code
-      >をConnection作成時の<code>agentProfile</code>へ使用する。
+      >をConnection作成時の<code>agentProfile</code>へ使用する。選択情報をConnectionまで保持するため、
+      <code>SAAA</code
+      >、<code>SAAA-w-Image</code>、<code>SAAA-w-music</code>はそれぞれ
+      <code>saaa-conversation-ornith15</code>、<code>saaa-conversation-ornith15-image</code>、
+      <code>saaa-conversation-ornith15-music</code>という異なる具体Profile
+      IDへ解決しなければならない。
     </p>
     <pre><code>{
   "contractVersion": "agent-connection.v3",

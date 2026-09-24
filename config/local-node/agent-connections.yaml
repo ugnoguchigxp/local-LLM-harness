@@ -95,6 +95,88 @@ agentProfiles:
         publicModel: multilingual-e5-small
         publishModel: false
         readiness: embedding
+  saaa-conversation-ornith15-image:
+    description: SAAA image-generation variant with the Ornith conversation provider set
+    schedulingPriority: 3000
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-saaa-ornith15
+        publicModel: ornith-1.5-35b
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 131072
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: backchannel
+        capability: llm.backchannel.classifier
+        route: llm-saaa-qwen35-2b
+        publicModel: qwen3.5-2b-fast-response
+        publishModel: false
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 65536
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-qwen
+        publicModel: qwen3-asr-1.7b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+  saaa-conversation-ornith15-music:
+    description: SAAA music-generation variant with the Ornith conversation provider set
+    schedulingPriority: 3000
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-saaa-ornith15
+        publicModel: ornith-1.5-35b
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 131072
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: backchannel
+        capability: llm.backchannel.classifier
+        route: llm-saaa-qwen35-2b
+        publicModel: qwen3.5-2b-fast-response
+        publishModel: false
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 65536
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-qwen
+        publicModel: qwen3-asr-1.7b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
   saaa-qwen38:
     description: Frozen legacy compatibility profile for the SAAA Gemma 4 warm conversation preset
     schedulingPriority: 3000
@@ -255,7 +337,7 @@ profileSelectors:
   SAAA:
     agentProfile: saaa-conversation-ornith15
   SAAA-w-Image:
-    agentProfile: saaa-conversation-ornith15
+    agentProfile: saaa-conversation-ornith15-image
     services:
       - name: image
         capability: media.image.generate
@@ -263,7 +345,7 @@ profileSelectors:
         endpoint: /v1/images/generations
         model: qwen-image-2.1
   SAAA-w-music:
-    agentProfile: saaa-conversation-ornith15
+    agentProfile: saaa-conversation-ornith15-music
     services:
       - name: music
         capability: media.music.generate
