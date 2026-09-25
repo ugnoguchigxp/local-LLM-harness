@@ -14,9 +14,7 @@
     <dt>Repository状態</dt>
     <dd>Control Plane、Model Broker、Agent Connection、Execution Gate、local-node設定へ実装済み</dd>
     <dt>Live状態</dt>
-    <dd>
-      <code>01667fe</code>から新releaseへの更新とconsumer実機canary待ち
-    </dd>
+    <dd>release <code>ffe02d57892ef2ce58463d4ea17a0b1c8d65fbaa</code>でconsumer実機canary完了</dd>
   </dl>
 
   <section id="policy">
@@ -197,5 +195,36 @@
         daemonの<code>releaseCommit</code>が新releaseと一致した後、SAAA実機canaryを再実行する。
       </li>
     </ol>
+    <aside>
+      <h3>2026-09-25 live受入結果</h3>
+      <p>
+        gnosis上の実LARMをrelease <code>ffe02d57892ef2ce58463d4ea17a0b1c8d65fbaa</code>へ更新し、
+        <code>same-host</code>
+        audienceで一連のcanaryを実施した。開始時に通常foregroundがactiveだったため、
+        SAAAの優先度4000が通常foregroundの3000を<code>foreground_preempted</code>で停止することも同時に確認した。
+      </p>
+      <ol>
+        <li>
+          SAAAが<code>ornith-1.5-35b</code>で実推論し、release後のcredentialが401になった。
+        </li>
+        <li>
+          ContextStillが<code>qwen-agent-worker</code>を実際にloadして実推論した。
+        </li>
+        <li>
+          ContextStillを保持したままSAAAを再作成し、ContextStillが
+          <code>foreground_preempted</code>でfailed、credentialが401になった。
+        </li>
+        <li>
+          SAAAが再度<code>ornith-1.5-35b</code>で実推論し、releaseとcredential失効まで完了した。
+        </li>
+        <li>
+          直後のllama-swap状態から<code>qwen-agent-worker</code>が消え、最終activityがidleになった。
+        </li>
+      </ol>
+      <p>
+        機密情報を含まない結果、health、release convergence、監査eventはrepository外の
+        <code>/srv/ai/logs/larm-canary/saaa-context-switch-20260925T144052Z</code>へ保存した。
+      </p>
+    </aside>
   </section>
 </article>

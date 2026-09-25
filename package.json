@@ -14,6 +14,7 @@
     "preflight:backchannel": "bun run deploy/local-node/scripts/preflight-backchannel-models.ts",
     "test:http-provider-contract": "bun test packages/core/src/openai-audio.test.ts packages/core/src/openai-json.test.ts packages/core/src/openai-sse.test.ts packages/core/src/openai-model-catalog.test.ts packages/core/src/provider-recovery.test.ts apps/daemon/src/app.test.ts apps/daemon/src/speech-gateway.test.ts packages/client/src/index.test.ts",
     "smoke:agent-http": "bun run deploy/local-node/scripts/smoke-agent-http.ts",
+    "smoke:saaa-context-switch": "bun run deploy/local-node/scripts/smoke-saaa-context-switch.ts",
     "smoke:http-provider-live": "bun run deploy/local-node/scripts/smoke-http-provider-live.ts",
     "verify:qwen-agent-worker-stability": "bun run deploy/local-node/scripts/verify-qwen-agent-worker-stability.ts",
     "smoke:embedding": "bun deploy/local-node/scripts/smoke-embedding.ts",
