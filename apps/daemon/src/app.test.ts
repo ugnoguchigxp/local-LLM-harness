@@ -1876,6 +1876,18 @@ test("SAAA preempts ordinary foreground and background work and retains priority
   expect(control.getAllocation((saaa.body as { id: string }).id)?.status).toBe("ready");
   expect(control.getAllocation((nightWorker.body as { id: string }).id)?.status).toBe("waiting");
 
+  const lateForeground = await control.allocate({
+    ...request("foreground", 3_000),
+    capacityPolicy: "reject" as const,
+  });
+  expect(lateForeground.status).toBe(409);
+  expect(lateForeground.body).toMatchObject({
+    error: {
+      code: "resource_exhausted",
+      message: "a higher-priority allocation currently reserves the requested provider",
+    },
+  });
+
   const lowerPriorityPreemption = await control.preemptAllocation(
     (saaa.body as { id: string }).id,
     3_000,

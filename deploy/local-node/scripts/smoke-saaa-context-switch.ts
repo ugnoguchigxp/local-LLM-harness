@@ -89,6 +89,22 @@ async function expectRevoked(provider: ClaimedLlm): Promise<void> {
   }
 }
 
+async function waitForRuntimeCold(runtimeId: string, waitMs = 90_000): Promise<void> {
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    const response = await fetch(`${baseUrl}/state`, {
+      headers: { authorization: `Bearer ${apiToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`runtime state returned HTTP ${response.status}`);
+    const body = await response.json() as { runtimes?: Array<{ id?: string; status?: string }> };
+    const runtime = body.runtimes?.find((candidate) => candidate.id === runtimeId);
+    if (runtime?.status === "COLD") return;
+    await Bun.sleep(1_000);
+  }
+  throw new Error(`${runtimeId} did not unload after ContextStill preemption`);
+}
+
 try {
   const health = await larm.getHealth();
   if (!health.ready || health.releaseCommit !== expectedReleaseCommit) {
@@ -121,6 +137,7 @@ try {
   await infer(replacementSaaa, "SAAA");
   await release(replacementSaaa);
   await expectRevoked(replacementSaaa);
+  await waitForRuntimeCold("qwen-worker-fast");
 
   const finalActivity = await larm.getServiceActivity();
   if (finalActivity.state !== "idle") {
@@ -137,6 +154,7 @@ try {
       { profile: "contextStill", model: context.model, inferred: true, preempted: true, credentialRevoked: true },
       { profile: "SAAA", model: replacementSaaa.model, inferred: true, released: true, credentialRevoked: true },
     ],
+    contextRuntimeUnloaded: true,
     finalActivity: finalActivity.state,
   }));
 } catch (error) {

@@ -356,6 +356,11 @@ export class ControlPlane {
       (allocation) => allocation.status === "waiting"
         && (allocation.priority ?? 0) >= (request.priority ?? 0),
     );
+    const conflictsWithHigherPriority = this.hasResourceConflict(
+      runtimeIds,
+      (allocation) => admittedAllocation(allocation.status)
+        && (allocation.priority ?? 0) > (request.priority ?? 0),
+    );
     if (transitioningRuntime && !(waitsForCapacity && conflictsWithAdmitted)) {
       this.emit("allocation_rejected", { reason: "runtime_transition_in_progress" });
       return {
@@ -402,14 +407,23 @@ export class ControlPlane {
     const capacityBlocked = !admission.ok && conflictsWithAdmitted;
     const waiting = waitsForCapacity && (
       conflictsWithWaiter
+      || conflictsWithHigherPriority
       || (transitioningRuntime !== undefined && conflictsWithAdmitted)
       || capacityBlocked
       || providerSwitchHoldUntil !== undefined
     );
-    if ((!admission.ok || providerSwitchHoldUntil !== undefined) && !waiting) {
+    if ((!admission.ok || providerSwitchHoldUntil !== undefined || conflictsWithHigherPriority) && !waiting) {
       const held = providerSwitchHoldUntil !== undefined;
-      const reason = held ? "provider_switch_hold" : admission.ok ? "resource_exhausted" : admission.reason;
-      const message = held
+      const reason = conflictsWithHigherPriority
+        ? "higher_priority_allocation_active"
+        : held
+        ? "provider_switch_hold"
+        : admission.ok
+        ? "resource_exhausted"
+        : admission.reason;
+      const message = conflictsWithHigherPriority
+        ? "a higher-priority allocation currently reserves the requested provider"
+        : held
         ? "provider switch is held for foreground reuse"
         : admission.ok
         ? "runtime resources are unavailable"
