@@ -1887,6 +1887,13 @@ test("SAAA preempts ordinary foreground and background work and retains priority
       message: "a higher-priority allocation currently reserves the requested provider",
     },
   });
+  const lateForegroundWaiter = await control.allocate(request("foreground", 3_000));
+  expect(lateForegroundWaiter.body).toMatchObject({ status: "waiting", priority: 3_000 });
+  await (control as unknown as { promoteWaitingAllocations(): Promise<void> })
+    .promoteWaitingAllocations();
+  expect(control.getAllocation((lateForegroundWaiter.body as { id: string }).id)?.status)
+    .toBe("waiting");
+  await control.releaseAllocation((lateForegroundWaiter.body as { id: string }).id);
 
   const lowerPriorityPreemption = await control.preemptAllocation(
     (saaa.body as { id: string }).id,

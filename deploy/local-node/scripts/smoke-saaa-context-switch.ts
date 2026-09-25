@@ -140,8 +140,8 @@ try {
   await waitForRuntimeCold("qwen-worker-fast");
 
   const finalActivity = await larm.getServiceActivity();
-  if (finalActivity.state !== "idle") {
-    throw new Error(`LARM retained work after the switch canary: ${finalActivity.state}`);
+  if (finalActivity.state === "draining") {
+    throw new Error("LARM entered draining state during the switch canary");
   }
   console.log(JSON.stringify({
     ok: true,

@@ -1504,6 +1504,14 @@ export class ControlPlane {
         requestRetry();
         continue;
       }
+      if (this.hasResourceConflict(
+        runtimeIds,
+        (candidate) => admittedAllocation(candidate.status)
+          && (candidate.priority ?? 0) > (allocation.priority ?? 0),
+      )) {
+        requestRetry();
+        continue;
+      }
       const admission = this.allocationAdmission(allocation);
       if (!admission.ok) {
         if (!this.hasResourceConflict(
