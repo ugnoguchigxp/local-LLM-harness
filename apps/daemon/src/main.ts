@@ -445,6 +445,7 @@ try {
       ?? `${config.tlsCertFile ? "https" : "http"}://${probeHost}:${server.port}`,
     apiToken: config.apiToken,
     model: process.env.LARM_REQUIRED_CHAT_MODEL ?? "qwen-agent-worker",
+    probeModel: process.env.LARM_STARTUP_PROBE_CHAT_MODEL ?? "coding-default",
     startupProbeToken,
     timeoutMs: config.connectionReadyTimeoutMs,
   });
@@ -458,7 +459,7 @@ try {
     labels: {
       bootEpoch: identity.bootEpoch,
       configRevision: identity.configRevision,
-      model: process.env.LARM_REQUIRED_CHAT_MODEL ?? "qwen-agent-worker",
+      model: process.env.LARM_STARTUP_PROBE_CHAT_MODEL ?? "coding-default",
     },
   });
 } catch (error) {

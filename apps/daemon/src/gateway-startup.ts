@@ -4,6 +4,7 @@ export type GatewayStartupVerificationOptions = {
   baseUrl: string;
   apiToken?: string;
   model: string;
+  probeModel?: string;
   startupProbeToken: string;
   timeoutMs: number;
   fetchImpl?: typeof fetch;
@@ -28,6 +29,10 @@ export async function verifyGatewayStartup(
   if (!models.data?.some((model) => model.id === options.model)) {
     throw new Error(`required chat model ${options.model} is not routed`);
   }
+  const probeModel = options.probeModel ?? options.model;
+  if (!models.data?.some((model) => model.id === probeModel)) {
+    throw new Error(`startup probe model ${probeModel} is not routed`);
+  }
 
   const chatResponse = await fetchImpl(`${baseUrl}/v1/chat/completions`, {
     method: "POST",
@@ -37,7 +42,7 @@ export async function verifyGatewayStartup(
       "x-larm-startup-probe": options.startupProbeToken,
     },
     body: JSON.stringify({
-      model: options.model,
+      model: probeModel,
       messages: [{ role: "user", content: "Reply with OK." }],
       max_tokens: 8,
       temperature: 0,
