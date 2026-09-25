@@ -62,13 +62,24 @@ export class RuntimeReleaseManager {
 
   async initialize(): Promise<void> {
     const saved = await this.stateStore.load();
+    const catalogRuntimes = new Set([...this.releases.values()].map((release) => release.runtime));
+    let changed = saved?.catalogRevision !== this.catalogRevision;
     if (saved) {
       for (const deployment of saved.deployments) {
+        if (!catalogRuntimes.has(deployment.runtime)) {
+          if (deployment.pending) {
+            throw new ReleaseStateStoreError(
+              "state_corrupt",
+              `retired runtime ${deployment.runtime} has an unfinished deployment`,
+            );
+          }
+          changed = true;
+          continue;
+        }
         this.validateDeploymentRecord(deployment);
         this.deployments.set(deployment.runtime, deployment);
       }
     }
-    let changed = saved?.catalogRevision !== this.catalogRevision;
     for (const deployment of this.deployments.values()) {
       if (deployment.pending) {
         await this.recoverPendingDeployment(deployment);

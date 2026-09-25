@@ -1,0 +1,31 @@
+<article lang="ja">
+  <h1>Runtime release stateのcatalog廃止時移行</h1>
+
+  <p>
+    Runtime IDをrelease catalogから廃止した後も、旧世代が保存した完了済みdeployment recordは
+    <code>/var/lib/larm/runtime-releases.json</code>に残り得ます。新世代の起動時は、現行catalogに Runtime
+    IDが存在しない完了済みrecordだけを除去し、現行catalog revisionでatomicに保存し直します。
+  </p>
+
+  <h2>安全条件</h2>
+  <ul>
+    <li>現行catalogにRuntime IDが存在するrecordは、release参照を従来どおり厳格に検証します。</li>
+    <li>
+      廃止Runtimeに<code>pending</code> operationが残る場合は移行せず、
+      <code>state_corrupt</code>でfail closedします。
+    </li>
+    <li>
+      完了済みの廃止Runtimeだけを除去し、現行catalogのdefault
+      releaseを通常の初期化処理で追加します。
+    </li>
+    <li>model artifact、provider process、外部credentialはこのstate移行では変更しません。</li>
+  </ul>
+
+  <aside>
+    <p>
+      これはrelease IDの不一致を黙認する互換処理ではありません。同じRuntime
+      IDが現行catalogに残る限り、 unknown
+      release、runtime不一致、未完了operationは引き続き起動失敗になります。
+    </p>
+  </aside>
+</article>

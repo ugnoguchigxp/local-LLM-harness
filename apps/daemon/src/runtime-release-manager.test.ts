@@ -48,6 +48,7 @@ async function fixture(options: {
   saved?: RuntimeReleaseState;
   active?: (artifactIds: string[]) => boolean;
   activationStatus?: ArtifactOperation["status"];
+  initialize?: boolean;
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "larm-release-manager-"));
   const store = new LocalRuntimeReleaseStateStore(root);
@@ -89,7 +90,7 @@ async function fixture(options: {
   } as unknown as ArtifactManager;
   if (options.saved) await store.save(options.saved);
   const manager = new RuntimeReleaseManager(releases, fake, store, () => Date.parse("2026-08-28T00:00:00Z"));
-  await manager.initialize();
+  if (options.initialize !== false) await manager.initialize();
   return { manager, store, callbacks };
 }
 
@@ -117,6 +118,50 @@ test("runtime release manager selects the declared default without hashing model
     expect.objectContaining({ id: "qwen-tts-r1", state: "previous" }),
   ]));
   expect((await store.load())?.deployments[0]?.activeRelease).toBe("qwen-tts-r2");
+});
+
+test("runtime release manager prunes completed state for a runtime retired from the catalog", async () => {
+  const retired = {
+    runtime: "qwen-general",
+    activeRelease: "qwen-general-current",
+    previousRelease: null,
+    updatedAt: "2026-08-28T00:00:00.000Z",
+  };
+  const { manager, store } = await fixture({
+    saved: {
+      version: 1,
+      catalogRevision: "0".repeat(64),
+      deployments: [retired],
+    },
+  });
+  expect(manager.getDeployment("qwen-tts").activeRelease).toBe("qwen-tts-r1");
+  expect((await store.load())?.deployments.map((deployment) => deployment.runtime)).toEqual([
+    "qwen-tts",
+  ]);
+});
+
+test("runtime release manager rejects an unfinished deployment for a retired runtime", async () => {
+  const { manager } = await fixture({
+    initialize: false,
+    saved: {
+      version: 1,
+      catalogRevision: "0".repeat(64),
+      deployments: [{
+        runtime: "qwen-general",
+        activeRelease: "qwen-general-current",
+        previousRelease: null,
+        updatedAt: "2026-08-28T00:00:00.000Z",
+        pending: {
+          kind: "activate",
+          targetRelease: "qwen-general-r2",
+          originalActiveRelease: "qwen-general-current",
+          originalPreviousRelease: null,
+          startedAt: "2026-08-28T00:00:01.000Z",
+        },
+      }],
+    },
+  });
+  await expect(manager.initialize()).rejects.toMatchObject({ code: "state_corrupt" });
 });
 
 test("runtime release manager recovers a crash-persisted prepared activation", async () => {
