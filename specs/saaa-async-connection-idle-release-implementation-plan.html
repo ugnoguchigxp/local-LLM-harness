@@ -1,0 +1,558 @@
+<article lang="ja">
+  <h1>SAAA非同期Connection・5分idle release・ContextStill復帰 実装計画</h1>
+
+  <p>
+    本計画は、SAAAが要求するLLM、backchannel LLM、ASR、TTS、embeddingの複合Agent
+    Connectionを短時間のHTTP requestで受け付け、別のstatus readで準備状況をpollできるようにする。
+    Connectionがreadyになった後、LLM、ASR、TTSの利用が5分間なければSAAAのAllocation全体を自動解放し、
+    通常時のContextStill利用へ自動的に戻す。
+  </p>
+
+  <dl>
+    <dt>文書状態</dt>
+    <dd>Proposed / implementation-ready</dd>
+    <dt>対象repository</dt>
+    <dd>
+      <code>local-LLM-harness</code>、consumer変更は<code
+        >../SAAA</code
+      >
+    </dd>
+    <dt>既定idle時間</dt>
+    <dd><code>300秒</code></dd>
+    <dt>関連仕様</dt>
+    <dd>
+      <a href="./provider-priority-scheduling.html">動的Provider優先度・foreground preemption仕様</a
+      >、
+      <a href="./dynamic-provider-daemon-lifecycle-implementation-plan.html"
+        >動的 Provider Daemon ライフサイクル実装計画</a
+      >
+    </dd>
+  </dl>
+
+  <aside>
+    <p>
+      <code>/ready</code>はLARM daemonがcontrol
+      APIを受け付けられることだけを表す。個別のAgent Connectionは、Profile内の全required
+      Providerがsemantic readinessを満たすまで
+      <code>ready</code>ではない。daemon readinessとConnection
+      readinessを一つのbooleanへ統合しない。
+    </p>
+  </aside>
+
+  <section id="goals">
+    <h2>目的と非目的</h2>
+    <h3>目的</h3>
+    <ul>
+      <li>Connection作成HTTPをProvider配備・容量待ち・semantic probeから切り離す。</li>
+      <li>
+        全required
+        Providerが利用可能になった場合だけConnectionを<code>ready</code>にする。
+      </li>
+      <li>同じSAAA sessionから重複Allocationを作らない。</li>
+      <li>LLM、ASR、TTSが5分間使われなければ、SAAA bundleを安全に自動解放する。</li>
+      <li>SAAA解放後、待機中のContextStill要求を直ちに再評価して通常利用へ戻す。</li>
+      <li>
+        待機理由、Provider別進捗、idle deadline、terminal reasonをpoll
+        responseとeventで観測可能にする。
+      </li>
+    </ul>
+
+    <h3>非目的</h3>
+    <ul>
+      <li>実行中のLLM stream、音声request、embedding requestをidle timerで中断しない。</li>
+      <li>LARMがconsumerのprincipalを代行してContextStill Connectionを勝手に作成しない。</li>
+      <li>Provider processのwarm TTLとAgent Connectionのidle releaseを同じtimerにしない。</li>
+      <li>モデルweight、backend binary、固定portをこの変更で追加しない。</li>
+    </ul>
+  </section>
+
+  <section id="invariants">
+    <h2>不変条件</h2>
+    <ol>
+      <li>
+        SAAA ProfileのLLM、backchannel、ASR、TTS、embeddingはすべてrequiredとし、一つでも未準備なら
+        Connection全体を<code>ready</code>にしない。
+      </li>
+      <li>
+        <code>claim</code
+        >はConnectionが<code>ready</code>で、全Providerのsemantic
+        probeが成功した場合だけ credentialを返す。
+      </li>
+      <li>
+        作成requestの切断やclient側timeoutは、受付済みConnectionの所有権を曖昧にしない。同じ
+        idempotency keyの再送は同じConnectionを返す。
+      </li>
+      <li>
+        auto release前にConnection generation、active request数、最終activity、terminal状態を同じ
+        critical sectionで再検証する。
+      </li>
+      <li>auto release後は既発行credentialを失効させ、新しいrequestをProviderへ転送しない。</li>
+      <li>ContextStillへの復帰はSAAAの全Provider解放後に行い、部分的なbundle切替を行わない。</li>
+      <li>status、health、claim、renewの読み取りや管理操作だけではidle deadlineを延長しない。</li>
+    </ol>
+  </section>
+
+  <section id="api-contract">
+    <h2>非同期API契約</h2>
+    <table>
+      <caption>
+        Agent Connection lifecycle API
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">操作</th>
+          <th scope="col">応答</th>
+          <th scope="col">責務</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>POST /v1/agent-connections</code></th>
+          <td>
+            <code>201</code>または<code
+              >202</code
+            >
+          </td>
+          <td>
+            admissionを開始してConnection
+            IDを返す。既に全Providerがreadyなら<code>201</code>、それ以外は
+            <code>202</code
+            >、<code>Location</code>、<code>Retry-After</code>を返す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /v1/agent-connections/:id</code></th>
+          <td><code>200</code></td>
+          <td>状態、phase、Provider別readiness、blocker、idle deadline、terminal reasonを返す。</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /v1/agent-connections/:id/claim</code></th>
+          <td>
+            <code>200</code>または<code
+              >409</code
+            >
+          </td>
+          <td>
+            <code>ready</code>の場合だけ全Providerの短期credentialを返す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>DELETE /v1/agent-connections/:id</code></th>
+          <td><code>204</code></td>
+          <td>明示release。auto releaseと同じ一回限りのterminal処理を使う。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      <code>POST</code
+      >の既定は待機なしとする。互換用<code>Prefer: wait=N</code>は最大3秒に制限し、3秒を超える
+      値には実際に適用した値を<code>Preference-Applied: wait=3</code>で返す。Providerの5分ready
+      deadlineは background
+      lifecycleの期限であり、元のPOSTを5分保持する期限ではない。deadline到達時はstatus resourceを
+      <code>failed</code
+      >、<code>connection_ready_timeout</code>へ遷移させる。
+    </p>
+
+    <h3>公開状態</h3>
+    <pre><code>type AgentConnectionProgress = {
+  status: "pending" | "probing" | "ready" | "failed" | "released" | "expired";
+  phase:
+    | "waiting-capacity"
+    | "deploying"
+    | "probing"
+    | "ready"
+    | "terminal";
+  blocker?: {
+    kind: "runtime-capacity" | "swap-group" | "memory" | "provider-start" | "semantic-probe";
+    runtime?: string;
+    retryable: boolean;
+  };
+  providers: Array&lt;{
+    name: string;
+    readiness: "waiting" | "deploying" | "probing" | "ready" | "failed";
+  }&gt;;
+  readyDeadline: string;
+  lastForegroundActivityAt?: string;
+  idleReleaseAt?: string;
+};</code></pre>
+    <p>
+      blockerにはcredential、model path、内部endpoint、他principalのConnection
+      IDを含めない。poll間隔は
+      <code>Retry-After</code>に従い、既定1秒、最大5秒とする。
+    </p>
+  </section>
+
+  <section id="deduplication">
+    <h2>重複Connection防止</h2>
+    <p>
+      SAAAは音声sessionの開始からrelease完了まで同じ永続idempotency keyを使用する。poll
+      timeout、UI再描画、 IPC
+      retryではkeyを変更しない。releaseが確認できた後だけ次のkeyへrotateする。
+    </p>
+    <p>
+      LARM側にも防御を追加し、同一principal、profile、audience、client session keyの非terminal
+      Connectionが 既にある場合は新しいAllocationを作らず既存resourceを返す。request
+      bodyが異なる同一keyは従来どおり conflictとする。異なるSAAA
+      processを意図的に並行利用する場合は別のclient session keyを要求し、暗黙共有しない。
+    </p>
+  </section>
+
+  <section id="idle-policy">
+    <h2>5分idle release policy</h2>
+    <pre><code>idleRelease:
+  enabled: true
+  idleSeconds: 300
+  activityProtocols:
+    - openai.chat-completions.v1
+    - openai.audio-transcriptions.v1
+    - openai.audio-speech.v1</code></pre>
+    <p>
+      このpolicyはSAAA Profileへ設定し、他のAgent Profileへ暗黙適用しない。Chat
+      protocolには通常LLMと backchannel
+      classifierの両方を含む。Provider名の文字列比較ではなく、compile済みprotocolで判定する。
+    </p>
+
+    <table>
+      <caption>
+        idle deadlineへの影響
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">操作</th>
+          <th scope="col">5分を再開するか</th>
+          <th scope="col">実行中の解放を防ぐか</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLM／backchannel request</th>
+          <td>する</td>
+          <td>する</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR request</th>
+          <td>する</td>
+          <td>する</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS request／stream</th>
+          <td>する</td>
+          <td>する</td>
+        </tr>
+        <tr>
+          <th scope="row">embedding request</th>
+          <td>しない</td>
+          <td>する</td>
+        </tr>
+        <tr>
+          <th scope="row">semantic probe／health／status poll</th>
+          <td>しない</td>
+          <td>しない</td>
+        </tr>
+        <tr>
+          <th scope="row">claim／renew</th>
+          <td>しない</td>
+          <td>しない</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <ol>
+      <li>
+        Connectionが<code>ready</code>になった時刻を最初のidle基準時刻とする。
+      </li>
+      <li>対象protocolのrequest受付時にtimerを停止し、active request refを取得する。</li>
+      <li>
+        response
+        bodyまたはstreamが閉じたterminal境界で最終activity時刻を更新し、そこから300秒後を新しい
+        deadlineとする。upstream error、client
+        cancelも認証・admission済みrequestなら利用として数える。
+      </li>
+      <li>
+        deadline到達時に対象protocolのactive requestが0で、全Providerを含むactive request
+        refも0なら、 Connectionを<code>released</code>へ遷移させる。
+      </li>
+      <li>
+        embeddingだけが実行中なら途中解放せず、終了後に再検査する。対象protocolの最終activityから既に300秒を
+        超えていればembedding終了直後に解放する。
+      </li>
+    </ol>
+    <p>
+      auto release理由は<code>foreground_idle_timeout</code>、eventは
+      <code>agent_connection_idle_released</code
+      >とする。旧credentialによるrequestはProviderへ転送せず、
+      <code>409 connection_idle_released</code>を返す。認証情報そのものはeventへ記録しない。
+    </p>
+  </section>
+
+  <section id="contextstill">
+    <h2>ContextStillを通常状態にする</h2>
+    <p>
+      ContextStill consumerは一つのdesired Connectionを所有し、SAAAのforeground
+      preemptionを受けた場合は
+      <code>foreground_preempted</code>をterminal成功と誤認せず、同じ再取得idempotency
+      keyで一件だけ
+      Connection作成を再送する。LARMはこれを<code>202 waiting-capacity</code>として保持できる。
+    </p>
+    <ol>
+      <li>通常時はContextStillがreadyでbackground処理を行う。</li>
+      <li>
+        SAAA要求が来たらContextStillの新規requestを停止し、active
+        requestのterminal処理後にcredentialを失効する。
+      </li>
+      <li>SAAAの全required Providerがreadyになった後だけSAAAへclaimを許可する。</li>
+      <li>SAAAでLLM、ASR、TTSの無利用が5分続いたらbundle全体をauto releaseする。</li>
+      <li>release完了時にwaiting queueを直ちに再評価し、ContextStillを優先度1000で再admitする。</li>
+      <li>ContextStillがreadyになったらconsumerが再claimし、background処理を再開する。</li>
+    </ol>
+    <p>
+      LARMはprincipalを代行してContextStill Connectionを新規作成しない。自動復帰のdesired
+      stateと再取得責務は ContextStill consumerに置き、LARMは一意なwaiting request、昇格、credential
+      generationを管理する。 SAAA release後のProvider warm
+      holdはprocess停止を遅らせてもよいが、ContextStillのadmission再評価を遅らせては ならない。
+    </p>
+  </section>
+
+  <section id="race-safety">
+    <h2>競合と障害時の扱い</h2>
+    <ul>
+      <li>
+        timerと新規requestが競合した場合、request
+        ref取得とrelease判定を直列化する。requestが先ならtimerを取消し、
+        releaseが先ならrequestをterminal errorで拒否する。
+      </li>
+      <li>streamはheader返却時ではなくbody close時までactiveとする。</li>
+      <li>daemon drainは新規requestを拒否し、active request終了後にConnectionを解放する。</li>
+      <li>daemon再起動時は従来どおり旧boot epochのConnectionを復元せず、clientが新規作成する。</li>
+      <li>
+        release処理は冪等とし、明示DELETE、TTL、idle timerが競合してもAllocationを一度だけ解放する。
+      </li>
+      <li>ready前のConnectionにはidle timerを開始せず、ready deadlineだけを適用する。</li>
+      <li>
+        時刻逆行の影響を避けるため、timer計算にはmonotonic clock、公開時刻にはwall clockを使う。
+      </li>
+    </ul>
+  </section>
+
+  <section id="work-packages">
+    <h2>実装順序</h2>
+
+    <section id="wp1">
+      <h3>WP1: API schemaと設定契約</h3>
+      <ul>
+        <li>
+          <code>packages/core/src/agent-connection.ts</code>へphase、Provider別readiness、blocker、
+          <code>readyDeadline</code
+          >、<code>lastForegroundActivityAt</code>、<code>idleReleaseAt</code>を追加する。
+        </li>
+        <li>
+          <code>agent-connections.yaml</code>のSAAA
+          Profileへ<code>idleRelease</code>を追加する。
+        </li>
+        <li><code>packages/core/src/api-contract.ts</code>とOpenAPI fixtureを更新する。</li>
+        <li>旧clientが未知fieldを拒否する場合に備え、契約versionと移行順序を固定する。</li>
+      </ul>
+    </section>
+
+    <section id="wp2">
+      <h3>WP2: Connection作成のbounded wait化</h3>
+      <ul>
+        <li>
+          <code>apps/daemon/src/app.ts</code
+          >で<code>Prefer</code>の実待機を最大3秒へ制限し、必ず
+          <code>Location</code
+          >と<code>Retry-After</code>を返す。
+        </li>
+        <li>
+          <code>apps/daemon/src/agent-connection-controller.ts</code>でready deadline処理をPOST lifecycleから完全に
+          分離する。
+        </li>
+        <li>Allocationのwaiting、ensure、semantic probeを公開phaseとProvider別進捗へ射影する。</li>
+        <li>同一SAAA client sessionの非terminal Connectionをsingle-flight化する。</li>
+      </ul>
+    </section>
+
+    <section id="wp3">
+      <h3>WP3: Connection activity tracker</h3>
+      <ul>
+        <li>
+          Agent Connection ControllerへConnection ID、generation、protocol、active request
+          IDs、最終activity、timer generationを保持するtrackerを追加する。
+        </li>
+        <li>
+          <code>apps/daemon/src/app.ts</code>のGateway request
+          ref取得・<code>onFinish</code>境界からtrackerを更新する。
+        </li>
+        <li>
+          JSON、SSE、audio stream、client cancel、upstream errorの全terminal
+          pathで一度だけreleaseする。
+        </li>
+        <li>
+          既存Provider Instance Managerのrequest refは維持し、Connection idle判定とは別層にする。
+        </li>
+      </ul>
+    </section>
+
+    <section id="wp4">
+      <h3>WP4: 5分auto release</h3>
+      <ul>
+        <li>Connection単位のgeneration付きtimerを追加し、古いcallbackを無効化する。</li>
+        <li>
+          release直前にterminal状態、deadline、全active request、Allocation bindingを再検証する。
+        </li>
+        <li>
+          <code>foreground_idle_timeout</code>をrecord、Allocation release
+          reason、監査eventへ一貫して保存する。
+        </li>
+        <li>
+          terminal recordを履歴保持期間中poll可能にし、idle
+          release理由をclientが識別できるようにする。
+        </li>
+      </ul>
+    </section>
+
+    <section id="wp5">
+      <h3>WP5: ContextStill自動復帰</h3>
+      <ul>
+        <li>SAAA release完了後にwaiting Allocation promotionを同じqueueへ投入する。</li>
+        <li>provider switch holdがContextStill admissionを抑止しないことを明示testする。</li>
+        <li>
+          ContextStill consumerへsingle-flight再取得、bounded
+          backoff、poll、再claimを実装し、preemption中の background jobを新Provider
+          ready後だけ再開する。
+        </li>
+      </ul>
+    </section>
+
+    <section id="wp6">
+      <h3>WP6: SAAA consumer移行</h3>
+      <ul>
+        <li>
+          <code>../SAAA/crates/larm-session/src/lib.rs</code>でPOSTを短時間受付、GET
+          polling、claimの三段階として
+          固定し、<code>Prefer: wait=300</code>を使用しない。
+        </li>
+        <li>
+          <code>../SAAA/src-tauri/src/providers/larm_voice/mod.rs</code>でsessionごとの永続idempotency keyと Connection
+          IDを一つだけ所有する。
+        </li>
+        <li>
+          <code>connection_idle_released</code
+          >受信後は旧credentialを再利用せず、次の実ユーザー操作で新しい Connectionを作成する。
+        </li>
+        <li>
+          UIへ<code>準備待ち</code>、Provider別進捗、<code>再接続中</code>、terminal
+          reasonを表示する。
+        </li>
+      </ul>
+    </section>
+  </section>
+
+  <section id="tests">
+    <h2>試験計画</h2>
+    <table>
+      <caption>
+        必須の自動試験
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">分類</th>
+          <th scope="col">確認内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">API contract</th>
+          <td>cold ProviderでもPOSTが3秒以内に202を返し、GETでpendingからreadyへ遷移する。</td>
+        </tr>
+        <tr>
+          <th scope="row">Atomic readiness</th>
+          <td>5 Provider中1つでもprobe失敗ならclaim不可で、全成功後だけ一括claimできる。</td>
+        </tr>
+        <tr>
+          <th scope="row">Deduplication</th>
+          <td>
+            同じsessionから同時POST、retry、再起動replayを行ってもactive
+            Allocationは一件だけになる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Idle clock</th>
+          <td>fake clockで299秒はready、300秒でauto releaseとなる。</td>
+        </tr>
+        <tr>
+          <th scope="row">Activity reset</th>
+          <td>LLM JSON、SSE、ASR、TTSの終了ごとにdeadlineが300秒延長される。</td>
+        </tr>
+        <tr>
+          <th scope="row">Non-activity</th>
+          <td>poll、health、claim、renew、embeddingだけではdeadlineが延長されない。</td>
+        </tr>
+        <tr>
+          <th scope="row">In-flight safety</th>
+          <td>
+            長時間streamとembedding実行中はtimerが発火しても解放せず、終了後に正しく再判定する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Race</th>
+          <td>
+            deadlineと同時のrequest、DELETE、TTL、drainで二重releaseや転送後失効を起こさない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ContextStill復帰</th>
+          <td>
+            SAAA preemption、SAAA利用、5分idle
+            release、ContextStill再昇格・再claimを一続きで確認する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      production E2Eでは実時間5分を一度だけ測定する。通常test suiteではfake monotonic
+      clockを使い、5分sleepを 入れない。live証跡にはrelease commit、config revision、Connection
+      IDの短縮表示、状態遷移時刻、release reasonだけを残し、credential、会話本文、音声を保存しない。
+    </p>
+  </section>
+
+  <section id="rollout">
+    <h2>配備順序とrollback</h2>
+    <ol>
+      <li>追加fieldを読めるLARM clientとSAAAを先に配備する。auto releaseはまだ無効にする。</li>
+      <li>
+        LARMの非同期status強化とsingle-flightを配備し、重複Allocationがないことをcanary確認する。
+      </li>
+      <li>ContextStillのsingle-flight再取得とpollingを有効にする。</li>
+      <li>
+        SAAA Profile一つだけで<code>idleRelease.enabled: true</code>、300秒を有効にする。
+      </li>
+      <li>24時間soak後、全SAAA variantへ同じpolicyを展開する。</li>
+    </ol>
+    <p>
+      rollbackは設定の<code>idleRelease.enabled</code>をfalseへ戻す。非同期POST、status
+      polling、deduplicationは 安全性改善として維持する。rollback時も既にauto
+      releaseされたConnectionを復活させず、新規Connectionを作成する。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>完了条件</h2>
+    <ol>
+      <li>Provider cold startまたは容量待ちでもConnection作成POSTが3秒を超えて保持されない。</li>
+      <li>poll responseだけでwaiting理由と各Providerの準備状態を説明できる。</li>
+      <li>SAAAの同一sessionが複数の5-Provider Allocationを作らない。</li>
+      <li>全required Providerがsemantic readyになる前にclaim credentialを発行しない。</li>
+      <li>LLM、ASR、TTSの最終request終了後300秒でSAAA bundle全体が解放される。</li>
+      <li>実行中request、embedding、streamをauto releaseが中断しない。</li>
+      <li>SAAA解放後、ContextStillが手動操作なしで再admit・再claimされる。</li>
+      <li>旧SAAA credentialは解放直後から使用できず、明確なterminal reasonを返す。</li>
+      <li>
+        <code>bun run check</code>とproduction profile
+        E2E、実機5分canaryが成功する。
+      </li>
+    </ol>
+  </section>
+</article>
