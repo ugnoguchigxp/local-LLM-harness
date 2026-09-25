@@ -144,9 +144,10 @@ journalctl -u larm-daemon.service -f
 `complete`へ進むには、ContextStill job一件の完了、成果一回保存、次job境界でのActivity再評価を示す
 consumer evidenceを最後に記録する必要があります。source HEADやbranch名はdesired stateとして使いません。
 
-After the repository installer is applied, the expected enablement is Resident/control units
-enabled and `qwen-tts.service` disabled. A Preferred service may still be active temporarily
-while an explicit Allocation uses it; enabled and active are separate states.
+After the repository installer is applied, the expected enablement is the LARM control plane and
+Provider supervisor enabled, with individual Provider daemons disabled. LARM starts and stops
+catalog-declared Provider units according to allocation policy; enabled and active are separate
+states, so a disabled Provider may still be active while an allocation or resident policy needs it.
 The latest retained host observation is recorded in
 [`commissioning-evidence.html`](../specs/commissioning-evidence.html); rerun preflight rather than
 assuming that observation is still current.
@@ -158,10 +159,10 @@ LARM自身は`/srv/ai/apps/larm-releases/<commit-prefix>`へ世代固定し、
 The host uses a 100 GB TTM/GTT setting. Check it with `amd-ttm` after an attended boot.
 Do not automate `reboot`: the machine is dual boot and may start Windows.
 
-The desired state leaves `qwen-tts.service` installed but disabled at boot because it is
-Preferred. LARM starts and stops only that service through the narrow rule in
+The desired state leaves individual Provider services installed but disabled at boot. LARM starts
+and stops only catalog-declared Provider services through the narrow rule in
 [`../deploy/local-node/polkit/50-larm-runtime-control.rules`](../deploy/local-node/polkit/50-larm-runtime-control.rules).
-Resident provider units remain outside unattended lifecycle authorization.
+The supervisor and LARM control plane remain outside unattended lifecycle authorization.
 
 VOICEVOX output must display the decoded `X-VOICEVOX-Credit` value returned for the selected
 speaker. The current default is `VOICEVOX:春日部つむぎ`; clients must not hard-code that value

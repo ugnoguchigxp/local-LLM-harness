@@ -47,8 +47,9 @@ test("OpenAPI is generated from the public contract schemas", () => {
     required?: string[];
     properties?: Record<string, unknown>;
   };
-  expect(agentRequest.required).not.toContain("agentProfile");
-  expect(agentRequest.properties).toHaveProperty("explicitAgentProfile");
+  expect(agentRequest.required).toContain("profile");
+  expect(agentRequest.properties).not.toHaveProperty("agentProfile");
+  expect(agentRequest.properties).not.toHaveProperty("explicitAgentProfile");
   expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("defaultAgentProfile");
   expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("supportedCapabilities");
   expect(JSON.stringify(document.components.schemas.AgentProfileList)).not.toContain("streamingProtocol");
@@ -71,6 +72,7 @@ test("OpenAPI is generated from the public contract schemas", () => {
   }
   const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
   expect(paths["/v1/allocations"]?.post?.requestBody).toBeDefined();
+  expect(JSON.stringify(paths["/v1/agent-connections"]?.post)).toContain('"name":"Prefer"');
   expect(paths["/v1/inspection/state"]?.get?.security).toEqual([{
     bearerAuth: [],
     managementToken: [],

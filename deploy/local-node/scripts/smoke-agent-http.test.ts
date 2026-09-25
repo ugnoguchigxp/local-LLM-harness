@@ -38,6 +38,7 @@ function fixtureFetch(options: {
     allocationId: "alloc_epoch_1",
     bootEpoch: "epoch",
     catalogRevision: configRevision,
+    profile: "contextStill",
     agentProfile: "contextstill-background",
     profileRevision: "1".repeat(64),
     audience: "saaa-desktop",
@@ -46,12 +47,14 @@ function fixtureFetch(options: {
     providers: [{
       name: "llm",
       capability: "llm.coding",
-      route: "llm-agent-worker",
+      supportedCapabilities: ["llm.coding"],
       protocol: "openai.chat-completions.v1",
-      publicModel: "qwen-agent-worker",
+      endpoint: "/v1/chat/completions",
+      model: "qwen-agent-worker",
       readiness: "ready",
       claimable: true,
     }],
+    services: [],
     createdAt: observedAt,
     expiresAt,
   };
@@ -96,26 +99,13 @@ function fixtureFetch(options: {
           configRevision,
         });
       }
-      if (url.pathname === "/v2/agent-profiles") {
+      if (url.pathname === "/v3/agent-profiles" && url.searchParams.get("profile") === "contextStill") {
         return json({
-          contractVersion: "agent-connection.v2",
+          contractVersion: "agent-connection.v3",
           catalogRevision: configRevision,
           defaultAgentProfile: "coding-default",
+          requestedProfile: "contextStill",
           profiles: [
-            {
-              id: "coding-default",
-              canonicalProfile: "coding-default",
-              description: "default",
-              selectionPolicy: "default",
-              deprecated: false,
-              providers: [{
-                name: "llm",
-                capability: "llm.coding",
-                supportedCapabilities: ["llm.coding"],
-                protocol: "openai.chat-completions.v1",
-                model: "coding-default",
-              }],
-            },
             {
               id: "contextstill-background",
               canonicalProfile: "contextstill-background",
@@ -127,8 +117,10 @@ function fixtureFetch(options: {
                 capability: "llm.coding",
                 supportedCapabilities: ["llm.coding"],
                 protocol: "openai.chat-completions.v1",
+                endpoint: "/v1/chat/completions",
                 model: "qwen-agent-worker",
               }],
+              services: [],
             },
           ],
           audiences: ["saaa-desktop"],
@@ -257,8 +249,7 @@ test("generic Agent HTTP smoke validates profile, claim, JSON, SSE, release, and
     new URL(request.url).pathname === "/v1/agent-connections" && request.method === "POST"
   );
   expect(create?.body).toEqual({
-    agentProfile: "contextstill-background",
-    explicitAgentProfile: true,
+    profile: "contextStill",
     audience: "saaa-desktop",
     client: "contextstill",
     ttlSeconds: 300,

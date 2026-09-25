@@ -44,6 +44,7 @@ function decisionConnectionFixture(
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
+    profile: "contextStill" as const,
     agentProfile: "contextstill-explore",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -52,12 +53,14 @@ function decisionConnectionFixture(
     providers: [{
       name: "decision-default",
       capability: "llm.decision.default",
-      route: "llm-decision-default",
+      supportedCapabilities: ["llm.decision.default"],
       protocol: "openai.chat-completions.v1" as const,
-      publicModel: "decision-default",
+      endpoint: "/v1/chat/completions" as const,
+      model: "decision-default",
       readiness: "ready" as const,
       claimable: true,
     }],
+    services: [],
     createdAt: "2026-08-28T00:00:00.000Z",
     expiresAt,
   };
@@ -880,6 +883,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
+    profile: "vulnWorkbench" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -888,12 +892,14 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
     providers: [{
       name: "llm",
       capability: "llm.coding",
-      route: "llm-default",
+      supportedCapabilities: ["llm.coding"],
       protocol: "openai.chat-completions.v1" as const,
-      publicModel: "coding-default",
+      endpoint: "/v1/chat/completions" as const,
+      model: "coding-default",
       readiness: "ready" as const,
       claimable: true,
     }],
+    services: [],
     createdAt: "2026-08-28T00:00:00.000Z",
     expiresAt: "2026-08-28T00:05:00.000Z",
   };
@@ -966,12 +972,14 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   });
 
   const created = await client.createAgentConnection({
+    profile: "vulnWorkbench",
     audience: "same-host",
-  });
+  }, { waitSeconds: 300 });
   expect(created.status).toBe("pending");
   expect(requests[0]?.headers.get("idempotency-key")).toBe("client_agent-fixed");
+  expect(requests[0]?.headers.get("prefer")).toBe("wait=300");
   expect(await requests[0]!.clone().json()).toEqual({
-    explicitAgentProfile: false,
+    profile: "vulnWorkbench",
     audience: "same-host",
     ttlSeconds: 300,
     allowFallback: false,
@@ -1164,6 +1172,7 @@ test("agent connection polling deadline aborts an in-flight HTTP request", async
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
+    profile: "vulnWorkbench" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -1172,12 +1181,14 @@ test("agent connection polling deadline aborts an in-flight HTTP request", async
     providers: [{
       name: "llm",
       capability: "llm.coding",
-      route: "llm-default",
+      supportedCapabilities: ["llm.coding"],
       protocol: "openai.chat-completions.v1" as const,
-      publicModel: "coding-default",
+      endpoint: "/v1/chat/completions" as const,
+      model: "coding-default",
       readiness: "pending" as const,
       claimable: false,
     }],
+    services: [],
     createdAt: "2026-08-28T00:00:00.000Z",
     expiresAt: "2026-08-28T00:05:00.000Z",
   };
@@ -1204,6 +1215,7 @@ test("withAgentConnection claims and releases with a fresh cleanup signal", asyn
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
+    profile: "vulnWorkbench" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -1212,12 +1224,14 @@ test("withAgentConnection claims and releases with a fresh cleanup signal", asyn
     providers: [{
       name: "llm",
       capability: "llm.coding",
-      route: "llm-default",
+      supportedCapabilities: ["llm.coding"],
       protocol: "openai.chat-completions.v1" as const,
-      publicModel: "coding-default",
+      endpoint: "/v1/chat/completions" as const,
+      model: "coding-default",
       readiness: "ready" as const,
       claimable: true,
     }],
+    services: [],
     createdAt: "2026-08-28T00:00:00.000Z",
     expiresAt: "2026-08-28T00:05:00.000Z",
   };
@@ -1275,6 +1289,7 @@ test("withAgentConnection claims and releases with a fresh cleanup signal", asyn
   });
 
   await expect(client.withAgentConnection({
+    profile: "vulnWorkbench",
     audience: "same-host",
   }, async (_ready, receivedClaim) => {
     expect(receivedClaim.providers[0]?.model).toBe("coding-default");

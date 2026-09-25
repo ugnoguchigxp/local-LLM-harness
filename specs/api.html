@@ -866,6 +866,14 @@
       >
       Audienceを実装済みです。
     </p>
+    <p>
+      Connection作成は公開selectorを指定する<code>{"profile":"SAAA", ...}</code>形式です。
+      旧<code>agentProfile</code>／<code>explicitAgentProfile</code>入力は受理しません。
+      <code>Prefer: wait=N</code>（1〜300秒）を指定するとboundedにsemantic
+      readinessを待ち、期限内の
+      readyは201、準備中は202で返します。作成responseには公開selector、解決後Profile、実際に確保した
+      Providerのprotocol、endpoint、model、readiness、claimableと、selectorに付随するservice一覧を含めます。
+    </p>
   </section>
 
   <section id="compatibility">

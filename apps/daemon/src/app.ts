@@ -1557,10 +1557,12 @@ export function createAppComponents(deps: AppDeps) {
     body: unknown;
     replay?: boolean;
     location?: string;
+    retryAfterSeconds?: number;
   }): Response => {
     if (result.replay) c.header("x-larm-idempotent-replay", "true");
     if (result.location) c.header("location", result.location);
-    if (result.status === 202 || result.status === 503) c.header("retry-after", "1");
+    if (result.retryAfterSeconds) c.header("retry-after", String(result.retryAfterSeconds));
+    else if (result.status === 202 || result.status === 503) c.header("retry-after", "1");
     if (result.status === 204) return c.body(null, 204);
     return c.json(result.body, result.status as 200 | 201 | 202 | 400 | 401 | 403 | 404 | 409 | 410 | 429 | 503);
   };
@@ -1826,6 +1828,15 @@ export function createAppComponents(deps: AppDeps) {
     if (key instanceof Response) return key;
     const parsed = agentConnectionRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
     if (!parsed.success) return c.json(errorBody("invalid_request", "invalid agent connection request"), 400);
+    const prefer = c.req.header("prefer");
+    let waitSeconds = 0;
+    if (prefer !== undefined) {
+      const match = /^wait=([1-9][0-9]{0,2})$/.exec(prefer.trim());
+      if (!match || Number(match[1]) > 300) {
+        return c.json(errorBody("invalid_request", "Prefer must be wait=N where N is between 1 and 300"), 400);
+      }
+      waitSeconds = Number(match[1]);
+    }
     if (parsed.data.deploymentPolicy === "allow-listed") {
       if (!deps.managementToken) {
         return c.json(errorBody("management_not_configured", "allow-listed deployment is disabled"), 503);
@@ -1840,9 +1851,10 @@ export function createAppComponents(deps: AppDeps) {
       key,
       c.req.url,
       secretMatches(c.req.header("authorization"), `Bearer ${deps.apiToken}`),
+      waitSeconds * 1_000,
     );
     const catalog = deps.agentConnectionCatalog;
-    const selectedProfile = parsed.data.agentProfile ?? catalog?.defaultAgentProfile;
+    const selector = catalog?.profileSelectors.find((item) => item.id === parsed.data.profile);
     const errorCode = typeof result.body === "object" && result.body !== null && "error" in result.body
       && typeof result.body.error === "object" && result.body.error !== null && "code" in result.body.error
       ? String(result.body.error.code)
@@ -1852,13 +1864,14 @@ export function createAppComponents(deps: AppDeps) {
         ? "agent_connection_create_accepted"
         : "agent_connection_create_rejected",
       labels: {
-        requestedProfile: parsed.data.agentProfile ?? "(default)",
-        canonicalProfile: catalog?.profiles.find((profile) => profile.id === selectedProfile)
+        requestedProfile: parsed.data.profile,
+        canonicalProfile: catalog?.profiles.find((profile) => profile.id === selector?.agentProfile)
           ?.canonicalProfile ?? "(unknown)",
         status: String(result.status),
         ...(errorCode ? { code: errorCode } : {}),
       },
     });
+    if (waitSeconds > 0) c.header("preference-applied", `wait=${waitSeconds}`);
     return agentResult(c, result);
   });
 

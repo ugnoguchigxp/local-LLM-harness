@@ -1122,7 +1122,15 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
             in: "header",
             required: true,
             schema: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
-          }],
+          }, ...(operationId === "createAgentConnection"
+            ? [{
+              name: "Prefer",
+              in: "header",
+              required: false,
+              description: "Bounded readiness wait, formatted as wait=N where N is 1 through 300 seconds",
+              schema: { type: "string", pattern: "^wait=([1-9][0-9]{0,2})$" },
+            }]
+            : [])],
         }
         : {})),
       ...(operationId === "provisionContextSource"
@@ -1147,6 +1155,9 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
           : {}),
         ...(operationId === "getAgentConnectionHealth" || operationId === "getAgentProviderHealth"
           ? { "503": { description: "Semantic provider not ready", content: successContent } }
+          : {}),
+        ...(operationId === "createAgentConnection"
+          ? { "503": { description: "Connection reached a terminal readiness failure", content: successContent } }
           : {}),
         ...(operationId === "getServiceActivity"
           ? {

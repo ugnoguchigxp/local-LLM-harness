@@ -8,8 +8,6 @@ import {
   inspectionRuntimeListSchema,
   publicClusterStateSchema,
   publicAgentConnectionSchema,
-  publicAgentProfileListSchema,
-  publicAgentProfileListV1Schema,
   loadAgentConnectionCatalogForRegistry,
   loadRegistry,
   parseAgentConnectionCatalog,
@@ -133,6 +131,7 @@ const agentConnectionCatalog = parseAgentConnectionCatalog({
       }],
     },
   },
+  profileSelectors: { vulnWorkbench: { agentProfile: "coding" } },
 }, registry);
 
 const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
@@ -158,33 +157,7 @@ const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
       }],
     },
   },
-}, registry);
-
-const legacyAgentConnectionCatalog = parseAgentConnectionCatalog({
-  version: 1,
-  defaultAgentProfile: "coding",
-  audiences: {
-    remote: { network: "host-private", baseUrl: "request-origin" },
-  },
-  agentProfiles: {
-    coding: {
-      description: "Test coding provider",
-      providers: [{
-        name: "llm",
-        capability: "llm.general",
-        route: "llm-default",
-        publicModel: "test-model",
-        readiness: "llm-inference",
-      }],
-    },
-  },
-  compatibilityAliases: {
-    "deep-reasoning-35b": {
-      canonicalProfile: "coding",
-      description: "Deprecated SAAA bootstrap alias",
-      providerCapabilities: { llm: "llm.reasoning" },
-    },
-  },
+  profileSelectors: { vulnWorkbench: { agentProfile: "coding" } },
 }, registry);
 
 const explicitAgentConnectionCatalog = parseAgentConnectionCatalog({
@@ -214,6 +187,11 @@ const explicitAgentConnectionCatalog = parseAgentConnectionCatalog({
         readiness: "llm-inference",
       }],
     },
+  },
+  profileSelectors: {
+    vulnWorkbench: { agentProfile: "coding" },
+    contextStill: { agentProfile: "speed" },
+    SAAA: { agentProfile: "coding" },
   },
 }, registry);
 
@@ -256,6 +234,57 @@ function validLlmSemanticProbeResponse(init?: RequestInit): Response {
     choices: [{ index: 0, message: { role: "assistant", content: "0" }, finish_reason: "stop" }],
     usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   });
+}
+
+function validSemanticWavResponse(): Response {
+  const bytes = new Uint8Array(46);
+  const view = new DataView(bytes.buffer);
+  const write = (offset: number, value: string) => {
+    for (let index = 0; index < value.length; index += 1) bytes[offset + index] = value.charCodeAt(index);
+  };
+  write(0, "RIFF");
+  view.setUint32(4, 38, true);
+  write(8, "WAVE");
+  write(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 16_000, true);
+  view.setUint32(28, 32_000, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  write(36, "data");
+  view.setUint32(40, 2, true);
+  return new Response(bytes, { headers: { "content-type": "audio/wav" } });
+}
+
+async function validAgentProviderSemanticResponse(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+  if (path.endsWith("/v1/chat/completions")) return validLlmSemanticProbeResponse(init);
+  if (path.endsWith("/v1/audio/transcriptions")) return Response.json({ text: "" });
+  if (path.endsWith("/v1/audio/speech")) return validSemanticWavResponse();
+  if (path.endsWith("/health")) {
+    return Response.json({
+      ready: true,
+      modelLoaded: true,
+      service: "embeddingd",
+      activeRequests: 0,
+      queueDepth: 0,
+    });
+  }
+  if (path.endsWith("/embed")) {
+    const body = JSON.parse(String(init?.body)) as { type: "query" | "passage" };
+    return Response.json({
+      embeddings: [[1, ...Array.from({ length: 383 }, () => 0)]],
+      dimension: 384,
+      count: 1,
+      type: body.type,
+      normalize: true,
+      queueWaitMs: 0,
+      encodeMs: 1,
+    });
+  }
+  return Response.json({ error: { message: `unexpected semantic endpoint ${path}` } }, { status: 500 });
 }
 
 function probe(
@@ -429,6 +458,189 @@ test("v3 public profile selectors return exact provider and service endpoints wi
     expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=unknown`)).status).toBe(404);
     expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=SAAA&profile=contextStill`)).status).toBe(400);
     expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=SAAA&extra=true`)).status).toBe(400);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("E2E: SAAA profile provide returns every live provider over a real HTTP listener", async () => {
+  const catalogRevision = "e".repeat(64);
+  const configDir = join(import.meta.dir, "../../../config/local-node");
+  const productionRegistry = loadRegistry(configDir);
+  const productionCatalog = loadAgentConnectionCatalogForRegistry(configDir, productionRegistry);
+  const liveRuntimeIds = new Set([
+    "ornith-general",
+    "qwen35-decision",
+    "qwen-asr",
+    "voicevox-tts",
+    "multilingual-e5-small",
+  ]);
+  const probes = new Map(productionRegistry.runtimes.map((runtime) => [
+    runtime.id,
+    probe(runtime.id, liveRuntimeIds.has(runtime.id)),
+  ]));
+  const log = { ensure: [] as string[], stop: [] as string[] };
+  const backend = stubBackend(probes, log);
+  const observer = new Observer(productionRegistry, backend);
+  await observer.tick();
+  const control = new ControlPlane(productionRegistry, backend, observer, {
+    idleTtlMs: 0,
+    random: () => "profile-provide-e2e",
+    onRouteShadowComparison: () => undefined,
+    getCatalogRevision: () => catalogRevision,
+  });
+  let appFetch: (request: Request) => Response | Promise<Response> = () => new Response(null, { status: 503 });
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => appFetch(request),
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const catalog = structuredClone(productionCatalog);
+  catalog.audiences.find((audience) => audience.id === "same-host")!.baseUrl = `${baseUrl}/v1`;
+  const app = createApp({
+    registry: productionRegistry,
+    getState: () => observer.getState(),
+    control,
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: catalog,
+    getConfigRevision: () => catalogRevision,
+    gatewayFetch: validAgentProviderSemanticResponse,
+  });
+  appFetch = app.fetch;
+
+  try {
+    const discoveryResponse = await fetch(`${baseUrl}/v3/agent-profiles?profile=SAAA`, {
+      headers: agentHeaders(),
+    });
+    expect(discoveryResponse.status).toBe(200);
+    const discovery = await discoveryResponse.json() as { catalogRevision: string };
+
+    const createResponse = await fetch(`${baseUrl}/v1/agent-connections`, {
+      method: "POST",
+      headers: agentHeaders({
+        "content-type": "application/json",
+        "idempotency-key": "saaa-profile-provide-e2e",
+        prefer: "wait=3",
+      }),
+      body: JSON.stringify({
+        profile: "SAAA",
+        expectedCatalogRevision: discovery.catalogRevision,
+        audience: "same-host",
+        client: "saaa-e2e",
+        ttlSeconds: 300,
+        allowFallback: false,
+        deploymentPolicy: "existing-only",
+      }),
+    });
+    expect(createResponse.status).toBe(201);
+    expect(createResponse.headers.get("preference-applied")).toBe("wait=3");
+    const connection = publicAgentConnectionSchema.parse(await createResponse.json());
+    expect(createResponse.headers.get("location")).toBe(`/v1/agent-connections/${connection.id}`);
+    expect(connection).toMatchObject({
+      profile: "SAAA",
+      agentProfile: "saaa-conversation-ornith15",
+      catalogRevision: discovery.catalogRevision,
+      status: "ready",
+      services: [],
+    });
+    expect(connection.providers.map((provider) => ({
+      name: provider.name,
+      endpoint: provider.endpoint,
+      model: provider.model,
+      readiness: provider.readiness,
+      claimable: provider.claimable,
+    }))).toEqual([
+      {
+        name: "asr",
+        endpoint: "/v1/audio/transcriptions",
+        model: "qwen3-asr-1.7b",
+        readiness: "ready",
+        claimable: true,
+      },
+      {
+        name: "backchannel",
+        endpoint: "/v1/chat/completions",
+        model: "qwen3.5-2b-fast-response",
+        readiness: "ready",
+        claimable: true,
+      },
+      {
+        name: "embedding",
+        endpoint: "/v1/embed",
+        model: "multilingual-e5-small",
+        readiness: "ready",
+        claimable: true,
+      },
+      {
+        name: "llm",
+        endpoint: "/v1/chat/completions",
+        model: "ornith-1.5-35b",
+        readiness: "ready",
+        claimable: true,
+      },
+      {
+        name: "tts",
+        endpoint: "/v1/audio/speech",
+        model: "voicevox-core",
+        readiness: "ready",
+        claimable: true,
+      },
+    ]);
+    expect(log.ensure).toEqual([]);
+
+    const getResponse = await fetch(`${baseUrl}/v1/agent-connections/${connection.id}`, {
+      headers: agentHeaders(),
+    });
+    expect(getResponse.status).toBe(200);
+    expect(publicAgentConnectionSchema.parse(await getResponse.json())).toEqual(connection);
+
+    const healthResponse = await fetch(`${baseUrl}/v1/agent-connections/${connection.id}/health`, {
+      headers: agentHeaders(),
+    });
+    expect(healthResponse.status).toBe(200);
+    expect(await healthResponse.json()).toMatchObject({
+      status: "ready",
+      ready: true,
+      acceptingRequests: true,
+      providers: [
+        { name: "asr", ready: true },
+        { name: "backchannel", ready: true },
+        { name: "embedding", ready: true },
+        { name: "llm", ready: true },
+        { name: "tts", ready: true },
+      ],
+    });
+
+    const claimResponse = await fetch(`${baseUrl}/v1/agent-connections/${connection.id}/claim`, {
+      method: "POST",
+      headers: agentHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ format: "openai-provider-v1" }),
+    });
+    expect(claimResponse.status).toBe(200);
+    const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
+    expect(claim.providers.map((provider) => provider.name)).toEqual([
+      "asr",
+      "backchannel",
+      "embedding",
+      "llm",
+      "tts",
+    ]);
+
+    const providerHealth = await fetch(claim.providers[0]!.health.url, {
+      headers: { authorization: `Bearer ${claim.providers[0]!.credential.token}` },
+    });
+    expect(providerHealth.status).toBe(200);
+
+    const releaseResponse = await fetch(`${baseUrl}/v1/agent-connections/${connection.id}`, {
+      method: "DELETE",
+      headers: agentHeaders(),
+    });
+    expect(releaseResponse.status).toBe(204);
+    expect((await fetch(claim.providers[0]!.health.url, {
+      headers: { authorization: `Bearer ${claim.providers[0]!.credential.token}` },
+    })).status).toBe(401);
   } finally {
     server.stop(true);
   }
@@ -3416,7 +3628,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
       "content-type": "application/json",
       "idempotency-key": "agent-create-1",
     }),
-    body: JSON.stringify({ audience: "loopback" }),
+    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
   });
   expect(create.status).toBe(201);
   const connection = publicAgentConnectionSchema.parse(await create.json());
@@ -3450,7 +3662,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
       "content-type": "application/json",
       "idempotency-key": "agent-create-1",
     }),
-    body: JSON.stringify({ agentProfile: "coding", audience: "loopback" }),
+    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
   });
   expect(replay.headers.get("x-larm-idempotent-replay")).toBe("true");
   expect((await replay.json() as { id: string }).id).toBe(connection.id);
@@ -3727,6 +3939,10 @@ test("embedding Agent Connection claims, validates, renews, and releases a scope
         }],
       },
     },
+    profileSelectors: {
+      vulnWorkbench: { agentProfile: "coding" },
+      embeddingCanary: { agentProfile: "embedding" },
+    },
   }, embeddingRegistry);
   const probes = new Map<string, RuntimeHealth>([
     ["qwen-general", probe("qwen-general", true)],
@@ -3786,9 +4002,6 @@ test("embedding Agent Connection claims, validates, renews, and releases a scope
     personalStateController: {} as PersonalStateController,
   });
 
-  const legacyProfiles = await app.request("/v2/agent-profiles", { headers: agentHeaders() });
-  expect((await legacyProfiles.json() as { profiles: Array<{ id: string }> }).profiles)
-    .not.toContainEqual(expect.objectContaining({ id: "embedding" }));
   const profiles = await app.request("/v3/agent-profiles", { headers: agentHeaders() });
   const profileBody = await profiles.json() as {
     contractVersion: string;
@@ -3808,8 +4021,7 @@ test("embedding Agent Connection claims, validates, renews, and releases a scope
     method: "POST",
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "embed-create" }),
     body: JSON.stringify({
-      agentProfile: "embedding",
-      explicitAgentProfile: true,
+      profile: "embeddingCanary",
       audience: "loopback",
       ttlSeconds: 60,
     }),
@@ -3900,7 +4112,7 @@ test("embedding Agent Connection claims, validates, renews, and releases a scope
   })).status).toBe(401);
 });
 
-test("non-default Agent Profiles require an explicit selection signal", async () => {
+test("Agent Connection creation resolves public profile selectors and returns selected services", async () => {
   const variantCatalog = structuredClone(explicitAgentConnectionCatalog);
   const speedProfile = variantCatalog.profiles.find((profile) => profile.id === "speed")!;
   variantCatalog.profiles.push(
@@ -3914,6 +4126,20 @@ test("non-default Agent Profiles require an explicit selection signal", async ()
       id: "saaa-conversation-ornith15-music",
       canonicalProfile: "saaa-conversation-ornith15-music",
     },
+  );
+  variantCatalog.profileSelectors.push(
+    {
+      id: "SAAA-w-Image",
+      agentProfile: "saaa-conversation-ornith15-image",
+      services: [{
+        name: "image",
+        capability: "media.image.generate",
+        protocol: "larm.image-generation.v1",
+        endpoint: "/v1/images/generations",
+        model: "qwen-image-2.1",
+      }],
+    },
+    { id: "SAAA-w-music", agentProfile: "saaa-conversation-ornith15-music", services: [] },
   );
   const { app } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
@@ -3930,19 +4156,6 @@ test("non-default Agent Profiles require an explicit selection signal", async ()
       { id: "saaa-conversation-ornith15-music", selectionPolicy: "explicit-only" },
     ],
   });
-  const rejected = await app.request("/v1/agent-connections", {
-    method: "POST",
-    headers: agentHeaders({
-      "content-type": "application/json",
-      "idempotency-key": "implicit-speed-profile",
-    }),
-    body: JSON.stringify({ agentProfile: "speed", audience: "loopback" }),
-  });
-  expect(rejected.status).toBe(409);
-  expect(await rejected.json()).toMatchObject({
-    error: { code: "explicit_agent_profile_required" },
-  });
-
   const accepted = await app.request("/v1/agent-connections", {
     method: "POST",
     headers: agentHeaders({
@@ -3950,15 +4163,15 @@ test("non-default Agent Profiles require an explicit selection signal", async ()
       "idempotency-key": "explicit-speed-profile",
     }),
     body: JSON.stringify({
-      agentProfile: "speed",
-      explicitAgentProfile: true,
+      profile: "contextStill",
       audience: "loopback",
     }),
   });
   expect(accepted.status).toBe(202);
   expect(await accepted.json()).toMatchObject({
+    profile: "contextStill",
     agentProfile: "speed",
-    providers: [{ route: "llm-speed", publicModel: "speed-model" }],
+    providers: [{ endpoint: "/v1/chat/completions", model: "speed-model" }],
   });
 
   for (const agentProfile of [
@@ -3971,136 +4184,88 @@ test("non-default Agent Profiles require an explicit selection signal", async ()
         "content-type": "application/json",
         "idempotency-key": `explicit-${agentProfile}`,
       }),
-      body: JSON.stringify({ agentProfile, explicitAgentProfile: true, audience: "loopback" }),
+      body: JSON.stringify({
+        profile: agentProfile.endsWith("-image") ? "SAAA-w-Image" : "SAAA-w-music",
+        audience: "loopback",
+      }),
     });
     expect(variant.status).toBe(202);
-    expect(await variant.json()).toMatchObject({ agentProfile });
+    expect(await variant.json()).toMatchObject({
+      agentProfile,
+      services: agentProfile.endsWith("-image")
+        ? [{ name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1" }]
+        : [],
+    });
   }
 });
 
-test("commissioned v1 SAAA bootstrap migrates the legacy profile to standard HTTP", async () => {
-  const events: ControlEvent[] = [];
-  const { app, control, log } = await makeApp(true, false, {}, {
+test("Agent Connection Prefer wait converges to ready and validates catalog revision", async () => {
+  let semanticProbes = 0;
+  const { app, log } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
-    allowAnonymousAgentConnections: true,
     connectionSigningKey: agentSigningKey,
-    agentConnectionCatalog: legacyAgentConnectionCatalog,
-    onEvent: (event) => events.push(event),
-    gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
-  });
-
-  const legacyProfilesResponse = await app.request("/v1/agent-profiles");
-  expect(legacyProfilesResponse.status).toBe(200);
-  const legacyProfiles = publicAgentProfileListV1Schema.parse(await legacyProfilesResponse.json());
-  expect(Object.keys(legacyProfiles).sort()).toEqual([
-    "audiences",
-    "catalogRevision",
-    "contractVersion",
-    "profiles",
-  ]);
-  expect(legacyProfiles.profiles.find((profile) => profile.id === "deep-reasoning-35b"))
-    .toEqual({
-      id: "deep-reasoning-35b",
-      description: "Deprecated SAAA bootstrap alias",
-      providers: [{
-        name: "llm",
-        capability: "llm.reasoning",
-        protocol: "openai.chat-completions.v1",
-        model: "test-model",
-      }],
-    });
-
-  const modernProfiles = publicAgentProfileListSchema.parse(await (await app.request(
-    "/v2/agent-profiles",
-  )).json());
-  expect(modernProfiles.defaultAgentProfile).toBe("coding");
-  expect(modernProfiles.profiles.find((profile) => profile.id === "deep-reasoning-35b"))
-    .toMatchObject({
-      canonicalProfile: "coding",
-      selectionPolicy: "compatibility",
-      deprecated: true,
-      providers: [{
-        capability: "llm.reasoning",
-        model: "test-model",
-      }],
-    });
-
-  const create = await app.request("http://gnosis.local:9810/v1/agent-connections", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "idempotency-key": "legacy-saaa-create",
+    agentConnectionCatalog,
+    gatewayFetch: async (_input, init) => {
+      semanticProbes += 1;
+      if (semanticProbes === 1) {
+        return Response.json({ error: { message: "warming" } }, { status: 503 });
+      }
+      return validLlmSemanticProbeResponse(init);
     },
+  });
+  const mismatch = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "revision-mismatch",
+    }),
     body: JSON.stringify({
-      agentProfile: "deep-reasoning-35b",
-      audience: "remote",
-      client: "saaa-desktop",
-      ttlSeconds: 300,
-      allowFallback: false,
-      deploymentPolicy: "existing-only",
+      profile: "vulnWorkbench",
+      expectedCatalogRevision: "0".repeat(64),
+      audience: "loopback",
     }),
   });
-  expect(create.status).toBe(201);
-  const connection = publicAgentConnectionSchema.parse(await create.json());
-  expect(connection).toMatchObject({
-    agentProfile: "deep-reasoning-35b",
-    status: "ready",
-    providers: [{
-      capability: "llm.reasoning",
-      route: "llm-default",
-      publicModel: "test-model",
-      claimable: true,
-    }],
-  });
-
-  const claimResponse = await app.request(`/v1/agent-connections/${connection.id}/claim`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ format: "openai-provider-v1" }),
-  });
-  expect(claimResponse.status).toBe(200);
-  const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
-  expect(claim.providers[0]).toMatchObject({
-    capability: "llm.reasoning",
-    model: "test-model",
-  });
-  expect(control.getAllocation(connection.allocationId)).toMatchObject({
-    allowFallback: false,
-    deploymentPolicy: "existing-only",
-    bindings: [{
-      capability: "llm.reasoning",
-      route: "llm-default",
-      runtime: "qwen-general",
-      fallback: false,
-    }],
-  });
+  expect(mismatch.status).toBe(409);
+  expect(await mismatch.json()).toMatchObject({ error: { code: "catalog_revision_mismatch" } });
   expect(log.ensure).toEqual([]);
-  expect(events).toContainEqual({
-    name: "agent_profile_catalog_served",
-    labels: { contract: "agent-connection.v1" },
+
+  const response = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "bounded-wait",
+      prefer: "wait=2",
+    }),
+    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
   });
-  expect(events).toContainEqual({
-    name: "agent_connection_create_accepted",
-    labels: {
-      requestedProfile: "deep-reasoning-35b",
-      canonicalProfile: "coding",
-      status: "201",
-    },
+  expect(response.status).toBe(201);
+  expect(response.headers.get("preference-applied")).toBe("wait=2");
+  expect(await response.json()).toMatchObject({ profile: "vulnWorkbench", status: "ready" });
+  expect(semanticProbes).toBeGreaterThanOrEqual(2);
+});
+
+test("ContextStill is rejected while SAAA is actively provided", async () => {
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: explicitAgentConnectionCatalog,
+    gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
   });
-  expect(events).toContainEqual({
-    name: "agent_connection_claim_accepted",
-    labels: { status: "200", providers: "1" },
+  const saaa = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "active-saaa" }),
+    body: JSON.stringify({ profile: "SAAA", audience: "loopback" }),
   });
-  expect((await app.request(`/v1/agent-connections/${connection.id}`, {
-    method: "DELETE",
-  })).status).toBe(204);
-  expect(events).toContainEqual({
-    name: "agent_connection_release_completed",
-    labels: { status: "204" },
+  expect(saaa.status).toBe(201);
+
+  const contextStill = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "blocked-contextstill" }),
+    body: JSON.stringify({ profile: "contextStill", audience: "loopback" }),
   });
-  expect((await app.request(claim.providers[0]!.health.url, {
-    headers: { authorization: `Bearer ${claim.providers[0]!.credential.token}` },
-  })).status).toBe(401);
+  expect(contextStill.status).toBe(409);
+  expect(contextStill.headers.get("retry-after")).toBe("1");
+  expect(await contextStill.json()).toMatchObject({ error: { code: "provider_conflict" } });
 });
 
 test("agent connection derives a host-private claim from the request origin", async () => {
@@ -4118,7 +4283,7 @@ test("agent connection derives a host-private claim from the request origin", as
       "x-forwarded-host": "attacker.example",
       "x-forwarded-proto": "https",
     }),
-    body: JSON.stringify({ agentProfile: "coding", audience: "remote" }),
+    body: JSON.stringify({ profile: "vulnWorkbench", audience: "remote" }),
   });
   expect(create.status).toBe(201);
   const connection = publicAgentConnectionSchema.parse(await create.json());
@@ -4152,7 +4317,7 @@ test("agent connection derives a host-private claim from the request origin", as
       "content-type": "application/json",
       "idempotency-key": "dynamic-origin-create",
     }),
-    body: JSON.stringify({ agentProfile: "coding", audience: "remote" }),
+    body: JSON.stringify({ profile: "vulnWorkbench", audience: "remote" }),
   });
   expect(conflictingOrigin.status).toBe(409);
   expect(await conflictingOrigin.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
@@ -4170,7 +4335,7 @@ test("host-private request-origin audiences reject loopback ingress", async () =
       "content-type": "application/json",
       "idempotency-key": "loopback-origin-rejected",
     }),
-    body: JSON.stringify({ agentProfile: "coding", audience: "remote" }),
+    body: JSON.stringify({ profile: "vulnWorkbench", audience: "remote" }),
   });
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ error: { code: "connection_audience_unavailable" } });
@@ -4197,7 +4362,7 @@ test("agent semantic health rejects an HTTP-alive model that does not complete e
       "content-type": "application/json",
       "idempotency-key": "bad-semantic-model",
     }),
-    body: JSON.stringify({ agentProfile: "coding", audience: "loopback" }),
+    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
   });
   expect(created.status).toBe(202);
   const connection = publicAgentConnectionSchema.parse(await created.json());
@@ -4231,9 +4396,9 @@ test("agent connection fails immediately when a provider rejects the fixed readi
       "content-type": "application/json",
       "idempotency-key": "provider-contract-mismatch",
     }),
-    body: JSON.stringify({ agentProfile: "coding", audience: "loopback" }),
+    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
   });
-  expect(created.status).toBe(202);
+  expect(created.status).toBe(503);
   expect(publicAgentConnectionSchema.parse(await created.json())).toMatchObject({
     status: "failed",
     error: { code: "provider_contract_mismatch" },
@@ -4279,7 +4444,7 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
       "content-type": "application/json",
       "idempotency-key": "anonymous-create-1",
     },
-    body: JSON.stringify({ agentProfile: "coding", audience: "loopback" }),
+    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
   });
   expect(createdResponse.status).toBe(201);
   const created = publicAgentConnectionSchema.parse(await createdResponse.json());

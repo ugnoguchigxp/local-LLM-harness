@@ -121,6 +121,13 @@ grep -F "Environment=LARM_CONNECTION_READY_TIMEOUT_SECONDS=300" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "Environment=LARM_REQUIRED_CHAT_MODEL=qwen-agent-worker" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
+grep -F "ExecStart=/home/ugnoguchi/.bun/bin/bun run /srv/ai/apps/larm-current/apps/daemon/src/inference-audit-cli.ts prune" \
+  "${test_root}/etc/systemd/system/larm-inference-audit-prune.service" >/dev/null
+if grep -Fq "bun run inference:audit" \
+  "${test_root}/etc/systemd/system/larm-inference-audit-prune.service"; then
+  echo "inference audit prune unit relies on a package script and ambient PATH" >&2
+  exit 1
+fi
 grep -F "Type=notify" "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 grep -F "After=network-online.target" "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
 if grep -Fq "Wants=network-online.target llama-server.service" \

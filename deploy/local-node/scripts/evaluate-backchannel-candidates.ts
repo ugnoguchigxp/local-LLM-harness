@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { LarmClient } from "../../../packages/client/src/index";
+import type { AgentProfileSelectorId } from "../../../packages/core/src/index";
 import { absoluteOutput, prepareExternalOutput, writeExclusive } from "./benchmark-helpers";
 
 export type BackchannelKind = "ack" | "defer";
@@ -101,6 +102,12 @@ type EvaluationOptions = {
   requireIdle: boolean;
   outputPath?: string;
   fetch?: typeof fetch;
+};
+
+const BACKCHANNEL_SELECTORS: Record<string, AgentProfileSelectorId> = {
+  "contextstill-backchannel-qwen35-2b": "backchannelQwen35",
+  "contextstill-backchannel-lfm25-jp-1.2b": "backchannelLfm25Jp",
+  "contextstill-backchannel-gemma3-1b": "backchannelGemma3",
 };
 
 type CaseResult = BackchannelCase & {
@@ -242,9 +249,10 @@ export async function evaluateBackchannelCandidates(options: EvaluationOptions) 
     }
 
     const candidateStarted = performance.now();
+    const selector = BACKCHANNEL_SELECTORS[profileId];
+    if (!selector) throw new Error(`no public profile selector is configured for ${profileId}`);
     const evaluated = await larm.withAgentConnection({
-      agentProfile: profileId,
-      explicitAgentProfile: true,
+      profile: selector,
       audience: options.audience,
       client: "larm-backchannel-evaluator",
       ttlSeconds: 300,

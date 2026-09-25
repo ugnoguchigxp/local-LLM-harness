@@ -27,6 +27,10 @@ export const agentProfileSelectorIdSchema = z.enum([
   "SAAA-w-Image",
   "SAAA-w-music",
   "vulnWorkbench",
+  "embeddingCanary",
+  "backchannelQwen35",
+  "backchannelLfm25Jp",
+  "backchannelGemma3",
 ]);
 export type AgentProfileSelectorId = z.infer<typeof agentProfileSelectorIdSchema>;
 
@@ -535,23 +539,17 @@ export const agentConnectionStatusSchema = z.enum([
 
 export const agentProviderReadinessStatusSchema = agentConnectionStatusSchema;
 
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+
 export const agentConnectionRequestSchema = z.object({
-  agentProfile: agentIdentifierSchema.optional(),
-  explicitAgentProfile: z.boolean().default(false),
+  profile: agentProfileSelectorIdSchema,
+  expectedCatalogRevision: sha256Schema.optional(),
   audience: agentIdentifierSchema,
   client: agentIdentifierSchema.optional(),
   ttlSeconds: z.number().int().min(1).max(86_400).default(300),
   allowFallback: z.boolean().default(false),
   deploymentPolicy: deploymentPolicySchema.default("existing-only"),
-}).strict().superRefine((value, context) => {
-  if (value.explicitAgentProfile && !value.agentProfile) {
-    context.addIssue({
-      code: "custom",
-      path: ["agentProfile"],
-      message: "agentProfile is required when explicitAgentProfile is true",
-    });
-  }
-});
+}).strict();
 
 export const agentConnectionRenewRequestSchema = z.object({
   ttlSeconds: z.number().int().min(1).max(86_400).default(300),
@@ -560,8 +558,6 @@ export const agentConnectionRenewRequestSchema = z.object({
 export const agentConnectionClaimRequestSchema = z.object({
   format: z.enum(["openai-provider-v1", "larm-embedding-provider-v1"]),
 }).strict();
-
-const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 
 export const publicAgentProfileListV1Schema = z.object({
   contractVersion: z.literal("agent-connection.v1"),
@@ -742,24 +738,44 @@ export const publicAgentProfileListV3Schema = z.object({
 export const publicAgentConnectionProviderSchema = z.object({
   name: agentIdentifierSchema,
   capability: agentIdentifierSchema,
-  route: agentIdentifierSchema,
+  supportedCapabilities: z.array(agentIdentifierSchema).min(1).max(32),
   protocol: runtimeProtocolSchema,
-  publicModel: agentIdentifierSchema,
+  endpoint: agentProviderEndpointSchema,
+  model: agentIdentifierSchema,
+  embeddingSpace: embeddingSpaceSchema.optional(),
+  contextWindow: z.object({
+    maxTokens: z.number().int().min(1).max(1_000_000),
+    outputReserveTokens: z.number().int().min(1).max(1_000_000),
+    safetyMarginTokens: z.number().int().min(0).max(1_000_000),
+  }).strict().optional(),
   readiness: agentProviderReadinessStatusSchema,
   claimable: z.boolean(),
-}).strict();
+}).strict().superRefine((provider, context) => {
+  if (provider.endpoint !== agentProviderEndpoint(provider.protocol)) {
+    context.addIssue({ code: "custom", path: ["endpoint"], message: "endpoint must match protocol" });
+  }
+  if ((provider.protocol === "larm.embedding.v1") !== (provider.embeddingSpace !== undefined)) {
+    context.addIssue({
+      code: "custom",
+      path: ["embeddingSpace"],
+      message: "embeddingSpace must be present exactly for embedding providers",
+    });
+  }
+});
 
 export const publicAgentConnectionSchema = z.object({
   id: z.string().min(1).max(192),
   allocationId: z.string().min(1).max(192),
   bootEpoch: z.string().min(1).max(128),
   catalogRevision: z.string().min(1).max(128),
+  profile: agentProfileSelectorIdSchema,
   agentProfile: agentIdentifierSchema,
   profileRevision: sha256Schema,
   audience: agentIdentifierSchema,
   audienceRevision: sha256Schema,
   status: agentConnectionStatusSchema,
   providers: z.array(publicAgentConnectionProviderSchema).min(1).max(8),
+  services: z.array(agentProfileServiceSchema).max(8),
   createdAt: z.string().datetime(),
   expiresAt: z.string().datetime(),
   releasedAt: z.string().datetime().optional(),

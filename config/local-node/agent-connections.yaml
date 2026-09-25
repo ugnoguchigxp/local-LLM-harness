@@ -354,6 +354,14 @@ profileSelectors:
         model: ace-step-1.5
   vulnWorkbench:
     agentProfile: coding-default
+  embeddingCanary:
+    agentProfile: contextstill-embedding
+  backchannelQwen35:
+    agentProfile: contextstill-backchannel-qwen35-2b
+  backchannelLfm25Jp:
+    agentProfile: contextstill-backchannel-lfm25-jp-1.2b
+  backchannelGemma3:
+    agentProfile: contextstill-backchannel-gemma3-1b
 
 compatibilityAliases:
   deep-reasoning-35b:

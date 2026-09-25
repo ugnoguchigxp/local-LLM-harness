@@ -264,8 +264,9 @@ OpenAI互換SSE (`text/event-stream`) を返します。低遅延応答は同じ
 
 ## Agent Connection API
 
-Profile一覧は`defaultAgentProfile: "coding-default"`を返します。既定ProfileはConnection作成bodyから
-省略できます。workerと35BのRuntime・Routeは用途別の公開model／profileとして明示選択できます。
+Profile一覧は公開selectorを具体Profileへ解決します。Connection作成bodyでは`profile` selectorが必須です。
+旧`agentProfile`／`explicitAgentProfile`入力は受理しません。workerと35BのRuntime・Routeは
+用途別の公開model／profileとして明示選択できます。
 claimはLARM Gatewayの`baseUrl`、public `model`、Provider限定の短期token、semantic health URLを
 返します。backend portや長期API token、独自transport descriptorは返しません。
 
@@ -274,10 +275,11 @@ connection_json="$(curl -fsS -X POST http://127.0.0.1:9810/v1/agent-connections 
   -H "Authorization: Bearer ${LARM_API_TOKEN}" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: agent-$(date +%s)" \
-  -d '{"audience":"same-host"}')"
+  -H 'Prefer: wait=300' \
+  -d '{"profile":"vulnWorkbench","audience":"same-host"}')"
 connection_id="$(jq -er .id <<<"${connection_json}")"
 
-# GET /v1/agent-connections/:idをreadyまでpollしてからclaimします。
+# 202の場合だけGET /v1/agent-connections/:idをreadyまでpollしてからclaimします。
 curl -fsS -X POST "http://127.0.0.1:9810/v1/agent-connections/${connection_id}/claim" \
   -H "Authorization: Bearer ${LARM_API_TOKEN}" \
   -H 'Content-Type: application/json' \

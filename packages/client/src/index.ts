@@ -62,6 +62,7 @@ import {
   type EmbeddingRequest,
   type EmbeddingResponse,
 } from "@larm/core";
+import { z } from "zod";
 
 export type EmbeddingAgentProvider = Extract<
   AgentConnectionClaim["providers"][number],
@@ -84,6 +85,7 @@ export type RequestOptions = {
   signal?: AbortSignal;
   idempotencyKey?: string;
   management?: boolean;
+  waitSeconds?: number;
 };
 
 export type PersonalStateRequestOptions = RequestOptions & {
@@ -577,15 +579,21 @@ export class LarmClient {
     options: RequestOptions = {},
   ): Promise<PublicAgentConnection> {
     const normalized = agentConnectionRequestSchema.parse(request);
+    const waitSeconds = options.waitSeconds === undefined
+      ? undefined
+      : z.number().int().min(1).max(300).parse(options.waitSeconds);
     const response = await this.request("/v1/agent-connections", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
+        ...(waitSeconds ? { prefer: `wait=${waitSeconds}` } : {}),
       },
       body: JSON.stringify(normalized),
       signal: options.signal,
-    }, options.management ?? normalized.deploymentPolicy === "allow-listed");
+    }, options.management ?? normalized.deploymentPolicy === "allow-listed", waitSeconds
+      ? Math.max(this.timeoutMs, waitSeconds * 1_000 + 5_000)
+      : this.timeoutMs);
     return this.parseJson(response, publicAgentConnectionSchema);
   }
 

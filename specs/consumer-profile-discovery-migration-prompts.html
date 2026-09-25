@@ -1,148 +1,127 @@
 <article lang="ja">
-  <h1>SAAA・ContextStill向け公開Profile Discovery改修依頼プロンプト</h1>
+  <h1>SAAA・ContextStill向けAgent Connection provide移行プロンプト</h1>
 
   <p>
     以下の二つのsectionは、それぞれのrepositoryを担当する実装agentへそのまま渡せる改修依頼である。
-    LARMの正本contractは<code>GET /v3/agent-profiles?profile=&lt;selector&gt;</code>であり、Consumerは内部 Profile
-    ID、endpoint、modelをハードコードせずresponseから取得する。
+    LARMは旧request入力<code>agentProfile</code>と<code>explicitAgentProfile</code>を廃止した。
+    Consumerは公開selectorを<code>profile</code>としてPOSTし、具体Agent
+    ProfileとProvider構成を作成responseから受け取る。
   </p>
 
   <section id="contract">
-    <h2>共通contract</h2>
-    <table>
-      <caption>
-        公開selectorと解決結果
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">selector</th>
-          <th scope="col">具体Agent Profile</th>
-          <th scope="col">追加service</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <th scope="row"><code>contextStill</code></th>
-          <td><code>contextstill-background</code></td>
-          <td>なし</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>SAAA</code></th>
-          <td><code>saaa-conversation-ornith15</code></td>
-          <td>なし</td>
-        </tr>
-        <tr>
-          <th scope="row"><code>SAAA-w-Image</code></th>
-          <td><code>saaa-conversation-ornith15-image</code></td>
-          <td><code>image</code></td>
-        </tr>
-        <tr>
-          <th scope="row"><code>SAAA-w-music</code></th>
-          <td><code>saaa-conversation-ornith15-music</code></td>
-          <td><code>music</code></td>
-        </tr>
-        <tr>
-          <th scope="row"><code>vulnWorkbench</code></th>
-          <td><code>coding-default</code></td>
-          <td>なし</td>
-        </tr>
-      </tbody>
-    </table>
-    <p>
-      成功responseは<code>contractVersion: agent-connection.v3</code>、要求値と同じ
-      <code>requestedProfile</code
-      >、一件だけの<code>profiles</code>を返す。各Providerは
-      <code>name</code
-      >、<code>capability</code>、<code>protocol</code>、相対
-      <code>endpoint</code
-      >、<code>model</code>を持つ。ImageとMusicは
-      <code>profiles[0].services</code>に入り、Agent Connectionのclaim対象にはしない。
-    </p>
+    <h2>実装済みLARM contract</h2>
+    <ul>
+      <li>
+        <code>GET /v3/agent-profiles?profile=&lt;selector&gt;</code>は任意の事前照会であり、状態を変更しない。
+      </li>
+      <li>
+        <code>POST /v1/agent-connections</code
+        >の必須<code>profile</code>がprovide、起動、確保要求である。
+      </li>
+      <li>旧入力fieldを含むrequestは<code>400 invalid_request</code>になる。</li>
+      <li>
+        <code>Prefer: wait=N</code
+        >は1〜300秒。期限内readyは201、準備継続は202となる。
+      </li>
+      <li>
+        任意の<code>expectedCatalogRevision</code>が不一致ならAllocation作成前に409となる。
+      </li>
+      <li>
+        responseは公開<code>profile</code>、解決後<code>agentProfile</code>、<code>providers</code>、補助
+        <code>services</code
+        >を返す。各Providerにはprotocol、endpoint、model、readiness、claimableが含まれる。
+      </li>
+      <li>
+        SAAA提供中のContextStill要求は<code>409 provider_conflict</code>と<code>Retry-After</code>を返す。
+      </li>
+    </ul>
   </section>
 
   <section id="saaa-prompt">
     <h2>SAAA向けプロンプト</h2>
-    <pre><code>SAAAのLARM discoveryを公開Profile selector contractへ移行してください。
+    <pre><code>SAAAをLARMの新Agent Connection provide契約へ完全移行してください。
 
-要件:
-1. 通常会話は GET {controlOrigin}/v3/agent-profiles?profile=SAAA を呼ぶ。
-2. 画像生成sessionはprofile=SAAA-w-Image、音楽生成sessionはprofile=SAAA-w-musicを指定する。
-3. URL APIでqueryを構築し、未escapeの文字列連結を使わない。
-4. contractVersion == "agent-connection.v3"、requestedProfileが要求値と完全一致、profiles.length == 1を必須にする。
-5. profiles[0].idをPOST /v1/agent-connectionsのagentProfileへ渡し、内部IDをsourceへハードコードしない。
-6. Providerをnameで索引化し、endpointとmodelをresponseから読む。必須nameはllm、backchannel、asr、tts、embedding。
-7. protocolとendpointを厳密検証する:
-   openai.chat-completions.v1=/v1/chat/completions
-   openai.audio-transcriptions.v1=/v1/audio/transcriptions
-   openai.audio-speech.v1=/v1/audio/speech
-   larm.embedding.v1=/v1/embed
-8. endpointはLARM control originへ解決する。絶対URL、別origin、userinfo、query、fragment、path traversalを拒否する。
-9. claim後は短期credentialとclaimのbaseUrlを実行時の正本にする。discoveryのmodelとclaimが矛盾したらfail closedする。
-10. SAAA-w-Imageはservicesのimageについてprotocol=larm.image-generation.v1、endpoint=/v1/images/generations、model=qwen-image-2.1を検証する。
-11. SAAA-w-musicはservicesのmusicについてprotocol=larm.music-generation.v1、endpoint=/v1/music/generations、model=ace-step-1.5を検証する。
-12. 通常SAAAはservicesが空でなければ拒否する。未知・重複name、欠落、空modelも拒否する。
-13. LARM_API_TOKENは既存のsecret経路だけで扱い、ログ、設定JSON、SQLite、診断へ出さない。
+前提:
+- LARM側では旧request field agentProfile / explicitAgentProfileは廃止済みです。
+- 通常会話selectorはSAAA、画像sessionはSAAA-w-Image、音楽sessionはSAAA-w-musicです。
+- GET /v3/agent-profilesは任意のdiscovery、POST /v1/agent-connectionsがprovide要求です。
+
+実装要件:
+1. Connection作成bodyは次の形にする:
+   {"profile":"SAAA","audience":"saaa-desktop","client":"saaa-desktop","ttlSeconds":900,"allowFallback":false,"deploymentPolicy":"existing-only"}
+2. agentProfileとexplicitAgentProfileをrequest型、serializer、fixture、設定migrationから削除する。
+3. createにはPrefer: wait=300と再送可能なIdempotency-Keyを付ける。
+4. 事前discoveryを行った場合だけexpectedCatalogRevisionへ取得revisionを渡す。GETなしの直接POSTも許可する。
+5. 201ではstatus=readyと全Providerのclaimable=trueを確認する。202ではLocationの同じConnectionをbounded pollする。
+6. response.profileが要求selector、response.agentProfileが非空であることを検証する。具体Profile IDを次回POST入力へ使わない。
+7. providersをnameで索引化し、通常SAAAではllm、backchannel、asr、tts、embeddingの5件を必須にする。
+8. protocol、endpoint、modelを厳密検証する:
+   llm/backchannel: openai.chat-completions.v1, /v1/chat/completions
+   asr: openai.audio-transcriptions.v1, /v1/audio/transcriptions
+   tts: openai.audio-speech.v1, /v1/audio/speech
+   embedding: larm.embedding.v1, /v1/embed
+9. claim後は短期credential、baseUrl、modelを実行時の正本にする。create responseとclaimが矛盾したら推論しない。
+10. SAAA-w-Imageはservicesのimage、SAAA-w-musicはservicesのmusicを検証する。servicesはclaim対象ではない。
+11. HTTP切断を起動取消として扱わない。同じIdempotency-Keyで再取得し、明示取消はDELETEだけで行う。
+12. 自己診断をTCP/HTTP到達、discovery、create、semantic readiness、claim、実推論に分ける。4xx契約失敗を「到達不能」と表示しない。
+13. API tokenとclaim tokenをログ、診断JSON、SQLite、設定画面へ保存しない。
 
 必須test:
-- mock HTTP serverでrequest lineにprofile=SAAAがexactly one回含まれること。
-- SAAA-w-ImageとSAAA-w-musicのqueryを別testで固定すること。
-- SAAA、SAAA-w-Image、SAAA-w-musicが互いに異なるprofiles[0].idを返し、そのIDがConnection create bodyと作成結果に保持されること。
-- 5 Providerのendpoint/modelを順序に依存せずnameで選ぶこと。
-- requestedProfile不一致、profiles 0件/複数、protocol/endpoint不一致、model欠落、別originを拒否するnegative test。
-- discoveryで得たprofiles[0].idがConnection create bodyへ渡る統合test。
-- claimとのmodel不一致時に推論を開始しないtest。
-- freeze対象を変更する場合はAGENTS.md指定の回帰testとfreeze更新を実施すること。
+- POST bodyがprofile=SAAAを含み、旧二fieldを含まないこと。
+- discoveryなしの直接POSTが201 readyへ到達する統合test。
+- Prefer wait期限内の201と、期限超過時の202→poll→readyを検証するtest。
+- responseの5 Providerを順序非依存で検証し、欠落、重複、protocol/endpoint/model不一致を拒否するtest。
+- SAAA-w-Image / SAAA-w-musicのselectorとservicesを別testで固定する。
+- revision不一致、terminal 503、idempotency conflictを型付きエラーへ写像するtest。
+- create、claim、LLM、backchannel、ASR、TTS、embedding、renew、release、credential失効まで通すE2E。
+- 自己診断がnetwork成功とcreate契約失敗を別項目で表示する回帰test。
 
 完了条件:
-- fixtureだけでなく隔離またはlive LARM daemonでdiscovery、create、poll、claim、LLM/ASR/TTS/Embedding整合、releaseを完走する。
-- Image/Musicはservice契約を確認し、対応APIの成功または明示的unavailableを記録する。
-- 実装、test、Spec HTML、運用文書を同じ変更で更新し、秘密値を証跡へ残さない。</code></pre>
+- 旧request生成経路と旧fixtureがrepository内に残っていない。
+- 通常・画像・音楽sessionが新selectorだけで作成される。
+- 隔離daemonまたはlive LARMでprovideからreleaseまで完走する。
+- 実装、test、仕様、自己診断表示を同じ変更で更新する。</code></pre>
   </section>
 
   <section id="contextstill-prompt">
     <h2>ContextStill向けプロンプト</h2>
-    <pre><code>ContextStillのLARM Agent Connection discoveryをv3公開Profile selectorへ移行してください。
+    <pre><code>ContextStillをLARMの新Agent Connection provide契約へ完全移行してください。
 
-要件:
-1. GET {controlBaseUrl}/v3/agent-profiles?profile=contextStill を使用し、旧GET /v2/agent-profiles依存を削除する。
-2. queryはURL APIで構築し、profileをexactly one回だけ送る。
-3. contractVersion == "agent-connection.v3"、requestedProfile == "contextStill"、profiles.length == 1を必須にする。
-4. profiles[0]はdeprecated == false、selectionPolicy == "explicit-only"、id == canonicalProfileでなければfail closedする。
-5. profiles[0].idをruntime内の具体agentProfileとして保持し、POST /v1/agent-connectionsへ渡す。内部IDを固定しない。
-6. providersはllm一件を必須にし、protocol=openai.chat-completions.v1、endpoint=/v1/chat/completions、model非空を検証する。
-7. endpointはcontrol originへ安全に解決する。絶対URL、別origin、userinfo、query、fragment、path traversalを拒否する。
-8. claim後はclaimの短期credential、baseUrl、modelを実行時の正本にし、discoveryと矛盾したら推論を開始しない。
-9. catalogRevisionはservice activityのconfigRevision整合検査に使い、boot epoch変更時はConnectionを作り直す。
-10. CONTEXT_STILL_LARM_API_TOKENは既存secret経路だけで扱い、ログ、DB、settings responseへ出さない。
+前提:
+- LARM側では旧request field agentProfile / explicitAgentProfileは廃止済みです。
+- ContextStillの公開selectorはcontextStillです。
+- SAAAがprovide中なら409 provider_conflictです。これはpendingではなく今回jobのrejectedです。
+
+実装要件:
+1. Connection作成bodyは次の形にする:
+   {"profile":"contextStill","audience":"same-host","client":"contextstill","ttlSeconds":300,"allowFallback":false,"deploymentPolicy":"existing-only"}
+2. agentProfileとexplicitAgentProfileをrequest型、serializer、fixture、設定migrationから削除する。
+3. createにはPrefer: wait=300とjob単位のIdempotency-Keyを付ける。
+4. GET /v3/agent-profiles?profile=contextStillは表示や事前検証が必要な場合だけ使う。GETなしの直接POSTも許可する。
+5. discovery時だけexpectedCatalogRevisionを送り、不一致なら再discovery後に新しいkeyで再評価する。
+6. 201ではreadyを確認する。202だけをpending/probingとしてLocationからbounded pollする。
+7. response.profile=contextStill、agentProfile非空、providersがllm一件であることを検証する。
+8. llmはprotocol=openai.chat-completions.v1、endpoint=/v1/chat/completions、model非空、ready時claimable=trueを必須にする。
+9. claim後は短期credential、baseUrl、modelを正本にし、create responseとの不一致時は推論を開始しない。
+10. 409 provider_conflictは今回jobのrejectedとして扱い、poll、fallback、同一job内retryを行わない。
+11. Retry-Afterを記録し、次job境界で新しいIdempotency-Keyにより再評価する。busy loopしない。
+12. SAAAより優先して資源を奪う処理をConsumer側へ追加しない。優先順位とpreemptionはLARMに委ねる。
+13. tokenをログ、DB、settings response、成果物へ保存しない。
 
 必須test:
-- request lineがGET /v3/agent-profiles?profile=contextStillであること。
-- responseの具体profile ID、endpoint、modelがConnection createとclaim検証へ伝播する統合test。
-- requestedProfile不一致、profiles 0件/複数、deprecated、selectionPolicy不一致、endpoint/protocol不一致、空modelを拒否するtest。
-- 401、404 unknown_agent_profile、catalogRevision不一致、timeoutを既存のretry分類へ正しく写像するtest。
-- createの201/202、poll、semantic health、claim、renew、releaseを維持する回帰test。
-- TypeScript workerへ動的LARM targetを渡さず、Rust resident lifecycleを維持するtest。
+- POST bodyがprofile=contextStillを含み、旧二fieldを含まないこと。
+- discoveryなしの直接POST、201 ready、202→poll→readyを検証する統合test。
+- responseのprofile、agentProfile、endpoint、protocol、model、claimableがclaimまで伝播するtest。
+- 409 provider_conflictをrejectedへ写像し、poll、fallback、同一job内retryを行わないtest。
+- Retry-After後または次jobで新しいIdempotency-Keyを使用するtest。
+- revision不一致、unknown selector、terminal 503、timeoutを区別するtest。
+- claim、実推論、renew、release、credential失効まで通すE2E。
+- Rust resident lifecycleを維持し、TypeScript workerへ動的LARM targetを渡さない回帰test。
 
 完了条件:
-- mockだけでなく隔離またはlive LARM daemonでselector discoveryからConnection releaseまで一件を完走する。
-- 成果保存は一回だけにし、失敗時に静的Providerへ暗黙fallbackせず次job境界まで安全に待機する。
-- 実装、Rust test、設定migration、管理UI表示、Spec HTMLを更新し、従来設定を安全に移行する。</code></pre>
-  </section>
-
-  <section id="e2e">
-    <h2>LARM側E2E受入条件</h2>
-    <ul>
-      <li>
-        5 selectorすべてを実daemon routerへGETし、HTTP 200、要求selectorのecho、一件解決を確認する。
-      </li>
-      <li>SAAA系は5 Providerの相対endpointとmodelを完全一致で検証する。</li>
-      <li>Image/Music selectorは基本Providerを維持し、対応serviceだけを一件追加する。</li>
-      <li>ContextStillとvulnWorkbenchは所定のLLM endpoint/modelへ解決する。</li>
-      <li>未知selectorは404、重複profileと余分なqueryは400にする。</li>
-      <li>
-        OpenAPI、TypeScript client schema、daemon
-        response、設定catalogの四者を同じcontractに固定する。
-      </li>
-    </ul>
+- 旧request生成経路と旧fixtureがrepository内に残っていない。
+- SAAA active中のjobがprovider_conflictとして安全に終了し、成果を一回だけ保存する。
+- SAAA非active時はprovideからreleaseまで完走する。
+- 実装、Rust test、設定migration、管理UI、仕様を同じ変更で更新する。</code></pre>
   </section>
 </article>

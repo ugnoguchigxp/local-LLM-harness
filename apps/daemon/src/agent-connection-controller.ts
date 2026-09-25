@@ -11,6 +11,7 @@ import {
   type AgentConnectionRequest,
   type AgentConnectionStatus,
   type AgentProfile,
+  type AgentProfileSelectorId,
   type AgentProviderHealth,
   type PublicAgentConnection,
 } from "@larm/core";
@@ -34,6 +35,7 @@ type ConnectionRecord = {
   principal: string;
   bootEpoch: string;
   catalogRevision: string;
+  selector: AgentConnectionCatalog["profileSelectors"][number];
   profile: AgentProfile;
   audience: AgentAudience;
   status: AgentConnectionStatus;
@@ -52,6 +54,7 @@ export type AgentConnectionApiResult = {
   body: unknown;
   replay?: boolean;
   location?: string;
+  retryAfterSeconds?: number;
 };
 
 export type VerifiedProviderToken = {
@@ -207,19 +210,14 @@ export class AgentConnectionController {
     idempotencyKey: string,
     requestUrl: string,
     personalStateAuthorized = false,
+    waitMs = 0,
   ): Promise<AgentConnectionApiResult> {
     const catalog = this.options.getCatalog();
     if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
-    const requestedProfile = request.agentProfile ?? catalog.defaultAgentProfile;
-    const profile = catalog.profiles.find((item) => item.id === requestedProfile);
-    if (!profile) return error("unknown_agent_profile", `agent profile ${requestedProfile} does not exist`, 404);
-    if (profile.selectionPolicy === "explicit-only" && !request.explicitAgentProfile) {
-      return error(
-        "explicit_agent_profile_required",
-        `agent profile ${requestedProfile} requires explicit selection`,
-        409,
-      );
-    }
+    const selector = catalog.profileSelectors.find((item) => item.id === request.profile);
+    if (!selector) return error("unknown_profile_selector", `profile selector ${request.profile} does not exist`, 404);
+    const profile = catalog.profiles.find((item) => item.id === selector.agentProfile);
+    if (!profile) return error("profile_resolution_failed", `profile selector ${request.profile} cannot be resolved`, 503);
     const configuredAudience = catalog.audiences.find((item) => item.id === request.audience);
     if (!configuredAudience) return error(
       "connection_audience_unavailable",
@@ -234,8 +232,10 @@ export class AgentConnectionController {
     );
     const audience = { ...structuredClone(configuredAudience), baseUrl: advertisedBaseUrl };
     const normalizedRequest = {
-      agentProfile: requestedProfile,
-      explicitAgentProfile: request.explicitAgentProfile,
+      profile: request.profile,
+      ...(request.expectedCatalogRevision
+        ? { expectedCatalogRevision: request.expectedCatalogRevision }
+        : {}),
       audience: request.audience,
       ...(request.client ? { client: request.client } : {}),
       ttlSeconds: request.ttlSeconds,
@@ -246,6 +246,33 @@ export class AgentConnectionController {
       `${principal}:POST:/v1/agent-connections:${idempotencyKey}`,
       hash(JSON.stringify({ request: normalizedRequest, advertisedBaseUrl, personalStateAuthorized })),
       async () => {
+        const catalogRevision = this.options.getCatalogRevision();
+        if (
+          request.expectedCatalogRevision
+          && request.expectedCatalogRevision !== catalogRevision
+        ) {
+          return error(
+            "catalog_revision_mismatch",
+            "expectedCatalogRevision does not match the active catalog",
+            409,
+          );
+        }
+        if (
+          request.profile === "contextStill"
+          && [...this.records.values()].some((record) => {
+            this.refreshLifecycle(record);
+            return record.selector.id.startsWith("SAAA") && !isTerminal(record.status);
+          })
+        ) {
+          return {
+            ...error(
+              "provider_conflict",
+              "ContextStill cannot be provided while an SAAA connection is active",
+              409,
+            ),
+            retryAfterSeconds: 1,
+          };
+        }
         const allocated = await this.options.control.allocate({
           requirements: profile.providers.map((provider) => ({
             capability: provider.capability,
@@ -269,6 +296,7 @@ export class AgentConnectionController {
           principal,
           bootEpoch: this.options.control.getBootEpoch(),
           catalogRevision: allocation.catalogRevision ?? this.options.getCatalogRevision(),
+          selector: structuredClone(selector),
           profile: structuredClone(profile),
           audience,
           status: allocation.status === "ready" ? "probing" : "pending",
@@ -282,9 +310,12 @@ export class AgentConnectionController {
         this.records.set(record.id, record);
         let complete = false;
         if (record.status === "probing") complete = await this.probeInitial(record);
+        if (!complete && !isTerminal(record.status) && waitMs > 0) {
+          complete = await this.waitForReadiness(record, waitMs);
+        }
         if (!complete && !isTerminal(record.status)) this.startBackground(record);
         return {
-          status: record.status === "ready" ? 201 : 202,
+          status: record.status === "ready" ? 201 : isTerminal(record.status) ? 503 : 202,
           body: this.public(record),
           location: `/v1/agent-connections/${record.id}`,
         };
@@ -602,6 +633,24 @@ export class AgentConnectionController {
     void this.runBackground(record).finally(() => this.background.delete(record.id));
   }
 
+  private async waitForReadiness(record: ConnectionRecord, waitMs: number): Promise<boolean> {
+    const deadline = Math.min(record.readyDeadline, this.now() + waitMs);
+    while (!isTerminal(record.status) && this.now() < deadline) {
+      this.refreshLifecycle(record);
+      if (isTerminal(record.status)) return true;
+      const allocation = this.options.control.getAllocation(record.allocationId);
+      if (allocation?.status === "ready") {
+        record.status = "probing";
+        if (await this.probeInitial(record)) return true;
+      }
+      const remaining = deadline - this.now();
+      if (remaining > 0) {
+        await this.sleep(Math.min(Math.max(1, remaining), Math.max(1_000, this.options.pollIntervalMs)));
+      }
+    }
+    return isTerminal(record.status) || record.status === "ready";
+  }
+
   private async runBackground(record: ConnectionRecord): Promise<void> {
     while (!isTerminal(record.status) && this.now() < record.readyDeadline) {
       this.refreshLifecycle(record);
@@ -658,6 +707,7 @@ export class AgentConnectionController {
       allocationId: record.allocationId,
       bootEpoch: record.bootEpoch,
       catalogRevision: record.catalogRevision,
+      profile: record.selector.id as AgentProfileSelectorId,
       agentProfile: record.profile.id,
       profileRevision: record.profile.revision,
       audience: record.audience.id,
@@ -666,13 +716,17 @@ export class AgentConnectionController {
       providers: record.profile.providers.map((provider) => ({
         name: provider.name,
         capability: provider.capability,
-        route: provider.route,
+        supportedCapabilities: provider.supportedCapabilities,
         protocol: provider.protocol,
-        publicModel: provider.publicModel,
+        endpoint: agentProviderEndpoint(provider.protocol),
+        model: provider.publicModel,
+        ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
+        ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
         readiness: record.status,
         claimable: record.status === "ready"
           && this.options.semantic.peek({ allocationId: record.allocationId, provider })?.ready === true,
       })),
+      services: structuredClone(record.selector.services),
       createdAt: record.createdAt,
       expiresAt: record.expiresAt,
       ...(record.releasedAt ? { releasedAt: record.releasedAt } : {}),

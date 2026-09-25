@@ -1,0 +1,446 @@
+<article lang="ja">
+  <h1>公開Profile選択とAgent Connection作成契約 vNext</h1>
+
+  <dl>
+    <dt>状態</dt>
+    <dd>LARM側実装済み。Consumer移行とlive E2Eは後続</dd>
+    <dt>対象</dt>
+    <dd>LARM、SAAA、ContextStill、その他のAgent Connection consumer</dd>
+    <dt>決定</dt>
+    <dd>
+      ConsumerはConnection作成時に公開selectorを指定し、LARMが具体Agent Profileへ原子的に解決する。
+      Discoveryは任意の事前照会とし、旧入力<code>agentProfile</code>と<code>explicitAgentProfile</code>は受理しない。
+    </dd>
+  </dl>
+
+  <aside>
+    <h2>結論</h2>
+    <p>
+      <code>GET /v3/agent-profiles?profile=SAAA</code
+      >は「SAAA構成の照会」、<code>POST /v1/agent-connections</code>は「その構成を今回使える状態へ確保する要求」として維持する。POSTには、内部Profile
+      IDや別のbooleanではなく、
+      <code>profile: "SAAA"</code
+      >を渡す。LARMはこのfield自体を明示的な起動・確保要求として扱う。
+    </p>
+  </aside>
+
+  <section id="problem">
+    <h2>解決する問題</h2>
+    <p>
+      現行契約では、公開selectorを具体Agent Profileへ解決した後、Consumerが
+      <code>agentProfile</code
+      >と<code>explicitAgentProfile: true</code>をPOSTする。Profile IDの存在自体が
+      明示選択であるにもかかわらずbooleanを重ねるため、片方だけを送る実装不整合が発生する。また、事前照会を必須に
+      すると、単にSAAAを起動したいConsumerにも不要な往復とcatalog保持を要求する。
+    </p>
+    <p>
+      2026-09-25のSAAA自己診断では、<code>profile=SAAA</code>のdiscoveryは成功したが、Connection作成bodyに
+      <code>explicitAgentProfile</code>がなく、LARMが
+      <code>409 explicit_agent_profile_required</code
+      >を返した。ネットワーク到達性とConnection契約失敗も一つの
+      「Harness到達性」へ集約され、原因表示が不明瞭になった。
+    </p>
+  </section>
+
+  <section id="model">
+    <h2>操作の意味</h2>
+    <table>
+      <caption>
+        Discovery、Connection、Claimの責務
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">質問または命令</th>
+          <th scope="col">状態変更</th>
+          <th scope="col">成果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Discovery</th>
+          <td>この公開selectorは何を提供するか</td>
+          <td>なし</td>
+          <td>具体Profile、Provider、model、endpoint、catalog revision</td>
+        </tr>
+        <tr>
+          <th scope="row">Connection作成</th>
+          <td>このselectorの構成を今回使える状態にせよ</td>
+          <td>Allocation作成、Provider確保、readiness開始</td>
+          <td>期限付きConnectionと固定された構成revision</td>
+        </tr>
+        <tr>
+          <th scope="row">Claim</th>
+          <td>readyなConnectionの実行設定を発行せよ</td>
+          <td>credential generationを確定</td>
+          <td>Provider別base URL、model、短期Bearer、capacity</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Discoveryは任意であり、それだけではProviderを起動・予約せず、credentialも発行しない。Connectionを省略できるのは、長期API
+      tokenで公開modelを直接呼び、複数Providerの一括readiness、短期credential、renew、releaseを必要としない
+      Consumerだけである。
+    </p>
+  </section>
+
+  <section id="wire">
+    <h2>推奨wire contract</h2>
+
+    <h3>1. Discovery</h3>
+    <pre><code>GET /v3/agent-profiles?profile=SAAA
+Authorization: Bearer &lt;optional LARM_API_TOKEN&gt;</code></pre>
+    <pre><code>{
+  "contractVersion": "agent-connection.v3",
+  "catalogRevision": "&lt;64 lowercase hex&gt;",
+  "requestedProfile": "SAAA",
+  "profiles": [
+    {
+      "id": "saaa-conversation-ornith15",
+      "canonicalProfile": "saaa-conversation-ornith15",
+      "selectionPolicy": "explicit-only",
+      "providers": ["..."],
+      "services": []
+    }
+  ],
+  "audiences": ["saaa-desktop", "same-host"]
+}</code></pre>
+    <p>
+      Consumerは事前表示や互換確認が必要な場合だけこのGETを使う。contract version、
+      <code>requestedProfile</code>、Profile件数、Provider契約を検証する。具体Profile
+      IDは表示・整合検査に利用できるが、
+      vNextのConnection作成入力には使用しない。事前照会なしで直接POSTしてもよい。
+    </p>
+
+    <h3>2. Connection作成</h3>
+    <pre><code>POST /v1/agent-connections
+Idempotency-Key: saaa-session-0182
+Prefer: wait=300
+Content-Type: application/json
+
+{
+  "profile": "SAAA",
+  "audience": "saaa-desktop",
+  "client": "saaa-desktop",
+  "ttlSeconds": 900,
+  "allowFallback": false,
+  "deploymentPolicy": "existing-only"
+}</code></pre>
+    <p>
+      <code>profile</code
+      >の存在が明示選択と起動要求を表すため、<code>explicitAgentProfile</code>は送らない。LARMは一つの
+      catalog
+      snapshot内でselectorを具体Profileへ解決し、Allocationを作成する。事前照会との厳密な一致が必要な
+      Consumerだけは、任意の<code>expectedCatalogRevision</code>へGETで得たrevisionを追加できる。
+      vNextの新規Consumerはrequestへ<code>agentProfile</code>を送ってはならない。
+    </p>
+
+    <h3>3. Ready待機</h3>
+    <p>
+      SAAAの通常起動と自己診断は<code>Prefer: wait=300</code>を送り、LARMへ最大300秒のbounded
+      waitを要求する。 LARMはConnection resourceとAllocationを先に作成してから、ready、terminal
+      failure、または待機期限まで応答を
+      保留する。Client切断は起動処理を取り消さず、取消はConnectionのDELETEだけで行う。同じ
+      Idempotency-Keyによる再送は同じConnectionへ収束する。
+    </p>
+    <table>
+      <caption>
+        作成時の待機結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">結果</th>
+          <th scope="col">HTTP</th>
+          <th scope="col">Response</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">期限内にready</th>
+          <td>201 Created</td>
+          <td><code>status: "ready"</code>とConnection全体</td>
+        </tr>
+        <tr>
+          <th scope="row">期限時点で準備中</th>
+          <td>202 Accepted</td>
+          <td>
+            <code>status: "pending"</code
+            >または<code>"probing"</code>、<code
+              >Retry-After</code
+            >
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">期限内にterminal failure</th>
+          <td>409または503</td>
+          <td>Connection ID、terminal status、型付きerror</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <code>Prefer</code
+      >を省略した既存Consumerには従来どおり202を即時返す。これにより長時間HTTP requestを扱えない
+      Consumerを壊さず、SAAAは通常成功時にpollなしでready Connectionを受け取れる。全responseに
+      <code>Location: /v1/agent-connections/:id</code>を付ける。
+    </p>
+
+    <h3>4. Ready response</h3>
+    <pre><code>{
+  "id": "aconn_epoch_uuid",
+  "allocationId": "alloc_epoch_uuid",
+  "profile": "SAAA",
+  "agentProfile": "saaa-conversation-ornith15",
+  "catalogRevision": "&lt;要求と一致するrevision&gt;",
+  "profileRevision": "&lt;具体Profile revision&gt;",
+  "audience": "saaa-desktop",
+  "audienceRevision": "&lt;audience revision&gt;",
+  "status": "ready",
+  "providers": [{
+    "name": "llm",
+    "capability": "llm.general",
+    "supportedCapabilities": ["llm.general"],
+    "protocol": "openai.chat-completions.v1",
+    "endpoint": "/v1/chat/completions",
+    "model": "ornith-1.5-35b",
+    "readiness": "ready",
+    "claimable": true
+  }],
+  "services": []
+}</code></pre>
+    <p>
+      HTTP 201と<code>status: "ready"</code>はProvider群のsemantic
+      readiness完了を表す。裸のbooleanだけではclaim、renew、
+      releaseの対象を識別できないため、必ずConnection
+      IDと状態を返す。待機期限までにreadyにならない場合だけ、同じshapeを
+      <code>status: "pending"</code
+      >または<code>"probing"</code>としてHTTP
+      202で返す。Responseは公開selectorと解決後の 具体Profileを両方記録する。
+      <code>agentProfile</code
+      >は入力ではなく、LARMがどの具体Profileへ解決したかを示すresponse専用fieldである。
+      status、health、claim、renewでも両者を保持し、
+      Consumerは別selectorまたは別Profileへ変化したConnectionを受理しない。
+      <code>providers</code
+      >と<code>services</code>はDiscoveryと同じ公開名、capability、protocol、endpoint、modelを持ち、
+      実際にAllocationへ固定された<code>providers</code>にはConnection固有の<code>readiness</code>と
+      <code>claimable</code
+      >を加える。<code>services</code>はDiscoveryと同じ補助service
+      descriptorであり、 Connection readinessの対象外である。内部route、runtime、service
+      unit、portは返さない。
+    </p>
+  </section>
+
+  <section id="validation">
+    <h2>検証規則</h2>
+    <ul>
+      <li>
+        vNext入力では公開<code>profile</code>
+        selectorを必須指定する。省略要求は<code>400 invalid_request</code>とし、既定Profileへ暗黙解決しない。
+      </li>
+      <li>
+        新形式のrequestは<code>agentProfile</code>と<code>explicitAgentProfile</code>を受け付けない。具体Profileの選択はLARMの責務とする。
+      </li>
+      <li>
+        <code>expectedCatalogRevision</code
+        >は任意とする。指定された場合はSHA-256形式と現在値の一致をAllocation作成前に検証する。
+      </li>
+      <li>
+        <code>Prefer: wait=N</code
+        >の<code>N</code>は1から300秒とする。待機時間はConnection
+        TTLに加算せず、作成時点から TTLを計測する。
+      </li>
+      <li>
+        profile selector、任意のcatalog revision、audience、client、TTL、fallback、deployment
+        policyをidempotencyのcanonical requestへ含める。
+      </li>
+      <li>
+        同じIdempotency-Keyと同じcanonical
+        requestの再送は、catalogが後で変わっていても最初の結果を返す。異なる
+        requestへのkey再利用は<code>409 idempotency_conflict</code>とする。
+      </li>
+      <li>
+        revisionを指定した新規要求の不一致はAllocation作成前に拒否し、Consumerは再discoveryする。revisionを指定しない
+        要求は、POST処理開始時のcatalog snapshotを正本として解決する。
+      </li>
+      <li>
+        Connection作成responseとclaimのProfile、model、protocol、endpointがdiscovery結果と一致しない場合、Consumerは
+        推論を開始せずConnectionをreleaseする。
+      </li>
+    </ul>
+  </section>
+
+  <section id="conflict-policy">
+    <h2>Profile競合と優先順位</h2>
+    <p>
+      <code>pending</code>は、要求したProfileの起動またはsemantic
+      readinessが進行中である場合だけ使用する。別Profileが
+      排他的資源を保持していて要求を開始できない状態をpendingや待ち行列として隠してはならない。
+    </p>
+    <table>
+      <caption>
+        SAAAとContextStillの競合規則
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">現在の占有</th>
+          <th scope="col">新規要求</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>なし、または共有可能</td>
+          <td>SAAA／ContextStill</td>
+          <td>受理し、必要なら起動してreadyまでbounded wait</td>
+        </tr>
+        <tr>
+          <td>SAAAが排他的資源を使用中</td>
+          <td>ContextStill</td>
+          <td>即時409。Allocationを作成せず、Provider状態を変更しない</td>
+        </tr>
+        <tr>
+          <td>ContextStillが排他的資源を使用中</td>
+          <td>SAAA</td>
+          <td>foreground優先。安全な境界でContextStillをpreemptし、SAAAを受理してready待機</td>
+        </tr>
+        <tr>
+          <td>同一SAAA構成を既存Connectionが使用中</td>
+          <td>SAAA</td>
+          <td>
+            capacity内ならProvider instanceを共有し、新しい期限・credentialを持つConnectionを作成
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      ContextStillへの拒否は<code>409 provider_conflict</code>とboundedな<code>Retry-After</code>で返す。Responseは
+      占有中のConsumer名、Connection
+      ID、model、内部runtimeを公開しない。ContextStillは同一job内でbusy loopせず、次の
+      job境界またはRetry-After後に新しいIdempotency-Keyで再評価する。
+    </p>
+  </section>
+
+  <section id="errors">
+    <h2>エラーcontract</h2>
+    <table>
+      <caption>
+        選択と作成の主要エラー
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">HTTP</th>
+          <th scope="col">code</th>
+          <th scope="col">意味</th>
+          <th scope="col">Consumer動作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>400</td>
+          <td><code>invalid_request</code></td>
+          <td>未知field、形式不正、移行中fieldの競合</td>
+          <td>retryせず実装または設定を修正</td>
+        </tr>
+        <tr>
+          <td>404</td>
+          <td><code>unknown_profile_selector</code></td>
+          <td>公開selectorが存在しない</td>
+          <td>設定を修正し、別Profileへ暗黙fallbackしない</td>
+        </tr>
+        <tr>
+          <td>409</td>
+          <td><code>catalog_revision_mismatch</code></td>
+          <td>任意のexpected revisionを指定した後にcatalogが変化した</td>
+          <td>再discoveryし、新しいIdempotency-Keyで再要求</td>
+        </tr>
+        <tr>
+          <td>409</td>
+          <td><code>idempotency_conflict</code></td>
+          <td>同じkeyを異なる要求へ再利用した</td>
+          <td>新しいkeyを発行する</td>
+        </tr>
+        <tr>
+          <td>409</td>
+          <td><code>provider_conflict</code></td>
+          <td>SAAAなど高優先Profileが排他的資源を使用中</td>
+          <td>Retry-Afterまたは次job境界まで待ち、同じ要求をbusy retryしない</td>
+        </tr>
+        <tr>
+          <td>409または429</td>
+          <td><code>capacity_exhausted</code></td>
+          <td>構成は有効だが現在確保できない</td>
+          <td>Retry-Afterに従い、明示許可なしに別Profileへ切り替えない</td>
+        </tr>
+        <tr>
+          <td>503</td>
+          <td><code>connection_not_ready</code></td>
+          <td>Providerがsemantic readinessを満たさない</td>
+          <td>期限内pollまたは明示失敗</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      自己診断は、TCP／HTTP到達、catalog discovery、Connection作成、semantic
+      readiness、claim、実推論を別項目として
+      表示する。Connection契約エラーを「到達不能」と表示してはならない。
+    </p>
+  </section>
+
+  <section id="migration">
+    <h2>Consumer移行</h2>
+    <p>
+      LARMは旧形式を同時受理する移行期間を設けず、新形式へ切り替えた。SAAAとContextStillは後続改修で
+      <code>profile</code
+      >と必要に応じて<code>Prefer: wait=N</code>を送る。旧fieldを含むrequestはstrict
+      schemaにより
+      <code>400 invalid_request</code
+      >となる。Responseの<code>agentProfile</code>は監査・整合検査用として維持する。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>受入条件</h2>
+    <ul>
+      <li>
+        SAAAについてdiscovery、create、poll、aggregate
+        health、claim、LLM、backchannel、ASR、TTS、embedding、renew、releaseを 実daemonで完走する。
+      </li>
+      <li>
+        discoveryを行わない<code>POST {"profile":"SAAA",...}</code>からも、同じ具体Profileを確保してclaimまで完走する。
+      </li>
+      <li>
+        warm状態とcold状態の両方で<code>Prefer: wait=300</code>を実行し、期限内ならpollを挟まず201
+        readyを返す。300秒を超えるProvider
+        fixtureでは202とLocationを返し、後続pollでreadyへ収束する。
+      </li>
+      <li>
+        HTTP
+        client切断後もConnection作成を継続し、同じIdempotency-Keyの再送が重複Allocationを作らない。
+      </li>
+      <li>
+        SAAAが排他的資源を使用中のContextStill要求は409
+        provider_conflictとなり、Allocation数とProvider PIDが変化しない。
+      </li>
+      <li>ContextStill使用中のSAAA要求はforeground preemptionを経てreadyへ到達する。</li>
+      <li>
+        expected
+        revisionを使う経路ではdiscoveryとcreateの間でcatalogを更新し、旧revisionの要求がAllocationを一件も作らず
+        <code>catalog_revision_mismatch</code>になる。
+      </li>
+      <li>同一Idempotency-Keyのresponse lost retryが、catalog更新後も最初のConnectionを返す。</li>
+      <li>selector省略と旧形式fieldを含む要求が400でfail closedする。</li>
+      <li>ログと診断にcredential、API token、claim tokenを記録しない。</li>
+      <li>自己診断がnetwork成功とConnection契約失敗を別々に表示する。</li>
+    </ul>
+  </section>
+
+  <section id="non-goals">
+    <h2>非目標</h2>
+    <ul>
+      <li>Discovery GETだけでProviderを起動または予約すること。</li>
+      <li>Profile selectorをmodel IDとして扱うこと。</li>
+      <li>Consumerが内部runtime、service、port、artifactを選ぶこと。</li>
+      <li>Connection失敗時に別Profileへ暗黙fallbackすること。</li>
+      <li>長期control credentialをclaim後の通常推論へ流用すること。</li>
+    </ul>
+  </section>
+</article>

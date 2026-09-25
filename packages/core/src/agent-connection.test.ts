@@ -8,7 +8,6 @@ import {
   matchAgentProfileContextWindow,
   parseAgentConnectionCatalog,
   publicAgentProfileListSchema,
-  publicAgentProfileListV1Schema,
   publicAgentProfileListV3Schema,
   resolveAgentAudienceBaseUrl,
 } from "./agent-connection";
@@ -29,7 +28,11 @@ test("production agent profiles compile to strict protocol-aware provider contra
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
   expect(catalog.defaultAgentProfile).toBe("coding-default");
   expect(catalog.profileSelectors).toEqual([
+    { id: "backchannelGemma3", agentProfile: "contextstill-backchannel-gemma3-1b", services: [] },
+    { id: "backchannelLfm25Jp", agentProfile: "contextstill-backchannel-lfm25-jp-1.2b", services: [] },
+    { id: "backchannelQwen35", agentProfile: "contextstill-backchannel-qwen35-2b", services: [] },
     { id: "contextStill", agentProfile: "contextstill-background", services: [] },
+    { id: "embeddingCanary", agentProfile: "contextstill-embedding", services: [] },
     { id: "SAAA", agentProfile: "saaa-conversation-ornith15", services: [] },
     {
       id: "SAAA-w-Image",
@@ -815,39 +818,19 @@ test("embedding failover candidates must preserve the exact semantic space", () 
   }, mismatchedRegistry)).toThrow(/do not share one embedding space/);
 });
 
-test("v1 Agent Profile discovery remains byte-shape compatible with the commissioned SAAA parser", () => {
-  const response = {
-    contractVersion: "agent-connection.v1" as const,
-    catalogRevision: "catalog-test",
-    profiles: [{
-      id: "deep-reasoning-35b",
-      description: "Legacy bootstrap alias",
-      providers: [{
-        name: "llm",
-        capability: "llm.reasoning",
-        protocol: "openai.chat-completions.v1" as const,
-        model: "coding-default",
-      }],
-    }],
-    audiences: ["saaa-desktop"],
-  };
-  expect(publicAgentProfileListV1Schema.parse(response)).toEqual(response);
-  expect(publicAgentProfileListV1Schema.safeParse({
-    ...response,
-    defaultAgentProfile: "coding-default",
-  }).success).toBeFalse();
-});
-
-test("explicit Agent Profile selection must name the selected profile", () => {
+test("Agent Connection creation requires a public selector and a strict new request shape", () => {
   expect(agentConnectionRequestSchema.safeParse({
     audience: "same-host",
-    explicitAgentProfile: true,
   }).success).toBeFalse();
   expect(agentConnectionRequestSchema.safeParse({
-    agentProfile: "speed",
+    profile: "contextStill",
     audience: "same-host",
-    explicitAgentProfile: true,
   }).success).toBeTrue();
+  expect(agentConnectionRequestSchema.safeParse({
+    profile: "contextStill",
+    audience: "same-host",
+    unexpected: true,
+  }).success).toBeFalse();
 });
 
 test("agent claim validation rejects inconsistent HTTP descriptors", () => {

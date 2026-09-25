@@ -2,6 +2,7 @@ import {
   agentProviderHealthSchema,
   inspectOpenAiChatCompletionJson,
   inspectOpenAiChatCompletionSse,
+  type AgentProfileSelectorId,
 } from "../../../packages/core/src/index";
 import { LarmClient } from "../../../packages/client/src/index";
 
@@ -14,6 +15,7 @@ export type AgentHttpSmokeOptions = {
   baseUrl: string;
   apiToken?: string;
   agentProfile: string;
+  profile?: AgentProfileSelectorId;
   audience: string;
   client: string;
   provider?: string;
@@ -49,7 +51,7 @@ export type AgentHttpSmokeResult = {
 const MAX_PROVIDER_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_PROVIDER_HEALTH_BYTES = 64 * 1024;
 
-type AgentProfiles = Awaited<ReturnType<LarmClient["listAgentProfiles"]>>;
+type AgentProfiles = Awaited<ReturnType<LarmClient["listAgentProfilesV3"]>>;
 type AdvertisedProfile = AgentProfiles["profiles"][number];
 type AdvertisedProvider = AdvertisedProfile["providers"][number];
 
@@ -81,6 +83,16 @@ function selectedProvider(
     throw new Error(`Agent Provider does not use OpenAI Chat Completions: ${name}`);
   }
   return provider;
+}
+
+function selectorForAgentProfile(agentProfile: string): AgentProfileSelectorId {
+  if (agentProfile === "coding-default") return "vulnWorkbench";
+  if (agentProfile === "contextstill-background") return "contextStill";
+  if (agentProfile === "saaa-conversation-ornith15") return "SAAA";
+  if (agentProfile === "saaa-conversation-ornith15-image") return "SAAA-w-Image";
+  if (agentProfile === "saaa-conversation-ornith15-music") return "SAAA-w-music";
+  if (agentProfile === "contextstill-embedding") return "embeddingCanary";
+  throw new Error(`no public profile selector is configured for ${agentProfile}`);
 }
 
 function mediaType(response: Response): string | undefined {
@@ -187,7 +199,8 @@ export async function runAgentHttpSmoke(options: AgentHttpSmokeOptions): Promise
     throw new Error(`LARM is not idle before the canary: ${initialActivity.state}`);
   }
 
-  const profiles = await larm.listAgentProfiles();
+  const selector = options.profile ?? selectorForAgentProfile(options.agentProfile);
+  const profiles = await larm.listAgentProfilesV3(selector);
   if (profiles.catalogRevision !== health.configRevision) {
     throw new Error("Agent Profile catalog revision does not match daemon health");
   }
@@ -204,8 +217,7 @@ export async function runAgentHttpSmoke(options: AgentHttpSmokeOptions): Promise
   let released = false;
   try {
     const created = await larm.createAgentConnection({
-      agentProfile: profile.id,
-      explicitAgentProfile: profile.selectionPolicy === "explicit-only",
+      profile: selector,
       audience: options.audience,
       client: options.client,
       ttlSeconds,
@@ -221,7 +233,7 @@ export async function runAgentHttpSmoke(options: AgentHttpSmokeOptions): Promise
       throw new Error("Agent Connection catalog revision drifted during creation");
     }
     const connectionProvider = connection.providers.find((candidate) => candidate.name === providerName);
-    if (!connectionProvider?.claimable || connectionProvider.publicModel !== advertised.model) {
+    if (!connectionProvider?.claimable || connectionProvider.model !== advertised.model) {
       throw new Error("Agent Connection provider does not match its advertised profile");
     }
 

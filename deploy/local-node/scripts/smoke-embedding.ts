@@ -60,7 +60,7 @@ export async function runEmbeddingSmoke(options: {
   if ((await client.getReadiness()).status !== "ready") throw new Error("LARM is not ready");
   const initialActivity = await client.getServiceActivity();
   if (initialActivity.state === "draining") throw new Error("LARM is draining");
-  const profiles = await client.listAgentProfilesV3();
+  const profiles = await client.listAgentProfilesV3("embeddingCanary");
   if (profiles.catalogRevision !== health.configRevision) {
     throw new Error("embedding catalog and daemon configuration revisions differ");
   }
@@ -84,8 +84,7 @@ export async function runEmbeddingSmoke(options: {
   ) throw new Error("advertised embedding semantic space drifted from the commissioned contract");
 
   const created = await client.createAgentConnection({
-    agentProfile: profile.id,
-    explicitAgentProfile: true,
+    profile: "embeddingCanary",
     audience: "same-host",
     client: "embedding-canary",
     ttlSeconds: 120,
