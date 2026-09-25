@@ -200,7 +200,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
       canonicalProfile: "saaa-backchannel-default",
       selectionPolicy: "explicit-only",
       deprecated: false,
-      schedulingPriority: 3000,
+      schedulingPriority: 4000,
       providers: [{
         name: "backchannel",
         capability: "llm.backchannel.classifier",
@@ -217,7 +217,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
         canonicalProfile: profileId,
         selectionPolicy: "explicit-only",
         deprecated: false,
-        schedulingPriority: 3000,
+        schedulingPriority: 4000,
         providers: [
         {
           name: "asr",
@@ -271,7 +271,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     .toMatchObject({
       capability: "llm.general",
       route: "llm-saaa-gemma4",
-      schedulingPriority: 3000,
+      schedulingPriority: 4000,
       profileIds: ["saaa-conversation-gemma4", "saaa-qwen38"],
     });
   for (const profileId of [
@@ -283,7 +283,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
       .toMatchObject({
       canonicalProfile: profileId,
       selectionPolicy: "explicit-only",
-      schedulingPriority: 3000,
+      schedulingPriority: 4000,
       providers: [
         { name: "asr", route: "stt-qwen", protocol: "openai.audio-transcriptions.v1" },
         {
@@ -317,7 +317,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     .toMatchObject({
       capability: "llm.general",
       route: "llm-saaa-ornith15",
-      schedulingPriority: 3000,
+      schedulingPriority: 4000,
       profileIds: [
         "saaa-conversation-ornith15",
         "saaa-conversation-ornith15-image",
@@ -335,7 +335,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     .toMatchObject({
       capability: "llm.backchannel.classifier",
       route: "llm-backchannel-default",
-      schedulingPriority: 3000,
+      schedulingPriority: 4000,
       profileIds: ["saaa-backchannel-default"],
     });
   expect(getOpenAiModel(

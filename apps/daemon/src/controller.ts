@@ -653,6 +653,40 @@ export class ControlPlane {
     return { status: 200 as const, body: allocation };
   }
 
+  async preemptAllocation(id: string, preemptingPriority: number) {
+    const allocation = this.allocations.get(id);
+    if (!allocation) return this.allocationLookupError(id);
+    if (allocation.status === "released" || allocation.status === "expired") {
+      return { status: 200 as const, body: allocation };
+    }
+    if ((allocation.priority ?? 0) >= preemptingPriority) {
+      return {
+        status: 409 as const,
+        body: {
+          error: {
+            code: "allocation_priority_conflict",
+            message: "allocation priority is not lower than the preempting request",
+          },
+        },
+      };
+    }
+    this.emit("allocation_preempted", {
+      allocation: allocation.id,
+      client: allocation.client ?? "unknown",
+      reason: "higher_priority_foreground_task",
+      priority: String(allocation.priority ?? 0),
+      preemptingPriority: String(preemptingPriority),
+    });
+    return await this.releaseAllocation(
+      allocation.id,
+      "released",
+      new AllocationLifecycleError(
+        "foreground_preempted",
+        "request stopped because a higher-priority foreground task requires the provider",
+      ),
+    );
+  }
+
   async prepare(request: PrepareRequest) {
     if (this.draining) {
       return {
@@ -1320,21 +1354,7 @@ export class ControlPlane {
         return [...requested].some((key) => allocated.has(key));
       });
     for (const allocation of victims) {
-      this.emit("allocation_preempted", {
-        allocation: allocation.id,
-        client: allocation.client ?? "unknown",
-        reason: "higher_priority_foreground_task",
-        priority: String(allocation.priority ?? 0),
-        preemptingPriority: String(priority),
-      });
-      void this.releaseAllocation(
-        allocation.id,
-        "released",
-        new AllocationLifecycleError(
-          "foreground_preempted",
-          "request stopped because a higher-priority foreground task requires the provider",
-        ),
-      );
+      void this.preemptAllocation(allocation.id, priority);
     }
   }
 

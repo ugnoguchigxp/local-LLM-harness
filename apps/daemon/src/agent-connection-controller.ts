@@ -273,6 +273,10 @@ export class AgentConnectionController {
             retryAfterSeconds: 1,
           };
         }
+        if (request.profile.startsWith("SAAA")) {
+          const conflict = await this.preemptContextStillConnections(profile.schedulingPriority ?? 0);
+          if (conflict) return conflict;
+        }
         const allocated = await this.options.control.allocate({
           requirements: profile.providers.map((provider) => ({
             capability: provider.capability,
@@ -600,6 +604,34 @@ export class AgentConnectionController {
       providers,
     };
     return { status: ready ? 200 : 503, body };
+  }
+
+  private async preemptContextStillConnections(
+    preemptingPriority: number,
+  ): Promise<AgentConnectionApiResult | undefined> {
+    for (const record of this.records.values()) {
+      this.refreshLifecycle(record);
+      if (record.selector.id !== "contextStill" || isTerminal(record.status)) continue;
+      const released = await this.options.control.preemptAllocation(
+        record.allocationId,
+        preemptingPriority,
+      );
+      if (released.status !== 200) {
+        return error(
+          "provider_conflict",
+          "ContextStill could not be preempted by the SAAA connection",
+          409,
+        );
+      }
+      record.status = "failed";
+      record.releasedAt = new Date(this.now()).toISOString();
+      record.error = {
+        code: "foreground_preempted",
+        message: "request stopped because a higher-priority foreground task requires the provider",
+      };
+    }
+    this.pruneHistory();
+    return undefined;
   }
 
   private notReadyHealth(name: string, capability: string): AgentProviderHealth {

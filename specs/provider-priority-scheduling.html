@@ -10,7 +10,7 @@
 
   <dl>
     <dt>更新日</dt>
-    <dd><time>2026-09-21</time></dd>
+    <dd><time>2026-09-25</time></dd>
     <dt>Repository状態</dt>
     <dd>Control Plane、Model Broker、Agent Connection、Execution Gate、local-node設定へ実装済み</dd>
     <dt>Live状態</dt>
@@ -35,6 +35,16 @@
       <tbody>
         <tr>
           <th scope="row">SAAA</th>
+          <td>
+            <code>SAAA</code
+            >／<code>SAAA-w-Image</code>／<code
+              >SAAA-w-music</code
+            >
+          </td>
+          <td><code>4000</code></td>
+        </tr>
+        <tr>
+          <th scope="row">通常foreground</th>
           <td><code>coding-default</code></td>
           <td><code>3000</code></td>
         </tr>
@@ -110,6 +120,12 @@
       資源不足、telemetry不明、mutation中など、使用中Allocationの解放だけでは解消しない拒否理由を
       無条件に待機へ変換しません。待機Allocationもactive上限、TTL、daemon drainの対象です。
     </p>
+    <p>
+      SAAAとContextStillのAgent Connectionは、選択されたRuntime IDやswap groupが異なる場合でも
+      consumer間の排他policyを適用します。SAAA作成時はactiveなContextStill Connectionの低優先
+      Allocationを<code>foreground_preempted</code>でreleaseしてcredentialを失効させた後、SAAAの
+      Allocationとreadiness確認へ進みます。
+    </p>
   </section>
 
   <section id="preemption-error">
@@ -161,6 +177,15 @@
       <li>
         ContextStill相当のactive
         AllocationへSAAA要求を追加すると、専用理由を残してただちに停止する。
+      </li>
+      <li>
+        優先度3000の通常foreground Allocationがactiveでも、優先度4000のSAAAが専用理由を残して
+        preemptし、待機せず昇格する。
+      </li>
+      <li>
+        production Profileを使うHTTP E2Eで、SAAA ready・推論・release、ContextStill ready・推論、
+        SAAA再要求によるContextStill credential失効・worker停止、SAAA
+        ready・推論・releaseを一続きで確認する。
       </li>
       <li>SAAAは低優先のactiveおよびwaiting Allocationを追い越して昇格する。</li>
       <li>SAAA解放後300秒は別Providerへ切り替えず、経過後に優先度順で待機Allocationを昇格する。</li>

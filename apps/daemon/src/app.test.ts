@@ -206,7 +206,10 @@ function agentHeaders(extra: Record<string, string> = {}): Record<string, string
 }
 
 function validLlmSemanticProbeResponse(init?: RequestInit): Response {
-  const body = JSON.parse(String(init?.body)) as { model: string; stream?: boolean };
+  const raw = init?.body instanceof Uint8Array
+    ? new TextDecoder().decode(init.body)
+    : String(init?.body);
+  const body = JSON.parse(raw) as { model: string; stream?: boolean };
   if (body.stream === true) {
     return new Response([
       `data: ${JSON.stringify({
@@ -646,6 +649,166 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
   }
 });
 
+test("E2E: SAAA releases to ContextStill and then preempts it during resource replacement", async () => {
+  const catalogRevision = "f".repeat(64);
+  const configDir = join(import.meta.dir, "../../../config/local-node");
+  const productionRegistry = loadRegistry(configDir);
+  const productionCatalog = loadAgentConnectionCatalogForRegistry(configDir, productionRegistry);
+  const initiallyLive = new Set([
+    "ornith-general",
+    "qwen35-decision",
+    "qwen-asr",
+    "voicevox-tts",
+    "multilingual-e5-small",
+  ]);
+  const probes = new Map(productionRegistry.runtimes.map((runtime) => [
+    runtime.id,
+    probe(runtime.id, initiallyLive.has(runtime.id)),
+  ]));
+  const log = { ensure: [] as string[], stop: [] as string[] };
+  const backend = stubBackend(probes, log);
+  const observer = new Observer(productionRegistry, backend);
+  await observer.tick();
+  const control = new ControlPlane(productionRegistry, backend, observer, {
+    idleTtlMs: 0,
+    pollIntervalMs: 1,
+    providerSwitchHoldMs: 0,
+    getCatalogRevision: () => catalogRevision,
+  });
+  let appFetch: (request: Request) => Response | Promise<Response> = () => new Response(null, { status: 503 });
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => appFetch(request),
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const catalog = structuredClone(productionCatalog);
+  catalog.audiences.find((audience) => audience.id === "same-host")!.baseUrl = `${baseUrl}/v1`;
+  const app = createApp({
+    registry: productionRegistry,
+    getState: () => observer.getState(),
+    control,
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: catalog,
+    getConfigRevision: () => catalogRevision,
+    gatewayFetch: validAgentProviderSemanticResponse,
+    connectionPollIntervalMs: 1,
+  });
+  appFetch = app.fetch;
+
+  let createSequence = 0;
+  const createConnection = async (profile: "SAAA" | "contextStill") => {
+    createSequence += 1;
+    const response = await fetch(`${baseUrl}/v1/agent-connections`, {
+      method: "POST",
+      headers: agentHeaders({
+        "content-type": "application/json",
+        "idempotency-key": `resource-replacement-${profile}-${createSequence}`,
+        prefer: "wait=3",
+      }),
+      body: JSON.stringify({
+        profile,
+        expectedCatalogRevision: catalogRevision,
+        audience: "same-host",
+        client: profile === "SAAA" ? "saaa-e2e" : "contextstill-e2e",
+        ttlSeconds: 300,
+        allowFallback: false,
+        deploymentPolicy: "existing-only",
+      }),
+    });
+    expect(response.status).toBe(201);
+    return publicAgentConnectionSchema.parse(await response.json());
+  };
+  const claimConnection = async (connection: { id: string }) => {
+    const response = await fetch(`${baseUrl}/v1/agent-connections/${connection.id}/claim`, {
+      method: "POST",
+      headers: agentHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ format: "openai-provider-v1" }),
+    });
+    expect(response.status).toBe(200);
+    return agentConnectionClaimSchema.parse(await response.json());
+  };
+  const infer = async (claim: ReturnType<typeof agentConnectionClaimSchema.parse>) => {
+    const provider = claim.providers.find((candidate) => candidate.name === "llm")!;
+    const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${provider.credential.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        messages: [{ role: "user", content: "resource replacement e2e" }],
+        max_tokens: 4,
+      }),
+    });
+    const body = await response.json();
+    expect({ status: response.status, body }).toMatchObject({
+      status: 200,
+      body: {
+        model: provider.model,
+        choices: [{ message: { content: "0" } }],
+      },
+    });
+  };
+  const release = async (connection: { id: string }) => {
+    const response = await fetch(`${baseUrl}/v1/agent-connections/${connection.id}`, {
+      method: "DELETE",
+      headers: agentHeaders(),
+    });
+    expect(response.status).toBe(204);
+    await control.flush();
+  };
+
+  try {
+    const firstSaaa = await createConnection("SAAA");
+    expect(firstSaaa).toMatchObject({ profile: "SAAA", status: "ready" });
+    const firstSaaaClaim = await claimConnection(firstSaaa);
+    await infer(firstSaaaClaim);
+    await release(firstSaaa);
+
+    const contextStill = await createConnection("contextStill");
+    expect(contextStill).toMatchObject({ profile: "contextStill", status: "ready" });
+    expect(log.ensure).toContain("qwen-worker-fast");
+    const contextClaim = await claimConnection(contextStill);
+    await infer(contextClaim);
+
+    const secondSaaa = await createConnection("SAAA");
+    expect(secondSaaa).toMatchObject({ profile: "SAAA", status: "ready" });
+    await control.flush();
+
+    const preempted = await fetch(`${baseUrl}/v1/agent-connections/${contextStill.id}`, {
+      headers: agentHeaders(),
+    });
+    expect(preempted.status).toBe(200);
+    expect(await preempted.json()).toMatchObject({
+      status: "failed",
+      error: {
+        code: "foreground_preempted",
+        message: "request stopped because a higher-priority foreground task requires the provider",
+      },
+    });
+    expect(log.stop).toContain("qwen-worker-fast");
+
+    const revokedContext = await fetch(`${contextClaim.providers[0]!.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${contextClaim.providers[0]!.credential.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ model: contextClaim.providers[0]!.model, messages: [] }),
+    });
+    expect(revokedContext.status).toBe(401);
+
+    const secondSaaaClaim = await claimConnection(secondSaaa);
+    await infer(secondSaaaClaim);
+    await release(secondSaaa);
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("generated image artifact APIs list, describe, stream, and delete files", async () => {
   const root = await mkdtemp(join(tmpdir(), "larm-image-api-"));
   const path = join(root, "image.webp");
@@ -840,7 +1003,7 @@ test("service activity observes a live Gateway request until its response closes
   const upstreamReleased = new Promise<void>((resolve) => {
     releaseUpstream = resolve;
   });
-  const { app } = await makeApp(true, false, {}, {
+  const { app, control } = await makeApp(true, false, {}, {
     requestTracker: tracker,
     gatewayFetch: async () => {
       markUpstreamStarted?.();
@@ -1580,7 +1743,7 @@ test("v1 admission enforces declared runtime allocation capacity", async () => {
   });
 });
 
-test("foreground allocations preempt conflicting background work and retain priority order", async () => {
+test("SAAA preempts ordinary foreground and background work and retains priority order", async () => {
   const priorityRegistry: Registry = {
     nodes: [{
       id: "local-node",
@@ -1608,7 +1771,7 @@ test("foreground allocations preempt conflicting background work and retain prio
           endpoint: "http://127.0.0.1:8080",
         },
       },
-      ...["contextstill", "nightworker", "saaa"].map((id, index) => ({
+      ...["contextstill", "nightworker", "foreground", "saaa"].map((id, index) => ({
         id,
         capability: ["llm.general"],
         protocol: "openai.chat-completions.v1" as const,
@@ -1616,7 +1779,7 @@ test("foreground allocations preempt conflicting background work and retain prio
         node: "local-node",
         policy: { class: "preferred" as const, swapGroup: "worker-slot" },
         resources: {
-          estimatedMemoryGB: index === 2 ? 44 : 40,
+          estimatedMemoryGB: index === 3 ? 44 : 40,
           maxConcurrentAllocations: 1,
           maxConcurrentRequests: 1,
           maxQueuedRequests: 1,
@@ -1629,7 +1792,7 @@ test("foreground allocations preempt conflicting background work and retain prio
         },
       })),
     ],
-    routes: ["contextstill", "nightworker", "saaa"].map((id) => ({
+    routes: ["contextstill", "nightworker", "foreground", "saaa"].map((id) => ({
       id: `llm-${id}`,
       capabilities: ["llm.general"],
       explicitOnly: true,
@@ -1648,7 +1811,7 @@ test("foreground allocations preempt conflicting background work and retain prio
     health: async (id) => probes.get(id) ?? probe(id, false),
     ensure: async (runtime) => {
       ensured.push(runtime.id);
-      for (const peer of ["contextstill", "nightworker", "saaa"]) {
+      for (const peer of ["contextstill", "nightworker", "foreground", "saaa"]) {
         probes.set(peer, probe(peer, peer === runtime.id));
       }
       return probes.get(runtime.id)!;
@@ -1681,7 +1844,7 @@ test("foreground allocations preempt conflicting background work and retain prio
   expect(contextStill.body).toMatchObject({ status: "ready", priority: 1_000 });
   const contextStillId = (contextStill.body as { id: string }).id;
   const contextStillSignal = control.getAllocationSignal(contextStillId);
-  const saaa = await control.allocate(request("saaa", 3_000));
+  const foreground = await control.allocate(request("foreground", 3_000));
   expect(nightWorker.body).toMatchObject({ status: "waiting", priority: 2_000 });
   expect(contextStillSignal?.aborted).toBeTrue();
   expect(control.getAllocation(contextStillId)).toMatchObject({
@@ -1691,22 +1854,45 @@ test("foreground allocations preempt conflicting background work and retain prio
       message: "request stopped because a higher-priority foreground task requires the provider",
     },
   });
-  expect(saaa.body).toMatchObject({ status: "pending", priority: 3_000 });
+  expect(foreground.body).toMatchObject({ status: "pending", priority: 3_000 });
   await control.flush();
-  expect(ensured).toEqual(["saaa"]);
+  expect(ensured).toEqual(["foreground"]);
+  const foregroundId = (foreground.body as { id: string }).id;
+  const foregroundSignal = control.getAllocationSignal(foregroundId);
+  expect(control.getAllocation(foregroundId)?.status).toBe("ready");
+
+  const saaa = await control.allocate(request("saaa", 4_000));
+  expect(foregroundSignal?.aborted).toBeTrue();
+  expect(control.getAllocation(foregroundId)).toMatchObject({
+    status: "released",
+    error: {
+      code: "foreground_preempted",
+      message: "request stopped because a higher-priority foreground task requires the provider",
+    },
+  });
+  expect(saaa.body).toMatchObject({ status: "pending", priority: 4_000 });
+  await control.flush();
+  expect(ensured).toEqual(["foreground", "saaa"]);
   expect(control.getAllocation((saaa.body as { id: string }).id)?.status).toBe("ready");
   expect(control.getAllocation((nightWorker.body as { id: string }).id)?.status).toBe("waiting");
 
+  const lowerPriorityPreemption = await control.preemptAllocation(
+    (saaa.body as { id: string }).id,
+    3_000,
+  );
+  expect(lowerPriorityPreemption.status).toBe(409);
+  expect(control.getAllocation((saaa.body as { id: string }).id)?.status).toBe("ready");
+
   await control.releaseAllocation((saaa.body as { id: string }).id);
   await control.flush();
-  expect(ensured).toEqual(["saaa"]);
+  expect(ensured).toEqual(["foreground", "saaa"]);
   expect(control.getAllocation((nightWorker.body as { id: string }).id)?.status).toBe("waiting");
 
   now += 300_001;
   await (control as unknown as { promoteWaitingAllocations(): Promise<void> })
     .promoteWaitingAllocations();
   await control.flush();
-  expect(ensured).toEqual(["saaa", "nightworker"]);
+  expect(ensured).toEqual(["foreground", "saaa", "nightworker"]);
   expect(control.getAllocation((nightWorker.body as { id: string }).id)?.status).toBe("ready");
 
   const finalContextStill = await control.allocate(request("contextstill", 1_000));
@@ -1715,7 +1901,7 @@ test("foreground allocations preempt conflicting background work and retain prio
   await control.flush();
   expect(control.getAllocation((finalContextStill.body as { id: string }).id)?.status)
     .toBe("released");
-  expect(ensured).toEqual(["saaa", "nightworker"]);
+  expect(ensured).toEqual(["foreground", "saaa", "nightworker"]);
 });
 
 test("control plane bounds active allocations even when runtime capacity is unbounded", async () => {
@@ -4120,11 +4306,21 @@ test("Agent Connection creation resolves public profile selectors and returns se
       ...structuredClone(speedProfile),
       id: "saaa-conversation-ornith15-image",
       canonicalProfile: "saaa-conversation-ornith15-image",
+      schedulingPriority: 4_000,
+      providers: structuredClone(speedProfile.providers).map((provider) => ({
+        ...provider,
+        publishModel: false,
+      })),
     },
     {
       ...structuredClone(speedProfile),
       id: "saaa-conversation-ornith15-music",
       canonicalProfile: "saaa-conversation-ornith15-music",
+      schedulingPriority: 4_000,
+      providers: structuredClone(speedProfile.providers).map((provider) => ({
+        ...provider,
+        publishModel: false,
+      })),
     },
   );
   variantCatalog.profileSelectors.push(
@@ -4141,7 +4337,7 @@ test("Agent Connection creation resolves public profile selectors and returns se
     },
     { id: "SAAA-w-music", agentProfile: "saaa-conversation-ornith15-music", services: [] },
   );
-  const { app } = await makeApp(true, false, {}, {
+  const { app, control } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog: variantCatalog,
@@ -4168,11 +4364,17 @@ test("Agent Connection creation resolves public profile selectors and returns se
     }),
   });
   expect(accepted.status).toBe(202);
-  expect(await accepted.json()).toMatchObject({
+  const acceptedConnection = publicAgentConnectionSchema.parse(await accepted.json());
+  expect(acceptedConnection).toMatchObject({
     profile: "contextStill",
     agentProfile: "speed",
     providers: [{ endpoint: "/v1/chat/completions", model: "speed-model" }],
   });
+  expect((await app.request(`/v1/agent-connections/${acceptedConnection.id}`, {
+    method: "DELETE",
+    headers: agentHeaders(),
+  })).status).toBe(204);
+  await control.flush();
 
   for (const agentProfile of [
     "saaa-conversation-ornith15-image",
