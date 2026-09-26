@@ -131,9 +131,31 @@ const agentProviderYamlSchema = z.object({
   ).optional(),
 }).strict();
 
+export const agentConnectionIdleReleaseSchema = z.object({
+  enabled: z.boolean(),
+  idleSeconds: z.number().int().min(1).max(86_400),
+  activityProtocols: z.array(z.enum([
+    "openai.chat-completions.v1",
+    "openai.audio-transcriptions.v1",
+    "openai.audio-speech.v1",
+  ])).min(1).max(3),
+}).strict().superRefine((value, context) => {
+  const canonical = [...new Set(value.activityProtocols)].sort();
+  if (JSON.stringify(canonical) !== JSON.stringify(value.activityProtocols)) {
+    context.addIssue({
+      code: "custom",
+      path: ["activityProtocols"],
+      message: "activityProtocols must be sorted and unique",
+    });
+  }
+});
+
+export type AgentConnectionIdleRelease = z.infer<typeof agentConnectionIdleReleaseSchema>;
+
 const agentProfileYamlSchema = z.object({
   description: z.string().min(1).max(256),
   schedulingPriority: z.number().int().min(-1_000_000).max(1_000_000).default(0),
+  idleRelease: agentConnectionIdleReleaseSchema.optional(),
   providers: z.array(agentProviderYamlSchema).min(1).max(8),
 }).strict().superRefine((value, context) => {
   for (const field of ["name", "capability", "publicModel"] as const) {
@@ -296,6 +318,7 @@ export type AgentProfile = {
   selectionPolicy: "default" | "compatibility" | "explicit-only";
   deprecated: boolean;
   schedulingPriority?: number;
+  idleRelease?: AgentConnectionIdleRelease;
   providers: AgentProviderProfile[];
   revision: string;
 };
@@ -439,6 +462,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
       selectionPolicy,
       deprecated: false,
       schedulingPriority: profile.schedulingPriority,
+      ...(profile.idleRelease ? { idleRelease: structuredClone(profile.idleRelease) } : {}),
       providers,
     };
     return { id, ...normalized, revision: digest(normalized) };
@@ -482,6 +506,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
       selectionPolicy: "compatibility" as const,
       deprecated: true,
       schedulingPriority: canonical.schedulingPriority,
+      ...(canonical.idleRelease ? { idleRelease: structuredClone(canonical.idleRelease) } : {}),
       providers,
     };
     return { id, ...normalized, revision: digest(normalized) };
@@ -537,7 +562,24 @@ export const agentConnectionStatusSchema = z.enum([
   "expired",
 ]);
 
-export const agentProviderReadinessStatusSchema = agentConnectionStatusSchema;
+export const agentConnectionPhaseSchema = z.enum([
+  "waiting-capacity",
+  "deploying",
+  "probing",
+  "ready",
+  "terminal",
+]);
+
+export const agentProviderReadinessStatusSchema = z.enum([
+  "pending",
+  "waiting",
+  "deploying",
+  "probing",
+  "ready",
+  "failed",
+  "released",
+  "expired",
+]);
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 
@@ -586,6 +628,7 @@ export const publicAgentProfileListSchema = z.object({
     selectionPolicy: z.enum(["default", "compatibility", "explicit-only"]),
     deprecated: z.boolean(),
     schedulingPriority: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+    idleRelease: agentConnectionIdleReleaseSchema.optional(),
     providers: z.array(z.object({
       name: agentIdentifierSchema,
       capability: agentIdentifierSchema,
@@ -647,6 +690,7 @@ export const publicAgentProfileListV3Schema = z.object({
     selectionPolicy: z.enum(["default", "compatibility", "explicit-only"]),
     deprecated: z.boolean(),
     schedulingPriority: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+    idleRelease: agentConnectionIdleReleaseSchema.optional(),
     providers: z.array(z.object({
       name: agentIdentifierSchema,
       capability: agentIdentifierSchema,
@@ -774,10 +818,14 @@ export const publicAgentConnectionSchema = z.object({
   audience: agentIdentifierSchema,
   audienceRevision: sha256Schema,
   status: agentConnectionStatusSchema,
+  phase: agentConnectionPhaseSchema.optional(),
   providers: z.array(publicAgentConnectionProviderSchema).min(1).max(8),
   services: z.array(agentProfileServiceSchema).max(8),
   createdAt: z.string().datetime(),
   expiresAt: z.string().datetime(),
+  readyDeadline: z.string().datetime().optional(),
+  lastForegroundActivityAt: z.string().datetime().optional(),
+  idleReleaseAt: z.string().datetime().optional(),
   releasedAt: z.string().datetime().optional(),
   error: z.object({
     code: z.string().min(1).max(128),

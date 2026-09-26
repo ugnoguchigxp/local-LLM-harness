@@ -4,13 +4,14 @@
   <p>
     本計画は、SAAAが要求するLLM、backchannel LLM、ASR、TTS、embeddingの複合Agent
     Connectionを短時間のHTTP requestで受け付け、別のstatus readで準備状況をpollできるようにする。
-    Connectionがreadyになった後、LLM、ASR、TTSの利用が5分間なければSAAAのAllocation全体を自動解放し、
-    通常時のContextStill利用へ自動的に戻す。
+    Connectionがreadyになった後、LLM、ASR、TTSの利用が5分間なければSAAAのAllocation参照を自動解放し、
+    通常時のContextStill利用へ自動的に戻す。embedding
+    instanceはSAAAとContextStillで共有する常駐Providerとし、 SAAAの解放では停止しない。
   </p>
 
   <dl>
     <dt>文書状態</dt>
-    <dd>Proposed / implementation-ready</dd>
+    <dd>Implemented / verified 2026-09-26</dd>
     <dt>対象repository</dt>
     <dd>
       <code>local-LLM-harness</code>、consumer変更は<code
@@ -50,6 +51,7 @@
       </li>
       <li>同じSAAA sessionから重複Allocationを作らない。</li>
       <li>LLM、ASR、TTSが5分間使われなければ、SAAA bundleを安全に自動解放する。</li>
+      <li>embeddingをSAAAとContextStillで共有し、どちらか一方のConnection解放で停止しない。</li>
       <li>SAAA解放後、待機中のContextStill要求を直ちに再評価して通常利用へ戻す。</li>
       <li>
         待機理由、Provider別進捗、idle deadline、terminal reasonをpoll
@@ -87,7 +89,10 @@
         critical sectionで再検証する。
       </li>
       <li>auto release後は既発行credentialを失効させ、新しいrequestをProviderへ転送しない。</li>
-      <li>ContextStillへの復帰はSAAAの全Provider解放後に行い、部分的なbundle切替を行わない。</li>
+      <li>
+        ContextStillへの復帰はSAAAの全Allocation参照解放後に行う。共有embedding instanceのwarm refと
+        ContextStill側参照はこの切替で解放しない。
+      </li>
       <li>status、health、claim、renewの読み取りや管理操作だけではidle deadlineを延長しない。</li>
     </ol>
   </section>
@@ -183,6 +188,40 @@
     </p>
   </section>
 
+  <section id="shared-embedding">
+    <h2>共有常駐embedding</h2>
+    <p>
+      <code>multilingual-e5-small</code
+      >はSAAA専有bundleの一部として停止・起動するProviderではなく、SAAAと ContextStillが同じsemantic
+      spaceを共有するhost常駐Providerとして扱う。現行設定の
+      <code>minInstances: 1</code
+      >、<code>maxConcurrentAllocations: 8</code>を維持し、class名にかかわらずwarm
+      refが存在する限りinstanceを停止しない。
+    </p>
+    <ul>
+      <li>SAAA Connectionは従来どおりembeddingをrequired Providerとしてclaimする。</li>
+      <li>
+        ContextStillはforeground preemption対象のLLM Connectionと別に、embedding-only
+        Connectionを一件所有する。
+      </li>
+      <li>SAAA開始時のContextStill preemptionはembedding-only Connectionを対象にしない。</li>
+      <li>
+        SAAAの5分idle releaseはSAAAのembedding allocation refだけを外し、instanceを停止しない。
+      </li>
+      <li>
+        ContextStill側のembedding credentialと実行中requestはSAAAの開始・終了をまたいで有効とする。
+      </li>
+      <li>
+        同時requestはProviderの<code>maxConcurrentRequests</code>とqueueで直列化し、Allocation排他で拒否しない。
+      </li>
+    </ul>
+    <p>
+      semantic spaceのmodel
+      revision、dimension、prefix、normalizationが一致しないConsumerは同じinstanceを共有せず、
+      Connection作成またはclaim時に<code>embedding_space_mismatch</code>で拒否する。
+    </p>
+  </section>
+
   <section id="deduplication">
     <h2>重複Connection防止</h2>
     <p>
@@ -270,8 +309,10 @@
         cancelも認証・admission済みrequestなら利用として数える。
       </li>
       <li>
-        deadline到達時に対象protocolのactive requestが0で、全Providerを含むactive request
-        refも0なら、 Connectionを<code>released</code>へ遷移させる。
+        deadline到達時に対象protocolのactive requestが0で、SAAA Connectionに属する全Providerのactive
+        request
+        refも0なら、Connectionを<code>released</code>へ遷移させる。共有embeddingの別Connection
+        refとwarm refは 判定対象にしない。
       </li>
       <li>
         embeddingだけが実行中なら途中解放せず、終了後に再検査する。対象protocolの最終activityから既に300秒を
@@ -293,18 +334,25 @@
       preemptionを受けた場合は
       <code>foreground_preempted</code>をterminal成功と誤認せず、同じ再取得idempotency
       keyで一件だけ
-      Connection作成を再送する。LARMはこれを<code>202 waiting-capacity</code>として保持できる。
+      Connection作成を再送する。SAAAがactiveな間はLARMが<code>409 provider_conflict</code>と
+      <code>Retry-After: 1</code>を返し、解放後の同じ再送を受け付ける。
     </p>
     <ol>
-      <li>通常時はContextStillがreadyでbackground処理を行う。</li>
       <li>
-        SAAA要求が来たらContextStillの新規requestを停止し、active
-        requestのterminal処理後にcredentialを失効する。
+        通常時はContextStillのLLM Connectionとembedding-only
+        Connectionがreadyでbackground処理を行う。
+      </li>
+      <li>
+        SAAA要求が来たらContextStillの新規LLM requestを停止し、active LLM
+        requestのterminal処理後にLLM credentialを失効する。embedding-only Connectionは維持する。
       </li>
       <li>SAAAの全required Providerがreadyになった後だけSAAAへclaimを許可する。</li>
       <li>SAAAでLLM、ASR、TTSの無利用が5分続いたらbundle全体をauto releaseする。</li>
       <li>release完了時にwaiting queueを直ちに再評価し、ContextStillを優先度1000で再admitする。</li>
-      <li>ContextStillがreadyになったらconsumerが再claimし、background処理を再開する。</li>
+      <li>
+        ContextStillのLLM Connectionがreadyになったらconsumerが再claimし、維持していたembedding
+        Connectionと組み合わせてbackground処理を再開する。
+      </li>
     </ol>
     <p>
       LARMはprincipalを代行してContextStill Connectionを新規作成しない。自動復帰のdesired
@@ -394,6 +442,25 @@
       </ul>
     </section>
 
+    <section id="wp3a">
+      <h3>WP3a: 共有embedding参照の分離</h3>
+      <ul>
+        <li>
+          ContextStill用のembedding-only ProfileとConnection ownerを追加し、LLM preemption
+          lifecycleから分離する。
+        </li>
+        <li>
+          <code>preemptContextStillConnections</code>はforeground競合するLLM
+          Connectionだけを対象とし、 embedding-only Connectionを除外する。
+        </li>
+        <li>
+          SAAA release時にembedding instanceのwarm refまたはContextStill allocation
+          refが残ることを検証する。
+        </li>
+        <li>共有前にembedding space identityの完全一致を検証する。</li>
+      </ul>
+    </section>
+
     <section id="wp4">
       <h3>WP4: 5分auto release</h3>
       <ul>
@@ -415,7 +482,9 @@
     <section id="wp5">
       <h3>WP5: ContextStill自動復帰</h3>
       <ul>
-        <li>SAAA release完了後にwaiting Allocation promotionを同じqueueへ投入する。</li>
+        <li>
+          SAAA release完了後、ContextStill consumerのbounded retryを直ちにadmitできるようにする。
+        </li>
         <li>provider switch holdがContextStill admissionを抑止しないことを明示testする。</li>
         <li>
           ContextStill consumerへsingle-flight再取得、bounded
@@ -434,8 +503,8 @@
           固定し、<code>Prefer: wait=300</code>を使用しない。
         </li>
         <li>
-          <code>../SAAA/src-tauri/src/providers/larm_voice/mod.rs</code>でsessionごとの永続idempotency keyと Connection
-          IDを一つだけ所有する。
+          <code>../SAAA/src-tauri/src/providers/larm_voice/mod.rs</code>でsessionごとの永続idempotency keyと
+          Connection IDを一つだけ所有する。
         </li>
         <li>
           <code>connection_idle_released</code
@@ -508,6 +577,14 @@
             release、ContextStill再昇格・再claimを一続きで確認する。
           </td>
         </tr>
+        <tr>
+          <th scope="row">共有embedding</th>
+          <td>
+            ContextStill embedding request、SAAA開始、SAAA embedding request、SAAA idle
+            release、ContextStill embedding requestを一続きで実行し、instance IDとsemantic
+            spaceが維持される。
+          </td>
+        </tr>
       </tbody>
     </table>
 
@@ -547,6 +624,9 @@
       <li>全required Providerがsemantic readyになる前にclaim credentialを発行しない。</li>
       <li>LLM、ASR、TTSの最終request終了後300秒でSAAA bundle全体が解放される。</li>
       <li>実行中request、embedding、streamをauto releaseが中断しない。</li>
+      <li>
+        SAAAの開始・auto releaseをまたいでContextStillのembedding-only Connectionが有効である。
+      </li>
       <li>SAAA解放後、ContextStillが手動操作なしで再admit・再claimされる。</li>
       <li>旧SAAA credentialは解放直後から使用できず、明確なterminal reasonを返す。</li>
       <li>
@@ -554,5 +634,16 @@
         E2E、実機5分canaryが成功する。
       </li>
     </ol>
+    <aside>
+      <p>
+        自動検証ではLARMの<code>bun run check</code>（source、型、531
+        unit/integration test、49 deployment
+        test）とSAAAの<code>saaa-larm-session</code>全testが成功した。SAAA
+        desktop全体のRust buildは 実装とは独立したLinux
+        GUI開発依存（<code>pkg-config</code>、GTK/WebKit）がこの環境にないため対象外とし、
+        <code>cargo fmt --check</code>とcritical-path freeze
+        checkで変更範囲を検証した。
+      </p>
+    </aside>
   </section>
 </article>

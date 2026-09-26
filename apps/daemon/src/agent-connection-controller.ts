@@ -14,7 +14,9 @@ import {
   type AgentProfileSelectorId,
   type AgentProviderHealth,
   type PublicAgentConnection,
+  type RuntimeProtocol,
 } from "@larm/core";
+import { AllocationLifecycleError } from "./allocation-lifecycle";
 import type { ControlPlane } from "./controller";
 import { ConnectionTokenCodec, ConnectionTokenError, type ConnectionTokenPayload } from "./connection-token";
 import type { SemanticReadiness } from "./semantic-readiness";
@@ -45,6 +47,13 @@ type ConnectionRecord = {
   generation: number;
   tokenIssuedAt: number;
   personalStateAuthorized: boolean;
+  sessionScope: string;
+  requestHash: string;
+  readyAt?: string;
+  lastForegroundActivityAt?: string;
+  idleReleaseAt?: string;
+  idleTimer?: ReturnType<typeof setTimeout>;
+  activeRequests: Map<string, { foreground: boolean }>;
   releasedAt?: string;
   error?: { code: string; message: string };
 };
@@ -90,6 +99,7 @@ export class AgentConnectionController {
   private readonly records = new Map<string, ConnectionRecord>();
   private readonly idempotency = new Map<string, IdempotencyEntry>();
   private readonly background = new Set<string>();
+  private readonly sessionLocks = new Map<string, Promise<void>>();
   private sequence = 0;
 
   constructor(private readonly options: {
@@ -104,6 +114,7 @@ export class AgentConnectionController {
     idempotencyLimit: number;
     historyLimit?: number;
     personalStateAvailable?: boolean;
+    onEvent?: (event: { name: string; labels: Record<string, string> }) => void;
     now?: () => number;
     random?: () => string;
   }) {}
@@ -147,6 +158,7 @@ export class AgentConnectionController {
           selectionPolicy: profile.selectionPolicy,
           deprecated: profile.deprecated,
           schedulingPriority: profile.schedulingPriority ?? 0,
+          ...(profile.idleRelease ? { idleRelease: structuredClone(profile.idleRelease) } : {}),
           providers: profile.providers.map((provider) => ({
             name: provider.name,
             capability: provider.capability,
@@ -187,6 +199,7 @@ export class AgentConnectionController {
           selectionPolicy: profile.selectionPolicy,
           deprecated: profile.deprecated,
           schedulingPriority: profile.schedulingPriority ?? 0,
+          ...(profile.idleRelease ? { idleRelease: structuredClone(profile.idleRelease) } : {}),
           providers: profile.providers.map((provider) => ({
             name: provider.name,
             capability: provider.capability,
@@ -242,20 +255,34 @@ export class AgentConnectionController {
       allowFallback: request.allowFallback,
       deploymentPolicy: request.deploymentPolicy,
     };
+    const requestHash = hash(JSON.stringify({
+      request: normalizedRequest,
+      advertisedBaseUrl,
+      personalStateAuthorized,
+    }));
+    const sessionScope = `${principal}:${request.profile}:${request.audience}:${request.client ?? "(anonymous)"}`;
     return await this.idempotent(
       `${principal}:POST:/v1/agent-connections:${idempotencyKey}`,
-      hash(JSON.stringify({ request: normalizedRequest, advertisedBaseUrl, personalStateAuthorized })),
-      async () => {
-        const catalogRevision = this.options.getCatalogRevision();
-        if (
-          request.expectedCatalogRevision
-          && request.expectedCatalogRevision !== catalogRevision
-        ) {
-          return error(
-            "catalog_revision_mismatch",
-            "expectedCatalogRevision does not match the active catalog",
-            409,
-          );
+      requestHash,
+      async () => await this.withSessionLock(sessionScope, async () => {
+        const reusable = [...this.records.values()].find((record) => {
+          this.refreshLifecycle(record);
+          return record.sessionScope === sessionScope && !isTerminal(record.status);
+        });
+        if (reusable) {
+          if (reusable.requestHash !== requestHash) {
+            return error(
+              "connection_session_conflict",
+              "an active connection already exists for this client session with different options",
+              409,
+            );
+          }
+          return {
+            status: reusable.status === "ready" ? 201 : 202,
+            body: this.public(reusable),
+            location: `/v1/agent-connections/${reusable.id}`,
+            replay: true,
+          };
         }
         if (
           request.profile === "contextStill"
@@ -272,6 +299,17 @@ export class AgentConnectionController {
             ),
             retryAfterSeconds: 1,
           };
+        }
+        const catalogRevision = this.options.getCatalogRevision();
+        if (
+          request.expectedCatalogRevision
+          && request.expectedCatalogRevision !== catalogRevision
+        ) {
+          return error(
+            "catalog_revision_mismatch",
+            "expectedCatalogRevision does not match the active catalog",
+            409,
+          );
         }
         if (request.profile.startsWith("SAAA")) {
           const conflict = await this.preemptContextStillConnections(profile.schedulingPriority ?? 0);
@@ -310,6 +348,9 @@ export class AgentConnectionController {
           generation: 1,
           tokenIssuedAt: Math.floor(now / 1_000),
           personalStateAuthorized,
+          sessionScope,
+          requestHash,
+          activeRequests: new Map(),
         };
         this.records.set(record.id, record);
         let complete = false;
@@ -323,7 +364,7 @@ export class AgentConnectionController {
           body: this.public(record),
           location: `/v1/agent-connections/${record.id}`,
         };
-      },
+      }),
     );
   }
 
@@ -543,6 +584,7 @@ export class AgentConnectionController {
     if ("body" in found) return found;
     if (isTerminal(found.status)) return { status: 204, body: undefined };
     await this.options.control.releaseAllocation(found.allocationId);
+    this.clearIdleTimer(found);
     found.status = "released";
     found.releasedAt = new Date(this.now()).toISOString();
     this.pruneHistory();
@@ -557,6 +599,12 @@ export class AgentConnectionController {
       throw new ConnectionTokenError("invalid_token", "provider bearer token does not name an active connection");
     }
     this.refreshLifecycle(record);
+    if (record.error?.code === "foreground_idle_timeout") {
+      throw new ConnectionTokenError(
+        "connection_idle_released",
+        "provider bearer token belongs to an idle-released connection",
+      );
+    }
     const provider = record.profile.providers.find((item) => item.name === payload.provider);
     const binding = this.options.control.getAllocation(record.allocationId)?.bindings.find(
       (item) => item.capability === provider?.capability,
@@ -580,6 +628,35 @@ export class AgentConnectionController {
     return { record, provider, payload };
   }
 
+  beginProviderRequest(
+    connectionId: string,
+    requestId: string,
+    protocol: RuntimeProtocol,
+    countsAsForegroundActivity = true,
+  ): boolean {
+    const record = this.records.get(connectionId);
+    if (!record) return false;
+    this.refreshLifecycle(record);
+    if (record.status !== "ready" || record.activeRequests.has(requestId)) return false;
+    const foreground = countsAsForegroundActivity
+      && record.profile.idleRelease?.enabled === true
+      && record.profile.idleRelease.activityProtocols.some((candidate) => candidate === protocol);
+    record.activeRequests.set(requestId, { foreground });
+    if (foreground) this.clearIdleTimer(record);
+    return true;
+  }
+
+  finishProviderRequest(connectionId: string, requestId: string): void {
+    const record = this.records.get(connectionId);
+    const active = record?.activeRequests.get(requestId);
+    if (!record || !active) return;
+    record.activeRequests.delete(requestId);
+    if (active.foreground && record.status === "ready") {
+      record.lastForegroundActivityAt = new Date(this.now()).toISOString();
+    }
+    this.scheduleIdleRelease(record);
+  }
+
   private async healthRecord(record: ConnectionRecord): Promise<AgentConnectionApiResult> {
     this.refreshLifecycle(record);
     const providers: AgentProviderHealth[] = [];
@@ -594,7 +671,7 @@ export class AgentConnectionController {
     }
     const ready = providers.every((provider) => provider.ready);
     const acceptingRequests = ready && providers.every((provider) => provider.acceptingRequests);
-    if (ready && record.status === "probing") record.status = "ready";
+    if (ready && record.status === "probing") this.markReady(record);
     const body: AgentConnectionHealth = {
       id: record.id,
       status: record.status,
@@ -641,13 +718,14 @@ export class AgentConnectionController {
   private async probeInitial(record: ConnectionRecord): Promise<boolean> {
     const health = await this.healthRecord(record);
     if (health.status === 200) {
-      record.status = "ready";
+      this.markReady(record);
       return true;
     }
     const providers = (health.body as AgentConnectionHealth).providers;
     const mismatch = providers.find((provider) => provider.reason === "provider_contract_mismatch");
     if (mismatch) {
       record.status = "failed";
+      this.clearIdleTimer(record);
       record.error = {
         code: "provider_contract_mismatch",
         message: `provider ${mismatch.name} rejected its fixed readiness contract`,
@@ -696,6 +774,7 @@ export class AgentConnectionController {
     }
     if (!isTerminal(record.status)) {
       record.status = "failed";
+      this.clearIdleTimer(record);
       record.error = {
         code: "connection_ready_timeout",
         message: "connection did not become semantically ready before its deadline",
@@ -710,6 +789,7 @@ export class AgentConnectionController {
     const allocation = this.options.control.getAllocation(record.allocationId);
     if (!allocation) {
       record.status = "failed";
+      this.clearIdleTimer(record);
       record.error = { code: "allocation_missing", message: "owned allocation is unavailable" };
       this.pruneHistory();
       return;
@@ -717,23 +797,46 @@ export class AgentConnectionController {
     record.expiresAt = allocation.expiresAt;
     if (allocation.status === "expired") {
       record.status = "expired";
+      this.clearIdleTimer(record);
       this.pruneHistory();
       return;
     }
     if (allocation.status === "released") {
       record.status = "failed";
-      record.error = { code: "allocation_released", message: "owned allocation was released unexpectedly" };
+      this.clearIdleTimer(record);
+      record.error = allocation.error
+        ?? { code: "allocation_released", message: "owned allocation was released unexpectedly" };
       this.pruneHistory();
       return;
     }
     if (allocation.status === "failed") {
       record.status = "failed";
+      this.clearIdleTimer(record);
       record.error = allocation.error ?? { code: "allocation_failed", message: "owned allocation failed" };
       this.pruneHistory();
     }
   }
 
   private public(record: ConnectionRecord): PublicAgentConnection {
+    const allocation = this.options.control.getAllocation(record.allocationId);
+    const phase = isTerminal(record.status)
+      ? "terminal" as const
+      : record.status === "ready"
+      ? "ready" as const
+      : record.status === "probing"
+      ? "probing" as const
+      : allocation?.status === "waiting"
+      ? "waiting-capacity" as const
+      : "deploying" as const;
+    const providerReadiness = record.status === "ready"
+      ? "ready" as const
+      : isTerminal(record.status)
+      ? "failed" as const
+      : record.status === "probing"
+      ? "probing" as const
+      : allocation?.status === "waiting"
+      ? "waiting" as const
+      : "deploying" as const;
     return {
       id: record.id,
       allocationId: record.allocationId,
@@ -745,6 +848,7 @@ export class AgentConnectionController {
       audience: record.audience.id,
       audienceRevision: record.audience.revision,
       status: record.status,
+      phase,
       providers: record.profile.providers.map((provider) => ({
         name: provider.name,
         capability: provider.capability,
@@ -754,13 +858,18 @@ export class AgentConnectionController {
         model: provider.publicModel,
         ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
         ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
-        readiness: record.status,
+        readiness: providerReadiness,
         claimable: record.status === "ready"
           && this.options.semantic.peek({ allocationId: record.allocationId, provider })?.ready === true,
       })),
       services: structuredClone(record.selector.services),
       createdAt: record.createdAt,
       expiresAt: record.expiresAt,
+      readyDeadline: new Date(record.readyDeadline).toISOString(),
+      ...(record.lastForegroundActivityAt
+        ? { lastForegroundActivityAt: record.lastForegroundActivityAt }
+        : {}),
+      ...(record.idleReleaseAt ? { idleReleaseAt: record.idleReleaseAt } : {}),
       ...(record.releasedAt ? { releasedAt: record.releasedAt } : {}),
       ...(record.error ? { error: record.error } : {}),
     };
@@ -882,7 +991,84 @@ export class AgentConnectionController {
       .filter((record) => isTerminal(record.status))
       .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
     for (const record of terminal.slice(0, Math.max(0, terminal.length - limit))) {
+      this.clearIdleTimer(record);
       this.records.delete(record.id);
+    }
+  }
+
+  private markReady(record: ConnectionRecord): void {
+    record.status = "ready";
+    record.readyAt ??= new Date(this.now()).toISOString();
+    this.scheduleIdleRelease(record);
+  }
+
+  private scheduleIdleRelease(record: ConnectionRecord): void {
+    this.clearIdleTimer(record);
+    const policy = record.profile.idleRelease;
+    if (!policy?.enabled || record.status !== "ready" || record.activeRequests.size > 0) return;
+    const baseline = Date.parse(record.lastForegroundActivityAt ?? record.readyAt ?? record.createdAt);
+    const deadline = baseline + policy.idleSeconds * 1_000;
+    record.idleReleaseAt = new Date(deadline).toISOString();
+    const timer = setTimeout(() => {
+      if (record.idleTimer !== timer) return;
+      record.idleTimer = undefined;
+      void this.releaseIdleConnection(record.id, deadline);
+    }, Math.max(0, deadline - this.now()));
+    timer.unref?.();
+    record.idleTimer = timer;
+  }
+
+  private clearIdleTimer(record: ConnectionRecord): void {
+    if (record.idleTimer) clearTimeout(record.idleTimer);
+    record.idleTimer = undefined;
+    record.idleReleaseAt = undefined;
+  }
+
+  private async releaseIdleConnection(id: string, deadline: number): Promise<void> {
+    const record = this.records.get(id);
+    const policy = record?.profile.idleRelease;
+    if (!record || !policy?.enabled || record.status !== "ready") return;
+    const baseline = Date.parse(record.lastForegroundActivityAt ?? record.readyAt ?? record.createdAt);
+    const currentDeadline = baseline + policy.idleSeconds * 1_000;
+    if (currentDeadline !== deadline || record.activeRequests.size > 0 || this.now() < currentDeadline) {
+      this.scheduleIdleRelease(record);
+      return;
+    }
+    const reason = new AllocationLifecycleError(
+      "foreground_idle_timeout",
+      `connection released after ${policy.idleSeconds} seconds without LLM, ASR, or TTS activity`,
+    );
+    record.status = "released";
+    record.releasedAt = new Date(this.now()).toISOString();
+    record.error = { code: reason.code, message: reason.message };
+    record.generation += 1;
+    record.idleReleaseAt = undefined;
+    await this.options.control.releaseAllocation(record.allocationId, "released", reason);
+    this.options.onEvent?.({
+      name: "agent_connection_idle_released",
+      labels: {
+        connection: record.id,
+        profile: record.selector.id,
+        idleSeconds: String(policy.idleSeconds),
+      },
+    });
+    this.pruneHistory();
+  }
+
+  private async withSessionLock<T>(scope: string, operation: () => Promise<T>): Promise<T> {
+    const prior = this.sessionLocks.get(scope) ?? Promise.resolve();
+    let unlock!: () => void;
+    const current = new Promise<void>((resolve) => {
+      unlock = resolve;
+    });
+    const tail = prior.then(() => current);
+    this.sessionLocks.set(scope, tail);
+    await prior;
+    try {
+      return await operation();
+    } finally {
+      unlock();
+      if (this.sessionLocks.get(scope) === tail) this.sessionLocks.delete(scope);
     }
   }
 

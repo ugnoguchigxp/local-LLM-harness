@@ -46,7 +46,7 @@ export type ConnectionTokenPayload = z.infer<typeof tokenPayloadSchema>;
 
 export class ConnectionTokenError extends Error {
   constructor(
-    readonly code: "invalid_token" | "expired_token",
+    readonly code: "invalid_token" | "expired_token" | "connection_idle_released",
     message: string,
   ) {
     super(message);

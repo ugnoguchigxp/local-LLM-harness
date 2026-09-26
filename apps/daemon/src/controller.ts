@@ -351,12 +351,12 @@ export class ControlPlane {
       runtimeIds,
       (allocation) => admittedAllocation(allocation.status),
     );
-    const conflictsWithWaiter = this.hasResourceConflict(
+    const conflictsWithWaiter = this.hasExclusiveResourceConflict(
       runtimeIds,
       (allocation) => allocation.status === "waiting"
         && (allocation.priority ?? 0) >= (request.priority ?? 0),
     );
-    const conflictsWithHigherPriority = this.hasResourceConflict(
+    const conflictsWithHigherPriority = this.hasExclusiveResourceConflict(
       runtimeIds,
       (allocation) => admittedAllocation(allocation.status)
         && (allocation.priority ?? 0) > (request.priority ?? 0),
@@ -1348,6 +1348,16 @@ export class ControlPlane {
     return keys;
   }
 
+  private allocationExclusiveResourceKeys(runtimeIds: string[]): Set<string> {
+    const keys = new Set<string>();
+    for (const runtimeId of runtimeIds) {
+      const runtime = getRuntime(this.registry, runtimeId);
+      if (runtime?.resources.maxConcurrentAllocations === 1) keys.add(`runtime:${runtimeId}`);
+      if (runtime?.policy.swapGroup) keys.add(`swap:${runtime.policy.swapGroup}`);
+    }
+    return keys;
+  }
+
   private foregroundPriorityThreshold(): number {
     return this.options.foregroundPriorityThreshold ?? 3_000;
   }
@@ -1358,11 +1368,11 @@ export class ControlPlane {
 
   private preemptLowerPriorityConflicts(priority: number, runtimeIds: string[]): void {
     if (priority < this.foregroundPriorityThreshold()) return;
-    const requested = this.allocationResourceKeys(runtimeIds);
+    const requested = this.allocationExclusiveResourceKeys(runtimeIds);
     const victims = [...this.allocations.values()]
       .filter((allocation) => {
         if (!admittedAllocation(allocation.status) || (allocation.priority ?? 0) >= priority) return false;
-        const allocated = this.allocationResourceKeys(
+        const allocated = this.allocationExclusiveResourceKeys(
           allocation.bindings.map((binding) => binding.runtime),
         );
         return [...requested].some((key) => allocated.has(key));
@@ -1420,6 +1430,20 @@ export class ControlPlane {
     return [...this.allocations.values()].some((allocation) => {
       if (!predicate(allocation)) return false;
       const existing = this.allocationResourceKeys(
+        allocation.bindings.map((binding) => binding.runtime),
+      );
+      return [...requested].some((key) => existing.has(key));
+    });
+  }
+
+  private hasExclusiveResourceConflict(
+    runtimeIds: string[],
+    predicate: (allocation: Allocation) => boolean,
+  ): boolean {
+    const requested = this.allocationExclusiveResourceKeys(runtimeIds);
+    return [...this.allocations.values()].some((allocation) => {
+      if (!predicate(allocation)) return false;
+      const existing = this.allocationExclusiveResourceKeys(
         allocation.bindings.map((binding) => binding.runtime),
       );
       return [...requested].some((key) => existing.has(key));
@@ -1504,7 +1528,7 @@ export class ControlPlane {
         requestRetry();
         continue;
       }
-      if (this.hasResourceConflict(
+      if (this.hasExclusiveResourceConflict(
         runtimeIds,
         (candidate) => admittedAllocation(candidate.status)
           && (candidate.priority ?? 0) > (allocation.priority ?? 0),

@@ -218,6 +218,15 @@ test("production agent profiles compile to strict protocol-aware provider contra
         selectionPolicy: "explicit-only",
         deprecated: false,
         schedulingPriority: 4000,
+        idleRelease: {
+          enabled: true,
+          idleSeconds: 300,
+          activityProtocols: [
+            "openai.audio-speech.v1",
+            "openai.audio-transcriptions.v1",
+            "openai.chat-completions.v1",
+          ],
+        },
         providers: [
         {
           name: "asr",
@@ -284,6 +293,15 @@ test("production agent profiles compile to strict protocol-aware provider contra
       canonicalProfile: profileId,
       selectionPolicy: "explicit-only",
       schedulingPriority: 4000,
+      idleRelease: {
+        enabled: true,
+        idleSeconds: 300,
+        activityProtocols: [
+          "openai.audio-speech.v1",
+          "openai.audio-transcriptions.v1",
+          "openai.chat-completions.v1",
+        ],
+      },
       providers: [
         { name: "asr", route: "stt-qwen", protocol: "openai.audio-transcriptions.v1" },
         {

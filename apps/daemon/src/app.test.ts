@@ -195,6 +195,47 @@ const explicitAgentConnectionCatalog = parseAgentConnectionCatalog({
   },
 }, registry);
 
+const idleSaaaAgentConnectionCatalog = parseAgentConnectionCatalog({
+  version: 1,
+  defaultAgentProfile: "coding",
+  audiences: {
+    loopback: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" },
+  },
+  agentProfiles: {
+    coding: {
+      description: "Default coding provider",
+      providers: [{
+        name: "llm",
+        capability: "llm.general",
+        route: "llm-default",
+        publicModel: "test-model",
+        readiness: "llm-inference",
+      }],
+    },
+    saaa: {
+      description: "Idle-released SAAA provider",
+      schedulingPriority: 4_000,
+      idleRelease: {
+        enabled: true,
+        idleSeconds: 1,
+        activityProtocols: ["openai.chat-completions.v1"],
+      },
+      providers: [{
+        name: "llm",
+        capability: "llm.general",
+        route: "llm-speed",
+        publicModel: "saaa-test-model",
+        readiness: "llm-inference",
+      }],
+    },
+  },
+  profileSelectors: {
+    vulnWorkbench: { agentProfile: "coding" },
+    contextStill: { agentProfile: "coding" },
+    SAAA: { agentProfile: "saaa" },
+  },
+}, registry);
+
 const agentApiToken = "agent-api-token";
 const agentSigningKey = new Uint8Array(32).fill(7);
 
@@ -276,7 +317,9 @@ async function validAgentProviderSemanticResponse(input: string | URL | Request,
     });
   }
   if (path.endsWith("/embed")) {
-    const body = JSON.parse(String(init?.body)) as { type: "query" | "passage" };
+    const body = JSON.parse(
+      init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init?.body),
+    ) as { type: "query" | "passage" };
     return Response.json({
       embeddings: [[1, ...Array.from({ length: 383 }, () => 0)]],
       dimension: 384,
@@ -698,7 +741,7 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
   appFetch = app.fetch;
 
   let createSequence = 0;
-  const createConnection = async (profile: "SAAA" | "contextStill") => {
+  const createConnection = async (profile: "SAAA" | "contextStill" | "embeddingCanary") => {
     createSequence += 1;
     const response = await fetch(`${baseUrl}/v1/agent-connections`, {
       method: "POST",
@@ -711,20 +754,23 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
         profile,
         expectedCatalogRevision: catalogRevision,
         audience: "same-host",
-        client: profile === "SAAA" ? "saaa-e2e" : "contextstill-e2e",
+        client: `${profile.toLowerCase()}-e2e`,
         ttlSeconds: 300,
         allowFallback: false,
         deploymentPolicy: "existing-only",
       }),
     });
-    expect(response.status).toBe(201);
+    expect([201, 202]).toContain(response.status);
     return publicAgentConnectionSchema.parse(await response.json());
   };
-  const claimConnection = async (connection: { id: string }) => {
+  const claimConnection = async (
+    connection: { id: string },
+    format: "openai-provider-v1" | "larm-embedding-provider-v1" = "openai-provider-v1",
+  ) => {
     const response = await fetch(`${baseUrl}/v1/agent-connections/${connection.id}/claim`, {
       method: "POST",
       headers: agentHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ format: "openai-provider-v1" }),
+      body: JSON.stringify({ format }),
     });
     expect(response.status).toBe(200);
     return agentConnectionClaimSchema.parse(await response.json());
@@ -752,6 +798,24 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
       },
     });
   };
+  const embed = async (claim: ReturnType<typeof agentConnectionClaimSchema.parse>) => {
+    const provider = claim.providers.find((candidate) => candidate.name === "embedding")!;
+    const response = await fetch(`${provider.baseUrl}/embed`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${provider.credential.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        texts: ["shared resident embedding"],
+        type: "query",
+        normalize: true,
+        priority: "normal",
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ dimension: 384, count: 1, type: "query" });
+  };
   const release = async (connection: { id: string }) => {
     const response = await fetch(`${baseUrl}/v1/agent-connections/${connection.id}`, {
       method: "DELETE",
@@ -762,6 +826,10 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
   };
 
   try {
+    const embedding = await createConnection("embeddingCanary");
+    const embeddingClaim = await claimConnection(embedding, "larm-embedding-provider-v1");
+    await embed(embeddingClaim);
+
     const firstSaaa = await createConnection("SAAA");
     expect(firstSaaa).toMatchObject({ profile: "SAAA", status: "ready" });
     const firstSaaaClaim = await claimConnection(firstSaaa);
@@ -803,7 +871,11 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
 
     const secondSaaaClaim = await claimConnection(secondSaaa);
     await infer(secondSaaaClaim);
+    await embed(embeddingClaim);
+    expect(log.stop).not.toContain("multilingual-e5-small");
     await release(secondSaaa);
+    await embed(embeddingClaim);
+    await release(embedding);
   } finally {
     server.stop(true);
   }
@@ -4465,7 +4537,176 @@ test("Agent Connection Prefer wait converges to ready and validates catalog revi
   expect(semanticProbes).toBeGreaterThanOrEqual(2);
 });
 
-test("ContextStill is rejected while SAAA is actively provided", async () => {
+test("Agent Connection caps synchronous Prefer wait at three seconds", async () => {
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog,
+    gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
+  });
+  const response = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "bounded-long-wait",
+      prefer: "wait=300",
+    }),
+    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+  });
+  expect(response.status).toBe(201);
+  expect(response.headers.get("preference-applied")).toBe("wait=3");
+});
+
+test("equivalent SAAA creates reuse one non-terminal connection across idempotency keys", async () => {
+  const { app } = await makeApp(true, true, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: idleSaaaAgentConnectionCatalog,
+    gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
+  });
+  const create = async (key: string) => {
+    const response = await app.request("/v1/agent-connections", {
+      method: "POST",
+      headers: agentHeaders({ "content-type": "application/json", "idempotency-key": key }),
+      body: JSON.stringify({
+        profile: "SAAA",
+        audience: "loopback",
+        client: "saaa-desktop",
+        ttlSeconds: 30,
+      }),
+    });
+    expect(response.status).toBe(201);
+    return publicAgentConnectionSchema.parse(await response.json());
+  };
+  const [first, second] = await Promise.all([create("saaa-single-1"), create("saaa-single-2")]);
+  expect(second.id).toBe(first.id);
+  expect(second.allocationId).toBe(first.allocationId);
+});
+
+test("one SAAA client session rejects conflicting active connection options", async () => {
+  const { app } = await makeApp(true, true, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: idleSaaaAgentConnectionCatalog,
+    gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
+  });
+  const create = (key: string, ttlSeconds: number) => app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json", "idempotency-key": key }),
+    body: JSON.stringify({
+      profile: "SAAA",
+      audience: "loopback",
+      client: "saaa-desktop-conflict",
+      ttlSeconds,
+    }),
+  });
+  expect((await create("saaa-conflict-1", 30)).status).toBe(201);
+  const conflicting = await create("saaa-conflict-2", 60);
+  expect(conflicting.status).toBe(409);
+  expect(await conflicting.json()).toMatchObject({
+    error: { code: "connection_session_conflict" },
+  });
+});
+
+test("SAAA auto releases after idle while health polling does not extend the deadline", async () => {
+  const { app } = await makeApp(true, true, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: idleSaaaAgentConnectionCatalog,
+    gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
+  });
+  const createdResponse = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "saaa-idle" }),
+    body: JSON.stringify({ profile: "SAAA", audience: "loopback", ttlSeconds: 30 }),
+  });
+  const created = publicAgentConnectionSchema.parse(await createdResponse.json());
+  expect(created).toMatchObject({ status: "ready", phase: "ready" });
+  expect(created.idleReleaseAt).toBeDefined();
+  const claim = agentConnectionClaimSchema.parse(await (await app.request(
+    `/v1/agent-connections/${created.id}/claim`,
+    {
+      method: "POST",
+      headers: agentHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ format: "openai-provider-v1" }),
+    },
+  )).json());
+  const credential = claim.providers[0]!.credential.token;
+  await Bun.sleep(600);
+  expect((await app.request(`/v1/agent-connections/${created.id}/health`, {
+    headers: agentHeaders(),
+  })).status).toBe(200);
+  await Bun.sleep(550);
+  const released = publicAgentConnectionSchema.parse(await (await app.request(
+    `/v1/agent-connections/${created.id}`,
+    { headers: agentHeaders() },
+  )).json());
+  expect(released).toMatchObject({
+    status: "released",
+    phase: "terminal",
+    error: { code: "foreground_idle_timeout" },
+  });
+  const revoked = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+    body: JSON.stringify({ model: "saaa-test-model", messages: [] }),
+  });
+  expect(revoked.status).toBe(409);
+  expect(await revoked.json()).toMatchObject({ error: { code: "connection_idle_released" } });
+  const contextStill = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "context-after-idle" }),
+    body: JSON.stringify({ profile: "contextStill", audience: "loopback", ttlSeconds: 30 }),
+  });
+  expect(contextStill.status).toBe(201);
+  expect(await contextStill.json()).toMatchObject({ profile: "contextStill", status: "ready" });
+});
+
+test("foreground request completion restarts the SAAA idle deadline", async () => {
+  const { app } = await makeApp(true, true, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: idleSaaaAgentConnectionCatalog,
+    gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
+  });
+  const created = publicAgentConnectionSchema.parse(await (await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "saaa-active" }),
+    body: JSON.stringify({ profile: "SAAA", audience: "loopback", ttlSeconds: 30 }),
+  })).json());
+  const claim = agentConnectionClaimSchema.parse(await (await app.request(
+    `/v1/agent-connections/${created.id}/claim`,
+    {
+      method: "POST",
+      headers: agentHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ format: "openai-provider-v1" }),
+    },
+  )).json());
+  await Bun.sleep(600);
+  const completion = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${claim.providers[0]!.credential.token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ model: "saaa-test-model", messages: [] }),
+  });
+  expect(completion.status).toBe(200);
+  await completion.text();
+  await Bun.sleep(550);
+  const active = publicAgentConnectionSchema.parse(await (await app.request(
+    `/v1/agent-connections/${created.id}`,
+    { headers: agentHeaders() },
+  )).json());
+  expect(active.status).toBe("ready");
+  expect(active.lastForegroundActivityAt).toBeDefined();
+  await Bun.sleep(550);
+  expect(await (await app.request(`/v1/agent-connections/${created.id}`, {
+    headers: agentHeaders(),
+  })).json()).toMatchObject({ status: "released", error: { code: "foreground_idle_timeout" } });
+});
+
+test("ContextStill receives a retryable conflict only while SAAA is active", async () => {
   const { app } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
     connectionSigningKey: agentSigningKey,
@@ -4478,7 +4719,6 @@ test("ContextStill is rejected while SAAA is actively provided", async () => {
     body: JSON.stringify({ profile: "SAAA", audience: "loopback" }),
   });
   expect(saaa.status).toBe(201);
-
   const contextStill = await app.request("/v1/agent-connections", {
     method: "POST",
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "blocked-contextstill" }),

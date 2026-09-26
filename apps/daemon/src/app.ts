@@ -384,6 +384,7 @@ export function createAppComponents(deps: AppDeps) {
       idempotencyLimit: deps.idempotencyLimit ?? 1_000,
       historyLimit: deps.connectionHistoryLimit ?? 1_000,
       personalStateAvailable: deps.personalStateController !== undefined,
+      onEvent: deps.onEvent,
       now: deps.now,
       random: deps.random,
     })
@@ -516,7 +517,11 @@ export function createAppComponents(deps: AppDeps) {
         return { principal: scoped.record.principal, scoped };
       } catch (error) {
         if (error instanceof ConnectionTokenError) {
-          return c.json(errorBody("unauthorized", error.message), 401);
+          const idleReleased = error.code === "connection_idle_released";
+          return c.json(
+            errorBody(idleReleased ? error.code : "unauthorized", error.message),
+            idleReleased ? 409 : 401,
+          );
         }
         throw error;
       }
@@ -651,7 +656,11 @@ export function createAppComponents(deps: AppDeps) {
         scoped = feature.verifyProviderToken(providerToken);
       } catch (error) {
         if (error instanceof ConnectionTokenError) {
-          return c.json(errorBody("unauthorized", error.message), 401);
+          const idleReleased = error.code === "connection_idle_released";
+          return c.json(
+            errorBody(idleReleased ? error.code : "unauthorized", error.message),
+            idleReleased ? 409 : 401,
+          );
         }
         throw error;
       }
@@ -1097,6 +1106,22 @@ export function createAppComponents(deps: AppDeps) {
       ? personalStateSubjectDigest(requestPrincipal!)
       : undefined;
     const providerRequestId = `provider-request-${deps.random?.() ?? crypto.randomUUID()}`;
+    const connectionRequestTracked = scoped
+      ? agentConnections?.beginProviderRequest(
+        scoped.record.id,
+        providerRequestId,
+        options.protocol,
+        !(options.protocol === "openai.audio-speech.v1" && options.bodyMode === "none"),
+      ) === true
+      : false;
+    if (scoped && !connectionRequestTracked) {
+      return c.json(errorBody(
+        scoped.record.error?.code === "foreground_idle_timeout"
+          ? "connection_idle_released"
+          : "connection_inactive",
+        "agent connection is no longer active",
+      ), 409);
+    }
     const providerInstanceId = deps.control.retainProviderRequest?.(
       allocationId,
       selected.binding.capability,
@@ -1107,6 +1132,9 @@ export function createAppComponents(deps: AppDeps) {
       if (providerRequestReleased) return;
       providerRequestReleased = true;
       deps.control.releaseProviderRequest?.(providerInstanceId, providerRequestId);
+      if (connectionRequestTracked && scoped) {
+        agentConnections?.finishProviderRequest(scoped.record.id, providerRequestId);
+      }
     };
     try {
       return await proxyGateway({
@@ -1829,14 +1857,15 @@ export function createAppComponents(deps: AppDeps) {
     const parsed = agentConnectionRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
     if (!parsed.success) return c.json(errorBody("invalid_request", "invalid agent connection request"), 400);
     const prefer = c.req.header("prefer");
-    let waitSeconds = 0;
+    let requestedWaitSeconds = 0;
     if (prefer !== undefined) {
       const match = /^wait=([1-9][0-9]{0,2})$/.exec(prefer.trim());
       if (!match || Number(match[1]) > 300) {
         return c.json(errorBody("invalid_request", "Prefer must be wait=N where N is between 1 and 300"), 400);
       }
-      waitSeconds = Number(match[1]);
+      requestedWaitSeconds = Number(match[1]);
     }
+    const waitSeconds = Math.min(requestedWaitSeconds, 3);
     if (parsed.data.deploymentPolicy === "allow-listed") {
       if (!deps.managementToken) {
         return c.json(errorBody("management_not_configured", "allow-listed deployment is disabled"), 503);
@@ -1871,7 +1900,7 @@ export function createAppComponents(deps: AppDeps) {
         ...(errorCode ? { code: errorCode } : {}),
       },
     });
-    if (waitSeconds > 0) c.header("preference-applied", `wait=${waitSeconds}`);
+    if (requestedWaitSeconds > 0) c.header("preference-applied", `wait=${waitSeconds}`);
     return agentResult(c, result);
   });
 
@@ -1917,7 +1946,11 @@ export function createAppComponents(deps: AppDeps) {
       return agentResult(c, await feature.providerHealth(c.req.param("id"), c.req.param("name")));
     } catch (error) {
       if (error instanceof ConnectionTokenError) {
-        return c.json(errorBody("unauthorized", error.message), 401);
+        const idleReleased = error.code === "connection_idle_released";
+        return c.json(
+          errorBody(idleReleased ? error.code : "unauthorized", error.message),
+          idleReleased ? 409 : 401,
+        );
       }
       throw error;
     }
