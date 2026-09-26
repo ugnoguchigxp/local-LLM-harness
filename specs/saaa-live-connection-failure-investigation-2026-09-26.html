@@ -1,0 +1,246 @@
+<article lang="ja">
+  <h1>SAAA LLM・ASR接続障害 調査・是正結果</h1>
+
+  <dl>
+    <dt>調査日時</dt>
+    <dd>2026-09-26 JST</dd>
+    <dt>接続先</dt>
+    <dd><code>http://192.168.0.130:9810</code></dd>
+    <dt>稼働LARM release</dt>
+    <dd><code>0e927504824309ab5dabec2263309bb9b1a31bc6</code></dd>
+    <dt>調査条件</dt>
+    <dd>設定、model、service状態を変更せず、credential、会話本文、利用者音声を記録しない。</dd>
+  </dl>
+
+  <section id="conclusion">
+    <h2>結論</h2>
+    <ol>
+      <li>
+        LLMとASRのProvider自体は利用可能である。既にHOTなLLMへChat Completionsを実行してHTTP
+        200と応答本文を確認し、短い日本語音声をASRへ送ってHTTP 200と正しい文字起こしを確認した。
+      </li>
+      <li>
+        <code>harness-connection-schema-invalid</code>の直接原因は、SAAAが期待する旧Connection
+        Provider fieldとLARMの現行公開fieldの不一致である。
+      </li>
+      <li>
+        約90秒のready待ちはmodel起動失敗ではない。先行する未claimのSAAA Connectionが唯一のSAAA
+        Allocation
+        capacityを保持し、後続が<code>waiting-capacity</code>になったためである。
+      </li>
+      <li>
+        対象系列にはclaim受理・拒否のどちらのeventもなく、SAAAからLLMまたはASRの実requestへ進んでいない。
+      </li>
+      <li>
+        稼働LARMは5分idle
+        release実装前のreleaseである。readyだが未claimのConnectionが15分TTLまで残り、 後続を塞いだ。
+      </li>
+    </ol>
+  </section>
+
+  <section id="http-contract">
+    <h2>HTTP契約の照合</h2>
+    <p>
+      SAAA sourceの旧requestを同じ形で送ると、Allocation作成前にHTTP 400となった。応答は
+      <code>Content-Type: application/json</code
+      >、<code>x-larm-boot-epoch</code>付きで、bodyは
+      <code>{"error":{"code":"invalid_request","message":"invalid agent connection request"}}</code>
+      だった。
+    </p>
+    <p>
+      LARMの現行create
+      requestはselectorを表す<code>profile: "SAAA"</code>を要求する。
+      <code>agentProfile</code
+      >や<code>explicitAgentProfile</code>はstrict schemaで拒否される。
+    </p>
+    <p>
+      正しいrequestで再現したcreateはHTTP
+      202、<code>Location</code>、<code>Retry-After: 1</code>、
+      <code>Content-Type: application/json</code
+      >を返した。調査用Connectionは応答確認直後にDELETEし、HTTP 204を確認した。
+    </p>
+    <table>
+      <caption>
+        SAAAと稼働LARMのConnection Provider field差分
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">意味</th>
+          <th scope="col">SAAAが要求</th>
+          <th scope="col">LARMの実応答</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">内部route</th>
+          <td><code>route</code>必須</td>
+          <td>非公開のためfieldなし</td>
+        </tr>
+        <tr>
+          <th scope="row">公開model</th>
+          <td><code>publicModel</code>必須</td>
+          <td><code>model</code></td>
+        </tr>
+        <tr>
+          <th scope="row">公開endpoint</th>
+          <td>fieldなし</td>
+          <td><code>endpoint</code></td>
+        </tr>
+        <tr>
+          <th scope="row">提供可能capability</th>
+          <td>fieldなし</td>
+          <td><code>supportedCapabilities</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      実応答のtop-levelには<code>profile</code>、<code>agentProfile</code>、<code>services</code>があり、
+      Providerには<code>name</code>、<code>capability</code>、<code>supportedCapabilities</code>、
+      <code>protocol</code
+      >、<code>endpoint</code>、<code>model</code>、<code>readiness</code>、
+      <code>claimable</code
+      >がある。SAAAのdeserializerは欠落した<code>route</code>と
+      <code>publicModel</code>により、成功HTTP responseを
+      <code>harness-connection-schema-invalid</code>へ分類する。
+    </p>
+  </section>
+
+  <section id="timeline">
+    <h2>約90秒待機の時系列</h2>
+    <ul>
+      <li>
+        12:05:58 JST、先行SAAA Allocationがpending。既存ASR、embedding、LLM、TTSは再利用され、
+        backchannelだけを起動した。
+      </li>
+      <li>12:06:00、Allocation ready。起動所要は約1.27秒だった。</li>
+      <li>
+        12:06:00から12:06:02、ASR、backchannel、embedding、LLM、TTSのsemantic
+        probeがすべて成功した。
+      </li>
+      <li>この先行Connectionにclaim eventはなく、15分TTLまでAllocationを保持した。</li>
+      <li>
+        12:09:00、後続SAAA Allocationがwaiting。12:09:01にcreate HTTP 202となり、12:10:39を過ぎても
+        waitingだった。12:14:00にready timeout相当で解放された。
+      </li>
+      <li>
+        12:10:42にも重複した後続Connectionがwaitingとなったが、12:10:58にclient DELETEで解放された。
+      </li>
+      <li>
+        12:20:58、先行Connectionが15分TTLでexpiredし、待機中の別Allocationがadmitされ、全Provider
+        probeが再び成功した。
+      </li>
+    </ul>
+  </section>
+
+  <section id="llm-result">
+    <h2>LLM再現結果</h2>
+    <p>
+      inspectionでは<code>ornith-general</code>がHOTだった。公開model
+      <code>ornith-1.5-35b</code>へ短いChat Completionsを送り、HTTP 200、JSON応答、
+      <code>finish_reason: stop</code
+      >、本文<code>OK</code>を確認した。対象時刻のAgent
+      ConnectionでもLLM semantic probeは成功している。LLM ProviderまたはHTTP接続の故障ではない。
+    </p>
+  </section>
+
+  <section id="asr-result">
+    <h2>ASR再現結果</h2>
+    <p>
+      inspectionでは<code>qwen-asr</code>がHOTで、Service Harness
+      healthはHTTP 200、model
+      <code>qwen3-asr-1.7b</code
+      >だった。既に稼働中の音声合成serviceで作った短い日本語音声 「今日は良い天気です」をService
+      Harnessの<code>/v1/audio/transcriptions</code>へ送り、HTTP
+      200、<code>application/json</code>、文字起こし「今日は良い天気です。」、language
+      <code>Japanese</code>を確認した。
+    </p>
+    <p>
+      対象のSAAA Connection系列ではsemantic probe以外のASR requestはLARMへ届いていない。
+      <code>target-speaker-empty</code
+      >でSAAAが音声を破棄した場合、その音声はLARM側では観測できず、 LARM ASRの失敗には分類できない。
+    </p>
+  </section>
+
+  <section id="required-fixes">
+    <h2>必要な修正</h2>
+    <ol>
+      <li>
+        SAAAのcreate requestを<code>profile: "SAAA"</code>へ統一し、canonical
+        <code>agentProfile</code
+        >と<code>explicitAgentProfile</code>を送らない。
+      </li>
+      <li>
+        SAAAのConnection
+        response型をLARMの公開契約へ合わせる。Providerは<code>model</code>と
+        <code>endpoint</code
+        >を読み、非公開の<code>route</code>と旧<code>publicModel</code>を要求しない。
+      </li>
+      <li>
+        readyになった同じConnectionをclaimし、create、poll、claimを一つの永続idempotency/session
+        ownerで single-flight化する。失敗またはcancel時は必ずDELETEする。
+      </li>
+      <li>
+        workspace mainの5分idle release実装を正規release手順でLARMへ配備する。稼働release
+        <code>0e92750</code>にはこの変更がない。
+      </li>
+      <li>
+        修正後に、create 202、poll ready、claim 200、claimed credentialによるLLMとASR、DELETE
+        204を一続きで canary確認する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="implemented-remediation">
+    <h2>実装した是正</h2>
+    <p>
+      SAAA
+      <code>main</code
+      >の<code>016081b</code>で、両方のAgent Connection
+      consumerを現行公開契約へ 移行した。既定値とcreate bodyは公開selector
+      <code>SAAA</code>を使用し、既存設定に保存された旧canonical
+      profileは対応する公開selectorへ安全に移行する。
+    </p>
+    <ul>
+      <li>
+        dynamic LAN consumerは<code>GET /v3/agent-profiles?profile=SAAA</code>から5
+        Provider構成を取得し、
+        全Providerがreadyかつclaimableであることを確認してから一意なLLMを選ぶ。
+      </li>
+      <li>
+        Connection
+        responseは<code>supportedCapabilities</code>、<code>endpoint</code>、<code>model</code>を読み、
+        非公開fieldへ依存しない。
+      </li>
+      <li>
+        create responseの型検証より先にboundedなConnection IDを回収し、残りのschemaが不正でも
+        best-effort DELETEを実行してAllocationを残さない。
+      </li>
+      <li>
+        会話session consumerは同じsession ownerと永続idempotency keyを維持し、LARMのidle release後は
+        次回利用時に再接続する。
+      </li>
+    </ul>
+    <p>
+      SAAAのstandalone session crateはclippyをwarning 0で通過し、unit・context
+      testは計29件成功した。 settings regression 7件とTypeScript typecheckも成功した。desktop
+      crate全体は、このLinux環境に
+      <code>pkg-config</code>とGTK開発packageがないためproject
+      sourceのcompile前に停止する。
+    </p>
+    <p>
+      LARM source側では、非同期202受付、最大3秒のbounded
+      <code>Prefer</code> wait、同一SAAA
+      sessionのsingle-flight、LLM・ASR・TTS無利用300秒後のbundle release、共有embedding常駐、
+      ContextStill再admitを実装済みである。全source・operation・document・type・531 unit・49
+      deployment testが成功した。次のgateはこのrevisionの正規配備と実環境canaryである。
+    </p>
+  </section>
+
+  <aside>
+    <p>
+      調査終了時のLARM activityはidle、active workloadは0だった。LARM
+      daemon、ASR、VOICEVOX、resident LLM、llama-swap
+      serviceのactive開始時刻に変化はなく、調査によるmodel切替やservice再起動はない。
+    </p>
+  </aside>
+</article>
