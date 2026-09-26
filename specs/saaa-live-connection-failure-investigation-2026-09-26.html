@@ -219,6 +219,13 @@
         会話session consumerは同じsession ownerと永続idempotency keyを維持し、LARMのidle release後は
         次回利用時に再接続する。
       </li>
+      <li>
+        配備後canaryで、daemonが採用したon-demand Provider
+        instanceが外部でCOLDへ変化した場合に、内部の
+        HOT記録だけを再利用して起動を省略する不整合を検出した。allocation時にbackendのinstance
+        healthを 再確認し、COLDなら同じrevisionを再loadするようinstance managerとllama-swap
+        backendを是正した。
+      </li>
     </ul>
     <p>
       SAAAのstandalone session crateはclippyをwarning 0で通過し、unit・context

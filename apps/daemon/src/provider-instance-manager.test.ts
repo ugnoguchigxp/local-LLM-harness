@@ -113,6 +113,55 @@ test("warm policy preserves a zero-reference resident instance", async () => {
   expect(manager.inspect()[0]?.warmRefs).toBe(1);
 });
 
+test("rechecks and recovers a managed instance that became cold outside the manager", async () => {
+  let status: ProviderInstance["status"] = "HOT";
+  let ensureCount = 0;
+  const instance = (revision: string): ProviderInstance => ({
+    id: "instance-recoverable",
+    runtimeId: runtime.id,
+    revision,
+    generation: 1,
+    node: runtime.node,
+    endpoint: runtime.deployment.endpoint,
+    backendEndpoint: runtime.deployment.endpoint,
+    status,
+    createdAt: new Date(0).toISOString(),
+  });
+  const backend: RuntimeBackend = {
+    list: async () => [],
+    health: async () => ({
+      runtimeId: runtime.id,
+      service: status === "COLD" ? "Stopped" : "Running",
+      listening: status !== "COLD",
+      healthOk: status !== "COLD",
+      busy: false,
+    }),
+    ensure: async () => { throw new Error("unexpected legacy ensure"); },
+    stop: async () => undefined,
+    ensureInstance: async (revision) => {
+      ensureCount += 1;
+      status = "HOT";
+      return instance(revision.revision);
+    },
+    healthInstance: async (id) => ({
+      ...instance(compileProviderRevision({ runtime, runtimeRelease: "release-a" }).revision),
+      id,
+      status,
+      service: status === "COLD" ? "Stopped" : "Running",
+      listening: status !== "COLD",
+      healthOk: status !== "COLD",
+      busy: false,
+    }),
+  };
+  const manager = new ProviderInstanceManager(backend, { idleTtlMs: 10_000 });
+  await manager.acquire(runtime, "allocation-a", "release-a");
+  status = "COLD";
+  await manager.acquire(runtime, "allocation-b", "release-a");
+  expect(ensureCount).toBe(2);
+  expect(manager.inspect()[0]?.instance.status).toBe("HOT");
+  manager.close();
+});
+
 test("one cancelled waiter does not cancel a shared ensure", async () => {
   let finish!: (instance: ProviderInstance) => void;
   const ensured = new Promise<ProviderInstance>((resolve) => { finish = resolve; });

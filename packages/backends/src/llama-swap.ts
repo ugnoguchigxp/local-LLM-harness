@@ -224,7 +224,16 @@ export class LlamaSwapBackend implements RuntimeBackend {
     const existing = [...this.instances.values()].find(
       (record) => record.instance.revision === revision.revision,
     );
-    if (existing) return existing.instance;
+    if (existing) {
+      const health = await this.health(runtime.id, signal);
+      const status = deriveStatus({ ...health, startingGraceExpired: false });
+      existing.instance.status = status;
+      if (status === "HOT" || status === "BUSY") return existing.instance;
+      await this.load(runtime, signal);
+      await this.waitHealthy(runtime, signal);
+      existing.instance.status = "HOT";
+      return existing.instance;
+    }
     const conflicting = [...this.instances.values()].find(
       (record) => record.instance.runtimeId === runtime.id,
     );

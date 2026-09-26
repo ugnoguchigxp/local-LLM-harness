@@ -79,6 +79,13 @@ export class ProviderInstanceManager {
       ? compileProviderRevision({ runtime, runtimeRelease })
       : compileProviderRevision({ runtime, release: runtimeRelease });
     let record = this.byRevision.get(revision.revision);
+    if (record && this.backend.healthInstance && this.backend.ensureInstance) {
+      const observed = await this.backend.healthInstance(record.instance.id);
+      record.instance.status = observed.status;
+      if (!["STARTING", "HOT", "BUSY"].includes(observed.status)) {
+        record.instance = await this.backend.ensureInstance(revision, runtime, signal);
+      }
+    }
     if (record?.instance.status === "FAILED" && this.referenceCount(record) === 0 && record.warmRefs === 0) {
       this.cancelIdle(record);
       if (await this.stopIfIdle(record.instance.id, record.instance.generation)) {
