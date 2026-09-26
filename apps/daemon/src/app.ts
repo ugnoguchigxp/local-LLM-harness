@@ -1960,10 +1960,20 @@ export function createAppComponents(deps: AppDeps) {
     const feature = agentFeature(c);
     if (feature instanceof Response) return feature;
     if (c.req.header("idempotency-key") !== undefined) {
+      deps.onEvent?.({
+        name: "agent_connection_claim_rejected",
+        labels: { status: "400", providers: "0", reason: "idempotency_key_forbidden" },
+      });
       return c.json(errorBody("invalid_request", "claim does not accept Idempotency-Key"), 400);
     }
     const parsed = agentConnectionClaimRequestSchema.safeParse(await readJson(c, controlMaxBodyBytes));
-    if (!parsed.success) return c.json(errorBody("invalid_request", "invalid claim request"), 400);
+    if (!parsed.success) {
+      deps.onEvent?.({
+        name: "agent_connection_claim_rejected",
+        labels: { status: "400", providers: "0", reason: "invalid_body" },
+      });
+      return c.json(errorBody("invalid_request", "invalid claim request"), 400);
+    }
     const result = await feature.claim(
       c.req.param("id"),
       agentRequestPrincipal(c),
@@ -1974,6 +1984,10 @@ export function createAppComponents(deps: AppDeps) {
       && Array.isArray(result.body.providers)
       ? result.body.providers
       : [];
+    const rejectionReason = typeof result.body === "object" && result.body !== null && "error" in result.body
+      && typeof result.body.error === "object" && result.body.error !== null && "code" in result.body.error
+      ? String(result.body.error.code)
+      : undefined;
     deps.onEvent?.({
       name: result.status === 200
         ? "agent_connection_claim_accepted"
@@ -1981,6 +1995,7 @@ export function createAppComponents(deps: AppDeps) {
       labels: {
         status: String(result.status),
         providers: String(providers.length),
+        ...(result.status === 200 ? {} : { reason: rejectionReason ?? "controller_rejected" }),
       },
     });
     return agentResult(c, result);

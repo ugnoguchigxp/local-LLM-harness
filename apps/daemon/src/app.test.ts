@@ -407,6 +407,50 @@ test("GET /health", async () => {
   expect(res.headers.get("x-larm-boot-epoch")).toBe("epoch-local");
 });
 
+test("claim request validation emits a reasoned rejection event", async () => {
+  const events: ControlEvent[] = [];
+  const { app } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog,
+    onEvent: (event) => events.push(event),
+  });
+  const headers = {
+    authorization: `Bearer ${agentApiToken}`,
+    "content-type": "application/json",
+  };
+
+  const forbiddenIdempotency = await app.request("/v1/agent-connections/not-real/claim", {
+    method: "POST",
+    headers: { ...headers, "idempotency-key": "claim-must-not-be-idempotent" },
+    body: JSON.stringify({ format: "openai-provider-v1" }),
+  });
+  expect(forbiddenIdempotency.status).toBe(400);
+  expect(await forbiddenIdempotency.json()).toEqual({
+    error: { code: "invalid_request", message: "claim does not accept Idempotency-Key" },
+  });
+
+  const invalidBody = await app.request("/v1/agent-connections/not-real/claim", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({}),
+  });
+  expect(invalidBody.status).toBe(400);
+  expect(await invalidBody.json()).toEqual({
+    error: { code: "invalid_request", message: "invalid claim request" },
+  });
+  expect(events.filter((event) => event.name === "agent_connection_claim_rejected")).toEqual([
+    {
+      name: "agent_connection_claim_rejected",
+      labels: { status: "400", providers: "0", reason: "idempotency_key_forbidden" },
+    },
+    {
+      name: "agent_connection_claim_rejected",
+      labels: { status: "400", providers: "0", reason: "invalid_body" },
+    },
+  ]);
+});
+
 test("v3 public profile selectors return exact provider and service endpoints with models", async () => {
   const configDir = join(import.meta.dir, "../../../config/local-node");
   const productionRegistry = loadRegistry(configDir);

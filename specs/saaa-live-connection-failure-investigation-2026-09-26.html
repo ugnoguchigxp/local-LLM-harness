@@ -243,6 +243,30 @@
     </p>
   </section>
 
+  <section id="claim-400-follow-up">
+    <h2>ready後claim HTTP 400の追跡</h2>
+    <p>
+      配備後の実機でready到達後のclaimがHTTP 400と報告された。現行LARMのclaim入口で400を返す条件は、
+      claimでは禁止される<code>Idempotency-Key</code>が付与された場合と、本文が厳密な
+      <code>{"format":"openai-provider-v1"}</code
+      >またはembedding専用formatのschemaに一致しない場合である。
+      controllerへ到達した後の状態不整合やformat不一致は400ではなく409となる。
+    </p>
+    <p>
+      調査時のLARM event logにはclaim 200が複数記録されていた一方、上記2つの400経路はevent発行前に
+      returnしており、従来ログだけでは区別できなかった。入口検証の拒否についても
+      <code>agent_connection_claim_rejected</code>を記録し、認証情報や本文を残さず、
+      <code>idempotency_key_forbidden</code
+      >または<code>invalid_body</code>のreasonを残すよう是正した。
+    </p>
+    <p>
+      SAAAはLARMのboundedなerror responseを読み、invalid claim body、禁止idempotency header、 claim
+      format不一致、未ready、期限切れを安全な個別診断codeへ変換する。さらにclaim HTTP 400でも
+      作成済みConnectionをDELETEし、解放失敗時だけretry可能なcleanup
+      handleを保持する回帰testを追加した。
+    </p>
+  </section>
+
   <aside>
     <p>
       調査終了時のLARM activityはidle、active workloadは0だった。LARM
