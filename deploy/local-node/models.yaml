@@ -1,6 +1,23 @@
 # Model binaries live under /srv/ai/models and are deliberately not part of this repository.
 # Pin the source revision here; record a checksum after each deliberate model replacement.
 models:
+  laya-multilingual:
+    kind: snapshot
+    role: evaluation-system-one
+    source: https://huggingface.co/convaiinnovations/laya
+    revision: 55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851
+    path: /srv/ai/models/laya-multilingual
+    totalBytes: 678201636
+    maxFiles: 5
+    snapshotDigest: f3db11bdcf3eb23c56453fadf4332cd4ba2dcbd095f5286ba015bf04936fcbaa
+    runtime: laya-0.3.20-cpu
+    files:
+      - { path: encoder/config.json, sourcePath: multilingual/encoder/config.json, bytes: 1938, sha256: 83f6916d13ef0f556ac461f28308dc2bffa7ebeadee8ec9e2db5812020ea5bb4 }
+      - { path: model.safetensors, sourcePath: multilingual/model.safetensors, bytes: 643835514, sha256: 9d628fd971b700382ac6f65920a86f149777b2e748e0c955fb3b19695aa8f204 }
+      - { path: rl_agent_config.json, sourcePath: multilingual/rl_agent_config.json, bytes: 472, sha256: 25061739243b617ad88d1219ba6f8a9c86c5881ca28df024fa2d9b3b2fcc30c6 }
+      - { path: tokenizer/tokenizer.json, sourcePath: multilingual/tokenizer/tokenizer.json, bytes: 34363188, sha256: 609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f }
+      - { path: tokenizer/tokenizer_config.json, sourcePath: multilingual/tokenizer/tokenizer_config.json, bytes: 524, sha256: 6c6b2d8e3c84ce0e671c129cd6b374b235d6f9863042a5836358d00a89bbb5a1 }
+
   multilingual-e5-small-onnx-qint8:
     kind: snapshot
     role: preferred-embedding

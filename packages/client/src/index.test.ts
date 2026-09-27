@@ -1168,6 +1168,57 @@ test("typed embedding client uses the claimed endpoint and semantic-space contra
   })).rejects.toMatchObject({ code: "embedding_dimension_mismatch", responseBody: undefined });
 });
 
+test("typed System One client uses the scoped endpoint and validates typed answers", async () => {
+  const expiresAt = "2026-08-28T00:05:00.000Z";
+  const provider = {
+    name: "system-one",
+    capability: "decision.system-one" as const,
+    apiStyle: "larm-system-one" as const,
+    protocol: "larm.system-one.v1" as const,
+    scheme: "http" as const,
+    host: "127.0.0.1",
+    port: 9810,
+    baseUrl: "http://127.0.0.1:9810/v1",
+    endpoint: "http://127.0.0.1:9810/v1/systemone",
+    model: "laya-multilingual",
+    health: {
+      url: "http://127.0.0.1:9810/v1/agent-connections/id/providers/system-one/health",
+      kind: "semantic-inference" as const,
+      maxAgeMs: 10_000 as const,
+    },
+    credential: { type: "bearer" as const, token: "larm_conn_v1.payload.signature", expiresAt },
+    configuration: {
+      kind: "larm-system-one-provider-v1" as const,
+      fields: { daemonURL: "http://127.0.0.1:9810/v1", model: "laya-multilingual" },
+      secretFields: { accessToken: "credential.token" as const },
+    },
+  };
+  const requests: Request[] = [];
+  const client = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    fetch: async (input, init) => {
+      requests.push(new Request(input.toString(), init));
+      return json({
+        model: "laya-multilingual",
+        answers: { intent: { type: "choice", choice: "refund", confidence: 0.8 } },
+        usage: { input_tokens: 12, output_tokens: 0 },
+      });
+    },
+  });
+  const request = {
+    model: "laya-multilingual",
+    state: "返金をお願いします",
+    questions: { intent: { type: "choice" as const, instructions: "分類", criteria: { refund: "返金", other: "その他" } } },
+  };
+  expect(await client.systemOne(provider, request)).toMatchObject({
+    model: "laya-multilingual",
+    answers: { intent: { choice: "refund" } },
+  });
+  expect(requests[0]?.url).toBe(provider.endpoint);
+  expect(requests[0]?.headers.get("authorization")).toBe(`Bearer ${provider.credential.token}`);
+  expect(await requests[0]!.clone().json()).toEqual(request);
+});
+
 test("agent connection polling deadline aborts an in-flight HTTP request", async () => {
   const connection = {
     id: "aconn_epoch-test_stalled",

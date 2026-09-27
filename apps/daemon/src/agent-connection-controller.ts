@@ -529,6 +529,35 @@ export class AgentConnectionController {
           },
         };
       }
+      if (provider.protocol === "larm.system-one.v1") {
+        return {
+          name: provider.name,
+          capability: "decision.system-one" as const,
+          apiStyle: "larm-system-one" as const,
+          protocol: "larm.system-one.v1" as const,
+          scheme,
+          host: base.hostname,
+          port,
+          baseUrl: found.audience.baseUrl,
+          endpoint: `${base.origin}/v1/systemone`,
+          model: provider.publicModel,
+          health: {
+            url: `${found.audience.baseUrl}/agent-connections/${found.id}/providers/${provider.name}/health`,
+            kind: "semantic-inference" as const,
+            maxAgeMs: 10_000 as const,
+          },
+          credential: {
+            type: "bearer" as const,
+            token: this.providerToken(found, provider.name, provider.capability),
+            expiresAt: found.expiresAt,
+          },
+          configuration: {
+            kind: "larm-system-one-provider-v1" as const,
+            fields: { daemonURL: found.audience.baseUrl, model: provider.publicModel },
+            secretFields: { accessToken: "credential.token" as const },
+          },
+        };
+      }
       return {
         name: provider.name,
         capability: provider.capability,

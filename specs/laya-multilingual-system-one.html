@@ -1,0 +1,63 @@
+<article lang="ja">
+  <h1>Gemma 4 26B SAAA profileへのLaya System One追加</h1>
+  <p>
+    明示selector <code>SAAA-gemma4-26b</code>のAgent Profileへ、Laya
+    0.3.20のmultilingual checkpointを第4 Providerとして追加する。既定profileと常駐Qwen 3.8
+    27Bは変更しない。
+  </p>
+  <h2>固定構成</h2>
+  <table>
+    <caption>
+      Laya System One Providerの固定値
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">項目</th>
+        <th scope="col">値</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Provider</th>
+        <td>
+          <code>system-one</code> / <code>decision.system-one</code>
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">公開protocol</th>
+        <td>
+          <code>larm.system-one.v1</code> / <code>POST /v1/systemone</code>
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">model</th>
+        <td>
+          <code>convaiinnovations/laya</code> revision
+          <code>55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851</code> の <code>multilingual</code>
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">runtime</th>
+        <td>Laya 0.3.20、PyTorch CPU、16 threads、同時推論1</td>
+      </tr>
+      <tr>
+        <th scope="row">lifecycle</th>
+        <td>preferred managed、profile未使用時は停止可能</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>境界</h2>
+  <p>
+    Layaは非自己回帰の型付き判断器であり、Chat Completionsとして公開しない。System One
+    endpointはAgent
+    Connectionで発行したProvider固有Bearerだけを受理し、固定model、question型、応答answer集合をGatewayで検証する。判断結果は補助信号であり、認可や不可逆操作の唯一の根拠にはしない。
+  </p>
+  <h2>E2E受入条件</h2>
+  <ol>
+    <li>全artifactがmanifestのbyte数とSHA-256に一致する。</li>
+    <li>ローカルcheckpointのみからhealthと日本語choice/noul推論が成功する。</li>
+    <li><code>SAAA-gemma4-26b</code>のclaimがasr、llm、system-one、ttsを返す。</li>
+    <li>Laya日本語判断とGemma短文生成が同じConnectionで成功する。</li>
+    <li>Connection release後に旧System One credentialがHTTP 401となる。</li>
+  </ol>
+</article>

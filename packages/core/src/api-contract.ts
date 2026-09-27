@@ -30,6 +30,7 @@ import {
   publicAgentProfileListV3Schema,
 } from "./agent-connection";
 import { embeddingRequestSchema, embeddingResponseSchema } from "./embedding";
+import { systemOneRequestSchema, systemOneResponseSchema } from "./system-one";
 import {
   musicArtifactMetadataSchema,
   musicFavoriteListSchema,
@@ -581,6 +582,7 @@ export const API_OPERATIONS = [
   ["post", "/v1/audio/transcriptions", "createTranscription"],
   ["post", "/v1/audio/speech", "createSpeech"],
   ["post", "/v1/embed", "createEmbedding"],
+  ["post", "/v1/systemone", "createSystemOneDecision"],
   ["get", "/v1/music/providers", "listMusicProviders"],
   ["post", "/v1/music/generations", "createMusicGeneration"],
   ["get", "/v1/music/generations/{id}", "getMusicGeneration"],
@@ -669,6 +671,7 @@ const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> =
   createTranscription: ["200"],
   createSpeech: ["200"],
   createEmbedding: ["200"],
+  createSystemOneDecision: ["200"],
   listMusicProviders: ["200"],
   createMusicGeneration: ["202"],
   getMusicGeneration: ["200"],
@@ -755,6 +758,7 @@ const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   createTranscription: "UpstreamJson",
   createSpeech: "Binary",
   createEmbedding: "EmbeddingResponse",
+  createSystemOneDecision: "SystemOneResponse",
   listMusicProviders: "MusicProviderList",
   createMusicGeneration: "MusicGenerationJob",
   getMusicGeneration: "MusicGenerationJob",
@@ -849,6 +853,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     AudioVoiceDiscovery: jsonSchema(audioVoiceDiscoverySchema),
     EmbeddingRequest: jsonSchema(embeddingRequestSchema),
     EmbeddingResponse: jsonSchema(embeddingResponseSchema),
+    SystemOneRequest: jsonSchema(systemOneRequestSchema),
+    SystemOneResponse: jsonSchema(systemOneResponseSchema),
     MusicGenerationRequest: jsonSchema(musicGenerationRequestSchema),
     MusicGenerationJob: jsonSchema(musicGenerationJobSchema),
     MusicProviderList: jsonSchema(musicProviderListSchema),
@@ -893,6 +899,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
       if (operationId === "createChatCompletion") return "ChatCompletionRequest";
       if (operationId === "createSpeech") return "AudioSpeechRequest";
       if (operationId === "createEmbedding") return "EmbeddingRequest";
+      if (operationId === "createSystemOneDecision") return "SystemOneRequest";
       if (operationId === "createMusicGeneration") return "MusicGenerationRequest";
       if (operationId === "claimAgentConnection") return "AgentConnectionClaimRequest";
       if (operationId === "renewAgentConnection") return "AgentConnectionRenewRequest";

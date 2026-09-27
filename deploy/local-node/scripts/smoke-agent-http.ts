@@ -89,6 +89,7 @@ function selectorForAgentProfile(agentProfile: string): AgentProfileSelectorId {
   if (agentProfile === "coding-default") return "vulnWorkbench";
   if (agentProfile === "contextstill-background") return "contextStill";
   if (agentProfile === "saaa-conversation-ornith15") return "SAAA";
+  if (agentProfile === "saaa-conversation-gemma4-26b-voice") return "SAAA-gemma4-26b";
   if (agentProfile === "saaa-conversation-ornith15-image") return "SAAA-w-Image";
   if (agentProfile === "saaa-conversation-ornith15-music") return "SAAA-w-music";
   if (agentProfile === "contextstill-embedding") return "embeddingCanary";

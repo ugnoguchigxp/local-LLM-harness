@@ -238,3 +238,11 @@ routes:
     candidates:
       - runtime: multilingual-e5-small
         purpose: primary
+
+  system-one-laya:
+    capabilities:
+      - decision.system-one
+    explicitOnly: true
+    candidates:
+      - runtime: laya-system-one
+        purpose: primary

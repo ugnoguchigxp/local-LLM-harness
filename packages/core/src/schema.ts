@@ -24,6 +24,7 @@ export const runtimeProtocolSchema = z.enum([
   "openai.audio-transcriptions.v1",
   "openai.audio-speech.v1",
   "larm.embedding.v1",
+  "larm.system-one.v1",
 ]);
 
 export const runtimeStatusSchema = z.enum([

@@ -65,7 +65,7 @@ test("loads the Linux production registry", () => {
   expect(realtimeTts?.capability).toContain("speech.tts");
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");
   for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd")) {
-    expect(runtime.policy.warm?.minInstances).toBe(1);
+    expect(runtime.policy.warm?.minInstances).toBe(runtime.id === "laya-system-one" ? 0 : 1);
   }
   expect(model35b?.policy).toEqual({
     class: "preferred",

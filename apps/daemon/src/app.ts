@@ -25,6 +25,7 @@ import {
   personalStateSubjectDigest,
   personalStateViewRequestSchema,
   embeddingRequestSchema,
+  systemOneRequestSchema,
   musicGenerationRequestSchema,
   prepareRequestSchema,
   releaseRequestSchema,
@@ -38,6 +39,7 @@ import {
   type Allocation,
   type AllocationRequest,
   type EmbeddingRequest,
+  type SystemOneRequest,
 } from "@larm/core";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import type { ControlEvent, ControlPlane } from "./controller";
@@ -681,10 +683,10 @@ export function createAppComponents(deps: AppDeps) {
         "generation attempts require an explicit allocation or claimed provider",
       ), 400);
     }
-    if (options.protocol === "larm.embedding.v1" && !scoped) {
+    if ((options.protocol === "larm.embedding.v1" || options.protocol === "larm.system-one.v1") && !scoped) {
       return c.json(errorBody(
         "connection_provider_token_required",
-        "embedding requests require a claimed provider bearer token",
+        "this endpoint requires a claimed provider bearer token",
       ), 401);
     }
     let chatRequest: unknown;
@@ -695,6 +697,8 @@ export function createAppComponents(deps: AppDeps) {
     let voicevoxOnlyParameter: string | undefined;
     let embeddingRequest: EmbeddingRequest | undefined;
     let embeddingRequestBytes: Uint8Array | undefined;
+    let systemOneRequest: SystemOneRequest | undefined;
+    let systemOneRequestBytes: Uint8Array | undefined;
     if (options.protocol === "larm.embedding.v1") {
       try {
         const bytes = await readBodyLimited(c.req.raw.clone() as unknown as Request, options.maxBodyBytes);
@@ -713,6 +717,20 @@ export function createAppComponents(deps: AppDeps) {
         if (error instanceof RequestBodyError) {
           return c.json(errorBody(error.code, error.message), error.status);
         }
+        return c.json(errorBody("bad_request", "request body must be valid UTF-8 JSON"), 400);
+      }
+    }
+    if (options.protocol === "larm.system-one.v1") {
+      try {
+        const bytes = await readBodyLimited(c.req.raw.clone() as unknown as Request, options.maxBodyBytes);
+        const parsed = systemOneRequestSchema.safeParse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+        if (!parsed.success) {
+          return c.json(errorBody("invalid_system_one_request", "model, state, and typed questions are required"), 400);
+        }
+        systemOneRequest = parsed.data;
+        systemOneRequestBytes = new TextEncoder().encode(JSON.stringify(parsed.data));
+      } catch (error) {
+        if (error instanceof RequestBodyError) return c.json(errorBody(error.code, error.message), error.status);
         return c.json(errorBody("bad_request", "request body must be valid UTF-8 JSON"), 400);
       }
     }
@@ -838,6 +856,8 @@ export function createAppComponents(deps: AppDeps) {
         let modelValues: unknown[] = [];
         if (options.protocol === "larm.embedding.v1") {
           modelValues = [scoped.provider.publicModel];
+        } else if (options.protocol === "larm.system-one.v1") {
+          modelValues = systemOneRequest ? [systemOneRequest.model] : [];
         } else if (options.protocol === "openai.chat-completions.v1") {
           modelValues = typeof chatRequest === "object" && chatRequest !== null && !Array.isArray(chatRequest)
             ? [(chatRequest as Record<string, unknown>).model]
@@ -1139,8 +1159,8 @@ export function createAppComponents(deps: AppDeps) {
     try {
       return await proxyGateway({
       request: c.req.raw,
-      ...((embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes)
-        ? { requestBody: embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes }
+      ...((systemOneRequestBytes ?? embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes)
+        ? { requestBody: systemOneRequestBytes ?? embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes }
         : {}),
       ...(contextViewId
         ? {
@@ -1253,6 +1273,7 @@ export function createAppComponents(deps: AppDeps) {
       ...(embeddingRequest && runtime.embedding
         ? { validateEmbeddingResponse: { request: embeddingRequest, space: runtime.embedding } }
         : {}),
+      ...(systemOneRequest ? { validateSystemOneResponse: { request: systemOneRequest } } : {}),
       revalidate: () => {
         if (providerToken && agentConnections) {
           try {
@@ -2237,6 +2258,13 @@ export function createAppComponents(deps: AppDeps) {
     upstreamPath: "/embed",
     bodyMode: "buffered",
     maxBodyBytes: deps.embeddingMaxBodyBytes ?? 2 * 1024 * 1024,
+  }));
+
+  app.post("/v1/systemone", (c) => handleGateway(c, {
+    protocol: "larm.system-one.v1",
+    upstreamPath: "/v1/systemone",
+    bodyMode: "buffered",
+    maxBodyBytes: 2 * 1024 * 1024,
   }));
 
   app.get("/v1/image-artifacts", async (c) => {

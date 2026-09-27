@@ -54,6 +54,7 @@ worker_35b_dir="$(target_path /srv/ai/models/qwen36-35b)"
 ornith_35b_dir="$(target_path /srv/ai/models/ornith15-35b)"
 tts_dir="$(target_path /srv/ai/models/qwen-tts)"
 embedding_dir="$(target_path /srv/ai/models/multilingual-e5-small-onnx-qint8)"
+laya_dir="$(target_path /srv/ai/models/laya-multilingual)"
 candidate_dir="$(target_path /srv/ai/apps/larm-candidates)"
 release_dir="$(target_path /srv/ai/apps/larm-releases)"
 release_inbox_dir="$(target_path /var/lib/larm/release-inbox)"
@@ -111,6 +112,7 @@ else
     whisper-asr.service
     qwen-tts.service
     larm-embedding.service
+    laya-system-one.service
     voicevox-tts.service
     larm-music-ace-step.service
     larm-image-qwen21.service
@@ -135,6 +137,7 @@ else
     "${ornith_35b_dir}"
     "${tts_dir}"
     "${embedding_dir}"
+    "${laya_dir}"
     "${staging_dir}"
     "${rollback_dir}"
     "${state_dir}"
@@ -362,7 +365,7 @@ systemctl_run daemon-reload
 systemctl_run enable "${enabled_units[@]}"
 if [[ "${install_scope}" == "all" ]]; then
   systemctl_run disable llama-server.service qwen-asr.service whisper-asr.service \
-    voicevox-tts.service qwen-tts.service larm-embedding.service \
+    voicevox-tts.service qwen-tts.service larm-embedding.service laya-system-one.service \
     larm-music-ace-step.service larm-image-qwen21.service
 fi
 

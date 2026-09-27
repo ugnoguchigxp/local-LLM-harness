@@ -10,7 +10,8 @@ polkit.addRule(function(action, subject) {
             "whisper-asr.service",
             "voicevox-tts.service",
             "qwen-tts.service",
-            "larm-embedding.service"
+            "larm-embedding.service",
+            "laya-system-one.service"
         ].indexOf(action.lookup("unit")) !== -1
         && ["start", "stop"].indexOf(action.lookup("verb")) !== -1
     ) {

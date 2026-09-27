@@ -19,6 +19,7 @@ export const agentProviderEndpointSchema = z.enum([
   "/v1/audio/transcriptions",
   "/v1/audio/speech",
   "/v1/embed",
+  "/v1/systemone",
 ]);
 
 export const agentProfileSelectorIdSchema = z.enum([
@@ -41,6 +42,7 @@ export function agentProviderEndpoint(protocol: RuntimeProtocol): z.infer<typeof
     case "openai.audio-transcriptions.v1": return "/v1/audio/transcriptions";
     case "openai.audio-speech.v1": return "/v1/audio/speech";
     case "larm.embedding.v1": return "/v1/embed";
+    case "larm.system-one.v1": return "/v1/systemone";
   }
 }
 
@@ -49,6 +51,7 @@ export const agentReadinessKindSchema = z.enum([
   "stt-transcription",
   "tts-speech",
   "embedding",
+  "system-one",
 ]);
 
 export const agentAudienceNetworkSchema = z.enum([
@@ -139,7 +142,8 @@ export const agentConnectionIdleReleaseSchema = z.object({
     "openai.chat-completions.v1",
     "openai.audio-transcriptions.v1",
     "openai.audio-speech.v1",
-  ])).min(1).max(3),
+    "larm.system-one.v1",
+  ])).min(1).max(4),
 }).strict().superRefine((value, context) => {
   const canonical = [...new Set(value.activityProtocols)].sort();
   if (JSON.stringify(canonical) !== JSON.stringify(value.activityProtocols)) {
@@ -351,6 +355,7 @@ function expectedReadiness(protocol: RuntimeProtocol): AgentReadinessKind {
   if (protocol === "openai.chat-completions.v1") return "llm-inference";
   if (protocol === "openai.audio-transcriptions.v1") return "stt-transcription";
   if (protocol === "larm.embedding.v1") return "embedding";
+  if (protocol === "larm.system-one.v1") return "system-one";
   return "tts-speech";
 }
 
@@ -1066,6 +1071,56 @@ export const embeddingAgentProviderDescriptorSchema = z.object({
   }
 });
 
+export const systemOneAgentProviderDescriptorSchema = z.object({
+  name: agentIdentifierSchema,
+  capability: z.literal("decision.system-one"),
+  apiStyle: z.literal("larm-system-one"),
+  protocol: z.literal("larm.system-one.v1"),
+  scheme: z.enum(["http", "https"]),
+  host: z.string().min(1).max(255),
+  port: z.number().int().min(1).max(65_535),
+  baseUrl: z.string().url(),
+  endpoint: z.string().url(),
+  model: agentIdentifierSchema,
+  health: z.object({
+    url: z.string().url(),
+    kind: z.literal("semantic-inference"),
+    maxAgeMs: z.literal(10_000),
+  }).strict(),
+  credential: z.object({
+    type: z.literal("bearer"),
+    token: z.string().min(1).max(4096),
+    expiresAt: z.string().datetime(),
+  }).strict(),
+  configuration: z.object({
+    kind: z.literal("larm-system-one-provider-v1"),
+    fields: z.object({ daemonURL: z.string().url(), model: agentIdentifierSchema }).strict(),
+    secretFields: z.object({ accessToken: z.literal("credential.token") }).strict(),
+  }).strict(),
+}).strict().superRefine((provider, context) => {
+  let baseUrl: URL;
+  let endpoint: URL;
+  try {
+    baseUrl = new URL(provider.baseUrl);
+    endpoint = new URL(provider.endpoint);
+  } catch {
+    return;
+  }
+  const port = baseUrl.port ? Number(baseUrl.port) : baseUrl.protocol === "https:" ? 443 : 80;
+  if (baseUrl.pathname !== "/v1" || baseUrl.search || baseUrl.hash || baseUrl.username || baseUrl.password) {
+    context.addIssue({ code: "custom", path: ["baseUrl"], message: "baseUrl must be a canonical /v1 URL" });
+  }
+  if (endpoint.origin !== baseUrl.origin || endpoint.pathname !== "/v1/systemone" || endpoint.search || endpoint.hash) {
+    context.addIssue({ code: "custom", path: ["endpoint"], message: "endpoint must be the base origin /v1/systemone" });
+  }
+  if (provider.scheme !== baseUrl.protocol.slice(0, -1) || provider.host !== baseUrl.hostname || provider.port !== port) {
+    context.addIssue({ code: "custom", path: ["baseUrl"], message: "scheme, host, and port must match baseUrl" });
+  }
+  if (provider.configuration.fields.daemonURL !== provider.baseUrl || provider.configuration.fields.model !== provider.model) {
+    context.addIssue({ code: "custom", path: ["configuration", "fields"], message: "configuration must match the claimed provider" });
+  }
+});
+
 export const agentConnectionClaimSchema = z.object({
   id: z.string().min(1).max(192),
   allocationId: z.string().min(1).max(192),
@@ -1074,6 +1129,7 @@ export const agentConnectionClaimSchema = z.object({
   providers: z.array(z.union([
     agentProviderDescriptorSchema,
     embeddingAgentProviderDescriptorSchema,
+    systemOneAgentProviderDescriptorSchema,
   ])).min(1).max(8),
   contextControl: z.object({
     contractVersion: z.literal("larm-personal-state.v1"),

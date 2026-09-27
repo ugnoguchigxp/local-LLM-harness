@@ -111,11 +111,48 @@ function fixture(protocol: AgentProviderProfile["protocol"], capability: string)
       ? "stt-transcription"
       : protocol === "larm.embedding.v1"
       ? "embedding"
+      : protocol === "larm.system-one.v1"
+      ? "system-one"
       : "tts-speech",
     ...(embeddingSpace ? { embeddingSpace } : {}),
   };
   return { registry, control, provider, setStatus: (value: "HOT" | "BUSY") => { status = value; } };
 }
+
+test("System One readiness sends and validates a fixed Japanese typed decision", async () => {
+  const { registry, control, provider } = fixture("larm.system-one.v1", "decision.system-one");
+  let observed: unknown;
+  const readiness = new SemanticReadiness({
+    control,
+    getRegistry: () => registry,
+    executionGate: new ExecutionGate(),
+    timeoutMs: 100,
+    fetchImpl: async (_input, init) => {
+      observed = JSON.parse(String(init?.body));
+      return Response.json({
+        model: "public-model",
+        answers: {
+          intent: {
+            type: "choice",
+            choice: "refund",
+            probabilities: { refund: 0.9, other: 0.1 },
+            confidence: 0.8,
+          },
+        },
+        usage: { input_tokens: 12, output_tokens: 0 },
+      });
+    },
+  });
+  expect(await readiness.check({ allocationId: "alloc", provider })).toMatchObject({
+    ready: true,
+    probe: { protocol: "larm.system-one.v1", validated: true },
+  });
+  expect(observed).toMatchObject({
+    model: "public-model",
+    state: "返品と返金をお願いします",
+    questions: { intent: { type: "choice" } },
+  });
+});
 
 function embeddingResponse(type: "query" | "passage", dimension = 384): Response {
   return Response.json({

@@ -107,6 +107,9 @@ export function parseRegistryDocuments(input: {
       if (runtime.protocol === "larm.embedding.v1") {
         return capability.startsWith("embedding.");
       }
+      if (runtime.protocol === "larm.system-one.v1") {
+        return capability === "decision.system-one";
+      }
       return capability.startsWith("speech.tts");
     });
     if (!compatible) {

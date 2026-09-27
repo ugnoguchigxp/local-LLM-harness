@@ -1,6 +1,15 @@
 # Runtime releases combine immutable artifact entries into one deployable unit.
 # Model data stays outside this repository; every artifact is pinned in models.yaml.
 runtimeReleases:
+  laya-system-one-current:
+    runtime: laya-system-one
+    artifacts:
+      - laya-multilingual
+    providerConfigRevision: laya-0.3.20-cpu-multilingual-v1
+    estimatedMemoryGB: 2
+    healthPath: /health
+    default: true
+
   multilingual-e5-small-current:
     runtime: multilingual-e5-small
     artifacts:

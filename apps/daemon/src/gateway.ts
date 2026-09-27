@@ -3,6 +3,7 @@ import {
   inspectEmbeddingResponse,
   inspectOpenAiChatCompletionJson,
   inspectOpenAiTranscriptionJson,
+  inspectSystemOneResponse,
   isOpenAiSpeechMediaType,
   OpenAiChatCompletionSseInspector,
   OpenAiChatCompletionSseNormalizer,
@@ -10,6 +11,7 @@ import {
   type RuntimeProtocol,
   type EmbeddingRequest,
   type EmbeddingSpace,
+  type SystemOneRequest,
 } from "@larm/core";
 import type { ControlEvent } from "./controller";
 import {
@@ -109,6 +111,7 @@ export type GatewayProxyOptions = {
     request: EmbeddingRequest;
     space: EmbeddingSpace;
   };
+  validateSystemOneResponse?: { request: SystemOneRequest };
   expectedSpeechFormat?: string;
   expectedModel?: string;
   maxResponseBytes?: number;
@@ -891,6 +894,27 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         inputType: options.validateEmbeddingResponse.request.type,
       },
     });
+    await finalizeAudit();
+    finish();
+    return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
+  }
+  if (options.validateSystemOneResponse && options.protocol === "larm.system-one.v1" && upstream.ok) {
+    if (upstream.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+      await upstream.body?.cancel(new Error("upstream did not return JSON")).catch(() => undefined);
+      return failure("upstream_response_format_mismatch", "upstream did not return application/json for a System One request", 502, "upstream_protocol_error");
+    }
+    let responseBody: Uint8Array;
+    let parsed: unknown;
+    try {
+      responseBody = await readBodyLimited(upstream as unknown as Request, options.maxResponseBytes ?? 2 * 1024 * 1024, abort.signal);
+      parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody)) as unknown;
+    } catch {
+      return failure("upstream_response_invalid", "upstream returned an invalid or oversized System One response", 502, "upstream_protocol_error");
+    }
+    const inspected = inspectSystemOneResponse({ value: parsed, request: options.validateSystemOneResponse.request });
+    if (!inspected.ok) {
+      return failure("upstream_response_invalid", `upstream System One response failed ${inspected.reason}`, 502, "upstream_protocol_error");
+    }
     await finalizeAudit();
     finish();
     return new Response(responseBody, { status: upstream.status, headers: responseHeaders });

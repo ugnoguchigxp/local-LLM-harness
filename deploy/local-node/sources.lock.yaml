@@ -1,6 +1,14 @@
 # Source/release identities used to reconstruct binaries under /srv/ai/apps.
 # No artifact from these projects is vendored into this repository.
 sources:
+  laya-system-one:
+    repository: https://github.com/NandhaKishorM/laya.git
+    revision: 55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851
+    version: 0.3.20
+    path: /srv/ai/apps/laya-system-one
+    python: "3.13"
+    wheelSha256: 6039e802fa5effb8dd492061cd7ad39a43087beadc4a4fa4a649614e77eb83d4
+
   local-llm:
     repository: https://github.com/ugnoguchigxp/local-llm.git
     revision: d2f40a755fdda85c87274b0724a62de7250d8526

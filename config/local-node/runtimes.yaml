@@ -539,3 +539,27 @@ runtimes:
       healthPort: 44512
       healthPath: /health
       endpoint: http://127.0.0.1:44512
+
+  laya-system-one:
+    artifacts:
+      - laya-multilingual
+    capability:
+      - decision.system-one
+    protocol: larm.system-one.v1
+    backend: systemd
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
+    resources:
+      estimatedMemoryGB: 2
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 16
+      queueTimeoutMs: 30000
+    deployment:
+      service: laya-system-one.service
+      healthPort: 8086
+      healthPath: /health
+      endpoint: http://127.0.0.1:8086

@@ -92,10 +92,11 @@ cmp --silent \
 systemctl_log="${test_root}/var/lib/larm/install-systemctl.log"
 grep -F "enable llama-swap-worker.service larm-daemon.service" \
   "${systemctl_log}" >/dev/null
-grep -F "disable llama-server.service qwen-asr.service whisper-asr.service voicevox-tts.service qwen-tts.service larm-embedding.service larm-music-ace-step.service larm-image-qwen21.service" \
+grep -F "disable llama-server.service qwen-asr.service whisper-asr.service voicevox-tts.service qwen-tts.service larm-embedding.service laya-system-one.service larm-music-ace-step.service larm-image-qwen21.service" \
   "${systemctl_log}" >/dev/null
 [[ -d "${test_root}/srv/ai/models/qwen-tts" ]]
 [[ -d "${test_root}/srv/ai/models/multilingual-e5-small-onnx-qint8" ]]
+[[ -d "${test_root}/srv/ai/models/laya-multilingual" ]]
 [[ -d "${test_root}/srv/ai/models/qwen36-35b" ]]
 [[ -d "${test_root}/srv/ai/models/ornith15-35b" ]]
 [[ "$(stat -c '%a' "${test_root}/var/lib/larm/inference-audit")" == "700" ]]
@@ -153,7 +154,7 @@ LARM_INSTALL_TEST_MODE=1 \
 [[ -f "${gateway_root}/etc/systemd/system/larm-inference-audit-prune.timer" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-release-activator.path" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-http-provider-monitor.timer" ]]
-for unit in llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service qwen-tts.service larm-embedding.service \
+for unit in llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service qwen-tts.service larm-embedding.service laya-system-one.service \
   voicevox-tts.service larm-music-ace-step.service larm-image-qwen21.service; do
   [[ ! -e "${gateway_root}/etc/systemd/system/${unit}" ]]
 done

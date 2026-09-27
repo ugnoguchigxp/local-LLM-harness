@@ -4,10 +4,12 @@ import {
   inspectEmbeddingResponse,
   inspectOpenAiChatCompletionJson,
   inspectOpenAiChatCompletionSse,
+  inspectSystemOneResponse,
   type EmbeddingRequest,
   type AgentProviderHealth,
   type AgentProviderProfile,
   type Registry,
+  type SystemOneRequest,
 } from "@larm/core";
 import type { ControlPlane } from "./controller";
 import type { ExecutionGate } from "./execution-gate";
@@ -29,6 +31,20 @@ const JSON_LIMIT = 65_536;
 const AUDIO_LIMIT = 1_048_576;
 
 type ProbeFormat = "json" | "sse" | "default" | "query" | "passage";
+
+function systemOneProbe(model: string): SystemOneRequest {
+  return {
+    model,
+    state: "返品と返金をお願いします",
+    questions: {
+      intent: {
+        type: "choice",
+        instructions: "問い合わせの意図を分類してください",
+        criteria: { refund: "返品または返金", other: "その他" },
+      },
+    },
+  };
+}
 
 type EmbeddingCapacity = NonNullable<AgentProviderHealth["capacity"]>;
 
@@ -392,6 +408,15 @@ export class SemanticReadiness {
         redirect: "manual",
       });
     }
+    if (provider.protocol === "larm.system-one.v1") {
+      return await (this.options.fetchImpl ?? fetch)(`${base}/v1/systemone`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(systemOneProbe(provider.publicModel)),
+        signal,
+        redirect: "manual",
+      });
+    }
     return await (this.options.fetchImpl ?? fetch)(`${base}/v1/audio/speech`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "audio/wav" },
@@ -439,6 +464,9 @@ export class SemanticReadiness {
         priority: "low",
       };
       return inspectEmbeddingResponse({ value, request, space: provider.embeddingSpace }).ok;
+    }
+    if (provider.protocol === "larm.system-one.v1") {
+      return inspectSystemOneResponse({ value, request: systemOneProbe(provider.publicModel) }).ok;
     }
     if (provider.protocol !== "openai.chat-completions.v1") return validTranscription(value);
     const inspected = inspectOpenAiChatCompletionJson(value);

@@ -62,9 +62,16 @@ agentProfiles:
         publishModel: false
         readiness: embedding
   saaa-conversation-gemma4-26b-voice:
-    description: Explicit SAAA evaluation preset with Gemma 4 26B-A4B, Qwen ASR, and VOICEVOX TTS only
+    description: Explicit SAAA evaluation preset with Gemma 4 26B-A4B, Laya multilingual System One, Qwen ASR, and VOICEVOX TTS
     schedulingPriority: 4000
-    idleRelease: *saaa-idle-release
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - larm.system-one.v1
+        - openai.audio-speech.v1
+        - openai.audio-transcriptions.v1
+        - openai.chat-completions.v1
     providers:
       - name: llm
         capability: llm.general
@@ -87,6 +94,12 @@ agentProfiles:
         publicModel: voicevox-core
         publishModel: false
         readiness: tts-speech
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-laya
+        publicModel: laya-multilingual
+        publishModel: false
+        readiness: system-one
   saaa-conversation-ornith15:
     description: SAAA base response set with resident Ornith 1.5 35B, Qwen 3.5 2B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding
     schedulingPriority: 4000

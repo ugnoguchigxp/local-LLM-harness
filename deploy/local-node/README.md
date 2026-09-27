@@ -198,10 +198,13 @@ consumerはclaimで返されたProviderごとのmodel、短期credential、Chat 
 session終了時にConnectionをreleaseします。
 
 Gemma 4 26B-A4Bを試験する場合は、明示selector `SAAA-gemma4-26b`を要求します。対応するAgent Profile
-`saaa-conversation-gemma4-26b-voice`は`llm`、`asr`、`tts`の3 Providerだけを含み、backchannelと
-embeddingを起動しません。Gemma runtimeは各256Kの2 session、plain decode、conversation swap group内のcanaryとして
+`saaa-conversation-gemma4-26b-voice`は`llm`、`asr`、`tts`に加えて、CPU上のLaya multilingualを
+`system-one` Providerとして含みます。backchannelとembeddingは起動しません。Layaは生成LLMではなく、claimで返る
+`/v1/systemone`へ型付きquestionを送る補助的な分類・スコアリングProviderです。Gemma runtimeは各256Kの2 session、plain decode、conversation swap group内のcanaryとして
 定義されており、既定profileや常駐modelを変更しません。artifactは`models.yaml`のrevision、size、SHA-256で
-固定されていますが、manifest追加だけではweightをdownloadせず、serviceも起動しません。
+固定されています。Laya artifactも同様にrevision、全ファイルのsize、SHA-256で固定し、serviceはprofile session中だけ
+managed起動します。実環境確認は`bun deploy/local-node/scripts/smoke-laya-profile.ts`で4 Providerのclaim、Laya日本語判定、
+Gemma生成、release後credential失効まで検証します。
 
 ## Media Runtime Variant
 

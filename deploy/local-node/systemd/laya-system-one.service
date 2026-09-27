@@ -1,0 +1,34 @@
+[Unit]
+Description=LARM Laya multilingual System One provider
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/larm-current/apps/laya-system-one
+Environment=HOME=/srv/ai/cache
+Environment=HF_HOME=/srv/ai/cache/huggingface
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+Environment=LAYA_MODEL_ROOT=/srv/ai/models/laya-multilingual
+Environment=LAYA_MODEL_REVISION=55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851
+Environment=LAYA_PUBLIC_MODEL=laya-multilingual
+Environment=LAYA_DEVICE=cpu
+Environment=LAYA_THREADS=16
+Environment=LAYA_MAX_CONCURRENT=1
+Environment=TOKENIZERS_PARALLELISM=false
+ExecStart=/srv/ai/apps/laya-system-one/.venv/bin/uvicorn laya_api:app --host 127.0.0.1 --port 8086 --workers 1
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=30
+LimitNOFILE=65535
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/srv/ai/cache /srv/ai/logs
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

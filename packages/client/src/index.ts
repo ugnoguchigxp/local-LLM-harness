@@ -39,6 +39,9 @@ import {
   embeddingAgentProviderDescriptorSchema,
   embeddingRequestSchema,
   inspectEmbeddingResponse,
+  inspectSystemOneResponse,
+  systemOneAgentProviderDescriptorSchema,
+  systemOneRequestSchema,
   type AgentConnectionClaim,
   type AudioSpeechRequest,
   type AudioVoiceList,
@@ -61,12 +64,18 @@ import {
   type ReleaseConvergenceStatus,
   type EmbeddingRequest,
   type EmbeddingResponse,
+  type SystemOneRequest,
+  type SystemOneResponse,
 } from "@larm/core";
 import { z } from "zod";
 
 export type EmbeddingAgentProvider = Extract<
   AgentConnectionClaim["providers"][number],
   { apiStyle: "larm-embedding" }
+>;
+export type SystemOneAgentProvider = Extract<
+  AgentConnectionClaim["providers"][number],
+  { apiStyle: "larm-system-one" }
 >;
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -940,6 +949,50 @@ export class LarmClient {
       clearTimeout(timeout);
       signal?.removeEventListener("abort", onAbort);
     }
+  }
+
+  async systemOne(
+    claimedProvider: SystemOneAgentProvider,
+    input: SystemOneRequest,
+    signal?: AbortSignal,
+  ): Promise<SystemOneResponse> {
+    const provider = systemOneAgentProviderDescriptorSchema.parse(claimedProvider);
+    const request = systemOneRequestSchema.parse(input);
+    const response = await this.fetchImpl(provider.endpoint, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${provider.credential.token}`,
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify(request),
+      redirect: "manual",
+      signal,
+    });
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel(new Error("provider redirect is forbidden")).catch(() => undefined);
+      throw new LarmApiError(502, "provider_redirect_forbidden", "System One provider returned a redirect");
+    }
+    const bytes = await this.readResponseLimited(response, 2 * 1024 * 1024);
+    let value: unknown;
+    try {
+      value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+    } catch {
+      throw new LarmApiError(502, "system_one_response_invalid", "System One provider returned invalid JSON");
+    }
+    if (!response.ok) {
+      const parsed = errorResponseSchema.safeParse(value);
+      throw new LarmApiError(
+        response.status,
+        parsed.success ? parsed.data.error.code : "system_one_http_error",
+        parsed.success ? parsed.data.error.message : `System One provider returned HTTP ${response.status}`,
+      );
+    }
+    const inspected = inspectSystemOneResponse({ value, request });
+    if (!inspected.ok) {
+      throw new LarmApiError(502, `system_one_${inspected.reason}`, "System One response does not match the request");
+    }
+    return inspected.response;
   }
 
   createChatCompletion(body: unknown, options: RequestOptions = {}): Promise<Response> {
