@@ -26,6 +26,14 @@ routes:
       - runtime: gemma4-conversation
         purpose: primary
 
+  llm-saaa-gemma4-26b:
+    capabilities:
+      - llm.general
+    explicitOnly: true
+    candidates:
+      - runtime: gemma4-26b-conversation
+        purpose: primary
+
   llm-saaa-ornith15:
     capabilities:
       - llm.general

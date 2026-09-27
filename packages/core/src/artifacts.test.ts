@@ -24,6 +24,7 @@ test("loads the production artifact manifest and builds pinned download URLs", (
   const gemmaBackchannel = artifacts.find((artifact) => artifact.id === "gemma3-1b-it-q4-k-m")!;
   const ornith35b = artifacts.find((artifact) => artifact.id === "ornith15-35b-quality")!;
   const ornith35bSpeed = artifacts.find((artifact) => artifact.id === "ornith15-35b-speed")!;
+  const gemma4_26b = artifacts.find((artifact) => artifact.id === "gemma4-26b-a4b-it-qat-q4-0")!;
   expect(isFileArtifact(primary)).toBe(true);
   if (
     !isFileArtifact(primary)
@@ -34,6 +35,7 @@ test("loads the production artifact manifest and builds pinned download URLs", (
     || !isFileArtifact(gemmaBackchannel)
     || !isFileArtifact(ornith35b)
     || !isFileArtifact(ornith35bSpeed)
+    || !isFileArtifact(gemma4_26b)
   ) {
     throw new Error("production GGUF artifacts must be files");
   }
@@ -92,6 +94,12 @@ test("loads the production artifact manifest and builds pinned download URLs", (
   expect(artifactDownloadUrl(ornith35bSpeed)).toContain(
     `/resolve/${ornith35bSpeed.revision}/Ornith-1.5-35B-A3B-ROCmFP4.gguf`,
   );
+  expect(gemma4_26b).toEqual(expect.objectContaining({
+    revision: "d1c082be9cf3c8a514acf63b8761f4b41935842e",
+    bytes: 14_439_363_584,
+    sha256: "3eca3b8f6d7baf218a7dd6bba5fb59a56ee25fe2d567b6f5f589b4f697eca51d",
+    quantization: "QAT-Q4_0",
+  }));
 });
 
 test("rejects unsafe artifact ids and non-absolute targets", () => {

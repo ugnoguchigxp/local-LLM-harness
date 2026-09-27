@@ -92,6 +92,15 @@ runtimeReleases:
     healthPath: /health
     default: true
 
+  gemma4-26b-conversation-canary-v1:
+    runtime: gemma4-26b-conversation
+    artifacts:
+      - gemma4-26b-a4b-it-qat-q4-0
+    providerConfigRevision: llama-swap-gemma4-26b-a4b-qat-q4-0-conversation-256k-p2-plain-v1
+    estimatedMemoryGB: 48
+    healthPath: /health
+    default: true
+
   ornith15-conversation-current:
     runtime: ornith15-conversation
     artifacts:

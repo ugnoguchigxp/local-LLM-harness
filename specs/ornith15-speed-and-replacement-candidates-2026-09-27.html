@@ -1,0 +1,237 @@
+<article lang="ja">
+  <h1>Ornith 1.5 高速化と80–100 tok/s代替候補調査 2026-09-27</h1>
+
+  <p>
+    Ryzen AI MAX+ 395／Radeon 8060S／121 GiB usable UMAのlocal-nodeで、Qwen 3.5 2Bと同居する main
+    LLMの体感改善を目的に、Ornith-1.5-35B-A3Bの追加高速化余地と別モデル候補を調査した。
+    結論は、Ornithの現行artifactを捨てずに新engineとMTP条件を隔離canaryで再測定し、それと並行して
+    汎用会話にはGemma 4 26B-A4B、plain
+    decodeの再現性にはQwen3-30B-A3B-Instruct-2507を比較する、である。
+  </p>
+
+  <aside>
+    <p>
+      <strong>重要:</strong> tok/sだけでは現在の使用感を説明できない。2026-09-27の既存調査では、
+      Qwen 2Bのloadやmemory不足ではなく、Ornithの単一実行slotが長い通常推論で占有され、SAAAの
+      全Provider ready gateがQwen 2Bのclaimまで待たせた。モデル比較と別にProvider subset readiness、
+      queue、first content token、不要reasoning量を測る。
+    </p>
+  </aside>
+
+  <section id="observed-baseline">
+    <h2>local-nodeの確定baseline</h2>
+    <table>
+      <caption>
+        同一hostで保存済みの実測
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">条件</th>
+          <th scope="col">結果</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Ornith ROCmFP4</th>
+          <td>MTP OFF、256-token coding</td>
+          <td>67.9 tok/s</td>
+          <td>現行engineのbare server基準</td>
+        </tr>
+        <tr>
+          <th scope="row">Ornith ROCmFP4</th>
+          <td>MTP n4／p0.6、同一条件</td>
+          <td>72.2 tok/s、acceptance 79.2%</td>
+          <td>現行production候補。90 tok/s gate未達</td>
+        </tr>
+        <tr>
+          <th scope="row">Ornith ROCmFP4</th>
+          <td>SAAA、thinking off</td>
+          <td>75.1 tok/s、TTFT 154.9 ms</td>
+          <td>短い実応答でも80 tok/s未達</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.5 2B Q4_K_M</th>
+          <td>512-token生成</td>
+          <td>実効112–122 tok/s</td>
+          <td>速度は十分。main LLMの代替には品質不足</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Ornith測定時は別のresident Providerを稼働させたままであり、完全分離値ではない。2026-09-27の
+      瞬間観測でもQwen3.8 resident processはHOTだったが、これはその時点の実行状態であり、
+      Ornith要求が別runtimeへ誤routeされた証拠ではない。今後の比較ではresident idle、Qwen 2B idle、
+      Qwen 2B同時decodeを別条件として記録する。
+    </p>
+  </section>
+
+  <section id="ornith-path">
+    <h2>Ornithを限界まで詰める経路</h2>
+    <p>
+      現行artifactは既に速度重視の<code>Q4_0_ROCMFP4_STRIX_LEAN</code>である。別quantへの横移動より、
+      engine更新、短いcontext tier、MTP探索、同時decode制御の順に試す価値が高い。
+      同一artifactの配布元測定はbare tg128 82.45 tok/sで、local-nodeの72.2 tok/sより約14%高い。
+      一方HaloFPXの別workloadではbare 76.0 tok/sに対しMTPが72.5–73.5 tok/sへ低下しており、
+      MTPは常に速いという前提を置けない。
+    </p>
+    <ol>
+      <li>
+        現行SHAを固定し、最新のStrix Halo向けVulkan buildでMTP OFF、n1、n2、n4／p0.6、adaptiveを
+        同じpromptとseedで比較する。平均tok/sだけでなくaccepted tokens per positionとwall
+        timeを見る。
+      </li>
+      <li>
+        128K residentとは別に32K／64Kの会話canaryを作る。weight速度は同じでもKV、prefill、first
+        content token、Qwen 2Bとの同居余裕を改善できる。
+      </li>
+      <li>
+        idle同居と同時decodeを分ける。Qwen 2Bが返答中はOrnith decodeを数百msだけ譲る、または
+        backchannelを先行してmain
+        LLMをqueueする方が、二processの無制御な同時decodeより体感を改善しやすい。
+      </li>
+      <li>
+        thinking offを通常会話で固定する。既存実測ではreasoning autoが512
+        tokensをreasoningだけで消費し、 表示本文へ到達しないrunがあった。
+      </li>
+    </ol>
+    <p>
+      期待値は短context・単独decodeで80–85 tok/s、Qwen 2B同時decode中はそれ未満と置く。 100
+      tok/sはadaptive speculationを含む外部報告があるが、prompt形状依存で、現行local
+      artifact／engineの 再現値とはまだ扱わない。
+    </p>
+  </section>
+
+  <section id="replacement-matrix">
+    <h2>別モデル候補</h2>
+    <table>
+      <caption>
+        同型Strix Haloの公開実測とlocal-node適合性
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">公開速度</th>
+          <th scope="col">長所</th>
+          <th scope="col">主なrisk</th>
+          <th scope="col">順位</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Gemma 4 26B-A4B IT QAT UD-Q4_K_XL + 専用MTP</th>
+          <td>direct 74.8、MTP server 102.7–110 tok/s</td>
+          <td>現行世代の汎用・reasoning・multimodal、約14.2 GB、公式MTP drafterあり</td>
+          <td>MTP値はserver workload。日本語、tool、長文、draft acceptanceの実機受入が必要</td>
+          <td><strong>汎用第一候補</strong></td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-30B-A3B-Instruct-2507 IQ4_XS</th>
+          <td>direct 100.0–103.2 tok/s</td>
+          <td>MTPなしでも目標域、約13.9 GB、汎用instruction model</td>
+          <td>旧世代。Ornithよりagent/coding品質を落とす可能性、IQ4のlocal品質確認が必要</td>
+          <td><strong>速度再現性第一候補</strong></td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-Coder 30B-A3B</th>
+          <td>Q4_K_S 98–101、UD-Q4_K_XL 96–97 tok/s</td>
+          <td>coding、agentic task、256K model context</td>
+          <td>雑談mainには専門化が過剰。speed quantとbalanced quantで品質差未確定</td>
+          <td>coding route第一候補</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM2.5 8B-A1B Q4_K_M</th>
+          <td>最新buildで171–176 tok/s</td>
+          <td>約5.1 GB、日本語対象、小型MoEで同居しやすい</td>
+          <td>local試験は69.89 tok/sで、256-token枠をreasoningだけで消費</td>
+          <td>速度scout、main不採用</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Qwen3.6-35B-A3B Q4_0は約81 tok/sの報告があり目標下限には入るが、local-nodeにはOrnithより
+      agent品質が低い比較fallbackとして既に位置づけられているため、優先して増やす候補ではない。
+    </p>
+  </section>
+
+  <section id="decision">
+    <h2>推奨する検証順</h2>
+    <ol>
+      <li>
+        <strong>A: Ornith canary。</strong> 同じartifactで新engine、32K／64K、MTP
+        OFF／n1／adaptiveを測る。 目標は単独p50 80 tok/s以上、Qwen
+        2B同時decode時の双方p95悪化20%以内、first content 300 ms以内。
+      </li>
+      <li>
+        <strong>B: Gemma 4 26B-A4B canary。</strong>
+        directと専用MTPを比較し、会話、tool、JSON、coding、 日本語長文のblind
+        fixtureでOrnithに対する品質差と回答完了wall timeを測る。
+      </li>
+      <li>
+        <strong>C: Qwen3-30B-A3B-Instruct-2507 canary。</strong> 80–100
+        tok/sを安定して満たすcontrolとし、 MTPに依存しないplain decodeの運用性を確認する。
+      </li>
+      <li>
+        coding用途が独立して大きい場合だけQwen3-Coderを追加する。main会話modelとの一本化はしない。
+      </li>
+    </ol>
+    <p>
+      採用判定はraw tg128だけにしない。同じSAAA fixtureでfirst content token、回答完了wall time、
+      visible tokens、reasoning tokens、tool成功率、queue時間、Qwen 2Bのbackchannel p95、peak
+      UMAを記録する。 main LLMの長い推論中でもQwen 2BだけをclaimできるProvider subset
+      contractを同時に検証する。
+    </p>
+  </section>
+
+  <section id="sources">
+    <h2>参照</h2>
+    <ul>
+      <li>
+        <a href="./ornith-1.5-35b-mtp-refresh-evaluation.html"
+          >local-node Ornith MTP refresh再評価</a
+        >
+      </li>
+      <li><a href="./qwen-3.5-2b-interaction-evaluation.html">local-node Qwen 3.5 2B評価</a></li>
+      <li>
+        <a href="./saaa-unit-provider-readiness-investigation-2026-09-27.html"
+          >SAAA readiness停止調査</a
+        >
+      </li>
+      <li>
+        <a href="https://huggingface.co/pugant/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN"
+          >Ornith ROCmFP4 artifactと同型host benchmark</a
+        >
+      </li>
+      <li>
+        <a href="https://github.com/julianmb/halofpx/blob/main/docs/BENCHMARKS.md"
+          >HaloFPX MTP benchmark</a
+        >
+      </li>
+      <li>
+        <a href="https://github.com/hogeheer499-commits/strix-halo-guide/blob/main/BENCHMARKS.md"
+          >Strix Halo再現benchmark集</a
+        >
+      </li>
+      <li>
+        <a href="https://huggingface.co/google/gemma-4-26B-A4B-it">Gemma 4 26B-A4B IT model card</a>
+      </li>
+      <li>
+        <a href="https://huggingface.co/google/gemma-4-26B-A4B-it-assistant"
+          >Gemma 4 MTP drafter model card</a
+        >
+      </li>
+      <li>
+        <a href="https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507"
+          >Qwen3-30B-A3B-Instruct-2507 model card</a
+        >
+      </li>
+      <li>
+        <a href="https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct"
+          >Qwen3-Coder-30B-A3B model card</a
+        >
+      </li>
+      <li><a href="https://huggingface.co/LiquidAI/LFM2.5-8B-A1B">LFM2.5-8B-A1B model card</a></li>
+    </ul>
+  </section>
+</article>

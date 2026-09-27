@@ -24,6 +24,7 @@ export const agentProviderEndpointSchema = z.enum([
 export const agentProfileSelectorIdSchema = z.enum([
   "contextStill",
   "SAAA",
+  "SAAA-gemma4-26b",
   "SAAA-w-Image",
   "SAAA-w-music",
   "vulnWorkbench",

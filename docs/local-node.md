@@ -60,6 +60,10 @@ a different declared Provider.
 
 - The SAAA Ornith profile selects the refreshed Ornith ROCmFP4 build. It uses the artifact whose SHA-256 is
   `0f907917a1bfe4e0ca0d281e5709dcf34b6277063e94fab29491bb5c80fda696`, 128K context, and MTP n4/p0.6.
+- `SAAA-gemma4-26b` is an explicit evaluation selector containing only Gemma 4 26B-A4B,
+  Qwen3-ASR, and VOICEVOX. It does not replace the default profile, add a backchannel model, or add
+  an embedding provider. The Gemma runtime starts with plain decoding and two 256K sessions
+  (`--ctx-size 524288 --parallel 2`); MTP is a later, separately qualified optimization.
 - Qwen 3.5 2B supplies short responses, backchannel decisions, and simple tool selection at 64K.
   Agent Connection owns its lifetime; it is not a separate boot-resident LLM.
 - Qwen 3.8 general and Agent workers are explicit routes used by matching workloads.

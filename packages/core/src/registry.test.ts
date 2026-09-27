@@ -331,6 +331,7 @@ test("production swap group matches llama-swap model membership", () => {
   const decisionDefaultCommand = configured.models["qwen35-decision"]?.cmd ?? "";
   const lfmBackchannelCommand = configured.models["lfm25-backchannel-jp"]?.cmd ?? "";
   const gemmaBackchannelCommand = configured.models["gemma3-backchannel"]?.cmd ?? "";
+  const gemma4_26bCommand = configured.models["gemma4-26b-conversation"]?.cmd ?? "";
   const agent35bCommand = configured.models["ornith15-35b-agent"]?.cmd ?? "";
   expect(ornithCommand).toContain("/srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server");
   expect(ornithCommand).toContain("Ornith-1.5-35B-Q5_K_M.gguf");
@@ -365,6 +366,14 @@ test("production swap group matches llama-swap model membership", () => {
   expect(contextStill64Command).toContain("--ctx-size 65536");
   expect(contextStill64Command).toContain("--batch-size 2048");
   expect(contextStill64Command).toContain("--ubatch-size 256");
+  expect(gemma4_26bCommand).toContain("gemma-4-26B_q4_0-it.gguf");
+  expect(gemma4_26bCommand).toContain("--ctx-size 524288");
+  expect(gemma4_26bCommand).toContain("--parallel 2");
+  expect(gemma4_26bCommand).toContain("--cache-type-k q4_0");
+  expect(gemma4_26bCommand).toContain("--cache-type-v q4_0");
+  expect(gemma4_26bCommand).toContain("--cont-batching");
+  expect(gemma4_26bCommand).toContain("--kv-unified");
+  expect(gemma4_26bCommand).not.toContain("draft-mtp");
   expect(efficientAgentCommand).toContain("--ctx-size 65536");
   expect(efficientAgentCommand).toContain(
     "Qwen3.8-27B-EfficientThink-SimPO-Q3-LynnStyle.gguf",

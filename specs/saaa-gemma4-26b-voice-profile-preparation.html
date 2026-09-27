@@ -1,0 +1,72 @@
+<article lang="ja">
+  <h1>SAAA Gemma 4 26B 音声プロファイル準備記録 2026-09-27</h1>
+
+  <p>
+    SAAAのGemma 4評価用に、既定構成から独立した明示選択プロファイルを用意する。
+    selectorは<code>SAAA-gemma4-26b</code>、Agent Profileは
+    <code>saaa-conversation-gemma4-26b-voice</code>とする。既定の
+    <code>SAAA</code> selectorと常駐LLMは変更しない。
+  </p>
+
+  <section id="provider-contract">
+    <h2>Provider契約</h2>
+    <table>
+      <caption>
+        Gemma 4評価用Agent Profileを構成する3 Provider
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Provider</th>
+          <th scope="col">実装</th>
+          <th scope="col">条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">llm</th>
+          <td>Gemma 4 26B-A4B IT QAT Q4_0</td>
+          <td>各256Kの2 session、reasoning off、plain decode</td>
+        </tr>
+        <tr>
+          <th scope="row">asr</th>
+          <td>Qwen3-ASR 1.7B</td>
+          <td>既存の音声認識routeを共有</td>
+        </tr>
+        <tr>
+          <th scope="row">tts</th>
+          <td>VOICEVOX</td>
+          <td>既存の通常音声routeを共有</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>backchannel、embedding、画像、音楽Providerはこのプロファイルに含めない。</p>
+  </section>
+
+  <section id="artifact-boundary">
+    <h2>Artifactと起動境界</h2>
+    <p>
+      GGUFはGoogleの公式repositoryのrevision
+      <code>d1c082be9cf3c8a514acf63b8761f4b41935842e</code>へ固定し、期待sizeを
+      <code>14439363584</code> byte、SHA-256を
+      <code>3eca3b8f6d7baf218a7dd6bba5fb59a56ee25fe2d567b6f5f589b4f697eca51d</code>とする。
+      配置先は<code>/srv/ai/models/gemma4-26b-a4b-it-gguf/gemma-4-26B_q4_0-it.gguf</code>である。 source
+      repositoryにはweightを含めず、manifestの登録だけではdownload、deploy、起動を行わない。
+    </p>
+    <p>
+      llama.cppのcontext poolは2
+      slotの合計として<code>--ctx-size 524288 --parallel 2</code>を確保する。 KV
+      cacheはq4_0、continuous batchingとunified
+      KVを使用し、LARM側も同時allocationとrequestを2に制限する。
+    </p>
+  </section>
+
+  <section id="initial-qualification">
+    <h2>初期qualification</h2>
+    <ol>
+      <li><strong>完了:</strong> artifactをstagingし、sizeとSHA-256を照合する。</li>
+      <li>plain decodeで起動、readiness、SSE終端、tool call、長文contextを検証する。</li>
+      <li>SAAA会話・tool・memory・security suiteと実機latencyをOrnithと同条件で比較する。</li>
+      <li>MTPは正しさと長時間sessionの合格後に別releaseとして追加する。</li>
+    </ol>
+  </section>
+</article>

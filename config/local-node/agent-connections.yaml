@@ -61,6 +61,32 @@ agentProfiles:
         publicModel: multilingual-e5-small
         publishModel: false
         readiness: embedding
+  saaa-conversation-gemma4-26b-voice:
+    description: Explicit SAAA evaluation preset with Gemma 4 26B-A4B, Qwen ASR, and VOICEVOX TTS only
+    schedulingPriority: 4000
+    idleRelease: *saaa-idle-release
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-saaa-gemma4-26b
+        publicModel: gemma4-26b-a4b
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 262144
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-qwen
+        publicModel: qwen3-asr-1.7b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
   saaa-conversation-ornith15:
     description: SAAA base response set with resident Ornith 1.5 35B, Qwen 3.5 2B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding
     schedulingPriority: 4000
@@ -347,6 +373,8 @@ profileSelectors:
     agentProfile: contextstill-background
   SAAA:
     agentProfile: saaa-conversation-ornith15
+  SAAA-gemma4-26b:
+    agentProfile: saaa-conversation-gemma4-26b-voice
   SAAA-w-Image:
     agentProfile: saaa-conversation-ornith15-image
     services:

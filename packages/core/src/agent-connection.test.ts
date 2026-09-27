@@ -34,6 +34,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     { id: "contextStill", agentProfile: "contextstill-background", services: [] },
     { id: "embeddingCanary", agentProfile: "contextstill-embedding", services: [] },
     { id: "SAAA", agentProfile: "saaa-conversation-ornith15", services: [] },
+    { id: "SAAA-gemma4-26b", agentProfile: "saaa-conversation-gemma4-26b-voice", services: [] },
     {
       id: "SAAA-w-Image",
       agentProfile: "saaa-conversation-ornith15-image",
@@ -73,6 +74,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "nightworker-background",
     "saaa-backchannel-default",
     "saaa-conversation-gemma4",
+    "saaa-conversation-gemma4-26b-voice",
     "saaa-conversation-ornith15",
     "saaa-conversation-ornith15-image",
     "saaa-conversation-ornith15-music",
@@ -276,6 +278,37 @@ test("production agent profiles compile to strict protocol-aware provider contra
         ],
       });
   }
+  expect(catalog.profiles.find((profile) => profile.id === "saaa-conversation-gemma4-26b-voice"))
+    .toMatchObject({
+      canonicalProfile: "saaa-conversation-gemma4-26b-voice",
+      selectionPolicy: "explicit-only",
+      schedulingPriority: 4000,
+      providers: [
+        {
+          name: "asr",
+          capability: "speech.stt",
+          route: "stt-qwen",
+          publicModel: "qwen3-asr-1.7b",
+        },
+        {
+          name: "llm",
+          capability: "llm.general",
+          route: "llm-saaa-gemma4-26b",
+          publicModel: "gemma4-26b-a4b",
+          contextWindow: {
+            maxTokens: 262_144,
+            outputReserveTokens: 4_096,
+            safetyMarginTokens: 1_976,
+          },
+        },
+        {
+          name: "tts",
+          capability: "speech.tts",
+          route: "tts-voicevox",
+          publicModel: "voicevox-core",
+        },
+      ],
+    });
   expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "gemma4-e4b"))
     .toMatchObject({
       capability: "llm.general",

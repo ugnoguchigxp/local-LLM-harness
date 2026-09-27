@@ -42,6 +42,12 @@ describe("runtime release catalog", () => {
       artifacts: ["gemma3-1b-it-q4-k-m"],
       estimatedMemoryGB: 3,
     });
+    expect(defaultRuntimeRelease(releases, "gemma4-26b-conversation")).toMatchObject({
+      id: "gemma4-26b-conversation-canary-v1",
+      artifacts: ["gemma4-26b-a4b-it-qat-q4-0"],
+      providerConfigRevision: "llama-swap-gemma4-26b-a4b-qat-q4-0-conversation-256k-p2-plain-v1",
+      estimatedMemoryGB: 48,
+    });
     expect(defaultRuntimeRelease(releases, "ornith15-35b")?.artifacts).toEqual([
       "ornith15-35b-quality",
     ]);

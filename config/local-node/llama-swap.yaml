@@ -317,6 +317,45 @@ models:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
 
+  gemma4-26b-conversation:
+    # Evaluation-only provider. Start with plain decoding; MTP remains disabled
+    # until the 26B server path passes correctness and long-session testing.
+    ttl: 0
+    cmd: >
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
+      -m /srv/ai/models/gemma4-26b-a4b-it-gguf/gemma-4-26B_q4_0-it.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --flash-attn on
+      --ctx-size 524288
+      --parallel 2
+      --batch-size 2048
+      --ubatch-size 512
+      --threads 16
+      --poll 100
+      --cache-type-k q4_0
+      --cache-type-v q4_0
+      --cont-batching
+      --kv-unified
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning off
+      --temp 0.6
+      --top-p 0.95
+      --top-k 64
+      --jinja
+      --context-shift
+      --cache-reuse 256
+      --metrics
+      --no-webui
+    aliases:
+      - gemma4-26b-a4b
+      - gemma4-26b-conversation-canary
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
   ornith15-conversation:
     # Candidate only: this model starts exclusively through the explicit SAAA
     # Agent Connection and remains loaded while that connection is renewed.
@@ -512,6 +551,7 @@ groups:
     swap: true
     exclusive: false
     members:
+      - gemma4-26b-conversation
       - gemma4-conversation
       - ornith15-conversation
 

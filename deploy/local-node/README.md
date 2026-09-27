@@ -197,6 +197,12 @@ SAAAは`saaa-qwen38`へfallbackし、claimに存在するProviderだけを使用
 consumerはclaimで返されたProviderごとのmodel、短期credential、Chat Completionsのcontext windowを使用し、
 session終了時にConnectionをreleaseします。
 
+Gemma 4 26B-A4Bを試験する場合は、明示selector `SAAA-gemma4-26b`を要求します。対応するAgent Profile
+`saaa-conversation-gemma4-26b-voice`は`llm`、`asr`、`tts`の3 Providerだけを含み、backchannelと
+embeddingを起動しません。Gemma runtimeは各256Kの2 session、plain decode、conversation swap group内のcanaryとして
+定義されており、既定profileや常駐modelを変更しません。artifactは`models.yaml`のrevision、size、SHA-256で
+固定されていますが、manifest追加だけではweightをdownloadせず、serviceも起動しません。
+
 ## Media Runtime Variant
 
 `music`と`image`は同じ`accelerator-media-heavy`排他groupに属し、同時には起動しません。
