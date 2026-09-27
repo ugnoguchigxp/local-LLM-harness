@@ -1,21 +1,21 @@
 # local-node: AI MAX+ 395 Linux provider
 
-`local-node` is the first Linux deployment of LARM. It keeps the interactive voice path hot
-while providing one resident Ornith 1.5 35B LLM, a session-scoped Qwen 3.5 2B response helper,
-and explicit Qwen 3.8 worker pools for background tasks.
+`local-node` is the first Linux deployment of LARM. Consumers request an Agent Profile and optional
+Provider subset; LARM resolves and operates the backing Providers according to the catalog and current
+resource policy. A process observed at a port is the result of the active workload, not the permanent
+identity of that port.
 
-## Desired runtime map
+## Provider listener map
 
-This table describes the repository-managed desired state. Check the live host with
-`systemctl is-active`, `systemctl is-enabled`, and `ss -ltnp`; do not infer current service
-state from this document alone.
+This table describes listener roles, not permanent model placement. Check the live binding through
+LARM state and Allocation or Agent Connection data before inspecting the selected backend process.
 
 | Port | Runtime | Policy | Purpose |
 | ---: | --- | --- | --- |
-| 8080 | Ornith-1.5-35B-A3B ROCmFP4 + MTP n4/p0.6 | resident | primary conversation/reasoning/coding, 128K |
+| 8080 | systemd-managed LLM Provider slot | managed | selected conversation/reasoning/coding runtime |
 | 8081 | Qwen3-ASR 1.7B FP16 | resident backup | explicit `stt-qwen` / default fallback |
 | 8082 | Qwen3-TTS 0.6B optimized | preferred | expressive speech |
-| 8083 | llama-swap | resident executor | session-scoped Qwen 2B 64K and on-demand Qwen 3.8 workers |
+| 8083 | llama-swap | resident executor | session-scoped and on-demand Provider runtimes |
 | 8084 | VOICEVOX CORE 0.17.0 | resident | low-latency speech |
 | 8085 | Whisper large-v3-turbo Q5 HIP | trial resident | primary Japanese transcription |
 | 9810 | LARM daemon | control plane | authenticated LAN Gateway |
@@ -52,14 +52,17 @@ The LLM transport is only OpenAI-compatible HTTP. Non-streaming requests return 
 requests return SSE from the same `/v1/chat/completions` endpoint. There is no native companion,
 custom subprotocol, acknowledgement/replay state, or separate streaming port.
 
-## Why this split
+## Current catalog choices
 
-- The refreshed Ornith ROCmFP4 build is the resident primary. It uses the artifact whose SHA-256 is
+The entries below describe the checked-in `local-node` catalog and measured artifacts. They are not
+invariants about which model must be running at inspection time; an active request can select and keep
+a different declared Provider.
+
+- The SAAA Ornith profile selects the refreshed Ornith ROCmFP4 build. It uses the artifact whose SHA-256 is
   `0f907917a1bfe4e0ca0d281e5709dcf34b6277063e94fab29491bb5c80fda696`, 128K context, and MTP n4/p0.6.
 - Qwen 3.5 2B supplies short responses, backchannel decisions, and simple tool selection at 64K.
   Agent Connection owns its lifetime; it is not a separate boot-resident LLM.
-- Qwen 3.8 is no longer the resident default. Its general and Agent workers remain explicit,
-  on-demand routes for background compatibility.
+- Qwen 3.8 general and Agent workers are explicit routes used by matching workloads.
 - `UD-Q4_K_XL` is the quality-oriented 256K worker and `Q4_0` is its faster fallback.
   Both are loaded through llama-swap only when needed.
 - Ornith-1.5-35B-A3B uses the official Q5_K_M artifact for the quality route and the

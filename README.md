@@ -27,6 +27,12 @@ Client / Agent
 
 公開APIではリクエスト本文の `model` を、事前登録された一つの capability と routeへ解決します。Model Brokerが内部Allocationを取得し、一度選んだランタイムをリクエスト完了まで固定します。未登録modelや許可されていないfallbackは推論開始前に拒否します。
 
+Providerの実体は固定のモデル・ポート対応表ではありません。要求された公開modelまたはAgent Profileから
+Provider subset、route、runtime、backendの順に解決され、LARMが必要なProviderを起動、維持、置換、停止します。
+同じhostの同じportやsystemd unitで、直前とは異なるProviderが稼働していても、それだけでは設定不整合では
+ありません。現在の意図と実体を調べる場合は、プロセス一覧だけでなくAllocation／Agent Connectionのbindingと
+解決されたruntimeを確認します。
+
 ## 主な概念
 
 | 用語 | 意味 |
@@ -164,30 +170,15 @@ LARM_MODEL=coding-default bun quickstart.ts
 
 Model Brokerが内部Allocationの取得・固定・解放を行います。明示Allocationは管理・高度用途にだけ残します。LLM全文を待たず句単位でTTSを開始する音声例は [`examples/voice-client.ts`](examples/voice-client.ts) にあります。
 
-## Qwen 3.8通常ProviderとManaged Context
+## 動的ProviderとManaged Context
 
-永続KV snapshot方式は実機でtool結果後の再要求が`503 model_loading_timeout`になることを確認したため廃止しました。
-専用公開model、Agent Profile、route、runtime、release、snapshot storeは存在しません。SAAAは通常のresident
-Qwen 3.8を使用し、Managed Contextが必要な場合もsource本文をrequestへ再構築する方式だけを使用します。
+公開model、Agent Profile、Provider subset、優先度、利用可能な資源から、要求ごとに使用するruntimeが
+決まります。consumerは個別Providerのmodel path、内部port、現在のプロセスを前提にせず、Gatewayまたは
+claimで返されたProviderごとのbase URL、model、短期credential、context windowを使用します。
+具体的なmodelとrouteの対応はREADMEへ複製せず、実行中daemonの`GET /v1/models`、Agent Profile catalog、
+Allocation bindingを正とします。
 
-| 用途 | 公開model | 内部route / runtime | KV方式 |
-| --- | --- | --- | --- |
-| SAAA Qwen 3.8 | `qwen3.8` | `llm-saaa-qwen38` / `qwen-general` | resident通常推論 |
-| ContextStill | `qwen-agent-worker` | `llm-agent-worker` / `qwen-worker-agent` | 従来KV |
-| 通常の既定利用 | `coding-default` | `llm-default` / `qwen-general` | 常駐Provider |
-
-SAAAのProvider設定では、既存のbase URLとBearerを維持してmodelだけを明示します。
-
-```json
-{
-  "model": "qwen3.8",
-  "messages": [{ "role": "user", "content": "質問" }],
-  "stream": true
-}
-```
-
-通常Providerのcontext windowは262,144 token、実入力上限は225,280 token、output reserveは32,768 token、
-safety marginは4,096 token、同時実行数は1です。Managed Contextは別機能です。事前provision済みsourceを
+Managed Contextでは、事前provision済みsourceを
 `POST /v1/contexts`へ登録して、同じAllocationへ`POST /v1/context-views`でViewをbindします。Chat requestには
 `x-larm-allocation-id`、`x-larm-capability: llm.coding`、`x-larm-context-view-id`をすべて指定します。
 Viewは一回だけconsumeされ、principal、model、runtime release、Allocation、期限が違えばfail closedで拒否されます。

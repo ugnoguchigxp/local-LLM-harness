@@ -194,18 +194,14 @@ curl -sS 'http://127.0.0.1:9810/v1/audio/voices?model=voicevox-core' \
 ```
 
 公開modelは、deprecatedでないAgent ProfileのLLM・ASR・TTS Providerから構築します。
-同じ公開modelを異なるrouteまたは異なる優先度へ重複定義した場合は起動時に拒否します。既定の
-`coding-default`はResident Qwen 3.8 27Bへ、`qwen-nightworker`と`qwen-agent-worker`は明示選択のworker
-routeへ解決します。優先度はSAAA 3000、NightWorker 2000、ContextStill 1000です。実行中requestは
-preemptせず、解放後の次枠を高い値から選び、同値はFIFOです。
+同じ公開modelを異なるrouteまたは異なる優先度へ重複定義した場合は起動時に拒否します。modelまたは
+Agent Profileの要求はProvider subset、route、runtime、backendへ解決され、必要なProvider processを
+起動、維持、置換、停止します。内部portや現在のprocessは解決結果であり、公開modelの恒久的なidentityでは
+ありません。実行中requestはpreemptせず、解放後の次枠をpriority順に選び、同値はFIFOです。
 
-## SAAA Qwen 3.8 Provider経路
+## Managed Context Provider経路
 
-公開model `qwen3.8`は、明示専用route `llm-saaa-qwen38`からresident `qwen-general`だけへ
-解決します。廃止した永続KV snapshot経路や他workerへのfallbackはありません。
-通常の`coding-default`も同じResidentを維持します。
-
-Model Broker経由の通常Chatはresident hostで通常推論します。
+Model Broker経由の通常Chatは、要求から解決されたruntimeで推論します。
 Managed Contextをmaterializeするrequestは、明示Allocationと同じprincipalでContext Viewを作成し、Chatへ
 `x-larm-allocation-id`、`x-larm-capability`、`x-larm-context-view-id`を渡します。controllerはViewを
 Allocation、runtime、release、model binding、TTL、lease epochへbindし、一回だけconsumeします。
@@ -260,7 +256,10 @@ LLM Gatewayは、`POST /v1/chat/completions`の`stream: false`にはJSON、`stre
 OpenAI互換SSE (`text/event-stream`) を返します。低遅延応答は同じHTTP接続上のSSE deltaを
 逐次転送して実現します。
 
-追加27Bは`route`へ`llm-speed`、公式Q5_K_MのOrnith 35Bは`llm-35b`、ROCmFP4速度版は`llm-35b-speed`を明示した場合だけ選択されます。比較用Qwen3.6-35Bは`llm-qwen36-35b`で固定できます。`llm-default`はswapせずResident 27Bへ固定されます。fallbackはrequestで`allowFallback: true`を指定した場合だけ許可されます。同じworker swap groupの別Runtimeにactive Allocationがある場合もpreemptしません。既定の`capacityPolicy: reject`は拒否し、`capacityPolicy: wait`はTTL内で優先度付き待機列へ入ります。
+利用可能なrouteとruntime候補は起動中daemonのcatalogを正とし、READMEへ固定対応表を複製しません。
+fallbackはrequestで`allowFallback: true`を指定した場合だけ許可されます。同じswap groupの別Runtimeに
+active Allocationがある場合もpreemptしません。既定の`capacityPolicy: reject`は拒否し、
+`capacityPolicy: wait`はTTL内で優先度付き待機列へ入ります。
 
 ## Agent Connection API
 

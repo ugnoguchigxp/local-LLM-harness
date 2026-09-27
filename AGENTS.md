@@ -2,7 +2,14 @@
 
 ## Project overview
 
-local-LLM-harness (LARM) is the Linux-first control plane for local AI runtimes, with `local-node` as its neutral deployment profile. Keep inference engines and model weights outside this source-only repository.
+local-LLM-harness (LARM) is the Linux-first, demand-driven control plane for local AI runtimes, with `local-node` as its neutral deployment profile. A consumer requests an Agent Profile and its Provider services; LARM resolves the required runtimes and dynamically starts, keeps warm, replaces, or stops the backing Provider processes according to lifecycle, resource, priority, and swap-group policy. A port, systemd unit, or currently running model is therefore current execution state, not a permanent Provider identity. Keep inference engines and model weights outside this source-only repository.
+
+## Provider lifecycle premise
+
+- Treat the requested Agent Profile and Provider subset as the source of intent. Trace profile -> route -> runtime -> backend before deciding which model should be running.
+- Do not infer a configuration fault merely because a currently running process differs from another profile's desired model. It may legitimately serve the active workload, such as a ContextStill request.
+- When investigating a model or concurrency issue, distinguish the current workload, the resolved runtime, the live backend process, and the repository's possible runtime definitions. Only call their difference drift after proving that the active request resolves to a different runtime than the process serving it.
+- Evaluate session capacity against the runtime that LARM would resolve for the named request, including its context size, slot count, KV cache, lifecycle, and competing Providers. Do not substitute whichever model happens to be running at inspection time.
 
 ## Commands
 

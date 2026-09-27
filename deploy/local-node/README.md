@@ -16,7 +16,7 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/configure-larm-lan-access.sh`: 現在のLAN prefixを動的検出し、LANから9810だけを許可するplan・apply・rollback
 - `scripts/configure-saaa-rest-access.sh`: 旧exact-host ruleの互換運用・rollback用
 - `scripts/restore-dhcp.sh`: legacy LARM固定address overlayをattended Netplanで除去してDHCPを検証
-- `scripts/install-services.sh`: unitをinstallし、Resident/controlだけをenableする（restartなし）。
+- `scripts/install-services.sh`: unitをinstallし、supervisor/controlだけをenableする（restartなし）。
   `LARM_INSTALL_SCOPE=gateway`ではLARM Gatewayだけをinstall・enableし、既存Provider unitを変更しない
 - `scripts/preflight-larm.sh`: secretを含めないread-only commissioning inventory
 - `scripts/backup-host-state.sh`: installed unitとcurrent pointerのdigest付きoperator backup
@@ -28,7 +28,7 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/rollback-larm-release.sh`: candidate codeをroot実行せず前世代へatomic rollback
 - `scripts/release-larm.sh`: 新Controller移行前の既存世代向けlegacy release helper
 - `scripts/verify.sh`: GPU, service, HTTP health, and memory checks
-- `scripts/smoke-larm.sh`: Resident 27B固定のAllocation、stream、release smoke
+- `scripts/smoke-larm.sh`: catalogから解決されたLLMのAllocation、stream、release smoke
 - `scripts/smoke-agent-http.ts`: 任意のAgent Profileに対するHTTP JSON/SSE・解放・token失効smoke
 - `scripts/smoke-http-provider-live.ts`: Bearer＋modelだけでLLM JSON/SSE、ASR、TTSを検証するlive smoke
 - `scripts/monitor-http-provider-soak.ts`: 同一Provider世代の定期smokeを永続集計し、失敗と観測gapを保持
@@ -71,8 +71,8 @@ capture, and the persistent hourly `larm-inference-audit-prune.timer` enforces t
 10 GiB, and minimum-free-space bounds even after daemon downtime. Audit payloads are not part of
 release or host-state backups. The prune service reads only the audit settings and key; API,
 management, and Agent Connection credentials remain outside its environment.
-個別Provider unitはinstallのみ行い、boot時はdisableのままです。Ornith、ASR、TTS、Embeddingのhost daemonは
-LARMのmanaged warm policy（`minInstances: 1`）で起動・維持します。常駐する`llama-swap-worker.service`は
+個別Provider unitはinstallのみ行い、boot時はdisableのままです。Providerのhost daemonは
+LARMのlifecycle policyとAgent Profile要求に従って起動・維持・停止します。常駐する`llama-swap-worker.service`は
 Provider supervisorであり、検証済みreleaseから`/var/lib/larm/provider-config/llama-swap.yaml`へ原子的に
 公開された設定を`--watch-config`で追跡します。LARMは同梱のpolkit ruleによりProvider serviceのstart / stopを
 無人実行できます。VRAMを共有するllama-swap内部model entryは全同時warmにはせず、Profile参照に従って
@@ -80,7 +80,7 @@ load／unloadします。Embeddingモデルは
 `intfloat/multilingual-e5-small` revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`の
 ONNX/QInt8 snapshotへ固定され、artifact stagingが全6ファイルのsize・SHA-256・snapshot digestを検証します。
 
-`ornith-general`はloopbackのOpenAI互換HTTP endpointへ接続し、GatewayがJSONまたはSSEとして転送します。
+選択されたLLM ProviderはloopbackのOpenAI互換HTTP endpointへ接続し、GatewayがJSONまたはSSEとして転送します。
 公開data planeはHTTPだけです。`saaa-desktop`の
 `host-private` Audienceも標準HTTPの`baseUrl`だけを返します。LAN境界外へ公開する場合は、LARM service
 userが読める証明書と秘密鍵の絶対pathを`/etc/larm/larm.env`の`LARM_TLS_CERT_FILE`と
@@ -181,18 +181,17 @@ deploy/local-node/scripts/smoke-larm.sh
 # deploy/local-node/scripts/canary-gate.sh
 ```
 
-## SAAA Ornith 35B + Qwen 2B基本応答セットの運用
+## SAAA基本応答セットの運用
 
-SAAAの標準会話LLMは公開model `ornith-1.5-35b`です。`llm-saaa-ornith15`は
-systemd管理の`ornith-general`だけへ解決され、Aug-24 MTP refresh後のROCmFP4 artifact、128K
-context、MTP n4/p0.6を使用します。`coding-default`も同じresident Ornithへ解決されます。
-旧Qwen 3.8は常駐せず、ContextStillやNightWorkerの明示的なworker routeで必要時だけloadします。
+SAAAはAgent Profileと必要なProvider subsetを要求します。LARMはその時点のcatalog、priority、resource
+policyからrouteとruntimeを解決し、必要なProviderを準備します。SAAAは特定の内部port、systemd unit、
+起動済みprocessをモデルidentityとして扱いません。
 
-SAAA session全体はAgent Profile `saaa-conversation-ornith15`を選択します。旧client向けの
+現在のcatalogでOrnith構成を使用する場合、Agent Profile `saaa-conversation-ornith15`を選択します。旧client向けの
 `saaa-qwen38`はGemma 4構成のfrozen legacy profileとして内容を変更せず残します。一つの
 Agent Connectionが`tts`（VOICEVOX）、`asr`（Qwen3 ASR）、`backchannel`（Qwen 3.5 2B、64K）、
 `embedding`（multilingual E5）、`llm`（Ornith 1.5 35B、128K）を同じTTLへ固定します。Qwen 2Bは
-profile session中だけ維持し、常駐Qwen 3.8はありません。新profileがcatalogにない旧LARMへ接続する場合、
+profile session中だけ維持します。新profileがcatalogにない旧LARMへ接続する場合、
 SAAAは`saaa-qwen38`へfallbackし、claimに存在するProviderだけを使用します。`llm`だけを必須とし、
 `backchannel`がなければ短応答も`llm`へ送ります。
 consumerはclaimで返されたProviderごとのmodel、短期credential、Chat Completionsのcontext windowを使用し、

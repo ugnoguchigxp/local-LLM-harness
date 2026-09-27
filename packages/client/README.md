@@ -53,7 +53,7 @@ if (health.status !== "ok" || readiness.status !== "ready") {
 
 const models = await larm.listOpenAiModels();
 if (!models.data.some(({ id }) => id === "coding-default")) {
-  throw new Error("Resident Qwen model is not available");
+  throw new Error("Requested public model is not available");
 }
 for await (const event of larm.streamChatCompletion({
   model: "coding-default",
@@ -92,17 +92,18 @@ function contextStillModel(promptTokens: number, maxOutputTokens: number): strin
 }
 ```
 
-## SAAA Qwen 3.8選択
+## SAAA Provider選択
 
-SAAAは`qwen3.8`を明示します。これは標準`qwen-worker-fast`（Qwen 3.8 27B Q4_0、225K、MTP）専用の通常modelで、廃止した
-永続KV snapshot Providerやworker Providerへのfallbackはありません。
+SAAAは対象Agent Profileを作成し、必要なProvider subsetを指定します。特定のモデル、内部runtime、portを
+clientへ固定せず、claimで返された`model`、`baseUrl`、短期credential、context windowを使用します。
+次は、claimで`qwen3.8`が返された場合の通常Chat例です。
 
 ```ts
 for await (const event of larm.streamChatCompletion({
   model: "qwen3.8",
   messages: [{ role: "user", content: "hello" }],
 })) {
-  // Q4_0 128K + MTP workerで通常Chatとして実行される。
+  // 実体のruntimeはLARMが要求とpolicyから解決する。
 }
 ```
 
