@@ -238,6 +238,16 @@
       backchannel-onlyとllm-onlyは別Connectionとして安全に併存できる。空集合、重複、8件超はrequest
       schemaで拒否し、Profileに存在しない名前は<code>400 unknown_connection_provider</code>で拒否する。
     </p>
+    <p>
+      実機subset検証後に残ったOrnithの同一Provider競合も是正した。Ornithは
+      <code>maxConcurrentRequests: 1</code
+      >だけで複数Allocationを許していたため、優先度4000のSAAAと
+      優先度3000の通常OpenAI要求が同じ非プリエンプティブrequest queueへ入っていた。Qwen
+      3.8系と同じく
+      <code>maxConcurrentAllocations: 1</code>を設定し、競合をrequest実行後ではなくAllocation
+      admissionで 解決する。これによりSAAA Connection作成時に実行中の低優先度Allocationをlifecycle
+      preemptionし、 SAAAが保持する間は新しい低優先度Allocationをwaitingに留める。
+    </p>
   </section>
 
   <section id="acceptance">

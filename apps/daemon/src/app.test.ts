@@ -2092,6 +2092,84 @@ test("SAAA preempts ordinary foreground and background work and retains priority
   expect(ensured).toEqual(["foreground", "saaa", "nightworker"]);
 });
 
+test("SAAA exclusively reserves a resident single-slot runtime before request execution", async () => {
+  const residentRegistry: Registry = {
+    nodes: [{
+      id: "local-node",
+      endpoint: "http://127.0.0.1",
+      resources: { memoryTotalGB: 100, reservedMemoryGB: 16 },
+    }],
+    profiles: [],
+    runtimes: [{
+      id: "ornith",
+      capability: ["llm.general"],
+      protocol: "openai.chat-completions.v1",
+      backend: "systemd",
+      node: "local-node",
+      policy: { class: "resident" },
+      resources: {
+        estimatedMemoryGB: 40,
+        maxConcurrentAllocations: 1,
+        maxConcurrentRequests: 1,
+        maxQueuedRequests: 16,
+        queueTimeoutMs: 120_000,
+      },
+      deployment: {
+        service: "ornith.service",
+        healthPort: 8080,
+        endpoint: "http://127.0.0.1:8080",
+      },
+    }],
+    routes: [
+      {
+        id: "llm-default",
+        capabilities: ["llm.general"],
+        explicitOnly: false,
+        candidates: [{ runtime: "ornith", purpose: "primary" }],
+      },
+      {
+        id: "llm-saaa",
+        capabilities: ["llm.general"],
+        explicitOnly: true,
+        candidates: [{ runtime: "ornith", purpose: "primary" }],
+      },
+    ],
+  };
+  const runtimeProbe = probe("ornith", true);
+  const backend = stubBackend(new Map([["ornith", runtimeProbe]]), { ensure: [], stop: [] });
+  const observer = new Observer(residentRegistry, backend);
+  await observer.tick();
+  const control = new ControlPlane(residentRegistry, backend, observer, {
+    pollIntervalMs: 1,
+    providerSwitchHoldMs: 0,
+  });
+  const request = (route: string, client: string, priority: number) => ({
+    requirements: [{ capability: "llm.general", route }],
+    client,
+    allowFallback: false,
+    ttlSeconds: 600,
+    deploymentPolicy: "existing-only" as const,
+    priority,
+    capacityPolicy: "wait" as const,
+  });
+
+  const ordinary = await control.allocate(request("llm-default", "openai-http", 3_000));
+  expect(ordinary.body).toMatchObject({ status: "ready", priority: 3_000 });
+  const ordinaryId = (ordinary.body as { id: string }).id;
+  const ordinarySignal = control.getAllocationSignal(ordinaryId);
+
+  const saaa = await control.allocate(request("llm-saaa", "saaa-desktop", 4_000));
+  expect(ordinarySignal?.aborted).toBeTrue();
+  expect(control.getAllocation(ordinaryId)).toMatchObject({
+    status: "released",
+    error: { code: "foreground_preempted" },
+  });
+  expect(saaa.body).toMatchObject({ status: "ready", priority: 4_000 });
+
+  const blockedOrdinary = await control.allocate(request("llm-default", "openai-http", 3_000));
+  expect(blockedOrdinary.body).toMatchObject({ status: "waiting", priority: 3_000 });
+});
+
 test("control plane bounds active allocations even when runtime capacity is unbounded", async () => {
   const { app } = await makeApp(true, false, { maxActiveAllocations: 1 });
   const create = () => app.request("/v1/allocations", {

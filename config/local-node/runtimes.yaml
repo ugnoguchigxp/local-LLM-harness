@@ -27,6 +27,10 @@ runtimes:
         - source-rebuild
     resources:
       estimatedMemoryGB: 40
+      # Ornith exposes one llama.cpp execution slot. Keep allocation ownership
+      # exclusive as well so SAAA priority can preempt or fence lower-priority
+      # OpenAI requests before they contend in the non-preemptive request queue.
+      maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16
       queueTimeoutMs: 120000

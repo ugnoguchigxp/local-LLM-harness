@@ -53,6 +53,10 @@ test("loads the Linux production registry", () => {
   expect(registry.nodes[0]?.id).toBe("local-node");
   expect(general?.backend).toBe("systemd");
   expect(general?.policy.class).toBe("resident");
+  expect(general?.resources).toMatchObject({
+    maxConcurrentAllocations: 1,
+    maxConcurrentRequests: 1,
+  });
   if (general?.backend === "systemd") {
     expect(general.deployment.healthPort).toBe(8080);
     expect(general.deployment.endpoint).toBe("http://127.0.0.1:8080");
