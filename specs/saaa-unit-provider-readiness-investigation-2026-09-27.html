@@ -1,0 +1,273 @@
+<article lang="ja">
+  <h1>SAAA単体Providerテストの300秒ready停止 調査結果</h1>
+
+  <dl>
+    <dt>調査日時</dt>
+    <dd>2026-09-27 JST</dd>
+    <dt>接続先</dt>
+    <dd><code>http://192.168.0.130:9810</code></dd>
+    <dt>稼働release</dt>
+    <dd><code>30188f79294128d9a1d7399e84924b7ef8811246</code></dd>
+    <dt>config revision</dt>
+    <dd><code>3d34751b93a255df305f97af07e988a639d6f6d7d357d2e55f5b432c6fc9b05b</code></dd>
+    <dt>調査制約</dt>
+    <dd>保存済み設定、Provider定義、service状態を変更せず、credentialと推論本文を記録しない。</dd>
+  </dl>
+
+  <section id="conclusion">
+    <h2>結論</h2>
+    <ol>
+      <li>
+        300秒停止の直接原因は<code>ornith-general</code>のsemantic probeが
+        <code>provider_busy</code
+        >になり続けたことである。モデル未ロード、メモリ不足、Qwen 2Bの起動失敗ではない。
+      </li>
+      <li>
+        <code>SAAA</code>はASR、backchannel、embedding、LLM、TTSの5
+        Providerを一つのAllocationと Connectionへ束ねる。Connectionは5 Providerすべてのsemantic
+        probeが成功するまで
+        <code>probing</code
+        >のままで、credentialを一つもclaimできない。この全体ready gateが、既にreadyな Qwen
+        2Bの単体利用をOrnithの空き待ちへ結合している。
+      </li>
+      <li>
+        失敗回のQwen 2B probeは約80から187
+        msで繰り返し成功した。Ornithは常駐かつhealth正常だったが、
+        <code>maxConcurrentRequests: 1</code
+        >の実行slotを長い通常推論が連続して占有し、non-queuing probeが 毎秒拒否された。
+      </li>
+      <li>
+        <code>qwen3.5-2b-fast-response</code>の直接Chat Completionsが
+        <code>model_not_found</code>となるのは現行設定どおりである。このmodelは
+        <code>publishModel: false</code>で、Agent
+        Connectionのclaimから返された短期credential専用である。
+      </li>
+      <li>
+        物理リソース枯渇は観測されなかった。調査時の<code>MemAvailable</code>は約88
+        GiBで、Ornithは resident processとして稼働し、Qwen 2BはSAAA
+        Allocationでloadされた後、Connection解放に伴い停止した。
+        競合していたのは主にOrnithの実行slotと、Qwen 2Bの単一Allocation枠である。
+      </li>
+    </ol>
+  </section>
+
+  <section id="provider-status">
+    <h2>Provider別の観測結果</h2>
+    <table>
+      <caption>
+        失敗したSAAA Connectionの初回readiness
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Provider</th>
+          <th scope="col">Runtime</th>
+          <th scope="col">観測</th>
+          <th scope="col">readyへの影響</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">asr</th>
+          <td><code>qwen-asr</code></td>
+          <td>probe成功</td>
+          <td>妨げていない</td>
+        </tr>
+        <tr>
+          <th scope="row">backchannel</th>
+          <td><code>qwen35-decision</code></td>
+          <td>load成功、probe約80から187 msで反復成功</td>
+          <td>妨げていない</td>
+        </tr>
+        <tr>
+          <th scope="row">embedding</th>
+          <td><code>multilingual-e5-small</code></td>
+          <td>probe成功</td>
+          <td>妨げていない</td>
+        </tr>
+        <tr>
+          <th scope="row">llm</th>
+          <td><code>ornith-general</code></td>
+          <td>通常推論が実行slotを占有し、probeは<code>provider_busy</code></td>
+          <td>唯一の阻害要因</td>
+        </tr>
+        <tr>
+          <th scope="row">tts</th>
+          <td><code>voicevox-tts</code></td>
+          <td>probe成功</td>
+          <td>妨げていない</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="timeline">
+    <h2>失敗回の時系列</h2>
+    <ol>
+      <li>
+        09:59:59.174 JST、公開model <code>coding-default</code>の通常推論が
+        <code>ornith-general</code>で開始した。
+      </li>
+      <li>
+        10:00:13.373、SAAAの5 Provider Allocationを作成した。10:00:14.381にConnection createは HTTP
+        202を返し、10:00:15.682にAllocation自体はreadyとなった。起動待ちは約2.3秒である。
+      </li>
+      <li>
+        10:00:17.020以降、Qwen 2B probeは成功した一方、Ornith probeは毎秒
+        <code>probe_busy</code>となった。
+      </li>
+      <li>
+        最初のOrnith通常推論は10:02:46.649に完了したが、10:02:46.684に次の通常推論が開始し、
+        空き時間は約35 msしかなかった。1秒pollのsemantic probeはこの間にslotを取得できなかった。
+      </li>
+      <li>
+        10:05:11.917、SAAAがstartup timeout後にConnectionをDELETEし、10:05:11.920にHTTP
+        204で解放した。
+        Allocation作成から解放までは約298.5秒だった。二本目のOrnith通常推論はその後の10:05:39.363に完了した。
+      </li>
+    </ol>
+    <p>
+      成功回では、Ornithの通常推論が09:56:58.619に完了し、09:57:00.949に同じSAAA Connectionをclaim、
+      09:57:01.000からQwen 2Bを実行して09:57:02.274にHTTP
+      200で完了した。次のConnectionも即時readyとなり、
+      Ornith推論が成功した。モデルの成否が不安定なのではなく、probe時点でOrnith
+      slotが空くかどうかが差である。
+    </p>
+  </section>
+
+  <section id="mechanism">
+    <h2>コード上の発生機構</h2>
+    <ul>
+      <li>
+        Agent Connection
+        healthはProfile内Providerを順にprobeし、<code>every(provider.ready)</code>だけを
+        aggregate readyとする。
+      </li>
+      <li>
+        semantic readinessはBUSYかつ10秒以内の成功cacheがない場合、通常queueへ入らず
+        <code>provider_busy</code>を返す。失敗cacheは1秒なので、Connection
+        background loopは毎秒同じ判定を繰り返す。
+      </li>
+      <li>
+        初回全Provider成功まではConnectionが<code>probing</code>から<code>ready</code>へ遷移せず、claimは
+        <code>connection_not_ready</code>となる。既定ready deadlineは300秒である。
+      </li>
+      <li>
+        Qwen 2BはSAAA
+        ConnectionのAllocationが<code>maxConcurrentAllocations: 1</code>を保持するため、同じruntimeを
+        別の直接model
+        requestや単体Connectionから使う要求も待機する。全体ready待ちがQwen側の個別経路も占有する。
+      </li>
+    </ul>
+  </section>
+
+  <section id="reproduction">
+    <h2>再現手順</h2>
+    <ol>
+      <li>
+        <code>coding-default</code>へ300秒近く継続するChat Completionsを開始し、
+        <code>ornith-general</code>の唯一の実行slotを占有する。
+      </li>
+      <li>
+        その間に<code>profile: "SAAA"</code>、<code>audience: "saaa-desktop"</code>、
+        <code>deploymentPolicy: "existing-only"</code>でAgent Connectionを作る。
+      </li>
+      <li>
+        Connection resourceをpollする。Allocationはreadyになるが、公開phaseは
+        <code>probing</code>に留まる。
+      </li>
+      <li>
+        Connection healthを確認する。backchannel、ASR、embedding、TTSはreadyで、LLMだけが
+        <code>reason: "provider_busy"</code>となる。
+      </li>
+      <li>
+        Ornithの通常推論を切れ目なく継続すると、SAAA側の300秒上限で
+        <code>larm_startup_timeout</code>となり、DELETEでAllocationが解放される。
+      </li>
+    </ol>
+  </section>
+
+  <section id="required-remediation">
+    <h2>LARM側で必要な修正</h2>
+    <ol>
+      <li>
+        <strong>優先:</strong> Agent Connection
+        createへProfile内Providerの明示的なsubset選択を追加する。
+        省略時は従来どおり全Providerとし、例えば<code>providers: ["backchannel"]</code>または
+        <code>providers: ["llm"]</code
+        >なら、そのProviderだけをallocate、probe、claimする。 selector
+        <code>SAAA</code
+        >と保存済み設定は変更せず、単体テストだけがsubsetを要求できる形にする。
+      </li>
+      <li>
+        subsetはProfileに存在するProvider名だけを許可し、空集合、重複、未知名をHTTP 400で拒否する。
+        idempotency hash、公開Connection response、claim、renew、release、priority、idle
+        releaseにも選択集合を含める。
+      </li>
+      <li>
+        Connectionのaggregate phaseと各Provider進捗を観測可能にする。GET responseで各Providerの
+        <code>reason</code
+        >または最後のprobe結果を公開し、consumerが単なる<code>probing</code>から
+        <code>provider_busy</code>、load中、contract
+        mismatchを区別できるようにする。
+      </li>
+      <li>
+        BUSY時のsemantic保証は別途見直す。固定Bindingで直近の実推論成功とbackend
+        healthが確認できる場合に、
+        10秒cache失効だけで初回Connectionを300秒阻害すべきかを再設計する。ただし、古い成功を無期限にready扱いする
+        変更は故障を隠すため、subset対応とは分離し、最大ageとbinding/release一致を明示する。
+      </li>
+      <li>
+        <code>qwen3.5-2b-fast-response</code>を通常model
+        catalogへ安易に公開しない。現行のlifecycleと短期credential境界を
+        維持し、直接利用が必要ならsubset Agent Connection経由に統一する。
+      </li>
+    </ol>
+  </section>
+
+  <section id="implemented-remediation">
+    <h2>実装した是正</h2>
+    <p>
+      Agent Connection createへ任意の<code>providers</code>
+      fieldを追加した。selector
+      <code>SAAA</code
+      >と保存済み設定を維持したまま、要求されたProviderだけをallocate、probe、claimする。
+      field省略時は従来どおりProfile内の全Providerを対象とするため、既存の会話session契約は変わらない。
+    </p>
+    <p>
+      選択集合はProfile定義順へ正規化し、idempotency hashとsession scopeへ含める。同じclientでも
+      backchannel-onlyとllm-onlyは別Connectionとして安全に併存できる。空集合、重複、8件超はrequest
+      schemaで拒否し、Profileに存在しない名前は<code>400 unknown_connection_provider</code>で拒否する。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>修正の受入条件</h2>
+    <ul>
+      <li>
+        Ornithで300秒の通常推論中でも、SAAA backchannel-only
+        Connectionがbounded時間でready、claim、Qwen 2B応答へ進む。
+      </li>
+      <li>Qwen 2Bが利用中でも、SAAA llm-only ConnectionはQwenのAllocationやprobeを要求しない。</li>
+      <li>
+        Provider subset省略時のSAAA会話sessionは従来どおり5 Provider atomic
+        readyと一括claimを維持する。
+      </li>
+      <li>
+        失敗時とcancel時は選択subsetのAllocationを必ずDELETEし、未claim Connectionを残さない。
+      </li>
+      <li>
+        direct model catalogでは非公開modelが引き続き404となり、claimed
+        requestだけが短期credentialで成功する。
+      </li>
+    </ul>
+  </section>
+
+  <aside>
+    <p>
+      調査では保存済み設定、Agent Profile、Provider、systemd
+      serviceを変更していない。進行中の利用を妨げないため、 追加のlive
+      Connectionは作成せず、既存実行のHTTP event、allocation event、execution gate
+      event、process、health、 memory状態を読み取り専用で照合した。
+    </p>
+  </aside>
+</article>

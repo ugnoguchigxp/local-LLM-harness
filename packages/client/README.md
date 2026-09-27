@@ -33,6 +33,10 @@ Allocation、Gateway、管理APIは引き続き認証必須です。`getHealth()
 headerを送らず、host到達不能とhost非readyを分離します。最後に観測したresponse headerは
 `observedConfigRevision`と`observedBootEpoch`で確認できます。
 
+Agent Connection作成時の`providers`は任意です。省略時はProfile全体を準備し、指定時はそのProviderだけを
+allocate、semantic probe、claimします。たとえばSAAAの単発LLM実行は`providers: ["llm"]`、短い応答だけなら
+`providers: ["backchannel"]`を指定すると、無関係なProviderのbusy状態にreadyが阻害されません。
+
 ```ts
 const gatewayUrl = process.env.LARM_BASE_URL;
 if (!gatewayUrl) throw new Error("LARM_BASE_URL must come from host discovery or operator configuration");

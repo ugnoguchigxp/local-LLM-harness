@@ -490,9 +490,10 @@ agentProfiles:
     </p>
     <p>
       <code>contextWindow</code>はProfile直下ではなく、Chat Completions
-      Providerごとの任意fieldです。音声Providerには付けません。複数Providerを持つProfileは一つの
-      Connectionとして一括claimし、consumerは<code>providers</code>から<code>name</code>で必要なProviderを
-      選びます。Connection作成時にProvider subsetだけを要求するwire fieldはありません。
+      Providerごとの任意fieldです。音声Providerには付けません。複数Providerを持つProfileは既定では一つの
+      Connectionとして一括claimします。特定用途が一部のProviderだけを必要とする場合は、作成requestの
+      <code>providers</code
+      >でsubsetを指定でき、そのProviderだけをallocate、probe、claimします。
     </p>
 
     <h3>Request</h3>
@@ -502,10 +503,10 @@ Idempotency-Key: agent-task-0182
 Content-Type: application/json
 
 {
-  "agentProfile": "saaa-qwen38",
-  "explicitAgentProfile": true,
+  "profile": "SAAA",
   "audience": "saaa-desktop",
   "client": "saaa-desktop",
+  "providers": ["backchannel"],
   "ttlSeconds": 900,
   "allowFallback": false,
   "deploymentPolicy": "existing-only"
@@ -523,19 +524,9 @@ Content-Type: application/json
       </thead>
       <tbody>
         <tr>
-          <th scope="row"><code>agentProfile</code></th>
-          <td>任意</td>
-          <td>
-            省略時は<code>defaultAgentProfile</code>。非既定Profileは明示選択時だけ指定
-          </td>
-        </tr>
-        <tr>
-          <th scope="row"><code>explicitAgentProfile</code></th>
-          <td>任意</td>
-          <td>
-            boolean、既定false。<code>explicit-only</code>
-            Profileを指定する場合だけtrue。trueの場合は<code>agentProfile</code>も必須
-          </td>
+          <th scope="row"><code>profile</code></th>
+          <td>必須</td>
+          <td>公開catalogに登録されたProfile selector</td>
         </tr>
         <tr>
           <th scope="row"><code>audience</code></th>
@@ -546,6 +537,14 @@ Content-Type: application/json
           <th scope="row"><code>client</code></th>
           <td>任意</td>
           <td>1から128文字のidentifier。authorizationには使わない</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>providers</code></th>
+          <td>任意</td>
+          <td>
+            selectorが解決するProfile内のProvider名を1から8件。重複と未知名は禁止。
+            省略時はProfile内の全Providerをallocate、probe、claimする
+          </td>
         </tr>
         <tr>
           <th scope="row"><code>ttlSeconds</code></th>
@@ -568,18 +567,8 @@ Content-Type: application/json
       </tbody>
     </table>
     <p>
-      request bodyに<code>agentProfile</code>が存在する場合はその値を使用し、
-      <code>defaultAgentProfile</code
-      >は省略時だけ使用します。明示指定をdefaultで上書きしません。
-      <code>saaa-qwen38</code>のような<code
-        >explicit-only</code
-      >
-      Profileには <code>explicitAgentProfile: true</code>が必須です。
-    </p>
-    <p>
       Bodyはstrict objectとし、未知fieldは<code>400 invalid_request</code>です。
-      非既定Profileを<code>explicitAgentProfile: true</code>なしで要求すると
-      <code>409 explicit_agent_profile_required</code>です。
+      selectorに存在しないProvider名は<code>400 unknown_connection_provider</code>です。
       <code>Idempotency-Key</code>は必須で、1から128文字の
       <code>[A-Za-z0-9][A-Za-z0-9._:-]*</code
       >です。scopeはprincipal、method、pathの組で、同じkeyと canonical

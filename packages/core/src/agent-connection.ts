@@ -588,6 +588,19 @@ export const agentConnectionRequestSchema = z.object({
   expectedCatalogRevision: sha256Schema.optional(),
   audience: agentIdentifierSchema,
   client: agentIdentifierSchema.optional(),
+  providers: z.array(agentIdentifierSchema).min(1).max(8).superRefine((providers, context) => {
+    const seen = new Set<string>();
+    for (const [index, provider] of providers.entries()) {
+      if (seen.has(provider)) {
+        context.addIssue({
+          code: "custom",
+          path: [index],
+          message: "provider names must be unique",
+        });
+      }
+      seen.add(provider);
+    }
+  }).optional(),
   ttlSeconds: z.number().int().min(1).max(86_400).default(300),
   allowFallback: z.boolean().default(false),
   deploymentPolicy: deploymentPolicySchema.default("existing-only"),

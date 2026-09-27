@@ -48,6 +48,7 @@ test("OpenAPI is generated from the public contract schemas", () => {
     properties?: Record<string, unknown>;
   };
   expect(agentRequest.required).toContain("profile");
+  expect(agentRequest.properties).toHaveProperty("providers");
   expect(agentRequest.properties).not.toHaveProperty("agentProfile");
   expect(agentRequest.properties).not.toHaveProperty("explicitAgentProfile");
   expect(JSON.stringify(document.components.schemas.AgentProfileList)).toContain("defaultAgentProfile");

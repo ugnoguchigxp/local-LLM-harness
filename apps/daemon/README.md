@@ -276,7 +276,7 @@ connection_json="$(curl -fsS -X POST http://127.0.0.1:9810/v1/agent-connections 
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: agent-$(date +%s)" \
   -H 'Prefer: wait=300' \
-  -d '{"profile":"vulnWorkbench","audience":"same-host"}')"
+  -d '{"profile":"vulnWorkbench","audience":"same-host","providers":["llm"]}')"
 connection_id="$(jq -er .id <<<"${connection_json}")"
 
 # 202の場合だけGET /v1/agent-connections/:idをreadyまでpollしてからclaimします。

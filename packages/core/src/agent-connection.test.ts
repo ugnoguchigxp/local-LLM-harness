@@ -843,7 +843,18 @@ test("Agent Connection creation requires a public selector and a strict new requ
   expect(agentConnectionRequestSchema.safeParse({
     profile: "contextStill",
     audience: "same-host",
+    providers: ["llm"],
   }).success).toBeTrue();
+  expect(agentConnectionRequestSchema.safeParse({
+    profile: "contextStill",
+    audience: "same-host",
+    providers: [],
+  }).success).toBeFalse();
+  expect(agentConnectionRequestSchema.safeParse({
+    profile: "contextStill",
+    audience: "same-host",
+    providers: ["llm", "llm"],
+  }).success).toBeFalse();
   expect(agentConnectionRequestSchema.safeParse({
     profile: "contextStill",
     audience: "same-host",

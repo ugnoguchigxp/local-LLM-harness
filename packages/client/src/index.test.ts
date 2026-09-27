@@ -974,6 +974,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   const created = await client.createAgentConnection({
     profile: "vulnWorkbench",
     audience: "same-host",
+    providers: ["llm"],
   }, { waitSeconds: 300 });
   expect(created.status).toBe("pending");
   expect(requests[0]?.headers.get("idempotency-key")).toBe("client_agent-fixed");
@@ -981,6 +982,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   expect(await requests[0]!.clone().json()).toEqual({
     profile: "vulnWorkbench",
     audience: "same-host",
+    providers: ["llm"],
     ttlSeconds: 300,
     allowFallback: false,
     deploymentPolicy: "existing-only",

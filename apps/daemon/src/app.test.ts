@@ -728,6 +728,59 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
       headers: agentHeaders(),
     });
     expect(releaseResponse.status).toBe(204);
+
+    const subsetResponse = await fetch(`${baseUrl}/v1/agent-connections`, {
+      method: "POST",
+      headers: agentHeaders({
+        "content-type": "application/json",
+        "idempotency-key": "saaa-profile-backchannel-subset-e2e",
+        prefer: "wait=3",
+      }),
+      body: JSON.stringify({
+        profile: "SAAA",
+        expectedCatalogRevision: discovery.catalogRevision,
+        audience: "same-host",
+        client: "saaa-backchannel-e2e",
+        providers: ["backchannel"],
+        ttlSeconds: 300,
+        allowFallback: false,
+        deploymentPolicy: "existing-only",
+      }),
+    });
+    expect(subsetResponse.status).toBe(201);
+    const subset = publicAgentConnectionSchema.parse(await subsetResponse.json());
+    expect(subset.providers.map((provider) => provider.name)).toEqual(["backchannel"]);
+
+    const subsetClaimResponse = await fetch(`${baseUrl}/v1/agent-connections/${subset.id}/claim`, {
+      method: "POST",
+      headers: agentHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ format: "openai-provider-v1" }),
+    });
+    expect(subsetClaimResponse.status).toBe(200);
+    const subsetClaim = agentConnectionClaimSchema.parse(await subsetClaimResponse.json());
+    expect(subsetClaim.providers.map((provider) => provider.name)).toEqual(["backchannel"]);
+    expect((await fetch(`${baseUrl}/v1/agent-connections/${subset.id}`, {
+      method: "DELETE",
+      headers: agentHeaders(),
+    })).status).toBe(204);
+
+    const unknownSubsetResponse = await fetch(`${baseUrl}/v1/agent-connections`, {
+      method: "POST",
+      headers: agentHeaders({
+        "content-type": "application/json",
+        "idempotency-key": "saaa-profile-unknown-subset-e2e",
+      }),
+      body: JSON.stringify({
+        profile: "SAAA",
+        audience: "same-host",
+        providers: ["missing"],
+      }),
+    });
+    expect(unknownSubsetResponse.status).toBe(400);
+    expect(await unknownSubsetResponse.json()).toMatchObject({
+      error: { code: "unknown_connection_provider" },
+    });
+
     expect((await fetch(claim.providers[0]!.health.url, {
       headers: { authorization: `Bearer ${claim.providers[0]!.credential.token}` },
     })).status).toBe(401);
@@ -3790,6 +3843,76 @@ test("POST /release stops idle preferred worker", async () => {
   expect(released.status).toBe(200);
   await control.flush();
   expect(log.stop).toEqual(["qwen-worker"]);
+});
+
+test("Agent Connection provider subset does not probe an unrelated busy provider", async () => {
+  const subsetCatalog = parseAgentConnectionCatalog({
+    version: 1,
+    defaultAgentProfile: "conversation",
+    audiences: {
+      loopback: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" },
+    },
+    agentProfiles: {
+      conversation: {
+        description: "Two independently selectable chat providers",
+        providers: [
+          {
+            name: "llm",
+            capability: "llm.reasoning",
+            route: "llm-default",
+            publicModel: "test-model",
+            readiness: "llm-inference",
+          },
+          {
+            name: "backchannel",
+            capability: "llm.general",
+            route: "llm-default",
+            publicModel: "speed-model",
+            readiness: "llm-inference",
+          },
+        ],
+      },
+    },
+    profileSelectors: { SAAA: { agentProfile: "conversation" } },
+  }, registry);
+  const probedModels: string[] = [];
+  const { app } = await makeApp(true, true, {}, {
+    apiToken: agentApiToken,
+    connectionSigningKey: agentSigningKey,
+    agentConnectionCatalog: subsetCatalog,
+    gatewayFetch: async (_input, init) => {
+      const raw = init?.body instanceof Uint8Array
+        ? new TextDecoder().decode(init.body)
+        : String(init?.body);
+      const body = JSON.parse(raw) as { model: string };
+      probedModels.push(body.model);
+      if (body.model === "test-model") {
+        return Response.json({ error: { message: "busy" } }, { status: 503 });
+      }
+      return validLlmSemanticProbeResponse(init);
+    },
+  });
+
+  const response = await app.request("/v1/agent-connections", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "provider-subset-busy-isolation",
+      prefer: "wait=3",
+    }),
+    body: JSON.stringify({
+      profile: "SAAA",
+      audience: "loopback",
+      client: "subset-test",
+      providers: ["backchannel"],
+    }),
+  });
+
+  expect(response.status).toBe(201);
+  const connection = publicAgentConnectionSchema.parse(await response.json());
+  expect(connection.providers.map((provider) => provider.name)).toEqual(["backchannel"]);
+  expect(probedModels.length).toBeGreaterThan(0);
+  expect(new Set(probedModels)).toEqual(new Set(["speed-model"]));
 });
 
 test("agent connection claims a scoped OpenAI provider and revokes generations", async () => {

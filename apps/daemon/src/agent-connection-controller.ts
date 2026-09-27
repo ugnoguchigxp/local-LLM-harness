@@ -231,6 +231,22 @@ export class AgentConnectionController {
     if (!selector) return error("unknown_profile_selector", `profile selector ${request.profile} does not exist`, 404);
     const profile = catalog.profiles.find((item) => item.id === selector.agentProfile);
     if (!profile) return error("profile_resolution_failed", `profile selector ${request.profile} cannot be resolved`, 503);
+    const requestedProviders = request.providers ? new Set(request.providers) : undefined;
+    const unknownProvider = request.providers?.find(
+      (name) => !profile.providers.some((provider) => provider.name === name),
+    );
+    if (unknownProvider) {
+      return error(
+        "unknown_connection_provider",
+        `provider ${unknownProvider} does not exist in profile selector ${request.profile}`,
+        400,
+      );
+    }
+    const selectedProfile: AgentProfile = {
+      ...structuredClone(profile),
+      providers: profile.providers.filter((provider) => requestedProviders?.has(provider.name) ?? true),
+    };
+    const selectedProviderNames = selectedProfile.providers.map((provider) => provider.name);
     const configuredAudience = catalog.audiences.find((item) => item.id === request.audience);
     if (!configuredAudience) return error(
       "connection_audience_unavailable",
@@ -251,6 +267,7 @@ export class AgentConnectionController {
         : {}),
       audience: request.audience,
       ...(request.client ? { client: request.client } : {}),
+      providers: selectedProviderNames,
       ttlSeconds: request.ttlSeconds,
       allowFallback: request.allowFallback,
       deploymentPolicy: request.deploymentPolicy,
@@ -260,7 +277,13 @@ export class AgentConnectionController {
       advertisedBaseUrl,
       personalStateAuthorized,
     }));
-    const sessionScope = `${principal}:${request.profile}:${request.audience}:${request.client ?? "(anonymous)"}`;
+    const sessionScope = [
+      principal,
+      request.profile,
+      request.audience,
+      request.client ?? "(anonymous)",
+      selectedProviderNames.join(","),
+    ].join(":");
     return await this.idempotent(
       `${principal}:POST:/v1/agent-connections:${idempotencyKey}`,
       requestHash,
@@ -312,11 +335,11 @@ export class AgentConnectionController {
           );
         }
         if (request.profile.startsWith("SAAA")) {
-          const conflict = await this.preemptContextStillConnections(profile.schedulingPriority ?? 0);
+          const conflict = await this.preemptContextStillConnections(selectedProfile.schedulingPriority ?? 0);
           if (conflict) return conflict;
         }
         const allocated = await this.options.control.allocate({
-          requirements: profile.providers.map((provider) => ({
+          requirements: selectedProfile.providers.map((provider) => ({
             capability: provider.capability,
             route: provider.route,
           })),
@@ -324,7 +347,7 @@ export class AgentConnectionController {
           ttlSeconds: request.ttlSeconds,
           allowFallback: request.allowFallback,
           deploymentPolicy: request.deploymentPolicy,
-          priority: profile.schedulingPriority ?? 0,
+          priority: selectedProfile.schedulingPriority ?? 0,
           capacityPolicy: "wait",
         });
         if (allocated.status !== 200 && allocated.status !== 202) {
@@ -339,7 +362,7 @@ export class AgentConnectionController {
           bootEpoch: this.options.control.getBootEpoch(),
           catalogRevision: allocation.catalogRevision ?? this.options.getCatalogRevision(),
           selector: structuredClone(selector),
-          profile: structuredClone(profile),
+          profile: selectedProfile,
           audience,
           status: allocation.status === "ready" ? "probing" : "pending",
           createdAt: new Date(now).toISOString(),
