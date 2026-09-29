@@ -2,9 +2,10 @@ import { readFile } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import {
   daemonHealthSchema,
-  publicAgentProfileListSchema,
+  publicAgentProfileListV3Schema,
   readinessSchema,
   serviceActivitySchema,
+  agentProviderEndpoint,
   type AgentConnectionCatalog,
 } from "../../../packages/core/src/index";
 import { loadCatalogGeneration } from "../../../apps/daemon/src/catalog-generation";
@@ -39,7 +40,7 @@ function expectedProfiles(expected: ExpectedLiveContract): unknown {
   const catalog = expected.agentConnections;
   if (!catalog) return undefined;
   return {
-    contractVersion: "agent-connection.v2",
+    contractVersion: "agent-connection.v3",
     catalogRevision: expected.configRevision,
     defaultAgentProfile: catalog.defaultAgentProfile,
     profiles: catalog.profiles.map((profile) => ({
@@ -49,13 +50,18 @@ function expectedProfiles(expected: ExpectedLiveContract): unknown {
       selectionPolicy: profile.selectionPolicy,
       deprecated: profile.deprecated,
       schedulingPriority: profile.schedulingPriority ?? 0,
+      ...(profile.idleRelease ? { idleRelease: profile.idleRelease } : {}),
       providers: profile.providers.map((provider) => ({
         name: provider.name,
         capability: provider.capability,
         supportedCapabilities: provider.supportedCapabilities,
         protocol: provider.protocol,
+        endpoint: agentProviderEndpoint(provider.protocol),
         model: provider.publicModel,
+        ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
+        ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
       })),
+      services: [],
     })),
     audiences: catalog.audiences.map((audience) => audience.id),
   };
@@ -176,10 +182,10 @@ export async function verifyLiveContract(options: {
   const advertisedExpected = expectedProfiles(options.expected);
   let agentProfiles = 0;
   if (advertisedExpected) {
-    const advertised = publicAgentProfileListSchema.parse(
-      await requestJson(fetchImpl, baseUrl, "/v2/agent-profiles", timeoutMs),
+    const advertised = publicAgentProfileListV3Schema.parse(
+      await requestJson(fetchImpl, baseUrl, "/v3/agent-profiles", timeoutMs),
     );
-    const validatedExpected = publicAgentProfileListSchema.parse(advertisedExpected);
+    const validatedExpected = publicAgentProfileListV3Schema.parse(advertisedExpected);
     if (!isDeepStrictEqual(advertised, validatedExpected)) {
       throw new Error("live Agent Profile catalog does not match the candidate release");
     }

@@ -59,6 +59,7 @@ async function snapshotFixture(
   corruptPath?: string,
   options: {
     availableBytes?: number;
+    downloadTimeoutMs?: number;
     incompleteSnapshotTtlMs?: number;
     fetchImpl?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
     contents?: Record<string, string>;
@@ -97,6 +98,7 @@ async function snapshotFixture(
       ? undefined
       : () => options.availableBytes!,
     incompleteSnapshotTtlMs: options.incompleteSnapshotTtlMs,
+    downloadTimeoutMs: options.downloadTimeoutMs,
     fetchImpl: options.fetchImpl ?? (async (input) => {
       const path = decodeURIComponent(new URL(input.toString()).pathname)
         .replace(/^\/model\//, "");
@@ -150,6 +152,79 @@ test("rejects and cleans up a download that exceeds the manifest size", async ()
   try {
     await expect(store.stage(artifact)).rejects.toMatchObject({ code: "size_mismatch" });
     expect(await store.getStaged(artifact)).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects unsuccessful, bodyless, and oversized declared file downloads", async () => {
+  const { root, artifact } = await fixture();
+  let response = new Response("unavailable", { status: 503 });
+  const store = new LocalArtifactStore({
+    stagingRoot: join(root, "response-staging"),
+    rollbackRoot: join(root, "response-rollback"),
+    stateRoot: join(root, "response-state"),
+    fetchImpl: async () => response,
+  });
+  try {
+    await expect(store.stage(artifact)).rejects.toMatchObject({ code: "download_failed" });
+    response = new Response(null, { status: 204 });
+    await expect(store.stage(artifact)).rejects.toMatchObject({ code: "download_failed" });
+    response = new Response("new-model", {
+      headers: { "content-length": String(artifact.bytes + 1) },
+    });
+    await expect(store.stage(artifact)).rejects.toMatchObject({ code: "size_mismatch" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reports a staging-file collision and cleans up the response body", async () => {
+  const { root, artifact, store } = await fixture();
+  const temporaryDirectory = join(
+    root,
+    "staging",
+    artifact.id,
+    artifact.revision,
+    `${artifact.filename}.part-fixed`,
+  );
+  try {
+    await mkdir(temporaryDirectory, { recursive: true });
+    await expect(store.stage(artifact)).rejects.toMatchObject({ code: "staging_failed" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects truncated downloads and refuses to replace a directory with an artifact file", async () => {
+  const { root, artifact } = await fixture();
+  const store = new LocalArtifactStore({
+    stagingRoot: join(root, "edge-staging"),
+    rollbackRoot: join(root, "edge-rollback"),
+    stateRoot: join(root, "edge-state"),
+    random: () => "edge",
+    fetchImpl: async () => new Response("short"),
+  });
+  try {
+    await expect(store.stage(artifact)).rejects.toMatchObject({ code: "size_mismatch" });
+    const conflictingDestination = join(
+      root,
+      "edge-staging-2",
+      artifact.id,
+      artifact.revision,
+      artifact.filename,
+    );
+    const validStore = new LocalArtifactStore({
+      stagingRoot: join(root, "edge-staging-2"),
+      rollbackRoot: join(root, "edge-rollback-2"),
+      stateRoot: join(root, "edge-state-2"),
+      random: () => "edge",
+      fetchImpl: async () => {
+        await mkdir(conflictingDestination, { recursive: true });
+        return new Response("new-model");
+      },
+    });
+    await expect(validStore.stage(artifact)).rejects.toMatchObject({ code: "staging_failed" });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -449,6 +524,19 @@ test("cancels and removes a partially downloaded snapshot", async () => {
     await Bun.sleep(1);
     controller.abort(new Error("daemon draining"));
     await expect(staging).rejects.toMatchObject({ code: "operation_cancelled" });
+    expect(await store.getStaged(artifact)).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("times out a stalled snapshot download and removes the partial directory", async () => {
+  const { root, artifact, store } = await snapshotFixture(undefined, {
+    downloadTimeoutMs: 1,
+    fetchImpl: async (_input, _init) => await new Promise<Response>(() => {}),
+  });
+  try {
+    await expect(store.stage(artifact)).rejects.toMatchObject({ code: "download_timeout" });
     expect(await store.getStaged(artifact)).toBeUndefined();
   } finally {
     await rm(root, { recursive: true, force: true });

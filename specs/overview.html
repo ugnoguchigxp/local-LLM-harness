@@ -20,80 +20,206 @@
         </tr>
       </thead>
       <tbody>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="quality-maintainability-improvement-plan"
+        >
+          <th scope="row">
+            <a href="./quality-maintainability-improvement-plan.html">品質・保守性改善 実装計画</a>
+          </th>
+          <td>
+            依存監査、coverage、巨大module分割、文書catalog、API lifecycleの統合計画
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>quality-maintainability-improvement-plan</code></small
+            >
+          </td>
+          <td>
+            repository内の暫定実装をmerge済みrevisionへ固定中。coverage baselineのrevision固定、
+            廃止日程metadata、全instance観測、外部consumer受入とsunset判定は未完了
+          </td>
+        </tr>
+        <tr
+          data-kind="contract"
+          data-state="implemented"
+          data-domain="saaa-conversation-model-profile"
+        >
           <th scope="row">
             <a href="./saaa-conversation-model-profile.html"
               >SAAA 会話モデル・Context Window 接続仕様</a
             >
           </th>
-          <td>LFM 1.2B相槌、Qwen 27B推論、claim由来の接続・context契約</td>
+          <td>
+            LFM 1.2B相槌、Qwen 27B推論、claim由来の接続・context契約
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>saaa-conversation-model-profile</code></small
+            >
+          </td>
           <td>local-nodeへ配備済み。Agent Connection、JSON、SSE、releaseをlive検証済み</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="contract"
+          data-state="implemented"
+          data-domain="dynamic-provider-daemon-lifecycle"
+        >
           <th scope="row">
             <a href="./dynamic-provider-daemon-lifecycle.html"
               >動的 Provider Daemon ライフサイクル仕様</a
             >
           </th>
-          <td>全ProfileのProviderをrevision単位で起動、共有、drain、停止する制御プレーン契約</td>
+          <td>
+            全ProfileのProviderをrevision単位で起動、共有、drain、停止する制御プレーン契約
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>dynamic-provider-daemon-lifecycle</code></small
+            >
+          </td>
           <td>基盤実装済み。revision併存と実機probeはrollout gate</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="implemented"
+          data-domain="dynamic-provider-daemon-lifecycle-implementation-plan"
+        >
           <th scope="row">
             <a href="./dynamic-provider-daemon-lifecycle-implementation-plan.html"
               >動的 Provider Daemon ライフサイクル実装計画</a
             >
           </th>
-          <td>Core型、Backend、Instance Manager、移行、E2E、rollbackの作業計画</td>
+          <td>
+            Core型、Backend、Instance Manager、移行、E2E、rollbackの作業計画
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>dynamic-provider-daemon-lifecycle-implementation-plan</code></small
+            >
+          </td>
           <td>WP1、WP2、WP5の基盤とmanaged policy移行を実装済み</td>
         </tr>
-        <tr>
+        <tr data-kind="decision" data-state="current" data-domain="architecture">
           <th scope="row"><a href="./concept.html">Local AI Provider コンセプト</a></th>
-          <td>責務境界、運用原則、モデル方針</td>
+          <td>
+            責務境界、運用原則、モデル方針
+            <small
+              >分類: <code>decision</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>architecture</code></small
+            >
+          </td>
           <td>現行正本</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="decision"
+          data-state="proposed"
+          data-domain="inference-first-host-responsibility-boundary"
+        >
           <th scope="row">
             <a href="./inference-first-host-responsibility-boundary.html"
               >Inference-firstホスト責務境界</a
             >
           </th>
-          <td>MacBookとAI MAXの二台だけでSAAA側の状態・I/Oとlocal-node側の推論を分離する設計案</td>
+          <td>
+            MacBookとAI MAXの二台だけでSAAA側の状態・I/Oとlocal-node側の推論を分離する設計案
+            <small
+              >分類: <code>decision</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>inference-first-host-responsibility-boundary</code></small
+            >
+          </td>
           <td>責務境界案。実装前</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="research"
+          data-state="proposed"
+          data-domain="backchannel-model-candidate-selection"
+        >
           <th scope="row">
             <a href="./backchannel-model-candidate-selection.html"
               >Backchannel小型モデル候補・選択仕様</a
             >
           </th>
-          <td>Qwen3.5 2B、LFM2.5 1.2B JP、Gemma 3 1Bの明示選択と共通日本語評価contract</td>
+          <td>
+            Qwen3.5 2B、LFM2.5 1.2B JP、Gemma 3 1Bの明示選択と共通日本語評価contract
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>backchannel-model-candidate-selection</code></small
+            >
+          </td>
           <td>Repository設定・harness実装済み。追加artifact取得と実機評価待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="research"
+          data-state="historical"
+          data-domain="local-node-model-provider-inventory"
+          data-successor="none"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-16"
+          data-target-revision="da0566cc94114efd610186d8d91d6ac356918603"
+        >
           <th scope="row">
             <a href="./local-node-model-provider-inventory.html"
               >local-node モデル資産・Provider準備状況一覧</a
             >
           </th>
-          <td>ダウンロード済みweight、Provider準備済み構成、未Provider化・評価stagingの横断棚卸</td>
-          <td>2026-09-16 point-in-time実機棚卸</td>
+          <td>
+            ダウンロード済みweight、Provider準備済み構成、未Provider化・評価stagingの横断棚卸
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>local-node-model-provider-inventory</code></small
+            >
+          </td>
+          <td>
+            2026-09-16 point-in-time実機棚卸
+            <small data-audit-summary="true"
+              >観測 2026-09-16 · target revision da0566cc94114efd610186d8d91d6ac356918603</small
+            >
+            <span data-successor-note="後継文書なし">後継文書なし</span>
+          </td>
         </tr>
-        <tr>
+        <tr data-kind="contract" data-state="current" data-domain="public-api">
           <th scope="row"><a href="./api.html">LARM v1 API仕様</a></th>
-          <td>実装済み公開API contract</td>
+          <td>
+            実装済み公開API contract
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>public-api</code></small
+            >
+          </td>
           <td>現行正本</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="voicevox-control-api-implementation-plan"
+        >
           <th scope="row">
             <a href="./voicevox-control-api-implementation-plan.html"
               >VOICEVOX話者・スタイル・韻律制御API 実装計画</a
             >
           </th>
-          <td>voice、style、speed、pitch、intonationと複数VVM catalogの拡張計画</td>
+          <td>
+            voice、style、speed、pitch、intonationと複数VVM catalogの拡張計画
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>voicevox-control-api-implementation-plan</code></small
+            >
+          </td>
           <td>Source実装済み。男性系voice assetのoperator同意・staging・local-node配備待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="saaa-voicevox-controls-integration-request"
+        >
           <th scope="row">
             <a href="./saaa-voicevox-controls-integration-request.html"
               >SAAA実装依頼：VOICEVOX話者・スタイル・韻律制御</a
@@ -101,74 +227,159 @@
           </th>
           <td>
             SAAAのHTTP TTS・LARM音声Session・設定UIへ新しいvoice catalogと韻律制御を接続するhandoff
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>saaa-voicevox-controls-integration-request</code></small
+            >
           </td>
           <td>SAAA向け実装プロンプト。consumer実装・実機受入待ち</td>
         </tr>
-        <tr>
+        <tr data-kind="plan" data-state="proposed" data-domain="lan-gateway-access">
           <th scope="row"><a href="./lan-gateway-access.html">LARM Gateway LANアクセス方針</a></th>
-          <td>固定IPに依存しないLAN検出、UFW plan・apply・rollback境界</td>
+          <td>
+            固定IPに依存しないLAN検出、UFW plan・apply・rollback境界
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>lan-gateway-access</code></small
+            >
+          </td>
           <td>Repository実装・自動test完了。local-node適用待ち</td>
         </tr>
-        <tr>
+        <tr data-kind="contract" data-state="proposed" data-domain="provider-priority-scheduling">
           <th scope="row">
             <a href="./provider-priority-scheduling.html"
               >動的Provider優先度・foreground preemption仕様</a
             >
           </th>
-          <td>SAAA、NightWorker、ContextStillのAllocation・実行待機順序</td>
+          <td>
+            SAAA、NightWorker、ContextStillのAllocation・実行待機順序
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>provider-priority-scheduling</code></small
+            >
+          </td>
           <td>Repository実装・自動test完了。local-node配備と実機canary待ち</td>
         </tr>
-        <tr>
+        <tr data-kind="contract" data-state="proposed" data-domain="http-provider-standardization">
           <th scope="row">
             <a href="./http-provider-standardization.html">OpenAI互換HTTP Provider移行 実装計画</a>
           </th>
-          <td>LLM JSON／SSE、ASR、TTS、release収束、consumer受入のHTTP-only正本</td>
+          <td>
+            LLM JSON／SSE、ASR、TTS、release収束、consumer受入のHTTP-only正本
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>http-provider-standardization</code></small
+            >
+          </td>
           <td>Repository実装・自動test完了。local-node配備とconsumer canary待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="contextstill-larm-live-improvement-plan"
+        >
           <th scope="row">
             <a href="./contextstill-larm-live-improvement-plan.html"
               >ContextStill向けLARM HTTP Provider live改善方針</a
             >
           </th>
-          <td>live復旧、汎用HTTP Provider gate、SSE readiness、release driftの再発防止策</td>
+          <td>
+            live復旧、汎用HTTP Provider gate、SSE readiness、release driftの再発防止策
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>contextstill-larm-live-improvement-plan</code></small
+            >
+          </td>
           <td>P0復旧とP1 gate実装の実施待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="decision"
+          data-state="proposed"
+          data-domain="contextstill-context-window-tiering"
+        >
           <th scope="row">
             <a href="./contextstill-context-window-tiering.html"
               >ContextStill Context Window tier選択の再評価と実装</a
             >
           </th>
-          <td>固定3 slot案の再評価、64K／128K最小tier選択、256K受入境界</td>
+          <td>
+            固定3 slot案の再評価、64K／128K最小tier選択、256K受入境界
+            <small
+              >分類: <code>decision</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>contextstill-context-window-tiering</code></small
+            >
+          </td>
           <td>Repository実装・自動test完了。ContextStill組込みとlocal-node canary待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="contract"
+          data-state="implemented"
+          data-domain="agent-provider-connection-api"
+        >
           <th scope="row">
             <a href="./agent-provider-connection-api.html">Agent Provider Connection API実装仕様</a>
           </th>
-          <td>Agent profile要求からProvider設定、短期credential、semantic readinessを返すAPI</td>
+          <td>
+            Agent profile要求からProvider設定、短期credential、semantic readinessを返すAPI
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>agent-provider-connection-api</code></small
+            >
+          </td>
           <td>daemon、OpenAPI、client実装・local-node実機E2E完了</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="contract"
+          data-state="proposed"
+          data-domain="agent-profile-selection-and-connection-vnext"
+        >
           <th scope="row">
             <a href="./agent-profile-selection-and-connection-vnext.html"
               >公開Profile選択とAgent Connection作成契約 vNext</a
             >
           </th>
-          <td>公開selectorの明示性、catalog revision fence、Connection作成の重複field廃止</td>
+          <td>
+            公開selectorの明示性、catalog revision fence、Connection作成の重複field廃止
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>agent-profile-selection-and-connection-vnext</code></small
+            >
+          </td>
           <td>提案。後方互換移行とlive E2Eの実装前</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="evidence"
+          data-state="implemented"
+          data-domain="agent-provider-connection-implementation"
+        >
           <th scope="row">
             <a href="./agent-provider-connection-implementation.html"
               >Agent Connection実装・E2E記録</a
             >
           </th>
-          <td>64K Agent worker、SAAA LAN Audience、認証、semantic readinessの検証証跡</td>
+          <td>
+            64K Agent worker、SAAA LAN Audience、認証、semantic readinessの検証証跡
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>agent-provider-connection-implementation</code></small
+            >
+          </td>
           <td>2026-08-29完了記録</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="contract"
+          data-state="proposed"
+          data-domain="contextstill-dynamic-llm-provider-instructions"
+        >
           <th scope="row">
             <a href="./contextstill-dynamic-llm-provider-instructions.html"
               >ContextStill 動的LLM Provider適用 実装指示書</a
@@ -176,46 +387,99 @@
           </th>
           <td>
             LARM idle時の背景処理、従来Provider互換、Agent Connection adapter、Qwen 3.8二基構成
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>contextstill-dynamic-llm-provider-instructions</code></small
+            >
           </td>
           <td>LARM source実装済み。ContextStill application組込みと配備待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="service-activity-api-implementation-plan"
+        >
           <th scope="row">
             <a href="./service-activity-api-implementation-plan.html"
               >LARM Service Activity API・ContextStill連携 実装計画・記録</a
             >
           </th>
-          <td>service全体のactivity集約APIと既存動的Providerを使うContextStill job gate</td>
+          <td>
+            service全体のactivity集約APIと既存動的Providerを使うContextStill job gate
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>service-activity-api-implementation-plan</code></small
+            >
+          </td>
           <td>
             LARM source・client境界実装済み。ContextStill application組込みとlocal-node canary待ち
           </td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="contextstill-service-activity-alignment-request"
+        >
           <th scope="row">
             <a href="./contextstill-service-activity-alignment-request.html"
               >ContextStill Service Activity契約整合 修正依頼書</a
             >
           </th>
-          <td>旧Profile availability依存を廃止し、GET /v1/activityへ統一する修正依頼</td>
+          <td>
+            旧Profile availability依存を廃止し、GET /v1/activityへ統一する修正依頼
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>contextstill-service-activity-alignment-request</code></small
+            >
+          </td>
           <td>ContextStill application側の反映待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="saaa-http-provider-migration-request"
+        >
           <th scope="row">
             <a href="./saaa-http-provider-migration-request.html"
               >SAAA OpenAI互換HTTP Provider移行依頼</a
             >
           </th>
-          <td>base URL、Bearer、modelだけでSAAAを標準HTTP APIへ接続する実装依頼</td>
+          <td>
+            base URL、Bearer、modelだけでSAAAを標準HTTP APIへ接続する実装依頼
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>saaa-http-provider-migration-request</code></small
+            >
+          </td>
           <td>SAAA application組込みとMac canary待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="contract"
+          data-state="implemented"
+          data-domain="managed-context-source-rebuild"
+        >
           <th scope="row">
             <a href="./managed-context-source-rebuild.html">Managed Context source rebuild契約</a>
           </th>
-          <td>永続KV snapshot廃止後のsource検証、View binding、materialization契約</td>
+          <td>
+            永続KV snapshot廃止後のsource検証、View binding、materialization契約
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>managed-context-source-rebuild</code></small
+            >
+          </td>
           <td>Repository実装・自動test完了。local-node配備時に旧snapshot dataを削除する</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="personal-state-product-connection-remediation-plan"
+        >
           <th scope="row">
             <a href="./personal-state-product-connection-remediation-plan.html"
               >Personal State製品接続・忘却保証 改善実装計画</a
@@ -223,174 +487,1174 @@
           </th>
           <td>
             source配送、canonical計測、identity、forget、snapshot、generation停止の閉鎖計画と実装結果
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>personal-state-product-connection-remediation-plan</code></small
+            >
           </td>
           <td>Repository実装・自動test完了。SAAA組込みとlocal-node実機受入まではNo-Go</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="personal-state-saaa-integration-handoff"
+        >
           <th scope="row">
             <a href="./personal-state-saaa-integration-handoff.html"
               >Personal State LARM–SAAA 製品接続handoff</a
             >
           </th>
-          <td>確定HTTP contract、再送・照合規則、SAAA必須実装、合成data conformance手順</td>
+          <td>
+            確定HTTP contract、再送・照合規則、SAAA必須実装、合成data conformance手順
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>personal-state-saaa-integration-handoff</code></small
+            >
+          </td>
           <td>LARM側実装済み。SAAA Delivery／outbox／late-output fenceとlive受入待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="decision"
+          data-state="proposed"
+          data-domain="saaa-contextstill-memory-architecture"
+        >
           <th scope="row">
             <a href="./saaa-contextstill-memory-architecture.html"
               >SAAA・ContextStill統合メモリーアーキテクチャ</a
             >
           </th>
-          <td>個人Memory、文書Knowledge、Tool Registry、Context Pack、LARM cacheの責務分離</td>
+          <td>
+            個人Memory、文書Knowledge、Tool Registry、Context Pack、LARM cacheの責務分離
+            <small
+              >分類: <code>decision</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>saaa-contextstill-memory-architecture</code></small
+            >
+          </td>
           <td>設計案。SAAA・ContextStill側のcontract合意と段階実装待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="research"
+          data-state="historical"
+          data-domain="qwen38-model-and-host-profile"
+          data-successor="qwen38-q4-0-standard-profile-decision.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-11"
+          data-target-revision="ebe3ba830f8f2dbd2ea2754ad4cb26da1821fd53"
+        >
           <th scope="row">
             <a href="./qwen38-model-and-host-profile.html"
               >Qwen3.8-27B モデル・ホスト共有プロファイル</a
             >
           </th>
-          <td>上流model、量子化artifact、実行設定、local-node実機、公開Gatewayの共有用説明</td>
-          <td>2026-09-11 point-in-time観測と現行repository設定</td>
+          <td>
+            上流model、量子化artifact、実行設定、local-node実機、公開Gatewayの共有用説明
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>qwen38-model-and-host-profile</code></small
+            >
+          </td>
+          <td>
+            2026-09-11 point-in-time観測と現行repository設定
+            <small data-audit-summary="true"
+              >観測 2026-09-11 · target revision ebe3ba830f8f2dbd2ea2754ad4cb26da1821fd53</small
+            >
+            <a rel="successor" href="./qwen38-q4-0-standard-profile-decision.html"
+              >後継: qwen38-q4-0-standard-profile-decision</a
+            >
+          </td>
         </tr>
-        <tr>
+        <tr
+          data-kind="research"
+          data-state="proposed"
+          data-domain="qwen38-derivative-candidate-evaluation"
+        >
           <th scope="row">
             <a href="./qwen38-derivative-candidate-evaluation.html"
               >Qwen3.8-27B派生モデル候補 事前評価</a
             >
           </th>
-          <td>EfficientThink、Signal、Qwopus、Sharp、NEOの証拠評価と64K A/B契約</td>
+          <td>
+            EfficientThink、Signal、Qwopus、Sharp、NEOの証拠評価と64K A/B契約
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>qwen38-derivative-candidate-evaluation</code></small
+            >
+          </td>
           <td>2026-09-12 初期実測済み。常駐runtime未変更</td>
         </tr>
-        <tr>
+        <tr data-kind="contract" data-state="proposed" data-domain="on-demand-llm-worker-pool">
           <th scope="row">
             <a href="./on-demand-llm-worker-pool.html">On-demand LLM Worker Pool契約</a>
           </th>
-          <td>Resident 27B、追加27B、35Bのroute、swap、admission、live gate</td>
+          <td>
+            Resident 27B、追加27B、35Bのroute、swap、admission、live gate
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>on-demand-llm-worker-pool</code></small
+            >
+          </td>
           <td>
             Repository実装、Agent Connection経由の並列・swap・反復Ready acceptance済み。SLO gate前
           </td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="historical"
+          data-domain="implementation-plan"
+          data-successor="production-completion-plan.html"
+        >
           <th scope="row"><a href="./implementation-plan.html">初期実装計画・完了記録</a></th>
-          <td>Milestone 0から7の計画とコード実装結果</td>
-          <td>履歴。0から6のコード完了、Milestone 7の35Bは任意工程へ移管</td>
+          <td>
+            Milestone 0から7の計画とコード実装結果
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>implementation-plan</code></small
+            >
+          </td>
+          <td>
+            履歴。0から6のコード完了、Milestone 7の35Bは任意工程へ移管
+            <a rel="successor" href="./production-completion-plan.html"
+              >後継: production-completion-plan</a
+            >
+          </td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="historical"
+          data-domain="next-implementation-plan"
+          data-successor="production-completion-plan.html"
+        >
           <th scope="row">
             <a href="./next-implementation-plan.html">Milestone 15–21 実装計画（履歴）</a>
           </th>
           <td>
             Versioned release、公開contract、model release、reload、telemetry、canary toolingの計画
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>next-implementation-plan</code></small
+            >
           </td>
-          <td>Repository実装完了。残るlive gateは現行計画へ移管</td>
+          <td>
+            Repository実装完了。残るlive gateは現行計画へ移管
+            <a rel="successor" href="./production-completion-plan.html"
+              >後継: production-completion-plan</a
+            >
+          </td>
         </tr>
-        <tr>
+        <tr data-kind="plan" data-state="current" data-domain="production-readiness">
           <th scope="row">
             <a href="./production-completion-plan.html">Production Completion 実装計画</a>
           </th>
-          <td>残るnetwork境界、実機導入、commissioning、SLO、Ambient canaryの完了計画</td>
+          <td>
+            残るnetwork境界、実機導入、commissioning、SLO、Ambient canaryの完了計画
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>production-readiness</code></small
+            >
+          </td>
           <td>
             現行計画。Milestone 22・25をrepository実装済み。35B workerの基本live acceptance済み、
             production gateは未適用
           </td>
         </tr>
-        <tr>
+        <tr data-kind="plan" data-state="current" data-domain="production-rollout">
           <th scope="row">
             <a href="./production-rollout-execution-plan.html">Production Rollout 実行計画</a>
           </th>
-          <td>Milestone 23–27の実行順、checkpoint、証跡、停止条件、rollback</td>
+          <td>
+            Milestone 23–27の実行順、checkpoint、証跡、停止条件、rollback
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>production-rollout</code></small
+            >
+          </td>
           <td>現行実行手順。attended実行待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="milestones-15-21"
+          data-audit="point-in-time"
+          data-observed-on="2026-08-28"
+          data-target-revision="unrecorded"
+          data-audit-gap="implementation target LARM source commit is absent from the completion record"
+        >
           <th scope="row">
             <a href="./implementation-completion-m15-m21.html">Milestone 15–21 実装完了記録</a>
           </th>
-          <td>Versioned release、公開contract、model release、reload、telemetry、canary実装結果</td>
-          <td>現行記録</td>
+          <td>
+            Versioned release、公開contract、model release、reload、telemetry、canary実装結果
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>milestones-15-21</code></small
+            >
+          </td>
+          <td>
+            現行のrepository実装・isolated verification記録。local-node commissioning待ち
+            <small data-audit-summary="true">観測 2026-08-28 · target revision unrecorded</small>
+            <span data-audit-gap-note="true"
+              >implementation target LARM source commit is absent from the completion record</span
+            >
+          </td>
         </tr>
-        <tr>
+        <tr
+          data-kind="decision"
+          data-state="proposed"
+          data-domain="implementation-completion-m22-m25"
+        >
           <th scope="row">
             <a href="./implementation-completion-m22-m25.html"
               >Milestone 22・25 Repository実装記録</a
             >
           </th>
-          <td>公開境界、loopback desired state、external asset検証、SLO gateの実装結果</td>
+          <td>
+            公開境界、loopback desired state、external asset検証、SLO gateの実装結果
+            <small
+              >分類: <code>decision</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>implementation-completion-m22-m25</code></small
+            >
+          </td>
           <td>Repository実装記録。production deployment・校正・cutoverは未完了</td>
         </tr>
-        <tr>
+        <tr data-kind="evidence" data-state="proposed" data-domain="commissioning-evidence">
           <th scope="row">
             <a href="./commissioning-evidence.html">local-node Commissioning Evidence</a>
           </th>
-          <td>read-only preflightと実機acceptance</td>
+          <td>
+            read-only preflightと実機acceptance
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>commissioning-evidence</code></small
+            >
+          </td>
           <td>preflight完了、commissioning保留</td>
         </tr>
-        <tr>
+        <tr data-kind="research" data-state="implemented" data-domain="performance-benchmark">
           <th scope="row">
             <a href="./performance-benchmark.html">LLM・ASR・TTS 性能診断ベンチマーク仕様</a>
           </th>
-          <td>単体性能と3系統同時利用時の劣化を比較する測定契約・実測記録</td>
+          <td>
+            単体性能と3系統同時利用時の劣化を比較する測定契約・実測記録
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>performance-benchmark</code></small
+            >
+          </td>
           <td>実装・自動テスト・2026-08-31 local-node warm-state実測完了</td>
         </tr>
-        <tr>
+        <tr data-kind="research" data-state="implemented" data-domain="asr-alternative-evaluation">
           <th scope="row">
             <a href="./asr-alternative-evaluation.html"
               >軽量日本語ASR 再選定調査・Shadow評価・試用結果</a
             >
           </th>
-          <td>CPU軽量ASR候補、同一fixtureの精度、単体・mixed性能比較</td>
+          <td>
+            CPU軽量ASR候補、同一fixtureの精度、単体・mixed性能比較
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>asr-alternative-evaluation</code></small
+            >
+          </td>
           <td>
             MIT・Apache-2.0限定のCPU・GPU shadow完了。Whisper turbo HIPをrollback可能な
             <code>stt-default</code>限定trialへ切替、Qwen 1.7BはResident
             backupとして維持
           </td>
         </tr>
-        <tr>
+        <tr data-kind="plan" data-state="current" data-domain="inference-audit-retention">
           <th scope="row">
             <a href="./inference-audit-log-retention-plan.html"
               >LLM推論内容監査ログ・7日保持 実装計画</a
             >
           </th>
-          <td>raw request、rendered prompt、token、responseの暗号化保存と168時間TTL</td>
+          <td>
+            raw request、rendered prompt、token、responseの暗号化保存と168時間TTL
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>inference-audit-retention</code></small
+            >
+          </td>
           <td>現行計画。repository実装・実機cutover待ち</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="contract"
+          data-state="proposed"
+          data-domain="qwen38-efficientthink-agent-rollout"
+        >
           <th scope="row">
             <a href="./qwen38-efficientthink-agent-rollout.html"
               >Qwen 3.8 EfficientThink Agent worker切替記録</a
             >
           </th>
-          <td>64K Agent primaryの分離導入、KV snapshot非変更、fallbackとrollback</td>
+          <td>
+            64K Agent primaryの分離導入、KV snapshot非変更、fallbackとrollback
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>qwen38-efficientthink-agent-rollout</code></small
+            >
+          </td>
           <td>Repository構成・2026-09-12切替・公開canary・最初の実workload確認済み</td>
         </tr>
-        <tr>
+        <tr data-kind="contract" data-state="proposed" data-domain="stable-release-gate">
           <th scope="row"><a href="./stable-release-gate.html">Stable Release Gate</a></th>
-          <td>repository、contract・network、commissioning、SLO、Ambient canaryの昇格条件</td>
+          <td>
+            repository、contract・network、commissioning、SLO、Ambient canaryの昇格条件
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>stable-release-gate</code></small
+            >
+          </td>
           <td>production gate保留</td>
         </tr>
-        <tr>
+        <tr
+          data-kind="plan"
+          data-state="historical"
+          data-domain="implementation-plan-m8-m14"
+          data-successor="implementation-completion.html"
+        >
           <th scope="row">
             <a href="./implementation-plan-m8-m14.html">Milestone 8–14 実装計画（履歴）</a>
           </th>
-          <td>統一Data Plane、bounded execution、restart、snapshotの計画</td>
-          <td>repository実装完了、履歴文書</td>
+          <td>
+            統一Data Plane、bounded execution、restart、snapshotの計画
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>implementation-plan-m8-m14</code></small
+            >
+          </td>
+          <td>
+            repository実装完了、履歴文書
+            <a rel="successor" href="./implementation-completion.html"
+              >後継: implementation-completion</a
+            >
+          </td>
         </tr>
-        <tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="milestones-8-14"
+          data-audit="point-in-time"
+          data-observed-on="2026-08-28"
+          data-target-revision="unrecorded"
+          data-audit-gap="Milestone実装完了時のLARM source commitが記録されていない"
+        >
           <th scope="row">
             <a href="./implementation-completion.html">Milestone 8–14 実装完了記録</a>
           </th>
-          <td>実装結果、固定contract、残る実機gate</td>
-          <td>現行記録</td>
+          <td>
+            実装結果、固定contract、残る実機gate
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>milestones-8-14</code></small
+            >
+          </td>
+          <td>
+            現行記録
+            <small data-audit-summary="true">観測 2026-08-28 · target revision unrecorded</small>
+            <span data-audit-gap-note="true"
+              >Milestone実装完了時のLARM source commitが記録されていない</span
+            >
+          </td>
         </tr>
-        <tr>
+        <tr data-kind="evidence" data-state="proposed" data-domain="review-hardening">
           <th scope="row"><a href="./review-hardening.html">コードレビュー・Hardening記録</a></th>
-          <td>コード監査の指摘、対策、不変条件</td>
+          <td>
+            コード監査の指摘、対策、不変条件
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>review-hardening</code></small
+            >
+          </td>
           <td>指摘修正済み</td>
         </tr>
-        <tr>
+        <tr data-kind="contract" data-state="implemented" data-domain="documentation-review">
           <th scope="row"><a href="./documentation-review.html">ドキュメントレビュー記録</a></th>
-          <td>文書監査、正本対応、運用状態との区別</td>
+          <td>
+            文書監査、正本対応、運用状態との区別
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>documentation-review</code></small
+            >
+          </td>
           <td>2026-08-29再監査済み、未解消指摘なし</td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="historical"
+          data-domain="ace-step-music-trial"
+          data-successor="music-generation-provider.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-24"
+          data-target-revision="unrecorded"
+          data-audit-gap="実行engineのcommit/buildが記録されていない"
+        >
+          <th scope="row">
+            <a href="./ace-step-music-trial-2026-09-24.html"
+              >ACE-Step 1.5 ROCm 音楽生成試行 2026-09-24</a
+            >
+          </th>
+          <td>
+            音楽生成Providerの実機試行と成果
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>ace-step-music-trial</code></small
+            >
+          </td>
+          <td>
+            日付付き試行記録
+            <small data-audit-summary="true">観測 2026-09-24 · target revision unrecorded</small>
+            <span data-audit-gap-note="true">実行engineのcommit/buildが記録されていない</span>
+            <a rel="successor" href="./music-generation-provider.html"
+              >後継: music-generation-provider</a
+            >
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="implemented"
+          data-domain="bonsai2-27b-local-evaluation"
+        >
+          <th scope="row">
+            <a href="./bonsai2-27b-local-evaluation.html"
+              >Ternary Bonsai 2 27B 実機評価 Phase 1–3</a
+            >
+          </th>
+          <td>
+            候補モデルの実機品質・性能評価
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>bonsai2-27b-local-evaluation</code></small
+            >
+          </td>
+          <td>評価記録</td>
+        </tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="consumer-profile-discovery-migration-prompts"
+        >
+          <th scope="row">
+            <a href="./consumer-profile-discovery-migration-prompts.html"
+              >Agent Connection provide移行プロンプト</a
+            >
+          </th>
+          <td>
+            SAAA・ContextStill consumerのprofile discovery移行手順
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>consumer-profile-discovery-migration-prompts</code></small
+            >
+          </td>
+          <td>移行用handoff</td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="implemented"
+          data-domain="context-implementation-traceability"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-13"
+          data-target-revision="unrecorded"
+          data-audit-gap="監査対象のLARM source commitが記録されていない"
+        >
+          <th scope="row">
+            <a href="./context-implementation-traceability.html"
+              >Managed Context実装完了トレーサビリティ</a
+            >
+          </th>
+          <td>
+            要件・実装・受入testの対応記録
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>context-implementation-traceability</code></small
+            >
+          </td>
+          <td>
+            2026-09-13時点の完了記録
+            <small data-audit-summary="true">観測 2026-09-13 · target revision unrecorded</small>
+            <span data-audit-gap-note="true">監査対象のLARM source commitが記録されていない</span>
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="historical"
+          data-domain="context-source-rebuild-evidence"
+          data-successor="context-implementation-traceability.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-09"
+          data-target-revision="unrecorded"
+          data-audit-gap="実機試験対象のLARM source commitが記録されていない"
+        >
+          <th scope="row">
+            <a href="./context-source-rebuild-evidence.html"
+              >Managed Context source-rebuild適合証跡</a
+            >
+          </th>
+          <td>
+            source-rebuild契約の適合証跡
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>context-source-rebuild-evidence</code></small
+            >
+          </td>
+          <td>
+            2026-09-09 point-in-time実機適合証跡
+            <small data-audit-summary="true">観測 2026-09-09 · target revision unrecorded</small>
+            <span data-audit-gap-note="true"
+              >実機試験対象のLARM source commitが記録されていない</span
+            >
+            <a rel="successor" href="./context-implementation-traceability.html"
+              >後継: context-implementation-traceability</a
+            >
+          </td>
+        </tr>
+        <tr
+          data-kind="decision"
+          data-state="implemented"
+          data-domain="contextstill-decision-workload-profile-evaluation"
+        >
+          <th scope="row">
+            <a href="./contextstill-decision-workload-profile-evaluation.html"
+              >ContextStill Decision Workload Profile検討検証</a
+            >
+          </th>
+          <td>
+            Decision Model、Workload Profile、ML Compute MCPの候補検討
+            <small
+              >分類: <code>decision</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>contextstill-decision-workload-profile-evaluation</code></small
+            >
+          </td>
+          <td>調査・評価記録</td>
+        </tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="contextstill-decision-workload-profile-implementation-plan"
+        >
+          <th scope="row">
+            <a href="./contextstill-decision-workload-profile-implementation-plan.html"
+              >ContextStill Decision Workload Profile実装計画</a
+            >
+          </th>
+          <td>
+            ContextStill向けdecision workloadの実装手順
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>contextstill-decision-workload-profile-implementation-plan</code></small
+            >
+          </td>
+          <td>
+            decision-defaultはproduction
+            live検証済み。decision-fastはoperator受諾待ち、consumer統合はContextStill/DeepStill
+            source配置待ち
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="historical"
+          data-domain="conversation-model-selection"
+          data-successor="qwen38-q4-0-standard-profile-decision.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-22"
+          data-target-revision="cb300598d"
+        >
+          <th scope="row">
+            <a href="./conversation-model-selection-2026-09-22.html"
+              >local-node 会話モデル候補の実機選定</a
+            >
+          </th>
+          <td>
+            会話モデル候補の品質・性能比較
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>conversation-model-selection</code></small
+            >
+          </td>
+          <td>
+            日付付き選定記録
+            <small data-audit-summary="true">観測 2026-09-22 · target revision cb300598d</small>
+            <a rel="successor" href="./qwen38-q4-0-standard-profile-decision.html"
+              >後継: qwen38-q4-0-standard-profile-decision</a
+            >
+          </td>
+        </tr>
+        <tr data-kind="decision" data-state="implemented" data-domain="daemon-simplification">
+          <th scope="row"><a href="./daemon-simplification.html">Daemon実装簡素化の決定記録</a></th>
+          <td>
+            重複運用経路の削除と責務ownerの決定
+            <small
+              >分類: <code>decision</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>daemon-simplification</code></small
+            >
+          </td>
+          <td>決定記録</td>
+        </tr>
+        <tr
+          data-kind="contract"
+          data-state="proposed"
+          data-domain="dynamic-embedding-host-implementation"
+        >
+          <th scope="row">
+            <a href="./dynamic-embedding-host-implementation.html"
+              >LARM 動的Embeddingホスト実装仕様</a
+            >
+          </th>
+          <td>
+            Agent Connectionに束縛されたEmbedding host contract
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>dynamic-embedding-host-implementation</code></small
+            >
+          </td>
+          <td>
+            LARMのEmbedding profile・Agent Connection・gateway・配備harnessを実装済み。external
+            runtime導入とlocal-node smoke acceptance待ち
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="implemented"
+          data-domain="irodori-tts-evaluation"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-18"
+          data-target-revision="a92d4ab8a3ad6a120b2b008a8a36013ec3a3195f"
+        >
+          <th scope="row">
+            <a href="./irodori-tts-evaluation.html">Irodori-TTS v4.1 Anime／MeanFlow 実機評価</a>
+          </th>
+          <td>
+            TTS品質、レイテンシ、CPU・ROCm構成の実機評価
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>irodori-tts-evaluation</code></small
+            >
+          </td>
+          <td>
+            評価記録。LARM source commit、host、co-resident条件を固定した実測
+            <small data-audit-summary="true"
+              >観測 2026-09-18 · target revision a92d4ab8a3ad6a120b2b008a8a36013ec3a3195f</small
+            >
+          </td>
+        </tr>
+        <tr
+          data-kind="contract"
+          data-state="implemented"
+          data-domain="laya-multilingual-system-one"
+        >
+          <th scope="row">
+            <a href="./laya-multilingual-system-one.html"
+              >Gemma 4 26B SAAA profileへのLaya System One追加</a
+            >
+          </th>
+          <td>
+            System One providerのprofile・typed response契約
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>laya-multilingual-system-one</code></small
+            >
+          </td>
+          <td>実装済み仕様</td>
+        </tr>
+        <tr
+          data-kind="contract"
+          data-state="proposed"
+          data-domain="local-multimodal-runtime-variants"
+        >
+          <th scope="row">
+            <a href="./local-multimodal-runtime-variants.html"
+              >ローカルAI基本セットとオンデマンドRuntime Variant</a
+            >
+          </th>
+          <td>
+            常駐基本構成と明示選択するmedia runtime variant
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>local-multimodal-runtime-variants</code></small
+            >
+          </td>
+          <td>
+            repositoryのbase profile・Variant設定と隔離model E2Eあり。production service
+            install/restartは未確認のためproposedを維持
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="proposed" data-domain="music-generation-provider">
+          <th scope="row">
+            <a href="./music-generation-provider.html">Music Generation Provider Phase 1</a>
+          </th>
+          <td>
+            ACE-Step provider/API、retention、favorite routeを実装済み。runtime配備、durable
+            journal、reference audio、admission・benchmarkは未完了
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>music-generation-provider</code></small
+            >
+          </td>
+          <td>repository実装済みの範囲と残るruntime・durability gateを分離して記録</td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="historical"
+          data-domain="ornith-1-5-35b-mtp-refresh-evaluation"
+          data-successor="ornith15-speed-and-replacement-candidates-2026-09-27.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-24"
+          data-target-revision="a0db6d02a557324a04cecd3feb0ab3f08565521e"
+        >
+          <th scope="row">
+            <a href="./ornith-1.5-35b-mtp-refresh-evaluation.html"
+              >Ornith-1.5-35B-A3B MTP refresh再評価</a
+            >
+          </th>
+          <td>
+            speculative decoding構成の再測定
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>ornith-1-5-35b-mtp-refresh-evaluation</code></small
+            >
+          </td>
+          <td>
+            日付付き評価記録
+            <small data-audit-summary="true"
+              >観測 2026-09-24 · target revision a0db6d02a557324a04cecd3feb0ab3f08565521e</small
+            >
+            <a rel="successor" href="./ornith15-speed-and-replacement-candidates-2026-09-27.html"
+              >後継: ornith15-speed-and-replacement-candidates-2026-09-27</a
+            >
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="historical"
+          data-domain="ornith-1-5-35b-selection"
+          data-successor="ornith15-speed-and-replacement-candidates-2026-09-27.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-24"
+          data-target-revision="unrecorded"
+          data-audit-gap="比較対象ごとの実行revisionが完結していない"
+        >
+          <th scope="row">
+            <a href="./ornith-1.5-35b-selection.html">Ornith-1.5-35B-A3B 配布物選定</a>
+          </th>
+          <td>
+            モデル配布物、revision、ライセンスの選定
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>ornith-1-5-35b-selection</code></small
+            >
+          </td>
+          <td>
+            選定記録・後継評価あり
+            <small data-audit-summary="true">観測 2026-09-24 · target revision unrecorded</small>
+            <span data-audit-gap-note="true">比較対象ごとの実行revisionが完結していない</span>
+            <a rel="successor" href="./ornith15-speed-and-replacement-candidates-2026-09-27.html"
+              >後継: ornith15-speed-and-replacement-candidates-2026-09-27</a
+            >
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="historical"
+          data-domain="ornith15-speed-and-replacement-candidates"
+          data-successor="none"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-27"
+          data-target-revision="unrecorded"
+          data-audit-gap="候補ごとの測定engine revisionが一貫して記録されていない"
+        >
+          <th scope="row">
+            <a href="./ornith15-speed-and-replacement-candidates-2026-09-27.html"
+              >Ornith 1.5 高速化と代替候補調査</a
+            >
+          </th>
+          <td>
+            速度改善策と置換候補の比較調査
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>ornith15-speed-and-replacement-candidates</code></small
+            >
+          </td>
+          <td>
+            日付付き調査記録
+            <small data-audit-summary="true">観測 2026-09-27 · target revision unrecorded</small
+            ><span data-audit-gap-note="true"
+              >候補ごとの測定engine revisionが一貫して記録されていない</span
+            >
+            <span data-successor-note="後継文書なし">後継文書なし</span>
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="implemented"
+          data-domain="qwen-3-5-2b-interaction-evaluation"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-24"
+          data-target-revision="unrecorded"
+          data-audit-gap="evaluation records the inference engine commit but not the target LARM source commit"
+        >
+          <th scope="row">
+            <a href="./qwen-3.5-2b-interaction-evaluation.html">Qwen 3.5 2B 会話・Tool use 評価</a>
+          </th>
+          <td>
+            会話品質とtool useの比較評価
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>qwen-3-5-2b-interaction-evaluation</code></small
+            >
+          </td>
+          <td>
+            評価記録。model digestとllama.cpp commitを固定。target LARM source commitは未記録
+            <small data-audit-summary="true">観測 2026-09-24 · target revision unrecorded</small>
+            <span data-audit-gap-note="true"
+              >evaluation records the inference engine commit but not the target LARM source
+              commit</span
+            >
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="proposed"
+          data-domain="qwen-agent-worker-reachability-remediation"
+        >
+          <th scope="row">
+            <a href="./qwen-agent-worker-reachability-remediation.html"
+              >qwen-agent-worker到達不能の調査とreadiness修正</a
+            >
+          </th>
+          <td>
+            worker到達性の障害調査とGateway readiness対策
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>qwen-agent-worker-reachability-remediation</code></small
+            >
+          </td>
+          <td>是正記録</td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="implemented"
+          data-domain="qwen-image-2-1-local-evaluation"
+        >
+          <th scope="row">
+            <a href="./qwen-image-2.1-local-evaluation.html"
+              >Qwen-Image-2.1 local取得・ROCm試用・画像artifact API</a
+            >
+          </th>
+          <td>
+            画像modelの取得・試用とartifact API評価
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>qwen-image-2-1-local-evaluation</code></small
+            >
+          </td>
+          <td>評価・実装記録</td>
+        </tr>
+        <tr data-kind="decision" data-state="current" data-domain="resident-default-profile">
+          <th scope="row">
+            <a href="./qwen38-q4-0-standard-profile-decision.html"
+              >Qwen3.8-27B Q4_0 128K MTP標準Profile決定</a
+            >
+          </th>
+          <td>
+            Resident defaultとcontext windowのprofile決定
+            <small
+              >分類: <code>decision</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>resident-default-profile</code></small
+            >
+          </td>
+          <td>現行決定記録</td>
+        </tr>
+        <tr
+          data-kind="decision"
+          data-state="implemented"
+          data-domain="runtime-release-state-catalog-retirement"
+        >
+          <th scope="row">
+            <a href="./runtime-release-state-catalog-retirement.html"
+              >Runtime release stateのcatalog廃止時移行</a
+            >
+          </th>
+          <td>
+            retired catalogに残るdurable release stateの扱い
+            <small
+              >分類: <code>decision</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>runtime-release-state-catalog-retirement</code></small
+            >
+          </td>
+          <td>実装済み決定記録</td>
+        </tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="saaa-async-connection-idle-release-implementation-plan"
+        >
+          <th scope="row">
+            <a href="./saaa-async-connection-idle-release-implementation-plan.html"
+              >SAAA非同期Connection・idle release実装計画</a
+            >
+          </th>
+          <td>
+            非同期接続、idle解放、foreground復帰の変更計画
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>saaa-async-connection-idle-release-implementation-plan</code></small
+            >
+          </td>
+          <td>実装計画・結果は関連記録を参照</td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="implemented"
+          data-domain="saaa-current-requirements-assessment"
+        >
+          <th scope="row">
+            <a href="./saaa-current-requirements-assessment.html"
+              >SAAAがLARMへ求める現行要件の照合</a
+            >
+          </th>
+          <td>
+            consumer要件とLARM contractのギャップ分析
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>saaa-current-requirements-assessment</code></small
+            >
+          </td>
+          <td>要件評価記録</td>
+        </tr>
+        <tr
+          data-kind="contract"
+          data-state="proposed"
+          data-domain="saaa-gemma4-26b-voice-profile-preparation"
+        >
+          <th scope="row">
+            <a href="./saaa-gemma4-26b-voice-profile-preparation.html"
+              >SAAA Gemma 4 26B 音声プロファイル準備記録</a
+            >
+          </th>
+          <td>
+            Gemma 4 voice profileのsource準備
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>saaa-gemma4-26b-voice-profile-preparation</code></small
+            >
+          </td>
+          <td>
+            LARM explicit profile/release設定済み。plain decode、SAAA
+            quality/tool/security比較、実機latency qualification待ち
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="implemented" data-domain="saaa-larm-api-contract-response">
+          <th scope="row">
+            <a href="./saaa-larm-api-contract-response.html">SAAA向けLARM API契約 回答</a>
+          </th>
+          <td>
+            consumer向けAPI contractの回答と接続要件
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>saaa-larm-api-contract-response</code></small
+            >
+          </td>
+          <td>handoff記録</td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="historical"
+          data-domain="saaa-live-connection-failure-investigation"
+          data-successor="saaa-provider-runtime-remediation.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-26"
+          data-target-revision="0e927504824309ab5dabec2263309bb9b1a31bc6"
+        >
+          <th scope="row">
+            <a href="./saaa-live-connection-failure-investigation-2026-09-26.html"
+              >SAAA LLM・ASR接続障害 調査・是正結果</a
+            >
+          </th>
+          <td>
+            live接続障害の原因、修正、受入結果
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>saaa-live-connection-failure-investigation</code></small
+            >
+          </td>
+          <td>
+            日付付き是正記録
+            <small data-audit-summary="true"
+              >観測 2026-09-26 · target revision 0e927504824309ab5dabec2263309bb9b1a31bc6</small
+            >
+            <a rel="successor" href="./saaa-provider-runtime-remediation.html"
+              >後継: saaa-provider-runtime-remediation</a
+            >
+          </td>
+        </tr>
+        <tr data-kind="research" data-state="proposed" data-domain="saaa-main-llm-benchmark-design">
+          <th scope="row">
+            <a href="./saaa-main-llm-benchmark-design-2026-09-27.html"
+              >SAAA main LLM比較ベンチ設計</a
+            >
+          </th>
+          <td>
+            Gemma 4とOrnith候補の比較条件と評価方法
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>saaa-main-llm-benchmark-design</code></small
+            >
+          </td>
+          <td>評価設計・実測待ち</td>
+        </tr>
+        <tr
+          data-kind="contract"
+          data-state="proposed"
+          data-domain="saaa-ornith-qwen2b-base-profile"
+        >
+          <th scope="row">
+            <a href="./saaa-ornith-qwen2b-base-profile.html"
+              >SAAA Ornith 35B + Qwen 2B基本応答プロファイル</a
+            >
+          </th>
+          <td>
+            main LLMとbackchannelのprofile構成
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>saaa-ornith-qwen2b-base-profile</code></small
+            >
+          </td>
+          <td>
+            canonical profileはrepository設定と一致。production install/restartとSAAA consumer
+            acceptanceは未確認のためproposedを維持
+          </td>
+        </tr>
+        <tr
+          data-kind="contract"
+          data-state="historical"
+          data-domain="saaa-profile-and-media-variant-e2e"
+          data-successor="saaa-conversation-model-profile.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-24"
+          data-target-revision="unrecorded"
+          data-audit-gap="試験対象のdeployed release commitとconfig revisionが固定されていない"
+        >
+          <th scope="row">
+            <a href="./saaa-profile-and-media-variant-e2e-2026-09-24.html"
+              >SAAA Profile・Media Variant E2E</a
+            >
+          </th>
+          <td>
+            Agent profileとmedia variantのend-to-end受入
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>saaa-profile-and-media-variant-e2e</code></small
+            >
+          </td>
+          <td>
+            日付付きE2E記録
+            <small data-audit-summary="true">観測 2026-09-24 · target revision unrecorded</small>
+            <span data-audit-gap-note="true"
+              >試験対象のdeployed release commitとconfig revisionが固定されていない</span
+            >
+            <a rel="successor" href="./saaa-conversation-model-profile.html"
+              >後継: saaa-conversation-model-profile</a
+            >
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="proposed" data-domain="saaa-provider-runtime-remediation">
+          <th scope="row">
+            <a href="./saaa-provider-runtime-remediation.html"
+              >SAAA Provider実機障害の是正と配備後受入</a
+            >
+          </th>
+          <td>
+            Provider実機障害の復旧・配備後検証手順
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>saaa-provider-runtime-remediation</code></small
+            >
+          </td>
+          <td>是正・運用記録</td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="historical"
+          data-domain="saaa-unit-provider-readiness-investigation"
+          data-successor="saaa-provider-runtime-remediation.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-09-27"
+          data-target-revision="30188f79294128d9a1d7399e84924b7ef8811246"
+        >
+          <th scope="row">
+            <a href="./saaa-unit-provider-readiness-investigation-2026-09-27.html"
+              >SAAA単体Provider ready停止 調査結果</a
+            >
+          </th>
+          <td>
+            readiness待機停止の原因とProvider単体検証
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>saaa-unit-provider-readiness-investigation</code></small
+            >
+          </td>
+          <td>
+            日付付き調査記録
+            <small data-audit-summary="true"
+              >観測 2026-09-27 · target revision 30188f79294128d9a1d7399e84924b7ef8811246</small
+            >
+            <a rel="successor" href="./saaa-provider-runtime-remediation.html"
+              >後継: saaa-provider-runtime-remediation</a
+            >
+          </td>
         </tr>
       </tbody>
     </table>

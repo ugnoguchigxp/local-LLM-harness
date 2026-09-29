@@ -1,47 +1,12 @@
 import {
-  allocationRequestSchema,
-  agentProfileSelectorIdSchema,
-  audioVoiceListSchema,
-  agentConnectionClaimSchema,
-  agentConnectionClaimRequestSchema,
-  agentConnectionHealthSchema,
-  agentConnectionRequestSchema,
-  agentConnectionRenewRequestSchema,
   controlOperationSchema,
-  contextListSchema,
-  contextRegistrationRequestSchema,
-  contextStatusSchema,
-  contextViewRequestSchema,
-  canonicalMeasurementReceiptSchema,
-  canonicalMeasurementRequestSchema,
-  forgetOperationSchema,
-  forgetRequestSchema,
-  generationAttemptSchema,
-  personalStateCapabilitySchema,
-  personalStateViewRequestSchema,
-  personalStateViewReceiptSchema,
-  sourceProvisionReceiptSchema,
   daemonHealthSchema,
-  errorResponseSchema,
   LARM_SERVICE_ACTIVITY_VALID_FOR_MS,
   openAiModelListSchema,
-  publicAllocationSchema,
-  publicContextDescriptorSchema,
-  publicContextOperationSchema,
-  publicContextViewSchema,
-  publicAgentConnectionSchema,
-  publicAgentProfileListSchema,
   publicAgentProfileListV3Schema,
   readinessSchema,
   releaseConvergenceStatusSchema,
   serviceActivitySchema,
-  OpenAiChatCompletionSseInspector,
-  embeddingAgentProviderDescriptorSchema,
-  embeddingRequestSchema,
-  inspectEmbeddingResponse,
-  inspectSystemOneResponse,
-  systemOneAgentProviderDescriptorSchema,
-  systemOneRequestSchema,
   type AgentConnectionClaim,
   type AudioSpeechRequest,
   type AudioVoiceList,
@@ -50,10 +15,10 @@ import {
   type AgentConnectionRequestInput,
   type AgentProfileSelectorId,
   type AllocationRequestInput,
+  type CanonicalMeasurementRequest,
   type ControlOperation,
   type ContextRegistrationRequest,
   type ContextViewRequest,
-  type CanonicalMeasurementRequest,
   type ForgetRequestInput,
   type PersonalStateViewRequest,
   type PublicAllocation,
@@ -67,16 +32,34 @@ import {
   type SystemOneRequest,
   type SystemOneResponse,
 } from "@larm/core";
-import { z } from "zod";
+import {
+  delay,
+  validatePollingOptions,
+  waitForOperation as waitForControlOperation,
+} from "./client-helpers";
+import {
+  LarmApiError,
+  LarmClientConfigurationError,
+  LarmEpochChangedError,
+} from "./errors";
+import { sendClientRequest } from "./client-transport";
+import { ClientMedia } from "./client-media";
+import { ClientAllocationApi } from "./client-allocation-api";
+import { ClientContextApi } from "./client-context-api";
+import type { ClientRequestOptions as RequestOptions, PersonalStateRequestOptions } from "./client-context-api";
+export type { ClientRequestOptions as RequestOptions, PersonalStateRequestOptions } from "./client-context-api";
+import { ClientAgentConnections, type RefreshedAgentConnection } from "./client-agent-connections";
+export type { RefreshedAgentConnection } from "./client-agent-connections";
+import {
+  embedWithClaimedProvider,
+  systemOneWithClaimedProvider,
+  type EmbeddingAgentProvider,
+  type SystemOneAgentProvider,
+} from "./client-provider-protocols";
 
-export type EmbeddingAgentProvider = Extract<
-  AgentConnectionClaim["providers"][number],
-  { apiStyle: "larm-embedding" }
->;
-export type SystemOneAgentProvider = Extract<
-  AgentConnectionClaim["providers"][number],
-  { apiStyle: "larm-system-one" }
->;
+export type { EmbeddingAgentProvider, SystemOneAgentProvider } from "./client-provider-protocols";
+
+export { LarmApiError, LarmClientConfigurationError, LarmEpochChangedError, LarmStreamProtocolError } from "./errors";
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -90,67 +73,19 @@ export type LarmClientOptions = {
   now?: () => number;
 };
 
-export type RequestOptions = {
-  signal?: AbortSignal;
-  idempotencyKey?: string;
-  management?: boolean;
-  waitSeconds?: number;
-};
-
-export type PersonalStateRequestOptions = RequestOptions & {
-  providerToken: string;
-};
-
 export type AgentConnectionRefreshOptions = RequestOptions & {
   ttlSeconds?: number;
   claimFormat?: AgentConnectionClaimRequest["format"];
 };
 
-export type RefreshedAgentConnection = {
-  connection: PublicAgentConnection;
-  claim: AgentConnectionClaim;
-};
-
-export class LarmApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-    readonly responseBody?: unknown,
-  ) {
-    super(message);
-    this.name = "LarmApiError";
-  }
-}
-
-export class LarmClientConfigurationError extends Error {
-  constructor(
-    readonly code: "api_token_missing",
-    message: string,
-  ) {
-    super(message);
-    this.name = "LarmClientConfigurationError";
-  }
-}
-
-export class LarmEpochChangedError extends Error {
-  constructor(readonly previous: string, readonly current: string) {
-    super(`LARM boot epoch changed from ${previous} to ${current}; start a new request lifecycle`);
-    this.name = "LarmEpochChangedError";
-  }
-}
-
-export class LarmStreamProtocolError extends Error {
-  constructor(readonly code: string, message: string) {
-    super(message);
-    this.name = "LarmStreamProtocolError";
-  }
-}
-
 export class LarmClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
   private readonly timeoutMs: number;
+  private readonly media: ClientMedia;
+  private readonly allocationApi: ClientAllocationApi;
+  private readonly contextApi: ClientContextApi;
+  private readonly agentConnections: ClientAgentConnections;
   private bootEpoch?: string;
   private configRevision?: string;
 
@@ -168,6 +103,39 @@ export class LarmClient {
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) {
       throw new RangeError("LARM timeoutMs must be a positive finite number");
     }
+    this.media = new ClientMedia((path, init) => this.request(path, init));
+    this.allocationApi = new ClientAllocationApi({
+      request: (path, init, management, timeoutMs) => this.request(path, init, management, timeoutMs),
+      parseJson: (response, schema) => this.parseJson(response, schema),
+      random: options.random,
+      timeoutMs: this.timeoutMs,
+    });
+    this.contextApi = new ClientContextApi({
+      request: (path, init, management, timeoutMs, acceptedStatuses, sendApiToken) => this.request(
+        path,
+        init,
+        management,
+        timeoutMs,
+        acceptedStatuses,
+        sendApiToken,
+      ),
+      parseJson: (response, schema) => this.parseJson(response, schema),
+      random: options.random,
+      timeoutMs: this.timeoutMs,
+    });
+    this.agentConnections = new ClientAgentConnections({
+      request: (path, init, management, timeoutMs, acceptedStatuses, sendApiToken) => this.request(
+        path,
+        init,
+        management,
+        timeoutMs,
+        acceptedStatuses,
+        sendApiToken,
+      ),
+      parseJson: (response, schema) => this.parseJson(response, schema),
+      random: options.random,
+      timeoutMs: this.timeoutMs,
+    });
   }
 
   get observedBootEpoch(): string | undefined {
@@ -232,155 +200,53 @@ export class LarmClient {
   }
 
   async allocate(request: AllocationRequestInput, options: RequestOptions = {}): Promise<PublicAllocation> {
-    const normalized = allocationRequestSchema.parse(request);
-    const response = await this.request("/v1/allocations", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
-      },
-      body: JSON.stringify(normalized),
-      signal: options.signal,
-    }, options.management ?? normalized.deploymentPolicy === "allow-listed");
-    return this.parseJson(response, publicAllocationSchema);
+    return this.allocationApi.allocate(request, options);
   }
 
   async getAllocation(id: string, signal?: AbortSignal): Promise<PublicAllocation> {
-    return await this.getAllocationWithin(id, signal, this.timeoutMs);
-  }
-
-  private async getAllocationWithin(
-    id: string,
-    signal: AbortSignal | undefined,
-    timeoutMs: number,
-  ): Promise<PublicAllocation> {
-    const response = await this.request(
-      `/v1/allocations/${encodeURIComponent(id)}`,
-      { signal },
-      false,
-      timeoutMs,
-    );
-    return this.parseJson(response, publicAllocationSchema);
+    return this.allocationApi.getAllocation(id, signal);
   }
 
   async waitUntilReady(
     allocation: PublicAllocation,
     options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number } = {},
   ): Promise<PublicAllocation> {
-    const timeoutMs = options.timeoutMs ?? this.timeoutMs;
-    const pollIntervalMs = options.pollIntervalMs ?? 250;
-    this.validatePollingOptions(timeoutMs, pollIntervalMs);
-    const deadline = Date.now() + timeoutMs;
-    let current = allocation;
-    while (current.status === "waiting" || current.status === "pending") {
-      if (Date.now() >= deadline) {
-        throw new LarmApiError(
-          408,
-          "allocation_timeout",
-          `allocation ${current.id} did not become ready before the client deadline`,
-          current,
-        );
-      }
-      await this.delay(
-        Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
-        options.signal,
-      );
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) {
-        throw this.allocationTimeout(current);
-      }
-      try {
-        current = await this.getAllocationWithin(current.id, options.signal, remainingMs);
-      } catch (error) {
-        if (Date.now() >= deadline) throw this.allocationTimeout(current);
-        throw error;
-      }
-    }
-    if (current.status !== "ready") {
-      throw new LarmApiError(409, current.error?.code ?? "allocation_not_ready", current.error?.message
-        ?? `allocation ${current.id} ended as ${current.status}`, current);
-    }
-    return current;
+    return this.allocationApi.waitUntilReady(allocation, options);
   }
 
   async renew(id: string, ttlSeconds = 300, signal?: AbortSignal): Promise<PublicAllocation> {
-    const response = await this.request(`/v1/allocations/${encodeURIComponent(id)}/renew`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ttlSeconds }),
-      signal,
-    });
-    return this.parseJson(response, publicAllocationSchema);
+    return this.allocationApi.renew(id, ttlSeconds, signal);
   }
 
   async release(id: string, signal?: AbortSignal): Promise<PublicAllocation> {
-    const response = await this.request(`/v1/allocations/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      signal,
-    });
-    return this.parseJson(response, publicAllocationSchema);
+    return this.allocationApi.release(id, signal);
   }
 
   async getContextStatus(signal?: AbortSignal) {
-    const response = await this.request("/v1/context-status", { signal });
-    return this.parseJson(response, contextStatusSchema);
+    return this.contextApi.getContextStatus(signal);
   }
 
   async registerContext(
     input: ContextRegistrationRequest,
     options: RequestOptions = {},
   ) {
-    const request = contextRegistrationRequestSchema.parse(input);
-    const response = await this.request("/v1/contexts", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
-      },
-      body: JSON.stringify(request),
-      signal: options.signal,
-    });
-    return this.parseJson(response, publicContextDescriptorSchema);
+    return this.contextApi.registerContext(input, options);
   }
 
   async listContexts(options: { signal?: AbortSignal; cursor?: string; limit?: number } = {}) {
-    const query = new URLSearchParams();
-    if (options.cursor) query.set("cursor", options.cursor);
-    if (options.limit !== undefined) query.set("limit", String(options.limit));
-    const response = await this.request(`/v1/contexts${query.size > 0 ? `?${query}` : ""}`, {
-      signal: options.signal,
-    });
-    return this.parseJson(response, contextListSchema);
+    return this.contextApi.listContexts(options);
   }
 
   async deleteContext(id: string, options: RequestOptions = {}): Promise<void> {
-    const response = await this.request(`/v1/contexts/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      headers: {
-        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
-      },
-      signal: options.signal,
-    });
-    await response.body?.cancel().catch(() => undefined);
+    return this.contextApi.deleteContext(id, options);
   }
 
   async createContextView(input: ContextViewRequest, options: RequestOptions = {}) {
-    const request = contextViewRequestSchema.parse(input);
-    const response = await this.request("/v1/context-views", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
-      },
-      body: JSON.stringify(request),
-      signal: options.signal,
-    });
-    return this.parseJson(response, publicContextViewSchema);
+    return this.contextApi.createContextView(input, options);
   }
 
   async getContextOperation(id: string, signal?: AbortSignal) {
-    const response = await this.request(`/v1/context-operations/${encodeURIComponent(id)}`, { signal });
-    return this.parseJson(response, publicContextOperationSchema);
+    return this.contextApi.getContextOperation(id, signal);
   }
 
   async getPersonalStateCapability(
@@ -388,15 +254,7 @@ export class LarmClient {
     runtime: string,
     options: PersonalStateRequestOptions,
   ) {
-    const response = await this.request("/v1/personal-state/capability", {
-      headers: {
-        authorization: `Bearer ${options.providerToken}`,
-        "x-larm-allocation-id": allocationId,
-        "x-larm-runtime": runtime,
-      },
-      signal: options.signal,
-    });
-    return this.parseJson(response, personalStateCapabilitySchema);
+    return this.contextApi.getPersonalStateCapability(allocationId, runtime, options);
   }
 
   async provisionContextSource(input: {
@@ -406,100 +264,43 @@ export class LarmClient {
     sourceDigest: string;
     content: string;
   }, options: PersonalStateRequestOptions) {
-    const response = await this.request("/v1/context-sources", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${options.providerToken}`,
-        "content-type": "text/plain; charset=utf-8",
-        "x-larm-source-incarnation": input.incarnation,
-        "x-larm-allocation-id": input.allocationId,
-        "x-larm-runtime": input.runtime,
-        "x-larm-source-digest": input.sourceDigest,
-      },
-      body: input.content,
-      signal: options.signal,
-    });
-    return this.parseJson(response, sourceProvisionReceiptSchema);
+    return this.contextApi.provisionContextSource(input, options);
   }
 
   async getContextSourceOperation(
     incarnation: string,
     options: PersonalStateRequestOptions,
   ) {
-    const response = await this.request(
-      `/v1/context-source-operations/${encodeURIComponent(incarnation)}`,
-      { headers: { authorization: `Bearer ${options.providerToken}` }, signal: options.signal },
-    );
-    return this.parseJson(response, sourceProvisionReceiptSchema);
+    return this.contextApi.getContextSourceOperation(incarnation, options);
   }
 
   async registerPersonalStateContext(
     input: ContextRegistrationRequest,
     options: PersonalStateRequestOptions,
   ) {
-    const request = contextRegistrationRequestSchema.parse(input);
-    const response = await this.request("/v1/contexts", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${options.providerToken}`,
-        "content-type": "application/json",
-        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
-      },
-      body: JSON.stringify(request),
-      signal: options.signal,
-    });
-    return this.parseJson(response, publicContextDescriptorSchema);
+    return this.contextApi.registerPersonalStateContext(input, options);
   }
 
   async createContextMeasurement(
     input: CanonicalMeasurementRequest,
     options: PersonalStateRequestOptions,
   ) {
-    const request = canonicalMeasurementRequestSchema.parse(input);
-    const response = await this.request("/v1/context-measurements", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${options.providerToken}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(request),
-      signal: options.signal,
-    });
-    return this.parseJson(response, canonicalMeasurementReceiptSchema);
+    return this.contextApi.createContextMeasurement(input, options);
   }
 
   async getContextMeasurement(id: string, options: PersonalStateRequestOptions) {
-    const response = await this.request(`/v1/context-measurements/${encodeURIComponent(id)}`, {
-      headers: { authorization: `Bearer ${options.providerToken}` },
-      signal: options.signal,
-    });
-    return this.parseJson(response, canonicalMeasurementReceiptSchema);
+    return this.contextApi.getContextMeasurement(id, options);
   }
 
   async createPersonalStateView(
     input: PersonalStateViewRequest,
     options: PersonalStateRequestOptions,
   ) {
-    const request = personalStateViewRequestSchema.parse(input);
-    const response = await this.request("/v2/context-views", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${options.providerToken}`,
-        "content-type": "application/json",
-        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
-      },
-      body: JSON.stringify(request),
-      signal: options.signal,
-    });
-    return this.parseJson(response, publicContextViewSchema);
+    return this.contextApi.createPersonalStateView(input, options);
   }
 
   async getPersonalStateViewReceipt(id: string, options: PersonalStateRequestOptions) {
-    const response = await this.request(`/v2/context-views/${encodeURIComponent(id)}`, {
-      headers: { authorization: `Bearer ${options.providerToken}` },
-      signal: options.signal,
-    });
-    return this.parseJson(response, personalStateViewReceiptSchema);
+    return this.contextApi.getPersonalStateViewReceipt(id, options);
   }
 
   chatPersonalState(input: {
@@ -508,62 +309,28 @@ export class LarmClient {
     viewId?: string;
     body: unknown;
   }, options: PersonalStateRequestOptions): Promise<Response> {
-    return this.request("/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${options.providerToken}`,
-        "content-type": "application/json",
-        "x-larm-allocation-id": input.allocationId,
-        "x-larm-attempt-id": input.attemptId,
-        ...(input.viewId ? { "x-larm-context-view-id": input.viewId } : {}),
-      },
-      body: JSON.stringify(input.body),
-      signal: options.signal,
-    });
+    return this.contextApi.chatPersonalState(input, options);
   }
 
   async getGenerationAttempt(id: string, options: PersonalStateRequestOptions) {
-    const response = await this.request(`/v1/generation-attempts/${encodeURIComponent(id)}`, {
-      headers: { authorization: `Bearer ${options.providerToken}` },
-      signal: options.signal,
-    });
-    return this.parseJson(response, generationAttemptSchema);
+    return this.contextApi.getGenerationAttempt(id, options);
   }
 
   async cancelGenerationAttempt(id: string, options: PersonalStateRequestOptions) {
-    const response = await this.request(`/v1/generation-attempts/${encodeURIComponent(id)}/cancel`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${options.providerToken}` },
-      signal: options.signal,
-    });
-    return this.parseJson(response, generationAttemptSchema);
+    return this.contextApi.cancelGenerationAttempt(id, options);
   }
 
   async forgetPersonalState(input: ForgetRequestInput, options: PersonalStateRequestOptions) {
-    const request = forgetRequestSchema.parse(input);
-    const response = await this.request("/v1/context-forget-operations", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${options.providerToken}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(request),
-      signal: options.signal,
-    }, false, this.timeoutMs, [202]);
-    return this.parseJson(response, forgetOperationSchema);
+    return this.contextApi.forgetPersonalState(input, options);
   }
 
   async getForgetOperation(id: string, options: PersonalStateRequestOptions) {
-    const response = await this.request(`/v1/context-forget-operations/${encodeURIComponent(id)}`, {
-      headers: { authorization: `Bearer ${options.providerToken}` },
-      signal: options.signal,
-    });
-    return this.parseJson(response, forgetOperationSchema);
+    return this.contextApi.getForgetOperation(id, options);
   }
 
+  /** @deprecated Use listAgentProfilesV3; the v2 route is a compatibility surface. */
   async listAgentProfiles(signal?: AbortSignal) {
-    const response = await this.request("/v2/agent-profiles", { signal });
-    return this.parseJson(response, publicAgentProfileListSchema);
+    return this.agentConnections.listAgentProfiles(signal);
   }
 
   async listAgentProfilesV3(signal?: AbortSignal): Promise<ReturnType<typeof publicAgentProfileListV3Schema.parse>>;
@@ -572,104 +339,34 @@ export class LarmClient {
     signal?: AbortSignal,
   ): Promise<ReturnType<typeof publicAgentProfileListV3Schema.parse>>;
   async listAgentProfilesV3(profileOrSignal?: string | AbortSignal, signal?: AbortSignal) {
-    const profile = typeof profileOrSignal === "string"
-      ? agentProfileSelectorIdSchema.parse(profileOrSignal)
-      : undefined;
-    const requestSignal = typeof profileOrSignal === "string" ? signal : profileOrSignal;
-    const path = profile
-      ? `/v3/agent-profiles?profile=${encodeURIComponent(profile)}`
-      : "/v3/agent-profiles";
-    const response = await this.request(path, { signal: requestSignal });
-    return this.parseJson(response, publicAgentProfileListV3Schema);
+    return typeof profileOrSignal === "string"
+      ? this.agentConnections.listAgentProfilesV3(profileOrSignal as AgentProfileSelectorId, signal)
+      : this.agentConnections.listAgentProfilesV3(profileOrSignal);
   }
 
   async createAgentConnection(
     request: AgentConnectionRequestInput,
     options: RequestOptions = {},
   ): Promise<PublicAgentConnection> {
-    const normalized = agentConnectionRequestSchema.parse(request);
-    const waitSeconds = options.waitSeconds === undefined
-      ? undefined
-      : z.number().int().min(1).max(300).parse(options.waitSeconds);
-    const response = await this.request("/v1/agent-connections", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
-        ...(waitSeconds ? { prefer: `wait=${waitSeconds}` } : {}),
-      },
-      body: JSON.stringify(normalized),
-      signal: options.signal,
-    }, options.management ?? normalized.deploymentPolicy === "allow-listed", waitSeconds
-      ? Math.max(this.timeoutMs, waitSeconds * 1_000 + 5_000)
-      : this.timeoutMs);
-    return this.parseJson(response, publicAgentConnectionSchema);
+    return this.agentConnections.create(request, options);
   }
 
   async getAgentConnection(id: string, signal?: AbortSignal): Promise<PublicAgentConnection> {
-    return await this.getAgentConnectionWithin(id, signal, this.timeoutMs);
-  }
-
-  private async getAgentConnectionWithin(
-    id: string,
-    signal: AbortSignal | undefined,
-    timeoutMs: number,
-  ): Promise<PublicAgentConnection> {
-    const response = await this.request(
-      `/v1/agent-connections/${encodeURIComponent(id)}`,
-      { signal },
-      false,
-      timeoutMs,
-    );
-    return this.parseJson(response, publicAgentConnectionSchema);
+    return this.agentConnections.get(id, signal);
   }
 
   async waitForAgentConnection(
     connection: PublicAgentConnection,
     options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number } = {},
   ): Promise<PublicAgentConnection> {
-    const timeoutMs = options.timeoutMs ?? this.timeoutMs;
-    const pollIntervalMs = options.pollIntervalMs ?? 250;
-    this.validatePollingOptions(timeoutMs, pollIntervalMs);
-    const deadline = Date.now() + timeoutMs;
-    let current = publicAgentConnectionSchema.parse(connection);
-    while (current.status === "pending" || current.status === "probing") {
-      if (Date.now() >= deadline) {
-        throw new LarmApiError(408, "connection_timeout", `connection ${current.id} did not become ready`, current);
-      }
-      await this.delay(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())), options.signal);
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) throw this.connectionTimeout(current);
-      try {
-        current = await this.getAgentConnectionWithin(current.id, options.signal, remainingMs);
-      } catch (error) {
-        if (Date.now() >= deadline) throw this.connectionTimeout(current);
-        throw error;
-      }
-    }
-    if (current.status !== "ready") {
-      throw new LarmApiError(
-        409,
-        current.error?.code ?? "connection_not_ready",
-        current.error?.message ?? `connection ${current.id} ended as ${current.status}`,
-        current,
-      );
-    }
-    return current;
+    return this.agentConnections.waitUntilReady(connection, options);
   }
 
   async getAgentConnectionHealth(
     id: string,
     signal?: AbortSignal,
   ): Promise<AgentConnectionHealth> {
-    const response = await this.request(
-      `/v1/agent-connections/${encodeURIComponent(id)}/health`,
-      { signal },
-      false,
-      this.timeoutMs,
-      [503],
-    );
-    return this.parseJson(response, agentConnectionHealthSchema);
+    return this.agentConnections.getHealth(id, signal);
   }
 
   async claimAgentConnection(
@@ -677,16 +374,7 @@ export class LarmClient {
     formatOrSignal: AgentConnectionClaimRequest["format"] | AbortSignal = "openai-provider-v1",
     signal?: AbortSignal,
   ): Promise<AgentConnectionClaim> {
-    const format = typeof formatOrSignal === "string" ? formatOrSignal : "openai-provider-v1";
-    const requestSignal = typeof formatOrSignal === "string" ? signal : formatOrSignal;
-    const body = agentConnectionClaimRequestSchema.parse({ format });
-    const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}/claim`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: requestSignal,
-    });
-    return this.parseJson(response, agentConnectionClaimSchema);
+    return this.agentConnections.claim(id, formatOrSignal, signal);
   }
 
   async renewAgentConnection(
@@ -694,55 +382,18 @@ export class LarmClient {
     ttlSeconds = 300,
     options: RequestOptions = {},
   ): Promise<PublicAgentConnection> {
-    const body = agentConnectionRenewRequestSchema.parse({ ttlSeconds });
-    const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}/renew`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": options.idempotencyKey ?? this.createIdempotencyKey(),
-      },
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
-    return this.parseJson(response, publicAgentConnectionSchema);
+    return this.agentConnections.renew(id, ttlSeconds, options);
   }
 
   async refreshAgentConnection(
     id: string,
     options: AgentConnectionRefreshOptions = {},
   ): Promise<RefreshedAgentConnection> {
-    const connection = await this.renewAgentConnection(
-      id,
-      options.ttlSeconds,
-      options,
-    );
-    const claim = await this.claimAgentConnection(
-      id,
-      options.claimFormat,
-      options.signal,
-    );
-    if (
-      claim.id !== connection.id
-      || claim.allocationId !== connection.allocationId
-      || claim.audience !== connection.audience
-      || claim.expiresAt !== connection.expiresAt
-    ) {
-      throw new LarmApiError(
-        502,
-        "connection_refresh_mismatch",
-        `renewed connection ${connection.id} did not match its refreshed claim`,
-        { connection, claim },
-      );
-    }
-    return { connection, claim };
+    return this.agentConnections.refresh(id, options);
   }
 
   async releaseAgentConnection(id: string, signal?: AbortSignal): Promise<void> {
-    const response = await this.request(`/v1/agent-connections/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      signal,
-    });
-    await response.body?.cancel().catch(() => undefined);
+    return this.agentConnections.release(id, signal);
   }
 
   async withAgentConnection<T>(
@@ -806,49 +457,13 @@ export class LarmClient {
     operation: ControlOperation | string,
     options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number } = {},
   ): Promise<ControlOperation> {
-    const timeoutMs = options.timeoutMs ?? this.timeoutMs;
-    const pollIntervalMs = options.pollIntervalMs ?? 250;
-    this.validatePollingOptions(timeoutMs, pollIntervalMs);
-    const deadline = Date.now() + timeoutMs;
-    let current: ControlOperation;
-    if (typeof operation === "string") {
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) throw this.operationTimeout(operation);
-      try {
-        current = await this.getOperationWithin(operation, options.signal, remainingMs);
-      } catch (error) {
-        if (Date.now() >= deadline) throw this.operationTimeout(operation);
-        throw error;
-      }
-    } else {
-      current = controlOperationSchema.parse(operation);
-    }
-    while (current.status === "pending" || current.status === "running") {
-      if (Date.now() >= deadline) {
-        throw this.operationTimeout(current.id, current);
-      }
-      await this.delay(
-        Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
-        options.signal,
-      );
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) throw this.operationTimeout(current.id, current);
-      try {
-        current = await this.getOperationWithin(current.id, options.signal, remainingMs);
-      } catch (error) {
-        if (Date.now() >= deadline) throw this.operationTimeout(current.id, current);
-        throw error;
-      }
-    }
-    if (current.status !== "succeeded") {
-      throw new LarmApiError(
-        current.status === "timed_out" ? 408 : 409,
-        current.error?.code ?? `operation_${current.status}`,
-        current.error?.message ?? `operation ${current.id} ended as ${current.status}`,
-        current,
-      );
-    }
-    return current;
+    return await waitForControlOperation({
+      operation: typeof operation === "string" ? operation : controlOperationSchema.parse(operation),
+      signal: options.signal,
+      pollIntervalMs: options.pollIntervalMs ?? 250,
+      timeoutMs: options.timeoutMs ?? this.timeoutMs,
+      getOperation: (id, signal, timeoutMs) => this.getOperationWithin(id, signal, timeoutMs),
+    });
   }
 
   async withAllocation<T>(
@@ -890,65 +505,13 @@ export class LarmClient {
     input: EmbeddingRequest,
     signal?: AbortSignal,
   ): Promise<EmbeddingResponse> {
-    const provider = embeddingAgentProviderDescriptorSchema.parse(claimedProvider);
-    const request = embeddingRequestSchema.parse(input);
-    const abort = new AbortController();
-    const onAbort = () => abort.abort(signal?.reason);
-    if (signal?.aborted) onAbort();
-    else signal?.addEventListener("abort", onAbort, { once: true });
-    const timeout = setTimeout(
-      () => abort.abort(new Error("LARM embedding client timeout")),
-      this.timeoutMs,
-    );
-    timeout.unref?.();
-    try {
-      const response = await this.fetchImpl(provider.endpoint, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${provider.credential.token}`,
-          "content-type": "application/json",
-          accept: "application/json",
-        },
-        body: JSON.stringify(request),
-        redirect: "manual",
-        signal: abort.signal,
-      });
-      if (response.status >= 300 && response.status < 400) {
-        await response.body?.cancel(new Error("provider redirect is forbidden")).catch(() => undefined);
-        throw new LarmApiError(502, "provider_redirect_forbidden", "embedding provider returned a redirect");
-      }
-      const bytes = await this.readResponseLimited(response, 2 * 1024 * 1024);
-      let value: unknown;
-      try {
-        value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
-      } catch {
-        throw new LarmApiError(502, "embedding_response_invalid", "embedding provider returned invalid JSON");
-      }
-      if (!response.ok) {
-        const parsed = errorResponseSchema.safeParse(value);
-        throw new LarmApiError(
-          response.status,
-          parsed.success ? parsed.data.error.code : "embedding_http_error",
-          parsed.success ? parsed.data.error.message : `embedding provider returned HTTP ${response.status}`,
-        );
-      }
-      const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-      if (mediaType !== "application/json") {
-        throw new LarmApiError(502, "embedding_response_invalid", "embedding provider did not return JSON");
-      }
-      const inspected = inspectEmbeddingResponse({ value, request, space: provider.embeddingSpace });
-      if (!inspected.ok) {
-        throw new LarmApiError(
-          502,
-          `embedding_${inspected.reason}`,
-          "embedding provider response does not match the claimed semantic space",
-        );
-      }
-      return inspected.response;
-    } finally {
-      clearTimeout(timeout);
-      signal?.removeEventListener("abort", onAbort);
-    }
+    return await embedWithClaimedProvider({
+      fetch: this.fetchImpl,
+      timeoutMs: this.timeoutMs,
+      claimedProvider,
+      requestInput: input,
+      signal,
+    });
   }
 
   async systemOne(
@@ -956,135 +519,46 @@ export class LarmClient {
     input: SystemOneRequest,
     signal?: AbortSignal,
   ): Promise<SystemOneResponse> {
-    const provider = systemOneAgentProviderDescriptorSchema.parse(claimedProvider);
-    const request = systemOneRequestSchema.parse(input);
-    const response = await this.fetchImpl(provider.endpoint, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${provider.credential.token}`,
-        "content-type": "application/json",
-        accept: "application/json",
-      },
-      body: JSON.stringify(request),
-      redirect: "manual",
+    return await systemOneWithClaimedProvider({
+      fetch: this.fetchImpl,
+      claimedProvider,
+      requestInput: input,
       signal,
     });
-    if (response.status >= 300 && response.status < 400) {
-      await response.body?.cancel(new Error("provider redirect is forbidden")).catch(() => undefined);
-      throw new LarmApiError(502, "provider_redirect_forbidden", "System One provider returned a redirect");
-    }
-    const bytes = await this.readResponseLimited(response, 2 * 1024 * 1024);
-    let value: unknown;
-    try {
-      value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
-    } catch {
-      throw new LarmApiError(502, "system_one_response_invalid", "System One provider returned invalid JSON");
-    }
-    if (!response.ok) {
-      const parsed = errorResponseSchema.safeParse(value);
-      throw new LarmApiError(
-        response.status,
-        parsed.success ? parsed.data.error.code : "system_one_http_error",
-        parsed.success ? parsed.data.error.message : `System One provider returned HTTP ${response.status}`,
-      );
-    }
-    const inspected = inspectSystemOneResponse({ value, request });
-    if (!inspected.ok) {
-      throw new LarmApiError(502, `system_one_${inspected.reason}`, "System One response does not match the request");
-    }
-    return inspected.response;
   }
 
   createChatCompletion(body: unknown, options: RequestOptions = {}): Promise<Response> {
-    return this.request("/v1/chat/completions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    return this.media.createChatCompletion(body, options);
   }
 
   async *streamChatCompletion(
     body: Record<string, unknown>,
     options: RequestOptions = {},
   ): AsyncGenerator<OpenAiChatCompletionSseChunk> {
-    const response = await this.createChatCompletion({ ...body, stream: true }, options);
-    const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-    if (contentType !== "text/event-stream") {
-      await response.body?.cancel(new Error("stream content type mismatch")).catch(() => undefined);
-      throw new LarmStreamProtocolError(
-        "stream_content_type_invalid",
-        "Chat Completions stream did not return text/event-stream",
-      );
-    }
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new LarmStreamProtocolError("stream_body_missing", "Chat Completions stream has no body");
-    }
-    const pending: OpenAiChatCompletionSseChunk[] = [];
-    const inspector = new OpenAiChatCompletionSseInspector((chunk) => pending.push(chunk));
-    let completed = false;
-    try {
-      while (true) {
-        const next = await reader.read();
-        if (next.done) break;
-        const progress = inspector.push(next.value);
-        if (!progress.ok) {
-          throw new LarmStreamProtocolError(
-            `stream_${progress.reason}`,
-            `Chat Completions stream failed validation: ${progress.reason}`,
-          );
-        }
-        while (pending.length > 0) yield pending.shift()!;
-      }
-      const inspected = inspector.finish();
-      if (!inspected.ok) {
-        throw new LarmStreamProtocolError(
-          `stream_${inspected.reason}`,
-          `Chat Completions stream failed validation: ${inspected.reason}`,
-        );
-      }
-      while (pending.length > 0) yield pending.shift()!;
-      completed = true;
-    } finally {
-      if (!completed) await reader.cancel(new Error("stream consumer stopped")).catch(() => undefined);
-      reader.releaseLock();
-    }
+    yield* this.media.streamChatCompletion(body, options);
   }
 
   createAudioTranscription(
     body: RequestInit["body"],
     options: RequestOptions = {},
   ): Promise<Response> {
-    return this.request("/v1/audio/transcriptions", {
-      method: "POST",
-      body,
-      signal: options.signal,
-    });
+    return this.media.createAudioTranscription(body, options);
   }
 
   createSpeech(body: AudioSpeechRequest, options: RequestOptions = {}): Promise<Response> {
-    return this.request("/v1/audio/speech", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    return this.media.createSpeech(body, options);
   }
 
   listVoices(model: string, options: RequestOptions = {}): Promise<Response> {
-    const query = new URLSearchParams({ model });
-    return this.request(`/v1/audio/voices?${query.toString()}`, {
-      signal: options.signal,
-    });
+    return this.media.listVoices(model, options);
   }
 
-  async getVoicevoxCatalog(options: RequestOptions = {}): Promise<AudioVoiceList> {
-    return this.parseJson(await this.listVoices("voicevox-core", options), audioVoiceListSchema);
+  getVoicevoxCatalog(options: RequestOptions = {}): Promise<AudioVoiceList> {
+    return this.media.getVoicevoxCatalog(options);
   }
 
   chat(allocationId: string, body: unknown, options: RequestOptions = {}): Promise<Response> {
-    return this.gateway("/v1/chat/completions", allocationId, body, options);
+    return this.media.chat(allocationId, body, options);
   }
 
   chatWithContext(
@@ -1094,21 +568,11 @@ export class LarmClient {
     capability?: string,
     options: RequestOptions = {},
   ): Promise<Response> {
-    return this.request("/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-larm-allocation-id": allocationId,
-        "x-larm-context-view-id": viewId,
-        ...(capability ? { "x-larm-capability": capability } : {}),
-      },
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    return this.media.chatWithContext(allocationId, viewId, body, capability, options);
   }
 
   speech(allocationId: string, body: unknown, options: RequestOptions = {}): Promise<Response> {
-    return this.gateway("/v1/audio/speech", allocationId, body, options);
+    return this.media.speech(allocationId, body, options);
   }
 
   transcribe(
@@ -1116,12 +580,7 @@ export class LarmClient {
     body: RequestInit["body"],
     options: RequestOptions = {},
   ): Promise<Response> {
-    return this.request("/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { "x-larm-allocation-id": allocationId },
-      body,
-      signal: options.signal,
-    });
+    return this.media.transcribe(allocationId, body, options);
   }
 
   voices(
@@ -1129,30 +588,7 @@ export class LarmClient {
     capability?: string,
     options: RequestOptions = {},
   ): Promise<Response> {
-    return this.request("/v1/audio/voices", {
-      headers: {
-        "x-larm-allocation-id": allocationId,
-        ...(capability ? { "x-larm-capability": capability } : {}),
-      },
-      signal: options.signal,
-    });
-  }
-
-  private gateway(
-    path: string,
-    allocationId: string,
-    body: unknown,
-    options: RequestOptions,
-  ): Promise<Response> {
-    return this.request(path, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-larm-allocation-id": allocationId,
-      },
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    return this.media.voices(allocationId, capability, options);
   }
 
   private async request(
@@ -1163,114 +599,18 @@ export class LarmClient {
     acceptedStatuses: readonly number[] = [],
     sendApiToken = true,
   ): Promise<Response> {
-    const headers = new Headers(init.headers);
-    if (sendApiToken && this.options.apiToken && !headers.has("authorization")) {
-      headers.set("authorization", `Bearer ${this.options.apiToken}`);
-    }
-    if (management) {
-      if (!this.options.managementToken) {
-        throw new Error("LARM management token is required for this request");
-      }
-      headers.set("x-larm-management-token", this.options.managementToken);
-    }
-    const abort = new AbortController();
-    const upstreamSignal = init.signal;
-    const onAbort = () => abort.abort(upstreamSignal?.reason);
-    if (upstreamSignal?.aborted) {
-      onAbort();
-    } else {
-      upstreamSignal?.addEventListener("abort", onAbort, { once: true });
-    }
-    const timeout = setTimeout(
-      () => abort.abort(new Error("LARM client timeout")),
-      Math.max(0, timeoutMs),
-    );
-    timeout.unref?.();
-    let response: Response;
-    try {
-      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-        ...init,
-        headers,
-        signal: abort.signal,
-      });
-    } catch (error) {
-      clearTimeout(timeout);
-      upstreamSignal?.removeEventListener("abort", onAbort);
-      throw error;
-    }
-    try {
-      this.observeIdentity(response);
-    } catch (error) {
-      clearTimeout(timeout);
-      upstreamSignal?.removeEventListener("abort", onAbort);
-      void response.body?.cancel(error).catch(() => undefined);
-      throw error;
-    }
-    if (!response.ok && !acceptedStatuses.includes(response.status)) {
-      const body = await response.clone().json().catch(() => undefined);
-      await response.body?.cancel().catch(() => undefined);
-      clearTimeout(timeout);
-      upstreamSignal?.removeEventListener("abort", onAbort);
-      const parsed = errorResponseSchema.safeParse(body);
-      throw new LarmApiError(
-        response.status,
-        parsed.success ? parsed.data.error.code : "http_error",
-        parsed.success ? parsed.data.error.message : `LARM returned HTTP ${response.status}`,
-        body,
-      );
-    }
-    if (!response.body) {
-      clearTimeout(timeout);
-      upstreamSignal?.removeEventListener("abort", onAbort);
-      return response;
-    }
-    const reader = response.body.getReader();
-    let cleaned = false;
-    let managedController: ReadableStreamDefaultController<Uint8Array> | undefined;
-    let onManagedAbort: () => void = () => undefined;
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-      clearTimeout(timeout);
-      upstreamSignal?.removeEventListener("abort", onAbort);
-      abort.signal.removeEventListener("abort", onManagedAbort);
-    };
-    onManagedAbort = () => {
-      const reason = abort.signal.reason ?? new Error("LARM request aborted");
-      void reader.cancel(reason).catch(() => undefined);
-      cleanup();
-      managedController?.error(reason);
-    };
-    const body = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        managedController = controller;
-        abort.signal.addEventListener("abort", onManagedAbort, { once: true });
-        if (abort.signal.aborted) onManagedAbort();
-      },
-      pull: async (controller) => {
-        try {
-          const chunk = await reader.read();
-          if (chunk.done) {
-            cleanup();
-            controller.close();
-          } else {
-            controller.enqueue(chunk.value);
-          }
-        } catch (error) {
-          cleanup();
-          controller.error(error);
-        }
-      },
-      cancel: async (reason) => {
-        abort.abort(reason);
-        cleanup();
-        await reader.cancel(reason).catch(() => undefined);
-      },
-    });
-    return new Response(body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
+    return sendClientRequest({
+      baseUrl: this.baseUrl,
+      fetch: this.fetchImpl,
+      apiToken: this.options.apiToken,
+      managementToken: this.options.managementToken,
+      path,
+      init,
+      management,
+      timeoutMs,
+      acceptedStatuses,
+      sendApiToken,
+      observeIdentity: (response) => this.observeIdentity(response),
     });
   }
 
@@ -1289,100 +629,8 @@ export class LarmClient {
     this.bootEpoch = epoch;
   }
 
-  private async readResponseLimited(response: Response, maxBytes: number): Promise<Uint8Array> {
-    const declared = response.headers.get("content-length");
-    if (declared && /^\d+$/.test(declared) && Number(declared) > maxBytes) {
-      await response.body?.cancel(new Error("embedding response too large")).catch(() => undefined);
-      throw new LarmApiError(502, "embedding_response_too_large", "embedding provider response is too large");
-    }
-    if (!response.body) return new Uint8Array();
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    try {
-      while (true) {
-        const next = await reader.read();
-        if (next.done) break;
-        total += next.value.byteLength;
-        if (total > maxBytes) {
-          throw new LarmApiError(502, "embedding_response_too_large", "embedding provider response is too large");
-        }
-        chunks.push(next.value);
-      }
-    } catch (error) {
-      await reader.cancel(error).catch(() => undefined);
-      throw error;
-    } finally {
-      reader.releaseLock();
-    }
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return bytes;
-  }
-
   private async parseJson<T>(response: Response, schema: { parse(input: unknown): T }): Promise<T> {
     return schema.parse(await response.json());
   }
 
-  private createIdempotencyKey(): string {
-    return `client_${(this.options.random ?? (() => crypto.randomUUID()))()}`;
-  }
-
-  private allocationTimeout(allocation: PublicAllocation): LarmApiError {
-    return new LarmApiError(
-      408,
-      "allocation_timeout",
-      `allocation ${allocation.id} did not become ready before the client deadline`,
-      allocation,
-    );
-  }
-
-  private operationTimeout(id: string, operation?: ControlOperation): LarmApiError {
-    return new LarmApiError(
-      408,
-      "operation_timeout",
-      `operation ${id} did not complete before the client deadline`,
-      operation,
-    );
-  }
-
-  private connectionTimeout(connection: PublicAgentConnection): LarmApiError {
-    return new LarmApiError(
-      408,
-      "connection_timeout",
-      `connection ${connection.id} did not become ready before the client deadline`,
-      connection,
-    );
-  }
-
-  private validatePollingOptions(timeoutMs: number, pollIntervalMs: number): void {
-    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
-      throw new RangeError("poll timeoutMs must be a nonnegative finite number");
-    }
-    if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 0) {
-      throw new RangeError("pollIntervalMs must be a nonnegative finite number");
-    }
-  }
-
-  private delay(ms: number, signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted) {
-      return Promise.reject(signal.reason);
-    }
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        signal?.removeEventListener("abort", onAbort);
-        resolve();
-      }, ms);
-      timer.unref?.();
-      const onAbort = () => {
-        clearTimeout(timer);
-        reject(signal?.reason);
-      };
-      signal?.addEventListener("abort", onAbort, { once: true });
-    });
-  }
 }

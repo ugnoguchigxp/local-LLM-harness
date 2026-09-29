@@ -18,5 +18,16 @@ jobs:
           bun-version: 1.4.0
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
+      - name: Reject high-severity dependency vulnerabilities
+        run: bun run audit:high
       - name: Run repository gate
         run: bun run check
+      - name: Enforce critical-path coverage ratchet
+        run: bun run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: error

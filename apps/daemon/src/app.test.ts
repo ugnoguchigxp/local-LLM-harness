@@ -407,6 +407,15 @@ test("GET /health", async () => {
   expect(res.headers.get("x-larm-boot-epoch")).toBe("epoch-local");
 });
 
+test("provider instance reconciliation warms residents and adopts observed workers", async () => {
+  const { control, log } = await makeApp(true, true, { idleTtlMs: 60_000 });
+  expect(control.isRuntimeTransitioning("qwen-worker")).toBeFalse();
+  expect(control.getActiveAllocationCount()).toBe(0);
+  await control.reconcileProviderInstances();
+  expect(log.ensure).toContain("qwen-general");
+  expect(control.getProviderInstances().some((instance) => instance.instance.runtimeId === "qwen-worker")).toBeTrue();
+});
+
 test("claim request validation emits a reasoned rejection event", async () => {
   const events: ControlEvent[] = [];
   const { app } = await makeApp(true, false, {}, {
@@ -1363,6 +1372,34 @@ test("POST /prepare is ready when resident already covers the profile", async ()
   const body = (await res.json()) as { leaseId: string; ready: boolean };
   expect(body.ready).toBe(true);
   expect(body.leaseId.startsWith("lease_")).toBe(true);
+});
+
+test("compatibility API metrics count successful and failed requests by stable operation id", async () => {
+  const metrics = new MetricsRegistry();
+  const { app } = await makeApp(true, false, {}, { metrics });
+  const success = await app.request("/prepare", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ profile: "default" }),
+  });
+  const failure = await app.request("/prepare", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ profile: "missing-profile" }),
+  });
+
+  expect(success.status).toBe(200);
+  expect(failure.status).toBe(404);
+  expect(metrics.render()).toContain('larm_compatibility_api_requests_total{operation="prepareLegacyLease",outcome="2xx"} 1');
+  expect(metrics.render()).toContain('larm_compatibility_api_requests_total{operation="prepareLegacyLease",outcome="4xx"} 1');
+});
+
+test("compatibility API metrics include requests rejected before route handling", async () => {
+  const metrics = new MetricsRegistry();
+  const { app } = await makeApp(true, false, {}, { apiToken: "secret", metrics });
+  const response = await app.request("/prepare", { method: "POST" });
+  expect(response.status).toBe(401);
+  expect(metrics.render()).toContain('larm_compatibility_api_requests_total{operation="prepareLegacyLease",outcome="4xx"} 1');
 });
 
 test("POST /prepare 409 when profile needs missing capabilities", async () => {
@@ -2554,6 +2591,33 @@ test("standard Chat Completions rejects personal-state attempt headers without a
   expect(control.getActiveAllocationCount()).toBe(0);
 });
 
+test("standard Chat Completions rejects an empty context-view header before provider contact", async () => {
+  let contacted = false;
+  const { app, control } = await makeApp(true, false, {}, {
+    apiToken: agentApiToken,
+    agentConnectionCatalog,
+    gatewayFetch: async () => {
+      contacted = true;
+      return Response.json({ unexpected: true });
+    },
+  });
+  const response = await app.request("/v1/chat/completions", {
+    method: "POST",
+    headers: agentHeaders({
+      "content-type": "application/json",
+      "x-larm-context-view-id": "",
+    }),
+    body: JSON.stringify({ model: "test-model", messages: [] }),
+  });
+
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({
+    error: { code: "context_request_invalid", message: "x-larm-context-view-id is invalid" },
+  });
+  expect(contacted).toBeFalse();
+  expect(control.getActiveAllocationCount()).toBe(0);
+});
+
 test("standard Chat Completions rejects unknown models before allocation or upstream contact", async () => {
   let contacted = false;
   const { app, control } = await makeApp(true, false, {}, {
@@ -3645,9 +3709,9 @@ test("startup reconciliation stops only orphaned HOT preferred runtimes", async 
 test("startup reconciliation preserves a preferred runtime required by a legacy lease", async () => {
   const { control, log } = await makeApp(true, true);
   const leases = (control as unknown as {
-    leases: Map<string, { id: string; capabilities: string[]; createdAt: string }>;
-  }).leases;
-  leases.set("legacy", {
+    legacyLeases: { add(lease: { id: string; capabilities: string[]; createdAt: string }): void };
+  }).legacyLeases;
+  leases.add({
     id: "legacy",
     capabilities: ["llm.general"],
     createdAt: new Date().toISOString(),

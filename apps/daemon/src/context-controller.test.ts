@@ -209,6 +209,46 @@ test("live context identity mismatch never activates the runtime", async () => {
   });
 });
 
+test("runtime binding and canonical measurement expose only the active certified allocation", async () => {
+  const value = await fixture();
+  expect(value.controller.statuses(value.principal).runtimes[0]?.quota).toMatchObject({
+    sourceTokensUsed: 0,
+    sourceTokensLimit: 20_000_000,
+    sourceBytesUsed: 0,
+    sourceBytesLimit: 1024 * 1024,
+  });
+  expect(value.controller.productRuntimeBinding(value.allocation.id, value.runtime.id)).toMatchObject({
+    endpoint: value.runtime.deployment.endpoint,
+    release: value.release.id,
+    leaseEpoch: expect.any(Number),
+    tokenizerDigest,
+    chatTemplateDigest: value.release.contextCertification!.chatTemplateDigest,
+    contextLimitTokens: 1000,
+    sourceTokenLimit: 20_000_000,
+  });
+  expect(value.controller.personalStateCleanupEndpoint(value.runtime.id)).toBe(value.runtime.deployment.endpoint);
+  expect(value.controller.personalStateCleanupEndpoint("unmanaged-runtime")).toBeUndefined();
+  expect(() => value.controller.productRuntimeBinding("missing-allocation", value.runtime.id))
+    .toThrow("runtime binding is not active");
+
+  const measured = await value.controller.measureCanonicalRequest({
+    principal: value.principal,
+    allocationId: value.allocation.id,
+    runtime: value.runtime.id,
+    request: { messages: [{ role: "user", content: "hello" }] },
+  });
+  expect(measured).toMatchObject({
+    inputTokens: 100,
+    inputBudgetTokens: 880,
+    release: value.release.id,
+    tokenizerDigest,
+    chatTemplateDigest: value.release.contextCertification!.chatTemplateDigest,
+    sourceDigests: [],
+  });
+  expect(measured.leaseEpoch).toBeGreaterThan(0);
+  value.controller.beginDrain();
+});
+
 test("source set accepts exactly 20M tokens and rejects the next token", async () => {
   const value = await fixture();
   const capacitySource = await value.source.provision(
@@ -280,6 +320,26 @@ test("registered source is planned, materialized once, and bound to the lifecycl
     canonicalizationVersion: "context-view-v1",
     items: [{ contextId: "ctx-a", version: "v1", required: true, utility: 1 }],
   }, value.principal, "view-1");
+  const replayedView = await value.controller.createView({
+    allocationId: value.allocation.id,
+    runtime: runtime.id,
+    baseInputTokens: 10,
+    maxInputTokens: 800,
+    deadline: "2026-09-09T00:05:00.000Z",
+    canonicalizationVersion: "context-view-v1",
+    items: [{ contextId: "ctx-a", version: "v1", required: true, utility: 1 }],
+  }, value.principal, "view-1");
+  expect(replayedView.replay).toBeTrue();
+  expect(replayedView.view.id).toBe(created.view.id);
+  await expect(value.controller.createView({
+    allocationId: value.allocation.id,
+    runtime: runtime.id,
+    baseInputTokens: 11,
+    maxInputTokens: 800,
+    deadline: "2026-09-09T00:05:00.000Z",
+    canonicalizationVersion: "context-view-v1",
+    items: [{ contextId: "ctx-a", version: "v1", required: true, utility: 1 }],
+  }, value.principal, "view-1")).rejects.toMatchObject({ code: "idempotency_conflict" });
   expect(created.view.tokenCount).toBe(30);
   expect(value.controller.getOperation(value.principal, created.view.operationId).state).toBe("pending");
   const body = new TextEncoder().encode(JSON.stringify({

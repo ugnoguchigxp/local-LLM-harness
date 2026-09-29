@@ -9,6 +9,8 @@ fi
 
 lease_id=""
 allocation_id=""
+# This diagnostic intentionally calls both deprecated lease routes and v1 Allocation
+# to prove binding parity. It is the compatibility verifier, not a production consumer.
 cleanup() {
   if [[ -n "${allocation_id}" ]]; then
     curl -fsS --max-time 10 -X DELETE "${headers[@]}" \

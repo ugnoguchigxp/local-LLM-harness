@@ -150,11 +150,25 @@ curl http://127.0.0.1:9810/openapi.json
 # 完全なRuntime・state inspectionにはmanagement tokenが必要です。
 curl -H "x-larm-management-token: ${LARM_MANAGEMENT_TOKEN}" \
   http://127.0.0.1:9810/v1/inspection/runtimes
-curl -sS -X POST http://127.0.0.1:9810/prepare \
-  -H 'Content-Type: application/json' -d '{"profile":"voice"}'
-curl -sS -X POST http://127.0.0.1:9810/resolve \
+
+# 明示的なruntime制御が必要なconsumerはversioned Allocation APIを使います。
+allocation="$(curl -fsS -X POST http://127.0.0.1:9810/v1/allocations \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: docs-$(date +%s)" \
+  -d '{"requirements":[{"capability":"llm.general","route":"llm-default"}],"allowFallback":false,"deploymentPolicy":"existing-only","ttlSeconds":60}')"
+allocation_id="$(jq -er .id <<<"${allocation}")"
+curl -fsS "http://127.0.0.1:9810/v1/allocations/${allocation_id}" \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}"
+curl -fsS -X POST "http://127.0.0.1:9810/v1/allocations/${allocation_id}/resolve" \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}" \
   -H 'Content-Type: application/json' -d '{"capability":"llm.general"}'
+curl -fsS -X DELETE "http://127.0.0.1:9810/v1/allocations/${allocation_id}" \
+  -H "Authorization: Bearer ${LARM_API_TOKEN}"
 ```
+
+`/prepare`、`/resolve`、`/release`は旧lease consumer向けcompatibility endpointです。新しい通常consumerは
+OpenAI互換Gateway、Agent consumerはAgent Connection、明示的な高度制御だけAllocation APIを使用してください。
 
 ## OpenAI互換HTTP Gateway
 

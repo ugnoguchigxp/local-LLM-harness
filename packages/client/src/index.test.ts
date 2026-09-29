@@ -231,6 +231,10 @@ test("reference client exposes the managed context lifecycle", async () => {
           expiresAt: "2026-09-09T00:05:00.000Z",
         }, "epoch-test", 201);
       }
+      if (path === "/v1/contexts" && request.method === "GET") return json({ contexts: [] });
+      if (path.startsWith("/v1/contexts/") && request.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
       return json({ ok: true });
     },
   });
@@ -245,6 +249,8 @@ test("reference client exposes the managed context lifecycle", async () => {
     tokenCount: 20,
     tokenizerDigest: "b".repeat(64),
   });
+  expect((await client.listContexts({ cursor: "cursor-a", limit: 1 })).contexts).toEqual([]);
+  await client.deleteContext("ctx-a", { idempotencyKey: "delete-context-a" });
   const view = await client.createContextView({
     allocationId: "alloc-a",
     runtime: "qwen-general",
@@ -256,7 +262,7 @@ test("reference client exposes the managed context lifecycle", async () => {
   });
   await client.chatWithContext("alloc-a", view.id, { model: "test", messages: [] }, "llm.reasoning");
   expect(requests[1]?.headers.get("idempotency-key")).toBe("client_fixed");
-  expect(requests[3]?.headers.get("x-larm-context-view-id")).toBe("view-a");
+  expect(requests[5]?.headers.get("x-larm-context-view-id")).toBe("view-a");
   expect(requests.every((request) => request.headers.get("authorization") === "Bearer context-token"))
     .toBeTrue();
 });
@@ -1123,6 +1129,7 @@ test("typed embedding client uses the claimed endpoint and semantic-space contra
   };
   const requests: Request[] = [];
   let wrongDimension = false;
+  let providerResponseMode: "valid" | "redirect" | "invalid-json" | "wrong-media" | "http-error" | "oversized" | "empty" = "valid";
   const client = new LarmClient({
     baseUrl: "http://127.0.0.1:9810",
     apiToken: "control-token",
@@ -1130,6 +1137,21 @@ test("typed embedding client uses the claimed endpoint and semantic-space contra
       const request = new Request(input.toString(), init);
       requests.push(request);
       if (new URL(request.url).pathname.endsWith("/claim")) return json(claim);
+      if (providerResponseMode === "redirect") return new Response(null, { status: 302 });
+      if (providerResponseMode === "invalid-json") return new Response("not-json");
+      if (providerResponseMode === "wrong-media") {
+        return new Response("{}", { headers: { "content-type": "text/plain" } });
+      }
+      if (providerResponseMode === "empty") return new Response(null, { status: 204 });
+      if (providerResponseMode === "http-error") {
+        return new Response(JSON.stringify({ error: { code: "busy", message: "busy" } }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (providerResponseMode === "oversized") {
+        return new Response("x", { headers: { "content-length": String(2 * 1024 * 1024 + 1) } });
+      }
       const dimension = wrongDimension ? 383 : 384;
       return json({
         embeddings: [[1, ...Array.from({ length: dimension - 1 }, () => 0)]],
@@ -1166,6 +1188,40 @@ test("typed embedding client uses the claimed endpoint and semantic-space contra
   await expect(client.embed(provider, {
     texts: ["document"], type: "passage", normalize: true, priority: "low",
   })).rejects.toMatchObject({ code: "embedding_dimension_mismatch", responseBody: undefined });
+  providerResponseMode = "redirect";
+  await expect(client.embed(provider, {
+    texts: ["document"], type: "passage", normalize: true, priority: "low",
+  })).rejects.toMatchObject({ code: "provider_redirect_forbidden" });
+  providerResponseMode = "invalid-json";
+  await expect(client.embed(provider, {
+    texts: ["document"], type: "passage", normalize: true, priority: "low",
+  })).rejects.toMatchObject({ code: "embedding_response_invalid" });
+  providerResponseMode = "wrong-media";
+  await expect(client.embed(provider, {
+    texts: ["document"], type: "passage", normalize: true, priority: "low",
+  })).rejects.toMatchObject({ code: "embedding_response_invalid" });
+  providerResponseMode = "http-error";
+  await expect(client.embed(provider, {
+    texts: ["document"], type: "passage", normalize: true, priority: "low",
+  })).rejects.toMatchObject({ status: 429, code: "busy" });
+  providerResponseMode = "oversized";
+  await expect(client.embed(provider, {
+    texts: ["document"], type: "passage", normalize: true, priority: "low",
+  })).rejects.toMatchObject({ code: "embedding_response_too_large" });
+  providerResponseMode = "empty";
+  await expect(client.embed(provider, {
+    texts: ["document"], type: "passage", normalize: true, priority: "low",
+  })).rejects.toMatchObject({ code: "embedding_response_invalid" });
+  const timeoutClient = new LarmClient({
+    baseUrl: "http://127.0.0.1:9810",
+    timeoutMs: 5,
+    fetch: async (_input, init) => await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }),
+  });
+  await expect(timeoutClient.embed(provider, {
+    texts: ["document"], type: "passage", normalize: true, priority: "low",
+  })).rejects.toThrow();
 });
 
 test("typed System One client uses the scoped endpoint and validates typed answers", async () => {
@@ -1194,13 +1250,22 @@ test("typed System One client uses the scoped endpoint and validates typed answe
     },
   };
   const requests: Request[] = [];
+  let systemOneResponseMode: "valid" | "redirect" | "invalid-json" | "http-error" | "invalid-answer" = "valid";
   const client = new LarmClient({
     baseUrl: "http://127.0.0.1:9810",
     fetch: async (input, init) => {
       requests.push(new Request(input.toString(), init));
+      if (systemOneResponseMode === "redirect") return new Response(null, { status: 302 });
+      if (systemOneResponseMode === "invalid-json") return new Response("not-json");
+      if (systemOneResponseMode === "http-error") {
+        return new Response(JSON.stringify({ error: { code: "busy", message: "busy" } }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      }
       return json({
-        model: "laya-multilingual",
-        answers: { intent: { type: "choice", choice: "refund", confidence: 0.8 } },
+        model: systemOneResponseMode === "invalid-answer" ? "other-model" : "laya-multilingual",
+        answers: { intent: { type: "choice", choice: systemOneResponseMode === "invalid-answer" ? "unknown" : "refund", confidence: 0.8 } },
         usage: { input_tokens: 12, output_tokens: 0 },
       });
     },
@@ -1217,6 +1282,18 @@ test("typed System One client uses the scoped endpoint and validates typed answe
   expect(requests[0]?.url).toBe(provider.endpoint);
   expect(requests[0]?.headers.get("authorization")).toBe(`Bearer ${provider.credential.token}`);
   expect(await requests[0]!.clone().json()).toEqual(request);
+  systemOneResponseMode = "redirect";
+  await expect(client.systemOne(provider, request))
+    .rejects.toMatchObject({ code: "provider_redirect_forbidden" });
+  systemOneResponseMode = "invalid-json";
+  await expect(client.systemOne(provider, request))
+    .rejects.toMatchObject({ code: "system_one_response_invalid" });
+  systemOneResponseMode = "http-error";
+  await expect(client.systemOne(provider, request))
+    .rejects.toMatchObject({ status: 429, code: "busy" });
+  systemOneResponseMode = "invalid-answer";
+  await expect(client.systemOne(provider, request))
+    .rejects.toMatchObject({ code: expect.stringContaining("system_one_") });
 });
 
 test("agent connection polling deadline aborts an in-flight HTTP request", async () => {

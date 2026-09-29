@@ -1,11 +1,14 @@
 import { expect, test } from "bun:test";
 import {
   API_OPERATIONS,
+  apiOperationLifecycle,
+  apiOperationPolicy,
   audioSpeechRequestSchema,
   audioVoiceDiscoverySchema,
   audioVoiceListSchema,
   chatCompletionRequestSchema,
   createOpenApiDocument,
+  compatibilityApiOperation,
   errorResponseSchema,
   httpProviderSoakEvidenceSchema,
   legacyPrepareResponseSchema,
@@ -62,10 +65,36 @@ test("OpenAPI is generated from the public contract schemas", () => {
     expect(document.paths[path]?.[method]?.operationId).toBe(operationId);
     const operation = document.paths[path]?.[method] as unknown as {
       responses: Record<string, { content?: Record<string, unknown> }>;
+      "x-larm-lifecycle": { classification: string; successor?: string };
+      "x-larm-policy": { owner: string; consumers: string[]; authority: string };
+      deprecated?: boolean;
     };
     const successResponses = Object.entries(operation.responses)
       .filter(([status]) => status.startsWith("2") || status === "101");
     expect(successResponses.length).toBeGreaterThan(0);
+    expect(operation["x-larm-lifecycle"].classification).toMatch(/^(current|compatibility|management)$/);
+    expect(operation.deprecated === true)
+      .toBe(operation["x-larm-lifecycle"].classification === "compatibility");
+    expect(operation["x-larm-policy"].owner.length).toBeGreaterThan(0);
+    expect(operation["x-larm-policy"].consumers.length).toBeGreaterThan(0);
+    expect(operation["x-larm-policy"].authority.length).toBeGreaterThan(0);
+    const governance = (operation as typeof operation & {
+      "x-larm-governance": {
+        audience: string;
+        authority: string;
+        stability: string;
+        compatibility: string;
+        lifecycle: string;
+        successor?: string;
+      };
+    })["x-larm-governance"];
+    expect(governance.audience).toMatch(/^(public|agent|advanced|management)$/);
+    expect(governance.authority).toBe(operation["x-larm-policy"].authority);
+    expect(governance.stability).toMatch(/^(stable|experimental)$/);
+    expect(governance.compatibility).toMatch(/^(canonical|compatibility)$/);
+    expect(governance.lifecycle).toMatch(/^(active|deprecated)$/);
+    expect(governance.lifecycle === "deprecated").toBe(operation.deprecated === true);
+    if (governance.lifecycle === "deprecated") expect(governance.successor).toBeDefined();
     for (const [status, response] of successResponses) {
       if (status === "101" || status === "204") expect(response.content).toBeUndefined();
       else expect(response.content).toBeDefined();
@@ -94,6 +123,26 @@ test("OpenAPI is generated from the public contract schemas", () => {
   expect(paths["/v1/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v2/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
   expect(paths["/v3/agent-profiles"]?.get?.security).toEqual([{}, { bearerAuth: [] }]);
+  expect(paths["/v1/agent-profiles"]?.get?.["x-larm-lifecycle"]).toEqual({
+    classification: "compatibility",
+    successor: "GET /v3/agent-profiles",
+  });
+  expect(paths["/v3/agent-profiles"]?.get?.["x-larm-lifecycle"]).toEqual({
+    classification: "current",
+  });
+  expect(paths["/v1/inspection/state"]?.get?.["x-larm-lifecycle"]).toEqual({
+    classification: "management",
+  });
+  expect(paths["/v1/inspection/state"]?.get?.["x-larm-policy"]).toEqual({
+    owner: "operator-inspection",
+    consumers: ["operator"],
+    authority: "api-and-management-bearer",
+  });
+  expect(paths["/v1/chat/completions"]?.post?.["x-larm-policy"]).toEqual({
+    owner: "inference-gateway",
+    consumers: ["openai-compatible-consumer"],
+    authority: "api-or-provider-bearer",
+  });
   expect(paths["/v3/agent-profiles"]?.get?.parameters).toEqual([{
     name: "profile",
     in: "query",
@@ -175,6 +224,26 @@ test("OpenAPI is generated from the public contract schemas", () => {
   ]);
   expect((paths["/v1/agent-connections/{id}"]?.delete?.responses as Record<string, unknown>)["204"])
     .not.toHaveProperty("content");
+});
+
+test("API lifecycle classifies compatibility operations and resolves bounded request paths", () => {
+  expect(apiOperationLifecycle("/prepare", "prepareLegacyLease")).toEqual({
+    classification: "compatibility",
+    successor: "POST /v1/agent-connections",
+  });
+  expect(compatibilityApiOperation("GET", "/operations/op_123")).toBe("getLegacyOperation");
+  expect(compatibilityApiOperation("POST", "/resolve")).toBe("resolveLegacyLease");
+  expect(compatibilityApiOperation("GET", "/v1/agent-profiles")).toBe("listAgentProfilesV1");
+  expect(compatibilityApiOperation("POST", "/v1/chat/completions")).toBeUndefined();
+  expect(compatibilityApiOperation("DELETE", "/operations/op_123")).toBeUndefined();
+  expect(apiOperationPolicy("/v1/chat/completions", "createChatCompletion")).toEqual({
+    owner: "inference-gateway",
+    consumers: ["openai-compatible-consumer"],
+    authority: "api-or-provider-bearer",
+  });
+  expect(() => apiOperationPolicy("/unexpected", "unknownOperation")).toThrow(
+    "API operation has no owner policy",
+  );
 });
 
 test("speech controls have finite bounded contracts", () => {

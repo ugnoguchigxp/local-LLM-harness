@@ -19,7 +19,7 @@
     <dt>既定listen</dt>
     <dd><code>http://127.0.0.1:9810</code></dd>
     <dt>更新日</dt>
-    <dd><time>2026-09-01</time></dd>
+    <dd><time>2026-09-29</time></dd>
   </dl>
 
   <section id="security">
@@ -72,8 +72,24 @@
       <code>GET /openapi.json</code>はdaemonと同じCore schemaおよびroute
       metadataから生成します。全operationは実装が返す成功statusとresponse
       contentを持ち、JSON、SSE、Prometheus text、audio・image binaryのmedia
-      typeを区別します。compatibility APIの成功responseもstrict
+      typeを区別します。各operationは<code>x-larm-lifecycle</code>で<code>current</code>、
+      <code>compatibility</code
+      >、<code>management</code>の分類を公開し、compatibilityには後継operationを
+      示します。compatibility APIの成功responseもstrict
       schemaで検証し、実routeとの追加・削除driftと2xx response schemaの欠落をtestで拒否します。
+    </p>
+    <p>
+      さらに各operationは<code>x-larm-policy</code>で責務owner、consumer
+      class、authority
+      classを公開します。これは利用者の個人識別や実際の採用を示すものではなく、route群の contract
+      ownershipと認証境界をレビューするための静的inventoryです。実利用有無は互換operationの
+      low-cardinality counterとconsumer側の確認で別途判断します。
+    </p>
+    <p>
+      <code>x-larm-governance</code
+      >は利用者、認証、安定性、互換性、廃止状態を別々の値として公開します。 compatibility
+      operationには後継を必須とします。互換routeのcounterはoperationと結果分類ごとに
+      成功・失敗・認証拒否を記録します。counterの値だけで外部consumerの移行やroute削除を承認しません。
     </p>
   </section>
 
@@ -883,6 +899,66 @@
       default Routeが定義されたcapabilityは内部Allocationへ変換し、従来のlease
       response形へ戻します。新規clientはRuntime固定と期限を明示できるv1 Allocation APIを使用します。
       機械可読な詳細は実daemonの<code>GET /openapi.json</code>を参照してください。
+    </p>
+    <table>
+      <caption>
+        利用者別の推奨operationとcompatibility移行先
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">利用者</th>
+          <th scope="col">推奨operation</th>
+          <th scope="col">compatibility operation</th>
+          <th scope="col">移行先</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">通常の推論consumer</th>
+          <td><code>/v1/models</code>、Chat Completions、audio Gateway</td>
+          <td>なし</td>
+          <td>OpenAI互換Gatewayを利用</td>
+        </tr>
+        <tr>
+          <th scope="row">Agent consumer</th>
+          <td>
+            <code>GET /v3/agent-profiles</code>、<code>/v1/agent-connections</code>
+          </td>
+          <td>Agent Profile v1・v2</td>
+          <td>Profile v3とAgent Connection</td>
+        </tr>
+        <tr>
+          <th scope="row">明示Allocationを扱うclient</th>
+          <td><code>/v1/allocations</code></td>
+          <td>
+            <code>/prepare</code
+            >、<code>/resolve</code>、<code
+              >/release</code
+            >
+          </td>
+          <td>用途に応じてAllocationまたはAgent Connection</td>
+        </tr>
+        <tr>
+          <th scope="row">非同期operation client</th>
+          <td><code>GET /v1/operations/:id</code></td>
+          <td><code>GET /operations/:id</code></td>
+          <td><code>GET /v1/operations/:id</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Operator</th>
+          <td>inspection、artifact、release、deployment API</td>
+          <td>なし</td>
+          <td>management credentialで保護されたAPIを使用</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      compatibility operationの成功request数は、request内容や主体を記録せず、有限のoperation
+      IDごとに
+      <code>compatibility_api_requests_total</code
+      >として公開します。認証失敗と4xx/5xxは利用実績に含めません。
+      利用実績の観測後、consumer移行とcanaryを確認してから、別releaseでdeprecationまたは削除を判断します。
+      外部consumerの状態を確認できないときは互換routeを削除しません。現時点では互換routeを削除しません。
     </p>
   </section>
 </article>

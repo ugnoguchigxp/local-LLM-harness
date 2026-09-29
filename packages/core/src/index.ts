@@ -68,6 +68,10 @@ export * from "./music";
 export * from "./image-artifact";
 export {
   API_OPERATIONS,
+  apiOperationGovernance,
+  apiOperationLifecycle,
+  apiOperationPolicy,
+  compatibilityApiOperation,
   allocationResolveResponseSchema,
   artifactOperationSchema,
   chatCompletionRequestSchema,
@@ -114,6 +118,7 @@ export {
   type AudioSpeechRequest,
   type AudioVoice,
   type AudioVoiceList,
+  type ApiOperationGovernance,
   type ControlOperation,
   type HttpProviderSoakEvidence,
   type PublicAllocation,

@@ -204,13 +204,13 @@ verify_health() {
   openapi="$(curl -fsS --max-time 5 -H "Authorization: Bearer ${token}" http://127.0.0.1:9810/openapi.json)" \
     && models="$(curl -fsS --max-time 5 -H "Authorization: Bearer ${token}" http://127.0.0.1:9810/v1/models)" \
     && activity="$(curl -fsS --max-time 5 -H "Authorization: Bearer ${token}" http://127.0.0.1:9810/v1/activity)" \
-    && profiles="$(curl -fsS --max-time 5 http://127.0.0.1:9810/v2/agent-profiles)" \
+    && profiles="$(curl -fsS --max-time 5 http://127.0.0.1:9810/v3/agent-profiles)" \
     || return 1
   jq -e '.openapi == "3.1.0" and (.paths["/v1/chat/completions"] | type == "object") and (.paths["/v1/audio/transcriptions"] | type == "object") and (.paths["/v1/audio/speech"] | type == "object")' \
     <<<"${openapi}" >/dev/null \
     && jq -e '.object == "list" and (.data | type == "array" and length > 0)' <<<"${models}" >/dev/null \
     && jq -e '.state == "idle" or .state == "active" or .state == "draining"' <<<"${activity}" >/dev/null \
-    && jq -e --arg revision "${expected_revision}" '.contractVersion == "agent-connection.v2" and .catalogRevision == $revision' \
+    && jq -e --arg revision "${expected_revision}" '.contractVersion == "agent-connection.v3" and .catalogRevision == $revision' \
       <<<"${profiles}" >/dev/null
 }
 

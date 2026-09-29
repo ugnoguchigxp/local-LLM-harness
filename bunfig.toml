@@ -1,3 +1,5 @@
 # Run only repository-owned application and package tests.
 [test]
-coverage = false
+coverageSkipTestFiles = true
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"

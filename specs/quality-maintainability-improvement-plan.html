@@ -1,0 +1,745 @@
+<article lang="ja">
+  <h1>LARM 品質・保守性改善 実装計画</h1>
+
+  <p>
+    依存脆弱性、coverage、巨大module、文書catalog、公開API lifecycleの負債を、
+    Provider選択やlocal-nodeの実行方針を変えずに解消するための実行計画です。
+    repository内で実装済みの変更も、再現可能なrevisionと受入証跡が固定されるまでは暫定結果として扱います。
+  </p>
+
+  <dl>
+    <dt>全体状態</dt>
+    <dd>
+      進行中。repository内の実装は暫定完了、外部consumer移行・production観測・live受入は未完了
+    </dd>
+    <dt>計画改訂日</dt>
+    <dd><time>2026-09-29</time></dd>
+    <dt>基準revision</dt>
+    <dd>
+      <code>2259fe2</code>を基点とする未commit working
+      tree。以下の実装結果はmerge済みrevisionの証跡ではない
+    </dd>
+    <dt>対象</dt>
+    <dd>
+      開発依存、CI、<code>apps/daemon</code>、<code>packages/core</code>、
+      <code>packages/client</code
+      >、<code>packages/backends</code>、文書catalog、公開API lifecycle
+    </dd>
+    <dt>関連文書</dt>
+    <dd>
+      <a href="./daemon-simplification.html">Daemon実装簡素化の決定記録</a>、
+      <a href="./documentation-review.html">ドキュメントレビュー記録</a>、
+      <a href="./api.html">現行API仕様</a>
+    </dd>
+  </dl>
+
+  <aside>
+    <h2>状態の読み方</h2>
+    <p>
+      「実装済み」はworking treeに変更が存在すること、「検証済み」は記載したcommandがそのworking
+      treeで成功したことを表します。「完了」は対象commitがmergeされ、CI artifactと必要な外部受入が
+      revisionへ紐付いた場合にだけ使用します。
+    </p>
+  </aside>
+
+  <section id="goals">
+    <h2>目標と非目標</h2>
+    <h3>目標</h3>
+    <ul>
+      <li>High以上の依存脆弱性をCIで拒否し、例外を期限付きで管理する。</li>
+      <li>critical pathのcoverage低下を、基準revisionとの比較で拒否する。</li>
+      <li>公開contractを保ったまま、状態所有と副作用の境界に沿って巨大moduleを分割する。</li>
+      <li>
+        全Spec HTMLの正本性、状態、種類、後継、観測revisionをcatalogから追跡できるようにする。
+      </li>
+      <li>
+        APIの利用者、authority、stability、互換性、deprecation状態を直交したmetadataで管理する。
+      </li>
+      <li>
+        互換routeは、既知consumer移行、全attempt観測、live canary、rollback準備の後だけ削除する。
+      </li>
+    </ul>
+    <h3>非目標</h3>
+    <ul>
+      <li>Provider選択、モデル、priority、lifecycle policyを同じ変更で変更しない。</li>
+      <li>行数だけを目的に抽象化層を増やさない。</li>
+      <li>静的source scanまたは成功requestのcounterだけで、consumer不在を証明しない。</li>
+      <li>履歴文書を削除・移動して既存の相対linkを壊さない。</li>
+      <li>unit coverageをsemantic canary、concurrency test、fault injectionの代替にしない。</li>
+    </ul>
+  </section>
+
+  <section id="principles">
+    <h2>実施原則</h2>
+    <ul>
+      <li>
+        Agent Profileと要求Provider
+        subsetをintentの起点とし、profile、route、runtime、backendの順に追跡する。
+      </li>
+      <li>構造変更、contract変更、Provider変更、互換route削除を同じreleaseへ混在させない。</li>
+      <li>各変更は単独でreview、検証、rollbackできるcommitまたはPRにする。</li>
+      <li>測定値には対象commit、時刻、環境、command、artifactを付ける。</li>
+      <li>完了条件を満たせない項目は、理由にかかわらず進行中またはblockedとして残す。</li>
+    </ul>
+  </section>
+
+  <section id="baseline">
+    <h2>開始時baselineと現在地</h2>
+    <table>
+      <caption>
+        基準revisionから観測した課題と暫定結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">開始時</th>
+          <th scope="col">現在のworking tree</th>
+          <th scope="col">未完了</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">依存監査</th>
+          <td><code>fast-uri@3.1.6</code>にHigh advisory</td>
+          <td><code>3.1.7</code> overrideとCI audit gateを実装</td>
+          <td>merge後CI証跡、例外policyの機械化</td>
+        </tr>
+        <tr>
+          <th scope="row">Coverage</th>
+          <td>測定・threshold・artifactなし</td>
+          <td>LCOV、critical inventory、測定済み暫定baselineとのfile・group比較を実装</td>
+          <td>merge済みrevisionへのbaseline固定、branch scenario、例外manifest</td>
+        </tr>
+        <tr>
+          <th scope="row">Daemon composition</th>
+          <td><code>app.ts</code> 2,612行</td>
+          <td>route、auth、Gateway compositionを責務別moduleへ抽出</td>
+          <td>merge後contract snapshot、性能比較</td>
+        </tr>
+        <tr>
+          <th scope="row">Domain module</th>
+          <td>
+            <code>controller.ts</code> 1,780行、<code
+              >context-controller.ts</code
+            >
+            1,533行
+          </td>
+          <td>allocation、context、artifact、client、contractのcomponentを抽出</td>
+          <td>状態owner一覧、concurrency・fault-injection受入</td>
+        </tr>
+        <tr>
+          <th scope="row">文書</th>
+          <td>正本・履歴・提案の識別が不統一</td>
+          <td>catalog gateとpoint-in-time metadata検査を実装</td>
+          <td>全catalogの意味監査と状態説明の同期</td>
+        </tr>
+        <tr>
+          <th scope="row">API lifecycle</th>
+          <td>通常、Agent、管理、互換endpointが同居</td>
+          <td>operation inventory、直交metadata、成功・失敗・認証拒否のattempt counterを実装</td>
+          <td>廃止日程metadata、全instance観測、外部移行、sunset受入</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="work-packages">
+    <h2>残作業と実施順序</h2>
+    <p>
+      R0からR6までは順序どおり実施します。R7はR1、R2、R6の完了後に開始し、R8は全項目の最後に行います。
+      ownerは個人名ではなくreview責任を持つ役割を示します。
+    </p>
+
+    <section id="r0">
+      <h3>R0: revision固定と変更分割</h3>
+      <dl>
+        <dt>Owner</dt>
+        <dd>Repository maintainer</dd>
+        <dt>依存</dt>
+        <dd>なし</dd>
+        <dt>成果物</dt>
+        <dd>責務別commit、PR依存図、各PRのCI URLとartifact</dd>
+      </dl>
+      <ol>
+        <li>現在のworking treeをWP1、WP2、WP3、WP4、WP5、WP6の論理差分へ分類する。</li>
+        <li>構造移動と機能変更を分離し、各commitでtypecheckと対象testを成功させる。</li>
+        <li>
+          各PRへbase/head commit、実行command、coverage artifact、rollback対象commitを記録する。
+        </li>
+        <li>merge後のcommitで共通受入gateを再実行し、以後のbaseline revisionとする。</li>
+      </ol>
+      <p>
+        完了条件は、未commit working
+        treeを根拠とする「完了」表現がなくなり、全結果がimmutableなcommitへ紐付くことです。挙動差分が見つかった場合は抽出を戻し、characterization
+        testを先行します。
+      </p>
+    </section>
+
+    <section id="r1">
+      <h3>R1: 互換API観測の信頼性</h3>
+      <dl>
+        <dt>Owner</dt>
+        <dd>Daemon/API maintainer</dd>
+        <dt>依存</dt>
+        <dd>R0</dd>
+        <dt>成果物</dt>
+        <dd>全attempt counter、観測runbook、metric contract test</dd>
+      </dl>
+      <ol>
+        <li>
+          互換routeへのrequestを成功・失敗にかかわらず記録する。認証、validation、readiness、handlerのどこで終了してもattemptを失わないmiddleware境界に置く。
+        </li>
+        <li>
+          labelは<code>operation</code>と<code>outcome</code>（<code>2xx</code>、<code>3xx</code>、<code>4xx</code>、<code>5xx</code>、<code>aborted</code>）だけに制限し、主体やrequest内容を保存しない。
+        </li>
+        <li>
+          認証失敗、validation失敗、例外、abortを含め、各attemptが一度だけ記録されるtestを追加する。
+        </li>
+        <li>
+          全daemon instanceを集約し、再起動によるcounter
+          reset、scrape欠損、release切替を観測記録へ残す。
+        </li>
+      </ol>
+      <p>
+        完了条件は、互換routeの全attemptが一度だけ計測され、欠測中は「利用0」と判定できないことです。metric追加は既存routeのstatus、body、headerを変更してはなりません。
+      </p>
+    </section>
+
+    <section id="r2">
+      <h3>R2: API lifecycle metadataの直交化</h3>
+      <dl>
+        <dt>Owner</dt>
+        <dd>Core contract maintainer</dd>
+        <dt>依存</dt>
+        <dd>R0</dd>
+        <dt>成果物</dt>
+        <dd>型付きoperation metadata、OpenAPI extension、網羅test</dd>
+      </dl>
+      <table>
+        <caption>
+          全公開operationに必須のmetadata軸
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">軸</th>
+            <th scope="col">値</th>
+            <th scope="col">目的</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">audience</th>
+            <td>public、agent、advanced、management</td>
+            <td>利用者境界</td>
+          </tr>
+          <tr>
+            <th scope="row">authority</th>
+            <td>anonymous、API、Provider、management、および明示的組合せ</td>
+            <td>認証境界</td>
+          </tr>
+          <tr>
+            <th scope="row">stability</th>
+            <td>experimental、stable</td>
+            <td>contract保証</td>
+          </tr>
+          <tr>
+            <th scope="row">compatibility</th>
+            <td>canonical、compatibility</td>
+            <td>推奨入口との関係</td>
+          </tr>
+          <tr>
+            <th scope="row">lifecycle</th>
+            <td>active、deprecated、sunset-scheduled</td>
+            <td>廃止段階</td>
+          </tr>
+        </tbody>
+      </table>
+      <ol>
+        <li>management、compatibility、deprecationを同一enumで表現しない。</li>
+        <li>
+          deprecated
+          operationには<code>successor</code>、<code>deprecatedAt</code>、<code>sunsetAfter</code>、<code>removalIssue</code>を必須にする。
+        </li>
+        <li>
+          OpenAPIの<code>deprecated</code>と拡張metadataを型付きinventoryから一意に生成する。
+        </li>
+        <li>
+          runtimeの認証policyとmetadata authorityが全operationで一致することをcontract testする。
+        </li>
+      </ol>
+      <p>
+        完了条件は、全operationが各軸を持ち、未分類operation、後継なしのdeprecated
+        operation、runtime認証との不一致をCIが拒否することです。
+      </p>
+    </section>
+
+    <section id="r3">
+      <h3>R3: 真のcoverage ratchet</h3>
+      <dl>
+        <dt>Owner</dt>
+        <dd>Test infrastructure maintainer</dd>
+        <dt>依存</dt>
+        <dd>R0</dd>
+        <dt>成果物</dt>
+        <dd>versioned baseline、比較checker、例外manifest、CI artifact</dd>
+      </dl>
+      <ol>
+        <li>
+          merge済みbaseline
+          revisionのfile別・group別line/function値をJSONへ保存し、対象inventoryと除外理由を同じfileで管理する。
+        </li>
+        <li>
+          CIは現在値をbaselineと比較し、固定最低値とbaselineの高い方を下回った場合に失敗する。
+        </li>
+        <li>
+          security/lifecycle/protocol critical fileはgroup合算だけでなくfile単位でも低下を拒否する。
+        </li>
+        <li>
+          baseline低下は、例外file、理由、代替検証、owner、30日以内の期限を持つmanifestと専用approvalだけで許可する。
+        </li>
+        <li>
+          認証分岐、status mapping、rollback、abort、timeoutはscenario inventoryで網羅を検査する。
+        </li>
+        <li>coverage gate失敗時もLCOV、比較結果、対象inventoryをCI artifactとして保存する。</li>
+      </ol>
+      <table>
+        <caption>
+          固定最低値
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">群</th>
+            <th scope="col">lines</th>
+            <th scope="col">functions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Security critical</th>
+            <td>90%</td>
+            <td>90%</td>
+          </tr>
+          <tr>
+            <th scope="row">Lifecycle critical</th>
+            <td>85%</td>
+            <td>80%</td>
+          </tr>
+          <tr>
+            <th scope="row">Protocol critical</th>
+            <td>85%</td>
+            <td>80%</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Wiringはinventoryから除外せず、個別thresholdの代わりに対応E2Eまたはsmoke
+        test名を必須にします。完了条件は、baseline値を下げるだけの変更と未load critical
+        fileをCIが拒否することです。
+      </p>
+    </section>
+
+    <section id="r4">
+      <h3>R4: module境界と非機能回帰gate</h3>
+      <dl>
+        <dt>Owner</dt>
+        <dd>Daemon architecture maintainer</dd>
+        <dt>依存</dt>
+        <dd>R0、R3</dd>
+        <dt>成果物</dt>
+        <dd>import boundary checker、state owner表、contract・concurrency・fault test</dd>
+      </dl>
+      <ol>
+        <li>
+          循環import、domainからHTTP層への依存、route moduleによるcontroller生成を機械検査する。
+        </li>
+        <li>
+          Allocation、Operation、Lease、Context View、Personal State、timer、journalのmutable state
+          ownerを一つずつ明記する。
+        </li>
+        <li>
+          公開export、route、schema、status、header、media type、body
+          limitのsnapshotを抽出前後で比較する。
+        </li>
+        <li>
+          並行allocation/release、cancel/timeout、restart recovery、journal失敗、atomic
+          rename失敗を故障注入testで検査する。
+        </li>
+        <li>
+          代表的なJSON、SSE、audio経路でlatency、throughput、memory、resource
+          cleanupを基準revisionと比較する。
+        </li>
+      </ol>
+      <p>
+        性能は同一host・fixtureで3回以上測定し、中央値latency 10%超悪化またはpeak memory
+        10%超増加を要reviewとします。完了条件は行数ではなく、依存規則、状態所有、contract不変、故障時整合性を全て満たすことです。
+      </p>
+    </section>
+
+    <section id="r5">
+      <h3>R5: 文書catalogの意味監査</h3>
+      <dl>
+        <dt>Owner</dt>
+        <dd>Documentation maintainer</dd>
+        <dt>依存</dt>
+        <dd>R0</dd>
+        <dt>成果物</dt>
+        <dd>全件監査表、catalog同期gate、point-in-time provenance</dd>
+      </dl>
+      <ol>
+        <li>
+          全Spec HTMLをcontract、decision、plan、evidence、researchと状態語彙で一度だけ分類する。
+        </li>
+        <li>
+          catalogの状態説明と本文の状態が一致することを検査し、「一部実装」と「完了」の矛盾を拒否する。
+        </li>
+        <li>
+          実測・受入結果には観測日、対象commit、release、config
+          revision、実行環境、gap理由を要求する。
+        </li>
+        <li>historical文書には実在する後継または後継なしの理由を要求する。</li>
+        <li>サンプルではなく全documentの意味監査を完了し、未確認項目を一覧化する。</li>
+      </ol>
+      <p>
+        完了条件は、機械的catalog検査と全件意味監査の両方が完了し、推測したrevisionが一件もないことです。
+      </p>
+    </section>
+
+    <section id="r6">
+      <h3>R6: repository consumer inventoryの強化</h3>
+      <dl>
+        <dt>Owner</dt>
+        <dd>Client/API maintainer</dd>
+        <dt>依存</dt>
+        <dd>R2</dd>
+        <dt>成果物</dt>
+        <dd>consumer manifest、静的scan、実行時contract test</dd>
+      </dl>
+      <ol>
+        <li>
+          既知consumerをoperation ID単位のmanifestへ登録し、owner、source、移行先、状態を管理する。
+        </li>
+        <li>文字列scanは補助gateと明記し、コメントだけで移行済みと判定しないfixtureを追加する。</li>
+        <li>
+          文字列結合、helper経由、環境変数、設定、shell、Rustを含むfirst-party実行sourceを対象化する。
+        </li>
+        <li>
+          主要consumerは型付きclientまたはOpenAPI operation IDに基づくcontract
+          testで移行を証明する。
+        </li>
+      </ol>
+      <p>
+        完了条件は、静的scanの不在だけでなく、各既知consumerのcanonical operationへの成功contract
+        testが存在することです。
+      </p>
+    </section>
+
+    <section id="r7">
+      <h3>R7: 外部consumerとlive受入</h3>
+      <dl>
+        <dt>Owner</dt>
+        <dd>Release ownerと各consumer owner</dd>
+        <dt>依存</dt>
+        <dd>R1、R2、R6</dd>
+        <dt>成果物</dt>
+        <dd>consumer別sign-off、canary結果、production観測記録</dd>
+      </dl>
+      <table>
+        <caption>
+          外部受入inventory
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Consumer</th>
+            <th scope="col">現状</th>
+            <th scope="col">必要証跡</th>
+            <th scope="col">Blocker</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">SAAA</th>
+            <td>未確認</td>
+            <td>
+              clean revision、operation inventory、移行PR、contract test、live canary、owner
+              sign-off
+            </td>
+            <td><code>../SAAA</code>に所有者の未commit変更がある</td>
+          </tr>
+          <tr>
+            <th scope="row">ContextStill</th>
+            <td>未確認</td>
+            <td>repository revision、operation inventory、移行証跡、live canary、owner sign-off</td>
+            <td>consumer sourceとownerの確定</td>
+          </tr>
+          <tr>
+            <th scope="row">Unknown external</th>
+            <td>存在不明</td>
+            <td>全attempt metric、告知記録、観測期間、問い合わせ窓口</td>
+            <td>識別子を収集せず利用有無だけを観測する</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        SAAAはworktreeがcleanになった場合だけ<code>git pull --ff-only</code>で更新して調査します。既存変更をreset、stash、mergeしてはなりません。各consumerは別々に完了判定し、一つのblockerで他を保留しません。
+      </p>
+    </section>
+
+    <section id="r8">
+      <h3>R8: deprecation観測と互換route削除</h3>
+      <dl>
+        <dt>Owner</dt>
+        <dd>Release owner</dd>
+        <dt>依存</dt>
+        <dd>R1〜R7</dd>
+        <dt>成果物</dt>
+        <dd>sunset release、削除承認記録、復帰runbook</dd>
+      </dl>
+      <p>各operationは次の条件を全て満たした場合だけ削除できます。</p>
+      <ul>
+        <li>OpenAPI、client、文書に後継とsunset日が公開され、最低30日経過している。</li>
+        <li>既知consumerごとのcanonical contract testとowner sign-offがある。</li>
+        <li>
+          全production instanceを含む30日連続かつ一つ以上の完全なrelease
+          cycleで、全outcomeのattemptが0である。
+        </li>
+        <li>scrape欠損、instance欠落、counter resetがあった期間は観測期間へ算入しない。</li>
+        <li>
+          live canaryが成功し、route復帰用feature flagまたは直前release artifactが検証済みである。
+        </li>
+        <li>構造分割、Provider、model、priority、lifecycle policy変更を同じreleaseに含めない。</li>
+      </ul>
+      <p>
+        削除後一releaseは互換routeを設定だけで復帰できる状態を維持します。復帰判断者、15分以内の目標復旧時間、OpenAPI・client・monitoringの復帰手順をrunbookへ記載します。
+      </p>
+    </section>
+  </section>
+
+  <section id="canonical-api">
+    <h2>正本となる利用経路</h2>
+    <table>
+      <caption>
+        利用者別の推奨入口
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">利用者</th>
+          <th scope="col">正本</th>
+          <th scope="col">補足</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">通常consumer</th>
+          <td><code>/v1/models</code>とOpenAI互換endpoint</td>
+          <td>Allocationを意識しない</td>
+        </tr>
+        <tr>
+          <th scope="row">複合Agent</th>
+          <td>
+            <code>/v3/agent-profiles</code>と<code
+              >/v1/agent-connections</code
+            >
+          </td>
+          <td>provide requestが状態変更の正本</td>
+        </tr>
+        <tr>
+          <th scope="row">高度な明示制御</th>
+          <td><code>/v1/allocations</code></td>
+          <td>通常consumerには推奨しない</td>
+        </tr>
+        <tr>
+          <th scope="row">Operator</th>
+          <td>inspection、artifact、release、deployment API</td>
+          <td>management credentialを必須にする</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      初期deprecation候補は<code>/v1/agent-profiles</code>、<code>/v2/agent-profiles</code>、<code>/prepare</code>、<code>/release</code>、<code>/resolve</code>、<code>/operations/:id</code>です。<code>/v1/services</code>はService
+      Harnessの正本contractであり、利用counterだけを理由に候補へ加えません。
+    </p>
+  </section>
+
+  <section id="pr-sequence">
+    <h2>PRとreleaseの分割</h2>
+    <ol>
+      <li>PR-A: revision固定、依存audit、文書catalog。挙動変更なし</li>
+      <li>PR-B: coverage baselineと比較checker。threshold変更以外のproduction変更なし</li>
+      <li>PR-C: app composition分割。公開contract snapshot不変</li>
+      <li>PR-D群: domain componentを状態owner単位で分割。一PR一責務</li>
+      <li>PR-E: API metadata直交化と全attempt metric。route削除なし</li>
+      <li>PR-F: repository consumer移行とcontract test</li>
+      <li>Release-G: external canaryと30日観測。構造変更なし</li>
+      <li>Release-H: 条件を満たしたoperationだけ削除。復帰手段を一release維持</li>
+    </ol>
+    <p>
+      後続PRは先行PRのmerge済みcommitをbaseにします。巨大な未commit差分を一つのPRとして完了扱いしません。
+    </p>
+  </section>
+
+  <section id="gates">
+    <h2>共通受入gate</h2>
+    <table>
+      <caption>
+        変更種別ごとの必須gate
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Gate</th>
+          <th scope="col">Repository PR</th>
+          <th scope="col">Release</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>bun install --frozen-lockfile</code></th>
+          <td>必須</td>
+          <td>release checkoutで再確認</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>bun audit --audit-level=high</code></th>
+          <td>必須</td>
+          <td>必須</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>bun run check</code></th>
+          <td>必須</td>
+          <td>必須</td>
+        </tr>
+        <tr>
+          <th scope="row">revision coverage ratchet</th>
+          <td>必須</td>
+          <td>artifact参照</td>
+        </tr>
+        <tr>
+          <th scope="row">route・OpenAPI・auth inventory</th>
+          <td>必須</td>
+          <td>live contractで再確認</td>
+        </tr>
+        <tr>
+          <th scope="row">dependency boundary check</th>
+          <td>構造変更で必須</td>
+          <td>artifact参照</td>
+        </tr>
+        <tr>
+          <th scope="row">concurrency・fault test</th>
+          <td>stateful変更で必須</td>
+          <td>smokeで再確認</td>
+        </tr>
+        <tr>
+          <th scope="row">性能比較</th>
+          <td>Gateway・lifecycle変更で必須</td>
+          <td>canaryで再確認</td>
+        </tr>
+        <tr>
+          <th scope="row">consumer sign-off・全attempt観測</th>
+          <td>不要</td>
+          <td>route削除で必須</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      audit例外を許可する場合はadvisory
+      ID、影響範囲、理由、owner、代替対策、30日以内の期限を持つmanifestを専用checkerで検査します。監査serviceの通信障害は脆弱性0件として扱わず、再実行可能なinfra
+      failureとして失敗させます。
+    </p>
+  </section>
+
+  <section id="rollback">
+    <h2>Rolloutとrollback</h2>
+    <ol>
+      <li>repository gateを通過したimmutable release artifactを作成する。</li>
+      <li>
+        単一canary nodeでhealth、profile、Allocation、JSON、SSE、audio、release
+        convergenceを検証する。
+      </li>
+      <li>
+        観測window中にerror rate、latency、memory、compatibility attempts、operation
+        terminal整合性を比較する。
+      </li>
+      <li>問題がなければ段階的に展開し、各段階のrelease revisionとconfig revisionを記録する。</li>
+    </ol>
+    <table>
+      <caption>
+        停止条件と復帰単位
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">失敗</th>
+          <th scope="col">停止条件</th>
+          <th scope="col">復帰</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Dependency</th>
+          <td>High advisoryまたはaudit判定不能</td>
+          <td>lockfile・override commitを戻す</td>
+        </tr>
+        <tr>
+          <th scope="row">Coverage</th>
+          <td>baseline低下、inventory欠落</td>
+          <td>production変更を戻す。baselineは下げない</td>
+        </tr>
+        <tr>
+          <th scope="row">Composition</th>
+          <td>contract snapshot、auth、streaming差分</td>
+          <td>該当責務の抽出commitだけを戻す</td>
+        </tr>
+        <tr>
+          <th scope="row">Stateful domain</th>
+          <td>race、journal、terminal state不整合</td>
+          <td>component抽出をfacadeへ戻し、保存形式は維持する</td>
+        </tr>
+        <tr>
+          <th scope="row">API removal</th>
+          <td>互換attempt、consumer障害、canary error</td>
+          <td>feature flagまたは直前artifactでrouteを15分以内に復帰する</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="evidence">
+    <h2>暫定実装証跡</h2>
+    <p>
+      次は<time>2026-09-29</time>に基準revision上のworking
+      treeで確認した暫定結果です。件数は変動するため完了条件には使用せず、R0でmerge済みcommitとCI
+      artifactへ置き換えます。
+    </p>
+    <ul>
+      <li><code>bun run docs:check</code>成功。</li>
+      <li><code>bun run check</code>成功。module境界gateを含む。</li>
+      <li>
+        <code>bun run test:coverage</code>成功。暫定baselineとのfile・group比較を含む。
+      </li>
+      <li>coverage、Spec catalog、API consumer checkerのtooling test成功。</li>
+      <li><code>bun run check:api-consumers</code>成功。</li>
+      <li>
+        <code>../SAAA</code
+        >は所有者の未commit変更があり、更新・現行実装調査を実施していない。
+      </li>
+    </ul>
+    <p>
+      既存working treeには依存更新、coverage、route/domain分割、catalog、API inventory、repository
+      consumer移行が含まれます。ただしR1〜R7の残件があるため、互換route削除とlocal-nodeへの適用を承認する証跡ではありません。
+    </p>
+  </section>
+
+  <section id="done">
+    <h2>全体完了条件</h2>
+    <ul>
+      <li>R0〜R7がmerge済みrevisionとartifactへ紐付き、未期限切れの例外だけが明示されている。</li>
+      <li>critical coverageがrevision baselineと最低値の双方を下回らない。</li>
+      <li>import境界、状態owner、公開contract、concurrency、fault、性能gateが成功する。</li>
+      <li>全Spec HTMLの機械検査と意味監査が完了する。</li>
+      <li>全operationが直交metadataを持ち、runtime authと一致する。</li>
+      <li>SAAAとContextStillのconsumer別sign-off、live canary、全instance観測が完了する。</li>
+      <li>削除対象operationがR8の全条件を満たし、復帰手順を実地確認する。</li>
+    </ul>
+    <p>
+      一部の互換routeを継続保持する判断は、この品質改善計画の失敗ではありません。その場合は理由と再評価日をoperation
+      metadataへ記録し、R8の削除だけを未実施として計画を終了できます。
+    </p>
+  </section>
+</article>

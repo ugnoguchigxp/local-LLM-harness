@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { AgentConnectionCatalog } from "../../../packages/core/src/index";
+import { agentProviderEndpoint, type AgentConnectionCatalog } from "../../../packages/core/src/index";
 import {
   verifyLiveContract,
   type ExpectedLiveContract,
@@ -26,6 +26,11 @@ const expected: ExpectedLiveContract = {
       selectionPolicy: "default",
       deprecated: false,
       schedulingPriority: 3_000,
+      idleRelease: {
+        enabled: true,
+        idleSeconds: 300,
+        activityProtocols: ["openai.chat-completions.v1"],
+      },
       revision: "2".repeat(64),
       providers: [{
         name: "llm",
@@ -35,6 +40,7 @@ const expected: ExpectedLiveContract = {
         publicModel: "coding-default",
         readiness: "llm-inference",
         protocol: "openai.chat-completions.v1",
+        contextWindow: { maxTokens: 4_096, outputReserveTokens: 512, safetyMarginTokens: 128 },
       }],
     }],
   } satisfies AgentConnectionCatalog,
@@ -64,9 +70,9 @@ function response(path: string, model = "coding-default"): Response {
       configRevision: expected.configRevision,
     });
   }
-  if (path === "/v2/agent-profiles") {
+  if (path === "/v3/agent-profiles") {
     return Response.json({
-      contractVersion: "agent-connection.v2",
+      contractVersion: "agent-connection.v3",
       catalogRevision: expected.configRevision,
       defaultAgentProfile: "coding-default",
       profiles: [{
@@ -76,13 +82,21 @@ function response(path: string, model = "coding-default"): Response {
         selectionPolicy: "default",
         deprecated: false,
         schedulingPriority: 3_000,
+        idleRelease: {
+          enabled: true,
+          idleSeconds: 300,
+          activityProtocols: ["openai.chat-completions.v1"],
+        },
         providers: [{
           name: "llm",
           capability: "llm.coding",
           supportedCapabilities: ["llm.coding"],
           protocol: "openai.chat-completions.v1",
+          endpoint: agentProviderEndpoint("openai.chat-completions.v1"),
           model,
+          contextWindow: { maxTokens: 4_096, outputReserveTokens: 512, safetyMarginTokens: 128 },
         }],
+        services: [],
       }],
       audiences: ["saaa-desktop"],
     });
@@ -110,7 +124,7 @@ test("post-activation contract verifies identity, activity, and the complete Age
     activity: "idle",
     agentProfiles: 1,
   });
-  expect(paths).toEqual(["/health", "/ready", "/v1/activity", "/v2/agent-profiles"]);
+  expect(paths).toEqual(["/health", "/ready", "/v1/activity", "/v3/agent-profiles"]);
 });
 
 test("post-activation contract rejects live catalog drift", async () => {
@@ -119,7 +133,7 @@ test("post-activation contract rejects live catalog drift", async () => {
     expected,
     fetch: async (input) => {
       const path = new URL(input.toString()).pathname;
-      return response(path, path === "/v2/agent-profiles" ? "stale-model" : "coding-default");
+      return response(path, path === "/v3/agent-profiles" ? "stale-model" : "coding-default");
     },
     now: () => Date.parse("2030-01-01T00:00:00.000Z"),
   }).catch((cause: unknown) => cause);

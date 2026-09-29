@@ -230,7 +230,7 @@ export async function evaluateBackchannelCandidates(options: EvaluationOptions) 
     fetch: fetchImpl,
   });
   const healthBefore = await larm.getHealth();
-  const profiles = await larm.listAgentProfiles();
+  const profiles = await larm.listAgentProfilesV3();
   const startedAt = new Date().toISOString();
   const candidates = [];
 

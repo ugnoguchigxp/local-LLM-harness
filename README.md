@@ -80,11 +80,21 @@ LARM は、GPU ドライバ、推論エンジン、モデルのインストー�
 | Managed Context | `GET /v1/context-status`、`POST /v1/contexts`、`POST /v1/context-views`、`GET /v1/context-operations/:id` |
 | 音声 | `POST /v1/audio/transcriptions`、`POST /v1/audio/speech`、`GET /v1/audio/voices` |
 | Embedding | `GET /v3/agent-profiles`で契約を発見し、Agent Connection claim後に`POST /v1/embed` |
-| Agent 接続 | `/v1/agent-profiles`、`/v2/agent-profiles`、`/v3/agent-profiles`、`/v1/agent-connections` |
+| Agent 接続 | 正本: `GET /v3/agent-profiles`で発見し、`POST /v1/agent-connections`で接続。Profile v1／v2 discoveryは互換専用 |
 | 成果物とリリース | `/v1/artifacts`、`/v1/runtime-releases`、`/v1/deployments` |
 | API 定義 | `GET /openapi.json` |
 
 完全なリクエスト・レスポンス定義は、起動中の daemon が返す `/openapi.json` を正本として確認できます。
+
+### 利用者別の入口
+
+| 利用者 | 推奨する入口 | 詳細 |
+| --- | --- | --- |
+| 通常consumer | `GET /v1/models`とOpenAI互換Gateway。TypeScriptでは`LarmClient.streamChatCompletion` | [最初のリクエスト](#最初のリクエスト) |
+| Agent consumer | `GET /v3/agent-profiles`で発見し、`POST /v1/agent-connections`で要求・claim | [Agent Connection API仕様](specs/agent-provider-connection-api.html) |
+| Operator | health/readiness、inspection、artifact/release/deployment API。management credentialを分離 | [local-node運用手順](deploy/local-node/README.md) |
+
+すべての設計資料は[Spec catalog](specs/overview.html)から役割と状態を確認してください。
 
 ## 必要なもの
 

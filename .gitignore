@@ -1,6 +1,7 @@
 node_modules/
 *.tsbuildinfo
 .cache/
+coverage/
 AGENTS.md
 # Generated/downloaded programs and build output
 bin/

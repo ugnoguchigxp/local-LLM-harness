@@ -3,6 +3,9 @@
   "private": true,
   "packageManager": "bun@1.4.0",
   "workspaces": ["apps/*", "packages/*"],
+  "overrides": {
+    "fast-uri": "3.1.7"
+  },
   "scripts": {
     "dev": "bun run --filter @larm/daemon dev",
     "start": "bun run --filter @larm/daemon start",
@@ -25,14 +28,19 @@
     "docs": "bun ./node_modules/spec-html/dist/cli.js ./specs --markdown-lang ja",
     "docs:fix": "bun ./node_modules/spec-html/dist/cli.js fix ./specs --write",
     "docs:format": "bun ./node_modules/spec-html/dist/cli.js format ./specs --write",
-    "docs:check": "bun ./node_modules/spec-html/dist/cli.js check ./specs --warnings-as-errors",
-    "docs:check:fix": "bun ./node_modules/spec-html/dist/cli.js check ./specs --fix --warnings-as-errors",
+    "docs:check": "bun ./node_modules/spec-html/dist/cli.js check ./specs --warnings-as-errors && bun run scripts/check-spec-catalog.ts",
+    "docs:check:fix": "bun ./node_modules/spec-html/dist/cli.js check ./specs --fix --warnings-as-errors && bun run scripts/check-spec-catalog.ts",
     "typecheck": "bun ./node_modules/typescript/bin/tsc --noEmit",
     "test": "bun test apps packages",
+    "test:coverage": "bun test --coverage apps packages && bun run scripts/check-coverage.ts",
+    "test:tooling": "bun test scripts/check-coverage.test.ts scripts/check-spec-catalog.test.ts scripts/check-api-consumers.test.ts scripts/check-module-boundaries.test.ts",
+    "check:module-boundaries": "bun run scripts/check-module-boundaries.ts",
+    "check:api-consumers": "bun run scripts/check-api-consumers.ts",
+    "audit:high": "bun audit --audit-level=high",
     "check:source-only": "bash scripts/check-source-only.sh",
     "check:operations": "bash scripts/check-operations.sh",
     "test:deployment": "bun test benchmarks/tts/irodori/tests deploy/local-node/scripts/verify-external-assets.test.ts deploy/local-node/scripts/benchmark-helpers.test.ts deploy/local-node/scripts/benchmark-larm.test.ts deploy/local-node/scripts/evaluate-backchannel-candidates.test.ts deploy/local-node/scripts/preflight-backchannel-models.test.ts deploy/local-node/scripts/performance-helpers.test.ts deploy/local-node/scripts/performance-larm.test.ts deploy/local-node/scripts/compare-slo.test.ts deploy/local-node/scripts/smoke-agent-http.test.ts deploy/local-node/scripts/smoke-http-provider-live.test.ts deploy/local-node/scripts/monitor-http-provider-soak.test.ts deploy/local-node/scripts/verify-qwen-agent-worker-stability.test.ts deploy/local-node/scripts/verify-live-contract.test.ts && bash deploy/local-node/scripts/backup-host-state.test.sh && bash deploy/local-node/scripts/prepare-qwen-tts-source.test.sh && bash deploy/local-node/scripts/install-services.test.sh && bash deploy/local-node/scripts/release-larm.test.sh && bash deploy/local-node/scripts/release-convergence.test.sh && bash deploy/local-node/scripts/network-converge.test.sh && bash deploy/local-node/scripts/configure-saaa-rest-access.test.sh && bash deploy/local-node/scripts/configure-larm-lan-access.test.sh && bash deploy/local-node/scripts/restore-dhcp.test.sh",
-    "check": "bun run check:source-only && bun run check:operations && bun run docs:check && bun run typecheck && bun run test && bun run test:deployment"
+    "check": "bun run check:source-only && bun run check:operations && bun run docs:check && bun run check:api-consumers && bun run check:module-boundaries && bun run typecheck && bun run test && bun run test:tooling && bun run test:deployment"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",

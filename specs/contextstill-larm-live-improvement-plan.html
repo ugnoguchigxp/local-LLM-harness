@@ -366,13 +366,13 @@
       </li>
       <li>
         ContextStill hostと同じLAN経路から<code>/v1/activity</code>が200、
-        <code>/v2/agent-profiles</code
-        >に<code>contextstill-background</code>が一意に存在することを確認する。
+        <code>/v3/agent-profiles?profile=contextstill-background</code>が対象Profileを一件返すことを確認する。
       </li>
       <li>
-        Activityがidleのときだけ同Profileを<code>explicitAgentProfile: true</code>、
-        <code>allowFallback: false</code
-        >、<code>deploymentPolicy: existing-only</code>で作成する。
+        Activityがidleのときだけ、現行request shape
+        <code>{"profile":"contextstill-background","audience":"&lt;reviewed-audience&gt;","providers":["llm"],"allowFallback":false,"deploymentPolicy":"existing-only"}</code>
+        でAgent
+        Connectionを作成する。互換入力<code>explicitAgentProfile</code>は送らない。
       </li>
       <li>
         claimされたbase URL、model、短期Bearerだけで、短いJSON completionとHTTP SSE

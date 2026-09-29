@@ -1,20 +1,14 @@
 import {
   activeAllocation,
   admittedAllocation,
-  admitRuntimes,
   createAllocationId,
-  createLeaseId,
   compareRouteSelection,
-  compileProviderRevision,
-  expandPrepareRequest,
+  createLeaseId,
   findDefaultRoute,
-  getRuntime,
   planTransition,
   prepareRequestSchema,
-  resolveCapability,
   selectRoute,
   type Allocation,
-  type AllocationBinding,
   type AllocationRequest,
   type Lease,
   type PrepareRequest,
@@ -24,10 +18,30 @@ import {
   type RuntimeReleaseDefinition,
 } from "@larm/core";
 import type { RuntimeBackend } from "@larm/backends";
-import { ArtifactStoreError, LifecycleError } from "@larm/backends";
 import type { Observer } from "./observer";
-import { AllocationLifecycleError } from "./allocation-lifecycle";
+import { AllocationStartupLifecycle } from "./allocation-startup-lifecycle";
+import { AllocationApiLifecycle } from "./allocation-api-lifecycle";
+import { AllocationTimers } from "./allocation-timers";
+import { planAllocationRequestAdmission } from "./allocation-request-admission";
+import { commitAllocationRequest } from "./allocation-request-commit";
+import {
+  promoteWaitingAllocationBatch,
+} from "./allocation-waiting-promotion";
+import { reconcileOrphanedPreferredRuntimes } from "./control-plane-startup-reconciliation";
+import { AllocationPreemption } from "./allocation-preemption";
+import { LegacyLeaseRegistry } from "./legacy-lease-registry";
+import { LegacyPrepareCoordinator } from "./legacy-prepare-coordinator";
+import { runLegacyPrepareOperation } from "./legacy-prepare-operation";
+import { LegacyControlOperations } from "./legacy-control-operations";
 import { ProviderInstanceManager, type ProviderInstanceInspection } from "./provider-instance-manager";
+import {
+  admittedAllocations,
+  allocationResourceKeys,
+  countActiveAdmission,
+  countActiveAllocations,
+  evaluateAllocationAdmission,
+  hasAllocationResourceConflict,
+} from "./allocation-admission";
 
 export type Operation = {
   id: string;
@@ -84,26 +98,21 @@ export type ControlPlaneOptions = {
   getRuntimeReleaseDefinition?: (runtimeId: string) => RuntimeReleaseDefinition | undefined;
 };
 
-type ProviderSwitchHold = {
-  runtime: string;
-  priority: number;
-  until: number;
-};
-
 export class ControlPlane {
-  private readonly leases = new Map<string, Lease>();
-  private readonly legacyAllocationByLease = new Map<string, string>();
+  private readonly legacyLeases = new LegacyLeaseRegistry();
   private readonly allocations = new Map<string, Allocation>();
   private readonly operations = new Map<string, Operation>();
-  private readonly allocationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly lifecycleTimers = new AllocationTimers();
   private readonly allocationAborts = new Map<string, AbortController>();
   private readonly allocationLifecycleAborts = new Map<string, AbortController>();
   private readonly operationAborts = new Map<string, AbortController>();
   private readonly lifecycleReservations = new Set<string>();
-  private readonly providerSwitchHolds = new Map<string, ProviderSwitchHold>();
+  private readonly legacyPrepare: LegacyPrepareCoordinator;
+  private readonly legacyControl: LegacyControlOperations;
   private readonly providerInstances: ProviderInstanceManager;
-  private idleTimer: ReturnType<typeof setTimeout> | undefined;
-  private waitingTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly allocationStartup: AllocationStartupLifecycle;
+  private readonly allocationApi: AllocationApiLifecycle;
+  private readonly preemption: AllocationPreemption;
   private applyChain: Promise<void> = Promise.resolve();
   private draining = false;
   private idSequence = 0;
@@ -114,10 +123,114 @@ export class ControlPlane {
     private readonly observer: Observer,
     private readonly options: ControlPlaneOptions = {},
   ) {
+    this.legacyPrepare = new LegacyPrepareCoordinator({
+      registry,
+      isDraining: () => this.draining,
+      allocate: (request) => this.allocate(request),
+      hasFreshState: () => this.hasFreshState(),
+      getState: () => this.observer.getState(),
+      planningLeases: () => this.planningLeases(),
+      activeAdmissionCount: () => this.activeAdmissionCount(),
+      maxActiveAllocations: () => Math.max(1, options.maxActiveAllocations ?? 1_000),
+      createLeaseId: () => this.uniqueId(
+        createLeaseId(options.random),
+        (candidate) => this.legacyLeases.has(candidate),
+      ),
+      addLease: (lease, allocationId) => this.legacyLeases.add(lease, allocationId),
+      attachLeaseToOperation: (allocation, leaseId) => {
+        if (!allocation.operationId) return;
+        const operation = this.operations.get(allocation.operationId);
+        if (operation) operation.leaseId = leaseId;
+      },
+      cancelIdle: () => this.cancelIdle(),
+      createOperationId: () => this.createOperationId(),
+      storeAndRunOperation: (operation) => {
+        this.operations.set(operation.id, operation);
+        const abort = new AbortController();
+        this.operationAborts.set(operation.id, abort);
+        this.enqueue(() => this.runEnsure(operation, abort));
+      },
+      pruneHistory: () => this.pruneHistory(),
+      isoNow: () => this.isoNow(),
+    });
+    this.preemption = new AllocationPreemption(registry, {
+      now: () => this.now(),
+      foregroundPriorityThreshold: options.foregroundPriorityThreshold,
+      providerSwitchHoldMs: options.providerSwitchHoldMs,
+      emit: (name, labels) => this.emit(name, labels),
+    });
+    this.legacyControl = new LegacyControlOperations({
+      registry,
+      isDraining: () => this.draining,
+      getState: () => this.observer.getState(),
+      hasFreshState: () => this.hasFreshState(),
+      planningLeases: () => this.planningLeases(),
+      getLease: (leaseId) => this.legacyLeases.get(leaseId),
+      removeLease: (leaseId) => this.legacyLeases.remove(leaseId),
+      cancelLeaseOperations: (leaseId) => {
+        for (const operation of this.operations.values()) {
+          if (
+            operation.leaseId === leaseId
+            && (operation.status === "pending" || operation.status === "running")
+          ) {
+            this.operationAborts.get(operation.id)?.abort(new Error(`lease ${leaseId} released`));
+          }
+        }
+      },
+      releaseAllocation: (allocationId) => this.releaseAllocation(allocationId),
+      scheduleIdleStop: (runtimeIds) => this.scheduleIdleStop(runtimeIds),
+      observeRouteShadow: (capability, result) => this.observeRouteShadow(capability, result),
+    });
     this.providerInstances = new ProviderInstanceManager(backend, {
       idleTtlMs: options.idleTtlMs,
       now: options.now,
       onEvent: (name, labels) => options.onEvent?.({ name, labels }),
+    });
+    this.allocationStartup = new AllocationStartupLifecycle({
+      registry,
+      backend,
+      observer,
+      providerInstances: this.providerInstances,
+      allocationAborts: this.allocationAborts,
+      allocationLifecycleAborts: this.allocationLifecycleAborts,
+      deploymentCoordinator: options.deploymentCoordinator,
+      getRuntimeRelease: options.getRuntimeRelease,
+      getRuntimeReleaseDefinition: options.getRuntimeReleaseDefinition,
+      now: () => this.now(),
+      isoNow: () => this.isoNow(),
+      sleep: options.sleep ?? ((ms) => Bun.sleep(ms)),
+      pollIntervalMs: options.pollIntervalMs ?? 500,
+      allocationLabels: (allocation) => this.allocationLabels(allocation),
+      emit: (name, labels, value) => this.emit(name, labels, value),
+      clearAllocationTimer: (id) => this.clearAllocationTimer(id),
+      detachLegacyAllocation: (id) => this.detachLegacyAllocation(id),
+      scheduleIdleReconcile: () => this.scheduleIdleReconcile(),
+      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations()),
+      pruneHistory: () => this.pruneHistory(),
+    });
+    this.allocationApi = new AllocationApiLifecycle({
+      allocations: this.allocations,
+      operations: this.operations,
+      allocationAborts: this.allocationAborts,
+      allocationLifecycleAborts: this.allocationLifecycleAborts,
+      isDraining: () => this.draining,
+      expireDueAllocations: () => this.expireDueAllocations(),
+      allocationLookupError: (id) => this.allocationLookupError(id),
+      now: () => this.now(),
+      isoNow: () => this.isoNow(),
+      hasFreshState: () => this.hasFreshState(),
+      getState: () => this.observer.getState(),
+      scheduleAllocationExpiry: (allocation) => this.scheduleAllocationExpiry(allocation),
+      clearAllocationTimer: (id) => this.clearAllocationTimer(id),
+      detachLegacyAllocation: (id) => this.detachLegacyAllocation(id),
+      providerInstances: this.providerInstances,
+      foregroundPriorityThreshold: () => this.foregroundPriorityThreshold(),
+      holdForegroundProviders: (allocation) => this.holdForegroundProviders(allocation),
+      allocationLabels: (allocation) => this.allocationLabels(allocation),
+      emit: (name, labels) => this.emit(name, labels),
+      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations()),
+      scheduleIdleReconcile: () => this.scheduleIdleReconcile(),
+      pruneHistory: () => this.pruneHistory(),
     });
   }
 
@@ -160,7 +273,7 @@ export class ControlPlane {
   }
 
   getLeases(): Lease[] {
-    return [...this.leases.values()];
+    return this.legacyLeases.values();
   }
 
   getBootEpoch(): string {
@@ -229,9 +342,7 @@ export class ControlPlane {
   }
 
   getActiveAllocationCount(): number {
-    return [...this.allocations.values()].filter((allocation) =>
-      activeAllocation(allocation.status)
-    ).length;
+    return countActiveAllocations([...this.allocations.values()]);
   }
 
   async allocate(request: AllocationRequest) {
@@ -267,363 +378,71 @@ export class ControlPlane {
         },
       };
     }
-    const capabilities = new Set<string>();
-    const bindings: AllocationBinding[] = [];
-    for (const requirement of request.requirements) {
-      if (capabilities.has(requirement.capability)) {
-        return {
-          status: 400 as const,
-          body: {
-            error: {
-              code: "duplicate_capability",
-              message: `capability ${requirement.capability} is requested more than once`,
-            },
-          },
-        };
-      }
-      capabilities.add(requirement.capability);
-      const selected = selectRoute({
-        registry: this.registry,
-        state: this.observer.getState(),
-        routeId: requirement.route,
-        capability: requirement.capability,
-        mode: "explicit",
-        allowFallback: request.allowFallback,
-      });
-      if (!selected.ok) {
-        const notFound = selected.reason === "unknown_route" || selected.reason === "unsupported_capability";
-        const unavailable = selected.reason === "no_candidate_available";
-        this.emit("allocation_rejected", { reason: selected.reason, route: requirement.route });
-        return {
-          status: notFound ? 404 as const : unavailable ? 503 as const : 409 as const,
-          body: {
-            error: {
-              code: selected.reason,
-              message: `route ${requirement.route} cannot provide ${requirement.capability}: ${selected.reason}`,
-            },
-          },
-        };
-      }
-      bindings.push({
-        capability: selected.capability,
-        route: selected.route,
-        runtime: selected.runtime,
-        node: selected.node,
-        endpoint: selected.endpoint,
-        status: selected.status,
-        candidateRank: selected.candidateRank,
-        fallback: selected.fallback,
-        selectionReason: selected.reason,
-        release: this.options.getRuntimeRelease?.(selected.runtime),
-        providerRevision: (() => {
-          const runtime = getRuntime(this.registry, selected.runtime);
-          const release = this.options.getRuntimeReleaseDefinition?.(selected.runtime);
-          return runtime
-            ? compileProviderRevision(release
-              ? { runtime, release }
-              : {
-                runtime,
-                runtimeRelease: this.options.getRuntimeRelease?.(selected.runtime),
-              }).revision
-            : undefined;
-        })(),
-      });
-    }
-
-    const runtimeIds = [...new Set(bindings.map((binding) => binding.runtime))];
-    const lifecycleRuntimeIds = new Set(runtimeIds);
-    for (const runtimeId of runtimeIds) {
-      const swapGroup = getRuntime(this.registry, runtimeId)?.policy.swapGroup;
-      if (!swapGroup) continue;
-      for (const peer of this.registry.runtimes) {
-        if (peer.policy.swapGroup === swapGroup) lifecycleRuntimeIds.add(peer.id);
-      }
-    }
-    const transitioningRuntime = [...lifecycleRuntimeIds].find((runtimeId) =>
-      this.lifecycleReservations.has(runtimeId)
-    );
-    const waitsForCapacity = request.capacityPolicy === "wait";
-    const providerSwitchHoldUntil = this.providerSwitchHoldUntil(
-      runtimeIds,
-      request.priority ?? 0,
-    );
-    const conflictsWithAdmitted = this.hasResourceConflict(
-      runtimeIds,
-      (allocation) => admittedAllocation(allocation.status),
-    );
-    const conflictsWithWaiter = this.hasExclusiveResourceConflict(
-      runtimeIds,
-      (allocation) => allocation.status === "waiting"
-        && (allocation.priority ?? 0) >= (request.priority ?? 0),
-    );
-    const conflictsWithHigherPriority = this.hasExclusiveResourceConflict(
-      runtimeIds,
-      (allocation) => admittedAllocation(allocation.status)
-        && (allocation.priority ?? 0) > (request.priority ?? 0),
-    );
-    if (transitioningRuntime && !(waitsForCapacity && conflictsWithAdmitted)) {
-      this.emit("allocation_rejected", { reason: "runtime_transition_in_progress" });
-      return {
-        status: 409 as const,
-        body: {
-          error: {
-            code: "runtime_transition_in_progress",
-            message: `runtime ${transitioningRuntime} is changing lifecycle state`,
-          },
-        },
-      };
-    }
-    const mutatingRuntime = [...lifecycleRuntimeIds].find((runtimeId) =>
-      this.options.isRuntimeMutating?.(runtimeId)
-    );
-    if (mutatingRuntime) {
-      this.emit("allocation_rejected", { reason: "deployment_in_progress" });
-      return {
-        status: 409 as const,
-        body: {
-          error: {
-            code: "deployment_in_progress",
-            message: `runtime ${mutatingRuntime} is being updated`,
-          },
-        },
-      };
-    }
-    this.preemptLowerPriorityConflicts(request.priority ?? 0, runtimeIds);
-    const admission = admitRuntimes({
+    const admission = planAllocationRequestAdmission({
       registry: this.registry,
-      state: this.observer.getState(),
-      allocations: this.admittedAllocations(),
-      candidateRuntimeIds: runtimeIds,
-      ...(this.options.requireFreshTelemetry
-        ? {
-          liveTelemetry: {
-            requiredForNonResident: true,
-            maxAgeMs: this.options.telemetryMaxAgeMs ?? 10_000,
-            now: this.now(),
-          },
-        }
-        : {}),
+      request,
+      getState: () => this.observer.getState(),
+      getAllocations: () => [...this.allocations.values()],
+      isLifecycleReserved: (runtimeId) => this.lifecycleReservations.has(runtimeId),
+      isRuntimeMutating: (runtimeId) => this.options.isRuntimeMutating?.(runtimeId),
+      hasResourceConflict: (runtimeIds, predicate) => this.hasResourceConflict(runtimeIds, predicate),
+      providerSwitchHoldUntil: (runtimeIds, priority) => this.providerSwitchHoldUntil(runtimeIds, priority),
+      preemptLowerPriorityConflicts: (priority, runtimeIds) =>
+        this.preemptLowerPriorityConflicts(priority, runtimeIds),
+      getRuntimeRelease: this.options.getRuntimeRelease,
+      getRuntimeReleaseDefinition: this.options.getRuntimeReleaseDefinition,
+      requireFreshTelemetry: this.options.requireFreshTelemetry ?? false,
+      telemetryMaxAgeMs: this.options.telemetryMaxAgeMs ?? 10_000,
+      now: () => this.now(),
+      onRejected: (reason, route) => this.emit("allocation_rejected", {
+        reason,
+        ...(route ? { route } : {}),
+      }),
     });
-    const capacityBlocked = !admission.ok && conflictsWithAdmitted;
-    const waiting = waitsForCapacity && (
-      conflictsWithWaiter
-      || conflictsWithHigherPriority
-      || (transitioningRuntime !== undefined && conflictsWithAdmitted)
-      || capacityBlocked
-      || providerSwitchHoldUntil !== undefined
-    );
-    if ((!admission.ok || providerSwitchHoldUntil !== undefined || conflictsWithHigherPriority) && !waiting) {
-      const held = providerSwitchHoldUntil !== undefined;
-      const reason = conflictsWithHigherPriority
-        ? "higher_priority_allocation_active"
-        : held
-        ? "provider_switch_hold"
-        : admission.ok
-        ? "resource_exhausted"
-        : admission.reason;
-      const message = conflictsWithHigherPriority
-        ? "a higher-priority allocation currently reserves the requested provider"
-        : held
-        ? "provider switch is held for foreground reuse"
-        : admission.ok
-        ? "runtime resources are unavailable"
-        : admission.message;
-      this.emit("allocation_rejected", { reason });
-      return {
-        status: 409 as const,
-        body: {
-          error: {
-            code: "resource_exhausted",
-            message,
-            admission: admission.nodes,
-          },
-        },
-      };
-    }
-
+    if (!admission.ok) return admission.result;
     const now = this.now();
-    const allocation: Allocation = {
-      id: this.uniqueId(
-        createAllocationId(this.getBootEpoch(), this.options.random),
-        (candidate) => this.allocations.has(candidate),
-      ),
-      bootEpoch: this.getBootEpoch(),
-      catalogRevision: this.options.getCatalogRevision?.(),
-      client: request.client,
-      status: waiting
-        ? "waiting"
-        : request.deploymentPolicy === "existing-only" &&
-        bindings.every((binding) => binding.status === "HOT" || binding.status === "BUSY")
-        ? "ready"
-        : "pending",
-      requirements: request.requirements,
-      bindings,
-      allowFallback: request.allowFallback,
-      deploymentPolicy: request.deploymentPolicy,
-      priority: request.priority,
-      capacityPolicy: request.capacityPolicy,
-      createdAt: new Date(now).toISOString(),
-      expiresAt: new Date(now + request.ttlSeconds * 1000).toISOString(),
-    };
-    this.allocations.set(allocation.id, allocation);
-    for (const binding of allocation.bindings) {
-      const instance = this.providerInstances.retainExisting(
-        binding.runtime,
-        allocation.id,
-        binding.providerRevision,
-      );
-      if (instance) {
-        binding.instanceId = instance.id;
-        binding.instanceGeneration = instance.generation;
-        binding.endpoint = instance.endpoint;
-      }
-    }
-    if (
-      allocation.status === "ready"
-      && this.backend.ensureInstance
-      && allocation.bindings.some((binding) => binding.instanceId === undefined)
-    ) {
-      allocation.status = "pending";
-    }
-    this.allocationLifecycleAborts.set(allocation.id, new AbortController());
-    this.emit(
-      allocation.status === "waiting" ? "allocation_waiting" : "allocation_pending",
-      this.allocationLabels(allocation),
+    const allocationId = this.uniqueId(
+      createAllocationId(this.getBootEpoch(), this.options.random),
+      (candidate) => this.allocations.has(candidate),
     );
-    this.scheduleAllocationExpiry(allocation);
-    this.cancelIdle();
-
-    if (allocation.status === "ready") {
-      this.emit("allocation_ready", this.allocationLabels(allocation));
-      this.pruneHistory();
-      return {
-        status: 200 as const,
-        body: allocation,
-      };
-    }
-
-    const deadline = allocation.status === "waiting"
-      ? Date.parse(allocation.expiresAt)
-      : this.allocationStartupDeadline(allocation);
-    const operation: Operation = {
-      id: this.createOperationId(),
-      kind: "allocation",
-      allocationId: allocation.id,
-      status: "pending",
-      ready: false,
-      desired: [...capabilities].sort(),
-      ensure: runtimeIds,
-      createdAt: new Date(now).toISOString(),
-      deadlineAt: new Date(deadline).toISOString(),
-      phase: allocation.status === "waiting" ? "waiting-for-capacity" : "scheduled",
-    };
-    allocation.operationId = operation.id;
-    this.operations.set(operation.id, operation);
-    if (allocation.status === "waiting") {
-      this.enqueue(() => this.promoteWaitingAllocations());
-    } else {
-      this.enqueue(() => this.runAllocationEnsure(allocation, operation, deadline));
-    }
-    this.pruneHistory();
-
-    return {
-      status: 202 as const,
-      body: allocation,
-    };
+    const bootEpoch = this.getBootEpoch();
+    const catalogRevision = this.options.getCatalogRevision?.();
+    return commitAllocationRequest({
+      allocationId,
+      bootEpoch,
+      catalogRevision,
+      request,
+      admission,
+      now,
+      storeAllocation: (allocation) => this.allocations.set(allocation.id, allocation),
+      retainExisting: (runtimeId, id, providerRevision) =>
+        this.providerInstances.retainExisting(runtimeId, id, providerRevision),
+      requiresInstanceTracking: Boolean(this.backend.ensureInstance),
+      registerLifecycleAbort: (id) => this.allocationLifecycleAborts.set(id, new AbortController()),
+      emitCreated: (allocation) => this.emit(
+        allocation.status === "waiting" ? "allocation_waiting" : "allocation_pending",
+        this.allocationLabels(allocation),
+      ),
+      emitReady: (allocation) => this.emit("allocation_ready", this.allocationLabels(allocation)),
+      scheduleExpiry: (allocation) => this.scheduleAllocationExpiry(allocation),
+      cancelIdle: () => this.cancelIdle(),
+      startupDeadline: (allocation) => this.allocationStartupDeadline(allocation),
+      createOperationId: () => this.createOperationId(),
+      storeOperation: (operation) => this.operations.set(operation.id, operation),
+      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations()),
+      enqueueStartup: (allocation, operation, deadline) => this.enqueue(() =>
+        this.runAllocationEnsure(allocation, operation, deadline)
+      ),
+      pruneHistory: () => this.pruneHistory(),
+    });
   }
 
   renewAllocation(id: string, ttlSeconds: number) {
-    if (this.draining) {
-      return {
-        status: 503 as const,
-        body: { error: { code: "draining", message: "control plane is draining" } },
-      };
-    }
-    this.expireDueAllocations();
-    const allocation = this.allocations.get(id);
-    if (!allocation) {
-      return this.allocationLookupError(id);
-    }
-    if (!activeAllocation(allocation.status)) {
-      return {
-        status: 409 as const,
-        body: {
-          error: {
-            code: "allocation_inactive",
-            message: `allocation ${id} is ${allocation.status}`,
-          },
-        },
-      };
-    }
-    allocation.expiresAt = new Date(this.now() + ttlSeconds * 1000).toISOString();
-    this.scheduleAllocationExpiry(allocation);
-    return { status: 200 as const, body: allocation };
+    return this.allocationApi.renewAllocation(id, ttlSeconds);
   }
 
   resolveAllocation(id: string, capability: string) {
-    if (this.draining) {
-      return {
-        status: 503 as const,
-        body: { error: { code: "draining", message: "control plane is draining" } },
-      };
-    }
-    this.expireDueAllocations();
-    const allocation = this.allocations.get(id);
-    if (!allocation) {
-      return this.allocationLookupError(id);
-    }
-    if (allocation.status !== "ready") {
-      return {
-        status: activeAllocation(allocation.status) ? 503 as const : 409 as const,
-        body: {
-          error: allocation.error ?? {
-            code: "allocation_not_ready",
-            message: `allocation ${id} is ${allocation.status}`,
-          },
-        },
-      };
-    }
-    const binding = allocation.bindings.find((item) => item.capability === capability);
-    if (!binding) {
-      return {
-        status: 404 as const,
-        body: {
-          error: {
-            code: "capability_not_allocated",
-            message: `allocation ${id} does not bind ${capability}`,
-          },
-        },
-      };
-    }
-    const state = this.observer.getState();
-    if (!this.hasFreshState()) {
-      return {
-        status: 503 as const,
-        body: {
-          error: {
-            code: "stale_state",
-            message: "runtime observation is stale; retry after the next observer tick",
-          },
-        },
-      };
-    }
-    const snapshot = state.runtimes.find((runtime) => runtime.id === binding.runtime);
-    if (!snapshot || (snapshot.status !== "HOT" && snapshot.status !== "BUSY")) {
-      if (snapshot) {
-        binding.status = snapshot.status;
-      }
-      return {
-        status: 503 as const,
-        body: {
-          error: {
-            code: "runtime_not_ready",
-            message: `allocated runtime ${binding.runtime} is not ready`,
-          },
-        },
-      };
-    }
-    binding.status = snapshot.status;
-    return { status: 200 as const, body: binding };
+    return this.allocationApi.resolveAllocation(id, capability);
   }
 
   async releaseAllocation(
@@ -631,353 +450,23 @@ export class ControlPlane {
     terminal: "released" | "expired" = "released",
     reason?: Error,
   ) {
-    const allocation = this.allocations.get(id);
-    if (!allocation) {
-      return this.allocationLookupError(id);
-    }
-    if (allocation.status === "released" || allocation.status === "expired") {
-      return { status: 200 as const, body: allocation };
-    }
-    const wasAdmitted = admittedAllocation(allocation.status);
-    allocation.status = terminal;
-    allocation.releasedAt = this.isoNow();
-    if (reason instanceof AllocationLifecycleError) {
-      allocation.error = { code: reason.code, message: reason.message };
-    }
-    this.clearAllocationTimer(id);
-    const lifecycleReason = reason ?? new Error(`allocation ${terminal}`);
-    this.allocationAborts.get(id)?.abort(lifecycleReason);
-    this.allocationLifecycleAborts.get(id)?.abort(lifecycleReason);
-    this.detachLegacyAllocation(id);
-    this.providerInstances.releaseAllocation(id);
-    if (wasAdmitted && (allocation.priority ?? 0) >= this.foregroundPriorityThreshold()) {
-      this.holdForegroundProviders(allocation);
-    }
-    if (allocation.operationId) {
-      const operation = this.operations.get(allocation.operationId);
-      if (operation && (operation.status === "pending" || operation.status === "running")) {
-        operation.status = terminal === "expired" ? "timed_out" : "cancelled";
-        operation.completedAt = this.isoNow();
-      }
-    }
-    this.emit(`allocation_${terminal}`, this.allocationLabels(allocation));
-    this.enqueue(() => this.promoteWaitingAllocations());
-    this.scheduleIdleReconcile();
-    this.pruneHistory();
-    return { status: 200 as const, body: allocation };
+    return await this.allocationApi.releaseAllocation(id, terminal, reason);
   }
 
   async preemptAllocation(id: string, preemptingPriority: number) {
-    const allocation = this.allocations.get(id);
-    if (!allocation) return this.allocationLookupError(id);
-    if (allocation.status === "released" || allocation.status === "expired") {
-      return { status: 200 as const, body: allocation };
-    }
-    if ((allocation.priority ?? 0) >= preemptingPriority) {
-      return {
-        status: 409 as const,
-        body: {
-          error: {
-            code: "allocation_priority_conflict",
-            message: "allocation priority is not lower than the preempting request",
-          },
-        },
-      };
-    }
-    this.emit("allocation_preempted", {
-      allocation: allocation.id,
-      client: allocation.client ?? "unknown",
-      reason: "higher_priority_foreground_task",
-      priority: String(allocation.priority ?? 0),
-      preemptingPriority: String(preemptingPriority),
-    });
-    return await this.releaseAllocation(
-      allocation.id,
-      "released",
-      new AllocationLifecycleError(
-        "foreground_preempted",
-        "request stopped because a higher-priority foreground task requires the provider",
-      ),
-    );
+    return await this.allocationApi.preemptAllocation(id, preemptingPriority);
   }
 
   async prepare(request: PrepareRequest) {
-    if (this.draining) {
-      return {
-        status: 503 as const,
-        body: { error: { code: "draining", message: "control plane is draining" } },
-      };
-    }
-    const expanded = expandPrepareRequest(this.registry, request);
-    if (!expanded.ok) {
-      if (expanded.reason === "unknown_profile") {
-        return {
-          status: 404 as const,
-          body: {
-            error: { code: "not_found", message: `profile ${request.profile} is not defined` },
-          },
-        };
-      }
-      return {
-        status: 400 as const,
-        body: { error: { code: "bad_request", message: "profile or capabilities is required" } },
-      };
-    }
-
-    const requirements = expanded.capabilities.map((capability) => ({
-      capability,
-      route: findDefaultRoute(this.registry, capability)?.id,
-    }));
-    if (requirements.every(
-      (requirement): requirement is { capability: string; route: string } => Boolean(requirement.route),
-    )) {
-      const allocated = await this.allocate({
-        requirements,
-        client: request.client,
-        allowFallback: true,
-        ttlSeconds: 86_400,
-        deploymentPolicy: "existing-only",
-        priority: 0,
-        capacityPolicy: "reject",
-      });
-      if (allocated.status !== 200 && allocated.status !== 202) {
-        return allocated;
-      }
-      const allocation = allocated.body as Allocation;
-      if (!activeAllocation(allocation.status)) {
-        return {
-          status: 503 as const,
-          body: {
-            error: allocation.error ?? {
-              code: "allocation_failed",
-              message: "allocation failed before the legacy lease was created",
-            },
-          },
-        };
-      }
-      const lease: Lease = {
-        id: this.uniqueId(
-          createLeaseId(this.options.random),
-          (candidate) => this.leases.has(candidate),
-        ),
-        client: request.client,
-        capabilities: expanded.capabilities,
-        profile: expanded.profile,
-        createdAt: this.isoNow(),
-      };
-      this.leases.set(lease.id, lease);
-      this.legacyAllocationByLease.set(lease.id, allocation.id);
-      if (allocation.operationId) {
-        const operation = this.operations.get(allocation.operationId);
-        if (operation) {
-          operation.leaseId = lease.id;
-        }
-      }
-      return {
-        status: allocated.status,
-        body: {
-          leaseId: lease.id,
-          operationId: allocation.operationId,
-          desired: expanded.capabilities,
-          ready: allocation.status === "ready",
-          runtimes: [...new Set(allocation.bindings.map((binding) => binding.runtime))],
-        },
-      };
-    }
-
-    if (!this.hasFreshState()) {
-      return {
-        status: 503 as const,
-        body: {
-          error: {
-            code: "stale_state",
-            message: "runtime observation is stale; retry after the next observer tick",
-          },
-        },
-      };
-    }
-
-    const trial = planTransition({
-      registry: this.registry,
-      state: this.observer.getState(),
-      leases: [
-        ...this.planningLeases(),
-        {
-          id: "trial",
-          capabilities: expanded.capabilities,
-          createdAt: this.isoNow(),
-        },
-      ],
-    });
-
-    if (trial.uncovered.length > 0) {
-      return {
-        status: 409 as const,
-        body: {
-          error: {
-            code: "unsatisfiable",
-            message: `no runtime can provide: ${trial.uncovered.join(", ")}`,
-          },
-        },
-      };
-    }
-
-    const activeLimit = Math.max(1, this.options.maxActiveAllocations ?? 1_000);
-    if (this.activeAdmissionCount() >= activeLimit) {
-      return {
-        status: 503 as const,
-        body: {
-          error: {
-            code: "allocation_capacity",
-            message: `active allocation capacity ${activeLimit} has been reached`,
-          },
-        },
-      };
-    }
-
-    this.cancelIdle();
-    const lease: Lease = {
-      id: this.uniqueId(
-        createLeaseId(this.options.random),
-        (candidate) => this.leases.has(candidate),
-      ),
-      client: request.client,
-      capabilities: expanded.capabilities,
-      profile: expanded.profile,
-      createdAt: this.isoNow(),
-    };
-    this.leases.set(lease.id, lease);
-
-    const plan = planTransition({
-      registry: this.registry,
-      state: this.observer.getState(),
-      leases: this.planningLeases(),
-    });
-
-    const covering = this.observer
-      .getState()
-      .runtimes.filter((runtime) => runtime.status === "HOT" || runtime.status === "BUSY")
-      .map((runtime) => runtime.id);
-
-    if (plan.ensure.length === 0) {
-      return {
-        status: 200 as const,
-        body: {
-          leaseId: lease.id,
-          desired: plan.desired,
-          ready: true,
-          runtimes: covering,
-        },
-      };
-    }
-
-    const operation: Operation = {
-      id: this.createOperationId(),
-      kind: "prepare",
-      leaseId: lease.id,
-      status: "pending",
-      ready: false,
-      desired: plan.desired,
-      ensure: plan.ensure,
-      createdAt: this.isoNow(),
-    };
-    this.operations.set(operation.id, operation);
-    const abort = new AbortController();
-    this.operationAborts.set(operation.id, abort);
-    this.enqueue(() => this.runEnsure(operation, abort));
-    this.pruneHistory();
-
-    return {
-      status: 202 as const,
-      body: {
-        leaseId: lease.id,
-        operationId: operation.id,
-        desired: plan.desired,
-        ready: false,
-        runtimes: plan.ensure,
-      },
-    };
+    return await this.legacyPrepare.prepare(request);
   }
 
   async release(leaseId: string) {
-    const lease = this.leases.get(leaseId);
-    if (!lease) {
-      return {
-        status: 404 as const,
-        body: { error: { code: "not_found", message: `lease ${leaseId} is not active` } },
-      };
-    }
-    this.leases.delete(leaseId);
-    for (const operation of this.operations.values()) {
-      if (
-        operation.leaseId === leaseId
-        && (operation.status === "pending" || operation.status === "running")
-      ) {
-        this.operationAborts.get(operation.id)?.abort(new Error(`lease ${leaseId} released`));
-      }
-    }
-    const allocationId = this.legacyAllocationByLease.get(leaseId);
-    if (allocationId) {
-      this.legacyAllocationByLease.delete(leaseId);
-      await this.releaseAllocation(allocationId);
-    }
-    const plan = planTransition({
-      registry: this.registry,
-      state: this.observer.getState(),
-      leases: this.planningLeases(),
-    });
-
-    if (this.planningLeases().length === 0 && plan.stop.length > 0) {
-      this.scheduleIdleStop(plan.stop);
-    }
-
-    return {
-      status: 200 as const,
-      body: { released: true, leaseId, desired: plan.desired },
-    };
+    return await this.legacyControl.release(leaseId);
   }
 
   resolve(capability: string) {
-    if (this.draining) {
-      return {
-        status: 503 as const,
-        body: { error: { code: "draining", message: "control plane is draining" } },
-      };
-    }
-    const result = resolveCapability(this.registry, this.observer.getState(), capability);
-    if (!result.ok && result.reason === "unknown_capability") {
-      return {
-        status: 404 as const,
-        body: { error: { code: "not_found", message: `capability ${capability} is not in the registry` } },
-      };
-    }
-    if (!this.hasFreshState()) {
-      return {
-        status: 503 as const,
-        body: {
-          error: {
-            code: "stale_state",
-            message: "runtime observation is stale; retry after the next observer tick",
-          },
-        },
-      };
-    }
-    this.observeRouteShadow(capability, result);
-    if (!result.ok) {
-      return {
-        status: 503 as const,
-        body: { error: { code: "not_ready", message: "no HOT runtime; call POST /prepare first" } },
-      };
-    }
-    return {
-      status: 200 as const,
-      body: {
-        runtime: result.runtime,
-        node: result.node,
-        endpoint: result.endpoint,
-        status: result.status,
-      },
-    };
+    return this.legacyControl.resolve(capability);
   }
 
   async flush(): Promise<void> {
@@ -991,53 +480,19 @@ export class ControlPlane {
   }
 
   async reconcileOrphanedPreferred(): Promise<string[]> {
-    if (this.draining) {
-      return [];
-    }
-    this.expireDueAllocations();
-    const state = await this.observer.tick();
-    const allocated = new Set(
-      [...this.allocations.values()]
-        .filter((allocation) => activeAllocation(allocation.status))
-        .flatMap((allocation) => allocation.bindings.map((binding) => binding.runtime)),
-    );
-    const legacyCapabilities = new Set(
-      [...this.leases.values()].flatMap((lease) => lease.capabilities),
-    );
-    const stopped: string[] = [];
-    for (const snapshot of state.runtimes) {
-      const runtime = getRuntime(this.registry, snapshot.id);
-      if (
-        !runtime
-        || runtime.policy.class !== "preferred"
-        || snapshot.status !== "HOT"
-        || allocated.has(runtime.id)
-        || this.providerInstances.hasRuntime(runtime.id)
-        || runtime.capability.some((capability) => legacyCapabilities.has(capability))
-        || this.options.isRuntimeMutating?.(runtime.id)
-      ) {
-        continue;
-      }
-      this.lifecycleReservations.add(runtime.id);
-      try {
-        const inUse = [...this.allocations.values()].some(
-          (allocation) => activeAllocation(allocation.status)
-            && allocation.bindings.some((binding) => binding.runtime === runtime.id),
-        );
-        if (inUse || this.options.isRuntimeMutating?.(runtime.id)) {
-          continue;
-        }
-        await this.backend.stop(runtime.id);
-        stopped.push(runtime.id);
-        this.emit("startup_reconciliation", { runtime: runtime.id, result: "stopped_orphan" });
-      } finally {
-        this.lifecycleReservations.delete(runtime.id);
-      }
-    }
-    if (stopped.length > 0) {
-      await this.observer.tick();
-    }
-    return stopped;
+    return await reconcileOrphanedPreferredRuntimes({
+      draining: this.draining,
+      expireDueAllocations: () => this.expireDueAllocations(),
+      observer: this.observer,
+      registry: this.registry,
+      allocations: this.allocations,
+      leases: new Map(this.legacyLeases.values().map((lease) => [lease.id, lease])),
+      providerInstances: this.providerInstances,
+      backend: this.backend,
+      lifecycleReservations: this.lifecycleReservations,
+      isRuntimeMutating: this.options.isRuntimeMutating,
+      emit: (name, labels) => this.emit(name, labels),
+    });
   }
 
   private enqueue(work: () => Promise<void>): void {
@@ -1052,227 +507,25 @@ export class ControlPlane {
     operation: Operation,
     deadline: number,
   ): Promise<void> {
-    if (!activeAllocation(allocation.status)) {
-      return;
-    }
-    operation.status = "running";
-    const abort = new AbortController();
-    this.allocationAborts.set(allocation.id, abort);
-    let deadlineExceeded = false;
-    const deadlineTimer = setTimeout(() => {
-      deadlineExceeded = true;
-      abort.abort(new Error("allocation startup deadline exceeded"));
-    }, Math.max(0, deadline - this.now()));
-    deadlineTimer.unref?.();
-    try {
-      const runtimeIds = [...new Set(allocation.bindings.map((binding) => binding.runtime))];
-      for (const runtimeId of runtimeIds) {
-        if (!activeAllocation(allocation.status)) {
-          return;
-        }
-        if (allocation.deploymentPolicy === "allow-listed") {
-          if (!this.options.deploymentCoordinator) {
-            throw new Error("allow-listed deployment is not configured");
-          }
-          await this.options.deploymentCoordinator.ensureRuntime(
-            runtimeId,
-            allocation.id,
-            (phase) => {
-              operation.phase = phase;
-            },
-            abort.signal,
-          );
-          if (!activeAllocation(allocation.status)) {
-            return;
-          }
-          if (abort.signal.aborted) {
-            throw abort.signal.reason;
-          }
-        }
-        const runtime = getRuntime(this.registry, runtimeId);
-        if (!runtime) {
-          throw new Error(`runtime ${runtimeId} disappeared from registry`);
-        }
-        const status = this.observer.getState().runtimes.find((item) => item.id === runtimeId)?.status;
-        if (status === "COLD" || this.backend.ensureInstance) {
-          operation.phase = "starting-runtime";
-          const instance = await this.providerInstances.acquire(
-            runtime,
-            allocation.id,
-            this.options.getRuntimeReleaseDefinition?.(runtimeId)
-              ?? this.options.getRuntimeRelease?.(runtimeId),
-            abort.signal,
-          );
-          for (const binding of allocation.bindings) {
-            if (binding.runtime !== runtimeId) continue;
-            binding.providerRevision = instance.revision;
-            binding.instanceId = instance.id;
-            binding.instanceGeneration = instance.generation;
-            binding.endpoint = instance.endpoint;
-          }
-        }
-      }
-
-      operation.phase = "verifying-runtime";
-      while (activeAllocation(allocation.status)) {
-        const state = await this.observer.tick();
-        for (const binding of allocation.bindings) {
-          const snapshot = state.runtimes.find((item) => item.id === binding.runtime);
-          if (snapshot) {
-            binding.status = snapshot.status;
-          }
-        }
-        if (allocation.bindings.every(
-          (binding) => binding.status === "HOT" || binding.status === "BUSY",
-        )) {
-          allocation.status = "ready";
-          operation.status = "succeeded";
-          operation.ready = true;
-          operation.phase = "runtime-ready";
-          operation.completedAt = this.isoNow();
-          this.emit("allocation_ready", this.allocationLabels(allocation));
-          this.emit(
-            "allocation_startup_seconds",
-            this.allocationLabels(allocation),
-            Math.max(0, (this.now() - Date.parse(allocation.createdAt)) / 1_000),
-          );
-          return;
-        }
-        if (allocation.bindings.some((binding) => binding.status === "FAILED")) {
-          throw new Error("one or more allocated runtimes failed during startup");
-        }
-        if (this.now() >= deadline) {
-          allocation.status = "failed";
-          allocation.error = {
-            code: "startup_timeout",
-            message: "allocated runtimes did not become ready before the deadline",
-          };
-          operation.status = "timed_out";
-          operation.error = allocation.error;
-          operation.completedAt = this.isoNow();
-          this.clearAllocationTimer(allocation.id);
-          this.allocationLifecycleAborts.get(allocation.id)?.abort(new Error("allocation failed"));
-          this.detachLegacyAllocation(allocation.id);
-          this.emit("allocation_failed", {
-            ...this.allocationLabels(allocation),
-            reason: "startup_timeout",
-          });
-          return;
-        }
-        await (this.options.sleep ?? ((ms: number) => Bun.sleep(ms)))(
-          this.options.pollIntervalMs ?? 500,
-        );
-      }
-    } catch (err) {
-      if (!activeAllocation(allocation.status)) {
-        this.providerInstances.releaseAllocation(allocation.id);
-        return;
-      }
-      const error = deadlineExceeded
-        ? {
-            code: "startup_timeout",
-            message: "allocated runtimes did not become ready before the deadline",
-          }
-        : err instanceof LifecycleError || err instanceof ArtifactStoreError
-        ? { code: err.code, message: err.message }
-        : {
-            code: "start_failed",
-            message: err instanceof Error ? err.message : String(err),
-          };
-      allocation.status = "failed";
-      allocation.error = error;
-      operation.status = deadlineExceeded ? "timed_out" : "failed";
-      operation.ready = false;
-      operation.error = error;
-      operation.completedAt = this.isoNow();
-      this.clearAllocationTimer(allocation.id);
-      this.allocationLifecycleAborts.get(allocation.id)?.abort(new Error("allocation failed"));
-      this.detachLegacyAllocation(allocation.id);
-      this.emit("allocation_failed", {
-        ...this.allocationLabels(allocation),
-        reason: error.code,
-      });
-    } finally {
-      clearTimeout(deadlineTimer);
-      if (this.allocationAborts.get(allocation.id) === abort) {
-        this.allocationAborts.delete(allocation.id);
-      }
-      if (!activeAllocation(allocation.status)) {
-        this.providerInstances.releaseAllocation(allocation.id);
-        try {
-          await this.observer.tick();
-        } catch {
-          // The idle reconcile still applies resident protection when observation fails.
-        }
-        this.scheduleIdleReconcile();
-        this.enqueue(() => this.promoteWaitingAllocations());
-      }
-      this.pruneHistory();
-    }
+    await this.allocationStartup.run(allocation, operation, deadline);
   }
 
   private async runEnsure(operation: Operation, abort: AbortController): Promise<void> {
-    if (abort.signal.aborted) {
-      operation.status = "cancelled";
-      operation.ready = false;
-      operation.completedAt = this.isoNow();
-      operation.error = {
-        code: "operation_cancelled",
-        message: abort.signal.reason instanceof Error
-          ? abort.signal.reason.message
-          : "operation cancelled",
-      };
-      this.operationAborts.delete(operation.id);
-      this.pruneHistory();
-      return;
-    }
-    operation.status = "running";
-    try {
-      for (const runtimeId of operation.ensure) {
-        if (abort.signal.aborted) {
-          throw abort.signal.reason;
+    await runLegacyPrepareOperation({
+      operation,
+      abort,
+      registry: this.registry,
+      backend: this.backend,
+      observer: this.observer,
+      isoNow: () => this.isoNow(),
+      deleteAbortedOperation: (operationId) => this.operationAborts.delete(operationId),
+      clearOperationAbort: (operationId, currentAbort) => {
+        if (this.operationAborts.get(operationId) === currentAbort) {
+          this.operationAborts.delete(operationId);
         }
-        const runtime = getRuntime(this.registry, runtimeId);
-        if (!runtime) {
-          throw new Error(`runtime ${runtimeId} disappeared from registry`);
-        }
-        await this.backend.ensure(runtime, abort.signal);
-        if (abort.signal.aborted) {
-          throw abort.signal.reason;
-        }
-        await this.observer.tick();
-        if (abort.signal.aborted) {
-          throw abort.signal.reason;
-        }
-      }
-      operation.status = "succeeded";
-      operation.ready = true;
-      operation.completedAt = this.isoNow();
-    } catch (err) {
-      operation.status = abort.signal.aborted ? "cancelled" : "failed";
-      operation.ready = false;
-      operation.completedAt = this.isoNow();
-      if (abort.signal.aborted) {
-        operation.error = {
-          code: "operation_cancelled",
-          message: abort.signal.reason instanceof Error
-            ? abort.signal.reason.message
-            : "operation cancelled",
-        };
-      } else if (err instanceof LifecycleError) {
-        operation.error = { code: err.code, message: err.message };
-      } else {
-        operation.error = {
-          code: "start_failed",
-          message: err instanceof Error ? err.message : String(err),
-        };
-      }
-    } finally {
-      if (this.operationAborts.get(operation.id) === abort) {
-        this.operationAborts.delete(operation.id);
-      }
-      this.pruneHistory();
-    }
+      },
+      pruneHistory: () => this.pruneHistory(),
+    });
   }
 
   private async runStop(ids: string[]): Promise<void> {
@@ -1307,10 +560,7 @@ export class ControlPlane {
   }
 
   private cancelIdle(): void {
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = undefined;
-    }
+    this.lifecycleTimers.cancelIdle();
   }
 
   private planningLeases(): Lease[] {
@@ -1322,132 +572,71 @@ export class ControlPlane {
         capabilities: allocation.requirements.map((requirement) => requirement.capability),
         createdAt: allocation.createdAt,
       }));
-    return [...this.leases.values(), ...allocationLeases];
+    return [...this.legacyLeases.values(), ...allocationLeases];
   }
 
   private activeAdmissionCount(): number {
-    const directLegacyLeases = [...this.leases.keys()].filter((leaseId) =>
-      !this.legacyAllocationByLease.has(leaseId)
-    ).length;
-    return this.getActiveAllocationCount() + directLegacyLeases;
-  }
-
-  private admittedAllocations(): Allocation[] {
-    return [...this.allocations.values()].filter((allocation) =>
-      admittedAllocation(allocation.status)
+    return countActiveAdmission(
+      [...this.allocations.values()],
+      this.legacyLeases.ids(),
+      this.legacyLeases.activeAdmissionIndex(),
     );
   }
 
-  private allocationResourceKeys(runtimeIds: string[]): Set<string> {
-    const keys = new Set<string>();
-    for (const runtimeId of runtimeIds) {
-      keys.add(`runtime:${runtimeId}`);
-      const swapGroup = getRuntime(this.registry, runtimeId)?.policy.swapGroup;
-      if (swapGroup) keys.add(`swap:${swapGroup}`);
-    }
-    return keys;
+  private admittedAllocations(): Allocation[] {
+    return admittedAllocations([...this.allocations.values()]);
   }
 
   private allocationExclusiveResourceKeys(runtimeIds: string[]): Set<string> {
-    const keys = new Set<string>();
-    for (const runtimeId of runtimeIds) {
-      const runtime = getRuntime(this.registry, runtimeId);
-      if (runtime?.resources.maxConcurrentAllocations === 1) keys.add(`runtime:${runtimeId}`);
-      if (runtime?.policy.swapGroup) keys.add(`swap:${runtime.policy.swapGroup}`);
-    }
-    return keys;
+    return allocationResourceKeys(this.registry, runtimeIds, true);
   }
 
   private foregroundPriorityThreshold(): number {
-    return this.options.foregroundPriorityThreshold ?? 3_000;
-  }
-
-  private providerSwitchHoldMs(): number {
-    return this.options.providerSwitchHoldMs ?? 300_000;
+    return this.preemption.foregroundPriorityThreshold();
   }
 
   private preemptLowerPriorityConflicts(priority: number, runtimeIds: string[]): void {
-    if (priority < this.foregroundPriorityThreshold()) return;
-    const requested = this.allocationExclusiveResourceKeys(runtimeIds);
-    const victims = [...this.allocations.values()]
-      .filter((allocation) => {
-        if (!admittedAllocation(allocation.status) || (allocation.priority ?? 0) >= priority) return false;
-        const allocated = this.allocationExclusiveResourceKeys(
-          allocation.bindings.map((binding) => binding.runtime),
-        );
-        return [...requested].some((key) => allocated.has(key));
-      });
-    for (const allocation of victims) {
-      void this.preemptAllocation(allocation.id, priority);
-    }
+    this.preemption.preemptLowerPriorityConflicts({
+      priority,
+      runtimeIds,
+      allocations: [...this.allocations.values()],
+      exclusiveResourceKeys: (ids) => this.allocationExclusiveResourceKeys(ids),
+      preempt: (allocationId, requestedPriority) => this.preemptAllocation(allocationId, requestedPriority),
+    });
   }
 
   private holdForegroundProviders(allocation: Allocation): void {
-    const duration = this.providerSwitchHoldMs();
-    if (duration <= 0) return;
-    const until = this.now() + duration;
-    for (const binding of allocation.bindings) {
-      const swapGroup = getRuntime(this.registry, binding.runtime)?.policy.swapGroup;
-      if (!swapGroup) continue;
-      const current = this.providerSwitchHolds.get(swapGroup);
-      const hold: ProviderSwitchHold = {
-        runtime: binding.runtime,
-        priority: allocation.priority ?? 0,
-        until: Math.max(until, current?.until ?? 0),
-      };
-      this.providerSwitchHolds.set(swapGroup, hold);
-      this.emit("provider_switch_hold_started", {
-        swapGroup,
-        runtime: hold.runtime,
-        priority: String(hold.priority),
-        until: new Date(hold.until).toISOString(),
-      });
-    }
+    this.preemption.holdForegroundProviders(allocation);
   }
 
   private providerSwitchHoldUntil(runtimeIds: string[], priority: number): number | undefined {
-    const now = this.now();
-    let blockedUntil: number | undefined;
-    for (const [swapGroup, hold] of this.providerSwitchHolds) {
-      if (hold.until <= now) {
-        this.providerSwitchHolds.delete(swapGroup);
-        continue;
-      }
-      const requested = runtimeIds.filter((runtimeId) =>
-        getRuntime(this.registry, runtimeId)?.policy.swapGroup === swapGroup
-      );
-      if (requested.length === 0 || requested.includes(hold.runtime) || priority >= hold.priority) continue;
-      blockedUntil = Math.max(blockedUntil ?? 0, hold.until);
-    }
-    return blockedUntil;
+    return this.preemption.holdUntil(runtimeIds, priority);
   }
 
   private hasResourceConflict(
     runtimeIds: string[],
     predicate: (allocation: Allocation) => boolean,
   ): boolean {
-    const requested = this.allocationResourceKeys(runtimeIds);
-    return [...this.allocations.values()].some((allocation) => {
-      if (!predicate(allocation)) return false;
-      const existing = this.allocationResourceKeys(
-        allocation.bindings.map((binding) => binding.runtime),
-      );
-      return [...requested].some((key) => existing.has(key));
-    });
+    return hasAllocationResourceConflict(
+      this.registry,
+      [...this.allocations.values()],
+      runtimeIds,
+      predicate,
+      false,
+    );
   }
 
   private hasExclusiveResourceConflict(
     runtimeIds: string[],
     predicate: (allocation: Allocation) => boolean,
   ): boolean {
-    const requested = this.allocationExclusiveResourceKeys(runtimeIds);
-    return [...this.allocations.values()].some((allocation) => {
-      if (!predicate(allocation)) return false;
-      const existing = this.allocationExclusiveResourceKeys(
-        allocation.bindings.map((binding) => binding.runtime),
-      );
-      return [...requested].some((key) => existing.has(key));
-    });
+    return hasAllocationResourceConflict(
+      this.registry,
+      [...this.allocations.values()],
+      runtimeIds,
+      predicate,
+      true,
+    );
   }
 
   private allocationStartupDeadline(allocation: Allocation): number {
@@ -1458,156 +647,79 @@ export class ControlPlane {
   }
 
   private allocationAdmission(allocation: Allocation) {
-    return admitRuntimes({
+    return evaluateAllocationAdmission({
       registry: this.registry,
       state: this.observer.getState(),
       allocations: this.admittedAllocations(),
-      candidateRuntimeIds: [...new Set(allocation.bindings.map((binding) => binding.runtime))],
-      ...(this.options.requireFreshTelemetry
-        ? {
-          liveTelemetry: {
-            requiredForNonResident: true,
-            maxAgeMs: this.options.telemetryMaxAgeMs ?? 10_000,
-            now: this.now(),
-          },
-        }
-        : {}),
+      candidateRuntimeIds: allocation.bindings.map((binding) => binding.runtime),
+      requireFreshTelemetry: this.options.requireFreshTelemetry ?? false,
+      telemetryMaxAgeMs: this.options.telemetryMaxAgeMs ?? 10_000,
+      ...(this.options.requireFreshTelemetry ? { now: this.now() } : {}),
     });
   }
 
   private async promoteWaitingAllocations(): Promise<void> {
-    if (this.draining) return;
-    if (!this.hasFreshState()) {
-      try {
-        await this.observer.tick();
-      } catch {
-        this.scheduleWaitingPromotion();
-        return;
-      }
-      if (!this.hasFreshState()) {
-        this.scheduleWaitingPromotion();
-        return;
-      }
-    }
-    const waiting = [...this.allocations.values()]
-      .filter((allocation) => allocation.status === "waiting")
-      .sort((left, right) => {
-        const byPriority = (right.priority ?? 0) - (left.priority ?? 0);
-        if (byPriority !== 0) return byPriority;
-        const byCreated = Date.parse(left.createdAt) - Date.parse(right.createdAt);
-        return byCreated !== 0 ? byCreated : left.id.localeCompare(right.id);
-      });
-    let retryDelayMs: number | undefined;
-    const requestRetry = (delayMs = this.options.pollIntervalMs ?? 500) => {
-      retryDelayMs = Math.min(retryDelayMs ?? Number.POSITIVE_INFINITY, delayMs);
-    };
-    for (const allocation of waiting) {
-      if (allocation.status !== "waiting" || Date.parse(allocation.expiresAt) <= this.now()) {
-        continue;
-      }
-      const runtimeIds = [...new Set(allocation.bindings.map((binding) => binding.runtime))];
-      const providerSwitchHoldUntil = this.providerSwitchHoldUntil(
-        runtimeIds,
-        allocation.priority ?? 0,
-      );
-      if (providerSwitchHoldUntil !== undefined) {
-        requestRetry(Math.max(1, providerSwitchHoldUntil - this.now()));
-        continue;
-      }
-      const lifecycleRuntimeIds = new Set(runtimeIds);
-      for (const runtimeId of runtimeIds) {
-        const swapGroup = getRuntime(this.registry, runtimeId)?.policy.swapGroup;
-        if (!swapGroup) continue;
-        for (const peer of this.registry.runtimes) {
-          if (peer.policy.swapGroup === swapGroup) lifecycleRuntimeIds.add(peer.id);
-        }
-      }
-      if ([...lifecycleRuntimeIds].some((runtimeId) =>
-        this.lifecycleReservations.has(runtimeId) || this.options.isRuntimeMutating?.(runtimeId)
-      )) {
-        requestRetry();
-        continue;
-      }
-      if (this.hasExclusiveResourceConflict(
-        runtimeIds,
-        (candidate) => admittedAllocation(candidate.status)
-          && (candidate.priority ?? 0) > (allocation.priority ?? 0),
-      )) {
-        requestRetry();
-        continue;
-      }
-      const admission = this.allocationAdmission(allocation);
-      if (!admission.ok) {
-        if (!this.hasResourceConflict(
+    const pollIntervalMs = this.options.pollIntervalMs ?? 500;
+    await promoteWaitingAllocationBatch({
+      queue: {
+        draining: this.draining,
+        hasFreshState: () => this.hasFreshState(),
+        tick: () => this.observer.tick(),
+        allocations: () => this.allocations.values(),
+        now: () => this.now(),
+        pollIntervalMs,
+        scheduleRetry: (delayMs) => this.scheduleWaitingPromotion(delayMs),
+        pruneHistory: () => this.pruneHistory(),
+      },
+      admission: {
+        registry: this.registry,
+        providerSwitchHoldUntil: (runtimeIds, priority) =>
+          this.providerSwitchHoldUntil(runtimeIds, priority),
+        isRuntimeBusy: (runtimeId) =>
+          this.lifecycleReservations.has(runtimeId)
+          || this.options.isRuntimeMutating?.(runtimeId) === true,
+        hasHigherPriorityConflict: (allocation, runtimeIds) =>
+          this.hasExclusiveResourceConflict(
+            runtimeIds,
+            (candidate) => admittedAllocation(candidate.status)
+              && (candidate.priority ?? 0) > (allocation.priority ?? 0),
+          ),
+        evaluateAdmission: (allocation) => this.allocationAdmission(allocation),
+        hasAdmittedResourceConflict: (runtimeIds) => this.hasResourceConflict(
           runtimeIds,
           (candidate) => admittedAllocation(candidate.status),
-        )) {
-          requestRetry();
-        }
-        continue;
-      }
-      const state = this.observer.getState();
-      for (const binding of allocation.bindings) {
-        const snapshot = state.runtimes.find((runtime) => runtime.id === binding.runtime);
-        if (snapshot) binding.status = snapshot.status;
-      }
-      const operation = allocation.operationId
-        ? this.operations.get(allocation.operationId)
-        : undefined;
-      const ready = allocation.deploymentPolicy === "existing-only"
-        && allocation.bindings.every((binding) =>
-          binding.status === "HOT" || binding.status === "BUSY"
-        );
-      allocation.status = ready ? "ready" : "pending";
-      this.emit("allocation_admitted", this.allocationLabels(allocation));
-      if (ready) {
-        if (operation) {
-          operation.status = "succeeded";
-          operation.ready = true;
-          operation.phase = "runtime-ready";
-          operation.completedAt = this.isoNow();
-        }
-        this.emit("allocation_ready", this.allocationLabels(allocation));
-        continue;
-      }
-      if (!operation) {
-        allocation.status = "failed";
-        allocation.error = {
-          code: "operation_missing",
-          message: "waiting allocation lost its startup operation",
-        };
-        this.allocationLifecycleAborts.get(allocation.id)?.abort(new Error("allocation failed"));
-        continue;
-      }
-      const deadline = this.allocationStartupDeadline(allocation);
-      operation.deadlineAt = new Date(deadline).toISOString();
-      operation.phase = "scheduled";
-      await this.runAllocationEnsure(allocation, operation, deadline);
-    }
-    this.pruneHistory();
-    if (retryDelayMs !== undefined) this.scheduleWaitingPromotion(retryDelayMs);
+        ),
+      },
+      lifecycle: {
+        runtimeStatuses: () => new Map(
+          this.observer.getState().runtimes.map((runtime) => [runtime.id, runtime.status]),
+        ),
+        getOperation: (allocation) => allocation.operationId
+          ? this.operations.get(allocation.operationId)
+          : undefined,
+        isoNow: () => this.isoNow(),
+        startupDeadline: (allocation) => this.allocationStartupDeadline(allocation),
+        onAdmitted: (allocation) => this.emit("allocation_admitted", this.allocationLabels(allocation)),
+        onReady: (allocation) => this.emit("allocation_ready", this.allocationLabels(allocation)),
+        failMissingOperation: (allocation) =>
+          this.allocationLifecycleAborts.get(allocation.id)?.abort(new Error("allocation failed")),
+        runEnsure: (allocation, operation, deadline) =>
+          this.runAllocationEnsure(allocation, operation, deadline),
+      },
+    });
   }
 
   private scheduleWaitingPromotion(delayMs = this.options.pollIntervalMs ?? 500): void {
-    if (
-      this.draining
-      || this.waitingTimer
-      || ![...this.allocations.values()].some((allocation) => allocation.status === "waiting")
-    ) {
-      return;
-    }
-    const timer = setTimeout(() => {
-      if (this.waitingTimer === timer) this.waitingTimer = undefined;
-      this.enqueue(() => this.promoteWaitingAllocations());
-    }, delayMs);
-    timer.unref?.();
-    this.waitingTimer = timer;
+    this.lifecycleTimers.scheduleWaitingPromotion({
+      draining: this.draining,
+      hasWaiting: [...this.allocations.values()].some((allocation) => allocation.status === "waiting"),
+      delayMs,
+      promote: () => this.enqueue(() => this.promoteWaitingAllocations()),
+    });
   }
 
   private cancelWaitingPromotion(): void {
-    if (!this.waitingTimer) return;
-    clearTimeout(this.waitingTimer);
-    this.waitingTimer = undefined;
+    this.lifecycleTimers.cancelWaitingPromotion();
   }
 
   private scheduleIdleReconcile(): void {
@@ -1625,53 +737,35 @@ export class ControlPlane {
   }
 
   private scheduleIdleStop(ids: string[]): void {
-    if (this.draining) {
-      return;
-    }
-    const ttl = this.options.idleTtlMs ?? 60_000;
-    this.cancelIdle();
-    if (ttl <= 0) {
-      this.enqueue(() => this.runStop(ids));
-      return;
-    }
-    const timer = setTimeout(() => {
-      if (this.idleTimer === timer) {
-        this.idleTimer = undefined;
-      }
-      this.enqueue(() => this.runStop(ids));
-    }, ttl);
-    this.idleTimer = timer;
-    this.idleTimer.unref?.();
+    this.lifecycleTimers.scheduleIdleStop({
+      draining: this.draining,
+      ttlMs: this.options.idleTtlMs ?? 60_000,
+      ids,
+      enqueue: (work) => this.enqueue(work),
+      runStop: (runtimeIds) => this.runStop(runtimeIds),
+    });
   }
 
   private scheduleAllocationExpiry(allocation: Allocation): void {
-    const existing = this.allocationTimers.get(allocation.id);
-    if (existing) {
-      clearTimeout(existing);
-    }
-    const delay = Math.max(0, Date.parse(allocation.expiresAt) - this.now());
-    const timer = setTimeout(() => {
-      void this.releaseAllocation(allocation.id, "expired");
-    }, delay);
-    timer.unref?.();
-    this.allocationTimers.set(allocation.id, timer);
+    this.lifecycleTimers.scheduleAllocationExpiry({
+      id: allocation.id,
+      expiresAt: allocation.expiresAt,
+      now: this.now(),
+      expire: (id) => { void this.releaseAllocation(id, "expired"); },
+    });
   }
 
   private clearAllocationTimer(id: string): void {
-    const timer = this.allocationTimers.get(id);
-    if (timer) {
-      clearTimeout(timer);
-      this.allocationTimers.delete(id);
-    }
+    this.lifecycleTimers.clearAllocationExpiry(id);
   }
 
   private expireDueAllocations(): void {
-    const now = this.now();
-    for (const allocation of this.allocations.values()) {
-      if (activeAllocation(allocation.status) && Date.parse(allocation.expiresAt) <= now) {
-        void this.releaseAllocation(allocation.id, "expired");
-      }
-    }
+    this.lifecycleTimers.expireDueAllocations({
+      allocations: this.allocations.values(),
+      now: this.now(),
+      isActive: activeAllocation,
+      expire: (id) => { void this.releaseAllocation(id, "expired"); },
+    });
   }
 
   private pruneHistory(): void {
@@ -1734,13 +828,7 @@ export class ControlPlane {
   }
 
   private detachLegacyAllocation(allocationId: string): void {
-    for (const [leaseId, mappedAllocationId] of this.legacyAllocationByLease) {
-      if (mappedAllocationId !== allocationId) {
-        continue;
-      }
-      this.legacyAllocationByLease.delete(leaseId);
-      this.leases.delete(leaseId);
-    }
+    this.legacyLeases.detachAllocation(allocationId);
   }
 
   private now(): number {
