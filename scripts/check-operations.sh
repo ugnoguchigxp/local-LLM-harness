@@ -22,7 +22,19 @@ if ! command -v systemd-analyze >/dev/null 2>&1; then
   echo "systemd-analyze is required for unit verification" >&2
   exit 1
 fi
-systemd-analyze verify deploy/local-node/systemd/*.service
+if [[ "${CI:-}" == "true" ]]; then
+  # Runner images do not contain deployment-only binaries. Keep the unit
+  # directives and arguments intact while substituting only the executable.
+  unit_check_dir="$(mktemp -d)"
+  trap 'rm -r -- "${unit_check_dir}"' EXIT
+  for unit in deploy/local-node/systemd/*.service; do
+    sed -E 's#^(Exec(Start|StartPre|StartPost|Stop|StopPost|Reload)=)[^[:space:]]+#\1/bin/true#' \
+      "${unit}" > "${unit_check_dir}/$(basename "${unit}")"
+  done
+  systemd-analyze verify "${unit_check_dir}"/*.service
+else
+  systemd-analyze verify deploy/local-node/systemd/*.service
+fi
 
 if grep -En 'network-online\.target' \
   deploy/local-node/systemd/llama-server.service \

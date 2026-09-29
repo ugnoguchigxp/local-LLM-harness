@@ -23,9 +23,10 @@ jobs:
       - name: Run repository gate
         run: bun run check
       - name: Enforce critical-path coverage ratchet
+        id: coverage
         run: bun run test:coverage
       - name: Upload coverage report
-        if: always()
+        if: ${{ always() && steps.coverage.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov
