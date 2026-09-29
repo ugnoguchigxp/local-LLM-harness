@@ -5,6 +5,7 @@ Linux Runtimeを観測・制御するLARM daemonです。既定で `config/local
 ## ACE-Step music generation
 
 `LARM_MUSIC_PROVIDER_ENDPOINT` に ACE-Step 1.5 API の base URL を設定すると、非同期 Music API が有効になります。出力形式の既定は MP3 です。成果物の合計上限50 GiBは通常20 GiBとお気に入り30 GiBに分けます。通常成果物は既定で24時間、WAVだけは1時間保持し、各枠を超えると古いものから削除します。お気に入りはTTLの対象外です。掃除は起動時、生成完了後、5分ごとに実行されます。
+APIが有効でもACE-Step Providerが停止中なら生成できません。SAAAのAgent ConnectionがreadyになっただけではProviderは起動せず、local-nodeでは明示的なmedia Variant起動が必要です。
 
 ```bash
 curl -sS -X POST http://127.0.0.1:9810/v1/music/generations \

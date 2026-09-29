@@ -206,6 +206,12 @@ Gemma 4 26B-A4Bを試験する場合は、明示selector `SAAA-gemma4-26b`を要
 managed起動します。実環境確認は`bun deploy/local-node/scripts/smoke-laya-profile.ts`で4 Providerのclaim、Laya日本語判定、
 Gemma生成、release後credential失効まで検証します。
 
+SAAA向けの公開selectorは`SAAA`、`SAAA-gemma4-26b`、`SAAA-w-Image`、`SAAA-w-music`です。
+2026年9月29日のlive canaryでは4件ともAgent Connectionのready、LLM JSON/SSE応答、release後の
+credential失効を確認しました。GemmaのLaya System One判断も成功しています。ただし、Connectionのreadyは
+media Variantの起動や生成成功を意味しません。詳細は
+[`../../specs/quality-maintainability-improvement-plan.html`](../../specs/quality-maintainability-improvement-plan.html)のR7に記録しています。
+
 ## Media Runtime Variant
 
 `music`と`image`は同じ`accelerator-media-heavy`排他groupに属し、同時には起動しません。
@@ -223,6 +229,11 @@ Qwen-Image 2.1をloopback port 8091へ起動し、GPU denoiseとCPU FP32 VAE dec
 生成物は`/srv/ai/data/generated/images`へ書き、LARMの認証付き`/v1/image-artifacts/*`から取得します。
 起動scriptは反対側のVariantを停止し、Variant予約に加えて16 GiBの`MemAvailable` floorを要求します。
 両unitはinstall後もdisabledで、明示起動されるまでmemoryを消費しません。
+`SAAA-w-Image`と`SAAA-w-music`のConnection作成だけでは、これらのunitは起動しません。
+2026年9月29日のreleaseでは、image selectorが広告する`POST /v1/images/generations`は404で、
+`/v1/image-artifacts/*`は既存の生成物を取得するAPIです。musicはVariant停止中に
+`GET /v1/music/providers`がunavailableを返します。media生成E2Eは両方とも未達のため、
+Connection canaryの成功をmedia機能の受入完了として扱わないでください。
 
 Personal State製品contractは別gateです。systemd unitは
 `LARM_PERSONAL_STATE_ENABLED=false`と`LARM_PERSONAL_STATE_JOURNAL_ROOT=/var/lib/larm/personal-state`を
@@ -352,6 +363,10 @@ digestとconfig revisionをmanifestへ保存します。全gate後はdev depende
 候補をroot所有releaseへcopy後にdigestを再検証します。`/health`、`/ready`、OpenAPI、model catalog、Activity、
 Profile catalogの軽量contractが不一致なら前世代へ自動rollbackします。実推論は非特権の
 `smoke:http-provider-live`が行います。
+通常の署名済みrelease適用ではactivatorがdaemonを再起動するため、healthとrelease commitが一致して
+readyなら追加のdaemon再起動やhost再起動は不要です。releaseは`bun install --production`で作るので、
+daemonまたはProviderの起動scriptがimportするpackageは`dependencies`へ置き、dev dependencyだけに
+置かないでください。
 
 旧`release-larm.sh apply`はrollback期間の既存世代向け互換手段であり、新しい自動配備経路には使いません。
 互換手段で切り替える場合も、release identityとcatalogの検証後に実ProviderへLLM JSON/SSE、
