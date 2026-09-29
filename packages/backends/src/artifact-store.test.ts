@@ -521,9 +521,12 @@ test("cancels and removes a partially downloaded snapshot", async () => {
   });
   try {
     const staging = store.stage(artifact, controller.signal);
+    // Attach the rejection handler before yielding: CI can reject the promise
+    // before the assertion below runs and report an unhandled rejection.
+    const stagingResult = staging.then(() => undefined, (error: unknown) => error);
     await Bun.sleep(1);
     controller.abort(new Error("daemon draining"));
-    await expect(staging).rejects.toMatchObject({ code: "operation_cancelled" });
+    expect(await stagingResult).toMatchObject({ code: "operation_cancelled" });
     expect(await store.getStaged(artifact)).toBeUndefined();
   } finally {
     await rm(root, { recursive: true, force: true });
