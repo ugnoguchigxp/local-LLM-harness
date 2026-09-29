@@ -456,12 +456,17 @@
         <tbody>
           <tr>
             <th scope="row">SAAA</th>
-            <td>未確認</td>
+            <td>
+              4 selectorのAgent Connection起動canaryは成功。media機能とconsumer sign-offは未完了
+            </td>
             <td>
               clean revision、operation inventory、移行PR、contract test、live canary、owner
               sign-off
             </td>
-            <td><code>../SAAA</code>に所有者の未commit変更がある</td>
+            <td>
+              <code>../SAAA</code
+              >に所有者の未commit変更がある。画像生成URLは404、音楽Providerは停止中
+            </td>
           </tr>
           <tr>
             <th scope="row">ContextStill</th>
@@ -480,6 +485,51 @@
       <p>
         SAAAはworktreeがcleanになった場合だけ<code>git pull --ff-only</code>で更新して調査します。既存変更をreset、stash、mergeしてはなりません。各consumerは別々に完了判定し、一つのblockerで他を保留しません。
       </p>
+      <p>
+        <time>2026-09-29</time>の実機canaryでは、署名済みrelease
+        <code>dbbe3237171218d94a9c1f3eeba8aef586288637</code>をLAN経由で検証した。
+        直前の旧releaseは実行時依存<code>yaml</code>がproduction
+        installから欠落してdaemonが起動不能だったため、<code>yaml</code>と<code>zod</code>をproduction依存に移したreleaseへ更新した。
+      </p>
+      <table>
+        <caption>
+          SAAA profile起動canary
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Selector</th>
+            <th scope="col">接続・LLM E2E</th>
+            <th scope="col">追加確認・残件</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row"><code>SAAA</code></th>
+            <td>成功</td>
+            <td>Ornith JSON/SSE応答、解放、資格情報失効を確認</td>
+          </tr>
+          <tr>
+            <th scope="row"><code>SAAA-gemma4-26b</code></th>
+            <td>成功</td>
+            <td>
+              Gemma JSON/SSEとLaya System
+              One判断を確認。backchannelのwarm予約が残る間は容量不足で拒否され、解放後に成功
+            </td>
+          </tr>
+          <tr>
+            <th scope="row"><code>SAAA-w-Image</code></th>
+            <td>成功</td>
+            <td>
+              接続はready。ただし広告する<code>POST /v1/images/generations</code>は404で、画像生成E2Eは未達
+            </td>
+          </tr>
+          <tr>
+            <th scope="row"><code>SAAA-w-music</code></th>
+            <td>成功</td>
+            <td>接続はready。ただしACE-Step Providerのhealthはunavailableで、音楽生成E2Eは未達</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <section id="r8">
