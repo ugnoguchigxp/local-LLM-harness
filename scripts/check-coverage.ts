@@ -31,8 +31,8 @@ export const CRITICAL_COVERAGE_THRESHOLDS: Readonly<Record<string, CoverageThres
   "packages/core/src/releases.ts": { functions: 70, lines: 67 },
 } as const;
 
-// Measured on 2026-09-29 from the current quality-maintainability working tree.
-// This is a provisional baseline until the changes have an immutable merge commit.
+// Measured on 2026-09-29 from quality-maintainability source commit fb12b84.
+// Revalidate this baseline against the merged revision before raising thresholds.
 // Keep it separate from the minimum thresholds so a baseline cannot silently fall
 // back to the original, looser gate during ordinary source changes.
 export const CRITICAL_COVERAGE_BASELINE: Readonly<Record<string, CoverageThreshold>> = {

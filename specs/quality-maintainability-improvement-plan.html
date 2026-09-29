@@ -4,20 +4,18 @@
   <p>
     依存脆弱性、coverage、巨大module、文書catalog、公開API lifecycleの負債を、
     Provider選択やlocal-nodeの実行方針を変えずに解消するための実行計画です。
-    repository内で実装済みの変更も、再現可能なrevisionと受入証跡が固定されるまでは暫定結果として扱います。
+    repository内の実装結果はsource commitと検証commandへ紐付け、live受入とは区別します。
   </p>
 
   <dl>
     <dt>全体状態</dt>
-    <dd>
-      進行中。repository内の実装は暫定完了、外部consumer移行・production観測・live受入は未完了
-    </dd>
+    <dd>進行中。repository内の実装はcommit済み。production観測・live受入は未完了</dd>
     <dt>計画改訂日</dt>
     <dd><time>2026-09-29</time></dd>
     <dt>基準revision</dt>
     <dd>
-      <code>2259fe2</code>を基点とする未commit working
-      tree。以下の実装結果はmerge済みrevisionの証跡ではない
+      開始時は<code>2259fe2</code>。repository内の実装は<code>fb12b84</code>。以下の検証はlocal
+      checkoutでの結果
     </dd>
     <dt>対象</dt>
     <dd>
@@ -36,8 +34,8 @@
   <aside>
     <h2>状態の読み方</h2>
     <p>
-      「実装済み」はworking treeに変更が存在すること、「検証済み」は記載したcommandがそのworking
-      treeで成功したことを表します。「完了」は対象commitがmergeされ、CI artifactと必要な外部受入が
+      「実装済み」はsource commitに変更が存在すること、「検証済み」は記載したcommandがそのcommitで
+      成功したことを表します。「完了」は対象commitがmergeされ、CI artifactと必要な外部受入が
       revisionへ紐付いた場合にだけ使用します。
     </p>
   </aside>
@@ -703,9 +701,8 @@
   <section id="evidence">
     <h2>暫定実装証跡</h2>
     <p>
-      次は<time>2026-09-29</time>に基準revision上のworking
-      treeで確認した暫定結果です。件数は変動するため完了条件には使用せず、R0でmerge済みcommitとCI
-      artifactへ置き換えます。
+      次は<time>2026-09-29</time>に<code>fb12b84</code>のlocal
+      checkoutで確認した結果です。 CI artifactとlive受入は別の証跡として扱います。
     </p>
     <ul>
       <li><code>bun run docs:check</code>成功。</li>
@@ -716,13 +713,24 @@
       <li>coverage、Spec catalog、API consumer checkerのtooling test成功。</li>
       <li><code>bun run check:api-consumers</code>成功。</li>
       <li>
+        <code>bun install --frozen-lockfile</code
+        >と<code>bun audit --audit-level=high</code>成功。
+      </li>
+      <li>
+        ContextStillのclean
+        checkoutを<code>57a3d8d</code>へfast-forwardし、source内のLARM接続がv3
+        discoveryとAgent Connectionを使用することを確認した。live受入ではない。
+      </li>
+      <li>
         <code>../SAAA</code
-        >は所有者の未commit変更があり、更新・現行実装調査を実施していない。
+        >は所有者の未commit変更があり、checkoutを更新・変更していない。既存commit<code>af97e48</code>の静的参照はv3
+        discoveryとAgent Connectionを使用するが、dirtyな現行worktreeやlive受入を示さない。
       </li>
     </ul>
     <p>
-      既存working treeには依存更新、coverage、route/domain分割、catalog、API inventory、repository
-      consumer移行が含まれます。ただしR1〜R7の残件があるため、互換route削除とlocal-nodeへの適用を承認する証跡ではありません。
+      <code>fb12b84</code
+      >には依存更新、coverage、route/domain分割、catalog、API inventory、repository
+      consumer移行が含まれます。production観測がないため、互換route削除とlocal-nodeへの適用を承認する証跡ではありません。
     </p>
   </section>
 
