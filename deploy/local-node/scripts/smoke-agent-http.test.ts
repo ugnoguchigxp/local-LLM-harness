@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { agentConnectionClaimSchema } from "../../../packages/core/src/index";
 import {
   runAgentHttpSmoke,
   type AgentHttpSmokeFetch,
@@ -228,6 +229,7 @@ test("generic Agent HTTP smoke validates profile, claim, JSON, SSE, release, and
     agentProfile: "contextstill-background",
     audience: "saaa-desktop",
     client: "contextstill",
+    providers: ["llm"],
     expectedModel: "qwen-agent-worker",
     expectedReleaseCommit: releaseCommit,
     fetch: fixture.fetch,
@@ -250,12 +252,37 @@ test("generic Agent HTTP smoke validates profile, claim, JSON, SSE, release, and
   );
   expect(create?.body).toEqual({
     profile: "contextStill",
+    expectedCatalogRevision: configRevision,
+    providers: ["llm"],
     audience: "saaa-desktop",
     client: "contextstill",
     ttlSeconds: 300,
     allowFallback: false,
     deploymentPolicy: "existing-only",
   });
+});
+
+test("generic Agent HTTP smoke rejects additional Providers in a subset claim and still releases", async () => {
+  const fixture = fixtureFetch();
+  const error = await runAgentHttpSmoke({
+    baseUrl: "http://larm.test:9810", agentProfile: "contextstill-background",
+    audience: "saaa-desktop", client: "contextstill", providers: ["llm"],
+    now: () => Date.parse(observedAt),
+    fetch: async (input, init) => {
+      const response = await fixture.fetch(input, init);
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (!url.pathname.endsWith("/claim")) return response;
+      const claim = agentConnectionClaimSchema.parse(await response.json());
+      claim.providers.push({ ...claim.providers[0], name: "extra",
+        health: { ...claim.providers[0].health,
+          url: claim.providers[0].health.url.replace("/llm/health", "/extra/health") } });
+      return json(claim);
+    },
+  }).catch((error: unknown) => error);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("subset does not match");
+  expect(fixture.released()).toBeTrue();
+  expect(fixture.requests.some((request) => new URL(request.url).pathname === "/v1/chat/completions")).toBeFalse();
 });
 
 test("generic Agent HTTP smoke rejects an empty incomplete stream and still releases", async () => {

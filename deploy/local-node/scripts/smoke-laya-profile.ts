@@ -21,6 +21,7 @@ try {
   const advertised = profile?.providers.map((provider) => `${provider.name}:${provider.protocol}`).sort();
   const expected = [
     "asr:openai.audio-transcriptions.v1",
+    "embedding:larm.embedding.v1",
     "llm:openai.chat-completions.v1",
     "system-one:larm.system-one.v1",
     "tts:openai.audio-speech.v1",
@@ -30,6 +31,7 @@ try {
   }
   const created = await client.createAgentConnection({
     profile: "SAAA-gemma4-26b",
+    expectedCatalogRevision: catalog.catalogRevision,
     audience: "same-host",
     client: "gemma4-laya-live-e2e",
     ttlSeconds: 600,
@@ -39,7 +41,7 @@ try {
   connectionId = created.id;
   const ready = await client.waitForAgentConnection(created, { timeoutMs: 300_000, pollIntervalMs: 1_000 });
   const claim = await client.claimAgentConnection(ready.id);
-  if (claim.providers.length !== 4) throw new Error(`claim returned ${claim.providers.length} providers`);
+  if (claim.providers.length !== expected.length) throw new Error(`claim returned ${claim.providers.length} providers`);
   const systemOne = claim.providers.find((provider): provider is SystemOneAgentProvider => provider.apiStyle === "larm-system-one");
   const llm = claim.providers.find((provider) => provider.name === "llm" && provider.apiStyle === "openai");
   if (!systemOne || !llm) throw new Error("claim omitted System One or LLM provider");

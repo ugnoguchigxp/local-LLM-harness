@@ -31,6 +31,7 @@ build trees, caches, generated audio, and logs stay outside Git under `/srv/ai`.
 - `scripts/smoke-larm.sh`: catalogから解決されたLLMのAllocation、stream、release smoke
 - `scripts/smoke-agent-http.ts`: 任意のAgent Profileに対するHTTP JSON/SSE・解放・token失効smoke
 - `scripts/smoke-http-provider-live.ts`: Bearer＋modelだけでLLM JSON/SSE、ASR、TTSを検証するlive smoke
+- `scripts/smoke-contextstill-profile.ts`: ContextStillの3 Provider実処理、LLMの同時処理数4、LLMのみのsubset接続とJSON/SSE、release後のtoken失効を検証する。`LARM_API_TOKEN`と配備済みの完全commitを`LARM_EXPECTED_RELEASE_COMMIT`に設定して`bun run smoke:contextstill`を実行する。既存Connectionがない保守時間に実行し、生成品質や長文4並列の性能試験とは区別する。
 - `scripts/monitor-http-provider-soak.ts`: 同一Provider世代の定期smokeを永続集計し、失敗と観測gapを保持
 - `scripts/smoke-voice.sh`: operator提供音声によるSTT・通常TTS smoke
 - `scripts/canary-gate.sh`: 4 seriesのSLO、boot epoch、fallback、leakを拒否するcanary gate

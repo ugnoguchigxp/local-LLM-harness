@@ -453,12 +453,13 @@ try {
     ? "localhost"
     : config.hostname;
   const startupModel = defaultGatewayStartupModel(catalogGeneration.agentConnections);
+  const probeModel = process.env.LARM_STARTUP_PROBE_CHAT_MODEL ?? startupModel;
   await verifyGatewayStartup({
     baseUrl: process.env.LARM_STARTUP_PROBE_BASE_URL
       ?? `${config.tlsCertFile ? "https" : "http"}://${probeHost}:${server.port}`,
     apiToken: config.apiToken,
     model: startupModel,
-    probeModel: process.env.LARM_STARTUP_PROBE_CHAT_MODEL ?? startupModel,
+    probeModel,
     startupProbeToken,
     timeoutMs: config.connectionReadyTimeoutMs,
   });
@@ -472,7 +473,7 @@ try {
     labels: {
       bootEpoch: identity.bootEpoch,
       configRevision: identity.configRevision,
-      model: process.env.LARM_STARTUP_PROBE_CHAT_MODEL ?? "coding-default",
+      model: probeModel,
     },
   });
 } catch (error) {

@@ -19,6 +19,7 @@ export type AgentHttpSmokeOptions = {
   audience: string;
   client: string;
   provider?: string;
+  providers?: string[];
   expectedModel?: string;
   expectedReleaseCommit?: string;
   requireReleaseIdentity?: boolean;
@@ -219,6 +220,8 @@ export async function runAgentHttpSmoke(options: AgentHttpSmokeOptions): Promise
   try {
     const created = await larm.createAgentConnection({
       profile: selector,
+      expectedCatalogRevision: profiles.catalogRevision,
+      ...(options.providers ? { providers: options.providers } : {}),
       audience: options.audience,
       client: options.client,
       ttlSeconds,
@@ -239,6 +242,10 @@ export async function runAgentHttpSmoke(options: AgentHttpSmokeOptions): Promise
     }
 
     const claim = await larm.claimAgentConnection(connection.id);
+    if (options.providers && (claim.providers.length !== options.providers.length
+      || claim.providers.some((provider) => !options.providers!.includes(provider.name)))) {
+      throw new Error("claimed Provider subset does not match the requested subset");
+    }
     const provider = claim.providers.find((candidate) => candidate.name === providerName);
     if (!provider || provider.model !== advertised.model) {
       throw new Error("claimed Agent Provider does not match its advertised profile");

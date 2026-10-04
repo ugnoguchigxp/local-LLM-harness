@@ -287,8 +287,9 @@ export class OnDemandMusicProvider implements MusicProvider {
     await this.upstream.cancel?.(jobId);
   }
   async generate(request: MusicGenerationRequest, context: Parameters<MusicProvider["generate"]>[1]) {
-    const release = await this.variants.acquire("music");
+    const release = await this.variants.acquire("music", context.signal);
     try {
+      context.signal.throwIfAborted();
       return await this.upstream.generate(request, context);
     } finally {
       release();

@@ -26,6 +26,7 @@ export class MediaVariantManager {
   private warm: Record<MediaVariant, boolean> = { image: false, music: false };
   private timers: Partial<Record<MediaVariant, ReturnType<typeof setTimeout>>> = {};
   private chain: Promise<void> = Promise.resolve();
+  private closed = false;
 
   constructor(private readonly options: {
     script: string;
@@ -39,21 +40,27 @@ export class MediaVariantManager {
     return result;
   }
 
-  async acquire(variant: MediaVariant): Promise<() => void> {
+  async acquire(variant: MediaVariant, signal?: AbortSignal): Promise<() => void> {
     await this.serialized(async () => {
+      if (this.closed) throw new Error("media variant manager is closed");
+      signal?.throwIfAborted();
       const other = variant === "image" ? "music" : "image";
       if (this.active[other] > 0) throw new MediaVariantBusyError();
       const timer = this.timers[variant];
       if (timer) clearTimeout(timer);
       delete this.timers[variant];
-      if (!this.warm[variant]) {
-        await this.run("start", variant);
-        this.warm[variant] = true;
+      if (this.active[variant] === 0) {
+        // The script verifies health even for an already running worker. A
+        // failed switch may have stopped the previous worker before failing.
+        this.warm[variant] = false;
         this.warm[other] = false;
         const otherTimer = this.timers[other];
         if (otherTimer) clearTimeout(otherTimer);
         delete this.timers[other];
+        await this.run("start", variant);
+        this.warm[variant] = true;
       }
+      if (this.closed) throw new Error("media variant manager is closed");
       this.active[variant]++;
     });
     let released = false;
@@ -62,11 +69,11 @@ export class MediaVariantManager {
       released = true;
       void this.serialized(async () => {
         this.active[variant]--;
-        if (this.active[variant] !== 0) return;
+        if (this.closed || this.active[variant] !== 0) return;
         const timer = setTimeout(() => {
           delete this.timers[variant];
           void this.serialized(async () => {
-            if (this.active[variant] === 0 && this.warm[variant]) {
+            if (!this.closed && this.active[variant] === 0 && this.warm[variant]) {
               await this.run("stop", variant);
               this.warm[variant] = false;
             }
@@ -79,6 +86,7 @@ export class MediaVariantManager {
   }
 
   close(): void {
+    this.closed = true;
     for (const timer of Object.values(this.timers)) if (timer) clearTimeout(timer);
     this.timers = {};
   }

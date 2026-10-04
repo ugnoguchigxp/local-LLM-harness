@@ -13,4 +13,9 @@ test("startup selects the catalog default after ContextStill replaces its legacy
   const updated = structuredClone(catalog);
   updated.defaultAgentProfile = "contextstill-background";
   expect(defaultGatewayStartupModel(updated)).toBe("ornith-contextstill");
+  const defaultProfile = updated.profiles.find((profile) => profile.id === updated.defaultAgentProfile)!;
+  defaultProfile.providers.find((provider) => provider.name === "llm")!.name = "chat";
+  expect(defaultGatewayStartupModel(updated)).toBe("ornith-contextstill");
+  defaultProfile.providers.find((provider) => provider.name === "chat")!.publishModel = false;
+  expect(() => defaultGatewayStartupModel(updated)).toThrow("no published chat provider");
 });

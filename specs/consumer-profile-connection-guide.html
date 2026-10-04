@@ -86,6 +86,14 @@
   </p>
   <h2>今回の挙動から分かること</h2>
   <p>
+    コードレビューで、起動検査のProvider名固定と確認モデルのログ不一致、Embedding追加前の
+    Laya検証スクリプト、メディア切替失敗後の稼働状態再確認と終了・キャンセル時の競合を修正した。
+    再現する回帰テストを追加した。ContextStillの実API確認は
+    <code>bun run smoke:contextstill</code>で再実行でき、3 Providerの実処理、LLM同時処理数4、
+    llmだけを指定するsubset接続、JSON/SSE応答とrelease後のtoken失効を検査する。 実行にはcontrol
+    tokenと期待する配備済みrelease commitを指定する。
+  </p>
+  <p>
     ContextStillの画面にはLocal LLM /
     coding-defaultが表示され、同時間帯のLARMログはllm-defaultからornith-generalへの実行を記録しています。ContextStill用Qwenの稼働は確認されませんでした。ContextStill用Connectionを使っていない疑いはありますが、画面のタスクIDとLARMのrequest
     IDを照合していないため、接続作成の欠落、claim結果の未適用、別処理のログ、意図的な既定モデル指定のどれかは未特定です。

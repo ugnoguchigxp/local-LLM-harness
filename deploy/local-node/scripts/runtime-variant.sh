@@ -21,13 +21,15 @@ case "${action}" in
     if systemctl is-active --quiet "${service}" && curl -fsS --max-time 3 "${health}" >/dev/null 2>&1; then
       exit 0
     fi
+    # A different idle variant owns memory that this request is replacing.
+    # Wait for its shutdown before measuring the available headroom.
+    systemctl stop "${other}"
     available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
     required_kib="$(( (reserve_gb + 16) * 1024 * 1024 ))"
     if (( available_kib < required_kib )); then
       echo "insufficient available memory for ${variant}: need ${required_kib} KiB including safety floor, have ${available_kib} KiB" >&2
       exit 1
     fi
-    systemctl stop "${other}" 2>/dev/null || true
     systemctl start "${service}"
     deadline=$((SECONDS + 300))
     until curl -fsS --max-time 3 "${health}" >/dev/null 2>&1; do
