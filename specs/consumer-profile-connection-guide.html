@@ -5,14 +5,14 @@
     APIでプロファイルを選び、返されたProviderへ接続するための共通手順です。標準は6ステップです。即時readyなら待機を省略でき、5回のAPI呼び出しで1回の処理を完了できます。長時間利用では更新と再claimの2操作を追加します。
   </p>
   <p>
-    このPageは2026年10月3日に確認した配備済み実装を根拠とする利用仕様と、Consumerへ適用する共通方針です。Consumerの実装修正・動作確認は未実施です。
+    この文書は2026年10月4日に配備したLARM構成と実API試験を根拠とする共通手順です。Consumer本体の実装修正・実接続確認は未実施です。
   </p>
   <h2>ContextStill の ROCmFP4 プロファイル構成</h2>
   <p>
-    2026年10月3日のリポジトリ設定更新で、公開 selector contextStill は contextstill-background
-    を選択し、 llm・system-one・embedding の3 Providerを提供する。llm は llm-contextstill-ornith
-    経由で ornith-contextstill runtime を解決する。モデル名は claim 応答の ornith-contextstill
-    を使用する。 この設定更新は配備完了や4並列の実機性能を示す証拠ではない。
+    2026年10月4日の配備で、公開 selector contextStill は contextstill-background を選択し、
+    llm・system-one・embedding の3 Providerを提供する。llm は llm-contextstill-ornith 経由で
+    ornith-contextstill runtime を解決する。モデル名は claim 応答の ornith-contextstill を使用する。
+    実APIのdiscovery、claimと各Providerの実処理を確認した。
   </p>
   <table>
     <caption>
@@ -37,12 +37,12 @@
       <tr>
         <th scope="row">system-one</th>
         <td>Laya multilingual、CPU</td>
-        <td>メモリ見積もり2 GB。要求時に起動して接続中はwarmを維持する。</td>
+        <td>メモリ見積もり2 GB。実行枠1。要求時に起動して接続中はwarmを維持する。</td>
       </tr>
       <tr>
         <th scope="row">embedding</th>
         <td>multilingual-e5-small、ONNX QInt8</td>
-        <td>メモリ見積もり1 GB。query / passage を明示する。</td>
+        <td>メモリ見積もり1 GB。allocation枠8、実行枠1。query / passage を明示する。</td>
       </tr>
     </tbody>
   </table>
@@ -67,7 +67,22 @@
     Providerの実応答と4件の同時処理を確認した。ただし4並列のMTP有効時に
     項目の重複や欠落が出たため、ContextStill経路はMTPを無効にする。同じ短い入力でMTP無効時は
     4件とも3項目で完了したが、中国語混入が1件あり、日本語品質の課題は残る。
-    この比較だけでMTPを唯一の原因とは断定しない。最終releaseの実機検証は配備後に記録する。
+    この比較だけでMTPを唯一の原因とは断定しない。
+  </p>
+  <h2>2026年10月4日の実API確認</h2>
+  <p>
+    配備release 451df5593766b0087209c12e5891672695dafd37は署名付き配備と
+    contract_verifiedを通過した。discoveryとclaimに3 Providerが返り、healthのHTTP実行上限は
+    llmが4、system-oneが1、embeddingが1。実バックエンドのctx-size 262144、parallel 4、 spec-type
+    noneと4 slotを確認した。1 Connectionからの短い日本語要求4件で同時処理slot数4を
+    観測し、すべてHTTP 200、finish_reason stopで完了した。中国語混入は残っている。
+  </p>
+  <p>
+    Layaの返金意図分類と、Embeddingのquery / passage両方の384次元・L2正規化を実APIで確認した。
+    release後のLaya Provider tokenは401となった。providersにllmだけを指定する接続でも、
+    Ornithだけが返り、実行上限は4。稼働releaseの全チェックでは646テスト、型検査、
+    仕様文書検査と配備関連検査が通過した。長い入力で4枠を埋める負荷試験、ピークメモリ、
+    Consumer本体からの接続と32K入力検査は未確認。
   </p>
   <h2>今回の挙動から分かること</h2>
   <p>
@@ -85,7 +100,7 @@
   </p>
   <p>
     確認対象は配備release
-    dbbe3237171218d94a9c1f3eeba8aef586288637、APIのcatalog契約agent-connection.v3、Connection操作のURLは/v1/agent-connectionsです。discoveryがv3でもConnection
+    451df5593766b0087209c12e5891672695dafd37、APIのcatalog契約agent-connection.v3、Connection操作のURLは/v1/agent-connectionsです。discoveryがv3でもConnection
     URLを/v3に置き換えません。
   </p>
   <p>
@@ -350,12 +365,15 @@ Idempotency-Key: &lt;この更新操作の一意キー&gt;
     <li>終了時にreleaseし、subset指定で不要なProviderを確保しない。</li>
   </ol>
   <p>
-    ContextStill側の既定モデル迂回の有無と、SAAAの現在の実装との適合は未確認です。このPageの保存はConsumer修正や実接続試験の完了を意味しません。
+    ContextStill側の既定モデル迂回の有無と、SAAAの現在の実装との適合は未確認です。この文書の更新はConsumer本体の修正やConsumerからの実接続試験の完了を意味しません。
   </p>
   <h2>根拠</h2>
   <p>
     LARMの配備済みソースで確認した場所はpackages/core/src/agent-connection.ts、apps/daemon/src/routes/agent-connections.ts、apps/daemon/src/agent-connection-controller.ts、apps/daemon/src/app-gateway-ingress.ts、config/local-node/agent-connections.yaml、config/local-node/routes.yamlです。公開discovery
-    APIも同日に読み取りました。モデルの起動を伴うConnection作成試験は実施していません。
+    APIも2026年10月4日に読み取りました。モデルの起動を伴うConnection作成・各Providerへの
+    実処理・releaseを確認しています。証跡はホスト上の
+    <code>/srv/ai/logs/contextstill-live-e2e-20261004.json</code>と
+    <code>/srv/ai/logs/contextstill-subset-quality-20261004.json</code>に保存しました。
   </p>
   <p>
     関連する詳細契約は<a href="./agent-provider-connection-api.html"
