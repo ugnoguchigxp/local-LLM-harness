@@ -1,4 +1,15 @@
-import { inspectOpenAiChatCompletionJson } from "@larm/core";
+import { inspectOpenAiChatCompletionJson, type AgentConnectionCatalog } from "@larm/core";
+
+export function defaultGatewayStartupModel(catalog: AgentConnectionCatalog): string {
+  const profile = catalog.profiles.find((profile) => profile.id === catalog.defaultAgentProfile);
+  const provider = profile?.providers.find((provider) =>
+    provider.name === "llm"
+    && provider.protocol === "openai.chat-completions.v1"
+    && provider.publishModel !== false
+  );
+  if (!provider) throw new Error("default Agent Profile has no published chat provider");
+  return provider.publicModel;
+}
 
 export type GatewayStartupVerificationOptions = {
   baseUrl: string;

@@ -30,7 +30,7 @@ import {
 import { ContextController } from "./context-controller";
 import { PersonalStateController } from "./personal-state-controller";
 import { GatewayLifecycle, type GatewayLifecycleState } from "./gateway-lifecycle";
-import { verifyGatewayStartup } from "./gateway-startup";
+import { defaultGatewayStartupModel, verifyGatewayStartup } from "./gateway-startup";
 import { AceStepMusicProvider, MusicGenerationManager, OnDemandMusicProvider } from "./music-manager";
 import { ImageArtifactManager } from "./image-artifact-manager";
 import { ImageGenerationProvider } from "./image-generation-provider";
@@ -446,16 +446,19 @@ console.log(`larm listening on ${listenerUrl}`);
 console.log(`config ${config.configDir}`);
 
 try {
-  if (!modelBroker) throw new Error("OpenAI-compatible model broker is not configured");
+  if (!modelBroker || !catalogGeneration.agentConnections) {
+    throw new Error("OpenAI-compatible model broker is not configured");
+  }
   const probeHost = config.hostname === "0.0.0.0" || config.hostname === "::"
     ? "localhost"
     : config.hostname;
+  const startupModel = defaultGatewayStartupModel(catalogGeneration.agentConnections);
   await verifyGatewayStartup({
     baseUrl: process.env.LARM_STARTUP_PROBE_BASE_URL
       ?? `${config.tlsCertFile ? "https" : "http"}://${probeHost}:${server.port}`,
     apiToken: config.apiToken,
-    model: process.env.LARM_REQUIRED_CHAT_MODEL ?? "qwen-agent-worker",
-    probeModel: process.env.LARM_STARTUP_PROBE_CHAT_MODEL ?? "coding-default",
+    model: process.env.LARM_REQUIRED_CHAT_MODEL ?? startupModel,
+    probeModel: process.env.LARM_STARTUP_PROBE_CHAT_MODEL ?? startupModel,
     startupProbeToken,
     timeoutMs: config.connectionReadyTimeoutMs,
   });
