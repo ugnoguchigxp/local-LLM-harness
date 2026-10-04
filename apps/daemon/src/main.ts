@@ -10,6 +10,7 @@ import {
   LlamaContextTokenizer,
   LlamaContextSlotEraseAdapter,
   LocalPersonalStateJournal,
+  MediaVariantManager,
 } from "@larm/backends";
 import { createAppComponents } from "./app";
 import { ArtifactManager } from "./artifact-manager";
@@ -30,8 +31,9 @@ import { ContextController } from "./context-controller";
 import { PersonalStateController } from "./personal-state-controller";
 import { GatewayLifecycle, type GatewayLifecycleState } from "./gateway-lifecycle";
 import { verifyGatewayStartup } from "./gateway-startup";
-import { AceStepMusicProvider, MusicGenerationManager } from "./music-manager";
+import { AceStepMusicProvider, MusicGenerationManager, OnDemandMusicProvider } from "./music-manager";
 import { ImageArtifactManager } from "./image-artifact-manager";
+import { ImageGenerationProvider } from "./image-generation-provider";
 
 const config = parseDaemonConfig();
 const catalogGeneration = loadCatalogGeneration({
@@ -289,14 +291,18 @@ const personalStateController = new PersonalStateController({
 await personalStateController.initialize();
 
 const startupProbeToken = crypto.randomUUID();
+const mediaVariants = new MediaVariantManager({
+  script: new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname,
+  idleTtlMs: { image: 120_000, music: 300_000 },
+});
 const musicManager = config.musicProviderEndpoint
-  ? new MusicGenerationManager(new AceStepMusicProvider({
+  ? new MusicGenerationManager(new OnDemandMusicProvider(new AceStepMusicProvider({
     endpoint: config.musicProviderEndpoint,
     apiKey: config.musicProviderApiKey,
     pollIntervalMs: config.musicPollIntervalMs,
     maxAudioBytes: config.musicMaxAudioBytes,
     upstreamOutputRoot: config.musicUpstreamOutputRoot,
-  }), {
+  }), mediaVariants), {
     artifactRoot: config.musicArtifactRoot,
     concurrency: 1,
     retentionMs: config.musicArtifactRetentionMs,
@@ -313,6 +319,9 @@ const imageArtifactManager = new ImageArtifactManager(config.imageArtifactRoot, 
   pruneIntervalMs: config.imagePruneIntervalMs,
 });
 await imageArtifactManager.initialize();
+const imageGenerationProvider = config.imageProviderEndpoint
+  ? new ImageGenerationProvider(config.imageProviderEndpoint, mediaVariants)
+  : undefined;
 const appComponents = createAppComponents({
   registry,
   getState: () => observer.getState(),
@@ -351,6 +360,7 @@ const appComponents = createAppComponents({
   startupProbeToken,
   musicManager,
   imageArtifactManager,
+  imageGenerationProvider,
   getReleaseConvergenceStatus: async () => await Bun.file(
     process.env.LARM_RELEASE_CONVERGENCE_STATUS ?? "/var/lib/larm/release-controller/status.json",
   ).json(),
@@ -511,6 +521,7 @@ async function shutdown(signal: string): Promise<void> {
   executionGate.beginDrain();
   clearInterval(interval);
   musicManager?.close();
+  mediaVariants.close();
   imageArtifactManager.close();
   clearTimeout(reconciliationTimer);
   const deadline = Date.now() + config.shutdownTimeoutMs;

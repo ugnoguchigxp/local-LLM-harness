@@ -901,19 +901,28 @@ export class AgentConnectionController {
       audienceRevision: record.audience.revision,
       status: record.status,
       phase,
-      providers: record.profile.providers.map((provider) => ({
-        name: provider.name,
-        capability: provider.capability,
-        supportedCapabilities: provider.supportedCapabilities,
-        protocol: provider.protocol,
-        endpoint: agentProviderEndpoint(provider.protocol),
-        model: provider.publicModel,
-        ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
-        ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
-        readiness: providerReadiness,
-        claimable: record.status === "ready"
-          && this.options.semantic.peek({ allocationId: record.allocationId, provider })?.ready === true,
-      })),
+      providers: record.profile.providers.map((provider) => {
+        const binding = allocation?.bindings.find((item) =>
+          item.capability === provider.capability && item.route === provider.route
+        );
+        const startupPolicy = binding
+          ? this.options.control.getRuntimeStartupPolicy(binding.runtime)
+          : undefined;
+        return {
+          name: provider.name,
+          capability: provider.capability,
+          supportedCapabilities: provider.supportedCapabilities,
+          protocol: provider.protocol,
+          endpoint: agentProviderEndpoint(provider.protocol),
+          model: provider.publicModel,
+          ...(startupPolicy ? { startupPolicy } : {}),
+          ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
+          ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
+          readiness: providerReadiness,
+          claimable: record.status === "ready"
+            && this.options.semantic.peek({ allocationId: record.allocationId, provider })?.ready === true,
+        };
+      }),
       services: structuredClone(record.selector.services),
       createdAt: record.createdAt,
       expiresAt: record.expiresAt,

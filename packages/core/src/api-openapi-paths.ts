@@ -20,6 +20,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       if (operationId === "createEmbedding") return "EmbeddingRequest";
       if (operationId === "createSystemOneDecision") return "SystemOneRequest";
       if (operationId === "createMusicGeneration") return "MusicGenerationRequest";
+      if (operationId === "createImageGeneration") return "ImageGenerationRequest";
       if (operationId === "claimAgentConnection") return "AgentConnectionClaimRequest";
       if (operationId === "renewAgentConnection") return "AgentConnectionRenewRequest";
       if (operationId === "planRuntimeDeployment") return "RuntimeReleasePlanRequest";

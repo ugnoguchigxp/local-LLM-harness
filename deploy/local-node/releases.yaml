@@ -108,6 +108,14 @@ runtimeReleases:
     providerConfigRevision: llama-swap-gemma4-26b-a4b-qat-q4-0-conversation-256k-p2-plain-v1
     estimatedMemoryGB: 48
     healthPath: /health
+    default: false
+  gemma4-26b-conversation-warm-p3-v1:
+    runtime: gemma4-26b-conversation
+    artifacts:
+      - gemma4-26b-a4b-it-qat-q4-0
+    providerConfigRevision: llama-swap-gemma4-26b-a4b-qat-q4-0-conversation-512k-p3-unified-v1
+    estimatedMemoryGB: 48
+    healthPath: /health
     default: true
 
   ornith15-conversation-current:
@@ -143,6 +151,15 @@ runtimeReleases:
     artifacts:
       - ornith15-35b-speed
     providerConfigRevision: llama-swap-ornith15-35b-rocmfp4-aug24-mtp-n4-p06-v3
+    estimatedMemoryGB: 44
+    healthPath: /health
+    default: true
+
+  ornith-contextstill-current:
+    runtime: ornith-contextstill
+    artifacts:
+      - ornith15-35b-speed
+    providerConfigRevision: llama-swap-ornith15-contextstill-64k-n4-v1
     estimatedMemoryGB: 44
     healthPath: /health
     default: true

@@ -65,6 +65,24 @@ export const imageArtifactDeleteSchema = z.object({
   deleted: z.literal(true),
 }).strict();
 
+export const imageGenerationRequestSchema = z.object({
+  prompt: z.string().min(1).max(8_192),
+  width: z.union([z.literal(512), z.literal(768), z.literal(1024)]).optional(),
+  height: z.union([z.literal(512), z.literal(768), z.literal(1024)]).optional(),
+  steps: z.number().int().min(1).max(50).optional(),
+  seed: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  format: imageArtifactFormatSchema.optional(),
+}).strict();
+
+export const imageGenerationResponseSchema = z.object({
+  object: z.literal("image_generation"),
+  status: z.literal("succeeded"),
+  artifact: imageArtifactSchema,
+  durationMs: z.number().nonnegative(),
+}).strict();
+
+export type ImageGenerationRequest = z.infer<typeof imageGenerationRequestSchema>;
+
 export type StoredImageArtifactMetadata = z.infer<typeof storedImageArtifactMetadataSchema>;
 export type ImageArtifact = z.infer<typeof imageArtifactSchema>;
 export type ImageArtifactList = z.infer<typeof imageArtifactListSchema>;

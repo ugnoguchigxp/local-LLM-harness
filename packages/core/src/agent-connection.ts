@@ -7,6 +7,7 @@ import { deploymentPolicySchema } from "./api-schema";
 import { embeddingSpaceSchema, type EmbeddingSpace } from "./embedding";
 import type { Registry } from "./registry";
 import { isLiteralLoopbackHost } from "./network";
+import { providerStartupPolicySchema } from "./provider-lifecycle";
 import { runtimeProtocolSchema, type RuntimeProtocol } from "./schema";
 
 export const agentIdentifierSchema = z.string()
@@ -190,6 +191,7 @@ export const agentProfileServiceSchema = z.object({
   protocol: z.enum(["larm.image-generation.v1", "larm.music-generation.v1"]),
   endpoint: z.enum(["/v1/images/generations", "/v1/music/generations"]),
   model: agentIdentifierSchema,
+  startupPolicy: providerStartupPolicySchema.optional(),
 }).strict().superRefine((service, context) => {
   const expected = service.protocol === "larm.image-generation.v1"
     ? "/v1/images/generations"
@@ -805,6 +807,7 @@ export const publicAgentConnectionProviderSchema = z.object({
   protocol: runtimeProtocolSchema,
   endpoint: agentProviderEndpointSchema,
   model: agentIdentifierSchema,
+  startupPolicy: providerStartupPolicySchema.optional(),
   embeddingSpace: embeddingSpaceSchema.optional(),
   contextWindow: z.object({
     maxTokens: z.number().int().min(1).max(1_000_000),

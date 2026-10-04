@@ -37,24 +37,26 @@ test("production agent profiles compile to strict protocol-aware provider contra
     { id: "SAAA-gemma4-26b", agentProfile: "saaa-conversation-gemma4-26b-voice", services: [] },
     {
       id: "SAAA-w-Image",
-      agentProfile: "saaa-conversation-ornith15-image",
+      agentProfile: "saaa-conversation-gemma4-26b-voice",
       services: [{
         name: "image",
         capability: "media.image.generate",
         protocol: "larm.image-generation.v1",
         endpoint: "/v1/images/generations",
         model: "qwen-image-2.1",
+        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 120 },
       }],
     },
     {
       id: "SAAA-w-music",
-      agentProfile: "saaa-conversation-ornith15-music",
+      agentProfile: "saaa-conversation-gemma4-26b-voice",
       services: [{
         name: "music",
         capability: "media.music.generate",
         protocol: "larm.music-generation.v1",
         endpoint: "/v1/music/generations",
         model: "ace-step-1.5",
+        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 300 },
       }],
     },
     { id: "vulnWorkbench", agentProfile: "coding-default", services: [] },
@@ -130,12 +132,23 @@ test("production agent profiles compile to strict protocol-aware provider contra
       deprecated: false,
       schedulingPriority: 1000,
       providers: [{
+        name: "embedding",
+        route: "embedding-multilingual-e5-small",
+        protocol: "larm.embedding.v1",
+        readiness: "embedding",
+      }, {
         capability: "llm.coding",
         supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
-        route: "llm-agent-worker",
+        route: "llm-contextstill-ornith",
         protocol: "openai.chat-completions.v1",
-        publicModel: "qwen-agent-worker",
+        publicModel: "ornith-contextstill",
         readiness: "llm-inference",
+        contextWindow: { maxTokens: 32768, outputReserveTokens: 4096, safetyMarginTokens: 0 },
+      }, {
+        name: "system-one",
+        route: "system-one-laya",
+        protocol: "larm.system-one.v1",
+        readiness: "system-one",
       }],
     });
   expect(catalog.profiles.find((profile) => profile.id === "contextstill-background-64k"))
@@ -289,6 +302,12 @@ test("production agent profiles compile to strict protocol-aware provider contra
           capability: "speech.stt",
           route: "stt-qwen",
           publicModel: "qwen3-asr-1.7b",
+        },
+        {
+          name: "embedding",
+          capability: "embedding.multilingual-e5-small",
+          route: "embedding-multilingual-e5-small",
+          publicModel: "multilingual-e5-small",
         },
         {
           name: "llm",

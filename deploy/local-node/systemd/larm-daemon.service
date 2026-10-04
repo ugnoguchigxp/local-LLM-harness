@@ -22,6 +22,7 @@ Environment=LARM_CONTEXT_ENABLED=true
 Environment=LARM_PERSONAL_STATE_ENABLED=false
 Environment=LARM_PERSONAL_STATE_JOURNAL_ROOT=/var/lib/larm/personal-state
 Environment=LARM_MUSIC_PROVIDER_ENDPOINT=http://127.0.0.1:8090
+Environment=LARM_IMAGE_PROVIDER_ENDPOINT=http://127.0.0.1:8091
 Environment=LARM_MUSIC_ARTIFACT_ROOT=/srv/ai/data/generated/music
 Environment=LARM_MUSIC_UPSTREAM_OUTPUT_ROOT=/srv/ai/apps/larm-trials/20260924-ace-step15/.cache/acestep/tmp/api_audio
 Environment=LARM_CONTEXT_METADATA_ROOT=/var/lib/larm/contexts

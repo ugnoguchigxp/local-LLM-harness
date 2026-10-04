@@ -11,7 +11,9 @@ polkit.addRule(function(action, subject) {
             "voicevox-tts.service",
             "qwen-tts.service",
             "larm-embedding.service",
-            "laya-system-one.service"
+            "laya-system-one.service",
+            "larm-music-ace-step.service",
+            "larm-image-qwen21.service"
         ].indexOf(action.lookup("unit")) !== -1
         && ["start", "stop"].indexOf(action.lookup("verb")) !== -1
     ) {

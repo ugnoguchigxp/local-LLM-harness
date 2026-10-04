@@ -43,9 +43,9 @@ describe("runtime release catalog", () => {
       estimatedMemoryGB: 3,
     });
     expect(defaultRuntimeRelease(releases, "gemma4-26b-conversation")).toMatchObject({
-      id: "gemma4-26b-conversation-canary-v1",
+      id: "gemma4-26b-conversation-warm-p3-v1",
       artifacts: ["gemma4-26b-a4b-it-qat-q4-0"],
-      providerConfigRevision: "llama-swap-gemma4-26b-a4b-qat-q4-0-conversation-256k-p2-plain-v1",
+      providerConfigRevision: "llama-swap-gemma4-26b-a4b-qat-q4-0-conversation-512k-p3-unified-v1",
       estimatedMemoryGB: 48,
     });
     expect(defaultRuntimeRelease(releases, "ornith15-35b")?.artifacts).toEqual([

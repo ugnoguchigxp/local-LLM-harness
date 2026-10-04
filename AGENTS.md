@@ -36,7 +36,7 @@ When design decisions, specifications, implementation plans, or research results
 
 - Keep OS-independent registry, planning, lease, and resolve logic in `packages/core`.
 - Keep systemd and llama-swap integrations in `packages/backends`.
-- Qwen 3.8 27B remains the resident default, including realtime tasks. Optional speed-oriented models require explicit selection.
+- Model selection, resident policy, and priority come from the requested Agent Profile and resolved route. Do not privilege a model family by name; optional variants require explicit selection.
 - Do not commit model weights, binaries, build output, caches, logs, or generated media.
 
 ## Related repositories

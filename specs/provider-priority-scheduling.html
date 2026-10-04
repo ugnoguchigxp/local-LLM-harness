@@ -158,9 +158,8 @@
         従来の明示Allocationは既定の<code>capacityPolicy: reject</code>、<code>priority: 0</code>です。
       </li>
       <li>
-        通常の既定は<code>coding-default</code>とResident
-        Qwenを維持します。SAAAがQwen
-        3.8を要求するときは<code>qwen3.8</code>を明示選択します。
+        通常の既定は選択されたAgent ProfileとRoute catalogで決めます。
+        SAAAが特定のmodelを要求するときは、対応する公開Profileを明示選択します。
       </li>
       <li>
         NightWorkerは<code>qwen-nightworker</code>、ContextStillは<code>qwen-agent-worker</code>を使います。

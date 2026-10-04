@@ -1,5 +1,5 @@
-# Local AI Provider concept
+# LARM コンセプト正本への案内
 
-このMarkdown文書は、Spec HTML版の[`../specs/concept.html`](../specs/concept.html)へ置き換えられました。
+LARMの全体コンセプトの正本は、[ChatGPT Page「LARMの全体コンセプト」](https://chatgpt.com/space/page_9fab9c53bce8819181c9c8256a3b303a)です。
 
-過去の内容はGit履歴から参照できます。最新のコンセプト、モデル運用方針、実装到達点、過去の`plan.md`からの分類はHTML版を正本とします。
+リポジトリ内の互換入口は[Spec HTMLの案内](../specs/concept.html)です。個別のAPI、実装契約、検証記録は引き続きspecsディレクトリで管理します。旧コンセプト本文はGit履歴から参照できます。

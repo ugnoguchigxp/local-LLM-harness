@@ -65,7 +65,7 @@ test("loads the Linux production registry", () => {
   expect(realtimeTts?.capability).toContain("speech.tts");
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");
   for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd")) {
-    expect(runtime.policy.warm?.minInstances).toBe(runtime.id === "laya-system-one" ? 0 : 1);
+    expect(runtime.policy.warm?.minInstances).toBe(1);
   }
   expect(model35b?.policy).toEqual({
     class: "preferred",
@@ -259,7 +259,7 @@ test("production media variants are exclusive, bounded, and remain outside the b
       estimatedMemoryGB: number;
     }>;
   };
-  expect(variants.baseProfile).toBe("saaa-conversation-ornith15");
+  expect(variants.baseProfile).toBe("saaa-conversation-gemma4-26b-voice");
   expect(variants.groups["accelerator-media-heavy"]).toEqual({
     exclusive: true,
     minimumAvailableMemoryGB: 16,
@@ -332,6 +332,12 @@ test("production swap group matches llama-swap model membership", () => {
   const lfmBackchannelCommand = configured.models["lfm25-backchannel-jp"]?.cmd ?? "";
   const gemmaBackchannelCommand = configured.models["gemma3-backchannel"]?.cmd ?? "";
   const gemma4_26bCommand = configured.models["gemma4-26b-conversation"]?.cmd ?? "";
+  const gemma4_26b = registry.runtimes.find((runtime) => runtime.id === "gemma4-26b-conversation");
+  expect(gemma4_26b?.policy.warm?.minInstances).toBe(1);
+  expect(gemma4_26b?.resources).toMatchObject({
+    maxConcurrentAllocations: 3,
+    maxConcurrentRequests: 3,
+  });
   const agent35bCommand = configured.models["ornith15-35b-agent"]?.cmd ?? "";
   expect(ornithCommand).toContain("/srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server");
   expect(ornithCommand).toContain("Ornith-1.5-35B-Q5_K_M.gguf");
@@ -368,7 +374,7 @@ test("production swap group matches llama-swap model membership", () => {
   expect(contextStill64Command).toContain("--ubatch-size 256");
   expect(gemma4_26bCommand).toContain("gemma-4-26B_q4_0-it.gguf");
   expect(gemma4_26bCommand).toContain("--ctx-size 524288");
-  expect(gemma4_26bCommand).toContain("--parallel 2");
+  expect(gemma4_26bCommand).toContain("--parallel 3");
   expect(gemma4_26bCommand).toContain("--cache-type-k q4_0");
   expect(gemma4_26bCommand).toContain("--cache-type-v q4_0");
   expect(gemma4_26bCommand).toContain("--cont-batching");
@@ -608,4 +614,25 @@ test("rejects a resident floor that exceeds usable node memory", () => {
   expect(() => parseRegistryDocuments(documents)).toThrow(
     /resident runtimes on node local-node require 113GB but only 112GB is usable/,
   );
+});
+
+test("ContextStill resolves one ROCmFP4 backend with capacity for four 64K sessions", () => {
+  const registry = loadRegistry(repoConfig);
+  const route = registry.routes.find((route) => route.id === "llm-contextstill-ornith");
+  expect(route?.candidates).toEqual([{ runtime: "ornith-contextstill", purpose: "primary" }]);
+  const runtime = registry.runtimes.find((runtime) => runtime.id === "ornith-contextstill");
+  expect(runtime).toMatchObject({
+    artifacts: ["ornith15-35b-speed"],
+    resources: { maxConcurrentAllocations: 4, maxConcurrentRequests: 4 },
+    deployment: { modelId: "ornith-contextstill" },
+  });
+  const configured = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
+  if (!runtime || runtime.backend !== "llama-swap") throw new Error("expected llama-swap runtime");
+  const command = configured.models[runtime.deployment.modelId].cmd;
+  expect(command).toContain("Ornith-1.5-35B-A3B-ROCmFP4.gguf");
+  expect(command).toContain("--ctx-size 262144");
+  expect(command).toContain("--parallel 4");
+  expect(command).toContain("--cache-type-k q8_0");
+  expect(command).toContain("--cache-type-v q8_0");
+  expect(command).toContain("--spec-type draft-mtp");
 });

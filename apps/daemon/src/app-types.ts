@@ -14,6 +14,7 @@ import type { PersonalStateController } from "./personal-state-controller";
 import type { GatewayReadiness } from "./gateway-lifecycle";
 import type { MusicGenerationManager } from "./music-manager";
 import type { ImageArtifactManager } from "./image-artifact-manager";
+import type { ImageGenerationProvider } from "./image-generation-provider";
 
 export type AppDeps = {
   registry: Registry;
@@ -60,4 +61,5 @@ export type AppDeps = {
   startupProbeToken?: string;
   musicManager?: MusicGenerationManager;
   imageArtifactManager?: ImageArtifactManager;
+  imageGenerationProvider?: ImageGenerationProvider;
 };

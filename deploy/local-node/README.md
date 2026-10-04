@@ -197,13 +197,13 @@ SAAAは`saaa-qwen38`へfallbackし、claimに存在するProviderだけを使用
 consumerはclaimで返されたProviderごとのmodel、短期credential、Chat Completionsのcontext windowを使用し、
 session終了時にConnectionをreleaseします。
 
-Gemma 4 26B-A4Bを試験する場合は、明示selector `SAAA-gemma4-26b`を要求します。対応するAgent Profile
+Gemma 4 26B-A4Bを使用する場合は、明示selector `SAAA-gemma4-26b`を要求します。対応するAgent Profile
 `saaa-conversation-gemma4-26b-voice`は`llm`、`asr`、`tts`に加えて、CPU上のLaya multilingualを
-`system-one` Providerとして含みます。backchannelとembeddingは起動しません。Layaは生成LLMではなく、claimで返る
-`/v1/systemone`へ型付きquestionを送る補助的な分類・スコアリングProviderです。Gemma runtimeは各256Kの2 session、plain decode、conversation swap group内のcanaryとして
-定義されており、既定profileや常駐modelを変更しません。artifactは`models.yaml`のrevision、size、SHA-256で
+`system-one` Providerと`embedding` Providerを含みます。backchannelは起動しません。Layaは生成LLMではなく、claimで返る
+`/v1/systemone`へ型付きquestionを送る補助的な分類・スコアリングProviderです。Gemma runtimeは512Kの共有KV poolと3 session、plain decode、Warm 1 instanceで
+定義されています。SAAAの公開context上限は256Kで、背景requestの長さはSAAA側が制御します。既定の`SAAA` selectorは変更していません。artifactは`models.yaml`のrevision、size、SHA-256で
 固定されています。Laya artifactも同様にrevision、全ファイルのsize、SHA-256で固定し、serviceはprofile session中だけ
-managed起動します。実環境確認は`bun deploy/local-node/scripts/smoke-laya-profile.ts`で4 Providerのclaim、Laya日本語判定、
+Warmで維持します。embeddingもWarmで維持します。実環境確認は`bun deploy/local-node/scripts/smoke-laya-profile.ts`でProviderのclaim、Laya日本語判定、
 Gemma生成、release後credential失効まで検証します。
 
 SAAA向けの公開selectorは`SAAA`、`SAAA-gemma4-26b`、`SAAA-w-Image`、`SAAA-w-music`です。
@@ -215,7 +215,7 @@ media Variantの起動や生成成功を意味しません。詳細は
 ## Media Runtime Variant
 
 `music`と`image`は同じ`accelerator-media-heavy`排他groupに属し、同時には起動しません。
-基本Agent Profileは`saaa-conversation-ornith15`のままで、必要な生成capabilityだけをon-demandで追加します。
+media Variantの基本Agent Profileは`saaa-conversation-gemma4-26b-voice`です。画像・楽曲生成は要求が来るまで停止し、生成終了後のidle TTLで停止します。
 
 ```bash
 deploy/local-node/scripts/runtime-variant.sh start music
@@ -230,10 +230,9 @@ Qwen-Image 2.1をloopback port 8091へ起動し、GPU denoiseとCPU FP32 VAE dec
 起動scriptは反対側のVariantを停止し、Variant予約に加えて16 GiBの`MemAvailable` floorを要求します。
 両unitはinstall後もdisabledで、明示起動されるまでmemoryを消費しません。
 `SAAA-w-Image`と`SAAA-w-music`のConnection作成だけでは、これらのunitは起動しません。
-2026年9月29日のreleaseでは、image selectorが広告する`POST /v1/images/generations`は404で、
-`/v1/image-artifacts/*`は既存の生成物を取得するAPIです。musicはVariant停止中に
-`GET /v1/music/providers`がunavailableを返します。media生成E2Eは両方とも未達のため、
-Connection canaryの成功をmedia機能の受入完了として扱わないでください。
+`POST /v1/images/generations`と`POST /v1/music/generations`が対応unitを起動します。
+画像は同期応答、楽曲は非同期jobです。画像生成物は`/v1/image-artifacts/*`から取得します。
+実機でのcold起動、競合、生成、idle停止はデプロイ後に確認してください。
 
 Personal State製品contractは別gateです。systemd unitは
 `LARM_PERSONAL_STATE_ENABLED=false`と`LARM_PERSONAL_STATE_JOURNAL_ROOT=/var/lib/larm/personal-state`を

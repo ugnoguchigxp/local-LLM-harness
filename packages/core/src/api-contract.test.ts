@@ -380,12 +380,14 @@ test("public runtime and state schemas reject operational detail", () => {
     capability: ["llm.general"],
     protocol: "openai.chat-completions.v1",
     policy: { class: "resident" },
+    startupPolicy: { minWarmInstances: 1, idleTtlSeconds: 60 },
   }).id).toBe("qwen-general");
   expect(() => publicRuntimeSchema.parse({
     id: "qwen-general",
     capability: ["llm.general"],
     protocol: "openai.chat-completions.v1",
     policy: { class: "resident" },
+    startupPolicy: { minWarmInstances: 1, idleTtlSeconds: 60 },
     deployment: { endpoint: "http://127.0.0.1:8080" },
   })).toThrow();
   expect(() => publicClusterStateSchema.parse({

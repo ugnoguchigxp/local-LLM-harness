@@ -316,6 +316,17 @@ async function validAgentProviderSemanticResponse(input: string | URL | Request,
       queueDepth: 0,
     });
   }
+  if (path.endsWith("/v1/systemone")) {
+    const request = JSON.parse(String(init?.body)) as { model: string };
+    return Response.json({
+      model: request.model,
+      answers: { intent: {
+        type: "choice", choice: "refund",
+        probabilities: { refund: 0.9, other: 0.1 }, confidence: 0.8,
+      } },
+      usage: { input_tokens: 12, output_tokens: 0 },
+    });
+  }
   if (path.endsWith("/embed")) {
     const body = JSON.parse(
       init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init?.body),
@@ -489,7 +500,11 @@ test("v3 public profile selectors return exact provider and service endpoints wi
   const expected = {
     contextStill: {
       id: "contextstill-background",
-      providers: [{ name: "llm", endpoint: "/v1/chat/completions", model: "qwen-agent-worker" }],
+      providers: [
+        { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
+        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-contextstill" },
+        { name: "system-one", endpoint: "/v1/systemone", model: "laya-multilingual" },
+      ],
       services: [],
     },
     SAAA: {
@@ -504,23 +519,23 @@ test("v3 public profile selectors return exact provider and service endpoints wi
       services: [],
     },
     "SAAA-w-Image": {
-      id: "saaa-conversation-ornith15-image",
+      id: "saaa-conversation-gemma4-26b-voice",
       providers: [
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
-        { name: "backchannel", endpoint: "/v1/chat/completions", model: "qwen3.5-2b-fast-response" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
-        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-35b" },
+        { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
+        { name: "system-one", endpoint: "/v1/systemone", model: "laya-multilingual" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
       ],
       services: [{ name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1" }],
     },
     "SAAA-w-music": {
-      id: "saaa-conversation-ornith15-music",
+      id: "saaa-conversation-gemma4-26b-voice",
       providers: [
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
-        { name: "backchannel", endpoint: "/v1/chat/completions", model: "qwen3.5-2b-fast-response" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
-        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-35b" },
+        { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
+        { name: "system-one", endpoint: "/v1/systemone", model: "laya-multilingual" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
       ],
       services: [{ name: "music", endpoint: "/v1/music/generations", model: "ace-step-1.5" }],
@@ -644,6 +659,8 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
       status: "ready",
       services: [],
     });
+    expect(connection.providers.find((provider) => provider.name === "llm")?.startupPolicy)
+      .toEqual({ minWarmInstances: 1, idleTtlSeconds: 60 });
     expect(connection.providers.map((provider) => ({
       name: provider.name,
       endpoint: provider.endpoint,
@@ -944,7 +961,8 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
 
     const contextStill = await createConnection("contextStill");
     expect(contextStill).toMatchObject({ profile: "contextStill", status: "ready" });
-    expect(log.ensure).toContain("qwen-worker-fast");
+    expect(log.ensure).toContain("ornith-contextstill")
+    expect(log.ensure).toContain("laya-system-one");
     const contextClaim = await claimConnection(contextStill);
     await infer(contextClaim);
 
@@ -963,15 +981,16 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
         message: "request stopped because a higher-priority foreground task requires the provider",
       },
     });
-    expect(log.stop).toContain("qwen-worker-fast");
+    expect(log.stop).toContain("ornith-contextstill");
 
-    const revokedContext = await fetch(`${contextClaim.providers[0]!.baseUrl}/chat/completions`, {
+    const contextLlm = contextClaim.providers.find((provider) => provider.name === "llm")!;
+    const revokedContext = await fetch(`${contextLlm.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${contextClaim.providers[0]!.credential.token}`,
+        authorization: `Bearer ${contextLlm.credential.token}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ model: contextClaim.providers[0]!.model, messages: [] }),
+      body: JSON.stringify({ model: contextLlm.model, messages: [] }),
     });
     expect(revokedContext.status).toBe(401);
 
@@ -1287,6 +1306,8 @@ test("GET /runtimes lists registry definitions", async () => {
   expect(body.runtimes.map((r) => r.id)).toEqual(["qwen-general", "qwen-worker"]);
   expect(body.runtimes[0]?.policy.class).toBe("resident");
   expect(body.runtimes[1]?.policy.class).toBe("preferred");
+  expect(body.runtimes[0]?.startupPolicy).toEqual({ minWarmInstances: 1, idleTtlSeconds: 60 });
+  expect(body.runtimes[1]?.startupPolicy).toEqual({ minWarmInstances: 0, idleTtlSeconds: 60 });
   expect(body.runtimes[0]).not.toHaveProperty("backend");
   expect(body.runtimes[0]).not.toHaveProperty("node");
   expect(body.runtimes[0]).not.toHaveProperty("resources");
@@ -1303,6 +1324,7 @@ test("public runtime omits management-only swap group metadata", () => {
     capability: ["llm.general", "llm.reasoning"],
     protocol: "openai.chat-completions.v1",
     policy: { class: "preferred" },
+    startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 60 },
   });
 });
 

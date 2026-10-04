@@ -1,0 +1,355 @@
+<article lang="ja">
+  <h1>LARM プロファイル選択と接続の共通手順 ContextStillとSAAA</h1>
+  <p>
+    ContextStillとSAAAが、同じLARM Agent Connection
+    APIでプロファイルを選び、返されたProviderへ接続するための共通手順です。標準は6ステップです。即時readyなら待機を省略でき、5回のAPI呼び出しで1回の処理を完了できます。長時間利用では更新と再claimの2操作を追加します。
+  </p>
+  <p>
+    このPageは2026年10月3日に確認した配備済み実装を根拠とする利用仕様と、Consumerへ適用する共通方針です。Consumerの実装修正・動作確認は未実施です。
+  </p>
+  <h2>ContextStill の ROCmFP4 プロファイル構成</h2>
+  <p>
+    2026年10月3日のリポジトリ設定更新で、公開 selector contextStill は contextstill-background
+    を選択し、 llm・system-one・embedding の3 Providerを提供する。llm は llm-contextstill-ornith
+    経由で ornith-contextstill runtime を解決する。モデル名は claim 応答の ornith-contextstill
+    を使用する。 この設定更新は配備完了や4並列の実機性能を示す証拠ではない。
+  </p>
+  <table>
+    <caption>
+      ContextStill の要求時に解決する Provider
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">Provider</th>
+        <th scope="col">構成</th>
+        <th scope="col">容量と方針</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">llm</th>
+        <td>Ornith 1.5 35B-A3B ROCmFP4、MTP n4 / p0.6、K/V q8_0</td>
+        <td>
+          1プロセス、KV総枠262,144 token、4セッション分の65,536 token。LARM
+          allocationとHTTP実行枠も4。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">system-one</th>
+        <td>Laya multilingual、CPU</td>
+        <td>メモリ見積もり2 GB。要求時に起動して接続中はwarmを維持する。</td>
+      </tr>
+      <tr>
+        <th scope="row">embedding</th>
+        <td>multilingual-e5-small、ONNX QInt8</td>
+        <td>メモリ見積もり1 GB。query / passage を明示する。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    各Queueの1要求は入力と生成の合計32,768 tokenを上限とし、Consumerは送信前にモデルのtokenizerで
+    system prompt・tool schema・履歴を含む入力を数える。出力予約の既定は4,096 tokenなので、
+    入力は28,672
+    token以内。catalogのcontextWindowはこの要求上限を表し、backendのKV総量とは区別する。
+    LARMの設定更新だけでConsumerのtoken検査が実装されるわけではない。
+  </p>
+  <p>
+    Ornith runtime のメモリ見積もりは44 GBとし、既存256K ROCmFP4経路と同じ保守的な予約値を使う。
+    4並列のピークと完了ジョブ数／分は未測定。旧Qwen 64K / 128K profileは明示選択用として残り、
+    contextStill
+    selectorのfallbackには含めない。SAAAとの優先度・排他方針は既存のConnection契約に従う。
+  </p>
+  <h2>今回の挙動から分かること</h2>
+  <p>
+    ContextStillの画面にはLocal LLM /
+    coding-defaultが表示され、同時間帯のLARMログはllm-defaultからornith-generalへの実行を記録しています。ContextStill用Qwenの稼働は確認されませんでした。ContextStill用Connectionを使っていない疑いはありますが、画面のタスクIDとLARMのrequest
+    IDを照合していないため、接続作成の欠落、claim結果の未適用、別処理のログ、意図的な既定モデル指定のどれかは未特定です。
+  </p>
+  <p>
+    LARMはホスト全体を一つのプロファイルへ変更する仕組みではありません。要求したprofileとProvider
+    subsetからConnectionを作成し、そのConnectionに結び付いたProviderを利用します。現在起動中のモデル名だけで、Consumerの選択の成否を判定しません。
+  </p>
+  <h2>正本と適用範囲</h2>
+  <p>
+    モデル・route・runtime・優先度の正本はLARMのcatalogと設定です。Consumerは起動時と再接続時に公開catalogを読み、claimの応答から接続情報を取得します。このPageをContextStillとSAAA共通の利用手順として参照し、アプリごとの独自な接続手順を増やさない方針を提案します。
+  </p>
+  <p>
+    確認対象は配備release
+    dbbe3237171218d94a9c1f3eeba8aef586288637、APIのcatalog契約agent-connection.v3、Connection操作のURLは/v1/agent-connectionsです。discoveryがv3でもConnection
+    URLを/v3に置き換えません。
+  </p>
+  <p>
+    SAAAのローカル作業ツリーには未コミット変更があり、プロジェクトの規則に従ってpullと実装調査を保留しました。SAAAが以下の手順を既に満たすとは認定していません。
+  </p>
+  <h2>プロファイルと接続先の選び方</h2>
+  <table>
+    <caption>
+      用途別の公開プロファイルとProvider
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">用途</th>
+        <th scope="col">createのprofile</th>
+        <th scope="col">2026年10月3日の具体Profile</th>
+        <th scope="col">Provider</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>ContextStillの背景処理</td>
+        <td>contextStill</td>
+        <td>contextstill-background</td>
+        <td>embedding、llm、system-one</td>
+      </tr>
+      <tr>
+        <td>SAAAの会話</td>
+        <td>SAAA</td>
+        <td>saaa-conversation-ornith15</td>
+        <td>asr、backchannel、embedding、llm、tts</td>
+      </tr>
+      <tr>
+        <td>SAAAの会話LLMだけ</td>
+        <td>SAAA</td>
+        <td>同上</td>
+        <td>providersにllmだけ指定</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    profileは大文字小文字を含め公開selectorをそのまま指定します。ContextStillはcontextStill、SAAAはSAAAです。discoveryのprofiles[0].idは具体Profileの確認用で、createのprofileへそのままコピーしません。配備済みcreateは公開selectorを受け取ります。
+  </p>
+  <p>
+    同じホスト上のConsumerはaudienceにsame-hostを指定します。別端末のConsumerはcatalogにあるsaaa-desktopを使い、その端末から到達できるLARMのLANアドレスへcontrol
+    APIを送ります。別端末で127.0.0.1を使うと別端末自身を指します。clientは利用者識別用の文字列で、権限やプロファイル選択を代替しません。
+  </p>
+  <p>
+    Provider名とprotocolは毎回catalogから取得します。providersを省略すると選んだProfileの全Providerが対象になるため、用途に必要なsubsetを明示する方針を推奨します。ProfileのservicesはConnectionのprovidersとは別契約です。
+  </p>
+  <h2>標準の6ステップ</h2>
+  <table>
+    <caption>
+      接続から解放までの6ステップ
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">ステップ</th>
+        <th scope="col">API</th>
+        <th scope="col">成功条件とConsumerの処理</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1 選択を確認</td>
+        <td>GET /v3/agent-profiles?profile=contextStill</td>
+        <td>requestedProfileと具体Profile、Provider名、protocol、catalogRevisionを確認</td>
+      </tr>
+      <tr>
+        <td>2 Connectionを作成</td>
+        <td>POST /v1/agent-connections</td>
+        <td>201または202。id、allocationId、bootEpoch、profile、agentProfile、expiresAtを保持</td>
+      </tr>
+      <tr>
+        <td>3 readyを待つ</td>
+        <td>GET /v1/agent-connections/{id}</td>
+        <td>statusがreadyかつ必要なProviderがclaimable。pendingとprobingの間は待つ</td>
+      </tr>
+      <tr>
+        <td>4 接続情報を取得</td>
+        <td>POST /v1/agent-connections/{id}/claim</td>
+        <td>200。ProviderごとのURL・model・credentialを一組として受け取る</td>
+      </tr>
+      <tr>
+        <td>5 実処理を送る</td>
+        <td>claimのbaseUrlとprotocolに対応するendpoint</td>
+        <td>claimのmodelと専用Bearerで送信し、成功を確認</td>
+      </tr>
+      <tr>
+        <td>6 解放</td>
+        <td>DELETE /v1/agent-connections/{id}</td>
+        <td>204。SDKとトークンを破棄</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    201でもbodyのstatusとProvider状態を確認します。202は受付済みで、利用可能という意味ではありません。GET
+    statusのHTTP
+    200もreadinessの証明にはならず、bodyを判定します。failed、released、expiredは待機を終了します。
+  </p>
+  <p>
+    待機は応答のRetry-Afterがあれば尊重し、readyDeadlineとexpiresAtを超えて無制限に繰り返しません。待機間隔は1秒から最大5秒へのbackoffを共通方針として提案します。createはPrefer:
+    wait=Nを受け付けますが、今回の実装は最大3秒の待機なので、ポーリングを省けるとは限りません。
+  </p>
+  <p>
+    初回のAPI呼び出し数は、discovery 1回、create 1回、status 0回以上、claim 1回、処理1回、release
+    1回で、合計5回以上です。catalogを有効なrevisionとともに再利用する場合はdiscoveryを省けます。health確認を別に行う場合や複数の実処理を送る場合は、その分だけ増えます。
+  </p>
+  <h2>ContextStillの具体的な要求</h2>
+  <p>
+    以下はHTTP要求のテンプレートです。山括弧の値は応答や実環境の値に置き換えます。control
+    APIの認証は配備の方針に従います。長期control BearerとclaimされたProvider Bearerを混同しません。
+  </p>
+  <pre><code>GET /v3/agent-profiles?profile=contextStill
+
+POST /v1/agent-connections
+Content-Type: application/json
+Idempotency-Key: &lt;この接続作成を識別する一意キー&gt;
+
+{
+  &quot;profile&quot;: &quot;contextStill&quot;,
+  &quot;expectedCatalogRevision&quot;: &quot;&lt;discoveryのcatalogRevision&gt;&quot;,
+  &quot;audience&quot;: &quot;same-host&quot;,
+  &quot;client&quot;: &quot;contextstill&quot;,
+  &quot;providers&quot;: [&quot;llm&quot;],
+  &quot;ttlSeconds&quot;: 900,
+  &quot;allowFallback&quot;: false,
+  &quot;deploymentPolicy&quot;: &quot;existing-only&quot;
+}</code></pre>
+  <p>
+    expectedCatalogRevisionを使って選択時と作成時のcatalogの不一致を検出します。変更が検出されたらdiscoveryからやり直します。同じcreateの通信再試行は同じIdempotency-Keyとbodyを使い、プロファイルやbodyを変える場合は新しいキーを使います。
+  </p>
+  <p>
+    existing-onlyは既存の配備済みruntimeを使う方針で、プロセスが既に起動中であることを要求する指定ではありません。LARMが必要に応じて起動します。allow-listedは管理トークンを必要とする別操作なので、通常のConsumer接続には使いません。
+  </p>
+  <pre><code>GET /v1/agent-connections/&lt;id&gt;
+
+POST /v1/agent-connections/&lt;id&gt;/claim
+Content-Type: application/json
+
+{
+  &quot;format&quot;: &quot;openai-provider-v1&quot;
+}</code></pre>
+  <p>
+    claimにはIdempotency-Keyを付けません。返されたprovidersからnameがllmのものを取得し、configuration.fields.baseURL、configuration.fields.model、credential.tokenをSDKへ適用します。secretFields.apiKeyの文字列credential.tokenは参照パスであり、APIキーそのものではありません。
+  </p>
+  <pre><code>provider = claim.providers.find(name == &quot;llm&quot;)
+SDK.baseURL = provider.configuration.fields.baseURL
+SDK.model = provider.configuration.fields.model
+SDK.apiKey = provider.credential.token
+
+POST provider.baseUrl + &quot;/chat/completions&quot;
+Authorization: Bearer provider.credential.token
+body.model = provider.model</code></pre>
+  <p>
+    今回のcontextStill
+    discoveryではllmの公開modelはqwen-agent-workerです。実際に使う値はclaim応答から読みます。coding-defaultをハードコードして送る、既存のSDKを使い回して古いmodelやAPIキーを残す、claim後も固定のバックエンドポートへ直接送る、という実装はこの共通手順を満たしません。通常のチャット推論ではallocationヘッダーはProvider
+    tokenから解決され、追加する場合はそのConnectionのallocationIdと一致させます。context
+    viewなど他の契約で必要なヘッダーは別途適用します。
+  </p>
+  <h2>SAAAへ適用する差分</h2>
+  <p>
+    SAAAは同じ6ステップを使い、discoveryとcreateのprofileをSAAAへ変更します。LLMだけの用途はproviders:
+    [&quot;llm&quot;]、会話全体では必要なProviderをまとめて指定します。
+  </p>
+  <p>
+    claimには混在したProvider descriptorが返り得ます。LLMとbackchannelはChat Completions、ASRはAudio
+    Transcriptions、TTSはAudio Speechを使います。embeddingはlarm.embedding.v1で、OpenAIのembeddings
+    APIと同一とは扱いません。configuration.kindとprotocolを確認して、それぞれ対応するクライアントを構築します。共通claimはformat:
+    &quot;openai-provider-v1&quot;で混在descriptorを返す実装です。
+  </p>
+  <p>
+    現行SAAAには300秒のforeground idle
+    releaseが設定されています。health確認とrenewだけで会話の利用中とみなされるわけではありません。待機中にConnectionが解放されたら、次の会話で新しいConnectionを作ります。解放がモデル停止につながるかは他のConnectionやruntimeのresident
+    policyによります。
+  </p>
+  <h2>長時間利用と再起動後の復旧</h2>
+  <p>
+    長時間使う場合はPOST
+    /v1/agent-connections/{id}/renewにttlSecondsを送り、その更新操作固有のIdempotency-Keyを付けます。更新後は再claimしてSDKのcredentialを交換します。renewはgenerationを変えるため、古いProvider
+    tokenは使い続けられません。
+  </p>
+  <pre><code>POST /v1/agent-connections/&lt;id&gt;/renew
+Content-Type: application/json
+Idempotency-Key: &lt;この更新操作の一意キー&gt;
+
+{ &quot;ttlSeconds&quot;: 900 }</code></pre>
+  <p>
+    共通方針として、残りTTLが3分の1になる前に更新を開始し、新規送信とtoken交換を直列化します。このタイミングはConsumer側の提案で、LARMの必須値ではありません。更新後にclaimが失敗したら新規処理を止め、readyを確認して再claimします。
+  </p>
+  <p>
+    LARMの再起動でbootEpochが変わると以前のConnectionとtokenは再利用できません。401、connection_not_found、connection_idle_released、expiredなどを検出したら、古いSDKを破棄してdiscoveryから作り直します。非冪等な生成を通信障害で自動再送する場合は、二重実行がないと確認してからにします。
+  </p>
+  <h2>エラー時の共通判断</h2>
+  <table>
+    <caption>
+      エラー時の対応
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">状況</th>
+        <th scope="col">対応</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>createの400</td>
+        <td>profileやProvider名、body、必須Idempotency-Keyを確認</td>
+      </tr>
+      <tr>
+        <td>401または403</td>
+        <td>control認証とProvider認証、所有者、scopeを確認。既定モデルへ黙って迂回しない</td>
+      </tr>
+      <tr>
+        <td>202またはconnection_not_ready</td>
+        <td>statusを待ち、claimを取り直す</td>
+      </tr>
+      <tr>
+        <td>catalogやConnection契約の変更</td>
+        <td>discoveryから再作成</td>
+      </tr>
+      <tr>
+        <td>期限切れ、idle release、再起動後の旧ID</td>
+        <td>新規Connectionを作成</td>
+      </tr>
+      <tr>
+        <td>503や容量待ち</td>
+        <td>応答の理由と待機期限を確認。ready前に推論を開始しない</td>
+      </tr>
+      <tr>
+        <td>idempotency_conflict</td>
+        <td>同じキーへ異なるbodyを送っていないか確認</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    allowFallback:
+    falseを標準にし、利用者の同意なくcoding-defaultや別profileへ切り替えません。待機や再接続の失敗は画面にも表示し、要求profileと実際のmodelを区別します。
+  </p>
+  <h2>仕様を一元化する実装案</h2>
+  <p>
+    共通Connection管理器にdiscovery、create、待機、claim、renewと再claim、release、再起動復旧をまとめます。アプリ側はprofile、audience、必要なProvider、TTLと用途を渡し、管理器からprotocol別のクライアントを受け取ります。
+  </p>
+  <p>
+    管理状態は未接続、作成中、準備待ち、claim中、利用可能、更新中、再接続中、終了、失敗とします。利用可能になる前に実処理を送れない構造にし、profile変更時は新しいConnectionを作ってSDKを差し替え、古いConnectionを解放します。
+  </p>
+  <p>
+    Consumerのtelemetryにはtask ID、要求profile、具体agentProfile、Connection
+    ID、allocationId、bootEpoch、catalogRevision、Provider名、公開model、LARM request
+    IDを記録します。LARMの解決runtimeとbackendは管理側ログで照合します。tokenとAPIキーは記録しません。画面のLocal
+    LLM / coding-defaultだけでは、接続選択の正しさを判定できません。
+  </p>
+  <h2>受け入れ確認</h2>
+  <ol>
+    <li>contextStillのdiscoveryとcreate応答が一致し、agentProfileが選んだ具体Profileである。</li>
+    <li>claimのllm modelとSDKのmodel、tokenの対象Connectionが一致する。</li>
+    <li>
+      該当タスクとLARM requestを照合し、要求profileからroute、runtime、backendへの経路が一致する。
+    </li>
+    <li>ready前に実処理を送らず、失敗時にcoding-defaultへ黙って切り替えない。</li>
+    <li>renew後に新tokenへ交換し、旧tokenを使い続けない。</li>
+    <li>LARM再起動、TTL切れ、SAAAのidle releaseから再接続できる。</li>
+    <li>終了時にreleaseし、subset指定で不要なProviderを確保しない。</li>
+  </ol>
+  <p>
+    ContextStill側の既定モデル迂回の有無と、SAAAの現在の実装との適合は未確認です。このPageの保存はConsumer修正や実接続試験の完了を意味しません。
+  </p>
+  <h2>根拠</h2>
+  <p>
+    LARMの配備済みソースで確認した場所はpackages/core/src/agent-connection.ts、apps/daemon/src/routes/agent-connections.ts、apps/daemon/src/agent-connection-controller.ts、apps/daemon/src/app-gateway-ingress.ts、config/local-node/agent-connections.yaml、config/local-node/routes.yamlです。公開discovery
+    APIも同日に読み取りました。モデルの起動を伴うConnection作成試験は実施していません。
+  </p>
+  <p>
+    関連する詳細契約は<a href="./agent-provider-connection-api.html"
+      >Agent Provider Connection API</a
+    >を参照してください。
+  </p>
+</article>

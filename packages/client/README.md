@@ -64,6 +64,14 @@ for await (const event of larm.streamChatCompletion({
 
 ```
 
+ContextStillの標準接続は公開selector `contextStill` を指定し、claim応答の接続情報を使います。
+`contextstill-background` は Ornith 1.5 ROCmFP4の `llm`、Layaの `system-one`、E5の `embedding` を提供します。
+LLMは1プロセスに64K相当のKV枠を4セッション分確保し、LARMも4並列を許可します。
+各要求は入力＋生成で32,768 token以内です。送信前に実tokenizerで全入力を数え、
+4,096 tokenの出力を予約する場合は入力を28,672 token以内にしてください。
+
+以下の固定モデル指定とQwen tier選択は旧consumerの互換経路についての説明です。
+
 ContextStillの背景jobは固定LARM URL、Bearer、`qwen-agent-worker` modelで通常のChat Completionsを使います。
 旧static portやclaim済みURLを永続化しません。Provider取得・loading・busyはjob failure attemptへ加算せず、
 LARMのrelease/config/boot identityが変わった後のcanary成功時だけinfra起因paused jobを一件から再開します。

@@ -18,6 +18,7 @@ export {
   type SystemdBackendOptions,
   type SystemdServiceControl,
 } from "./systemd";
+export { MediaVariantBusyError, MediaVariantManager, type MediaVariant } from "./media-variants";
 export {
   LifecycleError,
   type ProviderInstanceHealth,

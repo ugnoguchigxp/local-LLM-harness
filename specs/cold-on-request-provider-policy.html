@@ -1,0 +1,173 @@
+<article lang="ja">
+  <h1>リクエスト起動型 Provider のライフサイクル方針</h1>
+  <p>
+    低頻度の処理は、LARM の公開 API と制御面を利用可能に保ちながら、実処理を行う Provider を COLD
+    で待機させる。要求が来た時点で Profile と Provider subset から route、runtime、backend
+    を解決し、容量を確保して起動する。待機中の port や systemd unit を Provider
+    の恒久的な識別子にしない。
+  </p>
+  <section id="policy">
+    <h2>対象と既定方針</h2>
+    <p>
+      現行のGemma 4、ASR、TTS、Laya System
+      One、embeddingはWarmで維持する。画像生成と楽曲生成はCOLDで待機し、生成要求時にだけ起動する。
+    </p>
+    <table>
+      <caption>
+        用途別の起動方針と API 応答形態
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">起動方針</th>
+          <th scope="col">応答形態</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">OCR・OpenCV</th>
+          <td>
+            個別の capability と runtime を明示し、初回要求で起動する。軽い CPU 処理は常駐 daemon
+            を必須にしない。
+          </td>
+          <td>短時間なら同期、長時間なら job</td>
+        </tr>
+        <tr>
+          <th scope="row">SAAA の通常経路とは別の LLM</th>
+          <td>
+            明示 route の worker とし、<code>minInstances: 0</code>で待機する。
+          </td>
+          <td>Connection の準備完了後に既存推論 API</td>
+        </tr>
+        <tr>
+          <th scope="row">画像・楽曲生成</th>
+          <td>要求時に variant を起動し、生成終了後の idle TTL で停止する。</td>
+          <td>画像は同期応答と成果物取得、楽曲はjobの受付・状態確認・成果物取得</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      通常・リアルタイム要求に使うRuntimeは、選択されたAgent ProfileとRoute、 Warm
+      policyで決める。追加LLMは明示選択時だけ起動し、 暗黙にSAAAの通常routeを差し替えない。
+    </p>
+  </section>
+  <section id="lifecycle">
+    <h2>要求から停止まで</h2>
+    <ol>
+      <li>
+        要求の capability と明示 route から runtime を決め、優先度・メモリ・swap group を評価する。
+      </li>
+      <li>
+        容量を予約して Provider を起動し、protocol 固有の readiness
+        が通るまで推論先として公開しない。
+      </li>
+      <li>
+        起動待ちが長い場合は job または非同期 Connection の pending
+        状態を返し、状態を確認できるようにする。
+      </li>
+      <li>
+        実行中は request・job・Connection の参照を保持する。client が待機をやめても、明示 cancel
+        または定めた期限までは処理を管理する。
+      </li>
+      <li>最後の参照がなくなってから idle TTL を数え、停止直前に参照数と世代を再確認する。</li>
+    </ol>
+    <p>
+      起動失敗、容量不足、待機期限超過は区別して返す。再試行で同一 job が重複生成されないよう、job
+      型 API は既存の識別子と冪等性境界を使う。生成結果の保持期間は Provider の warm TTL
+      と分離する。
+    </p>
+  </section>
+  <section id="implementation">
+    <h2>現行実装との接続</h2>
+    <p>
+      runtime schema は <code>policy.warm.minInstances: 0</code> と
+      <code>idleTtlSeconds</code> を表現でき、on-demand LLM worker
+      は既にこの方針を使う。 local-node の画像 variant は idle 120 秒、楽曲 variant は 300
+      秒で設定済みである。生成APIは専用のmedia variant
+      managerを通して対象unitを起動し、実行中の参照を保持する。したがって一律の新しい「cold
+      endpoint」種別は追加せず、capability、route、runtime、API の応答形態を用途ごとに定める。
+    </p>
+    <p>
+      OCR と OpenCV は、入力・出力 schema、CPU または GPU
+      の資源見積り、同期上限、cancel、成果物保持を 定義してから登録する。既存の画像・楽曲 variant
+      とは別の workload として容量を評価する。 設定だけで稼働を宣言せず、COLD
+      からの起動、同時要求、cancel、idle 停止を実機で確認する。
+    </p>
+  </section>
+  <section id="world-model">
+    <h2>World Model の背景推論</h2>
+    <p>
+      World Model の関係抽出と因果仮説の候補生成は、SAAA の会話 Provider と独立した低優先度の job
+      として扱う。観測、相関、因果仮説を区別し、根拠を伴わない関係を確定事実へ昇格させない。 出力は
+      SAAA 側の型・scope・source・引用位置・失効条件で検証してから保存する。
+    </p>
+    <p>
+      目標構成では SAAA の会話 LLM を Ornith から Gemma 4 26B-A4B へ切り替え、Ornith
+      の常駐を解除する。 Gemma を一つ Warm 常駐させ、SAAA の前景会話と World Model の背景 job が同じ
+      model instance の別 session を利用する。Gemma runtime の repository 設定は
+      <code>--parallel 3</code>、同時 allocation と request が各 3、
+      <code>minInstances: 1</code> とした。SAAA の session を優先し、背景 job
+      は会話の負荷が高い間は待機・一時停止できるようにする。SAAA の既定 selector 切替と Ornith
+      の常駐解除は、この設定変更には含まれない。
+    </p>
+    <p>
+      三つの session は、SAAA に一つ、World Model などの背景処理に最大二つを与える。SAAA の最大
+      context は 256K、背景 job の通常予算はそれぞれ 64K とする。 この通常配分の合計は 384K
+      であり、現行の 512K KV pool より小さい。手元の llama.cpp は
+      <code>--kv-unified</code> 有効時に各 slot の context 上限を pool
+      全体から求めるため、<code>--parallel 3</code> にしても SAAA の 256K
+      上限は単純に三分割されない。ただし、pool は共有なので三つの prompt
+      を同時に最大長まで使う実機試験を通す。
+    </p>
+    <p>
+      LARM の Provider は単一の Gemma runtime と 512K の共有 KV pool として扱い、 slot を SAAA
+      主処理用と背景用に固定しない。SAAA は各 request の入力と出力予約を数え、 主処理の 256K
+      上限、背景処理の通常 64K、同時処理の合計予算を自分で制御する。 背景処理は空きに応じて 64K
+      を超えてよいが、model の学習時 context 上限と 共有 pool の容量を超えない。LARM の
+      <code>contextWindow.maxTokens</code> は 接続先の上限を示す契約であり、用途別の物理 slot
+      分割ではない。 この方式で共有 pool の合計を SAAA だけで保証する間は、同じ Gemma runtime に
+      独立した consumer の長い request を同時投入しない。別 consumer に開放する場合は、 全 request
+      に共通する pool admission を LARM に追加する。
+    </p>
+    <p>
+      三つの session を有効にするときは LARM の同時 allocation と request の上限も 3 に合わせる。
+      session 数だけでは前景用の一枠は予約できない。同じ SAAA Agent Connection
+      から主処理と背景処理を送る場合、LARM は両者を同じ Provider 利用として扱う。 SAAA
+      が背景処理を同時最大二つに制限し、主処理を優先して背景 job
+      の開始・協調的な中断を制御する。LARM は runtime 全体の同時実行上限、 認証、起動・停止と他
+      consumer との競合を管理する。二つまたは三つの session は同じ GPU
+      計算資源を共有し、独立した推論速度は保証しない。
+    </p>
+    <p>
+      Gemma 26B の現行予約は 48 GB である。Ornith の常駐解除後も、ASR、TTS、embedding、 その他の常駐
+      Provider と動的 worker の容量を含めて admission を確認する。 この切替は LARM の warm policy
+      だけで完結せず、SAAA の既定 Agent Profile、 route、公開 model、readiness と接続試験を同じ
+      release で更新する。
+    </p>
+    <p>
+      モデル選定は、同じ World Model fixture で JSON 妥当率、引用の一致、scope 違反、
+      相関から因果への誤昇格、未知を未知と返す率、SAAA 応答遅延への影響を比較して決める。 背景 job
+      は容量待ち・中断・再開を持ち、SAAA の foreground 開始だけで結果が
+      失われる現行経路とは分けて設計する。
+    </p>
+  </section>
+  <section id="api-startup-policy">
+    <h2>起動方針の API 表示</h2>
+    <p>
+      <code>GET /runtimes</code> と
+      <code>GET /runtimes/:id</code> は各 runtime の
+      <code>startupPolicy.minWarmInstances</code> と
+      <code>idleTtlSeconds</code> を返す。 解決済み Agent Connection の各 Provider
+      にも、固定された binding の runtime から 同じ
+      <code>startupPolicy</code> を返す。値は宣言された Warm 維持方針であり、現在の
+      HOT/COLD 状態や readiness の保証ではない。現在状態は既存の state または Connection readiness
+      で確認する。
+    </p>
+    <p>
+      Agent Profile の provider は route から runtime を解決するため、候補が複数ある場合に profile
+      の静的 metadata へ単一 runtime の起動方針を固定しない。解決済み Connection または runtime
+      catalog の応答に、実際の binding に対応する policy を載せる。 systemd unit 名や現在の port を
+      Provider の永続識別子として公開しない。
+    </p>
+  </section>
+</article>

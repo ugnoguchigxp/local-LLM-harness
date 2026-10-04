@@ -62,7 +62,7 @@ agentProfiles:
         publishModel: false
         readiness: embedding
   saaa-conversation-gemma4-26b-voice:
-    description: Explicit SAAA evaluation preset with Gemma 4 26B-A4B, Laya multilingual System One, Qwen ASR, and VOICEVOX TTS
+    description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, TTS, embedding, and Laya System One
     schedulingPriority: 4000
     idleRelease:
       enabled: true
@@ -94,6 +94,12 @@ agentProfiles:
         publicModel: voicevox-core
         publishModel: false
         readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
       - name: system-one
         capability: decision.system-one
         route: system-one-laya
@@ -259,14 +265,30 @@ agentProfiles:
         publishModel: false
         readiness: embedding
   contextstill-background:
-    description: ContextStill background Qwen 3.8 27B provider
+    description: ContextStill Ornith 1.5 background provider with four 64K slots, Laya, and embedding
     schedulingPriority: 1000
     providers:
       - name: llm
         capability: llm.coding
-        route: llm-agent-worker
-        publicModel: qwen-agent-worker
+        route: llm-contextstill-ornith
+        publicModel: ornith-contextstill
         readiness: llm-inference
+        contextWindow:
+          maxTokens: 32768
+          outputReserveTokens: 4096
+          safetyMarginTokens: 0
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-laya
+        publicModel: laya-multilingual
+        publishModel: false
+        readiness: system-one
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
   contextstill-background-64k:
     description: Explicit ContextStill background tier for requests that fit the 64K budget
     schedulingPriority: 1000
@@ -389,21 +411,23 @@ profileSelectors:
   SAAA-gemma4-26b:
     agentProfile: saaa-conversation-gemma4-26b-voice
   SAAA-w-Image:
-    agentProfile: saaa-conversation-ornith15-image
+    agentProfile: saaa-conversation-gemma4-26b-voice
     services:
       - name: image
         capability: media.image.generate
         protocol: larm.image-generation.v1
         endpoint: /v1/images/generations
         model: qwen-image-2.1
+        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 120 }
   SAAA-w-music:
-    agentProfile: saaa-conversation-ornith15-music
+    agentProfile: saaa-conversation-gemma4-26b-voice
     services:
       - name: music
         capability: media.music.generate
         protocol: larm.music-generation.v1
         endpoint: /v1/music/generations
         model: ace-step-1.5
+        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 300 }
   vulnWorkbench:
     agentProfile: coding-default
   embeddingCanary:

@@ -9,7 +9,7 @@ import {
   allocationPrioritySchema,
   deploymentPolicySchema,
 } from "./api-schema";
-import { providerInstanceSchema } from "./provider-lifecycle";
+import { providerInstanceSchema, providerStartupPolicySchema } from "./provider-lifecycle";
 import {
   runtimeClassSchema,
   runtimeDefinitionSchema,
@@ -41,6 +41,7 @@ export const publicRuntimeSchema = z.object({
   capability: z.array(z.string().min(1).max(128)).min(1).max(64),
   protocol: runtimeProtocolSchema,
   policy: z.object({ class: runtimeClassSchema }).strict(),
+  startupPolicy: providerStartupPolicySchema,
 }).strict();
 
 export const runtimeListSchema = z.object({

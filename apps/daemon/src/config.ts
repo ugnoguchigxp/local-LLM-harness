@@ -59,6 +59,7 @@ export type DaemonConfig = {
   personalStateJournalRoot: string;
   personalStateReceiptTtlMs: number;
   musicProviderEndpoint?: string;
+  imageProviderEndpoint?: string;
   musicProviderApiKey?: string;
   musicArtifactRoot: string;
   musicPollIntervalMs: number;
@@ -249,6 +250,7 @@ export function parseDaemonConfig(
     "/var/lib/larm/personal-state",
   );
   const musicProviderEndpoint = optionalSecret(env.LARM_MUSIC_PROVIDER_ENDPOINT);
+  const imageProviderEndpoint = optionalSecret(env.LARM_IMAGE_PROVIDER_ENDPOINT);
   const musicUpstreamOutputRoot = optionalSecret(env.LARM_MUSIC_UPSTREAM_OUTPUT_ROOT);
   const musicArtifactMaxBytes = numberSetting(
     env,
@@ -280,11 +282,12 @@ export function parseDaemonConfig(
   if (imageArtifactTargetBytes >= imageArtifactMaxBytes) {
     throw new Error("LARM_IMAGE_ARTIFACT_TARGET_BYTES must be less than LARM_IMAGE_ARTIFACT_MAX_BYTES");
   }
-  if (musicProviderEndpoint) {
-    const endpoint = new URL(musicProviderEndpoint);
+  for (const [name, value] of [["LARM_MUSIC_PROVIDER_ENDPOINT", musicProviderEndpoint], ["LARM_IMAGE_PROVIDER_ENDPOINT", imageProviderEndpoint]] as const) {
+    if (!value) continue;
+    const endpoint = new URL(value);
     if (!new Set(["http:", "https:"]).has(endpoint.protocol)
       || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
-      throw new Error("LARM_MUSIC_PROVIDER_ENDPOINT must use http or https without credentials, query, or fragment");
+      throw new Error(`${name} must use http or https without credentials, query, or fragment`);
     }
   }
   if (musicUpstreamOutputRoot && !isAbsolute(musicUpstreamOutputRoot)) {
@@ -466,6 +469,7 @@ export function parseDaemonConfig(
       7 * 24 * 60 * 60,
     ),
     ...(musicProviderEndpoint ? { musicProviderEndpoint } : {}),
+    ...(imageProviderEndpoint ? { imageProviderEndpoint } : {}),
     musicProviderApiKey: optionalSecret(env.LARM_MUSIC_PROVIDER_API_KEY),
     musicArtifactRoot: absolutePathSetting(
       env,

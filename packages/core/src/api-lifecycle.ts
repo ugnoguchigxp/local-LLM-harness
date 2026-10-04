@@ -114,7 +114,7 @@ export function apiOperationPolicy(
     || path.startsWith("/v1/context-forget-operations")) {
     owner = "personal-state";
   } else if (path.startsWith("/v1/music/")) owner = "music";
-  else if (path.startsWith("/v1/image-artifacts")) owner = "image-artifact";
+  else if (path.startsWith("/v1/image-artifacts") || path === "/v1/images/generations") owner = "image-artifact";
   else if (path.startsWith("/v1/artifacts/") || path.startsWith("/v1/artifact-operations/")
     || path.startsWith("/v1/runtime-releases") || path.startsWith("/v1/deployments/")) {
     owner = "release-management";

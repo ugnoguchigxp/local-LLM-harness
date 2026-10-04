@@ -2,8 +2,10 @@
   <h1>local-LLM-harness 設計資料</h1>
 
   <p>
-    このディレクトリは、LARMの設計書、仕様書、実装計画、調査結果をSpec HTMLで管理する正本です。
-    新しい文書はMarkdownではなく、意味構造を持つHTML fragmentとして作成します。
+    このディレクトリは、LARMの個別設計書、仕様書、実装計画、調査結果をSpec HTMLで管理する正本です。
+    製品コンセプトの正本はChatGPT Page「LARMの全体コンセプト」とし、
+    リポジトリ内のconcept.htmlから参照します。 新しい文書はMarkdownではなく、意味構造を持つHTML
+    fragmentとして作成します。
   </p>
 
   <section id="documents" aria-labelledby="document-list">
@@ -20,6 +22,40 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="plan" data-state="proposed" data-domain="consumer-profile-connection-guide">
+          <th scope="row">
+            <a href="./consumer-profile-connection-guide.html">ContextStillとSAAAの共通接続手順</a>
+          </th>
+          <td>
+            配備済みAPIに基づく6段階の接続手順とConsumer共通化案。<small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>consumer-profile-connection-guide</code></small
+            >
+          </td>
+          <td>手順を確認済み。Consumerへの適用と実接続試験は未実施。</td>
+        </tr>
+
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="host-reset-investigation-2026-10-03"
+        >
+          <th scope="row">
+            <a href="./host-reset-investigation-2026-10-03.html"
+              >2026年10月3日 ホスト再起動の調査</a
+            >
+          </th>
+          <td>
+            未正常終了とリセット理由の調査記録。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>host-reset-investigation-2026-10-03</code></small
+            >
+          </td>
+          <td>ソフトウェアによるリセット記録を確認。要求主体と根本原因は未特定。</td>
+        </tr>
+
         <tr
           data-kind="plan"
           data-state="proposed"
@@ -102,16 +138,16 @@
           <td>WP1、WP2、WP5の基盤とmanaged policy移行を実装済み</td>
         </tr>
         <tr data-kind="decision" data-state="current" data-domain="architecture">
-          <th scope="row"><a href="./concept.html">Local AI Provider コンセプト</a></th>
+          <th scope="row"><a href="./concept.html">LARM コンセプト正本への案内</a></th>
           <td>
-            責務境界、運用原則、モデル方針
+            ChatGPT Pageの全体コンセプト正本への案内と個別契約への入口
             <small
               >分類: <code>decision</code> · 状態:
               <code>current</code> · 正本領域:
               <code>architecture</code></small
             >
           </td>
-          <td>現行正本</td>
+          <td>Page正本への案内</td>
         </tr>
         <tr
           data-kind="decision"
@@ -602,6 +638,26 @@
           <td>
             Repository実装、Agent Connection経由の並列・swap・反復Ready acceptance済み。SLO gate前
           </td>
+        </tr>
+        <tr
+          data-kind="contract"
+          data-state="proposed"
+          data-domain="cold-on-request-provider-policy"
+        >
+          <th scope="row">
+            <a href="./cold-on-request-provider-policy.html"
+              >リクエスト起動型 Provider のライフサイクル方針</a
+            >
+          </th>
+          <td>
+            OCR、OpenCV、追加 LLM、画像・楽曲生成の cold 起動と idle 停止
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>cold-on-request-provider-policy</code></small
+            >
+          </td>
+          <td>既存 policy・variant を再利用。OCR と OpenCV の API・runtime は未定義</td>
         </tr>
         <tr
           data-kind="plan"
@@ -1675,10 +1731,11 @@
   </section>
 
   <section id="model-policy" aria-labelledby="current-policy">
-    <h2 id="current-policy">現在のモデル運用前提</h2>
+    <h2 id="current-policy">現在のモデル選択方針</h2>
     <p>
-      Qwen 3.8 27Bを通常処理とリアルタイム処理のResident defaultとします。
-      速度特化モデルは、対象タスクが明示的に要求した場合だけ選択します。
+      既定Runtime、Warm待機数、優先度は、要求されたAgent Profileと検証済みRouteから決めます。 Qwen
+      3.8を含むmodel名だけに特別な既定権を与えません。 現在のmodelとProfileの数はChatGPT
+      Page「LARMのモデルとProfileの現行一覧」で確認します。
     </p>
   </section>
 </article>

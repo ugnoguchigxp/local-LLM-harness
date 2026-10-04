@@ -318,8 +318,8 @@ models:
       - ROCR_VISIBLE_DEVICES=-1
 
   gemma4-26b-conversation:
-    # Evaluation-only provider. Start with plain decoding; MTP remains disabled
-    # until the 26B server path passes correctness and long-session testing.
+    # Shared SAAA conversation and background provider. Keep one warm instance;
+    # unified KV lets three slots share the 512K context pool.
     ttl: 0
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
@@ -329,7 +329,7 @@ models:
       --fit off
       --flash-attn on
       --ctx-size 524288
-      --parallel 2
+      --parallel 3
       --batch-size 2048
       --ubatch-size 512
       --threads 16
@@ -503,6 +503,48 @@ models:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
 
+  ornith-contextstill:
+    cmd: >
+      /srv/ai/apps/q38rocm/engine/bin/llama-server
+      -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --flash-attn on
+      --ctx-size 262144
+      --parallel 4
+      --batch-size 2048
+      --ubatch-size 2048
+      --threads 16
+      --poll 100
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      --no-mmap
+      --cont-batching
+      --kv-unified
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning auto
+      --temp 0.6
+      --top-p 0.95
+      --top-k 20
+      --jinja
+      --context-shift
+      --spec-type draft-mtp
+      --spec-draft-n-max 4
+      --spec-draft-p-min 0.6
+      -ctxcp 0
+      -cram 0
+      --no-cache-prompt
+      --no-cache-idle-slots
+      --metrics
+      --no-webui
+    aliases:
+      - ornith-1.5-contextstill
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
   ornith15-35b-agent:
     cmd: >
       /srv/ai/apps/q38rocm/engine/bin/llama-server
@@ -572,6 +614,7 @@ groups:
     swap: true
     exclusive: false
     members:
+      - ornith-contextstill
       - qwen-agent
       - qwen-agent-efficientthink
       - qwen-fast

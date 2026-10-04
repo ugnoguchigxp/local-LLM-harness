@@ -1,5 +1,5 @@
 version: 1
-baseProfile: saaa-conversation-ornith15
+baseProfile: saaa-conversation-gemma4-26b-voice
 groups:
   accelerator-media-heavy:
     exclusive: true

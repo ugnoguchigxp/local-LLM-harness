@@ -7,6 +7,7 @@ import {
   findDefaultRoute,
   planTransition,
   prepareRequestSchema,
+  providerStartupPolicy,
   selectRoute,
   type Allocation,
   type AllocationRequest,
@@ -311,6 +312,11 @@ export class ControlPlane {
   getAllocation(id: string): Allocation | undefined {
     this.expireDueAllocations();
     return this.allocations.get(id);
+  }
+
+  getRuntimeStartupPolicy(runtimeId: string) {
+    const runtime = this.registry.runtimes.find((item) => item.id === runtimeId);
+    return runtime ? providerStartupPolicy(runtime) : undefined;
   }
 
   getAllocationSignal(id: string): AbortSignal | undefined {

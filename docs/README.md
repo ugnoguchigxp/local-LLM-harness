@@ -4,7 +4,7 @@
 
 | Document | Purpose |
 | --- | --- |
-| [../specs/concept.html](../specs/concept.html) | Providerの最新コンセプト、責務、過去計画の分類 |
+| [LARMの全体コンセプト](https://chatgpt.com/space/page_9fab9c53bce8819181c9c8256a3b303a) | LARMの製品コンセプトと責務境界の正本 |
 | [../specs/api.html](../specs/api.html) | 実装済みv1 API contract |
 | [../specs/implementation-plan.html](../specs/implementation-plan.html) | 初期実装の計画とコード完了記録 |
 | [../specs/next-implementation-plan.html](../specs/next-implementation-plan.html) | Milestone 15–21の履歴計画 |

@@ -40,15 +40,15 @@
     </table>
     <p>
       <q>resident</q>はLARMの制御外という意味ではなく、warm
-      policyが最低一instanceの維持を要求するという意味に 限定する。Qwen 3.8 27Bはresident
-      defaultとしてwarmに保てるが、drain、revision切替、障害復旧ではLARMが
+      policyが最低一instanceの維持を要求するという意味に限定する。対象modelは Agent
+      ProfileとRouteの解決結果で決まり、drain、revision切替、障害復旧ではLARMが
       明示的に停止・再生成できなければならない。
     </p>
     <p>
-      local-nodeではsystemdでホストするQwen、ASR、TTS、Embedding
-      daemonをすべて<code>minInstances: 1</code>でWarm待機させる。llama-swap
-      supervisorも常駐するが、VRAMを共有する内部model entryはProfile参照に応じて
-      load／unloadし、全modelの同時ロードをWarm待機とは定義しない。
+      local-nodeの各RuntimeのWarm待機数は検証済みcatalogの
+      <code>minInstances</code>で決まる。Provider supervisorが常駐していても、
+      VRAMを共有する内部model entryはProfile参照に応じてload／unloadし、
+      全modelの同時ロードをWarm待機とは定義しない。
     </p>
   </section>
 
@@ -176,7 +176,8 @@
       <li>使用中revisionは停止せず、新規要求だけを新revisionへ送る。</li>
       <li>全protocolでWarm daemonの再利用、共有、release、障害後の自動再生成をE2E検証する。</li>
       <li>
-        Qwen resident defaultはwarm policyで維持しつつ、LARMによるdrainとrevision切替が可能である。
+        Residentに選ばれたRuntimeはwarm
+        policyで維持しつつ、LARMによるdrainとrevision切替が可能である。
       </li>
       <li>通常運用手順に手動<code>systemctl restart</code>を含めない。</li>
     </ul>

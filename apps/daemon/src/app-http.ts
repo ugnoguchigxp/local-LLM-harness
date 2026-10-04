@@ -1,4 +1,4 @@
-import type { Allocation, AllocationRequest, ClusterState, Registry } from "@larm/core";
+import { providerStartupPolicy, type Allocation, type AllocationRequest, type ClusterState, type Registry } from "@larm/core";
 import { createHash } from "node:crypto";
 import { readBodyLimited, RequestBodyError } from "./http-body";
 
@@ -23,6 +23,7 @@ export function publicRuntime(runtime: Registry["runtimes"][number]) {
     capability: runtime.capability,
     protocol: runtime.protocol,
     policy: { class: runtime.policy.class },
+    startupPolicy: providerStartupPolicy(runtime),
   };
 }
 

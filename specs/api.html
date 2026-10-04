@@ -130,12 +130,16 @@
         <tr>
           <td>GET</td>
           <th scope="row"><code>/runtimes</code></th>
-          <td>capability中心の公開Runtime一覧</td>
+          <td>
+            capabilityと宣言済み<code>startupPolicy</code>の公開Runtime一覧
+          </td>
         </tr>
         <tr>
           <td>GET</td>
           <th scope="row"><code>/runtimes/:id</code></th>
-          <td>capability中心の公開Runtime定義</td>
+          <td>
+            capabilityと宣言済み<code>startupPolicy</code>の公開Runtime定義
+          </td>
         </tr>
         <tr>
           <td>GET</td>
@@ -228,6 +232,11 @@
           <td>GET</td>
           <th scope="row"><code>/v1/image-artifacts</code></th>
           <td>生成画像一覧と20GB pool使用量</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <th scope="row"><code>/v1/images/generations</code></th>
+          <td>画像Providerを要求時に起動して生成し、artifact情報を返す</td>
         </tr>
         <tr>
           <td>GET</td>
@@ -490,7 +499,8 @@
     <h2>Route選択保証</h2>
     <ul>
       <li>
-        <code>llm-default</code>はQwen 3.8 27B Residentを第一候補とする。
+        <code>llm-default</code>の候補は検証済みRoute catalogで決める。
+        model名を固定の優先規則にしない。
       </li>
       <li>
         <code>llm-speed</code

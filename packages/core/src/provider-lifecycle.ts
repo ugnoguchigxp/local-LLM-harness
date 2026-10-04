@@ -128,3 +128,18 @@ export function managedWarmPolicy(runtime: RuntimeDefinition): {
     idleTtlSeconds: runtime.policy.warm?.idleTtlSeconds ?? 60,
   };
 }
+
+export const providerStartupPolicySchema = z.object({
+  minWarmInstances: z.number().int().min(0).max(1),
+  idleTtlSeconds: z.number().int().min(0).max(86_400),
+}).strict();
+
+export type ProviderStartupPolicy = z.infer<typeof providerStartupPolicySchema>;
+
+export function providerStartupPolicy(runtime: RuntimeDefinition): ProviderStartupPolicy {
+  const policy = managedWarmPolicy(runtime);
+  return {
+    minWarmInstances: policy.minInstances,
+    idleTtlSeconds: policy.idleTtlSeconds,
+  };
+}

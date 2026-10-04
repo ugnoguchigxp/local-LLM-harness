@@ -2,11 +2,14 @@ export { LARM_VERSION } from "./version";
 export {
   compileProviderRevision,
   managedWarmPolicy,
+  providerStartupPolicy,
+  providerStartupPolicySchema,
   providerInstanceId,
   providerInstanceSchema,
   providerRevisionSchema,
   type ProviderInstance,
   type ProviderRevision,
+  type ProviderStartupPolicy,
 } from "./provider-lifecycle";
 export * from "./personal-state";
 export {

@@ -11,6 +11,7 @@ import { musicArtifactMetadataSchema } from "@larm/core";
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { MusicArtifactRetention } from "./music-artifact-retention";
+import type { MediaVariantManager } from "@larm/backends";
 
 type FetchLike = typeof fetch;
 
@@ -265,6 +266,33 @@ export class AceStepMusicProvider implements MusicProvider {
       throw new MusicProviderError("invalid_upstream_response", `ACE-Step ${path} returned an error`);
     }
     return value;
+  }
+}
+
+export class OnDemandMusicProvider implements MusicProvider {
+  readonly id: string;
+  readonly capabilities: MusicProviderCapabilities;
+
+  constructor(private readonly upstream: MusicProvider, private readonly variants: MediaVariantManager) {
+    this.id = upstream.id;
+    this.capabilities = upstream.capabilities;
+  }
+
+  async load(): Promise<void> {}
+  async unload(): Promise<void> {}
+  async health(): Promise<{ available: boolean; reason?: string }> {
+    return { available: true };
+  }
+  async cancel(jobId: string): Promise<void> {
+    await this.upstream.cancel?.(jobId);
+  }
+  async generate(request: MusicGenerationRequest, context: Parameters<MusicProvider["generate"]>[1]) {
+    const release = await this.variants.acquire("music");
+    try {
+      return await this.upstream.generate(request, context);
+    } finally {
+      release();
+    }
   }
 }
 

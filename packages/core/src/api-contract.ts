@@ -92,6 +92,8 @@ import {
   imageArtifactDeleteSchema,
   imageArtifactListSchema,
   imageArtifactSchema,
+  imageGenerationRequestSchema,
+  imageGenerationResponseSchema,
 } from "./image-artifact";
 import {
   clusterStateSchema,
@@ -281,6 +283,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     MusicFavorite: jsonSchema(musicFavoriteSchema),
     MusicFavoriteList: jsonSchema(musicFavoriteListSchema),
     ImageArtifact: jsonSchema(imageArtifactSchema),
+    ImageGenerationRequest: jsonSchema(imageGenerationRequestSchema),
+    ImageGenerationResponse: jsonSchema(imageGenerationResponseSchema),
     ImageArtifactList: jsonSchema(imageArtifactListSchema),
     ImageArtifactDelete: jsonSchema(imageArtifactDeleteSchema),
     OpenAiModelList: jsonSchema(openAiModelListSchema),
