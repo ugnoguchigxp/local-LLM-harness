@@ -86,6 +86,15 @@
   </p>
   <h2>今回の挙動から分かること</h2>
   <p>
+    レビュー修正版の配備release 8cd43db935dbd0f52d17d17c57fb069be7643542は
+    contract_verifiedを通過した。全体検査でアプリ・パッケージ653テスト、tooling 24テスト、
+    deployment 53テストとshell検査がすべて成功した。実APIの再検証では3 Providerの実処理、
+    同時処理数4、llmのみのsubset接続でJSONとSSE、release後のtoken失効を確認した。
+    subset検証中は別Consumerも処理を継続していたが、検証用Connectionは正常に解放された。
+    証跡は<code>/srv/ai/logs/contextstill-review-live-20261004.json</code>に保存した。
+    メディアの実機生成と長い入力での4並列負荷試験は、このレビューでは実施していない。
+  </p>
+  <p>
     コードレビューで、起動検査のProvider名固定と確認モデルのログ不一致、Embedding追加前の
     Laya検証スクリプト、メディア切替失敗後の稼働状態再確認と終了・キャンセル時の競合を修正した。
     メディア切替は旧variantの停止後に容量を判定し、起動失敗・タイムアウトでは要求したvariantを停止する。
