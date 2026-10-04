@@ -593,6 +593,7 @@ groups:
     swap: true
     exclusive: false
     members:
+      - ornith-contextstill
       - gemma4-26b-conversation
       - gemma4-conversation
       - ornith15-conversation
@@ -614,7 +615,6 @@ groups:
     swap: true
     exclusive: false
     members:
-      - ornith-contextstill
       - qwen-agent
       - qwen-agent-efficientthink
       - qwen-fast

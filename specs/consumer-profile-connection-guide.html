@@ -59,6 +59,13 @@
     contextStill
     selectorのfallbackには含めない。SAAAとの優先度・排他方針は既存のConnection契約に従う。
   </p>
+  <p>
+    2026年10月4日の実機配備調査では、旧モデル名を必須とする起動検査と、会話用Gemmaと
+    ContextStill用Ornithの同時warmによる予約メモリ超過を確認した。起動検査はdefault Agent Profileの
+    公開LLMからモデルを選ぶ。ContextStill用OrnithはminInstancesを0にして要求時に起動し、
+    conversation-llm-slotで利用の終わった会話用モデルと入れ替える。
+    再配備と実機Provider確認の結果は、成功後にこの文書へ記録する。
+  </p>
   <h2>今回の挙動から分かること</h2>
   <p>
     ContextStillの画面にはLocal LLM /

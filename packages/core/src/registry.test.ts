@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { admitRuntimes } from "./admission";
+import type { ClusterState } from "./schema";
 import { parse as parseYaml } from "yaml";
 import {
   loadRegistry,
@@ -623,6 +625,7 @@ test("ContextStill resolves one ROCmFP4 backend with capacity for four 64K sessi
   const runtime = registry.runtimes.find((runtime) => runtime.id === "ornith-contextstill");
   expect(runtime).toMatchObject({
     artifacts: ["ornith15-35b-speed"],
+    policy: { warm: { minInstances: 0 }, swapGroup: "conversation-llm-slot" },
     resources: { maxConcurrentAllocations: 4, maxConcurrentRequests: 4 },
     deployment: { modelId: "ornith-contextstill" },
   });
@@ -635,4 +638,27 @@ test("ContextStill resolves one ROCmFP4 backend with capacity for four 64K sessi
   expect(command).toContain("--cache-type-k q8_0");
   expect(command).toContain("--cache-type-v q8_0");
   expect(command).toContain("--spec-type draft-mtp");
+});
+
+test("production warm floor admits startup and replaces idle conversation memory for ContextStill", () => {
+  const registry = loadRegistry(repoConfig);
+  const observedAt = "2026-10-04T09:00:00.000Z";
+  const state: ClusterState = {
+    generatedAt: observedAt,
+    node: { ...registry.nodes[0]!, online: true },
+    runtimes: registry.runtimes.map((runtime) => ({
+      id: runtime.id,
+      status: runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0 ? "HOT" : "COLD",
+      class: runtime.policy.class, capability: runtime.capability,
+      node: runtime.node, backend: runtime.backend,
+      endpoint: runtime.deployment.endpoint, observedAt,
+    })),
+  };
+  expect(admitRuntimes({ registry, state, allocations: [], candidateRuntimeIds: ["ornith-general"] }).ok).toBe(true);
+  const context = admitRuntimes({
+    registry, state, allocations: [],
+    candidateRuntimeIds: ["ornith-contextstill", "laya-system-one", "multilingual-e5-small"],
+  });
+  expect(context.ok).toBe(true);
+  expect(context.nodes[0]?.reclaimableMemoryGB).toBe(48);
 });
