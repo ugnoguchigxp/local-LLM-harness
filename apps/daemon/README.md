@@ -67,7 +67,7 @@ bun run dev
 | `LARM_MANAGEMENT_TOKEN` | 未設定 | artifact、release、catalog管理用の別credential |
 | `LARM_CONNECTION_SIGNING_KEY` | 未設定 | Agent Provider短期token用の32-byte unpadded base64url鍵 |
 | `LARM_CONNECTION_READY_TIMEOUT_SECONDS` | `300` | Connection初回semantic readinessの上限 |
-| `LARM_REQUIRED_CHAT_MODEL` | `qwen-agent-worker` | 起動時にlistener経由の実chatで受付を検証する公開model |
+| `LARM_STARTUP_PROBE_CHAT_MODEL` | default Agent Profileの公開LLM | 起動時にlistener経由の実chatで受付を検証する公開model。旧`LARM_REQUIRED_CHAT_MODEL`は使用しない |
 | `LARM_PROVIDER_PROBE_TIMEOUT_SECONDS` | `15` | Provider単位の最小semantic probe上限 |
 | `LARM_TLS_CERT_FILE` / `LARM_TLS_KEY_FILE` | 未設定 | GatewayをHTTPSで提供するための、対で指定する絶対path |
 | `LARM_STARTUP_PROBE_BASE_URL` | listenerから導出 | HTTPS証明書名などに合わせる起動時loopback canary URL |

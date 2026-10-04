@@ -457,7 +457,7 @@ try {
     baseUrl: process.env.LARM_STARTUP_PROBE_BASE_URL
       ?? `${config.tlsCertFile ? "https" : "http"}://${probeHost}:${server.port}`,
     apiToken: config.apiToken,
-    model: process.env.LARM_REQUIRED_CHAT_MODEL ?? startupModel,
+    model: startupModel,
     probeModel: process.env.LARM_STARTUP_PROBE_CHAT_MODEL ?? startupModel,
     startupProbeToken,
     timeoutMs: config.connectionReadyTimeoutMs,

@@ -120,8 +120,11 @@ grep -F "/var/lib/larm/provider-config" \
   "${test_root}/etc/systemd/system/larm-release-activator.service" >/dev/null
 grep -F "Environment=LARM_CONNECTION_READY_TIMEOUT_SECONDS=300" \
   "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
-grep -F "Environment=LARM_REQUIRED_CHAT_MODEL=qwen-agent-worker" \
-  "${test_root}/etc/systemd/system/larm-daemon.service" >/dev/null
+if grep -Fq "LARM_REQUIRED_CHAT_MODEL" \
+  "${test_root}/etc/systemd/system/larm-daemon.service"; then
+  echo "startup must select a model from the default Agent Profile" >&2
+  exit 1
+fi
 grep -F "ExecStart=/home/ugnoguchi/.bun/bin/bun run /srv/ai/apps/larm-current/apps/daemon/src/inference-audit-cli.ts prune" \
   "${test_root}/etc/systemd/system/larm-inference-audit-prune.service" >/dev/null
 if grep -Fq "bun run inference:audit" \
