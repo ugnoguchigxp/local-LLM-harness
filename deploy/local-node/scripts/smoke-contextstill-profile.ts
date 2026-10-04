@@ -3,20 +3,25 @@ import {
   inspectOpenAiChatCompletionJson,
 } from "../../../packages/core/src/index";
 import { LarmClient } from "../../../packages/client/src/index";
-import { runAgentHttpSmoke } from "./smoke-agent-http";
+import { runAgentHttpSmoke, type AgentHttpSmokeFetch } from "./smoke-agent-http";
 
 export async function runContextStillSmoke(options: {
   baseUrl: string;
   apiToken: string;
   expectedReleaseCommit: string;
+  fetch?: AgentHttpSmokeFetch;
 }) {
   if (!/^[a-f0-9]{40}$/.test(options.expectedReleaseCommit)) {
     throw new Error("expectedReleaseCommit must be a full lowercase Git commit");
   }
   const client = new LarmClient({ ...options, timeoutMs: 300_000 });
+  const fetchImpl = options.fetch ?? fetch;
   const health = await client.getHealth();
   if (!health.ready || health.releaseCommit !== options.expectedReleaseCommit) {
     throw new Error("release identity/readiness mismatch");
+  }
+  if ((await client.getServiceActivity()).state !== "idle") {
+    throw new Error("LARM must be idle before the ContextStill canary");
   }
   const catalog = await client.listAgentProfilesV3("contextStill");
   const profile = catalog.profiles.find((profile) => profile.id === "contextstill-background");
@@ -48,8 +53,8 @@ export async function runContextStillSmoke(options: {
       }
     }
     if (llm.model !== "ornith-contextstill") throw new Error("unexpected ContextStill LLM model");
-    const providerHealth = async (provider: typeof claim.providers[number], signal?: AbortSignal) => {
-      const response = await fetch(provider.health.url, {
+    const providerHealth = async (provider: typeof claim.providers[number], signal?: AbortSignal, requireAccepting = true) => {
+      const response = await fetchImpl(provider.health.url, {
         headers: { authorization: `Bearer ${provider.credential.token}` },
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5_000)]) : AbortSignal.timeout(5_000),
       });
@@ -59,7 +64,7 @@ export async function runContextStillSmoke(options: {
       }
       const value = agentProviderHealthSchema.parse(await response.json());
       if (value.name !== provider.name || value.capability !== provider.capability
-        || !value.ready || !value.acceptingRequests || !value.probe?.validated
+        || !value.ready || (requireAccepting && !value.acceptingRequests) || !value.probe?.validated
         || value.probe.protocol !== provider.protocol) throw new Error(`Provider ${provider.name} is not ready`);
       return value;
     };
@@ -85,15 +90,17 @@ export async function runContextStillSmoke(options: {
     const sampling = new AbortController();
     let samplingError: unknown;
     const sampler = (async () => {
-      while (!sampling.signal.aborted) {
-        const value = await providerHealth(llm, sampling.signal);
+      // Once four slots are observed, further semantic probes cannot add
+      // evidence and may expire while all slots are occupied by generation.
+      while (!sampling.signal.aborted && maxActiveRequests < 4) {
+        const value = await providerHealth(llm, sampling.signal, false);
         maxActiveRequests = Math.max(maxActiveRequests, value.capacity?.activeRequests ?? 0);
         await Bun.sleep(100);
       }
     })().catch((error) => { if (!sampling.signal.aborted) samplingError = error; });
     try {
       const results = await Promise.allSettled(Array.from({ length: 4 }, async (_, i) => {
-        const response = await fetch(`${llm.baseUrl}/chat/completions`, {
+        const response = await fetchImpl(`${llm.baseUrl}/chat/completions`, {
           method: "POST", headers: { authorization: `Bearer ${llm.credential.token}`, "content-type": "application/json" },
           body: JSON.stringify({ model: llm.model,
             messages: [{ role: "user", content: `図書館の利用方法を日本語で5項目で説明してください。試験番号${i + 1}。` }],
@@ -119,7 +126,7 @@ export async function runContextStillSmoke(options: {
     if (maxActiveRequests !== 4) throw new Error(`expected four simultaneous requests; observed ${maxActiveRequests}`);
     await client.releaseAgentConnection(ready.id);
     released = true;
-    const revoked = await fetch(laya.endpoint, {
+    const revoked = await fetchImpl(laya.endpoint, {
       method: "POST", headers: { authorization: `Bearer ${laya.credential.token}`, "content-type": "application/json" },
       body: JSON.stringify({ model: laya.model, state: "x", questions: { q: { type: "noul", instructions: "test" } } }),
       signal: AbortSignal.timeout(5_000),
@@ -139,6 +146,9 @@ export async function runContextStillSmoke(options: {
   const subset = await runAgentHttpSmoke({
     ...options, agentProfile: "contextstill-background", profile: "contextStill", audience: "same-host",
     client: "contextstill-subset-live-smoke", providers: ["llm"], expectedModel: "ornith-contextstill", timeoutMs: 300_000,
+    // Another consumer may connect after the initial idle snapshot. The
+    // subset check verifies its own release and credential revocation.
+    requireIdleBeforeCreate: false, requireIdleAfterRelease: false,
   });
   return { ok: true, releaseCommit: health.releaseCommit, configRevision: health.configRevision,
     providers: names, maxActiveRequests, layaValidated: true, embeddingValidated: true,

@@ -11,7 +11,7 @@ printf '%s\n' "$*" >>"${LARM_VARIANT_TEST_ROOT}/calls"
 case "$1" in
   is-active) [[ "${LARM_VARIANT_TEST_HEALTHY:-0}" == 1 ]] ;;
   stop) [[ "${LARM_VARIANT_TEST_STOP_FAIL:-0}" == 0 ]]; touch "${LARM_VARIANT_TEST_ROOT}/stopped" ;;
-  start) touch "${LARM_VARIANT_TEST_ROOT}/started" ;;
+  start) [[ "${LARM_VARIANT_TEST_START_FAIL:-0}" == 0 ]]; touch "${LARM_VARIANT_TEST_ROOT}/started" ;;
   *) exit 2 ;;
 esac
 SH
@@ -41,6 +41,18 @@ grep -Fx 'stop larm-image-qwen21.service' "${test_root}/calls" >/dev/null
 rm "${test_root}/started" "${test_root}/stopped"
 if LARM_VARIANT_TEST_LOW_MEMORY=1 bash "${script}" start image >/dev/null 2>&1; then exit 1; fi
 test ! -e "${test_root}/started"
+
+# Failed launch and startup deadline both clean up the requested worker.
+: >"${test_root}/calls"
+if LARM_VARIANT_TEST_START_FAIL=1 bash "${script}" start music >/dev/null 2>&1; then exit 1; fi
+test "$(tail -n 1 "${test_root}/calls")" = 'stop larm-music-ace-step.service'
+curl() { SECONDS=$((SECONDS + 301)); return 1; }
+export -f curl
+: >"${test_root}/calls"
+if bash "${script}" start image >/dev/null 2>&1; then exit 1; fi
+test "$(tail -n 1 "${test_root}/calls")" = 'stop larm-image-qwen21.service'
+unset -f curl
+rm -f "${test_root}/started"
 rm "${test_root}/stopped"
 if LARM_VARIANT_TEST_STOP_FAIL=1 bash "${script}" start image >/dev/null 2>&1; then exit 1; fi
 test ! -e "${test_root}/started"

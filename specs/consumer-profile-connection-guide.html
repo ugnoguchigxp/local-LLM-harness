@@ -88,6 +88,7 @@
   <p>
     コードレビューで、起動検査のProvider名固定と確認モデルのログ不一致、Embedding追加前の
     Laya検証スクリプト、メディア切替失敗後の稼働状態再確認と終了・キャンセル時の競合を修正した。
+    メディア切替は旧variantの停止後に容量を判定し、起動失敗・タイムアウトでは要求したvariantを停止する。
     再現する回帰テストを追加した。ContextStillの実API確認は
     <code>bun run smoke:contextstill</code>で再実行でき、3 Providerの実処理、LLM同時処理数4、
     llmだけを指定するsubset接続、JSON/SSE応答とrelease後のtoken失効を検査する。 実行にはcontrol

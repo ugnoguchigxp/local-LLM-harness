@@ -3,7 +3,38 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { musicGenerationRequestSchema } from "@larm/core";
-import { AceStepMusicProvider, MusicGenerationManager } from "./music-manager";
+import { MediaVariantManager } from "@larm/backends";
+import { AceStepMusicProvider, MusicGenerationManager, OnDemandMusicProvider } from "./music-manager";
+
+test("cancelled music startup does not submit generation and releases the media reservation", async () => {
+  const started = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
+  const abort = new AbortController();
+  let submissions = 0;
+  const variants = new MediaVariantManager({
+    script: "unused", idleTtlMs: { image: 60_000, music: 60_000 },
+    run: async () => { started.resolve(); await finish.promise; },
+  });
+  const provider = new OnDemandMusicProvider(new AceStepMusicProvider({ endpoint: "http://music.test",
+    fetchImpl: (async (_input: string | URL | Request, _init?: RequestInit) => {
+      submissions++;
+      return new Response();
+    }) as typeof fetch,
+  }), variants);
+  try {
+    const generation = provider.generate(musicGenerationRequestSchema.parse({ prompt: "test" }), {
+      jobId: "test", signal: abort.signal, phase: () => {},
+    });
+    await started.promise;
+    abort.abort(new Error("cancelled"));
+    finish.resolve();
+    await expect(generation).rejects.toThrow("cancelled");
+    expect(submissions).toBe(0);
+    (await variants.acquire("image"))();
+  } finally {
+    variants.close();
+  }
+});
 
 async function waitForTerminal(manager: MusicGenerationManager, id: string) {
   for (let index = 0; index < 100; index++) {

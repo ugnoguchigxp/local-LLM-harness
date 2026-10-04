@@ -30,11 +30,15 @@ case "${action}" in
       echo "insufficient available memory for ${variant}: need ${required_kib} KiB including safety floor, have ${available_kib} KiB" >&2
       exit 1
     fi
-    systemctl start "${service}"
+    if ! systemctl start "${service}"; then
+      systemctl stop "${service}"
+      exit 1
+    fi
     deadline=$((SECONDS + 300))
     until curl -fsS --max-time 3 "${health}" >/dev/null 2>&1; do
       if (( SECONDS >= deadline )); then
         echo "${variant} variant did not become healthy" >&2
+        systemctl stop "${service}"
         exit 1
       fi
       sleep 1
