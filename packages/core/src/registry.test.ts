@@ -637,7 +637,7 @@ test("ContextStill resolves one ROCmFP4 backend with capacity for four 64K sessi
   expect(command).toContain("--parallel 4");
   expect(command).toContain("--cache-type-k q8_0");
   expect(command).toContain("--cache-type-v q8_0");
-  expect(command).toContain("--spec-type draft-mtp");
+  expect(command).toContain("--spec-type none");
 });
 
 test("production warm floor admits startup and replaces idle conversation memory for ContextStill", () => {

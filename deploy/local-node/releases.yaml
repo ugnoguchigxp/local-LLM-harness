@@ -159,7 +159,7 @@ runtimeReleases:
     runtime: ornith-contextstill
     artifacts:
       - ornith15-35b-speed
-    providerConfigRevision: llama-swap-ornith15-contextstill-64k-n4-demand-v2
+    providerConfigRevision: llama-swap-ornith15-contextstill-64k-n4-demand-plain-v3
     estimatedMemoryGB: 44
     healthPath: /health
     default: true

@@ -28,7 +28,7 @@
     <tbody>
       <tr>
         <th scope="row">llm</th>
-        <td>Ornith 1.5 35B-A3B ROCmFP4、MTP n4 / p0.6、K/V q8_0</td>
+        <td>Ornith 1.5 35B-A3B ROCmFP4、MTP無効、K/V q8_0</td>
         <td>
           1プロセス、KV総枠262,144 token、4セッション分の65,536 token。LARM
           allocationとHTTP実行枠も4。
@@ -63,8 +63,11 @@
     2026年10月4日の実機配備調査では、旧モデル名を必須とする起動検査と、会話用Gemmaと
     ContextStill用Ornithの同時warmによる予約メモリ超過を確認した。起動検査はdefault Agent Profileの
     公開LLMからモデルを選ぶ。ContextStill用OrnithはminInstancesを0にして要求時に起動し、
-    conversation-llm-slotで利用の終わった会話用モデルと入れ替える。
-    再配備と実機Provider確認の結果は、成功後にこの文書へ記録する。
+    conversation-llm-slotで利用の終わった会話用モデルと入れ替える。 初回の再配備後に3
+    Providerの実応答と4件の同時処理を確認した。ただし4並列のMTP有効時に
+    項目の重複や欠落が出たため、ContextStill経路はMTPを無効にする。同じ短い入力でMTP無効時は
+    4件とも3項目で完了したが、中国語混入が1件あり、日本語品質の課題は残る。
+    この比較だけでMTPを唯一の原因とは断定しない。最終releaseの実機検証は配備後に記録する。
   </p>
   <h2>今回の挙動から分かること</h2>
   <p>
