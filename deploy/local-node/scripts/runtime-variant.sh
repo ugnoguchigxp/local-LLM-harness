@@ -50,11 +50,15 @@ case "${action}" in
         if (( SECONDS >= deadline )); then systemctl stop "${service}"; exit 1; fi
         sleep 1
       done
-      if ! curl -fsS --max-time 240 -H 'content-type: application/json' \
-        -d '{"model":"acestep-v15-turbo","init_llm":false}' http://127.0.0.1:8090/v1/init \
-        | python3 -c 'import json,sys; v=json.load(sys.stdin); sys.exit(0 if v.get("code",200)==200 else 1)'; then
-        systemctl stop "${service}"
-        exit 1
+      # Eager startup may have loaded the model while the listener was binding.
+      # Initialize only a worker that still reports an unloaded model.
+      if ! ready >/dev/null 2>&1; then
+        if ! curl -fsS --max-time 240 -H 'content-type: application/json' \
+          -d '{"model":"acestep-v15-turbo","init_llm":false}' http://127.0.0.1:8090/v1/init \
+          | python3 -c 'import json,sys; v=json.load(sys.stdin); sys.exit(0 if v.get("code",200)==200 else 1)'; then
+          systemctl stop "${service}"
+          exit 1
+        fi
       fi
     fi
     until ready >/dev/null 2>&1; do
