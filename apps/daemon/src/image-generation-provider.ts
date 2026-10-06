@@ -10,9 +10,16 @@ export class ImageWorkerStopError extends Error {
 export class ImageGenerationProvider {
   constructor(private readonly endpoint: string, private readonly variants: MediaVariantManager,
     private readonly fetchImpl: (input: URL, init: RequestInit) => Promise<Response> = fetch,
-    private readonly verifyArtifact?: (id: string) => Promise<boolean>) {}
+    private readonly verifyArtifact?: (id: string) => Promise<boolean>,
+    private readonly beginWorkload?: () => () => void) {}
 
   async generate(input: ImageGenerationRequest, signal?: AbortSignal) {
+    const finish = this.beginWorkload?.();
+    try { return await this.generateTracked(input, signal); }
+    finally { finish?.(); }
+  }
+
+  private async generateTracked(input: ImageGenerationRequest, signal?: AbortSignal) {
     signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(900_000)]);
     const release = await this.variants.acquire("image", signal);
     let artifact: unknown;

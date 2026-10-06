@@ -315,6 +315,7 @@ const musicManager = musicEndpoint
     upstreamOutputRoot: config.musicUpstreamOutputRoot,
   }), mediaVariants), {
     artifactRoot: config.musicArtifactRoot,
+    beginWorkload: () => requestTracker.begin(),
     concurrency: 1,
     retentionMs: config.musicArtifactRetentionMs,
     wavRetentionMs: config.musicWavRetentionMs,
@@ -332,7 +333,7 @@ const imageArtifactManager = new ImageArtifactManager(config.imageArtifactRoot, 
 await imageArtifactManager.initialize();
 const imageGenerationProvider = imageEndpoint
   ? new ImageGenerationProvider(imageEndpoint, mediaVariants, fetch,
-    async (id) => Boolean(await imageArtifactManager.content(id)))
+    async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin())
   : undefined;
 const appComponents = createAppComponents({
   registry,

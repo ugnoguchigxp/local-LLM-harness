@@ -320,6 +320,7 @@ export class MusicGenerationManager {
   private closed = false;
   constructor(readonly provider: MusicProvider, private readonly options: {
     artifactRoot: string;
+    beginWorkload?: () => () => void;
     concurrency?: number;
     now?: () => number;
     random?: () => string;
@@ -521,6 +522,7 @@ export class MusicGenerationManager {
 
   private async run(job: InternalJob): Promise<void> {
     let release: (() => Promise<void>) | undefined;
+    const finish = this.options.beginWorkload?.();
     try {
       const generated = await this.provider.generate(job.request, {
         jobId: job.jobId,
@@ -587,6 +589,7 @@ export class MusicGenerationManager {
       this.transition(job, "failed");
     } finally {
       await release?.().catch((error) => console.error(`music worker cleanup failed: ${String(error)}`));
+      finish?.();
     }
   }
 
