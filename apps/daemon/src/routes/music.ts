@@ -35,7 +35,7 @@ export function registerMusicRoutes(app: Hono, options: {
     let job;
     try { job = manager.create(parsed.data); }
     catch (error) {
-      if (error instanceof MusicProviderError) return c.json(errorBody(error.code, error.message), 503);
+      if (error instanceof MusicProviderError) return c.json(errorBody(error.code, error.message), error.code === "unsupported_feature" ? 400 : 503);
       throw error;
     }
     c.header("location", `/v1/music/generations/${encodeURIComponent(job.jobId)}`);

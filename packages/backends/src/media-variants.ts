@@ -15,9 +15,23 @@ export class MediaVariantBusyError extends Error {
   }
 }
 
-async function runVariantScript(script: string, action: "start" | "stop", variant: MediaVariant): Promise<void> {
+async function runVariantScript(script: string, action: "start" | "stop", variant: MediaVariant, signal?: AbortSignal): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(script, [action, variant], { stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn(script, [action, variant], { stdio: ["ignore", "ignore", "pipe"], detached: true });
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const abort = () => {
+      if (child.pid) {
+        try { process.kill(-child.pid, "SIGTERM"); } catch {}
+        killTimer = setTimeout(() => { try { process.kill(-child.pid!, "SIGKILL"); } catch {} }, 5_000);
+        killTimer.unref();
+      }
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    child.once("close", () => {
+      signal?.removeEventListener("abort", abort);
+      if (killTimer) clearTimeout(killTimer);
+    });
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4096); });
     child.on("error", reject);
@@ -35,11 +49,14 @@ export class MediaVariantManager {
   private closed = false;
   private faulted = false;
   private waitingMusic = 0;
+  private readonly shutdown = new AbortController();
+
+  get available(): boolean { return !this.closed && !this.faulted; }
 
   constructor(private readonly options: {
     script: string;
     idleTtlMs: Record<MediaVariant, number>;
-    run?: (action: "start" | "stop", variant: MediaVariant) => Promise<void>;
+    run?: (action: "start" | "stop", variant: MediaVariant, signal?: AbortSignal) => Promise<void>;
   }) {}
 
   private serialized<T>(work: () => Promise<T>): Promise<T> {
@@ -69,7 +86,7 @@ export class MediaVariantManager {
         if (otherTimer) clearTimeout(otherTimer);
         delete this.timers[other];
         try {
-          await this.run("start", variant);
+          await this.run("start", variant, AbortSignal.any([this.shutdown.signal, ...(signal ? [signal] : [])]));
           signal?.throwIfAborted();
           if (this.closed) throw new Error("media variant manager is closed");
         } catch (error) {
@@ -116,6 +133,7 @@ export class MediaVariantManager {
         catch (error) {
           if (!(error instanceof MediaVariantBusyError)) throw error;
           if (Date.now() >= deadline) throw new Error("media execution capacity wait expired");
+          signal.throwIfAborted();
           await new Promise<void>((resolve, reject) => {
             const abort = () => { clearTimeout(timer); reject(signal.reason); };
             const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, 100);
@@ -130,6 +148,7 @@ export class MediaVariantManager {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.shutdown.abort(new Error("media manager closed"));
     for (const timer of Object.values(this.timers)) if (timer) clearTimeout(timer);
     this.timers = {};
     await this.serialized(async () => {
@@ -149,8 +168,8 @@ export class MediaVariantManager {
     }
   }
 
-  private run(action: "start" | "stop", variant: MediaVariant): Promise<void> {
-    return this.options.run?.(action, variant)
-      ?? runVariantScript(this.options.script, action, variant);
+  private run(action: "start" | "stop", variant: MediaVariant, signal?: AbortSignal): Promise<void> {
+    return this.options.run?.(action, variant, signal)
+      ?? runVariantScript(this.options.script, action, variant, signal);
   }
 }

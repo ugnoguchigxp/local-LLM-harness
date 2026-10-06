@@ -160,3 +160,23 @@ test("queued music reserves the next slot before a new image", async () => {
   await (await music)();
   await manager.close();
 });
+
+test("closing interrupts cancellable startup and waits for cleanup", async () => {
+  const started = Promise.withResolvers<void>();
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action, variant, signal) => {
+      calls.push(`${action}:${variant}`);
+      if (action === "start") {
+        started.resolve();
+        await new Promise<void>((_resolve, reject) => signal!.addEventListener("abort", () => reject(signal!.reason), { once: true }));
+      }
+    },
+  });
+  const acquisition = manager.acquire("image").catch((error) => error);
+  await started.promise;
+  await manager.close();
+  expect((await acquisition).message).toContain("closed");
+  expect(calls).toEqual(["start:image", "stop:image"]);
+  expect(manager.available).toBe(false);
+});

@@ -39,11 +39,10 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => {
-      clearTimeout(timer);
-      reject(signal.reason ?? new Error("aborted"));
-    }, { once: true });
+    signal.throwIfAborted();
+    const abort = () => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, ms);
+    signal.addEventListener("abort", abort, { once: true });
   });
 }
 
@@ -185,8 +184,28 @@ export class AceStepMusicProvider implements MusicProvider {
     }
     const declaredBytes = Number(audioResponse.headers.get("content-length") ?? 0);
     const maxBytes = this.options.maxAudioBytes ?? 512 * 1024 * 1024;
-    if (declaredBytes > maxBytes) throw new MusicProviderError("audio_too_large", "generated audio is too large");
-    const audio = new Uint8Array(await audioResponse.arrayBuffer());
+    if (declaredBytes > maxBytes) {
+      await audioResponse.body?.cancel();
+      throw new MusicProviderError("audio_too_large", "generated audio is too large");
+    }
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    const reader = audioResponse.body?.getReader();
+    if (reader) {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          bytes += value.byteLength;
+          if (bytes > maxBytes) throw new MusicProviderError("audio_too_large", "generated audio is too large");
+          chunks.push(value);
+        }
+      } catch (error) { await reader.cancel().catch(() => {}); throw error; }
+      finally { reader.releaseLock(); }
+    }
+    const audio = new Uint8Array(bytes);
+    let offset = 0;
+    for (const chunk of chunks) { audio.set(chunk, offset); offset += chunk.byteLength; }
     if (audio.byteLength === 0 || audio.byteLength > maxBytes) {
       throw new MusicProviderError("audio_too_large", "generated audio is empty or too large");
     }
@@ -283,7 +302,7 @@ export class OnDemandMusicProvider implements MusicProvider {
   async load(): Promise<void> {}
   async unload(): Promise<void> {}
   async health(): Promise<{ available: boolean; reason?: string }> {
-    return { available: true };
+    return { available: this.variants.available, ...(!this.variants.available ? { reason: "media runtime unavailable" } : {}) };
   }
   async cancel(jobId: string): Promise<void> {
     await this.upstream.cancel?.(jobId);
@@ -313,6 +332,7 @@ type InternalJob = MusicGenerationJob & {
 export class MusicGenerationManager {
   private readonly jobs = new Map<string, InternalJob>();
   private readonly queue: string[] = [];
+  private readonly workloadFinishes = new Map<string, () => void>();
   private readonly listeners = new Map<string, Set<(job: MusicGenerationJob) => void>>();
   private readonly retention: MusicArtifactRetention;
   private pruneTimer?: ReturnType<typeof setInterval>;
@@ -330,6 +350,7 @@ export class MusicGenerationManager {
     maxArtifactBytes?: number;
     favoriteMaxArtifactBytes?: number;
     pruneIntervalMs?: number;
+    queueTimeoutMs?: number;
   }) {
     this.retention = new MusicArtifactRetention({
       artifactRoot: options.artifactRoot,
@@ -351,11 +372,16 @@ export class MusicGenerationManager {
       try {
         const saved = JSON.parse(readFileSync(join(this.options.artifactRoot, "jobs", file), "utf8"));
         const publicJob = musicGenerationJobSchema.parse(this.publicJob(saved));
-        if (file !== `${publicJob.jobId}.json` || this.jobs.has(publicJob.jobId)) continue;
-        const job: InternalJob = { ...publicJob, request: musicGenerationRequestSchema.parse(saved.request), abort: new AbortController() };
-        if (!["failed", "cancelled"].includes(job.status)) {
+        if (file !== `${publicJob.jobId}.json`) continue;
+        const artifact = this.jobs.get(publicJob.jobId);
+        if (!artifact && (this.options.now?.() ?? Date.now()) - Date.parse(publicJob.updatedAt) >= (this.options.retentionMs ?? 86_400_000)) {
+          await rm(join(this.options.artifactRoot, "jobs", file), { force: true });
+          continue;
+        }
+        const job: InternalJob = { ...publicJob, ...(artifact ? { result: artifact.result, audioPath: artifact.audioPath, metadataPath: artifact.metadataPath, favorite: artifact.favorite, favoritedAt: artifact.favoritedAt } : {}), request: musicGenerationRequestSchema.parse(saved.request), abort: new AbortController() };
+        if (!["failed", "cancelled"].includes(job.status) && !(job.status === "completed" && artifact)) {
           job.status = "failed"; job.phase = "failed";
-          delete job.result;
+          if (!artifact) delete job.result;
           job.error = { code: "generation_interrupted", message: "generation interrupted by daemon restart; not resubmitted" };
         }
         this.jobs.set(job.jobId, job);
@@ -378,6 +404,10 @@ export class MusicGenerationManager {
     for (const job of this.jobs.values()) {
       if (!["completed", "failed", "cancelled"].includes(job.status)) job.abort.abort(new Error("daemon shutting down"));
     }
+    for (const id of this.queue.splice(0)) {
+      const job = this.jobs.get(id);
+      if (job) this.transition(job, "cancelled");
+    }
     if (this.pruneTimer) clearInterval(this.pruneTimer);
     this.pruneTimer = undefined;
   }
@@ -390,6 +420,13 @@ export class MusicGenerationManager {
     for (const jobId of removed) {
       this.jobs.delete(jobId);
       this.listeners.delete(jobId);
+      await rm(join(this.options.artifactRoot, "jobs", `${jobId}.json`), { force: true });
+    }
+    for (const [id, job] of this.jobs) {
+      if (!job.result && ["failed", "cancelled"].includes(job.status) && (this.options.now?.() ?? Date.now()) - Date.parse(job.updatedAt) >= (this.options.retentionMs ?? 86_400_000)) {
+        await rm(join(this.options.artifactRoot, "jobs", `${id}.json`), { force: true });
+        this.jobs.delete(id); this.listeners.delete(id);
+      }
     }
     return removed;
   }
@@ -442,6 +479,7 @@ export class MusicGenerationManager {
   }
 
   create(request: MusicGenerationRequest): MusicGenerationJob {
+    if (request.referenceAudio && !this.provider.capabilities.referenceAudio) throw new MusicProviderError("unsupported_feature", "referenceAudio is not supported by this provider");
     if (this.closed || this.queue.length >= 16) throw new MusicProviderError("queue_full", "music generation queue unavailable");
     const now = this.isoNow();
     const jobId = `music_${this.options.random?.() ?? crypto.randomUUID()}`;
@@ -454,7 +492,12 @@ export class MusicGenerationManager {
       request,
       abort: new AbortController(),
     };
-    this.persist(job);
+    const finish = this.options.beginWorkload?.();
+    try { this.persist(job); } catch {
+      finish?.();
+      throw new MusicProviderError("job_persistence_failed", "unable to persist accepted music job");
+    }
+    if (finish) this.workloadFinishes.set(jobId, finish);
     this.jobs.set(jobId, job);
     this.queue.push(jobId);
     queueMicrotask(() => void this.drain());
@@ -472,7 +515,7 @@ export class MusicGenerationManager {
     const listeners = this.listeners.get(jobId) ?? new Set();
     listeners.add(listener);
     this.listeners.set(jobId, listeners);
-    listener(this.publicJob(job));
+    try { listener(this.publicJob(job)); } catch { listeners.delete(listener); }
     if (["completed", "failed", "cancelled"].includes(job.status)) listeners.delete(listener);
     return () => listeners.delete(listener);
   }
@@ -482,6 +525,8 @@ export class MusicGenerationManager {
     if (!job) return undefined;
     if (["completed", "failed", "cancelled"].includes(job.status)) return this.publicJob(job);
     job.abort.abort(new Error("cancelled"));
+    const queued = this.queue.indexOf(jobId);
+    if (queued >= 0) this.queue.splice(queued, 1);
     await this.provider.cancel?.(jobId);
     await this.runningJobs.get(jobId);
     this.transition(job, "cancelled");
@@ -509,7 +554,12 @@ export class MusicGenerationManager {
     while (!this.closed && this.running < concurrency && this.queue.length > 0) {
       const id = this.queue.shift()!;
       const job = this.jobs.get(id);
-      if (!job || job.status === "cancelled") continue;
+      if (!job || job.abort.signal.aborted || ["completed", "failed", "cancelled"].includes(job.status)) continue;
+      if ((this.options.now?.() ?? Date.now()) - Date.parse(job.createdAt) >= (this.options.queueTimeoutMs ?? 300_000)) {
+        job.error = { code: "queue_timeout", message: "music queue wait expired; not submitted" };
+        this.transition(job, "failed");
+        continue;
+      }
       this.running++;
       const running = this.run(job).finally(() => {
         this.runningJobs.delete(id);
@@ -523,11 +573,12 @@ export class MusicGenerationManager {
 
   private async run(job: InternalJob): Promise<void> {
     let release: (() => Promise<void>) | undefined;
-    const finish = this.options.beginWorkload?.();
+    let failure: unknown;
+    const signal = AbortSignal.any([job.abort.signal, AbortSignal.timeout(900_000)]);
     try {
       const generated = await this.provider.generate(job.request, {
         jobId: job.jobId,
-        signal: AbortSignal.any([job.abort.signal, AbortSignal.timeout(900_000)]),
+        signal,
         phase: (phase, progress) => this.transition(job, phase, progress),
       });
       release = generated.release;
@@ -575,35 +626,59 @@ export class MusicGenerationManager {
       job.audioPath = audioPath;
       job.metadataPath = metadataPath;
       job.result = result;
-      await release?.();
-      release = undefined;
-      this.transition(job, "completed", 1);
+      signal.throwIfAborted();
       void this.pruneArtifacts().catch((error) => {
         console.warn(`music artifact pruning failed: ${error instanceof Error ? error.message : String(error)}`);
       });
     } catch (error) {
-      if (job.abort.signal.aborted || job.status === "cancelled") return;
-      job.error = {
-        code: error instanceof MediaVariantStopError ? "worker_stop_failed" : error instanceof MusicProviderError ? error.code : "generation_failed",
-        message: error instanceof Error ? error.message : String(error),
-      };
-      this.transition(job, "failed");
+      failure = error;
     } finally {
-      await release?.().catch((error) => console.error(`music worker cleanup failed: ${String(error)}`));
-      finish?.();
+      try { await release?.(); } catch (error) { failure = error; }
+      try {
+        if (failure instanceof MediaVariantStopError || (!signal.aborted && failure)) {
+          job.error = {
+            code: failure instanceof MediaVariantStopError ? "worker_stop_failed" : failure instanceof MusicProviderError ? failure.code : "generation_failed",
+            message: failure instanceof Error ? failure.message : String(failure),
+          };
+          this.transition(job, "failed");
+        } else if (job.abort.signal.aborted) {
+          this.transition(job, "cancelled");
+        } else if (signal.aborted) {
+          job.error = { code: "generation_timeout", message: "generation timed out" };
+          this.transition(job, "failed");
+        } else {
+          this.transition(job, "completed", 1);
+        }
+      } finally { this.finishWorkload(job.jobId); }
     }
   }
 
   private transition(job: InternalJob, status: MusicGenerationStatus, progress?: number): void {
-    if (job.status === "cancelled") return;
+    if (["completed", "failed", "cancelled"].includes(job.status)) return;
     job.status = status;
     job.phase = status;
     job.updatedAt = this.isoNow();
     if (progress === undefined) delete job.progress;
     else job.progress = progress;
-    this.persist(job);
+    try { this.persist(job); } catch {
+      if (!["completed", "failed", "cancelled"].includes(status)) {
+        throw new MusicProviderError("job_persistence_failed", "unable to persist music job status");
+      }
+      job.status = "failed"; job.phase = "failed";
+      job.error = { code: "job_persistence_failed", message: "unable to persist music job status" };
+    }
+    if (["completed", "failed", "cancelled"].includes(job.status)) this.finishWorkload(job.jobId);
     const publicJob = this.publicJob(job);
-    for (const listener of this.listeners.get(job.jobId) ?? []) listener(publicJob);
+    for (const listener of this.listeners.get(job.jobId) ?? []) {
+      try { listener(structuredClone(publicJob)); } catch { this.listeners.get(job.jobId)?.delete(listener); }
+    }
+    if (["completed", "failed", "cancelled"].includes(job.status)) this.listeners.delete(job.jobId);
+  }
+
+  private finishWorkload(jobId: string): void {
+    const finish = this.workloadFinishes.get(jobId);
+    this.workloadFinishes.delete(jobId);
+    finish?.();
   }
 
   private publicJob(job: InternalJob): MusicGenerationJob {
@@ -638,7 +713,9 @@ export class MusicGenerationManager {
       try {
         const metadataPath = join(artifact.directory, "metadata.json");
         const metadata = musicArtifactMetadataSchema.parse(JSON.parse(await readFile(metadataPath, "utf8")));
-        if (metadata.audioFile !== `output.${metadata.format}`) continue;
+        if (metadata.audioFile !== `output.${metadata.format}` || metadata.id !== artifact.directory.split(sep).at(-1)) continue;
+        const audio = await lstat(join(artifact.directory, metadata.audioFile));
+        if (!audio.isFile() || audio.isSymbolicLink()) continue;
         const {
           audioFile: _audioFile,
           prompt: _prompt,

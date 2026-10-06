@@ -3,7 +3,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { musicGenerationRequestSchema } from "@larm/core";
-import { MediaVariantManager } from "@larm/backends";
+import { MediaVariantManager, MediaVariantStopError } from "@larm/backends";
 import { AceStepMusicProvider, MusicGenerationManager, OnDemandMusicProvider } from "./music-manager";
 
 test("cancelled music startup does not submit generation and releases the media reservation", async () => {
@@ -255,4 +255,107 @@ test("cancellation waits for worker cleanup before publishing cancelled", async 
     stopped.resolve();
     expect((await cancellation)?.status).toBe("cancelled");
   } finally { stopped.resolve(); manager.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+for (const stopFails of [false, true]) test(`cancel during stop preserves terminal status across recovery (stopFails=${stopFails})`, async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-music-stop-race-"));
+  const stopping = Promise.withResolvers<void>();
+  const stopped = Promise.withResolvers<void>();
+  const upstream = new AceStepMusicProvider({ endpoint: "http://unused" });
+  const provider = {
+    id: upstream.id, capabilities: upstream.capabilities,
+    load: async () => {}, unload: async () => {}, health: async () => ({ available: true }),
+    generate: async () => ({ model: "acestep-v15-turbo", audio: new Uint8Array([1]),
+      format: "mp3" as const, durationSeconds: 1, generationTimeMs: 1,
+      release: async () => { stopping.resolve(); await stopped.promise;
+        if (stopFails) throw new MediaVariantStopError("music", new Error("stop refused")); },
+    }),
+  };
+  const manager = new MusicGenerationManager(provider, { artifactRoot: root });
+  const recovered = new MusicGenerationManager(provider, { artifactRoot: root });
+  try {
+    const job = manager.create(musicGenerationRequestSchema.parse({ prompt: "test" }));
+    const observed: string[] = [];
+    manager.subscribe(job.jobId, (value) => { observed.push(value.status); });
+    await stopping.promise;
+    const cancellation = manager.cancel(job.jobId);
+    stopped.resolve();
+    const terminal = await cancellation;
+    expect(terminal?.status).toBe(stopFails ? "failed" : "cancelled");
+    expect(observed).not.toContain("completed");
+    if (stopFails) expect(terminal?.error?.code).toBe("worker_stop_failed");
+    await recovered.initialize();
+    expect(recovered.get(job.jobId)?.status).toBe(terminal?.status);
+    expect(recovered.artifact(job.jobId, "audio")).toBeDefined();
+  } finally { stopped.resolve(); manager.close(); recovered.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("expired artifacts remove durable jobs and cannot resurrect on restart", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-music-expiry-"));
+  let now = Date.UTC(2026, 9, 6);
+  const upstream = new AceStepMusicProvider({ endpoint: "http://unused" });
+  const provider = { id: upstream.id, capabilities: upstream.capabilities,
+    load: async () => {}, unload: async () => {}, health: async () => ({ available: true }),
+    generate: async () => ({ model: "acestep-v15-turbo", audio: new Uint8Array([1]), format: "mp3" as const, durationSeconds: 1, generationTimeMs: 1 }),
+  };
+  const manager = new MusicGenerationManager(provider, { artifactRoot: root, now: () => now, retentionMs: 100 });
+  const recovered = new MusicGenerationManager(provider, { artifactRoot: root, now: () => now, retentionMs: 100 });
+  try {
+    const job = manager.create(musicGenerationRequestSchema.parse({ prompt: "test" }));
+    manager.subscribe(job.jobId, () => { throw new Error("broken subscriber"); });
+    expect((await waitForTerminal(manager, job.jobId)).status).toBe("completed");
+    now += 1_000;
+    await manager.pruneArtifacts();
+    expect(manager.get(job.jobId)).toBeUndefined();
+    expect(await lstat(join(root, "jobs", `${job.jobId}.json`)).catch(() => undefined)).toBeUndefined();
+    await recovered.initialize();
+    expect(recovered.get(job.jobId)).toBeUndefined();
+  } finally { manager.close(); recovered.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("audio download enforces byte limit without content-length and cancels stream", async () => {
+  let cancelled = false;
+  const provider = new AceStepMusicProvider({ endpoint: "http://unused", maxAudioBytes: 3, pollIntervalMs: 1,
+    fetchImpl: (async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/release_task") return Response.json({ code: 200, data: { task_id: "task" } });
+      if (path === "/query_result") return Response.json({ code: 200, data: [{ task_id: "task", status: 1, result: JSON.stringify([{ file: "/v1/audio" }]) }] });
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); },
+        cancel() { cancelled = true; },
+      }));
+    }) as typeof fetch,
+  });
+  await expect(provider.generate(musicGenerationRequestSchema.parse({ prompt: "test" }), {
+    jobId: "music_limit", signal: new AbortController().signal, phase: () => {},
+  })).rejects.toThrow("too large");
+  expect(cancelled).toBe(true);
+});
+
+test("queued jobs hold activity leases and expire without provider submission", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-music-queue-"));
+  const started = Promise.withResolvers<void>();
+  const proceed = Promise.withResolvers<void>();
+  let now = Date.UTC(2026, 9, 6), active = 0, submissions = 0;
+  const upstream = new AceStepMusicProvider({ endpoint: "http://unused" });
+  const manager = new MusicGenerationManager({
+    id: upstream.id, capabilities: upstream.capabilities,
+    load: async () => {}, unload: async () => {}, health: async () => ({ available: true }),
+    generate: async () => { submissions++; started.resolve(); await proceed.promise;
+      return { model: "acestep-v15-turbo", audio: new Uint8Array([1]), format: "mp3", durationSeconds: 1, generationTimeMs: 1 };
+    },
+  }, { artifactRoot: root, now: () => now, queueTimeoutMs: 100,
+    beginWorkload: () => { active++; return () => { active--; }; },
+  });
+  try {
+    const first = manager.create(musicGenerationRequestSchema.parse({ prompt: "first" }));
+    await started.promise;
+    const second = manager.create(musicGenerationRequestSchema.parse({ prompt: "second" }));
+    expect(active).toBe(2);
+    now += 1_000; proceed.resolve();
+    expect((await waitForTerminal(manager, first.jobId)).status).toBe("completed");
+    expect((await waitForTerminal(manager, second.jobId)).error?.code).toBe("queue_timeout");
+    expect(submissions).toBe(1);
+    expect(active).toBe(0);
+  } finally { proceed.resolve(); manager.close(); await rm(root, { recursive: true, force: true }); }
 });

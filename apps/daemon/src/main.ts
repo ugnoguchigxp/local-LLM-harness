@@ -546,7 +546,10 @@ async function shutdown(signal: string): Promise<void> {
   executionGate.beginDrain();
   clearInterval(interval);
   musicManager?.close();
-  await mediaVariants.close();
+  const mediaClosed = mediaVariants.close().then(() => true, (error) => {
+    console.error(`media shutdown failed: ${String(error)}`);
+    return false;
+  });
   imageArtifactManager.close();
   clearTimeout(reconciliationTimer);
   const deadline = Date.now() + config.shutdownTimeoutMs;
@@ -556,7 +559,8 @@ async function shutdown(signal: string): Promise<void> {
       artifactManager.flush(),
       mutationCoordinator.drain(config.shutdownTimeoutMs),
       reconciliationInFlight ?? Promise.resolve(),
-    ]).then(([, , mutationDrained]) => mutationDrained),
+      mediaClosed,
+    ]).then(([, , mutationDrained, , mediaDrained]) => mutationDrained && mediaDrained),
     Bun.sleep(config.shutdownTimeoutMs).then(() => false),
   ]);
   const requestsDrained = await requestTracker.drain(Math.max(0, deadline - Date.now()));
