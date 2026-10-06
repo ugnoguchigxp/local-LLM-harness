@@ -192,6 +192,7 @@ def main() -> None:
         raise SystemExit("model and artifact root must be absolute directories")
     args.artifact_root.mkdir(parents=True, mode=0o700, exist_ok=True)
     Handler.provider = Provider(args.model, args.artifact_root)
+    Handler.provider.load()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.serve_forever()
 

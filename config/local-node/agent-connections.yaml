@@ -418,7 +418,7 @@ profileSelectors:
         protocol: larm.image-generation.v1
         endpoint: /v1/images/generations
         model: qwen-image-2.1
-        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 120 }
+        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
   SAAA-w-music:
     agentProfile: saaa-conversation-gemma4-26b-voice
     services:
@@ -427,7 +427,7 @@ profileSelectors:
         protocol: larm.music-generation.v1
         endpoint: /v1/music/generations
         model: ace-step-1.5
-        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 300 }
+        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
   vulnWorkbench:
     agentProfile: coding-default
   embeddingCanary:

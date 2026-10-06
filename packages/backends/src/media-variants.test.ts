@@ -44,7 +44,7 @@ test("a failed switch revalidates the previous worker before reusing it", async 
     (await manager.acquire("image"))();
     await expect(manager.acquire("music")).rejects.toThrow("start failed");
     (await manager.acquire("image"))();
-    expect(calls).toEqual(["start:image", "start:music", "start:image"]);
+    expect(calls).toEqual(["start:image", "start:music", "stop:music", "start:image"]);
   } finally {
     manager.close();
   }
@@ -69,7 +69,7 @@ test("closing during startup rejects acquisition and prevents subsequent starts"
   finish.resolve();
   await expect(acquisition).rejects.toThrow("closed");
   await expect(manager.acquire("music")).rejects.toThrow("closed");
-  expect(calls).toEqual(["start:image"]);
+  expect(calls).toEqual(["start:image", "stop:image"]);
 });
 
 test("release after close does not schedule an idle stop during shutdown", async () => {
@@ -83,7 +83,7 @@ test("release after close does not schedule an idle stop during shutdown", async
   manager.close();
   release();
   await Bun.sleep(20);
-  expect(calls).toEqual(["start:image"]);
+  expect(calls).toEqual(["start:image", "stop:image"]);
 });
 
 test("an aborted queued request does not start a media worker", async () => {
@@ -112,4 +112,51 @@ test("an aborted queued request does not start a media worker", async () => {
   } finally {
     manager.close();
   }
+});
+
+
+test("completion waits for immediate stop and excludes concurrent workers", async () => {
+  const stopped = Promise.withResolvers<void>();
+  const stopping = Promise.withResolvers<void>();
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action, variant) => {
+      calls.push(`${action}:${variant}`);
+      if (action === "stop") { stopping.resolve(); await stopped.promise; }
+    },
+  });
+  const release = await manager.acquire("image");
+  await expect(manager.acquire("image")).rejects.toBeInstanceOf(MediaVariantBusyError);
+  let finished = false;
+  const completion = release().then(() => { finished = true; });
+  await stopping.promise;
+  expect(finished).toBe(false);
+  stopped.resolve();
+  await completion;
+  expect(calls).toEqual(["start:image", "stop:image"]);
+  await release();
+  expect(calls).toHaveLength(2);
+  await manager.close();
+});
+
+test("failed stop quarantines the group without another generation start", async () => {
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action, variant) => { calls.push(`${action}:${variant}`); if (action === "stop") throw new Error("stop denied"); },
+  });
+  const release = await manager.acquire("image");
+  await expect(release()).rejects.toThrow("stop denied");
+  await expect(manager.acquire("music")).rejects.toThrow("quarantined");
+  expect(calls).toEqual(["start:image", "stop:image"]);
+  await expect(manager.close()).rejects.toThrow("stop denied");
+});
+
+test("queued music reserves the next slot before a new image", async () => {
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 }, run: async () => {} });
+  const image = await manager.acquire("image");
+  const music = manager.waitForMusic(new AbortController().signal);
+  await image();
+  await expect(manager.acquire("image")).rejects.toBeInstanceOf(MediaVariantBusyError);
+  await (await music)();
+  await manager.close();
 });

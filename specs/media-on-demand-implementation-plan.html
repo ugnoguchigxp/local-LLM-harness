@@ -1,0 +1,189 @@
+<article lang="ja">
+  <h1>画像・楽曲生成のオンデマンド実装計画</h1>
+  <p>
+    2026-10-06の利用者合意に基づく計画。公開APIは常時稼働し、受理した要求に必要なモデルを起動・ロードして生成し、成果物をLARM側へ保存した後にモデルプロセスを停止する。APIは停止後も結果と成果物を配信する。本書は提案であり実装・配備完了を表さない。
+  </p>
+  <section id="boundary">
+    <h2>境界と完了条件</h2>
+    <p>
+      常時稼働するAPIとはlarm-daemonのControlと成果物配信を指す。画像・楽曲の内部HTTP
+      workerはモデルと一緒に停止してよい。モデルを内部APIと別プロセスに分離することは初期実装の必須条件にしない。外部クライアントは内部workerへ直接接続しない。
+    </p>
+    <p>
+      処理順は、認証・入力検証、profile/service/modelからのruntime解決、実行枠予約、資源確認、worker起動、モデル準備完了、上流への生成POSTを1回、成果物取得と永続化、worker停止確認、結果公開とする。画像の応答と楽曲completedは保存・停止確認の後に確定する。生成POSTの自動再送は行わない。
+    </p>
+    <p>
+      起動準備待ちはGET等の照会で行う。停止中のworkerがhealthに応答しないことは正常であり、公開APIのreadinessと区別する。モデル稼働状態と生成可否は別に表示する。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>API契約と互換性</h2>
+    <table>
+      <caption>
+        初期実装で維持・追加する契約
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">計画</th>
+          <th scope="col">目的</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">画像入力</th>
+          <td>
+            既存prompt等に任意modelを追加する。カタログで広告したqwen-image-2.1などの登録済み選択だけを許可し、未知・不一致は起動前に400で返す。
+          </td>
+          <td>SAAAのprompt/model入力を受理し、modelを黙って無視しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">画像応答</th>
+          <td>
+            同期200を維持。既存artifactを残し、同一成果物をartifacts配列にも追加する。object、status、durationMsを維持する。data形式は追加しない。
+          </td>
+          <td>
+            既存クライアントとSAAA暫定仕様のartifacts経路を両立する。strict
+            schemaの消費者へ変更を周知する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">楽曲</th>
+          <td>
+            POSTは202
+            job、GET/SSEで追跡、result.audioUrlとmetadataUrlを維持。loadingをworker起動前から通知し、保存と停止が終わるまではcompletedにしない。
+          </td>
+          <td>長い起動時間を1回の依頼の内部処理として扱う。</td>
+        </tr>
+        <tr>
+          <th scope="row">カタログ</th>
+          <td>
+            画像・楽曲ともminWarmInstances: 0、idleTtlSeconds:
+            0を広告。runtime定義と実行policyを共通の検証済み設定から取得する。
+          </td>
+          <td>120秒・300秒の保持とmain.tsの固定値を廃止する。</td>
+        </tr>
+        <tr>
+          <th scope="row">仕様</th>
+          <td>
+            OpenAPIに同期画像、非同期楽曲、model選択、認証、相対成果物URL、cold-startの待機、409/503/504、停止失敗時の結果を記載する。
+          </td>
+          <td>公開releaseの契約を直接確認できるようにする。</td>
+        </tr>
+      </tbody>
+    </table>
+    <pre><code>{"prompt":"A small bird","model":"qwen-image-2.1","width":512,"height":512,"steps":4}</code></pre>
+    <p>
+      画像応答のartifactsにはid、contentUrl、mimeTypeを含む既存のartifactオブジェクトを格納する。contentUrlはControl
+      URLに対する相対URLで、モデル停止後も取得可能。内部workerの応答契約と公開応答契約は分け、workerに互換フィールドを強制しない。
+    </p>
+  </section>
+  <section id="lifecycle">
+    <h2>実行管理の変更</h2>
+    <p>
+      初期実装では画像と楽曲を合わせて実行中1件に制限する。画像は混雑時409を返し、モデルを起動しない。楽曲の受理済みjobは上限付きキューで待機し、他の画像・楽曲処理が終わってから実行する。キュー上限と待機期限を設定として検証し、上限到達は503、期限超過はjobの明示エラーにする。先行する楽曲待機要求を画像が無期限に追い越さないよう予約順を管理する。
+    </p>
+    <p>
+      packages/coreはprofile/service/model解決、policy、要求検証を担当する。packages/backendsのMediaVariantManagerは共有実行枠とOS操作adapterを持ち、idle、starting、ready、generating、persisting、stopping、faultedの状態を追う。daemonはAPIと生成・保存の順序を担当する。画像・楽曲以外のProviderは明示された資源・priority
+      policyに従い、モデル名だけで停止対象にしない。
+    </p>
+    <p>
+      releaseはPromiseを返し、呼び出し元が停止完了をawaitする。停止中は予約を保持し、新しいworkerを起動しない。起動失敗・起動中abort・closeの全経路で起動途中のunitも停止する。closeは非同期drainへ変更し、新規受理停止、進行中処理の期限付き待機、期限超過時abort、worker停止を順に行う。
+    </p>
+    <p>
+      画像providerおよび楽曲OnDemandMusicProviderだけに所有権を閉じ込めず、保存処理まで含む要求またはjobの実行範囲で予約を所有する。楽曲の現在のwrapperはファイル保存より先にreleaseするため、managerの保存完了後へ移す。画像はworker保存後にControl側でmetadata、実ファイル、サイズ等を検証し、原子的な保存完了を確認する。
+    </p>
+  </section>
+  <section id="readiness">
+    <h2>起動・ロード・停止</h2>
+    <p>
+      画像workerに明示的な準備処理を設け、モデルload完了を示すreadyを照会可能にする。現在のhealthのloaded:
+      falseを生成readyと扱わない。ready確認後に生成POSTを送る。ACE-Stepは配備済みバージョンのロード契約を調査し、必要な初期化と生成モデル準備の確認をadapterへ実装する。単なるHTTP
+      200だけで判定しない。
+    </p>
+    <p>
+      runtime-variant.shのsystemctl操作には期限を設ける。起動は資源確認からモデルreadyまでを期限内に収め、失敗時はunitを停止する。停止はinactiveかつプロセス消滅を確認する。SIGINTの猶予後はsystemdがunit配下のプロセスを確実に終了する設定を確認する。停止済みへのstopは成功として扱う。
+    </p>
+    <p>
+      unitは自動起動を無効にし、モデルworkerのRestart=on-failureはnoへ変更する。再起動をLARMの要求管理の外で行わない。daemon再起動時は管理対象の画像・楽曲unitと回収途中jobを照合し、所有者のないworkerを停止する。API
+      readynessを上流常時起動に依存させない。
+    </p>
+    <p>
+      起動・生成・停止の期限を別々に設定し、全体の上限も定義する。画像同期APIのcold-start時間に対してControl、HTTP接続、クライアントのtimeoutを照合する。同期で収まらない場合の画像job
+      APIは別の契約変更として扱い、この実装へ暗黙に混ぜない。
+    </p>
+  </section>
+  <section id="failure">
+    <h2>失敗と成果物保護</h2>
+    <p>
+      起動失敗、ready期限超過、上流接続失敗、生成失敗、成果物保存失敗、停止失敗を区別する。ユーザー向けには識別可能なcodeを返し、内部ログではrequest/job
+      ID、runtime、phase、unit状態を関連付ける。tokenやprompt全文を不要に記録しない。
+    </p>
+    <p>
+      成果物保存後に停止が失敗しても成果物は削除しない。画像は停止失敗の503応答にartifact参照を含め、楽曲はfailed
+      jobに保存済みresultと停止エラーを残す。この場合にも認証付きで成果物を取得できるよう、配信判定を単なるcompleted依存から保存済み成果物の検証へ変更する。グループはfaultedとして隔離し、停止の再試行は許可しても生成POSTは再送しない。
+    </p>
+    <p>
+      画像の接続切断と楽曲DELETEはモデル処理のキャンセルを要求する。上流にキャンセル契約がなければworker停止で終了を保証し、終了確認まで枠を解放しない。キャンセル後に処理が遅れてcompletedへ変わらないよう状態遷移を制御する。
+    </p>
+    <p>
+      楽曲jobの要求と状態を実行前に永続化する。daemon再起動で中断されたjobは明示的にfailedへ回収し、自動で生成を再実行しない。保存済み成果物は回収して配信する。キューと実行中状態が再起動で消える現在の問題を、モデル後始末と同時に解消する。
+    </p>
+  </section>
+  <section id="steps">
+    <h2>実装順序</h2>
+    <ol>
+      <li>
+        公開release、OpenAPI、daemon環境設定、unit、上流endpointと起動権限を読み取りで照合する。2026-10-01の404と接続失敗の原因を現在の状態と区別して記録する。秘密情報は表示しない。
+      </li>
+      <li>
+        coreのmedia policyと公開schemaを変更し、選択規則、互換画像応答、エラー契約、TTL
+        0を定義する。設定の読み込みとcatalogの一致を検証する。
+      </li>
+      <li>
+        backendsの実行管理を非同期停止、共有排他、期限、abort、faulted、drainへ変更する。unitと起動スクリプトの再起動・停止設定を合わせる。
+      </li>
+      <li>
+        画像ロードreadyと画像要求の保存・停止処理を実装する。楽曲jobの所有範囲、永続化、停止後の結果確定、回収処理を実装する。
+      </li>
+      <li>OpenAPI、client schema、利用例、運用文書を更新し、自動検証を完了する。</li>
+      <li>
+        既存作業ツリーの変更を保護してreleaseを作り、既存のrelease検証・切替手順で配備する。配備直後のカタログとOpenAPIを再照合する。
+      </li>
+      <li>
+        SAAAとの各1回の実生成検証を行う。SAAA作業ツリーがdirtyのため、その扱いを解決するまではpullや実装を現行とみなした参照を行わない。
+      </li>
+    </ol>
+  </section>
+  <section id="tests">
+    <h2>検証と受け入れ条件</h2>
+    <ul>
+      <li>
+        入力・認証・model不一致はモデル起動前に拒否する。ロードready前の生成POSTは0回、正常処理の上流生成POSTは1回である。
+      </li>
+      <li>
+        保存完了より前にstopしない。stop確認より前に同期成功またはcompletedを公開しない。成功後にAPIは稼働し、成果物を取得でき、画像・楽曲workerはinactiveである。
+      </li>
+      <li>
+        画像・楽曲の同時要求、キュー上限・期限、公平性を検証し、稼働中workerを次の要求で停止しない。
+      </li>
+      <li>
+        起動・生成・保存・停止それぞれの失敗、起動中と生成中のabort、重複release、shutdown、daemon再起動でworkerと予約が残らない。停止失敗では隔離し、保存済み成果物を保持する。
+      </li>
+      <li>
+        制御・契約テストでは実モデルを使わず、生成回数と順序を観測する。変更に対応したbackend、daemon、core、client、起動スクリプトのテストを追加する。bun
+        run checkとbun run docs:check:fixを通す。
+      </li>
+      <li>
+        実機は画像・楽曲各1回だけ。事前起動なしでPOSTし、cold-startを含む成功、Control経由の成果物取得、モデル停止、API稼働を確認する。失敗した際は無条件の再送をしない。
+      </li>
+    </ul>
+    <pre><code>SAAA_LARM_CONTROL_URL=&lt;URL&gt; LARM_API_TOKEN=&lt;token&gt; cargo test --locked --manifest-path crates/larm-session/Cargo.toml --test media_live -- --ignored --nocapture --test-threads=1</code></pre>
+    <p>
+      現行契約との差分と確認済み事実は<a
+        href="./media-on-demand-connection-investigation-2026-10-06.html"
+        >オンデマンド接続調査</a
+      >を参照する。上流ACE-Stepのready契約、cold-start実測とクライアントtimeout、配備環境の停止権限は実装開始時に確定する項目である。
+    </p>
+  </section>
+</article>

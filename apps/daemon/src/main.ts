@@ -1,4 +1,7 @@
-import { LARM_VERSION } from "@larm/core";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse } from "yaml";
+import { LARM_VERSION, mediaPolicySchema } from "@larm/core";
 import {
   createRuntimeBackend,
   LocalArtifactStore,
@@ -291,13 +294,21 @@ const personalStateController = new PersonalStateController({
 await personalStateController.initialize();
 
 const startupProbeToken = crypto.randomUUID();
+const mediaPolicy = mediaPolicySchema.parse(parse(readFileSync(join(config.configDir, "runtime-variants.yaml"), "utf8")));
+const imageEndpoint = config.imageProviderEndpoint ?? new URL(mediaPolicy.variants.image.healthUrl).origin;
+const musicEndpoint = config.musicProviderEndpoint ?? new URL(mediaPolicy.variants.music.healthUrl).origin;
 const mediaVariants = new MediaVariantManager({
   script: new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname,
-  idleTtlMs: { image: 120_000, music: 300_000 },
+  idleTtlMs: { image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
 });
-const musicManager = config.musicProviderEndpoint
+// Recover orphan workers before accepting new generation requests.
+await Promise.all(["image", "music"].map(async (variant) => {
+  const child = Bun.spawn([new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname, "stop", variant], { stdout: "ignore", stderr: "pipe" });
+  if (await child.exited !== 0) throw new Error(`unable to recover ${variant} worker`);
+}));
+const musicManager = musicEndpoint
   ? new MusicGenerationManager(new OnDemandMusicProvider(new AceStepMusicProvider({
-    endpoint: config.musicProviderEndpoint,
+    endpoint: musicEndpoint,
     apiKey: config.musicProviderApiKey,
     pollIntervalMs: config.musicPollIntervalMs,
     maxAudioBytes: config.musicMaxAudioBytes,
@@ -319,8 +330,9 @@ const imageArtifactManager = new ImageArtifactManager(config.imageArtifactRoot, 
   pruneIntervalMs: config.imagePruneIntervalMs,
 });
 await imageArtifactManager.initialize();
-const imageGenerationProvider = config.imageProviderEndpoint
-  ? new ImageGenerationProvider(config.imageProviderEndpoint, mediaVariants)
+const imageGenerationProvider = imageEndpoint
+  ? new ImageGenerationProvider(imageEndpoint, mediaVariants, fetch,
+    async (id) => Boolean(await imageArtifactManager.content(id)))
   : undefined;
 const appComponents = createAppComponents({
   registry,
@@ -525,7 +537,7 @@ async function shutdown(signal: string): Promise<void> {
   executionGate.beginDrain();
   clearInterval(interval);
   musicManager?.close();
-  mediaVariants.close();
+  await mediaVariants.close();
   imageArtifactManager.close();
   clearTimeout(reconciliationTimer);
   const deadline = Date.now() + config.shutdownTimeoutMs;

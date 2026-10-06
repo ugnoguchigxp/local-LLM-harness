@@ -27,6 +27,8 @@ export class MediaVariantManager {
   private timers: Partial<Record<MediaVariant, ReturnType<typeof setTimeout>>> = {};
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
+  private faulted = false;
+  private waitingMusic = 0;
 
   constructor(private readonly options: {
     script: string;
@@ -40,10 +42,13 @@ export class MediaVariantManager {
     return result;
   }
 
-  async acquire(variant: MediaVariant, signal?: AbortSignal): Promise<() => void> {
+  async acquire(variant: MediaVariant, signal?: AbortSignal): Promise<() => Promise<void>> {
     await this.serialized(async () => {
       if (this.closed) throw new Error("media variant manager is closed");
       signal?.throwIfAborted();
+      if (this.faulted) throw new Error("media worker stop failed; runtime is quarantined");
+      if (this.options.idleTtlMs[variant] === 0 && (this.active.image + this.active.music) > 0) throw new MediaVariantBusyError();
+      if (variant === "image" && this.waitingMusic > 0) throw new MediaVariantBusyError();
       const other = variant === "image" ? "music" : "image";
       if (this.active[other] > 0) throw new MediaVariantBusyError();
       const timer = this.timers[variant];
@@ -57,38 +62,83 @@ export class MediaVariantManager {
         const otherTimer = this.timers[other];
         if (otherTimer) clearTimeout(otherTimer);
         delete this.timers[other];
-        await this.run("start", variant);
+        try {
+          await this.run("start", variant);
+          signal?.throwIfAborted();
+          if (this.closed) throw new Error("media variant manager is closed");
+        } catch (error) {
+          await this.stop(variant);
+          throw error;
+        }
         this.warm[variant] = true;
       }
       if (this.closed) throw new Error("media variant manager is closed");
       this.active[variant]++;
     });
-    let released = false;
+    let releasePromise: Promise<void> | undefined;
     return () => {
-      if (released) return;
-      released = true;
-      void this.serialized(async () => {
+      if (releasePromise) return releasePromise;
+      releasePromise = this.serialized(async () => {
         this.active[variant]--;
-        if (this.closed || this.active[variant] !== 0) return;
+        if (this.active[variant] !== 0) return;
+        if (this.closed || this.options.idleTtlMs[variant] === 0) {
+          if (this.warm[variant]) await this.stop(variant);
+          return;
+        }
         const timer = setTimeout(() => {
           delete this.timers[variant];
           void this.serialized(async () => {
             if (!this.closed && this.active[variant] === 0 && this.warm[variant]) {
-              await this.run("stop", variant);
-              this.warm[variant] = false;
+              await this.stop(variant);
             }
           }).catch((error) => console.error(`media variant idle stop failed: ${String(error)}`));
         }, this.options.idleTtlMs[variant]);
         timer.unref?.();
         this.timers[variant] = timer;
       });
+      return releasePromise;
     };
   }
 
-  close(): void {
+  async waitForMusic(signal: AbortSignal, timeoutMs = 300_000): Promise<() => Promise<void>> {
+    this.waitingMusic++;
+    const deadline = Date.now() + timeoutMs;
+    try {
+      while (true) {
+        signal.throwIfAborted();
+        try { return await this.acquire("music", signal); }
+        catch (error) {
+          if (!(error instanceof MediaVariantBusyError)) throw error;
+          if (Date.now() >= deadline) throw new Error("media execution capacity wait expired");
+          await new Promise<void>((resolve, reject) => {
+            const abort = () => { clearTimeout(timer); reject(signal.reason); };
+            const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, 100);
+            signal.addEventListener("abort", abort, { once: true });
+          });
+        }
+      }
+    } finally { this.waitingMusic--; }
+  }
+
+  async close(): Promise<void> {
     this.closed = true;
     for (const timer of Object.values(this.timers)) if (timer) clearTimeout(timer);
     this.timers = {};
+    await this.serialized(async () => {
+      for (const variant of ["image", "music"] as const) {
+        if (this.warm[variant]) await this.stop(variant);
+      }
+    });
+  }
+
+  private async stop(variant: MediaVariant): Promise<void> {
+    try {
+      await this.run("stop", variant);
+      this.warm[variant] = false;
+    } catch (error) {
+      this.faulted = true;
+      throw error;
+    }
   }
 
   private run(action: "start" | "stop", variant: MediaVariant): Promise<void> {

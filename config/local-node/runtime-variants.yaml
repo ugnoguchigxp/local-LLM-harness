@@ -11,11 +11,11 @@ variants:
     healthUrl: http://127.0.0.1:8090/health
     group: accelerator-media-heavy
     estimatedMemoryGB: 18
-    idleTtlSeconds: 300
+    idleTtlSeconds: 0
   image:
     capability: media.image.generate
     service: larm-image-qwen21.service
     healthUrl: http://127.0.0.1:8091/health
     group: accelerator-media-heavy
     estimatedMemoryGB: 34
-    idleTtlSeconds: 120
+    idleTtlSeconds: 0

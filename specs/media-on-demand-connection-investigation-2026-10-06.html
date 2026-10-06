@@ -1,0 +1,94 @@
+<article lang="ja">
+  <h1>画像・楽曲生成のオンデマンド接続調査 2026-10-06</h1>
+  <p>
+    2026-10-01のSAAA報告を、2026-10-06に公開Control
+    APIとLARMソースへ照合した。今回は設計検討と読み取り調査であり、モデル起動、実生成、デプロイは行っていない。障害修正済みとは判定しない。
+  </p>
+  <section id="observations">
+    <h2>確認した事実</h2>
+    <ul>
+      <li>
+        Controlのhealthはready、公開releaseCommitは8cd43db935dbd0f52d17d17c57fb069be7643542。作業ツリーHEADはc0da5540940df027851e599a6d7c739257b039c5。公開環境と作業ソースは別に検証する必要がある。
+      </li>
+      <li>
+        公開GET
+        /v3/agent-profiles?profile=SAAA-w-Imageはsaaa-conversation-gemma4-26b-voiceを返し、Gemma 4
+        26B、Laya System One、画像サービスのstartupPolicy（minWarmInstances: 0、idleTtlSeconds:
+        120）を広告している。旧Ornithのみという報告時点の状態は、現在のこのselectorには該当しない。
+      </li>
+      <li>
+        画像・楽曲systemd
+        unitはいずれもinactiveかつdisabled。オンデマンド待機状態として正常であり、接続障害の証拠にはならない。楽曲unitの2026-10-01以降のjournal照会には記録がなかった。
+      </li>
+      <li>
+        認証なしの空JSONによる画像POSTは401
+        unauthorized。認証が先に評価されるため、生成ルートの実行可能性や404解消を証明しない。
+      </li>
+      <li>
+        SAAA作業ツリーには未コミット変更があり、pullおよび実装参照を行わなかった。SAAA側との照合は依頼文の暫定仕様に限定する。
+      </li>
+    </ul>
+  </section>
+  <section id="contracts">
+    <h2>現在のソース契約</h2>
+    <p>
+      画像POST /v1/images/generationsは同期200
+      JSON。入力はpromptと任意のwidth、height、steps、seed、formatで、strict
+      schemaのためmodelは受理しない。応答はobject: image_generation、status:
+      succeeded、単数artifact、durationMs。artifact内のid、contentUrl、mimeTypeを取得する。artifactsまたはdata[].artifactというSAAA暫定仕様とは不一致。contentUrlはControlを基準とする相対URLである。
+    </p>
+    <pre><code>{"prompt":"A small bird","width":512,"height":512,"steps":4,"format":"webp"}</code></pre>
+    <p>
+      作業ソースのOpenAPIにはImageGenerationRequest、ImageGenerationResponseとcreateImageGenerationが存在する。公開OpenAPIに同じ定義があるかは未検証であり、追加済みという結論を公開環境へ拡張しない。
+    </p>
+    <p>
+      楽曲POST
+      /v1/music/generationsは202のjob。GETで状態を追い、completed後にresult.audioUrlから取得する。SAAAはPOSTを再送せず、GETで待機する。LARM内部は1回の生成依頼で起動、health待ち、上流release_task、query_result、音声取得を担当する。
+    </p>
+  </section>
+  <section id="lifecycle">
+    <h2>完了後終了の設計条件</h2>
+    <p>
+      minWarmInstances:
+      0は常時起動しないことを表すが、即時終了を意味しない。現行のMediaVariantManagerには画像120秒、楽曲300秒の保持がmain.tsで固定され、runtime-variants.yamlにも同じTTLがある。今回の要件を満たすには両方を整合させ、最後の処理終了で停止を実行する必要がある。
+    </p>
+    <ol>
+      <li>
+        要求されたprofileとserviceから生成runtime、backend、モデルを決定する。任意のmodelを黙って無視したり、稼働中のLLMを画像・楽曲のために無条件停止したりしない。
+      </li>
+      <li>
+        1回のPOSTに起動待ちを含める。LARMがメモリ余裕、排他、起動権限、healthと生成準備完了を確認する。停止中の上流へ直接POSTしない。GET
+        healthだけではモデル生成準備完了を証明できない。
+      </li>
+      <li>
+        画像・楽曲は現在相互排他。同種の同時要求も上流capacityに合わせて制限し、未実行要求と実行中処理を区別する。
+      </li>
+      <li>
+        画像は永続artifactとControl配信を確保してから停止。楽曲は音声をControl側へ確保するまで停止しない。現行楽曲wrapperのreleaseはmanagerのファイル保存より前なので、停止境界を明記して検証する。
+      </li>
+      <li>
+        成功、失敗、起動中キャンセル、実行中キャンセル、デーモン終了の各経路で停止と参照数解放を保証する。現行closeはtimerを解除するだけで停止を実行せず、起動中closeでも起動済みworkerが残り得る。
+      </li>
+      <li>
+        キャンセル時は上流の処理終了または停止を確認してから解放する。単にHTTPをabortしただけでは上流生成が終了したとは限らない。停止失敗を観測可能にし、処理完了とプロセス終了を別々に検証する。
+      </li>
+      <li>
+        OSに依存しない解決・policyはcore、systemd起動・停止はbackendsへ配置する。固定TTLとカタログpolicyの二重管理を解消する。
+      </li>
+    </ol>
+  </section>
+  <section id="verification">
+    <h2>修正と受け入れ検証</h2>
+    <p>
+      2026-10-01の404と接続失敗の原因は未確定。認証付きの公開契約照会、配備ソースと環境設定の照合、起動スクリプト権限・上流endpoint・health・生成readyの検証を行ってから原因を確定する。バックエンド停止だけを故障と診断しない。
+    </p>
+    <p>
+      画像契約はmodelの明示選択規則とartifact応答をSAAAと合意し、公開OpenAPIへ例と同期応答を反映する。Gemma
+      4とSystem
+      Oneは現在のSAAA-w-Image公開カタログへ反映済みだが、起動と推論の成功は別途検証が必要。
+    </p>
+    <p>
+      受け入れ時は画像・楽曲を各1回だけPOSTし、成果物取得と最後の処理後のプロセス終了を確認する。SAAA側に事前起動、systemd操作、自動再送を要求しない。正常終了に加え、生成失敗・キャンセル・停止失敗の制御テストを行う。SAAAのmedia_live実装を参照・実行する前に、未コミット変更の扱いを解決する。
+    </p>
+  </section>
+</article>

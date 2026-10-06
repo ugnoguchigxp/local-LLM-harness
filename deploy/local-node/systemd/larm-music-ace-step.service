@@ -17,7 +17,7 @@ Environment=ACESTEP_LM_BACKEND=pt
 Environment=MIOPEN_FIND_MODE=FAST
 Environment=TOKENIZERS_PARALLELISM=false
 ExecStart=/srv/ai/apps/larm-trials/20260924-ace-step15/.venv/bin/python -u acestep/api_server.py --host 127.0.0.1 --port 8090
-Restart=on-failure
+Restart=no
 RestartSec=5
 TimeoutStartSec=240
 TimeoutStopSec=60

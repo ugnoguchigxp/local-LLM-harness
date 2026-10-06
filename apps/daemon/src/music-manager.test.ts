@@ -181,3 +181,47 @@ test("ACE-Step upstream output is removed only from its configured root", async 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("music saves audio before awaiting worker shutdown and only then completes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-music-stop-"));
+  const stopping = Promise.withResolvers<void>();
+  const stopped = Promise.withResolvers<void>();
+  let persisted = false;
+  const upstream = new AceStepMusicProvider({ endpoint: "http://unused" });
+  const manager = new MusicGenerationManager({
+    id: upstream.id, capabilities: upstream.capabilities,
+    load: async () => {}, unload: async () => {}, health: async () => ({ available: true }),
+    generate: async () => ({ model: "acestep-v15-turbo", audio: new Uint8Array([1, 2]),
+      format: "mp3", durationSeconds: 1, generationTimeMs: 1,
+      release: async () => {
+        const audio = await readFile(join(root, "2026", "10", "music_stop", "output.mp3"));
+        persisted = audio.length === 2;
+        stopping.resolve(); await stopped.promise;
+      },
+    }),
+  }, { artifactRoot: root, random: () => "stop", now: () => Date.UTC(2026, 9, 6) });
+  try {
+    const job = manager.create(musicGenerationRequestSchema.parse({ prompt: "test" }));
+    await stopping.promise;
+    expect(persisted).toBe(true);
+    expect(manager.get(job.jobId)?.status).not.toBe("completed");
+    stopped.resolve();
+    expect((await waitForTerminal(manager, job.jobId)).status).toBe("completed");
+  } finally { stopped.resolve(); manager.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("recovery fails interrupted jobs without submitting them again", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-music-recovery-"));
+  const upstream = new AceStepMusicProvider({ endpoint: "http://unused" });
+  await mkdir(join(root, "jobs"));
+  await writeFile(join(root, "jobs", "music_interrupted.json"), JSON.stringify({
+    jobId: "music_interrupted", status: "loading", phase: "loading",
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    request: musicGenerationRequestSchema.parse({ prompt: "test" }),
+  }));
+  const manager = new MusicGenerationManager(upstream, { artifactRoot: root });
+  try {
+    await manager.initialize();
+    expect(manager.get("music_interrupted")?.error?.code).toBe("generation_interrupted");
+  } finally { manager.close(); await rm(root, { recursive: true, force: true }); }
+});

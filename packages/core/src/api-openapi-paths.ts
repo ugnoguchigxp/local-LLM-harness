@@ -132,6 +132,11 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
     paths[path] ??= {};
     paths[path]![method] = {
       operationId,
+      ...(operationId === "createImageGeneration" ? {
+        description: "Synchronous image generation. Control starts and loads the selected model, stores the artifact, and stops the worker before returning 200. Optional model must match the advertised service. Read artifacts[0] or artifact; contentUrl is relative to Control and remains available after worker shutdown. Cold startup is included in request latency; do not automatically resubmit POST.",
+      } : operationId === "createMusicGeneration" ? {
+        description: "Returns a 202 job. Control starts the model on demand; poll the job or follow events. Completed means the artifact is stored and the worker stopped. Download result.audioUrl relative to Control. Submit once; polling does not start a model.",
+      } : {}),
       ...(lifecycle.classification === "compatibility" ? { deprecated: true } : {}),
       "x-larm-lifecycle": lifecycle,
       "x-larm-governance": apiOperationGovernance(path, operationId),

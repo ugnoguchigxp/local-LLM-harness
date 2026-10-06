@@ -1,12 +1,21 @@
 import type { MediaVariantManager } from "@larm/backends";
 import { imageGenerationResponseSchema, type ImageGenerationRequest } from "@larm/core";
 
+export class ImageWorkerStopError extends Error {
+  constructor(readonly artifact: unknown, cause: unknown) {
+    super("image artifact saved but model worker shutdown failed", { cause });
+  }
+}
+
 export class ImageGenerationProvider {
   constructor(private readonly endpoint: string, private readonly variants: MediaVariantManager,
-    private readonly fetchImpl: (input: URL, init: RequestInit) => Promise<Response> = fetch) {}
+    private readonly fetchImpl: (input: URL, init: RequestInit) => Promise<Response> = fetch,
+    private readonly verifyArtifact?: (id: string) => Promise<boolean>) {}
 
   async generate(input: ImageGenerationRequest, signal?: AbortSignal) {
+    signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(900_000)]);
     const release = await this.variants.acquire("image", signal);
+    let artifact: unknown;
     try {
       signal?.throwIfAborted();
       const response = await this.fetchImpl(new URL("/v1/generations", this.endpoint), {
@@ -20,9 +29,13 @@ export class ImageGenerationProvider {
         await response.body?.cancel();
         throw new Error(`image provider returned HTTP ${response.status}`);
       }
-      return imageGenerationResponseSchema.parse(await response.json());
+      const result = imageGenerationResponseSchema.parse(await response.json());
+      if (this.verifyArtifact && !await this.verifyArtifact(result.artifact.id)) throw new Error("generated image artifact is not readable by Control");
+      artifact = result.artifact;
+      return { ...result, artifacts: [result.artifact] };
     } finally {
-      release();
+      try { await release(); }
+      catch (error) { throw new ImageWorkerStopError(artifact, error); }
     }
   }
 }

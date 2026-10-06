@@ -7,7 +7,8 @@ import type {
   MusicProvider,
   MusicProviderCapabilities,
 } from "@larm/core";
-import { musicArtifactMetadataSchema } from "@larm/core";
+import { musicArtifactMetadataSchema, musicGenerationJobSchema, musicGenerationRequestSchema } from "@larm/core";
+import { mkdirSync, writeFileSync, renameSync, readdirSync, readFileSync } from "node:fs";
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { MusicArtifactRetention } from "./music-artifact-retention";
@@ -135,7 +136,7 @@ export class AceStepMusicProvider implements MusicProvider {
       ...(request.seed === undefined
         ? { use_random_seed: true }
         : { use_random_seed: false, seed: request.seed }),
-      ...(request.model ? { model: request.model } : {}),
+      model: request.model === "ace-step-1.5" ? "acestep-v15-turbo" : (request.model ?? "acestep-v15-turbo"),
     };
     const started = Date.now();
     const submitted = await this.json("release_task", payload, context.signal);
@@ -287,12 +288,14 @@ export class OnDemandMusicProvider implements MusicProvider {
     await this.upstream.cancel?.(jobId);
   }
   async generate(request: MusicGenerationRequest, context: Parameters<MusicProvider["generate"]>[1]) {
-    const release = await this.variants.acquire("music", context.signal);
+    context.phase("loading");
+    const release = await this.variants.waitForMusic(context.signal);
     try {
       context.signal.throwIfAborted();
-      return await this.upstream.generate(request, context);
-    } finally {
-      release();
+      return { ...await this.upstream.generate(request, context), release };
+    } catch (error) {
+      await release();
+      throw error;
     }
   }
 }
@@ -313,6 +316,7 @@ export class MusicGenerationManager {
   private readonly retention: MusicArtifactRetention;
   private pruneTimer?: ReturnType<typeof setInterval>;
   private running = 0;
+  private closed = false;
   constructor(readonly provider: MusicProvider, private readonly options: {
     artifactRoot: string;
     concurrency?: number;
@@ -335,9 +339,28 @@ export class MusicGenerationManager {
   }
 
   async initialize(): Promise<void> {
+    mkdirSync(join(this.options.artifactRoot, "jobs"), { recursive: true, mode: 0o750 });
     await mkdir(this.options.artifactRoot, { recursive: true, mode: 0o750 });
     await this.pruneArtifacts();
     await this.recoverStoredJobs();
+    for (const file of readdirSync(join(this.options.artifactRoot, "jobs"))) {
+      if (!/^music_[a-zA-Z0-9._-]+\.json$/.test(file)) continue;
+      try {
+        const saved = JSON.parse(readFileSync(join(this.options.artifactRoot, "jobs", file), "utf8"));
+        const publicJob = musicGenerationJobSchema.parse(this.publicJob(saved));
+        if (file !== `${publicJob.jobId}.json` || this.jobs.has(publicJob.jobId)) continue;
+        const job: InternalJob = { ...publicJob, request: musicGenerationRequestSchema.parse(saved.request), abort: new AbortController() };
+        if (!["failed", "cancelled"].includes(job.status)) {
+          job.status = "failed"; job.phase = "failed";
+          delete job.result;
+          job.error = { code: "generation_interrupted", message: "generation interrupted by daemon restart; not resubmitted" };
+        }
+        this.jobs.set(job.jobId, job);
+        this.persist(job);
+      } catch (error) {
+        console.warn(`music job recovery skipped invalid record: ${file}`);
+      }
+    }
     this.pruneTimer = setInterval(
       () => void this.pruneArtifacts().catch((error) => {
         console.warn(`music artifact pruning failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -348,6 +371,10 @@ export class MusicGenerationManager {
   }
 
   close(): void {
+    this.closed = true;
+    for (const job of this.jobs.values()) {
+      if (!["completed", "failed", "cancelled"].includes(job.status)) job.abort.abort(new Error("daemon shutting down"));
+    }
     if (this.pruneTimer) clearInterval(this.pruneTimer);
     this.pruneTimer = undefined;
   }
@@ -412,6 +439,7 @@ export class MusicGenerationManager {
   }
 
   create(request: MusicGenerationRequest): MusicGenerationJob {
+    if (this.closed || this.queue.length >= 16) throw new MusicProviderError("queue_full", "music generation queue unavailable");
     const now = this.isoNow();
     const jobId = `music_${this.options.random?.() ?? crypto.randomUUID()}`;
     const job: InternalJob = {
@@ -423,6 +451,7 @@ export class MusicGenerationManager {
       request,
       abort: new AbortController(),
     };
+    this.persist(job);
     this.jobs.set(jobId, job);
     this.queue.push(jobId);
     queueMicrotask(() => void this.drain());
@@ -458,7 +487,7 @@ export class MusicGenerationManager {
   artifact(jobId: string, kind: "audio" | "metadata", favoriteOnly = false):
     { path: string; contentType: string; filename: string } | undefined {
     const job = this.jobs.get(jobId);
-    if (job?.status !== "completed" || !job.result || (favoriteOnly && !job.favorite)) return undefined;
+    if (!job?.result || (favoriteOnly && !job.favorite)) return undefined;
     if (kind === "metadata" && job.metadataPath) {
       return { path: job.metadataPath, contentType: "application/json; charset=utf-8", filename: "metadata.json" };
     }
@@ -473,7 +502,7 @@ export class MusicGenerationManager {
 
   private async drain(): Promise<void> {
     const concurrency = this.options.concurrency ?? 1;
-    while (this.running < concurrency && this.queue.length > 0) {
+    while (!this.closed && this.running < concurrency && this.queue.length > 0) {
       const id = this.queue.shift()!;
       const job = this.jobs.get(id);
       if (!job || job.status === "cancelled") continue;
@@ -486,12 +515,14 @@ export class MusicGenerationManager {
   }
 
   private async run(job: InternalJob): Promise<void> {
+    let release: (() => Promise<void>) | undefined;
     try {
       const generated = await this.provider.generate(job.request, {
         jobId: job.jobId,
-        signal: job.abort.signal,
+        signal: AbortSignal.any([job.abort.signal, AbortSignal.timeout(900_000)]),
         phase: (phase, progress) => this.transition(job, phase, progress),
       });
+      release = generated.release;
       if (job.abort.signal.aborted || job.status === "cancelled") return;
       const date = new Date(this.options.now?.() ?? Date.now());
       const directory = join(
@@ -505,7 +536,7 @@ export class MusicGenerationManager {
       const metadataPath = join(directory, "metadata.json");
       const audioTmp = `${audioPath}.tmp`;
       const metadataTmp = `${metadataPath}.tmp`;
-      const { audio, ...providerResult } = generated;
+      const { audio, release: _release, ...providerResult } = generated;
       const result: MusicGenerationResult = {
         id: job.jobId,
         provider: this.provider.id,
@@ -536,6 +567,8 @@ export class MusicGenerationManager {
       job.audioPath = audioPath;
       job.metadataPath = metadataPath;
       job.result = result;
+      await release?.();
+      release = undefined;
       this.transition(job, "completed", 1);
       void this.pruneArtifacts().catch((error) => {
         console.warn(`music artifact pruning failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -547,6 +580,8 @@ export class MusicGenerationManager {
         message: error instanceof Error ? error.message : String(error),
       };
       this.transition(job, "failed");
+    } finally {
+      await release?.().catch((error) => console.error(`music worker cleanup failed: ${String(error)}`));
     }
   }
 
@@ -557,6 +592,7 @@ export class MusicGenerationManager {
     job.updatedAt = this.isoNow();
     if (progress === undefined) delete job.progress;
     else job.progress = progress;
+    this.persist(job);
     const publicJob = this.publicJob(job);
     for (const listener of this.listeners.get(job.jobId) ?? []) listener(publicJob);
   }
@@ -623,6 +659,15 @@ export class MusicGenerationManager {
         // Corrupt or partial artifacts remain eligible for bounded retention cleanup.
       }
     }
+  }
+
+  private persist(job: InternalJob): void {
+    const root = join(this.options.artifactRoot, "jobs");
+    mkdirSync(root, { recursive: true, mode: 0o750 });
+    const path = join(root, `${job.jobId}.json`);
+    const { abort: _abort, ...saved } = job;
+    writeFileSync(`${path}.tmp`, JSON.stringify(saved), { mode: 0o640 });
+    renameSync(`${path}.tmp`, path);
   }
 
   private isoNow(): string {

@@ -317,3 +317,5 @@ export {
   type ProviderRecoveryWave,
   type RecoverablePausedJob,
 } from "./provider-recovery";
+
+export { mediaPolicySchema } from "./media-policy";

@@ -26,7 +26,7 @@ fi
 SH
 cat >"${test_root}/bin/curl" <<'SH'
 #!/usr/bin/env bash
-exit 0
+echo '{"loaded":true,"data":{"loaded":true,"models_initialized":true}}'
 SH
 chmod +x "${test_root}/bin/"*
 export PATH="${test_root}/bin:${PATH}"
@@ -49,7 +49,7 @@ test "$(tail -n 1 "${test_root}/calls")" = 'stop larm-music-ace-step.service'
 curl() { SECONDS=$((SECONDS + 301)); return 1; }
 export -f curl
 : >"${test_root}/calls"
-if bash "${script}" start image >/dev/null 2>&1; then exit 1; fi
+if LARM_MEDIA_START_TIMEOUT_SECONDS=0 bash "${script}" start image >/dev/null 2>&1; then exit 1; fi
 test "$(tail -n 1 "${test_root}/calls")" = 'stop larm-image-qwen21.service'
 unset -f curl
 rm -f "${test_root}/started"
