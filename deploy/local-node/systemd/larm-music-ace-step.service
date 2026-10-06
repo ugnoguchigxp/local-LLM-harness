@@ -13,6 +13,7 @@ Environment=XDG_CACHE_HOME=/srv/ai/cache
 Environment=ACESTEP_CHECKPOINTS_DIR=/srv/ai/models/ace-step-1.5
 Environment=ACESTEP_CONFIG_PATH=acestep-v15-turbo
 Environment=ACESTEP_INIT_LLM=false
+Environment=ACESTEP_NO_INIT=false
 Environment=ACESTEP_LM_BACKEND=pt
 Environment=MIOPEN_FIND_MODE=FAST
 Environment=TOKENIZERS_PARALLELISM=false

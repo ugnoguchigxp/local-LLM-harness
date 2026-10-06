@@ -126,6 +126,8 @@ export class MediaVariantManager {
     } finally { this.waitingMusic--; }
   }
 
+  quarantine(): void { this.faulted = true; }
+
   async close(): Promise<void> {
     this.closed = true;
     for (const timer of Object.values(this.timers)) if (timer) clearTimeout(timer);

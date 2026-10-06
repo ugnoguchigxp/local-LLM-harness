@@ -45,7 +45,7 @@ case "${action}" in
       exit 1
     fi
     deadline=$((SECONDS + ${LARM_MEDIA_START_TIMEOUT_SECONDS:-300}))
-    if [[ "${variant}" == music ]]; then
+    if [[ "${variant}" == music ]] && ! ready >/dev/null 2>&1; then
       until curl -fsS --max-time 3 "${health}" >/dev/null 2>&1; do
         if (( SECONDS >= deadline )); then systemctl stop "${service}"; exit 1; fi
         sleep 1

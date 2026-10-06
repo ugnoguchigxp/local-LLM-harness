@@ -301,10 +301,18 @@ const mediaVariants = new MediaVariantManager({
   script: new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname,
   idleTtlMs: { image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
 });
-// Recover orphan workers before accepting new generation requests.
+// Recover orphan workers without making the public API depend on media permissions.
 await Promise.all(["image", "music"].map(async (variant) => {
+  const unit = variant === "image" ? "larm-image-qwen21.service" : "larm-music-ace-step.service";
+  const observed = Bun.spawn(["systemctl", "show", unit, "--property=ActiveState", "--value"], { stdout: "pipe", stderr: "ignore" });
+  const state = (await new Response(observed.stdout).text()).trim();
+  if (await observed.exited === 0 && state === "inactive") return;
   const child = Bun.spawn([new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname, "stop", variant], { stdout: "ignore", stderr: "pipe" });
-  if (await child.exited !== 0) throw new Error(`unable to recover ${variant} worker`);
+  const detail = await new Response(child.stderr).text();
+  if (await child.exited !== 0) {
+    mediaVariants.quarantine();
+    console.error(`media recovery failed for ${variant}: ${detail.trim()}`);
+  }
 }));
 const musicManager = musicEndpoint
   ? new MusicGenerationManager(new OnDemandMusicProvider(new AceStepMusicProvider({
