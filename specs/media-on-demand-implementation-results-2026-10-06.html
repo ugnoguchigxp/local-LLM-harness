@@ -6,7 +6,7 @@
   <section id="release">
     <h2>配備</h2>
     <p>
-      Controlは192.168.0.130:9810、releaseCommitは<code>ba114cb6ff67c33fd5f6c1321ea0f570f0e82732</code>、configRevisionは<code>1411986f3a921403a3a2ef724fb30e1e0390aed2471a58a7d3976dd346bdcb37</code>。署名付きリリースの起動と公開契約検証が成功した。既存要求の完了を待ち、idle確認後に切り替えた。
+      Controlは192.168.0.130:9810、releaseCommitは<code>b41165d80e7df1b7cd8adc527b9680fde5828046</code>、configRevisionは<code>1411986f3a921403a3a2ef724fb30e1e0390aed2471a58a7d3976dd346bdcb37</code>。署名付きリリースの起動と公開契約検証が成功した。既存要求の完了を待ち、idle確認後に切り替えた。
     </p>
     <p>
       レビュー用branchは<code>codex/media-on-demand</code>。別のソースチェックアウトで今回の変更だけをcommit・検証し、元の作業ツリーの既存未コミット変更を保護した。最終リリースの<code>bun run check</code>は成功し、Bunテスト660件、tooling
@@ -116,6 +116,17 @@
       追加の生成POSTを行わず、LARMと同じruntime-variant.shを使い、停止中の楽曲workerを起動した。healthのmodels_initialized:
       trueとloaded_model:
       acestep-v15-turboを確認し、停止後のinactive、MainPID=0を確認した。これにより、修正後はホーム内キャッシュに依存せず起動できることを検証した。
+    </p>
+  </section>
+  <section id="default-quality">
+    <h2>既定品質と最終更新</h2>
+    <p>
+      補助LMを無効にしたACE-Stepに対し、従来のbalanced/high変換がthinking:
+      trueを要求する不整合を修正した。品質は4/8/12の生成ステップ数へ変換し、thinkingはfalseとする。既定balancedの上流payloadを自動テストで検証した。
+    </p>
+    <p>
+      実生成2件はba114cb6ff67c33fd5f6c1321ea0f570f0e82732で行い、既定品質修正を含む最終releaseはb41165d80e7df1b7cd8adc527b9680fde5828046。fast要求の変換は変わらない。追加生成はせず、最終releaseへの更新後に両成果物の取得、楽曲jobのcompleted回収、API
+      ready、両workerの停止と公開カタログを再確認した。balanced/highの実生成を検証したという主張ではない。
     </p>
   </section>
   <section id="scope">
