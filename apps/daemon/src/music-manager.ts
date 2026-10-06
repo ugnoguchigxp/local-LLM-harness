@@ -316,6 +316,7 @@ export class MusicGenerationManager {
   private readonly retention: MusicArtifactRetention;
   private pruneTimer?: ReturnType<typeof setInterval>;
   private running = 0;
+  private readonly runningJobs = new Map<string, Promise<void>>();
   private closed = false;
   constructor(readonly provider: MusicProvider, private readonly options: {
     artifactRoot: string;
@@ -480,6 +481,7 @@ export class MusicGenerationManager {
     if (["completed", "failed", "cancelled"].includes(job.status)) return this.publicJob(job);
     job.abort.abort(new Error("cancelled"));
     await this.provider.cancel?.(jobId);
+    await this.runningJobs.get(jobId);
     this.transition(job, "cancelled");
     return this.publicJob(job);
   }
@@ -507,10 +509,13 @@ export class MusicGenerationManager {
       const job = this.jobs.get(id);
       if (!job || job.status === "cancelled") continue;
       this.running++;
-      void this.run(job).finally(() => {
+      const running = this.run(job).finally(() => {
+        this.runningJobs.delete(id);
         this.running--;
         void this.drain();
       });
+      this.runningJobs.set(id, running);
+      void running.catch((error) => console.error(`music job execution failed: ${String(error)}`));
     }
   }
 

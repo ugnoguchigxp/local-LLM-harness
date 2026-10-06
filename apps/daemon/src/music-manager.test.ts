@@ -225,3 +225,31 @@ test("recovery fails interrupted jobs without submitting them again", async () =
     expect(manager.get("music_interrupted")?.error?.code).toBe("generation_interrupted");
   } finally { manager.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test("cancellation waits for worker cleanup before publishing cancelled", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-music-cancel-"));
+  const started = Promise.withResolvers<void>();
+  const stopping = Promise.withResolvers<void>();
+  const stopped = Promise.withResolvers<void>();
+  const upstream = new AceStepMusicProvider({ endpoint: "http://unused" });
+  const manager = new MusicGenerationManager({
+    id: upstream.id, capabilities: upstream.capabilities,
+    load: async () => {}, unload: async () => {}, health: async () => ({ available: true }),
+    generate: async (_request, context) => {
+      started.resolve();
+      try {
+        await new Promise<void>((_resolve, reject) => context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true }));
+        throw new Error("unreachable");
+      } finally { stopping.resolve(); await stopped.promise; }
+    },
+  }, { artifactRoot: root });
+  try {
+    const job = manager.create(musicGenerationRequestSchema.parse({ prompt: "test" }));
+    await started.promise;
+    const cancellation = manager.cancel(job.jobId);
+    await stopping.promise;
+    expect(manager.get(job.jobId)?.status).not.toBe("cancelled");
+    stopped.resolve();
+    expect((await cancellation)?.status).toBe("cancelled");
+  } finally { stopped.resolve(); manager.close(); await rm(root, { recursive: true, force: true }); }
+});
