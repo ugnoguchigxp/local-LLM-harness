@@ -124,7 +124,8 @@ export class AceStepMusicProvider implements MusicProvider {
       lyrics: request.instrumental ? "[Instrumental]" : (request.lyrics ?? ""),
       audio_duration: request.durationSeconds,
       audio_format: request.outputFormat,
-      thinking: quality !== "fast",
+      // Quality changes diffusion steps; this runtime has no auxiliary LM.
+      thinking: false,
       inference_steps: quality === "fast" ? 4 : quality === "high" ? 12 : 8,
       batch_size: 1,
       ...(request.language ? { vocal_language: request.language } : {}),

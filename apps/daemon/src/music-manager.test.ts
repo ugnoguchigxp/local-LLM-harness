@@ -52,6 +52,9 @@ test("ACE-Step job is normalized and materialized behind download URLs", async (
     const url = new URL(input instanceof Request ? input.url : input.toString());
     calls.push(url.pathname);
     if (url.pathname === "/release_task") {
+      const payload = JSON.parse(String(init?.body));
+      expect(payload.thinking).toBe(false);
+      expect(payload.inference_steps).toBe(8);
       return Response.json({ data: { task_id: "upstream-1", status: "queued" }, code: 200 });
     }
     if (url.pathname === "/query_result") {
