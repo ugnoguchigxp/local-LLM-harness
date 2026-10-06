@@ -1,0 +1,689 @@
+<article lang="ja">
+  <h1>docling-deskの環境分離とオンデマンドホスティング実装計画</h1>
+  <p>
+    2026年10月6日の利用者合意に基づく提案。docling-deskは利用頻度が低くても、第三者パッケージを試すための環境分離の初期事例としてLinuxネイティブコンテナで実行する。既存のKnowledge
+    APIとCPU
+    processorを再利用し、LARMから一つの論理サービスとして起動・接続・停止できるようにする。本書の作成は実装、イメージのビルド、インストール、配備、データ移行の実施を意味しない。
+  </p>
+  <p>
+    製品方針は<a href="./concept.html">LARMコンセプト正本への案内</a
+    >、調査依頼の評価と分離方式の比較は<a
+      href="./local-service-runtime-prompt-review-2026-10-06.html"
+      >Local Service Runtime調査プロンプト評価</a
+    >を参照する。今回のdoclingはコンテナを必須とするが、他の全サービスへコンテナを強制しない。
+  </p>
+  <p>
+    実装sourceと配備受入の進捗は<a
+      href="./docling-isolated-service-implementation-results-2026-10-06.html"
+      >実装と配備受入状況</a
+    >に記録する。実装時はprobeを固定契約とし、consumer許可を別Secret設定へ分けた。強制停止APIは実装せず、未観測groupは資源予約を保持して隔離する。
+    leaseと状態管理はcoreへ置き、daemonからhost
+    backendとjournalを注入する。group停止にはcontainerごとの60秒のTERM猶予を使い、LARM制御期限を180秒とした。以下のmanifestは初期提案で、実装のstrict
+    schemaと配備設定はconfig/local-node/local-services.yamlを参照する。
+  </p>
+  <section id="decision">
+    <h2>採用する構成と非目標</h2>
+    <p>
+      SAAA等のconsumerがdocling-deskの利用権を要求し、LARMが資源枠を確保して承認済みsystemd
+      unitを起動する。unitは専用ユーザーのrootless
+      Dockerで、固定されたCompose構成のAPIとprocessorを起動する。processorを先に準備し、APIの利用契約のreadiness成立後に接続先を返す。LARMはDocker
+      socketを保持せず、Appもsocketへアクセスしない。
+    </p>
+    <table>
+      <caption>
+        初期の実行単位
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">役割</th>
+          <th scope="col">起動と接続</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LARM daemon</th>
+          <td>論理サービス、利用権、資源枠、readiness、停止判定</td>
+          <td>既存制御面を維持。Appの検索、資料変換、DB、job意味論は持たない</td>
+        </tr>
+        <tr>
+          <th scope="row">docling Knowledge API</th>
+          <td>TypeScript / Bun、SQLiteの単一writer、FTS検索、登録、job、認証</td>
+          <td>container。API入口はhost loopback。外部consumerへは認証付きTLS入口を別途用意する</td>
+        </tr>
+        <tr>
+          <th scope="row">docling processor</th>
+          <td>Python、CPU版PyTorch、Docling、OCR、変換とviewer生成</td>
+          <td>container。APIとprivate networkで接続し、host portとGPU deviceを公開しない</td>
+        </tr>
+        <tr>
+          <th scope="row">永続volume</th>
+          <td>APIのSQLiteと、原本・抽出成果物</td>
+          <td>独立した固定volume。通常停止・再生成・rollbackでも削除しない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      初期は二つのcontainerをまとめてcold起動・停止する。APIだけをwarm保持してprocessorのみを起動する機能は後続とする。Compose内の依存は固定のAPI→processorのみで、LARMへ汎用dependency
+      schedulerを追加しない。processorからAPIへのOCR ledger
+      callbackは実装上の通信関係であり、逆向きの起動依存にはしない。
+    </p>
+    <p>
+      KVM、分散配置、汎用Docker
+      API、利用者によるmanifest登録、任意packageの実行、GPU版Docling、semantic検索・回答生成のProvider接続、Wiki移行、Copy
+      Referenceの新規実装、旧UIの全面統合は初期対象外。CPUのみの登録・抽出・FTS検索・既存viewer
+      APIまでを実証対象にする。第三者の任意コードをVM並みに隔離できる保証はしない。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>確認した実装と再利用の限界</h2>
+    <p>
+      LARMの調査時HEADはc0da5540940df027851e599a6d7c739257b039c5。作業ツリーには画像・音楽等の未コミット変更があり、維持する。本計画の根拠は読み取った作業ツリーであり、稼働releaseと同一とは認定しない。docling-deskはcanonical
+      repositoryから取得した05d9b995c29f3d2f02a86fca3a9cd58eb3273a6cを確認した。Docling
+      submoduleの記録revisionはa1c5ff2a8c5ab2bf87d7c1eb896b5bc351f51220。submodule内容の取得、依存インストール、buildと実機起動は行っていない。SAAA実装は調査対象にしておらず、consumer契約だけを提案する。
+    </p>
+    <table>
+      <caption>
+        確認できた事実と今回の変更
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">根拠</th>
+          <th scope="col">現状</th>
+          <th scope="col">判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">packages/core/src/schema.ts、registry.ts</th>
+          <td>nodes、runtimes、profiles、routes。AI専用protocolとcapability互換検証</td>
+          <td>
+            一般Appを既存AI
+            RuntimeDefinitionへ押し込まない。別のServiceDefinitionを追加し、nodeと検証の規約を再利用
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">packages/core/src/provider-lifecycle.ts、allocation.ts</th>
+          <td>revision、instance generation、warm policy、期限付きBinding</td>
+          <td>
+            識別と期限の原則を再利用。Provider schemaやAI Allocationをそのまま一般Appへ流用しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            packages/core/src/admission.ts、packages/backends/src/linux-node-telemetry.ts
+          </th>
+          <td>宣言メモリとlive headroom。GPU側はVRAM/GTTのsysfs値を集計</td>
+          <td>
+            Serviceの予約をAI側admissionにも反映。UMAを独立RAM＋VRAMとして加算しない。CPU
+            AppへGPU固有gateを無条件適用しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">packages/backends/src/systemd.ts、types.ts</th>
+          <td>
+            systemd start/stop、instance-aware操作。healthはstatus ok/healthyまたはready:trueを判定
+          </td>
+          <td>
+            shellを介さないunit制御を抽出して再利用。doclingのstatus:readyを既存正規表現では受理できないため、Service用の厳密なprobeを追加
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">packages/core/src/service-activity.ts</th>
+          <td>HTTP active workloadの短期観測。reservationGuaranteed:false</td>
+          <td>一般Appのjob保護には不足。App activityとdrainの新規契約が必要</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            docling deploy/compose.knowledge.yml、Dockerfile、knowledge-api/Dockerfile
+          </th>
+          <td>
+            APIとprocessorは分離済み、非root UID
+            10001、CPUモデル、二つのvolume。restart:unless-stopped
+          </td>
+          <td>
+            固定image
+            digestとhardeningを指定したLARM用構成を準備。restart:noへ変更しLARMをlifecycleの判断主体とする
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">docling knowledge-api/src/app.ts、server.ts、worker.ts</th>
+          <td>
+            readyはDB・空き容量・client設定を検査。source_managementはprocessor到達性。job実行とsignal
+            shutdownあり
+          </td>
+          <td>
+            HTTP
+            200だけでは不十分。source_management:trueも要求。現行shutdownはworker取消と約10秒の待機を含むため、通常idle停止でactive
+            jobへSIGTERMを送らない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">docling src/docling_desk/knowledge/worker.py</th>
+          <td>private token、processor busy拒否、モデル・Tesseract・disk readiness</td>
+          <td>
+            private endpointとCPU実装を再利用。processor activity、drain、進行中処理の照合を追加
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">docling docs/knowledge-api.md、docs/linux-docker.md</th>
+          <td>
+            FTSはEmbedding未設定でも利用可。Knowledge
+            APIはbrowserのOrigin付き要求を拒否。既存Composeのprocessor停止猶予は1920秒
+          </td>
+          <td>
+            SAAA側server adapterを契約上の前提とする。長いstop
+            timeoutだけではjob保護にならないため、受付停止と活動照合を先に成立させる
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Knowledge API用volumeは旧デモのdataと独立している。旧デモComposeを起動しただけでDocument
+      Knowledge Storeとの接続が完了したとは扱わない。Dockerの公式Resource constraints、rootless
+      Tipsとcontainer run仕様も確認し、rootlessのcgroup v2とsystemd delegation、memory
+      limit、権限とread-only設定を導入前検証の対象とする。
+    </p>
+  </section>
+  <section id="boundaries">
+    <h2>責務と変更箇所</h2>
+    <table>
+      <caption>
+        実装単位と担当repository
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">場所</th>
+          <th scope="col">変更案</th>
+          <th scope="col">再利用と境界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LARM packages/core/src/local-service.ts、local-service-registry.ts</th>
+          <td>
+            strict ServiceDefinition、ServiceInstance、ServiceLease、状態遷移、catalog validation
+          </td>
+          <td>
+            新規ファイル案。既存AI schema、Profile解決、APIを維持。OS操作とcontainer CLIは入れない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LARM packages/core/src/service-resource-ledger.ts、admission.ts</th>
+          <td>node単位のService予約とAI予約の共通会計。観測と予約の判定</td>
+          <td>新規ledger案。AI→ServiceとService→AIの両方向を同じnode lockで判定</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            LARM packages/backends/src/systemd-control.ts、local-service-systemd.ts
+          </th>
+          <td>
+            allowlist unitのstart/stop、状態query、container groupの観測、Service readiness probe
+          </td>
+          <td>既存systemd.tsから制御部分だけ抽出。AI固有health・resident保護は既存側で維持</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            LARM apps/daemon/src/local-service-manager.ts、routes/local-services.ts
+          </th>
+          <td>ensure、lease、activity polling、drain、idle回収、restart reconcile</td>
+          <td>新規managerとroute案。既存metrics/onEventの仕組みを利用。App DBは読まない</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            LARM apps/daemon/src/config.ts、main.ts、app-types.ts、app-request-policy.ts
+          </th>
+          <td>
+            default offのfeature gate、service catalogとmanagerの注入、consumerとmanagement認証
+          </td>
+          <td>現行制御tokenのscopeを広げない。local servicesには匿名Agent API例外を適用しない</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            LARM
+            packages/core/src/api-operations.ts、api-schema.ts、api-openapi-paths.ts、api-lifecycle.ts
+          </th>
+          <td>Service APIの型、error、認可、OpenAPIとoperation governance</td>
+          <td>既存/v1/servicesのASR service-harnessを維持し、新規/v1/local-servicesへ分離</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM packages/client/src/client-local-services.ts、index.ts</th>
+          <td>consumer用discovery、ensure、resolve、renew、release</td>
+          <td>既存clientとAI Provider接続は変更しない。management操作を通常clientへ混ぜない</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            LARM
+            config/local-node/local-services.yaml、deploy/local-node/systemd、deploy/local-node/scripts
+          </th>
+          <td>承認済みService定義、専用unit、固定引数のcontroller/helper、preflightとsmoke</td>
+          <td>host側sourceのみ。image、原本、モデル、cache、鍵、log、build出力はrepository外</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            docling-desk deploy/compose.larm.yml、knowledge-api/src、Python processor
+          </th>
+          <td>hardened配備、activity/drain/resume、必要なSecret file対応、private状態契約</td>
+          <td>
+            別repositoryの作業。image buildとApp
+            jobの復旧仕様はdocling側。LARMへドメイン処理を移さない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">SAAAまたは他consumer</th>
+          <td>service lease、server側Knowledge API接続、WebViewの利用中renew</td>
+          <td>consumer接続は後続受入。SAAAの変更箇所は最新checkout確認後に確定する</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      独立したDockerBackendで任意imageを動かす案は初期に採用しない。承認済みsystemd
+      unitから固定Compose構成を起動する案は、既存OS境界を使い、daemonにcontainer管理socketの権限を与えずに成立する。rootlessが使えない場合は、host
+      root権限の管理socketをdaemonへ渡す方法に自動変更せず、限定helper方式を再設計してから進める。
+    </p>
+  </section>
+  <section id="manifest">
+    <h2>最小Service manifest案</h2>
+    <p>
+      以下は実装予定schemaの例であり、現行LARMの読込可能configではない。単位はbytesとsecondsを明示する。image
+      digest、Compose project、mount、envとSecretは管理者が所有する固定配備定義へ置き、consumer
+      requestで上書きできない。revisionは配備定義、image digest、probeとresource
+      policyのdigestから算出する。
+    </p>
+    <pre><code class="language-yaml">schemaVersion: larm.local-services.v1
+services:
+  docling-desk:
+    node: local-node
+    backend: systemd-container-group
+    deployment:
+      unit: larm-local-service-docling-desk.service
+      release: docling-knowledge-cpu-v1
+      endpoint: http://127.0.0.1:18766
+    readiness:
+      path: /health/ready
+      expectedStatus: 200
+      expectedJson:
+        status: ready
+        capabilities.source_management: true
+      timeoutSeconds: 180
+    activity:
+      path: /internal/larm/activity
+      secretRef: docling-lifecycle-token
+      pollSeconds: 5
+      staleAfterSeconds: 15
+    lifecycle:
+      minInstances: 0
+      idleSeconds: 120
+      leaseSeconds: 300
+      gracefulStopSeconds: 60
+      restartPolicy: on-next-ensure
+    resources:
+      startupReservationBytes: 9663676416
+      cpuMaxCores: 5
+      maxInstances: 1
+      gpuAccess: false
+    permissions:
+      consumerScope: docling-desk.use
+      managementScope: local-services.manage
+</code></pre>
+    <p>
+      180秒のreadiness、120秒のidle、300秒のlease、60秒の停止猶予と9
+      GiBの予約は検証開始値であり実測保証ではない。API memory limit 512 MiB、processor 8 GiB、API
+      CPU 1、processor CPU 4、抽出concurrency
+      1を初期候補とする。これらの制限が実際に適用されることと、対応fixtureが完了することを確認して採用する。processorの1件制約は既存実装と合わせ、上限変更は別受入を要する。
+    </p>
+    <p>
+      vuln-workbench等の第二サービスはmanifest形状の一般化検証に限定し、この計画で配備しない。通常processのbackendを後から追加できるdiscriminated
+      schemaとするが、未実装backendをreadyと広告しない。
+    </p>
+  </section>
+  <section id="isolation">
+    <h2>配備と境界分離</h2>
+    <ul>
+      <li>
+        rootless DockerはLARM daemonと別の専用ユーザーで実行し、systemdのcgroup v2 delegationとUID
+        mappingをpreflightする。daemonにはDocker socket、docker
+        group、汎用sudo、任意systemctlの権限を渡さず、登録済みunitに限定する。
+      </li>
+      <li>
+        Composeとhelperは管理者所有でconsumerやcontainerから書換不可。project名、service名、releaseとimage
+        digestを固定し、起動時build、pull、package
+        installを行わない。submoduleと依存lockを固定したimageを別のbuild工程で作る。
+      </li>
+      <li>
+        両containerを非root、cap_drop ALL、no-new-privileges、default seccomp、read-only root
+        filesystem、init付きとする。必要な/tmp、LibreOffice profileとPython
+        cacheの書込先は上限付きtmpfsまたは専用cache
+        volumeへ限定し、互換性はfixtureで確認する。tmpfsとshared memoryもメモリ予算に含める。
+      </li>
+      <li>
+        GPU device、host network、host PID/IPC、privileged、host
+        root、SSH鍵、ユーザーhome、.codex、LARM管理token、APIのactor署名鍵をprocessorへ渡さない。APIのSQLite
+        volumeはprocessorへ渡さず、artifact volumeのみ共有する。
+      </li>
+      <li>
+        runtime networkは原則外部egressを許可しないprivate
+        network。APIとprocessor間の必要通信とhost側入口の動作をrootlessで検証する。外部OCR、translation、answer、embeddingは初期off。環境全体の.envを取り込まずallowlistした設定のみ渡す。
+      </li>
+      <li>
+        Secretは管理者設定のfile referenceで渡す。API clientとactor署名鍵、processor
+        token、lifecycle tokenを分離する。現行のenv-only
+        tokenにfile対応が必要ならdocling側で追加する。Secretをimage、manifest本文、API応答、監査logへ保存しない。
+      </li>
+      <li>
+        標準Composeのrestart:unless-stoppedをrestart:noへ置き換える。起動helperはforegroundのApp
+        processをunit内に直接含むと仮定せず、Docker側のcontainer ID、所有label、exit
+        codeとOOMKilledを別途観測する。
+      </li>
+      <li>
+        unitのactiveだけでgroup
+        readyとしない。管理helperが固定projectのAPIとprocessorの状態をqueryできる限定経路を用意し、LARMはその状態とHTTP
+        probeを照合する。daemonから汎用inspectやdocker execを呼べる経路は作らない。
+      </li>
+    </ul>
+    <p>
+      初期はhost port
+      18766をAPI用loopbackとして事前検査する。衝突は起動前に拒否し、consumerにはportを恒久IDとして扱わせない。Macから利用する段階では管理者が認証付きTLS
+      reverse
+      proxyのFQDNと固定経路を設定し、LARMのresolveがその到達可能な入口を返す。127.0.0.1をMac向け接続先として返さない。private
+      activity/drain経路は外部proxyから拒否する。
+    </p>
+    <p>
+      Knowledge APIはactor client tokenと短期actor
+      JWTを要求し、browserからの直接呼出を想定していない。service
+      leaseはAppデータへの認可を代替しない。SAAAのserver
+      adapterはAppの利用者権限を検証して問い合わせ、viewerの配信入口とsession期限は既存viewer契約に合わせて受入する。一般的なHTTP
+      reverse proxyだけでbrowser認証が成立したとは扱わない。
+    </p>
+  </section>
+  <section id="api">
+    <h2>Control APIとconsumer契約</h2>
+    <table>
+      <caption>
+        新規API案
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">操作</th>
+          <th scope="col">要求と結果</th>
+          <th scope="col">認可と副作用</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">GET /v1/local-services</th>
+          <td>許可されたServiceの能力、revision、稼働状態</td>
+          <td>consumer scope。起動、予約、credential発行なし</td>
+        </tr>
+        <tr>
+          <th scope="row">GET /v1/local-services/:id</th>
+          <td>
+            stopped / starting / ready / draining / stopping / failed、healthとactivity freshness
+          </td>
+          <td>consumer scope。pid、unit、Secretと内部processor endpointは非公開</td>
+        </tr>
+        <tr>
+          <th scope="row">POST /v1/local-services/:id/leases</th>
+          <td>
+            ensureに相当。Idempotency-Key、希望TTLと任意catalog revision。201 readyまたは202
+            startingの同じleaseを返す
+          </td>
+          <td>consumer scope。固定serviceのみ。command、image、env、path、任意endpoint指定は400</td>
+        </tr>
+        <tr>
+          <th scope="row">GET /v1/local-service-leases/:id</th>
+          <td>
+            利用権の状態と有効期限。readyなら承認済み公開endpoint、revision、instance
+            generation、boot epochを解決
+          </td>
+          <td>同一principalのみ。準備中は接続可能としない。resolveは新しい起動をしない</td>
+        </tr>
+        <tr>
+          <th scope="row">POST /v1/local-service-leases/:id/renew</th>
+          <td>同じgenerationとboot epochの期限を延長</td>
+          <td>同一principalのみ。古いinstanceは409 stale_binding。失効後は新規ensure</td>
+        </tr>
+        <tr>
+          <th scope="row">DELETE /v1/local-service-leases/:id</th>
+          <td>自身の利用権を冪等解放。204</td>
+          <td>他consumer、jobと共有参照は維持。即座に全体停止しない</td>
+        </tr>
+        <tr>
+          <th scope="row">POST /v1/management/local-services/:id/stop</th>
+          <td>通常はdrainとidle確認、busyなら409。forceは明示理由と監査を要求</td>
+          <td>
+            management scope。一般LLMへforce権限を渡さない。forceはjob中断とデータ保全の結果を返す
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      初期登録は管理者がconfigへ承認済みmanifestを追加し、起動時に検証する方式とする。公開register
+      APIは不要。consumer
+      identityとscopeは認証設定に結び付け、request本文のclient名を認可主体にしない。401、403、404、409、429、503とRetry-Afterを型付きで返す。HTTP切断でleaseや起動を自動取消せず、明示releaseまたはTTLで回収する。
+    </p>
+    <p>
+      同じprincipal・key・bodyの再送は同一leaseとoperationへ戻し、keyのbody不一致は409。異なるconsumerのensureも同じservice
+      revisionの一つの起動へ合流する。待機leaseの全解放でstartupを取消す場合は、既存jobや他参照がないことと、自分が作成したcontainerだけを停止することを確認する。
+    </p>
+  </section>
+  <section id="activity">
+    <h2>活動通知と競合しない停止</h2>
+    <p>
+      docling側へ認証付きのprivate契約を追加する。GET /internal/larm/activityは契約version、app boot
+      ID、単調sequence、observedAt、queuedJobs、runningJobs、activeRequests、processor
+      activeJobs、drain状態とdrain
+      tokenを返す。job一覧、文書IDと内容はLARMへ返さない。APIは自身のcounterとjob
+      DBを照合し、processorの活動を集約する。processor到達不能、counter不一致と期限切れはidleではなくunknownとする。
+    </p>
+    <p>
+      POST
+      /internal/larm/drainは新規の資料登録、抽出開始、検索、viewer処理等の業務受付と外部からの新規job受理を停止する。既に受理した処理とqueueはclaimを継続して完了へ進め、queueが残る間は停止可としない。単調sequenceとapp
+      boot
+      IDを含むtokenを返し、LARMは同じtokenでdrainedを確認する。activityとdrainのcheckはreadiness照会と区別する。POST
+      /internal/larm/resumeは同じ世代のdrainを解除する。
+    </p>
+    <ol>
+      <li>
+        有効lease、依存参照、queued/running job、active
+        requestのいずれかがある間はbusyとしてidle時計を進めない。busyは稼働状態と独立したactivityとして表示する。
+      </li>
+      <li>
+        全参照ゼロかつ新鮮なidleが120秒続いたら、service
+        lockの下でdrainを開始する。App側が受付を閉じたことを確認してから最後のactivityを取得する。
+      </li>
+      <li>
+        同じapp boot IDとdrain
+        tokenで、queue・job・request・processor活動のゼロを確認し、leaseとgenerationを再確認する。ここが停止判断の確定点となる。
+      </li>
+      <li>
+        確定前の新しいensureはdrainを解除して利用再開する。確定後のensureはstoppingを追跡し、旧世代の完全停止後に新generationを起動する。同時に二つのSQLite
+        writerを起動しない。
+      </li>
+      <li>
+        APIを先に正常停止し、processorの終了を確認してから停止する。両containerのexitと子process消滅を確認し、resource予約を解放する。volumeは残す。
+      </li>
+    </ol>
+    <p>
+      activity不明、通信断、processorの応答不明の際は通常停止を保留し、drainを解除できれば解除する。5分継続時を通知開始値とし、管理者の照合を要求する。通知期限を自動killの期限に読み替えない。60秒の正常停止猶予を超えた場合もstop_timeoutと予約を残し、通常idle回収で無条件SIGKILLへ進まない。明示forceだけが中断とchild
+      tree強制回収を行う。
+    </p>
+    <p>
+      WebViewを表示しているconsumerはleaseをrenewする。consumerが落ちてもApp内のjobがあればactivityで保護する。Appから生成APIへの要求が中断された場合、LARMは業務POSTを再送しない。job再開・失敗・重複防止はdoclingが決定する。
+    </p>
+  </section>
+  <section id="memory">
+    <h2>ユニファイドメモリの資源管理</h2>
+    <p>
+      config/local-node/nodes.yamlはRyzen AI MAX+ 395、128 GB、reservedMemoryGB
+      16を宣言する。これは登録値であり今回の空き容量の実測ではない。system
+      RAMとGPU使用分は同じ物理poolを競合するため、総容量へRAM＋VRAMを加算しない。containerのmemory
+      limitは上限であり同量の常時占有を意味しない。GPU
+      device非公開でも、CPUのDocling処理がLLMの余裕を減らすことをadmissionに反映する。
+    </p>
+    <p>
+      初期はCPU専用groupに9
+      GiBのstartup/peak予算を静的予約し、稼働中も同じ予約を維持する保守的な方式を使う。containerごとのmemory
+      limitを予約と別に強制し、tmpfs、shared
+      memoryと子processを含む実測peakが予算内に収まるか検証する。Docker/rootlessの常駐費用はnodeのsystem
+      overheadとして一度だけ計上する。
+    </p>
+    <p>
+      admissionは二段階とする。静的gateは既存AI
+      runtimeの重複しない予約、起動中Service予約とnode保護枠を同じ会計で集計する。live
+      gateは新鮮なMemAvailableとUMA上のGPU観測を確認し、既にlive使用量へ反映された稼働予約をもう一度丸ごと減算せず、まだ観測されていない起動予約・予算残額を照合する。CPUとGPU双方の観測を突き合わせる方法をpure関数へ切り出し、二重計上・過小計上・競合をfixtureで検証する。CPU-only
+      ServiceにはGPU freeだけを起動条件にしない。
+    </p>
+    <p>
+      Serviceの枠確保とAI Allocationのadmissionを共通node
+      lockで直列化し、どちらか一方だけに予約を見せる実装を禁止する。稼働ServiceをAI側が未管理メモリとして無視しない。通常は重要なforeground
+      Providerをdoclingのためにpreemptしない。枠不足またはstale
+      telemetryは起動を503で拒否し、予約漏れを残さない。disk空き不足は別理由で拒否する。
+    </p>
+    <p>
+      OOMKilled、memory.events、memory
+      peak、CPU負荷、起動時間、抽出時間、AIのTTFTと音声遅延を測定する。上限到達を自動で制限解除する理由にせず、対応入力の制限または管理者による予算変更で解決する。container停止後はprocess由来メモリと予約の回収を確認し、reclaim可能なpage
+      cacheの残留を孤児processと誤認しない。
+    </p>
+  </section>
+  <section id="recovery">
+    <h2>永続化と復旧</h2>
+    <p>
+      rootless専用ユーザーの管理領域にcontainer state、imageとcacheを置き、API
+      DBとartifactの固定volume名をreleaseから独立させる。readiness失敗と起動取消時は今回起動したgroupだけを回収し、以前のvolumeへ変更を加えない。通常運用にdown
+      -vやvolume pruneを使わない。
+    </p>
+    <p>
+      LARMはservice ID、配備revision、container ID、generation、App boot
+      ID、drain状態と予約の小さなjournalを永続化する。再起動時は通常APIを開く前に所有labelと実際のcontainerを照合し、観測済みgroupの資源枠を再登録する。古いleaseはboot
+      epochで失効させるが、それを理由に稼働jobを停止しない。consumerは再ensureし、jobはAppのIDで照合する。
+    </p>
+    <p>
+      unit
+      activeでも片方がexitした場合はfailed/degradedとして新規leaseをreadyにしない。正常稼働中のjobがある側を即座に全停止しない。未知revision、duplicate
+      writer、label不一致と所有者不明containerはquarantineして自動adoptやkillをせず報告する。LARM停止中も既存containerは自律的に処理を継続できるが、新しいensureとidle回収は利用不可とする。
+    </p>
+    <p>
+      crashしたinstanceは同じleaseへ別generationとして黙って差し替えない。新規ensureで再起動を試み、backoffと試行上限を持つ。writer
+      leaseの解放と既存の最大30秒程度の復旧待ちをreadiness期限に含める。Appの原本DB・索引・jobの整合性はApp自身が検証する。
+    </p>
+    <p>
+      更新はdrain後に旧groupを停止し、DBとartifactを同じ時点でbackupして新image
+      digestへ切り替える。schema
+      migration前に互換性を確認し、非互換migration後は旧imageへの切替だけをrollback成功とせず対応backupへ戻す。環境分離と永続データ削除権限を混同しない。
+    </p>
+  </section>
+  <section id="phases">
+    <h2>段階別実装と完了条件</h2>
+    <table>
+      <caption>
+        依存順に進めるPhase
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Phase</th>
+          <th scope="col">作業</th>
+          <th scope="col">完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">0 配備前提とApp契約</th>
+          <td>
+            image/submodule pin、rootless/cgroup/network preflight、固定Compose
+            hardening、activity/drain/resumeをdoclingへ追加
+          </td>
+          <td>
+            CPU
+            fixtureが成功し、受付停止中の新規業務要求が拒否され、queued/running/processor活動を正しく観測する。実効memory
+            limitとnon-root、private networkを確認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">1 LARMの制御と安全な起動</th>
+          <td>
+            Service registry、revision/instance、共通資源会計、allowlist unit adapter、lease
+            API、readiness、認証、feature gate
+          </td>
+          <td>
+            同時ensureで一つのgroup、正しい201/202、資源不足拒否、AI側からService予約が見える。consumerコマンド上書き不可。初期はidle回収off
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">2 停止と再起動復旧</th>
+          <td>
+            activity polling、drain競合処理、idle時計、journal/reconcile、OOM/crash/stop
+            timeout、監査とmetrics
+          </td>
+          <td>
+            jobと共有leaseの誤停止ゼロ。通信断で保留。ensure/stop競合とdaemon再起動でduplicate
+            writerを作らない。予約とprocessを停止確認後に回収
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">3 consumer接続と受入</th>
+          <td>
+            client helper、TLS入口、server adapter、viewer
+            lease、文書登録・抽出・FTSと再起動確認、mixed workload
+          </td>
+          <td>
+            別PCから実到達、App認可、FTSとviewer利用、volume永続性が確認できる。初期入力上限・peak予算・foreground性能の合格閾値を確定して受入
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">後続</th>
+          <td>
+            processorだけのcold化、Embedding Connection adapter、必要なら第二App、通常process
+            adapter
+          </td>
+          <td>初期受入後に別計画化。GPU版、分散、汎用registerとUI管理は混ぜない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Phase 0のactivity/drainが成立するまで自動idle停止を有効にしない。Phase
+      1での手動正常停止もdrain契約を使う。Phase
+      3のSAAA結合は最新checkout確認を前提とし、worktreeがdirtyならpull・reset・stashせずその状態を報告してから対象revisionを確定する。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証項目とリリース判定</h2>
+    <ul>
+      <li>
+        core：manifestの余分なfield、重複ID、未知node、無許可unit、revision改変、lease主体と期限、idempotency不一致、同時予約、UMA二重計上を検証する。
+      </li>
+      <li>
+        backend：status:readyとsource_management:trueのprobe、processor不健康、container片側exit、OOM、unit状態の不一致、cancelと停止失敗を検証する。
+      </li>
+      <li>
+        daemon：二consumer ensure、片側release、長いjob、queue残存、WebView
+        renew、通信断、drain直前直後のensure、再起動と旧credential失効を検証する。
+      </li>
+      <li>
+        実機：read-only/non-root、capability、memory/CPU/pids制限、GPU非公開、egress遮断、Secret非漏えい、host
+        port衝突とprivate processor非公開を確認する。
+      </li>
+      <li>
+        App：PDF、画像PDFのOCR、PPTX、XLSX、DOCX、Markdownの合成fixtureで登録・抽出・FTS・viewerを検証する。資料内容、ページ数、indexとjobの成功判定はdocling側が行う。
+      </li>
+      <li>
+        永続化：stop/startとimage再生成後の原本・DB・索引保持、backup/restore、crash中jobのApp側の正しい最終状態、孤児processの消滅を確認する。
+      </li>
+      <li>
+        性能：container engineのみ、group
+        idle、startup、抽出peak、停止後を分け、解決されたforeground
+        Profileとの混合で測る。静的memory上限の候補値をそのまま性能保証にしない。
+      </li>
+      <li>
+        LARM回帰：bun run typecheck、関連test、bun run checkを実装後に実行し、既存LLM / ASR / TTS /
+        Embeddingと画像・音楽の契約を維持する。live検証はconsumerが要求したProfile→route→runtime→backendを追跡し、たまたま動いているモデルで代用しない。
+      </li>
+    </ul>
+    <p>
+      性能閾値、最大入力サイズ・ページ数、rootlessのkernel/cgroup条件、TLS名、image
+      digest、backup先はPhase
+      0から3の配備値で確定する。未確定値が残る状態で本番受入を完了としない。feature gateはdefault
+      offとし、独立fixtureと混合負荷の受入後にdoclingだけを有効化する。既存未コミット変更と本計画の変更を混在させて配備しない。
+    </p>
+  </section>
+</article>

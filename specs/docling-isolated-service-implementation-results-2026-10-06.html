@@ -1,0 +1,244 @@
+<article lang="ja">
+  <h1>docling分離ホスティングの実装と配備受入状況</h1>
+  <p>
+    2026年10月6日。<a href="./docling-isolated-service-implementation-plan.html">実装計画</a
+    >に基づき、LARM側のService登録・利用権・資源会計・systemd
+    adapter・停止保護・再起動照合と、docling側の活動通知・受付停止を実装した。配備は未実施。Docker、uidmap、rootless実行環境が未導入で、sudoは対話認証を要求するため、このセッションではコンテナの起動と実機受入を完了できない。
+  </p>
+  <section id="implementation">
+    <h2>実装した経路</h2>
+    <p>
+      local-services.yamlをstrict検証し、consumer別tokenとservice
+      allowlistでensure、照会、renew、releaseを認可する。idempotency
+      keyと単一起動を持ち、Appのreadinessとsource_managementが成立してからreadyを返す。APIは/v1/local-servicesと/v1/local-service-leasesへ分け、既存ASR
+      service-harnessを維持した。OpenAPIへ型と専用認証schemeを追加し、ClientLocalServicesを公開した。
+    </p>
+    <p>
+      ServiceResourceLedgerはdoclingの静的予約と未観測の予算残額を、既存AIの受付・起動・待機昇格admissionへ反映する。CPU
+      Appの起動にGPU
+      freeを単独の必須条件としない。画像・楽曲の独立起動経路との併用は初期には相互拒否とし、モデル起動中も競合を防ぐ。UMAの混合性能が受入できるまで無制限併用を許可しない。
+    </p>
+    <p>
+      登録済みの起動unitと停止専用unitのみを操作し、Docker
+      socketはdaemonへ渡さない。停止専用unitは通常unitがfailedやinactiveでも活動確認付きcontrollerを実行する。専用rootless
+      controllerが固定projectの二containerを照合し、定期observerがrelease、container
+      ID、承認済みComposeとimage設定のdigest、稼働状態とanon
+      memoryを取得する。観測値が古い、所有labelが違う、groupが不完全な場合は隔離して資源枠を維持する。
+    </p>
+    <p>
+      有効lease、queued/running job、App
+      request、processor処理を保護する。drainで受付を閉じ、既存queueを進め、同じApp boot IDとdrain
+      tokenのゼロ活動を再確認して停止する。processorのboot
+      IDも合成識別子へ含める。通常停止ではTERMだけを送り、期限超過で自動KILLしない。stop未確認なら資源予約を残す。強制停止APIは提供せず、管理者の別手順に限定する。
+    </p>
+    <p>
+      journalでrevision、generation、container IDと自分が開始したdrain tokenを照合し、boot
+      epoch変更で旧leaseを失効する。未観測group、起動中crash、所有不明groupを勝手にadoptやkillしない。正常停止後の再起動は新generationとし、業務POSTは再送しない。再照合でquarantineしたgroupは管理者確認が必要。
+    </p>
+  </section>
+  <section id="configuration">
+    <h2>設定と配備手順</h2>
+    <ol>
+      <li>
+        管理者がDocker Engineのrootless
+        extras、uidmap等を導入し、deploy/local-node/scripts/install-local-services.shを実行する。installerは専用ユーザー、固定unit、controller、polkitと保存先だけを準備し、Providerやdoclingを起動しない。
+        daemonの既存unitのUserを認可先として使用する。別配備ではLARM_LOCAL_SERVICES_DAEMON_USERで指定する。現在のsource
+        unitはugnoguchiであり、larmという追加daemonユーザーは前提にしない。
+      </li>
+      <li>
+        larm-servicesに独立したsubuid/subgidとrootless daemonを設定する。cgroup v2、systemd
+        delegation、memory/CPU/pids制限の実効性を確認する。daemonのuser
+        unitは常時利用可能にするが、App containerは常時起動しない。
+      </li>
+      <li>
+        変更を含むdocling checkoutを専用ユーザーのbuild環境へ用意し、build-docling-images.shでCPU
+        imageをbuildする。出力されたimmutable image IDまたはregistry
+        digestを/etc/larm-local-services/docling-desk/images.envへ記入する。Secret
+        rootも同ファイルへ指定する。実行時build/pullは行わない。
+        Composeとimages.envのbyte列をこの順番で連結してSHA-256を計算し、同じ値をmanifest.sha256とlocal-services.yamlのdeployment.manifestDigestへ記入する。初期値のゼロdigestは配備前のplaceholderであり、そのままenableしない。
+      </li>
+      <li>
+        API用clients.json、worker-token、lifecycle-tokenを専用ユーザーだけが辿れる0700のsecrets
+        directoryへ準備する。Composeのbind secretは非root
+        containerから読める0444のfileとし、directoryでhostの閲覧を制限する。processorへclients.jsonを渡さない。
+      </li>
+      <li>
+        LARM用lifecycle
+        tokenの同じ値を/etc/larm/local-services/secrets/docling-lifecycle-tokenへroot:daemonのgroup
+        0640で配置する。consumer
+        tokenの別設定を/etc/larm/local-services/consumers.jsonへroot:daemonのgroup
+        0640で置く。形状はid、token、services配列で、tokenは32文字以上、servicesはdocling-deskだけを許可する。実値をsourceやlogへ保存しない。
+      </li>
+      <li>
+        preflight-local-services.shを専用ユーザーで実行し、observer
+        timerを有効化する。初期のstopped観測を確認する。LARMは観測がないgroupを安全側にquarantineするため、初回enableより前にobserverを成立させる。
+      </li>
+      <li>
+        LARM_LOCAL_SERVICES_ENABLED=trueとjournal、consumer、Secret、観測rootを配備設定へ指定する。defaultはfalse。初期publicEndpointはhost-local
+        HTTPなのでMacへそのまま渡さず、認証付きTLS入口を設定してpublicEndpointを更新する。private
+        lifecycle経路はLAN入口で拒否する。
+      </li>
+      <li>
+        scoped clientでensureを一回送り、同じleaseを追跡する。Knowledge APIのclient tokenとactor
+        JWTは別認証としてserver adapterから渡す。App readiness、CPU
+        fixture、停止回収、volume永続性、混合負荷を検証してから受入を確定する。
+      </li>
+    </ol>
+    <p>
+      起動予算9 GiB、API上限512 MiB、processor上限8 GiB、idle 120秒、lease
+      300秒は検証開始値である。TERMの猶予はcontainerごと60秒とし、groupのsystemd停止期限150秒を待つLARM側制御期限は180秒とした。コンテナはread-only、非root、capability全削除、GPU非公開、private
+      networkとし、外部OCR・Embedding・回答生成はoff。rootless private
+      networkでhost公開portが到達できることと、LibreOfficeの書込先を実機確認する。
+    </p>
+  </section>
+  <section id="repositories">
+    <h2>変更したrepositoryと境界</h2>
+    <p>
+      LARMの作業ツリーに新規core/backend/daemon/clientと配備sourceを追加した。既存の画像・楽曲・ContextStill等の未コミット差分は保持した。docling-deskは隣接checkoutへ取得し、codex/larm-container-lifecycle
+      branchにAPI/processor lifecycle adapter、file
+      Secret対応、固定Composeと回帰testを追加した。commit、pushとreleaseは行っていない。
+    </p>
+    <p>
+      SAAA
+      checkoutはProvider関連に未コミット変更があるためpullせず、実装を現在の正本として扱わず、変更もしていない。SAAA固有のserver
+      adapterとArtifact Host結合は、対象revisionを確定した後の受入として残る。一般consumer用LARM
+      clientは実装済みである。
+    </p>
+    <p>
+      lease、共有起動、世代、idle判定と再照合の状態管理はpackages/coreのLocalServiceManagerに置いた。systemd、HTTP
+      probe、観測fileとatomic
+      journalの入出力はpackages/backendsへ分離し、daemonは配備設定と認証routeを組み立てる。coreはBunやsystemd、Dockerへ依存しない。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証と未完了条件</h2>
+    <p>
+      LARMのbun run checkは成功した。本体699件、tooling 24件、配備53件のBun
+      testに加え、配備のshell回帰test、controllerのPython test 9件が通過した。型、API
+      consumer、module境界、source-only、shell/Python/systemd、Spec HTML検査も通過した。docling
+      Knowledge APIのtypecheck・lint、68件のtest、保存OpenAPI contract checkが成功し、Python
+      lifecycleの認証・処理中drain・resumeの2件とRuff検査が通過した。既存Starlette/httpxの非推奨warningは1件あり、failureはなかった。これらは変更を含む作業ツリーの結果であり、live
+      container受入の証拠ではない。
+    </p>
+    <p>
+      実機container image build、rootlessの実効権限とresource
+      limit、CPU資料変換fixture、MacからのTLS/actor認証、SAAAのviewer利用、memory
+      peakとforeground遅延、volume
+      backup/restoreは未検証。この状態は実装sourceの検証段階であり、実運用の完了ではない。
+    </p>
+  </section>
+  <section id="code-review">
+    <h2>コードレビューと修正</h2>
+    <p>
+      初回実装後にLARMと隣接docling-deskの変更を再レビューし、以下の問題を修正した。別作業の既存差分とSAAAの作業ツリーは保持した。各不具合を再現する回帰testを追加し、修正後に状態遷移、資源会計、認証と配備制御を再確認した。
+    </p>
+    <table>
+      <caption>
+        修正した不具合と再発防止
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">問題</th>
+          <th scope="col">修正と検証</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">停止中のensureで同じ要求に別leaseを発行</th>
+          <td>
+            待機後にidempotencyと容量を再検証。同じkeyの重複・異なるbodyの競合を回帰testで確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">drain中の新規利用と停止確定の競合</th>
+          <td>
+            確定前のensureは現世代へ参照を追加してdrainを解除。最終観測後も参照を再検証し、確定後は完全停止を待って新世代を起動する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">古い活動観測でもready endpointを返す</th>
+          <td>
+            照会とensureで鮮度を判定。未知状態では未観測の予約を全額へ戻し、endpointを返さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">観測の空白や短い処理をidle継続と数える</th>
+          <td>
+            観測の期限切れとsnapshot間の活動sequence増加でidle時計をリセット。通常poll、一時的な処理、長い観測空白を検証。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">processor応答待ちの間のjob追加を見落とす</th>
+          <td>
+            APIのqueued/running/request件数を応答後に取り直す。受付済み要求が後からjobを追加する競合をdocling側testで再現。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">resumeがprocessor drainを追い越す</th>
+          <td>
+            private
+            lifecycle操作を直列化。未知応答でもidleにせず、失われたdrain応答は同じcontainerとbootを再確認してから解除。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">observerとstart/stopが古い状態を上書きする</th>
+          <td>専用accountのfile lockで観測と配備操作を排他。制御中のobserverは更新を保留する。</td>
+        </tr>
+        <tr>
+          <th scope="row">container終了後もsystemd activeが残り起動が空振りする</th>
+          <td>
+            完全終了を確認したgroupだけunitを停止状態へ戻して再起動。稼働中・片側稼働のgroupを起動でadoptしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">systemdがfailedやinactiveだと稼働groupを停止できない</th>
+          <td>
+            固定の停止専用oneshot
+            unitを追加し、通常unitの状態に依存せず活動確認付きcontrollerを実行。polkitの許可はこのunitのstartだけに限定し、inactive状態からの停止を回帰testで確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">外部からのdrainをdaemon再起動で勝手に解除する</th>
+          <td>
+            自分が開始したdrain
+            tokenだけをjournalへ記録し、再照合で一致した場合だけ解除。外部drainの隔離と、自分の停止失敗後の復旧を両方検証。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">完全crashで予約が残り、古いleaseが再利用される</th>
+          <td>
+            全containerの終了が確定した場合に予約を回収し、旧leaseを恒久的にfailedへする。次のensureは新generationを使う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Appの再起動をcontainer IDだけでは検出できない</th>
+          <td>
+            信頼済みApp boot
+            IDをjournalへ保存。未確認の観測で上書きせず、daemon再起動を繰り返しても未知世代を自動adoptしない。隔離状態の通常停止も拒否する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">失敗したimageを連続起動できる</th>
+          <td>
+            起動失敗に5秒、10秒、20秒のbackoffを設け、同じrevisionで連続3回までに制限。journalで再起動をまたいで保持し、正常起動または承認済みrevision変更でリセットする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">認証形式・応答サイズ・SDKの識別検証が不足</th>
+          <td>
+            Bearer形式を必須化。private
+            JSONとprocessor応答を制限し、認証前の業務要求をactivityへ数えない。SDKはservice、lease、revision、generation、boot
+            epochと応答上限を検証し、待機期限を守る。OpenAPIへ必須Idempotency-Keyも追加。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      全サービスを一つのpoll待ちに束ねず、Service単位で競合を防止した。daemon終了時はAI側の新規受付を先に閉じ、Serviceの進行中制御とjournal確定を待つ。通常停止のTERM限定と、未知状態の資源予約保持を維持する。
+    </p>
+    <p>
+      自動検証を含む修正後の確認範囲に、未修正のコード上の指摘は残っていない。Docker未導入のためlive
+      container、実効cgroup制限、CPU資料変換、TLSとSAAA結合の受入は引き続き未実施であり、ソースレビューでその受入を代替しない。
+    </p>
+  </section>
+</article>

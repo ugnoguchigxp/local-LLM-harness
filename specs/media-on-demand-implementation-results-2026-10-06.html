@@ -1,0 +1,161 @@
+<article lang="ja">
+  <h1>画像・楽曲オンデマンド生成の実装・配備結果 2026-10-06</h1>
+  <p>
+    公開APIは常時稼働し、生成要求を受理してモデルを起動・ロードし、成果物保存後にモデルを停止する実装を配備した。画像・楽曲を各1回だけ公開APIへPOSTし、成果物取得、モデル停止、公開APIの継続稼働を確認した。生成POSTの自動再送は行っていない。
+  </p>
+  <section id="release">
+    <h2>配備</h2>
+    <p>
+      Controlは192.168.0.130:9810、releaseCommitは<code>b41165d80e7df1b7cd8adc527b9680fde5828046</code>、configRevisionは<code>1411986f3a921403a3a2ef724fb30e1e0390aed2471a58a7d3976dd346bdcb37</code>。署名付きリリースの起動と公開契約検証が成功した。既存要求の完了を待ち、idle確認後に切り替えた。
+    </p>
+    <p>
+      レビュー用branchは<code>codex/media-on-demand</code>。別のソースチェックアウトで今回の変更だけをcommit・検証し、元の作業ツリーの既存未コミット変更を保護した。最終リリースの<code>bun run check</code>は成功し、Bunテスト660件、tooling
+      24件、deployment 53件と配備用shell検証を通過した。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>公開契約</h2>
+    <p>
+      画像は<code>POST /v1/images/generations</code>の同期200。promptと任意modelを受理し、modelは広告した<code>qwen-image-2.1</code>に限定する。既存artifactを維持し、SAAA互換のartifacts配列にも同一artifactを返す。id、contentUrl、mimeTypeはartifacts[0]から取得できる。contentUrlはControlを基準に解決する相対URLであり、モデル停止後も配信される。
+    </p>
+    <pre><code>{"prompt":"A small blue bird on a plain white background","model":"qwen-image-2.1","width":512,"height":512,"steps":4,"seed":42}</code></pre>
+    <p>
+      楽曲は<code>POST /v1/music/generations</code>の202
+      job。GETまたはSSEで状態を待ち、completed後にresult.audioUrlから取得する。公開modelのace-step-1.5は上流のacestep-v15-turboへ明示的に対応付ける。未知modelは起動前に400で拒否する。
+    </p>
+    <pre><code>{"prompt":"Calm instrumental piano melody","model":"ace-step-1.5","durationSeconds":10,"instrumental":true,"quality":"fast","outputFormat":"mp3","seed":42}</code></pre>
+    <p>
+      公開OpenAPIで画像POSTの定義とmodel制約、同期応答と楽曲job説明を確認した。SAAA-w-Imageの公開カタログはGemma
+      4 26BとSystem Oneを含み、画像startupPolicyはminWarmInstances: 0、idleTtlSeconds:
+      0。画像・楽曲とも120秒・300秒の保持を廃止した。
+    </p>
+  </section>
+  <section id="results">
+    <h2>実生成結果</h2>
+    <table>
+      <caption>
+        各1回のPOSTによる実機確認
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">画像</th>
+          <th scope="col">楽曲</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ID</th>
+          <td>image_aa133193fa594f358e8215880816dbd5</td>
+          <td>music_6b852d40-20c8-4dfb-9ba4-0aff9a658408</td>
+        </tr>
+        <tr>
+          <th scope="row">成果物</th>
+          <td>512×512 WebP、2742 bytes</td>
+          <td>10秒 MP3、160940 bytes</td>
+        </tr>
+        <tr>
+          <th scope="row">要求から結果取得まで</th>
+          <td>63.65秒</td>
+          <td>90.34秒。起動中の依存参照修正時間を含み、通常のcold-start性能を表さない。</td>
+        </tr>
+        <tr>
+          <th scope="row">結果公開後のworker</th>
+          <td>inactive、MainPID=0</td>
+          <td>inactive、MainPID=0</td>
+        </tr>
+        <tr>
+          <th scope="row">Control health</th>
+          <td>ready: true</td>
+          <td>ready: true</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      画像はロード後に上流生成POSTを1回実行し、Controlで成果物の読み取り可能性を確認してから停止した。楽曲は音声をControl側へ保存してから停止し、その後にcompletedを公開した。モデル停止後の成果物を認証付きで取得した。SAAAクライアントの既定timeoutを測定したわけではないため、画像同期要求ではcold-startを含む待機時間を確保する必要がある。
+    </p>
+  </section>
+  <section id="host-fixes">
+    <h2>ホスト側の修正</h2>
+    <ul>
+      <li>
+        生成サービスの起動・停止権限が拒否されていた。最初の新リリースは起動検証に失敗し、自動的に旧リリースへ復帰した。利用者が指定した管理者認証方法で、対象2サービスだけのstart/stopを許可するpolkit規則を反映した。認証情報は表示・記録していない。
+      </li>
+      <li>
+        対象systemd
+        unitはdisabledかつRestart=noとし、常駐起動と要求外の自動再起動を防いだ。ACE-StepはACESTEP_NO_INIT=falseにより起動中にモデルをロードする。未ロードのworkerにだけ初期化を要求し、二重ロードを避ける。
+      </li>
+      <li>
+        Python実行ファイルがProtectHomeで隠れるホーム内を参照していた。既存CPythonをリポジトリ外の/srv/ai/apps/larm-python-runtimeへ配置し、2つのvenvの参照を修正した。元の設定・リンクのバックアップを残した。
+      </li>
+      <li>
+        楽曲のtorchaudioもホーム内のuvキャッシュを参照していた。同じ2.11.0+rocm7.13.0の既存パッケージを楽曲venvへ配置し、ホーム参照を除去した。最初のjobが起動待ちの間に修正してworkerを起動し、同じjobで生成を完了させた。LARM
+        POSTを再送していない。
+      </li>
+    </ul>
+    <p>
+      今後の設定反映はdeploy/local-node/scripts/install-media-services.shで対象unitと限定的なpolkit規則をまとめて反映できる。この手順はモデルを起動しない。重いworkerの回収失敗を理由に公開API全体を起動不能にせず、mediaを隔離して公開APIを維持するよう修正した。
+    </p>
+  </section>
+  <section id="lifecycle">
+    <h2>ライフサイクルと失敗処理</h2>
+    <p>
+      画像・楽曲の共有実行枠は1件。楽曲の受理済みjobは上限16のキューと300秒の実行枠待機期限を持ち、待機中の楽曲を画像が追い越し続けない。起動中・生成中・保存中・停止中をservice
+      activityの処理中として数える。生成全体には900秒の上限を設ける。
+    </p>
+    <p>
+      予約解放は非同期で停止をawaitし、停止失敗でグループを隔離する。画像停止失敗時は503に保存済みartifact参照を残し、楽曲停止失敗時もresultを保護して取得可能にする。キャンセル完了はworkerの後始末を待つ。起動中abort、重複解放、shutdown、保存と停止の順序を制御テストで検証した。
+    </p>
+    <p>
+      楽曲要求と状態を永続化し、API再起動で中断したjobをgeneration_interruptedとして回収する。再生成はしない。既存の成果物保持・お気に入り機能を維持する。
+    </p>
+  </section>
+  <section id="cold-start-check">
+    <h2>依存参照修正後の起動確認</h2>
+    <p>
+      追加の生成POSTを行わず、LARMと同じruntime-variant.shを使い、停止中の楽曲workerを起動した。healthのmodels_initialized:
+      trueとloaded_model:
+      acestep-v15-turboを確認し、停止後のinactive、MainPID=0を確認した。これにより、修正後はホーム内キャッシュに依存せず起動できることを検証した。
+    </p>
+  </section>
+  <section id="default-quality">
+    <h2>既定品質と最終更新</h2>
+    <p>
+      補助LMを無効にしたACE-Stepに対し、従来のbalanced/high変換がthinking:
+      trueを要求する不整合を修正した。品質は4/8/12の生成ステップ数へ変換し、thinkingはfalseとする。既定balancedの上流payloadを自動テストで検証した。
+    </p>
+    <p>
+      実生成2件はba114cb6ff67c33fd5f6c1321ea0f570f0e82732で行い、既定品質修正を含む最終releaseはb41165d80e7df1b7cd8adc527b9680fde5828046。fast要求の変換は変わらない。追加生成はせず、最終releaseへの更新後に両成果物の取得、楽曲jobのcompleted回収、API
+      ready、両workerの停止と公開カタログを再確認した。balanced/highの実生成を検証したという主張ではない。
+    </p>
+  </section>
+  <section id="review-hardening">
+    <h2>コードレビューによる改善</h2>
+    <p>
+      停止中のキャンセル、停止失敗、再起動、成果物期限切れの境界を再検証した。最終状態は停止処理後に一度だけ通知し、停止失敗はキャンセルより優先する。保存済み失敗・キャンセルは再起動後も維持し、成果物削除時にはjob記録も削除する。音声はストリーム読み込み中に容量制限を適用する。
+    </p>
+    <p>
+      起動処理に中断信号を渡し、終了時に起動中の子プロセス群を停止する。待機jobも稼働監視の対象とし、期限切れの待機jobを再送しない。購読者の例外を分離し、停止失敗で隔離されたruntimeのhealthを利用不可とする。これらは模擬providerの回帰テストで検証し、画像・楽曲の追加生成は行わない。
+    </p>
+    <p>
+      レビュー修正のreleaseは48996cbf82ee86d4e7719f498eaf89a8ad1ad767。署名付きreleaseの全体検証はBun
+      666件、tooling 24件、deployment
+      53件とshell検証を通過した。作業ツリーの別作業を維持した統合状態では対象回帰テスト23件と型検査も通過した。Controlのidleを確認して反映後、API
+      ready、既存画像2742 bytes・楽曲160940 bytesの取得、楽曲job completed、両worker
+      inactive・MainPID=0を確認した。
+    </p>
+  </section>
+  <section id="scope">
+    <h2>検証範囲</h2>
+    <p>
+      SAAAの作業ツリーには未コミット変更があるため、pullや実装参照、cargoのmedia_live試験は行っていない。今回の実機確認はSAAAの報告に記載された公開API契約を使って行った。SAAA側で提示済みのcargo試験を実行する際、同じControl
+      URLを使用できる。
+    </p>
+    <p>
+      詳細な計画は<a href="./media-on-demand-implementation-plan.html">実装計画</a
+      >、修正前の観測は<a href="./media-on-demand-connection-investigation-2026-10-06.html"
+        >接続調査</a
+      >を参照する。
+    </p>
+  </section>
+</article>

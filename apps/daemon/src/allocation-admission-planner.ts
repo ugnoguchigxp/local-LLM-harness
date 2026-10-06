@@ -1,3 +1,4 @@
+import type { ServiceMemoryReservation } from "@larm/core";
 import {
   admittedAllocation,
   type Allocation,
@@ -37,6 +38,7 @@ export function planAllocationCapacity(input: {
   conflictsWithAdmitted: boolean;
   transitioningRuntime?: string;
   providerSwitchHoldUntil?: number;
+  serviceReservations?: readonly ServiceMemoryReservation[];
   requireFreshTelemetry: boolean;
   telemetryMaxAgeMs: number;
   now?: number;
@@ -60,6 +62,7 @@ export function planAllocationCapacity(input: {
     state: input.state,
     allocations: admittedAllocations([...input.allocations]),
     candidateRuntimeIds: input.runtimeIds,
+    serviceReservations: input.serviceReservations,
     requireFreshTelemetry: input.requireFreshTelemetry,
     telemetryMaxAgeMs: input.telemetryMaxAgeMs,
     ...(input.requireFreshTelemetry ? { now: input.now } : {}),

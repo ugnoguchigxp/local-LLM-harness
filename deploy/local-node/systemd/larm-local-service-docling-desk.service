@@ -1,0 +1,17 @@
+[Unit]
+Description=LARM isolated docling Knowledge API and CPU processor
+After=network.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=larm-services
+Group=larm-services
+ExecStartPre=/usr/bin/python3 /usr/local/libexec/larm-local-service-controller.py preflight
+ExecStart=/usr/bin/python3 /usr/local/libexec/larm-local-service-controller.py start
+ExecStop=/usr/bin/python3 /usr/local/libexec/larm-local-service-controller.py stop
+TimeoutStartSec=240
+TimeoutStopSec=150
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/larm-local-services/observations

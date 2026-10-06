@@ -1,3 +1,4 @@
+import type { ServiceMemoryReservation } from "@larm/core";
 import {
   activeAllocation,
   admittedAllocation,
@@ -90,6 +91,7 @@ export type ControlPlaneOptions = {
   isRuntimeMutating?: (runtimeId: string) => boolean;
   onEvent?: (event: ControlEvent) => void;
   onRouteShadowComparison?: (comparison: RouteShadowComparison) => void;
+  getServiceReservations?: () => readonly ServiceMemoryReservation[];
   requireFreshTelemetry?: boolean;
   telemetryMaxAgeMs?: number;
   foregroundPriorityThreshold?: number;
@@ -397,6 +399,7 @@ export class ControlPlane {
         this.preemptLowerPriorityConflicts(priority, runtimeIds),
       getRuntimeRelease: this.options.getRuntimeRelease,
       getRuntimeReleaseDefinition: this.options.getRuntimeReleaseDefinition,
+      serviceReservations: this.options.getServiceReservations?.(),
       requireFreshTelemetry: this.options.requireFreshTelemetry ?? false,
       telemetryMaxAgeMs: this.options.telemetryMaxAgeMs ?? 10_000,
       now: () => this.now(),
@@ -658,6 +661,7 @@ export class ControlPlane {
       state: this.observer.getState(),
       allocations: this.admittedAllocations(),
       candidateRuntimeIds: allocation.bindings.map((binding) => binding.runtime),
+      serviceReservations: this.options.getServiceReservations?.(),
       requireFreshTelemetry: this.options.requireFreshTelemetry ?? false,
       telemetryMaxAgeMs: this.options.telemetryMaxAgeMs ?? 10_000,
       ...(this.options.requireFreshTelemetry ? { now: this.now() } : {}),

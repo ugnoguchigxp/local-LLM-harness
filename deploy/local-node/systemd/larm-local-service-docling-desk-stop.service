@@ -1,0 +1,12 @@
+[Unit]
+Description=Guarded stop for the LARM isolated docling container group
+[Service]
+Type=oneshot
+User=larm-services
+Group=larm-services
+ExecStart=/usr/bin/python3 /usr/local/libexec/larm-local-service-controller.py stop
+TimeoutStartSec=150
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/larm-local-services/observations

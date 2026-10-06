@@ -1,3 +1,4 @@
+import type { ServiceMemoryReservation } from "./local-service";
 import { admittedAllocation, type Allocation } from "./allocation";
 import type { Registry } from "./registry";
 import type { ClusterState, RuntimeDefinition } from "./schema";
@@ -54,6 +55,7 @@ export function admitRuntimes(input: {
   state: ClusterState;
   allocations: Allocation[];
   candidateRuntimeIds: string[];
+  serviceReservations?: readonly ServiceMemoryReservation[];
   liveTelemetry?: {
     requiredForNonResident: boolean;
     maxAgeMs: number;
@@ -145,7 +147,9 @@ export function admitRuntimes(input: {
       .map((id) => runtimeById(input.registry, id))
       .filter((runtime): runtime is RuntimeDefinition => runtime?.node === nodeId)
       .reduce((total, runtime) => total + runtime.resources.estimatedMemoryGB, 0);
-    const usableMemoryGB = node.resources.memoryTotalGB - node.resources.reservedMemoryGB;
+    const services = (input.serviceReservations ?? []).filter(r => r.node === nodeId);
+    const serviceMemoryGB = services.reduce((n, r) => n + r.bytes / (1024 ** 3), 0);
+    const usableMemoryGB = node.resources.memoryTotalGB - node.resources.reservedMemoryGB - serviceMemoryGB;
     const availableMemoryGB = usableMemoryGB - committedMemoryGB;
     const reclaimableMemoryGB = [...replaceableIds]
       .map((id) => runtimeById(input.registry, id))
@@ -206,7 +210,8 @@ export function admitRuntimes(input: {
       // accelerator available values are live headroom, so subtracting the reserve again
       // would double-count it and incorrectly reject unified-memory hosts.
       const liveAvailableMemoryGB = Math.max(0, liveBytes / (1024 ** 3));
-      const effectiveLiveAvailableMemoryGB = liveAvailableMemoryGB + reclaimableMemoryGB;
+      const pendingServiceGB = services.reduce((n, r) => n + r.pendingBytes / (1024 ** 3), 0);
+      const effectiveLiveAvailableMemoryGB = Math.max(0, liveAvailableMemoryGB + reclaimableMemoryGB - pendingServiceGB);
       summary.liveAvailableMemoryGB = liveAvailableMemoryGB;
       if (incrementalMemoryGB > effectiveLiveAvailableMemoryGB) {
         return {

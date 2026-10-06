@@ -1,3 +1,4 @@
+import { localServiceListSchema, localServiceStatusSchema, localServiceLeaseSchema, localServiceLeaseRequestSchema, localServiceRenewSchema } from "./local-service";
 import { z } from "zod";
 import {
   SUCCESS_SCHEMA_BY_OPERATION,
@@ -219,6 +220,13 @@ function jsonSchema(schema: z.ZodType): Record<string, unknown> {
 
 export function createOpenApiDocument(version: string): Record<string, unknown> {
   const schemas = {
+    LocalServiceList: jsonSchema(localServiceListSchema),
+    LocalServiceStatus: jsonSchema(localServiceStatusSchema),
+    LocalServiceLease: jsonSchema(localServiceLeaseSchema),
+    LocalServiceLeaseRequest: jsonSchema(localServiceLeaseRequestSchema),
+    LocalServiceRenewRequest: jsonSchema(localServiceRenewSchema),
+    LocalServiceStopRequest: { type: "object", additionalProperties: false },
+    Empty: { type: "object" },
     ErrorResponse: jsonSchema(errorResponseSchema),
     Health: jsonSchema(daemonHealthSchema),
     Readiness: jsonSchema(readinessSchema),
@@ -314,6 +322,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     paths,
     components: {
       securitySchemes: {
+        localServiceBearer: { type: "http", scheme: "bearer", description: "Scoped local service consumer token" },
+        localServiceManagementBearer: { type: "http", scheme: "bearer", description: "Management token, distinct from consumer token" },
         bearerAuth: { type: "http", scheme: "bearer" },
         providerBearer: {
           type: "http",

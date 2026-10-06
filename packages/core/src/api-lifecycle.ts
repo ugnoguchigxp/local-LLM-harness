@@ -5,7 +5,8 @@ export function apiOperationLifecycle(
   operationId: string,
 ): { classification: ApiLifecycleClass; successor?: string } {
   if (
-    path.startsWith("/v1/artifacts/")
+    path.startsWith("/v1/management/local-services/")
+    || path.startsWith("/v1/artifacts/")
     || path.startsWith("/v1/artifact-operations/")
     || path.startsWith("/v1/runtime-releases")
     || path.startsWith("/v1/deployments/")
@@ -27,6 +28,7 @@ export function apiOperationLifecycle(
 }
 
 export type ApiOperationOwner =
+  | "local-services"
   | "health"
   | "service-activity"
   | "telemetry"
@@ -43,6 +45,8 @@ export type ApiOperationOwner =
   | "release-management";
 
 export type ApiOperationAuthority =
+  | "local-service-bearer"
+  | "management-bearer"
   | "public"
   | "api-bearer"
   | "optional-api-bearer"
@@ -67,7 +71,7 @@ export function apiOperationGovernance(path: string, operationId: string): ApiOp
   const policy = apiOperationPolicy(path, operationId);
   const legacy = apiOperationLifecycle(path, operationId);
   const compatibility = legacy.classification === "compatibility";
-  const audience: ApiOperationGovernanceBase["audience"] = policy.authority === "api-and-management-bearer"
+  const audience: ApiOperationGovernanceBase["audience"] = (policy.authority === "api-and-management-bearer" || policy.authority === "management-bearer")
     ? "management"
     : policy.owner === "allocation"
     ? "advanced"
@@ -96,7 +100,8 @@ export function apiOperationPolicy(
   authority: ApiOperationAuthority;
 } {
   let owner: ApiOperationOwner;
-  if (path === "/health" || path === "/ready" || path === "/v1/release-convergence") owner = "health";
+  if (/^\/v1\/(local-services|local-service-leases|management\/local-services)/.test(path)) owner = "local-services";
+  else if (path === "/health" || path === "/ready" || path === "/v1/release-convergence") owner = "health";
   else if (path === "/v1/activity") owner = "service-activity";
   else if (path === "/metrics") owner = "telemetry";
   else if (path === "/openapi.json") owner = "api-contract";
@@ -131,7 +136,9 @@ export function apiOperationPolicy(
   }
 
   const lifecycle = apiOperationLifecycle(path, operationId);
-  const authority: ApiOperationAuthority = lifecycle.classification === "management"
+  const authority: ApiOperationAuthority = owner === "local-services"
+    ? path.startsWith("/v1/management/") ? "management-bearer" : "local-service-bearer"
+    : lifecycle.classification === "management"
     ? "api-and-management-bearer"
     : operationId === "getHealth" || operationId === "getReadiness"
     ? "public"
@@ -156,6 +163,7 @@ export function apiOperationPolicy(
     : "api-bearer";
 
   const consumers: Readonly<Record<ApiOperationOwner, readonly string[]>> = {
+    "local-services": ["local-service-consumer", "operator"],
     health: ["operator", "service-monitor"],
     "service-activity": ["daemon-consumer", "service-monitor"],
     telemetry: ["operator", "monitoring"],

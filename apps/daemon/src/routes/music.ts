@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { musicGenerationRequestSchema } from "@larm/core";
 import { errorBody, readJson } from "../app-http";
-import type { MusicGenerationManager } from "../music-manager";
+import { MusicProviderError, type MusicGenerationManager } from "../music-manager";
 
 export function registerMusicRoutes(app: Hono, options: {
   manager?: MusicGenerationManager;
@@ -29,7 +29,15 @@ export function registerMusicRoutes(app: Hono, options: {
     if (!parsed.success) {
       return c.json(errorBody("invalid_music_request", "invalid music generation request"), 400);
     }
-    const job = manager.create(parsed.data);
+    if (parsed.data.model && !["ace-step-1.5", "acestep-v15-turbo"].includes(parsed.data.model)) {
+      return c.json(errorBody("invalid_music_model", "model must match the advertised music service"), 400);
+    }
+    let job;
+    try { job = manager.create(parsed.data); }
+    catch (error) {
+      if (error instanceof MusicProviderError) return c.json(errorBody(error.code, error.message), error.code === "unsupported_feature" ? 400 : 503);
+      throw error;
+    }
     c.header("location", `/v1/music/generations/${encodeURIComponent(job.jobId)}`);
     c.header("retry-after", "1");
     return c.json(job, 202);

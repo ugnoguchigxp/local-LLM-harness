@@ -634,3 +634,4 @@ export class LarmClient {
   }
 
 }
+export { ClientLocalServices } from "./client-local-services";

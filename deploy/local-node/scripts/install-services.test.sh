@@ -83,6 +83,11 @@ run_installer
 for unit in "${repo_root}"/deploy/local-node/systemd/*.service \
   "${repo_root}"/deploy/local-node/systemd/*.timer \
   "${repo_root}"/deploy/local-node/systemd/*.path; do
+  # Optional isolated applications are installed only by install-local-services.sh.
+  if [[ "$(basename "${unit}")" == larm-local-service-* ]]; then
+    [[ ! -e "${test_root}/etc/systemd/system/$(basename "${unit}")" ]]
+    continue
+  fi
   cmp --silent "${unit}" "${test_root}/etc/systemd/system/$(basename "${unit}")"
 done
 cmp --silent \

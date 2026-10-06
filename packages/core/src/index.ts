@@ -317,3 +317,9 @@ export {
   type ProviderRecoveryWave,
   type RecoverablePausedJob,
 } from "./provider-recovery";
+
+export { mediaPolicySchema } from "./media-policy";
+export * from "./local-service";
+export { ServiceResourceLedger } from "./service-resource-ledger";
+
+export { LocalServiceManager, LocalServiceError } from "./local-service-manager";

@@ -31,6 +31,9 @@ export function createAppRequestPolicy(
       c.header("x-larm-config-revision", deps.getConfigRevision?.() ?? identity.configRevision);
       if (c.req.path === "/v1/activity") c.header("cache-control", "no-store");
       if (isPersonalStateApiPath(c.req.path)) c.header("cache-control", "no-store");
+      if (/^\/v1\/(?:local-services|local-service-leases|management\/local-services)(?:\/|$)/.test(c.req.path)) {
+        await next(); return; // Local service routes enforce their own scoped credentials.
+      }
       const publicPath = c.req.path === "/health" || c.req.path === "/ready";
       const anonymousAgentConnection = deps.allowAnonymousAgentConnections === true
         && c.req.header("authorization") === undefined

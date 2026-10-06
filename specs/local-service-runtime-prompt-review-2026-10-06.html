@@ -1,0 +1,93 @@
+<article lang="ja">
+  <h1>Local Service Runtime 調査プロンプト評価</h1>
+  <p>
+    2026年10月6日。添付された調査依頼文の評価であり、構想の実現可能性を確定する調査や実装ではない。SAAAと外部アプリの実装は未確認。
+  </p>
+  <section id="conclusion">
+    <h2>結論</h2>
+    <p>
+      目的、非目標、責務境界、成果物は明確で、設計調査の依頼として有用。ただし初期スコープ、既存Providerの選択経路、利用権の寿命、停止競合、障害復旧の条件を補足してから利用することを推奨する。添付文はPhase
+      3のdependency / resourceで終了している。
+    </p>
+  </section>
+  <section id="existing-evidence">
+    <h2>既存コードで確認できた前提</h2>
+    <p>
+      packages/core/src/registry.tsはnodes、runtimes、profiles、routesを登録し、capabilityとprotocolの互換性を検証する。packages/core/src/provider-lifecycle.tsにはProvider
+      revision、instance generation、node、endpointとwarm
+      policyがある。packages/core/src/service-activity.tsのactivityはHTTP active
+      workloadの観測であり、reservationGuaranteedはfalse。これらの存在は再利用候補を示すが、一般アプリの長時間ジョブ保護を保証しない。
+    </p>
+  </section>
+  <section id="recommended-additions">
+    <h2>追記すべき条件</h2>
+    <ul>
+      <li>
+        AI Providerは要求Agent ProfileとProvider
+        subsetからroute、runtime、backendへ解決する。論理サービス要求がこのモデル選択を迂回しない設計を比較する。
+      </li>
+      <li>
+        Pluginからrequired
+        serviceへの対応はSAAAまたはPluginが管理し、LARMは受け取ったサービスIDの実行定義と依存だけを解決する。
+      </li>
+      <li>
+        always-on、warm、coldは例示であり既定値の変更ではない。既存resident、preferred、elastic、warm
+        policyとの対応を検討する。
+      </li>
+      <li>
+        Phase 1でも最低限のreadiness、認証・認可、利用権と通常停止の保護を成立させる。dynamic
+        portとidle shutdownは後続段階にできる。
+      </li>
+      <li>
+        lease、heartbeatまたはactivity
+        adapterによる長時間ジョブ・WebView・共有依存の保護、同時ensureとstopの競合、期限切れとLARM再起動時のreconcileを設計する。
+      </li>
+      <li>
+        登録は管理者が承認したmanifestの取り込みとし、LLMの通常APIでcommand、cwd、envを指定させない。stopは利用権の解放と管理者による全体停止を区別する。
+      </li>
+      <li>
+        一般サービスの論理ID、配備定義、実行instance、endpoint世代を区別する。固定port、動的port、gatewayを比較し、動的portを必須にしない。
+      </li>
+      <li>
+        観測するresource、予約・admissionに使うresource、実際に制限できるresourceを分け、初期の必須項目を絞る。
+      </li>
+      <li>
+        初期対象は単一Linux
+        hostと既存backendを利用した一サービス。Docker、分散、UI、Wiki移行は後続または別案件とする。
+      </li>
+      <li>
+        調査は代表的経路の追跡と網羅表で行い、既存事実、希望、提案、未確認を分ける。根拠のファイルとrevision、再利用案・分離案の比較、Phaseごとの受入条件を成果物に加える。
+      </li>
+    </ul>
+  </section>
+  <section id="isolation-and-unified-memory">
+    <h2>境界分離とユニファイドメモリの設計候補</h2>
+    <p>
+      2026年10月6日の設計相談。推奨候補は、信頼するサービスをsystemdの権限分離・sandbox・cgroupで管理し、依存環境やファイル・network境界の分離が必要なAppにLinux
+      nativeコンテナを選び、未知のコード実行等でより強い境界が必要なworkerだけVMを検討する構成。コンテナbackendの初期実装を決定するものではない。
+    </p>
+    <p>
+      KVMはVMの仮想化技術であり、Linuxコンテナと区別する。Linux nativeコンテナはhost
+      kernelを共有し、guest OSごとのメモリは不要。memory
+      limitは上限であり同量の事前予約ではない。VMにはguest
+      OSと仮想RAM管理があり、実際の占有量はpreallocation、guest利用とballoon等に依存する。GPUアクセスもVMでは機種とpassthrough構成の検証が必要。
+    </p>
+    <p>
+      このhostの登録はRyzen AI MAX+
+      395、128GB。ユニファイドメモリではCPUとGPUの物理容量を独立した加算可能なpoolとして扱わない。containerのmemory
+      limitだけでGPU割当を制限できるとは仮定せず、hostの利用可能メモリ、GPU割当、driver設定と実測peakを突き合わせ、二重計上を避ける。一般App、モデルweight、KV
+      cache、GPU処理とOSの安全床を含めてadmissionする。
+    </p>
+    <p>
+      AppごとにLLMやEmbeddingを複製せず既存Providerを利用する。CPU側APIと重量級GPU
+      workerの分離はApp構造を確認して評価する。境界の追加費用はidle、startup、job
+      peak、停止後の回収、AI Providerとのmixed workloadで測定する。systemdとコンテナはhost
+      kernelを共有するため、未知のコードに対するVMと同じ強度の隔離を保証しない。
+    </p>
+    <p>
+      技術確認に用いた資料はDocker公式のResource constraints、AMD ROCm公式のRun ROCm Docker
+      containers、QEMU公式のInvocation、systemdのresource-controlとexecの公式仕様。GPUのcgroup
+      accountingと395のVM passthroughは実機で別途確認する。
+    </p>
+  </section>
+</article>

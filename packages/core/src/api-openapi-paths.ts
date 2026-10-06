@@ -6,6 +6,9 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
   for (const [method, path, operationId] of API_OPERATIONS) {
     const successSchema = SUCCESS_SCHEMA_BY_OPERATION[operationId];
     const requestSchema = (() => {
+      if (operationId === "ensureLocalService") return "LocalServiceLeaseRequest";
+      if (operationId === "renewLocalServiceLease") return "LocalServiceRenewRequest";
+      if (operationId === "stopLocalService") return "LocalServiceStopRequest";
       if (operationId === "createAllocation") return "AllocationRequest";
       if (operationId === "renewAllocation") return "AllocationRenewRequest";
       if (operationId === "resolveAllocation") return "AllocationResolveRequest";
@@ -125,18 +128,25 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       : undefined;
     const success = {
       description: "Success",
-      ...(successContent ? { content: successContent } : {}),
+      ...(successContent && !["releaseLocalServiceLease", "stopLocalService"].includes(operationId) ? { content: successContent } : {}),
       ...(activityHeaders ? { headers: activityHeaders } : {}),
     };
     const lifecycle = apiOperationLifecycle(path, operationId);
     paths[path] ??= {};
     paths[path]![method] = {
       operationId,
+      ...(operationId === "createImageGeneration" ? {
+        description: "Synchronous image generation. Control starts and loads the selected model, stores the artifact, and stops the worker before returning 200. Optional model must match the advertised service. Read artifacts[0] or artifact; contentUrl is relative to Control and remains available after worker shutdown. Cold startup is included in request latency; do not automatically resubmit POST.",
+      } : operationId === "createMusicGeneration" ? {
+        description: "Returns a 202 job. Control starts the model on demand; poll the job or follow events. Completed means the artifact is stored and the worker stopped. Download result.audioUrl relative to Control. Submit once; polling does not start a model.",
+      } : {}),
       ...(lifecycle.classification === "compatibility" ? { deprecated: true } : {}),
       "x-larm-lifecycle": lifecycle,
       "x-larm-governance": apiOperationGovernance(path, operationId),
       "x-larm-policy": apiOperationPolicy(path, operationId),
-      security: publicOperation ? [] : management
+      security: path.startsWith("/v1/management/local-services/") ? [{ localServiceManagementBearer: [] }]
+        : /^\/v1\/local-service/.test(path) ? [{ localServiceBearer: [] }]
+        : publicOperation ? [] : management
         ? [{ bearerAuth: [], managementToken: [] }]
         : providerOnlyOperation
         ? [{ providerBearer: [] }]
@@ -265,6 +275,10 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
             : [])],
         }
         : {})),
+      ...(operationId === "ensureLocalService" ? {
+        parameters: [{ name: "Idempotency-Key", in: "header", required: true,
+          schema: { type: "string", minLength: 1, maxLength: 192 } }],
+      } : {}),
       ...(operationId === "provisionContextSource"
         ? {
           requestBody: {

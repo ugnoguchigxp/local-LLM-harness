@@ -1,4 +1,11 @@
-import { LARM_VERSION } from "@larm/core";
+import { LocalServiceManager } from "./local-service-manager";
+import { z } from "zod";
+import { parseLocalServices, ServiceResourceLedger } from "@larm/core";
+import { LocalServiceSystemdBackend, LocalServiceFileJournal } from "@larm/backends";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse } from "yaml";
+import { LARM_VERSION, mediaPolicySchema } from "@larm/core";
 import {
   createRuntimeBackend,
   LocalArtifactStore,
@@ -50,6 +57,9 @@ const identity = {
 };
 
 const backend = createRuntimeBackend(registry.runtimes);
+const serviceLedger = new ServiceResourceLedger();
+let localServiceManager: LocalServiceManager | undefined;
+let localServicePrincipals: { id: string; token: string; services: string[] }[] | undefined;
 const metrics = new MetricsRegistry();
 const observer = new Observer(registry, backend, {
   graceMs: config.graceMs,
@@ -172,6 +182,7 @@ control = new ControlPlane(registry, backend, observer, {
   historyLimit: config.historyLimit,
   maxActiveAllocations: config.activeAllocationLimit,
   stateMaxAgeMs: config.stateMaxAgeMs,
+  getServiceReservations: () => serviceLedger.reservations(),
   requireFreshTelemetry: true,
   telemetryMaxAgeMs: config.telemetryMaxAgeMs,
   getCatalogRevision: () => catalogGeneration.revision,
@@ -187,6 +198,21 @@ control = new ControlPlane(registry, backend, observer, {
       artifactManager.ensureRuntime(runtimeId, allocationId, onPhase, signal),
   },
 });
+if (config.localServicesEnabled) {
+  const definitions = parseLocalServices(parse(readFileSync(join(config.configDir, "local-services.yaml"), "utf8")), registry.nodes.map(n => n.id));
+  if (definitions.some(d => d.node !== registry.nodes[0]?.id)) throw new Error("local services only support the local host");
+  localServicePrincipals = z.array(z.object({ id: z.string().min(1).max(128), token: z.string().min(32).max(4096), services: z.array(z.string()).min(1) }).strict()).min(1).max(100).parse(JSON.parse(readFileSync(config.localServicesPrincipals, "utf8")));
+  if (new Set(localServicePrincipals.map(p => p.id)).size !== localServicePrincipals.length || new Set(localServicePrincipals.map(p => p.token)).size !== localServicePrincipals.length) throw new Error("duplicate local service principal");
+  localServiceManager = new LocalServiceManager(definitions, new LocalServiceSystemdBackend({ secretRoot: config.localServicesSecrets, observationRoot: config.localServicesObservations }), {
+    bootEpoch: identity.bootEpoch, journal: new LocalServiceFileJournal(config.localServicesJournal), ledger: serviceLedger,
+    reserve: (id, d) => {
+      if (mediaVariants.isOccupied()) throw new Error("media_conflict");
+      serviceLedger.reserve(id, d.node, d.resources.startupReservationBytes, { registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(), maxAgeMs: config.telemetryMaxAgeMs });
+    },
+    onEvent: (name, service, reason) => observeEvent({ name, labels: { service, ...(reason ? { reason } : {}) } }),
+  });
+  await localServiceManager.initialize();
+}
 metrics.setGauge("active_allocations", {}, 0);
 artifactManager = new ArtifactManager(
   artifacts,
@@ -291,19 +317,37 @@ const personalStateController = new PersonalStateController({
 await personalStateController.initialize();
 
 const startupProbeToken = crypto.randomUUID();
+const mediaPolicy = mediaPolicySchema.parse(parse(readFileSync(join(config.configDir, "runtime-variants.yaml"), "utf8")));
+const imageEndpoint = config.imageProviderEndpoint ?? new URL(mediaPolicy.variants.image.healthUrl).origin;
+const musicEndpoint = config.musicProviderEndpoint ?? new URL(mediaPolicy.variants.music.healthUrl).origin;
 const mediaVariants = new MediaVariantManager({
+  beforeStart: () => { if (serviceLedger.reservations().length) throw new Error("local service reserves host memory"); },
   script: new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname,
-  idleTtlMs: { image: 120_000, music: 300_000 },
+  idleTtlMs: { image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
 });
-const musicManager = config.musicProviderEndpoint
+// Recover orphan workers without making the public API depend on media permissions.
+await Promise.all(["image", "music"].map(async (variant) => {
+  const unit = variant === "image" ? "larm-image-qwen21.service" : "larm-music-ace-step.service";
+  const observed = Bun.spawn(["systemctl", "show", unit, "--property=ActiveState", "--value"], { stdout: "pipe", stderr: "ignore" });
+  const state = (await new Response(observed.stdout).text()).trim();
+  if (await observed.exited === 0 && state === "inactive") return;
+  const child = Bun.spawn([new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname, "stop", variant], { stdout: "ignore", stderr: "pipe" });
+  const detail = await new Response(child.stderr).text();
+  if (await child.exited !== 0) {
+    mediaVariants.quarantine();
+    console.error(`media recovery failed for ${variant}: ${detail.trim()}`);
+  }
+}));
+const musicManager = musicEndpoint
   ? new MusicGenerationManager(new OnDemandMusicProvider(new AceStepMusicProvider({
-    endpoint: config.musicProviderEndpoint,
+    endpoint: musicEndpoint,
     apiKey: config.musicProviderApiKey,
     pollIntervalMs: config.musicPollIntervalMs,
     maxAudioBytes: config.musicMaxAudioBytes,
     upstreamOutputRoot: config.musicUpstreamOutputRoot,
   }), mediaVariants), {
     artifactRoot: config.musicArtifactRoot,
+    beginWorkload: () => requestTracker.begin(),
     concurrency: 1,
     retentionMs: config.musicArtifactRetentionMs,
     wavRetentionMs: config.musicWavRetentionMs,
@@ -319,8 +363,9 @@ const imageArtifactManager = new ImageArtifactManager(config.imageArtifactRoot, 
   pruneIntervalMs: config.imagePruneIntervalMs,
 });
 await imageArtifactManager.initialize();
-const imageGenerationProvider = config.imageProviderEndpoint
-  ? new ImageGenerationProvider(config.imageProviderEndpoint, mediaVariants)
+const imageGenerationProvider = imageEndpoint
+  ? new ImageGenerationProvider(imageEndpoint, mediaVariants, fetch,
+    async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin())
   : undefined;
 const appComponents = createAppComponents({
   registry,
@@ -330,6 +375,8 @@ const appComponents = createAppComponents({
   allowAnonymousAgentConnections: config.allowAnonymousAgentConnections,
   serviceHarnessAuthEnabled: config.serviceHarnessAuthEnabled,
   managementToken: config.managementToken,
+  localServiceManager,
+  localServicePrincipals,
   artifactManager,
   runtimeReleaseManager,
   metrics,
@@ -507,6 +554,12 @@ const reconciliationTimer = setTimeout(() => {
 }, config.recoveryGraceMs);
 reconciliationTimer.unref?.();
 
+const localServiceTimer = localServiceManager ? setInterval(() => {
+  // The manager guards each service; a slow stop must not starve other probes.
+  void localServiceManager!.tick().catch(() => console.error("local service reconciliation failed"));
+}, 2000) : undefined;
+localServiceTimer?.unref();
+
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) {
@@ -518,14 +571,19 @@ async function shutdown(signal: string): Promise<void> {
     console.warn(error instanceof Error ? error.message : String(error));
   });
   console.log(`received ${signal}; draining`);
+  if (localServiceTimer) clearInterval(localServiceTimer);
   control.beginDrain();
   contextController.beginDrain();
   mutationCoordinator.beginDrain();
+  await localServiceManager?.close();
   artifactManager.beginDrain();
   executionGate.beginDrain();
   clearInterval(interval);
   musicManager?.close();
-  mediaVariants.close();
+  const mediaClosed = mediaVariants.close().then(() => true, (error) => {
+    console.error(`media shutdown failed: ${String(error)}`);
+    return false;
+  });
   imageArtifactManager.close();
   clearTimeout(reconciliationTimer);
   const deadline = Date.now() + config.shutdownTimeoutMs;
@@ -535,7 +593,8 @@ async function shutdown(signal: string): Promise<void> {
       artifactManager.flush(),
       mutationCoordinator.drain(config.shutdownTimeoutMs),
       reconciliationInFlight ?? Promise.resolve(),
-    ]).then(([, , mutationDrained]) => mutationDrained),
+      mediaClosed,
+    ]).then(([, , mutationDrained, , mediaDrained]) => mutationDrained && mediaDrained),
     Bun.sleep(config.shutdownTimeoutMs).then(() => false),
   ]);
   const requestsDrained = await requestTracker.drain(Math.max(0, deadline - Date.now()));

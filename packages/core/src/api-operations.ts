@@ -1,4 +1,12 @@
 export const API_OPERATIONS = [
+  ["get", "/v1/local-services", "listLocalServices"],
+  ["get", "/v1/local-services/{id}", "getLocalService"],
+  ["post", "/v1/local-services/{id}/leases", "ensureLocalService"],
+  ["get", "/v1/local-service-leases/{id}", "getLocalServiceLease"],
+  ["post", "/v1/local-service-leases/{id}/renew", "renewLocalServiceLease"],
+  ["delete", "/v1/local-service-leases/{id}", "releaseLocalServiceLease"],
+  ["post", "/v1/management/local-services/{id}/stop", "stopLocalService"],
+
   ["get", "/health", "getHealth"],
   ["get", "/ready", "getReadiness"],
   ["get", "/v1/activity", "getServiceActivity"],
@@ -89,6 +97,14 @@ export const API_OPERATIONS = [
 type ApiOperationId = typeof API_OPERATIONS[number][2];
 
 export const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> = {
+  listLocalServices: ["200"],
+  getLocalService: ["200"],
+  ensureLocalService: ["201", "202"],
+  getLocalServiceLease: ["200"],
+  renewLocalServiceLease: ["200"],
+  releaseLocalServiceLease: ["204"],
+  stopLocalService: ["204"],
+
   getHealth: ["200"],
   getReadiness: ["200"],
   getServiceActivity: ["200"],
@@ -177,6 +193,14 @@ export const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly stri
 };
 
 export const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
+  listLocalServices: "LocalServiceList",
+  getLocalService: "LocalServiceStatus",
+  ensureLocalService: "LocalServiceLease",
+  getLocalServiceLease: "LocalServiceLease",
+  renewLocalServiceLease: "LocalServiceLease",
+  releaseLocalServiceLease: "Empty",
+  stopLocalService: "Empty",
+
   getHealth: "Health",
   getReadiness: "Readiness",
   getServiceActivity: "ServiceActivity",

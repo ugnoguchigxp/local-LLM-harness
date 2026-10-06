@@ -1,3 +1,6 @@
+import { ZodError } from "zod";
+import { registerLocalServiceRoutes } from "./routes/local-services";
+import { LocalServiceError } from "./local-service-manager";
 import type { ServiceActivityState } from "@larm/core";
 import {
   canonicalMeasurementRequestSchema,
@@ -126,6 +129,11 @@ export function createAppComponents(deps: AppDeps) {
   let lastObservedActivityState: ServiceActivityState | undefined;
 
   app.onError((err, c) => {
+    if (err instanceof ZodError) return c.json(errorBody("invalid_request", "invalid request"), 400);
+    if (err instanceof LocalServiceError) {
+      if (err.status === 503 || err.status === 429) c.header("retry-after", "5");
+      return c.json(errorBody(err.code, err.code), err.status);
+    }
     if (err instanceof RequestBodyError) {
       return c.json(errorBody(err.code, err.message), err.status);
     }
@@ -293,6 +301,7 @@ export function createAppComponents(deps: AppDeps) {
     onEvent: deps.onEvent,
   });
 
+  registerLocalServiceRoutes(app, { manager: deps.localServiceManager, principals: deps.localServicePrincipals, managementToken: deps.managementToken, maxBodyBytes: controlMaxBodyBytes });
   registerHealthRoutes(app, { ...deps, identity }, {
     get current() { return lastObservedActivityState; },
     set current(value) { lastObservedActivityState = value; },

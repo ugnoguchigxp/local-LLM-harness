@@ -13,7 +13,7 @@ done < <(find scripts deploy -type f -name '*.sh' -print0)
 python3 - <<'PY'
 from pathlib import Path
 
-for root in (Path("scripts"), Path("apps")):
+for root in (Path("scripts"), Path("apps"), Path("deploy")):
     for path in root.rglob("*.py"):
         compile(path.read_bytes(), str(path), "exec")
 PY

@@ -116,8 +116,9 @@
       <code>/release_task</code
       >、<code>/query_result</code>、<code>/v1/audio</code>
       を使用する。上流が返した音声 URL は設定済み ACE-Step origin と一致する場合だけ取得し、SSRF
-      を防止する。出力は最大バイト数で制限する。品質指定は Phase 1 では inference steps と thinking
-      の安全な既定値へ変換する。
+      を防止する。出力は最大バイト数で制限する。品質指定は inference steps（fast: 4、balanced:
+      8、high: 12）へ変換する。
+      補助LMをロードしない構成に合わせ、thinkingはfalseとし、既定品質の要求が未起動LMへ依存しないようにする。
     </p>
     <p>
       ACE-Step の出力専用 root を明示設定した場合、音声を LARM

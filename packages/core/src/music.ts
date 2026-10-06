@@ -142,6 +142,7 @@ export interface MusicProvider {
     context: MusicGenerationContext,
   ): Promise<Omit<MusicGenerationResult, "id" | "provider" | "audioUrl" | "metadataUrl"> & {
     audio: Uint8Array;
+    release?: () => Promise<void>;
   }>;
   cancel?(jobId: string): Promise<void>;
   health(): Promise<{ available: boolean; reason?: string }>;

@@ -342,3 +342,10 @@ test("admission rejects two members of one swap group in one allocation", () => 
   });
   expect(result).toEqual(expect.objectContaining({ ok: false, reason: "swap_group_conflict" }));
 });
+
+test("AI admission accounts for Service reservations in static and live capacity", () => {
+  const state: ClusterState = { generatedAt: "2026-08-28T00:00:00.000Z", node: { ...registry.nodes[0]!, online: true }, runtimes: [] };
+  const result = admitRuntimes({ registry, state, allocations: [], candidateRuntimeIds: ["worker"], serviceReservations: [{ node: "local-node", bytes: 9 * 1024 ** 3, pendingBytes: 9 * 1024 ** 3 }] });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.reason).toBe("memory_exhausted");
+});

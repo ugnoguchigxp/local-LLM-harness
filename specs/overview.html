@@ -22,6 +22,94 @@
         </tr>
       </thead>
       <tbody>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="docling-isolated-service-implementation-results-2026-10-06"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-06"
+          data-target-revision="unrecorded"
+          data-audit-gap="未コミットの作業ツリーを検証"
+        >
+          <th scope="row">
+            <a href="./docling-isolated-service-implementation-results-2026-10-06.html"
+              >docling分離ホスティングの実装と配備受入状況</a
+            >
+          </th>
+          <td>
+            Service lifecycle実装、分離配備sourceと検証。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>docling-isolated-service-implementation-results-2026-10-06</code></small
+            >
+          </td>
+          <td>
+            source実装。Docker導入・実機受入・SAAA結合は未完了。
+            <small data-audit-summary="true">2026-10-06 · revision: unrecorded</small>
+            <span data-audit-gap-note="true">未コミットの作業ツリーを検証</span>
+          </td>
+        </tr>
+
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="docling-isolated-service-implementation-plan"
+        >
+          <th scope="row">
+            <a href="./docling-isolated-service-implementation-plan.html"
+              >docling-deskの環境分離とオンデマンドホスティング実装計画</a
+            >
+          </th>
+          <td>
+            CPU専用APIとprocessorのコンテナ分離、LARM連携、資源と停止保護。<small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>docling-isolated-service-implementation-plan</code></small
+            >
+          </td>
+          <td>利用者合意に基づく初期計画。source実装済み。配備・実機受入は未実施。</td>
+        </tr>
+
+        <tr
+          data-kind="research"
+          data-state="proposed"
+          data-domain="local-service-runtime-prompt-review-2026-10-06"
+        >
+          <th scope="row">
+            <a href="./local-service-runtime-prompt-review-2026-10-06.html"
+              >Local Service Runtime 調査プロンプト評価</a
+            >
+          </th>
+          <td>
+            調査依頼文の不足と改善条件。<small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>local-service-runtime-prompt-review-2026-10-06</code></small
+            >
+          </td>
+          <td>依頼文の評価。構想の実装可否は未確定。</td>
+        </tr>
+
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="contextstill-lifecycle-inference-investigation-2026-10-04"
+        >
+          <th scope="row">
+            <a href="./contextstill-lifecycle-inference-investigation-2026-10-04.html"
+              >ContextStill 接続更新・構造化出力・401調査</a
+            >
+          </th>
+          <td>
+            実ログと隔離接続による原因切り分け。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>contextstill-lifecycle-inference-investigation-2026-10-04</code></small
+            >
+          </td>
+          <td>cache待機とjson_object形式違反を再現。歴史的renew・401照合と業務復旧は未確定。</td>
+        </tr>
+
         <tr data-kind="plan" data-state="proposed" data-domain="consumer-profile-connection-guide">
           <th scope="row">
             <a href="./consumer-profile-connection-guide.html">ContextStillとSAAAの共通接続手順</a>
@@ -1710,6 +1798,43 @@
             <a rel="successor" href="./saaa-provider-runtime-remediation.html"
               >後継: saaa-provider-runtime-remediation</a
             >
+          </td>
+        </tr>
+        <tr data-kind="evidence" data-state="proposed" data-domain="media-on-demand-investigation">
+          <th scope="row">
+            <a href="./media-on-demand-connection-investigation-2026-10-06.html"
+              >画像・楽曲オンデマンド接続調査</a
+            >
+          </th>
+          <td>公開カタログ、生成契約、終了条件の照合</td>
+          <td>
+            分類: <code>evidence</code> · 状態:
+            <code>proposed</code> · 正本領域:
+            <code>media-on-demand-investigation</code>。実生成と修正は未実施。
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="proposed" data-domain="media-on-demand-implementation">
+          <th scope="row">
+            <a href="./media-on-demand-implementation-plan.html">画像・楽曲オンデマンド実装計画</a>
+          </th>
+          <td>常時API、要求時ロード、保存後停止と契約互換性</td>
+          <td>
+            分類: <code>plan</code> · 状態:
+            <code>proposed</code> · 正本領域:
+            <code>media-on-demand-implementation</code>。実装前の計画。
+          </td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="media-on-demand-delivery">
+          <th scope="row">
+            <a href="./media-on-demand-implementation-results-2026-10-06.html"
+              >画像・楽曲オンデマンド生成の実装・配備結果</a
+            >
+          </th>
+          <td>配備revision、各1回の実生成、モデル停止とホスト修正</td>
+          <td>
+            分類: <code>evidence</code> · 状態:
+            <code>current</code> · 正本領域:
+            <code>media-on-demand-delivery</code>。2026-10-06の配備・検証結果。
           </td>
         </tr>
       </tbody>

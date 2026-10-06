@@ -67,6 +67,7 @@ export const imageArtifactDeleteSchema = z.object({
 
 export const imageGenerationRequestSchema = z.object({
   prompt: z.string().min(1).max(8_192),
+  model: z.literal("qwen-image-2.1").optional(),
   width: z.union([z.literal(512), z.literal(768), z.literal(1024)]).optional(),
   height: z.union([z.literal(512), z.literal(768), z.literal(1024)]).optional(),
   steps: z.number().int().min(1).max(50).optional(),
@@ -78,6 +79,7 @@ export const imageGenerationResponseSchema = z.object({
   object: z.literal("image_generation"),
   status: z.literal("succeeded"),
   artifact: imageArtifactSchema,
+  artifacts: z.array(imageArtifactSchema).length(1).optional(),
   durationMs: z.number().nonnegative(),
 }).strict();
 

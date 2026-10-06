@@ -1,0 +1,11 @@
+[Unit]
+Description=Observe LARM isolated docling containers
+[Service]
+Type=oneshot
+User=larm-services
+Group=larm-services
+ExecStart=/usr/bin/python3 /usr/local/libexec/larm-local-service-controller.py observe
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/larm-local-services/observations

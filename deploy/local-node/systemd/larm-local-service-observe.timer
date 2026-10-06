@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh isolated docling container state
+[Timer]
+OnBootSec=2s
+OnUnitInactiveSec=2s
+AccuracySec=1s
+[Install]
+WantedBy=timers.target

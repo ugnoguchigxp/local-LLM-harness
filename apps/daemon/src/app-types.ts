@@ -1,3 +1,5 @@
+import type { LocalServiceManager } from "./local-service-manager";
+import type { LocalServicePrincipal } from "./routes/local-services";
 import type { AgentConnectionCatalog, ClusterState, Registry } from "@larm/core";
 import type { ControlEvent, ControlPlane } from "./controller";
 import type { ArtifactManager } from "./artifact-manager";
@@ -17,6 +19,8 @@ import type { ImageArtifactManager } from "./image-artifact-manager";
 import type { ImageGenerationProvider } from "./image-generation-provider";
 
 export type AppDeps = {
+  localServiceManager?: LocalServiceManager;
+  localServicePrincipals?: LocalServicePrincipal[];
   registry: Registry;
   getState: () => ClusterState;
   control: ControlPlane;

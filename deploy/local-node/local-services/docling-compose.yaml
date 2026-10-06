@@ -1,0 +1,81 @@
+name: larm-docling
+services:
+  api:
+    image: ${LARM_DOCLING_API_IMAGE:?pinned API image digest required}
+    pull_policy: never
+    user: "10001:10001"
+    init: true
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    pids_limit: 128
+    tmpfs: [/tmp:size=64m,mode=1777]
+    ports: ["127.0.0.1:18766:18766"]
+    networks: [private]
+    labels:
+      io.larm.service: docling-desk
+      io.larm.release: docling-knowledge-cpu-v1
+    environment:
+      KNOWLEDGE_STATE_DIR: /var/lib/knowledge
+      KNOWLEDGE_ARTIFACT_ROOT: /artifacts
+      KNOWLEDGE_WORKER_URL: http://processor:8765
+      KNOWLEDGE_HOST: 0.0.0.0
+      KNOWLEDGE_PORT: 18766
+      KNOWLEDGE_CLIENTS_FILE: /run/secrets/clients
+      KNOWLEDGE_WORKER_TOKEN_FILE: /run/secrets/worker-token
+      KNOWLEDGE_LARM_TOKEN_FILE: /run/secrets/lifecycle-token
+    secrets: [clients, worker-token, lifecycle-token]
+    volumes:
+      - knowledge-state:/var/lib/knowledge
+      - knowledge-artifacts:/artifacts
+    depends_on:
+      processor:
+        condition: service_healthy
+    stop_grace_period: 60s
+  processor:
+    image: ${LARM_DOCLING_PROCESSOR_IMAGE:?pinned processor image digest required}
+    pull_policy: never
+    user: "10001:10001"
+    init: true
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 8g
+    memswap_limit: 8g
+    cpus: 4
+    pids_limit: 256
+    shm_size: 256m
+    tmpfs: [/tmp:size=512m,mode=1777, /home/docling:size=64m,uid=10001,gid=10001]
+    networks: [private]
+    labels:
+      io.larm.service: docling-desk
+      io.larm.release: docling-knowledge-cpu-v1
+    command: [python, -m, uvicorn, docling_desk.knowledge.worker:app_factory, --factory, --host, 0.0.0.0, --port, "8765", --workers, "1", --no-access-log]
+    environment:
+      KNOWLEDGE_ARTIFACT_ROOT: /var/lib/docling/data
+      KNOWLEDGE_API_INTERNAL_URL: http://api:18766
+      KNOWLEDGE_WORKER_TOKEN_FILE: /run/secrets/worker-token
+      KNOWLEDGE_LARM_TOKEN_FILE: /run/secrets/lifecycle-token
+    secrets: [worker-token, lifecycle-token]
+    volumes: [knowledge-artifacts:/var/lib/docling/data]
+    stop_grace_period: 60s
+networks:
+  private:
+    internal: true
+volumes:
+  knowledge-state:
+    name: larm-docling-knowledge-state
+  knowledge-artifacts:
+    name: larm-docling-knowledge-artifacts
+secrets:
+  clients:
+    file: ${LARM_DOCLING_SECRET_ROOT:?}/clients.json
+  worker-token:
+    file: ${LARM_DOCLING_SECRET_ROOT:?}/worker-token
+  lifecycle-token:
+    file: ${LARM_DOCLING_SECRET_ROOT:?}/lifecycle-token

@@ -1,3 +1,4 @@
+import type { ServiceMemoryReservation } from "@larm/core";
 import {
   admittedAllocation,
   getRuntime,
@@ -52,6 +53,7 @@ export function planAllocationRequestAdmission(input: {
   preemptLowerPriorityConflicts: (priority: number, runtimeIds: string[]) => void;
   getRuntimeRelease?: (runtimeId: string) => string | undefined;
   getRuntimeReleaseDefinition?: (runtimeId: string) => RuntimeReleaseDefinition | undefined;
+  serviceReservations?: readonly ServiceMemoryReservation[];
   requireFreshTelemetry: boolean;
   telemetryMaxAgeMs: number;
   now: () => number;
@@ -129,6 +131,7 @@ export function planAllocationRequestAdmission(input: {
     conflictsWithAdmitted,
     transitioningRuntime,
     providerSwitchHoldUntil,
+    serviceReservations: input.serviceReservations,
     requireFreshTelemetry: input.requireFreshTelemetry,
     telemetryMaxAgeMs: input.telemetryMaxAgeMs,
     ...(input.requireFreshTelemetry ? { now: input.now() } : {}),

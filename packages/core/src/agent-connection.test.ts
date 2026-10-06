@@ -44,7 +44,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
         protocol: "larm.image-generation.v1",
         endpoint: "/v1/images/generations",
         model: "qwen-image-2.1",
-        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 120 },
+        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 },
       }],
     },
     {
@@ -56,7 +56,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
         protocol: "larm.music-generation.v1",
         endpoint: "/v1/music/generations",
         model: "ace-step-1.5",
-        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 300 },
+        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 },
       }],
     },
     { id: "vulnWorkbench", agentProfile: "coding-default", services: [] },

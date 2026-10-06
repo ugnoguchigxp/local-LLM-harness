@@ -1,0 +1,29 @@
+schemaVersion: larm.local-services.v1
+services:
+  docling-desk:
+    node: local-node
+    backend: systemd-container-group
+    deployment:
+      unit: larm-local-service-docling-desk.service
+      stopUnit: larm-local-service-docling-desk-stop.service
+      release: docling-knowledge-cpu-v1
+      manifestDigest: "0000000000000000000000000000000000000000000000000000000000000000"
+      endpoint: http://127.0.0.1:18766
+      publicEndpoint: http://127.0.0.1:18766
+    readiness:
+      timeoutSeconds: 180
+    activity:
+      secretRef: docling-lifecycle-token
+      pollSeconds: 5
+      staleAfterSeconds: 15
+    lifecycle:
+      minInstances: 0
+      idleSeconds: 120
+      leaseSeconds: 300
+      gracefulStopSeconds: 180
+      restartPolicy: on-next-ensure
+    resources:
+      startupReservationBytes: 9663676416
+      cpuMaxCores: 5
+      maxInstances: 1
+      gpuAccess: false

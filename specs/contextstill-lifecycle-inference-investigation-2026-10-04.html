@@ -1,0 +1,343 @@
+<article lang="ja">
+  <h1>ContextStillの接続更新・構造化出力・401調査（2026年10月4日）</h1>
+  <p>
+    起点は23:32
+    JSTのConsumer観測。以下の時刻はJST。実地検証は23:47–23:49に実施した。復旧完了とは判定していない。本番Connectionの更新・削除、サービス再起動、モデル・配備変更、Queue再投入は行っていない。隔離Connectionを2件作成し、その2件だけを解放した。認証情報と原資料本文は記載しない。
+  </p>
+  <h2>結論と責任の切り分け</h2>
+  <table>
+    <caption>
+      確定事項と未確定事項
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">問題</th>
+        <th scope="col">確定事項</th>
+        <th scope="col">未確定事項</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">更新待機</th>
+        <td>
+          claimableはclaim未取得の意味ではない。成功semantic
+          cacheの10秒期限を過ぎるとfalseになる。GET
+          statusはprobeしないため、そのGETだけの待機は進まない。falseから直接claimして成功する。Consumerガイドの待機手順にも不備がある。
+        </td>
+        <td>
+          ContextStill実行プロセスが提示された現行ソースと一致するか、19分の各renew時刻と待機再試行、23:29のhealth操作主体は未確定。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">形式違反</th>
+        <td>
+          json_objectがbackendで空schemaとなり、autoparserの空schema判定でgrammarを作らない経路がある。公開APIで小入力でもフェンスと後続文を返す。LARMの応答検査はOpenAI外側envelopeのみで、指定された本文形式を保証しない。
+        </td>
+        <td>
+          json_schema全keywordの対応とstrictの保証は未検証。単一schema成功を全面的な対応とは判定しない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">打ち切り</th>
+        <td>
+          保存済み応答では思考が生成予算を消費し、本文空のままlengthになる例が多数。12000
+          tokenでも同じ失敗がある。上限増加だけでは解決しない。
+        </td>
+        <td>
+          各ジョブの思考反復、候補過多、内容起因の長さを全件分類していない。Consumer観測の24時間38応答と今回の保存範囲は同じ母集団ではない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">401</th>
+        <td>
+          renewでgenerationを更新し、旧credentialを即時失効する。期限切れも内部では区別できるが公開応答はunauthorizedに潰れる。更新後の旧tokenで401を再現した。実行開始済みリクエストは更新をまたいで完了した。
+        </td>
+        <td>
+          過去のCuration
+          2件の失効原因はrenew、TTL、binding変更等から個別確定できない。実行待ち中の失効は実装経路を確認したがライブ再現はしていない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>稼働版と解決runtime</h2>
+  <p>
+    daemonの起動時刻は18:59:23、実行先はlarm-releases/8cd43db935db。調査に使用したagent-connection-controller.ts、semantic-readiness.ts、app-http.ts、gateway.ts、runtimes.yaml、llama-swap.yamlは稼働releaseと作業ツリーでバイト一致した。Consumer稼働版は未確認。隣接SAAAには3ファイルの未コミット変更があり、更新・実装参照を行わなかった。
+  </p>
+  <p>
+    本番の公開GETで対象Connectionとallocationを照合した。contextStill → contextstill-background →
+    llm-contextstill-ornith → ornith-contextstill →
+    llama-swapの/upstream/ornith-contextstillを使用。23:06:58.983のallocationログも同じroute/runtime、fallback=false。別のornith-generalプロセスとの差をdriftとは判定していない。
+  </p>
+  <p>
+    実backendはPID 585935、port 58004、build b244-0fc9568。対応checkout
+    revisionは0fc9568e07ccc8553010864cb8db1957e629cbfa。実起動引数はctx-size 262144、parallel
+    4、kv-unified、KV K/V q8_0、reasoning auto、spec-type none。propsも4
+    slotsを確認した。64K×4の設定と公開contextWindow 32768・outputReserveTokens
+    4096は別の値である。公開reserveは通常のChat
+    Completionsの8192/12000を4096へ強制する設定ではなく、実auditでも元の上限が到達している。context-view経路は別途reserve超過を拒否する。競合優先度はContextStill
+    1000、ornith-general 3000。停止期間の対象allocationはreleaseされていない。
+  </p>
+  <h2>接続契約と19分の停止</h2>
+  <p>
+    apps/daemon/src/agent-connection-controller.tsのpublic（922行付近）はstatus=readyかつsemantic.peek.readyでclaimableを決める。claim取得済みフラグ、credential有効性、空きslot数を直接表す値ではない。semantic-readiness.tsのpeek（164行付近）は期限切れをundefinedにし、remember（540行付近）は成功10秒・失敗1秒のcacheを保持する。readiness=readyはConnectionの状態を反映し、fresh
+    cacheがなくてもreadyのままになり得る。
+  </p>
+  <ul>
+    <li>初回claim直後：probe成功cacheがfreshならtrue。claimしたこと自体ではfalseにならない。</li>
+    <li>
+      renew後：cacheを更新も消去もしない。元のcacheの鮮度によりtrue/false。generationとtokenIssuedAtを更新するので全旧tokenは即時無効。
+    </li>
+    <li>
+      credentialの自然満了後：credentialとConnection期限は結び付いており、status取得でexpiredへ遷移しclaimable=false。旧tokenだけをrenewで失効させた場合はConnectionはreadyのまま。
+    </li>
+    <li>
+      claim条件：Connectionがready、format一致、所有権・権限一致、healthRecordによるsemantic
+      check成功。事前GETのclaimable=trueは前提条件ではない。同じgenerationの再claimは同じtokenを返す。
+    </li>
+  </ul>
+  <table>
+    <caption>
+      本番の根拠時刻
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">時刻</th>
+        <th scope="col">事実</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">23:06:58.983–23:06:59.170</th>
+        <td>対象allocation ready、claim成功。ConnectionのcreatedAtも一致。</td>
+      </tr>
+      <tr>
+        <th scope="row">23:10:30.909–23:10:30.922</th>
+        <td>
+          4件開始。request
+          IDはreq_195edd38-6cc2-4a39-becb-9fa157be7f7f、req_bf95be2c-508a-468b-9b82-1a401c68e6ea、req_cb2ddd98-198c-4362-b596-d731a13d9d2c、req_129764d4-0195-4263-8cad-a38fbef1e81b。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">23:12:34.082–23:14:53.465</th>
+        <td>上記4件がHTTP 200で終了。HTTP成功はConsumer envelope成功ではない。</td>
+      </tr>
+      <tr>
+        <th scope="row">23:29:45.794–23:29:45.960</th>
+        <td>対象runtimeにsemantic probe、aggregate health 200。fresh cacheを再作成する経路。</td>
+      </tr>
+      <tr>
+        <th scope="row">23:29:48.877</th>
+        <td>claim 200。health後10秒以内。</td>
+      </tr>
+      <tr>
+        <th scope="row">23:29:53.358–23:29:53.604</th>
+        <td>
+          同じallocationでreq_0fe5b6d2-42ca-4c04-ab60-79ddfc5c1f0eとreq_537819f9-f43a-4d14-a2d9-dd1f4f244d1b開始。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">23:32:36.127–23:32:36.480</th>
+        <td>
+          追加health probe
+          200。先行GETがfalse、healthがtrueでも矛盾しない。GETとhealthは同一snapshotではない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    19分後の復帰はhealthによるcache更新→claim→同じallocationで処理再開というログと整合する。ただし、これを唯一の歴史的原因と断定しない。初回TTL
+    900秒なら23:21:58.983までであるが、同じConnectionが23:29に使えたため、満了前に期限を延長したことは必要条件。満了済みConnectionはrenewで復活できない。23:46頃の公開GETではexpiresAt=23:50:58.052であり、TTLが900秒ならその値は23:35:58.052のrenewに対応する。過去の各renew応答は保存されておらず、値から19分の更新回数や待機間隔は逆算できない。
+  </p>
+  <p>
+    routes/agent-connections.tsのrenewとallocation-api-lifecycle.tsのrenewAllocationはrenew
+    eventを発行しない。claimとhealthのeventにもConnection
+    IDがない。この観測不足はLARM側の問題で、過去2件の401とrenewの照合を妨げる。
+  </p>
+  <h2>推論パラメータと保存済み応答</h2>
+  <p>
+    app-gateway-request.tsでbodyをparse・再serializeし、app-http.tsのnormalizeQwen38ChatRequestはmodel=qwen3.8だけに特別処理する。ornith-contextstillにはその処理が適用されない。app-gateway-handler.tsからgateway.tsへrequestBodyを渡す。max_tokens、temperature、response_format、streamはそのまま転送され、claim専用のgateway応答では外側modelだけを公開名に合わせる。LARMはusageとfinish_reasonを再計算しない。
+  </p>
+  <p>
+    backendのtools/server/server-task.cpp:272–273はn_predictをmax_completion_tokens、max_tokensから決定し、n_predictを明示するとそちらが優先される。usage_json_oaicompat（781行付近）のcompletion_tokensは全n_decodedで思考を含む。reasoning_tokens内訳は出さない。to_json_oaicompat_chat（830行付近）はEOS/stop
+    wordでstop、それ以外はlength。stopはJSON妥当性やアプリ意味の成功ではない。
+  </p>
+  <p>
+    server-common.cpp:945–955はjson_objectをschema指定がなければ空objectへ、json_schemaをjson_schema.schemaへ変換する。common/chat-auto-parser-generator.cpp:62、115の非空判定は空objectを構造化指定と認識せずgrammarを生成しない。稼働buildと短入力再現がこの経路を裏付ける。json_schemaの非空schemaはgrammarを生成するが、strict自体はこの抽出で検証されない。json-schema-to-grammar.cppにはunsupported
+    patternのwarning等があり、完全なJSON Schema
+    validatorではない。未対応keywordを黙って緩和しない公開契約が必要である。
+  </p>
+  <p>
+    調査時点で残っていた10月4日のornith-contextstill構造化audit
+    67件を、原文を出力せずメタデータ・文字数・parse成否で調べた。json_object
+    35件のうち終端を読めた34件はlength 19、stop 15。length
+    19件はすべて8192、うち16件はcontentが空。json_schema 32件はlength 14、stop 18。length
+    14件のうち13件は12000でcontentが空、1件は4096で本文途中。これはConsumerのFinding
+    38件とは範囲・ジョブ識別が異なるため、件数一致を主張しない。
+  </p>
+  <table>
+    <caption>
+      原文を転載せず確認した生成例
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">request ID・開始時刻</th>
+        <th scope="col">結果</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">req_eefca659-0615-4527-8503-b07227fb1024（23:07:06.724 audit作成）</th>
+        <td>json_object、8192/8192、length、本文0文字、reasoning 29396文字。</td>
+      </tr>
+      <tr>
+        <th scope="row">req_cb2ddd98-198c-4362-b596-d731a13d9d2c（23:10:35.107）</th>
+        <td>8192/8192、length、本文0文字、reasoning 31041文字。</td>
+      </tr>
+      <tr>
+        <th scope="row">req_537819f9-f43a-4d14-a2d9-dd1f4f244d1b（23:29:56.611）</th>
+        <td>json_schema、12000/12000、length、本文0文字、reasoning 53836文字。</td>
+      </tr>
+      <tr>
+        <th scope="row">req_358b6946-d303-426f-ab70-b694fdd216e2（23:07:06.725）</th>
+        <td>
+          json_object、5173 token、stop、本文2405文字でコードフェンス付き、JSON全体parse失敗。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    responseTruncated=falseの保存済み応答を直接検査した結果であり、Consumerが捨てた本文の推測ではない。思考が主因の実例は確定したが、思考の全内容分類や候補過多の因果判定は実施していない。稼働MTPはnoneなので、別runtimeのspeculative
+    decodingを原因として持ち込まない。
+  </p>
+  <h2>隔離再現とcredential影響</h2>
+  <p>
+    1件目のConnection末尾b70e897c-201b-4464-9e6b-3333910d96adはllmだけ、existing-only、fallbackなし、TTL
+    300秒。23:47:01に作成・claimし、人工の1キーJSON要求（max_tokens=256）を送った。req_55cab485-0b63-4e14-a3db-6b78cc684d80はstop、31
+    token、JSON成功。11秒後のGETはready/false。23:47:17.390にrenew、応答もfalse、直後の旧token送信は401
+    unauthorizedでrequest
+    IDなし。falseを待たず直接claimして23:47:26.478に200、新tokenへ交換。req_e42c5c25-b38f-4ea1-a0cd-d127a418fd03はjson_schemaでstop・JSON成功。さらにenable_thinking=falseのreq_fcdfcc4a-bc80-4072-9b8d-8e9ce3cd21feは6
+    token、reasoningなしで成功。23:47:49に検証ConnectionのみDELETE 204。
+  </p>
+  <p>
+    2件目の末尾6ed12a1d-ea95-46f6-8ba2-57091aa644c6では、人工入力にフェンスと後続文を要求し、API形式指定が優先されるか試した。思考を無効化しmax_tokens=128。23:48:35のreq_70952a60-3e56-492b-a151-5593d89dba84はjson_objectにもかかわらずフェンス＋後続文、13
+    token、stop、HTTP
+    200。23:48:46のreq_52f9aedd-a068-4163-bf44-a6c8a55577b2は同じ入力と非空json_schemaでJSON成功。プロンプトの指示だけで形式を守らせる検査では、この差を発見できない。
+  </p>
+  <p>
+    同じ2件目で512
+    tokenの人工生成を開始し、23:48:51に実行中のままrenewした。req_265b4ea2-7954-42ee-9c8f-f99713096afeは23:49:10にHTTP
+    200・length・512
+    tokenで終了。renewは実行中生成をabortしないことをこの1件で確認。gateway.tsはexecution
+    slot取得後・upstream送信前にrevalidateするため、並列の新規送信とslot待ち中の旧tokenは401になり得る。stream、queued、TTL満了でのabort等は別の回帰対象。検証Connectionのみ23:49:10にDELETE
+    204。
+  </p>
+  <p>
+    ConnectionTokenCodec.verifyはexpired_tokenを識別し、AgentConnectionController.verifyProviderTokenはgeneration、epoch、allocation、provider、audience、expiry、binding
+    revision、instanceを照合する。ただしapp-gateway-ingress.tsはidle release以外を401
+    unauthorizedへ変換し、gatewayの再検証catchも同じメッセージへ集約する。「no longer
+    valid」だけではrenewによる失効を証明できない。過去2件の401をモデル出力不正へ分類するConsumerの問題は、このLARM側の識別不足とは別である。
+  </p>
+  <h2>修正案と正しい状態遷移</h2>
+  <ol>
+    <li>
+      Consumer共有管理器：新規送信を止め、renewをsingle-flightにする。同じ更新の通信retryは同じIdempotency-Key、次の更新は新しいkeyを使う。renew
+      200後にclaimを直接呼び、全Provider credentialを一括交換して送信を再開する。readyでGET
+      claimable=falseを待ち続けない。claimの409 connection_not_readyではstatusを確認し、503
+      provider_semantic_not_readyではbackoffして再claimまたはcontrol認証のhealthを使う。旧Provider
+      tokenでhealthを確認しない。
+    </li>
+    <li>
+      Consumer並列動作：4ワーカーがそれぞれrenewして互いのcredentialを失効させない。送信開始とcredential交換を直列化する。実行開始済みは結果を待ち、queued失効や401は認証エラーとして分離する。renew済みreadyなら再claim、expired/released/epoch変更ならdiscovery・createから再作成。結果の不明な生成を無条件再送しない。
+    </li>
+    <li>
+      LARM契約：claimableはfresh
+      probe情報と明記し、観測鮮度・理由・確認時刻を公開する案を検討する。常時trueにする修正は行わない。ConsumerガイドのGET-only待機を修正する。renew・claim・失効拒否をConnection
+      ID、generation、期限、request ID、reason付きで記録し、tokenは記録しない。
+    </li>
+    <li>
+      LARM構造化出力：OS独立の契約検査はcore、backend固有の空schema補正・対応能力判定はbackendsに置く。json_objectを非空のobject
+      schemaへ正規化するかbackendの空schema判定を修正する。model
+      family名による例外にしない。未対応形式・schema
+      keywordは送信前に400等で明示拒否し、黙ってtextへ降格しない。stop時の本文object/schema検証を加え、違反はrequest
+      ID付きupstream_structured_output_invalidとして扱う。lengthは打ち切りとして区別し、成功としない。
+    </li>
+    <li>
+      出力予算：思考無効化または思考予算と回答予算の分離を明示選択し、Consumerの小出力契約で効果を比較する。今回のno-thinking成功は有望だが業務精度改善は未検証。候補数・文字列長・列挙数をschemaで限定し、意味検証も維持する。reasoning
+      usage内訳を提供できない場合はunknownと明記する。
+    </li>
+    <li>
+      401契約案：HTTP
+      401内でcredential_expired、credential_rotated、credential_invalidを区別し、terminal
+      Connectionはconnection_expired/released、epoch不一致はconnection_epoch_mismatch等で識別する。外側にrequest
+      IDと再取得方法を付ける。現行契約ではcode=unauthorizedのみのため、ConsumerはHTTP分類→control
+      GET→reclaim/createの順で判断し、メッセージ文字列へ依存しない。
+    </li>
+  </ol>
+  <h2>必要な回帰試験と復旧判定</h2>
+  <table>
+    <caption>
+      次の修正で必須の検証
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">層</th>
+        <th scope="col">試験と合格条件</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">readiness・client</th>
+        <td>
+          fake
+          clockで成功probe→10秒超過→GETのみではfreshにならない→health/claimで回復。renew後falseでもrefreshがclaimへ進む。pending、503、期限満了、key
+          replayも検査。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">credential・並列</th>
+        <td>
+          4ワーカー共有でrenewを最低1回含め、旧token拒否、新token継続、二重renew抑止、claim
+          retry、送信中とqueuedの差、stream、TTL、epoch、binding変更を個別確認。Consumerが401を生成不正に分類しないこと。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">構造化出力</th>
+        <td>
+          通常JSON要求に加えフェンス誘導入力でjson_objectとjson_schemaを検査。object/array、enum、required、additionalProperties、maxItems、maxLength、数値範囲、未対応keyword、stop形式不正の拒否。mock転送成功だけでbackend合格にしない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">打ち切り・usage</th>
+        <td>
+          意図的な小予算でlengthを確認し、思考のみ・本文途中・反復を区別。思考あり/なしの同じ小契約を比較。予算到達とusage、finish_reason、reasoning内訳またはunknownが整合すること。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">業務継続</th>
+        <td>
+          隔離されたConsumer検証キューでFinding/Covering/Episode/Curationを共有Connection・同時上限4・TTL
+          900・ready
+          180・推論600秒で実行。最低1回更新後もジョブ取得と正常完了が続くこと、形式/認証/打ち切りの分類を確認。本番Queue再投入はこの調査では行わない。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    既存の接続・renew・semantic関連試験は18 pass、109 filtered、0 fail（164
+    assertions）。今回追加したfake-clock試験はGET相当のpeekでcacheが回復しない待機経路を固定する。追加後のsemantic-readinessとconnection-tokenの全試験は14
+    pass、0 fail（229 assertions）、typecheckも成功した。Spec
+    HTMLと文書catalogの検査は全83ファイルでerror・warningとも0。既存smoke-contextstill-profile.tsはrenewを実行せず、LLMは192
+    token・思考無効・非構造化で外側envelopeを検査するだけで、lengthも拒否しない。この試験の成功は今回のQueue継続・構造化出力の成功根拠にならない。
+  </p>
+  <p>
+    残る採取：Consumer稼働revision、接続管理器の更新ログ（tokenなし）、当該2件401の正確な時刻とHTTP
+    request ID、19分間のrenew応答・expiresAt履歴、claimable polling周期、23:29
+    healthの呼出主体。稼働Consumerが変更済みの場合はその状態を先に確定する。これらがないまま歴史的原因や復旧完了を確定しない。
+  </p>
+  <p>
+    関連契約：<a href="./agent-provider-connection-api.html">Agent Connection API</a>、<a
+      href="./consumer-profile-connection-guide.html"
+      >Consumer共通接続手順</a
+    >、<a href="./inference-audit-log-retention-plan.html">推論audit</a>。
+  </p>
+</article>

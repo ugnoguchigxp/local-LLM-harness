@@ -44,3 +44,27 @@ test("upstream errors cancel the response body and release the media reservation
     manager.close();
   }
 });
+
+test("image compatibility response is returned only after worker shutdown", async () => {
+  const stopping = Promise.withResolvers<void>();
+  const stopped = Promise.withResolvers<void>();
+  let posts = 0;
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action) => { if (action === "stop") { stopping.resolve(); await stopped.promise; } },
+  });
+  const artifact = { id: "image_test", createdAt: new Date().toISOString(), format: "webp", mimeType: "image/webp",
+    width: 512, height: 512, hasAlpha: false, bytes: 10, sha256: "a".repeat(64), contentUrl: "/v1/image-artifacts/image_test/content" };
+  const provider = new ImageGenerationProvider("http://image.test", manager, async () => {
+    posts++;
+    return Response.json({ object: "image_generation", status: "succeeded", artifact, durationMs: 1 });
+  }, async () => true);
+  let completed = false;
+  const generation = provider.generate({ prompt: "test", model: "qwen-image-2.1" }).then((result) => { completed = true; return result; });
+  await stopping.promise;
+  expect(completed).toBe(false);
+  expect(posts).toBe(1);
+  stopped.resolve();
+  const result = await generation;
+  expect(result.artifacts).toEqual([result.artifact]);
+  await manager.close();
+});

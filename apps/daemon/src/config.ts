@@ -5,6 +5,11 @@ type Environment = Record<string, string | undefined>;
 
 export type DaemonConfig = {
   configDir: string;
+  localServicesEnabled: boolean;
+  localServicesJournal: string;
+  localServicesSecrets: string;
+  localServicesObservations: string;
+  localServicesPrincipals: string;
   port: number;
   hostname: string;
   httpIdleTimeoutSeconds: number;
@@ -323,6 +328,11 @@ export function parseDaemonConfig(
   }
 
   return {
+    localServicesEnabled: booleanSetting(env, "LARM_LOCAL_SERVICES_ENABLED", false),
+    localServicesJournal: absolutePathSetting(env, "LARM_LOCAL_SERVICES_JOURNAL", "/var/lib/larm/local-services/journal.json"),
+    localServicesSecrets: absolutePathSetting(env, "LARM_LOCAL_SERVICES_SECRETS", "/etc/larm/local-services/secrets"),
+    localServicesObservations: absolutePathSetting(env, "LARM_LOCAL_SERVICES_OBSERVATIONS", "/var/lib/larm-local-services/observations"),
+    localServicesPrincipals: absolutePathSetting(env, "LARM_LOCAL_SERVICES_PRINCIPALS", "/etc/larm/local-services/consumers.json"),
     configDir: resolve(env.LARM_CONFIG_DIR ?? join(sourceDir, "../../../config/local-node")),
     port: numberSetting(env, "LARM_PORT", 9810, { min: 1, max: 65_535, integer: true }),
     hostname,

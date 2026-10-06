@@ -18,7 +18,7 @@ export {
   type SystemdBackendOptions,
   type SystemdServiceControl,
 } from "./systemd";
-export { MediaVariantBusyError, MediaVariantManager, type MediaVariant } from "./media-variants";
+export { MediaVariantStopError, MediaVariantBusyError, MediaVariantManager, type MediaVariant } from "./media-variants";
 export {
   LifecycleError,
   type ProviderInstanceHealth,
@@ -87,3 +87,6 @@ export {
   type GeneratedImagePruneResult,
   type StoredGeneratedImageArtifact,
 } from "./generated-image-retention";
+export { LocalServiceSystemdBackend, localServiceObservationSchema, type LocalServiceBackend, type LocalServiceObservation } from "./local-service-systemd";
+
+export { LocalServiceFileJournal } from "./local-service-journal";

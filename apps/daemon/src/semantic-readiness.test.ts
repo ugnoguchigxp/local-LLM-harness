@@ -594,3 +594,34 @@ test("semantic readiness cancels a response rejected by its declared size", asyn
   });
   expect(cancelled).toBeTrue();
 });
+
+test("status-only polling cannot refresh an expired successful semantic probe", async () => {
+  const { registry, control, provider } = fixture("openai.chat-completions.v1", "llm.coding");
+  let clock = 1_000;
+  let fetches = 0;
+  const readiness = new SemanticReadiness({
+    control,
+    getRegistry: () => registry,
+    executionGate: new ExecutionGate(),
+    timeoutMs: 1_000,
+    now: () => clock,
+    fetchImpl: async (_url, init) => {
+      fetches += 1;
+      return validLlmProbeResponse(init);
+    },
+  });
+  const input = { allocationId: "alloc", provider };
+  expect((await readiness.check(input)).ready).toBeTrue();
+  expect(fetches).toBe(2);
+  clock += 10_000;
+  // Connection GET uses peek; repeating GET must not be mistaken for a probe.
+  for (let poll = 0; poll < 180; poll += 1) {
+    expect(readiness.peek(input)).toBeUndefined();
+    clock += 1_000;
+  }
+  expect(fetches).toBe(2);
+  // Claim and health use check, which can recover without a true peek first.
+  expect((await readiness.check(input)).ready).toBeTrue();
+  expect(fetches).toBe(4);
+  expect(readiness.peek(input)?.ready).toBeTrue();
+});

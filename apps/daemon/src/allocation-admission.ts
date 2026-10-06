@@ -1,3 +1,4 @@
+import type { ServiceMemoryReservation } from "@larm/core";
 import {
   activeAllocation,
   admittedAllocation,
@@ -68,11 +69,13 @@ export function evaluateAllocationAdmission(input: {
   state: Parameters<typeof admitRuntimes>[0]["state"];
   allocations: readonly Allocation[];
   candidateRuntimeIds: readonly string[];
+  serviceReservations?: readonly ServiceMemoryReservation[];
   requireFreshTelemetry: boolean;
   telemetryMaxAgeMs: number;
   now?: number;
 }) {
   return admitRuntimes({
+    serviceReservations: input.serviceReservations,
     registry: input.registry,
     state: input.state,
     allocations: [...input.allocations],

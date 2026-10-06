@@ -3,14 +3,65 @@
   <p>
     LARMの製品コンセプトと責務境界の正本は、ChatGPT Page「LARMの全体コンセプト」です。 Page
     IDは<code>page_9fab9c53bce8819181c9c8256a3b303a</code>です。
-    現行の方針、SAAA・ContextStillとの境界、Provider lifecycle、モデル選択、
-    優先度、運用上の未完了条件を同Pageで管理します。
+    現行の方針、SAAA・ContextStillとの境界、Provider lifecycle、モデル選択、 優先度、Local Service
+    Runtimeへの拡張方針、運用上の未完了条件を同Pageで管理します。
   </p>
   <p>
     このファイルはリポジトリ内の既存参照を保つための案内です。
     2026年8月29日版の旧コンセプト本文はGit履歴に残します。 個別のAPI・実装契約は引き続きSpec
     HTML文書で管理します。
   </p>
+  <section id="local-service-runtime-direction">
+    <h2>Local Service Runtimeの拡張方針</h2>
+    <p>
+      2026年10月6日に正本Pageへ追加した方針。既存Model / AI Provider
+      Runtimeを維持し、登録済みの専門ツールとWebアプリを実行可能にするLocal Service
+      Runtimeを段階的に追加する。一般サービス管理は実装済みではなく、API・manifest・具体的な実装計画は次の設計段階で確定する。
+    </p>
+    <ul>
+      <li>
+        AI Providerは要求Agent ProfileとProvider
+        subsetからroute、runtime、backendへ解決する。一般サービス要求でこの選択・認可・容量判断を迂回しない。
+      </li>
+      <li>
+        SAAAとPluginはTool、Resource URI、Skill、Artifact
+        HostとUIの意味を管理する。各Appは業務ロジック、永続データとjobを管理し、LARMは起動、readiness、endpoint、状態、停止、依存と資源調停を担当する。
+      </li>
+      <li>
+        docling-deskをSource / Document Knowledgeの初期候補とし、ContextStillはCompiled / Derived
+        Knowledgeを担う方向とする。Wiki移行とReference
+        APIはApp側の別案件とする。vulnWorkbenchは必要時に起動するSecurity Diagnostic
+        Workbenchの候補とする。
+      </li>
+      <li>
+        論理ID、実行定義、revision、instanceとendpoint
+        generationを分ける。固定port、動的port、gatewayは比較対象であり、動的portは必須にしない。
+      </li>
+      <li>
+        長時間job、WebView利用、共有参照と依存をidle停止から保護する。通常の利用権解放と管理者の全体停止を分け、crash、期限切れ、再起動と孤児processを扱う。
+      </li>
+      <li>
+        承認済みmanifestのみ起動し、利用側から任意command、cwd、envを受け取らない。最小段階にもreadiness、認証認可と共有利用の停止保護を含める。
+      </li>
+      <li>
+        単一Linux
+        host上のdocling-deskを初期対象とし、既存systemd制御から承認済みコンテナ構成を起動する。今回は環境分離の実証としてコンテナを採用し、他サービスへは強制しない。分散scheduler、GUI管理画面、Wiki移行とOntology導入は初期範囲から外す。
+      </li>
+    </ul>
+    <p>
+      この節はリポジトリ利用者向けの要点であり、製品コンセプトの正本は引き続き上記Pageとする。次の実装計画では既存基盤の再利用案と分離案を比較し、既存LLM
+      / ASR / TTS / Embeddingの回帰を含む受入条件を確定する。
+    </p>
+  </section>
+  <section id="implementation-plan">
+    <h2>初期実装計画</h2>
+    <p>
+      <a href="./docling-isolated-service-implementation-plan.html"
+        >docling-deskの環境分離とオンデマンドホスティング実装計画</a
+      >で、CPU専用Knowledge
+      APIとprocessorのコンテナ分離、rootless実行、資源会計、活動通知とdrain、段階別受入を提案する。実装と配備は未実施。
+    </p>
+  </section>
   <section id="contracts">
     <h2>個別契約</h2>
     <ul>
