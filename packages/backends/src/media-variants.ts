@@ -2,6 +2,12 @@ import { spawn } from "node:child_process";
 
 export type MediaVariant = "image" | "music";
 
+export class MediaVariantStopError extends Error {
+  constructor(readonly variant: MediaVariant, cause: unknown) {
+    super(`${variant} worker shutdown failed`, { cause });
+  }
+}
+
 export class MediaVariantBusyError extends Error {
   constructor() {
     super("another media variant is active");
@@ -137,7 +143,7 @@ export class MediaVariantManager {
       this.warm[variant] = false;
     } catch (error) {
       this.faulted = true;
-      throw error;
+      throw new MediaVariantStopError(variant, error);
     }
   }
 

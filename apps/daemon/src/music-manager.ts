@@ -12,7 +12,7 @@ import { mkdirSync, writeFileSync, renameSync, readdirSync, readFileSync } from 
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { MusicArtifactRetention } from "./music-artifact-retention";
-import type { MediaVariantManager } from "@larm/backends";
+import { MediaVariantStopError, type MediaVariantManager } from "@larm/backends";
 
 type FetchLike = typeof fetch;
 
@@ -576,7 +576,7 @@ export class MusicGenerationManager {
     } catch (error) {
       if (job.abort.signal.aborted || job.status === "cancelled") return;
       job.error = {
-        code: error instanceof MusicProviderError ? error.code : "generation_failed",
+        code: error instanceof MediaVariantStopError ? "worker_stop_failed" : error instanceof MusicProviderError ? error.code : "generation_failed",
         message: error instanceof Error ? error.message : String(error),
       };
       this.transition(job, "failed");

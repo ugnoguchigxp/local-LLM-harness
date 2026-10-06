@@ -145,10 +145,10 @@ test("failed stop quarantines the group without another generation start", async
     run: async (action, variant) => { calls.push(`${action}:${variant}`); if (action === "stop") throw new Error("stop denied"); },
   });
   const release = await manager.acquire("image");
-  await expect(release()).rejects.toThrow("stop denied");
+  await expect(release()).rejects.toThrow("worker shutdown failed");
   await expect(manager.acquire("music")).rejects.toThrow("quarantined");
   expect(calls).toEqual(["start:image", "stop:image"]);
-  await expect(manager.close()).rejects.toThrow("stop denied");
+  await expect(manager.close()).rejects.toThrow("worker shutdown failed");
 });
 
 test("queued music reserves the next slot before a new image", async () => {
