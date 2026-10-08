@@ -671,8 +671,8 @@ test("speech gateway preserves provider 429 and Retry-After", async () => {
 });
 
 test.each([
-  { status: 422, error: { code: "speech_text_unprocessable", param: "input" }, retryAfter: undefined },
-  { status: 503, error: { code: "speech_provider_unavailable" }, retryAfter: "1" },
+  { status: 422, error: { code: "speech_text_unprocessable", message: "VOICEVOX could not analyze input text", param: "input" }, retryAfter: undefined },
+  { status: 503, error: { code: "speech_provider_unavailable", message: "Synthesizer is starting" }, retryAfter: "1" },
 ])("speech gateway preserves provider $status and retry semantics", async ({ status, error, retryAfter }) => {
   const app = await makeSpeechApp({
     gatewayFetch: async () => Response.json(

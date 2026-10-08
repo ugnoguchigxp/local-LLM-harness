@@ -148,8 +148,10 @@ async def request(path, body=None):
 
 async def main():
     for path, body in [("/health", None), ("/v1/audio/voices", None), ("/v1/audio/speech", {"input": "確認です。"})]:
-        status, headers, _ = await request(path, body)
+        status, headers, payload = await request(path, body)
         assert status == 503 and headers[b"retry-after"] == b"1"
+        if path != "/health":
+            assert json.loads(payload)["error"]["code"] == "speech_provider_unavailable"
     async with module.lifespan(module.app):
         for text in ["。", "   ", "…", "！？"]:
             status, headers, payload = await request("/v1/audio/speech", {"input": text})

@@ -123,6 +123,11 @@ voice_catalog: dict[str, dict[str, object]] = {}
 style_owners: dict[int, str] = {}
 
 
+class SpeechProviderUnavailable(HTTPException):
+    def __init__(self):
+        super().__init__(status_code=503, detail="Synthesizer is starting", headers={"Retry-After": "1"})
+
+
 class RequestBodyTooLarge(Exception):
     pass
 
@@ -369,6 +374,15 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(SpeechProviderUnavailable)
+async def speech_provider_unavailable_handler(_, error: SpeechProviderUnavailable):
+    return JSONResponse(
+        {"error": {"code": "speech_provider_unavailable", "message": error.detail}},
+        status_code=error.status_code,
+        headers=error.headers,
+    )
+
+
 @app.get("/health")
 def health(fail_on_no_slot: bool = False):
     body = {
@@ -401,9 +415,7 @@ def models() -> dict[str, object]:
 @app.get("/v1/audio/voices")
 def voices() -> dict[str, object]:
     if synthesizer is None:
-        raise HTTPException(
-            status_code=503, detail="Synthesizer is starting", headers={"Retry-After": "1"},
-        )
+        raise SpeechProviderUnavailable()
     return {
         "default_voice": DEFAULT_VOICE,
         "voices": list(voice_catalog.values()),
@@ -415,9 +427,7 @@ def speech(request: SpeechRequest) -> Response:
     if request.model not in {"voicevox-core", "tts-1", "tts-1-hd"}:
         raise HTTPException(status_code=400, detail="Unsupported model")
     if synthesizer is None:
-        raise HTTPException(
-            status_code=503, detail="Synthesizer is starting", headers={"Retry-After": "1"},
-        )
+        raise SpeechProviderUnavailable()
     if request.stream:
         raise HTTPException(status_code=400, detail="Native streaming is not supported")
     if request.language not in {None, "ja", "japanese", "Japanese"}:

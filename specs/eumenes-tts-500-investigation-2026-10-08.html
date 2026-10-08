@@ -138,7 +138,10 @@
         </tr>
         <tr>
           <th scope="row">Synthesizer起動待ち</th>
-          <td>speech・voices・healthは503、Retry-After: 1。</td>
+          <td>
+            speech・voicesは503、error.code=speech_provider_unavailable、Retry-After:
+            1。healthも503とRetry-After: 1。
+          </td>
           <td>待機後、回数を制限して再試行。</td>
         </tr>
         <tr>
@@ -165,6 +168,114 @@
       音声関連の24テスト、typecheck、docs:check:fix、全体のbun run checkが成功した。修正はsource
       worktreeにあり、稼働releaseへの反映・サービス再起動は実施していない。
       運用反映では検証済みreleaseの作成とVOICEVOXプロセスの再起動が必要。
+    </p>
+  </section>
+  <section id="deployment-preparation">
+    <h2>2026-10-09の配備準備</h2>
+    <p>
+      ユーザーの修正依頼を受け、稼働daemonの48996cbf82eeを基点に、今回のadapter修正、音声テスト、
+      本調査記録とcatalog行だけを隔離したcheckoutでcommitした。
+      配備候補は<code>14f2d17194a4eba87d1f5a7e2558edf2b249eb0b</code>、
+      branchは<code>codex/fix-voicevox-text-analysis-20261009</code>。
+      元worktreeの既存変更を配備候補に含めていない。
+    </p>
+    <p>
+      通常builderでfrozen install、全check、production依存への切替とtree digest生成を実施した。
+      candidate単独のテストは669件、toolingは24件、deploymentのBunテストは53件が成功し、
+      shell検証も成功。候補のconfig revisionは稼働版と同一。
+      署名済みintentは通常の監視inboxに投入せず、
+      <code>/srv/ai/apps/larm-voicevox-fix-20261009-intent/request.json</code>に準備した。 署名とmanifest
+      digest、稼働版との前提条件を確認した。
+    </p>
+    <p>
+      適用用scriptは<code>/srv/ai/apps/larm-voicevox-fix-20261009-apply.sh</code>。
+      非特権ユーザーで実行し、最初にsudo認証を行ってから署名済みintentを投入する。
+      activator成功後にVOICEVOXだけを明示的に再起動し、backendとLARMの双方で
+      句点のみのinputが422、続く通常文が有効なWAVの200になることを確認する。
+      枠競合・起動待ちには回数を制限して再試行し、適用後の検証失敗時は固定install済みrollback
+      helperを使用する。 script構文と署名検証のcheckモードを検証済み。
+    </p>
+    <p>
+      このセッションのsudoは対話認証が必要で、再起動権限を取得できなかった。
+      稼働版は48996cbf82ee、VOICEVOX PIDは3612のままで、live反映は未完了。
+      次の操作はサーバーの対話端末で行う。sudoのパスワードをチャットへ渡す必要はない。
+    </p>
+    <pre><code>bash /srv/ai/apps/larm-voicevox-fix-20261009-apply.sh</code></pre>
+  </section>
+  <section id="code-review">
+    <h2>2026-10-09のコードレビューと改善</h2>
+    <p>
+      音声adapter、Gatewayのエラー転送、配備手順をレビューし、発見した問題を修正した後に再レビューした。
+      14f2d171の初期候補をそのまま適用する手順は廃止し、レビュー済みの候補へ署名済みintentと適用用wrapperを更新する。
+      起動待ちのspeech・voicesも、テストと実装が一致するerror.code=speech_provider_unavailableのJSONへ統一した。
+    </p>
+    <table>
+      <caption>
+        発見した問題と改善後の挙動
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">問題</th>
+          <th scope="col">改善</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">適用完了前のtimeoutでcandidate_activeがfalseのまま</th>
+          <td>実際のrelease pointerとmanifestに紐付くoperation IDで復旧の要否を決定する。</td>
+        </tr>
+        <tr>
+          <th scope="row">中断時に復旧処理が呼ばれない</th>
+          <td>
+            SIGINT・SIGTERMを失敗として扱い、提出直後の中断も検出する。復旧中の再中断は抑止する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">別の配備要求を上書きし得る</th>
+          <td>
+            非待機lock、認証後の再照合、Linuxのatomic
+            renameで既存requestを上書きしない。requestのlink数は常に1で、root
+            activatorの検証条件も満たす。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">復旧失敗を無視、想定と異なるpreviousを使用し得る</th>
+          <td>
+            固定root helperのpreviousを照合し、復旧失敗を明示する。別operationや実行中のroot
+            activatorへ並行rollbackを行わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">検証assertがPython最適化で無効化される</th>
+          <td>配備の判定は明示的な例外に変更。最適化を有効にした試験も実施。</td>
+        </tr>
+        <tr>
+          <th scope="row">検証HTTPが環境proxy・redirectを使用し得る</th>
+          <td>
+            loopbackへのHTTPはproxyとredirectを無効化し、本文サイズを制限する。API
+            tokenはLARMだけへ送り、backendへは送らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">配備scriptがsource管理外、異常系の自動検証なし</th>
+          <td>
+            apply-voicevox-release.pyとテストをrepositoryへ追加し、test:deploymentへ組み込む。外部wrapperはレビュー済みcandidateのscriptを呼ぶだけにする。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      配備の21ケースで認証失敗、適用timeout、中断、二重実行、認証中のrelease変更、pending
+      requestの保護、
+      別manifestのstatus拒否、復旧先変更、rollback・再起動失敗、無効なWAV、枠競合の再試行、
+      適用済みreleaseの再実行、実際の署名検証と改変拒否、HTTP redirect・proxy・本文上限を検証した。
+      初期候補のreview前scriptにあった復旧成功の保証は訂正する。
+      activatorがまだ動作中、提出済みrequestがまだpending、または権限・復旧操作に失敗した場合は、
+      復旧未完了を明示して運用確認を要求する。これらの状態を成功として扱わない。
+    </p>
+    <p>
+      releaseの適用は本レビューに含めて実行していない。元worktreeの既存変更は維持し、
+      今回の修正と配備検証だけを隔離checkoutの新しい候補へ取り込む。
     </p>
   </section>
   <section id="nearby-errors">
