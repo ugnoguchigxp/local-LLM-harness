@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import threading
 import wave
@@ -12,6 +13,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
+from voicevox_core import AnalyzeTextError
 from voicevox_core.blocking import Onnxruntime, OpenJtalk, Synthesizer, VoiceModelFile
 
 
@@ -116,6 +118,7 @@ VVM_PATHS, MISSING_OPTIONAL_VVMS = configured_vvm_paths()
 
 synthesizer: Synthesizer | None = None
 synthesis_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 voice_catalog: dict[str, dict[str, object]] = {}
 style_owners: dict[int, str] = {}
 
@@ -384,7 +387,9 @@ def health(fail_on_no_slot: bool = False):
     }
     if fail_on_no_slot and synthesis_lock.locked():
         body["status"] = "busy"
-        return JSONResponse(body, status_code=503)
+        return JSONResponse(body, status_code=503, headers={"Retry-After": "1"})
+    if synthesizer is None:
+        return JSONResponse(body, status_code=503, headers={"Retry-After": "1"})
     return body
 
 
@@ -396,7 +401,9 @@ def models() -> dict[str, object]:
 @app.get("/v1/audio/voices")
 def voices() -> dict[str, object]:
     if synthesizer is None:
-        raise HTTPException(status_code=503, detail="Synthesizer is starting")
+        raise HTTPException(
+            status_code=503, detail="Synthesizer is starting", headers={"Retry-After": "1"},
+        )
     return {
         "default_voice": DEFAULT_VOICE,
         "voices": list(voice_catalog.values()),
@@ -408,7 +415,9 @@ def speech(request: SpeechRequest) -> Response:
     if request.model not in {"voicevox-core", "tts-1", "tts-1-hd"}:
         raise HTTPException(status_code=400, detail="Unsupported model")
     if synthesizer is None:
-        raise HTTPException(status_code=503, detail="Synthesizer is starting")
+        raise HTTPException(
+            status_code=503, detail="Synthesizer is starting", headers={"Retry-After": "1"},
+        )
     if request.stream:
         raise HTTPException(status_code=400, detail="Native streaming is not supported")
     if request.language not in {None, "ja", "japanese", "Japanese"}:
@@ -423,7 +432,22 @@ def speech(request: SpeechRequest) -> Response:
             headers={"Retry-After": "1"},
         )
     try:
-        query = synthesizer.create_audio_query(request.input, style_id)
+        try:
+            query = synthesizer.create_audio_query(request.input, style_id)
+        except AnalyzeTextError:
+            # Exception chains may contain input text; record only bounded metadata.
+            logger.warning(
+                "VOICEVOX text analysis failed: code=speech_text_unprocessable input_length=%d style_id=%d",
+                len(request.input), style_id,
+            )
+            return JSONResponse(
+                {"error": {
+                    "code": "speech_text_unprocessable",
+                    "message": "VOICEVOX could not analyze input text",
+                    "param": "input",
+                }},
+                status_code=422,
+            )
         query.speed_scale = request.speed
         query.pitch_scale = request.pitch_scale
         query.intonation_scale = request.intonation_scale
