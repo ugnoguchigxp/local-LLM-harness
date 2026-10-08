@@ -1,7 +1,7 @@
 import { LocalServiceManager } from "./local-service-manager";
 import { z } from "zod";
 import { parseLocalServices, ServiceResourceLedger } from "@larm/core";
-import { LocalServiceSystemdBackend, LocalServiceFileJournal } from "@larm/backends";
+import { LocalServiceSystemdBackend, SystemdProcessBackend, LocalServiceRoutingBackend, LocalServiceFileJournal } from "@larm/backends";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
@@ -199,11 +199,11 @@ control = new ControlPlane(registry, backend, observer, {
   },
 });
 if (config.localServicesEnabled) {
-  const definitions = parseLocalServices(parse(readFileSync(join(config.configDir, "local-services.yaml"), "utf8")), registry.nodes.map(n => n.id));
+  const definitions = parseLocalServices(parse(readFileSync(config.localServicesFile, "utf8")), registry.nodes.map(n => n.id));
   if (definitions.some(d => d.node !== registry.nodes[0]?.id)) throw new Error("local services only support the local host");
   localServicePrincipals = z.array(z.object({ id: z.string().min(1).max(128), token: z.string().min(32).max(4096), services: z.array(z.string()).min(1) }).strict()).min(1).max(100).parse(JSON.parse(readFileSync(config.localServicesPrincipals, "utf8")));
   if (new Set(localServicePrincipals.map(p => p.id)).size !== localServicePrincipals.length || new Set(localServicePrincipals.map(p => p.token)).size !== localServicePrincipals.length) throw new Error("duplicate local service principal");
-  localServiceManager = new LocalServiceManager(definitions, new LocalServiceSystemdBackend({ secretRoot: config.localServicesSecrets, observationRoot: config.localServicesObservations }), {
+  localServiceManager = new LocalServiceManager(definitions, new LocalServiceRoutingBackend(new LocalServiceSystemdBackend({ secretRoot: config.localServicesSecrets, observationRoot: config.localServicesObservations }), new SystemdProcessBackend({ secretRoot: config.localServicesSecrets, observationRoot: config.localServicesObservations, requestRoot: config.localServicesRequests })), {
     bootEpoch: identity.bootEpoch, journal: new LocalServiceFileJournal(config.localServicesJournal), ledger: serviceLedger,
     reserve: (id, d) => {
       if (mediaVariants.isOccupied()) throw new Error("media_conflict");

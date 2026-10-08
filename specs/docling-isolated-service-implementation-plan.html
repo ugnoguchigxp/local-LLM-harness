@@ -1,5 +1,14 @@
 <article lang="ja">
   <h1>docling-deskの環境分離とオンデマンドホスティング実装計画</h1>
+  <aside>
+    <p>
+      2026年10月7日、利用者合意により標準方式をホストprocessへ変更した。現在の方針と移行手順は<a
+        href="./local-service-host-process-direction-and-plan.html"
+        >ホストプロセス標準化方針と実装計画</a
+      >を参照する。本書は先日のコンテナ案の判断・source実装の背景として保存し、今後の標準配備手順には使わない。既存container
+      backendは明示選択として保持する。
+    </p>
+  </aside>
   <p>
     2026年10月6日の利用者合意に基づく提案。docling-deskは利用頻度が低くても、第三者パッケージを試すための環境分離の初期事例としてLinuxネイティブコンテナで実行する。既存のKnowledge
     APIとCPU

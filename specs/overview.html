@@ -22,6 +22,183 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="plan" data-state="proposed" data-domain="eumenes-laya-voice-avatar-handoff">
+          <th scope="row">
+            <a href="./eumenes-laya-voice-avatar-handoff.html"
+              >Eumenes向けLaya・音声・アバター連携プロンプト</a
+            >
+          </th>
+          <td>
+            判断API、話し方の提案値、再生に同期する表情と動作、fallback。<small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>eumenes-laya-voice-avatar-handoff</code></small
+            >
+          </td>
+          <td>2026-10-08 API source照合済み。演出値は提案。実推論・試聴・動作確認は未実施。</td>
+        </tr>
+        <tr data-kind="contract" data-state="current" data-domain="eumenes-voicevox-api-handoff">
+          <th scope="row">
+            <a href="./eumenes-voicevox-api-handoff.html"
+              >Eumenes向けVOICEVOX API仕様伝達プロンプト</a
+            >
+          </th>
+          <td>
+            話者・style・話速・ピッチ・抑揚、catalog、音声応答と利用時の扱い。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>eumenes-voicevox-api-handoff</code></small
+            >
+          </td>
+          <td>2026-10-08 source照合済み。稼働catalogと合成は未確認。</td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="local-service-host-process-implementation-2026-10-08"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-08"
+          data-target-revision="7f79874707ba359ced233ff6f355636fa7e20d5e"
+        >
+          <th scope="row">
+            <a href="./local-service-host-process-implementation-results-2026-10-08.html"
+              >ホストプロセス方式の実装・環境準備と受入進捗</a
+            >
+          </th>
+          <td>
+            共通source、環境だけの準備、停止・記録の証拠と範囲訂正。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>local-service-host-process-implementation-2026-10-08</code></small
+            >
+          </td>
+          <td>
+            環境基盤のsourceを検証。App導入候補は撤去。OS登録とB実機受入は未完了。<small
+              data-audit-summary="true"
+              >2026-10-08、7f79874707ba359ced233ff6f355636fa7e20d5eと作業差分の時点検証。</small
+            >
+          </td>
+        </tr>
+
+        <tr
+          data-kind="contract"
+          data-state="proposed"
+          data-domain="local-service-host-process-contract"
+        >
+          <th scope="row">
+            <a href="./local-service-host-process-design-and-acceptance.html"
+              >Dockerを使わないLocal Service環境分離：設計と受入仕様</a
+            >
+          </th>
+          <td>
+            環境準備・設定・保存先・停止・資源の契約と受入の合否を定義。<small
+              >分類: <code>contract</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>local-service-host-process-contract</code></small
+            >
+          </td>
+          <td>
+            2026-10-08、環境基盤Bを今回の対象とする。App導入Aは将来の別作業。OS登録・B実機受入は未完了。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="eumenes-tts-500-investigation-2026-10-08"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-08"
+          data-target-revision="dbbe3237171218d94a9c1f3eeba8aef586288637"
+        >
+          <th scope="row">
+            <a href="./eumenes-tts-500-investigation-2026-10-08.html"
+              >Eumenes VOICEVOX HTTP 500調査</a
+            >
+          </th>
+          <td>
+            Open JTalkの音素なし解析失敗、HTTP分類修正と後続文の回復を検証。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>eumenes-tts-500-investigation-2026-10-08</code></small
+            >
+          </td>
+          <td>
+            原因を特定、source修正済み。稼働反映と該当inputの確定は未実施。
+            <small data-audit-summary="true"
+              >2026-10-08、VOICEVOX adapter revision
+              dbbe3237171218d94a9c1f3eeba8aef586288637の時点調査。</small
+            >
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="eumenes-llm-409-investigation-2026-10-08"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-08"
+          data-target-revision="48996cbf82ee86d4e7719f498eaf89a8ad1ad767"
+        >
+          <th scope="row">
+            <a href="./eumenes-llm-409-investigation-2026-10-08.html">Eumenes LLM HTTP 409調査</a>
+          </th>
+          <td>
+            idle解放、credential、モデル割当、取消とstreamを照合。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>eumenes-llm-409-investigation-2026-10-08</code></small
+            >
+          </td>
+          <td>
+            入口拒否が最有力。実測409本文の未保存とrun相関の限界を明示。<small
+              data-audit-summary="true"
+              >2026-10-08、稼働revision 48996cbf82ee86d4e7719f498eaf89a8ad1ad767の時点調査。</small
+            >
+          </td>
+        </tr>
+        <tr
+          data-kind="decision"
+          data-state="current"
+          data-domain="local-service-host-process-direction"
+        >
+          <th scope="row">
+            <a href="./local-service-host-process-direction-and-plan.html"
+              >Local Serviceのホストプロセス標準化方針と実装計画</a
+            >
+          </th>
+          <td>
+            ホストprocessを標準とし、共有資産・private状態・停止・資源最適化の変更順序を定義。<small
+              >分類: <code>decision</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>local-service-host-process-direction</code></small
+            >
+          </td>
+          <td>
+            2026-10-07に標準方針は合意済み。process
+            backendのsourceは実装済み。native管理者配備と動的予算は未完了。製品正本Pageへの同期は未実施。
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="proposed"
+          data-domain="lightweight-local-service-prompt-review-2026-10-07"
+        >
+          <th scope="row">
+            <a href="./lightweight-local-service-prompt-review-2026-10-07.html"
+              >軽量Local Service Runtimeプロンプトの評価</a
+            >
+          </th>
+          <td>
+            既存コンテナ実装との関係、メモリー共有、最小の変更案。<small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>lightweight-local-service-prompt-review-2026-10-07</code></small
+            >
+          </td>
+          <td>
+            2026-10-07、revision
+            7f79874707ba359ced233ff6f355636fa7e20d5eの調査に基づく提案。新backendと実機受入は未実施。
+          </td>
+        </tr>
         <tr
           data-kind="evidence"
           data-state="current"
@@ -52,8 +229,9 @@
 
         <tr
           data-kind="plan"
-          data-state="proposed"
+          data-state="historical"
           data-domain="docling-isolated-service-implementation-plan"
+          data-successor="local-service-host-process-direction-and-plan.html"
         >
           <th scope="row">
             <a href="./docling-isolated-service-implementation-plan.html"
@@ -63,11 +241,16 @@
           <td>
             CPU専用APIとprocessorのコンテナ分離、LARM連携、資源と停止保護。<small
               >分類: <code>plan</code> · 状態:
-              <code>proposed</code> · 正本領域:
+              <code>historical</code> · 正本領域:
               <code>docling-isolated-service-implementation-plan</code></small
             >
           </td>
-          <td>利用者合意に基づく初期計画。source実装済み。配備・実機受入は未実施。</td>
+          <td>
+            コンテナを初期対象にした旧計画。source実装済み、配備・実機受入は未実施。後継:
+            <a href="./local-service-host-process-direction-and-plan.html" rel="successor"
+              >ホストprocess標準化方針</a
+            >。既存container backendは明示選択として保持する。
+          </td>
         </tr>
 
         <tr
@@ -1835,6 +2018,38 @@
             分類: <code>evidence</code> · 状態:
             <code>current</code> · 正本領域:
             <code>media-on-demand-delivery</code>。2026-10-06の配備・検証結果。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="host-storage">
+    <h2>ホスト保存領域</h2>
+    <table>
+      <caption>
+        USBストレージとバックアップの設計案
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">文書</th>
+          <th scope="col">役割</th>
+          <th scope="col">状態</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr data-kind="plan" data-state="proposed" data-domain="host-usb-storage-and-mac-backup">
+          <th scope="row">
+            <a href="./nextorage-usb-storage-and-mac-backup-plan.html">Nextorage 2 TBの活用案</a>
+          </th>
+          <td>scpでの開発ファイル退避、docling-deskのHTTP取り込みと保存先、世代バックアップ</td>
+          <td>
+            SSH転送とHTTP取り込みを前提とする案。単一ext4の初期化・固定マウント・実測は完了。サービス配備は未実施。
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>host-usb-storage-and-mac-backup</code></small
+            >
           </td>
         </tr>
       </tbody>

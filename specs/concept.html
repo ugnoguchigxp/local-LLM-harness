@@ -13,6 +13,15 @@
   </p>
   <section id="local-service-runtime-direction">
     <h2>Local Service Runtimeの拡張方針</h2>
+    <aside>
+      <p>
+        2026年10月7日の最新利用者合意では、信頼済みLocal
+        Serviceの標準方式をsystemd管理のホストprocessとし、mutable状態だけを個別化してruntime・モデル・cacheを共有する。<a
+          href="./local-service-host-process-direction-and-plan.html"
+          >標準化方針と実装計画</a
+        >に変更順序と受入条件を記録した。下記は10月6日にPageへ反映した方針の記録であり、コンテナを初期対象にする部分は今回の合意が後継となる。製品コンセプト正本Pageへの今回の同期は未実施。
+      </p>
+    </aside>
     <p>
       2026年10月6日に正本Pageへ追加した方針。既存Model / AI Provider
       Runtimeを維持し、登録済みの専門ツールとWebアプリを実行可能にするLocal Service
@@ -58,8 +67,13 @@
     <p>
       <a href="./docling-isolated-service-implementation-plan.html"
         >docling-deskの環境分離とオンデマンドホスティング実装計画</a
-      >で、CPU専用Knowledge
-      APIとprocessorのコンテナ分離、rootless実行、資源会計、活動通知とdrain、段階別受入を提案する。実装と配備は未実施。
+      >は10月6日のコンテナ案であり、共通lifecycleのsource実装は<a
+        href="./docling-isolated-service-implementation-results-2026-10-06.html"
+        >実装結果</a
+      >に記録している。実機配備は未完了。現在の初期計画は<a
+        href="./local-service-host-process-direction-and-plan.html"
+        >ホストprocess標準化</a
+      >を参照する。
     </p>
   </section>
   <section id="contracts">

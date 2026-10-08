@@ -27,6 +27,7 @@ export const agentProfileSelectorIdSchema = z.enum([
   "contextStill",
   "SAAA",
   "SAAA-gemma4-26b",
+  "SAAA-gemma4-26b-64k",
   "SAAA-w-Image",
   "SAAA-w-music",
   "vulnWorkbench",

@@ -1,0 +1,159 @@
+<article lang="ja">
+  <h1>Local Serviceホストプロセス方式：環境基盤の実装と検証結果</h1>
+  <p>
+    2026年10月8日。今回の対象は、アプリを後から導入できるDocker不要の環境基盤である。docling-deskは将来の利用例であり、導入・依存取得・機能変更・起動の対象ではない。共通backend、設定と記録の移行、停止controller、環境準備手順を実装した。OS管理者による登録と専用UIDでの実機受入は未完了。<a
+      href="./local-service-host-process-design-and-acceptance.html"
+      >設計と受入仕様</a
+    >を参照する。
+  </p>
+  <section id="scope-correction">
+    <h2>作業範囲の訂正と撤去</h2>
+    <p>
+      環境の整備をAppの導入準備と取り違え、docling-desk向けのPython/Bun依存・モデル候補、専用配備scriptとAppの変更まで進めた。利用者の指示により、これらを撤去した。隣接docling-deskの変更5ファイルと追加試験を戻し、git
+      worktreeがcleanであることを確認した。今回作成したdocling-native-20261008およびr2/r3/r4の環境、モデル、patch、専用unit候補を削除した。
+    </p>
+    <p>
+      App向けprepare・installer・launcher・renderer・backup・実機検証scriptは共通基盤の成果物から除いた。LibreOffice等のホスト導入コマンドと、抽出プレビューへの変更案も撤回した。ホストへの追加パッケージ導入、doclingの専用UID作成、サービス登録・起動、業務文書・DBの作成は行っていない。既存アプリのデータ、共有cache、既存Providerとモデルには変更を加えない。
+    </p>
+  </section>
+  <section id="implementation">
+    <h2>維持した共通基盤</h2>
+    <table>
+      <caption>
+        アプリの種類に依存しない実装
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">設定と公開API</th>
+          <td>
+            local-services.v1の読取りを維持し、v2にsystemd-processを追加。member、観測unit、readiness、保存先UUIDと最低空き容量をstrict検証する。未知field、ゼロdigest、重複unit、同じportの重複登録を拒否する。ensure/renew/releaseとSDK
+            bindingは維持する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">利用権と停止</th>
+          <td>
+            Managerの2-container停止条件をopaque instanceTokenへ置換。停止時に期待instance、App
+            boot、所有drainを照合する。全cgroupとlistenerの終了確認まで予算を保持し、自動SIGKILLしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">記録移行</th>
+          <td>
+            v1 journalをv2へ移行し元fileを.v1.bakへ保持。同期とatomic
+            renameで確定する。破損・未知versionを上書きせず、新起動をjournal_recovery_requiredで拒否する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">backendとcontroller</th>
+          <td>
+            共通Managerから既存containerと新processを振り分ける。root管理の固定manifest、unit、asset、実効保護、専用UIDと制限を検証する。consumerへ任意command/env/unit指定を許さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">外付け保存先</th>
+          <td>
+            mount
+            UUID・read-write・realpath・容量を確認し、外付け不在では内蔵へのfallbackを拒否。登録後のAppはmount依存を持ち、停止確定後だけ起動世代のworkを回収する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">環境だけの準備</th>
+          <td>
+            prepare-local-service-environment.pyのcheckは読取りのみ。installは共通directory、固定controller、未展開のunit
+            templateと環境記録だけを配置する。App専用UID、依存、DB、manifest、unit、polkit許可を生成せず、daemonを有効化・再起動しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      OS依存のI/Oはpackages/backendsと配備controller、設定・利用権・解決はpackages/coreに保持する。AIのProfile
+      → route → runtime →
+      backendとServiceResourceLedgerを継続する。新しいモデルschedulerやアプリごとの固定RAM
+      partitionを追加していない。
+    </p>
+  </section>
+  <section id="layout">
+    <h2>空の環境基盤と将来の導入境界</h2>
+    <table>
+      <caption>
+        local-service-environment.jsonが規定する保存先
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">保存先</th>
+          <th scope="col">用途</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">/opt/larm-local-services/runtimes</th>
+          <td>内蔵。後から登録する共有runtime。準備時には空。</td>
+        </tr>
+        <tr>
+          <th scope="row">/opt/larm-local-services/releases</th>
+          <td>内蔵。後から登録するimmutable成果物。準備時には空。</td>
+        </tr>
+        <tr>
+          <th scope="row">/var/lib/larm-apps</th>
+          <td>内蔵。後から作成するApp専用HOME・config。準備時にはApp directoryを作らない。</td>
+        </tr>
+        <tr>
+          <th scope="row">/srv/storage/nextorage/larm/apps</th>
+          <td>
+            2
+            TB。将来のApp別文書・data・state・大容量cache・workの基準先。今回、文書・DBを初期化しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">/srv/storage/nextorage/larm/prepare-cache</th>
+          <td>
+            2
+            TB。prepare主体専用の共有取得cache。runtime実行主体は書き込まない。準備時には依存を取得しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">/etc/larm-local-services</th>
+          <td>root管理の環境記録、将来の固定manifest、unit template。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      NextorageのUUIDはde97577d-c5d3-4b57-ac4b-3753a2f6d331、初期最低空きは2
+      GiB。新基盤を独立したlarm配下へ置き、既存services配下の所有権やdataを変更しない。実アプリの保存先は導入時に登録し、既存データの移行は別途扱う。
+    </p>
+    <p>
+      新しいAppの導入を依頼された段階でだけ、専用UID、明示したentrypoint・runtime・必要依存、HOME/XDG/TMP/cwd、port、資源制限、活動とreadiness、固定unit・manifestを登録する。Python/Bun/NodeやGo/Rust/native
+      binaryを扱える契約であり、全言語toolchainを先回りしてインストールしない。Office描画やOCR方式などのApp機能はこの基盤で決定しない。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証と現在の限界</h2>
+    <p>
+      共通schema、process backend、単member
+      lifecycle、停止期待値、停止未確認、instance置換、journal破損・v1移行を検証した。controllerの10
+      scenarioはUUID違い、read-only、容量不足、symlink、外部drain、instance置換、停止timeout、I/O障害を含む。環境準備の試験ではApp導入を有効にする設定の拒否、誤UUID・read-onlyの拒否、保存先確認に失敗した場合の書込みゼロを検証する。
+    </p>
+    <p>
+      実際のuser-systemdで親・子・孫および別sessionの3
+      processを試験した。通常TERM停止後は0。TERM無視時は停止要求のexit code 0でも3
+      processが残り、cgroup観測で未終了を検知できた。検証用fixtureだけを明示cleanupした。証跡は/srv/ai/local-services-prepared/cgroup-evidence-20261008.json。これはproduction専用UID・2
+      TBへの実保存・全B受入を認定する試験ではない。
+    </p>
+    <p>
+      環境checkでsystemd 259、cgroup v2のmemory/cpu/pids、正しいNextorage
+      UUIDとread-write接続、最低空き容量を確認した。管理者認証を要求するsudoの状態により、/opt・/etc等への共通基盤登録はこのセッションでは未実施。source実装の完了とOSへの配置済み状態を区別する。現行LARMのLocal
+      Servicesは既定無効のまま維持する。
+    </p>
+    <p>
+      共通検査はbun run check、文書修正後はbun run
+      docs:check:fixを実施する。最終の件数と証跡は検査完了後に記録する。調査対象は7f79874707ba359ced233ff6f355636fa7e20d5eと本作業差分。commit・pushはしていない。
+    </p>
+  </section>
+</article>

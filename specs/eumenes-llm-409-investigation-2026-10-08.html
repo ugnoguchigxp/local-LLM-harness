@@ -1,0 +1,253 @@
+<article lang="ja">
+  <h1>Eumenes LLM HTTP 409調査 — 2026-10-08</h1>
+  <p>
+    対象は2026-10-08 09:40:02 JST（00:40:02 UTC）、192.168.0.130:9810へのstream Chat
+    Completions要求。profileはSAAA-gemma4-26b、modelはgemma4-26b-a4b。Eumenes run
+    IDは772ddede-bef3-4ffe-9a5f-fd9c8ea10da2であり、LARM request IDとして検索・同一視しない。
+  </p>
+  <p>
+    稼働版はrelease commit <code>48996cbf82ee86d4e7719f498eaf89a8ad1ad767</code>、config revision
+    <code>1411986f3a921403a3a2ef724fb30e1e0390aed2471a58a7d3976dd346bdcb37</code>。調査時のsource
+    worktreeは7f79874707ba359ced233ff6f355636fa7e20d5eで既存の未コミット変更があるため、原因判定には稼働releaseの実装・設定を使った。日時は以下すべてJST。資格情報、署名鍵、会話本文は記録しない。
+  </p>
+  <section id="conclusion">
+    <h2>結論と確度</h2>
+    <p>
+      最有力原因は、300秒のidle
+      policyで解放されたConnectionのProvider資格情報をEumenesが保持し、ready表示のまま使ったこと。対象候補のConnectionは09:38:22.625にreleasedへ遷移し、09:40:02には非活動状態だった。これは同時実行枠の不足による競合拒否ではなく、解放済みConnectionに対する正常なライフサイクル拒否と整合する。
+    </p>
+    <aside>
+      <p>
+        当該時刻の409アクセス記録・応答本文・入口request
+        IDはLARMに保存されていない。以下のJSONは実測本文の回収ではなく、確認した状態と稼働版の拒否分岐からの推定である。Eumenesの当該runのConnection
+        ID、送信credentialの非秘密メタデータ、error.codeを照合するまで、個別要求との対応を完全には確定できない。約111msという所要時間だけでは原因を確定しない。
+      </p>
+    </aside>
+  </section>
+  <section id="timeline">
+    <h2>時系列と相関ID</h2>
+    <dl>
+      <dt>Connection</dt>
+      <dd><code>aconn_epoch-e1e5c2a7-0bf0-4635-ab6b-1d315b840fb7_928f71de-a08e-4ff6-ba69-f251691ccb59</code></dd>
+      <dt>Allocation</dt>
+      <dd><code>alloc_epoch-e1e5c2a7-0bf0-4635-ab6b-1d315b840fb7_50054ad4-1018-40cc-867e-ea8579c291a4</code></dd>
+    </dl>
+    <table>
+      <caption>
+        systemd journal、推論監査、Connection状態取得の照合
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">時刻</th>
+          <th scope="col">確認した事実</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">09:33:14.547–15.078</th>
+          <td>
+            Allocation ready、各Providerのsemantic probe完了、create 201、claim 200（5
+            Providers）。llm、asr、ttsにembedding、system-oneを含む。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">09:33:16.896–17.227</th>
+          <td>ASR req_bf035372-b752-48e2-81c8-f0320d62e582がhttp_200で終了。</td>
+        </tr>
+        <tr>
+          <th scope="row">09:33:17.253–20.474</th>
+          <td>
+            LLM
+            req_3bf816d3-bfd8-4235-b2f1-cebfdb46adc8。stream=true、指定modelはgemma4-26b-a4b。client_cancelled、execution
+            completed、監査responseBytes=0。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">09:33:19.557–19.558</th>
+          <td>ASR req_1b82516f-5601-43a6-948e-f9420d472220がclient_cancelledで終了。</td>
+        </tr>
+        <tr>
+          <th scope="row">09:33:19.575–19.899</th>
+          <td>ASR req_19c8690b-618e-4b30-b4f7-ee61e2accf1cがhttp_200で終了。</td>
+        </tr>
+        <tr>
+          <th scope="row">09:33:19.913–22.624</th>
+          <td>
+            LLM
+            req_c70d28eb-8b4e-4649-a806-1f781408662d。stream=true、指定modelはgemma4-26b-a4b。client_cancelled、execution
+            completed。監査はupstreamStatus=200、responseBytes=0。llama-swapもstream切断からの復帰を09:33:22.619に記録。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">09:38:22.625–22.628</th>
+          <td>
+            最後の前景要求終了から300秒後にAllocation解放、agent_connection_idle_releasedを記録。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">09:40:02</th>
+          <td>
+            ユーザー提供のEumenes LLM要求失敗時刻。LARM
+            journalにこの時刻のgateway_request_startedや409本文はない。入口拒否は現実装でイベントを出さないため、この欠落だけで未到達とは判定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">09:45:14.622–14.778</th>
+          <td>
+            release 204後、同profileのLLMのみで新Allocation ready、create 201、claim 200（1
+            Provider）。既存Gemma instanceを再利用。実際のLLM生成成功を示す記録ではない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      管理権限による読み取りで旧Connectionのstatus=released、phase=terminal、error.code=foreground_idle_timeout、lastForegroundActivityAt=00:33:22.624Z、releasedAt=00:38:22.625Zを確認した。expiresAtは00:48:14.547Zであり、09:40:02はTTL期限内でもConnectionは解放済み。状態取得のためにrenewやclaimを実行していない。
+    </p>
+  </section>
+  <section id="credentials-and-rejection">
+    <h2>409の発生箇所と資格情報</h2>
+    <p>
+      稼働版apps/daemon/src/app-gateway-ingress.tsのprepareGatewayIngress（103–108行）がProvider
+      bearerを検証する。agent-connection-controller.tsのverifyProviderToken（654–658行）はConnectionにforeground_idle_timeoutがあるとconnection_idle_releasedを送出する。入口はこれをHTTP
+      409、application/jsonで返す。bodyのstream=trueを解析する前、実行枠取得・upstream接続・推論監査開始より前の分岐である。
+    </p>
+    <pre><code>{"error":{"code":"connection_idle_released","message":"provider bearer token belongs to an idle-released connection"}}</code></pre>
+    <p>
+      この本文は当該Connectionの有効期限内の署名済みtokenを使用した場合の推定応答。解放と要求受付が同時に競合した場合には、同じcodeでも後段のmessageがagent
+      connection is no longer activeとなる分岐もある。当該候補では解放が要求より約99秒早い。
+    </p>
+    <p>
+      claimは成功していた。credentialはConnection expiryに結び付き、generation、boot
+      epoch、allocation、Provider
+      bindingも検証される。TTLの延長だけで無期限に使える鍵ではない。期限切れ、renew前のgeneration、通常release等の不正tokenは原則401。モデル不一致は400であり、この409とは区別する。
+    </p>
+    <p>
+      renew成功はgenerationを増やして旧credentialを失効させるため、consumerは再claimして全Provider設定を一括置換する必要がある。renew、claim、health
+      pollingはidle期限を延長しない。released Connectionのrenewは409 connection_inactive、claimは409
+      connection_not_readyになる。再利用には新しいcreateとclaimが必要。
+    </p>
+    <p>
+      当該Connectionのexpiryは作成から15分の値のまま。renewは現行journalにイベントを出さず、renew実行履歴やEumenesの再claim履歴は回収できないため、「renewが一度もなかった」とは断定しない。renewだけが成功して旧tokenを使った問題なら401が基本だが、idle解放後はexpiry未到達tokenへのidle拒否が先行し得る。
+    </p>
+  </section>
+  <section id="runtime-cancellation-and-stream">
+    <h2>モデル割当・同時要求・資源・stream</h2>
+    <p>
+      要求経路はSAAA-gemma4-26b → saaa-conversation-gemma4-26b-voice → llm-saaa-gemma4-26b →
+      gemma4-26b-conversation → llama-swapのGemma
+      backend。実際の両LLM要求もこのruntimeへ向かい、モデル不一致の根拠はない。別のcoding-default要求がornith-generalへ向かった記録は、別Allocationの正常な処理であり、Gemmaの割当driftではない。
+    </p>
+    <p>
+      対象runtimeの稼働設定はmaxConcurrentAllocations=3、maxConcurrentRequests=3、maxQueuedRequests=16、queueTimeoutMs=30000。backendは09:17:56起動のllama-serverで、--ctx-size
+      524288、--parallel 3、--kv-unified、K/Vともq4_0。profileが公開するcontextWindowは262144
+      tokens。共有512KのKV poolなので、3セッションにそれぞれ262144
+      tokensを同時保証する意味ではない。
+    </p>
+    <p>
+      09:33:19.913–20.474にGemma要求2本が重なったが、双方にexecution
+      startedがあり、枠不足拒否や待機超過を示す記録はない。09:40前後にはgateway開始記録もupstream
+      Chat
+      Completions記録もない。単なる実行枠満杯ではgatewayは通常429、排他・draining等は503となる。Connection作成時のProvider競合は409になり得るが、今回は既存credentialによる生成要求の失敗である。
+    </p>
+    <p>
+      取消後に両LLMのexecution
+      completedとgateway_request_completedがあり、最後の終了時刻とidle解放時刻も一致する。finishは実行枠とProvider
+      request ref、Connection activeRequestsを解放する。Allocation
+      refはConnectionのidle解放で外れる。Gemmaはwarm.minInstances=1なのでbackend
+      processとKV用メモリーが残ることは正常。5分のprovider switch
+      holdも09:38:22から始まるが、request slot保持とは別である。歴史的なbackend
+      slot数・GPU使用量の連続記録はなく、全物理資源の解放まで実測したとは言わない。
+    </p>
+    <p>
+      両要求はstream=trueでclient_cancelled。監査responseBytes=0はLARMが捕捉した応答量であり、UI表示・利用者の発話・中断原因を確定する値ではない。stream=trueでもエラーはJSONで返るため、consumerはHTTP
+      statusとContent-Typeを先に確認し、409本文をSSEとして読み飛ばさない。SSEの200だけでは完了ではなく、終端確認までが成功条件となる。
+    </p>
+    <p>
+      ASRは同Allocationで2回成功している。音声表示・取消競合、音声全体の症状をLARM障害と断定する根拠はない。Eumenes実装・当該runのクライアントログはこのworkspaceにないため、UI競合の原因はユーザー提供情報以上には検証していない。SAAA実装を参照する必要はなかった。
+    </p>
+  </section>
+  <section id="reproduction-and-remediation">
+    <h2>再現条件・修正案・検証</h2>
+    <ol>
+      <li>idleRelease=300秒のprofileでConnectionを作成しready後にclaimする。</li>
+      <li>
+        前景要求を終了・取消し、その後300秒間LLM、ASR、TTS等の対象前景処理を行わない。health
+        pollingやrenewだけでは期限は延びない。
+      </li>
+      <li>
+        credentialのexpがまだ未来の状態で、旧Connectionのtokenによるstream Chat
+        Completionsを送ると、idle入口拒否は409 connection_idle_releasedになる。
+      </li>
+      <li>
+        別条件としてready
+        Connectionをrenewし再claimせず旧tokenで送ると401。renew後の再claim、またはidle解放後の新createとclaimで復旧させる。
+      </li>
+    </ol>
+    <table>
+      <caption>
+        対応対象の切り分け
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">提案</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Eumenesの接続表示</th>
+          <td>
+            readyを固定保持せず、Connection
+            status、idleReleaseAt、Provider状態、error.codeを反映。releasedやforeground_idle_timeoutで旧Provider設定を無効化し再接続可能な表示へ遷移。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Eumenesの資格情報更新</th>
+          <td>
+            renew → claim
+            →全Provider設定の一括置換を単一の接続世代として扱う。旧世代の完了callbackや取消処理が新世代をreadyに戻したり新要求を止めたりしないよう、Connection
+            IDと世代・runを照合。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Eumenesの失敗処理</th>
+          <td>
+            409
+            connection_idle_releasedに限って新create、ready待機、claimを行う。応答開始前の拒否であることを確認してから必要なら一度再送。すべての409や応答開始後のstreamを一律再送しない。失敗本文・HTTP
+            status・Connection ID・run IDを秘密抜きで保存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LARMの観測性</th>
+          <td>
+            入口拒否にもrequest IDを付け、時刻、経路、status、error.code、Connection／Allocation
+            IDと可能ならcredential世代だけを記録。create、claim、renewにも相関ID・expiry・generationの安全なメタデータを記録し、今回のような応答本文未保存の検証限界をなくす。tokenやAuthorizationは記録しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LARMのライフサイクル仕様</th>
+          <td>
+            5分idle releaseとwarm保持は仕様通り。idle
+            timeoutの無効化や常時接続維持を原因修正として行う根拠はない。先にクライアント状態追従と相関ログを修正する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      稼働releaseの既存テストを限定実行し、11件成功・0失敗。idle解放とhealth
+      polling、前景終了後のdeadline、renew後の旧token失効と再claim、JSONエラーを返すstream、正常SSEと不完全EOF、非SSE成功拒否、active／queued要求の取消、Provider
+      request
+      refの一度だけの解放を確認した。idle再現テストは短縮した1秒policyのfixtureであり、本番要求を新規投入した再現ではない。
+    </p>
+    <p>
+      本調査では稼働サービス・設定・Eumenes実装を変更していない。個別409の最終確定には当該runのerror.codeまたはConnection
+      IDの追加照合が残る。
+    </p>
+  </section>
+  <p>
+    関連仕様:
+    <a href="./saaa-async-connection-idle-release-implementation-plan.html"
+      >SAAA非同期Connection・idle release</a
+    >、<a href="./agent-provider-connection-api.html">Agent Provider Connection API</a>。
+  </p>
+</article>

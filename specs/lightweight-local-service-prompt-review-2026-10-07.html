@@ -1,0 +1,407 @@
+<article lang="ja">
+  <h1>軽量Local Service Runtimeプロンプトの評価と既存コンテナ実装との関係</h1>
+  <p>
+    2026年10月7日。対象revisionは7f79874707ba359ced233ff6f355636fa7e20d5e。
+    添付された言語非依存Application Runtimeの調査依頼を、現在のLARMソースと配備状態に照合した評価。
+    新しいbackendの実装・配備は行っていない。SAAAとdocling-desk本体の現行実装は今回の確認対象外。
+    「メモリーの分断」は添付の主題に沿ってRAM・モデル・キャッシュの重複と、固定予算による容量の使い残しを主に評価する。
+    会話・設計判断の継承についても、既存資料との関係を明記する。
+  </p>
+  <section id="assessment">
+    <h2>評価</h2>
+    <p>
+      目的、非目的、共有資源と個別状態の区別が明確で、LARMの軽量なオンデマンド制御に適している。
+      Linuxではsystemdによるホストプロセス管理とcgroupを標準候補にできる。
+      既存LocalServiceManagerの利用権、起動集約、readiness、活動確認、受付停止、停止競合保護、世代管理、再起動照合を再利用し、
+      Local Serviceという既存名称を維持する案を推奨する。別のApp Runtime
+      Managerを並設する必然性は現時点ではない。
+    </p>
+    <p>
+      添付をそのまま使うと、既に実装済みの仕組みを再調査・再実装したり、六言語と三OSの汎用frameworkへ初期範囲が広がる恐れがある。
+      最初に既存実装との適合表を作り、単一Linuxホストの承認済み一サービスにホストプロセスbackendを追加する範囲へ絞るとよい。
+      先日のコンテナ案はdoclingの分離配備に対する個別案として扱い、今回の標準方式と同一視しない。
+    </p>
+  </section>
+  <section id="continuity">
+    <h2>先日の実装と今回の位置付け</h2>
+    <ul>
+      <li>
+        <a href="./local-service-runtime-prompt-review-2026-10-06.html">先日のプロンプト評価</a
+        >は、systemd・コンテナ・VMを条件に応じて比較した記録である。今回の添付とは評価対象が異なる。
+      </li>
+      <li>
+        <a href="./docling-isolated-service-implementation-plan.html">docling分離配備計画</a
+        >は、APIとCPU processorをrootlessコンテナで管理する個別設計。
+      </li>
+      <li>
+        <a href="./docling-isolated-service-implementation-results-2026-10-06.html">実装結果</a
+        >には、LARM側のsource実装と実機受入の未完了が記録されている。
+      </li>
+      <li>
+        今回の確認でもdockerとpodmanはPATHに見つからず、docling起動unitはLoadState=not-found、ActiveState=inactiveだった。コンテナの運用開始やメモリー改善の実測を確認したものではない。
+      </li>
+    </ul>
+    <p>
+      過去の成果を捨てる必要はない。サービス制御の共通部分を維持し、実行backendの選択を追加する。
+      今回の評価は新標準の採用決定ではなく提案であり、過去の計画を無断で決定済みの新方針へ書き換えない。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>確認した実装上の事実</h2>
+    <table>
+      <caption>
+        再利用できる構造と現在の制約
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ソース</th>
+          <th scope="col">確認内容</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">packages/core/src/local-service-manager.ts</th>
+          <td>利用権、idempotency、同一起動の集約、idle、drain、世代、journal照合がある。</td>
+          <td>
+            一般アプリの制御基盤として再利用できる。一方、containerIdsと停止時のlength !==
+            2が共通処理に残る。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">packages/core/src/local-service.ts</th>
+          <td>
+            backendはsystemd-container-groupのみ。HTTP
+            endpointとdocling向け活動契約、minInstances=0、maxInstances=1、gpuAccess=falseを検証。
+          </td>
+          <td>現状は全言語・全protocol・全lifecycleを扱う汎用App Runtimeではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">packages/backends/src/local-service-systemd.ts</th>
+          <td>
+            固定unitの操作、観測file、readinessとprivate lifecycle
+            HTTPを扱う。稼働時にコンテナ2個を要求する。
+          </td>
+          <td>名前はsystemdだが、現在の実体はコンテナgroup専用adapter。</td>
+        </tr>
+        <tr>
+          <th scope="row">packages/core/src/service-resource-ledger.ts、admission.ts</th>
+          <td>
+            Service予算をAI起動のadmissionへ反映。実観測に応じて未観測分のpendingBytesを減らす。
+          </td>
+          <td>二重の起動承認を防ぐ基盤はあるが、静的予算bytesは停止確認まで保持する。</td>
+        </tr>
+        <tr>
+          <th scope="row">apps/daemon/src/main.ts</th>
+          <td>
+            backend・認証・journalを組み立てる。Local
+            Serviceと画像・楽曲の起動経路は初期の相互拒否を持つ。
+          </td>
+          <td>
+            RAMに余裕があっても並行起動を断る場合がある。混合負荷の受入後に統合会計を検討する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">config/local-node/local-services.yaml</th>
+          <td>
+            doclingに9 GiBの起動予算、120秒idle、300秒leaseを設定。配備digestはゼロのplaceholder。
+          </td>
+          <td>配備前の検証開始値であり、実測済みの必要容量ではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">deploy/local-node/local-services/docling-compose.yaml、controller.py</th>
+          <td>
+            API上限512 MiB、processor上限8 GiB。read-only filesystem、private
+            network、永続volumeとtmpfsがある。observerはanonを予算消化として観測。
+          </td>
+          <td>
+            既存の分離は今回の最小要件より強い。上限やtmpfs容量は同量の事前RAM確保を意味しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="memory">
+    <h2>メモリー共有について修正すべき前提</h2>
+    <p>
+      Linux nativeコンテナはVMのようにguest OSと固定の仮想RAMを必ず持つ方式ではない。
+      memory.maxやDockerのmemory limitは使用上限であり、その量のRAMを事前に占有する指定ではない。
+      同じimage
+      layerはストレージ上で共有できるため、「コンテナごとにOS・runtime・全ファイルが必ず複製される」とは評価できない。
+      コンテナを避ける理由は、今回不要な配備・image・daemon管理を減らすことと、共有資産の運用を単純化することに置くと正確である。
+    </p>
+    <table>
+      <caption>
+        分断・重複の種類と対策
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">種類</th>
+          <th scope="col">評価と対策</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">物理RAMの固定分割</th>
+          <td>
+            cgroupの使用上限は物理RAMの区画を固定確保する機能ではない。コンテナを廃止すれば物理断片化が解消するといった保証もない。allocator・driverの断片化は別の実測課題。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">予算による容量の使い残し</th>
+          <td>
+            現状の9 GiBはLARMの論理的な受付予算。実使用量が少なくても静的admissionでは9
+            GiBを差し引く。起動peak、平常使用量、ジョブ追加分、OS上限を分ける候補があるが、未観測分を消して危険なovercommitへ変えない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">モデルの重複ロード</th>
+          <td>
+            同じweightファイルを共有しても、別processで展開したtensor・GPU allocation・KV
+            cacheまで一つになるとは限らない。重量級の推論は共有Providerへの呼出しに集約する。App内に埋め込まれたモデルは利用経路を確認して移行可否を判断する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">runtimeと依存の重複</th>
+          <td>
+            共有runtime実行ファイルとpackage取得cacheはSSD効率を改善する。各processのheap、module
+            state、JIT等まで共有できるという意味ではない。lockfile・ABI・toolchainが異なる依存まで無理に共通化しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">共有ページの二重会計</th>
+          <td>
+            共有ページは複数cgroupから使えても、課金先は単純な等分とは限らない。RSSの総和を物理使用量と扱わず、host
+            MemAvailable、cgroupの使用量と内訳、必要ならPSSを目的ごとに使い分ける。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">CPU/GPUのUMA</th>
+          <td>
+            登録上このnodeは128 GBでOS等の安全床が16 GB。CPU
+            RAMとGPU表示容量を独立poolとして足さない。driverによる確保・予約・計測の関係は実機確認が必要で、cgroupだけで全GPU割当を把握・制限できるとはしない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      最優先は「重いモデルを共有Providerで一度だけロード」「起動中・ジョブ中の将来増加を含めた一つの資源会計」
+      「必要なときだけ起動して完全終了を確認」である。LocalProcessへ移せば必ず何GiB節約できるという実測根拠はまだない。
+    </p>
+  </section>
+  <section id="requested-topics">
+    <h2>添付の15項目への具体的な回答</h2>
+    <table>
+      <caption>
+        調査依頼の各論点と推奨案
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">回答・提案</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1. 流用する構造</th>
+          <td>
+            LocalServiceManager、LocalServiceBackend、ServiceResourceLedger、認可済みAPI、SDK、FileJournalと既存systemd操作を優先する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">2. Providerとの関係</th>
+          <td>
+            一般AppはLocal Serviceとして登録。AIへの要求はAgent ProfileとProvider
+            subsetからroute、runtime、backendへ解決し、現在稼働するモデルを選択根拠にしない。一般Appのservice
+            leaseとAIのallocationは同一概念へ強引に統合しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">3. 新規責務</th>
+          <td>
+            backendに依存しないinstance識別、ホストprocessの所有・終了観測、private
+            directoryと許可envの準備、承認済み成果物の登録が必要。AppのAI依存を起動・保護・解放する責務は現在の契約にはなく、consumer側かcore側かを明示する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">4. 推奨構成</th>
+          <td>
+            coreでregistry・利用権・state・admission、backendsでSystemdProcessBackendと既存container
+            backend、daemonで認証と配備を組み立てる。標準候補をホストprocessとし、個別の隔離要件があるサービスはcontainerを選べる構成。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">5. Runtime Adapter</th>
+          <td>
+            初期は承認済み実行ファイル・argv・cwdと完成済み成果物で足りる。detectや全言語共通build
+            frameworkは不要。必要になった言語のprepare/buildだけ配備時adapterにする。六種類を先に作らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">6. Instanceとstate</th>
+          <td>
+            stopped → starting → ready → draining → stopping → stopped、異常時failedを維持。service
+            ID、revision、generation、App boot
+            ID、unit起動識別子、cgroup、MainPID、endpoint、利用権、活動鮮度、資源観測を区別する。PID単独の再利用を識別根拠にしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">7. 共有と個別</th>
+          <td>
+            runtime版・同一内容の取得cache・immutable成果物・weightファイルと推論Providerは共有。HOME、XDG
+            config/data/state/cache、TMP、work、writable
+            build、socket、env、logsはservice単位。永続dataは停止後も保持。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">8. OS別cleanup</th>
+          <td>
+            Linuxはsystemd unitのcgroupで子孫を追跡し停止。process
+            groupだけでは別session化した子を追えない場合がある。Windows Job Object、macOS process
+            groupは将来backendの候補であり、初期に実装・同等保証を約束しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">9. 各言語とbinary</th>
+          <td>
+            Pythonは版とlockを固定したuv/venvから起動、JS/TSは共有Node/Bunから完成済みentrypointを起動。Go/Rustは原則完成済みbinaryを起動し、compilerはprepare環境に置く。native
+            binaryは直接実行。MCPはHTTPとstdioで接続寿命が異なるため別の受入条件が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">10. cache共有</th>
+          <td>
+            取得cacheはtoolが提供する並行利用・lock条件に従う。内容・依存lock・platform・toolchainでimmutable成果物を識別する。runtime中は共有物をread-onlyとし、書込みやpackage
+            installはprepare段階へ限定。private HOMEでも明示したcache配置を使う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">11. 汚染防止の最小構成</th>
+          <td>
+            private HOMEとTMP、XDG各変数、明示cwd、env
+            allowlist、所有権を成立させる。これだけでは絶対パスへの書込みを防げない。必要なホスト設定保護にはsystemdのProtectSystem、ProtectHome、ReadWritePaths、PrivateTmpを追加し、serviceユーザーと配置の整合を検証する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">12. Container/VMの必要性</th>
+          <td>
+            今回の信頼済みアプリの環境整理とprocess
+            lifecycleには必須ではない。未知コードの強い隔離、異なるOS/kernelなどは別要件。既存doclingのprivate
+            network・read-only root等まで同等に移すなら、要件別に残す制御を決める。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">13. 変更範囲</th>
+          <td>
+            coreの定義・観測契約・journal
+            migration・managerの2-container前提、backendのdispatchと新process
+            adapter、daemonの組立て、manifest、unit/installer/observer、OpenAPI/SDKの公開型を必要に応じて更新。既存AIモデル選択ロジックを置換する変更は不要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">14. 最小ステップ</th>
+          <td>
+            次節の順序で共通処理の一般化、Linux一サービス、prepare共有、AI依存、測定後の資源会計改善へ進む。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">15. 懸念</th>
+          <td>
+            利用権切れとjob寿命の違い、停止中ensure、再起動照合、共有依存の停止、MCP stdio、cache
+            lock、build副作用、port競合、image移行時のdata引継ぎ、TMPと永続dataの区別、観測不能時の予算保持を補足する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="stopping">
+    <h2>停止の保証を曖昧にしない</h2>
+    <p>
+      既存実装はジョブ保護を優先し、通常停止でTERMだけを送り、終了未確認なら資源予算を保持する。
+      「必ず全子プロセスを消す」「自動強制終了しない」「猶予以内に必ずstoppedになる」は同時には保証できない。
+      初期は既存のdrainと利用権保護を維持し、失敗時はfailedとしてendpointを引き上げ、予算を保持する。
+      許可された強制終了は別の管理操作とし、通常停止との境界を設計する。
+    </p>
+    <p>
+      systemdのKillMode=control-groupはunitに残る子孫を対象にするが、標準では期限超過後にSIGKILLへ進む。
+      既存のTERM限定を継承するprocess backendではSendSIGKILLの設定を明示する必要がある。
+      cgroupが空であること、所有するlistener/socketが消えたこと、leaseとendpointが無効になったことを停止完了の受入条件にする。
+      persistent
+      data・承認済みbuild・共有cache・保持期限内のlogsは「停止時の痕跡除去」の対象から除く。
+    </p>
+  </section>
+  <section id="phases">
+    <h2>最小の実装順序と受入条件</h2>
+    <ol>
+      <li>
+        既存container
+        backendの動作を維持しつつ、containerIdsをbackend別のinstance観測へ一般化し、2個固定条件をcontainer
+        adapterへ移す。journalは版を上げ、旧記録の移行・未知所有の隔離を検証する。
+      </li>
+      <li>
+        一つの承認済みHTTPサービスにSystemdProcessBackendを追加する。固定portと完成済みentrypointで、利用者二人の起動集約、private
+        HOME/TMP、子プロセス終了、idle競合、daemon再起動を確認する。App側の活動契約がないサービスへ既存docling契約を擬装しない。
+      </li>
+      <li>
+        必要な言語だけprepare処理と共有取得cacheを整える。実行時build/pullを避け、異なる依存lockの共存、再起動でbuildを繰り返さないこと、cacheを変更して他Appを壊さないことを確認する。
+      </li>
+      <li>
+        AIを使用するAppを既存Profile解決とallocationへ接続する。必要なProviderをjob中に保護し、最後の利用者が解放した後に各policyで停止する。同じ解決先を使う二Appがモデルを二重起動しないことを確認する。
+      </li>
+      <li>
+        cold/startup/ready/job
+        peak/停止後の回収、startup時間、ホスト空き容量、GPU観測、foreground遅延を測定する。必要なら起動予算と平常予算を分け、追加jobもadmissionしてから既存のmedia相互拒否を段階的に見直す。測定前に静的予算を単なる現在値へ置き換えない。
+      </li>
+    </ol>
+    <p>
+      dynamic
+      port、Windows/macOS、全言語adapter、Container/VMの新実装は初期の必須成果物にしない。既存doclingのホストprocess移行も、外部アプリの構造と失われる隔離を確認してから別の受入にする。
+    </p>
+  </section>
+  <section id="prompt-additions">
+    <h2>プロンプトへ追記するとよい条件</h2>
+    <ul>
+      <li>
+        LocalServiceManager等の既存成果とdoclingの個別コンテナ配備案を調べ、再利用・変更・追加を分ける。別managerを新設するなら必要性を示す。
+      </li>
+      <li>
+        コンテナの使用上限、LARMの受付予算、実使用量、ファイル共有、ロード済みモデル共有、物理断片化を区別する。UMAではCPU/GPU容量を二重計上しない。
+      </li>
+      <li>
+        AI依存の選択はAgent Profile → route → runtime →
+        backendを守る。Appごとのモデル内蔵を共有Provider化できるかは実装確認で判断する。
+      </li>
+      <li>
+        初期対象はLinux一ホスト、一サービス、固定port、承認済み完成成果物。一般APIからcommand・env・cwd・imageを指定させない。
+      </li>
+      <li>
+        lease/heartbeatだけでなくjob・WebView・stdio接続の寿命、停止中ensure、起動失敗と再試行、再起動journal照合を受入条件に入れる。
+      </li>
+      <li>
+        上限は物理予約にしないが、安全な同時起動の予算は維持する。共有cacheの管理者、排他、版、読書き権限とGCを決める。
+      </li>
+      <li>
+        通常停止のジョブ保護と強制cleanupを分ける。「痕跡を残さない」は一時物・実行process・所有socketに適用し、永続dataを消さない。
+      </li>
+      <li>
+        RAM節約はprocess方式へ移すだけでは確定しない。起動peakと混合負荷を測定して判定し、事実・提案・未検証を区別する。
+      </li>
+    </ul>
+  </section>
+  <section id="verification">
+    <h2>検証と範囲</h2>
+    <p>
+      2026年10月7日に既存local-serviceのcore、manager、systemd
+      backend、route、clientの5ファイル・29テストを実行し、29成功、0失敗、122 assertion。
+      起動集約、停止中の競合、活動鮮度、job保護、失敗時予算保持、世代変更と再起動照合を確認した。
+      これは既存sourceの回帰確認であり、コンテナや新process backendの実機受入を代替しない。
+      今回の変更はこの評価文書と一覧への登録のみ。コード、稼働サービス、モデル選択、commit、pushは変更していない。
+    </p>
+    <p>
+      技術前提はDocker公式Resource constraints・Storage drivers、Linux kernel公式Control Group
+      v2のmemory interfaceとMemory Ownership、
+      systemd公式ソースのsystemd.exec・systemd.killで確認した。資料は2026年10月7日に参照。
+      GPUの実効会計、言語別cacheの挙動、doclingの内蔵モデル利用、OS別の同等cleanupは未検証。
+    </p>
+  </section>
+</article>

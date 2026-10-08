@@ -412,6 +412,7 @@ agentProfiles:
         >profile</code
       >
       selectorを一つ指定する。selectorは<code>contextStill</code>、<code>SAAA</code>、<code>SAAA-gemma4-26b</code>、
+      <code>SAAA-gemma4-26b-64k</code>、
       <code>SAAA-w-Image</code
       >、<code>SAAA-w-music</code>、<code>vulnWorkbench</code>であり、
       responseの<code>requestedProfile</code>へechoし、<code>profiles</code>配列を具体的なAgent
@@ -435,6 +436,14 @@ agentProfiles:
       >は、どちらも<code>saaa-conversation-gemma4-26b-voice</code>へ解決する。
       serviceの<code>startupPolicy.minWarmInstances</code>は0であり、Connection作成ではmedia
       unitを起動しない。 生成APIへの要求時に起動し、画像は120秒、楽曲は300秒のidle TTLで停止する。
+    </p>
+    <p>
+      <code>SAAA-gemma4-26b-64k</code>は補助LLMのみの
+      <code>saaa-conversation-gemma4-26b-64k</code>へ解決する。 メインvoice Profileと同じGemma
+      runtimeの4枠と512K KV poolを共有し、
+      <code>contextWindow.maxTokens</code>は65536、出力reserveは4096、safety
+      marginは1976とする。 Consumerはメイン256Kを1本、補助64Kを最大3本として予算を守る。
+      contextWindowはConsumer向けの予算契約で、専用slotの予約やgatewayでのtoken数の強制検査を意味しない。
     </p>
     <pre><code>{
   "contractVersion": "agent-connection.v3",

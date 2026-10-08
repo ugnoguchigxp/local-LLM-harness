@@ -1,0 +1,306 @@
+<article lang="ja">
+  <h1>Eumenes VOICEVOX HTTP 500調査 — 2026-10-08</h1>
+  <p>
+    対象は2026-10-08 14:51:31.042 UTC（23:51:31.042 JST）、Eumenesの
+    <code>1d5a2c26-58ad-4f62-a816-a70d1c21c7a1:speech:9</code>。 POST
+    /v1/audio/speechが約16msで500になったという報告を、LARMとVOICEVOXのsystemd journalで照合した。
+    Eumenesのutterance IDはLARM request IDとは別の相関識別子であり、journalには保存されていない。
+    以下の時刻はUTCを明示する。会話本文・資格情報は保存しない。
+  </p>
+  <section id="conclusion">
+    <h2>結論</h2>
+    <p>
+      報告時刻と先行9件の成功に一致する要求を確認した。直接原因はVOICEVOX COREの
+      <code>AnalyzeTextError</code>。Open JTalkが入力から音素を生成できず、
+      <code>create_audio_query</code
+      >で例外が発生した。adapterがこの例外を未処理の500にし、LARM Gatewayはそのstatusを転送した。
+      合成モデル実行に入る前の失敗であり、短い応答時間と整合する。
+    </p>
+    <p>
+      直前の音声要求は完了しており、当該要求にはexecution startedがある。 同じVOICEVOX PID
+      3612のhealthは直前・直後とも200。 調査時のsystemd状態は2026-10-03 19:55:43
+      JSTからactive、NRestarts=0。 当該500をエンジン停止・再起動・同時実行過多で説明する根拠はない。
+      ただし該当文の本文がなく、具体的にどの文字列が音素なしになったかは未確定。
+    </p>
+  </section>
+  <section id="request-and-runtime">
+    <h2>相関と実行経路</h2>
+    <dl>
+      <dt>LARM request ID</dt>
+      <dd><code>req_798187ed-90b0-4852-9cad-3b6fc0d64f5e</code></dd>
+      <dt>Allocation</dt>
+      <dd><code>alloc_epoch-e1e5c2a7-0bf0-4635-ab6b-1d315b840fb7_ea58dd9d-8a30-46a3-909d-f78d3e2d6744</code></dd>
+      <dt>要求から実行先への解決</dt>
+      <dd>
+        SAAA-gemma4-26b → saaa-conversation-gemma4-26b-voice → tts-voicevox → voicevox-tts →
+        voicevox-tts.service、127.0.0.1:8084
+      </dd>
+      <dt>Daemon稼働release</dt>
+      <dd><code>48996cbf82ee86d4e7719f498eaf89a8ad1ad767</code></dd>
+      <dt>VOICEVOXプロセスが読み込んだadapterのrelease</dt>
+      <dd><code>dbbe3237171218d94a9c1f3eeba8aef586288637</code></dd>
+    </dl>
+    <p>
+      14:49:00.984のallocation_ready、14:49:00.985のcreate accepted、14:49:00.991のclaim
+      acceptedを照合した。 runtimeの設定はmaxConcurrentRequests=1、maxQueuedRequests=0。
+      adapterも非待機の合成lockを使用し、枠が埋まっている場合は429とRetry-After: 1を返す。
+      スタックトレースのadapterパスはdbbe32371712のreleaseであり、現在のlarm-currentリンク先とは異なる。
+      稼働中のPythonは起動時にimportしたコードを使うため、リンク変更だけではadapterコードは切り替わらない。
+      両releaseとsourceの当該adapterは調査開始時点で同一内容だった。
+    </p>
+    <table>
+      <caption>
+        journalで確認した時系列（UTC）
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">時刻</th>
+          <th scope="col">証拠</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">14:51:20.635–29.290</th>
+          <td>
+            同一Allocationで9件のspeechがhttp_200。開始時刻は20.635、21.109、21.483、22.511、22.938、25.250、26.060、27.387、29.128。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">14:51:31.044</th>
+          <td>対象候補のgateway_request_started、runtime=voicevox-tts、execution started。</td>
+        </tr>
+        <tr>
+          <th scope="row">14:51:31.046</th>
+          <td>VOICEVOXがJPCommonLabel_make: No phonemeを警告。</td>
+        </tr>
+        <tr>
+          <th scope="row">14:51:31.050</th>
+          <td>VOICEVOXのPOST /v1/audio/speechが500。</td>
+        </tr>
+        <tr>
+          <th scope="row">14:51:31.051</th>
+          <td>
+            LARMのexecution completed、gateway_request_completed
+            outcome=http_500。LARM内の処理は約7ms。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">14:51:31.104–105</th>
+          <td>
+            ASGIスタックトレースにJPCommon_get_label_feature失敗、Open
+            JTalkで解釈不可、AnalyzeTextError。adapterのspeech、426行目のcreate_audio_queryが送出箇所。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      journal検索の日時にはUTCを明示した。journalctlの表示をUTCにする設定と、検索時刻の解釈は別である。
+      16msはEumenes計測、7msはGatewayの開始・完了イベント差であり、ネットワークなどを含む範囲が異なる。
+      utterance IDとの完全な照合にはEumenesが受け取ったX-Request-Idを使用する。
+    </p>
+  </section>
+  <section id="input-and-privacy">
+    <h2>入力条件と本文の扱い</h2>
+    <p>
+      VOICEVOX CORE 0.17.0、実際の辞書・モデルを使用した隔離テストで、
+      「。」「空白3文字」「…」「！？」から同じAnalyzeTextErrorを再現した。
+      読める音素がない文が失敗条件の一例である。文章中の記号がすべて失敗するとは限らず、
+      今回が記号だけの文だったとも断定しない。長さ制限超過を示す例外ではない。
+      adapterのinputは1–4096文字、request bodyは最大65536
+      bytesで、上限超過の拒否はこの解析例外とは別である。
+    </p>
+    <p>
+      LARMのfull-required推論監査はChat
+      Completionsのみを対象にしており、今回のTTS本文を監査から回収できない。
+      追加で具体的な入力条件まで確定する場合、Eumenesで合成に渡した最終inputを非保存の再現環境で確認する。
+      新しい解析失敗ログは固定のerror
+      code、input_length、style_idのみを記録し、入力本文や例外チェーンを記録しない。
+    </p>
+  </section>
+  <section id="fix-and-retry-contract">
+    <h2>修正と再試行の契約</h2>
+    <table>
+      <caption>
+        失敗分類と利用側の扱い
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">応答</th>
+          <th scope="col">Eumenesの扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">テキスト解析不可</th>
+          <td>422、error.code=speech_text_unprocessable、param=input。Retry-Afterなし。</td>
+          <td>同じ入力の再試行を止め、文をスキップするか、合成用inputを修正して再送。</td>
+        </tr>
+        <tr>
+          <th scope="row">Synthesizer起動待ち</th>
+          <td>
+            speech・voicesは503、error.code=speech_provider_unavailable、Retry-After:
+            1。healthも503とRetry-After: 1。
+          </td>
+          <td>待機後、回数を制限して再試行。</td>
+        </tr>
+        <tr>
+          <th scope="row">合成枠使用中</th>
+          <td>speechは既存の429、Retry-After: 1。空き枠要求のhealthは503とRetry-After: 1。</td>
+          <td>待機後、回数を制限して再試行。</td>
+        </tr>
+        <tr>
+          <th scope="row">未分類の推論障害</th>
+          <td>既存の500。</td>
+          <td>一時障害と断定せず、相関IDで原因を調査。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      AnalyzeTextErrorのみをcreate_audio_queryの周囲で捕捉する。finallyで合成lockを解放し、
+      後続の通常文はWAVとPCMの双方で成功する。未知の合成例外を503に一括変換しない。
+      422のJSON本文と503のRetry-AfterはGatewayでそのまま維持する。
+    </p>
+    <pre><code>{"error":{"code":"speech_text_unprocessable","message":"VOICEVOX could not analyze input text","param":"input"}}</code></pre>
+    <p>
+      実エンジンでの入力解析失敗、続く通常文の成功、WAV/PCM、lock解放、本文を含む例外の非出力、
+      起動待ち、busy、未知の合成エラーの伝播を検証した。
+      音声関連の24テスト、typecheck、docs:check:fix、全体のbun run checkが成功した。修正はsource
+      worktreeにあり、稼働releaseへの反映・サービス再起動は実施していない。
+      運用反映では検証済みreleaseの作成とVOICEVOXプロセスの再起動が必要。
+    </p>
+  </section>
+  <section id="deployment-preparation">
+    <h2>2026-10-09の配備準備</h2>
+    <p>
+      ユーザーの修正依頼を受け、稼働daemonの48996cbf82eeを基点に、今回のadapter修正、音声テスト、
+      本調査記録とcatalog行だけを隔離したcheckoutでcommitした。
+      配備候補は<code>14f2d17194a4eba87d1f5a7e2558edf2b249eb0b</code>、
+      branchは<code>codex/fix-voicevox-text-analysis-20261009</code>。
+      元worktreeの既存変更を配備候補に含めていない。
+    </p>
+    <p>
+      通常builderでfrozen install、全check、production依存への切替とtree digest生成を実施した。
+      candidate単独のテストは669件、toolingは24件、deploymentのBunテストは53件が成功し、
+      shell検証も成功。候補のconfig revisionは稼働版と同一。
+      署名済みintentは通常の監視inboxに投入せず、
+      <code>/srv/ai/apps/larm-voicevox-fix-20261009-intent/request.json</code>に準備した。 署名とmanifest
+      digest、稼働版との前提条件を確認した。
+    </p>
+    <p>
+      適用用scriptは<code>/srv/ai/apps/larm-voicevox-fix-20261009-apply.sh</code>。
+      非特権ユーザーで実行し、最初にsudo認証を行ってから署名済みintentを投入する。
+      activator成功後にVOICEVOXだけを明示的に再起動し、backendとLARMの双方で
+      句点のみのinputが422、続く通常文が有効なWAVの200になることを確認する。
+      枠競合・起動待ちには回数を制限して再試行し、適用後の検証失敗時は固定install済みrollback
+      helperを使用する。 script構文と署名検証のcheckモードを検証済み。
+    </p>
+    <p>
+      このセッションのsudoは対話認証が必要で、再起動権限を取得できなかった。
+      稼働版は48996cbf82ee、VOICEVOX PIDは3612のままで、live反映は未完了。
+      次の操作はサーバーの対話端末で行う。sudoのパスワードをチャットへ渡す必要はない。
+    </p>
+    <pre><code>bash /srv/ai/apps/larm-voicevox-fix-20261009-apply.sh</code></pre>
+  </section>
+  <section id="code-review">
+    <h2>2026-10-09のコードレビューと改善</h2>
+    <p>
+      音声adapter、Gatewayのエラー転送、配備手順をレビューし、発見した問題を修正した後に再レビューした。
+      14f2d171の初期候補をそのまま適用する手順は廃止し、レビュー済みの候補へ署名済みintentと適用用wrapperを更新する。
+      起動待ちのspeech・voicesも、テストと実装が一致するerror.code=speech_provider_unavailableのJSONへ統一した。
+    </p>
+    <table>
+      <caption>
+        発見した問題と改善後の挙動
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">問題</th>
+          <th scope="col">改善</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">適用完了前のtimeoutでcandidate_activeがfalseのまま</th>
+          <td>実際のrelease pointerとmanifestに紐付くoperation IDで復旧の要否を決定する。</td>
+        </tr>
+        <tr>
+          <th scope="row">中断時に復旧処理が呼ばれない</th>
+          <td>
+            SIGINT・SIGTERMを失敗として扱い、提出直後の中断も検出する。復旧中の再中断は抑止する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">別の配備要求を上書きし得る</th>
+          <td>
+            非待機lock、認証後の再照合、Linuxのatomic
+            renameで既存requestを上書きしない。requestのlink数は常に1で、root
+            activatorの検証条件も満たす。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">復旧失敗を無視、想定と異なるpreviousを使用し得る</th>
+          <td>
+            固定root helperのpreviousを照合し、復旧失敗を明示する。別operationや実行中のroot
+            activatorへ並行rollbackを行わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">検証assertがPython最適化で無効化される</th>
+          <td>配備の判定は明示的な例外に変更。最適化を有効にした試験も実施。</td>
+        </tr>
+        <tr>
+          <th scope="row">検証HTTPが環境proxy・redirectを使用し得る</th>
+          <td>
+            loopbackへのHTTPはproxyとredirectを無効化し、本文サイズを制限する。API
+            tokenはLARMだけへ送り、backendへは送らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">配備scriptがsource管理外、異常系の自動検証なし</th>
+          <td>
+            apply-voicevox-release.pyとテストをrepositoryへ追加し、test:deploymentへ組み込む。外部wrapperはレビュー済みcandidateのscriptを呼ぶだけにする。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      配備の21ケースで認証失敗、適用timeout、中断、二重実行、認証中のrelease変更、pending
+      requestの保護、
+      別manifestのstatus拒否、復旧先変更、rollback・再起動失敗、無効なWAV、枠競合の再試行、
+      適用済みreleaseの再実行、実際の署名検証と改変拒否、HTTP redirect・proxy・本文上限を検証した。
+      初期候補のreview前scriptにあった復旧成功の保証は訂正する。
+      activatorがまだ動作中、提出済みrequestがまだpending、または権限・復旧操作に失敗した場合は、
+      復旧未完了を明示して運用確認を要求する。これらの状態を成功として扱わない。
+    </p>
+    <p>
+      releaseの適用は本レビューに含めて実行していない。元worktreeの既存変更は維持し、
+      今回の修正と配備検証だけを隔離checkoutの新しい候補へ取り込む。
+    </p>
+    <p>
+      レビュー済み候補は<code>9c5b396b85f34cdce93835fde4c7e8a5c8428111</code>。
+      通常builderの全checkを通して再署名し、専用intent directoryと適用用wrapperを更新した。
+      元worktreeの全checkは712件、tooling 24件、deploymentのBunテスト54件とshell・Python検証が成功。
+      隔離候補の全checkも669件、tooling 24件、deploymentのBunテスト54件とshell検証が成功した。
+      wrapperのcheckモードで新しい署名とmanifest、稼働前提を検証した。
+      通常の監視inboxへの投入は行っておらず、稼働daemonは48996cbf82ee、VOICEVOX PIDは3612のまま。
+      再レビューで今回の変更範囲に未解決の指摘は残っていない。
+    </p>
+  </section>
+  <section id="nearby-errors">
+    <h2>前後の別エラー</h2>
+    <p>
+      14:40:45.149にはvoicevox-ttsへの要求2本が重なり、一方がhttp_200、もう一方がqueue_fullで終了した。
+      /v1/audio/voicesも音声runtimeの1枠を使用するため、報告された429は枠競合と整合する。
+      個別のURLをGatewayイベントが保存しないため、拒否した要求がvoicesだったことはEumenesの報告に依存する。
+    </p>
+    <p>
+      14:45:23のTTS候補req_6ddbdd54-9ee9-4bd4-86de-88f86a0f125dは23.263開始、23.382にclient_cancelled。
+      backendは23.033に200を記録しているが、Gateway取消と時刻・対象がずれるため、その成功を同一要求とは断定しない。
+      14:48–52のASRではclient_cancelledとhttp_200があり、この範囲のGateway完了イベントには
+      upstream_protocol_errorやupstream_errorは見つからない。
+      Eumenesのlarm_invalid_contract、network_unavailableの分類条件・正確な相関IDは未確認。
+      これらを今回のOpen JTalk解析失敗と同じ原因にはまとめない。
+    </p>
+  </section>
+</article>

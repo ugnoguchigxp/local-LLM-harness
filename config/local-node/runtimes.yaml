@@ -293,8 +293,8 @@ runtimes:
       swapGroup: conversation-llm-slot
     resources:
       estimatedMemoryGB: 48
-      maxConcurrentAllocations: 3
-      maxConcurrentRequests: 3
+      maxConcurrentAllocations: 4
+      maxConcurrentRequests: 4
       maxQueuedRequests: 16
       queueTimeoutMs: 30000
     deployment:

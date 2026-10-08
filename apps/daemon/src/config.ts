@@ -7,6 +7,8 @@ export type DaemonConfig = {
   configDir: string;
   localServicesEnabled: boolean;
   localServicesJournal: string;
+  localServicesRequests: string;
+  localServicesFile: string;
   localServicesSecrets: string;
   localServicesObservations: string;
   localServicesPrincipals: string;
@@ -329,6 +331,8 @@ export function parseDaemonConfig(
 
   return {
     localServicesEnabled: booleanSetting(env, "LARM_LOCAL_SERVICES_ENABLED", false),
+    localServicesFile: absolutePathSetting(env, "LARM_LOCAL_SERVICES_FILE", resolve(env.LARM_CONFIG_DIR ?? join(sourceDir, "../../../config/local-node"), "local-services.yaml")),
+    localServicesRequests: absolutePathSetting(env, "LARM_LOCAL_SERVICES_REQUESTS", "/var/lib/larm/local-services/requests"),
     localServicesJournal: absolutePathSetting(env, "LARM_LOCAL_SERVICES_JOURNAL", "/var/lib/larm/local-services/journal.json"),
     localServicesSecrets: absolutePathSetting(env, "LARM_LOCAL_SERVICES_SECRETS", "/etc/larm/local-services/secrets"),
     localServicesObservations: absolutePathSetting(env, "LARM_LOCAL_SERVICES_OBSERVATIONS", "/var/lib/larm-local-services/observations"),

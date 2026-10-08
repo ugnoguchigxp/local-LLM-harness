@@ -1,0 +1,46 @@
+[Unit]
+Description=LARM registered local service @SERVICE_ID@ member @MEMBER_ID@
+RequiresMountsFor=@DATA_ROOT@
+BindsTo=@MOUNT_UNIT@
+After=@MOUNT_UNIT@
+
+[Service]
+Type=simple
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@RELEASE_ROOT@
+Environment="HOME=@PRIVATE_ROOT@/home"
+Environment="XDG_CONFIG_HOME=@PRIVATE_ROOT@/config"
+Environment="XDG_STATE_HOME=@DATA_ROOT@/state"
+Environment="XDG_DATA_HOME=@DATA_ROOT@/data"
+Environment="XDG_CACHE_HOME=@DATA_ROOT@/cache"
+Environment="TMPDIR=@DATA_ROOT@/work/@MEMBER_ID@"
+Environment="TMP=@DATA_ROOT@/work/@MEMBER_ID@"
+Environment="TEMP=@DATA_ROOT@/work/@MEMBER_ID@"
+Environment="PYTHONDONTWRITEBYTECODE=1"
+ExecStart=@REGISTERED_EXEC_START@
+Restart=no
+KillMode=control-group
+SendSIGKILL=no
+TimeoutStopSec=@STOP_SECONDS@
+MemoryMax=@MEMORY_MAX_BYTES@
+MemorySwapMax=0
+CPUQuota=@CPU_QUOTA_PERCENT@%
+TasksMax=@TASKS_MAX@
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+PrivateTmp=yes
+PrivateDevices=yes
+DevicePolicy=closed
+Delegate=no
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RuntimeDirectory=larm-app-@SERVICE_ID@-@MEMBER_ID@
+RuntimeDirectoryMode=0700
+LogsDirectory=larm-app-@SERVICE_ID@-@MEMBER_ID@
+LogsDirectoryMode=0700
+ReadWritePaths=@PRIVATE_ROOT@ @DATA_ROOT@/data @DATA_ROOT@/state @DATA_ROOT@/cache @DATA_ROOT@/work/@MEMBER_ID@
+UMask=0077

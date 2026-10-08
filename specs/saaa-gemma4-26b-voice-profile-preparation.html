@@ -6,10 +6,74 @@
     selectorは<code>SAAA-gemma4-26b</code>、Agent Profileは
     <code>saaa-conversation-gemma4-26b-voice</code>とする。既定の
     <code>SAAA</code> selectorと常駐LLMは変更しない。
+    以下の初期準備記録に対し、現行sourceのsession構成は次節の2026-10-07更新を優先する。
   </p>
 
+  <section id="four-session-budget">
+    <h2>2026-10-07更新: メイン256Kと補助64Kの4 session</h2>
+    <p>
+      メイン会話は<code>SAAA-gemma4-26b</code>を選び、
+      <code>saaa-conversation-gemma4-26b-voice</code>の256K contextを使用する。
+      このProfileは現在llm、asr、tts、embedding、system-oneの5 Providerを持つ。
+      補助sessionは<code>SAAA-gemma4-26b-64k</code>を選び、
+      <code>saaa-conversation-gemma4-26b-64k</code>のLLMのみを使用する。 両ProfileのLLMは同じroute
+      <code>llm-saaa-gemma4-26b</code>から runtime
+      <code>gemma4-26b-conversation</code>へ解決し、1 instanceを共有する。
+    </p>
+    <table>
+      <caption>
+        メイン1 sessionと補助3 sessionのcontext予算
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">session数</th>
+          <th scope="col">各sessionの上限</th>
+          <th scope="col">入力予算</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">メイン会話</th>
+          <td>1</td>
+          <td>262144 token</td>
+          <td>256072 token</td>
+        </tr>
+        <tr>
+          <th scope="row">補助LLM</th>
+          <td>3</td>
+          <td>65536 token</td>
+          <td>59464 token</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      各上限は入力と出力を含む。出力reserveは4096 token、safety marginは1976 token。
+      最大予算の合計は458752 token（448K）で、共有KV poolの524288 token（512K）に対して 65536
+      token（64K）の余裕がある。起動設定は
+      <code>--ctx-size 524288 --parallel 4 --kv-unified --cont-batching</code>、KV cacheはq4_0とする。
+      LARMの同時allocationとrequest上限も4へ揃える。 Warmは1 instance、memory
+      estimateは48GBを維持する。
+      新しい既定releaseは<code>gemma4-26b-conversation-warm-p4-v1</code>で、旧p3
+      releaseは非既定として残す。
+    </p>
+    <aside>
+      <p>
+        4枠はruntime全体で共有し、メイン専用枠を予約する仕組みはない。
+        Consumerはメイン1本と補助3本に制限し、各ProfileのcontextWindowを用いて最終prompt、 tool
+        schema、履歴、検索結果と出力のtoken予算を確認する。
+        contextWindowはConsumer向け契約であり、gatewayでのtoken数の強制検査やslotごとの固定KV分割ではない。
+        メインProfileを複数sessionで選ぶ場合、256Kを4 session同時に使える保証はない。
+      </p>
+    </aside>
+    <p>
+      検証は共有routeの解決、64Kの境界判定、4個目のallocation受理と5個目の拒否を対象とする。
+      source設定の変更と稼働環境への適用は別であり、実機の4並列latencyや448K長文負荷は別途検証する。
+    </p>
+  </section>
+
   <section id="provider-contract">
-    <h2>Provider契約</h2>
+    <h2>初期準備時のProvider契約</h2>
     <table>
       <caption>
         Gemma 4評価用Agent Profileを構成する3 Provider
@@ -43,7 +107,7 @@
   </section>
 
   <section id="artifact-boundary">
-    <h2>Artifactと起動境界</h2>
+    <h2>初期準備時のArtifactと起動境界</h2>
     <p>
       GGUFはGoogleの公式repositoryのrevision
       <code>d1c082be9cf3c8a514acf63b8761f4b41935842e</code>へ固定し、期待sizeを

@@ -669,3 +669,24 @@ test("speech gateway preserves provider 429 and Retry-After", async () => {
   expect(response.status).toBe(429);
   expect(response.headers.get("retry-after")).toBe("2");
 });
+
+test.each([
+  { status: 422, error: { code: "speech_text_unprocessable", message: "VOICEVOX could not analyze input text", param: "input" }, retryAfter: undefined },
+  { status: 503, error: { code: "speech_provider_unavailable", message: "Synthesizer is starting" }, retryAfter: "1" },
+])("speech gateway preserves provider $status and retry semantics", async ({ status, error, retryAfter }) => {
+  const app = await makeSpeechApp({
+    gatewayFetch: async () => Response.json(
+      { error },
+      { status, headers: retryAfter ? { "retry-after": retryAfter } : {} },
+    ),
+  });
+  const allocationId = await allocate(app, [{ capability: "speech.tts", route: "tts-default" }]);
+  const response = await app.request("/v1/audio/speech", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-larm-allocation-id": allocationId },
+    body: JSON.stringify({ model: "voicevox-core", input: "。" }),
+  });
+  expect(response.status).toBe(status);
+  expect(response.headers.get("retry-after")).toBe(retryAfter ?? null);
+  expect(await response.json()).toEqual({ error });
+});

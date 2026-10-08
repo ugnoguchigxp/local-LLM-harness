@@ -90,3 +90,5 @@ export {
 export { LocalServiceSystemdBackend, localServiceObservationSchema, type LocalServiceBackend, type LocalServiceObservation } from "./local-service-systemd";
 
 export { LocalServiceFileJournal } from "./local-service-journal";
+
+export { SystemdProcessBackend, LocalServiceRoutingBackend, processServiceObservationSchema } from "./local-service-process";

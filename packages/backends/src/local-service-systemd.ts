@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import {
-  localServiceActivitySchema,
+  legacyServiceInstanceToken, localServiceActivitySchema,
   type LocalServiceActivity, type LocalServiceDefinition, type LocalServiceBackend,
 } from "@larm/core";
 
@@ -15,7 +15,7 @@ export const localServiceObservationSchema = z.object({
 }).strict();
 export type LocalServiceObservation = z.infer<typeof localServiceObservationSchema>;
 export type { LocalServiceBackend } from "@larm/core";
-async function systemctl(args: string[], timeoutMs: number): Promise<void> {
+export async function systemctl(args: string[], timeoutMs: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn("/usr/bin/systemctl", args, { shell: false, stdio: "ignore" });
     const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("unit_control_timeout")); }, timeoutMs);
@@ -23,7 +23,7 @@ async function systemctl(args: string[], timeoutMs: number): Promise<void> {
     child.once("exit", code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error("unit_control_failed")); });
   });
 }
-async function boundedJson(r: Response): Promise<unknown> {
+export async function boundedJson(r: Response): Promise<unknown> {
   const reader = r.body?.getReader();
   if (!reader) throw new Error("empty_response");
   const decoder = new TextDecoder();
@@ -41,14 +41,15 @@ async function boundedJson(r: Response): Promise<unknown> {
   return JSON.parse(result);
 }
 export class LocalServiceSystemdBackend implements LocalServiceBackend {
-  constructor(private readonly options: {
+  constructor(protected readonly options: {
     secretRoot: string; observationRoot: string; now?: () => number;
     fetch?: typeof fetch; control?: (args: string[], timeoutMs: number) => Promise<void>;
   }) {}
   async start(d: LocalServiceDefinition): Promise<void> {
+    if (d.backend !== "systemd-container-group") throw new Error("backend_mismatch");
     const deadline = Date.now() + d.readiness.timeoutSeconds * 1000;
     const o = await this.observe(d);
-    if (o.containerIds.length || !["stopped", "failed"].includes(o.state)) throw new Error("start_requires_stopped_group");
+    if (!o.stopConfirmed || !["stopped", "failed"].includes(o.state)) throw new Error("start_requires_stopped_group");
     const control = this.options.control ?? systemctl;
     // RemainAfterExit can stay active after the backing containers have exited.
     // Reset only a positively observed empty group before a new activation.
@@ -57,6 +58,7 @@ export class LocalServiceSystemdBackend implements LocalServiceBackend {
     await control(["start", d.deployment.unit], remaining);
   }
   async stop(d: LocalServiceDefinition): Promise<void> {
+    if (d.backend !== "systemd-container-group") throw new Error("backend_mismatch");
     const control = this.options.control ?? systemctl, deadline = Date.now() + d.lifecycle.gracefulStopSeconds * 1000;
     // A failed/inactive supervising unit does not execute ExecStop. The fixed
     // one-shot stop unit must run the guarded helper regardless of that state.
@@ -64,7 +66,8 @@ export class LocalServiceSystemdBackend implements LocalServiceBackend {
     const remaining = deadline - Date.now(); if (remaining <= 0) throw new Error("stop_timeout");
     await control(["stop", d.deployment.unit], remaining);
   }
-  async observe(d: LocalServiceDefinition): Promise<LocalServiceObservation> {
+  async observe(d: LocalServiceDefinition): Promise<Awaited<ReturnType<LocalServiceBackend["observe"]>>> {
+    if (d.backend !== "systemd-container-group") throw new Error("backend_mismatch");
     const raw = await readFile(`${this.options.observationRoot}/${d.id}.json`, "utf8");
     if (raw.length > 16384) throw new Error("observation_too_large");
     const o = localServiceObservationSchema.parse(JSON.parse(raw));
@@ -73,7 +76,7 @@ export class LocalServiceSystemdBackend implements LocalServiceBackend {
     if (new Set(o.containerIds).size !== o.containerIds.length) throw new Error("group_duplicate_identity");
     if (o.state === "running" && o.containerIds.length !== 2) throw new Error("group_incomplete");
     if (o.state === "stopped" && o.containerIds.length !== 0) throw new Error("group_not_stopped");
-    return o;
+    return { ...o, instanceToken: legacyServiceInstanceToken(o.containerIds), stopConfirmed: o.containerIds.length === 0 && ["stopped", "failed"].includes(o.state) };
   }
   private async request(d: LocalServiceDefinition, path: string, method = "GET", body?: unknown): Promise<unknown> {
     const token = (await readFile(`${this.options.secretRoot}/${d.activity.secretRef}`, "utf8")).trim();
@@ -96,10 +99,12 @@ export class LocalServiceSystemdBackend implements LocalServiceBackend {
   async resume(d: LocalServiceDefinition, token: string) { await this.request(d, "/internal/larm/resume", "POST", { drainToken: token }); }
   async ready(d: LocalServiceDefinition): Promise<boolean> {
     try {
-      const r = await (this.options.fetch ?? fetch)(`${d.deployment.endpoint}/health/ready`, { redirect: "error", signal: AbortSignal.timeout(3000) });
+      const r = await (this.options.fetch ?? fetch)(`${d.deployment.endpoint}${d.backend === "systemd-process" ? d.readiness.path : "/health/ready"}`, { redirect: "error", signal: AbortSignal.timeout(3000) });
       if (!r.ok) { await r.body?.cancel(); return false; }
       const body = await boundedJson(r);
-      return z.object({ status: z.literal("ready"), capabilities: z.object({ source_management: z.literal(true) }) }).safeParse(body).success;
+      if (d.backend === "systemd-container-group") return z.object({ status: z.literal("ready"), capabilities: z.object({ source_management: z.literal(true) }) }).safeParse(body).success;
+      const parsed = z.object({ status: z.string(), capabilities: z.record(z.string(), z.boolean()).optional() }).safeParse(body);
+      return parsed.success && parsed.data.status === d.readiness.status && Object.entries(d.readiness.capabilities).every(([k, v]) => parsed.data.capabilities?.[k] === v);
     } catch { return false; }
   }
 }

@@ -337,8 +337,8 @@ test("production swap group matches llama-swap model membership", () => {
   const gemma4_26b = registry.runtimes.find((runtime) => runtime.id === "gemma4-26b-conversation");
   expect(gemma4_26b?.policy.warm?.minInstances).toBe(1);
   expect(gemma4_26b?.resources).toMatchObject({
-    maxConcurrentAllocations: 3,
-    maxConcurrentRequests: 3,
+    maxConcurrentAllocations: 4,
+    maxConcurrentRequests: 4,
   });
   const agent35bCommand = configured.models["ornith15-35b-agent"]?.cmd ?? "";
   expect(ornithCommand).toContain("/srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server");
@@ -376,7 +376,7 @@ test("production swap group matches llama-swap model membership", () => {
   expect(contextStill64Command).toContain("--ubatch-size 256");
   expect(gemma4_26bCommand).toContain("gemma-4-26B_q4_0-it.gguf");
   expect(gemma4_26bCommand).toContain("--ctx-size 524288");
-  expect(gemma4_26bCommand).toContain("--parallel 3");
+  expect(gemma4_26bCommand).toContain("--parallel 4");
   expect(gemma4_26bCommand).toContain("--cache-type-k q4_0");
   expect(gemma4_26bCommand).toContain("--cache-type-v q4_0");
   expect(gemma4_26bCommand).toContain("--cont-batching");

@@ -106,6 +106,25 @@ agentProfiles:
         publicModel: laya-multilingual
         publishModel: false
         readiness: system-one
+  saaa-conversation-gemma4-26b-64k:
+    description: SAAA auxiliary 64K LLM session sharing the Gemma 4 26B four-slot runtime with the main voice profile
+    schedulingPriority: 4000
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-saaa-gemma4-26b
+        publicModel: gemma4-26b-a4b
+        publishModel: false
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 65536
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
   saaa-conversation-ornith15:
     description: SAAA base response set with resident Ornith 1.5 35B, Qwen 3.5 2B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding
     schedulingPriority: 4000
@@ -410,6 +429,8 @@ profileSelectors:
     agentProfile: saaa-conversation-ornith15
   SAAA-gemma4-26b:
     agentProfile: saaa-conversation-gemma4-26b-voice
+  SAAA-gemma4-26b-64k:
+    agentProfile: saaa-conversation-gemma4-26b-64k
   SAAA-w-Image:
     agentProfile: saaa-conversation-gemma4-26b-voice
     services:

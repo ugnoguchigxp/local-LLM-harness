@@ -319,7 +319,7 @@ models:
 
   gemma4-26b-conversation:
     # Shared SAAA conversation and background provider. Keep one warm instance;
-    # unified KV lets three slots share the 512K context pool.
+    # unified KV shares 512K across one 256K main and three 64K auxiliary sessions.
     ttl: 0
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
@@ -329,7 +329,7 @@ models:
       --fit off
       --flash-attn on
       --ctx-size 524288
-      --parallel 3
+      --parallel 4
       --batch-size 2048
       --ubatch-size 512
       --threads 16

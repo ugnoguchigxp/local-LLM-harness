@@ -1,0 +1,335 @@
+<article lang="ja">
+  <h1>Nextorage 2 TB：単一パーティションの保存先とSSHバックアップ</h1>
+  <p>
+    Nextorageをlocal-nodeへ常時接続し、全容量を一つのext4データパーティションとして使う。
+    用途別の容量予約や強制クォータは設けず、Macから自由なフォルダ構成でscp保存できるようにする。
+    docling-deskのオフィス文書・WikiはHTTP経由で登録する。ユーザーの指定によりTime
+    Machineは使わない。
+  </p>
+  <dl>
+    <dt>状態</dt>
+    <dd>
+      単一GPT/ext4への初期化、固定マウント、約25.3
+      GBのモデルファイルによる実測・内容検証が完了。サービス配備とMac上の削除は未実施。
+    </dd>
+    <dt>更新日</dt>
+    <dd><time>2026-10-08</time></dd>
+    <dt>利用者の希望</dt>
+    <dd>
+      なるべく単一パーティションとし、細かな分類や容量配分をせず保存したい。
+      接続機器のボリュームラベルはNX-P4SE2TBで、USB4の40 Gbps相当リンクを確認した。
+    </dd>
+    <dt>確認済み</dt>
+    <dd>
+      ユーザーによるscpの動作確認。MacにはEndpointセキュリティがある。PCにはUSB4 Host
+      Routerが2つ認識されている。
+    </dd>
+  </dl>
+  <section id="connected-device">
+    <h2>接続後の読み取り確認</h2>
+    <p>
+      2026年10月7日、外付けとして新たに<code>/dev/nvme1n1</code>を認識した。
+      USB4側のvendorはNXTRG、device名はNX-P、NVMe状態はlive。 ディスク容量は2,048,408,248,320
+      byteで、約2.05 TB・1.86 TiB。
+      内蔵のLexarは<code>/dev/nvme0n1</code>であり、今回の機器と区別できる。
+      デバイス名は再接続で変わり得るため、導入時にはUUID等で識別する。
+    </p>
+    <p>
+      初期化前は単一の<code>/dev/nvme1n1p1</code>があり、形式はexFAT、ラベルはNX-P4SE2TB、
+      パーティションテーブルはMBR、未マウントだった。既存形式とUUIDを確認し、利用者からの
+      フォーマット依頼に従って、下記の単一GPT/ext4構成へ変更した。
+    </p>
+    <p>
+      USB4のsysfsは送受信とも1レーンあたり20.0 Gb/s、2レーン、authorized=1、generation=4を表示した。
+      合計40 Gbps相当のリンクとして認識されている。ファイル読み書きの実測値ではない。
+      PCIeトンネルを通じてNVMeとして見えるため、USBストレージとしてlsusbに載らないことだけで未認識とは判断しない。
+    </p>
+  </section>
+  <section id="layout">
+    <h2>初期化・固定マウントと実測結果</h2>
+    <p>
+      利用者は接続済みSSDのフォーマット、マウント、大きなLLMモデルを使う簡単な実測を依頼した。
+      シリアル07005695F3830967、容量2,048,408,248,320 byte、既存exFATのUUID DB55-0839を
+      再確認した。利用者が指定した認証情報をsudoの標準入力で使用し、対象だけを初期化した。
+      認証情報は文書やコマンド引数に保存しない。
+    </p>
+    <p>
+      初期化手順はシリアル・容量・既存パーティション・UUID・未マウント・未使用状態を確認し、
+      対象だけを単一GPT/ext4へ変更した。ext4の予約は1%、UUIDでfstabへ登録し、
+      外付けなしでもOSを起動できるnofailを使う。未マウント時の基底ディレクトリは一般ユーザーから書き込み不可にした。
+      手順のplanは通過し、権限なしのapplyは書き込み前に拒否された。
+      既存パーティションテーブルとfstabは実行時に保存したが、消去したユーザーファイルのバックアップではない。
+    </p>
+    <p>
+      実測対象はOrnith-1.5-35B-Q5_K_M.gguf、25,347,532,544 byte。
+      内蔵原本を保持し、外付けへの通常コピーとfsyncまでを計時した。コピー後はdirect
+      I/Oで読み出してOSキャッシュを避け、SHA-256で原本との一致を確認した。
+      測定用コピーは検証後に削除済み。全ホストのキャッシュを落とす操作は行っていない。
+      コピー速度は内蔵側の読み出しも含む値で、ランダムI/Oやディスク全体の継続書き込み性能は評価しない。
+    </p>
+    <table>
+      <caption>
+        25,347,532,544 byteのモデルで行った単回の連続転送実測
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">測定</th>
+          <th scope="col">時間</th>
+          <th scope="col">実効速度</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">内蔵から外付けへのコピーとfsync</th>
+          <td>9.016秒</td>
+          <td>2,811 MB/s、約2.81 GB/s</td>
+        </tr>
+        <tr>
+          <th scope="row">外付けのdirect I/O読み出し</th>
+          <td>6.683秒</td>
+          <td>3,793 MB/s、約3.79 GB/s</td>
+        </tr>
+        <tr>
+          <th scope="row">内容検証</th>
+          <td>SHA-256一致</td>
+          <td>原本を維持し、測定用コピーのみ削除</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      現在のfilesystem UUIDは<code>de97577d-c5d3-4b57-ac4b-3753a2f6d331</code>、
+      マウント先は<code>/srv/storage/nextorage</code>。ラベルはNEXTORAGE。
+      検証後の空き容量は1,994,600,321,024 byte、約1.99 TB。
+      <code>files/</code>は利用者uid/gid
+      1000が所有し、scp保存先として書き込み可能。
+      <code>services/</code
+      >と<code>backups/</code>は初期状態ではrootが管理する。
+      利用者の後続依頼に従って<code>services/docling-desk/data/</code>、
+      <code>backups/macbook/</code
+      >、<code>backups/host/</code>も作成した。
+      サービス用の所有者設定は配備時に確定する。
+      実測用モデルコピーが残っていないことと、<code>files/</code>への一般ユーザーの書き込み権限を再確認し、
+      実測準備中にできたPythonのコンパイルキャッシュを削除した。測定結果とモデル原本は保持している。
+      fstabの構文・UUID解決と実マウントを確認済み。再起動試験、Macからの実転送、
+      バックアップ自動化、docling-deskの保存先切り替えは今回実施していない。
+    </p>
+  </section>
+  <section id="shared-layout">
+    <h2>一つの保存領域に三つのフォルダ</h2>
+    <p>
+      GPT上にext4の単一データパーティションを作り、UUIDで
+      <code>/srv/storage/nextorage</code>へ固定マウントする。2 TBを全用途で共有する。
+      先の800 GB・600 GB・400 GBという用途別予算は撤回し、固定配分を設けない。
+      ext4はLinuxサービスで常用する設計に合わせた選択で、MacからはSSHまたはHTTP越しに利用する。
+    </p>
+    <table>
+      <caption>
+        保存先の最小構成
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">フォルダ</th>
+          <th scope="col">用途</th>
+          <th scope="col">使い方</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>files/</code></th>
+          <td>Macの開発生成物、プロジェクト、任意のファイル</td>
+          <td>scpで直接保存・取得できる。プロジェクト名や日付などの下位フォルダは自由に作る。</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>services/</code></th>
+          <td>docling-deskなどのアプリのデータ</td>
+          <td>アプリごとに一つの保存先を作り、アプリの所有者が管理する。</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>backups/</code></th>
+          <td>Macに原本を残すファイル、内蔵上の重要データの世代保存</td>
+          <td>普段のファイル操作と独立した履歴を保持する。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      ファイルを送るたびの事前登録、棚卸し、バッチID、圧縮アーカイブ作成を必須にしない。
+      一般保存先は上書きや整理ができ、バックアップ履歴だけを転送用アカウントからの削除対象外にする。
+      空きが10%程度を下回ったら通知して保持世代などを見直す。サービス側の容量不足判定も維持する。
+      保存領域の空きは全用途共通なので、大量保存によってアプリの取り込みが停止し得ることは運用上把握する。
+    </p>
+  </section>
+  <section id="speed">
+    <h2>40 Gbps接続と実際の転送速度</h2>
+    <p>
+      利用者の「40GB対応」はUSB 40 Gbpsの表記を指すと推定する。 40 Gbpsは転送路の規格上約5
+      GB/sに相当し、SSDの実効速度そのものではない。
+      接続時ラベルに対応するNX-P4SE2TBのメーカー公称値は、読み出し4,000 MB/s、書き込み3,600 MB/s。
+      これをGbit/sへ換算すると32.0と28.8で、製品仕様自体がファイル転送40 Gbit/sを公称していない。
+      実測の読み出し3,792.66 MB/sは約30.34 Gbit/sで、公称読み出しの約94.8%。 コピーとfsyncの2,811.45
+      MB/sは約22.49 Gbit/sで、内蔵側の読み出しも含む。
+      このコピー値だけから外付けSSDの単体書き込み性能や律速要因を特定しない。
+    </p>
+    <p>
+      PCではAMD Strix Halo USB4 Host Routerを2つ確認した。 USB3のroot hubが10
+      Gbps表示であることだけからPCの上限を10 Gbpsとは判断しない。 接続後に外付けの40
+      Gbps相当リンクを確認し、モデルファイルの連続コピー約2.81 GB/s、読み出し約3.79 GB/sを実測した。
+      USB4対応コントローラの存在だけで、すべての端子やケーブルが40 Gbps対応とはみなさない。
+    </p>
+    <p>
+      調査時点ではPCのネットワークはWi-Fiで、有線ポートはリンクしていない。
+      MacからのscpとHTTPアップロードの速度はネットワーク、SSH暗号処理、ファイル数にも制約される。
+      SSDのローカル読み書き速度とMacからの転送速度を別々に測る。
+      測定は既存データを壊さないテストファイルで行い、キャッシュだけの値と継続書き込みの値を区別する。
+    </p>
+  </section>
+  <section id="docling">
+    <h2>docling-deskも一つのデータルートで始める</h2>
+    <p>
+      運用を簡単にするため、docling-deskのデータルートは
+      <code>/srv/storage/nextorage/services/docling-desk/data</code>へまとめる案とする。
+      原本・Wikiの<code>content/</code>、抽出・翻訳・プレビューの<code>derived/</code>、
+      SQLiteと処理状態の<code>runtime/</code>、サムネイルの<code>cache/</code>を含める。
+      先の領域別に内蔵と外付けを分ける案は初期構成から外し、実測で問題が出た場合にだけ分離を検討する。
+      外付けにSQLiteを置く場合は、切断・再起動・ロック・永続化の動作を受入確認する。
+    </p>
+    <p>
+      プログラム、実行環境、頻用モデルは内蔵NVMeに置く。
+      アプリの<code>DOCLING_DATA_DIR</code>を保存先へ対応させ、コンテナならホスト側の保存先を明示的にマウントする。
+      隣接checkoutのLARM用composeはnamed
+      volumeを使うため、そのままで今回の外付け保存先へ配置されるわけではない。 Knowledge
+      APIの独立した状態・artifact領域も、実際の起動構成に合わせて配置とバックアップ対象を確認する。
+    </p>
+    <p>
+      保存構成は公開repositoryの文書と、クリーンな隣接checkoutのrevision
+      <code>94f4351142afad6326058c373443bf1c2c8ffccd</code>を確認済み。
+      今回は稼働サービスの配備完了を認定していない。
+      文書・Wikiはアプリの取り込み経路で登録し、Wiki公開版やmanifestをscpで直接編集しない。
+      HTTP公開時は認証付きHTTPSを推奨し、実際のMacからアップロードと取得を確認する。
+    </p>
+    <p>
+      アプリでの資料削除は原本の物理削除を伴うため、HTTP登録と独立した世代バックアップを持つ。
+      アプリ付属の<code>docling_desk.operations.backup</code>で変換と索引書き込みの完了後に
+      原本・成果物・処理状態を一組で保存する。SQLiteは付属処理のbackup APIを使う。
+      出力は内蔵上の復旧用保存先へ置く。同じ外付け内だけへの保存を媒体故障対策としない。
+      資格情報とデータルート外のWiki編集ワークスペースは別途保存する。
+    </p>
+    <p>
+      既存の<a href="./docling-isolated-service-implementation-plan.html">doclingホスティング計画</a
+      >と
+      <a href="./docling-isolated-service-implementation-results-2026-10-06.html"
+        >実装・配備受入状況</a
+      >に対し、
+      本案は保存先の単純化を提案する。サービスの起動方式・認証・公開URLは導入時に確定する。
+    </p>
+  </section>
+  <section id="native-service-alignment">
+    <h2>ホストprocess計画との統合</h2>
+    <p>
+      保存先・mount不在・I/O障害・容量不足・復元の判定方法は<a
+        href="./local-service-host-process-design-and-acceptance.html"
+        >Local Service環境分離の設計と受入仕様</a
+      >に定義した。保存先の切替やサービス構築を今回行うものではない。
+    </p>
+    <p>
+      2026年10月8日、別チャットで検討した<a
+        href="./local-service-host-process-direction-and-plan.html"
+        >Local Serviceのホストprocess標準化</a
+      >と保存方針を統合した。 利用者は内蔵を極力実行環境向けに保持し、docling等の文書データをこの2
+      TBへ置く意向を確認した。
+      文書・Wiki・抽出成果物・AppのSQLite/job状態・文書由来cacheをservices配下へ置き、runtime・依存・プログラム・頻用モデルとLARM制御journalは内蔵に残す。
+      Knowledge
+      APIにはDOCLING_DATA_DIRだけでは足りず、KNOWLEDGE_STATE_DIRとKNOWLEDGE_ARTIFACT_ROOTも明示してAPIとprocessorの共有保存先を合わせる。
+    </p>
+    <p>
+      ホストprocessのunitは実マウントのUUIDと書込み可否を確認し、未接続時は起動しない。
+      内蔵上の同名directoryへの誤保存や空DB初期化を防ぎ、媒体喪失・復帰とDB整合を受入条件にする。
+      内蔵の復旧用backupは保持容量を管理し、全量の無制限な二重保存を前提にしない。
+      mountは10月8日にも読取り確認したが、サービス配下の所有者設定、data移動、App保存先切替とバックアップ自動化は未実施。
+    </p>
+  </section>
+  <section id="mac">
+    <h2>Macからの保存とバックアップ</h2>
+    <p>
+      通常のファイルはscpで<code>files/</code>以下の任意の保存先へ直接送る。
+      Endpointセキュリティ下で実際に通ったscp方式を維持し、任意のSSHコマンド、SFTPクライアント、
+      rsync over SSHは別途利用可否を確認する。rsyncが使える場合は差分転送を追加できる。
+      初期運用で<code>--delete</code>や<code>--remove-source-files</code>は使わない。
+    </p>
+    <p>
+      scpの再帰転送はシンボリックリンクをたどるため、リンクや実行権限を含む開発プロジェクトは
+      必要に応じてtar等にまとめて保存する。Mac固有のメタデータの完全な復元は別途検証する。
+      大きなファイルをまとめる空きがない場合はそのまま順次転送する。
+    </p>
+    <p>
+      Macに原本を残すものは外付け上の世代バックアップにする。
+      Macの容量を空けるために削除する重要ファイルは、転送後の内容確認と内蔵への別コピーを行う。
+      この確認は原本削除時の条件であり、通常のファイル保存の都度ユーザーへ確認を要求しない。
+      再生成可能な中間生成物の扱いは利用者の選択に従い、Macからの自動削除は初期構成に含めない。
+    </p>
+    <p>
+      任意保存先は直接整理できるようにし、過去世代は別のバックアップ所有者で保護する。
+      サーバー側restic等の世代保存は、転送が完了したファイルだけを確定済みとして取り込む。
+      実装時には一時名からのrenameや転送完了通知などの完了判定を設け、途中コピーを唯一の復旧版にしない。
+    </p>
+  </section>
+  <section id="operations">
+    <h2>最低限のホスト運用</h2>
+    <ul>
+      <li>
+        一般ファイル、サービスデータ、バックアップ履歴の所有者を分ける。一般ファイルはユーザーが自由に整理できるようにする。
+      </li>
+      <li>
+        外付け未接続時は依存サービスと書き込みを止める。UUIDとマウントを確認し、内蔵上の同名ディレクトリへの誤保存や空の状態での再初期化を防ぐ。
+      </li>
+      <li>
+        外付けに原本がある重要ファイルは内蔵へ、内蔵の重要データは外付けへ複製する。内蔵の空き容量で足りない場合は別媒体への保存が必要になる。
+      </li>
+      <li>
+        残容量とバックアップ成功日時を監視し、秘密を含むバックアップは暗号化して鍵を別途保管する。
+      </li>
+      <li>
+        データの移動・バックアップはホスト運用として管理する。LARMのProfileによるモデル選択やSAAAの状態所有権を変更しない。
+      </li>
+    </ul>
+  </section>
+  <section id="rollout">
+    <h2>接続後の導入順序</h2>
+    <ol>
+      <li>SSDの型番・シリアル・既存データを読み取り確認し、USB4接続の条件を確かめる。</li>
+      <li>
+        初期化作業の依頼を受けた後、対象と消去されるデータを特定して単一ext4パーティションを作る。
+      </li>
+      <li>
+        固定マウントと三つの保存先を設定し、scp送信・取得、再起動、未接続時の書き込み拒否を確認する。
+      </li>
+      <li>
+        USB側の実効速度とMacからの転送速度を別々に測り、docling-deskの保存先と復元を確認する。
+      </li>
+      <li>重要ファイルのバックアップを設定し、日常は任意ファイルの保存先として使う。</li>
+    </ol>
+  </section>
+  <section id="sources">
+    <h2>一次資料</h2>
+    <p>2026年10月7日に確認。文書内リンクはspecs内に限定する。</p>
+    <dl>
+      <dt>Linux：USB4のsysfs表示仕様</dt>
+      <dd>
+        <code>https://github.com/torvalds/linux/blob/master/Documentation/ABI/testing/sysfs-bus-thunderbolt</code
+        >。送受信速度はレーン単位、レーン数は同時に使用する数。
+      </dd>
+      <dt>Nextorage：NX-P4SE2TBの仕様</dt>
+      <dd>
+        <code>https://www.nextorage.net/ssds/p4se/</code>。USB 40 Gbps、最大読み出し4,000
+        MB/s・書き込み3,600 MB/s。
+      </dd>
+      <dt>docling-desk：保存構成とバックアップ</dt>
+      <dd>
+        <code>https://github.com/ugnoguchigxp/docling-desk/blob/main/docs/content-storage.md</code>、<code>https://github.com/ugnoguchigxp/docling-desk/blob/main/docs/operations.md</code>。
+      </dd>
+      <dt>OpenSSH：scp</dt>
+      <dd><code>https://man.openbsd.org/scp.1</code>。SSH転送と再帰コピーの仕様。</dd>
+      <dt>rsync：公式マニュアル</dt>
+      <dd><code>https://download.samba.org/pub/rsync/rsync.1.html</code>。SSH経由の差分転送。</dd>
+    </dl>
+  </section>
+</article>

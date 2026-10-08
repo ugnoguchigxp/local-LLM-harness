@@ -1,0 +1,597 @@
+<article lang="ja">
+  <h1>Local Serviceのホストプロセス標準化方針と実装計画</h1>
+  <p>
+    2026年10月8日追記：<a href="./local-service-host-process-implementation-results-2026-10-08.html"
+      >実装・環境準備と受入の進捗</a
+    >を追加した。今回の対象はアプリを後から導入できる環境基盤Bであり、docling-deskの導入・改変・依存取得は行わない。以下のApp導入例は別の依頼があった段階の参考であり、現在の配備済み状態ではない。将来のAppのimmutable実行環境は、既存/srv/aiの所有権を変更せずroot管理を成立させるため、内蔵/opt/larm-local-services/releasesに具体化した。
+  </p>
+  <aside>
+    <p>
+      2026年10月8日、環境準備・実行契約・合否判定を具体化した<a
+        href="./local-service-host-process-design-and-acceptance.html"
+        >設計と受入仕様</a
+      >を作成した。本書は方針と変更順序、受入仕様は実装時の必須条件と検証方法を担当する。新サービス構築と実機受入はまだ行わない。
+    </p>
+  </aside>
+  <p>
+    2026年10月7日の利用者合意により、信頼済みLocal
+    Serviceの標準方式をsystemd管理のホストプロセスとする。
+    mutableな状態をサービス単位に局所化し、runtime・依存取得cache・immutable成果物・モデルと既存AI
+    Providerを共有する。
+    方針は合意済み。以下の契約変更、移行手順と資源最適化は実装前の計画であり、配備済み仕様を示すものではない。
+  </p>
+  <p>
+    LARMの確認revisionは7f79874707ba359ced233ff6f355636fa7e20d5e。
+    <a href="./lightweight-local-service-prompt-review-2026-10-07.html">プロンプト評価</a
+    >を具体化する。
+    <a href="./docling-isolated-service-implementation-plan.html">先日のコンテナ配備計画</a
+    >は過去の判断として保存し、
+    <a href="./docling-isolated-service-implementation-results-2026-10-06.html">既存のsource実装</a
+    >から共通制御を継承する。
+    新しい作業ツリー、commit、push、実行環境のインストールとサービス起動は今回行わない。
+  </p>
+  <section id="direction">
+    <h2>採用する方針</h2>
+    <ul>
+      <li>
+        既存のLocal
+        Service名称、LocalServiceManager、利用権APIとClientLocalServicesを維持する。別のApp Runtime
+        Managerや汎用container管理frameworkは追加しない。
+      </li>
+      <li>
+        Linux標準backendとしてsystemd-processを追加する。Docker
+        daemon、image、仮想OS、アプリごとの固定RAM領域は標準方式の前提にしない。
+      </li>
+      <li>
+        ホストprocessもサービス専用cgroupで所有・資源・終了を観測する。環境変数の分離だけで子孫processの停止を保証しない。
+      </li>
+      <li>
+        登録済みで信頼するアプリを対象とする。host
+        filesystem保護とprivate状態は誤書込み防止のために使い、未知コードに対する強いsecurity
+        boundaryとは扱わない。
+      </li>
+      <li>
+        既存systemd-container-groupは互換性と明示選択のために保持する。今後の標準サービスにコンテナを要求せず、VMや新コンテナbackendを追加実装しない。
+      </li>
+      <li>
+        メモリー効率はhost全体の実測で判断する。共有ファイル、共有推論process、論理予算、使用上限、物理断片化を区別する。
+      </li>
+    </ul>
+  </section>
+  <section id="architecture">
+    <h2>責務と実行経路</h2>
+    <p>
+      Consumerのensure → 既存認可 → LocalServiceManagerの利用権・起動集約 → 資源受付 →
+      登録済みbackend → systemd unit起動 → 所有instance観測とApp readiness → ready
+      leaseのendpoint、という経路を維持する。 停止は全利用者と活動の確認 → drain → 再確認 →
+      所有process群のTERM → 完全終了の観測 → 資源解放とする。
+    </p>
+    <table>
+      <caption>
+        現在の構造を拡張する責務分担
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">場所</th>
+          <th scope="col">責務</th>
+          <th scope="col">変更</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">packages/core</th>
+          <td>登録定義、利用権、世代、状態遷移、起動・停止の競合制御、資源受付。</td>
+          <td>
+            containerIdsと2個固定の前提を除き、backendが証明するinstance識別と完全停止を扱う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">packages/backends</th>
+          <td>systemd操作、cgroup・unit観測、AppのHTTP契約、journal入出力。</td>
+          <td>
+            SystemdProcessBackendとbackend振分けを追加。既存container
+            adapterの2-member判定はここに残す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">apps/daemon</th>
+          <td>backend・認証・設定・observerと資源会計の組立て。</td>
+          <td>一つのManagerへbackend振分けを注入。任意コマンド実行APIを追加しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">配備工程</th>
+          <td>
+            runtimeと依存の準備、アプリ成果物、unit、ユーザー、許可env、private
+            directoryと署名相当のdigest検証。
+          </td>
+          <td>
+            登録前に完成済み成果物を用意する。推論要求の処理中にbuild・install・downloadしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Consumer/App</th>
+          <td>業務job、永続data、利用権更新と必要なAI allocation。</td>
+          <td>
+            AI利用はAgent Profile → route → runtime →
+            backendを守る。軽量App内にモデルを重複配置しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      既存ArtifactStoreはdigest・取得・stagingの再利用候補だが、現行runtime releaseはAI
+      runtime登録と結び付く。 初期は既存の配備時scriptで固定成果物を準備し、一般AppをAI
+      runtimeとして偽装したり、別のpackage managerを作らない。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>定義・観測契約の最小変更</h2>
+    <ol>
+      <li>
+        local-services.v1を引き続き読めるようにし、process定義はv2のbackend別strict
+        schemaで追加する。backendを省略して旧設定の意味を変えない。新規設定の生成時はsystemd-processを選ぶ。
+      </li>
+      <li>
+        process側のdeploymentは承認済みunit、release、manifestDigest、固定endpointを持つ。実行ファイル・argv・cwd・許可envは管理者が準備したunitとreleaseの内容に固定し、consumerのensure
+        bodyへ載せない。
+      </li>
+      <li>
+        HTTP
+        readinessのpath、期待statusと必要capabilityを承認済み定義へ移す。doclingのsource_management要件を維持し、他Appにdocling固有capabilityを要求しない。汎用のJSON式評価frameworkは不要。
+      </li>
+      <li>
+        観測にbackend種別、opaqueなinstanceToken、明示的な停止確認、observedAtと資源観測を持たせる。未知観測、読込み失敗、unit
+        inactiveだけを完全停止の証拠にしない。
+      </li>
+      <li>
+        process側のinstanceTokenはhost
+        boot、unitのInvocationID、member構成、releaseから作る。MainPIDとControlGroupは診断・所有照合に使う。PID再利用と、同じunit名での別起動を区別する。
+      </li>
+      <li>
+        stop操作へ期待instanceTokenを渡し、制御直前に同じinstanceであることをbackend側でも確認する。unitを操作する前後に変わったinstanceを勝手に停止・adoptしない。
+      </li>
+      <li>
+        journalをv2へ移行し、v1のcontainerIdsは既存container
+        adapterの識別へ正規化する。移行は元fileを保存してatomicに行い、revision不一致・未知所有は資源を保持してfailedへする。daemon再起動時の旧lease失効は維持する。
+      </li>
+    </ol>
+    <p>
+      初期の公開lease、HTTP endpoint、ensure/renew/releaseと利用者認可は維持する。
+      lifecycleはon-demand・単一instanceから開始し、always-on/manual、dynamic port、MCP
+      stdioは独立の追加契約とする。
+      複数unitのサービスは承認済みmember一覧で必要数を定義する。固定targetを入口にしても、targetのactiveだけを稼働や終了の根拠にせず、全memberのinstanceとcgroupを確認する。
+    </p>
+  </section>
+  <section id="environment">
+    <h2>共有資産と個別状態の配置</h2>
+    <p>
+      このhostの既存/srv/ai構成に合わせ、重量物をrepository外に置く。以下は配備候補で、まだ作成していない。
+      service IDは論理名、release digestはimmutable成果物の版、generationは一回の起動を表す。
+    </p>
+    <p>
+      2026年10月8日の追加合意と別チャット「nextstorage 2TBの活用方法を考案」の記録を照合した。
+      <a href="./nextorage-usb-storage-and-mac-backup-plan.html">2 TB保存領域の計画</a>に従い、
+      実行環境と頻用モデルは内蔵、文書・抽出成果物・業務DBはNextorageへ置く。 下記の内蔵private
+      directoryはHOME・設定・小さな制御情報のために使い、doclingの大容量data保存先にはしない。
+    </p>
+    <table>
+      <caption>
+        保存先と書込み権限
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">保存先候補</th>
+          <th scope="col">内容</th>
+          <th scope="col">書込み主体</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">/srv/ai/runtimes/&lt;runtime&gt;/&lt;version&gt;</th>
+          <td>Python、Bun、Node等の共有実行ファイル。</td>
+          <td>配備工程のみ。サービスからread-only。</td>
+        </tr>
+        <tr>
+          <th scope="row">/srv/ai/cache/packages/&lt;tool&gt;</th>
+          <td>uv、Bun/npm、Cargo、Goの取得cache。</td>
+          <td>
+            prepare専用ユーザーがtoolのlock規則に従って書く。サービスへ共通の書込み権限を渡さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">/srv/ai/apps/local-services/&lt;id&gt;/releases/&lt;digest&gt;</th>
+          <td>完成済みentrypoint、依存環境、静的assets。build後の成果物。</td>
+          <td>配備工程のみ。内容を稼働中に変更せず、次回起動でreleaseを選ぶ。</td>
+        </tr>
+        <tr>
+          <th scope="row">/srv/ai/models</th>
+          <td>weight、tokenizer、docling model snapshot等。</td>
+          <td>既存の準備工程。サービスには必要なsnapshotの読取りだけを許す。</td>
+        </tr>
+        <tr>
+          <th scope="row">/var/lib/larm/local-service-apps/&lt;id&gt;</th>
+          <td>home、config、小さな制御情報。大容量の業務data/state/workは外付けへ明示配置する。</td>
+          <td>専用サービスユーザー。LARMの制御journalとAppの業務DBを区別する。</td>
+        </tr>
+        <tr>
+          <th scope="row">/srv/storage/nextorage/services/&lt;id&gt;/data</th>
+          <td>文書・Wiki原本、抽出・プレビュー、業務DB・索引、文書由来cache、大きな処理用work。</td>
+          <td>
+            専用サービスユーザー。永続data/stateは停止後も保持。アプリが必要な下位構造だけ作り、用途別容量予約は設けない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">/var/cache/larm/local-service-apps/&lt;id&gt;</th>
+          <td>小さな実行時cacheとprepare時のprivate build。文書由来の大容量cacheは外付け。</td>
+          <td>
+            App
+            cacheは専用サービスユーザー。buildはprepare工程。容量上限・保持期限を決め、GCは稼働・参照確認後に行う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">/run/larm-local-services/&lt;id&gt;</th>
+          <td>socket、PID補助情報、世代別TMP。</td>
+          <td>
+            サービス専用。完全停止後に回収し、旧generationのcleanupが新generationの一時物を消さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">journalと必要な/var/log配下</th>
+          <td>stdout/stderr、障害診断とApp log。</td>
+          <td>systemdまたは専用サービスユーザー。保持期限と容量を設定する。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      各サービスに専用の固定UIDを用意し、HOME、TMPDIR、XDG_CONFIG_HOME、XDG_DATA_HOME、XDG_STATE_HOME、XDG_CACHE_HOMEとWorkingDirectoryを明示する。
+      HOMEを変えるだけでは絶対パスやホストの共通/tmpへの書込みを防げないため、NoNewPrivileges、ProtectSystem=strict、ProtectHomeと必要なReadWritePathsを組み合わせる。
+      PrivateTmpを使う場合も大きな処理用一時物の保存先は明示し、全work/dataをtmpfsへ移してRAMを消費しない。
+      モデル準備はoffline化し、Pythonの実行時bytecode生成など共有成果物への暗黙書込みを抑える。
+    </p>
+    <p>
+      runtimeの必要版が異なれば版別に共存させる。Pythonのvenvはlockごとに必要だが、同じ依存内容を取得cacheからlink/reflinkできる条件を使う。
+      uv
+      cacheと依存環境は同じfilesystemに置く候補とし、cacheの直接改変や書込み可能なhardlink共有を避ける。
+      Node/Bunはlockごとの完成依存を固定し、Go/Rustは原則完成済みbinaryを動かす。toolchainとcompilerを実行instanceごとにロード・複製しない。
+      初期はBunとPythonというdoclingに必要なprepare処理だけを用意する。
+    </p>
+  </section>
+  <section id="storage-integration">
+    <h2>2 TB増設の別チャットとの統合</h2>
+    <p>
+      参照チャットは「nextstorage 2TBの活用方法を考案」、IDは01a11531-f8bf-76c1-af2c-d9810dfc2a81。
+      10月7日の作業記録では単一GPT/ext4、UUID固定マウント、files/services/backupsとdoclingデータ用フォルダの作成、実測用モデルコピーの削除まで完了。
+      用途別の固定容量配分とTime
+      Machineは採用しない。doclingの保存先切替とバックアップ自動化は未実施。
+      10月8日のread-only確認でも、/srv/storage/nextorageはext4、UUID
+      de97577d-c5d3-4b57-ac4b-3753a2f6d331としてマウントされていた。
+      service配下は管理者権限のため内容の再確認はしておらず、配備前に所有者と空き容量を確認する。
+    </p>
+    <p>
+      利用者が「プライマリの1 TB」と呼んだ保存領域は内蔵実行側という意味で扱う。
+      観測した内蔵diskの物理容量は2,000,398,934,016 byte、Linux領域は1,561,485,901,824
+      byte、空きは約944 GiB。 外付けの2 TBとは別物であり、容量の呼称を理由に配置方針を変更しない。
+    </p>
+    <table>
+      <caption>
+        doclingの配備候補。下位フォルダはApp内部用で、利用者の手動分類は不要
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">設定または用途</th>
+          <th scope="col">配置</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">共通data root</th>
+          <td>/srv/storage/nextorage/services/docling-desk/data</td>
+        </tr>
+        <tr>
+          <th scope="row">KNOWLEDGE_STATE_DIR</th>
+          <td>
+            data root配下のknowledge/state。Knowledge
+            APIのSQLite・job状態。資格情報fileは内蔵の明示secretRefを維持。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">KNOWLEDGE_ARTIFACT_ROOT</th>
+          <td>data root配下のknowledge/artifacts。APIとprocessorへ同じ保存先を渡す。</td>
+        </tr>
+        <tr>
+          <th scope="row">DOCLING_DATA_DIR・DOCLING_STATE_DIR</th>
+          <td>
+            data root配下のapp・app-state。通常のdocling文書・Wiki構造とKnowledge
+            API構造を混同しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">DOCLING_CACHE_DIR・大きな作業用TMP</th>
+          <td>
+            data
+            root配下のcache・work。Appが対応する設定を明示して内蔵HOMEと共通/tmpへの大量保存を避ける。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">runtime・依存・完成済みrelease・DOCLING_MODELS_DIR</th>
+          <td>内蔵の/srv/ai配下。モデルの実行用snapshotは文書data rootへ混ぜない。</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM journal・unit・認証設定</th>
+          <td>内蔵の/var/lib/larm・/etc配下。外付けがなくても制御と診断を行えるようにする。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      外付けに依存するApp unitはRequiresMountsFor、mount
+      unitへのBindsToとAfterを設定し、起動前に実マウントのUUID・read/write状態・保存先所有者を検証する。
+      ディレクトリの存在だけで成立とみなさず、外付け未接続時に内蔵上の同名directoryへfallbackしたり空DBを初期化しない。
+      I/O障害では受付を閉じ、readinessを失効させる。通常idle停止と異なり、媒体喪失時の処理継続・成功は保証できない。
+      再接続後はDB・job状態の照合を行い、新しい有効leaseを発行する。失敗した業務POSTは自動再送しない。
+    </p>
+    <p>
+      外付け上のDBはアプリの整合性を保つbackup手順で保存し、同じ外付け内の複製だけを媒体故障へのbackupとは扱わない。
+      内蔵を実行環境向けに保つため、復旧用backupは保持世代と容量を制限し、文書全量を無条件に二重保持しない。
+      必要な独立保存容量が足りなければ別の保存先を検討する。mount喪失・復帰、SQLite整合、容量不足、権限とデータ復元をnative配備の受入条件へ追加する。
+      この追記は設計の統合であり、データ移動、権限変更、起動設定の切替は行っていない。
+    </p>
+  </section>
+  <section id="resources">
+    <h2>一つのメモリープールを有効に使う手順</h2>
+    <p>
+      phase
+      1では既存のstartupReservationBytesと静的admissionを維持し、backend変更と容量policy変更を同時に行わない。
+      doclingの9
+      GiBも実測前に引き下げない。OSのMemoryMaxは異常増加の上限、LARMの予算は同時実行を承認する見込み容量、観測値は現在の使用量として扱う。
+      MemoryHighは必要な実測が揃ってから調整する。低く設定しすぎるとreclaimによりforegroundとAppの遅延を増やすため、単なる節約設定にはしない。
+    </p>
+    <table>
+      <caption>
+        後続の動的予算
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">予算</th>
+          <th scope="col">変更条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">starting</th>
+          <td>起動・モデル準備・復旧queueを含むpeak予算。</td>
+          <td>
+            起動要求前に一括admissionする。既存queueが勝手に処理を再開するAppは、開始時点からjob
+            peakも確保する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ready/idle</th>
+          <td>保持モデルとキャッシュを含む、実測・制約で成立する待機予算。</td>
+          <td>
+            fresh観測と全活動ゼロ、次jobの事前受付制御が揃った場合だけ縮小する。現在の使用量まで無条件に縮小しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">job開始前</th>
+          <td>待機予算＋許可した同時jobの追加peak。</td>
+          <td>
+            Appのprocessorが処理を始める前にLARMへ追加予算を申請。予算不足は待機・拒否し、後からメモリー使用を報告するだけでは不可。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">job終了後</th>
+          <td>待機予算へ戻す候補。</td>
+          <td>
+            job終了通知と活動・資源観測を確認する。終了後も残るモデルcacheは待機予算に含める。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">failed/unknown</th>
+          <td>最後に承認した予算、または保守的peakを保持。</td>
+          <td>
+            heartbeat期限切れだけで実行中jobの容量を解放しない。再照合・終了証拠なしで他Appへ貸し出さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">stopped</th>
+          <td>実行予算を解放。</td>
+          <td>
+            全所有cgroupの終了を確認する。reclaimable file
+            cacheが即時ゼロにならなくても、process終了と区別してhost観測へ反映する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      会計はservice IDとinstance世代をキーにし、既存AI admissionと同じ同期区間で予算を更新する。
+      静的検査は「OS安全床＋解決済みAI runtime予算＋Local Service承認予算」をhost容量と照合する。
+      live検査はMemAvailableへ、まだ実使用へ反映されていない承認予算の残りと、新規増加分を照合する。
+      MemAvailableから既に観測された全使用量をもう一度差し引かない。観測のanon、file、shmem、totalは区別し、全RSSを足して共有ページを二重計上しない。
+    </p>
+    <p>
+      CPU/GPUが同一物理容量を使うUMAでは二つの表示容量を加算しない。GPU/driverの確保量はhost/cgroup観測との重複を確認して補正する。
+      CPUはforegroundを優先するweightとアプリ内thread数を調整し、hard
+      quotaは必要なものだけ実測で決める。
+      初期のmedia相互拒否は維持し、画像・楽曲にも同じ起動・処理予算の経路を導入して混合負荷を確認してから解除する。
+    </p>
+    <p>
+      重量級LLM/ASR/TTS/Embeddingは共有Providerへ呼び出す。consumerが選んだProfileに従ってallocationを取得し、job終了まで更新する。
+      初期はconsumerまたはAppの明示的な連携が所有し、一般的な依存DAG schedulerは追加しない。
+      App専用のdoclingモデルはまず単一processorでロードし、weightをread-onlyで共有する。既存ASR等へ機械的に置換できるとは仮定しない。
+    </p>
+  </section>
+  <section id="lifecycle">
+    <h2>通常停止・異常停止・再起動</h2>
+    <ol>
+      <li>
+        有効lease、queued/running job、active
+        request、processor処理のいずれかがあれば通常停止しない。lease失効だけでjobが終わったとみなさない。
+      </li>
+      <li>
+        idle期間を満たしたらdrainで受付を閉じ、同じApp boot
+        IDとtokenのゼロ活動を再確認する。drain中の新規ensureは既存の停止取消・再起動競合制御を維持する。
+      </li>
+      <li>
+        期待instanceを照合した固定停止controllerから全memberへTERMを送る。systemdはKillMode=control-group、SendSIGKILL=noを明示し、通常停止の無断強制終了を避ける。
+      </li>
+      <li>
+        unit状態と全所有cgroupの空、所有listener/socketの終了を確認した後だけstoppedを返し、予算と一時物を解放する。観測失敗や期限超過はfailedとし、endpointを引き上げて予算を保持する。
+      </li>
+      <li>
+        強制終了は管理者の別手順とする。通常APIから利用できるforceを追加しない。固定停止unitは入口unitがfailed/inactiveでも実行できるようにし、勝手に置き換わったinstanceをkillしない。
+      </li>
+      <li>
+        App unitは初期Restart=noとし、次のensureでLARMが起動を決める。daemon再起動ではjournal、unit
+        InvocationID、App boot IDとreleaseを照合し、未知の既存processを採用しない。job
+        POSTを自動再送しない。
+      </li>
+    </ol>
+    <p>
+      すべての信頼済みAppがTERMで必ず終了するとは保証できない。「無断でjobを中断しない」と「停止期限以内に必ず全processが消える」は同時には約束しない。
+      RAM効率のために、停止未確認の予算を解放してはならない。
+      prepare/buildの子processも専用unitで扱い、失敗時にcompilerやinstallerがホストへ残らないようにする。
+    </p>
+  </section>
+  <section id="docling">
+    <h2>doclingをホストprocessへ移す具体案</h2>
+    <p>
+      隣接docling-deskはcleanなcheckoutの94f4351142afad6326058c373443bf1c2c8ffccdを読取り確認した。
+      Bun Knowledge APIとPython processorは既に分かれ、workerはLARM
+      activity/drain連携を持ち、model/state/cacheは環境変数で指定できる。
+      本体の変更・pull・install・起動はしていない。SAAAの実装は今回使用しない。
+    </p>
+    <ol>
+      <li>
+        Knowledge
+        APIはそのlockと指定Bun版を使う。LARM本体と異なるruntime版を無理に統一せず、共有runtime
+        catalogで版別に用意する。
+      </li>
+      <li>
+        Python
+        processorを将来導入する場合は実際の解析・描画・OCR経路から必要依存を確認し、版を固定する。Dockerfileの依存一覧をホストへの導入指示へ流用しない。LibreOffice等を環境基盤の前提にはしない。App機能を勝手に変更せず、推論時のapt/pipや利用者HOMEへのinstallを避ける。
+      </li>
+      <li>
+        モデルは既存download/verify工程でrepository外のsnapshotへ用意し、DOCLING_MODELS_DIRへread-onlyで渡す。DOCLING_STATE_DIR、DOCLING_DATA_DIR、DOCLING_CACHE_DIR、DOCLING_ENV_FILEを明示してsource
+        checkoutの既定保存先を使わせない。
+      </li>
+      <li>
+        APIとprocessorを二つのforeground unitにし、一つの論理docling
+        serviceとして制御する。processor ready → API readyの順に確認し、停止はApp
+        groupのdrain後にAPI・processor全体を終了する。unit間のstop伝播と順序を明示して実機検証する。
+      </li>
+      <li>
+        両HTTP入口を127.0.0.1へbindし、固定portの競合を確認する。Composeのprocessor DNS名はloopback
+        endpointへ置き換える。loopbackはnetwork isolationではないので、private
+        APIのtoken認証と外向き連携の承認条件は維持する。
+      </li>
+      <li>
+        同じartifact rootを両processが使い、API
+        DBはAPI専用とする。既存volume内にdataがある場合は停止中にbackupし、コピー・所有権・DB整合を検証してから切り替える。旧volumeを稼働中に二方式から同時更新しない。
+      </li>
+      <li>
+        初期はHTTP
+        API、CPU資料変換、offlineモデル、lease、drain、再起動、data保持を将来のApp受入条件とする。実際に選定した処理のTMP、子process回収と書込み境界を確認する。今回はAppの機能・変換方式を変更しない。
+      </li>
+    </ol>
+    <p>
+      先日の記録ではコンテナは未配備なので、通常は停止移行ではなくnative初回配備になる。
+      実装時にはlive状態と既存dataを再確認する。OS依存の衝突があれば版別native依存の追加費用を評価し、共有できるものだけ共有する。
+    </p>
+  </section>
+  <section id="implementation">
+    <h2>実装順序と完了条件</h2>
+    <table>
+      <caption>
+        各段階で成果を確認してから次へ進む
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">作業</th>
+          <th scope="col">完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1. 共通契約</th>
+          <td>
+            local-service.ts、Manager、journalのbackend依存を整理。v1互換、readiness定義とbackend振分け。
+          </td>
+          <td>
+            既存container・API・SDKの回帰が成功。旧journalの移行、未知instanceの隔離、停止直前の置換を再現できる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">2. Linux process</th>
+          <td>
+            SystemdProcessBackend、固定unit/observer/stop
+            controller、Docker不要のinstallerとpolkit。最小HTTP fixtureで確認。
+          </td>
+          <td>
+            二consumerで一回起動。private
+            HOME/TMPへの書込み、孫process、別session化した子の回収、job中停止拒否、起動失敗・停止失敗・daemon再起動が成立する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">3. docling配備準備</th>
+          <td>Bun/Python prepare、共有models、二unit、secrets/data配置とrelease digest。</td>
+          <td>
+            build/install/downloadを繰り返さずcold起動。ready
+            capability成立、資料変換、再起動後のdata保持と子process回収を実機で確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">4. 共有Provider連携</th>
+          <td>必要なAI allocationを明示取得・更新・解放。App内に重い汎用推論を追加しない。</td>
+          <td>
+            同じProfile解決先を要求した複数Appで一つのProviderを使い、job中は停止しない。別Profileの異なるruntimeも正しく扱う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">5. 資源最適化</th>
+          <td>
+            待機・起動・job peak測定。処理前の追加予算受付、統合会計、mediaの混合負荷を順に導入。
+          </td>
+          <td>
+            予算競合を再現して過剰起動を防ぎ、待機時の容量使い残しが減る。新job、復旧queue、観測失効でも資源保護が成立する。foreground遅延を測定してpolicy値を決める。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      各段階の実装ではbun run checkを通し、配備のunit・controller・installerも検証する。
+      実機受入はhost idle、cold起動、steady ready、最大fixture job、停止後、既存AIとのmixed
+      workloadで比較する。 メモリーはhost
+      availableと非reclaimable使用量、必要なGPU観測、資源圧迫、swap、起動時間、foregroundの応答遅延を記録する。
+      待機時の予算解放とphysical
+      RAM減少を別の成果として示し、コンテナ比較環境がなければ測定済みの比較結果とは呼ばない。
+    </p>
+  </section>
+  <section id="migration">
+    <h2>既存成果の保持とrollback</h2>
+    <p>
+      まず現行container設定の読取りとsourceを保持してprocess backendを追加する。
+      doclingの標準設定を切り替えるのはnative受入後とし、利用中のleaseがあれば停止・切替を拒否する。
+      切替では新revisionとgenerationを使い、古いendpoint利用権を継続扱いしない。
+      新processを確実に停止してdata互換を確認してから前releaseへ戻す。同じport・dataに旧方式と新方式を並行起動しない。
+      旧コンテナが未配備なら、container rollbackを即実行可能とは扱わず、sourceだけの保持と区別する。
+    </p>
+    <p>
+      今回は方針・計画をSpec HTMLで保存し、コンセプト案内と旧計画へ後継を明記する。 ChatGPT
+      Pageの製品コンセプト正本は今回編集していないため、Pageへの同期は未実施。
+      新しい標準方針、過去の個別配備案、source実装、未完了の実機受入を別々に記録し、判断の継承を保つ。
+    </p>
+  </section>
+  <section id="references">
+    <h2>技術確認と未確定事項</h2>
+    <p>
+      hostでsystemctl
+      259、cgroup2fsを確認した。systemd公式のexec・kill・resource-control・D-Bus仕様、Linux
+      kernel公式Control Group v2、uv公式Cachingを2026年10月7日に参照した。
+      これらの確認は、配備先の実効permission、GPU会計、native依存互換性、Appのjob追加予算契約を保証しない。
+      待機予算・job peak・CPU weightの数値は実測後に決める。Windows/macOS、MCP
+      stdio、分散、任意コード実行と汎用依存schedulerはこの計画の初期対象外。
+    </p>
+  </section>
+</article>

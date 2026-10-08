@@ -116,6 +116,14 @@ runtimeReleases:
     providerConfigRevision: llama-swap-gemma4-26b-a4b-qat-q4-0-conversation-512k-p3-unified-v1
     estimatedMemoryGB: 48
     healthPath: /health
+    default: false
+  gemma4-26b-conversation-warm-p4-v1:
+    runtime: gemma4-26b-conversation
+    artifacts:
+      - gemma4-26b-a4b-it-qat-q4-0
+    providerConfigRevision: llama-swap-gemma4-26b-a4b-qat-q4-0-conversation-512k-p4-unified-v1
+    estimatedMemoryGB: 48
+    healthPath: /health
     default: true
 
   ornith15-conversation-current:

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "larm.local-service-environment.v1",
+  "node": "local-node",
+  "releaseRoot": "/opt/larm-local-services/releases",
+  "runtimeRoot": "/opt/larm-local-services/runtimes",
+  "privateRoot": "/var/lib/larm-apps",
+  "storage": {
+    "mountPoint": "/srv/storage/nextorage",
+    "filesystemUuid": "de97577d-c5d3-4b57-ac4b-3753a2f6d331",
+    "dataRoot": "/srv/storage/nextorage/larm/apps",
+    "prepareCacheRoot": "/srv/storage/nextorage/larm/prepare-cache",
+    "minFreeBytes": 2147483648
+  },
+  "policy": {
+    "installApplications": false,
+    "startServices": false,
+    "enableDaemon": false,
+    "runtimeDownloads": false,
+    "internalStorageFallback": false
+  }
+}

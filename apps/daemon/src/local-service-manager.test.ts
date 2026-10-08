@@ -221,3 +221,13 @@ test("daemon restart resumes its recorded drain after a failed physical stop", a
   expect((await f.backend.activity(f.definitions[0]!)).draining).toBe(false);
   expect(f.stops).toBe(0);
 });
+test("a live v1 container journal migrates to opaque v2 identity without another start or stop", async () => {
+  const f = await fixture(); await f.manager.ensure("docling-desk", "a", "initial", {}); await f.manager.flush(); await f.manager.close();
+  const current = await f.opts.journal.load() as { entries: Record<string, unknown>[] };
+  await f.opts.journal.save({ version: 1, entries: current.entries.map(({ instanceToken: _, ...entry }) => ({ ...entry, containerIds: ["a".repeat(64), "b".repeat(64)] })) });
+  const restarted = new LocalServiceManager(f.definitions, f.backend, { ...f.opts, bootEpoch: "daemon-2" });
+  await restarted.initialize();
+  expect(restarted.status("docling-desk").state).toBe("ready");
+  expect(await f.opts.journal.load()).toMatchObject({ version: 2 });
+  expect(f.starts).toBe(1); expect(f.stops).toBe(0);
+});

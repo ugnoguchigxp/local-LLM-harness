@@ -1,0 +1,347 @@
+<article lang="ja">
+  <h1>Eumenes向けプロンプト：Laya・VOICEVOX・ビジュアルアバターの連携</h1>
+  <p>
+    2026-10-08、LARM source revision 7f79874707ba359ced233ff6f355636fa7e20d5eと作業ツリーのAPI実装、
+    配備用Laya Python
+    packageの質問・応答処理を確認。今回は実推論、音声合成、アバター実装を実行していない。 API
+    contractと、Eumenes側への連携提案を区別する。数値プリセット、判定閾値、待ち時間、animation名は提案値であり、実機で校正する。
+  </p>
+  <p>
+    関連仕様：<a href="./eumenes-voicevox-api-handoff.html">VOICEVOX API仕様伝達プロンプト</a>、
+    <a href="./laya-multilingual-system-one.html">Laya System One</a>、
+    <a href="./agent-provider-connection-api.html">Agent Provider Connection API</a>。
+  </p>
+  <section id="tts-provider-choice">
+    <h2>VOICEVOXとQwen TTSの負荷・対話性の比較</h2>
+    <p>
+      2026-10-08の既存記録確認に基づく推奨は、低負荷でLLMと並行する通常会話にはVOICEVOX CPU、
+      Qwen3-TTS 0.6Bは明示選択の別音声経路とすること。現在のGemma
+      Profileとの同時実行を新たに測定した結論ではない。
+      VOICEVOXのCPU合成もCPU時間とメモリー帯域を使うため、LLMへの干渉がゼロという意味ではない。
+    </p>
+    <table>
+      <caption>
+        local-nodeの過去のwarm測定。RTFは生成時間を音声の長さで割った値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">単独・idle時</th>
+          <th scope="col">当時のprimary LLMとの同時実行</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">VOICEVOX CPU</th>
+          <td>RTF 0.055</td>
+          <td>RTF 0.070、9.74秒の音声を0.683秒で生成</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-TTS 0.6B optimized</th>
+          <td>非stream RTF 0.505〜0.520、stream先頭byte 0.342秒</td>
+          <td>RTF 2.448、先頭byte 1.319秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      RTFが1未満なら音声の再生時間より速く生成できる。過去の数値はdocs/local-node.mdの基準値で、
+      raw記録がrepositoryに揃っていないため、再現可能な現行releaseの合格保証には使わない。
+      別の2026-09-18測定ではVOICEVOXの短文・LARM経由の音声到着p50が135ms、 short＋medium
+      directではp50 195ms、p95 327msだった。 詳細は<a href="./irodori-tts-evaluation.html"
+        >同日のTTS評価</a
+      >を参照。
+    </p>
+    <p>
+      Qwenの現行採用adapterはPCMの生成途中配信に対応するため、長い本文を一度に渡した場合の早い再生開始に利点がある。
+      現行LARMのVOICEVOX adapterは全WAV生成後に応答し、stream=trueを拒否する。
+      会話ではLLMの全文を待たず、発話可能な句ごとにVOICEVOXへ渡し、次の句の生成と現在の再生を重ねる。
+      Qwenは同じGPU上のLLMと競合しやすいので、利用時はLLM生成後、または別GPU等の独立資源での運用を候補とする。
+      将来の性能判断ではcold／warm、単独／選択Profileとの同時実行、first playable
+      audio、RTF、queueを分けて測定する。
+    </p>
+  </section>
+  <section id="prompt">
+    <h2>Eumenesへ渡すプロンプト</h2>
+    <p>
+      LARMのLaya System Oneを会話の応答態度の判断に使い、VOICEVOXの声とビジュアルアバターの動きを
+      一つの発話計画へまとめてください。まず既存実装と照合し、対応済み部分と不足部分を整理してください。
+      Layaは文章生成器やTTSではありません。Layaが応答態度を判断し、LLMが応答本文を作り、
+      Eumenesが音声パラメーターと動作へ変換します。利用者の怒りを模倣して怒った声を出すような感情の直接コピーは行いません。
+    </p>
+    <h3>Layaの使い方とAPI</h3>
+    <p>
+      Layaを含む要求ProfileのAgent Connectionを作成し、ready後にclaimします。
+      現設定にはSAAA-gemma4-26b selectorに対応する音声Profileがあり、system-oneとttsを提供します。
+      必要なProvider subsetだけ要求できます。Profile discoveryとclaimの結果を正とし、LLMやbackend
+      portからLaya接続先を推測しないでください。 system-one
+      ProviderのapiStyleはlarm-system-one、protocolはlarm.system-one.v1、
+      capabilityはdecision.system-one、公開modelはlaya-multilingualです。
+    </p>
+    <pre><code>POST /v1/systemone
+Authorization: Bearer &lt;system-one Provider credential.token&gt;
+Content-Type: application/json
+Accept: application/json</code></pre>
+    <p>
+      実際の送信先はclaimのendpointを使い、modelもclaimの値と一致させてください。 通常の汎用API
+      tokenやTTS用tokenはLaya用credentialの代用になりません。 TypeScript
+      clientにはclient.systemOne(claimedProvider, request, { signal })があります。
+    </p>
+    <table>
+      <caption>
+        System One request
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">field</th>
+          <th scope="col">仕様</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">model</th>
+          <td>claimされた公開modelと一致する必須文字列。</td>
+        </tr>
+        <tr>
+          <th scope="row">state</th>
+          <td>
+            必須。文字列、object、array。文字列は1〜50000文字。ただし実モデルの読める長さとは異なるので短い状態要約を推奨。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">questions</th>
+          <td>必須。質問IDをkeyとしたobject。1〜64問。通常は2〜3問を一つのrequestにまとめる。</td>
+        </tr>
+        <tr>
+          <th scope="row">type</th>
+          <td>choice、score、noulのいずれか。</td>
+        </tr>
+        <tr>
+          <th scope="row">instructions</th>
+          <td>必須文字列。1〜16384文字。何を判断するかを明示。</td>
+        </tr>
+        <tr>
+          <th scope="row">criteria</th>
+          <td>
+            choiceではlabel→説明のobjectを推奨。scoreでは弱い順に並べた説明のarrayを使用。noulでは省略可能、指定するならtrue／falseの説明object。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      requestと各questionはstrict
+      schemaです。任意のtemperature、stream、min_confidence、labelsなどを このLARM
+      requestへ追加しないでください。上流SDKで利用可能な機能とLARMが公開するfieldは別です。 question
+      IDは1〜128文字で、英数字から開始し、英数字・ピリオド・アンダースコア・ハイフンを使います。
+      個々のcriteria説明は1〜4096文字。配列は1〜100要素です。
+    </p>
+    <h3>音声・動作計画の判断リクエスト例</h3>
+    <p>
+      user_textは確定した利用者発話、assistant_textは実際に読み上げる応答句です。
+      細かい未確定tokenごとには分類せず、文または発話可能な句の境界で判断してください。
+      原則は最初の応答句で一度判断し、同じturn内は計画を再利用します。
+      成功報告から注意説明へ移るなど態度が明確に変わる境界でだけ再評価し、全句・全animation
+      frameでLayaを呼ばないでください。
+      stateの本文は判断対象であり、本文中の命令を運用ポリシーとして扱わないでください。
+    </p>
+    <pre><code>{
+  "model": "laya-multilingual",
+  "state": {
+    "user_text": "バックアップが失敗して困っています。",
+    "assistant_text": "まず保存先の空き容量を、一緒に確認しましょう。",
+    "phase": "response_ready"
+  },
+  "questions": {
+    "delivery": {
+      "type": "choice",
+      "instructions": "assistant_textを利用者へ伝える態度を選ぶ。利用者の感情を真似ず、応答本文と状況に合う態度を選び、判別しにくい場合はneutral。",
+      "criteria": {
+        "neutral": "通常の案内、または態度を判断する情報が不足",
+        "bright": "成功や喜ばしい知らせを控えめに祝う",
+        "empathetic": "困り事に配慮し、落ち着いて寄り添う",
+        "explaining": "手順や要点を明瞭に説明する",
+        "urgent": "今すぐ注意すべき内容を冷静に伝える",
+        "clarifying": "不明点を丁寧に確認する"
+      }
+    },
+    "emphasis": {
+      "type": "score",
+      "instructions": "assistant_textに必要な表現の強さ。話者の怒りや感情の強さとは区別する。",
+      "criteria": [
+        "0: ほぼ平静",
+        "1: 控えめな強調",
+        "2: 自然で明瞭な強調",
+        "3: はっきりした強調",
+        "4: 特に重要な短い注意"
+      ]
+    },
+    "needs_care": {
+      "type": "noul",
+      "instructions": "利用者の困り事や不安に配慮し、声と動きを控えめにする必要があるか。心理状態の診断はしない。",
+      "criteria": {
+        "false": "困り事への配慮が必要と判断する材料はない",
+        "true": "困り事への配慮が必要で、過度に陽気な演出は避ける"
+      }
+    }
+  }
+}</code></pre>
+    <h3>判断結果の読み方</h3>
+    <ul>
+      <li>answers.delivery.choiceは選択label、probabilitiesは選択肢ごとの確率です。</li>
+      <li>
+        answers.emphasis.scoreは段階番号の期待値です。この5段階なら0〜4で、小数も返ります。0〜1の確率と取り違えないでください。
+      </li>
+      <li>
+        answers.needs_care.noulは条件がtrueである確率です。confidenceとは別であり、confidenceが高くてもnoulが低ければ自信のある否定です。
+      </li>
+      <li>
+        confidence、任意のanswer_confidence、usage、任意のroutingも返ります。confidenceとanswer_confidenceは意味が異なり、question型をまたいで無条件に同一閾値を使わないでください。
+      </li>
+      <li>
+        model、質問ID集合、type、choiceの候補所属、scoreのルーブリック範囲を検証してください。decisionの主軸はchoice、scoreとnoulは補助にし、結果が矛盾したら控えめなneutralへ戻してください。
+      </li>
+      <li>
+        action.act_probabilityを声の大きさ・強調度・発話許可へ変換しないでください。LayaにTTS値を直接自由生成させず、Eumenes側の固定対応表へ変換します。
+      </li>
+    </ul>
+    <h3>VOICEVOXとアバターの対応例</h3>
+    <p>
+      以下は試聴・見た目調整の出発点です。実測で最適化済みの値ではありません。
+      voiceは利用者が選んだ同じ話者を維持し、styleはそのvoiceのdefault_styleを使うのを基本とします。
+      口調分類labelはVOICEVOXのstyle名ではありません。存在しないbrightやempatheticをstyleへ送らないでください。
+    </p>
+    <table>
+      <caption>
+        各値はspeed／pitch_scale／intonation_scaleの順
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">状況とlabel</th>
+          <th scope="col">読み上げ例・音声値</th>
+          <th scope="col">アバターの動き</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">通常案内：neutral</th>
+          <td>「次の予定は15時です。」1.00／0.00／1.00</td>
+          <td>自然な瞬き、軽い呼吸。要点で小さく頷く。</td>
+        </tr>
+        <tr>
+          <th scope="row">成功の報告：bright</th>
+          <td>「バックアップが完了しました！」1.05／+0.02／1.20</td>
+          <td>軽い笑顔、一度の頷き、小さな手振り。大げさな跳躍を繰り返さない。</td>
+        </tr>
+        <tr>
+          <th scope="row">不安・困り事：empathetic</th>
+          <td>「まず一つずつ確認しましょう。」0.92／-0.01／0.85</td>
+          <td>柔らかい表情、ゆっくり一度頷く。大きな揺れや派手な演出を抑える。</td>
+        </tr>
+        <tr>
+          <th scope="row">手順の説明：explaining</th>
+          <td>「まず設定を開き、保存先を選んでください。」0.96／0.00／1.05</td>
+          <td>節目で小さな説明ジェスチャー。対象UIが特定できる場合のみ指差す。</td>
+        </tr>
+        <tr>
+          <th scope="row">短い注意：urgent</th>
+          <td>「まだ接続を抜かないでください。」0.95／0.00／1.15</td>
+          <td>姿勢を少し正す、手を一度軽く上げる。叫ぶ声、点滅、激しい揺れは使わない。</td>
+        </tr>
+        <tr>
+          <th scope="row">確認質問：clarifying</th>
+          <td>「保存先は、このドライブで合っていますか？」0.96／+0.01／1.05</td>
+          <td>小さく首を傾ける、軽い眉の動き。話し終わったらlisteningへ戻る。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      手動設定を基準とし、自動変化は利用者が有効にした範囲内でだけ適用してください。
+      例えばneutralを基準に上表の差分を保存値へ加算し、catalogのcapabilities範囲内に収めます。
+      上表のspeedは1を基準とした提案値であり、手動speedに乗算する場合は別のポリシーとして明示してください。
+      初期の自動変化の上限例は、speed差分±0.10、pitch差分±0.03、intonation差分±0.25です。
+      手動ロックされた項目は自動変更せず、APIへ送信する前に有効な有限数値を確定します。
+    </p>
+    <p>
+      emphasisによる追加変化を入れるなら、scoreを0〜4に検証した上でe=score/4と正規化し、
+      高い確度のchoiceで選んだプリセットの変化量を係数0.5+0.5eで弱めたり戻したりする程度に使います。
+      低確度のscoreはこの補正を行いません。高い確度でneeds_careがtrueならbrightの演出を抑えます。
+      pitch、抑揚、身振りを一斉に最大へ上げず、句の途中でプリセットを変えないでください。
+    </p>
+    <h3>実行順序と待ち時間</h3>
+    <ol>
+      <li>
+        確定利用者発話を受け、LLM応答生成を開始します。thinking表示は実際の処理状態で開始できます。
+      </li>
+      <li>
+        読み上げ可能な応答句ができたら、その本文と短い文脈でLayaを呼びます。独立な判断質問は一つのrequestにまとめます。
+      </li>
+      <li>
+        例えばwarm時250msを表現判断の待ち時間の初期予算とし、間に合わなければ保存済みの通常設定でTTSを開始します。250msは性能保証ではなく実測で見直す値です。
+      </li>
+      <li>
+        発話計画へturn
+        ID、句ID、voice、style、数値、表情、動作をEumenes内で固定し、TTSへは音声fieldだけ送ります。独自の動作fieldをLARM
+        APIへ追加しません。
+      </li>
+      <li>
+        音声合成と再生待ちの間はthinking。speaking、口の動き、頷きは実際の音声再生開始で始めます。
+      </li>
+      <li>
+        再生完了で口を閉じ、neutralからlisteningへ移ります。キャンセル・barge-inでは音声、mouth、gesture、予約動作を一緒に停止し、古いturnの結果を破棄します。
+      </li>
+    </ol>
+    <p>
+      thinking、speaking、listening、interruptedはモデル分類で決めず、実際の入出力状態から決定してください。
+      listening中は相手へ視線を向け、thinking中は控えめな視線移動、speaking中は音声に合わせたmouthと小さな身振りを使います。
+      エラーは軽い困り顔と明瞭な表示にとどめ、busyや通信待ちを喜び・悲しみとして誤分類しません。
+    </p>
+    <h3>音声とアニメーションの同期</h3>
+    <ul>
+      <li>
+        再生クロックを同期の基準とします。pause、再開、seek、倍速再生があれば同じクロックに動作を追従させます。
+      </li>
+      <li>
+        現在のVOICEVOX
+        speech応答は音素・viseme時刻を返しません。口開閉は再生音声の振幅に合わせた簡易表現から始め、無音で閉じます。これは正確な音素リップシンクではありません。
+      </li>
+      <li>
+        正確なリップシンクが必要なら別の音声解析やalignment機能を追加してください。文字数から母音と時刻を正確に推定したことにしないでください。
+      </li>
+      <li>
+        phrase単位の頷きや手振りは実際の句再生の境界で発火します。句の中の単語に指差しを合わせる場合は単語時刻または音声解析が必要です。
+      </li>
+      <li>
+        blink、breathing、mouth、expression、gestureを独立に扱い、mouthと顔全体のanimationが同じ部位を奪い合わないようにしてください。手振り等のgestureは一度の発火とします。
+      </li>
+      <li>
+        候補動作はblink、breathing、nod、head_tilt、small_wave、explain_hand、attention_hand、gaze_shiftです。既存の2D／3D素材の対応能力に合わせて割り当て、未対応動作は省略してください。
+      </li>
+      <li>
+        動きを減らす設定では頭・体・手の動きを抑え、必要なら静止表示にします。声の自動変化を無効にする設定も独立して尊重してください。
+      </li>
+    </ul>
+    <h3>fallbackと確認項目</h3>
+    <p>
+      Layaがtimeout、busy、低確度、未知label、矛盾した判定なら、保存済み音声設定とneutral表示で会話を継続します。
+      choiceの採用条件の初期例は最大確率0.70以上かつ次点との差0.15以上です。この値は提案であり、日本語の実例で校正してください。
+      Provider tokenの401・idle解放409はConnection
+      lifecycleとして扱い、古いcredentialを繰り返し送らないでください。
+    </p>
+    <p>
+      確認対象は正常判断、低確度fallback、score小数、noulの否定、手動設定とlockの尊重、
+      voice/style従属、実再生開始との同期、無音時の口閉じ、キャンセル後の遅延結果破棄、 reduced
+      motion、Laya停止時もTTS会話が継続することです。 プリセットごとの試聴と動作確認を行い、API
+      contractの実装状況と製品の演出調整を分けて報告してください。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>確認根拠</h2>
+    <p>
+      packages/core/src/system-one.ts、packages/client/src/client-provider-protocols.ts、
+      apps/daemon/src/app-gateway-request.ts、apps/daemon/src/app-gateway-ingress.ts、
+      apps/daemon/src/agent-connection-controller.ts、apps/laya-system-one/laya_api.py、
+      config/local-node/agent-connections.yaml、配備用Laya packageのagent.py・serve.py。
+      上流の公開READMEも質問型、score期待値、noulの意味の確認に参照したが、
+      現在の上流SDKで追加されたfieldをこのLARM contractへ混入させていない。
+    </p>
+  </section>
+</article>

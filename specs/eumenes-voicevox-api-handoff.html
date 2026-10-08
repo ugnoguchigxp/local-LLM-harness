@@ -1,0 +1,471 @@
+<article lang="ja">
+  <h1>Eumenes向けプロンプト：VOICEVOXの話者・スタイル・韻律制御API</h1>
+  <p>
+    2026-10-08、LARM source revision
+    7f79874707ba359ced233ff6f355636fa7e20d5eと作業ツリーの実装を確認した仕様伝達用プロンプト。
+    稼働releaseのcatalog取得・音声合成は今回実行していない。EumenesおよびSAAAの現在の実装状態は判定していない。
+  </p>
+  <p>
+    参照：<a href="./api.html">API契約</a>、
+    <a href="./agent-provider-connection-api.html">Agent Provider Connection API</a>、
+    <a href="./voicevox-control-api-implementation-plan.html">VOICEVOX制御API実装計画</a>。
+    下記は実装計画の記述をそのまま転記せず、現在のrequest schema、Gateway、VOICEVOX
+    adapterと照合した内容である。
+  </p>
+  <section id="prompt">
+    <h2>Eumenesへ渡すプロンプト</h2>
+    <p>
+      EumenesでLARMのTTSを扱う際は、以下の既存API仕様を前提にしてください。
+      対象modelはvoicevox-coreです。話者キャラクター、発話スタイル、話速、ピッチ、抑揚を発話ごとに指定できます。
+      ここでいう「躍動」が声の抑揚を意味する場合はintonation_scaleに対応します。
+      アバターの画像・外見・表情・身体の動き・リップシンクを変更するAPIではありません。それらはEumenes側の表示機能として扱ってください。
+    </p>
+    <h3>接続先と認証</h3>
+    <p>
+      既存のAgent ConnectionからclaimしたTTS ProviderのbaseUrl、model、credential.tokenを使います。
+      通常の公開Gatewayにも同じ音声endpointがあります。個別backend portを固定せず、要求ProfileのTTS
+      Providerを使用してください。
+      baseUrlが/v1で終わる場合は/audio/voicesと/audio/speechを追加し、/v1を重複させないでください。
+      両APIは同じTTS用Bearerを使います。以下のパスはGateway originからの表記です。
+    </p>
+    <pre><code>GET /v1/audio/voices?model=voicevox-core
+Authorization: Bearer &lt;TTS Provider token&gt;
+
+POST /v1/audio/speech
+Authorization: Bearer &lt;TTS Provider token&gt;
+Content-Type: application/json</code></pre>
+    <p>
+      voicevox-coreの数値制御を使うためにLLMのmodelを変える必要はありません。
+      既存ProfileにTTSがなければtts-default等の登録ProfileからTTSを要求してください。 必要なProvider
+      subsetだけを要求でき、LLMやASRを必ず同時に要求する必要はありません。
+    </p>
+    <h3>話者とスタイルの一覧</h3>
+    <p>
+      GETのJSONはdefault_voiceとvoicesを返します。voicesの各要素には次のfieldがあります。
+      選択肢は実際にロードされた音声モデルから生成されるため、返ってきたcatalogを使用してください。
+    </p>
+    <dl>
+      <dt>id、display_name</dt>
+      <dd>保存・送信用の具体的な話者IDと画面表示名。</dd>
+      <dt>name、speaker_uuid、language</dt>
+      <dd>互換用の名前、話者UUID、言語ja。</dd>
+      <dt>default_style、style_id</dt>
+      <dd>既定スタイルの文字列IDとその数値ID。</dd>
+      <dt>styles</dt>
+      <dd>選択話者に属するスタイル一覧。各要素はid、display_name、style_id。</dd>
+      <dt>capabilities</dt>
+      <dd>speed、pitch_scale、intonation_scaleそれぞれのminimum、maximum、default。</dd>
+      <dt>voice_presentation</dt>
+      <dd>masculine、feminine、androgynous、unspecifiedの表示補助情報。</dd>
+      <dt>credit</dt>
+      <dd>選択話者のクレジット表記。</dd>
+    </dl>
+    <p>
+      話者IDの実装例はKasukabe_Tsumugi（春日部つむぎ）、Shikoku_Metan（四国めたん）、
+      Zundamon（ずんだもん）、Amehare_Hau（雨晴はう）。Kurono_Takehiro（玄野武宏）、
+      Kenzaki_Mesuo（剣崎雌雄）もmetadata対応がありますが、追加VVMの配備状況に依存するため利用可能とは断定しないでください。
+      男性系・女性系の切替は具体的なvoice IDの選択で行い、pitch変更で代用しないでください。
+    </p>
+    <p>
+      style IDの例はnormal、sweet、tsuntsun、sexy、whisper、soft-whisper。
+      全話者に全styleがあるわけではありません。必ず選択voiceのstylesから選んでください。
+    </p>
+    <h3>音声合成の仕様一覧</h3>
+    <table>
+      <caption>
+        voicevox-coreへのPOST body
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">field</th>
+          <th scope="col">意味・型・範囲</th>
+          <th scope="col">省略時</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">model</th>
+          <td>必須文字列。voicevox-core</td>
+          <td>公開Gatewayでは必須</td>
+        </tr>
+        <tr>
+          <th scope="row">input</th>
+          <td>必須文字列。日本語の読み上げ本文、adapterでは1〜4096文字</td>
+          <td>必須</td>
+        </tr>
+        <tr>
+          <th scope="row">voice</th>
+          <td>catalogに存在する具体的な話者ID</td>
+          <td>catalogのdefault_voice。sourceの既定設定はKasukabe_Tsumugi</td>
+        </tr>
+        <tr>
+          <th scope="row">style</th>
+          <td>選択voiceのstyles[].idを推奨。整数のstyle_idも受理</td>
+          <td>選択voiceのdefault_style</td>
+        </tr>
+        <tr>
+          <th scope="row">speed</th>
+          <td>話速。有限数値、0.5〜2.0、両端を含む。大きいほど速い</td>
+          <td>1.0</td>
+        </tr>
+        <tr>
+          <th scope="row">pitch_scale</th>
+          <td>
+            声の高さ。有限数値、-0.15〜0.15、両端を含む。正で高く、負で低くなる。Hzや半音数ではない
+          </td>
+          <td>0.0</td>
+        </tr>
+        <tr>
+          <th scope="row">intonation_scale</th>
+          <td>抑揚。有限数値、0.0〜2.0、両端を含む。0で平坦、1が基準、大きいほど抑揚を強める</td>
+          <td>1.0</td>
+        </tr>
+        <tr>
+          <th scope="row">response_format</th>
+          <td>wavまたはpcm</td>
+          <td>wav</td>
+        </tr>
+        <tr>
+          <th scope="row">stream</th>
+          <td>native streaming非対応。trueは拒否</td>
+          <td>false</td>
+        </tr>
+        <tr>
+          <th scope="row">language</th>
+          <td>日本語のみ。指定する場合はjaを推奨</td>
+          <td>ja</td>
+        </tr>
+        <tr>
+          <th scope="row">instruct</th>
+          <td>VOICEVOXでは非対応。空でない指示は拒否</td>
+          <td>指定しない</td>
+        </tr>
+      </tbody>
+    </table>
+    <pre><code>{
+  "model": "voicevox-core",
+  "input": "こんにちは。本日の予定をご案内します。",
+  "voice": "Kasukabe_Tsumugi",
+  "style": "normal",
+  "response_format": "wav",
+  "speed": 1.1,
+  "pitch_scale": 0.03,
+  "intonation_scale": 1.15
+}</code></pre>
+    <p>
+      値は発話ごとのrequestに適用されます。サーバー全体の既定値や設定を永続的に更新するAPIではありません。
+      Eumenes側で設定を保存し、次回以降の各requestへ反映してください。
+      未設定fieldは省略し、数値はJSON
+      numberとして送信してください。NaN、Infinity、範囲外、数値文字列を送らないでください。
+    </p>
+    <h3>応答とエラー</h3>
+    <ul>
+      <li>
+        成功bodyはJSONではなく音声binary。wavはaudio/wav、pcmは24 kHz・mono・signed 16-bit
+        little-endianです。
+      </li>
+      <li>
+        PCMのContent-Typeはaudio/pcm;rate=24000;channels=1;format=s16le。X-Audio-Sample-RateとX-Audio-Sample-Formatも参照できます。
+      </li>
+      <li>
+        X-VOICEVOX-CreditはUTF-8''に続くpercent-encoded文字列です。復号して選択話者のクレジットを表示し、春日部つむぎに固定しないでください。
+      </li>
+      <li>
+        VOICEVOXは全音声を生成してから返します。低遅延会話は既存の句単位合成・再生順序・キャンセル処理で扱ってください。
+      </li>
+      <li>
+        Gatewayの型・範囲違反は400
+        invalid_request。style、pitch_scale、intonation_scaleをvoicevox-core以外へ送ると400
+        unsupported_parameterです。他modelへこの制御仕様をそのまま適用しないでください。
+      </li>
+      <li>
+        不明voiceやvoiceに属さないstyleは400。実装計画にはinvalid_voice_styleというcodeが記載されていますが、現在のadapter実装はdetail形式のエラーを返すため、このcodeが必ずあると仮定しないでください。
+      </li>
+      <li>
+        adapter側の入力検証は422を返す場合もあります。JSONのerror.code形式とdetail形式を区別して扱い、失敗bodyを音声として再生しないでください。
+      </li>
+      <li>
+        合成枠がbusyなら429とRetry-After。401、Connection失効・idle解放の409、upstream障害の502とは区別してください。idle解放済みConnectionでは新しいConnectionを作成してclaimし、古いtokenを再利用しないでください。
+      </li>
+    </ul>
+    <h3>Eumenesで利用する際の扱い</h3>
+    <ul>
+      <li>
+        設定項目は「キャラクター」「発話スタイル」「話す速さ」「声の高さ」「抑揚」。表示名を見せ、保存と送信には具体的なIDを使ってください。
+      </li>
+      <li>
+        voice変更時はそのvoiceのdefault_styleへ更新し、style変更だけでvoiceを変更しないでください。数値入力の範囲・既定値はcatalogのcapabilitiesを反映してください。
+      </li>
+      <li>
+        catalog取得失敗・選択話者の消失では保存済みIDを保持し、再取得や既定話者に戻す操作を提示してください。無言で別話者へ変更しないでください。
+      </li>
+      <li>
+        アバター画像とTTS話者の対応はEumenes側で管理してください。LARMのcatalogは画像URLや身体アニメーションを返しません。
+      </li>
+      <li>
+        既存実装の調査時は、設定保存からPOST
+        bodyまで各値が届くか確認し、実装済み部分と不足部分を報告してください。稼働releaseのcatalogと試聴を確認するまでは、本番での話者・style利用可能性を確定しないでください。
+      </li>
+    </ul>
+  </section>
+  <section id="all-voicevox-character-names-2026-10-08">
+    <h2>VOICEVOX全43キャラクターの正式表記</h2>
+    <p>
+      2026-10-08、VOICEVOX公式キャラクター一覧とvoicevox_vvm 0.16.4のトーク対応表を確認した。
+      利用者が求める全体一覧と稼働中のロード済み一覧を混同しない。以下は未ロードの男性キャラクターを含む公式キャラクターの全体一覧である。
+      キャラクター名のないVOICEVOX Nemoはこの一覧の対象外。
+      確認元はvoicevox.hiroshiba.jpのキャラクター一覧と、VOICEVOX/voicevox_vvmの0.16.4 README。
+    </p>
+    <table>
+      <caption>
+        氏名とLARM TTS APIのvoice指定値。対応VVMのロードが必要
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">氏名</th>
+          <th scope="col">voice指定値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">四国めたん</th>
+          <td><code>Shikoku_Metan</code></td>
+        </tr>
+        <tr>
+          <th scope="row">ずんだもん</th>
+          <td><code>Zundamon</code></td>
+        </tr>
+        <tr>
+          <th scope="row">春日部つむぎ</th>
+          <td><code>Kasukabe_Tsumugi</code></td>
+        </tr>
+        <tr>
+          <th scope="row">雨晴はう</th>
+          <td><code>Amehare_Hau</code></td>
+        </tr>
+        <tr>
+          <th scope="row">波音リツ</th>
+          <td><code>b1a81618-b27b-40d2-b0ea-27a9ad408c4b</code></td>
+        </tr>
+        <tr>
+          <th scope="row">玄野武宏</th>
+          <td><code>Kurono_Takehiro</code></td>
+        </tr>
+        <tr>
+          <th scope="row">白上虎太郎</th>
+          <td><code>e5020595-5c5d-4e87-b849-270a518d0dcf</code></td>
+        </tr>
+        <tr>
+          <th scope="row">青山龍星</th>
+          <td><code>4f51116a-d9ee-4516-925d-21f183e2afad</code></td>
+        </tr>
+        <tr>
+          <th scope="row">冥鳴ひまり</th>
+          <td><code>8eaad775-3119-417e-8cf4-2a10bfd592c8</code></td>
+        </tr>
+        <tr>
+          <th scope="row">九州そら</th>
+          <td><code>481fb609-6446-4870-9f46-90c4dd623403</code></td>
+        </tr>
+        <tr>
+          <th scope="row">もち子さん</th>
+          <td><code>9f3ee141-26ad-437e-97bd-d22298d02ad2</code></td>
+        </tr>
+        <tr>
+          <th scope="row">剣崎雌雄</th>
+          <td><code>Kenzaki_Mesuo</code></td>
+        </tr>
+        <tr>
+          <th scope="row">WhiteCUL</th>
+          <td><code>67d5d8da-acd7-4207-bb10-b5542d3a663b</code></td>
+        </tr>
+        <tr>
+          <th scope="row">後鬼</th>
+          <td><code>0f56c2f2-644c-49c9-8989-94e11f7129d0</code></td>
+        </tr>
+        <tr>
+          <th scope="row">No.7</th>
+          <td><code>044830d2-f23b-44d6-ac0d-b5d733caa900</code></td>
+        </tr>
+        <tr>
+          <th scope="row">ちび式じい</th>
+          <td><code>468b8e94-9da4-4f7a-8715-a22a48844f9e</code></td>
+        </tr>
+        <tr>
+          <th scope="row">櫻歌ミコ</th>
+          <td><code>0693554c-338e-4790-8982-b9c6d476dc69</code></td>
+        </tr>
+        <tr>
+          <th scope="row">小夜/SAYO</th>
+          <td><code>a8cc6d22-aad0-4ab8-bf1e-2f843924164a</code></td>
+        </tr>
+        <tr>
+          <th scope="row">ナースロボ＿タイプＴ</th>
+          <td><code>882a636f-3bac-431a-966d-c5e6bba9f949</code></td>
+        </tr>
+        <tr>
+          <th scope="row">‡聖騎士 紅桜‡</th>
+          <td><code>471e39d2-fb11-4c8c-8d89-4b322d2498e0</code></td>
+        </tr>
+        <tr>
+          <th scope="row">雀松朱司</th>
+          <td><code>0acebdee-a4a5-4e12-a695-e19609728e30</code></td>
+        </tr>
+        <tr>
+          <th scope="row">麒ヶ島宗麟</th>
+          <td><code>7d1e7ba7-f957-40e5-a3fc-da49f769ab65</code></td>
+        </tr>
+        <tr>
+          <th scope="row">春歌ナナ</th>
+          <td><code>ba5d2428-f7e0-4c20-ac41-9dd56e9178b4</code></td>
+        </tr>
+        <tr>
+          <th scope="row">猫使アル</th>
+          <td><code>00a5c10c-d3bd-459f-83fd-43180b521a44</code></td>
+        </tr>
+        <tr>
+          <th scope="row">猫使ビィ</th>
+          <td><code>c20a2254-0349-4470-9fc8-e5c0f8cf3404</code></td>
+        </tr>
+        <tr>
+          <th scope="row">中国うさぎ</th>
+          <td><code>1f18ffc3-47ea-4ce0-9829-0576d03a7ec8</code></td>
+        </tr>
+        <tr>
+          <th scope="row">栗田まろん</th>
+          <td><code>04dbd989-32d0-40b4-9e71-17c920f2a8a9</code></td>
+        </tr>
+        <tr>
+          <th scope="row">あいえるたん</th>
+          <td><code>dda44ade-5f9c-4a3a-9d2c-2a976c7476d9</code></td>
+        </tr>
+        <tr>
+          <th scope="row">満別花丸</th>
+          <td><code>287aa49f-e56b-4530-a469-855776c84a8d</code></td>
+        </tr>
+        <tr>
+          <th scope="row">琴詠ニア</th>
+          <td><code>97a4af4b-086e-4efd-b125-7ae2da85e697</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Voidoll</th>
+          <td><code>0ebe2c7d-96f3-4f0e-a2e3-ae13fe27c403</code></td>
+        </tr>
+        <tr>
+          <th scope="row">ぞん子</th>
+          <td><code>0156da66-4300-474a-a398-49eb2e8dd853</code></td>
+        </tr>
+        <tr>
+          <th scope="row">中部つるぎ</th>
+          <td><code>4614a7de-9829-465d-9791-97eb8a5f9b86</code></td>
+        </tr>
+        <tr>
+          <th scope="row">離途</th>
+          <td><code>3b91e034-e028-4acb-a08d-fbdcd207ea63</code></td>
+        </tr>
+        <tr>
+          <th scope="row">黒沢冴白</th>
+          <td><code>0b466290-f9b6-4718-8d37-6c0c81e824ac</code></td>
+        </tr>
+        <tr>
+          <th scope="row">ユーレイちゃん</th>
+          <td><code>462cd6b4-c088-42b0-b357-3816e24f112e</code></td>
+        </tr>
+        <tr>
+          <th scope="row">東北ずん子</th>
+          <td><code>80802b2d-8c75-4429-978b-515105017010</code></td>
+        </tr>
+        <tr>
+          <th scope="row">東北きりたん</th>
+          <td><code>1bd6b32b-d650-4072-bbe5-1d0ef4aaa28b</code></td>
+        </tr>
+        <tr>
+          <th scope="row">東北イタコ</th>
+          <td><code>ab4c31a3-8769-422a-b412-708f5ae637e8</code></td>
+        </tr>
+        <tr>
+          <th scope="row">あんこもん</th>
+          <td><code>3be49e15-34bb-48a0-9e2f-9b80c96e9905</code></td>
+        </tr>
+        <tr>
+          <th scope="row">夜語トバリ</th>
+          <td><code>d3be2066-205b-47f6-8818-1d93a9ca9cef</code></td>
+        </tr>
+        <tr>
+          <th scope="row">暁記ミタマ</th>
+          <td><code>aca7de06-9ff9-49a3-9f08-9d3bc19689e5</code></td>
+        </tr>
+        <tr>
+          <th scope="row">里石ユカ</th>
+          <td><code>cc7baa71-6c74-4399-803b-b60576176a08</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      厳密な表記の注意：公式サイトのキャラクター名は<code>‡聖騎士 紅桜‡</code>だが、
+      voicevox_vvm 0.16.4のトーク話者名は<code>†聖騎士 紅桜†</code>。
+      <code>ナースロボ＿タイプＴ</code>の下線とＴは全角。 LARMのvoice
+      IDは表示名とは別で、metadataの明示aliasがない話者はspeaker UUIDがIDになる。
+      英字aliasの定義は6話者のみで、残り37話者はUUIDを使う。上表は公式voicevox_resourceの
+      character_info（revision
+      37c265375e05313486ebf2024b1679d6952a53d8）の話者UUIDとLARMのalias定義を照合した値。
+      推測した英字名は記載していない。未ロード話者の現在のGateway利用成功を保証する一覧ではない。
+      追加配備後のAPI指定値は返されたcatalogのidで最終確認する。
+    </p>
+  </section>
+  <section id="live-voice-catalog-2026-10-08">
+    <h2>2026-10-08の稼働VOICEVOX話者一覧</h2>
+    <p>
+      local-nodeで現在応答しているVOICEVOX backendのvoice catalogを読み取り、次の4話者を確認した。
+      音声合成は実行していない。backendの観測結果であり、別Profileの要求や将来のreleaseへ利用可能性を固定するものではない。
+      通常consumerはclaimされたTTS ProviderのGatewayを使う。
+    </p>
+    <table>
+      <caption>
+        表示名とPOSTのvoiceへ指定する厳密なID
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">表示名</th>
+          <th scope="col">voice ID</th>
+          <th scope="col">対応style ID</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">四国めたん</th>
+          <td><code>Shikoku_Metan</code></td>
+          <td>normal、sweet、tsuntsun、sexy</td>
+        </tr>
+        <tr>
+          <th scope="row">ずんだもん</th>
+          <td><code>Zundamon</code></td>
+          <td>normal、sweet、tsuntsun、sexy</td>
+        </tr>
+        <tr>
+          <th scope="row">春日部つむぎ</th>
+          <td><code>Kasukabe_Tsumugi</code></td>
+          <td>normal</td>
+        </tr>
+        <tr>
+          <th scope="row">雨晴はう</th>
+          <td><code>Amehare_Hau</code></td>
+          <td>normal</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      default_voiceはKasukabe_Tsumugi。玄野武宏のKurono_Takehiroと剣崎雌雄のKenzaki_Mesuoはsourceのmetadata対応には存在するが、
+      今回の稼働catalogには含まれていない。whisperとsoft-whisperも今回の4話者のstylesには含まれていない。
+    </p>
+  </section>
+  <section id="source-evidence">
+    <h2>照合したsource</h2>
+    <p>
+      packages/core/src/openai-contract.ts、apps/daemon/src/app-gateway-request.ts、
+      apps/daemon/src/gateway.ts、apps/voicevox-tts/voicevox_api.py、
+      packages/client/src/client-media.ts、config/local-node/agent-connections.yaml。
+      旧SAAA向け依頼の実装状況を現在のEumenesの状態として転用していない。
+    </p>
+  </section>
+</article>
