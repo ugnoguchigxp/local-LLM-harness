@@ -1,0 +1,759 @@
+<article lang="ja">
+  <h1>Eumenes向けオンデマンドホスティング実装計画</h1>
+  <p>
+    2026年10月9日。利用者指定の「要求時に起動し、無操作になったら停止する」「保存すべきデータは外付けSSD、ホスティングコードと起動スクリプトはこのリポジトリ」を具体化する。
+    ホストするアプリの実DBもデータディスク側に配置する。サービス停止はプロセスと資源の解放であり、データ削除ではない。
+    本書は実装計画とExcalidrawの先行実装・検証の正本である。独立アプリを作成し、隔離した実機環境でSSD上のDB初期化とオンデマンド利用を検証した。正式な専用UID/systemd配備、稼働中LARMへの有効化、Eumenesへの接続と公開は未実施である。
+  </p>
+  <dl>
+    <dt>対象</dt>
+    <dd>
+      markdownWysiwyg、regular-calendar、Excalidraw、Archify、Docling
+      Deskと、EumenesのMCP・アーティファクト接続。
+    </dd>
+    <dt>採用する基盤</dt>
+    <dd>
+      既存LARM
+      LocalServiceManager、ClientLocalServices、systemd-process、資源会計、readiness/activity/drain契約。
+    </dd>
+    <dt>保存方針</dt>
+    <dd>
+      業務データと実DBはNextorage。アプリソースは各独立repository、起動・停止・配備コードはlocal-LLM-harness、完成済み実行物はホスト内蔵のroot管理領域。
+    </dd>
+    <dt>設計上の開始値</dt>
+    <dd>
+      画面無操作180秒、サービスidle 120秒、lease 120秒、更新30秒。時間値は実機評価後に調整する。
+    </dd>
+    <dt>前段の検討</dt>
+    <dd>
+      <a href="./eumenes-document-calendar-services-evaluation-2026-10-09.html"
+        >文書・カレンダー・図解サービスの候補評価</a
+      >。
+    </dd>
+  </dl>
+  <section id="baseline">
+    <h2>確認済み基盤と今回追加する範囲</h2>
+    <p>
+      sourceの確認revisionはa51ef398413d7305404d5b9303f3e4c1d58f22ec。既存作業差分は候補評価書と資料一覧の変更である。
+      packages/core/src/local-service.tsにはv2のsystemd-process定義と保存先UUID検証、packages/core/src/local-service-manager.tsには利用権と停止制御がある。
+      packages/backends/src/local-service-process.ts、deploy/local-node/local-services/process-controller.pyとprocess-member.service.inを再利用する。
+      ensure・resolve・renew・releaseのHTTP routeとClientLocalServicesも実装済みである。
+    </p>
+    <p>
+      <a href="./local-service-host-process-direction-and-plan.html">ホストプロセス標準化方針</a>と
+      <a href="./local-service-host-process-design-and-acceptance.html">基盤設計・受入仕様</a
+      >を継承する。
+      <a href="./local-service-host-process-implementation-results-2026-10-08.html">既存実装結果</a
+      >は環境基盤のsource検証であり、アプリ導入やproduction専用UIDでの受入完了を示さない。
+      config/local-node/local-service-environment.jsonはinstallApplications、startServices、enableDaemon、runtimeDownloads、internalStorageFallbackをfalseにしている。
+      config/local-node/local-services.yamlの旧container例は配備digestが未確定であり、新しいprocess配備へそのまま流用しない。
+    </p>
+    <p>
+      今回の読取り確認で、/srv/storage/nextorageはUUID
+      de97577d-c5d3-4b57-ac4b-3753a2f6d331、ext4、rwでマウントされていた。
+      これは観測時の媒体確認であり、起動ごとの再検証やbackup/restore受入を代替しない。 新しいLocal
+      Service管理framework、汎用shell実行API、モデルschedulerは追加しない。
+    </p>
+  </section>
+  <section id="service-layout">
+    <h2>実行単位と責務</h2>
+    <table>
+      <caption>
+        アプリごとに独立したLocal
+        Serviceとする。最初の対象はexcalidraw-host。Doclingは関連member群を一つのサービスとして扱う。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">担当</th>
+          <th scope="col">起動と停止</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Eumenes backend</th>
+          <td>
+            常時到達できる認証入口、MCP client、tool
+            schema、lease仲介と結果からのアーティファクト表示。
+          </td>
+          <td>既存アプリを入口として使う。対象サービス停止中でも起動要求を受けられる。</td>
+        </tr>
+        <tr>
+          <th scope="row">各独立アプリ</th>
+          <td>
+            Markdown・予定・Excalidraw・Archifyの保存API、MCP
+            server、専用画面とasset配信。SQLiteの単一writer。
+          </td>
+          <td>
+            アプリごとに一つのsystemd-processサービス。Archify
+            rendererはこのgroup内の固定子プロセスとして必要時だけ実行する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">docling-desk</th>
+          <td>
+            既存Knowledge API、CPU processor、viewer
+            gatewayとそのMCP。既存の保存・検索契約を再利用する。
+          </td>
+          <td>
+            固定member群を一つのsystemd-processサービスとして起動・停止。初期はAPI、processor、viewerの個別idle停止を行わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LARM</th>
+          <td>
+            認可されたserviceのensure、起動集約、利用権、readiness、資源受付、drain、完全停止観測。
+          </td>
+          <td>業務DB、文書・予定の意味、図の生成指示を管理しない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Markdown、カレンダー、Excalidrawのhost画面と業務API・MCP・保存処理は、それぞれLARMの外にある独立repositoryに置く。Excalidrawの初期実装は/srv/ai/apps/excalidraw-hostである。
+      Eumenesは型別アーティファクトから対応画面を開く。直接React組み込みも候補評価では挙げたが、本計画の初期配備はホスト画面と明示したiframe通信契約を採用する。
+      ArchifyはJSONの検証・生成jobとして扱い、常駐preview
+      serverは使わない。生成済みHTMLの表示にrendererの継続稼働は不要である。
+    </p>
+    <p>
+      新設の業務保存・生成処理は/srv/ai/apps配下の各独立repositoryに置く。LARM内のOS非依存のregistry・計画・leaseはpackages/core、systemd
+      I/Oはpackages/backendsに維持する。
+      Docling本体は隣接repositoryを固定revisionで取得して使い、vendorとして本repositoryへコピーしない。
+      起動・配備・設定テンプレートは本repositoryで管理し、Eumenes固有のUIと認証接続はEumenes側の変更工程とする。
+    </p>
+  </section>
+  <section id="storage">
+    <h2>コード、実行物、外付けSSDの配置</h2>
+    <table>
+      <caption>
+        既存環境契約を継承する配置。App専用directoryとDBは実装・配備工程で初めて作る。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">配置</th>
+          <th scope="col">保持方針</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ソースと起動スクリプト</th>
+          <td>
+            アプリ本体は/srv/ai/apps/{app-repository}。オンデマンド制御・入口・prepare/installは/srv/ai/apps/local-LLM-harnessのpackages、deploy/local-node、config/local-node。
+          </td>
+          <td>Git管理。実DB、依存物、build結果、model、生成HTML、ログをcommitしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">完成済み実行物</th>
+          <td>
+            /opt/larm-local-services/releases/{serviceId}/{digest}と/opt/larm-local-services/runtimes。
+          </td>
+          <td>
+            内蔵、root管理、実行時read-only。画面bundle、固定renderer、lock別依存もここへ配置する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">固定manifest・unit・秘密情報</th>
+          <td>
+            /etc/larm-local-servicesと/etc/systemd/system。HOME・configは/var/lib/larm-apps/{serviceId}。
+          </td>
+          <td>
+            内蔵、専用UIDと最小権限。tokenはGit外のSecret
+            file。復旧には別途保護した設定backupが必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実DBと業務状態</th>
+          <td>/srv/storage/nextorage/larm/apps/{serviceId}/state。</td>
+          <td>外付けSSD。DB、schema版、job、再送識別、所有者・認可metadataを保持。</td>
+        </tr>
+        <tr>
+          <th scope="row">文書・予定・図の実データ</th>
+          <td>/srv/storage/nextorage/larm/apps/{serviceId}/data。</td>
+          <td>
+            外付けSSD。原本、文書版、Excalidraw scene・画像、Archify
+            JSON・HTML、利用者の保存済み成果物を保持。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">再生成できるもの</th>
+          <td>同じservice rootのcache、work/{member}/{generation}。</td>
+          <td>外付けSSD。容量と期限で回収。参照中・処理中・未公開候補を確認せず削除しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">一時socket・実行識別</th>
+          <td>/run/larm-local-services等の固定runtime領域。</td>
+          <td>再起動で消失可能。DB・文書・未送信の編集内容の正本にはしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM制御journal</th>
+          <td>既存の内蔵側LARM state領域。</td>
+          <td>
+            起動世代とleaseの制御記録。外付けアプリDBとは別。既存Providerの保存先を本計画で移動しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <pre><code>/srv/storage/nextorage/larm/apps/
+  excalidraw-host/
+    state/documents.sqlite
+    data/documents/{documentId}/{revision}-{uuid}.excalidraw
+    cache/
+    work/{member}/{generation}/
+  docling-desk/
+    state/knowledge/knowledge.sqlite
+    data/knowledge/
+    cache/
+    work/{member}/{generation}/</code></pre>
+    <p>
+      予定の正本はカレンダーアプリのDB内のeventとrevision。Markdownは版別本文とDBの公開版参照、Excalidrawはscene
+      JSONと画像asset、Archifyは入力JSONと検証済みHTMLを正本として保存する。
+      利用者が保存したexportもdata対象とする。再生成可能なthumbnailと一時出力だけをcache/workにする。
+      sqlite-wal、sqlite-shm、rollback journal等のDB付随ファイルはDBと同じSSD
+      directoryに置く。個別に内蔵へ分離したり、稼働中の付随ファイルをcleanupしたりしない。
+    </p>
+    <p>
+      DoclingにはKNOWLEDGE_STATE_DIRをstate/knowledge、KNOWLEDGE_ARTIFACT_ROOTをdata/knowledgeへ明示する。APIとprocessorのartifact
+      rootを一致させる。 clients、worker token、lifecycle tokenとviewer設定は固定Secret
+      fileへ明示し、既定のcheckout内dataや.envに依存しない。 通常Docling画面の旧dataと独立Knowledge
+      APIの資料は形式もIDも異なるため、自動混在・自動移行しない。
+      Eumenes自体の既存DBを一括移行する作業は本計画に含めず、新規ホストサービスのDBと成果物を対象にする。
+    </p>
+    <p>
+      専用UID、HOME、XDG_DATA_HOME、XDG_STATE_HOME、XDG_CACHE_HOME、TMPDIRとcwdを固定する。
+      SSDのmount UUID、rw、realpath、最低空き2 GiBをDB
+      openより前に検証する。大容量入力には追加の必要容量も見積もる。
+      pathが存在するだけでは起動せず、媒体不在・別UUID・read-only・容量不足では受付を拒否する。内蔵directoryへのfallbackと空DBの自動作成を禁止する。
+      初回DB作成は正しい媒体確認後の明示bootstrapに限定し、通常起動で既存DBが消えていた場合は復旧要求とする。
+    </p>
+    <p>
+      SSD依存memberにはRequiresMountsFor、mount
+      unitへのBindsTo/Afterを設定する。未mount時の基底directoryをservice UIDから書込み不可にする。
+      使用中に媒体が失われたら新規書込みを止め、I/O障害として応答し、復帰後にDBとjobを再照合する。
+      起動時のUUID確認だけでは運用中の正常性を保証しないため、活動・readinessとAppのI/O失敗検知も使う。
+    </p>
+  </section>
+  <section id="request-flow">
+    <h2>要求から起動・復帰まで</h2>
+    <ol>
+      <li>
+        Eumenesが利用者と対象artifact/sourceの権限を確定する。停止中でもtool一覧は固定版のschemaから取得できるようにする。
+      </li>
+      <li>
+        backendのClientLocalServicesでservice
+        IDを固定してensureする。同じensureの再送には同じkeyを使い、別要求の利用権と混同しない。
+      </li>
+      <li>
+        startingでは待機表示を出し、resolveで同じrevision・generation・bootEpochを追跡する。初期の起動待ち上限は180秒、待機中もleaseを更新する。
+      </li>
+      <li>
+        ready endpointだけを使ってMCPまたはHTTP
+        APIへ接続する。LARM用tokenとアプリの業務tokenを分ける。
+      </li>
+      <li>
+        結果をartifact参照へ変換し、対応するhost画面を開く。Doclingはsource・原本版・根拠版・位置の参照を使う。
+      </li>
+      <li>
+        idle停止後の次の操作は同じ入口へ戻り、ensureして新世代へ接続する。資料が更新されていれば再検索し、古いsessionは再発行する。
+      </li>
+    </ol>
+    <p>
+      初期はサービスごと最大1
+      instanceとし、同時要求を既存Managerで起動集約する。各利用者・画面・agentの利用はbackend側で識別する。
+      LARM上のprincipalがEumenesサービス主体であっても、Eumenes内で利用者別の参照を管理し、一人の退出で他人のleaseを解放しない。
+      接続先は承認済みservice定義と固定hostのみを使い、モデルから任意URL・port・unit・commandを指定させない。
+    </p>
+    <p>
+      SDKの既存waitUntilReadyは待機中のrenewを自動では行わない。今回はconsumer
+      adapterでrenewとresolveを組み合わせ、起動待ちがlease期限を越えないようにする。
+      呼出し取消時は専用leaseを解放し、複数利用者が共有する起動まで無条件に取り消さない。
+      応答不明の作成・更新は新しいkeyで再実行せず、保存済み再送識別またはjob状態を確認する。
+    </p>
+  </section>
+  <section id="idle">
+    <h2>操作・lease・jobと停止判定</h2>
+    <table>
+      <caption>
+        未適用の初期値。単独利用で正常解放できた場合は最後の操作から約5分で停止判定へ進む。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">開始値</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">画面の無操作</th>
+          <td>180秒</td>
+          <td>
+            最後の編集・検索・ページ移動等から計る。保存済みならleaseを解放し、受動pollを停止する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">lease TTL / renew</th>
+          <td>120秒 / 30秒</td>
+          <td>
+            操作中、起動待ち、保存中、未完了toolのためにbackendが更新する。利用終了後の無条件renewは禁止。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">service idle</th>
+          <td>120秒</td>
+          <td>
+            全leaseなし、全活動ゼロ、freshな観測が継続した時間。画面無操作時間とは別にLARMが計る。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">活動poll / stale</th>
+          <td>5秒 / 15秒</td>
+          <td>制御上の観測。観測不明や空白をidleとして扱わない。</td>
+        </tr>
+        <tr>
+          <th scope="row">起動 / 停止上限</th>
+          <td>180秒 / 180秒</td>
+          <td>開始値。期限超過でも停止完了を捏造せず、残るprocessと資源予約を報告する。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      起動を維持する実操作は編集、保存、検索、予定変更、資料のページ移動、図の操作と実際のtool実行である。
+      画面が存在すること、接続が開いていること、heartbeat、readiness、activity、viewerの受動manifest確認、描画animationだけでは維持しない。
+      初期はidle画面のpollを停止または表示sessionを閉じ、監視要求でactiveRequestsや活動sequenceが増え続けることを防ぐ。
+      lifecycle/readiness自身を業務活動counterへ入れない。iframeからの活動通知は送信元window・message
+      schema・session対応を検証する。
+    </p>
+    <p>
+      auto-saveは変更をまとめて行い、未保存変更や保存失敗がある間は意図的にleaseを解放しない。
+      通信切断時の未送信変更は復旧可能なローカル下書きとして保持し、画面に未保存を示す。ローカル下書きはSSDの保存成功とは区別する。
+      backendやブラウザーの終了では最後のrenewから期限で回収されるため、固定の「5分停止」を保証せず、lease残時間とservice
+      idleの合計で説明する。
+    </p>
+    <p>
+      抽出、保存、Archify生成はqueuedJobs・runningJobs・activeRequests等で保護する。画面を閉じても受付済みjobは完了または失敗が確定するまで活動に残る。
+      DoclingのAPI・processor・viewerを集約したboot識別と活動契約を用意し、既存APIのactivityだけでviewerの実操作を見落とさない。
+      gatewayのsessionがメモリーに存在することだけをbusyにせず、操作中はEumenes
+      lease、実行中の取得は適切な活動counterで保護する。
+    </p>
+    <p>
+      idle成立後は既存Managerでdrainし、新規受付を閉じ、同じinstanceToken・App boot・drain
+      tokenの活動ゼロとleaseなしを再確認してTERM停止する。
+      停止確定前のensureは既存契約どおり再開し、停止確定後は完全停止して次世代を起動する。
+      子孫processとlistenerの終了観測後にだけ資源枠を返す。自動SIGKILLとjobの無条件再実行は追加しない。
+    </p>
+  </section>
+  <section id="data-contract">
+    <h2>保存、MCP、表示の共通契約</h2>
+    <p>
+      artifact
+      metadataはid、kind、schemaVersion、revision、owner、許可範囲、公開版参照、asset一覧とhashを持つ。
+      kindはmarkdown、calendar、excalidraw、archifyを初期対象とする。Doclingのsource参照は既存の版契約を保持し、workspace
+      DBへ原本を二重保存しない。 UI
+      stateは文書内容と分け、表示位置の変更だけで内容revisionを更新しない。 calendarは安定event
+      ID、開始・終了、timezone、終日区分とevent
+      revisionを持ち、繰返し予定、通知、外部同期は後続とする。
+    </p>
+    <p>
+      workspaceの公開APIは作成・取得・版指定更新・一覧・export・job照会に限定し、全更新で利用者認可、expected
+      revision、再送識別を確認する。
+      MCPと画面は同じ業務操作を使う。MCP用のactor対応はEumenesが認証済み利用者から確定し、tool引数で利用者を選ばせない。
+      初期workspace MCPはStreamable
+      HTTPを採用し、業務toolとread-only参照を固定schemaで公開する。接続だけではbusyを維持しない。
+    </p>
+    <p>
+      SQLiteは一つのAPI
+      writerとし、同じDBへ別プロセスから直接書かない。rendererはDBを開かず、固定job
+      directoryの入力を読み結果を返す。
+      fileは同じSSD内の候補へ書込み、sync・renameで不変版を確定してからDB
+      transactionで公開参照を切り替える。 DB
+      transactionとfile操作は一つの原子的操作ではないため、crashで残る未参照候補をreconcileし、DBから存在しないfileを公開しない。
+      更新競合は既存版を残して返し、失敗した再生成で最後の成功HTMLを上書きしない。asset回収は参照版と実行中jobを確認して行う。
+    </p>
+    <p>
+      workspaceのhost画面には、Eumenes
+      backendが対象artifactとread/write権限を確定して発行した短期sessionだけを渡す。
+      sessionはiframeのメモリー内で保持し、model文脈、会話履歴、localStorageや永続URLへ保存しない。service
+      tokenやactor署名鍵はbackendに留める。
+      発行・renew時と各取得・保存で利用者の現在の権限と対象版を確認し、idle復帰では新しいsessionを発行する。
+      短期sessionの発行・message交換・失効と公開asset取得はWP2・WP4の契約としてschema化する。
+    </p>
+    <p>
+      Archifyは固定revisionのCLI・schema・templateで入力を検証して生成する。自由なshell・任意path・任意package取得は公開しない。
+      図のJSONや添付assetはサイズ上限を設け、job同時実行は初期1。期限超過はcancel要求と終了観測を分け、未終了ならbusyと資源枠を維持する。
+      HTMLは隔離したiframeでscriptを許可しつつ同一origin権限とEumenes
+      credentialを渡さず、必要な通信とasset取得だけを定義する。
+      renderer固有のfont・assetはprepare時に固定し、実行時downloadを前提にしない。
+    </p>
+    <p>
+      初期Doclingは既存read-only MCPと接続コードによるviewer承認を再利用する。
+      起動し直すと失効するsessionやMCP接続は再接続し、履歴にはsourceの版と位置を残す。
+      Eumenesの信頼済み利用者対応、iframe表示、選択箇所から会話へ戻す通信を別途実装する。
+      LARM用lease token、Knowledge API actor token、MCP token、viewerの短期sessionは混同しない。
+    </p>
+  </section>
+  <section id="work-packages">
+    <h2>実装工程と変更先</h2>
+    <table>
+      <caption>
+        小さい単位でレビューし、各工程の完了条件を満たして次へ進む。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">工程</th>
+          <th scope="col">成果物・変更先</th>
+          <th scope="col">依存と完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">WP1: 配備・保存契約</th>
+          <td>
+            config/local-nodeのv2定義テンプレート、service別dataRoot、固定manifest形式、権限・port・資源・設定一覧。
+          </td>
+          <td>
+            既存環境を読取り確認。DB前のmount確認、初期bootstrapと通常起動の区別、業務・control
+            Secret分離がレビュー可能。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">WP2: workspace保存API</th>
+          <td>
+            LARM外の独立repositoryごとのschema、単一writer、版・asset・再送識別・job、lifecycle/readinessと業務API。
+          </td>
+          <td>WP1。SSD fixtureで保存・再起動・競合・crash候補回収・保存失敗を検証。</td>
+        </tr>
+        <tr>
+          <th scope="row">WP3: host画面と図生成</th>
+          <td>
+            各独立repositoryのMarkdown、calendar、Excalidraw画面、Archify生成adapterとHTML表示、固定iframe契約。
+          </td>
+          <td>
+            WP2。各正本の再表示、auto-save、idle復帰、画像維持、Archify最後の成功版維持を確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">WP4: MCPとEumenes入口</th>
+          <td>
+            各独立アプリのMCP、packages/clientの必要binding、Eumenes側のlocal-service
+            adapter、tool呼出し・actor仲介・型別ArtifactPanel。
+          </td>
+          <td>
+            WP2。起動待ちrenew、取消、他利用者保護、操作によるidle判定、停止後再接続を確認。Web/CLIはAPI経由。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">WP5: Docling接続</th>
+          <td>
+            固定release取得・prepare、三member起動定義、保存env、全体readiness/activity/drain、viewerと既存MCPの接続。
+          </td>
+          <td>
+            WP1・WP4。合成文書で検索→親文脈→引用→該当位置表示。viewer通信とprocessor
+            jobの停止保護を確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">WP6: 配備と停止観測</th>
+          <td>
+            deploy/local-node/scriptsの専用prepare/install/preflight/verify手順、固定unit・manifest・polkitと観測設定。
+          </td>
+          <td>
+            WP2・WP3・WP5。systemd-process既存backendを使い、完成済みdigest、専用UID、正しいSSDとstopped観測を確認してから登録。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">WP7: backup・restore・upgrade</th>
+          <td>
+            DB・data整合backup、checksum manifest、schema
+            migration・rollback、未参照候補とcache回収手順。
+          </td>
+          <td>
+            WP2・WP5。独立保存先への復元と旧release切戻し条件を確認。通常cleanupでDB・公開版を削除しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">WP8: 実機受入</th>
+          <td>fixtureとliveを分けたSpec HTML記録、計測結果、固定版・digest・設定、未完了条件。</td>
+          <td>WP4・WP6・WP7。全受入に合格後、対象serviceだけ有効化してEumenesへ提供。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      WP1–WP4でExcalidrawの最小縦断を先に作り、WP5でDoclingを接続する。
+      WP6の管理者配置はsource・固定成果物・設定とrollbackがレビュー可能になってから実施する。
+      installはサービス登録まで、DB
+      bootstrap、daemon有効化、初回ensureを明示した別工程に分け、環境準備だけでアプリを勝手に起動しない。
+      prepareではlock・commit・依存・runtime版を固定し、buildと必要資産取得を済ませる。初回リクエストでinstall・build・downloadしない。
+    </p>
+    <p>
+      新設scriptの候補はprepare-artifact-hosting、install-artifact-hosting、preflight-artifact-hosting、verify-artifact-hosting、backup-artifact-hostingとrestore-artifact-hosting。
+      命名と拡張子は実装時に既存scriptへ合わせる。prepareの再実行は同じdigestを再利用し、installやrestoreが既存dataを黙って上書きしない契約にする。
+      shellからcommand/envをconsumer入力で組み立てず、root管理の登録内容を実行する。
+    </p>
+  </section>
+  <section id="resources">
+    <h2>資源と受入計測</h2>
+    <p>
+      両サービスは初期CPUのみ、minInstances=0、maxInstances=1とする。workspaceとArchify子processは一つのcgroup予算へ含める。
+      DoclingのAPI・processor・viewer全体を合算してadmissionへ反映する。memory/CPU/pidsと起動予約の値は固定fixtureのpeakを測ってから配備manifestへ確定する。
+      旧Docling計画の9 GiB等は測定済み値として転用せず、必要なら検証開始の保守的候補として扱う。
+    </p>
+    <p>
+      idle停止までの時間、cold起動・warm応答、同時ensureの起動数、DBとassetのI/O、生成・抽出peak、停止後のanon
+      memory回収と残るfile cacheを記録する。 会話中のAI遅延も要求するAgent ProfileとProvider
+      subsetを固定して測る。現在動いているモデルを評価対象の代わりにしない。
+      Embeddingや回答生成の追加はProfile→route→runtime→backendで解決し、App内に同じLLMを重複配置しない。
+    </p>
+  </section>
+  <section id="acceptance">
+    <h2>必須受入試験</h2>
+    <table>
+      <caption>
+        source検証とproduction相当の実機検証を分けて記録する。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">合格基準</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">初回要求・同時要求</th>
+          <td>
+            停止中の検索・画面要求からreadyになる。同時要求で起動は一回、権限外要求は起動前に拒否。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">無操作と再開</th>
+          <td>
+            放置tab、MCP接続、heartbeat、animationだけでは維持しない。正常解放後にidle停止し、次の操作で対象IDと版から復帰。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">未保存・job・共有利用</th>
+          <td>
+            保存失敗、抽出、生成、別利用者の操作中に停止しない。切断しても期限とjob照合で最終的に回収。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">停止競合と残存process</th>
+          <td>drain中のensure、世代変更、TERM未終了で誤停止・二重起動・資源の早期解放がない。</td>
+        </tr>
+        <tr>
+          <th scope="row">SSDとDB</th>
+          <td>
+            正しいSSDに実DB・付随file・dataを書き、停止・ホスト再起動後に復元。未mount・別UUID・read-only・容量不足ではDB
+            open前に拒否し、内蔵へ書かない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">crash・媒体I/O障害</th>
+          <td>
+            asset確定前後とDB
+            commit前後で整合を回復。応答不明更新の再送が重複しない。媒体復帰で空DBへ置換しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">アーティファクト</th>
+          <td>
+            Markdown、予定timezone・終日、Excalidraw scene・画像、Archify
+            JSON・HTMLを再表示。競合で人の編集を消さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Docling</th>
+          <td>
+            合成PDF等で検索→親文脈→出典→該当位置表示。権限・版更新・session失効を扱い、原本をworkspaceへ複製しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">認証と表示</th>
+          <td>
+            別利用者のartifact/sourceを取得できず、iframe
+            messageを偽造して権限を変えられない。SecretをHTML、会話、ログ、履歴へ残さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">backup・restore・upgrade</th>
+          <td>
+            DBとassetの同時点backupを別の復元先で開ける。schema非互換時のrollbackはDB
+            snapshotも含め、旧codeだけ戻さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">負荷・停止後</th>
+          <td>
+            登録予算内で起動・生成・抽出し、固定Profileの会話負荷との併用を測る。停止後はprocess/listenerゼロを観測。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LARMの変更にはbun run typecheck、対象testsと配備fixtureを実施し、横断変更はbun run
+      checkを必須とする。 Eumenesの変更工程では対象domainのverifyと横断verify:allを適用する。
+      Doclingの変更は同repositoryのAPI契約、Python・TypeScriptの対象検査と合成資料を使う。 文書はbun
+      run
+      docs:check:fixで全診断を解消する。実機の停止・SSD保存・復元を通すまでホスティング完了とは記録しない。
+    </p>
+  </section>
+  <section id="backup">
+    <h2>backup、復旧、データ移行</h2>
+    <p>
+      初期backupは新規受付を止め、全consumer利用とjobを確認してserviceを正常停止し、DB・全付随file・data・schema版と公開版manifestを同じ時点で取得する。
+      停止できない場合は延期し、稼働中DBファイルだけをコピーする手順にしない。cache/workは原則対象外、秘密設定は別の暗号化した復旧用backupへ含める。
+      同じSSD内のsnapshotは更新rollbackには使えるが、媒体故障対策にはならないため、独立したbackup保存先を本番受入前に決める。
+    </p>
+    <p>
+      restoreはservice停止下で別directoryへ展開し、checksum、DB整合、artifact参照、UID・権限とschema対応を確認してから保存先を切り替える。
+      release更新はdataを保持し、schema
+      migration前に整合snapshotを取得する。rollbackでdataRootを削除せず、code・schema・データ版の組合せを確認する。
+      既存資料を移す場合は別工程として入力元、対象件数、停止点、checksumと切戻しを決め、旧配置を検証完了前に削除しない。
+    </p>
+  </section>
+  <section id="excalidraw-results">
+    <h2>Excalidraw先行実装と2026年10月9日の実機結果</h2>
+    <p>
+      利用者指定により、アプリをLARMの子directoryへ置かない構成へ更新した。/srv/ai/apps/excalidraw-hostに独立Git
+      repositoryを新設した。上流のforkではなく、固定した@excalidraw/excalidraw
+      0.18.1を使う保存・配信・MCP付きhostアプリである。GitHub remoteはまだ作成していない。
+    </p>
+    <table>
+      <caption>
+        責務と作成済みsource
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">担当</th>
+          <th scope="col">成果物</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">独立アプリ</th>
+          <td>
+            src/store.ts、storage.ts、server.ts、web/main.tsx。利用者別API、SQLite、不可変scene版、再送キー、revision競合、画像、MCPのlist/get/create/update、保存画面と下書き復元を実装。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LARM</th>
+          <td>
+            deploy/local-node/scripts/hosted-service-gateway.ts、prepare-excalidraw-hosting.ts、install-excalidraw-hosting.py、verify-excalidraw-hosting.ts。既存LocalServiceManager・route・ClientLocalServicesとprocess-controllerを再利用。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">常時到達する入口</th>
+          <td>
+            停止中でもUIを配信する小さなgatewayだけを残す。認証された業務API/MCPでensureし、同一利用者の同時要求を集約する。起動後も/hosting/statusとactivityの監視だけでは起動しない。業務tokenとlifecycle
+            tokenは別にする。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        隔離した実機検証の保存先と正式配備予定先
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">確認した場所・扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">検証の実DB</th>
+          <td>
+            /srv/storage/nextorage/files/larm-excalidraw-acceptance-20261009/app/state/documents.sqlite。WAL・SHM・writer.lockもstate配下。外付けSSDの専用fixtureで、正式dataRootの代替動作ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">検証の図と画像</th>
+          <td>
+            同じappのdata/documents/{id}/{revision}-{uuid}.excalidraw。画像dataURLをscene.filesに含む。DBは版のpathとSHA-256、所有者、title、revision、再送識別を持つ。停止時に削除しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">検証の実行物・証跡</th>
+          <td>
+            /srv/ai/local-services-prepared/excalidraw-acceptance。固定release、Git外0600の設定と秘密情報、results.json、restore-results.json、browser.pngを保持。DB・画像・依存物・証跡をどちらのsource
+            repositoryにも入れない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">正式配備予定</th>
+          <td>
+            /srv/storage/nextorage/larm/apps/excalidraw-host/{state,data,cache,work}。実行物は/opt/larm-local-services/releases/excalidraw-host/{digest}、runtimeは/opt/larm-local-services/runtimes/bun-{digest}/bun。root登録manifest・unitと専用UID
+            larm-excalidrawを使う。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      最終画面検証は21:21–21:22
+      JST。20並列で1000件を約12.7秒で作成し、1000件すべてのsceneを読み戻した。cold開始のgenerationは15→16だけで、起動は一回に集約された。停止後の要求で17へ更新し、保存済みの版と画像を維持した。テストではuser
+      idleとservice idleをそれぞれ3秒へ短縮した。正式設定の180秒・120秒を待った試験ではない。
+    </p>
+    <ul>
+      <li>
+        未認証拒否、別ownerの404、同一再送キーの同一結果、expectedRevision競合409、旧版の取得、native
+        export、SSD上の二つの不可変sceneファイルを確認した。
+      </li>
+      <li>
+        公式MCP SDK clientで4
+        toolの発見と図の作成に成功した。Eumenes自身からの呼出し・アーティファクトiframe接続は別工程で未検証。
+      </li>
+      <li>
+        Chromiumで日本語画面へ接続し、矩形を描き、保存・reload後の再表示を確認した。画面例は7018件の一覧。JavaScriptエラー0、外部通信0。日本語フォントとExcalidraw
+        fontsはbuild時同梱する。
+      </li>
+      <li>
+        systemdのread-only mount
+        namespaceではstate/data両方の実際の書込み先のUUID・rwを再検査する分岐をfixtureで確認した。単一writerの二重起動拒否、通常起動でのDB欠落拒否、mount/UUID不一致、保存先symlink拒否、ファイルchecksum破損の検出を単体試験した。gatewayは静的表示・監視による起動なし、認証・Origin拒否、処理中lease保持を別途試験した。
+      </li>
+      <li>
+        停止確認とwriter
+        lock取得後にDBをcheckpointし、DBと全sceneを別directoryへコピーした。7018件・7032版を再読込みし、7033ファイルのchecksumとSQLite
+        integrity_check=okを確認した。復元先は同じSSDのrestore-5ebf5f59-c3ad-4dad-b835-d5e4acad8374。同じ媒体内の復元演習であり、別媒体への災害復旧backupではない。
+      </li>
+    </ul>
+    <h3>正式配備の手順と残条件</h3>
+    <p>
+      prepareは独立repositoryを検査・buildし、Bun、UI、fonts、server、gateway、controllerをGit外のexcalidraw-productionへ固定する。prepared.jsonに全ファイルhashとdigestを記録する。installerの既定動作はdry-runであり、--applyにはrootと--expected-digestが必要。初回登録専用で既存deployment・DBを上書きしない。--bootstrapを明示した場合だけ専用UIDで初期DBを作る。
+    </p>
+    <pre><code>bun deploy/local-node/scripts/prepare-excalidraw-hosting.ts
+python3 deploy/local-node/scripts/install-excalidraw-hosting.py
+sudo python3 deploy/local-node/scripts/install-excalidraw-hosting.py --apply --bootstrap --expected-digest 3d876781599cab9411909511e31ec76502043b8184224ff8e071ac32cb78f376</code></pre>
+    <p>
+      上記digestは今回の固定成果物の値。再prepareした場合は直前のprepared.jsonのdigestに置換する。installerはSSDのUUID/ext4/rw/空き容量を確認し、root固定unitとmanifest、サービスに限定したpolkit、別々の認証設定を配置する。gatewayの正式portは18790、アプリは18791。LARM
+      leaseが返すpublicEndpointは認可されたgateway
+      consumer用の18791に固定し、gateway自身を返す循環を避ける。利用画面とMCP
+      clientの入口は18790である。登録後もLARMのrestart・gatewayのenable・アプリのensureを自動実施しない。
+    </p>
+    <p>
+      この環境ではsudoの非対話認証が利用できず、root管理先への正式配置は未実施。稼働中LARM
+      releaseにはv2とSystemdProcessBackendが存在することを読取り確認した。管理者登録後は固定releaseとの対応、既存local-servicesとconsumer設定との統合、larm-daemon-dropin.review、資源受付の実telemetry、専用UIDの停止観測とSSD障害復帰を確認してから有効化する。検証用child
+      process
+      backendは実際のアプリを起動・停止したが、productionのsystemd/cgroup・共通資源受付の認証ではない。
+    </p>
+    <p>
+      アプリのtypecheck・7単体試験・buildとLARMのbun run
+      checkは合格。追加修正後にもsource-only、operations、typecheck、gateway・installer試験とdocs検査を実施した。独立アプリの出荷buildは約420ファイルで、上流依存の大きなchunk警告は残る。
+    </p>
+    <p>
+      まだ共同編集・削除・外部共有・上流excalidraw.com互換の共有serverは提供しない。sceneをDBへ登録する前にファイルを公開するため、途中異常では未参照候補が残り得る。削除・容量回収と独立媒体backupは運用工程で設計する。下書きは同じタブ内で復元・exportでき、永続正本は保存成功したSSD版である。
+    </p>
+  </section>
+  <section id="completion">
+    <h2>本計画の完了条件と残る配備判断</h2>
+    <p>
+      文書・予定・図・DoclingをEumenesから要求して利用でき、無操作時に停止し、次の操作で復帰すること。
+      実DBと正本dataが指定SSDに残り、媒体不在で内蔵fallbackせず、別保存先から復元できること。
+      source検証、固定releaseと専用UIDでの実機受入、資源測定、backup/rollback手順を記録した段階で実装完了とする。
+    </p>
+    <p>
+      配備前に確定するのは固定依存revision、port、専用UID、資源上限、独立backup先と公開経路である。
+      初期提案は既存Eumenesから到達する限定経路を使い、不特定の外部公開は別の配備判断とする。
+      本計画作成では実DB、アプリ環境、unit、Secretを作成・変更せず、daemonも再起動しない。SAAA実装は参照していない。
+    </p>
+  </section>
+</article>

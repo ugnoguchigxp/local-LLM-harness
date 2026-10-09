@@ -1,0 +1,262 @@
+<article lang="ja">
+  <h1>Eumenes向け文書・カレンダー・図解サービスとアーティファクト連携の検討</h1>
+  <p>
+    2026年10月9日の調査と提案。Markdown編集、予定操作、資料検索、原本閲覧と図解を会話へ結び付ける構成は有用である。
+    MarkdownとカレンダーはReact表示部品、Docling Deskは文書処理・検索・閲覧サービスとして利用する。
+    追加候補のExcalidrawは編集可能な白板、Archifyは構造化した図解の生成と対話的閲覧を担当する。
+    ホスティングだけではMCP接続、保存、会話からの画面表示は成立しない。
+    利用者はリクエスト時に起動し、しばらく操作がなければ停止する方針を指定した。以下の詳細設計と時間値は提案であり、実装や配備の完了を示さない。
+  </p>
+  <p>
+    実装工程と保存配置は<a href="./on-demand-artifact-hosting-implementation-plan-2026-10-09.html"
+      >オンデマンドホスティング実装計画</a
+    >へ具体化した。 実DBと正本dataは外付けSSD、hosting
+    sourceと起動scriptは本repository、固定実行物は内蔵の管理領域に置く。
+    本書は候補の評価を担当し、実装時の具体的な初期構成は実装計画を参照する。
+  </p>
+  <section id="observations">
+    <h2>確認した実装</h2>
+    <table>
+      <caption>
+        候補の役割と追加が必要な機能
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">既存機能</th>
+          <th scope="col">Eumenes向けの追加</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">markdownWysiwyg</th>
+          <td>
+            TipTapベースのReact用Markdown編集部品。Markdown入出力、表、任意のMermaid表示。公開packageは0.3.7、React
+            peerは19.2.3以降の19系。
+          </td>
+          <td>
+            文書ID、保存API、版管理、利用者認可とMCP操作。編集部品の公開デモは永続文書サービスの代わりにはならない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">regular-calendar</th>
+          <td>
+            React用の予定・施設スケジュール表示部品。イベント配列と作成・更新・削除callbackを受け取る。公開packageは0.1.0。
+          </td>
+          <td>
+            予定の保存・認可API、タイムゾーンと終日予定の契約、重複更新対策、MCP操作。外部カレンダー同期と繰返し予定は別途対応範囲を決める。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">docling-desk</th>
+          <td>
+            独立Knowledge API、文書処理、出典付き検索、親文脈、形式別ビューアーとStreamable HTTP
+            MCP。MCPには検索・文脈取得・閲覧要求・接続承認がある。
+          </td>
+          <td>
+            Eumenesの利用者認証との対応、MCP
+            client、引用からの閲覧、専用アーティファクト表示。登録・差替えのHTTP
+            APIはあるが、既存閲覧MCPはread中心である。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Excalidraw</th>
+          <td>
+            React用の白板編集部品。図形、矢印、文字、画像、JSON形式の図、PNG・SVG出力を扱う。initialData、onChange、updateScene等の組み込みAPIがある。
+          </td>
+          <td>
+            図ID、sceneと画像assetの永続保存、版管理、MCPによる図の作成・取得・要素更新、Eumenesの編集画面。公開サイトの共同編集と共有リンク機能は、部品の組み込みだけでは揃わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Archify</th>
+          <td>
+            agent向けSkillとCLIによる図解生成。型付きJSONを検証して独立したHTMLへ変換し、構成・workflow・sequence・dataflow・lifecycleを表現する。成果物は生成環境なしで閲覧できる。
+          </td>
+          <td>
+            Eumenes agentへの生成手順の組み込み、必要なら限定したMCP
+            tool、生成job、JSONとHTMLの保存、対話的HTML表示。WYSIWYG編集とhosted
+            sharingは既存の対象外であり、常駐Webアプリとして扱わない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      隣接Eumenes checkoutはcleanで、確認revisionはc651e23。Reactは19.2.7。
+      ArtifactTabはkindがmarkdownのみ、ArtifactPanelは安全化したMarkdownを表示する。api、web/src、docsとREADMEの検索範囲ではMCP実装を確認できなかった。
+      この調査はローカルcheckoutの確認であり、稼働版やremote最新との一致は認定していない。
+      隣接docling-desk checkoutはclean、確認revisionは94f4351。公開mainのREADME、package、Knowledge
+      API・viewer埋め込み文書も確認した。
+    </p>
+  </section>
+  <section id="proposal">
+    <h2>提案する責務と接続</h2>
+    <ol>
+      <li>
+        Eumenes backendが利用者認証、許可範囲、MCP
+        clientとサービスAPI接続を担当する。署名鍵・service tokenをモデル引数やブラウザーへ渡さない。
+      </li>
+      <li>
+        文書・予定の保存APIを正本とする。MCPと人の画面操作は同じ認可・更新処理を使い、expected
+        revisionと再送識別で競合・重複を防ぐ。
+      </li>
+      <li>
+        Eumenesのアーティファクトへ文書編集、カレンダー、原本閲覧の型別表示を加える。履歴には対象ID、版、表示種別と位置を保存し、再表示時に権限を確認する。
+      </li>
+      <li>
+        Markdownとカレンダーは、まずEumenesへReact部品として組み込む。別アプリからの再利用・独立更新が必要なら、小さな専用画面としてホストし、明示した通信契約でiframeへ組み込む。
+      </li>
+      <li>
+        Doclingは独立サービスとしてホストし、既存のviewer gatewayとMCPを再利用する。Open
+        WebUI向けRich UIの変換はEumenesでは新たな接続処理が必要である。
+      </li>
+    </ol>
+    <p>
+      MCPは操作契約、アーティファクトは表示契約、保存APIはデータ正本を担当する。
+      提案例は文書作成・取得・更新、期間指定の予定検索・作成・更新である。これらの文書・予定MCP
+      toolは新設案であり、候補ライブラリーの既存機能ではない。
+      最初はEumenesの型別表示で実現し、汎用MCP
+      Apps対応の要否は他hostとの相互運用需要が出た段階で判断する。
+    </p>
+  </section>
+  <section id="hosting">
+    <h2>LARMによるホスティング</h2>
+    <p>
+      <a href="./local-service-host-process-direction-and-plan.html"
+        >Local Serviceのホストプロセス方針</a
+      >と
+      <a href="./local-service-host-process-implementation-results-2026-10-08.html"
+        >環境基盤の実装結果</a
+      >を継承する。
+      信頼済みアプリはsystemd-processで起動し、LARMは利用権、readiness、資源受付と停止を担当する。
+      文書・予定のDB、MCP業務toolと画面はアプリ側に置く。既存文書は基盤実装を記録しているが、Docling導入や実機受入の完了は示していない。
+    </p>
+    <p>
+      軽量な画面配信・認証仲介と、重い文書処理の起動単位は実測後に決める。初期は既存サービスの停止契約を再利用し、processorのみの個別停止を実装済みと扱わない。
+      操作中のビューアーと処理中jobも利用として数え、モデルのtool呼出し終了だけでleaseを解放しない。
+      ブラウザーから到達する閲覧URLとbackend専用API
+      URLを分ける。常時公開入口が必要なら、停止中サービスのensureを認証後に仲介する。
+    </p>
+    <p>
+      Doclingの既存viewerは接続コード3分、閲覧session5分、gateway再起動で失効する。
+      Eumenesではまず既存の接続承認手順を維持し、自動接続へ変更する場合は利用者・対象文書・権限を確定する別契約を設計する。
+      永続履歴に一時session
+      URLを保存せず、元資料の版と位置から再接続する。認証なしの通常Docling画面をそのまま公開する構成は採らない。
+    </p>
+    <p>
+      Embeddingや回答生成を追加する場合は、要求するAgent ProfileとProvider
+      subsetからroute、runtime、backendを解決する。
+      現在起動しているモデルを接続先の恒久的な正本にしない。文書処理のモデル資産はsource
+      repository外に置く。
+    </p>
+  </section>
+  <section id="on-demand">
+    <h2>リクエスト起動と無操作停止の方針</h2>
+    <p>
+      利用者指定の方針は、初回リクエストで必要なサービスだけ起動し、操作が途絶えたら停止する方式である。
+      常駐するEumenes
+      backendまたは既存の入口が認証後にLARMへensureし、ready成立を待ってサービスへ要求を渡す。
+      停止中のサービスへブラウザーを直接接続するだけでは起動できない。画面には準備中と起動失敗を表示する。
+      同じサービスへの同時要求は一つの起動へ集約し、すでにreadyならそのinstanceを共有する。
+    </p>
+    <ol>
+      <li>文書を開く、検索する、予定を表示するなどの要求で、必要なサービスの利用権を取得する。</li>
+      <li>
+        表示変更、編集、保存、検索、ページ移動などの実操作が続く間は、Eumenesが利用権を更新する。
+      </li>
+      <li>
+        タブが存在すること、MCPの接続が残ること、定期pollやheartbeatだけを実操作とは扱わない。無操作でタブを放置したら利用権の更新を止める。
+      </li>
+      <li>
+        保存を確定して利用権を解放し、LARMが全利用者の利用権と処理中jobを確認する。全活動がゼロでidle期間が成立したらdrainして停止する。
+      </li>
+      <li>
+        次の操作で再びensureし、対象ID、版と表示位置から画面を復帰する。更新・削除された資料は再検索し、失効した閲覧sessionは再接続する。
+      </li>
+    </ol>
+    <p>
+      初期案は画面の無操作3分で利用権を解放し、その後サービスのidle 120秒を経て停止する。
+      単独利用で活動がなければ最後の操作からおおむね5分が目安となる。これは未適用の開始値であり、起動時間と再利用頻度を測って調整する。
+      同時利用者、処理中job、保存処理がある場合は停止を延期する。lease期限とrenew周期は無操作判定と別に設計し、切断時にも回収されるようにする。
+    </p>
+    <p>
+      編集内容は自動保存し、未保存変更または保存失敗がある間は意図的に利用権を解放しない。
+      切断や障害による失効も想定し、未送信の変更はサービス停止で失われない復旧可能な下書きとして保持する。
+      原本、文書、予定、DBは永続保存先に置き、process停止や次回起動で消さない。
+      重い抽出処理は画面を閉じてもjobとして保護する。複数利用者のうち一人の無操作だけで共有サービス全体を停止しない。
+    </p>
+    <p>
+      Markdownとカレンダーの表示部品は静的配信でき、対象backendを停止しても既に読み込んだ画面は保持できる。
+      サービスを再び必要とする通信はEumenesの入口へ戻す。Doclingの埋め込みも再開要求をEumenesへ伝える接続処理が必要である。
+      停止に伴うMCP接続と閲覧sessionの切断は再接続で扱う。応答不明の書込みを無条件に再送せず、再送識別と版確認を使う。
+    </p>
+  </section>
+  <section id="diagram-artifacts">
+    <h2>ExcalidrawとArchifyによる図解</h2>
+    <p>
+      Excalidrawは、会話で作成した図を人が配置・矢印・文字まで直接修正する白板として使う。
+      Archifyは、構成や手順の意味をJSONに保持し、ノード詳細や経路を読めるHTMLとして渡す。
+      用途に応じて選択し、どちらもEumenesのアーティファクトとして開ける設計にする。
+      相互変換は未検討であり、一方を編集すれば他方へ自動反映するとは約束しない。
+    </p>
+    <p>
+      保存の共通契約はartifact
+      ID、kind、revision、所有者・許可範囲、元データ、関連assetと生成物の参照を持つ。
+      Excalidrawはscene JSONと画像を正本として保存し、PNGだけを残す方式にしない。
+      Archifyは入力JSONと生成HTMLを対として版管理し、agentによる修正はJSON更新、検証、再生成の順に行う。
+      表示用のstateと内容revisionを分け、ズームで内容の版を更新しない。人によるズームは操作として扱い、自動描画だけでは無操作時間を更新しない。
+      HTMLは隔離したiframeで表示し、Eumenesの認証情報を渡さず、必要なhost通信だけを定義する。
+    </p>
+    <p>
+      文書、予定、図の取得・保存は軽量な共通入口にまとめることを提案する。
+      Excalidrawの描画とArchify成果物の対話的表示はブラウザーで動くため、編集画面ごとに独立した常駐serverを立てる必要はない。
+      LARMは必要な保存backendや生成workerを要求時に起動し、無操作とjob終了後に停止させる。
+      Archifyの生成は固定のrendererを有限jobとして実行し、常駐preview
+      serverを本番配信の前提にしない。
+      生成済みHTMLはworker停止後も閲覧でき、次の修正要求でworkerを再起動する。
+    </p>
+    <p>
+      MCPの図操作toolは新設案である。create/get/update/export等の限定操作を共通保存APIへ接続し、任意commandや任意pathを引数として公開しない。
+      Excalidrawの手動更新とagent更新は同じrevision確認を使う。最初は一人での編集を対象にし、複数人のリアルタイム共同編集は別工程とする。
+      Archify用のSkillやCLIは本調査ではインストール・実行していない。第三者のSkill文書は候補の仕様調査として読んだものである。
+    </p>
+  </section>
+  <section id="delivery">
+    <h2>実装順序と受入条件</h2>
+    <ol>
+      <li>
+        Doclingのread-only接続：検索、親文脈取得、出典クリック、該当ページ表示、権限外拒否と期限切れ再接続を一連で検証する。
+      </li>
+      <li>
+        Markdownの編集・保存：人とagentの更新が同じ正本へ反映され、競合は上書きせず通知され、再起動後も文書が残ることを確認する。
+      </li>
+      <li>
+        カレンダーの検索・表示・保存：タイムゾーン、終日予定、再送、競合、対象期間外の予定を確認する。予定からの通知や外部サービス同期は別契約とする。
+      </li>
+      <li>
+        図解連携：Excalidrawのsceneと画像の再表示、手動とagent更新の競合、ArchifyのJSON検証と再生成、worker停止後のHTML閲覧を確認する。Markdown編集と同じ保存・表示基盤を再利用する。
+      </li>
+      <li>
+        オンデマンド運用：cold起動と同時要求の起動集約、操作中のlease更新、放置タブ・定期pollで停止が妨げられないこと、job・未保存編集・他利用者の保護、idle停止と次の操作での復帰、再起動後の資料維持と会話中のAI負荷への影響を実機で測る。
+      </li>
+    </ol>
+    <p>
+      配備先、LAN/VPN限定か外部公開か、既存データの移行、予定の正本と他アプリからの再利用範囲は未決定である。
+      本調査ではサービスを起動・公開せず、資格情報・業務データ・他repositoryを変更していない。SAAA実装は参照していない。
+    </p>
+  </section>
+  <section id="sources">
+    <h2>調査対象</h2>
+    <p>
+      公開repositoryはgithub.com/ugnoguchigxp/markdownWysiwyg、github.com/ugnoguchigxp/regular-calendar、github.com/ugnoguchigxp/docling-desk。確認日は2026年10月9日。
+    </p>
+    <p>
+      追加候補はgithub.com/excalidraw/excalidrawのmaster
+      READMEとdocs.excalidraw.comのProps・Utils文書、github.com/tt-a1i/archifyのmain
+      README_EN.md、archify/SKILL.mdとarchify/package.json。確認日は2026年10月9日。公開branchの時点調査であり、導入revisionは実装時に固定する。
+    </p>
+    <p>
+      主な根拠は各README・package.json、Doclingのdocs/knowledge-api.md、docs/viewer-embedding.md、src/docling_desk/viewer/mcp.py、Eumenesのweb/src/domains/artifact/store/index.tsとweb/src/components/domains/artifact/ArtifactPanel.tsx。
+    </p>
+  </section>
+</article>

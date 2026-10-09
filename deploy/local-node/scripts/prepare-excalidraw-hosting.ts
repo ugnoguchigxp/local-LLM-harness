@@ -1,0 +1,25 @@
+import { mkdir, cp, writeFile, readFile, readdir, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
+const app = "/srv/ai/apps/excalidraw-host", stage = "/srv/ai/local-services-prepared/excalidraw-production";
+const font = "/srv/ai/local-services-prepared/excalidraw-fonts/NotoSansJP.ttf";
+const fontHash = "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f";
+if (createHash("sha256").update(await readFile(font)).digest("hex") !== fontHash) throw new Error("prepared_font_changed");
+const check = Bun.spawn([process.execPath, "run", "check"], { cwd: app, env: { ...process.env, EXCALIDRAW_CJK_FONT: font }, stdout: "ignore", stderr: "pipe" });
+if (await check.exited !== 0) throw new Error(await new Response(check.stderr).text());
+await rm(stage, { recursive: true, force: true });
+await mkdir(stage, { recursive: true, mode: 0o700 });
+await cp(`${app}/dist`, `${stage}/release`, { recursive: true });
+await cp(process.execPath, `${stage}/bun`);
+await cp("deploy/local-node/local-services/process-controller.py", `${stage}/process-controller.py`);
+await cp("deploy/local-node/local-services/process-member.service.in", `${stage}/process-member.service.in`);
+await cp("/srv/ai/local-services-prepared/excalidraw-fonts/OFL.txt", `${stage}/release/web/fonts/OFL-NotoSansJP.txt`);
+const gateway = await Bun.build({ entrypoints: ["deploy/local-node/scripts/hosted-service-gateway.ts"], outdir: stage, target: "bun", naming: "gateway.js" });
+if (!gateway.success) throw new Error("gateway_build_failed");
+const files: Record<string, string> = {};
+async function walk(dir: string) { for (const entry of await readdir(dir, { withFileTypes: true })) { const path = join(dir, entry.name); if (entry.isDirectory()) await walk(path); else if (entry.isFile()) files[path.slice(stage.length + 1)] = createHash("sha256").update(await readFile(path)).digest("hex"); else throw new Error("stage_symlink_refused"); } }
+await walk(stage);
+delete files["prepared.json"];
+const digest = createHash("sha256").update(JSON.stringify(Object.entries(files).sort())).digest("hex");
+await writeFile(`${stage}/prepared.json`, JSON.stringify({ version: 1, appRepository: app, stage, digest, files }, null, 2), { mode: 0o600 });
+console.log(JSON.stringify({ prepared: `${stage}/prepared.json`, digest, appRepository: app, dataRoot: "/srv/storage/nextorage/larm/apps/excalidraw-host", activation: "requires administrator placement and current LARM release verification" }));
