@@ -6,8 +6,9 @@
   </p>
   <aside>
     <p>
-      ソースの設定変更、外部モデル配置、隔離HTTP APIの検証、新規systemd
-      unit登録まで完了。2026-10-09にユーザーが保存済み認証情報による登録・再起動を明示許可した。署名付きreleaseの検証・稼働反映と実Gemma接続のsmokeはこれから実施する。この時点で稼働GemmaはまだLayaである。
+      2026-10-09に稼働反映を完了。ユーザーが保存済み認証情報による登録・再起動を明示許可し、新規systemd
+      unit登録、検証済みcommitの署名付きrelease反映、LARM再起動、実Gemma接続とContextStill経路の確認まで完了した。GemmaのSystem
+      Oneはruri-v3-30m-speaking-attitude。Layaの重みは保持し、使用後の待機期限でLayaサービスが停止することも確認した。
     </p>
   </aside>
   <section id="scope">
@@ -159,27 +160,75 @@
     </p>
   </section>
   <section id="activation">
-    <h2>稼働反映の手順と未完了項目</h2>
+    <h2>稼働反映と受入結果</h2>
     <ol>
-      <li>prepare-ruri-runtime.shとprovision-ruri-artifacts.pyによる環境・artifact準備は完了。</li>
+      <li>prepare-ruri-runtime.shとprovision-ruri-artifacts.pyで外部環境・artifactを配置。</li>
       <li>
-        管理者がinstall-ruri-service.shを実行する。新規Ruri
-        unit、当該unitだけのstart/stop許可、daemon-reloadを行う。Layaの停止・削除、他Provider変更、接続設定・認証情報変更、release反映は行わない。
+        install-ruri-service.shで新規Ruri
+        unit、当該unitだけのstart/stop許可を登録し、daemon-reload。Ruri
+        unitはdisabledのまま、LARMがライフサイクルを管理する。
       </li>
       <li>
-        検証済みのclean commitを既存の署名付きrelease
-        build/activation経路で反映する。直接root所有releaseを編集しない。
+        clean commit ce7262154888279dfa6c55d74c8ccb9f959d50a1を非特権builderで全check後に署名。root
+        activatorがmanifest・treeを照合してatomic切替とLARM再起動を実施。
       </li>
       <li>
-        新しいGemma Agent
-        ConnectionでRuriの実判定とcredential失効をsmoke確認する。ContextStillのLaya経路も確認する。
+        2026-10-09 13:07:42 JSTにrelease controllerがcontract_verified / succeededを記録。desired
+        releaseとobserved releaseはともにce7262154888279dfa6c55d74c8ccb9f959d50a1。
       </li>
     </ol>
     <p>
-      現時点の稼働catalog
-      revisionは1411986f3a921403a3a2ef724fb30e1e0390aed2471a58a7d3976dd346bdcb37で、Gemmaの公開System
-      Oneモデルはlaya-multilingual。更新ソースのcatalog
-      revisionは0d7933c48f5fefa07af4d4696125feb3a3ba69353f2f58a4ebb713caf556a944。稼働catalogへの切替、実Gemma接続によるsmoke、利用アプリの再接続は未完了。
+      稼働releaseは/srv/ai/apps/larm-releases/ce7262154888。catalog
+      revisionは0d7933c48f5fefa07af4d4696125feb3a3ba69353f2f58a4ebb713caf556a944。旧release
+      48996cbf82ee86d4e7719f498eaf89a8ad1ad767からの更新を/healthと/v3/agent-profilesで確認した。
+    </p>
+    <table>
+      <caption>
+        稼働環境の実接続確認
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">確認</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Gemma</th>
+          <td>
+            SAAA-gemma4-26bの新規Agent Connectionで5 Providerをclaim。System
+            OneはRuri。操作手順の判定はnone。Gemma 4
+            26B-A4Bの実LLM応答も検証。接続release後のcredentialは401。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ContextStill</th>
+          <td>
+            System
+            Oneだけを要求した新規接続はlaya-multilingualをclaim。既存の汎用返金意図判定でrefundを返す。接続release後のcredentialは401。ContextStillのLLM起動や回答品質比較はこの確認に含めない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Ruri実行条件</th>
+          <td>
+            CPUExecutionProvider、4threads、batch 1、512tokens、input mode
+            A。起動時のartifact検証・warmup込み455ms。観測時RSS435MiB/PSS423MiB、Swap 0。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">待機制御</th>
+          <td>
+            確認接続を解放し、待機期限後にLayaはinactive / MainPID 0、Ruriはactiveを確認。Layaの5
+            model fileはモデルmanifestのサイズ・SHA256すべて一致し、削除していない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      証拠は/srv/ai/benchmarks/avatar-attitude/ruri-live-cutover.json、ruri-live-gemma.json、ruri-live-contextstill.json、ruri-release-build.log。実会話や認証情報は証拠に含めない。
+    </p>
+    <p>
+      この切替の受入は完了。既存利用アプリはGemma接続を再取得すると新しい構成を利用できる。個々の利用アプリのUI操作・再接続、実会話による人手評価、24時間soak、実TTS開始遅延測定は今回の確認に含めない。分類ヘッドは引き続き合成データ由来の暫定版である。
     </p>
     <p>
       リポジトリ全体のbun run

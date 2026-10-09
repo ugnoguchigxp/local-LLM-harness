@@ -75,5 +75,6 @@ This installs only the new unit and its narrow start/stop permission; it does no
 start or enable the Provider, replace credentials, remove Laya or activate a release.
 After registration, use the existing signed release build/activation workflow for
 a clean committed revision. The legacy-named `smoke-laya-profile.ts` now verifies
-Gemma's Ruri attitude decision and credential revocation. Reacquire existing Gemma
-Agent Connections after catalog activation; old claims retain their pinned generation.
+Gemma's Ruri attitude decision and credential revocation. Reacquire Gemma Agent Connections after activation. A daemon restart changes
+the boot epoch and invalidates old credentials; a catalog update alone keeps
+existing claims pinned to their original generation.
