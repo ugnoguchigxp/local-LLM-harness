@@ -1,0 +1,4216 @@
+<article lang="ja">
+  <h1>アバター表情・TTS発話態度の小型判断モデル比較：2026-10-09予備評価</h1>
+  <aside>
+    <p>
+      本書は予備評価時点の結果です。その後、ユーザーがGemmaのLayaをRuriへ切り替えることを明示承認しました。後続の分類ヘッド・校正・API実装と稼働反映の状態は<a
+        href="./gemma-ruri-speaking-attitude-provider-2026-10-09.html"
+        >GemmaのRuri発話態度Providerへの切替</a
+      >を参照してください。
+    </p>
+  </aside>
+  <p>
+    判断対象は文章中の感情ではなく、現在の回答チャンクをアシスタント自身が話すときの表情と声色である。合成例と仮ラベルによる予備評価として扱い、本番サービスとモデル設定は変更しない。共通条件の実機測定、ONNX出力の数値audit、保存スコアからの方策比較まで完了した。
+  </p>
+  <h2>独立性と参照範囲</h2>
+  <p>
+    評価の正本はLARMの<code>benchmarks/avatar-attitude/</code>に置く。モデル取得、CPU推論、固定Encoderの分類ヘッド学習、ONNX
+    INT8出力、保存スコアの再集計は独立したPython
+    Scriptで完結する。Eumenes、SAAA、稼働Provider、LLM、TTSへの呼び出しは行わない。モデル、環境、学習済みヘッド、生の測定結果はsource
+    repository外へ保存する。
+  </p>
+  <p>
+    ユーザーの追加指示によりEumenesを<code>../eumenes</code>へ取得し、revision
+    <code>c651e23dbbe7850f7ae5664f240db313829113b2</code
+    >の製品側deliveryとinference実装を参照した。評価Script、試験データ、既存評価値は評価入力・正解・比較値として利用しない。製品側の候補絞り込みと0.6の閾値は、本比較の全6候補固定条件とは別の動作である。
+  </p>
+  <p>
+    <code>../SAAA</code
+    >には<code>src-tauri/src/providers/dynamic_lan/mod.d/02.rs</code>、<code>04.rs</code>、<code>05.rs</code>の未コミット変更があり、更新していない。checkout
+    revisionは<code>af97e48429f0a2545afed5c51c04cb7d820acaee</code>。AGENTS.mdの指示に従い、変更を上書きせず、最新実装として依拠していない。
+  </p>
+  <h2>タスクと入力</h2>
+  <table>
+    <caption>
+      固定した6クラスの発話目的
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">クラス</th>
+        <th scope="col">アシスタントの表現</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">none</th>
+        <td>通常。落ち着いた事実、説明、操作手順。</td>
+      </tr>
+      <tr>
+        <th scope="row">warmth</th>
+        <td>親しみ。挨拶、感謝、温かい声かけ。</td>
+      </tr>
+      <tr>
+        <th scope="row">joy</th>
+        <td>喜び。達成や良い知らせを一緒に喜ぶ。</td>
+      </tr>
+      <tr>
+        <th scope="row">empathy</th>
+        <td>寄り添い。穏やかな気遣い、安心を伝える。</td>
+      </tr>
+      <tr>
+        <th scope="row">curiosity</th>
+        <td>興味。相手の話の続きを知りたい反応。</td>
+      </tr>
+      <tr>
+        <th scope="row">surprise</th>
+        <td>驚き。予想外の出来事への反応。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    候補順序はnone、warmth、joy、empathy、curiosity、surpriseで固定する。感情語、否定、引用、技術上の失敗だけを根拠に表情を変更しない。スコアから作るsoftmaxやLayaの出力値も、このタスクにおける正解確率としては校正していない。
+  </p>
+  <ol>
+    <li>A：現在チャンクだけ。現在のアシスタント発話を判断対象として明示する。</li>
+    <li>B：ユーザー発言と現在チャンク。ユーザーは参考情報として役割を明示する。</li>
+    <li>C：ユーザー発言、直前の回答1チャンク、現在チャンク。初回の直前は「なし」。</li>
+  </ol>
+  <p>
+    同じ日本語原文を使用し、英訳、追加LLM呼び出し、未来チャンクの参照、回答全文の完成待ちは行わない。前チャンクは会話IDと順序から復元し、現在チャンク以外を判断対象へ混ぜない。Embedding入力の超過は左から切り詰めて記録し、Layaでは現在チャンクが落ちる超過入力を拒否する。
+  </p>
+  <h2>データと分離</h2>
+  <p>
+    JSONLは学習60件、校正36件、評価81件の計177件。各例に会話ID、テンプレート群、チャンク順序、ユーザー発言、現在チャンク、主ラベル、許容ラベル、initial・hold・changeの表情遷移、用途タグ、合成・仮ラベルの状態を持たせる。initialは前チャンクのない例を表し、遷移率の分母へ含めない。
+  </p>
+  <p>
+    会話とテンプレート群を分割間で共有しない。同じ現在チャンクや、文字列類似度0.8以上の近似文が分割をまたぐ場合は実行を拒否する。これは形式的な漏洩確認であり、人による意味的なテンプレート監査の代わりにはならない。初回の分割監査で見つかった類似文を修正したため、中断した測定結果は最終集計から除外する。
+  </p>
+  <p>
+    短文、技術説明、祝福、回復の安心、喪失への寄り添い、興味、驚き、否定・引用、祝福から操作手順への移行を含む。「それはよかったですね。」には合格、発熱からの回復、バックアップ確認の対照例を用意した。Aでは同じ入力になり、主ラベル3種類をすべて正解することは原理的にできない。
+  </p>
+  <p>
+    分類ヘッドは学習例だけで学習する。Encoderは固定し、6クラスの線形Logistic
+    Regressionを初期C=10、最大2000反復、seed=1729で学習する。追加の正則化比較は校正集合のみで選択する。A/B/Cごとに別ヘッドを学習するため、学習済み分類器の入力比較にはヘッドの差も含まれる。校正例は閾値・ヒステリシス・平滑化の選択だけに使い、評価例は学習・選択に使用しない。
+  </p>
+  <h2>測定条件</h2>
+  <p>
+    実機はAMD Ryzen AI MAX+ 395。CPUのみ、FP32、推論4 threads、interop 1 thread、batch 1、最大512
+    tokens、各入力方式のwarmup
+    10回、3反復。反復ごとに新しいプロセスを用い、モデルは順次測定する。GPUとNPUは別条件であり、本CPU評価には含めない。
+  </p>
+  <p>
+    LayaはLARMで固定しているmultilingual checkpoint、Laya 0.3.20、revision
+    <code>55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851</code
+    >を検証用ディレクトリへ取得する。稼働serviceは呼び出さない。既存と同じcheckpointを共通の6択課題で再測定するもので、Eumenesの絞り込みや閾値を含む本番経路の再現ではない。
+  </p>
+  <p>
+    Verdictはquery: とpassage:、Ruriは入力と候補にトピック: を付け、mean
+    poolingとL2正規化でcosine類似度を求める。固定候補6つのembeddingだけを初期化時に事前計算する。入力embeddingはキャッシュしない。Layaはcheckpoint付属のtyped
+    decision headを使用し、候補embeddingのキャッシュはない。
+  </p>
+  <p>
+    推論時間はtokenization、Encoder、pooling、6候補のスコア計算を含む。Layaはtyped
+    requestの整形も含む。入力整形の事前検査、メモリ採取、HTTP、接続準備、TTS合成、再生待ちを含まない。ロードはローカルtokenizerとmodel、固定候補の計算、adapter初期化を含み、framework
+    importとdownloadは除く。SHA-256確認後なのでファイルページが温まった条件であり、ディスクからのcold
+    loadではない。
+  </p>
+  <p>
+    RSS/PSS/SwapはLinuxのsmaps_rollup、VmHWMはstatusから採取する。ロード前後と各推論後の値を保存する。PSSの最大値は観測した最大であり、推論中の一時ピークの保証ではない。プロセス全体とロード前のlibrary常駐量を区別する。CPU消費は推論中のprocess
+    CPU時間をwall時間で割った使用コア相当値を報告する。
+  </p>
+  <h2>指標と再集計</h2>
+  <p>
+    品質は反復0だけで81例を数え、3反復を独立した正解例として数えない。一致率とMacro
+    F1は主ラベル、許容外率は許容ラベル集合で評価する。混同行列の行は正解、列は予測、順序は固定候補と同じ。全クラスのprecision・recall・F1と分母を保存する。
+  </p>
+  <ul>
+    <li>
+      表情の通常への落下：主ラベルがnone以外で、noneが許容されない例のうち、noneを予測した率。
+    </li>
+    <li>技術説明への誤感情：technicalタグかつ主ラベルnoneの例で、none以外を予測した率。</li>
+    <li>不要な切替：holdの遷移で、予測ラベルが前チャンクから変わった率。</li>
+    <li>
+      必要な変化の遅れ：changeの開始チャンクで、新しい許容ラベルにならなかった率。回復までのチャンク数と、次の変化や会話終了まで回復しなかった打切り数も保存する。
+    </li>
+  </ul>
+  <p>
+    保存したraw_scoresとdecision_scoresから閾値、ヒステリシス、指数平滑化を再比較できる。cosineの20倍は共通のスコア単位を作るためのlogitであり、正解確率ではない。方策の状態は会話開始時にリセットし、過去のスコアだけを使う。最終集計で未来の予測を調べる処理は遅れの事後測定に限る。
+  </p>
+  <p>
+    校正集合だけで、margin=0・0.2・0.6・1.2、hysteresis=0・0.2・0.6、alpha=1・0.75・0.5を比較する。目的関数はMacro
+    F1から不要切替率と変化遅延率をそれぞれ0.1倍して引いた値。評価集合で最良の方策を選ばない。実際のTTS開始遅延は測定しておらず、結果のtts_start_delay_msはnullとする。
+  </p>
+  <h2>実行方法</h2>
+  <p>
+    環境と重みはrepository外の<code>/srv/ai/benchmarks/avatar-attitude</code>に保存する。dependenciesは<code>requirements.txt</code>で固定する。PyTorch
+    CPU wheelの取得には公式CPU indexを追加する。
+  </p>
+  <pre><code>uv venv --python python3.13 /srv/ai/benchmarks/avatar-attitude/.venv
+uv pip install --python /srv/ai/benchmarks/avatar-attitude/.venv/bin/python \
+  --extra-index-url https://download.pytorch.org/whl/cpu \
+  -r benchmarks/avatar-attitude/requirements.txt
+PYTHONDONTWRITEBYTECODE=1 /srv/ai/benchmarks/avatar-attitude/.venv/bin/python \
+  benchmarks/avatar-attitude/prepare.py --sandbox /srv/ai/benchmarks/avatar-attitude
+PYTHONDONTWRITEBYTECODE=1 /srv/ai/benchmarks/avatar-attitude/.venv/bin/python \
+  benchmarks/avatar-attitude/run.py --sandbox /srv/ai/benchmarks/avatar-attitude \
+  --output /srv/ai/benchmarks/avatar-attitude/new-run
+PYTHONDONTWRITEBYTECODE=1 python3 benchmarks/avatar-attitude/report.py \
+  --runs /srv/ai/benchmarks/avatar-attitude/new-run \
+  --output /srv/ai/benchmarks/avatar-attitude/new-report \
+  --margin 0.2 --hysteresis 0.2 --alpha 0.75
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+  -s benchmarks/avatar-attitude -p 'test_*.py'</code></pre>
+  <p>
+    追加モデルはprepare.pyの--modelsで明示する。分類ヘッドはtrain_head.py、INT8化は品質確認後にexport_int8.pyを使い、それぞれ別のrun
+    directoryで測る。出力先に同名の測定がある場合は上書きを拒否する。
+  </p>
+  <h2>採用提案</h2>
+  <p>
+    現時点では本番のLayaを継続し、変更候補の第一位をRuri
+    37Mの固定Encoder＋6クラス分類ヘッドとする。ゼロショット類似度方式への即時変更は勧めない。Ruri分類ヘッドのAは精度・速度・常駐量で有望だが、合成の小規模評価であり、曖昧な短文と不要切替が残る。追加の実会話収集、発話目的の人手ラベル、独立した会話単位の評価を通してから置換する。既存のservice・モデル設定・Eumenes製品コードは変更していない。
+  </p>
+  <p>
+    RuriはAのFP32で一致率90.1%、Macro F1
+    0.900、INT8で91.4%、0.911。INT8のP50/P95は2.66/3.34ms、観測PSSは293MiBで、Laya
+    Aの259.15/273.35ms、1779MiBより小さい。ただし異なるruntimeを含む常駐量であり、量子化単独の削減量ではない。Aの対照短文は全部noneになり、合格を喜ぶ・回復に寄り添う2例を取りこぼす。
+  </p>
+  <p>
+    Ruri分類ヘッドBのFP32は同一短文の3対照例をjoy・empathy・noneに分けるが、技術説明14例中6例に感情を付け、必要な切替7回中2回で遅れる。Cでは遅れが4/7に増える。文脈を増やすだけでは現在チャンクの目的を守れない。Aを基準にBを曖昧時だけ使う構成は今後の検証案であり、今回その混合方策の精度を測ったわけではない。
+  </p>
+  <p>
+    ModernBERT-Jaの固定Encoder＋ヘッドBはFP32で一致率85.2%、Macro F1
+    0.840、技術誤感情0/14。専用分類器の比較候補として残す。しかし今回のINT8化ではMacro F1
+    0.379へ低下し、そのまま採用できない。量子化Encoderに合わせたヘッド再学習や量子化対象の見直しは未評価。RuriのINT8もB/Cで劣化しており、Aでの改善を全入力方式へ一般化しない。
+  </p>
+  <h2>モデルと実行の固定値</h2>
+  <table>
+    <caption>
+      取得revisionと実測対象のパラメータ数
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">モデル</th>
+        <th scope="col">revision</th>
+        <th scope="col">パラメータ数</th>
+        <th scope="col">入力prefix</th>
+        <th scope="col">候補prefix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">convaiinnovations/laya</th>
+        <td>55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851</td>
+        <td>321,908,995</td>
+        <td>typed request</td>
+        <td>typed head</td>
+      </tr>
+      <tr>
+        <th scope="row">Manav2op/verdict-small</th>
+        <td>085a41e0ea269f00483dd202a286cfb68f7aa63a</td>
+        <td>117,653,760</td>
+        <td>query:</td>
+        <td>passage:</td>
+      </tr>
+      <tr>
+        <th scope="row">cl-nagoya/ruri-v3-30m</th>
+        <td>24899e5de370b56d179604a007c0d727bf144504</td>
+        <td>36,705,536</td>
+        <td>トピック:</td>
+        <td>トピック:</td>
+      </tr>
+      <tr>
+        <th scope="row">cl-nagoya/ruri-v3-70m</th>
+        <td>07a8b0aba47d29d2ca21f89b915c1efe2c23d1cc</td>
+        <td>70,002,816</td>
+        <td>トピック:</td>
+        <td>トピック:</td>
+      </tr>
+      <tr>
+        <th scope="row">sbintuitions/modernbert-ja-30m</th>
+        <td>8cb03f54cb9e30e72459e5f1cedc6d89c7d8dcb5</td>
+        <td>36,705,536</td>
+        <td></td>
+        <td>typed head</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    CPU FP32はPyTorch 2.11.0+cpu、Transformers 5.17.0、Tokenizers 0.23.2、NumPy 2.5.3、Laya
+    0.3.20。ヘッド学習はscikit-learn 1.9.1。ONNX出力はonnx 1.23.2、CPU推論はONNX Runtime
+    1.30.0。ONNX
+    workerはPyTorchとTransformersをimportせず、TokenizersとNumPyを使う。全実行でCPUを明示し、実際のproviderはCPUExecutionProviderのみ。GPU/NPUの値として報告する結果はない。
+  </p>
+  <p>
+    分類ヘッドは初期C=10の結果も保存し、その後の探索的比較でC=1・10・100・1000を校正集合のMacro
+    F1で選択した。同率では小さいCを選ぶ。RuriはA/B/CともC=100、ModernBERT-JaはA/Bが10、Cが100。評価集合でCを選んでいない。初期予備結果を観測した後の追加実験であり、最終採用には新しい人手ラベルの評価集合が必要である。Ruriはmean＋L2正規化、ModernBERT-Jaは先頭tokenのCLS表現を特徴量にする。
+  </p>
+  <p>
+    rawのrun識別子にあるlaya-similarity-fp32は共通runnerの既定CLI名であり、Layaがcosine類似度方式を使う意味ではない。実際のscore_kindはlaya_raw_logitsで、checkpoint付属のtyped
+    decision headを使っている。
+  </p>
+  <h2>A/B/Cの品質と速度</h2>
+  <table>
+    <caption>
+      予備評価81例、品質は反復0、時間は3反復243観測
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">モデル・方式・入力</th>
+        <th scope="col">一致率</th>
+        <th scope="col">Macro F1</th>
+        <th scope="col">許容外</th>
+        <th scope="col">P50 ms</th>
+        <th scope="col">P95 ms</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Laya multilingual／付属typed head／FP32／A</th>
+        <td>50.6%</td>
+        <td>0.435</td>
+        <td>40/81 (49.4%)</td>
+        <td>259.15</td>
+        <td>273.35</td>
+      </tr>
+      <tr>
+        <th scope="row">Laya multilingual／付属typed head／FP32／B</th>
+        <td>64.2%</td>
+        <td>0.651</td>
+        <td>29/81 (35.8%)</td>
+        <td>279.37</td>
+        <td>296.22</td>
+      </tr>
+      <tr>
+        <th scope="row">Laya multilingual／付属typed head／FP32／C</th>
+        <td>55.6%</td>
+        <td>0.533</td>
+        <td>36/81 (44.4%)</td>
+        <td>311.03</td>
+        <td>330.83</td>
+      </tr>
+      <tr>
+        <th scope="row">Verdict 118M／類似度／FP32／A</th>
+        <td>60.5%</td>
+        <td>0.533</td>
+        <td>32/81 (39.5%)</td>
+        <td>19.51</td>
+        <td>21.50</td>
+      </tr>
+      <tr>
+        <th scope="row">Verdict 118M／類似度／FP32／B</th>
+        <td>58.0%</td>
+        <td>0.536</td>
+        <td>34/81 (42.0%)</td>
+        <td>22.16</td>
+        <td>23.99</td>
+      </tr>
+      <tr>
+        <th scope="row">Verdict 118M／類似度／FP32／C</th>
+        <td>46.9%</td>
+        <td>0.408</td>
+        <td>43/81 (53.1%)</td>
+        <td>27.88</td>
+        <td>31.50</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／類似度／FP32／A</th>
+        <td>48.1%</td>
+        <td>0.383</td>
+        <td>42/81 (51.9%)</td>
+        <td>9.61</td>
+        <td>10.27</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／類似度／FP32／B</th>
+        <td>49.4%</td>
+        <td>0.398</td>
+        <td>41/81 (50.6%)</td>
+        <td>11.25</td>
+        <td>12.09</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／類似度／FP32／C</th>
+        <td>45.7%</td>
+        <td>0.350</td>
+        <td>44/81 (54.3%)</td>
+        <td>13.54</td>
+        <td>14.78</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 70M／類似度／FP32／A</th>
+        <td>59.3%</td>
+        <td>0.513</td>
+        <td>33/81 (40.7%)</td>
+        <td>22.44</td>
+        <td>24.14</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 70M／類似度／FP32／B</th>
+        <td>42.0%</td>
+        <td>0.321</td>
+        <td>47/81 (58.0%)</td>
+        <td>26.55</td>
+        <td>28.32</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 70M／類似度／FP32／C</th>
+        <td>53.1%</td>
+        <td>0.440</td>
+        <td>38/81 (46.9%)</td>
+        <td>32.22</td>
+        <td>34.82</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／固定Encoder＋ヘッドC=10／FP32／A</th>
+        <td>66.7%</td>
+        <td>0.614</td>
+        <td>27/81 (33.3%)</td>
+        <td>9.47</td>
+        <td>10.14</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／固定Encoder＋ヘッドC=10／FP32／B</th>
+        <td>77.8%</td>
+        <td>0.768</td>
+        <td>18/81 (22.2%)</td>
+        <td>11.20</td>
+        <td>11.96</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／固定Encoder＋ヘッドC=10／FP32／C</th>
+        <td>75.3%</td>
+        <td>0.749</td>
+        <td>20/81 (24.7%)</td>
+        <td>13.57</td>
+        <td>14.66</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／A</th>
+        <td>82.7%</td>
+        <td>0.803</td>
+        <td>14/81 (17.3%)</td>
+        <td>9.16</td>
+        <td>9.85</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／B</th>
+        <td>85.2%</td>
+        <td>0.840</td>
+        <td>12/81 (14.8%)</td>
+        <td>10.87</td>
+        <td>11.82</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／C</th>
+        <td>74.1%</td>
+        <td>0.716</td>
+        <td>21/81 (25.9%)</td>
+        <td>13.05</td>
+        <td>13.92</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／校正集合でC選択したヘッド／FP32／A</th>
+        <td>90.1%</td>
+        <td>0.900</td>
+        <td>8/81 (9.9%)</td>
+        <td>9.88</td>
+        <td>17.27</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／校正集合でC選択したヘッド／FP32／B</th>
+        <td>81.5%</td>
+        <td>0.816</td>
+        <td>15/81 (18.5%)</td>
+        <td>11.57</td>
+        <td>28.84</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／校正集合でC選択したヘッド／FP32／C</th>
+        <td>79.0%</td>
+        <td>0.797</td>
+        <td>17/81 (21.0%)</td>
+        <td>13.91</td>
+        <td>21.54</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／A</th>
+        <td>82.7%</td>
+        <td>0.803</td>
+        <td>14/81 (17.3%)</td>
+        <td>9.20</td>
+        <td>10.06</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／B</th>
+        <td>85.2%</td>
+        <td>0.840</td>
+        <td>12/81 (14.8%)</td>
+        <td>10.86</td>
+        <td>11.85</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／C</th>
+        <td>84.0%</td>
+        <td>0.828</td>
+        <td>13/81 (16.0%)</td>
+        <td>13.08</td>
+        <td>14.12</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／同一ヘッド／ONNX INT8／A</th>
+        <td>91.4%</td>
+        <td>0.911</td>
+        <td>7/81 (8.6%)</td>
+        <td>2.66</td>
+        <td>3.34</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／同一ヘッド／ONNX INT8／B</th>
+        <td>74.1%</td>
+        <td>0.750</td>
+        <td>21/81 (25.9%)</td>
+        <td>3.14</td>
+        <td>3.59</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／同一ヘッド／ONNX INT8／C</th>
+        <td>75.3%</td>
+        <td>0.757</td>
+        <td>20/81 (24.7%)</td>
+        <td>4.10</td>
+        <td>4.55</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／A</th>
+        <td>45.7%</td>
+        <td>0.377</td>
+        <td>44/81 (54.3%)</td>
+        <td>2.75</td>
+        <td>2.94</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／B</th>
+        <td>48.1%</td>
+        <td>0.379</td>
+        <td>42/81 (51.9%)</td>
+        <td>3.30</td>
+        <td>3.78</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／C</th>
+        <td>38.3%</td>
+        <td>0.224</td>
+        <td>50/81 (61.7%)</td>
+        <td>4.13</td>
+        <td>4.42</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    この81例に対して学習済みヘッドの学習例は60件、校正例は36件。評価例は61会話・59テンプレート群。学習は52会話・52群、校正は28会話・28群。表情を通常へ落とす率の分母は58例、技術誤感情は14例、不要切替は13遷移、必要な変化は7遷移であり、少数の違いで率が大きく変動する。
+  </p>
+  <h2>誤りとチャンク遷移</h2>
+  <table>
+    <caption>
+      必要な表情とチャンク境界に関する率
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">モデル・入力</th>
+        <th scope="col">none落下</th>
+        <th scope="col">技術誤感情</th>
+        <th scope="col">不要切替</th>
+        <th scope="col">変化開始時の遅れ</th>
+        <th scope="col">未回復・打切り</th>
+        <th scope="col">回復チャンク数</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Laya multilingual／付属typed head／FP32／A</th>
+        <td>0/58 (0.0%)</td>
+        <td>14/14 (100.0%)</td>
+        <td>5/13 (38.5%)</td>
+        <td>6/7 (85.7%)</td>
+        <td>6/7 (85.7%)</td>
+        <td>[0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Laya multilingual／付属typed head／FP32／B</th>
+        <td>1/58 (1.7%)</td>
+        <td>13/14 (92.9%)</td>
+        <td>3/13 (23.1%)</td>
+        <td>6/7 (85.7%)</td>
+        <td>6/7 (85.7%)</td>
+        <td>[0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Laya multilingual／付属typed head／FP32／C</th>
+        <td>0/58 (0.0%)</td>
+        <td>14/14 (100.0%)</td>
+        <td>5/13 (38.5%)</td>
+        <td>6/7 (85.7%)</td>
+        <td>6/7 (85.7%)</td>
+        <td>[0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Verdict 118M／類似度／FP32／A</th>
+        <td>22/58 (37.9%)</td>
+        <td>1/14 (7.1%)</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Verdict 118M／類似度／FP32／B</th>
+        <td>24/58 (41.4%)</td>
+        <td>1/14 (7.1%)</td>
+        <td>2/13 (15.4%)</td>
+        <td>1/7 (14.3%)</td>
+        <td>1/7 (14.3%)</td>
+        <td>[0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Verdict 118M／類似度／FP32／C</th>
+        <td>33/58 (56.9%)</td>
+        <td>1/14 (7.1%)</td>
+        <td>1/13 (7.7%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>[0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／類似度／FP32／A</th>
+        <td>33/58 (56.9%)</td>
+        <td>1/14 (7.1%)</td>
+        <td>5/13 (38.5%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[1, 0, 1, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／類似度／FP32／B</th>
+        <td>29/58 (50.0%)</td>
+        <td>2/14 (14.3%)</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／類似度／FP32／C</th>
+        <td>31/58 (53.4%)</td>
+        <td>2/14 (14.3%)</td>
+        <td>0/13 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 70M／類似度／FP32／A</th>
+        <td>25/58 (43.1%)</td>
+        <td>2/14 (14.3%)</td>
+        <td>5/13 (38.5%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 70M／類似度／FP32／B</th>
+        <td>29/58 (50.0%)</td>
+        <td>6/14 (42.9%)</td>
+        <td>3/13 (23.1%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>[0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 70M／類似度／FP32／C</th>
+        <td>31/58 (53.4%)</td>
+        <td>2/14 (14.3%)</td>
+        <td>2/13 (15.4%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 1, 0, 0, 0, 0, 1]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／固定Encoder＋ヘッドC=10／FP32／A</th>
+        <td>27/58 (46.6%)</td>
+        <td>0/14 (0.0%)</td>
+        <td>2/13 (15.4%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／固定Encoder＋ヘッドC=10／FP32／B</th>
+        <td>16/58 (27.6%)</td>
+        <td>0/14 (0.0%)</td>
+        <td>2/13 (15.4%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／固定Encoder＋ヘッドC=10／FP32／C</th>
+        <td>15/58 (25.9%)</td>
+        <td>2/14 (14.3%)</td>
+        <td>2/13 (15.4%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>1/7 (14.3%)</td>
+        <td>[1, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／A</th>
+        <td>6/58 (10.3%)</td>
+        <td>0/14 (0.0%)</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／B</th>
+        <td>8/58 (13.8%)</td>
+        <td>0/14 (0.0%)</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／C</th>
+        <td>13/58 (22.4%)</td>
+        <td>1/14 (7.1%)</td>
+        <td>3/13 (23.1%)</td>
+        <td>3/7 (42.9%)</td>
+        <td>1/7 (14.3%)</td>
+        <td>[0, 0, 0, 0, 1, 1]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／校正集合でC選択したヘッド／FP32／A</th>
+        <td>6/58 (10.3%)</td>
+        <td>0/14 (0.0%)</td>
+        <td>2/13 (15.4%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／校正集合でC選択したヘッド／FP32／B</th>
+        <td>1/58 (1.7%)</td>
+        <td>6/14 (42.9%)</td>
+        <td>1/13 (7.7%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>[0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／校正集合でC選択したヘッド／FP32／C</th>
+        <td>2/58 (3.4%)</td>
+        <td>6/14 (42.9%)</td>
+        <td>2/13 (15.4%)</td>
+        <td>4/7 (57.1%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>[0, 1, 0, 0, 1]</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／A</th>
+        <td>6/58 (10.3%)</td>
+        <td>0/14 (0.0%)</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／B</th>
+        <td>8/58 (13.8%)</td>
+        <td>0/14 (0.0%)</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／C</th>
+        <td>3/58 (5.2%)</td>
+        <td>2/14 (14.3%)</td>
+        <td>3/13 (23.1%)</td>
+        <td>3/7 (42.9%)</td>
+        <td>1/7 (14.3%)</td>
+        <td>[0, 0, 0, 0, 1, 1]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／同一ヘッド／ONNX INT8／A</th>
+        <td>4/58 (6.9%)</td>
+        <td>0/14 (0.0%)</td>
+        <td>3/13 (23.1%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／同一ヘッド／ONNX INT8／B</th>
+        <td>2/58 (3.4%)</td>
+        <td>7/14 (50.0%)</td>
+        <td>3/13 (23.1%)</td>
+        <td>3/7 (42.9%)</td>
+        <td>3/7 (42.9%)</td>
+        <td>[0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／同一ヘッド／ONNX INT8／C</th>
+        <td>3/58 (5.2%)</td>
+        <td>7/14 (50.0%)</td>
+        <td>2/13 (15.4%)</td>
+        <td>4/7 (57.1%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>[0, 1, 0, 0, 1]</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／A</th>
+        <td>37/58 (63.8%)</td>
+        <td>0/14 (0.0%)</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／B</th>
+        <td>36/58 (62.1%)</td>
+        <td>0/14 (0.0%)</td>
+        <td>2/13 (15.4%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>[0, 0, 0, 0, 0, 0, 0]</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／C</th>
+        <td>44/58 (75.9%)</td>
+        <td>0/14 (0.0%)</td>
+        <td>4/13 (30.8%)</td>
+        <td>1/7 (14.3%)</td>
+        <td>1/7 (14.3%)</td>
+        <td>[0, 0, 0, 0, 0, 0]</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>ロードと常駐メモリ・CPU</h2>
+  <table>
+    <caption>
+      メモリ最大観測はA/B/C共通プロセス、CPUはAの推論区間
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">モデル・方式</th>
+        <th scope="col">ロード3反復 ms</th>
+        <th scope="col">RSS MiB</th>
+        <th scope="col">PSS MiB</th>
+        <th scope="col">ロード前PSS中央値 MiB</th>
+        <th scope="col">ロード後PSS中央値 MiB</th>
+        <th scope="col">Swap MiB</th>
+        <th scope="col">使用コア相当</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Laya multilingual／付属typed head／FP32</th>
+        <td>1929/1934/1890</td>
+        <td>1803.8</td>
+        <td>1779.3</td>
+        <td>375.0</td>
+        <td>1744.3</td>
+        <td>0.0</td>
+        <td>3.99</td>
+      </tr>
+      <tr>
+        <th scope="row">Verdict 118M／類似度／FP32</th>
+        <td>1592/1561/1574</td>
+        <td>1166.6</td>
+        <td>1143.7</td>
+        <td>375.1</td>
+        <td>921.8</td>
+        <td>0.0</td>
+        <td>3.87</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／類似度／FP32</th>
+        <td>509/490/491</td>
+        <td>767.2</td>
+        <td>744.8</td>
+        <td>375.1</td>
+        <td>686.2</td>
+        <td>0.0</td>
+        <td>3.74</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 70M／類似度／FP32</th>
+        <td>565/563/570</td>
+        <td>894.5</td>
+        <td>872.1</td>
+        <td>375.1</td>
+        <td>784.7</td>
+        <td>0.0</td>
+        <td>3.89</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／固定Encoder＋ヘッドC=10／FP32</th>
+        <td>430/449/446</td>
+        <td>765.0</td>
+        <td>742.7</td>
+        <td>375.2</td>
+        <td>638.6</td>
+        <td>0.0</td>
+        <td>3.73</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32</th>
+        <td>453/448/441</td>
+        <td>767.1</td>
+        <td>744.9</td>
+        <td>375.3</td>
+        <td>638.7</td>
+        <td>0.0</td>
+        <td>3.72</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／校正集合でC選択したヘッド／FP32</th>
+        <td>446/445/432</td>
+        <td>765.2</td>
+        <td>742.8</td>
+        <td>375.4</td>
+        <td>638.7</td>
+        <td>0.0</td>
+        <td>3.77</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32</th>
+        <td>432/449/451</td>
+        <td>767.1</td>
+        <td>744.9</td>
+        <td>375.4</td>
+        <td>638.7</td>
+        <td>0.0</td>
+        <td>3.74</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／同一ヘッド／ONNX INT8</th>
+        <td>321/313/322</td>
+        <td>305.4</td>
+        <td>293.0</td>
+        <td>48.5</td>
+        <td>284.4</td>
+        <td>0.0</td>
+        <td>4.03</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／同一ヘッド／ONNX INT8</th>
+        <td>299/314/295</td>
+        <td>305.1</td>
+        <td>292.7</td>
+        <td>48.4</td>
+        <td>284.2</td>
+        <td>0.0</td>
+        <td>3.99</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    プロセスのSwapとSwapPssは全条件0。ホスト全体には測定開始時からSwap使用があり、他の本番プロセスを停止・変更していない。ロード時間は温まったfilesystem
+    page条件。RuriヘッドFP32の一部反復ではP95が上がっているため、実際の各観測とhost load・CPU
+    pressureを保存している。この測定はホストの完全な専有条件ではない。
+  </p>
+  <h2>INT8の数値整合性</h2>
+  <p>
+    dynamic per-channel
+    QInt8でMatMul/Gemmの重みを量子化し、各Encoderに80個の量子化関連nodeがあることを確認した。embedding
+    table、正規化、pooling、分類ヘッドはFP32のまま。opset 18、動的sequence、batch
+    1を使用した。5・282・512 tokensのONNX FP32出力はPyTorchと一致し、全評価・校正入力のtoken
+    IDも一致する。
+  </p>
+  <table>
+    <caption>
+      ruri30：評価81例のタスクlogitと予測変化
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">入力</th>
+        <th scope="col">ONNX FP32最大logit差</th>
+        <th scope="col">FP32予測変化数</th>
+        <th scope="col">INT8最大logit差</th>
+        <th scope="col">INT8予測変化数</th>
+        <th scope="col">最小embedding cosine</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">ruri30／A</th>
+        <td>0.0000043</td>
+        <td>0</td>
+        <td>0.5164</td>
+        <td>4</td>
+        <td>0.991756</td>
+      </tr>
+      <tr>
+        <th scope="row">ruri30／B</th>
+        <td>0.0000038</td>
+        <td>0</td>
+        <td>0.6745</td>
+        <td>8</td>
+        <td>0.990859</td>
+      </tr>
+      <tr>
+        <th scope="row">ruri30／C</th>
+        <td>0.0000036</td>
+        <td>0</td>
+        <td>0.7466</td>
+        <td>5</td>
+        <td>0.987581</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    ruri30 artifact：FP32 147,064,161 bytes、INT8 115,924,487 bytes。Tokenizer一致確認 537入力。INT8
+    SHA-256 8e6124684aff3f86ac4c0bcfe37806d8fa4a76100c20b06942d8f726babe90bd。
+  </p>
+  <table>
+    <caption>
+      modernbert30：評価81例のタスクlogitと予測変化
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">入力</th>
+        <th scope="col">ONNX FP32最大logit差</th>
+        <th scope="col">FP32予測変化数</th>
+        <th scope="col">INT8最大logit差</th>
+        <th scope="col">INT8予測変化数</th>
+        <th scope="col">最小embedding cosine</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">modernbert30／A</th>
+        <td>0.0000725</td>
+        <td>0</td>
+        <td>2.3707</td>
+        <td>38</td>
+        <td>0.999911</td>
+      </tr>
+      <tr>
+        <th scope="row">modernbert30／B</th>
+        <td>0.0001030</td>
+        <td>0</td>
+        <td>2.7563</td>
+        <td>33</td>
+        <td>0.999912</td>
+      </tr>
+      <tr>
+        <th scope="row">modernbert30／C</th>
+        <td>0.0001831</td>
+        <td>0</td>
+        <td>7.4688</td>
+        <td>49</td>
+        <td>0.999903</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    modernbert30 artifact：FP32 147,063,049 bytes、INT8 115,922,752 bytes。Tokenizer一致確認
+    531入力。INT8 SHA-256 e81337c288995f4ade1bbc52a26e4eb00437d9470aaa42cc988faa631a181e16。
+  </p>
+  <p>
+    実際のタスク入力でもONNX
+    FP32は両モデルともA/B/Cすべて予測変化0/81だった。ModernBERT-JaのINT8では、embedding
+    cosineが0.9999程度でも分類logitは大きく変わり、A/B/Cの予測が38/33/49例変わった。出力経路の不一致ではなく、量子化で生じた特徴量の差と固定ヘッドの組合せによる劣化と判断する。embeddingの近さだけでは分類品質を保証できない。
+  </p>
+  <h2>保存スコアによる方策比較</h2>
+  <table>
+    <caption>
+      選択は校正集合のみ。右端の固定方策は探索的比較で採用値ではない
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">モデル・入力</th>
+        <th scope="col">校正集合で選択した方策</th>
+        <th scope="col">評価F1</th>
+        <th scope="col">不要切替</th>
+        <th scope="col">変化の遅れ</th>
+        <th scope="col">固定方策F1</th>
+        <th scope="col">固定方策の遅れ</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Laya multilingual／付属typed head／FP32／A</th>
+        <td>{&#x27;margin&#x27;: 0.2, &#x27;hysteresis&#x27;: 0.6, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.532</td>
+        <td>3/13 (23.1%)</td>
+        <td>5/7 (71.4%)</td>
+        <td>0.506</td>
+        <td>6/7 (85.7%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Laya multilingual／付属typed head／FP32／B</th>
+        <td>{&#x27;margin&#x27;: 0.2, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.666</td>
+        <td>2/13 (15.4%)</td>
+        <td>4/7 (57.1%)</td>
+        <td>0.649</td>
+        <td>5/7 (71.4%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Laya multilingual／付属typed head／FP32／C</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.533</td>
+        <td>5/13 (38.5%)</td>
+        <td>6/7 (85.7%)</td>
+        <td>0.547</td>
+        <td>7/7 (100.0%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Verdict 118M／類似度／FP32／A</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.2, &#x27;alpha&#x27;: 0.75}</td>
+        <td>0.509</td>
+        <td>2/13 (15.4%)</td>
+        <td>4/7 (57.1%)</td>
+        <td>0.377</td>
+        <td>2/7 (28.6%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Verdict 118M／類似度／FP32／B</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 0.5}</td>
+        <td>0.528</td>
+        <td>1/13 (7.7%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>0.287</td>
+        <td>2/7 (28.6%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Verdict 118M／類似度／FP32／C</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 0.5}</td>
+        <td>0.408</td>
+        <td>1/13 (7.7%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>0.262</td>
+        <td>3/7 (42.9%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／類似度／FP32／A</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.383</td>
+        <td>5/13 (38.5%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>0.074</td>
+        <td>1/7 (14.3%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／類似度／FP32／B</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.398</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.074</td>
+        <td>1/7 (14.3%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／類似度／FP32／C</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.2, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.317</td>
+        <td>0/13 (0.0%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>0.097</td>
+        <td>1/7 (14.3%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 70M／類似度／FP32／A</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.513</td>
+        <td>5/13 (38.5%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.108</td>
+        <td>1/7 (14.3%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 70M／類似度／FP32／B</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.321</td>
+        <td>3/13 (23.1%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>0.131</td>
+        <td>1/7 (14.3%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 70M／類似度／FP32／C</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.440</td>
+        <td>2/13 (15.4%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>0.135</td>
+        <td>1/7 (14.3%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／固定Encoder＋ヘッドC=10／FP32／A</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.2, &#x27;alpha&#x27;: 0.75}</td>
+        <td>0.610</td>
+        <td>0/13 (0.0%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.441</td>
+        <td>0/7 (0.0%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／固定Encoder＋ヘッドC=10／FP32／B</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.768</td>
+        <td>2/13 (15.4%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.539</td>
+        <td>3/7 (42.9%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／固定Encoder＋ヘッドC=10／FP32／C</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.749</td>
+        <td>2/13 (15.4%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>0.570</td>
+        <td>3/7 (42.9%)</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／A</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.803</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.804</td>
+        <td>0/7 (0.0%)</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／B</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.840</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.788</td>
+        <td>1/7 (14.3%)</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／C</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.716</td>
+        <td>3/13 (23.1%)</td>
+        <td>3/7 (42.9%)</td>
+        <td>0.678</td>
+        <td>3/7 (42.9%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／校正集合でC選択したヘッド／FP32／A</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.900</td>
+        <td>2/13 (15.4%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.918</td>
+        <td>0/7 (0.0%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／校正集合でC選択したヘッド／FP32／B</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.816</td>
+        <td>1/13 (7.7%)</td>
+        <td>2/7 (28.6%)</td>
+        <td>0.816</td>
+        <td>3/7 (42.9%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／校正集合でC選択したヘッド／FP32／C</th>
+        <td>{&#x27;margin&#x27;: 0.2, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.781</td>
+        <td>2/13 (15.4%)</td>
+        <td>4/7 (57.1%)</td>
+        <td>0.761</td>
+        <td>5/7 (71.4%)</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／A</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.803</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.804</td>
+        <td>0/7 (0.0%)</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／B</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.840</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.788</td>
+        <td>1/7 (14.3%)</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／C</th>
+        <td>{&#x27;margin&#x27;: 0.6, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.775</td>
+        <td>2/13 (15.4%)</td>
+        <td>3/7 (42.9%)</td>
+        <td>0.801</td>
+        <td>4/7 (57.1%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／同一ヘッド／ONNX INT8／A</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.911</td>
+        <td>3/13 (23.1%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.877</td>
+        <td>0/7 (0.0%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／同一ヘッド／ONNX INT8／B</th>
+        <td>{&#x27;margin&#x27;: 0.2, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.777</td>
+        <td>1/13 (7.7%)</td>
+        <td>3/7 (42.9%)</td>
+        <td>0.744</td>
+        <td>4/7 (57.1%)</td>
+      </tr>
+      <tr>
+        <th scope="row">Ruri 37M／同一ヘッド／ONNX INT8／C</th>
+        <td>{&#x27;margin&#x27;: 0.2, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.744</td>
+        <td>2/13 (15.4%)</td>
+        <td>4/7 (57.1%)</td>
+        <td>0.727</td>
+        <td>4/7 (57.1%)</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／A</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.377</td>
+        <td>1/13 (7.7%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.316</td>
+        <td>1/7 (14.3%)</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／B</th>
+        <td>{&#x27;margin&#x27;: 0.0, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.379</td>
+        <td>2/13 (15.4%)</td>
+        <td>0/7 (0.0%)</td>
+        <td>0.336</td>
+        <td>1/7 (14.3%)</td>
+      </tr>
+      <tr>
+        <th scope="row">ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／C</th>
+        <td>{&#x27;margin&#x27;: 0.2, &#x27;hysteresis&#x27;: 0.0, &#x27;alpha&#x27;: 1.0}</td>
+        <td>0.201</td>
+        <td>2/13 (15.4%)</td>
+        <td>1/7 (14.3%)</td>
+        <td>0.201</td>
+        <td>1/7 (14.3%)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    固定方策はmargin=0.2、hysteresis=0.2、alpha=0.75。閾値や平滑化は、切替を減らす代わりに必要な変化を遅らせたり、必要な表情をnoneに落としたりする。今回の小さい校正集合から選んだ方策も評価で悪化することがあり、常に良くなる保証はない。再比較は保存されたdecision_scoresに対して行い、推論を呼び直さない。
+  </p>
+  <h2>クラス別混同行列</h2>
+  <p>
+    行は主ラベル、6つの列は予測。続くprecision・recall・F1は各クラスの値。許容ラベルに含まれる別クラスも、主ラベルの混同行列では不一致として数える。
+  </p>
+  <details>
+    <summary>Laya multilingual／付属typed head／FP32／A</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>0</td>
+          <td>1</td>
+          <td>1</td>
+          <td>7</td>
+          <td>12</td>
+          <td>2</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>7</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>0</td>
+          <td>0</td>
+          <td>14</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.700</td>
+          <td>1.000</td>
+          <td>0.824</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>0</td>
+          <td>0</td>
+          <td>4</td>
+          <td>8</td>
+          <td>1</td>
+          <td>1</td>
+          <td>0.364</td>
+          <td>0.571</td>
+          <td>0.444</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>11</td>
+          <td>1</td>
+          <td>0.423</td>
+          <td>0.917</td>
+          <td>0.579</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>8</td>
+          <td>0.667</td>
+          <td>0.889</td>
+          <td>0.762</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Laya multilingual／付属typed head／FP32／B</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>3</td>
+          <td>0</td>
+          <td>2</td>
+          <td>7</td>
+          <td>10</td>
+          <td>1</td>
+          <td>0.750</td>
+          <td>0.130</td>
+          <td>0.222</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>0</td>
+          <td>6</td>
+          <td>0</td>
+          <td>2</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.750</td>
+          <td>0.667</td>
+          <td>0.706</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>0</td>
+          <td>0</td>
+          <td>14</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.824</td>
+          <td>1.000</td>
+          <td>0.903</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>0</td>
+          <td>1</td>
+          <td>1</td>
+          <td>10</td>
+          <td>1</td>
+          <td>1</td>
+          <td>0.526</td>
+          <td>0.714</td>
+          <td>0.606</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>11</td>
+          <td>0</td>
+          <td>0.478</td>
+          <td>0.917</td>
+          <td>0.629</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>8</td>
+          <td>0.800</td>
+          <td>0.889</td>
+          <td>0.842</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Laya multilingual／付属typed head／FP32／C</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>0</td>
+          <td>3</td>
+          <td>4</td>
+          <td>7</td>
+          <td>4</td>
+          <td>5</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>0</td>
+          <td>5</td>
+          <td>0</td>
+          <td>2</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0.417</td>
+          <td>0.556</td>
+          <td>0.476</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>0</td>
+          <td>0</td>
+          <td>13</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0.722</td>
+          <td>0.929</td>
+          <td>0.813</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>0</td>
+          <td>3</td>
+          <td>1</td>
+          <td>9</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.474</td>
+          <td>0.643</td>
+          <td>0.545</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>1</td>
+          <td>10</td>
+          <td>0</td>
+          <td>0.556</td>
+          <td>0.833</td>
+          <td>0.667</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>8</td>
+          <td>0.571</td>
+          <td>0.889</td>
+          <td>0.696</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Verdict 118M／類似度／FP32／A</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>21</td>
+          <td>0</td>
+          <td>1</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.488</td>
+          <td>0.913</td>
+          <td>0.636</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>6</td>
+          <td>0</td>
+          <td>0</td>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>3</td>
+          <td>0</td>
+          <td>10</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.769</td>
+          <td>0.714</td>
+          <td>0.741</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>6</td>
+          <td>0</td>
+          <td>2</td>
+          <td>6</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.545</td>
+          <td>0.429</td>
+          <td>0.480</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>4</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>8</td>
+          <td>0</td>
+          <td>0.800</td>
+          <td>0.667</td>
+          <td>0.727</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>4</td>
+          <td>1.000</td>
+          <td>0.444</td>
+          <td>0.615</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Verdict 118M／類似度／FP32／B</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>19</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>3</td>
+          <td>0</td>
+          <td>0.442</td>
+          <td>0.826</td>
+          <td>0.576</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>8</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.111</td>
+          <td>0.200</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>5</td>
+          <td>0</td>
+          <td>7</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0.875</td>
+          <td>0.500</td>
+          <td>0.636</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>6</td>
+          <td>0</td>
+          <td>1</td>
+          <td>7</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.875</td>
+          <td>0.500</td>
+          <td>0.636</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>10</td>
+          <td>0</td>
+          <td>0.556</td>
+          <td>0.833</td>
+          <td>0.667</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>3</td>
+          <td>3</td>
+          <td>1.000</td>
+          <td>0.333</td>
+          <td>0.500</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Verdict 118M／類似度／FP32／C</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>18</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>3</td>
+          <td>0</td>
+          <td>0.353</td>
+          <td>0.783</td>
+          <td>0.486</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>8</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>8</td>
+          <td>0</td>
+          <td>4</td>
+          <td>1</td>
+          <td>0</td>
+          <td>1</td>
+          <td>1.000</td>
+          <td>0.286</td>
+          <td>0.444</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>10</td>
+          <td>0</td>
+          <td>0</td>
+          <td>4</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.500</td>
+          <td>0.286</td>
+          <td>0.364</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0</td>
+          <td>0.643</td>
+          <td>0.750</td>
+          <td>0.692</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>4</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>3</td>
+          <td>0.750</td>
+          <td>0.333</td>
+          <td>0.462</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／類似度／FP32／A</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>21</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0.389</td>
+          <td>0.913</td>
+          <td>0.545</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>8</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>9</td>
+          <td>0</td>
+          <td>3</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.214</td>
+          <td>0.353</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0</td>
+          <td>0.500</td>
+          <td>0.750</td>
+          <td>0.600</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>6</td>
+          <td>1.000</td>
+          <td>0.667</td>
+          <td>0.800</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／類似度／FP32／B</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>20</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>1</td>
+          <td>0.408</td>
+          <td>0.870</td>
+          <td>0.556</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>8</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>6</td>
+          <td>0</td>
+          <td>5</td>
+          <td>0</td>
+          <td>2</td>
+          <td>1</td>
+          <td>1.000</td>
+          <td>0.357</td>
+          <td>0.526</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0</td>
+          <td>0.500</td>
+          <td>0.750</td>
+          <td>0.600</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>3</td>
+          <td>6</td>
+          <td>0.750</td>
+          <td>0.667</td>
+          <td>0.706</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／類似度／FP32／C</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>20</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>1</td>
+          <td>0.392</td>
+          <td>0.870</td>
+          <td>0.541</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>8</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>6</td>
+          <td>0</td>
+          <td>4</td>
+          <td>0</td>
+          <td>3</td>
+          <td>1</td>
+          <td>1.000</td>
+          <td>0.286</td>
+          <td>0.444</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>13</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0</td>
+          <td>0.474</td>
+          <td>0.750</td>
+          <td>0.581</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>4</td>
+          <td>4</td>
+          <td>0.667</td>
+          <td>0.444</td>
+          <td>0.533</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 70M／類似度／FP32／A</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>21</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0.457</td>
+          <td>0.913</td>
+          <td>0.609</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>9</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>2</td>
+          <td>0</td>
+          <td>10</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>1.000</td>
+          <td>0.714</td>
+          <td>0.833</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>11</td>
+          <td>0</td>
+          <td>0</td>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.214</td>
+          <td>0.353</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>5</td>
+          <td>4</td>
+          <td>1.000</td>
+          <td>0.417</td>
+          <td>0.588</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.529</td>
+          <td>1.000</td>
+          <td>0.692</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 70M／類似度／FP32／B</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>16</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>7</td>
+          <td>0.356</td>
+          <td>0.696</td>
+          <td>0.471</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>9</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>4</td>
+          <td>0</td>
+          <td>7</td>
+          <td>0</td>
+          <td>0</td>
+          <td>3</td>
+          <td>1.000</td>
+          <td>0.500</td>
+          <td>0.667</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>1</td>
+          <td>1.000</td>
+          <td>0.071</td>
+          <td>0.133</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>4</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>7</td>
+          <td>1.000</td>
+          <td>0.083</td>
+          <td>0.154</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.333</td>
+          <td>1.000</td>
+          <td>0.500</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 70M／類似度／FP32／C</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>21</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0.404</td>
+          <td>0.913</td>
+          <td>0.560</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>9</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>3</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>1.000</td>
+          <td>0.643</td>
+          <td>0.783</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>13</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.071</td>
+          <td>0.133</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>5</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>4</td>
+          <td>3</td>
+          <td>1.000</td>
+          <td>0.333</td>
+          <td>0.500</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>8</td>
+          <td>0.533</td>
+          <td>0.889</td>
+          <td>0.667</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／固定Encoder＋ヘッドC=10／FP32／A</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>23</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.460</td>
+          <td>1.000</td>
+          <td>0.630</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>9</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>3</td>
+          <td>0</td>
+          <td>11</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.786</td>
+          <td>0.880</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>8</td>
+          <td>0</td>
+          <td>0</td>
+          <td>6</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.429</td>
+          <td>0.600</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.750</td>
+          <td>0.857</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>4</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>5</td>
+          <td>1.000</td>
+          <td>0.556</td>
+          <td>0.714</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／固定Encoder＋ヘッドC=10／FP32／B</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>22</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.579</td>
+          <td>0.957</td>
+          <td>0.721</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>6</td>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.750</td>
+          <td>0.333</td>
+          <td>0.462</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>2</td>
+          <td>0</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.857</td>
+          <td>0.923</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>4</td>
+          <td>0</td>
+          <td>0</td>
+          <td>10</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.714</td>
+          <td>0.833</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>10</td>
+          <td>0</td>
+          <td>0.909</td>
+          <td>0.833</td>
+          <td>0.870</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>6</td>
+          <td>1.000</td>
+          <td>0.667</td>
+          <td>0.800</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／固定Encoder＋ヘッドC=10／FP32／C</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>19</td>
+          <td>1</td>
+          <td>1</td>
+          <td>1</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.559</td>
+          <td>0.826</td>
+          <td>0.667</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>6</td>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.750</td>
+          <td>0.333</td>
+          <td>0.462</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>2</td>
+          <td>0</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.923</td>
+          <td>0.857</td>
+          <td>0.889</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>11</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.917</td>
+          <td>0.786</td>
+          <td>0.846</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>10</td>
+          <td>0</td>
+          <td>0.833</td>
+          <td>0.833</td>
+          <td>0.833</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>6</td>
+          <td>1.000</td>
+          <td>0.667</td>
+          <td>0.800</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／A</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>22</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0.786</td>
+          <td>0.957</td>
+          <td>0.863</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>3</td>
+          <td>4</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.667</td>
+          <td>0.444</td>
+          <td>0.533</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>1</td>
+          <td>1</td>
+          <td>10</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>1.000</td>
+          <td>0.714</td>
+          <td>0.833</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>1</td>
+          <td>1</td>
+          <td>0</td>
+          <td>11</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0.846</td>
+          <td>0.786</td>
+          <td>0.815</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>11</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.917</td>
+          <td>0.957</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.692</td>
+          <td>1.000</td>
+          <td>0.818</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／B</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>23</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.742</td>
+          <td>1.000</td>
+          <td>0.852</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>2</td>
+          <td>4</td>
+          <td>0</td>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.800</td>
+          <td>0.444</td>
+          <td>0.571</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>2</td>
+          <td>0</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.857</td>
+          <td>0.923</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>2</td>
+          <td>1</td>
+          <td>0</td>
+          <td>11</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.786</td>
+          <td>0.786</td>
+          <td>0.786</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>10</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.833</td>
+          <td>0.909</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>1.000</td>
+          <td>1.000</td>
+          <td>1.000</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>ModernBERT-Ja 37M／固定Encoder＋ヘッドC=10／FP32／C</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>21</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.618</td>
+          <td>0.913</td>
+          <td>0.737</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>5</td>
+          <td>2</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.400</td>
+          <td>0.222</td>
+          <td>0.286</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>4</td>
+          <td>0</td>
+          <td>10</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.714</td>
+          <td>0.833</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>2</td>
+          <td>2</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0.818</td>
+          <td>0.643</td>
+          <td>0.720</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>1</td>
+          <td>0.900</td>
+          <td>0.750</td>
+          <td>0.818</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.818</td>
+          <td>1.000</td>
+          <td>0.900</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／校正集合でC選択したヘッド／FP32／A</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>23</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.793</td>
+          <td>1.000</td>
+          <td>0.885</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>2</td>
+          <td>6</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.667</td>
+          <td>0.800</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>2</td>
+          <td>0</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.857</td>
+          <td>0.923</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.923</td>
+          <td>0.857</td>
+          <td>0.889</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>11</td>
+          <td>1</td>
+          <td>1.000</td>
+          <td>0.917</td>
+          <td>0.957</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.900</td>
+          <td>1.000</td>
+          <td>0.947</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／校正集合でC選択したヘッド／FP32／B</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>15</td>
+          <td>2</td>
+          <td>2</td>
+          <td>3</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.938</td>
+          <td>0.652</td>
+          <td>0.769</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>1</td>
+          <td>6</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.545</td>
+          <td>0.667</td>
+          <td>0.600</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>0</td>
+          <td>1</td>
+          <td>13</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.867</td>
+          <td>0.929</td>
+          <td>0.897</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>13</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.722</td>
+          <td>0.929</td>
+          <td>0.813</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>10</td>
+          <td>1</td>
+          <td>0.909</td>
+          <td>0.833</td>
+          <td>0.870</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.900</td>
+          <td>1.000</td>
+          <td>0.947</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／校正集合でC選択したヘッド／FP32／C</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>14</td>
+          <td>2</td>
+          <td>2</td>
+          <td>4</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.875</td>
+          <td>0.609</td>
+          <td>0.718</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>1</td>
+          <td>6</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.545</td>
+          <td>0.667</td>
+          <td>0.600</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>0</td>
+          <td>1</td>
+          <td>13</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.867</td>
+          <td>0.929</td>
+          <td>0.897</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>1</td>
+          <td>1</td>
+          <td>0</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.667</td>
+          <td>0.857</td>
+          <td>0.750</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>10</td>
+          <td>1</td>
+          <td>0.909</td>
+          <td>0.833</td>
+          <td>0.870</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.900</td>
+          <td>1.000</td>
+          <td>0.947</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／A</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>22</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0.786</td>
+          <td>0.957</td>
+          <td>0.863</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>3</td>
+          <td>4</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.667</td>
+          <td>0.444</td>
+          <td>0.533</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>1</td>
+          <td>1</td>
+          <td>10</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>1.000</td>
+          <td>0.714</td>
+          <td>0.833</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>1</td>
+          <td>1</td>
+          <td>0</td>
+          <td>11</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0.846</td>
+          <td>0.786</td>
+          <td>0.815</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>11</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.917</td>
+          <td>0.957</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.692</td>
+          <td>1.000</td>
+          <td>0.818</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／B</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>23</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.742</td>
+          <td>1.000</td>
+          <td>0.852</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>2</td>
+          <td>4</td>
+          <td>0</td>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.800</td>
+          <td>0.444</td>
+          <td>0.571</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>2</td>
+          <td>0</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.857</td>
+          <td>0.923</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>2</td>
+          <td>1</td>
+          <td>0</td>
+          <td>11</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.786</td>
+          <td>0.786</td>
+          <td>0.786</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>10</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.833</td>
+          <td>0.909</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>1.000</td>
+          <td>1.000</td>
+          <td>1.000</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>ModernBERT-Ja 37M／校正集合でC選択したヘッド／FP32／C</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>19</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>2</td>
+          <td>0.864</td>
+          <td>0.826</td>
+          <td>0.844</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>1</td>
+          <td>6</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.667</td>
+          <td>0.667</td>
+          <td>0.667</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>0</td>
+          <td>0</td>
+          <td>14</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>1.000</td>
+          <td>1.000</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>2</td>
+          <td>2</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0.818</td>
+          <td>0.643</td>
+          <td>0.720</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>11</td>
+          <td>1</td>
+          <td>0.917</td>
+          <td>0.917</td>
+          <td>0.917</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.692</td>
+          <td>1.000</td>
+          <td>0.818</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／同一ヘッド／ONNX INT8／A</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>23</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.852</td>
+          <td>1.000</td>
+          <td>0.920</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>1</td>
+          <td>8</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.889</td>
+          <td>0.889</td>
+          <td>0.889</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>1</td>
+          <td>0</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>1.000</td>
+          <td>0.857</td>
+          <td>0.923</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.857</td>
+          <td>0.923</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>10</td>
+          <td>1</td>
+          <td>1.000</td>
+          <td>0.833</td>
+          <td>0.909</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.818</td>
+          <td>1.000</td>
+          <td>0.900</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／同一ヘッド／ONNX INT8／B</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>12</td>
+          <td>4</td>
+          <td>2</td>
+          <td>4</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.857</td>
+          <td>0.522</td>
+          <td>0.649</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>1</td>
+          <td>7</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.467</td>
+          <td>0.778</td>
+          <td>0.583</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>0</td>
+          <td>1</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0.857</td>
+          <td>0.857</td>
+          <td>0.857</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>1</td>
+          <td>2</td>
+          <td>0</td>
+          <td>11</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.688</td>
+          <td>0.786</td>
+          <td>0.733</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>2</td>
+          <td>0.900</td>
+          <td>0.750</td>
+          <td>0.818</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.750</td>
+          <td>1.000</td>
+          <td>0.857</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Ruri 37M／同一ヘッド／ONNX INT8／C</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>13</td>
+          <td>2</td>
+          <td>2</td>
+          <td>5</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.812</td>
+          <td>0.565</td>
+          <td>0.667</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>2</td>
+          <td>6</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.600</td>
+          <td>0.667</td>
+          <td>0.632</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>0</td>
+          <td>1</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0.857</td>
+          <td>0.857</td>
+          <td>0.857</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>1</td>
+          <td>1</td>
+          <td>0</td>
+          <td>12</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.667</td>
+          <td>0.857</td>
+          <td>0.750</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>3</td>
+          <td>0.900</td>
+          <td>0.750</td>
+          <td>0.818</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>9</td>
+          <td>0.692</td>
+          <td>1.000</td>
+          <td>0.818</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／A</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>23</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.383</td>
+          <td>1.000</td>
+          <td>0.554</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>7</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.400</td>
+          <td>0.222</td>
+          <td>0.286</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>8</td>
+          <td>1</td>
+          <td>5</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.625</td>
+          <td>0.357</td>
+          <td>0.455</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>10</td>
+          <td>2</td>
+          <td>0</td>
+          <td>1</td>
+          <td>1</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.071</td>
+          <td>0.133</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>8</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>4</td>
+          <td>0</td>
+          <td>0.800</td>
+          <td>0.333</td>
+          <td>0.471</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>4</td>
+          <td>0</td>
+          <td>3</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>1.000</td>
+          <td>0.222</td>
+          <td>0.364</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／B</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>23</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0.390</td>
+          <td>1.000</td>
+          <td>0.561</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>6</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.667</td>
+          <td>0.222</td>
+          <td>0.333</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>10</td>
+          <td>0</td>
+          <td>3</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.214</td>
+          <td>0.353</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>9</td>
+          <td>1</td>
+          <td>0</td>
+          <td>4</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.286</td>
+          <td>0.444</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>5</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>7</td>
+          <td>0</td>
+          <td>0.583</td>
+          <td>0.583</td>
+          <td>0.583</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>6</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>3</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>ModernBERT-Ja 37M／同一ヘッド／ONNX INT8／C</summary>
+    <table>
+      <caption>
+        評価81例のクラス別混同行列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">正解</th>
+          <th scope="col">none</th>
+          <th scope="col">warmth</th>
+          <th scope="col">joy</th>
+          <th scope="col">empathy</th>
+          <th scope="col">curiosity</th>
+          <th scope="col">surprise</th>
+          <th scope="col">precision</th>
+          <th scope="col">recall</th>
+          <th scope="col">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>22</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.333</td>
+          <td>0.957</td>
+          <td>0.494</td>
+        </tr>
+        <tr>
+          <th scope="row">warmth</th>
+          <td>7</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>2</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>13</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.071</td>
+          <td>0.133</td>
+        </tr>
+        <tr>
+          <th scope="row">empathy</th>
+          <td>11</td>
+          <td>1</td>
+          <td>0</td>
+          <td>1</td>
+          <td>1</td>
+          <td>0</td>
+          <td>1.000</td>
+          <td>0.071</td>
+          <td>0.133</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>5</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>7</td>
+          <td>0</td>
+          <td>0.583</td>
+          <td>0.583</td>
+          <td>0.583</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>8</td>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+          <td>1</td>
+          <td>0</td>
+          <td>0.000</td>
+          <td>0.000</td>
+          <td>0.000</td>
+        </tr>
+      </tbody>
+    </table>
+  </details>
+  <h2>保存物と未評価範囲</h2>
+  <p>
+    raw JSONL、各反復のmeta JSON、使用sourceのsnapshot、全artifactのサイズ・SHA-256、学習済みhead
+    JSON、ONNX
+    graph、数値audit、summary.json、summary.csvを<code>/srv/ai/benchmarks/avatar-attitude/</code>に保存した。主集計は<code>report/</code>、固定方策の再比較は<code>replay-diagnostic/</code>。全6候補のraw/decision
+    scores、入力hash、token数、各推論の時間・CPU・メモリを保存している。反復による予測の不安定例は全条件0。中断した旧データのinitial
+    runとCPU設定競合で初期化できなかったONNX試行は主集計へ含めない。
+  </p>
+  <p>
+    未評価：人手ラベルの実会話、実TTS開始遅延、再生・表情との同期、GPU/NPU、Ruri
+    70Mの分類ヘッド、Encoder全体の専用微調整、量子化後のヘッド再学習、A/Bの条件付き混合。今回測った学習済み分類器は合成60例の固定Encoder＋線形ヘッドであり、十分な専用学習を終えた製品用分類器ではない。速度の反復を品質件数に加えず、softmaxを正解確率とみなさない。
+  </p>
+</article>

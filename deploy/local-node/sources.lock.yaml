@@ -1,6 +1,17 @@
 # Source/release identities used to reconstruct binaries under /srv/ai/apps.
 # No artifact from these projects is vendored into this repository.
 sources:
+  ruri-system-one:
+    repository: https://huggingface.co/cl-nagoya/ruri-v3-30m
+    revision: 24899e5de370b56d179604a007c0d727bf144504
+    path: /srv/ai/apps/ruri-system-one
+    python: 3.13
+    runtime: onnxruntime-1.30.0-cpu
+    requirementsSha256: 1f7582ac3f92d643adf98a325bce2134358511fbc40c8fd457894f26f687e9f7
+    headRevision: synthetic-v1-c100-A-9d382201d67e
+    calibrationRevision: synthetic-v1-A-e768c18981af
+    assetManifestSha256: 121aa557b2c878204c575f2ce08499a20e6d021361de3d3edf00ccfc2eda1a48
+
   laya-system-one:
     repository: https://github.com/NandhaKishorM/laya.git
     revision: 55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851

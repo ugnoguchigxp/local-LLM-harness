@@ -1,0 +1,30 @@
+{
+  "model": "cl-nagoya/ruri-v3-30m",
+  "revision": "24899e5de370b56d179604a007c0d727bf144504",
+  "head_revision": "synthetic-v1-c100-A-9d382201d67e",
+  "input_mode": "A",
+  "preliminary": true,
+  "files": [
+    {
+      "path": "calibration.json",
+      "bytes": 1780,
+      "sha256": "e768c18981afa38a96abdec9604f15c4ddfd7f02e01e7740f9fa770f406b2858"
+    },
+    {
+      "path": "head.json",
+      "bytes": 150555,
+      "sha256": "9d382201d67ebbf0c13cb23daabd2d73fe0685b074d5fbd1c809a1a2e259ca9b"
+    },
+    {
+      "path": "model.onnx",
+      "bytes": 115924487,
+      "sha256": "8e6124684aff3f86ac4c0bcfe37806d8fa4a76100c20b06942d8f726babe90bd"
+    },
+    {
+      "path": "tokenizer.json",
+      "bytes": 6724873,
+      "sha256": "0a94ac9a0a02c067bdef25b72ae9f4ee33f48f552e55988d444f6d25eeb1d062"
+    }
+  ],
+  "calibration_revision": "synthetic-v1-A-e768c18981af"
+}

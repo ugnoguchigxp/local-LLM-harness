@@ -1,0 +1,7 @@
+{
+  "laya": {"repo": "convaiinnovations/laya", "revision": "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851", "kind": "laya", "subfolder": "multilingual"},
+  "verdict": {"repo": "Manav2op/verdict-small", "revision": "085a41e0ea269f00483dd202a286cfb68f7aa63a", "kind": "embedding", "input_prefix": "query: ", "candidate_prefix": "passage: ", "pooling": "mean"},
+  "ruri30": {"repo": "cl-nagoya/ruri-v3-30m", "revision": "24899e5de370b56d179604a007c0d727bf144504", "kind": "embedding", "input_prefix": "トピック: ", "candidate_prefix": "トピック: ", "pooling": "mean"},
+  "ruri70": {"repo": "cl-nagoya/ruri-v3-70m", "revision": "07a8b0aba47d29d2ca21f89b915c1efe2c23d1cc", "kind": "embedding", "input_prefix": "トピック: ", "candidate_prefix": "トピック: ", "pooling": "mean"},
+  "modernbert30": {"repo": "sbintuitions/modernbert-ja-30m", "revision": "8cb03f54cb9e30e72459e5f1cedc6d89c7d8dcb5", "kind": "head-only", "input_prefix": "", "pooling": "cls"}
+}

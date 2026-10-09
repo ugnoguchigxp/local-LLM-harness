@@ -132,10 +132,10 @@ test("System One readiness sends and validates a fixed Japanese typed decision",
       return Response.json({
         model: "public-model",
         answers: {
-          intent: {
+          emotion: {
             type: "choice",
-            choice: "refund",
-            probabilities: { refund: 0.9, other: 0.1 },
+            choice: "none",
+            probabilities: { none: 0.9, warmth: 0.1 },
             confidence: 0.8,
           },
         },
@@ -149,8 +149,8 @@ test("System One readiness sends and validates a fixed Japanese typed decision",
   });
   expect(observed).toMatchObject({
     model: "public-model",
-    state: "返品と返金をお願いします",
-    questions: { intent: { type: "choice" } },
+    state: { response: "設定画面を開いてください。" },
+    questions: { emotion: { type: "choice" } },
   });
 });
 

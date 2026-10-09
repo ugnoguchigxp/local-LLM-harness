@@ -1,6 +1,14 @@
 # Runtime releases combine immutable artifact entries into one deployable unit.
 # Model data stays outside this repository; every artifact is pinned in models.yaml.
 runtimeReleases:
+  ruri-system-one-current:
+    runtime: ruri-system-one
+    artifacts: [ruri-v3-30m]
+    providerConfigRevision: ruri-ort-int8-synthetic-v1-c100-A-9d382201d67e-synthetic-v1-A-e768c18981af
+    estimatedMemoryGB: 1
+    healthPath: /health
+    default: true
+
   laya-system-one-current:
     runtime: laya-system-one
     artifacts:

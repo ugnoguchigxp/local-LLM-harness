@@ -27,13 +27,13 @@ try {
     "tts:openai.audio-speech.v1",
   ];
   if (!profile || JSON.stringify(advertised) !== JSON.stringify(expected)) {
-    throw new Error(`Gemma/Laya profile drift: ${JSON.stringify(advertised)}`);
+    throw new Error(`Gemma/Ruri profile drift: ${JSON.stringify(advertised)}`);
   }
   const created = await client.createAgentConnection({
     profile: "SAAA-gemma4-26b",
     expectedCatalogRevision: catalog.catalogRevision,
     audience: "same-host",
-    client: "gemma4-laya-live-e2e",
+    client: "gemma4-ruri-live-e2e",
     ttlSeconds: 600,
     allowFallback: false,
     deploymentPolicy: "existing-only",
@@ -48,15 +48,17 @@ try {
 
   const decision = await client.systemOne(systemOne, {
     model: systemOne.model,
-    state: "返品して返金をお願いします",
+    state: { response: "設定画面を開いてください。" },
     questions: {
-      intent: {
+      emotion: {
         type: "choice",
-        instructions: "問い合わせの意図を分類してください",
-        criteria: { refund: "返品または返金", other: "その他" },
+        instructions: "現在の回答をアシスタント自身が話す表情と声色を選んでください",
+        criteria: { none: "通常。操作手順", warmth: "親しみ", joy: "喜び", empathy: "寄り添い", curiosity: "興味", surprise: "驚き" },
       },
     },
   });
+  if (decision.model !== "ruri-v3-30m-speaking-attitude" || decision.answers.emotion?.choice !== "none"
+    || decision.routing?.input_mode !== "A") throw new Error("Ruri speaking-attitude probe failed");
   const chatResponse = await fetch(`${llm.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -90,8 +92,8 @@ try {
     releaseCommit: health.releaseCommit,
     profile: profile.id,
     providers: advertised,
-    layaModel: decision.model,
-    layaIntent: decision.answers.intent?.choice,
+    systemOneModel: decision.model,
+    speakingAttitude: decision.answers.emotion?.choice,
     gemmaModel: llm.model,
     released: true,
     credentialRevoked: true,

@@ -256,3 +256,10 @@ routes:
     candidates:
       - runtime: laya-system-one
         purpose: primary
+
+  system-one-ruri:
+    capabilities: [decision.system-one]
+    explicitOnly: true
+    candidates:
+      - runtime: ruri-system-one
+        purpose: primary

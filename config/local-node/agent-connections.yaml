@@ -62,7 +62,7 @@ agentProfiles:
         publishModel: false
         readiness: embedding
   saaa-conversation-gemma4-26b-voice:
-    description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, TTS, embedding, and Laya System One
+    description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, TTS, embedding, and Ruri speaking-attitude System One
     schedulingPriority: 4000
     idleRelease:
       enabled: true
@@ -102,8 +102,8 @@ agentProfiles:
         readiness: embedding
       - name: system-one
         capability: decision.system-one
-        route: system-one-laya
-        publicModel: laya-multilingual
+        route: system-one-ruri
+        publicModel: ruri-v3-30m-speaking-attitude
         publishModel: false
         readiness: system-one
   saaa-conversation-gemma4-26b-64k:

@@ -320,9 +320,9 @@ async function validAgentProviderSemanticResponse(input: string | URL | Request,
     const request = JSON.parse(String(init?.body)) as { model: string };
     return Response.json({
       model: request.model,
-      answers: { intent: {
-        type: "choice", choice: "refund",
-        probabilities: { refund: 0.9, other: 0.1 }, confidence: 0.8,
+      answers: { emotion: {
+        type: "choice", choice: "none",
+        probabilities: { none: 0.9, warmth: 0.1 }, confidence: 0.8,
       } },
       usage: { input_tokens: 12, output_tokens: 0 },
     });
@@ -524,7 +524,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
-        { name: "system-one", endpoint: "/v1/systemone", model: "laya-multilingual" },
+        { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
       ],
       services: [{ name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1" }],
@@ -535,7 +535,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
-        { name: "system-one", endpoint: "/v1/systemone", model: "laya-multilingual" },
+        { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
       ],
       services: [{ name: "music", endpoint: "/v1/music/generations", model: "ace-step-1.5" }],

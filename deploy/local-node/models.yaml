@@ -1,6 +1,21 @@
 # Model binaries live under /srv/ai/models and are deliberately not part of this repository.
 # Pin the source revision here; record a checksum after each deliberate model replacement.
 models:
+  ruri-v3-30m:
+    kind: snapshot
+    role: speaking-attitude-encoder
+    source: https://huggingface.co/cl-nagoya/ruri-v3-30m
+    revision: 24899e5de370b56d179604a007c0d727bf144504
+    path: /srv/ai/models/ruri-v3-30m
+    totalBytes: 153554348
+    maxFiles: 3
+    snapshotDigest: d263781470cc3568afa6b847bf6c5249a56fad37ae88ce585e860a093ea1b522
+    runtime: ruri-ort-1.30.0-cpu
+    files:
+      - { path: config.json, bytes: 1323, sha256: 3230a8666ce50d245a0e68f5bff4682c419c541f1212ba001a497f327fb7a9e5 }
+      - { path: model.safetensors, bytes: 146828152, sha256: e94155e342cbfc33280c345c6e2912905fb5de6e1a3adeb938f395aafd2f8832 }
+      - { path: tokenizer.json, bytes: 6724873, sha256: 0a94ac9a0a02c067bdef25b72ae9f4ee33f48f552e55988d444f6d25eeb1d062 }
+
   laya-multilingual:
     kind: snapshot
     role: evaluation-system-one

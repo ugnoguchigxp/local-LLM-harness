@@ -1,0 +1,30 @@
+[Unit]
+Description=LARM Ruri CPU speaking-attitude System One provider
+After=local-fs.target
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/larm-current/apps/ruri-system-one
+Environment=HOME=/srv/ai/cache
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+Environment=RURI_MODEL_ROOT=/srv/ai/models/ruri-speaking-attitude-v1
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=OMP_NUM_THREADS=4
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/srv/ai/apps/ruri-system-one/.venv/bin/uvicorn ruri_api:app --host 127.0.0.1 --port 8087 --workers 1 --no-access-log
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/srv/ai/cache /srv/ai/logs
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

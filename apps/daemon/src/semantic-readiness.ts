@@ -35,12 +35,19 @@ type ProbeFormat = "json" | "sse" | "default" | "query" | "passage";
 function systemOneProbe(model: string): SystemOneRequest {
   return {
     model,
-    state: "返品と返金をお願いします",
+    state: { response: "設定画面を開いてください。" },
     questions: {
-      intent: {
+      emotion: {
         type: "choice",
-        instructions: "問い合わせの意図を分類してください",
-        criteria: { refund: "返品または返金", other: "その他" },
+        instructions: "現在の回答をアシスタント自身が話す表情と声色を選んでください",
+        criteria: {
+          none: "通常。事実・操作手順の説明",
+          warmth: "親しみ。挨拶・感謝・温かい声かけ",
+          joy: "喜び。達成や良い知らせを一緒に喜ぶ",
+          empathy: "寄り添い。穏やかな気遣い・安心",
+          curiosity: "興味。相手の話の続きを知りたい",
+          surprise: "驚き。予想外の出来事への反応",
+        },
       },
     },
   };

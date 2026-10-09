@@ -328,8 +328,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
         {
           name: "system-one",
           capability: "decision.system-one",
-          route: "system-one-laya",
-          publicModel: "laya-multilingual",
+          route: "system-one-ruri",
+          publicModel: "ruri-v3-30m-speaking-attitude",
           protocol: "larm.system-one.v1",
           readiness: "system-one",
         },

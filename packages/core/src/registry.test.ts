@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { admitRuntimes } from "./admission";
+import { loadAgentConnectionCatalogForRegistry } from "./agent-connection";
 import type { ClusterState } from "./schema";
 import { parse as parseYaml } from "yaml";
 import {
@@ -66,7 +67,7 @@ test("loads the Linux production registry", () => {
   expect(asr?.capability).toContain("speech.stt");
   expect(realtimeTts?.capability).toContain("speech.tts");
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");
-  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd")) {
+  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd" && item.id !== "laya-system-one")) {
     expect(runtime.policy.warm?.minInstances).toBe(1);
   }
   expect(model35b?.policy).toEqual({
@@ -661,4 +662,29 @@ test("production warm floor admits startup and replaces idle conversation memory
   });
   expect(context.ok).toBe(true);
   expect(context.nodes[0]?.reclaimableMemoryGB).toBe(48);
+});
+
+
+test("Gemma uses the dedicated Ruri attitude route while ContextStill retains Laya", () => {
+  const registry = loadRegistry(repoConfig);
+  const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry);
+  const gemma = catalog.profiles.find((profile) => profile.id === "saaa-conversation-gemma4-26b-voice");
+  const context = catalog.profiles.find((profile) => profile.id === "contextstill-background");
+  expect(gemma?.providers.find((provider) => provider.name === "system-one")).toMatchObject({
+    route: "system-one-ruri", publicModel: "ruri-v3-30m-speaking-attitude", readiness: "system-one",
+  });
+  expect(context?.providers.find((provider) => provider.name === "system-one")).toMatchObject({
+    route: "system-one-laya", publicModel: "laya-multilingual",
+  });
+  for (const selector of ["SAAA-gemma4-26b", "SAAA-w-Image", "SAAA-w-music"]) {
+    expect(catalog.profileSelectors.find((item) => item.id === selector)?.agentProfile).toBe(gemma?.id);
+  }
+  expect(registry.runtimes.find((runtime) => runtime.id === "laya-system-one")?.policy.warm?.minInstances).toBe(0);
+  expect(registry.routes.find((route) => route.id === "system-one-ruri")?.candidates)
+    .toEqual([{ runtime: "ruri-system-one", purpose: "primary" }]);
+  expect(registry.runtimes.find((runtime) => runtime.id === "ruri-system-one")).toMatchObject({
+    artifacts: ["ruri-v3-30m"], backend: "systemd", protocol: "larm.system-one.v1",
+    deployment: { service: "ruri-system-one.service", endpoint: "http://127.0.0.1:8087" },
+    resources: { estimatedMemoryGB: 1, maxConcurrentRequests: 1 },
+  });
 });

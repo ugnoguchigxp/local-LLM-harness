@@ -1,0 +1,198 @@
+<article lang="ja">
+  <h1>GemmaのRuri発話態度Providerへの切替</h1>
+  <p>
+    2026-10-09のユーザー指示に基づき、GemmaのSystem
+    OneをLayaからRuriへ変更する。Layaモデルは保持する。先行評価の「本番設定を変更しない」という範囲は、この明示的な切替指示によってGemmaについて更新された。
+  </p>
+  <aside>
+    <p>
+      ソースの設定変更、外部モデル配置、隔離HTTP APIの検証、新規systemd
+      unit登録まで完了。2026-10-09にユーザーが保存済み認証情報による登録・再起動を明示許可した。署名付きreleaseの検証・稼働反映と実Gemma接続のsmokeはこれから実施する。この時点で稼働GemmaはまだLayaである。
+    </p>
+  </aside>
+  <section id="scope">
+    <h2>切替対象</h2>
+    <table>
+      <caption>
+        Profileから実行先への対応
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">切替後</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Agent Profile</th>
+          <td>
+            saaa-conversation-gemma4-26b-voice。SAAA-gemma4-26b、SAAA-w-Image、SAAA-w-musicの各selectorがこのprofileを参照する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">System One</th>
+          <td>
+            system-one-ruri → ruri-system-one → ruri-system-one.service →
+            http://127.0.0.1:8087/v1/systemone
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">公開モデル名</th>
+          <td>ruri-v3-30m-speaking-attitude</td>
+        </tr>
+        <tr>
+          <th scope="row">維持対象</th>
+          <td>
+            ContextStillのsystem-one-laya、Layaのservice・runtime・routeと/srv/ai/models/laya-multilingual。Layaの無条件warm
+            floorは0へ変更し、ContextStillが要求したときだけ起動する。GemmaのLLM、ASR、TTS、embeddingは変更しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      既存のAgent Connectionは取得時のcatalog
+      generationに固定される。稼働catalog変更後はGemma接続を取り直す必要がある。現在動作している他profileのバックエンドをGemmaのモデルへ強制置換することはしない。
+    </p>
+  </section>
+  <section id="configuration">
+    <h2>採用する構成</h2>
+    <p>
+      cl-nagoya/ruri-v3-30m、revision
+      24899e5de370b56d179604a007c0d727bf144504。実Encoderは36,705,536パラメータ。固定Encoderのmean
+      poolingと6クラスの学習済み線形ヘッドを使い、候補文の類似度方式とは区別する。
+    </p>
+    <p>
+      ONNX Runtime 1.30.0のCPUExecutionProviderのみ。推論4threads、interop 1、batch
+      1、最大512tokens、warmup 10回。MatMul/Gemmを動的per-channel
+      INT8に量子化し、embedding、pooling、正規化、分類ヘッドはFP32。入力embedding
+      cache、候補cache、会話状態、平滑化、ヒステリシスは使用しない。GPU/NPUとCPU
+      fallbackの結果ではない。
+    </p>
+    <p>
+      入力方式Aを固定する。日本語の役割タグと「トピック:
+      」prefixは学習時と完全に同じ。現在チャンクを優先し、ユーザー発言や直前チャンクを混ぜない。B/Cは技術説明に感情を付ける問題が残ったため採用しない。このため文脈だけで意味が変わる「それはよかったですね。」の対照例に対応できない限界は残る。
+    </p>
+    <p>
+      分類はnone、warmth、joy、empathy、curiosity、surpriseの順序で固定する。アシスタントがどういう表情・声色で話すかを判定し、文章中の感情を汎用分類するモデルとして扱わない。
+    </p>
+    <p>
+      分類ヘッドは60件の合成訓練例だけで学習し、別会話・別テンプレートの36件の校正例でC=100を選択。81件の評価例は学習に使用していない。実会話300件の人手評価によるモデルではなく、引き続き予備評価に基づく構成である。
+    </p>
+  </section>
+  <section id="calibration">
+    <h2>既存の確信度条件への対応</h2>
+    <p>
+      既存利用側はanswer_confidenceが0.6未満ならnoneへ戻す。未校正の分類器softmaxをそのまま返すと、81件の予備評価で一致率が49.4%まで下がる。評価用ラベルを使わず、保存済みINT8校正例36件のlogitに対して負の対数尤度を最小にするtemperatureを学習した。
+    </p>
+    <p>
+      temperatureは0.09477120804600765。校正セットの負の対数尤度は0.61414から0.04023へ低下。正則化選択とtemperature学習に同じ校正集合を使用している。小さな合成データへの校正であり、実会話における正解確率の保証ではない。responseにはtemperature_scaled_classifier_softmaxとsynthetic-provisionalを明示する。
+    </p>
+    <p>
+      クラスのargmaxはtemperatureによって変わらない。候補subsetの場合も全6クラスを計算し、除外されたクラスが首位ならnone、answer_confidence
+      0へ棄却する。subset内でsoftmaxを再正規化して見かけの確信度を上げない。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>APIと外部artifact</h2>
+    <p>
+      apps/ruri-system-oneは評価ScriptやEumenesのコードをimportしない独立Provider。larm.system-one.v1のchoice応答を維持する。stateには現在テキスト、current_chunk、既存のresponseのいずれかを受け付け、conversationはEncoderへ渡さない。current_chunkがあればresponseより優先する。返金意図などの汎用質問、score、noul、不明なラベルやモデル名は422で拒否する。
+    </p>
+    <p>
+      全6logitとスコア、校正状態、実行provider、head
+      revision、推論時間を応答に含める。512tokens超過は左側から切り詰め、truncatedとstate_tokens_droppedはstrictなusage契約を守るため応答のトップレベルに置く。既存利用側がusage内だけを読む場合、切詰め情報は取得できない。入力本文はサービスのaccess
+      logへ記録しない。
+    </p>
+    <p>
+      起動時に各artifactのSHA256、サイズ、分類ヘッドと校正のprovenanceを確認し、不一致なら起動しない。raw
+      HF
+      snapshotは/srv/ai/models/ruri-v3-30m、派生ONNX・head・校正・tokenizerは/srv/ai/models/ruri-speaking-attitude-v1、Python環境は/srv/ai/apps/ruri-system-one/.venv。重み・係数・環境・実行結果はソースに格納しない。派生物をHFに存在するファイルとして取得する設定は作らない。
+    </p>
+    <table>
+      <caption>
+        派生artifactの固定値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ファイル</th>
+          <th scope="col">SHA256</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">model.onnx</th>
+          <td>8e6124684aff3f86ac4c0bcfe37806d8fa4a76100c20b06942d8f726babe90bd</td>
+        </tr>
+        <tr>
+          <th scope="row">head.json</th>
+          <td>9d382201d67ebbf0c13cb23daabd2d73fe0685b074d5fbd1c809a1a2e259ca9b</td>
+        </tr>
+        <tr>
+          <th scope="row">calibration.json</th>
+          <td>e768c18981afa38a96abdec9604f15c4ddfd7f02e01e7740f9fa770f406b2858</td>
+        </tr>
+        <tr>
+          <th scope="row">tokenizer.json</th>
+          <td>0a94ac9a0a02c067bdef25b72ae9f4ee33f48f552e55988d444f6d25eeb1d062</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="validation">
+    <h2>隔離APIの検証</h2>
+    <p>
+      実際のRuri HTTP
+      APIで校正36件と評価81件を判定し、既存のINT8測定結果117件すべてと全6logitが一致した。最大差は0。既存利用側の0.6条件を含む評価81件の一致率91.36%、Macro
+      F1
+      0.9164。技術例14件で誤った感情付与は0件。必要表情をnoneへ落とす例は5/58件。合成例・仮ラベルであり、実利用精度とは区別する。
+    </p>
+    <p>
+      HTTPでの1反復の観測はP50 9.92ms、P95 10.53ms、応答内の入力処理・推論P50 7.89ms、P95
+      8.43ms。共通条件3反復のEncoderベンチマークP50 2.66ms/P95
+      3.34msとは、API処理・ホスト負荷・測定回数が異なる。TTSの実開始遅延は測っていない。
+    </p>
+    <p>
+      ロード・checksum照合・warmupを含め658ms。HTTP反復後はRSS429MiB/PSS416MiB、512token処理後はRSS459MiB/PSS446MiB、Swap
+      0。Runtimeの推定メモリは余裕を含め1GB。品質判定の反復を新しい正解例として数えない。
+    </p>
+    <p>
+      512tokens切詰め、非対応質問422、候補から首位クラスが除外された場合の棄却も実HTTPで確認。出力は/srv/ai/benchmarks/avatar-attitude/ruri-provider-validation.jsonと対応JSONLに保存した。通常のシステムメタデータ以外に実会話や認証情報を保存していない。
+    </p>
+  </section>
+  <section id="activation">
+    <h2>稼働反映の手順と未完了項目</h2>
+    <ol>
+      <li>prepare-ruri-runtime.shとprovision-ruri-artifacts.pyによる環境・artifact準備は完了。</li>
+      <li>
+        管理者がinstall-ruri-service.shを実行する。新規Ruri
+        unit、当該unitだけのstart/stop許可、daemon-reloadを行う。Layaの停止・削除、他Provider変更、接続設定・認証情報変更、release反映は行わない。
+      </li>
+      <li>
+        検証済みのclean commitを既存の署名付きrelease
+        build/activation経路で反映する。直接root所有releaseを編集しない。
+      </li>
+      <li>
+        新しいGemma Agent
+        ConnectionでRuriの実判定とcredential失効をsmoke確認する。ContextStillのLaya経路も確認する。
+      </li>
+    </ol>
+    <p>
+      現時点の稼働catalog
+      revisionは1411986f3a921403a3a2ef724fb30e1e0390aed2471a58a7d3976dd346bdcb37で、Gemmaの公開System
+      Oneモデルはlaya-multilingual。更新ソースのcatalog
+      revisionは0d7933c48f5fefa07af4d4696125feb3a3ba69353f2f58a4ebb713caf556a944。稼働catalogへの切替、実Gemma接続によるsmoke、利用アプリの再接続は未完了。
+    </p>
+    <p>
+      リポジトリ全体のbun run
+      checkは通過。実装の回帰確認では役割・prefix一致、履歴非参照、汎用質問拒否、候補subset棄却、温度校正、invalid
+      scoreのfail closed、GemmaとContextStillのroute分離を確認する。
+    </p>
+    <p>
+      Eumenesの参考実装は現状、LLM回答完成後にdeliveryを求める。Provider切替だけでチャンク単位のTTS開始タイミングが改善したとは主張しない。利用アプリへchunk単位で渡す変更はこの切替に含めない。
+    </p>
+    <p>
+      先行の品質・速度比較は<a href="./avatar-speaking-attitude-evaluation-2026-10-09.html"
+        >独立予備評価</a
+      >を参照。
+    </p>
+  </section>
+</article>
