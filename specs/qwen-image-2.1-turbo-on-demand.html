@@ -42,6 +42,11 @@
       重量だけの約12 GiBを必要メモリとはみなさない。workspaceと背景負荷を考慮して既存の予約34
       GiBと安全余白16 GiBを維持し、生成中もMemAvailableの16 GiB floorを監視する。
     </p>
+    <p>
+      写真風画像の連続測定で、停止直後のengineポートにTIME_WAIT接続が残ると、次の起動前のbind検査が失敗することを確認した。
+      検査socketはengineと同じSO_REUSEADDRを使用し、停止済み接続の残存中でも再起動できるようにする。
+      稼働中listenerの占有は引き続き拒否する。実TCP接続を閉じて直ちに再起動する回帰試験と、占有listenerを奪わない試験を通過した。
+    </p>
   </section>
   <section id="contract">
     <h2>発見・確保応答と入力</h2>

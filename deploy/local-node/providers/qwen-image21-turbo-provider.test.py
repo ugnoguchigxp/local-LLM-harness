@@ -86,6 +86,24 @@ class TurboProviderTest(unittest.TestCase):
                 self.provider.start()
         self.assertIsNone(self.provider.child)
 
+    @patch.object(module.subprocess, "Popen")
+    def test_restart_accepts_closed_engine_connections_in_time_wait(self, popen):
+        # The server actively closes a real TCP connection, leaving its port
+        # in TIME_WAIT. A stopped worker must be restartable immediately.
+        with socket.socket() as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            address = listener.getsockname()
+            with socket.create_connection(address) as client:
+                accepted, _ = listener.accept()
+                accepted.close()
+                self.assertEqual(client.recv(1), b"")
+        self.provider.endpoint = f"http://127.0.0.1:{address[1]}"
+        self.provider.ready = Mock(return_value=True)
+        self.provider.start()
+        popen.assert_called_once_with(["unused"])
+
 
 if __name__ == "__main__":
     unittest.main()

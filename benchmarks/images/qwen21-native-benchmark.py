@@ -51,6 +51,8 @@ def main() -> None:
     ]
     if plan.get("vaeOnCpu", True):
         command.append("--vae-on-cpu")
+    if plan.get("vaeTiling", False):
+        command.extend(["--vae-tiling", "--vae-tile-size", str(plan.get("vaeTileSize", "512x512"))])
     if plan.get("visionPath"):
         command.extend(["--llm_vision", plan["visionPath"]])
     endpoint = f'http://127.0.0.1:{plan.get("port", 18291)}'
@@ -87,6 +89,11 @@ def main() -> None:
             nonlocal peak_rss, minimum_available, peak_driver_vram
             if child.poll() is not None:
                 raise RuntimeError(f"sd-server exited with {child.returncode}")
+            if plan.get("abortIfProductionMediaStarts", False):
+                live = subprocess.check_output(["systemctl", "show", "larm-image-qwen21.service",
+                    "larm-music-ace-step.service", "--property=MainPID"], text=True)
+                if any(line.startswith("MainPID=") and line != "MainPID=0" for line in live.splitlines()):
+                    raise RuntimeError("isolated benchmark yielded to a production media workload")
             peak_rss = max(peak_rss, process_rss(child.pid))
             minimum_available = min(minimum_available, available())
             peak_driver_vram = max(peak_driver_vram, driver_vram())

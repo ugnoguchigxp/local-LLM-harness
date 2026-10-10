@@ -54,6 +54,9 @@ class Provider:
         from urllib.parse import urlparse
         address = urlparse(self.endpoint)
         with socket.socket() as probe:
+            # Match the engine listener: permit TIME_WAIT reuse after shutdown,
+            # while an existing listening socket still prevents this bind.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             probe.bind((address.hostname, address.port))
         self.child = subprocess.Popen(self.command)
         deadline = time.monotonic() + 30
