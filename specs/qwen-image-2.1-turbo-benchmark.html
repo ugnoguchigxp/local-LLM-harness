@@ -278,7 +278,7 @@
     </p>
   </section>
   <section id="photographic-on-demand-2026-10-10">
-    <h2>写真風の実生成と2048角の追加測定</h2>
+    <h2>写真風の実生成と中間サイズ・2048角の追加測定</h2>
     <p>
       2026年10月10日、本番のTurbo AD-Q4_Kで室内・人物・料理・風景を生成した。通常APIは12枚、
       個別native試験は2048角1枚。室内は同じprompt・seed 42で512・768・1024角を各3回測定した。
@@ -336,6 +336,61 @@
       VAEを512角tile・49領域に分けてdecodeし、メモリを抑える。通常APIとdecode条件が異なり、
       407.90秒には試験processの起動・PNGとpreviewの保存を含むが、LARMの起動・停止・応答処理は含まない。
       2048角PNGの実寸とSHA256を検証した。公開APIの入力上限は引き続き1024角である。
+    </p>
+    <h3>1200角付近の追加測定</h3>
+    <p>
+      同日、同じ室内prompt・seed 42・8ステップで中間サイズを測定した。 native
+      engineは縦横を32ピクセルの倍数へ切り上げるため、1200×1200の要求は1216×1216になった。
+      最初の1200指定は生成自体が完了したが、実寸の厳密検査で不一致を検出したため画像保存せず、成功例に含めない。
+      改めて1216角と1280角を明示して各1枚生成し、指定とPNG実寸の一致・SHA256を確認した。
+      正確な1200角を納品するには別途resizeが必要で、この試験では行っていない。
+    </p>
+    <table>
+      <caption>
+        中間サイズの単発実測。試験process起動からPNG・preview保存まで。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">実寸</th>
+          <th scope="col">起動から保存まで</th>
+          <th scope="col">sampling</th>
+          <th scope="col">decode</th>
+          <th scope="col">利用可能メモリ最低値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1216×1216</th>
+          <td>86.56秒</td>
+          <td>74.89秒</td>
+          <td>8.97秒</td>
+          <td>42.73 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">1280×1280</th>
+          <td>97.15秒</td>
+          <td>84.84秒</td>
+          <td>9.94秒</td>
+          <td>41.56 GiB</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      両サイズともGPU VAEで全体decodeし、2048角のtile decodeは使っていない。
+      毎回別processを起動しているが、OS file cacheは破棄していない。
+      上表にはLARMの起動・停止・HTTP応答処理を含めず、通常APIの中央値と同一の測定経路ではない。
+      布地・木目・自然光を目視し、この室内例では写真風の描写が成立した。
+      1200角付近は約1分半、2048角は約6分48秒という実用上の違いがある。 単発・1
+      promptの結果であり、他の構図で同じ品質や時間を保証しない。
+      公開APIの1024角上限は変更しておらず、1216・1280角は個別native試験のみ。
+    </p>
+    <p>
+      追加証跡は同じrootの<code>native-1200/server.log</code>、
+      <code>native-1216/results.jsonl</code>、<code>native-1280/results.jsonl</code>、
+      <code>mid-resolution-summary.json</code>、<code>mid-resolution-summary.csv</code>。
+      各caseのPNG・samples・engine logを保持し、試験後に両production media
+      Providerのinactive・MainPID 0と 試験port
+      18291のlistener消失を確認した。背景処理を含むMemAvailableの変化は専有メモリ使用量とみなさない。
     </p>
     <h3>写真の確認</h3>
     <ul>
