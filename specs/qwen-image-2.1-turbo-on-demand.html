@@ -143,6 +143,65 @@
       Provider固有試験は9件、入力・OpenAPI・Controlの関連試験は7件成功した。
     </p>
     <p>
+      自由サイズ対応のproduction releaseは<code>b5273a4425dca150e82d16de54ccc8be25a6c446</code>。
+      署名付き配備の<code>contract_verified</code>と<code>succeeded</code>を確認した。
+      builderの全体checkはapp/package 717件、tooling 24件、deployment
+      56件とshell/Python検査を通過した。
+      本番OpenAPIの両辺100〜1280、Profile広告・Connection作成・claimのdescriptionを照合し、
+      両辺の範囲外・型不正14パターンがHTTP
+      400で拒否され、画像workerが停止状態のままであることを確認した。 検証用Connectionは解放済み。
+    </p>
+    <table>
+      <caption>
+        本番APIの自由サイズ実生成。各1回、同じ室内prompt・seed 42・8ステップ・PNG。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指定・保存寸法</th>
+          <th scope="col">内部生成寸法</th>
+          <th scope="col">要求から応答まで</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">100×100</th>
+          <td>128×128</td>
+          <td>3.92秒</td>
+        </tr>
+        <tr>
+          <th scope="row">100×1280</th>
+          <td>128×1280</td>
+          <td>9.33秒</td>
+        </tr>
+        <tr>
+          <th scope="row">1280×100</th>
+          <td>1280×128</td>
+          <td>9.83秒</td>
+        </tr>
+        <tr>
+          <th scope="row">1200×777</th>
+          <td>1216×800</td>
+          <td>52.81秒</td>
+        </tr>
+        <tr>
+          <th scope="row">1280×1280</th>
+          <td>1280×1280</td>
+          <td>101.52秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      5要求とも毎回起動し、HTTP応答前のworker停止、停止後の画像取得、保存実寸とmetadata・SHA256の一致を確認した。
+      最終状態はMainPID 0・inactive、8091・8092にlistenerはない。
+      1200×777の画像は写真風の室内として目視確認した。小さいサイズや極端な縦横比については寸法契約の検証であり、
+      画質・構図の品質保証ではない。証跡rootは<code>/srv/ai/data/benchmarks/qwen-image-turbo-size-api-20261010</code>。
+      <code>contract-verification.json</code
+      >、<code>release-status.json</code>、<code>summary.json</code>、
+      <code>summary.csv</code
+      >と<code>api/results.jsonl</code>、各caseのPNG・samples・engine logを保存した。
+      認証情報は証跡に含めない。
+    </p>
+    <p>
       本番反映後、<code>same-host</code> audienceとembeddingだけのProvider
       subsetで<code>SAAA-w-Image</code>を確保し、確保・取得・claimに画像serviceのdescriptionと完全URLが返ることを確認した。Connection作成では画像unitは起動しない。LAN経由の<code
         >saaa-desktop</code
