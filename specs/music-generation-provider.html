@@ -132,6 +132,40 @@
       ID で参照する。
     </p>
   </section>
+
+  <section id="fast-prototype-2026-10-10">
+    <h2>2026年10月10日：高速な試作品の検討</h2>
+    <p>
+      画像Turboと同様に、楽曲も短い試作品から方向を決める運用は可能。生成内容の編成を簡単にするだけで、同じ音声長・同じ生成stepsの計算が大幅に減るとはみなさない。主な比較軸は音声長、denoising
+      steps、モデル、推論backendと起動・保存処理である。短いcaptionの効果と、実際に生成する音声量の削減は分ける。
+    </p>
+    <p>
+      現在のunitは<code>acestep-v15-turbo</code>を選び、補助LMを初期化しない。adapterも<code>thinking: false</code>とし、<code>quality: fast</code>を4
+      steps、balancedを8
+      stepsへ変換する。公開APIのdurationSecondsは省略時180秒なので、高速試作の候補は15〜30秒、fast、1曲ずつ。編成や歌詞を簡単にする指定は確認しやすさには役立つが、instrumental指定単独の速度改善は未測定である。
+    </p>
+    <p>
+      公式の推論資料はTurboを標準8 steps、baseを推奨32〜64
+      stepsとし、profile用コードはduration・steps・batch・thinkingを比較軸にする。少ないstepsでまとまるかはモデルの蒸留方式に依存し、モデルのサイズや量子化だけでこのPCの速度順を判断しない。stepsを半分にしても、モデル起動、音声decodeと保存を含む全体時間が半分になるとは保証しない。
+    </p>
+    <p>
+      次の測定候補は15秒と30秒、それぞれfast 4 stepsとbalanced 8
+      steps。同じprompt・seedで複数回比較し、起動を含む時間と生成部分を分けて、音質・曲のまとまりも確認する。今回は設定と公式資料の確認のみで、新たな生成benchや既定値の変更は行っていない。2026年9月24日の30秒・8
+      stepsの実測は内部30.52秒、API
+      end-to-end36.18秒だが、現在のcold-on-demand処理の新しい測定値ではない。
+    </p>
+    <p>
+      短い試作品から同じ旋律を保って長尺へ仕上げることは、promptによる独立再生成とは別の要件。現在のadapterはreference
+      audioを受け付けないため、参照音源のupload・artifact
+      IDと、モデル側の参照・編集機能の検証が必要である。
+    </p>
+    <p>
+      確認した公式資料は<code>https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/INFERENCE.md</code>と<code>https://github.com/ace-step/ACE-Step-1.5/blob/main/profile_inference.py</code>。このPCの過去実測は<a
+        href="./ace-step-music-trial-2026-09-24.html"
+        >ACE-Step 1.5 ROCm試行</a
+      >に記録する。
+    </p>
+  </section>
   <section id="configuration">
     <h2>設定</h2>
     <dl>
