@@ -439,7 +439,7 @@ profileSelectors:
         protocol: larm.image-generation.v1
         endpoint: /v1/images/generations
         model: qwen-image-2.1-turbo
-        description: 'Qwen-Image 2.1 Turbo AD-Q4_Kによる画像生成。POSTでpromptを指定すると起動し、画像保存後に停止します。width/heightは512・768・1024（省略時512）、stepsは8固定、seedは任意、formatはwebpまたはpng（省略時webp）。このPCで512角約11秒・768角約28秒、起動時間が加わります。応答のartifacts[0].contentUrlをControlのURLに解決してGETすると画像を取得できます。写真・イラスト・構図検討に対応。参照画像による編集はこのAPIでは未対応。'
+        description: 'Qwen-Image 2.1 Turbo AD-Q4_Kによる画像生成。POSTでpromptを指定すると起動し、画像保存後に停止します。width/heightは縦横それぞれ100〜1280の整数を自由指定できます（省略時512）。内部では各辺を32の倍数へ切り上げて生成し、指定どおりの寸法へ縮小して返します。stepsは8固定、seedは任意、formatはwebpまたはpng（省略時webp）。このPCで起動から応答まで512角約16秒・768角約31秒・1024角約58秒、中間サイズの個別生成試験では1216角約87秒・1280角約97秒でした。応答のartifacts[0].contentUrlをControlのURLに解決してGETすると画像を取得できます。写真・イラスト・構図検討に対応。参照画像による編集はこのAPIでは未対応。'
         startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
   SAAA-w-music:
     agentProfile: saaa-conversation-gemma4-26b-voice

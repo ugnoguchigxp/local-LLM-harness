@@ -33,7 +33,10 @@ class TurboProviderTest(unittest.TestCase):
 
     def test_rejects_model_schedule_and_invalid_types_before_submission(self):
         self.provider.request = Mock()
-        for override in ({"model": "qwen-image-2.1"}, {"steps": 40}, {"steps": True}, {"width": True}, {"seed": True}, {"seed": 2**53}, {"reference": "anything"}):
+        invalid = [{"model": "qwen-image-2.1"}, {"steps": 40}, {"steps": True}, {"seed": True}, {"seed": 2**53}, {"reference": "anything"}]
+        invalid.extend({axis: value} for axis in ("width", "height")
+            for value in (99, 1281, 2048, 100.5, True, "1200", None))
+        for override in invalid:
             with self.subTest(override=override), self.assertRaises(ValueError):
                 self.provider.generate({"prompt": "A photo", **override})
         self.provider.request.assert_not_called()
@@ -52,6 +55,39 @@ class TurboProviderTest(unittest.TestCase):
         self.assertEqual((artifact["width"], artifact["height"], artifact["steps"], artifact["seed"]), (512, 512, 8, 42))
         self.assertEqual(metadata_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(artifact["contentUrl"], f'/v1/image-artifacts/{artifact["id"]}/content')
+        self.assertFalse(self.provider.generation_lock.locked())
+
+    @patch.object(module, "available_bytes", return_value=64 * 1024**3)
+    def test_arbitrary_sizes_align_engine_input_and_preserve_exact_saved_dimensions(self, _available):
+        import hashlib
+        from PIL import Image
+        for width, height, engine_size in ((100, 100, (128, 128)), (100, 1280, (128, 1280)),
+                (1280, 100, (1280, 128)), (1200, 777, (1216, 800)), (1280, 1280, (1280, 1280))):
+            for output_format in ("png", "webp"):
+                with self.subTest(width=width, height=height, format=output_format):
+                    self.install_job(self.completed_image(engine_size))
+                    result = self.provider.generate({"prompt": "A photo", "width": width,
+                        "height": height, "format": output_format})
+                    submitted = self.provider.request.call_args_list[0].args[1]
+                    self.assertEqual((submitted["width"], submitted["height"]), engine_size)
+                    artifact = result["artifact"]
+                    metadata_path = next(Path(self.temp.name).rglob(f'{artifact["id"]}/metadata.json'))
+                    metadata = json.loads(metadata_path.read_text())
+                    target = metadata_path.with_name(metadata["file"])
+                    with Image.open(target) as saved:
+                        self.assertEqual(saved.size, (width, height))
+                        self.assertEqual(saved.format.lower(), output_format)
+                    self.assertEqual((artifact["width"], artifact["height"]), (width, height))
+                    self.assertEqual((metadata["width"], metadata["height"]), (width, height))
+                    self.assertEqual(artifact["sha256"], hashlib.sha256(target.read_bytes()).hexdigest())
+                    self.assertFalse(self.provider.generation_lock.locked())
+
+    @patch.object(module, "available_bytes", return_value=64 * 1024**3)
+    def test_unexpected_engine_dimensions_are_not_hidden_by_resize(self, _available):
+        self.install_job(self.completed_image((1200, 777)))
+        with self.assertRaisesRegex(RuntimeError, "unexpected image dimensions"):
+            self.provider.generate({"prompt": "A photo", "width": 1200, "height": 777})
+        self.assertEqual(list(Path(self.temp.name).rglob("metadata.json")), [])
         self.assertFalse(self.provider.generation_lock.locked())
 
     @patch.object(module, "available_bytes", return_value=64 * 1024**3)

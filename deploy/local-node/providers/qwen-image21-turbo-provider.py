@@ -109,8 +109,8 @@ class Provider:
             raise ValueError("prompt must contain 1 to 8192 characters")
         if request.get("model", MODEL) != MODEL:
             raise ValueError("model must match the advertised Turbo service")
-        if type(width) is not int or type(height) is not int or width not in (512, 768, 1024) or height not in (512, 768, 1024):
-            raise ValueError("width and height must be 512, 768, or 1024")
+        if type(width) is not int or type(height) is not int or not 100 <= width <= 1280 or not 100 <= height <= 1280:
+            raise ValueError("width and height must be integers from 100 to 1280")
         if type(request.get("steps", 8)) is not int or request.get("steps", 8) != 8:
             raise ValueError("Turbo uses exactly 8 steps")
         if type(seed) is not int or not 0 <= seed <= 2**53 - 1:
@@ -121,8 +121,11 @@ class Provider:
             raise RuntimeError("image provider is busy")
         try:
             started = time.monotonic()
+            # Qwen's native engine requires multiples of 32. Keep the public
+            # artifact dimensions exact by resizing after validated generation.
+            engine_width, engine_height = ((value + 31) // 32 * 32 for value in (width, height))
             job = self.request("/sdcpp/v1/img_gen", {
-                "prompt": prompt, "width": width, "height": height, "seed": seed,
+                "prompt": prompt, "width": engine_width, "height": engine_height, "seed": seed,
                 "batch_count": 1, "output_format": "png", "preview": "none",
                 "sample_params": {"sample_method": "euler", "sample_steps": 8,
                     "custom_sigmas": SIGMAS, "guidance": {"txt_cfg": 1.0}},
@@ -146,9 +149,10 @@ class Provider:
             raw = base64.b64decode(result["result"]["images"][0]["b64_json"], validate=True)
             with Image.open(io.BytesIO(raw)) as source:
                 source.load()
-                if source.size != (width, height):
+                if source.size != (engine_width, engine_height):
                     raise RuntimeError("engine returned unexpected image dimensions")
-                image = source.copy()
+                image = source.copy() if source.size == (width, height) else source.resize(
+                    (width, height), Image.Resampling.LANCZOS)
             now = datetime.now(timezone.utc)
             artifact_id = f"image_{uuid.uuid4().hex}"
             directory = self.artifact_root / now.strftime("%Y") / now.strftime("%m") / artifact_id

@@ -136,7 +136,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
     paths[path]![method] = {
       operationId,
       ...(operationId === "createImageGeneration" ? {
-        description: "Synchronous Qwen-Image 2.1 Turbo generation with a fixed eight-step schedule. Defaults: 512x512, seed 0, WebP. Sizes: 512, 768, or 1024 per axis; PNG is optional. Control starts and loads the selected model, stores the artifact, and stops the worker before returning 200. Optional model must match the advertised service. Read artifacts[0] or artifact; contentUrl is relative to Control and remains available after worker shutdown. Cold startup is included in request latency; do not automatically resubmit POST.",
+        description: "Synchronous Qwen-Image 2.1 Turbo generation with a fixed eight-step schedule. Defaults: 512x512, seed 0, WebP. Width and height independently accept any integer from 100 through 1280. Generation rounds each axis up to a multiple of 32 and resizes to the exact requested output dimensions; PNG is optional. Control starts and loads the selected model, stores the artifact, and stops the worker before returning 200. Optional model must match the advertised service. Read artifacts[0] or artifact; contentUrl is relative to Control and remains available after worker shutdown. Cold startup is included in request latency; do not automatically resubmit POST.",
       } : operationId === "createMusicGeneration" ? {
         description: "Returns a 202 job. Control starts the model on demand; poll the job or follow events. Completed means the artifact is stored and the worker stopped. Download result.audioUrl relative to Control. Submit once; polling does not start a model.",
       } : {}),

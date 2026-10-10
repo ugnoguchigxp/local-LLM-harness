@@ -68,8 +68,10 @@ export const imageArtifactDeleteSchema = z.object({
 export const imageGenerationRequestSchema = z.object({
   prompt: z.string().min(1).max(8_192),
   model: z.literal("qwen-image-2.1-turbo").optional(),
-  width: z.union([z.literal(512), z.literal(768), z.literal(1024)]).optional(),
-  height: z.union([z.literal(512), z.literal(768), z.literal(1024)]).optional(),
+  width: z.number().int().min(100).max(1280).optional()
+    .describe("Output width in pixels, 100 through 1280 inclusive; defaults to 512. Generation rounds up to a multiple of 32, then resizes to this exact width."),
+  height: z.number().int().min(100).max(1280).optional()
+    .describe("Output height in pixels, 100 through 1280 inclusive; defaults to 512. Generation rounds up to a multiple of 32, then resizes to this exact height."),
   steps: z.literal(8).optional(),
   seed: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   format: imageArtifactFormatSchema.optional(),

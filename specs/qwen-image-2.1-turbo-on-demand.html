@@ -94,7 +94,7 @@
         </tr>
         <tr>
           <th scope="row">width / height</th>
-          <td>各512・768・1024。省略時は各512。</td>
+          <td>縦横それぞれ100〜1280の整数を独立に指定可能。省略した辺は512。</td>
         </tr>
         <tr>
           <th scope="row">steps</th>
@@ -110,11 +110,21 @@
         </tr>
       </tbody>
     </table>
+    <p>
+      2026年10月10日の追加変更で、サイズを3択から100〜1280の自由指定へ拡張した。 native
+      engineの32ピクセル刻みに合わせ、各辺を次の32の倍数へ切り上げて生成し、
+      必要な場合だけLanczosで指定寸法へ縮小する。例えば1200×777は内部で1216×800を生成し、
+      保存画像と応答metadataは1200×777になる。切り上げ後も各辺1280以下である。
+      cropは行わず、内部画像全体を指定寸法に合わせる。極端な縦横比や小さい出力の画質は別途評価する。
+      100未満・1280超・小数・文字列・真偽値はworker起動前に400で拒否する。
+      engine出力は内部生成寸法と厳密に照合し、不一致をresizeで隠さず失敗にする。
+      OpenAPIと確保応答のservice descriptionにも範囲と寸法調整を記載する。
+    </p>
     <pre><code>{
   "model": "qwen-image-2.1-turbo",
   "prompt": "自然光の入る部屋。左に緑の椅子、右に赤いソファ、中央に木のテーブル。写真として描く。",
-  "width": 768,
-  "height": 768,
+  "width": 1200,
+  "height": 777,
   "seed": 42,
   "format": "png"
 }</code></pre>
@@ -125,6 +135,13 @@
   </section>
   <section id="validation">
     <h2>検証記録</h2>
+    <p>
+      自由サイズの回帰試験では両辺の100・1280境界、範囲内の端数、縦横別の範囲外・型不正を検査した。
+      Provider試験で100角、100×1280、1280×100、1200×777、1280角をPNGとWebPで保存し、
+      内部生成寸法、保存実寸、metadata、SHA256の一致を確認した。内部寸法と異なるengine出力は保存しない。
+      Controlの試験でも指定寸法をProviderへ渡し、停止完了前に応答しないことを確認した。
+      Provider固有試験は9件、入力・OpenAPI・Controlの関連試験は7件成功した。
+    </p>
     <p>
       本番反映後、<code>same-host</code> audienceとembeddingだけのProvider
       subsetで<code>SAAA-w-Image</code>を確保し、確保・取得・claimに画像serviceのdescriptionと完全URLが返ることを確認した。Connection作成では画像unitは起動しない。LAN経由の<code
