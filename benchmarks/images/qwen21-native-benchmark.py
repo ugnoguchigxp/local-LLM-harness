@@ -32,6 +32,13 @@ def driver_vram() -> int:
     return sum(int(p.read_text()) for p in Path("/sys/class/drm").glob("card*/device/mem_info_vram_used"))
 
 
+def optional_sensor(pattern: str) -> int | None:
+    try:
+        return int(next(Path("/sys/class/drm").glob(pattern)).read_text())
+    except (OSError, ValueError, StopIteration):
+        return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", required=True, type=Path)
@@ -73,6 +80,7 @@ def main() -> None:
         raise RuntimeError("benchmark port is already occupied")
 
     environment = {"plan": plan, "command": command, "kernel": platform.release(),
+                   "runnerSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                    "initialAvailableBytes": available(), "initialDriverVramBytes": driver_vram()}
     (args.output / "environment.json").write_text(json.dumps(environment, indent=2))
     from PIL import Image
@@ -84,6 +92,8 @@ def main() -> None:
         peak_rss = 0
         minimum_available = available()
         peak_driver_vram = driver_vram()
+        current_case = None
+        samples = []
 
         def sample():
             nonlocal peak_rss, minimum_available, peak_driver_vram
@@ -97,6 +107,11 @@ def main() -> None:
             peak_rss = max(peak_rss, process_rss(child.pid))
             minimum_available = min(minimum_available, available())
             peak_driver_vram = max(peak_driver_vram, driver_vram())
+            samples.append({"elapsedSeconds": time.monotonic() - start,
+                            "availableBytes": available(), "rssBytes": process_rss(child.pid),
+                            "gpuBusyPercent": optional_sensor("card*/device/gpu_busy_percent"),
+                            "temperatureMilliC": optional_sensor("card*/device/hwmon/hwmon*/temp1_input"),
+                            "powerMicroW": optional_sensor("card*/device/hwmon/hwmon*/power1_average")})
             if minimum_available < 16 * 1024**3:
                 raise RuntimeError("benchmark stopped at the 16 GiB memory floor")
 
@@ -115,10 +130,13 @@ def main() -> None:
             (args.output / "load.json").write_text(json.dumps(load, indent=2))
             print(json.dumps({"event": "loaded", "candidate": plan["candidate"], **load}), flush=True)
             for case_index, case in enumerate(plan["cases"]):
+                current_case = case["id"]
                 print(json.dumps({"event": "start", "candidate": plan["candidate"], "case": case["id"]}), flush=True)
                 peak_rss = 0
                 minimum_available = available()
                 peak_driver_vram = driver_vram()
+                initial_available = available()
+                samples = []
                 payload = {"prompt": case["prompt"], "width": case["width"], "height": case["height"],
                            "seed": case["seed"], "batch_count": 1, "output_format": "png",
                            "preview": "none", "sample_params": {
@@ -154,6 +172,7 @@ def main() -> None:
                 record = {"candidate": plan["candidate"], **case, "status": "succeeded",
                           "inferenceSeconds": inference_seconds, "totalSeconds": time.monotonic() - started,
                           "peakRssBytes": peak_rss, "minimumAvailableBytes": minimum_available,
+                          "initialAvailableBytes": initial_available,
                           "peakDriverVramBytes": peak_driver_vram, "png": str(target),
                           "sha256": hashlib.sha256(data).hexdigest(), "pixelStd": float(pixels.std()),
                           "imageMode": image.mode, "actualSize": list(image.size)}
@@ -161,8 +180,18 @@ def main() -> None:
                     record["coldFirstGenerationSeconds"] = load["loadSeconds"] + record["totalSeconds"]
                 with (args.output / "results.jsonl").open("a") as file:
                     file.write(json.dumps(record, ensure_ascii=False) + "\n")
+                (args.output / (case["id"] + "-samples.json")).write_text(json.dumps(samples))
                 print(json.dumps(record, ensure_ascii=False), flush=True)
+        except Exception as error:
+            failure = {"candidate": plan["candidate"], "case": current_case, "status": "failed",
+                       "error": str(error), "peakRssBytes": peak_rss,
+                       "minimumAvailableBytes": minimum_available, "peakDriverVramBytes": peak_driver_vram}
+            (args.output / "failure.json").write_text(json.dumps(failure, ensure_ascii=False, indent=2))
+            print(json.dumps(failure, ensure_ascii=False), flush=True)
+            raise
         finally:
+            if current_case:
+                (args.output / (current_case + "-samples.json")).write_text(json.dumps(samples))
             if child.poll() is None:
                 os.killpg(child.pid, signal.SIGTERM)
                 try:

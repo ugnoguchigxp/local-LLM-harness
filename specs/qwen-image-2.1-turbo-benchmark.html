@@ -277,6 +277,117 @@
       admissionを12GiBだけで見積もることも避ける。
     </p>
   </section>
+  <section id="photographic-on-demand-2026-10-10">
+    <h2>写真風の実生成と2048角の追加測定</h2>
+    <p>
+      2026年10月10日、本番のTurbo AD-Q4_Kで室内・人物・料理・風景を生成した。通常APIは12枚、
+      個別native試験は2048角1枚。室内は同じprompt・seed 42で512・768・1024角を各3回測定した。
+      通常APIの時間は要求からHTTP応答までで、毎回のworker起動・モデル初期化・PNG保存・停止を含む。
+      OS再起動やfile cacheの破棄は行っていないため、空のディスクcacheからのcold
+      boot測定とは呼ばない。 全例8ステップ・CFG 1・Euler・GPU VAE・Flash
+      Attention、encoderはQwen3-VL-8B Q8_0。
+    </p>
+    <table>
+      <caption>
+        同じ室内写真promptの解像度比較。通常APIは3回の中央値、2048角は単発参考。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">サイズ</th>
+          <th scope="col">起動から保存・応答まで</th>
+          <th scope="col">sampling</th>
+          <th scope="col">decode</th>
+          <th scope="col">利用可能メモリの減少</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">512角</th>
+          <td>16.05秒（14.43〜16.58秒）</td>
+          <td>10.80秒</td>
+          <td>2.03秒</td>
+          <td>15.77 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">768角</th>
+          <td>31.41秒（30.83〜31.51秒）</td>
+          <td>24.77秒</td>
+          <td>3.49秒</td>
+          <td>18.16 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">1024角</th>
+          <td>57.53秒（57.46〜57.65秒）</td>
+          <td>48.09秒</td>
+          <td>6.30秒</td>
+          <td>22.43 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">2048角・個別試験</th>
+          <td>407.90秒</td>
+          <td>337.80秒</td>
+          <td>66.88秒</td>
+          <td>24.22 GiB</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      2048角は同じweightsとsample scheduleを使い、native serverの個別loopback portで測定した。 GPU
+      VAEを512角tile・49領域に分けてdecodeし、メモリを抑える。通常APIとdecode条件が異なり、
+      407.90秒には試験processの起動・PNGとpreviewの保存を含むが、LARMの起動・停止・応答処理は含まない。
+      2048角PNGの実寸とSHA256を検証した。公開APIの入力上限は引き続き1024角である。
+    </p>
+    <h3>写真の確認</h3>
+    <ul>
+      <li>
+        室内：左右の椅子とソファ、木目、布地、自然光を確認。同じ解像度の3回はPNGのSHA256がすべて一致した。
+      </li>
+      <li>
+        人物1024角：57.61秒。顔、髪、肌、両手で持つカップを目視し、この例では大きな手の破綻は見られなかった。
+      </li>
+      <li>料理1024角：57.43秒。焼き鮭、米、器の質感を確認した。</li>
+      <li>風景1024×768：41.92秒。構図は成立したが、岩と木の葉にざらついた絵画調の描写が残った。</li>
+      <li>
+        2048角：布地、木目、葉の細部を確認し、目立つtile境界は見られなかった。解像度を変えると家具の比率や画角も変わる。
+      </li>
+    </ul>
+    <p>
+      写真風生成にもTurboを基本候補として使える。ただし、この4種類・各1
+      seedの例だけで品質を一般化しない。
+      普段は768〜1024角、2048角は約7分待てる用途の候補とする。参照画像による構図固定は現在の公開APIにない。
+      今回は通常版との新たな品質比較を行っておらず、通常版の優位性やTurboとの同等性を証明するものではない。
+    </p>
+    <h3>メモリ・温度・ライフサイクル</h3>
+    <p>
+      通常API中のMemAvailable最低値は47.43 GiB、2048角では45.80 GiBだった。
+      表の減少量は各case開始時から最低値までで、通常APIはその中央値。背景Providerとcacheの変化も含むため、
+      専有peakメモリとは呼ばない。通常APIのprocess RSS最大値は約2.20
+      GiBだが、UMA上のGPU確保を含む総使用量の代わりにはならない。 通常APIのGPU
+      edge温度表示は最高74℃、amdgpuのPPT電力表示は最大69.07 W。 2048角では70℃・58.00
+      Wだった。電力はdriver sensorの観測値で、PC全体の壁コンセントでの測定値ではない。 通常APIのhost
+      swap counter増分はread約10.05 MiB・write約29.68 MiBで、背景処理も含む。
+    </p>
+    <p>
+      通常APIの12要求はすべて画像保存後にworker停止を確認し、その後HTTPで取得したPNGのSHA256がmetadataと一致した。
+      downloadとPNG検証は中央値29.83
+      ms（loopback）。2048角の試験serverも終了し、8091・8092・18291にlistenerは残らない。
+      連続起動時のTIME_WAITとport検査の不一致を修正し、production release
+      <code>13bb3a9ba980744125172aaf4e75bb851977281d</code>で12要求の起動・停止を確認した。
+      最終測定前の失敗した2回の起動試行は、この成功12例の時間集計に含めない。
+      <a href="./qwen-image-2.1-turbo-on-demand.html#runtime">連続起動の修正</a>に条件を記録する。
+    </p>
+    <p>
+      証跡rootは<code>/srv/ai/data/benchmarks/qwen-image-turbo-photo-20261010</code>。
+      <code>api-final/results.jsonl</code
+      >、<code>native-2048/results.jsonl</code>、<code>summary.json</code>、<code>summary.csv</code>に
+      prompt・seed・各stage・メモリ・温度・電力・PNGサイズ・SHA256を保存し、各caseのsamples
+      JSONとengine logも保持する。
+      <code>photo-preview.png</code
+      >は4種類を縮小配置した表示用一覧で、画質確認の原本は各caseのPNG。
+      認証情報は証跡へ保存しない。再現用sourceは<code>benchmarks/images/qwen21-photo-benchmark.py</code>と
+      <code>benchmarks/images/qwen21-native-benchmark.py</code>、plan・weights・生成物はrepository外に置く。
+    </p>
+  </section>
   <section id="draft-to-finish">
     <h2>下書きから通常版への仕上げ実験</h2>
     <p>
