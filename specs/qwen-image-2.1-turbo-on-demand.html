@@ -44,8 +44,10 @@
     </p>
     <p>
       写真風画像の連続測定で、停止直後のengineポートにTIME_WAIT接続が残ると、次の起動前のbind検査が失敗することを確認した。
-      検査socketはengineと同じSO_REUSEADDRを使用し、停止済み接続の残存中でも再起動できるようにする。
-      稼働中listenerの占有は引き続き拒否する。実TCP接続を閉じて直ちに再起動する回帰試験と、占有listenerを奪わない試験を通過した。
+      engineのLinux listenerはSO_REUSEPORTを使うため、SO_REUSEADDRだけの検査では不足した。
+      bindが失敗した場合、対象ポートのTCP状態がすべてTIME_WAITの場合にだけ起動を許可する。
+      検査socketにSO_REUSEPORTを使って稼働中listenerを共有することは避ける。 同じsocket
+      optionの実TCP接続を閉じて直ちに再起動する回帰試験と、占有listenerを奪わない試験を通過した。
     </p>
   </section>
   <section id="contract">

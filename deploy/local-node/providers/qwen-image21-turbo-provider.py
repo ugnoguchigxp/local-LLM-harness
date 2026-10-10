@@ -50,14 +50,29 @@ class Provider:
 
     def start(self) -> None:
         # Never take ownership of an unrelated listener on the private port.
+        import errno
         import socket
         from urllib.parse import urlparse
         address = urlparse(self.endpoint)
         with socket.socket() as probe:
-            # Match the engine listener: permit TIME_WAIT reuse after shutdown,
-            # while an existing listening socket still prevents this bind.
+            # sd-server uses SO_REUSEPORT on Linux. A REUSEADDR-only probe
+            # cannot bind its TIME_WAIT sockets; do not enable REUSEPORT here,
+            # since that would also allow sharing an unrelated live listener.
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            probe.bind((address.hostname, address.port))
+            try:
+                probe.bind((address.hostname, address.port))
+            except OSError as error:
+                states = []
+                if error.errno == errno.EADDRINUSE:
+                    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+                        for line in Path(table).read_text().splitlines()[1:]:
+                            fields = line.split()
+                            if int(fields[1].rsplit(":", 1)[1], 16) == address.port:
+                                states.append(fields[3])
+                # Only closed TCP connections may remain; LISTEN, active
+                # connections, or an unexplained reservation still fail.
+                if not states or any(state != "06" for state in states):
+                    raise
         self.child = subprocess.Popen(self.command)
         deadline = time.monotonic() + 30
         while not self.ready():

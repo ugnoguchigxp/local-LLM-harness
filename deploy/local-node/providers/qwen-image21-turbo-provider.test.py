@@ -79,6 +79,7 @@ class TurboProviderTest(unittest.TestCase):
     def test_occupied_engine_port_is_not_taken_over(self):
         self.provider.child = None
         with socket.socket() as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             listener.bind(("127.0.0.1", 0))
             listener.listen()
             self.provider.endpoint = f"http://127.0.0.1:{listener.getsockname()[1]}"
@@ -91,7 +92,9 @@ class TurboProviderTest(unittest.TestCase):
         # The server actively closes a real TCP connection, leaving its port
         # in TIME_WAIT. A stopped worker must be restartable immediately.
         with socket.socket() as listener:
-            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # Match cpp-httplib's Linux listener, which uses REUSEPORT
+            # instead of REUSEADDR.
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             listener.bind(("127.0.0.1", 0))
             listener.listen()
             address = listener.getsockname()
