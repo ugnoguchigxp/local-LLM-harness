@@ -10,7 +10,9 @@
     <h2>実装と配備の区別</h2>
     <p>
       ソースの画像service広告、公開入力schema、native
-      engine接続、systemd起動設定、確保応答の説明と完全URLを変更した。隔離APIで実生成と停止後の画像読出しを確認した。本番unitは管理者所有で、今回の実行環境は非対話sudoを利用できない。本番起動設定の更新とrelease切替は未実施であり、配備済みとは扱わない。
+      engine接続、systemd起動設定、確保応答の説明と完全URLを変更した。隔離APIで実生成と停止後の画像読出しを確認し、利用者指定の認証情報で管理者所有の本番unitを更新した。release
+      <code>08fecdae29a7029ee5ef711182b27a97256b30a3</code
+      >は署名付き配備と<code>contract_verified</code>を通過した。本番の確保・claim、実生成、停止後の画像取得まで確認済み。
     </p>
     <p>
       通常版のモデルとPython
@@ -59,8 +61,8 @@
   }]
 }</code></pre>
     <p>
-      上のURLはloopback audienceの例。host-privateのrequest-origin
-      audienceでは、確保要求の到達先originを使う。service
+      上のURLはloopback networkである<code>same-host</code>
+      audienceの例。host-privateのrequest-origin audienceでは、確保要求の到達先originを使う。service
       descriptionはcatalogの設定文をそのまま返す。画像serviceは会話Providerのclaim対象ではなく、認証は従来のControl
       APIの規則に従う。
     </p>
@@ -116,6 +118,25 @@
   </section>
   <section id="validation">
     <h2>検証記録</h2>
+    <p>
+      本番反映後、<code>same-host</code> audienceとembeddingだけのProvider
+      subsetで<code>SAAA-w-Image</code>を確保し、確保・取得・claimに画像serviceのdescriptionと完全URLが返ることを確認した。Connection作成では画像unitは起動しない。LAN経由の<code
+        >saaa-desktop</code
+      >
+      audienceでは<code>http://192.168.0.130:9810/v1/images/generations</code>を広告した。検証用ConnectionはすべてDELETEで解放した。
+    </p>
+    <p>
+      本番の生成APIで日本語promptから512角PNGを生成し、systemd起動・生成・保存・停止・HTTP
+      downloadまで15.76秒で完了した。実際のengineは8ステップで、weight
+      revisionも広告したTurboと一致する。応答後はMainPID 0、unit
+      inactive、8091と8092の両portが閉じた。停止後のGETは200で、downloadのSHA256がmetadataと一致した。写真風の緑の椅子・赤いソファ・木のテーブルと照明を目視確認した。
+    </p>
+    <p>
+      本番証跡は<code>/srv/ai/data/benchmarks/qwen-image-turbo-live-20261010/verification.json</code>、<code>lan-verification.json</code>と<code>live-image.png</code>。保存証跡にProvider
+      tokenや管理者認証情報は含めない。全体checkは715件のapp/package試験、tooling 24件、deployment
+      56件とshell/Python検査を通過し、Turbo Provider固有の6件も成功した。
+    </p>
+
     <p>
       実際のnative engine、Turbo weights、Python Provider、Controlの画像routeとartifact
       managerを隔離して接続し、512角の人物写真を生成した。HTTP
