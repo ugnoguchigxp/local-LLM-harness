@@ -1,0 +1,138 @@
+<article lang="ja">
+  <h1>Qwen-Image 2.1 Turboのオンデマンド採用とサービス案内</h1>
+  <p>
+    2026年10月10日、利用者の採用指示に基づき、普段の画像生成にはTurbo AD-Q4_Kを選ぶ。<a
+      href="./qwen-image-2.1-turbo-benchmark.html"
+      >7候補の実機評価</a
+    >で512角・768角の速度と画質を確認した。写真・イラストを直接生成でき、下書き風の指示は高速化の必須条件ではない。
+  </p>
+  <section id="implementation">
+    <h2>実装と配備の区別</h2>
+    <p>
+      ソースの画像service広告、公開入力schema、native
+      engine接続、systemd起動設定、確保応答の説明と完全URLを変更した。隔離APIで実生成と停止後の画像読出しを確認した。本番unitは管理者所有で、今回の実行環境は非対話sudoを利用できない。本番起動設定の更新とrelease切替は未実施であり、配備済みとは扱わない。
+    </p>
+    <p>
+      通常版のモデルとPython
+      Providerは保持する。公開画像APIは今回Turboへ切り替え、通常版の選択と参照画像による仕上げは別途実装する。公開modelの旧値をTurboへ黙って読み替えない。
+    </p>
+  </section>
+  <section id="runtime">
+    <h2>起動と停止</h2>
+    <p>
+      利用者は<code>SAAA-w-Image</code>のserviceを選ぶ。Agent
+      Connectionの作成だけでは画像モデルを起動しない。<code>POST /v1/images/generations</code>でimage
+      variantを確保し、<code>larm-image-qwen21.service</code>を起動する。画像とmetadataを保存してControlが読めることを検証し、worker停止の完了後にHTTP
+      200を返す。idle TTLと常駐数は0。並行する画像・楽曲生成は既存の重量級排他で拒否する。
+    </p>
+    <p>
+      Providerの8091とnative engineの8092はloopback専用。native engineは同じsystemd
+      cgroup内の子プロセスで、終了時に停止する。既存のlistenerを奪わず、初期化失敗時も子プロセスを片付ける。healthの<code>ready</code>はengineが要求を受け取れることを表し、モデル転送・初回処理の時間は生成要求に含まれ得る。
+    </p>
+    <p>
+      native HIP
+      buildとモデルはrepository外に置く。engineは<code>/srv/ai/apps/qwen-image-turbo-benchmark/stable-diffusion.cpp/build-hip/bin/sd-server</code>。DiTはAtomicChat
+      AD-Q4_K、encoderはQwen3-VL-8B Q8_0、VAEはComfy-Org BF16を使い、GPU VAE、Flash
+      Attention、Euler、CFG 1、CPU RNG、8ステップと公式sample sigmaを固定する。AtomicChat
+      revisionは<code>bb25d06bc74119c12207243d68917951e6d9c232</code>。
+    </p>
+    <p>
+      重量だけの約12 GiBを必要メモリとはみなさない。workspaceと背景負荷を考慮して既存の予約34
+      GiBと安全余白16 GiBを維持し、生成中もMemAvailableの16 GiB floorを監視する。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>発見・確保応答と入力</h2>
+    <p>
+      既存の<code>GET /v3/agent-profiles?profile=SAAA-w-Image</code>はProfile全体のdescriptionとserviceの相対endpoint・model・startupPolicyを持っていた。今回serviceの<code>description</code>に用途、入力、時間の目安、画像取得方法を追加する。Connection作成・取得・claim応答の<code>services[].url</code>は選択したaudienceのoriginから構成し、利用者側で内部Providerポートを使う必要はない。管理権限やcredentialを追加するフィールドではない。
+    </p>
+    <pre><code>{
+  "services": [{
+    "name": "image",
+    "capability": "media.image.generate",
+    "protocol": "larm.image-generation.v1",
+    "endpoint": "/v1/images/generations",
+    "url": "http://127.0.0.1:9810/v1/images/generations",
+    "model": "qwen-image-2.1-turbo",
+    "description": "Qwen-Image 2.1 Turbo AD-Q4_Kによる画像生成。入力、所要時間と画像取得方法を案内する。",
+    "startupPolicy": { "minWarmInstances": 0, "idleTtlSeconds": 0 }
+  }]
+}</code></pre>
+    <p>
+      上のURLはloopback audienceの例。host-privateのrequest-origin
+      audienceでは、確保要求の到達先originを使う。service
+      descriptionはcatalogの設定文をそのまま返す。画像serviceは会話Providerのclaim対象ではなく、認証は従来のControl
+      APIの規則に従う。
+    </p>
+    <table>
+      <caption>
+        画像生成入力
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">フィールド</th>
+          <th scope="col">契約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">prompt</th>
+          <td>必須。1〜8192文字。</td>
+        </tr>
+        <tr>
+          <th scope="row">model</th>
+          <td>省略可能。指定する場合はqwen-image-2.1-turbo。</td>
+        </tr>
+        <tr>
+          <th scope="row">width / height</th>
+          <td>各512・768・1024。省略時は各512。</td>
+        </tr>
+        <tr>
+          <th scope="row">steps</th>
+          <td>省略または8。蒸留scheduleと異なる値は起動前に400で拒否。</td>
+        </tr>
+        <tr>
+          <th scope="row">seed</th>
+          <td>0以上のJavaScript safe integer。省略時0。</td>
+        </tr>
+        <tr>
+          <th scope="row">format</th>
+          <td>webpまたはpng。省略時webp。WebP qualityは80、PNGはlossless。</td>
+        </tr>
+      </tbody>
+    </table>
+    <pre><code>{
+  "model": "qwen-image-2.1-turbo",
+  "prompt": "自然光の入る部屋。左に緑の椅子、右に赤いソファ、中央に木のテーブル。写真として描く。",
+  "width": 768,
+  "height": 768,
+  "seed": 42,
+  "format": "png"
+}</code></pre>
+    <p>
+      同期応答の<code>artifacts[0].contentUrl</code>または<code>artifact.contentUrl</code>をControlのoriginに解決してGETする。worker停止後も画像はretention期限内で取得できる。参照画像入力と非同期image
+      jobは今回追加しない。旧<code>model: qwen-image-2.1</code>と40ステップを送るConsumerは入力を移行する必要がある。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証記録</h2>
+    <p>
+      実際のnative engine、Turbo weights、Python Provider、Controlの画像routeとartifact
+      managerを隔離して接続し、512角の人物写真を生成した。HTTP
+      200まで15.46秒、Provider生成・保存は15.223秒。image
+      variantのstartとstop各1回、返却前の停止、停止後も23652
+      bytesのWebPを取得できることを確認した。engineの起動は試験前に行っており、この15.46秒はsystemd
+      cold startの計測ではない。
+    </p>
+    <p>
+      証跡は<code>/srv/ai/data/benchmarks/qwen-image-turbo-integration-20261010/api-result.json</code>とworker
+      log、生成artifactに保存する。入力モデル・steps拒否、確保応答のdescriptionとURL、終了待ち、upstreamエラーを自動試験で確認する。Python
+      Providerはサイズ不一致、job失敗、メモリfloor、listener競合、保存metadataを試験する。
+    </p>
+    <p>
+      ライセンス条件は<a href="./qwen-image-2.1-turbo-benchmark.html#sources"
+        >評価文書の取得元と制約</a
+      >を引き継ぐ。研究・評価利用と一般の常用・商用利用を同一視しない。
+    </p>
+  </section>
+</article>

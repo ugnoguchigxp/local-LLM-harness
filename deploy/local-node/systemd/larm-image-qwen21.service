@@ -1,5 +1,5 @@
 [Unit]
-Description=LARM on-demand Qwen-Image 2.1 variant
+Description=LARM on-demand Qwen-Image 2.1 Turbo AD-Q4_K variant
 After=network.target
 Conflicts=larm-music-ace-step.service
 
@@ -11,7 +11,7 @@ WorkingDirectory=/srv/ai/apps/larm-current
 Environment=HOME=/srv/ai/cache
 Environment=XDG_CACHE_HOME=/srv/ai/cache
 Environment=TOKENIZERS_PARALLELISM=false
-ExecStart=/srv/ai/apps/qwen-image-2.1-runtime/.venv/bin/python -u /srv/ai/apps/larm-current/deploy/local-node/providers/qwen-image21-provider.py --host 127.0.0.1 --port 8091 --model /srv/ai/models/Qwen/Qwen-Image-2.1 --artifact-root /srv/ai/data/generated/images
+ExecStart=/srv/ai/apps/qwen-image-2.1-runtime/.venv/bin/python -u /srv/ai/apps/larm-current/deploy/local-node/providers/qwen-image21-turbo-provider.py --host 127.0.0.1 --port 8091 --engine /srv/ai/apps/qwen-image-turbo-benchmark/stable-diffusion.cpp/build-hip/bin/sd-server --engine-port 8092 --model /srv/ai/models/AtomicChat/Qwen-Image-2.1-Turbo-GGUF/Qwen-Image-2.1-Turbo-AD-Q4_K.gguf --encoder /srv/ai/models/Qwen/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q8_0.gguf --vae /srv/ai/models/Comfy-Org/Qwen-Image-2.1/vae/qwen_image_2.1_vae_bf16.safetensors --artifact-root /srv/ai/data/generated/images
 Restart=no
 RestartSec=5
 TimeoutStartSec=30
@@ -23,7 +23,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadOnlyPaths=/srv/ai/models /srv/ai/apps/qwen-image-2.1-runtime /srv/ai/apps/larm-current
+ReadOnlyPaths=/srv/ai/models /srv/ai/apps/qwen-image-2.1-runtime /srv/ai/apps/qwen-image-turbo-benchmark /srv/ai/apps/larm-current
 ReadWritePaths=/srv/ai/cache /srv/ai/logs /srv/ai/data/generated/images
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 

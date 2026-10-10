@@ -192,6 +192,8 @@ export const agentProfileServiceSchema = z.object({
   protocol: z.enum(["larm.image-generation.v1", "larm.music-generation.v1"]),
   endpoint: z.enum(["/v1/images/generations", "/v1/music/generations"]),
   model: agentIdentifierSchema,
+  description: z.string().min(1).max(2048).optional(),
+  url: z.string().url().optional(),
   startupPolicy: providerStartupPolicySchema.optional(),
 }).strict().superRefine((service, context) => {
   const expected = service.protocol === "larm.image-generation.v1"
@@ -1135,6 +1137,7 @@ export const agentConnectionClaimSchema = z.object({
     embeddingAgentProviderDescriptorSchema,
     systemOneAgentProviderDescriptorSchema,
   ])).min(1).max(8),
+  services: z.array(agentProfileServiceSchema).max(8).optional(),
   contextControl: z.object({
     contractVersion: z.literal("larm-personal-state.v1"),
     subjectDigest: sha256Schema,

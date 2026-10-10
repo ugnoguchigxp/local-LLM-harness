@@ -592,6 +592,7 @@ export class AgentConnectionController {
       status: "ready",
       audience: found.audience.id,
       providers,
+      services: this.services(found),
       ...(this.personalStateAuthorized(found) ? {
         contextControl: {
           contractVersion: "larm-personal-state.v1" as const,
@@ -923,7 +924,7 @@ export class AgentConnectionController {
             && this.options.semantic.peek({ allocationId: record.allocationId, provider })?.ready === true,
         };
       }),
-      services: structuredClone(record.selector.services),
+      services: this.services(record),
       createdAt: record.createdAt,
       expiresAt: record.expiresAt,
       readyDeadline: new Date(record.readyDeadline).toISOString(),
@@ -934,6 +935,13 @@ export class AgentConnectionController {
       ...(record.releasedAt ? { releasedAt: record.releasedAt } : {}),
       ...(record.error ? { error: record.error } : {}),
     };
+  }
+
+  private services(record: ConnectionRecord): PublicAgentConnection["services"] {
+    return record.selector.services.map((service) => ({
+      ...structuredClone(service),
+      url: new URL(service.endpoint, record.audience.baseUrl).toString(),
+    }));
   }
 
   private providerToken(record: ConnectionRecord, provider: string, capability: string): string {

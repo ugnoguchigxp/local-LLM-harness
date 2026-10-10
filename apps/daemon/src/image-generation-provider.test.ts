@@ -59,7 +59,7 @@ test("image compatibility response is returned only after worker shutdown", asyn
     return Response.json({ object: "image_generation", status: "succeeded", artifact, durationMs: 1 });
   }, async () => true);
   let completed = false;
-  const generation = provider.generate({ prompt: "test", model: "qwen-image-2.1" }).then((result) => { completed = true; return result; });
+  const generation = provider.generate({ prompt: "test", model: "qwen-image-2.1-turbo" }).then((result) => { completed = true; return result; });
   await stopping.promise;
   expect(completed).toBe(false);
   expect(posts).toBe(1);
@@ -67,4 +67,25 @@ test("image compatibility response is returned only after worker shutdown", asyn
   const result = await generation;
   expect(result.artifacts).toEqual([result.artifact]);
   await manager.close();
+});
+
+test("invalid Turbo model or schedule is rejected before starting a worker", async () => {
+  const { Hono } = await import("hono");
+  const { registerImageGenerationRoutes } = await import("./routes/image-generations");
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action, variant) => { calls.push(`${action}:${variant}`); },
+  });
+  const provider = new ImageGenerationProvider("http://image.test", manager, async () => {
+    throw new Error("invalid input must not reach inference");
+  });
+  const app = new Hono(); registerImageGenerationRoutes(app, provider);
+  try {
+    for (const invalid of [{ model: "qwen-image-2.1" }, { steps: 40 }]) {
+      const result = await app.request("/v1/images/generations", { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: "A portrait", ...invalid }) });
+      expect(result.status).toBe(400);
+    }
+    expect(calls).toEqual([]);
+  } finally { await manager.close(); }
 });

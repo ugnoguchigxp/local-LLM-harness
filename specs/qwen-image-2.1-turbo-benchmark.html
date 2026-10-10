@@ -1,0 +1,359 @@
+<article lang="ja">
+  <h1>Qwen-Image-2.1-Turbo派生のRadeon 8060S評価</h1>
+  <p>
+    2026年10月10日。普段のオンデマンド画像生成で構図・下書きを試し、方針確定後に通常版
+    Qwen-Image-2.1で仕上げる用途を評価する。公式Turbo、少ステップ蒸留LoRA、TurboのGGUF量子化を
+    実機で比較する。モデル・推論環境・ログ・生成画像はリポジトリ外に保存する。
+    この文書は評価記録であり、productionの既定モデルを変更するものではない。
+  </p>
+  <section id="candidates">
+    <h2>対象と選定理由</h2>
+    <table>
+      <caption>
+        比較候補
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">役割</th>
+          <th scope="col">条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen-Image-2.1 BF16</th>
+          <td>仕上げ用の現行基準</td>
+          <td>40 steps、CFG 1</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen-Image-2.1-Turbo BF16</th>
+          <td>公式の速度・画質基準</td>
+          <td>checkpointの8-step schedule、CFG 1</td>
+        </tr>
+        <tr>
+          <th scope="row">Viggle初期4-step r64</th>
+          <td>下書きの速度を優先する候補</td>
+          <td>初期preview、専用scheduler、CFG 1。現行6-step版と品質を比較</td>
+        </tr>
+        <tr>
+          <th scope="row">Viggle v0.3 r128 / r256</th>
+          <td>6 stepsの速度とadapter容量の比較</td>
+          <td>通常版への未merge LoRA、専用sigmas・scheduler、CFG 1</td>
+        </tr>
+        <tr>
+          <th scope="row">AtomicChat Turbo Q8_0 / AD-Q5_K / AD-Q4_K</th>
+          <td>公式Turboの量子化とnative backend。Q5は画質・速度の中間候補</td>
+          <td>8 steps、専用sigmas、CFG 1</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Viggleは通常版2.1からの別蒸留であり、公式Turboの量子化ではない。AtomicChatは公式Turboの
+      denoiser量子化である。蒸留によるstep削減と量子化による帯域・容量削減を区別する。
+      GGUFとDiffusersの比較は実行環境も異なるため、モデル単独の差とは主張しない。
+    </p>
+    <p>
+      公式Turboの<code>sample_sigmas</code>はcheckpointに含まれ、<code
+        >num_inference_steps</code
+      >
+      だけを変えても変更されない。8という要求値に加え、実際のcallback回数を記録する。 既存Diffusers
+      revisionはこの設定対応より古いため、production環境を更新せず専用環境を用意した。
+    </p>
+  </section>
+  <section id="environment">
+    <h2>実機と再現条件</h2>
+    <dl>
+      <dt>PC</dt>
+      <dd>Ryzen AI MAX+ 395、Radeon 8060S / gfx1151、128GB unified memory（OS表示121GiB）</dd>
+      <dt>OS</dt>
+      <dd>Linux 7.0.0-34-generic</dd>
+      <dt>GPU環境</dt>
+      <dd>PyTorch 2.11.0+rocm7.13.0、Transformers 5.17.0</dd>
+      <dt>比較用Diffusers</dt>
+      <dd><code>1d5d056ecff3a8c1d887a7dd1aa66ca4a0323458</code>、PEFT 0.21.2</dd>
+      <dt>専用環境</dt>
+      <dd>
+        <code>/srv/ai/apps/qwen-image-turbo-benchmark/.venv311</code
+        >。既存画像環境のROCmライブラリを参照し、DiffusersとPEFTだけを分離
+      </dd>
+      <dt>記録root</dt>
+      <dd><code>/srv/ai/data/benchmarks/qwen-image-turbo-20261010</code></dd>
+      <dt>native backend</dt>
+      <dd>
+        stable-diffusion.cpp HIP、system ROCm 10.0、gfx1151専用build。DiffusersのROCm 7.13環境とは別
+      </dd>
+      <dt>実行source</dt>
+      <dd>
+        <code>benchmarks/images/qwen21-benchmark.py</code>、<code>benchmarks/images/qwen21-native-benchmark.py</code>
+      </dd>
+    </dl>
+    <p>
+      既存の会話・音声バックエンドを残して測る。起動中のモデル名を要求Profileの意図と混同せず、
+      production
+      routeのdrift診断は行わない。実測は通常利用時の背景負荷を含み、GPU専有の性能ではない。
+      モデル起動前のMemAvailableを48GiB以上、denoise callbackの停止条件を16GiB未満に設定する。
+      初期の通常版1024角ではCPU decodeの一時bufferにより11.15GiBまで低下したため、後続の Diffusers
+      1024角はCPU VAEを512角tileで処理し、decode前にも追加memory予約を検査する。
+    </p>
+    <p>
+      DiffusersはGPU BF16でtext encoder・denoise、CPU FP32でVAEを実行する。
+      <a href="./qwen-image-2.1-local-evaluation.html">既存のROCm評価</a>でGPU VAE出力の異常が
+      観測されたため、速度比較でも正常画像を生成できる経路に揃える。CPUは16 threads、batch 1、
+      prefix KV cache有効、同一prompt・seed・解像度を使用する。起動時間、各解像度の初回生成、
+      warm生成、text encoding、denoise、decode、torch GPU peak、process
+      RSS、MemAvailableを分けて記録する。
+    </p>
+    <p>
+      gfx1151でexperimental AOTriton Flash Attentionのprimitiveを試し、finiteな出力を確認した。
+      その後は専用processだけに<code>TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1</code>を設定し、
+      通常版・蒸留版を同じ条件で比較する。productionの環境変数は変更しない。
+      保存を除くinference時間では、標準経路の通常版512角は3回の中央値64.74秒、高速経路は48.12秒だった。
+      初期基準の残りケースはこの比較条件変更に伴い中断し、完了した測定値だけを保持した。
+    </p>
+    <p>
+      512・768角のwarm速度は同一ケース3回の中央値で比較し、画質は夜景の構図、日本語ポスター、室内配置、人物の
+      手と顔を確認する。512・768・1024角を対象とし、1024角は各候補とも単発の参考値として扱う。
+      同一seedだけではモデル間の構図保持を保証しない。
+      比較表の時間は入力からPNG・preview保存完了までの<code>totalSeconds</code>で揃える。
+      nativeにはHTTP往復と最大200msのpoll待ちも含む。 nativeのweightはfirst inferenceでlazy
+      loadされるため、<code>/v1/models</code>が応答するまでの
+      <code>loadSeconds</code>だけを起動速度として比較しない。
+      cold値はprocess停止状態から最初の512角を保存するまでで、OSのfile cacheは消去していない。
+      再起動後の完全なcold
+      boot測定ではなく、各候補のcold値は単発の参考値である。同一指示のwarm生成ではnativeのconditioning
+      cacheが効き、 DiffusersもKV cacheを使う。指示を変更した画質caseの時間もJSONLに残す。
+    </p>
+  </section>
+  <section id="revisions">
+    <h2>取得revision</h2>
+    <ul>
+      <li>取得済み通常版: <code>790c92633540aa0cb11d9abf19eb46d861714758</code></li>
+      <li>公式Turbo: <code>d65dbc9a7e8f6b5479e33dee6030eaab2a906509</code></li>
+      <li>Viggle: <code>009a44a895ef85f7e643c80fdca9543795248867</code></li>
+      <li>
+        4-step設定の一次資料: <code>7c9d130b4f7db3ae761ce4146e003aba6092e4d6</code>。現在配布のr64
+        weightとSHA256が同一であることを確認
+      </li>
+      <li>AtomicChat: <code>bb25d06bc74119c12207243d68917951e6d9c232</code></li>
+      <li>GGUF text encoder: <code>f982a07559d4a2f6c8744d840bf6fccab30eea96</code></li>
+      <li>Comfy-Org VAE: <code>df94239739eef7205973a145ffa6f441f7b64e84</code></li>
+      <li>stable-diffusion.cpp: <code>f89d9b13d730eabeede7314ce49dacd18d3c90c2</code></li>
+    </ul>
+    <p>
+      Hubのfile size・SHA256・revisionをmetadata JSONで保存し、取得した13 weight
+      files、62,555,196,592 bytesのSHA256一致を確認した。 一度目の4-step
+      runは実行管理processがSIGTERM（143）で終了し、11 caseだけ完了した。
+      モデルの例外記録はなく、残りのportraitは別runで再測定して完了した。
+      4-stepの最初の512角までは初回81.48秒、再測定29.51秒だった。初回は公式weightのSHA256検証と重なった。
+      file cacheやIO負荷が起動時間へ影響し得るため、初回値のみで優劣を決めない。
+      再測定の512角は初回とPNGのSHA256が一致した。起動再測定も別記録として保持する。
+    </p>
+  </section>
+  <section id="results">
+    <h2>実測結果</h2>
+    <p>
+      速度優先の下書き用はAtomicChat AD-Q4_Kをnative HIP
+      backendで動かす構成を推奨する。512角は通常版の約4.3倍速く、起動から最初の512角まで16.04秒だった。公式Turboへの忠実さを優先する明示variantはQ8_0を候補とする。
+    </p>
+    <table>
+      <caption>
+        入力からPNG・preview保存完了まで。512・768角はwarm 3回の中央値、1024角は単発参考。単位は秒
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">512角</th>
+          <th scope="col">768角</th>
+          <th scope="col">1024角</th>
+          <th scope="col">起動→最初の512角</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">通常版40-step BF16</th>
+          <td>48.45</td>
+          <td>103.44</td>
+          <td>未測定</td>
+          <td>未記録</td>
+        </tr>
+        <tr>
+          <th scope="row">公式Turbo BF16</th>
+          <td>14.18</td>
+          <td>33.46</td>
+          <td>71.69</td>
+          <td>37.59</td>
+        </tr>
+        <tr>
+          <th scope="row">Viggle 4-step r64</th>
+          <td>13.89</td>
+          <td>29.56</td>
+          <td>68.67</td>
+          <td>81.48 / 再測定29.51</td>
+        </tr>
+        <tr>
+          <th scope="row">Viggle 6-step r128</th>
+          <td>13.02</td>
+          <td>33.45</td>
+          <td>74.99</td>
+          <td>35.56</td>
+        </tr>
+        <tr>
+          <th scope="row">Viggle 6-step r256</th>
+          <td>13.25</td>
+          <td>29.70</td>
+          <td>72.11</td>
+          <td>36.14</td>
+        </tr>
+        <tr>
+          <th scope="row">AtomicChat Q8_0</th>
+          <td>13.28</td>
+          <td>31.24</td>
+          <td>55.53</td>
+          <td>17.84</td>
+        </tr>
+        <tr>
+          <th scope="row">AtomicChat AD-Q5_K</th>
+          <td>15.67</td>
+          <td>37.77</td>
+          <td>72.07</td>
+          <td>20.82</td>
+        </tr>
+        <tr>
+          <th scope="row">AtomicChat AD-Q4_K</th>
+          <td>11.20</td>
+          <td>27.85</td>
+          <td>57.08</td>
+          <td>16.04</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      通常版の標準attention経路は512角64.87秒、1024角631.28秒（単発）だったが、上表とはattention条件が違うため混ぜない。通常版の768角も高速attentionでwarm
+      3回を追加測定し、中央値103.44秒だった。
+    </p>
+    <p>
+      Viggle r256の768角の総時間がr128より短い主因はCPU
+      decodeの変動である。中央値のdecodeはr128が16.34秒、r256が12.58秒。denoiseはr128が15.79秒、r256が16.45秒で、r256のモデル自体が速いとは判断しない。夜景の画素平均差は約1/255、ポスターは約4.82/255。目視でr256の明確な利点を認めなかったため、LoRAを選ぶ場合は容量の小さいr128を優先する。
+    </p>
+    <p>
+      Q5は512角15.67秒、768角37.77秒で、Q8より小さいが遅かった。このGPU・kernel・設定の観測であり、bit数から速度順を推定しない。配布元の別環境・48
+      prompts × 2 seeds評価ではBF16へのLPIPS距離がQ8 0.037、Q5 0.076、Q4
+      0.147と報告されている。この値は元画像への近さであり、画像の良し悪しそのものの点数ではない。
+    </p>
+    <p>
+      全7候補でポスターの「京都の秋」「KYOTO
+      AUTUMN」と室内の緑の椅子・赤いソファ・中央のテーブルを確認した。Viggle 6-step
+      r128/r256の人物は正面寄りとなり、指定したthree-quarter
+      viewとの差がある。Q4の今回のsampleでは人物の両手とcup、日本語見出し、左右配置に大きな破綻は見られなかった。Q5では追加の日本語指示による室内ラフも生成した。
+    </p>
+    <aside>
+      <p>
+        画質確認は4種類のprompt・各1
+        seedを中心とする目視確認で、一般的な品質順位を保証するものではない。posterのflat
+        graphic指定への忠実さは限定的だった。異なるbackend間では同じseedでも初期noiseや計算が一致するとは限らない。背景Provider、file
+        cache、CPU decodeの変動を含むため、このPCの今回の実行構成を比較した結果として扱う。
+      </p>
+    </aside>
+    <p>
+      全測定値、stage内訳、各caseのPNGとSHA256、共通planは記録rootの<code>summary.json</code>、<code>summary.csv</code>、各candidateの<code>results.jsonl</code>に保存した。比較画像は<code>poster-comparison.jpg</code>、<code>layout-comparison.jpg</code>、<code>portrait-comparison.jpg</code>、<code>speed-768-1-comparison.jpg</code>。
+    </p>
+  </section>
+  <section id="native-vae">
+    <h2>native GPU VAEの確認</h2>
+    <p>
+      Q8の同一prompt・seed・weightで、CPU VAEとGPU VAEを512角の夜景と768角のポスターで比較した。
+      両方で有効画像を生成し、画素の平均絶対差は255段階でそれぞれ0.344、0.264だった。 GPU
+      decodeは512角で約1.9秒、CPU decodeは約11.6秒。768角のGPU decodeは約3.6秒だった。
+      このnative経路を量子化候補の本測定に採用し、1024角の正常出力も確認した。
+      PyTorchの既知のVAE異常が一般に解決したとは主張しない。
+    </p>
+    <p>
+      native logのweight確保量はQ4が12,321MiB（約12.0GiB）、Q8が15,554MiB（約15.2GiB）。 process
+      RSSやdriverのVRAM値だけではunified memory上のGPU確保を表せない。
+      driverのVRAM値をモデル全体の使用量として採用せず、torchの確保量、nativeのweight確保量、
+      200ms間隔で観測したMemAvailableをそれぞれの指標として記録する。
+      weight確保量は生成時のworkspaceを含まない。Q4の1024角では初期MemAvailable 67.82GiBから
+      最低39.96GiBまで約27.9GiB減った。背景Providerの変化も含むため専有peakとは呼ばないが、
+      admissionを12GiBだけで見積もることも避ける。
+    </p>
+  </section>
+  <section id="draft-to-finish">
+    <h2>下書きから通常版への仕上げ実験</h2>
+    <p>
+      AD-Q4_Kの768角室内ラフ（27.845秒）をPNGのまま通常版2.1へ参照画像として渡した。入力SHA256は<code>224de5c719bbdfd177dac6d9743e76ca1306edfd290b6178597dc0b408912fb9</code>。参照画像は512角へresizeしてtext
+      encoderとCPU VAEに入力し、仕上げは768角・40 steps・CFG 1・seed 4321。CPU
+      VAEは512角tileで処理した。
+    </p>
+    <p>
+      仕上げの生成・保存は148.314秒、process起動からの最初の仕上げ画像までは171.772秒だった。text/image
+      prompt encode 32.374秒、参照VAE encode 1.226秒、denoise 98.430秒、decode
+      15.891秒。最初のvision encodeにはMIOpen
+      DBの警告と初期処理があり、この時間を一般的なwarm編集速度とは呼ばない。latentとdecodeのfinite検査を通り、40回のcallbackと参照PNGのSHA256を記録した。
+    </p>
+    <p>
+      目視では左の緑の椅子、右の赤いソファ、中央の木製テーブル、奥中央の窓、窓の前のpendant
+      lampを保ち、手描きラフから自然素材・daylightの写真風へ変換できた。輪郭・比率の完全固定やあらゆる構図の保持を保証する結果ではなく、この1例で2段階workflowが成立した確認である。参照なしとの比較実験や、仕上げ編集の3回反復は実施していない。
+    </p>
+    <p>
+      lossless出力は<code>base40-final/finish-layout.png</code>、左右比較は記録rootの<code>draft-to-finish.jpg</code>。下書きと仕上げの時間はそれぞれの生成時間で、2段階の合計wall時間にはruntimeの入替・loadも加わる。<code>base40-final-plan.json</code>で参照画像付きの実行を再現できる。
+    </p>
+  </section>
+  <section id="integration">
+    <h2>LARMへの反映方針</h2>
+    <p>
+      評価完了後、利用者はTurbo採用とオンデマンド起動を指示した。<a
+        href="./qwen-image-2.1-turbo-on-demand.html"
+        >Turboオンデマンド実装</a
+      >でAD-Q4_K、固定8ステップと確保応答の説明・完全URLを追加した。以下の現行状態は実装前の評価時点を表す。本番反映状況と新しい契約は採用文書を参照する。
+    </p>
+    <p>
+      現行の<code>POST /v1/images/generations</code>は同期応答で、公開schemaは
+      <code>model: "qwen-image-2.1"</code>のみ許可する。内部の<code
+        >image</code
+      >
+      variantは通常版の systemd unitへ固定され、idle TTLは0秒である。過去文書の非同期job
+      APIや短いidle TTLは提案であり、 現行実装の挙動として扱わない。
+    </p>
+    <ol>
+      <li>
+        要求Profile・capability・用途から、下書き用と仕上げ用のruntimeを明示的に解決する。構図確定後の仕上げはconsumerが明示要求する。
+      </li>
+      <li>
+        下書き用runtimeを普段の既定候補とし、仕上げは通常版へ切り替える。checkpointのstep条件をruntimeに持ち、任意step値で蒸留モデルを動かさない。
+      </li>
+      <li>
+        画像・楽曲の重量級排他を保ち、Turboと通常版の同時loadを避ける。普段の生成では短いkeep-warm期間を検討し、初回と連続生成の差をconsumerへ伝える。
+      </li>
+      <li>
+        仕上げでは採用した下書きartifactを通常版の参照画像へ渡す。現行APIには参照画像入力がないため、artifact
+        IDで指定する契約とCPU VAE encodeを追加する。
+      </li>
+      <li>
+        仕上げ入力はlossless
+        PNGを保持し、表示用WebPと分ける。artifactを参照中はretentionで消えないよう保護する。prompt・seed・model
+        revision・実際のsteps・参照artifactを追跡する。
+      </li>
+      <li>
+        今回成立した2段階実測を出発点に、参照画像の構図・対象数・左右配置について複数のprompt・seed・解像度で検証する。単に通常版を再生成する操作を構図固定の仕上げとは呼ばない。
+      </li>
+    </ol>
+  </section>
+  <section id="sources">
+    <h2>一次資料</h2>
+    <p>外部資料は次の識別子を取得記録へ保存する。文書内の関連リンクはspecs内に限定する。</p>
+    <ul>
+      <li><code>https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo</code> — 公式checkpointとsampling条件</li>
+      <li><code>https://github.com/QwenLM/Qwen-Image-2.1</code> — 通常版とTurboの生成・編集例</li>
+      <li><code>https://github.com/huggingface/diffusers/pull/14950</code> — checkpointに保存したsigmas対応</li>
+      <li>
+        <code>https://huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo</code> — 専用scheduler、未merge adapter、rank比較
+      </li>
+      <li><code>https://huggingface.co/AtomicChat/Qwen-Image-2.1-Turbo-GGUF</code> — 量子化とnative sampling条件</li>
+      <li><code>https://github.com/leejet/stable-diffusion.cpp</code> — HIP backendとQwen-Image-2.1対応</li>
+    </ul>
+    <p>
+      model同梱のQwen Research Licenseは研究・評価目的の利用を対象とする。常用・商用での採用判断は
+      同梱licenseの利用範囲も確認する。今回の実行はモデル評価である。
+    </p>
+  </section>
+</article>

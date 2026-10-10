@@ -427,15 +427,17 @@ agentProfiles:
       Connectionのclaim対象ではないため、Providerへ混ぜず、選択したProfileの
       <code>services</code
       >へ返す。<code>SAAA-w-Image</code>は
-      <code>/v1/images/generations</code>と<code>qwen-image-2.1</code>、
+      <code>/v1/images/generations</code>と<code>qwen-image-2.1-turbo</code>、
       <code>SAAA-w-music</code>は<code>/v1/music/generations</code>と
-      <code>ace-step-1.5</code>を広告する。Consumerはresponseの具体的な
-      <code>profiles[0].id</code
-      >をConnection作成時の<code>agentProfile</code>へ使用する。現行の<code>SAAA-w-Image</code>と
+      <code>ace-step-1.5</code
+      >を広告する。Consumerはresponseの公開selectorをConnection作成時の<code>profile</code>へ使用する。現行の<code>SAAA-w-Image</code>と
       <code>SAAA-w-music</code
       >は、どちらも<code>saaa-conversation-gemma4-26b-voice</code>へ解決する。
       serviceの<code>startupPolicy.minWarmInstances</code>は0であり、Connection作成ではmedia
-      unitを起動しない。 生成APIへの要求時に起動し、画像は120秒、楽曲は300秒のidle TTLで停止する。
+      unitを起動しない。 生成APIへの要求時に起動し、画像・楽曲とも保存完了後に停止する。
+      画像serviceには<code>description</code>で用途・入力・取得方法を広告し、
+      Connection作成・取得・claim応答の<code>services[].url</code>は要求したaudienceに対応する完全なURLを返す。
+      <a href="./qwen-image-2.1-turbo-on-demand.html">Turbo採用とAPI契約</a>に詳細を定める。
     </p>
     <p>
       <code>SAAA-gemma4-26b-64k</code>は補助LLMのみの

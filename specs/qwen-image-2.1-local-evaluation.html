@@ -12,7 +12,9 @@
     <dt>判定</dt>
     <dd>
       GPUでtext encoderとdenoise、CPU FP32でVAE decodeするhybrid構成なら有効なPNGを生成できる。
-      gfx1151のROCm VAE decodeは現時点で不正出力となるため採用しない
+      この評価で用いたPyTorch/ROCmのgfx1151 VAE decodeは不正出力となるため採用しない。
+      2026年10月10日の<a href="./qwen-image-2.1-turbo-benchmark.html">Turbo派生評価</a>では、
+      別のnative HIP backendによるGPU decodeで正常画像を確認した
     </dd>
     <dt>model</dt>
     <dd><code>Qwen/Qwen-Image-2.1</code></dd>

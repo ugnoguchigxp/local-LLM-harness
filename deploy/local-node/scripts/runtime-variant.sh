@@ -13,7 +13,7 @@ esac
 ready() {
   local response
   response="$(curl -fsS --max-time 3 "${health}")" || return 1
-  python3 -c 'import json,sys; v=json.load(sys.stdin); d=v.get("data",v); sys.exit(0 if (d.get("loaded") is True if sys.argv[1]=="image" else d.get("models_initialized") is True) else 1)' "${variant}" <<<"${response}"
+  python3 -c 'import json,sys; v=json.load(sys.stdin); d=v.get("data",v); sys.exit(0 if ((d.get("ready") is True or d.get("loaded") is True) if sys.argv[1]=="image" else d.get("models_initialized") is True) else 1)' "${variant}" <<<"${response}"
 }
 
 stop_worker() {

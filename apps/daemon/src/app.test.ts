@@ -527,7 +527,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
       ],
-      services: [{ name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1" }],
+      services: [{ name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1-turbo" }],
     },
     "SAAA-w-music": {
       id: "saaa-conversation-gemma4-26b-voice",
@@ -4754,7 +4754,8 @@ test("Agent Connection creation resolves public profile selectors and returns se
         capability: "media.image.generate",
         protocol: "larm.image-generation.v1",
         endpoint: "/v1/images/generations",
-        model: "qwen-image-2.1",
+        model: "qwen-image-2.1-turbo",
+        description: "Generate photos and illustrations on demand; saved images outlive the worker.",
       }],
     },
     { id: "SAAA-w-music", agentProfile: "saaa-conversation-ornith15-music", services: [] },
@@ -4817,7 +4818,9 @@ test("Agent Connection creation resolves public profile selectors and returns se
     expect(await variant.json()).toMatchObject({
       agentProfile,
       services: agentProfile.endsWith("-image")
-        ? [{ name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1" }]
+        ? [{ name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1-turbo",
+            url: "http://127.0.0.1:9810/v1/images/generations",
+            description: "Generate photos and illustrations on demand; saved images outlive the worker." }]
         : [],
     });
   }
@@ -5061,10 +5064,16 @@ test("ContextStill receives a retryable conflict only while SAAA is active", asy
 });
 
 test("agent connection derives a host-private claim from the request origin", async () => {
+  const mediaCatalog = structuredClone(dynamicAgentConnectionCatalog);
+  mediaCatalog.profileSelectors[0]!.services = [{
+    name: "image", capability: "media.image.generate", protocol: "larm.image-generation.v1",
+    endpoint: "/v1/images/generations", model: "qwen-image-2.1-turbo",
+    description: "On-demand image generation; retrieve the saved artifact after completion.",
+  }];
   const { app } = await makeApp(true, false, {}, {
     apiToken: agentApiToken,
     connectionSigningKey: agentSigningKey,
-    agentConnectionCatalog: dynamicAgentConnectionCatalog,
+    agentConnectionCatalog: mediaCatalog,
     gatewayFetch: async (_input, init) => validLlmSemanticProbeResponse(init),
   });
   const create = await app.request("http://gnosis.local:9810/v1/agent-connections", {
@@ -5079,12 +5088,19 @@ test("agent connection derives a host-private claim from the request origin", as
   });
   expect(create.status).toBe(201);
   const connection = publicAgentConnectionSchema.parse(await create.json());
+  expect(connection.services).toMatchObject([{
+    endpoint: "/v1/images/generations", url: "http://gnosis.local:9810/v1/images/generations",
+    description: "On-demand image generation; retrieve the saved artifact after completion.",
+  }]);
+  const claimedSnapshot = await app.request(`/v1/agent-connections/${connection.id}`, { headers: agentHeaders() });
+  expect(publicAgentConnectionSchema.parse(await claimedSnapshot.json()).services).toEqual(connection.services);
   const claimResponse = await app.request(`/v1/agent-connections/${connection.id}/claim`, {
     method: "POST",
     headers: agentHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ format: "openai-provider-v1" }),
   });
   const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
+  expect(claim.services).toEqual(connection.services);
   expect(claim.providers[0]).toMatchObject({
     scheme: "http",
     host: "gnosis.local",
