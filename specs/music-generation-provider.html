@@ -166,6 +166,28 @@
       >に記録する。
     </p>
   </section>
+  <section id="service-description">
+    <h2>APIから取得する使い方</h2>
+    <p>
+      <code>SAAA-w-music</code
+      >の<code>services[].description</code>に、生成APIの入力と結果の取得方法を含める。
+      Profile発見とConnection作成・取得・claimで同じ説明を返し、Connection応答の<code>services[].url</code>から生成を要求できる。
+      説明は<code>durationSeconds</code>の範囲1〜600秒と省略時180秒、<code>quality</code>のfast（4ステップ）、balanced（8ステップ・既定）、high（12ステップ）を広告する。
+      起動時間が加わることと、highで音質向上を保証しないことも明記する。
+    </p>
+    <p>
+      試作例は30秒・fast・instrumentalのJSONとする。歌なしは<code>instrumental: true</code>で、その場合<code>lyrics</code>を指定しない。
+      出力形式はmp3・wav・flac（既定mp3）、seedは任意、参照音源の編集は未対応と説明する。 HTTP
+      202で受け取った<code>jobId</code>を使い<code>GET /v1/music/generations/{jobId}</code>で確認し、
+      completed時の<code>result.audioUrl</code>をControlのURLに解決して音声を取得する。
+    </p>
+    <pre><code>{
+  "prompt": "軽快なピアノのBGM",
+  "durationSeconds": 30,
+  "quality": "fast",
+  "instrumental": true
+}</code></pre>
+  </section>
   <section id="configuration">
     <h2>設定</h2>
     <dl>

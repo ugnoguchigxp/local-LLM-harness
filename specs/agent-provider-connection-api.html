@@ -435,9 +435,11 @@ agentProfiles:
       >は、どちらも<code>saaa-conversation-gemma4-26b-voice</code>へ解決する。
       serviceの<code>startupPolicy.minWarmInstances</code>は0であり、Connection作成ではmedia
       unitを起動しない。 生成APIへの要求時に起動し、画像・楽曲とも保存完了後に停止する。
-      画像serviceには<code>description</code>で用途・入力・取得方法を広告し、
+      画像・音楽serviceには<code>description</code>で用途・入力・取得方法を広告し、
       Connection作成・取得・claim応答の<code>services[].url</code>は要求したaudienceに対応する完全なURLを返す。
       <a href="./qwen-image-2.1-turbo-on-demand.html">Turbo採用とAPI契約</a>に詳細を定める。
+      音楽の説明は曲の長さ・品質設定・省略時の値と短い高速試作例を含み、
+      <a href="./music-generation-provider.html#service-description">音楽APIの使い方</a>に定める。
     </p>
     <p>
       <code>SAAA-gemma4-26b-64k</code>は補助LLMのみの

@@ -449,6 +449,7 @@ profileSelectors:
         protocol: larm.music-generation.v1
         endpoint: /v1/music/generations
         model: ace-step-1.5
+        description: 'ACE-Step 1.5 Turboによる楽曲生成。POSTでprompt（曲調・編成）を指定すると起動し、音声保存後に停止します。durationSecondsは曲の長さを1〜600秒で指定（省略時180秒）。qualityはfast（4ステップ・高速試作）、balanced（8ステップ・標準、省略時）、high（12ステップ）から選択。試作例：{"prompt":"軽快なピアノのBGM","durationSeconds":30,"quality":"fast","instrumental":true}。instrumentalは歌なし指定（省略時false）で、trueの場合はlyricsを指定しません。歌詞はlyrics、seedは任意、outputFormatはmp3・wav・flac（省略時mp3）。HTTP 202で返るjobIdを使いGET /v1/music/generations/{jobId}で状態を確認し、statusがcompletedになったらresult.audioUrlをControlのURLに解決してGETすると音声を取得できます。短い曲とfast設定で試作し、必要な長さとbalanced設定で本番生成できます。起動時間が加わり、highで音質向上を保証するものではありません。参照音源による編集は未対応。'
         startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
   vulnWorkbench:
     agentProfile: coding-default
