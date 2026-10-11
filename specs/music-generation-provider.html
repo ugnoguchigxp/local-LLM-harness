@@ -430,6 +430,29 @@
       確認曲は最後に削除し、既存曲は取得可能なまま維持した。
     </p>
   </section>
+  <section id="pagination-validation-2026-10-11">
+    <h2>2026年10月11日：一覧APIの50件ページ分割</h2>
+    <p>
+      revision <code>8a8a2596df40b5fb2fa5b50cc6a853166f617a8c</code>を署名付きリリース経路で反映し、
+      contract_verified成功、healthのrevision一致、readinessを確認した。
+      楽曲・お気に入り・タグの一覧を既定50件（最大100件）、total、任意のnextCursorに揃えた。
+      お気に入りは登録日時とjobId、タグは曲数と正規化したタグ名で続きの位置を決め、別APIのcursorは拒否する。
+    </p>
+    <p>
+      ローカルと配備候補のbun run checkが成功し、apps・packagesの750テストを含む全体確認が通過した。
+      125件の各一覧で50件・50件・25件を重複なく取得し、最終ページのnextCursor省略を確認した。
+      APIテストでは55曲・55お気に入り・56タグを既定50件と残りに分け、total、limit指定、
+      条件変更や不正cursorの400を確認した。お気に入り解除・境界削除・新規登録後の継続、Unicodeタグも確認した。
+    </p>
+    <p>
+      稼働環境では楽曲2件・お気に入り0件・タグ6件を取得し、各APIのtotalと公開契約の既定50件を確認した。
+      楽曲とタグをlimit=1で取得した後、cursorだけを渡して既定50件の続きを取得できた。
+      お気に入りは空一覧のため、50件超の継続は自動テストで確認した。
+      不正入力と別APIのcursorは400、既存OpusのRange再生は206だった。
+      この実機確認では生成・お気に入り変更・楽曲削除を行っていない。
+      Eumenes向けプロンプトも3一覧のページ分割に合わせて更新した。
+    </p>
+  </section>
   <section id="configuration">
     <h2>設定</h2>
     <dl>
