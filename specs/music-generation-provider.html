@@ -346,6 +346,31 @@
       <code>d60738a1596ad343ea45e04b9057b43af073f2f9e3896498455b97057378fa63</code>を記録する。
     </p>
   </section>
+  <section id="library-validation-2026-10-11">
+    <h2>2026年10月11日：楽曲ライブラリの実装・実機確認</h2>
+    <p>
+      一覧・検索・手動削除APIと期限なしの既定保存を実装し、revision
+      <code>9abba5987aa7fe9e95cb57240884315d368c6bba</code>を署名付きリリース経路で稼働環境へ反映した。
+      リリースcontrollerのcontract_verified成功、healthのrevision一致、readinessを確認した。
+      ローカルと配備候補の両方でbun run
+      checkが成功し、apps・packagesの736テスト、toolingの24テスト、
+      deployment関連の56テストとシェル・Pythonの確認も通過した。
+    </p>
+    <p>
+      自動テストではUnicode検索、歌詞・タグ検索、削除や新規追加でページ境界が変わっても継続できるcursor、
+      期限なし保存の再起動復元、容量不足時の既存曲保護、同時生成の容量制限、手動削除の中断復旧を確認した。
+      未完成の一時保存を回収しても実行中ジョブと完成曲を保護することも確認した。
+    </p>
+    <p>
+      実機では反映前から保存済みの曲を一覧へ復元し、新しい音声URLからRange再生できることを確認した。
+      titleとtagsを付けて10秒・fastの確認曲を生成し、約24.1秒で完了した。
+      曲名・prompt・タグの検索、ページ分割、お気に入り登録・検索・再生・解除、手動削除の204と削除後の404を確認した。
+      保存設定は0（期限なし）。音声は48 kHz・ステレオのOpusで、20 msごとの160 byte packetから64
+      kbps固定を確認した。
+      中間音声は変換後にremovedとなり、上流出力専用rootの音声ファイルは0件、生成workerはinactiveだった。
+      確認曲の音声・metadata・履歴は最後に削除し、既存曲は取得可能なまま維持した。
+    </p>
+  </section>
   <section id="configuration">
     <h2>設定</h2>
     <dl>
