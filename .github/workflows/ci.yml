@@ -16,6 +16,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+      - name: Install music audio tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
       - name: Reject high-severity dependency vulnerabilities

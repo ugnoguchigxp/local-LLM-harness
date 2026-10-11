@@ -70,7 +70,7 @@
     </table>
     <aside>
       <p>
-        Phase 1 では Range request と期限付き URL は提供しない。LARM の bearer
+        音声取得はHTTP Rangeに対応する。期限付き URL は提供しない。LARM の bearer
         認証を必須にできるため、URL
         自体を資格情報にしない。将来ブラウザへの大規模配信が必要になった場合は、同じ
         <code>audioUrl</code> 契約の裏側を object storage または Range
@@ -282,6 +282,35 @@
       確認日は2026-10-11。実際の配備ソースでもwav32の直接保存経路と48 kHzの設定を確認した。
     </p>
   </section>
+  <section id="opus-validation-2026-10-11">
+    <h2>検証結果（2026-10-11）</h2>
+    <p>
+      変更は<code>codex/music-opus64</code>に保存し、署名付きリリース経路で稼働環境へ反映した。
+      稼働revisionは<code>0f2d0fc1b22059be1b4b7cde15b2905beb174372</code>。
+      リリース候補からの<code>bun run check</code>と起動後の契約検査は通過した。
+      CIにもFFmpegの導入を明記し、ffprobeとlibopusを使う検証環境を用意する。
+    </p>
+    <p>
+      <code>SAAA-w-music</code>の公開serviceからACE-Step 1.5
+      Turboへ解決されることを確認し、
+      outputFormatを省略して10秒のinstrumentalをfast品質で1回生成した。
+      生成時revisionは<code>db2c99cb4bbfde9b1fa32570896c06b2e1493b13</code>。
+      初回生成開始から完了まで18.432秒、モデル起動を除くprovider処理は7,234 msだった。
+      最終ファイルは81,094 bytes、Ogg Opus、48
+      kHz、2チャンネルであり、デコード後の音声長は10.000秒。 各20 msパケットが160 bytesで、64
+      kbps固定のエンコードであることを確認した。
+    </p>
+    <p>
+      その後、稼働revisionで同じ保存済みジョブを復元・取得して検証した。
+      音声配信は<code>audio/ogg</code>で、<code>Range: bytes=0-3</code>にHTTP
+      206と4 bytesだけを返した。
+      成果物ディレクトリには<code>output.opus</code>と<code>metadata.json</code>だけが存在し、
+      ACE-Stepの一時音声は0件、workerはinactiveかつMainPID=0である。
+      変換失敗、音声取得失敗、サイズ超過、キャンセル、worker停止後の孤児音声掃除も自動テストで検証した。
+      テスト音声のSHA-256でなくジョブIDのSHA-256として
+      <code>d60738a1596ad343ea45e04b9057b43af073f2f9e3896498455b97057378fa63</code>を記録する。
+    </p>
+  </section>
   <section id="configuration">
     <h2>設定</h2>
     <dl>
@@ -318,7 +347,7 @@
       <li>ACE-Step runtime の systemd 配備、ROCm 実機 commissioning、モデル revision の固定。</li>
       <li>ジョブ journal と daemon 再起動後の状態復旧。ファイル retention は実装済み。</li>
       <li>reference audio の認証付き upload と artifact ID 化。</li>
-      <li>実音声ヘッダーからの duration 検証、Range request、benchmark command。</li>
+      <li>実音声ヘッダーからの duration 検証、benchmark command。</li>
       <li>既存 allocation と unified-memory admission への music runtime 統合。</li>
     </ul>
   </section>
