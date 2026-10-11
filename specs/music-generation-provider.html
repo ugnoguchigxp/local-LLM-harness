@@ -171,7 +171,7 @@
       <dd>完了済み楽曲を冪等にお気に入りへ登録し、再生用 URL を返す。</dd>
       <dt><code>GET /v1/music/favorites</code></dt>
       <dd>
-        お気に入りを登録日時の新しい順に返す。任意のqでライブラリと同じ検索ができる。保存済み
+        お気に入りを登録日時の新しい順に返す。任意のqとtagsでライブラリと同じ検索・絞り込みができる。保存済み
         metadata から起動時に復元する。
       </dd>
       <dt><code>GET /v1/music/favorites/:id</code></dt>
@@ -408,6 +408,26 @@
       kbps固定を確認した。
       中間音声は変換後にremovedとなり、上流出力専用rootの音声ファイルは0件、生成workerはinactiveだった。
       確認曲の音声・metadata・履歴は最後に削除し、既存曲は取得可能なまま維持した。
+    </p>
+  </section>
+  <section id="tags-sort-validation-2026-10-11">
+    <h2>2026年10月11日：自動タグ・絞り込み・並び替えの実機確認</h2>
+    <p>
+      revision <code>efddc0212cff27e62b530665b2e2898fd5ffb561</code>を署名付きリリース経路で反映し、
+      contract_verified成功、healthのrevision一致、readinessを確認した。 ローカルと配備候補のbun run
+      checkが成功した。apps・packagesの745テストを含み、
+      日本語・英語のタグ抽出、単純な否定表現、明示タグの保持、タグ曲数、複数タグの完全一致、
+      生成日時の両方向、重み付き一致度、各並び順のcursor継続と条件変更の拒否を確認した。
+    </p>
+    <p>
+      実機では既存曲の英語promptからピアノ・電子音楽・落ち着いたのタグが補われ、
+      ピアノと落ち着いたの組み合わせで検索できることを確認した。 tagsを指定せずbright up-tempo piano
+      popの説明で10秒・fastの曲を生成し、約18.04秒で完了した。
+      アップテンポ・明るい・ポップ・ピアノ・インストゥルメンタルの5タグが自動生成され、metadataにも保存された。
+      タグと曲数の一覧、複数タグとqの併用、お気に入りのタグ絞り込み、生成日時の昇順・降順、
+      一致度順、昇順ページ分割、並び順を変更したcursorの400を確認した。
+      保存済みOpusのRange再生、中間音声0件、生成workerのinactiveも確認した。
+      確認曲は最後に削除し、既存曲は取得可能なまま維持した。
     </p>
   </section>
   <section id="configuration">
