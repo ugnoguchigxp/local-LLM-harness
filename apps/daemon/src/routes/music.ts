@@ -121,7 +121,9 @@ export function registerMusicRoutes(app: Hono, options: {
     c.status(206);
     c.header("content-range", `bytes ${start}-${end}/${file.size}`);
     c.header("content-length", String(end - start + 1));
-    return c.body(file.slice(start, end + 1).stream());
+    // Bun's file-stream HTTP optimization can send the unsliced file. Forward
+    // the sliced stream so transport preserves both the range and its length.
+    return c.body(file.slice(start, end + 1).stream().pipeThrough(new TransformStream()));
   };
   app.get("/v1/music/generations/:id/audio", (c) => musicArtifact(c, "audio"));
   app.get("/v1/music/generations/:id/metadata", (c) => musicArtifact(c, "metadata"));

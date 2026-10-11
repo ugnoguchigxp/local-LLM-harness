@@ -74,6 +74,15 @@ for (const mode of ["success", "bad-wave", "download-failed", "too-large", "canc
         const range = await app.request(`/v1/music/generations/${job.jobId}/audio`, { headers: { range: "bytes=0-3" } });
         expect(range.status).toBe(206);
         expect(await range.text()).toBe("OggS");
+        const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch });
+        try {
+          const overHttp = await fetch(`${server.url}v1/music/generations/${job.jobId}/audio`, {
+            headers: { range: "bytes=0-3" },
+          });
+          expect(overHttp.status).toBe(206);
+          expect(overHttp.headers.get("content-length")).toBe("4");
+          expect(await overHttp.text()).toBe("OggS");
+        } finally { server.stop(true); }
         await manager.pruneArtifacts();
         await manager.favorite(job.jobId);
         await recovered.initialize();

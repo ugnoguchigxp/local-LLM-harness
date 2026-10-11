@@ -357,7 +357,7 @@ const musicManager = musicEndpoint
   })
   : undefined;
 // Media recovery above has stopped orphan workers; discard their temporary audio.
-await musicManager?.provider.unload();
+if (mediaVariants.available) await musicManager?.provider.unload();
 await musicManager?.initialize();
 const imageArtifactManager = new ImageArtifactManager(config.imageArtifactRoot, {
   maxBytes: config.imageArtifactMaxBytes,

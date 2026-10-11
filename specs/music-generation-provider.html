@@ -202,7 +202,7 @@
       WAV）を選択した。
       WAVとFLACはsoundfile経路を利用し、wav32はsoundfileへ浮動小数点波形を直接書き込む。
       FLACの圧縮や整数PCMへの丸めを挟まず、生成波形をOpus変換へ渡せる。
-      これは保存処理の構造に基づく判断であり、モデル生成速度の改善や形式別の速度測定結果を意味しない。
+      保存経路と以下の小規模測定に基づく判断であり、モデル生成速度の改善を意味しない。
     </p>
     <table>
       <caption>
@@ -239,6 +239,16 @@
       </tbody>
     </table>
     <p>
+      配備ソースrevisionは<code>ca1e85fe9430179831e6bc6be790c332190a3866</code>。 CPU上で30秒・48
+      kHz・2チャンネルの合成正弦波をAudioSaverで保存し、初回を除く3回の中央値を測定した。
+      wav32は8.00 ms（11,520,088 bytes）、wavは13.20 ms（5,760,044 bytes）、flacは31.93
+      ms（1,891,687 bytes）だった。 この配備環境ではwavとflacはAudioSaverのsoundfile
+      fallback経路で保存された。 ffprobeでwav32がfloat32、wavとflacが16
+      bit整数PCMであることを確認した。 この条件ではwav32が最短で、浮動小数点の精度も維持する。
+      値は保存処理だけの小規模測定であり、楽曲生成時間の比較ではない。FLACの容量は実楽曲の複雑さにより変わる。
+      比較で作成したすべての中間ファイルは測定終了時に削除した。
+    </p>
+    <p>
       LARMはOpus要求に対して上流へ<code>audio_format: wav32</code>を送る。
       取得したWAVをFFmpegの標準入力へ渡し、<code>libopus</code>で64,000
       bit/s、CBR、48,000 Hzへ変換する。
@@ -252,6 +262,9 @@
       生成途中の中断でパスを取得できなかった音声も、on-demand
       workerが停止してから出力専用root内で掃除する。
       保存・お気に入り・再起動後の復元・Range配信・容量管理では最終Opusだけを音声成果物として扱う。
+      実HTTP配信では、Bunがsliceしたfile streamを元ファイル全体として送信する最適化を避けるため、
+      Range応答のstreamをTransformStream経由で転送する。HTTP
+      206のbodyとContent-Lengthが指定範囲と一致することを実サーバーで検証する。
       明示的に指定したWAV、FLAC、MP3は最終成果物なので、既存の保持規則に従う。
     </p>
     <p>
