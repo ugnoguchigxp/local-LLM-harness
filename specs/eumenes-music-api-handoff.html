@@ -1,0 +1,91 @@
+<article lang="ja">
+  <h1>Eumenes向けプロンプト：楽曲生成・ライブラリ・自動タグ連携</h1>
+  <p>
+    2026-10-11。LARMの実装済み楽曲APIを前提に、Eumenesの実装エージェントへ渡す依頼文を更新した。LARM側の配備と実機検証は完了している。本文書ではEumenesの実装や送信は行っていない。
+  </p>
+  <p>
+    参照：<a href="./music-generation-provider.html">楽曲生成・ライブラリ仕様</a>、<a
+      href="./agent-provider-connection-api.html"
+      >Agent Connection API</a
+    >。認証、service発見、リクエスト型、検索・タグ・並び順は現在のソース実装と照合した。
+  </p>
+  <section id="prompt">
+    <h2>Eumenesへ渡すプロンプト</h2>
+    <pre>Eumenesに、LARMの楽曲生成と楽曲ライブラリを統合してください。まずEumenesのAGENTS.mdと既存の接続・アーティファクト・音声再生の実装を確認し、既存の構成に沿って変更してください。以下は2026-10-11時点のLARM実装済みAPIです。
+
+【接続】
+- 既存のLARM Control接続先を使用し、GET /openapi.jsonで実際の契約を確認してください。
+- GET /v3/agent-profiles?profile=SAAA-w-musicのservicesからname=music、protocol=larm.music-generation.v1のサービスを取得し、返されたendpointとmodelを使用してください。現在のmodelはace-step-1.5です。
+- musicはservicesに属し、LLMなどのProvider claim対象ではありません。Music APIは既存のControl API用認証で呼び出し、LLM・TTS用のclaim tokenを流用しないでください。
+- 以下のパスはControl originからの表記です。/v1を重複させず、返された相対audioUrl・metadataUrlをControlのURLとして解決してください。上流ACE-Stepのポートやローカルファイルパスを直接使わないでください。
+- 一覧・検索・タグ取得・保存済み曲の再生のためにモデルを起動する必要はありません。
+
+【楽曲生成】
+POST /v1/music/generations
+例：
+{
+  &quot;title&quot;: &quot;明るいピアノのBGM&quot;,
+  &quot;prompt&quot;: &quot;アップテンポで明るいピアノ中心のポップ。軽いリズムで爽やかな雰囲気&quot;,
+  &quot;durationSeconds&quot;: 30,
+  &quot;quality&quot;: &quot;fast&quot;,
+  &quot;instrumental&quot;: true,
+  &quot;outputFormat&quot;: &quot;opus&quot;
+}
+- titleとtagsは任意。titleは200文字以内、tagsは各64文字以内・最大32件の配列です。
+- durationSecondsは整数1〜600、未指定は180。qualityはfast / balanced / high、未指定はbalancedです。短い試作では30秒・fastを選べるようにしてください。highによる音質向上は保証されません。
+- 歌詞はlyricsに指定し、instrumental=trueの場合はlyricsを送らないでください。seedは任意です。
+- 既定出力はOgg Opus、64 kbps固定、48 kHzです。追加の圧縮やEumenes側での再変換は不要です。mp3 / wav / flacも明示指定できます。
+- HTTP 202で返るjobIdを保持し、GET /v1/music/generations/{id}で状態を確認してください。必要ならGET /v1/music/generations/{id}/eventsのSSEを使えます。
+- statusはqueued / loading / generating / encoding / completed / failed / cancelledです。completedを確認してからresult.audioUrlを再生し、ライブラリとタグ一覧を更新してください。進捗率がなければ段階表示にしてください。
+- POSTの自動再送で重複生成しないでください。jobId取得後の通信切断は同じジョブの確認で復帰し、失敗・キャンセル後の再生成は利用者の操作で行います。
+- キャンセルはDELETE /v1/music/generations/{id}です。
+
+【一覧・検索・並び替え】
+GET /v1/music/tracks
+- 応答は {&quot;tracks&quot;:[...],&quot;total&quot;:整数,&quot;nextCursor&quot;:任意の文字列}。nextCursorがない場合は最後のページです。
+- 各曲はid、title、tags、prompt、必要に応じlyrics、instrumental、provider、model、format、durationSeconds、createdAt、favorite、必要に応じfavoritedAt、audioUrl、metadataUrlを持ちます。
+- qは曲名・作成時の説明・歌詞・タグの部分一致検索です。Unicode正規化と英字の大小文字無視に対応し、空白で区切った語はすべて一致する必要があります。
+- sort=createdAt&amp;order=descで新しい順（既定）、order=ascで古い順です。createdAtは生成依頼日時です。
+- q=明るい&amp;sort=relevance&amp;order=descで一致度順です。曲名・タグの一致を説明・歌詞より重視し、同点は新しい順になります。
+- favorite=trueでお気に入りだけ、falseでお気に入り以外に絞れます。
+- limitは1〜100、既定50。次ページはnextCursorをcursorに渡し、q・tags・favorite・sort・orderを維持してください。検索や並び順を変更したらcursorを破棄して先頭から取得してください。
+- 日本語やcursorはURLSearchParams等で正しくエンコードしてください。
+
+【タグ一覧と絞り込み】
+GET /v1/music/tags
+応答例（曲数は例）：
+{&quot;tags&quot;:[{&quot;tag&quot;:&quot;明るい&quot;,&quot;count&quot;:5},{&quot;tag&quot;:&quot;アップテンポ&quot;,&quot;count&quot;:3}],&quot;total&quot;:2}
+- 保存済み完成曲で使われているタグと曲数を返します。曲数の多い順、同数はタグ名順です。全定義タグや現在の検索結果だけの件数ではありません。
+- タグ一覧も既定50件、limitは1〜100です。応答はtags、タグ総数のtotal、任意のnextCursorです。続きをcursorに渡し、選択肢を50件ずつ追加取得できるようにしてください。タグを全件読み込む場合はnextCursorがなくなるまで取得してください。
+- この応答からタグ選択肢と件数を表示し、複数選択できるようにしてください。値を固定の選択肢だけに限定しないでください。
+- GET /v1/music/tracks?tags=アップテンポ,明るいで、両方のタグを持つ曲を返します。tagsはカンマ区切り、正規化後の完全一致、AND条件です。q・並び替え・favoriteと併用できます。未選択ならtagsを送らないでください。
+- LARMはtitleとpromptの日本語・英語表現から、テンポ、雰囲気、ジャンル、楽器のタグを辞書で自動生成します。例：fast-paced→アップテンポ、bright / happy / uplifting→明るい、piano→ピアノ。明示したtagsを保持し、重複を除いて合計32件まで追加します。
+- 自動タグは音声分析ではなく生成条件に基づきます。既存曲にも説明からタグが補われます。Eumenes側で別のタグ生成モデルを起動する必要はありません。
+- 生成完了・楽曲削除後はタグ一覧のcursorを破棄して先頭から再取得してください。
+
+【お気に入り・詳細・再生・削除】
+- GET /v1/music/tracks/{id}：楽曲詳細。
+- GET /v1/music/tracks/{id}/audio：保存済み音声。HTTP Range対応。
+- GET /v1/music/tracks/{id}/metadata：生成条件などのJSON。
+- PUT /v1/music/generations/{id}/favorite：お気に入り登録。
+- DELETE /v1/music/generations/{id}/favorite：お気に入り解除。音声は残ります。
+- GET /v1/music/favorites：登録日時の新しい順。qとtagsで絞れます。応答は{&quot;favorites&quot;:[...],&quot;total&quot;:整数,&quot;nextCursor&quot;:任意の文字列}で、要素の識別子はjobIdです。既定50件（limitは1〜100）で、nextCursorをcursorに渡すと続きを取得できます。q・tagsを維持し、条件変更時は先頭から取得してください。tracksのidと混同せず変換してください。
+- 曲名・タグ付きのお気に入り画面で一覧と同じ曲名・タグの表示と並び替えを使う場合は、GET /v1/music/tracks?favorite=trueを使用してください。favorites APIにはsort・orderを送らないでください。limit・cursorは利用できます。
+- DELETE /v1/music/tracks/{id}：音声・metadata・履歴・お気に入りをまとめて削除し、204を返します。お気に入り解除や生成キャンセルとは別操作です。画面で対象曲を明示して削除操作を扱ってください。
+- 画面を閉じても曲を破棄せず、会話履歴には安定した曲IDを保持し、再表示時は詳細APIから最新情報を取得してください。
+- ブラウザのaudio要素へBearer必須のURLを直接渡すだけでは再生できません。既存の認証付き再生経路、またはEumenes backendのストリーミング中継を使用してください。中継時はRangeと206、Content-Range、Accept-Ranges、Content-Typeを引き継ぎ、途中シークを維持してください。Control tokenをURLや公開HTMLへ埋め込まないでください。
+
+【保存とエラー】
+- 完成曲は既定で期限なしにLARMが保存します。中間WAVはOpus変換直後に削除されるため、Eumenesは完成曲のIDとURLを扱ってください。
+- 容量上限でも既存曲は自動削除されません。生成ジョブのerror.code=music_storage_full、またはお気に入り変更のHTTP 507では、空き容量不足として不要曲の削除を案内してください。
+- 400は入力・検索・cursorの不整合、401は認証、404は削除済みまたは存在しない曲、削除時の409は生成中、503は設定や受付状態を確認します。APIのerror.codeとmessageを扱い、契約エラーを通信不能と表示しないでください。
+
+【画面と完了条件】
+- 「生成」「ライブラリ」「お気に入り」を既存UIに統合し、曲名・長さ・作成日時・タグ・再生・お気に入り操作を表示してください。
+- ライブラリに検索欄、複数タグ選択、新しい順／古い順／一致度順、次の50件の取得を用意してください。楽曲・お気に入り・タグ一覧に共通するlimit・cursor・total・nextCursorを扱ってください。空の一覧、取得中、失敗、再試行を表示し、古い検索の応答で新しい結果を上書きしないでください。
+- 非同期ジョブの継続、日英の自動タグ、複数タグAND、各並び順とcursor、認証付きRange再生、お気に入り登録・解除、楽曲削除を検証してください。
+- 実接続で短い曲を1曲生成し、一覧・検索・タグ・再生まで確認してください。テスト用に作成した曲だけを削除し、既存曲は維持してください。
+- Eumenes側の規則に沿った検証を実行し、実装した画面・接続設定・テスト結果・未対応事項を報告してください。
+</pre>
+  </section>
+</article>

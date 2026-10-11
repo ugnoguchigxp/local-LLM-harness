@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
-import { musicFavoriteListSchema, musicGenerationRequestSchema, musicTrackListSchema, musicTrackSchema, type MusicProvider } from "@larm/core";
+import { musicFavoriteListSchema, musicGenerationRequestSchema, musicTagListSchema, musicTrackListSchema, musicTrackSchema, type MusicProvider } from "@larm/core";
 import { AceStepMusicProvider, MusicGenerationManager } from "./music-manager";
 import { registerMusicRoutes } from "./routes/music";
 
@@ -187,4 +187,49 @@ test("library API persists automatic tags and exposes sorting, tag filters and c
     await recovered.deleteTrack(bright.jobId);
     expect(await (await app.request("/v1/music/tags")).json()).not.toMatchObject({ tags: expect.arrayContaining([{ tag: "明るい", count: 1 }]) });
   } finally { manager.close(); recovered.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("every library list returns 50 by default and continues through the API", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-library-pages-"));
+  let sequence = 0, now = Date.parse("2026-10-11T00:00:00Z");
+  const manager = new MusicGenerationManager(provider(), { artifactRoot: root,
+    random: () => String(sequence++), now: () => now });
+  try {
+    for (let i = 0; i < 55; i++) {
+      now += 1000;
+      const job = manager.create(musicGenerationRequestSchema.parse({ prompt: "neutral", tags: [`tag${String(i).padStart(3, "0")}`, "共通"] }));
+      expect((await finished(manager, job.jobId)).status).toBe("completed");
+      await manager.favorite(job.jobId);
+    }
+    const app = routes(manager);
+    for (const [path, field, total] of [["tracks", "tracks", 55], ["favorites", "favorites", 55], ["tags", "tags", 56]] as const) {
+      const endpoint = `/v1/music/${path}`;
+      const parse = (body: unknown) => {
+        if (field === "tracks") {
+          const page = musicTrackListSchema.parse(body);
+          return { ...page, items: page.tracks.map((item) => item.id) };
+        }
+        if (field === "favorites") {
+          const page = musicFavoriteListSchema.parse(body);
+          return { ...page, items: page.favorites.map((item) => item.jobId) };
+        }
+        const page = musicTagListSchema.parse(body);
+        return { ...page, items: page.tags.map((item) => item.tag) };
+      };
+      const first = parse(await (await app.request(endpoint)).json());
+      expect(first.items).toHaveLength(50);
+      expect(first.total).toBe(total);
+      expect(first.nextCursor).toBeString();
+      const second = parse(await (await app.request(`${endpoint}?cursor=${encodeURIComponent(first.nextCursor!)}`)).json());
+      expect(second.items).toHaveLength(total - 50);
+      expect(second.total).toBe(total);
+      expect(second.nextCursor).toBeUndefined();
+      expect(new Set([...first.items, ...second.items]).size).toBe(total);
+      for (const suffix of ["?limit=0", "?limit=101", "?cursor=broken"]) expect((await app.request(endpoint + suffix)).status).toBe(400);
+      expect(parse(await (await app.request(endpoint + "?limit=1")).json()).items).toHaveLength(1);
+    }
+    const favoritePage = musicFavoriteListSchema.parse(await (await app.request("/v1/music/favorites?q=neutral&limit=1")).json());
+    expect((await app.request(`/v1/music/favorites?q=other&cursor=${encodeURIComponent(favoritePage.nextCursor!)}`)).status).toBe(400);
+    expect((await app.request(`/v1/music/tags?cursor=${encodeURIComponent(favoritePage.nextCursor!)}`)).status).toBe(400);
+  } finally { manager.close(); await rm(root, { recursive: true, force: true }); }
 });

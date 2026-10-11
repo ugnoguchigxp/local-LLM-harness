@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { MusicTrack, MusicTrackList, MusicTrackQuery } from "./music";
 import { musicTrackTagsMatch, normalizeMusicText } from "./music-tags";
+import { decodeMusicCursor, encodeMusicCursor, InvalidMusicCursorError } from "./music-pagination";
+export { InvalidMusicCursorError } from "./music-pagination";
 
 const keySchema = z.object({
   createdAt: z.string().datetime(),
@@ -15,8 +17,6 @@ const cursorSchema = keySchema.extend({
   favorite: z.enum(["all", "true", "false"]),
   score: z.number().int().nonnegative(),
 }).strict();
-
-export class InvalidMusicCursorError extends Error {}
 
 function words(query?: string): string[] {
   return [...new Set(normalizeMusicText(query ?? "").split(/\s+/).filter(Boolean))];
@@ -58,8 +58,7 @@ export function listMusicTracks(tracks: readonly MusicTrack[], query: MusicTrack
   let cursor: RankedKey | undefined;
   if (query.cursor) {
     try {
-      const bytes = Uint8Array.from(atob(query.cursor.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
-      const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+      const value = decodeMusicCursor(query.cursor) as Record<string, unknown>;
       if (value.version === undefined) {
         // Preserve cursors issued before sort options were introduced.
         if (context.sort !== "createdAt" || context.order !== "desc" || context.tags.length) throw new Error("legacy cursor ordering changed");
@@ -82,7 +81,6 @@ export function listMusicTracks(tracks: readonly MusicTrack[], query: MusicTrack
   return {
     tracks: page.map((item) => item.track),
     total: matches.length,
-    ...(next ? { nextCursor: btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(next))))
-      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") } : {}),
+    ...(next ? { nextCursor: encodeMusicCursor(next) } : {}),
   };
 }

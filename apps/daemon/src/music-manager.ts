@@ -1,5 +1,6 @@
 import type {
   MusicFavorite,
+  MusicFavoriteQuery,
   MusicGenerationJob,
   MusicGenerationRequest,
   MusicGenerationResult,
@@ -8,8 +9,9 @@ import type {
   MusicProviderCapabilities,
   MusicTrack,
   MusicTrackQuery,
+  MusicTagQuery,
 } from "@larm/core";
-import { deriveMusicTags, listMusicTags, listMusicTracks, musicTrackMatches, musicTrackTagsMatch, musicArtifactMetadataSchema, musicGenerationJobSchema, musicGenerationRequestSchema } from "@larm/core";
+import { deriveMusicTags, listMusicTags, listMusicTracks, paginateMusicFavorites, musicTrackMatches, musicTrackTagsMatch, musicArtifactMetadataSchema, musicGenerationJobSchema, musicGenerationRequestSchema } from "@larm/core";
 import { mkdirSync, writeFileSync, renameSync, readdirSync, readFileSync } from "node:fs";
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
@@ -500,6 +502,10 @@ export class MusicGenerationManager {
       .sort((left, right) => right.favoritedAt.localeCompare(left.favoritedAt));
   }
 
+  listFavoritesPage(query: MusicFavoriteQuery) {
+    return paginateMusicFavorites(this.listFavorites(query.q, query.tags), query);
+  }
+
   getFavorite(jobId: string): MusicFavorite | undefined {
     const job = this.jobs.get(jobId);
     return job?.status === "completed" && job.result && job.favorite && job.favoritedAt
@@ -781,10 +787,10 @@ export class MusicGenerationManager {
       .map((job) => this.trackView(job)), query);
   }
 
-  listTags() {
+  listTags(query: MusicTagQuery = { limit: 50 }) {
     return listMusicTags([...this.jobs.values()]
       .filter((job) => job.status === "completed" && job.result)
-      .map((job) => this.trackView(job)));
+      .map((job) => this.trackView(job)), query);
   }
 
   getTrack(id: string): MusicTrack | undefined {

@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { InvalidMusicCursorError, musicGenerationRequestSchema, musicTrackQuerySchema } from "@larm/core";
+import { InvalidMusicCursorError, musicGenerationRequestSchema, musicTrackQuerySchema, musicFavoriteQuerySchema, musicTagQuerySchema } from "@larm/core";
 import { errorBody, readJson } from "../app-http";
 import { MusicProviderError, type MusicGenerationManager } from "../music-manager";
 
@@ -12,6 +12,10 @@ export function registerMusicRoutes(app: Hono, options: {
     if (error instanceof MusicProviderError) {
       return c.json(errorBody(error.code, error.message), error.code === "music_storage_full" ? 507 : 409);
     }
+    throw error;
+  };
+  const listError = (c: Context, error: unknown) => {
+    if (error instanceof InvalidMusicCursorError) return c.json(errorBody("invalid_music_cursor", error.message), 400);
     throw error;
   };
   app.get("/v1/music/providers", async (c) => {
@@ -62,16 +66,16 @@ export function registerMusicRoutes(app: Hono, options: {
     if (!query.success) return c.json(errorBody("invalid_music_query", "invalid music library query"), 400);
     c.header("cache-control", "no-store");
     try { return c.json(manager.listTracks(query.data)); }
-    catch (error) {
-      if (error instanceof InvalidMusicCursorError) return c.json(errorBody("invalid_music_cursor", error.message), 400);
-      throw error;
-    }
+    catch (error) { return listError(c, error); }
   });
 
   app.get("/v1/music/tags", (c) => {
     if (!manager) return c.json(errorBody("not_configured", "music generation is not configured"), 503);
+    const query = musicTagQuerySchema.safeParse(c.req.query());
+    if (!query.success) return c.json(errorBody("invalid_music_query", "invalid music tags query"), 400);
     c.header("cache-control", "no-store");
-    return c.json(manager.listTags());
+    try { return c.json(manager.listTags(query.data)); }
+    catch (error) { return listError(c, error); }
   });
 
   app.get("/v1/music/tracks/:id", (c) => {
@@ -179,9 +183,10 @@ export function registerMusicRoutes(app: Hono, options: {
       return c.json(errorBody("not_configured", "music generation is not configured"), 503);
     }
     c.header("cache-control", "no-store");
-    const query = musicTrackQuerySchema.pick({ q: true, tags: true }).safeParse(c.req.query());
+    const query = musicFavoriteQuerySchema.safeParse(c.req.query());
     if (!query.success) return c.json(errorBody("invalid_music_query", "invalid music favorite query"), 400);
-    return c.json({ favorites: manager.listFavorites(query.data.q, query.data.tags) });
+    try { return c.json(manager.listFavoritesPage(query.data)); }
+    catch (error) { return listError(c, error); }
   });
 
   app.get("/v1/music/favorites/:id", (c) => {

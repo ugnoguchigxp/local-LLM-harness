@@ -119,6 +119,8 @@ export const musicFavoriteSchema = z.object({
 
 export const musicFavoriteListSchema = z.object({
   favorites: z.array(musicFavoriteSchema),
+  total: z.number().int().nonnegative(),
+  nextCursor: z.string().optional(),
 }).strict();
 
 export const musicTrackSchema = z.object({
@@ -151,6 +153,9 @@ export const musicTrackQuerySchema = z.object({
   cursor: z.string().min(1).max(8192).optional(),
 }).strict();
 
+export const musicFavoriteQuerySchema = musicTrackQuerySchema.pick({ q: true, tags: true, limit: true, cursor: true });
+export const musicTagQuerySchema = musicTrackQuerySchema.pick({ limit: true, cursor: true });
+
 export const musicTrackListSchema = z.object({
   tracks: z.array(musicTrackSchema),
   total: z.number().int().nonnegative(),
@@ -159,11 +164,15 @@ export const musicTrackListSchema = z.object({
 
 export const musicTagListSchema = z.object({
   tags: z.array(z.object({ tag: z.string().min(1).max(64), count: z.number().int().positive() }).strict()),
+  total: z.number().int().nonnegative(),
+  nextCursor: z.string().optional(),
 }).strict();
 
 export type MusicTrack = z.infer<typeof musicTrackSchema>;
 export type MusicTrackQuery = z.infer<typeof musicTrackQuerySchema>;
 export type MusicTrackList = z.infer<typeof musicTrackListSchema>;
+export type MusicFavoriteQuery = z.infer<typeof musicFavoriteQuerySchema>;
+export type MusicTagQuery = z.infer<typeof musicTagQuerySchema>;
 
 export type MusicGenerationRequest = z.infer<typeof musicGenerationRequestSchema>;
 export type MusicGenerationStatus = z.infer<typeof musicGenerationStatusSchema>;

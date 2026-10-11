@@ -25,5 +25,5 @@ test("explicit tags are preserved, normalized duplicates removed and tag count b
 
 test("tag catalog counts songs once per normalized tag", () => {
   const tracks = [{ tags: ["Piano", "ＰＩＡＮＯ", "明るい"] }, { tags: ["piano"] }] as MusicTrack[];
-  expect(listMusicTags(tracks)).toEqual({ tags: [{ tag: "Piano", count: 2 }, { tag: "明るい", count: 1 }] });
+  expect(listMusicTags(tracks)).toEqual({ tags: [{ tag: "Piano", count: 2 }, { tag: "明るい", count: 1 }], total: 2 });
 });

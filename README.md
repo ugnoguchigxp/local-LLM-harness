@@ -88,7 +88,7 @@ LARM は、GPU ドライバ、推論エンジン、モデルのインストー�
 
 完全なリクエスト・レスポンス定義は、起動中の daemon が返す `/openapi.json` を正本として確認できます。
 
-楽曲生成にはFFmpegの`libopus`エンコーダーと、`LARM_MUSIC_UPSTREAM_OUTPUT_ROOT`で指定するACE-Stepの出力専用ディレクトリが必要です。生成した32 bit浮動小数点WAVをパイプ経由でOpusへ変換し、中間音声は成功・失敗・キャンセル時に削除します。完成した楽曲は既定で期限なしに保存し、容量上限でも自動削除しません。検索は曲名・生成時の説明・歌詞・タグに対応します。説明から「アップテンポ」「明るい」などのタグを自動生成し、`GET /v1/music/tags`でタグと曲数、`GET /v1/music/tracks?tags=アップテンポ,明るい`で絞り込みができます。`sort=createdAt&order=asc`で古い順、`q=検索語&sort=relevance`で一致度順を選べます。生成時に任意の`title`と`tags`を指定できます。詳細は[楽曲生成仕様](./specs/music-generation-provider.html#opus-encoding)を参照してください。
+楽曲生成にはFFmpegの`libopus`エンコーダーと、`LARM_MUSIC_UPSTREAM_OUTPUT_ROOT`で指定するACE-Stepの出力専用ディレクトリが必要です。生成した32 bit浮動小数点WAVをパイプ経由でOpusへ変換し、中間音声は成功・失敗・キャンセル時に削除します。完成した楽曲は既定で期限なしに保存し、容量上限でも自動削除しません。検索は曲名・生成時の説明・歌詞・タグに対応します。説明から「アップテンポ」「明るい」などのタグを自動生成し、`GET /v1/music/tags`でタグと曲数、`GET /v1/music/tracks?tags=アップテンポ,明るい`で絞り込みができます。`sort=createdAt&order=asc`で古い順、`q=検索語&sort=relevance`で一致度順を選べます。楽曲・お気に入り・タグの一覧はすべて既定50件（最大100件）です。`nextCursor`を`cursor`に渡すと次の50件を取得でき、`total`は全件数を表します。生成時に任意の`title`と`tags`を指定できます。詳細は[楽曲生成仕様](./specs/music-generation-provider.html#opus-encoding)を参照してください。
 
 ### 利用者別の入口
 

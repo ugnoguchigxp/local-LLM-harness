@@ -1,4 +1,6 @@
-import type { MusicGenerationRequest, MusicTrack } from "./music";
+import { z } from "zod";
+import type { MusicGenerationRequest, MusicTagQuery, MusicTrack } from "./music";
+import { decodeMusicCursor, encodeMusicCursor, InvalidMusicCursorError } from "./music-pagination";
 
 const rules: readonly [string, RegExp][] = [
   ["アップテンポ", /\b(?:up[- ]?tempo|fast[- ]paced|fast tempo)\b|アップテンポ|(?:速|早)いテンポ|テンポ(?:が|の)?(?:速|早)/giu],
@@ -57,7 +59,10 @@ export function musicTrackTagsMatch(track: MusicTrack, tags?: readonly string[])
   return (tags ?? []).every((tag) => available.has(normalizeMusicText(tag)));
 }
 
-export function listMusicTags(tracks: readonly MusicTrack[]) {
+const tagCursorSchema = z.object({ version: z.literal(1), kind: z.literal("music-tags"),
+  tag: z.string().min(1).max(64), count: z.number().int().positive() }).strict();
+
+export function listMusicTags(tracks: readonly MusicTrack[], query: MusicTagQuery = { limit: 50 }) {
   const counts = new Map<string, { tag: string; count: number }>();
   for (const track of tracks) {
     for (const key of new Set(track.tags.map(normalizeMusicText))) {
@@ -66,5 +71,18 @@ export function listMusicTags(tracks: readonly MusicTrack[]) {
       else counts.set(key, { tag: track.tags.find((tag) => normalizeMusicText(tag) === key)!, count: 1 });
     }
   }
-  return { tags: [...counts.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag)) };
+  const compare = (a: { tag: string; count: number }, b: { tag: string; count: number }) =>
+    b.count - a.count || normalizeMusicText(a.tag).localeCompare(normalizeMusicText(b.tag));
+  const matches = [...counts.values()].sort(compare);
+  let cursor: z.infer<typeof tagCursorSchema> | undefined;
+  if (query.cursor) {
+    try { cursor = tagCursorSchema.parse(decodeMusicCursor(query.cursor)); }
+    catch { throw new InvalidMusicCursorError("invalid music tags cursor"); }
+  }
+  const remaining = cursor ? matches.filter((tag) => compare(tag, cursor!) > 0) : matches;
+  const page = remaining.slice(0, query.limit);
+  const last = page.at(-1);
+  return { tags: page, total: matches.length,
+    ...(last && remaining.length > page.length ? { nextCursor: encodeMusicCursor({ version: 1,
+      kind: "music-tags", tag: last.tag, count: last.count }) } : {}) };
 }

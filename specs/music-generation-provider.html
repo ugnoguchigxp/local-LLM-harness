@@ -145,7 +145,7 @@
     <dl>
       <dt><code>GET /v1/music/tags</code></dt>
       <dd>
-        保存済み完成曲で使われているタグと曲数を返す。応答はtags配列のtagとcount。曲数の多い順で、同数の場合はタグ名順。
+        保存済み完成曲で使われているタグと曲数を返す。応答はtags配列のtagとcount、タグ総数のtotal、続きがある場合のnextCursor。既定50件、limitは1〜100。曲数の多い順で、同数の場合は正規化したタグ名順。
       </dd>
       <dt><code>GET /v1/music/tracks?tags=アップテンポ,明るい</code></dt>
       <dd>
@@ -163,7 +163,7 @@
     <p>
       ページの続きを取得する場合はq、tags、favorite、sort、orderを維持してnextCursorをcursorに渡す。
       条件を変更したcursorは400となる。limitだけは変更可能。以前の新しい順のcursorも対応する。
-      お気に入り一覧は登録日時の新しい順を維持し、qとtagsで絞り込める。
+      楽曲・お気に入り・タグの一覧はすべて既定50件（limitは1〜100）とし、totalと任意のnextCursorを返す。nextCursorがなければ最終ページ。各APIが返したcursorは同じAPIで使用する。お気に入り一覧は登録日時の新しい順を維持し、qとtagsで絞り込める。お気に入りの同時刻はjobIdの降順で決める。タグ一覧は曲数が更新されるため、生成・削除後は先頭から再取得する。
     </p>
     <h3>お気に入り API</h3>
     <dl>
@@ -171,7 +171,7 @@
       <dd>完了済み楽曲を冪等にお気に入りへ登録し、再生用 URL を返す。</dd>
       <dt><code>GET /v1/music/favorites</code></dt>
       <dd>
-        お気に入りを登録日時の新しい順に返す。任意のqとtagsでライブラリと同じ検索・絞り込みができる。保存済み
+        お気に入りを登録日時の新しい順に返す。任意のqとtagsでライブラリと同じ検索・絞り込みができる。応答はfavorites、検索結果全体のtotal、任意のnextCursor。limitとcursorで既定50件ずつ継続取得する。保存済み
         metadata から起動時に復元する。
       </dd>
       <dt><code>GET /v1/music/favorites/:id</code></dt>
