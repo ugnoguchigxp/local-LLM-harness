@@ -7,7 +7,7 @@ import { MusicArtifactRetention } from "./music-artifact-retention";
 async function artifact(
   root: string,
   id: string,
-  format: "wav" | "mp3",
+  format: "wav" | "mp3" | "opus",
   createdAt: string,
   bytes: number,
   favorite = false,
@@ -46,6 +46,23 @@ test("retention removes WAV sooner while retaining MP3", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("Opus metadata preserves favorites and uses regular retention", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-opus-retention-"));
+  try {
+    const favorite = await artifact(root, "music_opus_favorite", "opus", "2026-09-20T10:00:00.000Z", 100, true);
+    const regular = await artifact(root, "music_opus_regular", "opus", "2026-09-24T10:00:00.000Z", 100);
+    let now = Date.parse("2026-09-24T12:00:00.000Z");
+    const retention = new MusicArtifactRetention({ artifactRoot: root, retentionMs: 86_400_000,
+      wavRetentionMs: 3_600_000, maxBytes: 10_000, favoriteMaxBytes: 5_000, now: () => now });
+    expect((await retention.list()).every((entry) => entry.format === "opus")).toBe(true);
+    expect(await retention.prune()).toEqual([]);
+    now += 86_400_000;
+    expect(await retention.prune()).toEqual(["music_opus_regular"]);
+    expect(await lstat(regular).catch(() => undefined)).toBeUndefined();
+    expect((await lstat(favorite)).isDirectory()).toBe(true);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("favorites ignore TTL but stay inside their reserved capacity", async () => {

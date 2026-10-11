@@ -93,6 +93,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       }
       if (operationId === "getMusicGenerationAudio" || operationId === "getMusicFavoriteAudio") {
         return {
+          "audio/ogg": { schema: { $ref: "#/components/schemas/Binary" } },
           "audio/wav": { schema: { $ref: "#/components/schemas/Binary" } },
           "audio/flac": { schema: { $ref: "#/components/schemas/Binary" } },
           "audio/mpeg": { schema: { $ref: "#/components/schemas/Binary" } },
@@ -138,7 +139,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       ...(operationId === "createImageGeneration" ? {
         description: "Synchronous Qwen-Image 2.1 Turbo generation with a fixed eight-step schedule. Defaults: 512x512, seed 0, WebP. Width and height independently accept any integer from 100 through 1280. Generation rounds each axis up to a multiple of 32 and resizes to the exact requested output dimensions; PNG is optional. Control starts and loads the selected model, stores the artifact, and stops the worker before returning 200. Optional model must match the advertised service. Read artifacts[0] or artifact; contentUrl is relative to Control and remains available after worker shutdown. Cold startup is included in request latency; do not automatically resubmit POST.",
       } : operationId === "createMusicGeneration" ? {
-        description: "Returns a 202 job. Control starts the model on demand; poll the job or follow events. Completed means the artifact is stored and the worker stopped. Download result.audioUrl relative to Control. Submit once; polling does not start a model.",
+        description: "Returns a 202 job. Default output is Ogg Opus at fixed 64 kbps and 48 kHz; mp3, wav, and flac remain explicit options. Opus is encoded from temporary float32 WAV; intermediates are deleted on success or failure. Control starts the model on demand; poll the job or follow events. Completed means the artifact is stored and the worker stopped. Download result.audioUrl relative to Control. Submit once; polling does not start a model.",
       } : {}),
       ...(lifecycle.classification === "compatibility" ? { deprecated: true } : {}),
       "x-larm-lifecycle": lifecycle,

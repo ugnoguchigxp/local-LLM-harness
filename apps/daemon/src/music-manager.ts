@@ -9,9 +9,10 @@ import type {
 } from "@larm/core";
 import { musicArtifactMetadataSchema, musicGenerationJobSchema, musicGenerationRequestSchema } from "@larm/core";
 import { mkdirSync, writeFileSync, renameSync, readdirSync, readFileSync } from "node:fs";
-import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { MusicArtifactRetention } from "./music-artifact-retention";
+import { encodeMusicOpus, verifyMusicOpusEncoder } from "./music-audio";
 import { MediaVariantStopError, type MediaVariantManager } from "@larm/backends";
 
 type FetchLike = typeof fetch;
@@ -90,7 +91,28 @@ export class AceStepMusicProvider implements MusicProvider {
     if (!health.available) throw new MusicProviderError("provider_unavailable", health.reason!);
   }
 
-  async unload(): Promise<void> {}
+  async unload(): Promise<void> {
+    // Called only after the on-demand worker has stopped, including cancellation.
+    const root = this.options.upstreamOutputRoot;
+    if (!root) return;
+    const info = await lstat(root).catch((error) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!info) return;
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      throw new MusicProviderError("intermediate_cleanup_failed", "ACE-Step output root must be a real directory");
+    }
+    const entries = await readdir(root, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !/\.(wav|flac|mp3|opus|aac)$/.test(entry.name)) continue;
+      const url = new URL("v1/audio", this.base);
+      url.searchParams.set("path", join(root, entry.name));
+      if (await this.removeUpstreamArtifact(url) !== "removed") {
+        throw new MusicProviderError("intermediate_cleanup_failed", "could not remove ACE-Step intermediate audio");
+      }
+    }
+  }
 
   async health(): Promise<{ available: boolean; reason?: string }> {
     try {
@@ -114,6 +136,15 @@ export class AceStepMusicProvider implements MusicProvider {
         "referenceAudio upload is not enabled for the ACE-Step provider yet",
       );
     }
+    const isOpus = request.outputFormat === "opus";
+    if (isOpus) {
+      if (!this.options.upstreamOutputRoot) {
+        throw new MusicProviderError("intermediate_cleanup_required", "Opus output requires an ACE-Step output root for intermediate cleanup");
+      }
+      try { await verifyMusicOpusEncoder(); }
+      catch { throw new MusicProviderError("audio_encoder_unavailable", "music Opus output requires ffmpeg with libopus"); }
+    }
+    context.signal.throwIfAborted();
     context.phase("loading");
     const quality = request.quality;
     const providerOptions = request.providerOptions ?? {};
@@ -122,7 +153,7 @@ export class AceStepMusicProvider implements MusicProvider {
       prompt: request.prompt,
       lyrics: request.instrumental ? "[Instrumental]" : (request.lyrics ?? ""),
       audio_duration: request.durationSeconds,
-      audio_format: request.outputFormat,
+      audio_format: isOpus ? "wav32" : request.outputFormat,
       // Quality changes diffusion steps; this runtime has no auxiliary LM.
       thinking: false,
       inference_steps: quality === "fast" ? 4 : quality === "high" ? 12 : 8,
@@ -174,9 +205,55 @@ export class AceStepMusicProvider implements MusicProvider {
     if (audioUrl.origin !== this.base.origin) {
       throw new MusicProviderError("invalid_upstream_response", "ACE-Step returned a cross-origin audio URL");
     }
+    let audio: Uint8Array;
+    let upstreamArtifactCleanup: Awaited<ReturnType<AceStepMusicProvider["removeUpstreamArtifact"]>>;
+    try {
+      const waveform = await this.downloadAudio(audioUrl, context.signal);
+      if (isOpus) {
+        try { audio = await encodeMusicOpus(waveform, context.signal, this.options.maxAudioBytes ?? 512 * 1024 * 1024); }
+        catch (error) {
+          context.signal.throwIfAborted();
+          throw new MusicProviderError("audio_encoding_failed", error instanceof Error ? error.message : "music Opus encoding failed");
+        }
+      } else audio = waveform;
+    } finally {
+      upstreamArtifactCleanup = await this.removeUpstreamArtifact(audioUrl);
+      if (isOpus && upstreamArtifactCleanup !== "removed") {
+        throw new MusicProviderError("intermediate_cleanup_failed", "could not remove ACE-Step intermediate audio");
+      }
+    }
+    const metas = record(first.metas) ?? {};
+    const durationSeconds = typeof metas.duration === "number" && metas.duration > 0
+      ? metas.duration
+      : request.durationSeconds;
+    const seedText = typeof first.seed_value === "string" ? first.seed_value.split(",")[0] : undefined;
+    const actualSeed = seedText && /^\d+$/.test(seedText) ? Number(seedText) : request.seed;
+    const generationTimeMs = Date.now() - started;
+    return {
+      model: typeof first.dit_model === "string"
+        ? first.dit_model
+        : (request.model ?? "acestep-v15-turbo"),
+      audio,
+      durationSeconds,
+      format: request.outputFormat,
+      ...(actualSeed === undefined ? {} : { seed: actualSeed }),
+      generationTimeMs,
+      realtimeFactor: generationTimeMs / 1_000 / durationSeconds,
+      metadata: {
+        ...(typeof first.lm_model === "string" ? { lmModel: first.lm_model } : {}),
+        ...metas,
+        upstreamTaskId: taskId,
+        upstreamArtifactCleanup,
+        ...(isOpus ? { encoding: { codec: "opus", container: "ogg", bitrateBps: 64_000,
+          bitrateMode: "cbr", sampleRateHz: 48_000, intermediateFormat: "wav32" } } : {}),
+      },
+    };
+  }
+
+  private async downloadAudio(audioUrl: URL, signal: AbortSignal): Promise<Uint8Array> {
     const audioResponse = await (this.options.fetchImpl ?? fetch)(audioUrl, {
       headers: this.headers(),
-      signal: context.signal,
+      signal,
       redirect: "error",
     });
     if (!audioResponse.ok) {
@@ -209,31 +286,7 @@ export class AceStepMusicProvider implements MusicProvider {
     if (audio.byteLength === 0 || audio.byteLength > maxBytes) {
       throw new MusicProviderError("audio_too_large", "generated audio is empty or too large");
     }
-    const upstreamArtifactCleanup = await this.removeUpstreamArtifact(audioUrl);
-    const metas = record(first.metas) ?? {};
-    const durationSeconds = typeof metas.duration === "number" && metas.duration > 0
-      ? metas.duration
-      : request.durationSeconds;
-    const seedText = typeof first.seed_value === "string" ? first.seed_value.split(",")[0] : undefined;
-    const actualSeed = seedText && /^\d+$/.test(seedText) ? Number(seedText) : request.seed;
-    const generationTimeMs = Date.now() - started;
-    return {
-      model: typeof first.dit_model === "string"
-        ? first.dit_model
-        : (request.model ?? "acestep-v15-turbo"),
-      audio,
-      durationSeconds,
-      format: request.outputFormat,
-      ...(actualSeed === undefined ? {} : { seed: actualSeed }),
-      generationTimeMs,
-      realtimeFactor: generationTimeMs / 1_000 / durationSeconds,
-      metadata: {
-        upstreamTaskId: taskId,
-        upstreamArtifactCleanup,
-        ...(typeof first.lm_model === "string" ? { lmModel: first.lm_model } : {}),
-        ...metas,
-      },
-    };
+    return audio;
   }
 
   private async removeUpstreamArtifact(audioUrl: URL): Promise<"removed" | "not_configured" | "not_applicable" | "failed"> {
@@ -300,7 +353,7 @@ export class OnDemandMusicProvider implements MusicProvider {
   }
 
   async load(): Promise<void> {}
-  async unload(): Promise<void> {}
+  async unload(): Promise<void> { await this.upstream.unload(); }
   async health(): Promise<{ available: boolean; reason?: string }> {
     return { available: this.variants.available, ...(!this.variants.available ? { reason: "media runtime unavailable" } : {}) };
   }
@@ -309,7 +362,8 @@ export class OnDemandMusicProvider implements MusicProvider {
   }
   async generate(request: MusicGenerationRequest, context: Parameters<MusicProvider["generate"]>[1]) {
     context.phase("loading");
-    const release = await this.variants.waitForMusic(context.signal);
+    const stopWorker = await this.variants.waitForMusic(context.signal);
+    const release = async () => { await stopWorker(); await this.upstream.unload(); };
     try {
       context.signal.throwIfAborted();
       return { ...await this.upstream.generate(request, context), release };
@@ -541,7 +595,7 @@ export class MusicGenerationManager {
       return { path: job.metadataPath, contentType: "application/json; charset=utf-8", filename: "metadata.json" };
     }
     if (!job.audioPath) return undefined;
-    const contentTypes = { wav: "audio/wav", flac: "audio/flac", mp3: "audio/mpeg" };
+    const contentTypes = { wav: "audio/wav", flac: "audio/flac", mp3: "audio/mpeg", opus: "audio/ogg" };
     return {
       path: job.audioPath,
       contentType: contentTypes[job.result.format],

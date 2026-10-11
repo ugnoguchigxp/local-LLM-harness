@@ -22,7 +22,8 @@
       </li>
       <li>既定 concurrency は 1 とし、GPU を使う生成を直列化する。</li>
       <li>
-        出力形式の既定は、非圧縮 WAV ではなく <code>mp3</code> とする。
+        出力形式の既定は <code>opus</code> とし、Ogg Opus・64
+        kbps固定・48 kHzで保存する。
       </li>
       <li>SAAA は完了済み楽曲をお気に入りへ指定し、daemon 再起動後も一覧からリプレイできる。</li>
     </ul>
@@ -55,7 +56,9 @@
           <td>
             <code>audio/wav</code
             >、<code>audio/flac</code>、または
-            <code>audio/mpeg</code>
+            <code>audio/mpeg</code>、<code
+              >audio/ogg</code
+            >
           </td>
         </tr>
         <tr>
@@ -85,7 +88,7 @@
       を含める。絶対ファイルパスはダウンロードする metadata に含めない。
     </p>
     <p>
-      掃除は daemon 起動時、生成完了後、既定5分間隔で行う。MP3 と FLAC は既定24時間、WAV
+      掃除は daemon 起動時、生成完了後、既定5分間隔で行う。Opus、MP3 と FLAC は既定24時間、WAV
       は既定1時間だけ保持する。全形式の合計50 GiBは通常20 GiBとお気に入り30 GiBに分け、
       各枠を超えた場合は古い完成済み成果物から削除する。お気に入りは通常TTLの対象外だが、30 GiB枠を
       超えれば古いお気に入りから削除する。実行中ジョブは削除対象から保護し、クラッシュで残った一時ファイルも保持期限後に回収する。
@@ -121,10 +124,11 @@
       補助LMをロードしない構成に合わせ、thinkingはfalseとし、既定品質の要求が未起動LMへ依存しないようにする。
     </p>
     <p>
-      ACE-Step の出力専用 root を明示設定した場合、音声を LARM
-      管理領域へ取り込んだ後に上流の一時ファイルも 削除する。削除対象は realpath が設定 root
-      内にある通常ファイルだけとし、root 外パス、root 自体、
-      シンボリックリンクは拒否する。未設定時は上流ファイルに触れない。
+      ACE-Step の出力専用 root
+      はOpus出力で必須。音声の取得・変換を終えた場合も、失敗・キャンセルした場合も、一時ファイルを削除する。
+      削除対象は realpath が設定 root 内にある通常ファイルだけとし、root 外パス、root 自体、
+      シンボリックリンクは拒否する。worker停止後とdaemon起動時の孤児worker回復後にも、同root直下の一時音声を掃除する。
+      掃除に失敗したOpusジョブは完了扱いにしない。
     </p>
     <p>
       reference audio は共通 schema に予約するが、この adapter ではまだ受け付けない。外部 URL
@@ -177,7 +181,8 @@
     </p>
     <p>
       試作例は30秒・fast・instrumentalのJSONとする。歌なしは<code>instrumental: true</code>で、その場合<code>lyrics</code>を指定しない。
-      出力形式はmp3・wav・flac（既定mp3）、seedは任意、参照音源の編集は未対応と説明する。 HTTP
+      出力形式はopus・mp3・wav・flac（既定opus、64 kbps固定・48
+      kHz）、seedは任意、参照音源の編集は未対応と説明する。 HTTP
       202で受け取った<code>jobId</code>を使い<code>GET /v1/music/generations/{jobId}</code>で確認し、
       completed時の<code>result.audioUrl</code>をControlのURLに解決して音声を取得する。
     </p>
@@ -187,6 +192,82 @@
   "quality": "fast",
   "instrumental": true
 }</code></pre>
+  </section>
+  <section id="opus-encoding">
+    <h2>Opus出力と中間形式の選択（2026-10-11）</h2>
+    <p>
+      ACE-Stepは48 kHzの波形tensorを生成し、ファイル形式への保存は生成後の処理である。
+      モデル自体にMP3やOpusを生成させる必要はない。配備済みのAudioSaverと公式実装を確認し、
+      中間形式には<code>wav32</code>（32 bit浮動小数点PCM
+      WAV）を選択した。
+      WAVとFLACはsoundfile経路を利用し、wav32はsoundfileへ浮動小数点波形を直接書き込む。
+      FLACの圧縮や整数PCMへの丸めを挟まず、生成波形をOpus変換へ渡せる。
+      これは保存処理の構造に基づく判断であり、モデル生成速度の改善や形式別の速度測定結果を意味しない。
+    </p>
+    <table>
+      <caption>
+        中間形式の比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">形式</th>
+          <th scope="col">保存処理</th>
+          <th scope="col">採用判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">wav32</th>
+          <td>soundfileで32 bit浮動小数点PCMを直接保存</td>
+          <td>採用。量子化と非可逆な再圧縮を避ける</td>
+        </tr>
+        <tr>
+          <th scope="row">wav</th>
+          <td>soundfile経路。通常は整数PCM</td>
+          <td>明示的な最終出力として対応を維持</td>
+        </tr>
+        <tr>
+          <th scope="row">flac</th>
+          <td>soundfile経路。整数PCMの可逆圧縮</td>
+          <td>中間容量は減るが、圧縮・展開が増える</td>
+        </tr>
+        <tr>
+          <th scope="row">mp3、opus</th>
+          <td>FFmpeg等で非可逆エンコード</td>
+          <td>Opus変換の前段には使わない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LARMはOpus要求に対して上流へ<code>audio_format: wav32</code>を送る。
+      取得したWAVをFFmpegの標準入力へ渡し、<code>libopus</code>で64,000
+      bit/s、CBR、48,000 Hzへ変換する。
+      Oggコンテナを標準出力から受け取り、最終成果物を<code>output.opus</code>、Content-Typeを<code>audio/ogg</code>とする。
+      変換のCPU処理はモデルの生成品質指定とは独立し、生成品質を変更してもビットレートは64
+      kbpsのままである。 音声tensorのチャンネル数を維持し、不要なダウンサンプリングは行わない。
+    </p>
+    <p>
+      変換中はLARM側に中間ファイルを作らず、取得・変換のバイト上限、120秒の変換上限、キャンセルを適用する。
+      ACE-Stepが作る一時WAVは変換の成功・失敗時にfinallyで削除する。
+      生成途中の中断でパスを取得できなかった音声も、on-demand
+      workerが停止してから出力専用root内で掃除する。
+      保存・お気に入り・再起動後の復元・Range配信・容量管理では最終Opusだけを音声成果物として扱う。
+      明示的に指定したWAV、FLAC、MP3は最終成果物なので、既存の保持規則に従う。
+    </p>
+    <p>
+      環境要件はFFmpegの<code>libopus</code>エンコーダーである。
+      Debian系では<code>ffmpeg</code>パッケージを導入し、<code>ffmpeg -hide_banner -encoders</code>で
+      libopusを確認する。検証には<code>ffprobe</code>も使用する。
+      このホストは両プログラムとlibopusを導入済みで、追加のPython音声エンコード依存は不要だった。
+      Opus要求を上流へ送信する前にもエンコーダーの存在を検査する。
+    </p>
+    <p>
+      参照した公式実装は<code>https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/audio_utils.py</code>、
+      <code>https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/inference.py</code>。
+      FFmpeg設定は<code>https://ffmpeg.org/ffmpeg-codecs.html</code>のlibopusと
+      <code>https://ffmpeg.org/ffmpeg-formats.html</code>のOggを確認する。
+      確認日は2026-10-11。実際の配備ソースでもwav32の直接保存経路と48 kHzの設定を確認した。
+    </p>
   </section>
   <section id="configuration">
     <h2>設定</h2>
@@ -202,7 +283,7 @@
       <dt><code>LARM_MUSIC_MAX_AUDIO_BYTES</code></dt>
       <dd>単一出力の上限。既定は 512 MiB。</dd>
       <dt><code>LARM_MUSIC_ARTIFACT_RETENTION_SECONDS</code></dt>
-      <dd>MP3、FLAC、および通常の成果物の保持期限。既定は 86400 秒。</dd>
+      <dd>Opus、MP3、FLAC、および通常の成果物の保持期限。既定は 86400 秒。</dd>
       <dt><code>LARM_MUSIC_WAV_RETENTION_SECONDS</code></dt>
       <dd>WAV の短期保持期限。既定は 3600 秒。</dd>
       <dt><code>LARM_MUSIC_ARTIFACT_MAX_BYTES</code></dt>
@@ -213,7 +294,8 @@
       <dd>定期掃除の間隔。既定は 300 秒。</dd>
       <dt><code>LARM_MUSIC_UPSTREAM_OUTPUT_ROOT</code></dt>
       <dd>
-        任意の ACE-Step 出力専用 root。設定時だけ、取り込み済みの上流一時ファイルを安全に削除する。
+        ACE-Step 出力専用
+        root。Opus出力では必須。通常ファイルだけを削除し、変換成功・失敗・キャンセル時に中間音声を保持しない。
       </dd>
     </dl>
   </section>

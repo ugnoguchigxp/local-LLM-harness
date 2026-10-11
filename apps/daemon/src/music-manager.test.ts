@@ -140,8 +140,8 @@ test("music request rejects lyrics on an instrumental", () => {
   }).success).toBeFalse();
 });
 
-test("music request defaults to compact MP3 output", () => {
-  expect(musicGenerationRequestSchema.parse({ prompt: "ambient" }).outputFormat).toBe("mp3");
+test("music request defaults to Opus output", () => {
+  expect(musicGenerationRequestSchema.parse({ prompt: "ambient" }).outputFormat).toBe("opus");
 });
 
 test("ACE-Step upstream output is removed only from its configured root", async () => {
@@ -174,7 +174,7 @@ test("ACE-Step upstream output is removed only from its configured root", async 
       fetchImpl: fetchImpl as typeof fetch,
       upstreamOutputRoot: upstreamRoot,
     }), { artifactRoot, random: () => "cleanup" });
-    const created = manager.create(musicGenerationRequestSchema.parse({ prompt: "ambient" }));
+    const created = manager.create(musicGenerationRequestSchema.parse({ prompt: "ambient", outputFormat: "mp3" }));
     const completed = await waitForTerminal(manager, created.jobId);
 
     expect(completed.status).toBe("completed");
@@ -326,7 +326,7 @@ test("audio download enforces byte limit without content-length and cancels stre
       }));
     }) as typeof fetch,
   });
-  await expect(provider.generate(musicGenerationRequestSchema.parse({ prompt: "test" }), {
+  await expect(provider.generate(musicGenerationRequestSchema.parse({ prompt: "test", outputFormat: "mp3" }), {
     jobId: "music_limit", signal: new AbortController().signal, phase: () => {},
   })).rejects.toThrow("too large");
   expect(cancelled).toBe(true);

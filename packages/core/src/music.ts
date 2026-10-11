@@ -3,7 +3,7 @@ import { z } from "zod";
 const identifierSchema = z.string().min(1).max(128)
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 
-export const musicOutputFormatSchema = z.enum(["wav", "flac", "mp3"]);
+export const musicOutputFormatSchema = z.enum(["wav", "flac", "mp3", "opus"]);
 export const musicQualitySchema = z.enum(["fast", "balanced", "high"]);
 export const musicGenerationStatusSchema = z.enum([
   "queued",
@@ -26,7 +26,7 @@ export const musicGenerationRequestSchema = z.object({
   timeSignature: z.string().regex(/^\d{1,2}(?:\/\d{1,2})?$/).optional(),
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
   referenceAudio: z.string().url().optional(),
-  outputFormat: musicOutputFormatSchema.default("mp3"),
+  outputFormat: musicOutputFormatSchema.default("opus"),
   quality: musicQualitySchema.default("balanced"),
   model: identifierSchema.optional(),
   providerOptions: z.record(z.string(), z.unknown()).optional(),

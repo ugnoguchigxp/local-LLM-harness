@@ -4,7 +4,7 @@ import { basename, isAbsolute, join, resolve, sep } from "node:path";
 export type StoredArtifact = {
   jobId: string;
   directory: string;
-  format: "wav" | "flac" | "mp3";
+  format: "wav" | "flac" | "mp3" | "opus";
   bytes: number;
   createdAtMs: number;
   favorite: boolean;
@@ -125,11 +125,12 @@ export class MusicArtifactRetention {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(fallbackId)) return undefined;
     const fallbackFormat = stats.some(({ name }) => name === "output.wav")
       ? "wav"
-      : stats.some(({ name }) => name === "output.flac") ? "flac" : "mp3";
+      : stats.some(({ name }) => name === "output.flac") ? "flac"
+      : stats.some(({ name }) => name === "output.opus") ? "opus" : "mp3";
     const fallback = {
       jobId: fallbackId,
       directory,
-      format: fallbackFormat as "wav" | "flac" | "mp3",
+      format: fallbackFormat as StoredArtifact["format"],
       bytes: stats.reduce((total, entry) => total + entry.info.size, 0),
       createdAtMs: Math.max(...stats.map((entry) => entry.info.mtimeMs)),
       favorite: false,
@@ -147,7 +148,7 @@ export class MusicArtifactRetention {
     if (
       typeof jobId !== "string"
       || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(jobId)
-      || (format !== "wav" && format !== "flac" && format !== "mp3")
+      || (format !== "wav" && format !== "flac" && format !== "mp3" && format !== "opus")
     ) return fallback;
     const audio = join(directory, `output.${format}`);
     const [audioStat, metadataStat] = await Promise.all([
