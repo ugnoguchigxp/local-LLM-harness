@@ -88,18 +88,53 @@
       を含める。絶対ファイルパスはダウンロードする metadata に含めない。
     </p>
     <p>
-      掃除は daemon 起動時、生成完了後、既定5分間隔で行う。Opus、MP3 と FLAC は既定24時間、WAV
-      は既定1時間だけ保持する。全形式の合計50 GiBは通常20 GiBとお気に入り30 GiBに分け、
-      各枠を超えた場合は古い完成済み成果物から削除する。お気に入りは通常TTLの対象外だが、30 GiB枠を
-      超えれば古いお気に入りから削除する。実行中ジョブは削除対象から保護し、クラッシュで残った一時ファイルも保持期限後に回収する。
-      削除済みジョブの URL は永続リンクではなく、以後 404 を返す。
+      完成した楽曲は形式やお気に入り登録の有無を問わず、既定で期限なしに保存する。
+      Opus変換に使う中間WAVは変換直後に削除し、完成したOpusとmetadataだけを残す。 全形式の合計50
+      GiBは通常20 GiBとお気に入り30 GiBに分ける。容量上限でも保存済みの曲を
+      自動削除せず、新規保存または枠を移すお気に入り変更を拒否する。生成ジョブは
+      <code>music_storage_full</code>で失敗し、お気に入り変更はHTTP 507を返す。
+      不要な曲は利用者が明示的に削除する。
     </p>
+    <p>
+      通常曲に期限を設けたい運用では、保持秒数を正の値で指定できる。その場合に限りWAVの短期保持上限も適用する。
+      お気に入りは保持期限の対象外。掃除はdaemon起動時、生成完了後、既定5分間隔で行う。
+      実行中ジョブを保護し、完成していない成果物と失敗・キャンセルの履歴は既定24時間で回収する。
+      手動削除は成果物ディレクトリを先に退避してから履歴を消し、途中でdaemonが停止した場合も起動時に削除を完了する。
+      削除済み楽曲のURLは以後404を返す。
+    </p>
+    <h3>楽曲ライブラリ API</h3>
+    <dl>
+      <dt><code>GET /v1/music/tracks</code></dt>
+      <dd>
+        完成した全楽曲を生成日時の新しい順に返す。応答はtracks、検索結果全体のtotal、続きがある場合のnextCursor。
+      </dd>
+      <dt><code>GET /v1/music/tracks?q=ピアノ&amp;favorite=true&amp;limit=50</code></dt>
+      <dd>
+        qは曲名・prompt・歌詞・タグの部分一致検索。Unicode
+        NFKC正規化と英字の大小文字無視を行い、空白で区切った語をすべて含む曲を返す。favoriteは省略・true・false、limitは1〜100（既定50）。nextCursorをcursorに指定して続きを取得する。
+      </dd>
+      <dt><code>GET /v1/music/tracks/:id</code></dt>
+      <dd>
+        曲名、タグ、生成条件、お気に入り状態、音声・metadataの取得URLを返す。生成要求のtitle（200文字以内）とtags（各64文字以内・32件以内）は任意。既存曲などtitleがない場合はpromptの先頭200文字を曲名にする。
+      </dd>
+      <dt><code>GET /v1/music/tracks/:id/audio</code></dt>
+      <dd>保存済み音声を返す。HTTP Rangeに対応し、途中シークに利用できる。モデル起動は不要。</dd>
+      <dt><code>GET /v1/music/tracks/:id/metadata</code></dt>
+      <dd>再現用metadataを返す。daemon再起動後も保存済み曲を復元する。</dd>
+      <dt><code>DELETE /v1/music/tracks/:id</code></dt>
+      <dd>
+        音声、metadata、ジョブ履歴、お気に入り登録をまとめて削除し、204を返す。生成中は409、存在しない曲は404。
+      </dd>
+    </dl>
     <h3>お気に入り API</h3>
     <dl>
       <dt><code>PUT /v1/music/generations/:id/favorite</code></dt>
       <dd>完了済み楽曲を冪等にお気に入りへ登録し、再生用 URL を返す。</dd>
       <dt><code>GET /v1/music/favorites</code></dt>
-      <dd>お気に入りを登録日時の新しい順に返す。保存済み metadata から起動時に復元する。</dd>
+      <dd>
+        お気に入りを登録日時の新しい順に返す。任意のqでライブラリと同じ検索ができる。保存済み
+        metadata から起動時に復元する。
+      </dd>
       <dt><code>GET /v1/music/favorites/:id</code></dt>
       <dd>お気に入り1件と、音声・metadataの取得URLを返す。</dd>
       <dt><code>GET /v1/music/favorites/:id/audio</code></dt>
@@ -109,7 +144,7 @@
       <dt><code>GET /v1/music/favorites/:id/metadata</code></dt>
       <dd>再現用metadataをJSONファイルとして返す。</dd>
       <dt><code>DELETE /v1/music/generations/:id/favorite</code></dt>
-      <dd>お気に入りを解除し、通常の保持期限と20 GiB枠へ戻す。</dd>
+      <dd>お気に入りを解除し、通常の20 GiB枠へ戻す。既定では楽曲の保存期限は変わらない。</dd>
     </dl>
   </section>
   <section id="ace-step-adapter">
@@ -325,9 +360,11 @@
       <dt><code>LARM_MUSIC_MAX_AUDIO_BYTES</code></dt>
       <dd>単一出力の上限。既定は 512 MiB。</dd>
       <dt><code>LARM_MUSIC_ARTIFACT_RETENTION_SECONDS</code></dt>
-      <dd>Opus、MP3、FLAC、および通常の成果物の保持期限。既定は 86400 秒。</dd>
+      <dd>通常曲の保持期限。既定は0（期限なし）。正の値を指定した場合のみ期限で削除する。</dd>
       <dt><code>LARM_MUSIC_WAV_RETENTION_SECONDS</code></dt>
-      <dd>WAV の短期保持期限。既定は 3600 秒。</dd>
+      <dd>
+        通常曲の保持期限が正の場合に適用するWAVの上限。既定は3600秒。期限なし設定では完成したWAVも保存する。
+      </dd>
       <dt><code>LARM_MUSIC_ARTIFACT_MAX_BYTES</code></dt>
       <dd>成果物 root 全体の容量上限。既定は 50 GiB。</dd>
       <dt><code>LARM_MUSIC_FAVORITE_MAX_BYTES</code></dt>

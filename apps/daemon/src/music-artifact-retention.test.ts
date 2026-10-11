@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MusicArtifactRetention } from "./music-artifact-retention";
@@ -65,7 +65,7 @@ test("Opus metadata preserves favorites and uses regular retention", async () =>
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("favorites ignore TTL but stay inside their reserved capacity", async () => {
+test("favorites ignore TTL and are not evicted at capacity", async () => {
   const root = await mkdtemp(join(tmpdir(), "larm-music-favorites-"));
   try {
     const oldest = await artifact(root, "music_favorite_old", "mp3", "2026-09-20T10:00:00.000Z", 800, true);
@@ -80,15 +80,16 @@ test("favorites ignore TTL but stay inside their reserved capacity", async () =>
       now: () => Date.parse("2026-09-24T12:00:00.000Z"),
     });
 
-    expect(await retention.prune()).toEqual(["music_favorite_old"]);
-    expect(await lstat(oldest).catch(() => undefined)).toBeUndefined();
+    expect(await retention.prune()).toEqual([]);
+    expect((await lstat(oldest)).isDirectory()).toBeTrue();
+    await expect(retention.assertCapacity(1, true)).rejects.toThrow("storage is full");
     expect((await lstat(newest)).isDirectory()).toBeTrue();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("capacity pruning removes oldest artifacts first", async () => {
+test("capacity rejects new data without removing saved tracks", async () => {
   const root = await mkdtemp(join(tmpdir(), "larm-music-capacity-"));
   try {
     const oldest = await artifact(root, "music_oldest", "mp3", "2026-09-24T10:00:00.000Z", 800);
@@ -104,10 +105,42 @@ test("capacity pruning removes oldest artifacts first", async () => {
       now: () => Date.parse("2026-09-24T12:00:00.000Z"),
     });
 
-    expect(await retention.prune()).toEqual(["music_oldest"]);
-    expect(await lstat(oldest).catch(() => undefined)).toBeUndefined();
+    expect(await retention.prune()).toEqual([]);
+    expect((await lstat(oldest)).isDirectory()).toBeTrue();
+    await expect(retention.assertCapacity(1, false)).rejects.toThrow("storage is full");
     expect((await lstat(newest)).isDirectory()).toBeTrue();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+
+test("zero retention preserves all completed formats regardless of age", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-music-persistent-"));
+  try {
+    for (const format of ["opus", "mp3", "wav"] as const) {
+      await artifact(root, `music_${format}`, format, "2020-01-01T00:00:00.000Z", 100);
+    }
+    const retention = new MusicArtifactRetention({ artifactRoot: root, retentionMs: 0,
+      wavRetentionMs: 3_600_000, maxBytes: 10_000, favoriteMaxBytes: 5_000 });
+    expect(await retention.prune()).toEqual([]);
+    expect(await retention.list()).toHaveLength(3);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("indefinite storage still cleans abandoned partial saves and protects active jobs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-music-partial-"));
+  try {
+    for (const id of ["music_partial", "music_active"]) {
+      const directory = join(root, "2026", "09", id);
+      await mkdir(directory, { recursive: true });
+      const file = join(directory, "output.opus.tmp");
+      await writeFile(file, "partial");
+      await utimes(file, new Date("2020-01-01"), new Date("2020-01-01"));
+    }
+    const retention = new MusicArtifactRetention({ artifactRoot: root, retentionMs: 0,
+      wavRetentionMs: 3_600_000, maxBytes: 10_000, favoriteMaxBytes: 5_000 });
+    expect(await retention.prune(new Set(["music_active"]))).toEqual(["music_partial"]);
+    expect((await retention.list()).map((artifact) => artifact.jobId)).toEqual(["music_active"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

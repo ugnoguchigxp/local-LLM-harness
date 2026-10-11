@@ -501,7 +501,7 @@ export function parseDaemonConfig(
       512 * 1024 * 1024,
       { min: 1, max: 2 * 1024 * 1024 * 1024, integer: true },
     ),
-    musicArtifactRetentionMs: secondsSetting(
+    musicArtifactRetentionMs: !env.LARM_MUSIC_ARTIFACT_RETENTION_SECONDS || env.LARM_MUSIC_ARTIFACT_RETENTION_SECONDS === "0" ? 0 : secondsSetting(
       env,
       "LARM_MUSIC_ARTIFACT_RETENTION_SECONDS",
       24 * 60 * 60,

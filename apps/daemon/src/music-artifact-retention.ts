@@ -1,5 +1,6 @@
 import { lstat, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve, sep } from "node:path";
+import { MusicProviderError } from "./music-errors";
 
 export type StoredArtifact = {
   jobId: string;
@@ -8,6 +9,7 @@ export type StoredArtifact = {
   bytes: number;
   createdAtMs: number;
   favorite: boolean;
+  complete: boolean;
   favoritedAtMs?: number;
 };
 
@@ -35,37 +37,14 @@ export class MusicArtifactRetention {
     const now = this.options.now?.() ?? Date.now();
     const expired = new Set(artifacts.filter((artifact) => {
       if (protectedJobIds.has(artifact.jobId)) return false;
+      if (!artifact.complete) return artifact.createdAtMs + 86_400_000 <= now;
       if (artifact.favorite) return false;
+      if (this.options.retentionMs === 0) return false;
       const retentionMs = artifact.format === "wav"
         ? Math.min(this.options.retentionMs, this.options.wavRetentionMs)
         : this.options.retentionMs;
       return artifact.createdAtMs + retentionMs <= now;
     }).map((artifact) => artifact.jobId));
-
-    const regularMaxBytes = Math.max(0, this.options.maxBytes - this.options.favoriteMaxBytes);
-    for (const favorite of [false, true]) {
-      let retainedBytes = artifacts
-        .filter((artifact) => artifact.favorite === favorite && !expired.has(artifact.jobId))
-        .reduce((total, artifact) => total + artifact.bytes, 0);
-      const limit = favorite ? this.options.favoriteMaxBytes : regularMaxBytes;
-      const candidates = artifacts
-        .filter((artifact) => artifact.favorite === favorite)
-        .sort((left, right) => {
-          const leftAge = favorite ? left.favoritedAtMs ?? left.createdAtMs : left.createdAtMs;
-          const rightAge = favorite ? right.favoritedAtMs ?? right.createdAtMs : right.createdAtMs;
-          return leftAge - rightAge || left.jobId.localeCompare(right.jobId);
-        });
-      for (const artifact of candidates) {
-        if (
-          artifact.favorite !== favorite
-          || expired.has(artifact.jobId)
-          || protectedJobIds.has(artifact.jobId)
-          || retainedBytes <= limit
-        ) continue;
-        expired.add(artifact.jobId);
-        retainedBytes -= artifact.bytes;
-      }
-    }
 
     const removed: string[] = [];
     for (const artifact of artifacts) {
@@ -78,6 +57,19 @@ export class MusicArtifactRetention {
 
   async list(): Promise<readonly StoredArtifact[]> {
     return await this.scan();
+  }
+
+  // The caller serializes this check with writes, deletions and favorite changes.
+  // A full library rejects new data instead of evicting a saved song.
+  async assertCapacity(bytes: number, favorite: boolean, replacingJobId?: string): Promise<void> {
+    const artifacts = (await this.scan()).filter((artifact) => artifact.jobId !== replacingJobId);
+    const total = artifacts.reduce((sum, artifact) => sum + artifact.bytes, 0) + bytes;
+    const bucket = artifacts.filter((artifact) => artifact.favorite === favorite)
+      .reduce((sum, artifact) => sum + artifact.bytes, 0) + bytes;
+    const limit = favorite ? this.options.favoriteMaxBytes : this.options.maxBytes - this.options.favoriteMaxBytes;
+    if (total > this.options.maxBytes || bucket > limit) {
+      throw new MusicProviderError("music_storage_full", "music storage is full; delete unwanted tracks or increase the storage limit");
+    }
   }
 
   private async scan(): Promise<StoredArtifact[]> {
@@ -116,10 +108,14 @@ export class MusicArtifactRetention {
   private async inspect(directory: string): Promise<StoredArtifact | undefined> {
     const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
     const files = entries.filter((entry) => entry.isFile() && !entry.isSymbolicLink());
-    const stats = await Promise.all(files.map(async (entry) => ({
-      name: entry.name,
-      info: await stat(join(directory, entry.name)),
-    })));
+    const observed = await Promise.all(files.map(async (entry) => {
+      const info = await stat(join(directory, entry.name)).catch((error) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      });
+      return info ? { name: entry.name, info } : undefined;
+    }));
+    const stats = observed.filter((entry) => entry !== undefined);
     if (stats.length === 0) return undefined;
     const fallbackId = basename(directory);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(fallbackId)) return undefined;
@@ -134,6 +130,7 @@ export class MusicArtifactRetention {
       bytes: stats.reduce((total, entry) => total + entry.info.size, 0),
       createdAtMs: Math.max(...stats.map((entry) => entry.info.mtimeMs)),
       favorite: false,
+      complete: false,
     };
     let metadata: unknown;
     try {
@@ -164,6 +161,7 @@ export class MusicArtifactRetention {
       bytes: fallback.bytes,
       createdAtMs: Number.isFinite(parsedCreatedAt) ? parsedCreatedAt : audioStat.mtimeMs,
       favorite: value.favorite === true,
+      complete: true,
       ...(typeof value.favoritedAt === "string" && Number.isFinite(Date.parse(value.favoritedAt))
         ? { favoritedAtMs: Date.parse(value.favoritedAt) }
         : {}),

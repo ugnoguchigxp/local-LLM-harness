@@ -91,7 +91,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
           "text/event-stream": { schema: { $ref: "#/components/schemas/ServerSentEvents" } },
         };
       }
-      if (operationId === "getMusicGenerationAudio" || operationId === "getMusicFavoriteAudio") {
+      if (operationId === "getMusicGenerationAudio" || operationId === "getMusicFavoriteAudio" || operationId === "getMusicTrackAudio") {
         return {
           "audio/ogg": { schema: { $ref: "#/components/schemas/Binary" } },
           "audio/wav": { schema: { $ref: "#/components/schemas/Binary" } },
@@ -109,6 +109,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
         operationId === "releaseAgentConnection"
         || operationId === "deleteContext"
         || operationId === "unfavoriteMusicGeneration"
+        || operationId === "deleteMusicTrack"
       ) return undefined;
       return { "application/json": { schema: { $ref: `#/components/schemas/${successSchema}` } } };
     })();
@@ -139,7 +140,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       ...(operationId === "createImageGeneration" ? {
         description: "Synchronous Qwen-Image 2.1 Turbo generation with a fixed eight-step schedule. Defaults: 512x512, seed 0, WebP. Width and height independently accept any integer from 100 through 1280. Generation rounds each axis up to a multiple of 32 and resizes to the exact requested output dimensions; PNG is optional. Control starts and loads the selected model, stores the artifact, and stops the worker before returning 200. Optional model must match the advertised service. Read artifacts[0] or artifact; contentUrl is relative to Control and remains available after worker shutdown. Cold startup is included in request latency; do not automatically resubmit POST.",
       } : operationId === "createMusicGeneration" ? {
-        description: "Returns a 202 job. Default output is Ogg Opus at fixed 64 kbps and 48 kHz; mp3, wav, and flac remain explicit options. Opus is encoded from temporary float32 WAV; intermediates are deleted on success or failure. Control starts the model on demand; poll the job or follow events. Completed means the artifact is stored and the worker stopped. Download result.audioUrl relative to Control. Submit once; polling does not start a model.",
+        description: "Returns a 202 job. Completed tracks are stored indefinitely by default and listed or searched at GET /v1/music/tracks. Default output is Ogg Opus at fixed 64 kbps and 48 kHz; mp3, wav, and flac remain explicit options. Opus is encoded from temporary float32 WAV; intermediates are deleted on success or failure. Control starts the model on demand; poll the job or follow events. Completed means the artifact is stored and the worker stopped. Download result.audioUrl relative to Control. Submit once; polling does not start a model.",
       } : {}),
       ...(lifecycle.classification === "compatibility" ? { deprecated: true } : {}),
       "x-larm-lifecycle": lifecycle,
@@ -189,6 +190,17 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
             description: "Required when X-LARM-Exclusive-Execution is true.",
             schema: { type: "string", minLength: 1 },
           }],
+        }
+        : operationId === "listMusicTracks" || operationId === "listMusicFavorites"
+        ? {
+          parameters: [
+            { name: "q", in: "query", required: false, description: "Case-insensitive words matched against title, prompt, lyrics and tags; all words must match.", schema: { type: "string", maxLength: 512 } },
+            ...(operationId === "listMusicTracks" ? [
+              { name: "favorite", in: "query", required: false, schema: { type: "string", enum: ["true", "false"] } },
+              { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 100, default: 50 } },
+              { name: "cursor", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 512 } },
+            ] : []),
+          ],
         }
         : operationId === "listVoices"
         ? {

@@ -42,7 +42,7 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.musicArtifactRoot).toBe("/var/lib/larm/music");
   expect(config.musicPollIntervalMs).toBe(1_000);
   expect(config.musicMaxAudioBytes).toBe(512 * 1024 * 1024);
-  expect(config.musicArtifactRetentionMs).toBe(24 * 60 * 60 * 1_000);
+  expect(config.musicArtifactRetentionMs).toBe(0);
   expect(config.musicWavRetentionMs).toBe(60 * 60 * 1_000);
   expect(config.musicArtifactMaxBytes).toBe(50 * 1024 * 1024 * 1024);
   expect(config.musicFavoriteMaxBytes).toBe(30 * 1024 * 1024 * 1024);
@@ -108,6 +108,9 @@ test("daemon configuration rejects invalid numbers", () => {
     .toThrow(/absolute path/);
   expect(() => parseDaemonConfig({ LARM_MUSIC_ARTIFACT_ROOT: "relative/music" }))
     .toThrow(/absolute path/);
+  expect(parseDaemonConfig({}).musicArtifactRetentionMs).toBe(0);
+  expect(parseDaemonConfig({ LARM_MUSIC_ARTIFACT_RETENTION_SECONDS: "0" }).musicArtifactRetentionMs).toBe(0);
+  expect(parseDaemonConfig({ LARM_MUSIC_ARTIFACT_RETENTION_SECONDS: "86400" }).musicArtifactRetentionMs).toBe(86_400_000);
   expect(() => parseDaemonConfig({ LARM_MUSIC_UPSTREAM_OUTPUT_ROOT: "relative/output" }))
     .toThrow(/absolute path/);
   expect(() => parseDaemonConfig({ LARM_IMAGE_ARTIFACT_ROOT: "relative/images" }))

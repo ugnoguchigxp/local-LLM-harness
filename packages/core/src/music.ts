@@ -16,6 +16,8 @@ export const musicGenerationStatusSchema = z.enum([
 ]);
 
 export const musicGenerationRequestSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+  tags: z.array(z.string().trim().min(1).max(64)).max(32).optional(),
   prompt: z.string().trim().min(1).max(16_384),
   lyrics: z.string().max(131_072).optional(),
   durationSeconds: z.number().int().min(1).max(600).default(180),
@@ -118,6 +120,42 @@ export const musicFavoriteSchema = z.object({
 export const musicFavoriteListSchema = z.object({
   favorites: z.array(musicFavoriteSchema),
 }).strict();
+
+export const musicTrackSchema = z.object({
+  id: identifierSchema,
+  title: z.string().min(1).max(200),
+  tags: z.array(z.string().min(1).max(64)).max(32),
+  prompt: z.string().min(1).max(16_384),
+  lyrics: z.string().max(131_072).optional(),
+  instrumental: z.boolean(),
+  language: z.string().optional(),
+  provider: identifierSchema,
+  model: identifierSchema,
+  format: musicOutputFormatSchema,
+  durationSeconds: z.number().positive(),
+  createdAt: z.string().datetime(),
+  favorite: z.boolean(),
+  favoritedAt: z.string().datetime().optional(),
+  audioUrl: z.string().startsWith("/"),
+  metadataUrl: z.string().startsWith("/"),
+}).strict();
+
+export const musicTrackQuerySchema = z.object({
+  q: z.string().trim().max(512).optional(),
+  favorite: z.enum(["true", "false"]).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().min(1).max(512).optional(),
+}).strict();
+
+export const musicTrackListSchema = z.object({
+  tracks: z.array(musicTrackSchema),
+  total: z.number().int().nonnegative(),
+  nextCursor: z.string().optional(),
+}).strict();
+
+export type MusicTrack = z.infer<typeof musicTrackSchema>;
+export type MusicTrackQuery = z.infer<typeof musicTrackQuerySchema>;
+export type MusicTrackList = z.infer<typeof musicTrackListSchema>;
 
 export type MusicGenerationRequest = z.infer<typeof musicGenerationRequestSchema>;
 export type MusicGenerationStatus = z.infer<typeof musicGenerationStatusSchema>;

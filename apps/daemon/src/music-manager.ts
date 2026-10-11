@@ -6,8 +6,10 @@ import type {
   MusicGenerationStatus,
   MusicProvider,
   MusicProviderCapabilities,
+  MusicTrack,
+  MusicTrackQuery,
 } from "@larm/core";
-import { musicArtifactMetadataSchema, musicGenerationJobSchema, musicGenerationRequestSchema } from "@larm/core";
+import { listMusicTracks, musicTrackMatches, musicArtifactMetadataSchema, musicGenerationJobSchema, musicGenerationRequestSchema } from "@larm/core";
 import { mkdirSync, writeFileSync, renameSync, readdirSync, readFileSync } from "node:fs";
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
@@ -25,12 +27,8 @@ type AceStepResult = {
   lm_model?: unknown;
 };
 
-export class MusicProviderError extends Error {
-  constructor(readonly code: string, message: string) {
-    super(message);
-    this.name = "MusicProviderError";
-  }
-}
+export { MusicProviderError } from "./music-errors";
+import { MusicProviderError } from "./music-errors";
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -393,6 +391,7 @@ export class MusicGenerationManager {
   private running = 0;
   private readonly runningJobs = new Map<string, Promise<void>>();
   private closed = false;
+  private storageChain: Promise<void> = Promise.resolve();
   constructor(readonly provider: MusicProvider, private readonly options: {
     artifactRoot: string;
     beginWorkload?: () => () => void;
@@ -408,7 +407,7 @@ export class MusicGenerationManager {
   }) {
     this.retention = new MusicArtifactRetention({
       artifactRoot: options.artifactRoot,
-      retentionMs: options.retentionMs ?? 24 * 60 * 60 * 1_000,
+      retentionMs: options.retentionMs ?? 0,
       wavRetentionMs: options.wavRetentionMs ?? 60 * 60 * 1_000,
       maxBytes: options.maxArtifactBytes ?? 50 * 1024 * 1024 * 1024,
       favoriteMaxBytes: options.favoriteMaxArtifactBytes ?? 30 * 1024 * 1024 * 1024,
@@ -419,6 +418,12 @@ export class MusicGenerationManager {
   async initialize(): Promise<void> {
     mkdirSync(join(this.options.artifactRoot, "jobs"), { recursive: true, mode: 0o750 });
     await mkdir(this.options.artifactRoot, { recursive: true, mode: 0o750 });
+    for (const entry of await readdir(this.options.artifactRoot, { withFileTypes: true })) {
+      const match = /^\.deleted-(music_[a-zA-Z0-9._-]+)$/.exec(entry.name);
+      if (!match || !entry.isDirectory() || entry.isSymbolicLink()) continue;
+      await rm(join(this.options.artifactRoot, "jobs", `${match[1]}.json`), { force: true });
+      await rm(join(this.options.artifactRoot, entry.name), { recursive: true, force: true });
+    }
     await this.pruneArtifacts();
     await this.recoverStoredJobs();
     for (const file of readdirSync(join(this.options.artifactRoot, "jobs"))) {
@@ -428,7 +433,7 @@ export class MusicGenerationManager {
         const publicJob = musicGenerationJobSchema.parse(this.publicJob(saved));
         if (file !== `${publicJob.jobId}.json`) continue;
         const artifact = this.jobs.get(publicJob.jobId);
-        if (!artifact && (this.options.now?.() ?? Date.now()) - Date.parse(publicJob.updatedAt) >= (this.options.retentionMs ?? 86_400_000)) {
+        if (!artifact && (this.options.now?.() ?? Date.now()) - Date.parse(publicJob.updatedAt) >= (this.options.retentionMs || 86_400_000)) {
           await rm(join(this.options.artifactRoot, "jobs", file), { force: true });
           continue;
         }
@@ -467,27 +472,30 @@ export class MusicGenerationManager {
   }
 
   async pruneArtifacts(): Promise<string[]> {
-    const protectedJobIds = new Set([...this.jobs.values()]
-      .filter((job) => !["completed", "failed", "cancelled"].includes(job.status))
-      .map((job) => job.jobId));
-    const removed = await this.retention.prune(protectedJobIds);
-    for (const jobId of removed) {
-      this.jobs.delete(jobId);
-      this.listeners.delete(jobId);
-      await rm(join(this.options.artifactRoot, "jobs", `${jobId}.json`), { force: true });
-    }
-    for (const [id, job] of this.jobs) {
-      if (!job.result && ["failed", "cancelled"].includes(job.status) && (this.options.now?.() ?? Date.now()) - Date.parse(job.updatedAt) >= (this.options.retentionMs ?? 86_400_000)) {
-        await rm(join(this.options.artifactRoot, "jobs", `${id}.json`), { force: true });
-        this.jobs.delete(id); this.listeners.delete(id);
+    return this.withStorage(async () => {
+      const protectedJobIds = new Set([...this.jobs.values()]
+        .filter((job) => !["completed", "failed", "cancelled"].includes(job.status))
+        .map((job) => job.jobId));
+      const removed = await this.retention.prune(protectedJobIds);
+      for (const jobId of removed) {
+        this.jobs.delete(jobId);
+        this.listeners.delete(jobId);
+        await rm(join(this.options.artifactRoot, "jobs", `${jobId}.json`), { force: true });
       }
-    }
-    return removed;
+      for (const [id, job] of this.jobs) {
+        if (!job.result && ["failed", "cancelled"].includes(job.status) && (this.options.now?.() ?? Date.now()) - Date.parse(job.updatedAt) >= (this.options.retentionMs || 86_400_000)) {
+          await rm(join(this.options.artifactRoot, "jobs", `${id}.json`), { force: true });
+          this.jobs.delete(id); this.listeners.delete(id);
+        }
+      }
+      return removed;
+    });
   }
 
-  listFavorites(): MusicFavorite[] {
+  listFavorites(q?: string): MusicFavorite[] {
     return [...this.jobs.values()]
-      .filter((job) => job.status === "completed" && job.result && job.favorite && job.favoritedAt)
+      .filter((job) => job.status === "completed" && job.result && job.favorite && job.favoritedAt
+        && musicTrackMatches(this.trackView(job), q))
       .map((job) => this.favoriteView(job))
       .sort((left, right) => right.favoritedAt.localeCompare(left.favoritedAt));
   }
@@ -500,36 +508,44 @@ export class MusicGenerationManager {
   }
 
   async favorite(jobId: string): Promise<MusicFavorite | undefined> {
-    const job = this.jobs.get(jobId);
-    if (job?.status !== "completed" || !job.result || !job.metadataPath) return undefined;
-    const metadata = musicArtifactMetadataSchema.parse(JSON.parse(await readFile(job.metadataPath, "utf8")));
-    const favoritedAt = job.favoritedAt ?? this.isoNow();
-    const updated = { ...metadata, favorite: true, favoritedAt };
-    const temporary = `${job.metadataPath}.favorite.tmp`;
-    await writeFile(temporary, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o640 });
-    await rename(temporary, job.metadataPath);
-    job.favorite = true;
-    job.favoritedAt = favoritedAt;
-    void this.pruneArtifacts().catch((error) => {
-      console.warn(`music artifact pruning failed: ${error instanceof Error ? error.message : String(error)}`);
+    return this.withStorage(async () => {
+      const job = this.jobs.get(jobId);
+      if (job?.status !== "completed" || !job.result || !job.metadataPath) return undefined;
+      const metadata = musicArtifactMetadataSchema.parse(JSON.parse(await readFile(job.metadataPath, "utf8")));
+      const favoritedAt = job.favoritedAt ?? this.isoNow();
+      const updated = { ...metadata, favorite: true, favoritedAt };
+      await this.retention.assertCapacity((await lstat(job.audioPath!)).size
+        + Buffer.byteLength(`${JSON.stringify(updated, null, 2)}\n`), updated.favorite, job.jobId);
+      const temporary = `${job.metadataPath}.favorite.tmp`;
+      await writeFile(temporary, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o640 });
+      await rename(temporary, job.metadataPath);
+      job.favorite = true;
+      job.favoritedAt = favoritedAt;
+      void this.pruneArtifacts().catch((error) => {
+        console.warn(`music artifact pruning failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+      return this.favoriteView(job);
     });
-    return this.favoriteView(job);
   }
 
   async unfavorite(jobId: string): Promise<boolean> {
-    const job = this.jobs.get(jobId);
-    if (job?.status !== "completed" || !job.metadataPath) return false;
-    const metadata = musicArtifactMetadataSchema.parse(JSON.parse(await readFile(job.metadataPath, "utf8")));
-    const { favoritedAt: _favoritedAt, ...updated } = { ...metadata, favorite: false };
-    const temporary = `${job.metadataPath}.favorite.tmp`;
-    await writeFile(temporary, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o640 });
-    await rename(temporary, job.metadataPath);
-    job.favorite = false;
-    delete job.favoritedAt;
-    void this.pruneArtifacts().catch((error) => {
-      console.warn(`music artifact pruning failed: ${error instanceof Error ? error.message : String(error)}`);
+    return this.withStorage(async () => {
+      const job = this.jobs.get(jobId);
+      if (job?.status !== "completed" || !job.metadataPath) return false;
+      const metadata = musicArtifactMetadataSchema.parse(JSON.parse(await readFile(job.metadataPath, "utf8")));
+      const { favoritedAt: _favoritedAt, ...updated } = { ...metadata, favorite: false };
+      await this.retention.assertCapacity((await lstat(job.audioPath!)).size
+        + Buffer.byteLength(`${JSON.stringify(updated, null, 2)}\n`), updated.favorite, job.jobId);
+      const temporary = `${job.metadataPath}.favorite.tmp`;
+      await writeFile(temporary, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o640 });
+      await rename(temporary, job.metadataPath);
+      job.favorite = false;
+      delete job.favoritedAt;
+      void this.pruneArtifacts().catch((error) => {
+        console.warn(`music artifact pruning failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+      return true;
     });
-    return true;
   }
 
   create(request: MusicGenerationRequest): MusicGenerationJob {
@@ -630,6 +646,7 @@ export class MusicGenerationManager {
     let failure: unknown;
     const signal = AbortSignal.any([job.abort.signal, AbortSignal.timeout(900_000)]);
     try {
+      await this.withStorage(() => this.retention.assertCapacity(0, false));
       const generated = await this.provider.generate(job.request, {
         jobId: job.jobId,
         signal,
@@ -637,49 +654,58 @@ export class MusicGenerationManager {
       });
       release = generated.release;
       if (job.abort.signal.aborted || job.status === "cancelled") return;
-      const date = new Date(this.options.now?.() ?? Date.now());
-      const directory = join(
-        this.options.artifactRoot,
-        String(date.getUTCFullYear()),
-        String(date.getUTCMonth() + 1).padStart(2, "0"),
-        job.jobId,
-      );
-      await mkdir(directory, { recursive: true, mode: 0o750 });
-      const audioPath = join(directory, `output.${generated.format}`);
-      const metadataPath = join(directory, "metadata.json");
-      const audioTmp = `${audioPath}.tmp`;
-      const metadataTmp = `${metadataPath}.tmp`;
-      const { audio, release: _release, ...providerResult } = generated;
-      const result: MusicGenerationResult = {
-        id: job.jobId,
-        provider: this.provider.id,
-        ...providerResult,
-        audioUrl: `/v1/music/generations/${encodeURIComponent(job.jobId)}/audio`,
-        metadataUrl: `/v1/music/generations/${encodeURIComponent(job.jobId)}/metadata`,
-      };
-      const metadata = {
-        ...result,
-        audioFile: `output.${generated.format}`,
-        prompt: job.request.prompt,
-        ...(job.request.lyrics ? { lyrics: job.request.lyrics } : {}),
-        request: job.request,
-        createdAt: job.createdAt,
-        favorite: false,
-      };
-      await writeFile(audioTmp, audio, { mode: 0o640 });
-      await writeFile(metadataTmp, `${JSON.stringify(metadata, null, 2)}\n`, { mode: 0o640 });
-      if (job.abort.signal.aborted) {
-        await Promise.all([
-          rm(audioTmp, { force: true }),
-          rm(metadataTmp, { force: true }),
-        ]);
-        return;
-      }
-      await rename(audioTmp, audioPath);
-      await rename(metadataTmp, metadataPath);
-      job.audioPath = audioPath;
-      job.metadataPath = metadataPath;
-      job.result = result;
+      await this.withStorage(async () => {
+        const date = new Date(this.options.now?.() ?? Date.now());
+        const directory = join(
+          this.options.artifactRoot,
+          String(date.getUTCFullYear()),
+          String(date.getUTCMonth() + 1).padStart(2, "0"),
+          job.jobId,
+        );
+        const audioPath = join(directory, `output.${generated.format}`);
+        const metadataPath = join(directory, "metadata.json");
+        const audioTmp = `${audioPath}.tmp`;
+        const metadataTmp = `${metadataPath}.tmp`;
+        const { audio, release: _release, ...providerResult } = generated;
+        const result: MusicGenerationResult = {
+          id: job.jobId,
+          provider: this.provider.id,
+          ...providerResult,
+          audioUrl: `/v1/music/generations/${encodeURIComponent(job.jobId)}/audio`,
+          metadataUrl: `/v1/music/generations/${encodeURIComponent(job.jobId)}/metadata`,
+        };
+        const metadata = {
+          ...result,
+          audioFile: `output.${generated.format}`,
+          prompt: job.request.prompt,
+          ...(job.request.lyrics ? { lyrics: job.request.lyrics } : {}),
+          request: job.request,
+          createdAt: job.createdAt,
+          favorite: false,
+        };
+        const metadataText = `${JSON.stringify(metadata, null, 2)}\n`;
+        await this.retention.assertCapacity(audio.byteLength + Buffer.byteLength(metadataText), false);
+        signal.throwIfAborted();
+        await mkdir(directory, { recursive: true, mode: 0o750 });
+        try {
+          await writeFile(audioTmp, audio, { mode: 0o640 });
+          await writeFile(metadataTmp, metadataText, { mode: 0o640 });
+          if (job.abort.signal.aborted) {
+            await Promise.all([
+              rm(audioTmp, { force: true }),
+              rm(metadataTmp, { force: true }),
+            ]);
+            return;
+          }
+          await rename(audioTmp, audioPath);
+          await rename(metadataTmp, metadataPath);
+          job.audioPath = audioPath;
+          job.metadataPath = metadataPath;
+          job.result = result;
+        } finally {
+          await Promise.all([rm(audioTmp, { force: true }), rm(metadataTmp, { force: true })]);
+        }
+      });
       signal.throwIfAborted();
       void this.pruneArtifacts().catch((error) => {
         console.warn(`music artifact pruning failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -746,6 +772,66 @@ export class MusicGenerationManager {
       ...value
     } = job;
     return structuredClone(value);
+  }
+
+  listTracks(query: MusicTrackQuery) {
+    return listMusicTracks([...this.jobs.values()]
+      .filter((job) => job.status === "completed" && job.result)
+      .map((job) => this.trackView(job)), query);
+  }
+
+  getTrack(id: string): MusicTrack | undefined {
+    const job = this.jobs.get(id);
+    return job?.status === "completed" && job.result ? this.trackView(job) : undefined;
+  }
+
+  async deleteTrack(id: string): Promise<boolean> {
+    return this.withStorage(async () => {
+      const job = this.jobs.get(id);
+      if (!job) return false;
+      if (!["completed", "failed", "cancelled"].includes(job.status)) {
+        throw new MusicProviderError("music_track_busy", "cannot delete a music job while it is running");
+      }
+      if (!job.audioPath) return false;
+      const directory = resolve(job.audioPath, "..");
+      const trash = join(this.options.artifactRoot, `.deleted-${id}`);
+      // Hide the entire artifact atomically before removing the journal. A
+      // crash cannot rediscover a deleted track as a completed artifact.
+      await rename(directory, trash);
+      this.jobs.delete(id);
+      this.listeners.delete(id);
+      await rm(join(this.options.artifactRoot, "jobs", `${id}.json`), { force: true });
+      await rm(trash, { recursive: true, force: true });
+      return true;
+    });
+  }
+
+  private withStorage<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.storageChain.then(work);
+    this.storageChain = result.then(() => {}, () => {});
+    return result;
+  }
+
+  private trackView(job: InternalJob): MusicTrack {
+    const result = job.result!;
+    return {
+      id: job.jobId,
+      title: job.request.title ?? job.request.prompt.slice(0, 200),
+      tags: [...(job.request.tags ?? [])],
+      prompt: job.request.prompt,
+      ...(job.request.lyrics === undefined ? {} : { lyrics: job.request.lyrics }),
+      instrumental: job.request.instrumental,
+      ...(job.request.language ? { language: job.request.language } : {}),
+      provider: result.provider,
+      model: result.model,
+      format: result.format,
+      durationSeconds: result.durationSeconds,
+      createdAt: job.createdAt,
+      favorite: job.favorite ?? false,
+      ...(job.favoritedAt ? { favoritedAt: job.favoritedAt } : {}),
+      audioUrl: `/v1/music/tracks/${encodeURIComponent(job.jobId)}/audio`,
+      metadataUrl: `/v1/music/tracks/${encodeURIComponent(job.jobId)}/metadata`,
+    };
   }
 
   private favoriteView(job: InternalJob): MusicFavorite {

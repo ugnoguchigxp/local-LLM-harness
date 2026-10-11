@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { musicGenerationRequestSchema } from "@larm/core";
+import { InvalidMusicCursorError, musicGenerationRequestSchema, musicTrackQuerySchema } from "@larm/core";
 import { errorBody, readJson } from "../app-http";
 import { MusicProviderError, type MusicGenerationManager } from "../music-manager";
 
@@ -8,6 +8,12 @@ export function registerMusicRoutes(app: Hono, options: {
   maxBodyBytes: number;
 }): void {
   const { manager } = options;
+  const mutationError = (c: Context, error: unknown) => {
+    if (error instanceof MusicProviderError) {
+      return c.json(errorBody(error.code, error.message), error.code === "music_storage_full" ? 507 : 409);
+    }
+    throw error;
+  };
   app.get("/v1/music/providers", async (c) => {
     if (!manager) {
       return c.json(errorBody("not_configured", "music generation is not configured"), 503);
@@ -48,6 +54,32 @@ export function registerMusicRoutes(app: Hono, options: {
     if (!job) return c.json(errorBody("not_found", "music generation job not found"), 404);
     c.header("cache-control", "no-store");
     return c.json(job);
+  });
+
+  app.get("/v1/music/tracks", (c) => {
+    if (!manager) return c.json(errorBody("not_configured", "music generation is not configured"), 503);
+    const query = musicTrackQuerySchema.safeParse(c.req.query());
+    if (!query.success) return c.json(errorBody("invalid_music_query", "invalid music library query"), 400);
+    c.header("cache-control", "no-store");
+    try { return c.json(manager.listTracks(query.data)); }
+    catch (error) {
+      if (error instanceof InvalidMusicCursorError) return c.json(errorBody("invalid_music_cursor", error.message), 400);
+      throw error;
+    }
+  });
+
+  app.get("/v1/music/tracks/:id", (c) => {
+    const track = manager?.getTrack(c.req.param("id"));
+    if (!track) return c.json(errorBody("not_found", "music track not found"), 404);
+    c.header("cache-control", "no-store");
+    return c.json(track);
+  });
+
+  app.delete("/v1/music/tracks/:id", async (c) => {
+    try {
+      if (!await manager?.deleteTrack(c.req.param("id"))) return c.json(errorBody("not_found", "music track not found"), 404);
+      return c.body(null, 204);
+    } catch (error) { return mutationError(c, error); }
   });
 
   app.delete("/v1/music/generations/:id", async (c) => {
@@ -127,13 +159,23 @@ export function registerMusicRoutes(app: Hono, options: {
   };
   app.get("/v1/music/generations/:id/audio", (c) => musicArtifact(c, "audio"));
   app.get("/v1/music/generations/:id/metadata", (c) => musicArtifact(c, "metadata"));
+  app.get("/v1/music/tracks/:id/audio", (c) => {
+    if (!manager?.getTrack(c.req.param("id"))) return c.json(errorBody("not_found", "music track not found"), 404);
+    return musicArtifact(c, "audio");
+  });
+  app.get("/v1/music/tracks/:id/metadata", (c) => {
+    if (!manager?.getTrack(c.req.param("id"))) return c.json(errorBody("not_found", "music track not found"), 404);
+    return musicArtifact(c, "metadata");
+  });
 
   app.get("/v1/music/favorites", (c) => {
     if (!manager) {
       return c.json(errorBody("not_configured", "music generation is not configured"), 503);
     }
     c.header("cache-control", "no-store");
-    return c.json({ favorites: manager.listFavorites() });
+    const query = musicTrackQuerySchema.pick({ q: true }).safeParse(c.req.query());
+    if (!query.success) return c.json(errorBody("invalid_music_query", "invalid music favorite query"), 400);
+    return c.json({ favorites: manager.listFavorites(query.data.q) });
   });
 
   app.get("/v1/music/favorites/:id", (c) => {
@@ -147,13 +189,17 @@ export function registerMusicRoutes(app: Hono, options: {
   app.get("/v1/music/favorites/:id/metadata", (c) => musicArtifact(c, "metadata", true));
 
   app.put("/v1/music/generations/:id/favorite", async (c) => {
-    const favorite = await manager?.favorite(c.req.param("id"));
+    let favorite;
+    try { favorite = await manager?.favorite(c.req.param("id")); }
+    catch (error) { return mutationError(c, error); }
     if (!favorite) return c.json(errorBody("not_found", "completed music generation not found"), 404);
     return c.json(favorite);
   });
 
   app.delete("/v1/music/generations/:id/favorite", async (c) => {
-    const removed = await manager?.unfavorite(c.req.param("id"));
+    let removed;
+    try { removed = await manager?.unfavorite(c.req.param("id")); }
+    catch (error) { return mutationError(c, error); }
     if (!removed) return c.json(errorBody("not_found", "completed music generation not found"), 404);
     return c.body(null, 204);
   });

@@ -80,6 +80,7 @@ LARM は、GPU ドライバ、推論エンジン、モデルのインストー�
 | Managed Context | `GET /v1/context-status`、`POST /v1/contexts`、`POST /v1/context-views`、`GET /v1/context-operations/:id` |
 | 音声 | `POST /v1/audio/transcriptions`、`POST /v1/audio/speech`、`GET /v1/audio/voices` |
 | 楽曲生成 | `POST /v1/music/generations`（既定はOpus・64 kbps・48 kHz）、ジョブ確認と音声取得 |
+| 楽曲ライブラリ | `GET /v1/music/tracks?q=検索語`、`GET /v1/music/favorites`、`GET /v1/music/tracks/:id/audio`、`DELETE /v1/music/tracks/:id` |
 | Embedding | `GET /v3/agent-profiles`で契約を発見し、Agent Connection claim後に`POST /v1/embed` |
 | Agent 接続 | 正本: `GET /v3/agent-profiles`で発見し、`POST /v1/agent-connections`で接続。Profile v1／v2 discoveryは互換専用 |
 | 成果物とリリース | `/v1/artifacts`、`/v1/runtime-releases`、`/v1/deployments` |
@@ -87,7 +88,7 @@ LARM は、GPU ドライバ、推論エンジン、モデルのインストー�
 
 完全なリクエスト・レスポンス定義は、起動中の daemon が返す `/openapi.json` を正本として確認できます。
 
-楽曲生成にはFFmpegの`libopus`エンコーダーと、`LARM_MUSIC_UPSTREAM_OUTPUT_ROOT`で指定するACE-Stepの出力専用ディレクトリが必要です。生成した32 bit浮動小数点WAVをパイプ経由でOpusへ変換し、中間音声は成功・失敗・キャンセル時に削除します。詳細は[楽曲生成仕様](./specs/music-generation-provider.html#opus-encoding)を参照してください。
+楽曲生成にはFFmpegの`libopus`エンコーダーと、`LARM_MUSIC_UPSTREAM_OUTPUT_ROOT`で指定するACE-Stepの出力専用ディレクトリが必要です。生成した32 bit浮動小数点WAVをパイプ経由でOpusへ変換し、中間音声は成功・失敗・キャンセル時に削除します。完成した楽曲は既定で期限なしに保存し、容量上限でも自動削除しません。検索は曲名・生成時の説明・歌詞・タグに対応します。生成時に任意の`title`と`tags`を指定できます。詳細は[楽曲生成仕様](./specs/music-generation-provider.html#opus-encoding)を参照してください。
 
 ### 利用者別の入口
 
