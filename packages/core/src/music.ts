@@ -142,15 +142,23 @@ export const musicTrackSchema = z.object({
 
 export const musicTrackQuerySchema = z.object({
   q: z.string().trim().max(512).optional(),
+  tags: z.string().max(512).transform((value) => value.split(",").map((tag) => tag.trim()))
+    .pipe(z.array(z.string().min(1).max(64)).min(1).max(32)).optional(),
+  sort: z.enum(["createdAt", "relevance"]).optional(),
+  order: z.enum(["asc", "desc"]).optional(),
   favorite: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  cursor: z.string().min(1).max(512).optional(),
+  cursor: z.string().min(1).max(8192).optional(),
 }).strict();
 
 export const musicTrackListSchema = z.object({
   tracks: z.array(musicTrackSchema),
   total: z.number().int().nonnegative(),
   nextCursor: z.string().optional(),
+}).strict();
+
+export const musicTagListSchema = z.object({
+  tags: z.array(z.object({ tag: z.string().min(1).max(64), count: z.number().int().positive() }).strict()),
 }).strict();
 
 export type MusicTrack = z.infer<typeof musicTrackSchema>;

@@ -195,10 +195,13 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
         ? {
           parameters: [
             { name: "q", in: "query", required: false, description: "Case-insensitive words matched against title, prompt, lyrics and tags; all words must match.", schema: { type: "string", maxLength: 512 } },
+            { name: "tags", in: "query", required: false, description: "Comma-separated exact tags; all tags must match after Unicode normalization and case folding. Discover tags and track counts at GET /v1/music/tags.", schema: { type: "string", maxLength: 512 } },
             ...(operationId === "listMusicTracks" ? [
+              { name: "sort", in: "query", required: false, description: "Sort by creation time or keyword relevance. Relevance weights title and tags above prompt and lyrics; ties use newest creation time.", schema: { type: "string", enum: ["createdAt", "relevance"], default: "createdAt" } },
+              { name: "order", in: "query", required: false, schema: { type: "string", enum: ["asc", "desc"], default: "desc" } },
               { name: "favorite", in: "query", required: false, schema: { type: "string", enum: ["true", "false"] } },
               { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 100, default: 50 } },
-              { name: "cursor", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 512 } },
+              { name: "cursor", in: "query", required: false, description: "Continue with the same query, tags, favorite, sort and order settings.", schema: { type: "string", minLength: 1, maxLength: 8192 } },
             ] : []),
           ],
         }

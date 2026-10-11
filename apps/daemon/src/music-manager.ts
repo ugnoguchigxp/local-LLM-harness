@@ -9,7 +9,7 @@ import type {
   MusicTrack,
   MusicTrackQuery,
 } from "@larm/core";
-import { listMusicTracks, musicTrackMatches, musicArtifactMetadataSchema, musicGenerationJobSchema, musicGenerationRequestSchema } from "@larm/core";
+import { deriveMusicTags, listMusicTags, listMusicTracks, musicTrackMatches, musicTrackTagsMatch, musicArtifactMetadataSchema, musicGenerationJobSchema, musicGenerationRequestSchema } from "@larm/core";
 import { mkdirSync, writeFileSync, renameSync, readdirSync, readFileSync } from "node:fs";
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
@@ -492,10 +492,10 @@ export class MusicGenerationManager {
     });
   }
 
-  listFavorites(q?: string): MusicFavorite[] {
+  listFavorites(q?: string, tags?: string[]): MusicFavorite[] {
     return [...this.jobs.values()]
       .filter((job) => job.status === "completed" && job.result && job.favorite && job.favoritedAt
-        && musicTrackMatches(this.trackView(job), q))
+        && musicTrackMatches(this.trackView(job), q) && musicTrackTagsMatch(this.trackView(job), tags))
       .map((job) => this.favoriteView(job))
       .sort((left, right) => right.favoritedAt.localeCompare(left.favoritedAt));
   }
@@ -551,6 +551,7 @@ export class MusicGenerationManager {
   create(request: MusicGenerationRequest): MusicGenerationJob {
     if (request.referenceAudio && !this.provider.capabilities.referenceAudio) throw new MusicProviderError("unsupported_feature", "referenceAudio is not supported by this provider");
     if (this.closed || this.queue.length >= 16) throw new MusicProviderError("queue_full", "music generation queue unavailable");
+    request = { ...request, tags: deriveMusicTags(request) };
     const now = this.isoNow();
     const jobId = `music_${this.options.random?.() ?? crypto.randomUUID()}`;
     const job: InternalJob = {
@@ -780,6 +781,12 @@ export class MusicGenerationManager {
       .map((job) => this.trackView(job)), query);
   }
 
+  listTags() {
+    return listMusicTags([...this.jobs.values()]
+      .filter((job) => job.status === "completed" && job.result)
+      .map((job) => this.trackView(job)));
+  }
+
   getTrack(id: string): MusicTrack | undefined {
     const job = this.jobs.get(id);
     return job?.status === "completed" && job.result ? this.trackView(job) : undefined;
@@ -817,7 +824,7 @@ export class MusicGenerationManager {
     return {
       id: job.jobId,
       title: job.request.title ?? job.request.prompt.slice(0, 200),
-      tags: [...(job.request.tags ?? [])],
+      tags: deriveMusicTags(job.request),
       prompt: job.request.prompt,
       ...(job.request.lyrics === undefined ? {} : { lyrics: job.request.lyrics }),
       instrumental: job.request.instrumental,

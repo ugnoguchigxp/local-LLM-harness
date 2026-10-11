@@ -90,6 +90,7 @@ import {
   musicProviderListSchema,
   musicTrackSchema,
   musicTrackListSchema,
+  musicTagListSchema,
 } from "./music";
 import {
   imageArtifactDeleteSchema,
@@ -288,6 +289,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     SystemOneResponse: jsonSchema(systemOneResponseSchema),
     MusicTrack: jsonSchema(musicTrackSchema),
     MusicTrackList: jsonSchema(musicTrackListSchema),
+    MusicTagList: jsonSchema(musicTagListSchema),
     MusicGenerationRequest: jsonSchema(musicGenerationRequestSchema),
     MusicGenerationJob: jsonSchema(musicGenerationJobSchema),
     MusicProviderList: jsonSchema(musicProviderListSchema),

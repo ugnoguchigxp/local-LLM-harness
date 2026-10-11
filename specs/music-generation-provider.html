@@ -126,6 +126,45 @@
         音声、metadata、ジョブ履歴、お気に入り登録をまとめて削除し、204を返す。生成中は409、存在しない曲は404。
       </dd>
     </dl>
+    <h3>自動タグと並び順</h3>
+    <p>
+      生成要求のtitleとpromptに明記された表現から、日本語・英語の辞書でタグを自動生成する。
+      テンポ（アップテンポ、ゆったり）、雰囲気（明るい、落ち着いた、暗い、切ない、力強い、幻想的）、
+      ジャンル（ポップ、ロック、ジャズ、クラシック、アンビエント、ローファイ、電子音楽）、
+      楽器（ピアノ、ギター、ストリングス、シンセサイザー）を対象にする。
+      instrumentalがtrueならインストゥルメンタルも付ける。例：fast-pacedとアップテンポは同じタグ、
+      bright・happy・upliftingと明るいは同じタグにする。upbeatは明るいに対応する。
+      英語のno・not・withoutや日本語の「なし」「ない」など、近接した単純な否定表現は除外する。
+      辞書による説明文の分類であり、音声の分析や自由な文脈判断は行わない。複雑な否定や辞書外の表現は扱えない。
+    </p>
+    <p>
+      明示されたtagsを先に保持し、Unicode正規化後の重複を除いて自動タグを追加する。上限は合計32件。
+      新規曲では生成要求・metadata・履歴に保存する。既存曲では読み出し時に説明からタグを補うため、再生成は不要。
+      歌詞は雰囲気の自動判定に使わない。
+    </p>
+    <dl>
+      <dt><code>GET /v1/music/tags</code></dt>
+      <dd>
+        保存済み完成曲で使われているタグと曲数を返す。応答はtags配列のtagとcount。曲数の多い順で、同数の場合はタグ名順。
+      </dd>
+      <dt><code>GET /v1/music/tracks?tags=アップテンポ,明るい</code></dt>
+      <dd>
+        カンマ区切りのすべてのタグを持つ曲に絞る。タグはUnicode正規化・大小文字無視の完全一致。qやfavoriteとも併用できる。
+      </dd>
+      <dt><code>GET /v1/music/tracks?sort=createdAt&amp;order=asc</code></dt>
+      <dd>
+        生成依頼日時の古い順。order=descは新しい順。sortの既定はcreatedAt、orderの既定はdesc。
+      </dd>
+      <dt><code>GET /v1/music/tracks?q=明るい&amp;sort=relevance</code></dt>
+      <dd>
+        検索語の一致度が高い順。各語について曲名は完全一致12点・部分一致6点、タグは完全一致10点・部分一致5点、promptの部分一致3点、歌詞の部分一致1点を合計する。各欄内の繰り返しでは加点しない。同点は生成日時の新しい順。qがない場合も同点として新しい順になる。
+      </dd>
+    </dl>
+    <p>
+      ページの続きを取得する場合はq、tags、favorite、sort、orderを維持してnextCursorをcursorに渡す。
+      条件を変更したcursorは400となる。limitだけは変更可能。以前の新しい順のcursorも対応する。
+      お気に入り一覧は登録日時の新しい順を維持し、qとtagsで絞り込める。
+    </p>
     <h3>お気に入り API</h3>
     <dl>
       <dt><code>PUT /v1/music/generations/:id/favorite</code></dt>

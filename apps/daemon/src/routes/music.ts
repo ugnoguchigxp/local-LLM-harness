@@ -68,6 +68,12 @@ export function registerMusicRoutes(app: Hono, options: {
     }
   });
 
+  app.get("/v1/music/tags", (c) => {
+    if (!manager) return c.json(errorBody("not_configured", "music generation is not configured"), 503);
+    c.header("cache-control", "no-store");
+    return c.json(manager.listTags());
+  });
+
   app.get("/v1/music/tracks/:id", (c) => {
     const track = manager?.getTrack(c.req.param("id"));
     if (!track) return c.json(errorBody("not_found", "music track not found"), 404);
@@ -173,9 +179,9 @@ export function registerMusicRoutes(app: Hono, options: {
       return c.json(errorBody("not_configured", "music generation is not configured"), 503);
     }
     c.header("cache-control", "no-store");
-    const query = musicTrackQuerySchema.pick({ q: true }).safeParse(c.req.query());
+    const query = musicTrackQuerySchema.pick({ q: true, tags: true }).safeParse(c.req.query());
     if (!query.success) return c.json(errorBody("invalid_music_query", "invalid music favorite query"), 400);
-    return c.json({ favorites: manager.listFavorites(query.data.q) });
+    return c.json({ favorites: manager.listFavorites(query.data.q, query.data.tags) });
   });
 
   app.get("/v1/music/favorites/:id", (c) => {

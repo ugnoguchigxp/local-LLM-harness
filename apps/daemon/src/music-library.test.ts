@@ -63,7 +63,8 @@ test("library lists and searches old and new tracks, favorites and playback surv
     await recovered.initialize();
     const recoveredApp = routes(recovered);
     const detail = musicTrackSchema.parse(await (await recoveredApp.request(`/v1/music/tracks/${named.jobId}`)).json());
-    expect(detail).toMatchObject({ title: "星の夜", tags: ["ピアノ", "Ambient"], favorite: true });
+    expect(detail).toMatchObject({ title: "星の夜", favorite: true });
+    expect(detail.tags).toEqual(expect.arrayContaining(["ピアノ", "Ambient", "落ち着いた"]));
     expect(recovered.getTrack(old.jobId)).toBeDefined();
     const audio = await recoveredApp.request(detail.audioUrl, { headers: { range: "bytes=0-3" } });
     expect(audio.status).toBe(206);
@@ -151,4 +152,39 @@ test("concurrent generations cannot exceed library capacity", async () => {
     expect(results.find((job) => job.status === "failed")?.error?.code).toBe("music_storage_full");
     expect(manager.listTracks({ limit: 50 }).total).toBe(1);
   } finally { manager.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("library API persists automatic tags and exposes sorting, tag filters and counts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-library-tags-"));
+  let sequence = 0, now = Date.parse("2026-10-11T00:00:00Z");
+  const manager = new MusicGenerationManager(provider(), { artifactRoot: root, random: () => String(sequence++), now: () => now });
+  const recovered = new MusicGenerationManager(provider(), { artifactRoot: root });
+  try {
+    const bright = manager.create(musicGenerationRequestSchema.parse({ title: "朝の曲", prompt: "明るくアップテンポなピアノのポップ", instrumental: true }));
+    await finished(manager, bright.jobId);
+    now += 1000;
+    const calm = manager.create(musicGenerationRequestSchema.parse({ title: "夜の曲", prompt: "Slow calm ambient guitar", instrumental: true }));
+    await finished(manager, calm.jobId);
+    const metadata = JSON.parse(await readFile(manager.artifact(bright.jobId, "metadata")!.path, "utf8"));
+    expect(metadata.request.tags).toEqual(expect.arrayContaining(["明るい", "アップテンポ", "ピアノ"]));
+    await manager.favorite(bright.jobId);
+    await recovered.initialize();
+    const app = routes(recovered);
+    const filter = encodeURIComponent("アップテンポ,明るい");
+    const tagged = musicTrackListSchema.parse(await (await app.request(`/v1/music/tracks?tags=${filter}`)).json());
+    expect(tagged.tracks.map((t) => t.id)).toEqual([bright.jobId]);
+    const oldest = musicTrackListSchema.parse(await (await app.request("/v1/music/tracks?sort=createdAt&order=asc")).json());
+    expect(oldest.tracks.map((t) => t.id)).toEqual([bright.jobId, calm.jobId]);
+    const relevant = musicTrackListSchema.parse(await (await app.request(`/v1/music/tracks?sort=relevance&q=${encodeURIComponent("明るい")}`)).json());
+    expect(relevant.tracks[0]?.id).toBe(bright.jobId);
+    expect(await (await app.request("/v1/music/tags")).json()).toMatchObject({ tags: expect.arrayContaining([
+      { tag: "インストゥルメンタル", count: 2 }, { tag: "明るい", count: 1 },
+    ]) });
+    expect(musicFavoriteListSchema.parse(await (await app.request(`/v1/music/favorites?tags=${filter}`)).json()).favorites[0]?.jobId).toBe(bright.jobId);
+    for (const suffix of ["?sort=bad", "?order=bad", "?tags=", "?tags=a,", "?tags=" + "x".repeat(65)]) {
+      expect((await app.request("/v1/music/tracks" + suffix)).status).toBe(400);
+    }
+    await recovered.deleteTrack(bright.jobId);
+    expect(await (await app.request("/v1/music/tags")).json()).not.toMatchObject({ tags: expect.arrayContaining([{ tag: "明るい", count: 1 }]) });
+  } finally { manager.close(); recovered.close(); await rm(root, { recursive: true, force: true }); }
 });

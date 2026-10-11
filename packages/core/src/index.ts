@@ -69,6 +69,7 @@ export * from "./service-activity";
 export * from "./agent-connection";
 export * from "./music";
 export * from "./music-library";
+export * from "./music-tags";
 export * from "./image-artifact";
 export {
   API_OPERATIONS,
