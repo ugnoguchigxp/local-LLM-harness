@@ -97,8 +97,43 @@ export const audioVoiceListSchema = z.object({
   }
 });
 
+// Providers without VOICEVOX's numeric speaker/style identifiers still expose
+// deterministic voice selection and only the controls they actually support.
+const audioProviderVoiceListSchema = z.object({
+  default_voice: z.string().min(1),
+  voices: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    display_name: z.string().min(1),
+    language: z.string().min(1),
+    voice_presentation: z.enum(["masculine", "feminine", "androgynous", "unspecified"]),
+    styles: z.array(z.object({
+      id: z.string().min(1), display_name: z.string().min(1),
+    }).strict()),
+    capabilities: z.object({
+      speed: audioVoiceControlRangeSchema.optional(),
+      pitch_scale: audioVoiceControlRangeSchema.optional(),
+      intonation_scale: audioVoiceControlRangeSchema.optional(),
+    }).strict(),
+  }).strict()),
+}).strict().superRefine((value, context) => {
+  const ids = value.voices.map((voice) => voice.id);
+  if (new Set(ids).size !== ids.length) {
+    context.addIssue({ code: "custom", path: ["voices"], message: "voice ids must be unique" });
+  }
+  if (!ids.includes(value.default_voice)) {
+    context.addIssue({ code: "custom", path: ["default_voice"], message: "default voice must be advertised" });
+  }
+  for (const [index, voice] of value.voices.entries()) {
+    if (new Set(voice.styles.map((style) => style.id)).size !== voice.styles.length) {
+      context.addIssue({ code: "custom", path: ["voices", index, "styles"], message: "style ids must be unique" });
+    }
+  }
+});
+
 export const audioVoiceDiscoverySchema = z.union([
   audioVoiceListSchema,
+  audioProviderVoiceListSchema,
   z.object({
     voices: z.array(z.object({
       id: z.string().min(1),

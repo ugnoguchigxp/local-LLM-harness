@@ -136,8 +136,8 @@ def create_app(engine_factory=load_engine) -> FastAPI:
     def voices(model: str = MODEL):
         if model != MODEL:
             raise HTTPException(404, "unknown speech model")
-        return {"model": MODEL, "default_voice": "Rosie", "voices": [
-            {"id": voice, "display_name": voice, "language": "en", "styles": [],
+        return {"default_voice": "Rosie", "voices": [
+            {"id": voice, "name": voice, "display_name": voice, "language": "en", "styles": [],
              "voice_presentation": "feminine" if index % 2 == 0 else "masculine",
              "capabilities": {"speed": {"minimum": 0.5, "maximum": 2.0, "default": 1.0}}}
             for index, voice in enumerate(VOICES)

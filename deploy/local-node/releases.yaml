@@ -4,7 +4,7 @@ runtimeReleases:
   kittentts-nano-fp32-current:
     runtime: kittentts-nano
     artifacts: [kitten-tts-nano-fp32, kitten-tts-nano-voices, kitten-tts-nano-config]
-    providerConfigRevision: kittentts-0.8.1-nano-fp32-cpu4-clean-text-v1
+    providerConfigRevision: kittentts-0.8.1-nano-fp32-cpu4-clean-text-voice-catalog-v2
     estimatedMemoryGB: 1.5
     healthPath: /health
     default: true

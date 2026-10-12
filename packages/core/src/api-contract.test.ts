@@ -323,6 +323,23 @@ test("voice catalog exposes deterministic selection and control capabilities", (
   }).voices[0]?.name).toBe("Ryan");
 });
 
+test("voice discovery accepts English voices with supported controls without inventing VOICEVOX styles", () => {
+  const voice = {
+    id: "Rosie", name: "Rosie", display_name: "Rosie", language: "en",
+    voice_presentation: "feminine", styles: [],
+    capabilities: { speed: { minimum: 0.5, maximum: 2, default: 1 } },
+  };
+  const catalog = { default_voice: "Rosie", voices: [voice] };
+  expect(audioVoiceDiscoverySchema.parse(catalog)).toEqual(catalog);
+  expect(audioVoiceListSchema.safeParse(catalog).success).toBeFalse();
+  expect(audioVoiceDiscoverySchema.safeParse({ ...catalog, default_voice: "Hugo" }).success).toBeFalse();
+  expect(audioVoiceDiscoverySchema.safeParse({ ...catalog, voices: [voice, voice] }).success).toBeFalse();
+  expect(audioVoiceDiscoverySchema.safeParse({ ...catalog, voices: [{ ...voice,
+    capabilities: { speed: { minimum: 2, maximum: 0.5, default: 1 } },
+  }] }).success).toBeFalse();
+  expect(audioVoiceDiscoverySchema.safeParse({ ...catalog, voices: [{ ...voice, made_up: true }] }).success).toBeFalse();
+});
+
 test("Chat Completions contract validates schema-constrained response formats", () => {
   const request = {
     model: "qwen-agent-worker",
