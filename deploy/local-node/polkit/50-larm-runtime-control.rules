@@ -9,6 +9,7 @@ polkit.addRule(function(action, subject) {
             "qwen-asr.service",
             "whisper-asr.service",
             "voicevox-tts.service",
+            "kittentts-tts.service",
             "qwen-tts.service",
             "larm-embedding.service",
             "laya-system-one.service",

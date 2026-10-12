@@ -1,0 +1,10 @@
+{
+  "ack": "Yes, I'm here.",
+  "short": "Hello! I'm ready to help you plan your day.",
+  "medium": "Good morning! Your next meeting starts in twenty minutes. There is enough time to review your notes, grab a glass of water, and take a deep breath before we begin.",
+  "long": "Welcome back! Today we are going to explore how a small voice assistant can make everyday work a little easier. First, we will check the schedule and choose the most important task. Then, we will break that task into a few clear steps. If something unexpected happens, we can pause, adjust the plan, and continue at a comfortable pace. You do not need to finish everything at once. A steady rhythm and a short break can help you stay focused. When you are ready, tell me what you would like to work on next.",
+  "punctuation": "Really? That's wonderful! Wait... are you sure? Let's check the answer together.",
+  "numbers": "At 3:30 PM, Dr. Smith paid $12.50 for 2 items, with a 15% discount.",
+  "technical": "The CPU uses ONNX Runtime, and the GPU stays available for the large language model.",
+  "japanese_negative_control": "こんにちは。今日の予定を一緒に確認しましょう。"
+}

@@ -1,0 +1,7 @@
+# Install CPU Torch first with --index-url https://download.pytorch.org/whl/cpu.
+torch==2.14.1+cpu
+kittentts @ https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl
+onnxruntime==1.31.0
+numpy==2.5.4
+fastapi==0.143.0
+uvicorn==0.54.0

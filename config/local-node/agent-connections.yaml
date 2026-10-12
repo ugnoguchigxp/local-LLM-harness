@@ -62,7 +62,7 @@ agentProfiles:
         publishModel: false
         readiness: embedding
   saaa-conversation-gemma4-26b-voice:
-    description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, TTS, embedding, and Ruri speaking-attitude System One
+    description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, Japanese VOICEVOX and English KittenTTS, embedding, and Ruri speaking-attitude System One
     schedulingPriority: 4000
     idleRelease:
       enabled: true
@@ -100,6 +100,12 @@ agentProfiles:
         publicModel: multilingual-e5-small
         publishModel: false
         readiness: embedding
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
+        publishModel: false
+        readiness: tts-speech
       - name: system-one
         capability: decision.system-one
         route: system-one-ruri
@@ -403,6 +409,14 @@ agentProfiles:
         capability: speech.tts
         route: tts-voicevox
         publicModel: voicevox-core
+        readiness: tts-speech
+  tts-english:
+    description: Resident CPU English KittenTTS Nano FP32 provider with Rosie and Hugo voices
+    providers:
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
         readiness: tts-speech
   tts-expressive:
     description: Explicit Qwen3 expressive speech provider

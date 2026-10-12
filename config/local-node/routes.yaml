@@ -233,6 +233,14 @@ routes:
       - runtime: voicevox-tts
         purpose: primary
 
+  tts-kittentts-nano:
+    capabilities:
+      - speech.tts.english
+    explicitOnly: true
+    candidates:
+      - runtime: kittentts-nano
+        purpose: primary
+
   tts-expressive:
     capabilities:
       - speech.tts.expressive

@@ -322,6 +322,40 @@ models:
     quantization: Q5_0
     runtime: whisper.cpp-hip
 
+  kitten-tts-nano-fp32:
+    kind: file
+    role: english-tts
+    source: https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32
+    revision: 7a1db645b1f3ab9420761d87428e042b9cec3f26
+    filename: kitten_tts_nano_v0_8.onnx
+    path: /srv/ai/models/kittentts/fp32/kitten_tts_nano_v0_8.onnx
+    bytes: 56767095
+    sha256: 320564d2615f235de972ca27a7f39551c94185cfa24ca85b07a29084135f1e5e
+    quantization: FP32
+    runtime: kittentts-onnx
+
+  kitten-tts-nano-voices:
+    kind: file
+    role: english-tts-voices
+    source: https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32
+    revision: 7a1db645b1f3ab9420761d87428e042b9cec3f26
+    filename: voices.npz
+    path: /srv/ai/models/kittentts/fp32/voices.npz
+    bytes: 3278902
+    sha256: 8aa7cee235abb0739cb51e6559685f65a4dacd95568833d05699b1633f519b3f
+    runtime: kittentts-onnx
+
+  kitten-tts-nano-config:
+    kind: file
+    role: english-tts-config
+    source: https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32
+    revision: 7a1db645b1f3ab9420761d87428e042b9cec3f26
+    filename: config.json
+    path: /srv/ai/models/kittentts/fp32/config.json
+    bytes: 688
+    sha256: b66006ccbeccd4de5fc3c9272059c47f5725df7215fd889785c03602652fab64
+    runtime: kittentts-onnx
+
   qwen3-tts-expressive:
     kind: snapshot
     role: preferred-tts

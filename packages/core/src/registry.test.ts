@@ -688,3 +688,29 @@ test("Gemma uses the dedicated Ruri attitude route while ContextStill retains La
     resources: { estimatedMemoryGB: 1, maxConcurrentRequests: 1 },
   });
 });
+
+test("Gemma adds an English CPU speech provider while Japanese TTS and auxiliary LLM sessions keep their routes", () => {
+  const registry = loadRegistry(repoConfig);
+  const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry);
+  const gemma = catalog.profiles.find((profile) => profile.id === "saaa-conversation-gemma4-26b-voice")!;
+  expect(gemma.providers.find((provider) => provider.name === "tts")).toMatchObject({
+    capability: "speech.tts", route: "tts-voicevox", publicModel: "voicevox-core",
+  });
+  expect(gemma.providers.find((provider) => provider.name === "tts-english")).toMatchObject({
+    capability: "speech.tts.english", route: "tts-kittentts-nano",
+    publicModel: "kitten-tts-nano-0.8-fp32", protocol: "openai.audio-speech.v1", readiness: "tts-speech",
+  });
+  expect(registry.routes.find((route) => route.id === "tts-kittentts-nano")).toMatchObject({
+    explicitOnly: true, candidates: [{ runtime: "kittentts-nano", purpose: "primary" }],
+  });
+  expect(registry.runtimes.find((runtime) => runtime.id === "kittentts-nano")).toMatchObject({
+    policy: { lifecycle: "managed", warm: { minInstances: 1 } },
+    backend: "systemd", capability: ["speech.tts.english"],
+    resources: { estimatedMemoryGB: 1.5, maxConcurrentRequests: 1, maxQueuedRequests: 2 },
+    deployment: { service: "kittentts-tts.service", endpoint: "http://127.0.0.1:8088" },
+  });
+  for (const profileId of ["contextstill-background", "saaa-conversation-ornith15", "saaa-conversation-gemma4-26b-64k"]) {
+    expect(catalog.profiles.find((profile) => profile.id === profileId)?.providers
+      .some((provider) => provider.name === "tts-english")).toBe(false);
+  }
+});

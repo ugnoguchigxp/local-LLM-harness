@@ -1,6 +1,14 @@
 # Runtime releases combine immutable artifact entries into one deployable unit.
 # Model data stays outside this repository; every artifact is pinned in models.yaml.
 runtimeReleases:
+  kittentts-nano-fp32-current:
+    runtime: kittentts-nano
+    artifacts: [kitten-tts-nano-fp32, kitten-tts-nano-voices, kitten-tts-nano-config]
+    providerConfigRevision: kittentts-0.8.1-nano-fp32-cpu4-clean-text-v1
+    estimatedMemoryGB: 1.5
+    healthPath: /health
+    default: true
+
   ruri-system-one-current:
     runtime: ruri-system-one
     artifacts: [ruri-v3-30m]

@@ -89,6 +89,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "saaa-conversation-ornith15-music",
     "saaa-qwen38",
     "tts-default",
+    "tts-english",
     "tts-expressive",
   ]);
   expect(catalog.audiences.map((audience) => audience.id)).toEqual([
@@ -340,6 +341,12 @@ test("production agent profiles compile to strict protocol-aware provider contra
           capability: "speech.tts",
           route: "tts-voicevox",
           publicModel: "voicevox-core",
+        },
+        {
+          name: "tts-english",
+          capability: "speech.tts.english",
+          route: "tts-kittentts-nano",
+          publicModel: "kitten-tts-nano-0.8-fp32",
         },
       ],
     });
