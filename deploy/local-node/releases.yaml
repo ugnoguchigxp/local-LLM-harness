@@ -12,7 +12,7 @@ runtimeReleases:
   ruri-system-one-current:
     runtime: ruri-system-one
     artifacts: [ruri-v3-30m]
-    providerConfigRevision: ruri-ort-int8-synthetic-v1-c100-A-9d382201d67e-synthetic-v1-A-e768c18981af
+    providerConfigRevision: ruri-ort-int8-attitude-and-sentence-language-aa0ec854481c
     estimatedMemoryGB: 1
     healthPath: /health
     default: true

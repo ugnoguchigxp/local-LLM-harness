@@ -329,6 +329,14 @@ test("production agent profiles compile to strict protocol-aware provider contra
           },
         },
         {
+          name: "sentence-language",
+          capability: "decision.sentence-language",
+          route: "system-one-ruri-language",
+          publicModel: "ruri-v3-30m-sentence-language",
+          protocol: "larm.system-one.v1",
+          readiness: "system-one",
+        },
+        {
           name: "system-one",
           capability: "decision.system-one",
           route: "system-one-ruri",

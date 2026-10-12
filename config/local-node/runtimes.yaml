@@ -617,7 +617,7 @@ runtimes:
 
   ruri-system-one:
     artifacts: [ruri-v3-30m]
-    capability: [decision.system-one]
+    capability: [decision.system-one, decision.sentence-language]
     protocol: larm.system-one.v1
     backend: systemd
     node: local-node

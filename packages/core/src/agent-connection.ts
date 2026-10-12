@@ -1079,7 +1079,7 @@ export const embeddingAgentProviderDescriptorSchema = z.object({
 
 export const systemOneAgentProviderDescriptorSchema = z.object({
   name: agentIdentifierSchema,
-  capability: z.literal("decision.system-one"),
+  capability: z.enum(["decision.system-one", "decision.sentence-language"]),
   apiStyle: z.literal("larm-system-one"),
   protocol: z.literal("larm.system-one.v1"),
   scheme: z.enum(["http", "https"]),

@@ -33,6 +33,16 @@ const AUDIO_LIMIT = 1_048_576;
 type ProbeFormat = "json" | "sse" | "default" | "query" | "passage";
 
 function systemOneProbe(model: string): SystemOneRequest {
+  if (model === "ruri-v3-30m-sentence-language") {
+    return {
+      model,
+      state: "これは日本語の文章です。",
+      questions: { language: {
+        type: "choice", instructions: "文章全体が日本語か英語かを判定してください",
+        criteria: { ja: "日本語文章", en: "英語文章" },
+      } },
+    };
+  }
   return {
     model,
     state: { response: "設定画面を開いてください。" },
@@ -473,7 +483,9 @@ export class SemanticReadiness {
       return inspectEmbeddingResponse({ value, request, space: provider.embeddingSpace }).ok;
     }
     if (provider.protocol === "larm.system-one.v1") {
-      return inspectSystemOneResponse({ value, request: systemOneProbe(provider.publicModel) }).ok;
+      const inspected = inspectSystemOneResponse({ value, request: systemOneProbe(provider.publicModel) });
+      return inspected.ok && (provider.publicModel !== "ruri-v3-30m-sentence-language"
+        || inspected.response.answers.language?.choice === "ja");
     }
     if (provider.protocol !== "openai.chat-completions.v1") return validTranscription(value);
     const inspected = inspectOpenAiChatCompletionJson(value);

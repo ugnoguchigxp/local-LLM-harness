@@ -1,0 +1,107 @@
+<article lang="ja">
+  <h1>Ruri文章言語判定の常駐組込み</h1>
+  <p>
+    2026-10-12。日本語200文・英語200文を全件学習した二分類ヘッドを、既存の常駐Ruriへ追加する。約342msは試作のencoder・tokenizer初期化を含む時間であり、常駐後の各判定で初期化を繰り返さない。
+  </p>
+  <section id="architecture">
+    <h2>一つのencoderを共有する二つのタスク</h2>
+    <p>
+      ruri-system-one.service、CPU ONNX Runtime
+      session一つ、tokenizer、lockを共有する。態度の入力tagと6分類ヘッドは維持し、言語判定では学習時どおり「トピック:
+      」＋原文と別の二分類ヘッドを使う。旧態度の5入力（長文の512-token切詰めを含む）は変更前とanswers・usage・切詰め結果が完全一致した。
+    </p>
+    <table>
+      <caption>
+        同じ常駐runtimeに解決される二つの公開Provider
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Provider名</th>
+          <th scope="col">capability／route</th>
+          <th scope="col">公開モデル</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">system-one</th>
+          <td>decision.system-one／system-one-ruri</td>
+          <td>ruri-v3-30m-speaking-attitude</td>
+        </tr>
+        <tr>
+          <th scope="row">sentence-language</th>
+          <td>decision.sentence-language／system-one-ruri-language</td>
+          <td>ruri-v3-30m-sentence-language</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      両routeはruri-system-oneへ解決し、従来のwarm minInstances
+      1を使う。新たなencoderプロセスや重みコピーは作らず、head.jsonだけを/srv/ai/models/ruri-sentence-language-v1へhash検証して配置した。capabilityは別にして、同じAgent
+      Connectionで両タスクを要求できるようにした。
+    </p>
+    <p>
+      healthは旧態度のmodel・labelsを維持し、models配列、encoder_session_count
+      1、sentence_languageのhead版・追加load時間を加える。既存態度と新しい言語判定の校正・入力形式を混同しない。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>Eumenesからの接続</h2>
+    <p>
+      GET /v3/agent-profiles?profile=SAAA-gemma4-26bで発見し、POST
+      /v1/agent-connectionsでprovidersにsentence-languageを指定する。態度も使う場合はsystem-oneを追加する。ready後にclaimされたsentence-languageのendpointとBearer
+      credentialを使う。サービスportを固定のProvider identityとして扱わない。
+    </p>
+    <pre><code>{
+  "model": "ruri-v3-30m-sentence-language",
+  "state": "これは日本語の文章です。",
+  "questions": {
+    "language": {
+      "type": "choice",
+      "instructions": "文章全体が日本語か英語かを判定してください",
+      "criteria": { "ja": "日本語文章", "en": "英語文章" }
+    }
+  }
+}</code></pre>
+    <p>
+      POST
+      /v1/systemoneの既存choice契約を使用し、answers.language.choiceがja／enになる。stateは自然文、または既存利用者向けのcurrent_chunk／response
+      object。会話全体を分類せず、current_chunkを優先する。score・noul、候補欠落、別タスクの候補は422。言語判定は512
+      tokens超を切り捨てず422。claimに違うモデルを指定した場合はgatewayで400、解放後のcredentialは401。
+    </p>
+    <p>
+      renew後はclaimも更新する。release後は結果を採用しない。今回のモデルは文章全体の二択だけであり、言語区間・境界・休止は返さない。ローマ字は当面対象外。学習400文、追加50文のデータと試験はbenchmarks/sentence-languageに置く。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証と性能</h2>
+    <p>
+      組込み後のEngineでも新規50文は50／50正解。既存態度の入力・応答回帰、両taskの厳密な候補検査、同じencoder
+      hash／tokenizer
+      hashの照合、言語専用semantic-readinessと既知日本語probeの誤回答拒否を検証する。
+    </p>
+    <p>
+      実接続canaryはdeploy/local-node/scripts/smoke-ruri-language-profile.ts。両Providerをsubsetで確保し、50文判定、旧態度判定、モデル束縛、renew、解放後401を検査し、準備済みの公開gateway往復を日本語・英語各200回測定する。失敗・timeoutを別集計し、失敗した試行時間もpercentileに含める。モデル初期化時間、head追加load時間、判定時間を分けて記録する。
+    </p>
+    <p>
+      この文書を作成した時点では、関連163試験と組込みEngineの50文試験を通過。配備用ソースは現在の稼働release
+      c5f5c318201ae2004cf3bc3c3a61c2573cf4bb62を基に隔離し、他の作業ツリーの未確定変更を混ぜない。署名付きreleaseの全体check・稼働反映・公開canaryの結果は確認後に追記する。
+    </p>
+  </section>
+  <section id="deployment">
+    <h2>配備と版</h2>
+    <p>
+      encoder revisionは24899e5de370b56d179604a007c0d727bf144504。言語head
+      SHA-256はaa0ec854481c88e421711824c4082ba45f7ac21006bd5f3343f6064a4321e289。assetsにencoderとtokenizerのSHA-256も指定し、既存態度と一致しない場合は起動失敗にする。校正はheadに内包し、実世界の正答確率とは扱わない。
+    </p>
+    <p>
+      現在のdaemonはGranite試用config
+      overlayを参照しているため、そのASR・LLM・TTS選択は保持し、新しいRuri
+      capability／route／Providerだけを追加する。release builderのcatalog identityは同じ有効config
+      overlayを用いて計算し、署名済みmanifestと稼働healthのconfigRevision一致を検査する。既存サービスの所有・設定を直接置換しない。
+    </p>
+    <p>
+      再現手順はprepare-ruri-runtime.sh、provision-ruri-artifacts.pyによる固定artifact準備、隔離した完全commitに対するbuild-larm-release.sh、既存の署名intent
+      activator、Ruriのstop／start、公開canary。既存Connectionはdaemon再起動後に再取得する。重み・head係数・logs・実測JSONはrepository外に保持する。
+    </p>
+  </section>
+</article>

@@ -112,6 +112,12 @@ agentProfiles:
         publicModel: ruri-v3-30m-speaking-attitude
         publishModel: false
         readiness: system-one
+      - name: sentence-language
+        capability: decision.sentence-language
+        route: system-one-ruri-language
+        publicModel: ruri-v3-30m-sentence-language
+        publishModel: false
+        readiness: system-one
   saaa-conversation-gemma4-26b-64k:
     description: SAAA auxiliary 64K LLM session sharing the Gemma 4 26B four-slot runtime with the main voice profile
     schedulingPriority: 4000
