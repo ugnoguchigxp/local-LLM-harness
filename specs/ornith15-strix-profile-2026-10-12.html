@@ -1,0 +1,142 @@
+<article lang="ja">
+  <h1>Gemma4の構成を引き継ぐornith1.5Strixプロファイル</h1>
+  <p>
+    <time>2026-10-12</time>。利用者の依頼により、Gemma 4
+    26Bの音声対話プロファイルをコピーし、LLMだけを実機検証済みのOrnith 1.5
+    STRIX_LEANへ変更した。指定名の訂正を反映し、Agent Profile
+    IDと公開selectorをともに<code>ornith1.5Strix</code>とする。
+  </p>
+  <section id="selection">
+    <h2>選択と配布物の固定</h2>
+    <p>
+      既存のdefaultやSAAA-gemma4-26b
+      selectorは維持する。新しい接続では<code>profile: ornith1.5Strix</code>を明示する。経路は<code>llm-ornith15-strix</code>、専用runtimeは<code>ornith15-strix-conversation</code>、公開モデル名は<code>ornith-1.5-strix-lean</code>。経路はexplicitOnlyで、代替モデルへのfallbackは設けない。
+    </p>
+    <p>
+      artifact IDは<code>ornith15-35b-strix-lean</code>。pugant配布のrevision
+      <code>4494a5cffb1eb5496fa25575e5a5040064aa48b8</code>、19,052,439,552 bytes、SHA-256
+      <code>aa35045aab39163851c8584e6cf8cc6f33e8fc2ffe28ca627d3414ec66584704</code>を固定する。既存のjulianmb
+      refresh版を指すartifactとは別に定義する。
+    </p>
+    <p>
+      専用量子化に対応するq38rocm engine、commit <code>0fc9568</code>のVulkan
+      backendを使う。古いMTP
+      headによる推測生成を避けるため、<code>--spec-type none</code>を明示する。比較の出典は3候補の実機試験（外部証跡
+      ornith-three-trial-20261012）。
+    </p>
+  </section>
+  <p>
+    追加依頼に合わせ、補助会話用のselectorとAgent Profile
+    <code>ornith1.5Strix-64k</code
+    >を用意する。Gemmaと同様、主会話256Kと補助64K×3が1つのruntimeの4枠を共有する。
+  </p>
+  <section id="providers">
+    <h2>コピー範囲と稼働中の設定</h2>
+    <p>
+      元は<code>saaa-conversation-gemma4-26b-voice</code>。7
+      ProviderのうちLLMのrouteとpublicModelだけを変更する。ASR、日本語VOICEVOX、英語KittenTTS、E5
+      embedding、Ruri speaking-attitude、Ruri sentence-languageは共通。優先度4000、300秒のidle
+      release、入力余裕1976 tokens、出力予約4096 tokensも維持する。
+    </p>
+    <p>
+      リポジトリの基準設定はQwen
+      ASRを含む。一方、現在の実環境ではGemmaのASRがGraniteへ一時切り替えされている。準備スクリプトは稼働中のeffective
+      configから元プロファイルをコピーするため、配備候補ではGraniteも引き継ぐ。他の既存profile、selector、route、runtime、artifact、releaseの内容が変わらないことを比較して検証する。
+    </p>
+    <p>
+      LLMはconversation-llm-slotに属し、GemmaやContextStillの同じswap
+      groupと交代する。新runtimeのminInstancesは0にする。既存Gemmaの48 GBのwarm floorと新しい48
+      GBを起動時に二重予約するとadmissionが失敗するためである。選択した接続がLLMを要求すると起動し、接続のleaseが維持される間はllama-swapの独立したTTL
+      evictionを行わない。
+    </p>
+  </section>
+  <section id="capacity">
+    <h2>容量と実測</h2>
+    <p>
+      Gemmaと同じ262,144 tokensの会話枠、4同時allocation・request、524,288 tokensのunified KV
+      pool、K/Vともq4_0を設定した。各slotの上限は262,144
+      tokensだが、4接続分のKVは共有する。4接続すべてで256Kを同時に保持できるという保証ではない。主会話256Kと補助3接続各64Kなら共有pool内に収まる。
+    </p>
+    <table>
+      <caption>
+        新プロファイルの起動コマンドによる短い合成入力の再測定、各3回の中央値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">課題</th>
+          <th scope="col">生成速度</th>
+          <th scope="col">最初の文字</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">日本語短文</th>
+          <td>66.79 tok/s</td>
+          <td>0.246秒</td>
+        </tr>
+        <tr>
+          <th scope="row">短いコード</th>
+          <td>66.88 tok/s</td>
+          <td>0.246秒</td>
+        </tr>
+        <tr>
+          <th scope="row">約4.7K入力の日本語履歴</th>
+          <td>63.81 tok/s</td>
+          <td>6.069秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      起動は4.52秒、4 slotsが各262,144 tokensで初期化され、生成・JSON schema・tool
+      callingを実行できた。基本チェックは9/10で、指定の不明回答だけに限定する課題で説明を追加した。256Kの実入力処理や長時間運用は未検証。単発の速度試験だけから日常対話の品質向上を保証しない。
+    </p>
+    <p>
+      試験中の空きメモリ最低値は36.48 GiB、共有GTTの最高値は76.64
+      GiBだった。短い入力で測定したメモリ余裕であり、KVを使い切った時の上限ではない。容量予約は元と同じ48
+      GBを維持する。
+    </p>
+  </section>
+  <p>
+    追加の4同時要求試験でも4 slotが並行して処理し、全要求が約4.13〜4.15秒で128
+    tokensを生成して完了した。長い会話4本の同時処理を測定したものではない。
+  </p>
+  <section id="deployment">
+    <h2>署名付き更新と実環境でのセッション検証</h2>
+    <p>
+      外部snapshotは<code>/srv/ai/apps/larm-ornith-strix-profile</code>。active releaseとeffective
+      configを読み、基準ファイルと候補ファイルのSHA-256、catalog
+      revision、LLM以外のProvider構成を保存する。新selectorに対応するコードは、稼働release
+      f65c374を元にした独立したcheckoutへ今回の変更だけを適用する。
+    </p>
+    <p>
+      既存の署名builderを使い、全チェック後のcandidateと署名intentをまず非公開inboxへ準備する。稼働中のGranite
+      overrideを含むeffective catalog
+      revisionをmanifestへ固定する。基準が変わっていないこととLARMがidleであることを確認してからoverrideの設定を更新し、署名intentを既存activatorへ渡す。activatorがprovider設定の公開、daemonの更新、healthと契約の確認を行う。
+    </p>
+    <p>
+      検証スクリプトは主profileの7
+      Providerを含む1接続と、補助LLMの3接続を生成する。4接続の同時SSE応答、会話履歴の独立、runtime
+      instanceの共有、5つ目の容量制御、解放による待機接続の昇格、renewと資格情報の失効を確認し、作成した接続を必ず解放する。
+    </p>
+    <p>
+      Agent Connectionの容量方針はGemmaと同じwaitである。4枠が使われている時の5接続目はwaiting
+      allocationとなり、空きができるまでclaimや推論を許可しない。capacityPolicyをrejectにした低水準allocationでは5つ目を409
+      resource_exhaustedで拒否する。4枠を超える同時実行は認めない。
+    </p>
+    <p>
+      共有KVの配分は、主256Kと補助64K×3で458,752
+      tokens。4接続すべてを256Kで同時に使う構成や最大長での実入力検証はこの試験の範囲外である。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>ソース検証</h2>
+    <p>
+      型検査、資料チェック、境界チェック、関連42テスト、LARM本体の762テスト、toolingの24テスト、deploymentの56
+      Bunテストは成功した。profileのLLM以外のProvider一致、新selectorの接続request受理、専用routeから固定artifactへの対応、MTP無効設定を確認した。
+    </p>
+    <p>
+      bun run
+      check全体は、既存のGranite試験unitを通常installerの出力に対して比較するinstall-services.test.shで停止した。granite-asr-trial.serviceは専用の試験登録スクリプトで配備され、通常installerの対象外である。この既存作業の不一致は本変更で上書きしていない。shell/Python/systemdの静的チェックとGit差分の空白チェックは成功した。
+    </p>
+  </section>
+</article>

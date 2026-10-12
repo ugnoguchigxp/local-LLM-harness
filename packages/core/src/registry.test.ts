@@ -714,3 +714,32 @@ test("Gemma adds an English CPU speech provider while Japanese TTS and auxiliary
       .some((provider) => provider.name === "tts-english")).toBe(false);
   }
 });
+
+test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifact", () => {
+  const registry = loadRegistry(repoConfig);
+  const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry)!;
+  const base = catalog.profiles.find(profile => profile.id === "saaa-conversation-gemma4-26b-voice")!;
+  const strix = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  expect(strix).toBeDefined();
+  expect(strix.providers.filter(provider => provider.name !== "llm"))
+    .toEqual(base.providers.filter(provider => provider.name !== "llm"));
+  expect(strix.schedulingPriority).toBe(base.schedulingPriority);
+  expect(strix.idleRelease).toEqual(base.idleRelease);
+  expect(strix.providers.find(provider => provider.name === "llm")).toEqual({
+    ...base.providers.find(provider => provider.name === "llm")!,
+    route: "llm-ornith15-strix",
+    publicModel: "ornith-1.5-strix-lean",
+  });
+  expect(catalog.profileSelectors.find(selector => selector.id === "ornith1.5Strix"))
+    .toMatchObject({ agentProfile: strix.id });
+  const route = registry.routes.find(route => route.id === "llm-ornith15-strix")!;
+  expect(route.explicitOnly).toBe(true);
+  expect(route.candidates).toEqual([{ runtime: "ornith15-strix-conversation", purpose: "primary" }]);
+  const runtime = registry.runtimes.find(runtime => runtime.id === route.candidates[0]!.runtime)!;
+  expect(runtime.artifacts).toEqual(["ornith15-35b-strix-lean"]);
+  expect(runtime.resources.maxConcurrentRequests).toBe(4);
+  const swap = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
+  expect(swap.models[runtime.id].cmd).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");
+  expect(swap.models[runtime.id].cmd).toContain("--spec-type none");
+  expect(swap.models[runtime.id].cmd).not.toContain("draft-mtp");
+});

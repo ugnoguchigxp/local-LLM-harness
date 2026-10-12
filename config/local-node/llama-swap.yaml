@@ -356,6 +356,51 @@ models:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
 
+  ornith15-strix-conversation:
+    # Explicit STRIX_LEAN voice profile, using the benchmarked custom-quant engine.
+    # The pinned artifact has an old MTP head: keep speculation disabled.
+    # Keep the Gemma profile capacity:
+    # unified KV shares 512K across one 256K main and three 64K auxiliary sessions.
+    ttl: 0
+    cmd: >
+      /srv/ai/apps/q38rocm/engine/bin/llama-server
+      -m /srv/ai/models/ornith-trial-20261012/strix-lean/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --no-mmap
+      --flash-attn on
+      --ctx-size 524288
+      --parallel 4
+      --batch-size 2048
+      --ubatch-size 512
+      --threads 16
+      --poll 100
+      --cache-type-k q4_0
+      --cache-type-v q4_0
+      --cont-batching
+      --kv-unified
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning off
+      --spec-type none
+      -ctxcp 0
+      -cram 0
+      --no-cache-idle-slots
+      --temp 0.6
+      --top-p 0.95
+      --top-k 64
+      --jinja
+      --context-shift
+      --cache-reuse 256
+      --metrics
+      --no-webui
+    aliases:
+      - ornith-1.5-strix-lean
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
   ornith15-conversation:
     # Candidate only: this model starts exclusively through the explicit SAAA
     # Agent Connection and remains loaded while that connection is renewed.
@@ -593,6 +638,7 @@ groups:
     members:
       - ornith-contextstill
       - gemma4-26b-conversation
+      - ornith15-strix-conversation
       - gemma4-conversation
       - ornith15-conversation
 

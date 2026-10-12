@@ -118,6 +118,63 @@ agentProfiles:
         publicModel: ruri-v3-30m-sentence-language
         publishModel: false
         readiness: system-one
+  ornith1.5Strix:
+    description: Ornith 1.5 STRIX_LEAN profile copied from the Gemma 4 26B voice profile with the same speech, embedding, and System One providers
+    schedulingPriority: 4000
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - larm.system-one.v1
+        - openai.audio-speech.v1
+        - openai.audio-transcriptions.v1
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-ornith15-strix
+        publicModel: ornith-1.5-strix-lean
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 262144
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-qwen
+        publicModel: qwen3-asr-1.7b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
+        publishModel: false
+        readiness: tts-speech
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-ruri
+        publicModel: ruri-v3-30m-speaking-attitude
+        publishModel: false
+        readiness: system-one
+      - name: sentence-language
+        capability: decision.sentence-language
+        route: system-one-ruri-language
+        publicModel: ruri-v3-30m-sentence-language
+        publishModel: false
+        readiness: system-one
   saaa-conversation-gemma4-26b-64k:
     description: SAAA auxiliary 64K LLM session sharing the Gemma 4 26B four-slot runtime with the main voice profile
     schedulingPriority: 4000
@@ -131,6 +188,25 @@ agentProfiles:
         capability: llm.general
         route: llm-saaa-gemma4-26b
         publicModel: gemma4-26b-a4b
+        publishModel: false
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 65536
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+  ornith1.5Strix-64k:
+    description: Ornith 1.5 STRIX_LEAN auxiliary 64K LLM session sharing four slots and the unified KV pool with ornith1.5Strix
+    schedulingPriority: 4000
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-ornith15-strix
+        publicModel: ornith-1.5-strix-lean
         publishModel: false
         readiness: llm-inference
         contextWindow:
@@ -451,6 +527,10 @@ profileSelectors:
     agentProfile: saaa-conversation-gemma4-26b-voice
   SAAA-gemma4-26b-64k:
     agentProfile: saaa-conversation-gemma4-26b-64k
+  ornith1.5Strix:
+    agentProfile: ornith1.5Strix
+  ornith1.5Strix-64k:
+    agentProfile: ornith1.5Strix-64k
   SAAA-w-Image:
     agentProfile: saaa-conversation-gemma4-26b-voice
     services:

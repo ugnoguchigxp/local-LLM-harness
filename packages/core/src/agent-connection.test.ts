@@ -36,6 +36,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
     { id: "backchannelQwen35", agentProfile: "contextstill-backchannel-qwen35-2b", services: [] },
     { id: "contextStill", agentProfile: "contextstill-background", services: [] },
     { id: "embeddingCanary", agentProfile: "contextstill-embedding", services: [] },
+    { id: "ornith1.5Strix", agentProfile: "ornith1.5Strix", services: [] },
+    { id: "ornith1.5Strix-64k", agentProfile: "ornith1.5Strix-64k", services: [] },
     { id: "SAAA", agentProfile: "saaa-conversation-ornith15", services: [] },
     { id: "SAAA-gemma4-26b", agentProfile: "saaa-conversation-gemma4-26b-voice", services: [] },
     { id: "SAAA-gemma4-26b-64k", agentProfile: "saaa-conversation-gemma4-26b-64k", services: [] },
@@ -80,6 +82,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "contextstill-embedding",
     "deep-reasoning-35b",
     "nightworker-background",
+    "ornith1.5Strix",
+    "ornith1.5Strix-64k",
     "saaa-backchannel-default",
     "saaa-conversation-gemma4",
     "saaa-conversation-gemma4-26b-64k",
@@ -597,6 +601,54 @@ test("Gemma main and auxiliary context tiers share four allocations within one K
     .toMatchObject({ ok: false, reason: "runtime_capacity", runtime: runtimeId });
 });
 
+test("Ornith STRIX main and auxiliary sessions share four allocations within one KV pool", () => {
+  const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
+  const main = catalog.profiles.find((profile) => profile.id === "ornith1.5Strix")!;
+  const auxiliary = catalog.profiles.find((profile) => profile.id === "ornith1.5Strix-64k")!;
+  const mainLlm = main.providers.find((provider) => provider.name === "llm")!;
+  const auxiliaryLlm = auxiliary.providers[0]!;
+  const route = registry.routes.find((route) => route.id === mainLlm.route)!;
+  const runtimeId = route.candidates[0]!.runtime;
+  expect(auxiliaryLlm.route).toBe(mainLlm.route);
+  expect(auxiliary.providers).toHaveLength(1);
+  expect(mainLlm.contextWindow!.maxTokens + 3 * auxiliaryLlm.contextWindow!.maxTokens).toBe(458_752);
+  const auxiliaryRequest = {
+    catalog, profileIds: [auxiliary.id], promptTokens: 59_464, requestedOutputTokens: 4_096,
+  };
+  expect(matchAgentProfileContextWindow(auxiliaryRequest)?.inputBudgetTokens).toBe(59_464);
+  expect(matchAgentProfileContextWindow({ ...auxiliaryRequest, promptTokens: 59_465 })).toBeUndefined();
+  expect(matchAgentProfileContextWindow({
+    catalog, profileIds: [main.id], promptTokens: 256_072, requestedOutputTokens: 4_096,
+  })?.profile.id).toBe(main.id);
+
+  const observedAt = "2026-10-07T00:00:00.000Z";
+  const state: ClusterState = {
+    generatedAt: observedAt,
+    node: { ...registry.nodes[0]!, online: true },
+    runtimes: registry.runtimes.map((runtime) => ({
+      id: runtime.id,
+      status: runtime.id === runtimeId || runtime.policy.class === "resident" ? "HOT" : "COLD",
+      class: runtime.policy.class, capability: runtime.capability,
+      node: runtime.node, backend: runtime.backend, endpoint: runtime.deployment.endpoint, observedAt,
+    })),
+  };
+  const allocations: Allocation[] = [mainLlm, auxiliaryLlm, auxiliaryLlm, auxiliaryLlm].map((provider, index) => ({
+    id: `strix-session-${index}`, bootEpoch: "test", status: "ready",
+    requirements: [{ capability: provider.capability, route: provider.route }],
+    bindings: [{
+      capability: provider.capability, route: provider.route, runtime: runtimeId,
+      node: "local-node", endpoint: "http://127.0.0.1:8083", status: "HOT",
+      candidateRank: 1, fallback: false, selectionReason: "primary-live",
+    }],
+    allowFallback: false, deploymentPolicy: "existing-only",
+    createdAt: observedAt, expiresAt: "2026-10-07T00:05:00.000Z",
+  }));
+  expect(admitRuntimes({ registry, state, allocations: allocations.slice(0, 3), candidateRuntimeIds: [runtimeId] }).ok)
+    .toBe(true);
+  expect(admitRuntimes({ registry, state, allocations, candidateRuntimeIds: [runtimeId] }))
+    .toMatchObject({ ok: false, reason: "runtime_capacity", runtime: runtimeId });
+});
+
 test("agent profile compilation rejects unknown fields and semantic protocol drift", () => {
   const base = {
     version: 1 as const,
@@ -967,6 +1019,11 @@ test("embedding failover candidates must preserve the exact semantic space", () 
 });
 
 test("Agent Connection creation requires a public selector and a strict new request shape", () => {
+  expect(agentConnectionRequestSchema.safeParse({
+    profile: "ornith1.5Strix",
+    audience: "same-host",
+    providers: ["llm"],
+  }).success).toBeTrue();
   expect(agentConnectionRequestSchema.safeParse({
     audience: "same-host",
   }).success).toBeFalse();

@@ -34,6 +34,14 @@ routes:
       - runtime: gemma4-26b-conversation
         purpose: primary
 
+  llm-ornith15-strix:
+    capabilities:
+      - llm.general
+    explicitOnly: true
+    candidates:
+      - runtime: ornith15-strix-conversation
+        purpose: primary
+
   llm-saaa-ornith15:
     capabilities:
       - llm.general
