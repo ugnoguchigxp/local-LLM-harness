@@ -742,4 +742,5 @@ test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifa
   expect(swap.models[runtime.id].cmd).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");
   expect(swap.models[runtime.id].cmd).toContain("--spec-type none");
   expect(swap.models[runtime.id].cmd).not.toContain("draft-mtp");
+  expect(swap.models[runtime.id].cmd).toContain("--no-cache-prompt");
 });

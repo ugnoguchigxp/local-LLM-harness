@@ -230,4 +230,12 @@ runtimeReleases:
     providerConfigRevision: q38rocm-0fc9568-strix-lean-512k-p4-unified-q4-no-mtp-v1
     estimatedMemoryGB: 48
     healthPath: /health
+    default: false
+
+  ornith15-strix-conversation-p4-v2:
+    runtime: ornith15-strix-conversation
+    artifacts: [ornith15-35b-strix-lean]
+    providerConfigRevision: q38rocm-0fc9568-strix-lean-512k-p4-unified-q4-no-mtp-no-prompt-cache-v2
+    estimatedMemoryGB: 48
+    healthPath: /health
     default: true

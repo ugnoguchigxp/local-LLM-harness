@@ -128,6 +128,24 @@
       tokens。4接続すべてを256Kで同時に使う構成や最大長での実入力検証はこの試験の範囲外である。
     </p>
   </section>
+  <section id="repeated-probe-fix">
+    <h2>実環境の繰り返しprobeで検出した不具合</h2>
+    <p>
+      初回の配備候補1226a0eではruntime起動は成功したが、同一の1
+      token入力をJSONとSSEで繰り返すsemantic
+      readinessが2回目で推論プロセスをabortさせた。単体の同時生成試験はcache_promptをfalseにしていたため、この経路を通っていなかった。
+    </p>
+    <p>
+      同じ起動コマンドの独立プロセスでLARMと同じ入力「0」、max_tokens
+      1を再現した。prompt再利用が有効な場合は2回目で終了コード-6、sequence
+      3のp0=12以降を除去できない旨のログが出た。no-cache-promptとcache-reuse
+      0を追加した場合はJSON/SSEを交互に8回実行して全て200となった。
+    </p>
+    <p>
+      STRIX専用runtimeの起動設定でprompt再利用を無効化し、固定release
+      v2を追加する。v1は履歴として残してdefaultをfalseにする。Gemmaや他のruntimeの設定と、LARMの一般的なreadiness確認方法は維持する。
+    </p>
+  </section>
   <section id="validation">
     <h2>ソース検証</h2>
     <p>
