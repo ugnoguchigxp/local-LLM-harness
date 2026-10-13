@@ -15,11 +15,11 @@
     <h2>共通認証と追加キー入力の省略</h2>
     <p>
       Eumenes
-      backendの既存設定<code>LARM_API_TOKEN</code>を使い、三つのgatewayへの業務要求に<code>Authorization: Bearer &lt;LARM_API_TOKEN&gt;</code>を付ける。利用者に別の接続キーを入力させず、tokenをブラウザ、URL、公開HTML、モデル引数へ渡さない。未認証・誤ったtokenの要求は401で拒否する。
+      backendはOCRと物体認識には既存設定<code>LARM_API_TOKEN</code>のBearerを使う。Excalidrawの専用連携には、後述のconsumerTokenと図保存API用apiTokenを個別に使う。利用者に別の接続キーを入力させず、tokenをブラウザ、URL、公開HTML、モデル引数へ渡さない。未認証・誤ったtokenの要求は401で拒否する。
     </p>
     <p>
       gatewayはこのtokenを検証し、既存の業務owner
-      tokenへ置き換えてworkerへ中継する。workerにはLARM_API_TOKENを渡さない。lifecycle用とgateway内部のLARM制御用tokenは引き続き別にする。Excalidrawの画面は認証済みの中継からhosting状態を確認し、接続キー入力を省略できる。
+      tokenへ置き換えてworkerへ中継する。workerには共有LARM_API_TOKENを渡さない。Excalidrawの専用apiTokenは業務ownerの資格情報として使う。lifecycle用とgateway内部のLARM制御用tokenは別にする。Excalidrawの画面は認証済みの中継からhosting状態を確認し、接続キー入力を省略できる。
     </p>
     <p>
       正式installerは既定で<code>/etc/larm/larm.env</code>からtokenを読み、gateway設定に読込先を記録し、許可されたserviceだけの<code>eumenes-hosted-apps</code>consumerを登録する。読込先の変更は<code>--larm-api-token-env-file</code>で指定する。登録後のlease操作にも同じBearerを使う。tokenを変更したらconsumer登録を同期し、gatewayを再起動する。
@@ -70,6 +70,38 @@
       releaseとデータは保持している。新規配備では修正版sourceから再prepareし、その時点のdigestを使う。
     </p>
   </section>
+  <section id="dedicated-eumenes-consumer">
+    <h2>Excalidraw専用のEumenes consumerと資格情報</h2>
+    <p>
+      利用者の指定に従い、既存の正式配備を再確認したうえでconsumer
+      <code>eumenes-excalidraw</code
+      >を追加し、<code>excalidraw-host</code>だけを許可した。従来のeumenes-hosted-appsや他consumerの定義・資格情報・権限は変更していない。Local
+      Services用consumerTokenと図保存API用apiTokenを別々に新規発行し、lifecycle・LLM/control/admin・gateway内部controlの資格情報と分離した。共有LARM_API_TOKENの登録を専用登録とは扱わない。
+    </p>
+    <p>
+      資格情報は<code>/etc/larm-local-services/excalidraw/eumenes-credentials.json</code>に保存する。root所有、daemonの実行groupをread許可した0640。JSONのconsumerTokenはlease取得・確認・更新・解放へ、apiTokenは図保存API・MCP・gatewayのhosting状態・activityへ使う。値は信頼された経路でEumenes
+      backendの秘密設定へ取り込み、Page・チャット・ブラウザ・モデル引数へ転記しない。consumerId、serviceId、owner、larmBaseUrl、gatewayBaseUrlも同じfileに記録する。
+    </p>
+    <p>
+      保存先SSDのUUID、SQLite
+      quick_check、全ての既存sceneのchecksum、凍結releaseとmanifest、root固定controllerのpreflightを確認した。既存図のownerはlocal-ownerのまま、保存先は正式SSDのまま保持した。gatewayのuser
+      idleは180秒、workerのidleは120秒であり、共通Pageと一致した。再bootstrap、受入DBのコピー、受入資格情報の流用は行わない。
+    </p>
+    <p>
+      追加登録は<code>deploy/local-node/scripts/register-eumenes-excalidraw.py</code>を用いる。既定はdry-run。applyは確認したmanifest
+      digestを指定し、activateはidleのLARMを再起動して登録を反映する。既存configはprivate
+      backupを取り、反映失敗時は元へ戻す。既存owner・consumerの保持、資格情報の分離、同じ登録の再適用を単体試験で確認した。
+    </p>
+    <p>
+      Eumenes側のlease、編集・保存・再表示、下書き保護、無操作解放、復帰、会話ツールとアーティファクト表示は利用者申告により実装済み。今回の対象はLARM側の正式整合性確認と専用登録であり、実際のMacBook上のEumenesアプリからの接続検証は別途行う。
+    </p>
+    <p>
+      専用credentialでLocal
+      Services一覧がExcalidraw一件のみとなること、他serviceが403、図保存用credentialとconsumer用credentialの混用が401、LLM
+      chat/controlが401、管理stopが403、lifecycleが401となることを確認した。既存図の読取り、保存・版指定更新・古い版の409、lease更新・解放、正式120秒idle停止後の保存版再取得を確認した。認可済み中継とChromiumでは追加キー入力を省略し、HTML・URL・要求に資格情報が出ないことを確認した。実際のMacBook
+      Eumenesとの接続試験とは区別する。
+    </p>
+  </section>
   <section id="excalidraw">
     <h2>Excalidraw：オンデマンド起動してWebアプリを開く</h2>
     <pre>EumenesからExcalidrawを必要なときに起動し、利用者がブラウザで編集できるURLを返す機能を実装してください。EumenesのAGENTS.mdに従い、initial_instructions MCPを作業開始時に実行し、既存のLARM接続・会話・アーティファクト表示に沿って変更してください。
@@ -77,13 +109,13 @@
 目的は「図を描く／編集する」を選ぶ → 準備中を表示 → 起動完了 → Excalidrawを開く、という操作です。図を再表示するときも、保存済みの図IDと版から復帰できるようにしてください。
 
 【起動とURL】
-- LARMのLocal Service IDはexcalidraw-hostです。Eumenes backendからPOST /v1/local-services/excalidraw-host/leasesへJSON {}とIdempotency-Keyを送ります。Eumenes backendのLARM_API_TOKENをAuthorization: Bearerとして送ってください。許可serviceに限定したeumenes-hosted-apps consumerの登録が必要です。LLMのclaim tokenや管理者tokenと混同しないでください。
+- LARMのLocal Service IDはexcalidraw-hostです。Eumenes backendからPOST /v1/local-services/excalidraw-host/leasesへJSON {}とIdempotency-Keyを送ります。Eumenes backendの専用consumerTokenをAuthorization: Bearerとして送ってください。Excalidraw専用のeumenes-excalidraw consumerは登録済みで、excalidraw-hostだけを許可しています。LLMのclaim tokenや管理者tokenと混同しないでください。
 - startingの場合はGET /v1/local-service-leases/{leaseId}でreadyまで待ちます。必要に応じてPOST /v1/local-service-leases/{leaseId}/renewで更新し、generationとbootEpochを照合してください。既存のClientLocalServicesが再利用できます。
 - readyのendpointはbackend用です。Linux側の127.0.0.1 URLをMacBookのブラウザへ返して完成扱いにしないでください。
 - Eumenesが認証済み利用者向けのWeb入口を提供し、準備完了後に実際に開けるURLを返してください。起動操作やURL応答のEumenes APIは新設する契約として定義し、実装済みとは仮定しないでください。
 - 正式配備済みのhosted gatewayはLinux側127.0.0.1:18790です。固定ポートをサービスidentityとして扱わず、設定した入口とleaseのbindingを使ってください。
 - 既存Excalidraw画面のasset、/api/documents、/auth/session、/activityなどのルート相対URLを確認し、base path対応または専用originで解決してください。prefix付きproxyだけで画面・保存が動くとは仮定しないでください。
-- Eumenesの認証をbackendで仲介し、gatewayへのAPI・hosting状態・activity要求にLARM_API_TOKENのBearerを付けてください。通常操作で長期接続キーの手入力を要求しない構成にしてください。service tokenをURL・公開HTML・モデル引数へ埋め込まず、上流のOrigin・Host検査に合う中継を実装してください。
+- Eumenesの認証をbackendで仲介し、gatewayへの図保存API・MCP・hosting状態・activity要求には別の専用apiTokenのBearerを付けてください。consumerToken、lifecycle、LLM/control/adminの資格情報を混用しないでください。通常操作で長期接続キーの手入力を要求しない構成にしてください。service tokenをURL・公開HTML・モデル引数へ埋め込まず、上流のOrigin・Host検査に合う中継を実装してください。
 
 【利用中と保存】
 - 編集・保存などの実操作が続く間は利用権を維持します。無操作で解放し、次の操作で再起動して復帰してください。タブ表示や監視pollだけで常駐させないでください。
@@ -92,7 +124,7 @@
 
 【確認と前提】
 - sourceは/srv/ai/apps/excalidraw-host、LARMの既存手順は/srv/ai/apps/local-LLM-harness/specs/on-demand-artifact-hosting-implementation-plan-2026-10-09.htmlです。
-- 正式systemd配備とeumenes-hosted-apps consumer登録は確認済みです。Eumenes backendからの到達経路を確認してください。製品のDB・設定・秘密をコピーしないでください。
+- 正式systemd配備とExcalidraw専用eumenes-excalidraw consumer登録は確認済みです。Eumenes backendからの到達経路を確認してください。発行された専用資格情報だけをbackendの秘密設定へ取り込み、製品DBやlifecycle・内部control・管理用の秘密は複製しないでください。
 - coldからの起動、MacBookで開けるURL、描画・保存・再表示、無操作停止、次の操作での復帰を検証してください。Eumenesの対象domain検証と、横断変更ならverify:allを実行し、fixture・live・MacBook実機の結果を分けて報告してください。</pre>
   </section>
   <section id="ocr">
