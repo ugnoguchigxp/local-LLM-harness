@@ -55,7 +55,8 @@ test("loads the Linux production registry", () => {
 
   expect(registry.nodes[0]?.id).toBe("local-node");
   expect(general?.backend).toBe("systemd");
-  expect(general?.policy.class).toBe("resident");
+  expect(general?.policy.class).toBe("preferred");
+  expect(general?.policy.warm?.minInstances).toBe(0);
   expect(general?.resources).toMatchObject({
     maxConcurrentAllocations: 1,
     maxConcurrentRequests: 1,
@@ -67,7 +68,7 @@ test("loads the Linux production registry", () => {
   expect(asr?.capability).toContain("speech.stt");
   expect(realtimeTts?.capability).toContain("speech.tts");
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");
-  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd" && !["laya-system-one", "qwen-asr"].includes(item.id))) {
+  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd" && !["laya-system-one", "qwen-asr", "ornith-general"].includes(item.id))) {
     expect(runtime.policy.warm?.minInstances).toBe(1);
   }
   expect(model35b?.policy).toEqual({
@@ -141,7 +142,7 @@ test("loads the Linux production registry", () => {
   expect(agent35b?.resources.estimatedMemoryGB).toBe(32);
   expect(registry.profiles.some((profile) => profile.id === "voice-expressive")).toBe(true);
   expect(defaultRoute?.candidates[0]).toEqual({
-    runtime: "ornith-general",
+    runtime: "ornith15-strix-conversation",
     purpose: "primary",
   });
   expect(defaultRoute?.candidates).toHaveLength(1);
@@ -203,7 +204,7 @@ test("loads the Linux production registry", () => {
     purpose: "primary",
   });
   expect(defaultRoute?.candidates).toEqual([
-    { runtime: "ornith-general", purpose: "primary" },
+    { runtime: "ornith15-strix-conversation", purpose: "primary" },
   ]);
   expect(registry.runtimes.some((runtime) => runtime.id === "qwen-general")).toBe(false);
   expect(registry.runtimes.some((runtime) => runtime.id.includes("35b"))).toBe(true);
@@ -225,11 +226,11 @@ test("loads the Linux production registry", () => {
   });
 });
 
-test("resident Ornith exposes the configured 128K window and keeps certification gated", () => {
+test("optional legacy Ornith keeps its 128K window without a resident reservation", () => {
   const registry = loadRegistry(repoConfig);
   const runtime = registry.runtimes.find((candidate) => candidate.id === "ornith-general");
   expect(runtime).toMatchObject({
-    policy: { class: "resident" },
+    policy: { class: "preferred", warm: { minInstances: 0 } },
     context: {
       outputReserveTokens: 4_096,
       safetyMarginTokens: 1_976,
@@ -739,7 +740,7 @@ test("Gemma adds an English CPU speech provider while Japanese TTS and auxiliary
     resources: { estimatedMemoryGB: 1.5, maxConcurrentRequests: 1, maxQueuedRequests: 2 },
     deployment: { service: "kittentts-tts.service", endpoint: "http://127.0.0.1:8088" },
   });
-  for (const profileId of ["saaa-conversation-ornith15", "saaa-conversation-gemma4-26b-64k"]) {
+  for (const profileId of ["saaa-conversation-gemma4-26b-64k"]) {
     expect(catalog.profiles.find((profile) => profile.id === profileId)?.providers
       .some((provider) => provider.name === "tts-english")).toBe(false);
   }

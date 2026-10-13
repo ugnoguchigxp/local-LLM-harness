@@ -19,8 +19,7 @@ const environment = Object.fromEntries(readFileSync("/etc/larm/larm.env", "utf8"
 const client = new LarmClient({ baseUrl: process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810",
   apiToken: environment.LARM_API_TOKEN, timeoutMs: 60_000 });
 const runtime = "ornith15-strix-conversation";
-const mainSessions = Number(process.env.LARM_STRIX_256K_SESSIONS ?? "1");
-if (![1, 2, 3].includes(mainSessions)) throw new Error("LARM_STRIX_256K_SESSIONS must be 1, 2, or 3");
+const mainSessions = 4;
 const run = randomUUID().slice(0, 8);
 const owned = new Set<string>();
 const evidence: Record<string, unknown> = { ok: false, observedAt: new Date().toISOString() };
@@ -46,10 +45,10 @@ const llm = (claim: AgentConnectionClaim): OpenAiAgentProvider => {
 };
 const headers = (provider: OpenAiAgentProvider) => ({ "content-type": "application/json", authorization: `Bearer ${provider.credential.token}` });
 async function create(index: number) {
-  const selector = index < mainSessions ? "ornith1.5Strix" : "ornith1.5Strix-64k";
+  const selector = "ornith1.5Strix";
   const catalog = await client.listAgentProfilesV3(selector);
   const connection = await client.createAgentConnection({ profile: selector,
-    ...(index > 0 && index < mainSessions ? { providers: ["llm"] } : {}),
+    ...(index > 0 ? { providers: ["llm"] } : {}),
     expectedCatalogRevision: catalog.catalogRevision, audience: "same-host", client: `strix-four-${run}-${index}`,
     ttlSeconds: 600, allowFallback: false, deploymentPolicy: "existing-only" }, { waitSeconds: 3 });
   owned.add(connection.id);
@@ -111,9 +110,8 @@ try {
   const health = await client.getHealth(); evidence.health = health;
   evidence.main256kSessions = mainSessions;
   const mainCatalog = await client.listAgentProfilesV3("ornith1.5Strix");
-  const auxCatalog = await client.listAgentProfilesV3("ornith1.5Strix-64k");
   if (mainCatalog.profiles[0]?.providers.find(p => p.name === "llm")?.contextWindow?.maxTokens !== 262144
-    || auxCatalog.profiles[0]?.providers[0]?.contextWindow?.maxTokens !== 65536) throw new Error("Wrong context tiers");
+) throw new Error("Wrong primary context window");
   const sessions = [];
   for (let index = 0; index < 4; index++) {
     const created = await create(index);

@@ -25,14 +25,11 @@ export const agentProviderEndpointSchema = z.enum([
 
 export const agentProfileSelectorIdSchema = z.enum([
   "contextStill",
-  "SAAA",
   "SAAA-gemma4-26b",
   "SAAA-gemma4-26b-64k",
   "ornith1.5Strix",
-  "ornith1.5Strix-64k",
   "SAAA-w-Image",
   "SAAA-w-music",
-  "vulnWorkbench",
   "embeddingCanary",
   "backchannelQwen35",
 ]);
@@ -403,11 +400,9 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
           `agent profile ${id} route ${provider.route} does not advertise ${provider.capability}`,
         );
       }
-      if (selectionPolicy === "default" && route.explicitOnly) {
-        throw new AgentConnectionCatalogError(
-          `default agent profile ${id} cannot use explicit-only route ${provider.route}`,
-        );
-      }
+      // A default Agent Profile still selects each Provider route explicitly.
+      // Route explicitOnly controls implicit capability resolution, not which
+      // complete Provider set may be the catalog default.
       if (selectionPolicy === "explicit-only" && !route.explicitOnly) {
         throw new AgentConnectionCatalogError(
           `non-default agent profile ${id} must use explicit-only route ${provider.route}`,

@@ -540,8 +540,8 @@ test("v3 agent profile discovery preserves advertised Chat Completions context b
   expect(new URL(observed!.url).pathname).toBe("/v3/agent-profiles");
   expect(observed!.headers.get("authorization")).toBe("Bearer profile-token");
 
-  await client.listAgentProfilesV3("SAAA");
-  expect(new URL(observed!.url).searchParams.get("profile")).toBe("SAAA");
+  await client.listAgentProfilesV3("SAAA-gemma4-26b");
+  expect(new URL(observed!.url).searchParams.get("profile")).toBe("SAAA-gemma4-26b");
 });
 
 test("reference client reads strict service activity and uses the optional control bearer", async () => {
@@ -889,7 +889,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
-    profile: "vulnWorkbench" as const,
+    profile: "ornith1.5Strix" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -978,7 +978,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   });
 
   const created = await client.createAgentConnection({
-    profile: "vulnWorkbench",
+    profile: "ornith1.5Strix",
     audience: "same-host",
     providers: ["llm"],
   }, { waitSeconds: 300 });
@@ -986,7 +986,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   expect(requests[0]?.headers.get("idempotency-key")).toBe("client_agent-fixed");
   expect(requests[0]?.headers.get("prefer")).toBe("wait=300");
   expect(await requests[0]!.clone().json()).toEqual({
-    profile: "vulnWorkbench",
+    profile: "ornith1.5Strix",
     audience: "same-host",
     providers: ["llm"],
     ttlSeconds: 300,
@@ -1302,7 +1302,7 @@ test("agent connection polling deadline aborts an in-flight HTTP request", async
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
-    profile: "vulnWorkbench" as const,
+    profile: "ornith1.5Strix" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -1345,7 +1345,7 @@ test("withAgentConnection claims and releases with a fresh cleanup signal", asyn
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
-    profile: "vulnWorkbench" as const,
+    profile: "ornith1.5Strix" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -1419,7 +1419,7 @@ test("withAgentConnection claims and releases with a fresh cleanup signal", asyn
   });
 
   await expect(client.withAgentConnection({
-    profile: "vulnWorkbench",
+    profile: "ornith1.5Strix",
     audience: "same-host",
   }, async (_ready, receivedClaim) => {
     expect(receivedClaim.providers[0]?.model).toBe("coding-default");

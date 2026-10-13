@@ -1,5 +1,5 @@
 [Unit]
-Description=Ornith 1.5 35B Primary Vision LLM Provider (ROCmFP4 + Vulkan MTP)
+Description=Ornith 1.5 35B Primary LLM Provider (ROCmFP4 + Vulkan MTP)
 
 [Service]
 Type=simple
@@ -10,8 +10,6 @@ Environment=HOME=/srv/ai/cache
 Environment=XDG_CACHE_HOME=/srv/ai/cache
 ExecStart=/srv/ai/apps/q38rocm/engine/bin/llama-server \
   -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf \
-  --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf \
-  --image-max-tokens 4096 \
   -dev Vulkan0 \
   -ngl 999 \
   --fit off \
@@ -34,7 +32,7 @@ ExecStart=/srv/ai/apps/q38rocm/engine/bin/llama-server \
   --top-p 0.95 \
   --top-k 20 \
   --jinja \
-  --no-context-shift \
+  --context-shift \
   --spec-type draft-mtp \
   --spec-draft-n-max 4 \
   --spec-draft-p-min 0.6 \

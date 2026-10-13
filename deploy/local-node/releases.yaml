@@ -38,9 +38,8 @@ runtimeReleases:
     runtime: ornith-general
     artifacts:
       - ornith15-35b-speed
-      - ornith15-vision-bf16
-    providerConfigRevision: llama-server-ornith15-rocmfp4-128k-mtp-n4-p06-v1-vision4096-v1
-    estimatedMemoryGB: 42
+    providerConfigRevision: llama-server-ornith15-rocmfp4-128k-mtp-n4-p06-v1
+    estimatedMemoryGB: 40
     healthPath: /health
     default: true
 

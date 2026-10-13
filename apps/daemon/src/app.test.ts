@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   API_OPERATIONS,
   agentConnectionClaimSchema,
+  agentProviderEndpoint,
   agentConnectionHealthSchema,
   clusterStateSchema,
   inspectionProviderInstanceListSchema,
@@ -131,7 +132,7 @@ const agentConnectionCatalog = parseAgentConnectionCatalog({
       }],
     },
   },
-  profileSelectors: { vulnWorkbench: { agentProfile: "coding" } },
+  profileSelectors: { "ornith1.5Strix": { agentProfile: "coding" } },
 }, registry);
 
 const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
@@ -157,7 +158,7 @@ const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
       }],
     },
   },
-  profileSelectors: { vulnWorkbench: { agentProfile: "coding" } },
+  profileSelectors: { "ornith1.5Strix": { agentProfile: "coding" } },
 }, registry);
 
 const explicitAgentConnectionCatalog = parseAgentConnectionCatalog({
@@ -189,9 +190,9 @@ const explicitAgentConnectionCatalog = parseAgentConnectionCatalog({
     },
   },
   profileSelectors: {
-    vulnWorkbench: { agentProfile: "coding" },
+    "ornith1.5Strix": { agentProfile: "coding" },
     contextStill: { agentProfile: "speed" },
-    SAAA: { agentProfile: "coding" },
+    "SAAA-gemma4-26b": { agentProfile: "coding" },
   },
 }, registry);
 
@@ -230,9 +231,9 @@ const idleSaaaAgentConnectionCatalog = parseAgentConnectionCatalog({
     },
   },
   profileSelectors: {
-    vulnWorkbench: { agentProfile: "coding" },
+    "ornith1.5Strix": { agentProfile: "coding" },
     contextStill: { agentProfile: "coding" },
-    SAAA: { agentProfile: "saaa" },
+    "SAAA-gemma4-26b": { agentProfile: "saaa" },
   },
 }, registry);
 
@@ -516,17 +517,6 @@ test("v3 public profile selectors return exact provider and service endpoints wi
       ],
       services: [],
     },
-    SAAA: {
-      id: "saaa-conversation-ornith15",
-      providers: [
-        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
-        { name: "backchannel", endpoint: "/v1/chat/completions", model: "qwen3.5-2b-fast-response" },
-        { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
-        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-35b" },
-        { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
-      ],
-      services: [],
-    },
     "SAAA-w-Image": {
       id: "saaa-conversation-gemma4-26b-voice",
       providers: [
@@ -566,11 +556,6 @@ test("v3 public profile selectors return exact provider and service endpoints wi
       ],
       services: [],
     },
-    vulnWorkbench: {
-      id: "coding-default",
-      providers: [{ name: "llm", endpoint: "/v1/chat/completions", model: "coding-default" }],
-      services: [],
-    },
   } as const;
 
   try {
@@ -608,15 +593,16 @@ test("v3 public profile selectors return exact provider and service endpoints wi
   }
 });
 
-test("E2E: SAAA profile provide returns every live provider over a real HTTP listener", async () => {
+test("E2E: default Ornith profile provide returns every live provider over a real HTTP listener", async () => {
   const catalogRevision = "e".repeat(64);
   const configDir = join(import.meta.dir, "../../../config/local-node");
   const productionRegistry = loadRegistry(configDir);
   const productionCatalog = loadAgentConnectionCatalogForRegistry(configDir, productionRegistry);
   const liveRuntimeIds = new Set([
-    "ornith-general",
-    "qwen35-decision",
-    "qwen-asr",
+    "ornith15-strix-conversation",
+    "granite-asr",
+    "kittentts-nano",
+    "ruri-system-one",
     "voicevox-tts",
     "multilingual-e5-small",
   ]);
@@ -656,7 +642,7 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
   appFetch = app.fetch;
 
   try {
-    const discoveryResponse = await fetch(`${baseUrl}/v3/agent-profiles?profile=SAAA`, {
+    const discoveryResponse = await fetch(`${baseUrl}/v3/agent-profiles?profile=ornith1.5Strix`, {
       headers: agentHeaders(),
     });
     expect(discoveryResponse.status).toBe(200);
@@ -670,7 +656,7 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
         prefer: "wait=3",
       }),
       body: JSON.stringify({
-        profile: "SAAA",
+        profile: "ornith1.5Strix",
         expectedCatalogRevision: discovery.catalogRevision,
         audience: "same-host",
         client: "saaa-e2e",
@@ -684,8 +670,8 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
     const connection = publicAgentConnectionSchema.parse(await createResponse.json());
     expect(createResponse.headers.get("location")).toBe(`/v1/agent-connections/${connection.id}`);
     expect(connection).toMatchObject({
-      profile: "SAAA",
-      agentProfile: "saaa-conversation-ornith15",
+      profile: "ornith1.5Strix",
+      agentProfile: "ornith1.5Strix",
       catalogRevision: discovery.catalogRevision,
       status: "ready",
       services: [],
@@ -698,43 +684,10 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
       model: provider.model,
       readiness: provider.readiness,
       claimable: provider.claimable,
-    }))).toEqual([
-      {
-        name: "asr",
-        endpoint: "/v1/audio/transcriptions",
-        model: "qwen3-asr-1.7b",
-        readiness: "ready",
-        claimable: true,
-      },
-      {
-        name: "backchannel",
-        endpoint: "/v1/chat/completions",
-        model: "qwen3.5-2b-fast-response",
-        readiness: "ready",
-        claimable: true,
-      },
-      {
-        name: "embedding",
-        endpoint: "/v1/embed",
-        model: "multilingual-e5-small",
-        readiness: "ready",
-        claimable: true,
-      },
-      {
-        name: "llm",
-        endpoint: "/v1/chat/completions",
-        model: "ornith-1.5-35b",
-        readiness: "ready",
-        claimable: true,
-      },
-      {
-        name: "tts",
-        endpoint: "/v1/audio/speech",
-        model: "voicevox-core",
-        readiness: "ready",
-        claimable: true,
-      },
-    ]);
+    }))).toEqual(catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!.providers.map(provider => ({
+      name: provider.name, endpoint: agentProviderEndpoint(provider.protocol), model: provider.publicModel,
+      readiness: "ready", claimable: true,
+    })));
     expect(log.ensure).toEqual([]);
 
     const getResponse = await fetch(`${baseUrl}/v1/agent-connections/${connection.id}`, {
@@ -753,10 +706,12 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
       acceptingRequests: true,
       providers: [
         { name: "asr", ready: true },
-        { name: "backchannel", ready: true },
         { name: "embedding", ready: true },
         { name: "llm", ready: true },
+        { name: "sentence-language", ready: true },
+        { name: "system-one", ready: true },
         { name: "tts", ready: true },
+        { name: "tts-english", ready: true },
       ],
     });
 
@@ -769,10 +724,12 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
     const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
     expect(claim.providers.map((provider) => provider.name)).toEqual([
       "asr",
-      "backchannel",
       "embedding",
       "llm",
+      "sentence-language",
+      "system-one",
       "tts",
+      "tts-english",
     ]);
 
     const providerHealth = await fetch(claim.providers[0]!.health.url, {
@@ -794,11 +751,11 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
         prefer: "wait=3",
       }),
       body: JSON.stringify({
-        profile: "SAAA",
+        profile: "ornith1.5Strix",
         expectedCatalogRevision: discovery.catalogRevision,
         audience: "same-host",
-        client: "saaa-backchannel-e2e",
-        providers: ["backchannel"],
+        client: "ornith-llm-subset-e2e",
+        providers: ["llm"],
         ttlSeconds: 300,
         allowFallback: false,
         deploymentPolicy: "existing-only",
@@ -806,7 +763,7 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
     });
     expect(subsetResponse.status).toBe(201);
     const subset = publicAgentConnectionSchema.parse(await subsetResponse.json());
-    expect(subset.providers.map((provider) => provider.name)).toEqual(["backchannel"]);
+    expect(subset.providers.map((provider) => provider.name)).toEqual(["llm"]);
 
     const subsetClaimResponse = await fetch(`${baseUrl}/v1/agent-connections/${subset.id}/claim`, {
       method: "POST",
@@ -815,7 +772,7 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
     });
     expect(subsetClaimResponse.status).toBe(200);
     const subsetClaim = agentConnectionClaimSchema.parse(await subsetClaimResponse.json());
-    expect(subsetClaim.providers.map((provider) => provider.name)).toEqual(["backchannel"]);
+    expect(subsetClaim.providers.map((provider) => provider.name)).toEqual(["llm"]);
     expect((await fetch(`${baseUrl}/v1/agent-connections/${subset.id}`, {
       method: "DELETE",
       headers: agentHeaders(),
@@ -828,7 +785,7 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
         "idempotency-key": "saaa-profile-unknown-subset-e2e",
       }),
       body: JSON.stringify({
-        profile: "SAAA",
+        profile: "ornith1.5Strix",
         audience: "same-host",
         providers: ["missing"],
       }),
@@ -4065,7 +4022,7 @@ test("Agent Connection provider subset does not probe an unrelated busy provider
         ],
       },
     },
-    profileSelectors: { SAAA: { agentProfile: "conversation" } },
+    profileSelectors: { "SAAA-gemma4-26b": { agentProfile: "conversation" } },
   }, registry);
   const probedModels: string[] = [];
   const { app } = await makeApp(true, true, {}, {
@@ -4093,7 +4050,7 @@ test("Agent Connection provider subset does not probe an unrelated busy provider
       prefer: "wait=3",
     }),
     body: JSON.stringify({
-      profile: "SAAA",
+      profile: "SAAA-gemma4-26b",
       audience: "loopback",
       client: "subset-test",
       providers: ["backchannel"],
@@ -4264,7 +4221,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
       "content-type": "application/json",
       "idempotency-key": "agent-create-1",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(create.status).toBe(201);
   const connection = publicAgentConnectionSchema.parse(await create.json());
@@ -4298,7 +4255,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
       "content-type": "application/json",
       "idempotency-key": "agent-create-1",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(replay.headers.get("x-larm-idempotent-replay")).toBe("true");
   expect((await replay.json() as { id: string }).id).toBe(connection.id);
@@ -4576,7 +4533,7 @@ test("embedding Agent Connection claims, validates, renews, and releases a scope
       },
     },
     profileSelectors: {
-      vulnWorkbench: { agentProfile: "coding" },
+      "ornith1.5Strix": { agentProfile: "coding" },
       embeddingCanary: { agentProfile: "embedding" },
     },
   }, embeddingRegistry);
@@ -4875,7 +4832,7 @@ test("Agent Connection Prefer wait converges to ready and validates catalog revi
       "idempotency-key": "revision-mismatch",
     }),
     body: JSON.stringify({
-      profile: "vulnWorkbench",
+      profile: "ornith1.5Strix",
       expectedCatalogRevision: "0".repeat(64),
       audience: "loopback",
     }),
@@ -4891,11 +4848,11 @@ test("Agent Connection Prefer wait converges to ready and validates catalog revi
       "idempotency-key": "bounded-wait",
       prefer: "wait=2",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(response.status).toBe(201);
   expect(response.headers.get("preference-applied")).toBe("wait=2");
-  expect(await response.json()).toMatchObject({ profile: "vulnWorkbench", status: "ready" });
+  expect(await response.json()).toMatchObject({ profile: "ornith1.5Strix", status: "ready" });
   expect(semanticProbes).toBeGreaterThanOrEqual(2);
 });
 
@@ -4913,7 +4870,7 @@ test("Agent Connection caps synchronous Prefer wait at three seconds", async () 
       "idempotency-key": "bounded-long-wait",
       prefer: "wait=300",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(response.status).toBe(201);
   expect(response.headers.get("preference-applied")).toBe("wait=3");
@@ -4931,7 +4888,7 @@ test("equivalent SAAA creates reuse one non-terminal connection across idempoten
       method: "POST",
       headers: agentHeaders({ "content-type": "application/json", "idempotency-key": key }),
       body: JSON.stringify({
-        profile: "SAAA",
+        profile: "SAAA-gemma4-26b",
         audience: "loopback",
         client: "saaa-desktop",
         ttlSeconds: 30,
@@ -4956,7 +4913,7 @@ test("one SAAA client session rejects conflicting active connection options", as
     method: "POST",
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": key }),
     body: JSON.stringify({
-      profile: "SAAA",
+      profile: "SAAA-gemma4-26b",
       audience: "loopback",
       client: "saaa-desktop-conflict",
       ttlSeconds,
@@ -4980,7 +4937,7 @@ test("SAAA auto releases after idle while health polling does not extend the dea
   const createdResponse = await app.request("/v1/agent-connections", {
     method: "POST",
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "saaa-idle" }),
-    body: JSON.stringify({ profile: "SAAA", audience: "loopback", ttlSeconds: 30 }),
+    body: JSON.stringify({ profile: "SAAA-gemma4-26b", audience: "loopback", ttlSeconds: 30 }),
   });
   const created = publicAgentConnectionSchema.parse(await createdResponse.json());
   expect(created).toMatchObject({ status: "ready", phase: "ready" });
@@ -5034,7 +4991,7 @@ test("foreground request completion restarts the SAAA idle deadline", async () =
   const created = publicAgentConnectionSchema.parse(await (await app.request("/v1/agent-connections", {
     method: "POST",
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "saaa-active" }),
-    body: JSON.stringify({ profile: "SAAA", audience: "loopback", ttlSeconds: 30 }),
+    body: JSON.stringify({ profile: "SAAA-gemma4-26b", audience: "loopback", ttlSeconds: 30 }),
   })).json());
   const claim = agentConnectionClaimSchema.parse(await (await app.request(
     `/v1/agent-connections/${created.id}/claim`,
@@ -5078,7 +5035,7 @@ test("a selector name alone does not exclude ContextStill while the foreground c
   const saaa = await app.request("/v1/agent-connections", {
     method: "POST",
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "active-saaa" }),
-    body: JSON.stringify({ profile: "SAAA", audience: "loopback" }),
+    body: JSON.stringify({ profile: "SAAA-gemma4-26b", audience: "loopback" }),
   });
   expect(saaa.status).toBe(201);
   const contextStill = await app.request("/v1/agent-connections", {
@@ -5111,7 +5068,7 @@ test("agent connection derives a host-private claim from the request origin", as
       "x-forwarded-host": "attacker.example",
       "x-forwarded-proto": "https",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "remote" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "remote" }),
   });
   expect(create.status).toBe(201);
   const connection = publicAgentConnectionSchema.parse(await create.json());
@@ -5152,7 +5109,7 @@ test("agent connection derives a host-private claim from the request origin", as
       "content-type": "application/json",
       "idempotency-key": "dynamic-origin-create",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "remote" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "remote" }),
   });
   expect(conflictingOrigin.status).toBe(409);
   expect(await conflictingOrigin.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
@@ -5170,7 +5127,7 @@ test("host-private request-origin audiences reject loopback ingress", async () =
       "content-type": "application/json",
       "idempotency-key": "loopback-origin-rejected",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "remote" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "remote" }),
   });
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ error: { code: "connection_audience_unavailable" } });
@@ -5197,7 +5154,7 @@ test("agent semantic health rejects an HTTP-alive model that does not complete e
       "content-type": "application/json",
       "idempotency-key": "bad-semantic-model",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(created.status).toBe(202);
   const connection = publicAgentConnectionSchema.parse(await created.json());
@@ -5231,7 +5188,7 @@ test("agent connection fails immediately when a provider rejects the fixed readi
       "content-type": "application/json",
       "idempotency-key": "provider-contract-mismatch",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(created.status).toBe(503);
   expect(publicAgentConnectionSchema.parse(await created.json())).toMatchObject({
@@ -5279,7 +5236,7 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
       "content-type": "application/json",
       "idempotency-key": "anonymous-create-1",
     },
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(createdResponse.status).toBe(201);
   const created = publicAgentConnectionSchema.parse(await createdResponse.json());

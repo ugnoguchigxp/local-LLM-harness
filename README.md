@@ -167,7 +167,7 @@ const client = new LarmClient({
 });
 
 for await (const event of client.streamChatCompletion({
-  model: process.env.LARM_MODEL ?? "coding-default",
+  model: process.env.LARM_MODEL ?? "ornith-1.5-strix-lean",
   messages: [{ role: "user", content: "Hello" }],
 })) {
   for (const choice of event.choices) {
@@ -179,7 +179,7 @@ for await (const event of client.streamChatCompletion({
 コードをリポジトリ直下の `quickstart.ts` として保存した場合は、次のように実行できます。
 
 ```bash
-LARM_MODEL=coding-default bun quickstart.ts
+LARM_MODEL=ornith-1.5-strix-lean bun quickstart.ts
 ```
 
 Model Brokerが内部Allocationの取得・固定・解放を行います。明示Allocationは管理・高度用途にだけ残します。LLM全文を待たず句単位でTTSを開始する音声例は [`examples/voice-client.ts`](examples/voice-client.ts) にあります。

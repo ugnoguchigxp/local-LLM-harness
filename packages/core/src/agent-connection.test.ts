@@ -29,14 +29,12 @@ test("agent provider protocols map to stable public endpoint paths", () => {
 
 test("production agent profiles compile to strict protocol-aware provider contracts", () => {
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
-  expect(catalog.defaultAgentProfile).toBe("coding-default");
+  expect(catalog.defaultAgentProfile).toBe("ornith1.5Strix");
   expect(catalog.profileSelectors).toEqual([
     { id: "backchannelQwen35", agentProfile: "contextstill-backchannel-qwen35-2b", services: [] },
     { id: "contextStill", agentProfile: "contextstill-background", services: [] },
     { id: "embeddingCanary", agentProfile: "contextstill-embedding", services: [] },
     { id: "ornith1.5Strix", agentProfile: "ornith1.5Strix", services: [] },
-    { id: "ornith1.5Strix-64k", agentProfile: "ornith1.5Strix-64k", services: [] },
-    { id: "SAAA", agentProfile: "saaa-conversation-ornith15", services: [] },
     { id: "SAAA-gemma4-26b", agentProfile: "saaa-conversation-gemma4-26b-voice", services: [] },
     { id: "SAAA-gemma4-26b-64k", agentProfile: "saaa-conversation-gemma4-26b-64k", services: [] },
     {
@@ -65,12 +63,10 @@ test("production agent profiles compile to strict protocol-aware provider contra
         startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 },
       }],
     },
-    { id: "vulnWorkbench", agentProfile: "coding-default", services: [] },
   ]);
   expect(catalog.profiles.map((profile) => profile.id)).toEqual([
     "asr-granite",
     "asr-qwen",
-    "coding-default",
     "contextstill-backchannel-qwen35-2b",
     "contextstill-background",
     "contextstill-background-128k",
@@ -78,11 +74,9 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "contextstill-embedding",
     "nightworker-background",
     "ornith1.5Strix",
-    "ornith1.5Strix-64k",
     "saaa-backchannel-default",
     "saaa-conversation-gemma4-26b-64k",
     "saaa-conversation-gemma4-26b-voice",
-    "saaa-conversation-ornith15",
     "tts-default",
     "tts-english",
     "tts-expressive",
@@ -96,25 +90,21 @@ test("production agent profiles compile to strict protocol-aware provider contra
       network: "host-private",
       baseUrl: "request-origin",
     });
-  expect(catalog.profiles.find((profile) => profile.id === "coding-default"))
-    .toMatchObject({
-      selectionPolicy: "default",
-      canonicalProfile: "coding-default",
-      deprecated: false,
-      schedulingPriority: 3000,
-      providers: [{
-        capability: "llm.coding",
-        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning", "llm.vision"],
-        route: "llm-default",
-        protocol: "openai.chat-completions.v1",
-        readiness: "llm-inference",
-        contextWindow: {
-          maxTokens: 131_072,
-          outputReserveTokens: 4_096,
-          safetyMarginTokens: 1_976,
-        },
-      }],
-    });
+  const primary = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  expect(primary).toMatchObject({
+    selectionPolicy: "default", canonicalProfile: "ornith1.5Strix", deprecated: false, schedulingPriority: 4000,
+  });
+  expect(primary.providers.find(provider => provider.name === "llm")).toMatchObject({
+    capability: "llm.general", supportedCapabilities: ["llm.general", "llm.vision"],
+    publicModel: "ornith-1.5-strix-lean", route: "llm-ornith15-strix",
+    contextWindow: { maxTokens: 262_144, outputReserveTokens: 4_096, safetyMarginTokens: 1_976 },
+  });
+  for (const id of ["coding-default", "saaa-conversation-ornith15", "ornith1.5Strix-64k"]) {
+    expect(catalog.profiles.some(profile => profile.id === id)).toBe(false);
+  }
+  for (const profile of ["SAAA", "vulnWorkbench", "ornith1.5Strix-64k"]) {
+    expect(agentConnectionRequestSchema.safeParse({ profile, audience: "same-host" }).success).toBe(false);
+  }
   const contextStill = catalog.profiles.find((profile) => profile.id === "contextstill-background");
   expect(contextStill?.requestScheduling).toBe("background-when-idle");
   expect(catalog.profiles.find(profile => profile.id === "ornith1.5Strix")?.requestScheduling).toBe("foreground-exclusive");
@@ -283,61 +273,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
         },
       ],
     });
-  for (const profileId of [
-    "saaa-conversation-ornith15",
-  ]) {
-    expect(catalog.profiles.find((profile) => profile.id === profileId))
-      .toMatchObject({
-      canonicalProfile: profileId,
-      selectionPolicy: "explicit-only",
-      schedulingPriority: 4000,
-      idleRelease: {
-        enabled: true,
-        idleSeconds: 300,
-        activityProtocols: [
-          "openai.audio-speech.v1",
-          "openai.audio-transcriptions.v1",
-          "openai.chat-completions.v1",
-        ],
-      },
-      providers: [
-        { name: "asr", route: "stt-qwen", protocol: "openai.audio-transcriptions.v1" },
-        {
-          name: "backchannel",
-          route: "llm-saaa-qwen35-2b",
-          protocol: "openai.chat-completions.v1",
-          publicModel: "qwen3.5-2b-fast-response",
-          contextWindow: {
-            maxTokens: 65_536,
-            outputReserveTokens: 4_096,
-            safetyMarginTokens: 1_976,
-          },
-        },
-        { name: "embedding", route: "embedding-multilingual-e5-small", protocol: "larm.embedding.v1" },
-        {
-          name: "llm",
-          route: "llm-saaa-ornith15",
-          protocol: "openai.chat-completions.v1",
-          publicModel: "ornith-1.5-35b",
-          contextWindow: {
-            maxTokens: 131_072,
-            outputReserveTokens: 4_096,
-            safetyMarginTokens: 1_976,
-          },
-        },
-        { name: "tts", route: "tts-voicevox", protocol: "openai.audio-speech.v1" },
-      ],
-    });
-  }
-  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "ornith-1.5-35b"))
-    .toMatchObject({
-      capability: "llm.general",
-      route: "llm-saaa-ornith15",
-      schedulingPriority: 4000,
-      profileIds: [
-        "saaa-conversation-ornith15",
-      ],
-    });
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "ornith-1.5-35b")).toBeUndefined();
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "coding-default")).toBeUndefined();
   expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "backchannel-default"))
     .toMatchObject({
       capability: "llm.backchannel.classifier",
@@ -487,7 +424,7 @@ test("Gemma main and auxiliary context tiers share four allocations within one K
       node: runtime.node, backend: runtime.backend, endpoint: runtime.deployment.endpoint, observedAt,
     })),
   };
-  const allocations: Allocation[] = [mainLlm, auxiliaryLlm, auxiliaryLlm, auxiliaryLlm].map((provider, index) => ({
+  const allocations: Allocation[] = [mainLlm, mainLlm, mainLlm, mainLlm].map((provider, index) => ({
     id: `gemma-session-${index}`, bootEpoch: "test", status: "ready",
     requirements: [{ capability: provider.capability, route: provider.route }],
     bindings: [{
@@ -504,22 +441,13 @@ test("Gemma main and auxiliary context tiers share four allocations within one K
     .toMatchObject({ ok: false, reason: "runtime_capacity", runtime: runtimeId });
 });
 
-test("Ornith STRIX main and auxiliary sessions share four allocations within one KV pool", () => {
+test("four retained Ornith profile sessions share one KV pool without the retired auxiliary profile", () => {
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
   const main = catalog.profiles.find((profile) => profile.id === "ornith1.5Strix")!;
-  const auxiliary = catalog.profiles.find((profile) => profile.id === "ornith1.5Strix-64k")!;
   const mainLlm = main.providers.find((provider) => provider.name === "llm")!;
-  const auxiliaryLlm = auxiliary.providers[0]!;
   const route = registry.routes.find((route) => route.id === mainLlm.route)!;
   const runtimeId = route.candidates[0]!.runtime;
-  expect(auxiliaryLlm.route).toBe(mainLlm.route);
-  expect(auxiliary.providers).toHaveLength(1);
-  expect(mainLlm.contextWindow!.maxTokens + 3 * auxiliaryLlm.contextWindow!.maxTokens).toBe(458_752);
-  const auxiliaryRequest = {
-    catalog, profileIds: [auxiliary.id], promptTokens: 59_464, requestedOutputTokens: 4_096,
-  };
-  expect(matchAgentProfileContextWindow(auxiliaryRequest)?.inputBudgetTokens).toBe(59_464);
-  expect(matchAgentProfileContextWindow({ ...auxiliaryRequest, promptTokens: 59_465 })).toBeUndefined();
+  expect(mainLlm.contextWindow!.maxTokens * 4).toBe(1_048_576);
   expect(matchAgentProfileContextWindow({
     catalog, profileIds: [main.id], promptTokens: 256_072, requestedOutputTokens: 4_096,
   })?.profile.id).toBe(main.id);
@@ -535,7 +463,7 @@ test("Ornith STRIX main and auxiliary sessions share four allocations within one
       node: runtime.node, backend: runtime.backend, endpoint: runtime.deployment.endpoint, observedAt,
     })),
   };
-  const allocations: Allocation[] = [mainLlm, auxiliaryLlm, auxiliaryLlm, auxiliaryLlm].map((provider, index) => ({
+  const allocations: Allocation[] = [mainLlm, mainLlm, mainLlm, mainLlm].map((provider, index) => ({
     id: `strix-session-${index}`, bootEpoch: "test", status: "ready",
     requirements: [{ capability: provider.capability, route: provider.route }],
     bindings: [{
@@ -583,8 +511,8 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
   }, registry)).toThrow(/Invalid key in record/);
   expect(() => parseAgentConnectionCatalog({
     ...base,
-    profileSelectors: { SAAA: { agentProfile: "missing" } },
-  }, registry)).toThrow(/profile selector SAAA references unknown agent profile missing/);
+    profileSelectors: { "ornith1.5Strix": { agentProfile: "missing" } },
+  }, registry)).toThrow(/profile selector ornith1\.5Strix references unknown agent profile missing/);
   expect(() => parseAgentConnectionCatalog({
     ...base,
     profileSelectors: {
@@ -604,7 +532,7 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
     ...base,
     defaultAgentProfile: "missing",
   }, registry)).toThrow(/default profile missing does not exist/);
-  expect(() => parseAgentConnectionCatalog({
+  expect(parseAgentConnectionCatalog({
     ...base,
     defaultAgentProfile: "speed",
     agentProfiles: {
@@ -613,7 +541,7 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
         providers: [{ ...base.agentProfiles.coding.providers[0]!, route: "llm-speed" }],
       },
     },
-  }, registry)).toThrow(/default agent profile speed cannot use explicit-only route llm-speed/);
+  }, registry).profiles[0]?.providers[0]?.route).toBe("llm-speed");
   expect(() => parseAgentConnectionCatalog({
     ...base,
     agentProfiles: {

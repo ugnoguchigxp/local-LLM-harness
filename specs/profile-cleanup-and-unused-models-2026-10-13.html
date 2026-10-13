@@ -38,6 +38,42 @@
     </p>
   </section>
   <section id="models">
+    <h2>追加承認された3 Profileの廃止と既定の統合</h2>
+    <p>
+      2026年10月13日、利用者が<code>coding-default</code>、旧<code>SAAA</code>のcanonical
+      Profile
+      <code>saaa-conversation-ornith15</code
+      >、補助<code>ornith1.5Strix-64k</code>の廃止を承認した。
+      <code>vulnWorkbench</code
+      >も後日作り直すため、そのselectorを残す必要はないとの確認がある。 3 canonical
+      Profileと<code>SAAA</code>、<code>ornith1.5Strix-64k</code>、
+      <code>vulnWorkbench</code>の3 selectorを削除し、接続request
+      schemaとOpenAPIのselector一覧からも外す。 残るcanonical Profileは15件、selectorは8件となる。
+    </p>
+    <p>
+      Eumenes用の<code>ornith1.5Strix</code>を既定Agent Profileにする。
+      <code>contextStill</code
+      >は維持し、両者のLLMは<code>ornith15-strix-conversation</code>を共有する。
+      既定のcapability route <code>llm-default</code>も同じruntimeへ向ける。
+      既定ProfileでもProviderごとのrouteは明示されているため、routeの<code>explicitOnly</code>は
+      暗黙のcapability選択だけを制約するように整理する。非既定Profileの暗黙route禁止は維持する。
+    </p>
+    <p>
+      旧Ornith用<code>ornith-general</code>はruntime定義と重みを保管し、preferred・warm
+      0に変更する。 現行Profileや既定routeから要求されない限り常駐させない。既存systemd
+      unitの書き換えは不要で、
+      そのruntimeのprojector常駐案も取り下げる。STRIXはprojectorを常駐し、1MのKV poolと4会話枠、
+      256Kの各会話上限を維持する。同じ主ProfileのLLM subset接続を4本作れば共有4枠を利用でき、
+      廃止した64K Profileを再導入する必要はない。
+    </p>
+    <p>
+      以前準備した5 Profile向け署名候補は適用を禁止した。今回の廃止と画像対応を合わせた新候補を、
+      稼働版を基準に独立したsourceで検証して署名付き更新へ渡す。旧selectorのdiscovery・作成拒否、
+      公開modelから旧名が消えること、既定modelと画像理解、EumenesとContextStillの共有runtimeを
+      本番で確認する。重み・外部ファイルの削除は行わない。
+    </p>
+  </section>
+  <section id="model-candidates">
     <h2>現在の標準構成から参照されないモデル候補</h2>
     <table>
       <caption>
@@ -155,6 +191,15 @@
   </section>
   <section id="validation">
     <h2>確認範囲と反映</h2>
+    <p>
+      2026年10月13日11:18 JSTに反映を完了した。稼働releaseは
+      <code>9ea268d43bffb90863b2828aa6df558394539cf6</code>、configRevisionは
+      <code>18bda978640c5cc7ccc5d9b16eac959198b344a724ba899bde44f62cc191b120</code>。 署名releaseの全体checkと本番contract
+      verificationが成功した。 8名のdiscoveryは404、評価用selector 2名の作成要求は400、catalogは18
+      profilesとなった。
+      StrixとGemma双方のGranite短文・長文認識は200で正しく認識し、connection解放後は401となった。
+      モデルファイルの削除・移動は実施していない。
+    </p>
     <p>
       基点は稼働release <code>f88c58d2c57806c79b43b0b47e74c851e30993cf</code>。
       独立sourceから削除に必要な変更だけを正式releaseへ反映する。

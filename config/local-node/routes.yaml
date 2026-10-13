@@ -6,7 +6,7 @@ routes:
       - llm.coding
       - llm.vision
     candidates:
-      - runtime: ornith-general
+      - runtime: ornith15-strix-conversation
         purpose: primary
 
   llm-saaa-qwen38:
@@ -14,7 +14,6 @@ routes:
       - llm.general
       - llm.reasoning
       - llm.coding
-      - llm.vision
     explicitOnly: true
     candidates:
       - runtime: ornith-general
@@ -43,15 +42,6 @@ routes:
     explicitOnly: true
     candidates:
       - runtime: ornith15-strix-conversation
-        purpose: primary
-
-  llm-saaa-ornith15:
-    capabilities:
-      - llm.general
-      - llm.vision
-    explicitOnly: true
-    candidates:
-      - runtime: ornith-general
         purpose: primary
 
   llm-agent-worker:

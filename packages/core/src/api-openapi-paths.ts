@@ -1,5 +1,6 @@
 import { apiOperationGovernance, apiOperationLifecycle, apiOperationPolicy } from "./api-lifecycle";
 import { API_OPERATIONS, SUCCESS_SCHEMA_BY_OPERATION, SUCCESS_STATUSES_BY_OPERATION } from "./api-operations";
+import { agentProfileSelectorIdSchema } from "./agent-connection";
 
 export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
   const paths: Record<string, Record<string, unknown>> = {};
@@ -228,7 +229,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
               minLength: 1,
               maxLength: 128,
               pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
-              enum: ["contextStill", "SAAA", "SAAA-w-Image", "SAAA-w-music", "vulnWorkbench"],
+              enum: agentProfileSelectorIdSchema.options,
             },
           }],
         }

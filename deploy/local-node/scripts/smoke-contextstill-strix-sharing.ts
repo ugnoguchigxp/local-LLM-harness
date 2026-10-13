@@ -68,7 +68,7 @@ async function instances(minRefs: number) {
   }));
 }
 
-async function create(selector: "contextStill" | "ornith1.5Strix" | "ornith1.5Strix-64k", subset?: string[]) {
+async function create(selector: "contextStill" | "ornith1.5Strix", subset?: string[]) {
   const catalog = await client.listAgentProfilesV3(selector);
   const created = await client.createAgentConnection({ profile: selector, expectedCatalogRevision: catalog.catalogRevision,
     audience: "same-host", client: `contextstill-strix-sharing-${run}-${++createSequence}`, ...(subset ? { providers: subset } : {}),
@@ -158,10 +158,10 @@ try {
   evidence.foregroundSpeech = await speech(foreground.claim);
   const auxiliary = [];
   for (let index = 0; index < 2; index++) {
-    const item = await create("ornith1.5Strix-64k");
+    const item = await create("ornith1.5Strix", ["llm"]);
     auxiliary.push(await client.waitForAgentConnection(item, { timeoutMs: 60_000 }));
   }
-  const fifth = await create("ornith1.5Strix-64k");
+  const fifth = await create("ornith1.5Strix", ["llm"]);
   if (new Set([context.connection.id, foreground.connection.id, ...auxiliary.map(item => item.id), fifth.id]).size !== 5) {
     throw new Error("Capacity probe reused a client session instead of creating five distinct leases");
   }

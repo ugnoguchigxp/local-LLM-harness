@@ -2,20 +2,18 @@ runtimes:
   ornith-general:
     artifacts:
       - ornith15-35b-speed
-      - ornith15-vision-bf16
     capability:
       - llm.general
       - llm.reasoning
       - llm.coding
-      - llm.vision
     protocol: openai.chat-completions.v1
     backend: systemd
     node: local-node
     policy:
-      class: resident
+      class: preferred
       lifecycle: managed
       warm:
-        minInstances: 1
+        minInstances: 0
         idleTtlSeconds: 60
     context:
       class: managed-context
@@ -28,7 +26,7 @@ runtimes:
       allowedModes:
         - source-rebuild
     resources:
-      estimatedMemoryGB: 42
+      estimatedMemoryGB: 40
       # Ornith exposes one llama.cpp execution slot. Keep allocation ownership
       # exclusive as well so SAAA priority can preempt or fence lower-priority
       # OpenAI requests before they contend in the non-preemptive request queue.

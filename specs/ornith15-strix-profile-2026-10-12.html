@@ -457,6 +457,18 @@
   </section>
   <section id="vision-always-loaded-20261013">
     <h2>Ornithを参照する全プロファイルで画像入力を有効化 2026-10-13</h2>
+    <aside>
+      <p>
+        後続の利用者承認で<code>coding-default</code>、旧<code>SAAA</code>、
+        <code>ornith1.5Strix-64k</code
+        >を廃止する。以下の5件は初回準備時点の参照一覧である。
+        最終の対象Profileは<code>ornith1.5Strix</code>と<code>contextStill</code>、共有STRIXは1
+        runtime。 旧5件向け候補の適用を禁止し、旧Ornithの常駐とunit更新案も取り下げた。
+        <a href="./profile-cleanup-and-unused-models-2026-10-13.html#models"
+          >承認された廃止と既定の統合</a
+        >を参照。
+      </p>
+    </aside>
     <p>
       利便性を優先し、Ornith runtimeが起動している間はprojectorも常駐する構成を採用する。
       個々のruntimeのresident・warm・on-demand方針は維持し、画像request単位でprojectorを
@@ -536,6 +548,30 @@
       <code>/srv/ai/evidence/ornith-vision-20261013</code>に保存した。
     </p>
     <h3>更新候補と本番反映の境界</h3>
+    <p>
+      続く利用者確認では、Eumenesは<code>ornith1.5Strix</code>を使用し、旧SAAAは既に使っていない。
+      <code>contextStill</code
+      >は継続用途があり、<code>coding-default</code>は整理候補とされた。
+      上表の5件は設定に存在するAgent Profileの参照数であり、5つの独立したモデルProviderや
+      5件の実利用consumerを確認した数ではない。EumenesとContextStillのLLMは同じSTRIX
+      runtimeを共有する。
+    </p>
+    <p>
+      <code>ornith1.5Strix-64k</code
+      >は以前の補助会話依頼に合わせたLLMのみ・64K上限のProfileである。
+      LARM側の並行session・待機・解放検証スクリプトが参照し、接続作成logにも記録があるが、
+      記録だけでは実利用とsmokeを区別できない。確認したローカルEumenes checkoutの製品コードには
+      このselectorへの参照はなかった。使用中のconsumer設定や履歴全体を確認した結論ではない。
+      同じruntimeの4枠を使用するために補助64K Profile自体が必須という意味でもない。
+    </p>
+    <p>
+      <code>coding-default</code
+      >は現在の<code>defaultAgentProfile</code>および
+      <code>vulnWorkbench</code
+      >の参照先なので、廃止するなら既定Profile・routeの条件とselectorも
+      一緒に整合させる。今回の確認ではProfileを削除せず、準備済みの5件対象の署名更新も本番未反映。
+      Profileの廃止・対象の絞り込みを行う場合は、その決定を反映した更新候補を新たに検証する。
+    </p>
     <p>
       作業ツリーの<code>bun run check</code>が全て成功した。LARM本体770テスト、tooling24テスト、
       speech segmentation関連16テスト、deployment57

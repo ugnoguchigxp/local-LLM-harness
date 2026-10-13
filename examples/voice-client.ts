@@ -5,7 +5,7 @@ import { inspectOpenAiTranscriptionJson } from "../packages/core/src/index";
 const audioPath = process.env.LARM_CANARY_AUDIO_FILE;
 if (!audioPath) throw new Error("LARM_CANARY_AUDIO_FILE is required");
 const asrModel = process.env.LARM_ASR_MODEL ?? "qwen3-asr-1.7b";
-const llmModel = process.env.LARM_MODEL ?? "coding-default";
+const llmModel = process.env.LARM_MODEL ?? "ornith-1.5-strix-lean";
 const ttsModel = process.env.LARM_TTS_MODEL ?? "voicevox-core";
 const client = new LarmClient({
   baseUrl: process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810",

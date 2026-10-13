@@ -22,7 +22,7 @@ type ClaimedLlm = {
   model: string;
 };
 
-async function createAndClaim(profile: "SAAA" | "contextStill", client: string): Promise<ClaimedLlm> {
+async function createAndClaim(profile: "ornith1.5Strix" | "contextStill", client: string): Promise<ClaimedLlm> {
   const created = await larm.createAgentConnection({
     profile,
     audience: "same-host",
@@ -115,15 +115,15 @@ try {
     throw new Error("LARM is draining before the switch canary");
   }
 
-  const initialSaaa = await createAndClaim("SAAA", "saaa-switch-canary-initial");
-  await infer(initialSaaa, "SAAA");
+  const initialSaaa = await createAndClaim("ornith1.5Strix", "saaa-switch-canary-initial");
+  await infer(initialSaaa, "ornith1.5Strix");
   await release(initialSaaa);
   await expectRevoked(initialSaaa);
 
   const context = await createAndClaim("contextStill", "contextstill-switch-canary");
   await infer(context, "CONTEXT");
 
-  const replacementSaaa = await createAndClaim("SAAA", "saaa-switch-canary-replacement");
+  const replacementSaaa = await createAndClaim("ornith1.5Strix", "saaa-switch-canary-replacement");
   const preempted = await larm.getAgentConnection(context.connectionId);
   liveConnections.delete(context.connectionId);
   if (
@@ -134,7 +134,7 @@ try {
     throw new Error(`ContextStill was not preempted: ${JSON.stringify(preempted.error ?? preempted.status)}`);
   }
   await expectRevoked(context);
-  await infer(replacementSaaa, "SAAA");
+  await infer(replacementSaaa, "ornith1.5Strix");
   await release(replacementSaaa);
   await expectRevoked(replacementSaaa);
   await waitForRuntimeCold("qwen-worker-fast");
@@ -150,9 +150,9 @@ try {
     bootEpoch: health.bootEpoch,
     initialActivity: initialActivity.state,
     sequence: [
-      { profile: "SAAA", model: initialSaaa.model, inferred: true, released: true, credentialRevoked: true },
+      { profile: "ornith1.5Strix", model: initialSaaa.model, inferred: true, released: true, credentialRevoked: true },
       { profile: "contextStill", model: context.model, inferred: true, preempted: true, credentialRevoked: true },
-      { profile: "SAAA", model: replacementSaaa.model, inferred: true, released: true, credentialRevoked: true },
+      { profile: "ornith1.5Strix", model: replacementSaaa.model, inferred: true, released: true, credentialRevoked: true },
     ],
     contextRuntimeUnloaded: true,
     finalActivity: finalActivity.state,

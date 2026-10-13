@@ -1,5 +1,5 @@
 version: 1
-defaultAgentProfile: coding-default
+defaultAgentProfile: ornith1.5Strix
 
 audiences:
   same-host:
@@ -10,19 +10,6 @@ audiences:
     baseUrl: request-origin
 
 agentProfiles:
-  coding-default:
-    description: Resident Ornith 1.5 35B ROCmFP4 128K provider with MTP; image input enabled
-    schedulingPriority: 3000
-    providers:
-      - name: llm
-        capability: llm.coding
-        route: llm-default
-        publicModel: coding-default
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 131072
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
   saaa-conversation-gemma4-26b-voice:
     description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, Japanese VOICEVOX and English KittenTTS, embedding, and Ruri speaking-attitude System One
     schedulingPriority: 4000
@@ -159,75 +146,6 @@ agentProfiles:
           maxTokens: 65536
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
-  ornith1.5Strix-64k:
-    description: Ornith 1.5 STRIX_LEAN auxiliary 64K LLM session sharing four slots and the unified KV pool with ornith1.5Strix; image input enabled
-    schedulingPriority: 4000
-    requestScheduling: foreground-exclusive
-    idleRelease:
-      enabled: true
-      idleSeconds: 300
-      activityProtocols:
-        - openai.chat-completions.v1
-    providers:
-      - name: llm
-        capability: llm.general
-        route: llm-ornith15-strix
-        publicModel: ornith-1.5-strix-lean
-        publishModel: false
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 65536
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
-  saaa-conversation-ornith15:
-    description: SAAA base response set with resident Ornith 1.5 35B, Qwen 3.5 2B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding; image input enabled
-    schedulingPriority: 4000
-    requestScheduling: foreground-exclusive
-    idleRelease: &saaa-idle-release
-      enabled: true
-      idleSeconds: 300
-      activityProtocols:
-        - openai.audio-speech.v1
-        - openai.audio-transcriptions.v1
-        - openai.chat-completions.v1
-    providers:
-      - name: llm
-        capability: llm.general
-        route: llm-saaa-ornith15
-        publicModel: ornith-1.5-35b
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 131072
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
-      - name: backchannel
-        capability: llm.backchannel.classifier
-        route: llm-saaa-qwen35-2b
-        publicModel: qwen3.5-2b-fast-response
-        publishModel: false
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 65536
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
-      - name: asr
-        capability: speech.stt
-        route: stt-qwen
-        publicModel: qwen3-asr-1.7b
-        publishModel: false
-        readiness: stt-transcription
-      - name: tts
-        capability: speech.tts
-        route: tts-voicevox
-        publicModel: voicevox-core
-        publishModel: false
-        readiness: tts-speech
-      - name: embedding
-        capability: embedding.multilingual-e5-small
-        route: embedding-multilingual-e5-small
-        publicModel: multilingual-e5-small
-        publishModel: false
-        readiness: embedding
   contextstill-background:
     description: ContextStill background profile sharing the warm Ornith STRIX_LEAN vision LLM, Laya System One, and multilingual E5 embedding
     schedulingPriority: 1000
@@ -386,16 +304,12 @@ agentProfiles:
 profileSelectors:
   contextStill:
     agentProfile: contextstill-background
-  SAAA:
-    agentProfile: saaa-conversation-ornith15
   SAAA-gemma4-26b:
     agentProfile: saaa-conversation-gemma4-26b-voice
   SAAA-gemma4-26b-64k:
     agentProfile: saaa-conversation-gemma4-26b-64k
   ornith1.5Strix:
     agentProfile: ornith1.5Strix
-  ornith1.5Strix-64k:
-    agentProfile: ornith1.5Strix-64k
   SAAA-w-Image:
     agentProfile: saaa-conversation-gemma4-26b-voice
     services:
@@ -416,8 +330,6 @@ profileSelectors:
         model: ace-step-1.5
         description: 'ACE-Step 1.5 Turboによる楽曲生成。POSTでprompt（曲調・編成）を指定すると起動し、音声保存後に停止します。durationSecondsは曲の長さを1〜600秒で指定（省略時180秒）。qualityはfast（4ステップ・高速試作）、balanced（8ステップ・標準、省略時）、high（12ステップ）から選択。試作例：{"prompt":"軽快なピアノのBGM","durationSeconds":30,"quality":"fast","instrumental":true}。instrumentalは歌なし指定（省略時false）で、trueの場合はlyricsを指定しません。歌詞はlyrics、seedは任意、outputFormatはopus・mp3・wav・flac（省略時opus、128 kbps VBR・48 kHz）。Opusは一時的な32 bit浮動小数点WAVから変換し、中間音声は変換直後に削除します。title（曲名）とtags（タグ一覧）は任意。説明からテンポ・雰囲気・ジャンル・楽器のタグを自動生成します。GET /v1/music/tagsでタグと曲数を取得し、GET /v1/music/tracks?tags=アップテンポ,明るいで複数タグに絞れます。sort=createdAt&order=ascで古い順（既定は新しい順）、q=検索語&sort=relevanceで一致度順を指定できます。楽曲・お気に入り・タグ一覧はすべて既定50件（limitは1〜100）。nextCursorをcursorに渡すと続き、totalは全件数です。ページ継続時は同じAPIで検索・タグ・並び順を維持し、生成・削除後のタグ一覧は先頭から再取得してください。完成曲は既定で期限なしに保存し、GET /v1/music/tracks?q=検索語で曲名・prompt・歌詞・タグを検索できます（limitは1〜100、nextCursorをcursorに渡すと続き）。GET /v1/music/tracks/{id}/audioで再生、GET /v1/music/favoritesでお気に入り一覧、PUTまたはDELETE /v1/music/generations/{id}/favoriteで登録・解除、DELETE /v1/music/tracks/{id}で楽曲を削除できます。容量上限では自動削除せずmusic_storage_fullで保存を拒否します。HTTP 202で返るjobIdを使いGET /v1/music/generations/{jobId}で状態を確認し、statusがcompletedになったらresult.audioUrlをControlのURLに解決してGETすると音声を取得できます。短い曲とfast設定で試作し、必要な長さとbalanced設定で本番生成できます。起動時間が加わり、highで音質向上を保証するものではありません。参照音源による編集は未対応。'
         startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
-  vulnWorkbench:
-    agentProfile: coding-default
   embeddingCanary:
     agentProfile: contextstill-embedding
   backchannelQwen35:

@@ -13,7 +13,7 @@ const larm = new LarmClient({
   apiToken: process.env.LARM_API_TOKEN,
 });
 for await (const event of larm.streamChatCompletion({
-  model: "coding-default",
+  model: "ornith-1.5-strix-lean",
   messages: [{ role: "user", content: "hello" }],
 })) {
   // 検証済みdeltaをUIや句単位TTSへ即時に渡す。
@@ -52,11 +52,11 @@ if (health.status !== "ok" || readiness.status !== "ready") {
 }
 
 const models = await larm.listOpenAiModels();
-if (!models.data.some(({ id }) => id === "coding-default")) {
+if (!models.data.some(({ id }) => id === "ornith-1.5-strix-lean")) {
   throw new Error("Requested public model is not available");
 }
 for await (const event of larm.streamChatCompletion({
-  model: "coding-default",
+  model: "ornith-1.5-strix-lean",
   messages: [{ role: "user", content: "hello" }],
 })) {
   // iteratorはUTF-8境界、chunk schema、finish、data: [DONE]をfail closedで検証する。
