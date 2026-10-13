@@ -107,3 +107,16 @@ sources:
       sha256: da5aaad87d5b7ea5b346def2e610cc63e64a90088bb0fc2d27fb63a622113953
       terms: https://github.com/VOICEVOX/voicevox_vvm/blob/0.16.4/README.md
       acceptance: operator-required
+
+  granite-asr:
+    repository: https://github.com/handy-computer/transcribe.cpp.git
+    revision: 5d66f60257a75e9bdbddc72dc0887b32e9d4841a
+    path: /srv/ai/apps/granite-asr-runtime/transcribe.cpp
+    python: "3.12"
+    backend: vulkan
+    quantization: Q8_0
+    build: build-vulkan
+    openblas: 0.3.32+ds-5
+    maxAudioSeconds: 12
+    decoderContextTokens: 512
+    threads: 16

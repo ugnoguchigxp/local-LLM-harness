@@ -389,3 +389,15 @@ models:
     sha256: aa35045aab39163851c8584e6cf8cc6f33e8fc2ffe28ca627d3414ec66584704
     quantization: Q4_0_ROCMFP4_STRIX_LEAN
     runtime: q38rocm-vulkan
+
+  granite-speech-4.1-2b-q8:
+    kind: file
+    role: dialogue-asr
+    source: https://huggingface.co/handy-computer/granite-speech-4.1-2b-gguf
+    revision: 5fa89dfac74d52a186f63647553b9e1f7ae36e83
+    filename: granite-speech-4.1-2b-Q8_0.gguf
+    path: /srv/ai/models/granite-asr/granite-speech-4.1-2b-Q8_0.gguf
+    bytes: 2559878944
+    sha256: 666d2f7736bfa140f44d67ba7bcb0827aa5718462f13850af294d72c1f09b218
+    quantization: Q8_0
+    runtime: transcribe.cpp-vulkan

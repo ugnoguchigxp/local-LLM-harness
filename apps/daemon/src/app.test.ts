@@ -526,7 +526,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
     "SAAA-w-Image": {
       id: "saaa-conversation-gemma4-26b-voice",
       providers: [
-        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
         { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
@@ -539,7 +539,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
     "SAAA-w-music": {
       id: "saaa-conversation-gemma4-26b-voice",
       providers: [
-        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
         { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
@@ -548,6 +548,19 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
       ],
       services: [{ name: "music", endpoint: "/v1/music/generations", model: "ace-step-1.5" }],
+    },
+    "ornith1.5Strix": {
+      id: "ornith1.5Strix",
+      providers: [
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
+        { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
+        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-strix-lean" },
+        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
+        { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
+        { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
+        { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
+      ],
+      services: [],
     },
     vulnWorkbench: {
       id: "coding-default",

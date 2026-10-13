@@ -70,6 +70,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     { id: "vulnWorkbench", agentProfile: "coding-default", services: [] },
   ]);
   expect(catalog.profiles.map((profile) => profile.id)).toEqual([
+    "asr-granite",
     "asr-qwen",
     "coding-default",
     "contextstill-backchannel-gemma3-1b",
@@ -312,8 +313,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
         {
           name: "asr",
           capability: "speech.stt",
-          route: "stt-qwen",
-          publicModel: "qwen3-asr-1.7b",
+          route: "stt-granite",
+          publicModel: "granite-speech-4.1-2b",
         },
         {
           name: "embedding",

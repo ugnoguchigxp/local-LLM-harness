@@ -286,3 +286,11 @@ routes:
     candidates:
       - runtime: ruri-system-one
         purpose: primary
+
+  stt-granite:
+    capabilities:
+      - speech.stt
+    explicitOnly: true
+    candidates:
+      - runtime: granite-asr
+        purpose: primary

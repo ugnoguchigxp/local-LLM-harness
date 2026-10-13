@@ -7,6 +7,7 @@ polkit.addRule(function(action, subject) {
         && [
             "llama-server.service",
             "qwen-asr.service",
+            "granite-asr.service",
             "whisper-asr.service",
             "voicevox-tts.service",
             "kittentts-tts.service",

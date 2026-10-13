@@ -239,3 +239,12 @@ runtimeReleases:
     estimatedMemoryGB: 48
     healthPath: /health
     default: true
+
+  granite-asr-current:
+    runtime: granite-asr
+    artifacts:
+      - granite-speech-4.1-2b-q8
+    providerConfigRevision: transcribe-5d66f602-granite-q8-vulkan-16t-ctx512-12s-v1
+    estimatedMemoryGB: 3.5
+    healthPath: /health
+    default: true

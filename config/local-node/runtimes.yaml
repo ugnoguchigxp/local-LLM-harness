@@ -661,3 +661,28 @@ runtimes:
       healthPort: 8087
       healthPath: /health
       endpoint: http://127.0.0.1:8087
+
+  granite-asr:
+    artifacts:
+      - granite-speech-4.1-2b-q8
+    capability:
+      - speech.stt
+    protocol: openai.audio-transcriptions.v1
+    backend: systemd
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 60
+    resources:
+      estimatedMemoryGB: 3.5
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 1
+      queueTimeoutMs: 2000
+    deployment:
+      service: granite-asr.service
+      healthPort: 8089
+      healthPath: /health
+      endpoint: http://127.0.0.1:8089

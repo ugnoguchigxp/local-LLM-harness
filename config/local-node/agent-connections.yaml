@@ -84,8 +84,8 @@ agentProfiles:
           safetyMarginTokens: 1976
       - name: asr
         capability: speech.stt
-        route: stt-qwen
-        publicModel: qwen3-asr-1.7b
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
         publishModel: false
         readiness: stt-transcription
       - name: tts
@@ -141,8 +141,8 @@ agentProfiles:
           safetyMarginTokens: 1976
       - name: asr
         capability: speech.stt
-        route: stt-qwen
-        publicModel: qwen3-asr-1.7b
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
         publishModel: false
         readiness: stt-transcription
       - name: tts
@@ -476,6 +476,14 @@ agentProfiles:
         route: llm-agent-worker
         publicModel: qwen-nightworker
         readiness: llm-inference
+  asr-granite:
+    description: Granite Speech 4.1 2B Q8 Vulkan provider for Japanese and English short voice dialogue
+    providers:
+      - name: asr
+        capability: speech.stt
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
+        readiness: stt-transcription
   asr-qwen:
     description: Resident Qwen3 ASR OpenAI-compatible provider
     providers:
