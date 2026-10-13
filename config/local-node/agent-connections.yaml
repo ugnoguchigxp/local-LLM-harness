@@ -11,7 +11,7 @@ audiences:
 
 agentProfiles:
   coding-default:
-    description: Resident Ornith 1.5 35B ROCmFP4 128K provider with MTP
+    description: Resident Ornith 1.5 35B ROCmFP4 128K provider with MTP; image input enabled
     schedulingPriority: 3000
     providers:
       - name: llm
@@ -82,7 +82,7 @@ agentProfiles:
         publishModel: false
         readiness: system-one
   ornith1.5Strix:
-    description: Ornith 1.5 STRIX_LEAN profile copied from the Gemma 4 26B voice profile with the same speech, embedding, and System One providers
+    description: Ornith 1.5 STRIX_LEAN profile copied from the Gemma 4 26B voice profile with the same speech, embedding, and System One providers; image input enabled
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
     idleRelease:
@@ -160,7 +160,7 @@ agentProfiles:
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
   ornith1.5Strix-64k:
-    description: Ornith 1.5 STRIX_LEAN auxiliary 64K LLM session sharing four slots and the unified KV pool with ornith1.5Strix
+    description: Ornith 1.5 STRIX_LEAN auxiliary 64K LLM session sharing four slots and the unified KV pool with ornith1.5Strix; image input enabled
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
     idleRelease:
@@ -180,7 +180,7 @@ agentProfiles:
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
   saaa-conversation-ornith15:
-    description: SAAA base response set with resident Ornith 1.5 35B, Qwen 3.5 2B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding
+    description: SAAA base response set with resident Ornith 1.5 35B, Qwen 3.5 2B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding; image input enabled
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
     idleRelease: &saaa-idle-release
@@ -229,7 +229,7 @@ agentProfiles:
         publishModel: false
         readiness: embedding
   contextstill-background:
-    description: ContextStill background profile sharing STRIX_LEAN, Granite ASR, Japanese VOICEVOX, English KittenTTS, embedding, and sentence-language with the voice profile; retains its Laya decision provider and 32K budget
+    description: ContextStill background profile sharing the warm Ornith STRIX_LEAN vision LLM, Laya System One, and multilingual E5 embedding
     schedulingPriority: 1000
     requestScheduling: background-when-idle
     providers:

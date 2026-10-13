@@ -209,6 +209,18 @@ models:
     quantization: Q4_0_ROCMFP4_STRIX_LEAN
     runtime: q38rocm-vulkan
 
+  ornith15-vision-bf16:
+    kind: file
+    role: vision-projector
+    source: https://huggingface.co/pugant/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN
+    revision: 4494a5cffb1eb5496fa25575e5a5040064aa48b8
+    filename: mmproj-Ornith-1.5-35B-BF16.gguf
+    path: /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+    bytes: 902822016
+    sha256: d9ce31026d1cb1f3f8d5152e2e2a014d9d2b302b6c93a7dc07bb0a0487f52837
+    quantization: BF16
+    runtime: llama.cpp-vulkan
+
   ornith15-35b-quality:
     kind: file
     role: preferred-llm

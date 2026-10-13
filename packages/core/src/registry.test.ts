@@ -82,7 +82,7 @@ test("loads the Linux production registry", () => {
     warm: { minInstances: 0, idleTtlSeconds: 60 },
     swapGroup: "qwen-worker-slot",
   });
-  expect(ornith35b?.resources.estimatedMemoryGB).toBe(48);
+  expect(ornith35b?.resources.estimatedMemoryGB).toBe(50);
   expect(ornith35bSpeed?.policy).toEqual({
     class: "preferred",
     lifecycle: "managed",
@@ -138,7 +138,7 @@ test("loads the Linux production registry", () => {
     "qwen38-worker-efficientthink-q3",
     "qwen38-efficientthink-mtp",
   ]);
-  expect(agent35b?.resources.estimatedMemoryGB).toBe(30);
+  expect(agent35b?.resources.estimatedMemoryGB).toBe(32);
   expect(registry.profiles.some((profile) => profile.id === "voice-expressive")).toBe(true);
   expect(defaultRoute?.candidates[0]).toEqual({
     runtime: "ornith-general",
@@ -625,7 +625,7 @@ test("ContextStill resolves the warm Strix backend shared with the distinct voic
   expect(route?.candidates).toEqual([{ runtime: "ornith15-strix-conversation", purpose: "primary" }]);
   const runtime = registry.runtimes.find((runtime) => runtime.id === "ornith15-strix-conversation");
   expect(runtime).toMatchObject({
-    artifacts: ["ornith15-35b-strix-lean"],
+    artifacts: ["ornith15-35b-strix-lean", "ornith15-vision-bf16"],
     policy: { warm: { minInstances: 1 }, swapGroup: "conversation-llm-slot" },
     resources: { maxConcurrentAllocations: 4, maxConcurrentRequests: 4 },
     deployment: { modelId: "ornith15-strix-conversation" },
@@ -757,6 +757,7 @@ test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifa
   expect(strix.idleRelease).toEqual(base.idleRelease);
   expect(strix.providers.find(provider => provider.name === "llm")).toEqual({
     ...base.providers.find(provider => provider.name === "llm")!,
+    supportedCapabilities: ["llm.general", "llm.vision"],
     route: "llm-ornith15-strix",
     publicModel: "ornith-1.5-strix-lean",
   });
@@ -766,7 +767,7 @@ test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifa
   expect(route.explicitOnly).toBe(true);
   expect(route.candidates).toEqual([{ runtime: "ornith15-strix-conversation", purpose: "primary" }]);
   const runtime = registry.runtimes.find(runtime => runtime.id === route.candidates[0]!.runtime)!;
-  expect(runtime.artifacts).toEqual(["ornith15-35b-strix-lean"]);
+  expect(runtime.artifacts).toEqual(["ornith15-35b-strix-lean", "ornith15-vision-bf16"]);
   expect(runtime.resources.maxConcurrentRequests).toBe(4);
   const swap = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
   expect(swap.models[runtime.id].cmd).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");

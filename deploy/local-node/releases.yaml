@@ -38,8 +38,9 @@ runtimeReleases:
     runtime: ornith-general
     artifacts:
       - ornith15-35b-speed
-    providerConfigRevision: llama-server-ornith15-rocmfp4-128k-mtp-n4-p06-v1
-    estimatedMemoryGB: 40
+      - ornith15-vision-bf16
+    providerConfigRevision: llama-server-ornith15-rocmfp4-128k-mtp-n4-p06-v1-vision4096-v1
+    estimatedMemoryGB: 42
     healthPath: /health
     default: true
 
@@ -146,8 +147,9 @@ runtimeReleases:
     runtime: ornith15-conversation
     artifacts:
       - ornith15-35b-quality
-    providerConfigRevision: llama-swap-ornith15-35b-official-q5-conversation-225k-reasoning-off-v2
-    estimatedMemoryGB: 48
+      - ornith15-vision-bf16
+    providerConfigRevision: llama-swap-ornith15-35b-official-q5-conversation-225k-reasoning-off-v2-vision4096-v1
+    estimatedMemoryGB: 50
     healthPath: /health
     default: true
 
@@ -165,8 +167,9 @@ runtimeReleases:
     runtime: ornith15-35b
     artifacts:
       - ornith15-35b-quality
-    providerConfigRevision: llama-swap-ornith15-35b-official-q5-plain-v2
-    estimatedMemoryGB: 48
+      - ornith15-vision-bf16
+    providerConfigRevision: llama-swap-ornith15-35b-official-q5-plain-v2-vision4096-v1
+    estimatedMemoryGB: 50
     healthPath: /health
     default: true
 
@@ -174,8 +177,9 @@ runtimeReleases:
     runtime: ornith15-35b-speed
     artifacts:
       - ornith15-35b-speed
-    providerConfigRevision: llama-swap-ornith15-35b-rocmfp4-aug24-mtp-n4-p06-v3
-    estimatedMemoryGB: 44
+      - ornith15-vision-bf16
+    providerConfigRevision: llama-swap-ornith15-35b-rocmfp4-aug24-mtp-n4-p06-v3-vision4096-v1
+    estimatedMemoryGB: 46
     healthPath: /health
     default: true
 
@@ -183,8 +187,9 @@ runtimeReleases:
     runtime: ornith-contextstill
     artifacts:
       - ornith15-35b-speed
-    providerConfigRevision: llama-swap-ornith15-contextstill-64k-n4-demand-plain-v3
-    estimatedMemoryGB: 44
+      - ornith15-vision-bf16
+    providerConfigRevision: llama-swap-ornith15-contextstill-64k-n4-demand-plain-v3-vision4096-v1
+    estimatedMemoryGB: 46
     healthPath: /health
     default: true
 
@@ -192,8 +197,9 @@ runtimeReleases:
     runtime: ornith15-35b-agent
     artifacts:
       - ornith15-35b-speed
-    providerConfigRevision: llama-swap-ornith15-35b-agent-64k-aug24-mtp-n4-p06-v3
-    estimatedMemoryGB: 30
+      - ornith15-vision-bf16
+    providerConfigRevision: llama-swap-ornith15-35b-agent-64k-aug24-mtp-n4-p06-v3-vision4096-v1
+    estimatedMemoryGB: 32
     healthPath: /health
     default: true
 
@@ -226,25 +232,25 @@ runtimeReleases:
 
   ornith15-strix-conversation-p4-v1:
     runtime: ornith15-strix-conversation
-    artifacts: [ornith15-35b-strix-lean]
-    providerConfigRevision: q38rocm-0fc9568-strix-lean-512k-p4-unified-q4-no-mtp-v1
-    estimatedMemoryGB: 48
+    artifacts: [ornith15-35b-strix-lean, ornith15-vision-bf16]
+    providerConfigRevision: q38rocm-0fc9568-strix-lean-512k-p4-unified-q4-no-mtp-v1-vision4096-v1
+    estimatedMemoryGB: 50
     healthPath: /health
     default: false
 
   ornith15-strix-conversation-p4-v2:
     runtime: ornith15-strix-conversation
-    artifacts: [ornith15-35b-strix-lean]
-    providerConfigRevision: q38rocm-0fc9568-strix-lean-512k-p4-unified-q4-no-mtp-no-prompt-cache-v2
-    estimatedMemoryGB: 48
+    artifacts: [ornith15-35b-strix-lean, ornith15-vision-bf16]
+    providerConfigRevision: q38rocm-0fc9568-strix-lean-512k-p4-unified-q4-no-mtp-no-prompt-cache-v2-vision4096-v1
+    estimatedMemoryGB: 50
     healthPath: /health
     default: false
 
   ornith15-strix-conversation-p4-v3:
     runtime: ornith15-strix-conversation
-    artifacts: [ ornith15-35b-strix-lean ]
-    providerConfigRevision: q38rocm-0fc9568-strix-lean-1m-p4-unified-q4-no-mtp-no-prompt-cache-v3
-    estimatedMemoryGB: 52
+    artifacts: [ornith15-35b-strix-lean, ornith15-vision-bf16]
+    providerConfigRevision: q38rocm-0fc9568-strix-lean-1m-p4-unified-q4-no-mtp-no-prompt-cache-v3-vision4096-v1
+    estimatedMemoryGB: 54
     healthPath: /health
     default: true
 

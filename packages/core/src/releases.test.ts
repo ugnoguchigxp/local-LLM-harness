@@ -16,9 +16,9 @@ describe("runtime release catalog", () => {
     const releases = loadRuntimeReleaseCatalog(`${root}deploy/local-node/releases.yaml`, registry, artifacts);
     expect(defaultRuntimeRelease(releases, "ornith-general")).toMatchObject({
       id: "ornith-general-current",
-      artifacts: ["ornith15-35b-speed"],
-      providerConfigRevision: "llama-server-ornith15-rocmfp4-128k-mtp-n4-p06-v1",
-      estimatedMemoryGB: 40,
+      artifacts: ["ornith15-35b-speed", "ornith15-vision-bf16"],
+      providerConfigRevision: "llama-server-ornith15-rocmfp4-128k-mtp-n4-p06-v1-vision4096-v1",
+      estimatedMemoryGB: 42,
     });
     expect(defaultRuntimeRelease(releases, "qwen-worker-fast")).toMatchObject({
       id: "qwen-worker-fast-current",
@@ -50,9 +50,11 @@ describe("runtime release catalog", () => {
     });
     expect(defaultRuntimeRelease(releases, "ornith15-35b")?.artifacts).toEqual([
       "ornith15-35b-quality",
+      "ornith15-vision-bf16",
     ]);
     expect(defaultRuntimeRelease(releases, "ornith15-35b-speed")?.artifacts).toEqual([
       "ornith15-35b-speed",
+      "ornith15-vision-bf16",
     ]);
     expect(registry.runtimes.find((runtime) => runtime.id === "ornith-general")?.context)
       .toMatchObject({ class: "managed-context", sourceTokenLimit: 20_000_000 });
@@ -80,7 +82,7 @@ describe("runtime release catalog", () => {
 
     const current = {
       runtime: "ornith-general",
-      artifacts: ["ornith15-35b-speed"],
+      artifacts: ["ornith15-35b-speed", "ornith15-vision-bf16"],
       providerConfigRevision: "v1",
       estimatedMemoryGB: 40,
       default: true,

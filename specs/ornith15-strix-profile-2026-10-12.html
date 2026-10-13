@@ -146,6 +146,142 @@
       v2を追加する。v1は履歴として残してdefaultをfalseにする。Gemmaや他のruntimeの設定と、LARMの一般的なreadiness確認方法は維持する。
     </p>
   </section>
+  <section id="live-session-results">
+    <h2>本番LARM経由の4セッション検証結果</h2>
+    <p>
+      <time>2026-10-12 20:30 JST</time
+      >。修正版d1d1a92e6f454b87d90af6ad0a3ed4b720d84d98を署名付き更新経路で配備し、health、ready、API契約、catalog
+      revisionの一致を確認した。稼働revisionは<code>6c059a1ccd7b9e477d0738872f93ce9102a564e77cd282c58be7046679af7ac3</code>。
+    </p>
+    <table>
+      <caption>
+        LARMの接続・容量・解放を含めた実機検証
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">主会話＋補助会話3本</th>
+          <td>
+            4つの異なる接続がready。主接続は7 Provider、補助はLLMのみ。GemmaとLLM以外の6
+            Providerが完全一致。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">runtime共有</th>
+          <td>1 instanceにallocation参照4本。別々のモデルプロセスを4つ起動していない。</td>
+        </tr>
+        <tr>
+          <th scope="row">4同時SSE生成</th>
+          <td>
+            全接続で128 tokensを生成し、finishとDONEを検証。各6.46〜6.50秒、decode区間30.5〜32.4
+            tok/s。最初の文字2.30〜2.55秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">会話履歴</th>
+          <td>
+            4本の別々の履歴をリクエストに与え、各合言葉をJSONで正しく返す。サーバー側の永続記憶を意味しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">5つ目の容量制御</th>
+          <td>
+            reject指定では409 resource_exhausted、allocation capacity 4。Agent
+            Connectionではwaitingとなり、claimは409。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">解放と昇格</th>
+          <td>
+            1つ解放すると待機接続がreadyになり、同じinstanceで応答。置換後の単発decodeは66.7
+            tok/s、最初の文字1.79秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">renew・失効</th>
+          <td>
+            主接続のrenewと会話応答が成功。解放後の4資格情報はすべて401。解放した補助接続の旧資格情報も401。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">終了時</th>
+          <td>
+            試験で作成した全接続を解放。cleanup失敗0、LLMのallocation/request参照0、LARMはidleでhealth
+            ready。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      最初の文字の値はfull-required監査を含む本番LARMのProvider
+      API全体で測定した値。前節の約0.25秒は直接engineに送った単体試験の値であり、同じ測定経路ではない。長さ256Kの実会話入力や4本すべての最大context使用は未検証。
+    </p>
+    <p>
+      証跡は外部の<code>/srv/ai/evidence/ornith-three-trial-20261012/strix-four-larm-sessions-v2.json</code>、activation-result-v2、final-live-checkに保存した。資格情報やAPI
+      tokenは証跡へ保存していない。
+    </p>
+  </section>
+  <section id="two-256k-capacity-20261013">
+    <h2>256Kを2セッションに配分する容量評価</h2>
+    <p>
+      <time>2026-10-13 13:37 JST</time>の読み取り調査。 会話用の公開profile
+      <code>ornith1.5Strix</code>は
+      <code>llm-ornith15-strix</code
+      >から<code>ornith15-strix-conversation</code>へ解決する。
+      稼働releaseは<code>ea00ad8828d0c3a3e65321459432f9d5197076bf</code>、catalog revisionは
+      <code>a17f051682876b2e59b4b02eb8780062c9cfca949b302d342dfd3fecd225c096</code>。 起動中のSTRIX_LEAN backendは524,288
+      tokensのunified KV、4 slots、K/Vともq4_0を使用し、 propsとslotsは各slotの上限262,144
+      tokensを報告した。別に稼働する8080のresident Ornithは このprofileの会話runtimeではない。
+    </p>
+    <table>
+      <caption>
+        同じ会話runtimeを共有するセッションの最大context合計。入力と生成出力を含む。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">配分</th>
+          <th scope="col">合計tokens</th>
+          <th scope="col">現在の512K poolに対する余裕</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">主256K＋補助64K×3</th>
+          <td>458,752</td>
+          <td>65,536</td>
+        </tr>
+        <tr>
+          <th scope="row">256K×2のみ</th>
+          <td>524,288</td>
+          <td>0。算術上は収まるが、余裕を持った最大長同時運用は未検証。</td>
+        </tr>
+        <tr>
+          <th scope="row">補助1本を256Kへ拡大し、残り64K×2を維持</th>
+          <td>655,360</td>
+          <td>131,072不足。4 slotsを維持するならpool拡張が必要。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      観測時のsystem availableは約60.0 GiB、accelerator availableは約43.5 GiBで、
+      会話LLMの処理中requestは0だった。両者はAPUの共有RAMに対する観測であり、足し合わせてはならない。
+      メモリ余裕はpool拡張を検討する根拠になるが、別モデルの256Kセッションや別プロセスの起動可否を
+      保証する値ではない。同一runtime共有ならモデル重みをもう1組ロードする必要はない。
+    </p>
+    <p>
+      結論は、同じOrnith会話runtimeで256Kを2本にする容量は設定上あるが、現在の512K poolでは
+      最大長2本だけで使い切る。補助2本も維持する候補は最低640K、余裕を含める候補は768K （786,432
+      tokens）の共有poolとする。後者でも4 slots上限は維持し、ContextStillなど同じruntimeを
+      使う要求も合計予算へ含める。変更時はprofileのtoken上限、runtimeのメモリ予約、Consumerの総token予算を
+      整合させ、最大長2本と補助要求による実入力検証で安定性、処理時間、ピークメモリを測る。
+      今回は設定変更、runtime再起動、長文推論試験を行っていない。
+    </p>
+  </section>
   <section id="one-million-shared-context-20261013">
     <h2>2026-10-13の共有容量拡張</h2>
     <p>
@@ -186,15 +322,247 @@
       この短文検証は256K×3の実入力性能や長時間運用の保証ではない。
     </p>
   </section>
-  <section id="validation">
-    <h2>ソース検証</h2>
+  <section id="one-million-deployment-results-20261013">
+    <h2>1M共有容量の本番反映と検証結果</h2>
     <p>
-      型検査、資料チェック、境界チェック、関連42テスト、LARM本体の762テスト、toolingの24テスト、deploymentの56
-      Bunテストは成功した。profileのLLM以外のProvider一致、新selectorの接続request受理、専用routeから固定artifactへの対応、MTP無効設定を確認した。
+      <time>2026-10-13</time>。署名builderの全体checkを通過し、最終release
+      <code>a52ba20141be44f3a5dc9962e82a0db7e6d2a9a1</code>を本番へ反映した。 config
+      revisionは<code>6066bc09cb083f2c43a35e817e93b0e587a04faaefcff58d364792bf954e48bd</code>。 backendの実起動引数はctx-size
+      1,048,576、parallel 4。各slotの上限は262,144 tokensで、
+      LARMのallocationとrequest上限も4のまま。メモリ予約52 GBを読み取り確認した。
     </p>
     <p>
-      bun run
-      check全体は、既存のGranite試験unitを通常installerの出力に対して比較するinstall-services.test.shで停止した。granite-asr-trial.serviceは専用の試験登録スクリプトで配備され、通常installerの対象外である。この既存作業の不一致は本変更で上書きしていない。shell/Python/systemdの静的チェックとGit差分の空白チェックは成功した。
+      runtime release管理のactive・desiredも<code>ornith15-strix-conversation-p4-v3</code>へ揃えた。
+      既存モデルをstaging領域へhard
+      linkで登録してAPIによるchecksum検証を通し、モデル重みの再取得や置換は
+      行っていない。管理情報の切り替え後、旧releaseのwarm参照が再接続をrevision
+      conflictで拒否したため、 制御サービスを署名release経由で再起動して参照を揃えた。
+    </p>
+    <p>
+      最終の本番smokeは256K profile3本と64K profile1本が1つのruntime instanceを共有し、
+      4本同時SSE応答、独立した会話履歴、5本目の拒否と待機、解放後の昇格、renew、解放後の資格情報失効に
+      全て成功した。昇格直後の参照数検査はreconciliationを最大2秒待つようにした。
+      作成した試験接続は全て解放し、cleanup失敗0、allocation・request・mutation参照0、health ready、
+      activity idleを確認した。最終証跡はrepository外の
+      <code>/srv/ai/evidence/strix-1m-context-20261013/live-four-sessions-v3.json</code>とfinal-live-state.json。
+      256K×3を実際に埋めた長文処理の性能・品質と長時間運用は今回の検証に含めていない。
+    </p>
+  </section>
+  <section id="vision-input-investigation-20261013">
+    <h2>画像入力の構成確認 2026-10-13</h2>
+    <p>
+      Ornith 1.5 35B-A3Bは画像入力を持つモデルである。公式Hugging Faceページに
+      image-text-to-text分類と画像を含む入力例があり、公式GGUF配布には
+      <code>mmproj-Ornith-1.5-35B-BF16.gguf</code>が存在する。
+      モデルの画像対応と、個々のProviderで画像入力を有効にしたことは区別する。
+    </p>
+    <p>
+      本作業ツリーでは<code>ornith1.5Strix</code>から<code>llm-ornith15-strix</code>を経由して
+      <code>ornith15-strix-conversation</code>へ解決する。このruntimeの起動定義に
+      <code>--mmproj</code>指定はない。通常のOrnith定義にも同指定はない。
+      調査時に稼働していたresident ROCmFP4とSTRIX_LEANの両プロセスも、起動引数に
+      <code>--mmproj</code
+      >を持たなかった。別のprofileのmodelを基準にdriftと判断した結果ではない。
+    </p>
+    <p>
+      ホストにはSTRIX_LEANモデルのディレクトリと通常のROCmFP4モデルのディレクトリに
+      同名projectorが保存済みで、各902,822,016 bytesだった。内容のchecksum一致や実際の
+      vision推論の成功までは検証していない。使用中engineのhelpには
+      <code>--mmproj</code
+      >、<code>--mmproj-offload</code>、<code>--media-path</code>がある。
+      ファイルの存在とオプション認識だけで量子化artifact・engineとの互換性を確定しない。
+    </p>
+    <h3>画像の送信形式</h3>
+    <p>
+      質問文と画像を、同じuser messageのcontent配列に入れてChat Completionsへ送る。
+      ローカル画像はBase64化したdata URLを使えば、consumerとserver間でファイルパスを
+      共有する必要がない。Base64は転送用の表現であり、画像encoderの代替ではない。
+      HTTPS画像URLもllama-serverで使用できるが、serverから取得可能である必要がある。
+    </p>
+    <pre><code>{
+  "model": "ornith-1.5-strix-lean",
+  "messages": [{
+    "role": "user",
+    "content": [
+      { "type": "text", "text": "この画像に何が写っていますか？" },
+      { "type": "image_url", "image_url": {
+        "url": "data:image/png;base64,ここに画像のBase64データ"
+      }}
+    ]
+  }],
+  "max_tokens": 512
+}</code></pre>
+    <p>
+      上記は形式例で、Base64部分を実データへ置き換える。LARM経由では選択したAgent Profileの llm
+      Providerが返すendpoint・公開model・資格情報を使う。現在のChat Completions schemaと
+      通常gatewayはcontent配列を文字列限定にしておらず、画像partを保持して転送できる構造である。
+      画像を含む実リクエストのLARM経由E2E検証は未実施。request body上限には画像のBase64と
+      テキストの両方が含まれる。consumer側にも画像選択・エンコード・送信処理が必要である。
+    </p>
+    <h3>追加構成と残る検証</h3>
+    <p>
+      llama.cppではprojectorを同じllama-serverへ読み込む。独立したOCR serverや別の会話LLMは
+      通常の画像理解には必須ではない。STRIX_LEANでの指定候補は
+      <code>--mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf</code>。
+      projector内の画像encoderが画像を特徴量へ変換し、LLMが質問文と合わせて解釈する。 約903
+      MBはファイル容量であり、実行時の追加memoryや画像token、latencyを示す値ではない。
+    </p>
+    <h3>projectorの常駐とmemory見積もり</h3>
+    <p>
+      通常のllama-serverでは、projectorを起動時にLLMと一緒に読み込み、同じruntimeの稼働中は
+      保持する。画像requestのたびにロード・解放する方式ではない。テキストだけのrequestでは
+      画像encoderを実行する必要はないが、projectorの重みは保持される。LARMがruntimeを停止すれば
+      プロセスのmemoryも解放される。同じserverの4 slotはprojectorの重みを共有し、 4
+      sessionだから重みが4倍になるわけではない。別プロセスで起動したruntimeは別の保持単位になる。
+    </p>
+    <p>
+      保存済みSTRIX_LEAN側projectorのGGUF tensor一覧を読み取り、334 tensorの重みデータを
+      合計902,802,368 bytes、860.98 MiB、約0.841 GiBと確認した。内訳は BF16が883,482,624
+      bytes、F32が19,319,744 bytesである。この値は重みデータ容量であり、 プロセスの実測RSSやGPU
+      allocationではない。ファイル全体の902,822,016 bytesには metadataとalignmentも含まれる。
+    </p>
+    <p>
+      追加memoryはprojectorの重みだけでなく、backend管理領域、画像encoderの計算buffer、
+      画像展開・前処理・特徴量bufferも含む。計算bufferを起動時に確保するか画像処理時に確保するかは
+      engineの版と実装による。画像由来tokenもLLMのcontext容量を使うが、既に確保済みのKV poolが
+      同じ量だけ追加確保されるとは限らない。解像度、画像token上限、画像枚数、並行処理でpeakは変わる。
+      従って約0.9 GBは重み部分の目安であり、idle差分・画像推論peakは未測定である。 AI MAX 395のGPU
+      offloadも同じ物理RAMを使うので、CPUに移すだけで総容量を節約できるとは限らない。
+    </p>
+    <p>
+      有効化前には対象artifactとengineで隔離試験し、既存のcontext-shift、KV cache、複数slot、
+      speculation設定との組み合わせを確認する。物体説明と文字読み取りを分けて評価し、 peak
+      memoryと既存sessionへの影響を測る。本調査では稼働設定の変更、restart、重みの取得を
+      行っていない。
+    </p>
+    <p>
+      出典：
+      <a href="https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B">公式モデルページ</a>、
+      <a href="https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF/tree/main"
+        >公式GGUFファイル一覧</a
+      >、
+      <a href="https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md"
+        >llama.cpp multimodal仕様</a
+      >、
+      <a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md"
+        >llama-server API仕様</a
+      >、
+      <a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/server/server-context.cpp"
+        >serverのprojector初期化実装</a
+      >、
+      <a href="https://github.com/ggml-org/llama.cpp/blob/master/tools/mtmd/clip.cpp"
+        >画像encoderのbuffer管理実装</a
+      >。
+    </p>
+  </section>
+  <section id="vision-always-loaded-20261013">
+    <h2>Ornithを参照する全プロファイルで画像入力を有効化 2026-10-13</h2>
+    <p>
+      利便性を優先し、Ornith runtimeが起動している間はprojectorも常駐する構成を採用する。
+      個々のruntimeのresident・warm・on-demand方針は維持し、画像request単位でprojectorを
+      ロード・解放する別モジュールは追加しない。同じruntimeを共有する会話枠はprojectorの重みも共有する。
+    </p>
+    <table>
+      <caption>
+        更新したAgent ProfileとLLMの参照先
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Agent Profile</th>
+          <th scope="col">runtime</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">coding-default</th>
+          <td>ornith-general</td>
+        </tr>
+        <tr>
+          <th scope="row">saaa-conversation-ornith15（SAAA）</th>
+          <td>ornith-general</td>
+        </tr>
+        <tr>
+          <th scope="row">ornith1.5Strix</th>
+          <td>ornith15-strix-conversation</td>
+        </tr>
+        <tr>
+          <th scope="row">ornith1.5Strix-64k</th>
+          <td>ornith15-strix-conversation</td>
+        </tr>
+        <tr>
+          <th scope="row">contextstill-background（contextStill）</th>
+          <td>ornith15-strix-conversation</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      7つのOrnith runtime定義、6つのllama-swap起動commandとresident用systemd unitを更新した。
+      5つの関連routeに<code>llm.vision</code>を追加し、上表のProviderの
+      <code>supportedCapabilities</code>にも反映する。Qwenをfallbackに含む比較routeは
+      全candidateの画像対応を保証できないため、同capabilityを宣言しない。 Profileの公開model
+      ID、priority、context上限、会話枠数、LLM以外のProviderは保持する。
+    </p>
+    <p>
+      projectorは<code>ornith15-vision-bf16</code>として登録し、すべてのOrnith runtimeと
+      対応releaseのartifact集合に含めた。PugantのSTRIX_LEAN配布revision
+      <code>4494a5cffb1eb5496fa25575e5a5040064aa48b8</code>の902,822,016 bytesと SHA-256
+      <code>d9ce31026d1cb1f3f8d5152e2e2a014d9d2b302b6c93a7dc07bb0a0487f52837</code>に
+      保存済みファイルが一致した。公式配布のprojectorと同名だが、公式配布のfile SHAを
+      このローカルファイルへ流用しない。
+    </p>
+    <p>
+      画像は最大4096 tokenに制限する。画像対応で無効になるcontext shiftは
+      <code>--no-context-shift</code>に揃え、公式Q5会話のcache reuseも0とする。
+      上限を超える会話はconsumer側で履歴を整理して再送する。MTPを使う構成は既存のMTP設定を維持する。
+      メモリ予約は各runtimeで2 GB増やし、resident Ornithは42 GB、共有STRIXは54 GBとする。
+      warm・resident集合は合計110 GB、ContextStillのLayaを加え112 GBとなり、既存の 16 GB
+      OS予約を保つ。各4 GB増の案ではwarm floorが114
+      GBになり、静的admissionで拒否されるため採用しない。
+    </p>
+    <h3>隔離した実機検証</h3>
+    <p>
+      まずSTRIX_LEAN、ROCmFP4＋MTP、公式Q5を8K contextで比較し、text-onlyとvisionで起動・
+      テキスト応答を確認した。各vision構成で同じ質問に赤・青・緑・黄の異なるPNGを送り、
+      画像に応じた正しいJSON応答を得た。続けて全7起動定義をそれぞれ実際のcontext容量と会話枠数で
+      隔離起動し、各4画像、合計28画像の判定とテキスト応答が成功した。 STRIXの1M context・4
+      slotを維持した4並列画像要求も成功した。
+    </p>
+    <p>
+      8K比較のGPU GTT allocationはprojector有効化で約1.08 GiB増加した。CPU RSSや画像処理後の
+      buffer増加は別であり、他の常駐Providerを稼働させた測定なのでホスト全体の差分を
+      projector単体の正確なpeakとは扱わない。4096 tokenの高解像度画像、OCR品質、長期運用は未評価。
+      全7構成の成功を確認する前に本番Providerを変更していない。
+      証跡、試験PNG、command、memory時系列はrepository外の
+      <code>/srv/ai/evidence/ornith-vision-20261013</code>に保存した。
+    </p>
+    <h3>更新候補と本番反映の境界</h3>
+    <p>
+      作業ツリーの<code>bun run check</code>が全て成功した。LARM本体770テスト、tooling24テスト、
+      speech segmentation関連16テスト、deployment57
+      Bunテストとinstaller・release・Python検証を含む。 稼働commit
+      <code>a52ba20141be44f3a5dc9962e82a0db7e6d2a9a1</code>から独立したsourceを作り、
+      画像対応の差分だけを適用して署名builder用候補を準備する。他の未commit作業は配備候補へ混ぜない。
+    </p>
+    <p>
+      常駐Ornithのsystemd unit更新は管理者認証が必要である。適用stageは
+      <code>/srv/ai/apps/larm-ornith-vision-20261013</code>で、<code>activate.sh</code>が
+      元release・元unit・準備済みfile digestとallocationがないことを確認してからunitを更新する。
+      常駐Ornithのvision-readyを確認して署名intentを既存activatorへ渡し、5 profile経由で合計20画像を
+      検証する手順を用意した。署名intentは非公開inboxに留め、管理者認証前に本番へ投稿しない。
+      本番反映・LARM経由画像検証はこの段階では未実施である。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>ソース検証と配備の範囲</h2>
+    <p>
+      稼働release f65c374を元にした独立したGit
+      checkoutで、今回のprofile・route・runtime・artifact・releaseと対応selector・検証スクリプトだけを変更した。署名builderのbun
+      run check全体を通過し、LARM本体755テスト、tooling24テスト、deployment56
+      Bunテスト、installer、release/convergence、ネットワーク、およびPython検証が成功した。新selectorの受理、256K/64Kのtoken
+      budget、4 allocation上限と5つ目の拒否を単体テストでも検証した。
+    </p>
+    <p>
+      元の作業ツリーには今回と別のGranite試験unitなどの未commit作業があり、前段の全チェックはその通常installerテストの不一致で停止していた。その変更を今回の配備へ含めず、元の作業も上書きしていない。Gemmaの既存selectorやdefaultは保持したまま、新たに主profileと補助profileを公開した。
     </p>
   </section>
 </article>

@@ -104,7 +104,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
       schedulingPriority: 3000,
       providers: [{
         capability: "llm.coding",
-        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
+        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning", "llm.vision"],
         route: "llm-default",
         protocol: "openai.chat-completions.v1",
         readiness: "llm-inference",
@@ -137,7 +137,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "embedding",
       }, {
         capability: "llm.coding",
-        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
+        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning", "llm.vision"],
         route: "llm-contextstill-ornith",
         protocol: "openai.chat-completions.v1",
         publicModel: "ornith-contextstill",

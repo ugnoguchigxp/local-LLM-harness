@@ -366,6 +366,8 @@ models:
     cmd: >
       /srv/ai/apps/q38rocm/engine/bin/llama-server
       -m /srv/ai/models/ornith-trial-20261012/strix-lean/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -392,7 +394,7 @@ models:
       --top-p 0.95
       --top-k 64
       --jinja
-      --context-shift
+      --no-context-shift
       --no-cache-prompt
       --cache-reuse 0
       --metrics
@@ -410,6 +412,8 @@ models:
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
       -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-Q5_K_M.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -432,8 +436,8 @@ models:
       --top-p 0.95
       --top-k 20
       --jinja
-      --context-shift
-      --cache-reuse 256
+      --no-context-shift
+      --cache-reuse 0
       --metrics
       --no-webui
     aliases:
@@ -475,6 +479,8 @@ models:
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
       -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-Q5_K_M.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -497,7 +503,7 @@ models:
       --top-p 0.95
       --top-k 20
       --jinja
-      --context-shift
+      --no-context-shift
       --metrics
       --no-webui
     aliases:
@@ -511,6 +517,8 @@ models:
     cmd: >
       /srv/ai/apps/q38rocm/engine/bin/llama-server
       -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -533,7 +541,7 @@ models:
       --top-p 0.95
       --top-k 20
       --jinja
-      --context-shift
+      --no-context-shift
       --spec-type draft-mtp
       --spec-draft-n-max 4
       --spec-draft-p-min 0.6
@@ -554,6 +562,8 @@ models:
     cmd: >
       /srv/ai/apps/q38rocm/engine/bin/llama-server
       -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -576,7 +586,7 @@ models:
       --top-p 0.95
       --top-k 20
       --jinja
-      --context-shift
+      --no-context-shift
       --spec-type none
       -ctxcp 0
       -cram 0
@@ -594,6 +604,8 @@ models:
     cmd: >
       /srv/ai/apps/q38rocm/engine/bin/llama-server
       -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -616,7 +628,7 @@ models:
       --top-p 0.95
       --top-k 20
       --jinja
-      --context-shift
+      --no-context-shift
       --spec-type draft-mtp
       --spec-draft-n-max 4
       --spec-draft-p-min 0.6

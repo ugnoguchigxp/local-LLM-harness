@@ -2,10 +2,12 @@ runtimes:
   ornith-general:
     artifacts:
       - ornith15-35b-speed
+      - ornith15-vision-bf16
     capability:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     protocol: openai.chat-completions.v1
     backend: systemd
     node: local-node
@@ -26,7 +28,7 @@ runtimes:
       allowedModes:
         - source-rebuild
     resources:
-      estimatedMemoryGB: 40
+      estimatedMemoryGB: 42
       # Ornith exposes one llama.cpp execution slot. Keep allocation ownership
       # exclusive as well so SAAA priority can preempt or fence lower-priority
       # OpenAI requests before they contend in the non-preemptive request queue.
@@ -126,10 +128,12 @@ runtimes:
   ornith-contextstill:
     artifacts:
       - ornith15-35b-speed
+      - ornith15-vision-bf16
     capability:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     protocol: openai.chat-completions.v1
     backend: llama-swap
     node: local-node
@@ -139,7 +143,7 @@ runtimes:
       warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: conversation-llm-slot
     resources:
-      estimatedMemoryGB: 44
+      estimatedMemoryGB: 46
       maxConcurrentAllocations: 4
       maxConcurrentRequests: 4
       maxQueuedRequests: 16
@@ -306,10 +310,12 @@ runtimes:
   ornith15-strix-conversation:
     artifacts:
       - ornith15-35b-strix-lean
+      - ornith15-vision-bf16
     capability:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     protocol: openai.chat-completions.v1
     backend: llama-swap
     node: local-node
@@ -319,7 +325,7 @@ runtimes:
       warm: { minInstances: 1, idleTtlSeconds: 60 }
       swapGroup: conversation-llm-slot
     resources:
-      estimatedMemoryGB: 52
+      estimatedMemoryGB: 54
       maxConcurrentAllocations: 4
       maxConcurrentRequests: 4
       maxQueuedRequests: 16
@@ -333,6 +339,7 @@ runtimes:
   ornith15-conversation:
     artifacts:
       - ornith15-35b-quality
+      - ornith15-vision-bf16
     capability:
       - llm.general
     protocol: openai.chat-completions.v1
@@ -344,7 +351,7 @@ runtimes:
       warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: conversation-llm-slot
     resources:
-      estimatedMemoryGB: 48
+      estimatedMemoryGB: 50
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16
@@ -385,10 +392,12 @@ runtimes:
   ornith15-35b:
     artifacts:
       - ornith15-35b-quality
+      - ornith15-vision-bf16
     capability:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     protocol: openai.chat-completions.v1
     backend: llama-swap
     node: local-node
@@ -398,7 +407,7 @@ runtimes:
       warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
-      estimatedMemoryGB: 48
+      estimatedMemoryGB: 50
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16
@@ -412,10 +421,12 @@ runtimes:
   ornith15-35b-speed:
     artifacts:
       - ornith15-35b-speed
+      - ornith15-vision-bf16
     capability:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     protocol: openai.chat-completions.v1
     backend: llama-swap
     node: local-node
@@ -425,7 +436,7 @@ runtimes:
       warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
-      estimatedMemoryGB: 44
+      estimatedMemoryGB: 46
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16
@@ -439,10 +450,12 @@ runtimes:
   ornith15-35b-agent:
     artifacts:
       - ornith15-35b-speed
+      - ornith15-vision-bf16
     capability:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     protocol: openai.chat-completions.v1
     backend: llama-swap
     node: local-node
@@ -452,7 +465,7 @@ runtimes:
       warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
-      estimatedMemoryGB: 30
+      estimatedMemoryGB: 32
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16

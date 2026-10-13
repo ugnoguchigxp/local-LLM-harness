@@ -4,6 +4,7 @@ routes:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     candidates:
       - runtime: ornith-general
         purpose: primary
@@ -13,6 +14,7 @@ routes:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     explicitOnly: true
     candidates:
       - runtime: ornith-general
@@ -37,6 +39,7 @@ routes:
   llm-ornith15-strix:
     capabilities:
       - llm.general
+      - llm.vision
     explicitOnly: true
     candidates:
       - runtime: ornith15-strix-conversation
@@ -45,6 +48,7 @@ routes:
   llm-saaa-ornith15:
     capabilities:
       - llm.general
+      - llm.vision
     explicitOnly: true
     candidates:
       - runtime: ornith-general
@@ -69,6 +73,7 @@ routes:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     explicitOnly: true
     candidates:
       - runtime: ornith15-strix-conversation
