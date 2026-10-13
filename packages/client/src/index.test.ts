@@ -1687,3 +1687,20 @@ test("Personal State client uses the claimed provider credential for every durab
   const generationRequest = requests.find((request) => new URL(request.url).pathname === "/v1/chat/completions")!;
   expect(generationRequest.headers.get("x-larm-attempt-id")).toBe("attempt-1");
 });
+
+test("image preflight uses only the claimed bearer, validates totals, and never retries POST", async () => {
+  const calls: string[] = [];
+  const count = { contractVersion: "larm-chat-input-token-count.v1" as const, model: "fixture", promptTokens: 160,
+    textTokens: 16, imageTokens: 144, imageCount: 1, requestedOutputTokens: 32, safetyMarginTokens: 8,
+    inputBudgetTokens: 160, maxContextTokens: 200, fits: true, requestDigest: "a".repeat(64),
+    runtime: "runtime", configRevision: "revision", bootEpoch: "epoch-test", engineBuild: "engine" };
+  const client = new LarmClient({ baseUrl: "http://larm", apiToken: "control-secret", fetch: async (url, init) => {
+    calls.push(String(url)); expect(new Headers(init?.headers).get("authorization")).toBe("Bearer provider-secret");
+    return json(count);
+  } });
+  expect(await client.countChatInputTokens({ model:"fixture", messages:[] }, "provider-secret")).toEqual(count);
+  expect(calls).toEqual(["http://larm/v1/chat/completions/input-tokens"]);
+  const broken = new LarmClient({ baseUrl:"http://larm", fetch:async()=>{ calls.push("broken"); throw new Error("disconnect"); } });
+  await expect(broken.countChatInputTokens({},"provider-secret")).rejects.toThrow("disconnect");
+  expect(calls.filter(x=>x==="broken")).toHaveLength(1);
+});

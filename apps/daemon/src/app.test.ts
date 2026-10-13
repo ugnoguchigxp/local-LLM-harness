@@ -9,6 +9,7 @@ import {
   inspectionRuntimeListSchema,
   publicClusterStateSchema,
   publicAgentConnectionSchema,
+  publicAgentProfileListV3Schema,
   loadAgentConnectionCatalogForRegistry,
   loadRegistry,
   parseAgentConnectionCatalog,
@@ -305,6 +306,7 @@ function validSemanticWavResponse(): Response {
 
 async function validAgentProviderSemanticResponse(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+  if (path.endsWith("/tokenize")) return Response.json({ contractVersion: "llama-chat-token-count.v1", promptTokens: 20, textTokens: 20, imageTokens: 0, imageCount: 0, engineBuild: "fixture" });
   if (path.endsWith("/v1/chat/completions")) return validLlmSemanticProbeResponse(init);
   if (path.endsWith("/v1/audio/transcriptions")) return Response.json({ text: "" });
   if (path.endsWith("/v1/audio/speech")) return validSemanticWavResponse();
@@ -5379,4 +5381,43 @@ test("Eumenes requests abort ContextStill, fence reacquisition until all foregro
     for (const id of owned) await app.request(`/v1/agent-connections/${id}`, { method: "DELETE", headers: agentHeaders() });
     control.beginDrain();
   }
+});
+
+test("claimed image preflight exposes exact contract and retention and never bypasses model or bearer scope", async () => {
+  const dir=join(import.meta.dir,"../../../config/local-node");
+  const production=loadRegistry(dir);const catalog=loadAgentConnectionCatalogForRegistry(dir,production);
+  const live = new Set(["ornith15-strix-conversation", "granite-asr", "kittentts-nano", "ruri-system-one", "voicevox-tts", "multilingual-e5-small"]);
+  const probes=new Map(production.runtimes.map(runtime=>[runtime.id,probe(runtime.id,live.has(runtime.id))]));
+  const log={ensure:[] as string[],stop:[] as string[]};const observer=new Observer(production,stubBackend(probes,log));await observer.tick();
+  const control=new ControlPlane(production,stubBackend(probes,log),observer,{idleTtlMs:0});
+  let countCalls=0;let promptTokens=20;
+  const app=createApp({registry:production,getState:()=>observer.getState(),control,apiToken:agentApiToken,connectionSigningKey:agentSigningKey,agentConnectionCatalog:catalog,
+    inferenceAuditMode:"full-required",inferenceAuditRetentionMs:604800000,
+    gatewayFetch:async(input,init)=>{
+      if(String(input).endsWith("/tokenize")){countCalls++;return Response.json({contractVersion:"llama-chat-token-count.v1",promptTokens,textTokens:promptTokens,imageTokens:0,imageCount:0,engineBuild:"fixture"});}
+      return validAgentProviderSemanticResponse(input,init);
+    }});
+  const discovery=publicAgentProfileListV3Schema.parse(await (await app.request("/v3/agent-profiles?profile=ornith1.5Strix",{headers:agentHeaders()})).json());
+  const createdResponse=await app.request("/v1/agent-connections",{method:"POST",headers:agentHeaders({"content-type":"application/json","idempotency-key":"chat-count-contract",prefer:"wait=3"}),body:JSON.stringify({profile:"ornith1.5Strix",audience:"same-host",providers:["llm"],client:"input-count-fixture",ttlSeconds:300,allowFallback:false,deploymentPolicy:"existing-only"})});
+  expect(createdResponse.status).toBe(201);const connection=publicAgentConnectionSchema.parse(await createdResponse.json());
+  try {
+    const claimed=agentConnectionClaimSchema.parse(await (await app.request(`/v1/agent-connections/${connection.id}/claim`,{method:"POST",headers:agentHeaders({"content-type":"application/json"}),body:JSON.stringify({format:"openai-provider-v1"})})).json());
+    const provider=claimed.providers.find(p=>p.name==="llm")!;
+    if(provider.protocol!=="openai.chat-completions.v1")throw new Error("fixture protocol mismatch");
+    expect(provider.chatInput).toEqual(discovery.profiles[0]!.providers.find(p=>p.name==="llm")!.chatInput);
+    expect(provider.chatInput).toEqual(connection.providers[0]!.chatInput);
+    expect(provider.chatInput!.retention).toMatchObject({inferenceAudit:"full-required",requestPayloadStored:true,maxRetentionSeconds:604800,tokenCountPayloadStored:false});
+    const body={model:provider.model,messages:[{role:"user",content:"fixture"}],max_tokens:32};
+    const headers={authorization:`Bearer ${provider.credential.token}`,"content-type":"application/json"};
+    const requestCount=(value:unknown,auth=headers)=>app.request("/v1/chat/completions/input-tokens",{method:"POST",headers:auth,body:JSON.stringify(value)});
+    const result=await requestCount(body);expect(result.status).toBe(200);expect((await result.json() as {fits:boolean}).fits).toBe(true);expect(result.headers.get("cache-control")).toBe("no-store");
+    const calls=countCalls;
+    expect((await requestCount({...body,model:"other-model"})).status).toBe(400);
+    expect((await requestCount(body,{authorization:`Bearer ${agentApiToken}`,"content-type":"application/json"})).status).toBe(401);
+    expect(countCalls).toBe(calls);
+    promptTokens=300000;
+    const excess=await requestCount(body);expect(excess.status).toBe(200);expect((await excess.json() as {fits:boolean}).fits).toBe(false);
+    const inference=await app.request("/v1/chat/completions",{method:"POST",headers,body:JSON.stringify(body)});
+    expect(inference.status).toBe(400);expect(await inference.json()).toMatchObject({error:{code:"context_budget_exceeded"}});
+  } finally {await app.request(`/v1/agent-connections/${connection.id}`,{method:"DELETE",headers:agentHeaders()});}
 });

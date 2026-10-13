@@ -327,3 +327,5 @@ export * from "./local-service";
 export { ServiceResourceLedger } from "./service-resource-ledger";
 
 export { LocalServiceManager, LocalServiceError } from "./local-service-manager";
+
+export * from "./chat-input";

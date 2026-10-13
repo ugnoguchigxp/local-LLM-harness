@@ -1,3 +1,5 @@
+import { ChatInputError, validateChatImages, type AgentProviderContextWindow } from "@larm/core";
+import { prepareChatInput } from "./chat-input-gateway";
 import {
   audioVoiceDiscoverySchema,
   inspectEmbeddingResponse,
@@ -69,6 +71,8 @@ export type GatewayProxyOptions = {
   runtime: RuntimeDefinition;
   bodyMode: "buffered" | "stream" | "none";
   requestBody?: Uint8Array;
+  chatInputWindow?: AgentProviderContextWindow;
+  countChatInputOnly?: boolean;
   prepareRequestBody?: (body: Uint8Array, signal: AbortSignal) => Promise<Uint8Array>;
   maxBodyBytes: number;
   timeoutMs: number;
@@ -518,6 +522,38 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       }
       body = await options.prepareRequestBody(body, abort.signal);
     }
+    if (options.protocol === "openai.chat-completions.v1" && body instanceof Uint8Array) {
+      if (options.runtime.chatInput) {
+        if (!options.chatInputWindow) throw new ChatInputError(503, "chat_input_contract_unavailable");
+        const checked = await withAbort(prepareChatInput({
+          body, endpoint: current.binding.endpoint, policy: options.runtime.chatInput,
+          window: options.chatInputWindow, runtime: options.runtime.id,
+          runtimeRelease: options.auditContext?.runtimeRelease,
+          configRevision: options.auditContext?.configRevision ?? "unknown",
+          bootEpoch: options.bootEpoch, requestId, signal: abort.signal,
+          fetchImpl: options.fetchImpl,
+        }), abort.signal);
+        body = checked.body;
+        // Revalidate after preprocessing: an expired/replaced lease cannot forward inference.
+        const after = options.revalidate();
+        if (!after.ok) {
+          outcome = "binding_invalidated";
+          finish();
+          return jsonResponse(after.body, after.status, { "x-request-id": requestId, "x-larm-boot-epoch": options.bootEpoch, "cache-control": "no-store" });
+        }
+        if (after.binding.runtime !== current.binding.runtime || after.binding.endpoint !== current.binding.endpoint) return failure("binding_changed", "allocation binding changed", 409, "binding_changed");
+        if (options.countChatInputOnly) {
+          finish();
+          return jsonResponse(checked.count, 200, { "x-request-id": requestId, "x-larm-boot-epoch": options.bootEpoch, "cache-control": "no-store" });
+        }
+        if (!checked.count.fits) throw new ChatInputError(400, "context_budget_exceeded");
+      } else if (options.countChatInputOnly) {
+        throw new ChatInputError(503, "chat_token_count_unavailable");
+      } else if (!options.runtime.capability.includes("llm.vision")) {
+        const untyped = JSON.parse(new TextDecoder().decode(body));
+        if (Array.isArray(untyped?.messages)) validateChatImages(untyped, undefined);
+      }
+    }
     if (
       options.protocol === "openai.audio-speech.v1"
       && expectedSpeechFormat === undefined
@@ -541,6 +577,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     }
     if (options.lifecycleSignal?.aborted) {
       return lifecycleFailure();
+    }
+    if (error instanceof ChatInputError) {
+      return failure(error.code, error.message, error.status, error.code);
     }
     if (error instanceof RequestBodyError) {
       return failure(error.code, error.message, error.status, error.code);

@@ -15,6 +15,7 @@ export type GatewayRouteOptions = {
   bodyMode: "buffered" | "stream" | "none";
   maxBodyBytes: number;
   capability?: string;
+  countChatInputOnly?: boolean;
 };
 
 export type GatewayIngress = {
@@ -139,6 +140,12 @@ export async function prepareGatewayIngress(input: {
         "generation attempts require an explicit allocation or claimed provider",
       ), 400),
     };
+  }
+  if (options.countChatInputOnly && !scoped) {
+    return { ok: false, response: c.json(errorBody("connection_provider_token_required", "token counting requires a claimed LLM Provider bearer"), 401) };
+  }
+  if (options.countChatInputOnly && (contextViewId || attemptId)) {
+    return { ok: false, response: c.json(errorBody("invalid_request", "token counting requires the complete materialized messages without context or attempt headers"), 400) };
   }
   if ((options.protocol === "larm.embedding.v1" || options.protocol === "larm.system-one.v1") && !scoped) {
     return {

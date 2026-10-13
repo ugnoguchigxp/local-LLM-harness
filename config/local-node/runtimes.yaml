@@ -306,6 +306,7 @@ runtimes:
       backendEndpoint: http://127.0.0.1:8083/upstream/gemma4-26b-conversation
 
   ornith15-strix-conversation:
+    chatInput: {}
     artifacts:
       - ornith15-35b-strix-lean
       - ornith15-vision-bf16

@@ -761,6 +761,7 @@ test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifa
     supportedCapabilities: ["llm.general", "llm.vision"],
     route: "llm-ornith15-strix",
     publicModel: "ornith-1.5-strix-lean",
+    chatInput: registry.runtimes.find(runtime => runtime.id === "ornith15-strix-conversation")!.chatInput,
   });
   expect(catalog.profileSelectors.find(selector => selector.id === "ornith1.5Strix"))
     .toMatchObject({ agentProfile: strix.id });

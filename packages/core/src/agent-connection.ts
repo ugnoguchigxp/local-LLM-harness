@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { chatInputContractSchema, type ChatInputPolicy } from "./chat-input";
 import { deploymentPolicySchema } from "./api-schema";
 import { embeddingSpaceSchema, type EmbeddingSpace } from "./embedding";
 import type { Registry } from "./registry";
@@ -259,6 +260,7 @@ export type AgentProviderProfile = {
   protocol: RuntimeProtocol;
   embeddingSpace?: EmbeddingSpace;
   contextWindow?: AgentProviderContextWindow;
+  chatInput?: ChatInputPolicy;
 };
 
 export type AgentProviderContextWindow = {
@@ -456,8 +458,14 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
           `agent profile ${id} provider ${provider.name} readiness does not match ${protocol}`,
         );
       }
+      const inputPolicies = route.candidates.map((candidate) => registry.runtimes.find((runtime) => runtime.id === candidate.runtime)?.chatInput);
+      const chatInput = inputPolicies[0];
+      if (inputPolicies.some(Boolean) && (protocol !== "openai.chat-completions.v1" || !route.capabilities.includes("llm.vision") || inputPolicies.some((policy) => JSON.stringify(policy) !== JSON.stringify(chatInput)))) {
+        throw new AgentConnectionCatalogError(`agent profile ${id} has inconsistent chat input policies`);
+      }
       return {
         ...provider,
+        ...(chatInput ? { chatInput } : {}),
         supportedCapabilities: [...route.capabilities].sort(),
         protocol,
         ...(embeddingSpace ? { embeddingSpace } : {}),
@@ -722,6 +730,7 @@ export const publicAgentProfileListV3Schema = z.object({
       endpoint: agentProviderEndpointSchema,
       model: agentIdentifierSchema,
       embeddingSpace: embeddingSpaceSchema.optional(),
+      chatInput: chatInputContractSchema.optional(),
       contextWindow: z.object({
         maxTokens: z.number().int().min(1).max(1_000_000),
         outputReserveTokens: z.number().int().min(1).max(1_000_000),
@@ -810,6 +819,7 @@ export const publicAgentConnectionProviderSchema = z.object({
   endpoint: agentProviderEndpointSchema,
   model: agentIdentifierSchema,
   startupPolicy: providerStartupPolicySchema.optional(),
+  chatInput: chatInputContractSchema.optional(),
   embeddingSpace: embeddingSpaceSchema.optional(),
   contextWindow: z.object({
     maxTokens: z.number().int().min(1).max(1_000_000),
@@ -919,6 +929,8 @@ export const agentProviderDescriptorSchema = z.object({
   port: z.number().int().min(1).max(65_535),
   baseUrl: z.string().url(),
   model: agentIdentifierSchema,
+  supportedCapabilities: z.array(agentIdentifierSchema).optional(),
+  chatInput: chatInputContractSchema.optional(),
   contextWindow: z.object({
     maxTokens: z.number().int().min(1).max(1_000_000),
     outputReserveTokens: z.number().int().min(1).max(1_000_000),

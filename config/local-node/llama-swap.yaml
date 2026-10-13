@@ -364,7 +364,7 @@ models:
     # Each session remains capped at 256K; the 64K auxiliary selector stays available.
     ttl: 0
     cmd: >
-      /srv/ai/apps/q38rocm/engine/bin/llama-server
+      /srv/ai/apps/larm-chat-input-engine-20261013/llama-server
       -m /srv/ai/models/ornith-trial-20261012/strix-lean/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
       --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
       --image-max-tokens 4096

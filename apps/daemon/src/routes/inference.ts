@@ -8,6 +8,7 @@ type GatewayOptions = {
   upstreamPath: string;
   bodyMode: "buffered" | "stream" | "none";
   maxBodyBytes: number;
+  countChatInputOnly?: boolean;
 };
 
 export function registerInferenceRoutes(app: Hono, options: {
@@ -25,6 +26,14 @@ export function registerInferenceRoutes(app: Hono, options: {
     }
     return c.json(options.modelBroker.listModels());
   });
+
+  app.post("/v1/chat/completions/input-tokens", (c) => options.handleGateway(c, {
+    protocol: "openai.chat-completions.v1",
+    upstreamPath: "/tokenize",
+    bodyMode: "buffered",
+    maxBodyBytes: options.gatewayMaxBodyBytes,
+    countChatInputOnly: true,
+  }));
 
   app.post("/v1/chat/completions", (c) => options.handleGateway(c, {
     protocol: "openai.chat-completions.v1",

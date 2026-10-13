@@ -100,6 +100,7 @@ export function createGatewayHandler(input: {
       scopedProvider: scoped !== undefined,
       declaredAllocationId,
       directModel,
+      chatContextWindow: (model, route) => deps.agentConnectionCatalog?.profiles.flatMap(profile => profile.providers).find(provider => provider.publicModel === model && provider.route === route)?.contextWindow,
       directRequestBytes: directRequestBytes ?? chatRequestBytes,
       chatRequest,
       chatResponseFormat,
@@ -203,6 +204,8 @@ export function createGatewayHandler(input: {
             }),
           }
           : {}),
+        chatInputWindow: scoped?.provider.contextWindow ?? deps.agentConnectionCatalog?.profiles.flatMap(profile => profile.providers).find(provider => provider.route === selected.binding.route && provider.publicModel === (chatRequest as { model?: string } | undefined)?.model)?.contextWindow,
+        countChatInputOnly: options.countChatInputOnly,
         allocationId,
         protocol: options.protocol,
         upstreamPath: options.upstreamPath,

@@ -1,0 +1,91 @@
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -4854,6 +4854,36 @@
+     this->post_tokenize = [this](const server_http_req & req) {
+         auto res = create_response();
+         const json body = json::parse(req.body);
++        // LARM preflight uses exactly the Chat Completions template and MTMD
++        // preprocessing path, without enqueuing inference or touching KV state.
++        if (body.contains("messages")) {
++            json chat = body;
++            std::vector<raw_buffer> files;
++            json parsed;
++            try {
++                parsed = oaicompat_chat_params_parse(chat, meta->chat_params, files);
++            } catch (const std::exception &) {
++                throw std::invalid_argument("larm_chat_input_invalid");
++            }
++            server_tokens input;
++            try {
++                input = ctx_server.mctx != nullptr
++                    ? process_mtmd_prompt(ctx_server.mctx, parsed.at("prompt").get<std::string>(), files)
++                    : std::move(tokenize_input_prompts(ctx_server.vocab, nullptr, parsed.at("prompt"), true, true)[0]);
++            } catch (const std::exception &) {
++                throw std::invalid_argument(files.empty() ? "larm_chat_input_invalid" : "larm_image_invalid");
++            }
++            const size_t text_tokens = input.get_text_tokens().size();
++            res->ok(json{
++                {"contractVersion", "llama-chat-token-count.v1"},
++                {"promptTokens", input.size()},
++                {"textTokens", text_tokens},
++                {"imageTokens", input.size() - text_tokens},
++                {"imageCount", files.size()},
++                {"engineBuild", meta->build_info},
++            });
++            return res;
++        }
+         json tokens_response = json::array();
+         if (body.count("content") != 0) {
+             const bool add_special = json_value(body, "add_special", false);
+--- a/tools/server/server-http.cpp
++++ b/tools/server/server-http.cpp
+@@ -49,6 +49,11 @@
+ 
+     SRV_TRC("done request: %s %s %s %d\n", req.method.c_str(), req.path.c_str(), req.remote_addr.c_str(), res.status);
+ 
++    // Chat and token-count requests can contain private text and image bytes.
++    // Preserve metadata tracing, but never dump these bodies at debug verbosity.
++    if (req.path == "/tokenize" || req.path == "/v1/chat/completions" || req.path == "/chat/completions" || req.path == "/apply-template") {
++        return;
++    }
+     SRV_DBG("request:  %s\n", req.body.c_str());
+     SRV_DBG("response: %s\n", res.body.c_str());
+ }
+--- a/tools/server/server.cpp
++++ b/tools/server/server.cpp
+@@ -84,6 +84,13 @@
+             message = "unknown error";
+         }
+ 
++        if (req.path == "/tokenize" || req.path == "/v1/chat/completions" || req.path == "/chat/completions" || req.path == "/apply-template") {
++            // Exception diagnostics can embed content parts or tool arguments.
++            // Only stable, value-free extension codes are safe to retain.
++            if (message != "larm_chat_input_invalid" && message != "larm_image_invalid") {
++                message = "chat input rejected";
++            }
++        }
+         auto res = std::make_unique<server_http_res>();
+         res->status = 500;
+         try {
+--- a/tools/server/server-common.cpp
++++ b/tools/server/server-common.cpp
+@@ -948,7 +948,7 @@
+         std::string response_type = json_value(response_format, "type", std::string());
+         if (response_type == "json_object") {
+             if (response_format.contains("schema") || json_schema.empty()) {
+-                json_schema = json_value(response_format, "schema", json::object());
++                json_schema = json_value(response_format, "schema", json{{"type", "object"}});
+             }
+         } else if (response_type == "json_schema") {
+             auto schema_wrapper = json_value(response_format, "json_schema", json::object());
+@@ -999,7 +999,9 @@
+                 handle_media(out_files, image_url, opt.media_path);
+ 
+                 p["type"] = "media_marker";
+-                p["text"] = get_media_marker();
++                // Adjacent same-size bitmaps are grouped as video by MTMD.
++                // Chat image_url parts are independent images, so separate them.
++                p["text"] = std::string(get_media_marker()) + "\n";
+                 p.erase("image_url");
+ 
+             } else if (type == "input_audio") {

@@ -55,6 +55,7 @@ export type AppDeps = {
   connectionPollIntervalMs?: number;
   connectionHistoryLimit?: number;
   inferenceAuditMode?: "off" | "metadata" | "full-required";
+  inferenceAuditRetentionMs?: number;
   inferenceAuditRecorder?: InferenceAuditRecorder;
   agentConnectionController?: AgentConnectionController;
   modelBroker?: ModelBroker;

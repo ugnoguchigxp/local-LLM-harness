@@ -14,9 +14,18 @@ export const chatCompletionResponseFormatSchema = z.discriminatedUnion("type", [
   }).passthrough(),
 ]);
 
+export const chatCompletionContentPartSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string() }).passthrough(),
+  z.object({ type: z.literal("image_url"), image_url: z.object({ url: z.string().min(1), detail: z.enum(["auto", "low", "high"]).optional() }).passthrough() }).passthrough(),
+]);
+export const chatCompletionMessageSchema = z.object({
+  role: z.string().min(1),
+  content: z.union([z.string(), z.array(chatCompletionContentPartSchema), z.null()]).optional(),
+}).passthrough();
+
 export const chatCompletionRequestSchema = z.object({
   model: z.string().min(1),
-  messages: z.array(z.record(z.string(), z.unknown())),
+  messages: z.array(chatCompletionMessageSchema),
   stream: z.boolean().optional(),
   response_format: chatCompletionResponseFormatSchema.optional(),
 }).passthrough();

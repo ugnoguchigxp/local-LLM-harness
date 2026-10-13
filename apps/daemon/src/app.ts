@@ -99,6 +99,7 @@ export function createAppComponents(deps: AppDeps) {
   const agentConnections = deps.agentConnectionController ?? (deps.connectionSigningKey
     ? new AgentConnectionController({
       control: deps.control,
+      chatInputRetention: { mode: deps.inferenceAuditMode ?? "off", seconds: Math.ceil((deps.inferenceAuditRetentionMs ?? 7 * 24 * 60 * 60 * 1000) / 1000), maxBodyBytes: deps.gatewayMaxBodyBytes ?? 4 * 1024 * 1024 },
       getCatalog: () => deps.agentConnectionCatalog,
       getCatalogRevision: () => deps.getConfigRevision?.() ?? identity.configRevision,
       semantic: semanticReadiness,

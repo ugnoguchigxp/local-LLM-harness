@@ -92,6 +92,9 @@ export function parseRegistryDocuments(input: {
   }
 
   for (const runtime of runtimes) {
+    if (runtime.chatInput && (runtime.protocol !== "openai.chat-completions.v1" || !runtime.capability.includes("llm.vision"))) {
+      throw new RegistryError(`runtime ${runtime.id}: chatInput requires a vision Chat Completions runtime`);
+    }
     if (!nodeIds.has(runtime.node)) {
       throw new RegistryError(
         `runtimes.yaml: runtime ${runtime.id} references unknown node ${runtime.node}`,

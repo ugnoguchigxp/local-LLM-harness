@@ -2,6 +2,7 @@ import {
   chatCompletionRequestSchema,
   getRuntime,
   type Registry,
+  type AgentProviderContextWindow,
   type RuntimeProtocol,
 } from "@larm/core";
 import type { Context } from "hono";
@@ -43,6 +44,7 @@ export async function handleModelBrokerGateway(input: {
   exclusiveExecution: boolean;
   scopedProvider: boolean;
   declaredAllocationId?: string;
+  chatContextWindow?: (model: string, route: string) => AgentProviderContextWindow | undefined;
   directModel?: string;
   directRequestBytes?: Uint8Array;
   chatRequest?: unknown;
@@ -100,6 +102,7 @@ export async function handleModelBrokerGateway(input: {
     return await proxyGateway({
       request: c.req.raw,
       ...(directRequestBytes ? { requestBody: directRequestBytes } : {}),
+      chatInputWindow: input.chatContextWindow?.(directModel, lease.route),
       allocationId: lease.allocationId,
       protocol: options.protocol,
       upstreamPath: options.bodyMode === "none"

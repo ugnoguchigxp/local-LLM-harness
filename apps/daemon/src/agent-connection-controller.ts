@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   activeAllocation,
+  type ChatInputPolicy,
   agentProviderEndpoint,
   personalStateSubjectDigest,
   resolveAgentAudienceBaseUrl,
@@ -105,6 +106,7 @@ export class AgentConnectionController {
 
   constructor(private readonly options: {
     control: ControlPlane;
+    chatInputRetention?: { mode: "off" | "metadata" | "full-required"; seconds: number; maxBodyBytes: number };
     getCatalog: () => AgentConnectionCatalog | undefined;
     getCatalogRevision: () => string;
     semantic: SemanticReadiness;
@@ -139,6 +141,23 @@ export class AgentConnectionController {
           })),
         })),
         audiences: catalog.audiences.map((audience) => audience.id),
+      },
+    };
+  }
+
+  private publicChatInput(policy: ChatInputPolicy) {
+    const audit = this.options.chatInputRetention ?? { mode: "off", seconds: 0, maxBodyBytes: 4 * 1024 * 1024 };
+    return {
+      ...policy,
+      maxRequestBytes: Math.min(policy.maxRequestBytes, audit.maxBodyBytes),
+      retention: {
+        inferenceAudit: audit.mode,
+        requestPayloadStored: audit.mode === "full-required",
+        maxRetentionSeconds: audit.mode === "full-required" ? audit.seconds : 0,
+        encrypted: audit.mode === "full-required",
+        tokenCountPayloadStored: false as const,
+        providerImageStore: false as const,
+        historyResendRequired: true as const,
       },
     };
   }
@@ -210,6 +229,7 @@ export class AgentConnectionController {
             model: provider.publicModel,
             ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
             ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
+        ...(provider.chatInput ? { chatInput: this.publicChatInput(provider.chatInput) } : {}),
           })),
           services: selector?.services ?? [],
         })),
@@ -566,12 +586,14 @@ export class AgentConnectionController {
         capability: provider.capability,
         apiStyle: "openai" as const,
         protocol: provider.protocol,
+        ...(provider.chatInput ? { supportedCapabilities: provider.supportedCapabilities } : {}),
         scheme,
         host: base.hostname,
         port,
         baseUrl: found.audience.baseUrl,
         model: provider.publicModel,
         ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
+        ...(provider.chatInput ? { chatInput: this.publicChatInput(provider.chatInput) } : {}),
         health: {
           url: `${found.audience.baseUrl}/agent-connections/${found.id}/providers/${provider.name}/health`,
           kind: "semantic-inference" as const,
@@ -962,6 +984,7 @@ export class AgentConnectionController {
           ...(startupPolicy ? { startupPolicy } : {}),
           ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
           ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
+        ...(provider.chatInput ? { chatInput: this.publicChatInput(provider.chatInput) } : {}),
           readiness: providerReadiness,
           claimable: record.status === "ready"
             && this.options.semantic.peek({ allocationId: record.allocationId, provider })?.ready === true,
