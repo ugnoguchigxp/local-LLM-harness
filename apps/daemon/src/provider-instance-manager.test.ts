@@ -297,3 +297,23 @@ test("a later acquire retries cleanup after an idle stop failure", async () => {
   expect(ensureCount).toBe(2);
   manager.close();
 });
+
+test("preempted background instances stop after request drain while shared warm instances remain loaded", async () => {
+  const { manager, stopped } = fixture(60_000);
+  const background = await manager.acquire(runtime, "background", "release-a");
+  manager.retainRequest(background.id, "running");
+  manager.releaseAllocation("background", true);
+  await Bun.sleep(0);
+  expect(stopped).toEqual([]);
+  manager.releaseRequest(background.id, "running");
+  await Bun.sleep(0);
+  expect(stopped).toEqual([background.id]);
+  const warm = { ...runtime, policy: { ...runtime.policy, warm: { minInstances: 1, idleTtlSeconds: 60 } } };
+  const shared = await manager.ensureWarm(warm, "release-a");
+  await manager.acquire(warm, "background-again", "release-a");
+  manager.releaseAllocation("background-again", true);
+  await Bun.sleep(0);
+  expect(stopped).toEqual([background.id]);
+  expect(manager.inspect().find(item => item.instance.id === shared!.id)).toMatchObject({ warmRefs: 1, refs: { allocation: 0 } });
+  manager.close();
+});

@@ -218,15 +218,21 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   const finishTracked = options.requestTracker?.begin() ?? (() => undefined);
   const abortFromClient = () => {
     outcome = "client_cancelled";
-    abort.abort(clientSignal.reason ?? new Error("client disconnected"));
+    const reason = clientSignal.reason ?? new Error("client disconnected");
+    abort.abort(reason);
+    void cancelUpstream?.(reason).catch(() => undefined);
   };
   const abortFromLifecycle = () => {
     outcome = "binding_invalidated";
-    abort.abort(options.lifecycleSignal?.reason ?? new Error("allocation is no longer active"));
+    const reason = options.lifecycleSignal?.reason ?? new Error("allocation is no longer active");
+    abort.abort(reason);
+    void cancelUpstream?.(reason).catch(() => undefined);
   };
   const abortFromAttempt = () => {
     outcome = "attempt_cancelled";
-    abort.abort(options.attemptSignal?.reason ?? new Error("generation attempt cancelled"));
+    const reason = options.attemptSignal?.reason ?? new Error("generation attempt cancelled");
+    abort.abort(reason);
+    void cancelUpstream?.(reason).catch(() => undefined);
   };
   let timeout: ReturnType<typeof setTimeout>;
   const finish = () => {
@@ -1131,11 +1137,20 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     }
     return true;
   };
-  cancelUpstream = async (reason) => await reader.cancel(reason);
+  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  cancelUpstream = async (reason) => {
+    await reader.cancel(reason).catch(() => undefined);
+    await finalizeAudit();
+    finish();
+    try { streamController?.error(reason); } catch { /* The stream may already be terminal. */ }
+  };
   const stream = new ReadableStream<Uint8Array>({
+    start(controller) { streamController = controller; },
     async pull(controller) {
       try {
+        abort.signal.throwIfAborted();
         const chunk = await withAbort(reader.read(), abort.signal);
+        abort.signal.throwIfAborted();
         if (chunk.done) {
           if (sseNormalizer) {
             const normalized = sseNormalizer.finish();
@@ -1188,7 +1203,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       }
     },
     async cancel(reason) {
-      outcome = "client_cancelled";
+      if (!abort.signal.aborted) outcome = "client_cancelled";
       abort.abort(reason);
       try {
         await reader.cancel(reason);
@@ -1198,5 +1213,6 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       }
     },
   });
+  if (abort.signal.aborted) void cancelUpstream(abort.signal.reason).catch(() => undefined);
   return new Response(stream, { status: upstream.status, headers: responseHeaders });
 }

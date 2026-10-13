@@ -146,7 +146,7 @@ export class AllocationApiLifecycle {
     d.allocationAborts.get(id)?.abort(lifecycleReason);
     d.allocationLifecycleAborts.get(id)?.abort(lifecycleReason);
     d.detachLegacyAllocation(id);
-    d.providerInstances.releaseAllocation(id);
+    d.providerInstances.releaseAllocation(id, reason instanceof AllocationLifecycleError && reason.code === "foreground_preempted");
     if (wasAdmitted && (allocation.priority ?? 0) >= d.foregroundPriorityThreshold()) {
       d.holdForegroundProviders(allocation);
     }

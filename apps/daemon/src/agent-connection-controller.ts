@@ -53,7 +53,7 @@ type ConnectionRecord = {
   lastForegroundActivityAt?: string;
   idleReleaseAt?: string;
   idleTimer?: ReturnType<typeof setTimeout>;
-  activeRequests: Map<string, { foreground: boolean }>;
+  activeRequests: Map<string, { foreground: boolean; exclusive: boolean }>;
   releasedAt?: string;
   error?: { code: string; message: string };
 };
@@ -101,6 +101,7 @@ export class AgentConnectionController {
   private readonly background = new Set<string>();
   private readonly sessionLocks = new Map<string, Promise<void>>();
   private sequence = 0;
+  private foregroundCreations = 0;
 
   constructor(private readonly options: {
     control: ControlPlane;
@@ -288,6 +289,9 @@ export class AgentConnectionController {
       `${principal}:POST:/v1/agent-connections:${idempotencyKey}`,
       requestHash,
       async () => await this.withSessionLock(sessionScope, async () => {
+        if (selectedProfile.requestScheduling === "background-when-idle" && this.backgroundBlocked()) {
+          return this.foregroundConflict();
+        }
         const reusable = [...this.records.values()].find((record) => {
           this.refreshLifecycle(record);
           return record.sessionScope === sessionScope && !isTerminal(record.status);
@@ -307,22 +311,6 @@ export class AgentConnectionController {
             replay: true,
           };
         }
-        if (
-          request.profile === "contextStill"
-          && [...this.records.values()].some((record) => {
-            this.refreshLifecycle(record);
-            return record.selector.id.startsWith("SAAA") && !isTerminal(record.status);
-          })
-        ) {
-          return {
-            ...error(
-              "provider_conflict",
-              "ContextStill cannot be provided while an SAAA connection is active",
-              409,
-            ),
-            retryAfterSeconds: 1,
-          };
-        }
         const catalogRevision = this.options.getCatalogRevision();
         if (
           request.expectedCatalogRevision
@@ -334,59 +322,72 @@ export class AgentConnectionController {
             409,
           );
         }
-        if (request.profile.startsWith("SAAA")) {
-          const conflict = await this.preemptContextStillConnections(selectedProfile.schedulingPriority ?? 0);
-          if (conflict) return conflict;
+        const foregroundCreation = selectedProfile.requestScheduling === "foreground-exclusive";
+        if (foregroundCreation) this.foregroundCreations += 1;
+        try {
+          if (foregroundCreation) {
+            const conflict = await this.preemptBackgroundConnections(selectedProfile.schedulingPriority ?? 0);
+            if (conflict) return conflict;
+          }
+          const allocated = await this.options.control.allocate({
+            requirements: selectedProfile.providers.map((provider) => ({
+              capability: provider.capability,
+              route: provider.route,
+            })),
+            ...(request.client ? { client: request.client } : {}),
+            ttlSeconds: request.ttlSeconds,
+            allowFallback: request.allowFallback,
+            deploymentPolicy: request.deploymentPolicy,
+            priority: selectedProfile.schedulingPriority ?? 0,
+            capacityPolicy: "wait",
+          });
+          if (allocated.status !== 200 && allocated.status !== 202) {
+            return { status: allocated.status, body: allocated.body };
+          }
+          const allocation = allocated.body;
+          const now = this.now();
+          const record: ConnectionRecord = {
+            id: this.createId(),
+            allocationId: allocation.id,
+            principal,
+            bootEpoch: this.options.control.getBootEpoch(),
+            catalogRevision: allocation.catalogRevision ?? this.options.getCatalogRevision(),
+            selector: structuredClone(selector),
+            profile: selectedProfile,
+            audience,
+            status: allocation.status === "ready" ? "probing" : "pending",
+            createdAt: new Date(now).toISOString(),
+            expiresAt: allocation.expiresAt,
+            readyDeadline: Math.min(Date.parse(allocation.expiresAt), now + this.options.readyTimeoutMs),
+            generation: 1,
+            tokenIssuedAt: Math.floor(now / 1_000),
+            personalStateAuthorized,
+            sessionScope,
+            requestHash,
+            activeRequests: new Map(),
+          };
+          this.records.set(record.id, record);
+          if (selectedProfile.requestScheduling === "background-when-idle" && this.backgroundBlocked()) {
+            await this.options.control.releaseAllocation(record.allocationId, "released", new AllocationLifecycleError(
+              "foreground_preempted", "request stopped because a higher-priority foreground task requires the provider",
+            ));
+            this.refreshLifecycle(record);
+            return this.foregroundConflict();
+          }
+          let complete = false;
+          if (record.status === "probing") complete = await this.probeInitial(record);
+          if (!complete && !isTerminal(record.status) && waitMs > 0) {
+            complete = await this.waitForReadiness(record, waitMs);
+          }
+          if (!complete && !isTerminal(record.status)) this.startBackground(record);
+          return {
+            status: record.status === "ready" ? 201 : isTerminal(record.status) ? 503 : 202,
+            body: this.public(record),
+            location: `/v1/agent-connections/${record.id}`,
+          };
+        } finally {
+          if (foregroundCreation) this.foregroundCreations -= 1;
         }
-        const allocated = await this.options.control.allocate({
-          requirements: selectedProfile.providers.map((provider) => ({
-            capability: provider.capability,
-            route: provider.route,
-          })),
-          ...(request.client ? { client: request.client } : {}),
-          ttlSeconds: request.ttlSeconds,
-          allowFallback: request.allowFallback,
-          deploymentPolicy: request.deploymentPolicy,
-          priority: selectedProfile.schedulingPriority ?? 0,
-          capacityPolicy: "wait",
-        });
-        if (allocated.status !== 200 && allocated.status !== 202) {
-          return { status: allocated.status, body: allocated.body };
-        }
-        const allocation = allocated.body;
-        const now = this.now();
-        const record: ConnectionRecord = {
-          id: this.createId(),
-          allocationId: allocation.id,
-          principal,
-          bootEpoch: this.options.control.getBootEpoch(),
-          catalogRevision: allocation.catalogRevision ?? this.options.getCatalogRevision(),
-          selector: structuredClone(selector),
-          profile: selectedProfile,
-          audience,
-          status: allocation.status === "ready" ? "probing" : "pending",
-          createdAt: new Date(now).toISOString(),
-          expiresAt: allocation.expiresAt,
-          readyDeadline: Math.min(Date.parse(allocation.expiresAt), now + this.options.readyTimeoutMs),
-          generation: 1,
-          tokenIssuedAt: Math.floor(now / 1_000),
-          personalStateAuthorized,
-          sessionScope,
-          requestHash,
-          activeRequests: new Map(),
-        };
-        this.records.set(record.id, record);
-        let complete = false;
-        if (record.status === "probing") complete = await this.probeInitial(record);
-        if (!complete && !isTerminal(record.status) && waitMs > 0) {
-          complete = await this.waitForReadiness(record, waitMs);
-        }
-        if (!complete && !isTerminal(record.status)) this.startBackground(record);
-        return {
-          status: record.status === "ready" ? 201 : isTerminal(record.status) ? 503 : 202,
-          body: this.public(record),
-          location: `/v1/agent-connections/${record.id}`,
-        };
       }),
     );
   }
@@ -471,6 +472,8 @@ export class AgentConnectionController {
       );
     }
     const current = await this.healthRecord(found);
+    this.refreshLifecycle(found);
+    if (found.status !== "ready") return error("connection_inactive", `connection ${id} is ${found.status}`, 409);
     if (current.status !== 200) {
       return error("provider_semantic_not_ready", "one or more providers are not semantically ready", 503);
     }
@@ -681,22 +684,41 @@ export class AgentConnectionController {
     return { record, provider, payload };
   }
 
-  beginProviderRequest(
+  async beginProviderRequest(
     connectionId: string,
     requestId: string,
     protocol: RuntimeProtocol,
     countsAsForegroundActivity = true,
-  ): boolean {
+  ): Promise<"accepted" | "foreground_active" | "foreground_preemption_failed" | "connection_inactive"> {
     const record = this.records.get(connectionId);
-    if (!record) return false;
+    if (!record) return "connection_inactive";
     this.refreshLifecycle(record);
-    if (record.status !== "ready" || record.activeRequests.has(requestId)) return false;
+    if (record.status !== "ready" || record.activeRequests.has(requestId)) return "connection_inactive";
+    if (record.profile.requestScheduling === "background-when-idle" && this.backgroundBlocked()) return "foreground_active";
     const foreground = countsAsForegroundActivity
       && record.profile.idleRelease?.enabled === true
       && record.profile.idleRelease.activityProtocols.some((candidate) => candidate === protocol);
-    record.activeRequests.set(requestId, { foreground });
+    const exclusive = countsAsForegroundActivity && record.profile.requestScheduling === "foreground-exclusive";
+    record.activeRequests.set(requestId, { foreground, exclusive });
     if (foreground) this.clearIdleTimer(record);
-    return true;
+    try {
+      if (exclusive) {
+        const conflict = await this.preemptBackgroundConnections(record.profile.schedulingPriority ?? 0);
+        if (conflict) {
+          this.finishProviderRequest(connectionId, requestId);
+          return "foreground_preemption_failed";
+        }
+      }
+      this.refreshLifecycle(record);
+      if (record.status !== "ready") {
+        this.finishProviderRequest(connectionId, requestId);
+        return "connection_inactive";
+      }
+      return "accepted";
+    } catch (error) {
+      this.finishProviderRequest(connectionId, requestId);
+      throw error;
+    }
   }
 
   finishProviderRequest(connectionId: string, requestId: string): void {
@@ -736,12 +758,25 @@ export class AgentConnectionController {
     return { status: ready ? 200 : 503, body };
   }
 
-  private async preemptContextStillConnections(
+  private backgroundBlocked(): boolean {
+    return this.foregroundCreations > 0 || [...this.records.values()].some(record =>
+      [...record.activeRequests.values()].some(request => request.exclusive)
+    );
+  }
+
+  private foregroundConflict(): AgentConnectionApiResult {
+    return { ...error("provider_conflict", "background work must wait for foreground requests to finish", 409), retryAfterSeconds: 1 };
+  }
+
+  private async preemptBackgroundConnections(
     preemptingPriority: number,
   ): Promise<AgentConnectionApiResult | undefined> {
-    for (const record of this.records.values()) {
+    const victims = [...this.records.values()].filter(record =>
+      record.profile.requestScheduling === "background-when-idle"
+      && (!isTerminal(record.status) || record.activeRequests.size > 0)
+    );
+    for (const record of victims) {
       this.refreshLifecycle(record);
-      if (record.selector.id !== "contextStill" || isTerminal(record.status)) continue;
       const released = await this.options.control.preemptAllocation(
         record.allocationId,
         preemptingPriority,
@@ -749,16 +784,21 @@ export class AgentConnectionController {
       if (released.status !== 200) {
         return error(
           "provider_conflict",
-          "ContextStill could not be preempted by the SAAA connection",
+          "background work could not be preempted by the foreground request",
           409,
         );
       }
       record.status = "failed";
-      record.releasedAt = new Date(this.now()).toISOString();
+      record.releasedAt ??= new Date(this.now()).toISOString();
       record.error = {
         code: "foreground_preempted",
         message: "request stopped because a higher-priority foreground task requires the provider",
       };
+    }
+    const deadline = Date.now() + 2_000;
+    while (victims.some(record => record.activeRequests.size > 0)) {
+      if (Date.now() >= deadline) return error("provider_conflict", "background requests have not released their execution resources", 409);
+      await this.sleep(10);
     }
     this.pruneHistory();
     return undefined;
@@ -769,7 +809,10 @@ export class AgentConnectionController {
   }
 
   private async probeInitial(record: ConnectionRecord): Promise<boolean> {
+    if (isTerminal(record.status) || (record.profile.requestScheduling === "background-when-idle" && this.backgroundBlocked())) return false;
     const health = await this.healthRecord(record);
+    this.refreshLifecycle(record);
+    if (isTerminal(record.status)) return false;
     if (health.status === 200) {
       this.markReady(record);
       return true;
@@ -1057,7 +1100,7 @@ export class AgentConnectionController {
   private pruneHistory(): void {
     const limit = Math.max(1, this.options.historyLimit ?? 1_000);
     const terminal = [...this.records.values()]
-      .filter((record) => isTerminal(record.status))
+      .filter((record) => isTerminal(record.status) && record.activeRequests.size === 0)
       .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
     for (const record of terminal.slice(0, Math.max(0, terminal.length - limit))) {
       this.clearIdleTimer(record);
@@ -1066,6 +1109,7 @@ export class AgentConnectionController {
   }
 
   private markReady(record: ConnectionRecord): void {
+    if (isTerminal(record.status)) return;
     record.status = "ready";
     record.readyAt ??= new Date(this.now()).toISOString();
     this.scheduleIdleRelease(record);

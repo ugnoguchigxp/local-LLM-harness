@@ -100,6 +100,23 @@
             2026-10-13。多枠の共有とswap排他を区別。実機でPID・instance・容量・APIを確認する検証入口を追加。
           </td>
         </tr>
+        <tr data-kind="decision" data-state="implemented" data-domain="eumenes-request-preemption">
+          <th scope="row">
+            <a href="./eumenes-request-preemption-2026-10-13.html"
+              >Eumenes要求ごとのContextStill中断と資源解放</a
+            >
+          </th>
+          <td>
+            前景要求中だけ排他。背景lease・stream・実行枠を解放し、共通モデルを保持。<small
+              >分類: <code>decision</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>eumenes-request-preemption</code></small
+            >
+          </td>
+          <td>
+            2026-10-13。用途別の内部方針で制御。旧SAAA名による固定排他を置換し、再取得とstream切断を検証。
+          </td>
+        </tr>
         <tr data-kind="decision" data-state="implemented" data-domain="ornith15-strix-profile">
           <th scope="row">
             <a href="./ornith15-strix-profile-2026-10-12.html"

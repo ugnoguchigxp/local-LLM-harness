@@ -162,6 +162,7 @@ export type AgentConnectionIdleRelease = z.infer<typeof agentConnectionIdleRelea
 const agentProfileYamlSchema = z.object({
   description: z.string().min(1).max(256),
   schedulingPriority: z.number().int().min(-1_000_000).max(1_000_000).default(0),
+  requestScheduling: z.enum(["foreground-exclusive", "background-when-idle"]).optional(),
   idleRelease: agentConnectionIdleReleaseSchema.optional(),
   providers: z.array(agentProviderYamlSchema).min(1).max(8),
 }).strict().superRefine((value, context) => {
@@ -328,6 +329,7 @@ export type AgentProfile = {
   selectionPolicy: "default" | "compatibility" | "explicit-only";
   deprecated: boolean;
   schedulingPriority?: number;
+  requestScheduling?: "foreground-exclusive" | "background-when-idle";
   idleRelease?: AgentConnectionIdleRelease;
   providers: AgentProviderProfile[];
   revision: string;
@@ -473,6 +475,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
       selectionPolicy,
       deprecated: false,
       schedulingPriority: profile.schedulingPriority,
+      ...(profile.requestScheduling ? { requestScheduling: profile.requestScheduling } : {}),
       ...(profile.idleRelease ? { idleRelease: structuredClone(profile.idleRelease) } : {}),
       providers,
     };
@@ -517,6 +520,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
       selectionPolicy: "compatibility" as const,
       deprecated: true,
       schedulingPriority: canonical.schedulingPriority,
+      ...(canonical.requestScheduling ? { requestScheduling: canonical.requestScheduling } : {}),
       ...(canonical.idleRelease ? { idleRelease: structuredClone(canonical.idleRelease) } : {}),
       providers,
     };

@@ -19,9 +19,9 @@ function scoped(errorCode?: string): VerifiedProviderToken {
   } as unknown as VerifiedProviderToken;
 }
 
-test("provider request retains and releases allocation and connection references exactly once", () => {
+test("provider request retains and releases allocation and connection references exactly once", async () => {
   const events: string[] = [];
-  const request = beginGatewayProviderRequest({
+  const request = await beginGatewayProviderRequest({
     allocationId: "allocation-1",
     capability: "llm.general",
     protocol: "openai.chat-completions.v1",
@@ -31,7 +31,7 @@ test("provider request retains and releases allocation and connection references
     connections: {
       beginProviderRequest: (connectionId: string, requestId: string, protocol: RuntimeProtocol, extendIdle: boolean) => {
         events.push(`begin:${connectionId}:${requestId}:${protocol}:${extendIdle}`);
-        return true;
+        return "accepted";
       },
       finishProviderRequest: (connectionId: string, requestId: string) => events.push(`finish:${connectionId}:${requestId}`),
     } as never,
@@ -58,7 +58,7 @@ test("provider request retains and releases allocation and connection references
   ]);
 });
 
-test("inactive scoped requests do not retain an allocation and distinguish idle release", () => {
+test("inactive scoped requests do not retain an allocation and distinguish idle release", async () => {
   let retained = false;
   const base = {
     allocationId: "allocation-1",
@@ -67,27 +67,27 @@ test("inactive scoped requests do not retain an allocation and distinguish idle 
     bodyMode: "buffered" as const,
     control: { retainProviderRequest: () => { retained = true; return undefined; } } as never,
     connections: {
-      beginProviderRequest: () => false,
+      beginProviderRequest: () => "connection_inactive",
       finishProviderRequest: () => undefined,
     } as never,
   };
-  expect(beginGatewayProviderRequest({ ...base, scoped: scoped("foreground_idle_timeout") }))
+  expect(await beginGatewayProviderRequest({ ...base, scoped: scoped("foreground_idle_timeout") }))
     .toMatchObject({ ok: false, code: "connection_idle_released" });
-  expect(beginGatewayProviderRequest({ ...base, scoped: scoped("connection_inactive") }))
+  expect(await beginGatewayProviderRequest({ ...base, scoped: scoped("connection_inactive") }))
     .toMatchObject({ ok: false, code: "connection_inactive" });
   expect(retained).toBe(false);
 });
 
-test("voice catalog probes do not extend connection idle time", () => {
+test("voice catalog probes do not extend connection idle time", async () => {
   let extendIdle: boolean | undefined;
-  const request = beginGatewayProviderRequest({
+  const request = await beginGatewayProviderRequest({
     allocationId: "allocation-1",
     capability: "speech.tts",
     protocol: "openai.audio-speech.v1",
     bodyMode: "none",
     scoped: scoped(),
     connections: {
-      beginProviderRequest: (_id: string, _requestId: string, _protocol: RuntimeProtocol, extend: boolean) => { extendIdle = extend; return true; },
+      beginProviderRequest: (_id: string, _requestId: string, _protocol: RuntimeProtocol, extend: boolean) => { extendIdle = extend; return "accepted"; },
       finishProviderRequest: (_id: string, _requestId: string) => undefined,
     } as never,
     control: {} as never,

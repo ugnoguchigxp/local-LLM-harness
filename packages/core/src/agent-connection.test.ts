@@ -116,6 +116,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
       }],
     });
   const contextStill = catalog.profiles.find((profile) => profile.id === "contextstill-background");
+  expect(contextStill?.requestScheduling).toBe("background-when-idle");
+  expect(catalog.profiles.find(profile => profile.id === "ornith1.5Strix")?.requestScheduling).toBe("foreground-exclusive");
   expect(contextStill)
     .toMatchObject({
       canonicalProfile: "contextstill-background",

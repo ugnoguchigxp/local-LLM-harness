@@ -1,0 +1,66 @@
+<article lang="ja">
+  <h1>EumenesのリクエストごとにContextStillを中断する実行方針</h1>
+  <p>
+    <time>2026-10-13</time
+    >。利用者の指示により、Eumenesの要求中は計算資源を対話へ集中し、ContextStillは要求の無い間に実行する。用途別のプロファイル、共有Strix、Granite
+    ASR、日英TTSの保持は継続する。
+  </p>
+  <section id="policy">
+    <h2>リクエストの境界と設定</h2>
+    <p>
+      Agent
+      Profileの内部設定requestSchedulingにforeground-exclusiveまたはbackground-when-idleを指定する。ornith1.5Strixと補助64K、Gemmaの対話・補助、旧SAAA対話は前者。ContextStillの主profileと明示64K・128K
+      tierは後者。モデル名やselector名の文字列で排他を判断しない。
+    </p>
+    <p>
+      前景接続を保持するだけでは背景処理を止めない。LLM、ASR、TTS、System
+      One、embeddingの実要求が始まった時点で、実行中・準備中・待機中の背景接続をpreemptし、allocationを解放し、credentialを失効させる。新しい前景接続の初期化時にも背景を解放し、4枠が背景で満杯でも取得できるようにする。health・claim・catalogの取得やvoicesの一覧取得は常時排他を保持する理由にしない。
+    </p>
+    <p>
+      前景要求の準備・中断処理の前に排他フラグを登録する。背景の接続作成はHTTP 409
+      provider_conflictとRetry-After
+      1で待機を促す。既存の背景要求もforwardする前に排他を確認する。並行する前景要求が複数ある場合は最後の要求が終了・中断するまで背景を許可しない。JSONは処理終了、SSEや音声streamは終了・切断で排他を解除する。
+    </p>
+    <p>
+      公開APIのprofile名、Provider名、モデル名、credential方式は変更しない。requestSchedulingは公開catalogへ追加しない内部方針であり、既存SDKのstrictなresponse
+      schemaを壊さない。中断されたContextStillは従来と同じforeground_preemptedを受け、新しい接続で再取得する。途中結果を成功した完了として扱わない。
+    </p>
+  </section>
+  <section id="release">
+    <h2>実行資源の解放と常駐モデルの維持</h2>
+    <p>
+      allocationのlifecycle
+      signalで上流HTTP要求を中断する。受信側がSSEを読まずに止まっていても、readerをcancelし、terminal処理と実行枠・要求参照の解放を行う。背景側の要求参照が消えるのを最大2秒待ち、それが確認できるまで前景要求を上流へ送らない。解放できない場合は前景要求を拒否し、背景と並行して実行を開始しない。
+    </p>
+    <p>
+      preemption時は、warm保持の無いProviderを最後の参照が消えた時点で終了する。通常のidle保持時間を待たない。Layaなどの背景専用プロセスを含む。別の接続・要求・mutationの参照が残るProviderは終了しない。Strix・Granite・VOICEVOX・KittenTTSのwarm参照は維持するため、要求の中断やprofileの受け渡しで重みを再ロードしない。
+    </p>
+    <p>
+      共有KV
+      pool自体はStrixプロセスに確保したまま残る。解放するのは背景の所有権、生成要求、実行枠と背景専用Providerであり、常駐共有モデルのメモリ全体をOSへ返す変更ではない。通常Ornithの標準コード用runtimeも別の要求先として残る。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証</h2>
+    <p>
+      統合試験は、背景中断が前景forwardより先に起きること、複数の前景要求中の背景再取得拒否、最後の要求終了後の再取得、ASR要求による背景中断、共有Providerの保持を確認する。SSEを読まないclientの中断と実行枠解放を別に検証する。Provider
+      instance試験は、背景専用プロセスの停止が要求の終了を待つことと、warm参照を持つ共通プロセスの保持を確認する。
+    </p>
+    <p>
+      実機入口はsmoke-eumenes-request-preemption.ts。合成の長いContextStill生成を各前景要求で中断する。LLM、ASR、日英TTS、Ruri判定、embeddingで中断を確認し、前景SSE中の再取得拒否と前景接続を保持したままの背景再開を確認する。共有LLM・ASR・TTSのPID、開始時刻、instance
+      IDを照合する。
+    </p>
+    <p>
+      外部証跡は /srv/ai/evidence/eumenes-request-preemption-20261013
+      に保存する。consumer実装や会話保存領域は変更しない。合成生成とAPI契約の検証であり、ContextStillの実業務結果の品質や永続化の検証ではない。
+    </p>
+  </section>
+  <section id="previous">
+    <h2>変更前の構成</h2>
+    <p>
+      <a href="./contextstill-strix-shared-providers-2026-10-13.html"
+        >共通Providerの保持と用途別プロファイル</a
+      >で確認した空き枠の共有に、今回のリクエスト単位の排他を加える。前景と背景の同時生成を許可した旧canaryは、今回の排他検証へ置き換える。
+    </p>
+  </section>
+</article>

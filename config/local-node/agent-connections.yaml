@@ -26,6 +26,7 @@ agentProfiles:
   saaa-conversation-gemma4-26b-voice:
     description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, Japanese VOICEVOX and English KittenTTS, embedding, and Ruri speaking-attitude System One
     schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -83,6 +84,7 @@ agentProfiles:
   ornith1.5Strix:
     description: Ornith 1.5 STRIX_LEAN profile copied from the Gemma 4 26B voice profile with the same speech, embedding, and System One providers
     schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -140,6 +142,7 @@ agentProfiles:
   saaa-conversation-gemma4-26b-64k:
     description: SAAA auxiliary 64K LLM session sharing the Gemma 4 26B four-slot runtime with the main voice profile
     schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -159,6 +162,7 @@ agentProfiles:
   ornith1.5Strix-64k:
     description: Ornith 1.5 STRIX_LEAN auxiliary 64K LLM session sharing four slots and the unified KV pool with ornith1.5Strix
     schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -178,6 +182,7 @@ agentProfiles:
   saaa-conversation-ornith15:
     description: SAAA base response set with resident Ornith 1.5 35B, Qwen 3.5 2B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding
     schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
     idleRelease: &saaa-idle-release
       enabled: true
       idleSeconds: 300
@@ -226,6 +231,7 @@ agentProfiles:
   contextstill-background:
     description: ContextStill background profile sharing STRIX_LEAN, Granite ASR, Japanese VOICEVOX, English KittenTTS, embedding, and sentence-language with the voice profile; retains its Laya decision provider and 32K budget
     schedulingPriority: 1000
+    requestScheduling: background-when-idle
     providers:
       - name: llm
         capability: llm.coding
@@ -275,6 +281,7 @@ agentProfiles:
   contextstill-background-64k:
     description: Explicit ContextStill background tier for requests that fit the 64K budget
     schedulingPriority: 1000
+    requestScheduling: background-when-idle
     providers:
       - name: llm
         capability: llm.coding
@@ -288,6 +295,7 @@ agentProfiles:
   contextstill-background-128k:
     description: Explicit ContextStill background tier for requests that exceed the 64K budget
     schedulingPriority: 1000
+    requestScheduling: background-when-idle
     providers:
       - name: llm
         capability: llm.coding

@@ -1,5 +1,11 @@
 <article lang="ja">
   <h1>用途別プロファイルを維持するContextStillとStrixのProvider共有</h1>
+  <aside>
+    本稿は共有基盤の初回検証。後続指示による実行方針は<a
+      href="./eumenes-request-preemption-2026-10-13.html"
+      >Eumenesの要求ごとのContextStill中断</a
+    >を参照。空き枠があっても前景要求中の背景生成は許可しない。
+  </aside>
   <p>
     <time>2026-10-13</time
     >。利用者の指示により、音声対話とContextStillのプロファイルは独立したまま、同じLLMと音声Providerを使う構成にする。プロファイルは用途と要求予算を表し、プロセスの複製を意味しない。

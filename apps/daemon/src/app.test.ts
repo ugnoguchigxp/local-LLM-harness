@@ -5068,8 +5068,8 @@ test("foreground request completion restarts the SAAA idle deadline", async () =
   })).json()).toMatchObject({ status: "released", error: { code: "foreground_idle_timeout" } });
 });
 
-test("ContextStill receives a retryable conflict only while SAAA is active", async () => {
-  const { app } = await makeApp(true, false, {}, {
+test("a selector name alone does not exclude ContextStill while the foreground connection is idle", async () => {
+  const { app } = await makeApp(true, true, {}, {
     apiToken: agentApiToken,
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog: explicitAgentConnectionCatalog,
@@ -5086,9 +5086,8 @@ test("ContextStill receives a retryable conflict only while SAAA is active", asy
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "blocked-contextstill" }),
     body: JSON.stringify({ profile: "contextStill", audience: "loopback" }),
   });
-  expect(contextStill.status).toBe(409);
-  expect(contextStill.headers.get("retry-after")).toBe("1");
-  expect(await contextStill.json()).toMatchObject({ error: { code: "provider_conflict" } });
+  expect(contextStill.status).toBe(201);
+  expect(await contextStill.json()).toMatchObject({ profile: "contextStill", status: "ready" });
 });
 
 test("agent connection derives a host-private claim from the request origin", async () => {
@@ -5319,4 +5318,108 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
   expect((await app.request(`/v1/agent-connections/${created.id}`, {
     method: "DELETE",
   })).status).toBe(204);
+});
+
+test("Eumenes requests abort ContextStill, fence reacquisition until all foreground requests finish, and retain shared providers", async () => {
+  const configDir = join(import.meta.dir, "../../../config/local-node");
+  const production = loadRegistry(configDir);
+  const catalog = loadAgentConnectionCatalogForRegistry(configDir, production);
+  const probes = new Map(production.runtimes.map(runtime => [runtime.id, probe(runtime.id,
+    runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0)]));
+  const log = { ensure: [] as string[], stop: [] as string[] };
+  const observer = new Observer(production, stubBackend(probes, log));
+  await observer.tick();
+  const control = new ControlPlane(production, stubBackend(probes, log), observer, { pollIntervalMs: 1, providerSwitchHoldMs: 0 });
+  const events: string[] = [];
+  let backgroundStarted!: () => void;
+  let backgroundStart = new Promise<void>(resolve => { backgroundStarted = resolve; });
+  const foregroundReleases: (() => void)[] = [];
+  let foregroundStarts = 0;
+  const app = createApp({ registry: production, getState: () => observer.getState(), control,
+    apiToken: agentApiToken, connectionSigningKey: agentSigningKey, agentConnectionCatalog: catalog,
+    connectionPollIntervalMs: 1,
+    gatewayFetch: async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      if (path.endsWith("/v1/chat/completions")) {
+        const body = JSON.parse(init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init?.body));
+        const text = body.messages[0]?.content;
+        if (text === "background-work") {
+          events.push("background-started"); backgroundStarted();
+          return await new Promise<Response>((_resolve, reject) => {
+            const abort = () => { events.push("background-aborted"); reject(init?.signal?.reason); };
+            if (init?.signal?.aborted) abort(); else init?.signal?.addEventListener("abort", abort, { once: true });
+          });
+        }
+        if (text === "foreground-work") {
+          events.push("foreground-started"); foregroundStarts += 1;
+          await new Promise<void>(resolve => { foregroundReleases.push(resolve); });
+        }
+      }
+      if (path.endsWith("/v1/audio/transcriptions") && init?.body instanceof ReadableStream) {
+        await new Response(init.body).arrayBuffer();
+      }
+      return await validAgentProviderSemanticResponse(input, init);
+    },
+  });
+  const owned = new Set<string>();
+  let sequence = 0;
+  const create = async (profile: "contextStill" | "ornith1.5Strix") => app.request("/v1/agent-connections", {
+    method: "POST", headers: agentHeaders({ "content-type": "application/json", "idempotency-key": `exclusive-${++sequence}`, prefer: "wait=3" }),
+    body: JSON.stringify({ profile, audience: "same-host", client: `exclusive-${sequence}`, ttlSeconds: 300,
+      ...(profile === "contextStill" ? { providers: ["llm"] } : {}), deploymentPolicy: "existing-only", allowFallback: false }),
+  });
+  const ready = async (profile: "contextStill" | "ornith1.5Strix") => {
+    const response = await create(profile); expect(response.status).toBe(201);
+    const connection = publicAgentConnectionSchema.parse(await response.json()); owned.add(connection.id);
+    const claim = agentConnectionClaimSchema.parse(await (await app.request(`/v1/agent-connections/${connection.id}/claim`, {
+      method: "POST", headers: agentHeaders({ "content-type": "application/json" }), body: JSON.stringify({ format: "openai-provider-v1" }),
+    })).json());
+    return { connection, claim };
+  };
+  const chat = (claim: ReturnType<typeof agentConnectionClaimSchema.parse>, text: string) => {
+    const provider = claim.providers.find(provider => provider.name === "llm")!;
+    return app.request("/v1/chat/completions", { method: "POST", headers: { authorization: `Bearer ${provider.credential.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: provider.model, messages: [{ role: "user", content: text }], max_tokens: 8 }),
+    });
+  };
+  try {
+    const foreground = await ready("ornith1.5Strix");
+    const background = await ready("contextStill");
+    const bg = chat(background.claim, "background-work"); await backgroundStart;
+    const fg1 = chat(foreground.claim, "foreground-work");
+    for (let i = 0; i < 1000 && foregroundStarts < 1; i++) await Bun.sleep(1);
+    expect(foregroundStarts).toBe(1);
+    expect(events.slice(0, 3)).toEqual(["background-started", "background-aborted", "foreground-started"]);
+    const aborted = await bg; expect(aborted.status).toBe(409);
+    expect(await aborted.json()).toMatchObject({ error: { code: "foreground_preempted" } });
+    expect(control.getAllocation(background.connection.allocationId)).toMatchObject({ status: "released" });
+    const blocked = await create("contextStill"); expect(blocked.status).toBe(409);
+    expect(blocked.headers.get("retry-after")).toBe("1");
+    expect(await blocked.json()).toMatchObject({ error: { code: "provider_conflict" } });
+    const fg2 = chat(foreground.claim, "foreground-work");
+    for (let i = 0; i < 1000 && foregroundStarts < 2; i++) await Bun.sleep(1);
+    expect(foregroundStarts).toBe(2);
+    foregroundReleases[0]!(); const completed1 = await fg1; expect(completed1.status).toBe(200); await completed1.text();
+    expect((await create("contextStill")).status).toBe(409);
+    foregroundReleases[1]!(); const completed2 = await fg2; expect(completed2.status).toBe(200); await completed2.text();
+    const resumed = await ready("contextStill");
+    backgroundStart = new Promise(resolve => { backgroundStarted = resolve; });
+    const bg2 = chat(resumed.claim, "background-work");
+    await backgroundStart;
+    const asr = foreground.claim.providers.find(provider => provider.name === "asr")!;
+    const form = new FormData(); form.set("model", asr.model); form.set("file", new Blob([await validSemanticWavResponse().arrayBuffer()], { type: "audio/wav" }), "silence.wav");
+    const transcription = await app.request("/v1/audio/transcriptions", { method: "POST", headers: { authorization: `Bearer ${asr.credential.token}` }, body: form });
+    expect(transcription.status).toBe(200); await transcription.text();
+    const aborted2 = await bg2; expect(aborted2.status).toBe(409); await aborted2.text();
+    expect(events.filter(event => event === "background-aborted").length).toBe(2);
+    expect(control.getAllocation(resumed.connection.allocationId)).toMatchObject({ status: "released" });
+    const again = await ready("contextStill");
+    expect(again.connection.id).not.toBe(background.connection.id);
+    for (const runtime of ["ornith15-strix-conversation", "granite-asr", "voicevox-tts", "kittentts-nano"]) expect(log.stop).not.toContain(runtime);
+    expect(control.getAllocation(foreground.connection.allocationId)?.status).toBe("ready");
+  } finally {
+    foregroundReleases.forEach(release => release());
+    for (const id of owned) await app.request(`/v1/agent-connections/${id}`, { method: "DELETE", headers: agentHeaders() });
+    control.beginDrain();
+  }
 });

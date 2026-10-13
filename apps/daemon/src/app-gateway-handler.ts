@@ -161,7 +161,7 @@ export function createGatewayHandler(input: {
       }
     }
 
-    const gatewayRequest = beginGatewayProviderRequest({
+    const gatewayRequest = await beginGatewayProviderRequest({
       allocationId,
       capability: selected.binding.capability,
       protocol: options.protocol,
@@ -172,9 +172,14 @@ export function createGatewayHandler(input: {
       random: deps.random,
     });
     if (!gatewayRequest.ok) {
+      if (gatewayRequest.code === "foreground_active") c.header("retry-after", "1");
       return c.json(errorBody(
         gatewayRequest.code,
-        "agent connection is no longer active",
+        gatewayRequest.code === "foreground_active"
+          ? "background work must wait for foreground requests to finish"
+          : gatewayRequest.code === "foreground_preemption_failed"
+          ? "background work has not released its execution resources"
+          : "agent connection is no longer active",
       ), 409);
     }
     const releaseProviderRequest = gatewayRequest.release;

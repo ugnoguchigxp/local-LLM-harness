@@ -6,10 +6,10 @@ type ConnectionRequestTracker = Pick<AgentConnectionController, "beginProviderRe
 type ProviderRequestReferences = Pick<ControlPlane, "retainProviderRequest" | "releaseProviderRequest">;
 
 export type GatewayProviderRequest =
-  | { ok: false; code: "connection_idle_released" | "connection_inactive" }
+  | { ok: false; code: "connection_idle_released" | "connection_inactive" | "foreground_active" | "foreground_preemption_failed" }
   | { ok: true; requestId: string; providerInstanceId?: string; release: () => void };
 
-export function beginGatewayProviderRequest(input: {
+export async function beginGatewayProviderRequest(input: {
   allocationId: string;
   capability: string;
   protocol: RuntimeProtocol;
@@ -18,30 +18,35 @@ export function beginGatewayProviderRequest(input: {
   connections?: ConnectionRequestTracker;
   control: ProviderRequestReferences;
   random?: () => string;
-}): GatewayProviderRequest {
+}): Promise<GatewayProviderRequest> {
   const requestId = `provider-request-${input.random?.() ?? crypto.randomUUID()}`;
-  const connectionRequestTracked = input.scoped
-    ? input.connections?.beginProviderRequest(
+  const admission = input.scoped
+    ? await input.connections?.beginProviderRequest(
       input.scoped.record.id,
       requestId,
       input.protocol,
       !(input.protocol === "openai.audio-speech.v1" && input.bodyMode === "none"),
-    ) === true
-    : false;
+    )
+    : undefined;
+  const connectionRequestTracked = admission === "accepted";
   if (input.scoped && !connectionRequestTracked) {
     return {
       ok: false,
-      code: input.scoped.record.error?.code === "foreground_idle_timeout"
+      code: admission === "foreground_active" || admission === "foreground_preemption_failed"
+        ? admission
+        : input.scoped.record.error?.code === "foreground_idle_timeout"
         ? "connection_idle_released"
         : "connection_inactive",
     };
   }
 
-  const providerInstanceId = input.control.retainProviderRequest?.(
-    input.allocationId,
-    input.capability,
-    requestId,
-  );
+  let providerInstanceId: string | undefined;
+  try {
+    providerInstanceId = input.control.retainProviderRequest?.(input.allocationId, input.capability, requestId);
+  } catch (error) {
+    if (connectionRequestTracked && input.scoped) input.connections?.finishProviderRequest(input.scoped.record.id, requestId);
+    throw error;
+  }
   let released = false;
   return {
     ok: true,
@@ -50,9 +55,10 @@ export function beginGatewayProviderRequest(input: {
     release: () => {
       if (released) return;
       released = true;
-      input.control.releaseProviderRequest?.(providerInstanceId, requestId);
-      if (connectionRequestTracked && input.scoped) {
-        input.connections?.finishProviderRequest(input.scoped.record.id, requestId);
+      try {
+        input.control.releaseProviderRequest?.(providerInstanceId, requestId);
+      } finally {
+        if (connectionRequestTracked && input.scoped) input.connections?.finishProviderRequest(input.scoped.record.id, requestId);
       }
     },
   };
