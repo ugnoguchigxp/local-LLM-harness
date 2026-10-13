@@ -19,8 +19,8 @@
       refresh版を指すartifactとは別に定義する。
     </p>
     <p>
-      専用量子化に対応するq38rocm engine、commit <code>0fc9568</code>のVulkan
-      backendを使う。古いMTP
+      専用量子化に対応するq38rocm engine、commit
+      <code>0fc9568</code>のVulkan backendを使う。古いMTP
       headによる推測生成を避けるため、<code>--spec-type none</code>を明示する。比較の出典は3候補の実機試験（外部証跡
       ornith-three-trial-20261012）。
     </p>
@@ -144,6 +144,46 @@
     <p>
       STRIX専用runtimeの起動設定でprompt再利用を無効化し、固定release
       v2を追加する。v1は履歴として残してdefaultをfalseにする。Gemmaや他のruntimeの設定と、LARMの一般的なreadiness確認方法は維持する。
+    </p>
+  </section>
+  <section id="one-million-shared-context-20261013">
+    <h2>2026-10-13の共有容量拡張</h2>
+    <p>
+      利用者の依頼により、256K×3＋64K×2相当の896K（917,504 tokens）以上を確保する。 共有KV
+      poolは1M（1,048,576 tokens）とし、execution slotsとLARMの同時allocation・request上限は
+      既存の4を維持する。この容量例は5本分の合計だが、5本同時接続を許可する変更ではない。
+      4枠なら256K×3＋64K×1を使用しても192Kの余裕がある。
+    </p>
+    <p>
+      主profileの上限262,144 tokensと補助selectorの上限65,536 tokensは維持する。
+      256Kを使う追加会話は既存の<code>ornith1.5Strix</code>へ
+      <code>providers: ["llm"]</code>で接続する。64K
+      selectorを256Kへ読み替えず、新しいselectorも追加しない。
+      ContextStillの32K予算も維持する。個々の上限は入力と生成出力込みで、主profileの入力予算は
+      256,072
+      tokens。4枠すべてを256Kで埋めると余裕がなくなるため、Consumerは共有poolの総予算を管理する。
+    </p>
+    <p>
+      STRIX専用コマンドのctx-sizeだけを524,288から1,048,576へ拡張する。 モデルartifact、engine、4
+      slots、q4_0のK/V、推測生成とprompt cacheを無効にする設定は維持する。 runtimeメモリ予約を48
+      GBから52 GBへ増やし、新しいimmutable release
+      <code>ornith15-strix-conversation-p4-v3</code>をdefaultとする。512Kのv2は履歴として保持する。
+    </p>
+    <p>
+      同じ実機で本番と同じ起動引数のctx-sizeとportだけを変更した独立canaryを起動し、 4
+      slotsすべてが262,144 tokensで初期化され、4本同時の短文要求が各32 tokensを生成して成功した。
+      1Mは共有poolの長さであり、モデルの学習contextを1Mへ延長する設定ではない。
+      engineも各slotを学習上限262,144へ制限したことをログで確認した。
+      既存本番processとcanaryを両方ロードした状態でもsystem availableは約31.1 GiBを維持した。
+      canaryは終了し、試験用モデルのメモリを解放した。証跡はrepository外の
+      <code>/srv/ai/evidence/strix-1m-context-20261013/canary.json</code>とcanary-server.log。
+    </p>
+    <p>
+      配備用sourceは稼働release <code>ea00ad8828d0c3a3e65321459432f9d5197076bf</code>から
+      独立したcheckoutを作り、今回の変更だけを適用する。既存の署名builderとactivatorで検証・配備する。
+      セッションsmokeは<code>LARM_STRIX_256K_SESSIONS=3</code>により主profile3本（追加2本はLLMのみ）と
+      補助64K1本の共有、4本同時応答、会話履歴の独立、5本目の拒否・待機、解放後の昇格を確認する。
+      この短文検証は256K×3の実入力性能や長時間運用の保証ではない。
     </p>
   </section>
   <section id="validation">

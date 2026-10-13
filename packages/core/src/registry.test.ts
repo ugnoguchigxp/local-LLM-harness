@@ -634,7 +634,7 @@ test("ContextStill resolves the warm Strix backend shared with the distinct voic
   if (!runtime || runtime.backend !== "llama-swap") throw new Error("expected llama-swap runtime");
   const command = configured.models[runtime.deployment.modelId].cmd;
   expect(command).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");
-  expect(command).toContain("--ctx-size 524288");
+  expect(command).toContain("--ctx-size 1048576");
   expect(command).toContain("--parallel 4");
   expect(command).toContain("--cache-type-k q4_0");
   expect(command).toContain("--cache-type-v q4_0");
