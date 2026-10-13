@@ -19,12 +19,12 @@ function floatWave(seconds = 2): Uint8Array {
   return wave;
 }
 
-test("float WAV becomes decodable 48 kHz stereo Opus at fixed 64 kbps", async () => {
+test("float WAV becomes decodable 48 kHz stereo Opus at target 128 kbps VBR", async () => {
   await verifyMusicOpusEncoder();
   const audio = await encodeMusicOpus(floatWave(), new AbortController().signal, 1_000_000);
   expect(new TextDecoder().decode(audio.slice(0, 4))).toBe("OggS");
-  expect(audio.length).toBeGreaterThan(16_000);
-  expect(audio.length).toBeLessThan(18_000);
+  expect(audio.length).toBeGreaterThan(24_000);
+  expect(audio.length).toBeLessThan(48_000);
   const probe = Bun.spawn([
     "ffprobe", "-v", "error", "-show_streams", "-show_packets", "-of", "json", "pipe:0",
   ], { stdin: audio, stdout: "pipe", stderr: "ignore" });
@@ -34,8 +34,11 @@ test("float WAV becomes decodable 48 kHz stereo Opus at fixed 64 kbps", async ()
   };
   expect(await probe.exited).toBe(0);
   expect(data.streams[0]).toMatchObject({ codec_name: "opus", sample_rate: "48000", channels: 2 });
-  // Each default 20 ms packet carries exactly 160 bytes at 64 kbps CBR.
-  expect(new Set(data.packets.map((packet) => packet.size))).toEqual(new Set(["160"]));
+  // VBR varies packet sizes; total payload is near the 128 kbps target, not 64 kbps.
+  expect(new Set(data.packets.map((packet) => packet.size)).size).toBeGreaterThan(1);
+  const payloadBitrate = data.packets.reduce((sum, packet) => sum + Number(packet.size), 0) * 8 / 2;
+  expect(payloadBitrate).toBeGreaterThan(96_000);
+  expect(payloadBitrate).toBeLessThan(192_000);
 });
 
 test("Opus conversion rejects invalid input, oversize output, and cancellation", async () => {

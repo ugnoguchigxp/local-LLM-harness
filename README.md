@@ -79,7 +79,7 @@ LARM は、GPU ドライバ、推論エンジン、モデルのインストー�
 | LLM | JSON／HTTP SSE: `POST /v1/chat/completions` |
 | Managed Context | `GET /v1/context-status`、`POST /v1/contexts`、`POST /v1/context-views`、`GET /v1/context-operations/:id` |
 | 音声 | `POST /v1/audio/transcriptions`、`POST /v1/audio/speech`、`GET /v1/audio/voices` |
-| 楽曲生成 | `POST /v1/music/generations`（既定はOpus・64 kbps・48 kHz）、ジョブ確認と音声取得 |
+| 楽曲生成 | `POST /v1/music/generations`（既定はOpus・128 kbps VBR・48 kHz）、ジョブ確認と音声取得 |
 | 楽曲ライブラリ | `GET /v1/music/tracks?q=検索語`、`GET /v1/music/favorites`、`GET /v1/music/tracks/:id/audio`、`DELETE /v1/music/tracks/:id` |
 | Embedding | `GET /v3/agent-profiles`で契約を発見し、Agent Connection claim後に`POST /v1/embed` |
 | Agent 接続 | 正本: `GET /v3/agent-profiles`で発見し、`POST /v1/agent-connections`で接続。Profile v1／v2 discoveryは互換専用 |
