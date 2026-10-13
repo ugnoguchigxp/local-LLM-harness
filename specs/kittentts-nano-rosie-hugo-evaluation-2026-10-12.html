@@ -1,0 +1,530 @@
+<article lang="ja">
+  <h1>KittenTTS Nano：Rosie／HugoのPC適合性・速度・メモリ検証</h1>
+  <p>
+    2026-10-12 JST、gnosisで実測。英語の女性アバターにはRosie、男性アバターにはHugoを
+    選ぶ構成は、このPCでは性能面で十分実用的である。推奨候補はデモと同じNano FP32、 CPU
+    4スレッド、常駐1プロセス。約4秒の短文は0.14〜0.15秒、約11〜13秒の文は
+    0.38〜0.40秒で完成した。音色の採否は保存した音声の試聴で判断する。
+  </p>
+  <section id="target">
+    <h2>対象と公式情報</h2>
+    <p>
+      指定されたHugging FaceデモのNanoは
+      <code>KittenML/kitten-tts-nano-0.8-fp32</code>。15Mパラメータ、ONNX、24 kHz出力。
+      RosieとHugoは別モデルではなく、共通モデルとvoices.npz内の話者情報を選ぶ。
+      configの対応はRosie＝<code>expr-voice-4-f</code>、Hugo＝<code>expr-voice-4-m</code>。
+      speed=1.0でも内部speed priorはRosie 0.8、Hugo 0.9であり、同じ文でも音声長は異なる。
+      公式モデルカードのライセンス表示は両版ともApache-2.0。
+    </p>
+    <p>
+      デモが指定する公式wheelはkittentts 0.8.1。現在のGitHub mainはKittenTTS 2の説明を
+      含むため、2の多言語・声クローン・感情制御・必要メモリをNano 0.8の仕様として扱わない。
+      本試験はデモの実装と0.8.1 wheelを確認し、Nanoを明示して行った。
+    </p>
+    <ul>
+      <li><a href="https://huggingface.co/spaces/KittenML/KittenTTS-Demo">指定デモ</a></li>
+      <li>
+        <a
+          href="https://huggingface.co/spaces/KittenML/KittenTTS-Demo/blob/d674a76c70a33e543ade37e1114923db58480cc2/app.py"
+          >固定revisionのデモ実装</a
+        >
+      </li>
+      <li>
+        <a href="https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32">Nano FP32モデルカード</a>
+      </li>
+      <li>
+        <a href="https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8">Nano INT8モデルカード</a>
+      </li>
+      <li>
+        <a href="https://github.com/KittenML/KittenTTS/releases/tag/0.8.1">公式0.8.1リリース</a>
+      </li>
+    </ul>
+  </section>
+  <section id="environment">
+    <h2>PCと測定条件</h2>
+    <table>
+      <caption>
+        実測環境
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">確認内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">CPU</th>
+          <td>AMD Ryzen AI MAX+ 395、16コア／32スレッド、AVX2／AVX-512、governor powersave</td>
+        </tr>
+        <tr>
+          <th scope="row">GPU</th>
+          <td>AMD Radeon 8060S、gfx1151。Nanoの推論には使用しない</td>
+        </tr>
+        <tr>
+          <th scope="row">RAM</th>
+          <td>OS認識約121 GiB。測定開始時のavailable約79 GiB、swap使用約6.7 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">OS</th>
+          <td>Linux 7.0.0-34-generic、x86_64</td>
+        </tr>
+        <tr>
+          <th scope="row">ソフトウェア</th>
+          <td>
+            Python 3.12.14、kittentts 0.8.1、ONNX Runtime 1.31.0、NumPy 2.5.4、phonemizer-fork
+            3.3.2、Torch 2.14.1+cpu、spaCy 3.8.16
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">推論設定</th>
+          <td>
+            CPUExecutionProviderを明示。intra_op=4、inter_op=1、intra_opの待機spinを無効化。speed=1.0
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">出力</th>
+          <td>24 kHz、mono、PCM16 WAV。推論計時からファイル保存とASR検証を除外</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      既存のLLM・TTS・ASRサービスを停止・切替せずに測定した。開始時load averageは
+      0.34／0.95／0.82。既存GPU workloadがあり、GPU busy値をNanoの利用率と解釈しない。
+      これはローカル推論ライブラリの試験であり、LARMのProvider登録・HTTP経由の遅延・ 特定Agent
+      Profileの同時セッション数の試験ではない。
+    </p>
+    <p>
+      1・2・4・8・16・自動設定のFP32、1・2・4スレッドのINT8を短文／中程度の文で
+      各声3反復し、108件を測定。その後4スレッドで8種類の文×2声×5反復と
+      数字前処理／速度変更を測定し、両版合計172件。両版でONNX同時実行合計42件、
+      別プロセスでFP32の直列メモリ測定22件を追加した。
+      常用速度表はウォーム状態5反復の中央値。短い試験なのでp95保証や長時間soakを意味しない。
+    </p>
+  </section>
+  <section id="speed">
+    <h2>FP32の生成速度</h2>
+    <table>
+      <caption>
+        CPU 4スレッド、前処理なし、speed=1.0、各5回の中央値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">声／文</th>
+          <th scope="col">音声長</th>
+          <th scope="col">生成時間</th>
+          <th scope="col">RTF</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Rosie・相づち</th>
+          <td>2.092秒</td>
+          <td>0.063秒</td>
+          <td>0.030</td>
+        </tr>
+        <tr>
+          <th scope="row">Hugo・相づち</th>
+          <td>1.692秒</td>
+          <td>0.066秒</td>
+          <td>0.039</td>
+        </tr>
+        <tr>
+          <th scope="row">Rosie・短文</th>
+          <td>4.733秒</td>
+          <td>0.141秒</td>
+          <td>0.030</td>
+        </tr>
+        <tr>
+          <th scope="row">Hugo・短文</th>
+          <td>3.983秒</td>
+          <td>0.153秒</td>
+          <td>0.038</td>
+        </tr>
+        <tr>
+          <th scope="row">Rosie・中程度</th>
+          <td>13.200秒</td>
+          <td>0.385秒</td>
+          <td>0.029</td>
+        </tr>
+        <tr>
+          <th scope="row">Hugo・中程度</th>
+          <td>10.975秒</td>
+          <td>0.403秒</td>
+          <td>0.037</td>
+        </tr>
+        <tr>
+          <th scope="row">Rosie・長文</th>
+          <td>43.233秒</td>
+          <td>1.507秒</td>
+          <td>0.035</td>
+        </tr>
+        <tr>
+          <th scope="row">Hugo・長文</th>
+          <td>33.458秒</td>
+          <td>1.219秒</td>
+          <td>0.036</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      RTF＝生成時間÷音声長。0.03〜0.04は音声の再生時間の約25〜33分の1で生成することを
+      示す。上表は全文完成までの時間であり、LLMの応答待ち・HTTP転送・再生bufferの時間を含まない。
+      短文は「Hello! I'm ready to help you plan your day.」、中程度は会議の開始を案内する3文、
+      長文は予定と作業手順を説明する8文・507文字。
+    </p>
+    <table>
+      <caption>
+        予備試験：短文／中程度×2声×3回の平均生成時間
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">CPUスレッド設定</th>
+          <th scope="col">FP32</th>
+          <th scope="col">INT8</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1</th>
+          <td>0.510秒</td>
+          <td>0.447秒</td>
+        </tr>
+        <tr>
+          <th scope="row">2</th>
+          <td>0.353秒</td>
+          <td>0.318秒</td>
+        </tr>
+        <tr>
+          <th scope="row">4</th>
+          <td>0.264秒</td>
+          <td>0.252秒</td>
+        </tr>
+        <tr>
+          <th scope="row">8</th>
+          <td>0.258秒</td>
+          <td>未測定</td>
+        </tr>
+        <tr>
+          <th scope="row">16</th>
+          <td>0.305秒</td>
+          <td>未測定</td>
+        </tr>
+        <tr>
+          <th scope="row">自動、公式SessionOptions既定値</th>
+          <td>0.413秒</td>
+          <td>未測定</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      8スレッドの改善は4スレッドに対し約2%。4スレッドは自動設定より約36%短い時間で完成し、
+      他ProviderとのCPU競合も抑えやすいため推奨する。1スレッドでも実時間より速い。
+      設定変更はスレッド数に加えてspinの有無も含むため、差をスレッド数だけの効果とは断定しない。
+      FP32の主要4文種ではCPU時間÷実時間が概ね2.2〜2.4で、生成中に平均約2.3コア相当を使用した。
+    </p>
+  </section>
+  <section id="resources">
+    <h2>メモリ・起動・ディスク</h2>
+    <table>
+      <caption>
+        プロセス全体のRSS。重みサイズと実行時メモリを区別する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">状態</th>
+          <th scope="col">FP32</th>
+          <th scope="col">INT8</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ライブラリimport後</th>
+          <td>約328 MiB</td>
+          <td>約328 MiB</td>
+        </tr>
+        <tr>
+          <th scope="row">モデル読込直後</th>
+          <td>約429 MiB</td>
+          <td>約406 MiB</td>
+        </tr>
+        <tr>
+          <th scope="row">最初の短文完成後・別直列測定</th>
+          <td>約451 MiB</td>
+          <td>未分離測定</td>
+        </tr>
+        <tr>
+          <th scope="row">長文を含む22件の直列測定peak</th>
+          <td>約621 MiB</td>
+          <td>未分離測定</td>
+        </tr>
+        <tr>
+          <th scope="row">5反復＋最大4件同時実行を含むpeak</th>
+          <td>約940 MiB</td>
+          <td>約1,043 MiB</td>
+        </tr>
+        <tr>
+          <th scope="row">ONNXファイル</th>
+          <td>56,767,095 bytes／56.8 MB</td>
+          <td>24,369,971 bytes／24.4 MB</td>
+        </tr>
+        <tr>
+          <th scope="row">ONNX＋声データ</th>
+          <td>約60.0 MB</td>
+          <td>約27.6 MB</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      peakはLinuxのru_maxrss。10 ms間隔のRSSサンプリングでは数MiB大きく出るが結論は同じ。
+      直列測定と同時実行測定は別プロセス・異なる反復数なので、peak差の全てを同時実行の影響とは
+      分離できない。INT8は重みを半分以下にできるが、実行時peakは小さくならなかった。
+      メモリarena、可変長中間tensor、Python依存の影響が大きい。今回の最大33〜43秒程度の発話では
+      1プロセスの初期予算を1.5 GiB程度とする案が妥当。長文上限を拡張する場合は再測定する。
+    </p>
+    <p>
+      FP32のimport 2.68秒、モデル読込0.209秒、初回短文生成0.166秒で、合計約3.05秒。
+      重みはダウンロード済み・OSファイルcacheありの新規プロセスでの値。ネットワーク取得時間や
+      cacheなしのディスク起動時間を含まない。常駐状態の待機CPUは約0.034%／1コア、
+      別直列測定で約0.024%とほぼ無負荷だった。待機計時中はRSS監視threadを停止した。
+    </p>
+    <p>
+      専用venvは約1.2 GiB。小さなモデルでも公式wheelのmisaki／spaCy等の依存からTorchが入る。
+      本環境ではCPU版Torchを明示し、不要なCUDA依存をインストール対象から外した。
+      重み読込後の推論はローカルファイルのみで動作し、APIキーやクラウド推論は必要ない。
+      消費電力・温度・サーマルスロットリングの連続負荷試験は行っていない。
+    </p>
+  </section>
+  <section id="hardware">
+    <h2>CPU／GPU／NPUの適合性</h2>
+    <p>
+      今回のONNX Runtimeが列挙するEPはAzureExecutionProviderとCPUExecutionProviderで、
+      実際のSessionはCPUExecutionProviderのみ。Nano推論によるGPU tensorやGPUメモリ割当は
+      使用しない。TorchもCPU版で、NPUも使用していない。GPUをLLM用に確保する構成と相性が良い。
+    </p>
+    <p>
+      AMD GPUでのONNX推論には別のEP付きビルドが必要で、標準wheelを入れるだけではGPU実行に
+      ならない。ONNX Runtime公式は旧ROCm EPを1.23以降削除し、MIGraphXへの移行を案内している。
+      本試験で8060S向けMIGraphXの追加構築・互換性検証は行っておらず、GPU速度やGPU実行可否は
+      未検証。CPUが既に25〜33倍速であるため、この英語アバター用途ではCPUを第一候補にする。
+    </p>
+    <ul>
+      <li>
+        <a href="https://onnxruntime.ai/docs/execution-providers/"
+          >ONNX RuntimeのExecution Providers</a
+        >
+      </li>
+      <li>
+        <a href="https://onnxruntime.ai/docs/execution-providers/ROCm-ExecutionProvider.html"
+          >ROCm EP削除と移行案内</a
+        >
+      </li>
+      <li>
+        <a href="https://onnxruntime.ai/docs/execution-providers/MIGraphX-ExecutionProvider.html"
+          >MIGraphX EP</a
+        >
+      </li>
+    </ul>
+  </section>
+  <section id="concurrency">
+    <h2>同時生成と再生開始</h2>
+    <table>
+      <caption>
+        FP32・単一ORT sessionへの同時推論、各3回の全件完了時間中央値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">同時件数</th>
+          <th scope="col">全件完了</th>
+          <th scope="col">合計音声長</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1</th>
+          <td>0.413秒</td>
+          <td>11.517秒</td>
+        </tr>
+        <tr>
+          <th scope="row">2</th>
+          <td>0.577秒</td>
+          <td>20.933秒</td>
+        </tr>
+        <tr>
+          <th scope="row">4</th>
+          <td>0.952秒</td>
+          <td>41.867秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      4件まで推論エラー・NaNはない。ただし同時実行試験はEspeakのthread安全性が未証明のため
+      phoneme準備を直列に済ませ、session.runだけを同時実行した。3文を一つの入力として渡すため、
+      公式generateの文分割を含む速度表とは音声長も異なる。これはONNX backendの余力の確認であり、
+      前処理・HTTP・待ち行列を含む4セッション保証ではない。最初のadapterは前処理を直列化する 1
+      workerでも十分速く、声の変更でモデルの再ロードは不要。
+    </p>
+    <p>
+      0.8.1のgenerateは文ごとに生成してから全chunkを結合して返すため、標準APIに逐次音声返却は
+      ない。内部のgenerate_single_chunkを一文ずつ呼ぶprobeではRosieの長文の最初の 「Welcome
+      back,」2.092秒分が0.076秒で完成し、全8文は1.509秒で完了した。
+      文単位のadapterで再生を先行できる見込みはあるが、PCM／HTTP streamingは未実装・未検証。
+      LLMからの文字fragmentをそのまま合成する機能やphoneme／token単位のstreamingではない。
+    </p>
+  </section>
+  <section id="reading">
+    <h2>音声・読みの確認</h2>
+    <p>
+      FP32とINT8それぞれRosie／Hugoの11条件、計44個のWAVを保存。
+      波形は全て有限・非無音。FP32で最大振幅1.026、INT8で1.099の瞬間的超過があり、
+      abs(x)≥1の割合は最大約0.00052%。WAV保存時にごく少数のsampleが飽和するため、
+      adapterでは小さなheadroomまたはlimiterを検討する。聴感上の品質保証やMOS評価は行っていない。
+    </p>
+    <p>
+      推論計時完了後、既存whisper.cppのlarge-v3-turbo Q5_0を直接使用し、36音声を読み戻した。
+      使用先は127.0.0.1:8085の既存transcription API。モデルを変更するAPIは呼んでいない。
+      ASR一致は語の読み確認を補助するもので、声の自然さ・抑揚・発音の正しさを証明しない。
+    </p>
+    <table>
+      <caption>
+        両モデル版・両声で確認した挙動
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">結果と対応案</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">相づち／短文／長文</th>
+          <td>ASRの単語比較で欠落なし。約500文字の長文も全文が認識された</td>
+        </tr>
+        <tr>
+          <th scope="row">中程度の文</th>
+          <td>twenty minutesが20 minutesとして認識。表記差以外は一致</td>
+        </tr>
+        <tr>
+          <th scope="row">ONNX</th>
+          <td>両声ともASRではAnx runtime。略語の読みを聴き、必要に応じ「O N N X」などを明示する</td>
+        </tr>
+        <tr>
+          <th scope="row">数字・金額</th>
+          <td>
+            Rosieの前処理なしは$12.50が「12,
+            50」。clean_text=Trueでは金額として認識。Hugoは両方で金額として認識されたが、ASRの補完の可能性を含む
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">句読点・略語</th>
+          <td>
+            公式chunk_textが.!?で分割し終端をcommaに置換。Dr.や小数点も分割する。前処理で小数問題は減るが、Dr.は残る。doctor等の明示と文境界の扱いが課題
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">日本語の負例</th>
+          <td>
+            日本語の原文は話されず「Japanese letter」「Chinese
+            letter」等と認識。0.8.1のfrontendはen-us。日本語アバター用に選ばない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">声・感情</th>
+          <td>8種類の既定声から選択。Nano 0.8のAPIには声クローンや感情指示はない</td>
+        </tr>
+        <tr>
+          <th scope="row">速度調整</th>
+          <td>
+            speed=0.8／1.2が動作。Rosie短文は6.258／3.908秒、Hugoは5.233／3.258秒。基準は各4.733／3.983秒
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      初期の候補はFP32を維持する。INT8は予備試験で平均約5%速いが、主試験では声・文により
+      速い場合と遅い場合があり、同時生成はFP32より遅かった。実行メモリも有利ではない。
+      速度だけを理由にユーザーが試聴したFP32からINT8へ切り替える必要はない。
+    </p>
+  </section>
+  <section id="integration">
+    <h2>LARMに組み込む場合の判断</h2>
+    <p>
+      英語用Agent Profileが選択したときだけNano CPU runtimeを解決する構成が候補となる。
+      Rosie／Hugoはrequestのvoiceとして指定し、同じbackendを共有できる。短文のcold起動約3秒を
+      避けるには会話中のkeep-warmが有効。最大発話長、空入力の拒否、前処理、キャンセル、声一覧、
+      前処理のthread安全性とstreamingをadapter実装時に確認する。 本調査ではregistry・route・Agent
+      Profile・既存Provider設定・systemdサービスは変更していない。
+    </p>
+    <p>
+      参考となる別モデルの測定は
+      <a href="./tts-multilingual-speed-benchmark-2026-10-12.html">多言語TTS速度比較</a>と
+      <a href="./inflect-nano-english-and-japanese-trial-2026-10-12.html">Inflect Nano試験</a
+      >にある。 文・声・frontend・backendが異なるため、本書の値と同条件の順位として比較しない。
+    </p>
+  </section>
+  <section id="reproduction">
+    <h2>保存先・再現性</h2>
+    <dl>
+      <dt>専用実行環境</dt>
+      <dd><code>/srv/ai/apps/kittentts-trial/.venv</code></dd>
+      <dt>固定モデル</dt>
+      <dd>
+        <code>/srv/ai/models/kittentts/fp32</code>と<code>/srv/ai/models/kittentts/int8</code>
+      </dd>
+      <dt>音声と生データ</dt>
+      <dd>
+        <code>/srv/ai/results/larm/tts/2026-10-12-kittentts</code
+        >。fp32-4／int8-4にWAV、result.json、reading-smoke.jsonを保存。serial-memory-fp32-4は別メモリ測定
+      </dd>
+      <dt>取得manifestと依存lock</dt>
+      <dd>
+        <code>/srv/ai/models/kittentts/manifest.json</code
+        >、<code>/srv/ai/apps/kittentts-trial/model-manifest.json</code>、<code>source-manifest.json</code>、<code
+          >requirements-lock.txt</code
+        >
+      </dd>
+      <dt>再実行ソース</dt>
+      <dd>
+        repository内の<code>benchmarks/tts/kittentts/download.py</code>、<code>run.py</code>、<code>validate_audio.py</code>、<code>corpus.json</code>。重み・推論エンジン・音声・ログをrepository外に保存
+      </dd>
+    </dl>
+    <table>
+      <caption>
+        固定revision
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">revision／SHA-256</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Demo</th>
+          <td><code>d674a76c70a33e543ade37e1114923db58480cc2</code></td>
+        </tr>
+        <tr>
+          <th scope="row">FP32</th>
+          <td><code>7a1db645b1f3ab9420761d87428e042b9cec3f26</code></td>
+        </tr>
+        <tr>
+          <th scope="row">INT8</th>
+          <td><code>84781d74e29ee25217551556398b42f80593a813</code></td>
+        </tr>
+        <tr>
+          <th scope="row">0.8.1 wheel</th>
+          <td><code>482a436c4f1f3192153710376e459ff3689517ebcda7c2b051e2fd4187b41851</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      download.pyは両モデルのONNX、voices.npz、config.jsonを固定revisionから取得しSHA-256を
+      検証する。既存ファイルの検証も成功した。wheelとデモソースも外部保存。
+      同じ入力でも波形peakが反復間で少し変わるため、音声のbit単位の再現は主張しない。
+    </p>
+    <pre><code>python3 benchmarks/tts/kittentts/download.py --output /srv/ai/models/kittentts
+PYTHONDONTWRITEBYTECODE=1 /srv/ai/apps/kittentts-trial/.venv/bin/python benchmarks/tts/kittentts/run.py --models /srv/ai/models/kittentts --output /srv/ai/results/larm/tts/kittentts-rerun --variant fp32 --threads 4 --repeats 5 --concurrency
+PYTHONDONTWRITEBYTECODE=1 /srv/ai/apps/kittentts-trial/.venv/bin/python benchmarks/tts/kittentts/validate_audio.py --input /srv/ai/results/larm/tts/kittentts-rerun</code></pre>
+    <p>文書・catalogは<code>bun run docs:check:fix</code>で検証する。</p>
+  </section>
+</article>

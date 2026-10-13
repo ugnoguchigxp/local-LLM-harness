@@ -100,6 +100,7 @@ export function createGatewayHandler(input: {
       scopedProvider: scoped !== undefined,
       declaredAllocationId,
       directModel,
+      chatContextWindow: (model, route) => deps.agentConnectionCatalog?.profiles.flatMap(profile => profile.providers).find(provider => provider.publicModel === model && provider.route === route)?.contextWindow,
       directRequestBytes: directRequestBytes ?? chatRequestBytes,
       chatRequest,
       chatResponseFormat,
@@ -161,7 +162,7 @@ export function createGatewayHandler(input: {
       }
     }
 
-    const gatewayRequest = beginGatewayProviderRequest({
+    const gatewayRequest = await beginGatewayProviderRequest({
       allocationId,
       capability: selected.binding.capability,
       protocol: options.protocol,
@@ -172,9 +173,14 @@ export function createGatewayHandler(input: {
       random: deps.random,
     });
     if (!gatewayRequest.ok) {
+      if (gatewayRequest.code === "foreground_active") c.header("retry-after", "1");
       return c.json(errorBody(
         gatewayRequest.code,
-        "agent connection is no longer active",
+        gatewayRequest.code === "foreground_active"
+          ? "background work must wait for foreground requests to finish"
+          : gatewayRequest.code === "foreground_preemption_failed"
+          ? "background work has not released its execution resources"
+          : "agent connection is no longer active",
       ), 409);
     }
     const releaseProviderRequest = gatewayRequest.release;
@@ -198,6 +204,8 @@ export function createGatewayHandler(input: {
             }),
           }
           : {}),
+        chatInputWindow: scoped?.provider.contextWindow ?? deps.agentConnectionCatalog?.profiles.flatMap(profile => profile.providers).find(provider => provider.route === selected.binding.route && provider.publicModel === (chatRequest as { model?: string } | undefined)?.model)?.contextWindow,
+        countChatInputOnly: options.countChatInputOnly,
         allocationId,
         protocol: options.protocol,
         upstreamPath: options.upstreamPath,

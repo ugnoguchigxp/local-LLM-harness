@@ -1,0 +1,358 @@
+<article lang="ja">
+  <h1>Eumenesを改修せずASR三方式を試す設計とWebSocketの判断</h1>
+
+  <p>
+    2026年10月12日の設計案。対象はGranite Speech 4.1 2B Q8_0、Qwen3-ASR 1.7Bの
+    antirez軽量C実装、現行Qwen3-ASR 1.7B PyTorch ROCm FP16。 まず現在のHTTP transcription
+    APIを維持し、LARMで要求profileのASR Providerだけを
+    明示選択する構成を推奨する。Eumenesのコード・接続設定・呼出形式を変えず、
+    新しい接続で選択した方式を試せるようにする。WebSocketは別の段階とする。
+    この文書は計画であり、新HTTP adapter・試用選択機構・WebSocketは未実装。
+    本番設定の変更やEumenesへの連絡は行っていない。
+  </p>
+
+  <section id="evidence">
+    <h2>確認した現在の呼出経路</h2>
+    <p>
+      Eumenesのcleanなworktree、revision
+      <code>c651e23dbbe7850f7ae5664f240db313829113b2</code>を読取参照した。
+      製品DB・設定値・credential・会話ログは取得していない。 既定設定はselector
+      <code>SAAA-gemma4-26b</code>で、LARMでは
+      <code>saaa-conversation-gemma4-26b-voice</code>に対応する。 実利用中のEumenesの設定・active
+      connectionがこの既定値と同じかは未確認。
+    </p>
+    <ol>
+      <li>
+        ブラウザは音声をWAVへまとめ、通常はmono 16kHzへ変換する。 Eumenes
+        backendの<code>/api/voice/preview</code>と<code>/api/voice/turns</code>へ
+        音声を送る。無音判定の既定値は700ms、発話区間は約10秒で区切られる。
+      </li>
+      <li>
+        既に仮字幕の仕組みがある。最初は蓄積音声約1.8秒でpreviewし、その後約0.6秒ごとに
+        発話先頭からのWAVを送り直す。処理中は最新のWAVだけを保持する。
+        これはキャッシュを持つモデルのincremental streamingとは異なる。
+      </li>
+      <li>
+        Eumenes backendはLARMのcatalog・connection・claimからASRのmodel、baseURL、tokenを取得し、
+        <code>POST /v1/audio/transcriptions</code>へmultipartの
+        <code>model</code
+        >、<code>response_format=json</code>、<code>file=speech.wav</code>を渡す。
+        現在の呼出は<code>language</code>を送らず、返された<code>text</code>を使用する。
+        ASR model名をコードでQwenに固定してはいない。
+      </li>
+      <li>
+        <code>SAAA-gemma4-26b</code>ではAgent Profile IDとLLMのGemma
+        contractを検査する。 したがってASR候補ごとに別Agent Profile
+        IDへ付け替える構成は、そのままでは互換でない。 一方、新接続時のASR
+        modelはcatalog・作成結果・claimで一致していれば受け入れられる。
+      </li>
+    </ol>
+    <p>
+      主な参照箇所：Eumenesの<code>api/domains/larm/service/index.ts:1162</code>、
+      <code>web/src/domains/audio/controller/index.ts:208</code>、 <code>web/src/domains/voice-dialogue/hooks/index.ts:58</code>。
+      LARMの参照revisionは<code>05f0222eda4420fe86fb28efb4d89dec312afd0a</code>と作業ツリー。
+      SAAAの実装は今回参照していない。
+    </p>
+  </section>
+
+  <section id="transport">
+    <h2>方式別の判断</h2>
+    <table>
+      <caption>
+        通信方式と推論方式を区別した判断
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">方式</th>
+          <th scope="col">現在のHTTP API</th>
+          <th scope="col">発話中の推論</th>
+          <th scope="col">推奨</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Granite 4.1 2B Q8_0 / Vulkan</th>
+          <td>常駐するtranscribe.cppをHTTP adapterで包めばEumenesの呼出形式を維持できる</td>
+          <td>
+            評価したportにはstream_begin/feed/finalizeの実装がない。WSを付けただけではencoder状態の再利用は実現しない
+          </td>
+          <td>一括認識と既存のHTTP previewで先行試用。WebSocketは後回し</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-ASR 1.7B / antirez C実装</th>
+          <td>
+            既存重みを1回ロードするworkerとHTTP adapterで維持できる。現状のbenchmark driverはHTTP
+            serverではない
+          </td>
+          <td>
+            incremental入力とprefix
+            rollbackの機能あり。既定chunkは2秒で、通常の一括認識より遅くなる場合もある
+          </td>
+          <td>まずHTTPで現行と比較。後から本当のstreamingを試す際の第一候補</td>
+        </tr>
+        <tr>
+          <th scope="row">現行Qwen3-ASR 1.7B / PyTorch ROCm FP16</th>
+          <td>既に提供中。比較基準とrollback先として維持する</td>
+          <td>
+            現在のadapterはupload完了後にtranscribeする。公式streaming helperはvLLM
+            backend専用で、現在のPyTorch経路には使えない
+          </td>
+          <td>通信方式を変更せず残す。WebSocketによる即時の推論高速化は見込まない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Graniteのportは<code>src/arch/granite/model.cpp:1973</code>以下のstream操作が
+      <code>nullptr</code>であることを確認した。Qwen Cの挙動は
+      <a href="https://github.com/antirez/qwen-asr">作者の説明</a>と取得したコードで確認した。
+      PyTorch側の制限は現行installationの<code>qwen_asr/inference/qwen3_asr.py:596</code>と
+      <a
+        href="https://github.com/QwenLM/Qwen3-ASR/blob/main/examples/example_qwen3_asr_vllm_streaming.py"
+        >公式streaming例</a
+      >で確認した。
+    </p>
+    <p>
+      WebSocketは継続的に送受信する通信路を提供する。
+      <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSocket">MDNのWebSocket API資料</a
+      >も 送受信とbufferingの仕様を説明するが、ASRの計算や発話終了判定を代わりに行うものではない。
+      Eumenes→LARMだけを隠れてWSへ置換しても、完成したWAVを受け取る現在の経路では
+      発話中にモデルへPCMを渡せるようにならない。
+    </p>
+  </section>
+
+  <section id="selection">
+    <h2>LARMだけで試用方式を選ぶ構成</h2>
+    <p>
+      共通HTTP adapterのコードは複数engineに対応するが、各runtime instanceは1つのengineと weight
+      revisionを固定してロードする。実行中processの中で選択したmodelを密かに入れ替えない。
+      profile→選択route→runtime→実backendの情報をLARMで一致させる。
+    </p>
+    <table>
+      <caption>
+        新しい名前は提案。登録・配備は未実施
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">試用選択</th>
+          <th scope="col">route / runtime</th>
+          <th scope="col">公開model</th>
+          <th scope="col">実行内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">current</th>
+          <td>
+            <code>stt-qwen</code> /
+            <code>qwen-asr</code>
+          </td>
+          <td><code>qwen3-asr-1.7b</code></td>
+          <td>現行FP16 PyTorch</td>
+        </tr>
+        <tr>
+          <th scope="row">qwen-native</th>
+          <td>
+            <code>stt-qwen-native-trial</code> /
+            <code>qwen-asr-native-trial</code>
+          </td>
+          <td><code>qwen3-asr-1.7b</code></td>
+          <td>同じmodelのC実装、HIP Q8 decoder</td>
+        </tr>
+        <tr>
+          <th scope="row">granite</th>
+          <td>
+            <code>stt-granite-trial</code> /
+            <code>granite-asr-trial</code>
+          </td>
+          <td><code>granite-speech-4.1-2b</code></td>
+          <td>Granite Q8_0、Vulkan</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LARMの管理側に、対象selectorのASR Providerだけを上書きする試用選択を設ける。
+      初期値は<code>current</code>、選択は<code>qwen-native</code>または<code>granite</code>を
+      operatorが明示する。OS非依存のselector overlay・revision・resolveは
+      <code>packages/core</code
+      >、connection処理はdaemon、systemd起動・停止はbackendsへ置く。 overlayは有効profileのASR
+      route・公開modelを変更し、その内容からprofileRevisionを求める。 Agent Profile
+      ID、LLMのmodel・contextWindow、TTSの設定は維持する。
+    </p>
+    <p>
+      Eumenesはいつも同じselectorと同じHTTP pathを使う。新接続のcatalog・connection・claimには
+      選択したASR modelが整合して現れ、Eumenesは通常の取得処理でそれを使う。
+      GraniteをQwenのmodel名として広告する必要はない。 実runtime、weight revision、engine
+      commit、試用選択revision、待ち時間、errorを
+      LARMの計測に残す。通常ログへ音声本文やtokenを記録しない。
+    </p>
+    <p>
+      selector単位の選択は、そのselectorを共有する他consumerにも適用される。
+      現在のEumenesは識別clientを明示設定せず、libraryの既定<code>gemma-client</code>を使うため、
+      この値だけでEumenes専用と判断しない。Eumenesだけに厳密に限定する場合は、既存の
+      認証principal・audience等で独立した範囲を確定できるか別途調べる。
+      今回は実principalを読んでおらず、専用分離まで実現済みとは扱わない。
+    </p>
+  </section>
+
+  <section id="connection">
+    <h2>接続中の切替とcatalogの整合性</h2>
+    <p>
+      現行Provider tokenはallocation・providerRevision・instanceId・instanceGenerationに結び付く。
+      またEumenesはrenew時に、以前とmodel・protocolが一致するか検査する。
+      従って生きたconnectionのASR bindingだけを書き換える切替は使わない。
+    </p>
+    <ol>
+      <li>
+        選択候補のHTTP adapterを配備し、artifactとsemantic
+        readinessを先に確認する。Eumenesの<code>deploymentPolicy=existing-only</code>のままで解決できる状態にする。
+      </li>
+      <li>
+        管理側で次に使用するASR選択を公開する。新しいcatalog・新しいconnectionはその選択で作る。
+      </li>
+      <li>
+        既存connectionは元のprofile
+        snapshot・runtimeを使い続ける。処理中のASR、LLM、TTSを中断して切り替えない。
+      </li>
+      <li>
+        自然なidle
+        release・明示的な接続終了の後、Eumenesの既存の再接続処理で新しいmodelを取得する。既定idleは300秒のため、反映待ちになることがある。
+      </li>
+      <li>
+        管理画面・CLIでは「選択済み」「旧接続の終了待ち」「新接続へ反映済み」を区別する。rollbackも同じ手順で<code>current</code>へ戻す。
+      </li>
+    </ol>
+    <p>
+      Eumenesにはidle-released 409と、Controlが旧接続のreleased状態を確認した401を受けた場合の
+      1回だけの再接続処理がある。ただし通常のready状態の401、429、renewのmodel mismatchは
+      無条件には再試行しない。これらをわざと起こして切り替える構成にしない。
+      音声turn全体の終了は単発HTTPのactive件数0だけでは判定できないので、最初はidle境界で切り替える。
+    </p>
+    <p>
+      Eumenesはcatalog取得後、<code>expectedCatalogRevision</code>を指定してconnectionを作る。
+      現行LARMは現在のrevision以外を拒否するため、取得と作成の間の選択変更は409になり得る。
+      完全な変更通知不要の切替には、LARMで短時間の旧catalog snapshotを保持し、
+      authorizedな旧revisionからはそのsnapshotの一致したprofileで接続を作る機能を追加する。
+      未知・失効・別scopeのrevisionは従来どおり拒否する。保持上限・有効期間を決め、
+      古いrevisionからの接続も自然終了まで同じruntimeへpinする。
+      これは既存機能ではなく、本案のLARM側の追加要件である。
+    </p>
+  </section>
+
+  <section id="http-contract">
+    <h2>共通HTTP adapterの互換要件</h2>
+    <ul>
+      <li>
+        <code>POST /v1/audio/transcriptions</code
+        >のmultipartと、少なくともEumenesが使う<code>response_format=json</code>、<code>{"text":"..."}</code>を全方式で維持する。
+      </li>
+      <li>
+        requestの<code>model</code>はclaimの公開modelと一致させる。modelが違うrequestや重複したmodel
+        fieldは拒否する。実行時の推論先は確定したbindingから選ぶ。
+      </li>
+      <li>
+        Eumenesはlanguageを送らないので、auto入力で日本語・英語の認識を確認する。前回の日本語指定benchmarkがそのままauto入力の検証になるとは扱わない。
+      </li>
+      <li>
+        WAVのsample rate・channel・PCM形式を検査し、必要ならmono 16kHz
+        float32へ変換する。無音・非発話は空textとして扱う条件を各方式で試す。
+      </li>
+      <li>
+        既存APIの<code>text</code>・<code>verbose_json</code>、温度0、非対応promptの扱いも明示する。Graniteで未確認のtimestamp等を互換と表示しない。
+      </li>
+      <li>
+        モデルを1回ロードして保持する。音声ごとにCLIを起動し、毎回数秒のロード時間を加える実装は避ける。
+      </li>
+      <li>
+        実際のworkerが使われている間は推論slotを保持する。HTTP切断だけでslotを空け、同じsessionを次のrequestから並行操作しない。
+      </li>
+    </ul>
+    <p>
+      Eumenesの対象は約10秒以下の区間だが、現行Qwen
+      adapterには最大3600秒・256MiBの別の利用範囲もある。 Granite
+      portのcontext由来の上限は異なるため、Eumenes互換を一般の全長音声API互換とは呼ばない。
+      長い録音用の明示Qwen routeは維持し、上限を超えるGranite requestは明確に拒否するか、
+      別途検証したchunkingを導入する。切替によって長音声の既存利用を黙って破壊しない。
+    </p>
+  </section>
+
+  <section id="preview">
+    <h2>通信方式より先に確認するpreviewと取消</h2>
+    <p>
+      Eumenesは最終音声を送る際にpreviewをabortするが、切断が実際のGPU推論停止を意味するとは限らない。
+      Graniteのbindingにはsession.cancelがある一方、評価したQwen C
+      APIには同等の明示cancel操作がない。 現行PyTorch
+      adapterも同期推論であり、WebSocketを足すだけでは取消問題は解決しない。
+    </p>
+    <p>
+      cancel可能なengineはrequest取消をcooperative cancelへ渡す。Qwen Cは初期案では
+      完了までslotを保持して結果を破棄し、workerごとのbounded admissionと短いqueueを検討する。
+      通常利用のpreview→finalで429が起きないかを先に測る。
+      取消のたびにworkerをkillして再ロードする方法は、次の発話のcold startを増やすため既定にしない。
+      queueはruntimeのresource policyと一致させ、adapterだけに隠れた無制限queueを置かない。
+    </p>
+    <p>
+      現在のEumenes→LARM requestにはpreview/finalやutteranceIdを伝える明示fieldがない。
+      LARMだけで確実に最終発話を優先したり、同一発話のstreaming
+      stateへ結び付けたりするとは約束できない。
+      発話の先頭部分が同じというだけで暫定結果を最終結果として採用しない。
+      API不変更の段階ではstatelessなHTTP previewを維持し、その頻度を含めた実経路を受入試験に使う。
+    </p>
+  </section>
+
+  <section id="latency">
+    <h2>待ち時間の見積りとWebSocketを追加する条件</h2>
+    <p>
+      <a href="./asr-tts-japanese-evaluation-2026-10-12.html">TTS音声による実機評価</a
+      >の短文中央値は 現行Qwen 0.934秒、Qwen C 0.570秒、Granite Vulkan 0.326秒。
+      既定の無音待ち700msを単純に足すと約1.63秒・1.27秒・1.03秒となる。
+      これは推論前の待ち時間を説明する参考計算であり、Eumenesで測った応答時間ではない。
+      upload、preview競合、queue、LLMの初動、TTS生成・再生の時間はさらに加わる。
+    </p>
+    <p>
+      WebSocketを追加するのは、HTTP
+      adapterの試用後も「最初の仮字幕が遅い」「長い発話の再計算が重い」
+      「発話終了直後の待ち時間をさらに減らしたい」という問題が実測で残る場合。 Qwen
+      Cの実streamingを別endpointで試し、PCM frameのsequence、utterance generation、
+      tentative・committed・final、取消、再接続、bounded bufferingを定義する。
+      finalだけを会話LLMの確定入力とする。既存HTTP endpointは残す。
+    </p>
+    <p>
+      ブラウザから連続PCMを送る段階ではEumenesのfrontend・backendにも実装が必要であり、
+      「Eumenesを改修しない」という初期要件とは分ける。
+      内部通信だけをWSに替えて、利用者向けの待ち時間が短くなると断定しない。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>実装順と受入条件</h2>
+    <ol>
+      <li>
+        GraniteとQwen Cの常駐HTTP
+        adapterを隔離配備し、現行と同じmultipartで24音声を再実行する。language未指定、json応答、無音、取消、過大upload、単一slotを確認する。
+      </li>
+      <li>
+        現在のEumenesに合わせ、1.8秒から始まる累積preview、約0.6秒間隔、700msの終端無音、preview取消直後のfinalを模擬する。最終結果の遅延と429を測る。
+      </li>
+      <li>
+        selectorのASR overlayとcatalog
+        snapshot保持を実装し、新旧connectionのpin・renew・自然終了・再接続・catalog取得と作成のraceを試験する。
+      </li>
+      <li>
+        現行→Qwen
+        C→Granite→現行の順で試す。Eumenesのコード・設定を変更せず、毎回catalog・claim・requestのmodelと実runtimeが一致することを確認する。
+      </li>
+      <li>
+        本人のマイクによる3往復を各方式で確認し、LLM・TTS同時利用、cold start、100
+        request安定性も測る。前回のQwen C最大18秒の外れ値は別に追跡する。
+      </li>
+      <li>
+        HTTP経路の改善後に、必要性と効果が確認できた場合のみ別のstreaming endpointを実装する。
+      </li>
+    </ol>
+    <p>
+      今回完了したのはsourceと通信契約の確認、およびこの設計の作成。
+      新adapterのHTTP試験、Eumenes実機3往復、切替の配備、WSの性能測定は未実施。
+      前回の合成音声での優位だけをもって、Eumenes音声MVPや本番切替の完了とは宣言しない。
+    </p>
+  </section>
+</article>

@@ -19,6 +19,7 @@ export function acceptsProviderBearer(method: string, path: string): boolean {
     method === "POST"
     && new Set([
       "/v1/chat/completions",
+      "/v1/chat/completions/input-tokens",
       "/v1/audio/transcriptions",
       "/v1/audio/speech",
       "/v1/embed",

@@ -63,7 +63,7 @@ for (const mode of ["success", "bad-wave", "download-failed", "too-large", "canc
         const result = manager.get(job.jobId);
         expect(result?.status).toBe("completed");
         expect(result?.result?.format).toBe("opus");
-        expect(result?.result?.metadata?.encoding).toMatchObject({ bitrateBps: 64_000, sampleRateHz: 48_000 });
+        expect(result?.result?.metadata?.encoding).toMatchObject({ bitrateBps: 128_000, bitrateMode: "vbr", sampleRateHz: 48_000 });
         const artifact = manager.artifact(job.jobId, "audio")!;
         expect(artifact).toMatchObject({ contentType: "audio/ogg", filename: "output.opus" });
         expect((await readFile(artifact.path)).subarray(0, 4).toString()).toBe("OggS");

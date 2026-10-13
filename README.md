@@ -79,7 +79,7 @@ LARM は、GPU ドライバ、推論エンジン、モデルのインストー�
 | LLM | JSON／HTTP SSE: `POST /v1/chat/completions` |
 | Managed Context | `GET /v1/context-status`、`POST /v1/contexts`、`POST /v1/context-views`、`GET /v1/context-operations/:id` |
 | 音声 | `POST /v1/audio/transcriptions`、`POST /v1/audio/speech`、`GET /v1/audio/voices` |
-| 楽曲生成 | `POST /v1/music/generations`（既定はOpus・64 kbps・48 kHz）、ジョブ確認と音声取得 |
+| 楽曲生成 | `POST /v1/music/generations`（既定はOpus・128 kbps VBR・48 kHz）、ジョブ確認と音声取得 |
 | 楽曲ライブラリ | `GET /v1/music/tracks?q=検索語`、`GET /v1/music/favorites`、`GET /v1/music/tracks/:id/audio`、`DELETE /v1/music/tracks/:id` |
 | Embedding | `GET /v3/agent-profiles`で契約を発見し、Agent Connection claim後に`POST /v1/embed` |
 | Agent 接続 | 正本: `GET /v3/agent-profiles`で発見し、`POST /v1/agent-connections`で接続。Profile v1／v2 discoveryは互換専用 |
@@ -167,7 +167,7 @@ const client = new LarmClient({
 });
 
 for await (const event of client.streamChatCompletion({
-  model: process.env.LARM_MODEL ?? "coding-default",
+  model: process.env.LARM_MODEL ?? "ornith-1.5-strix-lean",
   messages: [{ role: "user", content: "Hello" }],
 })) {
   for (const choice of event.choices) {
@@ -179,7 +179,7 @@ for await (const event of client.streamChatCompletion({
 コードをリポジトリ直下の `quickstart.ts` として保存した場合は、次のように実行できます。
 
 ```bash
-LARM_MODEL=coding-default bun quickstart.ts
+LARM_MODEL=ornith-1.5-strix-lean bun quickstart.ts
 ```
 
 Model Brokerが内部Allocationの取得・固定・解放を行います。明示Allocationは管理・高度用途にだけ残します。LLM全文を待たず句単位でTTSを開始する音声例は [`examples/voice-client.ts`](examples/voice-client.ts) にあります。

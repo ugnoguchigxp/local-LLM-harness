@@ -1,0 +1,10 @@
+// LARM controls the standard Granite dialogue runtime and its legacy trial.
+polkit.addRule(function(action, subject) {
+    if (subject.user === "ugnoguchi"
+        && action.id === "org.freedesktop.systemd1.manage-units"
+        && ["granite-asr.service", "granite-asr-trial.service"].indexOf(action.lookup("unit")) !== -1
+        && ["start", "stop"].indexOf(action.lookup("verb")) !== -1) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

@@ -1,0 +1,440 @@
+<article lang="ja">
+  <h1>日本語TTS音声によるASR三候補の実機評価：2026年10月12日</h1>
+
+  <p>
+    Ryzen AI Max+ 395 / Radeon 8060S / 128GB級共有メモリのlocal-nodeで、 Cohere Transcribe
+    2B、Qwen3-ASR 1.7Bの軽量C実行系、Granite Speech 4.1 2Bを評価した。
+    利用者が指定した日本語の短文と50文字程度の文をTTSに生成させ、同じ音声を比較した。
+    この合成音声試験では、精度と速度の組み合わせが最も良かった追加候補はGraniteのQ8_0 / Vulkan。
+    会話profileの変更や本番ASRの置換は行っていない。
+  </p>
+
+  <section id="conclusion">
+    <h2>今回の判断</h2>
+    <ul>
+      <li>
+        Granite Speech 4.1 2B Q8_0 / Vulkanを次の試用候補とする。
+        表記差を除いた読みは24本すべて一致し、短文の認識時間中央値0.326秒、長文0.950秒。
+        単純な日本語命令のこの試験では、現行Qwenと内容精度を維持しながら速かった。
+      </li>
+      <li>
+        Qwen3-ASR 1.7Bのantirez C実装も24本すべて一致。
+        短文0.570秒、長文1.485秒で、現行PyTorch経路の0.934秒・2.082秒より速かった。
+        ただし測定中に18.010秒の外れ値が1回あり、安定運用の優位まで確定していない。
+      </li>
+      <li>
+        Cohere Q8_0 / transcribe.cpp Vulkanは最速だが、田中・京都などの欠落があるため
+        この条件では置換候補にしない。追加した個別実行でも同じ欠落が再現した。
+        原配布の非量子化モデルや別runtimeの日本語品質まで否定する結果ではない。
+      </li>
+      <li>
+        GraniteのCPU経路も24本すべて一致した。短文0.582秒、長文1.806秒で、
+        GPUをASRに使わない選択肢として残す。LLMとの同時実行効果は今回未測定。
+      </li>
+    </ul>
+    <p>
+      入力は同じTTSエンジンのcleanな合成音声であり、自然発話、環境雑音、マイク録音、
+      話者の多様性に対する最適モデルを確定する試験ではない。
+      <a href="./asr-short-voice-model-research-2026-10-12.html">実測前の候補調査</a>で
+      Cohereを第一候補とした仮説は、この試験では支持されなかった。
+    </p>
+  </section>
+
+  <section id="corpus">
+    <h2>評価音声</h2>
+    <p>
+      VOICEVOX CORE 0.17.0のノーマルstyle、speed 1.0で、次の12文を春日部つむぎと
+      ずんだもんの2声で合成した。計24本・114.902秒。
+      短文は10〜14文字・1.632〜2.571秒、長文は45〜47文字・6.101〜8.864秒。 全候補に同じmono 16kHz
+      PCM s16le WAVを渡し、音声ごとのSHA-256を記録した。
+    </p>
+    <table>
+      <caption>
+        正解テキスト。文字数は句読点を含むUnicode文字数
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID</th>
+          <th scope="col">区分</th>
+          <th scope="col">文字数</th>
+          <th scope="col">発話</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">s01</th>
+          <td>短文</td>
+          <td>10</td>
+          <td>明日の天気を教えて。</td>
+        </tr>
+        <tr>
+          <th scope="row">s02</th>
+          <td>短文</td>
+          <td>13</td>
+          <td>音量を少し下げてください。</td>
+        </tr>
+        <tr>
+          <th scope="row">s03</th>
+          <td>短文</td>
+          <td>14</td>
+          <td>予約は変更しないでください。</td>
+        </tr>
+        <tr>
+          <th scope="row">s04</th>
+          <td>短文</td>
+          <td>12</td>
+          <td>田中さんに電話をかけて。</td>
+        </tr>
+        <tr>
+          <th scope="row">s05</th>
+          <td>短文</td>
+          <td>12</td>
+          <td>パソコンの設定を開いて。</td>
+        </tr>
+        <tr>
+          <th scope="row">s06</th>
+          <td>短文</td>
+          <td>12</td>
+          <td>水曜日の予定を確認して。</td>
+        </tr>
+        <tr>
+          <th scope="row">l01</th>
+          <td>長文</td>
+          <td>47</td>
+          <td>
+            明日の午後三時に田中さんとオンラインで打ち合わせをするので、開始する少し前に知らせてください。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">l02</th>
+          <td>長文</td>
+          <td>45</td>
+          <td>
+            このファイルは削除せずに新しい名前で保存してから、共有フォルダにコピーしておいてください。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">l03</th>
+          <td>長文</td>
+          <td>45</td>
+          <td>
+            京都駅から奈良公園まで電車で移動したいので、乗り換えが少ない行き方を調べて教えてください。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">l04</th>
+          <td>長文</td>
+          <td>45</td>
+          <td>
+            冷蔵庫にある豆腐と野菜を使って、辛くない夕食を作りたいので、簡単な献立を提案してください。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">l05</th>
+          <td>長文</td>
+          <td>47</td>
+          <td>
+            音声認識の設定を確認して、日本語の専門用語と固有名詞を正しく文字起こしできるか試してください。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">l06</th>
+          <td>長文</td>
+          <td>45</td>
+          <td>
+            昨夜注文した商品の届け先を会社ではなく自宅に変更したいので、手続きの方法を教えてください。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>生成音声のクレジット：VOICEVOX:春日部つむぎ、VOICEVOX:ずんだもん。</p>
+  </section>
+
+  <section id="method">
+    <h2>測定方法と判定の範囲</h2>
+    <p>
+      主比較は5方式を事前ロードし、各方式で短文・長文を1回ずつwarmupした後、
+      24本を各3回、計72回ずつ推論した。発話順と方式順をroundごとに固定seedでshuffleし、
+      測定する推論は常に1件とした。計360 measured request、errorは0。
+      内容精度は各音声の最初の測定結果から集計し、繰り返しを独立した72音声とは扱わない。
+    </p>
+    <p>
+      時間は完成済み音声から最終テキストが返るまでのwarmなoffline文字起こし。
+      モデルロード時間、TTS生成時間、発話時間、VAD待ち時間は除外する。
+      新runtimeはファイル読込・PCM準備、既存ProviderはHTTP uploadと応答の時間を含む。 全方式CPU
+      thread設定16、OpenBLAS thread設定16。CohereとGraniteは実際のbackendが
+      <code>Vulkan0</code> /
+      <code>Radeon 8060S Graphics (RADV STRIX_HALO)</code>であることを確認した。
+    </p>
+    <p>
+      PCの通常サービスは稼働したまま。LLM・TTS負荷を一定にしたmixed試験や完全idle測定ではない。
+      測定途中にホストのavailable memoryが約26GiB減る区間があり、Qwen Cの18.010秒という
+      外れ値が同区間に記録された。外部負荷やbackend同期の影響は未分離であり、原因を断定しない。
+      p95は外れ値を削除せずnearest-rankで求めた。GPU busyの値には本試験自身の処理も含まれる。
+    </p>
+    <p>
+      通常CERはNFKC・小文字化・空白とUnicode句読点の除去後の文字編集距離。
+      さらに表記差を分けるため、<code>3時</code>を<code>三時</code>に揃え、
+      食事の文脈の<code>辛くない</code>は<code>からくない</code>と読ませてから、
+      pykakasi 2.3.0でひらがなへ変換した「読みCER」を別に計算した。
+      「明日」と「あした」、「献立」と「こんだて」は読みでは同等。
+      同音異義語や誤った漢字が読みCERだけで正しいと扱われる可能性があるため、
+      元の出力と人名・地名・否定も併せて確認した。読みCERは一般の公開ASR CERとは異なる指標。
+    </p>
+  </section>
+
+  <section id="results">
+    <h2>主比較結果</h2>
+    <table>
+      <caption>
+        同じ24音声、各3回の方式順を入れ替えた比較。時間の単位は秒
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">方式</th>
+          <th scope="col">読み一致</th>
+          <th scope="col">短文 p50 / p95</th>
+          <th scope="col">長文 p50 / p95</th>
+          <th scope="col">通常CER</th>
+          <th scope="col">読みCER</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Granite 4.1 2B Q8_0 / Vulkan</th>
+          <td>24 / 24</td>
+          <td>0.326 / 0.481</td>
+          <td>0.950 / 1.267</td>
+          <td>0.305%</td>
+          <td>0.000%</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-ASR 1.7B / C実装 HIP Q8 decoder</th>
+          <td>24 / 24</td>
+          <td>0.570 / 0.711</td>
+          <td>1.485 / 1.797</td>
+          <td>0.000%</td>
+          <td>0.000%</td>
+        </tr>
+        <tr>
+          <th scope="row">Cohere Transcribe 2B Q8_0 / Vulkan</th>
+          <td>18 / 24</td>
+          <td>0.187 / 0.284</td>
+          <td>0.358 / 0.486</td>
+          <td>15.091%</td>
+          <td>1.412%</td>
+        </tr>
+        <tr>
+          <th scope="row">対照：現行Qwen3-ASR 1.7B PyTorch ROCm FP16</th>
+          <td>24 / 24</td>
+          <td>0.934 / 4.047</td>
+          <td>2.082 / 4.943</td>
+          <td>0.000%</td>
+          <td>0.000%</td>
+        </tr>
+        <tr>
+          <th scope="row">対照：Whisper large-v3-turbo Q5_0 / HIP</th>
+          <td>22 / 24</td>
+          <td>0.594 / 0.659</td>
+          <td>0.649 / 0.828</td>
+          <td>2.439%</td>
+          <td>0.235%</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Graniteの通常CERは2本の「三時→3時」の表記差だけ。
+      Cohereの通常CERが15.091%になる主因は、まとまった部分をひらがなで出力することだが、
+      読みへ揃えても固有名詞などの欠落が残る。Whisperの出力は1音声で3回の表記が変わり、
+      他4方式は各音声の出力が3回とも同じだった。 Qwen
+      Cの短文最大時間18.010秒は表のp95には現れないため、中央値とp95だけで安定性を判断しない。
+    </p>
+    <table>
+      <caption>
+        主な内容の差。漢字・かなや数字の表記差だけではない例
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力部分</th>
+          <th scope="col">方式・音声</th>
+          <th scope="col">出力部分</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">田中さんに電話をかけて</th>
+          <td>Cohere / 春日部つむぎ</td>
+          <td>さんに電話をかけて</td>
+          <td>電話先の人名が欠落</td>
+        </tr>
+        <tr>
+          <th scope="row">京都駅から奈良公園まで</th>
+          <td>Cohere / ずんだもん</td>
+          <td>駅から奈良公園まで</td>
+          <td>出発駅の地名が欠落</td>
+        </tr>
+        <tr>
+          <th scope="row">冷蔵庫にある豆腐と野菜</th>
+          <td>Cohere / ずんだもん</td>
+          <td>ぞうこにあるとうふとやさい</td>
+          <td>文頭の「れい」が欠落</td>
+        </tr>
+        <tr>
+          <th scope="row">行き方</th>
+          <td>Cohere / 春日部つむぎ</td>
+          <td>きかた</td>
+          <td>「い」が欠落</td>
+        </tr>
+        <tr>
+          <th scope="row">文字起こしできるか</th>
+          <td>Cohere / 両音声</td>
+          <td>文字を起こしできるか</td>
+          <td>余分な「を」が挿入</td>
+        </tr>
+        <tr>
+          <th scope="row">文字起こしできるか</th>
+          <td>Whisper / 両音声</td>
+          <td>文字をお越しできるか</td>
+          <td>語の表記と文法が変化</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      「予約は変更しない」「ファイルは削除せず」「辛くない」「会社ではなく自宅」という
+      否定・制約は全方式で保たれた。Cohereの欠落は別途、他の試験用モデルをロードせず
+      24本を1回ずつ実行した場合にも同じ音声で再現した。個別runの読み一致も18 / 24。
+      量子化・変換・runtime・モデル本体のどこが原因かは未分離。
+    </p>
+  </section>
+
+  <section id="cpu">
+    <h2>Granite CPUの追加確認</h2>
+    <table>
+      <caption>
+        別runで同じ24音声を各3回。主比較と外部負荷が同一とは保証しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">方式</th>
+          <th scope="col">読み一致</th>
+          <th scope="col">短文 p50 / p95</th>
+          <th scope="col">長文 p50 / p95</th>
+          <th scope="col">error</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Granite Q8_0 / CPU 16 thread</th>
+          <td>24 / 24</td>
+          <td>0.582 / 0.687秒</td>
+          <td>1.806 / 2.148秒</td>
+          <td>0 / 72</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      CPUでも通常CERは0.305%、読みCERは0%。3回の出力は同じだった。
+      1本の音声長より短い時間で処理できるが、長文はGPU経路より待ち時間が増えた。
+      通常はVulkan経路を先行候補とし、LLMとのGPU競合が大きい場合にCPU経路を比較する。
+    </p>
+  </section>
+
+  <section id="assets">
+    <h2>取得物と実行系</h2>
+    <p>
+      追加重みはruntime作者が公開するApache-2.0の非gated GGUF。 ダウンロード後、Hugging Face
+      LFSに記載されたbytesとSHA-256の一致を検証した。
+      Cohere原配布の連絡先共有フォームへの同意は行っていない。 Qwenは既存の公式1.7B
+      snapshot、計4,698,521,512 bytesの重み2 shardを再利用してSHA-256を記録した。
+    </p>
+    <table>
+      <caption>
+        repository外の保存先と固定した配布revision
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">取得物</th>
+          <th scope="col">保存先</th>
+          <th scope="col">bytes / revision</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Cohere Q8_0</th>
+          <td><code>/srv/ai/models/asr-eval-20261012/cohere-transcribe-03-2026-Q8_0.gguf</code></td>
+          <td>2,410,655,232 bytes、<code>ab667acedcb5d8d56837ef3ed3568c3ad50dde47</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Granite Q8_0</th>
+          <td><code>/srv/ai/models/asr-eval-20261012/granite-speech-4.1-2b-Q8_0.gguf</code></td>
+          <td>2,559,878,944 bytes、<code>5fa89dfac74d52a186f63647553b9e1f7ae36e83</code></td>
+        </tr>
+        <tr>
+          <th scope="row">transcribe.cpp + Vulkan / CPU / OpenBLAS</th>
+          <td><code>/srv/ai/apps/asr-eval-20261012/transcribe.cpp</code></td>
+          <td><code>5d66f60257a75e9bdbddc72dc0887b32e9d4841a</code></td>
+        </tr>
+        <tr>
+          <th scope="row">antirez/qwen-asr + gfx1151 HIP</th>
+          <td><code>/srv/ai/apps/asr-eval-20261012/qwen-asr</code></td>
+          <td><code>924694251d9e0f18e5d86bbd06aa3ab5f870002d</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      OpenBLAS 0.3.32のpackageは試験用directoryへ展開し、OSや既存Python環境には導入していない。
+      QwenのC driverはモデルを1回ロードし、発話ごとの推論で再利用する。 HIP
+      decoderのQ8を明示し、分割なし、日本語指定、prompt biasingなし。
+      CohereとGraniteも日本語指定、追加語彙・専用promptなしで評価した。
+    </p>
+  </section>
+
+  <section id="reproducibility">
+    <h2>証跡と再実行</h2>
+    <p>
+      音声と原記録は<code>/srv/ai/benchmarks/asr-2026-10-12/</code>に保存した。
+      <code>manifest.json</code
+      >は発話・声・音声hash、<code>downloads.json</code>は配布revision・重みhash、
+      <code>host-and-assets.json</code>はCPU・runtime revision・Qwen重みhash・service
+      PIDを記録する。
+      主比較の<code>balanced/</code>には各方式72行のJSONL、metadata、summary、reading-analysisがある。
+      root側の追加runにはGranite CPU、Cohere個別実行、最初のQwen C試行がある。
+      主比較と追加runの速度は混ぜて集計しない。
+    </p>
+    <p>
+      source-onlyの再実行コードは<code>benchmarks/asr/tts-japanese/</code>に保存した。
+      <code>suite.py</code
+      >が合成・単体推論・通常CER集計、<code>balanced.py</code>が方式順を
+      入れ替えた比較、<code>qwen-native-driver.c</code>がC実装の常駐driver、
+      <code>analyze.py</code>が通常CERと読みCERを分けた集計を担当する。
+      Pythonは<code>uv run --no-project --python /usr/bin/python3</code>で実行し、
+      読み集計には<code>--with pykakasi==2.3.0</code>を追加する。
+      <code>PYTHONPATH</code
+      >にtranscribe.cppの<code>bindings/python/src</code>、
+      <code>TRANSCRIBE_LIBRARY</code>にbuild-vulkanのshared libraryを設定する。
+      重み・生成音声・build・ログはrepositoryへ入れない。
+    </p>
+  </section>
+
+  <section id="operation">
+    <h2>通常サービスと次の確認</h2>
+    <p>
+      LARM設定のSAAA会話用Agent Profileと<code>asr-qwen</code>は
+      <code>stt-qwen</code
+      >から<code>qwen-asr</code>へ解決する。
+      現行Qwenの対照はそのbackendの8081、Whisperの対照は8085、TTS生成は8084を使用した。
+      この試験はLARM Allocationを経由したend-to-end試験ではない。
+      qwen-asr・whisper-asr・voicevox-ttsのsystem serviceは試験前後でMainPIDが一致した。
+      試験用の常駐processは測定終了時に解放した。
+    </p>
+    <p>
+      Graniteをprofileへ追加する前に、本人のマイク音声、固有名詞と専門用語、無音・雑音、 cold
+      start、100 request安定性、要求profileのLLM・TTSとの同時実行を確認する。
+      今回の24本は12個のテキストを同じTTSエンジンの2声で読む限定試験であり、
+      通常利用での精度改善や連続運用の保証には使わない。
+      <a href="./asr-alternative-evaluation.html">過去の17 clip比較</a>は別corpusとして保持し、
+      そのCERと今回のCERを直接比較しない。
+    </p>
+  </section>
+</article>

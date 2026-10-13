@@ -199,16 +199,21 @@ consumerはclaimで返されたProviderごとのmodel、短期credential、Chat 
 session終了時にConnectionをreleaseします。
 
 Gemma 4 26B-A4Bを使用する場合は、明示selector `SAAA-gemma4-26b`を要求します。対応するAgent Profile
-`saaa-conversation-gemma4-26b-voice`は`llm`、`asr`、`tts`に加えて、CPU上のLaya multilingualを
-`system-one` Providerと`embedding` Providerを含みます。backchannelは起動しません。Layaは生成LLMではなく、claimで返る
-`/v1/systemone`へ型付きquestionを送る補助的な分類・スコアリングProviderです。Gemma runtimeは512Kの共有KV poolと4 session、plain decode、Warm 1 instanceで
-定義されています。メインは256K、補助3 sessionは明示selector `SAAA-gemma4-26b-64k`（LLMのみの
+`saaa-conversation-gemma4-26b-voice`は`llm`、`asr`、日本語`tts`（VOICEVOX）、英語`tts-english`（KittenTTS Nano FP32）、
+`embedding`、CPU上のRuri発話態度分類`system-one`を含みます。backchannelは起動しません。
+英語TTSはCPU 4スレッド・warm 1 instance、既定声Rosie、男性声Hugoを選べます。モデル名は
+`kitten-tts-nano-0.8-fp32`、capabilityは`speech.tts.english`です。consumerは言語と声の選択に応じてProviderを明示します。
+Eumenesの既存`speak`は`tts`を使用するため、この追加だけで英語へ自動切替しません。
+英語Providerだけを確認する場合は`bun run deploy/local-node/scripts/smoke-kittentts-profile.ts`を使います。
+実行環境は`bash deploy/local-node/scripts/prepare-kittentts-runtime.sh`で準備し、新規unitの増分登録には
+管理者権限で`bash deploy/local-node/scripts/install-kittentts-service.sh`を実行します。
+
+Gemma runtimeは512Kの共有KV poolと4 session、plain decode、warm 1 instanceで定義されています。
+メインは256K、補助3 sessionは明示selector `SAAA-gemma4-26b-64k`（LLMのみの
 `saaa-conversation-gemma4-26b-64k`）で各64Kを選びます。両Profileは同じruntimeを共有し、最大合計は448Kです。
 context上限は入出力込みで、入力予算はメイン256072 token、補助59464 tokenです。Consumerがtoken予算とメイン1本・補助3本を制御します。
-専用slotの予約やgatewayでのtoken数の強制検査は行いません。既定の`SAAA` selectorは変更していません。artifactは`models.yaml`のrevision、size、SHA-256で
-固定されています。Laya artifactも同様にrevision、全ファイルのsize、SHA-256で固定し、serviceはprofile session中だけ
-Warmで維持します。embeddingもWarmで維持します。実環境確認は`bun deploy/local-node/scripts/smoke-laya-profile.ts`でProviderのclaim、Laya日本語判定、
-Gemma生成、release後credential失効まで検証します。
+専用slotの予約やgatewayでのtoken数の強制検査は行いません。既定の`SAAA` selectorは変更していません。
+artifactは`models.yaml`のrevision、size、SHA-256で固定されています。
 
 SAAA向けの公開selectorは`SAAA`、`SAAA-gemma4-26b`、`SAAA-gemma4-26b-64k`、`SAAA-w-Image`、`SAAA-w-music`です。
 2026年9月29日のlive canaryでは4件ともAgent Connectionのready、LLM JSON/SSE応答、release後の

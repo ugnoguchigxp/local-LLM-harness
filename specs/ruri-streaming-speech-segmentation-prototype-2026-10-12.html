@@ -1,0 +1,838 @@
+<article lang="ja">
+  <h1>Ruriによる読み上げ言語・境界判定の追加要件と予備試作</h1>
+  <p>
+    2026-10-12。自然文の公開済みストリームから、日本語はVOICEVOX、英語はKittenTTSへ順次合成するための追加契約と実験。回答LLMにはJSON、言語タグ、読み上げ用構造化出力を要求しない。
+  </p>
+  <aside>
+    <p>
+      追加検証：利用者が判断対象を「文章全体が日本語か英語か」へ絞ったため、<a
+        href="./ruri-sentence-language-classification-2026-10-12.html"
+        >別の文章単位二分類試作</a
+      >を実施。日本語200文・英語200文の全件で別ヘッドを学習し、凍結後の新規50文は50／50正解だった。この区間・境界タスクの不足を、文章単位の二分類もできないという結論へ拡張しない。
+    </p>
+    <p>
+      <strong>本接続への判定：見送り。</strong
+      >トークン出力の再利用と隔離HTTPの速度は確認できたが、50文の合成データによる固定encoder＋線形ヘッドでは読み上げ言語・境界の精度が不足した。FP32でも同様であり、INT8だけが原因とは言えない。学習データとヘッドの制約を含む結果なので、Ruri基盤そのものの限界とは断定しない。既存態度Provider、配備設定、公開System
+      Oneのchoice・score・noul契約は変更しない。
+    </p>
+    <p>
+      契約validatorと固定ストリームの消費側シミュレーターは実装済み。実Ruriによる予備学習・評価・隔離HTTP測定済み。LARM公開APIへの登録、実VOICEVOX／KittenTTSとの接続、Eumenes実装、実スピーカー・マイク確認は未実施。APIが応答することをリアルタイム読み上げの完成としない。
+    </p>
+  </aside>
+
+  <section id="current-architecture">
+    <h2>意図と現行構成の確認</h2>
+    <p>
+      要求するAgent ProfileとProvider subsetを起点にprofile → route → runtime →
+      backendを解決する。現在動いているモデルやポートは実行状態であり、Provider
+      identityではない。今回確認したのは作業ツリー内の定義と外部固定artifactであり、稼働release全体の監査ではない。
+    </p>
+    <table>
+      <caption>
+        現行態度Providerと区間判定で必要になる変更
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">確認内容</th>
+          <th scope="col">追加対応</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">態度</th>
+          <td>
+            SAAA-gemma4-26b selectorの定義にsystem-one → system-one-ruri → ruri-system-one →
+            ruri-system-one.service。公開モデルruri-v3-30m-speaking-attitude。態度6分類専用。
+          </td>
+          <td>
+            別のspeech-segmentation
+            Providerを明示選択する。態度の質問instructionsを書き換えて区間判定に転用しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">encoder</th>
+          <td>
+            cl-nagoya/ruri-v3-30m、revision
+            24899e5de370b56d179604a007c0d727bf144504。配備済みONNXは平均pooling後の256次元出力。
+          </td>
+          <td>
+            基盤snapshotを再利用し、[batch, sequence,
+            256]のトークン出力を別ONNXにexport。原文offsetへ対応付け、言語ヘッドと境界・休止ヘッドを一回のencoder推論に載せる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実行機構</th>
+          <td>
+            CPU ONNX Runtime、4 threads、batch 1、起動時hash検査・warmup・モデル常駐。態度は512
+            tokensを左から切り詰める。
+          </td>
+          <td>
+            実行方式は再利用可能。区間判定で未処理本文を切り捨てない。512
+            tokens超はinput_limit。token graph、ヘッド、校正manifestは別管理する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">資源待ち</th>
+          <td>
+            現行態度runtimeはmaxConcurrentRequests 1、maxQueuedRequests 16、queueTimeoutMs 30000。
+          </td>
+          <td>
+            この待ち行列のままP95
+            50msを保証できない。別runtime／短い期限のキューを提案し、同時負荷のadmission・queue時間を実測する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Eumenesの「全文採用後の合成」とMemory／Worldによる公開保留は今回の利用者要件を前提として記録する。隣接Eumenes／SAAAの実装には依存しておらず、checkoutを最新とみなす調査や変更は行っていない。関連する既存判断は<a
+        href="./gemma-ruri-speaking-attitude-provider-2026-10-09.html"
+        >態度Providerの切替記録</a
+      >、<a href="./tts-customvoice-pronunciation-and-streaming-2026-10-12.html"
+        >TTSの発音・streaming検討</a
+      >を参照。
+    </p>
+  </section>
+
+  <section id="api-extension">
+    <h2>公開APIの最小拡張案</h2>
+    <p>
+      パスは既存の<strong>POST /v1/systemone</strong
+      >、protocolはlarm.system-one.v1、capabilityはdecision.system-oneを使う案。追加するquestion／answer
+      discriminatorは<strong>segments</strong>。stateは区間判定専用のstrict
+      object、questionsは固定キーspeech一つとする。既存のchoice・score・noulの意味・応答・モデルIDは維持する。既存answerのpassthroughへ配列を隠してchoiceと偽装しない。
+    </p>
+    <p>
+      今回の独立試作schemaはpackages/core/src/speech-segmentation.ts。実験モデルIDは<strong>ruri-v3-30m-speech-segmentation-prototype</strong>。公開候補IDはruri-v3-30m-speech-segmentation、Provider名speech-segmentation、route案system-one-ruri-speech-segmentation、runtime案ruri-speech-segmentation。候補IDはRuri継続と精度合格が成立した場合に限る。いずれもcatalog・route・serviceには未登録。
+    </p>
+    <p>
+      現在の公開System One schemaはsegmentsを拒否する。正式化する際はquestion／answerのdiscriminated
+      union追加、専用stateの検証、inspectSystemOneResponseから区間validatorへの分岐、OpenAPI、SDK、gateway、semantic-readiness
+      probe、model binding、API
+      consumer回帰試験を一緒に追加する。既存Providerへsegmentsを転送しない。現行の公開API対応として宣伝しない。
+    </p>
+    <table>
+      <caption>
+        区間判定の入力契約
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力</th>
+          <th scope="col">意味・上限</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">model／questions.speech</th>
+          <td>
+            実験ID、type
+            segments、instructions「読み上げ言語・確定境界・休止を判断する」。任意instructionsで学習タスクを再定義しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">request_id／generation／input_version</th>
+          <td>
+            回答ストリームの要求ID、取消・回答置換で変わる世代、公開本文・終了状態・読み指定・文脈が変わるたびに増える入力版。三つを応答にechoする。消費側では各dispatchのjob
+            identityも保持し、同じ版の再要求の重複採用を防ぐ。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">offset_unit</th>
+          <td>
+            unicode_code_point固定。Unicode scalarのコードポイント単位、半開区間[start, end)。UTF-8
+            bytesやJavaScript UTF-16 indicesではない。unpaired
+            surrogateを拒否し、上流decoderは未完成の符号を完成まで保留する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">text_start／text／committed</th>
+          <td>
+            現在保持している公開本文windowの絶対開始位置、原文、確定済み絶対位置。textは最大4096コードポイント、committedはwindow内。確定分を落とした後も絶対位置をリセットしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">context</th>
+          <td>
+            必要な直前文脈だけ。最大256コードポイント。全文や会話全体を毎回送らない。意味に必要な文脈が不足する場合は判定不能を返せる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">reading_revision／reading_overrides</th>
+          <td>
+            利用者の読み指定版と、未処理原文上の非重複・昇順の範囲指定。最大64件、language
+            ja／en、任意のdictionary_entry_id。辞書の変更も入力版に反映する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">end_of_input</th>
+          <td>
+            当該回答の本文終了。未来の続きを参照せず、残りを確定または明示的未解決で終える。空の終了入力も扱う。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        区間判定の出力契約
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">出力</th>
+          <th scope="col">用途</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">answers.speech.segments</th>
+          <td>
+            最大64個のstart、end、原文text、読み上げlanguage ja／en、末尾pause
+            none／short／sentence。空白・引用符・句読点も一度だけいずれかの区間に含める。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">committed</th>
+          <td>
+            segmentsで覆った連続先頭部分の末尾。入力のcommittedから後退しない。採用した言語・境界・休止は後から変更しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">status／reason／retry_after_ms</th>
+          <td>
+            下表の進行・待機・終了・失敗を区別。理由はincomplete_tail、insufficient_confidence、input_limit、deadline、model_failure。waitingだけretry_after_msを持つ。エラーを日本語判定へ置換しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">usage</th>
+          <td>input_tokens、output_tokens 0。区間判定は自然文生成ではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">routing</th>
+          <td>
+            encoder_revision、head_revision、calibration_revision、runtime_revision、inference_ms、queue_ms。モデルIDはenvelopeにも保持する。実験HTTPは簡略bodyであり、この公開候補envelopeの実HTTP試験ではない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        確定・待機・終了・失敗の状態契約
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">状態</th>
+          <th scope="col">許される確定</th>
+          <th scope="col">終端</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">progress</th>
+          <td>一つ以上の区間を確定。末尾の未完成単語・句は保留。</td>
+          <td>未完。EOSで全残りが確定した場合はcompletedを使う。</td>
+        </tr>
+        <tr>
+          <th scope="row">waiting</th>
+          <td>確定位置を動かさない。理由とretry_after_ms必須。</td>
+          <td>EOSでwaitingは禁止。同じ本文への無制限再判定を行わない。</td>
+        </tr>
+        <tr>
+          <th scope="row">completed</th>
+          <td>EOSあり、window末尾まで全原文を確定。空残りも可。</td>
+          <td>判断処理の終了。実際の再生終了は別状態。</td>
+        </tr>
+        <tr>
+          <th scope="row">unresolved</th>
+          <td>
+            EOSあり、解決した連続先頭部分だけ確定可。未解決範囲はcommitted以降の原文として残す。
+          </td>
+          <td>理由を付けて終える。未知言語を黙ってVOICEVOXへ送らない。</td>
+        </tr>
+        <tr>
+          <th scope="row">failed</th>
+          <td>
+            新たな確定なし、理由必須。HTTP error、timeout、malformed responseも別途失敗として記録。
+          </td>
+          <td>消費側は処理を止めて観測可能な失敗にする。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      「設定画面で Keep me signed in を選んでください。」の原文保持例は、日本語[0,6)「設定画面で
+      」、英語[6,24)「Keep me signed in
+      」、日本語[24,33)「を選んでください。」。空白も原文位置に含める。最初の二つのpauseはnone、最後はsentence。英語句を単語ごとに分けず、言語切替えで句点相当の間を加えない。同一言語でも長文はshortなどを持つ自然な単位に分割する。
+    </p>
+  </section>
+
+  <section id="adoption-and-readings">
+    <h2>採用・原文保全・辞書の責任</h2>
+    <p>
+      原文を追加・削除・書換えしない。validatorは未処理先頭からの連続性、各区間textと原文sliceの完全一致、順序、範囲、確定位置の一致を検査する。欠落・重複・逆転・後退は拒否する。サーバーに確定履歴を預けず、消費側の採用済み位置を正本とする。validatorは意味上の言語・境界の正しさまでは証明できない。
+    </p>
+    <p>
+      取消・旧世代・期限切れ・異なるモデル・異なる要求IDは必ず破棄。既定では旧入力版も拒否する。append-onlyの旧版を採用するにはallowAppendOnlyVersionを明示し、現在版が新しいこと、要求時の原文全体が現在原文の同じ先頭prefixであること、text_startとcommittedが同じこと、contextとreading_revisionが同じこと、旧prefixに関わるoverride集合が完全一致すること、旧入力がEOSでなかったことを確認する。新しい読み指定が旧prefixへまたがる場合も拒否する。
+    </p>
+    <p>
+      新EOSが到着しても、同条件を満たす旧非EOS入力の安全な先頭確定は採用可能。未処理の最新末尾について必ずEOS判定を続ける。以前のcommittedからのduplicateや同じ入力版の文脈・EOS変更は認めない。採用と音声キュー投入は同一状態遷移で行い、キュー容量不足時には確定位置を進めず本文を保持する。
+    </p>
+    <p>
+      判定対象は文字種でなく読み上げ言語。略語、製品名、数字、単位は文脈と利用者指定を入力する。語句辞書、正規表現、製品名の条件分岐で意味判断を代替しない。利用者登録辞書の語句照合と原文offsetへの展開は消費側の既存辞書層が担当し、今回のモデルはその明示的language指定に従う。音素・読み文字列への置換はTTS前処理の既存辞書層が担当し、判定原文・確定offsetを置換後文字列で再計算しない。dictionary_entry_idにより適用根拠を追跡する。
+    </p>
+    <p>
+      固定試験では空入力、scalar／UTF-16差、絵文字・結合文字、原文windowの破棄後の絶対offset、要求差替え、期限境界、override不一致、EOS判定不能を確認した。コードポイント契約だけでは書記素途中の合成を防げないため、本接続のdecoderでは絵文字・結合文字のまとまりを壊さない境界制約を追加し評価する。
+    </p>
+  </section>
+
+  <section id="provider-lifecycle">
+    <h2>発見・確保・更新・解放とTTS接続案</h2>
+    <ol>
+      <li>
+        GET
+        /v3/agent-profiles?profile=SAAA-gemma4-26bからcatalogRevisionと対象profileのProvider定義を取得する。本接続時にspeech-segmentationを明示追加する。現在のcatalogに存在するとは扱わない。
+      </li>
+      <li>
+        POST
+        /v1/agent-connectionsへprofile、audience、client、expectedCatalogRevision、providers、ttlSecondsを指定する。追加後のsubset例はspeech-segmentation、tts、tts-english。態度も必要ならsystem-oneを追加する。既存サービスのみの利用はdeploymentPolicy
+        existing-only。
+      </li>
+      <li>
+        pending／probingの場合はGET
+        /v1/agent-connections/{id}でreadyまで待つ。準備のload・warmup時間を定常判定と別に記録する。接続準備中に区間要求を積み上げない。
+      </li>
+      <li>
+        POST /v1/agent-connections/{id}/claim、format
+        openai-provider-v1。返ったProviderのendpoint、model、credential.token、expiresAt、generationに相当する接続revisionを使用する。8084／8087／8088などを恒久APIとして直結しない。
+      </li>
+      <li>
+        新判定にはclaimされたPOST /v1/systemone、TTSには各claimのPOST
+        /v1/audio/speechをBearer認証付きで呼ぶ。claimのモデルを別モデルへ上書きしない。
+      </li>
+      <li>
+        期限前にPOST
+        /v1/agent-connections/{id}/renew、ttlSecondsを送り、claimを再取得する。SDKのrefreshはrenewしたconnectionとclaimのid・allocationId・audience・expiresAt一致も検査する。期限切れ結果を採用しない。
+      </li>
+      <li>
+        取消時は回答generationを更新し、判定・両TTSの要求をabort、再生を停止、待機音声を破棄する。利用終了時はDELETE
+        /v1/agent-connections/{id}。他利用者のruntimeを直接stopせず、leaseとwarm／idle
+        policyへ停止判断を任せる。
+      </li>
+    </ol>
+    <table>
+      <caption>
+        読み上げ言語別のTTS接続
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">読み言語</th>
+          <th scope="col">定義上の接続</th>
+          <th scope="col">確認点</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ja</th>
+          <td>
+            tts → tts-voicevox → voicevox-tts → voicevox-tts.service。model
+            voicevox-core、openai.audio-speech.v1。
+          </td>
+          <td>
+            inputは原文区間。voiceはclaimのvoice discoveryから選択し、利用者の読み辞書を適用する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">en</th>
+          <td>
+            tts-english → tts-kittentts-nano → kittentts-nano → kittentts-tts.service。model
+            kitten-tts-nano-0.8-fp32、openai.audio-speech.v1。
+          </td>
+          <td>
+            voice
+            Rosie／Hugoなどをdiscoveryで確認。WAV／PCMに対応。サンプルレート・gainの違いをdecode／再生層で扱う。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      作業ツリーのKittenTTS
+      frontendには英数字の存在と日本語文字不在を確かめる入力guardがある。これは読み言語を意味判定する機能ではない。英語読み指定が元の日本語表記に対して必要な場合は既存読み前処理との接続を別途確認する。今回、guardを新判定の代用にしていない。
+    </p>
+    <p>
+      現行同期TTSのHTTP
+      abortだけで、内部の実行中合成が止まることは未確認。要求取消・遅着結果破棄と、バックエンド計算の停止を分けて測定する。後者を満たさない場合は協調取消またはjob取消の最小追加契約が必要で、本接続の完了条件に残す。LARMはこの試作で再生を提供しない。
+    </p>
+  </section>
+
+  <section id="stream-and-playback">
+    <h2>リアルタイム処理と再生の境界</h2>
+    <p>
+      LARMは判定モデル、API、発見・認証、leaseと実行資源を担当する。Eumenesは本文streamの接続、公開許可、結果検証・採用、辞書指定、TTS振分け、合成とdecode、音声キュー、順次再生、割込みを担当する。Memory／Worldなどで公開を保留している本文を音声経路だけ先に公開しない。検証シミュレーターのreleaseは公開許可後の本文だけを表す。
+    </p>
+    <p>
+      公開本文到着 → 短い保留 → 判定 → 確定区間の合成 →
+      原文順再生。全文完成は開始条件にしない。判定flightは一つ、到着文字は最新prefixへまとめる。準備済みencoderの一回の処理で言語と境界・休止を判定する。確定済み本文は必要な直前contextだけ残す。
+    </p>
+    <table>
+      <caption>
+        未処理本文・判定・音声の上限と対処
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">試作上限・設計案</th>
+          <th scope="col">値</th>
+          <th scope="col">上限時</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">未処理本文</th>
+          <td>4096コードポイント、モデル入力全体512 tokens。contextは256コードポイントまで。</td>
+          <td>
+            backpressure／input_limitを通知。上流は未受領本文を保持する。解消できなければ明示失敗。黙って本文を捨てない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">判定</th>
+          <td>flight 1、次のsnapshot 1。固定シミュレーターのhold 60ms、要求timeout 1000ms。</td>
+          <td>
+            到着ごとに新要求をenqueueしない。旧版採用は原文一致証明がある場合だけ。timeout後はgeneration無効化。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">合成／音声</th>
+          <td>
+            シミュレーターは再生中を含め16区間、音声長合計30000ms。実装案ではさらにdecoded
+            bytesと取得中bytesにも上限を設ける。
+          </td>
+          <td>
+            容量不足時は採用を進めず待機・backpressure。取得後にduration上限を超えた場合は音声を止めて明示失敗。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">持続する判定不能</th>
+          <td>
+            固定シミュレーターのpending
+            stall期限は5000ms。待機理由・未完成語句の時間を別記録し、本実装で上限を調整する。EOS・flight期限・stall期限を区別する。
+          </td>
+          <td>
+            無制限に同じ入力を再判定しない。EOSはunresolvedで終端可。EOS未到着でもstall期限では明示失敗。未完成語句を無理に合成しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      合成は後続区間を先行できるが、再生は原文start順。最初の区間が準備できたら後続完成を待たず再生する。次の音声は前の音声の実際のended通知後に開始し、未準備なら待つ。durationから終了を推測して重ねて発声しない。pause
+      noneは追加待機0、short／sentenceは消費側の明示設定を使用する。シミュレーターはshort
+      120ms、sentence 300msであり、本番での試聴合意値ではない。
+    </p>
+    <p>
+      発声中にも後続の合成・取得・decodeを進める。pause
+      noneでTTS固有の末尾無音が残る場合も、意図したpauseと余分な間を分離して実測する。取消後のaudio-ready／ended通知、旧generation、重複完了、最後のended直後の割込みでは再開しない。
+    </p>
+  </section>
+
+  <section id="pilot-quality">
+    <h2>学習・評価の分離と実モデル試作</h2>
+    <p>
+      benchmarks/speech-segmentation/corpus.pyに独立に手書きした合成50scenarioを置いた。train
+      24、calibration 8、evaluation 18。会話ID・手書きscenarioのtemplate
+      group・原文の交差を検査し、各scenarioからのEOS・非EOS・未完成prefixを同じpartitionに置く。学習63入力、校正21入力、評価44入力。共通テンプレートの語だけ置換する増殖は行っていない。ただし小さい合成集合なので、実会話や未知の言い回しの品質を証明しない。
+    </p>
+    <p>
+      対象は日・英・混在、英語句・引用、製品名・略語、数字・単位、小数点・桁区切り、略語のピリオド、URL、括弧、句読点なしの長文、短文、単語途中。評価前に日本語読みのGPU／GitHubなどの文脈と、英語GPUの明示overrideを固定した。空・不正・判定不能の終端契約は固定試験対象であり、学習モデルの未知分布への棄却精度は未評価。
+    </p>
+    <p>
+      encoderは凍結。原文コードポイントにかかる複数のtoken
+      stateは平均し、トークン内の位置・端・EOSなど構造的特徴だけを追加する。意味を推測する文字種条件分岐はない。class_weight
+      balanced、C
+      1固定のLogisticRegressionで言語2分類と境界・休止4分類（continue／none／short／sentence）を学習。温度は校正集合のNLLのみでfit。境界thresholdは校正集合でprecision
+      0.9以上の候補からF1最大を選び、該当がなければ候補全体のF1最大。言語confidence
+      0.8未満の区間は保留する。
+    </p>
+    <p>
+      この校正選択規則は試作decoder用であり、利用者と合意した本実装の分類合格値ではない。評価後に合格値を弱めて採用しない。信頼度も合成校正集合に対する値であり、実世界の正答確率ではない。明示override適用後の言語精度を下表に示す。
+    </p>
+    <table>
+      <caption>
+        独立評価集合でのINT8とFP32の予備精度
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">評価44入力・1025コードポイント</th>
+          <th scope="col">INT8</th>
+          <th scope="col">FP32比較</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">文字単位の読み上げ言語精度</th>
+          <td>61.07%</td>
+          <td>61.95%</td>
+        </tr>
+        <tr>
+          <th scope="row">読み言語区間の完全一致precision／recall／F1</th>
+          <td>9.72%／21.54%／13.40%（TP 14、FP 130、FN 51）</td>
+          <td>10.79%／23.08%／14.71%（TP 15、FP 124、FN 50）</td>
+        </tr>
+        <tr>
+          <th scope="row">境界precision／recall／F1</th>
+          <td>100.00%／18.87%／31.75%（TP 10、FP 0、FN 43）</td>
+          <td>64.71%／41.51%／50.57%（TP 22、FP 12、FN 31）</td>
+        </tr>
+        <tr>
+          <th scope="row">正解境界位置で休止も正解</th>
+          <td>18.87%</td>
+          <td>41.51%</td>
+        </tr>
+        <tr>
+          <th scope="row">言語・境界一致の合成区間recall</th>
+          <td>9.43%</td>
+          <td>11.32%</td>
+        </tr>
+        <tr>
+          <th scope="row">早すぎる確定／過剰な保留</th>
+          <td>0／27入力</td>
+          <td>0／26入力</td>
+        </tr>
+        <tr>
+          <th scope="row">正解区間数を超えた追加fragment</th>
+          <td>0</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">EOS completed／unresolved</th>
+          <td>2／16文</td>
+          <td>2／16文</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      「追加fragment
+      0」「早すぎる確定0」は大量に保留している結果でもある。良好な自然性・安全な即時合成の証拠ではない。読み言語区間の完全一致はlanguageの連続区間だけを評価し、合成境界・休止を含む合成区間recallと分ける。空白の帰属も事前のgoldに固定した厳密評価。許容される複数読みの集合評価と実会話の人手レビューは今後追加する。
+    </p>
+    <table>
+      <caption>
+        INT8試作の具体的な誤判定
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">INT8の誤判定例</th>
+          <th scope="col">観測</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">設定画面で Keep me signed in を選んでください。</th>
+          <td>
+            末尾「選んでください。」を英語と予測。境界を確定できず、EOSでもcommitted 0、unresolved。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">The meeting starts tomorrow.Bring your notes.</th>
+          <td>英文内に日本語予測が複数混入し、EOSでもcommitted 0。</td>
+        </tr>
+        <tr>
+          <th scope="row">GPUを交換してください。</th>
+          <td>
+            日本語読み指定のcontextを入れてもGPUと後続日本語の多くが英語予測。文脈理解が成立したとは言えない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Check the connection open your browser and visit the home page</th>
+          <td>全文を日本語と予測。句読点なしの英語長文で失敗。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      ONNX FP32は13・14・27・150 tokensの入力でsourceとの差最大2.29×10⁻⁵〜4.20×10⁻⁵、出力形状[1,
+      sequence, 256]を確認。INT8 token
+      stateの最大絶対差は2.80〜10.41であり、pooling後の過去の一致結果をtoken
+      featureの同等性保証に使わない。FP32ヘッドも独立にtrain／calibrationでfitして比較した。評価集合を使って係数やthresholdを選び直していない。
+    </p>
+    <p>
+      再試作では実会話と許容読みを人手注釈し、prefix安全境界をレビューする。データ拡充、文脈入力、学習ヘッド／encoder
+      fine-tuning、量子化の影響を分けて調べる。それでも混在文に不足する場合に、多言語基盤との比較を別の検討として行う。今回の失敗から基盤変更を自動実行しない。
+    </p>
+  </section>
+
+  <section id="http-latency">
+    <h2>隔離HTTPの実測値と限界</h2>
+    <p>
+      CPUはAMD RYZEN AI MAX+ 395、16 cores／32 threads、Linux x86_64。batch
+      1、CPUExecutionProvider、intra-op 4、inter-op 1、OPENBLAS_NUM_THREADS
+      1。tokenizer／推論／ヘッド／decoder／JSON応答を含むloopback HTTP往復。入力feature
+      cacheなし。以下は最終INT8
+      runの各条件200試行、計2000試行。失敗・timeoutも時間集計対象、今回は両方0。HTTP成功にはwaiting／unresolvedも含み、区間の有用性は精度評価側で検査する。
+    </p>
+    <table>
+      <caption>
+        最終INT8試作の隔離HTTP往復時間
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力</th>
+          <th scope="col">準備済み単独 P50／P95 ms</th>
+          <th scope="col">態度同時CPU負荷 P50／P95 ms</th>
+          <th scope="col">試行／失敗／timeout</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">日本語</th>
+          <td>2.73／3.14</td>
+          <td>3.93／4.29</td>
+          <td>各200／0／0</td>
+        </tr>
+        <tr>
+          <th scope="row">英語</th>
+          <td>2.97／3.55</td>
+          <td>4.37／4.65</td>
+          <td>各200／0／0</td>
+        </tr>
+        <tr>
+          <th scope="row">混在</th>
+          <td>3.12／3.75</td>
+          <td>4.69／5.05</td>
+          <td>各200／0／0</td>
+        </tr>
+        <tr>
+          <th scope="row">未完成句</th>
+          <td>2.86／3.35</td>
+          <td>3.97／4.26</td>
+          <td>各200／0／0</td>
+        </tr>
+        <tr>
+          <th scope="row">長文（日本語文12反復）</th>
+          <td>11.95／13.91</td>
+          <td>16.05／16.51</td>
+          <td>各200／0／0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      FP32比較も各条件200回、単独・態度同時負荷の計2000回。単独P95 3.42〜12.33ms、同時負荷P95
+      4.34〜20.01ms、失敗0・timeout0。最初のINT8探索runも別に2000回実施し、最終runと混ぜてpercentileを算出しない。
+    </p>
+    <p>
+      同時負荷は、変更していない態度Engineを別プロセスにロードしCPU推論を連続実行するもの。稼働サービスを切り替えず終了時に競合プロセスを停止する。LARMの共用admission
+      queue、現行態度lockの共用待ち、LLM・両TTS・decodeとの同時負荷は未測定。実験のlock待ちを含むinference_msと、LARMのqueue_msを混同しない。
+    </p>
+    <p>
+      graph export後の新規ORT session loadと初回feature推論はreport.jsonに記録した。INT8 session
+      load 238.09ms、初回feature推論2.56ms。FP32 session load 241.96ms、初回3.27ms。filesystem
+      cacheが暖まった状態なので、cold process
+      startupや接続確保時間ではない。ヘッド学習後のfirst_after_feature_fit_msも初回発声時間ではない。今回、保留時間・合成時間・発声開始・余分な区間間待ち・持続RTF・取消停止時間は測定していない。
+    </p>
+    <table>
+      <caption>
+        本接続で必要な時間・持続性能指標
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">本接続時の指標</th>
+          <th scope="col">測定・初期設計目標</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">判定往復</th>
+          <td>
+            実claim＋LARM
+            gateway＋queue込みの要求送信から取得までP50／P95。代表条件ごと200回以上、失敗・timeout込み。準備済みP95
+            50ms以内を目標。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">確定待ち</th>
+          <td>
+            必要文字の到着から確定まで。モデル・通信時間、自然な区間のための追加保留、単語・句の未完成時間を分離。追加保留は原則100ms以内が目標。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">初回発声</th>
+          <td>
+            最初の本文到着から実音声開始まで。公開許可待ち、接続準備、初回、準備済み、並行負荷を分ける。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">合成とdecode</th>
+          <td>区間確定から音声準備まで、TTS別に計測。通信、取得、decodeを区別。</td>
+        </tr>
+        <tr>
+          <th scope="row">区間間の余分な待ち</th>
+          <td>
+            前音声終了から次音声開始までから意図したpauseを除く。次音声準備済みでP95
+            50ms以内を目標。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">持続性能・取消</th>
+          <td>
+            生成時間／音声長、bytes・音声長・区間数キューの増減、長文での遅延蓄積。取消から実停止まで、取消後の採用・発声・バックエンド処理残留を測る。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      これらの目標は未合意・未測定の設計目標。過去の態度分類速度を新機能の性能保証にしない。目標未達時はモデル、通信、保留、admission／CPU競合ごとに要因を示す。
+    </p>
+  </section>
+
+  <section id="versions-and-replay">
+    <h2>版・証拠・再実行</h2>
+    <p>
+      読み言語区間の完全一致指標は、python3 benchmarks/speech-segmentation/analyze_intervals.py
+      --result-dirと実験directoryを指定して再算出する。保存済み評価とcorpus版の一致を検査し、language-intervals.jsonを外部出力する。再推論や評価集合によるモデル調整は行わない。
+    </p>
+    <p>
+      最終INT8の外部結果は/srv/ai/benchmarks/speech-segmentation/pilot-20261012-int8、FP32比較は同階層pilot-20261012-fp32。最初の探索runはpilot-20261012-v1。重み、ONNX、head係数、ログ、実行結果はrepository外に置き、commit対象にしない。
+    </p>
+    <table>
+      <caption>
+        encoder・head・校正・データ・runtimeの版
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">版</th>
+          <th scope="col">識別</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">encoder</th>
+          <td>
+            24899e5de370b56d179604a007c0d727bf144504。元snapshot全fileを既存manifestのSHA-256と照合。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">token INT8 graph</th>
+          <td>85be304296ee190a7527f363ce74b5f0f0ab86cd708be7a9e83a00f51e2d3540。</td>
+        </tr>
+        <tr>
+          <th scope="row">INT8学習head</th>
+          <td>
+            language f406ca4a1f53d75117ff8d0c05d5bd4a5e58175e891248a6206d9124fb5299df、boundary
+            24591b5035f8e61da571554ed75d4edc002a8ebc4b7fb4d017f583eb0c8f8a62。合成データ専用、C
+            1、frozen encoder。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">INT8校正</th>
+          <td>
+            温度language 2.9690973430、boundary 1.5111914622、境界threshold 0.95。calibration
+            ID、選択候補、頭部hashはreportとhead JSONに保存。態度の校正を流用しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">データ</th>
+          <td>
+            corpus.py SHA-256
+            70a0fdde91c91d239bdf3682673c359e1897410431e8a9eced1cc0d161cbcff0。最終runはsourceとcorpusのsnapshotも外部保存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">runtime</th>
+          <td>
+            Torch 2.11.0+cpu、Transformers 5.17.0、ONNX 1.23.2、ONNX Runtime 1.30.0、scikit-learn
+            1.9.1、Tokenizers 0.23.2、NumPy 2.5.3。exact環境は既存avatar-attitude
+            requirements、実測版はreportに記録。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      固定試験：bun run
+      test:speech-segmentation。coreの原文保全・採用契約と、benchmarksの固定判断・TTS・再生シミュレーター、Python
+      corpus検査を実行する。1コードポイント単位、単語途中、句読点前後、不規則なまとめ、seed固定のランダム到着間隔を用いる。固定streamでは43通りの分割を検査する。
+    </p>
+    <pre><code>PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=4 \
+  /srv/ai/benchmarks/avatar-attitude/.venv/bin/python \
+  benchmarks/speech-segmentation/prototype.py --precision int8 --repeats 200 \
+  --output /srv/ai/benchmarks/speech-segmentation/new-int8-run</code></pre>
+    <p>
+      FP32は--precision
+      fp32と別の新規外部directoryを使う。既存directoryやsource内の出力先を拒否する。report.json、pilot-evaluation.json、evaluation-errors.json、http-trials.jsonl、source
+      snapshots、graphs、headsを保存する。入力prefixだけを推論へ渡し、未来の本文はgold生成側にしか置かない。失敗・timeoutのtrialも記録する。
+    </p>
+  </section>
+
+  <section id="completion-gates">
+    <h2>段階別完了条件と残作業</h2>
+    <p>
+      repository検証：bun run test:speech-segmentationの16 TypeScript試験・2 Python試験、bun run
+      testの760試験、型検査、API consumer／module boundary検査、tooling 24試験、既存態度Python
+      9＋7試験、deployment TypeScript 56試験を通過。docs:check:fixはerror／warning
+      0、catalogも通過。
+    </p>
+    <p>
+      bun run
+      check全体はinstall-services.test.shで停止。開始時から存在した未追跡granite-asr-trial.serviceを全service比較ループが検査する一方、通常installerの明示unit一覧に含まれておらず、比較先がなくcmp
+      status
+      2となることを再現した。今回その既存の配備作業は変更していない。以降のdeployment試験は全体checkでは未実行で、全チェック成功とは報告しない。外部証拠はpilot-20261012-int8/regression-check.logとvalidation.json。
+    </p>
+    <table>
+      <caption>
+        試作から実機器までの検証状況と完了条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">今回</th>
+          <th scope="col">次の条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">実装</th>
+          <td>
+            独立試作契約、採用validator、token graph
+            export、合成データhead学習・校正・評価、隔離HTTP測定、消費側シミュレーター。
+          </td>
+          <td>
+            分類精度・許容読み・早期確定・過剰保留・細切れの合格値を本実装前に合意。人手データと必要な学習方式で改善し、独立評価で合格する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">固定試験</th>
+          <td>
+            原文欠落・重複・逆転・確定後退0件。古い応答・取消・期限切れ・音声順・実ended待ち・容量・EOS終端を固定fixtureで確認。
+          </td>
+          <td>
+            実際のgateway・Eumenesで同じ試験を再実行。HTTP失敗、不正応答、外部取消失敗、bytes容量、wall-clock
+            stallも観測する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実モデル</th>
+          <td>Ruri INT8／FP32をCPUで評価。最終run各2000回。モデル精度は不合格と判断。</td>
+          <td>
+            同じ本文・到着時刻で実Ruri・両TTSを接続し、接続準備、初回、準備済み、並行負荷、持続性能を区別する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">公開LARM接続</th>
+          <td>未実施。旧態度API・runtimeを変更しない。</td>
+          <td>
+            公開schema／OpenAPI／SDK／catalog／service登録とreadiness。lease・auth・renew／release・既存利用者の回帰試験。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Eumenes接続</th>
+          <td>未実施。変更点と責任分界を提示。</td>
+          <td>
+            公開許可後のstream接続、区間ごとの合成開始・採用、辞書offset、両TTS振分け、順序付きqueue、割込み。関連domain検証とbun
+            run verify:all。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実機器</th>
+          <td>未実施。</td>
+          <td>
+            実スピーカー・マイクで3往復以上。英語発音、声・音量切替え、間、割込み、取消後に発声しないことを試聴。固定・実モデル・実機器の結果を分けて記録する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      今回の渡し物は公開契約案と最小拡張、区間・入力版・確定・待機・終了・取消・失敗の検証可能な試作、encoder／head／校正／runtimeの版、分離済み合成データと誤判定例、再実行手順、実測値と条件、既存態度への非干渉、Eumenes側の必要変更。精度が不足しているため、本接続と実機器の完了は主張しない。
+    </p>
+  </section>
+</article>

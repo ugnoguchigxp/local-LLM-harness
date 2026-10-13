@@ -356,6 +356,55 @@ models:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
 
+  ornith15-strix-conversation:
+    # Explicit STRIX_LEAN voice profile, using the benchmarked custom-quant engine.
+    # The pinned artifact has an old MTP head: keep speculation disabled.
+    # Repeated one-token probes abort this engine when prompt reuse is enabled.
+    # Reserve a 1M unified KV pool without increasing the four execution slots.
+    # Each session remains capped at 256K; the 64K auxiliary selector stays available.
+    ttl: 0
+    cmd: >
+      /srv/ai/apps/larm-chat-input-engine-20261013/llama-server
+      -m /srv/ai/models/ornith-trial-20261012/strix-lean/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --no-mmap
+      --flash-attn on
+      --ctx-size 1048576
+      --parallel 4
+      --batch-size 2048
+      --ubatch-size 512
+      --threads 16
+      --poll 100
+      --cache-type-k q4_0
+      --cache-type-v q4_0
+      --cont-batching
+      --kv-unified
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning off
+      --spec-type none
+      -ctxcp 0
+      -cram 0
+      --no-cache-idle-slots
+      --temp 0.6
+      --top-p 0.95
+      --top-k 64
+      --jinja
+      --no-context-shift
+      --no-cache-prompt
+      --cache-reuse 0
+      --metrics
+      --no-webui
+    aliases:
+      - ornith-1.5-strix-lean
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
   ornith15-conversation:
     # Candidate only: this model starts exclusively through the explicit SAAA
     # Agent Connection and remains loaded while that connection is renewed.
@@ -363,6 +412,8 @@ models:
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
       -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-Q5_K_M.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -385,8 +436,8 @@ models:
       --top-p 0.95
       --top-k 20
       --jinja
-      --context-shift
-      --cache-reuse 256
+      --no-context-shift
+      --cache-reuse 0
       --metrics
       --no-webui
     aliases:
@@ -428,6 +479,8 @@ models:
     cmd: >
       /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
       -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-Q5_K_M.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -450,7 +503,7 @@ models:
       --top-p 0.95
       --top-k 20
       --jinja
-      --context-shift
+      --no-context-shift
       --metrics
       --no-webui
     aliases:
@@ -464,6 +517,8 @@ models:
     cmd: >
       /srv/ai/apps/q38rocm/engine/bin/llama-server
       -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -486,7 +541,7 @@ models:
       --top-p 0.95
       --top-k 20
       --jinja
-      --context-shift
+      --no-context-shift
       --spec-type draft-mtp
       --spec-draft-n-max 4
       --spec-draft-p-min 0.6
@@ -507,6 +562,8 @@ models:
     cmd: >
       /srv/ai/apps/q38rocm/engine/bin/llama-server
       -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -529,7 +586,7 @@ models:
       --top-p 0.95
       --top-k 20
       --jinja
-      --context-shift
+      --no-context-shift
       --spec-type none
       -ctxcp 0
       -cram 0
@@ -547,6 +604,8 @@ models:
     cmd: >
       /srv/ai/apps/q38rocm/engine/bin/llama-server
       -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
+      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+      --image-max-tokens 4096
       -dev Vulkan0
       -ngl 999
       --fit off
@@ -569,7 +628,7 @@ models:
       --top-p 0.95
       --top-k 20
       --jinja
-      --context-shift
+      --no-context-shift
       --spec-type draft-mtp
       --spec-draft-n-max 4
       --spec-draft-p-min 0.6
@@ -593,6 +652,7 @@ groups:
     members:
       - ornith-contextstill
       - gemma4-26b-conversation
+      - ornith15-strix-conversation
       - gemma4-conversation
       - ornith15-conversation
 

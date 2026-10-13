@@ -1,0 +1,1566 @@
+<article lang="ja">
+  <h1>Strata統合・128GB UMA資源管理の調査と導入計画</h1>
+  <p>
+    <strong>結論は条件付き採用。</strong
+    >まずIQ3_XXS、単一LLM、論理5セッション、物理同時推論1で評価する。IQ3_Sを品質比較の第一候補、IQ2_XSをメモリ比較候補とする。256K
+    Main、64K
+    Worker×4の会話保持は設計可能だが、gfx1151での復元・中断・長文品質と実メモリの受入試験が必要である。5件の同時推論、全KV保持、ASR/TTS、画像生成の同時実行を現時点で保証しない。
+  </p>
+  <aside>
+    <p>
+      追加の実機試験ではIQ3_XXSのCPU Expert arenaとGPU Expert
+      Cacheが各39.97GiBとなり、他Provider停止時でも空きは約31GiBだった。本計画のGPU Cache
+      8GiBという共存予算とは別構成である。標準MTPの長文は約38〜39
+      tok/s、短い品質30問は30/30だが、物語の鍵所有者の指定違反があった。5論理会話の100回切替は正答100/100、実KV復元91回、4GiB
+      cacheからの追い出し4回を確認した。詳細と後続測定は<a
+        href="./strata-first-trial-2026-10-10.html"
+        >初回実機試験</a
+      >を参照する。現時点で全Context・音声・Turboの共存を受入済みとは扱わない。
+    </p>
+  </aside>
+  <p>
+    画像生成の導入・共存評価対象はQwen-Image 2.1 Turbo
+    AD-Q4_Kのみとする。通常版や複数の画像モデルの常駐は今回の計画に含めない。既存Turbo
+    Providerを要求時に起動し、処理後に解放する構成を再利用する。Turboを選ぶだけではピークRAMが減るとは判断せず、34GiB予約と16GiB空きfloorは解像度別の実測で校正するまで維持する。
+  </p>
+  <dl>
+    <dt>調査日</dt>
+    <dd><time>2026-10-10</time>。ホスト観測は20:30前後 JST。</dd>
+    <dt>LARM確認revision</dt>
+    <dd><code>0f4e559a6aa7d8b0c3e855a572293075a072661c</code>。調査開始時worktreeはclean。</dd>
+    <dt>Strata確認revision</dt>
+    <dd>
+      <code>fb58e0dbc8399662c0e47c76578c6e878b14f6cf</code>、commit日時2026-10-08 10:25:39
+      UTC、CMake上のversionは0.1.41。mainのソースをこのSHAに固定して確認した。
+    </dd>
+    <dt>モデルmetadata</dt>
+    <dd>
+      Qwen原版 <code>de4b8e4d43b917e7706784d8bb445c9af86a3540</code>、ISTA-DASLab GGUF
+      <code>ed59f92082b1e93c0e96d60a8b11aab089b52f09</code>。
+    </dd>
+    <dt>実施範囲</dt>
+    <dd>
+      初期調査は既存コード・設定、公式source・文書・Issuesの読取りとホスト観測のみ。利用者の追加指示後、repository外でStrataをbuildし、IQ3_XXSとMTPを取得して、Providerを一時停止した隔離試験を実施した。LARMの統合コード・本番設定は変更していない。commit・pushは行っていない。
+    </dd>
+    <dt>証拠の読み方</dt>
+    <dd>
+      「実装」は確認SHAにコードがあること、「公式実測」は開発元の報告、「Issue実測」は投稿者の限定環境の報告、「推定・予約」は本計画の計算または保守的な設計値。本計画の予約値は推定であり、追加試験で得た実機結果とは区別する。実測値と失敗例は<a
+        href="./strata-first-trial-2026-10-10.html"
+        >初回実機試験</a
+      >へ記録する。
+    </dd>
+  </dl>
+
+  <section id="decision">
+    <h2>1. 採用判断と推奨構成</h2>
+    <p>
+      OpenAI Chat Completions、SSE、Tool
+      Calling、プロセス単位の起動停止はLARMの既存経路と接続できる。Strataを新しいcontrol
+      planeにせず、Providerの実行実体として登録する。MainとWorkerは同じruntimeに解決し、重みを1回共有する。モデルや量子化の選択は明示Profile・route・releaseから行う。
+    </p>
+    <table>
+      <caption>
+        推奨する評価順序
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">判断</th>
+          <th scope="col">理由・条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">IQ3_XXS、INT8 KV、物理1</th>
+          <td>最初のcanary候補</td>
+          <td>
+            IQ3_Sよりshard
+            1が約7.24GiB小さい。公式の同型APU・128K実測でもdecodeがIQ3_Sを上回る。日本語・tool品質は別途比較。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_S、INT8 KV、物理1</th>
+          <td>品質優先候補</td>
+          <td>
+            量子化作者の公開品質は最も良い。ただし日本語会話、長文、Tool
+            Callingの優位は未確認。保守予算では128GBホストの余白が小さい。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">IQ2_XS、INT8 KV</th>
+          <td>メモリ優先候補</td>
+          <td>
+            低メモリでの比較用。品質低下を許容できる場合に限る。gfx1151での速度を他GPUから外挿しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">物理2〜5、Batch MTP</th>
+          <td>後段の実験</td>
+          <td>
+            Main速度への影響、均等slot割当、長文admission、slot移行、GPU
+            reset波及、追加メモリを検証してから許可する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">画像生成：Turboのみ</th>
+          <td>要求時起動・条件付き共存</td>
+          <td>
+            既存の34GiB予約と16GiB空きfloorを維持する。LLM常駐だけで条件を満たさない場合は待機・拒否し、無断でMainやモデルを停止しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      今回の目標は一度に全機能を切り替えることではない。会話の品質がGemmaを下回る、Main応答SLOを満たせない、長文復元でGPU
+      resetまたは状態混入が起きる場合は本番置換を見送る。代替量子化への変更も明示選択と同じ評価を必要とする。
+    </p>
+  </section>
+
+  <section id="current-larm">
+    <h2>2. LARM現状と再利用範囲</h2>
+    <p>
+      現行会話経路は <code>saaa-conversation-gemma4-26b-voice → llm-saaa-gemma4-26b → gemma4-26b-conversation → llama-swap → llama-server</code>。ASRは
+      <code>stt-qwen → qwen-asr → systemd</code>、通常TTSは
+      <code>tts-voicevox → voicevox-tts → systemd</code
+      >。別ProfileのWorkerやOrnithの定義も存在するが、存在する定義とactiveな要求、liveプロセスは別である。本調査では現在のlive
+      LLMが別定義と異なることを設定driftと判定していない。
+    </p>
+    <p>
+      <code>config/local-node/llama-swap.yaml</code>のGemma
+      26BはVulkan、<code>--ctx-size 524288 --parallel 4 --kv-unified</code>、K/Vともq4_0。LARM上限もallocation
+      4、request 4、queue 16、30秒。Main Profileは262,144、auxiliary
+      Profileは65,536のcontextWindowを持つ。現状の4枠を要求された5論理セッションと同一視しない。Mainとauxiliaryの既存priorityはどちらも4000なので、Workerの低優先化も明示Profileの変更対象となる。
+    </p>
+    <table>
+      <caption>
+        既存実装と追加検討の境界
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">機能</th>
+          <th scope="col">実装</th>
+          <th scope="col">今回必要な差分</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">runtime/route/Profile/lease</th>
+          <td>
+            <code>packages/core/src/schema.ts</code
+            >、<code>registry.ts</code>、<code>resolve.ts</code>、<code
+              >agent-connection.ts</code
+            >
+          </td>
+          <td>
+            同じStrata runtimeにMain/Workerをbinding。5論理接続と物理request上限を分離。新backend
+            enumは不要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">プロセスlifecycle</th>
+          <td>
+            <code>packages/backends/src/systemd.ts</code>、daemonのallocation startup、release管理
+          </td>
+          <td>
+            systemd登録を第一案とし、Strata
+            serverとengineを同じcgroupで管理。ready判定は追加確認が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">request待機</th>
+          <td>
+            <code>apps/daemon/src/execution-gate.ts:183</code>でpriority降順・同値FIFO、queue
+            cap、timeout、abort、quarantine
+          </td>
+          <td>
+            active
+            requestをtask単位で停止する仕組み、GPU資源を複数runtime間で共有するadmissionを既存Gateに拡張。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">allocation preemption</th>
+          <td>
+            <code>allocation-preemption.ts</code
+            >、<code>allocation-admission.ts</code>、<code
+              >allocation-waiting-promotion.ts</code
+            >
+          </td>
+          <td>
+            既存preemptionはlease失効を伴い得る。5接続を保持するためrequest単位の中断と区別する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">HTTP/SSE/cancel</th>
+          <td>
+            <code>gateway.ts</code
+            >、<code>gateway-request-lifecycle.ts</code>、coreのOpenAI JSON/SSE検証
+          </td>
+          <td>
+            Strataのusage、reasoning、tool
+            delta、切断後のSTOP完了をcontract試験。SSE開始後の失敗をHTTP retryとして扱わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">メモリadmission</th>
+          <td>
+            <code>packages/core/src/admission.ts</code>、<code
+              >service-resource-ledger.ts</code
+            >
+          </td>
+          <td>
+            重みをruntimeごとに1回、会話snapshotとworkspaceを増分で予約。実測ピークへ校正し、モデル別schedulerを作らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">host telemetry</th>
+          <td><code>packages/backends/src/linux-node-telemetry.ts</code></td>
+          <td>
+            MemAvailable、GTT/VRAMに加えてPSI、swap入出力、GPU
+            busy・resetを監視。UMAを二重加算しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">画像lifecycle</th>
+          <td>
+            <code>packages/backends/src/media-variants.ts</code
+            >、<code>runtime-variants.yaml</code>、Turbo Provider
+          </td>
+          <td>
+            既存要求時起動・生成後停止・メモリ予約を継続。pause/resumeは未実装なので前提にしない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <h3>健康判定とtoken計数の互換性に注意</h3>
+      <p>
+        Strata <code>serve/server.py:4531</code>の
+        <code>/health</code>はengine未loadでもHTTP
+        200・<code>status: ok</code>を返し、別に
+        <code>loaded</code
+        >を返す。既存SystemdBackendはstatus文字列と503によるbusyを検出するため、そのままではreadyを過大評価する。engine
+        ready・loaded・reported
+        context・実slot数を確認する汎用probeを追加し、実推論readinessを再利用する。
+      </p>
+      <p>
+        LARMの <code>packages/backends/src/context-tokenizer.ts</code>と
+        <code>apps/daemon/src/inference-audit.ts</code>はllama.cppの
+        <code>/apply-template</code>と
+        <code>/tokenize</code>を利用する。確認したStrata
+        serverにはこれらのHTTP routeがない。Chat
+        Completions接続ができることと、managed-context・監査の正確なtoken計数ができることは別である。Strataの実template/tokenizerを呼ぶ限定adapter、または同じ実装を公開する上流HTTP拡張を検討する。文字数近似を64K/256K制限の根拠にしない。
+      </p>
+    </aside>
+    <p>
+      SAAAの実装は本調査で参照していない。従って隣接repositoryの更新や、consumer実装の変更は行っていない。接続後のconsumer受入は別工程である。
+    </p>
+  </section>
+
+  <section id="engine">
+    <h2>3. Strataの機能と実装状態</h2>
+    <table>
+      <caption>
+        確認SHAでの分類。gfx1151実機保証とは区別する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">分類</th>
+          <th scope="col">確認内容・根拠</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">OS・HIP・gfx1151</th>
+          <td>Linux/Windows実装、gfx1151は実験的</td>
+          <td>
+            <code>docs/STRIX_HALO.md</code>とCMake。Linux source build、ROCm/TheRock
+            7.14.1、gfx1151、hipBLASLt version一致表。公式検証環境はUbuntu 26.04・kernel
+            7.0。Windows gfx1151配布codeはあるが当該APUの検証は未実施。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Prefill</th>
+          <td>実装、一部kernelはopt-in</td>
+          <td>
+            <code>src/prefill/prefill.cpp</code
+            >、<code>hipblaslt_tuning.hpp</code>。chunk、MMQ、WMMA、dense
+            GEMM、GDN/QSA最適化。fused FP16/WMMAのopt-inは丸めが変わるので品質試験が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Decode</th>
+          <td>実装</td>
+          <td>
+            <code>src/core/verify.cpp</code
+            >、<code>arch_defaults.cpp</code>。GPU graph、grouped
+            expert、GDN、QSA、packed quant、launch fusion。gfx1151
+            defaultsはあるが、全入力の同一出力証明ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">重みload・Expert Cache</th>
+          <td>実装</td>
+          <td>
+            <code>src/core/pinned.cu</code>でresident CPU
+            arenaを確保・登録、<code>expert_source.cpp</code>でload。<code>expert_cache.cpp:519,682</code>ではGPU領域を別確保してcopy。mmap/CPU
+            complementもある。UMAだから重みが自動的に単一copyになるとはいえない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">MTP・Speculative</th>
+          <td>実装、追加方式は実験的</td>
+          <td>
+            <code>src/core/mtp.cpp</code
+            >、<code>src/spec/</code>、<code>generate.cpp</code>。同モデルの専用draft
+            layer、prompt
+            lookup・suffix、検証・commit。独立した任意draftモデルへの互換性は確認していない。coupled/probability
+            samplingはopt-in。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Batch MTP</th>
+          <td>opt-in、gfx1151運用は検証待ち</td>
+          <td>
+            <code>generate.cpp:3869,8385</code
+            >。単一GPU、2slot以上、MTPあり、spec≥2、serveが条件。1slotにつきproposal 1個。8row
+            windowなので5slotは全員を同時に2rowで載せられずrotationする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">KV量子化</th>
+          <td>FP16/INT8実装、Q4/K8V4はopt-in</td>
+          <td>
+            <code>include/strata/kernels/kv_q8.hpp</code
+            >、<code>kv_q4.hpp</code>、<code>src/core/layer.cpp</code>。Q4はHadamard回転＋Q4_0、K8V4はINT8
+            K＋回転Q4 V。GDN stateはこれらで4bit化されない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">KV streaming</th>
+          <td>実装</td>
+          <td>
+            <code>layer.cpp:799</code>。全KVのpinned host copyとGPU resident
+            windowを保持。容量削減・圧縮と違い、配置変更である。UMAではGPU
+            ringも同じ物理RAMを消費する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Prefix再利用</th>
+          <td>実装</td>
+          <td>
+            <code>generate.cpp</code>のcheckpoint、slot cache。完全なtoken/image
+            prefixとsteering一致による再利用。<code>strata_prefix</code>による固定prefixはengineあたり1つ。一般的な複数tenant間の認可付きsession
+            storeではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">会話parking</th>
+          <td>実装、HIP実機coverageは要確認</td>
+          <td>
+            <code>conversation_snapshot.cpp</code
+            >、<code>conversation_cache.hpp</code>、<code>generate.cpp:6968</code>。RAM予算・件数・free
+            floor付き。使ったKV、GDN/PLE state、checkpoint、MTP stateを保存。default
+            off、予算超過はevict・re-prefill。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ディスクsession保存</th>
+          <td>実装、HIP運用は未検証</td>
+          <td>
+            <code>conversation_file.cpp</code
+            >、<code>server.py:2664</code>。slot
+            0のみ、save/restore、再起動後に利用可能。同engine version・model/config
+            fingerprintが条件。parallel/batchとの併用は501。erase APIはない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">OpenAI/SSE/Tools</th>
+          <td>実装</td>
+          <td>
+            <code>serve/server.py</code>と
+            <code>responses.py</code
+            >。Chat、Responses、Anthropic、streaming、tool
+            schema/parser。LARMでは既存Chat経路だけを採用し、上流組込みMCPのtool実行は使わずconsumerが実行する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">同時実行・cancel</th>
+          <td>実装</td>
+          <td>
+            <code>server.py:1176,1471</code
+            >、<code>generate.cpp:7960</code>。solo STOP、slot BSTOP、prefill
+            chunk境界でyield、disconnectでcancel。GPU kernelの任意時点の強制pauseではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">priority API・slot weight</th>
+          <td>確認範囲で未対応</td>
+          <td>
+            serverはsolo lock/queueとparallel admission、engineはactive
+            slotの巡回。用途別priority、deadline、slot weight、公開suspend/resume
+            handleは見つからない。BYIELDは短いpromptを優遇する長さ基準で、Main
+            priorityと同義ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">動的メモリ解放</th>
+          <td>unload実装、HIPのelastic cacheは未対応</td>
+          <td>
+            request終了で全重み・slot領域が返るわけではない。RAM
+            parkingはeviction可。serverのunloadはengineを終了させる。<code>docs/VRAM_ELASTIC.md</code>の
+            <code>/v1/vram</code
+            >・<code>--vram-elastic</code>はNVIDIA単一GPU限定でHIPでは無効。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      エンジンはQwen
+      Flash-Nextのgeometry・PLE・GDN/QSAに特化している。LARMは別モデルや別Providerへ拡張可能だが、Strata自身が任意のGemmaや画像モデルを推論するわけではない。将来のモデル変更時は対応engineとartifact・tokenizer・session互換性をreleaseで明示する。
+    </p>
+  </section>
+
+  <section id="issues">
+    <h2>4. 最新Issuesと256K制約</h2>
+    <p>
+      2026-10-10のopen updated上位100件、closed
+      updated上位50件からPRを除いて確認し、関連Issue本文・commentsを追加取得した。全Issueの網羅ではない。以下の不具合をLinux/gfx1151で未再現のまま同一障害と断定しない。
+    </p>
+    <table>
+      <caption>
+        導入gateに反映するIssue
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Issue</th>
+          <th scope="col">報告と現状</th>
+          <th scope="col">LARMへの意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">#1139、closed</th>
+          <td>
+            gfx1151でQFUSE-on
+            batchが壊れる問題。0.1.40.2で修正、同APUで36/36短文一致の再試験報告。確認source
+            <code>verify.cpp:1037</code>に
+            <code>!g_qfuse() || batch_rec_</code>がある。
+          </td>
+          <td>旧版は避ける。現行を未修正とは扱わず、並列数3〜5・長文・長出力は別途試す。</td>
+        </tr>
+        <tr>
+          <th scope="row">#1121、open</th>
+          <td>
+            Batch MTP subset-head type未伝達で異常終了。確認source
+            <code>mtp.cpp:627</code>にはtype
+            copy修正がある。commentsでは旧版・SYCL等の残存報告もある。
+          </td>
+          <td>
+            Issue openだけで現行HIPの機能を否定しない。修正を含むbinary SHAを記録し、Batch MTP
+            admission failureで全requestが失われないことを検証。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">#1712、open</th>
+          <td>
+            Linux・dual gfx1100・parallelでhost page faultとGPU
+            reset。no-prefill-borrowでも長時間後の再発報告。
+          </td>
+          <td>
+            単一gfx1151への直接証拠ではないが、slot移行・cache restore・他ROCm
+            Providerへのreset波及を長時間試験する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">#1705、open</th>
+          <td>
+            gfx1100の長文・host
+            reclaimでwatchdog。<code>HSA_USERPTR_FOR_PAGED_MEM=0</code>の改善報告がある。
+          </td>
+          <td>
+            本ホストへ無条件適用しない。driver/runtimeの組合せ、swap・PSI、pinned
+            memoryを記録して再現条件を分離。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">#1468、open</th>
+          <td>
+            large chunk・long promptのcopy_i32 illegal
+            access。最新commentではauto:16384でもprefix再利用中に再発。
+          </td>
+          <td>
+            小chunkは緩和策であり修正保証ではない。cold長文だけでなくprefix成長とrewindを試す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">#1785、open</th>
+          <td>Windows/gfx1201で262,144初期captureがTDR。229,376以下は動作。</td>
+          <td>
+            Linux/gfx1151の262K不可を意味しない。対象ホストでの最大context起動・実入力を独立gateにする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">#1135、closed</th>
+          <td>
+            K8V4＋streamed batch
+            appendの破損は0.1.40.2修正。最新RTX5090再試験ではINT8との速度差がほぼなく、旧30%高速化は反復tokenのartifactと訂正。
+          </td>
+          <td>KV圧縮は容量と品質を主に測り、高速化を先に予算化しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">#1827、open</th>
+          <td>
+            unpruned IQ3_S、CUDA multi-GPUで中国語長出力のloop。Coder pruningだけで説明できない。
+          </td>
+          <td>日本語障害の実証ではないが、CJK長文・tool引数のloop試験を必須とする。</td>
+        </tr>
+        <tr>
+          <th scope="row">#1809、open</th>
+          <td>queue cap＋429要求。現在のupstream queueで大量待機した報告。</td>
+          <td>LARMの既存bounded queueで制限し、Strataに大量requestを先送りしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">#1842、open</th>
+          <td>sm_89の128K decode回帰とMMVQ switch改善。</td>
+          <td>gfx1151への速度予測に流用しない。version固定とアブレーションが必要な例。</td>
+        </tr>
+        <tr>
+          <th scope="row">#1791、open</th>
+          <td>RTX5090でmax-context 262K、実prompt約8Kの高速結果。</td>
+          <td>最大設定値と実際の256K Prefill/Decodeを区別する。262K実入力の証拠として使わない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      原版configの最大positionは262,144。Strata serverは
+      <code>prompt + max_new + 8 ≤ max_context</code>を要求し、勝手に切り捨てない。LARMのMain output
+      reserve 4,096・safety margin 1,976を維持すれば最大入力は256,072 tokens、Workerは59,464
+      tokensであり、表のcontext上限全部を入力に使うことはできない。テンプレート・tools・画像tokensも入力に含める。
+    </p>
+    <p>
+      256Kの初回読み込みは長時間になる。長さを超えて利用するYaRN等は今回の採用対象外。全履歴のprefix一致、過去のtool結果変更、thinkingを履歴から除く場合、context圧縮、再起動後の再Prefillを区別して評価する。
+    </p>
+  </section>
+
+  <section id="memory">
+    <h2>5. モデルファイル、実メモリ、予算</h2>
+    <p>
+      この節のGBは10億bytes、GiBは2の30乗bytes。LARMの
+      <code>estimatedMemoryGB</code
+      >等は実装上2の30乗bytesで換算される。ホストの実観測MemTotalは
+      <code>127098480 kB = 121.21GiB</code>、GTT上限は100GiB、BIOS VRAMは2GiB。設定の
+      <code>memoryTotalGB: 128</code
+      >から使える物理RAMを128GiBとみなすと過大評価になる。GTTは物理RAMへの追加容量ではない。
+    </p>
+    <table>
+      <caption>
+        HF metadataの正確なfile bytes。モデル本体を取得せず確認
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">量子化</th>
+          <th scope="col">shard 1 bytes / GiB</th>
+          <th scope="col">合計bytes / GiB</th>
+          <th scope="col">常駐部分の意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">IQ3_S</th>
+          <td>54,817,524,224 / 51.05</td>
+          <td>83,617,662,656 / 77.88</td>
+          <td>公式はexpert約50GB。CPU arena＋dense/head/embeddingを別計上。</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_XXS</th>
+          <td>47,039,860,096 / 43.81</td>
+          <td>75,839,998,528 / 70.63</td>
+          <td>expert約43GB。</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ2_XS</th>
+          <td>39,225,954,592 / 36.53</td>
+          <td>68,026,093,024 / 63.35</td>
+          <td>expert約35.5〜36GB。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      shard 2は3形式とも <code>28,800,138,432 bytes = 26.82GiB</code>で同じLFS digest。51.2B
+      parameterのPLE n-gram lookupでありexpert cacheではない。Strataの既定
+      <code>--ple-io direct</code>は非buffered SSD読取りとbounded row
+      cacheを使う。<code>mmap</code>はpage
+      cacheに入り得るが全fileを即residentにする指定ではなく、<code>ram</code>は全tableをload・lockして約26.82GiB増やすため今回推奨しない。direct
+      I/O可否と実read量は対象filesystemで測る。
+    </p>
+    <p>
+      MTP取得量は公式説明で約6GBだがruntime RAM量と同一ではない。pack生成、dense再配置、追加
+      <code>experts.bin</code
+      >、MTP・tokenizerなどもdiskを使う。将来評価では1量子化ずつ取得・packし、共有PLEを重複保持しない。3形式のshard
+      1と共有PLEだけでも約158.22GiBとなり、pack・MTP・Gemma
+      rollback領域は別に必要である。容量確認前に自動setupを実行しない。
+    </p>
+    <p>
+      既定resident方式ではCPU側に全expertのarenaがあり、GPU cacheは別のdevice領域にcopyする。mapped
+      GPU aliasの存在は、GPU cache全体がCPU arenaと同じページを共有する証拠にはならない。
+      <code>--mmap-experts</code>＋static
+      profile＋<code>--resident-experts</code>のCPU
+      complement方式はGPUにないexpertだけをhostへ保持できるが、mapped page
+      cache・staging・pinの実占有を測る必要がある。これは後段の省メモリアブレーションで扱う。
+    </p>
+
+    <h3>KV計算と5セッションの実際の確保量</h3>
+    <p>
+      原版とsourceから48layer、4layer毎にQSA＝12layer、KV heads 2、head_dim
+      256を確認した。残る36layerはGDN recurrence。INT8は64値毎のFP16 scaleを含む。1token・QSA
+      1layer当たりFP16 2,048 bytes、INT8 1,056 bytes、K8V4 816 bytes、Q4_0 576
+      bytes。全論理token容量は524,288である。
+    </p>
+    <table>
+      <caption>
+        計算値：純K/Vのみ。GDN、indexer、RoPE、checkpoint、MTP、workspaceは含まない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">KV形式</th>
+          <th scope="col">Main 262K GiB</th>
+          <th scope="col">Worker 64K 1件 GiB</th>
+          <th scope="col">論理5件合計 GiB</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">FP16</th>
+          <td>6.000</td>
+          <td>1.500</td>
+          <td>12.000</td>
+        </tr>
+        <tr>
+          <th scope="row">INT8</th>
+          <td>3.094</td>
+          <td>0.773</td>
+          <td>6.188</td>
+        </tr>
+        <tr>
+          <th scope="row">K8V4</th>
+          <td>2.391</td>
+          <td>0.598</td>
+          <td>4.781</td>
+        </tr>
+        <tr>
+          <th scope="row">Q4_0</th>
+          <td>1.688</td>
+          <td>0.422</td>
+          <td>3.375</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Indexerのpooled FP32 keysは12×128×4/4＝1,536
+      bytes/tokenなので5件満杯で約0.750GiB、RoPEは1sessionの262Kで64MiB、GDN
+      recurrenceは1sessionで概ね0.11GiBにconv・checkpoint分が加わる。再帰stateも戻す必要があるため、KVだけ保存してresumeする設計は誤りである。
+    </p>
+    <p>
+      <code>generate.cpp:3923</code>はbatch各slotに同一の
+      <code>o.max_context</code
+      >を渡し、slot以外にsolo/prefill用sessionも保持する。LARMでWorker上限を64KにしてもStrataの物理slotを64Kに縮めることにはならない。KV
+      streamingなし・INT8・global 262Kの純KV確保は、physical
+      2なら3session分9.281GiB、3なら12.375GiB、4なら15.469GiB、5なら18.563GiB。これにindexer・MTP等が加わる。logical合計6.188GiBを並列5の総確保量として使わない。
+    </p>
+    <p>
+      <code>--kv-resident 32768</code>ではfull host KVにGPU ring約0.387GiB/physical
+      sessionが追加される。UMAで総RAMが減る保証はない。最初は
+      <code>--kv int8 --kv-resident 0</code>を基準とし、streaming-onを別測定する。batchのidle
+      slotが内容を保持しても固定領域が解放されるわけではない。
+    </p>
+
+    <h3>ASR/TTSの設定と今回の読取り観測</h3>
+    <table>
+      <caption>
+        20:30 JST前後のpoint-in-time値。cgroup peakは過去履歴を含み、今回の負荷試験ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Provider</th>
+          <th scope="col">設定予約 GiB</th>
+          <th scope="col">cgroup current / peak GiB</th>
+          <th scope="col">補足</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen3-ASR 1.7B</th>
+          <td>10</td>
+          <td>0.38 / 9.34</td>
+          <td>
+            FP16、cuda:0、batch 1。DRM clientのGTT resident約4.96GiB、VRAM約0.005GiB。cgroup
+            swap約1.85GiB。modelのFP16 weight理論値だけでは予約できない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">VOICEVOX通常TTS</th>
+          <td>1</td>
+          <td>0.12 / 1.42</td>
+          <td>
+            CPU inference、16threads、必須0.vvm。cgroup swap約1.35GiB。保守予算では2GiBとする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-TTS expressive</th>
+          <td>5</td>
+          <td>0.14 / 0.49</td>
+          <td>
+            0.6B、preload false、compile/graph有効。GTT
+            resident約0.25GiB、swap約0.29GiB。この観測は生成時の上限を示さない。使用時はVOICEVOXとの置換で5GiBを予約して再測定。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      RSS/PSSはASR約0.33/0.32GiB、VOICEVOX約0.12/0.11GiB、Qwen
+      TTS約0.13/0.13GiBだった。これらをGPU確保込みのRAM量と扱わず、DRM値・cgroup・MemAvailableの差分を別に記録する。cgroupとDRMに同じ物理ページが含まれる可能性があるため、単純合算して実占有量とも呼ばない。
+    </p>
+    <p>
+      ホスト全体では約5.31GiBのswap既存使用があり、MemAvailableは約86.92GiBだった。これは新しいStrata負荷によるswapではなく、現在の入力のリアルタイム性低下を証明する値でもない。受入では既存swap量と
+      <code>pswpin/pswpout</code
+      >差分を分離し、新負荷によるswap入出力・OOMを防ぐ。ASR APIはchunk
+      audioのtranscribe経路であり、継続的なmicrophone入力維持自体はconsumer/CPU
+      buffer側の責務となる。
+    </p>
+
+    <h3>保守的な初期予算</h3>
+    <table>
+      <caption>
+        全量resident arena、物理1、RAM parking上限12GiB。実測値ではなくadmissionの暫定予約
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">費目 GiB</th>
+          <th scope="col">IQ3_S</th>
+          <th scope="col">IQ3_XXS</th>
+          <th scope="col">IQ2_XS</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">expert arena＋dense/head/embedding</th>
+          <td>54</td>
+          <td>46</td>
+          <td>39</td>
+        </tr>
+        <tr>
+          <th scope="row">別copyのGPU Expert Cache上限</th>
+          <td>8</td>
+          <td>8</td>
+          <td>8</td>
+        </tr>
+        <tr>
+          <th scope="row">active 262K session、INT8＋state</th>
+          <td>4</td>
+          <td>4</td>
+          <td>4</td>
+        </tr>
+        <tr>
+          <th scope="row">parking予算、切替中のincoming・retainedを含む</th>
+          <td>12</td>
+          <td>12</td>
+          <td>12</td>
+        </tr>
+        <tr>
+          <th scope="row">MTP、Prefill/verify/staging、PLE row cache、server</th>
+          <td>6</td>
+          <td>6</td>
+          <td>6</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR予約</th>
+          <td>10</td>
+          <td>10</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <th scope="row">CPU TTS予約</th>
+          <td>2</td>
+          <td>2</td>
+          <td>2</td>
+        </tr>
+        <tr>
+          <th scope="row">embedding/Ruri/その他LARMの追加予約</th>
+          <td>2</td>
+          <td>2</td>
+          <td>2</td>
+        </tr>
+        <tr>
+          <th scope="row">OS等の暫定占有</th>
+          <td>6</td>
+          <td>6</td>
+          <td>6</td>
+        </tr>
+        <tr>
+          <th scope="row">占有・予約合計</th>
+          <td>104</td>
+          <td>96</td>
+          <td>89</td>
+        </tr>
+        <tr>
+          <th scope="row">121.21GiBからの残り</th>
+          <td>17.21</td>
+          <td>25.21</td>
+          <td>32.21</td>
+        </tr>
+        <tr>
+          <th scope="row">16GiB free floor確保後の余裕</th>
+          <td>1.21</td>
+          <td>9.21</td>
+          <td>16.21</td>
+        </tr>
+        <tr>
+          <th scope="row">画像34GiB予約を追加したときの残り</th>
+          <td>−16.79</td>
+          <td>−8.79</td>
+          <td>−1.79</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      全量resident方式でIQ3_Sは余裕が小さく、起動・cache切替・長Prefillの一時peakを測るまでは本番admission不可とする。IQ3_XXSを先に評価する理由はこの余白である。MTP/workspace
+      6GiBやparking 12GiBは推定上限であり、実測が超えれば予算・cacheを再設定する。parking
+      budgetは5会話保持の保証でもなく、最大snapshotの同時切替を含めて容量試験する。
+    </p>
+    <p>
+      表では3形式すべて、既存画像予約34GiBと空き16GiBを同時に満たさない。したがって「LLM＋全5履歴＋音声＋画像の無条件同居」を推奨しない。将来はCPU
+      complementで重複expertを減らす、Workerをdiskへ退避する、GPU
+      cacheを小さくして再起動する、解像度別の実peakで画像予約を校正する順に検証する。HIPのcacheを稼働中に縮めるAPIはないので、LARM
+      schedulerだけで8GiBを即返せるとはしない。
+    </p>
+    <p>
+      画像を常にreadyに置く必要はない。queueは保持し、起動直前に
+      <code>MemAvailable ≥ 画像予約34GiB + floor16GiB + 未反映pending予約</code
+      >を確認する。snapshot退避が成功しても十分な空きがなければ実行しない。LLMを一時unloadする別運用を将来選ぶ場合は、cold復帰でMain
+      TTFTを失うことを明示し、会話優先の既定構成から切り離す。
+    </p>
+    <p>
+      監視は正常24GiB以上、24GiB未満でP3/P4の新規admission停止、16GiBを下回る予測ならP4取消・Worker
+      cache
+      evictionという提案である。予約と実占有を一度だけ数え、既存reserveを同じadmission式で二重減算しない。coreの静的128GiB設定と実物理容量の上限、およびlive安全floorを整合させる。
+    </p>
+  </section>
+
+  <section id="sessions">
+    <h2>6. 論理5セッションとキャッシュlifecycle</h2>
+    <p>
+      Main 1件とWorker 4件をAgent Connectionで管理する。論理session ID、consumer、context
+      limit、priority、会話revision、直前に確定したtool境界を持つ。重み・backend
+      PIDは同じruntimeから参照し、sessionごとにserverを立てない。5接続の維持と1〜5
+      requestの物理実行は別の上限とする。
+    </p>
+    <ol>
+      <li>
+        <strong>初期運用はphysical 1。</strong>5つのlogical
+        contextを262K/64Kに検査し、1本の推論を時分割する。Strata parkingは
+        <code>--conversation-cache-mib 12288 --conversation-cache-slots 5 --conversation-cache-min-free-mib 16384</code>を暫定値とし、prefix
+        checkpointを有効にする。最長のactive retained imageやincoming
+        snapshotもbudgetに入るため、件数5だけで保持できたと判定しない。
+      </li>
+      <li>
+        <strong>inactive会話はRAM parking。</strong>Strataはsession IDではなくtoken/image
+        prefixでrestoreするので、LARMのIDを上流KV
+        ownershipとみなさない。別consumerの内容が混ざらないこと、template/tool
+        schema変更で適切にmissになることを検査する。
+      </li>
+      <li>
+        <strong>diskはserialの任意機能。</strong>HIP
+        save/restore試験後、privateな保存先とquota/retentionをLARMの既存artifact管理の考え方で設計。slot
+        0へのsave/restoreはexclusive
+        barrierで他requestを止め、sessionとrevisionを正しく紐付ける。自動parkingと同時に二重snapshotを作らない。
+      </li>
+      <li>
+        <strong>中断は新requestとして再開。</strong>確定tokenだけを会話履歴に保持し、部分JSON
+        tool引数は実行しない。再送したprefixが残っていればreuse、なければre-Prefillする。HTTP
+        streamを途中から同じhandleでresumeする公開機能はない。sampling
+        RNGの完全継続やbyte同一出力は保証しない。
+      </li>
+      <li>
+        <strong>releaseとrestart。</strong
+        >接続の終了は論理状態とcache参照を失効させる。Strataにはper-ID
+        cache削除APIがないため、物理RAMの即解放とは区別する。engine再起動はRAM cacheを失い、disk
+        sessionはengine version・backend・model/config
+        fingerprintを照合。不一致は破棄して再Prefill。
+      </li>
+      <li>
+        <strong>physical 2〜5は段階追加。</strong
+        >engineはglobal262Kを各slotへ確保する。Mainを優先するためslotを予約してもdecode
+        kernel帯域は独占できない。parallel時のdisk
+        API501を受け入れ、RAM退避のみか、上流拡張のどちらかを明示する。
+      </li>
+    </ol>
+    <p>
+      cacheは性能最適化であり、会話履歴の正本ではない。consumer/既存context
+      storeは全messages・tool結果を保持する。session
+      fileのfingerprintはfileを部分sampleしており、任意中間bytesの改変を検出する完全artifact
+      hashではない。LARM releaseのSHA-256とengine binary hashを別途記録する。
+    </p>
+  </section>
+
+  <section id="scheduling">
+    <h2>7. 優先度付き汎用資源管理</h2>
+    <p>
+      一つのpriority値でCPU入力維持とGPUの全仕事を直列化しない。Profile/providerにSLO、実行場所、資源demand、preemption方式、最大非中断時間を宣言し、coreは汎用policyを評価する。GPUに載る計算はMainを優先し、P0
+      ASR入力のbuffer・CPU処理・メモリ予約は独立して維持する。
+    </p>
+    <table>
+      <caption>
+        利用者優先順位をProfile policyへ写す初期提案。数値はLARMの大きい値優先
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">class</th>
+          <th scope="col">service priority</th>
+          <th scope="col">実行方針</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">P0 ASR</th>
+          <td>5000</td>
+          <td>
+            入力収録をCPU bufferで維持。現在のGPU
+            ASRは1本、短いchunk・deadlineを持たせる。ASR長文batchでMainを塞がない。CPU
+            ASR候補は品質・RTF受入後に明示選択する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P1 Main</th>
+          <td>4000</td>
+          <td>
+            GPU
+            computeの最優先。到着時にP3/P4新規投入を停止、Workerをcancel、停止ackとbackend状態確認後にsolo
+            MTPで開始。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P2 TTS</th>
+          <td>3000</td>
+          <td>
+            通常VOICEVOX CPUで低競合。小さな文章chunkでfirst playable audioを維持。Qwen GPU
+            TTSは別予算・deadlineで検証する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P3 Worker</th>
+          <td>2000</td>
+          <td>
+            Main不在の間だけ開始。token/tool境界で短いrequestへ分割、bounded
+            output、cancel後は確定履歴から再投入。Worker間は公平・agingを許すがMainを追い越さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P4 画像/background</th>
+          <td>1000</td>
+          <td>
+            GPU重処理のidle
+            windowとメモリadmissionが条件。実行中にMainが来た場合の終了・取消をbackend
+            capabilityに従って選ぶ。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      新しい名前付きMain専用schedulerを作らず、resource key、priority、deadline、capacity、estimated
+      peak bytes、preemption
+      <code>none/cancel-replay/checkpoint</code
+      >等の宣言を既存Gate・admissionへ追加する案とする。これは提案schemaであり現行fieldではない。OS非依存の選択・予約はcore、HTTP
+      requestの追跡・abortはdaemon、systemd/HIP観測・停止確認はbackendsに置く。
+    </p>
+    <p>
+      現行AllocationPreemptionはforeground閾値3000、exclusive
+      runtimeまたはswap-group競合でallocationをreleaseする。<code>maxConcurrentAllocations: 5</code>へ増やすだけでは、同一runtime・swapGroupなしのWorker
+      active
+      requestを中断できない。逆に同じswapGroupを残すとMainがWorker接続ごと失効させ得る。5logical接続を保ったtask中断には、active
+      requestとAbortControllerを追跡する小さな拡張が必要であり、existing lease
+      preemptionを流用して全接続を壊さない。
+    </p>
+    <p>
+      単なるpriority queueはactive長Prefillを追い越せない。Strata
+      STOPはstep/chunk境界で効き、BYIELDはprompt長さによる協調yieldである。公式速度1,250
+      tok/sを仮置きすると8192chunkは約6.6秒、1024でも約0.82秒となる。これは説明用の推定で実際のcancel時間ではない。conversation運用ではprefill
+      256/512/1024を比較し、cancel acknowledgement p95が受入範囲に入る値を選ぶ。long cold
+      Mainは初回prefill時間を別SLOで扱う。
+    </p>
+    <p>
+      slotにMainを入れるだけではper-token優先度が付かない。Mainが生成中はWorkerを止め、実並列を1へ戻すのがLARM側だけで行う第一案である。MainとWorkerを同時decodeしながらMainのrateを保証する場合、slot
+      weight/deadline、Prefill budget/yield、pause
+      stateのengine側拡張が必要になる。LARMはStrata内部のverify
+      window・kernel発行順に介入できないためである。
+    </p>
+    <p>
+      HIPのStream Priority APIはROCm
+      sourceでpriorityをclampしてqueueへ渡す実装がある一方、公式referenceにはAMD
+      GPUで開発中の注意が残る。Strataの確認sourceは主に通常のnonblocking
+      streamを生成し、priority付き生成は使っていない。API成功や値域だけでgfx1151のpreemption・跨processの帯域保証を認めない。小kernel・長kernel・転送・別processを分けた将来microbenchmarkで実効性を測る。CPU
+      nice/cgroup CPUWeightもGPU予約の代わりにはならない。
+    </p>
+    <p>
+      Turbo Providerはnative jobをpollし、16GiB
+      floor・timeoutで子processを終了させる実装である。diffusion
+      latent、step、RNGを保存してpause/resumeするAPIは確認していない。HTTP
+      fetchのabortだけで画像jobが止まる契約もない。Main割込み時に既存MediaVariantsの停止・quarantineを使い、取消を確定してから後でseed等から再実行する案を第一段階とする。SIGSTOPだけではGPU
+      queue停止・資源解放を保証しない。
+    </p>
+  </section>
+
+  <section id="performance">
+    <h2>8. 公開性能と品質、性能予測の限界</h2>
+    <table>
+      <caption>
+        Strata公式STRIX_HALO資料の0.1.40
+        merged再測定。単一同型APU、INT8、MTP、他Providerの共存SLOを示さない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">量子化</th>
+          <th scope="col">実prompt context</th>
+          <th scope="col">Prefill tok/s</th>
+          <th scope="col">Decode tok/s</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">IQ3_S</th>
+          <td>8K</td>
+          <td>1,265</td>
+          <td>59.10</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_S</th>
+          <td>128K</td>
+          <td>1,310</td>
+          <td>42.09</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_XXS</th>
+          <td>8K</td>
+          <td>1,212</td>
+          <td>50.95</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_XXS</th>
+          <td>128K</td>
+          <td>1,250</td>
+          <td>50.22</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ2_XS</th>
+          <td>gfx1151の同条件</td>
+          <td>確認できず</td>
+          <td>確認できず</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      公式の前段fast設定はMTP/spec4、lookup-chain3、mtp-q4
+      all、prefill16384、全expertのUMA配置を使用する。merged表も同資料の手法・設定の文脈で読む。ここに挙げたtok/sはLARM向け8GiB
+      cache予算の実測ではない。engine 0.1.41、partial GPU
+      cache、音声・画像競合、thermal/power条件では変わる。
+    </p>
+    <p>
+      <strong>推定：</strong>1,250〜1,310 tok/sを256Kへ一定外挿したcold
+      Prefillは約200〜210秒。kernel、cache、256K
+      indexer、queueを含めた保証はなく、TTFTはこれにload/queue等が加わる。128K→256K
+      Decodeの一定rate外挿は根拠不足として数値を出さない。2〜5同時の総tok/s・Main
+      rateもgfx1151実測不足。NVIDIAの100〜200 tok/sやdiscrete Radeon値を本APUの予測値にしない。
+    </p>
+    <p>
+      ISTA-DASLabの公開評価ではIQ3_SがAIME25 100.00、GPQA-D 92.93、LCB v6
+      86.86、IQ3_XXSは100.00/91.41/86.29、IQ2_XSは96.67/87.37/83.43。これは量子化作者の評価でStrata日本語会話やGemmaとの直接比較ではない。日本語、coding、toolsを同じlocal
+      fixturesで比較して採否を決める。parameter数125Bのみで「Gemmaより賢い」と判定しない。
+    </p>
+  </section>
+
+  <section id="benchmarks">
+    <h2>9. 実機benchmark計画と検証コマンド</h2>
+    <section id="first-trial">
+      <h3>最初の実機試験：品質・速度・複数セッション</h3>
+      <p>
+        利用者の追加要望により、全面統合の前にIQ3_XXSだけを隔離環境で評価する。2026-10-10の追加読取りでは、確認した配置先にStrata実行環境および対象Flash-Next
+        GGUFは見つからなかった。モデル領域の空きは878GiB、MemAvailableは約86GiB、既存swap使用は約5.4GiBだった。現在動いている別ProfileのLLMをGemma
+        baselineとみなさず、既存workloadと解決経路を確認してから比較対象を起動する。
+      </p>
+      <p>
+        準備対象は固定revisionのStrata、IQ3_XXS本体と共有PLE（合計70.63GiB）、MTP（約6GB）、必要な場合のみユーザー領域のHIP
+        toolchainとする。新規取得は概算85GB、pack・展開・buildを含む追加ディスク予算は150GiBを上限とする。実際の取得一覧・容量を確定し、上限を超える準備は行わない。システムROCm・driver・起動設定は変更しない。本体・モデル・結果はrepository外に置き、本番routeの切替やLARM統合コードの実装はこの試験に含めない。
+      </p>
+      <table>
+        <caption>
+          初回に回答する問いと評価方法
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">問い</th>
+            <th scope="col">試験</th>
+            <th scope="col">報告する値</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">どの程度賢いか</th>
+            <td>
+              日本語の指示追従・推論10問、正解テスト付きcoding10問、模擬Tool
+              Calling10問。同じ問題を要求されたGemma
+              ProfileとIQ3_XXSへ与える。ツールは模擬実行に限定する。
+            </td>
+            <td>
+              カテゴリ別の合格数、失敗例、元回答、生成token数・所要時間。30問の限定評価をモデル全般の知能指標と呼ばない。
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">何token/s出るか</th>
+            <td>
+              physical1、max-context32Kで4K/8K/32K内の実入力、最大256生成token。target-onlyとMTPを比較し、warmup後に各条件を10回測る。品質問題では速度用の回答長を強制しない。
+            </td>
+            <td>
+              Decode tok/s、Prefill
+              tok/s、TTFTの中央値・p95、MTP採用率、ピークRAM。回答長不足やEOSを記録し、tokenizer差を併記する。
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">5会話を保持できるか</th>
+            <td>
+              logical5・physical1で各会話に異なる情報を与え、交互に20turnずつ継続する。RAM
+              parkingのhit/missと保持予算を観測し、会話混入・復元失敗・再Prefillを確認する。
+            </td>
+            <td>
+              保持・復元の成功数、切替TTFT、再Prefill
+              token数、RAM。履歴再送による回答成功だけではKV復元成功と判定しない。
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">2〜5件を同時に生成できるか</th>
+            <td>
+              短文・max-context32Kでphysical2/3/4/5を順に評価。plain batchとBatch
+              MTPを分け、対照のphysical1と比較する。要求が並んだだけか、実slotで同時進行したかも確認する。
+            </td>
+            <td>
+              完了・エラー数、実同時slot数、各会話tok/s、合計tok/s、MainのTTFT・速度低下、状態混入、ピークRAM。同時要求を送れたことだけでは並列対応と判定しない。
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        初回は画像生成を併走させず、音声Providerの状態と他workloadを記録する。MemAvailable
+        16GiBを下回る、swap使用が試験中に増え続ける、GPU
+        reset・状態混入が発生する場合は実験を停止する。短文試験通過後にWorker64K、Main256K、音声共存、Turbo共存へ進む。短文の並列成功を256K＋64K×4の成功へ外挿しない。
+      </p>
+      <p>
+        利用者はその後、モデル取得・試験開始・全Providerの一時停止を明示的に許可した。repository外で本体・PLE・MTPの取得と検証、gfx1151
+        build・selftest・生成試験を実施した。初回の長入力・同時推論は1回warmup＋3回測定とし、短・中入力は3回warmup＋10回測定。target-onlyの長文と長入力を含む全アブレーションは後続検証に残す。
+      </p>
+    </section>
+    <p>
+      以下は次の実装・評価段階で実行する計画であり、今回は未実行。既存weight・承認済みengine・隔離port・既存依存が揃うことを前提にする。新しいモデル取得やbuildはここから自動実行しない。結果はrepository外へ置く。
+    </p>
+    <ol>
+      <li>
+        host CPU/GPU、kernel、ROCm/hipBLASLt、GTT、MemTotal、BIOS/TDP、engine/source/binary
+        hash、model shard digest、pack、KV、全flags/envを記録。LARM経由のresolved
+        profile/route/runtime/release/instanceも記録する。
+      </li>
+      <li>
+        Gemma現行Profileをそのままbaselineにし、Strata3形式を逐次比較する。4K、32K、64K、128K、256K内の最大実入力でcold/warm/continuation/prefix-missを区別。各fixtureのinput
+        tokensと生成tokensを実tokenizerで確認する。
+      </li>
+      <li>
+        最低3 warmup＋10 matched反復、ABBA等の交互順序、固定prompt/output
+        length/seed/effortで測定。coldプロセス起動とwarm
+        engineを別計測し、drop_caches等で共有ホストを変更しない。品質はgreedyと通常samplingの両方で評価。
+      </li>
+      <li>
+        TTFTは最初の非空content token、thinking有ならfirst reasoningとfirst spoken
+        contentも別測定。Prefillは実read token/time、cache reused tokensを除外。Decodeはengine
+        decode-onlyとend-to-endの両方、並列はper-request rateと総throughput、p50/p95・最大queue
+        waitを記録。
+      </li>
+      <li>
+        logical 5固定でphysical cap
+        1/2/3/4/5を変える。全員を64Kにした対照とMain256K/Worker64Kを混ぜた本条件、長Worker
+        Prefill中のMain割込み、batch↔solo migration、5件交互turn、context上限までのgrowthを試す。
+      </li>
+      <li>
+        同じ日本語audio fixtureでASR単体、LLM＋ASR、LLM＋TTS、LLM＋両者を比較。ASR
+        RTF/CER/queue・input drop、TTS first playable audio/underrunを計測。画像はQwen-Image 2.1
+        Turbo
+        AD-Q4_Kのみを対象とし、現行の8ステップ設定で512/768/1024を比較する。起動時・denoise・decode時にMainを投入してcancel完了・TTFTを確認し、解像度別のピークRAMを予約量の校正に使う。
+      </li>
+      <li>
+        MemAvailable最低値、DRM client allocation、cgroup
+        current/peak/swap、RSS/PSS、PSI、pswpin/out、GPU busy/reset、major fault、disk
+        readを同時記録。LLM
+        load、最大Prefill、restore、parking切替、画像loadをそれぞれpeak対象にする。
+      </li>
+      <li>
+        日本語100題、coding50題、tool50題を初期proposalとし、既存consumer fixturesを再利用する。tool
+        JSON完全性、schema遵守、複数call、tool resultの次turn、キャンセル中の部分引数未実行、CJK
+        2K〜8K長出力の反復を採点する。
+      </li>
+    </ol>
+    <table>
+      <caption>
+        個別アブレーション。品質を変えるarmと配置のみのarmを分ける
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">比較</th>
+          <th scope="col">主な検査</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">MTP</th>
+          <td>
+            soloで <code>--spec 2 --suffix-draft 0 --lookup-chain 0</code>、MTP省略のtarget-only vs
+            MTP＋spec2/4/6。lookup-chain効果はMTPと分けて比較する。
+          </td>
+          <td>
+            accepted/offeredをdepth別、time/accepted token、thinking別品質。raw
+            file容量をRAM効果と混同しない。native IQ
+            packはspec≥2を起動条件にするためspec0/1で無効化しない。
+            <code>generate.cpp:10609</code>のserve
+            loopはMTPとlookupなしなら1token/roundになる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Batch MTP</th>
+          <td>同じNslotsでoff/on、N=2/3/4/5</td>
+          <td>実slot数、修正type継承、5slot rotation、各request starvation、総rateとMain rate。</td>
+        </tr>
+        <tr>
+          <th scope="row">Expert Cache</th>
+          <td>実bytes換算で4/8/12GiB目標、static/adaptive、resident arena vs CPU complement</td>
+          <td>
+            hit、CPU/GPU miss、host/cache重複、page fault、品質。flagのNはslot数でありMiBではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">HIP kernel</th>
+          <td>
+            <code>STRATA_GFX1151_DEFAULTS=0</code> vs defaults、tuning表有/無、opt-in fused
+            switchesを1つずつ
+          </td>
+          <td>
+            parity、KL/PPL、long retrieval、短tool-result TTFT。実際に使われたkernelをlogで確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">KV</th>
+          <td>FP16/INT8/K8V4/Q4_0、resident0 vs32768</td>
+          <td>
+            圧縮率、peak、PPL、multi-needle、長要約、反復、restore。FP16でメモリを満たさなければ負荷を下げて別条件と明記。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">cache</th>
+          <td>parking0 vs12GiB、full-capture vsretention、prefix hit/miss</td>
+          <td>
+            5会話state隔離、snapshot bytes、eviction、restore time、reused
+            tokens。tokenの完全一致は固定配置・greedy等の比較条件でのみ評価。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Prefill/PLE</th>
+          <td>chunk256/512/1024/8192、borrow on/off、PLE direct vsmmap</td>
+          <td>
+            preempt遅延、cache borrow副作用、SSD readとRAM。PLE ramは予算に余裕がある別条件だけ。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <details>
+      <summary>将来の読取り・HTTP・既存toolによるコマンド例</summary>
+      <p>
+        <code>STRATA_ROOT</code
+        >は承認後に用意した実checkout、<code>STRATA_EXE</code>は固定SHAの実binary、<code>STRATA_CONFIG</code>は既存packへの絶対pathを持つ実config、<code>BENCH_OUT</code>はrepository外の結果先を指定する。これらは現在存在する新配備を表すものではない。
+      </p>
+      <pre><code># 読取りのみ。配備前の環境確認
+uname -a
+cat /proc/meminfo
+cat /proc/pressure/memory
+cat /proc/vmstat
+systemctl show qwen-asr.service voicevox-tts.service qwen-tts.service --property=MainPID,ControlGroup,MemoryCurrent,MemoryPeak
+cat /sys/class/drm/card*/device/mem_info_gtt_total
+
+# 承認済み隔離Strataが起動した後のreadyとcapability確認
+curl -fsS "$STRATA_URL/health"
+curl -fsS -H "Authorization: Bearer $STRATA_KEY" "$STRATA_URL/v1/status"
+curl -fsS -H "Authorization: Bearer $STRATA_KEY" "$STRATA_URL/metrics"
+
+# 既存upstream HTTP load tool。--wordsは要求する回答長でありprompt長指定ではない
+python3 "$STRATA_ROOT/tools/serve_load.py" "$STRATA_URL" --clients 1,2,3,4,5 --rounds 10 --max-tokens 256 --model strata --json "$BENCH_OUT/serve-load.json"
+python3 "$STRATA_ROOT/tools/needle_bench.py" --url "$STRATA_URL" --api-key "$STRATA_KEY" --lengths 32k,128k,262k --depths 10,50,90 --out "$BENCH_OUT/needle.json"
+STRATA_KEY="$STRATA_KEY" python3 "$STRATA_ROOT/tools/early_close_test.py" "$STRATA_URL"
+
+# engine直接parity。fresh engineを立てるので配備後の隔離実験でのみ実施
+python3 "$STRATA_ROOT/tools/batch_test.py" --exe "$STRATA_EXE" --config "$STRATA_CONFIG" --batch 5 --n 5 --max-new 256 --extra '--pcie-frac 0 --adapt-every 1000000 --no-prefill-borrow' --dump "$BENCH_OUT/batch5.json"
+python3 "$STRATA_ROOT/tools/batch_interleave_test.py" --exe "$STRATA_EXE" --config "$STRATA_CONFIG" --long 65536 --max-new 256
+python3 "$STRATA_ROOT/tools/parking_test.py" --exe "$STRATA_EXE" --config "$STRATA_CONFIG" --extra '--conversation-cache-mib 12288 --conversation-cache-slots 5'
+
+# serial save/restore。parallel設定時は501となるのが現在の契約
+curl -fsS -X POST "$STRATA_URL/slots/0?action=save" -H "Authorization: Bearer $STRATA_KEY" -H 'Content-Type: application/json' -d '{"filename":"worker1.bin"}'
+curl -fsS -X POST "$STRATA_URL/slots/0?action=restore" -H "Authorization: Bearer $STRATA_KEY" -H 'Content-Type: application/json' -d '{"filename":"worker1.bin"}'
+
+# LARM既存mixed計測。評価用routeがStrataへ解決したことを結果で確認する
+LARM_PERF_SCENARIOS=llm-sse,asr,tts,mixed-sse LARM_PERF_ITERATIONS=10 LARM_PERF_WARMUPS=3 LARM_PERF_LLM_MAX_TOKENS=256 LARM_PERF_OUTPUT="$BENCH_OUT/larm-mixed.json" bun run perf:diagnostic</code></pre>
+      <p>
+        <code>needle_bench.py</code
+        >は単純needleの補助試験であり256Kの会話品質・全capacityを証明しない。<code>serve_load.py</code>もmixed
+        context/SLO
+        schedulerを検証するtoolではない。Main割込み、5会話保持、token計数、peak連続採取を含む追加driverは将来の実装工程で作成する。既存LARM
+        mixed計測は固定capability routeを使うので、既存Gemmaへ解決した結果をStrata実測と表示しない。
+      </p>
+    </details>
+  </section>
+
+  <section id="implementation-plan">
+    <h2>10. 将来の変更対象、段階導入、受入条件</h2>
+    <table>
+      <caption>
+        実装時の変更候補。今回は文書以外を変更しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">変更・影響</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">local-node catalogs</th>
+          <td>
+            <code>agent-connections.yaml</code
+            >、<code>routes.yaml</code>、<code>runtimes.yaml</code>、<code>nodes.yaml</code>。Strata
+            canaryのMain/Worker、量子化明示、logical5/physical1、校正予算。既存defaultを先に切替えない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">deploy/release</th>
+          <td>
+            <code>deploy/local-node/systemd/</code
+            >、<code>sources.lock.yaml</code>、<code>models.yaml</code>、release/artifact
+            manifest。source・binary・GGUF・packをrepository外に配置して固定。systemd
+            KillModeとreadiness、起動後の実slot降格検出。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">core</th>
+          <td>
+            <code>schema.ts</code
+            >、<code>admission.ts</code>、<code>service-resource-ledger.ts</code>、<code>agent-connection.ts</code>。必要最小限のresource
+            policy、追加メモリ予約、requestごとのcontext budget。model名の条件分岐を作らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">daemon</th>
+          <td>
+            <code>execution-gate.ts</code
+            >、<code>gateway.ts</code>、<code>gateway-request-lifecycle.ts</code>、allocation
+            admission/preemption、connection管理。request
+            cancel/replayをlease失効から分離。SSE確定・tool transaction・停止確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">backends</th>
+          <td>
+            <code>systemd.ts</code
+            >、<code>linux-node-telemetry.ts</code>、<code>context-tokenizer.ts</code>。loaded-aware
+            probe、UMA観測、tokenizer
+            adapter。必要時だけ内部cache制御transportを追加し、Strata専用control planeを複製しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">画像</th>
+          <td>
+            <code>media-variants.ts</code
+            >、<code>runtime-variants.yaml</code>、<code>qwen-image21-turbo-provider.py</code>。GPU共有gateと明示cancel/stop
+            ack。pause/resumeを必要とする場合は別のengine能力契約を追加。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">検証</th>
+          <td>
+            既存OpenAI contract・audio・lifecycle・priority・media試験を再利用。LARM
+            workload測定driver、5会話切替、cancel/recoveryの統合fixtureだけ追加。実装後に
+            <code>bun run check</code>。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <ol>
+      <li>
+        <strong>段階0：調査完了。</strong>この文書とsource
+        revision・不確実性をレビュー。公式値・推定値・追加の実機測定を区別して保持する。
+      </li>
+      <li>
+        <strong>段階1：隔離single runtime。</strong
+        >必要容量確認後に別工程でengineとIQ3_XXSを準備。32K solo、INT8、fixed Expert Cache、PLE
+        direct、音声なしでready、SSE、tools、cancel、restartを検証。Gemma rollbackを保持。
+      </li>
+      <li>
+        <strong>段階2：5論理、物理1。</strong
+        >64Kから262Kへ増やし、5会話parking、Main優先割込み、全state restore、token
+        cap、audio共存を検証。disk保存はHIP試験後に有効化する。
+      </li>
+      <li>
+        <strong>段階3：量子化と最適化。</strong
+        >IQ3_S/IQ2_XSを逐次比較し、cache/complement/MTP/kernel/KVを個別校正。品質とMain
+        SLOを満たす量子化を選ぶ。
+      </li>
+      <li>
+        <strong>段階4：並列2→3→4→5。</strong>実slot数と均一262K確保を検証。plain batch後にBatch
+        MTP。Main保護が崩れるNを許可しない。Main時はphysical1のfallbackを残す。
+      </li>
+      <li>
+        <strong>段階5：Turbo画像生成との共存。</strong>既存Turbo
+        Providerのみを要求時に起動し、現行予約でadmission可能な時間のみ実行する。解像度別の実peakと停止ackを測り、共存不能ならP4待機という結果を採用する。処理後は画像モデルを解放し、Mainの応答性能と16GiB空きfloorを受入条件にする。
+      </li>
+      <li>
+        <strong>段階6：本番置換。</strong
+        >明示Profileのcanary、24時間soak、監査・回復・rollback確認後にrouteを置換。releaseの適用はその段階で別途扱う。
+      </li>
+    </ol>
+    <table>
+      <caption>
+        提案受入条件。製品側で未確定の絶対SLOはこの値から調整する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">観点</th>
+          <th scope="col">gate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Main応答</th>
+          <td>
+            cached短turn（追加入力≤512、thinking off）のTTFT
+            p95≤2秒、Worker競合時の増分≤500msかつdecode低下≤10%。cold256K
+            TTFTは別計測し即時会話SLOから隠さない。全量constant外挿より速い等を条件にしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">中断</th>
+          <td>
+            cancel ack
+            p95≤500msを暫定目標。Main投入まで前requestのGPU仕事が残らない。満たさなければchunk調整・engine協調yield拡張か本番見送り。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">音声</th>
+          <td>
+            入力drop・TTS underrunゼロ、ASR RTF p95&lt;1、既存ASR CERとTTS品質を悪化させない。GPU
+            ASR競合でMain rate条件を外す場合は配置・chunkを再設計する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">メモリ</th>
+          <td>
+            load/prefill/restore/切替/画像を含めMemAvailable≥16GiB、OOM・GPU
+            resetゼロ、当該負荷で継続swap-in/outを発生させない。unknown
+            telemetry、未反映予約は新規P3/P4を拒否。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">5論理session</th>
+          <td>
+            Main262K/Worker64K×4の容量を証明し、token
+            cap越えを拒否、100round以上の交互切替で状態混入ゼロ。cache
+            eviction時も会話正本を失わずre-Prefillできる。選んだRAM
+            budgetでmiss率と最大復元時間を公開。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">品質・Tools</th>
+          <td>
+            同じfixtureでGemmaと比較し、重大tool誤実行・部分JSON実行・CJK反復collapseゼロ。定義した日本語/coding評価で許容差を先に固定して採点する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">並列</th>
+          <td>
+            N=2〜5を個別に合格させる。total throughputだけで採否を決めずMain per-request
+            SLOを維持。fallback slot数へのsilent降格を検知。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">復旧</th>
+          <td>
+            kill/engine stall/server再起動でreadyの誤判定ゼロ。確定後のtoolを重複実行しない。RAM
+            state喪失とdisk不一致を明示して再開。24h soakでwatchdog・state
+            corruption・重大漏れゼロ。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">画像</th>
+          <td>
+            memory
+            admissionとMain割込みを両方満たす。pause/resume非対応なら取消・再実行と表示し、HTTP取消でnative
+            jobが放置されない。満たせない場合は待機運用を正式結果とする。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      上流変更が必要になる条件は、parallel中のdisk
+      save/restore、物理slotごとのcapacity、slot優先decode、外部suspend/resume、HIP
+      cache縮小、同一templateのHTTP
+      token計数を標準化したい場合である。LARMはengine内部buffer・GPU発行順・diffusion
+      stateを所有しないため、HTTP入口のpriority
+      queueだけではこれらを実現できない。初期serial＋parking運用なら多くを必要とせず導入できる。
+    </p>
+  </section>
+
+  <section id="sources">
+    <h2>11. 根拠資料</h2>
+    <p>
+      外部sourceは以下のURLを参照。Strataのfileについては冒頭の固定SHAで確認した。公開文書は開発元の主張、Issuesは限定環境の報告として用いた。これらのURL文字列は出典であり、外部assetをこの文書へ埋め込まない。
+    </p>
+    <ul>
+      <li>
+        Strata
+        source固定起点：<code>https://github.com/Niko1221/Strata/tree/fb58e0dbc8399662c0e47c76578c6e878b14f6cf</code>。実読取り：<code>CMakeLists.txt</code>、<code>src/program/generate.cpp</code>、<code>src/core/session.cpp</code>、<code>layer.cpp</code>、<code>verify.cpp</code>、<code>mtp.cpp</code>、<code>pinned.cu</code>、<code>expert_source.cpp</code>、<code>expert_cache.cpp</code>、<code>arch_defaults.cpp</code>、conversation
+        state/snapshot/file/cache、KV/QSA
+        headers、<code>src/prefill/prefill.cpp</code>、<code>serve/server.py</code>、runconfig/telemetry/prometheus。
+      </li>
+      <li>
+        公式：<code>https://github.com/Niko1221/Strata/blob/fb58e0dbc8399662c0e47c76578c6e878b14f6cf/docs/STRIX_HALO.md</code>、同SHAの
+        <code>AMD_HIP.md</code
+        >、<code>BATCHING.md</code>、<code>DETAILS.md</code>、<code>MODELS.md</code>、<code>VRAM_ELASTIC.md</code>、prefix文書。bench
+        tool引数は実sourceから確認した。
+      </li>
+      <li>原版config：<code>https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/de4b8e4d43b917e7706784d8bb445c9af86a3540/config.json</code>。</li>
+      <li>
+        量子化card/file metadata：<code>https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/tree/ed59f92082b1e93c0e96d60a8b11aab089b52f09</code>。GB表示ではなくHF
+        APIのLFS bytesも確認した。
+      </li>
+      <li>
+        Issues：<code>https://github.com/Niko1221/Strata/issues/1139</code>、<code>1121</code>、<code>1712</code>、<code>1705</code>、<code>1468</code>、<code>1785</code>、<code>1135</code>、<code>1827</code>、<code>1809</code>、<code>1842</code>、<code>1791</code>。番号は同じrepositoryのIssue
+        pathに対応し、状態と最新commentを調査日に確認した。
+      </li>
+      <li>
+        HIP公式reference：<code>https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___stream.html</code>。ROCm
+        source：<code>https://github.com/ROCm/clr/blob/develop/hipamd/src/hip_stream.cpp</code>。target ROCm
+        buildでの実効priorityは未検証。
+      </li>
+      <li>
+        LARM既存仕様：<a href="./provider-priority-scheduling.html">優先度・preemption</a>、<a
+          href="./saaa-gemma4-26b-voice-profile-preparation.html"
+          >現行Gemma Profile</a
+        >、<a href="./qwen-image-2.1-turbo-on-demand.html">画像要求時運用</a>、<a
+          href="./qwen-image-2.1-turbo-benchmark.html"
+          >画像実機メモリ</a
+        >、<a href="./asr-alternative-evaluation.html">ASR競合評価</a
+        >。既存specの過去実測と今回のread-only観測を混同していない。
+      </li>
+    </ul>
+  </section>
+</article>

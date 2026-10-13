@@ -1,0 +1,29 @@
+[Unit]
+Description=LARM temporary Granite Speech 4.1 2B Q8 Vulkan ASR
+After=local-fs.target
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/larm-granite-trial/provider
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=OPENBLAS_NUM_THREADS=16
+Environment=OMP_NUM_THREADS=16
+Environment=PYTHONPATH=/srv/ai/apps/asr-eval-20261012/transcribe.cpp/bindings/python/src
+Environment=TRANSCRIBE_LIBRARY=/srv/ai/apps/asr-eval-20261012/transcribe.cpp/build-vulkan/src/libtranscribe.so
+Environment=LD_LIBRARY_PATH=/srv/ai/apps/asr-eval-20261012/deps/root/usr/lib/x86_64-linux-gnu/openblas-pthread
+Environment=GRANITE_ASR_MODEL=/srv/ai/models/asr-eval-20261012/granite-speech-4.1-2b-Q8_0.gguf
+ExecStart=/srv/ai/apps/larm-granite-trial/.venv/bin/uvicorn granite_api:app --host 127.0.0.1 --port 8089 --workers 1 --no-access-log
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+LimitNOFILE=65535
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/srv/ai/cache /srv/ai/logs
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

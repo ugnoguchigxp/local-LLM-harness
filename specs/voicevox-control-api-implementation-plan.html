@@ -14,8 +14,8 @@
     <dd><time>2026-09-22</time></dd>
     <dt>状態</dt>
     <dd>
-      WP1〜WP3と複数VVM source境界を実装。男性系4.vvmはidentity固定済み、operator同意・staging・
-      local-node配備待ち
+      WP1〜WP3と複数VVM
+      source境界を実装。2026-10-12、利用者の追加download依頼により4.vvmを取得・検証・配備し、音声サービスの公開話者を4人から6人へ拡張。既定話者は春日部つむぎを維持。
     </dd>
     <dt>対象endpoint</dt>
     <dd>
@@ -35,6 +35,38 @@
     </p>
   </aside>
 
+  <section id="speaker-expansion-2026-10-12">
+    <h2>2026-10-12の話者追加</h2>
+    <p>
+      多言語TTSの実機試聴後、利用者は現行VOICEVOXを最良と判断した。一方で、現在のアプリで選べる話者が4人しかなく使いにくいとの指摘を受けた。live
+      Providerのhealthとvoice
+      catalogを確認すると、0.vvmだけがロードされ、四国めたん・ずんだもん・春日部つむぎ・雨晴はうの4人を公開していた。アプリ表示だけの制限とはせず、導入済み音声モデルによるProvider側の制約を確認した。
+    </p>
+    <p>
+      利用者の明示的な追加download依頼を受け、source
+      lockで固定済みの0.16.4版4.vvmを取得した。58,211,265 bytes、SHA-256
+      <code>da5aaad87d5b7ea5b346def2e610cc63e64a90088bb0fc2d27fb63a622113953</code
+      >が一致し、外部runtimeの<code>models/vvms/4.vvm</code>へregular
+      fileとして配置。verify-external-assets.tsで既存0.vvmと追加4.vvmのidentity検証に成功した。
+    </p>
+    <p>
+      既存releaseのadapterとsystemdは4.vvmの任意ロードに対応済みで、sourceやunitの変更は不要だった。独立processで6話者のロードと追加2話者の合成を確認した後、利用者が認証手段の使用を許可し、voicevox-tts.serviceだけを再起動した。再起動後はhealthがhealthy、vvm_filesが0.vvmと4.vvm、公開catalogが6人となった。追加は玄野武宏（Kurono_Takehiro、normal
+      style 11）と剣崎雌雄（Kenzaki_Mesuo、normal style 21）。既定話者はKasukabe_Tsumugiのまま。
+    </p>
+    <p>
+      live HTTPで追加2話者と既定話者のWAV合成・credit
+      headerの検証に成功した。生成音声のcreditはVOICEVOX:玄野武宏、VOICEVOX:剣崎雌雄、VOICEVOX:春日部つむぎ。音声と取得前後のcatalog、checksum、offline検証は<code>/srv/ai/results/larm/tts/2026-10-12-voicevox-expansion</code>に保存した。秘密情報は結果やログへ記録していない。
+    </p>
+    <p>
+      SAAAの手元のworktreeには別作業の未commit変更があったため、変更・pull・reset・stash・実装の現行扱いは行わなかった。アプリ画面での6人表示は未確認であり、Providerの公開catalogの拡張と区別する。利用者はアプリで話者一覧を再取得して表示を確認する。モデルの追加は音声選択肢の拡張であり、表示用アバター画像の追加ではない。
+    </p>
+    <p>
+      話者とVVMの対応・音声モデル利用規約は<a
+        href="https://github.com/VOICEVOX/voicevox_vvm/blob/0.16.4/README.md"
+        >公式0.16.4 README</a
+      >を参照する。
+    </p>
+  </section>
   <section id="implementation-record">
     <h2>Source実装記録</h2>
     <ul>

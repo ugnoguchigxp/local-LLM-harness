@@ -22,6 +22,314 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="contract" data-state="current" data-domain="ornith-image-input">
+          <th scope="row">
+            <a href="./ornith-image-input-implementation-2026-10-13.html"
+              >Ornith画像入力の発見・事前計数・予算検査</a
+            >
+          </th>
+          <td>
+            LARMの画像parts、上限、正確な計数、保持metadataと安定error。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ornith-image-input</code></small
+            >
+          </td>
+          <td>2026-10-13。release 86e879abe56eを配備し、合成画像21項目のlive受入が成功。</td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="historical"
+          data-successor="ornith-image-input-implementation-2026-10-13.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-13"
+          data-target-revision="8be02d62ba8fed3287fa239f84890a5f188925ea"
+          data-domain="eumenes-ornith15-image-input-contract-audit"
+        >
+          <th scope="row">
+            <a href="./eumenes-ornith15-image-input-contract-audit-2026-10-13.html"
+              >Eumenes向けOrnith 1.5画像入力契約の配備版確認</a
+            >
+          </th>
+          <td>
+            配備schema、engine処理、既存画像試験を照合し、wire・予算・保持の確認範囲を整理。<small
+              >分類: <code>research</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>eumenes-ornith15-image-input-contract-audit</code></small
+            >
+          </td>
+          <td>
+            旧配備8be02d62ba8fの読取調査。後継:
+            <a href="./ornith-image-input-implementation-2026-10-13.html" rel="successor"
+              >実装・配備済みの画像入力契約</a
+            >。<small data-audit-summary="true"
+              >2026-10-13、対象revision 8be02d62ba8fed3287fa239f84890a5f188925ea。</small
+            >
+          </td>
+        </tr>
+        <tr
+          data-kind="decision"
+          data-state="current"
+          data-domain="profile-cleanup-and-unused-models"
+        >
+          <th scope="row">
+            <a href="./profile-cleanup-and-unused-models-2026-10-13.html"
+              >旧profile 8件の削除と未使用モデル候補</a
+            >
+          </th>
+          <td>
+            了承された旧定義の整理、継続するモデル参照と候補容量。<small
+              >分類: <code>decision</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>profile-cleanup-and-unused-models</code></small
+            >
+          </td>
+          <td>2026-10-13 11:18 JST。8件を削除し本番APIを確認済み。モデル本体は保管中。</td>
+        </tr>
+        <tr data-kind="research" data-state="current" data-domain="profile-retirement-candidates">
+          <th scope="row">
+            <a href="./profile-retirement-candidates-2026-10-13.html"
+              >古いAgent Profileの整理候補</a
+            >
+          </th>
+          <td>
+            稼働catalogと直近7日のmetadataから旧定義・比較候補・継続用途を整理。<small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>profile-retirement-candidates</code></small
+            >
+          </td>
+          <td>2026-10-13 JST。優先5件と比較用3件。削除・停止は未実施。</td>
+        </tr>
+        <tr
+          data-kind="decision"
+          data-state="current"
+          data-domain="granite-asr-standard-dialogue-provider"
+        >
+          <th scope="row">
+            <a href="./granite-asr-standard-dialogue-provider-2026-10-13.html"
+              >Granite 4.1の音声対話標準ASR</a
+            >
+          </th>
+          <td>
+            Strixを基準とする標準設定、固定artifact、常駐runtime、正式releaseと復元。<small
+              >分類: <code>decision</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>granite-asr-standard-dialogue-provider</code></small
+            >
+          </td>
+          <td>
+            2026-10-13 09:49
+            JST。正式反映済み。Strix・Gemmaの本番API、署名releaseと全体checkを検証。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="granite-asr-temporary-profile-trial"
+        >
+          <th scope="row">
+            <a href="./granite-asr-temporary-profile-trial-2026-10-12.html"
+              >SAAA-gemma4-26bのGranite ASR一時切り替え</a
+            >
+          </th>
+          <td>
+            HTTP adapter、原設定の保存、API検証、管理者適用と復元。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>granite-asr-temporary-profile-trial</code></small
+            >
+          </td>
+          <td>
+            2026-10-12 13:20
+            JST。Graniteへ一時切り替え済み。本番API経由の短文・長文認識と復元手順を確認。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="gemma4-kittentts-resident-provider"
+        >
+          <th scope="row">
+            <a href="./gemma4-kittentts-resident-provider-2026-10-12.html"
+              >Gemma4へのKittenTTS英語常駐Provider追加</a
+            >
+          </th>
+          <td>
+            対象識別、英日TTS併存、CPU HTTP adapter、署名release準備と適用手順。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>gemma4-kittentts-resident-provider</code></small
+            >
+          </td>
+          <td>
+            2026-10-12
+            JST。本番反映済み。CPU常駐、Rosie／HugoのLARM経由生成とrelease後の常駐維持を検証。Eumenesの通常ttsはVOICEVOXを維持。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="kittentts-nano-rosie-hugo-evaluation"
+        >
+          <th scope="row">
+            <a href="./kittentts-nano-rosie-hugo-evaluation-2026-10-12.html"
+              >KittenTTS NanoのRosie／Hugo適合性・速度・メモリ</a
+            >
+          </th>
+          <td>
+            395／8060SでFP32・INT8、CPUスレッド数、起動・RSS・同時推論・読みを実測。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>kittentts-nano-rosie-hugo-evaluation</code></small
+            >
+          </td>
+          <td>
+            2026-10-12 JST。英語アバター候補はFP32 CPU
+            4スレッド。通常短文0.14〜0.15秒、直列peak約621 MiB。音声と重みは外部保存。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="inflect-nano-english-and-japanese-trial"
+        >
+          <th scope="row">
+            <a href="./inflect-nano-english-and-japanese-trial-2026-10-12.html"
+              >Inflect Nano v2の英語と日本語強制発話</a
+            >
+          </th>
+          <td>
+            英語・原文日本語・ローマ字・IPAの12条件36音声。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>inflect-nano-english-and-japanese-trial</code></small
+            >
+          </td>
+          <td>
+            2026-10-12
+            JST。男性ボイスしか選べないため利用者判断で不採用。英語2文はASR一致。日本語は誤読・欠落あり。CPU実測と音声を外部保存。
+          </td>
+        </tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="asr-http-compatibility-and-streaming"
+        >
+          <th scope="row">
+            <a href="./asr-http-compatibility-and-streaming-plan-2026-10-12.html"
+              >Eumenes不変更のASR三方式試用とWebSocketの判断</a
+            >
+          </th>
+          <td>
+            HTTP adapter、ASRだけの選択、接続・catalog整合性、preview取消と将来streaming。<small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>asr-http-compatibility-and-streaming</code></small
+            >
+          </td>
+          <td>2026-10-12設計。HTTP維持を推奨。Eumenes変更・本番切替・新adapter実装なし。</td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="tts-customvoice-pronunciation-and-streaming"
+        >
+          <th scope="row">
+            <a href="./tts-customvoice-pronunciation-and-streaming-2026-10-12.html"
+              >Qwen CustomVoiceの発音比較とTTSの逐次入力</a
+            >
+          </th>
+          <td>
+            高速化0.6B・1.7Bを同条件で聴き比べ、Kokoro GPUと音声・文字streamの違いを評価。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>tts-customvoice-pronunciation-and-streaming</code></small
+            >
+          </td>
+          <td>
+            2026-10-12 JST。Qwen 1.7B
+            CustomVoiceは前半の品質により不採用。発音・prompt・PCM到着履歴の実測を保存。Kokoroは候補を継続。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="tts-multilingual-speed-benchmark"
+        >
+          <th scope="row">
+            <a href="./tts-multilingual-speed-benchmark-2026-10-12.html"
+              >Qwen3-TTS全5版・多言語TTSの生成速度比較</a
+            >
+          </th>
+          <td>
+            395 / 8060Sで日本語・英語・日英混在の生成時間を比較。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>tts-multilingual-speed-benchmark</code></small
+            >
+          </td>
+          <td>
+            2026-10-12
+            JST測定完了。Qwen全5版・Kokoro・Fish・VOICEVOX、12構成273件と読み検証。モデル・生成音声はrepository外。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="asr-tts-japanese-evaluation"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-12"
+          data-target-revision="05f0222eda4420fe86fb28efb4d89dec312afd0a"
+        >
+          <th scope="row">
+            <a href="./asr-tts-japanese-evaluation-2026-10-12.html"
+              >日本語TTS音声によるASR三候補の実機評価</a
+            >
+          </th>
+          <td>
+            24音声・三候補・現行対照の精度と速度、Granite CPUの追加確認。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>asr-tts-japanese-evaluation</code></small
+            >
+          </td>
+          <td>
+            初回評価完了。Granite Vulkanが先行候補、本番変更なし。<small data-audit-summary="true"
+              >時点監査: 2026-10-12、対象revision 05f0222eda4420fe86fb28efb4d89dec312afd0a。</small
+            >
+          </td>
+        </tr>
+        <tr data-kind="research" data-state="proposed" data-domain="asr-short-voice-model-research">
+          <th scope="row">
+            <a href="./asr-short-voice-model-research-2026-10-12.html"
+              >395向け日本語ASR：短発話の精度と応答速度</a
+            >
+          </th>
+          <td>
+            Cohere・QwenのAMD実行方式・Granite・streaming候補を既存実測と比較。<small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>asr-short-voice-model-research</code></small
+            >
+          </td>
+          <td>実測前の候補調査。後続のTTS実機評価への追記あり。自然発話での優位は未確認。</td>
+        </tr>
+        <tr data-kind="research" data-state="proposed" data-domain="swift15-gsq-rco-evaluation">
+          <th scope="row">
+            <a href="./swift15-gsq-rco-evaluation-2026-10-11.html"
+              >Swift 1.5 GSQ-RCO：395での性能・品質評価</a
+            >
+          </th>
+          <td>
+            Thinking短縮・MTP・混合精度を現行Qwenと同条件で評価。<small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>swift15-gsq-rco-evaluation</code></small
+            >
+          </td>
+          <td>2026-10-11試験中。既存LLMの一時停止はユーザー許可済み。本番切り替えなし。</td>
+        </tr>
         <tr data-kind="plan" data-state="proposed" data-domain="eumenes-music-api-handoff">
           <th scope="row">
             <a href="./eumenes-music-api-handoff.html"
@@ -36,6 +344,166 @@
             >
           </td>
           <td>2026-10-11更新。LARMは配備・実機確認済み。Eumenesの実装・送信は未実施。</td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="current"
+          data-domain="contextstill-strix-consolidation"
+        >
+          <th scope="row">
+            <a href="./contextstill-strix-consolidation-2026-10-13.html"
+              >通常Ornithの参照とContextStillのStrix統合案</a
+            >
+          </th>
+          <td>
+            通常版の残存参照、Strix共有時の能力宣言と4枠、標準コード用の移行条件。<small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>contextstill-strix-consolidation</code></small
+            >
+          </td>
+          <td>2026-10-13。変更前の稼働設定の調査。後続の共有構成仕様を別文書に保存。</td>
+        </tr>
+        <tr
+          data-kind="decision"
+          data-state="implemented"
+          data-domain="contextstill-strix-shared-providers"
+        >
+          <th scope="row">
+            <a href="./contextstill-strix-shared-providers-2026-10-13.html"
+              >用途別プロファイルとContextStill・StrixのProvider共有</a
+            >
+          </th>
+          <td>
+            別profile・公開モデル名を維持し、LLM・ASR・日英TTSを共有。<small
+              >分類: <code>decision</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>contextstill-strix-shared-providers</code></small
+            >
+          </td>
+          <td>
+            2026-10-13。多枠の共有とswap排他を区別。実機でPID・instance・容量・APIを確認する検証入口を追加。
+          </td>
+        </tr>
+        <tr data-kind="decision" data-state="implemented" data-domain="eumenes-request-preemption">
+          <th scope="row">
+            <a href="./eumenes-request-preemption-2026-10-13.html"
+              >Eumenes要求ごとのContextStill中断と資源解放</a
+            >
+          </th>
+          <td>
+            前景要求中だけ排他。背景lease・stream・実行枠を解放し、共通モデルを保持。<small
+              >分類: <code>decision</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>eumenes-request-preemption</code></small
+            >
+          </td>
+          <td>
+            2026-10-13。用途別の内部方針で制御。旧SAAA名による固定排他を置換し、再取得とstream切断を検証。
+          </td>
+        </tr>
+        <tr data-kind="decision" data-state="implemented" data-domain="ornith15-strix-profile">
+          <th scope="row">
+            <a href="./ornith15-strix-profile-2026-10-12.html"
+              >Gemma4構成を引き継ぐornith1.5Strix</a
+            >
+          </th>
+          <td>
+            専用route・runtime、固定STRIX_LEAN artifact、4枠と共有512K
+            KV、稼働設定からのコピー。<small
+              >分類: <code>decision</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>ornith15-strix-profile</code></small
+            >
+          </td>
+          <td>
+            2026-10-12。本番反映済み。主256K＋補助64K×3の作成・同時応答・5つ目の待機・解放後の昇格を確認。4同時decodeは各30.5〜32.4
+            tok/s。
+          </td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="ornith-three-candidate-trial">
+          <th scope="row">
+            <a href="./ornith-three-candidate-trial-2026-10-12.html">Ornith復帰候補3種の実機試験</a>
+          </th>
+          <td>
+            STRIX_LEAN、ArtomYuan Q6_AGENT、Ciru Halo AgentをGemmaと比較。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ornith-three-candidate-trial</code></small
+            >
+          </td>
+          <td>
+            2026-10-12実機試験。STRIX_LEAN約65、Q6_AGENT約45 tok/s。Ciruは44 GiB
+            cacheの確保でOOM。通常profileの切替なし。
+          </td>
+        </tr>
+        <tr data-kind="research" data-state="proposed" data-domain="gemma4-alternative-candidates">
+          <th scope="row">
+            <a href="./gemma4-alternative-candidates-2026-10-11.html"
+              >Gemma 4代替候補：395での速度とツール・エージェント性能</a
+            >
+          </th>
+          <td>
+            公開品質・395実測を分けて候補を評価。Laguna XS 2.1、Lightning、Qwen Coder
+            30Bと受入条件。<small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>gemma4-alternative-candidates</code></small
+            >
+          </td>
+          <td>
+            2026-10-11調査。Gemma維持、代替の同条件優位は未確認。追加取得・試験・本番変更なし。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="strata-first-trial"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-10"
+          data-target-revision="fb58e0dbc8399662c0e47c76578c6e878b14f6cf"
+        >
+          <th scope="row">
+            <a href="./strata-first-trial-2026-10-10.html"
+              >Strata初回実機試験：生成速度・長文品質・セッション運用</a
+            >
+          </th>
+          <td>
+            IQ3_XXSとGemmaの速度・5,000token長文・限定品質試験、5論理会話と同時推論、メモリ・復旧証跡。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>strata-first-trial</code></small
+            >
+          </td>
+          <td>
+            初回測定完了。5論理会話・2〜5同時推論を確認、通常サービス復旧済み。<small
+              data-audit-summary="true"
+              >時点監査: 2026-10-10、対象revision fb58e0dbc8399662c0e47c76578c6e878b14f6cf。</small
+            >
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="proposed"
+          data-domain="strata-integration-resource-plan"
+        >
+          <th scope="row">
+            <a href="./strata-integration-research-and-plan-2026-10-10.html"
+              >Strata統合・128GB UMA資源管理の調査と導入計画</a
+            >
+          </th>
+          <td>
+            公式source・Issues、5論理session、メモリ予算、Main優先scheduler、benchmarkと段階導入。<small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>strata-integration-resource-plan</code></small
+            >
+          </td>
+          <td>
+            2026-10-10
+            条件付き採用。調査・設計のみ。実装、install、model取得、build、commit・pushは未実施。
+          </td>
         </tr>
         <tr
           data-kind="contract"
@@ -81,6 +549,28 @@
             ExcalidrawをLARM外で実装。隔離実機で1000件作成と7018件復元を確認。正式配備とEumenes接続は未実施。
           </td>
         </tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="eumenes-excalidraw-ocr-opencv-integration-prompts"
+        >
+          <th scope="row">
+            <a href="./eumenes-excalidraw-ocr-opencv-integration-prompts-2026-10-13.html"
+              >Eumenes向けExcalidraw・OCR・OpenCV連携プロンプト</a
+            >
+          </th>
+          <td>
+            ExcalidrawのWeb起動とブラウザ到達URL、OCR・物体認識のbackend API利用を三つの依頼文に分離
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>eumenes-excalidraw-ocr-opencv-integration-prompts</code></small
+            >
+          </td>
+          <td>
+            2026-10-13。受信APIとhosting契約を照合。Eumenes実装・正式配備・consumer登録は未実施
+          </td>
+        </tr>
         <tr data-kind="plan" data-state="proposed" data-domain="eumenes-document-calendar-services">
           <th scope="row">
             <a href="./eumenes-document-calendar-services-evaluation-2026-10-09.html"
@@ -98,6 +588,72 @@
           <td>
             2026-10-09
             公開sourceと隣接checkoutを確認。リクエスト起動・無操作停止の利用者方針を反映。詳細設計は提案、実装・配備は未実施。
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="current"
+          data-domain="ruri-streaming-speech-segmentation"
+        >
+          <th scope="row">
+            <a href="./ruri-streaming-speech-segmentation-prototype-2026-10-12.html"
+              >Ruri読み上げ言語・境界判定の追加要件と予備試作</a
+            >
+          </th>
+          <td>
+            原文区間・確定・入力版のAPI案、固定ストリーム、token出力ONNX、独立head学習と評価。<small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ruri-streaming-speech-segmentation</code></small
+            >
+          </td>
+          <td>
+            2026-10-12
+            試作・固定試験・実Ruri隔離評価済み。精度不足で本接続は見送り。実TTS・Eumenes・実機器は未検証。
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="current"
+          data-domain="ruri-sentence-language-classification"
+        >
+          <th scope="row">
+            <a href="./ruri-sentence-language-classification-2026-10-12.html"
+              >Ruri文章単位の日英二分類：400文学習と追加50文判定</a
+            >
+          </th>
+          <td>
+            日本語200・英語200の全件学習、凍結後に追加した50文の独立判定、データと再実行。<small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ruri-sentence-language-classification</code></small
+            >
+          </td>
+          <td>
+            2026-10-12
+            INT8・FP32とも追加50／50正解。短文・引用・URLの一部に誤判定あり。ローマ字は利用者指定で当面対象外。
+          </td>
+        </tr>
+        <tr
+          data-kind="contract"
+          data-state="current"
+          data-domain="ruri-sentence-language-resident-integration"
+        >
+          <th scope="row">
+            <a href="./ruri-sentence-language-resident-integration-2026-10-12.html"
+              >Ruri文章言語判定の常駐組込み</a
+            >
+          </th>
+          <td>
+            共有encoder、新Providerの発見・確保・choice API、旧態度回帰、準備済みHTTP性能。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ruri-sentence-language-resident-integration</code></small
+            >
+          </td>
+          <td>
+            2026-10-12 署名release反映・公開API接続済み。50／50正解、単独P95
+            1.87〜3.16ms、態度同時P95 8.48ms。既存態度・認証・更新・解放も確認。
           </td>
         </tr>
         <tr data-kind="plan" data-state="proposed" data-domain="eumenes-ruri-training-data-handoff">
@@ -657,7 +1213,9 @@
               <code>voicevox-control-api-implementation-plan</code></small
             >
           </td>
-          <td>Source実装済み。男性系voice assetのoperator同意・staging・local-node配備待ち</td>
+          <td>
+            Source実装済み。2026-10-12に4.vvmを配備し、公開話者を4人から6人へ拡張。追加2人と既定話者のlive合成を確認。
+          </td>
         </tr>
         <tr
           data-kind="plan"
@@ -1066,6 +1624,50 @@
             >
           </td>
           <td>既存 policy・variant を再利用。OCR と OpenCV の API・runtime は未定義</td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="proposed"
+          data-domain="ocr-video-object-recognition-selection"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-13"
+          data-target-revision="05f0222eda4420fe86fb28efb4d89dec312afd0a"
+        >
+          <th scope="row">
+            <a href="./ocr-video-object-recognition-selection-2026-10-13.html"
+              >OCR・動画オブジェクト認識OSSの選定</a
+            >
+          </th>
+          <td>
+            Ryzen AI Max+ 395向けRapidOCR・OpenCV・YOLO26の選定と実機評価条件
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>ocr-video-object-recognition-selection</code></small
+            >
+          </td>
+          <td>
+            選定時点の記録。構築と実測は別手順書、本配備は未実施
+            <small data-audit-summary="true"
+              >2026-10-13 · revision: 05f0222eda4420fe86fb28efb4d89dec312afd0a</small
+            >
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="proposed" data-domain="ocr-object-on-demand-hosting">
+          <th scope="row">
+            <a href="./ocr-object-on-demand-hosting-2026-10-13.html"
+              >OCR・物体認識のオンデマンド構築手順と実機結果</a
+            >
+          </th>
+          <td>
+            Excalidraw方式の独立アプリ、lease、idle停止、CPUモデル、MacBook向け入口と正式配置手順
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>ocr-object-on-demand-hosting</code></small
+            >
+          </td>
+          <td>隔離実機28項目とブラウザ確認が合格。sudo認証が必要なroot/systemd配備は未実施</td>
         </tr>
         <tr
           data-kind="plan"

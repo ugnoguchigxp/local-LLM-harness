@@ -29,7 +29,7 @@ export function createAppRequestPolicy(
     try {
       c.header("x-larm-boot-epoch", identity.bootEpoch);
       c.header("x-larm-config-revision", deps.getConfigRevision?.() ?? identity.configRevision);
-      if (c.req.path === "/v1/activity") c.header("cache-control", "no-store");
+      if (c.req.path === "/v1/activity" || c.req.path === "/v1/chat/completions/input-tokens") c.header("cache-control", "no-store");
       if (isPersonalStateApiPath(c.req.path)) c.header("cache-control", "no-store");
       if (/^\/v1\/(?:local-services|local-service-leases|management\/local-services)(?:\/|$)/.test(c.req.path)) {
         await next(); return; // Local service routes enforce their own scoped credentials.
@@ -61,6 +61,7 @@ export function createAppRequestPolicy(
         && !gatewayReadiness.ready
         && new Set([
           "/v1/chat/completions",
+      "/v1/chat/completions/input-tokens",
           "/v1/audio/transcriptions",
           "/v1/audio/speech",
           "/v1/embed",

@@ -4,6 +4,7 @@ import {
   admittedAllocation,
   admitRuntimes,
   getRuntime,
+  runtimeSetsConflict,
   type Allocation,
   type Registry,
 } from "@larm/core";
@@ -52,15 +53,14 @@ export function hasAllocationResourceConflict(
   predicate: (allocation: Allocation) => boolean,
   exclusive: boolean,
 ): boolean {
-  const requested = allocationResourceKeys(registry, runtimeIds, exclusive);
   return allocations.some((allocation) => {
     if (!predicate(allocation)) return false;
-    const existing = allocationResourceKeys(
+    return runtimeSetsConflict(
       registry,
+      runtimeIds,
       allocation.bindings.map((binding) => binding.runtime),
       exclusive,
     );
-    return [...requested].some((key) => existing.has(key));
   });
 }
 

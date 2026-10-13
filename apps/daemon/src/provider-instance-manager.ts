@@ -16,6 +16,7 @@ type ManagedInstance = {
   warmRefs: number;
   idleDeadline?: string;
   idleTimer?: ReturnType<typeof setTimeout>;
+  stopWhenIdle?: boolean;
 };
 
 type EnsureFlight = {
@@ -64,6 +65,7 @@ export class ProviderInstanceManager {
     );
     if (!record) return undefined;
     this.cancelIdle(record);
+    record.stopWhenIdle = false;
     record.refs.allocation.add(allocationId);
     this.emit("provider_instance_reused", record);
     return record.instance;
@@ -182,6 +184,7 @@ export class ProviderInstanceManager {
       }
     }
     this.cancelIdle(record);
+    record.stopWhenIdle = false;
     record.refs.allocation.add(allocationId);
     return record.instance;
   }
@@ -225,9 +228,11 @@ export class ProviderInstanceManager {
     this.scheduleIfIdle(record);
   }
 
-  releaseAllocation(allocationId: string): void {
+  releaseAllocation(allocationId: string, immediateIdle = false): void {
     for (const record of this.byId.values()) {
-      if (record.refs.allocation.delete(allocationId)) this.scheduleIfIdle(record);
+      if (!record.refs.allocation.delete(allocationId)) continue;
+      if (immediateIdle && record.warmRefs === 0) record.stopWhenIdle = true;
+      this.scheduleIfIdle(record);
     }
   }
 
@@ -281,7 +286,7 @@ export class ProviderInstanceManager {
     if (this.referenceCount(record) > 0 || record.warmRefs > 0) return;
     this.cancelIdle(record);
     const configured = managedWarmPolicy(record.runtime).idleTtlSeconds * 1_000;
-    const ttl = this.options.idleTtlMs ?? configured;
+    const ttl = record.stopWhenIdle ? 0 : this.options.idleTtlMs ?? configured;
     const expectedGeneration = record.instance.generation;
     record.idleDeadline = new Date(this.now() + Math.max(0, ttl)).toISOString();
     const stop = () => void this.stopIfIdle(record.instance.id, expectedGeneration);

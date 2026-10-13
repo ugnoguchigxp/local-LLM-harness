@@ -106,8 +106,6 @@ type EvaluationOptions = {
 
 const BACKCHANNEL_SELECTORS: Record<string, AgentProfileSelectorId> = {
   "contextstill-backchannel-qwen35-2b": "backchannelQwen35",
-  "contextstill-backchannel-lfm25-jp-1.2b": "backchannelLfm25Jp",
-  "contextstill-backchannel-gemma3-1b": "backchannelGemma3",
 };
 
 type CaseResult = BackchannelCase & {
@@ -327,8 +325,6 @@ if (import.meta.main) {
     const profiles = (process.env.LARM_BACKCHANNEL_PROFILES
       ?? [
         "contextstill-backchannel-qwen35-2b",
-        "contextstill-backchannel-lfm25-jp-1.2b",
-        "contextstill-backchannel-gemma3-1b",
       ].join(","))
       .split(",")
       .map((value) => value.trim())

@@ -1,0 +1,246 @@
+<article lang="ja">
+  <h1>Gemma4マルチセッションへのKittenTTS英語常駐Provider追加</h1>
+  <p>
+    2026-10-12 JSTの利用者指示に基づき、Gemma4の英語TTSとしてKittenTTS Nano FP32を常駐追加した。
+    管理者unit登録、全体check付き署名release反映、LARM経由のRosie／Hugo音声生成、声一覧、
+    release後のcredential失効と常駐維持まで検証済み。日本語VOICEVOXと補助64K契約は維持する。
+  </p>
+  <section id="identification">
+    <h2>対象の識別</h2>
+    <table>
+      <caption>
+        利用者のいうGemma4構成と稼働catalogの対応
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">識別結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">公開selector</th>
+          <td><code>SAAA-gemma4-26b</code></td>
+        </tr>
+        <tr>
+          <th scope="row">メインAgent Profile</th>
+          <td><code>saaa-conversation-gemma4-26b-voice</code>、256K</td>
+        </tr>
+        <tr>
+          <th scope="row">補助selector</th>
+          <td><code>SAAA-gemma4-26b-64k</code>、LLMのみ、64K×3</td>
+        </tr>
+        <tr>
+          <th scope="row">共通LLM経路</th>
+          <td>
+            <code>llm-saaa-gemma4-26b</code> →
+            <code>gemma4-26b-conversation</code>。512K共有KV pool・4 slots
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">既存の日本語TTS</th>
+          <td>
+            <code>tts</code> →
+            <code>tts-voicevox</code> →
+            <code>voicevox-tts</code>、公開model
+            <code>voicevox-core</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">追加する英語TTS</th>
+          <td>
+            <code>tts-english</code> →
+            <code>tts-kittentts-nano</code> →
+            <code>kittentts-nano</code> →
+            <code>kittentts-tts.service</code>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      稼働LARMのv3 catalogはこのGemma構成を返す。反映前releaseは
+      <code>8a8a2596df40b5fb2fa5b50cc6a853166f617a8c</code>、config revisionは
+      <code>3d1cecc714cb877ec1e49e4701a0db8d4a90aef097f3e465c18b3649b81095a1</code>。
+      8080で動いていたOrnithをGemmaの構成不良とは解釈しない。別workloadの実行状態である。
+    </p>
+    <p>
+      このPCにあるEumenesの参照コードは同じGemma selectorとメインcontext契約を明示する。
+      音声用途はプロファイル全体を要求し、追加Providerがあっても既存の必須Providerを名前で探す。
+      ただし通常speakは<code>tts</code>を選ぶため、本追加だけで英語へ自動切替しない。
+      利用中のEumenes端末の保存設定・声選択・現在Connection IDは取得していない。
+      コード上の対応と、利用者の端末で現在どの声を選択しているかを区別する。
+    </p>
+    <p>
+      SAAAのworktreeには既存の未保存変更があるためpullも実装参照も行っていない。
+      LARMの稼働catalog、LARM設定、Eumenesの参照コードで対象を照合した。
+    </p>
+  </section>
+  <section id="configuration">
+    <h2>追加構成</h2>
+    <ul>
+      <li>
+        Gemmaメインは6
+        Provider。日本語<code>tts</code>と英語<code>tts-english</code>を別名・別capabilityで同時に公開する。
+      </li>
+      <li>
+        英語capabilityは<code>speech.tts.english</code>、protocolは<code>openai.audio-speech.v1</code>、公開modelは<code>kitten-tts-nano-0.8-fp32</code>。
+      </li>
+      <li>
+        英語runtimeはCPU 4スレッド、managed
+        lifecycle、<code>minInstances: 1</code>、メモリ見積1.5 GB。
+      </li>
+      <li>
+        HTTPは127.0.0.1:8088のみ。1
+        workerでEspeakと推論を直列化。LARMの同時要求1、待ち行列2、待ち期限5秒。
+      </li>
+      <li>
+        Gemma補助64K、ContextStill、既定SAAAのProvider集合は変更しない。Gemmaの画像・音楽selectorは共通メインprofileを使うため追加を共有する。
+      </li>
+      <li>
+        専用公開model用の<code>tts-english</code>
+        profileも用意し、control認証でモデル一覧・声一覧を取得できる。
+      </li>
+    </ul>
+    <p>
+      ONNX、voices.npz、config.jsonはモデルmanifestに別の固定artifactとして登録し、runtime releaseで
+      3ファイルをまとめる。revision、サイズ、SHA-256を固定し、Provider起動時にも照合する。
+      推論エンジンとPython環境は<code>/srv/ai/apps/kittentts-runtime</code>、重みは
+      <code>/srv/ai/models/kittentts/fp32</code>。ソースrepositoryに重み・生成音声を含めない。
+      追加実行環境の依存はrequirements.lockで固定する。
+    </p>
+  </section>
+  <section id="http-contract">
+    <h2>HTTP契約と声</h2>
+    <p>
+      <code>GET /health</code
+      >、<code>GET /v1/models</code>、<code>GET /v1/audio/voices</code>、
+      <code>POST /v1/audio/speech</code
+      >を実装。modelは固定、声は既定8種、default_voiceはRosie。
+      Rosieはfeminine、Hugoはmasculine、languageはen。speedは0.5〜2.0。 出力は24 kHz
+      monoのWAVまたはsigned little-endian PCM16。
+    </p>
+    <p>
+      数字前処理を常に有効にし、音声ピークが0.98を超えた場合のみ全体gainを下げる。
+      空文字・日本語混在・未対応声・未知model・未対応format・NaN・4096文字超を拒否する。 request
+      bodyは64 KiB上限で、Content-Lengthなしの分割送信でも上限を適用する。
+      同時backend要求は429とRetry-Afterを返す。読み上げ本文をアクセスログに記録しない。
+      pitch／intonation／style指定や音声chunk streamingは実装していない。
+    </p>
+    <p>
+      公式0.8.1の句読点・略語の文分割は維持する。文字fragmentからの逐次合成や進行中の
+      ONNX呼び出しの中断は追加していない。英語専用を明示することで日本語Providerと区別する。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証と反映手順</h2>
+    <p>
+      HTTP adapterの8試験が成功。WAV／PCM、声一覧、Rosie／Hugo切替、数字前処理、容量制限、
+      同時要求拒否と復帰、無効音声拒否、artifact破損拒否を確認した。 実モデルを一時loopback port
+      18088で起動し、両声ともHTTP 200・24 kHz WAVを生成した。
+      短文の単発HTTP実測はRosie約0.26秒、Hugo約0.15秒。前処理ありの単発値で、先行5反復の
+      ベンチマーク中央値とは測定条件が異なる。
+    </p>
+    <p>
+      設定・契約試験はGemmaの追加、既存日本語経路の維持、他profileへの非追加、常駐ポリシー、
+      公開モデル・Provider数を確認する。全体check、専用Python試験、文書checkを実行する。
+      本番smokeはGemmaの<code>providers: ["tts-english"]</code>だけを要求し、LLMを切り替えずに
+      discovery → claim → 声一覧 → Rosie／Hugo生成 → release → credential失効を検証する。
+    </p>
+    <ol>
+      <li>専用環境と固定重みを準備し、実モデルのHTTP試験を行う。</li>
+      <li>
+        既存の作業中変更を混ぜずに独立sourceを作成し、全体check付きの署名release候補を準備する。
+      </li>
+      <li>
+        管理者権限で<code>install-kittentts-service.sh</code>を実行し、新規unitと限定polkit規則を登録する。
+      </li>
+      <li>
+        既存の署名release watcherへ候補を提出し、LARM再起動後のcatalog・常駐実体・HTTP
+        smokeを確認する。
+      </li>
+    </ol>
+    <p>
+      新規unit登録は/etc/systemd/systemと/etc/polkit-1/rules.dへの書込を伴う。
+      利用者が保存済み認証情報の使用を明示したため、登録とProvider再起動を完了した。 署名release
+      watcherによるLARM再起動とcontract verificationも成功した。
+    </p>
+    <pre><code>sudo bash /srv/ai/apps/local-LLM-harness/deploy/local-node/scripts/install-kittentts-service.sh
+bun run deploy/local-node/scripts/smoke-kittentts-profile.ts</code></pre>
+    <p>
+      単体HTTP結果・検証ログは<code>/srv/ai/results/larm/tts/2026-10-12-kittentts</code>、
+      本番smoke音声とevidence.jsonは同配下の<code>deployed</code>へ保存する。
+      先行評価は<a href="./kittentts-nano-rosie-hugo-evaluation-2026-10-12.html"
+        >Nano Rosie／Hugo評価</a
+      >。 稼働catalog更新後は既存Agent Connectionを取得し直す必要がある。
+    </p>
+  </section>
+  <section id="deployed-acceptance">
+    <h2>本番反映と受入結果</h2>
+    <dl>
+      <dt>稼働release</dt>
+      <dd><code>c5f5c318201ae2004cf3bc3c3a61c2573cf4bb62</code></dd>
+      <dt>稼働config revision</dt>
+      <dd><code>84c1a419819df32890983dab02b0cd97a8e937ba8028ddca0111b06a483ec2f7</code></dd>
+      <dt>常駐Provider</dt>
+      <dd>
+        127.0.0.1:8088、kittentts-tts.service、HOT、warmRefs=1。接続release後にallocation／request／mutation
+        refsは全て0で、サービスはactiveを維持した。
+      </dd>
+      <dt>観測メモリ</dt>
+      <dd>
+        2件の短文生成後のプロセスRSSは約478
+        MiB。長文・同時要求を含む先行ベンチマークpeakとは区別する。
+      </dd>
+      <dt>検証日時</dt>
+      <dd>
+        2026-10-12 11:51
+        JST。desiredReleaseとobservedReleaseが一致し、contract_verified／succeeded。
+      </dd>
+    </dl>
+    <table>
+      <caption>
+        LARMのGemma英語Providerをclaimして生成した短文
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">声</th>
+          <th scope="col">HTTP</th>
+          <th scope="col">生成・受信時間</th>
+          <th scope="col">WAV bytes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Rosie</th>
+          <td>200</td>
+          <td>約0.165秒</td>
+          <td>250044</td>
+        </tr>
+        <tr>
+          <th scope="row">Hugo</th>
+          <td>200</td>
+          <td>約0.131秒</td>
+          <td>192444</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      両声のWAVを保存し、release後に同じProvider credentialが401になることを確認。
+      日本語のvoicevox-core声一覧もHTTP 200、default Kasukabe_Tsumugi、6声・全てjaで確認した。
+      Eumenesの現在の声選択を取得した結果ではない。
+    </p>
+    <p>
+      新しいProviderの声一覧はVOICEVOX固有のspeaker UUIDや数値style IDを持たないため、
+      OS非依存のcoreでgenericなvoice discovery契約を追加した。既存VOICEVOXのstrict schemaは維持し、
+      default声の存在・声ID重複・control範囲・未知fieldを検証する。実adapterが返す8声のJSONも契約に適合した。
+      署名候補の全体checkはBun試験752＋24＋56件、全て成功。専用Python 8試験も成功。
+    </p>
+    <p>
+      実測証跡は<code>/srv/ai/results/larm/tts/2026-10-12-kittentts/deployed/evidence.json</code>と
+      <code>after-release.json</code>、Rosie.wav、Hugo.wavに保存した。
+      反映sourceは<code>/srv/ai/apps/larm-kittentts-source-20261012</code>の
+      <code>codex/gemma4-kittentts-nano</code
+      >。既存worktreeの他の作業中変更をreleaseへ混ぜていない。
+    </p>
+  </section>
+</article>

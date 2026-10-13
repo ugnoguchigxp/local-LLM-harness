@@ -1,0 +1,154 @@
+<article lang="ja">
+  <h1>Eumenes向けプロンプト：ExcalidrawのWeb起動とOCR・OpenCVのAPI利用</h1>
+  <p>
+    2026年10月13日。利用者指定により、Excalidrawはオンデマンド起動したWebアプリのURLを提供し、OCRと物体認識はEumenes
+    backendからAPIとして利用する三つの実装依頼文に分けた。Eumenesの実装・送信・設定変更は本資料作成では行っていない。
+  </p>
+  <p>
+    参照：<a href="./on-demand-artifact-hosting-implementation-plan-2026-10-09.html"
+      >Excalidrawのhosting手順</a
+    >、<a href="./ocr-object-on-demand-hosting-2026-10-13.html">OCR・物体認識の構築手順</a
+    >。正式systemd配備と稼働中LARMへの登録は完了した。現在の正式入口はExcalidraw 18790、OCR
+    18794、物体認識18796、共通controlは9810。隔離入口は以前の実機検証の記録である。
+  </p>
+  <section id="authentication">
+    <h2>共通認証と追加キー入力の省略</h2>
+    <p>
+      Eumenes
+      backendの既存設定<code>LARM_API_TOKEN</code>を使い、三つのgatewayへの業務要求に<code>Authorization: Bearer &lt;LARM_API_TOKEN&gt;</code>を付ける。利用者に別の接続キーを入力させず、tokenをブラウザ、URL、公開HTML、モデル引数へ渡さない。未認証・誤ったtokenの要求は401で拒否する。
+    </p>
+    <p>
+      gatewayはこのtokenを検証し、既存の業務owner
+      tokenへ置き換えてworkerへ中継する。workerにはLARM_API_TOKENを渡さない。lifecycle用とgateway内部のLARM制御用tokenは引き続き別にする。Excalidrawの画面は認証済みの中継からhosting状態を確認し、接続キー入力を省略できる。
+    </p>
+    <p>
+      正式installerは既定で<code>/etc/larm/larm.env</code>からtokenを読み、gateway設定に読込先を記録し、許可されたserviceだけの<code>eumenes-hosted-apps</code>consumerを登録する。読込先の変更は<code>--larm-api-token-env-file</code>で指定する。登録後のlease操作にも同じBearerを使う。tokenを変更したらconsumer登録を同期し、gatewayを再起動する。
+    </p>
+    <p>
+      隔離入口はExcalidraw 18780、OCR 18784、物体認識18786。隔離controlはExcalidraw
+      18782、OCR・物体認識18788であり、稼働中LARMの9810とは別である。正式root/systemd配備は完了している。通常利用は正式入口と共通control
+      9810を使う。
+    </p>
+  </section>
+  <section id="api-token-evidence">
+    <h2>共通tokenでの実機確認</h2>
+    <p>
+      2026年10月13日。隔離入口の三つで同じLARM_API_TOKENのBearerを受理し、未認証と誤ったtokenを401で拒否した。限定consumerによるlease取得・解放と許可serviceの照合、日本語画像OCR、bus画像の物体検出、両方の動画jobと別ownerの404、idle停止後の結果再取得を確認した。
+    </p>
+    <p>
+      Excalidrawの新規保存、版指定更新、export、別ownerの404、idle停止後の再表示を確認した。認可済みEumenesセッションを模した中継とChromiumで、接続キー入力なしの画面表示、ブラウザのHTML・URL・要求にAPI
+      tokenが含まれないこと、page
+      errorがないことを確認した。実際のEumenes実装とMacBook実機試験ではない。
+    </p>
+    <p>
+      LARMのbun run check、Excalidrawのbun run
+      check、OCR・物体認識のPython単体6件は合格した。prepareを更新し、正式配置用digestはExcalidrawが<code>bddfbed49e857afa414c035377d734714a2e7545f6312d7a1067e5fc0bc2b93f</code>、OCR・物体認識が<code>7e97dbc683e120e5dbcea7382749bf4f5c4cfd2575f496f6db304baff4695811</code>になった。installerのdry-runも合格した。この節は管理者実行許可前の隔離検証記録である。後続作業で正式root/systemd配備と稼働中LARMのconsumer登録を完了した。
+    </p>
+  </section>
+  <section id="formal-deployment">
+    <h2>正式systemd配備と検証結果</h2>
+    <p>
+      2026年10月13日。利用者の管理者実行許可を受け、外付けSSDのUUIDを確認してExcalidraw・OCR・物体認識を正式配置し、稼働中LARMへ統合した。LARMは同じreleaseのまま再起動し、限定consumer
+      eumenes-hosted-appsに三つのserviceを登録した。新規の常駐モデルはenableせず、三つのgatewayだけを自動起動にした。
+    </p>
+    <p>
+      正式入口はLinux側の127.0.0.1:18790、18794、18796であり、controlは既存の9810。Eumenes
+      backendはすべてに同じLARM_API_TOKENのBearerを送信する。leaseのendpointは内部workerの照合用であり、業務要求は設定したgatewayへ送る。MacBookからは認可された中継またはSSH
+      forwardingを使い、ブラウザにtokenを渡さない。
+    </p>
+    <p>
+      実機で日本語画像OCR、bus画像と動画の物体認識、動画OCR、取消用API契約、完了結果の保持、同じtokenのlease取得・解放、許可serviceの制限を確認した。Excalidrawの新規保存、版指定更新、export、idle停止後の再取得を確認した。動画解析と完了結果の再取得は正式workerで実行した。idle待機は短縮せずOCR・物体認識が60秒、Excalidrawが120秒の設定で停止を確認した。
+    </p>
+    <p>
+      専用UIDはlarm-excalidrawとlarm-vision-ocr。実processとcgroup、MemoryMaxとCPUQuota、SSDの書込みmountを確認した。LARMの全checkとcontroller単体12件は合格した。Chromiumで認可済みEumenesセッションを模した中継を使い、追加キー入力なし、tokenの非露出、page
+      errorなしを確認した。実際のEumenes実装とMacBookのカメラ試験は未実施。
+    </p>
+    <p>
+      正式起動で見つかった二点を修正した。LARM
+      journalをdaemon所有の/var/lib/larm/local-services/state/journal.jsonへ配置し、同期restart失敗も設定復旧の対象にした。systemdが未起動unitをunloadするとreset-failedが失敗するため、失敗状態のmemberだけをresetするようcontrollerを修正した。root固定controllerと登録manifestのhashを同期し、三つともpreflightを再確認した。適用したcontroller
+      SHA-256は<code>7805810e2efde63f7ab759ad8397274e0cf99f1e87b3e20a1e1f5d4fee2d6940</code>。初回配備のapp
+      releaseとデータは保持している。新規配備では修正版sourceから再prepareし、その時点のdigestを使う。
+    </p>
+  </section>
+  <section id="excalidraw">
+    <h2>Excalidraw：オンデマンド起動してWebアプリを開く</h2>
+    <pre>EumenesからExcalidrawを必要なときに起動し、利用者がブラウザで編集できるURLを返す機能を実装してください。EumenesのAGENTS.mdに従い、initial_instructions MCPを作業開始時に実行し、既存のLARM接続・会話・アーティファクト表示に沿って変更してください。
+
+目的は「図を描く／編集する」を選ぶ → 準備中を表示 → 起動完了 → Excalidrawを開く、という操作です。図を再表示するときも、保存済みの図IDと版から復帰できるようにしてください。
+
+【起動とURL】
+- LARMのLocal Service IDはexcalidraw-hostです。Eumenes backendからPOST /v1/local-services/excalidraw-host/leasesへJSON {}とIdempotency-Keyを送ります。Eumenes backendのLARM_API_TOKENをAuthorization: Bearerとして送ってください。許可serviceに限定したeumenes-hosted-apps consumerの登録が必要です。LLMのclaim tokenや管理者tokenと混同しないでください。
+- startingの場合はGET /v1/local-service-leases/{leaseId}でreadyまで待ちます。必要に応じてPOST /v1/local-service-leases/{leaseId}/renewで更新し、generationとbootEpochを照合してください。既存のClientLocalServicesが再利用できます。
+- readyのendpointはbackend用です。Linux側の127.0.0.1 URLをMacBookのブラウザへ返して完成扱いにしないでください。
+- Eumenesが認証済み利用者向けのWeb入口を提供し、準備完了後に実際に開けるURLを返してください。起動操作やURL応答のEumenes APIは新設する契約として定義し、実装済みとは仮定しないでください。
+- 正式配備済みのhosted gatewayはLinux側127.0.0.1:18790です。固定ポートをサービスidentityとして扱わず、設定した入口とleaseのbindingを使ってください。
+- 既存Excalidraw画面のasset、/api/documents、/auth/session、/activityなどのルート相対URLを確認し、base path対応または専用originで解決してください。prefix付きproxyだけで画面・保存が動くとは仮定しないでください。
+- Eumenesの認証をbackendで仲介し、gatewayへのAPI・hosting状態・activity要求にLARM_API_TOKENのBearerを付けてください。通常操作で長期接続キーの手入力を要求しない構成にしてください。service tokenをURL・公開HTML・モデル引数へ埋め込まず、上流のOrigin・Host検査に合う中継を実装してください。
+
+【利用中と保存】
+- 編集・保存などの実操作が続く間は利用権を維持します。無操作で解放し、次の操作で再起動して復帰してください。タブ表示や監視pollだけで常駐させないでください。
+- 保存未確定・保存失敗中の図と下書きを保護し、原本はExcalidrawのscene保存APIで保存してください。画面を閉じる操作はleaseの解放であり、共有サービスの強制停止ではありません。
+- UIには準備中、利用可能、起動失敗、保存失敗、再接続を表示してください。
+
+【確認と前提】
+- sourceは/srv/ai/apps/excalidraw-host、LARMの既存手順は/srv/ai/apps/local-LLM-harness/specs/on-demand-artifact-hosting-implementation-plan-2026-10-09.htmlです。
+- 正式systemd配備とeumenes-hosted-apps consumer登録は確認済みです。Eumenes backendからの到達経路を確認してください。製品のDB・設定・秘密をコピーしないでください。
+- coldからの起動、MacBookで開けるURL、描画・保存・再表示、無操作停止、次の操作での復帰を検証してください。Eumenesの対象domain検証と、横断変更ならverify:allを実行し、fixture・live・MacBook実機の結果を分けて報告してください。</pre>
+  </section>
+  <section id="ocr">
+    <h2>OCR：画像・動画の文字起こしAPIを利用する</h2>
+    <pre>EumenesからOCR APIを呼び、添付画像・撮影画像・短い動画の文字を抽出して、会話やアーティファクトで利用できる機能を実装してください。EumenesのAGENTS.mdに従い、initial_instructions MCPを作業開始時に実行し、既存のLARM接続・添付ファイル・会話・結果表示に沿って変更してください。
+
+OCRはbackendから利用するAPIです。利用者が別のOCR Webアプリを開くことを通常フローの前提にしないでください。「文字を読み取る」操作、または認可されたagent toolから呼び出せるようにしてください。
+
+【API接続】
+- service IDはocr-hostです。正式配備済みのhosted gatewayはLinux側http://127.0.0.1:18794、現在の隔離検証用入口はhttp://127.0.0.1:18784です。base URLはbackend設定から取得し、既存のLARM_API_TOKENをAuthorization: Bearerとして送ってください。利用者に別のキー入力を要求しないでください。Eumenes backendが別hostなら到達する中継経路が必要です。
+- gatewayの認証付きPOST /api/analyzeが必要なworkerをオンデマンドで起動します。Eumenesが任意のsystemd commandを実行する必要はありません。これらはgateway originからのパスで、LARM Controlの/v1配下のOCR APIではありません。
+- multipart/form-dataでfileを一つ送信します。モデル、owner、modeなどの追加form fieldは送らず、multipart boundaryはHTTP clientに生成させてください。入力は利用者が選択・撮影した、権限のあるファイルを扱ってください。
+- JPEG・PNG・WebPは同期応答です。結果はkind=image、model、width、height、text、linesです。linesはtext、confidence、polygonを持ちます。
+- MP4・MOV・WebMはHTTP 202でidとstatusUrlを返します。GET /api/jobs/{id}でqueued / running / completed / failed / cancelledを確認し、completed時のresult.framesにあるtimestampSeconds、text、linesを使用してください。SSEは現在の契約にありません。
+- POST /api/jobs/{id}/cancelで協調的に中止できます。HTTPの待機を中断しただけで上流jobが中止されたと扱わないでください。
+- 上限は16MiB、動画30秒、毎秒2枚・最大60枚です。PDFの直接入力には対応していません。
+
+【Eumenesでの活用】
+- 抽出文字を読める結果欄へ表示し、コピー、選択箇所の会話への追加、元画像・動画の該当箇所への参照を提供してください。動画は時刻別に保持してください。
+- 元資料の参照と抽出した文字を保存し、原文を勝手に要約・訂正しないでください。要約や内容分析が要求された場合は、文字起こし後の別操作として既存の会話機能へ渡してください。
+- 判読が難しい箇所を扱えるようにし、confidenceを正答確率として断定しないでください。
+- credentialはbackendに置き、ブラウザやモデルへ渡さないでください。現行上流ownerは設定token単位なので、Eumenes側でも利用者・入力資料・上流job IDの対応を管理して結果取得を認可してください。
+- 202のjob IDを保持して通信切断後に再確認します。POSTには重複防止契約がないため、自動再送で二重jobを作らないでください。取消・対象変更後の遅い応答を現在の結果へ採用しないでください。
+- APIの完了結果は停止後も取得できますが、上流は24時間経過後に回収します。Eumenesの履歴に必要な結果は権限を確認してEumenesの公開保存APIで保持し、上流DB・filesystemを直接読まないでください。
+
+【エラーと確認】
+- 準備中、解析中、完了、中止、混雑、形式・容量の不一致、接続失敗を区別してください。workerのdetail形式とgatewayのerror形式を扱ってください。状態監視だけで起動・常駐させないでください。
+- sourceは/srv/ai/apps/vision-ocr-host、手順は/srv/ai/apps/local-LLM-harness/specs/ocr-object-on-demand-hosting-2026-10-13.htmlです。
+- 正式systemd配備と同じLARM_API_TOKENによるAPI実機確認は完了しています。Eumenes側の到達経路と設定を確認し、架空の接続先やtool名を実装済みとして扱わないでください。
+- 日本語画像の文字起こし、動画の進捗・時刻、cancel、利用者の分離、idle停止と再起動、会話への取り込みを検証してください。Eumenesの対象domain検証と必要なverify:allを実行し、fixture・live・MacBook実機の結果を分けて報告してください。</pre>
+  </section>
+  <section id="opencv">
+    <h2>OpenCV：画像・動画の物体認識APIを利用する</h2>
+    <pre>Eumenesから物体認識APIを呼び、添付画像・MacBookで取得した画像や短い動画に映る物体を認識する機能を実装してください。EumenesのAGENTS.mdに従い、initial_instructions MCPを作業開始時に実行し、既存のLARM接続・添付ファイル・会話・結果表示に沿って変更してください。
+
+「OpenCV」は利用者向けの呼び方です。実際の構成はOpenCVによる画像・動画処理とYOLO26nによる物体検出です。Eumenes backendからAPIを利用し、別の物体認識Webアプリを開く操作を通常フローの前提にしないでください。
+
+【API接続】
+- service IDはobject-recognition-hostです。正式配備済みのhosted gatewayはLinux側http://127.0.0.1:18796、隔離検証用入口はhttp://127.0.0.1:18786です。base URLはbackend設定から取得し、既存のLARM_API_TOKENをAuthorization: Bearerとして送ってください。利用者に別のキー入力を要求せず、別hostの場合は到達する中継経路を用意してください。
+- gatewayの認証付きPOST /api/analyzeが物体認識workerだけをオンデマンドで起動します。OCRを必須起動しないでください。このパスはgateway originからの表記で、LARM Controlの/v1配下ではありません。
+- multipart/form-dataでfileを一つ送信します。mode、model、ownerなどの追加form fieldはありません。
+- JPEG・PNG・WebPの同期結果はkind=image、model、width、height、objectsです。objectsの各項目はclassId、label、confidence、box=[x1,y1,x2,y2]です。boxは元画像のpixel座標です。
+- MP4・MOV・WebMはHTTP 202でidとstatusUrlを返します。GET /api/jobs/{id}で進捗を確認し、completed時のresult.videoの幅・高さ、result.framesのtimestampSecondsとobjectsを使用してください。状態はqueued / running / completed / failed / cancelledです。
+- POST /api/jobs/{id}/cancelで協調的に中止できます。入力上限は16MiB・動画30秒、解析は毎秒2枚・最大60枚です。現在はSSE・追跡ID・任意の物体名を指定する検出には対応していません。
+
+【Eumenesでの活用】
+- 「映っている物を調べる」操作、または認可されたagent toolから呼べるようにしてください。認識結果の物体名と位置を会話へ渡し、元画像に枠を表示してください。
+- 動画では時刻別の検出一覧と該当時刻への移動を提供してください。枠は元画像座標から表示サイズへ変換し、アスペクト比や余白を考慮してください。
+- 標準80クラスの検出です。対象が見つからない結果を故障と混同せず、フレームの間に出現した物体をすべて拾えると保証しないでください。confidenceは校正済み確率ではありません。
+- 各フレームの同じlabelを同一個体として数えたり、商品型番・人物の本人・行動・因果関係まで確定したりしないでください。必要なら観測結果を既存の会話機能へ渡し、物体検出と解釈を区別してください。
+- credentialはbackend内に保ちます。Eumenesの認証済み利用者と入力資料・上流job IDを対応付け、結果取得・cancelを認可してください。モデル引数からownerを選ばせないでください。
+- 上流POSTの自動再送で重複jobを作らず、取得済みidから復帰してください。取消・対象変更後の古い結果を採用しないでください。必要な履歴はEumenesの公開保存APIで保持し、上流結果は24時間経過後に回収される前提で扱ってください。
+
+【確認と前提】
+- 起動待ち、解析進捗、混雑、入力不整合、認識対象なし、cancel、接続失敗を画面で区別してください。物体認識とOCRは別の操作・別のserviceとして扱ってください。
+- sourceは/srv/ai/apps/vision-ocr-host、手順は/srv/ai/apps/local-LLM-harness/specs/ocr-object-on-demand-hosting-2026-10-13.htmlです。正式systemd配備と同じLARM_API_TOKENによるAPI実機確認は完了しています。Eumenesの実接続は別途検証してください。
+- 画像で物体名と座標、短い動画で時刻別結果、MacBook入力、cancel、利用者の分離、idle停止と再起動、会話への取り込みを検証してください。Eumenesの対象domain検証と必要なverify:allを実行し、fixture・live・MacBook実機の結果を分けて報告してください。</pre>
+  </section>
+</article>

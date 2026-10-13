@@ -1,0 +1,318 @@
+<article lang="ja">
+  <h1>Ruriによる日本語・英語の文章単位二分類：400文学習と追加50文判定</h1>
+  <p>
+    2026-10-12。利用者は当面、原文全体が日本語文章か英語文章かの二分類だけを要求する。日本語200文・英語200文はすべて学習し、それとは別に判定用50文を追加する。ローマ字日本語は当面の対象外。
+  </p>
+  <aside>
+    <p>
+      後続の<a href="./ruri-sentence-language-resident-integration-2026-10-12.html">常駐組込み</a
+      >を完了し、公開モデルruri-v3-30m-sentence-languageをsentence-language
+      Providerで利用可能にした。以下の試作結果は学習時点の記録として保持し、稼働契約・公開HTTP実測は後続文書を正本とする。
+    </p>
+    <p>
+      <strong>結果：新規50文は50／50正解。</strong
+      >日本語25／25、英語25／25。INT8・FP32の両方で同じ結果。新規50文は学習・校正に一切使っていない。今回の合成データではRuriによる文章単位の二分類が成立した。
+    </p>
+    <p>
+      前の言語区間・境界・休止の試作が不足した結果から、文章単位の二分類も不可能とは判断しない。これは文章全体にja／enを一つ返す独立の実験である。実会話の精度や日英混在文のTTS振分けを保証するものではない。
+    </p>
+  </aside>
+
+  <section id="scope">
+    <h2>今回の判断対象</h2>
+    <p>
+      入力は自然な文章、出力はjaまたはenだけ。文法・文章全体の主たる言語をgoldとし、単語ごとの言語区間や読み上げ境界、休止を出さない。日本語の「CPUの使用率が上がりました。」はja、英文で日本語のボタン名を引用していても主たる文章が英文ならenとする。
+    </p>
+    <p>
+      短文、英語引用・URLを含む日本語文章の追加probeには失敗が残る。ローマ字日本語2probeは利用者の指定により現在の集計対象から除外する。元のprobe結果を削除せず、適用した対象範囲を別reportに残した。数字だけ、記号だけ、URLだけ、日英が同じ程度の段落には一意な文章言語goldがなく、通常文の精度に混ぜない。
+    </p>
+    <p>
+      この実験は<a href="./ruri-streaming-speech-segmentation-prototype-2026-10-12.html"
+        >言語区間・境界・休止の予備試作</a
+      >と別のタスク。今回の成功で、前の区間判定や再生まで完成したとは扱わない。
+    </p>
+  </section>
+
+  <section id="data">
+    <h2>作成した学習・判定データ</h2>
+    <table>
+      <caption>
+        学習400文を減らさず、校正・評価・追加判定を分離した件数
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">データ</th>
+          <th scope="col">日本語</th>
+          <th scope="col">英語</th>
+          <th scope="col">使い方</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">学習用</th>
+          <td>200</td>
+          <td>200</td>
+          <td>400文すべてをfit。ここから検証用を抜いていない。</td>
+        </tr>
+        <tr>
+          <th scope="row">別途校正用</th>
+          <td>20</td>
+          <td>20</td>
+          <td>正則化選択と温度fitだけ。学習400文と別。</td>
+        </tr>
+        <tr>
+          <th scope="row">先行実験の評価用</th>
+          <td>100</td>
+          <td>100</td>
+          <td>最初の二分類実験で評価済み。データと結果を保持し、追加50文とは分ける。</td>
+        </tr>
+        <tr>
+          <th scope="row">今回指定の追加判定用</th>
+          <td>25</td>
+          <td>25</td>
+          <td>モデルの凍結後に新規作成。今回の主評価50文。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      benchmarks/sentence-language/training400.jsonlは学習400文だけ、evaluation50.jsonlは追加50文だけ。examples.jsonlは先行実験の学習・校正・評価640文をsplit付きで保持する。corpus.pyとevaluation50.pyに元の手書き文章・対訳を置いた。
+    </p>
+    <p>
+      学習は生活、食事、交通、仕事、ソフトウェア、機器、教育、家庭、天気、会話の10題材。校正は音楽とスポーツ、先行評価は書籍・動物・写真など別10題材。追加判定は案内表示・工事・物語・支払い・位置説明の別5題材。機械的な語句置換で200件へ増やさず、各文を手書きした合成文章。
+    </p>
+    <p>
+      日英対訳は同じconversation_idに置き、同じpartitionへ固定する。題材をtemplate_groupとしてpartitionを分離し、原文・会話・group・IDの交差を検査する。先行実験では異なるpartition間のSequenceMatcher類似度0.9以上も拒否。追加50文は以前の全640文と原文・会話・group・IDが交差しないことを検査した。実利用者の会話収集や独立した人手レビューではない。
+    </p>
+  </section>
+
+  <section id="training">
+    <h2>Ruriで実際に学習したもの</h2>
+    <p>
+      cl-nagoya/ruri-v3-30mのrevision
+      24899e5de370b56d179604a007c0d727bf144504を使用。既存の平均pooling・L2正規化済み256次元文章encoderを再利用し、Ruri本体の重みは固定した。別のLogisticRegression二分類ヘッドだけを400文すべてで学習した。態度6分類のヘッド・校正を転用しない。
+    </p>
+    <p>
+      入力は「トピック: 」に原文を続ける固定形式。文書の中に「Is it
+      Japanese?」と質問して文章を生成させる処理ではなく、encoder特徴から学習ヘッドで二分類する。語句辞書、文字種の条件分岐、正規表現で言語を決めていない。
+    </p>
+    <p>
+      C候補1・10・100・1000をそれぞれ学習400文でfitし、校正40文のMacro
+      F1、同点なら小さいCを選択。INT8・FP32ともC
+      1。校正40文でscalar温度をNLL最小化し、両方とも約0.0500053。評価200文・追加50文のlabelを正則化・係数・温度に使っていない。追加50文の実行Scriptは保存済みtrain_idsが学習400文全件と一致することを検査し、fit機能を持たない。
+    </p>
+    <p>
+      校正データが小さく全件正解のため、温度は探索範囲の下端付近になった。これは実会話に対するconfidenceの正確さを示さない。短文などの誤判定でも高confidenceが出るので、confidenceを本番の正答確率として扱わない。
+    </p>
+  </section>
+
+  <section id="results">
+    <h2>判別結果</h2>
+    <table>
+      <caption>
+        先行実験とモデル凍結後の新規50文を区別した正解件数
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">INT8</th>
+          <th scope="col">FP32</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">学習400文</th>
+          <td>396／400（99.0%）</td>
+          <td>396／400（99.0%）</td>
+        </tr>
+        <tr>
+          <th scope="row">校正40文</th>
+          <td>40／40</td>
+          <td>40／40</td>
+        </tr>
+        <tr>
+          <th scope="row">先行評価200文</th>
+          <td>200／200</td>
+          <td>200／200</td>
+        </tr>
+        <tr>
+          <th scope="row">追加判定50文</th>
+          <td>50／50（100%）</td>
+          <td>50／50（100%）</td>
+        </tr>
+        <tr>
+          <th scope="row">追加50文の日本語</th>
+          <td>25／25</td>
+          <td>25／25</td>
+        </tr>
+        <tr>
+          <th scope="row">追加50文の英語</th>
+          <td>25／25</td>
+          <td>25／25</td>
+        </tr>
+        <tr>
+          <th scope="row">ローマ字を除く先行追加probe</th>
+          <td>18／21（85.7%）</td>
+          <td>16／21（76.2%）</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      追加50文の混同行列は行を正解ja／en、列を予測ja／enとして[[25,0],[0,25]]。失敗0。先行評価200文のMacro
+      F1も両precisionで1.0。通常文で成立することは確認できたが、合成50文の100%を未知の実会話全体の保証にしない。
+    </p>
+    <table>
+      <caption>
+        現在の対象範囲に残るINT8の誤判定例
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">原文</th>
+          <th scope="col">正解</th>
+          <th scope="col">予測</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Hello!</th>
+          <td>en</td>
+          <td>ja</td>
+        </tr>
+        <tr>
+          <th scope="row">設定画面で Keep me signed in を選んでください。</th>
+          <td>ja</td>
+          <td>en</td>
+        </tr>
+        <tr>
+          <th scope="row">詳しくはhttps://example.org/v2.5を見てください。</th>
+          <td>ja</td>
+          <td>en</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      FP32は上の3例に加えて「ありがとう」をen、英文「Select 「設定」 and then click the blue
+      button.」をjaと予測した。これらはprobeとして結果を保持し、失敗を見て学習例へ戻したり、新規50文の合格率へ混ぜたりしていない。今回、ローマ字を除外したことは利用者の明示的な対象範囲変更であり、元の試験結果は残した。
+    </p>
+  </section>
+
+  <section id="runtime">
+    <h2>判定の実行と速度</h2>
+    <p>
+      実験モデルIDはruri-v3-30m-sentence-language-prototype。predict.pyに保存済みmodel
+      directoryと文章を渡すとja／enだけを標準出力へ返す。--json指定時だけscore・版・推論時間を併記する。空入力と512
+      tokens超を明示拒否し、本文を切り詰めない。追加判定用50文でも同じ保存済みruntimeを使った。
+    </p>
+    <p>
+      CPUExecutionProvider、intra-op 4、inter-op 1、batch 1、OPENBLAS_NUM_THREADS
+      1。10回warmup後、各言語200回を計測し、毎回tokenizeとONNX推論を実行した。入力feature
+      cacheなし。失敗時間も集計対象、実際の失敗は0。
+    </p>
+    <table>
+      <caption>
+        準備済みローカル判定の実測時間：各言語200回
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">precision</th>
+          <th scope="col">日本語P50／P95 ms</th>
+          <th scope="col">英語P50／P95 ms</th>
+          <th scope="col">失敗</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">INT8</th>
+          <td>0.785／0.840</td>
+          <td>0.869／1.002</td>
+          <td>0／400試行</td>
+        </tr>
+        <tr>
+          <th scope="row">FP32</th>
+          <td>1.542／1.660</td>
+          <td>1.784／2.004</td>
+          <td>0／400試行</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      hash検査と新規session・tokenizer loadを含む初期化はINT8 347.92ms、FP32
+      396.98ms。上表はencoder・headの準備後のローカル処理時間であり、HTTP、LARM
+      admission、通信、TTSや再生を含まない。今動いているProviderを変更せず、外部固定artifactを直接検査・利用した隔離実験。
+    </p>
+    <p>
+      将来System Oneへ登録する場合は既存POST
+      /v1/systemoneのchoiceでja／enを返せるため、この二分類だけにsegments拡張は不要。現在の態度モデルIDへ転送して使える状態にはしていない。公開catalog・service・既存態度契約の変更と配備は今回の範囲外。
+    </p>
+  </section>
+
+  <section id="reproduction">
+    <h2>データ・モデル・再実行手順</h2>
+    <p>
+      sourceはbenchmarks/sentence-language。データだけはrepositoryに保持し、学習係数・推論結果・ログはrepository外。学習済みINT8は/srv/ai/benchmarks/sentence-language/pilot-20261012-int8、FP32は同階層pilot-20261012-fp32。追加50文の結果はevaluation50-20261012-int8とevaluation50-20261012-fp32。
+    </p>
+    <table>
+      <caption>
+        実験の主要artifact識別
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">artifact</th>
+          <th scope="col">SHA-256または版</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">encoder revision</th>
+          <td>24899e5de370b56d179604a007c0d727bf144504</td>
+        </tr>
+        <tr>
+          <th scope="row">INT8 sentence graph</th>
+          <td>8e6124684aff3f86ac4c0bcfe37806d8fa4a76100c20b06942d8f726babe90bd</td>
+        </tr>
+        <tr>
+          <th scope="row">INT8 head</th>
+          <td>aa0ec854481c88e421711824c4082ba45f7ac21006bd5f3343f6064a4321e289</td>
+        </tr>
+        <tr>
+          <th scope="row">FP32 head</th>
+          <td>579c55c078e9123171f902dd182a8ad77cb132fe3007caec6fb82c06297448b0</td>
+        </tr>
+        <tr>
+          <th scope="row">先行640文JSONL</th>
+          <td>5d2b8f9e912695fca0be5e95c1f3a398076dd47fc8a10ad95a07f51c945fb5dd</td>
+        </tr>
+        <tr>
+          <th scope="row">追加50文JSONL</th>
+          <td>fe573879ebcac005b6cb338f08962b9ccfae862a4ee9350cd79c0beb36b056e6</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      runtimeは既存avatar-attitudeの固定外部環境を使用。NumPy 2.5.3、ONNX Runtime 1.30.0、Tokenizers
+      0.23.2、scikit-learn 1.9.1、SciPy 1.18.1。各runのreport.jsonに版、graph・head・data
+      hash、train／calibration IDs、試行数、source snapshotを保存する。
+    </p>
+    <pre><code>PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=4 \
+  /srv/ai/benchmarks/avatar-attitude/.venv/bin/python \
+  benchmarks/sentence-language/run.py --precision int8 \
+  --output /srv/ai/benchmarks/sentence-language/new-int8-run
+
+PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 \
+  /srv/ai/benchmarks/avatar-attitude/.venv/bin/python \
+  benchmarks/sentence-language/evaluate50.py \
+  --model-dir /srv/ai/benchmarks/sentence-language/new-int8-run \
+  --output /srv/ai/benchmarks/sentence-language/new-evaluation50-run</code></pre>
+    <p>
+      FP32はprecisionとdirectoryを変える。既存directoryやrepository内の出力先は拒否する。run.pyは400文でfitし別の校正・先行評価を実行する。evaluate50.pyは再学習せず凍結モデルを50文で検査する。出力report.json、predictions.json、errors.jsonで各文章の採否・誤判定を確認できる。
+    </p>
+    <pre><code>PYTHONDONTWRITEBYTECODE=1 /srv/ai/benchmarks/avatar-attitude/.venv/bin/python \
+  benchmarks/sentence-language/predict.py \
+  --model-dir /srv/ai/benchmarks/sentence-language/pilot-20261012-int8 \
+  --text 'これは日本語の文章です。'</code></pre>
+    <p>
+      この例の出力はja。「This sentence is written in
+      English.」はen。保存済みheadの再ロードとCLIで両方を実行して確認した。データの件数・snapshot一致・対訳のpartition・交差・追加50文の独立性はbun
+      run test:sentence-languageで検査する。
+    </p>
+  </section>
+</article>

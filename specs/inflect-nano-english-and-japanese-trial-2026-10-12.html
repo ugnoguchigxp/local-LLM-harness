@@ -1,0 +1,265 @@
+<article lang="ja">
+  <h1>Inflect Nano v2：英語TTSと日本語強制発話の試用</h1>
+  <p>
+    2026-10-12 JST、Ryzen AI MAX+
+    395のCPUでInflect-Nano-v2をローカル実行した。英語2文はQwen3-ASRの文字起こしが入力と一致した。日本語は原文・ローマ字・音素直接入力を試したが、全方式で読みの欠落や誤りが残った。利用者の判断により、男性ボイスしか選べない点を理由に英語用途も含めて不採用とする。自然さの聴取評価や一般的な品質順位は未確定。
+  </p>
+  <section id="decision">
+    <h2>採否判断</h2>
+    <p>
+      2026-10-12 JST、利用者がInflect Nano
+      v2の不採用を決定した。理由は、公開モデルが固定男性声のみで、女性ボイスを選べないこと。英語の読みや生成速度にかかわらず、今回のTTS選定候補から除外する。日本語の誤読・欠落は試験結果として残すが、不採用の主理由は声の選択肢である。
+    </p>
+  </section>
+  <section id="model">
+    <h2>モデルと実行環境</h2>
+    <p>
+      公式配布は英語専用の固定男性声、24 kHz mono、Apache-2.0。公開パラメータ数3,966,721、FP32
+      checkpoint 15,971,083 bytes。公式runtimeがweight
+      normalizationを除去した後の実測パラメータ数は3,958,801で、公開値との差はこの最適化による。声の複製や参照音声は使用しない。
+    </p>
+    <p>
+      指定Spaceは <code>https://huggingface.co/spaces/owensong/Inflect-v2</code>、確認revisionは
+      <code>3b958942b51a19c861a67ad29520027f70645422</code>。推論には公式モデル配布
+      <code>https://huggingface.co/owensong/Inflect-Nano-v2</code> のrevision
+      <code>71d70b00c8d9f9c3ca145e024b3351d327d98c51</code> を取得して使用した。重みSHA-256は
+      <code>bfca468489c9069361d6b87b295a17eef611af8ff09854ce0b80305d9122f5b3</code> で、Hub LFSとrelease
+      manifestの値に一致した。runtime全ファイルの実測hashも外部manifestへ保存した。
+    </p>
+    <p>
+      PyTorch 2.11.0+rocm7.13.0をCPU実行。framework thread 4、interop thread
+      1、同時生成1件。既存Providerを停止せず試した。公式コードは
+      <code>/srv/ai/apps/inflect-v2-trial</code>、重みは
+      <code>/srv/ai/models/Inflect-Nano-v2</code>、音声と生データは
+      <code>/srv/ai/benchmarks/inflect-nano-2026-10-12</code>
+      に置く。モデル、推論実装、依存環境、生成音声はrepository外。
+    </p>
+  </section>
+  <section id="method">
+    <h2>入力と試験方法</h2>
+    <p>
+      12条件を各3回、計36音声。seed 42/43/44、variation 0.667、speed 1.0。追加の手動IPAだけspeed
+      0.85。ロード0.047秒、英語warmup
+      0.271秒を通常生成から分離した。表は3回の生成時間とRTFの中央値、音声長はseed
+      42の値。RTFは生成時間÷音声長。WAV保存時間は除外し、通常入力ではfrontendと後処理、自動IPAではOpen
+      JTalk変換と後処理を含む。手動IPAは事前に作成した音素のtoken化から測定する。短い試験のため厳密な速度順位を確定しない。
+    </p>
+    <ul>
+      <li>英語短文：Hello. It is a beautiful day today.</li>
+      <li>
+        英語中文：Please save this file with a new name, then copy it to the shared folder. Let me
+        know when you are finished.
+      </li>
+      <li>日本語短文：こんにちは。今日はいい天気ですね。</li>
+      <li>
+        日本語中文：このファイルを新しい名前で保存してから、共有フォルダにコピーしてください。終わったら教えてください。
+      </li>
+    </ul>
+    <p>
+      日本語IPAはOpen JTalkの読みを既存symbol
+      inventoryへ写像する。native版はɴ・ɯ・ɾ・ɕ・ɸを用い、英語近似版はn・u・ɹ・ʃ・fなどへ置換する。これは発音の近似で、symbolが存在することはその日本語音素が学習済みであることを意味しない。手動IPAは語の区切り、英語式stress、母音長を調整した個別の文用入力で、日本語frontendの一般実装ではない。学習やcheckpoint変更は行わない。
+    </p>
+  </section>
+  <section id="timing">
+    <h2>生成時間</h2>
+    <table>
+      <caption>
+        CPU 4 thread、各3回。単位は秒
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力</th>
+          <th scope="col">speed</th>
+          <th scope="col">生成時間</th>
+          <th scope="col">音声長</th>
+          <th scope="col">RTF</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">英語・短文</th>
+          <td>1.00</td>
+          <td>0.153</td>
+          <td>2.631</td>
+          <td>0.058</td>
+        </tr>
+        <tr>
+          <th scope="row">英語・中文</th>
+          <td>1.00</td>
+          <td>0.203</td>
+          <td>6.407</td>
+          <td>0.032</td>
+        </tr>
+        <tr>
+          <th scope="row">日本語そのまま・短文</th>
+          <td>1.00</td>
+          <td>0.575</td>
+          <td>12.459</td>
+          <td>0.046</td>
+        </tr>
+        <tr>
+          <th scope="row">ローマ字・短文</th>
+          <td>1.00</td>
+          <td>0.160</td>
+          <td>3.601</td>
+          <td>0.044</td>
+        </tr>
+        <tr>
+          <th scope="row">日本語IPA・短文</th>
+          <td>1.00</td>
+          <td>0.074</td>
+          <td>2.059</td>
+          <td>0.036</td>
+        </tr>
+        <tr>
+          <th scope="row">英語音素近似・短文</th>
+          <td>1.00</td>
+          <td>0.079</td>
+          <td>1.973</td>
+          <td>0.040</td>
+        </tr>
+        <tr>
+          <th scope="row">日本語そのまま・中文</th>
+          <td>1.00</td>
+          <td>2.945</td>
+          <td>38.347</td>
+          <td>0.077</td>
+        </tr>
+        <tr>
+          <th scope="row">ローマ字・中文</th>
+          <td>1.00</td>
+          <td>0.329</td>
+          <td>8.743</td>
+          <td>0.038</td>
+        </tr>
+        <tr>
+          <th scope="row">日本語IPA・中文</th>
+          <td>1.00</td>
+          <td>0.231</td>
+          <td>5.248</td>
+          <td>0.044</td>
+        </tr>
+        <tr>
+          <th scope="row">英語音素近似・中文</th>
+          <td>1.00</td>
+          <td>0.234</td>
+          <td>5.355</td>
+          <td>0.044</td>
+        </tr>
+        <tr>
+          <th scope="row">手動IPA・短文</th>
+          <td>0.85</td>
+          <td>0.075</td>
+          <td>3.029</td>
+          <td>0.025</td>
+        </tr>
+        <tr>
+          <th scope="row">手動IPA・中文</th>
+          <td>0.85</td>
+          <td>0.287</td>
+          <td>8.480</td>
+          <td>0.034</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="reading">
+    <h2>読みの確認</h2>
+    <p>
+      各条件seed 42のWAVを既存Qwen3-ASR
+      1.7Bへ渡した。英語はEnglish指定、日本語実験は自動判定とJapanese指定の両方を記録した。言語指定で結果が変わるため、指定時の文字起こしだけを成功の根拠にしない。以下はASRの出力であり、音声の聴取評価やMOSではない。
+    </p>
+    <table>
+      <caption>
+        代表音声のQwen3-ASR文字起こし
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力</th>
+          <th scope="col">自動判定／英語指定</th>
+          <th scope="col">日本語指定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">英語・短文</th>
+          <td>Hello. It is a beautiful day today.</td>
+          <td>対象外</td>
+        </tr>
+        <tr>
+          <th scope="row">英語・中文</th>
+          <td>
+            Please save this file with a new name, then copy it to the shared folder. Let me know
+            when you are finished.
+          </td>
+          <td>対象外</td>
+        </tr>
+        <tr>
+          <th scope="row">ローマ字・短文</th>
+          <td>Kanishwa, kayu wa Roman tu tenki disuni.</td>
+          <td>カネシューは、カイオウはroman2天気ですゥニ。</td>
+        </tr>
+        <tr>
+          <th scope="row">日本語IPA・短文</th>
+          <td>Permisi, tuan, kau baik tidak disnek?</td>
+          <td>普米トワ、今日は天気です。</td>
+        </tr>
+        <tr>
+          <th scope="row">英語音素近似・短文</th>
+          <td>今日は今日は天気ですね。</td>
+          <td>今日は今日は天気ですね。</td>
+        </tr>
+        <tr>
+          <th scope="row">手動IPA・短文</th>
+          <td>Kanichi wan dat kau wan itu hendi desen.</td>
+          <td>こんにちは。今日は伊藤ですね。</td>
+        </tr>
+        <tr>
+          <th scope="row">手動IPA・中文</th>
+          <td>このファイルは神奈川県出身でから、教育分野に飛び出してから、またあおしでから。</td>
+          <td>このファイルは神奈川県出身でから、教育分野に飛び出してから、またあおしでから。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      日本語原文はeSpeakの英語frontendによって各文字が <q>Japanese letter</q> や
+      <q>Chinese letter</q>
+      という英語へ変換された。原文短文は12.459秒、中文は38.347秒の音声となり、意図した文を読んでいない。ローマ字短文の
+      <code>ii</code> は <q>Roman two</q>、<code
+        >kyou</code
+      >
+      は英語風に変換された。音素直接入力はこの前処理を回避するが、日本語としての読みを保証できない。
+    </p>
+    <p>
+      手動IPA短文は日本語指定時に <q>こんにちは。今日は伊藤ですね。</q>、中文は
+      <q>このファイルは神奈川県出身でから、教育分野に飛び出してから、またあおしでから。</q>
+      と認識された。部分的に日本語らしい内容を回収できても、意図した全文とは一致しない。日本語対応を求める場合は今回の発話hackとは別に、日本語frontend・symbol移行・追加学習と日本語話者による検証が必要になる。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>再現用データ</h2>
+    <p>
+      repository内の <code>benchmarks/tts/inflect/run.py</code> と
+      <code>corpus.json</code>
+      に12条件の正確な入力、IPA、speedを保存した。READMEに実行方法を記載した。外部の
+      <code>results.json</code> と
+      <code>articulated/results.json</code> に36音声の生成時間、長さ、seed、WAV
+      SHA-256、peak、RMSを保存し、各
+      <code>asr.jsonl</code> に計22回の認識結果を保存した。
+    </p>
+    <p>
+      音声名は通常版が
+      <code>en-short-0.wav</code
+      >、<code>en-medium-0.wav</code>、<code>ja-direct-0.wav</code>、<code>ja-romaji-0.wav</code>、<code
+        >ja-ipa-english-0.wav</code
+      >
+      など。手動版は <code>articulated/ja-articulated-0.wav</code> と
+      <code>articulated/ja-medium-articulated-0.wav</code>。末尾0/1/2はseed 42/43/44に対応する。
+    </p>
+    <p>
+      比較の背景は
+      <a href="./tts-multilingual-speed-benchmark-2026-10-12.html">多言語TTS速度試験</a>
+      を参照。今回の英語文・thread数・生成条件は異なるため、その速度値との直接比較で優劣を断定しない。
+    </p>
+  </section>
+</article>

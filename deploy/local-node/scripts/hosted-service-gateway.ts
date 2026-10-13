@@ -7,10 +7,21 @@ import type { LocalServiceLease } from "../../../packages/core/src/local-service
 export type HostedGatewayConfig = {
   hostname: "127.0.0.1"; port: number; serviceId: string; webRoot: string;
   clientTokens: string[]; allowedEndpoints: string[]; userIdleSeconds: number; renewSeconds: number;
+  // A server-side API credential is translated to the existing application owner.
+  apiToken?: string;
 };
+export function readHostedLarmApiToken(file: string): string {
+  const values = readFileSync(file, "utf8").split(/\r?\n/).filter(line => line.startsWith("LARM_API_TOKEN="));
+  if (values.length !== 1) throw new Error("hosted_larm_api_token_required");
+  let token = values[0]!.slice("LARM_API_TOKEN=".length).trim();
+  if ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))) token = token.slice(1, -1);
+  if (!/^[\x21-\x7e]{32,4096}$/.test(token) || /['"\\]/.test(token)) throw new Error("invalid_hosted_larm_api_token");
+  return token;
+}
 type Use = { token: string; lease?: LocalServiceLease; pending?: Promise<LocalServiceLease>; lastOperation: number; active: number; renewing: boolean };
 function same(a: string, b: string) { const aa = Buffer.from(a), bb = Buffer.from(b); return aa.length === bb.length && timingSafeEqual(aa, bb); }
 export function startHostedGateway(config: HostedGatewayConfig, client: ClientLocalServices) {
+  if (config.apiToken !== undefined && !/^[\x21-\x7e]{32,4096}$/.test(config.apiToken)) throw new Error("invalid_hosted_larm_api_token");
   if (config.hostname !== "127.0.0.1" || !Number.isInteger(config.port) || config.port < 1 || config.port > 65535 || config.userIdleSeconds <= 0 || config.renewSeconds <= 0 || !config.clientTokens.length || config.allowedEndpoints.some(endpoint => { const u = new URL(endpoint); return u.protocol !== "http:" || u.hostname !== "127.0.0.1" || !!u.username || !!u.password || u.pathname !== "/" || !!u.search || !!u.hash; })) throw new Error("invalid_hosted_gateway_config");
   const sessions = new Map<string, { token: string; expires: number }>(), uses = new Map<string, Use>();
   const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
@@ -60,8 +71,10 @@ export function startHostedGateway(config: HostedGatewayConfig, client: ClientLo
         const id = crypto.randomUUID(); sessions.set(id, { token, expires: Date.now() + 12 * 3600000 });
         return Response.json({ connected: true }, { headers: { "set-cookie": `hosted_session=${id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`, "cache-control": "no-store" } });
       }
-      const bearer = request.headers.get("authorization")?.replace(/^Bearer /, ""), cookie = /(?:^|;\s*)hosted_session=([a-f0-9-]+)/.exec(request.headers.get("cookie") ?? "")?.[1];
-      const direct = bearer ? config.clientTokens.find(t => same(t, bearer)) : undefined;
+      const authorization = request.headers.get("authorization");
+      const bearer = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined, cookie = /(?:^|;\s*)hosted_session=([a-f0-9-]+)/.exec(request.headers.get("cookie") ?? "")?.[1];
+      const direct = bearer && config.apiToken && same(config.apiToken, bearer)
+        ? config.clientTokens[0] : bearer ? config.clientTokens.find(t => same(t, bearer)) : undefined;
       const session = cookie ? sessions.get(cookie) : undefined;
       const token = direct ?? (session && session.expires > Date.now() ? session.token : undefined);
       const key = direct ? createHash("sha256").update(direct).digest("hex") : cookie;
@@ -106,7 +119,8 @@ if (import.meta.main) {
   // Secrets are read from local files, never argv or browser configuration.
   const token = readFileSync(value.larmTokenFile, "utf8").trim();
   const clientTokens: string[] = JSON.parse(readFileSync(value.clientTokensFile, "utf8"));
-  const gateway = startHostedGateway({ ...value.gateway, clientTokens }, new ClientLocalServices({ baseUrl: value.larmBaseUrl, token }));
+  const apiToken = value.larmApiTokenEnvFile ? readHostedLarmApiToken(value.larmApiTokenEnvFile) : undefined;
+  const gateway = startHostedGateway({ ...value.gateway, clientTokens, apiToken }, new ClientLocalServices({ baseUrl: value.larmBaseUrl, token }));
   console.log(`Hosted application gateway on 127.0.0.1:${value.gateway.port}`);
   const shutdown = async () => { await gateway.close(); process.exit(0); }; process.on("SIGTERM", shutdown); process.on("SIGINT", shutdown);
 }

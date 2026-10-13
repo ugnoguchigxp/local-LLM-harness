@@ -5,6 +5,13 @@
     ホストするアプリの実DBもデータディスク側に配置する。サービス停止はプロセスと資源の解放であり、データ削除ではない。
     本書は実装計画とExcalidrawの先行実装・検証の正本である。独立アプリを作成し、隔離した実機環境でSSD上のDB初期化とオンデマンド利用を検証した。正式な専用UID/systemd配備、稼働中LARMへの有効化、Eumenesへの接続と公開は未実施である。
   </p>
+  <p>
+    EumenesからExcalidrawを起動し、利用者が開けるURLを提供する実装依頼は<a
+      href="./eumenes-excalidraw-ocr-opencv-integration-prompts-2026-10-13.html#excalidraw"
+      >Excalidraw連携プロンプト</a
+    >にまとめた。
+    leaseのbackend用endpointとMacBookのブラウザ向けURLを分け、ready確認と認証付きWeb入口を接続する。
+  </p>
   <dl>
     <dt>対象</dt>
     <dd>
@@ -722,9 +729,10 @@
     </p>
     <pre><code>bun deploy/local-node/scripts/prepare-excalidraw-hosting.ts
 python3 deploy/local-node/scripts/install-excalidraw-hosting.py
-sudo python3 deploy/local-node/scripts/install-excalidraw-hosting.py --apply --bootstrap --expected-digest 3d876781599cab9411909511e31ec76502043b8184224ff8e071ac32cb78f376</code></pre>
+sudo python3 deploy/local-node/scripts/install-excalidraw-hosting.py --apply --bootstrap --expected-digest bddfbed49e857afa414c035377d734714a2e7545f6312d7a1067e5fc0bc2b93f</code></pre>
     <p>
-      上記digestは今回の固定成果物の値。再prepareした場合は直前のprepared.jsonのdigestに置換する。installerはSSDのUUID/ext4/rw/空き容量を確認し、root固定unitとmanifest、サービスに限定したpolkit、別々の認証設定を配置する。gatewayの正式portは18790、アプリは18791。LARM
+      上記digestは今回の固定成果物の値。再prepareした場合は直前のprepared.jsonのdigestに置換する。installerはSSDのUUID/ext4/rw/空き容量を確認し、root固定unitとmanifest、サービスに限定したpolkit、別々の認証設定を配置する。gatewayの正式portは18790、アプリは18791。Eumenes
+      backendはLARM_API_TOKENのBearerを送信し、gatewayが既存の業務ownerへ中継する。正式installerはtoken読込先を設定し、限定consumerを登録する。LARM
       leaseが返すpublicEndpointは認可されたgateway
       consumer用の18791に固定し、gateway自身を返す循環を避ける。利用画面とMCP
       clientの入口は18790である。登録後もLARMのrestart・gatewayのenable・アプリのensureを自動実施しない。
@@ -754,6 +762,16 @@ sudo python3 deploy/local-node/scripts/install-excalidraw-hosting.py --apply --b
       配備前に確定するのは固定依存revision、port、専用UID、資源上限、独立backup先と公開経路である。
       初期提案は既存Eumenesから到達する限定経路を使い、不特定の外部公開は別の配備判断とする。
       本計画作成では実DB、アプリ環境、unit、Secretを作成・変更せず、daemonも再起動しない。SAAA実装は参照していない。
+    </p>
+  </section>
+  <section id="formal-excalidraw-20261013">
+    <h2>2026年10月13日の正式配備</h2>
+    <p>
+      利用者の管理者実行許可を受け、Excalidrawを正式配置・bootstrapし、OCR・物体認識とともに稼働中LARMへ統合した。正式gatewayは127.0.0.1:18790、appは18791。gatewayだけをenableし、appは要求時起動と120秒idle停止を確認した。Eumenes
+      backendはLARM_API_TOKENのBearerを送り、追加キー入力を省略できる。図の保存・再表示とChromiumの中継画面も確認済み。詳細は<a
+        href="./eumenes-excalidraw-ocr-opencv-integration-prompts-2026-10-13.html#formal-deployment"
+        >正式systemd配備と検証結果</a
+      >を参照する。
     </p>
   </section>
 </article>

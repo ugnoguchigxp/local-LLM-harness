@@ -209,6 +209,18 @@ models:
     quantization: Q4_0_ROCMFP4_STRIX_LEAN
     runtime: q38rocm-vulkan
 
+  ornith15-vision-bf16:
+    kind: file
+    role: vision-projector
+    source: https://huggingface.co/pugant/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN
+    revision: 4494a5cffb1eb5496fa25575e5a5040064aa48b8
+    filename: mmproj-Ornith-1.5-35B-BF16.gguf
+    path: /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
+    bytes: 902822016
+    sha256: d9ce31026d1cb1f3f8d5152e2e2a014d9d2b302b6c93a7dc07bb0a0487f52837
+    quantization: BF16
+    runtime: llama.cpp-vulkan
+
   ornith15-35b-quality:
     kind: file
     role: preferred-llm
@@ -322,6 +334,40 @@ models:
     quantization: Q5_0
     runtime: whisper.cpp-hip
 
+  kitten-tts-nano-fp32:
+    kind: file
+    role: english-tts
+    source: https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32
+    revision: 7a1db645b1f3ab9420761d87428e042b9cec3f26
+    filename: kitten_tts_nano_v0_8.onnx
+    path: /srv/ai/models/kittentts/fp32/kitten_tts_nano_v0_8.onnx
+    bytes: 56767095
+    sha256: 320564d2615f235de972ca27a7f39551c94185cfa24ca85b07a29084135f1e5e
+    quantization: FP32
+    runtime: kittentts-onnx
+
+  kitten-tts-nano-voices:
+    kind: file
+    role: english-tts-voices
+    source: https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32
+    revision: 7a1db645b1f3ab9420761d87428e042b9cec3f26
+    filename: voices.npz
+    path: /srv/ai/models/kittentts/fp32/voices.npz
+    bytes: 3278902
+    sha256: 8aa7cee235abb0739cb51e6559685f65a4dacd95568833d05699b1633f519b3f
+    runtime: kittentts-onnx
+
+  kitten-tts-nano-config:
+    kind: file
+    role: english-tts-config
+    source: https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32
+    revision: 7a1db645b1f3ab9420761d87428e042b9cec3f26
+    filename: config.json
+    path: /srv/ai/models/kittentts/fp32/config.json
+    bytes: 688
+    sha256: b66006ccbeccd4de5fc3c9272059c47f5725df7215fd889785c03602652fab64
+    runtime: kittentts-onnx
+
   qwen3-tts-expressive:
     kind: snapshot
     role: preferred-tts
@@ -343,3 +389,26 @@ models:
       - { path: speech_tokenizer/preprocessor_config.json, bytes: 234, sha256: fcb3805e597e786d4067706e602f6688524640f8d3396790e2e09b5942fcbdfb }
       - { path: tokenizer_config.json, bytes: 7344, sha256: dc3c31c3bdaedd5016382bb3cbe07323026775ad51f5a4fb564505992ae4a670 }
       - { path: vocab.json, bytes: 2776833, sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910 }
+
+  ornith15-35b-strix-lean:
+    kind: file
+    role: preferred-llm
+    source: https://huggingface.co/pugant/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN
+    revision: 4494a5cffb1eb5496fa25575e5a5040064aa48b8
+    filename: Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
+    path: /srv/ai/models/ornith-trial-20261012/strix-lean/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
+    bytes: 19052439552
+    sha256: aa35045aab39163851c8584e6cf8cc6f33e8fc2ffe28ca627d3414ec66584704
+    quantization: Q4_0_ROCMFP4_STRIX_LEAN
+    runtime: q38rocm-vulkan
+  granite-speech-4.1-2b-q8:
+    kind: file
+    role: dialogue-asr
+    source: https://huggingface.co/handy-computer/granite-speech-4.1-2b-gguf
+    revision: 5fa89dfac74d52a186f63647553b9e1f7ae36e83
+    filename: granite-speech-4.1-2b-Q8_0.gguf
+    path: /srv/ai/models/granite-asr/granite-speech-4.1-2b-Q8_0.gguf
+    bytes: 2559878944
+    sha256: 666d2f7736bfa140f44d67ba7bcb0827aa5718462f13850af294d72c1f09b218
+    quantization: Q8_0
+    runtime: transcribe.cpp-vulkan

@@ -29,10 +29,6 @@ function allocation(input: {
 test("preemption selects only admitted lower-priority allocations with exclusive resource overlap", () => {
   const preemption = new AllocationPreemption(registry);
   const calls: string[] = [];
-  const resources = (runtimeIds: string[]) => new Set(runtimeIds.map((runtime) =>
-    runtime === "resident-a" || runtime === "worker-b" ? "llm" : runtime
-  ));
-
   preemption.preemptLowerPriorityConflicts({
     priority: 3_000,
     runtimeIds: ["worker-b"],
@@ -42,7 +38,6 @@ test("preemption selects only admitted lower-priority allocations with exclusive
       allocation({ id: "equal", runtime: "resident-a", priority: 3_000 }),
       allocation({ id: "waiting", runtime: "resident-a", priority: 1_000, status: "waiting" }),
     ],
-    exclusiveResourceKeys: resources,
     preempt: (id, priority) => calls.push(`${id}:${priority}`),
   });
 
@@ -65,6 +60,19 @@ test("foreground provider holds delay lower-priority swap-group switches and exp
   expect(events).toHaveLength(1);
   now = 1_300;
   expect(preemption.holdUntil(["worker-b"], 2_000)).toBeUndefined();
+});
+
+test("foreground acquisition preserves lower-priority leases on the same shared runtime", () => {
+  const sharedRegistry = structuredClone(registry);
+  sharedRegistry.runtimes[0]!.resources.maxConcurrentAllocations = 4;
+  const calls: string[] = [];
+  new AllocationPreemption(sharedRegistry).preemptLowerPriorityConflicts({
+    priority: 4_000,
+    runtimeIds: ["resident-a"],
+    allocations: [allocation({ id: "background", runtime: "resident-a", priority: 1_000 })],
+    preempt: (id) => calls.push(id),
+  });
+  expect(calls).toEqual([]);
 });
 
 test("foreground provider holds extend monotonically and can be disabled", () => {

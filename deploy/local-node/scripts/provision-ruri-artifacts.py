@@ -41,6 +41,8 @@ def digest(path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--benchmark-root', type=Path, default=Path('/srv/ai/benchmarks/avatar-attitude'))
+    parser.add_argument('--language-benchmark-root', type=Path,
+                        default=Path('/srv/ai/benchmarks/sentence-language/pilot-20261012-int8'))
     args = parser.parse_args()
     benchmark = args.benchmark_root.resolve()
     if benchmark == source_root or source_root in benchmark.parents:
@@ -62,7 +64,19 @@ def main():
     base = [(benchmark / 'artifacts/ruri30' / e['path'], e['path'], e['bytes'], e['sha256']) for e in model['files']]
     install_snapshot(Path(model['path']), base)
     install_snapshot(Path('/srv/ai/models/ruri-speaking-attitude-v1'), derived)
-    print(json.dumps({'model': PUBLIC_MODEL, 'head_revision': assets['head_revision'], 'installed': True}))
+    language_benchmark = args.language_benchmark_root.resolve()
+    if language_benchmark == source_root or source_root in language_benchmark.parents:
+        raise ValueError('language artifacts must be outside the repository')
+    language_assets = json.loads((source_root / 'apps/ruri-system-one/language-assets.json').read_text())
+    language_entries = []
+    for entry in language_assets['files']:
+        source = language_benchmark / entry['path']
+        if source.stat().st_size != entry['bytes'] or digest(source) != entry['sha256']:
+            raise ValueError('language head is not the pinned evaluated revision')
+        language_entries.append((source, entry['path'], entry['bytes'], entry['sha256']))
+    install_snapshot(Path('/srv/ai/models/ruri-sentence-language-v1'), language_entries)
+    print(json.dumps({'model': PUBLIC_MODEL, 'head_revision': assets['head_revision'],
+                      'sentence_language_model': language_assets['model'], 'installed': True}))
 
 
 if __name__ == '__main__':

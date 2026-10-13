@@ -1,0 +1,647 @@
+<article lang="ja">
+  <h1>Qwen3-TTS全5版・多言語TTSの生成速度比較</h1>
+  <p>
+    2026-10-12 JST、Ryzen AI MAX+ 395 / Radeon
+    8060Sでの実機評価。公開Qwen3-TTSの5版とKokoro・Fishの取得、12構成273件の生成速度測定、各入力の読みのASR確認を完了した。速度面ではKokoroが有力で、CPUでも日本語・英語の短文を約0.2秒で生成できた。
+  </p>
+  <section id="scope">
+    <h2>対象と目的</h2>
+    <p>
+      VOICEVOXの日本語生成速度を基準に、日本語・英語を生成できるTTSの待ち時間を比較する。Qwenの公式公開済み12Hzモデル全5版を取得し、Kokoro-82MとFish
+      Audio S2 Proも評価する。論文中の25Hzモデルは公式公開一覧とHugging
+      FaceのQwen配布一覧に存在せず、取得可能な5版とは分ける。
+    </p>
+    <table>
+      <caption>
+        公式チェックポイントと機能
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル</th>
+          <th scope="col">用途</th>
+          <th scope="col">測定構成</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen 0.6B CustomVoice</th>
+          <td>既定話者9種類</td>
+          <td>公式PyTorch、既存高速化Provider</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 1.7B CustomVoice</th>
+          <td>既定話者と発声指示</td>
+          <td>公式PyTorch、高速化fork</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 0.6B Base</th>
+          <td>参照音声による声の複製</td>
+          <td>公式PyTorch、合成参照音声を再利用</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 1.7B Base</th>
+          <td>参照音声による声の複製</td>
+          <td>公式PyTorch、合成参照音声を再利用</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 1.7B VoiceDesign</th>
+          <td>自然言語による声の設計</td>
+          <td>公式PyTorch、固定の発声説明</td>
+        </tr>
+        <tr>
+          <th scope="row">Kokoro-82M</th>
+          <td>軽量な多言語・既定話者TTS</td>
+          <td>公式PyTorch CPU / ROCm GPU</td>
+        </tr>
+        <tr>
+          <th scope="row">Fish Audio S2 Pro</th>
+          <td>多言語・表現制御TTS</td>
+          <td>公式PyTorch ROCm、参照音声なし</td>
+        </tr>
+        <tr>
+          <th scope="row">VOICEVOX CORE 0.17.0</th>
+          <td>日本語の速度基準</td>
+          <td>既存CPU Provider、16 thread。voiceは春日部つむぎ、creditはVOICEVOX:春日部つむぎ</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="method">
+    <h2>測定条件</h2>
+    <p>
+      CPUは16 core / 32 thread、RAMは121
+      GiB、GPUはgfx1151。PyTorchは2.11.0+rocm7.13.0、QwenはBF16とSDPA、KokoroはFP32を使用する。CPU
+      threadは16。同時生成は1。各言語の短文1回の準備生成を別記し、各文3回を測定する。異なる長さの最初の生成には追加のkernel・shape準備が含まれ得るため、中央値と全3回の生データを併記する。
+    </p>
+    <p>
+      日本語・英語の短文／中文／長文を各1文、日英混在文を2文、計8文を共通入力とする。各多言語構成24件、VOICEVOXは日本語3文×3回の9件。速度変更・辞書置換は行わない。ローカル生成の乱数seedは42、43、44。既存HTTP
+      Providerのserver seedは制御できない。
+    </p>
+    <p>
+      RTFは生成時間÷生成音声長。1未満なら再生時間より速く生成できる。主表のRTFは言語別の各リクエストの中央値（日本語・英語各9件、混在6件）、短文の待ち時間は同一文3回の中央値で示す。生成時間合計÷音声長合計による集約値もsummary.jsonに別記する。声・話速がモデルごとに異なるため、RTFと同一文の生成時間を併記する。初回ロード・compile時間、参照promptの準備は通常生成から分離する。
+    </p>
+    <p>
+      モデル内の同期を含む生成完了までを測り、native測定では音声保存を時間外とする。既存Providerはloopback
+      HTTP、WAV化・転送を含む。Kokoroのfirst
+      audioは最初の音声chunkが得られる時刻であり、逐次音素ストリーミングの性能を示すものではない。
+    </p>
+    <p>
+      Baseは今回Qwen 0.6B
+      CustomVoiceで生成した日本語・英語の参照音声を使う。ICL参照promptを言語ごとに一度生成し、通常測定で再利用する。実在個人の録音は使用しない。CustomVoiceは日本語Ono_Anna、英語Ryan。Kokoroは日本語jf_alpha、英語af_heart、Misaki
+      0.9.4とUniDic Lite 1.0.8、英語spaCy en_core_web_sm 3.8.0を使用する。
+    </p>
+    <p>
+      既存LLM・ASR・TTSを停止せず測定する。モデル取得等の同時作業を含む共存状態の値であり、GPUを占有した理想値ではない。各構成の開始時のprocess一覧・メモリ・環境変数を保存する。Qwenのgfx1151
+      samplingは配備済み実装と同様のCPU multinomial fallbackを使用する。
+    </p>
+  </section>
+  <section id="results">
+    <h2>実測結果</h2>
+    <p>
+      12構成、採用した通常測定は273件。公開Qwen5版・Kokoro
+      CPU/GPU・Fish・既存VOICEVOX・Qwen高速化2構成・現行Qwen
+      streamingの全構成で完了した。多言語構成は各24件、VOICEVOXは日本語9件。失敗した初回試行と並行実行したstream試行は集計から除外した。
+    </p>
+    <table>
+      <caption>
+        同一短文の完成時間とRTFの中央値。小さいほど速い。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">日本語短文 s</th>
+          <th scope="col">英語短文 s</th>
+          <th scope="col">日本語 RTF</th>
+          <th scope="col">英語 RTF</th>
+          <th scope="col">混在文 RTF</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">VOICEVOX CPU</th>
+          <td>0.288</td>
+          <td>対象外</td>
+          <td>0.101</td>
+          <td>対象外</td>
+          <td>対象外</td>
+        </tr>
+        <tr>
+          <th scope="row">Kokoro-82M CPU</th>
+          <td>0.238</td>
+          <td>0.218</td>
+          <td>0.083</td>
+          <td>0.117</td>
+          <td>0.070</td>
+        </tr>
+        <tr>
+          <th scope="row">Kokoro-82M GPU</th>
+          <td>0.152</td>
+          <td>0.133</td>
+          <td>0.049</td>
+          <td>0.054</td>
+          <td>0.048</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 0.6B CustomVoice・公式</th>
+          <td>4.307</td>
+          <td>3.598</td>
+          <td>0.862</td>
+          <td>0.869</td>
+          <td>0.864</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 0.6B CustomVoice・現行高速化API</th>
+          <td>2.510</td>
+          <td>2.898</td>
+          <td>0.535</td>
+          <td>0.527</td>
+          <td>0.549</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 0.6B Base・公式</th>
+          <td>3.441</td>
+          <td>4.175</td>
+          <td>0.878</td>
+          <td>0.895</td>
+          <td>0.894</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 1.7B CustomVoice・公式</th>
+          <td>4.034</td>
+          <td>3.569</td>
+          <td>1.168</td>
+          <td>1.152</td>
+          <td>1.150</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 1.7B CustomVoice・高速化</th>
+          <td>3.254</td>
+          <td>2.209</td>
+          <td>0.828</td>
+          <td>0.815</td>
+          <td>0.839</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 1.7B Base・公式</th>
+          <td>3.809</td>
+          <td>6.134</td>
+          <td>1.169</td>
+          <td>1.179</td>
+          <td>1.162</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 1.7B VoiceDesign・公式</th>
+          <td>3.453</td>
+          <td>3.154</td>
+          <td>1.158</td>
+          <td>1.139</td>
+          <td>1.155</td>
+        </tr>
+        <tr>
+          <th scope="row">Fish S2 Pro・PyTorch / ROCm互換設定</th>
+          <td>8.460</td>
+          <td>8.784</td>
+          <td>2.580</td>
+          <td>2.552</td>
+          <td>2.570</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      速度を優先する候補はKokoro。GPU構成は日本語・英語ともRTF約0.05、CPUでも短文の完成は約0.2秒。公式Qwenは0.6Bが約0.9、1.7Bが約1.2で、同じサイズの用途違いによる速度差は小さい。高速化版は0.6Bが約0.5、1.7Bが約0.8。Fishは今回のROCm標準実装で約2.5であり、低遅延の第一候補にはしない。モデルの品質順位を表す結論ではない。
+    </p>
+    <details>
+      <summary>中文・長文と準備時間・メモリの内訳</summary>
+      <table>
+        <caption>
+          各文3回の生成完了時間の中央値（秒）
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">構成</th>
+            <th scope="col">日本語短文</th>
+            <th scope="col">日本語中文</th>
+            <th scope="col">日本語長文</th>
+            <th scope="col">英語短文</th>
+            <th scope="col">英語中文</th>
+            <th scope="col">英語長文</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">VOICEVOX CPU</th>
+            <td>0.288</td>
+            <td>0.623</td>
+            <td>1.709</td>
+            <td>対象外</td>
+            <td>対象外</td>
+            <td>対象外</td>
+          </tr>
+          <tr>
+            <th scope="row">Kokoro-82M CPU</th>
+            <td>0.238</td>
+            <td>0.480</td>
+            <td>2.724</td>
+            <td>0.218</td>
+            <td>0.551</td>
+            <td>3.016</td>
+          </tr>
+          <tr>
+            <th scope="row">Kokoro-82M GPU</th>
+            <td>0.152</td>
+            <td>0.372</td>
+            <td>1.073</td>
+            <td>0.133</td>
+            <td>0.366</td>
+            <td>1.236</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 0.6B CustomVoice・公式</th>
+            <td>4.307</td>
+            <td>6.281</td>
+            <td>19.370</td>
+            <td>3.598</td>
+            <td>7.027</td>
+            <td>22.366</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 0.6B CustomVoice・現行高速化API</th>
+            <td>2.510</td>
+            <td>5.278</td>
+            <td>11.405</td>
+            <td>2.898</td>
+            <td>5.020</td>
+            <td>13.052</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 0.6B Base・公式</th>
+            <td>3.441</td>
+            <td>6.023</td>
+            <td>16.139</td>
+            <td>4.175</td>
+            <td>7.086</td>
+            <td>19.605</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 1.7B CustomVoice・公式</th>
+            <td>4.034</td>
+            <td>7.688</td>
+            <td>23.553</td>
+            <td>3.569</td>
+            <td>7.335</td>
+            <td>32.751</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 1.7B CustomVoice・高速化</th>
+            <td>3.254</td>
+            <td>5.759</td>
+            <td>15.292</td>
+            <td>2.209</td>
+            <td>6.974</td>
+            <td>22.694</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 1.7B Base・公式</th>
+            <td>3.809</td>
+            <td>8.666</td>
+            <td>21.551</td>
+            <td>6.134</td>
+            <td>9.177</td>
+            <td>24.399</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 1.7B VoiceDesign・公式</th>
+            <td>3.453</td>
+            <td>8.031</td>
+            <td>28.127</td>
+            <td>3.154</td>
+            <td>7.478</td>
+            <td>25.459</td>
+          </tr>
+          <tr>
+            <th scope="row">Fish S2 Pro・PyTorch / ROCm互換設定</th>
+            <td>8.460</td>
+            <td>17.107</td>
+            <td>48.479</td>
+            <td>8.784</td>
+            <td>16.943</td>
+            <td>58.610</td>
+          </tr>
+        </tbody>
+      </table>
+      <table>
+        <caption>
+          Native構成の準備時間とprocess単位のメモリ。HTTP clientのRSSをモデルメモリへ換算しない。
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">構成</th>
+            <th scope="col">ロード＋参照準備 s</th>
+            <th scope="col">初回英語生成 s</th>
+            <th scope="col">初回日本語生成 s</th>
+            <th scope="col">GPU peak allocated GiB</th>
+            <th scope="col">最大RSS GiB</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Kokoro-82M CPU</th>
+            <td>3.128</td>
+            <td>0.679</td>
+            <td>0.598</td>
+            <td>対象外</td>
+            <td>2.650</td>
+          </tr>
+          <tr>
+            <th scope="row">Kokoro-82M GPU</th>
+            <td>3.208</td>
+            <td>9.305</td>
+            <td>2.077</td>
+            <td>1.552</td>
+            <td>2.834</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 0.6B CustomVoice・公式</th>
+            <td>3.379</td>
+            <td>7.210</td>
+            <td>3.188</td>
+            <td>3.319</td>
+            <td>2.665</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 0.6B Base・公式</th>
+            <td>7.173</td>
+            <td>4.834</td>
+            <td>3.821</td>
+            <td>3.366</td>
+            <td>2.911</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 1.7B CustomVoice・公式</th>
+            <td>3.599</td>
+            <td>4.364</td>
+            <td>4.144</td>
+            <td>5.203</td>
+            <td>4.549</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 1.7B CustomVoice・高速化</th>
+            <td>14.135</td>
+            <td>188.590</td>
+            <td>3.242</td>
+            <td>5.963</td>
+            <td>4.552</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 1.7B Base・公式</th>
+            <td>7.310</td>
+            <td>6.240</td>
+            <td>3.973</td>
+            <td>5.256</td>
+            <td>4.574</td>
+          </tr>
+          <tr>
+            <th scope="row">Qwen 1.7B VoiceDesign・公式</th>
+            <td>4.808</td>
+            <td>4.819</td>
+            <td>4.419</td>
+            <td>5.202</td>
+            <td>4.552</td>
+          </tr>
+          <tr>
+            <th scope="row">Fish S2 Pro・PyTorch / ROCm互換設定</th>
+            <td>30.446</td>
+            <td>9.304</td>
+            <td>9.493</td>
+            <td>20.115</td>
+            <td>18.919</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        高速化1.7Bの初回英語生成188.590秒は、FD上限を修正した再試験で部分的なcompile
+        cacheを再利用した値であり、空cacheからの純粋なcold-start値ではない。その準備区間には除外したstream試行との重なりもある。通常の測定24件は重なりを解消した後に実施した。
+      </p>
+    </details>
+    <h3>最初の音声データまでの時間</h3>
+    <table>
+      <caption>
+        現行0.6B CustomVoiceのPCM streaming。最初のPCM sample到着と全生成終了を分ける。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">言語群</th>
+          <th scope="col">測定件数</th>
+          <th scope="col">最初の音声データ s・中央値</th>
+          <th scope="col">全生成 RTF・中央値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">日本語</th>
+          <td>9</td>
+          <td>0.421</td>
+          <td>0.865</td>
+        </tr>
+        <tr>
+          <th scope="row">英語</th>
+          <td>9</td>
+          <td>0.429</td>
+          <td>0.862</td>
+        </tr>
+        <tr>
+          <th scope="row">日英混在</th>
+          <td>6</td>
+          <td>0.404</td>
+          <td>0.904</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      PCM到着は再生可能な生音声の先頭sampleをloopback
+      clientが受信した時刻であり、実際のブラウザ再生・speaker出力の遅延は含まない。非streamingより全生成RTFは悪くなるが、完成を待たずに音声を受け取れる。英語長文の1回はRTF
+      1.267となったため、この共存条件で常に再生に追いつく保証はできない。
+    </p>
+    <h3>読みの簡易検証</h3>
+    <p>
+      後続の利用者による試聴では、Qwen 1.7B
+      CustomVoice高速化版は前半の品質が実用水準に届かず不採用となった。速度の測定成功やASRによる再認識成功は、音声品質の採用判断と同一ではない。最新の試聴結果は<a
+        href="./tts-customvoice-pronunciation-and-streaming-2026-10-12.html#selection-decision"
+        >CustomVoiceの最終判断</a
+      >を参照する。Kokoroは候補として継続する。
+    </p>
+    <p>
+      英語専用の低遅延補完にはKokoro
+      CPUが有力で、VOICEVOXの日本語経路と組み合わせる選択肢がある。ただし今回の標準日本語G2Pでは英語が音素化されず、混在文のSave
+      changes・OpenAI・GitHub・Hello
+      world等がASRで別語になった。単一Providerへ置き換えて混在文も任せる判断は保留する。Qwen・Fishは複数の英単語を維持したが、READMEは全構成で元の語として安定して認識されなかった。音声の誤読とASRの誤認識を分離する試聴・略語の正規化が必要である。
+    </p>
+    <p>
+      速度測定を全て終えてから、各構成の各文1回分（iteration
+      0）の計91音声を既存Qwen3-ASR-1.7Bへ渡した。短文・中文・長文・混在文を含む。これは読み落としを点検する補助情報であり、人の試聴、MOS、speaker同一性、accentの品質評価を代替しない。
+    </p>
+    <table>
+      <caption>
+        日英混在文のASR結果。ASR自体の誤認識を含み、音質・自然さの評点ではない。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成・文</th>
+          <th scope="col">入力</th>
+          <th scope="col">Qwen3-ASRの認識</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Kokoro CPU / mixed-short</th>
+          <td>設定画面で、Save changesを押してください。</td>
+          <td>設定画面でサブチャンネルを押してください。</td>
+        </tr>
+        <tr>
+          <th scope="row">Kokoro CPU / mixed-medium</th>
+          <td>
+            今日の議題は、OpenAI APIとGitHub Actionsの連携です。まずREADMEを確認してから、Hello
+            worldのサンプルを実行してください。
+          </td>
+          <td>
+            今日の議題はオペナイアイとイトベッティオンスの連携です。まずいを確認してからエロウールのサンプルを実行してください。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 0.6B高速化 / mixed-short</th>
+          <td>設定画面で、Save changesを押してください。</td>
+          <td>設定画面でSave Changesを押してください。</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 0.6B高速化 / mixed-medium</th>
+          <td>
+            今日の議題は、OpenAI APIとGitHub Actionsの連携です。まずREADMEを確認してから、Hello
+            worldのサンプルを実行してください。
+          </td>
+          <td>
+            今日の議題は OpenAI API と GitHub Actions
+            の連携です。まず、イヤタッチメベイを確認してから、Hello World
+            のサンプルを実行してください。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Fish S2 Pro / mixed-short</th>
+          <td>設定画面で、Save changesを押してください。</td>
+          <td>設定画面でSave Changesを押してください。</td>
+        </tr>
+        <tr>
+          <th scope="row">Fish S2 Pro / mixed-medium</th>
+          <td>
+            今日の議題は、OpenAI APIとGitHub Actionsの連携です。まずREADMEを確認してから、Hello
+            worldのサンプルを実行してください。
+          </td>
+          <td>
+            今日の議題は OpenAI API と GitHub Actions の連携です。まず LDB を確認してから、Hello
+            World のサンプルを実行してください。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <h3>互換調整と除外した試行</h3>
+    <ul>
+      <li>
+        Qwen公式の最初の試行ではMIOpenの網羅的な探索に時間がかかった。配備済みProviderと同じMIOPEN_FIND_MODE=FAST等を指定した実行に揃え、初期試行は採用しなかった。
+      </li>
+      <li>
+        高速化1.7Bの初回はshellのFD上限1024でInductorがToo many open
+        filesになった。試験processだけをsystemd Providerと同じsoft limit
+        65535へ上げ、全24件を再測定した。
+      </li>
+      <li>
+        Fish初回はROCm 7.13の旧TorchScript fusionでBF16 helper型が衝突した。試験processのlegacy GPU
+        fusionを無効化し、同じ重み・BF16・元の演算で全24件を測定した。upstreamのtorch
+        2.8指定に対して実機は2.11であり、この互換設定を含む結果である。SGLang等の高速実装やNVIDIA
+        GPUの性能を示す値ではない。
+      </li>
+      <li>
+        再試験の切替で既存stream試験のchild
+        processが残り、並行実行になった。自分が開始したclientだけを停止し、その試行はinitial-stream-overlap-attemptとして保存・除外した。最終stream試験は他のTTS試験の終了後に全24件を再測定した。
+      </li>
+    </ul>
+  </section>
+  <section id="reproduction">
+    <h2>保存先と再現</h2>
+    <table>
+      <caption>
+        取得とSHA-256照合を完了した公式チェックポイント
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル</th>
+          <th scope="col">revision</th>
+          <th scope="col">取得ファイル合計 GiB</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice</th>
+          <td><code>85e237c12c027371202489a0ec509ded67b5e4b5</code></td>
+          <td>2.327</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice</th>
+          <td><code>0c0e3051f131929182e2c023b9537f8b1c68adfe</code></td>
+          <td>4.210</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen/Qwen3-TTS-12Hz-0.6B-Base</th>
+          <td><code>5d83992436eae1d760afd27aff78a71d676296fc</code></td>
+          <td>2.343</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen/Qwen3-TTS-12Hz-1.7B-Base</th>
+          <td><code>fd4b254389122332181a7c3db7f27e918eec64e3</code></td>
+          <td>4.232</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign</th>
+          <td><code>5ecdb67327fd37bb2e042aab12ff7391903235d3</code></td>
+          <td>4.210</td>
+        </tr>
+        <tr>
+          <th scope="row">hexgrad/Kokoro-82M</th>
+          <td><code>f3ff3571791e39611d31c381e3a41a3af07b4987</code></td>
+          <td>0.331</td>
+        </tr>
+        <tr>
+          <th scope="row">fishaudio/s2-pro</th>
+          <td><code>1de9996b6be38b745688de084d87a5633f714e4e</code></td>
+          <td>10.252</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      7 checkpoint、合計27.905
+      GiB。全取得ファイルのbytesを照合し、LFSファイルの公式SHA-256一致を検証した。既存CustomVoice
+      0.6B /
+      1.7BのLFSファイルも新規snapshotのhashに一致した。取得ファイル数・個別hashはdownloads-verified.json、既存重み照合はexisting-customvoice-identity.jsonを参照する。
+    </p>
+    <p>
+      チェックアウトと追加依存環境は<code>/srv/ai/apps/tts-speed-benchmark</code>、重みは<code>/srv/ai/models/tts-benchmark</code>、生成音声・生データ・取得manifestは<code>/srv/ai/results/larm/tts/2026-10-12-multilingual</code>に保存する。ソースrepositoryには重み・推論エンジン・生成音声・ログを置かない。
+    </p>
+    <p>
+      再実行用ソースは<code>benchmarks/tts/multilingual/download.py</code>、<code>run.py</code>、<code>validate_audio.py</code>、<code>plot.py</code>、<code>report.py</code>、<code>corpus.json</code>。取得scriptはモデルrevisionを固定し、verify指定でLFS
+      SHA-256を照合する。runは新しい外部出力directoryを要求し、1件ごとにJSONLへ記録する。失敗・未完了構成は成功結果へ混ぜない。
+    </p>
+    <p>
+      Qwen公式source
+      revisionは<code>022e286b98fbec7e1e916cb940cdf532cd9f488e</code>、Fish公式sourceは<code>bdd39477922a89b904c6f2c7397f2a9bbcc60a0c</code>。高速化forkは配備済み<code>eb14f6e6a50445cf442979abb9203ff0d5042c43</code>とLARM管理ROCm
+      patch。モデルrevision・ファイルhash・package一覧は外部manifestと各environment.jsonに記録する。
+    </p>
+    <p>
+      公式情報:
+      <code>https://github.com/QwenLM/Qwen3-TTS</code
+      >、<code>https://github.com/hexgrad/kokoro</code>、<code>https://huggingface.co/hexgrad/Kokoro-82M</code>、<code>https://github.com/fishaudio/fish-speech</code>、<code>https://huggingface.co/fishaudio/s2-pro</code>。QwenとKokoroはApache-2.0、FishはFish
+      Audio Research Licenseであり、商用利用の条件は別途異なる。
+    </p>
+    <p>
+      以前の日本語専用TTS評価は<a href="./irodori-tts-evaluation.html">Irodori-TTS実機評価</a
+      >を参照。今回は別corpus・別時点の測定で、過去の結果を同一条件の順位に混ぜない。
+    </p>
+  </section>
+</article>

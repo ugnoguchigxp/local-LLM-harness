@@ -29,14 +29,12 @@ test("agent provider protocols map to stable public endpoint paths", () => {
 
 test("production agent profiles compile to strict protocol-aware provider contracts", () => {
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
-  expect(catalog.defaultAgentProfile).toBe("coding-default");
+  expect(catalog.defaultAgentProfile).toBe("ornith1.5Strix");
   expect(catalog.profileSelectors).toEqual([
-    { id: "backchannelGemma3", agentProfile: "contextstill-backchannel-gemma3-1b", services: [] },
-    { id: "backchannelLfm25Jp", agentProfile: "contextstill-backchannel-lfm25-jp-1.2b", services: [] },
     { id: "backchannelQwen35", agentProfile: "contextstill-backchannel-qwen35-2b", services: [] },
     { id: "contextStill", agentProfile: "contextstill-background", services: [] },
     { id: "embeddingCanary", agentProfile: "contextstill-embedding", services: [] },
-    { id: "SAAA", agentProfile: "saaa-conversation-ornith15", services: [] },
+    { id: "ornith1.5Strix", agentProfile: "ornith1.5Strix", services: [] },
     { id: "SAAA-gemma4-26b", agentProfile: "saaa-conversation-gemma4-26b-voice", services: [] },
     { id: "SAAA-gemma4-26b-64k", agentProfile: "saaa-conversation-gemma4-26b-64k", services: [] },
     {
@@ -65,30 +63,22 @@ test("production agent profiles compile to strict protocol-aware provider contra
         startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 },
       }],
     },
-    { id: "vulnWorkbench", agentProfile: "coding-default", services: [] },
   ]);
   expect(catalog.profiles.map((profile) => profile.id)).toEqual([
+    "asr-granite",
     "asr-qwen",
-    "coding-default",
-    "contextstill-backchannel-gemma3-1b",
-    "contextstill-backchannel-lfm25-jp-1.2b",
     "contextstill-backchannel-qwen35-2b",
     "contextstill-background",
     "contextstill-background-128k",
     "contextstill-background-64k",
-    "contextstill-decision-default-canary",
     "contextstill-embedding",
-    "deep-reasoning-35b",
     "nightworker-background",
+    "ornith1.5Strix",
     "saaa-backchannel-default",
-    "saaa-conversation-gemma4",
     "saaa-conversation-gemma4-26b-64k",
     "saaa-conversation-gemma4-26b-voice",
-    "saaa-conversation-ornith15",
-    "saaa-conversation-ornith15-image",
-    "saaa-conversation-ornith15-music",
-    "saaa-qwen38",
     "tts-default",
+    "tts-english",
     "tts-expressive",
   ]);
   expect(catalog.audiences.map((audience) => audience.id)).toEqual([
@@ -100,38 +90,24 @@ test("production agent profiles compile to strict protocol-aware provider contra
       network: "host-private",
       baseUrl: "request-origin",
     });
-  expect(catalog.profiles.find((profile) => profile.id === "coding-default"))
-    .toMatchObject({
-      selectionPolicy: "default",
-      canonicalProfile: "coding-default",
-      deprecated: false,
-      schedulingPriority: 3000,
-      providers: [{
-        capability: "llm.coding",
-        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
-        route: "llm-default",
-        protocol: "openai.chat-completions.v1",
-        readiness: "llm-inference",
-        contextWindow: {
-          maxTokens: 131_072,
-          outputReserveTokens: 4_096,
-          safetyMarginTokens: 1_976,
-        },
-      }],
-    });
-  expect(catalog.profiles.find((profile) => profile.id === "deep-reasoning-35b"))
-    .toMatchObject({
-      canonicalProfile: "coding-default",
-      selectionPolicy: "compatibility",
-      deprecated: true,
-      schedulingPriority: 3000,
-      providers: [{
-        capability: "llm.reasoning",
-        publicModel: "coding-default",
-        route: "llm-default",
-      }],
-    });
+  const primary = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  expect(primary).toMatchObject({
+    selectionPolicy: "default", canonicalProfile: "ornith1.5Strix", deprecated: false, schedulingPriority: 4000,
+  });
+  expect(primary.providers.find(provider => provider.name === "llm")).toMatchObject({
+    capability: "llm.general", supportedCapabilities: ["llm.general", "llm.vision"],
+    publicModel: "ornith-1.5-strix-lean", route: "llm-ornith15-strix",
+    contextWindow: { maxTokens: 262_144, outputReserveTokens: 4_096, safetyMarginTokens: 1_976 },
+  });
+  for (const id of ["coding-default", "saaa-conversation-ornith15", "ornith1.5Strix-64k"]) {
+    expect(catalog.profiles.some(profile => profile.id === id)).toBe(false);
+  }
+  for (const profile of ["SAAA", "vulnWorkbench", "ornith1.5Strix-64k"]) {
+    expect(agentConnectionRequestSchema.safeParse({ profile, audience: "same-host" }).success).toBe(false);
+  }
   const contextStill = catalog.profiles.find((profile) => profile.id === "contextstill-background");
+  expect(contextStill?.requestScheduling).toBe("background-when-idle");
+  expect(catalog.profiles.find(profile => profile.id === "ornith1.5Strix")?.requestScheduling).toBe("foreground-exclusive");
   expect(contextStill)
     .toMatchObject({
       canonicalProfile: "contextstill-background",
@@ -139,23 +115,44 @@ test("production agent profiles compile to strict protocol-aware provider contra
       deprecated: false,
       schedulingPriority: 1000,
       providers: [{
+        name: "asr",
+        route: "stt-granite",
+        protocol: "openai.audio-transcriptions.v1",
+        publicModel: "granite-speech-4.1-2b",
+        readiness: "stt-transcription",
+      }, {
         name: "embedding",
         route: "embedding-multilingual-e5-small",
         protocol: "larm.embedding.v1",
         readiness: "embedding",
       }, {
         capability: "llm.coding",
-        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
+        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning", "llm.vision"],
         route: "llm-contextstill-ornith",
         protocol: "openai.chat-completions.v1",
         publicModel: "ornith-contextstill",
         readiness: "llm-inference",
         contextWindow: { maxTokens: 32768, outputReserveTokens: 4096, safetyMarginTokens: 0 },
       }, {
+        name: "sentence-language",
+        route: "system-one-ruri-language",
+        protocol: "larm.system-one.v1",
+        readiness: "system-one",
+      }, {
         name: "system-one",
         route: "system-one-laya",
         protocol: "larm.system-one.v1",
         readiness: "system-one",
+      }, {
+        name: "tts",
+        route: "tts-voicevox",
+        protocol: "openai.audio-speech.v1",
+        readiness: "tts-speech",
+      }, {
+        name: "tts-english",
+        route: "tts-kittentts-nano",
+        protocol: "openai.audio-speech.v1",
+        readiness: "tts-speech",
       }],
     });
   expect(catalog.profiles.find((profile) => profile.id === "contextstill-background-64k"))
@@ -184,24 +181,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
         },
       }],
     });
-  expect(catalog.profiles.find((profile) => profile.id === "contextstill-decision-default-canary"))
-    .toMatchObject({
-      selectionPolicy: "explicit-only",
-      schedulingPriority: 1000,
-      providers: [{
-        name: "decision-default",
-        capability: "llm.decision.default",
-        supportedCapabilities: ["llm.decision.default"],
-        route: "llm-decision-default",
-        protocol: "openai.chat-completions.v1",
-        publicModel: "decision-default",
-        readiness: "llm-inference",
-      }],
-    });
   for (const [profileId, route, publicModel] of [
     ["contextstill-backchannel-qwen35-2b", "llm-backchannel-qwen35-2b", "backchannel-qwen35-2b"],
-    ["contextstill-backchannel-lfm25-jp-1.2b", "llm-backchannel-lfm25-jp-1.2b", "backchannel-lfm25-jp-1.2b"],
-    ["contextstill-backchannel-gemma3-1b", "llm-backchannel-gemma3-1b", "backchannel-gemma3-1b"],
   ] as const) {
     expect(catalog.profiles.find((profile) => profile.id === profileId)).toMatchObject({
       selectionPolicy: "explicit-only",
@@ -233,71 +214,6 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "llm-inference",
       }],
     });
-  for (const profileId of ["saaa-conversation-gemma4", "saaa-qwen38"]) {
-    expect(catalog.profiles.find((profile) => profile.id === profileId))
-      .toMatchObject({
-        canonicalProfile: profileId,
-        selectionPolicy: "explicit-only",
-        deprecated: false,
-        schedulingPriority: 4000,
-        idleRelease: {
-          enabled: true,
-          idleSeconds: 300,
-          activityProtocols: [
-            "openai.audio-speech.v1",
-            "openai.audio-transcriptions.v1",
-            "openai.chat-completions.v1",
-          ],
-        },
-        providers: [
-        {
-          name: "asr",
-          capability: "speech.stt",
-          supportedCapabilities: ["speech.stt"],
-          route: "stt-qwen",
-          protocol: "openai.audio-transcriptions.v1",
-          publicModel: "qwen3-asr-1.7b",
-          publishModel: false,
-          readiness: "stt-transcription",
-        },
-        {
-          name: "embedding",
-          capability: "embedding.multilingual-e5-small",
-          supportedCapabilities: ["embedding.multilingual-e5-small"],
-          route: "embedding-multilingual-e5-small",
-          protocol: "larm.embedding.v1",
-          publicModel: "multilingual-e5-small",
-          publishModel: false,
-          readiness: "embedding",
-          embeddingSpace: { dimension: 384 },
-        },
-        {
-          name: "llm",
-          capability: "llm.general",
-          supportedCapabilities: ["llm.general"],
-          route: "llm-saaa-gemma4",
-          protocol: "openai.chat-completions.v1",
-          publicModel: "gemma4-e4b",
-          readiness: "llm-inference",
-          contextWindow: {
-            maxTokens: 230_400,
-            outputReserveTokens: 4_096,
-            safetyMarginTokens: 1_976,
-          },
-        },
-        {
-          name: "tts",
-          capability: "speech.tts",
-          supportedCapabilities: ["speech.tts"],
-          route: "tts-voicevox",
-          protocol: "openai.audio-speech.v1",
-          publicModel: "voicevox-core",
-          publishModel: false,
-          readiness: "tts-speech",
-        },
-        ],
-      });
-  }
   expect(catalog.profiles.find((profile) => profile.id === "saaa-conversation-gemma4-26b-voice"))
     .toMatchObject({
       canonicalProfile: "saaa-conversation-gemma4-26b-voice",
@@ -307,8 +223,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
         {
           name: "asr",
           capability: "speech.stt",
-          route: "stt-qwen",
-          publicModel: "qwen3-asr-1.7b",
+          route: "stt-granite",
+          publicModel: "granite-speech-4.1-2b",
         },
         {
           name: "embedding",
@@ -328,6 +244,14 @@ test("production agent profiles compile to strict protocol-aware provider contra
           },
         },
         {
+          name: "sentence-language",
+          capability: "decision.sentence-language",
+          route: "system-one-ruri-language",
+          publicModel: "ruri-v3-30m-sentence-language",
+          protocol: "larm.system-one.v1",
+          readiness: "system-one",
+        },
+        {
           name: "system-one",
           capability: "decision.system-one",
           route: "system-one-ruri",
@@ -341,81 +265,16 @@ test("production agent profiles compile to strict protocol-aware provider contra
           route: "tts-voicevox",
           publicModel: "voicevox-core",
         },
-      ],
-    });
-  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "gemma4-e4b"))
-    .toMatchObject({
-      capability: "llm.general",
-      route: "llm-saaa-gemma4",
-      schedulingPriority: 4000,
-      profileIds: ["saaa-conversation-gemma4", "saaa-qwen38"],
-    });
-  for (const profileId of [
-    "saaa-conversation-ornith15",
-    "saaa-conversation-ornith15-image",
-    "saaa-conversation-ornith15-music",
-  ]) {
-    expect(catalog.profiles.find((profile) => profile.id === profileId))
-      .toMatchObject({
-      canonicalProfile: profileId,
-      selectionPolicy: "explicit-only",
-      schedulingPriority: 4000,
-      idleRelease: {
-        enabled: true,
-        idleSeconds: 300,
-        activityProtocols: [
-          "openai.audio-speech.v1",
-          "openai.audio-transcriptions.v1",
-          "openai.chat-completions.v1",
-        ],
-      },
-      providers: [
-        { name: "asr", route: "stt-qwen", protocol: "openai.audio-transcriptions.v1" },
         {
-          name: "backchannel",
-          route: "llm-saaa-qwen35-2b",
-          protocol: "openai.chat-completions.v1",
-          publicModel: "qwen3.5-2b-fast-response",
-          contextWindow: {
-            maxTokens: 65_536,
-            outputReserveTokens: 4_096,
-            safetyMarginTokens: 1_976,
-          },
+          name: "tts-english",
+          capability: "speech.tts.english",
+          route: "tts-kittentts-nano",
+          publicModel: "kitten-tts-nano-0.8-fp32",
         },
-        { name: "embedding", route: "embedding-multilingual-e5-small", protocol: "larm.embedding.v1" },
-        {
-          name: "llm",
-          route: "llm-saaa-ornith15",
-          protocol: "openai.chat-completions.v1",
-          publicModel: "ornith-1.5-35b",
-          contextWindow: {
-            maxTokens: 131_072,
-            outputReserveTokens: 4_096,
-            safetyMarginTokens: 1_976,
-          },
-        },
-        { name: "tts", route: "tts-voicevox", protocol: "openai.audio-speech.v1" },
       ],
     });
-  }
-  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "ornith-1.5-35b"))
-    .toMatchObject({
-      capability: "llm.general",
-      route: "llm-saaa-ornith15",
-      schedulingPriority: 4000,
-      profileIds: [
-        "saaa-conversation-ornith15",
-        "saaa-conversation-ornith15-image",
-        "saaa-conversation-ornith15-music",
-      ],
-    });
-  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "decision-default"))
-    .toMatchObject({
-      capability: "llm.decision.default",
-      route: "llm-decision-default",
-      schedulingPriority: 1000,
-      profileIds: ["contextstill-decision-default-canary"],
-    });
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "ornith-1.5-35b")).toBeUndefined();
+  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "coding-default")).toBeUndefined();
   expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "backchannel-default"))
     .toMatchObject({
       capability: "llm.backchannel.classifier",
@@ -565,8 +424,47 @@ test("Gemma main and auxiliary context tiers share four allocations within one K
       node: runtime.node, backend: runtime.backend, endpoint: runtime.deployment.endpoint, observedAt,
     })),
   };
-  const allocations: Allocation[] = [mainLlm, auxiliaryLlm, auxiliaryLlm, auxiliaryLlm].map((provider, index) => ({
+  const allocations: Allocation[] = [mainLlm, mainLlm, mainLlm, mainLlm].map((provider, index) => ({
     id: `gemma-session-${index}`, bootEpoch: "test", status: "ready",
+    requirements: [{ capability: provider.capability, route: provider.route }],
+    bindings: [{
+      capability: provider.capability, route: provider.route, runtime: runtimeId,
+      node: "local-node", endpoint: "http://127.0.0.1:8083", status: "HOT",
+      candidateRank: 1, fallback: false, selectionReason: "primary-live",
+    }],
+    allowFallback: false, deploymentPolicy: "existing-only",
+    createdAt: observedAt, expiresAt: "2026-10-07T00:05:00.000Z",
+  }));
+  expect(admitRuntimes({ registry, state, allocations: allocations.slice(0, 3), candidateRuntimeIds: [runtimeId] }).ok)
+    .toBe(true);
+  expect(admitRuntimes({ registry, state, allocations, candidateRuntimeIds: [runtimeId] }))
+    .toMatchObject({ ok: false, reason: "runtime_capacity", runtime: runtimeId });
+});
+
+test("four retained Ornith profile sessions share one KV pool without the retired auxiliary profile", () => {
+  const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
+  const main = catalog.profiles.find((profile) => profile.id === "ornith1.5Strix")!;
+  const mainLlm = main.providers.find((provider) => provider.name === "llm")!;
+  const route = registry.routes.find((route) => route.id === mainLlm.route)!;
+  const runtimeId = route.candidates[0]!.runtime;
+  expect(mainLlm.contextWindow!.maxTokens * 4).toBe(1_048_576);
+  expect(matchAgentProfileContextWindow({
+    catalog, profileIds: [main.id], promptTokens: 256_072, requestedOutputTokens: 4_096,
+  })?.profile.id).toBe(main.id);
+
+  const observedAt = "2026-10-07T00:00:00.000Z";
+  const state: ClusterState = {
+    generatedAt: observedAt,
+    node: { ...registry.nodes[0]!, online: true },
+    runtimes: registry.runtimes.map((runtime) => ({
+      id: runtime.id,
+      status: runtime.id === runtimeId || runtime.policy.class === "resident" ? "HOT" : "COLD",
+      class: runtime.policy.class, capability: runtime.capability,
+      node: runtime.node, backend: runtime.backend, endpoint: runtime.deployment.endpoint, observedAt,
+    })),
+  };
+  const allocations: Allocation[] = [mainLlm, mainLlm, mainLlm, mainLlm].map((provider, index) => ({
+    id: `strix-session-${index}`, bootEpoch: "test", status: "ready",
     requirements: [{ capability: provider.capability, route: provider.route }],
     bindings: [{
       capability: provider.capability, route: provider.route, runtime: runtimeId,
@@ -613,8 +511,8 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
   }, registry)).toThrow(/Invalid key in record/);
   expect(() => parseAgentConnectionCatalog({
     ...base,
-    profileSelectors: { SAAA: { agentProfile: "missing" } },
-  }, registry)).toThrow(/profile selector SAAA references unknown agent profile missing/);
+    profileSelectors: { "ornith1.5Strix": { agentProfile: "missing" } },
+  }, registry)).toThrow(/profile selector ornith1\.5Strix references unknown agent profile missing/);
   expect(() => parseAgentConnectionCatalog({
     ...base,
     profileSelectors: {
@@ -634,7 +532,7 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
     ...base,
     defaultAgentProfile: "missing",
   }, registry)).toThrow(/default profile missing does not exist/);
-  expect(() => parseAgentConnectionCatalog({
+  expect(parseAgentConnectionCatalog({
     ...base,
     defaultAgentProfile: "speed",
     agentProfiles: {
@@ -643,7 +541,7 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
         providers: [{ ...base.agentProfiles.coding.providers[0]!, route: "llm-speed" }],
       },
     },
-  }, registry)).toThrow(/default agent profile speed cannot use explicit-only route llm-speed/);
+  }, registry).profiles[0]?.providers[0]?.route).toBe("llm-speed");
   expect(() => parseAgentConnectionCatalog({
     ...base,
     agentProfiles: {
@@ -952,6 +850,11 @@ test("embedding failover candidates must preserve the exact semantic space", () 
 });
 
 test("Agent Connection creation requires a public selector and a strict new request shape", () => {
+  expect(agentConnectionRequestSchema.safeParse({
+    profile: "ornith1.5Strix",
+    audience: "same-host",
+    providers: ["llm"],
+  }).success).toBeTrue();
   expect(agentConnectionRequestSchema.safeParse({
     audience: "same-host",
   }).success).toBeFalse();

@@ -1,0 +1,115 @@
+<article lang="ja">
+  <h1>Granite Speech 4.1を音声対話の標準ASRにする</h1>
+  <p>
+    2026年10月13日、実利用で非常に良好だったとの利用者評価に基づき、 Granite Speech 4.1 2B
+    Q8_0／VulkanをEumenes用の標準ASRとする。
+    Eumenesが使用するselectorは利用者が確認した<code>ornith1.5Strix</code>。
+    既に同じGraniteを使っていた<code>SAAA-gemma4-26b</code>も同じ標準runtimeへ統合する。
+    一時overrideへ依存せず、通常のregistry、固定artifact、runtime release、systemd unitで管理する。
+  </p>
+  <section id="contract">
+    <h2>要求profileと互換性</h2>
+    <p>
+      <code>ornith1.5Strix</code
+      >と<code>saaa-conversation-gemma4-26b-voice</code>のASRを
+      <code>stt-granite</code
+      >→<code>granite-asr</code>→<code>granite-asr.service</code>で解決する。
+      Agent Profile ID、Ornith STRIX_LEANとGemmaのLLM、262144 token契約、VOICEVOX、KittenTTS、
+      embedding、RuriのSystem Oneと文言語判定、補助64Kセッションは保持する。
+      Eumenesのコード・設定を変更せず、catalogとclaimから実際のmodel名
+      <code>granite-speech-4.1-2b</code>を取得できる。
+    </p>
+    <p>
+      APIは<code>POST /v1/audio/transcriptions</code>のmultipart
+      <code>model</code
+      >、<code>file</code>、<code>response_format=json</code>と
+      JSONの<code>text</code>を維持する。言語指定なしで日本語を認識する。
+      試用時に使用感を確認した12秒・16MiB上限、decoder context 512、CPU 16 thread、
+      同時推論1件、待機1件・2秒、切断時のcooperative cancelを維持する。
+      Qwenの長時間ファイル用APIをこの12秒用providerへ置き換えない。
+      <code>asr-qwen</code>と旧profileの明示routeは残し、Granite単独のprofile
+      <code>asr-granite</code>も公開する。
+    </p>
+  </section>
+  <section id="identity">
+    <h2>再現できるruntimeとartifact</h2>
+    <dl>
+      <dt>モデルartifact</dt>
+      <dd><code>granite-speech-4.1-2b-q8</code>、2559878944 bytes、Q8_0</dd>
+      <dt>変換モデルrevision</dt>
+      <dd>
+        <code>5fa89dfac74d52a186f63647553b9e1f7ae36e83</code>、handy-computer/granite-speech-4.1-2b-gguf
+      </dd>
+      <dt>モデルSHA-256</dt>
+      <dd><code>666d2f7736bfa140f44d67ba7bcb0827aa5718462f13850af294d72c1f09b218</code></dd>
+      <dt>モデル配置</dt>
+      <dd><code>/srv/ai/models/granite-asr/granite-speech-4.1-2b-Q8_0.gguf</code></dd>
+      <dt>エンジンrevision</dt>
+      <dd>
+        transcribe.cpp <code>5d66f60257a75e9bdbddc72dc0887b32e9d4841a</code>、Vulkan、Release、system
+        OpenBLAS 0.3.32+ds-5
+      </dd>
+      <dt>runtime配置</dt>
+      <dd><code>/srv/ai/apps/granite-asr-runtime</code>、Python 3.12、固定Python requirements</dd>
+      <dt>provider実装</dt>
+      <dd>通常release配下の<code>apps/granite-asr</code>。loopback 8089</dd>
+      <dt>資源・常駐</dt>
+      <dd>推定3.5 GiB、managed、minInstances 1。unit自体の自動起動は無効にしLARMが管理する</dd>
+    </dl>
+    <p>
+      モデルは既存の評価済みartifactからchecksum確認付きで複製する。
+      エンジンを固定revisionで標準配置へ再構築し、評価用ディレクトリへ依存しない。
+      重み・venv・native build・音声・検証証拠はsource repository外に置く。 3.5
+      GiB予約は12秒音声で測定したRSS＋DRM GTT／VRAMのpeak 3.447 GiBに基づく。 OS予約16
+      GiBとLARMのadmissionを変更しない。
+    </p>
+  </section>
+  <section id="release">
+    <h2>通常releaseへ移す手順と復元</h2>
+    <ol>
+      <li>現在稼働中のreleaseを基点に独立sourceを作成し、標準ASRに必要な変更だけを加える。</li>
+      <li>
+        標準配置のengine・modelで日本語24音声、cancel直後のfinal、無音とエラー、待機上限を確認する。
+      </li>
+      <li>全体check付きの署名release候補を作成し、標準unitと限定polkit許可を登録する。</li>
+      <li>一時config overrideを保存して外し、旧trial unitを停止して8089を標準unitへ引き継ぐ。</li>
+      <li>通常releaseを適用し、manifestとlive configRevisionが一致することを確認する。</li>
+      <li>
+        StrixとGemmaのcatalog→connection→claim→短文・長文認識→release→credential失効を検証する。
+      </li>
+    </ol>
+    <p>
+      切り替えにはLARMの再起動が必要で既存接続は取得し直す。
+      失敗時は前のrelease・一時override・trial unitを復元する。
+      復元用のsnapshotと検証証拠は<code>/srv/ai/evidence/granite-standard-20261013</code>に保存する。
+      旧trial適用スクリプトによる復元は標準化後の通常操作として使わない。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>合格条件と評価の範囲</h2>
+    <p>
+      2026年10月13日09:49 JSTに正式反映を完了した。稼働releaseは
+      <code>f88c58d2c57806c79b43b0b47e74c851e30993cf</code>、configRevisionは
+      <code>ddb54fa9824a5166609fd83c36b73c5023cd09c99ee3e225175d84c98173dfc7</code>。 manifestとlive
+      identityの一致、署名検証と全体check、本番contract verificationが成功した。
+      StrixとGemmaそれぞれでASR connectionを作成し、catalogとclaimのGranite一致、
+      短文・長文の200と正しい認識結果、connection解放後の401を確認した。 StrixのLLMはOrnith
+      STRIX_LEANのままで、TTSと文言語判定も保持した。 Eumenesのコード・設定は変更していない。
+    </p>
+    <p>
+      標準配置で日本語24音声の認識、キャンセル3回、同時要求200・200・429を確認した。
+      一時overrideを削除し、<code>granite-asr-trial.service</code>から
+      <code>granite-asr.service</code>へ引き継いだ。旧設定・旧モデルは復元用に保存した。
+      本番smokeとbuildの証拠は外部の<code>live-evidence.json</code>と<code>release-build.log</code>へ保存した。
+      アプリ/APIの755試験とtooling・Python・deployment試験を含む全体checkが成功した。
+      本番での実マイク対話試験や新releaseの24時間soakを新たに実施したとの主張はしない。
+    </p>
+    <p>
+      日本語24音声は句読点と三時／3時を正規化して比較する。
+      これはTTSで作った短文と約50文字の長文の互換試験であり、自然音声全体の精度保証ではない。
+      本番ASR試験は<code>deploymentPolicy=existing-only</code>とASRだけのsubsetを使い、LLMへ推論を送らない。
+      StrixのLLM・TTS・文言語判定の維持と、release後の401を確認する。
+      全体checkとLARM経由の実推論を分けて証拠を保存する。
+    </p>
+  </section>
+</article>

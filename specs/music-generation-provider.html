@@ -22,8 +22,8 @@
       </li>
       <li>既定 concurrency は 1 とし、GPU を使う生成を直列化する。</li>
       <li>
-        出力形式の既定は <code>opus</code> とし、Ogg Opus・64
-        kbps固定・48 kHzで保存する。
+        出力形式の既定は <code>opus</code> とし、Ogg Opus・128 kbps
+        VBR（目標ビットレート）・48 kHzで保存する。
       </li>
       <li>SAAA は完了済み楽曲をお気に入りへ指定し、daemon 再起動後も一覧からリプレイできる。</li>
     </ul>
@@ -255,7 +255,7 @@
     </p>
     <p>
       試作例は30秒・fast・instrumentalのJSONとする。歌なしは<code>instrumental: true</code>で、その場合<code>lyrics</code>を指定しない。
-      出力形式はopus・mp3・wav・flac（既定opus、64 kbps固定・48
+      出力形式はopus・mp3・wav・flac（既定opus、128 kbps VBR・48
       kHz）、seedは任意、参照音源の編集は未対応と説明する。 HTTP
       202で受け取った<code>jobId</code>を使い<code>GET /v1/music/generations/{jobId}</code>で確認し、
       completed時の<code>result.audioUrl</code>をControlのURLに解決して音声を取得する。
@@ -324,11 +324,12 @@
     </p>
     <p>
       LARMはOpus要求に対して上流へ<code>audio_format: wav32</code>を送る。
-      取得したWAVをFFmpegの標準入力へ渡し、<code>libopus</code>で64,000
-      bit/s、CBR、48,000 Hzへ変換する。
+      取得したWAVをFFmpegの標準入力へ渡し、<code>libopus</code>で目標128,000
+      bit/s、VBR、48,000 Hzへ変換する。
       Oggコンテナを標準出力から受け取り、最終成果物を<code>output.opus</code>、Content-Typeを<code>audio/ogg</code>とする。
-      変換のCPU処理はモデルの生成品質指定とは独立し、生成品質を変更してもビットレートは64
-      kbpsのままである。 音声tensorのチャンネル数を維持し、不要なダウンサンプリングは行わない。
+      変換のCPU処理はモデルの生成品質指定とは独立し、生成品質を変更しても目標ビットレートは128
+      kbpsのままである。VBRの実際のビットレートと容量は音声内容に応じて変わる。
+      音声tensorのチャンネル数を維持し、不要なダウンサンプリングは行わない。
     </p>
     <p>
       変換中はLARM側に中間ファイルを作らず、取得・変換のバイト上限、120秒の変換上限、キャンセルを適用する。
@@ -451,6 +452,76 @@
       不正入力と別APIのcursorは400、既存OpusのRange再生は206だった。
       この実機確認では生成・お気に入り変更・楽曲削除を行っていない。
       Eumenes向けプロンプトも3一覧のページ分割に合わせて更新した。
+    </p>
+  </section>
+  <section id="audio-quality-investigation-2026-10-13">
+    <h2>2026年10月13日：ノイズとOpusビットレートの切り分け</h2>
+    <p>
+      保存曲の劣化・ノイズについて、作業ツリーと稼働releaseの変換設定、保存済みmetadataと音声ヘッダーを確認した。
+      調査時の公開selector SAAA-w-musicはmusic
+      serviceのace-step-1.5を要求し、adapterはacestep-v15-turboへ対応付ける。
+      配備unitも同Turboを指定する。通常会話のLLMと楽曲波形を生成するACE-Stepは別のProviderであり、
+      ACE-Stepの補助LMはロードせずthinkingはfalseである。現在のworkerが停止していることは要求時起動の正常な状態である。
+    </p>
+    <p>
+      保存済みOpusは5曲すべて48 kHz・ステレオで、metadataは64,000 bpsのCBRを記録していた。
+      ffprobeのコンテナ込み平均は約64.6〜64.8 kbpsである。うち4曲はbalanced、1曲はfastであり、
+      ノイズをfast指定だけの問題と断定できない。変換は生成したfloat32
+      WAVから直接行い、MP3の再圧縮は挟まない。
+      これらの曲の生成元WAVは削除済みで、今回の調査では聴感評価や同一波形による圧縮比較を行っていない。
+    </p>
+    <p>
+      音楽保存用の候補は128 kbps VBRとする。XiphのOpus推奨設定はステレオ音楽保存に96〜128
+      kbpsを示す。
+      これは圧縮劣化を減らすための推奨であり、生成波形に既にあるノイズや歪みの除去を保証しない。
+      3分曲の音声payloadは64 kbpsで約1.44 MB、128 kbpsで約2.88 MBとなる。VBRでは曲により増減し、
+      コンテナの容量が加わる。今回、実装の既定値と配備設定は変更していない。
+    </p>
+    <ol>
+      <li>
+        検証時だけ生成元の同一float32 WAVを確保し、元WAV・64 kbps CBR・128 kbps
+        VBRを同じ再生環境で比較する。
+      </li>
+      <li>
+        元WAVにもノイズがある場合は、ACE-Stepの生成条件、波形のピークとクリッピング、再生経路を調べる。
+      </li>
+      <li>Opus変換後だけ劣化する場合は圧縮条件を調べ、128 kbpsでの改善を確認する。</li>
+      <li>
+        別々に再生成したWAVとOpusは生成差が混ざるため、同じpromptとseedだけで圧縮原因を断定しない。既存64
+        kbps曲を128 kbpsへ再圧縮しても失われた音は復元されない。
+      </li>
+    </ol>
+    <p>
+      参照資料は<code>https://wiki.xiph.org/Opus_Recommended_Settings</code>、
+      <code>https://ffmpeg.org/ffmpeg-codecs.html</code>のlibopus、
+      <code>https://ace-step.github.io/ACE-Step-1.5/en/INFERENCE</code>。 Turboの標準8 stepsに対し、LARMのbalancedも8
+      stepsである。補助LMの無効化単独をノイズ原因と認定せず、 highの12
+      stepsや別モデルの評価は圧縮との切り分け後に行う。
+    </p>
+  </section>
+  <section id="opus128-default-2026-10-13">
+    <h2>2026年10月13日：Opus既定値を128 kbps VBRへ変更</h2>
+    <p>
+      利用者の指定により、新規Opus出力の目標ビットレートを128,000 bpsへ変更し、VBRを有効にした。
+      圧縮による劣化を減らす目的であり、生成波形に含まれるノイズの除去を保証するものではない。
+      Oggコンテナ、48 kHz、float32 WAVからの直接変換、中間音声の削除は維持する。
+      metadataのencodingはbitrateBpsを128000、bitrateModeをvbrとして記録する。
+      VBRの実際のビットレートと容量は音声内容によって増減する。既存曲の音声とmetadataは変更しない。
+    </p>
+    <p>
+      公開serviceの説明、OpenAPI、READMEとconsumer向け引き継ぎ文を更新した。
+      実エンコーダーを使う既存テストをVBRの可変パケットと128 kbps相当の出力容量の検証へ更新し、
+      APIから保存されるmetadataも128 kbps VBRとして検証する。 上記の64
+      kbps調査と過去の実機検証は、変更前の記録として保持する。
+    </p>
+    <p>
+      稼働版9ea268d43bffを基点とした隔離checkoutで今回の変更だけをcommitし、
+      d9542c4c8a1d8021031c66d1a91d66d911e7f969を署名済みrelease経路で配備した。 builderのbun run
+      checkは成功し、ControlのreleaseCommitとdesiredRelease・observedReleaseが一致した。
+      convergenceはcontract_verified・succeeded、healthはreadyである。
+      稼働版の変換関数に2秒の合成正弦波を渡す検証では、48 kHz・ステレオOpus、35,629 bytes、 packet
+      payload換算140,832 bps、11種類のpacketサイズを確認した。VBRの実測値は目標値に厳密一致しない。
+      これは配備とエンコードの検証であり、ACE-Stepによる新規楽曲生成やノイズ改善の聴感評価ではない。
     </p>
   </section>
   <section id="configuration">

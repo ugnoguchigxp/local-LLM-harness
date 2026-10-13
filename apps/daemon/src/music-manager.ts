@@ -244,8 +244,8 @@ export class AceStepMusicProvider implements MusicProvider {
         ...metas,
         upstreamTaskId: taskId,
         upstreamArtifactCleanup,
-        ...(isOpus ? { encoding: { codec: "opus", container: "ogg", bitrateBps: 64_000,
-          bitrateMode: "cbr", sampleRateHz: 48_000, intermediateFormat: "wav32" } } : {}),
+        ...(isOpus ? { encoding: { codec: "opus", container: "ogg", bitrateBps: 128_000,
+          bitrateMode: "vbr", sampleRateHz: 48_000, intermediateFormat: "wav32" } } : {}),
       },
     };
   }

@@ -1,0 +1,335 @@
+<article lang="ja">
+  <h1>Ornithへの復帰候補3種の実機試験</h1>
+  <p>
+    <time>2026-10-12</time>。利用者から、Gemma 4の使用感を理由に、STRIX_LEAN Q4、ArtomYuan
+    Q6_AGENT、Ciru Halo
+    Agentの順で実機試験を依頼された。ここでは公開速度、利用者の期待値、本機の実測を区別する。恒久的なモデル切替はこの依頼に含めない。
+  </p>
+  <p>
+    <strong>現構成での試用第一候補はSTRIX_LEAN。</strong>日本語短文65.14 tok/s、コード65.59
+    tok/sで、70〜85 tok/sの期待には届かなかった。Q6_AGENTは45.31 tok/sで期待の下端に入ったが、
+    基本チェックで優位は示されなかった。Ciruは44 GiB cacheの確保でOOMとなり、生成速度は未測定。
+    通常profileを切り替える操作は行っていない。
+  </p>
+  <section id="artifacts">
+    <h2>試験対象と配布物の固定</h2>
+    <table>
+      <caption>
+        比較候補。期待速度は依頼時の推定であり、採用保証ではない。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">優先</th>
+          <th scope="col">候補</th>
+          <th scope="col">公開速度</th>
+          <th scope="col">依頼時の期待</th>
+          <th scope="col">固定revision</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <th scope="row">pugant STRIX_LEAN Q4</th>
+          <td>82.45 tok/s、Vulkan llama-bench tg128、GPU専有</td>
+          <td>70〜85 tok/s</td>
+          <td><code>4494a5cffb1eb5496fa25575e5a5040064aa48b8</code></td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <th scope="row">ArtomYuan Q6_0_ROCMFPX_AGENT</th>
+          <td>51.6 tok/s、llama-bench tg256</td>
+          <td>45〜55 tok/s</td>
+          <td><code>3ca8bacce24e3882e6c91d73159123a5ddd192ab</code></td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <th scope="row">jcbtc Ciru Halo Agent 4.1.6</th>
+          <td>178 tok/s、短いコード課題の単一要求decode</td>
+          <td>会話50〜65、適合課題100〜180 tok/s</td>
+          <td><code>4e753c66eaf98f50e5683b3896da72548aa0193c</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      公開値は入力・出力長、engine、backend、常駐サービス、speculation条件が一致しない。178
+      tok/sは通常会話の保証ではない。Ciruは独自safetensorsと専用vLLM/ROCm
+      10環境を必要とし、通常のllama.cppへモデル名だけを追加しても試せない。
+    </p>
+    <dl>
+      <dt>STRIX_LEAN SHA-256、19,052,439,552 bytes</dt>
+      <dd><code>aa35045aab39163851c8584e6cf8cc6f33e8fc2ffe28ca627d3414ec66584704</code></dd>
+      <dt>Q6_AGENT SHA-256、33,137,821,120 bytes</dt>
+      <dd><code>735ec7c3bd3e8da3e7ea5643843c15994de367981c5020242b04db3d70c5a742</code></dd>
+      <dt>保存済みOrnith MTP refresh版SHA-256</dt>
+      <dd>
+        <code>0f907917a1bfe4e0ca0d281e5709dcf34b6277063e94fab29491bb5c80fda696</code
+        >。指定されたpugant配布物と異なるため補助比較として扱う。
+      </dd>
+    </dl>
+  </section>
+  <section id="intent-and-state">
+    <h2>要求とライブ状態の区別</h2>
+    <p>
+      開始時、SAAA用のGemma 4 26B conversation runtimeと、systemdのresident
+      Ornithが共存していた。Gemma profileはGemma
+      routeを解決し、Ornith用profileは別routeを解決する。2つのモデルが実行中であることだけを設定ドリフトとは扱わない。今回の合成要求は明示的な試験用backendへ送り、通常profile、route、lease、daemonの設定を変更しない。
+    </p>
+    <p>
+      ホストはRyzen AI MAX+ 395 / Radeon 8060S、usable UMA 121 GiB、Ubuntu 26.04.1、kernel
+      7.0.0-34、glibc 2.43。音声、embedding、Ruri、Gemma、resident
+      Ornith等を維持した同居条件である。GPU専有測定ではない。モデル取得とCiruの依存取得も並行したため、完全に静かなホストの上限性能は表さない。
+    </p>
+  </section>
+  <section id="method">
+    <h2>測定方法</h2>
+    <p>
+      GGUF比較は合計context 65,536、parallel 2、1 slotあたり32K、K/Vともq8_0、Flash Attention、batch
+      2048、ubatch 1024、threads 16、thinking off、temperature 0。Gemmaはstock llama.cpp build 10655
+      / cb300598d、Ornith補助比較はq38rocm build 244 /
+      0fc9568。GemmaとSTRIX_LEANはVulkan0、正式なQ6_AGENTはROCm0。
+      engineとbackendはモデル形式への対応を確認して選び、全候補を同一binaryで測ったとは扱わない。
+    </p>
+    <p>
+      Q6_AGENTの正式比較とengine切り分けではArtomYuan engine commit
+      <code>5d15c79b63a21d7fe9a86cf0ddf95cfc312b5aaa</code>を別ディレクトリにビルドした。
+      ROCmとVulkanの両方を有効にした。ROCmでcustom
+      typeに対応し、VulkanのSTRIX_LEANは後述の速度退行を確認した。新engineの
+      <code>--load-mode none</code
+      >を使い、旧engineのno-mmapに相当するロード条件にする。
+      日本語・コード・履歴の入力先頭に試験番号を付け、serverがcache_promptを無視しても、前回の長い履歴を再利用してTTFTを短く見せない。
+    </p>
+    <ol>
+      <li>
+        32-tokenのwarmup後、日本語短文、コード短文、日本語履歴の3課題を256-token上限で各3回Streaming生成する。
+      </li>
+      <li>
+        履歴は150件の合成会議記録。Gemma補助比較で4,758、先頭に試験番号を付けた比較で4,763 prompt
+        tokens。tokenizerが異なるモデルでは同じ文字入力でもtoken数が異なる。
+      </li>
+      <li>
+        HTTP送信から最初の表示contentまでを計測。usageのcompletion
+        tokensと最初のcontent以降の経過時間からdecode window
+        tok/sを求め、文字/秒も記録する。engineが返すtimingsは別に保存する。
+      </li>
+      <li>
+        固定文字列、3行指定、会話記憶、訂正、未知情報への応答、JSON schema、auto
+        tool、tool結果からの応答、不要tool抑止、2つのtool同時出力を確認する。実toolは実行せず、合成結果を戻す。
+      </li>
+      <li>
+        2要求同時のStreamingも別に測定。基本10課題は小さな機能screenで、汎用知能、日本語の自然さ、長期agent成功率の順位を証明しない。
+      </li>
+    </ol>
+    <p>
+      256-token速度課題は生成を意図的に打ち切る。finish_reason=lengthはこの速度試験の設計であり、完成したコードの品質合格とは数えない。10件の機能チェックは別に512-token上限で行う。thinking
+      onや256K履歴を受入済みとは扱わない。
+    </p>
+  </section>
+  <section id="candidate-results">
+    <h2>指定配布物の実測</h2>
+    <table>
+      <caption>
+        各3回の中央値。GGUFはMTP off、全要求thinking off。Ciruは標準構成の起動結果。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補と実行条件</th>
+          <th scope="col">日本語短文 tok/s</th>
+          <th scope="col">コード tok/s</th>
+          <th scope="col">履歴 tok/s</th>
+          <th scope="col">短文表示開始</th>
+          <th scope="col">基本チェック</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">pugant STRIX_LEAN、q38rocm / Vulkan0</th>
+          <td>65.14</td>
+          <td>65.59</td>
+          <td>63.59</td>
+          <td>318 ms</td>
+          <td>9/10</td>
+        </tr>
+        <tr>
+          <th scope="row">ArtomYuan Q6_AGENT、Artom engine / ROCm0</th>
+          <td>45.31</td>
+          <td>45.39</td>
+          <td>42.95</td>
+          <td>313 ms</td>
+          <td>9/10</td>
+        </tr>
+        <tr>
+          <th scope="row">Ciru 4.1.6、ROCm 10、256K / 8 sequences / 44 GiB cache</th>
+          <td>未測定</td>
+          <td>未測定</td>
+          <td>未測定</td>
+          <td>ready未到達</td>
+          <td>起動時OOM</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      両者ともSHA-256検証後に起動した。2要求同時では、STRIX_LEANが1要求あたり48.77
+      tok/s、Q6_AGENTが33.98 tok/s。短文の最初の表示まで、それぞれ約380 ms、388
+      ms。同時実行が単一要求と同じ速度になるとは扱わない。
+    </p>
+    <p>
+      両者の失敗は、知らない食事について「分かりません」と答えた後に説明を付け足したこと。未知情報の捏造ではない。今回の基本課題ではQ6_AGENTの明確な品質向上は示されず、decodeはSTRIX_LEANより遅い。Q6の重み精度が高いという構成上の説明を、測定した日本語やagent能力の優位へ置き換えない。
+    </p>
+    <p>
+      Artom engineのVulkan0でもSTRIX_LEANを試したが、日本語15.52、コード15.38
+      tok/sであった。該当sourceにROCmFPX custom
+      typeのVulkan実装が見当たらず、CPU側処理を含むfallbackが原因候補である。全課題は続行せず、対応済みq38rocmへ戻した。load成功と適切なGPU性能は別の確認事項である。この退行値をOrnith自体の性能上限とは扱わない。
+    </p>
+  </section>
+  <section id="supplementary-results">
+    <h2>完了した補助比較</h2>
+    <table>
+      <caption>
+        各3回の中央値。新規指定配布物の結果とは分ける。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">実行条件</th>
+          <th scope="col">日本語短文 tok/s</th>
+          <th scope="col">コード tok/s</th>
+          <th scope="col">履歴 tok/s</th>
+          <th scope="col">短文表示開始</th>
+          <th scope="col">基本チェック</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">稼働中Gemma 4 26B、4 slots / q4 KV</th>
+          <td>61.71</td>
+          <td>61.80</td>
+          <td>53.86</td>
+          <td>242 ms</td>
+          <td>10/10</td>
+        </tr>
+        <tr>
+          <th scope="row">Gemma 4 26B、比較用32K×2 / q8 KV</th>
+          <td>60.51</td>
+          <td>61.33</td>
+          <td>53.76</td>
+          <td>252 ms</td>
+          <td>10/10</td>
+        </tr>
+        <tr>
+          <th scope="row">保存済みOrnith refresh、MTP off</th>
+          <td>67.10</td>
+          <td>66.94</td>
+          <td>65.06</td>
+          <td>260 ms</td>
+          <td>9/10</td>
+        </tr>
+        <tr>
+          <th scope="row">保存済みOrnith refresh、MTP n4/p0.6</th>
+          <td>63.29</td>
+          <td>79.78</td>
+          <td>59.33</td>
+          <td>285 ms</td>
+          <td>10/10</td>
+        </tr>
+        <tr>
+          <th scope="row">Gemma 4 26B、新Artom engine、32K×2 / q8 KV</th>
+          <td>58.30</td>
+          <td>58.31</td>
+          <td>51.58</td>
+          <td>239 ms</td>
+          <td>10/10</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      MTP
+      offのOrnithは「分かりません」とだけ返す指定に説明を付け足した。未知情報を捏造した失敗ではなく、短い出力指定への違反である。MTP
+      onは今回のコード課題で速く、日本語短文・履歴課題では遅くなった。MTPの適否は課題ごとに判断する。
+    </p>
+    <p>
+      基本チェックに合格したGemmaも、利用者の実際の会話での不満を解消したとは判断しない。今回の試験は置き換え候補の起動・応答・API挙動を比較する第一段階である。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>再実行と証跡</h2>
+    <p>
+      合成評価は<code>benchmarks/ornith/evaluate.py</code>、明示commandとartifact
+      SHAを持つ外部JSON計画から逐次起動する入口は<code>benchmarks/ornith/run.py</code>。runnerは自身のprocess
+      groupだけを終了し、systemdやLARMの設定を変更しない。資源サンプル、起動ログ、リクエスト、応答本文、集計をrepository外へ保存する。
+    </p>
+    <p>
+      raw evidence: <code>/srv/ai/evidence/ornith-three-trial-20261012</code>。モデルとCiru
+      runtimeは<code>/srv/ai/models/ornith-trial-20261012</code>、<code>/srv/ai/apps/ornith-ciru-trial-20261012</code>。重み、binary、cache、ログをsource
+      repositoryへ追加しない。
+    </p>
+    <p>
+      Ciru
+      installerはpkg-configと開発用headerの不足で一度終了した。Ubuntu配布の必要debを試験ディレクトリへ展開して専用環境から参照する。system
+      glibcや全体のPython環境を置き換えない。
+    </p>
+  </section>
+  <section id="ciru-runtime-constraints">
+    <h2>Ciruの事前確認</h2>
+    <p>
+      Ciru 4.1.6はGPU認識と標準設定のdry-runに成功した。一方、INSTALL.mdに載る16 GiB
+      cache設定は内部のselection検証で拒否される。配布コードはcontext 262144、max sequences
+      8、shared cache 44 GiBを固定している。コードやsource pinを変更せず、その標準構成を試験した。 8
+      sequencesは独立した256K
+      cacheが8個あるという意味ではない。32K×2のGGUFと容量条件が異なることを明記する。
+    </p>
+  </section>
+  <section id="ciru-startup-result">
+    <h2>Ciru標準構成の起動結果</h2>
+    <p>
+      配布物のSHA-256検証後、targetとdrafterのロード、AITER JIT、torch.compileは成功した。
+      モデルロードは22.02 GiB、OOM時のPyTorch割当は27.54 GiB。続く43.99 GiBの単一cache割当が
+      <code>torch.OutOfMemoryError</code>で失敗し、起動から550.38秒でserverが終了した。
+      profile forwardと初回コンパイルを含むcold
+      startであり、通常のモデル切替時間として550秒を見積もらない。
+    </p>
+    <p>
+      起動時のsystem MemAvailableは57.81 GiB、測定中の最低値は9.45 GiB。 GTT使用量の最大は99.37
+      GiBで、実際のGTT上限100 GiBにほぼ達した。既存側のGTTは起動開始時57.49 GiB、試験終了後約35.11
+      GiBで、 試験中に他の要求に応じたruntimeの起動停止もあった。低い側の約35 GiBにCiruの約27.54
+      GiBのPyTorch割当と44 GiB cacheを加えても、概算で約106.5
+      GiBになる。共存するProviderとGTT予算の不足を第一原因と判断する。 ROCmが58.67 GiB
+      freeと表示しても、Vulkan等と共有するGTT全体やphysical UMAの余裕を保証しない。
+      単独条件とallocatorの切り分けは未実施である。
+    </p>
+    <p>
+      16 GiB設定を通すために配布コードのassertionやselectionを変更していない。
+      Ciruをさらに評価するには、使用中のAllocationとProvider
+      intentを確認したうえで競合LLMの常駐枠を明示的に解放し、
+      単一LLM条件で再試験する必要がある。今回の公開178 tok/sや会話50〜65
+      tok/sを、このホストで再現済みとは扱わない。 試験process groupは終了済みで、LARM
+      daemon、resident llama-server、llama-swapの稼働を確認した。
+    </p>
+  </section>
+  <section id="sources">
+    <h2>一次資料</h2>
+    <ul>
+      <li>
+        <a href="https://huggingface.co/pugant/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN"
+          >STRIX_LEANの配布者card</a
+        >
+      </li>
+      <li>
+        <a href="https://huggingface.co/ArtomYuan/Ornith-1.5-35B-A3B-ROCmFPX"
+          >利用者が指定したQ6_AGENTの配布者card</a
+        >
+      </li>
+      <li>
+        <a href="https://huggingface.co/jcbtc/Ornith1.5-Ciru-Halo-Agent-vllm-strix-halo"
+          >Ciruの配布者card</a
+        >
+      </li>
+      <li>
+        <a href="./ornith-1.5-35b-mtp-refresh-evaluation.html">保存済みrefresh版の過去測定</a>
+      </li>
+      <li>
+        <a href="./gemma4-alternative-candidates-2026-10-11.html"
+          >前日の候補調査。今回の使用感と試験依頼が判断の更新理由</a
+        >
+      </li>
+    </ul>
+  </section>
+</article>

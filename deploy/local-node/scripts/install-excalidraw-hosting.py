@@ -29,6 +29,35 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()
 
 
+def hosted_api_token(path):
+    values = [line.split('=', 1)[1].strip() for line in Path(path).read_text().splitlines() if line.startswith('LARM_API_TOKEN=')]
+    if len(values) != 1:
+        raise RuntimeError('hosted_larm_api_token_required')
+    token = values[0]
+    if len(token) >= 2 and token[0] in {'"', "'"} and token[-1] == token[0]:
+        token = token[1:-1]
+    if not re.fullmatch(r'[\x21-\x7e]{32,4096}', token) or any(c in token for c in ['"', "'", '\\']):
+        raise RuntimeError('invalid_hosted_larm_api_token')
+    return token
+
+
+def hosted_api_principal(token, services):
+    return {'id': 'eumenes-hosted-apps', 'token': token, 'services': sorted(set(services))}
+
+
+def merge_hosted_consumers(existing, additions):
+    merged = []
+    for principal in existing + additions:
+        matches = [p for p in merged if p['id'] == principal['id'] or p['token'] == principal['token']]
+        if not matches:
+            merged.append({**principal, 'services': list(principal['services'])})
+        elif len(matches) == 1 and matches[0]['id'] == principal['id'] == 'eumenes-hosted-apps' and matches[0]['token'] == principal['token']:
+            matches[0]['services'] = sorted(set(matches[0]['services']) | set(principal['services']))
+        else:
+            raise RuntimeError('existing_consumer_conflict')
+    return merged
+
+
 def safe_path(path):
     for p in [path, *path.parents]:
         if p.is_symlink():
@@ -160,6 +189,7 @@ def main():
     parser.add_argument('--bootstrap', action='store_true')
     parser.add_argument('--expected-digest')
     parser.add_argument('--daemon-user', default='ugnoguchi')
+    parser.add_argument('--larm-api-token-env-file', default='/etc/larm/larm.env')
     args = parser.parse_args()
     if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', args.daemon_user):
         raise RuntimeError('invalid_daemon_user')
@@ -170,6 +200,7 @@ def main():
         return
     if os.geteuid() != 0 or not args.expected_digest:
         raise RuntimeError('root_and_expected_digest_required')
+    api_token = hosted_api_token(args.larm_api_token_env_file)
     daemon = pwd.getpwnam(args.daemon_user)
     validate_request_path(Path('/var/lib/larm/local-services/requests'), daemon.pw_uid)
     # No writes to the mount before its exact identity is confirmed.
@@ -206,8 +237,8 @@ def main():
     put(Path('/etc/larm/local-services/secrets/excalidraw-lifecycle'), lifecycle.encode(), 0o640, daemon.pw_gid)
     put(CONF / 'client-tokens.json', canonical([owner]), 0o640, daemon.pw_gid)
     put(CONF / 'larm-token', larm.encode(), 0o640, daemon.pw_gid)
-    put(CONF / 'consumers.json', canonical([{'id': 'excalidraw-gateway', 'token': larm, 'services': ['excalidraw-host']}]), 0o640, daemon.pw_gid)
-    put(CONF / 'gateway.json', canonical({'larmBaseUrl': 'http://127.0.0.1:9810', 'larmTokenFile': str(CONF / 'larm-token'), 'clientTokensFile': str(CONF / 'client-tokens.json'), 'gateway': {'hostname': '127.0.0.1', 'port': 18790, 'serviceId': 'excalidraw-host', 'webRoot': str(release / 'web'), 'allowedEndpoints': [manifest['endpoint']], 'userIdleSeconds': 180, 'renewSeconds': 15}}), 0o640, daemon.pw_gid)
+    put(CONF / 'consumers.json', canonical([{'id': 'excalidraw-gateway', 'token': larm, 'services': ['excalidraw-host']}, hosted_api_principal(api_token, ['excalidraw-host'])]), 0o640, daemon.pw_gid)
+    put(CONF / 'gateway.json', canonical({'larmBaseUrl': 'http://127.0.0.1:9810', 'larmTokenFile': str(CONF / 'larm-token'), 'larmApiTokenEnvFile': args.larm_api_token_env_file, 'clientTokensFile': str(CONF / 'client-tokens.json'), 'gateway': {'hostname': '127.0.0.1', 'port': 18790, 'serviceId': 'excalidraw-host', 'webRoot': str(release / 'web'), 'allowedEndpoints': [manifest['endpoint']], 'userIdleSeconds': 180, 'renewSeconds': 15}}), 0o640, daemon.pw_gid)
     # Review-only fragment: application registration does not change the live inference daemon.
     dropin = f'[Service]\nEnvironment=LARM_LOCAL_SERVICES_ENABLED=true\nEnvironment=LARM_LOCAL_SERVICES_FILE={CONF}/services.yaml\nEnvironment=LARM_LOCAL_SERVICES_PRINCIPALS={CONF}/consumers.json\n'
     put(CONF / 'larm-daemon-dropin.review', dropin.encode())

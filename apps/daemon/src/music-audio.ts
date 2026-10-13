@@ -18,7 +18,7 @@ export async function encodeMusicOpus(
   const child = Bun.spawn([
     "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
     "-f", "wav", "-i", "pipe:0", "-map", "0:a:0", "-map_metadata", "-1",
-    "-c:a", "libopus", "-b:a", "64k", "-vbr", "off",
+    "-c:a", "libopus", "-b:a", "128k", "-vbr", "on",
     "-application", "audio", "-ar", "48000", "-f", "opus", "pipe:1",
   ], {
     stdin: waveform, stdout: "pipe", stderr: "ignore", signal, timeout: 120_000,

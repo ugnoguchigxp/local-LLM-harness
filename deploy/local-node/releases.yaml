@@ -1,10 +1,18 @@
 # Runtime releases combine immutable artifact entries into one deployable unit.
 # Model data stays outside this repository; every artifact is pinned in models.yaml.
 runtimeReleases:
+  kittentts-nano-fp32-current:
+    runtime: kittentts-nano
+    artifacts: [ kitten-tts-nano-fp32, kitten-tts-nano-voices, kitten-tts-nano-config ]
+    providerConfigRevision: kittentts-0.8.1-nano-fp32-cpu4-clean-text-voice-catalog-v2
+    estimatedMemoryGB: 1.5
+    healthPath: /health
+    default: true
+
   ruri-system-one-current:
     runtime: ruri-system-one
-    artifacts: [ruri-v3-30m]
-    providerConfigRevision: ruri-ort-int8-synthetic-v1-c100-A-9d382201d67e-synthetic-v1-A-e768c18981af
+    artifacts: [ ruri-v3-30m ]
+    providerConfigRevision: ruri-ort-int8-attitude-and-sentence-language-aa0ec854481c
     estimatedMemoryGB: 1
     healthPath: /health
     default: true
@@ -138,11 +146,11 @@ runtimeReleases:
     runtime: ornith15-conversation
     artifacts:
       - ornith15-35b-quality
-    providerConfigRevision: llama-swap-ornith15-35b-official-q5-conversation-225k-reasoning-off-v2
-    estimatedMemoryGB: 48
+      - ornith15-vision-bf16
+    providerConfigRevision: llama-swap-ornith15-35b-official-q5-conversation-225k-reasoning-off-v2-vision4096-v1
+    estimatedMemoryGB: 50
     healthPath: /health
     default: true
-
 
   qwen36-35b-current:
     runtime: qwen36-35b
@@ -157,8 +165,9 @@ runtimeReleases:
     runtime: ornith15-35b
     artifacts:
       - ornith15-35b-quality
-    providerConfigRevision: llama-swap-ornith15-35b-official-q5-plain-v2
-    estimatedMemoryGB: 48
+      - ornith15-vision-bf16
+    providerConfigRevision: llama-swap-ornith15-35b-official-q5-plain-v2-vision4096-v1
+    estimatedMemoryGB: 50
     healthPath: /health
     default: true
 
@@ -166,8 +175,9 @@ runtimeReleases:
     runtime: ornith15-35b-speed
     artifacts:
       - ornith15-35b-speed
-    providerConfigRevision: llama-swap-ornith15-35b-rocmfp4-aug24-mtp-n4-p06-v3
-    estimatedMemoryGB: 44
+      - ornith15-vision-bf16
+    providerConfigRevision: llama-swap-ornith15-35b-rocmfp4-aug24-mtp-n4-p06-v3-vision4096-v1
+    estimatedMemoryGB: 46
     healthPath: /health
     default: true
 
@@ -175,8 +185,9 @@ runtimeReleases:
     runtime: ornith-contextstill
     artifacts:
       - ornith15-35b-speed
-    providerConfigRevision: llama-swap-ornith15-contextstill-64k-n4-demand-plain-v3
-    estimatedMemoryGB: 44
+      - ornith15-vision-bf16
+    providerConfigRevision: llama-swap-ornith15-contextstill-64k-n4-demand-plain-v3-vision4096-v1
+    estimatedMemoryGB: 46
     healthPath: /health
     default: true
 
@@ -184,8 +195,9 @@ runtimeReleases:
     runtime: ornith15-35b-agent
     artifacts:
       - ornith15-35b-speed
-    providerConfigRevision: llama-swap-ornith15-35b-agent-64k-aug24-mtp-n4-p06-v3
-    estimatedMemoryGB: 30
+      - ornith15-vision-bf16
+    providerConfigRevision: llama-swap-ornith15-35b-agent-64k-aug24-mtp-n4-p06-v3-vision4096-v1
+    estimatedMemoryGB: 32
     healthPath: /health
     default: true
 
@@ -213,5 +225,37 @@ runtimeReleases:
       - qwen3-tts-expressive
     providerConfigRevision: qwen-tts-0.6b-v2-public-model
     estimatedMemoryGB: 5
+    healthPath: /health
+    default: true
+
+  ornith15-strix-conversation-p4-v1:
+    runtime: ornith15-strix-conversation
+    artifacts: [ ornith15-35b-strix-lean, ornith15-vision-bf16 ]
+    providerConfigRevision: q38rocm-0fc9568-strix-lean-512k-p4-unified-q4-no-mtp-v1-vision4096-v1
+    estimatedMemoryGB: 50
+    healthPath: /health
+    default: false
+
+  ornith15-strix-conversation-p4-v2:
+    runtime: ornith15-strix-conversation
+    artifacts: [ ornith15-35b-strix-lean, ornith15-vision-bf16 ]
+    providerConfigRevision: q38rocm-0fc9568-strix-lean-512k-p4-unified-q4-no-mtp-no-prompt-cache-v2-vision4096-v1
+    estimatedMemoryGB: 50
+    healthPath: /health
+    default: false
+
+  ornith15-strix-conversation-p4-v3:
+    runtime: ornith15-strix-conversation
+    artifacts: [ ornith15-35b-strix-lean, ornith15-vision-bf16 ]
+    providerConfigRevision: q38rocm-0fc9568-strix-lean-1m-p4-unified-q4-no-mtp-no-prompt-cache-v3-vision4096-chat-count-v1
+    estimatedMemoryGB: 54
+    healthPath: /health
+    default: true
+  granite-asr-current:
+    runtime: granite-asr
+    artifacts:
+      - granite-speech-4.1-2b-q8
+    providerConfigRevision: transcribe-5d66f602-granite-q8-vulkan-16t-ctx512-12s-v1
+    estimatedMemoryGB: 3.5
     healthPath: /health
     default: true

@@ -27,8 +27,10 @@ export async function runContextStillSmoke(options: {
   const profile = catalog.profiles.find((profile) => profile.id === "contextstill-background");
   const names = profile?.providers.map((provider) => `${provider.name}:${provider.protocol}`).sort();
   const expected = [
-    "embedding:larm.embedding.v1", "llm:openai.chat-completions.v1", "system-one:larm.system-one.v1",
-  ];
+    "asr:openai.audio-transcriptions.v1", "embedding:larm.embedding.v1", "llm:openai.chat-completions.v1",
+    "sentence-language:larm.system-one.v1", "system-one:larm.system-one.v1",
+    "tts:openai.audio-speech.v1", "tts-english:openai.audio-speech.v1",
+  ].sort();
   if (!profile || JSON.stringify(names) !== JSON.stringify(expected)) throw new Error("ContextStill Provider catalog drift");
   const created = await client.createAgentConnection({
     profile: "contextStill", expectedCatalogRevision: catalog.catalogRevision,

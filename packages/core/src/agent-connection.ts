@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { chatInputContractSchema, type ChatInputPolicy } from "./chat-input";
 import { deploymentPolicySchema } from "./api-schema";
 import { embeddingSpaceSchema, type EmbeddingSpace } from "./embedding";
 import type { Registry } from "./registry";
@@ -25,16 +26,13 @@ export const agentProviderEndpointSchema = z.enum([
 
 export const agentProfileSelectorIdSchema = z.enum([
   "contextStill",
-  "SAAA",
   "SAAA-gemma4-26b",
   "SAAA-gemma4-26b-64k",
+  "ornith1.5Strix",
   "SAAA-w-Image",
   "SAAA-w-music",
-  "vulnWorkbench",
   "embeddingCanary",
   "backchannelQwen35",
-  "backchannelLfm25Jp",
-  "backchannelGemma3",
 ]);
 export type AgentProfileSelectorId = z.infer<typeof agentProfileSelectorIdSchema>;
 
@@ -162,6 +160,7 @@ export type AgentConnectionIdleRelease = z.infer<typeof agentConnectionIdleRelea
 const agentProfileYamlSchema = z.object({
   description: z.string().min(1).max(256),
   schedulingPriority: z.number().int().min(-1_000_000).max(1_000_000).default(0),
+  requestScheduling: z.enum(["foreground-exclusive", "background-when-idle"]).optional(),
   idleRelease: agentConnectionIdleReleaseSchema.optional(),
   providers: z.array(agentProviderYamlSchema).min(1).max(8),
 }).strict().superRefine((value, context) => {
@@ -261,6 +260,7 @@ export type AgentProviderProfile = {
   protocol: RuntimeProtocol;
   embeddingSpace?: EmbeddingSpace;
   contextWindow?: AgentProviderContextWindow;
+  chatInput?: ChatInputPolicy;
 };
 
 export type AgentProviderContextWindow = {
@@ -328,6 +328,7 @@ export type AgentProfile = {
   selectionPolicy: "default" | "compatibility" | "explicit-only";
   deprecated: boolean;
   schedulingPriority?: number;
+  requestScheduling?: "foreground-exclusive" | "background-when-idle";
   idleRelease?: AgentConnectionIdleRelease;
   providers: AgentProviderProfile[];
   revision: string;
@@ -401,11 +402,9 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
           `agent profile ${id} route ${provider.route} does not advertise ${provider.capability}`,
         );
       }
-      if (selectionPolicy === "default" && route.explicitOnly) {
-        throw new AgentConnectionCatalogError(
-          `default agent profile ${id} cannot use explicit-only route ${provider.route}`,
-        );
-      }
+      // A default Agent Profile still selects each Provider route explicitly.
+      // Route explicitOnly controls implicit capability resolution, not which
+      // complete Provider set may be the catalog default.
       if (selectionPolicy === "explicit-only" && !route.explicitOnly) {
         throw new AgentConnectionCatalogError(
           `non-default agent profile ${id} must use explicit-only route ${provider.route}`,
@@ -459,8 +458,14 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
           `agent profile ${id} provider ${provider.name} readiness does not match ${protocol}`,
         );
       }
+      const inputPolicies = route.candidates.map((candidate) => registry.runtimes.find((runtime) => runtime.id === candidate.runtime)?.chatInput);
+      const chatInput = inputPolicies[0];
+      if (inputPolicies.some(Boolean) && (protocol !== "openai.chat-completions.v1" || !route.capabilities.includes("llm.vision") || inputPolicies.some((policy) => JSON.stringify(policy) !== JSON.stringify(chatInput)))) {
+        throw new AgentConnectionCatalogError(`agent profile ${id} has inconsistent chat input policies`);
+      }
       return {
         ...provider,
+        ...(chatInput ? { chatInput } : {}),
         supportedCapabilities: [...route.capabilities].sort(),
         protocol,
         ...(embeddingSpace ? { embeddingSpace } : {}),
@@ -473,6 +478,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
       selectionPolicy,
       deprecated: false,
       schedulingPriority: profile.schedulingPriority,
+      ...(profile.requestScheduling ? { requestScheduling: profile.requestScheduling } : {}),
       ...(profile.idleRelease ? { idleRelease: structuredClone(profile.idleRelease) } : {}),
       providers,
     };
@@ -517,6 +523,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
       selectionPolicy: "compatibility" as const,
       deprecated: true,
       schedulingPriority: canonical.schedulingPriority,
+      ...(canonical.requestScheduling ? { requestScheduling: canonical.requestScheduling } : {}),
       ...(canonical.idleRelease ? { idleRelease: structuredClone(canonical.idleRelease) } : {}),
       providers,
     };
@@ -723,6 +730,7 @@ export const publicAgentProfileListV3Schema = z.object({
       endpoint: agentProviderEndpointSchema,
       model: agentIdentifierSchema,
       embeddingSpace: embeddingSpaceSchema.optional(),
+      chatInput: chatInputContractSchema.optional(),
       contextWindow: z.object({
         maxTokens: z.number().int().min(1).max(1_000_000),
         outputReserveTokens: z.number().int().min(1).max(1_000_000),
@@ -811,6 +819,7 @@ export const publicAgentConnectionProviderSchema = z.object({
   endpoint: agentProviderEndpointSchema,
   model: agentIdentifierSchema,
   startupPolicy: providerStartupPolicySchema.optional(),
+  chatInput: chatInputContractSchema.optional(),
   embeddingSpace: embeddingSpaceSchema.optional(),
   contextWindow: z.object({
     maxTokens: z.number().int().min(1).max(1_000_000),
@@ -920,6 +929,8 @@ export const agentProviderDescriptorSchema = z.object({
   port: z.number().int().min(1).max(65_535),
   baseUrl: z.string().url(),
   model: agentIdentifierSchema,
+  supportedCapabilities: z.array(agentIdentifierSchema).optional(),
+  chatInput: chatInputContractSchema.optional(),
   contextWindow: z.object({
     maxTokens: z.number().int().min(1).max(1_000_000),
     outputReserveTokens: z.number().int().min(1).max(1_000_000),
@@ -1079,7 +1090,7 @@ export const embeddingAgentProviderDescriptorSchema = z.object({
 
 export const systemOneAgentProviderDescriptorSchema = z.object({
   name: agentIdentifierSchema,
-  capability: z.literal("decision.system-one"),
+  capability: z.enum(["decision.system-one", "decision.sentence-language"]),
   apiStyle: z.literal("larm-system-one"),
   protocol: z.literal("larm.system-one.v1"),
   scheme: z.enum(["http", "https"]),

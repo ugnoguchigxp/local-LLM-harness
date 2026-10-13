@@ -401,6 +401,7 @@ const appComponents = createAppComponents({
   connectionPollIntervalMs: config.pollIntervalMs,
   connectionHistoryLimit: config.historyLimit,
   inferenceAuditMode: config.inferenceAuditMode,
+  inferenceAuditRetentionMs: config.inferenceAuditRetentionMs,
   inferenceAuditRecorder,
   contextController,
   personalStateController,

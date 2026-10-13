@@ -55,7 +55,8 @@ test("loads the Linux production registry", () => {
 
   expect(registry.nodes[0]?.id).toBe("local-node");
   expect(general?.backend).toBe("systemd");
-  expect(general?.policy.class).toBe("resident");
+  expect(general?.policy.class).toBe("preferred");
+  expect(general?.policy.warm?.minInstances).toBe(0);
   expect(general?.resources).toMatchObject({
     maxConcurrentAllocations: 1,
     maxConcurrentRequests: 1,
@@ -67,7 +68,7 @@ test("loads the Linux production registry", () => {
   expect(asr?.capability).toContain("speech.stt");
   expect(realtimeTts?.capability).toContain("speech.tts");
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");
-  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd" && item.id !== "laya-system-one")) {
+  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd" && !["laya-system-one", "qwen-asr", "ornith-general"].includes(item.id))) {
     expect(runtime.policy.warm?.minInstances).toBe(1);
   }
   expect(model35b?.policy).toEqual({
@@ -82,7 +83,7 @@ test("loads the Linux production registry", () => {
     warm: { minInstances: 0, idleTtlSeconds: 60 },
     swapGroup: "qwen-worker-slot",
   });
-  expect(ornith35b?.resources.estimatedMemoryGB).toBe(48);
+  expect(ornith35b?.resources.estimatedMemoryGB).toBe(50);
   expect(ornith35bSpeed?.policy).toEqual({
     class: "preferred",
     lifecycle: "managed",
@@ -138,10 +139,10 @@ test("loads the Linux production registry", () => {
     "qwen38-worker-efficientthink-q3",
     "qwen38-efficientthink-mtp",
   ]);
-  expect(agent35b?.resources.estimatedMemoryGB).toBe(30);
+  expect(agent35b?.resources.estimatedMemoryGB).toBe(32);
   expect(registry.profiles.some((profile) => profile.id === "voice-expressive")).toBe(true);
   expect(defaultRoute?.candidates[0]).toEqual({
-    runtime: "ornith-general",
+    runtime: "ornith15-strix-conversation",
     purpose: "primary",
   });
   expect(defaultRoute?.candidates).toHaveLength(1);
@@ -203,7 +204,7 @@ test("loads the Linux production registry", () => {
     purpose: "primary",
   });
   expect(defaultRoute?.candidates).toEqual([
-    { runtime: "ornith-general", purpose: "primary" },
+    { runtime: "ornith15-strix-conversation", purpose: "primary" },
   ]);
   expect(registry.runtimes.some((runtime) => runtime.id === "qwen-general")).toBe(false);
   expect(registry.runtimes.some((runtime) => runtime.id.includes("35b"))).toBe(true);
@@ -225,11 +226,11 @@ test("loads the Linux production registry", () => {
   });
 });
 
-test("resident Ornith exposes the configured 128K window and keeps certification gated", () => {
+test("optional legacy Ornith keeps its 128K window without a resident reservation", () => {
   const registry = loadRegistry(repoConfig);
   const runtime = registry.runtimes.find((candidate) => candidate.id === "ornith-general");
   expect(runtime).toMatchObject({
-    policy: { class: "resident" },
+    policy: { class: "preferred", warm: { minInstances: 0 } },
     context: {
       outputReserveTokens: 4_096,
       safetyMarginTokens: 1_976,
@@ -336,7 +337,7 @@ test("production swap group matches llama-swap model membership", () => {
   const gemmaBackchannelCommand = configured.models["gemma3-backchannel"]?.cmd ?? "";
   const gemma4_26bCommand = configured.models["gemma4-26b-conversation"]?.cmd ?? "";
   const gemma4_26b = registry.runtimes.find((runtime) => runtime.id === "gemma4-26b-conversation");
-  expect(gemma4_26b?.policy.warm?.minInstances).toBe(1);
+  expect(gemma4_26b?.policy.warm?.minInstances).toBe(0);
   expect(gemma4_26b?.resources).toMatchObject({
     maxConcurrentAllocations: 4,
     maxConcurrentRequests: 4,
@@ -619,29 +620,54 @@ test("rejects a resident floor that exceeds usable node memory", () => {
   );
 });
 
-test("ContextStill resolves one ROCmFP4 backend with capacity for four 64K sessions", () => {
+test("ContextStill resolves the warm Strix backend shared with the distinct voice profile", () => {
   const registry = loadRegistry(repoConfig);
   const route = registry.routes.find((route) => route.id === "llm-contextstill-ornith");
-  expect(route?.candidates).toEqual([{ runtime: "ornith-contextstill", purpose: "primary" }]);
-  const runtime = registry.runtimes.find((runtime) => runtime.id === "ornith-contextstill");
+  expect(route?.candidates).toEqual([{ runtime: "ornith15-strix-conversation", purpose: "primary" }]);
+  const runtime = registry.runtimes.find((runtime) => runtime.id === "ornith15-strix-conversation");
   expect(runtime).toMatchObject({
-    artifacts: ["ornith15-35b-speed"],
-    policy: { warm: { minInstances: 0 }, swapGroup: "conversation-llm-slot" },
+    artifacts: ["ornith15-35b-strix-lean", "ornith15-vision-bf16"],
+    policy: { warm: { minInstances: 1 }, swapGroup: "conversation-llm-slot" },
     resources: { maxConcurrentAllocations: 4, maxConcurrentRequests: 4 },
-    deployment: { modelId: "ornith-contextstill" },
+    deployment: { modelId: "ornith15-strix-conversation" },
   });
   const configured = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
   if (!runtime || runtime.backend !== "llama-swap") throw new Error("expected llama-swap runtime");
   const command = configured.models[runtime.deployment.modelId].cmd;
-  expect(command).toContain("Ornith-1.5-35B-A3B-ROCmFP4.gguf");
-  expect(command).toContain("--ctx-size 262144");
+  expect(command).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");
+  expect(command).toContain("--ctx-size 1048576");
   expect(command).toContain("--parallel 4");
-  expect(command).toContain("--cache-type-k q8_0");
-  expect(command).toContain("--cache-type-v q8_0");
+  expect(command).toContain("--cache-type-k q4_0");
+  expect(command).toContain("--cache-type-v q4_0");
   expect(command).toContain("--spec-type none");
+  const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry);
+  const context = catalog.profiles.find(profile => profile.id === "contextstill-background")!;
+  const voice = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  expect(context.id).not.toBe(voice.id);
+  expect(context.schedulingPriority).toBe(1000);
+  expect(context.providers.find(provider => provider.name === "llm")).toMatchObject({
+    publicModel: "ornith-contextstill", contextWindow: { maxTokens: 32768 },
+  });
+  for (const name of ["asr", "tts", "tts-english", "embedding", "sentence-language"]) {
+    expect(context.providers.find(provider => provider.name === name))
+      .toEqual(voice.providers.find(provider => provider.name === name));
+  }
+  const runtimeIds = (profile: typeof context) => profile.providers.flatMap(provider =>
+    registry.routes.find(route => route.id === provider.route)!.candidates.slice(0, 1).map(candidate => candidate.runtime)
+  );
+  const foregroundRuntimes = [...new Set(runtimeIds(voice))];
+  const backgroundRuntimes = [...new Set(runtimeIds(context))];
+  const state = {
+    generatedAt: new Date().toISOString(), node: { ...registry.nodes[0]!, online: true }, runtimes: [],
+  } as unknown as ClusterState;
+  const foreground = { id: "voice", status: "ready", priority: 4000,
+    bindings: foregroundRuntimes.map(runtime => ({ runtime })) } as Parameters<typeof admitRuntimes>[0]["allocations"][number];
+  expect(admitRuntimes({ registry, state, allocations: [foreground], candidateRuntimeIds: backgroundRuntimes }).ok).toBe(true);
+  expect(registry.runtimes.find(runtime => runtime.id === "ruri-system-one")?.resources)
+    .toMatchObject({ maxConcurrentAllocations: 4, maxConcurrentRequests: 1 });
 });
 
-test("production warm floor admits startup and replaces idle conversation memory for ContextStill", () => {
+test("production warm floor keeps shared Strix and speech warm while admitting ContextStill Laya", () => {
   const registry = loadRegistry(repoConfig);
   const observedAt = "2026-10-04T09:00:00.000Z";
   const state: ClusterState = {
@@ -658,10 +684,15 @@ test("production warm floor admits startup and replaces idle conversation memory
   expect(admitRuntimes({ registry, state, allocations: [], candidateRuntimeIds: ["ornith-general"] }).ok).toBe(true);
   const context = admitRuntimes({
     registry, state, allocations: [],
-    candidateRuntimeIds: ["ornith-contextstill", "laya-system-one", "multilingual-e5-small"],
+    candidateRuntimeIds: ["ornith15-strix-conversation", "laya-system-one", "multilingual-e5-small", "granite-asr", "voicevox-tts", "kittentts-nano", "ruri-system-one"],
   });
   expect(context.ok).toBe(true);
-  expect(context.nodes[0]?.reclaimableMemoryGB).toBe(48);
+  expect(context.nodes[0]?.reclaimableMemoryGB ?? 0).toBe(0);
+  expect(registry.runtimes.find(runtime => runtime.id === "gemma4-26b-conversation")?.policy.warm?.minInstances).toBe(0);
+  expect(registry.runtimes.find(runtime => runtime.id === "qwen-asr")?.policy.warm?.minInstances).toBe(0);
+  for (const id of ["ornith15-strix-conversation", "granite-asr", "voicevox-tts", "kittentts-nano"]) {
+    expect(registry.runtimes.find(runtime => runtime.id === id)?.policy.warm?.minInstances).toBe(1);
+  }
 });
 
 
@@ -687,4 +718,62 @@ test("Gemma uses the dedicated Ruri attitude route while ContextStill retains La
     deployment: { service: "ruri-system-one.service", endpoint: "http://127.0.0.1:8087" },
     resources: { estimatedMemoryGB: 1, maxConcurrentRequests: 1 },
   });
+});
+
+test("Gemma adds an English CPU speech provider while Japanese TTS and auxiliary LLM sessions keep their routes", () => {
+  const registry = loadRegistry(repoConfig);
+  const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry);
+  const gemma = catalog.profiles.find((profile) => profile.id === "saaa-conversation-gemma4-26b-voice")!;
+  expect(gemma.providers.find((provider) => provider.name === "tts")).toMatchObject({
+    capability: "speech.tts", route: "tts-voicevox", publicModel: "voicevox-core",
+  });
+  expect(gemma.providers.find((provider) => provider.name === "tts-english")).toMatchObject({
+    capability: "speech.tts.english", route: "tts-kittentts-nano",
+    publicModel: "kitten-tts-nano-0.8-fp32", protocol: "openai.audio-speech.v1", readiness: "tts-speech",
+  });
+  expect(registry.routes.find((route) => route.id === "tts-kittentts-nano")).toMatchObject({
+    explicitOnly: true, candidates: [{ runtime: "kittentts-nano", purpose: "primary" }],
+  });
+  expect(registry.runtimes.find((runtime) => runtime.id === "kittentts-nano")).toMatchObject({
+    policy: { lifecycle: "managed", warm: { minInstances: 1 } },
+    backend: "systemd", capability: ["speech.tts.english"],
+    resources: { estimatedMemoryGB: 1.5, maxConcurrentRequests: 1, maxQueuedRequests: 2 },
+    deployment: { service: "kittentts-tts.service", endpoint: "http://127.0.0.1:8088" },
+  });
+  for (const profileId of ["saaa-conversation-gemma4-26b-64k"]) {
+    expect(catalog.profiles.find((profile) => profile.id === profileId)?.providers
+      .some((provider) => provider.name === "tts-english")).toBe(false);
+  }
+});
+
+test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifact", () => {
+  const registry = loadRegistry(repoConfig);
+  const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry)!;
+  const base = catalog.profiles.find(profile => profile.id === "saaa-conversation-gemma4-26b-voice")!;
+  const strix = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  expect(strix).toBeDefined();
+  expect(strix.providers.filter(provider => provider.name !== "llm"))
+    .toEqual(base.providers.filter(provider => provider.name !== "llm"));
+  expect(strix.schedulingPriority).toBe(base.schedulingPriority);
+  expect(strix.idleRelease).toEqual(base.idleRelease);
+  expect(strix.providers.find(provider => provider.name === "llm")).toEqual({
+    ...base.providers.find(provider => provider.name === "llm")!,
+    supportedCapabilities: ["llm.general", "llm.vision"],
+    route: "llm-ornith15-strix",
+    publicModel: "ornith-1.5-strix-lean",
+    chatInput: registry.runtimes.find(runtime => runtime.id === "ornith15-strix-conversation")!.chatInput,
+  });
+  expect(catalog.profileSelectors.find(selector => selector.id === "ornith1.5Strix"))
+    .toMatchObject({ agentProfile: strix.id });
+  const route = registry.routes.find(route => route.id === "llm-ornith15-strix")!;
+  expect(route.explicitOnly).toBe(true);
+  expect(route.candidates).toEqual([{ runtime: "ornith15-strix-conversation", purpose: "primary" }]);
+  const runtime = registry.runtimes.find(runtime => runtime.id === route.candidates[0]!.runtime)!;
+  expect(runtime.artifacts).toEqual(["ornith15-35b-strix-lean", "ornith15-vision-bf16"]);
+  expect(runtime.resources.maxConcurrentRequests).toBe(4);
+  const swap = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
+  expect(swap.models[runtime.id].cmd).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");
+  expect(swap.models[runtime.id].cmd).toContain("--spec-type none");
+  expect(swap.models[runtime.id].cmd).not.toContain("draft-mtp");
+  expect(swap.models[runtime.id].cmd).toContain("--no-cache-prompt");
 });

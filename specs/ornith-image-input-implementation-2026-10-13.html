@@ -1,0 +1,279 @@
+<article lang="ja">
+  <h1>Ornith画像入力の発見・事前計数・予算検査の実装</h1>
+  <p>
+    2026-10-13。Eumenesからの画像入力を使えるLARM側の契約として、公開schema、profile
+    metadata、claim、入力token事前計数、推論前の検査を実装する。EumenesのUI・保存・設定は変更しない。モデル・projectorと1M共有KV／4枠は維持し、主profileとContextStillの解決先に明示したchatInput
+    policyを適用する。廃止した64K selectorは復活させない。
+  </p>
+  <section id="usage">
+    <h2>consumerから使う手順</h2>
+    <ol>
+      <li>
+        <code>GET /v3/agent-profiles?profile=ornith1.5Strix</code>でLLM
+        Providerの<code>supportedCapabilities</code>に<code>llm.vision</code>があり、<code>chatInput</code>が存在することを確認する。profileを指定してConnection作成・ready確認・claimを行う。
+      </li>
+      <li>
+        claimの<code>providers</code>から<code>name=llm</code>の<code>model</code>・<code>baseUrl</code>・<code>credential</code>を選ぶ。credentialはconsumer
+        backend内だけで使う。catalog・Connection・claimの<code>chatInput</code>は同じ上限と保持方針を示す。
+      </li>
+      <li>
+        本文と保存画像を<code>messages</code>へ構成する。画像はuser
+        roleの<code>{"type":"image_url","image_url":{"url":"data:image/png;base64,BASE64_BYTES"}}</code>。text
+        partは任意で、画像だけ、2画像以上も許容する。providerがmedia
+        marker・templateを挿入する。原本への認証付きURLは渡さない。
+      </li>
+      <li>
+        同じProvider bearerで<code>POST /v1/chat/completions/input-tokens</code>へ最終的なChat Completions
+        JSONを送る。endpointは<code>chatInput.tokenCounting.endpoint</code>で発見する。claimのbaseUrlが/v1で終わる場合、相対operationは<code>/chat/completions/input-tokens</code>。
+      </li>
+      <li>
+        <code>fits</code
+        >を確認し、同じ要求を通常の<code>POST /v1/chat/completions</code>へ送る。生成時にも再計数するので、計数結果だけでcontext超過を通せない。通信断後の推論POSTを自動再送しない。
+      </li>
+      <li>
+        次の質問でも必要な過去画像partsを再送する。renew後は再claimし、新しいcredentialを使用する。ConnectionやKVだけを画像保存場所として扱わない。
+      </li>
+    </ol>
+    <p>
+      reference clientには<code>countChatInputTokens(chatRequest, provider.credential.token, {signal})</code>を追加した。control
+      tokenをProvider操作へ流用せず、通常の画像推論もProvider bearerを使う。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>公開契約と検査値</h2>
+    <table>
+      <caption>
+        chatInput policyの既定値。画像枚数は全履歴を含む1要求全体
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">値</th>
+          <th scope="col">挙動</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">contractVersion</th>
+          <td>larm-chat-input.v1</td>
+          <td>モデル名から推測せず、選択routeの全candidateが同じpolicyを持つ場合に公開</td>
+        </tr>
+        <tr>
+          <th scope="row">MIME</th>
+          <td>image/jpeg、image/png、image/bmp</td>
+          <td>
+            raw magicとdeclared MIMEを照合。JPEG 8 bpc baseline/progressive、BMP BI_RGB／16・32 bit
+            BI_BITFIELDS。BMP RLE・内包JPEG/PNGは拒否
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">参照方式・role・detail</th>
+          <td>data-urlのみ、userのみ、detailは省略またはauto</td>
+          <td>外部URL・file URL・upload IDとlow/highを明示拒否。Base64をtokenとして数えない</td>
+        </tr>
+        <tr>
+          <th scope="row">HTTP body</th>
+          <td>4194304 bytes（4 MiB）</td>
+          <td>
+            実gateway上限が小さければ発見情報も小さい値を示す。UTF-8
+            JSON、Base64、履歴、tools全て込み
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">原本・画像枚数</th>
+          <td>1画像3145728 bytes、全履歴8画像</td>
+          <td>
+            独立した原本上限とbody上限を両方検査。1画像3 MiBちょうどはJSON overheadにより4 MiB
+            bodyへ収まらない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">原本寸法</th>
+          <td>幅・高さ各1〜8192 px、総16777216 pixels、縦横比100以下</td>
+          <td>decode前にheaderを検査し、過大な展開memoryを抑制。実decoderで破損も検査</td>
+        </tr>
+        <tr>
+          <th scope="row">回転・alpha</th>
+          <td>encoded-pixels、alpha discard</td>
+          <td>EXIF回転、ICC/sRGBの管理、背景へのalpha合成が必要ならconsumerが行う</td>
+        </tr>
+        <tr>
+          <th scope="row">context</th>
+          <td>主262144 token、ContextStillはそのprofileのcontextWindow</td>
+          <td>
+            requested
+            max_tokensはoutputReserveTokens以下。省略は出力予約値を挿入。n_predict／max_completion_tokensによる別経路は拒否
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">token budget</th>
+          <td>promptTokens + requestedOutputTokens + safetyMarginTokens ≤ maxTokens</td>
+          <td>
+            主は出力4096、安全余白1976なら入力256072以下。明示max_tokensが小さい場合はその予約で計算
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">payload保持</th>
+          <td>発見時のchatInput.retentionを参照</td>
+          <td>
+            既存full-required監査方針を維持する。画像Base64と本文は暗号化監査の対象。count-onlyのpayloadは保存しない。既存監査を削除しない
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      公開JSONPathは<code>$.profiles[?(@.id=="ornith1.5Strix")].providers[?(@.name=="llm")].chatInput</code>。Connectionとclaimは<code>$.providers[?(@.name=="llm")].chatInput</code>。同じ場所の<code>.tokenCounting.endpoint</code>、<code>.images.mimeTypes</code>、<code>.images.maxImages</code>、<code>.maxRequestBytes</code>、<code>.retention.requestPayloadStored</code>、<code>.retention.maxRetentionSeconds</code>を読む。
+    </p>
+  </section>
+  <section id="counting">
+    <h2>事前計数の意味と応答</h2>
+    <p>
+      バックエンドの/private拡張は、Chat
+      Completionsと同じ<code>oaicompat_chat_params_parse</code>と<code>process_mtmd_prompt</code>を使う。RGB
+      decode・resize・MTMD tokenizationまで実施し、推論taskをenqueueせず、画像encoderやLLM
+      decode、KV更新を行わない。従来の文字/tokenize応答を画像計数として採用せず、versionと合計・画像枚数を検査してfail
+      closedする。
+    </p>
+    <p>
+      例の画像bytesはplaceholder。要求は<code>{"model":"ornith-1.5-strix-lean","max_tokens":256,"messages":[{"role":"user","content":[{"type":"text","text":"この画像を説明してください"},{"type":"image_url","image_url":{"url":"data:image/png;base64,BASE64_BYTES"}}]}]}</code>。次は応答構造の説明用例で、数値は実要求の結果で置き換える。
+    </p>
+    <pre><code>{
+  "contractVersion":"larm-chat-input-token-count.v1",
+  "model":"ornith-1.5-strix-lean",
+  "promptTokens":170,"textTokens":26,"imageTokens":144,"imageCount":1,
+  "requestedOutputTokens":256,"safetyMarginTokens":1976,
+  "inputBudgetTokens":259912,"maxContextTokens":262144,"fits":true,
+  "requestDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runtime":"ornith15-strix-conversation","runtimeRelease":"RELEASE_ID",
+  "configRevision":"CONFIG_REVISION","bootEpoch":"BOOT_EPOCH","engineBuild":"ENGINE_BUILD"
+}</code></pre>
+    <p>
+      textTokensはrole・template・toolsを含む文字token、imageTokensはembeddingのtokenで、合計がpromptTokensとなる。APIはtemplateだけの独立内訳を返さない。超過でもcount-onlyは200かつfits=false。推論はcontext_budget_exceededで400となり、上流へ生成POSTを送らない。requestDigestは通常化した最終JSONのSHA-256で、deduplication
+      key・推論予約・将来のreleaseにも有効なreceiptではない。計数と推論の間でlease・revisionが変わったら再計数する。
+    </p>
+    <p>
+      取消・deadline・lease失効は既存gatewayのexecution
+      gateとabortを使う。計数中でも枠を占有して資源を保護し、終端で解放する。生成前にはtoken計数後にもbindingを再検査する。payload・Provider生応答・credentialは通常イベントに渡さない。responseのx-request-id、x-larm-boot-epoch、x-larm-config-revisionを追跡に使う。
+    </p>
+  </section>
+  <section id="errors">
+    <h2>安定したerror code</h2>
+    <table>
+      <caption>
+        LARMのerror.code。body/messageに入力値やbackend diagnosticsを転記しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">HTTP</th>
+          <th scope="col">code</th>
+          <th scope="col">条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">400</th>
+          <td>image_reference_unsupported、image_role_unsupported、image_detail_unsupported</td>
+          <td>契約外URL／role／detail</td>
+        </tr>
+        <tr>
+          <th scope="row">400</th>
+          <td>output_parameter_unsupported、output_budget_exceeded、context_budget_exceeded</td>
+          <td>出力alias、予約超過、画像込みcontext超過</td>
+        </tr>
+        <tr>
+          <th scope="row">401／403</th>
+          <td>connection_provider_token_required、unauthorized、connection_forbidden</td>
+          <td>claimされたLLM bearerとscopeが必要。model不一致は既存model_mismatch／400</td>
+        </tr>
+        <tr>
+          <th scope="row">413</th>
+          <td>body_too_large、image_too_large、image_count_exceeded、image_dimensions_exceeded</td>
+          <td>HTTP容量・原本容量・全履歴枚数・寸法／画素／縦横比超過</td>
+        </tr>
+        <tr>
+          <th scope="row">415</th>
+          <td>image_format_unsupported、image_mime_mismatch、image_not_supported</td>
+          <td>形式／MIME不一致／解決runtimeが画像未対応</td>
+        </tr>
+        <tr>
+          <th scope="row">422</th>
+          <td>image_invalid</td>
+          <td>Base64、画像header、実decoderで破損を検出</td>
+        </tr>
+        <tr>
+          <th scope="row">503</th>
+          <td>chat_token_count_unavailable、chat_input_contract_unavailable</td>
+          <td>正確な計数拡張やprofile budgetがない場合。text-only計数へ降格しない</td>
+        </tr>
+        <tr>
+          <th scope="row">504</th>
+          <td>gateway_timeout</td>
+          <td>計数／推論のdeadline。結果不明の推論POSTを自動再送しない</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="implementation">
+    <h2>実装境界とengine差分</h2>
+    <p>
+      core/chat-input.tsにpolicy・公開schema・bytes/header検査、backends/chat-input-tokenizer.tsにengine
+      adapter、daemon/chat-input-gateway.tsとgateway.tsに計数・予算・取消を配置した。API
+      catalog・OpenAPI・reference
+      clientも更新。runtime設定で明示選択し、モデルfamily名による特権分岐はない。
+    </p>
+    <p>
+      engine拡張はdeploy/local-node/patches/llama-chat-token-count-v1.patch。Chat
+      Completions形式の/tokenizeはllama-chat-token-count.v1を返し、従来content文字列の/tokenizeは保持する。同サイズの連続image_urlが動画batchへ併合されるengine経路を避けるため、各image
+      marker間に改行を挿入する。特殊tokenと画像境界はProviderの責務。countと推論は同じ変更を通る。
+    </p>
+    <p>
+      debugのHTTP body
+      dumpと、例外に入力値を含むwarningをchat/count操作で抑止した。専用画像storeやattachment
+      IDは追加しない。requestのmemory解放の厳密な即時zeroizationは保証していない。実行engine・重み・合成画像・証跡はrepository外に置く。
+    </p>
+    <p>
+      準備scriptはdeploy/local-node/scripts/prepare-chat-token-count-engine.sh。外部source/build/outputを明示し、pinned
+      commitとpatchを検査する。異なる既存binaryの上書きを拒否する。通常releaseの署名builder・activatorで配備し、別consumerのConnectionを解放しない。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証と配備状況</h2>
+    <p>
+      実装・署名付き配備・LARM経由の受入が完了した。稼働releaseは<code>86e879abe56ee54802d345c8b38f26f72b5e3570</code>、configRevisionは<code>36ff1aef15217c25fa560c99cc287016435fee5a83cfe0085a20cbd2c58cb79e</code>。配備前はactivity
+      idle、allocation/request/mutation参照0を確認し、別consumerのConnectionを解放していない。
+    </p>
+    <p>
+      稼働engineはrepository外の<code>/srv/ai/apps/larm-chat-input-engine-20261013/llama-server</code>で、SHA-256は<code>d7b699c6d8c051b54e357d730940647ff8331d11e7543e38c96921a6c09fc1bb</code>。upstream
+      sourceは<code>0fc9568e07ccc8553010864cb8db1957e629cbfa</code>、私用の拡張patchのSHA-256は<code>0f19d2e0ae59789c9d9833244869b0498676de1defee5b5bc5b61c3e95fdf2ae</code>。既存のMTP
+      checkpoint修正は保持した。STRIXではMTPを使わない。
+    </p>
+    <p>
+      署名builderの全体checkはLARM本体776、tooling24、deployment56のBun試験とshell/Python検証を通過した。既存の未commit作業を保持して統合したworkspaceの全体checkもLARM本体784、tooling24、関連16、deployment59のBun試験とshell/Python検証を通過した。Eumenesの製品コード・DB・設定は変更していない。
+    </p>
+    <p>
+      追加試験はcore/chat-input.test.ts（履歴枚数、MIME、Base64、原本寸法、BMP圧縮、parts
+      schema、route由来の能力）、daemon/chat-input-gateway.test.ts（fit、legacy
+      tokenizer拒否、出力alias、count-only非保存、超過時forward阻止、abort非協調時の枠解放、lease失効）、daemon/app.test.ts（discovery・Connection・claimの契約一致、保持metadata、bearer/model
+      scope）、client/index.test.ts（Provider bearerのみ、応答validation、再送なし）。
+    </p>
+    <p>
+      LARM経由の非機密合成画像21項目が成功した。JPEG・PNG・BMP、image-only、2画像の赤／青比較、履歴再送、画像＋SSE、画像＋native
+      tool call、1024／2048
+      px画像の事前計数、4並列計数、stream取消後の継続、容量・寸法・MIME・枚数・破損・外部URLの拒否、context超過の生成阻止、renew/reclaim、ContextStillの32K予算を検証した。全て試験用に作成したConnectionだけを解放し、終了時activity
+      idle・activeWorkloads 0を確認した。
+    </p>
+    <p>
+      384×384の各形式はimageTokens
+      144、2画像は288だった。1024×1024は1024、2048×2048は4096である。入力270012
+      tokenの要求はfits=false、生成はcontext_budget_exceeded／400で拒否された。計数と実推論のusage.prompt_tokensは画像・複数画像・履歴・stream・toolsで一致した。json_objectはJSON構文を制約し、キー名を固定しない。比較の固定キーはjson_schemaで指定した。
+    </p>
+    <p>
+      大画像のpreflightMsはdecode・resize・tokenizationに加えHTTPとgate待ちを含むAPI全体の時間で、純粋なresize時間ではない。配備版の測定値・条件は<code>/srv/ai/evidence/larm-image-input-20261013/live-results.json</code>、隔離engine検証は<code>/srv/ai/evidence/larm-image-input-20261013/native-results.json</code>に保存した。caption品質・OCR精度や任意の写真での意味理解を保証する試験ではない。
+    </p>
+    <p>
+      既存の全文監査は引き続き暗号化した本文・画像Base64・応答に7日の期限を付与し、pruneで期限切れや容量圧迫を処理する。従来の監査token
+      piecesはtemplate文字列の計数であり、画像embedding数は含まない。入力予算には新しいinput-tokens
+      APIとusageを用い、監査token配列の長さを使わない。実機器音声acceptanceはこの変更の完成要件に含めない。
+    </p>
+  </section>
+</article>

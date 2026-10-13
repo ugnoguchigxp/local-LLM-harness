@@ -153,7 +153,7 @@ test("OpenAPI is generated from the public contract schemas", () => {
       minLength: 1,
       maxLength: 128,
       pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
-      enum: ["contextStill", "SAAA", "SAAA-w-Image", "SAAA-w-music", "vulnWorkbench"],
+      enum: ["contextStill", "SAAA-gemma4-26b", "SAAA-gemma4-26b-64k", "ornith1.5Strix", "SAAA-w-Image", "SAAA-w-music", "embeddingCanary", "backchannelQwen35"],
     },
   }]);
   expect(paths["/v1/embed"]?.post?.security).toEqual([{ providerBearer: [] }]);
@@ -321,6 +321,23 @@ test("voice catalog exposes deterministic selection and control capabilities", (
     voices: [{ id: "Ryan", name: "Ryan", language: "Japanese" }],
     languages: ["Japanese"],
   }).voices[0]?.name).toBe("Ryan");
+});
+
+test("voice discovery accepts English voices with supported controls without inventing VOICEVOX styles", () => {
+  const voice = {
+    id: "Rosie", name: "Rosie", display_name: "Rosie", language: "en",
+    voice_presentation: "feminine", styles: [],
+    capabilities: { speed: { minimum: 0.5, maximum: 2, default: 1 } },
+  };
+  const catalog = { default_voice: "Rosie", voices: [voice] };
+  expect(audioVoiceDiscoverySchema.parse(catalog)).toEqual(catalog);
+  expect(audioVoiceListSchema.safeParse(catalog).success).toBeFalse();
+  expect(audioVoiceDiscoverySchema.safeParse({ ...catalog, default_voice: "Hugo" }).success).toBeFalse();
+  expect(audioVoiceDiscoverySchema.safeParse({ ...catalog, voices: [voice, voice] }).success).toBeFalse();
+  expect(audioVoiceDiscoverySchema.safeParse({ ...catalog, voices: [{ ...voice,
+    capabilities: { speed: { minimum: 2, maximum: 0.5, default: 1 } },
+  }] }).success).toBeFalse();
+  expect(audioVoiceDiscoverySchema.safeParse({ ...catalog, voices: [{ ...voice, made_up: true }] }).success).toBeFalse();
 });
 
 test("Chat Completions contract validates schema-constrained response formats", () => {

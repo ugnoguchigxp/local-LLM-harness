@@ -1,0 +1,72 @@
+[
+  {
+    "id": "en-short",
+    "mode": "standard",
+    "text": "Hello. It is a beautiful day today."
+  },
+  {
+    "id": "en-medium",
+    "mode": "standard",
+    "text": "Please save this file with a new name, then copy it to the shared folder. Let me know when you are finished."
+  },
+  {
+    "id": "ja-direct",
+    "mode": "standard",
+    "text": "こんにちは。今日はいい天気ですね。"
+  },
+  {
+    "id": "ja-romaji",
+    "mode": "standard",
+    "text": "Konnichiwa. Kyou wa ii tenki desu ne.",
+    "expected": "こんにちは。今日はいい天気ですね。"
+  },
+  {
+    "id": "ja-ipa-native",
+    "mode": "japanese-ipa",
+    "text": "こんにちは。今日はいい天気ですね。",
+    "mapping": "native"
+  },
+  {
+    "id": "ja-ipa-english",
+    "mode": "japanese-ipa",
+    "text": "こんにちは。今日はいい天気ですね。",
+    "mapping": "english"
+  },
+  {
+    "id": "ja-medium-direct",
+    "mode": "standard",
+    "text": "このファイルを新しい名前で保存してから、共有フォルダにコピーしてください。終わったら教えてください。"
+  },
+  {
+    "id": "ja-medium-romaji",
+    "mode": "standard",
+    "text": "Kono fairu oh atarashii namae de hozon shite kara, kyouyuu foruda ni kopii shite kudasai. Owattara oshiete kudasai.",
+    "expected": "このファイルを新しい名前で保存してから、共有フォルダにコピーしてください。終わったら教えてください。"
+  },
+  {
+    "id": "ja-medium-ipa-native",
+    "mode": "japanese-ipa",
+    "text": "このファイルを新しい名前で保存してから、共有フォルダにコピーしてください。終わったら教えてください。",
+    "mapping": "native"
+  },
+  {
+    "id": "ja-medium-ipa-english",
+    "mode": "japanese-ipa",
+    "text": "このファイルを新しい名前で保存してから、共有フォルダにコピーしてください。終わったら教えてください。",
+    "mapping": "english"
+  },
+  {
+    "id": "ja-articulated",
+    "mode": "raw-ipa",
+    "text": "こんにちは。今日はいい天気ですね。",
+    "phonemes": "kˌɑːnnˈiːtʃiwɑː. kjˈoː wɑː ˈiː tˈɛnki dˈɛsʊ nˈɛ.",
+    "speed": 0.85
+  },
+  {
+    "id": "ja-medium-articulated",
+    "mode": "raw-ipa",
+    "text": "このファイルを新しい名前で保存してから、共有フォルダにコピーしてください。終わったら教えてください。",
+    "phonemes": "kˈoːno fˈɑːiɾʊ o ɑːtɑːɾˈɑːʃiː nˈɑːmɑːɛ dɛ hˈoːzoːn ʃˈiːtɛ kˈɑːɾɑː, kjˈoːjuː fˈoːɾʊdɑː ni kˈoːpiː ʃˈiːtɛ kʊdˈɑːsɑːi. owˈɑːttɑːɾɑː oʃˈiːɛtɛ kʊdˈɑːsɑːi.",
+    "speed": 0.85
+  }
+]

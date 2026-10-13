@@ -13,7 +13,7 @@ const larm = new LarmClient({
   apiToken: process.env.LARM_API_TOKEN,
 });
 for await (const event of larm.streamChatCompletion({
-  model: "coding-default",
+  model: "ornith-1.5-strix-lean",
   messages: [{ role: "user", content: "hello" }],
 })) {
   // 検証済みdeltaをUIや句単位TTSへ即時に渡す。
@@ -52,11 +52,11 @@ if (health.status !== "ok" || readiness.status !== "ready") {
 }
 
 const models = await larm.listOpenAiModels();
-if (!models.data.some(({ id }) => id === "coding-default")) {
+if (!models.data.some(({ id }) => id === "ornith-1.5-strix-lean")) {
   throw new Error("Requested public model is not available");
 }
 for await (const event of larm.streamChatCompletion({
-  model: "coding-default",
+  model: "ornith-1.5-strix-lean",
   messages: [{ role: "user", content: "hello" }],
 })) {
   // iteratorはUTF-8境界、chunk schema、finish、data: [DONE]をfail closedで検証する。
@@ -139,3 +139,28 @@ async function runContextStillJob(): Promise<void> {
 `openai.chat-completions.v1` Providerは要求形式を維持します。`stream: false`または省略時はJSON、
 `stream: true`時は`text/event-stream`です。SSEを選んだ場合は`[DONE]`まで読み、response bodyを
 閉じてください。claimの`streaming` fieldやAgent ConnectionはHTTP SSEを使用するためには必要ありません。
+
+### Claimed LLM image input
+
+Read the LLM Provider's `chatInput` in v3 discovery and claim. It advertises JPEG,
+PNG and uncompressed BMP data URLs, raw-image dimensions and bytes, request and
+history image counts, token counting, and the configured inference-audit payload
+retention. The current retained Ornith profile is `ornith1.5Strix`; do not request
+the retired `ornith1.5Strix-64k` selector.
+
+A backend can call `client.countChatInputTokens(chatRequest, provider.credential.token)`
+before inference. It uses the same complete `messages`, tools and `max_tokens` as
+Chat Completions. `promptTokens` includes image embeddings; `textTokens` includes
+role/template/tool tokens. Check `fits` and `inputBudgetTokens`, then submit the
+same request to the claimed Provider. Generation counts again and rejects an
+excess with `context_budget_exceeded`; the preflight is not a capacity reservation.
+The count-only operation does not retain the request payload and never generates
+an answer. No automatic retry is made for this POST or for inference.
+
+Send images as ordered `content` parts with `type: "image_url"` and
+`image_url.url: "data:image/png;base64,..."` in user messages. Text parts are optional.
+Read saved bytes in your backend; authenticated consumer image URLs and upload IDs
+are not accepted by this contract. Resend necessary history image parts on each
+request. Do EXIF orientation correction, color management and alpha compositing
+in the consumer when those are needed: the Provider reads encoded pixels and
+converts to RGB, discarding alpha. Credentials stay in the consumer backend.

@@ -1,0 +1,819 @@
+<article lang="ja">
+  <h1>Strata初回実機試験：生成速度・長文品質・セッション運用</h1>
+  <p>
+    2026-10-10 23:36
+    JST時点の記録。利用者の試験開始指示とProvider停止の許可に基づき、Strataの準備と比較試験を開始した。Strataのビルドとgfx1151のselftest、本体・PLE・MTPの取得と整合性検証が完了した。標準MTP設定で30問の品質試験と各5,000tokenの長文2課題を実測済み。5論理会話の切替と2〜5枠の同時推論も実測した。単独の長入力比較とGemma再測定も完了し、試験用processを終了して通常サービスを復旧した。<a
+      href="./strata-integration-research-and-plan-2026-10-10.html#first-trial"
+      >初回試験の設計</a
+    >を実行する工程の記録であり、全面統合の採用判断ではない。
+  </p>
+  <section id="environment">
+    <h2>環境と変更範囲</h2>
+    <dl>
+      <dt>エンジン</dt>
+      <dd>
+        Strata 0.1.41、source <code>fb58e0dbc8399662c0e47c76578c6e878b14f6cf</code>。Linux
+        HIP、gfx1151、native IQ、MMQ
+        Prefillを有効にしてビルドした。基盤のllama.cppはStrataが指定する
+        <code>3cf03257f219afbe7334045ff7c6a06ac68c627d</code>。
+      </dd>
+      <dt>実機</dt>
+      <dd>
+        Ryzen AI MAX+ 395 / Radeon 8060S、MemTotal約121.21GiB、HIP driver/runtime
+        <code>71526333</code>、hipBLASLt
+        1.4.1。Provider停止直後のMemAvailableは約117GiB。GPUの自己診断と125Bモデルの推論が成功した。
+      </dd>
+      <dt>モデル</dt>
+      <dd>
+        Qwen3.8-Flash-Next GSQ-RCO IQ3_XXS。量子化revision
+        <code>ed59f92082b1e93c0e96d60a8b11aab089b52f09</code>、本体とPLEの合計75,839,998,528
+        bytes（70.63GiB）。各shardのSHA-256はHFのLFS
+        metadataと一致した。MTPは固定した原版checkpointから31tensor、5,214,301,696
+        bytesを取得・検証し、GPU runtimeへpackした。IQ3_S・IQ2_XSは未取得・未測定。
+      </dd>
+      <dt>配置</dt>
+      <dd>
+        エンジン・Python環境は <code>/srv/ai/apps/strata-trial</code>、モデルは
+        <code>/srv/ai/models/strata-trial</code>、pack・MTPは
+        <code>/srv/ai/apps/strata-trial-data</code>。結果・driver・状態は
+        <code>/srv/ai/data/benchmarks/strata-trial-20261010</code>。すべてsource repositoryの外に置く。
+      </dd>
+      <dt>Provider停止</dt>
+      <dd>
+        通常のLLM・ASR・TTS等を停止し、LARM daemon、llama-swap supervisor、HTTP monitor
+        timerも停止した。試験用Gemmaは専用port
+        8188、Strataはlocalhostの8189を使う。認証情報は成果物に保存しない。試験終了または失敗時に、試験用processを終了して事前に稼働していたサービスと制御plane・monitor
+        timerを復旧する。
+      </dd>
+      <dt>LARMソース</dt>
+      <dd>
+        本番route・Provider登録・統合コード・システムROCm・driver・起動設定は変更していない。文書以外のrepository変更、Git
+        commit・pushは行っていない。
+      </dd>
+    </dl>
+  </section>
+  <section id="gemma-preliminary">
+    <h2>Gemma予備測定</h2>
+    <p>
+      現行定義の
+      <code>gemma4-26b-conversation</code>
+      にあるcommandと環境変数を再利用し、portだけを8188へ変更して直接起動した。モデルはGemma 4 26B
+      A4B Q4_0、Vulkan、context 524288、parallel 4、unified Q4_0 KV、reasoning
+      off。実要求は1件ずつ送る。起動時にはengineが各slotの上限を学習長262144へcapするログがあった。調査開始時に別Profileを提供していたOrnithをGemma
+      baselineとして扱っていない。
+    </p>
+    <table>
+      <caption>
+        生成256token、3回warmup後の10回の中央値。モデル取得と並行して行った予備測定
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">実入力token数</th>
+          <th scope="col">Decode tok/s</th>
+          <th scope="col">TTFT</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">短文</th>
+          <td>48〜49</td>
+          <td>61.10</td>
+          <td>0.244秒</td>
+        </tr>
+        <tr>
+          <th scope="row">中程度の入力</th>
+          <td>3,641〜3,642</td>
+          <td>53.38</td>
+          <td>4.522秒</td>
+        </tr>
+        <tr>
+          <th scope="row">長めの入力</th>
+          <td>21,641〜21,642</td>
+          <td>48.37</td>
+          <td>32.719秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Decodeはengineの
+      <code>timings.predicted_per_second</code
+      >、TTFTはclientの最初の非空content受信までの時間を使った。samplingはtemperature 0、seed
+      1729、最大生成256token。予備測定はモデル取得の通信・disk
+      I/Oと並行しているため、Strataとの最終比較には使わず、取得完了後に同じGemma構成を再測定する。最終比較ではmodel名をpromptへ入れず、各engineへ同じ入力文字列を渡し、異なるtokenizerによる実token数も記録する。
+    </p>
+    <table>
+      <caption>
+        30問の限定的な品質smoke試験。モデル全般の知能の順位を示す値ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">カテゴリ</th>
+          <th scope="col">合格</th>
+          <th scope="col">評価範囲</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">日本語の推論・指示理解</th>
+          <td>意味上の正解8/10</td>
+          <td>
+            計算、順序、営業日、根拠不足、配列処理。誤答は順序と営業日。全10問でJSONをMarkdown
+            fenceに入れたため、JSONのみという出力形式への厳密な適合は0/10。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">コーディング</th>
+          <td>関数の正解テスト10/10</td>
+          <td>
+            区間結合、二分探索、括弧、窓和、転置、BFSなどの小さなPython関数。コード以外の説明を返した場合は形式違反を別記する。大規模repositoryの改修能力を証明する試験ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Tool Calling</th>
+          <td>名前・引数10/10</td>
+          <td>
+            模擬toolの選択とJSON引数を検証。計算式の空白は正規化する。外部toolの実行や複数stepのAgent行動は評価していない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      推論はoff。日本語・toolは最大512token、codingは最大1024token。採点は回答の意味・関数テスト・tool引数と、指定された出力形式への適合を分けて保存する。コードでは複数のPython
+      blockを記載順に評価し、説明を含めたことを形式適合の問題として別記する。fixtureと初期の回答を保持し、上記の基準を両モデルへ同じように適用する。
+    </p>
+  </section>
+  <section id="longform">
+    <h2>5,000トークン級の長文生成と整合性</h2>
+    <p>
+      利用者の追加指示により、Gemma、Strata target-only、Strata
+      MTPのそれぞれに同一の日本語長文課題を追加した。各回答の生成上限は5,000token。実際の生成token数、終了理由、全体所要時間、TTFT、Decode
+      tok/sを保存する。上限に達した出力は途中で打ち切られたものとして表示し、早期終了を5,000tokenの完走と扱わない。取得済みGemmaの先行測定を実施した。Strataの標準MTP・高速化MTPでも2課題ずつ実測した。
+    </p>
+    <table>
+      <caption>
+        長文課題と守るべき事実
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">課題</th>
+          <th scope="col">指定</th>
+          <th scope="col">整合性を確認する事実</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">図書館の検索サービスの技術解説</th>
+          <td>12章、各章800字以上を要求し、最大5,000tokenを採取</td>
+          <td>
+            蔵書120,000冊、職員12人、公開端末8台、予算240万円、月曜休館、個人情報30日保存、個人情報をクラウドへ送らない、閉館後の更新、職員と利用者の権限を分離
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">港町の航海記録をめぐる物語</th>
+          <td>12章、各章800字以上を要求し、最大5,000tokenを採取</td>
+          <td>
+            司書の葵28歳、船舶整備士の蓮24歳、管理人の高瀬60歳。2031-06-12朝から06-14夕方の3日間。記録の箱は青、鍵の所有者は高瀬のみ、葵の手帳は赤
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      元の出力全文を保存し、事実の変更、時間・所有者・因果関係の矛盾、反復、章の順序、指示からの逸脱を本文から評価する。重複段落と40文字連続列の重複率も採取するが、固有名詞や引用の再登場を異常とは断定しない。生成後に同じ会話で確定事実の整理を求め、記憶・説明の一貫性を確認する。この自己報告だけで本文の整合性が成立したとは扱わない。
+    </p>
+  </section>
+  <section id="gemma-longform-results">
+    <h2>取得済みGemmaの長文先行測定</h2>
+    <p>
+      2026-10-10 21:54〜21:56
+      JSTに実施。Strataモデル取得と並行した予備測定で、Gemmaの構成、temperature 0、seed
+      1729、reasoning
+      offは前述と同じ。実生成token数とDecodeはengineのtimings、TTFTと全体時間はclientで計測した。長文本文と追質問を保存し、本文の整合性を独立に確認した。
+    </p>
+    <table>
+      <caption>
+        同一モデルの2課題、各1回。品質や速度の一般的な順位を証明するものではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">課題</th>
+          <th scope="col">生成token</th>
+          <th scope="col">Decode tok/s</th>
+          <th scope="col">TTFT</th>
+          <th scope="col">全体時間</th>
+          <th scope="col">文字数・終了</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">技術解説</th>
+          <td>5,000</td>
+          <td>55.89</td>
+          <td>0.381秒</td>
+          <td>89.814秒</td>
+          <td>9,597文字。length終了、第9章の途中で上限打ち切り</td>
+        </tr>
+        <tr>
+          <th scope="row">物語</th>
+          <td>1,901</td>
+          <td>58.20</td>
+          <td>0.551秒</td>
+          <td>33.198秒</td>
+          <td>2,997文字。stop終了、第3章までで自主終了し、続きを求めた</td>
+        </tr>
+      </tbody>
+    </table>
+    <ul>
+      <li>
+        技術解説では、蔵書数など本文に登場する指定の数値は維持された。完全に重複する段落、40文字連続列の重複は検出されなかった。一方、第2章で「司書」の読みを「しょくし」とする誤りがある。第4章では別拠点へのバックアップを提案した後、クラウドへの個人情報送信禁止から館内への限定を導いており、不要な制約追加と説明の食い違いがある。第5章の予約を許可しつつ参照権限のみとする説明も、更新操作との境界が不明確である。
+      </li>
+      <li>
+        物語では、人物の名前・年齢・職業、物の色は維持された。第1章末で鍵を「青い箱の中」と説明し、第2〜3章で高瀬が持つと説明した。移動の描写がなく、鍵の所在の整合性に問題がある。超自然的な現象へ寄せる描写もあり、手がかりと行動で解決する指定との適合は保留。本文だけという指定に反して前置きと継続確認を付け、5,000tokenの容量を使う前に停止した。
+      </li>
+      <li>
+        追質問では指定の確定事実を整理できたが、これは本文の矛盾を解消しない。長さの指示は出力上限を超える文章を要求するstress試験であり、12章全体の未完成だけを品質不合格とはしない。物語の早期自主終了は上限による打ち切りと区別する。
+      </li>
+      <li>
+        測定中の最小MemAvailableは100.15GiB、新規swap-outは0 bytes。Vulkanのdevice
+        allocationをprocess
+        PSS/RSSだけでは数えられないため、この値からモデルの正確なRAM占有量は断定しない。
+      </li>
+    </ul>
+    <p>
+      証跡は
+      <code>gemma-existing-longform.jsonl</code
+      >、<code>gemma-existing-longform-technical.txt</code>、<code>gemma-existing-longform-story.txt</code>、<code>gemma-existing-status.json</code>。先行測定の専用Gemma
+      processは終了した。取得完了後の比較試験では同じ課題を再測定する。
+    </p>
+  </section>
+  <section id="gemma-concurrency-results">
+    <h2>取得済みGemmaの同時リクエスト測定</h2>
+    <p>
+      現行runtimeのphysical
+      capは4のまま、clientを2〜5に変えて測定した。各条件3回warmupと10回測定、最大生成256token。架空のMainに相当するclient
+      0を他clientより0.2秒遅れて投入する。優先度指定はない。取得と並行した予備測定である。
+    </p>
+    <table>
+      <caption>
+        実slot数を監視し、推論枠と要求数を区別。全52burst、182requestでHTTP・streamエラー0
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">client数</th>
+          <th scope="col">最大実active slot</th>
+          <th scope="col">合計wall tok/sの中央値</th>
+          <th scope="col">後から投入したclient 0のTTFT中央値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">2</th>
+          <td>2</td>
+          <td>79.42</td>
+          <td>0.712秒</td>
+        </tr>
+        <tr>
+          <th scope="row">3</th>
+          <td>3</td>
+          <td>96.21</td>
+          <td>1.041秒</td>
+        </tr>
+        <tr>
+          <th scope="row">4</th>
+          <td>4</td>
+          <td>105.60</td>
+          <td>1.330秒</td>
+        </tr>
+        <tr>
+          <th scope="row">5</th>
+          <td>4</td>
+          <td>88.37</td>
+          <td>9.969秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      合計wall
+      tok/sは、全clientの生成token合計をburst開始から全応答完了までの時間で割った値であり、Prefillと待ち行列の時間も含む。各requestのengine
+      Decode
+      tok/sとは区別する。4枠をWorker相当の要求が先に使った5client条件では、遅れて到着するMain相当のTTFTが約10秒へ延びた。EngineだけのFIFO
+      admissionでMainを保護できるとは判断しない。
+    </p>
+    <p>
+      5つのHTTP要求を受け付けて応答できることを確認したが、5つを同時にdecodeしたことや5つの長い履歴を保持したことの証明ではない。5論理セッションの切替とKV保持・復元は別の試験とする。証跡は
+      <code>gemma-existing-clients2-parallel.jsonl</code> から
+      <code>gemma-existing-clients5-parallel.jsonl</code
+      >、<code>gemma-existing-parallel-status.json</code>。測定用Gemma processは終了した。
+    </p>
+  </section>
+  <section id="solo-speed-results">
+    <h2>単独推論の速度比較</h2>
+    <p>
+      他Providerを停止し、モデル取得の通信・disk I/Oもない状態で、同一の入力文字列・temperature
+      0・seed 1729・最大生成256tokenを与えた。thinking
+      off。実token数はtokenizerによって異なる。短文・中入力は3回warmup＋10回測定、長入力は1回warmup＋3回測定。表は測定値の中央値。Gemmaは現行runtime相当のphysical
+      cap 4だが同時要求は1、Strataはphysical 1・max-context
+      32768。モデル・量子化・engine・設定が異なる運用候補の比較であり、engine単体の速度差を切り出した比較ではない。
+    </p>
+    <table>
+      <caption>
+        DecodeとPrefillはengine timings、TTFTはclient実測
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">入力条件</th>
+          <th scope="col">実入力token</th>
+          <th scope="col">測定回数</th>
+          <th scope="col">Decode tok/s</th>
+          <th scope="col">Prefill tok/s</th>
+          <th scope="col">TTFT</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Gemma Q4_0、Vulkan</th>
+          <td>短文</td>
+          <td>47</td>
+          <td>10</td>
+          <td>61.44</td>
+          <td>211.58</td>
+          <td>0.244秒</td>
+        </tr>
+        <tr>
+          <th scope="row">Gemma Q4_0、Vulkan</th>
+          <td>中入力</td>
+          <td>3640</td>
+          <td>10</td>
+          <td>53.54</td>
+          <td>796.85</td>
+          <td>4.672秒</td>
+        </tr>
+        <tr>
+          <th scope="row">Gemma Q4_0、Vulkan</th>
+          <td>長入力</td>
+          <td>21640</td>
+          <td>3</td>
+          <td>48.71</td>
+          <td>654.88</td>
+          <td>33.293秒</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_XXS、標準MTP</th>
+          <td>短文</td>
+          <td>46</td>
+          <td>10</td>
+          <td>44.45</td>
+          <td>66.20</td>
+          <td>0.736秒</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_XXS、標準MTP</th>
+          <td>中入力</td>
+          <td>3639</td>
+          <td>10</td>
+          <td>39.80</td>
+          <td>242.45</td>
+          <td>15.055秒</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_XXS、標準MTP</th>
+          <td>長入力</td>
+          <td>21639</td>
+          <td>3</td>
+          <td>37.60</td>
+          <td>256.80</td>
+          <td>84.317秒</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_XXS、高速化MTP</th>
+          <td>短文</td>
+          <td>46</td>
+          <td>10</td>
+          <td>44.60</td>
+          <td>66.65</td>
+          <td>0.732秒</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_XXS、高速化MTP</th>
+          <td>中入力</td>
+          <td>3639</td>
+          <td>10</td>
+          <td>38.95</td>
+          <td>278.55</td>
+          <td>13.108秒</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_XXS、高速化MTP</th>
+          <td>長入力</td>
+          <td>21639</td>
+          <td>3</td>
+          <td>40.60</td>
+          <td>671.50</td>
+          <td>32.292秒</td>
+        </tr>
+        <tr>
+          <th scope="row">IQ3_XXS、target-only</th>
+          <td>短文</td>
+          <td>46</td>
+          <td>10</td>
+          <td>28.20</td>
+          <td>46.85</td>
+          <td>1.022秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      MTPありはspec 4、target-onlyはnative IQの動作条件を満たすspec 2でMTP・suffix draft・lookup
+      chainを省く。短文では標準MTP 44.45 tok/s、target-only 28.20
+      tok/sで約1.58倍。両条件の限定品質30問はいずれも30/30正答だった。target-onlyの長文と長入力は未測定なので、5,000tokenや256Kで同じ倍率になるとは扱わない。高速化MTPは短文44.60
+      tok/s・長入力Prefill 671.50 tok/sだが、短問のTool
+      Callingで1問誤答した。長入力6問は標準・高速化とも5/6で同じ営業日問題を誤った。
+    </p>
+    <details>
+      <summary>高速化MTPの追加設定と再現</summary>
+      <p>
+        STRATA_PF_FUSED、STRATA_PF_GEMM、STRATA_HC_UPMIX、STRATA_PA_FAST、STRATA_HIP_WMMA、STRATA_SELECT_WMMA、STRATA_HC_Q8を1、STRATA_PF_SWITCH_MIN_Tを4096、STRATA_PREFILL_STREAM_MINを128とした。公式資料の設定群をまとめた条件であり、各kernelの効果を個別に分離した試験ではない。通常MTP条件の18個のgfx1151既定最適化とは区別する。CPU/GPUのclock・power設定やsystem
+        ROCmは変更していない。
+      </p>
+    </details>
+  </section>
+  <section id="gemma-isolated-longform-results">
+    <h2>Gemma長文の再測定</h2>
+    <p>
+      モデル取得と他Providerの競合がない状態で、同じ2課題を再測定した。technicalは5,000token、storyは1,093tokenで自主終了した。先行測定のstory
+      1,901tokenとは別の出力であり、先行結果を再測定結果として流用しない。
+    </p>
+    <table>
+      <caption>
+        各1回、thinking off、temperature 0、seed 1729、最大5,000token
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">課題</th>
+          <th scope="col">生成token</th>
+          <th scope="col">Decode tok/s</th>
+          <th scope="col">TTFT</th>
+          <th scope="col">全体時間</th>
+          <th scope="col">文字数</th>
+          <th scope="col">終了理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">技術解説</th>
+          <td>5000</td>
+          <td>55.80</td>
+          <td>0.534秒</td>
+          <td>90.121秒</td>
+          <td>9395</td>
+          <td>length</td>
+        </tr>
+        <tr>
+          <th scope="row">物語</th>
+          <td>1093</td>
+          <td>59.49</td>
+          <td>0.553秒</td>
+          <td>18.910秒</td>
+          <td>1641</td>
+          <td>stop</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      technical本文の指定数値は維持されたが、表記ゆれの種類と例が一致せず、同一文字列の例もあった。30日を過ぎた個人情報の暗号化移動を消去と同列にしており、保存期限の条件を満たす説明になっていない。建物被災対策として館内の別区画を挙げ、3-2-1
+      backupの別拠点の意味も不明確だった。storyは本文を執筆せず、「10,000字は物理的に不可能」と述べ、設定確認・12章の構成案と利用者への承認確認のみを返した。本文だけという指定への違反であり、上限に達しての打ち切りとは区別する。両課題とも完全な重複段落と40文字連続列の重複率は0だったが、これは事実の整合性の証明にはならない。
+    </p>
+    <p>
+      全回答はgemma-isolated-longform.jsonlと2つの全文textに保存した。後続質問の自己報告を本文の正しさの根拠にはしない。
+    </p>
+  </section>
+  <section id="strata-results">
+    <h2>Strata IQ3_XXSの先行実測</h2>
+    <p>
+      標準MTPはspec 4、int8 KV、max-context 32768、physical 1、Expert Cache auto。temperature
+      0、seed 1729、thinking off。22:22 JSTから生成を確認した。高速化条件は公式Strix
+      Halo資料のHIP設定群を追加した独立条件であり、浮動小数点の演算結果を変える実験的設定として区別する。
+    </p>
+    <table>
+      <caption>
+        標準MTPの短文品質30問。限定的なsmoke試験
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">日本語・推論</th>
+          <th scope="col">Python関数テスト</th>
+          <th scope="col">Tool Calling</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>10/10、JSON形式10/10</td>
+          <td>10/10、コードのみ10/10</td>
+          <td>10/10</td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        同一の日本語課題、各条件1回。Decodeはengine値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">設定・課題</th>
+          <th scope="col">生成token</th>
+          <th scope="col">Decode tok/s</th>
+          <th scope="col">TTFT</th>
+          <th scope="col">全体時間</th>
+          <th scope="col">文字数</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">標準MTP・技術解説</th>
+          <td>5,000</td>
+          <td>38.0</td>
+          <td>1.979秒</td>
+          <td>133.554秒</td>
+          <td>9,460</td>
+        </tr>
+        <tr>
+          <th scope="row">標準MTP・物語</th>
+          <td>5,000</td>
+          <td>38.9</td>
+          <td>2.078秒</td>
+          <td>130.713秒</td>
+          <td>7,289</td>
+        </tr>
+        <tr>
+          <th scope="row">高速化MTP・技術解説</th>
+          <td>5,000</td>
+          <td>37.7</td>
+          <td>1.617秒</td>
+          <td>134.202秒</td>
+          <td>9,686</td>
+        </tr>
+        <tr>
+          <th scope="row">高速化MTP・物語</th>
+          <td>5,000</td>
+          <td>40.0</td>
+          <td>1.683秒</td>
+          <td>126.664秒</td>
+          <td>7,772</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      いずれもlength終了。技術解説の指定数値は維持されたが、標準設定は表記ゆれの例を同じ文字列で示し、個人情報クラウド禁止を外部送信禁止へ拡張した。高速化設定も異体字の例が同一文字列で、差分・増分バックアップを混同した。標準設定の物語は第8章で葵に鍵を持たせ、高瀬のみという指定に違反した。箱の回収を描写せず所持を断定する箇所もある。追質問は高瀬のみが鍵を持つと答え、本文の矛盾を解消しない。
+    </p>
+    <p>
+      高速化設定の物語も第7章で蓮が鍵を取り、第8章で葵が開封して指定に違反した。第5〜8章で「穴の存在を鍵の所在を示す目印として使った」という推測が反復され、40文字連続列の重複率は2.42%。重複段落数0だけでは反復の不在を証明できない。名前・年齢・職業と物の色は維持した。5,000tokenの出力だけで長文の整合性を保証できない。
+    </p>
+    <p>
+      標準長文のMTP採用率は技術解説2,324/3,712＝62.6%、物語2,450/4,005＝61.2%。高速化設定の短い品質30問は29/30で、list_tasksのcompletedへJSON
+      booleanではなく文字列「False」を送った。約5,500tokenの入力末尾の6課題は5/6正解で、営業日問題を誤答した。標準条件で同じ長入力を測った結果も5/6で、同じ営業日問題を誤答した。高速化設定がこの誤答の原因とは断定できない。
+    </p>
+  </section>
+  <section id="actual-memory">
+    <h2>実ロード時のメモリ</h2>
+    <p>
+      標準設定の起動ログはCPU Expert arena 39.97GiBと全24,576 ExpertのGPU Cache
+      39.97GiBを示した。Unified Memoryでも両者のコピーが存在する。native dense
+      weights約1.74GiB、pack arena約1.43GiB、MTP GPU weights 838MiB、draft
+      head約178MiBなども必要。Prefill workspace 4GiBはExpert
+      Cacheの領域を借用するため、さらに4GiBを物理使用量へ加算しない。
+    </p>
+    <p>
+      他Provider停止時のMemAvailable約117GiBが、Strataロード後は約31GiBへ低下した。CPU process
+      PSSは約41GiB、GPU
+      GTTは約46GiBを観測したが、これらは別の観測値であり単純な合計を正確なRAM占有量とはしない。本体・PLEのdisk容量70.63GiBとも区別する。28.8GBのPLEはSSDからのdirect
+      I/O、native embeddingはmmap、Expert CPU arenaはGPUアクセス可能なhost
+      memoryである。全Strata測定の最小MemAvailableは26.55GiB、Gemma単独再測定は96.39GiB。Strata CPU
+      processのPSSピークは45.46GiB、GPU全体のGTTピークは49.61GiBであり、単純合計はしない。新規swap-outは0。ASR・TTS・Turbo画像生成との共存は未測定。
+    </p>
+    <p>
+      このfull-cache構成で5セッションの最大Context、ASR/TTSと画像生成モデルをすべて常駐させる余裕は確認できていない。画像生成はTurboのみを候補とし、必要時にロードする。今後Expert
+      Cacheの上限とCPU側resident policyを個別に測り、空きメモリと速度の実測から決める。
+    </p>
+  </section>
+  <section id="strata-session-results">
+    <h2>5論理セッション・物理1の実測</h2>
+    <p>
+      異なる識別子を持つ5会話を20turnずつ交互に呼び出し、100/100回で自分の識別子を返した。他の会話の識別子の混入は0。入力は約1,400〜2,200tokenで、各requestに会話履歴を再送する。32K
+      runtimeの機能試験であり、Main256K＋Worker64K×4の容量試験ではない。
+    </p>
+    <table>
+      <caption>
+        conversation cache 4GiB、最大5件、physical 1
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">実測</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">会話ごとの正答</th>
+          <td>各20/20、合計100/100</td>
+        </tr>
+        <tr>
+          <th scope="row">RAM KV復元</th>
+          <td>91回。draft KVのverification成功91回、復元・verificationエラー0</td>
+        </tr>
+        <tr>
+          <th scope="row">キャッシュ追い出し</th>
+          <td>4回。95回の再訪のうち91回でKVを再利用、初回5回とmiss4回は再Prefill</td>
+        </tr>
+        <tr>
+          <th scope="row">復元処理</th>
+          <td>中央値24.7ms。ネットワーク・Prefill・Decodeを含むTTFTとは異なる</td>
+        </tr>
+        <tr>
+          <th scope="row">再訪のTTFT</th>
+          <td>中央値0.851秒。cache missを含む95回</td>
+        </tr>
+        <tr>
+          <th scope="row">MemAvailableの最小</th>
+          <td>26.70GiB、既存swap量の増加なし</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この試験で5つの論理会話を1モデルで運用でき、実際のKV復元も確認できた。ただし4GiBのcacheでは5会話の全stateを常に保持できなかった。LARM側に履歴を保持し、cache
+      miss時に再送・再Prefillする運用が必要。100/100正答だけをKV保持100/100の証明とは扱わない。復元回数とverificationはengine
+      log、metrics JSON、追加の連続stats採取を根拠とする。
+    </p>
+  </section>
+  <section id="strata-concurrency-results">
+    <h2>Strataの2〜5同時推論</h2>
+    <p>
+      max-context 32768でphysical 2、3、4、5を順に起動し、それぞれplain batchとBatch
+      MTPを測った。各条件は1回warmup＋3回測定、各request最大256生成token。client
+      0をWorker相当の他clientより0.2秒遅れて投入した。全32burst・112requestでHTTP・streamエラー0。各条件の実active
+      slotが要求数に達したことをmetricsのslot状態から確認した。
+    </p>
+    <table>
+      <caption>
+        3回測定の中央値。合計wall速度と各requestのengine Decodeを区別
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">物理slot</th>
+          <th scope="col">方式</th>
+          <th scope="col">合計wall tok/s</th>
+          <th scope="col">各会話Decode tok/s</th>
+          <th scope="col">client 0 TTFT</th>
+          <th scope="col">最大実active slot</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">2</th>
+          <td>plain batch</td>
+          <td>38.96</td>
+          <td>21.10</td>
+          <td>1.357秒</td>
+          <td>2</td>
+        </tr>
+        <tr>
+          <th scope="row">2</th>
+          <td>Batch MTP</td>
+          <td>47.95</td>
+          <td>26.85</td>
+          <td>1.359秒</td>
+          <td>2</td>
+        </tr>
+        <tr>
+          <th scope="row">3</th>
+          <td>plain batch</td>
+          <td>46.61</td>
+          <td>17.30</td>
+          <td>2.207秒</td>
+          <td>3</td>
+        </tr>
+        <tr>
+          <th scope="row">3</th>
+          <td>Batch MTP</td>
+          <td>50.73</td>
+          <td>18.90</td>
+          <td>2.191秒</td>
+          <td>3</td>
+        </tr>
+        <tr>
+          <th scope="row">4</th>
+          <td>plain batch</td>
+          <td>51.56</td>
+          <td>14.25</td>
+          <td>2.152秒</td>
+          <td>4</td>
+        </tr>
+        <tr>
+          <th scope="row">4</th>
+          <td>Batch MTP</td>
+          <td>52.52</td>
+          <td>14.80</td>
+          <td>3.171秒</td>
+          <td>4</td>
+        </tr>
+        <tr>
+          <th scope="row">5</th>
+          <td>plain batch</td>
+          <td>55.11</td>
+          <td>12.30</td>
+          <td>2.152秒</td>
+          <td>5</td>
+        </tr>
+        <tr>
+          <th scope="row">5</th>
+          <td>Batch MTP</td>
+          <td>53.47</td>
+          <td>12.00</td>
+          <td>2.269秒</td>
+          <td>5</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      plain batchのMTPはsolo pathでのみ有効で、同時生成部分の採用数は0。Batch
+      MTPは同時生成部分でもdraftを検証する。2枠ではBatch MTPの改善が見られたが、5枠ではplain
+      batchより速くならなかった。3回の小標本なので、その差を普遍的な性能差とは断定しない。Batch
+      MTPのAPI timingsはdraft_nとdraft_n_acceptedを0と報告し、正確な採用率を取得できなかった。C++
+      generate.cppのBDONE出力（8457行）にdraft総数がなく、serve/server.pyのBDONE処理（1359行）が終了・時間・生成数のみを更新するためである。batch
+      windowの複数token
+      commitと構成・挙動から機能の稼働を確認するが、採用率は不明と表示する。正確な採用率の公開にはengine側の計測が必要で、LARM側のHTTP応答数では復元できない。会話ごとの生成速度は枠数とともに低下し、Mainの優先度保護はない。
+    </p>
+    <p>
+      速度測定とは別に5枠のBatch
+      MTPへ異なる秘密識別子を含む5要求を同時投入し、5/5で自分の識別子だけを返した。実active
+      slotも5に達した。証跡はstrata-batch-mtp5-isolation.jsonl。長い履歴での同時推論の状態分離や長文品質は、今後の検証に残る。
+    </p>
+    <p>
+      初期運用は論理5・物理1を基本とし、Mainが必要な時間のWorker
+      admissionを制限する。Mainがidleの時間に2枠以上を試す。engine単体のbatch機能をMain優先schedulerの代替としない。32K
+      runtimeでの短文並列成功をMain256K＋Worker64K×4の成功へ外挿しない。
+    </p>
+  </section>
+  <section id="workflow">
+    <h2>初回測定と後続検証</h2>
+    <ol>
+      <li>
+        本体・PLEの取得とSHA-256照合、MTP取得・整合性検証、公式setupによるnative packとMTP
+        runtimeの準備。
+      </li>
+      <li>
+        Strataの32K・physical
+        1でMTPの品質30問・長文2課題・速度を測る。高速化HIP設定群を別条件とし、target-onlyは短文品質と短文速度を比較する。長入力速度は1回warmup＋3回測定、短・中入力は3回warmup＋10回測定。native
+        IQのtarget-onlyは
+        <code>--spec 2 --suffix-draft 0 --lookup-chain 0</code> とし、MTPを省略する。MTP条件はspec 4。Expert
+        Cacheはauto、UMA headroomは24GiBで、実cache容量を起動ログに残す。
+      </li>
+      <li>
+        5論理セッションと2〜5同時推論を優先して確認した後、モデル取得や他Providerとの競合がない状態でGemmaの速度を再測定し、長文2課題を実行して終了する。
+      </li>
+      <li>
+        logical 5・physical 1、RAM conversation cache
+        4GiB、最大5件で20turnずつ会話を切り替える。秘密情報の保持と会話混入、再Prefill、cacheの保持・復元・verificationログを確認する。履歴再送による正答だけをKV復元成功とは扱わない。
+      </li>
+      <li>
+        physical 2→3→4→5の各設定で、plain batchとBatch
+        MTPを分けて測る。初回の各条件は1回warmup＋3回測定。各会話tok/s、合計tok/s、遅れて投入するMainのTTFT、実active
+        slot数、エラー、RAMを記録する。engine単体の挙動を測り、Main優先schedulerが実装されているとは表示しない。
+      </li>
+      <li>
+        試験用processを終了し、停止前のサービス状態を復旧する。成功・失敗・復旧状態と集計を保存する。
+      </li>
+    </ol>
+    <p>
+      最初の試験は短文・32Kまでで、Main256K＋Worker64K×4、ASR/TTS共存、Turbo共存は次の段階とする。logical
+      session数とphysical推論数を分ける。ホストのMemAvailable、PSS/RSS、swap、memory
+      pressureを継続採取し、空き16GiB未満や新たなswap-outが8MiBを超えた場合はStrata試験を中断する。既存swap使用約740MiBは試験前の状態として記録済みである。
+    </p>
+  </section>
+  <section id="artifacts">
+    <h2>完了・証跡・復旧</h2>
+    <p>
+      初回測定driverは <code>finish_first_trial.py</code>、全条件の計画driverは
+      <code>run_trial.py</code>、最新工程は
+      <code>status.json</code>、全体logは
+      <code>trial.log</code>、集計は
+      <code>summary.json</code
+      >。各試験の入力・回答・timingsはJSONL、連続メモリ観測は
+      <code>memory.jsonl</code>
+      に残す。GPU計測はgpu.jsonl、Strataの連続metricsはstrata-stats.jsonl、全文の独立確認はcoherence-review.json、binary・driverのSHA-256はtrial-artifact-hashes.json。開始時のservice状態は
+      <code>providers-before.json</code>、復旧結果は
+      <code>providers-restored.json</code>
+      に残す。いずれも前述のrepository外の結果領域に保存する。
+    </p>
+    <pre><code># 状態確認のみ
+cat /srv/ai/data/benchmarks/strata-trial-20261010/status.json
+tail -n 10 /srv/ai/data/benchmarks/strata-trial-20261010/trial.log
+cat /srv/ai/data/benchmarks/strata-trial-20261010/summary.json</code></pre>
+    <p>
+      23:33 JSTに初回測定が完了した。停止前にactiveだった8 ProviderとLARM daemon・monitor
+      timerの計10 unitがactiveへ復旧したことを再確認した。試験用port
+      8188・8189のlistenerはなく、専用LLM
+      processは終了した。最終集計はfinal-results.json、復旧確認はrestoration-verified.json。target-onlyの長文・長入力、10回測定の同時推論、256K、他Providerとの共存、量子化形式の比較は後続検証として残る。
+    </p>
+  </section>
+</article>

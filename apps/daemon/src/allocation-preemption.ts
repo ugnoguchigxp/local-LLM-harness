@@ -1,6 +1,7 @@
 import {
   admittedAllocation,
   getRuntime,
+  runtimeSetsConflict,
   type Allocation,
   type Registry,
 } from "@larm/core";
@@ -74,17 +75,17 @@ export class AllocationPreemption {
     priority: number;
     runtimeIds: string[];
     allocations: readonly Allocation[];
-    exclusiveResourceKeys: (runtimeIds: string[]) => Set<string>;
     preempt: (allocationId: string, priority: number) => unknown;
   }): void {
     if (input.priority < this.foregroundPriorityThreshold()) return;
-    const requested = input.exclusiveResourceKeys(input.runtimeIds);
     const victims = input.allocations.filter((allocation) => {
       if (!admittedAllocation(allocation.status) || (allocation.priority ?? 0) >= input.priority) return false;
-      const allocated = input.exclusiveResourceKeys(
+      return runtimeSetsConflict(
+        this.registry,
+        input.runtimeIds,
         allocation.bindings.map((binding) => binding.runtime),
+        true,
       );
-      return [...requested].some((key) => allocated.has(key));
     });
     for (const allocation of victims) {
       void input.preempt(allocation.id, input.priority);

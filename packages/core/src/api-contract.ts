@@ -1,3 +1,4 @@
+import { chatInputContractSchema, chatInputTokenCountSchema } from "./chat-input";
 import { localServiceListSchema, localServiceStatusSchema, localServiceLeaseSchema, localServiceLeaseRequestSchema, localServiceRenewSchema } from "./local-service";
 import { z } from "zod";
 import {
@@ -280,6 +281,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     Metrics: jsonSchema(metricsResponseSchema),
     OpenApiDocument: jsonSchema(openApiDocumentSchema),
     ChatCompletionRequest: jsonSchema(chatCompletionRequestSchema),
+    ChatInputContract: jsonSchema(chatInputContractSchema),
+    ChatInputTokenCount: jsonSchema(chatInputTokenCountSchema),
     AudioSpeechRequest: jsonSchema(audioSpeechRequestSchema),
     AudioVoiceList: jsonSchema(audioVoiceListSchema),
     AudioVoiceDiscovery: jsonSchema(audioVoiceDiscoverySchema),

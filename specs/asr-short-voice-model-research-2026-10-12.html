@@ -1,0 +1,416 @@
+<article lang="ja">
+  <h1>Ryzen AI Max+ 395向け日本語ASR再調査：短発話の精度と応答速度</h1>
+
+  <aside>
+    <p>
+      2026年10月12日追記：<a href="./asr-tts-japanese-evaluation-2026-10-12.html"
+        >日本語TTSによる三候補の実機評価</a
+      >が完了した。 合成音声ではGranite Q8_0 / Vulkanが精度と速度の組み合わせで最良だった。
+      以下は実測前の候補調査として残す。Cohereを第一候補とする仮説は、この限定試験では支持されなかった。
+    </p>
+  </aside>
+
+  <p>
+    2026年10月12日の調査。利用者が指定した用途は「音声対話・短い発話（精度と応答速度）」である。
+    日本語を主対象とし、PCの実機情報、LARMの設定、既存の実測記録、公開元のモデル資料と
+    実行系の評価を確認した。新候補の実機推論、重み取得、サービス・route変更は行っていない。
+    以下の選定は比較試験の優先順位であり、新モデルの本採用決定ではない。
+  </p>
+
+  <section id="recommendation">
+    <h2>結論と試験の優先順位</h2>
+    <ol>
+      <li>
+        新モデルで精度向上を狙う第一候補はCohere Transcribe 2B。
+        日本語の人手評価が有望で、CPU・Vulkanの実行経路もある。ただし既存Whisperを
+        上回る日本語CER・応答時間はこのPCでは未確認。
+      </li>
+      <li>
+        このPCへの適合性が特に高い改善案は、Qwen3-ASR 1.7Bをantirez/qwen-asrの
+        C実装で動かすこと。作者が同じRadeon 8060S・gfx1151でROCmを検証している。
+        CPU経路も比較し、モデルを小さくせずGPU競合と応答時間を改善できるか確認する。
+        実行方式の変更だけで精度が上がるとは判断しない。
+      </li>
+      <li>
+        固有名詞・専門用語の問題が中心ならGranite Speech 4.1 2Bのキーワード指定を評価する。
+        低遅延をさらに優先するならMoonshine Small Streaming日本語版をCPUで比較する。
+      </li>
+      <li>
+        過去の同条件測定で総CERとmixed速度が良かった基準は、Whisper large-v3-turbo Q5_0 /
+        whisper.cpp HIP。 新候補が同じ発話と同時実行条件で優位になるまでは、この結果を基準に扱う。
+      </li>
+    </ol>
+  </section>
+
+  <section id="host">
+    <h2>このPCと要求される実行条件</h2>
+    <dl>
+      <dt>CPU</dt>
+      <dd>AMD Ryzen AI Max+ 395、16 core / 32 thread、AVX2・AVX-512対応</dd>
+      <dt>GPU</dt>
+      <dd>Radeon 8060S、rocminfoの識別子gfx1151。CUDA専用実行系を前提にしない</dd>
+      <dt>メモリ</dt>
+      <dd>128GB級共有メモリ。OS表示121GiB、観測時available約58GiB</dd>
+      <dt>ストレージ</dt>
+      <dd>/srv/aiを含むファイルシステムの空き約1.1TiB</dd>
+      <dt>実行環境</dt>
+      <dd>Linux、ROCm・Vulkanツールあり。既存ASRのHIP・ROCm稼働を確認</dd>
+      <dt>確認対象revision</dt>
+      <dd><code>05f0222eda4420fe86fb28efb4d89dec312afd0a</code>と作業ツリー設定</dd>
+    </dl>
+    <p>
+      メモリ容量より、ASRと会話LLMが同じGPU・メモリ帯域を使う際の応答時間が重要となる。 CPU
+      ASRも共有メモリ帯域とCPUを消費するので、GPUを使わないことだけで勝者としない。
+      他の作業負荷があるため、観測時のメモリ量を恒常的な空き容量とは扱わない。
+    </p>
+    <p>
+      repository設定ではprofile <code>voice</code> /
+      <code>voice-expressive</code>が
+      <code>speech.stt</code
+      >を要求し、通常の<code>stt-default</code>は
+      <code>whisper-asr</code
+      >をprimary、<code>qwen-asr</code>をfallbackとして定義する。 明示route
+      <code>stt-qwen</code
+      >は<code>qwen-asr</code>を選択する。 前者はwhisper-server / HIP / turbo
+      Q5_0、後者はPyTorch ROCm / Qwen3-ASR 1.7B FP16。 両system
+      serviceのrunning状態を確認したが、今回の利用者による特定Allocationや
+      処理中音声のrouteは観測していない。稼働PIDから要求意図やdriftは推定しない。
+    </p>
+    <p>
+      実際のAgent Profile正本である<code>config/local-node/agent-connections.yaml</code>では、
+      <code>saaa-conversation-gemma4</code
+      >、<code>saaa-conversation-gemma4-26b-voice</code>などの
+      会話用profileと<code>asr-qwen</code>がASRに<code>stt-qwen</code>を明示する。
+      したがって、これらのprofileの要求は<code>qwen-asr</code>・Qwen3-ASR
+      1.7Bへ解決する。
+      <code>stt-default</code
+      >のprimaryがWhisperでも、SAAAの会話用profileがWhisperを使うとは
+      扱わない。SAAA実装自体は今回参照しておらず、利用者のactive profileは未指定。
+    </p>
+    <p>
+      両runtimeの現在の設定はmanaged lifecycle、warm minInstances 1、idle TTL 60秒、
+      最大同時推論1、待ち行列0。過去の文書にあるResidentという記述を現在のpolicyへ転記しない。
+      会話用途ではwarm性能に加え、idle後の初回起動時間も判定対象とする。
+    </p>
+  </section>
+
+  <section id="local-evidence">
+    <h2>このPCで既に測定された基準</h2>
+    <p>
+      <a href="./asr-alternative-evaluation.html">2026年8月31日の同条件ASR比較</a>を再確認した。
+      CERは同じ17日本語clip、計221.46秒の文字誤り率で、低いほどよい。 速度は4.032秒の音声、warmup
+      1回除外・10回測定。今回の新規測定値ではなく、 当時のLLM・TTS・実行状態における値である。
+    </p>
+    <table>
+      <caption>
+        2026年8月31日のローカル評価。現在の全workloadへ速度を保証する値ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル・実行方式</th>
+          <th scope="col">CER</th>
+          <th scope="col">LLM・TTS同時実行時ASR p95</th>
+          <th scope="col">評価</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Whisper large-v3-turbo Q5_0 / HIP</th>
+          <td>3.257%</td>
+          <td>1.186秒</td>
+          <td>現行の比較基準</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-ASR 1.7B / PyTorch ROCm FP16</th>
+          <td>3.498%</td>
+          <td>3.015秒</td>
+          <td>意味の取り違えも比較する対照</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-ASR 0.6B / PyTorch ROCm</th>
+          <td>8.93%</td>
+          <td>未掲載</td>
+          <td>小型化を第一候補にしない</td>
+        </tr>
+        <tr>
+          <th scope="row">ReazonSpeech k2-v2 / CPU</th>
+          <td>10.253%</td>
+          <td>0.141秒</td>
+          <td>速いが既存clipでは精度が不足</td>
+        </tr>
+        <tr>
+          <th scope="row">Kotoba Whisper v2.0 Q5_0 / CPU</th>
+          <td>7.358%</td>
+          <td>5.849秒</td>
+          <td>既存clipの精度・応答時間では優先度が低い</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      配備後の別runではWhisperのASR p95は単体0.470秒、LLM・TTS同時1.184秒。 原記録<code
+        >/srv/ai/logs/larm-performance/20260831T141850Z-whisper-turbo-q5-hip-deployed-trial.json</code
+      >
+      のroute・runtime identityと数値を確認した。CER原記録は
+      <code>/srv/ai/logs/larm-performance/20260831T132011Z-whisper-turbo-q5-hip-eval.json</code>。
+      「帰国後→企画後」など意味を変える誤りがあるため、総CERだけで精度を判断しない。
+    </p>
+  </section>
+
+  <section id="candidates">
+    <h2>追加候補の適合性</h2>
+    <table>
+      <caption>
+        公開元の情報と、このPCに対する選定上の推論を区別した候補
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">確認できた特長</th>
+          <th scope="col">この用途での判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">
+            <a href="https://huggingface.co/CohereLabs/cohere-transcribe-03-2026"
+              >Cohere Transcribe 2B</a
+            >
+          </th>
+          <td>
+            日本語を含む14言語、Apache-2.0。Conformer encoderとTransformer decoder。
+            <a href="https://cohere.com/blog/transcribe">開発元の日本語人手評価</a>はQwen3-ASR
+            1.7Bに対し70%、Whisper large-v3に対し66%の選好率を報告。
+          </td>
+          <td>
+            新モデルの精度比較を最優先。これはCERやこのPCの実測ではない。
+            <a
+              href="https://github.com/handy-computer/transcribe.cpp/blob/main/docs/models/cohere-transcribe-03-2026.md"
+              >transcribe.cpp</a
+            >にCPU・VulkanとQ8_0約2.41GBの変換重みあり。
+            モデル本体は取得時にHFで連絡先共有への同意が必要。変換重みでも元の条件とrevisionを確認する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="https://github.com/antirez/qwen-asr">Qwen3-ASR 1.7B / antirez C実装</a>
+          </th>
+          <td>
+            MIT runtime。既存Apache-2.0重みを使用可能。Linux ROCm 7.1、Radeon 8060S /
+            gfx1151で作者が確認。 CPU OpenBLAS、ROCm HIP、言語指定・prompt
+            biasing・streamingを備える。
+          </td>
+          <td>
+            AMD適合性の高い実行方式改善。CPUとHIPを別々に比較する。 HIP既定のQ8
+            decoderと既存FP16では数値条件が異なるため精度維持も検証する。
+            CLIを毎回起動する時間をwarm推論時間と混同せず、常駐adapterへの統合が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="https://huggingface.co/ibm-granite/granite-speech-4.1-2b"
+              >Granite Speech 4.1 2B</a
+            >
+          </th>
+          <td>
+            日本語を含む6言語、Apache-2.0。キーワードによる固有名詞・略語の認識補助。
+            作者がTransformers・llama.cppの実行手順を公開。
+          </td>
+          <td>
+            専門用語に絞った追加比較向け。通常ASRとキーワード指定を同じ音声で分ける。
+            <a
+              href="https://github.com/handy-computer/transcribe.cpp/blob/main/docs/models/granite-speech-4.1-2b.md"
+              >transcribe.cpp</a
+            >にもCPU・Vulkan経路あり。 4.0の「1B」はbase
+            LLMのサイズであり、4.1の2B表記と単純比較しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a
+              href="https://github.com/moonshine-ai/moonshine/blob/main/docs/models/available-models.md"
+              >Moonshine Small Streaming日本語版</a
+            >
+          </th>
+          <td>
+            123M、streaming版の重み・runtimeはMIT。C++ / ONNX RuntimeでCPU実行可能。
+            <a href="https://github.com/moonshine-ai/moonshine/blob/main/docs/models/accuracy.md"
+              >公式の400 clip評価</a
+            >はFLEURSとReazonSpeechのpanelでCER 17.2%。
+          </td>
+          <td>
+            GPU競合と発話終了後の待ち時間を減らす候補。精度向上の第一候補にはしない。
+            旧日本語Base/TinyのCommunity licenseと区別する。 この公開CERは既存17
+            clipやFLEURS単独CERと直接比較できない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b"
+              >Nemotron 3.5 ASR Streaming 0.6B</a
+            >
+          </th>
+          <td>
+            日本語対応、cache-aware streaming、80〜1120msのchunk設定。
+            公式FLEURS日本語CERは言語指定時13.87〜11.48%。重みはOpenMDW-1.1。
+            <a href="https://github.com/NVIDIA/NeMo-Speech.cpp">公式C++実行系</a
+            >にはCPU・Vulkanのbuild経路がある。
+          </td>
+          <td>
+            streaming速度優先の別候補。NVIDIAモデルでもCUDA専用とは限らない。
+            chunk幅はこのPCの最終応答時間ではない。既存のMIT/Apache限定採用条件には重みが該当しないため、同条件の採用枠からは分離する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-7B"
+              >VibeVoice-ASR-Streaming-7B</a
+            >
+          </th>
+          <td>
+            2026年9月公開、日本語を含む10言語、MIT、hotword・話者付きstreaming。
+            HF上の全体規模は約9Bで、名称の7Bだけで必要資源を計算しない。
+          </td>
+          <td>
+            多話者会話向けの将来候補。単一話者の短発話では、大きいdecoderによる共有GPU競合を含めて比較する必要があり、今回の先行候補より優先度を下げる。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <a href="https://huggingface.co/kotoba-tech/kotoba-whisper-v2.2">Kotoba Whisper v2.2</a>は
+      v2.0を基礎に話者分離・句読点の後処理を追加したpipelineであり、version番号だけから
+      短発話の認識精度向上を推定しない。
+      <a href="https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc"
+        >Granite Speech 5.0 TurboCTC</a
+      >は英語専用。
+      <a href="https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3">Parakeet TDT 0.6B v3</a
+      >も欧州25言語が対象なので、日本語候補には含めない。
+    </p>
+  </section>
+
+  <section id="public-comparison">
+    <h2>公開評価から断定できる範囲</h2>
+    <table>
+      <caption>
+        transcribe.cpp開発元の公開FLEURS日本語Q8_0評価。このPCの測定ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル</th>
+          <th scope="col">日本語CER</th>
+          <th scope="col">実験の出典</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Whisper large-v3-turbo</th>
+          <td>4.82%</td>
+          <td>
+            <a
+              href="https://github.com/handy-computer/transcribe.cpp/blob/main/docs/models/whisper-large-v3-turbo.md"
+              >runtime開発元の評価</a
+            >
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Cohere Transcribe 2B</th>
+          <td>5.13%</td>
+          <td>
+            <a
+              href="https://github.com/handy-computer/transcribe.cpp/blob/main/docs/models/cohere-transcribe-03-2026.md"
+              >runtime開発元の評価</a
+            >
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-ASR 1.7B</th>
+          <td>5.29%</td>
+          <td>
+            <a
+              href="https://github.com/handy-computer/transcribe.cpp/blob/main/docs/models/qwen3-asr-1.7b.md"
+              >runtime開発元の評価</a
+            >
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Granite Speech 4.1 2B</th>
+          <td>6.30%</td>
+          <td>
+            <a
+              href="https://github.com/handy-computer/transcribe.cpp/blob/main/docs/models/granite-speech-4.1-2b.md"
+              >runtime開発元の評価</a
+            >
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      同じ実行系が公表する同名datasetの参考値だが、全候補を同じrevision・decode設定・
+      統計処理で測ったことまで今回監査していない。僅差の優劣や実利用時の意味保持を断定しない。
+      Cohereの日本語人手評価とFLEURSの序列は一致していないため、読み上げ音声と
+      自然な短発話を分けて確認する。英語Open ASR Leaderboardの順位を日本語の順位に置き換えない。
+      他CPUやH100上のRTFxを395の応答秒数へ換算しない。
+    </p>
+  </section>
+
+  <section id="validation">
+    <h2>同じPCで最適モデルを確定する比較条件</h2>
+    <ol>
+      <li>既存17 clipと同じ正解・正規化でCERを測り、Whisper HIPとQwen FP16を対照にする。</li>
+      <li>
+        利用者の短い自然発話を追加し、否定、数値、日付、人名、製品名、専門用語の取り違えを別集計する。音声を公開サービスへ送らずlocalで処理する。
+      </li>
+      <li>
+        Whisper
+        turboのQ5_0に加えQ8_0またはF16も対照候補にする。量子化変更による精度向上は未確認であり、decode条件を揃えて判定する。
+      </li>
+      <li>
+        常駐状態で単体とLLM・ASR・TTS同時実行を測る。会話LLMは指定Agent
+        Profileのrouteから解決したruntimeを使い、試験時のidentityを記録する。
+      </li>
+      <li>
+        発話終了から最終テキスト確定までのp50・p95、誤り率、LLMの初動と生成速度、memoryを比較する。streamingの暫定出力を最終確定と扱わない。
+      </li>
+      <li>
+        既存の目安である同時ASR p95 1.5秒以内を仮gateとし、現行と同じrunでの相対差も見る。100
+        request、無音、雑音、短い言い直し、idle後の初回起動を確認する。
+      </li>
+      <li>
+        新実行系は隔離した試験経路で確認する。通常のHTTP
+        transcription契約を維持し、streaming導入にはconsumerとgatewayの追加対応を見積もる。
+      </li>
+    </ol>
+    <p>
+      prompt対応の有無も比較する。現在のQwen adapterはpromptを拒否するが、モデルと
+      C実装側はbiasing機能を持つ。語彙指定で必要な名前の認識が改善するか、未発話の
+      語彙が挿入されないかを評価してから公開契約に取り入れる。
+    </p>
+  </section>
+
+  <section id="revisions">
+    <h2>確認した配布revision</h2>
+    <p>
+      2026年10月12日にHugging Face
+      APIで確認したsnapshot。metadata更新を新しい学習重みと同一視しない。
+    </p>
+    <dl>
+      <dt>Qwen/Qwen3-ASR-1.7B</dt>
+      <dd><code>7278e1e70fe206f11671096ffdd38061171dd6e5</code></dd>
+      <dt>CohereLabs/cohere-transcribe-03-2026</dt>
+      <dd><code>d552dadc2922ba6f6c1f994f8db904d52dcaf942</code></dd>
+      <dt>ibm-granite/granite-speech-4.1-2b</dt>
+      <dd><code>de575db64086f84fdc79da4932d1076e965bc546</code></dd>
+      <dt>nvidia/nemotron-3.5-asr-streaming-0.6b</dt>
+      <dd><code>ea30d66debe3740a08b573244286791d423d6b3e</code></dd>
+      <dt>microsoft/VibeVoice-ASR-Streaming-7B</dt>
+      <dd><code>60d858b518b4e19d404af3737f848fc185b30177</code></dd>
+    </dl>
+    <p>
+      重み、runtime、変換重みの正確なrevision・SHA-256・licenseを固定するのは実機試験準備時。
+      外部実行系と重みはsource-only repository外へ配置する。 本資料は<a
+        href="./asr-alternative-evaluation.html"
+        >既存の評価・試用記録</a
+      >を補足し、 過去の実測値や現在の配備設定を上書きしない。
+    </p>
+  </section>
+</article>

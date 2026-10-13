@@ -2,12 +2,14 @@ import { expect, test } from "bun:test";
 import {
   API_OPERATIONS,
   agentConnectionClaimSchema,
+  agentProviderEndpoint,
   agentConnectionHealthSchema,
   clusterStateSchema,
   inspectionProviderInstanceListSchema,
   inspectionRuntimeListSchema,
   publicClusterStateSchema,
   publicAgentConnectionSchema,
+  publicAgentProfileListV3Schema,
   loadAgentConnectionCatalogForRegistry,
   loadRegistry,
   parseAgentConnectionCatalog,
@@ -131,7 +133,7 @@ const agentConnectionCatalog = parseAgentConnectionCatalog({
       }],
     },
   },
-  profileSelectors: { vulnWorkbench: { agentProfile: "coding" } },
+  profileSelectors: { "ornith1.5Strix": { agentProfile: "coding" } },
 }, registry);
 
 const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
@@ -157,7 +159,7 @@ const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
       }],
     },
   },
-  profileSelectors: { vulnWorkbench: { agentProfile: "coding" } },
+  profileSelectors: { "ornith1.5Strix": { agentProfile: "coding" } },
 }, registry);
 
 const explicitAgentConnectionCatalog = parseAgentConnectionCatalog({
@@ -189,9 +191,9 @@ const explicitAgentConnectionCatalog = parseAgentConnectionCatalog({
     },
   },
   profileSelectors: {
-    vulnWorkbench: { agentProfile: "coding" },
+    "ornith1.5Strix": { agentProfile: "coding" },
     contextStill: { agentProfile: "speed" },
-    SAAA: { agentProfile: "coding" },
+    "SAAA-gemma4-26b": { agentProfile: "coding" },
   },
 }, registry);
 
@@ -230,9 +232,9 @@ const idleSaaaAgentConnectionCatalog = parseAgentConnectionCatalog({
     },
   },
   profileSelectors: {
-    vulnWorkbench: { agentProfile: "coding" },
+    "ornith1.5Strix": { agentProfile: "coding" },
     contextStill: { agentProfile: "coding" },
-    SAAA: { agentProfile: "saaa" },
+    "SAAA-gemma4-26b": { agentProfile: "saaa" },
   },
 }, registry);
 
@@ -304,6 +306,7 @@ function validSemanticWavResponse(): Response {
 
 async function validAgentProviderSemanticResponse(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+  if (path.endsWith("/tokenize")) return Response.json({ contractVersion: "llama-chat-token-count.v1", promptTokens: 20, textTokens: 20, imageTokens: 0, imageCount: 0, engineBuild: "fixture" });
   if (path.endsWith("/v1/chat/completions")) return validLlmSemanticProbeResponse(init);
   if (path.endsWith("/v1/audio/transcriptions")) return Response.json({ text: "" });
   if (path.endsWith("/v1/audio/speech")) return validSemanticWavResponse();
@@ -318,6 +321,11 @@ async function validAgentProviderSemanticResponse(input: string | URL | Request,
   }
   if (path.endsWith("/v1/systemone")) {
     const request = JSON.parse(String(init?.body)) as { model: string };
+    if (request.model === "ruri-v3-30m-sentence-language") {
+      return Response.json({ model: request.model,
+        answers: { language: { type: "choice", choice: "ja", probabilities: { ja: .99, en: .01 }, confidence: .99 } },
+        usage: { input_tokens: 10, output_tokens: 0 } });
+    }
     return Response.json({
       model: request.model,
       answers: { emotion: {
@@ -501,48 +509,53 @@ test("v3 public profile selectors return exact provider and service endpoints wi
     contextStill: {
       id: "contextstill-background",
       providers: [
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-contextstill" },
+        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
         { name: "system-one", endpoint: "/v1/systemone", model: "laya-multilingual" },
-      ],
-      services: [],
-    },
-    SAAA: {
-      id: "saaa-conversation-ornith15",
-      providers: [
-        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
-        { name: "backchannel", endpoint: "/v1/chat/completions", model: "qwen3.5-2b-fast-response" },
-        { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
-        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-35b" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
+        { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
       ],
       services: [],
     },
     "SAAA-w-Image": {
       id: "saaa-conversation-gemma4-26b-voice",
       providers: [
-        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
+        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
         { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
+        { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
       ],
       services: [{ name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1-turbo" }],
     },
     "SAAA-w-music": {
       id: "saaa-conversation-gemma4-26b-voice",
       providers: [
-        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "qwen3-asr-1.7b" },
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
+        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
         { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
+        { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
       ],
       services: [{ name: "music", endpoint: "/v1/music/generations", model: "ace-step-1.5" }],
     },
-    vulnWorkbench: {
-      id: "coding-default",
-      providers: [{ name: "llm", endpoint: "/v1/chat/completions", model: "coding-default" }],
+    "ornith1.5Strix": {
+      id: "ornith1.5Strix",
+      providers: [
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
+        { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
+        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-strix-lean" },
+        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
+        { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
+        { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
+        { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
+      ],
       services: [],
     },
   } as const;
@@ -569,6 +582,11 @@ test("v3 public profile selectors return exact provider and service endpoints wi
       expect(body.profiles[0]!.services.map(({ name, endpoint, model }) => ({ name, endpoint, model })))
         .toEqual([...selected.services]);
     }
+    for (const retired of ["deep-reasoning-35b", "saaa-qwen38", "saaa-conversation-gemma4",
+      "saaa-conversation-ornith15-image", "saaa-conversation-ornith15-music",
+      "contextstill-decision-default-canary", "backchannelLfm25Jp", "backchannelGemma3"]) {
+      expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=${retired}`)).status).toBe(404);
+    }
     expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=unknown`)).status).toBe(404);
     expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=SAAA&profile=contextStill`)).status).toBe(400);
     expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=SAAA&extra=true`)).status).toBe(400);
@@ -577,15 +595,16 @@ test("v3 public profile selectors return exact provider and service endpoints wi
   }
 });
 
-test("E2E: SAAA profile provide returns every live provider over a real HTTP listener", async () => {
+test("E2E: default Ornith profile provide returns every live provider over a real HTTP listener", async () => {
   const catalogRevision = "e".repeat(64);
   const configDir = join(import.meta.dir, "../../../config/local-node");
   const productionRegistry = loadRegistry(configDir);
   const productionCatalog = loadAgentConnectionCatalogForRegistry(configDir, productionRegistry);
   const liveRuntimeIds = new Set([
-    "ornith-general",
-    "qwen35-decision",
-    "qwen-asr",
+    "ornith15-strix-conversation",
+    "granite-asr",
+    "kittentts-nano",
+    "ruri-system-one",
     "voicevox-tts",
     "multilingual-e5-small",
   ]);
@@ -625,7 +644,7 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
   appFetch = app.fetch;
 
   try {
-    const discoveryResponse = await fetch(`${baseUrl}/v3/agent-profiles?profile=SAAA`, {
+    const discoveryResponse = await fetch(`${baseUrl}/v3/agent-profiles?profile=ornith1.5Strix`, {
       headers: agentHeaders(),
     });
     expect(discoveryResponse.status).toBe(200);
@@ -639,7 +658,7 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
         prefer: "wait=3",
       }),
       body: JSON.stringify({
-        profile: "SAAA",
+        profile: "ornith1.5Strix",
         expectedCatalogRevision: discovery.catalogRevision,
         audience: "same-host",
         client: "saaa-e2e",
@@ -653,8 +672,8 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
     const connection = publicAgentConnectionSchema.parse(await createResponse.json());
     expect(createResponse.headers.get("location")).toBe(`/v1/agent-connections/${connection.id}`);
     expect(connection).toMatchObject({
-      profile: "SAAA",
-      agentProfile: "saaa-conversation-ornith15",
+      profile: "ornith1.5Strix",
+      agentProfile: "ornith1.5Strix",
       catalogRevision: discovery.catalogRevision,
       status: "ready",
       services: [],
@@ -667,43 +686,10 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
       model: provider.model,
       readiness: provider.readiness,
       claimable: provider.claimable,
-    }))).toEqual([
-      {
-        name: "asr",
-        endpoint: "/v1/audio/transcriptions",
-        model: "qwen3-asr-1.7b",
-        readiness: "ready",
-        claimable: true,
-      },
-      {
-        name: "backchannel",
-        endpoint: "/v1/chat/completions",
-        model: "qwen3.5-2b-fast-response",
-        readiness: "ready",
-        claimable: true,
-      },
-      {
-        name: "embedding",
-        endpoint: "/v1/embed",
-        model: "multilingual-e5-small",
-        readiness: "ready",
-        claimable: true,
-      },
-      {
-        name: "llm",
-        endpoint: "/v1/chat/completions",
-        model: "ornith-1.5-35b",
-        readiness: "ready",
-        claimable: true,
-      },
-      {
-        name: "tts",
-        endpoint: "/v1/audio/speech",
-        model: "voicevox-core",
-        readiness: "ready",
-        claimable: true,
-      },
-    ]);
+    }))).toEqual(catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!.providers.map(provider => ({
+      name: provider.name, endpoint: agentProviderEndpoint(provider.protocol), model: provider.publicModel,
+      readiness: "ready", claimable: true,
+    })));
     expect(log.ensure).toEqual([]);
 
     const getResponse = await fetch(`${baseUrl}/v1/agent-connections/${connection.id}`, {
@@ -722,10 +708,12 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
       acceptingRequests: true,
       providers: [
         { name: "asr", ready: true },
-        { name: "backchannel", ready: true },
         { name: "embedding", ready: true },
         { name: "llm", ready: true },
+        { name: "sentence-language", ready: true },
+        { name: "system-one", ready: true },
         { name: "tts", ready: true },
+        { name: "tts-english", ready: true },
       ],
     });
 
@@ -738,10 +726,12 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
     const claim = agentConnectionClaimSchema.parse(await claimResponse.json());
     expect(claim.providers.map((provider) => provider.name)).toEqual([
       "asr",
-      "backchannel",
       "embedding",
       "llm",
+      "sentence-language",
+      "system-one",
       "tts",
+      "tts-english",
     ]);
 
     const providerHealth = await fetch(claim.providers[0]!.health.url, {
@@ -763,11 +753,11 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
         prefer: "wait=3",
       }),
       body: JSON.stringify({
-        profile: "SAAA",
+        profile: "ornith1.5Strix",
         expectedCatalogRevision: discovery.catalogRevision,
         audience: "same-host",
-        client: "saaa-backchannel-e2e",
-        providers: ["backchannel"],
+        client: "ornith-llm-subset-e2e",
+        providers: ["llm"],
         ttlSeconds: 300,
         allowFallback: false,
         deploymentPolicy: "existing-only",
@@ -775,7 +765,7 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
     });
     expect(subsetResponse.status).toBe(201);
     const subset = publicAgentConnectionSchema.parse(await subsetResponse.json());
-    expect(subset.providers.map((provider) => provider.name)).toEqual(["backchannel"]);
+    expect(subset.providers.map((provider) => provider.name)).toEqual(["llm"]);
 
     const subsetClaimResponse = await fetch(`${baseUrl}/v1/agent-connections/${subset.id}/claim`, {
       method: "POST",
@@ -784,7 +774,7 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
     });
     expect(subsetClaimResponse.status).toBe(200);
     const subsetClaim = agentConnectionClaimSchema.parse(await subsetClaimResponse.json());
-    expect(subsetClaim.providers.map((provider) => provider.name)).toEqual(["backchannel"]);
+    expect(subsetClaim.providers.map((provider) => provider.name)).toEqual(["llm"]);
     expect((await fetch(`${baseUrl}/v1/agent-connections/${subset.id}`, {
       method: "DELETE",
       headers: agentHeaders(),
@@ -797,7 +787,7 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
         "idempotency-key": "saaa-profile-unknown-subset-e2e",
       }),
       body: JSON.stringify({
-        profile: "SAAA",
+        profile: "ornith1.5Strix",
         audience: "same-host",
         providers: ["missing"],
       }),
@@ -815,18 +805,15 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
   }
 });
 
-test("E2E: SAAA releases to ContextStill and then preempts it during resource replacement", async () => {
+test("E2E: Gemma releases to ContextStill and then preempts its Strix runtime during replacement", async () => {
   const catalogRevision = "f".repeat(64);
   const configDir = join(import.meta.dir, "../../../config/local-node");
   const productionRegistry = loadRegistry(configDir);
   const productionCatalog = loadAgentConnectionCatalogForRegistry(configDir, productionRegistry);
-  const initiallyLive = new Set([
-    "ornith-general",
-    "qwen35-decision",
-    "qwen-asr",
-    "voicevox-tts",
-    "multilingual-e5-small",
-  ]);
+  const initiallyLive = new Set(productionRegistry.runtimes.filter(runtime =>
+    runtime.id !== "ornith15-strix-conversation"
+    && (runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0)
+  ).map(runtime => runtime.id));
   const probes = new Map(productionRegistry.runtimes.map((runtime) => [
     runtime.id,
     probe(runtime.id, initiallyLive.has(runtime.id)),
@@ -864,7 +851,7 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
   appFetch = app.fetch;
 
   let createSequence = 0;
-  const createConnection = async (profile: "SAAA" | "contextStill" | "embeddingCanary") => {
+  const createConnection = async (profile: "SAAA-gemma4-26b" | "contextStill" | "embeddingCanary") => {
     createSequence += 1;
     const response = await fetch(`${baseUrl}/v1/agent-connections`, {
       method: "POST",
@@ -953,21 +940,21 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
     const embeddingClaim = await claimConnection(embedding, "larm-embedding-provider-v1");
     await embed(embeddingClaim);
 
-    const firstSaaa = await createConnection("SAAA");
-    expect(firstSaaa).toMatchObject({ profile: "SAAA", status: "ready" });
+    const firstSaaa = await createConnection("SAAA-gemma4-26b");
+    expect(firstSaaa).toMatchObject({ profile: "SAAA-gemma4-26b", status: "ready" });
     const firstSaaaClaim = await claimConnection(firstSaaa);
     await infer(firstSaaaClaim);
     await release(firstSaaa);
 
     const contextStill = await createConnection("contextStill");
     expect(contextStill).toMatchObject({ profile: "contextStill", status: "ready" });
-    expect(log.ensure).toContain("ornith-contextstill")
+    expect(log.ensure).toContain("ornith15-strix-conversation");
     expect(log.ensure).toContain("laya-system-one");
     const contextClaim = await claimConnection(contextStill);
     await infer(contextClaim);
 
-    const secondSaaa = await createConnection("SAAA");
-    expect(secondSaaa).toMatchObject({ profile: "SAAA", status: "ready" });
+    const secondSaaa = await createConnection("SAAA-gemma4-26b");
+    expect(secondSaaa).toMatchObject({ profile: "SAAA-gemma4-26b", status: "ready" });
     await control.flush();
 
     const preempted = await fetch(`${baseUrl}/v1/agent-connections/${contextStill.id}`, {
@@ -981,7 +968,7 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
         message: "request stopped because a higher-priority foreground task requires the provider",
       },
     });
-    expect(log.stop).toContain("ornith-contextstill");
+    expect(log.stop).toContain("ornith15-strix-conversation");
 
     const contextLlm = contextClaim.providers.find((provider) => provider.name === "llm")!;
     const revokedContext = await fetch(`${contextLlm.baseUrl}/chat/completions`, {
@@ -4037,7 +4024,7 @@ test("Agent Connection provider subset does not probe an unrelated busy provider
         ],
       },
     },
-    profileSelectors: { SAAA: { agentProfile: "conversation" } },
+    profileSelectors: { "SAAA-gemma4-26b": { agentProfile: "conversation" } },
   }, registry);
   const probedModels: string[] = [];
   const { app } = await makeApp(true, true, {}, {
@@ -4065,7 +4052,7 @@ test("Agent Connection provider subset does not probe an unrelated busy provider
       prefer: "wait=3",
     }),
     body: JSON.stringify({
-      profile: "SAAA",
+      profile: "SAAA-gemma4-26b",
       audience: "loopback",
       client: "subset-test",
       providers: ["backchannel"],
@@ -4236,7 +4223,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
       "content-type": "application/json",
       "idempotency-key": "agent-create-1",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(create.status).toBe(201);
   const connection = publicAgentConnectionSchema.parse(await create.json());
@@ -4270,7 +4257,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
       "content-type": "application/json",
       "idempotency-key": "agent-create-1",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(replay.headers.get("x-larm-idempotent-replay")).toBe("true");
   expect((await replay.json() as { id: string }).id).toBe(connection.id);
@@ -4548,7 +4535,7 @@ test("embedding Agent Connection claims, validates, renews, and releases a scope
       },
     },
     profileSelectors: {
-      vulnWorkbench: { agentProfile: "coding" },
+      "ornith1.5Strix": { agentProfile: "coding" },
       embeddingCanary: { agentProfile: "embedding" },
     },
   }, embeddingRegistry);
@@ -4847,7 +4834,7 @@ test("Agent Connection Prefer wait converges to ready and validates catalog revi
       "idempotency-key": "revision-mismatch",
     }),
     body: JSON.stringify({
-      profile: "vulnWorkbench",
+      profile: "ornith1.5Strix",
       expectedCatalogRevision: "0".repeat(64),
       audience: "loopback",
     }),
@@ -4863,11 +4850,11 @@ test("Agent Connection Prefer wait converges to ready and validates catalog revi
       "idempotency-key": "bounded-wait",
       prefer: "wait=2",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(response.status).toBe(201);
   expect(response.headers.get("preference-applied")).toBe("wait=2");
-  expect(await response.json()).toMatchObject({ profile: "vulnWorkbench", status: "ready" });
+  expect(await response.json()).toMatchObject({ profile: "ornith1.5Strix", status: "ready" });
   expect(semanticProbes).toBeGreaterThanOrEqual(2);
 });
 
@@ -4885,7 +4872,7 @@ test("Agent Connection caps synchronous Prefer wait at three seconds", async () 
       "idempotency-key": "bounded-long-wait",
       prefer: "wait=300",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(response.status).toBe(201);
   expect(response.headers.get("preference-applied")).toBe("wait=3");
@@ -4903,7 +4890,7 @@ test("equivalent SAAA creates reuse one non-terminal connection across idempoten
       method: "POST",
       headers: agentHeaders({ "content-type": "application/json", "idempotency-key": key }),
       body: JSON.stringify({
-        profile: "SAAA",
+        profile: "SAAA-gemma4-26b",
         audience: "loopback",
         client: "saaa-desktop",
         ttlSeconds: 30,
@@ -4928,7 +4915,7 @@ test("one SAAA client session rejects conflicting active connection options", as
     method: "POST",
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": key }),
     body: JSON.stringify({
-      profile: "SAAA",
+      profile: "SAAA-gemma4-26b",
       audience: "loopback",
       client: "saaa-desktop-conflict",
       ttlSeconds,
@@ -4952,7 +4939,7 @@ test("SAAA auto releases after idle while health polling does not extend the dea
   const createdResponse = await app.request("/v1/agent-connections", {
     method: "POST",
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "saaa-idle" }),
-    body: JSON.stringify({ profile: "SAAA", audience: "loopback", ttlSeconds: 30 }),
+    body: JSON.stringify({ profile: "SAAA-gemma4-26b", audience: "loopback", ttlSeconds: 30 }),
   });
   const created = publicAgentConnectionSchema.parse(await createdResponse.json());
   expect(created).toMatchObject({ status: "ready", phase: "ready" });
@@ -5006,7 +4993,7 @@ test("foreground request completion restarts the SAAA idle deadline", async () =
   const created = publicAgentConnectionSchema.parse(await (await app.request("/v1/agent-connections", {
     method: "POST",
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "saaa-active" }),
-    body: JSON.stringify({ profile: "SAAA", audience: "loopback", ttlSeconds: 30 }),
+    body: JSON.stringify({ profile: "SAAA-gemma4-26b", audience: "loopback", ttlSeconds: 30 }),
   })).json());
   const claim = agentConnectionClaimSchema.parse(await (await app.request(
     `/v1/agent-connections/${created.id}/claim`,
@@ -5040,8 +5027,8 @@ test("foreground request completion restarts the SAAA idle deadline", async () =
   })).json()).toMatchObject({ status: "released", error: { code: "foreground_idle_timeout" } });
 });
 
-test("ContextStill receives a retryable conflict only while SAAA is active", async () => {
-  const { app } = await makeApp(true, false, {}, {
+test("a selector name alone does not exclude ContextStill while the foreground connection is idle", async () => {
+  const { app } = await makeApp(true, true, {}, {
     apiToken: agentApiToken,
     connectionSigningKey: agentSigningKey,
     agentConnectionCatalog: explicitAgentConnectionCatalog,
@@ -5050,7 +5037,7 @@ test("ContextStill receives a retryable conflict only while SAAA is active", asy
   const saaa = await app.request("/v1/agent-connections", {
     method: "POST",
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "active-saaa" }),
-    body: JSON.stringify({ profile: "SAAA", audience: "loopback" }),
+    body: JSON.stringify({ profile: "SAAA-gemma4-26b", audience: "loopback" }),
   });
   expect(saaa.status).toBe(201);
   const contextStill = await app.request("/v1/agent-connections", {
@@ -5058,9 +5045,8 @@ test("ContextStill receives a retryable conflict only while SAAA is active", asy
     headers: agentHeaders({ "content-type": "application/json", "idempotency-key": "blocked-contextstill" }),
     body: JSON.stringify({ profile: "contextStill", audience: "loopback" }),
   });
-  expect(contextStill.status).toBe(409);
-  expect(contextStill.headers.get("retry-after")).toBe("1");
-  expect(await contextStill.json()).toMatchObject({ error: { code: "provider_conflict" } });
+  expect(contextStill.status).toBe(201);
+  expect(await contextStill.json()).toMatchObject({ profile: "contextStill", status: "ready" });
 });
 
 test("agent connection derives a host-private claim from the request origin", async () => {
@@ -5084,7 +5070,7 @@ test("agent connection derives a host-private claim from the request origin", as
       "x-forwarded-host": "attacker.example",
       "x-forwarded-proto": "https",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "remote" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "remote" }),
   });
   expect(create.status).toBe(201);
   const connection = publicAgentConnectionSchema.parse(await create.json());
@@ -5125,7 +5111,7 @@ test("agent connection derives a host-private claim from the request origin", as
       "content-type": "application/json",
       "idempotency-key": "dynamic-origin-create",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "remote" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "remote" }),
   });
   expect(conflictingOrigin.status).toBe(409);
   expect(await conflictingOrigin.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
@@ -5143,7 +5129,7 @@ test("host-private request-origin audiences reject loopback ingress", async () =
       "content-type": "application/json",
       "idempotency-key": "loopback-origin-rejected",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "remote" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "remote" }),
   });
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ error: { code: "connection_audience_unavailable" } });
@@ -5170,7 +5156,7 @@ test("agent semantic health rejects an HTTP-alive model that does not complete e
       "content-type": "application/json",
       "idempotency-key": "bad-semantic-model",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(created.status).toBe(202);
   const connection = publicAgentConnectionSchema.parse(await created.json());
@@ -5204,7 +5190,7 @@ test("agent connection fails immediately when a provider rejects the fixed readi
       "content-type": "application/json",
       "idempotency-key": "provider-contract-mismatch",
     }),
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(created.status).toBe(503);
   expect(publicAgentConnectionSchema.parse(await created.json())).toMatchObject({
@@ -5252,7 +5238,7 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
       "content-type": "application/json",
       "idempotency-key": "anonymous-create-1",
     },
-    body: JSON.stringify({ profile: "vulnWorkbench", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
   });
   expect(createdResponse.status).toBe(201);
   const created = publicAgentConnectionSchema.parse(await createdResponse.json());
@@ -5291,4 +5277,147 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
   expect((await app.request(`/v1/agent-connections/${created.id}`, {
     method: "DELETE",
   })).status).toBe(204);
+});
+
+test("Eumenes requests abort ContextStill, fence reacquisition until all foreground requests finish, and retain shared providers", async () => {
+  const configDir = join(import.meta.dir, "../../../config/local-node");
+  const production = loadRegistry(configDir);
+  const catalog = loadAgentConnectionCatalogForRegistry(configDir, production);
+  const probes = new Map(production.runtimes.map(runtime => [runtime.id, probe(runtime.id,
+    runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0)]));
+  const log = { ensure: [] as string[], stop: [] as string[] };
+  const observer = new Observer(production, stubBackend(probes, log));
+  await observer.tick();
+  const control = new ControlPlane(production, stubBackend(probes, log), observer, { pollIntervalMs: 1, providerSwitchHoldMs: 0 });
+  const events: string[] = [];
+  let backgroundStarted!: () => void;
+  let backgroundStart = new Promise<void>(resolve => { backgroundStarted = resolve; });
+  const foregroundReleases: (() => void)[] = [];
+  let foregroundStarts = 0;
+  const app = createApp({ registry: production, getState: () => observer.getState(), control,
+    apiToken: agentApiToken, connectionSigningKey: agentSigningKey, agentConnectionCatalog: catalog,
+    connectionPollIntervalMs: 1,
+    gatewayFetch: async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      if (path.endsWith("/v1/chat/completions")) {
+        const body = JSON.parse(init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init?.body));
+        const text = body.messages[0]?.content;
+        if (text === "background-work") {
+          events.push("background-started"); backgroundStarted();
+          return await new Promise<Response>((_resolve, reject) => {
+            const abort = () => { events.push("background-aborted"); reject(init?.signal?.reason); };
+            if (init?.signal?.aborted) abort(); else init?.signal?.addEventListener("abort", abort, { once: true });
+          });
+        }
+        if (text === "foreground-work") {
+          events.push("foreground-started"); foregroundStarts += 1;
+          await new Promise<void>(resolve => { foregroundReleases.push(resolve); });
+        }
+      }
+      if (path.endsWith("/v1/audio/transcriptions") && init?.body instanceof ReadableStream) {
+        await new Response(init.body).arrayBuffer();
+      }
+      return await validAgentProviderSemanticResponse(input, init);
+    },
+  });
+  const owned = new Set<string>();
+  let sequence = 0;
+  const create = async (profile: "contextStill" | "ornith1.5Strix") => app.request("/v1/agent-connections", {
+    method: "POST", headers: agentHeaders({ "content-type": "application/json", "idempotency-key": `exclusive-${++sequence}`, prefer: "wait=3" }),
+    body: JSON.stringify({ profile, audience: "same-host", client: `exclusive-${sequence}`, ttlSeconds: 300,
+      ...(profile === "contextStill" ? { providers: ["llm"] } : {}), deploymentPolicy: "existing-only", allowFallback: false }),
+  });
+  const ready = async (profile: "contextStill" | "ornith1.5Strix") => {
+    const response = await create(profile); expect(response.status).toBe(201);
+    const connection = publicAgentConnectionSchema.parse(await response.json()); owned.add(connection.id);
+    const claim = agentConnectionClaimSchema.parse(await (await app.request(`/v1/agent-connections/${connection.id}/claim`, {
+      method: "POST", headers: agentHeaders({ "content-type": "application/json" }), body: JSON.stringify({ format: "openai-provider-v1" }),
+    })).json());
+    return { connection, claim };
+  };
+  const chat = (claim: ReturnType<typeof agentConnectionClaimSchema.parse>, text: string) => {
+    const provider = claim.providers.find(provider => provider.name === "llm")!;
+    return app.request("/v1/chat/completions", { method: "POST", headers: { authorization: `Bearer ${provider.credential.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: provider.model, messages: [{ role: "user", content: text }], max_tokens: 8 }),
+    });
+  };
+  try {
+    const foreground = await ready("ornith1.5Strix");
+    const background = await ready("contextStill");
+    const bg = chat(background.claim, "background-work"); await backgroundStart;
+    const fg1 = chat(foreground.claim, "foreground-work");
+    for (let i = 0; i < 1000 && foregroundStarts < 1; i++) await Bun.sleep(1);
+    expect(foregroundStarts).toBe(1);
+    expect(events.slice(0, 3)).toEqual(["background-started", "background-aborted", "foreground-started"]);
+    const aborted = await bg; expect(aborted.status).toBe(409);
+    expect(await aborted.json()).toMatchObject({ error: { code: "foreground_preempted" } });
+    expect(control.getAllocation(background.connection.allocationId)).toMatchObject({ status: "released" });
+    const blocked = await create("contextStill"); expect(blocked.status).toBe(409);
+    expect(blocked.headers.get("retry-after")).toBe("1");
+    expect(await blocked.json()).toMatchObject({ error: { code: "provider_conflict" } });
+    const fg2 = chat(foreground.claim, "foreground-work");
+    for (let i = 0; i < 1000 && foregroundStarts < 2; i++) await Bun.sleep(1);
+    expect(foregroundStarts).toBe(2);
+    foregroundReleases[0]!(); const completed1 = await fg1; expect(completed1.status).toBe(200); await completed1.text();
+    expect((await create("contextStill")).status).toBe(409);
+    foregroundReleases[1]!(); const completed2 = await fg2; expect(completed2.status).toBe(200); await completed2.text();
+    const resumed = await ready("contextStill");
+    backgroundStart = new Promise(resolve => { backgroundStarted = resolve; });
+    const bg2 = chat(resumed.claim, "background-work");
+    await backgroundStart;
+    const asr = foreground.claim.providers.find(provider => provider.name === "asr")!;
+    const form = new FormData(); form.set("model", asr.model); form.set("file", new Blob([await validSemanticWavResponse().arrayBuffer()], { type: "audio/wav" }), "silence.wav");
+    const transcription = await app.request("/v1/audio/transcriptions", { method: "POST", headers: { authorization: `Bearer ${asr.credential.token}` }, body: form });
+    expect(transcription.status).toBe(200); await transcription.text();
+    const aborted2 = await bg2; expect(aborted2.status).toBe(409); await aborted2.text();
+    expect(events.filter(event => event === "background-aborted").length).toBe(2);
+    expect(control.getAllocation(resumed.connection.allocationId)).toMatchObject({ status: "released" });
+    const again = await ready("contextStill");
+    expect(again.connection.id).not.toBe(background.connection.id);
+    for (const runtime of ["ornith15-strix-conversation", "granite-asr", "voicevox-tts", "kittentts-nano"]) expect(log.stop).not.toContain(runtime);
+    expect(control.getAllocation(foreground.connection.allocationId)?.status).toBe("ready");
+  } finally {
+    foregroundReleases.forEach(release => release());
+    for (const id of owned) await app.request(`/v1/agent-connections/${id}`, { method: "DELETE", headers: agentHeaders() });
+    control.beginDrain();
+  }
+});
+
+test("claimed image preflight exposes exact contract and retention and never bypasses model or bearer scope", async () => {
+  const dir=join(import.meta.dir,"../../../config/local-node");
+  const production=loadRegistry(dir);const catalog=loadAgentConnectionCatalogForRegistry(dir,production);
+  const live = new Set(["ornith15-strix-conversation", "granite-asr", "kittentts-nano", "ruri-system-one", "voicevox-tts", "multilingual-e5-small"]);
+  const probes=new Map(production.runtimes.map(runtime=>[runtime.id,probe(runtime.id,live.has(runtime.id))]));
+  const log={ensure:[] as string[],stop:[] as string[]};const observer=new Observer(production,stubBackend(probes,log));await observer.tick();
+  const control=new ControlPlane(production,stubBackend(probes,log),observer,{idleTtlMs:0});
+  let countCalls=0;let promptTokens=20;
+  const app=createApp({registry:production,getState:()=>observer.getState(),control,apiToken:agentApiToken,connectionSigningKey:agentSigningKey,agentConnectionCatalog:catalog,
+    inferenceAuditMode:"full-required",inferenceAuditRetentionMs:604800000,
+    gatewayFetch:async(input,init)=>{
+      if(String(input).endsWith("/tokenize")){countCalls++;return Response.json({contractVersion:"llama-chat-token-count.v1",promptTokens,textTokens:promptTokens,imageTokens:0,imageCount:0,engineBuild:"fixture"});}
+      return validAgentProviderSemanticResponse(input,init);
+    }});
+  const discovery=publicAgentProfileListV3Schema.parse(await (await app.request("/v3/agent-profiles?profile=ornith1.5Strix",{headers:agentHeaders()})).json());
+  const createdResponse=await app.request("/v1/agent-connections",{method:"POST",headers:agentHeaders({"content-type":"application/json","idempotency-key":"chat-count-contract",prefer:"wait=3"}),body:JSON.stringify({profile:"ornith1.5Strix",audience:"same-host",providers:["llm"],client:"input-count-fixture",ttlSeconds:300,allowFallback:false,deploymentPolicy:"existing-only"})});
+  expect(createdResponse.status).toBe(201);const connection=publicAgentConnectionSchema.parse(await createdResponse.json());
+  try {
+    const claimed=agentConnectionClaimSchema.parse(await (await app.request(`/v1/agent-connections/${connection.id}/claim`,{method:"POST",headers:agentHeaders({"content-type":"application/json"}),body:JSON.stringify({format:"openai-provider-v1"})})).json());
+    const provider=claimed.providers.find(p=>p.name==="llm")!;
+    if(provider.protocol!=="openai.chat-completions.v1")throw new Error("fixture protocol mismatch");
+    expect(provider.chatInput).toEqual(discovery.profiles[0]!.providers.find(p=>p.name==="llm")!.chatInput);
+    expect(provider.chatInput).toEqual(connection.providers[0]!.chatInput);
+    expect(provider.chatInput!.retention).toMatchObject({inferenceAudit:"full-required",requestPayloadStored:true,maxRetentionSeconds:604800,tokenCountPayloadStored:false});
+    const body={model:provider.model,messages:[{role:"user",content:"fixture"}],max_tokens:32};
+    const headers={authorization:`Bearer ${provider.credential.token}`,"content-type":"application/json"};
+    const requestCount=(value:unknown,auth=headers)=>app.request("/v1/chat/completions/input-tokens",{method:"POST",headers:auth,body:JSON.stringify(value)});
+    const result=await requestCount(body);expect(result.status).toBe(200);expect((await result.json() as {fits:boolean}).fits).toBe(true);expect(result.headers.get("cache-control")).toBe("no-store");
+    const calls=countCalls;
+    expect((await requestCount({...body,model:"other-model"})).status).toBe(400);
+    expect((await requestCount(body,{authorization:`Bearer ${agentApiToken}`,"content-type":"application/json"})).status).toBe(401);
+    expect(countCalls).toBe(calls);
+    promptTokens=300000;
+    const excess=await requestCount(body);expect(excess.status).toBe(200);expect((await excess.json() as {fits:boolean}).fits).toBe(false);
+    const inference=await app.request("/v1/chat/completions",{method:"POST",headers,body:JSON.stringify(body)});
+    expect(inference.status).toBe(400);expect(await inference.json()).toMatchObject({error:{code:"context_budget_exceeded"}});
+  } finally {await app.request(`/v1/agent-connections/${connection.id}`,{method:"DELETE",headers:agentHeaders()});}
 });

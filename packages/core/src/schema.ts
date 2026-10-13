@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { chatInputPolicySchema } from "./chat-input";
 import { embeddingSpaceSchema } from "./embedding";
 import { runtimeContextPolicySchema } from "./context";
 
@@ -69,6 +70,7 @@ const runtimeShared = {
   protocol: runtimeProtocolSchema,
   context: runtimeContextPolicySchema.optional(),
   embedding: embeddingSpaceSchema.optional(),
+  chatInput: chatInputPolicySchema.optional(),
   artifacts: uniqueStringList.optional(),
   node: identifierSchema,
   policy: z.object({

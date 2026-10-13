@@ -10,10 +10,10 @@ runtimes:
     backend: systemd
     node: local-node
     policy:
-      class: resident
+      class: preferred
       lifecycle: managed
       warm:
-        minInstances: 1
+        minInstances: 0
         idleTtlSeconds: 60
     context:
       class: managed-context
@@ -126,10 +126,12 @@ runtimes:
   ornith-contextstill:
     artifacts:
       - ornith15-35b-speed
+      - ornith15-vision-bf16
     capability:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     protocol: openai.chat-completions.v1
     backend: llama-swap
     node: local-node
@@ -139,7 +141,7 @@ runtimes:
       warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: conversation-llm-slot
     resources:
-      estimatedMemoryGB: 44
+      estimatedMemoryGB: 46
       maxConcurrentAllocations: 4
       maxConcurrentRequests: 4
       maxQueuedRequests: 16
@@ -289,7 +291,7 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: conversation-llm-slot
     resources:
       estimatedMemoryGB: 48
@@ -303,9 +305,40 @@ runtimes:
       endpoint: http://127.0.0.1:8083/upstream/gemma4-26b-conversation
       backendEndpoint: http://127.0.0.1:8083/upstream/gemma4-26b-conversation
 
+  ornith15-strix-conversation:
+    chatInput: {}
+    artifacts:
+      - ornith15-35b-strix-lean
+      - ornith15-vision-bf16
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+      - llm.vision
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      swapGroup: conversation-llm-slot
+    resources:
+      estimatedMemoryGB: 54
+      maxConcurrentAllocations: 4
+      maxConcurrentRequests: 4
+      maxQueuedRequests: 16
+      queueTimeoutMs: 30000
+    deployment:
+      modelId: ornith15-strix-conversation
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/ornith15-strix-conversation
+      backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-strix-conversation
+
   ornith15-conversation:
     artifacts:
       - ornith15-35b-quality
+      - ornith15-vision-bf16
     capability:
       - llm.general
     protocol: openai.chat-completions.v1
@@ -317,7 +350,7 @@ runtimes:
       warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: conversation-llm-slot
     resources:
-      estimatedMemoryGB: 48
+      estimatedMemoryGB: 50
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16
@@ -358,10 +391,12 @@ runtimes:
   ornith15-35b:
     artifacts:
       - ornith15-35b-quality
+      - ornith15-vision-bf16
     capability:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     protocol: openai.chat-completions.v1
     backend: llama-swap
     node: local-node
@@ -371,7 +406,7 @@ runtimes:
       warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
-      estimatedMemoryGB: 48
+      estimatedMemoryGB: 50
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16
@@ -385,10 +420,12 @@ runtimes:
   ornith15-35b-speed:
     artifacts:
       - ornith15-35b-speed
+      - ornith15-vision-bf16
     capability:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     protocol: openai.chat-completions.v1
     backend: llama-swap
     node: local-node
@@ -398,7 +435,7 @@ runtimes:
       warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
-      estimatedMemoryGB: 44
+      estimatedMemoryGB: 46
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16
@@ -412,10 +449,12 @@ runtimes:
   ornith15-35b-agent:
     artifacts:
       - ornith15-35b-speed
+      - ornith15-vision-bf16
     capability:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     protocol: openai.chat-completions.v1
     backend: llama-swap
     node: local-node
@@ -425,7 +464,7 @@ runtimes:
       warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: qwen-worker-slot
     resources:
-      estimatedMemoryGB: 30
+      estimatedMemoryGB: 32
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16
@@ -447,7 +486,7 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 10
       maxConcurrentRequests: 1
@@ -499,6 +538,30 @@ runtimes:
       service: voicevox-tts.service
       healthPort: 8084
       endpoint: http://127.0.0.1:8084
+
+  kittentts-nano:
+    artifacts:
+      - kitten-tts-nano-fp32
+      - kitten-tts-nano-voices
+      - kitten-tts-nano-config
+    capability:
+      - speech.tts.english
+    protocol: openai.audio-speech.v1
+    backend: systemd
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm: { minInstances: 1, idleTtlSeconds: 60 }
+    resources:
+      estimatedMemoryGB: 1.5
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 2
+      queueTimeoutMs: 5000
+    deployment:
+      service: kittentts-tts.service
+      healthPort: 8088
+      endpoint: http://127.0.0.1:8088
 
   qwen-tts:
     artifacts:
@@ -592,8 +655,8 @@ runtimes:
       endpoint: http://127.0.0.1:8086
 
   ruri-system-one:
-    artifacts: [ruri-v3-30m]
-    capability: [decision.system-one]
+    artifacts: [ ruri-v3-30m ]
+    capability: [ decision.system-one, decision.sentence-language ]
     protocol: larm.system-one.v1
     backend: systemd
     node: local-node
@@ -603,7 +666,7 @@ runtimes:
       warm: { minInstances: 1, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 1
-      maxConcurrentAllocations: 1
+      maxConcurrentAllocations: 4
       maxConcurrentRequests: 1
       maxQueuedRequests: 16
       queueTimeoutMs: 30000
@@ -612,3 +675,27 @@ runtimes:
       healthPort: 8087
       healthPath: /health
       endpoint: http://127.0.0.1:8087
+  granite-asr:
+    artifacts:
+      - granite-speech-4.1-2b-q8
+    capability:
+      - speech.stt
+    protocol: openai.audio-transcriptions.v1
+    backend: systemd
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 60
+    resources:
+      estimatedMemoryGB: 3.5
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 1
+      queueTimeoutMs: 2000
+    deployment:
+      service: granite-asr.service
+      healthPort: 8089
+      healthPath: /health
+      endpoint: http://127.0.0.1:8089

@@ -1,0 +1,299 @@
+<article lang="ja">
+  <h1>Ryzen AI Max+ 395向けOCR・動画オブジェクト認識OSSの選定</h1>
+  <aside>
+    <p>
+      2026年10月13日追記：<a href="./ocr-object-on-demand-hosting-2026-10-13.html"
+        >オンデマンド構築手順と実機結果</a
+      >を追加した。日本語OCR、物体認識、動画job、idle停止と再起動は隔離環境で確認済み。以下は選定時点の記録であり、root/systemdによる正式配置は未実施である。
+    </p>
+  </aside>
+  <p>
+    2026年10月13日の調査。利用者の用途は二つに分かれる。OCRは画像内の文字領域の検出と文字起こし、
+    Computer Visionは取得した動画に映るオブジェクトの認識である。日本語OCRを前提とする。
+    表の構造化、文書の意味理解、顔の本人識別は今回の要件に含めない。
+    実機のハードウェア、repositoryの設定、公開元の資料と配布metadataを確認した。
+    モデルの取得・推論実測・Provider実装・配備は行っていない。以下は実機評価へ進める選定結果である。
+  </p>
+  <section id="selection">
+    <h2>選定結果</h2>
+    <table>
+      <caption>
+        独立した二つの処理と、必要に応じて追加する機能
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">選定OSS・モデル</th>
+          <th scope="col">実行方式と選定理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">日本語OCR</th>
+          <td>RapidOCR 3.10.0、PP-OCRv6 Smallの検出・認識モデル</td>
+          <td>
+            ONNX RuntimeのCPU実行。日本語・英語を含む多言語対応と小型の専用OCRを組み合わせる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">OCRの精度優先候補</th>
+          <td>同じRapidOCRでPP-OCRv6 Mediumを明示選択</td>
+          <td>Smallで難しい画像を同条件比較する。Tinyの認識モデルは日本語非対応のため選ばない。</td>
+        </tr>
+        <tr>
+          <th scope="row">動画の物体認識</th>
+          <td>OpenCV Python headless、YOLO26n</td>
+          <td>
+            OpenCVで動画を読み、ONNX Runtime CPUで物体を検出する。標準モデルはCOCOの80クラス。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">動画内の追跡</th>
+          <td>ByteTrack</td>
+          <td>
+            検出結果をフレーム間で結び、同じ物体の軌跡を作る。出現物体の一覧だけなら追加は不要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">名称を指定した追加物体の検索</th>
+          <td>Grounding DINO Tiny</td>
+          <td>
+            固定クラスにない対象をテキストで指定する場合の追加候補。CPUでは疎なフレーム解析から評価する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      OpenCVは動画の読み込み、サイズ変更、座標変換、描画を担うライブラリである。
+      オブジェクトの種類を認識する学習済みモデルは別に必要となる。
+      OCRと動画認識は独立したProvider候補として扱い、動画認識の要求でOCRを必須起動しない。
+    </p>
+  </section>
+  <section id="host">
+    <h2>このPCへの適合性</h2>
+    <dl>
+      <dt>CPU</dt>
+      <dd>AMD Ryzen AI Max+ 395、16コア・32スレッド、AVX2・AVX-512対応。</dd>
+      <dt>GPU</dt>
+      <dd>Radeon 8060S。NVIDIA CUDAを前提とする構成は採用しない。</dd>
+      <dt>メモリ</dt>
+      <dd>128GB級。OS表示121GiB、観測時のavailableは約59GiB。恒常的な空き容量の保証ではない。</dd>
+      <dt>ストレージ</dt>
+      <dd>repositoryを含むファイルシステムで空き約894GiB。</dd>
+      <dt>OS・Python</dt>
+      <dd>Ubuntu 26.04.1 LTS、ホストのPythonは3.14.4。</dd>
+      <dt>確認したrepository revision</dt>
+      <dd><code>05f0222eda4420fe86fb28efb4d89dec312afd0a</code>と未commitの作業ツリー。</dd>
+    </dl>
+    <p>
+      ハードウェア容量とCPU実行経路から、軽量OCRと単一動画のフレーム間引き解析を十分に動かせる見込みが高い。
+      YOLO26nは公開元のfusedモデルで2.4M parameterの小型モデルである。
+      ただし、このPC上の処理秒数、実メモリ量、同時実行時の会話遅延は未測定である。 他CPU・NVIDIA
+      GPUの公表速度をRyzen・Radeonの実測値へ換算しない。
+    </p>
+    <p>
+      CPU構成は既存LLM・ASRとのGPU競合を減らせるが、CPUと共有メモリ帯域の競合は残る。
+      初期試験では各workerのCPUスレッドを4から比較し、同時worker数も制限する。
+      ROCm・Vulkan・NPUによる加速は個別backendの互換性と実機結果を確認した後の追加選択とする。
+      OpenCVやONNX Runtimeを導入しただけでRadeon・NPUが自動利用されるとは扱わない。
+    </p>
+    <p>
+      調査したホスト標準Pythonではcv2、onnxruntime、rapidocr、paddleocrのimport対象は見つからず、
+      tesseractコマンドも見つからなかった。他の仮想環境にある可能性までは否定しない。
+      試験はrepository外の専用Python環境で行い、ホストPythonや既存Provider環境を変更しない。
+      Pythonのversionと依存wheelの対応を合わせ、モデル・engine・変換条件・SHA-256を固定する。
+    </p>
+  </section>
+  <section id="ocr">
+    <h2>OCRの範囲と代替候補</h2>
+    <p>
+      入力画像から文字領域を検出し、各領域の文字列・座標・confidenceを返す。
+      文字がない画像は空の結果を返し、認識confidenceを校正済みの正答確率として表示しない。
+      文字列の意味や文章としての妥当性を判定する必要がある場合は、OCR後の別処理として定義する。
+      PDF入力が必要なら画像化を別の入力処理として追加する。
+    </p>
+    <p>
+      PP-OCRv6
+      SmallとMediumは日本語を含む50言語に対応する。Tinyの認識モデルは日本語を除く49言語である。
+      RapidOCRのmodel一覧でSmall・MediumのONNX配布と日本語の対応表を確認した。
+      使用する検出モデル・認識モデル・辞書は明示する。
+      文書理解用の大型VLMやPP-Structureをこの用途の必須依存にしない。
+    </p>
+    <p>
+      比較対照はTesseract 5系とtessdata_fastのjpn・jpn_vert・engである。
+      CLI・CPUだけで済ませたい場合の候補であり、整った印刷文字の画像で比較する。
+      PP-OCRv5の日本語対応認識モデルも互換性・精度比較の候補とする。
+      入力が手書き・縦書き・ルビ・小さい文字を含むかで結果が変わるため、このPCでの日本語精度の優位はまだ確定しない。
+    </p>
+  </section>
+  <section id="video">
+    <h2>取得した動画からのオブジェクト認識</h2>
+    <p>
+      初期構成はローカル動画ファイルを読み、例えば毎秒2〜5フレームを抽出してYOLO26nで解析する。
+      これは評価を始めるためのサンプリング設定であり、達成FPSやすべての出現物体の検出保証ではない。
+      元動画のtimestamp、class、bounding box、confidenceを保存する。
+      短い出現や速い動きが重要な場合はサンプリング頻度を上げ、必要な区間を再解析する。
+    </p>
+    <p>
+      人、車、犬、椅子など標準80クラスを扱う用途ならYOLO26nから開始し、
+      小さい物体や見落としが多ければYOLO26sと入力解像度を比較する。
+      OpenCV単体で未知の物体名や商品型番まで識別できるとは扱わない。
+      同じ物体を追跡する場合はByteTrackを追加し、入力するフレームの実間隔に合わせて設定する。
+      カット切り替え時は追跡をリセットする。疎なフレーム列では追跡IDが安定するとは限らない。
+      IDは同一人物の本人確認や動画を跨ぐ恒久的なidentityではない。
+    </p>
+    <p>
+      80クラスにない対象を名前で探すならGrounding DINO Tinyのopen-set検出を追加評価する。
+      公開元はCPU実行を提供し、公式モデルも公開するが、Radeon向けのカスタム演算の互換性は未検証である。
+      英語の対象名称を指定して疎なフレームから比較する。
+      「動画に何が起きたか」という行動・因果・出来事の理解は、物体検出とは別の評価対象である。
+    </p>
+  </section>
+  <section id="licenses">
+    <h2>ライセンスと構成の選択</h2>
+    <p>
+      RapidOCRと上流PaddleOCRモデルの配布条件はApache-2.0、OpenCVはApache-2.0、 ONNX
+      RuntimeとByteTrackはMITを確認した。Ultralyticsの公開元はYOLO26のcode・modelをAGPL-3.0として案内している。
+      これらは配布元の表示の確認であり、特定の製品構成に対する法的判断ではない。
+    </p>
+    <p>
+      Apache・MITに揃える方針が必要な場合は、動画検出モデルをYOLOX-Tinyに替える。 YOLOXはONNX
+      export・CPU推論経路を提供するApache-2.0の候補であり、Tinyは5.06M parameter・416入力。 OpenCV
+      Zooの既存YOLOXサンプルはYOLOX-Sであり、Tinyの配布物と混同しない。
+      今回は利用者からライセンスの限定がないため、YOLO26nを技術面での第一候補とする。
+      ONNXに変換しても元モデルの配布条件を変更したことにはならない。
+    </p>
+  </section>
+  <section id="integration">
+    <h2>LARMへ導入する際の境界と実機評価</h2>
+    <p>
+      <a href="./cold-on-request-provider-policy.html">要求時起動の方針</a
+      >に従い、OCRと動画認識は独立したcapability・route・runtimeを定義する。
+      現在のlocal-node設定にはOCR・OpenCVの専用route・runtimeを確認できず、選定だけで利用可能とは宣言しない。
+      この調査ではSAAA実装を参照していない。稼働しているmodelやportから要求profileの意図・driftを推定していない。
+    </p>
+    <ul>
+      <li>
+        小さい画像OCRは同期応答、長い動画解析は進捗・cancel・結果取得を持つjobとして設計する。
+      </li>
+      <li>
+        起動時に必要なモデルをlocalから読み込み、idle停止を可能にする。重み・engine・出力動画はrepository外に置く。
+      </li>
+      <li>
+        Ultralyticsのexport用環境と、OpenCV headless＋ONNX
+        Runtimeの軽量推論用環境を分ける。同じ環境に複数のcv2 wheelを入れない。
+      </li>
+      <li>
+        OCRは実際の画像で文字誤り率、領域の見落とし、縦書き・数値の誤り、cold・warmの時間とpeak
+        memoryを測る。
+      </li>
+      <li>
+        動画は実際のclipで検出漏れ・誤検出、timestamp一致、小さい物体、追跡ID切替、総処理時間とpeak
+        memoryを測る。
+      </li>
+      <li>
+        会話などとの併用試験では、指定Agent
+        Profileから解決したruntimeと資源条件を記録し、同じrunで応答遅延への影響を確認する。
+      </li>
+    </ul>
+    <p>
+      2026年10月13日のPyPI metadataではRapidOCR 3.10.0、ONNX Runtime 1.31.0、 opencv-python-headless
+      5.0.0.93、Ultralytics 8.4.176の配布を確認した。
+      公開最新版の一覧であり、この組み合わせの互換性確認・本番version固定ではない。
+    </p>
+  </section>
+  <section id="macbook-on-demand">
+    <h2>MacBookからのオンデマンド映像送信</h2>
+    <p>
+      利用者の追加要件は、MacBookで取得した映像を必要なときだけこのPCへ送り、物体を認識することである。
+      MacBookは撮影・圧縮・送信・結果表示、このPCは要求に応じたモデル起動と推論を担う。
+      ハードウェア構成と既存のLAN接続の仕組みから実現可能性は高いが、MacBookからの通信・撮影・認識の通し試験は未実施である。
+    </p>
+    <table>
+      <caption>
+        必要な結果に応じた二つの送信方式
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">目的</th>
+          <th scope="col">MacBookから送るもの</th>
+          <th scope="col">サーバー処理</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">現在映っている物体の認識</th>
+          <td>要求時の1枚、または要求中だけ毎秒2〜5枚のJPEGとtimestamp。</td>
+          <td>YOLO26nで各画像を検出し、物体名・位置・confidenceを返す。数値は試験の初期設定。</td>
+        </tr>
+        <tr>
+          <th scope="row">動き・出現区間・追跡の解析</th>
+          <td>例えば5〜10秒の圧縮動画clip。録画済みファイルの指定区間でもよい。</td>
+          <td>jobとして受理し、フレーム抽出・検出・必要な追跡を行う。時間の値は初期試験案。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      初期試験は単一の送信元・単一requestから行い、640程度の推論入力で物体の見落としと遅延を比較する。
+      応答待ちのフレームを無制限に積まず、現在の状態を知る方式では最新のフレームを優先する。
+      動画解析jobでは必要なフレームを保持し、短い出現物体を落とさない頻度を別途決める。
+      開始時のcold起動時間と起動後のwarm推論時間を分けて測る。
+    </p>
+    <p>
+      LARMにはLAN向けgatewayとAgent Connectionの仕組みがあり、
+      追加観測時には<code>0.0.0.0:9810</code>のlistenerを確認した。
+      ただしlistenerだけではMacBookから到達できることを証明しない。両端のnetwork・firewall・名前解決を通し試験する。
+      物体認識用の画像・動画受信APIとProviderは未実装であり、既存の画像生成APIを動画解析APIとして流用しない。
+      Profileからroute・runtimeを解決し、MacBookにはgatewayの認証付き認識APIを公開する構成とする。
+    </p>
+    <p>
+      MacBookのブラウザでカメラ撮影する方式も候補となる。 getUserMediaによる撮影はカメラ許可とsecure
+      contextを必要とするため、LANサーバーが画面を配信する場合はHTTPSを用意する。
+      clip録画にはMediaRecorderを使い、ブラウザが対応するcontainer・codecとサーバー側decodeの組み合わせを実機確認する。
+      ローカルMacアプリから送信する方式も選択できる。OCRは別要求として利用し、物体認識で必須起動しない。
+    </p>
+  </section>
+  <section id="sources">
+    <h2>確認した公開元の資料</h2>
+    <p>外部資料の所在を以下に記録する。取得・確認日は2026年10月13日。</p>
+    <dl>
+      <dt>RapidOCRの実行方式・配布条件</dt>
+      <dd><code>https://github.com/RapidAI/RapidOCR</code></dd>
+      <dt>RapidOCRの日本語対応表・ONNXモデル・digest</dt>
+      <dd><code>https://github.com/RapidAI/RapidOCR/blob/main/python/rapidocr/default_models.yaml</code></dd>
+      <dt>PP-OCRv6の言語対応</dt>
+      <dd><code>https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/algorithm/PP-OCRv6/PP-OCRv6.en.md</code></dd>
+      <dt>Tesseract・CPU用言語データ</dt>
+      <dd>
+        <code>https://github.com/tesseract-ocr/tesseract</code>、<code>https://github.com/tesseract-ocr/tessdata_fast</code>
+      </dd>
+      <dt>OpenCV Pythonのheadless構成</dt>
+      <dd><code>https://github.com/opencv/opencv-python</code></dd>
+      <dt>YOLO26の80クラス・モデル規模・ONNX export</dt>
+      <dd>
+        <code>https://docs.ultralytics.com/models/yolo26</code>、<code>https://docs.ultralytics.com/integrations/onnx</code>
+      </dd>
+      <dt>Ultralyticsの配布条件</dt>
+      <dd><code>https://www.ultralytics.com/license</code></dd>
+      <dt>ByteTrackの追跡・配布条件</dt>
+      <dd><code>https://github.com/FoundationVision/ByteTrack</code></dd>
+      <dt>Grounding DINOのCPU経路・公式モデル</dt>
+      <dd>
+        <code>https://github.com/IDEA-Research/GroundingDINO</code>、<code>https://huggingface.co/IDEA-Research/grounding-dino-tiny</code>
+      </dd>
+      <dt>YOLOXの軽量モデル・ONNX経路</dt>
+      <dd><code>https://github.com/Megvii-BaseDetection/YOLOX</code></dd>
+      <dt>ブラウザでのカメラ撮影・録画</dt>
+      <dd>
+        <code>https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia</code>、<code>https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder</code>
+      </dd>
+      <dt>各Python packageの配布metadata</dt>
+      <dd>
+        <code>https://pypi.org/pypi/rapidocr/json</code
+        >、<code>https://pypi.org/pypi/onnxruntime/json</code>、<code>https://pypi.org/pypi/opencv-python-headless/json</code>、<code
+          >https://pypi.org/pypi/ultralytics/json</code
+        >
+      </dd>
+    </dl>
+  </section>
+</article>

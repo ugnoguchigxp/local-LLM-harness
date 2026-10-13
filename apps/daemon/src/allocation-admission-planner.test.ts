@@ -74,3 +74,15 @@ test("higher-priority allocations wait or fail with the existing reason", () => 
     result: { body: { error: { code: "resource_exhausted" } } },
   });
 });
+
+test("lower-priority work shares a warm multi-slot runtime and waits when all slots are reserved", () => {
+  const sharedRegistry = structuredClone(registry);
+  sharedRegistry.runtimes[0]!.resources.maxConcurrentAllocations = 4;
+  sharedRegistry.runtimes[0]!.policy.swapGroup = "conversation";
+  const foreground = allocation("ready", 20);
+  expect(planAllocationCapacity(input({ registry: sharedRegistry, allocations: [foreground], capacityPolicy: "wait" })))
+    .toEqual({ ok: true, waiting: false });
+  const full = Array.from({ length: 4 }, (_, index) => ({ ...foreground, id: `slot-${index}` }));
+  expect(planAllocationCapacity(input({ registry: sharedRegistry, allocations: full, capacityPolicy: "wait", conflictsWithAdmitted: true })))
+    .toEqual({ ok: true, waiting: true });
+});

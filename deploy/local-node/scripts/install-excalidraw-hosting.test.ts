@@ -36,6 +36,22 @@ with tempfile.TemporaryDirectory() as t:
  p=pathlib.Path(t)/'requests'; p.symlink_to('/var/lib/larm')
  try: m.validate_request_path(p, __import__('os').getuid()); raise AssertionError('accepted redirected request root')
  except RuntimeError as e: assert str(e)=='request_root_changed'
+with tempfile.TemporaryDirectory() as t:
+ p=pathlib.Path(t)/'larm.env'
+ token='fixture-api-token-'+('x'*32)
+ p.write_text('LARM_API_TOKEN="'+token+'"\\n')
+ assert m.hosted_api_token(p)==token
+ first=m.hosted_api_principal(token,['excalidraw-host'])
+ second=m.hosted_api_principal(token,['ocr-host','object-recognition-host'])
+ merged=m.merge_hosted_consumers([first],[second])
+ assert len(merged)==1 and set(merged[0]['services'])=={'excalidraw-host','ocr-host','object-recognition-host'}
+ assert first['services']==['excalidraw-host']
+ for conflict in [{**second,'token':'different'}, {**second,'id':'different-consumer'}]:
+  try: m.merge_hosted_consumers([first],[conflict]); raise AssertionError('accepted conflicting consumer')
+  except RuntimeError as e: assert str(e)=='existing_consumer_conflict'
+ p.write_text('LARM_API_TOKEN=short\\n')
+ try: m.hosted_api_token(p); raise AssertionError('accepted malformed API token')
+ except RuntimeError as e: assert str(e)=='invalid_hosted_larm_api_token'
 print('registration contract passed')
 print(a[m.CONF/'services.yaml'].decode())
 `;

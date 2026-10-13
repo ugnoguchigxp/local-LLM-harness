@@ -1,0 +1,314 @@
+<article lang="ja">
+  <h1>OCR・物体認識のオンデマンド構築手順と実機結果</h1>
+  <p>
+    2026年10月13日。利用者の要件は、文字起こしと物体認識だけを必要なときに起動し、
+    以前のExcalidrawの準備方法を踏襲することである。独立アプリ、実行環境・重みの取得、
+    起動管理との接続、ブラウザ画面、固定成果物、正式配置用installerを準備し、隔離した実機環境で確認した。
+    利用者の管理者実行許可を受け、root管理先への正式配置と稼働中LARMへの登録を完了した。モデルは認識要求によってだけ起動する。最新の配備結果は連携プロンプト資料の正式systemd配備節を参照する。
+  </p>
+  <p>
+    Eumenesからの利用は<a href="./eumenes-excalidraw-ocr-opencv-integration-prompts-2026-10-13.html"
+      >Excalidraw・OCR・OpenCVの連携プロンプト</a
+    >を参照する。 OCRと物体認識はEumenes
+    backendからのAPI利用を通常経路とする。本書のブラウザ画面は単体検証用の入口である。
+  </p>
+  <section id="prior-runbook">
+    <h2>見つかったExcalidrawの手順書</h2>
+    <p>
+      正本は<a
+        href="./on-demand-artifact-hosting-implementation-plan-2026-10-09.html#excalidraw-results"
+        >オンデマンド成果物hosting実装計画のExcalidraw先行実装・正式配備手順</a
+      >である。 prepareで固定成果物を作り、root
+      installerのdry-runで配置を確認し、digestを指定して管理者配置する。
+      独立アプリのREADMEにも検証用入口と正式入口が区別されている。
+      前回もsudoの非対話認証が使えず、専用UID/systemdによる正式配置は未実施と記録されている。
+    </p>
+    <p>
+      今回は同じLocalServiceManager、LocalServiceの認証付きcontrol routes、ClientLocalServices、
+      hosted-service-gateway、process-controller、process-member templateを再利用する。
+      常時到達する入口だけを残し、画面表示と状態監視は起動要求にしない。
+      認証された業務要求がleaseを取得し、同じworkerへのcold起動を集約する。
+      処理中のjobをactivityへ反映し、利用権解放だけでは処理途中に停止させない。
+    </p>
+  </section>
+  <section id="layout">
+    <h2>配置と責務</h2>
+    <table>
+      <caption>
+        source・固定実行物・可変データを分けた配置
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">場所・内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">独立アプリ</th>
+          <td>
+            <code>/srv/ai/apps/vision-ocr-host</code>。Python
+            worker、画像・動画API、ブラウザ画面、model取得script、単体試験。独立Git
+            repository、remote未作成。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LARMの準備・配置・検証</th>
+          <td>
+            <code>deploy/local-node/scripts/prepare-vision-ocr-hosting.ts</code
+            >、<code>install-vision-ocr-hosting.py</code>、<code>verify-vision-ocr-hosting.ts</code>。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">固定成果物・Python環境・モデル</th>
+          <td>
+            <code>/srv/ai/local-services-prepared/vision-ocr-production</code>。Bun、bundleしたgateway、Python
+            3.12.14のruntime、依存package、worker、UI、checksum固定のONNXモデル。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">検証の認証・証跡</th>
+          <td>
+            <code>/srv/ai/local-services-prepared/vision-ocr-acceptance</code
+            >。credentials.json、ready.json、results.json、browser-results.json、browser.png、LARM全check記録。Git外に保持。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">検証の実データ</th>
+          <td>
+            <code>/srv/storage/nextorage/files/larm-vision-ocr-acceptance-20261013/{ocr-host,object-recognition-host}</code
+            >。state、data、cache、work/app。アップロードは処理後に削除。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">正式配備予定</th>
+          <td>
+            <code>/opt/larm-local-services/releases/vision-ocr-host/{digest}</code>、固定Python/Bun
+            runtime、<code>/etc/larm-local-services/vision-ocr</code>、専用UID
+            <code>larm-vision-ocr</code
+            >。保存先は外付けSSDの<code>/srv/storage/nextorage/larm/apps/{ocr-host,object-recognition-host}</code>。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      対象SSDはext4、UUID <code>de97577d-c5d3-4b57-ac4b-3753a2f6d331</code>。
+      UUIDと実際の書込み先を検査し、内蔵ディスクへのfallbackはしない。
+      普通の起動では保存先を自動初期化しない。初回bootstrapで必要なdirectoryを明示作成する。
+      rootのread-only mount
+      namespace内でも、アプリのstate・data・cache・workの実際のmountがrwかを検査する。
+    </p>
+  </section>
+  <section id="workers">
+    <h2>二つの独立したworker</h2>
+    <table>
+      <caption>
+        モデルはCPUで実行し、要求された側だけを起動する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">service</th>
+          <th scope="col">モデルと出力</th>
+          <th scope="col">初期資源設定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ocr-host</th>
+          <td>
+            RapidOCR 3.10.0 / PP-OCRv6 Small。日本語を含む文字列、文字領域の座標、confidence。
+          </td>
+          <td>
+            CPU推論、ORTのintra-op 4・inter-op 1。正式memberのMemoryMax 2GiB、CPUQuota
+            400%、TasksMax 128。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">object-recognition-host</th>
+          <td>
+            公式YOLO26n ONNX、640入力、NMS不要の300×6出力。標準80クラスの物体名・位置・confidence。
+          </td>
+          <td>
+            CPU推論、ORTのintra-op 4・inter-op 1。正式memberのMemoryMax 2GiB、CPUQuota
+            400%、TasksMax 128。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      両serviceは<code>minInstances: 0</code>、GPU accessなし、常駐モデルなし。
+      正式設定では最後の業務要求から30秒でgatewayがleaseを解放し、serviceが60秒idleを確認して停止する。
+      起動・停止の照合は世代、instance token、app boot ID、drain tokenとbusy状態を使う。
+      検証ではuser idleとservice
+      idleを各3秒へ短縮した。正式root/systemdでlease解放後の60秒idle停止と次の要求での復帰も確認済み。
+    </p>
+    <p>
+      字幕・紙面の意味理解、動画の出来事の要約、追跡、本人識別は提供しない。
+      固定80クラスにない名称指定の認識は別候補であり、今回のworkerへ自動fallbackしない。
+      文字認識用の辞書はONNX側のmetadataを用いる。モデル取得とhash確認はprepare時に明示実施し、起動中に取得しない。
+      モデルの選定理由は<a href="./ocr-video-object-recognition-selection-2026-10-13.html"
+        >OCR・動画認識OSSの選定</a
+      >に記録する。
+    </p>
+  </section>
+  <section id="api">
+    <h2>認識APIと入力上限</h2>
+    <ul>
+      <li>
+        <code>POST /api/analyze</code
+        >はmultipartの<code>file</code>を一つ受け取る。画像はJPEG・PNG・WebPで、文字起こしまたは物体認識の結果を同期で返す。
+      </li>
+      <li>
+        MP4・MOV・WebMはjobとして202で受け付ける。<code>GET /api/jobs/{id}</code>で進捗と結果、<code>POST /api/jobs/{id}/cancel</code>で協調的な中止を行う。
+      </li>
+      <li>
+        入力上限は16MiB、動画は30秒以内、解析は毎秒2枚・最大60枚。短時間の出現物体をすべて拾える保証ではない。
+      </li>
+      <li>各workerの推論は直列。実行中のrequestと受理済みjobの合計は最大4。混雑は429で返す。</li>
+      <li>元画像座標と元動画内のtimestampを返す。confidenceを校正済みの正答確率として扱わない。</li>
+      <li>
+        認識後にアップロードを削除する。動画の結果はowner別にSSDへ保存し、停止後も取得可能。24時間経過後の結果は次の受付で回収する。
+      </li>
+      <li>
+        worker起動時に中断されたjobをfailedと記録する。jobの自動再実行は行わない。別ownerの結果は404で返す。
+      </li>
+    </ul>
+  </section>
+  <section id="use">
+    <h2>検証用入口の使い方</h2>
+    <ol>
+      <li>
+        起動管理processが動いている間、OCRは<code>http://127.0.0.1:18784/</code>、物体認識は<code>http://127.0.0.1:18786/</code>へアクセスする。
+      </li>
+      <li>
+        <code>/srv/ai/local-services-prepared/vision-ocr-acceptance/credentials.json</code
+        >の<code>owner</code>が画面の接続キーである。larmとlifecycleは制御専用で、画面へ入力しない。
+      </li>
+      <li>
+        画像・30秒以内の動画を選択して認識する。カメラを開き、現在の一枚、または5秒のclipを送る操作も用意した。
+      </li>
+      <li>
+        画面表示と状態監視はworkerを起動しない。認識操作で必要な側を起動し、不要になれば自動停止する。
+      </li>
+    </ol>
+    <p>
+      MacBookでは同じLAN上のこのPCへSSHで到達できる場合、次のport forwardingで入口を利用できる。
+      接続名はMacBookから到達できる実際の名前・アドレスへ置換する。
+      ブラウザのlocalhostでカメラを利用できる構成だが、実際のMacBook・Safari・カメラでの試験は未実施。
+      今回はファイアウォールや公開ポートを変更していない。
+    </p>
+    <pre><code>ssh -N -L 18784:127.0.0.1:18784 -L 18786:127.0.0.1:18786 ugnoguchi@このPCの接続名</code></pre>
+    <p>
+      ブラウザでMacBookの<code>http://localhost:18784/</code>または<code>http://localhost:18786/</code>を開く。
+      認識結果はこのPCから返る。キーはURLやlocalStorageへ保存せず、gatewayのHttpOnly cookieを使う。
+    </p>
+    <p>
+      検証用の起動管理を再度起動する場合の手順は以下である。同じportの管理processが既に動いているときは二重起動しない。
+    </p>
+    <pre><code>cd /srv/ai/apps/local-LLM-harness
+bun deploy/local-node/scripts/verify-vision-ocr-hosting.ts</code></pre>
+    <p>
+      このscriptの標準値はuser idle 30秒・service idle 60秒。
+      現在の実機検証processは各3秒で動作する。子process
+      backendであり、systemd/cgroupによる正式資源制御や
+      稼働中LARMの共通資源受付を保証するものではない。
+    </p>
+  </section>
+  <section id="prepare">
+    <h2>再prepareと正式配置</h2>
+    <p>
+      モデル・engine・buildはすべてrepository外へ配置する。次の取得・同期・prepareは明示的な作業であり、認識要求のたびに行うものではない。
+    </p>
+    <pre><code>uv venv --python 3.12 /srv/ai/local-services-prepared/vision-ocr-production/runtime
+uv pip sync --python /srv/ai/local-services-prepared/vision-ocr-production/runtime/bin/python /srv/ai/apps/vision-ocr-host/requirements.lock
+/srv/ai/local-services-prepared/vision-ocr-production/runtime/bin/python /srv/ai/apps/vision-ocr-host/scripts/provision_models.py /srv/ai/local-services-prepared/vision-ocr-production/models
+cd /srv/ai/apps/local-LLM-harness
+bun deploy/local-node/scripts/prepare-vision-ocr-hosting.ts
+python3 deploy/local-node/scripts/install-vision-ocr-hosting.py</code></pre>
+    <p>
+      prepareはworker・UI、Bun、standalone Python、依存package、モデル、controllerを固定し、
+      <code>prepared.json</code
+      >へ全ファイルのSHA-256と実行属性、全体digestを記録する。
+      installerは既定でdry-runであり、<code>--apply</code>にはrootと直前のdigestが必要。
+      初回登録専用であり、既存の専用UID、正式保存先や設定を上書きしない。
+      検証用結果を正式保存先へ移行しない。
+    </p>
+    <p>
+      <code>--activate</code>を追加すると、現在のLARMがsystemd-process
+      backendへ対応していることを確認し、 既存Local
+      Serviceが有効な場合は定義・consumerを保存したうえで統合する。
+      重複したserviceやconsumerは拒否する。daemon専用EnvironmentFileのdropinを配置してLARMを再起動し、
+      readiness確認後に二つのgatewayだけをenable・startする。モデルのmemberをenableしない。
+      readiness確認に失敗した場合は追加dropinを外して元のdaemon設定へ戻す。
+    </p>
+    <pre><code>sudo python3 /srv/ai/apps/local-LLM-harness/deploy/local-node/scripts/install-vision-ocr-hosting.py --apply --activate --include-excalidraw --expected-digest 7e97dbc683e120e5dbcea7382749bf4f5c4cfd2575f496f6db304baff4695811</code></pre>
+    <p>
+      <code>PREPARED_DIGEST</code
+      >は直前のdry-runまたはprepared.jsonで確認した値に置換する。
+      この操作はLARMを再起動するため、接続中のconsumerに影響する。正式gatewayはOCRが18794、物体認識が18796、
+      workerはloopbackの18795・18797。MacBook向けSSH forwardingも18794・18796へ置換する。
+      単体画面用の接続キーは<code>/etc/larm-local-services/vision-ocr/client-tokens.json</code>に別途生成する。Eumenes
+      backendは既存の<code>LARM_API_TOKEN</code>のBearerを送信し、別キーの入力を不要にする。gatewayは内部の業務ownerへ中継する。installerは<code>/etc/larm/larm.env</code>を読込先として設定し、限定consumerを登録する。
+    </p>
+    <p>
+      2026年10月13日の稼働daemonは<code>/srv/ai/apps/larm-releases/a52ba20141be</code>を参照し、
+      SystemdProcessBackendが存在することを確認した。サービスはugnoguchiで実行される。
+      <code>sudo -n true</code
+      >は対話認証を要求したため、管理者配置・有効化は実行できていない。
+      この記録は初回準備時点の状態である。後続作業で正式配置、三つのconsumer統合、専用UIDの実推論・idle停止・cgroup確認を完了した。既に配備済みの本PCへ初回installerを再実行しない。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>隔離した実機環境で確認した結果</h2>
+    <p>
+      PCはRyzen AI Max+ 395、16コア・32スレッド、128GB級共有メモリ。
+      日本語の合成画像と公開元のbus画像、それらを動画化したclipで28項目のacceptanceが合格した。
+      合成画像と限定clipの試験であり、実際のMacBook映像に対する精度・速度の保証ではない。
+    </p>
+    <ul>
+      <li>静的画面と状態監視だけでは起動しない。未認証の認識要求は401で拒否する。</li>
+      <li>日本語の「日本語の文字起こしテスト」「認識番号12345」を読み取った。</li>
+      <li>coldのOCR同時3要求を一つの起動へ集約し、物体認識側は起動しなかった。</li>
+      <li>bus画像と2秒の動画でbusとpersonを検出し、動画は4フレームの結果を返した。</li>
+      <li>
+        10秒の日本語動画を20フレームで文字起こしした。利用権を解放しても解析中は停止せず完了した。
+      </li>
+      <li>
+        別ownerのjob結果を404で拒否した。idle停止後に同じ完了結果を取得でき、次の要求で世代が進んだ。
+      </li>
+      <li>動画jobの協調的なcancel、両workerの自動停止、処理後のアップロード削除を確認した。</li>
+      <li>
+        Chromiumで接続キー入力、画像upload、日本語結果の表示を確認した。キー入力欄は接続後に空になり、page
+        errorは0だった。
+      </li>
+    </ul>
+    <table>
+      <caption>
+        限定fixtureでの一回の測定。p95や実動画の性能値ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">測定</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">coldの日本語画像OCR、同時3要求がすべて完了するまで</th>
+          <td>2.862秒</td>
+        </tr>
+        <tr>
+          <th scope="row">warmの日本語画像OCR、一要求</th>
+          <td>0.289秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      単体試験6件、gateway・Excalidraw
+      installer・新installerの試験3件、LARMの<code>bun run check</code>が合格した。
+      PythonのSIGTERM後にBunのexitCodeがnull、signalCodeがSIGTERMとなる場合を検証用観測で扱い、
+      process終了とport閉鎖を照合することで正常停止を確認した。
+      root/systemd配備の証拠へ置き換えない。
+    </p>
+  </section>
+</article>

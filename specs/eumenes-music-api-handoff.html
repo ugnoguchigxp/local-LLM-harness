@@ -34,7 +34,7 @@ POST /v1/music/generations
 - titleとtagsは任意。titleは200文字以内、tagsは各64文字以内・最大32件の配列です。
 - durationSecondsは整数1〜600、未指定は180。qualityはfast / balanced / high、未指定はbalancedです。短い試作では30秒・fastを選べるようにしてください。highによる音質向上は保証されません。
 - 歌詞はlyricsに指定し、instrumental=trueの場合はlyricsを送らないでください。seedは任意です。
-- 既定出力はOgg Opus、64 kbps固定、48 kHzです。追加の圧縮やEumenes側での再変換は不要です。mp3 / wav / flacも明示指定できます。
+- 既定出力はOgg Opus、128 kbps VBR（目標ビットレート）、48 kHzです。追加の圧縮やEumenes側での再変換は不要です。mp3 / wav / flacも明示指定できます。
 - HTTP 202で返るjobIdを保持し、GET /v1/music/generations/{id}で状態を確認してください。必要ならGET /v1/music/generations/{id}/eventsのSSEを使えます。
 - statusはqueued / loading / generating / encoding / completed / failed / cancelledです。completedを確認してからresult.audioUrlを再生し、ライブラリとタグ一覧を更新してください。進捗率がなければ段階表示にしてください。
 - POSTの自動再送で重複生成しないでください。jobId取得後の通信切断は同じジョブの確認で復帰し、失敗・キャンセル後の再生成は利用者の操作で行います。

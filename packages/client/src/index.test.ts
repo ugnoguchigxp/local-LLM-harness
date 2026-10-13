@@ -540,8 +540,8 @@ test("v3 agent profile discovery preserves advertised Chat Completions context b
   expect(new URL(observed!.url).pathname).toBe("/v3/agent-profiles");
   expect(observed!.headers.get("authorization")).toBe("Bearer profile-token");
 
-  await client.listAgentProfilesV3("SAAA");
-  expect(new URL(observed!.url).searchParams.get("profile")).toBe("SAAA");
+  await client.listAgentProfilesV3("SAAA-gemma4-26b");
+  expect(new URL(observed!.url).searchParams.get("profile")).toBe("SAAA-gemma4-26b");
 });
 
 test("reference client reads strict service activity and uses the optional control bearer", async () => {
@@ -889,7 +889,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
-    profile: "vulnWorkbench" as const,
+    profile: "ornith1.5Strix" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -978,7 +978,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   });
 
   const created = await client.createAgentConnection({
-    profile: "vulnWorkbench",
+    profile: "ornith1.5Strix",
     audience: "same-host",
     providers: ["llm"],
   }, { waitSeconds: 300 });
@@ -986,7 +986,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   expect(requests[0]?.headers.get("idempotency-key")).toBe("client_agent-fixed");
   expect(requests[0]?.headers.get("prefer")).toBe("wait=300");
   expect(await requests[0]!.clone().json()).toEqual({
-    profile: "vulnWorkbench",
+    profile: "ornith1.5Strix",
     audience: "same-host",
     providers: ["llm"],
     ttlSeconds: 300,
@@ -1302,7 +1302,7 @@ test("agent connection polling deadline aborts an in-flight HTTP request", async
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
-    profile: "vulnWorkbench" as const,
+    profile: "ornith1.5Strix" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -1345,7 +1345,7 @@ test("withAgentConnection claims and releases with a fresh cleanup signal", asyn
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
-    profile: "vulnWorkbench" as const,
+    profile: "ornith1.5Strix" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -1419,7 +1419,7 @@ test("withAgentConnection claims and releases with a fresh cleanup signal", asyn
   });
 
   await expect(client.withAgentConnection({
-    profile: "vulnWorkbench",
+    profile: "ornith1.5Strix",
     audience: "same-host",
   }, async (_ready, receivedClaim) => {
     expect(receivedClaim.providers[0]?.model).toBe("coding-default");
@@ -1686,4 +1686,21 @@ test("Personal State client uses the claimed provider credential for every durab
   expect(registrationRequest.headers.get("idempotency-key")).toBe("register-key");
   const generationRequest = requests.find((request) => new URL(request.url).pathname === "/v1/chat/completions")!;
   expect(generationRequest.headers.get("x-larm-attempt-id")).toBe("attempt-1");
+});
+
+test("image preflight uses only the claimed bearer, validates totals, and never retries POST", async () => {
+  const calls: string[] = [];
+  const count = { contractVersion: "larm-chat-input-token-count.v1" as const, model: "fixture", promptTokens: 160,
+    textTokens: 16, imageTokens: 144, imageCount: 1, requestedOutputTokens: 32, safetyMarginTokens: 8,
+    inputBudgetTokens: 160, maxContextTokens: 200, fits: true, requestDigest: "a".repeat(64),
+    runtime: "runtime", configRevision: "revision", bootEpoch: "epoch-test", engineBuild: "engine" };
+  const client = new LarmClient({ baseUrl: "http://larm", apiToken: "control-secret", fetch: async (url, init) => {
+    calls.push(String(url)); expect(new Headers(init?.headers).get("authorization")).toBe("Bearer provider-secret");
+    return json(count);
+  } });
+  expect(await client.countChatInputTokens({ model:"fixture", messages:[] }, "provider-secret")).toEqual(count);
+  expect(calls).toEqual(["http://larm/v1/chat/completions/input-tokens"]);
+  const broken = new LarmClient({ baseUrl:"http://larm", fetch:async()=>{ calls.push("broken"); throw new Error("disconnect"); } });
+  await expect(broken.countChatInputTokens({},"provider-secret")).rejects.toThrow("disconnect");
+  expect(calls.filter(x=>x==="broken")).toHaveLength(1);
 });

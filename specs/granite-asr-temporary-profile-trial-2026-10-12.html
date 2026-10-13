@@ -1,0 +1,147 @@
+<article lang="ja">
+  <h1>SAAA-gemma4-26bのGranite 4.1 ASR一時切り替え</h1>
+  <aside>
+    <p>
+      この文書は2026年10月12日の一時切り替えの記録。
+      2026年10月13日に利用者がEumenesのprofileをornith1.5Strixと確認し、
+      <a href="./granite-asr-standard-dialogue-provider-2026-10-13.html"
+        >Graniteを標準ASRとして正式反映</a
+      >した。 一時overrideは削除し旧trial unitは停止済み。現在の運用と復元は標準化文書を参照する。
+    </p>
+  </aside>
+  <p>
+    2026年10月12日、利用者が使用感の確認のため明示的に依頼した一時切り替え。 Granite Speech 4.1 2B
+    Q8_0をVulkanで常駐ロードし、現在のHTTP transcription APIを維持する。 2026年10月12日13:20
+    JSTに一時設定を本番へ適用し、LARMの認証付きAPI経由で短文・長文の
+    文字起こしを確認した。対象profileのASRはGraniteになっている。
+    Eumenesのコード・設定変更や別チャットへの連絡は行っていない。
+  </p>
+  <section id="scope">
+    <h2>対象と維持する接続契約</h2>
+    <p>
+      selector <code>SAAA-gemma4-26b</code>から解決される
+      <code>saaa-conversation-gemma4-26b-voice</code>のASRだけを変更する。
+      元の<code>stt-qwen</code>／<code>qwen3-asr-1.7b</code>を
+      <code>stt-granite-trial</code
+      >／<code>granite-speech-4.1-2b</code>へ変更する。 同じAgent
+      Profileを参照する<code>SAAA-w-Image</code>と<code>SAAA-w-music</code>も
+      新規接続ではGraniteを使用する。別のAgent
+      Profileである<code>SAAA</code>などのASRはQwenのまま。
+    </p>
+    <p>
+      Agent Profile ID、LLMのGemma 4 26B-A4B、262144 token契約、VOICEVOX TTS、embedding、 System
+      One、既存route・runtimeを保持する。未反映の作業ツリーの別変更は取り込まず、
+      現在稼働中のreleaseから試用設定を複製する。作業中のrelease更新を検出し、
+      本番へ反映済みのKittenTTS英語Providerも保持する最新版で準備し直した。準備時releaseは
+      <code>c5f5c318201a</code>。原設定revisionは
+      <code>84c1a419819df32890983dab02b0cd97a8e937ba8028ddca0111b06a483ec2f7</code>、 試用設定revisionは
+      <code>2bed3bd73ac3b90e980bb5a932ad21bfcb38384b7a9f2c1e9b96f3e190f1d8c2</code>。 読み込んだregistryとAgent
+      Profile構造を比較し、追加したroute・runtimeと対象ASRの2項目以外が
+      変わっていないことを準備処理で検査する。
+    </p>
+  </section>
+  <section id="adapter">
+    <h2>HTTPとキャンセル</h2>
+    <ul>
+      <li>
+        <code>POST /v1/audio/transcriptions</code>へmultipartで
+        <code>model</code
+        >、<code>file=speech.wav</code>、<code>response_format=json</code>を渡し、
+        <code>{"text":"文字起こし"}</code>を返す。Eumenesと同じ言語指定なしを許可する。
+        Qwenのmodel名をGraniteとして受け付けず、catalogとclaimも実際のモデル名を公開する。
+      </li>
+      <li>
+        同時推論は1件、待機は1件、待機上限2秒。接続切断を20ms間隔で検出しnative sessionへ
+        cooperative
+        cancelを要求する。worker終了までslotを保持し、キャンセルした仮字幕の結果を返さない。
+        入力上限は16MiB・12秒、decoder context ceilingは512 token。
+        Eumenesの約10秒の発話区間を対象とする短い対話用設定であり、長時間ファイル向けQwen
+        APIとの完全互換は主張しない。
+      </li>
+      <li>
+        無音は空文字を返す。16kHz mono以外の対応音声はmono化とresampleを行う。
+        <code>text</code
+        >と<code>verbose_json</code>も返せるが、segment timestampは提供しない。
+        本試用で明示的に許可する言語指定は日本語・英語・auto。
+      </li>
+    </ul>
+    <p>
+      外部runtimeは<code>/srv/ai/apps/larm-granite-trial</code>、重みは
+      <code>/srv/ai/models/asr-eval-20261012/granite-speech-4.1-2b-Q8_0.gguf</code>。 transcribe.cpp revision
+      <code>5d66f60257a75e9bdbddc72dc0887b32e9d4841a</code>を使用する。
+      本番unitはloopbackの8089、事前検証用は18089。 音声、ログ、venv、評価結果はsource
+      repository外へ保存する。
+    </p>
+  </section>
+  <section id="activation">
+    <h2>適用と復元</h2>
+    <p>
+      現行daemonは起動時にregistryを読み込むため、設定反映にはLARMの再起動が必要。
+      既存connectionとcredentialは失効する。Eumenesの次の接続はcatalogからGraniteのmodelを取得する。
+      この一時適用は既存connectionを維持する新機構の実装ではない。
+      再起動中には他のLARM利用者にも短時間の中断が生じる。
+    </p>
+    <ol>
+      <li>
+        管理者が<code>sudo bash /srv/ai/apps/larm-granite-trial/activate.sh apply</code>を実行する。
+        スクリプトは準備時のrelease・原設定digest、API検証成功を確認し、 専用systemd
+        unitとstart／stopだけのpolkit ruleを登録する。
+      </li>
+      <li>
+        Graniteのhealthを確認してから、専用drop-inに
+        <code>LARM_CONFIG_DIR=/srv/ai/apps/larm-granite-trial/config</code>を設定しLARMを再起動する。 release本体・current
+        symlink・共通設定を編集しない。
+      </li>
+      <li>
+        利用者権限でcatalog→connection→claim→短文・長文transcription→release→credential失効を検査する。
+        Gemma契約・VOICEVOX・別profileのQwenも確認する。失敗時はdrop-inを削除し元設定で再起動する。
+      </li>
+      <li>
+        使用感確認後は<code>sudo bash /srv/ai/apps/larm-granite-trial/activate.sh restore</code>で
+        専用drop-inを削除し、元設定へ戻してGraniteを停止する。別release適用前にも復元する。
+      </li>
+    </ol>
+    <p>
+      初回準備では管理者認証待ちだったが、利用者が指定した認証ファイルをsudoの標準入力へ渡し、
+      認証を完了した。パスワードの値は出力・保存していない。
+      適用後の証拠は外部の<code>live-evidence.json</code>に保存した。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証と使用感の範囲</h2>
+    <p>
+      事前HTTP検証は成功。日本語24音声は句読点と三時／3時の表記を正規化した比較で24件一致。
+      無音は空文字、invalid modelは404、invalid audioと未対応引数は400。
+      キャンセル100ms後の即時finalを3回検証し、すべて200で約1.08〜1.10秒。
+      3件同時要求は200・200・429で上限を守った。単独24件のHTTP時間は0.18〜0.86秒、
+      中央値0.40秒であり、実対話全体の時間ではない。 型検査、module
+      boundary、source-only、unit構文とshell構文を確認し、既存STT readinessとsystemdの18試験も成功。
+      制限を12秒・512 contextへ変更した後も日本語24音声、キャンセル3回、待機上限試験は成功した。
+      本番経由の検証も成功し、catalog・claimはGraniteを返し、短文は0.187秒、長文は0.571秒で200を返した。
+      connection
+      release後のcredentialは401となった。Gemmaのmodel・context、VOICEVOX、別profileのQwenは保持した。
+    </p>
+    <p>
+      最初の適用ではGranite予約6 GiBを追加した結果、既存warm runtimeの108.5 GiBと合わせて usable 112
+      GiBを超え、起動canaryがmemory_exhaustedで429となった。
+      自動復元を確認した上で、短い発話用の上限を設定し直し、Granite単体のRSSとDRM
+      GTT／VRAMを20ms間隔で測定した。 同じDRM clientを重複計上せず、12秒の音声2回で合計peak 3.447
+      GiB。 12.01秒は413で拒否した。推定予約を実測に基づく3.5 GiBとし、warm合計112 GiBで再適用した。
+      本番のOS予約16 GiBとlive memory admissionは変更していない。
+      計測結果は外部の<code>memory-evidence.json</code>へ保存した。
+    </p>
+    <p>
+      事前検証は<a href="./asr-tts-japanese-evaluation-2026-10-12.html">日本語TTS評価</a>の24音声を
+      Eumenesと同じmultipart形式・言語指定なしで使用する。無音、invalid model／音声、 response
+      format、キャンセル直後のfinal、3件同時要求も検証する。
+      検証処理は失敗時に成功証拠を生成せず、適用スクリプトは成功証拠がない状態で反映しない。
+      実マイク、雑音、対話全体の応答速度は利用者の使用感確認対象であり、TTS試験だけでは保証しない。
+    </p>
+    <p>
+      長期の選択機構・HTTP preview改善・WebSocketの判断は
+      <a href="./asr-http-compatibility-and-streaming-plan-2026-10-12.html">別の設計案</a>を参照。
+      本試用は新しいselector overlayや過去catalog
+      retentionを実装せず、復元可能な設定overrideで行う。
+    </p>
+  </section>
+</article>

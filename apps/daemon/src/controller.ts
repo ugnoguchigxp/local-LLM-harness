@@ -38,7 +38,6 @@ import { LegacyControlOperations } from "./legacy-control-operations";
 import { ProviderInstanceManager, type ProviderInstanceInspection } from "./provider-instance-manager";
 import {
   admittedAllocations,
-  allocationResourceKeys,
   countActiveAdmission,
   countActiveAllocations,
   evaluateAllocationAdmission,
@@ -596,10 +595,6 @@ export class ControlPlane {
     return admittedAllocations([...this.allocations.values()]);
   }
 
-  private allocationExclusiveResourceKeys(runtimeIds: string[]): Set<string> {
-    return allocationResourceKeys(this.registry, runtimeIds, true);
-  }
-
   private foregroundPriorityThreshold(): number {
     return this.preemption.foregroundPriorityThreshold();
   }
@@ -609,7 +604,6 @@ export class ControlPlane {
       priority,
       runtimeIds,
       allocations: [...this.allocations.values()],
-      exclusiveResourceKeys: (ids) => this.allocationExclusiveResourceKeys(ids),
       preempt: (allocationId, requestedPriority) => this.preemptAllocation(allocationId, requestedPriority),
     });
   }

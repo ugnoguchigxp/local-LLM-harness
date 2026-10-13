@@ -40,6 +40,7 @@ test("exclusive resources model single-slot runtimes and shared swap groups", ()
   expect(hasAllocationResourceConflict(registry, admitted, ["single"], () => true, true)).toBeTrue();
   expect(hasAllocationResourceConflict(registry, admitted, ["other"], () => true, true)).toBeFalse();
   expect(hasAllocationResourceConflict(registry, admitted, ["shared"], () => true, false)).toBeTrue();
+  expect(hasAllocationResourceConflict(registry, admitted, ["shared"], () => true, true)).toBeFalse();
 });
 
 test("active capacity includes waiting allocations and only unattached legacy leases", () => {

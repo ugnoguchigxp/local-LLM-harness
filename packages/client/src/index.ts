@@ -1,5 +1,7 @@
 import {
   controlOperationSchema,
+  chatInputTokenCountSchema,
+  type ChatInputTokenCount,
   daemonHealthSchema,
   LARM_SERVICE_ACTIVITY_VALID_FOR_MS,
   openAiModelListSchema,
@@ -525,6 +527,16 @@ export class LarmClient {
       requestInput: input,
       signal,
     });
+  }
+
+  async countChatInputTokens(body: unknown, providerToken: string, options: RequestOptions = {}): Promise<ChatInputTokenCount> {
+    const response = await this.request("/v1/chat/completions/input-tokens", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${providerToken}` },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    }, false, this.timeoutMs, [], false);
+    return chatInputTokenCountSchema.parse(await response.json());
   }
 
   createChatCompletion(body: unknown, options: RequestOptions = {}): Promise<Response> {

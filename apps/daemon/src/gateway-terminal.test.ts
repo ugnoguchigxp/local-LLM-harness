@@ -203,3 +203,33 @@ test("foreground preemption returns a distinctive retryable ContextStill error",
   });
   expect(gate.snapshot(runtime.id)).toEqual({ active: 0, queued: 0 });
 });
+
+test("allocation preemption cancels an unread SSE stream and releases its execution slot", async () => {
+  const gate = new ExecutionGate();
+  const lifecycle = new AbortController();
+  let cancelled = 0;
+  let finishes = 0;
+  let terminal: { outcome: string } | undefined;
+  const response = await proxyGateway({
+    request: new Request("http://localhost/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+    allocationId: "background", protocol: "openai.chat-completions.v1", upstreamPath: "/v1/chat/completions",
+    runtime, bodyMode: "buffered", maxBodyBytes: 1024, timeoutMs: 10_000, bootEpoch: "boot", executionGate: gate,
+    lifecycleSignal: lifecycle.signal,
+    revalidate: () => ({ ok: true, binding: { endpoint: runtime.deployment.endpoint, runtime: runtime.id } }),
+    fetchImpl: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n')); },
+      cancel() { cancelled += 1; },
+    }), { headers: { "content-type": "text/event-stream" } }),
+    onTerminal: async (value) => { terminal = value; },
+    onFinish: () => { finishes += 1; },
+  });
+  await Bun.sleep(10);
+  expect(gate.snapshot(runtime.id).active).toBe(1);
+  lifecycle.abort(new AllocationLifecycleError("foreground_preempted", "foreground requires the provider"));
+  for (let index = 0; index < 100 && finishes === 0; index++) await Bun.sleep(1);
+  expect(cancelled).toBe(1);
+  expect(finishes).toBe(1);
+  expect(terminal).toMatchObject({ outcome: "binding_invalidated" });
+  expect(gate.snapshot(runtime.id)).toEqual({ active: 0, queued: 0 });
+  await expect(response.text()).rejects.toThrow("foreground requires the provider");
+});

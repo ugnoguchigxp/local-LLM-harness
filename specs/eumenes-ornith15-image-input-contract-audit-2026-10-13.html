@@ -1,0 +1,991 @@
+<article lang="ja">
+  <h1>Eumenes向けOrnith 1.5画像入力契約の配備版確認（2026-10-13）</h1>
+  <aside>
+    <p>
+      この文書はrelease
+      <code>8be02d62ba8fed3287fa239f84890a5f188925ea</code>の読取調査時点の記録である。後続のrelease
+      <code>86e879abe56ee54802d345c8b38f26f72b5e3570</code
+      >で画像能力metadata、正確な事前計数、予算・上限検査を実装・配備した。現在の利用手順は<a
+        href="./ornith-image-input-implementation-2026-10-13.html"
+        >実装済みの画像入力契約</a
+      >を参照する。
+    </p>
+  </aside>
+
+  <p>
+    調査日：2026-10-13
+    JST。対象はこのホストのLARM配備版であり、モデル名や一般的なOpenAI互換性から対応を推定していない。GETによるdiscovery・health・backend
+    props、稼働プロセスの選択した非秘密項目、配備source、engine
+    source、既存の合成画像試験を調査した。今回、新しい推論POST、Connection作成・claim・release、profile変更、再配備、データ削除は実施していない。EumenesやSAAAの実装・接続設定は調査していない。
+  </p>
+  <section id="decision">
+    <h2>1. 実装開始の可否と先に解消すべき条件</h2>
+    <p>
+      <strong
+        >主profileの画像送信adapterと添付UIの実装は進められる。画像を含む入力予算の保証とデータ保持の合意は未完了であり、そのまま完成した製品契約として公開できない。</strong
+      >主profileは画像対応済みで、PNG＋本文の意味理解に既存の本番検証がある。補助profile
+      <code>ornith1.5Strix-64k</code>
+      は廃止済みで、現行discoveryは404。同じ主profileからLLM
+      subsetのConnectionを追加する構成を利用できる。ContextStillも同じruntimeの4枠を消費する。
+    </p>
+    <ul>
+      <li>
+        補助selectorを前提にした設定を修正し、毎回catalogの存在・能力・予算を確認する。主profileへ移行する際はEumenes側で選択を明示する。
+      </li>
+      <li>
+        画像込みの正確な公開事前計数APIはない。Base64 bytesをtokenとして比較しない。HTTP
+        bodyのbytes検査とモデルのtoken予算検査を分ける。
+      </li>
+      <li>
+        LARMは現在
+        <code>full-required</code>
+        監査を使用する。要求JSON内の画像Base64・本文と応答を暗号化して保存し、設定上の期限は7日。Eumenesが通常ログを抑止してもLARM側の保持は発生する。保持を許容するか、LARM側の監査契約を別途変更するか決定が必要。
+      </li>
+      <li>
+        JPEG/BMP、画像だけ、2画像、画像＋stream、画像＋native
+        tools、画像＋json_objectは、この調査で本番推論成功を確認していない。対応経路の実装確認と、モデルの意味的な実動作確認を区別する。
+      </li>
+    </ul>
+  </section>
+  <section id="deployment">
+    <h2>2. 配備版、profile能力、発見方法</h2>
+    <table>
+      <caption>
+        調査時の配備識別と解決先
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">確認値</th>
+          <th scope="col">根拠</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LARM version / releaseCommit</th>
+          <td>0.1.0 / <code>8be02d62ba8fed3287fa239f84890a5f188925ea</code></td>
+          <td>GET /health、配備先 <code>/srv/ai/apps/larm-releases/8be02d62ba8f</code></td>
+        </tr>
+        <tr>
+          <th scope="row">configRevision / catalogRevision</th>
+          <td><code>4abea02f5b10a1a22f0953068f078fd40106a2b7fe53285151d81c5012e9ce85</code></td>
+          <td>GET /health と GET /v3/agent-profiles の一致</td>
+        </tr>
+        <tr>
+          <th scope="row">profile → route → runtime → backend</th>
+          <td><code>ornith1.5Strix → llm-ornith15-strix → ornith15-strix-conversation → llama-swap → q38rocm llama-server</code></td>
+          <td>配備sourceのprofile、route、runtime、起動command。既存本番allocation証跡でも一致</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM</th>
+          <td>
+            Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf、公開model
+            <code>ornith-1.5-strix-lean</code>、MTPなし
+          </td>
+          <td>artifact manifestと稼働process</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM artifact revision / digest</th>
+          <td>
+            <code>4494a5cffb1eb5496fa25575e5a5040064aa48b8</code> /
+            <code>aa35045aab39163851c8584e6cf8cc6f33e8fc2ffe28ca627d3414ec66584704</code>
+          </td>
+          <td>配備manifestの固定値。今回19 GBの重み全体を再hashしていない</td>
+        </tr>
+        <tr>
+          <th scope="row">projector</th>
+          <td>
+            mmproj-Ornith-1.5-35B-BF16.gguf、qwen3vl_merger、patch 16、spatial merge
+            2、mean/std各0.5
+          </td>
+          <td>
+            稼働 --mmproj 指定と同じファイルのGGUF metadata。既存導入検証digest
+            <code>d9ce31026d1cb1f3f8d5152e2e2a014d9d2b302b6c93a7dc07bb0a0487f52837</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">engine build</th>
+          <td>
+            <code>b244-0fc9568</code>、source HEAD
+            <code>0fc9568e07ccc8553010864cb8db1957e629cbfa</code>
+          </td>
+          <td>
+            live /props。sourceにserver-context.cppのMTP
+            checkpoint変更が18追加・8削除ある。build表示だけで完全な未変更source由来とは主張しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">engine executable SHA-256</th>
+          <td><code>57f2d865ba06cca1eb94aba9fdf0c2912aa011b5690ae18cf96e4bfc0e0f2c15</code></td>
+          <td>稼働executableの実ファイルを今回hash。reproducible buildの完全な来歴は未確認</td>
+        </tr>
+        <tr>
+          <th scope="row">調査workspace HEAD</th>
+          <td><code>05f0222eda4420fe86fb28efb4d89dec312afd0a</code>＋既存未commit変更</td>
+          <td>配備版と別。以下の契約根拠は原則として配備sourceを参照する</td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        主／補助profile別の能力
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">能力</th>
+          <th scope="col">ornith1.5Strix</th>
+          <th scope="col">ornith1.5Strix-64k</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">現行discovery</th>
+          <td>200、既定profile</td>
+          <td>404、unknown_agent_profile。廃止済み</td>
+        </tr>
+        <tr>
+          <th scope="row">画像</th>
+          <td>llm.visionを宣言、live modalities.vision=true、既存PNG意味理解成功</td>
+          <td>現行Providerなし。過去の64K契約を現行契約へ流用しない</td>
+        </tr>
+        <tr>
+          <th scope="row">protocol / endpoint</th>
+          <td>openai.chat-completions.v1 / /v1/chat/completions</td>
+          <td>利用不可</td>
+        </tr>
+        <tr>
+          <th scope="row">context / 出力予約 / 安全余白</th>
+          <td>262144 / 4096 / 1976 token</td>
+          <td>利用不可</td>
+        </tr>
+        <tr>
+          <th scope="row">共有資源</th>
+          <td>
+            1048576 tokenのunified KV pool、4
+            slot、K/Vともq4_0。ContextStillと共有。画像のための別Connection枠・増設slotなし
+          </td>
+          <td>利用不可</td>
+        </tr>
+        <tr>
+          <th scope="row">画像時の相違</th>
+          <td>
+            画像embeddingも入力・KVを消費。projectorはruntimeと共に常駐。no-context-shiftは文字要求にも共通
+          </td>
+          <td>利用不可</td>
+        </tr>
+        <tr>
+          <th scope="row">stream / native tools / json_objectとの併用</th>
+          <td>
+            共通parser上の併用経路あり。画像との組合せの実推論は未確認。画像＋json_schemaは既存本番成功
+          </td>
+          <td>すべて利用不可</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      v3 catalogでの正確なJSONPathは <code>$.profiles[?(@.id=="ornith1.5Strix")].providers[?(@.name=="llm")].supportedCapabilities</code>。この配列に
+      <code>llm.vision</code> があることを検査する。同じProviderの
+      <code>.protocol</code
+      >、<code>.endpoint</code>、<code>.model</code>、<code>.contextWindow.maxTokens</code>、<code>.contextWindow.outputReserveTokens</code>、<code
+        >.contextWindow.safetyMarginTokens</code
+      >
+      も確認する。順序固定の
+      <code>profiles[0].providers[2]</code> を製品コードに埋め込まない。
+    </p>
+    <p>
+      Connectionのcreate/get応答でも <code>$.providers[?(@.name=="llm")].supportedCapabilities</code> と
+      <code>.contextWindow</code> が返る。claimのLLM Providerは
+      <code>$.providers[?(@.name=="llm")].protocol</code
+      >、<code>.baseUrl</code>、<code>.model</code>、<code>.contextWindow</code>、<code>.credential.type</code>、<code
+        >.credential.expiresAt</code
+      >
+      を持つが、<strong>supportedCapabilities・MIME一覧・画像上限・画像計数operationはclaimにない</strong>。能力はcatalog／Connectionのmetadataで確認し、claimは実際の推論接続先として使う。v2
+      catalogにもsupportedCapabilitiesはあるが、contextWindowとendpointを含めて使う場合はv3を使う。
+    </p>
+    <p>秘密を含まないcatalogの抜粋（他のProvider・説明文は省略）：</p>
+    <pre><code>{
+  "contractVersion": "agent-connection.v3",
+  "catalogRevision": "4abea02f5b10a1a22f0953068f078fd40106a2b7fe53285151d81c5012e9ce85",
+  "requestedProfile": "ornith1.5Strix",
+  "profiles": [{"id": "ornith1.5Strix", "providers": [{
+    "name": "llm", "capability": "llm.general",
+    "supportedCapabilities": ["llm.general", "llm.vision"],
+    "protocol": "openai.chat-completions.v1",
+    "endpoint": "/v1/chat/completions", "model": "ornith-1.5-strix-lean",
+    "contextWindow": {"maxTokens": 262144,
+      "outputReserveTokens": 4096, "safetyMarginTokens": 1976}
+  }]}]
+}</code></pre>
+    <p>
+      MIMEの機械的discoveryフィールドは現在ない。運用者が解決済みruntimeに対応するbackendの
+      <code>/props</code> を確認する場合の補助情報は
+      <code>$.modalities.vision</code
+      >、<code>$.build_info</code>、<code>$.total_slots</code>、<code>$.default_generation_settings.n_ctx</code>。今回はそれぞれ
+      true、b244-0fc9568、4、262144だった。これは内部backend情報でありclaimから保証されたconsumer
+      operationではない。backend /modelsの
+      <code>$.models[0].capabilities</code> のmultimodal宣言をLARMの
+      /v1/modelsへそのまま期待しない。
+    </p>
+    <p>
+      claim応答の構造例（sourceに基づく説明用で今回claimしていない。baseUrlと期限はplaceholder、credential.tokenは意図して省略）：
+    </p>
+    <pre><code>{"providers":[{
+  "name":"llm","capability":"llm.general","apiStyle":"openai",
+  "protocol":"openai.chat-completions.v1",
+  "baseUrl":"https://LARM_HOST/v1","model":"ornith-1.5-strix-lean",
+  "contextWindow":{"maxTokens":262144,"outputReserveTokens":4096,"safetyMarginTokens":1976},
+  "credential":{"type":"bearer","expiresAt":"LEASE_EXPIRY"}
+}]}</code></pre>
+  </section>
+  <section id="wire">
+    <h2>3. Wire契約と最小要求</h2>
+    <p>
+      操作は <code>POST /v1/chat/completions</code>、protocolは従来通り。claimのbaseUrlが
+      <code>…/v1</code>
+      である場合、SDKにはそのbaseUrlを渡し、手動URL組立てでは
+      <code>/chat/completions</code>
+      を足す。v1を二重に付けない。AuthorizationはclaimのProvider
+      bearerを使う。公開model値もclaimに従う。
+    </p>
+    <p>
+      LARMの公開ChatCompletionRequest schemaは
+      <code>messages: array&lt;record&lt;string, unknown&gt;&gt;</code>
+      であり、content:string限定ではない。ただし画像partsの型やMIMEを厳密に定義するschemaでもない。配備engine
+      parserはcontentの文字列、配列、nullを読み、配列では
+      <code>{"type":"text","text":"…"}</code> と
+      <code>{"type":"image_url","image_url":{"url":"…"}}</code>
+      を受け付ける。textのtextフィールドと画像のurlは必要。画像なしでurlを省略すると空URLの解析が失敗する。配列順・messages順が媒体とpromptの対応順となる。複数の隣接text
+      partsは内部のflatten処理で改行が加わる場合がある。
+    </p>
+    <p>
+      <code>image_url.detail</code>
+      はこのparserでは読まれず、low/high/autoによるtoken制御は契約化されていない。独自のwidth、height、upload
+      ID、MIMEフィールドも不要。モデル用のmedia marker、vision特殊token、Jinja
+      templateはProviderが挿入する。Eumenesが特殊tokenを組み立てない。
+    </p>
+    <p>
+      画像だけのuser contentは画像partのみで構文上許容され、text
+      partの省略または空textが可能な経路である。本番推論成功は未確認。consumerとして画像はuser
+      roleで送る。parserは画像のroleをuserに限定していないが、system/developer/assistant/toolでの画像の意味的対応は未確認。モデルtemplateにsystem画像禁止の記述があっても、Providerがtyped
+      partsをmedia marker文字列へ変換するため、それだけではwireでの拒否保証にならない。system/tool
+      roleの画像対応をこの報告から保証しない。
+    </p>
+    <table>
+      <caption>
+        画像参照方式
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">方式</th>
+          <th scope="col">配備実装</th>
+          <th scope="col">認証・寿命・制約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Base64 data URL</th>
+          <td>受理。data:image/で始まり、ヘッダーがbase64で終わり、commaで分割してbytesをdecode</td>
+          <td>
+            Provider
+            bearer以外の画像認証なし。request内bytesであり参照IDの期限なし。通常のBase64を使い、改行・URL-safe変形を避ける
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">http / https外部URL</th>
+          <td>backendが取得する実装あり。10 MiB取得上限、10秒timeout</td>
+          <td>
+            Eumenes画像URL用のAuthorizationを渡すparts契約なし。redirect・ネットワーク参照制限の全体は未確認。署名URL等の期限はURL提供側依存。今回取得試験は未実施
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">file://</th>
+          <td>--media-pathが必要。稼働processには指定なし</td>
+          <td>配備では拒否経路。consumer方式に採用しない</td>
+        </tr>
+        <tr>
+          <th scope="row">upload ID / 添付ID</th>
+          <td>このProvider操作・LARM discoveryに公開された方式なし</td>
+          <td>
+            upload・状態照会・delete・専用ジョブ契約なし。Eumenes保存IDはEumenes内でbytesへ解決する
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      推奨方式は、Eumenes
+      backendが認可済み保存画像を読み、実bytesの形式を検査し、必要な正規化を行ってBase64 data
+      URLを組み立てること。Eumenesの画像URLは公開せず、Providerに取得させない。
+    </p>
+    <p>
+      以下4例の
+      <code>BASE64_IMAGE_1</code>
+      等は置換用placeholderで、そのまま有効な画像としては送れない。multipart送信ではなくJSON。操作とbearer
+      headerは共通。
+    </p>
+    <h3>文字だけ</h3>
+    <pre><code>{"model":"ornith-1.5-strix-lean","messages":[{"role":"user","content":"こんにちは"}],"max_tokens":256}</code></pre>
+    <h3>本文と1画像</h3>
+    <pre><code>{"model":"ornith-1.5-strix-lean","messages":[{"role":"user","content":[
+  {"type":"text","text":"この画像を説明してください"},
+  {"type":"image_url","image_url":{"url":"data:image/png;base64,BASE64_IMAGE_1"}}
+]}],"max_tokens":256}</code></pre>
+    <h3>画像だけ</h3>
+    <pre><code>{"model":"ornith-1.5-strix-lean","messages":[{"role":"user","content":[
+  {"type":"image_url","image_url":{"url":"data:image/jpeg;base64,BASE64_IMAGE_1"}}
+]}],"max_tokens":256}</code></pre>
+    <h3>2画像の比較</h3>
+    <pre><code>{"model":"ornith-1.5-strix-lean","messages":[{"role":"user","content":[
+  {"type":"text","text":"1枚目と2枚目の違いを説明してください"},
+  {"type":"image_url","image_url":{"url":"data:image/png;base64,BASE64_IMAGE_1"}},
+  {"type":"image_url","image_url":{"url":"data:image/bmp;base64,BASE64_IMAGE_2"}}
+]}],"max_tokens":256}</code></pre>
+  </section>
+  <section id="limits">
+    <h2>4. 形式・容量・寸法・画像枚数</h2>
+    <table>
+      <caption>
+        配備decoderから確認した形式。MIMEの公開allowlistではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">形式と推奨MIME</th>
+          <th scope="col">sourceで確認した挙動</th>
+          <th scope="col">実推論と呼出側対応</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">JPG/JPEG：image/jpeg</th>
+          <td>
+            stb_imageのbaseline/progressive JPEG decoder。12 bpcとarithmetic codingは未対応。8-bit
+            RGB 3 channelへdecode。EXIF回転やICC色管理の呼出しはこの経路にない
+          </td>
+          <td>
+            この配備でのJPEG実推論未確認。EXIFに従った回転とsRGB変換はEumenes側で行う。CMYK/YCCKの品質と全色空間対応は未確認。image/jpgもprefix検査では排除されないが正式discovery値ではないため使わない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">PNG：image/png</th>
+          <td>
+            1/2/4/8/16 bit/channelのdecode経路。stbi_loadの8-bit RGB 3 channel出力へ変換するため16
+            bitは8 bit化、alphaは破棄される。背景への合成処理はない
+          </td>
+          <td>
+            384×384 RGB PNG＋本文の既存本番成功。alpha画像の見え方・16
+            bit画像の実推論は未確認。透明部分の見え方を揃えるならEumenesで背景色を明示して合成する
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">BMP：image/bmp</th>
+          <td>
+            decoderに1/4/8 bit palette、16/24/32 bit経路。BI_RGBと16/32
+            bitのBI_BITFIELDS。RLE4/RLE8拒否、圧縮値4以上（内包JPEG/PNG等）拒否。DIB header size
+            12/40/56/108/124の経路。top-down/bottom-up処理あり
+          </td>
+          <td>
+            この配備でのBMP実推論未確認。複雑なBMPはEumenesでdecodeしPNGへ正規化する。decoder冒頭の古い「non-1bpp」説明より実装を根拠にした
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      data URLのMIMEは
+      <code>data:image/</code>
+      prefix以外の厳密照合がない。原本bytesはmagicとdecoderで処理されるため、MIMEだけで形式の受理や対応能力を決めない。Eumenesでは拡張子・declared
+      MIMEを信頼せず検査する。
+    </p>
+    <table>
+      <caption>
+        上限・予算・保持の一覧（未確定値は未確認）
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">主profileの確認値</th>
+          <th scope="col">検査／処理場所と限界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1画像の原本bytes</th>
+          <td>独立した公開上限は未確認</td>
+          <td>data URL全体は下記4 MiB bodyへ含まれる。外部URLの10 MiB取得制限とは別</td>
+        </tr>
+        <tr>
+          <th scope="row">要求全体／Base64を含むHTTP body</th>
+          <td>4194304 bytes（4 MiB）</td>
+          <td>
+            LARM gateway、Content-Lengthと実stream読込合計を検査。UTF-8 JSON、履歴、tools、data
+            URL全て込み。別proxyを含む経路全体の最小上限は未確認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">data URLで送る原本合計</th>
+          <td>JSONが全くない仮想上限でも3145728 bytes（3 MiB）未満が必要</td>
+          <td>
+            実際は <code>B = J + Σ 4×ceil(b_i/3) ≤ 4194304</code>。JはBase64 payloadを除く実際のUTF-8
+            JSON bytesで、data URL prefixも含む。画像数・履歴増加で余裕が減る
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">1要求・履歴全体の画像枚数</th>
+          <td>個別の公開上限は未確認</td>
+          <td>
+            parserは全messagesの画像を走査する。枚数専用の拒否検査は確認できない。HTTP
+            bodyとcontextが実効制限。無制限という保証ではない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">原本の最小／最大幅・高さ・画素数</th>
+          <td>製品としての公開安全上限は未確認</td>
+          <td>
+            decoderの巨大寸法・整数overflow・allocation検査はあるが、安全な受理保証値ではない。decodeはresizeより先に行われるため、小さい圧縮bytesでも展開メモリが大きくなり得る
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">前処理後の画素数設定</th>
+          <td>min 8192、max 4194304 pixels、幅・高さ32 pixels単位</td>
+          <td>
+            patch16×merge2、min8 tokenとmax4096 tokenから導出。bilinear smart
+            resizeで拡大／縮小、RGB
+            float正規化。原本画素上限ではなく、極端な縦横比を含むstrict上限保証も未確認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">画像embedding token設定</th>
+          <td>--image-max-tokens 4096、source上のmin設定8</td>
+          <td>
+            resize目標から導く設定。画像1枚ごとの固定token数ではない。極端な縦横比で片辺を最小32に固定するためmax_pixelsから超える可能性があり、consumerの無条件の4096固定見積りは保証しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">context最大／出力予約／安全余白</th>
+          <td>262144 / 4096 / 1976 token</td>
+          <td>
+            v3 contextWindow。標準入力予算256072 token。画像・文字・template・tools・履歴を含める
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">gateway全要求deadline</th>
+          <td>7200秒</td>
+          <td>
+            稼働override。Connection lease・consumer deadline・queue
+            timeoutは別。監査materializationは30秒
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">runtime会話枠／要求並行／queue</th>
+          <td>4 allocation / 4 active request / 16 queued、queueTimeoutMs 30000</td>
+          <td>
+            主profileとContextStillの共有runtime resource policy。consumerごとに専用4枠ではない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">監査保持期間</th>
+          <td>604800秒（7日）の期限を付与</td>
+          <td>
+            LARM暗号化監査。prune時に期限切れを除去し、容量圧迫で早期除去もある。active
+            recordを除く。期限到達と即時物理消去が同時という保証ではない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">原本・変換画像・embeddingのrequest外保存</th>
+          <td>
+            画像ファイル／embedding専用の永続保存経路は調査したProvider処理にない。request中のメモリ保持、監査JSON保持あり
+          </td>
+          <td>メモリの厳密な消去時間とzeroizationは未確認。Eumenes保存原本はEumenesの責任</td>
+        </tr>
+        <tr>
+          <th scope="row">KV・cache寿命</th>
+          <td>共有process内メモリ。利用者向けTTLは未確認</td>
+          <td>
+            no-cache-prompt、cache-reuse0、cache RAM0、context
+            checkpoint0、no-cache-idle-slots。releaseだけでbytesの即時消去を保証しない。runtimeはwarm
+            min1で維持される
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      このprojectorはdynamic
+      sizeの単一画像出力を使う。LLaVA風の複数tile/cropを適用する経路ではない。原本EXIF回転補正はProviderへ任せられない。品質評価、超高解像度、極端な縦横比、PNG
+      alpha、BMP圧縮・色の正規化はEumenes側で検査・前処理条件を設定する必要がある。原本はEumenesで保持し、推論用の派生画像と区別する。
+    </p>
+  </section>
+  <section id="budget">
+    <h2>5. 入力token計数と予算</h2>
+    <p>
+      <strong>画像込みの事前計数を返す公開operationと正式な計算契約は現在ない。</strong
+      >内部backendには <code>POST /apply-template</code> と
+      <code>POST /tokenize</code>
+      があるが、前者は画像bytesをdecode/Base64抽出してprompt
+      markerに置き換えた後、filesを捨てて文字promptだけ返す。後者はvocabのtext
+      tokenizationでありmtmd画像embeddingを数えない。両者を連結しても画像のtoken計数APIにならない。Anthropic
+      count_tokens実装も同じtext経路であり代替にしない。LARMの管理context計数はmanaged-context
+      certificationを要求し、このSTRIX routeに保証された画像計数ではない。
+    </p>
+    <p>
+      LARMの全文監査もapply-template→tokenizeでmaterializationする。監査に保存するtoken列と応答usage.prompt_tokensは、画像を含む場合一致すると仮定できない。内部計数の要求／応答例は文字経路だけなら
+      <code>{"content":"TEXT_PROMPT","add_special":true,"parse_special":true}</code> →
+      <code>{"tokens":[TOKEN_ID_1,TOKEN_ID_2]}</code>
+      の形だが、TOKEN_IDはplaceholderである。Eumenes向けの画像計数例として使用してはいけない。
+    </p>
+    <p>
+      画像embedding数は実装上、前処理後の
+      <code>W′/32 × H′/32</code> で変化する。このOrnith
+      projectorはpatch16、merge2。smart
+      resizeは幅・高さを32の倍数へ丸め、面積目標に応じてsqrt倍率で縮小／拡大する。max/detail指定のOpenAI一般式ではない。vision開始・終了、role、template、tools等は追加tokenとなる。標準的な384×384画像ならembeddingは144個となるが、応答の167
+      prompt tokenを画像だけの数と呼ばない。固定4096を全画像の実消費値として扱わない。
+    </p>
+    <ol>
+      <li>
+        discoveryで主profileの存在とllm.vision、contextWindowを確認し、Connectionとclaimがそのprofileに対応することを確認する。
+      </li>
+      <li>
+        保存原本の形式・寸法・画素数を検査し、回転・sRGB・alpha背景を必要に応じて正規化する。履歴で使う全画像を確定する。
+      </li>
+      <li>
+        実際のUTF-8 JSONを組み立て、Base64と履歴を含むbodyが4
+        MiB以下であることをbytes単位で検査する。ここはtoken検査とは独立して実施できる。
+      </li>
+      <li>
+        画像込みのcanonical入力token数Pを得られる追加APIが用意された場合、<code
+          >P + requestedOutputTokens + 1976 ≤ 262144</code
+        >
+        かつ
+        <code>requestedOutputTokens ≤ 4096</code> を確認する。出力4096を常に予約する標準運用では
+        <code>P ≤ 256072</code> とする。max_tokensを明示する。
+      </li>
+      <li>
+        現在はPを確実に計数する公開手段がない。限定版ではEumenesが画像数・寸法・履歴を保守的に制限し、engineのresize/token式を配備revisionに固定して見積もる案があるが、正式な受理保証ではない。text/template/toolsも同じtokenizerで数える必要がある。上限近くの入力を安全に受理する実装には追加APIが必要。
+      </li>
+      <li>
+        補助64K
+        profileの予算は適用しない。追加会話は主profileの別Connectionで管理し、共有枠の空きも確認する。超過時はユーザーに画像・履歴の選択／縮約を明示して再要求する。
+      </li>
+    </ol>
+    <p>
+      公開された画像dry-run／preflight-only操作はない。実際のchat POSTでbackendがdecode・mtmd
+      tokenization・context受理を確認するが、推論と監査保持を伴うため仕様確認用の無副作用dry-runと呼べない。contextを超えるpromptはbackendのHTTP400、<code>error.type=exceed_context_size_error</code>。生成中にcontextが尽きるno-context-shift経路は生成停止となることがあり、出力予約をProviderが自動で保証するものではない。
+    </p>
+    <p>
+      成功応答の
+      <code>usage.prompt_tokens</code>
+      はtaskの全入力token数から生成され、画像embeddingと文字を含む。<code
+        >usage.total_tokens</code
+      >
+      はcompletionとの合計。<code>usage.prompt_tokens_details.cached_tokens</code>
+      はcache情報であり画像token専用ではない。text_tokens／image_tokensの内訳はこのChat
+      Completions応答にはない。usageはtoken計数で、LARMの金銭課金契約は確認していない。
+    </p>
+    <table>
+      <caption>
+        既存実測の範囲
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">入力token</th>
+          <th scope="col">時間</th>
+          <th scope="col">限界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">
+            384×384 RGB PNG、原本1427 bytes、4色、STRIX 1M pool/4
+            slot、4並列、json_schema、max_tokens32
+          </th>
+          <td>各prompt_tokens167、画像embedding144はsource式からの計算、cached_tokens0</td>
+          <td>backend timings.prompt_ms 1978.804–2084.169 ms、生成512.330–806.425 ms</td>
+          <td>
+            隔離した既存試験。prompt_msは画像encoder・prompt処理を含む指標で、純粋な前処理時間やconsumer
+            TTFTではない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Eumenes用profile／ContextStill／既定model経由の本番12画像</th>
+          <td>画像意味理解成功。個別usageは集約証跡にない</td>
+          <td>画像のconsumer TTFT・純前処理時間は未確認</td>
+          <td>同じ小さい合成PNG。サイズ違いの代表画像、4096 token近傍、OCR品質は未確認</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="responses">
+    <h2>6. 成功・失敗応答と無視される入力</h2>
+    <p>
+      既存の隔離STRIX red
+      PNG試験から秘密・ID等を除いた成功応答の抜粋。usageは当該要求の実測であり固定予算ではない：
+    </p>
+    <pre><code>{
+  "object":"chat.completion",
+  "choices":[{"index":0,"finish_reason":"stop",
+    "message":{"role":"assistant","content":"{\"color\":\"red\"}"}}],
+  "usage":{"prompt_tokens":167,"completion_tokens":17,"total_tokens":184,
+    "prompt_tokens_details":{"cached_tokens":0}}
+}</code></pre>
+    <p>実際に今回GETした廃止profileの応答：</p>
+    <pre><code>{"error":{"code":"unknown_agent_profile",
+  "message":"agent profile ornith1.5Strix-64k does not exist"}}</code></pre>
+    <table>
+      <caption>
+        失敗のstatus・識別子。source確認と実送信確認を区別
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">HTTP status／error field</th>
+          <th scope="col">確認方法</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">4 MiB超過</th>
+          <td>413 / error.code=body_too_large</td>
+          <td>LARM sourceと既存oversized試験。今回大きい要求を送っていない</td>
+        </tr>
+        <tr>
+          <th scope="row">廃止補助profile discovery</th>
+          <td>404 / error.code=unknown_agent_profile</td>
+          <td>今回GETで確認</td>
+        </tr>
+        <tr>
+          <th scope="row">廃止selectorでConnection作成</th>
+          <td>400 / invalid_request</td>
+          <td>enum schema、既存廃止検証。今回作成していない</td>
+        </tr>
+        <tr>
+          <th scope="row">未対応parts type</th>
+          <td>400 / error.type=invalid_request_error、error.code=400</td>
+          <td>engine invalid_argument。image入力専用の安定文字列codeなし</td>
+        </tr>
+        <tr>
+          <th scope="row">破損画像・decoder未対応形式・不正data URL・mmprojなしbackendへの画像</th>
+          <td>500 / error.type=server_error、error.code=500となるsource経路</td>
+          <td>
+            runtime_error→exception
+            wrapper。image_invalid等の安定codeはない。個々の異常の本番応答は未検証
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">context超過</th>
+          <td>400 / error.type=exceed_context_size_error、error.code=400</td>
+          <td>backend slotのn_tokens検査。n_prompt_tokensとn_ctxの追加情報を持つsource経路あり</td>
+        </tr>
+        <tr>
+          <th scope="row">gateway deadline／通信障害</th>
+          <td>
+            504 / gateway_timeout または upstream_transport_timeout、502 / upstream_unavailable
+          </td>
+          <td>配備gateway source、通常推論の既存試験。画像固有試験なし</td>
+        </tr>
+        <tr>
+          <th scope="row">監査ストレージが使えない</th>
+          <td>503 / inference_audit_unavailable</td>
+          <td>full-requiredのfail closed。画像要求にも同じ処理</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>sourceから組み立てた失敗例（今回実送信した応答ではない）：</p>
+    <pre><code>{"error":{"code":"body_too_large","message":"request exceeds 4194304 bytes"}}
+{"error":{"code":500,"type":"server_error","message":"Failed to load image or audio file"}}
+{"error":{"code":400,"type":"exceed_context_size_error","message":"CONTEXT_LIMIT_MESSAGE"}}</code></pre>
+    <p>
+      backendエラーはLARMが原則そのstatus/bodyを転送するので、LARM文字列codeとbackend数値codeを分けて扱う。stream確立後の失敗はHTTP
+      statusを変更できず、stream error／通信断として観測される場合がある。
+    </p>
+    <p>
+      標準のimage_urlがunsupported
+      backendで黙って文字だけになる経路はこのparserでは確認していない。未対応typeも拒否する。ただし
+      <code>detail</code>
+      は無視され、content外の未知の画像風フィールドはLARM passthrough
+      schemaで保証されない。未知のfieldに画像を置いた場合まで拒否／利用を保証しない。生成が画像に言及しただけで意味理解成功と扱わず、異なる合成画像で結果が変わる検証を使う。
+    </p>
+  </section>
+  <section id="history">
+    <h2>7. 履歴再送、cache、Connection lifecycle、取消</h2>
+    <p>
+      同じConnectionでも毎回、必要な会話履歴と過去画像partsを再送する。Connectionは配備・lease・資格情報・要求の管理であり、画像の添付保存や会話history
+      storeではない。Eumenesは自分の保存IDからbytesを読み直す。画像だけを最初に送って後の要求で省略し、KVだけで参照できるとは仮定しない。
+    </p>
+    <p>
+      公開画像参照IDはないため、画像IDの期限、scope、Connection依存、再起動・renew・再claim時の画像ID復元もない。Eumenes原本を削除した後にdata
+      URLを組めなくなるのはEumenes側の状態であり、Providerのattachment-expiredエラーではない。Providerに画像だけのrelease/delete要求は不要。Connection
+      leaseのreleaseは通常契約に従う。
+    </p>
+    <p>
+      稼働runtimeは
+      <code>--no-cache-prompt -cram 0 -ctxcp 0 --no-cache-idle-slots --cache-reuse 0</code
+      >。同じ画像の再送も入力tokenとして計数され、cache割引・Connection間共有の保証はない。低レベルengineにはbitmap
+      hashによるKV
+      prefix照合があるが、hashは公開画像IDではない。既存試験ではcached_tokens0。consumerがcache_prompt等で設定を上書きした場合の利用者分離は未確認なので、Eumenesからcache設定を変更しない。共有process／KV
+      poolを使いながらConnection
+      bearerはscope検査されるが、専用process分離・メモリの即時消去保証はない。
+    </p>
+    <p>
+      stream:true、tools、response_formatは同じchat
+      parser／gateway処理に入り、画像のために別取消API・upload jobは使わない。native toolsは稼働
+      --jinja
+      とtemplateのsupports_tools/supports_tool_callsに対応経路があるが、画像から正しいtool選択を行う実推論は未確認。json_objectもparserに対応経路があるが、既存画像成功はjson_schemaであり、json_objectの実測に読み替えない。画像とSSEの組合せも未確認。既存4会話SSE成功は文字要求である。
+    </p>
+    <p>
+      client切断・abortはgatewayからupstreamへ伝播する。deadline、lease失効、binding変更、preemptionも共通処理を使う。CPU/GPU前処理が即時停止する最大遅延の保証は未確認。renewはConnectionの期限を更新するが、取得済みbearerは自己のexpiresAtを持つため、renew後はreclaimして新しい資格情報を使う。daemon再起動ではboot
+      epochが変わり、旧Connectionをそのまま復元できる契約ではない。新Connectionと履歴再送が必要。
+    </p>
+    <p>
+      <strong>通信断で結果不明の場合、推論POSTの自動再送は避ける。</strong>LARM
+      gatewayはこの推論を一度forwardする。control APIのidempotencyやPersonal State generation
+      attemptを通常の画像chat
+      POSTのexactly-once保証と解釈しない。responseのx-request-idは追跡用であり重複排除キーではない。別推論にする場合はユーザー操作で再送し、重複し得ることをEumenesで扱う。
+    </p>
+  </section>
+  <section id="retention">
+    <h2>8. 保持とログ、追跡</h2>
+    <p>
+      Providerはrequest内の原本bytesをメモリへ読み、RGB画像・前処理float
+      buffer・embedding・KVを作る。専用画像保存APIや画像／embedding永続storeは調査した処理にない。runtime停止はprocessメモリの寿命を終えるが、GPU
+      bufferのzeroization、request終了やConnection release直後の消去、host
+      swap等を含む厳密な保持保証は未確認。暖機されるruntimeの存在と画像保存を混同しない。
+    </p>
+    <p>
+      LARM全文監査は要求bytesをgzipしてAES-256-GCMで保存し、prompt／token
+      materializationと応答も記録する。認証headerそのものは要求JSONに含めないが、画像Base64と本文はJSON内のため保存対象。期限は7日、容量上限10
+      GiB、空き容量予約により早期pruneの可能性がある。ファイル・directoryはdaemon所有者の制限を検査する。consumer別の暗号鍵や専用storageではなく、LARM運用者が扱う共通監査storeである。今回監査payloadや鍵を開いていない。
+    </p>
+    <p>
+      engineのHTTP
+      debugログにはreq.body/res.bodyをそのまま出す経路がある。debugを有効にすると画像Base64・本文・生応答が含まれ得る。稼働argv/envにはverbose/log-verbosity指定を確認していないので、この経路はsourceの通常defaultではdebug非出力だが、全ログの完全な非混入を保証する監査は行っていない。例外wrapperはerror
+      messageをwarningへ出し、parserの一部の例外は不正なcontent値をmessageに含めるため、異常入力で本文が露出する可能性もある。llama-swapや全reverse
+      proxy、journaldの保持・バックアップまで含む総保持期間は未確認。
+    </p>
+    <p>
+      追跡にはresponseの <code>x-request-id</code>、<code
+        >x-larm-boot-epoch</code
+      >
+      とOpenAI completionの
+      <code>id</code>
+      を利用できる。gatewayはupstreamへx-request-idも送る。通常chatではgatewayがIDを生成するため、clientが同名headerを付けてもidempotencyにはならない。監査metadataはrequest
+      IDとallocation/runtime/configRevisionを関連付ける。EumenesはこれらID、profile、catalog
+      revision、status、サイズ・枚数、所要時間を通常ログに残し、原本・本文・Provider生応答・credentialを残さない設計にできる。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>9. 根拠と検証区分</h2>
+    <p>
+      以下のLARM相対ファイル名はすべて配備root
+      <code>/srv/ai/apps/larm-releases/8be02d62ba8f/</code> を基準とする。engine相対名は
+      <code>/srv/ai/apps/q38rocm/engine/src/</code
+      >。sourceのfileと開始行を示す。実稼働設定全体、秘密、既存利用者の本文はコピーしていない。
+    </p>
+    <table>
+      <caption>
+        仕様・source・試験の根拠
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">確認事項</th>
+          <th scope="col">根拠</th>
+          <th scope="col">区分</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">profileと能力・context</th>
+          <td>
+            LARM packages/core/src/agent-connection.ts:127, 396, 725,
+            922、apps/daemon/src/agent-connection-controller.ts:175, 438,
+            945、config/local-node/agent-connections.yaml:71
+          </td>
+          <td>配備schema/source、今回live GET</td>
+        </tr>
+        <tr>
+          <th scope="row">routeと共有容量</th>
+          <td>
+            LARM
+            config/local-node/routes.yaml:38、runtimes.yaml:308、llama-swap.yaml:359、deploy/local-node/releases.yaml:248、models.yaml:393
+          </td>
+          <td>配備source、稼働argvの対応確認</td>
+        </tr>
+        <tr>
+          <th scope="row">content配列とLARM passthrough</th>
+          <td>
+            LARM
+            packages/core/src/openai-contract.ts:17、apps/daemon/src/app-gateway-request.ts:106、app-http.ts:95
+          </td>
+          <td>配備schema/source</td>
+        </tr>
+        <tr>
+          <th scope="row">parts、URL、image unsupported、detail</th>
+          <td>engine tools/server/server-common.cpp:854, 963、common/chat.cpp:259</td>
+          <td>engine source。parts順・text必須・image_url処理</td>
+        </tr>
+        <tr>
+          <th scope="row">画像decodeとエラー</th>
+          <td>
+            engine
+            tools/mtmd/mtmd-helper.cpp:481、tools/server/server-common.cpp:714、server.cpp:67、server-common.cpp:16、vendor/stb/stb_image.h:5448
+          </td>
+          <td>engine source。異常画像実送信はしていない</td>
+        </tr>
+        <tr>
+          <th scope="row">resizeと画像token</th>
+          <td>
+            engine tools/mtmd/clip.cpp:1418、clip-model.h:121、mtmd-image.cpp:143, 861、mtmd.cpp:47,
+            329, 911
+          </td>
+          <td>sourceと当該GGUF metadata。正式な公開計算仕様ではない</td>
+        </tr>
+        <tr>
+          <th scope="row">事前計数の不足</th>
+          <td>
+            engine tools/server/server-context.cpp:4783, 4801, 4854、LARM
+            apps/daemon/src/context-request-measurement.ts:57、inference-audit.ts:225
+          </td>
+          <td>画像filesを使わないtext計数とmanaged-context条件をsource確認</td>
+        </tr>
+        <tr>
+          <th scope="row">context budgetとusage</th>
+          <td>
+            LARM packages/core/src/agent-connection.ts:280、engine
+            tools/server/server-context.cpp:1778, 1827, 2709、server-task.cpp:785
+          </td>
+          <td>配備source。prompt_tokensは画像を含む全task token</td>
+        </tr>
+        <tr>
+          <th scope="row">HTTP bodyとtimeout</th>
+          <td>
+            LARM apps/daemon/src/config.ts:398, 410、http-body.ts:12, 47、gateway.ts:201, 371, 490,
+            635
+          </td>
+          <td>配備sourceと選択した非秘密override</td>
+        </tr>
+        <tr>
+          <th scope="row">監査保存と期限</th>
+          <td>
+            LARM apps/daemon/src/main.ts:126、config.ts:186,
+            201、gateway.ts:564、inference-audit.ts:163、packages/backends/src/inference-audit-store.ts:317,
+            402, 434, 633
+          </td>
+          <td>配備sourceと選択した非秘密override</td>
+        </tr>
+        <tr>
+          <th scope="row">debugとerrorログ</th>
+          <td>
+            engine
+            tools/server/server-http.cpp:36、server.cpp:67、common/log.cpp:24、common/chat.cpp:259
+          </td>
+          <td>source。全運用ログの非混入検証は未実施</td>
+        </tr>
+        <tr>
+          <th scope="row">公開仕様URL</th>
+          <td><code>https://github.com/charlie12345/ROCmFPX/blob/0fc9568e07ccc8553010864cb8db1957e629cbfa/tools/server/README.md</code></td>
+          <td>
+            今回取得したrevision固定の一次仕様。ローカル配備との突合せ用で、一般的な最新仕様で穴を埋めない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LARM catalog試験</th>
+          <td>
+            packages/core/src/agent-connection.test.ts:30「production agent profiles compile to
+            strict protocol-aware provider contracts」、:444「four retained Ornith profile sessions
+            share one KV pool without the retired auxiliary
+            profile」、registry.test.ts:749「ornith1.5Strix is an explicit Gemma voice copy routed
+            to the tested artifact」
+          </td>
+          <td>既存単体試験。画像の意味理解試験ではない</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM制限・監査・取消試験</th>
+          <td>
+            apps/daemon/src/app.test.ts:2916「full-required inference audit captures the exact
+            gateway request and response」、:3340「gateway rejects oversized requests before
+            contacting upstream」、:3478「allocation release cancels both active and queued gateway
+            requests」、gateway-terminal.test.ts:105「generation attempt cancellation is observable
+            and terminates the upstream transport」
+          </td>
+          <td>既存通常推論試験。画像組合せの実測ではない</td>
+        </tr>
+        <tr>
+          <th scope="row">engine vision試験</th>
+          <td>
+            tools/server/tests/unit/test_vision_api.py:77「test_vision_chat_completion」、:130「test_vision_slot_erase」
+          </td>
+          <td>
+            sourceに存在。tinygemma
+            fixtureのためこのOrnithでの成功証明にはしない。multi-imageにはTODOあり
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">本番PNG意味理解</th>
+          <td>
+            <code>/srv/ai/apps/larm-ornith-profile-retirement-20261013/live-evidence.json</code>、smoke.mjs:15、observedAt
+            2026-10-13T07:15:50.786Z、releaseCommit 8be02d62ba8fed3287fa239f84890a5f188925ea
+          </td>
+          <td>既存本番実推論。主／ContextStill／既定modelで4色ずつ、12件成功</td>
+        </tr>
+        <tr>
+          <th scope="row">隔離画像実測</th>
+          <td><code>/srv/ai/evidence/ornith-vision-20261013/full/ornith15-strix-conversation/status.json</code>、probe.py:106、同directoryの合成PNG</td>
+          <td>既存隔離推論。本文＋単一PNG、4並列、json_schema。画像ごとのusageとprompt_ms</td>
+        </tr>
+        <tr>
+          <th scope="row">主profile 4会話</th>
+          <td><code>/srv/ai/evidence/ornith-profile-retirement-20261013/four-main-sessions.json</code>、observedAt 2026-10-13T07:14:04.788Z</td>
+          <td>
+            既存本番試験。4枠共有・独立履歴・文字SSE・5本目待機・renew・解放後401。画像SSEではない
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      今回の能動的な確認は読み取りのみ。過去の合成画像成功は既存証跡として利用した。画像付き新規request、非対応profileへの推論、破損・容量・寸法境界試験を本番へ送っていない。
+    </p>
+    <p>
+      関連する既存文書：<a
+        href="./ornith15-strix-profile-2026-10-12.html#vision-always-loaded-20261013"
+        >Ornith画像対応導入</a
+      >、<a href="./profile-cleanup-and-unused-models-2026-10-13.html#models"
+        >補助profileの廃止と主profileへの統合</a
+      >。
+    </p>
+  </section>
+  <section id="followups">
+    <h2>10. 未確認事項と最小差分案（提案のみ・未実装）</h2>
+    <p>
+      Eumenesの必要変更は、content:stringからstringまたはtyped
+      partsへの拡張、JPG/PNG/BMPの安全な保存・認可・前処理、paste/drop/file選択とサムネイル、image-onlyの入力検査、履歴画像の再送、bytesとtoken予算の分離、廃止補助selectorの移行、Provider
+      raw errorとLARM
+      errorの区別、abortと明示再送、メタデータだけのログである。ブラウザから直接Providerへ画像認証URLを渡さずbackendでbytesへ解決する。
+    </p>
+    <ol>
+      <li>
+        LARM coreに画像partsの型と、Provider単位のversion付きinput capability
+        metadataを追加する。例としてinputModalities、image
+        MIME、data-url参照方式、detailの扱い、body/画像数/寸法制限を定義する。catalog・Connection・claim・OpenAPIへ同じ契約を投影する。これらのfield名は提案であり現在存在しない。
+      </li>
+      <li>
+        認可済みConnectionへ束縛した画像込みpreflight計数operationを追加する。backend adapterでchat
+        templateと同じdecode／resize／mtmd tokenizationを使い、total/text/image/template
+        token、実resize寸法、入力予算、runtime/release/configRevision、model/projector/tokenizer/template
+        digestを返す。単なるtext
+        /tokenize転送では実現しない。OS独立の計画・予算契約はcore、engine固有の操作はbackendsに置く。
+      </li>
+      <li>
+        gatewayでbytes・枚数・寸法・MIMEとresolved
+        runtimeのllm.visionを検査し、画像エラーを安定codeへ正規化する。image_too_large、image_invalid、image_format_unsupported、image_not_supported、context_budget_exceeded等は提案名。極端な縦横比でresize目標を超える境界も検査する。
+      </li>
+      <li>
+        全文監査の保持を合意する。画像／本文を保存しない要件なら、監査metadataモードまたは媒体payload除外の明示契約を検討する。設定の勝手な切替や監査record削除をこの調査では行わない。
+      </li>
+      <li>
+        合成JPEG／BMP／alpha
+        PNG／EXIF回転、image-only、2画像比較、画像＋SSE／tools／json_object、境界超過・破損・cancel・履歴再送を限定試験に追加する。大画像についてencoder時間とconsumer
+        TTFTを別に測る。複数画像・履歴の画像数上限、安全な寸法上限、error保証、利用者ごとのメモリ消去・全ログ保持は未確認のまま残す。
+      </li>
+    </ol>
+    <p>
+      この報告に追加したものは調査文書と文書catalog登録だけであり、上記差分案やEumenes実装、本番設定変更は含まない。
+    </p>
+  </section>
+</article>

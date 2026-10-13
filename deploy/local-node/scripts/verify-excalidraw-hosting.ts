@@ -10,7 +10,8 @@ import { LocalServiceSystemdBackend } from "../../../packages/backends/src/local
 import { LocalServiceFileJournal } from "../../../packages/backends/src/local-service-journal";
 import { createLocalServiceControlApp } from "../../../apps/daemon/src/routes/local-service-control-app";
 import { ClientLocalServices } from "../../../packages/client/src/client-local-services";
-import { startHostedGateway } from "./hosted-service-gateway";
+import { readHostedLarmApiToken, startHostedGateway } from "./hosted-service-gateway";
+const apiToken = readHostedLarmApiToken(process.env.LARM_HOSTED_API_TOKEN_ENV_FILE ?? "/etc/larm/larm.env");
 const appRepo = "/srv/ai/apps/excalidraw-host";
 const root = process.env.EXCALIDRAW_ACCEPTANCE_ROOT ?? "/srv/storage/nextorage/files/larm-excalidraw-acceptance-20261009";
 const privateRoot = "/srv/ai/local-services-prepared/excalidraw-acceptance";
@@ -69,11 +70,11 @@ class AcceptanceBackend extends LocalServiceSystemdBackend {
 const ledger = new ServiceResourceLedger();
 const manager = new LocalServiceManager(definitions, new AcceptanceBackend({ secretRoot: privateRoot, observationRoot: privateRoot }), { bootEpoch: crypto.randomUUID(), journal: new LocalServiceFileJournal(`${privateRoot}/journal.json`), ledger, reserve: (id, d) => ledger.restore(id, d.node, d.resources.startupReservationBytes) });
 await manager.initialize();
-const api = createLocalServiceControlApp({ manager, principals: [{ id: "excalidraw-acceptance", token: credentials.larm, services: ["excalidraw-host"] }], maxBodyBytes: 8192 });
+const api = createLocalServiceControlApp({ manager, principals: [{ id: "excalidraw-acceptance", token: credentials.larm, services: ["excalidraw-host"] }, { id: "eumenes-hosted-apps", token: apiToken, services: ["excalidraw-host"] }], maxBodyBytes: 8192 });
 const control = Bun.serve({ hostname: "127.0.0.1", port: controlPort, fetch: api.fetch });
 let ticking = false;
 const timer = setInterval(() => { if (ticking) return; ticking = true; void manager.tick().catch(error => console.error(error.message)).finally(() => { ticking = false; }); }, 250);
-const gateway = startHostedGateway({ hostname: "127.0.0.1", port: gatewayPort, serviceId: "excalidraw-host", webRoot: `${releaseRoot}/web`, clientTokens: [credentials.owner, credentials.other], allowedEndpoints: [`http://127.0.0.1:${appPort}`], userIdleSeconds: Number(process.env.EXCALIDRAW_ACCEPTANCE_USER_IDLE_SECONDS ?? 3), renewSeconds: 1 }, new ClientLocalServices({ baseUrl: `http://127.0.0.1:${controlPort}`, token: credentials.larm }));
+const gateway = startHostedGateway({ hostname: "127.0.0.1", port: gatewayPort, serviceId: "excalidraw-host", webRoot: `${releaseRoot}/web`, clientTokens: [credentials.owner, credentials.other], apiToken, allowedEndpoints: [`http://127.0.0.1:${appPort}`], userIdleSeconds: Number(process.env.EXCALIDRAW_ACCEPTANCE_USER_IDLE_SECONDS ?? 3), renewSeconds: 1 }, new ClientLocalServices({ baseUrl: `http://127.0.0.1:${controlPort}`, token: credentials.larm }));
 await writeFile(`${privateRoot}/ready.json`, JSON.stringify({ gateway: `http://127.0.0.1:${gatewayPort}`, credentialsFile: credentialFile, storage: appConfig.dataRoot, releaseRoot }), { mode: 0o600 });
 console.log(JSON.stringify({ gateway: `http://127.0.0.1:${gatewayPort}`, storage: appConfig.dataRoot, mode: "isolated-acceptance", appInitially: manager.status("excalidraw-host").state }));
 const shutdown = async () => { clearInterval(timer); await gateway.close(); await manager.close(); await control.stop(); process.exit(0); };

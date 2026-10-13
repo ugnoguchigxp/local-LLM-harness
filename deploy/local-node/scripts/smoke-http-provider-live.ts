@@ -550,7 +550,7 @@ if (import.meta.main) {
       ...(process.env.LARM_MANAGEMENT_TOKEN
         ? { managementToken: process.env.LARM_MANAGEMENT_TOKEN }
         : {}),
-      model: process.env.LARM_HTTP_MODEL ?? "coding-default",
+      model: process.env.LARM_HTTP_MODEL ?? "ornith-1.5-strix-lean",
       ...(process.env.LARM_HTTP_ASR_MODEL ? { asrModel: process.env.LARM_HTTP_ASR_MODEL } : {}),
       ...(process.env.LARM_HTTP_TTS_MODEL ? { ttsModel: process.env.LARM_HTTP_TTS_MODEL } : {}),
       ...(process.env.LARM_HTTP_TTS_VOICE ? { ttsVoice: process.env.LARM_HTTP_TTS_VOICE } : {}),

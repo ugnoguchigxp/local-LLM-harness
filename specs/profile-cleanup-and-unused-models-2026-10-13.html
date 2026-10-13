@@ -1,0 +1,243 @@
+<article lang="ja">
+  <h1>旧profile 8件の削除と未使用モデル候補</h1>
+  <p>
+    2026年10月13日、利用者が直前に提示した8件のprofile・互換名の削除を了承した。 7個のcanonical
+    Agent Profile、2個のpublic selector、1個の互換aliasを取り除く。
+    同時に未使用モデル候補を調査するが、モデル本体の依頼は一覧提示までであり、重みは保管する。
+  </p>
+  <section id="profiles">
+    <h2>削除する8件と保持する構成</h2>
+    <ul>
+      <li><code>deep-reasoning-35b</code>：互換aliasのみ</li>
+      <li><code>saaa-qwen38</code></li>
+      <li><code>saaa-conversation-gemma4</code>：旧Gemma E4B構成</li>
+      <li><code>saaa-conversation-ornith15-image</code></li>
+      <li><code>saaa-conversation-ornith15-music</code></li>
+      <li><code>contextstill-decision-default-canary</code></li>
+      <li>
+        <code>backchannelLfm25Jp</code>とそのcanonical profile
+        <code>contextstill-backchannel-lfm25-jp-1.2b</code>
+      </li>
+      <li>
+        <code>backchannelGemma3</code>とそのcanonical profile
+        <code>contextstill-backchannel-gemma3-1b</code>
+      </li>
+    </ul>
+    <p>
+      public selectorのrequest schemaから評価用の2名も削除する。 比較ツールの既定候補を残すQwen 3.5
+      2Bに合わせる。 旧Gemmaが定義していた共有idleReleaseのYAML anchorは残るSAAAの定義へ移す。
+      残る18個のAgent Profileと11個のselectorを維持し、画像・音楽の公開selectorは保持する。
+      Strix・Strix-64k、Gemma 26Bと補助64K、ContextStill、coding-default、Granite、TTS、embedding、
+      System One、文言語判定の契約は変更しない。
+    </p>
+    <p>
+      profile削除とは別に、route・runtime・artifact catalogとモデルファイルは保管する。
+      古いモデルの直接routeや運用者の検証用途まで、profile削除だけで消してしまわない。
+      通常releaseへ適用し、retired profileのdiscoveryが404、評価用selectorの作成要求が400、
+      残るselectorのdiscoveryが200となることを確認する。
+    </p>
+  </section>
+  <section id="models">
+    <h2>追加承認された3 Profileの廃止と既定の統合</h2>
+    <p>
+      2026年10月13日、利用者が<code>coding-default</code>、旧<code>SAAA</code>のcanonical
+      Profile
+      <code>saaa-conversation-ornith15</code
+      >、補助<code>ornith1.5Strix-64k</code>の廃止を承認した。
+      <code>vulnWorkbench</code
+      >も後日作り直すため、そのselectorを残す必要はないとの確認がある。 3 canonical
+      Profileと<code>SAAA</code>、<code>ornith1.5Strix-64k</code>、
+      <code>vulnWorkbench</code>の3 selectorを削除し、接続request
+      schemaとOpenAPIのselector一覧からも外す。 残るcanonical Profileは15件、selectorは8件となる。
+    </p>
+    <p>
+      Eumenes用の<code>ornith1.5Strix</code>を既定Agent Profileにする。
+      <code>contextStill</code
+      >は維持し、両者のLLMは<code>ornith15-strix-conversation</code>を共有する。
+      既定のcapability route <code>llm-default</code>も同じruntimeへ向ける。
+      既定ProfileでもProviderごとのrouteは明示されているため、routeの<code>explicitOnly</code>は
+      暗黙のcapability選択だけを制約するように整理する。非既定Profileの暗黙route禁止は維持する。
+    </p>
+    <p>
+      旧Ornith用<code>ornith-general</code>はruntime定義と重みを保管し、preferred・warm
+      0に変更する。 現行Profileや既定routeから要求されない限り常駐させない。既存systemd
+      unitの書き換えは不要で、
+      そのruntimeのprojector常駐案も取り下げる。STRIXはprojectorを常駐し、1MのKV poolと4会話枠、
+      256Kの各会話上限を維持する。同じ主ProfileのLLM subset接続を4本作れば共有4枠を利用でき、
+      廃止した64K Profileを再導入する必要はない。
+    </p>
+    <p>
+      以前準備した5 Profile向け署名候補は適用を禁止した。今回の廃止と画像対応を合わせた新候補を、
+      稼働版を基準に独立したsourceで検証して署名付き更新へ渡す。旧selectorのdiscovery・作成拒否、
+      公開modelから旧名が消えること、既定modelと画像理解、EumenesとContextStillの共有runtimeを
+      本番で確認する。重み・外部ファイルの削除は行わない。
+    </p>
+    <h3>追加3 Profileの本番反映と検証結果</h3>
+    <p>
+      2026年10月13日、署名builderの全体checkを通過したcommit
+      <code>8be02d62ba8fed3287fa239f84890a5f188925ea</code>を既存activatorで本番反映した。 稼働config
+      revisionは<code>4abea02f5b10a1a22f0953068f078fd40106a2b7fe53285151d81c5012e9ce85</code>。 反映前にactivity
+      idle、allocation・request・mutation参照0を確認した。health readyと
+      既定<code>ornith1.5Strix</code>、canonical Profile 15件を確認した。
+      廃止したcanonical名・selectorのdiscoveryは404、public selectorでの接続作成は400となり、
+      <code>coding-default</code
+      >と旧<code>ornith-1.5-35b</code>は公開model一覧から消えた。
+    </p>
+    <p>
+      Eumenes用ProfileとContextStillのLLM subset、および既定公開model経由で、赤・青・緑・黄の
+      PNGを使った合計12件の画像判定に成功した。両Profileのallocationが同じ
+      <code>ornith15-strix-conversation</code>へ解決することも確認した。
+      残す主Profileだけで4本の独立sessionを作成し、1つのruntime共有、4並列SSE、独立した会話履歴、
+      5本目の待機、解放後の昇格、renew、解放後の資格情報失効が全て成功した。
+      新しい試験接続は解放済み。常駐参照が外れた旧<code>llama-server.service</code>も停止し、
+      ActiveState inactive・MainPID 0を確認した。モデルファイルは保管したままである。
+    </p>
+    <p>
+      主作業ツリーの全体checkはLARM本体770テスト、独立した配備候補は762テストを含め成功した。
+      以前の5件向け候補は<code>superseded</code>で適用を禁止している。
+      証跡は<code>/srv/ai/evidence/ornith-profile-retirement-20261013</code>、画像のLARM経由検証は
+      <code>/srv/ai/apps/larm-ornith-profile-retirement-20261013/live-evidence.json</code>に保存した。
+    </p>
+  </section>
+  <section id="model-candidates">
+    <h2>現在の標準構成から参照されないモデル候補</h2>
+    <table>
+      <caption>
+        モデル本体は保管中。サイズはGiB概算
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル・保管物</th>
+          <th scope="col">サイズ</th>
+          <th scope="col">候補理由・残る確認</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Gemma 4 E4B Q4_0とMTP</th>
+          <td>4.89</td>
+          <td>
+            削除した旧Gemma profileのモデル。残るprofileとdefault
+            routeから未参照。旧runtime・直接routeは残る
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LFM 2.5 1.2B JP Q4_K_M</th>
+          <td>0.68</td>
+          <td>削除したbackchannel比較候補。残るprofileから未参照</td>
+        </tr>
+        <tr>
+          <th scope="row">Gemma 3 1B Q4_K_M</th>
+          <td>0.75</td>
+          <td>削除したbackchannel比較候補。残るprofileから未参照</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 3.6 35B-A3B Q4_K_M</th>
+          <td>20.61</td>
+          <td>
+            残るprofileから未参照。直接routeとruntime定義は残るため、運用者の比較用途を確認する
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Ornith 1.5 35B Q5_K_M</th>
+          <td>23.61</td>
+          <td>
+            公式Q5比較版。現在のOrnith標準ROCmFP4およびSTRIX_LEANとは別。直接routeとruntime定義は残る
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Ornith Q6 ROCMFPX_AGENT評価版</th>
+          <td>30.86</td>
+          <td>
+            <code>ornith-trial-20261012/q6-agent</code>。現行LARMにはモデル・runtimeの登録なし
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Cohere Transcribe Q8評価版</th>
+          <td>2.25</td>
+          <td>ASR比較用。現行LARMには登録なし。実測で固有名詞欠落があり標準採用しなかった</td>
+        </tr>
+        <tr>
+          <th scope="row">Granite Q8の旧評価用コピー</th>
+          <td>2.38</td>
+          <td>
+            正式配置とSHA-256が一致する旧コピー。稼働中の<code>granite-asr</code>の重みを残して評価用コピーだけを検討
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">TTS評価用モデル群</th>
+          <td>27.91</td>
+          <td>
+            <code>tts-benchmark</code>。Qwen
+            Base／VoiceDesign／CustomVoice、s2-pro、Kokoro等。現行LARMから未参照。他の評価・アプリの使用は未確認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-VL 8B Q8とmmproj</th>
+          <td>9.19</td>
+          <td>
+            <code>Qwen/Qwen3-VL-8B-Instruct-GGUF</code
+            >。現行LARMから未参照。他アプリの視覚用途は未確認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">KittenTTS INT8評価版</th>
+          <td>0.026</td>
+          <td>現在の標準は別配置のFP32。INT8側は比較用</td>
+        </tr>
+        <tr>
+          <th scope="row">Inflect Nano v2評価版</th>
+          <td>0.015</td>
+          <td>現行LARMに登録なし</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      実体を確認した範囲は<code>/srv/ai/models</code>。 Qwen 3.6とOrnith
+      Q5の公開pathはsymlinkで、実体は<code>.larm-staging</code>にある。
+      symlink自体の数KiBではなく実体22.13 GBと25.35 GBを確認した。
+      管理対象artifactの削除を選ぶ場合は、route・runtime・release・staging
+      ownershipも一緒に整理する必要がある。
+    </p>
+  </section>
+  <section id="retained">
+    <h2>保持するモデルと条件付きの候補</h2>
+    <p>
+      Ornith STRIX_LEAN、通常Ornith ROCmFP4、Granite正式配置、Gemma 26B、 Qwen ASR 1.7B、Qwen 3.5
+      2B、VOICEVOX、KittenTTS FP32、Qwen TTS、 Ruri、Laya、multilingual
+      E5、画像用Qwen-ImageとVAE、音楽用ACE-Stepを保持する。
+      現行profile、fallback、補助サービスからの参照を追跡して区別した。
+    </p>
+    <p>
+      Qwen 3.8 worker／EfficientThinkは直近7日のLARM allocationが見つからないが、
+      NightWorkerやworker fallbackの設定から参照されるため、単に未使用として扱わない。
+      モデルの登録、現在ロードされたプロセス、実際の要求profileを区別する。
+      画像と音楽のモデルも、今動いていないことを理由に不要としない。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>確認範囲と反映</h2>
+    <p>
+      2026年10月13日11:18 JSTに反映を完了した。稼働releaseは
+      <code>9ea268d43bffb90863b2828aa6df558394539cf6</code>、configRevisionは
+      <code>18bda978640c5cc7ccc5d9b16eac959198b344a724ba899bde44f62cc191b120</code>。 署名releaseの全体checkと本番contract
+      verificationが成功した。 8名のdiscoveryは404、評価用selector 2名の作成要求は400、catalogは18
+      profilesとなった。
+      StrixとGemma双方のGranite短文・長文認識は200で正しく認識し、connection解放後は401となった。
+      モデルファイルの削除・移動は実施していない。
+    </p>
+    <p>
+      基点は稼働release <code>f88c58d2c57806c79b43b0b47e74c851e30993cf</code>。
+      独立sourceから削除に必要な変更だけを正式releaseへ反映する。
+      全体check、削除した8名の404、残るselectorの200、StrixからのGranite ASRを確認する。
+      稼働profileとmetadataの直近7日分を使った調査で、consumerのDB・会話本文・音声を取得していない。
+      他アプリの使用まで確認した結果ではないため、モデル表は削除候補として提示する。
+      サイズの合計は共有block・hardlinkなどを考慮した確定解放容量ではない。
+    </p>
+    <p>
+      削除前snapshot、モデル実体一覧、API確認、buildログは外部の
+      <code>/srv/ai/evidence/profile-cleanup-20261013</code>へ保存する。
+      前releaseと重みを保持し、問題があれば設定を復元できるようにする。
+    </p>
+  </section>
+</article>

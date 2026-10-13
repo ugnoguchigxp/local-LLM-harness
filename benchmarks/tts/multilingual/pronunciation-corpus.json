@@ -1,0 +1,10 @@
+[
+  {"id":"ja-short","language":"Japanese","length":"short","text":"こんにちは。今日はいい天気ですね。"},
+  {"id":"en-short","language":"English","length":"short","text":"Hello. The weather is lovely today."},
+  {"id":"ja-medium","language":"Japanese","length":"medium","text":"次の会議は午後三時からです。資料を確認して、気になる点があれば教えてください。"},
+  {"id":"en-medium","language":"English","length":"medium","text":"Our next meeting starts at three in the afternoon. Please review the documents and let me know if you have any questions."},
+  {"id":"mixed-raw","language":"Japanese","length":"mixed","text":"今日の議題は、OpenAI APIとGitHub Actionsの連携です。まずREADMEを確認してから、Hello worldのサンプルを実行してください。"},
+  {"id":"mixed-normalized","language":"Japanese","length":"mixed","text":"今日の議題は、オープンエーアイのエーピーアイとギットハブ・アクションズの連携です。まずリードミーを確認してから、ハロー・ワールドのサンプルを実行してください。"},
+  {"id":"ja-numbers","language":"Japanese","length":"medium","text":"10月12日の午後3時30分に集合です。料金は1,280円で、割引率は12.5パーセントです。バージョンは0.6と1.7です。"},
+  {"id":"en-numbers","language":"English","length":"medium","text":"Please meet us on October twelfth at three thirty p.m. The price is twelve dollars and eighty cents. Compare version zero point six with version one point seven."}
+]

@@ -1,0 +1,400 @@
+{"id": "train-everyday-01-ja", "split": "train", "conversation_id": "everyday-01", "template_group": "everyday", "language": "ja", "text": "今朝は目覚ましが鳴る前に起きました。", "synthetic": true}
+{"id": "train-everyday-01-en", "split": "train", "conversation_id": "everyday-01", "template_group": "everyday", "language": "en", "text": "I woke up before my alarm went off this morning.", "synthetic": true}
+{"id": "train-everyday-02-ja", "split": "train", "conversation_id": "everyday-02", "template_group": "everyday", "language": "ja", "text": "駅に向かう途中で友人に会いました。", "synthetic": true}
+{"id": "train-everyday-02-en", "split": "train", "conversation_id": "everyday-02", "template_group": "everyday", "language": "en", "text": "I met a friend on my way to the station.", "synthetic": true}
+{"id": "train-everyday-03-ja", "split": "train", "conversation_id": "everyday-03", "template_group": "everyday", "language": "ja", "text": "午後から少し買い物に出かけます。", "synthetic": true}
+{"id": "train-everyday-03-en", "split": "train", "conversation_id": "everyday-03", "template_group": "everyday", "language": "en", "text": "I am going out to do some shopping this afternoon.", "synthetic": true}
+{"id": "train-everyday-04-ja", "split": "train", "conversation_id": "everyday-04", "template_group": "everyday", "language": "ja", "text": "帰宅したらまず手を洗います。", "synthetic": true}
+{"id": "train-everyday-04-en", "split": "train", "conversation_id": "everyday-04", "template_group": "everyday", "language": "en", "text": "The first thing I do when I get home is wash my hands.", "synthetic": true}
+{"id": "train-everyday-05-ja", "split": "train", "conversation_id": "everyday-05", "template_group": "everyday", "language": "ja", "text": "今日はいつもより早く眠れそうです。", "synthetic": true}
+{"id": "train-everyday-05-en", "split": "train", "conversation_id": "everyday-05", "template_group": "everyday", "language": "en", "text": "I think I can go to bed earlier than usual today.", "synthetic": true}
+{"id": "train-everyday-06-ja", "split": "train", "conversation_id": "everyday-06", "template_group": "everyday", "language": "ja", "text": "鍵をどこに置いたか思い出せません。", "synthetic": true}
+{"id": "train-everyday-06-en", "split": "train", "conversation_id": "everyday-06", "template_group": "everyday", "language": "en", "text": "I cannot remember where I put my keys.", "synthetic": true}
+{"id": "train-everyday-07-ja", "split": "train", "conversation_id": "everyday-07", "template_group": "everyday", "language": "ja", "text": "出かける前に財布を確認してください。", "synthetic": true}
+{"id": "train-everyday-07-en", "split": "train", "conversation_id": "everyday-07", "template_group": "everyday", "language": "en", "text": "Please check that you have your wallet before leaving.", "synthetic": true}
+{"id": "train-everyday-08-ja", "split": "train", "conversation_id": "everyday-08", "template_group": "everyday", "language": "ja", "text": "明日の朝は私が窓を開けます。", "synthetic": true}
+{"id": "train-everyday-08-en", "split": "train", "conversation_id": "everyday-08", "template_group": "everyday", "language": "en", "text": "I will open the window tomorrow morning.", "synthetic": true}
+{"id": "train-everyday-09-ja", "split": "train", "conversation_id": "everyday-09", "template_group": "everyday", "language": "ja", "text": "週末は何も予定を入れていません。", "synthetic": true}
+{"id": "train-everyday-09-en", "split": "train", "conversation_id": "everyday-09", "template_group": "everyday", "language": "en", "text": "I have not made any plans for the weekend.", "synthetic": true}
+{"id": "train-everyday-10-ja", "split": "train", "conversation_id": "everyday-10", "template_group": "everyday", "language": "ja", "text": "電話が鳴りましたが、すぐには出られませんでした。", "synthetic": true}
+{"id": "train-everyday-10-en", "split": "train", "conversation_id": "everyday-10", "template_group": "everyday", "language": "en", "text": "The phone rang, but I could not answer it right away.", "synthetic": true}
+{"id": "train-everyday-11-ja", "split": "train", "conversation_id": "everyday-11", "template_group": "everyday", "language": "ja", "text": "朝食の後で近所を散歩しました。", "synthetic": true}
+{"id": "train-everyday-11-en", "split": "train", "conversation_id": "everyday-11", "template_group": "everyday", "language": "en", "text": "I took a walk around the neighborhood after breakfast.", "synthetic": true}
+{"id": "train-everyday-12-ja", "split": "train", "conversation_id": "everyday-12", "template_group": "everyday", "language": "ja", "text": "午後の予定を一つ取り消しました。", "synthetic": true}
+{"id": "train-everyday-12-en", "split": "train", "conversation_id": "everyday-12", "template_group": "everyday", "language": "en", "text": "I canceled one of my appointments for the afternoon.", "synthetic": true}
+{"id": "train-everyday-13-ja", "split": "train", "conversation_id": "everyday-13", "template_group": "everyday", "language": "ja", "text": "靴を履いたところで忘れ物に気づきました。", "synthetic": true}
+{"id": "train-everyday-13-en", "split": "train", "conversation_id": "everyday-13", "template_group": "everyday", "language": "en", "text": "I noticed I had forgotten something just as I put on my shoes.", "synthetic": true}
+{"id": "train-everyday-14-ja", "split": "train", "conversation_id": "everyday-14", "template_group": "everyday", "language": "ja", "text": "今夜は家でゆっくり過ごしたいです。", "synthetic": true}
+{"id": "train-everyday-14-en", "split": "train", "conversation_id": "everyday-14", "template_group": "everyday", "language": "en", "text": "I want to spend a quiet evening at home tonight.", "synthetic": true}
+{"id": "train-everyday-15-ja", "split": "train", "conversation_id": "everyday-15", "template_group": "everyday", "language": "ja", "text": "いつもの道が工事中だったので遠回りしました。", "synthetic": true}
+{"id": "train-everyday-15-en", "split": "train", "conversation_id": "everyday-15", "template_group": "everyday", "language": "en", "text": "I took a detour because my usual route was under construction.", "synthetic": true}
+{"id": "train-everyday-16-ja", "split": "train", "conversation_id": "everyday-16", "template_group": "everyday", "language": "ja", "text": "小さな用事でも手帳に書くようにしています。", "synthetic": true}
+{"id": "train-everyday-16-en", "split": "train", "conversation_id": "everyday-16", "template_group": "everyday", "language": "en", "text": "I try to write even small errands in my planner.", "synthetic": true}
+{"id": "train-everyday-17-ja", "split": "train", "conversation_id": "everyday-17", "template_group": "everyday", "language": "ja", "text": "昼休みに郵便局まで歩いてきました。", "synthetic": true}
+{"id": "train-everyday-17-en", "split": "train", "conversation_id": "everyday-17", "template_group": "everyday", "language": "en", "text": "I walked to the post office during my lunch break.", "synthetic": true}
+{"id": "train-everyday-18-ja", "split": "train", "conversation_id": "everyday-18", "template_group": "everyday", "language": "ja", "text": "急がなくても、約束の時間には間に合います。", "synthetic": true}
+{"id": "train-everyday-18-en", "split": "train", "conversation_id": "everyday-18", "template_group": "everyday", "language": "en", "text": "We can make it to the appointment without rushing.", "synthetic": true}
+{"id": "train-everyday-19-ja", "split": "train", "conversation_id": "everyday-19", "template_group": "everyday", "language": "ja", "text": "先に出発して、入口で待っていてください。", "synthetic": true}
+{"id": "train-everyday-19-en", "split": "train", "conversation_id": "everyday-19", "template_group": "everyday", "language": "en", "text": "Please leave ahead of me and wait at the entrance.", "synthetic": true}
+{"id": "train-everyday-20-ja", "split": "train", "conversation_id": "everyday-20", "template_group": "everyday", "language": "ja", "text": "少し休んでから次の用事を済ませます。", "synthetic": true}
+{"id": "train-everyday-20-en", "split": "train", "conversation_id": "everyday-20", "template_group": "everyday", "language": "en", "text": "I will take care of the next errand after a short rest.", "synthetic": true}
+{"id": "train-food-01-ja", "split": "train", "conversation_id": "food-01", "template_group": "food", "language": "ja", "text": "冷蔵庫に残っている野菜でスープを作ります。", "synthetic": true}
+{"id": "train-food-01-en", "split": "train", "conversation_id": "food-01", "template_group": "food", "language": "en", "text": "I will make soup with the vegetables left in the refrigerator.", "synthetic": true}
+{"id": "train-food-02-ja", "split": "train", "conversation_id": "food-02", "template_group": "food", "language": "ja", "text": "お湯が沸いたら麺を入れてください。", "synthetic": true}
+{"id": "train-food-02-en", "split": "train", "conversation_id": "food-02", "template_group": "food", "language": "en", "text": "Add the noodles when the water comes to a boil.", "synthetic": true}
+{"id": "train-food-03-ja", "split": "train", "conversation_id": "food-03", "template_group": "food", "language": "ja", "text": "このパンは外が硬くて中が柔らかいです。", "synthetic": true}
+{"id": "train-food-03-en", "split": "train", "conversation_id": "food-03", "template_group": "food", "language": "en", "text": "This bread is crusty on the outside and soft inside.", "synthetic": true}
+{"id": "train-food-04-ja", "split": "train", "conversation_id": "food-04", "template_group": "food", "language": "ja", "text": "砂糖を少し減らしたら、ちょうどよい甘さになりました。", "synthetic": true}
+{"id": "train-food-04-en", "split": "train", "conversation_id": "food-04", "template_group": "food", "language": "en", "text": "Reducing the sugar a little gave it just the right sweetness.", "synthetic": true}
+{"id": "train-food-05-ja", "split": "train", "conversation_id": "food-05", "template_group": "food", "language": "ja", "text": "夕食には魚を焼こうと思っています。", "synthetic": true}
+{"id": "train-food-05-en", "split": "train", "conversation_id": "food-05", "template_group": "food", "language": "en", "text": "I am thinking of grilling fish for dinner.", "synthetic": true}
+{"id": "train-food-06-ja", "split": "train", "conversation_id": "food-06", "template_group": "food", "language": "ja", "text": "塩を入れる前に味を見ましょう。", "synthetic": true}
+{"id": "train-food-06-en", "split": "train", "conversation_id": "food-06", "template_group": "food", "language": "en", "text": "Let us taste it before adding salt.", "synthetic": true}
+{"id": "train-food-07-ja", "split": "train", "conversation_id": "food-07", "template_group": "food", "language": "ja", "text": "温かいうちに召し上がってください。", "synthetic": true}
+{"id": "train-food-07-en", "split": "train", "conversation_id": "food-07", "template_group": "food", "language": "en", "text": "Please enjoy it while it is still warm.", "synthetic": true}
+{"id": "train-food-08-ja", "split": "train", "conversation_id": "food-08", "template_group": "food", "language": "ja", "text": "注文した料理はまだ来ていません。", "synthetic": true}
+{"id": "train-food-08-en", "split": "train", "conversation_id": "food-08", "template_group": "food", "language": "en", "text": "The food I ordered has not arrived yet.", "synthetic": true}
+{"id": "train-food-09-ja", "split": "train", "conversation_id": "food-09", "template_group": "food", "language": "ja", "text": "この店では持ち帰りもできますか。", "synthetic": true}
+{"id": "train-food-09-en", "split": "train", "conversation_id": "food-09", "template_group": "food", "language": "en", "text": "Does this restaurant offer takeout as well?", "synthetic": true}
+{"id": "train-food-10-ja", "split": "train", "conversation_id": "food-10", "template_group": "food", "language": "ja", "text": "辛いものが苦手なので、別の料理にします。", "synthetic": true}
+{"id": "train-food-10-en", "split": "train", "conversation_id": "food-10", "template_group": "food", "language": "en", "text": "I do not handle spicy food well, so I will choose something else.", "synthetic": true}
+{"id": "train-food-11-ja", "split": "train", "conversation_id": "food-11", "template_group": "food", "language": "ja", "text": "コーヒーにはミルクだけ入れます。", "synthetic": true}
+{"id": "train-food-11-en", "split": "train", "conversation_id": "food-11", "template_group": "food", "language": "en", "text": "I add only milk to my coffee.", "synthetic": true}
+{"id": "train-food-12-ja", "split": "train", "conversation_id": "food-12", "template_group": "food", "language": "ja", "text": "炊きたてのご飯を小さな茶碗によそいました。", "synthetic": true}
+{"id": "train-food-12-en", "split": "train", "conversation_id": "food-12", "template_group": "food", "language": "en", "text": "I served the freshly cooked rice in a small bowl.", "synthetic": true}
+{"id": "train-food-13-ja", "split": "train", "conversation_id": "food-13", "template_group": "food", "language": "ja", "text": "昨日のカレーを昼食に温め直しました。", "synthetic": true}
+{"id": "train-food-13-en", "split": "train", "conversation_id": "food-13", "template_group": "food", "language": "en", "text": "I reheated yesterday's curry for lunch.", "synthetic": true}
+{"id": "train-food-14-ja", "split": "train", "conversation_id": "food-14", "template_group": "food", "language": "ja", "text": "果物を切るための小さなナイフを探しています。", "synthetic": true}
+{"id": "train-food-14-en", "split": "train", "conversation_id": "food-14", "template_group": "food", "language": "en", "text": "I am looking for a small knife to cut the fruit.", "synthetic": true}
+{"id": "train-food-15-ja", "split": "train", "conversation_id": "food-15", "template_group": "food", "language": "ja", "text": "材料を全部そろえてから調理を始めます。", "synthetic": true}
+{"id": "train-food-15-en", "split": "train", "conversation_id": "food-15", "template_group": "food", "language": "en", "text": "I start cooking after gathering all the ingredients.", "synthetic": true}
+{"id": "train-food-16-ja", "split": "train", "conversation_id": "food-16", "template_group": "food", "language": "ja", "text": "玉ねぎが透き通るまでゆっくり炒めます。", "synthetic": true}
+{"id": "train-food-16-en", "split": "train", "conversation_id": "food-16", "template_group": "food", "language": "en", "text": "Cook the onions slowly until they turn translucent.", "synthetic": true}
+{"id": "train-food-17-ja", "split": "train", "conversation_id": "food-17", "template_group": "food", "language": "ja", "text": "食器を下げてもよろしいでしょうか。", "synthetic": true}
+{"id": "train-food-17-en", "split": "train", "conversation_id": "food-17", "template_group": "food", "language": "en", "text": "May I clear the dishes?", "synthetic": true}
+{"id": "train-food-18-ja", "split": "train", "conversation_id": "food-18", "template_group": "food", "language": "ja", "text": "お弁当の中身が片寄らないように詰めました。", "synthetic": true}
+{"id": "train-food-18-en", "split": "train", "conversation_id": "food-18", "template_group": "food", "language": "en", "text": "I packed the lunch box so its contents would stay in place.", "synthetic": true}
+{"id": "train-food-19-ja", "split": "train", "conversation_id": "food-19", "template_group": "food", "language": "ja", "text": "食後に温かいお茶を飲むのが好きです。", "synthetic": true}
+{"id": "train-food-19-en", "split": "train", "conversation_id": "food-19", "template_group": "food", "language": "en", "text": "I like drinking warm tea after a meal.", "synthetic": true}
+{"id": "train-food-20-ja", "split": "train", "conversation_id": "food-20", "template_group": "food", "language": "ja", "text": "予約した席を窓側に変更できますか。", "synthetic": true}
+{"id": "train-food-20-en", "split": "train", "conversation_id": "food-20", "template_group": "food", "language": "en", "text": "Could you change our reserved table to one by the window?", "synthetic": true}
+{"id": "train-transport-01-ja", "split": "train", "conversation_id": "transport-01", "template_group": "transport", "language": "ja", "text": "次の電車は三番ホームから出ます。", "synthetic": true}
+{"id": "train-transport-01-en", "split": "train", "conversation_id": "transport-01", "template_group": "transport", "language": "en", "text": "The next train leaves from platform three.", "synthetic": true}
+{"id": "train-transport-02-ja", "split": "train", "conversation_id": "transport-02", "template_group": "transport", "language": "ja", "text": "乗り換えには少なくとも十分かかります。", "synthetic": true}
+{"id": "train-transport-02-en", "split": "train", "conversation_id": "transport-02", "template_group": "transport", "language": "en", "text": "The transfer takes at least ten minutes.", "synthetic": true}
+{"id": "train-transport-03-ja", "split": "train", "conversation_id": "transport-03", "template_group": "transport", "language": "ja", "text": "バス停の前には長い列ができていました。", "synthetic": true}
+{"id": "train-transport-03-en", "split": "train", "conversation_id": "transport-03", "template_group": "transport", "language": "en", "text": "There was a long line in front of the bus stop.", "synthetic": true}
+{"id": "train-transport-04-ja", "split": "train", "conversation_id": "transport-04", "template_group": "transport", "language": "ja", "text": "切符を買う機械が一台故障しています。", "synthetic": true}
+{"id": "train-transport-04-en", "split": "train", "conversation_id": "transport-04", "template_group": "transport", "language": "en", "text": "One of the ticket machines is out of order.", "synthetic": true}
+{"id": "train-transport-05-ja", "split": "train", "conversation_id": "transport-05", "template_group": "transport", "language": "ja", "text": "空港へはどの路線に乗ればよいですか。", "synthetic": true}
+{"id": "train-transport-05-en", "split": "train", "conversation_id": "transport-05", "template_group": "transport", "language": "en", "text": "Which line should I take to the airport?", "synthetic": true}
+{"id": "train-transport-06-ja", "split": "train", "conversation_id": "transport-06", "template_group": "transport", "language": "ja", "text": "終点まで乗ってから反対側に渡ります。", "synthetic": true}
+{"id": "train-transport-06-en", "split": "train", "conversation_id": "transport-06", "template_group": "transport", "language": "en", "text": "Ride to the last stop and then cross to the other side.", "synthetic": true}
+{"id": "train-transport-07-ja", "split": "train", "conversation_id": "transport-07", "template_group": "transport", "language": "ja", "text": "運転中は携帯電話を手に取りません。", "synthetic": true}
+{"id": "train-transport-07-en", "split": "train", "conversation_id": "transport-07", "template_group": "transport", "language": "en", "text": "I do not pick up my phone while driving.", "synthetic": true}
+{"id": "train-transport-08-ja", "split": "train", "conversation_id": "transport-08", "template_group": "transport", "language": "ja", "text": "自転車の空気を入れてから出発しました。", "synthetic": true}
+{"id": "train-transport-08-en", "split": "train", "conversation_id": "transport-08", "template_group": "transport", "language": "en", "text": "I pumped up the bicycle tires before setting off.", "synthetic": true}
+{"id": "train-transport-09-ja", "split": "train", "conversation_id": "transport-09", "template_group": "transport", "language": "ja", "text": "この交差点を左に曲がってください。", "synthetic": true}
+{"id": "train-transport-09-en", "split": "train", "conversation_id": "transport-09", "template_group": "transport", "language": "en", "text": "Please turn left at this intersection.", "synthetic": true}
+{"id": "train-transport-10-ja", "split": "train", "conversation_id": "transport-10", "template_group": "transport", "language": "ja", "text": "目的地の手前でタクシーを降りました。", "synthetic": true}
+{"id": "train-transport-10-en", "split": "train", "conversation_id": "transport-10", "template_group": "transport", "language": "en", "text": "I got out of the taxi just before reaching the destination.", "synthetic": true}
+{"id": "train-transport-11-ja", "split": "train", "conversation_id": "transport-11", "template_group": "transport", "language": "ja", "text": "道路が混んでいるので到着が遅れそうです。", "synthetic": true}
+{"id": "train-transport-11-en", "split": "train", "conversation_id": "transport-11", "template_group": "transport", "language": "en", "text": "Traffic is heavy, so it looks like I will arrive late.", "synthetic": true}
+{"id": "train-transport-12-ja", "split": "train", "conversation_id": "transport-12", "template_group": "transport", "language": "ja", "text": "改札を出たところに案内板があります。", "synthetic": true}
+{"id": "train-transport-12-en", "split": "train", "conversation_id": "transport-12", "template_group": "transport", "language": "en", "text": "There is an information board just outside the ticket gates.", "synthetic": true}
+{"id": "train-transport-13-ja", "split": "train", "conversation_id": "transport-13", "template_group": "transport", "language": "ja", "text": "座席の番号をもう一度確認しましょう。", "synthetic": true}
+{"id": "train-transport-13-en", "split": "train", "conversation_id": "transport-13", "template_group": "transport", "language": "en", "text": "Let us check the seat numbers again.", "synthetic": true}
+{"id": "train-transport-14-ja", "split": "train", "conversation_id": "transport-14", "template_group": "transport", "language": "ja", "text": "急行はこの駅には停車しません。", "synthetic": true}
+{"id": "train-transport-14-en", "split": "train", "conversation_id": "transport-14", "template_group": "transport", "language": "en", "text": "The express train does not stop at this station.", "synthetic": true}
+{"id": "train-transport-15-ja", "split": "train", "conversation_id": "transport-15", "template_group": "transport", "language": "ja", "text": "小さな荷物は膝の上に置きました。", "synthetic": true}
+{"id": "train-transport-15-en", "split": "train", "conversation_id": "transport-15", "template_group": "transport", "language": "en", "text": "I kept my small bag on my lap.", "synthetic": true}
+{"id": "train-transport-16-ja", "split": "train", "conversation_id": "transport-16", "template_group": "transport", "language": "ja", "text": "帰りの切符も一緒に購入しました。", "synthetic": true}
+{"id": "train-transport-16-en", "split": "train", "conversation_id": "transport-16", "template_group": "transport", "language": "en", "text": "I bought the return ticket at the same time.", "synthetic": true}
+{"id": "train-transport-17-ja", "split": "train", "conversation_id": "transport-17", "template_group": "transport", "language": "ja", "text": "雨の日は歩道が滑りやすくなります。", "synthetic": true}
+{"id": "train-transport-17-en", "split": "train", "conversation_id": "transport-17", "template_group": "transport", "language": "en", "text": "The sidewalk gets slippery on rainy days.", "synthetic": true}
+{"id": "train-transport-18-ja", "split": "train", "conversation_id": "transport-18", "template_group": "transport", "language": "ja", "text": "出発時刻が掲示板に表示されました。", "synthetic": true}
+{"id": "train-transport-18-en", "split": "train", "conversation_id": "transport-18", "template_group": "transport", "language": "en", "text": "The departure time appeared on the board.", "synthetic": true}
+{"id": "train-transport-19-ja", "split": "train", "conversation_id": "transport-19", "template_group": "transport", "language": "ja", "text": "車を降りるときに傘を忘れました。", "synthetic": true}
+{"id": "train-transport-19-en", "split": "train", "conversation_id": "transport-19", "template_group": "transport", "language": "en", "text": "I forgot my umbrella when getting out of the car.", "synthetic": true}
+{"id": "train-transport-20-ja", "split": "train", "conversation_id": "transport-20", "template_group": "transport", "language": "ja", "text": "駅の出口が多くて、少し迷いました。", "synthetic": true}
+{"id": "train-transport-20-en", "split": "train", "conversation_id": "transport-20", "template_group": "transport", "language": "en", "text": "I got a little lost because the station had so many exits.", "synthetic": true}
+{"id": "train-work-01-ja", "split": "train", "conversation_id": "work-01", "template_group": "work", "language": "ja", "text": "会議の資料を全員に共有しました。", "synthetic": true}
+{"id": "train-work-01-en", "split": "train", "conversation_id": "work-01", "template_group": "work", "language": "en", "text": "I shared the meeting materials with everyone.", "synthetic": true}
+{"id": "train-work-02-ja", "split": "train", "conversation_id": "work-02", "template_group": "work", "language": "ja", "text": "この件は担当者に確認してから返事をします。", "synthetic": true}
+{"id": "train-work-02-en", "split": "train", "conversation_id": "work-02", "template_group": "work", "language": "en", "text": "I will reply after checking this with the person responsible.", "synthetic": true}
+{"id": "train-work-03-ja", "split": "train", "conversation_id": "work-03", "template_group": "work", "language": "ja", "text": "締め切りを一日だけ延ばしてもらえますか。", "synthetic": true}
+{"id": "train-work-03-en", "split": "train", "conversation_id": "work-03", "template_group": "work", "language": "en", "text": "Could you extend the deadline by just one day?", "synthetic": true}
+{"id": "train-work-04-ja", "split": "train", "conversation_id": "work-04", "template_group": "work", "language": "ja", "text": "午前の会議は予定より早く終わりました。", "synthetic": true}
+{"id": "train-work-04-en", "split": "train", "conversation_id": "work-04", "template_group": "work", "language": "en", "text": "The morning meeting ended earlier than planned.", "synthetic": true}
+{"id": "train-work-05-ja", "split": "train", "conversation_id": "work-05", "template_group": "work", "language": "ja", "text": "作業の優先順位を一緒に決めましょう。", "synthetic": true}
+{"id": "train-work-05-en", "split": "train", "conversation_id": "work-05", "template_group": "work", "language": "en", "text": "Let us decide on the priorities together.", "synthetic": true}
+{"id": "train-work-06-ja", "split": "train", "conversation_id": "work-06", "template_group": "work", "language": "ja", "text": "見積もりには送料も含まれています。", "synthetic": true}
+{"id": "train-work-06-en", "split": "train", "conversation_id": "work-06", "template_group": "work", "language": "en", "text": "The estimate includes the shipping cost.", "synthetic": true}
+{"id": "train-work-07-ja", "split": "train", "conversation_id": "work-07", "template_group": "work", "language": "ja", "text": "書類の最後に署名をお願いします。", "synthetic": true}
+{"id": "train-work-07-en", "split": "train", "conversation_id": "work-07", "template_group": "work", "language": "en", "text": "Please sign at the end of the document.", "synthetic": true}
+{"id": "train-work-08-ja", "split": "train", "conversation_id": "work-08", "template_group": "work", "language": "ja", "text": "担当が変わったことを先方へ伝えました。", "synthetic": true}
+{"id": "train-work-08-en", "split": "train", "conversation_id": "work-08", "template_group": "work", "language": "en", "text": "I informed the client that the person in charge had changed.", "synthetic": true}
+{"id": "train-work-09-ja", "split": "train", "conversation_id": "work-09", "template_group": "work", "language": "ja", "text": "まだ確認していない項目が二つあります。", "synthetic": true}
+{"id": "train-work-09-en", "split": "train", "conversation_id": "work-09", "template_group": "work", "language": "en", "text": "There are two items I have not checked yet.", "synthetic": true}
+{"id": "train-work-10-ja", "split": "train", "conversation_id": "work-10", "template_group": "work", "language": "ja", "text": "休憩の後で残りの作業に取りかかります。", "synthetic": true}
+{"id": "train-work-10-en", "split": "train", "conversation_id": "work-10", "template_group": "work", "language": "en", "text": "I will begin the remaining work after the break.", "synthetic": true}
+{"id": "train-work-11-ja", "split": "train", "conversation_id": "work-11", "template_group": "work", "language": "ja", "text": "この数字は前の月と比べる必要があります。", "synthetic": true}
+{"id": "train-work-11-en", "split": "train", "conversation_id": "work-11", "template_group": "work", "language": "en", "text": "We need to compare this figure with the previous month.", "synthetic": true}
+{"id": "train-work-12-ja", "split": "train", "conversation_id": "work-12", "template_group": "work", "language": "ja", "text": "議事録に決定事項だけをまとめてください。", "synthetic": true}
+{"id": "train-work-12-en", "split": "train", "conversation_id": "work-12", "template_group": "work", "language": "en", "text": "Please summarize only the decisions in the meeting minutes.", "synthetic": true}
+{"id": "train-work-13-ja", "split": "train", "conversation_id": "work-13", "template_group": "work", "language": "ja", "text": "途中までできた資料を先に送ります。", "synthetic": true}
+{"id": "train-work-13-en", "split": "train", "conversation_id": "work-13", "template_group": "work", "language": "en", "text": "I will send the partially finished materials first.", "synthetic": true}
+{"id": "train-work-14-ja", "split": "train", "conversation_id": "work-14", "template_group": "work", "language": "ja", "text": "新しい担当者へ手順を説明しました。", "synthetic": true}
+{"id": "train-work-14-en", "split": "train", "conversation_id": "work-14", "template_group": "work", "language": "en", "text": "I explained the procedure to the new person in charge.", "synthetic": true}
+{"id": "train-work-15-ja", "split": "train", "conversation_id": "work-15", "template_group": "work", "language": "ja", "text": "不明な点は遠慮なく質問してください。", "synthetic": true}
+{"id": "train-work-15-en", "split": "train", "conversation_id": "work-15", "template_group": "work", "language": "en", "text": "Feel free to ask about anything that is unclear.", "synthetic": true}
+{"id": "train-work-16-ja", "split": "train", "conversation_id": "work-16", "template_group": "work", "language": "ja", "text": "会議室を午後二時から予約しています。", "synthetic": true}
+{"id": "train-work-16-en", "split": "train", "conversation_id": "work-16", "template_group": "work", "language": "en", "text": "I have reserved the meeting room from two in the afternoon.", "synthetic": true}
+{"id": "train-work-17-ja", "split": "train", "conversation_id": "work-17", "template_group": "work", "language": "ja", "text": "電話では伝えにくいので、文章にまとめます。", "synthetic": true}
+{"id": "train-work-17-en", "split": "train", "conversation_id": "work-17", "template_group": "work", "language": "en", "text": "It is difficult to explain over the phone, so I will put it in writing.", "synthetic": true}
+{"id": "train-work-18-ja", "split": "train", "conversation_id": "work-18", "template_group": "work", "language": "ja", "text": "結論から先に説明していただけますか。", "synthetic": true}
+{"id": "train-work-18-en", "split": "train", "conversation_id": "work-18", "template_group": "work", "language": "en", "text": "Could you explain the conclusion first?", "synthetic": true}
+{"id": "train-work-19-ja", "split": "train", "conversation_id": "work-19", "template_group": "work", "language": "ja", "text": "持ち帰った課題を次回までに整理します。", "synthetic": true}
+{"id": "train-work-19-en", "split": "train", "conversation_id": "work-19", "template_group": "work", "language": "en", "text": "I will organize the issues we took away before the next meeting.", "synthetic": true}
+{"id": "train-work-20-ja", "split": "train", "conversation_id": "work-20", "template_group": "work", "language": "ja", "text": "今日は予定どおりに仕事を終えられました。", "synthetic": true}
+{"id": "train-work-20-en", "split": "train", "conversation_id": "work-20", "template_group": "work", "language": "en", "text": "I finished work on schedule today.", "synthetic": true}
+{"id": "train-software-01-ja", "split": "train", "conversation_id": "software-01", "template_group": "software", "language": "ja", "text": "設定画面で通知を無効にしてください。", "synthetic": true}
+{"id": "train-software-01-en", "split": "train", "conversation_id": "software-01", "template_group": "software", "language": "en", "text": "Please disable notifications in the settings screen.", "synthetic": true}
+{"id": "train-software-02-ja", "split": "train", "conversation_id": "software-02", "template_group": "software", "language": "ja", "text": "保存する前にファイル名を確認します。", "synthetic": true}
+{"id": "train-software-02-en", "split": "train", "conversation_id": "software-02", "template_group": "software", "language": "en", "text": "I check the file name before saving.", "synthetic": true}
+{"id": "train-software-03-ja", "split": "train", "conversation_id": "software-03", "template_group": "software", "language": "ja", "text": "GitHubに修正内容を送信しました。", "synthetic": true}
+{"id": "train-software-03-en", "split": "train", "conversation_id": "software-03", "template_group": "software", "language": "en", "text": "I submitted the changes to GitHub.", "synthetic": true}
+{"id": "train-software-04-ja", "split": "train", "conversation_id": "software-04", "template_group": "software", "language": "ja", "text": "ブラウザーを閉じてもダウンロードは続きますか。", "synthetic": true}
+{"id": "train-software-04-en", "split": "train", "conversation_id": "software-04", "template_group": "software", "language": "en", "text": "Will the download continue if I close the browser?", "synthetic": true}
+{"id": "train-software-05-ja", "split": "train", "conversation_id": "software-05", "template_group": "software", "language": "ja", "text": "APIの応答には必要な項目が足りません。", "synthetic": true}
+{"id": "train-software-05-en", "split": "train", "conversation_id": "software-05", "template_group": "software", "language": "en", "text": "The API response is missing a required field.", "synthetic": true}
+{"id": "train-software-06-ja", "split": "train", "conversation_id": "software-06", "template_group": "software", "language": "ja", "text": "画面に「Save changes」と表示されています。", "synthetic": true}
+{"id": "train-software-06-en", "split": "train", "conversation_id": "software-06", "template_group": "software", "language": "en", "text": "The screen says \"Save changes\".", "synthetic": true}
+{"id": "train-software-07-ja", "split": "train", "conversation_id": "software-07", "template_group": "software", "language": "ja", "text": "更新後も以前の設定を引き継ぎました。", "synthetic": true}
+{"id": "train-software-07-en", "split": "train", "conversation_id": "software-07", "template_group": "software", "language": "en", "text": "The previous settings were retained after the update.", "synthetic": true}
+{"id": "train-software-08-ja", "split": "train", "conversation_id": "software-08", "template_group": "software", "language": "ja", "text": "パスワードを忘れた場合はこちらを開いてください。", "synthetic": true}
+{"id": "train-software-08-en", "split": "train", "conversation_id": "software-08", "template_group": "software", "language": "en", "text": "Open this page if you have forgotten your password.", "synthetic": true}
+{"id": "train-software-09-ja", "split": "train", "conversation_id": "software-09", "template_group": "software", "language": "ja", "text": "読み込みが終わるまで操作を待ってください。", "synthetic": true}
+{"id": "train-software-09-en", "split": "train", "conversation_id": "software-09", "template_group": "software", "language": "en", "text": "Please wait until loading finishes before using the controls.", "synthetic": true}
+{"id": "train-software-10-ja", "split": "train", "conversation_id": "software-10", "template_group": "software", "language": "ja", "text": "ログには同じエラーが何度も出ています。", "synthetic": true}
+{"id": "train-software-10-en", "split": "train", "conversation_id": "software-10", "template_group": "software", "language": "en", "text": "The same error appears repeatedly in the log.", "synthetic": true}
+{"id": "train-software-11-ja", "split": "train", "conversation_id": "software-11", "template_group": "software", "language": "ja", "text": "コピーしたURLを入力欄に貼り付けます。", "synthetic": true}
+{"id": "train-software-11-en", "split": "train", "conversation_id": "software-11", "template_group": "software", "language": "en", "text": "Paste the copied URL into the input field.", "synthetic": true}
+{"id": "train-software-12-ja", "split": "train", "conversation_id": "software-12", "template_group": "software", "language": "ja", "text": "このアプリはインターネットなしでも使えます。", "synthetic": true}
+{"id": "train-software-12-en", "split": "train", "conversation_id": "software-12", "template_group": "software", "language": "en", "text": "This app can be used without an internet connection.", "synthetic": true}
+{"id": "train-software-13-ja", "split": "train", "conversation_id": "software-13", "template_group": "software", "language": "ja", "text": "削除したファイルを元に戻せますか。", "synthetic": true}
+{"id": "train-software-13-en", "split": "train", "conversation_id": "software-13", "template_group": "software", "language": "en", "text": "Can I restore the deleted file?", "synthetic": true}
+{"id": "train-software-14-ja", "split": "train", "conversation_id": "software-14", "template_group": "software", "language": "ja", "text": "新しいタブで説明書を開きました。", "synthetic": true}
+{"id": "train-software-14-en", "split": "train", "conversation_id": "software-14", "template_group": "software", "language": "en", "text": "I opened the instructions in a new tab.", "synthetic": true}
+{"id": "train-software-15-ja", "split": "train", "conversation_id": "software-15", "template_group": "software", "language": "ja", "text": "JSONの構文に誤りがあるようです。", "synthetic": true}
+{"id": "train-software-15-en", "split": "train", "conversation_id": "software-15", "template_group": "software", "language": "en", "text": "There seems to be an error in the JSON syntax.", "synthetic": true}
+{"id": "train-software-16-ja", "split": "train", "conversation_id": "software-16", "template_group": "software", "language": "ja", "text": "テストがすべて通ったので変更を確定します。", "synthetic": true}
+{"id": "train-software-16-en", "split": "train", "conversation_id": "software-16", "template_group": "software", "language": "en", "text": "All the tests passed, so I will finalize the changes.", "synthetic": true}
+{"id": "train-software-17-ja", "split": "train", "conversation_id": "software-17", "template_group": "software", "language": "ja", "text": "「次へ」と書かれたボタンで別のページを開けます。", "synthetic": true}
+{"id": "train-software-17-en", "split": "train", "conversation_id": "software-17", "template_group": "software", "language": "en", "text": "The button labelled \"次へ\" opens another page.", "synthetic": true}
+{"id": "train-software-18-ja", "split": "train", "conversation_id": "software-18", "template_group": "software", "language": "ja", "text": "英語のメッセージを日本語に翻訳しました。", "synthetic": true}
+{"id": "train-software-18-en", "split": "train", "conversation_id": "software-18", "template_group": "software", "language": "en", "text": "I translated the English message into Japanese.", "synthetic": true}
+{"id": "train-software-19-ja", "split": "train", "conversation_id": "software-19", "template_group": "software", "language": "ja", "text": "バックアップの保存先を変更したいです。", "synthetic": true}
+{"id": "train-software-19-en", "split": "train", "conversation_id": "software-19", "template_group": "software", "language": "en", "text": "I would like to change where the backups are saved.", "synthetic": true}
+{"id": "train-software-20-ja", "split": "train", "conversation_id": "software-20", "template_group": "software", "language": "ja", "text": "入力した内容は送信前に確認できます。", "synthetic": true}
+{"id": "train-software-20-en", "split": "train", "conversation_id": "software-20", "template_group": "software", "language": "en", "text": "You can review what you entered before submitting it.", "synthetic": true}
+{"id": "train-hardware-01-ja", "split": "train", "conversation_id": "hardware-01", "template_group": "hardware", "language": "ja", "text": "USBケーブルを別の端子に挿しました。", "synthetic": true}
+{"id": "train-hardware-01-en", "split": "train", "conversation_id": "hardware-01", "template_group": "hardware", "language": "en", "text": "I plugged the USB cable into a different port.", "synthetic": true}
+{"id": "train-hardware-02-ja", "split": "train", "conversation_id": "hardware-02", "template_group": "hardware", "language": "ja", "text": "CPUの使用率が急に上がりました。", "synthetic": true}
+{"id": "train-hardware-02-en", "split": "train", "conversation_id": "hardware-02", "template_group": "hardware", "language": "en", "text": "CPU usage suddenly increased.", "synthetic": true}
+{"id": "train-hardware-03-ja", "split": "train", "conversation_id": "hardware-03", "template_group": "hardware", "language": "ja", "text": "画面の明るさを少し下げたいです。", "synthetic": true}
+{"id": "train-hardware-03-en", "split": "train", "conversation_id": "hardware-03", "template_group": "hardware", "language": "en", "text": "I would like to lower the screen brightness a little.", "synthetic": true}
+{"id": "train-hardware-04-ja", "split": "train", "conversation_id": "hardware-04", "template_group": "hardware", "language": "ja", "text": "キーボードの一つのキーが反応しません。", "synthetic": true}
+{"id": "train-hardware-04-en", "split": "train", "conversation_id": "hardware-04", "template_group": "hardware", "language": "en", "text": "One key on the keyboard does not respond.", "synthetic": true}
+{"id": "train-hardware-05-ja", "split": "train", "conversation_id": "hardware-05", "template_group": "hardware", "language": "ja", "text": "スピーカーから小さな雑音が聞こえます。", "synthetic": true}
+{"id": "train-hardware-05-en", "split": "train", "conversation_id": "hardware-05", "template_group": "hardware", "language": "en", "text": "I can hear a faint noise from the speakers.", "synthetic": true}
+{"id": "train-hardware-06-ja", "split": "train", "conversation_id": "hardware-06", "template_group": "hardware", "language": "ja", "text": "電源を切ってからケーブルを抜きました。", "synthetic": true}
+{"id": "train-hardware-06-en", "split": "train", "conversation_id": "hardware-06", "template_group": "hardware", "language": "en", "text": "I unplugged the cable after turning off the power.", "synthetic": true}
+{"id": "train-hardware-07-ja", "split": "train", "conversation_id": "hardware-07", "template_group": "hardware", "language": "ja", "text": "充電器を持ってくるのを忘れました。", "synthetic": true}
+{"id": "train-hardware-07-en", "split": "train", "conversation_id": "hardware-07", "template_group": "hardware", "language": "en", "text": "I forgot to bring my charger.", "synthetic": true}
+{"id": "train-hardware-08-ja", "split": "train", "conversation_id": "hardware-08", "template_group": "hardware", "language": "ja", "text": "マイクの音量はどこで調整できますか。", "synthetic": true}
+{"id": "train-hardware-08-en", "split": "train", "conversation_id": "hardware-08", "template_group": "hardware", "language": "en", "text": "Where can I adjust the microphone volume?", "synthetic": true}
+{"id": "train-hardware-09-ja", "split": "train", "conversation_id": "hardware-09", "template_group": "hardware", "language": "ja", "text": "SSDの空き容量が少なくなっています。", "synthetic": true}
+{"id": "train-hardware-09-en", "split": "train", "conversation_id": "hardware-09", "template_group": "hardware", "language": "en", "text": "The SSD is running low on free space.", "synthetic": true}
+{"id": "train-hardware-10-ja", "split": "train", "conversation_id": "hardware-10", "template_group": "hardware", "language": "ja", "text": "プリンターの紙を補充してください。", "synthetic": true}
+{"id": "train-hardware-10-en", "split": "train", "conversation_id": "hardware-10", "template_group": "hardware", "language": "en", "text": "Please refill the printer paper.", "synthetic": true}
+{"id": "train-hardware-11-ja", "split": "train", "conversation_id": "hardware-11", "template_group": "hardware", "language": "ja", "text": "電池を交換すると正常に動きました。", "synthetic": true}
+{"id": "train-hardware-11-en", "split": "train", "conversation_id": "hardware-11", "template_group": "hardware", "language": "en", "text": "It worked normally after I replaced the batteries.", "synthetic": true}
+{"id": "train-hardware-12-ja", "split": "train", "conversation_id": "hardware-12", "template_group": "hardware", "language": "ja", "text": "机の下に延長コードを置いています。", "synthetic": true}
+{"id": "train-hardware-12-en", "split": "train", "conversation_id": "hardware-12", "template_group": "hardware", "language": "en", "text": "I keep an extension cord under the desk.", "synthetic": true}
+{"id": "train-hardware-13-ja", "split": "train", "conversation_id": "hardware-13", "template_group": "hardware", "language": "ja", "text": "Bluetoothの接続をいったん解除しました。", "synthetic": true}
+{"id": "train-hardware-13-en", "split": "train", "conversation_id": "hardware-13", "template_group": "hardware", "language": "en", "text": "I disconnected Bluetooth temporarily.", "synthetic": true}
+{"id": "train-hardware-14-ja", "split": "train", "conversation_id": "hardware-14", "template_group": "hardware", "language": "ja", "text": "この機器には説明書が付属していますか。", "synthetic": true}
+{"id": "train-hardware-14-en", "split": "train", "conversation_id": "hardware-14", "template_group": "hardware", "language": "en", "text": "Does this device come with an instruction manual?", "synthetic": true}
+{"id": "train-hardware-15-ja", "split": "train", "conversation_id": "hardware-15", "template_group": "hardware", "language": "ja", "text": "画面を拭くための柔らかい布を使いました。", "synthetic": true}
+{"id": "train-hardware-15-en", "split": "train", "conversation_id": "hardware-15", "template_group": "hardware", "language": "en", "text": "I used a soft cloth to wipe the screen.", "synthetic": true}
+{"id": "train-hardware-16-ja", "split": "train", "conversation_id": "hardware-16", "template_group": "hardware", "language": "ja", "text": "新しい機器を認識するまで少し時間がかかります。", "synthetic": true}
+{"id": "train-hardware-16-en", "split": "train", "conversation_id": "hardware-16", "template_group": "hardware", "language": "en", "text": "It takes a moment to recognize the new device.", "synthetic": true}
+{"id": "train-hardware-17-ja", "split": "train", "conversation_id": "hardware-17", "template_group": "hardware", "language": "ja", "text": "ファンの音が前より大きくなった気がします。", "synthetic": true}
+{"id": "train-hardware-17-en", "split": "train", "conversation_id": "hardware-17", "template_group": "hardware", "language": "en", "text": "I feel that the fan has become louder than before.", "synthetic": true}
+{"id": "train-hardware-18-ja", "split": "train", "conversation_id": "hardware-18", "template_group": "hardware", "language": "ja", "text": "有線で接続したら映像が安定しました。", "synthetic": true}
+{"id": "train-hardware-18-en", "split": "train", "conversation_id": "hardware-18", "template_group": "hardware", "language": "en", "text": "The video became stable when I used a wired connection.", "synthetic": true}
+{"id": "train-hardware-19-ja", "split": "train", "conversation_id": "hardware-19", "template_group": "hardware", "language": "ja", "text": "この端子には無理に差し込まないでください。", "synthetic": true}
+{"id": "train-hardware-19-en", "split": "train", "conversation_id": "hardware-19", "template_group": "hardware", "language": "en", "text": "Please do not force the plug into this port.", "synthetic": true}
+{"id": "train-hardware-20-ja", "split": "train", "conversation_id": "hardware-20", "template_group": "hardware", "language": "ja", "text": "GPUの温度を定期的に記録しています。", "synthetic": true}
+{"id": "train-hardware-20-en", "split": "train", "conversation_id": "hardware-20", "template_group": "hardware", "language": "en", "text": "I record the GPU temperature regularly.", "synthetic": true}
+{"id": "train-education-01-ja", "split": "train", "conversation_id": "education-01", "template_group": "education", "language": "ja", "text": "わからない単語をノートに書き出しました。", "synthetic": true}
+{"id": "train-education-01-en", "split": "train", "conversation_id": "education-01", "template_group": "education", "language": "en", "text": "I wrote the unfamiliar words in my notebook.", "synthetic": true}
+{"id": "train-education-02-ja", "split": "train", "conversation_id": "education-02", "template_group": "education", "language": "ja", "text": "宿題は授業の始めに提出してください。", "synthetic": true}
+{"id": "train-education-02-en", "split": "train", "conversation_id": "education-02", "template_group": "education", "language": "en", "text": "Please turn in the homework at the beginning of class.", "synthetic": true}
+{"id": "train-education-03-ja", "split": "train", "conversation_id": "education-03", "template_group": "education", "language": "ja", "text": "例文を声に出して三回読みました。", "synthetic": true}
+{"id": "train-education-03-en", "split": "train", "conversation_id": "education-03", "template_group": "education", "language": "en", "text": "I read the example sentence aloud three times.", "synthetic": true}
+{"id": "train-education-04-ja", "split": "train", "conversation_id": "education-04", "template_group": "education", "language": "ja", "text": "この問題は別の方法でも解けます。", "synthetic": true}
+{"id": "train-education-04-en", "split": "train", "conversation_id": "education-04", "template_group": "education", "language": "en", "text": "This problem can also be solved another way.", "synthetic": true}
+{"id": "train-education-05-ja", "split": "train", "conversation_id": "education-05", "template_group": "education", "language": "ja", "text": "答えだけでなく考え方を説明しましょう。", "synthetic": true}
+{"id": "train-education-05-en", "split": "train", "conversation_id": "education-05", "template_group": "education", "language": "en", "text": "Explain your reasoning as well as the answer.", "synthetic": true}
+{"id": "train-education-06-ja", "split": "train", "conversation_id": "education-06", "template_group": "education", "language": "ja", "text": "試験の日程が一週間後ろにずれました。", "synthetic": true}
+{"id": "train-education-06-en", "split": "train", "conversation_id": "education-06", "template_group": "education", "language": "en", "text": "The exam schedule was moved back by one week.", "synthetic": true}
+{"id": "train-education-07-ja", "split": "train", "conversation_id": "education-07", "template_group": "education", "language": "ja", "text": "黒板の文字が後ろからは見えません。", "synthetic": true}
+{"id": "train-education-07-en", "split": "train", "conversation_id": "education-07", "template_group": "education", "language": "en", "text": "I cannot see the writing on the board from the back.", "synthetic": true}
+{"id": "train-education-08-ja", "split": "train", "conversation_id": "education-08", "template_group": "education", "language": "ja", "text": "先生が配った資料をなくしてしまいました。", "synthetic": true}
+{"id": "train-education-08-en", "split": "train", "conversation_id": "education-08", "template_group": "education", "language": "en", "text": "I lost the handout the teacher gave us.", "synthetic": true}
+{"id": "train-education-09-ja", "split": "train", "conversation_id": "education-09", "template_group": "education", "language": "ja", "text": "辞書を使わずに一度読んでみてください。", "synthetic": true}
+{"id": "train-education-09-en", "split": "train", "conversation_id": "education-09", "template_group": "education", "language": "en", "text": "Try reading it once without a dictionary.", "synthetic": true}
+{"id": "train-education-10-ja", "split": "train", "conversation_id": "education-10", "template_group": "education", "language": "ja", "text": "毎日少しずつ復習するようにしています。", "synthetic": true}
+{"id": "train-education-10-en", "split": "train", "conversation_id": "education-10", "template_group": "education", "language": "en", "text": "I try to review a little every day.", "synthetic": true}
+{"id": "train-education-11-ja", "split": "train", "conversation_id": "education-11", "template_group": "education", "language": "ja", "text": "二人ずつ組になって話し合います。", "synthetic": true}
+{"id": "train-education-11-en", "split": "train", "conversation_id": "education-11", "template_group": "education", "language": "en", "text": "We will discuss it in pairs.", "synthetic": true}
+{"id": "train-education-12-ja", "split": "train", "conversation_id": "education-12", "template_group": "education", "language": "ja", "text": "次のページに練習問題があります。", "synthetic": true}
+{"id": "train-education-12-en", "split": "train", "conversation_id": "education-12", "template_group": "education", "language": "en", "text": "There are practice exercises on the next page.", "synthetic": true}
+{"id": "train-education-13-ja", "split": "train", "conversation_id": "education-13", "template_group": "education", "language": "ja", "text": "授業で扱った内容を家族に説明しました。", "synthetic": true}
+{"id": "train-education-13-en", "split": "train", "conversation_id": "education-13", "template_group": "education", "language": "en", "text": "I explained what we covered in class to my family.", "synthetic": true}
+{"id": "train-education-14-ja", "split": "train", "conversation_id": "education-14", "template_group": "education", "language": "ja", "text": "質問の意味を取り違えていました。", "synthetic": true}
+{"id": "train-education-14-en", "split": "train", "conversation_id": "education-14", "template_group": "education", "language": "en", "text": "I misunderstood the meaning of the question.", "synthetic": true}
+{"id": "train-education-15-ja", "split": "train", "conversation_id": "education-15", "template_group": "education", "language": "ja", "text": "忘れないように大事な部分に線を引きました。", "synthetic": true}
+{"id": "train-education-15-en", "split": "train", "conversation_id": "education-15", "template_group": "education", "language": "en", "text": "I underlined the important parts so I would not forget them.", "synthetic": true}
+{"id": "train-education-16-ja", "split": "train", "conversation_id": "education-16", "template_group": "education", "language": "ja", "text": "少し難しいですが、最後まで考えてみます。", "synthetic": true}
+{"id": "train-education-16-en", "split": "train", "conversation_id": "education-16", "template_group": "education", "language": "en", "text": "It is a little difficult, but I will keep thinking it through.", "synthetic": true}
+{"id": "train-education-17-ja", "split": "train", "conversation_id": "education-17", "template_group": "education", "language": "ja", "text": "昨日習ったことを今日の課題で使います。", "synthetic": true}
+{"id": "train-education-17-en", "split": "train", "conversation_id": "education-17", "template_group": "education", "language": "en", "text": "We will use what we learned yesterday in today's assignment.", "synthetic": true}
+{"id": "train-education-18-ja", "split": "train", "conversation_id": "education-18", "template_group": "education", "language": "ja", "text": "発音を聞いてから同じように繰り返してください。", "synthetic": true}
+{"id": "train-education-18-en", "split": "train", "conversation_id": "education-18", "template_group": "education", "language": "en", "text": "Listen to the pronunciation and then repeat it the same way.", "synthetic": true}
+{"id": "train-education-19-ja", "split": "train", "conversation_id": "education-19", "template_group": "education", "language": "ja", "text": "授業の終わりに短い感想を書きました。", "synthetic": true}
+{"id": "train-education-19-en", "split": "train", "conversation_id": "education-19", "template_group": "education", "language": "en", "text": "I wrote a short reflection at the end of class.", "synthetic": true}
+{"id": "train-education-20-ja", "split": "train", "conversation_id": "education-20", "template_group": "education", "language": "ja", "text": "勉強する場所を変えると集中できました。", "synthetic": true}
+{"id": "train-education-20-en", "split": "train", "conversation_id": "education-20", "template_group": "education", "language": "en", "text": "Changing where I studied helped me concentrate.", "synthetic": true}
+{"id": "train-home-01-ja", "split": "train", "conversation_id": "home-01", "template_group": "home", "language": "ja", "text": "洗濯物を取り込んでから畳みます。", "synthetic": true}
+{"id": "train-home-01-en", "split": "train", "conversation_id": "home-01", "template_group": "home", "language": "en", "text": "I bring in the laundry before folding it.", "synthetic": true}
+{"id": "train-home-02-ja", "split": "train", "conversation_id": "home-02", "template_group": "home", "language": "ja", "text": "棚の上に積んだ箱を片づけました。", "synthetic": true}
+{"id": "train-home-02-en", "split": "train", "conversation_id": "home-02", "template_group": "home", "language": "en", "text": "I put away the boxes piled on top of the shelf.", "synthetic": true}
+{"id": "train-home-03-ja", "split": "train", "conversation_id": "home-03", "template_group": "home", "language": "ja", "text": "窓の近くに小さな椅子を置きたいです。", "synthetic": true}
+{"id": "train-home-03-en", "split": "train", "conversation_id": "home-03", "template_group": "home", "language": "en", "text": "I would like to put a small chair near the window.", "synthetic": true}
+{"id": "train-home-04-ja", "split": "train", "conversation_id": "home-04", "template_group": "home", "language": "ja", "text": "掃除機の袋がいっぱいになっています。", "synthetic": true}
+{"id": "train-home-04-en", "split": "train", "conversation_id": "home-04", "template_group": "home", "language": "en", "text": "The vacuum cleaner bag is full.", "synthetic": true}
+{"id": "train-home-05-ja", "split": "train", "conversation_id": "home-05", "template_group": "home", "language": "ja", "text": "玄関の電球を新しいものに替えました。", "synthetic": true}
+{"id": "train-home-05-en", "split": "train", "conversation_id": "home-05", "template_group": "home", "language": "en", "text": "I replaced the bulb in the entrance with a new one.", "synthetic": true}
+{"id": "train-home-06-ja", "split": "train", "conversation_id": "home-06", "template_group": "home", "language": "ja", "text": "カーテンを洗ったら部屋が明るく感じます。", "synthetic": true}
+{"id": "train-home-06-en", "split": "train", "conversation_id": "home-06", "template_group": "home", "language": "en", "text": "The room feels brighter after I washed the curtains.", "synthetic": true}
+{"id": "train-home-07-ja", "split": "train", "conversation_id": "home-07", "template_group": "home", "language": "ja", "text": "隣の部屋から話し声が聞こえました。", "synthetic": true}
+{"id": "train-home-07-en", "split": "train", "conversation_id": "home-07", "template_group": "home", "language": "en", "text": "I heard people talking in the next room.", "synthetic": true}
+{"id": "train-home-08-ja", "split": "train", "conversation_id": "home-08", "template_group": "home", "language": "ja", "text": "冷たい空気が入るので戸を閉めてください。", "synthetic": true}
+{"id": "train-home-08-en", "split": "train", "conversation_id": "home-08", "template_group": "home", "language": "en", "text": "Please close the door because cold air is coming in.", "synthetic": true}
+{"id": "train-home-09-ja", "split": "train", "conversation_id": "home-09", "template_group": "home", "language": "ja", "text": "家具を動かすときは床を傷つけないようにします。", "synthetic": true}
+{"id": "train-home-09-en", "split": "train", "conversation_id": "home-09", "template_group": "home", "language": "en", "text": "I try not to scratch the floor when moving furniture.", "synthetic": true}
+{"id": "train-home-10-ja", "split": "train", "conversation_id": "home-10", "template_group": "home", "language": "ja", "text": "使わない物を箱にまとめておきました。", "synthetic": true}
+{"id": "train-home-10-en", "split": "train", "conversation_id": "home-10", "template_group": "home", "language": "en", "text": "I put the things I do not use together in a box.", "synthetic": true}
+{"id": "train-home-11-ja", "split": "train", "conversation_id": "home-11", "template_group": "home", "language": "ja", "text": "床に落とした水をすぐに拭きました。", "synthetic": true}
+{"id": "train-home-11-en", "split": "train", "conversation_id": "home-11", "template_group": "home", "language": "en", "text": "I wiped up the water I spilled on the floor right away.", "synthetic": true}
+{"id": "train-home-12-ja", "split": "train", "conversation_id": "home-12", "template_group": "home", "language": "ja", "text": "休日に部屋の模様替えをするつもりです。", "synthetic": true}
+{"id": "train-home-12-en", "split": "train", "conversation_id": "home-12", "template_group": "home", "language": "en", "text": "I plan to rearrange my room on my day off.", "synthetic": true}
+{"id": "train-home-13-ja", "split": "train", "conversation_id": "home-13", "template_group": "home", "language": "ja", "text": "壁の時計が五分ほど遅れています。", "synthetic": true}
+{"id": "train-home-13-en", "split": "train", "conversation_id": "home-13", "template_group": "home", "language": "en", "text": "The clock on the wall is about five minutes slow.", "synthetic": true}
+{"id": "train-home-14-ja", "split": "train", "conversation_id": "home-14", "template_group": "home", "language": "ja", "text": "この引き出しは途中で引っかかります。", "synthetic": true}
+{"id": "train-home-14-en", "split": "train", "conversation_id": "home-14", "template_group": "home", "language": "en", "text": "This drawer gets stuck halfway out.", "synthetic": true}
+{"id": "train-home-15-ja", "split": "train", "conversation_id": "home-15", "template_group": "home", "language": "ja", "text": "大きな荷物は廊下に置かないでください。", "synthetic": true}
+{"id": "train-home-15-en", "split": "train", "conversation_id": "home-15", "template_group": "home", "language": "en", "text": "Please do not leave large packages in the hallway.", "synthetic": true}
+{"id": "train-home-16-ja", "split": "train", "conversation_id": "home-16", "template_group": "home", "language": "ja", "text": "靴をそろえると玄関がすっきり見えます。", "synthetic": true}
+{"id": "train-home-16-en", "split": "train", "conversation_id": "home-16", "template_group": "home", "language": "en", "text": "Lining up the shoes makes the entrance look tidy.", "synthetic": true}
+{"id": "train-home-17-ja", "split": "train", "conversation_id": "home-17", "template_group": "home", "language": "ja", "text": "空いている棚を一段使ってもよいですか。", "synthetic": true}
+{"id": "train-home-17-en", "split": "train", "conversation_id": "home-17", "template_group": "home", "language": "en", "text": "May I use one of the empty shelves?", "synthetic": true}
+{"id": "train-home-18-ja", "split": "train", "conversation_id": "home-18", "template_group": "home", "language": "ja", "text": "ベランダに干したタオルがよく乾きました。", "synthetic": true}
+{"id": "train-home-18-en", "split": "train", "conversation_id": "home-18", "template_group": "home", "language": "en", "text": "The towels I hung on the balcony dried well.", "synthetic": true}
+{"id": "train-home-19-ja", "split": "train", "conversation_id": "home-19", "template_group": "home", "language": "ja", "text": "台所の引き出しを整理していました。", "synthetic": true}
+{"id": "train-home-19-en", "split": "train", "conversation_id": "home-19", "template_group": "home", "language": "en", "text": "I was organizing the kitchen drawers.", "synthetic": true}
+{"id": "train-home-20-ja", "split": "train", "conversation_id": "home-20", "template_group": "home", "language": "ja", "text": "夜は部屋の照明を少し暗くしています。", "synthetic": true}
+{"id": "train-home-20-en", "split": "train", "conversation_id": "home-20", "template_group": "home", "language": "en", "text": "I dim the room lights a little at night.", "synthetic": true}
+{"id": "train-weather-01-ja", "split": "train", "conversation_id": "weather-01", "template_group": "weather", "language": "ja", "text": "朝から雲が広がっています。", "synthetic": true}
+{"id": "train-weather-01-en", "split": "train", "conversation_id": "weather-01", "template_group": "weather", "language": "en", "text": "Clouds have been spreading across the sky since morning.", "synthetic": true}
+{"id": "train-weather-02-ja", "split": "train", "conversation_id": "weather-02", "template_group": "weather", "language": "ja", "text": "夕方になると風が冷たくなりました。", "synthetic": true}
+{"id": "train-weather-02-en", "split": "train", "conversation_id": "weather-02", "template_group": "weather", "language": "en", "text": "The wind turned chilly in the evening.", "synthetic": true}
+{"id": "train-weather-03-ja", "split": "train", "conversation_id": "weather-03", "template_group": "weather", "language": "ja", "text": "雨がやんだので外へ出てみました。", "synthetic": true}
+{"id": "train-weather-03-en", "split": "train", "conversation_id": "weather-03", "template_group": "weather", "language": "en", "text": "The rain stopped, so I stepped outside.", "synthetic": true}
+{"id": "train-weather-04-ja", "split": "train", "conversation_id": "weather-04", "template_group": "weather", "language": "ja", "text": "今日は薄手の上着で十分でした。", "synthetic": true}
+{"id": "train-weather-04-en", "split": "train", "conversation_id": "weather-04", "template_group": "weather", "language": "en", "text": "A light jacket was enough today.", "synthetic": true}
+{"id": "train-weather-05-ja", "split": "train", "conversation_id": "weather-05", "template_group": "weather", "language": "ja", "text": "日なたと日陰では暖かさが違います。", "synthetic": true}
+{"id": "train-weather-05-en", "split": "train", "conversation_id": "weather-05", "template_group": "weather", "language": "en", "text": "It feels warmer in the sun than in the shade.", "synthetic": true}
+{"id": "train-weather-06-ja", "split": "train", "conversation_id": "weather-06", "template_group": "weather", "language": "ja", "text": "遠くの山に雪が残っていました。", "synthetic": true}
+{"id": "train-weather-06-en", "split": "train", "conversation_id": "weather-06", "template_group": "weather", "language": "en", "text": "There was still snow on the distant mountains.", "synthetic": true}
+{"id": "train-weather-07-ja", "split": "train", "conversation_id": "weather-07", "template_group": "weather", "language": "ja", "text": "窓を開けると涼しい風が入りました。", "synthetic": true}
+{"id": "train-weather-07-en", "split": "train", "conversation_id": "weather-07", "template_group": "weather", "language": "en", "text": "A cool breeze came in when I opened the window.", "synthetic": true}
+{"id": "train-weather-08-ja", "split": "train", "conversation_id": "weather-08", "template_group": "weather", "language": "ja", "text": "傘を持っていったほうがよさそうです。", "synthetic": true}
+{"id": "train-weather-08-en", "split": "train", "conversation_id": "weather-08", "template_group": "weather", "language": "en", "text": "It looks like we should take umbrellas.", "synthetic": true}
+{"id": "train-weather-09-ja", "split": "train", "conversation_id": "weather-09", "template_group": "weather", "language": "ja", "text": "空が暗くなってきたので早めに帰りました。", "synthetic": true}
+{"id": "train-weather-09-en", "split": "train", "conversation_id": "weather-09", "template_group": "weather", "language": "en", "text": "The sky was getting dark, so I went home early.", "synthetic": true}
+{"id": "train-weather-10-ja", "split": "train", "conversation_id": "weather-10", "template_group": "weather", "language": "ja", "text": "寒さよりも強い風が気になります。", "synthetic": true}
+{"id": "train-weather-10-en", "split": "train", "conversation_id": "weather-10", "template_group": "weather", "language": "en", "text": "The strong wind bothers me more than the cold.", "synthetic": true}
+{"id": "train-weather-11-ja", "split": "train", "conversation_id": "weather-11", "template_group": "weather", "language": "ja", "text": "朝の霧で向こう側がよく見えませんでした。", "synthetic": true}
+{"id": "train-weather-11-en", "split": "train", "conversation_id": "weather-11", "template_group": "weather", "language": "en", "text": "I could not see the other side clearly through the morning fog.", "synthetic": true}
+{"id": "train-weather-12-ja", "split": "train", "conversation_id": "weather-12", "template_group": "weather", "language": "ja", "text": "雨上がりの道に水たまりができています。", "synthetic": true}
+{"id": "train-weather-12-en", "split": "train", "conversation_id": "weather-12", "template_group": "weather", "language": "en", "text": "There are puddles on the road after the rain.", "synthetic": true}
+{"id": "train-weather-13-ja", "split": "train", "conversation_id": "weather-13", "template_group": "weather", "language": "ja", "text": "乾いた空気で唇が少し荒れました。", "synthetic": true}
+{"id": "train-weather-13-en", "split": "train", "conversation_id": "weather-13", "template_group": "weather", "language": "en", "text": "The dry air left my lips a little chapped.", "synthetic": true}
+{"id": "train-weather-14-ja", "split": "train", "conversation_id": "weather-14", "template_group": "weather", "language": "ja", "text": "昨日より気温が二度下がったそうです。", "synthetic": true}
+{"id": "train-weather-14-en", "split": "train", "conversation_id": "weather-14", "template_group": "weather", "language": "en", "text": "I heard the temperature dropped by two degrees from yesterday.", "synthetic": true}
+{"id": "train-weather-15-ja", "split": "train", "conversation_id": "weather-15", "template_group": "weather", "language": "ja", "text": "昼ごろには雲の間から光が差しました。", "synthetic": true}
+{"id": "train-weather-15-en", "split": "train", "conversation_id": "weather-15", "template_group": "weather", "language": "en", "text": "Light broke through the clouds around noon.", "synthetic": true}
+{"id": "train-weather-16-ja", "split": "train", "conversation_id": "weather-16", "template_group": "weather", "language": "ja", "text": "木の葉が風に揺れていました。", "synthetic": true}
+{"id": "train-weather-16-en", "split": "train", "conversation_id": "weather-16", "template_group": "weather", "language": "en", "text": "The leaves were swaying in the wind.", "synthetic": true}
+{"id": "train-weather-17-ja", "split": "train", "conversation_id": "weather-17", "template_group": "weather", "language": "ja", "text": "今日は室内のほうが暖かく感じます。", "synthetic": true}
+{"id": "train-weather-17-en", "split": "train", "conversation_id": "weather-17", "template_group": "weather", "language": "en", "text": "It feels warmer indoors today.", "synthetic": true}
+{"id": "train-weather-18-ja", "split": "train", "conversation_id": "weather-18", "template_group": "weather", "language": "ja", "text": "雪が降り始めたころに駅へ着きました。", "synthetic": true}
+{"id": "train-weather-18-en", "split": "train", "conversation_id": "weather-18", "template_group": "weather", "language": "en", "text": "I reached the station just as it started to snow.", "synthetic": true}
+{"id": "train-weather-19-ja", "split": "train", "conversation_id": "weather-19", "template_group": "weather", "language": "ja", "text": "濡れた靴を入口で乾かしています。", "synthetic": true}
+{"id": "train-weather-19-en", "split": "train", "conversation_id": "weather-19", "template_group": "weather", "language": "en", "text": "I am drying my wet shoes by the entrance.", "synthetic": true}
+{"id": "train-weather-20-ja", "split": "train", "conversation_id": "weather-20", "template_group": "weather", "language": "ja", "text": "夜になっても蒸し暑さが残りました。", "synthetic": true}
+{"id": "train-weather-20-en", "split": "train", "conversation_id": "weather-20", "template_group": "weather", "language": "en", "text": "It remained hot and humid even after nightfall.", "synthetic": true}
+{"id": "train-conversation-01-ja", "split": "train", "conversation_id": "conversation-01", "template_group": "conversation", "language": "ja", "text": "ありがとうございます。", "synthetic": true}
+{"id": "train-conversation-01-en", "split": "train", "conversation_id": "conversation-01", "template_group": "conversation", "language": "en", "text": "Thank you.", "synthetic": true}
+{"id": "train-conversation-02-ja", "split": "train", "conversation_id": "conversation-02", "template_group": "conversation", "language": "ja", "text": "おはようございます。", "synthetic": true}
+{"id": "train-conversation-02-en", "split": "train", "conversation_id": "conversation-02", "template_group": "conversation", "language": "en", "text": "Good morning.", "synthetic": true}
+{"id": "train-conversation-03-ja", "split": "train", "conversation_id": "conversation-03", "template_group": "conversation", "language": "ja", "text": "少々お待ちください。", "synthetic": true}
+{"id": "train-conversation-03-en", "split": "train", "conversation_id": "conversation-03", "template_group": "conversation", "language": "en", "text": "Please wait a moment.", "synthetic": true}
+{"id": "train-conversation-04-ja", "split": "train", "conversation_id": "conversation-04", "template_group": "conversation", "language": "ja", "text": "はい、承知しました。", "synthetic": true}
+{"id": "train-conversation-04-en", "split": "train", "conversation_id": "conversation-04", "template_group": "conversation", "language": "en", "text": "Yes, I understand.", "synthetic": true}
+{"id": "train-conversation-05-ja", "split": "train", "conversation_id": "conversation-05", "template_group": "conversation", "language": "ja", "text": "いいえ、それは違います。", "synthetic": true}
+{"id": "train-conversation-05-en", "split": "train", "conversation_id": "conversation-05", "template_group": "conversation", "language": "en", "text": "No, that is not correct.", "synthetic": true}
+{"id": "train-conversation-06-ja", "split": "train", "conversation_id": "conversation-06", "template_group": "conversation", "language": "ja", "text": "もう一度お願いします。", "synthetic": true}
+{"id": "train-conversation-06-en", "split": "train", "conversation_id": "conversation-06", "template_group": "conversation", "language": "en", "text": "Could you say that again?", "synthetic": true}
+{"id": "train-conversation-07-ja", "split": "train", "conversation_id": "conversation-07", "template_group": "conversation", "language": "ja", "text": "お会いできてうれしいです。", "synthetic": true}
+{"id": "train-conversation-07-en", "split": "train", "conversation_id": "conversation-07", "template_group": "conversation", "language": "en", "text": "I am glad to meet you.", "synthetic": true}
+{"id": "train-conversation-08-ja", "split": "train", "conversation_id": "conversation-08", "template_group": "conversation", "language": "ja", "text": "それは残念でしたね。", "synthetic": true}
+{"id": "train-conversation-08-en", "split": "train", "conversation_id": "conversation-08", "template_group": "conversation", "language": "en", "text": "That is unfortunate.", "synthetic": true}
+{"id": "train-conversation-09-ja", "split": "train", "conversation_id": "conversation-09", "template_group": "conversation", "language": "ja", "text": "私も同じことを考えていました。", "synthetic": true}
+{"id": "train-conversation-09-en", "split": "train", "conversation_id": "conversation-09", "template_group": "conversation", "language": "en", "text": "I was thinking the same thing.", "synthetic": true}
+{"id": "train-conversation-10-ja", "split": "train", "conversation_id": "conversation-10", "template_group": "conversation", "language": "ja", "text": "詳しく聞かせてもらえますか。", "synthetic": true}
+{"id": "train-conversation-10-en", "split": "train", "conversation_id": "conversation-10", "template_group": "conversation", "language": "en", "text": "Could you tell me more about it?", "synthetic": true}
+{"id": "train-conversation-11-ja", "split": "train", "conversation_id": "conversation-11", "template_group": "conversation", "language": "ja", "text": "途中で話を止めてしまってすみません。", "synthetic": true}
+{"id": "train-conversation-11-en", "split": "train", "conversation_id": "conversation-11", "template_group": "conversation", "language": "en", "text": "Sorry for interrupting you.", "synthetic": true}
+{"id": "train-conversation-12-ja", "split": "train", "conversation_id": "conversation-12", "template_group": "conversation", "language": "ja", "text": "今の説明でよくわかりました。", "synthetic": true}
+{"id": "train-conversation-12-en", "split": "train", "conversation_id": "conversation-12", "template_group": "conversation", "language": "en", "text": "Your explanation made it clear.", "synthetic": true}
+{"id": "train-conversation-13-ja", "split": "train", "conversation_id": "conversation-13", "template_group": "conversation", "language": "ja", "text": "別の言い方で説明してみます。", "synthetic": true}
+{"id": "train-conversation-13-en", "split": "train", "conversation_id": "conversation-13", "template_group": "conversation", "language": "en", "text": "I will try explaining it another way.", "synthetic": true}
+{"id": "train-conversation-14-ja", "split": "train", "conversation_id": "conversation-14", "template_group": "conversation", "language": "ja", "text": "無理に今決めなくても大丈夫です。", "synthetic": true}
+{"id": "train-conversation-14-en", "split": "train", "conversation_id": "conversation-14", "template_group": "conversation", "language": "en", "text": "You do not have to decide right now.", "synthetic": true}
+{"id": "train-conversation-15-ja", "split": "train", "conversation_id": "conversation-15", "template_group": "conversation", "language": "ja", "text": "その話の続きを楽しみにしています。", "synthetic": true}
+{"id": "train-conversation-15-en", "split": "train", "conversation_id": "conversation-15", "template_group": "conversation", "language": "en", "text": "I look forward to hearing the rest of that story.", "synthetic": true}
+{"id": "train-conversation-16-ja", "split": "train", "conversation_id": "conversation-16", "template_group": "conversation", "language": "ja", "text": "どうぞお先に進んでください。", "synthetic": true}
+{"id": "train-conversation-16-en", "split": "train", "conversation_id": "conversation-16", "template_group": "conversation", "language": "en", "text": "Please go ahead.", "synthetic": true}
+{"id": "train-conversation-17-ja", "split": "train", "conversation_id": "conversation-17", "template_group": "conversation", "language": "ja", "text": "必要なら私が手伝います。", "synthetic": true}
+{"id": "train-conversation-17-en", "split": "train", "conversation_id": "conversation-17", "template_group": "conversation", "language": "en", "text": "I can help if you need me.", "synthetic": true}
+{"id": "train-conversation-18-ja", "split": "train", "conversation_id": "conversation-18", "template_group": "conversation", "language": "ja", "text": "ここまでの内容を確認しましょう。", "synthetic": true}
+{"id": "train-conversation-18-en", "split": "train", "conversation_id": "conversation-18", "template_group": "conversation", "language": "en", "text": "Let us review what we have covered so far.", "synthetic": true}
+{"id": "train-conversation-19-ja", "split": "train", "conversation_id": "conversation-19", "template_group": "conversation", "language": "ja", "text": "今は返事を待っているところです。", "synthetic": true}
+{"id": "train-conversation-19-en", "split": "train", "conversation_id": "conversation-19", "template_group": "conversation", "language": "en", "text": "I am waiting for a reply at the moment.", "synthetic": true}
+{"id": "train-conversation-20-ja", "split": "train", "conversation_id": "conversation-20", "template_group": "conversation", "language": "ja", "text": "また明日お話ししましょう。", "synthetic": true}
+{"id": "train-conversation-20-en", "split": "train", "conversation_id": "conversation-20", "template_group": "conversation", "language": "en", "text": "Let us talk again tomorrow.", "synthetic": true}

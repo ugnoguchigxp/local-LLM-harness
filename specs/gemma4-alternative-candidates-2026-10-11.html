@@ -1,0 +1,322 @@
+<article lang="ja">
+  <h1>Gemma 4代替候補：395での速度とツール・エージェント性能</h1>
+  <p>
+    <time>2026-10-11</time>時点の公開資料調査。対象はRyzen AI MAX+ 395、128GB Unified
+    Memory、単一LLMとASR/TTS・要求時Turboの運用である。
+  </p>
+  <p>
+    <strong
+      >結論：Gemma 4を維持する。追加評価候補はLaguna XS 2.1、Nemotron 3.5
+      Lightning、Qwen3-Coder-30B-A3B。</strong
+    >同じ395で約61
+    tok/sを超える公開速度は見つかったが、日本語会話・ツール利用・複数ターンの成功率・応答待ち時間を同時にGemma以上と確認できる資料は見つからなかった。「候補がある」と「置き換えを受入済み」は区別する。
+  </p>
+  <p>
+    難しい推論・設計・コード作業は利用者が選ぶクラウド側へ任せ、ローカルは会話と軽い処理を優先する方針を前提とする。調査のためのモデル取得、ビルド、推論試験、Provider停止、本番設定変更、commit・pushは行っていない。
+  </p>
+
+  <section id="comparison-basis">
+    <h2>比較基準と証拠の扱い</h2>
+    <p>
+      LARM実機のGemma 4 26B A4B IT QAT Q4_0、Vulkan、thinking off、1要求の中央値は短い入力で61.44
+      tok/s・TTFT 0.244秒、中入力で53.54 tok/s、約21.6K入力で48.71 tok/s。詳しくは<a
+        href="./strata-first-trial-2026-10-10.html"
+        >初回実機試験</a
+      >を参照する。この値は同時音声負荷下の保証値ではない。
+    </p>
+    <p>
+      公開速度の多くはllama-benchのtg128、短い入力、他ホスト・別build・別量子化である。LARMのStreamingリクエストと同条件ではなく、61.44との差をそのまま速度向上率にしない。総スループット、Prefill、Decode、思考を含む生成、利用者に見える本文の開始時間を別指標として扱う。モデル間のtokenizer差もある。
+    </p>
+    <p>
+      公式品質スコアは多くが元モデルのthinking
+      on評価で、公開速度はGGUF量子化の測定である。双方を結合して「この量子化でその品質を実測した」と表現しない。SWE-benchはコード変更を伴うエージェント評価であり、汎用ツール呼出し・日本語会話の代替指標にはしない。前回のツール10問は10/10で飽和しており、長いエージェント作業の能力順位は付けられない。
+    </p>
+  </section>
+
+  <section id="shortlist">
+    <h2>速度基準を満たし得る候補</h2>
+    <table>
+      <caption>
+        公開の395実測。容量は重みファイルであり、実行時RAM・KV・workspaceを含まない。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">公開速度・条件</th>
+          <th scope="col">品質の根拠</th>
+          <th scope="col">判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Laguna XS 2.1、33B total / 3B active</th>
+          <td>
+            Q4_K_M、19.56GB。Vulkan b11146、tg128 80.45 tok/s、入力深度8192で70.05
+            tok/s。MTP・DFlashなし。<a href="https://strixhaloguide.com/strix-halo-models/"
+              >測定者の一次報告</a
+            >。
+          </td>
+          <td>
+            開発元はSWE-bench Verified 70.9%、Multilingual 63.1%、Pro 47.6%、Terminal-Bench 2.0
+            37.5%を報告。thinking on、Poolsideのagent harness、最大500
+            steps。Gemmaとの同一harness比較はない。<a
+              href="https://huggingface.co/poolside/Laguna-XS-2.1"
+              >公式card</a
+            >。
+          </td>
+          <td>
+            速度と軽い常駐容量から第一候補。日本語会話、thinking off品質、連続ツール利用を要検証。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Nemotron 3.5 Lightning 30B A3B</th>
+          <td>
+            Q4_0、18.90GB。上と同じ測定者・Vulkan b11146で66.80 tok/s、入力深度8192で65.99 tok/s。<a
+              href="https://strixhaloguide.com/strix-halo-models/"
+              >一次報告</a
+            >。
+          </td>
+          <td>
+            NVIDIAの同一harness比較でPinchBench 85.37対Gemma 74.70、BrowseComp
+            36.97対26.30。一方、SWE Verified 51.56対57.40、Terminal-Bench 2.1 24.58対37.22、IFBench
+            loose 71.88対77.25。全面的に上ではない。<a
+              href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+              >公式BF16 card</a
+            >。
+          </td>
+          <td>
+            汎用agentの一部スコアと速度を両立する候補。公式に日本語を含むが、Q4_0の日本語品質は未確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-Coder-30B-A3B-Instruct</th>
+          <td>
+            UD-Q4_K_XL、16.45GiB。ONEXPLAYER SUPER X・395・128GB、llama.cpp d775b89、Vulkan
+            RADVでtg128 87.02、ROCmで66.96 tok/s。<a
+              href="https://github.com/wireframeslayout/strix-halo-onexplayer-super-x"
+              >一次報告とraw CSV</a
+            >。
+          </td>
+          <td>
+            コード・tool利用向け、native 256K、non-thinking専用。<a
+              href="https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct"
+              >公式card</a
+            >。今回確認できた資料にはGemmaの会話・汎用ツール品質を上回る直接比較がない。
+          </td>
+          <td>
+            思考による待ち時間を増やさず速度を確保できる候補。日本語会話と用途の広さを含む代替判断は保留。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LagunaとLightningの公開測定は2026-09-26、128GB機、balanced
+      power、VM・desktopを止めていない日常負荷下のscoutで、tg128は10回、8K深度は3回。server経由、TTFT、音声・画像競合、長文品質は測っていない。算術とis_primeの2課題はロード確認であり、知能の証明ではない。Qwen
+      Coderの測定は2026-08-24、tg128 3回であり別条件である。
+    </p>
+    <aside>
+      <p>
+        LightningのROCmFPX派生には81.6〜86.0 tok/sの報告もあるが、報告対象がBase
+        checkpoint由来かつ実験的専用量子化である。instruction-tuned版のagent品質の証拠と結合せず、最初の評価では通常GGUFを優先する。<a
+          href="https://github.com/julianmb/nemotron-3.5-30b-a3b-rocmfp4"
+          >派生量子化作者の一次報告</a
+        >。
+      </p>
+    </aside>
+  </section>
+
+  <section id="tool-reliability">
+    <h2>ツール利用で見落とせない条件</h2>
+    <p>
+      Laguna XS 2.1は262144
+      context、thinkingの切替、Streaming・tool_callsの利用例を公式に持つ。エージェント用途ではthinkingと過去のreasoning保持を推奨する。ただしvLLMのpoolside_v1
+      parserには改行なしのtool名で呼出しが落ちる修正への依存がある。これはvLLM経路の注意であり、LARMのllama.cpp経路に同じ欠陥があると断定しない。<a
+        href="https://huggingface.co/poolside/Laguna-XS-2.1"
+        >公式の運用注意</a
+      >。
+    </p>
+    <p>
+      別測定者のDGX
+      Spark・Ollama・Q4_K_M試験では、複数toolを1ターンで要求する10課題すべてで1件のみを出し、結果を返すと残りを順次呼んだ。未加工出力も確認した限定報告であり、単なるparser不具合として片付けられない。llama.cpp、日本語、本環境での再現は未確認。並列tool
+      call、不要なtoolを呼ばない判断、失敗後の再実行を個別に検証する。<a
+        href="https://rawrtech.ai/blog/dgx-spark-code-screening-laguna-vs-qwen-brain"
+        >試験者の一次報告</a
+      >。
+    </p>
+    <p>
+      LightningはMamba状態も使うため、通常KVだけを前提にせず、セッション切替時にSSM状態・会話履歴も正しく復元されるか確認する。engineのprefix
+      reuseや複数slotが公式NVIDIA環境で使えることだけでgfx1151・llama.cpp上の動作を保証しない。いずれの候補もMain
+      256K＋Worker 64K×4を受入済みとは扱わない。
+    </p>
+  </section>
+
+  <section id="deferred-candidates">
+    <h2>スコアは高くても速度・用途から優先しない候補</h2>
+    <table>
+      <caption>
+        今回の条件での保留理由
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">公開情報</th>
+          <th scope="col">判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen3.6-35B-A3B原版</th>
+          <td>
+            NVIDIAの同一harnessでSWE Verified 70.12対Gemma 57.40、Terminal 2.1
+            44.38対37.22。395のUD-Q4_K_XL速度59.6 tok/sという別測定がある。
+          </td>
+          <td>
+            Ornith派生とは区別する。追加候補にはなるが、既に利用者がOrnithよりGemmaのバランスを評価しており、優先しない。MTPによる改善をこのLARM構成で実測したわけではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-Coder-Next 80B A3B</th>
+          <td>
+            公式cardのSWE Verified 70.6。395でQ4_K_M 45.08GiB、tg128 56.61 tok/s、ROCm 46.32 tok/s。
+          </td>
+          <td>
+            通常の速度基準を満たす証拠不足、容量も大きい。重いコード作業をクラウドへ任せる方針では優先度が低い。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3.8-27B</th>
+          <td>
+            公式のagentスコアは強いがdenseモデル。395のQ4系で通常約12
+            tok/s、MTPを使った別報告で40.52 tok/s。Q8・131K server試験ではMTP平均15.29
+            tok/sという測定もある。
+          </td>
+          <td>今回の61 tok/s基準には不足。MTP最大値を長文会話の保証速度にしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">Muse Glimmer 30B、Gemma 4 31B、Devstral Small 2 24B</th>
+          <td>
+            それぞれ品質上の強みがあるがdense。395で通常の4bit decodeは約11〜14 tok/s級。Gemma
+            31BにはMTP 50.80 tok/sの報告がある。
+          </td>
+          <td>Gemma MoEと同じ活性パラメータ規模ではない。今回の速度条件を満たす証拠はない。</td>
+        </tr>
+        <tr>
+          <th scope="row">GPT-OSS 120B</th>
+          <td>395のMXFP4でtg128約53〜56 tok/s、重み約59GiB。</td>
+          <td>
+            速度・容量の面で今回の優先条件に届かない。Toolingを含むGemma超えの同条件証明も今回未確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GLM-4.7-Flash、旧Nemotron 3 Nano、GPT-OSS 20B派生</th>
+          <td>395で61〜77 tok/s級の報告があるが、同じ測定者の限定品質suiteでGemmaを下回る。</td>
+          <td>
+            速度だけでは採用しない。旧Nanoの評価をLightningの評価と取り違えない。GPT-OSS
+            20B派生の結果を原版へ移さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3.8-Flash-Next / Strata</th>
+          <td>
+            LARM実測で標準MTP短文44.45、長入力37.6
+            tok/s。簡単なツール10/10だが長文に指定違反もあった。
+          </td>
+          <td>既取得の検討候補として保持。Gemma並の速度という今回の条件では優先しない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      出典：<a href="https://slb350.github.io/strix-benchmarks/models/"
+        >Strix Benchmarks測定者のモデル別表</a
+      >、<a href="https://github.com/wireframeslayout/strix-halo-onexplayer-super-x"
+        >ONEXPLAYERのraw測定</a
+      >、<a href="https://github.com/MikeVeerman/qwen38-27-Strix-Halo-bench"
+        >Qwen3.8 MTPのserver測定</a
+      >、<a href="https://huggingface.co/Qwen/Qwen3-Coder-Next">Qwen Coder Next公式card</a>、<a
+        href="https://huggingface.co/Qwen/Qwen3.8-27B"
+        >Qwen3.8公式card</a
+      >、<a href="https://huggingface.co/meta-models/Muse-Glimmer-30B">Muse公式card</a
+      >。これらは同一のbenchmarkではなく、厳密な総合順位を表さない。
+    </p>
+  </section>
+
+  <section id="harness-effects">
+    <h2>Gemmaが良いという使用感と公開評価の関係</h2>
+    <p>
+      NVIDIAの同一harness比較ではGemmaのSWE Verifiedが57.40だが、Qwenのcomparison
+      tableでは17.4である。これは同じGemmaでもagent
+      harness、parser、思考設定、sampling、評価方法に依存することを示す。Qwen側の低い数字だけを根拠にGemmaのtool能力を否定しない。逆に高い数字を現在のthinking
+      off・Q4_0運用へそのまま当てはめない。<a
+        href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+        >NVIDIA比較</a
+      >、<a href="https://huggingface.co/Qwen/Qwen3.6-35B-A3B">Qwen比較と方法</a>。
+    </p>
+    <p>
+      別のDGX Spark上の小規模・thinking off suiteではGemma 26B Q4の総合92.6対Qwen3.6 35B
+      Q4の85.9。両方のfunction calling・tool選択は100%で、差はstructured
+      output・robustness等にある。395の性能証拠ではないが、「Gemmaの総合バランスが良い」という使用感と両立する一次資料である。<a
+        href="https://github.com/tomasrasymas/tora-agent/blob/main/benchmarks/BENCHMARKS.md"
+        >tora-agentの試験方法と内訳</a
+      >。
+    </p>
+    <p>
+      Strix BenchmarksのTooling /65ではGemma 59、Qwen3.6原版53.5、Ornith 1.5 Q8 62.5、Muse Q8
+      64.5、Qwen3.8 Q8
+      62.5。これは限定suite、異なる量子化と思考設定の比較で、利用者のOrnith体感を反証するものではない。今回の三候補すべてを含むGemmaとの同一suite結果は確認できなかった。
+    </p>
+  </section>
+
+  <section id="acceptance-plan">
+    <h2>次に試す場合の受入条件案</h2>
+    <p>
+      この節は計画であり試験開始の記録ではない。まず候補を1つずつ既存のProvider経路へ隔離して接続し、productionのGemma
+      profileは維持する。順序はLaguna XS 2.1、Lightning、Qwen Coder
+      30B。モデルを同時常駐させず、既存の起動停止・lease・Streaming処理を使う。
+    </p>
+    <ol>
+      <li>
+        同じ日本語入力、短文・約4K・約22K入力、256出力、3回warmup＋10回測定をGemmaと候補で繰り返す。engine
+        decode、TTFT、思考と本文のtoken数、文字/秒、toolが利用可能になるまでの時間を分ける。
+      </li>
+      <li>
+        候補はthinking offを会話基準とし、thinking onを別試験にする。thinking
+        onで高得点でも、思考時間を隠して会話の速度基準を達成したと扱わない。
+      </li>
+      <li>
+        少なくとも80種類の日本語toolシナリオを設ける。引数型・必須値、日時、不要toolの抑制、複数tool、20〜30ターン、失敗回復、tool結果からの正しい回答を含める。副作用のある処理はmockまたは隔離環境で評価する。抽出できない出力を無断で補正して合格にしない。
+      </li>
+      <li>
+        置換の必須条件案は、各入力帯で中央値decodeがGemma以上、warm時TTFTのp95がGemmaの110%以下、toolと日本語の成功率がGemma以上。110%は今回の設計上の許容案で、利用者の要求値として確定していない。重要な制約違反、履歴の混線、不正なtool引数も別集計する。
+      </li>
+      <li>
+        その後に音声同時負荷と5論理会話を確認する。画像は既存Turbo要求時運用のみ。十分な空きRAM、swap-outゼロ、cancelと切替後の状態復元を確認してから共存を受け入れる。
+      </li>
+    </ol>
+    <p>
+      速度または必要な会話・tool品質が基準未達ならGemmaを継続する。「新しい」「大きい」「公開codingスコアが高い」だけでは切り替えない。
+    </p>
+  </section>
+
+  <section id="sources-and-scope">
+    <h2>確認revisionと調査範囲</h2>
+    <dl>
+      <dt>Laguna XS 2.1 card</dt>
+      <dd><code>c5f36269bbdbd3f27fddc9a9f9dbae0cf2cf57db</code>。</dd>
+      <dt>Lightning BF16 card</dt>
+      <dd><code>a9904d24bcc1d289a1950fa9d2b978c47cf903b9</code>。</dd>
+      <dt>Qwen Coder 30B card</dt>
+      <dd><code>b2cff646eb4bb1d68355c01b18ae02e7cf42d120</code>。</dd>
+      <dt>Strix Halo Guide</dt>
+      <dd><code>f5d9e6dac1ec9aeeeeb1165ae85d305b33cee234</code>。モデル資料と一次raw測定を確認。</dd>
+      <dt>BFCL公式</dt>
+      <dd>
+        <a href="https://gorilla.cs.berkeley.edu/leaderboard.html">公開leaderboard</a
+        >も確認したが、取得した本文では今回の候補群とGemmaの数値を揃えて検証できなかった。未確認のBFCL点数を補完・推測していない。
+      </dd>
+    </dl>
+    <p>
+      本調査は公開資料と前回の保存測定の読取り、Spec HTMLへの保存のみ。現在のmodel
+      processからprofileの意図を推測していない。本番runtime・route・model選択への変更はない。
+    </p>
+  </section>
+</article>

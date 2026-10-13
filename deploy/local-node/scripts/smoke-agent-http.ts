@@ -87,9 +87,8 @@ function selectedProvider(
 }
 
 function selectorForAgentProfile(agentProfile: string): AgentProfileSelectorId {
-  if (agentProfile === "coding-default") return "vulnWorkbench";
+  if (agentProfile === "ornith1.5Strix") return "ornith1.5Strix";
   if (agentProfile === "contextstill-background") return "contextStill";
-  if (agentProfile === "saaa-conversation-ornith15") return "SAAA";
   if (agentProfile === "saaa-conversation-gemma4-26b-voice") return "SAAA-gemma4-26b";
   if (agentProfile === "saaa-conversation-ornith15-image") return "SAAA-w-Image";
   if (agentProfile === "saaa-conversation-ornith15-music") return "SAAA-w-music";
@@ -387,7 +386,7 @@ if (import.meta.main) {
     const result = await runAgentHttpSmoke({
       baseUrl: process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810",
       ...(process.env.LARM_API_TOKEN ? { apiToken: process.env.LARM_API_TOKEN } : {}),
-      agentProfile: process.env.LARM_AGENT_PROFILE ?? "coding-default",
+      agentProfile: process.env.LARM_AGENT_PROFILE ?? "ornith1.5Strix",
       audience: process.env.LARM_AGENT_AUDIENCE ?? "same-host",
       client: process.env.LARM_AGENT_CLIENT ?? "larm-agent-http-smoke",
       ...(process.env.LARM_AGENT_PROVIDER ? { provider: process.env.LARM_AGENT_PROVIDER } : {}),

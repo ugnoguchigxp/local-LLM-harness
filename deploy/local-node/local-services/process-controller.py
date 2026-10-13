@@ -268,7 +268,11 @@ def perform(value, action):
         preflight(value)
         if not observe(value)["stopConfirmed"]:
             raise RuntimeError("start_requires_stopped_group")
-        run(["/usr/bin/systemctl", "reset-failed", *[m["unit"] for m in value["members"]]])
+        failed = [m["unit"] for m in value["members"] if properties(m["unit"])["ActiveState"] == "failed"]
+        # systemd may unload an inactive unit between inspection and reset-failed.
+        # Only failed units retain a failure state that needs to be cleared.
+        if failed:
+            run(["/usr/bin/systemctl", "reset-failed", *failed])
         run(["/usr/bin/systemctl", "start", *[m["unit"] for m in value["members"]]], timeout=value["startSeconds"])
         publish(value, observe(value))
     elif action == "stop":

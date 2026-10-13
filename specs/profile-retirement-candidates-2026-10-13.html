@@ -1,0 +1,173 @@
+<article lang="ja">
+  <h1>古いAgent Profileの整理候補</h1>
+  <aside>
+    <p>
+      利用者の了承により、2026年10月13日11:18 JSTにこの文書の優先5件と比較用3件を削除した。
+      <a href="./profile-cleanup-and-unused-models-2026-10-13.html"
+        >削除の結果とモデル本体の整理候補</a
+      >を参照。 本文は削除前の調査記録として保持する。
+    </p>
+  </aside>
+  <p>
+    2026年10月13日の一覧調査。現在のrelease
+    <code>f88c58d2c57806c79b43b0b47e74c851e30993cf</code>の25個のAgent Profile定義、 1個の互換alias、public
+    selector、直近7日のLARMイベントを照合した。
+    現行のEumenes用profileは利用者が確認した<code>ornith1.5Strix</code>、ASRはGranite。
+    一覧は整理候補であり、設定・profile・runtime・重みの削除や停止は行っていない。
+  </p>
+  <section id="priority">
+    <h2>旧名・旧構成・重複定義として優先的に確認する5件</h2>
+    <table>
+      <caption>
+        参照構造から古くなったことが確認できる定義
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">識別名</th>
+          <th scope="col">整理理由</th>
+          <th scope="col">利用確認の範囲</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>deep-reasoning-35b</code></th>
+          <td><code>coding-default</code>を参照するdeprecated互換alias</td>
+          <td>
+            7日分のmodel
+            broker起動イベントに旧model名の記録がない。runtime自体は現役なのでaliasだけの整理対象
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>saaa-qwen38</code></th>
+          <td>Qwen38という旧名だが実体はGemma E4Bの互換構成</td>
+          <td>public selectorの選択先になっていない。専用LLM routeのallocation記録なし</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>saaa-conversation-gemma4</code></th>
+          <td>旧Gemma E4B音声構成。26BとStrixへの移行前の定義</td>
+          <td>
+            public
+            selectorの選択先になっていない。<code>llm-saaa-gemma4</code>のallocation記録なし
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>saaa-conversation-ornith15-image</code></th>
+          <td>
+            旧Ornith画像用profile。現在の<code>SAAA-w-Image</code>はGemma
+            26Bを選択する
+          </td>
+          <td>
+            public selectorから未参照。LLM
+            routeは現役のSAAAと共有されるため、route履歴だけで旧profileの使用を区別できない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>saaa-conversation-ornith15-music</code></th>
+          <td>
+            旧Ornith音楽用profile。現在の<code>SAAA-w-music</code>はGemma
+            26Bを選択する
+          </td>
+          <td>public selectorから未参照。旧定義と現在の公開音楽selectorを混同しない</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="experiments">
+    <h2>実験・比較を終了したか確認する3件</h2>
+    <table>
+      <caption>
+        直近7日の接続作成・専用route利用が見つからなかった評価用構成
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">公開名または定義名</th>
+          <th scope="col">用途</th>
+          <th scope="col">確認事項</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>contextstill-decision-default-canary</code></th>
+          <td>Qwen 3.5 2Bのdecision Provider canary</td>
+          <td>
+            <code>decision-default</code>のmodel
+            broker起動と<code>llm-decision-default</code>のallocation記録なし。今後の検証に使うか確認
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>backchannelLfm25Jp</code></th>
+          <td><code>contextstill-backchannel-lfm25-jp-1.2b</code>を選択する比較候補</td>
+          <td>selector接続作成と専用routeのallocation記録なし。比較を終えたなら整理候補</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>backchannelGemma3</code></th>
+          <td><code>contextstill-backchannel-gemma3-1b</code>を選択する比較候補</td>
+          <td>selector接続作成と専用routeのallocation記録なし。比較を終えたなら整理候補</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="unknown">
+    <h2>利用が見えないだけでは整理を決めない構成</h2>
+    <ul>
+      <li>
+        <code>nightworker-background</code
+        >：専用model・routeの7日分の記録なし。外部NightWorkerや定期ジョブ側の設定は確認していない。
+      </li>
+      <li>
+        <code>contextstill-background-64k</code
+        >と<code>contextstill-background-128k</code>：大きい入力や直接OpenAI
+        model呼出のためのcontext tier。小さい通常要求で使われなくても不要とは限らない。
+      </li>
+      <li>
+        <code>contextstill-backchannel-qwen35-2b</code
+        >と<code>saaa-backchannel-default</code>：Qwen 3.5
+        2Bのdefault系。比較候補のLFM・Gemmaとは区別し、consumer設定を確認してから判断する。
+      </li>
+      <li>
+        <code>SAAA-gemma4-26b-64k</code
+        >：7日分のselector接続作成記録なし。Gemmaの補助セッション・予備用途を確認する。
+      </li>
+      <li>
+        <code>asr-granite</code
+        >、<code>tts-default</code>、<code>tts-english</code>など：selectorから直接参照されなくても、OpenAIのmodel公開に必要なstandalone
+        profileである。
+      </li>
+    </ul>
+  </section>
+  <section id="retained">
+    <h2>現在の一覧では残す対象</h2>
+    <p>
+      <code>ornith1.5Strix</code>と補助<code>ornith1.5Strix-64k</code>、
+      <code>contextStill</code
+      >、<code>coding-default</code>は現行用途または直近の接続記録がある。
+      Strix-64kの最終接続作成は2026年10月13日06:50 JST。
+      <code>SAAA</code>にも10月7日の接続記録がある。
+      <code>SAAA-gemma4-26b</code
+      >は7日間に692件の接続作成記録があり、実利用とsmokeを含む。
+      Strixへ移行しただけで直ちに未使用と確定しない。
+    </p>
+    <p>
+      Qwen ASRには10月12日11:44 JSTまで、expressive Qwen TTSには10月12日06:57 JSTの
+      route利用がある。Gemma・Qwenの予備用途を確認するまではこれらも自動削除の対象にしない。
+      特に画像・音楽の公開selectorは現在もGemma profileを選択するため、
+      旧Ornithの同名用途の定義と一緒に削除しない。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>証拠と限界</h2>
+    <p>
+      調査対象は稼働releaseの<code>agent-connections.yaml</code>とLARMのjournalイベント。
+      集計したイベント範囲は2026年10月6日09:54 JSTから10月13日09:54 JST。
+      会話本文、音声、暗号化audit payload、consumerのDB・秘密設定は取得していない。
+      metadata集計は外部の<code>/srv/ai/evidence/profile-retirement-20261013/inventory.json</code>に保存した。
+    </p>
+    <p>
+      <code>agent_connection_create_accepted</code>はselectorを識別できるが、smokeを含む。
+      allocationのrouteは同じrouteを共有する複数profileを区別できない。
+      期間内の記録がゼロであることは、過去・外部consumer・将来の条件付き用途がないという証明ではない。
+      SAAA実装は参照していない。整理を実行する際は、旧APIの呼出元と公開modelの依存を確認してから
+      selector、profile、route、runtimeを順に判断する。
+    </p>
+  </section>
+</article>

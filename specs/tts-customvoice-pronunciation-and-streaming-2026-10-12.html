@@ -1,0 +1,493 @@
+<article lang="ja">
+  <h1>Qwen CustomVoiceの発音比較とTTSの逐次入力</h1>
+  <p>
+    2026-10-12 JST。<a href="./tts-multilingual-speed-benchmark-2026-10-12.html"
+      >全5版・多言語TTSの速度評価</a
+    >に続き、CustomVoice高速化版0.6Bと1.7Bを同条件で比較し、現行Providerのstream入力・出力を確認する。
+  </p>
+  <section id="selection-decision">
+    <h2>最終判断：Qwen3-TTS 1.7B CustomVoiceは不採用</h2>
+    <p>
+      Kokoroの話速・区切り・別話者も試聴した後、利用者は現行VOICEVOXを最良と判断した。現在のアプリで4人しか選べない制約に対して、追加音声モデルの取得を明示依頼し、VOICEVOX
+      Providerの公開話者を6人へ拡張した。配備記録は<a
+        href="./voicevox-control-api-implementation-plan.html#speaker-expansion-2026-10-12"
+        >VOICEVOX話者追加の実機記録</a
+      >を参照する。
+    </p>
+    <p>
+      2026-10-12、追加8条件の試聴後、利用者が今回のモデルを不採用と判断した。中盤から後半の音声は良いが、前半の品質が実用水準に届かず、会話用途で許容できない。先頭の無音追加、自然な長文の再生成、入力の短縮、発声指示なし・短い指示・詳しい指示を試しても採用に至らなかった。
+    </p>
+    <p>
+      対象は今回評価した1.7B
+      CustomVoice高速化構成であり、この用途の採用候補から外す。以前の英語の良好評価や0.6Bに対する相対的な優位は、最終の不採用判断を覆す理由にはしない。このモデルのプロンプト調整と追加生成による評価は終了する。記録と試聴音声は比較証拠として保持する。
+    </p>
+  </section>
+  <section id="kokoro-gpu">
+    <h2>Kokoro GPUの候補評価</h2>
+    <p>
+      Kokoroは不採用としていない。Qwen
+      CustomVoiceの不採用後も、日本語・英語の候補として保持する。前回CPUとGPUの速度と再認識は測定済みだが、利用者による音声品質の確認は十分に行っていない。日英混在の標準日本語frontendに見つかった読みの問題と、モデル全体の採用判断は区別する。既存GPU生成の日本語中文・長文、英語中文、日英混在短文を追加試聴として提示する。
+    </p>
+    <p>
+      前回のRadeon 8060S実測では英語短文の完成時間の中央値はCPU 0.218秒、GPU 0.133秒。英語長文はCPU
+      3.016秒、GPU 1.236秒、日本語長文はCPU 2.724秒、GPU 1.073秒。GPU構成のPyTorch最大割当は1.552
+      GiB。モデルをresidentにした後の値で、ロード時間や実際の再生開始時間ではない。
+    </p>
+    <p>
+      長めの発話ではGPUの利点が大きい。短い返事では差は約85
+      msなので、LLMのGPU使用と競合する場合はCPUも有力。既存サービスを停止しない共存測定だが、LLM生成とTTSを意図的に同時実行する比較は未実施。GPUによる速度向上と読みの正確さは別の問題で、標準日本語frontendの日英混在入力の誤読は前回のGPUでも残った。採用時はAgent
+      Profileの明示的なruntime選択とする。
+    </p>
+  </section>
+  <section id="matched-pronunciation">
+    <h2>発音の追加比較条件</h2>
+    <p>
+      外部の同じ高速化forkを使い、両サイズともBF16、SDPA、max-autotune compile、CUDA graph、fast
+      codebookを有効化。日本語Ono_Anna、英語Ryan、発声指示なし、temperature 0.8、top-k 50、top-p
+      1.0を共通とする。subtalkerにも同設定を使用する。乱数seedは42・43の2通り。同じseedはモデル間の同じ音声や話速を保証しない。従来の0.6B
+      HTTPと1.7B nativeという経路差を除いた比較である。
+    </p>
+    <p>
+      8入力×2seed×2モデルを生成。通常の日本語と英語、技術用語の原文・読みを明示した文、日付・金額・バージョン番号を含む文を比較する。日本語・英語の短文準備生成を別途行い、通常生成から分離する。読みの明示文は発音制御の別条件であり、原文入力のモデル品質として混ぜない。初回compileでは既存disk
+      cacheを再利用し、cold-start性能とはしない。
+    </p>
+    <p>
+      入力正本は<code>benchmarks/tts/multilingual/pronunciation-corpus.json</code>。測定・WAV・比較音声は<code>/srv/ai/results/larm/tts/2026-10-12-customvoice-followup</code>に保存する。比較音声は0.6B、0.8秒の無音、1.7Bの順で、音量・話速を加工しない。ASRの再認識は読みの問題を見つける補助手段であり、聴感の優劣やMOSではない。
+    </p>
+    <div id="matched-results">
+      <p>
+        通常生成32件、全件成功。各モデル16件、各言語の準備生成は別途2件。読みの再認識はseed
+        42の16件が成功した。測定時には発音・韻律の主観採点は行っていない。乱数の揺れ確認用にseed
+        43の音声も保存する。
+      </p>
+      <aside>
+        <p>
+          2026-10-12の利用者による試聴評価では、後者の1.7Bが前者の0.6Bより明確に良く、0.6Bにはノイズのような音も含まれるとの報告があった。どの入力・箇所についての指摘かは未特定。これは今回提示した高速化版の聴感評価であり、複数評価者によるMOSではない。
+        </p>
+        <p>
+          この利用者の当初の選好を受け、追加評価では1.7Bを優先候補とした。しかし、後続の試聴で前半の品質が実用水準に届かず、最終的に不採用となった。最新の判断は<a
+            href="#selection-decision"
+            >最終判断</a
+          >を優先する。ノイズがモデル、sampling、または高速化処理のどこから生じるかは未切り分けであり、モデルサイズ一般の特性とは断定しない。
+        </p>
+        <p>
+          その後の試聴では日本語短文に実用不可の評価があり、日本語長文は相対的に最もまし、英語は良好という違いが判明した。1.7B優先はサイズ間の相対評価であり、日本語全体の実用品質を保証しない。最新の入力別評価は<a
+            href="#onset-pause-trial"
+            >冒頭の違和感と無音の試行</a
+          >を参照する。
+        </p>
+      </aside>
+      <table>
+        <caption>
+          同条件の追加実測。RTF＝生成秒÷音声秒。日本語・英語は各6件、原文混在は各2件の中央値。
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">構成</th>
+            <th scope="col">日本語 RTF</th>
+            <th scope="col">英語 RTF</th>
+            <th scope="col">混在原文 RTF</th>
+            <th scope="col">日本語中文 完成秒</th>
+            <th scope="col">英語中文 完成秒</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">0.6B CustomVoice 高速化</th>
+            <td>0.529</td>
+            <td>0.520</td>
+            <td>0.513</td>
+            <td>4.056</td>
+            <td>4.965</td>
+          </tr>
+          <tr>
+            <th scope="row">1.7B CustomVoice 高速化</th>
+            <td>0.811</td>
+            <td>0.799</td>
+            <td>0.834</td>
+            <td>5.510</td>
+            <td>6.977</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        全16入力のRTF中央値は0.6Bが0.517、1.7Bが0.804で、0.6Bの音声長あたりの処理速度は約1.56倍。日本語中文は音声長が0.6B
+        7.673秒、1.7B
+        6.794秒と異なる。短文の完成時間が近い、あるいは1.7Bのほうが速い場合でも、同じ速度で生成しているとは限らない。
+      </p>
+      <p>
+        通常の日本語・英語文は両モデルともASRで内容を確認できた。日本語数字文では0.6Bの再認識に金額とバージョン番号の取り違えがあり、1.7Bは当該値を正しく認識した。READMEは両モデルの原文入力で再認識が異なる文字列になった。カタカナ読みを明示した条件では両方ともリードミーの内容を再認識できた。ASR自体の誤りもあり得るため、下表をTTS誤読の確定判定や一般的な品質順位にはしない。
+      </p>
+      <details>
+        <summary>seed 42の再認識の生出力</summary>
+        <table>
+          <caption>
+            技術用語と数字文の再認識比較。ASRの出力であり、誤読の確定判定ではない。
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">入力条件</th>
+              <th scope="col">0.6B</th>
+              <th scope="col">1.7B</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">mixed-raw</th>
+              <td>
+                今日の議題は OpenAI API と GitHub Actions
+                の連携です。まず、リーダーミーを確認してから、Hello World
+                のサンプルを実行してください。
+              </td>
+              <td>
+                今日の議題は、OpenAI API と GitHub Actions の連携です。まず Ada ME
+                を確認してから、Hello World のサンプルを実行してください。
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">mixed-normalized</th>
+              <td>
+                今日の議題は OpenAI の API と GitHub Actions の連携です。まず README
+                を確認してから、Hello World のサンプルを実行してください。
+              </td>
+              <td>
+                今日の議題はオープンAIのAPIとGitHub
+                Actionsの連携です。まずリードミーを確認してから、ハロー・ワールドのサンプルを実行してください。
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">ja-numbers</th>
+              <td>
+                10月12日の午後3時30分に集合です。料金は一人280円で割引率は12.5%です。バージョンは0と2ビット7です。
+              </td>
+              <td>
+                10月12日の午後3時30分に集合です。料金は1280円で割引率は12.5%です。アバージョンは0.6と1.7です。
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </details>
+      <p>
+        比較WAVは8文×2seedの16組。試聴一覧は外部結果directoryの<code>listening/index.html</code>、入力・順番・元WAVと音声長は<code>listening/index.json</code>。いずれも本番Providerのmodel切替をせず、独立した測定processで作成した。
+      </p>
+    </div>
+  </section>
+  <section id="current-stream-api">
+    <h2>現行のstreamで受付できる内容</h2>
+    <p>
+      現行Qwen ProviderのPOST
+      <code>/v1/audio/speech</code
+      >は、JSONの<code>input</code>に完成した文字列を受け取り、<code>stream: true</code>で音声PCMを逐次返す。入力文字列の上限は4096文字。受付後に文字列を追記するappend、flush、end-of-textのセッションAPIはない。CustomVoiceのstream
+      wrapperも最初に全文をtokenizeし、coreに固定のinput_idsを渡す。
+    </p>
+    <p>
+      確認箇所は外部checkoutの<code>api/structures/schemas.py</code>、<code>api/routers/openai_compatible.py</code>、<code>api/backends/optimized_backend.py</code>、<code>qwen_tts/inference/qwen3_tts_model.py</code>と<code>qwen_tts/core/models/modeling_qwen3_tts.py</code>。配備forkはcommit
+      <code>eb14f6e6a50445cf442979abb9203ff0d5042c43</code>とLARM管理patch。
+    </p>
+    <p>
+      前回のHTTP streaming
+      24件は最初のPCM到着の中央値が約0.421秒、RTFの中央値が約0.865。最初の音声が早くても、音声全体の生成は非streamより遅かった。最初のbyteと実際の発声開始・音声deviceの遅延は異なる。前回の長い英語1件はRTFが1を超えたため、最初のPCM到着だけで途切れない再生を保証しない。
+    </p>
+    <div id="stream-results">
+      <p>
+        現行0.6B
+        Providerで日本語短文・中文・英語中文を各2回、計6件のPCM到着履歴を追加測定した。全文JSONを事前に渡し、文字の到着待ち時間や実音声deviceの遅延は含めない。最初のPCMの中央値は0.427秒、範囲0.328〜0.462秒、RTF中央値は0.865だった。
+      </p>
+      <p>
+        到着したPCMを等速再生するsimulationでは、先頭到着後150 ms待つ設定は1件に165
+        msの途中欠音を生じた。欠音なしにするための先頭到着後の追加bufferの最大値は315
+        ms。この6件の履歴では350
+        ms待つ設定で欠音を避けられ、最初のPCM到着と合わせた再生開始は約0.78秒になる。これは履歴からの計算で、今後のLLM競合・ネットワーク・長文でも同じbufferで十分という保証ではない。
+      </p>
+      <p>
+        計算ではclient
+        readの時刻をt_i、直前までのPCM長をA_iとし、欠音なしの最小再生開始時刻をmax_i(t_i −
+        A_i)とする。HTTP read1の区切りはcodec
+        frameの境界とは異なる。計測器は<code>benchmarks/tts/multilingual/stream_timing.py</code>、生履歴は外部結果directoryの<code>pcm-arrivals/arrival-timing.jsonl</code>、集計は<code>pcm-arrivals/summary.json</code>。
+      </p>
+    </div>
+    <aside>
+      <p>
+        <a href="https://github.com/QwenLM/Qwen3-TTS">Qwen公式README</a
+        >は文字入力と音声出力のstreaming設計を説明する。一方、公開SDKと今回の配備APIが任意の到着時刻の文字列追記を受け付けることは別であり、公式の97
+        msをこのAMD実機の性能とはしない。
+      </p>
+    </aside>
+  </section>
+  <section id="realtime-improvements">
+    <h2>句読点単位から応答を早める方法</h2>
+    <ol>
+      <li>
+        最初の区間は短い意味のまとまりを優先する。長い一文では文末まで待たず、読点などの自然な境界で送る。助詞だけ、英単語の途中、日付・小数・単位の途中では切らない。未確定の数値は後続文字で読みが決まるまで保持する。
+      </li>
+      <li>
+        後続区間は少し長めにまとめ、先行区間の音声を再生中に次を生成する。GPU上のTTSは原則一つずつ実行し、再生と生成を重ねる。bufferに十分な音声がある間は、より多くの文章を待って韻律と文脈を確保できる。
+      </li>
+      <li>
+        Qwenでは各区間の音声出力streamを利用し、少量の再生bufferを確保する。固定の最適bufferは未確定なので、実測到着履歴から追加待ち時間と途中の欠音を評価する。Kokoroは各確定区間を高速に完成させる方式でも十分候補になる。
+      </li>
+      <li>
+        セッションにturn IDとsegment
+        IDを持たせ、割り込みでは生成の中止と再生済み位置を区別する。ネットワークをWebSocket化するだけでは、モデルの連続入力や内部stateの継承は実現しない。
+      </li>
+    </ol>
+    <p>
+      この方針は適用案であり、SAAAの現在の区切り方を変更した実装結果ではない。初区間の文字数・待機上限・後続区間長の最適値は、実際のLLM文字到着速度、再生device、発音評価を含めて決める。
+    </p>
+  </section>
+  <section id="incremental-input-candidates">
+    <h2>逐次テキスト入力を持つ追加候補</h2>
+    <table>
+      <caption>
+        2026-10-12確認。以下の実機速度は今回未測定。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">確認できた機能</th>
+          <th scope="col">今回の環境との関係</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><a href="https://github.com/QwenAudio/CosyVoice">CosyVoice</a></th>
+          <td>
+            公式はtext-in/audio-outのbi-streamingを掲げる。<a
+              href="https://github.com/QwenAudio/CosyVoice/blob/main/example.py"
+              >CosyVoice2の公式例</a
+            >は文字列generatorをinference_zero_shotに渡す。
+          </td>
+          <td>
+            逐次入力そのものを試す次の候補。ROCm動作・速度・日本語品質は未検証。CosyVoice3の公式日本語例はカタカナ化を要求しており、日本語原文の使い勝手も評価が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="https://github.com/X-Square-Robot/X2Streaming-TTS">X2Streaming-TTS</a>
+          </th>
+          <td>
+            逐次文字入力、読みの確定判定、区間間の音声state継承。Qwen系の研究実装。2026-09の公開版。
+          </td>
+          <td>
+            公開手順はTensorRTとNVIDIA、pre-release。AMDへの導入を確認できていない。公開GPU性能をRadeonの実測と混同しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><a href="https://github.com/runvnc/qwen3tts">Qwen WebSocket例</a></th>
+          <td>
+            READMEに逐次text入力の例があるが、確認したserver.pyのdispatchにはtextメッセージがなく、generate_streamも完成したtextを渡している。
+          </td>
+          <td>
+            READMEの宣伝だけでは入力stream実装の証拠にならない。既存Providerの置換候補として採用しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      確認したrevisionはQwen公式 <code>022e286b98fbec7e1e916cb940cdf532cd9f488e</code>、X2Streaming
+      <code>e96f066150c2b2353854e56a790262a80a2fff3d</code>、WebSocket例
+      <code>5381a0bc3667581e8f686be4f464e7486134a6ae</code>、CosyVoice
+      <code>074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc</code
+      >。取得日時とrevisionの証拠は外部結果directoryの<code>streaming-source-revisions.json</code>。
+    </p>
+  </section>
+  <section id="standalone-17b-samples">
+    <h2>1.7B単独の追加試聴サンプル</h2>
+    <p>
+      利用者の依頼により、1.7B
+      CustomVoice高速化版だけで新しい6入力を用意した。日本語の短い返事と長めの説明、英語の短い返事と説明、日本語に英語の技術用語を含む原文、日付・料金・バージョン番号を含む文を対象とする。日本語はOno_Anna、英語はRyan。前述の高速化・sampling設定を再利用し、seedは42、発声指示なし、各入力1回とする。
+    </p>
+    <p>
+      入力原文は外部結果directoryの<code>/srv/ai/results/larm/tts/2026-10-12-17b-samples/corpus.json</code>、単独WAVは同directoryの<code>generated/audio</code>、原文付き試聴一覧は<code>index.html</code>に保存する。音量・話速・ノイズ除去の後処理は行わない。比較音声の切り出しではなく、新しい文章の生成である。
+    </p>
+  </section>
+  <section id="onset-pause-trial">
+    <h2>冒頭の違和感と1秒の無音の試行</h2>
+    <aside>
+      <p>
+        利用者による最終確認では、先頭1秒の無音は今回の日本語の品質問題に役立たなかった。この対策を改善候補から外し、追加の無音試行は行わない。無音追加と発声指示を試しても、下表の日本語短文2本は実用水準に届かなかった。
+      </p>
+      <table>
+        <caption>
+          2026-10-12、利用者による入力別の試聴評価
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">音声</th>
+            <th scope="col">条件</th>
+            <th scope="col">評価</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row"><code>baseline-ja-short-plus-1s-silence.wav</code></th>
+            <td>日本語短文、発声指示なし、先頭1秒無音</td>
+            <td>実用不可</td>
+          </tr>
+          <tr>
+            <th scope="row"><code>ja-short-native-instruct-0-plus-1s-silence.wav</code></th>
+            <td>日本語短文、日本語で明瞭な発声を指示、先頭1秒無音</td>
+            <td>実用不可</td>
+          </tr>
+          <tr>
+            <th scope="row"><code>en-short-pause-clear-0-plus-1s-silence.wav</code></th>
+            <td>英語短文、明瞭な発声を指示、先頭1秒無音</td>
+            <td>明瞭で良好</td>
+          </tr>
+          <tr>
+            <th scope="row"><code>ja-explanation-0.wav</code></th>
+            <td>前回の日本語長文、発声指示なし、無音追加なし</td>
+            <td>日本語では相対的に最もまし。実用水準の承認とは区別する</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        この再評価時点の日本語の比較基準は<code>/srv/ai/results/larm/tts/2026-10-12-17b-samples/generated/audio/ja-explanation-0.wav</code>とした。1.7B
+        CustomVoice高速化版、Ono_Anna、seed
+        42、発声指示・無音追加なし。音声長23.920秒、生成時間18.293秒、RTF
+        0.765。日本語全体を不採用とする判断は早計であり、短文と長文の評価差を保持する。入力の長さ・内容・sampling・高速化のどれが冒頭の違和感に影響するかは未切り分け。
+      </p>
+    </aside>
+    <p>
+      単独サンプルの試聴後、利用者から最序盤だけノイズのような動きがあり、出だしの声が弱く揺れるように感じられるとの報告を受けた。日本語には発音・抑揚の違和感があり、英語は比較的ましとの評価。先の1.7B優先評価は0.6Bとの相対比較であり、日本語の品質を十分と判定したものではない。
+    </p>
+    <p>
+      1.7B
+      CustomVoiceに「冒頭で約1秒無音にする」という英語指示と、さらに「最初の音から明瞭で安定した声にする」という指示を加えた条件を、日本語・英語の短文と日英混在文で試す。日本語短文には日本語で無音と自然な日本語の発声を指定した別条件も用意する。話者、モデル、高速化設定、seed
+      42は維持する。明示指示に応じたsampling結果は変わるため、声の変化を無音だけの効果と解釈しない。
+    </p>
+    <p>
+      指示だけで先頭の1秒を厳密な無音にすることは確認できなかった。生成済みの各音声の先頭に24,000
+      sampleのdigital zeroを追加した版を別途作成し、元のPCM
+      sample列が変更されていないことを確認する。この処理は発声や冒頭のノイズを1秒後ろへ移動するだけで、ノイズを除去したりモデル内部の音声stateを準備したりはしない。再生開始時の問題と生成音声の発声の問題の切り分けに使う。最初の1秒を切除・置換する処理は言葉を欠く可能性があるため行わない。
+    </p>
+    <p>
+      外部結果directoryは<code>/srv/ai/results/larm/tts/2026-10-12-17b-onset-pause</code>。指示と入力は<code>all-corpus.json</code>、未加工の生成音声は<code>generated/audio</code>と<code>japanese-instruct/audio</code>、1秒の無音追加版は<code>listening</code>、PCM保存検証と音量からの活動開始の測定は<code>silence-audit.json</code>。10
+      ms窓で−50
+      dBFSを3窓連続で超える最初の時刻を測るが、これは音声活動の指標であり、発声開始やノイズの識別ではない。
+    </p>
+    <p>
+      公開SDKのCustomVoiceは自然言語のinstructを受け取る。局所的なpause指示の不確実さは<a
+        href="https://github.com/QwenLM/Qwen3-TTS/discussions/75"
+        >公式repositoryのpauseに関する利用者discussion</a
+      >にも報告されているが、一般的な性能の保証には使わない。今回の結果と、その後の利用者による聴感確認を優先する。
+    </p>
+  </section>
+  <section id="japanese-prompt-comparison">
+    <h2>日本語の文章長と発声指示の比較サンプル</h2>
+    <p>
+      利用者から、最もましだった日本語長文のプロンプトの特徴を踏襲し、逆に単純化した条件も比較したいとの依頼を受けた。「プロンプト」を読み上げ文章と発声指示の二つに分けて評価する。モデルは1.7B
+      CustomVoice高速化版、話者はOno_Anna、seedは42、既存のsampling・高速化設定を維持し、無音追加と音声後処理は行わない。
+    </p>
+    <table>
+      <caption>
+        同じ冒頭文を持つ2種類の文章と3種類の発声指示
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">比較軸</th>
+          <th scope="col">条件</th>
+          <th scope="col">確認する点</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">読み上げ文章</th>
+          <td>前回のja-explanation原文全体／その最初の一文だけ</td>
+          <td>同じ言葉で発声を始めたとき、後続文脈や全体の長さで冒頭の聞こえ方が変わるか</td>
+        </tr>
+        <tr>
+          <th scope="row">発声指示</th>
+          <td>指示なし</td>
+          <td>最もましと評価された前回条件の再生成</td>
+        </tr>
+        <tr>
+          <th scope="row">発声指示</th>
+          <td>「自然な日本語で話してください。」</td>
+          <td>短い指示で改善するか</td>
+        </tr>
+        <tr>
+          <th scope="row">発声指示</th>
+          <td>
+            「標準的で自然な日本語で、落ち着いた会話の調子で読み上げてください。最初の音から明瞭に発声し、自然な抑揚と聞き取りやすい速さを保ってください。文章の意味に合わせて、句読点で適度に間を取ってください。」
+          </td>
+          <td>指示の詳しさと要求内容を増やした場合の変化</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      2種類の文章×3指示の6条件に加え、自然な説明文、複数の完結した文、発声指示なしという特徴を持つ新しい日本語長文を2本用意する。内容は明日の予定の案内と設定変更の手順。各条件1回の生成であり、乱数seedを揃えても同一音声の再現や品質順位の統計的な確定は保証しない。詳しい指示は指示長だけでなく要求内容も変わるため、指示の文字数のみの効果と解釈しない。
+    </p>
+    <p>
+      入力と発声指示の正本は<code>/srv/ai/results/larm/tts/2026-10-12-17b-prompt-comparison/corpus.json</code>。単独WAVは同directoryの<code>generated/audio</code>、原文と指示付きの試聴一覧は<code>index.html</code>。8条件すべてを生成して試聴に供した結果、利用者は中盤以降を良いとしながらも前半の品質を許容できず、モデルの不採用を決定した。この評価は完了し、追加のプロンプト調整は行わない。
+    </p>
+  </section>
+  <section id="kokoro-rhythm-controls">
+    <h2>Kokoroの抑揚と話速の調整範囲</h2>
+    <p>
+      利用者から、日英混在の読みだけでなく、一定のテンポで話すため合成音声らしさが強いとの評価を受けた。Kokoroは候補を継続するが、速度だけでなく会話らしい韻律も採用判断に含める。
+    </p>
+    <p>
+      測定環境のKokoro
+      0.9.4のKPipelineはtext、voice、speed、split_patternを受け取る。KModel.forwardはphonemes、ref_s、speedを受け取り、感情の自然言語指示や抑揚の強さ・pitch
+      contourを直接指定する引数はない。speedはfloatまたは音素列長を受け取るcallableだが、最終的には一つの生成区間に一つの値が渡る。文内で話速を変えるには入力を分けて生成する必要がある。voice
+      packの平均による話者混合は可能だが、感情を意味に応じて指示する機能とは区別する。
+    </p>
+    <p>
+      根拠は測定環境のKPipeline.__call__、infer、load_voiceとKModel.forward。公開仕様の確認先は<a
+        href="https://github.com/hexgrad/kokoro/blob/main/kokoro/pipeline.py"
+        >公式pipeline.py</a
+      >、<a href="https://github.com/hexgrad/kokoro/blob/main/kokoro/model.py">公式model.py</a>、<a
+        href="https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md"
+        >公式voice一覧</a
+      >。日本語の既定voiceは4女性・1男性だが、voiceの違いが好みに合うかは試聴で判断する。
+    </p>
+    <table>
+      <caption>
+        同じ日本語中文での話速・区切り・話者の5条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">話者</th>
+          <th scope="col">区切りと話速</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">alpha-original</th>
+          <td>jf_alpha</td>
+          <td>全文を一括、speed 1.0</td>
+        </tr>
+        <tr>
+          <th scope="row">alpha-phrases-fixed</th>
+          <td>jf_alpha</td>
+          <td>同じ3区間を各speed 1.0、区間間に150 ms・80 msの間</td>
+        </tr>
+        <tr>
+          <th scope="row">alpha-phrases-varied</th>
+          <td>jf_alpha</td>
+          <td>同じ3区間・同じ間、speed 1.0・1.06・0.94</td>
+        </tr>
+        <tr>
+          <th scope="row">gongitsune-original</th>
+          <td>jf_gongitsune</td>
+          <td>全文を一括、speed 1.0</td>
+        </tr>
+        <tr>
+          <th scope="row">kumo-original</th>
+          <td>jm_kumo</td>
+          <td>全文を一括、speed 1.0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      入力は「次の会議は午後三時からです。資料を確認して、気になる点があれば教えてください。」。3区間は「次の会議は午後三時からです。」「資料を確認して、」「気になる点があれば教えてください。」で、結合すれば原文と完全一致する。後処理で音高は変更しない。区間分割により発声の文脈も変わるため、全文生成との比較は話速だけの効果ではない。固定話速の区間版と変化する区間版は区切りと間を一致させ、話速の効果を比較する。
+    </p>
+    <p>
+      外部結果directoryは<code>/srv/ai/results/larm/tts/2026-10-12-kokoro-rhythm</code>。各条件と音素列は<code>samples.json</code>、単独WAVは<code>audio</code>。Radeon
+      8060S、FP32、既存のKokoro
+      weightを使用する。今回の区間間の短い間はリズム比較用であり、無効と判断した発話前の1秒無音を再試行するものではない。voice一覧の参照creditはjf_gongitsuneがgongitsune、jm_kumoがkumonoito。
+    </p>
+  </section>
+</article>

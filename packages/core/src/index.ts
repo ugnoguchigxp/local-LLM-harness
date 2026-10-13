@@ -1,4 +1,5 @@
 export { LARM_VERSION } from "./version";
+export { runtimeSetsConflict } from "./allocation-resource-conflict";
 export {
   compileProviderRevision,
   managedWarmPolicy,
@@ -62,6 +63,7 @@ export {
 export * from "./protocol";
 export * from "./embedding";
 export * from "./system-one";
+export * from "./speech-segmentation";
 export * from "./openai-audio";
 export * from "./network";
 export * from "./service-harness";
@@ -326,3 +328,5 @@ export * from "./local-service";
 export { ServiceResourceLedger } from "./service-resource-ledger";
 
 export { LocalServiceManager, LocalServiceError } from "./local-service-manager";
+
+export * from "./chat-input";

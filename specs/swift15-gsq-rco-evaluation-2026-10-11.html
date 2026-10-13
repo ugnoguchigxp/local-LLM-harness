@@ -1,0 +1,346 @@
+<article lang="ja">
+  <h1>Swift 1.5 GSQ-RCO：Ryzen AI MAX+ 395での実測評価</h1>
+  <p>
+    2026-10-11から実機検証。2026-10-12 06:03
+    JST、ユーザーの指示で検証を停止し既存サービスを復帰した。以下は完了した実測の部分評価である。
+  </p>
+  <section id="decision">
+    <h2>現時点の判断：C、現行Qwen3.8-27Bを継続</h2>
+    <p>
+      実用設定の生成速度向上は約7〜10%で、90
+      tok/sを再現しなかった。Thinkingを多く使う一部Codingでは時間を短縮したが、依存tool
+      Agentは遅く、Swiftの長文性能・品質は未測定。全面置換を勧める根拠は揃っていない。IQ3_XXSのlow
+      Codingは追加選択の候補となる。
+    </p>
+    <p>
+      Swiftの最大持続実測は33.49 tok/s。単語alpha反復・512返却token・MTP
+      draft2・採用率約99.7%という特殊条件で、通常CodingやAgentと混ぜない。動画の説明・章立ては取得したが字幕は空、映像・音声は未確認。90の元測定条件は未同定である。
+    </p>
+  </section>
+  <section id="environment">
+    <h2>実機とLARMの運用意図</h2>
+    <p>
+      ユーザーの訂正により実機は1台。gnosisはGMKtec EVO-X2、Ryzen AI MAX+ 395 / Radeon
+      8060S、128GB、Ubuntu 26.04.1、kernel 7.0.0-34。ROCm 10.0.0、Mesa 26.0.8。native engine
+      version244、worker build10655。再ビルド・本番設定変更はしていない。
+    </p>
+    <p>
+      nightworker-background → llm-agent-worker → qwen-worker-fastが比較基準。Qwen3.8-27B
+      Q4_0と別MTP、230400容量、1slot、q4
+      KV、draft2。fallbackのUD-Q4_K_XLは主品質のみ比較した。8080の現行Ornith、8083のllama-swapを固定的なQwen
+      identityと扱わない。
+    </p>
+    <p>
+      ユーザーの追加指示で既存LLMの一時停止が許可され、各runのfinallyで復帰した。停止後の最終確認は3unit
+      active/running、daemon/swapのprocessは停止状態ではなく、8080/8083 health
+      HTTP200。試験port18090は閉じ、本番設定4ファイルのSHA256は開始時と一致した。
+    </p>
+  </section>
+  <section id="performance">
+    <h2>現行worker設定を再現した新規入力</h2>
+    <p>
+      共通worker Vulkan、ctx230400、q4 KV、MTP
+      draft2、threads自動/poll50、temp.2。新規3067入力token、256出力token、各3回。値は中央値と最小〜最大。230400全文の処理性能ではない。時間はbackend
+      ready後のHTTP要求から終了までで、LARM allocationやモデル起動待ちは含まない。
+    </p>
+    <table>
+      <caption>
+        同一の本番起動設定における比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">Qwen Q4_0</th>
+          <th scope="col">Swift IQ3_S</th>
+          <th scope="col">Swift IQ3_XXS</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">生成 tok/s</th>
+          <td>22.87（22.73〜23.00）</td>
+          <td>25.18（24.74〜25.35）</td>
+          <td>24.53（24.52〜24.69）</td>
+        </tr>
+        <tr>
+          <th scope="row">総時間 秒</th>
+          <td>23.89（23.84〜24.00）</td>
+          <td>24.86（24.68〜24.99）</td>
+          <td>23.56（23.40〜23.58）</td>
+        </tr>
+        <tr>
+          <th scope="row">生成速度の改善</th>
+          <td>基準</td>
+          <td>10.1%</td>
+          <td>7.3%</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Sは生成が速くても総時間は約4.1%増えた。XXSの総時間改善は約1.4%。同じnative
+      Vulkan・4KではMTPなしQwen12.94/S15.36/XXS16.93
+      tok/s、MTPあり21.49/22.24/23.43。既存QwenにもMTPの効果がある。ROCmのSwiftはMTPあり約15.1〜15.5
+      tok/sでVulkanより遅かった。
+    </p>
+    <p>
+      通常入力のdraft2が良好で、draft4/6では採用率と速度が低下。q8
+      KVの速度改善はS約2%、XXS約0.6%に留まった。ubatch256は4K比較の最短値で、全contextにおける最適値は未確認。full
+      GPU offloadとFlash Attentionを使用済み。実効帯域や単一ボトルネックをprofilerで立証していない。
+    </p>
+  </section>
+  <section id="quality">
+    <h2>品質とThinkingの削減</h2>
+    <p>
+      同一の修正済み12課題・各3seed、主試験xhigh、共有4096出力予算。Python/TypeScript/Goは隔離sandboxで実行assertion、Agentは注文取得→返されたSKUによる在庫取得→不足数の報告を採点した。
+    </p>
+    <table>
+      <caption>
+        主品質と補助low条件。時間は秒の中央値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">Qwen Q4_0</th>
+          <th scope="col">Swift IQ3_S</th>
+          <th scope="col">Swift IQ3_XXS</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">主品質成功</th>
+          <td>29/36</td>
+          <td>30/36</td>
+          <td>30/36</td>
+        </tr>
+        <tr>
+          <th scope="row">コード成功</th>
+          <td>8/12</td>
+          <td>9/12</td>
+          <td>9/12</td>
+        </tr>
+        <tr>
+          <th scope="row">Python区間統合、全て3/3成功</th>
+          <td>126.88秒</td>
+          <td>37.88秒</td>
+          <td>28.20秒</td>
+        </tr>
+        <tr>
+          <th scope="row">Pythonコード修正、全て3/3成功</th>
+          <td>153.84秒</td>
+          <td>35.36秒</td>
+          <td>37.89秒</td>
+        </tr>
+        <tr>
+          <th scope="row">Agent、全て3/3成功</th>
+          <td>16.95秒</td>
+          <td>25.83秒</td>
+          <td>19.10秒</td>
+        </tr>
+        <tr>
+          <th scope="row">本番設定TypeScript low、全て3/3成功</th>
+          <td>82.20秒</td>
+          <td>55.48秒</td>
+          <td>47.05秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      両者正答text26ペアのThinking合計はS58.1%、XXS52.8%減、時間合計は2.41倍/2.39倍改善。正答ペア選択の偏りがあり、全用途の改善率ではない。Agentは双方正解でも遅かった。
+    </p>
+    <p>
+      補助Python区間統合lowではQwen20.85/S22.62/XXS19.63秒、全て3/3成功。既存Qwenのeffort調整で差が縮むため、主試験の改善を全てSwift固有の効果としない。同じlowのTypeScriptではSwiftの時間改善が残った。
+    </p>
+    <p>
+      主試験TypeScriptと難しい組合せ論は全モデル0/3で、Thinkingが出力予算に達して最終回答を返さなかった。一般能力ゼロや量子化由来の低下とは断定しない。JSON、日英指示、未知情報へのUNKNOWN、修正済み変更計画は各3/3。UD-Q4_K_XLは29/36。TypeScriptはBun実行の検証でtscではなく、変更計画はJSON採点で実修正ではない。小規模suiteによる広い能力同等性の保証ではない。
+    </p>
+    <p>
+      曖昧な設問を修正した対象は全モデルに同じ修正版を適用し、旧試行の生出力を保存して正式採点から除外した。変更していない課題の失敗は保持した。Thinking・生成数はprompt_progressの仮IDを除いた実SSE
+      IDから再計数。品質の一部で残るserver counterとの最大43
+      token差は両方を保存し、補完していない。Tool APIのThinkingは同tokenizerでの再計数である。
+    </p>
+  </section>
+  <section id="long-context">
+    <h2>長文は部分測定で停止</h2>
+    <p>
+      予定252要求中61要求を完了。Qwen
+      MTPなしは4K/32K/64K/128Kの新規・同一・末尾変更各3回完了。MTPありは4K/32Kの性能・抽出を完了、64K新規1回のみ。Swiftの32K以上の全文性能・抽出は未測定。
+    </p>
+    <p>
+      Qwen MTPなしの新規入力では32K約176秒・12.09 tok/s、64K約416秒・11.26 tok/s、128K約1163秒・9.77
+      tok/s。128Kの同一入力再利用は約27秒、生成は約9.77のまま。入力キャッシュの効果と生成速度を区別する。Qwenの4K/32K抽出は計6/6成功。
+    </p>
+    <p>
+      Swiftは230400/262144のKV確保と短い回答を各3回成功したが、256K全文のprefillや品質を検証したものではない。計測範囲では16GiB安全余裕を下回らなかった。UMAのRSSとGTTを足さず、PPT約54Wをコンセント電力やTDP上限と同一視しない。
+    </p>
+  </section>
+  <section id="compatibility">
+    <h2>互換性・併用・採点の限界</h2>
+    <p>
+      Swiftのreasoning_effort=highは各3/3
+      HTTP500、Qwenは同指定を各3/3受理。有効値low/medium/xhighを使う必要があり、明示xhighは全モデル各3/3受理。MTPなしSchema
+      APIの出力は全モデル各3/3でキー・型・値が厳密一致。MTPありSchema追加試験は未実施。
+    </p>
+    <p>
+      Ornith128Kとcandidate64Kの常駐は可能。ただし同時生成でprimaryは約77〜78
+      tok/sから約30〜32へ低下し、candidateもS23.19→16.97、XXS24.22→18.20となった。HTTP要求の重複でありGPU
+      kernel同時実行率ではない。音声は常駐のみで同時音声負荷・複数slotは未測定。SAAA
+      worktreeはdirtyのためpull・実装参照をせず、実consumer canaryは未確認。
+    </p>
+    <p>
+      各軸100点、性能25%・品質35%・安定性20%・互換性10%・運用性10%の事前配点を保持。互換性はQwen100、Swift各97.5。長文未完了のため他軸・総合点は未確定で、未測定を0点や満点へ補完しない。判断Cは停止時点の暫定結論である。
+    </p>
+  </section>
+  <section id="license-and-rollout">
+    <h2>ライセンスと将来の移行案</h2>
+    <p>
+      Swift ContributionはSwift Open License
+      v1.0。関連会社を含む直近年度総売上についてユーザーが100万USD未満と回答したため、その申告を前提に売上条件を満たすと扱う。再配布時のSwift/Apache
+      LICENSE、著作権・変更表示・NOTICE等の条件は適用する。
+    </p>
+    <p>
+      将来採用する場合は固定hashの独立Runtime ReleaseとexplicitOnly
+      route/profileで追加し、profile→route→runtime→backendを追ってcanaryする。既存Qwen設定・重みは保持。rollbackは元のprofileに戻し、Swift新規allocationを止めlease解放後candidateを停止する。本番切替は実施していない。
+    </p>
+    <p>
+      記録はソースrepository外の検証領域に保存。swift15-research.md、swift15-environment.md、swift15-benchmark.csv、swift15-quality.md、swift15-performance.md、swift15-recommendation.mdとscripts、各runのargv・metadata・生SSE・復帰記録を保持する。
+    </p>
+  </section>
+  <section id="model-cleanup">
+    <h2>モデルの物理削除と棚卸しの結果</h2>
+    <p>
+      2026-10-12、ユーザーの指示でSwift IQ3_S /
+      IQ3_XXS本体と取得cacheを物理削除した。モデル本体22,562,844,672
+      bytes（約22.6GB）を削除し、空き容量の増加を確認。測定記録・スクリプトは保持した。記録中のSwift起動コマンドはモデル再取得後にのみ再実行可能。
+    </p>
+    <p>
+      続いて、ユーザーが表示済み未使用候補一覧について「全部捨てていいかな Qwen3
+      TTSだけ残して」と指示したため、Qwen3-TTS
+      1.7Bを除く12グループ・21パスを削除した。追加の空き容量増加は244,884,779,008
+      bytes（約244.9GB、228.07GiB）。Qwen3-TTSは現行0.6Bと保持指定1.7Bの両方を残し、69ファイルのパス・サイズ・mtime・inodeが削除前と一致した。削除結果のerrorsは空である。
+    </p>
+    <p>
+      削除前に稼働releaseとrepositoryのartifact → runtime → route、Agent
+      Profile、実systemd起動設定を照合し、保護対象とのパス衝突と対象を指定する実行中processがないことを確認した。現在停止中でも必要時に起動するQwen
+      worker・EfficientThink・Gemma・現行Ornith・画像AD-Q4_Kとencoder/vae・ACE-Step等の本番モデル、LARMのstaging/rollbackを削除対象に含めていない。本番設定の変更・サービス停止は行わなかった。
+    </p>
+    <table>
+      <caption>
+        棚卸し時点のディスク容量と、ユーザー指示による削除結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル・関連重み</th>
+          <th scope="col">削除前GiB</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Strata / Qwen3.8-Flash-Next IQ3_XXS</th>
+          <td>70.63</td>
+          <td>削除済み</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen-Image 2.1 / Turbo PyTorch版</th>
+          <td>61.08</td>
+          <td>削除済み</td>
+        </tr>
+        <tr>
+          <th scope="row">Bonsai 2 27B（2量子化＋MTP/DFlash）</th>
+          <td>21.30</td>
+          <td>削除済み</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM2.5-8B-A1B（通常版＋GGUF）</th>
+          <td>20.59</td>
+          <td>削除済み</td>
+        </tr>
+        <tr>
+          <th scope="row">旧Qwen3.8-27B ROCmFP4</th>
+          <td>13.56</td>
+          <td>削除済み</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen-Image Turbo GGUF Q8_0 / AD-Q5_K</th>
+          <td>12.10</td>
+          <td>削除済み</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3.5-4B（通常版＋GGUF）</th>
+          <td>11.25</td>
+          <td>削除済み</td>
+        </tr>
+        <tr>
+          <th scope="row">Irodori TTS 3版＋Semantic DACVAE</th>
+          <td>7.18</td>
+          <td>削除済み</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3.5-9B GGUF</th>
+          <td>5.29</td>
+          <td>削除済み</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-TTS 1.7B</th>
+          <td>4.21</td>
+          <td>ユーザー指定で保持</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen-Image Viggle LoRA 3版</th>
+          <td>2.22</td>
+          <td>削除済み</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-ASR 0.6B</th>
+          <td>1.75</td>
+          <td>削除済み</td>
+        </tr>
+        <tr>
+          <th scope="row">ReazonSpeech 2版＋Kotoba Whisper</th>
+          <td>1.11</td>
+          <td>削除済み</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      棚卸しの容量は割当済みディスク量。同一グループ内のinode重複を除いた値で、削除後は実際の空き容量差も記録した。現在稼働していないだけでは未使用と扱わない。stagingには現行モデルのsymlink先や復旧用保管が混在するため別扱いとした。全host
+      processのmaps/fdには読み取り制限があり、process未参照だけを削除の根拠にしていない。
+    </p>
+    <p>
+      削除前のパス・容量一覧、保護対象、削除計画・逐次結果、TTS保持確認、既存サービスの状態はrepository外のevidenceに保存した。model-cleanup-inventory-2026-10-12.csvは削除結果を含む現在の一覧に更新した。モデル本体はrepositoryに置いていない。
+    </p>
+  </section>
+
+  <section id="sources">
+    <h2>一次資料</h2>
+    <ul>
+      <li>
+        <a href="https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-27b"
+          >Swift 1.5 BF16の品質・Thinking評価</a
+        >
+      </li>
+      <li>
+        <a href="https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF"
+          >GSQ-RCO配布・KLD・manifest</a
+        >
+      </li>
+      <li>
+        <a href="https://github.com/IST-DASLab/GSQ">GSQ実装</a>、<a
+          href="https://github.com/IST-DASLab/RCO"
+          >RCO実装</a
+        >
+      </li>
+      <li>
+        <a href="https://www.youtube.com/watch?v=aNOUkWk9piU">指定動画</a>、<a
+          href="https://github.com/lukesdevlab/youtube/blob/main/model-configs.ini"
+          >作者の現行公開設定</a
+        >
+      </li>
+      <li>
+        <a href="https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF/blob/main/LICENSE"
+          >配布ライセンス本文</a
+        >
+      </li>
+    </ul>
+  </section>
+</article>

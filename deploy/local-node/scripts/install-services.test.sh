@@ -165,7 +165,7 @@ LARM_INSTALL_TEST_MODE=1 \
 [[ -f "${gateway_root}/etc/systemd/system/larm-release-activator.path" ]]
 [[ -f "${gateway_root}/etc/systemd/system/larm-http-provider-monitor.timer" ]]
 for unit in llama-server.service llama-swap-worker.service qwen-asr.service whisper-asr.service qwen-tts.service larm-embedding.service laya-system-one.service ruri-system-one.service \
-  voicevox-tts.service larm-music-ace-step.service larm-image-qwen21.service; do
+  voicevox-tts.service kittentts-tts.service larm-music-ace-step.service larm-image-qwen21.service; do
   [[ ! -e "${gateway_root}/etc/systemd/system/${unit}" ]]
 done
 grep -F "enable larm-daemon.service" \

@@ -151,7 +151,7 @@ export function apiOperationPolicy(
     : ["listServices", "getAsrServiceHealth", "createTranscription"].includes(operationId)
     ? "configurable-api-bearer"
     : [
-      "createEmbedding", "getPersonalStateCapability", "provisionContextSource", "getContextSourceOperation",
+      "countChatInputTokens", "createEmbedding", "getPersonalStateCapability", "provisionContextSource", "getContextSourceOperation",
       "createContextMeasurement", "getContextMeasurement", "createContextViewV2", "getContextViewV2",
       "getGenerationAttempt", "cancelGenerationAttempt", "createContextForgetOperation", "getContextForgetOperation",
     ].includes(operationId)

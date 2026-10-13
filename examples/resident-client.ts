@@ -1,7 +1,7 @@
 import { LarmClient } from "../packages/client/src/index";
 
 const startedAt = performance.now();
-const model = process.env.LARM_MODEL ?? "coding-default";
+const model = process.env.LARM_MODEL ?? "ornith-1.5-strix-lean";
 const client = new LarmClient({
   baseUrl: process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810",
   apiToken: process.env.LARM_API_TOKEN,

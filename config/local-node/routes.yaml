@@ -4,8 +4,9 @@ routes:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     candidates:
-      - runtime: ornith-general
+      - runtime: ornith15-strix-conversation
         purpose: primary
 
   llm-saaa-qwen38:
@@ -34,12 +35,13 @@ routes:
       - runtime: gemma4-26b-conversation
         purpose: primary
 
-  llm-saaa-ornith15:
+  llm-ornith15-strix:
     capabilities:
       - llm.general
+      - llm.vision
     explicitOnly: true
     candidates:
-      - runtime: ornith-general
+      - runtime: ornith15-strix-conversation
         purpose: primary
 
   llm-agent-worker:
@@ -61,9 +63,10 @@ routes:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     explicitOnly: true
     candidates:
-      - runtime: ornith-contextstill
+      - runtime: ornith15-strix-conversation
         purpose: primary
 
   # ContextStill chooses one of these explicit tiers from its final prompt
@@ -233,6 +236,14 @@ routes:
       - runtime: voicevox-tts
         purpose: primary
 
+  tts-kittentts-nano:
+    capabilities:
+      - speech.tts.english
+    explicitOnly: true
+    candidates:
+      - runtime: kittentts-nano
+        purpose: primary
+
   tts-expressive:
     capabilities:
       - speech.tts.expressive
@@ -258,8 +269,22 @@ routes:
         purpose: primary
 
   system-one-ruri:
-    capabilities: [decision.system-one]
+    capabilities: [ decision.system-one ]
     explicitOnly: true
     candidates:
       - runtime: ruri-system-one
+        purpose: primary
+
+  system-one-ruri-language:
+    capabilities: [ decision.sentence-language ]
+    explicitOnly: true
+    candidates:
+      - runtime: ruri-system-one
+        purpose: primary
+  stt-granite:
+    capabilities:
+      - speech.stt
+    explicitOnly: true
+    candidates:
+      - runtime: granite-asr
         purpose: primary

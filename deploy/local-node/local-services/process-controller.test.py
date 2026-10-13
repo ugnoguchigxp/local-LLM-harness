@@ -101,6 +101,21 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(publish.call_args.args[1]["state"], "unknown")
             self.assertFalse(publish.call_args.args[1]["stopConfirmed"])
 
+    def test_cold_start_does_not_reset_an_inactive_unit_that_systemd_can_unload(self):
+        self.value['startSeconds'] = 45
+        with patch.object(c, 'preflight'), patch.object(c, 'observe', return_value={'stopConfirmed': True}), patch.object(c, 'properties', return_value={'ActiveState': 'inactive'}), patch.object(c, 'run') as run, patch.object(c, 'publish'):
+            c.perform(self.value, 'start')
+            self.assertEqual(run.call_args_list[0].args[0], ['/usr/bin/systemctl', 'start', 'larm-local-service-fixture.service'])
+            self.assertEqual(run.call_count, 1)
+
+    def test_failed_start_clears_only_the_failed_member(self):
+        self.value['startSeconds'] = 45
+        self.value['members'].append({'unit': 'larm-local-service-other.service'})
+        with patch.object(c, 'preflight'), patch.object(c, 'observe', return_value={'stopConfirmed': True}), patch.object(c, 'properties', side_effect=[{'ActiveState': 'failed'}, {'ActiveState': 'inactive'}]), patch.object(c, 'run') as run, patch.object(c, 'publish'):
+            c.perform(self.value, 'start')
+            self.assertEqual(run.call_args_list[0].args[0], ['/usr/bin/systemctl', 'reset-failed', 'larm-local-service-fixture.service'])
+            self.assertEqual(run.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

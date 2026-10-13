@@ -50,9 +50,11 @@ describe("runtime release catalog", () => {
     });
     expect(defaultRuntimeRelease(releases, "ornith15-35b")?.artifacts).toEqual([
       "ornith15-35b-quality",
+      "ornith15-vision-bf16",
     ]);
     expect(defaultRuntimeRelease(releases, "ornith15-35b-speed")?.artifacts).toEqual([
       "ornith15-35b-speed",
+      "ornith15-vision-bf16",
     ]);
     expect(registry.runtimes.find((runtime) => runtime.id === "ornith-general")?.context)
       .toMatchObject({ class: "managed-context", sourceTokenLimit: 20_000_000 });
