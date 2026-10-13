@@ -23,44 +23,6 @@ agentProfiles:
           maxTokens: 131072
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
-  saaa-conversation-gemma4:
-    description: SAAA warm conversation preset with Gemma 4 E4B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding
-    schedulingPriority: 4000
-    idleRelease: &saaa-idle-release
-      enabled: true
-      idleSeconds: 300
-      activityProtocols:
-        - openai.audio-speech.v1
-        - openai.audio-transcriptions.v1
-        - openai.chat-completions.v1
-    providers:
-      - name: llm
-        capability: llm.general
-        route: llm-saaa-gemma4
-        publicModel: gemma4-e4b
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 230400
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
-      - name: asr
-        capability: speech.stt
-        route: stt-qwen
-        publicModel: qwen3-asr-1.7b
-        publishModel: false
-        readiness: stt-transcription
-      - name: tts
-        capability: speech.tts
-        route: tts-voicevox
-        publicModel: voicevox-core
-        publishModel: false
-        readiness: tts-speech
-      - name: embedding
-        capability: embedding.multilingual-e5-small
-        route: embedding-multilingual-e5-small
-        publicModel: multilingual-e5-small
-        publishModel: false
-        readiness: embedding
   saaa-conversation-gemma4-26b-voice:
     description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, Japanese VOICEVOX and English KittenTTS, embedding, and Ruri speaking-attitude System One
     schedulingPriority: 4000
@@ -216,7 +178,13 @@ agentProfiles:
   saaa-conversation-ornith15:
     description: SAAA base response set with resident Ornith 1.5 35B, Qwen 3.5 2B, Qwen ASR, VOICEVOX TTS, and multilingual E5 embedding
     schedulingPriority: 4000
-    idleRelease: *saaa-idle-release
+    idleRelease: &saaa-idle-release
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - openai.audio-speech.v1
+        - openai.audio-transcriptions.v1
+        - openai.chat-completions.v1
     providers:
       - name: llm
         capability: llm.general
@@ -235,122 +203,6 @@ agentProfiles:
         readiness: llm-inference
         contextWindow:
           maxTokens: 65536
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
-      - name: asr
-        capability: speech.stt
-        route: stt-qwen
-        publicModel: qwen3-asr-1.7b
-        publishModel: false
-        readiness: stt-transcription
-      - name: tts
-        capability: speech.tts
-        route: tts-voicevox
-        publicModel: voicevox-core
-        publishModel: false
-        readiness: tts-speech
-      - name: embedding
-        capability: embedding.multilingual-e5-small
-        route: embedding-multilingual-e5-small
-        publicModel: multilingual-e5-small
-        publishModel: false
-        readiness: embedding
-  saaa-conversation-ornith15-image:
-    description: SAAA image-generation variant with the Ornith conversation provider set
-    schedulingPriority: 4000
-    idleRelease: *saaa-idle-release
-    providers:
-      - name: llm
-        capability: llm.general
-        route: llm-saaa-ornith15
-        publicModel: ornith-1.5-35b
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 131072
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
-      - name: backchannel
-        capability: llm.backchannel.classifier
-        route: llm-saaa-qwen35-2b
-        publicModel: qwen3.5-2b-fast-response
-        publishModel: false
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 65536
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
-      - name: asr
-        capability: speech.stt
-        route: stt-qwen
-        publicModel: qwen3-asr-1.7b
-        publishModel: false
-        readiness: stt-transcription
-      - name: tts
-        capability: speech.tts
-        route: tts-voicevox
-        publicModel: voicevox-core
-        publishModel: false
-        readiness: tts-speech
-      - name: embedding
-        capability: embedding.multilingual-e5-small
-        route: embedding-multilingual-e5-small
-        publicModel: multilingual-e5-small
-        publishModel: false
-        readiness: embedding
-  saaa-conversation-ornith15-music:
-    description: SAAA music-generation variant with the Ornith conversation provider set
-    schedulingPriority: 4000
-    idleRelease: *saaa-idle-release
-    providers:
-      - name: llm
-        capability: llm.general
-        route: llm-saaa-ornith15
-        publicModel: ornith-1.5-35b
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 131072
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
-      - name: backchannel
-        capability: llm.backchannel.classifier
-        route: llm-saaa-qwen35-2b
-        publicModel: qwen3.5-2b-fast-response
-        publishModel: false
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 65536
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
-      - name: asr
-        capability: speech.stt
-        route: stt-qwen
-        publicModel: qwen3-asr-1.7b
-        publishModel: false
-        readiness: stt-transcription
-      - name: tts
-        capability: speech.tts
-        route: tts-voicevox
-        publicModel: voicevox-core
-        publishModel: false
-        readiness: tts-speech
-      - name: embedding
-        capability: embedding.multilingual-e5-small
-        route: embedding-multilingual-e5-small
-        publicModel: multilingual-e5-small
-        publishModel: false
-        readiness: embedding
-  saaa-qwen38:
-    description: Frozen legacy compatibility profile for the SAAA Gemma 4 warm conversation preset
-    schedulingPriority: 4000
-    idleRelease: *saaa-idle-release
-    providers:
-      - name: llm
-        capability: llm.general
-        route: llm-saaa-gemma4
-        publicModel: gemma4-e4b
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 230400
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
       - name: asr
@@ -422,15 +274,6 @@ agentProfiles:
           maxTokens: 131072
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
-  contextstill-decision-default-canary:
-    description: Explicit Qwen 3.5 2B ContextStill decision Provider canary
-    schedulingPriority: 1000
-    providers:
-      - name: decision-default
-        capability: llm.decision.default
-        route: llm-decision-default
-        publicModel: decision-default
-        readiness: llm-inference
   contextstill-backchannel-qwen35-2b:
     description: Explicit Qwen 3.5 2B backchannel classifier candidate
     schedulingPriority: 1000
@@ -439,24 +282,6 @@ agentProfiles:
         capability: llm.backchannel.classifier
         route: llm-backchannel-qwen35-2b
         publicModel: backchannel-qwen35-2b
-        readiness: llm-inference
-  contextstill-backchannel-lfm25-jp-1.2b:
-    description: Explicit Japanese-tuned LFM 2.5 1.2B backchannel classifier candidate
-    schedulingPriority: 1000
-    providers:
-      - name: backchannel
-        capability: llm.backchannel.classifier
-        route: llm-backchannel-lfm25-jp-1.2b
-        publicModel: backchannel-lfm25-jp-1.2b
-        readiness: llm-inference
-  contextstill-backchannel-gemma3-1b:
-    description: Explicit Gemma 3 1B multilingual backchannel classifier candidate
-    schedulingPriority: 1000
-    providers:
-      - name: backchannel
-        capability: llm.backchannel.classifier
-        route: llm-backchannel-gemma3-1b
-        publicModel: backchannel-gemma3-1b
         readiness: llm-inference
   saaa-backchannel-default:
     description: SAAA default backchannel and lightweight decision provider using Qwen 3.5 2B
@@ -565,14 +390,5 @@ profileSelectors:
     agentProfile: contextstill-embedding
   backchannelQwen35:
     agentProfile: contextstill-backchannel-qwen35-2b
-  backchannelLfm25Jp:
-    agentProfile: contextstill-backchannel-lfm25-jp-1.2b
-  backchannelGemma3:
-    agentProfile: contextstill-backchannel-gemma3-1b
 
-compatibilityAliases:
-  deep-reasoning-35b:
-    canonicalProfile: coding-default
-    description: Deprecated SAAA bootstrap alias routed to the resident 27B Qwen provider
-    providerCapabilities:
-      llm: llm.reasoning
+compatibilityAliases: {}

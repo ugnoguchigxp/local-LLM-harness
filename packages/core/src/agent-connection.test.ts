@@ -31,8 +31,6 @@ test("production agent profiles compile to strict protocol-aware provider contra
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
   expect(catalog.defaultAgentProfile).toBe("coding-default");
   expect(catalog.profileSelectors).toEqual([
-    { id: "backchannelGemma3", agentProfile: "contextstill-backchannel-gemma3-1b", services: [] },
-    { id: "backchannelLfm25Jp", agentProfile: "contextstill-backchannel-lfm25-jp-1.2b", services: [] },
     { id: "backchannelQwen35", agentProfile: "contextstill-backchannel-qwen35-2b", services: [] },
     { id: "contextStill", agentProfile: "contextstill-background", services: [] },
     { id: "embeddingCanary", agentProfile: "contextstill-embedding", services: [] },
@@ -73,26 +71,18 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "asr-granite",
     "asr-qwen",
     "coding-default",
-    "contextstill-backchannel-gemma3-1b",
-    "contextstill-backchannel-lfm25-jp-1.2b",
     "contextstill-backchannel-qwen35-2b",
     "contextstill-background",
     "contextstill-background-128k",
     "contextstill-background-64k",
-    "contextstill-decision-default-canary",
     "contextstill-embedding",
-    "deep-reasoning-35b",
     "nightworker-background",
     "ornith1.5Strix",
     "ornith1.5Strix-64k",
     "saaa-backchannel-default",
-    "saaa-conversation-gemma4",
     "saaa-conversation-gemma4-26b-64k",
     "saaa-conversation-gemma4-26b-voice",
     "saaa-conversation-ornith15",
-    "saaa-conversation-ornith15-image",
-    "saaa-conversation-ornith15-music",
-    "saaa-qwen38",
     "tts-default",
     "tts-english",
     "tts-expressive",
@@ -123,18 +113,6 @@ test("production agent profiles compile to strict protocol-aware provider contra
           outputReserveTokens: 4_096,
           safetyMarginTokens: 1_976,
         },
-      }],
-    });
-  expect(catalog.profiles.find((profile) => profile.id === "deep-reasoning-35b"))
-    .toMatchObject({
-      canonicalProfile: "coding-default",
-      selectionPolicy: "compatibility",
-      deprecated: true,
-      schedulingPriority: 3000,
-      providers: [{
-        capability: "llm.reasoning",
-        publicModel: "coding-default",
-        route: "llm-default",
       }],
     });
   const contextStill = catalog.profiles.find((profile) => profile.id === "contextstill-background");
@@ -190,24 +168,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
         },
       }],
     });
-  expect(catalog.profiles.find((profile) => profile.id === "contextstill-decision-default-canary"))
-    .toMatchObject({
-      selectionPolicy: "explicit-only",
-      schedulingPriority: 1000,
-      providers: [{
-        name: "decision-default",
-        capability: "llm.decision.default",
-        supportedCapabilities: ["llm.decision.default"],
-        route: "llm-decision-default",
-        protocol: "openai.chat-completions.v1",
-        publicModel: "decision-default",
-        readiness: "llm-inference",
-      }],
-    });
   for (const [profileId, route, publicModel] of [
     ["contextstill-backchannel-qwen35-2b", "llm-backchannel-qwen35-2b", "backchannel-qwen35-2b"],
-    ["contextstill-backchannel-lfm25-jp-1.2b", "llm-backchannel-lfm25-jp-1.2b", "backchannel-lfm25-jp-1.2b"],
-    ["contextstill-backchannel-gemma3-1b", "llm-backchannel-gemma3-1b", "backchannel-gemma3-1b"],
   ] as const) {
     expect(catalog.profiles.find((profile) => profile.id === profileId)).toMatchObject({
       selectionPolicy: "explicit-only",
@@ -239,71 +201,6 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "llm-inference",
       }],
     });
-  for (const profileId of ["saaa-conversation-gemma4", "saaa-qwen38"]) {
-    expect(catalog.profiles.find((profile) => profile.id === profileId))
-      .toMatchObject({
-        canonicalProfile: profileId,
-        selectionPolicy: "explicit-only",
-        deprecated: false,
-        schedulingPriority: 4000,
-        idleRelease: {
-          enabled: true,
-          idleSeconds: 300,
-          activityProtocols: [
-            "openai.audio-speech.v1",
-            "openai.audio-transcriptions.v1",
-            "openai.chat-completions.v1",
-          ],
-        },
-        providers: [
-        {
-          name: "asr",
-          capability: "speech.stt",
-          supportedCapabilities: ["speech.stt"],
-          route: "stt-qwen",
-          protocol: "openai.audio-transcriptions.v1",
-          publicModel: "qwen3-asr-1.7b",
-          publishModel: false,
-          readiness: "stt-transcription",
-        },
-        {
-          name: "embedding",
-          capability: "embedding.multilingual-e5-small",
-          supportedCapabilities: ["embedding.multilingual-e5-small"],
-          route: "embedding-multilingual-e5-small",
-          protocol: "larm.embedding.v1",
-          publicModel: "multilingual-e5-small",
-          publishModel: false,
-          readiness: "embedding",
-          embeddingSpace: { dimension: 384 },
-        },
-        {
-          name: "llm",
-          capability: "llm.general",
-          supportedCapabilities: ["llm.general"],
-          route: "llm-saaa-gemma4",
-          protocol: "openai.chat-completions.v1",
-          publicModel: "gemma4-e4b",
-          readiness: "llm-inference",
-          contextWindow: {
-            maxTokens: 230_400,
-            outputReserveTokens: 4_096,
-            safetyMarginTokens: 1_976,
-          },
-        },
-        {
-          name: "tts",
-          capability: "speech.tts",
-          supportedCapabilities: ["speech.tts"],
-          route: "tts-voicevox",
-          protocol: "openai.audio-speech.v1",
-          publicModel: "voicevox-core",
-          publishModel: false,
-          readiness: "tts-speech",
-        },
-        ],
-      });
-  }
   expect(catalog.profiles.find((profile) => profile.id === "saaa-conversation-gemma4-26b-voice"))
     .toMatchObject({
       canonicalProfile: "saaa-conversation-gemma4-26b-voice",
@@ -363,17 +260,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
         },
       ],
     });
-  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "gemma4-e4b"))
-    .toMatchObject({
-      capability: "llm.general",
-      route: "llm-saaa-gemma4",
-      schedulingPriority: 4000,
-      profileIds: ["saaa-conversation-gemma4", "saaa-qwen38"],
-    });
   for (const profileId of [
     "saaa-conversation-ornith15",
-    "saaa-conversation-ornith15-image",
-    "saaa-conversation-ornith15-music",
   ]) {
     expect(catalog.profiles.find((profile) => profile.id === profileId))
       .toMatchObject({
@@ -425,16 +313,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
       schedulingPriority: 4000,
       profileIds: [
         "saaa-conversation-ornith15",
-        "saaa-conversation-ornith15-image",
-        "saaa-conversation-ornith15-music",
       ],
-    });
-  expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "decision-default"))
-    .toMatchObject({
-      capability: "llm.decision.default",
-      route: "llm-decision-default",
-      schedulingPriority: 1000,
-      profileIds: ["contextstill-decision-default-canary"],
     });
   expect(getOpenAiModel(createOpenAiModelCatalog(catalog), "backchannel-default"))
     .toMatchObject({

@@ -591,6 +591,11 @@ test("v3 public profile selectors return exact provider and service endpoints wi
       expect(body.profiles[0]!.services.map(({ name, endpoint, model }) => ({ name, endpoint, model })))
         .toEqual([...selected.services]);
     }
+    for (const retired of ["deep-reasoning-35b", "saaa-qwen38", "saaa-conversation-gemma4",
+      "saaa-conversation-ornith15-image", "saaa-conversation-ornith15-music",
+      "contextstill-decision-default-canary", "backchannelLfm25Jp", "backchannelGemma3"]) {
+      expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=${retired}`)).status).toBe(404);
+    }
     expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=unknown`)).status).toBe(404);
     expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=SAAA&profile=contextStill`)).status).toBe(400);
     expect((await fetch(`${baseUrl}/v3/agent-profiles?profile=SAAA&extra=true`)).status).toBe(400);

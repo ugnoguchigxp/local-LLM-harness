@@ -35,8 +35,6 @@ export const agentProfileSelectorIdSchema = z.enum([
   "vulnWorkbench",
   "embeddingCanary",
   "backchannelQwen35",
-  "backchannelLfm25Jp",
-  "backchannelGemma3",
 ]);
 export type AgentProfileSelectorId = z.infer<typeof agentProfileSelectorIdSchema>;
 
