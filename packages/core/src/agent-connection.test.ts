@@ -123,6 +123,12 @@ test("production agent profiles compile to strict protocol-aware provider contra
       deprecated: false,
       schedulingPriority: 1000,
       providers: [{
+        name: "asr",
+        route: "stt-granite",
+        protocol: "openai.audio-transcriptions.v1",
+        publicModel: "granite-speech-4.1-2b",
+        readiness: "stt-transcription",
+      }, {
         name: "embedding",
         route: "embedding-multilingual-e5-small",
         protocol: "larm.embedding.v1",
@@ -136,10 +142,25 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "llm-inference",
         contextWindow: { maxTokens: 32768, outputReserveTokens: 4096, safetyMarginTokens: 0 },
       }, {
+        name: "sentence-language",
+        route: "system-one-ruri-language",
+        protocol: "larm.system-one.v1",
+        readiness: "system-one",
+      }, {
         name: "system-one",
         route: "system-one-laya",
         protocol: "larm.system-one.v1",
         readiness: "system-one",
+      }, {
+        name: "tts",
+        route: "tts-voicevox",
+        protocol: "openai.audio-speech.v1",
+        readiness: "tts-speech",
+      }, {
+        name: "tts-english",
+        route: "tts-kittentts-nano",
+        protocol: "openai.audio-speech.v1",
+        readiness: "tts-speech",
       }],
     });
   expect(catalog.profiles.find((profile) => profile.id === "contextstill-background-64k"))
