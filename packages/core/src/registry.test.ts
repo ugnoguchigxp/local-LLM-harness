@@ -651,6 +651,19 @@ test("ContextStill resolves the warm Strix backend shared with the distinct voic
     expect(context.providers.find(provider => provider.name === name))
       .toEqual(voice.providers.find(provider => provider.name === name));
   }
+  const runtimeIds = (profile: typeof context) => profile.providers.flatMap(provider =>
+    registry.routes.find(route => route.id === provider.route)!.candidates.slice(0, 1).map(candidate => candidate.runtime)
+  );
+  const foregroundRuntimes = [...new Set(runtimeIds(voice))];
+  const backgroundRuntimes = [...new Set(runtimeIds(context))];
+  const state = {
+    generatedAt: new Date().toISOString(), node: { ...registry.nodes[0]!, online: true }, runtimes: [],
+  } as unknown as ClusterState;
+  const foreground = { id: "voice", status: "ready", priority: 4000,
+    bindings: foregroundRuntimes.map(runtime => ({ runtime })) } as Parameters<typeof admitRuntimes>[0]["allocations"][number];
+  expect(admitRuntimes({ registry, state, allocations: [foreground], candidateRuntimeIds: backgroundRuntimes }).ok).toBe(true);
+  expect(registry.runtimes.find(runtime => runtime.id === "ruri-system-one")?.resources)
+    .toMatchObject({ maxConcurrentAllocations: 4, maxConcurrentRequests: 1 });
 });
 
 test("production warm floor keeps shared Strix and speech warm while admitting ContextStill Laya", () => {

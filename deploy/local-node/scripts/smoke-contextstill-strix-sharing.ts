@@ -58,7 +58,7 @@ async function instances(minRefs: number) {
   return Object.fromEntries(shared.map(runtime => {
     const matching = items.filter(item => item.instance.runtimeId === runtime && ["HOT", "BUSY"].includes(item.instance.status));
     if (matching.length !== 1 || matching[0]!.refs.allocation < minRefs || matching[0]!.warmRefs !== 1) {
-      throw new Error(`${runtime} is not one warm instance shared by ${minRefs} allocations`);
+      throw new Error(`${runtime} is not one warm instance shared by ${minRefs} allocations: ${JSON.stringify(matching.map(item => ({ id: item.instance.id, refs: item.refs, warmRefs: item.warmRefs })))}`);
     }
     const item = matching[0]!;
     return [runtime, { id: item.instance.id, refs: item.refs, warmRefs: item.warmRefs }];
@@ -138,6 +138,7 @@ try {
   const context = await ready("contextStill");
   const before = processes(); evidence.before = before;
   const foreground = await ready("ornith1.5Strix");
+  if ((await client.getAgentConnection(context.connection.id)).status !== "ready") throw new Error("Foreground acquisition preempted a shared background Provider");
   const commonInstances = await instances(2); evidence.sharedInstances = commonInstances;
   if (context.connection.id === foreground.connection.id || context.connection.agentProfile === foreground.connection.agentProfile) throw new Error("Profiles or leases were merged");
   evidence.distinctProfiles = { context: context.connection.agentProfile, foreground: foreground.connection.agentProfile };

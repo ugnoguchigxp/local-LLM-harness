@@ -654,7 +654,7 @@ runtimes:
       warm: { minInstances: 1, idleTtlSeconds: 60 }
     resources:
       estimatedMemoryGB: 1
-      maxConcurrentAllocations: 1
+      maxConcurrentAllocations: 4
       maxConcurrentRequests: 1
       maxQueuedRequests: 16
       queueTimeoutMs: 30000

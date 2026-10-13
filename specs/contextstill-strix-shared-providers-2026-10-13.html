@@ -84,6 +84,10 @@
   <section id="validation">
     <h2>検証条件</h2>
     <p>
+      Ruriも4つのallocationから保持できるようにする。推論自体は従来どおり1要求ずつ処理する。判定器のlease上限1を残すと、同じLLMを共有していても対話接続の作成が背景接続をpreemptするためである。初回配備では旧Qwen
+      ASRのidle保持期間が終了するまでメモリ予約が残るので、終了を確認してから共有検証を始める。
+    </p>
+    <p>
       単体検証は、空き枠共有、満杯待機、不要なpreemptionの防止、別モデルへのpreemption、公開catalogの互換を確認する。署名付きrelease
       builderは全チェックを実行する。
     </p>
