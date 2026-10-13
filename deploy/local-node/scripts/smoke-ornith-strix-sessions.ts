@@ -25,15 +25,19 @@ const run = randomUUID().slice(0, 8);
 const owned = new Set<string>();
 const evidence: Record<string, unknown> = { ok: false, observedAt: new Date().toISOString() };
 async function sharedInstance(expectedRefs: number) {
-  const response = await fetch(`${process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810"}/v1/inspection/provider-instances`, {
-    headers: { authorization: `Bearer ${environment.LARM_API_TOKEN}`, "x-larm-management-token": environment.LARM_MANAGEMENT_TOKEN! },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) throw new Error(`Instance inspection returned ${response.status}`);
-  const instances = inspectionProviderInstanceListSchema.parse(await response.json()).instances
-    .filter(item => item.instance.runtimeId === runtime && ["HOT", "BUSY"].includes(item.instance.status));
-  if (instances.length !== 1 || instances[0]!.refs.allocation !== expectedRefs) throw new Error("Connections do not share the expected runtime references");
-  return instances[0]!;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const response = await fetch(`${process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810"}/v1/inspection/provider-instances`, {
+      headers: { authorization: `Bearer ${environment.LARM_API_TOKEN}`, "x-larm-management-token": environment.LARM_MANAGEMENT_TOKEN! },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`Instance inspection returned ${response.status}`);
+    const instances = inspectionProviderInstanceListSchema.parse(await response.json()).instances
+      .filter(item => item.instance.runtimeId === runtime && ["HOT", "BUSY"].includes(item.instance.status));
+    if (instances.length === 1 && instances[0]!.refs.allocation === expectedRefs) return instances[0]!;
+    if (attempt === 19) throw new Error(`Expected one runtime with ${expectedRefs} allocation refs; observed ${JSON.stringify(instances.map(item => ({ id: item.instance.id, refs: item.refs })))}`);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error("Runtime reference inspection did not settle");
 }
 const llm = (claim: AgentConnectionClaim): OpenAiAgentProvider => {
   const provider = claim.providers.find((p): p is OpenAiAgentProvider => p.name === "llm" && p.apiStyle === "openai");
