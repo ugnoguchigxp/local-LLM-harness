@@ -53,6 +53,8 @@ async function infer(provider: Awaited<ReturnType<typeof connect>>["provider"], 
 }
 const bodyFor=(model:string,parts:unknown[])=>({model,max_tokens:128,temperature:0,chat_template_kwargs:{enable_thinking:false},response_format:{type:"json_object"},messages:[{role:"user",content:parts}]});
 const required=(value:boolean, message:string)=>{if(!value)throw new Error(message);};
+// json_object constrains JSON syntax, not property names; schema is required for fixed keys.
+const colorOf=(value:{color?:unknown;dominant_color?:unknown})=>String(value.color??value.dominant_color??"").toLowerCase();
 try {
   const health=await client.getHealth();
   const main=await connect("ornith1.5Strix");let provider=main.provider;
@@ -61,7 +63,7 @@ try {
     const count=await client.countChatInputTokens(body,provider.credential.token);
     const response=await (await infer(provider,body)).json() as {usage:{prompt_tokens:number};choices:Array<{message:{content:string}}>};
     required(count.promptTokens===response.usage.prompt_tokens,`usage mismatch ${name}`);
-    required(JSON.parse(response.choices[0]!.message.content).color==="red",`image semantics ${name}`);
+    required(colorOf(JSON.parse(response.choices[0]!.message.content))==="red",`image semantics ${name}`);
     results.push({case:name,promptTokens:count.promptTokens,imageTokens:count.imageTokens,ok:true});
   }
   const only=bodyFor(provider.model,[image(red)]);delete (only as Record<string,unknown>).response_format;
@@ -69,7 +71,8 @@ try {
   const onlyReply=await (await infer(provider,only)).json() as {usage:{prompt_tokens:number};choices:Array<{message:{content:string}}>};
   required(onlyCount.promptTokens===onlyReply.usage.prompt_tokens && onlyReply.choices[0]!.message.content.length>0,"image-only failed");
   results.push({case:"image-only",promptTokens:onlyCount.promptTokens,ok:true});
-  const two=bodyFor(provider.model,[text("Identify each image separately. Return JSON with first_color and second_color."),image(red),image(blue)]);
+  const two: Record<string, unknown>={...bodyFor(provider.model,[text("Identify each image separately. Return JSON with first_color and second_color."),image(red),image(blue)]),
+    response_format:{type:"json_schema",json_schema:{name:"image_comparison",strict:true,schema:{type:"object",properties:{first_color:{type:"string",enum:["red","blue","green","yellow"]},second_color:{type:"string",enum:["red","blue","green","yellow"]}},required:["first_color","second_color"],additionalProperties:false}}}};
   const twoCount=await client.countChatInputTokens(two,provider.credential.token);
   const twoReply=await (await infer(provider,two)).json() as {usage:{prompt_tokens:number};choices:Array<{message:{content:string}}>};
   const colors=JSON.parse(twoReply.choices[0]!.message.content);
@@ -78,14 +81,14 @@ try {
   const history={...bodyFor(provider.model,[]),messages:[{role:"user",content:[text("What color?"),image(red)]},{role:"assistant",content:'{"color":"red"}'},{role:"user",content:"What is the color of the previous image? Return JSON with color."}]};
   const historyCount=await client.countChatInputTokens(history,provider.credential.token);
   const historyReply=await (await infer(provider,history)).json() as {usage:{prompt_tokens:number};choices:Array<{message:{content:string}}>};
-  required(JSON.parse(historyReply.choices[0]!.message.content).color==="red" && historyCount.promptTokens===historyReply.usage.prompt_tokens,"image history resend failed");
+  required(colorOf(JSON.parse(historyReply.choices[0]!.message.content))==="red" && historyCount.promptTokens===historyReply.usage.prompt_tokens,"image history resend failed");
   results.push({case:"history-resend",promptTokens:historyCount.promptTokens,ok:true});
   const stream={...bodyFor(provider.model,[text("Identify the dominant color. Return JSON with color."),image(red)]),stream:true,stream_options:{include_usage:true}};
   const streamCount=await client.countChatInputTokens(stream,provider.credential.token);const streamStart=performance.now();
   const streamResponse=await infer(provider,stream);const reader=streamResponse.body!.getReader();const decoder=new TextDecoder();let pending="",content="",usage:number|undefined,firstContentMs:number|undefined;
   try {while(true){const item=await reader.read();if(item.done)break;pending+=decoder.decode(item.value,{stream:true});let stop;while((stop=pending.indexOf("\n\n"))>=0){const event=pending.slice(0,stop);pending=pending.slice(stop+2);for(const line of event.split("\n")){if(!line.startsWith("data:") || line.slice(5).trim()==="[DONE]")continue;const value=JSON.parse(line.slice(5));for(const choice of value.choices??[]){if(choice.delta?.content){firstContentMs??=performance.now()-streamStart;content+=choice.delta.content;}}if(value.usage)usage=value.usage.prompt_tokens;}}}}
   finally {reader.releaseLock();}
-  required(JSON.parse(content).color==="red" && usage===streamCount.promptTokens,"image stream failed");
+  required(colorOf(JSON.parse(content))==="red" && usage===streamCount.promptTokens,"image stream failed");
   results.push({case:"image-stream",promptTokens:usage,firstContentMs,ok:true});
   const tool:Record<string,unknown>={...bodyFor(provider.model,[text("Call report_color with the dominant color of this image."),image(red)]),tools:[{type:"function",function:{name:"report_color",description:"Report the image's dominant color.",parameters:{type:"object",properties:{color:{type:"string",enum:["red","blue","green","yellow"]}},required:["color"],additionalProperties:false}}}],tool_choice:"required"};delete tool.response_format;
   const toolCount=await client.countChatInputTokens(tool,provider.credential.token);const toolReply=await (await infer(provider,tool)).json() as {usage:{prompt_tokens:number};choices:Array<{message:{tool_calls?:Array<{function:{name:string;arguments:string}}>}}>};
@@ -97,7 +100,13 @@ try {
   }
   const parallel=await Promise.all(Array.from({length:4},()=>client.countChatInputTokens(two,provider.credential.token)));
   required(parallel.every(count=>count.imageTokens===288 && count.promptTokens===twoCount.promptTokens),"parallel counts failed");results.push({case:"four-parallel-counts",ok:true});
+  const cancelBody:Record<string,unknown>={...bodyFor(provider.model,[text("Describe this image at length."),image(red)]),stream:true,max_tokens:512};delete cancelBody.response_format;
+  const cancelled=await infer(provider,cancelBody);const cancelReader=cancelled.body!.getReader();await cancelReader.read();await cancelReader.cancel();cancelReader.releaseLock();
+  required((await client.countChatInputTokens(two,provider.credential.token)).imageTokens===288,"count after image stream cancellation failed");results.push({case:"image-stream-cancel",ok:true});
+  const overDimension=Buffer.from(red);overDimension.writeUInt32BE(8193,16);
   const wrong=[
+    ["dimensions",bodyFor(provider.model,[image(overDimension)]),413,"image_dimensions_exceeded"],
+    ["http-body",{model:provider.model,messages:[{role:"user",content:"x".repeat(4*1024*1024)}]},413,"body_too_large"],
     ["external-url",bodyFor(provider.model,[{type:"image_url",image_url:{url:"https://private.invalid/image.png"}}]),400,"image_reference_unsupported"],
     ["mime-mismatch",bodyFor(provider.model,[image(red,"image/jpeg")]),415,"image_mime_mismatch"],
     ["image-count",bodyFor(provider.model,Array.from({length:9},()=>image(red))),413,"image_count_exceeded"],
@@ -112,7 +121,7 @@ try {
   const renewed=await client.claimAgentConnection(main.connection.id);const newer=renewed.providers.find(p=>p.name==="llm");if(!newer || newer.protocol!=="openai.chat-completions.v1")throw new Error("reclaim lacks LLM");provider=newer;
   required((await client.countChatInputTokens(two,provider.credential.token)).imageTokens===288,"renew and reclaim failed");results.push({case:"renew-reclaim",ok:true});
   const background=await connect("contextStill");const bgBody=bodyFor(background.provider.model,[text("Identify the dominant color. Return JSON with color."),image(blue)]);const bgCount=await client.countChatInputTokens(bgBody,background.provider.credential.token);
-  const bgReply=await (await infer(background.provider,bgBody)).json() as {usage:{prompt_tokens:number};choices:Array<{message:{content:string}}>};required(JSON.parse(bgReply.choices[0]!.message.content).color==="blue" && bgCount.promptTokens===bgReply.usage.prompt_tokens,"ContextStill image inference failed");results.push({case:"contextStill",maxContextTokens:bgCount.maxContextTokens,ok:true});
+  const bgReply=await (await infer(background.provider,bgBody)).json() as {usage:{prompt_tokens:number};choices:Array<{message:{content:string}}>};required(colorOf(JSON.parse(bgReply.choices[0]!.message.content))==="blue" && bgCount.promptTokens===bgReply.usage.prompt_tokens,"ContextStill image inference failed");results.push({case:"contextStill",maxContextTokens:bgCount.maxContextTokens,ok:true});
   const report={ok:true,observedAt:new Date().toISOString(),releaseCommit:health.releaseCommit,configRevision:health.configRevision,results};
   if(process.env.LARM_IMAGE_SMOKE_REPORT)await writeFile(process.env.LARM_IMAGE_SMOKE_REPORT,JSON.stringify(report,null,2)+"\n",{mode:0o600});
   console.log(JSON.stringify({ok:true,tests:results.length,releaseCommit:health.releaseCommit}));

@@ -239,20 +239,41 @@
   <section id="verification">
     <h2>検証と配備状況</h2>
     <p>
-      実装sourceの型検査とbun run
-      check全体が成功した段階。配備とLARM経由の受入は続行中であり、この段階では配備済みと扱わない。最終結果は同節を更新する。
+      実装・署名付き配備・LARM経由の受入が完了した。稼働releaseは<code>86e879abe56ee54802d345c8b38f26f72b5e3570</code>、configRevisionは<code>36ff1aef15217c25fa560c99cc287016435fee5a83cfe0085a20cbd2c58cb79e</code>。配備前はactivity
+      idle、allocation/request/mutation参照0を確認し、別consumerのConnectionを解放していない。
+    </p>
+    <p>
+      稼働engineはrepository外の<code>/srv/ai/apps/larm-chat-input-engine-20261013/llama-server</code>で、SHA-256は<code>d7b699c6d8c051b54e357d730940647ff8331d11e7543e38c96921a6c09fc1bb</code>。upstream
+      sourceは<code>0fc9568e07ccc8553010864cb8db1957e629cbfa</code>、私用の拡張patchのSHA-256は<code>0f19d2e0ae59789c9d9833244869b0498676de1defee5b5bc5b61c3e95fdf2ae</code>。既存のMTP
+      checkpoint修正は保持した。STRIXではMTPを使わない。
+    </p>
+    <p>
+      署名builderの全体checkはLARM本体776、tooling24、deployment56のBun試験とshell/Python検証を通過した。既存の未commit作業を保持して統合したworkspaceの全体checkもLARM本体784、tooling24、関連16、deployment59のBun試験とshell/Python検証を通過した。Eumenesの製品コード・DB・設定は変更していない。
     </p>
     <p>
       追加試験はcore/chat-input.test.ts（履歴枚数、MIME、Base64、原本寸法、BMP圧縮、parts
       schema、route由来の能力）、daemon/chat-input-gateway.test.ts（fit、legacy
-      tokenizer拒否、出力alias、count-only非保存、超過時forward阻止、abort非協調時の枠解放、lease失効）、client/index.test.ts（Provider
-      bearerのみ、応答validation、再送なし）。
+      tokenizer拒否、出力alias、count-only非保存、超過時forward阻止、abort非協調時の枠解放、lease失効）、daemon/app.test.ts（discovery・Connection・claimの契約一致、保持metadata、bearer/model
+      scope）、client/index.test.ts（Provider bearerのみ、応答validation、再送なし）。
     </p>
     <p>
-      実機証跡は<code>/srv/ai/evidence/larm-image-input-20261013</code>。JPEG・PNG・BMP・image-onlyで計数とusageの一致を確認した。2画像で各144、合計288のimage
-      tokenと赤／青の独立判定に成功した。json_objectの既定schemaが空となるengine経路もobject
-      schemaへ修正し、応答本文のJSON
-      parse成功を確認した。大小代表画像の品質、極端な画像、実機器音声acceptanceはこの変更の完成要件に含めない。
+      LARM経由の非機密合成画像21項目が成功した。JPEG・PNG・BMP、image-only、2画像の赤／青比較、履歴再送、画像＋SSE、画像＋native
+      tool call、1024／2048
+      px画像の事前計数、4並列計数、stream取消後の継続、容量・寸法・MIME・枚数・破損・外部URLの拒否、context超過の生成阻止、renew/reclaim、ContextStillの32K予算を検証した。全て試験用に作成したConnectionだけを解放し、終了時activity
+      idle・activeWorkloads 0を確認した。
+    </p>
+    <p>
+      384×384の各形式はimageTokens
+      144、2画像は288だった。1024×1024は1024、2048×2048は4096である。入力270012
+      tokenの要求はfits=false、生成はcontext_budget_exceeded／400で拒否された。計数と実推論のusage.prompt_tokensは画像・複数画像・履歴・stream・toolsで一致した。json_objectはJSON構文を制約し、キー名を固定しない。比較の固定キーはjson_schemaで指定した。
+    </p>
+    <p>
+      大画像のpreflightMsはdecode・resize・tokenizationに加えHTTPとgate待ちを含むAPI全体の時間で、純粋なresize時間ではない。配備版の測定値・条件は<code>/srv/ai/evidence/larm-image-input-20261013/live-results.json</code>、隔離engine検証は<code>/srv/ai/evidence/larm-image-input-20261013/native-results.json</code>に保存した。caption品質・OCR精度や任意の写真での意味理解を保証する試験ではない。
+    </p>
+    <p>
+      既存の全文監査は引き続き暗号化した本文・画像Base64・応答に7日の期限を付与し、pruneで期限切れや容量圧迫を処理する。従来の監査token
+      piecesはtemplate文字列の計数であり、画像embedding数は含まない。入力予算には新しいinput-tokens
+      APIとusageを用い、監査token配列の長さを使わない。実機器音声acceptanceはこの変更の完成要件に含めない。
     </p>
   </section>
 </article>
