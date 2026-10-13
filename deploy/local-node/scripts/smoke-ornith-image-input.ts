@@ -1,7 +1,15 @@
 import { deflateSync } from "node:zlib";
 import { spawnSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
-import { crc32 } from "@node-rs/crc32";
+// PNG uses the standard reflected CRC-32 polynomial.
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
 import { LarmClient, LarmApiError } from "../../../packages/client/src/index";
 
 const apiToken = process.env.LARM_API_TOKEN;
@@ -46,7 +54,7 @@ async function infer(provider: Awaited<ReturnType<typeof connect>>["provider"], 
 const bodyFor=(model:string,parts:unknown[])=>({model,max_tokens:128,temperature:0,chat_template_kwargs:{enable_thinking:false},response_format:{type:"json_object"},messages:[{role:"user",content:parts}]});
 const required=(value:boolean, message:string)=>{if(!value)throw new Error(message);};
 try {
-  const health=await client.health();
+  const health=await client.getHealth();
   const main=await connect("ornith1.5Strix");let provider=main.provider;
   for(const [name,bytes,mime] of [["png",red,"image/png"],["jpeg",jpeg.stdout,"image/jpeg"],["bmp",bmp,"image/bmp"]] as const) {
     const body=bodyFor(provider.model,[text("Identify the dominant color. Return JSON with color."),image(bytes,mime)]);
@@ -100,7 +108,7 @@ try {
   const largeCount=await client.countChatInputTokens(large,provider.credential.token);required(!largeCount.fits,"excessive context accepted");
   const refused=await fetch(provider.baseUrl+"/chat/completions",{method:"POST",headers:{authorization:`Bearer ${provider.credential.token}`,"content-type":"application/json"},body:JSON.stringify(large)});
   required(refused.status===400 && (await refused.json() as {error:{code:string}}).error.code==="context_budget_exceeded","excessive generation forwarded");results.push({case:"context-budget",promptTokens:largeCount.promptTokens,ok:true});
-  await client.renewAgentConnection(main.connection.id,{ttlSeconds:600});
+  await client.renewAgentConnection(main.connection.id,600);
   const renewed=await client.claimAgentConnection(main.connection.id);const newer=renewed.providers.find(p=>p.name==="llm");if(!newer || newer.protocol!=="openai.chat-completions.v1")throw new Error("reclaim lacks LLM");provider=newer;
   required((await client.countChatInputTokens(two,provider.credential.token)).imageTokens===288,"renew and reclaim failed");results.push({case:"renew-reclaim",ok:true});
   const background=await connect("contextStill");const bgBody=bodyFor(background.provider.model,[text("Identify the dominant color. Return JSON with color."),image(blue)]);const bgCount=await client.countChatInputTokens(bgBody,background.provider.credential.token);
