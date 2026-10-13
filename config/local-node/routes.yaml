@@ -71,7 +71,7 @@ routes:
       - llm.coding
     explicitOnly: true
     candidates:
-      - runtime: ornith-contextstill
+      - runtime: ornith15-strix-conversation
         purpose: primary
 
   # ContextStill chooses one of these explicit tiers from its final prompt

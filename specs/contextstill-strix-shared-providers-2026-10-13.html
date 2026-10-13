@@ -1,0 +1,107 @@
+<article lang="ja">
+  <h1>用途別プロファイルを維持するContextStillとStrixのProvider共有</h1>
+  <p>
+    <time>2026-10-13</time
+    >。利用者の指示により、音声対話とContextStillのプロファイルは独立したまま、同じLLMと音声Providerを使う構成にする。プロファイルは用途と要求予算を表し、プロセスの複製を意味しない。
+  </p>
+  <section id="profiles">
+    <h2>独立して維持する契約</h2>
+    <table>
+      <caption>
+        共有する実行基盤と用途別の違い
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">音声対話</th>
+          <th scope="col">ContextStill</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">selectorとAgent Profile</th>
+          <td>ornith1.5Strix</td>
+          <td>contextStill → contextstill-background</td>
+        </tr>
+        <tr>
+          <th scope="row">公開LLM名</th>
+          <td>ornith-1.5-strix-lean</td>
+          <td>ornith-contextstill</td>
+        </tr>
+        <tr>
+          <th scope="row">優先度とwindow</th>
+          <td>4000、256K</td>
+          <td>1000、32K</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM経路</th>
+          <td>llm-ornith15-strix</td>
+          <td>llm-contextstill-ornith</td>
+        </tr>
+        <tr>
+          <th scope="row">実行runtime</th>
+          <td colspan="2">ornith15-strix-conversation。STRIX_LEAN、共有512K KV、合計4枠。</td>
+        </tr>
+        <tr>
+          <th scope="row">共通Provider</th>
+          <td colspan="2">
+            Granite ASR、日本語VOICEVOX、英語KittenTTS、E5 embedding、Ruri sentence-language
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">用途別判定器</th>
+          <td>Ruri speaking-attitude</td>
+          <td>従来のLayaを維持</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      既存ContextStill
+      consumerが要求するllm・system-one・embeddingの部分集合は引き続き使える。追加ASR・TTSを要求するかはconsumerが選べる。gatewayはそれぞれの公開LLM名を解決先へ送信する。lease、credential、入力予算、優先度と失効は別々に管理する。
+    </p>
+    <p>
+      明示64K・128KのContextStill
+      tier、標準coding-default、旧SAAAは今回の統合対象に含めない。それらは別runtimeを選ぶ場合がある。通常Ornithの重みは標準コード用などに必要であり削除しない。
+    </p>
+  </section>
+  <section id="lifecycle">
+    <h2>保持と共有可能性の判定</h2>
+    <p>
+      会話swap groupの常駐保持をGemmaからStrixへ移す。Granite・VOICEVOX・KittenTTSもminInstances
+      1を維持し、プロファイル間の受け渡しや最後のlease解放だけを理由に終了させない。Gemmaと旧Qwen
+      ASRは明示要求時に起動する。これによりLayaの2
+      GB予約を含めて静的メモリ予算に収める。旧APIと重みは残す。
+    </p>
+    <p>
+      coreのruntimeSetsConflictで同一runtimeの多枠共有と、異なるruntimeのswap
+      group排他を区別する。admission、待機からの昇格、優先度によるpreemptionはこの判定を使う。1枠runtimeの排他と、共有枠が満杯のときの容量制御は維持する。
+    </p>
+    <p>
+      4枠は対話・補助対話・背景処理の合計で共有する。主256K、補助64K×2、ContextStill32Kなら416Kで512K
+      pool内に収まる。4接続すべてで256Kを同時保持できる保証ではない。同時生成は計算資源を共有する。別モデルの要求、障害、更新によるreloadや容量不足による待機まで無くす変更ではない。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証条件</h2>
+    <p>
+      単体検証は、空き枠共有、満杯待機、不要なpreemptionの防止、別モデルへのpreemption、公開catalogの互換を確認する。署名付きrelease
+      builderは全チェックを実行する。
+    </p>
+    <p>
+      smoke-contextstill-strix-sharing.tsは、背景から対話の開始、同時JSON課題、対話解放後の背景側ASR・日英TTS、対話の再取得、背景解放後の対話生成を検証する。別profile・leaseが1つのruntime
+      instanceを共有し、Strix
+      workerのPIDと開始時刻、ASR・TTSのPIDと起動時刻が受け渡し前後で一致することを確認する。4枠と5つ目の待機、枠解放による昇格、credential失効、Layaの分類も確認する。
+    </p>
+    <p>
+      証跡はrepository外の /srv/ai/evidence/contextstill-strix-sharing-20261013
+      に保存する。合成要求の動作検証であり、ContextStillの実業務完了や長文品質の保証ではない。consumerの実装や会話保存領域は変更しない。
+    </p>
+  </section>
+  <section id="references">
+    <h2>関連資料</h2>
+    <ul>
+      <li><a href="./contextstill-strix-consolidation-2026-10-13.html">変更前の統合調査</a></li>
+      <li><a href="./ornith15-strix-profile-2026-10-12.html">Strixの初回配備と共有KVの検証</a></li>
+    </ul>
+  </section>
+</article>

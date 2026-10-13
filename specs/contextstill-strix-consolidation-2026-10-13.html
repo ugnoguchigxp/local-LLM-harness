@@ -1,0 +1,105 @@
+<article lang="ja">
+  <h1>通常Ornithの参照とContextStillのStrix統合案</h1>
+  <aside>
+    本稿は変更前の調査。後続の利用者指示による構成は<a
+      href="./contextstill-strix-shared-providers-2026-10-13.html"
+      >用途別プロファイルとProvider共有</a
+    >を参照。
+  </aside>
+  <p>
+    <time>2026-10-13</time
+    >。通常Ornithを残す必要と、ContextStillをSTRIX_LEANへ統合する案を確認した。結論は、ContextStillに通常版が必須という設定上の制約はなく、音声対話と同じStrix
+    runtimeを共有する案が合理的である。ただし通常版は標準コード用プロファイルなどから参照されており、現時点で未使用の重みではない。この調査では本番経路や重みを変更していない。
+  </p>
+  <section id="current-routes">
+    <h2>確認した要求経路</h2>
+    <p>
+      確認対象は稼働release
+      <code>d9542c4c8a1d8021031c66d1a91d66d911e7f969</code
+      >の設定。実行中のプロセスではなく、要求されるプロファイルから経路を辿った。
+    </p>
+    <table>
+      <caption>
+        現在の主要な参照
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">経路とruntime</th>
+          <th scope="col">設定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">標準のcoding-default、vulnWorkbench</th>
+          <td>llm-default → ornith-general → 通常ROCmFP4</td>
+          <td>128K、1枠、q8 KV、MTP有効。常駐予約40 GB。</td>
+        </tr>
+        <tr>
+          <th scope="row">SAAA</th>
+          <td>saaa-conversation-ornith15 → llm-saaa-ornith15 → ornith-general</td>
+          <td>通常版を参照。Eumenesが選んでいるornith1.5Strixとは別のselector。</td>
+        </tr>
+        <tr>
+          <th scope="row">contextStill</th>
+          <td>
+            contextstill-background → llm-contextstill-ornith → ornith-contextstill → 通常ROCmFP4
+          </td>
+          <td>
+            公開windowは32,768 tokens、出力予約4,096。backendは共有256K、4枠、q8 KV、MTP無効。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ornith1.5Strixと補助64K</th>
+          <td>llm-ornith15-strix → ornith15-strix-conversation → STRIX_LEAN</td>
+          <td>主256K、補助64K、共有512K、合計4枠、q4 KV、MTP無効。予約48 GB。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      ContextStillのdescriptionは「four 64K
+      slots」だが、実際に公開される主プロファイルのwindowは32Kである。明示64K・128K
+      tierは別のQwen経路なので、主プロファイルの変更だけで全tierがStrixになるわけではない。
+    </p>
+  </section>
+  <section id="contextstill-consolidation">
+    <h2>ContextStillの統合方法</h2>
+    <p>
+      既存のcontextStill selector、contextstill-background、公開モデル名、HTTP
+      APIと32Kの予算を維持し、LLMの経路候補を既存Strix
+      runtimeへ接続する。モデルのロードを共有すれば、現在同じconversation-llm-slot内で交代する通常版ContextStillとStrix対話の切り替えを減らせる。Strix専用の背景runtimeをもう一つ作るだけでは、重みの統一はできても実行プロセスの共有にはならない。
+    </p>
+    <p>
+      現在のStrix経路・runtimeはllm.generalのみを宣言している一方、ContextStillはllm.codingを要求する。この宣言の整合と、背景処理の構造化出力・要約・コード課題の検証が必要。通常版ContextStillのreasoning
+      autoに対してStrixはreasoning
+      offのため、思考出力の扱いも確認する。APIの形式一致だけでは置き換えの品質を保証しない。
+    </p>
+    <p>
+      音声対話の優先度4000、ContextStillの1000を維持する。実行枠は主対話・補助対話・背景処理の合計で4つであり、背景用にさらに4枠を提供できるわけではない。空き枠の利用、待機、対話による背景allocationの解放、再取得を確認する。共有KV内に全要求の予算を収める。背景処理と対話を同時に走らせる場合の応答速度も測定する。
+    </p>
+  </section>
+  <section id="normal-retirement">
+    <h2>通常版を廃止する条件</h2>
+    <p>
+      ContextStillだけを変更してもornith-generalの常駐予約40
+      GBは残る。通常版を完全に廃止するにはcoding-default、SAAA、直接指定やfallbackを含む通常重みの全参照を整理する必要がある。標準コード用runtimeにはmanaged-context設定があり、現在のStrix
+      runtimeにはない。対応APIの利用有無と資格条件を別途確認し、必要ならStrix側のrelease認証も含めて移行する。
+    </p>
+    <p>
+      通常版にはMTPによる推測生成があり、Strixでは無効にしている。先行の短い合成コード試験では通常refresh版のMTP有効が79.78
+      tok/s、STRIX_LEANが65.59
+      tok/sだった。これを一般的な品質差や全課題での速度優位とは扱わない。Strixの日本語短文・基本機能・4同時応答は確認済みだが、ContextStillの実業務と長い入力の品質は未検証である。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>関連する実機証跡</h2>
+    <ul>
+      <li><a href="./ornith15-strix-profile-2026-10-12.html">Strixの4枠、共有KVと接続検証</a></li>
+      <li>
+        <a href="./profile-cleanup-and-unused-models-2026-10-13.html"
+          >削除済みプロファイルとモデル参照の整理</a
+        >
+      </li>
+    </ul>
+  </section>
+</article>

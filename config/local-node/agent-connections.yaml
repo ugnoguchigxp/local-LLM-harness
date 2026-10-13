@@ -224,7 +224,7 @@ agentProfiles:
         publishModel: false
         readiness: embedding
   contextstill-background:
-    description: ContextStill Ornith 1.5 background provider with four 64K slots, Laya, and embedding
+    description: ContextStill background profile sharing STRIX_LEAN, Granite ASR, Japanese VOICEVOX, English KittenTTS, embedding, and sentence-language with the voice profile; retains its Laya decision provider and 32K budget
     schedulingPriority: 1000
     providers:
       - name: llm
@@ -236,6 +236,30 @@ agentProfiles:
           maxTokens: 32768
           outputReserveTokens: 4096
           safetyMarginTokens: 0
+      - name: asr
+        capability: speech.stt
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
+        publishModel: false
+        readiness: tts-speech
+      - name: sentence-language
+        capability: decision.sentence-language
+        route: system-one-ruri-language
+        publicModel: ruri-v3-30m-sentence-language
+        publishModel: false
+        readiness: system-one
       - name: system-one
         capability: decision.system-one
         route: system-one-laya
@@ -310,7 +334,7 @@ agentProfiles:
         publicModel: granite-speech-4.1-2b
         readiness: stt-transcription
   asr-qwen:
-    description: Resident Qwen3 ASR OpenAI-compatible provider
+    description: On-demand Qwen3 ASR OpenAI-compatible provider
     providers:
       - name: asr
         capability: speech.stt

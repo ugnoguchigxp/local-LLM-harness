@@ -1,4 +1,5 @@
 export { LARM_VERSION } from "./version";
+export { runtimeSetsConflict } from "./allocation-resource-conflict";
 export {
   compileProviderRevision,
   managedWarmPolicy,

@@ -506,9 +506,13 @@ test("v3 public profile selectors return exact provider and service endpoints wi
     contextStill: {
       id: "contextstill-background",
       providers: [
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-contextstill" },
+        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
         { name: "system-one", endpoint: "/v1/systemone", model: "laya-multilingual" },
+        { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
+        { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
       ],
       services: [],
     },
@@ -842,18 +846,15 @@ test("E2E: SAAA profile provide returns every live provider over a real HTTP lis
   }
 });
 
-test("E2E: SAAA releases to ContextStill and then preempts it during resource replacement", async () => {
+test("E2E: Gemma releases to ContextStill and then preempts its Strix runtime during replacement", async () => {
   const catalogRevision = "f".repeat(64);
   const configDir = join(import.meta.dir, "../../../config/local-node");
   const productionRegistry = loadRegistry(configDir);
   const productionCatalog = loadAgentConnectionCatalogForRegistry(configDir, productionRegistry);
-  const initiallyLive = new Set([
-    "ornith-general",
-    "qwen35-decision",
-    "qwen-asr",
-    "voicevox-tts",
-    "multilingual-e5-small",
-  ]);
+  const initiallyLive = new Set(productionRegistry.runtimes.filter(runtime =>
+    runtime.id !== "ornith15-strix-conversation"
+    && (runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0)
+  ).map(runtime => runtime.id));
   const probes = new Map(productionRegistry.runtimes.map((runtime) => [
     runtime.id,
     probe(runtime.id, initiallyLive.has(runtime.id)),
@@ -891,7 +892,7 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
   appFetch = app.fetch;
 
   let createSequence = 0;
-  const createConnection = async (profile: "SAAA" | "contextStill" | "embeddingCanary") => {
+  const createConnection = async (profile: "SAAA-gemma4-26b" | "contextStill" | "embeddingCanary") => {
     createSequence += 1;
     const response = await fetch(`${baseUrl}/v1/agent-connections`, {
       method: "POST",
@@ -980,21 +981,21 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
     const embeddingClaim = await claimConnection(embedding, "larm-embedding-provider-v1");
     await embed(embeddingClaim);
 
-    const firstSaaa = await createConnection("SAAA");
-    expect(firstSaaa).toMatchObject({ profile: "SAAA", status: "ready" });
+    const firstSaaa = await createConnection("SAAA-gemma4-26b");
+    expect(firstSaaa).toMatchObject({ profile: "SAAA-gemma4-26b", status: "ready" });
     const firstSaaaClaim = await claimConnection(firstSaaa);
     await infer(firstSaaaClaim);
     await release(firstSaaa);
 
     const contextStill = await createConnection("contextStill");
     expect(contextStill).toMatchObject({ profile: "contextStill", status: "ready" });
-    expect(log.ensure).toContain("ornith-contextstill")
+    expect(log.ensure).toContain("ornith15-strix-conversation");
     expect(log.ensure).toContain("laya-system-one");
     const contextClaim = await claimConnection(contextStill);
     await infer(contextClaim);
 
-    const secondSaaa = await createConnection("SAAA");
-    expect(secondSaaa).toMatchObject({ profile: "SAAA", status: "ready" });
+    const secondSaaa = await createConnection("SAAA-gemma4-26b");
+    expect(secondSaaa).toMatchObject({ profile: "SAAA-gemma4-26b", status: "ready" });
     await control.flush();
 
     const preempted = await fetch(`${baseUrl}/v1/agent-connections/${contextStill.id}`, {
@@ -1008,7 +1009,7 @@ test("E2E: SAAA releases to ContextStill and then preempts it during resource re
         message: "request stopped because a higher-priority foreground task requires the provider",
       },
     });
-    expect(log.stop).toContain("ornith-contextstill");
+    expect(log.stop).toContain("ornith15-strix-conversation");
 
     const contextLlm = contextClaim.providers.find((provider) => provider.name === "llm")!;
     const revokedContext = await fetch(`${contextLlm.baseUrl}/chat/completions`, {
