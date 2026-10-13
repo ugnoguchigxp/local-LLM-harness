@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { LarmClient, LarmApiError } from "../../../packages/client/src/index";
@@ -19,6 +20,8 @@ const env = Object.fromEntries(readFileSync("/etc/larm/larm.env", "utf8").split(
   }));
 const client = new LarmClient({ baseUrl, apiToken: env.LARM_API_TOKEN, timeoutMs: 60_000 });
 const owned = new Set<string>();
+const run = randomUUID().slice(0, 8);
+let createSequence = 0;
 const shared = ["ornith15-strix-conversation", "granite-asr", "voicevox-tts", "kittentts-nano", "multilingual-e5-small", "ruri-system-one"];
 const evidence: Record<string, unknown> = { ok: false, startedAt: new Date().toISOString() };
 const headers = (provider: Provider) => ({ authorization: `Bearer ${provider.credential.token}`, "content-type": "application/json" });
@@ -68,7 +71,7 @@ async function instances(minRefs: number) {
 async function create(selector: "contextStill" | "ornith1.5Strix" | "ornith1.5Strix-64k", subset?: string[]) {
   const catalog = await client.listAgentProfilesV3(selector);
   const created = await client.createAgentConnection({ profile: selector, expectedCatalogRevision: catalog.catalogRevision,
-    audience: "same-host", client: "contextstill-strix-sharing-smoke", ...(subset ? { providers: subset } : {}),
+    audience: "same-host", client: `contextstill-strix-sharing-${run}-${++createSequence}`, ...(subset ? { providers: subset } : {}),
     ttlSeconds: 600, allowFallback: false, deploymentPolicy: "existing-only" });
   owned.add(created.id);
   return created;
@@ -159,6 +162,9 @@ try {
     auxiliary.push(await client.waitForAgentConnection(item, { timeoutMs: 60_000 }));
   }
   const fifth = await create("ornith1.5Strix-64k");
+  if (new Set([context.connection.id, foreground.connection.id, ...auxiliary.map(item => item.id), fifth.id]).size !== 5) {
+    throw new Error("Capacity probe reused a client session instead of creating five distinct leases");
+  }
   const waiting = await client.getAllocation(fifth.allocationId);
   if (waiting.status !== "waiting") throw new Error("Fifth lease exceeded the shared four-slot limit");
   try { await client.claimAgentConnection(fifth.id); throw new Error("Waiting lease was claimable"); }
