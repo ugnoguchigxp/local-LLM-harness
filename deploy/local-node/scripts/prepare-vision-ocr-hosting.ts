@@ -4,7 +4,12 @@ import { join } from "node:path";
 
 const app = "/srv/ai/apps/vision-ocr-host";
 const stage = "/srv/ai/local-services-prepared/vision-ocr-production";
-const python = `${stage}/runtime/bin/python`;
+// Resolve a verified candidate environment built from the separate official checkouts.
+const resolvePython = Bun.spawn(["python3", "-B", `${app}/scripts/upstream.py`, "runtime"], {
+  cwd: app, stdout: "pipe", stderr: "inherit",
+});
+const python = (await new Response(resolvePython.stdout).text()).trim();
+if (await resolvePython.exited !== 0 || !python.startsWith("/") || python.includes("\n")) throw new Error("verified_upstream_runtime_required");
 const hash = (data: Uint8Array | string) => createHash("sha256").update(data).digest("hex");
 const check = Bun.spawn([python, "-m", "unittest", "discover", "-s", "tests", "-v"], {
   cwd: app, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, stdout: "inherit", stderr: "inherit",
@@ -17,6 +22,13 @@ await mkdir(`${stage}/release`, { recursive: true });
 await cp(`${app}/vision_ocr`, `${stage}/release/vision_ocr`, { recursive: true, filter: path => !path.includes("__pycache__") });
 await cp(`${stage}/models`, `${stage}/release/models`, { recursive: true });
 await cp(`${app}/requirements.lock`, `${stage}/release/requirements.lock`);
+await cp(`${app}/upstream.json`, `${stage}/release/upstream.json`);
+const provenance = Bun.spawn(["python3", "-B", `${app}/scripts/upstream.py`, "provenance"], {
+  cwd: app, stdout: "pipe", stderr: "inherit",
+});
+const sourceBuild = await new Response(provenance.stdout).text();
+if (await provenance.exited !== 0) throw new Error("upstream_provenance_required");
+await writeFile(`${stage}/release/upstream-build.json`, JSON.stringify(JSON.parse(sourceBuild), null, 2));
 await mkdir(`${stage}/release/web`, { recursive: true });
 const html = await readFile(`${app}/web/index.html`, "utf8");
 for (const [mode, title] of [["ocr", "画像・動画の文字起こし"], ["objects", "画像・動画の物体認識"]]) {

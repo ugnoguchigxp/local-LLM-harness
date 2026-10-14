@@ -39,6 +39,31 @@ print(a[m.CONF/'services.yaml'][0].decode())
   }
 });
 
+test("source-built OpenCV records validated native runtime dependencies for both workers", () => {
+  const path = resolve(import.meta.dir, "install-vision-ocr-hosting.py");
+  const script = `import importlib.util,pathlib,json
+s=importlib.util.spec_from_file_location('registration',${JSON.stringify(path)})
+m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+files={name:(b'fixture',False) for name in ['bun','gateway.js','process-controller.py','release/vision_ocr/server.py','python/bin/python3.12']}
+files['process-member.service.in']=(pathlib.Path('deploy/local-node/local-services/process-member.service.in').read_bytes(),False)
+native={'libavcodec62':'7:8.0.1-3ubuntu2','libavformat62':'7:8.0.1-3ubuntu2'}
+files['release/upstream-build.json']=(json.dumps({'nativePackages':native}).encode(),False)
+*_,manifests=m.artifacts('a'*64,files,'ugnoguchi')
+assert all(value['nativePackages']==native for value in manifests.values())
+assert m.native_dependencies({})=={}
+for bad in [{},{'--help':'1'},{'libavcodec62':'bad version'},{'libavcodec62':1}]:
+ try:
+  m.native_dependencies({'release/upstream-build.json':(json.dumps({'nativePackages':bad}).encode(),False)})
+  raise AssertionError('accepted invalid native dependencies')
+ except RuntimeError as error: assert str(error)=='invalid_native_dependencies'
+print('native dependency checks passed')
+`;
+  const result = Bun.spawnSync(["python3", "-c", script], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } });
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr.toString()).toBe("");
+  expect(result.stdout.toString()).toContain("native dependency checks passed");
+});
+
 test("synchronous daemon restart failure restores the original configuration before enabling gateways", () => {
   const path = resolve(import.meta.dir, "install-vision-ocr-hosting.py");
   const script = `import importlib.util,pathlib,tempfile,subprocess

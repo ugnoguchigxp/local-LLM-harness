@@ -6,6 +6,88 @@
     起動管理との接続、ブラウザ画面、固定成果物、正式配置用installerを準備し、隔離した実機環境で確認した。
     利用者の管理者実行許可を受け、root管理先への正式配置と稼働中LARMへの登録を完了した。モデルは認識要求によってだけ起動する。最新の配備結果は連携プロンプト資料の正式systemd配備節を参照する。
   </p>
+  <section id="upstream-update-20261014">
+    <h2>2026年10月14日：公式sourceと独自実装の分離</h2>
+    <p>
+      Excalidrawと同様に、公式repositoryを隣接する独立checkoutへ置き、独自のAPI・画面・LARM接続・更新手順だけをGitHubへ保存する。
+      公式sourceにpatchや独自commitを追加しない。公式checkoutのpush
+      URLはDISABLEDで、fetchとpullに使用する。
+      build用archive、wheel、候補Python環境はGit外の<code>/srv/ai/apps/vision-ocr-build</code>へ置く。
+    </p>
+    <table>
+      <caption>
+        候補環境で確認した公式source。commitの正本は独立アプリのupstream.json
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">公式repository</th>
+          <th scope="col">checkoutとbranch</th>
+          <th scope="col">commit</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">RapidAI/RapidOCR</th>
+          <td><code>/srv/ai/apps/RapidOCR</code>、main</td>
+          <td><code>7cfd3d9ef786a2e538ca30df700325e72e85b5f5</code></td>
+        </tr>
+        <tr>
+          <th scope="row">opencv/opencv</th>
+          <td><code>/srv/ai/apps/opencv</code>、5.x</td>
+          <td><code>6dc5ff5c1f84fc3fd22534503a116585919c772c</code></td>
+        </tr>
+        <tr>
+          <th scope="row">opencv/opencv-python</th>
+          <td><code>/srv/ai/apps/opencv-python</code>、5.x</td>
+          <td><code>7edf837265e1453373b2c2c09eafd4a52079df06</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <code>python3 scripts/upstream.py update</code
+      >は三checkoutの<code>git pull --ff-only</code>、公式sourceのwheel build、
+      候補環境の同期、整合性確認、単体試験、offline実engine検証を順に行う。 既存のOpenCV
+      5系を維持するためnative sourceと公式Python packagingの双方で5.xを追従する。
+      公式worktreeの変更・未追跡ファイル・独自commit・異なるoriginやbranchを拒否し、reset・stash・mergeで上書きしない。
+      公式checkoutへ直接pullした場合はprepareとcheckを実行する。旧wheelや環境を新しいsourceとして扱わない。
+    </p>
+    <p>
+      buildはPython 3.12、uv、CMake、Ninja、g++、pkg-configとFFmpeg開発headerを使用する。
+      headless・CPU用に必要なOpenCV moduleをbuildし、FFmpegによる動画decodeとWebPを有効にする。
+      公式sourceはgit archiveから別directoryへ展開し、wheel用version情報の生成もbuild
+      archive内だけで行う。 RapidOCRのpackage
+      versionは<code>0.0.0+g7cfd3d9ef786</code>、OpenCVは<code>5.1.0+g6dc5ff5c1f84</code>で、
+      公開済みPyPI versionを名乗らず公式commitを識別する。
+    </p>
+    <p>
+      requirements.lockには全Python依存versionを記録する。Git外の確認記録はsource commit、wheel
+      hash、 取り込んだRapidOCR・cv2のファイルhash、lockfile、FFmpeg runtime package
+      versionを照合する。
+      LARMのprepareは検査済み候補Python環境を固定し、source参照とportableなbuild記録をreleaseへ含める。
+      installerはFFmpeg runtime依存を両workerのprocess manifestへ含め、root
+      controllerのpreflightでpackage versionを照合する。
+      source更新・build・固定成果物の準備は順に実行し、本番反映を別工程とする。
+    </p>
+    <p>
+      PP-OCRv6 SmallとYOLO26nのONNX重みは従来の明示取得・checksum固定を維持する。
+      起動時やsource更新時にモデルを自動更新しない。Ultralytics frameworkは取り込まずCPU ONNX
+      Runtimeを使用する。
+      GitHubへ保存するものは独自source・script・試験・lockfile・公式commit参照だけであり、
+      公式sourceの複製、wheel、Python環境、重み、upload、結果、DB、資格情報を含めない。
+    </p>
+    <p>
+      候補環境で単体10件、installer試験4件、LARMのtypecheck、installerのdry-runが合格した。
+      外部モデル取得を禁止したoffline実engine試験で日本語OCR、bus・personの物体検出、MP4のdecodeとOCRを確認した。
+      さらに隔離したchild-process環境で28項目の受入試験が合格し、要求した側だけの起動、cold要求の集約、画像・動画、
+      job取消、別ownerの404、解析中のidle停止抑止、idle停止と再起動後の結果取得、upload削除を確認した。
+      coldの同時3要求は2.622秒、warmの一要求は0.293秒で、限定fixtureの一回の測定である。隔離processは検証後に停止した。
+    </p>
+    <p>
+      固定候補のdigestは<code>360f5290657e5da7e1c304a5239974a95eb2736d72a264f5c404583057ab4d0f</code>、7227 files。
+      このsource候補は本番systemdへ反映していない。正式入口18794・18796、既存資格情報・DB・モデル・登録設定は既存配備を維持する。
+      以下の2026年10月13日の結果と、今回のsource候補検証を区別する。
+    </p>
+  </section>
   <p>
     Eumenesからの利用は<a href="./eumenes-excalidraw-ocr-opencv-integration-prompts-2026-10-13.html"
       >Excalidraw・OCR・OpenCVの連携プロンプト</a
@@ -73,7 +155,7 @@
           <td>
             <code>/srv/ai/apps/vision-ocr-host</code>。Python
             worker、画像・動画API、ブラウザ画面、model取得script、単体試験。独立Git
-            repository、remote未作成。
+            repository。remoteは<code>https://github.com/ugnoguchigxp/vision-ocr-host.git</code>。
           </td>
         </tr>
         <tr>
@@ -233,8 +315,8 @@
 bun deploy/local-node/scripts/verify-vision-ocr-hosting.ts</code></pre>
     <p>
       このscriptの標準値はuser idle 30秒・service idle 60秒。
-      現在の実機検証processは各3秒で動作する。子process
-      backendであり、systemd/cgroupによる正式資源制御や
+      初回検証は各3秒、10月14日のsource候補検証はuser idle 3秒・service idle
+      10秒で動作し、検証後に停止した。子process backendであり、systemd/cgroupによる正式資源制御や
       稼働中LARMの共通資源受付を保証するものではない。
     </p>
   </section>
@@ -243,9 +325,13 @@ bun deploy/local-node/scripts/verify-vision-ocr-hosting.ts</code></pre>
     <p>
       モデル・engine・buildはすべてrepository外へ配置する。次の取得・同期・prepareは明示的な作業であり、認識要求のたびに行うものではない。
     </p>
-    <pre><code>uv venv --python 3.12 /srv/ai/local-services-prepared/vision-ocr-production/runtime
-uv pip sync --python /srv/ai/local-services-prepared/vision-ocr-production/runtime/bin/python /srv/ai/apps/vision-ocr-host/requirements.lock
-/srv/ai/local-services-prepared/vision-ocr-production/runtime/bin/python /srv/ai/apps/vision-ocr-host/scripts/provision_models.py /srv/ai/local-services-prepared/vision-ocr-production/models
+    <pre><code>cd /srv/ai/apps/vision-ocr-host
+python3 scripts/upstream.py prepare
+# 初回だけ、モデルを明示取得する。検証用の日本語font・bus画像も別途用意する
+vision_candidate_python=$(python3 scripts/upstream.py runtime)
+"$vision_candidate_python" scripts/provision_models.py /srv/ai/local-services-prepared/vision-ocr-production/models
+python3 scripts/check.py
+# 通常の公式更新はpython3 scripts/upstream.py update
 cd /srv/ai/apps/local-LLM-harness
 bun deploy/local-node/scripts/prepare-vision-ocr-hosting.ts
 python3 deploy/local-node/scripts/install-vision-ocr-hosting.py</code></pre>
@@ -265,7 +351,7 @@ python3 deploy/local-node/scripts/install-vision-ocr-hosting.py</code></pre>
       readiness確認後に二つのgatewayだけをenable・startする。モデルのmemberをenableしない。
       readiness確認に失敗した場合は追加dropinを外して元のdaemon設定へ戻す。
     </p>
-    <pre><code>sudo python3 /srv/ai/apps/local-LLM-harness/deploy/local-node/scripts/install-vision-ocr-hosting.py --apply --activate --include-excalidraw --expected-digest 7e97dbc683e120e5dbcea7382749bf4f5c4cfd2575f496f6db304baff4695811</code></pre>
+    <pre><code>sudo python3 /srv/ai/apps/local-LLM-harness/deploy/local-node/scripts/install-vision-ocr-hosting.py --apply --activate --include-excalidraw --expected-digest PREPARED_DIGEST</code></pre>
     <p>
       <code>PREPARED_DIGEST</code
       >は直前のdry-runまたはprepared.jsonで確認した値に置換する。

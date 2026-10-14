@@ -53,7 +53,22 @@ def prepared(expected):
     return computed, files
 
 
+def native_dependencies(files):
+    asset = files.get('release/upstream-build.json')
+    if asset is None:
+        return {}
+    value = json.loads(asset[0])
+    packages = value.get('nativePackages')
+    if not isinstance(packages, dict) or not 1 <= len(packages) <= 32:
+        raise RuntimeError('invalid_native_dependencies')
+    for name, version in packages.items():
+        if not re.fullmatch(r'[a-z0-9][a-z0-9+.-]{0,127}', name) or not isinstance(version, str) or not re.fullmatch(r'[A-Za-z0-9.+:~_-]{1,128}', version):
+            raise RuntimeError('invalid_native_dependencies')
+    return packages
+
+
 def artifacts(revision, files, daemon_user):
+    native_packages = native_dependencies(files)
     release = Path('/opt/larm-local-services/releases/vision-ocr-host') / revision
     python_root = Path('/opt/larm-local-services/runtimes') / ('python-' + revision)
     python = python_root / 'bin/python3.12'
@@ -120,6 +135,8 @@ WantedBy=multi-user.target
                     'unitHashes': {name: digest(unit.encode()) for name, unit in units.items() if name.startswith('larm-local-service-')},
                     'members': [{'unit': member, 'memoryMaxBytes': 2 * 1024 ** 3, 'tasksMax': 128, 'cpuQuotaPercent': 400}],
                     'ports': [port], 'lifecycleSecret': str(CONF / (service_id + '-lifecycle-token')), 'staleAfterSeconds': 15, 'startSeconds': 45, 'stopSeconds': 45}
+        if native_packages:
+            manifest['nativePackages'] = native_packages
         manifest['manifestDigest'] = digest(canonical(manifest))
         manifests[service_id] = manifest
         result[Path('/etc/larm-local-services/process') / (service_id + '.json')] = (canonical(manifest), 0o644)
