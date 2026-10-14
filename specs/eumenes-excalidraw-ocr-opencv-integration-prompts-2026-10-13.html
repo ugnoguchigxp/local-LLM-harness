@@ -102,6 +102,41 @@
       Eumenesとの接続試験とは区別する。
     </p>
   </section>
+  <section id="document-deletion-contract">
+    <h2>2026年10月14日：図の削除APIと作成時の重複防止</h2>
+    <p>
+      Eumenesの図一覧から削除する契約に合わせ、独立したexcalidraw-hostのsourceに
+      <code>DELETE /api/documents/{documentId}</code>を追加した。認証は従来の図保存用app
+      credentialのBearerで、leaseや認証方式は変更しない。成功時は200とJSON
+      <code>{"id":"&lt;documentId&gt;","deleted":true}</code>を返し、Idempotency-Keyと本文は不要。
+      Eumenesはこの削除が成功したあとに図一覧の情報を消す。
+    </p>
+    <p>
+      所有者以外、存在しない文書、削除済み文書はすべて404
+      <code>{"error":"document_not_found"}</code
+      >で区別しない。文書と全版のDB情報、scene・画像を含む文書directoryを削除する。
+      以後のGET、版指定GET、export、PUT、DELETEは404。過去に成功したPUTの同じキーによる再送も404になる。
+      既存の作成・取得・保存API、expectedRevision、leaseは維持する。
+    </p>
+    <p>
+      POSTの重複防止記録はSQLiteのrequests表にownerとkeyを主キーとして永続保存する。 ownerはapp
+      credentialから決まり、lease ID・generation・bootEpochをキーに含めない。
+      同じowner・同じキー・同じ検証と正規化後の内容の再送は元の結果を201で返し、内容が違えば409
+      <code>idempotency_conflict</code
+      >。保持期限、自動失効、定期回収はなく、worker停止・再起動後も保持する。
+      キーは8〜128文字の英数字、ピリオド、アンダースコア、ハイフンである。
+    </p>
+    <p>
+      削除後もsceneを含まない作成・更新の応答メタデータとfingerprintを保持し、通信途絶後の遅延POST再送で図が再作成されることを防ぐ。
+      削除後に元のPOSTを再送すると元の作成結果を返すが、その文書へのGETは404のままである。
+      新しい図には新しいキーを発行する。検証対象のJSONを文字列化してfingerprintを計算するため、再送時は元のpayloadを保持する。
+    </p>
+    <p>
+      検証はexcalidraw-hostの型検査、単体・HTTP試験10件、buildで合格した。所有者の分離、200のJSON、全版の実ファイル削除、
+      削除後のGET・export・PUT再送・再DELETEの404、再起動後の重複防止、symlinkへの削除拒否を確認した。
+      この変更はsourceとbuildの検証までであり、正式systemdの固定releaseへの反映とEumenes実接続試験は未実施。
+    </p>
+  </section>
   <section id="excalidraw">
     <h2>Excalidraw：オンデマンド起動してWebアプリを開く</h2>
     <pre>EumenesからExcalidrawを必要なときに起動し、利用者がブラウザで編集できるURLを返す機能を実装してください。EumenesのAGENTS.mdに従い、initial_instructions MCPを作業開始時に実行し、既存のLARM接続・会話・アーティファクト表示に沿って変更してください。
