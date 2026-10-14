@@ -12,6 +12,30 @@
     >を参照する。 OCRと物体認識はEumenes
     backendからのAPI利用を通常経路とする。本書のブラウザ画面は単体検証用の入口である。
   </p>
+  <section id="gateway-recovery-20261014">
+    <h2>2026年10月14日：制御側の更新後に受付が戻らない問題の修正</h2>
+    <p>
+      カメラ解析に再起動が必要との申告を受けて確認したところ、18:15:46 JSTのLARM停止に伴い、
+      OCRと物体認識のgatewayが停止していた。LARM復帰後に両gatewayが起動されず、正式入口18794・18796で受付できなかった。
+      gatewayのRequiresは制御側の停止を伝播するが、enabledやRestart=on-failureだけでは制御側の次回起動に追従しない。
+    </p>
+    <p>
+      両gatewayを起動して受付を復旧した。既存環境には
+      <code>/etc/systemd/system/larm-daemon.service.d/70-hosted-gateway-recovery.conf</code>を追加し、
+      LARMのWantsへOCR・物体認識・Excalidrawの登録済みgatewayを指定した。
+      新規配備用installerのactivateも同じWantsを生成する。workerを依存先へ追加せず、モデルは要求時に起動する。
+      復旧中にLARM本体を再起動せず、既存DB・資格情報・owner・凍結release・manifestを変更していない。
+    </p>
+    <p>
+      単体試験に加え、独立した一時的systemd unitでstart・stop・startとrestartを実行し、
+      gatewayが停止に追従し、起動時に復帰することを確認した。本番制御側のWantsにも三gatewayが含まれる。
+      正式gatewayで未認証401、日本語画像OCRの200、Chromiumの合成カメラをMediaRecorderで5秒録画した
+      MP4（VP9）の受付202・完了・10フレーム全ての日本語文字起こしを確認した。
+      正式idle設定でworkerが停止した後、次の画像要求で自動起動して200の日本語OCR結果が返ることも確認した。
+      この間gatewayはactiveを維持し、手動の再起動を必要としなかった。
+      MacBookの実カメラやEumenes画面からの試験とは区別する。
+    </p>
+  </section>
   <section id="prior-runbook">
     <h2>見つかったExcalidrawの手順書</h2>
     <p>

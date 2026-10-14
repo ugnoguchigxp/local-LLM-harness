@@ -65,3 +65,22 @@ print('rollback passed')
   expect(result.stderr.toString()).toBe("");
   expect(result.stdout.toString()).toContain("rollback passed");
 });
+
+test("daemon activation restores registered gateways without making inference workers resident", () => {
+  const path = resolve(import.meta.dir, "install-vision-ocr-hosting.py");
+  const script = `import importlib.util,configparser,io
+s=importlib.util.spec_from_file_location('registration',${JSON.stringify(path)})
+m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+gateways=['larm-ocr-host-gateway.service','larm-object-recognition-host-gateway.service','larm-excalidraw-gateway.service']
+configuration=configparser.ConfigParser();configuration.read_file(io.StringIO(m.gateway_activation_dropin(gateways)))
+assert configuration['Unit']['Wants'].split()==gateways
+assert configuration['Service']['EnvironmentFile']==str(m.CONF/'daemon.env')
+assert not any('local-service-' in unit for unit in configuration['Unit']['Wants'].split())
+assert 'Requires' not in configuration['Unit']
+print('gateway recovery dependency passed')
+`;
+  const result = Bun.spawnSync(["python3", "-c", script], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } });
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr.toString()).toBe("");
+  expect(result.stdout.toString()).toContain("gateway recovery dependency passed");
+});

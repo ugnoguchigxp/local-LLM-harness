@@ -156,6 +156,12 @@ def daemon_environment():
     return environment
 
 
+def gateway_activation_dropin(gateway_units):
+    # Requires on a gateway propagates daemon stops; the reverse Wants edge
+    # brings the registered gateways back on restart or a later daemon start.
+    return f'[Unit]\nWants={" ".join(gateway_units)}\n[Service]\nEnvironmentFile={CONF}/daemon.env\n'
+
+
 def start_registered_gateways(dropin_path, gateway_units):
     try:
         subprocess.run(['/usr/bin/systemctl', 'daemon-reload'], check=True)
@@ -215,7 +221,7 @@ def activate(release, python, modes, daemon, include_excalidraw=False):
         raise RuntimeError('journal_directory_not_daemon_owned')
     env = f'LARM_LOCAL_SERVICES_ENABLED=true\nLARM_LOCAL_SERVICES_FILE={CONF}/active-services.json\nLARM_LOCAL_SERVICES_PRINCIPALS={CONF}/active-consumers.json\nLARM_LOCAL_SERVICES_JOURNAL={journal}\n'
     put(CONF / 'daemon.env', env.encode(), 0o640, daemon.pw_gid)
-    dropin = f'[Service]\nEnvironmentFile={CONF}/daemon.env\n'
+    dropin = gateway_activation_dropin(gateway_units)
     dropin_path = Path('/etc/systemd/system/larm-daemon.service.d/65-vision-ocr-hosting.conf')
     put(dropin_path, dropin.encode())
     start_registered_gateways(dropin_path, gateway_units)
