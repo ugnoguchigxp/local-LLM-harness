@@ -14,6 +14,11 @@
       URLはDISABLEDで、fetchとpullに使用する。
       build用archive、wheel、候補Python環境はGit外の<code>/srv/ai/apps/vision-ocr-build</code>へ置く。
     </p>
+    <p>
+      OpenCV側の独自実装用に<code>ugnoguchigxp/opencv-host</code>を既存hostと同じ非公開設定で用意した。
+      checkoutは<code>/srv/ai/apps/opencv-host</code>。現時点ではREADME・Git除外設定・開発指針だけの土台であり、
+      実際の物体認識APIと更新処理は引き続きvision-ocr-hostにある。コードの移設、本番切替、公式sourceの複製は行っていない。
+    </p>
     <table>
       <caption>
         候補環境で確認した公式source。commitの正本は独立アプリのupstream.json
