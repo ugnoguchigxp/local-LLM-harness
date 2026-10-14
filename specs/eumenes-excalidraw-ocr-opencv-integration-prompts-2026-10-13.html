@@ -134,7 +134,176 @@
     <p>
       検証はexcalidraw-hostの型検査、単体・HTTP試験10件、buildで合格した。所有者の分離、200のJSON、全版の実ファイル削除、
       削除後のGET・export・PUT再送・再DELETEの404、再起動後の重複防止、symlinkへの削除拒否を確認した。
-      この変更はsourceとbuildの検証までであり、正式systemdの固定releaseへの反映とEumenes実接続試験は未実施。
+      この段階ではsourceとbuildの検証までであり、正式systemdの固定releaseへの反映は未実施だった。後述の2026年10月14日の正式更新で反映を完了した。Eumenes実接続試験とは区別する。
+    </p>
+  </section>
+  <section id="official-editor-boundary">
+    <h2>2026年10月14日：公式エディタと独自機能の分離</h2>
+    <p>
+      excalidraw-hostは公式repositoryのforkではなく、固定した公式パッケージ
+      <code>@excalidraw/excalidraw</code
+      >を組み込む独立アプリである。公式sourceへのpatchはない。
+      公式更新時に確認する境界を絞るため、従来のweb/main.tsxに混在した公式APIとの接続と独自機能を分離した。
+    </p>
+    <table>
+      <caption>
+        更新と保守の責務
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">場所</th>
+          <th scope="col">担当</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">web/editor/</th>
+          <td>
+            公式UIの接続、公式API型、日本語設定、scene変換、画像の保持、公式CSSへの局所的な上書き。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">web/host/</th>
+          <td>
+            独自の認証画面、一覧、保存・自動保存、版競合、同じキーとpayloadによる再送、下書き復元、activity通知と画面装飾。公式パッケージを直接importしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">web/types.tsとweb/main.tsx</th>
+          <td>公式APIから独立した保存用scene・文書の型と、画面の起動。</td>
+        </tr>
+        <tr>
+          <th scope="row">src/</th>
+          <td>独自の永続化、owner認証、版管理、削除API、MCP。公式UIから独立。</td>
+        </tr>
+        <tr>
+          <th scope="row">local-LLM-harness</th>
+          <td>lease、オンデマンドhosting、gatewayと固定releaseの配備。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      境界は独自のSceneとEditorHandleだけを渡し、公式API型を独自画面へ露出しない。公式部品はAPI要求、token、
+      retry
+      key、expectedRevision、sessionStorageを扱わない。独自のbutton・input・headerなどのCSSは独自操作部へ範囲を限定した。
+      公式のdatabase向けserializerがfilesを省略するため、未削除の図形が参照する画像をsceneへ明示的に保持するよう修正した。
+    </p>
+    <p>
+      公式更新はpackage.jsonとbun.lockの更新、editor境界の互換性確認、build時のフォント配置確認、型検査・試験・build、
+      ブラウザ確認、固定release反映の順で行う。自動追従・自動配備は追加していない。公式APIやscene形式に互換性の変更があれば境界の調整が必要である。
+    </p>
+    <p>
+      型検査、既存10件の試験、buildは合格した。本番DB・資格情報を使わない隔離したブラウザfixtureで、新規作成・描画・保存、図の切替、
+      画像の保持、失敗時の同じキーとpayloadでの再送、再読込み後の下書き復元を確認した。page
+      errorと外部要求は0件。
+      既存の実機受入scriptにも画像付き図のブラウザ保存確認を追加したが、正式workerへ接続する受入script自体は今回再実行していない。
+      この段階ではsourceの整理までだった。本番の固定releaseへの反映は後述の正式更新で完了した。Eumenes実接続試験は未実施。
+    </p>
+  </section>
+  <section id="formal-excalidraw-upgrade-20261014">
+    <h2>2026年10月14日：削除APIと分離した画面の正式反映</h2>
+    <p>
+      利用者のsudo実行許可を受け、本番が削除API追加前の固定releaseを参照していることを確認した。
+      古い実行先の再起動だけでは追加APIが使えないため、型検査・試験・buildを通した新release
+      <code>b15b91623be0d4c7dbf0482655423c73f4b90b6e1a56507a022c3f18cf6b64d6</code>をroot所有の新directoryへ配置した。
+      既存releaseは保持し、初回専用installerによる再bootstrapは行っていない。
+    </p>
+    <p>
+      gateway・workerのunit、双方のWeb配信先、process
+      manifest、Excalidraw単独定義と三serviceの統合定義を同期した。 新manifest
+      digestは<code>e491807e731c0668c70ce7eeb03d16ac6c0ece13ac006c81d9659a8217682446</code>。 既存のroot controllerとBun
+      runtimeは保持し、preflightとhash照合に合格した。実行中・待機中の推論要求とHTTP
+      workloadが0であることを確認し、
+      gatewayとLARMを正常停止して更新後に再起動した。workerは要求に応じて新releaseから起動し、オンデマンドのlifecycleを維持する。
+    </p>
+    <p>
+      更新前のwriter停止とlock取得後にSQLite backupと全sceneのコピーをroot専用
+      <code>/var/lib/larm-excalidraw-upgrades/20261014T091546Z-b15b91623be0</code>へ保存した。
+      配備設定もbackupし、反映失敗時に元の設定・releaseへ戻す経路を用意した。これは同一ホスト上の更新rollback用であり、独立媒体backupではない。
+      既存11件・34版についてDB情報、全sceneのchecksumとSQLite quick_checkを更新前後で確認した。
+      consumer登録、app
+      credential、lifecycle・gateway内部controlの資格情報、ownerと保存先は保持した。
+    </p>
+    <p>
+      正式gateway入口18790とEumenes専用資格情報で、検証用の新規図の作成、版2への更新、DELETEの200とJSON
+      <code>{"id":"&lt;documentId&gt;","deleted":true}</code>を確認した。
+      全版の実ファイル・DB情報が消え、版指定GET、export、過去のPUTの同じキーによる再送、新しいキーのPUT、再DELETEが404になった。
+      不正tokenとconsumer用tokenの図削除は401。別ownerの存在秘匿は先行する隔離HTTP試験で確認しており、本番のowner登録は増やしていない。
+    </p>
+    <p>
+      異なる二つのleaseを取得して同じPOSTキー・payloadが同じ結果を返すこと、内容が違えば409になることを確認した。
+      削除後の同じPOSTは元の作成結果を返すが図を復活させない。検証用の図は削除し、既存11件・34版が変わっていないことを再確認した。
+      LARM本体のreleaseは<code>86e879abe56ee54802d345c8b38f26f72b5e3570</code>、推論runtimeのconfigRevisionは
+      <code>36ff1aef15217c25fa560c99cc287016435fee5a83cfe0085a20cbd2c58cb79e</code>のままである。
+    </p>
+    <p>
+      制御側の再起動でbootEpochが変わったため、Eumenesは古いleaseが無効なら再取得する。資格情報の変更は不要。
+      今回の検証はLinux上の正式gatewayへのHTTP要求であり、MacBook上のEumenes画面からの実接続試験とは区別する。
+    </p>
+  </section>
+  <section id="official-checkout-update">
+    <h2>2026年10月14日：公式checkoutをgit pullで更新する構造</h2>
+    <p>
+      利用者指定により、公式Excalidrawを独立した
+      <code>/srv/ai/apps/excalidraw</code>へcloneした。originは
+      <code>https://github.com/excalidraw/excalidraw.git</code>、branchはmaster。
+      独自機能は<code>/srv/ai/apps/excalidraw-host</code>に置き、公式sourceへのpatch、forkへの再配布、submodule・subtreeによる取り込みは行わない。
+      公式checkoutのローカルpush URLはDISABLEDにし、取得・pullだけを許容する運用にした。
+    </p>
+    <table>
+      <caption>
+        repositoryとGitHubへ保存する範囲
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">repository</th>
+          <th scope="col">内容と更新方法</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">公式excalidraw</th>
+          <td>
+            公式sourceをそのまま保持する独立checkout。git pull
+            --ff-onlyでmasterを取得し、指定されたYarnとlockfileで公式のbuild:packagesを実行する。独自commit・pushを行わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">独自excalidraw-host</th>
+          <td>
+            認証・保存・版管理・削除API・MCP、独自画面、editor境界、更新・検証script、bun.lock、公式commitの参照情報を保存する。公式のビルド済み部品をfile依存として使う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">local-LLM-harness</th>
+          <td>
+            オンデマンドhosting、lease、gateway、配備手順と検証記録。公式source・生成物・図・資格情報を保存しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      初回または公式に直接pullした後は独自repositoryで<code>bun run upstream:prepare</code>を実行する。
+      通常は日本語フォントを設定して<code>bun run upstream:update</code>を実行すると、公式のpull、公式部品のbuild、独自アプリへの取り込み、型検査、単体試験、build、隔離ブラウザ検証をまとめて行う。
+      公式worktreeに未保存・未追跡の変更、独自commit、予期しないorigin・branchがあれば停止する。reset・stash・mergeで上書きしない。
+    </p>
+    <p>
+      <code>upstream.json</code>は公式URL・branch・使用commitだけをGitへ保存する。
+      Git外の<code>.upstream-state.json</code>はyarn.lock、公式部品のbuildと取り込んだ部品のhashを照合する。
+      公式のcommitが変わった後に古い依存でbuildすることを拒否し、packageのversion文字列が変わらない公式更新も取り込み直す。
+      公式checkout、node_modules、dist、archive、fonts、DB、保存scene、資格情報は独自Gitへ追加しない。buildした配備には公式MIT
+      licenseと公式commit情報を同梱する。
+    </p>
+    <p>
+      公式commit<code>541653c7c9d587d463a47daacff9fb30e45a52e7</code>から公式の六つの部品をbuildした。
+      最新のonExcalidrawAPIとsetViewportにeditor境界を合わせ、Reactと型を公式に合わせて19.0系へ更新した。
+      公式serializerの動作に依存せず、削除済みの図形を保存sceneから除き、未削除の画像が参照するfilesを保持する。
+      sourceの変更は独自repositoryの接続部分だけに行い、公式worktreeはcleanのままである。
+    </p>
+    <p>
+      型検査・単体15件・buildと、隔離ブラウザによる作成・描画・保存、図の切替、画像の保持と削除、同じキーとpayloadでの再送、再読込み後の下書き復元を確認した。
+      page errorと外部要求は0件。公式checkoutの変更拒否と部品hashの不一致検出は単体試験に含めた。
+      更新コマンドは本番を自動再起動せず、検証済みの固定releaseをLARM側で反映する。
     </p>
   </section>
   <section id="excalidraw">
