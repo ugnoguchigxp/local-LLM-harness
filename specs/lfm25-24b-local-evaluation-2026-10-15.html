@@ -1,0 +1,468 @@
+<article lang="ja">
+  <h1>LFM2.5・Gemma 4・Ornith STRIX：395での日本語・ツール・応答時間評価</h1>
+  <aside>
+    <p>
+      初回はLFMがreasoning on、Ornith・Gemmaがoffだった。同じoff要求・推論予算0での
+      <a href="./lfm25-reasoning-off-evaluation-2026-10-15.html">再測定</a>を同日に実施した。
+      初回の約15倍の完了時間をoff同士の性能差として扱わない。LFMの4会話完了は再測定で約2.3秒に短縮したが、
+      出力長の差と一部の本文への思考文混入も確認した。本書は初回条件の記録として保持する。
+    </p>
+  </aside>
+  <p>
+    <time>2026-10-15</time>の調査と実機試験。公式QAD Q4_0を独立した評価用プロセスで試し、Gemma 4 26B
+    A4B IT QAT Q4_0およびOrnith 1.5 STRIX_LEAN ROCmFP4と比較する。 稼働中のAgent
+    Profile・route・Provider設定は変更しない。
+  </p>
+  <section id="decision-and-reuse">
+    <h2>利用者の判断と次回の比較資材</h2>
+    <p>
+      2026年10月15日、利用者はLFMの生成速度とツール性能を評価しつつ、本文開始と4会話完了までの待ち時間から
+      載せ換えを一旦見送ると決定した。Ornith 1.5 STRIXを維持し、LFMは再評価候補として保留する。
+      Strata版、MTP対応、よりfine-tuneされた派生版などが実際に利用可能になった際に再比較する。
+      将来の版の存在や性能を確認済みとせず、監視・自動切替は設定していない。
+    </p>
+    <p>
+      利用者の指定に従い、測定記録をMarkdownの
+      <code>benchmarks/lfm25/records/2026-10-15.md</code>にも保存した。
+      同じdirectoryの<code>README.md</code>、<code>run.py</code>、<code>report.py</code>、
+      <code>replay.py</code
+      >と<code>baselines/2026-10-15.json</code>を次回の再利用資材とする。
+      元の68項目はSHA-256を固定して保持し、起動・終了・条件記録・比較表作成を外側のrunnerで行う。
+    </p>
+    <p>
+      再利用runnerの既定値は4枠・各16384である。初回の短入力・4会話の各8192とは条件が異なるため、
+      次回は候補と現行STRIXを同じ条件で再測定する。比較表には容量・思考・追加引数等の差を残す。
+      MTP等の追加引数を保存できるが、LARMのProfileや稼働中Providerを切り替える機能は持たない。
+    </p>
+  </section>
+  <section id="sources">
+    <h2>公開情報の検証</h2>
+    <p>
+      Liquid AIの2026年10月13日発表と公式model cardで、24B total・2.45B active、40層、30 short
+      convolution＋10 GQA、64 experts・top-4、131072 context、128000
+      vocabulary、日本語を含む16言語、reasoning専用を確認した。学習規模はcardで36T、発表の内訳はpretraining
+      33T＋midtraining 2T＋0.3T。概数と内訳を区別する。
+    </p>
+    <p>
+      AutomationBench 27.69、BFCLv4 65.01、ToolSandbox 80.71、LiveClaw 48.09、SWE-bench Verified
+      51.00、GPQA Diamond
+      74.42は発表と一致する。モデル開発元がvLLMで評価した値であり、今回のGGUF・日本語fixtureの測定結果ではない。各benchmarkでtemperature・出力上限・harnessが違い、ローカルの同一成功率へ換算しない。
+    </p>
+    <p>
+      114 tok/sは開発元が395で報告するdecode速度。単一B300の21K超はSGLang
+      0.5.22・BF16・入力1024・最大出力256で、継続的に要求を補充する高並列の総throughputである。ローカル1会話の速度と混同しない。
+    </p>
+    <p>
+      公式GGUF revisionは<code>0912d33141f77e10705345a6732bfd83f0252fdc</code>。QAD Q4_0は13578190880
+      bytes、SHA-256は<code>d1c03f73ecaf61017d70419eec9e5dc0b05d50ae26c23d522829b934fbabf8a5</code>。Q4_K_Mは14526258464
+      bytes。重みはrepository外に保管する。
+    </p>
+    <ul>
+      <li><a href="https://www.liquid.ai/blog/lfm2-5-24b-a2b">公式発表・benchmark・測定条件</a></li>
+      <li>
+        <a href="https://huggingface.co/LiquidAI/LFM2.5-24B-A2B"
+          >公式model card・設定・chat template</a
+        >
+      </li>
+      <li>
+        <a href="https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-GGUF"
+          >公式GGUF・QAD・推奨sampling</a
+        >
+      </li>
+      <li>
+        <a href="https://www.liquid.ai/lfm-license">LFM Open License v1.0</a>。Apache
+        2.0と同一条件ではなく、売上thresholdと商用利用条件がある。
+      </li>
+    </ul>
+  </section>
+  <section id="deployment-context">
+    <h2>LARMで比較する対象</h2>
+    <p>
+      調査時の既定Agent
+      Profileは<code>ornith1.5Strix</code>で、<code>contextStill</code>と共有する<code>ornith15-strix-conversation</code>へ解決する。現在のlive
+      backendはOrnith STRIX_LEAN＋projector、Vulkan、KV pool 1048576・4 slots・各262144、Q4_0
+      KV、reasoning
+      off。Gemmaを本番の現モデルと決めつけない。Gemma比較は残るGemma用Profileのモデルとの独立試験である。
+    </p>
+    <p>
+      稼働releaseは<code>86e879abe56ee54802d345c8b38f26f72b5e3570</code>、configRevisionは<code>36ff1aef15217c25fa560c99cc287016435fee5a83cfe0085a20cbd2c58cb79e</code>。試験のソース基点は<code>208577b0576f4ff3f2148e966fa74c68731cd7c7</code>。
+    </p>
+    <p>
+      LFMはtext-onlyでcontext上限131072。画像理解を持つ既定Ornithや256K主会話の契約を、そのまま置換できるとは扱わない。またGemmaの実ファイルは14439363584
+      bytesなので、LFM QADとの差は約0.86
+      GB、約6%である。既に4bitのGemmaから重み容量が大幅に減るという解釈は避ける。Ornith
+      STRIX_LEANの重み19052439552 bytesとの差は約5.47
+      GB。実行メモリには別途KV・convolution状態・workspace・projector等が加わる。
+    </p>
+  </section>
+  <section id="method">
+    <h2>評価条件と採点</h2>
+    <p>
+      3モデルのengineは既存の評価用llama-server、ROCmFPX派生のupstream
+      <code>0fc9568e07ccc8553010864cb8db1957e629cbfa</code>由来のbuild 244。 Vulkan0へ全層offload、flash
+      attention on、context pool 32768・4 slots・各8192、F16 K/V、batch 2048、ubatch 512、threads
+      16、fit off。Gemma用portは18091、LFM用は18090、Ornith用は18093。
+      Ornithもtext-only試験としてprojectorをロードしない。既定Profileの256K各会話・1M
+      poolとは異なる独立構成で、長文の収容能力を実運用と同じと主張しない。
+    </p>
+    <p>
+      AMD Ryzen AI MAX+ 395、128GB級Unified
+      Memoryの同一ホスト。既存サービスを保持し、loopbackの別portで順番に推論する。専用機の無負荷測定ではなく、ASR/TTSの同時推論負荷を発生させた測定でもない。LARM接続・leaseを介した受入試験とは区別する。
+    </p>
+    <p>
+      評価scriptは<code>benchmarks/lfm25/evaluate.py</code>。temperature 0.1、top_k 50、top_p
+      1、min_p 0、repeat_penalty 1.05、seed 20261015、最大出力4096。LFMはreasoning
+      on、GemmaとOrnithはreasoning
+      off。LFMの推奨samplingを明示し、共通設定で比較する。実運用の全設定を再現した比較ではない。
+    </p>
+    <p>
+      APIのSSEを受信し、思考を含む最初のtoken、利用者向け本文の開始、ツール出力の開始、応答完了を別に記録する。decode速度はserverの<code>timings.predicted_per_second</code>を用い、本文開始後の時間で思考tokenを割るような計算はしない。tokenizerが違うためtok/sだけで実際の会話速度を決めない。
+    </p>
+    <p>
+      ツールはすべて模擬定義・固定結果。都市名、検索語、整数・小数・boolean・配列、引用符・改行・backslashを含む引数を期待値と比較する。不要な呼出し、情報不足時の質問、2件の並列呼出し、tool結果から回答する往復、検索結果IDによる次の取得、not-found結果、文書内の命令注入を個別に採点する。tool_choiceの強制は使わないが、llama.cppが適用するtool
+      grammar・parserを含むAPI経路の評価である。
+    </p>
+    <p>
+      JSONはプロンプトだけで要求する6件とjson_schemaで制約する6件を分ける。code
+      fenceが付けば前者の厳密JSON採点は失敗。前後空白を除いた文字列完全一致8件には異体字、補助漢字、半角片仮名、絵文字、単位記号を含む。日本語散文3件も生成する。U+FFFD、制御文字、特殊token漏出、反復、既知のmojibake
+      patternを検査するが、機械検査だけで全ての文法・意味・文字品質を保証しない。自然さも標本を読む。
+    </p>
+    <p>
+      速度は短入力と180行の参考履歴付き入力を各3回。4独立会話の同時実行を3回行い、会話固有の符号と完了状態を確認する。これは小規模の状態分離試験で、長時間soakや131K文脈、4本それぞれ131Kの収容保証ではない。
+    </p>
+  </section>
+  <section id="results">
+    <h2>実測結果</h2>
+    <p>
+      <strong
+        >会話用の既定Ornith STRIXを維持する。LFM QADはツール引数の正確さに長所があるが、
+        思考量、不要な検索、文字列保持、現行engineのJSON互換条件に課題があり、独立した評価候補として扱う。</strong
+      >
+      68項目の模擬試験は、公開benchmarkや実際のEumenes・ContextStill・L-Lang全体の成功率へ換算しない。
+    </p>
+    <table>
+      <caption>
+        68項目の主試験。3モデルとも同じscript・利用者入力・模擬tool結果を使用
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">評価</th>
+          <th scope="col">LFM QAD Q4_0</th>
+          <th scope="col">Gemma QAT Q4_0</th>
+          <th scope="col">Ornith STRIX_LEAN</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ツール関連の合計</th>
+          <td>44/45（97.8%）</td>
+          <td>42/45（93.3%）</td>
+          <td>42/45（93.3%）</td>
+        </tr>
+        <tr>
+          <th scope="row">上記のうち基本ツール引数</th>
+          <td>18/18</td>
+          <td>15/18</td>
+          <td>15/18</td>
+        </tr>
+        <tr>
+          <th scope="row">上記のうち不要なツールを呼ばない</th>
+          <td>5/6</td>
+          <td>6/6</td>
+          <td>6/6</td>
+        </tr>
+        <tr>
+          <th scope="row">文字列の完全保持</th>
+          <td>7/8</td>
+          <td>8/8</td>
+          <td>8/8</td>
+        </tr>
+        <tr>
+          <th scope="row">指示だけによる厳密JSON・指定値一致</th>
+          <td>4/6</td>
+          <td>0/6</td>
+          <td>0/6</td>
+        </tr>
+        <tr>
+          <th scope="row">json_schema経路・指定値一致</th>
+          <td>4/6。制約生成失敗ログあり</td>
+          <td>6/6</td>
+          <td>6/6</td>
+        </tr>
+        <tr>
+          <th scope="row">散文の最低長と機械的破損検査</th>
+          <td>3/3</td>
+          <td>3/3</td>
+          <td>3/3</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      基本引数ではLFMが引用符・backslash・改行を正しく扱った。Gemmaは検索3件、Ornithは検索2件と予定名1件で
+      引数が期待値と一致しなかった。その他の並列呼出し、確認質問、tool結果から回答する往復、IDを受けた次の取得、
+      not-found結果、命令注入回避は3モデルとも今回の課題を通過した。
+      これらは少数のfixtureであり、一般的なtool-use能力の順位を確定する試験ではない。
+    </p>
+    <table>
+      <caption>
+        短い入力の400字程度の説明課題。3回の中央値。pool 32768、各8192
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">LFM</th>
+          <th scope="col">Gemma</th>
+          <th scope="col">Ornith STRIX</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">decode速度</th>
+          <td>93.13 tok/s</td>
+          <td>51.73 tok/s</td>
+          <td>59.82 tok/s</td>
+        </tr>
+        <tr>
+          <th scope="row">思考を含む最初のtoken</th>
+          <td>0.307秒</td>
+          <td>0.356秒</td>
+          <td>0.385秒</td>
+        </tr>
+        <tr>
+          <th scope="row">利用者向け本文の開始</th>
+          <td>3.519秒</td>
+          <td>0.356秒</td>
+          <td>0.385秒</td>
+        </tr>
+        <tr>
+          <th scope="row">応答完了</th>
+          <td>6.543秒</td>
+          <td>4.578秒</td>
+          <td>4.947秒</td>
+        </tr>
+        <tr>
+          <th scope="row">生成token数。思考を含む</th>
+          <td>581</td>
+          <td>219</td>
+          <td>278</td>
+        </tr>
+        <tr>
+          <th scope="row">利用者向け本文の文字数</th>
+          <td>337</td>
+          <td>416</td>
+          <td>503</td>
+        </tr>
+        <tr>
+          <th scope="row">完了までの時間で割った本文文字数</th>
+          <td>52.60文字/秒</td>
+          <td>90.87文字/秒</td>
+          <td>98.98文字/秒</td>
+        </tr>
+        <tr>
+          <th scope="row">ツール呼出し応答の完了時間。主試験で呼出しを含む応答の中央値</th>
+          <td>1.505秒</td>
+          <td>1.003秒</td>
+          <td>1.717秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LFMはOrnith比でdecodeが約1.56倍だが、本文開始は約9.1倍遅かった。
+      同じ「400字程度」の指示でも実際の出力量が異なるため、完了時間だけで同品質・同長の文章生成速度と主張しない。
+      LFMの短文3回の本文開始は3.181〜14.055秒。600字程度の物語では3258 token、
+      思考5579文字・本文525文字、完了35.845秒となった。
+    </p>
+    <table>
+      <caption>
+        4独立会話の同時実行を3回。固有符号・完了状態の検査
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">LFM</th>
+          <th scope="col">Gemma</th>
+          <th scope="col">Ornith STRIX</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">完了と符号分離</th>
+          <td>12/12</td>
+          <td>12/12</td>
+          <td>12/12</td>
+        </tr>
+        <tr>
+          <th scope="row">4件すべての完了時間の中央値</th>
+          <td>67.904秒</td>
+          <td>4.661秒</td>
+          <td>5.189秒</td>
+        </tr>
+        <tr>
+          <th scope="row">3回それぞれの完了時間</th>
+          <td>77.065、66.649、67.904秒</td>
+          <td>4.753、4.660、4.661秒</td>
+          <td>5.035、5.189、5.309秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      今回は混線・クラッシュを検出しなかった。一方、LFMの待ち時間は200字程度の挨拶課題でも大きくなった。
+      生成途中の思考が会話ごとに大量に増える影響を含み、decodeの速さだけでは同時会話の体感速度を評価できない。
+    </p>
+  </section>
+  <section id="text-observations">
+    <h2>文字の乱れと出力形式を分けて確認する</h2>
+    <p>
+      3モデルの返却本文でU+FFFD、予期しない制御文字、特殊token漏出、検査対象のmojibake pattern・
+      長い反復は検出しなかった。これは日本語品質の無欠陥を意味しない。
+      LFMは「カタカナ・ひらがな・漢字」だけのコピーで指示文まで混入した。
+      JSONでは期待値<code>引用&quot;と改行\n次の行</code>に対して<code>引用\n次の行</code>となり、引用符と語句が欠落した。
+      この表示の<code>\n</code>は、期待値では実際の改行、誤った返却値ではbackslashとnの2文字である。
+    </p>
+    <p>
+      Gemmaの指示のみJSONは6件ともcode fence付きで、枠を除けば値は正しかった。 Ornithも6件ともcode
+      fence付きで、pathの1件では枠を除いてもbackslashが余分だった。 LFMの絵文字JSONもcode
+      fence付きとなった。採点のための後処理で不合格を隠さず、形式違反と値の誤りを別に記録する。
+    </p>
+    <p>
+      散文の人手確認では、Ornithの料理説明に「最后」、物語に「おばあさんは名もこよと聞いた。」があった。
+      文字コードの破損とは区別した、不自然な表記・日本語の例である。
+      自然さ・知識の正確さ全体に客観的な合格点を付けた評価ではない。
+    </p>
+  </section>
+  <section id="wide-history">
+    <h2>履歴付き入力の容量をそろえた追試</h2>
+    <p>
+      最初の各8192枠ではLFMの3回中2回が文脈枠を使い切ったため、その時間を十分な容量での応答時間として扱わない。
+      3モデルとも同じ利用者入力とsamplingを保ち、pool 65536・4 slots・各16384、F16
+      K/Vへ拡大して履歴3回を再実行した。 最大出力4096は維持した。tokenizerにより入力はLFM
+      5171、Gemma 5057、Ornith 5417 tokenとなった。
+      入力と最大出力を足しても16384以内であり、この追試の打切りは文脈枠不足ではない。
+    </p>
+    <table>
+      <caption>
+        約5K tokenの履歴付き説明課題。3回。各16384枠・最大生成4096
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">LFM</th>
+          <th scope="col">Gemma</th>
+          <th scope="col">Ornith STRIX</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">本文を返して正常完了</th>
+          <td>2/3</td>
+          <td>3/3</td>
+          <td>3/3</td>
+        </tr>
+        <tr>
+          <th scope="row">decode速度の中央値</th>
+          <td>88.49 tok/s</td>
+          <td>46.68 tok/s</td>
+          <td>57.89 tok/s</td>
+        </tr>
+        <tr>
+          <th scope="row">全要求の終了までの中央値。打切りも含む</th>
+          <td>48.887秒</td>
+          <td>10.856秒</td>
+          <td>11.621秒</td>
+        </tr>
+        <tr>
+          <th scope="row">生成token数の中央値。思考を含む</th>
+          <td>3937</td>
+          <td>221</td>
+          <td>282</td>
+        </tr>
+        <tr>
+          <th scope="row">成功した要求だけの本文開始時間</th>
+          <td>45.319、21.426秒</td>
+          <td>5.843、6.122、6.034秒</td>
+          <td>6.686、6.785、6.764秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LFMの1回は4096 tokenを生成しても本文が出ず、50.668秒で終了した。 他の2回は3937
+      token・48.887秒、1737 token・23.953秒で正常完了した。
+      この課題では4Kの出力予約を思考が使い切り得る。出力上限を増やせば解消するか、思考予算を減らして品質を保てるかは未検証である。
+      131K全域の品質や、LARMでの長文Sessionの正式受入を完了した結果ではない。
+    </p>
+    <p>
+      追加でLFMにtoken ID 512個を入力し、EOSを無視して128
+      tokenを生成する固定長probeをwarmup後3回実行した。 同じVulkan・各16384枠でdecode中央値は92.13
+      tok/s。 公表114
+      tok/sは今回の条件では再現しなかったが、公表側と量子化・engine・文脈・電力条件まで一致した測定ではない。
+    </p>
+  </section>
+  <section id="json-compatibility">
+    <h2>LFMと現行engineのJSON互換条件</h2>
+    <p>
+      主試験のLFM json_schema経路では6件すべてに空のroot grammarを生成して失敗するログがあり、
+      1件は「expected peg-native format」の応答エラー、1件は指定文字列の誤りだった。
+      偶然JSONが返った要求も、正常な制約生成の証拠として扱わない。GemmaとOrnithには同じ失敗ログがなかった。
+    </p>
+    <p>
+      参照した<a
+        href="https://github.com/charlie12345/ROCmFPX/blob/0fc9568e07ccc8553010864cb8db1957e629cbfa/common/chat.cpp#L1618"
+        >当該engineのLFM2.5 parser</a
+      >では、 tool_choiceがautoならresponse_formatの有無によらずlazy grammarになる。
+      ツールを渡さない構造化要求で<code>tool_choice: "none"</code>を明示した追試では6/6がHTTP
+      200かつ指定schemaの構造に適合し、
+      この6件ではgrammar生成失敗を検出しなかった。ただし指定値まで一致したのは5/6で、引用符・改行の欠落は残った。
+      これは呼出し条件による互換回避であり、モデルの文字列理解が完全になった結果ではない。
+    </p>
+    <p>
+      元のschema-0をtool_choice未指定・seed 0/1/2で再試行すると3/3がHTTP 500となった。
+      engine側の互換問題と、日本語・文字列保持の品質問題を分けて扱う。
+      本番engine・LARM・consumerの変更は今回行わず、採用時にはこの契約を別途受入試験する。
+    </p>
+  </section>
+  <section id="japanese-followup">
+    <h2>「ねぎらい」の意味を取り違える例</h2>
+    <p>
+      入力は「今日は疲れました。ねぎらいを一言。」。GemmaとOrnithは労いの文章を返した。
+      LFMの主試験は文書検索<code>query="ねぎらい", limit=5</code>を呼んだ。
+      各16384枠の追試で同じ利用者入力・tool定義を保ち、seedを0/1/2に変えると、seed
+      0は同じ不要検索、seed 1/2はツールを使わずネギの説明を返した。
+      例は「ネギの一言：シンプルだけど味と栄養が豊富で、疲れた体にぴったりです。」である。
+    </p>
+    <p>
+      自動のno-tool判定は呼出しの有無と本文の存在しか検査しないため、seed
+      1/2の意味の誤りを検出できない。 主試験の44/45を日本語理解の97.8%成功率と解釈しない。
+      この限定的だが日常的な依頼の失敗と会話待ち時間から、現状の日本語会話用途ではOrnithを優先する。
+      LFMのツール引数精度は別の長所であり、特定のtool中心業務を採用するなら実際の業務課題で再評価する。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>再現と証跡</h2>
+    <p>
+      raw応答・timings・起動ログ・model
+      metadata・取得ログは<code>/srv/ai/evidence/lfm25-24b-20261015</code>。モデルは<code>/srv/ai/models/lfm25-24b-a2b</code>。生成物・ログ・重みはsource
+      repositoryへ追加しない。scriptは新規のrepository外出力先のみ許可する。
+    </p>
+    <p>
+      主試験は<code>lfm25-qad-full.json</code>、<code>gemma4-full.json</code>、<code>ornith-strix-full.json</code>。
+      3件のscript SHA-256は共通で<code>84f958d16035c4ea7892107f667e409840137b3adecc8a249cfd32fd75d54465</code>。
+      利用者・system入力と固定tool結果の一致を<code>comparison-validation.json</code>で検証した。
+      往復処理のassistant生成文やtool call IDは各モデルの実出力なので一致を要求しない。
+      履歴追試・固定長probe・JSON回避条件・seed変更は<code>wide-history.json</code>、
+      起動条件と取得・再現用scriptも同じ証跡directoryに保存した。
+    </p>
+    <p>
+      評価用プロセスは全て終了し、稼働LARMのready、releaseとconfigRevisionの維持、既存Ornith
+      backendの稼働を確認した。 LFMの量子化はQAD Q4_0だけを試験し、LFM
+      Q4_K_M以上の量子化、日本語の大規模corpus、実際のEumenesの全tool定義、
+      ASR/TTS同時負荷、長時間の会話履歴復元・soakは未検証である。
+    </p>
+    <p>
+      既存Gemma実測の比較条件と限界は<a href="./gemma4-alternative-candidates-2026-10-11.html"
+        >Gemma代替候補調査</a
+      >、既定Profile変更は<a href="./profile-cleanup-and-unused-models-2026-10-13.html"
+        >Profile整理</a
+      >も参照する。
+    </p>
+  </section>
+</article>

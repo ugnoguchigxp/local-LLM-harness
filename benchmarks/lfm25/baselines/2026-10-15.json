@@ -1,0 +1,341 @@
+{
+  "kind": "curated-measurement-baseline",
+  "observedOn": "2026-10-15",
+  "decision": "replacement-deferred",
+  "note": "Curated measurements, not raw logs. Primary 8K slots; corrected history 16K slots. No automatic model ranking.",
+  "runs": [
+    {
+      "label": "LFM2.5-24B-A2B QAD Q4_0",
+      "scriptSha256": "84f958d16035c4ea7892107f667e409840137b3adecc8a249cfd32fd75d54465",
+      "configuration": {
+        "primaryContextPool": 32768,
+        "primaryContextPerSlot": 8192,
+        "historyContextPool": 65536,
+        "historyContextPerSlot": 16384,
+        "parallel": 4,
+        "cache": "f16/f16",
+        "thinking": "on",
+        "device": "Vulkan0",
+        "maxOutputTokens": 4096,
+        "engineRevision": "0fc9568e07ccc8553010864cb8db1957e629cbfa",
+        "extraArgs": []
+      },
+      "complete": true,
+      "categories": {
+        "chain": {
+          "passed": 6,
+          "total": 6
+        },
+        "clarification": {
+          "passed": 3,
+          "total": 3
+        },
+        "constrained-json": {
+          "passed": 4,
+          "total": 6
+        },
+        "exact-text": {
+          "passed": 7,
+          "total": 8
+        },
+        "injection": {
+          "passed": 2,
+          "total": 2
+        },
+        "json": {
+          "passed": 4,
+          "total": 6
+        },
+        "loop": {
+          "passed": 6,
+          "total": 6
+        },
+        "no-tool": {
+          "passed": 5,
+          "total": 6
+        },
+        "parallel-tool": {
+          "passed": 3,
+          "total": 3
+        },
+        "prose": {
+          "passed": 3,
+          "total": 3
+        },
+        "tool": {
+          "passed": 18,
+          "total": 18
+        },
+        "tool-failure": {
+          "passed": 1,
+          "total": 1
+        }
+      },
+      "toolRelated": {
+        "passed": 44,
+        "total": 45
+      },
+      "performance": {
+        "short": {
+          "samples": 3,
+          "answers": 3,
+          "errors": 0,
+          "truncated": 0,
+          "decodeTokS": 93.13237685367093,
+          "firstContentMsSuccessful": 3519.0853270469233,
+          "totalMs": 6542.735664988868,
+          "outputTokens": 581
+        },
+        "history": {
+          "samples": 3,
+          "answers": 2,
+          "errors": 0,
+          "truncated": 1,
+          "decodeTokS": 88.48517891233443,
+          "firstContentMsSuccessful": 33372.62624199502,
+          "totalMs": 48886.73018896952,
+          "outputTokens": 3937
+        }
+      },
+      "concurrency": {
+        "passedRuns": 3,
+        "runs": 3,
+        "wallMsMedian": 67904.18795391452
+      },
+      "failedCases": [
+        "no-tool-5",
+        "schema-0",
+        "json-3",
+        "json-5",
+        "schema-5",
+        "copy-3"
+      ],
+      "evidenceFile": "/srv/ai/evidence/lfm25-24b-20261015/lfm25-qad-full.json",
+      "historyEvidenceFile": "/srv/ai/evidence/lfm25-24b-20261015/wide-history.json"
+    },
+    {
+      "label": "Gemma 4 26B A4B IT QAT Q4_0",
+      "scriptSha256": "84f958d16035c4ea7892107f667e409840137b3adecc8a249cfd32fd75d54465",
+      "configuration": {
+        "primaryContextPool": 32768,
+        "primaryContextPerSlot": 8192,
+        "historyContextPool": 65536,
+        "historyContextPerSlot": 16384,
+        "parallel": 4,
+        "cache": "f16/f16",
+        "thinking": "off",
+        "device": "Vulkan0",
+        "maxOutputTokens": 4096,
+        "engineRevision": "0fc9568e07ccc8553010864cb8db1957e629cbfa",
+        "extraArgs": []
+      },
+      "complete": true,
+      "categories": {
+        "chain": {
+          "passed": 6,
+          "total": 6
+        },
+        "clarification": {
+          "passed": 3,
+          "total": 3
+        },
+        "constrained-json": {
+          "passed": 6,
+          "total": 6
+        },
+        "exact-text": {
+          "passed": 8,
+          "total": 8
+        },
+        "injection": {
+          "passed": 2,
+          "total": 2
+        },
+        "json": {
+          "passed": 0,
+          "total": 6
+        },
+        "loop": {
+          "passed": 6,
+          "total": 6
+        },
+        "no-tool": {
+          "passed": 6,
+          "total": 6
+        },
+        "parallel-tool": {
+          "passed": 3,
+          "total": 3
+        },
+        "prose": {
+          "passed": 3,
+          "total": 3
+        },
+        "tool": {
+          "passed": 15,
+          "total": 18
+        },
+        "tool-failure": {
+          "passed": 1,
+          "total": 1
+        }
+      },
+      "toolRelated": {
+        "passed": 42,
+        "total": 45
+      },
+      "performance": {
+        "short": {
+          "samples": 3,
+          "answers": 3,
+          "errors": 0,
+          "truncated": 0,
+          "decodeTokS": 51.727388328290935,
+          "firstContentMsSuccessful": 355.82856996916234,
+          "totalMs": 4578.020930988714,
+          "outputTokens": 219
+        },
+        "history": {
+          "samples": 3,
+          "answers": 3,
+          "errors": 0,
+          "truncated": 0,
+          "decodeTokS": 46.678191885387086,
+          "firstContentMsSuccessful": 6034.3558409949765,
+          "totalMs": 10856.271756929345,
+          "outputTokens": 221
+        }
+      },
+      "concurrency": {
+        "passedRuns": 3,
+        "runs": 3,
+        "wallMsMedian": 4660.779213998467
+      },
+      "failedCases": [
+        "search-0",
+        "search-2",
+        "search-3",
+        "json-0",
+        "json-1",
+        "json-2",
+        "json-3",
+        "json-4",
+        "json-5"
+      ],
+      "evidenceFile": "/srv/ai/evidence/lfm25-24b-20261015/gemma4-full.json",
+      "historyEvidenceFile": "/srv/ai/evidence/lfm25-24b-20261015/wide-history.json"
+    },
+    {
+      "label": "Ornith 1.5 STRIX_LEAN ROCmFP4",
+      "scriptSha256": "84f958d16035c4ea7892107f667e409840137b3adecc8a249cfd32fd75d54465",
+      "configuration": {
+        "primaryContextPool": 32768,
+        "primaryContextPerSlot": 8192,
+        "historyContextPool": 65536,
+        "historyContextPerSlot": 16384,
+        "parallel": 4,
+        "cache": "f16/f16",
+        "thinking": "off",
+        "device": "Vulkan0",
+        "maxOutputTokens": 4096,
+        "engineRevision": "0fc9568e07ccc8553010864cb8db1957e629cbfa",
+        "extraArgs": []
+      },
+      "complete": true,
+      "categories": {
+        "chain": {
+          "passed": 6,
+          "total": 6
+        },
+        "clarification": {
+          "passed": 3,
+          "total": 3
+        },
+        "constrained-json": {
+          "passed": 6,
+          "total": 6
+        },
+        "exact-text": {
+          "passed": 8,
+          "total": 8
+        },
+        "injection": {
+          "passed": 2,
+          "total": 2
+        },
+        "json": {
+          "passed": 0,
+          "total": 6
+        },
+        "loop": {
+          "passed": 6,
+          "total": 6
+        },
+        "no-tool": {
+          "passed": 6,
+          "total": 6
+        },
+        "parallel-tool": {
+          "passed": 3,
+          "total": 3
+        },
+        "prose": {
+          "passed": 3,
+          "total": 3
+        },
+        "tool": {
+          "passed": 15,
+          "total": 18
+        },
+        "tool-failure": {
+          "passed": 1,
+          "total": 1
+        }
+      },
+      "toolRelated": {
+        "passed": 42,
+        "total": 45
+      },
+      "performance": {
+        "short": {
+          "samples": 3,
+          "answers": 3,
+          "errors": 0,
+          "truncated": 0,
+          "decodeTokS": 59.81887179106665,
+          "firstContentMsSuccessful": 384.7467900486663,
+          "totalMs": 4947.169641032815,
+          "outputTokens": 278
+        },
+        "history": {
+          "samples": 3,
+          "answers": 3,
+          "errors": 0,
+          "truncated": 0,
+          "decodeTokS": 57.8938972113153,
+          "firstContentMsSuccessful": 6764.138562954031,
+          "totalMs": 11621.127613005228,
+          "outputTokens": 282
+        }
+      },
+      "concurrency": {
+        "passedRuns": 3,
+        "runs": 3,
+        "wallMsMedian": 5189.488732023165
+      },
+      "failedCases": [
+        "search-2",
+        "search-3",
+        "calendar-2",
+        "json-0",
+        "json-1",
+        "json-2",
+        "json-3",
+        "json-4",
+        "json-5"
+      ],
+      "evidenceFile": "/srv/ai/evidence/lfm25-24b-20261015/ornith-strix-full.json",
+      "historyEvidenceFile": "/srv/ai/evidence/lfm25-24b-20261015/wide-history.json"
+    }
+  ]
+}

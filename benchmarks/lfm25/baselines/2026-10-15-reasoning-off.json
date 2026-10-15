@@ -1,0 +1,616 @@
+{
+  "recordedAt": "2026-10-15T03:34:08.022980+00:00",
+  "evidenceRoot": "/srv/ai/evidence/lfm25-reasoning-off-20261015",
+  "conditions": "all off requested, budget 0, context 65536/4; LFM body-thought leaks observed",
+  "runs": [
+    {
+      "label": "LFM2.5 QAD Q4_0 off budget0",
+      "scriptSha256": "84f958d16035c4ea7892107f667e409840137b3adecc8a249cfd32fd75d54465",
+      "configuration": {
+        "contextPool": 65536,
+        "parallel": 4,
+        "contextPerSlot": 16384,
+        "thinking": "off",
+        "reasoningBudget": 0,
+        "device": "Vulkan0",
+        "cache": "f16/f16",
+        "maxOutputTokens": 4096,
+        "extraArgs": [],
+        "baselineContextDiffers": true
+      },
+      "reasoningAudit": {
+        "requested": "off",
+        "responses": 87,
+        "responsesWithReasoning": 0,
+        "reasoningCharacters": 0,
+        "bodyThinkTagLeaks": 8
+      },
+      "complete": true,
+      "categories": {
+        "chain": {
+          "passed": 6,
+          "total": 6
+        },
+        "clarification": {
+          "passed": 2,
+          "total": 3
+        },
+        "constrained-json": {
+          "passed": 2,
+          "total": 6
+        },
+        "exact-text": {
+          "passed": 7,
+          "total": 8
+        },
+        "injection": {
+          "passed": 2,
+          "total": 2
+        },
+        "json": {
+          "passed": 5,
+          "total": 6
+        },
+        "loop": {
+          "passed": 6,
+          "total": 6
+        },
+        "no-tool": {
+          "passed": 6,
+          "total": 6
+        },
+        "parallel-tool": {
+          "passed": 2,
+          "total": 3
+        },
+        "prose": {
+          "passed": 3,
+          "total": 3
+        },
+        "tool": {
+          "passed": 16,
+          "total": 18
+        },
+        "tool-failure": {
+          "passed": 1,
+          "total": 1
+        }
+      },
+      "toolRelated": {
+        "passed": 41,
+        "total": 45
+      },
+      "performance": {
+        "short": {
+          "samples": 3,
+          "answers": 3,
+          "errors": 0,
+          "truncated": 0,
+          "decodeTokS": 94.0085296807036,
+          "firstContentMsSuccessful": 313.93904297146946,
+          "totalMs": 5286.221069982275,
+          "outputTokens": 462,
+          "bodyCharacters": 725
+        },
+        "history": {
+          "samples": 3,
+          "answers": 3,
+          "errors": 0,
+          "truncated": 0,
+          "decodeTokS": 89.92751678145864,
+          "firstContentMsSuccessful": 4332.223579054698,
+          "totalMs": 9196.261849952862,
+          "outputTokens": 442,
+          "bodyCharacters": 704
+        }
+      },
+      "concurrency": {
+        "passedRuns": 3,
+        "runs": 3,
+        "wallMsMedian": 2304.1466110153124,
+        "bodyCharacters": 103.0,
+        "outputTokens": 67.5
+      },
+      "failedCases": [
+        "search-1",
+        "search-2",
+        "parallel-東京",
+        "clarify-0",
+        "schema-0",
+        "json-1",
+        "schema-1",
+        "schema-3",
+        "schema-4",
+        "copy-3"
+      ]
+    },
+    {
+      "label": "Ornith 1.5 STRIX_LEAN off budget0",
+      "scriptSha256": "84f958d16035c4ea7892107f667e409840137b3adecc8a249cfd32fd75d54465",
+      "configuration": {
+        "contextPool": 65536,
+        "parallel": 4,
+        "contextPerSlot": 16384,
+        "thinking": "off",
+        "reasoningBudget": 0,
+        "device": "Vulkan0",
+        "cache": "f16/f16",
+        "maxOutputTokens": 4096,
+        "extraArgs": [],
+        "baselineContextDiffers": true
+      },
+      "reasoningAudit": {
+        "requested": "off",
+        "responses": 87,
+        "responsesWithReasoning": 0,
+        "reasoningCharacters": 0,
+        "bodyThinkTagLeaks": 0
+      },
+      "complete": true,
+      "categories": {
+        "chain": {
+          "passed": 6,
+          "total": 6
+        },
+        "clarification": {
+          "passed": 3,
+          "total": 3
+        },
+        "constrained-json": {
+          "passed": 6,
+          "total": 6
+        },
+        "exact-text": {
+          "passed": 8,
+          "total": 8
+        },
+        "injection": {
+          "passed": 2,
+          "total": 2
+        },
+        "json": {
+          "passed": 1,
+          "total": 6
+        },
+        "loop": {
+          "passed": 6,
+          "total": 6
+        },
+        "no-tool": {
+          "passed": 6,
+          "total": 6
+        },
+        "parallel-tool": {
+          "passed": 3,
+          "total": 3
+        },
+        "prose": {
+          "passed": 3,
+          "total": 3
+        },
+        "tool": {
+          "passed": 17,
+          "total": 18
+        },
+        "tool-failure": {
+          "passed": 1,
+          "total": 1
+        }
+      },
+      "toolRelated": {
+        "passed": 44,
+        "total": 45
+      },
+      "performance": {
+        "short": {
+          "samples": 3,
+          "answers": 3,
+          "errors": 0,
+          "truncated": 0,
+          "decodeTokS": 60.030050971624114,
+          "firstContentMsSuccessful": 391.91712194588035,
+          "totalMs": 5955.428357934579,
+          "outputTokens": 334,
+          "bodyCharacters": 616
+        },
+        "history": {
+          "samples": 3,
+          "answers": 3,
+          "errors": 0,
+          "truncated": 0,
+          "decodeTokS": 57.845596275133126,
+          "firstContentMsSuccessful": 6706.975280074403,
+          "totalMs": 11596.411698963493,
+          "outputTokens": 281,
+          "bodyCharacters": 523
+        }
+      },
+      "concurrency": {
+        "passedRuns": 3,
+        "runs": 3,
+        "wallMsMedian": 5223.826615023427,
+        "bodyCharacters": 228.5,
+        "outputTokens": 107.5
+      },
+      "failedCases": [
+        "search-3",
+        "json-0",
+        "json-1",
+        "json-3",
+        "json-4",
+        "json-5"
+      ]
+    },
+    {
+      "label": "Gemma 4 26B QAT Q4_0 off budget0",
+      "scriptSha256": "84f958d16035c4ea7892107f667e409840137b3adecc8a249cfd32fd75d54465",
+      "configuration": {
+        "contextPool": 65536,
+        "parallel": 4,
+        "contextPerSlot": 16384,
+        "thinking": "off",
+        "reasoningBudget": 0,
+        "device": "Vulkan0",
+        "cache": "f16/f16",
+        "maxOutputTokens": 4096,
+        "extraArgs": [],
+        "baselineContextDiffers": true
+      },
+      "reasoningAudit": {
+        "requested": "off",
+        "responses": 87,
+        "responsesWithReasoning": 0,
+        "reasoningCharacters": 0,
+        "bodyThinkTagLeaks": 0
+      },
+      "complete": true,
+      "categories": {
+        "chain": {
+          "passed": 6,
+          "total": 6
+        },
+        "clarification": {
+          "passed": 3,
+          "total": 3
+        },
+        "constrained-json": {
+          "passed": 6,
+          "total": 6
+        },
+        "exact-text": {
+          "passed": 8,
+          "total": 8
+        },
+        "injection": {
+          "passed": 2,
+          "total": 2
+        },
+        "json": {
+          "passed": 0,
+          "total": 6
+        },
+        "loop": {
+          "passed": 6,
+          "total": 6
+        },
+        "no-tool": {
+          "passed": 6,
+          "total": 6
+        },
+        "parallel-tool": {
+          "passed": 3,
+          "total": 3
+        },
+        "prose": {
+          "passed": 3,
+          "total": 3
+        },
+        "tool": {
+          "passed": 15,
+          "total": 18
+        },
+        "tool-failure": {
+          "passed": 1,
+          "total": 1
+        }
+      },
+      "toolRelated": {
+        "passed": 42,
+        "total": 45
+      },
+      "performance": {
+        "short": {
+          "samples": 3,
+          "answers": 3,
+          "errors": 0,
+          "truncated": 0,
+          "decodeTokS": 52.527532590139735,
+          "firstContentMsSuccessful": 331.3411209965125,
+          "totalMs": 4707.674024975859,
+          "outputTokens": 230,
+          "bodyCharacters": 438
+        },
+        "history": {
+          "samples": 3,
+          "answers": 3,
+          "errors": 0,
+          "truncated": 0,
+          "decodeTokS": 47.35519159575261,
+          "firstContentMsSuccessful": 5962.746931007132,
+          "totalMs": 10633.075559977442,
+          "outputTokens": 221,
+          "bodyCharacters": 409
+        }
+      },
+      "concurrency": {
+        "passedRuns": 3,
+        "runs": 3,
+        "wallMsMedian": 4580.977514968254,
+        "bodyCharacters": 197.0,
+        "outputTokens": 101.0
+      },
+      "failedCases": [
+        "search-0",
+        "search-2",
+        "search-3",
+        "json-0",
+        "json-1",
+        "json-2",
+        "json-3",
+        "json-4",
+        "json-5"
+      ]
+    }
+  ],
+  "audits": [
+    {
+      "model": "lfm25",
+      "evaluation": {
+        "requested": "off",
+        "responses": 87,
+        "responsesWithReasoning": 0,
+        "reasoningCharacters": 0,
+        "bodyThinkTagLeaks": 8
+      },
+      "fullSuiteReasoningOffVerified": false,
+      "manifestVerificationScope": "preflight-only; use this full-suite audit",
+      "thinkTagCases": [
+        "no-tool-0",
+        "no-tool-1",
+        "no-tool-3",
+        "no-tool-4",
+        "no-tool-5",
+        "clarify-0",
+        "clarify-2",
+        "copy-3"
+      ],
+      "diagnostics": {
+        "responses": 12,
+        "responsesWithReasoning": 0,
+        "bodyThinkTagLeaks": 2
+      },
+      "corruption": {
+        "replacement": 0,
+        "unexpectedControl": 0,
+        "specialTokenLeak": 8,
+        "repeatedSpan": 0,
+        "mojibakePattern": 0
+      },
+      "schemaNone": [
+        {
+          "case": "schema-0",
+          "passed": false,
+          "error": "{'code': 500, 'message': 'The model produced output that does not match the expected peg-native format', 'type': 'server_error'}"
+        },
+        {
+          "case": "schema-1",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-2",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-3",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-4",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-5",
+          "passed": true,
+          "error": null
+        }
+      ],
+      "schemaNonePassed": 5,
+      "nativeDecodeTokS": 93.10634781621971,
+      "concurrentBodyCharacters": [
+        86,
+        115,
+        105,
+        123,
+        135,
+        101,
+        142,
+        136,
+        100,
+        100,
+        100,
+        100
+      ],
+      "engineSha256": "d7b699c6d8c051b54e357d730940647ff8331d11e7543e38c96921a6c09fc1bb",
+      "weights": {
+        "path": "/srv/ai/models/lfm25-24b-a2b/LFM2.5-24B-A2B-QAD-Q4_0.gguf",
+        "bytes": 13578190880,
+        "mtimeNs": 1792032123549535460
+      },
+      "ownedProcessStopped": true
+    },
+    {
+      "model": "ornith",
+      "evaluation": {
+        "requested": "off",
+        "responses": 87,
+        "responsesWithReasoning": 0,
+        "reasoningCharacters": 0,
+        "bodyThinkTagLeaks": 0
+      },
+      "fullSuiteReasoningOffVerified": true,
+      "manifestVerificationScope": "full-suite",
+      "thinkTagCases": [],
+      "diagnostics": {
+        "responses": 12,
+        "responsesWithReasoning": 0,
+        "bodyThinkTagLeaks": 0
+      },
+      "corruption": {
+        "replacement": 0,
+        "unexpectedControl": 0,
+        "specialTokenLeak": 0,
+        "repeatedSpan": 0,
+        "mojibakePattern": 0
+      },
+      "schemaNone": [
+        {
+          "case": "schema-0",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-1",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-2",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-3",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-4",
+          "passed": false,
+          "error": null
+        },
+        {
+          "case": "schema-5",
+          "passed": true,
+          "error": null
+        }
+      ],
+      "schemaNonePassed": 5,
+      "nativeDecodeTokS": 60.70847741715783,
+      "concurrentBodyCharacters": [
+        202,
+        225,
+        240,
+        243,
+        232,
+        242,
+        264,
+        241,
+        187,
+        195,
+        211,
+        207
+      ],
+      "engineSha256": "d7b699c6d8c051b54e357d730940647ff8331d11e7543e38c96921a6c09fc1bb",
+      "weights": {
+        "path": "/srv/ai/models/ornith-trial-20261012/strix-lean/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf",
+        "bytes": 19052439552,
+        "mtimeNs": 1791798913456212647
+      },
+      "ownedProcessStopped": true
+    },
+    {
+      "model": "gemma",
+      "evaluation": {
+        "requested": "off",
+        "responses": 87,
+        "responsesWithReasoning": 0,
+        "reasoningCharacters": 0,
+        "bodyThinkTagLeaks": 0
+      },
+      "fullSuiteReasoningOffVerified": true,
+      "manifestVerificationScope": "full-suite",
+      "thinkTagCases": [],
+      "diagnostics": {
+        "responses": 12,
+        "responsesWithReasoning": 0,
+        "bodyThinkTagLeaks": 0
+      },
+      "corruption": {
+        "replacement": 0,
+        "unexpectedControl": 0,
+        "specialTokenLeak": 0,
+        "repeatedSpan": 0,
+        "mojibakePattern": 0
+      },
+      "schemaNone": [
+        {
+          "case": "schema-0",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-1",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-2",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-3",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-4",
+          "passed": true,
+          "error": null
+        },
+        {
+          "case": "schema-5",
+          "passed": true,
+          "error": null
+        }
+      ],
+      "schemaNonePassed": 6,
+      "nativeDecodeTokS": 52.904017233483614,
+      "concurrentBodyCharacters": [
+        208,
+        196,
+        196,
+        195,
+        201,
+        194,
+        203,
+        197,
+        209,
+        197,
+        196,
+        201
+      ],
+      "engineSha256": "d7b699c6d8c051b54e357d730940647ff8331d11e7543e38c96921a6c09fc1bb",
+      "weights": {
+        "path": "/srv/ai/models/gemma4-26b-a4b-it-gguf/gemma-4-26B_q4_0-it.gguf",
+        "bytes": 14439363584,
+        "mtimeNs": 1790511233816966023
+      },
+      "ownedProcessStopped": true
+    }
+  ]
+}

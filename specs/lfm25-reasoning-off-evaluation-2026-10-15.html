@@ -1,0 +1,206 @@
+<article lang="ja">
+  <h1>LFM2.5・STRIX・Gemma：reasoning off・予算0での再測定</h1>
+  <p>
+    <time>2026-10-15</time
+    >。利用者の指摘を受け、3モデルともoff要求・推論予算0で再測定した。初回のLFM
+    on・他offという条件差を訂正する。初回の約15倍の完了時間をoff同士の優劣に使わない。稼働中のOrnithの設定は維持した。
+  </p>
+  <section id="user-decision">
+    <h2>再測定後の利用者判断</h2>
+    <p>
+      現行Ornith 1.5 STRIXで十分満足しているため継続する。LFMのoff時の本文開始・4会話完了は速いが、
+      発売直後に移行するほどの優位点ではないと判断した。
+      ツール利用の追加学習モデルが利用可能になった際に再検討し、MTP・量子化・STRATAの進展も再評価の契機とする。
+      将来の改善を確認済みとはせず、今回の同条件試験と失敗例を比較基準として保持する。
+    </p>
+  </section>
+  <section id="results">
+    <h2>結果と比較の限界</h2>
+    <p>
+      時間・速度は各3回の中央値。固定68項目、性能6応答、4会話3組を全モデルで実施した。4会話の固有符号は12/12保持、全3組完了。
+    </p>
+    <table>
+      <caption>
+        全モデルoff要求・推論予算0での固定試験結果。時間・速度は中央値。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">LFM2.5 QAD Q4_0</th>
+          <th scope="col">Ornith 1.5 STRIX_LEAN</th>
+          <th scope="col">Gemma 4 IT QAT Q4_0</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">短入力decode（tok/s）</th>
+          <td>94.01</td>
+          <td>60.03</td>
+          <td>52.53</td>
+        </tr>
+        <tr>
+          <th scope="row">短入力の本文開始（秒）</th>
+          <td>0.314</td>
+          <td>0.392</td>
+          <td>0.331</td>
+        </tr>
+        <tr>
+          <th scope="row">短入力の完了（秒）</th>
+          <td>5.286</td>
+          <td>5.955</td>
+          <td>4.708</td>
+        </tr>
+        <tr>
+          <th scope="row">4会話すべて完了（秒）</th>
+          <td>2.304</td>
+          <td>5.224</td>
+          <td>4.581</td>
+        </tr>
+        <tr>
+          <th scope="row">4会話・1応答の本文文字数</th>
+          <td>103.0</td>
+          <td>228.5</td>
+          <td>197.0</td>
+        </tr>
+        <tr>
+          <th scope="row">4会話・1応答の生成token数</th>
+          <td>67.5</td>
+          <td>107.5</td>
+          <td>101.0</td>
+        </tr>
+        <tr>
+          <th scope="row">ツール関連45判定</th>
+          <td>41/45</td>
+          <td>44/45</td>
+          <td>42/45</td>
+        </tr>
+        <tr>
+          <th scope="row">基本ツール引数18問</th>
+          <td>16/18</td>
+          <td>17/18</td>
+          <td>15/18</td>
+        </tr>
+        <tr>
+          <th scope="row">文字列の完全保持8問</th>
+          <td>7/8</td>
+          <td>8/8</td>
+          <td>8/8</td>
+        </tr>
+        <tr>
+          <th scope="row">指示だけでJSONの値・形式一致</th>
+          <td>5/6</td>
+          <td>1/6</td>
+          <td>0/6</td>
+        </tr>
+        <tr>
+          <th scope="row">json_schema指定の値・形式一致</th>
+          <td>2/6</td>
+          <td>6/6</td>
+          <td>6/6</td>
+        </tr>
+        <tr>
+          <th scope="row">履歴付き完了（秒）</th>
+          <td>9.196</td>
+          <td>11.596</td>
+          <td>10.633</td>
+        </tr>
+        <tr>
+          <th scope="row">履歴付き正常完了</th>
+          <td>3/3</td>
+          <td>3/3</td>
+          <td>3/3</td>
+        </tr>
+        <tr>
+          <th scope="row">専用思考欄が非空</th>
+          <td>0</td>
+          <td>0</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">本文にthinkタグが残る応答</th>
+          <td>8</td>
+          <td>0</td>
+          <td>0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LFMは初回67.904秒から2.304秒へ短縮した。初回とはcontext枠も各8Kから16Kへ変わるため、全差分を思考だけへ厳密に帰属させる試験ではない。今回の3列は同条件である。
+    </p>
+    <p>
+      4会話の本文長中央値はLFM103文字、STRIX228.5文字。約200文字の指示への追従に差があり、完了時間を等量生成での優越とは解釈しない。小規模な模擬ツールの判定であり、一般benchmarkや実業務全体の正答率を示さない。
+    </p>
+  </section>
+  <section id="reasoning-verification">
+    <h2>offの実効性</h2>
+    <p>
+      全モデルにreasoning off・reasoning-budget 0を指定し、要求でもenable_thinking
+      falseを送った。LFMはoffフラグだけだと思考を継続したため、その初期試行を中止して予算0を併用した。ログにはbudget=0,
+      forcing immediatelyを確認した。
+    </p>
+    <p>
+      短い事前応答では全モデルの本文正常完了・思考欄空・thinkタグなしを確認した。固定試験87応答では全モデルの専用思考欄が空になったが、LFMの8応答は本文にthinkタグを含み、文字列保持課題では長い自己検討文も混じった。off要求と本文からの思考文除去を区別する。
+    </p>
+    <p>
+      最初のLFM
+      manifestのreasoningOffVerifiedは事前検査だけを示す旧実装の値である。生証跡を変更せず、全体監査audit-all.jsonにfalse相当の結果を記録した。現行runnerは事前検査と全体監査を分け、漏出時は全体のreasoningOffVerifiedをfalseにして原文を保持する。
+    </p>
+  </section>
+  <section id="quality">
+    <h2>日本語・ツール・JSON</h2>
+    <ul>
+      <li>
+        LFMは検索queryへJSON全体を入れた2件、東京・大阪を英語表記へ変えた並列取得、不要な呼出しで失敗し、ツール関連41/45だった。
+      </li>
+      <li>
+        「ねぎらい」をねぎの切り方に誤解した本文は自動判定を通過してしまう。seed
+        0/2は励ましだがタグと重複が残り、seed
+        1は不要なツールを呼んだ。意味の評価を自動得点で代用しない。
+      </li>
+      <li>
+        STRIXの追試にも「くつろいTime」の混在表記があった。全モデルでUFFFD・想定外制御文字・既定の文字化け／長い連続反復パターン検出は0だが、自然な日本語を保証しない。
+      </li>
+      <li>
+        LFMのschemaは4件がserver_error（code 500）。ログのgrammar
+        parse失敗を確認した。本エンジンとLFM2.5のテンプレート・grammar互換性が関わり、モデル固有能力だけへ帰属させない。ツールを与えないschemaだけにtool_choice
+        noneを付けてもschema-0は部分JSONの後に500となった。
+      </li>
+      <li>
+        散文3/3は文字数と破損パターンの機械判定で、技術説明の正しさを採点していない。本文長と意味の人手確認を残す。
+      </li>
+    </ul>
+    <p>
+      schema＋tool_choice noneの値・形式一致はLFM／STRIX／Gemmaで5/6／5/6／6/6。native
+      512入力・128出力のdecode中央値は同順で93.11／60.71／52.90
+      tok/s。native測定は各tokenizerのtoken数を揃えた参考値で、同量の日本語品質を比較しない。
+    </p>
+  </section>
+  <section id="reproducibility">
+    <h2>再現条件・保存先・運用状態</h2>
+    <p>
+      Ryzen AI MAX+ 395、ROCmFPX b244 revision
+      <code>0fc9568e07ccc8553010864cb8db1957e629cbfa</code>、Vulkan0、全層offload、Flash Attention on、fit
+      off、F16 K/V。合計context65536・4
+      slots・各16384、batch2048・ubatch512・threads16、出力上限4096。temperature0.1、top_k50、top_p1、min_p0、repeat_penalty1.05、seed20261015、cache_prompt
+      false。MTPなし。Ornithは画像projectorなしのテキスト評価。
+    </p>
+    <p>
+      全モデルで同じengine・設定を確認し、保存要求の固定設問・tool結果・tool定義・schema・samplingが一致することを照合した。frozen
+      evaluate.pyのSHA-256は<code>84f958d16035c4ea7892107f667e409840137b3adecc8a249cfd32fd75d54465</code>。モデル固有の生成履歴は一致の対象外。
+    </p>
+    <p>
+      生証跡はrepository外の<code>/srv/ai/evidence/lfm25-reasoning-off-20261015</code>。利用者指定のMarkdown記録は<code>benchmarks/lfm25/records/2026-10-15-reasoning-off.md</code>、比較値は同directory系列の<code>baselines/2026-10-15-reasoning-off.json</code>。重み・エンジン・ログはrepositoryへ入れない。
+    </p>
+    <p>
+      評価用サーバーを順番に起動・終了し、本番health・releaseCommit・configRevisionが前後で一致することを確認した。既存Providerは維持したため完全な専用無負荷機ではなく、ASR/TTS同時負荷や長時間試験は未評価。既存Profile・routeは変更せず、載せ換え見送りを維持する。
+    </p>
+    <p>
+      再利用runnerはoff時の予算0、事前検査、全応答監査、本文長を含む比較表、終了確認を保存する。Strata・MTP・fine-tuneの新候補は実在と対応条件を確認後、同じ試験で比較する。監視や自動切替は設定していない。
+    </p>
+    <p>
+      <a href="./lfm25-24b-local-evaluation-2026-10-15.html"
+        >初回の公開情報検証・条件の異なる測定記録</a
+      >
+    </p>
+  </section>
+</article>
