@@ -29,6 +29,7 @@ export const agentProfileSelectorIdSchema = z.enum([
   "SAAA-gemma4-26b",
   "SAAA-gemma4-26b-64k",
   "ornith1.5Strix",
+  "ornith1.5Strix-game",
   "SAAA-w-Image",
   "SAAA-w-music",
   "embeddingCanary",
@@ -1090,7 +1091,7 @@ export const embeddingAgentProviderDescriptorSchema = z.object({
 
 export const systemOneAgentProviderDescriptorSchema = z.object({
   name: agentIdentifierSchema,
-  capability: z.literal("decision.system-one"),
+  capability: z.enum(["decision.system-one", "decision.game"]),
   apiStyle: z.literal("larm-system-one"),
   protocol: z.literal("larm.system-one.v1"),
   scheme: z.enum(["http", "https"]),

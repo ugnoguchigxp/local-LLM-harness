@@ -15,6 +15,7 @@ polkit.addRule(function(action, subject) {
             "larm-embedding.service",
             "laya-system-one.service",
             "ruri-system-one.service",
+            "d1-system-one.service",
             "larm-music-ace-step.service",
             "larm-image-qwen21.service"
         ].indexOf(action.lookup("unit")) !== -1

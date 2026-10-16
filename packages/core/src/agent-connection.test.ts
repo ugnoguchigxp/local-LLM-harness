@@ -35,6 +35,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     { id: "contextStill", agentProfile: "contextstill-background", services: [] },
     { id: "embeddingCanary", agentProfile: "contextstill-embedding", services: [] },
     { id: "ornith1.5Strix", agentProfile: "ornith1.5Strix", services: [] },
+    { id: "ornith1.5Strix-game", agentProfile: "ornith1.5Strix-game", services: [] },
     { id: "SAAA-gemma4-26b", agentProfile: "saaa-conversation-gemma4-26b-voice", services: [] },
     { id: "SAAA-gemma4-26b-64k", agentProfile: "saaa-conversation-gemma4-26b-64k", services: [] },
     {
@@ -74,6 +75,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "contextstill-embedding",
     "nightworker-background",
     "ornith1.5Strix",
+    "ornith1.5Strix-game",
     "saaa-backchannel-default",
     "saaa-conversation-gemma4-26b-64k",
     "saaa-conversation-gemma4-26b-voice",

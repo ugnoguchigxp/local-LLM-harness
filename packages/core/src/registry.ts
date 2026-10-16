@@ -111,7 +111,7 @@ export function parseRegistryDocuments(input: {
         return capability.startsWith("embedding.");
       }
       if (runtime.protocol === "larm.system-one.v1") {
-        return capability === "decision.system-one";
+        return capability === "decision.system-one" || capability === "decision.game";
       }
       return capability.startsWith("speech.tts");
     });

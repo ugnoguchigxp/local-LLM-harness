@@ -261,3 +261,11 @@ runtimeReleases:
     estimatedMemoryGB: 3.5
     healthPath: /health
     default: true
+
+  d1-game-current:
+    runtime: d1-system-one
+    artifacts: [ d1-3b ]
+    providerConfigRevision: d1-051bcc464b01-native-bf16-rocm-gfx1151-v1
+    estimatedMemoryGB: 10
+    healthPath: /health
+    default: true

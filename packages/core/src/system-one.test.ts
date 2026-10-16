@@ -47,3 +47,13 @@ describe("System One contract", () => {
     })).toEqual({ ok: false, reason: "answer_type_mismatch" });
   });
 });
+
+test("System One accepts a bounded inline image and requires state or an image", () => {
+  const request = { model: "d1-3b-game", state: null,
+    images: ["data:image/png;base64,YQ=="],
+    questions: { move: { type: "choice", instructions: "Choose a move", criteria: { left: "left", right: "right" } } } };
+  expect(systemOneRequestSchema.parse(request).images).toEqual(request.images);
+  expect(systemOneRequestSchema.safeParse({ ...request, images: undefined }).success).toBe(false);
+  expect(systemOneRequestSchema.safeParse({ ...request, images: ["https://example.com/image.png"] }).success).toBe(false);
+  expect(systemOneRequestSchema.safeParse({ ...request, images: [...request.images, ...request.images] }).success).toBe(false);
+});

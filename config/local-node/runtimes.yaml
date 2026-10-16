@@ -700,3 +700,25 @@ runtimes:
       healthPort: 8089
       healthPath: /health
       endpoint: http://127.0.0.1:8089
+
+  d1-system-one:
+    artifacts: [ d1-3b ]
+    capability: [ decision.game ]
+    protocol: larm.system-one.v1
+    backend: systemd
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 120 }
+    resources:
+      estimatedMemoryGB: 10
+      maxConcurrentAllocations: 4
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 4
+      queueTimeoutMs: 100
+    deployment:
+      service: d1-system-one.service
+      healthPort: 8093
+      healthPath: /health
+      endpoint: http://127.0.0.1:8093

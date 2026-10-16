@@ -282,3 +282,10 @@ routes:
     candidates:
       - runtime: granite-asr
         purpose: primary
+
+  game-decision-d1:
+    capabilities: [ decision.game ]
+    explicitOnly: true
+    candidates:
+      - runtime: d1-system-one
+        purpose: primary

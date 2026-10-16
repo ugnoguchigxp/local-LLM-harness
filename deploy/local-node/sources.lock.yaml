@@ -120,3 +120,18 @@ sources:
     maxAudioSeconds: 12
     decoderContextTokens: 512
     threads: 16
+
+  d1-system-one:
+    repository: https://huggingface.co/LiquidAI/d1-3B
+    revision: 051bcc464b01b9f92942b364d9586b0ef5912432
+    path: /srv/ai/apps/d1-system-one
+    python: "3.11"
+    torch: 2.11.0+rocm7.13.0
+    torchIndex: https://repo.amd.com/rocm/whl/gfx1151/
+    transformers: 5.17.0
+    device: gfx1151
+    compile: false
+    treeAttention: explicit-fp32-rocm
+    aotritonExperimental: true
+    requirementsSha256: 155362e86c80ab1ffe20f3912c98cae060024dea94ff0978cf5236a59e2eb4f4
+    assetManifestSha256: 1d5cf6efa5b5f46fa8fbafc4dc120f624b76bae778aa4ac468a948e8a7704f77

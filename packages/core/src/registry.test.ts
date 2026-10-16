@@ -68,7 +68,7 @@ test("loads the Linux production registry", () => {
   expect(asr?.capability).toContain("speech.stt");
   expect(realtimeTts?.capability).toContain("speech.tts");
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");
-  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd" && !["laya-system-one", "qwen-asr", "ornith-general"].includes(item.id))) {
+  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd" && !["laya-system-one", "d1-system-one", "qwen-asr", "ornith-general"].includes(item.id))) {
     expect(runtime.policy.warm?.minInstances).toBe(1);
   }
   expect(model35b?.policy).toEqual({
@@ -776,4 +776,24 @@ test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifa
   expect(swap.models[runtime.id].cmd).toContain("--spec-type none");
   expect(swap.models[runtime.id].cmd).not.toContain("draft-mtp");
   expect(swap.models[runtime.id].cmd).toContain("--no-cache-prompt");
+});
+test("d1 game decisions require the explicit Ornith game profile and leave ordinary profiles intact", () => {
+  const registry = loadRegistry(repoConfig);
+  const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry);
+  const ordinary = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  const game = catalog.profiles.find(profile => profile.id === "ornith1.5Strix-game")!;
+  const gameProvider = game.providers.find(provider => provider.name === "game-decision");
+  expect(gameProvider).toMatchObject({ capability: "decision.game", publicModel: "d1-3b-game",
+    route: "game-decision-d1", protocol: "larm.system-one.v1", readiness: "system-one" });
+  expect(game.providers.filter(provider => provider.name !== "game-decision")).toEqual(ordinary.providers);
+  expect(ordinary.providers.some(provider => provider.capability === "decision.game")).toBe(false);
+  expect(catalog.profiles.find(profile => profile.id === "contextstill-background")?.providers
+    .find(provider => provider.name === "system-one")?.publicModel).toBe("laya-multilingual");
+  expect(catalog.profileSelectors.find(selector => selector.id === "ornith1.5Strix-game")?.agentProfile).toBe(game.id);
+  expect(registry.routes.find(route => route.id === "game-decision-d1")).toMatchObject({
+    explicitOnly: true, candidates: [{ runtime: "d1-system-one", purpose: "primary" }] });
+  expect(registry.runtimes.find(runtime => runtime.id === "d1-system-one")).toMatchObject({
+    policy: { lifecycle: "managed", warm: { minInstances: 0 } },
+    resources: { maxConcurrentRequests: 1, maxQueuedRequests: 4, queueTimeoutMs: 100 },
+    deployment: { service: "d1-system-one.service", endpoint: "http://127.0.0.1:8093" } });
 });

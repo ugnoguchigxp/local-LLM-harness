@@ -549,6 +549,19 @@ test("v3 public profile selectors return exact provider and service endpoints wi
       ],
       services: [],
     },
+    "ornith1.5Strix-game": {
+      id: "ornith1.5Strix-game",
+      providers: [
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
+        { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
+        { name: "game-decision", endpoint: "/v1/systemone", model: "d1-3b-game" },
+        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-strix-lean" },
+        { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
+        { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
+        { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
+      ],
+      services: [],
+    },
   } as const;
 
   try {

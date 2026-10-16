@@ -17,17 +17,26 @@ export const systemOneQuestionSchema = z.object({
   }
 });
 
+const systemOneImageSchema = z.string().max(2_800_000)
+  .regex(/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/);
+
 export const systemOneRequestSchema = z.object({
   model: questionIdSchema,
   state: z.union([
     z.string().min(1).max(50_000),
     z.record(z.string(), z.unknown()),
     z.array(z.unknown()),
+    z.null(),
   ]),
+  images: z.array(systemOneImageSchema).min(1).max(1).optional(),
   questions: z.record(questionIdSchema, systemOneQuestionSchema)
     .refine((questions) => Object.keys(questions).length > 0, "at least one question is required")
     .refine((questions) => Object.keys(questions).length <= 64, "at most 64 questions are allowed"),
-}).strict();
+}).strict().superRefine((request, context) => {
+  if (request.state === null && !request.images?.length) {
+    context.addIssue({ code: "custom", path: ["state"], message: "null state requires an image" });
+  }
+});
 
 const probabilitySchema = z.number().finite().min(0).max(1);
 const answerSchema = z.object({

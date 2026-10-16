@@ -625,3 +625,22 @@ test("status-only polling cannot refresh an expired successful semantic probe", 
   expect(fetches).toBe(4);
   expect(readiness.peek(input)?.ready).toBeTrue();
 });
+
+test("game decision readiness validates the known action independently of model family", async () => {
+  for (const choice of ["right", "left"]) {
+    const { registry, control, provider } = fixture("larm.system-one.v1", "decision.game");
+    provider.publicModel = "test-game-model";
+    let observed: unknown;
+    const readiness = new SemanticReadiness({ control, getRegistry: () => registry,
+      executionGate: new ExecutionGate(), timeoutMs: 100,
+      fetchImpl: async (_input, init) => {
+        observed = JSON.parse(String(init?.body));
+        return Response.json({ model: provider.publicModel,
+          answers: { action: { type: "choice", choice, confidence: .9 } },
+          usage: { input_tokens: 16, output_tokens: 0 } });
+      } });
+    expect((await readiness.check({ allocationId: "alloc", provider })).ready).toBe(choice === "right");
+    expect(observed).toMatchObject({ state: { player_x: 1, target_x: 3 },
+      questions: { action: { criteria: { left: "Move left", right: "Move right", wait: "Do not move" } } } });
+  }
+});
