@@ -51,6 +51,7 @@ export async function readBodyLimited(
   request: Request,
   maxBytes: number,
   signal?: AbortSignal,
+  onChunk?: () => void,
 ): Promise<Uint8Array> {
   validateContentLength(request, maxBytes);
   if (!request.body) {
@@ -66,6 +67,7 @@ export async function readBodyLimited(
       if (chunk.done) {
         break;
       }
+      if (chunk.value.byteLength > 0) { try { onChunk?.(); } catch { /* optional observer */ } }
       total += chunk.value.byteLength;
       if (total > maxBytes) {
         throw new RequestBodyError("body_too_large", `request exceeds ${maxBytes} bytes`, 413);

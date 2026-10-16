@@ -230,3 +230,8 @@ test("managed context requires an API token even on loopback", () => {
     LARM_PERSONAL_STATE_JOURNAL_ROOT: "/srv/ai/context-sources/personal-state",
   })).toThrow(/must not overlap/);
 });
+test("protected consumer credentials are separate from shared credentials", () => {
+  expect(() => parseDaemonConfig({ LARM_PROTECTED_CONSUMER_TOKEN: "owner" })).toThrow(/distinct/);
+  expect(() => parseDaemonConfig({ LARM_API_TOKEN: "same", LARM_PROTECTED_CONSUMER_TOKEN: "same" })).toThrow(/distinct/);
+  expect(parseDaemonConfig({ LARM_API_TOKEN: "shared", LARM_PROTECTED_CONSUMER_TOKEN: "owner" })).toMatchObject({ protectedConsumerToken: "owner", usageRetentionPath: "/var/lib/larm/usage-retention.json" });
+});

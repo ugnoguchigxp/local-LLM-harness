@@ -88,6 +88,12 @@
 
   <section id="state-machine">
     <h2>Allocation状態と切替</h2>
+    <p>
+      以下は通常の優先度・hold規則。後続の<a
+        href="./eumenes-protection-retention-implementation-plan-2026-10-16.html#implementation-results"
+        >利用保護policy</a
+      >を専用credentialで有効化したProfileは、利用中と最終要求終了後600秒の間、他consumerを同等以上の優先度も含めて拒否する。旧300秒holdは対象の新policyと重ねない。保護終了だけではモデルを停止せず、次のProfile要求で切り替える。
+    </p>
     <ol>
       <li>
         空きがあれば従来どおり<code>pending</code>または<code>ready</code>へ進みます。

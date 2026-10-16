@@ -168,6 +168,8 @@ export const nodeTelemetrySchema = z.object({
   systemMemoryAvailableBytes: z.number().int().nonnegative().optional(),
   acceleratorMemoryTotalBytes: z.number().int().nonnegative().optional(),
   acceleratorMemoryAvailableBytes: z.number().int().nonnegative().optional(),
+  systemCpuUtilization: z.number().min(0).max(1).optional(),
+  acceleratorBusyMaxPercent: z.number().min(0).max(100).optional(),
   source: z.string().min(1).max(64),
   detail: z.string().min(1).max(512).optional(),
 }).strict().superRefine((value, context) => {

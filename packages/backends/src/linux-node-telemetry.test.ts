@@ -44,3 +44,21 @@ test("telemetry failure is represented without throwing", async () => {
 test("meminfo parser requires available memory", () => {
   expect(() => parseMeminfo("MemTotal: 12 kB\n")).toThrow(/MemAvailable/);
 });
+
+
+test("optional utilization uses CPU counter deltas and reports busiest available GPU", async () => {
+  root = await mkdtemp(join(tmpdir(), "larm-utilization-"));
+  await mkdir(join(root, "proc"), { recursive: true });
+  await mkdir(join(root, "sys/class/drm/card0/device"), { recursive: true });
+  await writeFile(join(root, "proc/meminfo"), "MemTotal: 1000 kB\nMemAvailable: 500 kB\n");
+  await writeFile(join(root, "proc/stat"), "cpu  10 0 0 90 0 0 0 0 0 0\n");
+  await writeFile(join(root, "sys/class/drm/card0/device/mem_info_vram_total"), "1000");
+  await writeFile(join(root, "sys/class/drm/card0/device/mem_info_vram_used"), "100");
+  await writeFile(join(root, "sys/class/drm/card0/device/gpu_busy_percent"), "75");
+  const provider = new LinuxNodeTelemetry({ procRoot: join(root, "proc"), sysRoot: join(root, "sys"), utilization: true });
+  expect((await provider.observe()).systemCpuUtilization).toBeUndefined();
+  await writeFile(join(root, "proc/stat"), "cpu  60 0 0 140 0 0 0 0 0 0\n");
+  expect(await provider.observe()).toMatchObject({ systemCpuUtilization: 0.5, acceleratorBusyMaxPercent: 75 });
+  await writeFile(join(root, "sys/class/drm/card0/device/gpu_busy_percent"), "101");
+  expect((await provider.observe()).acceleratorBusyMaxPercent).toBeUndefined();
+});

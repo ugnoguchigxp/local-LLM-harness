@@ -82,3 +82,27 @@ test("request tracker can drain successfully after an earlier drain timeout", as
   finish();
   expect(await draining).toBe(true);
 });
+
+
+test("compact histograms preserve cumulative boundaries across repeated scrapes and reject nonfinite samples", () => {
+  const metrics = new MetricsRegistry();
+  for (const value of [0.0001, 0.000101, 300, 301, NaN, Infinity]) metrics.record({ name: "sample_seconds", value });
+  const first = metrics.render(); expect(metrics.render()).toBe(first);
+  expect(first).toContain('larm_sample_seconds_bucket{le="0.0001"} 1');
+  expect(first).toContain('larm_sample_seconds_bucket{le="0.00025"} 2');
+  expect(first).toContain('larm_sample_seconds_bucket{le="300"} 3');
+  expect(first).toContain('larm_sample_seconds_bucket{le="+Inf"} 4');
+  expect(first).toContain("larm_sample_seconds_count 4");
+  metrics.record({ name: "sample_seconds", value: 0 });
+  expect(metrics.render()).toContain('larm_sample_seconds_bucket{le="0.0001"} 2');
+});
+test("compiled duration recorder and general observations share cumulative histogram semantics", () => {
+  const metrics = new MetricsRegistry();
+  const record = metrics.durationRecorder("probe_seconds");
+  record(0.0001); record(0.001); record(Number.NaN);
+  metrics.record({ name: "probe_seconds", value: 1 });
+  expect(metrics.render()).toContain("larm_probe_seconds_count 3");
+  expect(metrics.render()).toContain('larm_probe_seconds_bucket{le="0.001"} 2');
+  expect(metrics.render()).toContain('larm_probe_seconds_bucket{le="1"} 3');
+  expect(metrics.render()).toBe(metrics.render());
+});

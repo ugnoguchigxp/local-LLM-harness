@@ -5,6 +5,7 @@ import {
   type AgentProviderContextWindow,
   type RuntimeProtocol,
 } from "@larm/core";
+import { requestObservation } from "./observability";
 import type { Context } from "hono";
 import { openAiErrorBody } from "./app-http";
 import type { DaemonIdentity } from "./identity";
@@ -75,6 +76,7 @@ export async function handleModelBrokerGateway(input: {
     ), 400);
   }
 
+  const brokerEnd = requestObservation(c.req.raw)?.stage("broker_acquire");
   let lease;
   try {
     lease = await broker.acquire(directModel, options.protocol, c.req.raw.signal);
@@ -88,7 +90,7 @@ export async function handleModelBrokerGateway(input: {
       ), error.status);
     }
     throw error;
-  }
+  } finally { brokerEnd?.(); }
   const runtime = getRuntime(input.registry, lease.runtime);
   if (!runtime || runtime.protocol !== options.protocol) {
     await lease.close();

@@ -49,7 +49,7 @@ test("measures validated LLM, ASR, and TTS responses", async () => {
     '{"choices":[{"message":{"content":"PERFORMANCE"}}],"usage":{"completion_tokens":8}}',
     { headers: { "content-type": "application/json" } },
   ), 100, () => times.shift() ?? 120);
-  expect(llm).toMatchObject({ firstByteMs: 10, firstTokenMs: 10, completionTokens: 8, completionTokenSource: "usage" });
+  expect(llm).toMatchObject({ firstByteMs: 10, firstTokenMs: null, completionTokens: 8, completionTokenSource: "usage" });
 
   const metadata = {
     id: "chatcmpl-performance",
@@ -108,4 +108,10 @@ test("rejects malformed LLM and responses that could not be evaluated", async ()
   await expect(consumeTtsPerformanceResponse(new Response(wav(), {
     headers: { "content-type": "audio/wav" },
   }), 0)).rejects.toThrow("tts_credit_missing");
+});
+
+
+test("missing engine usage never becomes estimated tokens or throughput", async () => {
+  const result = await consumeLlmPerformanceResponse(Response.json({ choices: [{ message: { content: "many words are not tokens" } }] }), 0, () => 10);
+  expect(result).toMatchObject({ firstTokenMs: null, completionTokens: null, outputTokensPerSecond: null, completionTokenSource: "unavailable", engine: {} });
 });

@@ -1,4 +1,4 @@
-import { OpenAiChatCompletionSseInspector } from "../../../packages/core/src/index";
+import { inferenceStatistics, type InferenceStatistics, OpenAiChatCompletionSseInspector } from "../../../packages/core/src/index";
 
 export type MetricSummary = {
   min: number;
@@ -15,10 +15,11 @@ export type TimedBody = {
 };
 
 export type LlmPerformance = TimedBody & {
-  firstTokenMs: number;
-  completionTokens: number;
-  completionTokenSource: "usage" | "content-events";
-  outputTokensPerSecond: number;
+  firstTokenMs: number | null;
+  completionTokens: number | null;
+  completionTokenSource: "usage" | "unavailable";
+  engine: InferenceStatistics;
+  outputTokensPerSecond: number | null;
 };
 
 export type AudioPerformance = TimedBody & {
@@ -119,17 +120,18 @@ export async function consumeLlmPerformanceResponse(
   const usage = parsed.usage;
   const completionTokens = isRecord(usage)
     && Number.isInteger(usage.completion_tokens)
-    && Number(usage.completion_tokens) > 0
+    && Number(usage.completion_tokens) >= 0
     ? Number(usage.completion_tokens)
     : undefined;
-  const tokens = completionTokens ?? Math.max(1, content.trim().split(/\s+/u).length);
+  const tokens = completionTokens ?? null;
   const elapsedSeconds = Math.max(body.timing.totalMs / 1_000, 0.001);
   return {
     ...body.timing,
-    firstTokenMs: body.timing.totalMs,
+    firstTokenMs: null,
     completionTokens: tokens,
-    completionTokenSource: completionTokens === undefined ? "content-events" : "usage",
-    outputTokensPerSecond: round(tokens / elapsedSeconds),
+    completionTokenSource: completionTokens === undefined ? "unavailable" : "usage",
+    outputTokensPerSecond: tokens === null ? null : round(tokens / elapsedSeconds),
+    engine: inferenceStatistics(parsed),
   };
 }
 
@@ -144,7 +146,8 @@ export async function consumeLlmSsePerformanceResponse(
   if (!response.ok) throw new Error(`http_${response.status}`);
   const reader = response.body?.getReader();
   if (!reader) throw new Error("response_body_missing");
-  const inspector = new OpenAiChatCompletionSseInspector();
+  const engine: InferenceStatistics = {};
+  const inspector = new OpenAiChatCompletionSseInspector(chunk => Object.assign(engine, inferenceStatistics(chunk)));
   let firstByteAt: number | undefined;
   let firstTokenAt: number | undefined;
   let lastByteAt: number | undefined;
@@ -176,15 +179,16 @@ export async function consumeLlmSsePerformanceResponse(
     throw new Error("empty_response");
   }
   const totalMs = round(lastByteAt - requestStarted);
-  const completionTokens = inspector.getCompletionTokens() ?? inspected.deltas;
+  const completionTokens = inspector.getCompletionTokens() ?? null;
   return {
     firstByteMs: round(firstByteAt - requestStarted),
     firstTokenMs: round(firstTokenAt - requestStarted),
     totalMs,
     responseBytes,
     completionTokens,
-    completionTokenSource: inspector.getCompletionTokens() === undefined ? "content-events" : "usage",
-    outputTokensPerSecond: round(completionTokens / Math.max(totalMs / 1_000, 0.001)),
+    completionTokenSource: inspector.getCompletionTokens() === undefined ? "unavailable" : "usage",
+    outputTokensPerSecond: completionTokens === null ? null : round(completionTokens / Math.max(totalMs / 1_000, 0.001)),
+    engine,
     deltaEvents: inspected.deltas,
   };
 }

@@ -1,3 +1,4 @@
+import { requestObservation } from "./observability";
 import type { PersonalStateScope } from "@larm/core";
 import type { Context } from "hono";
 import type { AppDeps } from "./app-types";
@@ -46,6 +47,9 @@ export function createGatewayHandler(input: {
   } = input;
 
   return async (c: Context, options: GatewayRouteOptions): Promise<Response> => {
+    const observation = requestObservation(c.req.raw);
+    observation?.measure("dispatch", performance.now() - observation.started);
+    const ingressEnd = observation?.stage("ingress");
     const ingressResult = await prepareGatewayIngress({
       context: c,
       route: options,
@@ -54,6 +58,7 @@ export function createGatewayHandler(input: {
       modelBrokerConfigured: modelBroker !== undefined,
       agentFeature,
     });
+    ingressEnd?.();
     if (!ingressResult.ok) return ingressResult.response;
     const {
       declaredAllocationId,
@@ -71,6 +76,7 @@ export function createGatewayHandler(input: {
       chatRequest,
       chatRequestBytes,
       chatResponseFormat,
+      speechRequest,
       speechRequestBytes,
       voicevoxOnlyParameter,
       embeddingRequest,
@@ -78,6 +84,7 @@ export function createGatewayHandler(input: {
       systemOneRequest,
       systemOneRequestBytes,
     } = prepared;
+    if (speechRequest) observation?.attribute("larm.input_characters", Array.from(speechRequest.input).length);
     const brokeredResponse = await handleModelBrokerGateway({
       context: c,
       route: options,
@@ -107,6 +114,7 @@ export function createGatewayHandler(input: {
       expectedSpeechFormat: directSpeechFormat,
     });
     if (brokeredResponse) return brokeredResponse;
+    const allocationEnd = observation?.stage("allocation_lookup");
     const allocationResolution = resolveGatewayAllocation({
       context: c,
       registry: deps.registry,
@@ -121,8 +129,11 @@ export function createGatewayHandler(input: {
       metrics: deps.metrics,
       onEvent: deps.onEvent,
     });
+    allocationEnd?.();
     if (!allocationResolution.ok) return allocationResolution.response;
     const { allocationId, allocation, selected, runtime, release } = allocationResolution;
+    observation?.attribute("larm.binding_state", selected.binding.status);
+    const personalStateEnd = observation?.stage("personal_state_preparation");
     const personalStateAttempt = await preparePersonalStateAttempt({
       context: c,
       protocol: options.protocol,
@@ -138,6 +149,7 @@ export function createGatewayHandler(input: {
       getContextController: () => deps.contextController,
       handleError: personalStateError,
     });
+    personalStateEnd?.();
     if (!personalStateAttempt.ok) return personalStateAttempt.response;
     const {
       principal: requestPrincipal,
@@ -162,6 +174,7 @@ export function createGatewayHandler(input: {
       }
     }
 
+    const providerEnd = observation?.stage("provider_admission");
     const gatewayRequest = await beginGatewayProviderRequest({
       allocationId,
       capability: selected.binding.capability,
@@ -172,6 +185,7 @@ export function createGatewayHandler(input: {
       control: deps.control,
       random: deps.random,
     });
+    providerEnd?.();
     if (!gatewayRequest.ok) {
       if (gatewayRequest.code === "foreground_active") c.header("retry-after", "1");
       return c.json(errorBody(

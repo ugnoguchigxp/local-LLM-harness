@@ -1,3 +1,4 @@
+import { observationHistograms, observationDelta, type HistogramSnapshot, type HistogramDelta } from "./performance-observation";
 import { lstat } from "node:fs/promises";
 import { extname, isAbsolute, resolve } from "node:path";
 import { LarmApiError, LarmClient } from "../../../packages/client/src/index";
@@ -23,14 +24,16 @@ type CommonSample = Identity & {
   firstByteMs: number;
   totalMs: number;
   responseBytes: number;
+  observation: ReturnType<typeof responseObservation>;
 };
 type LlmSample = CommonSample & {
   workload: "llm" | "llm-sse";
   transport: "http-json" | "http-sse";
-  firstTokenMs: number;
-  completionTokens: number;
-  completionTokenSource: "usage" | "content-events";
-  outputTokensPerSecond: number;
+  firstTokenMs: number | null;
+  completionTokens: number | null;
+  completionTokenSource: "usage" | "unavailable";
+  engine: import("../../../packages/core/src/index").InferenceStatistics;
+  outputTokensPerSecond: number | null;
   deltaEvents: number | null;
 };
 type AudioSample = CommonSample & {
@@ -57,12 +60,20 @@ type AudioFixture = {
   bytes: number;
 };
 type Telemetry = {
+  observerCounters: Record<string, number>;
+  stageHistograms: HistogramDelta[];
+  histogramResetDetected: boolean;
+  maxTraceQueueDepth: number;
+  maxObservedOperations: number;
   samples: number;
   systemMemoryAvailableMinBytes: number | null;
   acceleratorMemoryAvailableMinBytes: number | null;
   maxExecutionActive: number;
   maxQueueDepth: number;
   provider429Count: number;
+  systemCpuUtilizationMax: number | null;
+  acceleratorBusyMaxPercent: number | null;
+  processResidentMemoryMaxBytes: number | null;
   errors: string[];
 };
 const allScenarios = ["llm", "llm-sse", "asr", "tts", "mixed", "mixed-sse"] as const;
@@ -88,6 +99,10 @@ const timeoutMs = boundedInteger("LARM_PERF_TIMEOUT_MS", 300_000, 1_000, 900_000
 const scenarios = selectedScenarios(process.env.LARM_PERF_SCENARIOS ?? "all");
 const baseUrl = process.env.LARM_BASE_URL ?? "http://127.0.0.1:9810";
 const asrOverride = optionalAsrOverride();
+const directTargets = directConfiguration();
+type TransportTarget = "gateway" | "direct";
+const cachePrompt = process.env.LARM_PERF_CACHE_PROMPT;
+if (cachePrompt !== undefined && cachePrompt !== "true" && cachePrompt !== "false") throw new Error("LARM_PERF_CACHE_PROMPT must be true or false");
 const output = process.env.LARM_PERF_OUTPUT
   ? await prepareExternalOutput(absoluteOutput("LARM_PERF_OUTPUT", process.env.LARM_PERF_OUTPUT), repoRoot)
   : undefined;
@@ -108,23 +123,25 @@ const fixture = needsAudio ? await prepareAudioFixture() : undefined;
 const scenarioReports: Array<ReturnType<typeof aggregateScenario>> = [];
 
 for (const scenario of scenarios) {
-  const workloads = scenarioWorkloads[scenario];
-  for (let warmup = 0; warmup < warmups; warmup += 1) {
-    const result = await runIteration(scenario, 0);
-    if (result.errors.length > 0) {
-      throw new Error(`${scenario}_warmup_failed_${result.errors.map((item) => item.code).join("_")}`);
+  for (const target of (directTargets ? ["gateway", "direct"] : ["gateway"]) as TransportTarget[]) {
+    const workloads = scenarioWorkloads[scenario];
+    for (let warmup = 0; warmup < warmups; warmup += 1) {
+      const result = await runIteration(scenario, 0, target);
+      if (result.errors.length > 0) {
+        throw new Error(`${scenario}_warmup_failed_${result.errors.map((item) => item.code).join("_")}`);
+      }
     }
-  }
-  const monitor = await startTelemetryMonitor();
-  const results: IterationResult[] = [];
-  try {
-    for (let iteration = 1; iteration <= iterations; iteration += 1) {
-      results.push(await runIteration(scenario, iteration));
+    const monitor = await startTelemetryMonitor();
+    const results: IterationResult[] = [];
+    try {
+      for (let iteration = 1; iteration <= iterations; iteration += 1) {
+        results.push(await runIteration(scenario, iteration, target));
+      }
+    } finally {
+      await monitor.stop();
     }
-  } finally {
-    await monitor.stop();
+    scenarioReports.push(aggregateScenario(scenario, workloads, results, monitor.telemetry, target));
   }
-  scenarioReports.push(aggregateScenario(scenario, workloads, results, monitor.telemetry));
 }
 
 const healthAfter = await client.getHealth();
@@ -135,7 +152,7 @@ const comparisons = buildComparisons(scenarioReports);
 const passed = identityStable
   && scenarioReports.every((scenario) => scenario.errors === 0 && scenario.telemetry.errors.length === 0);
 const report = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   kind: "larm-performance-diagnostic",
   recordedAt: new Date().toISOString(),
   passed,
@@ -148,6 +165,9 @@ const report = {
   },
   configuration: {
     scenarios,
+    directComparison: Boolean(directTargets),
+    cachePrompt: cachePrompt ?? "engine-default",
+    comparisonCaveat: "Sequential samples include engine/cache variability; differences are not pure Gateway CPU overhead.",
     iterations,
     warmups,
     llmMaxTokens,
@@ -225,7 +245,7 @@ async function prepareAudioFixture(): Promise<AudioFixture> {
   };
 }
 
-async function runIteration(scenario: ScenarioId, iteration: number): Promise<IterationResult> {
+async function runIteration(scenario: ScenarioId, iteration: number, target: TransportTarget): Promise<IterationResult> {
   const workloads = scenarioWorkloads[scenario];
   const managedWorkloads = workloads
     .filter((workload) => workload !== "asr" || !asrOverride);
@@ -242,7 +262,7 @@ async function runIteration(scenario: ScenarioId, iteration: number): Promise<It
         try {
           return {
             ok: true as const,
-            sample: await execute(workload, iteration, allocation, larm, launches),
+            sample: await execute(workload, iteration, allocation, larm, launches, target),
           };
         } catch (cause) {
           return { ok: false as const, workload, code: errorCode(cause) };
@@ -288,24 +308,34 @@ async function execute(
   allocation: PublicAllocation | undefined,
   larm: LarmClient,
   launches: number[],
+  transportTarget: TransportTarget,
 ): Promise<WorkloadSample> {
   const identity = workload === "asr" && asrOverride
     ? asrOverride.identity
     : bindingIdentity(requiredAllocation(allocation), workload);
+  const direct = transportTarget === "direct" ? directTargets?.[workload === "llm-sse" ? "llm" : workload] : undefined;
+  if (transportTarget === "direct" && (!direct || direct.runtime !== identity.runtime)) throw new Error("direct_runtime_mismatch");
+  const directFetch = async (body: string | FormData, json: boolean) => await fetch(direct!.url, {
+    method: "POST", body, headers: json ? { "content-type": "application/json" } : undefined,
+    signal: AbortSignal.timeout(timeoutMs), redirect: "error",
+  });
   if (workload === "llm" || workload === "llm-sse") {
     const started = performance.now();
     launches.push(started);
     const streaming = workload === "llm-sse";
-    const response = await larm.chat(requiredAllocation(allocation).id, {
+    const payload = {
       model: "larm",
       stream: streaming,
       ...(streaming ? { stream_options: { include_usage: true } } : {}),
       max_tokens: llmMaxTokens,
+      temperature: 0,
+      ...(cachePrompt !== undefined ? { cache_prompt: cachePrompt === "true" } : {}),
       messages: [{
         role: "user",
         content: "Output the integers from 1 through 40 in order, separated by single spaces, with no other text.",
       }],
-    });
+    };
+    const response = direct ? await directFetch(JSON.stringify(payload), true) : await larm.chat(requiredAllocation(allocation).id, payload);
     const measured = streaming
       ? await consumeLlmSsePerformanceResponse(response, started)
       : await consumeLlmPerformanceResponse(response, started);
@@ -316,6 +346,7 @@ async function execute(
       workload,
       iteration,
       status: response.status,
+      observation: responseObservation(response),
       transport: streaming ? "http-sse" : "http-json",
       deltaEvents,
       ...identity,
@@ -328,7 +359,7 @@ async function execute(
     form.append("file", fixture.blob, fixture.filename);
     const started = performance.now();
     launches.push(started);
-    const response = asrOverride
+    const response = direct ? await directFetch(form, false) : asrOverride
       ? await fetch(asrOverride.url, {
         method: "POST",
         body: form,
@@ -336,14 +367,14 @@ async function execute(
       })
       : await larm.transcribe(requiredAllocation(allocation).id, form);
     const measured = await consumeAsrPerformanceResponse(response, started, fixture.audioSeconds);
-    return { workload, iteration, status: response.status, ...identity, ...measured };
+    return { workload, iteration, status: response.status, observation: responseObservation(response), ...identity, ...measured };
   }
   const started = performance.now();
   launches.push(started);
-  const response = await larm.speech(requiredAllocation(allocation).id, ttsRequest());
+  const response = direct ? await directFetch(JSON.stringify(ttsRequest()), true) : await larm.speech(requiredAllocation(allocation).id, ttsRequest());
   const measured = await consumeTtsPerformanceResponse(response, started);
   const { audio: _audio, ...metrics } = measured;
-  return { workload, iteration, status: response.status, ...identity, ...metrics };
+  return { workload, iteration, status: response.status, observation: responseObservation(response), ...identity, ...metrics };
 }
 
 function aggregateScenario(
@@ -351,11 +382,13 @@ function aggregateScenario(
   workloads: WorkloadId[],
   results: IterationResult[],
   telemetry: Telemetry,
+  target: TransportTarget,
 ) {
   const samples = results.flatMap((result) => result.samples);
   const errors = results.flatMap((result) => result.errors);
   return {
     id,
+    target,
     concurrency: Object.fromEntries(workloads.map((workload) => [workload, 1])),
     attempts: iterations * workloads.length,
     successes: samples.length,
@@ -396,6 +429,9 @@ function aggregateWorkload(
       total: summarize(samples.map((sample) => sample.totalMs)),
     },
     responseBytes: summarize(samples.map((sample) => sample.responseBytes)),
+    internalStagesMs: Object.fromEntries([...new Set(samples.flatMap(sample => Object.keys(sample.observation.stagesMs)))].map(stage => [
+      stage, summarize(samples.flatMap(sample => sample.observation.stagesMs[stage] === undefined ? [] : [sample.observation.stagesMs[stage]!])),
+    ])),
   };
   if (workload === "llm" || workload === "llm-sse") {
     const llm = samples.filter((sample): sample is LlmSample =>
@@ -404,10 +440,13 @@ function aggregateWorkload(
     return {
       ...common,
       transports: countValues(llm.map((sample) => sample.transport)),
-      latencyMs: { ...common.latencyMs, firstToken: summarize(llm.map((sample) => sample.firstTokenMs)) },
-      completionTokens: summarize(llm.map((sample) => sample.completionTokens)),
+      latencyMs: { ...common.latencyMs, firstToken: summarize(llm.flatMap((sample) => sample.firstTokenMs === null ? [] : [sample.firstTokenMs])) },
+      completionTokens: summarize(llm.flatMap((sample) => sample.completionTokens === null ? [] : [sample.completionTokens])),
       completionTokenSources: countValues(llm.map((sample) => sample.completionTokenSource)),
-      outputTokensPerSecond: summarize(llm.map((sample) => sample.outputTokensPerSecond)),
+      outputTokensPerSecond: summarize(llm.flatMap((sample) => sample.outputTokensPerSecond === null ? [] : [sample.outputTokensPerSecond])),
+      engineReported: Object.fromEntries([...new Set(llm.flatMap(sample => Object.keys(sample.engine)))].map(key => [
+        key, summarize(llm.flatMap(sample => { const value = sample.engine[key as keyof typeof sample.engine]; return value === undefined ? [] : [value]; })),
+      ])),
       deltaEvents: summarize(llm.flatMap((sample) => sample.deltaEvents === null ? [] : [sample.deltaEvents])),
     };
   }
@@ -430,7 +469,21 @@ function aggregateWorkload(
   };
 }
 
-function buildComparisons(scenarioReports: Array<ReturnType<typeof aggregateScenario>>) {
+function buildComparisons(reports: Array<ReturnType<typeof aggregateScenario>>) {
+  const scenarioReports = reports.filter(report => report.target === "gateway");
+  const gatewayVsDirect = scenarioReports.flatMap(gateway => {
+    const direct = reports.find(candidate => candidate.id === gateway.id && candidate.target === "direct");
+    if (!direct) return [];
+    return Object.keys(gateway.workloads).map(workload => {
+      const gatewayLatency = gateway.workloads[workload]?.latencyMs;
+      const directLatency = direct.workloads[workload]?.latencyMs;
+      return {
+        scenario: gateway.id, workload,
+        totalP50DifferenceMs: gatewayLatency?.total && directLatency?.total ? round(gatewayLatency.total.p50 - directLatency.total.p50) : null,
+        gateway: gatewayLatency, direct: directLatency,
+      };
+    });
+  });
   const mixedVsStandalone = ([
     { scenario: "mixed", workloads: ["llm", "asr", "tts"] },
     { scenario: "mixed-sse", workloads: ["llm-sse", "asr", "tts"] },
@@ -488,21 +541,31 @@ function buildComparisons(scenarioReports: Array<ReturnType<typeof aggregateScen
       },
     }
     : null;
-  return { mixedVsStandalone, llmTransport };
+  return { gatewayVsDirect, mixedVsStandalone, llmTransport };
 }
 
 async function startTelemetryMonitor(): Promise<{ telemetry: Telemetry; stop: () => Promise<void> }> {
   const telemetry: Telemetry = {
+    observerCounters: {},
+    stageHistograms: [],
+    histogramResetDetected: false,
+    maxTraceQueueDepth: 0,
+    maxObservedOperations: 0,
     samples: 0,
     systemMemoryAvailableMinBytes: null,
     acceleratorMemoryAvailableMinBytes: null,
     maxExecutionActive: 0,
     maxQueueDepth: 0,
     provider429Count: 0,
+    systemCpuUtilizationMax: null,
+    acceleratorBusyMaxPercent: null,
+    processResidentMemoryMaxBytes: null,
     errors: [],
   };
   let active = true;
   let before429: number | undefined;
+  let beforeHistograms: HistogramSnapshot | undefined;
+  const beforeObserverCounters = new Map<string, number>();
   const observe = async () => {
     try {
       const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/metrics`, {
@@ -514,6 +577,26 @@ async function startTelemetryMonitor(): Promise<{ telemetry: Telemetry; stop: ()
       if (!response.ok) throw new Error(`metrics_http_${response.status}`);
       const metrics = await response.text();
       telemetry.samples += 1;
+      const histograms = observationHistograms(metrics);
+      beforeHistograms ??= histograms;
+      const delta = observationDelta(beforeHistograms, histograms);
+      telemetry.stageHistograms = delta.histograms;
+      for (const metric of ["telemetry_trace_capacity_dropped_spans_total", "telemetry_trace_failed_spans_total", "telemetry_trace_failed_batches_total", "telemetry_operations_dropped_total", "telemetry_operations_expired_total"]) {
+        const current = metricSingle(metrics, `larm_${metric}`);
+        if (current === undefined) continue;
+        if (!beforeObserverCounters.has(metric)) beforeObserverCounters.set(metric, current);
+        const baseline = beforeObserverCounters.get(metric)!;
+        telemetry.observerCounters[metric] = Math.max(0, current - baseline);
+      }
+      telemetry.histogramResetDetected ||= delta.resetDetected;
+      telemetry.maxTraceQueueDepth = Math.max(telemetry.maxTraceQueueDepth, metricSingle(metrics, "larm_telemetry_trace_queued") ?? 0);
+      telemetry.maxObservedOperations = Math.max(telemetry.maxObservedOperations, metricSingle(metrics, "larm_telemetry_operations_active") ?? 0);
+      const cpu = metricSingle(metrics, "larm_system_cpu_utilization");
+      const gpu = metricSingle(metrics, "larm_accelerator_busy_max_percent");
+      const resident = metricSingle(metrics, "larm_process_resident_memory_bytes");
+      if (cpu !== undefined) telemetry.systemCpuUtilizationMax = Math.max(telemetry.systemCpuUtilizationMax ?? 0, cpu);
+      if (gpu !== undefined) telemetry.acceleratorBusyMaxPercent = Math.max(telemetry.acceleratorBusyMaxPercent ?? 0, gpu);
+      if (resident !== undefined) telemetry.processResidentMemoryMaxBytes = Math.max(telemetry.processResidentMemoryMaxBytes ?? 0, resident);
       const system = metricSingle(metrics, "larm_system_memory_available_bytes");
       const accelerator = metricSingle(metrics, "larm_accelerator_memory_available_bytes");
       if (system !== undefined) telemetry.systemMemoryAvailableMinBytes = minimum(
@@ -688,4 +771,29 @@ function redactBaseUrl(value: string): string {
 
 function round(value: number): number {
   return Math.round(value * 1_000) / 1_000;
+}
+
+function responseObservation(response: Response) {
+  const stagesMs: Record<string, number> = {};
+  for (const entry of (response.headers.get("server-timing") ?? "").split(",")) {
+    const match = /^\s*([a-z_]+);dur=([0-9.]+)\s*$/.exec(entry);
+    if (match && Number.isFinite(Number(match[2]))) stagesMs[match[1]!] = Number(match[2]);
+  }
+  return { requestId: response.headers.get("x-request-id"), traceId: response.headers.get("x-larm-trace-id"), stagesMs };
+}
+
+function directConfiguration(): Partial<Record<"llm" | "asr" | "tts", { url: string; runtime: string }>> | undefined {
+  if (process.env.LARM_PERF_COMPARE_DIRECT !== "true") return undefined;
+  if (asrOverride) throw new Error("direct_comparison_cannot_use_shadow_asr");
+  const targets: Partial<Record<"llm" | "asr" | "tts", { url: string; runtime: string }>> = {};
+  for (const workload of new Set(scenarios.flatMap(scenario => scenarioWorkloads[scenario]).map(workload => workload === "llm-sse" ? "llm" : workload))) {
+    const prefix = `LARM_PERF_DIRECT_${workload.toUpperCase()}`;
+    const url = new URL(process.env[`${prefix}_URL`] ?? "missing");
+    const runtime = process.env[`${prefix}_RUNTIME`];
+    if (url.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || url.username || url.password || url.search || url.hash || !runtime) {
+      throw new Error("direct_target_requires_loopback_url_and_runtime");
+    }
+    targets[workload] = { url: url.toString(), runtime };
+  }
+  return targets;
 }

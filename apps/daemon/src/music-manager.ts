@@ -384,6 +384,7 @@ type InternalJob = MusicGenerationJob & {
 };
 
 export class MusicGenerationManager {
+  private readonly admissions = new Map<string, () => void>();
   private readonly jobs = new Map<string, InternalJob>();
   private readonly queue: string[] = [];
   private readonly workloadFinishes = new Map<string, () => void>();
@@ -397,6 +398,7 @@ export class MusicGenerationManager {
   constructor(readonly provider: MusicProvider, private readonly options: {
     artifactRoot: string;
     beginWorkload?: () => () => void;
+    captureAdmission?: () => () => void;
     concurrency?: number;
     now?: () => number;
     random?: () => string;
@@ -569,12 +571,14 @@ export class MusicGenerationManager {
       request,
       abort: new AbortController(),
     };
+    const admission = this.options.captureAdmission?.();
     const finish = this.options.beginWorkload?.();
     try { this.persist(job); } catch {
       finish?.();
       throw new MusicProviderError("job_persistence_failed", "unable to persist accepted music job");
     }
     if (finish) this.workloadFinishes.set(jobId, finish);
+    if (admission) this.admissions.set(jobId, admission);
     this.jobs.set(jobId, job);
     this.queue.push(jobId);
     queueMicrotask(() => void this.drain());
@@ -653,6 +657,7 @@ export class MusicGenerationManager {
     let failure: unknown;
     const signal = AbortSignal.any([job.abort.signal, AbortSignal.timeout(900_000)]);
     try {
+      this.admissions.get(job.jobId)?.();
       await this.withStorage(() => this.retention.assertCapacity(0, false));
       const generated = await this.provider.generate(job.request, {
         jobId: job.jobId,
@@ -724,7 +729,7 @@ export class MusicGenerationManager {
       try {
         if (failure instanceof MediaVariantStopError || (!signal.aborted && failure)) {
           job.error = {
-            code: failure instanceof MediaVariantStopError ? "worker_stop_failed" : failure instanceof MusicProviderError ? failure.code : "generation_failed",
+            code: failure instanceof MediaVariantStopError ? "worker_stop_failed" : failure instanceof MusicProviderError ? failure.code : failure instanceof Error && "code" in failure && failure.code === "foreground_protected" ? "foreground_protected" : "generation_failed",
             message: failure instanceof Error ? failure.message : String(failure),
           };
           this.transition(job, "failed");
@@ -763,6 +768,7 @@ export class MusicGenerationManager {
   }
 
   private finishWorkload(jobId: string): void {
+    this.admissions.delete(jobId);
     const finish = this.workloadFinishes.get(jobId);
     this.workloadFinishes.delete(jobId);
     finish?.();

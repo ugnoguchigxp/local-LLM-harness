@@ -1,3 +1,4 @@
+import { currentObservation } from "./observability";
 import {
   allocationSchema,
   createOpenAiModelCatalog,
@@ -40,6 +41,7 @@ export type ModelBrokerLease = {
 
 export type ModelBrokerOptions = {
   startupTimeoutMs?: number;
+  /** @deprecated Accepted for configuration compatibility; allocation readiness uses notifications. */
   pollIntervalMs?: number;
   leaseTtlSeconds?: number;
   now?: () => number;
@@ -109,27 +111,10 @@ async function waitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Pro
   }
 }
 
-async function delay(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) throw abortError();
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    timer.unref?.();
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(abortError());
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 export class ModelBroker {
   private readonly catalog;
   private readonly shared = new Map<string, SharedModelLease>();
   private readonly startupTimeoutMs: number;
-  private readonly pollIntervalMs: number;
   private readonly leaseTtlSeconds: number;
   private readonly now: () => number;
 
@@ -140,13 +125,13 @@ export class ModelBroker {
   ) {
     this.catalog = createOpenAiModelCatalog(catalog);
     this.startupTimeoutMs = options.startupTimeoutMs ?? 300_000;
-    this.pollIntervalMs = options.pollIntervalMs ?? 50;
+    const pollIntervalMs = options.pollIntervalMs ?? 50;
     this.leaseTtlSeconds = options.leaseTtlSeconds ?? 900;
     this.now = options.now ?? Date.now;
     if (!Number.isFinite(this.startupTimeoutMs) || this.startupTimeoutMs <= 0) {
       throw new RangeError("Model Broker startup timeout must be positive");
     }
-    if (!Number.isFinite(this.pollIntervalMs) || this.pollIntervalMs <= 0) {
+    if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
       throw new RangeError("Model Broker poll interval must be positive");
     }
     if (!Number.isInteger(this.leaseTtlSeconds) || this.leaseTtlSeconds < 1 || this.leaseTtlSeconds > 86_400) {
@@ -163,14 +148,20 @@ export class ModelBroker {
     protocol: RuntimeProtocol,
     signal?: AbortSignal,
   ): Promise<ModelBrokerLease> {
+    const resolutionEnd = currentObservation()?.stage("model_resolution");
     const descriptor = getOpenAiModel(this.catalog, model, protocol);
+    resolutionEnd?.();
     if (!descriptor) {
       throw new ModelBrokerError(404, "model_not_found", `model ${model} is not available`);
     }
 
+    currentObservation()?.attribute("larm.model", descriptor.id);
+    currentObservation()?.attribute("larm.route", descriptor.route);
     let entry = this.shared.get(model);
+    currentObservation()?.attribute("larm.broker_lease", entry ? "shared" : "new");
     if (entry?.closing) {
-      await waitWithSignal(entry.closing, signal);
+      const closingEnd = currentObservation()?.stage("broker_closing_wait");
+      try { await waitWithSignal(entry.closing, signal); } finally { closingEnd?.(); }
       return await this.acquire(model, protocol, signal);
     }
     if (!entry) {
@@ -186,12 +177,13 @@ export class ModelBroker {
     }
     entry.refs += 1;
     let resolved: ResolvedModel;
+    const readyEnd = currentObservation()?.stage("broker_ready_wait");
     try {
       resolved = await waitWithSignal(entry.ready, signal);
     } catch (error) {
       await this.releaseReference(model, entry);
       throw error;
-    }
+    } finally { readyEnd?.(); }
 
     let closed = false;
     return {
@@ -221,6 +213,8 @@ export class ModelBroker {
       name: "model_broker_prepare_started",
       labels: { model: entry.descriptor.id, route: entry.descriptor.route },
     });
+    const observation = currentObservation();
+    const allocationEnd = observation?.stage("allocation_acquire");
     const result = await this.control.allocate({
       requirements: [{
         capability: entry.descriptor.capability,
@@ -233,6 +227,7 @@ export class ModelBroker {
       priority: entry.descriptor.schedulingPriority,
       capacityPolicy: "wait",
     });
+    allocationEnd?.();
     if (result.status !== 200 && result.status !== 202) {
       throw brokerFailure(result.status, result.body);
     }
@@ -241,6 +236,8 @@ export class ModelBroker {
       throw new ModelBrokerError(503, "invalid_allocation", "control plane returned an invalid allocation");
     }
     entry.allocationId = parsed.data.id;
+    observation?.attribute("larm.initial_allocation_state", parsed.data.status);
+    const readinessEnd = observation?.stage("runtime_readiness");
     const deadline = startedAt + this.startupTimeoutMs;
     while (true) {
       if (entry.abort.signal.aborted) throw abortError();
@@ -268,6 +265,8 @@ export class ModelBroker {
           },
           value: Math.max(0, (this.now() - startedAt) / 1_000),
         });
+        readinessEnd?.();
+        this.control.completeUsageHandover(allocation.id);
         return { allocation, binding };
       }
       if (allocation.status !== "pending" && allocation.status !== "waiting") {
@@ -276,7 +275,7 @@ export class ModelBroker {
       if (this.now() >= deadline) {
         throw new ModelBrokerError(503, "model_loading_timeout", `model ${entry.descriptor.id} did not become ready`, 1);
       }
-      await delay(Math.min(this.pollIntervalMs, Math.max(1, deadline - this.now())), entry.abort.signal);
+      await this.control.waitForAllocation(parsed.data.id, entry.abort.signal, Math.max(1, deadline - this.now()));
     }
   }
 

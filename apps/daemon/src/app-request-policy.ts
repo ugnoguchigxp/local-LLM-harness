@@ -9,6 +9,8 @@ import {
   isPersonalStateApiPath,
   isServiceHarnessRequest,
   secretMatches,
+  secretMatcher,
+  authenticatedBearerKinds,
 } from "./app-auth";
 import { errorBody } from "./app-http";
 
@@ -23,6 +25,8 @@ export function createAppRequestPolicy(
   deps: AppDeps,
   identity: AppIdentity,
 ): MiddlewareHandler {
+  const standardMatches = deps.apiToken ? secretMatcher(`Bearer ${deps.apiToken}`) : () => false;
+  const protectedMatches = deps.protectedConsumerToken ? secretMatcher(`Bearer ${deps.protectedConsumerToken}`) : () => false;
   return async (c, next) => {
     const compatibilityOperation = compatibilityApiOperation(c.req.method, c.req.path);
     let earlyStatus: number | undefined;
@@ -46,11 +50,13 @@ export function createAppRequestPolicy(
           c.req.header("x-larm-allocation-id"),
         );
       if (deps.apiToken && !publicPath && !anonymousAgentConnection && !anonymousServiceHarness) {
-        const expected = `Bearer ${deps.apiToken}`;
         const authorization = c.req.header("authorization");
         const providerBearer = authorization?.startsWith("Bearer larm_conn_v1.") === true
           && acceptsProviderBearer(c.req.method, c.req.path);
-        if (!secretMatches(authorization, expected) && !providerBearer) {
+        const standardConsumer = standardMatches(authorization);
+        const protectedConsumer = !standardConsumer && protectedMatches(authorization);
+        if (standardConsumer || protectedConsumer) authenticatedBearerKinds.set(c.req.raw, protectedConsumer ? "protected" : "standard");
+        if (!standardConsumer && !protectedConsumer && !providerBearer) {
           earlyStatus = 401;
           return c.json(errorBody("unauthorized", "valid bearer token required"), 401);
         }

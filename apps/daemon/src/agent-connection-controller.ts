@@ -55,6 +55,7 @@ type ConnectionRecord = {
   idleReleaseAt?: string;
   idleTimer?: ReturnType<typeof setTimeout>;
   activeRequests: Map<string, { foreground: boolean; exclusive: boolean }>;
+  preparationComplete?: (success: boolean) => void;
   releasedAt?: string;
   error?: { code: string; message: string };
 };
@@ -103,6 +104,7 @@ export class AgentConnectionController {
   private readonly sessionLocks = new Map<string, Promise<void>>();
   private sequence = 0;
   private foregroundCreations = 0;
+  private readonly requestDrainWaiters = new Set<() => void>();
 
   constructor(private readonly options: {
     control: ControlPlane;
@@ -162,6 +164,10 @@ export class AgentConnectionController {
     };
   }
 
+  private publicIdlePolicy(profile: AgentProfile) {
+    return profile.idleRelease ? { ...structuredClone(profile.idleRelease), enabled: this.options.control.usage && profile.usageProtection ? false : profile.idleRelease.enabled } : undefined;
+  }
+
   listProfilesV2(): AgentConnectionApiResult {
     const catalog = this.options.getCatalog();
     if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
@@ -178,7 +184,8 @@ export class AgentConnectionController {
           selectionPolicy: profile.selectionPolicy,
           deprecated: profile.deprecated,
           schedulingPriority: profile.schedulingPriority ?? 0,
-          ...(profile.idleRelease ? { idleRelease: structuredClone(profile.idleRelease) } : {}),
+          ...(this.options.control.usage && profile.usageProtection ? { usageProtection: structuredClone(profile.usageProtection) } : {}),
+          ...(profile.idleRelease ? { idleRelease: this.publicIdlePolicy(profile) } : {}),
           providers: profile.providers.map((provider) => ({
             name: provider.name,
             capability: provider.capability,
@@ -219,7 +226,8 @@ export class AgentConnectionController {
           selectionPolicy: profile.selectionPolicy,
           deprecated: profile.deprecated,
           schedulingPriority: profile.schedulingPriority ?? 0,
-          ...(profile.idleRelease ? { idleRelease: structuredClone(profile.idleRelease) } : {}),
+          ...(this.options.control.usage && profile.usageProtection ? { usageProtection: structuredClone(profile.usageProtection) } : {}),
+          ...(profile.idleRelease ? { idleRelease: this.publicIdlePolicy(profile) } : {}),
           providers: profile.providers.map((provider) => ({
             name: provider.name,
             capability: provider.capability,
@@ -342,9 +350,15 @@ export class AgentConnectionController {
             409,
           );
         }
+        const protection = this.options.control.usage && selectedProfile.usageProtection;
+        if (protection && !this.options.control.usage?.canProtect) return error("consumer_credential_required", "protected profiles require a dedicated consumer credential", 403);
+        const preparationComplete = protection ? this.options.control.usage!.prepare(protection.idleSeconds * 1000, `${selectedProfile.canonicalProfile}:${selectedProfile.revision}`) : undefined;
+        let preparationTransferred = false;
+        let createdRecord: ConnectionRecord | undefined;
         const foregroundCreation = selectedProfile.requestScheduling === "foreground-exclusive";
         if (foregroundCreation) this.foregroundCreations += 1;
         try {
+          if (protection) await this.options.control.activateUsageProtection(selectedProfile.schedulingPriority ?? 0);
           if (foregroundCreation) {
             const conflict = await this.preemptBackgroundConnections(selectedProfile.schedulingPriority ?? 0);
             if (conflict) return conflict;
@@ -360,8 +374,9 @@ export class AgentConnectionController {
             deploymentPolicy: request.deploymentPolicy,
             priority: selectedProfile.schedulingPriority ?? 0,
             capacityPolicy: "wait",
-          });
+          }, { waitForSemanticReadiness: true });
           if (allocated.status !== 200 && allocated.status !== 202) {
+            this.options.control.rollbackUsageProfile();
             return { status: allocated.status, body: allocated.body };
           }
           const allocation = allocated.body;
@@ -385,8 +400,11 @@ export class AgentConnectionController {
             sessionScope,
             requestHash,
             activeRequests: new Map(),
+            preparationComplete,
           };
           this.records.set(record.id, record);
+          createdRecord = record;
+          preparationTransferred = true;
           if (selectedProfile.requestScheduling === "background-when-idle" && this.backgroundBlocked()) {
             await this.options.control.releaseAllocation(record.allocationId, "released", new AllocationLifecycleError(
               "foreground_preempted", "request stopped because a higher-priority foreground task requires the provider",
@@ -405,8 +423,21 @@ export class AgentConnectionController {
             body: this.public(record),
             location: `/v1/agent-connections/${record.id}`,
           };
+        } catch (error) {
+          this.options.control.rollbackUsageProfile(createdRecord?.allocationId);
+          preparationComplete?.(false);
+          if (createdRecord) {
+            this.options.control.rollbackUsageProfile(createdRecord.allocationId);
+            createdRecord.preparationComplete = undefined;
+            createdRecord.status = "failed";
+            createdRecord.error = { code: "connection_prepare_failed", message: "connection preparation failed" };
+            this.clearIdleTimer(createdRecord);
+            await this.options.control.releaseAllocation(createdRecord.allocationId);
+          }
+          throw error;
         } finally {
           if (foregroundCreation) this.foregroundCreations -= 1;
+          if (!preparationTransferred) preparationComplete?.(false);
         }
       }),
     );
@@ -661,6 +692,7 @@ export class AgentConnectionController {
     const found = this.owned(id, principal);
     if ("body" in found) return found;
     if (isTerminal(found.status)) return { status: 204, body: undefined };
+    found.preparationComplete?.(false); found.preparationComplete = undefined;
     await this.options.control.releaseAllocation(found.allocationId);
     this.clearIdleTimer(found);
     found.status = "released";
@@ -714,6 +746,7 @@ export class AgentConnectionController {
   ): Promise<"accepted" | "foreground_active" | "foreground_preemption_failed" | "connection_inactive"> {
     const record = this.records.get(connectionId);
     if (!record) return "connection_inactive";
+    this.options.control.usage?.check(record.principal);
     this.refreshLifecycle(record);
     if (record.status !== "ready" || record.activeRequests.has(requestId)) return "connection_inactive";
     if (record.profile.requestScheduling === "background-when-idle" && this.backgroundBlocked()) return "foreground_active";
@@ -748,6 +781,7 @@ export class AgentConnectionController {
     const active = record?.activeRequests.get(requestId);
     if (!record || !active) return;
     record.activeRequests.delete(requestId);
+    for (const notify of [...this.requestDrainWaiters]) notify();
     if (active.foreground && record.status === "ready") {
       record.lastForegroundActivityAt = new Date(this.now()).toISOString();
     }
@@ -766,7 +800,9 @@ export class AgentConnectionController {
         providers.push(await this.options.semantic.check({ allocationId: record.allocationId, provider }));
       }
     }
-    const ready = providers.every((provider) => provider.ready);
+    // Readiness may await a backend while the allocation expires or is released.
+    this.refreshLifecycle(record);
+    const ready = !isTerminal(record.status) && record.status !== "pending" && providers.every((provider) => provider.ready);
     const acceptingRequests = ready && providers.every((provider) => provider.acceptingRequests);
     if (ready && record.status === "probing") this.markReady(record);
     const body: AgentConnectionHealth = {
@@ -810,6 +846,7 @@ export class AgentConnectionController {
           409,
         );
       }
+      record.preparationComplete?.(false); record.preparationComplete = undefined;
       record.status = "failed";
       record.releasedAt ??= new Date(this.now()).toISOString();
       record.error = {
@@ -817,10 +854,16 @@ export class AgentConnectionController {
         message: "request stopped because a higher-priority foreground task requires the provider",
       };
     }
-    const deadline = Date.now() + 2_000;
-    while (victims.some(record => record.activeRequests.size > 0)) {
-      if (Date.now() >= deadline) return error("provider_conflict", "background requests have not released their execution resources", 409);
-      await this.sleep(10);
+    if (victims.some(record => record.activeRequests.size > 0)) {
+      const drained = await new Promise<boolean>(resolve => {
+        const complete = (success: boolean) => { clearTimeout(timer); this.requestDrainWaiters.delete(check); resolve(success); };
+        const check = () => { if (victims.every(record => record.activeRequests.size === 0)) complete(true); };
+        const timer = setTimeout(() => complete(false), 2000);
+        timer.unref?.();
+        this.requestDrainWaiters.add(check);
+        check();
+      });
+      if (!drained) return error("provider_conflict", "background requests have not released their execution resources", 409);
     }
     this.pruneHistory();
     return undefined;
@@ -842,6 +885,8 @@ export class AgentConnectionController {
     const providers = (health.body as AgentConnectionHealth).providers;
     const mismatch = providers.find((provider) => provider.reason === "provider_contract_mismatch");
     if (mismatch) {
+      this.options.control.rollbackUsageProfile(record.allocationId);
+      record.preparationComplete?.(false); record.preparationComplete = undefined;
       record.status = "failed";
       this.clearIdleTimer(record);
       record.error = {
@@ -858,7 +903,13 @@ export class AgentConnectionController {
   private startBackground(record: ConnectionRecord): void {
     if (this.background.has(record.id)) return;
     this.background.add(record.id);
-    void this.runBackground(record).finally(() => this.background.delete(record.id));
+    void this.runBackground(record).catch(async () => {
+      this.options.control.rollbackUsageProfile(record.allocationId);
+      record.preparationComplete?.(false); record.preparationComplete = undefined;
+      record.status = "failed";
+      record.error = { code: "connection_prepare_failed", message: "connection preparation failed" };
+      await this.options.control.releaseAllocation(record.allocationId);
+    }).finally(() => this.background.delete(record.id));
   }
 
   private async waitForReadiness(record: ConnectionRecord, waitMs: number): Promise<boolean> {
@@ -870,10 +921,12 @@ export class AgentConnectionController {
       if (allocation?.status === "ready") {
         record.status = "probing";
         if (await this.probeInitial(record)) return true;
+        if (isTerminal(record.status)) return true;
       }
       const remaining = deadline - this.now();
       if (remaining > 0) {
-        await this.sleep(Math.min(Math.max(1, remaining), Math.max(1_000, this.options.pollIntervalMs)));
+        if (allocation && (allocation.status === "pending" || allocation.status === "waiting")) await this.options.control.waitForAllocation(record.allocationId, undefined, remaining);
+        else await this.sleep(Math.min(Math.max(1, remaining), Math.max(1_000, this.options.pollIntervalMs)));
       }
     }
     return isTerminal(record.status) || record.status === "ready";
@@ -887,10 +940,17 @@ export class AgentConnectionController {
       if (allocation?.status === "ready") {
         record.status = "probing";
         if (await this.probeInitial(record)) return;
+        if (isTerminal(record.status)) return;
       }
-      await this.sleep(Math.max(1_000, this.options.pollIntervalMs));
+      const remaining = Math.max(0, record.readyDeadline - this.now());
+      if (remaining > 0) {
+        if (allocation && (allocation.status === "pending" || allocation.status === "waiting")) await this.options.control.waitForAllocation(record.allocationId, undefined, remaining);
+        else await this.sleep(Math.min(remaining, Math.max(1_000, this.options.pollIntervalMs)));
+      }
     }
     if (!isTerminal(record.status)) {
+      this.options.control.rollbackUsageProfile(record.allocationId);
+      record.preparationComplete?.(false); record.preparationComplete = undefined;
       record.status = "failed";
       this.clearIdleTimer(record);
       record.error = {
@@ -903,9 +963,10 @@ export class AgentConnectionController {
   }
 
   private refreshLifecycle(record: ConnectionRecord): void {
-    if (isTerminal(record.status)) return;
+    if (isTerminal(record.status)) { record.preparationComplete?.(false); record.preparationComplete = undefined; return; }
     const allocation = this.options.control.getAllocation(record.allocationId);
     if (!allocation) {
+      record.preparationComplete?.(false); record.preparationComplete = undefined;
       record.status = "failed";
       this.clearIdleTimer(record);
       record.error = { code: "allocation_missing", message: "owned allocation is unavailable" };
@@ -914,12 +975,14 @@ export class AgentConnectionController {
     }
     record.expiresAt = allocation.expiresAt;
     if (allocation.status === "expired") {
+      record.preparationComplete?.(false); record.preparationComplete = undefined;
       record.status = "expired";
       this.clearIdleTimer(record);
       this.pruneHistory();
       return;
     }
     if (allocation.status === "released") {
+      record.preparationComplete?.(false); record.preparationComplete = undefined;
       record.status = "failed";
       this.clearIdleTimer(record);
       record.error = allocation.error
@@ -928,6 +991,7 @@ export class AgentConnectionController {
       return;
     }
     if (allocation.status === "failed") {
+      record.preparationComplete?.(false); record.preparationComplete = undefined;
       record.status = "failed";
       this.clearIdleTimer(record);
       record.error = allocation.error ?? { code: "allocation_failed", message: "owned allocation failed" };
@@ -1132,15 +1196,21 @@ export class AgentConnectionController {
   }
 
   private markReady(record: ConnectionRecord): void {
+    this.refreshLifecycle(record);
     if (isTerminal(record.status)) return;
     record.status = "ready";
     record.readyAt ??= new Date(this.now()).toISOString();
+    if (record.profile.usageProtection && this.options.control.usage) this.options.control.retainUsageProfile(record.allocationId);
+    this.options.control.completeUsageHandover(record.allocationId);
+    record.preparationComplete?.(true);
+    record.preparationComplete = undefined;
     this.scheduleIdleRelease(record);
   }
 
   private scheduleIdleRelease(record: ConnectionRecord): void {
     this.clearIdleTimer(record);
     const policy = record.profile.idleRelease;
+    if (this.options.control.usage && record.profile.usageProtection) return;
     if (!policy?.enabled || record.status !== "ready" || record.activeRequests.size > 0) return;
     const baseline = Date.parse(record.lastForegroundActivityAt ?? record.readyAt ?? record.createdAt);
     const deadline = baseline + policy.idleSeconds * 1_000;

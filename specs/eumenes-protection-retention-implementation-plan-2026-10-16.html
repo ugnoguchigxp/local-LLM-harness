@@ -1,0 +1,880 @@
+<article lang="ja">
+  <h1>Eumenesの10分利用保護・モデル維持・状態通知の実装計画</h1>
+  <p>
+    2026-10-16。利用者承認後、LARM側の保護・保持・内部通知と性能診断を実装した。専用credentialを設定した対象Profileでは、利用中と最後の要求終了後600秒間は他consumerの利用APIを拒否し、次のProfile要求まではロード済みモデルを維持する。本書末尾に有効化手順と検証結果を記録する。実モデルでのcanary、Eumenes設定変更、本番配備、commit、pushは行っていない。
+  </p>
+  <p>
+    関連資料は<a href="./observability.html">性能計測・トレーシング基盤</a>、<a
+      href="./provider-priority-scheduling.html"
+      >既存のProvider優先度制御</a
+    >、<a href="./dynamic-provider-daemon-lifecycle.html">Provider lifecycle仕様</a>、<a
+      href="./performance-benchmark.html"
+      >性能診断仕様</a
+    >。対象policyを有効化した場合は従来の5分idle解放・解放後holdと分離する。専用credential未設定時は保護と次Profileまでの保持を有効にしない。
+  </p>
+
+  <section id="behavior">
+    <h2>実装する動作と計画上の具体化</h2>
+    <table>
+      <caption>
+        Eumenesの保護とProviderの保持を別々に判断する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">状態</th>
+          <th scope="col">Eumenesの利用</th>
+          <th scope="col">他consumerの利用API</th>
+          <th scope="col">Provider</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Profile起動・初回準備中</th>
+          <td>要求したProfileの準備を進める</td>
+          <td>保護予約の取得後は409で拒否</td>
+          <td>必要なものだけ起動する</td>
+        </tr>
+        <tr>
+          <th scope="row">推論要求が実行中または実行待ち</th>
+          <td>継続を許可。既存の実行順序・上限を適用</td>
+          <td>409で拒否。裏で起動・キュー登録しない</td>
+          <td>進行中要求の参照を維持</td>
+        </tr>
+        <tr>
+          <th scope="row">最後の要求完了から600秒未満</th>
+          <td>継続を許可し、利用後に保護期限を更新</td>
+          <td>409で拒否</td>
+          <td>ロード済みの状態を維持</td>
+        </tr>
+        <tr>
+          <th scope="row">600秒経過後・次の要求なし</th>
+          <td>再利用可能</td>
+          <td>新規利用を許可できる状態</td>
+          <td>時間経過だけでは停止しない</td>
+        </tr>
+        <tr>
+          <th scope="row">600秒経過後・別のProfile要求あり</th>
+          <td>先に受理された所有権移譲に従う</td>
+          <td>通常の優先度・資源確認後に受理</td>
+          <td>同じrevisionは再利用し、不要・競合分だけ切り替える</td>
+        </tr>
+      </tbody>
+    </table>
+    <ul>
+      <li>
+        「前のリクエストから10分」の起点は、本計画では最後の受理済み推論要求の終了とする。要求受付時からの600秒では、長い推論の直後に保護がなくなるため、終了を起点に統一する。
+      </li>
+      <li>
+        要求の終了はHTTP応答bodyの終了・cancel・timeout・error後、必要なterminal処理と実行参照の解放を終えた時点とする。複数要求では進行中数がゼロになってから600秒を数える。ネットワーク送信完了やブラウザの再生完了とは異なる。
+      </li>
+      <li>
+        LLM・ASR・TTS・感情推定等の実推論を対象とする。句読点分割のTTS要求ごとに受付と終了を反映し、チャンクの間も保護を継続する。TTSの直列生成、音声順序、既存のキャンセル伝播を維持する。
+      </li>
+      <li>
+        health、metrics、catalog閲覧、claim、renewだけでは利用実績を更新しない。長時間接続や更新だけで他consumerを無期限に排除しない。ready後に一度も推論がなければready時点から600秒を初期保護とする。
+      </li>
+      <li>
+        利用者の確認に従い、他consumerには同じRuntimeや共有ASR/TTSの利用も自動的に許可しない。保護対象の既存接続による継続利用は許可する。保護外の通常優先度規則は維持する。
+      </li>
+      <li>
+        10分経過は利用保護の終了であり、接続credentialの期限切れやモデル停止の命令ではない。期限切れcredentialは既存の規則で失効させ、認証・再接続とProvider保持を分離する。
+      </li>
+      <li>
+        通常のProfile切替は保護を破れない。同等以上の優先度も暗黙の例外にしない。明示的な運用停止・更新・障害処理は別経路とし、理由を記録する。
+      </li>
+    </ul>
+  </section>
+
+  <section id="findings">
+    <h2>実装前との差と変更箇所</h2>
+    <table>
+      <caption>
+        2026-10-16、変更前の作業ツリー調査。稼働releaseの実測ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">箇所</th>
+          <th scope="col">現在</th>
+          <th scope="col">変更方針</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">agent-connection-controller.ts</th>
+          <td>
+            backgroundBlockedはforeground作成中と実行中を確認。完了後600秒は見ない。ProfileのidleReleaseで接続を解放
+          </td>
+          <td>
+            単一の利用保護状態を参照。接続作成と既存接続の推論開始をともに判定。対象Profileの時間経過によるidle解放を廃止
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">allocation-preemption.ts</th>
+          <td>
+            Allocation解放から既定300秒のswap-group hold。同一Runtime・同等以上の優先度は対象外
+          </td>
+          <td>
+            新しい600秒保護とは別物。対象scopeで旧holdを重ねず、二重の待ちや期限延長を除去。保護外のpolicyは維持
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ControlPlane / Admission / Gateway / Broker</th>
+          <td>割当、接続、モデル名指定、既存Allocation等の入口がある。容量待ちは202にできる</td>
+          <td>
+            認証・解決後、資源確保やpreemptionより前に保護を判定。保護理由はcapacityPolicyやPreferによらず409
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">provider-instance-manager.ts</th>
+          <td>
+            allocation/request/mutation参照とwarmRefsを管理。最後の参照解放後はidle timerで停止
+          </td>
+          <td>
+            対象Providerに切替までの保持理由を追加。利用枠の参照とは分離し、停止前のgeneration・参照再確認を再利用
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">controller.ts / lifecycle timer</th>
+          <td>instance別停止に加え、旧経路にもscheduleIdleReconcile / scheduleIdleStopがある</td>
+          <td>すべての停止計画で保持中Providerを考慮。片方のtimerだけ止める実装にしない</td>
+        </tr>
+        <tr>
+          <th scope="row">config/local-nodeとbackend設定</th>
+          <td>foreground ProfileはidleRelease 300秒。llama-swapにglobalTTL 300と個別ttl 0が併存</td>
+          <td>
+            対象のProfile・解決Runtime・model
+            entryを照合。対象entryの独自unloadを無効にし、LARMが保持・切替を所有。全モデルを一括常駐にはしない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ModelBroker / AgentConnection readiness</th>
+          <td>Brokerはmain設定既定500ms、接続準備は最低1000ms間隔で内部Allocationを再確認</td>
+          <td>
+            既存ready/failed/released/expired遷移を待つ購読へ変更。engineのhealth・semantic
+            readiness確認は別に維持
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">app.tsのprincipal</th>
+          <td>
+            通常の認証は単一apiTokenからprincipalを生成。自己申告clientはconsumerの証明ではない
+          </td>
+          <td>
+            認証済みの保護所有者と接続の紐付けを設計。単なるEumenesという文字列や同一API
+            tokenだけで例外許可しない
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="ownership">
+    <h2>保護状態・所有者・受付の競合処理</h2>
+    <p>
+      OS非依存の状態遷移と判定はpackages/coreに置き、daemonが認証済み接続と実行参照へ結びつける。systemdとllama-swapの操作はpackages/backendsに残す。保護判定はテレメトリ機構から独立させ、計測無効時やcollector障害時も同じ結果にする。
+    </p>
+    <ul>
+      <li>
+        状態は所有scope、世代、起動予約、進行中要求数、最後の完了時点、保護期限、保持対象のinstance/revision集合を持つ。要求IDで開始・終了を一度だけ反映し、cancelとfinallyの重複で参照数を減らさない。
+      </li>
+      <li>
+        保護所有者はLARMが認証・発行した接続に結びつく不透明なscopeとする。Profile名・model名・client名・traceparent・任意headerは権限の根拠にしない。同じProfileを名乗る別接続は所有者として自動承認しない。
+      </li>
+      <li>
+        同一Eumenesの複数接続と再接続には、既存scopeの継続を証明する接続資格情報かconsumer専用credentialを使う。現行の単一apiTokenはconsumer識別に不十分なので、実装の最初にEumenes側の資格情報を確認し、必要ならconsumer
+        credentialの最小限の割当を追加する。複数consumerで同じcredentialを共有したまま識別できるとは約束しない。
+      </li>
+      <li>
+        最初に接続を作る際、信頼済み設定がその資格情報に許可した保護Profileだけを選択可能にする。旧接続失効時も保護scopeを即時消去せず、所有者の再認証・再接続で継続できるようにする。claim/renewそのものでは期限を延長しない。
+      </li>
+      <li>
+        保護期限・経過時間は単調増加時計で管理する。APIに表示するUTC時刻は表示用のanchorから導出し、Date.nowの前後変動で600秒を短縮・延長しない。
+      </li>
+      <li>
+        判定と要求開始の参照取得は、同一プロセス内の短い同期区間で行う。資源起動などのawait前に起動予約を取得し、失敗時にはrollbackする。リモートI/Oやexporterをこの区間で待たない。
+      </li>
+      <li>
+        保護期限ちょうどにEumenes継続と別Profile要求が競合した場合は、先に取得した世代付き予約を有効とする。期限判定はnow
+        &lt; deadline、移譲可能はnow &gt;= deadlineとし、進行中要求があれば期限だけで移譲しない。
+      </li>
+      <li>
+        別consumerからすでに受理済みの要求がある状態でEumenesが利用を開始する場合は、既存のforeground
+        preemptionと参照解放手順を使う。新しい予約を先に公開して後続利用を拒否し、既存要求の取消・終了を確認してからモデルを切り替える。
+      </li>
+      <li>
+        キューに入った他consumer要求は実行枠取得時にも保護を再確認する。保護開始前の受付を理由に、保護開始後のupstream推論を許可しない。取消理由と優先度・FIFO順序をそれぞれ既存規則で扱う。
+      </li>
+    </ul>
+  </section>
+
+  <section id="api">
+    <h2>API契約と抜け道のない拒否</h2>
+    <table>
+      <caption>
+        提案する受付結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">操作</th>
+          <th scope="col">保護中の他consumer</th>
+          <th scope="col">備考</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Profile接続作成・Allocation作成</th>
+          <td>409。割当・起動・preemption前に拒否</td>
+          <td>Prefer: waitやcapacityPolicy: waitでも202や待機登録に変換しない</td>
+        </tr>
+        <tr>
+          <th scope="row">既存Provider credential・既存Allocation経由の推論</th>
+          <td>409。upstream送信前に拒否</td>
+          <td>既存資格情報が有効であることと、現在の利用許可を分離</td>
+        </tr>
+        <tr>
+          <th scope="row">モデル名指定のOpenAI互換入口</th>
+          <td>409。Broker.acquireの前に拒否</td>
+          <td>modelが保護対象と同じでも自動許可しない</td>
+        </tr>
+        <tr>
+          <th scope="row">context再構築・入力token計数・画像/音楽等の推論起動</th>
+          <td>推論またはProvider起動を伴う操作は共通の拒否判定へ接続</td>
+          <td>ルート一覧を監査し、保護対象推論への間接経路も確認する</td>
+        </tr>
+        <tr>
+          <th scope="row">catalog、状態取得、metrics、liveness、本人のcancel/release</th>
+          <td>状態閲覧・終了操作は可能</td>
+          <td>healthが試験推論を行う場合は他consumerの試験推論を拒否し、単なる読取扱いにしない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      409のerror.code案はforeground_protected。既存の保護・競合エラーとの対応表をSDKとEumenes向けに用意する。cooldown中は残秒を切り上げたRetry-Afterを返す。実行中は終了時刻不明なので最短再確認間隔としての値を返し、確定した解除予定と表示しない。既存のOpenAI互換error形式は維持する。Eumenes側は409を認証失敗としてtoken再発行ループにせず、他consumerはRetry-Afterとbackoffに従う。
+    </p>
+    <p>
+      エラーのidempotency保存は保護状態をまたいで拒否結果を無期限に再利用しない。保護状態の再評価可能な一時拒否として扱う一方、受理済み要求の再送では二重の起動・実行を防ぐ。認証・構文検査の失敗は元の401/403/400を維持する。通常利用用tokenを持つことだけで保護を迂回させない。
+    </p>
+    <p>
+      認証済みの他consumerであることが入口の情報だけで分かる場合は、音声multipartや大きいJSONを全量bufferする前に拒否する。未読bodyの処理は既存HTTPサーバーのcancel・接続管理に従い、拒否のために無制限に読み捨てない。既に判明した認証・構文エラーの応答は維持するが、拒否対象のbodyを400判定のためだけに最後まで読み込まない。
+    </p>
+  </section>
+
+  <section id="retention">
+    <h2>モデル維持と安全な切替</h2>
+    <ol>
+      <li>
+        要求終了時に実行slotとrequest参照を解放する。Allocationは有効なConnectionの利用契約として扱い、モデル保持のために終了要求のslotや偽のAllocationを残さない。
+      </li>
+      <li>
+        対象Profileが解決したProviderに、次のProfile要求までの保持理由を登録する。ProviderInstanceManagerの既存参照管理を拡張し、対象だけidle停止から除外する。保護600秒が切れても保持理由は消さない。
+      </li>
+      <li>
+        保持対象は同時ロード可能な現在の解決済み集合だけとする。要求が来るたびに過去の全Profileを積み上げない。共有Providerは一つのinstanceを共有し、世代・revisionを固定する。
+      </li>
+      <li>
+        別Profileを受理した時点で引継ぎを計画する。古いConnectionやAllocationが有効でも、保護が終わっている旧所有者の予約が永久にadmissionを妨げないよう、競合する利用契約を明示的に終了・credential失効させてから切り替える。
+      </li>
+      <li>
+        次のProfileで同じinstance/revisionを使う場合は保持を引き継ぎ、再起動・再ロードをしない。共有しないが資源競合しないProviderは、新しい要求に不要となったものから既存の参照とpolicyに従って回収する。共有参照やwarm
+        floorがあるものを一括停止しない。
+      </li>
+      <li>
+        保持中メモリはAdmissionの実占有として計上する。メモリを空きと見なして二重予約しない。容量不足時は引継ぎ計画で回収可能な保持分を区別し、停止の完了・telemetry更新を確認してから必要なモデルを起動する。
+      </li>
+      <li>
+        競合モデルに固定minInstancesが残ると停止を妨げたり、切替後に旧モデルを再起動したりする。対象swap-groupのwarm維持は現在のProfile解決結果へ従わせる。共有ASR/TTS等の明示された常駐方針は維持する。全RuntimeをminInstances:
+        1にする変更は行わない。
+      </li>
+      <li>
+        引継ぎ失敗時は新世代の予約・保持理由をrollbackし、利用可能な既存Providerを再利用可能に戻す。モデル停止後の再ロードが必ず成功するとは仮定せず、失敗状態と次回再試行をAPIに示す。
+      </li>
+    </ol>
+    <p>
+      daemon再起動時のprocess
+      adoptionにも保持理由を適用し、復旧用の一時Allocationを解放した直後にidle停止しない。資格情報は既存boot
+      epochで失効させ、保持するモデルと利用権限を分離する。初期実装では、保存済み保持対象がある再起動は最大600秒の保守的な保護で開始し、認証済み所有者を再接続させる案とする。再起動をまたぐ単調時刻を比較しない。保持対象metadataの保存はProfile切替時の小さな非同期更新に限定し、要求ごとの同期disk書込は追加しない。metadata欠落・破損時は誤ったProfileの自動起動を避け、状態を公開して復旧要求を受け付ける。
+    </p>
+  </section>
+
+  <section id="events">
+    <h2>内部状態待機をイベント通知へ変更する</h2>
+    <p>
+      ログ出力用onEventを直接待つのではなく、Allocationの状態遷移箇所に購読通知を追加する。状態の正本は既存Allocationであり、ログ・trace・metricsは通知の配信条件にしない。別の状態storeやイベント基盤は導入しない。
+    </p>
+    <ol>
+      <li>
+        waitForAllocationState(id, predicate, signal,
+        deadline)相当の内部APIを追加。購読登録後に現在状態を再読取し、登録直前のreadyを取りこぼさない。
+      </li>
+      <li>
+        ready、failed、released、expired、削除、daemon
+        drainを通知。waiterは成功・失敗・cancel・timeoutのすべてで購読とtimerを一度だけ解除する。通知callback例外が既存遷移を破壊しないよう、内部callbackの責務を待機解除に限定する。
+      </li>
+      <li>
+        ModelBroker.prepareとAgentConnectionControllerの内部Allocation待ちを置換する。既にreadyなら即時返却し、同一モデルのshared
+        ready
+        Promiseは再利用する。Connectionの待機上限とbackground準備の担当を一本化し、同じsemantic
+        probeを並行実行しない。
+      </li>
+      <li>
+        runtimeの外部health取得は維持する。engineがイベントを返さない場合は起動中だけの確認を残す。semantic
+        readinessが一時失敗する場合も、内部状態イベントが来ないことで永遠に再試行しなくなる実装を避け、期限付きの再確認を設ける。
+      </li>
+      <li>
+        進行中のbackground要求を止める際の10ms間隔の参照数確認も、既存の要求terminal通知から解決できるか検証し、同じ購読基盤で可能な範囲を置換する。engine監視全体のイベント化は本計画の前提にしない。
+      </li>
+    </ol>
+  </section>
+
+  <section id="performance">
+    <h2>性能上の制約と計測</h2>
+    <ul>
+      <li>
+        通常の保護判定は単調時計、所有scope、参照数、期限の参照だけで済ませる。全Connection走査を毎要求・毎tokenで行わず、集約counterと所有者へのindexを維持する。複数所有者が必要な場合も上限を設定し、無制限な履歴は保持しない。
+      </li>
+      <li>
+        全推論をglobal
+        mutexや制御作業キューへ流す実装を避ける。同期の予約更新と非同期の起動・切替を分け、通常のWarm要求は起動処理を通さない。
+      </li>
+      <li>
+        保護期限の判定は利用要求時に行える。期限通知が必要ならscopeごとの一つのtimerを更新し、定期走査は追加しない。timer実行の遅れを理由に600秒後の利用を余分に拒否しない。
+      </li>
+      <li>
+        token・音声frameごとのログや状態更新は追加しない。状態変化と要求terminalでだけ記録する。ログは内容を含めず、traceは既存sampling、低頻度の非同期exportを使う。
+      </li>
+      <li>
+        新しい集約値の案はprotection_check_seconds、protection_active_requests、protection_remaining_seconds、protection_rejections_total、profile_handover_seconds、provider_retained_instances、provider_retained_seconds、allocation_waiters。scope・request・traceのIDをmetrics
+        labelにしない。
+      </li>
+      <li>
+        provider再利用、load/unload回数、health_probe_count、内部ready更新からwaiter再開までの単調時間を記録する。モデル保持はKV
+        cache再利用を保証しない。KV命中やengine内部時間はengineが実際に報告した値だけを扱う。
+      </li>
+    </ul>
+    <table>
+      <caption>
+        実装前後に同条件で比較する試験
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">場面</th>
+          <th scope="col">比較</th>
+          <th scope="col">判断材料</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Warm・単独およびLLM/ASR/TTS混在</th>
+          <td>現行／変更後 × 計測無効／集約metrics／1%trace。順序を入れ替え複数round</td>
+          <td>p50・p95・最大、throughput、CPU、event loop遅延、slot待ち、推論区間</td>
+        </tr>
+        <tr>
+          <th scope="row">内部ready通知</th>
+          <td>同一模擬backendで定期確認とイベント通知</td>
+          <td>
+            readyから再開までのp50・p95・最大、probe回数、waiter残数。固定500/1000ms待ちの除去
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">10分保護の境界</th>
+          <td>仮想時計で599999ms／600000ms。所有者継続と別要求を競合させる</td>
+          <td>二重受理なし、不要なload/unloadなし。CIで実際に10分待たない</td>
+        </tr>
+        <tr>
+          <th scope="row">期限後の再利用・切替</th>
+          <td>同一revision／別revision／競合モデル／共有speech</td>
+          <td>同一revisionの起動0回、切替停止の内訳、管理時間とengine load時間を分離</td>
+        </tr>
+        <tr>
+          <th scope="row">拒否集中・繰返しcancel</th>
+          <td>多接続、一定時間の連続409、接続の作成破棄、collector停止</td>
+          <td>拒否latency、CPU、RSS、timer/waiter上限、inference失敗への影響</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      模擬HTTPの初期性能目標案は、変更によるWarm/mixedのp95増加を0.5ms以内、throughput低下を5%以内とする。同一host・同一条件・計測modeで比較し、現行の複数roundのばらつきを測った後に許容値を確定する。単体CIにはhost依存の時間閾値を置かず、定数回の判定・固定sleepなし・不要な起動0回を検証する。実モデルは隔離した実行環境でTTFT、ASR/TTSのRTFと利用再開を確認し、模擬HTTP結果を会話改善の実測値として報告しない。
+    </p>
+  </section>
+
+  <section id="steps">
+    <h2>実装順序と完了条件</h2>
+    <table>
+      <caption>
+        途中の段階だけを本番で有効にしない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">実装内容</th>
+          <th scope="col">完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1. 契約と現状の固定</th>
+          <td>
+            保護対象Profileと解決Runtime一覧、consumer資格情報、API拒否範囲、600秒の起点をschema・consumer文書へ反映。現行境界のcharacterization
+            testと性能baselineを保存
+          </td>
+          <td>
+            他consumerが同一client/Profile/共有tokenで所有者にならない方針が具体化。変更前の再利用・切替・cancelを再現できる
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">2. 保護の状態遷移</th>
+          <td>
+            coreの純粋な状態遷移とdaemonの所有者・要求参照連携。短い同期予約、既存全入口の受付と実行直前の再確認
+          </td>
+          <td>
+            保護中の409で起動・preemption・待機登録がゼロ。既存credentialの利用、TTL、renew、再接続も検証
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">3. 保持と所有権移譲</th>
+          <td>
+            Provider保持理由、idle停止と旧holdの整理、期限後のAllocation終了・引継ぎ、warm
+            floor・backend TTL・再起動adoption
+          </td>
+          <td>
+            600秒後も停止せず、次の要求で必要分だけ切替。保持メモリを計上し、旧warm
+            floorの再起動ループなし
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">4. 状態通知への移行</th>
+          <td>
+            内部Allocation待ちの購読API、BrokerとConnectionで共用、起動probeとsemantic
+            readiness再試行を維持
+          </td>
+          <td>ready通知取りこぼしなし、失敗/cancel/timeoutでlistener残留なし、二重probeなし</td>
+        </tr>
+        <tr>
+          <th scope="row">5. 計測・回帰試験</th>
+          <td>
+            既存overhead診断に拒否・期限・再利用・切替シナリオを追加。JSONの条件とp50/p95/maxを保存
+          </td>
+          <td>全体check成功、基準との比較を報告。未実測の改善を断定しない</td>
+        </tr>
+        <tr>
+          <th scope="row">6. 限定受入と展開準備</th>
+          <td>
+            対象Profileだけ新policyを選択し、Eumenes継続利用と別consumer拒否・期限後切替を隔離canaryで確認。稼働releaseとの差を確認
+          </td>
+          <td>
+            切戻し手順と互換性を確認した配備可能な変更一式。本計画の作成だけでは配備・restart・commit・pushを行わない
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      新policyは対象Profile/consumerに明示的に設定し、既存定義には従来動作を残す。policy
+      field案は利用保護のdurationSeconds:
+      600とProvider保持のuntil-next-profile相当を分離する。idleReleaseの秒数を600へ変えるだけ、または既存holdの定数を600秒へ変えるだけの実装は採用しない。SDK/schema/catalogの公開項目とconsumer側の409処理を同じ変更単位で整合させる。
+    </p>
+  </section>
+
+  <section id="tests">
+    <h2>外部モデル・GPUなしで必須とする回帰試験</h2>
+    <ul>
+      <li>
+        LLM/ASR/TTS/感情推定の開始と終了、並行要求、句読点間隔、cancel、timeout、upstream
+        error、terminal callback例外、二重終了。進行中に600秒を超えても保護が続く。
+      </li>
+      <li>
+        単調時計の境界、wall
+        clockの前進・後退、期限timerの実行遅延、同時受付、起動失敗、再接続、資格情報失効、明示release。GET/health/claim/renewや不正要求で保護が延長されない。
+      </li>
+      <li>
+        接続作成、直接Broker、明示Allocation、既存Provider
+        credential、キュー済み要求、間接推論からの拒否。別Profile・同じProfile・同じRuntime・高優先度でも他consumerは保護を迂回できない。
+      </li>
+      <li>
+        保護終了後の同一モデル再利用、別モデル切替、共有speechの維持、旧Allocationの回収、warm
+        floorの競合、二つのidle停止経路、backend側TTL設定。停止直前の新規参照と世代交代を再確認する。
+      </li>
+      <li>
+        ready通知の購読前後の競合、状態の同期変更、startup失敗、expired/released、drain、取消、通知callback例外。共有leaseと重複待機でprobe数や購読数が増殖しない。
+      </li>
+      <li>
+        daemon再起動と保持対象復元、epoch失効後の所有者再認証、壊れたmetadata、引継ぎ途中の障害。実行権限を復活させずProviderだけadoptする。
+      </li>
+      <li>
+        計測有効・無効・collector
+        503/timeoutで受付結果とTTS順序が同じ。連続拒否とcancel後に要求参照、timer、listenerが基準値へ戻る。
+      </li>
+    </ul>
+    <p>
+      主な既存試験はapp-scoped-provider、gateway-request-lifecycle、provider-instance-manager、allocation-request-admission、allocation-preemption、allocation-runtime-startup、app内のBroker/Connection試験を拡張する。core状態遷移と購読機構の単体試験を追加する。fake
+      backendと注入時計を使い、性能確認は既存performance-larmとobservability-overheadを拡張する。実装後はbun
+      run
+      checkを実行する。計画初稿では文書のみ検証した。実装後の動作試験と性能比較は末尾の検証結果に記録する。
+    </p>
+  </section>
+
+  <section id="rollout">
+    <h2>展開・切戻しと最終成果物</h2>
+    <p>
+      配備前にEumenesの利用Profileと資格情報、live
+      backendの実行先を照合する。現在動作しているモデル名だけを根拠に変更しない。対象Profile単位でpolicyを有効化し、拒否理由・残秒・保持対象・切替理由を状態APIとtraceで確認できるようにする。切戻しは新規受付を止め、進行中要求の終了後に保持と所有者を整合させ、従来policyへ戻す。利用中のモデルを一括停止して切り戻さない。
+    </p>
+    <p>
+      最終成果物はschema/API差分、core/daemon/backendの実装、Eumenes側で必要な資格情報・409対応の変更案、GPU不要の試験、実装前後の性能JSON、再利用・切替の受入記録、関連仕様の更新とする。内部通知で消える検出待ち、idle停止回避による再ロード回数、追加判定のCPUコストを別々に報告する。Rust移行、推論engine最適化、TTSの並列化、全engine監視の全面改修は対象外とする。
+    </p>
+  </section>
+  <section id="implementation-results">
+    <h2>実装結果と有効化</h2>
+    <p>
+      coreのUsageProtectionが単調時計で起動予約・進行中数・600秒の期限を管理し、daemonのUsageCoordinatorが認証済み所有者を伝播する。HTTP受付、Allocation作成、実行枠取得後の再確認で共通の保護状態を参照する。要求ごとの全Connection走査、token/frameごとの記録、同期disk書込は追加していない。
+    </p>
+    <table>
+      <caption>
+        実装した設定とAPI
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">値・扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LARM_PROTECTED_CONSUMER_TOKEN</th>
+          <td>
+            保護対象consumerの専用Bearer。LARM_API_TOKENと異なる値が必須。未設定では新しい保護・保持は無効
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ProfileのusageProtection</th>
+          <td>
+            idleSeconds: 600、retention:
+            until-next-profile。local-nodeの3つのforeground会話Profileへ設定。モデル名では優遇しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Profile公開情報</th>
+          <td>
+            有効時にusageProtectionを公開し、旧idleReleaseをenabled:
+            falseとする。無効時は従来の公開情報とidle解放
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">拒否</th>
+          <td>
+            HTTP 409、error.code:
+            foreground_protected、Retry-After。実行中・準備中は最短再確認1秒、cooldownは残秒の切り上げ。OpenAI入口はOpenAI
+            error形式。失効済みcredentialは従来どおり認証エラー
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LARM_USAGE_RETENTION_PATH</th>
+          <td>
+            既定/var/lib/larm/usage-retention.json。保持対象metadataを非同期・集約・atomic
+            renameで保存。token、prompt、音声、推論結果は保存しない
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">再起動</th>
+          <td>
+            同じcatalog
+            revisionの保持対象をadopt。保護対象だった場合は起動後600秒の保守的保護。credentialはboot
+            epochにより再取得。保持対象に合うモデルでGateway probeを実行
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">状態</th>
+          <td>
+            /healthのusageProtectionにprotected、transitioning、activeRequests、preparing、remainingMs、retainedRuntimeIds、allocationWaiters、retentionPersistenceFailed。所有者の認証情報は非公開
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">metrics</th>
+          <td>
+            protection_check_secondsは許可された推論要求の入口判定を1要求1回記録。拒否はprotection_rejections_total。protection_active_requests、protection_remaining_seconds、provider_retained_runtimes、allocation_waitersも取得。IDをlabelにしない
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Eumenes側では既存のLARM_API_TOKENを専用Bearerの値へ変更し、LARM
+      daemon自身のLARM_API_TOKENは他consumer用に維持する。Eumenesのauth-config.tsはEUMENES_API_TOKEN未設定時にLARM用tokenからローカルAPI認証を派生するため、ローカル認証を維持する場合はEUMENES_API_TOKENを明示した上で切り替える。Eumenes実装は読取確認のみで変更していない。更新したProfile
+      schemaを含むSDKと、他consumerの409・Retry-After処理も配備時に揃える。
+    </p>
+    <p>
+      要求終了時に実行枠を空け、Provider保持は独立した集合で管理する。切替では旧Allocationを終了し、同じrevisionを共有できるProviderを残し、競合・不要分だけ停止する。swap-groupの旧モデルのwarm
+      floorを再起動させず、独立した共有speechの明示warm
+      floorは維持する。同一instanceの停止を共有し、起動のfinallyと引継ぎが重なっても二重に停止しない。準備失敗では新しい保持をrollbackし、利用可能な旧Providerだけを維持する。
+    </p>
+    <p>
+      登録済みllama-swapモデルにttl:
+      0を設定し、proxyの5分自動unloadが保持を破らないようにした。全モデルをロードする設定ではなく、保護・保持が無効な場合も既存LARM
+      idle policyが停止を管理する。実機では稼働proxyへの設定反映を確認する。
+    </p>
+    <p>
+      BrokerとConnectionの内部Allocation待ちはready/failed/released/expired通知と期限付き購読へ置換した。subscribe後の再読取で取りこぼしを防ぎ、abort・timeout・終了で購読を解除する。background要求の終了待ちも10ms
+      pollingからterminal通知へ変更した。engine healthとsemantic
+      readinessの検証・一時失敗時の再確認は残している。
+    </p>
+  </section>
+
+  <section id="measured-results">
+    <h2>追加コストと通知待ちの実測</h2>
+    <p>
+      2026-10-16、Bun 1.4.0。模擬loopback
+      upstreamを使い、認証と集約metricsを揃えて保護なし／ありを比較。warmup後2000反復×5round、順序を交替。通常caseは各条件10000要求、mixedは各条件30000要求、合計140000要求。TTS
+      gateは常に1。driver・upstream・Gatewayは同一processであり、Broker、実モデル、host GPU
+      sampler、productionログは含まない。
+    </p>
+    <table>
+      <caption>
+        単位ms。throughput差は保護ありの保護なしに対する変化
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">case</th>
+          <th scope="col">p50なし／あり</th>
+          <th scope="col">p95なし／あり</th>
+          <th scope="col">最大なし／あり</th>
+          <th scope="col">p95増分</th>
+          <th scope="col">throughput差</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">JSON</th>
+          <td>0.087 / 0.092</td>
+          <td>0.192 / 0.161</td>
+          <td>5.399 / 3.324</td>
+          <td>-0.031</td>
+          <td>-2.43%</td>
+        </tr>
+        <tr>
+          <th scope="row">SSE</th>
+          <td>0.119 / 0.121</td>
+          <td>0.182 / 0.171</td>
+          <td>3.232 / 3.982</td>
+          <td>-0.011</td>
+          <td>-0.21%</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR multipart</th>
+          <td>0.107 / 0.108</td>
+          <td>0.174 / 0.171</td>
+          <td>2.907 / 3.321</td>
+          <td>-0.003</td>
+          <td>-1.80%</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS WAV</th>
+          <td>0.117 / 0.121</td>
+          <td>0.172 / 0.175</td>
+          <td>3.160 / 4.695</td>
+          <td>0.003</td>
+          <td>-1.91%</td>
+        </tr>
+        <tr>
+          <th scope="row">mixed</th>
+          <td>0.293 / 0.306</td>
+          <td>0.455 / 0.466</td>
+          <td>3.748 / 6.791</td>
+          <td>0.011</td>
+          <td>-3.42%</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この条件ではp95増分0.5ms以内・throughput低下5%以内の初期目標を満たした。負のp95差を高速化の証拠とは扱わない。初期試行には重複した計測記録・認証計算と比較条件の差があり、最終比較は認証条件を揃え、固定histogram
+      recorderを使った。初期試行との差をすべてコード変更の効果とは解釈しない。
+    </p>
+    <ul>
+      <li>
+        mixed・concurrency 4（各種類4要求、計12同時HTTP、TTS gate 1）、各条件24000要求。process
+        samplerあり。p95は1.945ms／1.804ms、実process
+        sampleは各2件。安定したCPU比較には隔離環境での長時間計測が必要。
+      </li>
+      <li>
+        collectorを100ms遅延・503応答、export timeout 150ms、reader delay
+        2ms、全件trace、mixed・concurrency
+        4に設定。各条件2400要求、合計4800要求がHTTP成功。保護ありのp95は7.234ms。traceは23160
+        spanが送信失敗、2040
+        spanを容量上限で破棄（warmupを含む）。終了時queued/inFlightは0。collector応答を推論完了の条件にしていない。
+      </li>
+      <li>
+        内部Allocationが5ms後にreadyになる条件を各方式5回比較。500ms
+        pollingの検出p95は495.656ms、通知待ちは0.341ms。1000ms
+        pollingは1000.955ms、通知待ちは0.134ms。engine load、health、semantic
+        readinessを含まない検出部分の比較。
+      </li>
+      <li>
+        模擬backendでは同じProfileへの再接続でensure回数が増えず、別Profileを挟んで戻る場合だけa→b→aの起動とa→bの停止を確認。実モデルの起動時間、会話TTFT、KV命中率の改善は未実測。
+      </li>
+    </ul>
+    <p>
+      再現はbun run
+      perf:usage。既定は集約metricsを揃えた2条件。LARM_OVERHEAD_ITERATIONS、LARM_OVERHEAD_ROUNDS、LARM_OVERHEAD_CONCURRENCY、LARM_OVERHEAD_TRACE_SAMPLE_RATIO等は既存診断と共通。LARM_OVERHEAD_READINESS_COMPARISON=trueで内部検出待ちを追加し、LARM_OVERHEAD_READINESS_SAMPLESで回数を指定。LARM_OVERHEAD_P95_BUDGET_MSで失敗閾値、LARM_OVERHEAD_OUTPUTでrepository外の未使用JSON
+      pathを指定する。usage比較のschemaは3。
+    </p>
+    <p>
+      実行環境の/tmpにlarm-usage-overhead-compiled-final.json、larm-usage-concurrent-final.json、larm-usage-collector-failure-final.json、larm-readiness-notification-final.jsonを保存。生成JSON・ログはrepositoryへ追加していない。
+    </p>
+  </section>
+
+  <section id="implementation-validation">
+    <h2>検証結果と実機確認範囲</h2>
+    <p>
+      GPU不要の試験で600秒境界、長いstream、cancel、無効入力、所有者偽装、再接続、他入口の拒否、切替、競合warm
+      floor、共有Providerのwarm維持、準備失敗のrollback、再起動時の保持対象とprobe選択、metadata保存、通知のtimeout・abort・購読解除を検証した。bun
+      run checkは初回実装の検証で終了code 0。TypeScriptは本体832件、tooling 24件、speech
+      16件、deployment
+      65件で計937件のテスト実行が成功し、Pythonは計51件が成功した。型検査、module境界、API
+      consumer整合性、source-only、運用・配備検査も成功した。文書検証はエラー・警告とも0件。
+    </p>
+    <p>
+      実機canaryでは、句読点単位TTSを含むEumenes継続利用、他consumerの409と再試行、600秒境界、期限後の再利用・切替、稼働proxyのttl、daemon再起動後のadoptionを確認する。専用credentialと更新SDKを揃えて有効化する。今回は実モデルや稼働サービスを起動・停止せず、配備・commit・pushも行っていない。
+    </p>
+  </section>
+  <section id="code-review">
+    <h2>実装後のコードレビューと修正</h2>
+    <p>
+      2026-10-16に変更全体をレビューし、入力拒否、同時受付、取消、非同期の遅延完了、再起動を重点的に検証した。再現できる問題にはGPU不要の回帰試験を追加し、修正後にも状態遷移と後処理を再確認した。
+    </p>
+    <table>
+      <caption>
+        レビューで確認した問題と対処
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">確認した問題と修正</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">保護期限</th>
+          <td>
+            proxy内で拒否した413・queue
+            429でも600秒を延長していた。upstream利用を開始した要求と、有効なtoken
+            countだけを延長対象とし、upstreamの4xxも延長しない。推論開始後のstream取消は既存どおり活動として扱う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">切替中の受付</th>
+          <td>
+            同じ所有者の新規推論が停止処理中に参照を取得できた。引継ぎ中は新規推論と重複transferを409で拒否し、同期例外でも切替中フラグを必ず解除する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">完了通知</th>
+          <td>
+            準備完了callbackの重複呼出しが、再接続時の期限更新判定を上書きできた。callbackを一度だけ適用する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">準備途中の解放</th>
+          <td>
+            readiness応答待ちの間にallocationを解放すると、遅い成功応答が保持と保護を復活させた。await後に状態を再確認し、解放済みallocationを保持しない。terminal確定後の固定待機も避け、再確認は準備期限以内に制限する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">rollbackの所有範囲</th>
+          <td>
+            引継ぎ結果をallocation
+            IDに結び付ける。同一対象の並行準備を追跡し、別対象は準備完了まで拒否する。無関係な成功・失敗でrollback状態を消さず、failed・released・expiredで対象の保持を解除する。通常allocation
+            APIはRuntime ready、Profile APIはsemantic readinessで成功を確定する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">保存の競合</th>
+          <td>
+            A保存後にBを書込中、最新要求がAへ戻ると最後のAが省略された。書込中の重複省略を避け、終了直前に追加された更新とflushも最後の状態まで処理する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">キュー後の拒否</th>
+          <td>
+            キュー待ち後の保護再判定にもRetry-Afterを付ける。slot解放、upstream未送信、409形式を検証する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">trace対象</th>
+          <td>
+            /v1/限定だったmiddlewareをversion付きAPIに適用し、/v2/context-viewsにもW3C親contextとRequest
+            IDを伝播する。health入口は採取対象外のままとする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">再起動probe</th>
+          <td>
+            候補一覧への包含だけでは保持対象への接続を保証できなかった。既存selectRouteの実際の解決結果と照合する。保持metadataが不確実、またはprobe
+            overrideが保持Profileと異なる場合はcatalogのみ確認し、別モデルを起動しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <h3>レビュー後の性能確認</h3>
+    <p>
+      最終コードの模擬HTTP比較は2026-10-16 06:37:25 UTC、Bun
+      1.4.0、2000反復×5round、認証とmetricsを同一条件にした。全140000要求が成功。p50・p95・最大はms、処理件数差は保護なしに対する保護ありの差である。
+    </p>
+    <table>
+      <caption>
+        利用保護の有無による模擬HTTP性能
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">p50なし／あり</th>
+          <th scope="col">p95なし／あり</th>
+          <th scope="col">最大なし／あり</th>
+          <th scope="col">処理件数差</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">JSON</th>
+          <td>0.088 / 0.093</td>
+          <td>0.174 / 0.158</td>
+          <td>5.396 / 1.510</td>
+          <td>-1.541%</td>
+        </tr>
+        <tr>
+          <th scope="row">SSE</th>
+          <td>0.115 / 0.117</td>
+          <td>0.165 / 0.158</td>
+          <td>3.589 / 3.519</td>
+          <td>-1.263%</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td>0.107 / 0.109</td>
+          <td>0.149 / 0.143</td>
+          <td>3.074 / 3.596</td>
+          <td>-0.859%</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>0.117 / 0.124</td>
+          <td>0.168 / 0.172</td>
+          <td>2.986 / 3.024</td>
+          <td>-5.287%</td>
+        </tr>
+        <tr>
+          <th scope="row">mixed</th>
+          <td>0.296 / 0.305</td>
+          <td>0.806 / 0.461</td>
+          <td>3.553 / 3.736</td>
+          <td>+1.738%</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      レビュー中の先行比較ではJSONの処理件数が5.475%低下し、JSONのみ5000反復×10roundで再測定すると3.459%増加した。最終比較でもTTSの低下が5%を僅かに超えたため、処理件数の初期目標を安定して満たしたとは断定しない。負のp95差や処理件数増を高速化の根拠とは扱わない。p95増加は先行比較で最大0.012ms、最終比較で最大0.004msだった。実モデル・GPUの遅延や会話性能への影響は未測定である。
+    </p>
+    <p>
+      結果は実行環境の/tmp/larm-usage-review-overhead.json、/tmp/larm-usage-review-json-repeat.json、/tmp/larm-usage-reviewed-final-overhead.jsonへ保存し、repositoryには追加していない。レビュー後のbun
+      run checkは終了code 0。TypeScriptは本体844件、tooling 24件、speech 16件、deployment
+      65件で計949件、Pythonは計51件が成功した。今回追加した回帰試験は12件。型検査・文書検査・API
+      consumer整合性・module境界・source-only・運用配備検査も成功した。最終ログは実行環境の/tmp/larm-usage-reviewed-final-check.txtに保存した。再レビューで追加の修正事項は見つからなかった。実モデル・GPU・配備後の確認は未実施で、commit・pushは行っていない。
+    </p>
+  </section>
+</article>

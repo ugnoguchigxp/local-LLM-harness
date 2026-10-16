@@ -64,6 +64,7 @@ const INTENTIONAL_COMPATIBILITY_CONSUMERS = new Set([
 ]);
 const API_PROVIDER_OR_CATALOG_SOURCES = new Set([
   "apps/daemon/src/app-auth.ts",
+  "apps/daemon/src/usage-policy.ts",
   "apps/daemon/src/routes/agent-profiles.ts",
   "apps/daemon/src/routes/inspection.ts",
   "apps/daemon/src/routes/legacy-control.ts",

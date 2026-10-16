@@ -36,6 +36,48 @@ export type ProviderInstanceInspection = {
 };
 
 export class ProviderInstanceManager {
+  private readonly stopping = new Map<string, Promise<boolean>>();
+  private retainedRuntimes = new Set<string>();
+  private readonly profileManagedRuntimes = new Set<string>();
+
+  retainUntilNextProfile(runtimeIds: string[], managedRuntimeIds = runtimeIds): void {
+    this.retainedRuntimes = new Set(runtimeIds);
+    for (const id of managedRuntimeIds) this.profileManagedRuntimes.add(id);
+    for (const record of this.byId.values()) {
+      if (this.retainedRuntimes.has(record.runtime.id)) this.cancelIdle(record);
+    }
+  }
+
+  isRetained(runtimeId: string): boolean { return this.retainedRuntimes.has(runtimeId); }
+  isProfileManaged(runtimeId: string): boolean { return this.profileManagedRuntimes.has(runtimeId); }
+  retainedRuntimeIds(): string[] { return [...this.retainedRuntimes].sort(); }
+
+  private releaseProfileWarmFloor(record: ManagedInstance): void {
+    record.warmRefs = record.runtime.policy.swapGroup && this.isProfileManaged(record.runtime.id)
+      ? 0 : Math.max(record.warmRefs, managedWarmPolicy(record.runtime).minInstances);
+  }
+
+  rollbackRetained(runtimeIds: string[]): void {
+    const previous = this.retainedRuntimes;
+    this.retainUntilNextProfile(runtimeIds);
+    for (const record of this.byId.values()) {
+      if (!previous.has(record.runtime.id) || this.isRetained(record.runtime.id)) continue;
+      this.releaseProfileWarmFloor(record);
+      this.scheduleIfIdle(record);
+    }
+  }
+
+  async releaseRetained(nextRuntimeIds: string[], managedRuntimeIds = nextRuntimeIds): Promise<void> {
+    const previous = this.retainedRuntimes;
+    this.retainUntilNextProfile(nextRuntimeIds, managedRuntimeIds);
+    for (const record of [...this.byId.values()]) {
+      if ((!previous.has(record.runtime.id) && !this.isProfileManaged(record.runtime.id)) || this.isRetained(record.runtime.id)) continue;
+      this.releaseProfileWarmFloor(record);
+      record.stopWhenIdle = true;
+      this.cancelIdle(record);
+      await this.stopIfIdle(record.instance.id, record.instance.generation);
+    }
+  }
   private readonly byRevision = new Map<string, ManagedInstance>();
   private readonly byId = new Map<string, ManagedInstance>();
   private readonly ensures = new Map<string, EnsureFlight>();
@@ -283,6 +325,7 @@ export class ProviderInstanceManager {
   }
 
   private scheduleIfIdle(record: ManagedInstance): void {
+    if (this.isRetained(record.runtime.id)) return;
     if (this.referenceCount(record) > 0 || record.warmRefs > 0) return;
     this.cancelIdle(record);
     const configured = managedWarmPolicy(record.runtime).idleTtlSeconds * 1_000;
@@ -295,9 +338,19 @@ export class ProviderInstanceManager {
     record.idleTimer.unref?.();
   }
 
-  private async stopIfIdle(instanceId: string, expectedGeneration: number): Promise<boolean> {
+  private stopIfIdle(instanceId: string, expectedGeneration: number): Promise<boolean> {
+    const existing = this.stopping.get(instanceId);
+    if (existing) return existing;
+    const stopping = Promise.resolve().then(() => this.stopIfIdleOnce(instanceId, expectedGeneration))
+      .finally(() => { if (this.stopping.get(instanceId) === stopping) this.stopping.delete(instanceId); });
+    this.stopping.set(instanceId, stopping);
+    return stopping;
+  }
+
+  private async stopIfIdleOnce(instanceId: string, expectedGeneration: number): Promise<boolean> {
     const record = this.byId.get(instanceId);
     if (!record) return true;
+    if (this.isRetained(record.runtime.id)) return false;
     if (record.instance.generation !== expectedGeneration) return false;
     record.idleTimer = undefined;
     record.idleDeadline = undefined;
@@ -307,6 +360,7 @@ export class ProviderInstanceManager {
       await this.backend.drainInstance?.(instanceId);
       if (
         this.referenceCount(record) > 0
+        || this.isRetained(record.runtime.id)
         || record.warmRefs > 0
         || record.instance.generation !== expectedGeneration
       ) {

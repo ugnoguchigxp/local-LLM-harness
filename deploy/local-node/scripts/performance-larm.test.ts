@@ -39,13 +39,14 @@ test("performance diagnostic measures HTTP JSON/SSE and synchronized mixed workl
   let allocationSequence = 0;
   let mixedLaunches = 0;
   let shadowRequests = 0;
+  let metricObservations = 0;
   const allocations = new Map<string, Array<{ capability: string; route: string }>>();
   const barriers = new Map<string, {
     workloads: Set<string>;
     promise: Promise<void>;
     resolve: () => void;
   }>();
-  const headers = { "x-larm-boot-epoch": "epoch-performance" };
+  const headers = { "x-larm-boot-epoch": "epoch-performance", "server-timing": "execution_wait;dur=0.5, upstream_headers;dur=2.0", "x-request-id": "req_fixture", "x-larm-trace-id": "a".repeat(32) };
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -62,6 +63,10 @@ test("performance diagnostic measures HTTP JSON/SSE and synchronized mixed workl
       }
       if (url.pathname === "/metrics") {
         return new Response([
+          `larm_request_stage_seconds_count{stage="total"} ${metricObservations}`,
+          `larm_request_stage_seconds_sum{stage="total"} ${metricObservations * 0.002}`,
+          `larm_request_stage_seconds_bucket{stage="total",le="0.005"} ${metricObservations}`,
+          `larm_request_stage_seconds_bucket{stage="total",le="+Inf"} ${metricObservations}`,
           "larm_system_memory_available_bytes 1000000",
           "larm_accelerator_memory_available_bytes 2000000",
           'larm_execution_active{runtime="qwen-general"} 0',
@@ -98,6 +103,7 @@ test("performance diagnostic measures HTTP JSON/SSE and synchronized mixed workl
         : url.pathname === "/v1/audio/speech" ? "tts"
         : undefined;
       if (workload && request.method === "POST") {
+        metricObservations++;
         const allocationId = request.headers.get("x-larm-allocation-id") ?? "";
         const requirements = allocations.get(allocationId) ?? [];
         if (requirements.length === 3) {
@@ -187,7 +193,7 @@ test("performance diagnostic measures HTTP JSON/SSE and synchronized mixed workl
     expect(exitCode).toBe(0);
     const report = JSON.parse(stdout);
     expect(report).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "larm-performance-diagnostic",
       passed: true,
       audioFixture: { source: "file", audioSeconds: 1 },
@@ -196,6 +202,9 @@ test("performance diagnostic measures HTTP JSON/SSE and synchronized mixed workl
     expect(report.scenarios.map((scenario: { id: string }) => scenario.id)).toEqual([
       "llm", "llm-sse", "asr", "tts", "mixed", "mixed-sse",
     ]);
+    expect(report.scenarios[0].telemetry.stageHistograms[0]).toMatchObject({ count: 2, p95UpperBoundMs: 5 });
+    expect(report.scenarios[0].workloads.llm.internalStagesMs.execution_wait.p50).toBe(0.5);
+    expect(report.scenarios[0].iterations[0].samples[0].observation).toMatchObject({ requestId: "req_fixture", traceId: "a".repeat(32) });
     expect(report.scenarios[1].workloads["llm-sse"]).toMatchObject({
       transports: { "http-sse": 2 },
       completionTokenSources: { usage: 2 },
@@ -245,6 +254,17 @@ test("performance diagnostic measures HTTP JSON/SSE and synchronized mixed workl
     });
     expect(shadowRequests).toBe(4);
     expect(JSON.parse(await readFile(shadowOutput, "utf8"))).toEqual(shadowReport);
+    const directChild = Bun.spawn(["bun", "run", performanceScript], {
+      env: { ...Bun.env, LARM_BASE_URL: `http://127.0.0.1:${server.port}`, LARM_PERF_SCENARIOS: "llm,llm-sse", LARM_PERF_ITERATIONS: "1", LARM_PERF_WARMUPS: "0", LARM_PERF_COMPARE_DIRECT: "true", LARM_PERF_DIRECT_LLM_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`, LARM_PERF_DIRECT_LLM_RUNTIME: "qwen-general", LARM_PERF_CACHE_PROMPT: "false" }, stdout: "pipe", stderr: "pipe",
+    });
+    const [directExit, directStdout, directStderr] = await Promise.all([directChild.exited, new Response(directChild.stdout).text(), new Response(directChild.stderr).text()]);
+    expect(directStderr).toBe(""); expect(directExit).toBe(0);
+    const directReport = JSON.parse(directStdout);
+    expect(directReport.scenarios.map((s: { target: string }) => s.target)).toEqual(["gateway", "direct", "gateway", "direct"]);
+    expect(directReport.comparisons.gatewayVsDirect).toHaveLength(2);
+    expect(directReport.scenarios[0].workloads.llm.latencyMs.firstToken).toBeNull();
+    expect(directReport.configuration.cachePrompt).toBe("false");
+
   } finally {
     server.stop(true);
     shadowServer.stop(true);

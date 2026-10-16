@@ -1,4 +1,13 @@
-import { inspectOpenAiChatCompletionJson, type AgentConnectionCatalog } from "@larm/core";
+import { inspectOpenAiChatCompletionJson, selectRoute, type AgentConnectionCatalog, type ClusterState, type Registry } from "@larm/core";
+
+export function retainedGatewayStartupModel(catalog: AgentConnectionCatalog, registry: Registry, runtimeIds: string[], state: ClusterState): string | undefined {
+  const retained = new Set(runtimeIds);
+  return catalog.profiles.flatMap(profile => profile.providers).find(provider => {
+    if (provider.protocol !== "openai.chat-completions.v1" || provider.publishModel === false) return false;
+    const selected = selectRoute({ registry, state, routeId: provider.route, capability: provider.capability, mode: "explicit", allowFallback: false });
+    return selected.ok && retained.has(selected.runtime);
+  })?.publicModel;
+}
 
 export function defaultGatewayStartupModel(catalog: AgentConnectionCatalog): string {
   const profile = catalog.profiles.find((profile) => profile.id === catalog.defaultAgentProfile);
@@ -10,6 +19,20 @@ export function defaultGatewayStartupModel(catalog: AgentConnectionCatalog): str
   return provider.publicModel;
 }
 
+export function gatewayStartupVerificationIntent(input: {
+  catalog: AgentConnectionCatalog; registry: Registry; state: ClusterState;
+  retainedRuntimeIds: string[]; probeModel?: string; retentionUncertain?: boolean;
+}) {
+  const retainedModel = retainedGatewayStartupModel(input.catalog, input.registry, input.retainedRuntimeIds, input.state);
+  const model = retainedModel ?? defaultGatewayStartupModel(input.catalog);
+  const probeModel = input.probeModel ?? model;
+  // Startup verification must not replace restored profile intent. When an
+  // inference probe cannot preserve it, verify only the published catalog.
+  const catalogOnly = input.retentionUncertain === true || (input.retainedRuntimeIds.length > 0
+    && (retainedModel === undefined || probeModel !== retainedModel));
+  return { model, probeModel, catalogOnly };
+}
+
 export type GatewayStartupVerificationOptions = {
   baseUrl: string;
   apiToken?: string;
@@ -17,6 +40,7 @@ export type GatewayStartupVerificationOptions = {
   probeModel?: string;
   startupProbeToken: string;
   timeoutMs: number;
+  catalogOnly?: boolean;
   fetchImpl?: typeof fetch;
 };
 
@@ -39,6 +63,7 @@ export async function verifyGatewayStartup(
   if (!models.data?.some((model) => model.id === options.model)) {
     throw new Error(`required chat model ${options.model} is not routed`);
   }
+  if (options.catalogOnly) return;
   const probeModel = options.probeModel ?? options.model;
   if (!models.data?.some((model) => model.id === probeModel)) {
     throw new Error(`startup probe model ${probeModel} is not routed`);

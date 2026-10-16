@@ -1,3 +1,7 @@
+import { agentPrincipal } from "./agent-connection-controller";
+import { observabilityFromEnvironment } from "./observability";
+import { LocalUsageRetentionStore } from "@larm/backends";
+import { startProcessMetrics } from "./process-metrics";
 import { LocalServiceManager } from "./local-service-manager";
 import { z } from "zod";
 import { parseLocalServices, ServiceResourceLedger } from "@larm/core";
@@ -37,7 +41,7 @@ import {
 import { ContextController } from "./context-controller";
 import { PersonalStateController } from "./personal-state-controller";
 import { GatewayLifecycle, type GatewayLifecycleState } from "./gateway-lifecycle";
-import { defaultGatewayStartupModel, verifyGatewayStartup } from "./gateway-startup";
+import { gatewayStartupVerificationIntent, verifyGatewayStartup } from "./gateway-startup";
 import { AceStepMusicProvider, MusicGenerationManager, OnDemandMusicProvider } from "./music-manager";
 import { ImageArtifactManager } from "./image-artifact-manager";
 import { ImageGenerationProvider } from "./image-generation-provider";
@@ -61,9 +65,11 @@ const serviceLedger = new ServiceResourceLedger();
 let localServiceManager: LocalServiceManager | undefined;
 let localServicePrincipals: { id: string; token: string; services: string[] }[] | undefined;
 const metrics = new MetricsRegistry();
+const observability = observabilityFromEnvironment(metrics);
+const stopProcessMetrics = observability ? startProcessMetrics(metrics) : () => {};
 const observer = new Observer(registry, backend, {
   graceMs: config.graceMs,
-  telemetry: new LinuxNodeTelemetry(),
+  telemetry: new LinuxNodeTelemetry({ utilization: observability !== undefined }),
   onTelemetry: (telemetry) => {
     if (telemetry?.status !== "available") return;
     metrics.setGauge(
@@ -71,6 +77,8 @@ const observer = new Observer(registry, backend, {
       {},
       telemetry.systemMemoryAvailableBytes ?? 0,
     );
+    if (telemetry.systemCpuUtilization !== undefined) metrics.setGauge("system_cpu_utilization", {}, telemetry.systemCpuUtilization);
+    if (telemetry.acceleratorBusyMaxPercent !== undefined) metrics.setGauge("accelerator_busy_max_percent", {}, telemetry.acceleratorBusyMaxPercent);
     if (telemetry.acceleratorMemoryAvailableBytes !== undefined) {
       metrics.setGauge(
         "accelerator_memory_available_bytes",
@@ -81,7 +89,7 @@ const observer = new Observer(registry, backend, {
   },
 });
 const requestTracker = new RequestTracker();
-const mutationCoordinator = new MutationCoordinator();
+const mutationCoordinator = new MutationCoordinator(observability);
 let control: ControlPlane;
 const writeEvent = (event: ControlEvent) => {
   console.log(JSON.stringify({
@@ -175,6 +183,7 @@ const artifactStore = new LocalArtifactStore({
 let artifactManager: ArtifactManager;
 let runtimeReleaseManager: RuntimeReleaseManager;
 control = new ControlPlane(registry, backend, observer, {
+  observability,
   bootEpoch: identity.bootEpoch,
   idleTtlMs: config.idleTtlMs,
   startupTimeoutMs: config.startupTimeoutMs,
@@ -347,7 +356,17 @@ const musicManager = musicEndpoint
     upstreamOutputRoot: config.musicUpstreamOutputRoot,
   }), mediaVariants), {
     artifactRoot: config.musicArtifactRoot,
-    beginWorkload: () => requestTracker.begin(),
+    captureAdmission: () => {
+      const usage = control.usage;
+      const owner = usage?.owner;
+      return () => usage?.run(owner, () => usage.check());
+    },
+    beginWorkload: () => {
+      control.usage?.check();
+      const finishUsage = control.usage?.protection.begin(control.usage.owner);
+      const finishTracked = requestTracker.begin();
+      return () => { try { finishTracked(); } finally { finishUsage?.(); } };
+    },
     concurrency: 1,
     retentionMs: config.musicArtifactRetentionMs,
     wavRetentionMs: config.musicWavRetentionMs,
@@ -370,10 +389,12 @@ const imageGenerationProvider = imageEndpoint
     async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin())
   : undefined;
 const appComponents = createAppComponents({
+  observability,
   registry,
   getState: () => observer.getState(),
   control,
   apiToken: config.apiToken,
+  protectedConsumerToken: config.protectedConsumerToken,
   allowAnonymousAgentConnections: config.allowAnonymousAgentConnections,
   serviceHarnessAuthEnabled: config.serviceHarnessAuthEnabled,
   managementToken: config.managementToken,
@@ -433,6 +454,28 @@ const notifySystemd = async (...args: string[]): Promise<void> => {
   }
 };
 
+const usageRetentionStore = config.protectedConsumerToken ? new LocalUsageRetentionStore(config.usageRetentionPath) : undefined;
+let retentionUncertain = false;
+if (usageRetentionStore) {
+  try {
+    const snapshot = await usageRetentionStore.load();
+    if (snapshot?.catalogRevision === catalogGeneration.revision) control.restoreUsageRetention(snapshot.runtimeIds, snapshot.protectedConsumer, agentPrincipal(config.apiToken!));
+    else if (snapshot) {
+      retentionUncertain = snapshot.runtimeIds.length > 0;
+      if (retentionUncertain && snapshot.protectedConsumer && control.usage?.protectedOwner) {
+        control.usage.run(control.usage.protectedOwner, () => control.usage!.prepare(600_000)(true));
+      }
+      writeEvent({ name: "usage_retention_catalog_changed" });
+    }
+  } catch {
+    retentionUncertain = true;
+    writeEvent({ name: "usage_retention_restore_failed" });
+    if (control.usage?.protectedOwner) control.usage.run(control.usage.protectedOwner, () => control.usage!.prepare(600_000)(true));
+  }
+  control.setUsageRetentionListener((runtimeIds, protectedConsumer) => {
+    usageRetentionStore.save({ version: 1, catalogRevision: catalogGeneration.revision, runtimeIds, protectedConsumer });
+  }, () => usageRetentionStore.failed);
+}
 await control.reconcileProviderInstances();
 
 let ticking = false;
@@ -502,14 +545,16 @@ try {
   const probeHost = config.hostname === "0.0.0.0" || config.hostname === "::"
     ? "localhost"
     : config.hostname;
-  const startupModel = defaultGatewayStartupModel(catalogGeneration.agentConnections);
-  const probeModel = process.env.LARM_STARTUP_PROBE_CHAT_MODEL ?? startupModel;
+  const retainedIds = control.getUsageState().retainedRuntimeIds;
+  const startupIntent = gatewayStartupVerificationIntent({
+    catalog: catalogGeneration.agentConnections, registry, state: observer.getState(), retainedRuntimeIds: retainedIds,
+    probeModel: process.env.LARM_STARTUP_PROBE_CHAT_MODEL, retentionUncertain,
+  });
   await verifyGatewayStartup({
     baseUrl: process.env.LARM_STARTUP_PROBE_BASE_URL
       ?? `${config.tlsCertFile ? "https" : "http"}://${probeHost}:${server.port}`,
-    apiToken: config.apiToken,
-    model: startupModel,
-    probeModel,
+    apiToken: control.getUsageState().protected ? config.protectedConsumerToken : config.apiToken,
+    ...startupIntent,
     startupProbeToken,
     timeoutMs: config.connectionReadyTimeoutMs,
   });
@@ -523,7 +568,7 @@ try {
     labels: {
       bootEpoch: identity.bootEpoch,
       configRevision: identity.configRevision,
-      model: probeModel,
+      model: startupIntent.probeModel,
     },
   });
 } catch (error) {
@@ -605,6 +650,9 @@ async function shutdown(signal: string): Promise<void> {
     console.warn(`shutdown drain exceeded ${config.shutdownTimeoutMs} ms`);
   }
   server.stop(true);
+  stopProcessMetrics();
+  await observability?.shutdown();
+  await usageRetentionStore?.flush();
   process.exit(operationsDrained && requestsDrained ? 0 : 1);
 }
 

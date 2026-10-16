@@ -1,3 +1,6 @@
+import { claimUsageRequest, UsageProtectionError } from "./usage-coordinator";
+import { AudioObservation } from "./audio-observation";
+import { requestObservation } from "./observability";
 import { ChatInputError, validateChatImages, type AgentProviderContextWindow } from "@larm/core";
 import { prepareChatInput } from "./chat-input-gateway";
 import {
@@ -61,7 +64,7 @@ export class GatewayRequestPreparationError extends Error {
 
 type Revalidation =
   | { ok: true; binding: GatewayBinding }
-  | { ok: false; status: number; body: unknown };
+  | { ok: false; status: number; body: unknown; headers?: ConstructorParameters<typeof Headers>[0] };
 
 export type GatewayProxyOptions = {
   request: Request;
@@ -202,8 +205,32 @@ function classifyUpstreamTransportFailure(error: unknown): UpstreamTransportFail
 }
 
 export async function proxyGateway(options: GatewayProxyOptions): Promise<Response> {
-  const requestId = options.requestId ?? `req_${(options.random ?? (() => crypto.randomUUID()))()}`;
-  const startedAt = options.now?.() ?? Date.now();
+  const usage = claimUsageRequest(options.request);
+  if (usage) {
+    const revalidate = options.revalidate;
+    options = { ...options, revalidate: () => {
+      try { usage.check(); }
+      catch (error) {
+        if (error instanceof UsageProtectionError) return { ok: false, status: 409, headers: { "retry-after": String(error.retryAfterSeconds) }, body: { error: { code: error.code, message: error.message, ...(options.errorFormat === "openai" ? { type: "invalid_request_error", param: null } : {}) } } };
+        throw error;
+      }
+      return usage.run(revalidate);
+    } };
+  }
+  const observation = requestObservation(options.request);
+  const requestId = options.requestId ?? observation?.correlation["larm.request_id"] ?? `req_${(options.random ?? (() => crypto.randomUUID()))()}`;
+  observation?.bind(options.runtime.id, options.protocol, requestId);
+  observation?.attribute("larm.allocation_id", options.allocationId);
+  if (options.auditContext) {
+    observation?.attribute("larm.route", options.auditContext.route);
+    observation?.attribute("larm.capability", options.auditContext.capability);
+    if (options.auditContext.runtimeRelease) observation?.attribute("larm.runtime_release", options.auditContext.runtimeRelease);
+  }
+  const audioObservation = observation && options.protocol === "openai.audio-speech.v1" ? new AudioObservation() : undefined;
+  let firstAudio = false;
+  let upstreamStarted: number | undefined;
+  let usagePerformed = false;
+  const startedAt = options.now?.() ?? performance.now();
   const clientSignal = options.request.signal;
   const abort = new AbortController();
   let outcome = "pending";
@@ -212,6 +239,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   let uploadError: unknown;
   let uploadCompletion = Promise.resolve();
   let releaseSlot: (() => void) | undefined;
+  let slotAcquiredAt: number | undefined;
   let cancelUpstream: ((reason: unknown) => Promise<void>) | undefined;
   let upstreamStatus: number | undefined;
   let auditSession: InferenceAuditCaptureSession | undefined;
@@ -248,41 +276,69 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     clientSignal.removeEventListener("abort", abortFromClient);
     options.lifecycleSignal?.removeEventListener("abort", abortFromLifecycle);
     options.attemptSignal?.removeEventListener("abort", abortFromAttempt);
+    const cleanup = observation?.operation("request_cleanup");
+    let cleanupOutcome = "complete";
+    const terminalAt = performance.now();
+    const used = usagePerformed && bodyLimitError === undefined;
     const releaseExecution = releaseSlot;
     releaseSlot = undefined;
+    const releaseObserved = () => {
+      try { releaseExecution?.(); }
+      finally {
+        if (releaseExecution && slotAcquiredAt !== undefined) {
+          cleanup?.measure("slot_hold", performance.now() - slotAcquiredAt);
+          cleanup?.measure("post_response_slot_hold", performance.now() - terminalAt);
+        }
+      }
+    };
     if (options.onTerminal) {
       void (async () => {
+        const terminalEnd = cleanup?.stage("terminal_callback");
         try {
-          await options.onTerminal!({ outcome, upstreamStatus });
+          const terminal = () => options.onTerminal!({ outcome, upstreamStatus });
+          await (cleanup ? cleanup.run(terminal) : terminal());
         } catch {
+          cleanupOutcome = "terminal_error";
           options.onEvent?.({
             name: "gateway_terminal_callback_failed",
             labels: { request: requestId },
           });
         } finally {
-          releaseExecution?.();
+          terminalEnd?.();
+          releaseObserved();
         }
+        const finishEnd = options.onFinish ? cleanup?.stage("finish_callback") : undefined;
         try {
-          await options.onFinish?.();
+          const complete = () => options.onFinish?.();
+          await (cleanup ? cleanup.run(complete) : complete());
         } catch {
+          cleanupOutcome = "finish_error";
           options.onEvent?.({
             name: "gateway_finish_callback_failed",
             labels: { request: requestId },
           });
         } finally {
+          finishEnd?.();
           finishTracked();
+          usage?.finish(used);
+          cleanup?.finish(cleanupOutcome);
         }
       })();
     } else {
-      releaseExecution?.();
+      releaseObserved();
+      const finishEnd = options.onFinish ? cleanup?.stage("finish_callback") : undefined;
       try {
-        void Promise.resolve(options.onFinish?.()).catch(() => {
+        const result = options.onFinish ? (cleanup ? cleanup.run(() => options.onFinish!()) : options.onFinish()) : undefined;
+        void Promise.resolve(result).catch(() => {
+          cleanupOutcome = "finish_error";
           options.onEvent?.({
             name: "gateway_finish_callback_failed",
             labels: { request: requestId },
           });
-        });
+        }).finally(() => { usage?.finish(used); finishEnd?.(); cleanup?.finish(cleanupOutcome); });
       } catch {
+        usage?.finish(used);
+        finishEnd?.(); cleanup?.finish("error");
         options.onEvent?.({
           name: "gateway_finish_callback_failed",
           labels: { request: requestId },
@@ -290,10 +346,16 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       }
       finishTracked();
     }
+    const audioSeconds = audioObservation?.durationSeconds();
+    if (audioSeconds !== undefined && outcome.startsWith("http_2")) {
+      observation?.attribute("larm.audio_seconds", audioSeconds);
+      if (upstreamStarted !== undefined) observation?.attribute("larm.upstream_rtf", (performance.now() - upstreamStarted) / (audioSeconds * 1000));
+    }
+    observation?.finish(outcome);
     options.metrics?.record({
       name: "gateway_duration_seconds",
       labels: { runtime: options.runtime.id, protocol: options.protocol },
-      value: Math.max(0, ((options.now?.() ?? Date.now()) - startedAt) / 1_000),
+      value: Math.max(0, ((options.now?.() ?? performance.now()) - startedAt) / 1_000),
     });
     if (auditMetadataStarted) {
       options.onEvent?.({
@@ -317,6 +379,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     if (!auditSession) return Promise.resolve();
     const finalOutcome = outcome;
     const finalUpstreamStatus = upstreamStatus;
+    const auditEnd = observation?.stage("audit_finalize");
     auditFinalization = auditSession.finalize({
       outcome: finalOutcome,
       upstreamStatus: finalUpstreamStatus,
@@ -331,6 +394,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         labels: { request: requestId, phase: "finalize" },
       });
     });
+    auditFinalization = auditFinalization.finally(() => auditEnd?.());
     return auditFinalization;
   };
   timeout = setTimeout(() => {
@@ -350,6 +414,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     headers?: ConstructorParameters<typeof Headers>[0],
   ): Promise<Response> => {
     outcome = result;
+    observation?.attribute("http.response.status_code", status);
     options.metrics?.record({
       name: "gateway_request",
       labels: { runtime: options.runtime.id, protocol: options.protocol, result },
@@ -382,7 +447,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         reason.code,
         {
           "retry-after": String(reason.retryAfterSeconds),
-          "x-larm-preemption-reason": "higher-priority-foreground-task",
+          "x-larm-preemption-reason": reason.code === "foreground_protected" ? "protected-consumer" : "higher-priority-foreground-task",
         },
       );
     }
@@ -392,6 +457,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       await finalizeAudit();
       finish();
       return jsonResponse(invalidated.body, invalidated.status, {
+        ...Object.fromEntries(new Headers(invalidated.headers)),
         "x-request-id": requestId,
         "x-larm-boot-epoch": options.bootEpoch,
       });
@@ -429,6 +495,10 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     },
   });
 
+  const queueEnd = observation?.stage("execution_wait");
+  const queueState = options.executionGate.snapshot(options.runtime.id);
+  observation?.attribute("larm.queue_depth_at_arrival", queueState.queued);
+  observation?.attribute("larm.active_at_arrival", queueState.active);
   try {
     releaseSlot = await (options.exclusiveExecution
       ? options.executionGate.acquireExclusive(
@@ -444,6 +514,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       options.priority ?? 0,
       ));
   } catch (error) {
+    queueEnd?.();
     if (timedOut) {
       return failure("gateway_timeout", "gateway request timed out", 504, "timeout");
     }
@@ -470,11 +541,16 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     return failure("execution_unavailable", "execution slot could not be acquired", 503, "gate_error");
   }
 
+  slotAcquiredAt = observation ? performance.now() : undefined;
+  queueEnd?.();
+  const readinessEnd = observation?.stage("binding_revalidation");
   const current = options.revalidate();
+  readinessEnd?.();
   if (!current.ok) {
     outcome = "binding_invalidated";
     finish();
     return jsonResponse(current.body, current.status, {
+      ...Object.fromEntries(new Headers(current.headers)),
       "x-request-id": requestId,
       "x-larm-boot-epoch": options.bootEpoch,
     });
@@ -488,6 +564,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     );
   }
 
+  const prepareEnd = observation?.stage("request_preparation");
   let body: RequestInit["body"];
   let expectedSpeechFormat = options.expectedSpeechFormat;
   try {
@@ -520,11 +597,14 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
           "context materialization requires a buffered request body",
         );
       }
+      const contextEnd = observation?.stage("context_preparation");
       body = await options.prepareRequestBody(body, abort.signal);
+      contextEnd?.();
     }
     if (options.protocol === "openai.chat-completions.v1" && body instanceof Uint8Array) {
       if (options.runtime.chatInput) {
         if (!options.chatInputWindow) throw new ChatInputError(503, "chat_input_contract_unavailable");
+        const chatInputEnd = observation?.stage("chat_input");
         const checked = await withAbort(prepareChatInput({
           body, endpoint: current.binding.endpoint, policy: options.runtime.chatInput,
           window: options.chatInputWindow, runtime: options.runtime.id,
@@ -533,16 +613,18 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
           bootEpoch: options.bootEpoch, requestId, signal: abort.signal,
           fetchImpl: options.fetchImpl,
         }), abort.signal);
+        chatInputEnd?.();
         body = checked.body;
         // Revalidate after preprocessing: an expired/replaced lease cannot forward inference.
         const after = options.revalidate();
         if (!after.ok) {
           outcome = "binding_invalidated";
           finish();
-          return jsonResponse(after.body, after.status, { "x-request-id": requestId, "x-larm-boot-epoch": options.bootEpoch, "cache-control": "no-store" });
+          return jsonResponse(after.body, after.status, { ...Object.fromEntries(new Headers(after.headers)), "x-request-id": requestId, "x-larm-boot-epoch": options.bootEpoch, "cache-control": "no-store" });
         }
         if (after.binding.runtime !== current.binding.runtime || after.binding.endpoint !== current.binding.endpoint) return failure("binding_changed", "allocation binding changed", 409, "binding_changed");
         if (options.countChatInputOnly) {
+          usagePerformed = true;
           finish();
           return jsonResponse(checked.count, 200, { "x-request-id": requestId, "x-larm-boot-epoch": options.bootEpoch, "cache-control": "no-store" });
         }
@@ -617,6 +699,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         "audit_unavailable",
       );
     }
+    const auditBeginEnd = observation?.stage("audit_begin");
     try {
       auditSession = await options.inferenceAuditRecorder.begin({
         requestId,
@@ -663,9 +746,10 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         503,
         "audit_unavailable",
       );
-    }
+    } finally { auditBeginEnd?.(); }
   }
 
+  prepareEnd?.();
   const headers = new Headers({
     accept: options.responseFormat === "sse"
       ? "text/event-stream"
@@ -673,12 +757,14 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     "content-type": options.request.headers.get("content-type") ?? "application/json",
     "x-request-id": requestId,
   });
+  const forwardPreparationEnd = observation?.stage("forward_preparation");
   const endpoint = current.binding.endpoint.replace(/\/+$/, "");
   const target = `${endpoint}${options.upstreamPath}`;
   let upstream: Response;
   try {
     abort.signal.throwIfAborted();
     await options.onForwarded?.();
+    forwardPreparationEnd?.();
     const init: GatewayFetchRequestInit & { duplex?: "half" } = {
       method: options.request.method,
       headers,
@@ -693,14 +779,20 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     if (options.bodyMode === "stream" && body) {
       init.duplex = "half";
     }
+    upstreamStarted = performance.now();
+    usagePerformed = true;
+    observation?.startUpstream(headers);
+    const headersEnd = observation?.stage("upstream_headers");
     const response = await withAbort((options.fetchImpl ?? fetch)(target, init), abort.signal);
+    headersEnd?.();
+    const uploadEnd = observation?.stage("upload_completion");
     try {
       await withAbort(uploadCompletion, abort.signal);
     } catch (error) {
       uploadError = error;
       await response.body?.cancel(error).catch(() => undefined);
       throw error;
-    }
+    } finally { uploadEnd?.(); }
     upstream = response;
   } catch (error) {
     if (bodyLimitError) {
@@ -749,7 +841,15 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     return failure("upstream_unavailable", "upstream request failed", 502, "upstream_error");
   }
 
+  const bodyEnd = observation?.stage("upstream_body");
+  const readUpstreamBody = async (limit: number) => {
+    try {
+      return await readBodyLimited(upstream as unknown as Request, limit, abort.signal, observation ? () => { observation.bodyReceived(); } : undefined);
+    } finally { bodyEnd?.(); observation?.endUpstream(); }
+  };
   upstreamStatus = upstream.status;
+  if (upstream.status >= 400 && upstream.status < 500) usagePerformed = false;
+  observation?.attribute("http.response.status_code", upstream.status);
   options.metrics?.record({
     name: "gateway_ttfb_seconds",
     labels: {
@@ -757,7 +857,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       protocol: options.protocol,
       status: String(upstream.status),
     },
-    value: ((options.now?.() ?? Date.now()) - startedAt) / 1_000,
+    value: ((options.now?.() ?? performance.now()) - startedAt) / 1_000,
   });
   if (upstream.status >= 300 && upstream.status < 400) {
     await upstream.body?.cancel(new Error("upstream redirect is forbidden")).catch(() => undefined);
@@ -856,11 +956,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     let responseBody: Uint8Array;
     let parsed: unknown;
     try {
-      responseBody = await readBodyLimited(
-        upstream as unknown as Request,
-        options.maxResponseBytes ?? 4 * 1024 * 1024,
-        abort.signal,
-      );
+      responseBody = await readUpstreamBody(options.maxResponseBytes ?? 4 * 1024 * 1024);
       parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody)) as unknown;
     } catch {
       return failure(
@@ -902,11 +998,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     let responseBody: Uint8Array;
     let parsed: unknown;
     try {
-      responseBody = await readBodyLimited(
-        upstream as unknown as Request,
-        options.maxResponseBytes ?? 2 * 1024 * 1024,
-        abort.signal,
-      );
+      responseBody = await readUpstreamBody(options.maxResponseBytes ?? 2 * 1024 * 1024);
       parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody)) as unknown;
     } catch {
       return failure(
@@ -951,7 +1043,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     let responseBody: Uint8Array;
     let parsed: unknown;
     try {
-      responseBody = await readBodyLimited(upstream as unknown as Request, options.maxResponseBytes ?? 2 * 1024 * 1024, abort.signal);
+      responseBody = await readUpstreamBody(options.maxResponseBytes ?? 2 * 1024 * 1024);
       parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody)) as unknown;
     } catch {
       return failure("upstream_response_invalid", "upstream returned an invalid or oversized System One response", 502, "upstream_protocol_error");
@@ -985,11 +1077,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     let responseBody: Uint8Array;
     let parsed: unknown;
     try {
-      responseBody = await readBodyLimited(
-        upstream as unknown as Request,
-        options.maxResponseBytes ?? 16 * 1024 * 1024,
-        abort.signal,
-      );
+      responseBody = await readUpstreamBody(options.maxResponseBytes ?? 16 * 1024 * 1024);
       parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody)) as unknown;
     } catch {
       return failure(
@@ -999,6 +1087,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         "upstream_protocol_error",
       );
     }
+    observation?.engine(parsed);
     const inspected = inspectOpenAiChatCompletionJson(parsed);
     if (!inspected.ok) {
       return failure(
@@ -1057,11 +1146,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     let responseBody: Uint8Array;
     let parsed: unknown;
     try {
-      responseBody = await readBodyLimited(
-        upstream as unknown as Request,
-        options.maxResponseBytes ?? 4 * 1024 * 1024,
-        abort.signal,
-      );
+      responseBody = await readUpstreamBody(options.maxResponseBytes ?? 4 * 1024 * 1024);
       parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody)) as unknown;
     } catch {
       return failure(
@@ -1082,6 +1167,11 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         responseHeaders.set("content-length", String(responseBody.byteLength));
       }
     }
+    const inputSeconds = (parsed as { duration?: unknown } | null)?.duration;
+    if (typeof inputSeconds === "number" && Number.isFinite(inputSeconds) && inputSeconds > 0) {
+      observation?.attribute("larm.audio_input_seconds", inputSeconds);
+      if (upstreamStarted !== undefined) observation?.attribute("larm.upstream_rtf", (performance.now() - upstreamStarted) / (inputSeconds * 1000));
+    }
     if (!inspectOpenAiTranscriptionJson(parsed).ok) {
       return failure(
         "upstream_response_invalid",
@@ -1099,20 +1189,27 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
   }
   if (!upstream.body) {
+    bodyEnd?.(); observation?.endUpstream();
     await finalizeAudit();
     finish();
     return new Response(null, { status: upstream.status, headers: responseHeaders });
   }
 
+  const statisticsChunks: Uint8Array[] | undefined = observation
+    && options.protocol === "openai.chat-completions.v1" && options.responseFormat !== "sse"
+    && upstream.ok && responseHeaders.get("content-type")?.startsWith("application/json") ? [] : undefined;
+  let statisticsBytes = 0;
+  let statisticsOverflow = false;
   const reader = upstream.body.getReader();
   const sseInspector = options.responseFormat === "sse" && upstream.ok
-    ? new OpenAiChatCompletionSseInspector()
+    ? new OpenAiChatCompletionSseInspector(observation ? chunk => observation.engine(chunk) : undefined)
     : undefined;
   const sseNormalizer = sseInspector && options.expectedModel !== undefined
     ? new OpenAiChatCompletionSseNormalizer(options.expectedModel)
     : undefined;
   if (sseNormalizer) responseHeaders.delete("content-length");
   let firstMeaningfulOutputObserved = false;
+  let lastEnqueuedAt: number | undefined;
   const failStreamProtocol = async (
     controller: ReadableStreamDefaultController<Uint8Array>,
     reason: string,
@@ -1144,7 +1241,8 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       }
       if (progress?.ok && progress.deltas > 0 && !firstMeaningfulOutputObserved) {
         firstMeaningfulOutputObserved = true;
-        const elapsed = Math.max(0, ((options.now?.() ?? Date.now()) - startedAt) / 1_000);
+        observation?.measure("first_token", performance.now() - observation.started);
+        const elapsed = Math.max(0, ((options.now?.() ?? performance.now()) - startedAt) / 1_000);
         options.metrics?.record({
           name: "gateway_first_meaningful_output_seconds",
           labels: { runtime: options.runtime.id, protocol: options.protocol },
@@ -1173,6 +1271,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         }
       }
       controller.enqueue(bytes);
+      if (observation) lastEnqueuedAt = performance.now();
     }
     return true;
   };
@@ -1186,11 +1285,22 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   const stream = new ReadableStream<Uint8Array>({
     start(controller) { streamController = controller; },
     async pull(controller) {
+      if (lastEnqueuedAt !== undefined) { observation?.measure("downstream_pull_gap", performance.now() - lastEnqueuedAt); lastEnqueuedAt = undefined; }
       try {
         abort.signal.throwIfAborted();
         const chunk = await withAbort(reader.read(), abort.signal);
         abort.signal.throwIfAborted();
         if (chunk.done) {
+          bodyEnd?.(); observation?.endUpstream();
+          if (statisticsChunks && !statisticsOverflow) {
+            try {
+              const bytes = new Uint8Array(statisticsBytes);
+              let offset = 0;
+              for (const chunk of statisticsChunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+              observation?.engine(JSON.parse(new TextDecoder().decode(bytes)));
+            } catch { /* Optional statistics never validate or reject the legacy response. */ }
+            statisticsChunks.length = 0;
+          }
           if (sseNormalizer) {
             const normalized = sseNormalizer.finish();
             if (!normalized.ok) {
@@ -1219,6 +1329,16 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
           controller.close();
           return;
         }
+        const received = observation?.bodyReceived();
+        if (statisticsChunks && !statisticsOverflow) {
+          statisticsBytes += chunk.value.byteLength;
+          if (statisticsBytes > 65536) { statisticsOverflow = true; statisticsChunks.length = 0; }
+          else statisticsChunks.push(chunk.value.slice());
+        }
+        if (audioObservation?.push(chunk.value) && !firstAudio) {
+          firstAudio = true;
+          observation?.measure("first_playable_audio", performance.now() - upstreamStarted!);
+        }
         const normalized = sseNormalizer?.push(chunk.value);
         if (normalized && !normalized.ok) {
           await failStreamProtocol(controller, normalized.reason);
@@ -1226,6 +1346,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         }
         const output = normalized?.output ?? [chunk.value];
         if (!await enqueueSseOutput(controller, output)) return;
+        if (received !== undefined) observation?.relayed(received);
       } catch (error) {
         if (
           !timedOut

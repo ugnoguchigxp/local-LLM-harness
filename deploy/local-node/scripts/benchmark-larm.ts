@@ -239,7 +239,7 @@ async function runSample(id: SeriesId, iteration: number): Promise<RawSample> {
         runtime: binding.runtime,
         release: binding.release ?? "unmanaged",
         fallback: binding.fallback,
-        ttfbMs: measured.firstTokenMs,
+        ttfbMs: measured.firstTokenMs ?? measured.firstByteMs,
         totalMs: measured.totalMs,
         startupMs,
         status,

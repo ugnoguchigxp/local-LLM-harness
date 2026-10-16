@@ -15,6 +15,7 @@ export type HealthRouteDeps = {
   getState: () => ClusterState;
   control: ControlPlane;
   metrics?: MetricsRegistry;
+  observability?: { collect(): void };
   requestTracker?: RequestTracker;
   stateMaxAgeMs?: number;
   now?: () => number;
@@ -40,6 +41,7 @@ export function registerHealthRoutes(
       releaseCommit: deps.identity.releaseCommit,
       configRevision: deps.getConfigRevision?.() ?? deps.identity.configRevision,
       bootEpoch: deps.identity.bootEpoch,
+      ...(deps.control.usage ? { usageProtection: deps.control.getUsageState() } : {}),
     }, gateway && !gateway.ready ? 503 : 200);
   });
 
@@ -111,6 +113,18 @@ export function registerHealthRoutes(
     return c.json(activity);
   });
 
-  app.get("/metrics", (c) => c.text(deps.metrics?.render() ?? ""));
+  app.get("/metrics", (c) => {
+    if (deps.control.usage) {
+      const state = deps.control.getUsageState();
+      try {
+        deps.metrics?.setGauge("protection_active_requests", {}, state.activeRequests);
+        deps.metrics?.setGauge("protection_remaining_seconds", {}, state.remainingMs / 1000);
+        deps.metrics?.setGauge("provider_retained_runtimes", {}, state.retainedRuntimeIds.length);
+        deps.metrics?.setGauge("allocation_waiters", {}, state.allocationWaiters);
+      } catch { /* Metric collection cannot change admission. */ }
+    }
+    try { deps.observability?.collect(); } catch { /* Telemetry health must not prevent a scrape. */ }
+    return c.text(deps.metrics?.render() ?? "");
+  });
   app.get("/openapi.json", (c) => c.json(createOpenApiDocument(deps.identity.version)));
 }

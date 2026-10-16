@@ -10,6 +10,14 @@ export function secretMatches(actual: string | undefined, expected: string): boo
   return actual !== undefined && timingSafeEqual(actualDigest, expectedDigest);
 }
 
+/** Cache only the configured secret digest, never arbitrary incoming credentials. */
+export function secretMatcher(expected: string): (actual: string | undefined) => boolean {
+  const digest = createHash("sha256").update(expected).digest();
+  return actual => actual !== undefined && timingSafeEqual(createHash("sha256").update(actual).digest(), digest);
+}
+
+export const authenticatedBearerKinds = new WeakMap<Request, "standard" | "protected">();
+
 export function isPersonalStateApiPath(path: string): boolean {
   return /^(?:\/v1\/(?:personal-state\/capability|context-sources|context-source-operations\/[^/]+|context-measurements(?:\/[^/]+)?|generation-attempts\/[^/]+(?:\/cancel)?|context-forget-operations(?:\/[^/]+)?)|\/v2\/context-views(?:\/[^/]+)?)$/.test(path);
 }

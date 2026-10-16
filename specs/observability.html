@@ -1,0 +1,844 @@
+<article lang="ja">
+  <h1>LARM 性能計測・トレーシング基盤</h1>
+  <p>
+    2026-10-16。既存のモデル解決、優先度、Provider
+    lifecycle、キャンセル、TTSの直列実行を変更せず、管理処理とupstream応答を分解する。実モデルの高速化、Rust移行、起動・配置の変更は対象外。本書と<a
+      href="./performance-benchmark.html"
+      >性能診断仕様</a
+    >を併せて参照する。
+  </p>
+
+  <section id="survey">
+    <h2>既存実装の調査と優先順位</h2>
+    <table>
+      <caption>
+        既存経路、不足点と今回の対応
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域・実装</th>
+          <th scope="col">既存機能と不足</th>
+          <th scope="col">対応</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Gateway</th>
+          <td>
+            <code>app-request-policy → app-gateway-handler → app-gateway-ingress → proxyGateway</code>。従来のgateway_duration、gateway_ttfb、SSE
+            first meaningful
+            outputはproxy内だけを測定。入口の認証・body検証、Broker待ちと関連しない。
+          </td>
+          <td>
+            優先度1。middlewareからterminalまで単一のserver
+            spanを維持。区間別histogram、Server-Timing、Request IDとの対応を追加。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Model Broker</th>
+          <td>
+            <code>app-model-broker-gateway → ModelBroker.acquire → control.allocate → ready polling</code
+            >。同一モデルの処理中leaseは共有、最後の参照でclose。prepare開始・完了eventは存在するがモデル解決、割当、ready待ちが分離されない。
+          </td>
+          <td>
+            優先度1。model_resolution、allocation_acquire、broker_acquire、runtime_readiness。共有処理自体は先行リクエストに属し、後続は自身のbroker_acquireで共有ready
+            Promise待ちを計測。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Allocation / Admission</th>
+          <td>
+            <code>controller → planAllocationRequestAdmission → resolveAllocationBindings / planAllocationCapacity → commitAllocationRequest</code>。リソース・優先度・swap-group・fresh
+            telemetry・待機promotionを制御。
+          </td>
+          <td>
+            優先度1。同期Admission判定と割当取得を別区間にする。既存allocation経路ではlookupを計測し、実施しないallocateや起動を架空の0msとして作らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Runtime Lifecycle</th>
+          <td>
+            <code>AllocationStartupLifecycle → startAndVerifyAllocationRuntimes → ProviderInstanceManager.acquire → backend</code>。起動・verify・waiting
+            promotionのeventと状態は既存。ready bindingは起動不要。
+          </td>
+          <td>
+            優先度1。要求からreadyになる待ちを計測し、初期allocation状態とbinding状態を記録。readyはcold/warmの物理証明ではない。プロセスを見て別Profileのモデルをdriftと判定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実行キュー</th>
+          <td>
+            <code>ExecutionGate</code
+            >がruntime単位のmaxConcurrentRequests、maxQueuedRequests、優先度降順・同順位FIFO、timeout、exclusive、quarantineを制御。execution_active、execution_queued、execution_queue_secondsが既存。
+          </td>
+          <td>
+            優先度1。全リクエストのexecution_waitを追加。即時取得も記録し、timeout・キャンセルもterminal
+            outcomeと共に観測。キューと順位は再実装しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LLM・感情推定</th>
+          <td>
+            LLM
+            JSON/SSEと<code>larm.system-one.v1</code>は同じproxyを利用。chat-inputのtokenize、managed
+            context、personal-state、監査には独立処理がある。エンジンによってusageとtimingsの提供が異なる。
+          </td>
+          <td>
+            優先度2。既存JSON parseとSSE inspector
+            callbackを再利用し、数値allowlistでengine統計のみ取得。request_preparationに前処理を含める。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td>
+            allocation/claimed
+            Provider経路と、<code>service-harness-gateway</code>の固定ASR経路がある。multipart
+            uploadはstream、最終JSONは既存検証器で検証。
+          </td>
+          <td>
+            優先度2。両経路の実行待ち、upload完了待ち、headers/body/全体を計測。入力長・RTFは診断fixtureで取得。通常APIはエンジン推論開始やVAD時刻を提供しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>
+            Gatewayのruntime実行制御と、Eumenesの会話内の直列生成が別々に存在する。音声の順序保証はconsumerにある。
+          </td>
+          <td>
+            優先度2。各HTTPチャンクのLARM待ち、最初のWAV音声、全体、文字数、音声長、RTF、キャンセルを取得。Eumenesのpendingキュー・再生時間はLARMから観測できない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">リソース・既存診断</th>
+          <td>
+            <code>LinuxNodeTelemetry</code>はprocfs/sysfsのRAM・AMD
+            VRAM/GTT。Observerの既存tickと/metricsを使用。performance-larm.tsはJSON/SSE、LLM/ASR/TTS単独・mixed、p50/p95/max、JSON外部保存、ASR
+            shadow比較を実装済み。
+          </td>
+          <td>
+            優先度2。任意CPU/GPU busy、daemon RSS/heap・CPU・event
+            loop、GC対応時のpauseを追加。診断にdirect比較、trace参照、区間別集計、engine統計を追加。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      調査範囲はapps、packages、deploy/local-node、benchmarks、既存specs。SAAA実装には依存せず、変更していない。Eumenesはローカルのclean
+      checkout
+      <code>c651e23dbbe7850f7ae5664f240db313829113b2</code
+      >をread-only調査した。最新remoteとの同一性は検証していない。
+    </p>
+  </section>
+
+  <section id="stages">
+    <h2>区間の意味と確認方法</h2>
+    <p>
+      新規計測の経過時間は<code>performance.now()</code>を使う。spanのUTC時刻は受付時のDate.nowに単調時計の差を足す。プロセス間でUTC時刻を引いて遅延を算出しない。既存queueとGatewayの既定duration時計も単調時計へ変更し、TTL・期限判定のwall
+      clockは維持する。
+    </p>
+    <table>
+      <caption>
+        spanとlarm_request_stage_secondsのstage。単位はhistogramが秒、trace属性とServer-Timingがms
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">stage</th>
+          <th scope="col">開始・終了と制限</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">dispatch</th>
+          <td>
+            共通middleware受付からGateway
+            handler開始まで。認証・readinessポリシー・ルートdispatchを含む。ネットワークで受信する前やHTTPサーバー内の待ちは含まない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ingress</th>
+          <td>Gateway入口の検証・body準備。multipartの音声本文はログにもtraceにも保存しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">model_resolution</th>
+          <td>Broker catalogからモデル・protocolを解決する同期区間。</td>
+        </tr>
+        <tr>
+          <th scope="row">broker_acquire</th>
+          <td>Broker.acquireの入口からlease取得。共有prepare・先行close待ちを含む。</td>
+        </tr>
+        <tr>
+          <th scope="row">allocation_acquire / allocation_admission</th>
+          <td>
+            control.allocate全体と、その内部のplanAllocationRequestAdmission判定。後者は前者の内数。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">runtime_readiness</th>
+          <td>
+            Brokerの割当応答からready binding確認。capacity待ち、起動、poll
+            intervalの待ちを含み、純粋なモデルload時間ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">allocation_lookup / provider_admission</th>
+          <td>
+            既存allocationのbinding選択・resolveと、foreground/background
+            Provider要求の受付。新規モデル起動と区別する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">execution_wait</th>
+          <td>
+            ExecutionGate.acquire呼出しからslot取得、または失敗まで。LARMの待ちであり、upstream内部キューを含まない。slot取得後のconcurrencyは既存execution_activeと比較する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">binding_revalidation / request_preparation / forward_preparation</th>
+          <td>
+            slot取得後のbinding再確認、body・chat-input・context・監査準備、onForwardedの実行。これらをエンジン推論時間に混ぜない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">upstream_headers</th>
+          <td>
+            fetch呼出しからresponse
+            headers受信。接続、upload、upstream内部キュー、推論の一部を含む。fetchは接続完了・送信完了の独立時刻を公開しないため個別値を作らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">upload_completion</th>
+          <td>
+            response headers取得後、stream
+            uploadが正常完了したことを確認する待ち。送信全体の所要時間ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">upstream_body</th>
+          <td>
+            headers/upload確認後からbody EOFまで。SSEではdecode、受信、正規化、consumer
+            backpressureを含む。engineのdecode_msとは別物。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">first_body / first_token</th>
+          <td>
+            共通受付から最初の非空body chunk／最初のmeaningful SSE
+            deltaまで。JSONのTTFTは未取得。SSEのrole、usage、finishだけではTTFTを確定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">relay_sum / relay_max</th>
+          <td>
+            streamのreader.read解決から検証・監査capture・downstream
+            enqueueまでの所要時間の合計／最大。1チャンク1ログを出さず最後に集約。ソケット送信・再生完了を意味しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">first_playable_audio</th>
+          <td>
+            fetch開始からWAV data
+            headerと最初の音声byteを観測するまで。実際のengine内部推論開始からの時間ではない。最大64KiBのheaderだけを検査し、非WAVでは未取得。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">total</th>
+          <td>
+            共通受付からGateway terminalまで。stream
+            EOF、cancel、timeout、異常終了を含む。buffered応答では検証完了時まで。実際のネットワーク配信・ブラウザ再生完了はEumenes側で別計測する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      入れ子や累積時間を含むため全stageを合算しない。larm.upstream client
+      spanはfetchからbody完了まで。early
+      failureでは進行中区間をterminal時点で閉じる。非同期監査finalizeやterminal
+      callbackによるslot保持は既存仕様を維持する。確定処理とslot保持はrequest_cleanup
+      operation、監査finalizeはaudit_finalizeで確認する。
+    </p>
+    <p>
+      Trace属性は<code>larm.duration_ms.*</code>、runtime/protocol、初期allocation/binding状態、到着時のqueue深度・active数、内部Request
+      ID。既存のallocation・lifecycle eventをRequest
+      ID、runtime、routeと照合する。状態は観測の分類であり、物理的cold/warmと断定しない。
+    </p>
+    <pre><code>larm_request_stage_seconds{stage="execution_wait",runtime="...",protocol="...",outcome="..."}
+larm_execution_active{runtime="..."}
+larm_execution_queued{runtime="..."}
+larm_observed_request_total{protocol="openai.audio-speech.v1",outcome="client_cancelled"}</code></pre>
+    <p>
+      実際のhistogram系列は上記nameに_bucket、_sum、_countが付く。低遅延区間を観測できるようbucket下限を0.1msとした。Prometheusでは<code>histogram_quantile(0.95, sum by (le, stage, runtime) (rate(larm_request_stage_seconds_bucket[5m])))</code>で確認する。IDはmetric
+      labelにしない。Server-Timingはheaders確定時点の完了区間のみで、stream完了後のtotalやrelayはtraceと/metricsで確認する。
+    </p>
+  </section>
+
+  <section id="engine-audio">
+    <h2>推論・音声統計と未取得の扱い</h2>
+    <p>
+      <code>inferenceStatistics</code
+      >は既にparseされたJSON/SSEから数値のみ抽出する。検証前のlegacy allocation
+      JSON応答は最大64KiBの任意tapから完了時に統計を読む。超過時はtapを破棄し、応答はそのまま配信する。usage.prompt_tokens、usage.completion_tokens、usage.prompt_tokens_details.cached_tokens、timings.cache_n、prompt_ms、predicted_ms、predicted_per_secondを対象とする。cache_nは再利用prompt
+      token数、prompt_msとpredicted_msはエンジン報告値。cache
+      hit率やtoken速度を文字数から推定しない。traceの<code>larm.engine.*</code>と<code
+        >larm_engine_reported_*</code
+      >
+      gaugeに記録し、診断ではp50/p95/maxを集計する。gaugeは最後に得た値であり、リクエストごとの履歴ではない。
+    </p>
+    <p>
+      診断JSON schema
+      4では、JSONのfirstTokenMsとusageなしのcompletionTokens、outputTokensPerSecondをnullとする。deltaEventsは引き続き別に記録する。outputTokensPerSecondは報告されたcompletion
+      token数÷クライアント側total時間であり、エンジンのdecode_tokens_per_secondと区別する。
+    </p>
+    <p>
+      TTSは<code>larm.input_characters</code>、WAVが完結した場合の<code>larm.audio_seconds</code>、fetch開始からterminalまで÷音声長の<code>larm.upstream_rtf</code>を記録する。対応gaugeは<code>larm_request_input_characters</code>、<code>larm_request_audio_seconds</code>、<code>larm_request_upstream_rtf</code>。headerが大きいWAV、未完結WAV、未知の長さ、PCM・MP3等では長さを推定しない。キャンセル音声のduration/RTFは確定しない。
+    </p>
+    <p>
+      ASR診断ではfixtureのWAV headerまたは明示した音声長とclient
+      totalからRTFを計算する。通常ASR最終JSONからengine内部の開始時刻や推論時間は得られない。verbose
+      JSONにdurationが報告される場合だけaudio_input_secondsとupstream
+      RTFも記録する。音声の長さと処理時間は別の値として扱う。
+    </p>
+    <table>
+      <caption>
+        現状の取得制限と必要な追加情報
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">engine内Queue / ASR推論 / TTS推論開始</th>
+          <td>engineのspanまたは数値統計が必要。LARM execution_waitやfetch時間を代用しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR部分認識、VAD終了→認識確定</th>
+          <td>
+            現在のHTTP最終認識契約には時刻がない。Eumenesの同一turnのVAD終了eventとASR child
+            spanを追加する。LARMで未取得の値は出力しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">モデル別実メモリ・KV占有・session内部slot</th>
+          <td>
+            既存runtime.resourcesは容量見積り。PIDやengine別観測がなく、実測メモリとしては出さない。/slotsや/metricsを利用する場合はactive
+            requestのresolved runtimeと結び付けたbackend adapterが必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Eumenes側TTS pendingキュー・playback</th>
+          <td>
+            LARMに送られる前の直列待ちと再生はconsumer側の責務。以下の連携案で同一traceへ記録する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">非HTTP/WebSocket</th>
+          <td>
+            今回のLARM推論経路はHTTP。新しいWebSocket処理やschemaを追加していない。message
+            metadataでコンテキストを渡し、既存受信境界で抽出する方針を定義する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="trace">
+    <h2>トレースIDの伝播とEumenes変更案</h2>
+    <p>
+      OpenTelemetryの公式API、W3C
+      propagator、BasicTracerProvider、ParentBasedSamplerとTraceIdRatioBasedSampler、BatchSpanProcessor、OTLP
+      HTTP exporterを使用する。グローバルproviderや自動HTTP monkey
+      patchは登録せず、middlewareのAsyncLocalStorageと明示Request参照を併用する。stream
+      pullが別の非同期contextで実行されても同じ観測を保持する。
+    </p>
+    <p>
+      計測対象は/v1/に限定せず、/v2/context-viewsなどのversion付きAPIにも同じ伝播を適用する。/health、/ready、/metricsの監視入口はtraceを生成しない。
+    </p>
+    <ol>
+      <li>
+        Eumenesからのtraceparent/tracestateを標準propagatorで検証・抽出する。不正なparentは新しいtraceにする。新規server
+        span、管理区間のchild span、upstream client spanを作る。
+      </li>
+      <li>
+        upstreamにはclient
+        spanのtraceparent/tracestateと既存x-request-idを送る。credentialやbaggageは無条件に転送しない。engineが未対応でもLARM側のclient
+        spanは記録する。
+      </li>
+      <li>
+        応答にはserver
+        spanのtraceparentとx-larm-trace-id、既存のx-request-idを返す。traceは会話全体、spanは個別処理、Request
+        IDは既存HTTP・監査の識別子として区別する。安全な形式の呼出元x-request-idはcaller_request_id属性へ記録し、内部IDを置き換えない。
+      </li>
+      <li>
+        Eumenesは会話turnのtraceを親とし、LLM、感情推定、TTSチャンクに別client
+        spanを作る。再試行も別span・Request IDとする。trace IDをruntimeやProfile選択には使わない。
+      </li>
+    </ol>
+    <p>
+      Eumenesの<code>api/application/app.ts</code>と<code>api/infrastructure/logger.ts</code>にはhttpRequestId、requestId、runId等が存在する。<code>api/domains/larm/service/index.ts</code>のinferはProvider
+      bearerを付けてrequestを行い、<code>api/domains/inference/service/index.ts</code>は個別推論・チャンクのreceiptを扱う。現状これらにW3C伝播がないため、次を別リポジトリ変更案とする。今回はEumenesを書き換えていない。
+    </p>
+    <ul>
+      <li>
+        入口でHTTP traceparentまたはWebSocket message metadataのtraceparent/tracestateを検証し、log
+        contextへtraceId/spanIdを追加する。会話のrunId/utteranceIdを維持する。
+      </li>
+      <li>
+        inferのrequest headersへ、そのcallのclient
+        spanをinjectする。onExchange/receiptへLARMのx-request-idとx-larm-trace-idを保存する。現在Date.nowで差を取るinferの経過時間をperformance.nowへ移す。
+      </li>
+      <li>
+        <code>voice-dialogue/service/index.ts</code
+        >のpending.push、pending.shift、speak/executeRequest完了でTTS
+        enqueue、start、completeを記録し、pending深度・chunk
+        index・attempt・キャンセル理由を残す。既存while
+        loopの直列awaitと先読み音声数の上限を維持する。
+      </li>
+      <li>
+        同ファイルには回答確定後にspeech.appendする分岐がある。answer確定→enqueue、LLM first
+        delta→answer確定、TTS完了→playback開始を別々に測る。仕様上の待機を不要なブロックと決め付けない。
+      </li>
+      <li>
+        ブラウザのaudio ready/play/end、VAD
+        endを同じtrace/turn/chunkに関連付ける。異なる時計の時刻差は計算せず、各プロセスで単調時計によるdurationを記録する。message
+        metadata例は<code>{traceparent, tracestate, requestId, runId, chunkIndex}</code>。音声frameごとにspanを作らない。
+      </li>
+    </ul>
+  </section>
+
+  <section id="config">
+    <h2>設定、負荷、障害分離</h2>
+    <pre><code>LARM_OBSERVABILITY_ENABLED=true
+LARM_TRACE_SAMPLE_RATIO=0.01
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces</code></pre>
+    <p>
+      既定は無効。新規metrics、trace、process
+      samplerは上記スイッチで有効化する。既存/metricsと制御eventは従来通り。endpoint省略時は新規metricsとID伝播だけで、traceは送信しない。ratioは0〜1で新規rootに適用し、受信parentのsampled判断を継承する。Eumenes側の親が全件sampledならLARMでも全件採取となるため、LARMのratioをtrace全体の採取率の上限とは扱わない。ratio=0もID伝播と全リクエストの集約metricsは残る。trace内容を確認するにはcollectorを設定し、テスト時はratio=1またはsampled親を使う。
+    </p>
+    <p>
+      batch
+      queueは最大2048span、batchは256span、送信周期1秒、送信timeout2秒。要求処理はexportやflushをawaitしない。満杯時は詳細spanが失われ得るため、欠測を処理時間0と解釈しない。metric
+      sink、spanの書込み、export障害は推論の応答から隔離する。shutdown時だけbest
+      effortでflushする。収集器への認証・接続経路は運用側で設定する。
+    </p>
+    <p>
+      token/frameごとのspan・同期console出力は追加しない。prompt、認識文字列、TTS本文、音声payload、credential、任意のrequest
+      headersは保存しない。数値統計、固定stage、runtime/protocol、IDをallowlistとして記録する。Request
+      ID、trace ID、span IDはPrometheus
+      labelから除外する。既存のinference-audit保持ポリシーは独立し、計測の設定で変更しない。
+    </p>
+    <p>
+      有効時は1秒周期でdaemon
+      CPU（1.0=1コア）、RSS、heap、timer遅延を計測する。event_loop_delayは周期超過時間で、1秒内の短いpauseを全て捉えるものではない。PerformanceObserverがgcをサポートするときだけprocess_gc_pause_secondsを記録し、未対応時の0msを捏造しない。既存Observer
+      tickで/proc/statの差分CPU利用率と/sys/class/drm/card*/device/gpu_busy_percentの最大値を任意取得する。Linux非対応・欠測時は値を出さない。CPUはホスト全体、GPU
+      busyは観測可能なカードの最大値、daemonのCPU/RSSはモデルprocessの値ではない。
+    </p>
+  </section>
+
+  <section id="diagnostics">
+    <h2>診断の実行と比較条件</h2>
+    <pre><code>LARM_PERF_SCENARIOS=llm,llm-sse,asr,tts,mixed,mixed-sse \
+LARM_PERF_ITERATIONS=20 LARM_PERF_WARMUPS=2 \
+LARM_PERF_AUDIO_FILE=/absolute/fixture.wav \
+LARM_PERF_OUTPUT=/outside-repository/diagnostic.json bun run perf:diagnostic</code></pre>
+    <p>
+      schema
+      4は各sampleのrequestId/traceId、headers時点のinternalStagesMs、engineReported、既存p50/p95/maxとraw
+      iterationをJSON保存する。resource monitorはCPU/GPU busy最大値、daemon
+      RSS最大値も保存し、取得できなければnullとする。TTFT、engine decode速度、client
+      totalを別々に比較する。最低20件の例でもp95は安定性の保証ではなく、十分な反復と条件固定が必要。
+    </p>
+    <pre><code>LARM_PERF_COMPARE_DIRECT=true \
+LARM_PERF_DIRECT_LLM_URL=http://127.0.0.1:PORT/v1/chat/completions \
+LARM_PERF_DIRECT_LLM_RUNTIME=RESOLVED_RUNTIME \
+LARM_PERF_SCENARIOS=llm,llm-sse \
+LARM_PERF_OUTPUT=/outside-repository/direct.json bun run perf:diagnostic</code></pre>
+    <p>
+      directは明示指定のHTTP loopback URLとruntime
+      IDが必要。ASR/TTSもDIRECT_ASR_URL/RUNTIME、DIRECT_TTS_URL/RUNTIMEで同様に指定する。public
+      allocationには内部endpointを要求せず、指定runtimeと実際の割当bindingが一致しなければ失敗させる。Profile→route→runtime→backendを確認してURLを設定する。稼働中の別モデルを流用しない。
+    </p>
+    <p>
+      direct時も割当leaseを保持して実行条件を維持するが、HTTPはExecutionGateを経由しない。管理者が隔離した比較環境で、同じモデルrelease、入力、sampling、token上限、slot数、context長、KV設定、同時workload、他consumerの有無を揃える。スクリプトは各系列でGatewayとdirectを順に測定し、warmupを同数実施する。差分はengine/cache/熱状態の変動も含むため純粋なGateway
+      CPU時間と呼ばない。ASR shadowとの混在比較は拒否する。
+    </p>
+    <p>
+      KV比較は、対応エンジンと隔離環境で<code>LARM_PERF_CACHE_PROMPT=true</code>と<code>false</code>を別々の出力先で実行する。cache_promptを同一payloadへ付加するだけで、共有slot消去・モデル再起動・設定変更は行わない。cached_tokensの実報告がなければ、比較モードは要求値に過ぎず、cache利用有無が実証されたとは扱わない。
+    </p>
+    <p>
+      <code>bun run perf:overhead</code
+      >はモデル不要の模擬upstreamとcollectorをlocalhostに起動し、無効／metrics（sampling
+      0）／全件trace送信（sampling
+      1）を比較する。反復はLARM_OVERHEAD_ITERATIONS、round数はLARM_OVERHEAD_ROUNDS、任意外部JSON保存先はLARM_OVERHEAD_OUTPUT。既存source-only保存制約と排他的出力を使用する。
+    </p>
+  </section>
+
+  <section id="platform">
+    <h2>追加の計測基盤：応答後処理・制御キュー・起動・収集器</h2>
+    <p>
+      2026-10-16の拡張。HTTP応答時間だけでなく、次の要求を待たせ得る管理処理と、計測系自身の詰まりも追跡する。処理順、割当、優先度、キャンセル、TTS直列制御を変更しない。デプロイ・モデル再起動・実モデルの選択は実施していない。
+    </p>
+    <table>
+      <caption>
+        独立したoperation spanとoperation_stage_seconds
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">operation</th>
+          <th scope="col">計測区間・意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">request_cleanup</th>
+          <td>
+            response
+            terminalから後処理完了まで。terminal_callbackはsnapshot等の確定処理、finish_callbackはlease解放等のonFinish。slot_holdはslot取得からrelease関数完了、post_response_slot_holdはresponse
+            terminalからrelease関数完了。既存のRequestTrackerとslotの解放順序を維持し、応答から後処理をawaitする待ちは追加しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">control_task</th>
+          <td>
+            ControlPlaneの既存applyChainに投入してから開始するまでのqueue_waitと、開始後のrun。キュー深度control_tasks_queued、実行中control_tasks_activeも公開する。task_kindはtraceに固定名で記録。単一制御キューの先頭処理によって後続が待つ現象を見られる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">runtime_startup</th>
+          <td>
+            割当runtimeの起動・検証処理全体。health_probeは実際のObserver.tick呼出し時間の合計、poll_waitは既存sleepの実時間の合計、health_probe_countは確認回数。pollごとのspan・ログは作らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">runtime_start</th>
+          <td>
+            選択されたruntimeのProviderInstance.acquire。runtime
+            IDを明示的に関連付ける。instanceの再利用もあり、純粋なモデルload時間と同一視しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">runtime_mutation</th>
+          <td>
+            既存MutationCoordinatorのreserveからreleaseまで。kindはtrace、kind別runtime_mutation_activeはgauge。排他方針や拒否・drain動作は維持する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      request_cleanupはrequest spanのchildだが、親の応答spanより後に終わる。totalは引き続きGateway
+      terminalまで。後処理のエラーはcleanupのoutcomeへ記録し、成功した推論のoutcomeを上書きしない。後処理が遅い場合は次のexecution_waitとpost_response_slot_holdを照合する。
+    </p>
+    <p>
+      既存request
+      stageにはpersonal_state_preparation、context_preparation、chat_input、audit_begin、audit_finalize、broker_closing_wait、broker_ready_waitを追加した。最後の2区間は共有leaseのclose待ちとready
+      Promise待ちで、broker_acquireの内数。downstream_pull_gapは最後のenqueueから次のReadableStream.pull開始までの合計であり、ソケット送信や再生の遅延を断定する値ではない。
+    </p>
+    <p>
+      共通ActivityObservationはstage、measure、operation、run、finishを提供する。currentObservationの固定名operationを作り、runで非同期contextへ引き継ぐことで、新しい処理も同じtraceへ追加できる。Request
+      IDは入口で発行し、runtime・allocation・routeの確定後に属性を追加する。要求受付前に決まらないruntime属性は空欄にし、別プロセスの稼働モデルから補完しない。
+    </p>
+    <p>
+      保持する非同期operation観測は最大1024件。15分を超えた観測はobservation_expiredとして閉じ、保持領域を解放する。これは計測上の打切りであり、アプリケーションのキャンセル・timeoutを実行しない。shutdownもobserver_shutdownとして観測のみ終了する。HTTP要求そのものの既存timeout・drain方針は変更しない。
+    </p>
+    <table>
+      <caption>
+        計測系自身の健全性。通常1秒ごとと/metrics取得時に更新する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">metric（larm_接頭辞）</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">telemetry_operations_active / telemetry_operation_oldest_seconds</th>
+          <td>保持中operation観測の数と最古の経過時間。実際の推論数はexecution_activeで見る。</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            telemetry_operations_dropped_total / telemetry_operations_expired_total
+          </th>
+          <td>観測数上限で開始できなかった件数／計測保持期限の超過。推論の失敗件数ではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">telemetry_trace_export_enabled</th>
+          <td>exporterの有無。0のときtrace未送信を送信障害と解釈しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">telemetry_trace_queued / telemetry_trace_in_flight</th>
+          <td>
+            SDKへ受け付けた待機span数／送信中span数。通常の待機上限2048span、batchは256span。forceFlush/shutdownでは複数batchが同時送信される場合がある。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">telemetry_trace_capacity_dropped_spans_total</th>
+          <td>待機上限で破棄した詳細span数。推論を止めて待機することはない。</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            telemetry_trace_exported_spans_total / telemetry_trace_failed_spans_total /
+            telemetry_trace_failed_batches_total
+          </th>
+          <td>
+            成功したspan数／送信失敗したspan数／失敗batch数。送信例外・無応答は既定2秒で計測側が打ち切り、遅れて到着したcallbackを二重計上しない。flushは送信中batchの完了も待つが、推論要求はflushを呼ばない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      TraceDeliveryは公式BatchSpanProcessorを使用し、待機上限・送信結果を小さなカウンタで観測する。batchのexport開始はsetImmediateへ回し、encoderが同期的にserializeする場合でも要求終了・slot解放の呼出し中にその処理を始めない。token/frame単位の送信や同期ログは追加しない。MetricsRegistryはdurationのcount・sum・該当binだけを記録し、累積bucketをscrape時に展開する。既存のPrometheus出力形式・境界・集約結果を維持し、高頻度の記録時に全bucketのMapキー生成を繰り返さない。
+    </p>
+    <p>
+      performance-larm.tsのtelemetry.stageHistogramsは、シナリオ前後の/metrics差分からrequestとoperationの区間別count・sum・mean、p50/p95/最大のbucket上限を出す。p50UpperBoundMs、p95UpperBoundMs、maxUpperBoundMsは生の測定値の分位点ではない。有限bucketを超えた上限はnull。counter減少・family消失はhistogramResetDetectedで示す。プロセス全体の差分なので他consumerの処理が混ざり得る。個別要求の分析はtrace
+      IDを使う。observerCountersにはシナリオ中の観測破棄・送信失敗の増分も含める。
+    </p>
+  </section>
+  <section id="overhead-matrix">
+    <h2>負荷比較と回帰検知</h2>
+    <p>
+      perf:overheadのschema 2はJSON、SSE、ASR multipart、TTS
+      WAV、SSE+ASR+TTS混在を対象とし、各系列で無効・metrics（sampling 0）・全件trace（sampling
+      1）を同条件で比較する。TTS
+      runtimeの実行枠は1を維持し、同時要求を送っても生成を並列化しない。各caseのraw
+      latencyは全HTTP要求を集計し、mixedは3種類の混合集計である。modeの順番はroundごとに回転する。
+    </p>
+    <pre><code>LARM_OVERHEAD_WORKLOADS=json,sse,asr,tts,mixed \
+LARM_OVERHEAD_ITERATIONS=1000 LARM_OVERHEAD_ROUNDS=5 \
+LARM_OVERHEAD_OUTPUT=/outside-repository/overhead.json bun run perf:overhead
+
+LARM_OVERHEAD_TRACE_SAMPLE_RATIO=0.01 LARM_OVERHEAD_P95_BUDGET_MS=1 \
+LARM_OVERHEAD_OUTPUT=/outside-repository/sampled.json bun run perf:overhead
+
+LARM_OVERHEAD_CONCURRENCY=4 LARM_OVERHEAD_WORKLOADS=sse,tts,mixed \
+LARM_OVERHEAD_READ_DELAY_MS=2 LARM_OVERHEAD_PROCESS_METRICS=true \
+LARM_OVERHEAD_OUTPUT=/outside-repository/concurrent.json bun run perf:overhead
+
+LARM_OVERHEAD_ITERATIONS=100 LARM_OVERHEAD_ROUNDS=1 \
+LARM_OVERHEAD_COLLECTOR_DELAY_MS=100 LARM_OVERHEAD_COLLECTOR_STATUS=503 \
+LARM_OVERHEAD_OUTPUT=/outside-repository/collector-failure.json bun run perf:overhead</code></pre>
+    <p>
+      concurrencyは1〜16。warmupはcase/modeごとに10batch、sample総量に上限を設ける。read
+      delayはconsumerの読取間隔を再現するが、HTTP
+      bufferingによりGatewayのbackpressureとして見えない場合がある。process
+      sampler有効時は実際のprocessSamplesを報告し、短い測定でtimerが一度も動かなければ0となる。ホスト/GPU
+      sampler、production logging、実モデル・Brokerはこの模擬比較に含まれない。
+    </p>
+    <p>
+      collectorの遅延・503・送信timeoutを注入でき、失敗はtraceDeliveryに記録する。意図したcollector障害を推論失敗と判定しない。実際のHTTP要求失敗は診断自体を失敗させる。LARM_OVERHEAD_EXPORT_TIMEOUT_MSは診断用の送信期限で、既定2000ms。通常daemonの送信期限は変更しない。
+    </p>
+    <p>
+      LARM_OVERHEAD_P95_BUDGET_MSを指定すると、各caseで有効modeのp95と無効modeのp95の差が指定msを超えた場合、budgetPassed=falseと終了コード1を返す。許容値は同じ機材・同じ条件で基準を作ってから設定する。既定ではhardware依存の閾値を強制しない。OS負荷、round数、concurrency、read
+      delayが違う結果を同一の回帰基準として比較しない。
+    </p>
+    <p id="platform-results">
+      拡張版の模擬計測はBun 1.4.0。100%採取は2026-10-16 14:00:17 JST、1%採取は2026-10-16 14:02:05
+      JST。同時実行1、1000反復×5round、warmup各10batch。JSON・SSE・ASR・TTSはmodeごとに5000要求、mixedは15000要求を測定した。CPU周波数・他processの負荷は固定していない。各列はそのrun内の無効modeとのp95差であり、異なるrun同士を直接の改善率として比較しない。
+    </p>
+    <table>
+      <caption>
+        正常collector時のp95増分。単位ms。全系列で指定した1msの基準を通過
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">workload</th>
+          <th scope="col">metrics・0%採取</th>
+          <th scope="col">100%採取</th>
+          <th scope="col">1%採取</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">json</th>
+          <td>0.076</td>
+          <td>0.478</td>
+          <td>0.055</td>
+        </tr>
+        <tr>
+          <th scope="row">sse</th>
+          <td>0.064</td>
+          <td>0.456</td>
+          <td>0.084</td>
+        </tr>
+        <tr>
+          <th scope="row">asr</th>
+          <td>0.050</td>
+          <td>0.463</td>
+          <td>0.073</td>
+        </tr>
+        <tr>
+          <th scope="row">tts</th>
+          <td>0.088</td>
+          <td>0.482</td>
+          <td>0.088</td>
+        </tr>
+        <tr>
+          <th scope="row">mixed</th>
+          <td>0.193</td>
+          <td>0.747</td>
+          <td>0.164</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      拡張の最初の試行では、100%採取時にJSON +1.299ms、SSE +1.415ms、mixed
+      +2.125msとなり、指定した1ms基準を検知して終了コード1となった。SDKのexport開始経路を調査し、要求終了の呼出し中に同期encoderが動き得るため送信開始を次のevent
+      loopへ移した。改修後の表は基準を通過したが、無効mode自体のp95も試行間で変動しているため、低下量全てをこの変更の効果と断定しない。これは計測系の回帰検知が機能した実例である。
+    </p>
+    <p>
+      2026-10-16 14:03:02 JSTにはmixed・concurrency 4・1%採取・process
+      sampler有効で、modeごとに24000要求を測定した。TTS実行枠は1。p95は無効1.527ms、metrics
+      1.802ms、trace 1.823ms。無効比の増分は0.275ms、0.296msで、enabled
+      modeのprocessSamplesは各2回だった。concurrencyは各種類4要求なのでmixedの同時HTTP要求は合計12。短い模擬試験であり、実モデルのリソース競合を再現した結果ではない。
+    </p>
+    <p>
+      2026-10-16 14:05:19 JSTの障害試験はmixed・concurrency 4・100%採取、collector遅延100ms＋HTTP
+      503、export期限150ms、client read delay
+      2ms。modeごとに2400要求、測定分計7200要求が成功した。採取modeでは送信成功0span、上限破棄2040span、送信失敗23160span・91batchを記録し、終了時のqueued/in_flightは0だった。warmupを含む25200spanが破棄・失敗として計上された。p95は無効5.634ms、metrics
+      6.366ms、trace
+      7.402ms。障害時のCPU負荷が0になる保証ではなく、collector応答待ちを推論処理に追加せず欠測を明示できたことを示す。
+    </p>
+    <p>
+      JSON結果は/tmp/larm-observability-platform-full-trace-final.json、/tmp/larm-observability-platform-sampled-1pct-final.json、/tmp/larm-observability-platform-concurrent-final.json、/tmp/larm-observability-platform-collector-failure-final.json。raw
+      sampleのp50/p95/max、各round、設定、送信カウンタを保持し、generated
+      reportはrepositoryへ追加していない。実モデル、GPU、Eumenes内のチャンク生成依頼までの待ち・再生待ちは未実測であり、システム全体のボトルネックは確定していない。
+    </p>
+    <p id="platform-test-results">
+      拡張後の最終 bun run check は終了コード0。主テスト810件（127ファイル）、tooling 24件、speech
+      16件、deployment 65件のTypeScriptテスト計915件、Python計51件、deployment
+      shell検証が成功した。型検査、module境界、API consumer、source-only、operations、Spec
+      HTMLも通過した。追加検証は、遅い確定処理とslot保持、後処理のtrace継承、確定処理失敗と推論成功の分離、制御キューの実行順・先頭待ち、観測の保持上限・期限、送信キュー上限・無応答・遅いcallback、histogram互換性、診断の区間差分、SSE/ASR/TTS/mixed・collector障害を含む。新たな外部モデル・GPU依存はない。コミット・pushは行っていない。
+    </p>
+  </section>
+
+  <section id="evidence">
+    <h2>検証結果とボトルネック候補</h2>
+    <p>
+      モデル・GPU不要テストで、W3C親子関係、不正parent、sampling、metric/export障害時の継続、stream完了とcancel、LLM/ASR/TTSのqueueとキャンセル、readyモデルの起動スキップ、cold
+      preferredモデルのready待ち、engine数値allowlist、fragmented
+      WAVと未完結音声、任意CPU/GPU利用率、diagnostic direct/JSON/SSE/mixedを確認する。
+    </p>
+    <p id="test-results">
+      2026-10-16の最終検証で bun run check
+      は終了コード0。source-only、shell/Python/systemd、文書lint、API
+      consumer、module境界、型検査を通過した。主テスト801件（123ファイル）、tooling 24件、speech
+      16件、deployment 63件が全て成功し、これらのTypeScriptテストは計904件。Pythonテストとdeployment
+      shellテストも成功した。bun run docs:check:fix はlint error/warning
+      0。W3C、queue、cancel、SSE、障害分離、clock
+      regression、音声・統計tapのテストは外部モデル・GPUなしで実行した。
+    </p>
+    <p>
+      2026-10-16の模擬HTTP比較はBun
+      1.4.0、同時実行1、warmup各100件、1000件×5round、順番をroundごとに回転した。upstreamは固定JSON、collectorは同じprocessのloopback
+      HTTPで正常応答。既存Gateway
+      proxy、middleware、既存metricsを含み、Broker、実モデル、GPU、process/host sampler、production
+      loggingの負荷は含まない。OS負荷・JIT・GC・接続再利用によるばらつきがあり、実会話の遅延増分の保証値ではない。
+    </p>
+    <table id="overhead-results">
+      <caption>
+        2026-10-16 13:28 JST、初期実装の計測有効／無効比較。単位ms。各モード5000件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モード</th>
+          <th scope="col">p50</th>
+          <th scope="col">p95</th>
+          <th scope="col">最大</th>
+          <th scope="col">無効比p95差</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">無効</th>
+          <td>0.070</td>
+          <td>0.115</td>
+          <td>3.536</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">metrics</th>
+          <td>0.235</td>
+          <td>0.353</td>
+          <td>4.834</td>
+          <td>0.238</td>
+        </tr>
+        <tr>
+          <th scope="row">全件trace</th>
+          <td>0.254</td>
+          <td>0.700</td>
+          <td>4.472</td>
+          <td>0.585</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      JSONレポートは実行環境の/tmpに保存し、生成ログをrepositoryに追加しない。collectorへの送信は183batch。結果はこの表で保存する。必要なら外部保存先を指定して同じ条件で再実行する。
+    </p>
+    <ul>
+      <li>
+        readyモデルのテストではbackend.ensure呼出しが0回。常駐通常要求への不要な起動待ちを実測で示したものではなく、正常な分岐を確認した結果。実環境ではbroker_acquire、allocation_admission、runtime_readiness、execution_waitを比較する。
+      </li>
+      <li>
+        Brokerのready
+        polling、全体の制御作業キュー、優先度競合、chat-input/context/監査準備は待ちの候補。対応stageの実測なしにBun性能やモデルloadを原因と断定しない。
+      </li>
+      <li>
+        TTSはLARMのexecution_waitと、Eumenes内のpending待ち・再生待ちが異なる。consumer側は句読点分割で生成依頼するという利用者の前提に従い、回答全文の確定待ちを改善候補とはしない。Eumenesの提案計測を追加して初めてパイプライン全体の不必要な待ちを判断できる。並列生成への変更は提案していない。
+      </li>
+      <li>
+        mixedでengineのprefill/decode、ASR/TTSのRTFだけが悪化し管理区間が変わらない場合は、推論・リソース競合の調査候補となる。queueだけが伸びれば容量・優先度の調査候補。今回は実モデルmixed、KV比較を実行しておらず、実システムのボトルネックは未確定。
+      </li>
+      <li>
+        今回の計測負荷は模擬HTTPで確認した。production相当のSSE・音声・最大同時数、遅いcollector、resource
+        samplerを含む負荷比較は隔離環境で追加検証する。既定1%samplingと無効化スイッチを維持する。
+      </li>
+    </ul>
+    <p>
+      仕様確認元はW3C Trace Context、OpenTelemetry JavaScript instrumentation、およびllama.cpp
+      tools/server/READMEのtimings/context
+      usage説明。対象engineのバージョンが統計を返さない場合は取得できない。これらの標準の採用はengine内部まで自動計測されることを意味しない。
+    </p>
+  </section>
+  <section id="readiness-and-retention-findings">
+    <h2>追加調査：状態通知と次のProfile要求までのモデル維持</h2>
+    <p>
+      変更先の契約、実装順序、認証・保持・API拒否・性能検証の詳細は<a
+        href="./eumenes-protection-retention-implementation-plan-2026-10-16.html"
+        >Eumenes保護・モデル維持の実装計画</a
+      >に整理した。下記は変更前の調査記録。後続の承認済み変更では内部待機の通知化と専用credentialによる保護・保持を実装しており、有効化条件と性能結果はリンク先の実装結果を参照する。
+    </p>
+    <p>
+      2026-10-16の利用者確認。内部状態の待機はイベント通知を使い、ロード済みモデルは次のProfile起動要求まで維持したいという意向がある。さらに、Eumenesの利用中および前のリクエストから10分間は他の利用要求をAPIで拒否する想定が示された。次のProfile要求が来ただけで保護中のEumenesから切り替える設計とはしない。以下は現状と変更候補の整理であり、今回の計測実装では待機方式・解放policyを変更していない。
+    </p>
+    <ul>
+      <li>
+        ControlPlaneはallocation_ready、allocation_failed、allocation_released、allocation_expiredを既にemitし、mainのonEventでmetricsとevent出力に渡している。一方、ModelBroker.prepareは内部Allocationを既定500ms間隔で再確認する（mainが渡す設定値。class単体の既定は50ms）。既にreadyならsleepしない。
+      </li>
+      <li>
+        AgentConnectionController.waitForReadinessとrunBackgroundにも内部Allocationの再確認があり、間隔はmax(1000ms,
+        pollIntervalMs)。Eumenesが利用する接続作成側にも関係する。ready検出後に別途semantic
+        readinessを確認するため、内部ready通知だけで接続readyと判定してはならない。通常推論ごとの固定待ちではない。
+      </li>
+      <li>
+        内部状態は状態遷移の通知で待てる。実装時は購読登録後の再確認で通知取りこぼしを防ぎ、失敗・期限切れ・解放・abort・timeoutのすべてで購読とtimerを解除する。通知は待機解除に使い、状態の正本は既存Allocationとする。計測やexporterへの配信失敗に待機解除を依存させない。
+      </li>
+      <li>
+        Runtime起動処理のObserver.tickはbackendの稼働・health情報を取得する別の確認である。外部engineが準備完了通知を提供しない場合は確認を残す。プロセス起動通知だけをモデル準備完了の証明には使わない。
+      </li>
+      <li>
+        利用要求のAllocationや実行枠と、ロード済みProviderの保持を分離する。終了要求の枠を無期限に保持すると後続admissionやswapを妨げ得るが、枠を解放してモデルを次の要求まで再利用可能な状態に保つ設計は可能。現状はProfileのidleRelease、AllocationのTTL、Providerのwarm/idle停止が独立して存在し、単にBroker.closeを削除しても意図した保持policyにはならない。
+      </li>
+      <li>
+        維持policyの候補は「同じRuntimeは再利用し、次のProfile要求で不要・競合となるProviderだけを、既存の優先度・共有参照・進行中要求を考慮して切り替える」。別Profileの到着だけで共有ASR/TTS等を一括停止しない。障害、明示停止、daemon終了は別の終了条件として扱う。これは現行の時間ベースのidle解放からのpolicy変更であり、性能計測の結果と混同しない。
+      </li>
+      <li>
+        利用者の10分保護という想定と現状は一致していない。foreground-exclusiveの実行中はbackground-when-idleの接続作成・Provider利用を拒否するが、backgroundBlocked自体には実行後10分の保護判定がない。repositoryのforeground
+        ProfileのidleReleaseは300秒で、最終対象要求の完了を基準に接続を解放する。別のProvider切替holdも既定300秒で、こちらはAllocation解放時が起点であり、同一Runtime・同等以上の優先度を対象外とする。この二つの300秒を足して最終利用後10分保護が実装済みとは解釈しない。稼働中releaseの設定は今回未確認。
+      </li>
+      <li>
+        変更時は保護期限とProvider保持を分離する。Eumenesの進行中要求がある間は保護を解除せず、保護時間を過ぎたことだけでモデルを停止しない。Eumenes自身の継続要求は拒否対象にしない。他consumerへの拒否はキュー待機とは区別して記録する。10分の起点を要求完了とするか、および他consumerの共有可能なProvider利用も拒否するかは、動作変更前にAPI契約として明文化する。共有可能だから許可する例外を利用者の想定に追加しない。
+      </li>
+    </ul>
+  </section>
+</article>

@@ -77,6 +77,14 @@
 
   <section id="lifecycle">
     <h2>状態機械</h2>
+    <p>
+      <a
+        href="./eumenes-protection-retention-implementation-plan-2026-10-16.html#implementation-results"
+        >専用credentialによる利用保護・保持policy</a
+      >を有効にしたProfileでは、最後の要求終了後も次のProfile要求までProviderを保持する。実行slot、Allocation、保持理由を分離し、期限だけではunloadしない。切替時は共有Providerと独立したwarm
+      floorを維持し、対象swap-groupの旧モデルだけを選択済みProfileに従って置き換える。以下のidle
+      TTLはこの保持がない場合に適用する。
+    </p>
     <ol>
       <li>Profileを解決し、必要な全Provider revisionを一つのAllocationへ固定する。</li>
       <li>各revisionの既存instanceを再利用するか、Provider supervisorへ生成を要求する。</li>

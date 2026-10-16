@@ -392,6 +392,6 @@ export class ExecutionGate {
   }
 
   private now(): number {
-    return this.options.now?.() ?? Date.now();
+    return this.options.now?.() ?? performance.now();
   }
 }

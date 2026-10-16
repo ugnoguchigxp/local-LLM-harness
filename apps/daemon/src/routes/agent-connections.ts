@@ -21,6 +21,7 @@ type AgentConnectionResult = {
 
 export function registerAgentConnectionRoutes(app: Hono, options: {
   apiToken?: string;
+  protectedConsumerToken?: string;
   managementToken?: string;
   catalog?: AgentConnectionCatalog;
   maxBodyBytes: number;
@@ -31,7 +32,9 @@ export function registerAgentConnectionRoutes(app: Hono, options: {
   result: (context: Context, result: AgentConnectionResult) => Response;
   onEvent?: (event: ControlEvent) => void;
 }): void {
-  const { feature, idempotencyKey, requestPrincipal, principal, result } = options;
+  const { feature, idempotencyKey, requestPrincipal, result } = options;
+  const standard = (authorization: string | undefined) => secretMatches(authorization, `Bearer ${options.apiToken}`)
+    || (options.protectedConsumerToken !== undefined && secretMatches(authorization, `Bearer ${options.protectedConsumerToken}`));
 
   app.post("/v1/agent-connections", async (c) => {
     const controller = feature(c);
@@ -63,7 +66,8 @@ export function registerAgentConnectionRoutes(app: Hono, options: {
       requestPrincipal(c),
       key,
       c.req.url,
-      secretMatches(c.req.header("authorization"), `Bearer ${options.apiToken}`),
+      secretMatches(c.req.header("authorization"), `Bearer ${options.apiToken}`)
+        || (options.protectedConsumerToken !== undefined && secretMatches(c.req.header("authorization"), `Bearer ${options.protectedConsumerToken}`)),
       waitSeconds * 1_000,
     );
     const selector = options.catalog?.profileSelectors.find((item) => item.id === parsed.data.profile);
@@ -107,8 +111,8 @@ export function registerAgentConnectionRoutes(app: Hono, options: {
     if (controller instanceof Response) return controller;
     c.header("cache-control", "no-store");
     const authorization = c.req.header("authorization");
-    if (secretMatches(authorization, `Bearer ${options.apiToken}`)) {
-      return result(c, await controller.providerHealth(c.req.param("id"), c.req.param("name"), principal()));
+    if (standard(authorization)) {
+      return result(c, await controller.providerHealth(c.req.param("id"), c.req.param("name"), requestPrincipal(c)));
     }
     const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
     try {
@@ -146,7 +150,7 @@ export function registerAgentConnectionRoutes(app: Hono, options: {
     }
     const claimed = await controller.claim(
       c.req.param("id"), requestPrincipal(c), parsed.data.format,
-      secretMatches(c.req.header("authorization"), `Bearer ${options.apiToken}`),
+      standard(c.req.header("authorization")),
     );
     const providers = typeof claimed.body === "object" && claimed.body !== null && "providers" in claimed.body
       && Array.isArray(claimed.body.providers) ? claimed.body.providers : [];

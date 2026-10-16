@@ -82,6 +82,33 @@ test("shares a revision and stops only after the last allocation reference", asy
   expect(stopped).toEqual([first.id]);
 });
 
+test("retention survives the last reference and keeps shared providers during handover", async () => {
+  const { manager, stopped, getEnsureCount } = fixture();
+  manager.retainUntilNextProfile([runtime.id]);
+  const instance = await manager.acquire(runtime, "first", "release-a");
+  manager.releaseAllocation("first");
+  await Bun.sleep(1);
+  expect(stopped).toEqual([]);
+  await manager.releaseRetained([runtime.id]);
+  expect(stopped).toEqual([]);
+  const reused = await manager.acquire(runtime, "second", "release-a");
+  expect(reused.id).toBe(instance.id);
+  expect(getEnsureCount()).toBe(1);
+  manager.releaseAllocation("second");
+  await manager.releaseRetained([]);
+  expect(stopped).toEqual([instance.id]);
+});
+
+test("profile handover preserves an independent shared provider warm floor", async () => {
+  const { manager, stopped } = fixture();
+  const shared = { ...runtime, policy: { ...runtime.policy, warm: { minInstances: 1, idleTtlSeconds: 0 } } };
+  await manager.ensureWarm(shared, "shared-release");
+  manager.retainUntilNextProfile([shared.id], []);
+  await manager.releaseRetained([], []);
+  expect(stopped).toEqual([]);
+  expect(manager.inspect()[0]!.warmRefs).toBe(1);
+});
+
 test("request reference cancels an idle stop and revision changes do not alias", async () => {
   const { manager, stopped } = fixture();
   const first = await manager.acquire(runtime, "allocation-a", "release-a");

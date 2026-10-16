@@ -1,3 +1,4 @@
+import type { Observability } from "./observability";
 export type MutationKind =
   | "artifact-stage"
   | "runtime-activation"
@@ -21,6 +22,7 @@ export class MutationCoordinatorError extends Error {
 }
 
 export class MutationCoordinator {
+  constructor(private readonly observability?: Observability) {}
   private active?: MutationKind;
   private draining = false;
   private readonly waiters = new Set<() => void>();
@@ -37,6 +39,9 @@ export class MutationCoordinator {
       );
     }
     this.active = kind;
+    const activity = this.observability?.operation("runtime_mutation");
+    activity?.attribute("larm.mutation_kind", kind);
+    this.observability?.gauge("runtime_mutation_active", { kind }, 1);
     let released = false;
     return {
       kind,
@@ -44,6 +49,8 @@ export class MutationCoordinator {
         if (released) return;
         released = true;
         if (this.active === kind) this.active = undefined;
+        activity?.finish();
+        this.observability?.gauge("runtime_mutation_active", { kind }, 0);
         if (!this.active) {
           for (const resolve of this.waiters) resolve();
           this.waiters.clear();

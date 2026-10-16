@@ -63,12 +63,18 @@ import { registerLegacyControlRoutes } from "./routes/legacy-control";
 import { registerServiceHarnessRoutes } from "./routes/service-harness";
 import { registerArtifactRoutes } from "./routes/artifacts";
 import { createAppRequestPolicy } from "./app-request-policy";
+import { UsageCoordinator, UsageProtectionError } from "./usage-coordinator";
+import { usagePolicy, protectionResponse } from "./usage-policy";
 
 export { publicClusterState, publicRuntime } from "./app-http";
 
 export type FetchLike = GatewayFetchLike;
 
 export function createAppComponents(deps: AppDeps) {
+  if (deps.protectedConsumerToken && deps.protectedConsumerToken === deps.apiToken) throw new Error("protected consumer token must differ from the shared API token");
+  const usage = deps.protectedConsumerToken
+    ? new UsageCoordinator(deps.usageMonotonicNow, deps.metrics, agentPrincipal(deps.protectedConsumerToken)) : undefined;
+  deps.control.usage = usage;
   const app = new Hono();
   const controlMaxBodyBytes = deps.controlMaxBodyBytes ?? 64 * 1024;
   const identity = deps.identity ?? {
@@ -130,6 +136,8 @@ export function createAppComponents(deps: AppDeps) {
   let lastObservedActivityState: ServiceActivityState | undefined;
 
   app.onError((err, c) => {
+    if (err instanceof UsageProtectionError) return protectionResponse(err, c.req.path);
+    if (err instanceof ConnectionTokenError) return c.json(errorBody(err.code, err.message), err.code === "connection_idle_released" ? 409 : 401);
     if (err instanceof ZodError) return c.json(errorBody("invalid_request", "invalid request"), 400);
     if (err instanceof LocalServiceError) {
       if (err.status === 503 || err.status === 429) c.header("retry-after", "5");
@@ -142,6 +150,7 @@ export function createAppComponents(deps: AppDeps) {
     return c.json(errorBody("internal_error", "internal server error"), 500);
   });
 
+  if (deps.observability) app.use("*", deps.observability.middleware());
   app.use("*", createAppRequestPolicy(deps, identity));
 
   const agentFeature = (c: Context): AgentConnectionController | Response => {
@@ -166,7 +175,8 @@ export function createAppComponents(deps: AppDeps) {
     return agentConnections;
   };
   const principal = () => agentPrincipal(deps.apiToken!);
-  const agentRequestPrincipal = (c: Context) => secretMatches(
+  const agentRequestPrincipal = (c: Context) => deps.protectedConsumerToken && secretMatches(c.req.header("authorization"), `Bearer ${deps.protectedConsumerToken}`)
+    ? agentPrincipal(deps.protectedConsumerToken) : secretMatches(
       c.req.header("authorization"),
       `Bearer ${deps.apiToken}`,
     )
@@ -174,8 +184,9 @@ export function createAppComponents(deps: AppDeps) {
     : agentPrincipal("larm-anonymous-agent-connection");
   const contextCaller = (c: Context): { principal: string; scoped?: VerifiedProviderToken } | Response => {
     const authorization = c.req.header("authorization");
-    if (deps.apiToken && secretMatches(authorization, `Bearer ${deps.apiToken}`)) {
-      return { principal: principal() };
+    if ((deps.apiToken && secretMatches(authorization, `Bearer ${deps.apiToken}`))
+      || (deps.protectedConsumerToken && secretMatches(authorization, `Bearer ${deps.protectedConsumerToken}`))) {
+      return { principal: agentRequestPrincipal(c) };
     }
     if (authorization?.startsWith("Bearer larm_conn_v1.")) {
       const feature = agentFeature(c);
@@ -196,6 +207,8 @@ export function createAppComponents(deps: AppDeps) {
     }
     return { principal: principal() };
   };
+  if (usage && deps.protectedConsumerToken) app.use("*", usagePolicy(usage, deps.protectedConsumerToken, agentConnections, deps.apiToken,
+    request => Boolean(deps.startupProbeToken && deps.getGatewayReadiness?.().state === "verifying" && secretMatches(request.headers.get("x-larm-startup-probe") ?? undefined, deps.startupProbeToken))));
   const contextFeature = (c: Context): ContextController | Response => {
     if (!deps.apiToken) {
       return c.json(errorBody(
@@ -360,6 +373,7 @@ export function createAppComponents(deps: AppDeps) {
   registerAgentProfileRoutes(app, deps, agentFeature, agentResult);
 
   registerAgentConnectionRoutes(app, {
+    protectedConsumerToken: deps.protectedConsumerToken,
     apiToken: deps.apiToken,
     managementToken: deps.managementToken,
     catalog: deps.agentConnectionCatalog,

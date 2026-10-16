@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { musicGenerationRequestSchema } from "@larm/core";
 import { MediaVariantManager, MediaVariantStopError } from "@larm/backends";
 import { AceStepMusicProvider, MusicGenerationManager, OnDemandMusicProvider } from "./music-manager";
+import { UsageCoordinator } from "./usage-coordinator";
 
 test("cancelled music startup does not submit generation and releases the media reservation", async () => {
   const started = Promise.withResolvers<void>();
@@ -44,6 +45,27 @@ async function waitForTerminal(manager: MusicGenerationManager, id: string) {
   }
   throw new Error("job did not finish");
 }
+
+test("queued media rechecks the captured consumer before upstream submission", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-music-admission-"));
+  const usage = new UsageCoordinator(undefined, undefined, "owner");
+  let submissions = 0;
+  const upstream = new AceStepMusicProvider({ endpoint: "http://unused" });
+  const manager = new MusicGenerationManager({
+    id: upstream.id, capabilities: upstream.capabilities,
+    load: async () => {}, unload: async () => {}, health: async () => ({ available: true }),
+    generate: async () => { submissions++; throw new Error("must not submit"); },
+  }, { artifactRoot: root, captureAdmission: () => {
+    const owner = usage.owner;
+    return () => usage.run(owner, () => usage.check());
+  } });
+  try {
+    const job = usage.run("other", () => manager.create(musicGenerationRequestSchema.parse({ prompt: "test" })));
+    usage.run("owner", () => usage.prepare(600_000)(true));
+    expect((await waitForTerminal(manager, job.jobId)).error?.code).toBe("foreground_protected");
+    expect(submissions).toBe(0);
+  } finally { manager.close(); await rm(root, { recursive: true, force: true }); }
+});
 
 test("ACE-Step job is normalized and materialized behind download URLs", async () => {
   const root = await mkdtemp(join(tmpdir(), "larm-music-"));

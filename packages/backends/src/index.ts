@@ -94,3 +94,4 @@ export { LocalServiceFileJournal } from "./local-service-journal";
 export { SystemdProcessBackend, LocalServiceRoutingBackend, processServiceObservationSchema } from "./local-service-process";
 
 export * from "./chat-input-tokenizer";
+export { LocalUsageRetentionStore, type UsageRetentionSnapshot } from "./usage-retention-store";

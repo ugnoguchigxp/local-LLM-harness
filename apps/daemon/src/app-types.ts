@@ -19,12 +19,15 @@ import type { ImageArtifactManager } from "./image-artifact-manager";
 import type { ImageGenerationProvider } from "./image-generation-provider";
 
 export type AppDeps = {
+  observability?: import("./observability").Observability;
   localServiceManager?: LocalServiceManager;
   localServicePrincipals?: LocalServicePrincipal[];
   registry: Registry;
   getState: () => ClusterState;
   control: ControlPlane;
   apiToken?: string;
+  protectedConsumerToken?: string;
+  usageMonotonicNow?: () => number;
   allowAnonymousAgentConnections?: boolean;
   serviceHarnessAuthEnabled?: boolean;
   managementToken?: string;

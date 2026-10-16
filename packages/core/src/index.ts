@@ -330,3 +330,7 @@ export { ServiceResourceLedger } from "./service-resource-ledger";
 export { LocalServiceManager, LocalServiceError } from "./local-service-manager";
 
 export * from "./chat-input";
+
+export { inferenceStatistics, type InferenceStatistics } from "./inference-statistics";
+
+export { UsageProtection } from "./usage-protection";

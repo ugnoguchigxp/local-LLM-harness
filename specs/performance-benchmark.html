@@ -3,11 +3,12 @@
   <p>
     local-nodeの遅延をOpenAI互換HTTP非streaming JSON、HTTP SSE、ASR、TTSへ分解し、
     LLMと音声2系統を同時利用した場合の干渉を再現可能な形で比較する。
-    実装は<code>deploy/local-node/scripts/performance-larm.ts</code>であり、公開HTTP APIだけを測定する。
+    実装は<code>deploy/local-node/scripts/performance-larm.ts</code>であり、通常は公開HTTP
+    APIを測定する。明示設定時は同じruntimeへの直接HTTPアクセスも比較する。
   </p>
   <dl>
     <dt>report schema</dt>
-    <dd><code>larm-performance-diagnostic</code> version 3</dd>
+    <dd><code>larm-performance-diagnostic</code> version 4</dd>
     <dt>既定反復</dt>
     <dd>warmup 1回、測定5回</dd>
     <dt>既定系列</dt>
@@ -18,6 +19,11 @@
     </dd>
   </dl>
 
+  <p>
+    区間別計測、分散トレース、direct比較、未取得値と計測負荷の扱いは<a href="./observability.html"
+      >性能計測・トレーシング基盤</a
+    >を参照する。
+  </p>
   <section id="measurement-contract">
     <h2>測定契約</h2>
     <table>
@@ -55,8 +61,8 @@
       </tbody>
     </table>
     <p>
-      LLMのtoken数は<code>usage.completion_tokens</code>を優先し、usageがない場合だけcontent
-      event数を代替値として明記する。SSEはUTF-8、event JSON、meaningful delta、finish reason、
+      LLMのtoken数は<code>usage.completion_tokens</code>を用い、usageがない場合はtoken数とtokens/secをnullとする。JSONではTTFTを観測できないためfirstTokenMsをnullとし、SSEのdelta数はtoken数と区別する。SSEはUTF-8、event
+      JSON、meaningful delta、finish reason、
       <code>[DONE]</code
       >を増分検証する。response本文、音声、credentialはreportへ保存しない。
     </p>
@@ -117,5 +123,17 @@ bun run perf:diagnostic</code></pre>
       <li>全6 scenarioでfallback 0、error 0、identity不変を検証できる。</li>
       <li>専用transport、Agent claim、native companionへ依存しない。</li>
     </ul>
+  </section>
+  <section id="usage-protection-overhead">
+    <h2>利用保護と内部通知の比較</h2>
+    <p>
+      bun run
+      perf:usageは認証と計測条件を揃え、利用保護なし／ありのHTTP処理をJSON、SSE、ASR、TTS、mixedで比較する。TTS
+      gateは1のまま維持する。LARM_OVERHEAD_READINESS_COMPARISON=trueでは、内部Allocationの定期確認と状態通知の検出待ちを別途測定する。usage比較のJSON
+      schemaは3で、p50・p95・最大、throughput、実行条件を保存する。実モデル・GPUは不要。詳細、環境変数と実測値は<a
+        href="./eumenes-protection-retention-implementation-plan-2026-10-16.html#measured-results"
+        >Eumenes保護・保持の実装結果</a
+      >を参照する。
+    </p>
   </section>
 </article>

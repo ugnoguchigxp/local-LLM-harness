@@ -14,6 +14,7 @@ agentProfiles:
     description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, Japanese VOICEVOX and English KittenTTS, embedding, and Ruri speaking-attitude System One
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
+    usageProtection: { idleSeconds: 600, retention: until-next-profile }
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -72,6 +73,7 @@ agentProfiles:
     description: Ornith 1.5 STRIX_LEAN profile copied from the Gemma 4 26B voice profile with the same speech, embedding, and System One providers; image input enabled
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
+    usageProtection: { idleSeconds: 600, retention: until-next-profile }
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -130,6 +132,7 @@ agentProfiles:
     description: SAAA auxiliary 64K LLM session sharing the Gemma 4 26B four-slot runtime with the main voice profile
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
+    usageProtection: { idleSeconds: 600, retention: until-next-profile }
     idleRelease:
       enabled: true
       idleSeconds: 300

@@ -1,8 +1,14 @@
+import { currentObservation, type Observability } from "./observability";
+import { AllocationNotifications } from "./allocation-notifications";
+import { AllocationLifecycleError } from "./allocation-lifecycle";
+import { resolveAllocationBindings } from "./allocation-binding-resolver";
+import { UsageProtectionError, type UsageCoordinator } from "./usage-coordinator";
 import type { ServiceMemoryReservation } from "@larm/core";
 import {
   activeAllocation,
   admittedAllocation,
   createAllocationId,
+  getRuntime,
   compareRouteSelection,
   createLeaseId,
   findDefaultRoute,
@@ -76,6 +82,7 @@ export type ControlEvent = {
 };
 
 export type ControlPlaneOptions = {
+  observability?: Observability;
   bootEpoch?: string;
   idleTtlMs?: number;
   now?: () => number;
@@ -101,6 +108,62 @@ export type ControlPlaneOptions = {
 };
 
 export class ControlPlane {
+  usage?: UsageCoordinator;
+  private readonly notifications = new AllocationNotifications();
+  private readonly usageAllocations = new Map<string, string>();
+  private retainedOwner?: string;
+  private handover?: { owner?: string; promise: Promise<void> };
+  private retentionChanged?: (runtimeIds: string[], protectedConsumer: boolean) => void;
+  private retentionHealth?: () => boolean;
+  private retentionRollback?: { previousOwner?: string; runtimeIds: string[]; nextOwner?: string; nextRuntimeIds: string[]; allocations: Set<string>; semanticAllocations: Set<string> };
+
+  setUsageRetentionListener(listener: (runtimeIds: string[], protectedConsumer: boolean) => void, failed?: () => boolean): void { this.retentionChanged = listener; this.retentionHealth = failed; }
+  completeUsageHandover(allocationId: string): void {
+    if (this.retentionRollback?.allocations.has(allocationId)) this.retentionRollback = undefined;
+  }
+  rollbackUsageProfile(allocationId?: string): void {
+    const rollback = this.retentionRollback;
+    if (!rollback) return;
+    if (allocationId) {
+      if (!rollback.allocations.delete(allocationId) || rollback.allocations.size > 0) return;
+    } else if (rollback.allocations.size > 0) return;
+    const usable = new Set(this.providerInstances.inspect().filter(record => ["HOT", "BUSY", "STARTING"].includes(record.instance.status)).map(record => record.instance.runtimeId));
+    const runtimeIds = rollback.runtimeIds.filter(id => usable.has(id));
+    this.providerInstances.rollbackRetained(runtimeIds);
+    this.retainedOwner = runtimeIds.length ? rollback.previousOwner : undefined;
+    this.retentionRollback = undefined;
+    this.retentionChanged?.(runtimeIds, this.retainedOwner !== undefined && this.retainedOwner === this.usage?.protectedOwner);
+  }
+  restoreUsageRetention(runtimeIds: string[], protectedConsumer: boolean, otherOwner = "(restored-other)"): void {
+    if (!this.usage || !runtimeIds.length || runtimeIds.some(id => !getRuntime(this.registry, id))) return;
+    this.retainedOwner = protectedConsumer ? this.usage.protectedOwner : otherOwner;
+    this.providerInstances.retainUntilNextProfile(runtimeIds, this.profileRetentionScope(runtimeIds));
+    if (protectedConsumer && this.usage.protectedOwner) this.usage.run(this.usage.protectedOwner, () => this.usage!.prepare(600_000)(true));
+  }
+
+  getUsageState() {
+    const state = this.usage?.protection.snapshot();
+    return {
+      enabled: this.usage !== undefined, protected: (state?.protected ?? false) || (this.usage?.isTransitioning ?? false),
+      transitioning: this.usage?.isTransitioning ?? false,
+      activeRequests: state?.activeRequests ?? 0, preparing: state?.preparing ?? 0,
+      remainingMs: state?.remainingMs ?? 0,
+      retainedRuntimeIds: this.providerInstances.retainedRuntimeIds(),
+      allocationWaiters: this.notifications.size,
+      retentionPersistenceFailed: this.retentionHealth?.() ?? false,
+    };
+  }
+
+  private usageHandoverNeeded(nextRuntimeIds: string[]): boolean {
+    if (this.retainedOwner === undefined) return false;
+    const sameRuntimes = JSON.stringify([...new Set(nextRuntimeIds)].sort()) === JSON.stringify(this.providerInstances.retainedRuntimeIds());
+    return this.retainedOwner !== this.usage?.owner || !sameRuntimes;
+  }
+
+  private profileRetentionScope(runtimeIds: string[]): string[] {
+    const groups = new Set(runtimeIds.map(id => getRuntime(this.registry, id)?.policy.swapGroup).filter(Boolean));
+    return this.registry.runtimes.filter(runtime => runtime.policy.swapGroup && groups.has(runtime.policy.swapGroup)).map(runtime => runtime.id);
+  }
   private readonly legacyLeases = new LegacyLeaseRegistry();
   private readonly allocations = new Map<string, Allocation>();
   private readonly operations = new Map<string, Operation>();
@@ -116,6 +179,7 @@ export class ControlPlane {
   private readonly allocationApi: AllocationApiLifecycle;
   private readonly preemption: AllocationPreemption;
   private applyChain: Promise<void> = Promise.resolve();
+  private queuedTasks = 0;
   private draining = false;
   private idSequence = 0;
 
@@ -150,7 +214,7 @@ export class ControlPlane {
         this.operations.set(operation.id, operation);
         const abort = new AbortController();
         this.operationAborts.set(operation.id, abort);
-        this.enqueue(() => this.runEnsure(operation, abort));
+        this.enqueue(() => this.runEnsure(operation, abort), "legacy_prepare");
       },
       pruneHistory: () => this.pruneHistory(),
       isoNow: () => this.isoNow(),
@@ -207,7 +271,7 @@ export class ControlPlane {
       clearAllocationTimer: (id) => this.clearAllocationTimer(id),
       detachLegacyAllocation: (id) => this.detachLegacyAllocation(id),
       scheduleIdleReconcile: () => this.scheduleIdleReconcile(),
-      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations()),
+      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations(), "waiting_promotion"),
       pruneHistory: () => this.pruneHistory(),
     });
     this.allocationApi = new AllocationApiLifecycle({
@@ -230,7 +294,7 @@ export class ControlPlane {
       holdForegroundProviders: (allocation) => this.holdForegroundProviders(allocation),
       allocationLabels: (allocation) => this.allocationLabels(allocation),
       emit: (name, labels) => this.emit(name, labels),
-      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations()),
+      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations(), "waiting_promotion"),
       scheduleIdleReconcile: () => this.scheduleIdleReconcile(),
       pruneHistory: () => this.pruneHistory(),
     });
@@ -238,6 +302,65 @@ export class ControlPlane {
 
   getProviderInstances(): ProviderInstanceInspection[] {
     return this.providerInstances.inspect();
+  }
+
+  waitForAllocation(id: string, signal?: AbortSignal, timeoutMs = 300_000) {
+    return this.notifications.wait(id, () => this.getAllocation(id), signal, timeoutMs);
+  }
+
+  getAllocationWaiterCount(): number { return this.notifications.size; }
+
+  async prepareUsageHandover(nextRuntimeIds: string[]): Promise<void> {
+    const usage = this.usage;
+    if (!usage) return;
+    usage.check();
+    const owner = usage.owner;
+    if (this.handover) {
+      if (this.handover.owner !== owner) throw new UsageProtectionError(1);
+      await this.handover.promise;
+      return await this.prepareUsageHandover(nextRuntimeIds);
+    }
+    const initialRetention = this.retainedOwner === undefined && usage.canProtect && usage.protection.snapshot().preparing > 0;
+    if (!initialRetention && !this.usageHandoverNeeded(nextRuntimeIds)) return;
+    // A different profile cannot overwrite rollback state while readiness for
+    // the previous accepted allocation is still unresolved.
+    if (this.retentionRollback?.allocations.size) throw new UsageProtectionError(1);
+    if (usage.protection.snapshot().activeRequests > 0) throw new UsageProtectionError(1);
+    this.retentionRollback = { previousOwner: this.retainedOwner, runtimeIds: this.providerInstances.retainedRuntimeIds(), nextOwner: owner, nextRuntimeIds: [...new Set(nextRuntimeIds)].sort(), allocations: new Set(), semanticAllocations: new Set() };
+    const promise = usage.transfer(async () => {
+      for (const [id, allocationOwner] of this.usageAllocations) {
+        if (allocationOwner === this.retainedOwner) await this.releaseAllocation(id);
+      }
+      await this.providerInstances.releaseRetained(nextRuntimeIds, this.profileRetentionScope(nextRuntimeIds));
+      this.retainedOwner = owner;
+      usage.protection.relinquish(owner);
+      await this.observer.tick();
+      this.retentionChanged?.(this.providerInstances.retainedRuntimeIds(), owner === usage.protectedOwner);
+    });
+    this.handover = { owner, promise };
+    try { await promise; } finally { if (this.handover?.promise === promise) this.handover = undefined; }
+  }
+
+  retainUsageProfile(allocationId: string): void {
+    const allocation = this.allocations.get(allocationId);
+    const owner = this.usage?.owner ?? this.usageAllocations.get(allocationId);
+    if (!allocation || allocation.status !== "ready" || !owner) return;
+    this.retainedOwner = owner;
+    const runtimeIds = allocation.bindings.map(binding => binding.runtime);
+    this.providerInstances.retainUntilNextProfile(runtimeIds, this.profileRetentionScope(runtimeIds));
+    this.retentionChanged?.(this.providerInstances.retainedRuntimeIds(), owner === this.usage?.protectedOwner);
+    this.completeUsageHandover(allocationId);
+  }
+
+  async activateUsageProtection(priority: number): Promise<void> {
+    if (!this.usage) return;
+    this.usage.check();
+    for (const [id, owner] of [...this.usageAllocations]) {
+      if (owner !== this.usage.owner && activeAllocation(this.allocations.get(id)?.status ?? "released")) {
+        const result = await this.preemptAllocation(id, priority);
+        if (result.status !== 200) throw new UsageProtectionError(1);
+      }
+    }
   }
 
   retainProviderRequest(allocationId: string, capability: string, requestId: string): string | undefined {
@@ -258,6 +381,7 @@ export class ControlPlane {
   async reconcileProviderInstances(signal?: AbortSignal): Promise<void> {
     const state = await this.observer.tick();
     for (const runtime of this.registry.runtimes) {
+      if (this.providerInstances.isProfileManaged(runtime.id) && !this.providerInstances.isRetained(runtime.id)) continue;
       const release = this.options.getRuntimeReleaseDefinition?.(runtime.id)
         ?? this.options.getRuntimeRelease?.(runtime.id);
       if (runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0) {
@@ -352,7 +476,8 @@ export class ControlPlane {
     return countActiveAllocations([...this.allocations.values()]);
   }
 
-  async allocate(request: AllocationRequest) {
+  async allocate(request: AllocationRequest, options: { waitForSemanticReadiness?: boolean } = {}) {
+    this.usage?.check();
     if (this.draining) {
       return {
         status: 503 as const,
@@ -371,9 +496,20 @@ export class ControlPlane {
         },
       };
     }
+    if (this.usage && (this.retainedOwner !== undefined || (this.usage.canProtect && this.usage.protection.snapshot().preparing > 0))) {
+      const resolved = resolveAllocationBindings({
+        registry: this.registry, state: this.observer.getState(), request,
+        getRuntimeRelease: this.options.getRuntimeRelease,
+        getRuntimeReleaseDefinition: this.options.getRuntimeReleaseDefinition,
+        onRejected: () => {},
+      });
+      if (!resolved.ok) return resolved.result;
+      await this.prepareUsageHandover(resolved.bindings.map(binding => binding.runtime));
+    }
     this.expireDueAllocations();
     const activeLimit = Math.max(1, this.options.maxActiveAllocations ?? 1_000);
     if (this.activeAdmissionCount() >= activeLimit) {
+      this.rollbackUsageProfile();
       this.emit("allocation_rejected", { reason: "allocation_capacity" });
       return {
         status: 503 as const,
@@ -385,6 +521,7 @@ export class ControlPlane {
         },
       };
     }
+    const admissionEnd = currentObservation()?.stage("allocation_admission");
     const admission = planAllocationRequestAdmission({
       registry: this.registry,
       request,
@@ -407,7 +544,8 @@ export class ControlPlane {
         ...(route ? { route } : {}),
       }),
     });
-    if (!admission.ok) return admission.result;
+    admissionEnd?.();
+    if (!admission.ok) { this.rollbackUsageProfile(); return admission.result; }
     const now = this.now();
     const allocationId = this.uniqueId(
       createAllocationId(this.getBootEpoch(), this.options.random),
@@ -422,7 +560,16 @@ export class ControlPlane {
       request,
       admission,
       now,
-      storeAllocation: (allocation) => this.allocations.set(allocation.id, allocation),
+      storeAllocation: (allocation) => {
+        this.allocations.set(allocation.id, allocation);
+        if (this.usage?.owner) this.usageAllocations.set(allocation.id, this.usage.owner);
+        const rollback = this.retentionRollback;
+        if (rollback && rollback.nextOwner === this.usage?.owner
+          && JSON.stringify(rollback.nextRuntimeIds) === JSON.stringify([...new Set(allocation.bindings.map(binding => binding.runtime))].sort())) {
+          rollback.allocations.add(allocation.id);
+          if (options.waitForSemanticReadiness) rollback.semanticAllocations.add(allocation.id);
+        }
+      },
       retainExisting: (runtimeId, id, providerRevision) =>
         this.providerInstances.retainExisting(runtimeId, id, providerRevision),
       requiresInstanceTracking: Boolean(this.backend.ensureInstance),
@@ -437,9 +584,9 @@ export class ControlPlane {
       startupDeadline: (allocation) => this.allocationStartupDeadline(allocation),
       createOperationId: () => this.createOperationId(),
       storeOperation: (operation) => this.operations.set(operation.id, operation),
-      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations()),
-      enqueueStartup: (allocation, operation, deadline) => this.enqueue(() =>
-        this.runAllocationEnsure(allocation, operation, deadline)
+      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations(), "waiting_promotion"),
+      enqueueStartup: (allocation, operation, deadline) => this.enqueue(
+        () => this.runAllocationEnsure(allocation, operation, deadline), "allocation_startup",
       ),
       pruneHistory: () => this.pruneHistory(),
     });
@@ -450,6 +597,7 @@ export class ControlPlane {
   }
 
   resolveAllocation(id: string, capability: string) {
+    this.usage?.check();
     return this.allocationApi.resolveAllocation(id, capability);
   }
 
@@ -458,7 +606,9 @@ export class ControlPlane {
     terminal: "released" | "expired" = "released",
     reason?: Error,
   ) {
-    return await this.allocationApi.releaseAllocation(id, terminal, reason);
+    const result = await this.allocationApi.releaseAllocation(id, terminal, reason);
+    this.usageAllocations.delete(id);
+    return result;
   }
 
   async preemptAllocation(id: string, preemptingPriority: number) {
@@ -466,6 +616,7 @@ export class ControlPlane {
   }
 
   async prepare(request: PrepareRequest) {
+    this.usage?.check();
     return await this.legacyPrepare.prepare(request);
   }
 
@@ -474,6 +625,7 @@ export class ControlPlane {
   }
 
   resolve(capability: string) {
+    this.usage?.check();
     return this.legacyControl.resolve(capability);
   }
 
@@ -503,8 +655,24 @@ export class ControlPlane {
     });
   }
 
-  private enqueue(work: () => Promise<void>): void {
-    this.applyChain = this.applyChain.then(work).catch((err) => {
+  private enqueue(work: () => Promise<void>, kind = "maintenance"): void {
+    const observation = this.options.observability;
+    const activity = observation?.operation("control_task");
+    activity?.attribute("larm.task_kind", kind);
+    const queueEnd = activity?.stage("queue_wait");
+    if (observation) observation.gauge("control_tasks_queued", {}, ++this.queuedTasks);
+    this.applyChain = this.applyChain.then(async () => {
+      queueEnd?.();
+      if (observation) {
+        observation.gauge("control_tasks_queued", {}, --this.queuedTasks);
+        observation.gauge("control_tasks_active", {}, 1);
+      }
+      const end = activity?.stage("run");
+      let outcome = "complete";
+      try { await (activity ? activity.run(work) : work()); }
+      catch (error) { outcome = "error"; throw error; }
+      finally { end?.(); activity?.finish(outcome); observation?.gauge("control_tasks_active", {}, 0); }
+    }).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`control plane task failed: ${message}`);
     });
@@ -515,6 +683,12 @@ export class ControlPlane {
     operation: Operation,
     deadline: number,
   ): Promise<void> {
+    try { this.usage?.check(); }
+    catch (error) {
+      if (!(error instanceof UsageProtectionError)) throw error;
+      await this.releaseAllocation(allocation.id, "released", new AllocationLifecycleError("foreground_protected", "request stopped because another consumer is protected"));
+      return;
+    }
     await this.allocationStartup.run(allocation, operation, deadline);
   }
 
@@ -609,6 +783,8 @@ export class ControlPlane {
   }
 
   private holdForegroundProviders(allocation: Allocation): void {
+    if (this.retainedOwner !== undefined && this.usageAllocations.get(allocation.id) === this.retainedOwner) return;
+    if (this.usage?.protectedOwner && this.usageAllocations.get(allocation.id) === this.usage.protectedOwner) return;
     this.preemption.holdForegroundProviders(allocation);
   }
 
@@ -718,7 +894,7 @@ export class ControlPlane {
       draining: this.draining,
       hasWaiting: [...this.allocations.values()].some((allocation) => allocation.status === "waiting"),
       delayMs,
-      promote: () => this.enqueue(() => this.promoteWaitingAllocations()),
+      promote: () => this.enqueue(() => this.promoteWaitingAllocations(), "waiting_promotion"),
     });
   }
 
@@ -781,6 +957,7 @@ export class ControlPlane {
       const allocation = terminalAllocations.shift();
       if (allocation) {
         this.allocations.delete(allocation.id);
+        this.usageAllocations.delete(allocation.id);
         this.allocationLifecycleAborts.delete(allocation.id);
       }
     }
@@ -809,6 +986,10 @@ export class ControlPlane {
   }
 
   private emit(name: string, labels?: Record<string, string>, value?: number): void {
+    if (["allocation_failed", "allocation_released", "allocation_expired"].includes(name) && labels?.allocation) this.rollbackUsageProfile(labels.allocation);
+    if (name === "allocation_ready" && labels?.allocation && !this.retentionRollback?.semanticAllocations.has(labels.allocation)) this.completeUsageHandover(labels.allocation);
+    if (labels?.allocation) this.notifications.notify(labels.allocation);
+    if (labels?.allocation && ["allocation_released", "allocation_expired", "allocation_failed"].includes(name)) this.usageAllocations.delete(labels.allocation);
     this.options.onEvent?.({ name, labels, value });
   }
 

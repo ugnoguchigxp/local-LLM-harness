@@ -161,6 +161,7 @@ const agentProfileYamlSchema = z.object({
   description: z.string().min(1).max(256),
   schedulingPriority: z.number().int().min(-1_000_000).max(1_000_000).default(0),
   requestScheduling: z.enum(["foreground-exclusive", "background-when-idle"]).optional(),
+  usageProtection: z.object({ idleSeconds: z.literal(600), retention: z.literal("until-next-profile") }).strict().optional(),
   idleRelease: agentConnectionIdleReleaseSchema.optional(),
   providers: z.array(agentProviderYamlSchema).min(1).max(8),
 }).strict().superRefine((value, context) => {
@@ -329,6 +330,7 @@ export type AgentProfile = {
   deprecated: boolean;
   schedulingPriority?: number;
   requestScheduling?: "foreground-exclusive" | "background-when-idle";
+  usageProtection?: { idleSeconds: 600; retention: "until-next-profile" };
   idleRelease?: AgentConnectionIdleRelease;
   providers: AgentProviderProfile[];
   revision: string;
@@ -479,6 +481,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
       deprecated: false,
       schedulingPriority: profile.schedulingPriority,
       ...(profile.requestScheduling ? { requestScheduling: profile.requestScheduling } : {}),
+      ...(profile.usageProtection ? { usageProtection: structuredClone(profile.usageProtection) } : {}),
       ...(profile.idleRelease ? { idleRelease: structuredClone(profile.idleRelease) } : {}),
       providers,
     };
@@ -524,6 +527,7 @@ export function parseAgentConnectionCatalog(input: unknown, registry: Registry):
       deprecated: true,
       schedulingPriority: canonical.schedulingPriority,
       ...(canonical.requestScheduling ? { requestScheduling: canonical.requestScheduling } : {}),
+      ...(canonical.usageProtection ? { usageProtection: structuredClone(canonical.usageProtection) } : {}),
       ...(canonical.idleRelease ? { idleRelease: structuredClone(canonical.idleRelease) } : {}),
       providers,
     };
@@ -659,7 +663,8 @@ export const publicAgentProfileListSchema = z.object({
     selectionPolicy: z.enum(["default", "compatibility", "explicit-only"]),
     deprecated: z.boolean(),
     schedulingPriority: z.number().int().min(-1_000_000).max(1_000_000).optional(),
-    idleRelease: agentConnectionIdleReleaseSchema.optional(),
+    usageProtection: z.object({ idleSeconds: z.literal(600), retention: z.literal("until-next-profile") }).strict().optional(),
+  idleRelease: agentConnectionIdleReleaseSchema.optional(),
     providers: z.array(z.object({
       name: agentIdentifierSchema,
       capability: agentIdentifierSchema,
@@ -721,7 +726,8 @@ export const publicAgentProfileListV3Schema = z.object({
     selectionPolicy: z.enum(["default", "compatibility", "explicit-only"]),
     deprecated: z.boolean(),
     schedulingPriority: z.number().int().min(-1_000_000).max(1_000_000).optional(),
-    idleRelease: agentConnectionIdleReleaseSchema.optional(),
+    usageProtection: z.object({ idleSeconds: z.literal(600), retention: z.literal("until-next-profile") }).strict().optional(),
+  idleRelease: agentConnectionIdleReleaseSchema.optional(),
     providers: z.array(z.object({
       name: agentIdentifierSchema,
       capability: agentIdentifierSchema,
