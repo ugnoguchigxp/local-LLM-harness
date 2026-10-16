@@ -62,12 +62,6 @@ agentProfiles:
         publicModel: ruri-v3-30m-speaking-attitude
         publishModel: false
         readiness: system-one
-      - name: sentence-language
-        capability: decision.sentence-language
-        route: system-one-ruri-language
-        publicModel: ruri-v3-30m-sentence-language
-        publishModel: false
-        readiness: system-one
   ornith1.5Strix:
     description: Ornith 1.5 STRIX_LEAN profile copied from the Gemma 4 26B voice profile with the same speech, embedding, and System One providers; image input enabled
     schedulingPriority: 4000
@@ -118,12 +112,6 @@ agentProfiles:
         capability: decision.system-one
         route: system-one-ruri
         publicModel: ruri-v3-30m-speaking-attitude
-        publishModel: false
-        readiness: system-one
-      - name: sentence-language
-        capability: decision.sentence-language
-        route: system-one-ruri-language
-        publicModel: ruri-v3-30m-sentence-language
         publishModel: false
         readiness: system-one
   saaa-conversation-gemma4-26b-64k:
@@ -178,12 +166,6 @@ agentProfiles:
         publicModel: kitten-tts-nano-0.8-fp32
         publishModel: false
         readiness: tts-speech
-      - name: sentence-language
-        capability: decision.sentence-language
-        route: system-one-ruri-language
-        publicModel: ruri-v3-30m-sentence-language
-        publishModel: false
-        readiness: system-one
       - name: system-one
         capability: decision.system-one
         route: system-one-laya

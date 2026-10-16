@@ -134,11 +134,6 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "llm-inference",
         contextWindow: { maxTokens: 32768, outputReserveTokens: 4096, safetyMarginTokens: 0 },
       }, {
-        name: "sentence-language",
-        route: "system-one-ruri-language",
-        protocol: "larm.system-one.v1",
-        readiness: "system-one",
-      }, {
         name: "system-one",
         route: "system-one-laya",
         protocol: "larm.system-one.v1",
@@ -242,14 +237,6 @@ test("production agent profiles compile to strict protocol-aware provider contra
             outputReserveTokens: 4_096,
             safetyMarginTokens: 1_976,
           },
-        },
-        {
-          name: "sentence-language",
-          capability: "decision.sentence-language",
-          route: "system-one-ruri-language",
-          publicModel: "ruri-v3-30m-sentence-language",
-          protocol: "larm.system-one.v1",
-          readiness: "system-one",
         },
         {
           name: "system-one",

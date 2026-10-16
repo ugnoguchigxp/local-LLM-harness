@@ -24,7 +24,7 @@ for (const [selector, llm] of [["ornith1.5Strix", "ornith-1.5-strix-lean"], ["SA
     || profile.providers.find(provider => provider.name === "llm")?.contextWindow?.maxTokens !== 262144
     || profile.providers.find(provider => provider.name === "tts")?.model !== "voicevox-core"
     || profile.providers.find(provider => provider.name === "tts-english")?.model !== "kitten-tts-nano-0.8-fp32"
-    || !profile.providers.some(provider => provider.name === "sentence-language")) {
+    || profile.providers.some(provider => provider.name === "sentence-language")) {
     throw new Error(`${selector}: standard ASR or retained provider contract mismatch`);
   }
   const created = await client.createAgentConnection({ profile: selector, expectedCatalogRevision: catalog.catalogRevision,

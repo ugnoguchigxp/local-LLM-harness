@@ -1,4 +1,4 @@
-"""larm.system-one.v1 attitude and sentence-language heads sharing one encoder."""
+"""larm.system-one.v1 speaking-attitude Provider."""
 from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI, HTTPException, Request
@@ -7,8 +7,7 @@ from engine import Engine
 
 @asynccontextmanager
 async def lifespan(app):
-    app.state.engine = Engine(os.environ.get('RURI_MODEL_ROOT', '/srv/ai/models/ruri-speaking-attitude-v1'),
-                              os.environ.get('RURI_LANGUAGE_MODEL_ROOT'))
+    app.state.engine = Engine(os.environ.get('RURI_MODEL_ROOT', '/srv/ai/models/ruri-speaking-attitude-v1'))
     yield
 
 

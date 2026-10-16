@@ -1,28 +1,8 @@
 # Ruri speaking-attitude Provider
 
-The same resident CPU encoder now serves `ruri-v3-30m-sentence-language`
-through the `sentence-language` Provider (`decision.sentence-language`,
-route `system-one-ruri-language`). Both routes resolve to `ruri-system-one`.
-There is one ONNX session, loaded once, and a separately pinned ja/en head.
-The previous attitude input format and head are unchanged.
-
-Language requests use the existing `/v1/systemone` choice envelope, with
-`state` containing a sentence and named criteria `{ja: "日本語文章", en: "英語文章"}`.
-Both candidates are required. `answers.<question>.choice` is `ja` or `en`.
-It classifies the whole sentence, not individual language spans or pauses.
-Empty input, unsupported questions, and >512 tokens return 422; language
-input is never silently truncated. Acquire the `sentence-language` provider
-from `SAAA-gemma4-26b` rather than changing an attitude claim's model.
-
-`provision-ruri-artifacts.py` also installs the evaluated head in
-`/srv/ai/models/ruri-sentence-language-v1` (head SHA-256
-`aa0ec854481c88e421711824c4082ba45f7ac21006bd5f3343f6064a4321e289`).
-The optional `RURI_LANGUAGE_MODEL_ROOT` selects its artifact root. Startup
-checks encoder/tokenizer hashes against both manifests before sharing them.
-`/health` retains the attitude fields and adds `models`,
-`encoder_session_count: 1`, and `sentence_language` details.
-Use `smoke-ruri-language-profile.ts` for claimed ja/en classification, old
-attitude, cross-model rejection, renewal, revocation and warm HTTP timings.
+The sentence-language Provider was retired on 2026-10-16. Japanese/English
+selection belongs in the consumer, using regular expressions. The runtime serves
+only the speaking-attitude model and does not load a language head.
 
 `ruri-v3-30m-speaking-attitude` implements the `choice` portion of `larm.system-one.v1`
 for the fixed labels `none`, `warmth`, `joy`, `empathy`, `curiosity`, `surprise`.

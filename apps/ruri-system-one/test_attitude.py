@@ -23,10 +23,11 @@ class AttitudeTests(unittest.TestCase):
         body = self.request({'refund': '返金', 'other': 'その他'})
         with self.assertRaises(ValueError):
             validate_request(body)
-        body = self.request()
-        body['model'] = 'laya-multilingual'
-        with self.assertRaises(ValueError):
-            validate_request(body)
+        for model in ['laya-multilingual', 'ruri-v3-30m-sentence-language']:
+            body = self.request()
+            body['model'] = model
+            with self.assertRaises(ValueError):
+                validate_request(body)
         body = self.request()
         body['questions']['emotion']['type'] = 'score'
         with self.assertRaises(ValueError):

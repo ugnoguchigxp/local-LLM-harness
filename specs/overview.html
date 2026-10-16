@@ -22,6 +22,27 @@
         </tr>
       </thead>
       <tbody>
+        <tr
+          data-kind="decision"
+          data-state="current"
+          data-domain="ruri-sentence-language-retirement"
+        >
+          <th scope="row">
+            <a href="./ruri-sentence-language-retirement-2026-10-16.html"
+              >Ruri文章日英判定Providerの廃止</a
+            >
+          </th>
+          <td>
+            公開Provider・route・言語head依存の削除と、呼び出し側の正規表現への責務移行。<small
+              >分類: <code>decision</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ruri-sentence-language-retirement</code></small
+            >
+          </td>
+          <td>
+            2026-10-16。ソースと配備定義を更新し、不要な学習・評価データと実験記録を削除。配備済み言語headは稼働反映まで保持。稼働releaseへの反映は未実施。
+          </td>
+        </tr>
         <tr data-kind="contract" data-state="current" data-domain="ornith-image-input">
           <th scope="row">
             <a href="./ornith-image-input-implementation-2026-10-13.html"
@@ -2320,7 +2341,11 @@
         </tr>
         <tr
           data-kind="contract"
-          data-state="current"
+          data-state="historical"
+          data-successor="ruri-sentence-language-retirement-2026-10-16.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-16"
+          data-target-revision="f3e50e2148df5212bec5cfcd871a6c17014d9799"
           data-domain="ruri-sentence-language-resident-integration"
         >
           <th scope="row">
@@ -2331,11 +2356,22 @@
           <td>
             共有encoder、新Providerの発見・確保・choice API、旧態度回帰、準備済みHTTP性能。<small
               >分類: <code>contract</code> · 状態:
-              <code>current</code> · 正本領域:
+              <code>historical</code> · 正本領域:
               <code>ruri-sentence-language-resident-integration</code></small
             >
           </td>
-          <td>2026-10-12 常駐への組込み・関連試験済み。署名release反映と公開canaryは確認中。</td>
+          <td>
+            2026-10-12 署名release反映・公開API接続済み。50／50正解、単独P95
+            1.87〜3.16ms、態度同時P95 8.48ms。既存態度・認証・更新・解放も確認。
+            <p>
+              2026-10-16に廃止。後継:
+              <a href="./ruri-sentence-language-retirement-2026-10-16.html" rel="successor"
+                >文章日英判定の廃止決定</a
+              >。<small data-audit-summary="true"
+                >2026-10-16、revision f3e50e2148df5212bec5cfcd871a6c17014d9799の記録を確認。</small
+              >
+            </p>
+          </td>
         </tr>
       </tbody>
     </table>

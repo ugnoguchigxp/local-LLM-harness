@@ -154,26 +154,6 @@ test("System One readiness sends and validates a fixed Japanese typed decision",
   });
 });
 
-test("sentence language readiness requests ja/en and rejects a wrong known language", async () => {
-  for (const choice of ["ja", "en"]) {
-    const { registry, control, provider } = fixture("larm.system-one.v1", "decision.sentence-language");
-    provider.publicModel = "ruri-v3-30m-sentence-language";
-    let observed: unknown;
-    const readiness = new SemanticReadiness({ control, getRegistry: () => registry,
-      executionGate: new ExecutionGate(), timeoutMs: 100,
-      fetchImpl: async (_input, init) => {
-        observed = JSON.parse(String(init?.body));
-        return Response.json({ model: provider.publicModel,
-          answers: { language: { type: "choice", choice, confidence: .9 } },
-          usage: { input_tokens: 10, output_tokens: 0 } });
-      } });
-    const result = await readiness.check({ allocationId: "alloc", provider });
-    expect(result.ready).toBe(choice === "ja");
-    expect(observed).toMatchObject({ model: provider.publicModel, state: "これは日本語の文章です。",
-      questions: { language: { type: "choice", criteria: { ja: "日本語文章", en: "英語文章" } } } });
-  }
-});
-
 function embeddingResponse(type: "query" | "passage", dimension = 384): Response {
   return Response.json({
     embeddings: [[1, ...Array.from({ length: dimension - 1 }, () => 0)]],

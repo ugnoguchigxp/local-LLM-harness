@@ -1,5 +1,13 @@
 <article lang="ja">
   <h1>Ruri文章言語判定の常駐組込み</h1>
+  <aside>
+    <p>
+      2026-10-16に文章日英判定Providerを廃止した。日英判定は呼び出し側の正規表現で行う。現行の判断は<a
+        href="./ruri-sentence-language-retirement-2026-10-16.html"
+        >廃止決定</a
+      >を参照する。以下は2026-10-12時点の実験・配備記録であり、現行の利用手順ではない。2026-10-16の追加指示により、学習・評価データ、実験コードと外部実測記録は削除済み。配備済み言語headのみ稼働反映まで保持する。
+    </p>
+  </aside>
   <p>
     2026-10-12。日本語200文・英語200文を全件学習した二分類ヘッドを、既存の常駐Ruriへ追加する。約342msは試作のencoder・tokenizer初期化を含む時間であり、常駐後の各判定で初期化を繰り返さない。
   </p>
@@ -83,8 +91,54 @@
       実接続canaryはdeploy/local-node/scripts/smoke-ruri-language-profile.ts。両Providerをsubsetで確保し、50文判定、旧態度判定、モデル束縛、renew、解放後401を検査し、準備済みの公開gateway往復を日本語・英語各200回測定する。失敗・timeoutを別集計し、失敗した試行時間もpercentileに含める。モデル初期化時間、head追加load時間、判定時間を分けて記録する。
     </p>
     <p>
-      この文書を作成した時点では、関連163試験と組込みEngineの50文試験を通過。配備用ソースは現在の稼働release
-      c5f5c318201ae2004cf3bc3c3a61c2573cf4bb62を基に隔離し、他の作業ツリーの未確定変更を混ぜない。署名付きreleaseの全体check・稼働反映・公開canaryの結果は確認後に追記する。
+      関連163試験と組込みEngineの50文試験を通過。配備用ソースは前の稼働release
+      c5f5c318201ae2004cf3bc3c3a61c2573cf4bb62を基に隔離し、他の作業ツリーの未確定変更を混ぜなかった。隔離ソースのbun
+      run checkは全通過（apps／packages 753試験、tooling 24試験、deployment TypeScript 56試験、Ruri
+      Python
+      11試験、文章データ4試験と配備Script群）。署名付きbuilderでも全checkを再実行して通過した。
+    </p>
+    <table>
+      <caption>
+        常駐後の認証付き公開gateway判定往復：各条件200回
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">P50 ms</th>
+          <th scope="col">P95 ms</th>
+          <th scope="col">失敗／誤判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">日本語単独</th>
+          <td>2.06</td>
+          <td>3.16</td>
+          <td>0／0</td>
+        </tr>
+        <tr>
+          <th scope="row">英語単独</th>
+          <td>1.57</td>
+          <td>1.87</td>
+          <td>0／0</td>
+        </tr>
+        <tr>
+          <th scope="row">英語＋同時の態度判定</th>
+          <td>5.39</td>
+          <td>8.48</td>
+          <td>0／0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      単独の日本語・英語400試行はtimeoutも0。並行負荷は言語要求ごとに一つの態度要求を同時送信し、200組で測定。共用runtimeのadmission待ちを含む。encode・判定以外にgatewayの認証・検証・通信を含み、初期化やTTSを含まない。
+    </p>
+    <p>
+      実接続の新規50文は50／50正解。旧態度none判定、異なるモデルへのcredential利用400、renew後のclaim再取得、release後401も通過。RuriのPID
+      695627は600回の性能試行を通して同じで、healthのencoder_session_countは1。言語headの追加loadは0.25ms、全service起動は496.36msで起動時だけ発生する。個々の判定で約342msの初期化を繰り返さない。
+    </p>
+    <p>
+      証拠は/srv/ai/benchmarks/sentence-language/resident-integration-20261012。check.log、build.log、live-canary.json、contention-canary.jsonと再実行用contention-canary.tsを保存した。credentialの値は保存していない。
     </p>
   </section>
   <section id="deployment">
@@ -102,6 +156,11 @@
     <p>
       再現手順はprepare-ruri-runtime.sh、provision-ruri-artifacts.pyによる固定artifact準備、隔離した完全commitに対するbuild-larm-release.sh、既存の署名intent
       activator、Ruriのstop／start、公開canary。既存Connectionはdaemon再起動後に再取得する。重み・head係数・logs・実測JSONはrepository外に保持する。
+    </p>
+    <p>
+      稼働releaseはf65c374445a0a47d0a164bbe8f2351c068af5875、configRevisionは1946ddd3d6f1d8c028b448d153d87b75a4d0ba9594f8f0d9318d03d8fa76e61c。署名manifestと/healthの両方の一致、root
+      activatorの成功を確認。有効configは起動時に読むため、overlay最終反映後にdaemonを正常終了し既存のRestart=alwaysで読み直した。Granite
+      ASRの選択は保持した。
     </p>
   </section>
 </article>

@@ -275,13 +275,6 @@ routes:
       - runtime: ruri-system-one
         purpose: primary
 
-  system-one-ruri-language:
-    capabilities: [decision.sentence-language]
-    explicitOnly: true
-    candidates:
-      - runtime: ruri-system-one
-        purpose: primary
-
   stt-granite:
     capabilities:
       - speech.stt

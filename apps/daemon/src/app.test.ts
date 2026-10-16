@@ -321,11 +321,6 @@ async function validAgentProviderSemanticResponse(input: string | URL | Request,
   }
   if (path.endsWith("/v1/systemone")) {
     const request = JSON.parse(String(init?.body)) as { model: string };
-    if (request.model === "ruri-v3-30m-sentence-language") {
-      return Response.json({ model: request.model,
-        answers: { language: { type: "choice", choice: "ja", probabilities: { ja: .99, en: .01 }, confidence: .99 } },
-        usage: { input_tokens: 10, output_tokens: 0 } });
-    }
     return Response.json({
       model: request.model,
       answers: { emotion: {
@@ -512,7 +507,6 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-contextstill" },
-        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
         { name: "system-one", endpoint: "/v1/systemone", model: "laya-multilingual" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
@@ -525,7 +519,6 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
-        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
         { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
@@ -538,7 +531,6 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
-        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
         { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
@@ -551,7 +543,6 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-strix-lean" },
-        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
         { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
@@ -710,7 +701,6 @@ test("E2E: default Ornith profile provide returns every live provider over a rea
         { name: "asr", ready: true },
         { name: "embedding", ready: true },
         { name: "llm", ready: true },
-        { name: "sentence-language", ready: true },
         { name: "system-one", ready: true },
         { name: "tts", ready: true },
         { name: "tts-english", ready: true },
@@ -728,7 +718,6 @@ test("E2E: default Ornith profile provide returns every live provider over a rea
       "asr",
       "embedding",
       "llm",
-      "sentence-language",
       "system-one",
       "tts",
       "tts-english",
@@ -780,22 +769,24 @@ test("E2E: default Ornith profile provide returns every live provider over a rea
       headers: agentHeaders(),
     })).status).toBe(204);
 
-    const unknownSubsetResponse = await fetch(`${baseUrl}/v1/agent-connections`, {
-      method: "POST",
-      headers: agentHeaders({
-        "content-type": "application/json",
-        "idempotency-key": "saaa-profile-unknown-subset-e2e",
-      }),
-      body: JSON.stringify({
-        profile: "ornith1.5Strix",
-        audience: "same-host",
-        providers: ["missing"],
-      }),
-    });
-    expect(unknownSubsetResponse.status).toBe(400);
-    expect(await unknownSubsetResponse.json()).toMatchObject({
-      error: { code: "unknown_connection_provider" },
-    });
+    for (const provider of ["missing", "sentence-language"]) {
+      const unknownSubsetResponse = await fetch(`${baseUrl}/v1/agent-connections`, {
+        method: "POST",
+        headers: agentHeaders({
+          "content-type": "application/json",
+          "idempotency-key": `saaa-profile-unknown-subset-${provider}-e2e`,
+        }),
+        body: JSON.stringify({
+          profile: "ornith1.5Strix",
+          audience: "same-host",
+          providers: [provider],
+        }),
+      });
+      expect(unknownSubsetResponse.status).toBe(400);
+      expect(await unknownSubsetResponse.json()).toMatchObject({
+        error: { code: "unknown_connection_provider" },
+      });
+    }
 
     expect((await fetch(claim.providers[0]!.health.url, {
       headers: { authorization: `Bearer ${claim.providers[0]!.credential.token}` },

@@ -648,7 +648,7 @@ test("ContextStill resolves the warm Strix backend shared with the distinct voic
   expect(context.providers.find(provider => provider.name === "llm")).toMatchObject({
     publicModel: "ornith-contextstill", contextWindow: { maxTokens: 32768 },
   });
-  for (const name of ["asr", "tts", "tts-english", "embedding", "sentence-language"]) {
+  for (const name of ["asr", "tts", "tts-english", "embedding"]) {
     expect(context.providers.find(provider => provider.name === name))
       .toEqual(voice.providers.find(provider => provider.name === name));
   }
@@ -684,7 +684,7 @@ test("production warm floor keeps shared Strix and speech warm while admitting C
   expect(admitRuntimes({ registry, state, allocations: [], candidateRuntimeIds: ["ornith-general"] }).ok).toBe(true);
   const context = admitRuntimes({
     registry, state, allocations: [],
-    candidateRuntimeIds: ["ornith15-strix-conversation", "laya-system-one", "multilingual-e5-small", "granite-asr", "voicevox-tts", "kittentts-nano", "ruri-system-one"],
+    candidateRuntimeIds: ["ornith15-strix-conversation", "laya-system-one", "multilingual-e5-small", "granite-asr", "voicevox-tts", "kittentts-nano"],
   });
   expect(context.ok).toBe(true);
   expect(context.nodes[0]?.reclaimableMemoryGB ?? 0).toBe(0);

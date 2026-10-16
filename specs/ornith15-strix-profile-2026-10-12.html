@@ -1,5 +1,13 @@
 <article lang="ja">
   <h1>Gemma4の構成を引き継ぐornith1.5Strixプロファイル</h1>
+  <aside>
+    <p>
+      2026-10-16の更新: 文章日英判定Providerは廃止する。詳細は<a
+        href="./ruri-sentence-language-retirement-2026-10-16.html"
+        >廃止決定</a
+      >を参照する。
+    </p>
+  </aside>
   <p>
     <time>2026-10-12</time>。利用者の依頼により、Gemma 4
     26Bの音声対話プロファイルをコピーし、LLMだけを実機検証済みのOrnith 1.5
@@ -35,8 +43,8 @@
     <p>
       元は<code>saaa-conversation-gemma4-26b-voice</code>。7
       ProviderのうちLLMのrouteとpublicModelだけを変更する。ASR、日本語VOICEVOX、英語KittenTTS、E5
-      embedding、Ruri speaking-attitude、Ruri sentence-languageは共通。優先度4000、300秒のidle
-      release、入力余裕1976 tokens、出力予約4096 tokensも維持する。
+      embedding、Ruri speaking-attitudeは共通。優先度4000、300秒のidle release、入力余裕1976
+      tokens、出力予約4096 tokensも維持する。
     </p>
     <p>
       リポジトリの基準設定はQwen
