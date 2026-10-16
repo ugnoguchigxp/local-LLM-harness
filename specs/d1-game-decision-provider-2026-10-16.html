@@ -23,6 +23,11 @@
       capabilityに対して既知の移動問題を出し、右方向の回答を検証する。Ruri発話態度用のprobeと混同しない。単純なprobeの成功をゲームの強さの保証としない。
     </p>
   </section>
+  <aside>
+    <p>
+      実接続でclaimのcapabilityが既存判断器の固定値になっている問題を検出した。claimは解決済みProviderのcapabilityをschema検証して返すよう修正し、decision.gameの保持と画像転送を確保・claim・Gatewayまで通す回帰試験を追加した。主worktreeの全体checkは修正後も成功した。
+    </p>
+  </aside>
   <section id="artifacts">
     <h2>固定するモデルと実行環境</h2>
     <table>

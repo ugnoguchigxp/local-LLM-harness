@@ -5425,3 +5425,47 @@ test("claimed image preflight exposes exact contract and retention and never byp
     expect(inference.status).toBe(400);expect(await inference.json()).toMatchObject({error:{code:"context_budget_exceeded"}});
   } finally {await app.request(`/v1/agent-connections/${connection.id}`,{method:"DELETE",headers:agentHeaders()});}
 });
+
+test("game decision claims retain capability and forward inline images through the scoped gateway", async () => {
+  const configDir = join(import.meta.dir, "../../../config/local-node");
+  const production = loadRegistry(configDir);
+  const catalog = loadAgentConnectionCatalogForRegistry(configDir, production);
+  const probes = new Map(production.runtimes.map(runtime => [runtime.id, probe(runtime.id, runtime.id === "d1-system-one")]));
+  const log = { ensure: [] as string[], stop: [] as string[] };
+  const backend = stubBackend(probes, log);
+  const observer = new Observer(production, backend);
+  await observer.tick();
+  const control = new ControlPlane(production, backend, observer, { idleTtlMs: 0 });
+  let observed: unknown;
+  const app = createApp({ registry: production, getState: () => observer.getState(), control,
+    apiToken: agentApiToken, connectionSigningKey: agentSigningKey, agentConnectionCatalog: catalog,
+    gatewayFetch: async (_input, init) => {
+      observed = JSON.parse(init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init?.body));
+      return Response.json({ model: "d1-3b-game", answers: { action: { type: "choice", choice: "right", confidence: .9 } },
+        usage: { input_tokens: 64, output_tokens: 0 } });
+    } });
+  const created = await app.request("/v1/agent-connections", { method: "POST",
+    headers: agentHeaders({ "content-type": "application/json", prefer: "wait=3", "idempotency-key": "d1-claim-capability-regression" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-game", audience: "same-host", providers: ["game-decision"] }) });
+  expect(created.status).toBe(201);
+  const connection = publicAgentConnectionSchema.parse(await created.json());
+  try {
+    expect(connection.status).toBe("ready");
+    const response = await app.request(`/v1/agent-connections/${connection.id}/claim`, { method: "POST",
+      headers: agentHeaders({ "content-type": "application/json" }), body: JSON.stringify({ format: "openai-provider-v1" }) });
+    expect(response.status).toBe(200);
+    const claim = agentConnectionClaimSchema.parse(await response.json());
+    expect(claim.providers).toHaveLength(1);
+    const provider = claim.providers[0]!;
+    expect(provider).toMatchObject({ name: "game-decision", capability: "decision.game", apiStyle: "larm-system-one", model: "d1-3b-game" });
+    const body = { model: provider.model, state: null, images: ["data:image/png;base64,YQ=="],
+      questions: { action: { type: "choice", instructions: "Move toward target", criteria: { left: "left", right: "right" } } } };
+    const inference = await app.request("/v1/systemone", { method: "POST",
+      headers: { authorization: `Bearer ${provider.credential.token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect(inference.status).toBe(200);
+    expect(await inference.json()).toMatchObject({ answers: { action: { choice: "right" } } });
+    expect(observed).toEqual(body);
+  } finally {
+    await app.request(`/v1/agent-connections/${connection.id}`, { method: "DELETE", headers: agentHeaders() });
+  }
+});

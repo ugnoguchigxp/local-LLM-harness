@@ -5,6 +5,7 @@ import {
   agentProviderEndpoint,
   personalStateSubjectDigest,
   resolveAgentAudienceBaseUrl,
+  systemOneAgentProviderDescriptorSchema,
   type AgentAudience,
   type AgentConnectionCatalog,
   type AgentConnectionClaim,
@@ -555,7 +556,7 @@ export class AgentConnectionController {
       if (provider.protocol === "larm.system-one.v1") {
         return {
           name: provider.name,
-          capability: "decision.system-one" as const,
+          capability: systemOneAgentProviderDescriptorSchema.shape.capability.parse(provider.capability),
           apiStyle: "larm-system-one" as const,
           protocol: "larm.system-one.v1" as const,
           scheme,
