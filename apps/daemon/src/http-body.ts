@@ -146,6 +146,9 @@ export function limitedRequestStream(
         }
         controller.enqueue(chunk.value);
       } catch (error) {
+        // Decoding can reject before this stream counts any bytes. Preserve
+        // its 400/413 instead of reporting an upstream transport failure.
+        if (error instanceof RequestBodyError) onLimit(error);
         fail(error);
         await reader.cancel(error).catch(() => undefined);
         controller.error(error);

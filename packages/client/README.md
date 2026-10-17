@@ -5,6 +5,27 @@ release選択、Cloud fallbackは行いません。Idempotency-Key、poll、rene
 AbortSignal、確実なreleaseを一か所で扱います。pollの全体期限は進行中のHTTPにも適用し、処理と
 releaseが両方失敗した場合は双方を含む`AggregateError`を返します。
 
+音楽・画像・LLM・TTS・ASRの対象APIでは、4 KiB以上の文字列本文とASRのWAV・PCM multipartを、
+元より小さくなる場合にgzipで送信します。旧LARMへ接続するときは`requestCompression: false`を指定してください。
+応答のgzip交渉・逐次展開は標準fetchが担当します。独自fetchにも同じ動作が必要です。
+SSEとWAV・PCM応答は途中から展開できます。PNG・JPEG・Opusなどの圧縮済みメディアと判断APIは再圧縮しません。
+詳しくは[双方向HTTP圧縮の契約](../../specs/http-media-compression-2026-10-17.html)を参照してください。
+
+音楽・画像などを直接fetchする場合も、公開helperで同じ送信圧縮を利用できます。
+
+```ts
+import { compressLarmMediaRequest } from "@larm/client";
+
+const path = "/v1/images/generations";
+const init = await compressLarmMediaRequest(path, {
+  method: "POST",
+  headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+  body: JSON.stringify(imageRequest),
+  signal,
+});
+const response = await fetch(`${baseUrl}${path}`, init);
+```
+
 ```ts
 import { LarmClient } from "@larm/client";
 

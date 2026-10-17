@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { gzipSync } from "node:zlib";
 import {
   parseAgentConnectionCatalog,
   saaaServiceHarnessSchema,
@@ -131,6 +132,20 @@ async function allocate(app: ReturnType<typeof createApp>, requirements: object[
   expect(response.status).toBe(200);
   return ((await response.json()) as { id: string }).id;
 }
+
+test("streaming ASR reports invalid gzip and expanded size limits as request errors", async () => {
+  const app = await makeSpeechApp({ speechMaxBodyBytes: 1024, gatewayFetch: async (_url, init) => {
+    await new Response(init?.body).bytes();
+    return Response.json({ text: "" });
+  } });
+  for (const [body, status] of [[Buffer.from("invalid gzip"), 400], [gzipSync("a".repeat(2048)), 413]] as const) {
+    const response = await app.request("/v1/audio/transcriptions", {
+      method: "POST", headers: { "content-encoding": "gzip", "content-type": "multipart/form-data; boundary=asr" }, body,
+    });
+    expect(response.status).toBe(status);
+    await response.body?.cancel();
+  }
+});
 
 test("Service Harness advertises batch ASR on the request origin without requiring Bearer", async () => {
   const app = await makeSpeechApp({ apiToken: "control-token" });
