@@ -1,7 +1,7 @@
 const MIN_REQUEST_BYTES = 4096;
 
 function mediaPath(path: string): boolean {
-  return /^\/v1\/(?:chat\/completions(?:\/input-tokens)?|audio\/(?:speech|transcriptions)|music(?:\/.*)?|images\/generations)$/.test(path);
+  return /^\/v1\/(?:embed|chat\/completions(?:\/input-tokens)?|audio\/(?:speech|transcriptions)|music(?:\/.*)?|images\/generations)$/.test(path);
 }
 
 /** Response decoding remains the fetch implementation's responsibility. */

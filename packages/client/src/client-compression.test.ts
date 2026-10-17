@@ -7,7 +7,7 @@ const text = "長い入力テキスト。".repeat(1000);
 
 test("SDK compresses large media JSON and leaves small, control and decision bodies alone", async () => {
   const init = { method: "POST", headers: { "content-type": "application/json", "content-length": "99999" }, body: JSON.stringify({ text }) };
-  for (const path of ["/v1/chat/completions", "/v1/audio/speech", "/v1/music/generations", "/v1/images/generations"]) {
+  for (const path of ["/v1/chat/completions", "/v1/audio/speech", "/v1/music/generations", "/v1/images/generations", "/v1/embed"]) {
     const prepared = await compressClientRequest(path, init);
     expect(new Headers(prepared.headers).get("content-encoding")).toBe("gzip");
     expect(new Headers(prepared.headers).get("content-length")).toBeNull();
@@ -15,7 +15,7 @@ test("SDK compresses large media JSON and leaves small, control and decision bod
   }
   const small = { body: "{}" };
   expect(await compressClientRequest("/v1/chat/completions", small)).toBe(small);
-  for (const path of ["/v1/systemone", "/v1/embed", "/v1/allocations"]) expect(await compressClientRequest(path, init)).toBe(init);
+  for (const path of ["/v1/systemone", "/v1/allocations"]) expect(await compressClientRequest(path, init)).toBe(init);
   const encoded = { ...init, headers: { "content-encoding": "gzip" } };
   expect(await compressClientRequest("/v1/chat/completions", encoded)).toBe(encoded);
 });

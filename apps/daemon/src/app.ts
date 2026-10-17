@@ -146,6 +146,7 @@ export function createAppComponents(deps: AppDeps) {
   app.use("*", mediaCompression({
     gatewayMaxBodyBytes: deps.gatewayMaxBodyBytes ?? 4 * 1024 * 1024,
     speechMaxBodyBytes: deps.speechMaxBodyBytes ?? 257 * 1024 * 1024,
+    embeddingMaxBodyBytes: deps.embeddingMaxBodyBytes ?? 2 * 1024 * 1024,
   }));
   app.use("*", createAppRequestPolicy(deps, identity));
 

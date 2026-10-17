@@ -9,7 +9,7 @@ const MIN_BYTES = 1024;
 
 /** Compression is a consumer-facing transport feature, not runtime identity. */
 export function isMediaCompressionPath(path: string): boolean {
-  return /^\/v1\/(?:chat\/completions(?:\/input-tokens)?|audio\/(?:speech|transcriptions|voices)|music(?:\/.*)?|images\/generations|image-artifacts(?:\/.*)?)$/.test(path);
+  return /^\/v1\/(?:embed|chat\/completions(?:\/input-tokens)?|audio\/(?:speech|transcriptions|voices)|music(?:\/.*)?|images\/generations|image-artifacts(?:\/.*)?)$/.test(path);
 }
 
 function acceptedEncodings(value: string | null): { gzip: boolean; identity: boolean } {
@@ -203,7 +203,7 @@ function gzipRequestBody(request: Request, maxBytes: number): ReadableStream<Uin
   }, { highWaterMark: 0 });
 }
 
-export function mediaCompression(options: { gatewayMaxBodyBytes: number; speechMaxBodyBytes: number }): MiddlewareHandler {
+export function mediaCompression(options: { gatewayMaxBodyBytes: number; speechMaxBodyBytes: number; embeddingMaxBodyBytes?: number }): MiddlewareHandler {
   return async (c, next) => {
     if (!isMediaCompressionPath(c.req.path)) { await next(); return; }
     const encoding = c.req.header("content-encoding")?.trim().toLowerCase();
@@ -214,6 +214,7 @@ export function mediaCompression(options: { gatewayMaxBodyBytes: number; speechM
       }
       const raw = c.req.raw;
       const maxBytes = c.req.path === "/v1/audio/transcriptions" ? options.speechMaxBodyBytes
+        : c.req.path === "/v1/embed" ? options.embeddingMaxBodyBytes ?? 2 * 1024 * 1024
         : c.req.path === "/v1/images/generations" ? 32 * 1024
         : options.gatewayMaxBodyBytes;
       validateContentLength(raw, maxBytes);

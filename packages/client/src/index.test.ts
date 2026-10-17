@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { gunzipSync } from "node:zlib";
 import {
   LarmApiError,
   LarmClient,
@@ -1130,9 +1131,10 @@ test("typed embedding client uses the claimed endpoint and semantic-space contra
   const requests: Request[] = [];
   let wrongDimension = false;
   let providerResponseMode: "valid" | "redirect" | "invalid-json" | "wrong-media" | "http-error" | "oversized" | "empty" = "valid";
-  const client = new LarmClient({
+  const createClient = (requestCompression?: "gzip" | false) => new LarmClient({
     baseUrl: "http://127.0.0.1:9810",
     apiToken: "control-token",
+    requestCompression,
     fetch: async (input, init) => {
       const request = new Request(input.toString(), init);
       requests.push(request);
@@ -1164,6 +1166,7 @@ test("typed embedding client uses the claimed endpoint and semantic-space contra
       });
     },
   });
+  const client = createClient();
   const claimed = await client.claimAgentConnection(
     claim.id,
     "larm-embedding-provider-v1",
@@ -1184,6 +1187,23 @@ test("typed embedding client uses the claimed endpoint and semantic-space contra
   expect(await requests[1]!.clone().json()).toEqual({
     texts: ["document"], type: "passage", normalize: true, priority: "normal",
   });
+  expect(requests[1]!.headers.get("content-encoding")).toBeNull();
+  const largeInput = { texts: ["長い文書の入力。".repeat(1000)], type: "passage" as const, normalize: true as const, priority: "normal" as const };
+  for (const requestCompression of [undefined, false] as const) {
+    await createClient(requestCompression).embed(provider, largeInput);
+    const sent = requests.at(-1)!;
+    expect(sent.url).toBe(provider.endpoint);
+    expect(sent.headers.get("authorization")).toBe(`Bearer ${provider.credential.token}`);
+    expect(sent.headers.get("content-encoding")).toBe(requestCompression === false ? null : "gzip");
+    const value = requestCompression === false ? await sent.clone().json()
+      : JSON.parse(gunzipSync(await sent.clone().bytes()).toString());
+    expect(value).toEqual(largeInput);
+  }
+  const beforeAbort = requests.length;
+  for (const input of [{ ...largeInput, texts: ["short"] }, largeInput]) {
+    await expect(client.embed(provider, input, AbortSignal.abort(new Error("cancelled")))).rejects.toThrow("cancelled");
+  }
+  expect(requests).toHaveLength(beforeAbort);
   wrongDimension = true;
   await expect(client.embed(provider, {
     texts: ["document"], type: "passage", normalize: true, priority: "low",
