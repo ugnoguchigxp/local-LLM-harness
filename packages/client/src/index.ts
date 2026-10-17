@@ -60,6 +60,7 @@ import {
 } from "./client-provider-protocols";
 
 export type { EmbeddingAgentProvider, SystemOneAgentProvider } from "./client-provider-protocols";
+export { compressClientRequest as compressLarmMediaRequest } from "./client-compression";
 
 export { LarmApiError, LarmClientConfigurationError, LarmEpochChangedError, LarmStreamProtocolError } from "./errors";
 
@@ -71,6 +72,8 @@ export type LarmClientOptions = {
   managementToken?: string;
   fetch?: FetchLike;
   timeoutMs?: number;
+  /** Gzip large media API requests by default; disable for older servers. */
+  requestCompression?: "gzip" | false;
   random?: () => string;
   now?: () => number;
 };
@@ -622,6 +625,7 @@ export class LarmClient {
       timeoutMs,
       acceptedStatuses,
       sendApiToken,
+      requestCompression: this.options.requestCompression,
       observeIdentity: (response) => this.observeIdentity(response),
     });
   }

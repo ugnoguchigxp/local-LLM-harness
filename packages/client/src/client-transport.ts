@@ -1,5 +1,6 @@
 import { errorResponseSchema } from "@larm/core";
 import { LarmApiError } from "./errors";
+import { compressClientRequest } from "./client-compression";
 
 export type ClientFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -14,6 +15,7 @@ export async function sendClientRequest(options: {
   timeoutMs: number;
   acceptedStatuses: readonly number[];
   sendApiToken: boolean;
+  requestCompression?: "gzip" | false;
   observeIdentity: (response: Response) => void;
 }): Promise<Response> {
   const headers = new Headers(options.init.headers);
@@ -41,10 +43,11 @@ export async function sendClientRequest(options: {
   timeout.unref?.();
   let response: Response;
   try {
+    const init = { ...options.init, headers, signal: abort.signal };
+    const prepared = options.requestCompression === false ? init : await compressClientRequest(options.path, init);
+    abort.signal.throwIfAborted();
     response = await options.fetch(`${options.baseUrl}${options.path}`, {
-      ...options.init,
-      headers,
-      signal: abort.signal,
+      ...prepared,
     });
   } catch (error) {
     clearTimeout(timeout);

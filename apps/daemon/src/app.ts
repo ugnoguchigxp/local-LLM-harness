@@ -18,6 +18,7 @@ export type { AppDeps } from "./app-types";
 import { ExecutionGate } from "./execution-gate";
 import type { FetchLike as GatewayFetchLike } from "./gateway";
 import { RequestBodyError } from "./http-body";
+import { mediaCompression } from "./http-compression";
 import type { GatewayRouteOptions } from "./app-gateway-ingress";
 import {
   AgentConnectionController,
@@ -142,6 +143,10 @@ export function createAppComponents(deps: AppDeps) {
     return c.json(errorBody("internal_error", "internal server error"), 500);
   });
 
+  app.use("*", mediaCompression({
+    gatewayMaxBodyBytes: deps.gatewayMaxBodyBytes ?? 4 * 1024 * 1024,
+    speechMaxBodyBytes: deps.speechMaxBodyBytes ?? 257 * 1024 * 1024,
+  }));
   app.use("*", createAppRequestPolicy(deps, identity));
 
   const agentFeature = (c: Context): AgentConnectionController | Response => {

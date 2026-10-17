@@ -667,6 +667,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   }
 
   const headers = new Headers({
+    // Local runtimes receive plain bodies; consumer-side compression is owned
+    // by the HTTP boundary, avoiding decompressed-body/content-length drift.
+    "accept-encoding": "identity",
     accept: options.responseFormat === "sse"
       ? "text/event-stream"
       : options.request.headers.get("accept") ?? "application/json",
@@ -833,7 +836,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     responseHeaders.set("content-type", "application/json");
   }
   if (options.responseFormat === "sse" && upstream.ok) {
-    responseHeaders.set("cache-control", "no-cache, no-transform");
+    // The consumer transport applies compression before forbidding further
+    // transformations by downstream proxies.
+    responseHeaders.set("cache-control", "no-cache");
     responseHeaders.set("x-accel-buffering", "no");
   }
   if (

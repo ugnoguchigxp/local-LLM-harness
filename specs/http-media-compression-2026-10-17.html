@@ -1,0 +1,143 @@
+<article lang="ja">
+  <h1>音楽・画像・LLM・TTS・ASRの双方向HTTP圧縮</h1>
+  <p>
+    2026-10-17。利用アプリとLARMの間でgzipのリクエスト圧縮とレスポンス圧縮を提供する。展開後のJSON、multipart、OpenAI互換SSEと認証を維持する。実装とローカルHTTP試験を記録し、稼働環境への反映やeumenes本体の変更とは区別する。
+  </p>
+  <section id="scope">
+    <h2>対象と境界</h2>
+    <table>
+      <caption>
+        圧縮の適用範囲
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">リクエスト</th>
+          <th scope="col">レスポンス</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLM</th>
+          <td>Chat Completionsと入力トークン計数のJSON</td>
+          <td>JSONとOpenAI互換SSE</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>音声生成JSON</td>
+          <td>WAV・PCM、音声一覧のJSON</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td>gzipで包んだmultipartを展開しboundaryと音声bytesを保持</td>
+          <td>文字起こしJSONと、対応Providerが返すSSE</td>
+        </tr>
+        <tr>
+          <th scope="row">音楽</th>
+          <td>生成などのJSON</td>
+          <td>ジョブ・ライブラリ・metadataのJSONと進捗SSE。WAV・PCMも対象</td>
+        </tr>
+        <tr>
+          <th scope="row">画像</th>
+          <td>画像生成JSON。LLMの画像入りJSONはLLM経路で扱う</td>
+          <td>生成結果と画像一覧のJSON。PNG・JPEG・WebPは再圧縮しない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      対象パスは<code>/v1/chat/completions</code>とその<code>/input-tokens</code>、<code>/v1/audio/speech</code>、<code>/v1/audio/transcriptions</code>、<code>/v1/audio/voices</code>、<code>/v1/music</code>配下、<code>/v1/images/generations</code>、<code>/v1/image-artifacts</code>配下。Ruri・D1などの<code>/v1/systemone</code>とEmbedding・管理APIは対象外とする。モデル名や現在稼働しているプロセスを圧縮適用の条件にしない。
+    </p>
+    <p>
+      LARMと同一ホストの各推論ランタイムの間では従来の非圧縮本文を使用する。共通推論ゲートウェイはupstreamに<code>Accept-Encoding: identity</code>を指定する。個別ランタイムへのgzip機能の追加は不要。
+    </p>
+  </section>
+  <section id="requests">
+    <h2>リクエスト圧縮</h2>
+    <ul>
+      <li>
+        非圧縮と<code>Content-Encoding: gzip</code>を受理する。gzipは本文全体を包む。multipartのContent-Typeには圧縮前のboundaryを指定する。
+      </li>
+      <li>
+        観測・認証・使用量管理がRequestを登録する前に、遅延読込のストリームへ置換する。実際のgzip展開は経路が本文を読むまで開始しない。認証などで拒否した未読の要求は、読まずに解放する。元のキャンセルsignalを保持し、入力が止まっていても中止できる。
+      </li>
+      <li>既存の経路ごとの本文上限を展開後にも適用する。圧縮されたbytesにも同じ上限を適用する。</li>
+      <li>
+        不正・途中で切れたgzipは400、上限超過は413、gzip・identity以外や多段のContent-Encodingは415とする。415には<code>Accept-Encoding: gzip, identity</code>を付ける。
+      </li>
+      <li>
+        展開後の内部RequestからContent-Encodingと圧縮時のContent-Lengthを除去する。認証・モデル検証・監査は元のAPIと同じ本文を扱う。生成POSTをSDKが自動再送しない。
+      </li>
+    </ul>
+  </section>
+  <section id="responses">
+    <h2>レスポンス圧縮とストリーミング</h2>
+    <p>
+      クライアントがAccept-Encodingでgzipを受理する場合だけ圧縮する。大文字小文字、q値、wildcard、明示的な<code>gzip;q=0</code>と<code>identity;q=0</code>を扱う。identityの優先度を明示した場合も尊重する。利用可能な形式が拒否されている場合は、元の応答ストリームを中止し、本文のない406を返す。圧縮可能な応答では<code>Vary: Accept-Encoding</code>を既存のVaryへ追記する。
+    </p>
+    <ul>
+      <li>
+        JSON・テキストの有限応答は1,024
+        bytes未満なら圧縮しない。ただしidentityが拒否されていれば小さい応答もgzip化する。サイズ不明の場合の判定用読込は先頭の必要なchunkに限定し、この読込中もキャンセルを適用する。
+      </li>
+      <li>
+        SSEとサイズ不明のWAV・PCMはサイズ判定のために待たない。gzip level
+        1とZ_SYNC_FLUSHを使用し、応答全体で辞書を維持しながら入力chunkごとに途中まで展開可能な形で送出する。
+      </li>
+      <li>
+        SSEのJSONイベントと<code>[DONE]</code>を変更しない。完了前に最初のイベントと音声chunkを受信できることを試験する。
+      </li>
+      <li>圧縮時は元のContent-LengthとAccept-Rangesを除去し、strong ETagをweak ETagにする。</li>
+      <li>
+        Range付き要求、206、Content-Range付き応答、HEAD、既にContent-Encodingがある応答、no-transform指定の応答は圧縮しない。
+      </li>
+      <li>
+        PNG・JPEG・WebP、Opus/Ogg・MP3・FLACなどの圧縮済みメディアは再圧縮しない。音楽の既存Opus配信とbyte
+        rangeを維持する。
+      </li>
+      <li>
+        SSEには処理後にno-transformと<code>X-Accel-Buffering: no</code>を付け、下流の再変換とbufferingを抑止する。
+      </li>
+      <li>
+        クライアントの切断・中止とストリームの異常は、圧縮処理を通して元の推論ストリームへ伝える。
+      </li>
+    </ul>
+    <p>
+      圧縮率や速度改善値は未測定。転送量、CPU使用量、初回トークン・初回音声、受信間隔、完了時間のp50・p95・p99を同じ負荷で比較して運用上の効果を判断する。
+    </p>
+  </section>
+  <section id="clients">
+    <h2>SDKとeumenesへの適用</h2>
+    <p>
+      このリポジトリの<code>@larm/client</code>は対象メディアAPIの4,096
+      bytes以上の文字列本文をgzip化する。ASRは4,096
+      bytes以上のWAV・PCMファイルを含むFormDataを直列化してから圧縮する。元より大きくなる場合、圧縮済み本文、小さい本文、Opusなどのファイル、任意の入力ストリームには自動圧縮を適用しない。任意のクライアントでもgzip本文と正しいContent-Encodingを指定して送信できる。
+    </p>
+    <p>
+      <code>new LarmClient({ baseUrl, requestCompression: false })</code
+      >で送信圧縮を無効にできる。旧LARMへの接続はこの設定を使い、対応済みLARMへ切り替えてから有効にする。圧縮準備中にもキャンセルと既存のrequest
+      timeoutを適用する。
+    </p>
+    <p>
+      応答のAccept-Encoding交渉と逐次展開は標準fetchを利用する。独自fetchを注入する場合も通常のfetchと同じ応答展開を行うこと。Bunのfetchは展開後にもContent-Encodingを残す場合があるため、ヘッダーだけを見て二重展開しない。
+    </p>
+    <p>
+      現在のeumenesは独自のLARM通信実装を持ち、このSDKの変更だけでは送信圧縮が有効にならない。LARMへの送信境界でgzipを適用し、Content-Type・認証・キャンセルを保持する必要がある。応答は実際に使うfetchでJSON・SSE・音声の逐次展開を確認する。本変更はeumenes本体を編集しておらず、稼働中LARMの更新も実施済みとは扱わない。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証と関連契約</h2>
+    <p>
+      ローカルの実HTTP
+      listenerを使い、SDKからの圧縮Chat要求が認証・Allocationを通り、ランタイムへ非圧縮で渡され、gzipのSSE応答が標準fetchで展開されることを確認する。全5種の経路、multipartの完全性、破損gzipと展開上限、q値とrange、短い応答と判断APIの除外、途中送出、キャンセルと異常伝播を試験する。実モデルや実eumenesを使った稼働環境の性能・受入試験は別途必要。
+    </p>
+    <p>
+      コードレビューでは、identity拒否時の形式選択、認証前の先読み、停止した入出力のキャンセル、ASRストリームの破損gzip・展開上限のエラー分類を修正した。ASRでも400・413を保持し、502へ変換しない。Cookie・Vary・ETag・Content-Lengthの整合性とgzip
+      checksumの破損を回帰試験で確認する。
+    </p>
+    <ul>
+      <li><a href="./http-provider-standardization.html">HTTP Provider標準化</a></li>
+      <li><a href="./agent-provider-connection-api.html">Agent Provider接続API</a></li>
+      <li><a href="./eumenes-music-api-handoff.html">eumenes音楽API接続</a></li>
+    </ul>
+  </section>
+</article>

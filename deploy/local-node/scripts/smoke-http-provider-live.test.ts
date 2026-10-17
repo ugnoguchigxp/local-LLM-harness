@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { gunzipSync } from "node:zlib";
 import { runHttpProviderLiveSmoke } from "./smoke-http-provider-live";
 
 const releaseCommit = "a".repeat(40);
@@ -28,6 +29,7 @@ function wav(): Uint8Array {
 
 test("live HTTP Provider smoke validates allocation-free JSON, SSE, ASR, and TTS", async () => {
   const requestPaths: string[] = [];
+  let compressedAsr = false;
   const result = await runHttpProviderLiveSmoke({
     baseUrl: "http://127.0.0.1:9810",
     apiToken: "secret",
@@ -35,9 +37,16 @@ test("live HTTP Provider smoke validates allocation-free JSON, SSE, ASR, and TTS
     model: "coding-default",
     expectedReleaseCommit: releaseCommit,
     fetch: async (input, init) => {
-      const request = input instanceof Request
+      let request = input instanceof Request
         ? new Request(input, init)
         : new Request(input.toString(), init);
+      if (request.headers.get("content-encoding") === "gzip") {
+        compressedAsr ||= new URL(request.url).pathname === "/v1/audio/transcriptions";
+        const headers = new Headers(request.headers);
+        headers.delete("content-encoding");
+        headers.delete("content-length");
+        request = new Request(request, { headers, body: gunzipSync(await request.bytes()) });
+      }
       expect(request.headers.has("x-larm-allocation-id")).toBe(false);
       const path = new URL(request.url).pathname;
       requestPaths.push(path);
@@ -170,6 +179,7 @@ test("live HTTP Provider smoke validates allocation-free JSON, SSE, ASR, and TTS
     },
   });
   expect(requestPaths).toHaveLength(10);
+  expect(compressedAsr).toBe(true);
 });
 
 test("live HTTP Provider smoke rejects content that violates the JSON Schema canary", async () => {
