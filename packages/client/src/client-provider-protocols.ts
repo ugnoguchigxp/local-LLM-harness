@@ -13,6 +13,7 @@ import {
   type SystemOneResponse,
 } from "@larm/core";
 import { LarmApiError } from "./errors";
+import { compressClientRequest } from "./client-compression";
 
 export type EmbeddingAgentProvider = Extract<
   AgentConnectionClaim["providers"][number],
@@ -28,6 +29,7 @@ export type ProviderFetch = (input: string | URL | Request, init?: RequestInit) 
 export async function embedWithClaimedProvider(input: {
   fetch: ProviderFetch;
   timeoutMs: number;
+  requestCompression?: "gzip" | false;
   claimedProvider: EmbeddingAgentProvider;
   requestInput: EmbeddingRequest;
   signal?: AbortSignal;
@@ -44,7 +46,7 @@ export async function embedWithClaimedProvider(input: {
   );
   timeout.unref?.();
   try {
-    const response = await input.fetch(provider.endpoint, {
+    let init: RequestInit = {
       method: "POST",
       headers: {
         authorization: `Bearer ${provider.credential.token}`,
@@ -54,7 +56,12 @@ export async function embedWithClaimedProvider(input: {
       body: JSON.stringify(request),
       redirect: "manual",
       signal: abort.signal,
-    });
+    };
+    if (input.requestCompression !== false) {
+      init = await compressClientRequest(new URL(provider.endpoint).pathname, init);
+    }
+    abort.signal.throwIfAborted();
+    const response = await input.fetch(provider.endpoint, init);
     if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel(new Error("provider redirect is forbidden")).catch(() => undefined);
       throw new LarmApiError(502, "provider_redirect_forbidden", "embedding provider returned a redirect");

@@ -513,6 +513,7 @@ export class LarmClient {
     return await embedWithClaimedProvider({
       fetch: this.fetchImpl,
       timeoutMs: this.timeoutMs,
+      requestCompression: this.options.requestCompression,
       claimedProvider,
       requestInput: input,
       signal,

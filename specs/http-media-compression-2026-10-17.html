@@ -1,5 +1,5 @@
 <article lang="ja">
-  <h1>音楽・画像・LLM・TTS・ASRの双方向HTTP圧縮</h1>
+  <h1>音楽・画像・LLM・TTS・ASR・Embeddingの双方向HTTP圧縮</h1>
   <p>
     2026-10-17。利用アプリとLARMの間でgzipのリクエスト圧縮とレスポンス圧縮を提供する。展開後のJSON、multipart、OpenAI互換SSEと認証を維持する。実装・ローカルHTTP試験・稼働環境への反映を記録し、eumenes本体の変更とは区別する。
   </p>
@@ -42,10 +42,15 @@
           <td>画像生成JSON。LLMの画像入りJSONはLLM経路で扱う</td>
           <td>生成結果と画像一覧のJSON。PNG・JPEG・WebPは再圧縮しない</td>
         </tr>
+        <tr>
+          <th scope="row">Embedding</th>
+          <td>単文とバッチのJSON。圧縮・非圧縮の両方を受理</td>
+          <td>次元・正規化・件数の検証を維持した数値配列のJSON</td>
+        </tr>
       </tbody>
     </table>
     <p>
-      対象パスは<code>/v1/chat/completions</code>とその<code>/input-tokens</code>、<code>/v1/audio/speech</code>、<code>/v1/audio/transcriptions</code>、<code>/v1/audio/voices</code>、<code>/v1/music</code>配下、<code>/v1/images/generations</code>、<code>/v1/image-artifacts</code>配下。Ruri・D1などの<code>/v1/systemone</code>とEmbedding・管理APIは対象外とする。モデル名や現在稼働しているプロセスを圧縮適用の条件にしない。
+      対象パスは<code>/v1/chat/completions</code>とその<code>/input-tokens</code>、<code>/v1/audio/speech</code>、<code>/v1/audio/transcriptions</code>、<code>/v1/audio/voices</code>、<code>/v1/music</code>配下、<code>/v1/images/generations</code>、<code>/v1/image-artifacts</code>配下、<code>/v1/embed</code>。Ruri・D1などの<code>/v1/systemone</code>と管理APIは対象外とする。モデル名や現在稼働しているプロセスを圧縮適用の条件にしない。
     </p>
     <p>
       LARMと同一ホストの各推論ランタイムの間では従来の非圧縮本文を使用する。共通推論ゲートウェイはupstreamに<code>Accept-Encoding: identity</code>を指定する。個別ランタイムへのgzip機能の追加は不要。
@@ -108,7 +113,7 @@
   <section id="clients">
     <h2>SDKとeumenesへの適用</h2>
     <p>
-      このリポジトリの<code>@larm/client</code>は対象メディアAPIの4,096
+      このリポジトリの<code>@larm/client</code>は対象メディアAPIとEmbeddingの4,096
       bytes以上の文字列本文をgzip化する。ASRは4,096
       bytes以上のWAV・PCMファイルを含むFormDataを直列化してから圧縮する。元より大きくなる場合、圧縮済み本文、小さい本文、Opusなどのファイル、任意の入力ストリームには自動圧縮を適用しない。任意のクライアントでもgzip本文と正しいContent-Encodingを指定して送信できる。
     </p>
@@ -128,7 +133,7 @@
     <h2>検証と関連契約</h2>
     <p>
       ローカルの実HTTP
-      listenerを使い、SDKからの圧縮Chat要求が認証・Allocationを通り、ランタイムへ非圧縮で渡され、gzipのSSE応答が標準fetchで展開されることを確認する。全5種の経路、multipartの完全性、破損gzipと展開上限、q値とrange、短い応答と判断APIの除外、途中送出、キャンセルと異常伝播を試験する。稼働モデルによる疎通結果は配備記録に示す。実eumenesの受入と性能比較は別途必要。
+      listenerを使い、SDKからの圧縮Chat要求が認証・Allocationを通り、ランタイムへ非圧縮で渡され、gzipのSSE応答が標準fetchで展開されることを確認する。メディア5種とEmbeddingの経路、multipartの完全性、破損gzipと展開上限、q値とrange、短い応答と判断APIの除外、途中送出、キャンセルと異常伝播を試験する。稼働モデルによる疎通結果は配備記録に示す。実eumenesの受入と性能比較は別途必要。
     </p>
     <p>
       コードレビューでは、identity拒否時の形式選択、認証前の先読み、停止した入出力のキャンセル、ASRストリームの破損gzip・展開上限のエラー分類を修正した。ASRでも400・413を保持し、502へ変換しない。Cookie・Vary・ETag・Content-Lengthの整合性とgzip
@@ -139,6 +144,24 @@
       <li><a href="./agent-provider-connection-api.html">Agent Provider接続API</a></li>
       <li><a href="./eumenes-music-api-handoff.html">eumenes音楽API接続</a></li>
     </ul>
+  </section>
+  <section id="embedding-followup">
+    <h2>Embeddingの400と追加対応（2026-10-18）</h2>
+    <p>
+      初版ではEmbeddingを除外していた。同じ有効な本文を稼働中の<code>/v1/embed</code>へ送信し、非圧縮なら200、gzipなら400・bad_request（有効なUTF-8
+      JSONではない）となることを再現した。gzipのbytesをJSONとして検証していたことが原因で、推論モデルの問題ではない。
+    </p>
+    <p>
+      Embeddingを既存の双方向圧縮経路に追加する。リクエストのgzip展開は認証後の読込時に行い、圧縮前後の双方でEmbedding専用の上限（既定2
+      MiB、設定変更可能）を維持する。レスポンスはAccept-Encodingに従い、通常は1,024
+      bytes以上のJSONを圧縮する。入力と出力の圧縮指定は独立で、圧縮・非圧縮の各組合せを利用できる。
+    </p>
+    <p>
+      専用SDKの<code>embed()</code>にも4,096
+      bytesの送信しきい値と<code>requestCompression: false</code>を適用する。圧縮準備を含むtimeout・中止、claimed
+      Providerの認証とsemantic
+      space検証を維持する。384次元のベクトルやバッチはJSONが大きくなるため圧縮対象とするが、CPU負荷・遅延・圧縮率の改善値は未測定。
+    </p>
   </section>
   <section id="deployment">
     <h2>稼働環境への反映（2026-10-17）</h2>

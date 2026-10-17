@@ -129,7 +129,7 @@ test("compressed media, range responses, no-transform and decision APIs remain u
   const range = new Request(url, { headers: { "accept-encoding": "gzip", range: "bytes=0-10" } });
   const response = Response.json({ text });
   expect(await compressMediaResponse(range, response)).toBe(response);
-  for (const path of ["/v1/systemone", "/v1/embed", "/v1/allocations"]) {
+  for (const path of ["/v1/systemone", "/v1/allocations"]) {
     expect(await compressMediaResponse(request("gzip", `http://larm.test${path}`), response)).toBe(response);
   }
 });
@@ -173,8 +173,8 @@ test("request abortion and source failure propagate through response compression
   await expect(failed.bytes()).rejects.toThrow("upstream failed");
 });
 
-test("all five media APIs accept gzip JSON requests and negotiate gzip responses", async () => {
-  const paths = ["/v1/chat/completions", "/v1/audio/speech", "/v1/audio/transcriptions", "/v1/music/generations", "/v1/images/generations"];
+test("media and embedding APIs accept gzip JSON requests and negotiate gzip responses", async () => {
+  const paths = ["/v1/chat/completions", "/v1/audio/speech", "/v1/audio/transcriptions", "/v1/music/generations", "/v1/images/generations", "/v1/embed"];
   for (const path of paths) {
     const api = app();
     api.post(path, async (c) => {
@@ -211,6 +211,45 @@ test("ASR gzip multipart retains its boundary and exact recording bytes", async 
   }, body: gzipSync(await serialized.bytes()) });
   expect(response.status).toBe(200);
   expect(JSON.parse(await decode(response))).toEqual({ text });
+});
+
+test("embedding independently negotiates request and response compression without changing numbers", async () => {
+  const api = app();
+  const input = { texts: ["検索対象の日本語文書"], type: "passage", normalize: true, priority: "normal" };
+  const result = { embeddings: [Array.from({ length: 384 }, (_, i) => Math.sin(i) / 14)], dimension: 384, count: 1 };
+  api.post("/v1/embed", async (c) => {
+    expect(await readJson(c, 16384)).toEqual(input);
+    return c.json(result);
+  });
+  for (const requestEncoding of ["identity", "gzip"]) {
+    for (const responseEncoding of ["identity", "gzip"]) {
+      const plain = JSON.stringify(input);
+      const response = await api.request("/v1/embed", { method: "POST", headers: {
+        "content-type": "application/json", "content-encoding": requestEncoding, "accept-encoding": responseEncoding,
+      }, body: requestEncoding === "gzip" ? gzipSync(plain) : plain });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-encoding")).toBe(responseEncoding === "gzip" ? "gzip" : null);
+      expect(responseEncoding === "gzip" ? JSON.parse(await decode(response)) : await response.json()).toEqual(result);
+    }
+  }
+});
+
+test("embedding gzip uses its own wire and decoded limits before JSON validation", async () => {
+  const api = new Hono();
+  api.onError((error, c) => error instanceof RequestBodyError
+    ? c.json({ error: { code: error.code } }, error.status) : c.json({ error: "unexpected" }, 500));
+  api.use("*", mediaCompression({ gatewayMaxBodyBytes: 16384, speechMaxBodyBytes: 16384, embeddingMaxBodyBytes: 1024 }));
+  api.post("/v1/embed", async (c) => c.json(await readJson(c, 1024)));
+  for (const [body, status] of [
+    [gzipSync(JSON.stringify({ texts: [text] })), 413],
+    [Buffer.alloc(1025), 413],
+    [Buffer.from("not gzip"), 400],
+  ] as const) {
+    const response = await api.request("/v1/embed", { method: "POST", headers: { "content-encoding": "gzip" }, body });
+    expect(response.status).toBe(status);
+  }
+  const unsupported = await api.request("/v1/embed", { method: "POST", headers: { "content-encoding": "br" }, body: "{}" });
+  expect(unsupported.status).toBe(415);
 });
 
 test("gzip rejects malformed bodies, unsupported codings and expansion past the route limit", async () => {
