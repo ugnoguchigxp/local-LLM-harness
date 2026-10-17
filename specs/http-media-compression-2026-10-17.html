@@ -162,6 +162,14 @@
       Providerの認証とsemantic
       space検証を維持する。384次元のベクトルやバッチはJSONが大きくなるため圧縮対象とするが、CPU負荷・遅延・圧縮率の改善値は未測定。
     </p>
+    <p>
+      実装はmainの<code>c840cf8</code>、稼働版は<code>764c0a86c7f99e93d56fd5f2f81ff54f99f51d9e</code>。
+      作業ツリー、未コミット変更を含まないmain、およびリリースbuilderの全体checkを通過した。
+      2026-10-18 06:08:53 JSTに署名検証と反映が完了し、daemonが再起動した。 稼働中のEmbedding
+      Providerで送信identity・gzipと応答identity・gzipの全4組合せを検証し、それぞれqueryとpassageが200となった。
+      全て384次元、L2 normは1。更新前と解放後のProvider認証が401となることも確認した。
+      health・readyは200で、設定revisionは変更していない。実eumenesからの再試行は別途確認する。
+    </p>
   </section>
   <section id="deployment">
     <h2>稼働環境への反映（2026-10-17）</h2>
