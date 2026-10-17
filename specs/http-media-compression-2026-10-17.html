@@ -1,7 +1,7 @@
 <article lang="ja">
   <h1>音楽・画像・LLM・TTS・ASRの双方向HTTP圧縮</h1>
   <p>
-    2026-10-17。利用アプリとLARMの間でgzipのリクエスト圧縮とレスポンス圧縮を提供する。展開後のJSON、multipart、OpenAI互換SSEと認証を維持する。実装とローカルHTTP試験を記録し、稼働環境への反映やeumenes本体の変更とは区別する。
+    2026-10-17。利用アプリとLARMの間でgzipのリクエスト圧縮とレスポンス圧縮を提供する。展開後のJSON、multipart、OpenAI互換SSEと認証を維持する。実装・ローカルHTTP試験・稼働環境への反映を記録し、eumenes本体の変更とは区別する。
   </p>
   <section id="scope">
     <h2>対象と境界</h2>
@@ -121,14 +121,14 @@
       応答のAccept-Encoding交渉と逐次展開は標準fetchを利用する。独自fetchを注入する場合も通常のfetchと同じ応答展開を行うこと。Bunのfetchは展開後にもContent-Encodingを残す場合があるため、ヘッダーだけを見て二重展開しない。
     </p>
     <p>
-      現在のeumenesは独自のLARM通信実装を持ち、このSDKの変更だけでは送信圧縮が有効にならない。LARMへの送信境界でgzipを適用し、Content-Type・認証・キャンセルを保持する必要がある。応答は実際に使うfetchでJSON・SSE・音声の逐次展開を確認する。本変更はeumenes本体を編集しておらず、稼働中LARMの更新も実施済みとは扱わない。
+      現在のeumenesは独自のLARM通信実装を持ち、このSDKの変更だけでは送信圧縮が有効にならない。LARMへの送信境界でgzipを適用し、Content-Type・認証・キャンセルを保持する必要がある。応答は実際に使うfetchでJSON・SSE・音声の逐次展開を確認する。本変更はeumenes本体を編集していない。LARMの稼働反映と検証結果は配備記録に示す。
     </p>
   </section>
   <section id="validation">
     <h2>検証と関連契約</h2>
     <p>
       ローカルの実HTTP
-      listenerを使い、SDKからの圧縮Chat要求が認証・Allocationを通り、ランタイムへ非圧縮で渡され、gzipのSSE応答が標準fetchで展開されることを確認する。全5種の経路、multipartの完全性、破損gzipと展開上限、q値とrange、短い応答と判断APIの除外、途中送出、キャンセルと異常伝播を試験する。実モデルや実eumenesを使った稼働環境の性能・受入試験は別途必要。
+      listenerを使い、SDKからの圧縮Chat要求が認証・Allocationを通り、ランタイムへ非圧縮で渡され、gzipのSSE応答が標準fetchで展開されることを確認する。全5種の経路、multipartの完全性、破損gzipと展開上限、q値とrange、短い応答と判断APIの除外、途中送出、キャンセルと異常伝播を試験する。稼働モデルによる疎通結果は配備記録に示す。実eumenesの受入と性能比較は別途必要。
     </p>
     <p>
       コードレビューでは、identity拒否時の形式選択、認証前の先読み、停止した入出力のキャンセル、ASRストリームの破損gzip・展開上限のエラー分類を修正した。ASRでも400・413を保持し、502へ変換しない。Cookie・Vary・ETag・Content-Lengthの整合性とgzip
@@ -139,5 +139,62 @@
       <li><a href="./agent-provider-connection-api.html">Agent Provider接続API</a></li>
       <li><a href="./eumenes-music-api-handoff.html">eumenes音楽API接続</a></li>
     </ul>
+  </section>
+  <section id="deployment">
+    <h2>稼働環境への反映（2026-10-17）</h2>
+    <p>
+      mainの圧縮実装commitは<code>de6d9a7</code>。ほかの未コミット変更を含まない作業コピーでも全体checkを通過した。
+      既存のD1などの稼働機能を維持するため、稼働版<code>f3f297566986</code>へ圧縮変更だけを追加し、
+      <code>codex/http-media-compression-release</code
+      >の<code>267bfcc44db207e4fdbd22d5840ba65e5a61b424</code>を配備した。
+      リリースbuilderの全体checkと署名、activatorの検証を通過し、daemon再起動後にhealth・readyとrelease
+      commitの一致を確認した。 config
+      revisionは切替前後で同じ<code>8abf3ae515eb3642b6c80339a8cee93085294520fceebb8fd5fc1123472e0af0</code>。
+    </p>
+    <table>
+      <caption>
+        実HTTP経路のgzip疎通結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">経路</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLM</th>
+          <td>
+            ornith-1.5-strix-leanのJSON・SSEを両方向gzipで200。JSON
+            schema、SSEのfinishとDONEを検証。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ASR</th>
+          <td>
+            qwen3-asr-1.7bへgzipの無音WAV
+            multipartを送信し、gzipの文字起こしJSONを200で受信。無音結果が空文字であることを確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">TTS</th>
+          <td>
+            voicevox-coreのWAV・PCMを両方向gzipで200。展開後のWAVは62,508
+            bytes、約1.30秒。PCMのsample rate・sample formatと音声一覧JSONも確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">音楽・画像</th>
+          <td>
+            gzipの空JSONが各経路の入力検証へ到達し、invalid_music_request・invalid_image_requestの400をgzipで受信。実生成は実行していない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この疎通試験では<code>Accept-Encoding: gzip, identity;q=0</code>で小さい応答にもgzipを要求した。
+      自由文の短文試験は非圧縮でも「OK.」と返る揺れがあったため、診断用grammarで「OK」に固定した。
+      この固定は試験側だけで行い、製品側のモデル選択やプロンプト処理は変更していない。
+    </p>
   </section>
 </article>
