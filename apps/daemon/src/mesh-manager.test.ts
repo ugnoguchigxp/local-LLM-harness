@@ -140,3 +140,14 @@ test("an unreadable journal disables new generation and preserves its private wo
   expect(await Bun.file(join(root, "work", id, "source.image")).text()).toBe("private input");
   await expect(recovery.create(input(), randomUUID())).rejects.toMatchObject({ status: 503 });
 });
+
+test("HTTP handlers preserve domain error statuses through Hono composition", async () => {
+  const { m } = await setup(), app = new Hono(); registerMeshRoutes(app, { manager: m, maxBodyBytes: 65536, viewerPath: "/missing" });
+  const send = (key: string, body: unknown) => app.request("/v1/3d/generations", { method: "POST", headers: { "content-type": "application/json", "idempotency-key": key }, body: JSON.stringify(body) });
+  expect((await send("bad-key", input())).status).toBe(400);
+  const key = randomUUID(), accepted = await send(key, input()); expect(accepted.status).toBe(202);
+  const conflict = await send(key, { ...input(), seed: 43 }); expect(conflict.status).toBe(409); expect(await conflict.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
+  expect((await app.request("/v1/3d/assets?cursor=invalid")).status).toBe(400);
+  const full = await setup(undefined, { maxBytes: 1024 }), fullApp = new Hono(); registerMeshRoutes(fullApp, { manager: full.m, maxBodyBytes: 65536, viewerPath: "/missing" });
+  expect((await fullApp.request("/v1/3d/generations", { method: "POST", headers: { "content-type": "application/json", "idempotency-key": randomUUID() }, body: JSON.stringify(input()) })).status).toBe(507);
+});

@@ -8,17 +8,21 @@ import type { MeshManager } from "../mesh-manager";
 
 const viewerDigest = "8367184a607fbe07a78b650c0d359e5ebbd96f7e2b22f95f761f559b63430386";
 const escape = (s: string) => s.replace(/[&<>"']/g, (v) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[v]!);
-export function registerMeshRoutes(app: Hono, options: { manager?: MeshManager; maxBodyBytes: number; viewerPath: string }) {
+export function registerMeshRoutes(parent: Hono, options: { manager?: MeshManager; maxBodyBytes: number; viewerPath: string }) {
+  const app = new Hono();
   const { manager } = options;
+  app.onError((error, c) => {
+    if (error instanceof MeshError) {
+      if (error.status === 429) c.header("retry-after", "10");
+      return c.json(errorBody(error.code, error.message), error.status);
+    }
+    if (error instanceof InvalidMeshCursorError) return c.json(errorBody("invalid_cursor", error.message), 400);
+    throw error;
+  });
   app.use("/v1/3d/*", async (c, next) => {
     c.header("cache-control", "private, no-store"); c.header("x-content-type-options", "nosniff");
     if (!manager || !manager.store.ready) return c.json(errorBody("not_configured", "3D generation is not configured"), 503);
-    try { await next(); }
-    catch (e) {
-      if (e instanceof MeshError) { if (e.status === 429) c.header("retry-after", "10"); return c.json(errorBody(e.code, e.message), e.status); }
-      if (e instanceof InvalidMeshCursorError) return c.json(errorBody("invalid_cursor", e.message), 400);
-      throw e;
-    }
+    await next();
   });
   app.post("/v1/3d/generations", async (c) => {
     const parsed = meshGenerationRequestSchema.safeParse(await readJson(c, options.maxBodyBytes));
@@ -91,4 +95,5 @@ export function registerMeshRoutes(app: Hono, options: { manager?: MeshManager; 
     c.header("content-security-policy", "default-src 'none'; script-src 'unsafe-inline' blob:; worker-src blob:; style-src 'unsafe-inline'; img-src data: blob:; connect-src data: blob:; frame-ancestors 'self'");
     return c.html(html);
   });
+  parent.route("/", app);
 }
