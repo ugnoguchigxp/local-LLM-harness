@@ -34,7 +34,7 @@ async function demand(key: string, body: unknown = input): Promise<Connection> {
   return connection;
 }
 try {
-  const unauthenticated = await fetch(`${root}/v1/agent-connections`, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: JSON.stringify(input) });
+  const unauthenticated = await fetch(`${root}/v1/agent-connections`, { method: "POST", headers: { authorization: "Bearer invalid-demand-acceptance-credential", "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: JSON.stringify(input) });
   assert(unauthenticated.status === 401, "this acceptance requires the existing authenticated endpoint");
   await unauthenticated.body?.cancel();
   let connection = await demand(crypto.randomUUID());

@@ -296,7 +296,7 @@ test("protected consumer health remains compatible with the public schema", asyn
 test("ordinary existing authentication can refresh demand without a protected consumer token or extra fields", async () => {
   const f = await fixture(false, true);
   const input = { profile: "ornith1.5Strix", audience: "local", client: "ordinary", ttlSeconds: 300 };
-  const demand = (key: string, token = "shared", body: unknown = input) => f.post("/v1/agent-connections", token, body, { "idempotency-key": key });
+  const demand = (key: string, token = "shared", body: unknown = input) => f.post("/v1/agent-connections", token, body, { "idempotency-key": key, prefer: "wait=3" });
   try {
     const created = await demand("first");
     expect(created.status).toBe(201);
