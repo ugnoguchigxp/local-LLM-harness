@@ -12,6 +12,7 @@ import {
   publicClusterStateSchema,
   publicAgentConnectionSchema,
   publicAgentProfileListV3Schema,
+  meshGenerationRequestSchema,
   loadAgentConnectionCatalogForRegistry,
   loadRegistry,
   parseAgentConnectionCatalog,
@@ -567,6 +568,21 @@ test("v3 public profile selectors return exact provider and service endpoints wi
   } as const;
 
   try {
+    // Control services must be discoverable from the saved origin without any
+    // Connection, including while selecting an unrelated conversation Profile.
+    for (const path of ["/v3/agent-profiles", "/v3/agent-profiles?profile=ornith1.5Strix"]) {
+      const catalog = publicAgentProfileListV3Schema.parse(await (await fetch(baseUrl + path)).json());
+      expect(catalog.services).toHaveLength(3);
+      expect(catalog.services.filter((s) => s.capability === "media.mesh.generate")).toHaveLength(1);
+      const mesh = catalog.services.find((s) => s.capability === "media.mesh.generate" && s.protocol === "larm.mesh-generation.v1")!;
+      const image = catalog.services.find((s) => s.capability === "media.image.generate" && s.protocol === "larm.image-generation.v1")!;
+      expect(mesh.url).toBe(`${baseUrl}/v1/3d/generations`);
+      expect(mesh.description).toContain("512"); expect(mesh.description).toContain("12 steps");
+      expect(mesh.description).toContain("imageModel"); expect(mesh.description).toContain("20 MiB");
+      expect(catalog.services.every((s) => s.description && new URL(s.url).origin === baseUrl)).toBe(true);
+      expect(meshGenerationRequestSchema.safeParse({ model: mesh.model, source: { type: "prompt", prompt: "ロボット", imageModel: image.model }, resolution: 512 }).success).toBe(true);
+    }
+    expect(log.ensure).toEqual([]);
     for (const [requestedProfile, selected] of Object.entries(expected)) {
       const requestUrl = new URL("/v3/agent-profiles", baseUrl);
       requestUrl.searchParams.set("profile", requestedProfile);
@@ -587,6 +603,8 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         .toEqual([...selected.providers]);
       expect(body.profiles[0]!.services.map(({ name, endpoint, model }) => ({ name, endpoint, model })))
         .toEqual([...selected.services]);
+      const advertised = publicAgentProfileListV3Schema.parse(body);
+      for (const service of advertised.profiles[0]!.services) expect(service.url).toBe(new URL(service.endpoint, baseUrl).toString());
     }
     for (const retired of ["deep-reasoning-35b", "saaa-qwen38", "saaa-conversation-gemma4",
       "saaa-conversation-ornith15-image", "saaa-conversation-ornith15-music",

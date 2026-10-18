@@ -507,6 +507,7 @@ test("v3 agent profile discovery preserves advertised Chat Completions context b
       observed = new Request(input.toString(), init);
       return json({
         contractVersion: "agent-connection.v3",
+        services: [{ name: "mesh", capability: "media.mesh.generate", protocol: "larm.mesh-generation.v1", endpoint: "/v1/3d/generations", url: "http://127.0.0.1:9810/v1/3d/generations", model: "catalog-selected-model", description: "512, fixed steps" }],
         catalogRevision: "catalog-test",
         defaultAgentProfile: "coding",
         profiles: [{
@@ -536,7 +537,10 @@ test("v3 agent profile discovery preserves advertised Chat Completions context b
     },
   });
 
-  expect((await client.listAgentProfilesV3()).profiles[0]!.providers[0]!.contextWindow)
+  const catalog = await client.listAgentProfilesV3();
+  expect(catalog.services[0]!.model).toBe("catalog-selected-model");
+  expect(catalog.services[0]!.url).toBe("http://127.0.0.1:9810/v1/3d/generations");
+  expect(catalog.profiles[0]!.providers[0]!.contextWindow)
     .toEqual({ maxTokens: 65_536, outputReserveTokens: 4_096, safetyMarginTokens: 1_976 });
   expect(new URL(observed!.url).pathname).toBe("/v3/agent-profiles");
   expect(observed!.headers.get("authorization")).toBe("Bearer profile-token");

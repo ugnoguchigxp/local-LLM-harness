@@ -6,6 +6,7 @@ import {
   readinessSchema,
   serviceActivitySchema,
   agentProviderEndpoint,
+  controlCatalogServices,
   type AgentConnectionCatalog,
 } from "../../../packages/core/src/index";
 import { loadCatalogGeneration } from "../../../apps/daemon/src/catalog-generation";
@@ -36,11 +37,12 @@ export type LiveContractResult = {
   agentProfiles: number;
 };
 
-function expectedProfiles(expected: ExpectedLiveContract): unknown {
+function expectedProfiles(expected: ExpectedLiveContract, baseUrl: string): unknown {
   const catalog = expected.agentConnections;
   if (!catalog) return undefined;
   return {
     contractVersion: "agent-connection.v3",
+    services: controlCatalogServices(catalog, baseUrl),
     catalogRevision: expected.configRevision,
     defaultAgentProfile: catalog.defaultAgentProfile,
     profiles: catalog.profiles.map((profile) => ({
@@ -179,7 +181,7 @@ export async function verifyLiveContract(options: {
     throw new Error("service activity snapshot is outside its validity window");
   }
 
-  const advertisedExpected = expectedProfiles(options.expected);
+  const advertisedExpected = expectedProfiles(options.expected, baseUrl);
   let agentProfiles = 0;
   if (advertisedExpected) {
     const advertised = publicAgentProfileListV3Schema.parse(

@@ -340,3 +340,5 @@ export { agentConnectionIdleDeadline } from "./agent-connection-idle";
 export * from "./mesh";
 export * from "./mesh-library";
 export * from "./mesh-glb";
+
+export { controlCatalogServices } from "./control-service-catalog";

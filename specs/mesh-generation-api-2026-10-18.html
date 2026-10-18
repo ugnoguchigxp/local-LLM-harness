@@ -17,6 +17,111 @@
       すべての操作はBearer認証。生成時はIdempotency-KeyにUUIDを必須とする。同一キーと正規化後の同一要求は同じjob、変更した要求は409。キーと要求のhashはjobと同時に永続化し、24時間以上保持する。完成品削除後も同じキーでは再生成せずdeletedを返す。
     </p>
   </section>
+  <section id="catalog-discovery">
+    <h2>通常catalogからの発見とEumenes連携</h2>
+    <p>
+      GET /v3/agent-profilesのroot
+      <code>services</code
+      >に、画像・楽曲・3DのControlサービスを広告する。profile指定なしでも、現在の会話Profileを指定しても同じサービスを発見できる。Profileの選択やAgent
+      Connection取得は不要。既存のprofiles内servicesも互換性のため維持し、そちらにもurlを付与する。
+    </p>
+    <p>
+      3Dの公開識別子は既存の<code>media.mesh.generate</code>と<code>larm.mesh-generation.v1</code>を維持する。nameはmesh。Eumenesはcapabilityとprotocolでサービスを選び、model・url・descriptionをその応答から取得する。modelの値やホスト名をEumenesへ固定しない。urlは要求を受けたControl
+      originとendpointから組み立てる絶対URLであり、内部workerのURLではない。
+    </p>
+    <pre><code>const catalog = await getControlJson("/v3/agent-profiles");
+const mesh = catalog.services.find(s =&gt;
+  s.capability === "media.mesh.generate" &amp;&amp;
+  s.protocol === "larm.mesh-generation.v1");
+const image = catalog.services.find(s =&gt;
+  s.capability === "media.image.generate" &amp;&amp;
+  s.protocol === "larm.image-generation.v1");
+if (!mesh || !image) throw new Error("必要な生成サービスが見つかりません");
+
+// 一つの生成意図に対してUUIDを保存し、再送でも同じ値を使う。
+await postControlJson(mesh.url, {
+  model: mesh.model,
+  source: {
+    type: "prompt", prompt: userPrompt,
+    imageModel: image.model, imageSeed: 42
+  },
+  resolution: 512, seed: 42, title, tags
+}, { "Idempotency-Key": savedUuid });</code></pre>
+    <p>
+      source.imageModelはprompt入力のときだけ使用し、同じcatalogのmedia.image.generateサービスのmodelを指定する。現在の広告値は3Dがtrellis2-4b、画像がqwen-image-2.1-turboで、実際のrequest
+      schemaが両値を受理することを試験する。既存image-artifactを入力する場合、sourceはtypeとidだけにする。
+    </p>
+    <p>
+      descriptionには512固定、3Dは12
+      steps固定でstepsフィールドを送らないこと、画像IDまたはprompt入力、PNG/WebP・20
+      MiB・最大4096px、URL・ホストパス・直接upload非対応、Qwen画像は768角・8 steps・PNG、Control
+      Bearerと再送キーが必要、接続取得不要、job追跡と保存後停止を記載する。
+    </p>
+    <p>
+      この変更はv3の追加フィールドとして公開する。SDKもroot
+      servicesを読み取る契約に更新する。新SDKは旧catalogのservices省略を空配列として扱えるが、3Dが広告されない場合にEumenesがmodelを推測して生成してはならない。
+    </p>
+    <table>
+      <caption>
+        生成状態APIのstage値と画面表示例。statusとは別のフィールド。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">stage</th>
+          <th scope="col">日本語表示</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>queued</td>
+          <td>受付済み・待機中</td>
+        </tr>
+        <tr>
+          <td>image</td>
+          <td>元画像を生成中</td>
+        </tr>
+        <tr>
+          <td>waiting_gpu</td>
+          <td>生成枠・メモリの空きを待機中</td>
+        </tr>
+        <tr>
+          <td>background</td>
+          <td>背景を除去中</td>
+        </tr>
+        <tr>
+          <td>mesh</td>
+          <td>3Dモデルを生成中</td>
+        </tr>
+        <tr>
+          <td>validating</td>
+          <td>3Dデータを検証中</td>
+        </tr>
+        <tr>
+          <td>stopping</td>
+          <td>生成エンジンを停止中</td>
+        </tr>
+        <tr>
+          <td>completed</td>
+          <td>生成完了</td>
+        </tr>
+        <tr>
+          <td>failed</td>
+          <td>生成失敗</td>
+        </tr>
+        <tr>
+          <td>cancelled</td>
+          <td>生成を取消済み</td>
+        </tr>
+        <tr>
+          <td>deleted</td>
+          <td>完成品は削除済み</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      deletedは完成品削除後のjobに現れる。この場合はstatus=completed、deleted=trueで、assetと取得URLを持たない。UIはこの状態を生成完了の表示と分ける。未知のstageは処理中として表示し、推測の百分率を作らない。
+    </p>
+  </section>
   <section id="operations">
     <h2>操作一覧</h2>
     <table>

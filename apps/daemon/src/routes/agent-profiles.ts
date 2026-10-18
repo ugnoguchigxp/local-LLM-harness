@@ -50,7 +50,7 @@ export function registerAgentProfileRoutes(
         "at most one valid profile query parameter and no other query parameters are allowed",
       ), 400);
     }
-    const result = feature.listProfilesV3(requestedProfiles[0]);
+    const result = feature.listProfilesV3(requestedProfiles[0], c.req.url);
     if (result.status === 200) {
       deps.onEvent?.({ name: "agent_profile_catalog_served", labels: { contract: "agent-connection.v3" } });
     }

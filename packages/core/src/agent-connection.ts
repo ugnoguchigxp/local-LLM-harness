@@ -717,6 +717,7 @@ export const publicAgentProfileListSchema = z.object({
 
 export const publicAgentProfileListV3Schema = z.object({
   contractVersion: z.literal("agent-connection.v3"),
+  services: z.array(agentProfileServiceSchema.safeExtend({ url: z.string().url() })).max(128).default([]),
   catalogRevision: z.string().min(1).max(128),
   defaultAgentProfile: agentIdentifierSchema,
   requestedProfile: agentIdentifierSchema.optional(),

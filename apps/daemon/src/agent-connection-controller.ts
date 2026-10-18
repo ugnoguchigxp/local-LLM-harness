@@ -4,6 +4,7 @@ import {
   agentConnectionIdleDeadline,
   type ChatInputPolicy,
   agentProviderEndpoint,
+  controlCatalogServices,
   personalStateSubjectDigest,
   resolveAgentAudienceBaseUrl,
   systemOneAgentProviderDescriptorSchema,
@@ -204,7 +205,7 @@ export class AgentConnectionController {
     };
   }
 
-  listProfilesV3(profileId?: string): AgentConnectionApiResult {
+  listProfilesV3(profileId: string | undefined, requestUrl: string): AgentConnectionApiResult {
     const catalog = this.options.getCatalog();
     if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
     const selector = profileId
@@ -221,6 +222,7 @@ export class AgentConnectionController {
       status: 200,
       body: {
         contractVersion: "agent-connection.v3",
+        services: controlCatalogServices(catalog, requestUrl),
         catalogRevision: this.options.getCatalogRevision(),
         defaultAgentProfile: catalog.defaultAgentProfile,
         ...(profileId ? { requestedProfile: profileId } : {}),
@@ -244,7 +246,7 @@ export class AgentConnectionController {
             ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
         ...(provider.chatInput ? { chatInput: this.publicChatInput(provider.chatInput) } : {}),
           })),
-          services: selector?.services ?? [],
+          services: (selector?.services ?? []).map((service) => ({ ...structuredClone(service), url: new URL(service.endpoint, requestUrl).toString() })),
         })),
         audiences: catalog.audiences.map((audience) => audience.id),
       },
