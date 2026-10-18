@@ -9,10 +9,10 @@ import { ConnectionTokenCodec } from "./connection-token";
 import type { SemanticReadiness } from "./semantic-readiness";
 import { gatewayStartupVerificationIntent, retainedGatewayStartupModel, verifyGatewayStartup } from "./gateway-startup";
 
-async function fixture(warmWorker = false, ownershipClock = false) {
+async function fixture(warmWorker = false, fixedClock = false) {
   let now = 0;
   const epoch = Date.now();
-  const wallNow = ownershipClock ? () => epoch + now : Date.now;
+  const wallNow = fixedClock ? () => epoch + now : Date.now;
   const loaded = new Set<string>();
   const starts: string[] = [], stops: string[] = [];
   const registry: Registry = {
@@ -290,5 +290,33 @@ test("protected consumer health remains compatible with the public schema", asyn
     expect(daemonHealthSchema.parse(await response.json()).usageProtection).toMatchObject({
       enabled: true, protected: true, remainingMs: 600_000, retainedRuntimeIds: ["a"],
     });
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("ordinary existing authentication can refresh demand without a protected consumer token or extra fields", async () => {
+  const f = await fixture(false, true);
+  const input = { profile: "ornith1.5Strix", audience: "local", client: "ordinary", ttlSeconds: 300 };
+  const demand = (key: string, token = "shared", body: unknown = input) => f.post("/v1/agent-connections", token, body, { "idempotency-key": key });
+  try {
+    const created = await demand("first");
+    expect(created.status).toBe(201);
+    const first = publicAgentConnectionSchema.parse(await created.json());
+    await f.advance(30_000);
+    expect((await demand("unauthorized", "wrong")).status).toBe(401);
+    const renewed = await demand("second");
+    expect(renewed.status).toBe(201);
+    expect(renewed.headers.has("idempotency-replayed")).toBe(false);
+    const second = publicAgentConnectionSchema.parse(await renewed.json());
+    expect(second.id).toBe(first.id);
+    expect(Date.parse(second.idleReleaseAt!)).toBe(Date.parse(first.idleReleaseAt!) + 30_000);
+    expect(Date.parse(second.expiresAt)).toBe(Date.parse(first.expiresAt) + 30_000);
+    const replay = await demand("second");
+    expect(replay.status).toBe(201);
+    expect(await replay.json()).toEqual(second);
+    expect((await demand("unknown-priority", "shared", { ...input, priority: 10000 })).status).toBe(400);
+    expect((await demand("obsolete-ownership", "shared", { ...input, ownership: { id: crypto.randomUUID(), issuedAt: new Date().toISOString() } })).status).toBe(400);
+    expect((await f.app.request(`/v1/agent-connections/${first.id}/ownership`, { method: "PUT", headers: { authorization: "Bearer shared" } })).status).toBe(404);
+    expect((await f.create("worker", "shared")).status).toBe(409);
+    expect(f.fetches()).toBe(0);
   } finally { f.control.beginDrain(); await f.control.flush(); }
 });

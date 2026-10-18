@@ -4,7 +4,7 @@
     既存のPOST
     /v1/agent-connectionsを定期送信すると、同一呼出元・client・Profile・audience・Provider集合のConnectionとAllocationを再利用し、自動解放期限を延長する。追加の保持API、入力項目、専用credential、モデル名による分岐は使用しない。
   </p>
-  <section>
+  <section id="contract">
     <h2>利用契約</h2>
     <table>
       <caption>
@@ -57,7 +57,7 @@
     <p>入力例は既存形式のまま。clientはbackendが使用中の同じ値を継続する。</p>
     <pre><code>{"profile":"ornith1.5Strix","client":"既存client","audience":"saaa-desktop","ttlSeconds":900,"allowFallback":false,"deploymentPolicy":"existing-only","providers":["llm"]}</code></pre>
   </section>
-  <section>
+  <section id="credentials">
     <h2>期限とcredential</h2>
     <p>
       新しい利用依頼の成功時刻、ready時刻、最後のforeground活動時刻の最も新しいものから、設定済みidleSecondsで解放期限を求める。GET・health・claim・renew・通信再送・拒否された依頼は無操作期限を延長しない。
@@ -71,7 +71,7 @@
       protectionを既に利用しているconsumerについては、その設定済みの保護期間を新しい利用依頼で更新する。通常の利用依頼に専用権限を要求しない。
     </p>
   </section>
-  <section>
+  <section id="arbitration">
     <h2>調停とエラー</h2>
     <p>
       認証で呼出元を分離し、登録ProfileのrequestScheduling・schedulingPriority・idleReleaseで調停する。client名や自己申告の優先度は優先権を与えない。foreground-exclusiveの占有期限内はbackground-when-idleの新規取得と実行を拒否する。backgroundが先に実行中なら既存の取消、Allocation解放、実行参照のdrainを終えてからforegroundへ引き渡す。占有終了後は通常の取得に戻る。
@@ -112,7 +112,7 @@
       </tbody>
     </table>
   </section>
-  <section>
+  <section id="verification">
     <h2>検証状況</h2>
     <p>
       実装済み。専用ownership
