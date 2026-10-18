@@ -65,12 +65,12 @@ export class MeshManager {
         }
         if (r.job.error?.code !== "worker_stop_failed") await rm(this.workPath(r.job.jobId), { recursive: true, force: true });
         await this.save(r);
-      } catch { console.warn("invalid or unrecoverable 3D job record retained privately"); }
+      } catch { this.storageReady = false; console.warn("invalid or unrecoverable 3D job record retained privately; generation disabled"); }
     }
     this.janitor = setInterval(() => { void this.maintain().catch(() => console.warn("3D maintenance deferred: storage unavailable")); }, 300_000);
     this.janitor.unref?.();
     const protectedWork = new Set([...this.records.values()].filter((r) => r.job.error?.code === "worker_stop_failed").map((r) => r.job.jobId));
-    for (const entry of await readdir(join(this.store.root, "work"))) if (!protectedWork.has(entry)) await rm(join(this.store.root, "work", entry), { recursive: true, force: true });
+    for (const entry of await readdir(join(this.store.root, "work"))) if (this.storageReady && !protectedWork.has(entry)) await rm(join(this.store.root, "work", entry), { recursive: true, force: true });
   }
   private async maintain() {
     await this.serial(async () => {

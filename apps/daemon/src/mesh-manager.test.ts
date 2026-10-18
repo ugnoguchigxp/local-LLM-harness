@@ -132,3 +132,11 @@ test("worker quarantine disables new inference while saved assets remain availab
   expect((await offline.store.content(result.assetId!, "content"))!.data).toEqual(meshFixtureGlb());
   await expect(offline.create(input(), randomUUID())).rejects.toMatchObject({ status: 503 });
 });
+
+test("an unreadable journal disables new generation and preserves its private work", async () => {
+  const { m, root } = await setup(); await m.close(); const id = `meshjob_${"c".repeat(32)}`;
+  await writeFile(join(root, "jobs", `${id}.json`), "truncated journal"); await mkdir(join(root, "work", id)); await writeFile(join(root, "work", id, "source.image"), "private input");
+  const recovery = new MeshManager(new MeshStore(root), m.provider, { copyImage: async () => undefined }); managers.push(recovery); await recovery.initialize();
+  expect(await Bun.file(join(root, "work", id, "source.image")).text()).toBe("private input");
+  await expect(recovery.create(input(), randomUUID())).rejects.toMatchObject({ status: 503 });
+});
