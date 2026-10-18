@@ -33,7 +33,7 @@ async function fixture(limit = 8, idleSeconds?: number) {
   const controller = new AgentConnectionController({ control, getCatalog: () => catalog, getCatalogRevision: () => "c".repeat(64),
     semantic: { check: async () => ready, peek: () => ready } as unknown as SemanticReadiness,
     tokenCodec: new ConnectionTokenCodec(new Uint8Array(32).fill(7), () => now),
-    readyTimeoutMs: 10_000, pollIntervalMs: 1, idempotencyTtlMs: idleSeconds === undefined ? 5 : 86_400_000, idempotencyLimit: 100, historyLimit: 1,
+    readyTimeoutMs: 10_000, pollIntervalMs: 1, idempotencyTtlMs: idleSeconds === undefined ? 5 : 300_000, idempotencyLimit: 100, historyLimit: 1,
     random: () => "repeating-source", now: () => now,
   });
   const create = (profile: "ornith1.5Strix" | "contextStill", client: string) => controller.create({ profile, audience: "local", client,
@@ -193,5 +193,27 @@ test("stopping new requests returns to real idle release; GET, claim, renew, rep
     expect(f.controller.get(first.id, "owner").body).toMatchObject({ status: "released" });
     expect((await f.demand("worker-after", "other", "contextStill")).status).toBe(201);
     expect((await f.controller.renew(first.id, 300, "owner", "late-renew")).status).toBe(409);
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("periodic demands recycle bounded replay capacity while the last key survives idle release", async () => {
+  const f = await fixture(8, 300);
+  try {
+    const first = (await f.demand("first")).body as PublicAgentConnection;
+    for (let i = 1; i <= 120; i++) {
+      f.advance(30_000);
+      const result = await f.demand(`periodic-${i}`);
+      expect(result.status).toBe(201);
+      expect((result.body as PublicAgentConnection).id).toBe(first.id);
+    }
+    const last = f.controller.get(first.id, "owner").body as PublicAgentConnection;
+    f.advance(300_000);
+    // Drive the same timer callback at the fixed deadline without a real
+    // five-minute sleep; the independent timer test exercises actual scheduling.
+    await (f.controller as unknown as { releaseIdleConnection(id: string, deadline: number): Promise<void> })
+      .releaseIdleConnection(first.id, Date.parse(last.idleReleaseAt!));
+    expect(f.controller.get(first.id, "owner").body).toMatchObject({ status: "released" });
+    expect((await f.demand("periodic-120")).replay).toBe(true);
+    expect(f.controller.get(first.id, "owner").body).toMatchObject({ status: "released" });
   } finally { f.control.beginDrain(); await f.control.flush(); }
 });

@@ -1191,6 +1191,15 @@ export class AgentConnectionController {
       this.idempotency.delete(scope);
     } else if (typeof result.body === "object" && result.body !== null && "id" in result.body) {
       entry.connectionId = String((result.body as { id: unknown }).id);
+      const record = this.records.get(entry.connectionId);
+      if (pruneWhileActive && record?.profile.idleRelease?.enabled) {
+        // Keep the last demand's replay through automatic release and the
+        // configured retry window, while older periodic demands can be pruned.
+        const idleSeconds = record.usesUsageProtection
+          ? record.profile.usageProtection!.idleSeconds : record.profile.idleRelease.idleSeconds;
+        entry.expiresAt = Math.max(entry.expiresAt,
+          agentConnectionIdleDeadline(record, idleSeconds) + this.options.idempotencyTtlMs);
+      }
     }
     return result;
   }
