@@ -1,0 +1,374 @@
+<article lang="ja">
+  <h1>画像認識基盤のコンセプトとドメイン・ツールチェーン構成</h1>
+  <p>
+    2026年10月18日。全体テーマを「画像認識」とし、専門機能を独立した契約で保持して、
+    用途別ツールチェーンで組み合わせる方針をまとめる。
+    既存OpenCV・物体認識・OCRを基盤とし、Florence-2、D1、表・数式認識を一つずつ実証する。
+    本書はコンセプトの正本とし、モデルの採否、追加API、実行環境の分割は実証結果から決める。
+    初回のモデル取得・CPU単体実証は<a
+      href="./visual-recognition-model-validation-results-2026-10-18.html"
+      >環境構築と実証結果</a
+    >を参照する。 追加モデルの本番配備は未実施である。
+  </p>
+  <section id="principles">
+    <h2>設計方針と段階的な採用</h2>
+    <ul>
+      <li>OCR等の専門機能は単独で利用できる責務と入出力を持つ。</li>
+      <li>
+        画像認識アプリが目的に応じて必要な機能を組み合わせ、LARMが解決済みruntimeの資源と起動・停止を管理する。
+      </li>
+      <li>画像内の文字・表・式・物体の混在を扱い、要求した抽出処理を補助分類だけで省略しない。</li>
+      <li>モデルは交換可能な実装候補として扱い、機能の実証後に接続・運用を段階的に追加する。</li>
+      <li>
+        既存機能、候補モデルの動作確認、実用精度の評価、LARM接続、本番運用の証拠を分けて記録する。
+      </li>
+    </ul>
+    <p>
+      検証順序、入力資料、測定項目、採否の条件は
+      <a href="./visual-recognition-validation-plan-2026-10-18.html">画像認識基盤の段階的実証計画</a
+      >を参照する。初回の単体実証で、写真の説明や単純表の復元と、白紙・日本語見出し・数式の誤りを確認した。
+      続く<a href="./visual-recognition-toolchain-validation-2026-10-18.html">ローカル連携の実証</a
+      >で、
+      単純表のデータ化、写真指定の説明、OCR単独を確認した。実際の利用資料と正式接続の評価を継続する。
+    </p>
+  </section>
+  <section id="domains">
+    <h2>全体テーマと独立ドメイン</h2>
+    <p>
+      利用者の意向に従い、静止画・動画を扱う全体テーマを「画像認識」とする。
+      OCRは独立したドメインとして維持する。他の機能も目的と出力の契約に基づいて整理し、
+      それぞれを単独利用でき、必要な要求では連携できる構成を提案する。
+    </p>
+    <table>
+      <caption>
+        画像認識テーマ内のドメイン案
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ドメイン</th>
+          <th scope="col">責務</th>
+          <th scope="col">実装候補・既存基盤</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">OCR</th>
+          <td>文字列と文字領域を抽出する。</td>
+          <td>既存RapidOCR。</td>
+        </tr>
+        <tr>
+          <th scope="row">物体認識</th>
+          <td>対象の種類と位置を検出する。追跡は追加機能として扱う。</td>
+          <td>既存物体検出とOpenCV。</td>
+        </tr>
+        <tr>
+          <th scope="row">画像説明</th>
+          <td>全体・領域の内容を説明し、指定した対象の位置を求める。</td>
+          <td>Florence-2など。</td>
+        </tr>
+        <tr>
+          <th scope="row">文書構造解析</th>
+          <td>表・数式・読み順を含む構造を復元する。必要な文字取得ではOCRと連携する。</td>
+          <td>Table Transformer、Granite Docling、Docling pipelineなど。</td>
+        </tr>
+        <tr>
+          <th scope="row">視覚判断</th>
+          <td>画像と抽出結果に対し、定義した質問へ選択・真偽・段階評価で答える。</td>
+          <td>D1など。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      OpenCVは複数ドメインで使える画像・映像処理の共通基盤でもある。
+      モデル名やライブラリ名をドメイン名にせず、一つのモデルが複数ドメインの機能を実装する場合も契約を区別する。
+      ドメインの境界だけを理由に別processや別repositoryを必須にはせず、資源・依存・lifecycleに応じて実行環境を決める。
+    </p>
+    <p>
+      上位の画像認識サービスは目的に応じて必要なドメインを組み合わせる。
+      OCRだけの呼出しで画像説明や視覚判断を必須にせず、各ドメインへの直接要求と、複合要求の両方を扱う。
+      例えば「写真中の看板を説明する」は物体・領域の認識、OCR、画像説明を組み合わせ、
+      「表をExcelへ変換する」は文書構造解析と必要なOCRを組み合わせる。
+    </p>
+  </section>
+  <section id="composition">
+    <h2>専門機能の独立契約と用途別ツールチェーン</h2>
+    <p>
+      ドメインは責務と入出力の境界、ツールチェーンはその機能を組み合わせる手順として整理する。
+      OCR等を単独利用できる契約で保持し、複合要求を用途別ツールチェーンで実行する構成を推奨する。
+      前節の五分類は論理的な機能境界の案であり、五つの独立serviceやrepositoryへの分割を要求するものではない。
+    </p>
+    <p>
+      固定の一本のchainでは用途ごとに不要な処理を通しやすく、途中結果の再利用や一部の交換が難しくなる。
+      独立機能だけを公開すると、呼出し側ごとに座標変換、処理順、失敗時の扱いが重複する。
+      独立機能と用途別chainを組み合わせ、単独利用と複合処理の使いやすさを両立する。
+    </p>
+    <table>
+      <caption>
+        最初に用意する用途別手順の例
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">目的</th>
+          <th scope="col">使う機能</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">画像を説明する</th>
+          <td>入力・必要な補正、Florence-2による説明。指定がある場合だけOCR等を追加する。</td>
+        </tr>
+        <tr>
+          <th scope="row">表をデータ化する</th>
+          <td>表領域の取得、表構造認識、必要な文字取得、セル統合、CSV・Excel等への出力。</td>
+        </tr>
+        <tr>
+          <th scope="row">文書を構造化する</th>
+          <td>文書pipelineまたは領域検出と専門処理を選択し、本文・表・式・読み順を統合する。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      初期実装では既存OCR・物体認識の独立workerを維持し、画像認識アプリ内の薄い連携層から呼び出す。
+      Florence-2、表、数式、判断を機能単位で追加し、動作確認前に新しい独立serviceを一斉に作らない。
+      共通基盤は入力参照、元画像の座標系、page・timestamp、処理状態を扱い、
+      文字列、セル構造、説明、判断の出力は各機能の型として保持する。
+    </p>
+    <p>
+      手順はアプリ側で定義する。D1は分類や品質判定などの限定した判断に使い、
+      任意のツール実行を決定する汎用agentを初期要件にしない。
+      少数の明示的な手順の品質と費用対効果を先に確認する。
+    </p>
+    <p>
+      独立processへの追加分割は、依存関係の衝突、GPU・CPU資源とidle方針の違い、
+      障害の分離、個別の更新、他consumerからの単独利用の必要性で判断する。
+      LARMは選択されたruntimeの資源・lease・起動停止を扱い、画像処理の手順は画像認識アプリ側が所有する。
+    </p>
+  </section>
+  <section id="evidence-status">
+    <h2>実証開始前の証拠と追加検証の対象</h2>
+    <table>
+      <caption>
+        2026年10月18日時点で参照したrepository内の記録
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">確認できる範囲</th>
+          <th scope="col">今回の実証で確認する範囲</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">OpenCV・物体認識・OCR</th>
+          <td>
+            <a href="./ocr-object-on-demand-hosting-2026-10-13.html">既存構築記録</a>と<a
+              href="./ocr-gateway-lan-ingress-2026-10-17.html"
+              >OCR接続契約</a
+            >に実装・受入結果がある。
+          </td>
+          <td>共通評価資料で再測定し、新機能比較用の基準を残す。</td>
+        </tr>
+        <tr>
+          <th scope="row">D1</th>
+          <td>
+            <a href="./d1-game-decision-provider-2026-10-16.html"
+              >ゲーム判断Providerの実装・配備記録</a
+            >があり、画像入力を扱える。
+          </td>
+          <td>画像認識用途の質問精度、cropの効果、費用対効果、専用接続条件。</td>
+        </tr>
+        <tr>
+          <th scope="row">Florence-2 Base</th>
+          <td>公開元の対応taskと配布を調査済み。</td>
+          <td>このホストでの単体動作、画像・領域説明とgroundingの品質。</td>
+        </tr>
+        <tr>
+          <th scope="row">Table Transformer</th>
+          <td>
+            <a href="./table-transformer-ocr-assessment-2026-10-18.html">事前評価</a>を作成済み。
+          </td>
+          <td>表構造単体の精度、OCR統合と出力までの品質。</td>
+        </tr>
+        <tr>
+          <th scope="row">Granite Docling</th>
+          <td>
+            <a href="./granite-docling-ocr-assessment-2026-10-18.html">事前評価</a>を作成済み。
+          </td>
+          <td>数式の転記、日本語混在文書の構造化、他方式との比較。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      既存資料の実測はその記録時点の条件で得られたものであり、今回すべてを再実行した結果ではない。
+      runtime定義やモデル配置があることだけで新用途の実用性を実証済みとはしない。
+    </p>
+  </section>
+  <section id="features">
+    <h2>上位サービスで最初に提供する機能</h2>
+    <p>
+      モデル名ではなく、画像から何を得たいかを入口にする。まず静止画の説明、抽出、判断に絞る。
+      以下は複数ドメインを利用する機能の整理であり、独立したOCR等のドメイン契約を統合するものではない。
+    </p>
+    <table>
+      <caption>
+        利用者が指定する目的と出力
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">機能</th>
+          <th scope="col">例</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">見て説明する</th>
+          <td>全体の短い説明、物体と領域ごとの説明、指定した対象の位置。</td>
+        </tr>
+        <tr>
+          <th scope="row">必要な情報を抽出する</th>
+          <td>文字、表、数式、文書全体を指定し、文字列・セル構造・LaTeX・構造化文書を返す。</td>
+        </tr>
+        <tr>
+          <th scope="row">質問に答えて判断する</th>
+          <td>
+            「人が写っているか」「再撮影が必要か」などの定義した質問へ候補・真偽・段階評価で答える。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      動画・カメラの継続監視と変化通知は次段階とする。変化したframeの処理、連続frameでの確認、通知頻度を評価する。
+      静止画のキャプションを、動画全体の出来事・因果・人物の意図を検証した結果として扱わない。
+      数式の転記と式を解く処理、グラフの説明と数値系列の復元もそれぞれ別機能である。
+    </p>
+  </section>
+  <section id="roles">
+    <h2>既存機能と追加候補の役割</h2>
+    <table>
+      <caption>
+        処理を依頼する先の候補
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">担当</th>
+          <th scope="col">役割</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">既存OpenCV・物体認識</th>
+          <td>画像・動画の入力、補正、品質計測、frame抽出、対応クラスの物体検出。</td>
+        </tr>
+        <tr>
+          <th scope="row">Florence-2 Base</th>
+          <td>全体・領域の説明、テキストから領域を特定するgroundingなどの候補。</td>
+        </tr>
+        <tr>
+          <th scope="row">D1</th>
+          <td>指定した候補、真偽質問、段階評価を用いる判断。</td>
+        </tr>
+        <tr>
+          <th scope="row">既存RapidOCR</th>
+          <td>文字列と文字領域の抽出。</td>
+        </tr>
+        <tr>
+          <th scope="row">Table Transformer</th>
+          <td>行・列・結合領域の認識とOCR文字の割当による表の再構成。</td>
+        </tr>
+        <tr>
+          <th scope="row">Granite Docling等</th>
+          <td>文書全体の構造化、数式などの領域変換の候補。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Doclingライブラリにも文書レイアウト、表構造、コード・数式の処理がある。
+      個別モデルを独自に組む方式と既存pipelineを使う方式を比較し、全モデルの常時直列実行を前提にしない。
+      個別評価は<a href="./table-transformer-ocr-assessment-2026-10-18.html">Table Transformer</a>と
+      <a href="./granite-docling-ocr-assessment-2026-10-18.html">Granite Docling</a>を参照する。
+    </p>
+  </section>
+  <section id="routing">
+    <h2>要求と領域から処理を選ぶ</h2>
+    <ol>
+      <li>利用者の目的、対象領域、速度・品質の希望と処理予算を受け取る。</li>
+      <li>OpenCVでdecode、向き・傾き補正、画質計測、切り出しを行う。元画像を保持する。</li>
+      <li>
+        目的から必須処理を決め、自動選択では軽量検出・文書レイアウト・必要に応じたFlorence-2やD1を使う。
+      </li>
+      <li>文字、表、数式、物体が共存できる前提で、領域ごとに必要な専門処理を呼び出す。</li>
+      <li>座標・page・timestampを元入力へ戻して統合し、不確かな領域だけを予算内で再解析する。</li>
+    </ol>
+    <p>
+      一画像一ラベルの排他的分類にしない。看板付きの写真や、表と数式を含む文書を扱う。
+      全体のD1判断だけから領域座標は得られない。OpenCVだけで表や式の意味的分類ができるとも扱わない。
+      明示的な表抽出・文字抽出の要求は、補助判断が否定しただけで省略しない。
+      D1は軽量OCRより大きいモデルなので、すべての要求の前に起動する費用対効果を検証する。
+    </p>
+    <p>
+      「未解析」「検出なし」「失敗」「要確認」を区別し、confidenceを校正済み正答率として表示しない。
+      自動選択では特に見落とし率と不要な追加処理率を測る。低確信の結果は必要なcropで再評価するか、
+      指定した品質・予算に応じて別処理へ切り替え、再試行回数と総時間を制限する。
+      Florence-2の説明だけを後続処理の唯一の根拠にせず、必要に応じ元画像とOCR・領域結果も渡す。
+    </p>
+  </section>
+  <section id="florence">
+    <h2>Florence-2の試用対象</h2>
+    <p>
+      MicrosoftのモデルカードはBaseを0.23Bの事前学習モデルとし、下流taskで追加学習したbase-ftを別配布している。
+      利用者指定のBaseを基準とし、base-ftは明示選択する比較候補とする。
+      CAPTION、DETAILED_CAPTION、DENSE_REGION_CAPTION、CAPTION_TO_PHRASE_GROUNDINGなどのtaskを評価する。
+      既存物体検出やRapidOCRを一律に置換する意図ではない。
+    </p>
+    <p>
+      一般的な対話LLMのような任意指示への追従を前提にせず、対応taskごとの入力・後処理を定義する。
+      公式例は英語中心であり、日本語captionや日本語OCRの品質を保証しない。
+      必要なら説明を日本語へ変換し、元の説明と元画像を参照可能にする。
+      静止画の内容説明と時系列の出来事認識を分け、関係・動作の誤補完も検証する。
+    </p>
+    <p>
+      Transformersの公式Florence2実装と配布snapshotの互換性を確認する。 配布のcustom
+      codeを使う場合もrevisionと依存を固定し、他Provider環境と分離する。
+      CPU単体の初回測定は実証結果に記録した。Radeonでの処理時間、LARM経由のcold起動、
+      複数機能を組み合わせた費用対効果は引き続き未評価である。
+    </p>
+  </section>
+  <section id="d1">
+    <h2>現在のD1接続とLARMの境界</h2>
+    <p>
+      apps/d1-system-oneのREADME・contract.pyとlocal-nodeの定義を確認した。
+      現在はornith1.5Strix-gameのgame-decisionからdecision.game、game-decision-d1、d1-system-oneへ解決する。
+      画像は一枚、384×384以内へ縮小し、最大16質問、同時推論1、待機4、待機期限100msである。
+      小さな表や式を否定する唯一の判定器にしない。文書側で高解像度原本を保持し、適切なpreview・cropを渡す。
+    </p>
+    <p>
+      画像解析用途には専用capability・接続契約、認可、優先順位、待機条件を設計する。
+      同じbackendを共有する場合も、ゲーム用profileを通常画像解析の必須依存にしない。
+      ドメインをまたぐ処理の振り分け、領域統合、出力整形は上位の画像認識アプリ側に置く。
+      各ドメインは自らの入力・出力と専門処理を担当する。
+      LARMは要求したprofile・providerまたはservice契約に従い、資源確保、起動・停止、lease、優先順位を担当する。
+      OS非依存の計画はcore、systemd等の操作はbackendsの境界を守る。
+    </p>
+    <p>
+      <a href="./ocr-object-on-demand-hosting-2026-10-13.html">既存OCR・物体認識ホスティング</a
+      >を基盤として、 実行planに含まれる処理だけを要求し、処理中の保護とidle解放を維持する。
+      応答は説明、領域、文字・表・式、質問への判断、実行処理・version、未実施・失敗・要確認を保持する。
+      モデルの推定説明・判断と、抽出した文字・セルを分けて示す。
+    </p>
+  </section>
+  <section id="sources">
+    <h2>確認した公開元資料</h2>
+    <dl>
+      <dt>Liquid AI公式：画像を用いた判断</dt>
+      <dd><code>https://www.liquid.ai/blog/d1-open</code></dd>
+      <dt>Microsoft公式モデル配布：Florence-2 Baseとbase-ft</dt>
+      <dd><code>https://huggingface.co/microsoft/Florence-2-base</code></dd>
+      <dd><code>https://huggingface.co/microsoft/Florence-2-base-ft</code></dd>
+      <dt>Transformers公式：Florence2</dt>
+      <dd><code>https://huggingface.co/docs/transformers/model_doc/florence2</code></dd>
+      <dt>Docling公式：モデルと追加認識</dt>
+      <dd><code>https://docling-project.github.io/docling/usage/model_catalog/</code></dd>
+      <dd><code>https://docling-project.github.io/docling/usage/enrichments/</code></dd>
+    </dl>
+  </section>
+</article>

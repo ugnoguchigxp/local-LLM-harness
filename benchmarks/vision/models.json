@@ -1,0 +1,6 @@
+{
+  "florence": {"repo": "microsoft/Florence-2-base", "revision": "5ca5edf5bd017b9919c05d08aebef5e4c7ac3bac"},
+  "table": {"repo": "microsoft/table-transformer-structure-recognition", "revision": "f4d4bdc85c3fe4b1fa49658882a5d38bbdd0f343"},
+  "table-detection": {"repo": "microsoft/table-transformer-detection", "revision": "2357cbe2b5a5d1c03e54f32764f06058933b65ab"},
+  "docling": {"repo": "ibm-granite/granite-docling-258M", "revision": "982fe3b40f2fa73c365bdb1bcacf6c81b7184bfe"}
+}

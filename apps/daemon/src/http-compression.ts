@@ -9,6 +9,7 @@ const MIN_BYTES = 1024;
 
 /** Compression is a consumer-facing transport feature, not runtime identity. */
 export function isMediaCompressionPath(path: string): boolean {
+  if (path === "/v1/image-artifacts/imports") return false;
   return /^\/v1\/(?:embed|chat\/completions(?:\/input-tokens)?|audio\/(?:speech|transcriptions|voices)|music(?:\/.*)?|images\/generations|image-artifacts(?:\/.*)?)$/.test(path);
 }
 

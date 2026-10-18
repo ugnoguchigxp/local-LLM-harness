@@ -1,6 +1,7 @@
 import { apiOperationGovernance, apiOperationLifecycle, apiOperationPolicy } from "./api-lifecycle";
 import { API_OPERATIONS, SUCCESS_SCHEMA_BY_OPERATION, SUCCESS_STATUSES_BY_OPERATION } from "./api-operations";
 import { agentProfileSelectorIdSchema } from "./agent-connection";
+import { IMAGE_IMPORT_MAX_BODY_BYTES, IMAGE_IMPORT_MAX_BYTES } from "./image-artifact";
 
 export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
   const paths: Record<string, Record<string, unknown>> = {};
@@ -139,6 +140,17 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
     paths[path] ??= {};
     paths[path]![method] = {
       operationId,
+      ...(operationId === "importImageArtifact" ? {
+        description: `Import one static WebP without re-encoding or metadata rewriting. Image limit ${IMAGE_IMPORT_MAX_BYTES} bytes; multipart body limit ${IMAGE_IMPORT_MAX_BODY_BYTES} bytes; maximum 2000 pixels per axis and 4,000,000 pixels. Fully decodes for validation. Does not invoke a model. Requires configured Control Bearer authentication even in anonymous development mode. UUID key is scoped to the authenticated token; identical bytes and MIME type replay the same artifact, independent of multipart boundary and filename. Different content returns 409. Receipts persist indefinitely across restart; deleted artifacts return 410 and are never recreated by the same key. Failures recorded after admission are terminal: query the receipt, then use a new UUID for an intentional retry. Before admission, 404 permits retry with the same key and content. Import capacity failures do not evict existing images. Journal capped at 64 MiB; exhaustion rejects new keys with 507. Identity content encoding only.`,
+        parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string", format: "uuid" } }],
+        requestBody: { required: true, content: { "multipart/form-data": { schema: {
+          type: "object", required: ["file"], additionalProperties: false,
+          properties: { file: { type: "string", format: "binary", contentMediaType: "image/webp" } },
+        }, encoding: { file: { contentType: "image/webp" } } } } },
+      } : operationId === "getImageImport" ? {
+        description: "Look up a UUID scoped to the same authenticated Control token. Receipts persist indefinitely. Returns succeeded with artifact, failed with stored error/httpStatus, or deleted after manual deletion or normal pool retention. A concurrent request waits for the serialized import to settle. 404 means no admitted receipt; resend identical content with the same UUID. No image or GPU work is started. Token rotation changes the receipt scope; the shared image library retains its existing Control ownership.",
+        parameters: [{ name: "requestId", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+      } : {}),
       ...(operationId === "countChatInputTokens" ? {
         description: "Count the complete claimed LLM Chat Completions input, including template, tools, history and image embeddings, without running inference or retaining the payload. Use the same Provider bearer and model as inference. Returns fits=false for a context budget excess; generation rechecks the budget. This is not an inference reservation or an idempotency receipt. Context views and generation-attempt headers are not accepted; supply the complete messages.",
       } : operationId === "createImageGeneration" ? {
@@ -322,6 +334,17 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
         }
         : {}),
       responses: {
+        ...((operationId === "importImageArtifact" || operationId === "getImageImport") ? Object.fromEntries([
+          ["400", "invalid_idempotency_key / invalid_multipart / bad_request"],
+          ["401", "unauthorized"], ["404", "image_import_not_found (lookup only)"],
+          ["409", "idempotency_conflict / image_import_interrupted"], ["410", "image_artifact_deleted"],
+          ["413", "body_too_large / image_too_large / image_dimensions_exceeded"],
+          ["415", "unsupported_image_format / animated_image_not_supported / unsupported_content_encoding"],
+          ["422", "invalid_image"], ["500", "image_storage_failed"], ["503", "not_configured"],
+          ["507", "image_storage_full / image_import_journal_full"],
+        ].map(([status, description]) => [status, { description, content: {
+          "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } },
+        } }])) : {}),
         ...Object.fromEntries(SUCCESS_STATUSES_BY_OPERATION[operationId].map((status) => [status, success])),
         ...(operationId === "getReadiness"
           ? { "503": { description: "Not ready", content: successContent } }

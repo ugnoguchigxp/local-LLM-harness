@@ -98,6 +98,7 @@ import {
   imageArtifactDeleteSchema,
   imageArtifactListSchema,
   imageArtifactSchema,
+  imageImportStatusSchema,
   imageGenerationRequestSchema,
   imageGenerationResponseSchema,
 } from "./image-artifact";
@@ -304,6 +305,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     MusicFavorite: jsonSchema(musicFavoriteSchema),
     MusicFavoriteList: jsonSchema(musicFavoriteListSchema),
     ImageArtifact: jsonSchema(imageArtifactSchema),
+    ImageImportStatus: jsonSchema(imageImportStatusSchema),
     ImageGenerationRequest: jsonSchema(imageGenerationRequestSchema),
     ImageGenerationResponse: jsonSchema(imageGenerationResponseSchema),
     ImageArtifactList: jsonSchema(imageArtifactListSchema),

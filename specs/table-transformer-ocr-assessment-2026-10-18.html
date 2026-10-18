@@ -1,0 +1,93 @@
+<article lang="ja">
+  <h1>Table TransformerによるOCR表構造認識の追加評価</h1>
+  <p>
+    2026年10月18日。Microsoft公式repository、配布モデル、推論コードを確認した調査結果。
+    既存RapidOCRに表構造認識を追加する候補として推奨するが、日本語帳票での実測前に採用を確定しない。
+    以下は取得前の事前評価である。後続の<a
+      href="./visual-recognition-model-validation-results-2026-10-18.html"
+      >モデル取得とCPU単体実証</a
+    >で、
+    単純表のOCR統合・CSV・Excel出力と、結合セルの見落としを確認した。公開接続・本番配備は未実施である。
+  </p>
+  <section id="role">
+    <h2>役割と処理全体</h2>
+    <p>
+      指定されたmicrosoft/table-transformer-structure-recognitionは、行、列、見出し、結合セル領域などを検出する物体検出モデルである。
+      OCRは別に必要となる。ページ上の表検出と、切り出した表の構造認識には別のモデルが用意されている。
+      行と列の交差や結合領域を後処理し、OCRの文字列と座標を対応付けてセルを再構成する。
+    </p>
+    <ol>
+      <li>PDFを画像化し、表領域を検出または指定して切り出す。</li>
+      <li>Table Transformerで表構造を認識する。</li>
+      <li>RapidOCRの結果、または文字付きPDFから取得した文字と座標をセルへ割り当てる。</li>
+      <li>セル構造をJSONまたはHTMLとして保持し、用途に応じてCSVやExcelへ書き出す。</li>
+    </ol>
+    <p>
+      公式推論コードにはセル再構成とHTML・CSV出力がある。Excelへの書き出しは追加処理となる。
+      CSVにはセル結合を保持できないため、rowspan・colspanを含む構造を正本として保持し、
+      CSVでは結合セルの値をどこへ置くか、Excelではどの範囲を結合するかを明示する。
+    </p>
+    <p>
+      切り出し、回転、画像化の座標変換を統一する。
+      OCRの一領域が複数セルを跨ぐ場合、領域を一つのセルへ押し込むだけでは文字が混入する。
+      細かい文字座標を取得するか、必要なセルを切り出して再OCRする方式を評価する。
+      数値、空セル、複数行の文字、見出し、結合セルの誤りを区別して記録する。
+    </p>
+  </section>
+  <section id="comparison">
+    <h2>Granite Doclingとの使い分け</h2>
+    <p>
+      <a href="./granite-docling-ocr-assessment-2026-10-18.html">Granite Doclingの評価</a
+      >で提案した文書解析と比較する。 表をCSV・Excelへ変換する目的ならRapidOCRとTable
+      Transformerを先に試す案とする。 本文、読み順、数式を含むページ全体の構造化にはGranite
+      Doclingを比較候補にする。
+      両モデルを必ず直列実行する必要はなく、同じ表から得たセル構造と文字精度を比較する。
+    </p>
+    <p>
+      構造認識と日本語OCRを分離できる利点はあるが、日本語帳票への適合を保証するものではない。
+      指定モデルはPubTables-1Mで学習している。論文表と日本の帳票のレイアウト差を評価する。
+      PubTables-1MとFinTabNet.cを併用したv1.1-allも比較候補とし、汎用性や精度の優位は実測で判断する。
+    </p>
+  </section>
+  <section id="operations">
+    <h2>資源と保守・受入条件</h2>
+    <p>
+      配布ページで指定モデルのmodel.safetensorsは約115MB、parameter数は28.8Mと表示されている。
+      これは構造認識の重み単体で、表検出モデル、OCR、推論ライブラリ、画像処理中のメモリを含まない。
+      CPUでの処理時間とpeak memoryは未測定である。
+      公式repositoryは2026年9月21日付でarchiveされているため、継続的な上流修正を前提にせず、互換性確認した依存とrevisionを固定する。
+    </p>
+    <p>
+      LARMでは表抽出要求を明示し、要求した経路から必要なruntimeと資源を解決する。
+      通常の文字OCRでは起動せず、表抽出処理中を停止から保護してidle時に解放する案とする。
+      engineと重みはrepository外に置く。 既存の<a href="./ocr-gateway-lan-ingress-2026-10-17.html"
+        >OCR gateway契約</a
+      >への追加方法は実装前に定義する。
+    </p>
+    <ul>
+      <li>
+        実際の日本語帳票で、罫線あり・なし、複数段見出し、縦書き、空セル、結合セル、斜め撮影を比較する。
+      </li>
+      <li>表領域の検出漏れ、行列の対応、結合範囲、文字の別セル混入、数値の完全一致を採点する。</li>
+      <li>CSVの平坦化とExcelの結合・文字列保持を確認し、先頭ゼロなどを出力時に失わない。</li>
+      <li>
+        cold・warm時間、peak memory、取消、idle解放、指定profileの会話runtimeとの同時処理を測る。
+      </li>
+    </ul>
+  </section>
+  <section id="sources">
+    <h2>確認した資料</h2>
+    <dl>
+      <dt>Microsoft公式repository：モデルの分担、OCR入力、v1.1、archive状態</dt>
+      <dd><code>https://github.com/microsoft/table-transformer</code></dd>
+      <dt>指定モデルの配布ファイルと構成</dt>
+      <dd><code>https://huggingface.co/microsoft/table-transformer-structure-recognition/tree/main</code></dd>
+      <dt>公式推論コード：構造の後処理、OCR割当、HTML・CSV出力</dt>
+      <dd><code>https://raw.githubusercontent.com/microsoft/table-transformer/main/src/inference.py</code></dd>
+      <dt>v1.1-allの配布：PubTables-1MとFinTabNet.c</dt>
+      <dd><code>https://huggingface.co/microsoft/table-transformer-structure-recognition-v1.1-all</code></dd>
+      <dt>PubTables-1Mの原論文</dt>
+      <dd><code>https://arxiv.org/abs/2110.00061</code></dd>
+    </dl>
+  </section>
+</article>

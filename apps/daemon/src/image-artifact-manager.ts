@@ -11,6 +11,7 @@ import {
   GeneratedImageArtifactRetention,
   type GeneratedImagePruneResult,
 } from "@larm/backends";
+import { ImageImportStore } from "./image-import-store";
 
 const MAX_METADATA_BYTES = 64 * 1024;
 
@@ -24,6 +25,7 @@ export type ImageArtifactContent = {
 
 export class ImageArtifactManager {
   private readonly retention: GeneratedImageArtifactRetention;
+  private readonly imports: ImageImportStore;
   private timer?: ReturnType<typeof setInterval>;
   private operationTail: Promise<void> = Promise.resolve();
 
@@ -40,6 +42,7 @@ export class ImageArtifactManager {
       maxBytes: options.maxBytes,
       targetBytes: options.targetBytes,
     });
+    this.imports = new ImageImportStore(artifactRoot, this.retention);
     const intervalMs = options.pruneIntervalMs ?? 5 * 60 * 1_000;
     if (!Number.isSafeInteger(intervalMs) || intervalMs < 1_000) {
       throw new Error("generated image prune interval is invalid");
@@ -54,6 +57,7 @@ export class ImageArtifactManager {
 
   async initialize(): Promise<GeneratedImagePruneResult> {
     await mkdir(this.artifactRoot, { recursive: true, mode: 0o700 });
+    await this.imports.initialize();
     return await this.prune();
   }
 
@@ -121,6 +125,14 @@ export class ImageArtifactManager {
 
   async delete(artifactId: string): Promise<boolean> {
     return await this.serialized(async () => await this.retention.remove(artifactId));
+  }
+
+  async importImage(principal: string, requestId: string, bytes: Buffer, mimeType: string): Promise<ImageArtifact> {
+    return await this.serialized(() => this.imports.import(principal, requestId, bytes, mimeType));
+  }
+
+  async getImport(principal: string, requestId: string) {
+    return await this.serialized(() => this.imports.lookup(principal, requestId));
   }
 
   private async serialized<T>(operation: () => Promise<T>): Promise<T> {

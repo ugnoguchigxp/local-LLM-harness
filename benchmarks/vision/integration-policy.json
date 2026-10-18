@@ -1,0 +1,19 @@
+{
+  "version": "vision-pilot-integration-v1",
+  "detection_threshold": 0.8,
+  "max_tables": 8,
+  "blank_channel_range": 3,
+  "max_pixels": 16000000,
+  "max_side": 8000,
+  "token_cell_overlap": 0.8,
+  "max_request_seconds": 120,
+  "evaluation": {
+    "false_ready_tables_allowed": 0,
+    "minimum_ready_supported_table_fraction": 0.75,
+    "false_scene_caption_on_nonphoto_allowed": 0,
+    "minimum_photo_keyword_match_fraction": 1.0,
+    "warm_table_budget_seconds": 5,
+    "warm_caption_budget_seconds": 6,
+    "claim_scope": "synthetic and known demonstration images only; representative real-world accuracy remains unproven"
+  }
+}

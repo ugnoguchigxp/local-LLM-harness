@@ -22,6 +22,23 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="contract" data-state="current" data-domain="image-artifact-import-api">
+          <th scope="row">
+            <a href="./image-artifact-import-api-2026-10-18.html"
+              >画像artifact取り込みAPI：Eumenes向け契約と検証状況</a
+            >
+          </th>
+          <td>
+            静止WebP専用受付、完全デコード、非再圧縮保存、UUID永続照会、再送・削除契約。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>image-artifact-import-api</code></small
+            >
+          </td>
+          <td>
+            本番111af3557904へ反映済み。2026-10-19に実HTTP再検証済み。既存3D連携を維持。Eumenes端末実接続は未検証。
+          </td>
+        </tr>
         <tr data-kind="contract" data-state="current" data-domain="spatial-monitoring-api-contract">
           <th scope="row">
             <a href="./eumenes-spatial-monitoring-api-handoff-2026-10-18.html"
@@ -179,6 +196,127 @@
           <td>
             2026-10-17。共通HTTP境界とSDKを実装。release
             267bfccを配備し、LLM・ASR・TTSの実APIで双方向gzipを検証。eumenes本体への適用は別途。
+          </td>
+        </tr>
+        <tr data-kind="decision" data-state="current" data-domain="visual-analysis-routing">
+          <th scope="row">
+            <a href="./visual-analysis-routing-proposal-2026-10-18.html"
+              >画像認識基盤のコンセプトとドメイン・ツールチェーン構成</a
+            >
+          </th>
+          <td>
+            OCR等の独立契約、用途別ツールチェーン、実行環境の分割基準と共通基盤の役割。
+            <small
+              >分類: <code>decision</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>visual-analysis-routing</code></small
+            >
+          </td>
+          <td>
+            2026-10-18。全体テーマ、独立契約、用途別連携と段階的実証の方針を整理。候補モデルの採否・接続・配備は実証後に判断。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="visual-recognition-cpu-validation"
+        >
+          <th scope="row">
+            <a href="./visual-recognition-model-validation-results-2026-10-18.html"
+              >画像認識モデルの取得・環境構築とCPU単体実証</a
+            >
+          </th>
+          <td>
+            固定snapshotの照合、専用環境、11資料の初回評価、処理時間・メモリ、失敗例と再実行手順。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>visual-recognition-cpu-validation</code></small
+            >
+          </td>
+          <td>
+            2026-10-18。4 snapshotを取得。既存基準とFlorence-2・表・Granite
+            Docling・D1をCPU評価。本番接続・配備は未実施。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="visual-recognition-toolchain-validation"
+        >
+          <th scope="row">
+            <a href="./visual-recognition-toolchain-validation-2026-10-18.html"
+              >画像認識ツールチェーンのテスト基盤拡張と活用判定</a
+            >
+          </th>
+          <td>
+            画像のみのローカル実行口、構造照合、Excel出力、35要求ケース、採点と用途別の活用範囲。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>visual-recognition-toolchain-validation</code></small
+            >
+          </td>
+          <td>
+            2026-10-18。単純表6/6ケースを復元。自動説明は未達例を保持し、写真指定・OCR単独の利用も確認。本番接続は未実施。
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="current" data-domain="visual-recognition-validation">
+          <th scope="row">
+            <a href="./visual-recognition-validation-plan-2026-10-18.html"
+              >画像認識基盤の段階的実証計画</a
+            >
+          </th>
+          <td>
+            既存基準、Florence-2、表、式・文書、D1、複合処理の逐次実証。入力、採点、性能、採否と証拠記録。
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>visual-recognition-validation</code></small
+            >
+          </td>
+          <td>
+            2026-10-18。P0〜P4の初回CPU単体実証を実施。実際の利用資料、複合処理と運用の受入は継続する。
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="proposed"
+          data-domain="table-transformer-ocr-assessment"
+        >
+          <th scope="row">
+            <a href="./table-transformer-ocr-assessment-2026-10-18.html"
+              >Table TransformerのOCR表構造認識適性</a
+            >
+          </th>
+          <td>
+            RapidOCRとの統合、Granite Doclingとの役割分担、出力形式と評価条件。
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>table-transformer-ocr-assessment</code></small
+            >
+          </td>
+          <td>
+            2026-10-18。取得前の事前評価。後続CPU実証で単純表の復元と結合セルの見落としを確認。本番配備は未実施。
+          </td>
+        </tr>
+        <tr data-kind="research" data-state="proposed" data-domain="granite-docling-ocr-assessment">
+          <th scope="row">
+            <a href="./granite-docling-ocr-assessment-2026-10-18.html"
+              >Granite Docling 258MのOCR補助適性</a
+            >
+          </th>
+          <td>
+            日本語の実験対応、既存OCRとの役割分担、文書解析経路の追加案と評価条件。
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>granite-docling-ocr-assessment</code></small
+            >
+          </td>
+          <td>
+            2026-10-18。取得前の事前評価。後続CPU実証で文書・数式の動作と転記誤りを確認。本番配備は未実施。
           </td>
         </tr>
         <tr data-kind="contract" data-state="current" data-domain="ocr-gateway-lan-ingress">

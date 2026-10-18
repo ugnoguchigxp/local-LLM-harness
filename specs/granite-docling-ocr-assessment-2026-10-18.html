@@ -1,0 +1,105 @@
+<article lang="ja">
+  <h1>Granite Docling 258MのOCR補助サブシステム適性</h1>
+  <p>
+    2026年10月18日の公開元資料とLARM内の既存設計に基づく評価。文書構造の抽出が必要なら追加候補として推奨する。
+    日本語の文字起こしだけが目的なら、既存RapidOCRの置換判断は実データ比較後とする。
+    以下は取得前の事前評価である。後続の<a
+      href="./visual-recognition-model-validation-results-2026-10-18.html"
+      >モデル取得とCPU単体実証</a
+    >で、 文書変換の動作と、数式・日本語見出しの誤りを確認した。公開接続・本番配備は未実施である。
+  </p>
+  <section id="fit">
+    <h2>適する用途と採用条件</h2>
+    <p>
+      Granite Doclingは258M
+      parameterの文書変換用VLMで、DocTagsを介して本文、読み順、表、数式、コードなどを構造化する。
+      Doclingは処理を組み合わせるライブラリであり、Granite Doclingはそこで選べるモデルである。
+      Doclingサービスの登録があることだけでは、このモデルの利用を意味しない。
+    </p>
+    <table>
+      <caption>
+        要求する結果に応じた推奨構成
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">推奨</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">画像・動画フレームの日本語文字列と領域座標</th>
+          <td>既存RapidOCR経路を基準として維持する。</td>
+        </tr>
+        <tr>
+          <th scope="row">PDF・スキャンの表、段組み、数式を含む文書化</th>
+          <td>Granite Doclingを明示選択できる文書解析経路として比較評価する。</td>
+        </tr>
+        <tr>
+          <th scope="row">物体認識や一般画像の内容理解</th>
+          <td>専用の別処理を使う。公開元も一般画像理解を主用途としていない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      公式モデルカードは日本語、中国語、アラビア語を実験対応と記載する。
+      IBMの公開説明も、その多言語性能・安定性は企業利用に向けた検証済みではないとしている。
+      公開ベンチマークを日本語の縦書き、ルビ、小さい文字、帳票数値の正確性へ読み替えない。
+      生成された文書の脱落・重複・誤補完と、読み順・セル対応も確認する。
+    </p>
+  </section>
+  <section id="integration">
+    <h2>LARMへの組み込み方針案</h2>
+    <p>
+      <a href="./ocr-object-on-demand-hosting-2026-10-13.html">既存のOCRホスティング</a>と
+      <a href="./ocr-gateway-lan-ingress-2026-10-17.html">OCR gatewayの接続契約</a>を基準とし、
+      文書解析を別の要求として明示する。既存の文字列・座標・confidenceと、文書階層・表構造を含む応答は同一契約とみなさない。
+      モデル選択、資源予約、優先順位は要求したprofileまたはservice契約から解決し、既存OCRへの全要求でVLMを必須起動しない。
+    </p>
+    <p>
+      独立した実行環境とruntimeで要求時に起動し、処理中を停止から保護し、idle時に解放する案とする。
+      複数ページの変換にはjob、進捗、cancel、出力上限を設ける。
+      重みと推論engineはrepository外へ置き、モデルrevision、依存version、入力画像化条件を固定する。
+    </p>
+    <p>
+      258Mという規模は導入候補として扱いやすいが、総メモリと待ち時間は重みだけでは決まらない。
+      自己回帰生成の長さ、ページ解像度、画像分割、実行backendを含めて測る。
+      CPU実行を初期比較経路にできるが、このホストでの速度は未測定である。
+      Radeon向け加速は依存と演算の互換性を別途検証し、NVIDIA向け公表速度を流用しない。
+    </p>
+  </section>
+  <section id="evaluation">
+    <h2>置換・追加を判断する比較</h2>
+    <ul>
+      <li>
+        実際に処理する日本語資料から、横書き、縦書き、日英混在、段組み、表、数値、小文字、低品質スキャンを選ぶ。
+      </li>
+      <li>
+        既存RapidOCRと共通する文字領域で文字誤り率、領域の見落とし、数値の完全一致を比較する。
+      </li>
+      <li>
+        文書解析側では読み順、表のセル対応、階層、数式の再現と、脱落・重複・誤補完を採点する。
+      </li>
+      <li>cold起動、warmのページ処理時間、peak memory、cancel、idle解放を測る。</li>
+      <li>
+        併用するAgent
+        Profileから解決した会話・ASR等のruntimeと資源条件を記録し、同時処理の遅延を測る。
+      </li>
+    </ul>
+    <p>
+      文書構造が必要で、その品質と処理時間が用途を満たせば追加採用する。
+      日本語OCR全体の既定変更は、共通評価で精度と運用条件が満たされた後に別途判断する。
+    </p>
+  </section>
+  <section id="sources">
+    <h2>確認した公開元資料</h2>
+    <dl>
+      <dt>IBM公式モデルカード：用途、日本語の実験対応、DocTags、推論例</dt>
+      <dd><code>https://huggingface.co/ibm-granite/granite-docling-258M</code></dd>
+      <dt>IBM Granite公式ドキュメント：DoclingのVLM pipelineによる利用</dt>
+      <dd><code>https://www.ibm.com/granite/docs/models/docling</code></dd>
+      <dt>IBM発表：多言語の検証状況とDoclingライブラリとの役割分担</dt>
+      <dd><code>https://www.ibm.com/new/announcements/granite-docling-end-to-end-document-conversion</code></dd>
+    </dl>
+  </section>
+</article>

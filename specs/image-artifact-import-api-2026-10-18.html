@@ -1,0 +1,285 @@
+<article lang="ja">
+  <h1>画像専用の取込APIとEumenes連携</h1>
+  <p>
+    2026-10-18。端末やGoogleフォトからEumenesが取得した画像bytesをControlへ送信し、既存の画像一覧・取得・削除と3D入力に使う。汎用ファイル保管やGoogle認証は追加しない。画像生成・3D生成・GPU起動を伴わないCPU処理。
+  </p>
+  <section id="contract">
+    <h2>正式契約</h2>
+    <table>
+      <caption>
+        エンドポイント
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">操作</th>
+          <th scope="col">契約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>POST /v1/image-artifacts/imports</code></td>
+          <td>
+            Control
+            Bearer、UUIDのIdempotency-Key必須。multipart/form-dataのfileを1個のみ。ほかの項目、URL、ホストパスは拒否。
+          </td>
+        </tr>
+        <tr>
+          <td><code>GET /v1/image-imports/{requestId}</code></td>
+          <td>
+            アップロード時と同じControl
+            Bearerで照会。requestIdは送信前に永続化したIdempotency-KeyのUUIDそのもの。大文字は小文字に正規化。
+          </td>
+        </tr>
+        <tr>
+          <td>既存の画像API</td>
+          <td>
+            一覧、個別GET、content GET、DELETEに同じimage_ +
+            32桁hexのIDが現れる。3D生成のsourceにはtype=image-artifactとそのidを指定。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      入力はJPEG/PNG/WebPの静止画、最大16 MiB（16,777,216
+      bytes）、幅・高さとも最大2000px、最大4,000,000画素。2000×2000を許可、2001pxの辺は拒否。LARMは暗黙の縮小をしない。multipart全体は16
+      MiB + 64 KiBまで。保存後は20 MiBまで。
+    </p>
+    <p>
+      Eumenesは既存画像変換を共通化し、原本にEXIF向き補正、縦横比維持・拡大なしの長辺2000px以内の縮小、非可逆WebP
+      quality
+      75、透過維持、メタデータ除去を行って送る。品質75はEumenesの送信条件であり、LARMが再圧縮したり品質を推定したりしない。
+    </p>
+    <p>
+      WebPはPillowで実体を完全decode検証し、VP8/VP8L/ALPH圧縮payloadを保持して保存する。EXIF/ICC/XMP等のコンテナメタデータは除去し、VP8Xの対応フラグも除去する。メタデータがない通常WebPは同じbytesになる。WebPの非標準向き（EXIF
+      orientationが1以外）は415
+      webp_orientation_unsupportedとし、送信前に補正する。JPEG/PNGはEXIF向きを補正し、新しいRGB/RGBA画素からメタデータなしPNGへ保存する。透過は保持。HEIC、SVG、動画、アニメーション、破損、偽MIMEは対象外。
+    </p>
+    <p>
+      成功画像のartifactはid、createdAt、format、mimeType、width、height、hasAlpha、bytes、sha256、contentUrl。sha256は保存後bytesの値。model、seed、stepsは付与しない。元ファイル名、原本bytes、資格情報は保存・記録しない。元の端末画像やGoogle写真は変更しない。
+    </p>
+  </section>
+  <section id="receipts">
+    <h2>成功・失敗・成否不明時</h2>
+    <p>
+      全receiptはrequestId、createdAt、expiresAt、statusUrlを持つ。statusはpending / succeeded /
+      failed。succeededかつdeleted=falseにはartifact、明示削除・保存保持処理で画像が失われた後はdeleted=trueとartifactIdのみ。failedにはerror.codeとerror.message。
+    </p>
+    <p>
+      POSTの初回完了は201、完了済み再送は200、処理中は202。LocationはstatusUrl、202にはRetry-After:
+      1。短時間で終わらない処理は接続とは独立して完了する。GETはpending / succeeded / failedをHTTP
+      200で返す。最初のPOSTでも失敗が確定すれば該当HTTPコードでfailed
+      receiptを返す。受付前の拒否は通常のerrorのみでreceiptを作らない。
+    </p>
+    <p>
+      同一Control Bearer主体・同一UUID・同一元file
+      bytesなら同じreceipt。同じキーで異なる元bytesは409
+      idempotency_conflict。multipart境界やファイル名は同一性に含めない。異なるBearerのreceiptは見えない。Bearer変更後に過去キーを自動再送しない。画像自体の既存共有Controlライブラリの公開範囲は維持する。
+    </p>
+    <p>
+      応答断では既知のUUIDでGETする。pendingなら待つ、succeededなら返されたIDを使う、failedなら失敗表示。404なら受付前の可能性があるため同じUUID・同じbytesで再送する。受付済み失敗を同じキーで再実行しない。明示的にやり直す場合だけ、新しいUUIDを使う。
+    </p>
+    <p>
+      receiptの照会期限は受付から7日。期限後はGET・同じbytesのPOSTとも410
+      image_import_receipt_expired。二重保存防止のキーと元bytesのdigestは保持し、期限切れキーを再利用しない。削除済み画像も同じキーでは再作成しない。
+    </p>
+    <table>
+      <caption>
+        HTTPと安全なエラーコード
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">HTTP</th>
+          <th scope="col">主なcode</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>400</td>
+          <td>
+            invalid_idempotency_key / invalid_image_multipart / invalid_image /
+            invalid_image_import_id / invalid_image_upload
+          </td>
+        </tr>
+        <tr>
+          <td>401</td>
+          <td>unauthorized。Control Bearer必須。Provider Bearer不可。</td>
+        </tr>
+        <tr>
+          <td>404</td>
+          <td>image_import_not_found</td>
+        </tr>
+        <tr>
+          <td>409</td>
+          <td>idempotency_conflict</td>
+        </tr>
+        <tr>
+          <td>410</td>
+          <td>image_import_receipt_expired</td>
+        </tr>
+        <tr>
+          <td>413</td>
+          <td>
+            image_input_too_large / image_dimensions_exceeded / image_output_too_large /
+            body_too_large
+          </td>
+        </tr>
+        <tr>
+          <td>415</td>
+          <td>
+            unsupported_image_format / image_mime_mismatch / animated_image_unsupported /
+            webp_orientation_unsupported
+          </td>
+        </tr>
+        <tr>
+          <td>429</td>
+          <td>image_import_queue_full。Retry-After: 1。同時受付4件、decodeは1件ずつ。</td>
+        </tr>
+        <tr>
+          <td>503</td>
+          <td>
+            image_import_unavailable / image_import_storage_unavailable / image_decoder_unavailable
+            / image_import_interrupted / image_import_draining / image_import_auth_not_configured
+          </td>
+        </tr>
+        <tr>
+          <td>507</td>
+          <td>image_storage_full / image_import_receipt_capacity</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="storage">
+    <h2>保存と再起動</h2>
+    <p>
+      既存画像rootのYYYY/MM/image_IDへ保存。同じドライブと既存の容量・削除管理を使う。取込は容量不足のため他画像を削除しない。既存生成側の画像pool保持方針は継続する。importはpool上限とディスク空き64
+      MiBの余裕を検証して不足を507で返す。
+    </p>
+    <p>
+      root/.imports/receiptsは画像本文なしの永続receipt、root/.imports/workは処理中だけの非公開bytes。既存3D
+      journalと同じ一時ファイル・fsync・rename・親ディレクトリfsync方式。receipt
+      intent→検証済み画像とmetadataの原子的rename→succeededの順で保存。daemonは1
+      writerを前提とする。
+    </p>
+    <p>
+      再起動時のpendingは再実行しない。すでに公開済みでhash一致ならsucceededへ復元、公開前ならfailed
+      /
+      image_import_interrupted。削除intentは本体削除前に保存し、中断した削除は起動時に完了。receiptが読めなければ取込を停止し、私有workを消さず、既存画像閲覧は維持する。
+    </p>
+    <p>
+      decodeは既存Qwen環境のPillow
+      12.2.0をCPUで利用。LARM_IMAGE_IMPORT_PYTHONで実行Pythonを指定可能。1処理にCPU20秒・wall30秒・アドレス空間512
+      MiBの上限を設け、stderrを記録しない。GPU・MediaVariant・Agent Connectionを取得しない。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証</h2>
+    <p>
+      JPEG回転、透過PNG/WebP、WebP圧縮payload一致、メタデータ除去、2000×2000許可と両辺2001px拒否、偽MIME・破損・アニメーション・過大入力拒否、並行再送、応答断後照会、再起動境界、削除intent、容量不足時の既存画像保持、画像IDから既存3Dへの入力を自動試験済み。
+    </p>
+    <p>
+      公開契約はGET
+      /openapi.json。multipart項目、UUIDヘッダー、状態schema、認証、HTTPコードを含む。SDKはclient.images.import
+      / receipt / list / get / content / deleteを提供する。
+    </p>
+  </section>
+  <section id="production-acceptance">
+    <h2>本番受入結果</h2>
+    <p>
+      2026-10-18、実装revision
+      111af3557904b6579c6c3d7f4c09efd9fd859452を署名付き正式経路で本番反映。必須のinstall・依存関係audit・全体check・coverageと本番依存関係auditを通過。917テスト成功、0失敗。20ファイルのcritical
+      coverage ratchetも通過。OpenAPIと通常catalogで取込経路を公開済み。
+    </p>
+    <p>
+      実HTTPで拡張子なしのWebP、JPEG向き補正、透過PNG、2000×2000を取り込み、一覧・content・hashを確認。各辺2001px、偽MIME、破損を拒否。16,777,216
+      bytesの有効WebPは許可、16,777,217 bytesは413で拒否しreceiptを作らないことを確認。
+    </p>
+    <p>
+      4件の並行再送と応答を破棄した接続からの再送で二重保存なし。同じキーの異なるbytesは409。Control以外の認証は401。取込前後ともimage/music/meshの3
+      workerは停止しており、GPU生成を開始しない。
+    </p>
+    <p>
+      Qwen由来の試験画像をEumenesと同じWebP quality
+      75へ事前変換して取り込み、その画像IDで本番TRELLIS.2生成が202.695秒で完了。GLBは6,970,700
+      bytes。画像ライブラリと3Dの固定元画像はいずれもWebP bytesを維持しhashが一致した。
+    </p>
+    <p>
+      本番daemonの再起動後に6件のreceipt・同じキーの再送・画像hash・完成3Dを復元。試験用画像と3Dを公開APIで削除し、再度daemonを再起動しても同じキーで再作成しないことを確認。既存の画像・3Dライブラリを保持し、取込workは空、3
+      workerはいずれもinactive・MainPID=0。
+    </p>
+    <p>
+      別の隔離プロセスでdecode途中にSIGKILLを与え、再起動後はimage_import_interrupted、同じキーを再送してもdecodeを繰り返さず、未完成bytesを清掃することを確認。公開rename後・削除intent後の中断、読めないjournalの保護は自動試験で検証した。
+    </p>
+    <p>
+      実機証跡はソース外の
+      <code>/srv/ai/results/image-import-validation-20261018</code
+      >。verification.json、byte-boundary.json、mesh-verification.json、restart-cleanup.json、real-crash.json、署名配備のrelease-build-native-webp.logへ保存。元ファイル名・認証情報・画像本文を運用ログへ出さない。
+    </p>
+  </section>
+  <section id="native-input">
+    <h2>3Dへの接続</h2>
+    <p>
+      返されたartifact.idを3D要求のsource.type=image-artifact、source.idへ指定する。モデル名は通常catalogのmedia.mesh.generate
+      / larm.mesh-generation.v1から取得する。取込自体にmodelやAgent Connectionは不要。
+    </p>
+    <p>
+      保存画像・3Dの固定元画像はWebP
+      bytesを維持する。ネイティブ3Dエンジンへの入力時のみ、非公開作業領域に復号画素と同一のPNGを作る。追加の非可逆圧縮は行わず、作業用PNGは成功・失敗後の既存清掃対象に含まれ、画像ライブラリや完成モデルの保存には追加しない。
+    </p>
+    <p>
+      取込は各辺1〜2000px。既存3D workerの画像制約は各辺32〜4096px・20
+      MiBであり、3D化に使う画像は各辺32px以上を満たすこと。極小画像は保存・取得できるが3D生成には使わない。
+    </p>
+  </section>
+  <p>3D生成の現在の要求・応答schemaは本番のGET /openapi.jsonを参照する。</p>
+  <section id="production-reconfirmation-20261019">
+    <h2>2026-10-19の本番再確認と報告訂正</h2>
+    <p>
+      実行中daemonのreleaseCommitは111af3557904b6579c6c3d7f4c09efd9fd859452。画像取込と3D生成の両エンドポイントは同じ本番OpenAPIに存在する。別ブランチcodex/image-importsに同等機構が既に配備されていたため、その実装と既存の.imports受付履歴を再利用した。今回、新しい配備・daemon再起動は行っていない。
+    </p>
+    <p>
+      このチャットの以前の「本番未反映」「3D APIなし」はmain
+      worktreeの別試作に基づく報告であり、本番の状態として訂正する。本番契約は初回201、再送200、処理中202、receiptの照会期限7日。期限切れキーは410、削除済みの期限内再送は200のsucceeded・deleted:trueとなり、画像を再作成しない。本書を本番契約に更新し、別試作の無期限照会・削除後410という契約は本番へ導入しない。
+    </p>
+    <p>
+      通常のLARM_API_TOKENで実HTTP再検証を実施。認証401、OpenAPI、品質75の透過WebPのバイト一致・SHA-256、一覧・詳細・content、4並行再送の単一成果物、異なるbytesの409、2000×2000受付、各辺2001px拒否、偽MIME拒否、削除後の再送でdeleted:trueを確認した。試験画像はAPIで削除し、既存画像を維持した。取込前後でimage・music・mesh
+      workerの状態に変化がないことを確認した。
+    </p>
+    <p>
+      本番poolはmaxBytes=20,000,000,000、targetBytes=18,000,000,000。今回3DのGPU生成・daemon再起動試験は繰り返さず、2026-10-18の本番受入証跡と実装を照合した。Eumenes端末・Googleフォトからの実送信は今回の検証対象に含まない。
+    </p>
+    <p>
+      本番再確認の証跡はソース外の/srv/ai/results/image-import-production-check-20261019/verification.json。認証情報・画像本文は含めない。
+    </p>
+    <pre><code>curl -X POST "$LARM_BASE_URL/v1/image-artifacts/imports" \
+  -H "Authorization: Bearer $LARM_API_TOKEN" \
+  -H 'Idempotency-Key: 8a3d3841-f573-44d5-a920-d65147928e9f' \
+  -F 'file=@photo.webp;type=image/webp'
+
+curl "$LARM_BASE_URL/v1/image-imports/8a3d3841-f573-44d5-a920-d65147928e9f" \
+  -H "Authorization: Bearer $LARM_API_TOKEN"</code></pre>
+    <p>
+      成功receiptは次の形。artifact内のid・日時・bytes・sha256は実際に保存した画像の値になる。pendingならstatusUrlで照会し、succeededのartifact.idを3D
+      sourceへ渡す。
+    </p>
+    <pre><code>{
+  "requestId": "8a3d3841-f573-44d5-a920-d65147928e9f",
+  "createdAt": "2026-10-18T21:09:57.305Z",
+  "expiresAt": "2026-10-25T21:09:57.305Z",
+  "statusUrl": "/v1/image-imports/8a3d3841-f573-44d5-a920-d65147928e9f",
+  "status": "succeeded",
+  "deleted": false,
+  "artifact": {
+    "id": "image_88a4ae3104834a85bd5ed04078d3b6ce",
+    "createdAt": "2026-10-18T21:09:57.305Z",
+    "format": "webp",
+    "mimeType": "image/webp",
+    "width": 64,
+    "height": 64,
+    "hasAlpha": true,
+    "bytes": 130,
+    "sha256": "599763daf707244049a940b2a5e44c4ce4e8f00163eb3fc3b95dbe30f01af2a7",
+    "contentUrl": "/v1/image-artifacts/image_88a4ae3104834a85bd5ed04078d3b6ce/content"
+  }
+}</code></pre>
+  </section>
+</article>

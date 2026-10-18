@@ -1065,6 +1065,33 @@ test("generated image artifact APIs fail closed when storage is unavailable", as
   expect((await app.request("/v1/image-artifacts/missing", { method: "DELETE" })).status).toBe(503);
 });
 
+test("image import uses Control auth and the real route stack without starting a provider", async () => {
+  const { ImageArtifactManager } = await import("./image-artifact-manager");
+  const { default: sharp } = await import("sharp");
+  const root = await mkdtemp(join(tmpdir(), "larm-import-app-"));
+  const manager = new ImageArtifactManager(root);
+  await manager.initialize();
+  try {
+    const { app, log } = await makeApp(false, false, {}, { apiToken: "secret", imageArtifactManager: manager });
+    const bytes = await sharp({ create: { width: 12, height: 12, channels: 4,
+      background: { r: 1, g: 2, b: 3, alpha: 0.5 } } }).webp({ quality: 75 }).toBuffer();
+    const key = crypto.randomUUID();
+    const send = (encoding?: string) => {
+      const form = new FormData(); form.append("file", new File([bytes], "photo.webp", { type: "image/webp" }));
+      return app.request("/v1/image-artifacts/imports", { method: "POST", body: form,
+        headers: { authorization: "Bearer secret", "idempotency-key": key, ...(encoding ? { "content-encoding": encoding } : {}) } });
+    };
+    expect((await send("gzip")).status).toBe(415);
+    const response = await send(); expect(response.status).toBe(200);
+    const artifact = await response.json() as { id: string; contentUrl: string };
+    const content = await app.request(artifact.contentUrl, { headers: { authorization: "Bearer secret" } });
+    expect(Buffer.from(await content.arrayBuffer())).toEqual(bytes);
+    expect((await app.request(`/v1/image-imports/${key}`, { headers: { authorization: "Bearer secret" } })).status).toBe(200);
+    expect((await app.request(`/v1/image-imports/${key}`)).status).toBe(401);
+    expect(log.ensure).toEqual([]); expect(log.stop).toEqual([]);
+  } finally { manager.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("GET /v1/release-convergence exposes only strict root-authored convergence state", async () => {
   const status = {
     schemaVersion: 1 as const,

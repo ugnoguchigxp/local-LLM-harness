@@ -1,0 +1,234 @@
+<article lang="ja">
+  <h1>画像認識モデルの取得・環境構築とCPU単体実証</h1>
+  <p>
+    2026年10月18日。<a href="./visual-recognition-validation-plan-2026-10-18.html">段階的実証計画</a
+    >に基づき、 Florence-2 Base、表検出、表構造認識、Granite Doclingの固定snapshotを取得し、
+    repository外の環境で既存OCR・物体認識と比較するCPU単体実証を実施した。
+    本書は小規模な探索評価で得た証拠を記録する。実際の利用資料による精度と本番接続の受入は別段階である。
+  </p>
+  <section id="artifacts">
+    <h2>取得したモデルと専用環境</h2>
+    <table>
+      <caption>
+        配布元のrevisionを固定したsnapshot。重みはsafetensorsを取得し、重複するbinを除いた
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">配布モデル</th>
+          <th scope="col">revision</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">画像説明</th>
+          <td>microsoft/Florence-2-base</td>
+          <td><code>5ca5edf5bd017b9919c05d08aebef5e4c7ac3bac</code></td>
+        </tr>
+        <tr>
+          <th scope="row">表構造</th>
+          <td>microsoft/table-transformer-structure-recognition</td>
+          <td><code>f4d4bdc85c3fe4b1fa49658882a5d38bbdd0f343</code></td>
+        </tr>
+        <tr>
+          <th scope="row">表検出</th>
+          <td>microsoft/table-transformer-detection</td>
+          <td><code>2357cbe2b5a5d1c03e54f32764f06058933b65ab</code></td>
+        </tr>
+        <tr>
+          <th scope="row">文書・数式</th>
+          <td>ibm-granite/granite-docling-258M</td>
+          <td><code>982fe3b40f2fa73c365bdb1bcacf6c81b7184bfe</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      保存先は<code>/srv/ai/models/visual-recognition/</code>配下のモデル名・revision別directory。
+      取得時に配布元LFSのSHA-256と照合し、全取得ファイルのbyte数とSHA-256を証拠のmodels.jsonへ記録した。
+      各推論runも保存済みdigestを再確認し、推論中はoffline設定とsocket接続禁止を適用した。
+      RapidOCR・YOLO26nとD1は既存の重みを使用し、再取得していない。
+    </p>
+    <p>
+      新環境は<code>/srv/ai/apps/vision-recognition-eval/</code>。 Python 3.12.14、PyTorch
+      2.11.0+cpu、torchvision 0.26.0+cpuを使い、 表・Docling用の.venvはTransformers
+      5.17.0、Florence専用のflorence-legacyはTransformers 4.49.0とした。
+      依存はbenchmarks/visionの二つのlockfileへ固定した。
+      既存OCRとD1はそれぞれの既存環境からCPUで単体実行する。
+      systemd、公開route、認証、配備済みworkerの設定は変更していない。
+    </p>
+  </section>
+  <section id="compatibility">
+    <h2>解消した互換性の問題</h2>
+    <p>
+      MicrosoftのFlorence-2原本をTransformers 5.17.0のnative processorで読む最初の試行は、
+      tokenizerのimage_tokenがないため失敗した。
+      現行Transformersの公式例が用いる変換済みcheckpointと、今回指定された原本の設定は同一ではない。
+      今回は原本を維持し、取得済みの公式custom codeをTransformers
+      4.49.0の専用環境で使って動作させた。
+      重み・公式sourceへのpatchや、別モデルへの暗黙差替えは行っていない。
+    </p>
+    <p>
+      表モデルはcheckpointにbackboneを含むため、別の事前学習backboneを取得しない設定を読込時に明示した。
+      最初のAPI引数の不一致も証拠へ残し、configを通す形へ修正した。
+      新環境で表示されるBatchNormのnum_batches_trackedに関する余剰bufferと、 Docling読込時のpad
+      token設定の警告はログに保持し、読込成功を精度の保証とはみなしていない。
+    </p>
+  </section>
+  <section id="corpus">
+    <h2>入力資料と測定範囲</h2>
+    <p>
+      11資料を用意した。合成資料は日本語文字、白紙、日英の単純表、結合セル表、二つの数式、
+      日英の本文・表・数式混在文書の9点。写真は既存受入用busと、公式使用例にあるcarの2点である。
+      写真は広く使われる例であり、未知資料への汎化を実証したものではない。
+      生成条件、font、出典、入力のSHA-256、期待文字・セル・式をfixture manifestに記録した。
+    </p>
+    <p>
+      新モデルはCPU FP32、intra-op 4、interop 1で測定した。
+      時間は画像読込・前処理・推論・出力後処理を含む単体呼出しの観測値であり、LAN・Gateway・leaseは含まない。
+      warm反復の代表taskとモデルloadは分けて記録する。 process再起動の測定ではOS page
+      cacheを除去しておらず、完全なcacheなし起動時間ではない。
+      GPU性能、会話等との併用性能、P99や実運用の応答保証は未評価である。
+    </p>
+  </section>
+  <section id="findings">
+    <h2>CPU単体の処理時間とprocessメモリ</h2>
+    <table>
+      <caption>
+        warm 20回の観測値。taskが異なるためモデル同士の同一条件での速度順位ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象・代表task</th>
+          <th scope="col">P50 ms</th>
+          <th scope="col">P95 ms</th>
+          <th scope="col">process peak RSS MiB</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">既存OCR：日本語文字画像</th>
+          <td>319.49</td>
+          <td>334.55</td>
+          <td>754.61</td>
+        </tr>
+        <tr>
+          <th scope="row">Florence-2：carのCAPTION</th>
+          <td>2217.79</td>
+          <td>2293.97</td>
+          <td>1719.24</td>
+        </tr>
+        <tr>
+          <th scope="row">Table Transformer：英語表の構造</th>
+          <td>126.75</td>
+          <td>143.53</td>
+          <td>846.93</td>
+        </tr>
+        <tr>
+          <th scope="row">Granite Docling：三平方の数式crop</th>
+          <td>9715.34</td>
+          <td>9892.16</td>
+          <td>2226.51</td>
+        </tr>
+        <tr>
+          <th scope="row">D1：bus画像・3質問</th>
+          <td>2873.50</td>
+          <td>3044.36</td>
+          <td>18550.85</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      peak RSSはモデルloadと評価全体を含むprocessの最大値であり、重みのサイズではない。
+      既存基準processはOCRと物体検出、表processは表検出と構造認識を両方loadしている。
+      Doclingのwarmは数式cropであり、混在ページ全体の初回変換は英語約21.9秒、日本語約22.8秒だった。
+      各taskの入力、生成長、呼出し範囲を揃えた比較や、GPU測定は今後の評価とする。
+    </p>
+  </section>
+  <section id="quality">
+    <h2>task別に確認できた内容と失敗例</h2>
+    <dl>
+      <dt>既存OCR・物体認識</dt>
+      <dd>
+        日本語文字、日英表の文字、bus・person・carの検出と、白紙での空結果を確認した。
+        日本語の合成文字画像は空白一文字の脱落があり、未正規化のCERは1/23。
+        空白を含めた比較と、表のセル内容の比較を区別する。
+      </dd>
+      <dt>Florence-2 Base</dt>
+      <dd>
+        carとbusの全体説明、領域説明、物体検出と、carのphrase groundingが動作した。
+        一方、白紙をノートPC、日本語文字画像をスーツ姿の人物として説明した。
+        詳細説明には画像内で確認できない空の状態の追加もあり、説明を検証済みの事実として扱えない。
+        写真の説明・領域候補として次段階へ進めるが、白紙や文書を含めた無条件の説明には使わない。
+      </dd>
+      <dt>Table TransformerとOCR</dt>
+      <dd>
+        単純な日英3×3表では行列を復元し、OCRの文字を18/18セルへ期待どおり割り当てた。
+        CSVとExcelへ出力し、Excel再読込でも文字列を保持した。
+        結合セル表は4行3列を検出したものの結合領域を見落とした。
+        白紙でも表検出・構造認識が誤った領域を出したため、対象領域や入力品質の確認が必要である。
+        セル割当は実証用の小さいadapterであり、複雑な表を扱う正式な後処理の完成とはしない。
+      </dd>
+      <dt>Granite Docling</dt>
+      <dd>
+        日英の単純表と混在文書からDocTagsを生成した。
+        三平方の式は転記できたが、解の公式では小文字xを大文字Xへ変えた。
+        白紙への数式変換では架空のmatrixを生成し、192 token上限に達した。
+        日本語の単純表を単独入力した場合は文字を保持したが、ページ全体では表見出し「金額」を 「令和
+        1 2 3 4 5」へ変える誤りが出た。cropと全体変換の品質を分けて評価する必要がある。
+      </dd>
+      <dt>D1</dt>
+      <dd>
+        既存の固定重みと公式実装をCPUで単体loadし、384px以内の画像に対して人・表・式の3問を評価した。
+        7画像の結果をyes確率0.5以上で照合した範囲では、対象の有無は期待どおりだった。
+        この小規模な資料で確率の校正や未知資料への精度を実証したことにはならない。 CPU
+        FP32では約18.1GiBのprocess peak
+        RSSと約2.9秒の3質問処理が観測され、軽量処理すべての必須前段にはしない。
+        初回load時間はassetsの検証と5回のwarmupも含むため、他モデルのload時間とは分けて扱う。
+      </dd>
+    </dl>
+  </section>
+  <section id="reproduce">
+    <h2>再実行と証拠の保存先</h2>
+    <p>
+      実装はbenchmarks/visionのsetup.sh、provision.py、fixtures.py、evaluate.py、run_suite.py、analyze.py。
+      setupは専用環境だけを作り、provisionだけが明示的にモデルを取得する。
+      run_suiteは対象を順番に実行し、evaluateは同じ証拠directory内の同時推論をlockで抑止する。 run
+      IDの重複と作成済み評価資料の上書きは拒否する。
+    </p>
+    <pre><code>bash benchmarks/vision/setup.sh
+/srv/ai/apps/vision-recognition-eval/.venv/bin/python benchmarks/vision/provision.py --root /srv/ai/models/visual-recognition --evidence /srv/ai/evidence/visual-recognition-NEW-RUN
+/srv/ai/apps/vision-recognition-eval/.venv/bin/python benchmarks/vision/fixtures.py --output /srv/ai/evidence/visual-recognition-NEW-RUN/fixtures --font /srv/ai/local-services-prepared/excalidraw-fonts/NotoSansJP.ttf --bus /srv/ai/local-services-prepared/vision-ocr-acceptance/fixtures/bus.jpg
+python3 benchmarks/vision/run_suite.py --evidence /srv/ai/evidence/visual-recognition-NEW-RUN --stages baseline florence table docling d1 --run-id main
+/srv/ai/apps/vision-recognition-eval/.venv/bin/python benchmarks/vision/analyze.py --evidence /srv/ai/evidence/visual-recognition-NEW-RUN --baseline baseline-main.json --florence florence-main.json --table table-main.json</code></pre>
+    <p>
+      今回の証拠は<code>/srv/ai/evidence/visual-recognition-20261018/</code>。
+      models.json、environment.json、fixtures/manifest.json、task別JSONとlog、CSV・Excel、
+      DocTagsからの変換結果、summary.jsonを保存する。 最初のbaseline-mainは失敗したFlorence
+      native初期化と短時間重なったため、基準性能には単独の再測定を使う。
+      失敗試行のJSON・logも保持する。
+    </p>
+    <p>
+      採用した基準runと二つの再起動runにより、各対象の3回のprocess起動と単体推論を確認した。
+      task別の代表warm処理は各20回測定した。run-index.jsonに成功・失敗と各JSONのdigestを保存し、
+      source/とsource-manifest.jsonに再実行用sourceとdigestを保存した。
+      setupの再実行でも依存の変更はなく、実環境のfreezeはlockfileと一致した。
+      評価用の文字誤り率・セル割当等の5試験、source-only検査、文書検査も成功した。
+    </p>
+  </section>
+  <section id="next">
+    <h2>次の実証で進める範囲</h2>
+    <p>
+      後続の<a href="./visual-recognition-toolchain-validation-2026-10-18.html"
+        >ツールチェーンの実証と活用判定</a
+      >で、 白紙判定、crop、構造照合、OCR統合、Excel出力のローカル連携を検証した。
+      以下は単体実証時点に整理した次段階の論点である。
+    </p>
+    <p>
+      まず実際に使う画像・帳票・式で資料を増やし、用途別の許容精度・待ち時間を固定する。
+      白紙判定、対象領域の取得、文字と構造の照合を含め、使えるtaskを限定した連携処理を一つずつ検証する。
+      表検出からcrop・OCR・Excelまでの全体処理、結合セル、数式の記号一致、
+      日本語混在文書の見出し・セル対応を優先する。
+      公開API、LARM接続、取消、idle停止、同時利用の受入はその後の段階とする。
+    </p>
+  </section>
+</article>

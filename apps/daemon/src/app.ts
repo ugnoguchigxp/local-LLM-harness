@@ -57,6 +57,7 @@ import { registerManagedContextRoutes } from "./routes/managed-context";
 import { registerPersonalStateRoutes } from "./routes/personal-state";
 import { registerInferenceRoutes } from "./routes/inference";
 import { registerImageArtifactRoutes } from "./routes/image-artifacts";
+import { registerImageImportRoutes } from "./routes/image-imports";
 import { registerImageGenerationRoutes } from "./routes/image-generations";
 import { registerMusicRoutes } from "./routes/music";
 import { registerAllocationRoutes } from "./routes/allocations";
@@ -424,6 +425,7 @@ export function createAppComponents(deps: AppDeps) {
     handleGateway,
   });
 
+  registerImageImportRoutes(app, deps.imageArtifactManager);
   registerImageArtifactRoutes(app, deps.imageArtifactManager);
   registerImageGenerationRoutes(app, deps.imageGenerationProvider);
 

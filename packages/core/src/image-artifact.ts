@@ -91,3 +91,18 @@ export type StoredImageArtifactMetadata = z.infer<typeof storedImageArtifactMeta
 export type ImageArtifact = z.infer<typeof imageArtifactSchema>;
 export type ImageArtifactList = z.infer<typeof imageArtifactListSchema>;
 export type ImageArtifactDelete = z.infer<typeof imageArtifactDeleteSchema>;
+
+export const IMAGE_IMPORT_MAX_BYTES = 16 * 1024 * 1024;
+export const IMAGE_IMPORT_MAX_BODY_BYTES = IMAGE_IMPORT_MAX_BYTES + 64 * 1024;
+export const IMAGE_IMPORT_MAX_DIMENSION = 2000;
+export const IMAGE_IMPORT_MAX_PIXELS = 4_000_000;
+export const imageImportRequestIdSchema = z.uuid();
+export const imageImportStatusSchema = z.object({
+  requestId: imageImportRequestIdSchema,
+  status: z.enum(["pending", "succeeded", "failed", "deleted"]),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  artifact: imageArtifactSchema.optional(),
+  error: z.object({ code: z.string(), message: z.string(), httpStatus: z.number().int() }).strict().optional(),
+}).strict();
+export type ImageImportStatus = z.infer<typeof imageImportStatusSchema>;

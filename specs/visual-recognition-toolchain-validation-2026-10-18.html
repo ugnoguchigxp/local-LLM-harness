@@ -1,0 +1,258 @@
+<article lang="ja">
+  <h1>画像認識ツールチェーンのテスト基盤拡張と活用判定</h1>
+  <p>
+    2026年10月18日。<a href="./visual-recognition-model-validation-results-2026-10-18.html"
+      >CPU単体実証</a
+    >を基に、 画像だけを渡すローカル実行口と、正解を分離して採点する基盤を追加した。
+    OCR、画像説明、表抽出、数式転記、文書変換、視覚判断を実際の処理順で呼び出し、
+    そのまま使える条件と要確認になる条件を検証した。
+    正式な公開APIやLARM接続の配備受入とは分け、検証・ローカル利用用CLIとして提供する。
+  </p>
+  <section id="conclusion">
+    <h2>活用できる範囲</h2>
+    <table>
+      <caption>
+        今回の資料と条件に対する判定。未知の業務資料の一般的な精度保証ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">判定</th>
+          <th scope="col">条件・残る課題</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">OCR単独</th>
+          <td>ローカルCLIで利用可能</td>
+          <td>既存OCRを直接呼び出す。文字が得られたことと文字列の正しさは分けて評価する。</td>
+        </tr>
+        <tr>
+          <th scope="row">単純表からExcel</th>
+          <td>限定した条件でローカル利用可能</td>
+          <td>
+            正立・罫線あり・結合なしで、OpenCVの罫線とモデル構造が一致し、文字割当を確認できる表。6ケース、7表、81セルが期待出力と一致した。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">撮影画像の説明</th>
+          <td>説明文の草稿として利用可能</td>
+          <td>
+            photo指定の公開3画像で主要な内容を説明できた。文章の全事実を検証するものではなく、元画像・抽出結果と併用する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">画像種別の自動振り分け</th>
+          <td>汎用用途では未達</td>
+          <td>
+            追加の公開写真3点のうち、既知物体を足掛かりに説明まで進めたのは1点。2点は要確認にした。目的・入力種別の明示が必要な場合がある。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">結合セル・薄い表・傾いた表</th>
+          <td>追加対応が必要</td>
+          <td>結合セルと薄い表は要確認。4度傾けた表は未検出。単なる成功扱いにはしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">数式・文書全体</th>
+          <td>候補出力を得る用途に限定</td>
+          <td>
+            数式のxからXへの転記誤り、日本語見出しの誤補完を確認し、要確認として返した。数学構造・セル対応の独立検証が残る。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">D1判断</th>
+          <td>限定質問の結果取得に利用可能</td>
+          <td>
+            表・式の有無を質問できる。全処理の必須前段にはせず、選択式判断の妥当性を用途別に評価する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="implementation">
+    <h2>追加した実行基盤</h2>
+    <p>
+      benchmarks/visionのchain.pyを、画像path、目的、request
+      ID、任意の入力種別だけを受け取る実行口とした。
+      正解文字列、正解セル、期待状態は渡さない。run_chain.pyから一画像を処理できる。
+      Python環境の異なるOCR、Florence、native表・Docling、D1は、chain_client.pyとchain_worker.pyで
+      ローカルのJSON-lines経由で呼び出す。必要なworker・モデルだけをlazy
+      loadし、同じ評価runでは再利用する。
+      終了時はこの実行口が起動したprocessを終了して資源を解放する。
+    </p>
+    <p>
+      モデルrevisionとSHA-256は前回の固定snapshotを継続し、推論中のnetworkを禁止する。
+      既存サービスの環境・重み・systemd・公開routeは変更していない。
+      入力・生成物・log・実行環境はrepository外に置く。今回の追加でPython依存の更新は不要だった。
+    </p>
+    <dl>
+      <dt>OCR</dt>
+      <dd>均一画像を先に扱い、他は既存OCRへ直接渡す。説明やD1を必須にしない。</dd>
+      <dt>画像説明</dt>
+      <dd>
+        autoでは既存物体検出を足掛かりに説明し、文字しか取得できない場合は要確認とする。photo指定では直接Florenceへ渡す。
+      </dd>
+      <dt>表</dt>
+      <dd>
+        OpenCVの罫線候補と表検出、crop、構造認識、OCR、セル割当、独立した構造照合、CSV・Excel出力まで通す。
+      </dd>
+      <dt>数式・文書</dt>
+      <dd>
+        OCRと生成結果を比較する。文字の一致だけで数学構造や文書構造を合格にせず、候補結果と照合上の問題を返す。
+      </dd>
+    </dl>
+    <p>
+      表領域とセル境界にOpenCV補助を追加しており、今回の改善をTable
+      Transformer単体の性能向上とはみなさない。
+      モデルと罫線で行列数が一致した場合だけ罫線境界に合わせて割当を補正し、元のモデル出力も残す。
+      結合の矛盾、文字領域が複数セルに跨る場合、独立した構造確認ができない場合は要確認にする。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>結果の契約と生成物</h2>
+    <p>
+      readyは、その目的の処理と現在の照合条件を満たしたことを示す。未知入力の正答保証ではない。
+      needs_reviewは候補結果を得たが確認が必要、not_detectedは対象を見つけられなかったこと、
+      emptyは均一画像で読める情報がないこと、failedは処理失敗を示す。
+      文字だけを取り出した結果を、画像全体の説明を完了した結果として返さない。
+    </p>
+    <p>
+      結果JSONには目的、状態、問題、実行手順、モデル・revision、初回操作かどうか、時間、
+      EXIF補正前後のサイズ、元画像digestと生成物を含める。
+      領域座標はEXIF補正後の画像の左上原点pixelと明示し、cropから元の正規化画像へ戻したセル座標も返す。
+      Excelは先頭ゼロ・空セル・等号から始まる文字列を文字として書き、再読込で照合した。
+      要確認の表にも調査用の候補CSV・Excelを残すため、呼出し側はファイルの有無だけで採用せず状態を見る。
+    </p>
+  </section>
+  <section id="cases">
+    <h2>評価資料と採点</h2>
+    <p>
+      主評価27ケースと追加公開画像8ケース、計35の要求ケースを用意した。
+      同じ画像に異なる要求を出す比較や派生画像を含み、35点の独立した実写資料ではない。
+      主評価は校正2、追加生成の単純表6、結合・薄字・ぼけ・傾きの境界例、白・黒・灰色、
+      小さい薄字、文章だけの画像、既知写真、前回の式・文書、D1、壊れた画像を含む。
+      追加公開画像はOpenCVのorange、fruits、graf1、notesを使用し、写真のauto/photo比較と楽譜の対象外確認を行った。
+      公開画像のsourceはOpenCV revision <code>6dc5ff5c1f84fc3fd22534503a116585919c772c</code>で固定した。
+    </p>
+    <p>
+      integration-policy.jsonに検証前の条件を固定した。表検出thresholdは0.8、最大8候補、
+      均一判定は全channelのrangeが3以内、画像上限は16M
+      pixel・長辺8000、文字とセルの必要重なりは0.8。
+      readyとした表の誤出力を許容せず、単純表の利用可能率75%以上、
+      既知の非写真への架空のscene説明なし、warm表5秒以内・写真説明6秒以内を初期条件とした。
+      全件を要確認にしても利用可能率の条件を満たせない。
+    </p>
+    <p>
+      最初の校正表では、内容が正しくてもモデルの狭いbboxで文字の重なり条件に抵触したため、
+      行列が罫線と一致した後に境界を補正する処理を加えた。その後に追加ケースを評価した。
+      採点は画像のみの実行が終わってから行い、期待結果をモデルや振り分けへ渡していない。
+      失敗を含む初回結果を保持したまま、失敗処理の見逃しと結合状態の採点を厳しくするv2再採点を行った。
+      自動説明の完了状態の修正は、別runで該当ケースを再実行した。
+    </p>
+  </section>
+  <section id="results">
+    <h2>実測結果</h2>
+    <table>
+      <caption>
+        主評価と追加公開画像を、同一要求の再確認結果で明示的に更新した最終記録
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">単純表の対応範囲</th>
+          <td>
+            6/6ケース、7表・81セルが期待出力と一致。ページ内の日英表、literal値、空セル、複数表、EXIF回転を含む。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">readyとした表の誤出力</th>
+          <td>
+            今回の正解付き資料では0件。結合セルは文字列が一致しても結合構造が未確認のため要確認とした。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">表のwarm総処理時間</th>
+          <td>
+            対象の単一表ケースは約0.37〜0.45秒。2表は約0.81秒。最初の校正要求はloadを含め約3.13秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">境界例</th>
+          <td>ぼけた日本語表は正しく出力。薄い表は要確認。4度の傾きは未検出として記録した。</td>
+        </tr>
+        <tr>
+          <th scope="row">均一・対象外・壊れた入力</th>
+          <td>
+            白・黒・灰色をモデルなしで処理。薄く小さい文字を均一と誤判定しなかった。文章・楽譜から利用可能な表を誤って生成せず、壊れた画像を拒否した。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">新しい公開写真の説明</th>
+          <td>
+            photo指定3/3で主要内容の語を確認。autoは1/3で説明でき、残り2/3は要確認。写真指定でのwarm観測は約2.42〜2.53秒、初回は約3.98秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">数式・文書</th>
+          <td>
+            xとXの不一致、OCRにない日本語表見出しの追加を検出。式・文書の構造を自動承認しなかった。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">最終状態</th>
+          <td>
+            ready 16、empty 4、needs_review 11、not_detected 3、failed
+            1。failedは壊れた画像の期待した拒否。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      状態・拒否等のチェックは33/35で条件を満たしたが、これは抽出正答率ではない。
+      残る2件は公開写真をautoで説明しきれない例であり、自動振り分けの汎用性は未達と判定した。
+      傾いた既知の表を見落としたことも、正常に対象なしを処理したこととは分けて保存している。
+      captionの主要内容が一致しても、材質・置かれた場所等の補完まで独立に正しいと確認したものではない。
+      時間はCPU上の各ケースの観測値であり、反復した本番P95やSLAではない。
+    </p>
+  </section>
+  <section id="usage">
+    <h2>そのままローカル利用する入口</h2>
+    <p>
+      前回用意した環境とモデルを使い、画像と目的を指定する。outputはGit外、request
+      IDは新しい値にする。
+      出力JSONと生成物を、利用アプリのbackendから呼び出して確認できる。今回は公開HTTP
+      APIやUIを追加していない。
+    </p>
+    <pre><code>/srv/ai/apps/vision-recognition-eval/.venv/bin/python benchmarks/vision/run_chain.py --image /path/to/input.png --objective table --output /srv/ai/evidence/vision-local-use --request-id table-001
+/srv/ai/apps/vision-recognition-eval/.venv/bin/python benchmarks/vision/run_chain.py --image /path/to/photo.jpg --objective describe --input-kind photo --output /srv/ai/evidence/vision-local-use --request-id photo-001
+/srv/ai/apps/vision-recognition-eval/.venv/bin/python benchmarks/vision/run_chain.py --image /path/to/document.png --objective ocr --output /srv/ai/evidence/vision-local-use --request-id ocr-001</code></pre>
+    <p>
+      採点器を介さないCLI単独でも、literal値の表をExcelへ変換し、文字列と空セルを確認した。
+      OCR単独の文章取得も確認した。サンプルExcelは
+      <code>/srv/ai/evidence/visual-recognition-integration-20261018/standalone/literal/table-0.xlsx</code>。
+      固定source・lockfileを用いれば同じホストで再実行できるが、現在は既存OCR実行環境等のpathを使うprototypeである。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>証拠と残る実証</h2>
+    <p>
+      証拠rootは<code>/srv/ai/evidence/visual-recognition-integration-20261018/</code>。
+      evaluationに主評価、public-finalに追加公開画像、routing-finalに完了状態の再確認を保存した。
+      final-report.jsonには選択した報告のSHA-256と、同一画像・目的を確認した更新関係を記録した。
+      元のsummary.json、厳しい条件によるsummary-v2.json、初回public-evaluationと校正の結果も保持している。
+      各requestの正規化画像、crop、result.json、CSV・Excel、worker logとsource
+      snapshotを再確認できる。
+    </p>
+    <p>
+      評価・座標復元・Excel文字列・失敗伝播・採点条件等の18試験を追加基盤全体で確認した。
+      次は実際の帳票・撮影画像で評価資料を増やし、傾き、罫線なし、結合セルと自動判別を個別に改善する。
+      LARMの正式接続、lease保護、取消、idle停止、同時利用時の性能、動画への展開は別途受入を行う。
+    </p>
+  </section>
+</article>

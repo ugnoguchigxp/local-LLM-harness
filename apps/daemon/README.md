@@ -34,6 +34,8 @@ SAAA は生成完了後に `PUT /v1/music/generations/{id}/favorite` を呼ぶ�
 
 生成画像は既定で `/srv/ai/data/generated/images` の専用poolへ保存します。上限は20,000,000,000 bytes、超過時は古いartifactから18,000,000,000 bytes以下になるまで画像とmetadataを一括削除します。掃除は起動時と5分ごとに実行します。`GET /v1/image-artifacts` で一覧、`GET /v1/image-artifacts/{id}` でmetadata、末尾の `/content` で画像binary、`DELETE /v1/image-artifacts/{id}` で削除できます。filesystem pathはAPIへ公開しません。
 
+本番の画像取り込みは配備済みrevision `111af3557904` の既存機構を使用します。`POST /v1/image-artifacts/imports` はControl Bearer（`LARM_API_TOKEN`）とUUIDの`Idempotency-Key`を使い、multipartの`file`を1個受け付けます。各軸2000px・400万画素・画像16 MiB以内、本文全体は16 MiB＋64 KiB以内です。初回201、再送200、処理中202でreceiptを返し、`GET /v1/image-imports/{requestId}`で受付から7日間照会できます。WebPは圧縮payloadを維持し、JPEG/PNGは向きを補正してmetadataなしPNGへ保存します。削除済みの期限内再送は`deleted:true`で画像を再作成せず、期限切れキーは410です。取込単独でProviderを起動しません。このworktreeにある別試作の無期限照会契約は本番未採用です。[本番契約と実HTTP検証](../../specs/image-artifact-import-api-2026-10-18.html)を参照してください。
+
 実装済みAPI contractの正本は[`../../specs/api.html`](../../specs/api.html)です。LLM、STT、通常TTS、表現TTSをprotocol-awareな共通Gatewayで提供し、通常clientは個別Provider portではなくGatewayを使用します。repositoryのProvider unitはloopback desired stateです。2026年8月29日のlive hostには移行用wildcard listenerが残り、network levelの閉鎖は[`../../specs/production-completion-plan.html`](../../specs/production-completion-plan.html)のMilestone 27で行います。
 
 ## Start
