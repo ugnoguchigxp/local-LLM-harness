@@ -68,7 +68,6 @@ export { LarmApiError, LarmClientConfigurationError, LarmEpochChangedError, Larm
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export type LarmClientOptions = {
-  monitorToken?: string;
   baseUrl: string;
   apiToken?: string;
   managementToken?: string;
@@ -207,7 +206,7 @@ export class LarmClient {
   }
 
   async getMonitoringSnapshot(signal?: AbortSignal): Promise<MonitoringSnapshot> {
-    const response = await this.request("/v1/monitoring/snapshot", { signal, ...(this.options.monitorToken ? { headers: { authorization: `Bearer ${this.options.monitorToken}` } } : {}) }, false, Math.min(5000, this.timeoutMs));
+    const response = await this.request("/v1/monitoring/snapshot", { signal }, false, Math.min(5000, this.timeoutMs));
     return this.parseJson(response, monitoringSnapshotSchema);
   }
 
@@ -215,7 +214,7 @@ export class LarmClient {
     const params = new URLSearchParams();
     if (options.cursor !== undefined) params.set("cursor", options.cursor);
     if (options.limit !== undefined) params.set("limit", String(options.limit));
-    const response = await this.request(`/v1/monitoring/events${params.size ? `?${params}` : ""}`, { signal: options.signal, ...(this.options.monitorToken ? { headers: { authorization: `Bearer ${this.options.monitorToken}` } } : {}) }, false, Math.min(5000, this.timeoutMs));
+    const response = await this.request(`/v1/monitoring/events${params.size ? `?${params}` : ""}`, { signal: options.signal }, false, Math.min(5000, this.timeoutMs));
     return this.parseJson(response, monitoringEventsSchema);
   }
 

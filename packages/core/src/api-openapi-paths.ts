@@ -150,7 +150,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       "x-larm-lifecycle": lifecycle,
       "x-larm-governance": apiOperationGovernance(path, operationId),
       "x-larm-policy": apiOperationPolicy(path, operationId),
-      security: monitoring ? [{ monitorBearer: [] }, { bearerAuth: [] }] : path.startsWith("/v1/management/local-services/") ? [{ localServiceManagementBearer: [] }]
+      security: path.startsWith("/v1/management/local-services/") ? [{ localServiceManagementBearer: [] }]
         : /^\/v1\/local-service/.test(path) ? [{ localServiceBearer: [] }]
         : publicOperation ? [] : management
         ? [{ bearerAuth: [], managementToken: [] }]

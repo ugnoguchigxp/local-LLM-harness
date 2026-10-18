@@ -73,7 +73,6 @@ export { publicClusterState, publicRuntime } from "./app-http";
 export type FetchLike = GatewayFetchLike;
 
 export function createAppComponents(deps: AppDeps) {
-  if (deps.monitorToken && [deps.apiToken, deps.protectedConsumerToken, deps.managementToken].includes(deps.monitorToken)) throw new Error("monitor token must differ from other tokens");
   if (deps.monitoring) {
     const monitoring = deps.monitoring, previous = deps.onEvent;
     deps = { ...deps, onEvent: event => { monitoring.capture(event); previous?.(event); } };

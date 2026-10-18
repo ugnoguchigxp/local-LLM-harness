@@ -50,7 +50,6 @@ export type ApiOperationAuthority =
   | "management-bearer"
   | "public"
   | "api-bearer"
-  | "api-or-monitor-bearer"
   | "optional-api-bearer"
   | "configurable-api-bearer"
   | "provider-bearer"
@@ -139,7 +138,7 @@ export function apiOperationPolicy(
   }
 
   const lifecycle = apiOperationLifecycle(path, operationId);
-  const authority: ApiOperationAuthority = owner === "monitoring" ? "api-or-monitor-bearer" : owner === "local-services"
+  const authority: ApiOperationAuthority = owner === "local-services"
     ? path.startsWith("/v1/management/") ? "management-bearer" : "local-service-bearer"
     : lifecycle.classification === "management"
     ? "api-and-management-bearer"

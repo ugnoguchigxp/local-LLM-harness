@@ -335,7 +335,6 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     paths,
     components: {
       securitySchemes: {
-        monitorBearer: { type: "http", scheme: "bearer", description: "LARM_MONITOR_TOKEN: monitoring GET only; standard/protected Control bearer also accepted" },
         localServiceBearer: { type: "http", scheme: "bearer", description: "Scoped local service consumer token" },
         localServiceManagementBearer: { type: "http", scheme: "bearer", description: "Management token, distinct from consumer token" },
         bearerAuth: { type: "http", scheme: "bearer" },

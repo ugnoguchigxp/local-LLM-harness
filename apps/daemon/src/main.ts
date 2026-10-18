@@ -401,7 +401,6 @@ const imageGenerationProvider = imageEndpoint
   : undefined;
 const appComponents = createAppComponents({
   monitoring,
-  monitorToken: config.monitorToken,
   observability,
   registry,
   getState: () => observer.getState(),

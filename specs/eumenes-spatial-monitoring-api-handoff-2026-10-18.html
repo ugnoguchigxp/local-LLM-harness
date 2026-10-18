@@ -7,6 +7,10 @@
     LARM稼働プロセスへの配備とEumenes backendへの接続は未実施であり、APIのsource完成とは分けて扱う。
     停止・起動・再起動や本番設定変更は実施していない。
   </p>
+  <p>
+    利用者の指示により監視用の追加資格情報を廃止し、既存LARM_API_TOKENの再利用へ統一した。
+    設定、認証分岐、SDKオプション、OpenAPIの追加認証定義を削除し、以下に現行契約を反映した。
+  </p>
 
   <section id="contract">
     <h2>APIと認証</h2>
@@ -47,17 +51,17 @@
           <th scope="row">認証</th>
           <td>
             <code>Authorization: Bearer …</code
-            >。推奨設定は<code>LARM_MONITOR_TOKEN</code>。既存のstandard/protected
-            Control Bearerでも可。Provider短期token、管理header単独、匿名では不可。
+            >。既存の<code>LARM_API_TOKEN</code>を再利用する。既存のprotected
+            Control Bearerも可。Provider短期token、管理header単独、匿名では不可。
           </td>
         </tr>
         <tr>
           <th scope="row">権限</th>
           <td>
-            monitor
-            tokenは上記二つのGETだけ。他pathは403、他methodは405。既存API・protected・management
-            tokenとの同値設定は起動時に拒否。監視認証自体が未設定なら503
-            monitoring_auth_not_configured。無効・無認証は401。
+            既存Control
+            Bearerの権限をそのまま使う。監視GETは読み取り専用だが、token自体の権限を読み取りへ制限するものではない。
+            他methodは405。LARM_API_TOKENが未設定なら503
+            monitoring_auth_not_configured。無効・無認証は401。追加の監視用資格情報は不要。
           </td>
         </tr>
         <tr>
@@ -85,7 +89,7 @@
       </tbody>
     </table>
     <p>
-      Eumenes backendにControl originと監視tokenをsecretとして設定する。
+      Eumenes backendの既存Control originとLARM_API_TOKENのsecret設定を再利用する。
       ブラウザへcredentialを渡さず、既存TLS/CA設定を使う。新port、CORS例外、管理tokenの追加配布は不要。
       接続先とcredentialの具体値は本資料・応答例に含めない。
     </p>
@@ -334,8 +338,8 @@
     <p>
       固定試験では、状態・取得品質・partial
       response、独立cursorと固定ページ、保持期限/容量/再起動/改変、
-      取消後の遅延成功、trace無効時の数値抽出、認証と専用tokenの範囲、秘密canary、並行GETを検証した。
-      監視反復でProvider
+      取消後の遅延成功、trace無効時の数値抽出、既存Control
+      Bearerの認証と未認証拒否、秘密canary、並行GETを検証した。 監視反復でProvider
       ensure/stop/probe呼出数、保存済みAllocationとexpiresAt、Provider参照/idle期限、 usage
       protectionの期限が変化しないことを確認する。期限切れ処理を持つgetterは監視依存に渡していない。
     </p>
@@ -431,8 +435,8 @@
     <h2>Eumenes側の接続作業</h2>
     <ol>
       <li>
-        LARMの新release配備とdaemon再起動を利用者の許可後に行い、専用monitor
-        tokenを設定する。既存Control originとTLSを維持する。
+        LARMの新release配備とdaemon再起動を利用者の許可後に行う。 Eumenes
+        backendの既存LARM_API_TOKEN、Control originとTLSを再利用する。
       </li>
       <li>
         Eumenes
@@ -443,7 +447,7 @@
         Core/CPU/Memory/GPUを追加し、配列の識別子と各Observationのstatus/observedAt/intervalを維持する。
       </li>
       <li>
-        通信到達不能、401/403、旧daemonの404、503、部分センサー未取得、履歴gapを別状態として扱う。失敗時に直前snapshotの応答時刻だけを更新しない。
+        通信到達不能、401、旧daemonの404、503、部分センサー未取得、履歴gapを別状態として扱う。失敗時に直前snapshotの応答時刻だけを更新しない。
       </li>
       <li>
         event

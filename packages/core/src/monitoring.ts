@@ -127,7 +127,7 @@ export const monitoringEventsSchema = z.object({
   nextCursor: z.string().min(1).max(1024), hasMore: z.boolean(), coverage: z.array(monitoringCoverageSchema),
 }).strict();
 export const monitoringErrorSchema = z.object({ error: z.object({
-  code: z.enum(["invalid_request", "unauthorized", "forbidden", "monitoring_auth_not_configured", "unsupported_monitoring_contract", "monitoring_epoch_changed", "monitoring_cursor_expired", "monitoring_unavailable", "rate_limited"]),
+  code: z.enum(["invalid_request", "unauthorized", "monitoring_auth_not_configured", "unsupported_monitoring_contract", "monitoring_epoch_changed", "monitoring_cursor_expired", "monitoring_unavailable", "rate_limited"]),
   message: z.string().min(1).max(128), bootEpoch: monitoringIdSchema, reasonCode: monitoringIdSchema.nullable(),
   supportedContractVersions: z.array(z.literal(MONITORING_VERSION)), recovery: z.enum(["retry", "restart_window", "fix_request", "fix_auth"]).nullable(),
 }).strict() }).strict();

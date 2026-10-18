@@ -1023,7 +1023,6 @@
               "enum": [
                 "invalid_request",
                 "unauthorized",
-                "forbidden",
                 "monitoring_auth_not_configured",
                 "unsupported_monitoring_contract",
                 "monitoring_epoch_changed",

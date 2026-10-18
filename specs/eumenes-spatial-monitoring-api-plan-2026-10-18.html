@@ -9,6 +9,10 @@
     サーバーまたはProviderの停止・起動・再起動を伴う実機試験と配備は、その操作前に別途許可を得る。
   </p>
   <p>
+    認証設計は利用者の指示に合わせて更新した。監視用の追加資格情報は設けず、既存のLARM_API_TOKENを再利用する。
+    設定・認証分岐・SDK・公開仕様から追加資格情報の仕組みを削除した。
+  </p>
+  <p>
     Eumenes backendがSpatial表示中に60秒間隔で取得し、既存snapshotへ統合する。
     ブラウザはLARMへ直接接続しない。LARMは観測値、正式状態、取得条件、欠落を提供し、
     表示色、アニメーション、9対象と追加4対象の状態集約はEumenesが決める。
@@ -46,8 +50,8 @@
             header、gzip、既存SDK transportがある。
           </td>
           <td>
-            同じlistener、middleware、secretMatcher、SDK
-            transportを再利用。監視専用Bearerの限定認可だけ追加する。
+            同じlistener、middleware、secretMatcher、SDK transportと既存Control
+            Bearerの認証を再利用する。
           </td>
         </tr>
         <tr>
@@ -322,20 +326,17 @@
     </p>
     <p>
       認証は既存と同じ<code>Authorization: Bearer …</code>。既存standard/protected Control
-      Bearerの 監視GET利用を許可し、既存共有tokenの広い権限は変更しない。
-      推奨は新設定<code>LARM_MONITOR_TOKEN</code>で同じsecretMatcherに接続し、
-      この二つのGETだけに相当する<code>monitoring:read</code>権限を与えること。
-      OAuth/RBAC基盤は追加しない。この権限名は今回の認可区分の提案であり、既存の正式scopeではない。
-      monitor tokenが他のAPI/protected/management tokenと一致する設定は起動時に拒否する。
-      他pathへのmonitor token利用は403
-      forbidden。Provider短期tokenと管理header単独は監視認証に使えず401。
-      未設定・無効Bearerは401、API Bearerもmonitor tokenも未設定なら503
+      Bearerの監視GET利用を許可し、既存共有tokenの権限は変更しない。
+      Eumenesは既存の<code>LARM_API_TOKEN</code>を再利用する。
+      追加の監視用資格情報やOAuth/RBAC基盤は設けない。
+      Provider短期tokenと管理header単独は監視認証に使えず401。
+      未設定・無効Bearerは401、LARM_API_TOKENが未設定なら503
       monitoring_auth_not_configuredで閉じる。 匿名Service
       Harness・匿名Connection許可設定の例外を監視へ適用しない。draining中も認証済み監視を許可する。
     </p>
     <p>
-      Eumenes backendのsecret管理でmonitor tokenとControl
-      originを設定し、既存TLSと信頼するCAを使う。
+      Eumenes backendの既存LARM_API_TOKENとControl
+      originのsecret設定を再利用し、既存TLSと信頼するCAを使う。
       tokenをブラウザ・query・応答・logに含めない。新しい公開port、CORS許可、管理token配布は不要。
       接続先やcredentialの具体値はこの設計書や応答例に記載しない。
     </p>
@@ -347,7 +348,7 @@
       200は「全計測正常」を意味しない。過剰な同時処理時は最大8 handlerとし、超過は429
       rate_limited、Retry-After: 1。
       250msは新たな監視処理予算の提案であり、遅延や故障を判定するしきい値ではない。
-      DNS・接続・TLS失敗やtimeoutはEumenes側でLARM到達不能として検出し、401/403、404、503、個別センサー状態とは分ける。
+      DNS・接続・TLS失敗やtimeoutはEumenes側でLARM到達不能として検出し、401、404、503、個別センサー状態とは分ける。
     </p>
   </section>
 
@@ -1010,7 +1011,7 @@
         <tr>
           <th scope="row">apps/daemon</th>
           <td>
-            保存view、二つのroute、限定認証、起動時刻、既存Observer/Gate/Gateway/media/controlの観測hook、取消terminal一意性、drain中の観測。
+            保存view、二つのroute、既存Control認証、起動時刻、既存Observer/Gate/Gateway/media/controlの観測hook、取消terminal一意性、drain中の観測。
           </td>
           <td>handler依存からmutationを排除し、producerと読者を分離。</td>
         </tr>
@@ -1024,8 +1025,7 @@
         <tr>
           <th scope="row">specs / deploy設定資料</th>
           <td>
-            提案を確定仕様へ更新、認証設定、計測表、実測結果、未対応一覧、Eumenes接続手順。monitor
-            token設定の任意項目追加。
+            提案を確定仕様へ更新、既存認証の利用方法、計測表、実測結果、未対応一覧、Eumenes接続手順。
           </td>
           <td>source完成・実機配備・Eumenes接続を別々に報告する。</td>
         </tr>
@@ -1135,9 +1135,9 @@
         <tr>
           <th scope="row">6 認証・秘密</th>
           <td>
-            無効/無設定/専用/既存/Provider/管理のみの認証、他method/pathで専用token拒否、draining中、未知query。秘密canaryをstate/error/job/auditに埋め、応答・監視store・logに無いことを検査。
+            無効/無設定/既存/Provider/管理のみの認証、他method拒否、draining中、未知query。秘密canaryをstate/error/job/auditに埋め、応答・監視store・logに無いことを検査。
           </td>
-          <td>credentialを表示せず200/401/403だけ確認。既存の配備secretを成果物に保存しない。</td>
+          <td>credentialを表示せず200/401/503だけ確認。既存の配備secretを成果物に保存しない。</td>
         </tr>
         <tr>
           <th scope="row">7 並行取得・区間</th>
@@ -1166,7 +1166,7 @@
   <section id="handoff">
     <h2>合意事項とEumenesへの引き渡し</h2>
     <p>
-      推奨する合意内容は、二つの監視GET、既存Control認証に接続する専用read token、
+      合意内容は、二つの監視GET、既存LARM_API_TOKENの再利用、
       値ごとの取得状態・時刻・区間、daemon内10分履歴と明示的な再起動reset、
       既存権限のkernel観測、GPU要求対応付けと熱制限flagの未対応を含む初版である。
       これらの案は利用者が承認し、sourceへ実装した。現行仕様と実測範囲は引き渡し仕様を参照する。

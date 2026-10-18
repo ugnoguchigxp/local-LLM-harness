@@ -8,7 +8,6 @@ import { ExecutionGate } from "./execution-gate";
 import { RequestTracker } from "./metrics";
 import { MonitoringService } from "./monitoring";
 import { proxyGateway } from "./gateway";
-import { parseDaemonConfig } from "./config";
 
 const registry: Registry = {
   nodes: [{ id: "node", endpoint: "http://secret-node.invalid", resources: { memoryTotalGB: 128, reservedMemoryGB: 16 } }], profiles: [],
@@ -28,26 +27,28 @@ async function fixture() {
   const control = new ControlPlane(registry, backend, observer, { now: () => clock, bootEpoch: "epoch-test", idleTtlMs: 0, onEvent: monitor.capture });
   const gate = new ExecutionGate({ now: () => mono, onEvent: monitor.capture });
   const app = createApp({ registry, control, getState: () => observer.getState(), now: () => clock,
-    apiToken: "standard-secret", monitorToken: "monitor-secret", managementToken: "management-secret", protectedConsumerToken: "protected-secret",
+    apiToken: "standard-secret", managementToken: "management-secret", protectedConsumerToken: "protected-secret",
     requestTracker: tracker, executionGate: gate, monitoring: monitor, onEvent: monitor.capture, usageMonotonicNow: () => mono });
-  const read = (path: string, token = "monitor-secret", method = "GET") => app.request(path, { method, headers: { authorization: `Bearer ${token}` } });
+  const read = (path: string, token = "standard-secret", method = "GET") => app.request(path, { method, headers: { authorization: `Bearer ${token}` } });
   return { app, monitor, control, observer, gate, tracker, read,
     advance: (ms: number) => { clock += ms; mono += ms; }, state: (s: { running?: boolean; busy?: boolean; healthy?: boolean }) => { running = s.running ?? running; busy = s.busy ?? busy; healthy = s.healthy ?? healthy; },
     counters: () => ({ ensures, stops, probes }) };
 }
-test("monitoring routes authenticate narrowly, validate versions and queries, expose missing sensors and survive drain", async () => {
+test("monitoring routes reuse Control bearer auth, validate versions and queries, expose missing sensors and survive drain", async () => {
   const f = await fixture();
   try {
     const first = await f.read("/v1/monitoring/snapshot"); expect(first.status).toBe(200); expect(first.headers.get("cache-control")).toBe("no-store");
     const data = monitoringSnapshotSchema.parse(await first.json()); expect(data.core.runtimes[0]!.status.value).toBe("HOT");
     expect(data.nodes[0]!.cpu.utilization.status).toBe("unavailable"); expect(data.nodes[0]!.cpu.utilization.value).toBeUndefined();
     expect(JSON.stringify(data)).not.toContain("SECRET"); expect(JSON.stringify(data)).not.toContain("secret-node");
-    for (const token of ["standard-secret", "protected-secret"]) expect((await f.read("/v1/monitoring/snapshot", token)).status).toBe(200);
-    for (const token of ["bad", "larm_conn_v1.fake", "management-secret"]) expect((await f.read("/v1/monitoring/snapshot", token)).status).toBe(401);
-    expect((await f.read("/prepare", "monitor-secret", "POST")).status).toBe(403);
-    expect((await f.read("/health", "monitor-secret")).status).toBe(403);
-    expect((await f.read("/v1/monitoring/snapshot", "monitor-secret", "POST")).status).toBe(405);
-    expect((await f.read("/v1/monitoring/snapshot", "monitor-secret", "HEAD")).status).toBe(405);
+    for (const path of ["/v1/monitoring/snapshot", "/v1/monitoring/events"]) {
+      for (const token of ["standard-secret", "protected-secret"]) expect((await f.read(path, token)).status).toBe(200);
+      for (const token of ["bad", "larm_conn_v1.fake", "management-secret"]) expect((await f.read(path, token)).status).toBe(401);
+      expect((await f.app.request(path)).status).toBe(401);
+      expect((await f.app.request(path, { headers: { "x-larm-management-token": "management-secret" } })).status).toBe(401);
+      expect((await f.read(path, "standard-secret", "POST")).status).toBe(405);
+      expect((await f.read(path, "standard-secret", "HEAD")).status).toBe(405);
+    }
     for (const query of ["?x=1", "?contractVersion=a&contractVersion=b"]) expect((await f.read(`/v1/monitoring/snapshot${query}`)).status).toBe(400);
     expect((await f.read("/v1/monitoring/snapshot?contractVersion=larm-monitoring.v2")).status).toBe(406);
     expect((await f.read("/v1/monitoring/events?limit=1001")).status).toBe(400);
@@ -117,7 +118,7 @@ test("real gateway instrumentation supplies first body and engine rates with tra
     expect(JSON.stringify(f.monitor.snapshot())).not.toContain("PRIVATE OUTPUT");
   } finally { f.control.beginDrain(); await f.control.flush(); }
 });
-test("monitoring media terminal is idempotent and secrets cannot become reasons; auth fails closed and duplicate secrets rejected", async () => {
+test("monitoring media terminal is idempotent and secrets cannot become reasons; auth fails closed without Control credentials", async () => {
   const f = await fixture();
   try {
     f.monitor.media("music", "PRIVATE-JOB", "queued"); f.monitor.media("music", "PRIVATE-JOB", "cancelled"); f.monitor.media("music", "PRIVATE-JOB", "completed");
@@ -125,8 +126,11 @@ test("monitoring media terminal is idempotent and secrets cannot become reasons;
     f.monitor.capture({ name: "allocation_rejected", labels: { reason: "PRIVATE-ERROR", endpoint: "PRIVATE-URL" } });
     expect(JSON.stringify(f.monitor.eventPage())).not.toContain("PRIVATE");
     const anonymous = createApp({ registry, control: f.control, getState: () => f.observer.getState(), monitoring: f.monitor });
-    expect((await anonymous.request("/v1/monitoring/snapshot")).status).toBe(503);
-    expect(() => parseDaemonConfig({ LARM_API_TOKEN: "same", LARM_MONITOR_TOKEN: "same" })).toThrow("must differ");
+    for (const path of ["/v1/monitoring/snapshot", "/v1/monitoring/events"]) {
+      const reply = await anonymous.request(path);
+      expect(reply.status).toBe(503);
+      expect(await reply.json()).toMatchObject({ error: { code: "monitoring_auth_not_configured" } });
+    }
     monitoringEventsSchema.parse(f.monitor.eventPage());
   } finally { f.control.beginDrain(); await f.control.flush(); }
 });
@@ -155,10 +159,10 @@ test("API keeps partial GPU failure and an OOM delta interval without inventing 
     return { node, modelStorage: data.modelStorage };
   } } });
   try {
-    const app = createApp({ registry, control: f.control, getState: () => f.observer.getState(), executionGate: f.gate, monitoring, monitorToken: "monitor-only" });
+    const app = createApp({ registry, control: f.control, getState: () => f.observer.getState(), executionGate: f.gate, monitoring, apiToken: "standard-secret" });
     await monitoring.collect(); expect(monitoring.eventPage().events.filter(e => e.kind === "host.oom_counter_changed")).toHaveLength(0);
     ms += 2000; mono += 2000; count = "5"; await monitoring.collect();
-    const reply = await app.request("/v1/monitoring/snapshot", { headers: { authorization: "Bearer monitor-only" } }); expect(reply.status).toBe(200);
+    const reply = await app.request("/v1/monitoring/snapshot", { headers: { authorization: "Bearer standard-secret" } }); expect(reply.status).toBe(200);
     const snapshot = monitoringSnapshotSchema.parse(await reply.json());
     expect(snapshot.nodes[0]!.gpus.value![0]!.utilization.status).toBe("permission_denied"); expect(snapshot.nodes[0]!.memory.memTotal.value).toBeGreaterThan(0);
     const oom = monitoring.eventPage().events.filter(e => e.kind === "host.oom_counter_changed"); expect(oom).toHaveLength(1); expect(oom[0]!.countDelta).toBe("2"); expect(oom[0]!.observationInterval?.durationMs).toBe(2000);

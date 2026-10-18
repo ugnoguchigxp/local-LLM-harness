@@ -7,9 +7,9 @@ releaseが両方失敗した場合は双方を含む`AggregateError`を返しま
 
 ## Spatial monitoring
 
-監視だけを行うbackendは `new LarmClient({ baseUrl, monitorToken })` を使い、
+監視を行うbackendは既存の認証設定で `new LarmClient({ baseUrl, apiToken })` を使い、
 `getMonitoringSnapshot(signal)` と `getMonitoringEvents({ cursor, limit, signal })` を呼べます。
-既存の `apiToken` でも取得でき、監視専用tokenはこの二つのGETにだけ送ります。監視要求のtimeoutは最大5秒です。
+認証には既存APIと同じ `apiToken` を共通通信処理で送ります。監視要求のtimeoutは最大5秒です。
 
 出来事は `hasMore` がfalseになるまでページを取得し、最後の `nextCursor` を次のpollに保存します。
 SDKは自動renew・claim・再試行をしません。`LarmApiError` の409 `monitoring_epoch_changed` と410

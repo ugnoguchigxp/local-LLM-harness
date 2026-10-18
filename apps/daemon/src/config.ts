@@ -26,7 +26,6 @@ export type DaemonConfig = {
   historyLimit: number;
   activeAllocationLimit: number;
   apiToken?: string;
-  monitorToken?: string;
   protectedConsumerToken?: string;
   usageRetentionPath: string;
   allowAnonymousAgentConnections: boolean;
@@ -243,8 +242,6 @@ export function parseDaemonConfig(
     false,
   );
   const managementToken = optionalSecret(env.LARM_MANAGEMENT_TOKEN);
-  const monitorToken = optionalSecret(env.LARM_MONITOR_TOKEN);
-  if (monitorToken && [apiToken, protectedConsumerToken, managementToken].includes(monitorToken)) throw new Error("LARM_MONITOR_TOKEN must differ from other tokens");
   const tlsCertFile = optionalSecret(env.LARM_TLS_CERT_FILE);
   const tlsKeyFile = optionalSecret(env.LARM_TLS_KEY_FILE);
   if ((tlsCertFile === undefined) !== (tlsKeyFile === undefined)) {
@@ -380,7 +377,6 @@ export function parseDaemonConfig(
       integer: true,
     }),
     apiToken,
-    monitorToken,
     protectedConsumerToken,
     usageRetentionPath: absolutePathSetting(env, "LARM_USAGE_RETENTION_PATH", "/var/lib/larm/usage-retention.json"),
     allowAnonymousAgentConnections: booleanSetting(
