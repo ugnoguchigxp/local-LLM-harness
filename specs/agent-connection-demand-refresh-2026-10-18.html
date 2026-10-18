@@ -71,6 +71,12 @@
       protectionを既に利用しているconsumerについては、その設定済みの保護期間を新しい利用依頼で更新する。通常の利用依頼に専用権限を要求しない。
     </p>
   </section>
+  <aside>
+    <h2>定期要求とclaimの使い分け</h2>
+    <p>
+      占有維持はPOSTだけで行い、30秒ごとにclaimや推論を追加しない。既発行credentialの署名期限はPOST応答の新しいexpiresAtとは別であり、credential期限に合わせて既存のclaim・renewを利用する。claimとhealthは既存のreadiness契約で疎通推論を実行する場合があるため、無推論の保持試験ではその確認を測定区間の外に分ける。claimのreadiness動作や設定は変更していない。
+    </p>
+  </aside>
   <section id="arbitration">
     <h2>調停とエラー</h2>
     <p>
@@ -115,13 +121,75 @@
   <section id="verification">
     <h2>検証状況</h2>
     <p>
-      実装済み。専用ownership
-      API・schema・SDKメソッド・保持registry・専用検証scriptは削除した。固定試験済み。881件が成功し、bun
-      run checkとbun run
-      test:coverageの基準を満たした。6分超の定期依頼、要求順序・同時要求、再送、停止後の実timer解放、credentialの署名期限・claim・renew・取消、既存の通常認証、長時間の再送記録回収を確認した。
+      実装済み。本番はcommit 0baea1ede627で稼働する。専用ownership
+      API・schema・SDKメソッド・保持registry・専用検証scriptを削除し、既存POSTの新しい依頼だけで保持する形に統一した。
     </p>
     <p>
-      本番実接続は、Eumenesが実際に作成したConnectionを既存credentialで取得し、認証principalの一致を確認した。LAN接続先・Profile・audience・TTLを一致させ、同じ本番daemonから実Providerまで通す。試験要求はLARMホストから送信し、Eumenesの画面操作そのものは行っていない。実測結果は検証終了後に記録する。別daemon・別認証を受入確認の代わりに使用しない。
+      固定試験済み。881件が成功し、bun run checkとbun run
+      test:coverageの基準を満たした。要求順序・同時要求・繰返し、再送と新しい依頼の区別、停止後の実timer解放、古い再送の無効化、認証、credentialの署名期限・claim・renew・取消、長時間の再送記録回収を確認した。
     </p>
+    <p>
+      実接続確認済み。2026-10-18、本番のhttp://192.168.0.130:9810を使用した。Eumenesが実際に作成したConnectionを既存credentialで取得できるHTTP
+      200を確認し、認証principalが一致することを検証した。その実ConnectionのProfile
+      ornith1.5Strix・audience saaa-desktop・Provider llm・TTL
+      900秒を再現した。試験の送信元はLARMホストであり、Eumenes画面自体の操作試験は行っていない。同じ本番daemonと実Providerを利用し、別daemon・別認証を代用しなかった。
+    </p>
+    <table>
+      <caption>
+        実測した期限の変化（2026-10-18、日本時間）
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">応答時刻</th>
+          <th scope="col">idleReleaseAt</th>
+          <th scope="col">expiresAt</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">取得</th>
+          <td>13:10:10.274</td>
+          <td>13:15:10.274</td>
+          <td>13:25:10.107</td>
+        </tr>
+        <tr>
+          <th scope="row">30秒後の新しい依頼</th>
+          <td>13:10:40.282</td>
+          <td>13:15:40.280</td>
+          <td>13:25:40.280</td>
+        </tr>
+        <tr>
+          <th scope="row">6分後の最後の依頼</th>
+          <td>13:16:10.347</td>
+          <td>13:21:10.346</td>
+          <td>13:31:10.345</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      30秒間隔の新しい利用依頼を360.070秒継続し、Connection id
+      aconn_epoch-7feef8f2-e170-4c23-a858-4354c0f97996_18381b32-9e57-44b7-9d3e-dbb5577a81b9とAllocation
+      id
+      alloc_epoch-7feef8f2-e170-4c23-a858-4354c0f97996_357872e1-1e21-4417-a9c1-123e6a2cdc56は変わらなかった。ContextStillの12回の要求はすべて409
+      provider_conflictとなった。LLMのprompt_tokens_totalは120から120、tokens_predicted_totalは10から10であり、この6分間の推論増加は0だった。
+    </p>
+    <p>
+      4分時点で既存renewを実行し、以前のcredentialは401になった。無推論区間の終了後、既存claimによる更新でgeneration
+      1から2と署名期限13:31:10.000を確認した。POSTの再利用で余分なgeneration更新は発生しなかった。
+    </p>
+    <p>
+      定期要求は13:16:10.519に停止した。同じKeyの再送で期限が進まないことを確認した。GETだけで観測し、13:21:10.447にforeground_idle_timeoutで自動解放された。停止からの実測は299.929秒で、現在の300秒設定どおりだった。解放後の遅延再送でも復活せず、ContextStillはreadyのConnectionを取得した。検証用2
+      Connectionは既存DELETEによりいずれも204で片付けた。
+    </p>
+    <p>
+      本番のconfigRevisionは配備前後とも8abf3ae515eb3642b6c80339a8cee93085294520fceebb8fd5fc1123472e0af0で一致する。自動解放の設定値、製品接続設定、秘密は変更していない。
+    </p>
+    <details>
+      <summary>測定手順の修正</summary>
+      <p>
+        最初の測定はclaimの既存readiness推論が無推論区間に入ったため不合格とし、検証Connectionを削除した。製品のclaim契約や設定を変更せず、claim確認を測定区間後に移して再試験し、上記の推論増加0を確認した。
+      </p>
+    </details>
   </section>
 </article>
