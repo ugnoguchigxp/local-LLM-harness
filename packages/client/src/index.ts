@@ -397,18 +397,6 @@ export class LarmClient {
     return this.agentConnections.refresh(id, options);
   }
 
-  async refreshAgentConnectionOwnership(
-    id: string, ownershipId: string, sequence: number, options: RequestOptions = {},
-  ): Promise<PublicAgentConnection> {
-    return this.agentConnections.updateOwnership(id, ownershipId, sequence, options);
-  }
-
-  async releaseAgentConnectionOwnership(
-    id: string, ownershipId: string, options: RequestOptions = {},
-  ): Promise<PublicAgentConnection> {
-    return this.agentConnections.updateOwnership(id, ownershipId, undefined, options);
-  }
-
   async releaseAgentConnection(id: string, signal?: AbortSignal): Promise<void> {
     return this.agentConnections.release(id, signal);
   }

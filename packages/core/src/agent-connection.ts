@@ -624,22 +624,9 @@ export const agentConnectionRequestSchema = z.object({
       seen.add(provider);
     }
   }).optional(),
-  ownership: z.object({
-    id: z.string().uuid(),
-    issuedAt: z.string().datetime(),
-  }).strict().optional(),
   ttlSeconds: z.number().int().min(1).max(86_400).default(300),
   allowFallback: z.boolean().default(false),
   deploymentPolicy: deploymentPolicySchema.default("existing-only"),
-}).strict();
-
-export const agentConnectionOwnershipUpdateSchema = z.object({
-  id: z.string().uuid(),
-  sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-}).strict();
-
-export const agentConnectionOwnershipReleaseSchema = z.object({
-  id: z.string().uuid(),
 }).strict();
 
 export const agentConnectionRenewRequestSchema = z.object({
@@ -880,14 +867,6 @@ export const publicAgentConnectionSchema = z.object({
   readyDeadline: z.string().datetime().optional(),
   lastForegroundActivityAt: z.string().datetime().optional(),
   idleReleaseAt: z.string().datetime().optional(),
-  ownership: z.object({
-    id: z.string().uuid(),
-    state: z.enum(["active", "expired", "released"]),
-    sequence: z.number().int().nonnegative(),
-    expiresAt: z.string().datetime(),
-    heartbeatSeconds: z.literal(30),
-    ttlSeconds: z.literal(90),
-  }).strict().optional(),
   releasedAt: z.string().datetime().optional(),
   error: z.object({
     code: z.string().min(1).max(128),

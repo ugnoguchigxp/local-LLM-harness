@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { UsageProtection, type ConnectionOwnership } from "@larm/core";
+import { UsageProtection } from "@larm/core";
 import type { MetricsRegistry } from "./metrics";
 
 export class UsageProtectionError extends Error {
@@ -23,18 +23,6 @@ export class UsageCoordinator {
   private readonly context = new AsyncLocalStorage<string | undefined>();
   private transitioning?: string;
   private profileKey?: string;
-  private readonly ownership = new Map<string, { owner: string; lease: ConnectionOwnership; alive: () => boolean }>();
-  get hasOwnership(): boolean {
-    for (const [id, item] of this.ownership) {
-      if (!item.lease.active || !item.alive()) this.ownership.delete(id);
-    }
-    return this.ownership.size > 0;
-  }
-  hold(lease: ConnectionOwnership, alive: () => boolean): void {
-    if (!this.canProtect) throw new Error("ownership requires a dedicated consumer credential");
-    this.check();
-    this.ownership.set(lease.id, { owner: this.owner!, lease, alive });
-  }
   private readonly recordDuration?: (seconds: number) => void;
   constructor(now?: () => number, private readonly metrics?: MetricsRegistry, readonly protectedOwner?: string) {
     this.protection = new UsageProtection(now);
@@ -48,14 +36,12 @@ export class UsageCoordinator {
   get canProtect(): boolean { return this.owner !== undefined && (this.protectedOwner === undefined || this.owner === this.protectedOwner); }
   run<T>(owner: string | undefined, fn: () => T): T { return this.context.run(owner, fn); }
   check(owner = this.owner): void {
-    const ownershipDenied = this.hasOwnership && [...this.ownership.values()].some(item => item.owner !== owner);
-    const denied = ownershipDenied || (this.transitioning !== undefined && this.transitioning !== owner) || this.protection.denied(owner);
+    const denied = (this.transitioning !== undefined && this.transitioning !== owner) || this.protection.denied(owner);
     if (denied) {
         this.record({ name: "protection_rejections", labels: { reason: "foreground_protected" } });
         const state = this.protection.snapshot();
         throw new UsageProtectionError(
-          ownershipDenied || state.activeRequests || state.preparing ? 1 : Math.max(1, Math.ceil(state.remainingMs / 1000)),
-          ownershipDenied ? "another consumer has an active Connection ownership lease" : undefined,
+          state.activeRequests || state.preparing ? 1 : Math.max(1, Math.ceil(state.remainingMs / 1000)),
         );
     }
   }

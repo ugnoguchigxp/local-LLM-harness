@@ -22,22 +22,20 @@
         </tr>
       </thead>
       <tbody>
-        <tr data-kind="contract" data-state="current" data-domain="connection-screen-ownership">
+        <tr data-kind="contract" data-state="current" data-domain="agent-connection-demand-refresh">
           <th scope="row">
-            <a href="./connection-screen-ownership-2026-10-18.html"
-              >画面表示中のProfile所有維持API</a
+            <a href="./agent-connection-demand-refresh-2026-10-18.html"
+              >既存Profile利用依頼によるConnectionの占有延長</a
             >
           </th>
           <td>
-            Eumenesの30秒更新・90秒保持、権限、credentialとの分離、ContextStillとの調停、API入力・応答・再送・解除。<small
+            既存POSTの再利用と期限更新、再送・credential・ContextStill調停。<small
               >分類: <code>contract</code> · 状態:
               <code>current</code> · 正本領域:
-              <code>connection-screen-ownership</code></small
+              <code>agent-connection-demand-refresh</code></small
             >
           </td>
-          <td>
-            2026-10-18。実装・固定試験済み。実接続は稼働版への反映と専用consumer認証の準備待ち。
-          </td>
+          <td>2026-10-18。実装済み。固定試験と本番E2Eの結果を個別に記録する。</td>
         </tr>
         <tr data-kind="contract" data-state="current" data-domain="http-media-compression">
           <th scope="row">
@@ -55,6 +53,122 @@
           <td>
             2026-10-17。共通HTTP境界とSDKを実装。release
             267bfccを配備し、LLM・ASR・TTSの実APIで双方向gzipを検証。eumenes本体への適用は別途。
+          </td>
+        </tr>
+        <tr data-kind="contract" data-state="current" data-domain="ocr-gateway-lan-ingress">
+          <th scope="row">
+            <a href="./ocr-gateway-lan-ingress-2026-10-17.html">Eumenes向けOCR gatewayのLAN入口</a>
+          </th>
+          <td>
+            共通Bearer、originと4操作のAPI、gateway解決、LAN中継の配備・切り戻し。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ocr-gateway-lan-ingress</code></small
+            >
+          </td>
+          <td>
+            2026-10-17。正式LAN入口を配置しgnosisから実処理を確認。MacのEumenesからの到達と設定保存は残作業。
+          </td>
+        </tr>
+        <tr
+          data-kind="plan"
+          data-state="current"
+          data-domain="dependency-reproducibility-and-slo-improvement"
+        >
+          <th scope="row">
+            <a href="./dependency-reproducibility-and-slo-improvement-plan-2026-10-16.html"
+              >依存管理・再現性とSLOの実装計画書</a
+            >
+          </th>
+          <td>
+            依存の固定・監査・環境復元、release検証の統一、SLO
+            v2の作業分解、受入条件、移行と切り戻し。容量は対象外。<small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>dependency-reproducibility-and-slo-improvement</code></small
+            >
+          </td>
+          <td>
+            2026-10-16。実装計画書1.1。W0を記録しW1を実装。共通release
+            gate・High解消・coverage補完のrepository受入完了。W2〜W7と実機校正は未着手。
+          </td>
+        </tr>
+        <tr data-kind="contract" data-state="current" data-domain="d1-game-decision-provider">
+          <th scope="row">
+            <a href="./d1-game-decision-provider-2026-10-16.html"
+              >d1-3Bゲーム判断Providerの追加と比較モデルの配置</a
+            >
+          </th>
+          <td>
+            明示的なgame profile、typed判断と画像入力、固定artifact、ROCm実行と接続手順。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>d1-game-decision-provider</code></small
+            >
+          </td>
+          <td>
+            2026-10-16。両モデル配置・全体check・隔離実推論を確認。短いJSON判断P50約95ms、画像約159ms。release
+            f3f297566986を稼働反映済み。LARM単独P50約97ms、Ornith生成中約162ms。画像・更新・解放も確認。
+          </td>
+        </tr>
+        <tr data-kind="research" data-state="current" data-domain="project-assessment-2026-10-16">
+          <th scope="row">
+            <a href="./project-assessment-2026-10-16.html">LARMプロジェクト多角評価</a>
+          </th>
+          <td>
+            14観点の評点、全体検査・coverage・依存監査の実行結果、改善優先順位。<small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>project-assessment-2026-10-16</code></small
+            >
+          </td>
+          <td>
+            2026-10-16。HEAD
+            f3e50e2と既存未コミット変更を含む作業ツリーを評価。総合79点。check成功、audit・coverage
+            gate失敗。実機受入の再検証は対象外。
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="current"
+          data-domain="real-time-game-decision-model-selection"
+        >
+          <th scope="row">
+            <a href="./real-time-game-decision-model-selection-2026-10-16.html"
+              >瞬発力を要するゲーム向け判断器の候補比較</a
+            >
+          </th>
+          <td>
+            d1-3B、H2O-Lightning、Layaと専用controllerの比較、実機評価条件。<small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>real-time-game-decision-model-selection</code></small
+            >
+          </td>
+          <td>
+            2026-10-16。公式資料と既設CPU評価を調査。暫定評価順を提案し、モデル導入・実機比較は未実施。
+          </td>
+        </tr>
+        <tr
+          data-kind="decision"
+          data-state="current"
+          data-domain="ruri-sentence-language-retirement"
+        >
+          <th scope="row">
+            <a href="./ruri-sentence-language-retirement-2026-10-16.html"
+              >Ruri文章日英判定Providerの廃止</a
+            >
+          </th>
+          <td>
+            公開Provider・route・言語head依存の削除と、呼び出し側の正規表現への責務移行。<small
+              >分類: <code>decision</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ruri-sentence-language-retirement</code></small
+            >
+          </td>
+          <td>
+            2026-10-16。ソースと配備定義を更新し、不要な学習・評価データと実験記録を削除。配備済み言語headも削除。release
+            d73eadd1c5f5を反映し、言語判定の廃止と発話態度の動作を確認。
           </td>
         </tr>
         <tr data-kind="plan" data-state="implemented" data-domain="eumenes-protection-retention">
@@ -698,7 +812,11 @@
         </tr>
         <tr
           data-kind="research"
-          data-state="current"
+          data-state="historical"
+          data-successor="ruri-sentence-language-retirement-2026-10-16.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-16"
+          data-target-revision="f3e50e2148df5212bec5cfcd871a6c17014d9799"
           data-domain="ruri-sentence-language-classification"
         >
           <th scope="row">
@@ -709,18 +827,30 @@
           <td>
             日本語200・英語200の全件学習、凍結後に追加した50文の独立判定、データと再実行。<small
               >分類: <code>research</code> · 状態:
-              <code>current</code> · 正本領域:
+              <code>historical</code> · 正本領域:
               <code>ruri-sentence-language-classification</code></small
             >
           </td>
           <td>
             2026-10-12
             INT8・FP32とも追加50／50正解。短文・引用・URLの一部に誤判定あり。ローマ字は利用者指定で当面対象外。
+            <p>
+              2026-10-16に廃止。後継:
+              <a href="./ruri-sentence-language-retirement-2026-10-16.html" rel="successor"
+                >文章日英判定の廃止決定</a
+              >。<small data-audit-summary="true"
+                >2026-10-16、revision f3e50e2148df5212bec5cfcd871a6c17014d9799の記録を確認。</small
+              >
+            </p>
           </td>
         </tr>
         <tr
           data-kind="contract"
-          data-state="current"
+          data-state="historical"
+          data-successor="ruri-sentence-language-retirement-2026-10-16.html"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-16"
+          data-target-revision="f3e50e2148df5212bec5cfcd871a6c17014d9799"
           data-domain="ruri-sentence-language-resident-integration"
         >
           <th scope="row">
@@ -731,13 +861,21 @@
           <td>
             共有encoder、新Providerの発見・確保・choice API、旧態度回帰、準備済みHTTP性能。<small
               >分類: <code>contract</code> · 状態:
-              <code>current</code> · 正本領域:
+              <code>historical</code> · 正本領域:
               <code>ruri-sentence-language-resident-integration</code></small
             >
           </td>
           <td>
             2026-10-12 署名release反映・公開API接続済み。50／50正解、単独P95
             1.87〜3.16ms、態度同時P95 8.48ms。既存態度・認証・更新・解放も確認。
+            <p>
+              2026-10-16に廃止。後継:
+              <a href="./ruri-sentence-language-retirement-2026-10-16.html" rel="successor"
+                >文章日英判定の廃止決定</a
+              >。<small data-audit-summary="true"
+                >2026-10-16、revision f3e50e2148df5212bec5cfcd871a6c17014d9799の記録を確認。</small
+              >
+            </p>
           </td>
         </tr>
         <tr data-kind="plan" data-state="proposed" data-domain="eumenes-ruri-training-data-handoff">

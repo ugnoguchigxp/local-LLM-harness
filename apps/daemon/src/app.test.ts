@@ -1,3 +1,5 @@
+import { Observability } from "./observability";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { expect, test } from "bun:test";
 import {
   API_OPERATIONS,
@@ -5283,10 +5285,13 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
   })).status).toBe(204);
 });
 
-test("Eumenes requests abort ContextStill, fence reacquisition until all foreground requests finish, and retain shared providers", async () => {
+test("Profiles without idle retention abort ContextStill, fence reacquisition until all foreground requests finish, and retain shared providers", async () => {
   const configDir = join(import.meta.dir, "../../../config/local-node");
   const production = loadRegistry(configDir);
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, production);
+  // This fixture exercises execution-only exclusion. Demand retention is
+  // exercised separately with the configured idle policy enabled.
+  for (const profile of catalog.profiles) profile.idleRelease = undefined;
   const probes = new Map(production.runtimes.map(runtime => [runtime.id, probe(runtime.id,
     runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0)]));
   const log = { ensure: [] as string[], stop: [] as string[] };
@@ -5424,6 +5429,34 @@ test("claimed image preflight exposes exact contract and retention and never byp
     const inference=await app.request("/v1/chat/completions",{method:"POST",headers,body:JSON.stringify(body)});
     expect(inference.status).toBe(400);expect(await inference.json()).toMatchObject({error:{code:"context_budget_exceeded"}});
   } finally {await app.request(`/v1/agent-connections/${connection.id}`,{method:"DELETE",headers:agentHeaders()});}
+});
+
+
+for (const hot of [true, false]) test(`observability covers Broker resolution, admission, readiness for ${hot ? "warm" : "cold"} runtime`, async () => {
+  const exporter = new InMemorySpanExporter();
+  const metrics = new MetricsRegistry();
+  const observability = new Observability(metrics, { exporter, sampleRatio: 1 });
+  const { app, control, log } = await makeApp(hot, false, { pollIntervalMs: 1 }, {
+    observability, metrics, agentConnectionCatalog: hot ? agentConnectionCatalog : explicitAgentConnectionCatalog, connectionPollIntervalMs: 1,
+    gatewayFetch: async () => Response.json({ id: "chatcmpl-observation", object: "chat.completion", created: 1, model: "test-model", choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 }, timings: { prompt_ms: 2, predicted_ms: 3, cache_n: 9 } }),
+  });
+  try {
+    const response = await app.request("/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: hot ? "test-model" : "speed-model", messages: [{ role: "user", content: "fixture" }] }) });
+    if (!response.ok) throw new Error(await response.text());
+    expect(response.status).toBe(200);
+    await response.text();
+    await observability.provider.forceFlush();
+    const spans = exporter.getFinishedSpans();
+    for (const stage of ["ingress", "model_resolution", "allocation_admission", "allocation_acquire", "runtime_readiness", "broker_acquire", "execution_wait", "upstream_headers"]) {
+      expect(spans.some(span => span.name === `larm.${stage}`)).toBe(true);
+    }
+    const root = spans.find(span => span.name === "larm.request")!;
+    expect(root.attributes["larm.engine.cached_tokens"]).toBe(9);
+    expect(root.attributes["larm.engine.prefill_ms"]).toBe(2);
+    expect(root.attributes["larm.engine.decode_ms"]).toBe(3);
+    expect(log.ensure).toHaveLength(hot ? 0 : 1);
+    if (hot) expect(root.attributes["larm.initial_allocation_state"]).toBe("ready");
+  } finally { control.beginDrain(); await control.flush(); await observability.shutdown(); }
 });
 
 test("game decision claims retain capability and forward inline images through the scoped gateway", async () => {
