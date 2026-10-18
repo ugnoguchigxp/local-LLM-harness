@@ -22,7 +22,7 @@ async function request(path: string, method = "GET", body?: unknown, key?: strin
   return { response, data };
 }
 function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
-const catalogResponse = await request("/v2/agent-profiles");
+const catalogResponse = await request("/v3/agent-profiles");
 assert(catalogResponse.response.status === 200, "the existing profile catalog is unavailable");
 const expectedCatalogRevision = (catalogResponse.data as { catalogRevision: string }).catalogRevision;
 const input = { profile, client, audience, expectedCatalogRevision, ttlSeconds: 900, allowFallback: false, deploymentPolicy: "existing-only", providers: ["llm"] };
