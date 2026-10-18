@@ -82,6 +82,7 @@ export async function handleModelBrokerGateway(input: {
     lease = await broker.acquire(directModel, options.protocol, c.req.raw.signal);
   } catch (error) {
     if (error instanceof ModelBrokerError) {
+      input.onEvent?.({ name: "monitoring_request_rejected", labels: { reason: error.code } });
       if (error.retryAfterSeconds) c.header("retry-after", String(error.retryAfterSeconds));
       return c.json(openAiErrorBody(
         error.code,

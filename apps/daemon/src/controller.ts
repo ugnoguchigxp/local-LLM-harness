@@ -108,6 +108,7 @@ export type ControlPlaneOptions = {
 };
 
 export class ControlPlane {
+  private readonly monitoringTerminals = new WeakSet<Operation>();
   usage?: UsageCoordinator;
   private readonly notifications = new AllocationNotifications();
   private readonly usageAllocations = new Map<string, string>();
@@ -303,6 +304,8 @@ export class ControlPlane {
   getProviderInstances(): ProviderInstanceInspection[] {
     return this.providerInstances.inspect();
   }
+
+  getMonitoringRuntimeObservations() { return this.observer.monitoringSnapshot(); }
 
   waitForAllocation(id: string, signal?: AbortSignal, timeoutMs = 300_000) {
     return this.notifications.wait(id, () => this.getAllocation(id), signal, timeoutMs);
@@ -690,6 +693,7 @@ export class ControlPlane {
       return;
     }
     await this.allocationStartup.run(allocation, operation, deadline);
+    this.observeOperationTerminal(operation);
   }
 
   private async runEnsure(operation: Operation, abort: AbortController): Promise<void> {
@@ -708,6 +712,7 @@ export class ControlPlane {
       },
       pruneHistory: () => this.pruneHistory(),
     });
+    this.observeOperationTerminal(operation);
   }
 
   private async runStop(ids: string[]): Promise<void> {
@@ -991,6 +996,17 @@ export class ControlPlane {
     if (labels?.allocation) this.notifications.notify(labels.allocation);
     if (labels?.allocation && ["allocation_released", "allocation_expired", "allocation_failed"].includes(name)) this.usageAllocations.delete(labels.allocation);
     this.options.onEvent?.({ name, labels, value });
+    const allocation = labels?.allocation ? this.allocations.get(labels.allocation) : undefined;
+    const operation = allocation?.operationId ? this.operations.get(allocation.operationId) : undefined;
+    if (operation) this.observeOperationTerminal(operation);
+  }
+
+  private observeOperationTerminal(operation: Operation): void {
+    if (["pending", "running"].includes(operation.status) || this.monitoringTerminals.has(operation)) return;
+    this.monitoringTerminals.add(operation);
+    try { this.options.onEvent?.({ name: "monitoring_control_terminal", labels: { operation: operation.id, status: operation.status,
+      ...(operation.completedAt ? { occurredAt: operation.completedAt } : {}), ...(operation.error?.code ? { reason: operation.error.code } : {}) } }); }
+    catch { /* Observation only. */ }
   }
 
   private createOperationId(): string {

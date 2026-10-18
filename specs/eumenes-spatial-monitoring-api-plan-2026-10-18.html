@@ -1,0 +1,1234 @@
+<article lang="ja">
+  <h1>Eumenes Spatial向けLARM監視API：調査結果と契約案</h1>
+  <p>
+    <time>2026年10月18日</time>に合意した設計と調査記録。source実装済み。
+    最新の確定仕様・検証結果は<a href="./eumenes-spatial-monitoring-api-handoff-2026-10-18.html"
+      >監視API引き渡し仕様</a
+    >を参照する。 以下の提案・試験計画は合意時の設計を記録したもの。既存Control
+    APIへ、モデルやConnectionの状態を変更しない監視用GETを追加した。
+    サーバーまたはProviderの停止・起動・再起動を伴う実機試験と配備は、その操作前に別途許可を得る。
+  </p>
+  <p>
+    Eumenes backendがSpatial表示中に60秒間隔で取得し、既存snapshotへ統合する。
+    ブラウザはLARMへ直接接続しない。LARMは観測値、正式状態、取得条件、欠落を提供し、
+    表示色、アニメーション、9対象と追加4対象の状態集約はEumenesが決める。
+    Web調査・天気・株価・Google連携等の「外部連携」は本APIの対象外。
+  </p>
+
+  <section id="findings">
+    <h2>既存設計・公開API・記録の調査</h2>
+    <p>
+      調査対象source revisionは<code>ecc36bf4c14e0f700495eeb2d797a19b3eae9c6d</code>。 既存仕様は<a
+        href="./api.html"
+        >API仕様</a
+      >、 <a href="./observability.html">Observability</a>、
+      <a href="./agent-provider-connection-api.html">Agent Provider Connection</a>、
+      <a href="./inference-audit-log-retention-plan.html">推論監査記録</a>を参照した。
+      SAAAやEumenes本体の実装は今回調査していない。Eumenes側の既存snapshotのfield名は確定していない。
+    </p>
+    <table>
+      <caption>
+        再利用する機構と、そのまま公開できない理由
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">機構・実装位置</th>
+          <th scope="col">確認した挙動</th>
+          <th scope="col">監視への適用</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">認証・通信</th>
+          <td>
+            <code>app-request-policy.ts</code
+            >、<code>app-auth.ts</code>、<code>usage-policy.ts</code>、<code>client-transport.ts</code>。Bearer照合、boot/config
+            header、gzip、既存SDK transportがある。
+          </td>
+          <td>
+            同じlistener、middleware、secretMatcher、SDK
+            transportを再利用。監視専用Bearerの限定認可だけ追加する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GET /health、/ready</th>
+          <td>
+            version、releaseCommit、configRevision、bootEpoch、Gateway
+            readiness、draining、state鮮度。bootEpochは起動ごとのUUID系識別子。
+          </td>
+          <td>
+            identityとreadiness
+            getterを再利用。既存healthには内部listenerが含まれる場合があり、そのまま監視応答へ転記しない。起動時刻・単調時計のuptimeは追加する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GET /state、/runtimes</th>
+          <td>公開用allowlistでRuntime ID・正式状態・health.ok・観測時刻等を返す。</td>
+          <td>
+            Observerの保存済みsnapshotとRegistryを参照。取得時にtick、health
+            probe、resolve、ensureを実行しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GET /v1/inspection/*</th>
+          <td>
+            API Bearerに加えて管理tokenが必要。生のstate、Runtime定義、Provider
+            instanceには内部URL等がある。管理middlewareはdraining時503。
+          </td>
+          <td>
+            監視をinspection配下に置かず、秘密を除く専用projectionを作る。drainingも観測可能にする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Observer</th>
+          <td>
+            <code>observer.ts</code
+            >。通常2秒tick、重複tickは同一Promiseへ集約。backend.listとtelemetryを観測。telemetry
+            timeout既定1秒。公開stateはprimary node一つ。
+          </td>
+          <td>
+            観測時刻を引き継ぐ。snapshotから複数Runtimeを返すが、remote
+            nodeを観測済みと見なさない。既存probeの結果を型付きで保存する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LinuxNodeTelemetry</th>
+          <td>
+            <code>packages/backends/src/linux-node-telemetry.ts</code
+            >。MemTotal/MemAvailable、前回との差分CPU率、DRMのVRAM/GTT、GPU
+            busy最大値。CPU/GPU負荷はObservability有効時のみ。例外と非対応が十分分離されず、VRAMとGTTを合算する。
+          </td>
+          <td>
+            procfs/sysfs取得方針とparserを再利用し、監視用にはセンサー別・デバイス別に保持。従来の合算値を監視の空き容量には使わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">MetricsRegistry、ProcessMetrics</th>
+          <td>
+            <code>/metrics</code
+            >にexecution_active/queued、要求結果counter、時間histogram等。ProcessMetricsは有効時1秒。値ごとの観測時刻・CPU区間・イベントIDを保持せず、未出力系列は0とは限らない。
+          </td>
+          <td>
+            同じ計測箇所から型付き監視記録へ分岐し、Prometheus textの逆parseはしない。process
+            CPUとhost CPUを混同しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">RequestTracker、ExecutionGate</th>
+          <td>
+            <code>metrics.ts</code
+            >のTrackerはGateway要求に加えてMusic/Image処理も追跡する。GateはRuntime別active/queueとqueuedAtを保持。probeも枠を使い、terminal
+            callback終了までactiveを保持する。exclusive
+            pendingは既存Runtime別snapshotに入らずtotalsのみ加算される。
+          </td>
+          <td>
+            読み取りsnapshotを拡張し、probe・利用者要求・後処理・exclusive待機を分ける。queue最古時刻は内部queuedAtから取得。active枠をGPU上の実行数と呼ばない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ControlPlane、ProviderInstanceManager</th>
+          <td>
+            正式Runtime状態、操作結果、instance
+            ID/revision/generation、参照数、idleDeadline。<code>getProviderInstances()</code>はcopy。<code>getAllocations()</code>、<code>getAllocation()</code>、<code>getAllocationSignal()</code>は期限切れ処理を実行する。
+          </td>
+          <td>
+            監視専用copy
+            getterまたは変更時のprojectionを用意。Allocation取得getter経由で失効・releaseを発生させない。instance参照数は要求数と別物。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ControlEvent、journald</th>
+          <td>
+            <code>main.ts</code
+            >のobserveEventでmetricsと構造化stdoutへ送信。gateway_request_started/completed、execution_request、allocation、Provider
+            lifecycle等がある。writeEvent直接呼出しもある。共通のイベントID・保持・読者cursor契約はない。
+          </td>
+          <td>
+            同じ発生点を再利用し、監視allowlistのみ非消費型の履歴へ格納。全logを公開しない。writeEventだけの起動・readinessも取り込む。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Observability / InferenceStatistics</th>
+          <td>
+            任意のOTel trace、区間histogram、allowlistのengine
+            usage/timings。first_bodyはGateway受信最初のbodyまででありTTFTではない。traceは採取率・queue破棄の制約がある。
+          </td>
+          <td>
+            既存の数値抽出を再利用し、terminal確定時に時刻付きlast sampleを保存。trace
+            exporterやsampled spanを監視履歴の正本にしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Inference audit</th>
+          <td>
+            full-requiredは暗号化された本文・prompt/token/responseを含むLLM監査で、最大7日・容量制限。beginはapply-template/tokenizeも呼ぶ。metadata/offでは同じ保存履歴がない。
+          </td>
+          <td>
+            監視のためにbegin、materialize、payload復号、全record
+            scanを呼ばない。本文を含まない既存terminal発生点だけ再利用する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">既存journalとmedia job</th>
+          <td>
+            LocalService、PersonalState、Artifactのjournalは個別状態復旧用。Music managerはjob
+            transition・terminal guardを持つ。Image providerは別の処理経路。
+          </td>
+          <td>
+            監視履歴の代替として個別journalを流用しない。Music/Imageの既存処理にも観測hookを置き、HTTP
+            Gatewayだけの数を全要求数としない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      正式な状態はProfile → route → runtime →
+      backendの関係で解釈する。登録されたRuntimeの一覧は可能な構成であり、
+      全モデルの常駐要求ではない。現在のworkloadに応じたCOLDや入れ替えは正常な動作になり得る。
+      optional variantやモデルfamilyを監視の優先順位で特別扱いしない。
+    </p>
+  </section>
+
+  <section id="live-evidence">
+    <h2>実機の読み取り調査</h2>
+    <p>
+      2026-10-18 17:25 JST前後に、既存API GET、procfs/sysfs、systemd property、
+      直近10分のjournalを読み取った。推論・probe追加・Connection作成・設定変更・サービス操作は行っていない。
+      journalの本文は成果物へ保存せず、event名の件数だけを確認した。
+    </p>
+    <table>
+      <caption>
+        この調査で確認した範囲。以下は新APIの検証結果ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">確認結果</th>
+          <th scope="col">制約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">daemon</th>
+          <td>
+            active/running、既存/health・/state・/metricsは200。実機releaseは<code>0baea1ede627b6b078f59db4d8cf3215709fe690</code>。プロセス開始13:02:15
+            JST、readiness移行13:02:27 JST。/stateは27 Runtime中9 HOT・18 COLD。
+          </td>
+          <td>
+            source
+            checkoutとはrevisionが異なる。新APIは未配備。HOTのモデル数と、利用者が要求したProvider数は同義ではない。NRestarts=0はsystemdの今回の集計であり長期履歴ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">計測設定</th>
+          <td>
+            実機Observabilityは無効、Inference
+            auditはfull-required、Observerは既定2秒、API/管理token設定あり。既存metricsにexecution系列はある。
+          </td>
+          <td>
+            host
+            CPU/GPU負荷やengine統計を既にAPIから完全に得られるとは言えない。監視はtrace有効化を前提にしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">CPU・memory</th>
+          <td>
+            論理32コア。MemTotal 127098480 KiB、MemAvailable 79619672 KiB。CPU/memory
+            PSI、pswpin/pswpout、oom_killを読み取れた。oom_kill=3。
+          </td>
+          <td>
+            oom_kill=3はhost起動以降の累積観測で、直近10分のOOM件数でもLARM原因でもない。今回はCPU率の連続計測は未実施。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GPU</th>
+          <td>
+            DRM card1、PCI 0000:c5:00.0、vendor 0x1002/device 0x1586、amdgpu。VRAM 2 GiB、GTT上限100
+            GiBの別々の値を読み取れた。hwmon edge 53℃、sclk 2.9 GHz。gpu_metricsは読み取り可能。
+          </td>
+          <td>
+            busy=100%という瞬間値を観測したが、推論中とは判定しない。gpu_metricsの構造version・熱制限bitは未解析。GPUと要求の対応付けは未確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">model storage</th>
+          <td>既存保存先のstatvfsで総量1535824654336 bytes、daemon利用可能913504448512 bytes。</td>
+          <td>
+            その時点のfilesystem値であり、モデル予約やLARM
+            admissionで保証された空きではない。複数保存先はfilesystem単位で重複を除く設計とする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実行記録</th>
+          <td>
+            直近10分のdaemon journalに構造化event
+            88件、gateway開始/完了、execution、allocation、Connection等を確認。kernel
+            journalも現在の調査userで読めた。
+          </td>
+          <td>
+            daemonのsystemd sandbox内からのkernel
+            journal可読性は未検証。期間内に検査したGPU障害等の文字列が無いことを、障害不存在やセンサー正常の保証としない。監査payloadは未読。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="endpoints">
+    <h2>エンドポイント・認証・エラー契約案</h2>
+    <table>
+      <caption>
+        既存Control API listenerに追加する二つのGET
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">操作</th>
+          <th scope="col">要求</th>
+          <th scope="col">応答</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">snapshot</th>
+          <td>
+            <code>GET /v1/monitoring/snapshot</code>。任意query
+            <code>contractVersion=larm-monitoring.v1</code>のみ。
+          </td>
+          <td>
+            200
+            application/json。Core、nodes[]のCPU/Memory/GPU、modelStorage、coverage、eventStream。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">events</th>
+          <td>
+            <code>GET /v1/monitoring/events</code
+            >。任意queryはcontractVersion、cursor、limit。cursorなしは現在までの直近600秒。limit既定500、1〜1000。
+          </td>
+          <td>
+            200 application/json。昇順event、固定window/high water、nextCursor、hasMore、coverage。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      pathのv1とbodyの<code>contractVersion: larm-monitoring.v1</code>を併用する。
+      正常時は<code>Cache-Control: no-store</code>、既存boot/config
+      headerを付け、認証エラーを含む全監視応答もno-storeとする。 GET
+      body、未知query、重複query、無効limit/cursorは400 invalid_request。GET以外は405とAllow: GET。
+      明示された非対応contractVersionは406 unsupported_monitoring_contractと対応version一覧。
+      未実装の旧daemonは404を返し得るので、Eumenesは「監視API非対応」と扱い、接続断や0負荷と混同しない。
+      /v2等の未登録pathは既存404のまま。
+    </p>
+    <p>
+      認証は既存と同じ<code>Authorization: Bearer …</code>。既存standard/protected Control
+      Bearerの 監視GET利用を許可し、既存共有tokenの広い権限は変更しない。
+      推奨は新設定<code>LARM_MONITOR_TOKEN</code>で同じsecretMatcherに接続し、
+      この二つのGETだけに相当する<code>monitoring:read</code>権限を与えること。
+      OAuth/RBAC基盤は追加しない。この権限名は今回の認可区分の提案であり、既存の正式scopeではない。
+      monitor tokenが他のAPI/protected/management tokenと一致する設定は起動時に拒否する。
+      他pathへのmonitor token利用は403
+      forbidden。Provider短期tokenと管理header単独は監視認証に使えず401。
+      未設定・無効Bearerは401、API Bearerもmonitor tokenも未設定なら503
+      monitoring_auth_not_configuredで閉じる。 匿名Service
+      Harness・匿名Connection許可設定の例外を監視へ適用しない。draining中も認証済み監視を許可する。
+    </p>
+    <p>
+      Eumenes backendのsecret管理でmonitor tokenとControl
+      originを設定し、既存TLSと信頼するCAを使う。
+      tokenをブラウザ・query・応答・logに含めない。新しい公開port、CORS許可、管理token配布は不要。
+      接続先やcredentialの具体値はこの設計書や応答例に記載しない。
+    </p>
+    <p>
+      snapshot GETは保存済みimmutable
+      viewを読むだけでセンサーI/Oを待たない。handler予算250ms、client timeout推奨5秒。
+      監視view自体を生成できない場合だけ503 monitoring_unavailableとRetry-After: 1。
+      一部または全センサーが失敗しても、起動識別と計測状態を返せるなら200を返す。
+      200は「全計測正常」を意味しない。過剰な同時処理時は最大8 handlerとし、超過は429
+      rate_limited、Retry-After: 1。
+      250msは新たな監視処理予算の提案であり、遅延や故障を判定するしきい値ではない。
+      DNS・接続・TLS失敗やtimeoutはEumenes側でLARM到達不能として検出し、401/403、404、503、個別センサー状態とは分ける。
+    </p>
+  </section>
+
+  <section id="schema">
+    <h2>JSON型・時刻・鮮度</h2>
+    <p>
+      合意用のJSON Schema Draft 2020-12は<a
+        href="./assets/spatial-monitoring-v1/responses.schema.json"
+        >responses.schema.json</a
+      >。 $defs.snapshot、$defs.events、$defs.errorが各response。現行OpenAPIの公開schemaではない。
+      合意後にCoreのZod schema・型・OpenAPI operation・SDKへ移し、文書との一致を試験する。
+      objectはadditionalProperties=false、必須計測keyを常に返す。nodes/GPU/Runtime/instance/モデル数は配列で表し固定しない。
+      不明なセンサー値は0にせず、value自体を持たない。要素配列の列挙失敗と、正常な空配列も区別する。
+    </p>
+    <table>
+      <caption>
+        全計測値に共通のObservation包絡
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">field</th>
+          <th scope="col">意味・制約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">status</th>
+          <td>
+            ok、stale、unsupported、permission_denied、error、unavailable。ok/staleだけvalueと実際のobservedAtを持つ。unsupportedは実装またはdriver非対応、permission_deniedはEACCES/EPERM、errorはI/O・parse・timeout失敗、unavailableはbaseline未成立・対象消失・未処理等。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">value / unit / kind</th>
+          <td>
+            単位はfieldごとに固定。gaugeは瞬間または直近の実測、counterは明記したepochからの累積。counterは桁落ちを避ける非負10進文字列。整数gaugeは0〜2^53−1、実数は有限値のみ。NaN/Infinity、不正値・矛盾値はerror
+            invalid_sensor_value。率・温度以外も不明をclampで0にしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">source</th>
+          <td>
+            proc-meminfo、proc-stat、proc-vmstat、proc-psi-cpu、proc-psi-memory、drm-sysfs、hwmon、statfs、observer、daemon-state、execution-gate、gateway-terminal等の固定allowlist識別子。ファイルの生内容やURLは含めない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">observedAt</th>
+          <td>
+            当該値を観測した時刻。未取得はnull。キャッシュ再送でも変更しない。計測開始から終了までの範囲を持つ値はintervalを併記する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">interval</th>
+          <td>
+            {startAt,endAt,durationMs}またはnull。CPU率は必須の差分区間。GPU
+            driverの平均窓が不明ならnull。PSIの10/60/300秒はfield定義の移動平均窓であり、読取処理の所要区間とは別。生成速度はengineが報告したdecode区間を定義とし、正確なwall-clock区間が無ければnull。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">counterEpoch</th>
+          <td>
+            counterだけ必須の識別子。vmstat/PSIはhostBootId、要求counterを将来追加するならbootEpoch。gaugeではnull。epoch変更や減少時は差分を作らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">maxAgeMs / lastAttempt</th>
+          <td>
+            maxAgeMsは計測の鮮度有効期間。lastAttempt={at,status,reasonCode}で最後の取得試行を示す。再取得失敗時に保存値を返すならstatus=staleとし、lastAttemptに失敗を残す。年齢超過時もstale。freshnessは障害の重大度ではない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      generatedAtは応答組立時刻、snapshotIdは観測viewの識別子、bootEpochはdaemon起動識別子。
+      センサー値の更新とGET応答生成は別であり、同じsnapshotIdを複数のgeneratedAtで返してよい。
+      日時はUTC、<code>YYYY-MM-DDTHH:mm:ss.SSSZ</code>の正規ISO 8601。
+      intervalのdurationとuptime・保持期限・最古待ちは単調時計で測る。CPU
+      counter減少・hotplug・計測時計不整合ではbaselineを再作成し、 最初の区間値はunavailable
+      baseline_required。NTP変更はuptimeやcounterを巻き戻さない。
+      wall-clock不整合時は該当区間をunavailable
+      clock_discontinuityとし、event順序はsequenceで確定する。
+      古い値のobservedAt・interval・lastAttemptを応答時刻に置き換えない。
+    </p>
+    <p>
+      coverageは観測経路ごとの取得条件で、since〜throughは連続して観測できた範囲を示す。
+      source停止・journal欠落後に回復した場合はsinceを新しい連続範囲の開始へ進め、
+      読者のwindow全体を覆わない範囲を完全履歴と解釈しない。eventStreamの保持欠落と、
+      sourceで観測できなかった欠落は別に検査する。snapshotとeventsは同一時刻のtransactionを保証せず、
+      値ごとのobservedAt、window、sequenceで解釈する。
+    </p>
+    <p>
+      nodes[]は現在は実際に観測したlocal hostのみ。hostBootIdはOS起動の識別子でありdaemon
+      bootEpochとは別。 RuntimeのnodeIdはRegistryから保持し、未観測のremote nodeへlocal
+      host値を複製しない。 GPU IDはnodeIdとbus IDで識別し、card番号の固定やcard0前提を置かない。
+      CPU論理コア数は取得時のonline CPU数であり、LARMのCPU affinity/cgroup quotaとは同義ではない。
+    </p>
+  </section>
+
+  <section id="measurements">
+    <h2>観測項目・取得元・更新周期・限界</h2>
+    <table>
+      <caption>
+        予定する計測。2秒は設定可能な既存Observer周期の既定値を指す
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">定義・単位</th>
+          <th scope="col">取得・更新・未取得条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">core.startedAt / uptimeMs</th>
+          <td>daemonプロセス開始のUTC時刻と単調時計稼働時間ms。ready移行時刻とは別。</td>
+          <td>
+            起動時に時刻基準を保存し2秒周期でviewへ反映。開始時刻はprocess開始に合わせ、API初回取得時を起動としない。maxAge
+            10秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">readiness / draining</th>
+          <td>既存GatewayLifecycle状態とControlPlane drain flag。集約した健全性判定ではない。</td>
+          <td>既存transition/getterのcopy。変化時および2秒。maxAge 10秒。</td>
+        </tr>
+        <tr>
+          <th scope="row">runtimes[].status / healthOk</th>
+          <td>既存COLD/STARTING/HOT/BUSY/FAILEDと、health probe結果boolean。</td>
+          <td>
+            Observer snapshot。maxAge 10秒。health detail、upstream
+            body、URLは除く。観測失敗をCOLDへ変換しないよう、probe取得品質も型付きで分離する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">declaredModelIds / modelLoadState</th>
+          <td>
+            Registry/releaseで選択したartifact/model識別子の配列と、明示観測がある場合のみunloaded/loading/loaded/failed。
+          </td>
+          <td>
+            既存llama-swap running stateや明示modelLoaded等のallowlistを通常観測で保存。generic
+            health=okだけではloadedを断定しない。STARTINGはモデル読込だけを意味しない。systemd等で明示信号が無ければunsupported
+            model_load_signal_absent。maxAge 10秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">providerInstances</th>
+          <td>
+            ID/runtimeId/revision/generation/nodeId/createdAt、reportedStatus、allocation/request/mutation/warmの参照数、idleDeadline。
+          </td>
+          <td>
+            既存inspect
+            copyを秘密除去。reportedStatusはmanagerの最終記録で、freshなhealthではない。稼働判定は別のRuntime観測を使用。参照数を要求数へ加算しない。2秒、maxAge
+            10秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">activeWorkloads / Runtime別inFlightRequests</th>
+          <td>
+            既存Trackerが追跡するGateway・Music・Image
+            workloadの生存数と、Runtimeに結び付いた利用者要求の生存数。queue/preparationを含む。Gatewayでは応答stream・後処理終了まで。Music/Imageは別coverageでterminalまで追う。
+          </td>
+          <td>
+            既存RequestTrackerとGatewayの開始/terminal
+            hookを再利用する。直接Providerへ届いた要求・backend内部queueは対象外。2秒および変化時、maxAge
+            10秒。既にTrackerへ入るmedia処理を再加算せず、Runtime対応が不明なjobを特定Runtimeへ割り振らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">forwardedRequests</th>
+          <td>
+            当該Runtimeの上流へ送信し、まだ応答terminalが確定していない利用者要求数。LARMから見た処理中要求であり、engine内部で演算している実数ではない。
+          </td>
+          <td>
+            既存Gatewayのfetch開始と確定terminalから計測し、probeを除く。inFlightの内数。backend内部queueへ入った要求も含み得る。2秒/変化時、maxAge
+            10秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">preparingRequests / gateOccupiedSlots / queuedRequests</th>
+          <td>
+            runtime準備待ちの要求数、Gateの占有枠数、Gate内待機数。preparingとqueuedは別phase、inFlightの内数であり合計して全数にしない。occupiedはprobe/terminal
+            cleanupを含むことがある。
+          </td>
+          <td>
+            既存queueの読み取りcopy。exclusive pendingも対応Runtimeの待機へ一度だけ加える。semantic
+            probeは利用者要求count/eventから除く。上流送信中はGPU演算実行中の証拠ではない。2秒/変化時、maxAge
+            10秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">oldestQueueWaitMs</th>
+          <td>そのRuntimeの現在最古のGate待機要求の単調時計経過ms。</td>
+          <td>
+            queuedAtを利用。待機0件ではunavailable no_waitersで、0ms待ちの実在要求と区別。maxAge
+            10秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">CPU logicalCores / utilization</th>
+          <td>
+            online論理数、全online coreの平均busy率0〜100%。proc
+            statのuser/nice/system/idle/iowait/irq/softirq/stealの差分を使い、busy=total−idle−iowait。guest/guest_niceはuser/niceとの重複を避け除く。
+          </td>
+          <td>
+            既存parserを拡張。既定2秒の単一producerがbaselineを所有し、全読者へ同一区間を返す。初回はbaseline_required。maxAge
+            10秒。iowaitの減少やtotal不正は区間無効、瞬間値やprocess CPUで代用しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">load1 / load5 / load15</th>
+          <td>
+            /proc/loadavgの1/5/15分のrunnableと非割込待ちtask負荷平均。非負tasks、CPU率ではない。
+          </td>
+          <td>2秒、maxAge 10秒。使用率と比較して推論実行やGPU待ちを推定しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">CPU/memory PSI</th>
+          <td>
+            some/fullのavg10/60/300はstall時間割合%、totalはhost起動からの累積μs文字列。someは一部task停滞、memory
+            fullは全non-idle task停滞。
+          </td>
+          <td>
+            /proc/pressure。2秒、maxAge 10秒。system-wide CPU
+            fullは意味が定義されないためunsupported
+            cpu_full_not_defined。fileなし、権限、parse失敗を区別する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">memTotal / memAvailable</th>
+          <td>
+            /proc/meminfoのMemTotalと、swapせず新規allocationに利用できるメモリのkernel見積りMemAvailable。kB表記を1024倍してbytes。
+          </td>
+          <td>2秒、maxAge 10秒。MemAvailableはMemFreeと異なり、LARM専有の予約残量ではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">swapTotal / swapUsed / swapIn / swapOut</th>
+          <td>
+            SwapTotal、SwapTotal−SwapFreeはbytes。pswpin/pswpoutはhost起動以来の累積pages文字列。pageSizeをbytesで別返却する。
+          </td>
+          <td>
+            /proc/meminfo、/proc/vmstat、sysconf。2秒、maxAge
+            10秒。pages×pageSizeで総bytesへ変換可能だが、転送帯域は観測時間差分からのみ計算。swap無しの0は実測値として返す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">oomKills</th>
+          <td>
+            /proc/vmstat oom_kill。host起動からのOOM kill件数。メモリ不足の全allocation
+            failureやLARMの被害数ではない。
+          </td>
+          <td>
+            2秒、maxAge
+            10秒。増分eventには検知区間とcountDeltaを示す。発生の厳密時刻や対象processはcounterだけでは不明。kernel
+            journalが読めれば別の明示観測eventを返す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GPU identity / utilization</th>
+          <td>
+            nodeとPCI
+            bus/vendor/device/driver。gpu_busy_percentはdriver報告の0〜100%。CPUと違い平均窓不明ならinterval=null。
+          </td>
+          <td>
+            DRM列挙は60秒、指標2秒、maxAge
+            10秒。hotplug時再列挙。非AMDGPUでadapterが無ければunsupported。列挙成功かつ対象なしはok
+            value=[]。使用率から推論・待ちを推測しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">temperatures / clocks / thermalThrottled</th>
+          <td>hwmon sensorごとの℃、Hz。thermalThrottledは明示したdriver熱制限flagだけ。</td>
+          <td>
+            2秒、maxAge 10秒。hwmon label/idを保持し複数sensorを配列化。列挙失敗はGPU
+            inventoryのlastAttemptに反映し、正常な空sensor配列と分離する。熱制限flagは初版unsupported
+            driver_metric_not_decoded。gpu_metrics可読だけでfalseにしない。温度・低クロックから制限を推定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">vramUsed/Limit / gttUsed/Limit</th>
+          <td>
+            デバイス別mem_info_vram_used/total、mem_info_gtt_used/totalをbytesで別返却。Limitはdriverが示すpool上限であって追加可能量の保証ではない。
+          </td>
+          <td>
+            2秒、maxAge
+            10秒。取得不能poolを0で補わない。memoryRelationshipは初版shared_or_unknown。dedicated_verifiedは将来adapterで分離を証明した場合のみ。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">gpuIds / GPUへのactive/queued/oldest待ち</th>
+          <td>
+            実行先GPUの証拠がある場合のみ対応付け。同一要求の複数GPU利用時はGPU別数を合算しない。
+          </td>
+          <td>
+            現行Registry・Gateway記録にはGPU bindingがないため初版unsupported
+            runtime_device_mapping_absent。1
+            GPUの機械でも自動対応付けしない。GPU数・model名・portから推測しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">lastDecodeTokensPerSecond</th>
+          <td>
+            成功した直近要求のengine報告timings.predicted_per_second。Runtime単位、tokens/s。CPU/GPUから計算しない。
+          </td>
+          <td>
+            既存inferenceStatisticsを利用しterminal確定時に保存。engine未提供・対象protocol不適合はunsupported、まだ完了sampleなしはunavailable。観測時刻はterminal、maxAge
+            600秒。cancel後・失敗時のsampleを成功sampleとして上書きしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">lastFirstResponseMs</th>
+          <td>
+            Gateway要求開始からupstream最初のbody
+            chunk受信までの時間ms。queue・準備を含み、TTFTではない。
+          </td>
+          <td>
+            既存first_body計測点から保存し、定義をfield名とともに公開。成功terminal時更新、maxAge
+            600秒。空bodyならunavailable。GPU単位の速度/初回応答は対応付け不明のためunsupported。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">modelStorage[].total / availableToDaemon</th>
+          <td>
+            モデル保存先filesystemのblocks×block sizeと、非特権daemonが利用できるbavail×block
+            size、bytes。
+          </td>
+          <td>
+            既存artifact/release manifestの保存先を内部で解決しstatfs。60秒、maxAge
+            120秒。新しい任意pathをAPI入力で受け付けず、公開はopaque filesystem IDとartifact
+            IDのみ。同一filesystemは一度だけ返す。mount消失やアクセス失敗を区別し、実pathを公開しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <aside>
+      <p>
+        メモリ集約の規則：host MemTotal/MemAvailable、VRAM、GTTは会計範囲が重複し得る。 GTT
+        pool上限は物理メモリの追加容量ではない。初版は明示的に
+        <code>aggregationPolicy=do_not_add_host_vram_gtt</code>とし、
+        MemAvailable+VRAM空き+GTT空き、VRAM+GTTの「総空き」、GPU別GTTの合算を返さない。 process
+        RSS、model見積り、Provider参照数も物理使用メモリへ足さない。
+        admissionで使っている従来accelerator合算値の意味変更は本変更に混ぜず、別の影響調査と合意対象とする。
+      </p>
+    </aside>
+  </section>
+
+  <section id="states">
+    <h2>正式状態・理由コードと監視判定の境界</h2>
+    <table>
+      <caption>
+        既存の正式状態を変更せず公開する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">状態・コード</th>
+          <th scope="col">既存の定義・監視での意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">HOT / BUSY</th>
+          <td>
+            healthOkかつbusy=falseならHOT、healthOkかつbusy=trueならBUSY。busyは既存slot
+            healthの503等に由来し、GPUの実行証明ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">COLD / STARTING / FAILED</th>
+          <td>
+            healthなしで稼働・listen条件がなければCOLD。healthなしでRunningまたはlistenならSTARTING、既存grace既定300秒を超えるとFAILED。service
+            NotFoundもFAILED。これはderiveStatusの規則であり、モデル単体の読込結果と同義ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Gateway starting/verifying/ready/draining/failed</th>
+          <td>
+            起動・検証・受付可能・drain・検証失敗の既存lifecycle。自発的再起動やstartingを全体障害へ変換しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">queue_full / queue_timeout</th>
+          <td>
+            既存ExecutionGateの待機上限到達、または待機期限切れ。混雑による要求拒否/timeoutの事実として公開する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">exclusive_execution / runtime_quarantined / draining</th>
+          <td>
+            排他的実行予約、backend停止確認待ちの隔離、drainによる受付拒否。理由を保存しGPU故障等へ置き換えない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            revision_conflict / foreground_protected / foreground_preempted /
+            foreground_idle_timeout
+          </th>
+          <td>
+            既存revision競合、保護された利用の優先、foregroundによるpreemption、foreground利用のidle期限切れ。モデル入れ替えを推測せず、実際に返った正式理由を用いる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">request_cancelled / client_cancelled / attempt_cancelled</th>
+          <td>
+            queue・caller・generation attemptの取消。error codeとterminal
+            outcomeの違いを保ち、cancelledに分類する。成功・障害数へ加えない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">pending/running/succeeded/failed/cancelled/timed_out</th>
+          <td>
+            既存Control
+            operation状態。GET時に再実行せず、commitされたterminalを監視eventへ投影する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      上表は調査した主要コード。実装時は既存型と発生箇所から監視用allowlistと定義一覧を作り、
+      未登録の生文字列・message・例外をreasonCodeへコピーしない。
+      監視専用のsensor_access_denied、baseline_required、no_waiters、runtime_device_mapping_absent等は新しい取得理由であり、
+      Provider正式エラーとは別に定義する。高負荷・idle・モデル未読込・頻繁な入れ替え・平常比遅延に対する新しい警報判定は実装しない。
+    </p>
+  </section>
+
+  <section id="events">
+    <h2>前回取得以降の出来事と保持</h2>
+    <p>
+      既存ControlEventとGateway/media/controlの確定発生点から、本文を持たない監視event storeを
+      daemon内に追加する。traceの有効/無効・採取率と独立し、GETが履歴の生成・削除・ackを起こさない。
+      eventはid、streamId、sequence、occurredAt、recordedAt、kind、target、workId、reasonCode、outcome、
+      fromState/toState、countDelta、observationInterval、source/sourceEventIdを持つ。使わない値はnull。
+      targetはRuntime/instance/node/GPU/daemon
+      ID。workIdは監視用のopaque相関IDであり、client名や本文のdigestではない。
+      idはbootEpochと単調増加sequenceの組で、再送や複数読者の重複排除に使う。
+    </p>
+    <table>
+      <caption>
+        イベントの意味と取得できる範囲
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">種別</th>
+          <th scope="col">発生元・意味</th>
+          <th scope="col">限界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">daemon.started / readiness_changed</th>
+          <td>既存起動・Gateway transition。</td>
+          <td>startedとbootEpoch変更は再起動検出材料。強制終了前の最終eventは保証しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">runtime.state_changed / model.load_*</th>
+          <td>Observerの正式状態変化、明示されたload開始・完了・失敗。</td>
+          <td>
+            load要求hookで短時間失敗を記録する。Observer差分だけで短時間処理を網羅しない。実測信号がないモデル状態は捏造しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">request.started / queued / forwarded / terminal / rejected</th>
+          <td>
+            LARMを経由した利用者要求のphaseと確定結果。拒否は既存admission/executionコードを使う。
+          </td>
+          <td>
+            started/forwardedとterminalは別eventで、件数はterminalのみから集計。ExecutionGateのrelease
+            completedは枠解放の意味で成功結果ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">control.terminal</th>
+          <td>prepare/Allocation等の既存操作のcommit結果。</td>
+          <td>要求terminalと同じ処理を二重に成功計上しない。準備の成功は推論の成功ではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">host.oom_counter_changed / oom_kill_observed</th>
+          <td>vmstat増分の検知、またはkernel明示logの観測。</td>
+          <td>
+            counter増分とlogは別の証拠。同じOOMについて足さない。counter
+            eventのoccurredAtは検知時刻で、厳密な発生時刻ではない。observationIntervalに前回から今回までの検知区間を返す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">gpu.*_observed</th>
+          <td>
+            kernel journalの明示reset/ring timeout/page
+            fault、または明確に型付けできたROCm/HIP実行障害。
+          </td>
+          <td>
+            生logは保存/返却しない。ログ中の安定device IDが無ければnode
+            targetにして対応不明を維持。一般的HTTP
+            500/timeoutをGPU障害へ変換しない。現行のProvider生応答をparseしてHIP障害を推測する実装は追加しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      保持は同一daemon起動中に直近600秒を目標とし、単調時計で期限管理する。 上限100000件または64
+      MiBの早い方。全eventは最大1 KiB、保存前にallowlist projectionと長さ検査を行う。
+      上限は通常負荷で10分を保持するための提案値で、負荷評価後に合意して調整する。
+      容量圧迫時は制御処理を止めず古いeventを退避なしで破棄し、continuity=gap、droppedEventsTotal、availableSinceで欠落を通知する。
+      「常に10分完全」とは宣言せず、実際に読める範囲を返す。過負荷でも10分完全保持が必須なら、後述の永続化案を先に合意する。
+      event 0件の完全な窓と、観測機構が未取得・欠落の窓はcoverageで区別する。
+    </p>
+    <ol>
+      <li>
+        初回GETはcursorなしで直近600秒の保存範囲を読む。window.from/throughとhighWaterSequenceを確定する。起動から600秒未満なら起動後だけでありpreviousBootHistory=false。
+      </li>
+      <li>
+        hasMore=trueの間は、返されたnextCursorを使って同じ固定high
+        waterまでページ取得する。既存ページ中に新eventが増えても読み終わりが動かない。
+      </li>
+      <li>
+        hasMore=falseの応答のnextCursorはhigh
+        water直後からの再開位置を示す。次の定期pollで新しいhigh
+        waterを作り、前回以降を取得する。cursorは読者ごとのローカル保存で、サーバーにackしない。
+      </li>
+      <li>
+        cursorは最大1024文字のopaque
+        token。streamId、次sequence、固定窓等を含む版付き形式を起動ごとの鍵で検証する。cursorは認証credentialではなく、任意pathや時刻・メモリ量を操作できない。
+      </li>
+      <li>
+        同一streamで読むべきsequenceが期限切れ/容量破棄なら410
+        monitoring_cursor_expired。reasonCodeはretention_expiredまたはcapacity_evicted、recovery=restart_window。初回取得へ戻り、欠落をEumenes側に記録する。
+      </li>
+      <li>
+        過去streamのcursorは409
+        monitoring_epoch_changed、recovery=restart_window。再起動前の履歴は初版では復元しない。cursor形式検査後、stream相違を先に検出し、新起動鍵で検証失敗しただけの400に潰さない。同一streamの改変・将来sequenceは400。
+      </li>
+      <li>
+        複数読者や同じcursorの再読は、保持されている同じevent
+        IDを返す。GETは他の読者の履歴を消費しない。10分を超える非表示期間は継続cursorの期限切れになり得る。
+      </li>
+    </ol>
+    <p>
+      cancellationは既存のabort/terminal
+      guardとoperation世代に結び付け、各workIdにつきterminalは一度だけcommitする。
+      cancelled確定後の遅延成功・遅延例外はterminalを変更せず、成功counter・障害counter・速度sampleに反映しない。
+      timeoutもtimed_outの一結果だけを残す。共有ensureのcaller取消と、Provider自体のload成功は別対象として記録する。
+      callerの取消をProviderロード失敗と見なさず、caller取消後に共有loadが成功してもそのcallerを成功へ変更しない。
+      再起動でterminal不明のworkを成功/失敗へ補完せず、stream resetとcoverageの限界を返す。
+    </p>
+    <p>
+      初版のkernel
+      event取得は、既存user権限で読めるjournalをdaemonの同じ観測処理から固定引数で読む案とする。
+      shellは使わず、kernel分だけを前回journal cursorから最大1秒・1 MiB・5000
+      record/回、2秒周期で読み、
+      正規化したID/時刻/種別/device/reasonだけを監視storeへ入れる。生MESSAGEは通常logへも転記しない。
+      journal
+      vacuum、cursor消失、上限打切り、権限エラー、未解釈driverはcoverageに欠落/未対応を返し、
+      internal journal
+      cursorを監視読者のcursorとは共有しない。過去10分の初期backfillも同じ制限で段階実行し、完了までcoverageをavailableにしない。
+      journal由来eventのsourceEventIdはjournal cursorのdigestとし、再読で同じ事実を重複生成しない。
+      hostの既存oom_kill累積値を初期化時の新規OOM eventとして発行しない。
+    </p>
+  </section>
+
+  <section id="side-effects">
+    <h2>副作用を防ぐ変更境界と代替案</h2>
+    <p>
+      監視handlerが依存するのは認証、保存済みmonitoring view、イベントstoreのreadだけとする。
+      Provider backend、Control mutation、Lease managerの操作interfaceをhandlerへ渡さない。
+      getAllocations/getAllocation/verifyProviderToken等の失効処理を伴う参照も利用しない。
+      観測producerは通常のstate・計測の更新を受けるだけで、ensure、load/unload、dummy
+      inference、probe追加、 Connection/Allocation/claim作成、lease
+      renew、idleDeadline延長、Provider start/stop、設定更新を実行しない。
+    </p>
+    <p>
+      CPU baseline・vmstat前回値は一つのproducerが所有し、取得I/Oはsingle-flightにする。
+      周期実行とGETは分離し、GET頻度が1秒・60秒・複数読者でも区間を変えない。
+      既存Observerの制御用telemetryと監視が同じmutable CPU
+      baselineを二重更新しないよう、共通sampleを配信するか独立baselineを持つ。 host sensorはbackend
+      probe待ちに巻き込まれず、同一daemonの周期処理内で独立更新する。
+      各sensorに既定1秒budgetを設け、完了しない採取を次周期で重複起動しない。
+      timeout後の遅延完了はsample generationを検査し、古い値で新しいviewを上書きしない。
+      GETはobservabilityのactive
+      workload対象から除外し、監視自身のeventが履歴を埋めないようtrace/履歴の対象外にする。
+    </p>
+    <table>
+      <caption>
+        常駐基盤・権限・永続化の選択
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">案</th>
+          <th scope="col">利点・制約</th>
+          <th scope="col">今回の提案</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">daemon内の期限付き履歴</th>
+          <td>追加daemon・DB・root不要。再起動前履歴は失う。容量超過は明示的gap。</td>
+          <td>初版の推奨。再起動検出とpreviousBootHistory=falseを必須にする。</td>
+        </tr>
+        <tr>
+          <th scope="row">既存journaldを外部API履歴として直接参照</th>
+          <td>
+            過去記録はあるが全種別のID/意味/保持が統一されず、権限・vacuum・秘密projection・取消結果の再構築が必要。
+          </td>
+          <td>kernel事実の取得元に限定。監視GETの都度全logをscanしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">本文なしの専用永続journal</th>
+          <td>
+            既存atomic
+            file/owner/symlink検査パターンを再利用可能だが、非同期書込み、破損・容量・crash未flush区間、権限、再起動復旧の追加設計が必要。
+          </td>
+          <td>
+            再起動前履歴・負荷超過時10分完全保持が必須なら別途合意。既存の業務journalや暗号化監査本文を共用しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">root collector・debugfs・ROCm常駐収集</th>
+          <td>取得範囲を広げられるが権限と運用負荷が増える。GPU bindingの証拠は別途必要。</td>
+          <td>
+            導入しない。既存権限で取れなければpermission_denied/unsupported。追加が必要になった時点で必要性と代替を提示する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      会話本文、入力・出力、音声、認証情報、内部接続URL、Providerの生応答は監視response/store/logに入れない。
+      生のstate、exception.message、health.detail、job metadata、audit payloadをspreadしない。
+      ID・数値・enum・固定reasonのallowlistから構築し、上流の自由文字列を「sanitizeしたmessage」として残す実装も行わない。
+      この制約は新しい監視経路に対するもので、既存Inference
+      auditの設定や7日保持を変更する指示ではない。
+    </p>
+  </section>
+
+  <section id="scope">
+    <h2>合意後の実装範囲</h2>
+    <table>
+      <caption>
+        責務ごとの変更予定
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">場所</th>
+          <th scope="col">予定する変更</th>
+          <th scope="col">完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">packages/core</th>
+          <td>
+            monitoring
+            schema/型、取得状態・正式code対応表、event/cursor/保持・projectionのOS非依存logic、API
+            inventory/OpenAPI/lifecycle metadata。
+          </td>
+          <td>型とOpenAPI、例のschemaが一致。秘密fieldは型で受け付けない。</td>
+        </tr>
+        <tr>
+          <th scope="row">packages/backends</th>
+          <td>
+            Linux procfs/sysfs/statfsの個別sample、DRM inventory、既存probeの型付き結果、kernel
+            journalの制限付きreader。既存admission telemetryの意味は維持。
+          </td>
+          <td>root無しの部分取得とdevice列挙、単位とepochを固定fixtureで検証。</td>
+        </tr>
+        <tr>
+          <th scope="row">apps/daemon</th>
+          <td>
+            保存view、二つのroute、限定認証、起動時刻、既存Observer/Gate/Gateway/media/controlの観測hook、取消terminal一意性、drain中の観測。
+          </td>
+          <td>handler依存からmutationを排除し、producerと読者を分離。</td>
+        </tr>
+        <tr>
+          <th scope="row">packages/client</th>
+          <td>
+            getMonitoringSnapshot/getMonitoringEvents相当。既存transport、timeout、AbortSignal、gzip、エラー形式を再利用し、イベントcursorを呼出し元へ返す。
+          </td>
+          <td>SDK自動renew/claimを起こさず、複数readerでcursorを共有しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">specs / deploy設定資料</th>
+          <td>
+            提案を確定仕様へ更新、認証設定、計測表、実測結果、未対応一覧、Eumenes接続手順。monitor
+            token設定の任意項目追加。
+          </td>
+          <td>source完成・実機配備・Eumenes接続を別々に報告する。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Profile・routeの選択、model weight、runtime policy、priority、swap group、port、既存認証権限、
+      lease/idle TTLの意味、Provider起動方針は本監視のために変更しない。
+      収集の追加負荷は固定試験と実機読み取りで測定し、kernel journal収集の予算が成立しなければ
+      取得機構の実装を隠して成功扱いにせず、未対応範囲と代替案を合意し直す。
+    </p>
+  </section>
+
+  <section id="examples">
+    <h2>レビュー用応答例</h2>
+    <p>
+      以下は固定データによる提案例であり実機API応答ではない。全ファイルを提案JSON Schemaで検査した。
+    </p>
+    <ul>
+      <li>
+        <a href="./assets/spatial-monitoring-v1/snapshot-idle.json">正常な取得・未使用のsnapshot</a
+        >：実測0、対象なし、未提供modelLoad/GPU binding、no_waitersを区別。
+      </li>
+      <li>
+        <a href="./assets/spatial-monitoring-v1/snapshot-partial.json">部分取得失敗</a>：GPU
+        busy権限不足と古い温度を返し、CPU・Memory・Coreは維持。
+      </li>
+      <li>
+        <a href="./assets/spatial-monitoring-v1/snapshot-unsupported.json">GPU未対応</a>：GPU
+        inventoryのunsupportedと正常な空配列を区別。
+      </li>
+      <li>
+        <a href="./assets/spatial-monitoring-v1/events-cancelled.json"
+          >短時間要求と取消の出来事取得</a
+        >：1分未満で開始・取消完了した一要求を、同一workIdの異なるevent IDで返す。
+      </li>
+      <li>
+        <a href="./assets/spatial-monitoring-v1/cursor-expired.json">410 保持期限切れ</a>、<a
+          href="./assets/spatial-monitoring-v1/epoch-changed.json"
+          >409 再起動によるstream変更</a
+        >：再取得条件を明示。
+      </li>
+    </ul>
+  </section>
+
+  <section id="validation">
+    <h2>検証計画と現在の到達点</h2>
+    <table>
+      <caption>
+        実装後の受入試験。現時点では未実施
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">固定データ・模擬処理による試験</th>
+          <th scope="col">実機での確認</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1 状態の区別</th>
+          <td>
+            COLD、STARTING、HOT、BUSY、FAILED、idle、準備待ち、queue、exclusive、probe/cleanup、media
+            jobを個別に検査。generic healthからloadedを生成しない。
+          </td>
+          <td>
+            既存状態の読み取り比較。実負荷・load遷移を能動的に発生させる試験は事前に操作範囲を提示する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">2 0・未取得・非対応・古い値</th>
+          <td>
+            0とvalue欠落、初回baseline、permission、sensor消失、timeout、不正値、旧sample、clock変更。列挙成功0
+            GPUと列挙失敗。
+          </td>
+          <td>可読sensorと自然な変化のみ。権限・device設定を変更しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">3 部分成功</th>
+          <td>
+            GPU/kernel/storageだけthrow/hangし、Core/CPU/Memoryを200で返す。全sensor失敗でも識別と状態を返す。producer
+            timeout後の遅延完了を拒否。
+          </td>
+          <td>新API配備後に取得時間と失敗scopeを確認。故障注入は行わない。</td>
+        </tr>
+        <tr>
+          <th scope="row">4 出来事・複数読者・期限・再起動</th>
+          <td>
+            60秒未満の成功/失敗/取消、独立cursor、再読、固定high
+            water、空窓、600秒expiry、容量gap、不正cursor、host/daemon
+            epoch別、cancel後の遅延成功/例外。kernel OOM重複証拠とvacuumを検査。
+          </td>
+          <td>
+            自然発生eventを複数readerで比較。再起動検証は事前許可後。OOM・GPU
+            resetは実機で誘発しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">5 副作用ゼロ</th>
+          <td>
+            fake clockを固定して期限到達を跨ぐ前後も、監視GETでConnection/Allocation/claim数、lease
+            expiry、idleDeadline、Provider
+            state、ensure/stop/probe/renew呼出数が変わらないことを検査。通常timerの変化とは分ける。
+          </td>
+          <td>短い読み取り反復と自然なlifecycleの観測。モデルの事前起動や負荷を追加しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">6 認証・秘密</th>
+          <td>
+            無効/無設定/専用/既存/Provider/管理のみの認証、他method/pathで専用token拒否、draining中、未知query。秘密canaryをstate/error/job/auditに埋め、応答・監視store・logに無いことを検査。
+          </td>
+          <td>credentialを表示せず200/401/403だけ確認。既存の配備secretを成果物に保存しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">7 並行取得・区間</th>
+          <td>
+            読者1/複数、1秒/60秒、request
+            abortでもproducerのbaseline、counter、sampleId、intervalが同じ。slow
+            sensorを並行再起動しない。CPU hotplug/reset、pageSize、複数GPU/モデル/保存先。
+          </td>
+          <td>
+            通常の60秒pollと短い並行GETで区間・鮮度・CPU負荷を比較。高負荷stressは別途許可を得る。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      今回の固定データ検証はJSON Schema自身の妥当性と6応答例の適合性まで。
+      runtime契約・副作用・cursor・認証の実装testが通ったという意味ではない。
+      今回の実機確認は前述の既存APIと取得元の読み取り調査のみ。 合意後は関連unit/integration
+      test、typecheck、API consumer/module boundary、最終的に
+      <code>bun run check</code
+      >を実行し、Spec変更後は<code>bun run docs:check:fix</code>の全diagnosticを解消する。
+      稼働サーバー/Providerの停止・起動・再起動、配備を伴う確認は、内容を明示して利用者の許可を得る。
+    </p>
+  </section>
+
+  <section id="handoff">
+    <h2>合意事項とEumenesへの引き渡し</h2>
+    <p>
+      推奨する合意内容は、二つの監視GET、既存Control認証に接続する専用read token、
+      値ごとの取得状態・時刻・区間、daemon内10分履歴と明示的な再起動reset、
+      既存権限のkernel観測、GPU要求対応付けと熱制限flagの未対応を含む初版である。
+      これらの案は利用者が承認し、sourceへ実装した。現行仕様と実測範囲は引き渡し仕様を参照する。
+    </p>
+    <p>
+      別途合意が必要なのは、再起動前履歴の永続化、上限超過時にも完全な10分保持を保証する負荷条件、
+      journal権限拡大、GPU bindingの新しい正式設定、thermal flagのdriver別decoder、
+      Provider内queue/直接接続観測、TTFT追加、旧admissionメモリ会計の変更、配備と破壊的実機試験である。
+      基準未確定の遅延・入れ替え頻度・高使用率に対する警報しきい値は、この合意とは別のEumenes設計対象とする。
+    </p>
+    <ol>
+      <li>
+        LARM source完成時に確定OpenAPI/JSON
+        schema、認証手順、4種類の代表応答とcursor例、計測表、正式code一覧、保持・reset条件を渡す。
+      </li>
+      <li>
+        固定試験結果と実機確認結果を別に記載し、thermal flag、GPU
+        binding、driver、権限等の未対応項目を列挙する。
+      </li>
+      <li>
+        Eumenes backendにorigin/monitor
+        token/timeoutを設定し、Spatial表示中だけ60秒pollする。同時pollは重複起動せず、cursorページは取得を完了してから保存する。
+      </li>
+      <li>
+        Core/CPU/Memory/GPUへ観測scopeを割り当て、value=0、未取得、非対応、staleを維持する。MemAvailableとGPU
+        poolを合算しない。GPU対応不明の要求をGPUへ割り振らない。
+      </li>
+      <li>
+        event IDで重複排除し、terminal
+        outcomeだけを要求結果へ集計する。410/409とbootEpoch変更時は履歴欠落を残して初回窓へ戻す。短い再試行でも取得済みIDを保持する。
+      </li>
+      <li>
+        LARM到達不能、API非対応、認証失敗、応答はあるが個別センサー失敗、観測履歴の欠落を区別する。表示色・animation・複数対象集約はEumenesで定義する。
+      </li>
+    </ol>
+    <p>
+      完了報告は「LARM source実装・固定試験完了」「LARM実機配備・受入範囲」「Eumenes
+      backend接続・Spatial表示確認」の三段階を分ける。
+      計画作成時は調査・設計案のレビュー準備段階だった。合意後のsource実装と検証結果は引き渡し仕様へ記録し、本番配備・Eumenes接続は未実施として分ける。
+    </p>
+  </section>
+
+  <section id="references">
+    <h2>計測定義の一次資料</h2>
+    <p>
+      2026-10-18にLinux Kernel公式の以下を参照して、procfs、PSI、AMDGPU
+      poolとthermal/sysfsの意味を確認した。
+      repository内の実装から分かる事実と、ここで提案した追加処理・保持値は本文で区別した。
+    </p>
+    <ul>
+      <li><cite>The /proc Filesystem</cite>：<code>https://docs.kernel.org/filesystems/proc.html</code></li>
+      <li>
+        <cite>PSI - Pressure Stall Information</cite>：<code>https://docs.kernel.org/accounting/psi.html</code>
+      </li>
+      <li>
+        <cite>Misc AMDGPU driver information</cite>：<code>https://docs.kernel.org/gpu/amdgpu/driver-misc.html</code>
+      </li>
+      <li>
+        <cite>GPU Power/Thermal Controls and Monitoring</cite>：<code
+          >https://www.kernel.org/doc/html/latest/gpu/amdgpu/thermal.html</code
+        >
+      </li>
+    </ul>
+  </section>
+</article>

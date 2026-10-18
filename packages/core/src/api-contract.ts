@@ -1,6 +1,7 @@
 import { chatInputContractSchema, chatInputTokenCountSchema } from "./chat-input";
 import { localServiceListSchema, localServiceStatusSchema, localServiceLeaseSchema, localServiceLeaseRequestSchema, localServiceRenewSchema } from "./local-service";
 import { z } from "zod";
+import { monitoringSnapshotSchema, monitoringEventsSchema, monitoringErrorSchema, monitoringJsonSchema } from "./monitoring";
 import {
   SUCCESS_SCHEMA_BY_OPERATION,
   SUCCESS_STATUSES_BY_OPERATION,
@@ -235,6 +236,9 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     Health: jsonSchema(daemonHealthSchema),
     Readiness: jsonSchema(readinessSchema),
     ServiceActivity: jsonSchema(serviceActivitySchema),
+    MonitoringSnapshot: monitoringJsonSchema(monitoringSnapshotSchema),
+    MonitoringEvents: monitoringJsonSchema(monitoringEventsSchema),
+    MonitoringError: monitoringJsonSchema(monitoringErrorSchema),
     Runtime: jsonSchema(publicRuntimeSchema),
     RuntimeList: jsonSchema(runtimeListSchema),
     PublicClusterState: jsonSchema(publicClusterStateSchema),
@@ -331,6 +335,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     paths,
     components: {
       securitySchemes: {
+        monitorBearer: { type: "http", scheme: "bearer", description: "LARM_MONITOR_TOKEN: monitoring GET only; standard/protected Control bearer also accepted" },
         localServiceBearer: { type: "http", scheme: "bearer", description: "Scoped local service consumer token" },
         localServiceManagementBearer: { type: "http", scheme: "bearer", description: "Management token, distinct from consumer token" },
         bearerAuth: { type: "http", scheme: "bearer" },

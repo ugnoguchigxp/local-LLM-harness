@@ -28,6 +28,8 @@ export type RuntimeHealth = {
   busy: boolean;
   httpStatus?: number;
   detail?: string;
+  modelLoadState?: "unloaded" | "loading" | "loaded" | "failed";
+  observationStatus?: "error";
 };
 
 export type RuntimeInstance = RuntimeHealth;

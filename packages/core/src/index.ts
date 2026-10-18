@@ -337,3 +337,5 @@ export { UsageProtection } from "./usage-protection";
 
 
 export { agentConnectionIdleDeadline } from "./agent-connection-idle";
+export * from "./monitoring";
+export * from "./monitoring-events";

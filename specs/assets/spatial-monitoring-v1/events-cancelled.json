@@ -1,0 +1,119 @@
+{
+  "contractVersion": "larm-monitoring.v1",
+  "generatedAt": "2026-10-18T08:30:00.000Z",
+  "bootEpoch": "epoch-example",
+  "eventStream": {
+    "streamId": "epoch-example",
+    "retentionTargetMs": 600000,
+    "availableSince": "2026-10-18T08:20:00.000Z",
+    "previousBootHistory": false,
+    "continuity": "complete_since_start",
+    "droppedEventsTotal": "0",
+    "capacityEvents": 100000,
+    "capacityBytes": 67108864
+  },
+  "window": {
+    "from": "2026-10-18T08:20:00.000Z",
+    "through": "2026-10-18T08:30:00.000Z",
+    "highWaterSequence": "42"
+  },
+  "events": [
+    {
+      "id": "epoch-example:41",
+      "sequence": "41",
+      "streamId": "epoch-example",
+      "occurredAt": "2026-10-18T08:29:10.000Z",
+      "recordedAt": "2026-10-18T08:29:10.000Z",
+      "kind": "request.started",
+      "target": {
+        "type": "runtime",
+        "id": "example-runtime",
+        "nodeId": "example-node"
+      },
+      "workId": "work-example-1",
+      "reasonCode": "accepted",
+      "outcome": null,
+      "fromState": null,
+      "toState": null,
+      "countDelta": null,
+      "observationInterval": null,
+      "source": "gateway-terminal",
+      "sourceEventId": null
+    },
+    {
+      "id": "epoch-example:42",
+      "sequence": "42",
+      "streamId": "epoch-example",
+      "occurredAt": "2026-10-18T08:29:10.100Z",
+      "recordedAt": "2026-10-18T08:29:10.100Z",
+      "kind": "request.terminal",
+      "target": {
+        "type": "runtime",
+        "id": "example-runtime",
+        "nodeId": "example-node"
+      },
+      "workId": "work-example-1",
+      "reasonCode": "attempt_cancelled",
+      "outcome": "cancelled",
+      "fromState": null,
+      "toState": null,
+      "countDelta": null,
+      "observationInterval": null,
+      "source": "gateway-terminal",
+      "sourceEventId": null
+    }
+  ],
+  "nextCursor": "example-opaque-cursor-not-a-real-token",
+  "hasMore": false,
+  "coverage": [
+    {
+      "id": "larm_gateway",
+      "status": "available",
+      "since": "2026-10-18T08:20:00.000Z",
+      "through": "2026-10-18T08:30:00.000Z",
+      "reasonCode": null
+    },
+    {
+      "id": "music_jobs",
+      "status": "available",
+      "since": "2026-10-18T08:20:00.000Z",
+      "through": "2026-10-18T08:30:00.000Z",
+      "reasonCode": null
+    },
+    {
+      "id": "image_jobs",
+      "status": "available",
+      "since": "2026-10-18T08:20:00.000Z",
+      "through": "2026-10-18T08:30:00.000Z",
+      "reasonCode": null
+    },
+    {
+      "id": "control_operations",
+      "status": "available",
+      "since": "2026-10-18T08:20:00.000Z",
+      "through": "2026-10-18T08:30:00.000Z",
+      "reasonCode": null
+    },
+    {
+      "id": "kernel_events",
+      "status": "available",
+      "since": "2026-10-18T08:20:00.000Z",
+      "through": "2026-10-18T08:30:00.000Z",
+      "reasonCode": null
+    },
+    {
+      "id": "provider_internal_queue",
+      "status": "unsupported",
+      "since": null,
+      "through": null,
+      "reasonCode": "outside_larm_observation"
+    },
+    {
+      "id": "direct_provider_requests",
+      "status": "unsupported",
+      "since": null,
+      "through": null,
+      "reasonCode": "outside_larm_observation"
+    }
+  ]
+}

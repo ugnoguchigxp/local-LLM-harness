@@ -95,3 +95,5 @@ export { SystemdProcessBackend, LocalServiceRoutingBackend, processServiceObserv
 
 export * from "./chat-input-tokenizer";
 export { LocalUsageRetentionStore, type UsageRetentionSnapshot } from "./usage-retention-store";
+export * from "./linux-monitoring";
+export * from "./kernel-monitoring";

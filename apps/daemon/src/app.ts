@@ -49,6 +49,7 @@ import {
   readJson,
 } from "./app-http";
 import { registerHealthRoutes } from "./routes/health";
+import { registerMonitoringRoutes } from "./routes/monitoring";
 import { registerAgentProfileRoutes } from "./routes/agent-profiles";
 import { registerInspectionRoutes } from "./routes/inspection";
 import { registerRuntimeReleaseRoutes } from "./routes/runtime-releases";
@@ -72,6 +73,11 @@ export { publicClusterState, publicRuntime } from "./app-http";
 export type FetchLike = GatewayFetchLike;
 
 export function createAppComponents(deps: AppDeps) {
+  if (deps.monitorToken && [deps.apiToken, deps.protectedConsumerToken, deps.managementToken].includes(deps.monitorToken)) throw new Error("monitor token must differ from other tokens");
+  if (deps.monitoring) {
+    const monitoring = deps.monitoring, previous = deps.onEvent;
+    deps = { ...deps, onEvent: event => { monitoring.capture(event); previous?.(event); } };
+  }
   if (deps.protectedConsumerToken && deps.protectedConsumerToken === deps.apiToken) throw new Error("protected consumer token must differ from the shared API token");
   const usage = deps.protectedConsumerToken
     ? new UsageCoordinator(deps.usageMonotonicNow, deps.metrics, agentPrincipal(deps.protectedConsumerToken)) : undefined;
@@ -135,9 +141,17 @@ export function createAppComponents(deps: AppDeps) {
     })
     : undefined);
   let lastObservedActivityState: ServiceActivityState | undefined;
+  deps.monitoring?.bind({ observer: {
+    getState: deps.getState,
+    monitoringSnapshot: () => deps.control.getMonitoringRuntimeObservations(),
+  }, gate: executionGate, control: deps.control, tracker: deps.requestTracker, broker: modelBroker,
+    readiness: deps.getGatewayReadiness, music: deps.musicManager !== undefined, image: deps.imageGenerationProvider !== undefined });
 
   app.onError((err, c) => {
-    if (err instanceof UsageProtectionError) return protectionResponse(err, c.req.path);
+    if (err instanceof UsageProtectionError) {
+      deps.monitoring?.capture({ name: "monitoring_request_rejected", labels: { reason: err.code } });
+      return protectionResponse(err, c.req.path);
+    }
     if (err instanceof ConnectionTokenError) return c.json(errorBody(err.code, err.message), err.code === "connection_idle_released" ? 409 : 401);
     if (err instanceof ZodError) return c.json(errorBody("invalid_request", "invalid request"), 400);
     if (err instanceof LocalServiceError) {
@@ -326,6 +340,7 @@ export function createAppComponents(deps: AppDeps) {
     get current() { return lastObservedActivityState; },
     set current(value) { lastObservedActivityState = value; },
   });
+  registerMonitoringRoutes(app, { monitoring: deps.monitoring, bootEpoch: identity.bootEpoch });
 
   registerServiceHarnessRoutes(app, {
     asrRuntime: getRuntime(deps.registry, SERVICE_HARNESS_ASR_RUNTIME),

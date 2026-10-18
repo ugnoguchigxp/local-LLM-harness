@@ -2,6 +2,16 @@
 
 Linux Runtimeを観測・制御するLARM daemonです。既定で `config/local-node` を読み、SystemdBackendとLlamaSwapBackendへRuntime単位でルーティングします。
 
+## Read-only monitoring
+
+`GET /v1/monitoring/snapshot` と `GET /v1/monitoring/events` は、保存済みのCore・CPU・Memory・GPU計測と直近10分の出来事を返します。監視のGETはモデル起動、Connection作成、claim、lease更新、追加health probeを行いません。
+
+Eumenes backendには、他のAPI/管理tokenと異なる `LARM_MONITOR_TOKEN` を設定してください。このBearerは上の二つのGETだけに使えます。既存Control Bearerでも取得できます。ブラウザへcredentialを渡す必要はありません。監視認証が未設定なら503で閉じます。
+
+計測の0・未取得・非対応・staleは別の状態です。VRAM/GTTとhostメモリは合算しません。イベントは読者ごとのcursorで再読でき、410は保持期限/容量欠落、409はdaemon再起動によるresetです。保持はdaemon内で、再起動前の履歴は復元しません。
+
+計測定義、応答例、保持上限、未対応項目、検証・配備状況は[Spatial監視API引き渡し仕様](../../specs/eumenes-spatial-monitoring-api-handoff-2026-10-18.html)を参照してください。
+
 ## ACE-Step music generation
 
 `LARM_MUSIC_PROVIDER_ENDPOINT` に ACE-Step 1.5 API の base URL を設定すると、非同期 Music API が有効になります。出力形式の既定は MP3 です。成果物の合計上限50 GiBは通常20 GiBとお気に入り30 GiBに分けます。通常成果物は既定で24時間、WAVだけは1時間保持し、各枠を超えると古いものから削除します。お気に入りはTTLの対象外です。掃除は起動時、生成完了後、5分ごとに実行されます。

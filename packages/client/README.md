@@ -5,6 +5,19 @@ release選択、Cloud fallbackは行いません。Idempotency-Key、poll、rene
 AbortSignal、確実なreleaseを一か所で扱います。pollの全体期限は進行中のHTTPにも適用し、処理と
 releaseが両方失敗した場合は双方を含む`AggregateError`を返します。
 
+## Spatial monitoring
+
+監視だけを行うbackendは `new LarmClient({ baseUrl, monitorToken })` を使い、
+`getMonitoringSnapshot(signal)` と `getMonitoringEvents({ cursor, limit, signal })` を呼べます。
+既存の `apiToken` でも取得でき、監視専用tokenはこの二つのGETにだけ送ります。監視要求のtimeoutは最大5秒です。
+
+出来事は `hasMore` がfalseになるまでページを取得し、最後の `nextCursor` を次のpollに保存します。
+SDKは自動renew・claim・再試行をしません。`LarmApiError` の409 `monitoring_epoch_changed` と410
+`monitoring_cursor_expired` では欠落を記録してcursorなしから再開してください。snapshotの `bootEpoch` と
+値ごとの `observedAt` / `status` を使い、未取得を0へ変換しないでください。監視のepoch観測は既存Allocationのepoch基準を更新しません。
+
+詳細は[Spatial監視API仕様](../../specs/eumenes-spatial-monitoring-api-handoff-2026-10-18.html)を参照してください。
+
 音楽・画像・LLM・TTS・ASR・Embeddingの対象APIでは、4 KiB以上の文字列本文とASRのWAV・PCM multipartを、
 元より小さくなる場合にgzipで送信します。旧LARMへ接続するときは`requestCompression: false`を指定してください。
 応答のgzip交渉・逐次展開は標準fetchが担当します。独自fetchにも同じ動作が必要です。

@@ -5,6 +5,7 @@ import { ChatInputError, validateChatImages, type AgentProviderContextWindow } f
 import { prepareChatInput } from "./chat-input-gateway";
 import {
   audioVoiceDiscoverySchema,
+  inferenceStatistics,
   inspectEmbeddingResponse,
   inspectOpenAiChatCompletionJson,
   inspectOpenAiTranscriptionJson,
@@ -247,6 +248,17 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   let auditResponseCaptureFailed = false;
   let auditMetadataStarted = false;
   let finished = false;
+  const monitoringStarted = performance.now();
+  let monitoringFirstBody = false;
+  const monitorBody = () => {
+    observation?.bodyReceived();
+    if (!monitoringFirstBody) { monitoringFirstBody = true; options.onEvent?.({ name: "gateway_first_body_ms", labels: { runtime: options.runtime.id, request: requestId }, value: performance.now() - monitoringStarted }); }
+  };
+  const monitorEngine = (value: unknown) => {
+    observation?.engine(value);
+    const rate = inferenceStatistics(value).decode_tokens_per_second;
+    if (rate !== undefined) options.onEvent?.({ name: "gateway_decode_rate", labels: { runtime: options.runtime.id, request: requestId }, value: rate });
+  };
   const finishTracked = options.requestTracker?.begin() ?? (() => undefined);
   const abortFromClient = () => {
     outcome = "client_cancelled";
@@ -506,12 +518,14 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         options.runtime.resources,
         abort.signal,
         options.priority ?? 0,
+        () => options.onEvent?.({ name: "gateway_request_queued", labels: { runtime: options.runtime.id, request: requestId } }),
       )
       : options.executionGate.acquire(
-      options.runtime.id,
-      options.runtime.resources,
-      abort.signal,
-      options.priority ?? 0,
+        options.runtime.id,
+        options.runtime.resources,
+        abort.signal,
+        options.priority ?? 0,
+        () => options.onEvent?.({ name: "gateway_request_queued", labels: { runtime: options.runtime.id, request: requestId } }),
       ));
   } catch (error) {
     queueEnd?.();
@@ -783,6 +797,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       init.duplex = "half";
     }
     upstreamStarted = performance.now();
+    options.onEvent?.({ name: "gateway_request_forwarded", labels: { runtime: options.runtime.id, request: requestId } });
     usagePerformed = true;
     observation?.startUpstream(headers);
     const headersEnd = observation?.stage("upstream_headers");
@@ -847,7 +862,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   const bodyEnd = observation?.stage("upstream_body");
   const readUpstreamBody = async (limit: number) => {
     try {
-      return await readBodyLimited(upstream as unknown as Request, limit, abort.signal, observation ? () => { observation.bodyReceived(); } : undefined);
+      return await readBodyLimited(upstream as unknown as Request, limit, abort.signal, observation || options.onEvent ? monitorBody : undefined);
     } finally { bodyEnd?.(); observation?.endUpstream(); }
   };
   upstreamStatus = upstream.status;
@@ -1092,7 +1107,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         "upstream_protocol_error",
       );
     }
-    observation?.engine(parsed);
+    monitorEngine(parsed);
     const inspected = inspectOpenAiChatCompletionJson(parsed);
     if (!inspected.ok) {
       return failure(
@@ -1200,14 +1215,14 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     return new Response(null, { status: upstream.status, headers: responseHeaders });
   }
 
-  const statisticsChunks: Uint8Array[] | undefined = observation
+  const statisticsChunks: Uint8Array[] | undefined = (observation || options.onEvent)
     && options.protocol === "openai.chat-completions.v1" && options.responseFormat !== "sse"
     && upstream.ok && responseHeaders.get("content-type")?.startsWith("application/json") ? [] : undefined;
   let statisticsBytes = 0;
   let statisticsOverflow = false;
   const reader = upstream.body.getReader();
   const sseInspector = options.responseFormat === "sse" && upstream.ok
-    ? new OpenAiChatCompletionSseInspector(observation ? chunk => observation.engine(chunk) : undefined)
+    ? new OpenAiChatCompletionSseInspector(observation || options.onEvent ? monitorEngine : undefined)
     : undefined;
   const sseNormalizer = sseInspector && options.expectedModel !== undefined
     ? new OpenAiChatCompletionSseNormalizer(options.expectedModel)
@@ -1302,7 +1317,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
               const bytes = new Uint8Array(statisticsBytes);
               let offset = 0;
               for (const chunk of statisticsChunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-              observation?.engine(JSON.parse(new TextDecoder().decode(bytes)));
+              monitorEngine(JSON.parse(new TextDecoder().decode(bytes)));
             } catch { /* Optional statistics never validate or reject the legacy response. */ }
             statisticsChunks.length = 0;
           }
@@ -1334,7 +1349,8 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
           controller.close();
           return;
         }
-        const received = observation?.bodyReceived();
+        monitorBody();
+        const received = observation ? performance.now() : undefined;
         if (statisticsChunks && !statisticsOverflow) {
           statisticsBytes += chunk.value.byteLength;
           if (statisticsBytes > 65536) { statisticsOverflow = true; statisticsChunks.length = 0; }

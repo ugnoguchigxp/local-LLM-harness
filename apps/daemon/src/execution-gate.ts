@@ -110,6 +110,7 @@ export class ExecutionGate {
     policy: ExecutionPolicy,
     signal: AbortSignal,
     priority = 0,
+    onQueued?: () => void,
   ): Promise<() => void> {
     if (this.draining) {
       throw new ExecutionGateError("draining", "execution gate is draining");
@@ -180,6 +181,7 @@ export class ExecutionGate {
       entry.timeout.unref?.();
       signal.addEventListener("abort", entry.onAbort, { once: true });
       state.queue.push(entry);
+      try { onQueued?.(); } catch { /* Observation only. */ }
       state.queue.sort((left, right) =>
         right.priority - left.priority || left.sequence - right.sequence
       );
@@ -192,6 +194,7 @@ export class ExecutionGate {
     policy: ExecutionPolicy,
     signal: AbortSignal,
     priority = 0,
+    onQueued?: () => void,
   ): Promise<() => void> {
     if (this.draining) {
       throw new ExecutionGateError("draining", "execution gate is draining");
@@ -226,6 +229,7 @@ export class ExecutionGate {
         resolve,
         reject,
       };
+      if (this.totals().active > 0) { try { onQueued?.(); } catch { /* Observation only. */ } }
       entry.onAbort = () => {
         if (this.exclusive !== entry || entry.phase !== "pending") return;
         this.clearExclusiveListeners(entry);
@@ -273,6 +277,14 @@ export class ExecutionGate {
   snapshot(runtime: string): { active: number; queued: number } {
     const state = this.runtimes.get(runtime);
     return { active: state?.active ?? 0, queued: state?.queue.length ?? 0 };
+  }
+
+  /** No timers, promotions or admission changes. Includes the exclusive waiter. */
+  monitoringSnapshot(runtime: string): { active: number; queued: number; oldestQueueWaitMs: number | null } {
+    const state = this.runtimes.get(runtime);
+    const waits = state?.queue.map(entry => entry.queuedAt) ?? [];
+    if (this.exclusive?.runtime === runtime && this.exclusive.phase === "pending") waits.push(this.exclusive.queuedAt);
+    return { active: state?.active ?? 0, queued: waits.length, oldestQueueWaitMs: waits.length ? Math.max(0, this.now() - Math.min(...waits)) : null };
   }
 
   totals(): { active: number; queued: number } {

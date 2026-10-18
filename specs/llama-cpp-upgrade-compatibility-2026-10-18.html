@@ -1,0 +1,514 @@
+<article lang="ja">
+  <h1>llama.cpp更新評価とLARM互換性確認（2026-10-18）</h1>
+  <p>
+    結論：LARMのProfile解決、lease、優先度、起動・停止、HTTP中継という構造は継続利用できる。
+    ただし、全Providerを最新の標準llama.cppへそのまま置き換えることはできない。
+    独自量子化、入力計数拡張、廃止済み起動引数、AMD/Vulkanの既知問題を分けて扱う必要がある。
+    今回は調査、隔離したCPU実機試験、文書化までを実施し、本番エンジン・設定・稼働Providerは変更していない。
+  </p>
+  <section id="versions">
+    <h2>対象と版の識別</h2>
+    <p>
+      調査日は2026-10-18（日本時間）。LARMのHEADは<code>ecc36bf</code>。
+      監視APIなど別作業の未commit差分がある作業ツリーを読み取り、これらの実装変更は行っていない。
+      GitHub Releases APIとタグ参照を直接確認し、検索結果の古いキャッシュと区別した。
+    </p>
+    <table>
+      <caption>
+        確認したエンジンと上流リリース
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">識別子</th>
+          <th scope="col">位置づけ</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">最新安定版</th>
+          <td>v0.7.0、<code>620d2225cc436ab0b001e3200e590e3b286ef9ab</code></td>
+          <td>
+            2026-10-16 02:13
+            JST公開。注釈付きタグのオブジェクトIDは<code>757cad021b357f417065ddbc41a6e8f87c1f8136</code>。試験はこの版のソースを使用。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">調査時の最新開発版</th>
+          <td>b11718、<code>547208dca250ceb3e4c8615598d043f2b602a527</code></td>
+          <td>
+            2026-10-18 13:42 JST公開、prerelease。v0.7.0より49
+            commit先。リリース情報、比較差分、関係するソースを確認。ビルド・推論試験は未実施。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">標準エンジン</th>
+          <td>0.3.0-dev、build 10655、<code>cb300598d5f90189cb69d2702f4930aaf99d32a2</code></td>
+          <td>
+            <code>/srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server</code
+            >のversion出力と<code>deploy/local-node/sources.lock.yaml</code>、ローカルソースHEADが一致。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ROCmFP4エンジン</th>
+          <td>build 244、<code>0fc9568</code></td>
+          <td>
+            <code>/srv/ai/apps/q38rocm/engine/bin/llama-server</code
+            >。標準版とは別系統。q38rocm自体のHEADは<code>9733f28</code>で、lockのrevisionやエンジンrevisionと同一視しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LARM入力計数拡張版</th>
+          <td><code>0fc9568e07ccc8553010864cb8db1957e629cbfa</code>を基点とするbuild 244</td>
+          <td>
+            <code>/srv/ai/apps/larm-chat-input-engine-20261013/llama-server</code
+            >。manifestに<code>llama-chat-token-count.v1</code>、独自量子化、MTP
+            checkpoint修正の保持を記録。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      実機はAMD Strix Halo（PCI ID <code>1002:1586</code>、Radeon
+      8060S運用）。 llama-swapは<code>v251 / 4ec3175</code>。
+      標準llama.cppのcheckoutはclean。q38rocmには既存のローカル変更があり、pull・reset・stashは行っていない。
+      SAAAの実装には依存せず、LARM内の契約と設定だけを確認した。
+    </p>
+  </section>
+  <section id="resolved-runtimes">
+    <h2>Profileから解決される実際の更新範囲</h2>
+    <table>
+      <caption>
+        公開モデル名やポートだけで更新対象を判断しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">route → runtime → backend</th>
+          <th scope="col">更新判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">既定Agent Profileのllm</th>
+          <td><code>ornith1.5Strix → llm-ornith15-strix → ornith15-strix-conversation → llama-swap → LARM入力計数拡張版</code></td>
+          <td>標準版の更新だけでは変わらない。独自エンジンを維持する。</td>
+        </tr>
+        <tr>
+          <th scope="row">ContextStill背景llm</th>
+          <td><code>contextstill-background → llm-contextstill-ornith → ornith15-strix-conversation</code></td>
+          <td>
+            同じSTRIX_LEAN
+            runtimeを共有。publicModelの<code>ornith-contextstill</code>から同名の別runtimeを推定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Gemma 4 26B音声Profileのllm</th>
+          <td><code>saaa-conversation-gemma4-26b-voice → llm-saaa-gemma4-26b → gemma4-26b-conversation → llama-swap → 標準版</code></td>
+          <td>
+            段階更新の候補。4 slot、512K unified
+            KV、主セッション256Kと補助64Kの運用を別途再検証する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ContextStill明示64K / 128K</th>
+          <td>
+            <code>llm-contextstill-64k → qwen-contextstill-64k</code
+            >、<code>llm-contextstill-128k → qwen-worker-fast</code>、いずれも標準版
+          </td>
+          <td>
+            draft-MTPと量子化KVを含めて個別試験。実際の起動ctxはそれぞれ65536 / 230400、各1 slot。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ゲーム判断Provider</th>
+          <td><code>ornith1.5Strix-game / game-decision → game-decision-d1 → d1-system-one → systemd</code></td>
+          <td>現行はPython/ROCm BF16。llama.cppのd1追加で自動的に置換されるものではない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      調査開始時にはSTRIX_LEANのプロセスがport 58009で稼働し、ctx 1048576、parallel 4、q4_0
+      KV、MTP無効だった。
+      これは観測した実行状態であり、消費者のProfileや現行leaseを特定した証拠ではない。
+      設定との差をdriftとは判定していない。容量保証は各Profileの上限、resolved
+      runtime、同居Providerを含めて行う。
+    </p>
+  </section>
+  <section id="compatibility-gaps">
+    <h2>そのまま適用できない点</h2>
+    <table>
+      <caption>
+        更新時に必要な対応と実証範囲
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">確認結果</th>
+          <th scope="col">対応</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ROCmFP4 / STRIX_LEAN</th>
+          <td>
+            標準v0.7.0で現物のSTRIX_LEAN
+            GGUFをCPUロードすると、<code>output.weight</code>のggml type
+            101が不正として終了。上流のtype範囲は0以上43未満。独自forkには100番台の型がある。
+          </td>
+          <td>
+            q38rocmとLARM拡張版は維持する。標準Q4/Q5への明示的モデル変更、または量子化カーネルの移植を独立作業として検討する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">廃止済み<code>--no-mmap</code></th>
+          <td>
+            候補バイナリは<code>invalid argument: --no-mmap</code>で終了。設定中の43種類のオプション名をhelpと照合し、この引数が非対応だった。
+          </td>
+          <td>
+            標準版を使う<code>ornith15-conversation</code>と<code>ornith15-35b</code>は<code>--load-mode none</code>へ移行する。旧独自エンジン用の引数は一括置換しない。新指定が受理されることは確認済み。他の引数は名前の存在確認であり、全値・組合せの動作保証ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LARM独自入力計数</th>
+          <td>
+            <code>/tokenize</code
+            >へmessagesを送ると標準版は<code>{"tokens":[]}</code>を返す。現行<code>countLlamaChatInput</code>は<code>chat_token_count_unavailable</code>で拒否した。text-onlyでも同じ。
+          </td>
+          <td>
+            <code>chatInput</code
+            >を有効にしたruntimeには独自拡張が必要。上流の<code>/v1/chat/completions/input_tokens</code>は総数を返すが、text/image内訳、imageCount、engineBuild、固定エラーコードを満たさず、そのまま代用できない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">既存エンジンパッチ</th>
+          <td>
+            <code>llama-chat-token-count-v1.patch</code
+            >のcheck適用は<code>server-common.cpp</code>の画像処理hunkで失敗。chat
+            parserはvocabとsessionを受け取る形へ変更され、MTMDの関数引数やtokenize経路も変わった。
+          </td>
+          <td>
+            hunkの位置調整だけでは不足。新しいchat/session・MTMD経路に移植し、生成と計数の同一性、連続画像、エラー・ログ抑制を再検証する。<code>json_object</code>の空schema補正は上流にも存在し、今回の実機試験で生成が成立した。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">AMD/Vulkanの性能問題</th>
+          <td>
+            安定版公開後の<code>a8d9a7e1e55f5b613f297504d9e159807ec3a99b</code>、PR #30468でLinux AMDのhost
+            memory importによる大幅な性能低下を修正。b11718に含まれ、v0.7.0には含まれない。
+          </td>
+          <td>
+            このホストではv0.7.0単体を本番更新の第一候補にしない。b11718固定、または安定版への同修正のbackportを隔離して比較する。8060Sでの影響度と改善幅は未測定。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Context認証・保存状態</th>
+          <td>
+            LARMはengineBuild、chatTemplateDigest、tokenizerDigest、contextLimitTokensを照合する。新buildを旧認証のまま有効化することはできない。
+          </td>
+          <td>
+            runtime
+            releaseとproviderConfigRevisionを更新し、認証を再取得する。必要なsourceの再tokenize、slot/cache状態の再構築を行い、旧buildの保存状態の互換性を仮定しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      既定portの8080から9931への変更は、現在の全llama-swap model
+      entryが<code>--port ${PORT}</code>、 systemd
+      unitが<code>--port 8080</code>を明示するため影響しない。
+      <code>--no-webui</code>は非推奨だが受理される。
+      HIPの<code>-DGGML_HIP=ON -DGPU_TARGETS=gfx1151</code>とVulkanのCMake設定名は上流ソースに残っている。
+      これはGPUビルド成功の証明ではない。C/C++ APIやggml
+      ABIの変更はLARMのTypeScript実装を直接破壊しないが、独自エンジンには影響する。
+    </p>
+  </section>
+  <section id="isolated-validation">
+    <h2>隔離した実機検証</h2>
+    <p>
+      v0.7.0のソースアーカイブからReleaseのCPU専用llama-serverを別ディレクトリでビルドした。 GPU
+      backendは無効、生成は4 CPU thread、context 2048、parallel 1、既存Gemma 3 1B Q4_K_Mを使用。
+      loopbackの59931で直接試験し、別のllama-swap v251を59932、子serverを59940以降で起動した。
+      LARMの既存adapterと応答検証器を直接importして実行し、試験プロセスは終了済み。
+      本番daemon経由の認証・lease・Profile切替E2E試験は行っていない。
+    </p>
+    <table>
+      <caption>
+        確認できたことと制限
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">試験</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">通常のchat completion</th>
+          <td>HTTP 200。既存JSON検証器が受理。usageのprompt/completion/totalの整合を確認。</td>
+        </tr>
+        <tr>
+          <th scope="row">SSEとusage</th>
+          <td>
+            既存gatewayと同じnormalizer → inspectorで受理、15 chunk、12 content
+            delta、finishとDONEあり。追加の100-token試験では103 chunkに3種類のcreatedが含まれ、raw
+            inspectorはinvalid_chunkで拒否、normalizer適用後は受理した。readiness側のraw検証は別途見直し対象。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">JSON Schema / json_object</th>
+          <td>
+            strict schemaに沿う生成と、schema省略のjson_object生成が成立。tool
+            callとreasoningのモデル別挙動は未検証。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">tokenizer / template / props</th>
+          <td>
+            既存tokenizerのidentity取得が成立し、<code>/apply-template</code>のpromptは引き続き文字列だった。リリースノートのpart化からHTTP応答の配列化を推定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">入力計数の差</th>
+          <td>
+            同じGemma要求で既存<code>countChatTokens</code>は16、上流input_tokensと生成usageは17。既存経路はadd_special=false、上流はtrueでBOSを含む。APIが呼べることと生成と完全一致することは別で、境界値の計数試験が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">slotと満席判定</th>
+          <td>
+            slot一覧と既存adapterによるeraseが成立。生成中も<code>/health?fail_on_no_slot=true</code>は200だが、<code>/slots?fail_on_no_slot=true</code>は503。LARMのsystemd
+            / llama-swap
+            adapterは前者を参照するためbusy検出に課題がある。固定中の旧標準ソースでもhealthは常にokで、更新起因の退行とは断定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">llama-swapとLARM backend</th>
+          <td>
+            v251経由の既存<code>LlamaSwapBackend.ensure</code>、health、completion中継、stop、再ensureが成立。プロセス管理方式の全面変更は不要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">既存テスト</th>
+          <td>
+            backend、入力preflight、Context readinessの26件と、JSON/SSE/System
+            One契約の13件、計39件が成功。候補GPU上での全モデル試験を代替しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      作業用ソース、ログ、検証補助スクリプトは<code>/tmp/larm-llama-compat-20261018-ssuurize</code>に置いた。
+      一時ファイルの存続を前提にせず、判断の根拠は本文に記録する。
+      アーカイブSHA-256は<code>ebe5fe11eb89011e7e5db1481f37c1b31a9d7c1968ce44fc775aea1100302cf9</code>。
+      試験用アーカイブbuildのpropsは<code>b0-unknown</code>であり、本番認証には流用しない。
+      GPUビルド、長文、画像、MTP、4並列、共有KV、大型モデルの速度・品質・メモリ圧、長時間安定性は未確認。
+    </p>
+  </section>
+  <section id="amd-vulkan-follow-up">
+    <h2>AMD/Vulkan追加調査（2026-10-18）</h2>
+    <p>
+      利用者の様子見方針を維持し、上流PR・issue・コメントとGitHub APIの状態を追加確認した。
+      安定版は引き続きv0.7.0、開発版はb11718だった。以下の数値は上流の報告者による測定であり、
+      このLARMホストやOrnithでの実測ではない。新しいビルド、GPU試験、本番設定の変更は実施していない。
+    </p>
+    <table>
+      <caption>
+        改善、修正、未解決報告を区別した更新判断
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">変更・報告</th>
+          <th scope="col">確認内容と版</th>
+          <th scope="col">このホストとの関係</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">
+            <a href="https://github.com/ggml-org/llama.cpp/pull/30049"
+              >#30049：AMD iGPUのcheckpoint読み出し改善</a
+            >
+          </th>
+          <td>
+            10月7日UTCにmerge。uncachedなUMA領域をCPUで読む経路を避け、GPU copyを使う。
+            8060S、Qwen3.5-4B UD-Q4_K_XLでprompt処理時間が初回600–1024 msから95–286 ms、
+            再実行は約290 msから約42 msへ短縮したという報告。 merge commit
+            <code>4d756bc72bf00a4aacf410ae15a2d315f3db400d</code>はv0.7.0の祖先とAPIで確認した。
+          </td>
+          <td>
+            同じGPUでの有力な改善情報。ただし入力処理とcheckpointの待ち時間であり、Ornithの生成tok/sの向上率ではない。
+            現行STRIXは<code>-ctxcp 0</code>、prompt
+            cacheとMTPも無効なので、同じ改善幅を期待する根拠にはならない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="https://github.com/ggml-org/llama.cpp/pull/30468"
+              >#30468：host memory共有によるAMD性能低下の修正</a
+            >
+          </th>
+          <td>
+            10月16日UTCにmerge。AMDで外部host memoryのimportを避ける。
+            v0.7.0には含まれず、b11718には含まれることをcommitの祖先関係でも再確認した。
+            <a href="https://github.com/ggml-org/llama.cpp/issues/30695#issuecomment-6227547401"
+              >#30695の追試</a
+            >では、 RX 7900 XTX / RADV、4 device可視、196608 context、speculative decodeで152.9
+            tok/s、 問題導入前の153.6 tok/sと同等へ回復し、issueは解決済みでclose。
+          </td>
+          <td>
+            特に複数Vulkan deviceが可視な構成で裏付けがある退行修正。
+            現在の8060S単体・STRIX非MTP構成に同じ低下があるとは確認していない。
+            旧版を超える新しい一律高速化と解釈せず、candidateに含める修正として扱う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="https://github.com/ggml-org/llama.cpp/issues/30568"
+              >#30568：8060SでのMTP draft長による速度低下</a
+            >
+          </th>
+          <td>
+            10月15日UTCの報告、確認時open。Windows 11、8060S、b11574、Qwen3.8-27Bで、
+            合成acceptance条件のdraft長3が31.3 tok/s、4が16.4 tok/s。 実際のdraft headでも3が23.2
+            tok/s、4が10–16 tok/sという報告。
+          </td>
+          <td>
+            GPU世代は同じだがOS・driver・モデルが異なる。LinuxのOrnithやMTP無効のSTRIXへ数値を転用しない。
+            MTPを試す際はdraft長を増やせば速くなるとは仮定せず、候補ごとに測定する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="https://github.com/ggml-org/llama.cpp/issues/30688">#30688</a> /
+            <a href="https://github.com/ggml-org/llama.cpp/issues/30638"
+              >#30638：Linux AMDのMTP退行報告</a
+            >
+          </th>
+          <td>
+            いずれも確認時open、修正完了の証拠なし。前者はR9700 / RADV、VRAM上限近くのQwen系Q6_Kで、
+            v0.6.0からv0.7.0のMTP decodeが約50から約11 tok/sへ低下し、非MTPは1%以内の差と報告。
+            後者は7900 XTX /
+            RADV、9月26日のcommitと10月16日のmaster比較でMTPが約10–13%低下、通常decodeはほぼ不変と報告。
+          </td>
+          <td>
+            8060Sでの再現は未確認。#30468で全てのVulkan/MTP問題が解決したとは扱わない。
+            現行STRIXのMTP無効方針を維持し、標準Qwen worker更新時には独立した回帰試験が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a href="https://github.com/ggml-org/llama.cpp/issues/30697"
+              >#30697：新MoE cacheのVulkan起動失敗報告</a
+            >
+          </th>
+          <td>
+            Windows、RX 6900 XT、b11700で大きいcache設定時の起動失敗を報告、確認時open。
+            コメントの上限チェック案には実GPUでの独立した再現・検証がなく、上流で解決した証拠はない。
+          </td>
+          <td>
+            現行設定は<code>--moe-cache-mib</code>を使わないため、直接の変更理由にはしない。新機能採用時の確認事項とする。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      追加調査後も本番更新を急ぐ根拠はない。
+      8060Sのcheckpoint改善は注目に値するが、Ornithの通常decodeが何%速くなるかを示す比較は得られていない。
+      次の判断材料はAMD修正を含む安定版、未解決MTP報告の切り分け、同一条件の8060S・Ornith実測とする。
+    </p>
+  </section>
+  <section id="upgrade-sequence">
+    <h2>更新の価値と実施順序</h2>
+    <p>
+      v0.7.0にはprompt-cacheとslot restore、draft状態復元、MTPやJinjaの修正がある。
+      標準モデルworkerには評価する価値がある。 MoEのhost expert用GPU cache、追加のspeculative
+      decoding方式、EmbeddingGemma-2などの利点は、
+      対応モデル・offload条件・明示設定が必要で、現在のOrnith、ONNX
+      embedding、ASR/TTSへ自動的に効くものではない。
+      公開された速度向上率を8060Sでの実測値として扱わない。
+    </p>
+    <p>
+      新しいd1向け<code>/v1/systemone</code>は、現在のPython
+      Providerを将来置き換える比較候補になる。 ただし、上流のchoice
+      criteriaはobjectであり、LARMが許す配列を変換する必要がある。
+      上流のnoul応答はconfidenceを含まず、LARM契約では必須。 model
+      alias、画像制限、4096-token運用、確率とscoreの意味、CPU/GPU性能、warmup、同居推論を検証するadapterが必要で、
+      API名が同じという理由でd1 runtimeを差し替えない。
+    </p>
+    <ol>
+      <li>
+        現行の独自量子化・入力計数エンジンを維持し、標準版のcandidateだけを別パスへビルドする。候補はAMD修正を含む固定revisionとする。
+      </li>
+      <li>
+        標準版を使うOrnithの2 entryをcandidate内でload-mode指定へ移行する。busy
+        probe、BOSを含む厳密計数、raw SSE readinessの既存課題は別の修正として扱う。
+      </li>
+      <li>
+        Gemma小型モデルから始め、Gemma 4 26Bの4並列とKV容量、QwenのMTP・KV型・64K/230400
+        context、通常Ornithの画像を順に比較する。profileの優先度・swap
+        group・同居Providerを再現する。
+      </li>
+      <li>
+        新しいバイナリdigest、source
+        revision、providerConfigRevision、必要なContext認証を固定し、既存の署名release手順へ渡す。旧バイナリと旧releaseをrollback先として保持する。
+      </li>
+      <li>
+        独自ROCmFP4
+        forkの追随、入力計数拡張の新APIへの移植、d1のネイティブ化は個別の候補として採否を決める。
+      </li>
+    </ol>
+    <p>
+      判定は「標準モデル向けの段階更新を推奨、即時一括更新は不可」。
+      LARMのcoreにモデル名による特例を追加する必要はない。必要な互換対応はbackend adapter、
+      エンジン拡張、runtime別起動設定とrelease metadataに閉じる。
+    </p>
+  </section>
+  <section id="reproduction-and-sources">
+    <h2>再現方法と一次資料</h2>
+    <p>
+      上流の版はGitHub
+      APIの<code>releases/latest</code>と<code>releases?per_page=5</code>、
+      <code>git ls-remote</code>のタグとpeeled commitを照合した。
+      CPU試験の主要条件は以下。ビルド先とポートは本番と分離する。
+    </p>
+    <pre><code>cmake -S SOURCE -B BUILD -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DLLAMA_BUILD_IS_DEV=OFF -DGGML_HIP=OFF -DGGML_VULKAN=OFF \
+  -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF
+cmake --build BUILD --target llama-server -j 6
+BUILD/bin/llama-server -m GEMMA3_1B_Q4_K_M --alias compat-gemma \
+  --host 127.0.0.1 --port 59931 -ngl 0 --fit off -c 2048 -np 1 \
+  -b 128 -ub 128 -t 4 --poll 0 --jinja --reasoning off --metrics --no-webui
+git -C SOURCE apply --check /ABSOLUTE/LARM/deploy/local-node/patches/llama-chat-token-count-v1.patch</code></pre>
+    <ul>
+      <li>
+        <a href="https://github.com/ggml-org/llama.cpp/releases/tag/v0.7.0">v0.7.0公式リリース</a
+        >、<a href="https://github.com/ggml-org/llama.cpp/releases/tag/b11718">b11718公式リリース</a
+        >、<a href="https://github.com/ggml-org/llama.cpp/compare/v0.7.0...b11718">両版の比較</a>。
+      </li>
+      <li>
+        <a href="https://github.com/ggml-org/llama.cpp/pull/30468"
+          >AMD/LinuxのVulkan host memory修正</a
+        >。
+      </li>
+      <li>
+        <a
+          href="https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/common/arg.cpp"
+          >安定版の引数実装</a
+        >、<a
+          href="https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/tools/server/server-context.cpp"
+          >HTTP handler実装</a
+        >、<a
+          href="https://github.com/ggml-org/llama.cpp/blob/620d2225cc436ab0b001e3200e590e3b286ef9ab/tools/server/server-decision.cpp"
+          >decision実装</a
+        >。
+      </li>
+      <li>
+        関連するLARM資料：<a href="./ornith15-strix-profile-2026-10-12.html">STRIX_LEAN Profile</a
+        >、<a href="./contextstill-strix-shared-providers-2026-10-13.html"
+          >ContextStillとのProvider共有</a
+        >、<a href="./d1-game-decision-provider-2026-10-16.html">d1ゲーム判断Provider</a>。
+      </li>
+    </ul>
+  </section>
+</article>

@@ -20,6 +20,7 @@ export type ObserverOptions = {
 };
 
 export class Observer {
+  private monitoring = new Map<string, { observedAt: string; modelLoadState?: "unloaded" | "loading" | "loaded" | "failed"; failed: boolean }>();
   private readonly startingSince = new Map<string, number>();
   private snapshot: ClusterState;
   private tickInFlight: Promise<ClusterState> | undefined;
@@ -41,6 +42,8 @@ export class Observer {
     return this.snapshot;
   }
 
+  monitoringSnapshot() { return new Map([...this.monitoring].map(([id, value]) => [id, { ...value }])); }
+
   tick(): Promise<ClusterState> {
     if (this.tickInFlight) {
       return this.tickInFlight;
@@ -50,6 +53,11 @@ export class Observer {
       if (this.tickInFlight === tracked) {
         this.tickInFlight = undefined;
       }
+    });
+    // Keep the original success promise ordering: lifecycle callers share it.
+    void observed.catch(() => {
+      const observedAt = new Date(this.now()).toISOString();
+      for (const runtime of this.registry.runtimes) this.monitoring.set(runtime.id, { observedAt, failed: true });
     });
     this.tickInFlight = tracked;
     return tracked;
@@ -76,6 +84,7 @@ export class Observer {
       };
 
       const starting = isStartingCondition(probe);
+      this.monitoring.set(runtime.id, { observedAt, failed: probe.service === "Unknown" || probe.observationStatus === "error", ...(probe.modelLoadState ? { modelLoadState: probe.modelLoadState } : {}) });
       let startedAt = this.startingSince.get(runtime.id);
       if (starting) {
         if (startedAt === undefined) {

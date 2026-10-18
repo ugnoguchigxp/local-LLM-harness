@@ -45,6 +45,7 @@ import {
   LarmEpochChangedError,
 } from "./errors";
 import { sendClientRequest } from "./client-transport";
+import { monitoringSnapshotSchema, monitoringEventsSchema, type MonitoringSnapshot, type MonitoringEvents } from "@larm/core";
 import { ClientMedia } from "./client-media";
 import { ClientAllocationApi } from "./client-allocation-api";
 import { ClientContextApi } from "./client-context-api";
@@ -67,6 +68,7 @@ export { LarmApiError, LarmClientConfigurationError, LarmEpochChangedError, Larm
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export type LarmClientOptions = {
+  monitorToken?: string;
   baseUrl: string;
   apiToken?: string;
   managementToken?: string;
@@ -202,6 +204,19 @@ export class LarmClient {
       );
     }
     return activity;
+  }
+
+  async getMonitoringSnapshot(signal?: AbortSignal): Promise<MonitoringSnapshot> {
+    const response = await this.request("/v1/monitoring/snapshot", { signal, ...(this.options.monitorToken ? { headers: { authorization: `Bearer ${this.options.monitorToken}` } } : {}) }, false, Math.min(5000, this.timeoutMs));
+    return this.parseJson(response, monitoringSnapshotSchema);
+  }
+
+  async getMonitoringEvents(options: { cursor?: string; limit?: number; signal?: AbortSignal } = {}): Promise<MonitoringEvents> {
+    const params = new URLSearchParams();
+    if (options.cursor !== undefined) params.set("cursor", options.cursor);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    const response = await this.request(`/v1/monitoring/events${params.size ? `?${params}` : ""}`, { signal: options.signal, ...(this.options.monitorToken ? { headers: { authorization: `Bearer ${this.options.monitorToken}` } } : {}) }, false, Math.min(5000, this.timeoutMs));
+    return this.parseJson(response, monitoringEventsSchema);
   }
 
   async allocate(request: AllocationRequestInput, options: RequestOptions = {}): Promise<PublicAllocation> {
@@ -627,7 +642,9 @@ export class LarmClient {
       acceptedStatuses,
       sendApiToken,
       requestCompression: this.options.requestCompression,
-      observeIdentity: (response) => this.observeIdentity(response),
+      // Monitoring carries its own epoch/reset contract; it must not silently
+      // rebase the identity used by an existing Allocation/Connection client.
+      observeIdentity: path.startsWith("/v1/monitoring/") ? () => {} : response => this.observeIdentity(response),
     });
   }
 

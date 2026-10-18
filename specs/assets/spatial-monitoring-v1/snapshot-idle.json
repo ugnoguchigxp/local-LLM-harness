@@ -1,0 +1,1161 @@
+{
+  "contractVersion": "larm-monitoring.v1",
+  "generatedAt": "2026-10-18T08:30:00.000Z",
+  "snapshotId": "snap-example-1",
+  "bootEpoch": "epoch-example",
+  "core": {
+    "startedAt": {
+      "status": "ok",
+      "source": "daemon-state",
+      "unit": "timestamp",
+      "kind": "gauge",
+      "observedAt": "2026-10-18T08:30:00.000Z",
+      "interval": null,
+      "counterEpoch": null,
+      "maxAgeMs": 10000,
+      "lastAttempt": {
+        "at": "2026-10-18T08:30:00.000Z",
+        "status": "ok",
+        "reasonCode": null
+      },
+      "value": "2026-10-18T08:10:00.000Z"
+    },
+    "uptimeMs": {
+      "status": "ok",
+      "source": "daemon-state",
+      "unit": "milliseconds",
+      "kind": "gauge",
+      "observedAt": "2026-10-18T08:30:00.000Z",
+      "interval": null,
+      "counterEpoch": null,
+      "maxAgeMs": 10000,
+      "lastAttempt": {
+        "at": "2026-10-18T08:30:00.000Z",
+        "status": "ok",
+        "reasonCode": null
+      },
+      "value": 1200000
+    },
+    "readiness": {
+      "status": "ok",
+      "source": "daemon-state",
+      "unit": "state",
+      "kind": "gauge",
+      "observedAt": "2026-10-18T08:30:00.000Z",
+      "interval": null,
+      "counterEpoch": null,
+      "maxAgeMs": 10000,
+      "lastAttempt": {
+        "at": "2026-10-18T08:30:00.000Z",
+        "status": "ok",
+        "reasonCode": null
+      },
+      "value": "ready"
+    },
+    "draining": {
+      "status": "ok",
+      "source": "daemon-state",
+      "unit": "boolean",
+      "kind": "gauge",
+      "observedAt": "2026-10-18T08:30:00.000Z",
+      "interval": null,
+      "counterEpoch": null,
+      "maxAgeMs": 10000,
+      "lastAttempt": {
+        "at": "2026-10-18T08:30:00.000Z",
+        "status": "ok",
+        "reasonCode": null
+      },
+      "value": false
+    },
+    "activeWorkloads": {
+      "status": "ok",
+      "source": "daemon-state",
+      "unit": "count",
+      "kind": "gauge",
+      "observedAt": "2026-10-18T08:30:00.000Z",
+      "interval": null,
+      "counterEpoch": null,
+      "maxAgeMs": 10000,
+      "lastAttempt": {
+        "at": "2026-10-18T08:30:00.000Z",
+        "status": "ok",
+        "reasonCode": null
+      },
+      "value": 0
+    },
+    "runtimes": [
+      {
+        "runtimeId": "example-runtime",
+        "nodeId": "example-node",
+        "backend": "systemd",
+        "declaredModelIds": [
+          "example-model"
+        ],
+        "status": {
+          "status": "ok",
+          "source": "observer",
+          "unit": "state",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": "HOT"
+        },
+        "healthOk": {
+          "status": "ok",
+          "source": "observer",
+          "unit": "boolean",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": true
+        },
+        "modelLoadState": {
+          "status": "unsupported",
+          "source": "observer",
+          "unit": "state",
+          "kind": "gauge",
+          "observedAt": null,
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "unsupported",
+            "reasonCode": "model_load_signal_absent"
+          }
+        },
+        "gpuIds": {
+          "status": "unsupported",
+          "source": "daemon-state",
+          "unit": "identifiers",
+          "kind": "gauge",
+          "observedAt": null,
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "unsupported",
+            "reasonCode": "runtime_device_mapping_absent"
+          }
+        },
+        "inFlightRequests": {
+          "status": "ok",
+          "source": "daemon-state",
+          "unit": "count",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 0
+        },
+        "preparingRequests": {
+          "status": "ok",
+          "source": "daemon-state",
+          "unit": "count",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 0
+        },
+        "forwardedRequests": {
+          "status": "ok",
+          "source": "daemon-state",
+          "unit": "count",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 0
+        },
+        "gateOccupiedSlots": {
+          "status": "ok",
+          "source": "daemon-state",
+          "unit": "count",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 0
+        },
+        "queuedRequests": {
+          "status": "ok",
+          "source": "daemon-state",
+          "unit": "count",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 0
+        },
+        "oldestQueueWaitMs": {
+          "status": "unavailable",
+          "source": "daemon-state",
+          "unit": "milliseconds",
+          "kind": "gauge",
+          "observedAt": null,
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "unavailable",
+            "reasonCode": "no_waiters"
+          }
+        },
+        "lastDecodeTokensPerSecond": {
+          "status": "unavailable",
+          "source": "daemon-state",
+          "unit": "tokens_per_second",
+          "kind": "gauge",
+          "observedAt": null,
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "unavailable",
+            "reasonCode": "no_completed_sample"
+          }
+        },
+        "lastFirstResponseMs": {
+          "status": "unavailable",
+          "source": "daemon-state",
+          "unit": "milliseconds",
+          "kind": "gauge",
+          "observedAt": null,
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "unavailable",
+            "reasonCode": "no_completed_sample"
+          }
+        }
+      }
+    ],
+    "providerInstances": {
+      "status": "ok",
+      "source": "daemon-state",
+      "unit": "instances",
+      "kind": "gauge",
+      "observedAt": "2026-10-18T08:30:00.000Z",
+      "interval": null,
+      "counterEpoch": null,
+      "maxAgeMs": 10000,
+      "lastAttempt": {
+        "at": "2026-10-18T08:30:00.000Z",
+        "status": "ok",
+        "reasonCode": null
+      },
+      "value": []
+    }
+  },
+  "nodes": [
+    {
+      "nodeId": "example-node",
+      "hostBootId": "hostboot-example",
+      "scope": "local_host",
+      "cpu": {
+        "logicalCores": {
+          "status": "ok",
+          "source": "proc-stat",
+          "unit": "count",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 32
+        },
+        "utilization": {
+          "status": "ok",
+          "source": "proc-stat",
+          "unit": "percent",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": {
+            "startAt": "2026-10-18T08:29:58.000Z",
+            "endAt": "2026-10-18T08:30:00.000Z",
+            "durationMs": 2000
+          },
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 0
+        },
+        "load1": {
+          "status": "ok",
+          "source": "proc-loadavg",
+          "unit": "tasks",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 0
+        },
+        "load5": {
+          "status": "ok",
+          "source": "proc-loadavg",
+          "unit": "tasks",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 0
+        },
+        "load15": {
+          "status": "ok",
+          "source": "proc-loadavg",
+          "unit": "tasks",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 0
+        },
+        "psi": {
+          "some": {
+            "avg10": {
+              "status": "ok",
+              "source": "proc-psi-cpu",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "avg60": {
+              "status": "ok",
+              "source": "proc-psi-cpu",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "avg300": {
+              "status": "ok",
+              "source": "proc-psi-cpu",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "total": {
+              "status": "ok",
+              "source": "proc-psi-cpu",
+              "unit": "microseconds",
+              "kind": "counter",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": "hostboot-example",
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": "0"
+            }
+          },
+          "full": {
+            "avg10": {
+              "status": "unsupported",
+              "source": "proc-psi-cpu",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": null,
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "unsupported",
+                "reasonCode": "cpu_full_not_defined"
+              }
+            },
+            "avg60": {
+              "status": "unsupported",
+              "source": "proc-psi-cpu",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": null,
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "unsupported",
+                "reasonCode": "cpu_full_not_defined"
+              }
+            },
+            "avg300": {
+              "status": "unsupported",
+              "source": "proc-psi-cpu",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": null,
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "unsupported",
+                "reasonCode": "cpu_full_not_defined"
+              }
+            },
+            "total": {
+              "status": "unsupported",
+              "source": "proc-psi-cpu",
+              "unit": "microseconds",
+              "kind": "counter",
+              "observedAt": null,
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "unsupported",
+                "reasonCode": "cpu_full_not_defined"
+              }
+            }
+          }
+        }
+      },
+      "memory": {
+        "memTotal": {
+          "status": "ok",
+          "source": "proc-meminfo",
+          "unit": "bytes",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 130148843520
+        },
+        "memAvailable": {
+          "status": "ok",
+          "source": "proc-meminfo",
+          "unit": "bytes",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 81530544128
+        },
+        "swapTotal": {
+          "status": "ok",
+          "source": "proc-meminfo",
+          "unit": "bytes",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 8589930496
+        },
+        "swapUsed": {
+          "status": "ok",
+          "source": "proc-meminfo",
+          "unit": "bytes",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 0
+        },
+        "swapIn": {
+          "status": "ok",
+          "source": "proc-vmstat",
+          "unit": "pages",
+          "kind": "counter",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": "hostboot-example",
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": "0"
+        },
+        "swapOut": {
+          "status": "ok",
+          "source": "proc-vmstat",
+          "unit": "pages",
+          "kind": "counter",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": "hostboot-example",
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": "0"
+        },
+        "pageSize": {
+          "status": "ok",
+          "source": "sysconf",
+          "unit": "bytes",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 4096
+        },
+        "psi": {
+          "some": {
+            "avg10": {
+              "status": "ok",
+              "source": "proc-psi-memory",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "avg60": {
+              "status": "ok",
+              "source": "proc-psi-memory",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "avg300": {
+              "status": "ok",
+              "source": "proc-psi-memory",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "total": {
+              "status": "ok",
+              "source": "proc-psi-memory",
+              "unit": "microseconds",
+              "kind": "counter",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": "hostboot-example",
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": "0"
+            }
+          },
+          "full": {
+            "avg10": {
+              "status": "ok",
+              "source": "proc-psi-memory",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "avg60": {
+              "status": "ok",
+              "source": "proc-psi-memory",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "avg300": {
+              "status": "ok",
+              "source": "proc-psi-memory",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "total": {
+              "status": "ok",
+              "source": "proc-psi-memory",
+              "unit": "microseconds",
+              "kind": "counter",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": "hostboot-example",
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": "0"
+            }
+          }
+        },
+        "oomKills": {
+          "status": "ok",
+          "source": "proc-vmstat",
+          "unit": "count",
+          "kind": "counter",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": "hostboot-example",
+          "maxAgeMs": 10000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": "0"
+        },
+        "aggregationPolicy": "do_not_add_host_vram_gtt"
+      },
+      "gpus": {
+        "status": "ok",
+        "source": "drm-sysfs",
+        "unit": "devices",
+        "kind": "gauge",
+        "observedAt": "2026-10-18T08:30:00.000Z",
+        "interval": null,
+        "counterEpoch": null,
+        "maxAgeMs": 10000,
+        "lastAttempt": {
+          "at": "2026-10-18T08:30:00.000Z",
+          "status": "ok",
+          "reasonCode": null
+        },
+        "value": [
+          {
+            "id": "pci-0000-c5-00-0",
+            "nodeId": "example-node",
+            "identity": {
+              "status": "ok",
+              "source": "drm-sysfs",
+              "unit": "identity",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": {
+                "busId": "0000:c5:00.0",
+                "vendorId": "0x1002",
+                "deviceId": "0x1586",
+                "driver": "amdgpu"
+              }
+            },
+            "utilization": {
+              "status": "ok",
+              "source": "drm-sysfs",
+              "unit": "percent",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "temperatures": [
+              {
+                "id": "edge",
+                "value": {
+                  "status": "ok",
+                  "source": "hwmon",
+                  "unit": "celsius",
+                  "kind": "gauge",
+                  "observedAt": "2026-10-18T08:30:00.000Z",
+                  "interval": null,
+                  "counterEpoch": null,
+                  "maxAgeMs": 10000,
+                  "lastAttempt": {
+                    "at": "2026-10-18T08:30:00.000Z",
+                    "status": "ok",
+                    "reasonCode": null
+                  },
+                  "value": 53
+                }
+              }
+            ],
+            "clocks": [
+              {
+                "id": "sclk",
+                "value": {
+                  "status": "ok",
+                  "source": "hwmon",
+                  "unit": "hertz",
+                  "kind": "gauge",
+                  "observedAt": "2026-10-18T08:30:00.000Z",
+                  "interval": null,
+                  "counterEpoch": null,
+                  "maxAgeMs": 10000,
+                  "lastAttempt": {
+                    "at": "2026-10-18T08:30:00.000Z",
+                    "status": "ok",
+                    "reasonCode": null
+                  },
+                  "value": 600000000
+                }
+              }
+            ],
+            "thermalThrottled": {
+              "status": "unsupported",
+              "source": "amdgpu-metrics",
+              "unit": "boolean",
+              "kind": "gauge",
+              "observedAt": null,
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "unsupported",
+                "reasonCode": "driver_metric_not_decoded"
+              }
+            },
+            "memoryRelationship": "shared_or_unknown",
+            "vramUsed": {
+              "status": "ok",
+              "source": "drm-sysfs",
+              "unit": "bytes",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "vramLimit": {
+              "status": "ok",
+              "source": "drm-sysfs",
+              "unit": "bytes",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 2147483648
+            },
+            "gttUsed": {
+              "status": "ok",
+              "source": "drm-sysfs",
+              "unit": "bytes",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 0
+            },
+            "gttLimit": {
+              "status": "ok",
+              "source": "drm-sysfs",
+              "unit": "bytes",
+              "kind": "gauge",
+              "observedAt": "2026-10-18T08:30:00.000Z",
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "ok",
+                "reasonCode": null
+              },
+              "value": 107374182400
+            },
+            "attributedActiveRequests": {
+              "status": "unsupported",
+              "source": "daemon-state",
+              "unit": "count",
+              "kind": "gauge",
+              "observedAt": null,
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "unsupported",
+                "reasonCode": "runtime_device_mapping_absent"
+              }
+            },
+            "attributedQueuedRequests": {
+              "status": "unsupported",
+              "source": "daemon-state",
+              "unit": "count",
+              "kind": "gauge",
+              "observedAt": null,
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "unsupported",
+                "reasonCode": "runtime_device_mapping_absent"
+              }
+            },
+            "oldestAttributedQueueWaitMs": {
+              "status": "unsupported",
+              "source": "daemon-state",
+              "unit": "milliseconds",
+              "kind": "gauge",
+              "observedAt": null,
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "unsupported",
+                "reasonCode": "runtime_device_mapping_absent"
+              }
+            },
+            "lastDecodeTokensPerSecond": {
+              "status": "unsupported",
+              "source": "daemon-state",
+              "unit": "tokens_per_second",
+              "kind": "gauge",
+              "observedAt": null,
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "unsupported",
+                "reasonCode": "runtime_device_mapping_absent"
+              }
+            },
+            "lastFirstResponseMs": {
+              "status": "unsupported",
+              "source": "daemon-state",
+              "unit": "milliseconds",
+              "kind": "gauge",
+              "observedAt": null,
+              "interval": null,
+              "counterEpoch": null,
+              "maxAgeMs": 10000,
+              "lastAttempt": {
+                "at": "2026-10-18T08:30:00.000Z",
+                "status": "unsupported",
+                "reasonCode": "runtime_device_mapping_absent"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "modelStorage": {
+    "status": "ok",
+    "source": "statfs",
+    "unit": "filesystems",
+    "kind": "gauge",
+    "observedAt": "2026-10-18T08:30:00.000Z",
+    "interval": null,
+    "counterEpoch": null,
+    "maxAgeMs": 120000,
+    "lastAttempt": {
+      "at": "2026-10-18T08:30:00.000Z",
+      "status": "ok",
+      "reasonCode": null
+    },
+    "value": [
+      {
+        "id": "model-fs-example",
+        "nodeId": "example-node",
+        "artifactIds": [
+          "example-model"
+        ],
+        "total": {
+          "status": "ok",
+          "source": "statfs",
+          "unit": "bytes",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 120000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 1535824654336
+        },
+        "availableToDaemon": {
+          "status": "ok",
+          "source": "statfs",
+          "unit": "bytes",
+          "kind": "gauge",
+          "observedAt": "2026-10-18T08:30:00.000Z",
+          "interval": null,
+          "counterEpoch": null,
+          "maxAgeMs": 120000,
+          "lastAttempt": {
+            "at": "2026-10-18T08:30:00.000Z",
+            "status": "ok",
+            "reasonCode": null
+          },
+          "value": 913504448512
+        }
+      }
+    ]
+  },
+  "coverage": [
+    {
+      "id": "larm_gateway",
+      "status": "available",
+      "since": "2026-10-18T08:20:00.000Z",
+      "through": "2026-10-18T08:30:00.000Z",
+      "reasonCode": null
+    },
+    {
+      "id": "music_jobs",
+      "status": "available",
+      "since": "2026-10-18T08:20:00.000Z",
+      "through": "2026-10-18T08:30:00.000Z",
+      "reasonCode": null
+    },
+    {
+      "id": "image_jobs",
+      "status": "available",
+      "since": "2026-10-18T08:20:00.000Z",
+      "through": "2026-10-18T08:30:00.000Z",
+      "reasonCode": null
+    },
+    {
+      "id": "control_operations",
+      "status": "available",
+      "since": "2026-10-18T08:20:00.000Z",
+      "through": "2026-10-18T08:30:00.000Z",
+      "reasonCode": null
+    },
+    {
+      "id": "kernel_events",
+      "status": "available",
+      "since": "2026-10-18T08:20:00.000Z",
+      "through": "2026-10-18T08:30:00.000Z",
+      "reasonCode": null
+    },
+    {
+      "id": "provider_internal_queue",
+      "status": "unsupported",
+      "since": null,
+      "through": null,
+      "reasonCode": "outside_larm_observation"
+    },
+    {
+      "id": "direct_provider_requests",
+      "status": "unsupported",
+      "since": null,
+      "through": null,
+      "reasonCode": "outside_larm_observation"
+    }
+  ],
+  "eventStream": {
+    "streamId": "epoch-example",
+    "retentionTargetMs": 600000,
+    "availableSince": "2026-10-18T08:20:00.000Z",
+    "previousBootHistory": false,
+    "continuity": "complete_since_start",
+    "droppedEventsTotal": "0",
+    "capacityEvents": 100000,
+    "capacityBytes": 67108864
+  }
+}

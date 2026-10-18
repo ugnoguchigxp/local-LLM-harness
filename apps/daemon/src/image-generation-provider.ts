@@ -11,11 +11,16 @@ export class ImageGenerationProvider {
   constructor(private readonly endpoint: string, private readonly variants: MediaVariantManager,
     private readonly fetchImpl: (input: URL, init: RequestInit) => Promise<Response> = fetch,
     private readonly verifyArtifact?: (id: string) => Promise<boolean>,
-    private readonly beginWorkload?: () => () => void) {}
+    private readonly beginWorkload?: () => () => void,
+    private readonly onMonitoringTransition?: (id: string, state: string, reason?: string) => void) {}
 
   async generate(input: ImageGenerationRequest, signal?: AbortSignal) {
+    const monitoringId = `image-${crypto.randomUUID()}`;
+    const observe = (state: string, reason?: string) => { try { this.onMonitoringTransition?.(monitoringId, state, reason); } catch { /* Observation only. */ } };
     const finish = this.beginWorkload?.();
-    try { return await this.generateTracked(input, signal); }
+    observe("started");
+    try { const result = await this.generateTracked(input, signal); observe(signal?.aborted ? "cancelled" : "completed"); return result; }
+    catch (e) { observe(signal?.aborted ? "cancelled" : "failed", "generation_failed"); throw e; }
     finally { finish?.(); }
   }
 
