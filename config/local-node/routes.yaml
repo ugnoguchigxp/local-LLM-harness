@@ -275,16 +275,17 @@ routes:
       - runtime: ruri-system-one
         purpose: primary
 
-  system-one-ruri-language:
-    capabilities: [ decision.sentence-language ]
-    explicitOnly: true
-    candidates:
-      - runtime: ruri-system-one
-        purpose: primary
   stt-granite:
     capabilities:
       - speech.stt
     explicitOnly: true
     candidates:
       - runtime: granite-asr
+        purpose: primary
+
+  game-decision-d1:
+    capabilities: [ decision.game ]
+    explicitOnly: true
+    candidates:
+      - runtime: d1-system-one
         purpose: primary

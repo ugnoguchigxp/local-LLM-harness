@@ -71,6 +71,28 @@ payload_digest() {
   ) | sha256sum | awk '{print $1}'
 }
 
+verify_release_gate() {
+  local root="$1" actual_inputs
+  if [[ "${test_mode}" == "1" && "${LARM_RELEASE_SKIP_GATE:-0}" == "1" ]]; then return; fi
+  [[ -f "${root}/release-gate.json" && ! -L "${root}/release-gate.json" ]] \
+    || fail "candidate has no mandatory release verification receipt"
+  jq -e --arg commit "${commit}" --arg bunVersion "$("${bun_bin}" --version)" '
+    .schemaVersion == 1 and .kind == "larm-release-gate" and .passed == true
+    and .sourceCommit == $commit and .bunVersion == $bunVersion
+    and .sourceDirty == false
+    and .productionAudit.status == "passed"
+    and (.lockfileSha256 | test("^[a-f0-9]{64}$"))
+    and (.inputDigest | test("^[a-f0-9]{64}$"))
+    and ([.checks[].id] == ["install","audit","check","coverage"])
+    and all(.checks[]; .status == "passed")
+  ' "${root}/release-gate.json" >/dev/null || fail "mandatory release verification failed"
+  actual_inputs="$(cd "${root}" && "${bun_bin}" -e 'import { releaseInputDigest } from "./scripts/check-release"; console.log(await releaseInputDigest(process.cwd()));')"
+  [[ "$(jq -er .inputDigest "${root}/release-gate.json")" == "${actual_inputs}" ]] \
+    || fail "release inputs changed after verification"
+  [[ "$(jq -er .lockfileSha256 "${root}/release-gate.json")" == "$(sha256sum "${root}/bun.lock" | awk '{print $1}')" ]] \
+    || fail "release lockfile changed after verification"
+}
+
 candidate="${candidate_root}/${commit}"
 if [[ -e "${candidate}" || -L "${candidate}" ]]; then
   [[ -d "${candidate}" && ! -L "${candidate}" && -f "${candidate}/release-manifest.json" ]] \
@@ -80,6 +102,18 @@ if [[ -e "${candidate}" || -L "${candidate}" ]]; then
   safe_tree "${candidate}" || fail "existing candidate contains an unsafe filesystem entry"
   expected="$(jq -er .payloadSha256 "${candidate}/release-manifest.json")"
   [[ "$(payload_digest "${candidate}")" == "${expected}" ]] || fail "existing candidate payload digest changed"
+  verify_release_gate "${candidate}"
+  # Reused candidates must also pass the current advisory database before signing.
+  if [[ "${test_mode}" != "1" || "${LARM_RELEASE_SKIP_GATE:-0}" != "1" ]]; then
+    (
+      cd "${candidate}"
+      "${bun_bin}" -e 'import { classifyAudit } from "./scripts/check-release";
+        const child = Bun.spawn([process.execPath, "audit", "--json", "--audit-level=high"], {stdout:"pipe",stderr:"inherit"});
+        const stdout = await new Response(child.stdout).text();
+        const result = classifyAudit({exitCode:await child.exited,stdout});
+        if (result.status !== "passed") { console.error(result.code); process.exit(1); }'
+    )
+  fi
 else
   staging="$(mktemp -d "${candidate_root}/.building-${commit}.XXXXXX")"
   trap 'chmod -R u+rwX -- "${staging:-}" 2>/dev/null || true; rm -rf -- "${staging:-}" "${request_tmp:-}"' EXIT
@@ -92,12 +126,15 @@ else
   else
     (
       cd "${staging}"
-      "${bun_bin}" install --frozen-lockfile >&2
-      "${bun_bin}" run check >&2
+      LARM_RELEASE_GATE_COMMIT="${commit}" "${bun_bin}" run check:release >release-gate.json
+      verify_release_gate "${staging}"
       [[ -d node_modules && ! -L node_modules ]] || fail "dependency tree is unsafe"
       find -P node_modules -mindepth 1 -depth -delete
       rmdir node_modules
       "${bun_bin}" install --frozen-lockfile --production >&2
+      verify_release_gate "${staging}"
+      [[ ! -L coverage ]] || fail "coverage directory is unsafe"
+      rm -rf -- coverage
       if find -P node_modules -type d -name ws -print -quit | grep -q .; then
         fail "production dependency tree contains a disallowed transport package"
       fi

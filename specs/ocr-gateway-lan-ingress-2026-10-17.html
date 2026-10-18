@@ -1,0 +1,176 @@
+<article lang="ja">
+  <h1>Eumenes向けOCR gatewayのLAN入口と接続契約</h1>
+  <p>
+    2026年10月17日。既存の共通トークン認証を維持し、Macで動くEumenes backend向けに
+    OCR専用のLAN中継を正式配置した。現在保存するgateway originは
+    <code>http://192.168.0.130:18794</code>。パスや末尾スラッシュを付けない。
+    gnosisからこのLAN入口を通す実処理は検証済みであり、Macからの到達・Eumenes設定保存は未確認である。
+  </p>
+  <section id="decision">
+    <h2>既存経路の調査と採用した構成</h2>
+    <p>
+      既存の正式gatewayはloopbackで待ち受けていた。共通トークンで状態照会は成功し、workerはstopped、
+      generation 7のままだった。既存資料にはMac向けSSH
+      forwardingの案内があるが、配備済みの中継入口はなかった。
+      MacへSSHで入る方法は利用できないため、Linux側に常駐する小さい中継を追加した。
+    </p>
+    <pre><code>MacのEumenes backend
+  → LAN ingress（192.168.0.130、現在のport allocation）
+  → 登録済みocr-host gateway（loopback、配備設定から解決）
+  → LARMのlease・オンデマンド起動
+  → OCR worker（loopback）</code></pre>
+    <p>
+      service
+      identityは<code>ocr-host</code>である。18794は今回の配備で観測した入口の割当値であり、
+      workerやserviceの識別子、自動検出の定数ではない。installerは
+      <code>larm-ocr-host-gateway.service</code>のEnvironmentからgateway設定ファイルを検出し、
+      service IDとloopback待受を検証する。中継も要求ごとにこの設定のgateway portを解決する。
+      leaseが返す内部worker endpointは通常の接続先にしない。
+    </p>
+    <p>
+      新しいunitは<code>larm-ocr-host-ingress.service</code>。現在のRFC1918アドレスだけで待ち受け、
+      UFWは<code>192.168.0.0/24</code>からそのアドレス・TCP
+      portへの規則を一つ追加した。 IPv6や全interfaceでは待ち受けない。既存のLARM
+      daemon、gateway、workerのrelease・設定・認証は変更していない。
+      gatewayの再起動に中継が追従する依存関係を設定した。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>Eumenesが利用する確定API契約</h2>
+    <table>
+      <caption>
+        すべてgateway originからの相対パス
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">操作</th>
+          <th scope="col">要求と応答</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>GET /hosting/status</code></th>
+          <td>
+            共通Bearer認証。200のJSONに<code>id: ocr-host</code>、state、generationが入る。workerを起動しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /api/analyze</code></th>
+          <td>
+            multipartのfileを一つだけ送る。画像は200で同期結果、動画は202でidとjob状態を返す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>GET /api/jobs/{id}</code></th>
+          <td>同じBearerで進捗と結果を取得する。別ownerのjobは404。</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>POST /api/jobs/{id}/cancel</code></th>
+          <td>
+            同じBearerで協調的に取り消す。取消後の状態をjob照会で確認する。別ownerの取消は404。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      認証値はbackend内で既存の<code>LARM_API_TOKEN</code>、未設定時は
+      <code>LARM_CONTROL_TOKEN</code>から解決し、AuthorizationのBearerで送る。
+      配備gatewayが検証する既存のLARM共通トークンと一致する必要がある。新しいキー発行、OCR専用キーの入力、
+      LLM claim tokenやExcalidraw専用資格情報の流用は不要である。トークンなし・不正トークンは401。
+      値をブラウザ、URL、ログ、会話、検証記録へ出してはならない。
+    </p>
+    <p>
+      入口は現在のEumenes設定が受けるHTTP originなので、Eumenes側のAPI実装変更やControl
+      prefix対応は不要。
+      通常のbackend要求にはOriginを付けない。Originがある場合は入口のoriginと完全一致する必要があり、
+      Hostも入口のauthorityに限定する。中継は検査後に外側のHost・Origin・cookie・転送先指定headerを渡さず、
+      内側のHostをloopback gatewayに合わせる。入力本文、HTTP
+      status、JSON結果を維持し、redirectは追わない。 中継が公開するのは表の4操作だけで、query
+      string、単体画面、session認証、内部lifecycle APIは公開しない。
+    </p>
+    <p>
+      既存gatewayは共通トークンを既存の業務ownerへ変換する。この対応を変えず、任意のowner
+      headerやcookieは受け継がない。
+      Eumenes内部の利用者ごとの原本・結果への権限確認も引き続きEumenes backendで行う。
+      既存の16MiB入力上限、30秒以内の動画、毎秒2枚・最大60枚、処理後のアップロード削除、
+      owner別保存、job保持、自動停止の規則を変更しない。
+    </p>
+  </section>
+  <section id="operations">
+    <h2>配備・確認・切り戻し</h2>
+    <p>
+      実装は<code>deploy/local-node/scripts/hosted-ocr-ingress.ts</code>、初回installerは
+      <code>install-ocr-ingress.py</code>。BunでbundleをGit外へ作り、rootでdry-runし、
+      検出interface・アドレス・CIDR・port・既存gateway設定・bundle digestをreviewしてから適用する。
+      applyにはdry-runのconfirmationが必要で、途中でnetwork・firewall・gateway設定・bundleが変わると拒否する。
+      既存の中継がある場合は初回installerを再適用しない。
+    </p>
+    <pre><code>bun build --target=bun deploy/local-node/scripts/hosted-ocr-ingress.ts --outfile /tmp/larm-ocr-ingress.js
+sudo python3 deploy/local-node/scripts/install-ocr-ingress.py --bundle /tmp/larm-ocr-ingress.js
+sudo python3 deploy/local-node/scripts/install-ocr-ingress.py --bundle /tmp/larm-ocr-ingress.js --apply --expected-digest REVIEWED_CONFIRMATION
+python3 deploy/local-node/scripts/verify-ocr-ingress.py</code></pre>
+    <p>
+      最後の確認は既定で状態照会と拒否検証だけを行う。画像・動画の実処理は
+      <code>--exercise --image SYNTHETIC_IMAGE --video SYNTHETIC_VIDEO</code>で明示する。
+      共通トークンは保護されたローカル環境ファイルから読み、引数や標準出力へ出さない。
+      設定と適用記録は<code>/etc/larm-local-services/ocr-ingress/</code>、
+      固定bundleは<code>/opt/larm-local-services/releases/ocr-ingress/</code>に置く。
+    </p>
+    <p>
+      途中失敗時は追加したunitとfirewall規則を取り消す。適用後の切り戻しはrootで次の順に行う。
+      まず<code>installation.json</code>のfirewallRuleが今回追加した規則であることを照合し、
+      <code>systemctl disable --now larm-ocr-host-ingress.service</code>で入口を停止する。
+      <code>ufw --force delete allow</code
+      >にそのfirewallRuleを引数として渡し、当該規則だけを削除する。
+      次に中継のunitとconfig.json・installation.jsonを外してdaemon-reloadする。
+      gateway・worker・LARM daemonは停止や再登録の対象にしない。
+    </p>
+    <aside>
+      <p>
+        このoriginは現在のLAN配備値である。DHCPでアドレスが変わった場合や別LANへ移った場合は、
+        新しいnetworkをreviewし、旧中継の規則と設定を切り戻したうえで再配備する。
+        自動的に別networkへ公開しない。Eumenesへは再配備後に確定したoriginを渡す。
+      </p>
+    </aside>
+  </section>
+  <section id="verification">
+    <h2>検証結果と残る受入</h2>
+    <p>
+      <code>bun run check</code
+      >は成功した。新しい中継の5試験をdeployment検査へ組み込み、 本体853件、tooling
+      30件、deploymentのBun試験70件、関連するPython・shell検査も成功した。
+      <code>bun run docs:check:fix</code>も診断なしで完了した。
+      適用失敗時に当該unit・firewall規則だけを取り消す試験を含む。
+    </p>
+    <p>
+      状態確認は正式LAN入口から実施し、共通トークン200、未認証・不正トークン・fixtureのLLM claim
+      tokenは401。
+      不正Host・Originは403、内部lifecycleパスは404。状態照会の前後でstopped、generation
+      7を維持した。
+      MacへのSSH接続は利用できないため、接続元はgnosisである。Macと同じ接続元の検証に読み替えない。
+    </p>
+    <p>
+      正式LAN入口から合成日本語画像の同期200、短い合成動画の202・job完了・文字結果、取消を確認した。
+      正式workerに一時的な別ownerの合成保存jobを置き、共通トークンでの照会と取消が両方404、
+      記録の内容が不変であることを確認し、検証記録を削除した。
+      複数ownerの実際の資格情報による変換はfixture gateway試験で確認した。
+      物体認識workerは起動していない。通常のidle設定を短縮せず、OCRの自動停止、停止後の完了結果再取得、再停止を確認した。generationは7から初回起動で8、結果再取得に伴う再起動で9となり、最終状態はstoppedだった。
+    </p>
+    <p>
+      正式gatewayを同じreleaseで再起動して中継の追従復帰も確認した。再起動後の状態照会は200、
+      workerはstopped、generation 9を維持し、OCRと物体認識の両workerのunitはinactiveだった。
+      OCRの残存アップロードは0件だった。 MacのEumenes
+      backendからの到達と設定保存は残作業である。次のプロンプトで依頼する。
+      ブラウザやMac上の別containerからの成功だけをbackendと同じ接続元の成功として扱わない。
+    </p>
+    <pre>EumenesのOCR接続先を、LARM側で正式配備したgateway origin http://192.168.0.130:18794 に設定してください。パスや末尾スラッシュは付けません。現状のorigin形式を維持しており、API実装の変更は不要です。
+
+認証は既存backend内のLARM_API_TOKEN、未設定時はLARM_CONTROL_TOKENをBearerとして使ってください。OCR専用キー、LLM claim token、Excalidraw専用資格情報は使いません。トークン値を画面、URL、会話、ログ、報告へ出さないでください。
+
+まずMacのEumenes backendと同じ実行環境・接続元から GET /hosting/status を実行し、共通トークンで200とJSONのid=ocr-hostを確認してください。トークンなし・不正トークンは401、状態確認前後のstate・generationが同じでworkerが起動しないことも確認してください。結果は値を除いたstatus、id、state、generationで報告してください。
+
+接続が成功したら、既存の設定保存経路でこのoriginを保存してください。画像は POST /api/analyze にmultipartのfileを一つ送り同期200、短い動画は同じAPIで202、GET /api/jobs/{id} で進捗・結果、POST /api/jobs/{id}/cancel で取消という既存契約です。必要な実機検証では合成fixtureを使い、利用者ごとの原本・結果への権限確認を維持してください。
+
+LARM側ではこの入口の認証・状態確認と画像・動画・取消をgnosisから検証済みです。Macからの到達・Eumenesでの保存と利用を確認し、fixture、LARM実機、Mac実機の結果と残作業を分けて報告してください。接続できなければURLを推測で変更せず、同じbackend実行環境からの接続エラーとHTTP statusを秘密なしで報告してください。</pre>
+  </section>
+</article>

@@ -89,6 +89,20 @@ userが読める証明書と秘密鍵の絶対pathを`/etc/larm/larm.env`の`LAR
 
 ## Apply
 
+リリース候補の検証には`bun run check:release`を使用します。固定インストール、全依存とproduction依存の
+High以上の監査、repository検査、重要経路coverageを同じ入口で実行します。通常の`bun run check`だけでは
+release検証の完了にはなりません。標準出力はJSONの検査receipt、各検査の出力は標準エラーです。
+
+```bash
+bun run check:release > /tmp/larm-release-gate.json
+```
+
+receiptは基準commit、未commit変更の有無、Bun version、lockfileとsource全体のSHA-256、各検査の結果を
+保持します。開発中のdirty worktreeも検査できますが、そのreceiptはcleanなrelease artifactの証跡には
+流用できません。builderは検証したsourceと候補の一致を確認し、receiptを候補内へ保存します。receiptのない
+旧候補は作り直してください。既存候補を再利用する場合も、その時点の依存監査に成功する必要があります。
+Provider環境の固定とSLO v2は[実装計画書](../../specs/dependency-reproducibility-and-slo-improvement-plan-2026-10-16.html)の後続作業です。
+
 Before overwriting any installed unit, create an operator-owned backup outside the repository.
 The plan rejects symlinked/non-regular units; apply copies the profile's LARM/Provider units and
 the current release pointer without copying credential contents.

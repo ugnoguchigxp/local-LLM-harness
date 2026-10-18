@@ -1,6 +1,14 @@
 <article lang="ja">
   <h1>用途別プロファイルを維持するContextStillとStrixのProvider共有</h1>
   <aside>
+    <p>
+      2026-10-16の更新: 文章日英判定Providerは廃止し、稼働版にも反映した。詳細は<a
+        href="./ruri-sentence-language-retirement-2026-10-16.html"
+        >廃止決定</a
+      >を参照する。
+    </p>
+  </aside>
+  <aside>
     本稿は共有基盤の初回検証。後続指示による実行方針は<a
       href="./eumenes-request-preemption-2026-10-13.html"
       >Eumenesの要求ごとのContextStill中断</a
@@ -50,9 +58,7 @@
         </tr>
         <tr>
           <th scope="row">共通Provider</th>
-          <td colspan="2">
-            Granite ASR、日本語VOICEVOX、英語KittenTTS、E5 embedding、Ruri sentence-language
-          </td>
+          <td colspan="2">Granite ASR、日本語VOICEVOX、英語KittenTTS、E5 embedding</td>
         </tr>
         <tr>
           <th scope="row">用途別判定器</th>

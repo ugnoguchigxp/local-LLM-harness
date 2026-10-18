@@ -12,7 +12,7 @@ runtimeReleases:
   ruri-system-one-current:
     runtime: ruri-system-one
     artifacts: [ ruri-v3-30m ]
-    providerConfigRevision: ruri-ort-int8-attitude-and-sentence-language-aa0ec854481c
+    providerConfigRevision: ruri-ort-int8-speaking-attitude-only-v1
     estimatedMemoryGB: 1
     healthPath: /health
     default: true
@@ -257,5 +257,13 @@ runtimeReleases:
       - granite-speech-4.1-2b-q8
     providerConfigRevision: transcribe-5d66f602-granite-q8-vulkan-16t-ctx512-12s-v1
     estimatedMemoryGB: 3.5
+    healthPath: /health
+    default: true
+
+  d1-game-current:
+    runtime: d1-system-one
+    artifacts: [ d1-3b ]
+    providerConfigRevision: d1-051bcc464b01-native-bf16-rocm-gfx1151-v1
+    estimatedMemoryGB: 10
     healthPath: /health
     default: true

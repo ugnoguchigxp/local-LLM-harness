@@ -1,0 +1,447 @@
+<article lang="ja">
+  <h1>LARMプロジェクト多角評価：2026年10月16日</h1>
+  <p>
+    総合評価は<strong>79点／100点</strong>（重み付き計算値79.42）。要求されたAgent ProfileとProvider
+    subsetを実行へ結び付ける制御、資源調停、観測性が強い。単一の信頼済みLinuxホストで使う実行基盤として価値がある。一方、今回の依存監査と重要経路のcoverage
+    gateは失敗したため、現在の作業ツリーをリリース可能とは判定しない。
+  </p>
+  <section id="scope">
+    <h2>評価対象と方法</h2>
+    <dl>
+      <dt>評価日</dt>
+      <dd><time>2026-10-16</time>（日本時間）</dd>
+      <dt>基準HEAD</dt>
+      <dd><code>f3e50e2148df5212bec5cfcd871a6c17014d9799</code></dd>
+      <dt>実際の対象</dt>
+      <dd>
+        既存の未コミット変更を含む作業ツリー。Ruri言語判定の廃止等の変更があり、HEAD単体の検証結果ではない。失敗を特定の変更の原因と断定していない。
+      </dd>
+      <dt>環境</dt>
+      <dd>既存Linux開発環境、Bun 1.4.0、Python 3.14.4。新しいホストへの導入試験ではない。</dd>
+      <dt>確認範囲</dt>
+      <dd>
+        製品コンセプト正本Page、README、設定、core・backend・daemon・clientの主要処理、運用スクリプト、CI、関連仕様、全体検査、coverage、依存監査。
+      </dd>
+      <dt>変更範囲</dt>
+      <dd>
+        本評価書とSpec catalogのみ。実装、設定、依存関係、稼働サービスの修正・更新は行っていない。
+      </dd>
+    </dl>
+    <p>
+      全体検査は16:28、coverage検査は16:29（日本時間）に完了した。評価中にも別作業によるd1関連のソース・設定追加を検出したため、その後の追加差分に検査成功を適用しない。この文書は検査時点の観測記録であり、更新され続ける作業ツリー全体の合格証明ではない。
+    </p>
+    <p>
+      製品の目的と責務は<a href="./concept.html">コンセプト正本への案内</a
+      >が示すPage「LARMの全体コンセプト」も読み、照合した。SAAA・ContextStillの実装や実機状態は今回検査していない。推論やモデル切替を発生させるlive
+      smokeは実行していない。
+    </p>
+    <p>
+      点数は、単一Linuxホスト向け制御基盤としての適合性、実装の裏づけ、残る不足を評価者が判断したもの。統計的な品質保証値や市場順位ではない。90点台は強い実装と検証、80点台は実用性が高く不足が明確、70点台は有用だが重要な改善余地、60点台以下は用途の限定または証拠不足を表す。総合点は各点数と重みの積の合計を100で割った値で、リリース必須条件の代用にしない。分散schedulerやHAは初期対象外のため、その不在自体を減点していない。
+    </p>
+  </section>
+  <section id="scores">
+    <h2>観点別評点</h2>
+    <table>
+      <caption>
+        各100点、重みの合計100。性能の実証と計測機構を分けて評価する。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">観点</th>
+          <th scope="col">評点</th>
+          <th scope="col">重み</th>
+          <th scope="col">根拠と主な減点理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">目的・利用価値</th>
+          <td>91</td>
+          <td>8</td>
+          <td>
+            利用側からport、起動方法、モデル交換、資源不足の判断を隠し、必要な能力を契約として提供する。Profile単位の要求は実際の利用に合う。利用効果の定量的な集約は不足。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">アーキテクチャ</th>
+          <td>84</td>
+          <td>8</td>
+          <td>
+            core、backends、daemon、clientを分離し、route、runtime、revision、instanceを区別する。境界検査は相対import中心で、workspace
+            package経由の依存まで網羅しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ライフサイクル・資源制御</th>
+          <td>90</td>
+          <td>10</td>
+          <td>
+            Allocation、参照共有、TTL、swap group、優先度、fresh
+            telemetry、起動回収を実装。要求が解決するruntimeを基準に容量判断する。全構成の実機受入は今回未確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">正しさ・競合・障害対応</th>
+          <td>86</td>
+          <td>8</td>
+          <td>
+            queue、cancel、drain、quarantine、preemption、冪等なreleaseと再起動時照合を扱う。状態を持つ部品の相互作用が多く、長期運転での保証は別途必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">API・利用側との契約</th>
+          <td>80</td>
+          <td>8</td>
+          <td>
+            OpenAPI、型付きclient、公開alias、Provider別短期token、SSE検証を備える。旧APIと複数世代の発見API、固定ASR互換経路が併存し、正しい入口の説明に不整合がある。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">テスト・品質管理</th>
+          <td>85</td>
+          <td>10</td>
+          <td>
+            主要843件に加えてtooling、Python、deployment、shell統合試験が成功。全体coverageは高いが、重要経路の基準未達が3項目あり、現行gateは不合格。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">安全性・権限設計</th>
+          <td>76</td>
+          <td>8</td>
+          <td>
+            管理token分離、scope付き署名token、許可manifest、入力制限、暗号化監査、systemd制限がある。local-nodeは匿名Connectionと認証なしService
+            Harnessを明示的に許す構成で、信頼するLAN境界への依存が強い。実機のnetwork境界は今回未監査。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">依存管理・再現性</th>
+          <td>60</td>
+          <td>7</td>
+          <td>
+            Bun lock、外部source revision、checksum、部分的なPython lockを備え、frozen
+            installは成功。開発依存1パッケージにHigh
+            advisoryが2件あり、Python環境の固定方式も一様ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">配備・運用・復旧</th>
+          <td>82</td>
+          <td>8</td>
+          <td>
+            versioned
+            release、署名、payload検証、原子的切替、rollback、network収束の仕組みと隔離試験がある。CIとrelease
+            builderで自動検証の集合が一致せず、全体のstable証跡も未集約。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">観測性・原因分析</th>
+          <td>90</td>
+          <td>6</td>
+          <td>
+            healthとsemantic
+            readinessの分離、Prometheus、OpenTelemetry、request相関、queue・起動・上流応答の区間計測を実装。collector障害や遅いreaderもテスト対象。継続運用での活用状況は未確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">性能・容量の実証</th>
+          <td>65</td>
+          <td>6</td>
+          <td>
+            JSON／SSE／音声の単独・混合測定、identity照合、比較ツールがある。しかしSLO
+            manifestはuncalibratedでseriesも空。個別の過去測定から現在の全Profileのp95や容量を保証できない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">文書・仕様の整合性</th>
+          <td>70</td>
+          <td>5</td>
+          <td>
+            評価前141件のHTMLと分類catalogを機械検査し成功。正本Pageと実装証跡を区別する方針も良い。client説明の新旧混在、古いstable表のモデル固定記述、commissioningの状態要約に不一致が残る。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">導入容易性・移植性</th>
+          <td>58</td>
+          <td>4</td>
+          <td>
+            Linuxという対象は明確。ただしlocal-nodeのunitにはユーザー名、Bunの絶対path、特定hardware・保存先への依存が多い。別Linuxホストでの最小構成導入を今回実証できていない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">保守性・継続開発</th>
+          <td>67</td>
+          <td>4</td>
+          <td>
+            責務分割は進む一方、gatewayは1,378行、接続controllerは1,297行。AI、音声、Context、画像、音楽ライブラリ、一般サービスまで保守範囲が広い。Git上のauthor表記が集中し、引継ぎや共同保守の証拠は弱い。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="verification">
+    <h2>今回実行した検査</h2>
+    <table>
+      <caption>
+        作業ツリーでの実行結果。外部CIの実行結果ではない。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">検査</th>
+          <th scope="col">結果</th>
+          <th scope="col">確認内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>bun install --frozen-lockfile</code></th>
+          <td>成功</td>
+          <td>107 installs、116 packagesを確認。変更なし。</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>bun run check</code></th>
+          <td>成功</td>
+          <td>
+            source-only、shell・Python・systemd、文書、API
+            consumer、module境界、型検査、主要試験、運用試験。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">主要アプリ・パッケージ試験</th>
+          <td>843成功、0失敗</td>
+          <td>133ファイル、6,325 assertions。coverage付きの再実行でも843件成功。</td>
+        </tr>
+        <tr>
+          <th scope="row">補助・配備試験</th>
+          <td>成功</td>
+          <td>
+            tooling 24件、speech関連Bun 16件、deployment Bun 65件、複数のPython・shell
+            suite。重複があるため主要試験と単純合算しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>bun run test:coverage</code></th>
+          <td>失敗、終了値1</td>
+          <td>テスト本体は全成功。coverageの基準比較が3項目で不合格。</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>bun audit --audit-level=high</code></th>
+          <td>失敗、終了値1</td>
+          <td><code>brace-expansion@5.0.9</code>にHigh advisory 2件。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      coverageのBun表示は全体で関数92.73%、行93.91%。これは今回instrumentされたファイルの集計であり、全リポジトリやPython実行環境の網羅率ではない。LCOVのcountを合算する方式では関数3,052／3,354、行27,671／29,458となり、Bun表示と集計方式が異なる。重要経路gateの判定は各対象のLCOV値と設定された基準を使う。
+    </p>
+    <table>
+      <caption>
+        coverage gateの不合格項目
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象・指標</th>
+          <th scope="col">実測</th>
+          <th scope="col">要求値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Agent Connection controller：関数</th>
+          <td>95.93%</td>
+          <td>97.27%以上</td>
+        </tr>
+        <tr>
+          <th scope="row">Agent Connection controller：行</th>
+          <td>97.82%</td>
+          <td>98.65%以上</td>
+        </tr>
+        <tr>
+          <th scope="row">daemon HTTP composition group：行</th>
+          <td>80.72%</td>
+          <td>80.99%以上</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="strengths">
+    <h2>特に評価できる設計</h2>
+    <ol>
+      <li>
+        <strong>要求を起点に実体を確定する。</strong>Profile、Provider
+        subset、route、runtime、revision、instanceの分離により、現在動くモデルと次の要求の意図を混同しにくい。停止中のProviderを直ちに障害と見なさない考え方は需要駆動の制御に適している。
+      </li>
+      <li>
+        <strong>資源不足と取消を契約として扱う。</strong>静的なメモリ宣言だけでなくfresh
+        telemetry、共有参照、排他group、待機・拒否・優先度を組み合わせる。cancel、timeout、切断、起動失敗を正常系と同じAPI設計に含めている。
+      </li>
+      <li>
+        <strong>運用操作の破壊範囲を限定する。</strong>許可済み成果物とunitだけを扱い、immutable
+        releaseのidentity、署名、rollbackを設計する。隔離試験で失敗・再実行・復旧まで扱っている。
+      </li>
+      <li>
+        <strong>計測結果を誇張しない。</strong>SSEのdelta数とtoken数、JSONのfirst
+        byteとTTFT、推定値と未取得値を区別する。collector障害が推論へ波及しない配慮もある。
+      </li>
+    </ol>
+    <p>
+      主要4領域の追跡済みTypeScript非テストソースは39,366行、対応テストソースは26,386行。行数だけで品質は決まらないが、実装と試験への投資は確認できる。176
+      commitのauthor集計は175件と1件の2表記に集中しており、表記から実人数やレビュー体制を断定していない。
+    </p>
+  </section>
+  <section id="findings">
+    <h2>優先して改善する事項</h2>
+    <table>
+      <caption>
+        優先度は今回の評価上のもの。修正は実施していない。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">優先度</th>
+          <th scope="col">所見</th>
+          <th scope="col">対応と完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">P1</th>
+          <td>
+            開発用依存にHigh advisory 2件。経路はspec-html → html-validate → glob → minimatch →
+            brace-expansion。GHSA-qhr7-859c-m2p7とGHSA-6j4f-fj2g-mc7pを監査結果と公開advisoryで照合した。今回の証拠は開発ツールの依存であり、daemonへの外部到達可能な攻撃経路は証明していない。
+          </td>
+          <td>
+            上流更新または互換性を確認した依存解決で両advisoryを解消する。5.xでは5.0.11が両修正を含む候補。frozen
+            install、audit、文書検査、全体検査を通す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P1</th>
+          <td>
+            重要経路のcoverageが既存baselineを下回る。差は小さくても、プロジェクトが自ら設定した退行検知に失敗している。
+          </td>
+          <td>
+            未実行のdrain待機、終了・拒否等の分岐について重要な振る舞いを検証する。環境差も確認し、基準を下げて通すことを通常対応にしない。coverage
+            gateの3項目を合格させる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P1</th>
+          <td>
+            検証集合が異なる。CIはaudit、check、coverageを要求する一方、package.jsonのcheckはaudit・coverageを含めず、build-larm-release.shの通常buildもcheckのみ実行する。
+          </td>
+          <td>
+            CIとrelease
+            builderが同じ必須gateを実行するか、同一commitのCI成功証跡をreleaseに結び付ける。audit失敗・coverage失敗の候補がrelease候補として通過しないことを確認する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P2</th>
+          <td>
+            SLO manifestはstatus: uncalibrated、series:
+            []。stable表とcommissioning要約は古い観測が残る。
+          </td>
+          <td>
+            代表ProfileとProvider
+            subsetごとにcold／warm、foreground／background、混合負荷、取消・再起動を実測する。release・config・fixtureを固定し、p95、拒否率、復旧時間、参照漏れを校正する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P2</th>
+          <td>
+            公開契約の説明に不整合がある。packages/client/README.mdは31行で新規consumerがConnection
+            lifecycleを使わないとし、67行ではContextStillの標準接続をselectorとclaimとしている。catalogのcommissioning保留要約と本文の部分完了も一致しない。
+          </td>
+          <td>
+            新規consumer向けの正本手順を一つに定め、互換例を分離する。Page、README、catalog、実装契約で採用状態を同期する。全Providerの完了と部分完了を明示する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P2</th>
+          <td>
+            境界checkerは非相対specifierを除外し、coreからbackendsへの禁止も検査しない。現在の実装違反を証明したものではなく、将来の逆依存を防ぐgateの不足。
+          </td>
+          <td>
+            workspace
+            packageの解決を含めた依存規則を定義し、coreからbackend・daemonへの逆依存とpackage間cycleを検出する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P2</th>
+          <td>
+            重要controllerが大きく、音楽ライブラリ・検索・タグなど実行基盤以外の意味も保守対象へ広がる。
+          </td>
+          <td>
+            状態の所有者と終了条件を明示し、変更時に必要な契約を追跡できる単位へ分割する。成果物の安全な保持とApp固有ライブラリ機能の境界を見直す。単純な行数削減を完了条件にしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P3</th>
+          <td>
+            local-node配備定義は特定ユーザーとpathを含む。Linux向けであることは意図された範囲であり、問題は別のLinux環境での再現性。
+          </td>
+          <td>
+            runtime user、Bun path、保存rootを入力化し、最小の2
+            Provider構成で別ホストへ導入・更新・rollbackする手順を検証する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="security-and-scope">
+    <h2>利用条件による判断の違い</h2>
+    <p>
+      信頼済みLANと既知consumerを持つ単一Linuxホストには適合性が高い。local-nodeのunitは0.0.0.0待受、匿名Agent
+      Connection有効、Service
+      Harness認証無効を明示している。通常API・管理APIのtoken要求やclaim後のProvider認証とは区別し、匿名許可そのものを未認可操作の脆弱性とは断定しない。ただし、認証された複数組織や信頼しない利用者へ提供する場合のtenant隔離、公平性、network制御は今回の試験で保証できない。
+    </p>
+    <p>
+      音楽・画像・文書などへ拡張する価値は、共通の起動、資源、readiness、共有利用保護を再利用できる点にある。Appのデータ検索やUI・業務判断までLARMへ集約すると、製品正本が定める責務境界と保守可能な範囲を改めて検討する必要がある。
+    </p>
+  </section>
+  <section id="next-actions">
+    <h2>推奨する改善順序</h2>
+    <ol>
+      <li>
+        <strong>リリース必須条件の回復。</strong>依存監査とcoverageを直し、CIとrelease
+        builderの検証条件を揃える。実装の追加より先に現在の失敗を解消する。
+      </li>
+      <li>
+        <strong>現行契約と実機証拠の同期。</strong
+        >利用側の接続手順を一本化し、代表ProfileのSLO・混合負荷・rollback・長時間観測を現在のreleaseに紐付ける。
+      </li>
+      <li>
+        <strong>保守範囲の整理。</strong
+        >controllerの状態所有を整理し、workspace間の境界を機械検査する。App固有機能と共通実行基盤の境界を確認する。
+      </li>
+      <li>
+        <strong>第三者による再現性。</strong
+        >別Linuxホストで最小構成を再現し、導入・障害調査・復旧を元の開発者以外でも実施できる資料を整える。
+      </li>
+    </ol>
+    <p>
+      後続評価では総合点だけを追わず、High advisory 0件、coverage
+      gate成功、同一commitのrelease証跡、代表Profileの校正済みSLO、別ホストでの再現という完了条件を確認する。
+    </p>
+  </section>
+  <section id="limits-and-references">
+    <h2>評価の限界と参照</h2>
+    <p>
+      実機の現在のモデル、LAN到達性、全Profileの性能、24時間以上のsoak、外部consumerの現行実装は今回再検証していない。LLMの回答精度、ASRの認識率、TTSの主観品質、電力・費用対効果、市場優位性は採点対象外。CIの構成は確認したが、GitHub上の最新runを読み取ったものではない。core全体の安全性や全てのraceの不在を証明する評価でもない。
+    </p>
+    <ul>
+      <li>
+        <a href="./quality-maintainability-improvement-plan.html">既存の品質・保守性改善計画</a>
+      </li>
+      <li><a href="./dynamic-provider-daemon-lifecycle.html">動的Provider lifecycle</a></li>
+      <li><a href="./agent-provider-connection-api.html">Agent Connection API</a></li>
+      <li><a href="./observability.html">性能計測・トレーシング基盤</a></li>
+      <li><a href="./performance-benchmark.html">性能診断ベンチマーク仕様</a></li>
+      <li><a href="./stable-release-gate.html">Stable Release Gate</a></li>
+      <li><a href="./commissioning-evidence.html">Commissioning Evidence</a></li>
+      <li>
+        <a href="./local-service-host-process-design-and-acceptance.html"
+          >Local Serviceの設計と受入仕様</a
+        >
+      </li>
+    </ul>
+  </section>
+</article>

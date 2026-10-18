@@ -27,8 +27,32 @@ mkdir -p "${source_root}/packages/core/src" "${source_root}/apps/daemon/src" \
 git -C "${test_root}" init -q source
 git -C "${source_root}" config user.email test@example.invalid
 git -C "${source_root}" config user.name LARM-test
-printf '%s\n' '{"scripts":{"check":"true"},"dependencies":{"zod":"4.4.3"},"devDependencies":{"typescript":"5.9.2"}}' \
+printf '%s\n' '{"packageManager":"bun@1.4.0","scripts":{"check":"true","check:release":"bun run scripts/fixture-release.ts"},"dependencies":{"zod":"4.4.3"},"devDependencies":{"typescript":"5.9.2"}}' \
   >"${source_root}/package.json"
+mkdir -p "${source_root}/scripts"
+cp "${repo_root}/scripts/check-release.ts" "${source_root}/scripts/check-release.ts"
+cat >"${source_root}/scripts/fixture-release.ts" <<'TS'
+import { checkRelease, releaseInputDigest } from "./check-release";
+import { createHash } from "node:crypto";
+const receipt = await checkRelease({
+  sourceCommit: process.env.LARM_RELEASE_GATE_COMMIT!, bunVersion: Bun.version, expectedBunVersion: "1.4.0",
+  lockfileSha256: createHash("sha256").update(await Bun.file("bun.lock").text()).digest("hex"),
+  readInputs: () => releaseInputDigest(process.cwd()),
+  run: async args => {
+    const step = args[0] === "run" ? args[1] : args[0];
+    const failure = process.env.LARM_FIXTURE_RELEASE_FAILURE;
+    if (step === failure) return { exitCode: 1, stdout: step === "audit" ? '{"x":[{"severity":"high"}]}' : "" };
+    if (step === "install") {
+      const install = Bun.spawn([process.execPath, ...args], { stdout: "ignore", stderr: "inherit" });
+      return { exitCode: await install.exited };
+    }
+    if (step === "test:coverage" && failure === "lock-change") await Bun.write("bun.lock", (await Bun.file("bun.lock").text()) + "\n");
+    return { exitCode: 0, stdout: "{}" };
+  },
+});
+console.log(JSON.stringify(receipt));
+if (!receipt.passed) process.exitCode = 1;
+TS
 printf 'export const LARM_VERSION = "1.0.0";\n' >"${source_root}/packages/core/src/version.ts"
 printf 'console.log("%064d");\n' 0 >"${source_root}/apps/daemon/src/print-config-revision.ts"
 printf 'models:\n  test-model:\n    cmd: test-v1\n' >"${source_root}/config/local-node/llama-swap.yaml"
@@ -86,6 +110,7 @@ build() {
   "${command[@]}" \
     LARM_RELEASE_BUILDER_TEST_MODE=1 \
     LARM_RELEASE_SKIP_GATE="${skip_gate}" \
+    LARM_FIXTURE_RELEASE_FAILURE="${LARM_FIXTURE_RELEASE_FAILURE:-}" \
     LARM_RELEASE_SOURCE="${source_root}" \
     LARM_RELEASE_CANDIDATE_ROOT="${candidate_root}" \
     LARM_RELEASE_INBOX_ROOT="${inbox_root}" \
@@ -127,9 +152,20 @@ rollback_release() {
 }
 
 first_commit="$(git -C "${source_root}" rev-parse HEAD)"
+for failure in audit check test:coverage lock-change; do
+  if LARM_FIXTURE_RELEASE_FAILURE="${failure}" build "${first_commit}" >/dev/null 2>&1; then
+    echo "builder signed a candidate after failed release verification: ${failure}" >&2
+    exit 1
+  fi
+  [[ ! -e "${candidate_root}/${first_commit}" && ! -e "${inbox_root}/request.json" ]]
+done
 build "${first_commit}" | jq -e --arg commit "${first_commit}" '.status == "submitted" and .commit == $commit' >/dev/null
 [[ -d "${candidate_root}/${first_commit}/node_modules/zod" ]]
 [[ ! -e "${candidate_root}/${first_commit}/node_modules/typescript" ]]
+jq -e '.passed == true and ([.checks[].id] == ["install","audit","check","coverage"])' \
+  "${candidate_root}/${first_commit}/release-gate.json" >/dev/null
+# A completed immutable candidate must retain its gate receipt when reused.
+build "${first_commit}" | jq -e '.status == "submitted"' >/dev/null
 jq -e '.schemaVersion == 1 and (.signature | length > 100)' "${inbox_root}/request.json" >/dev/null
 jq -e --arg commit "${first_commit}" '.schemaVersion == 2 and .commit == $commit and (.payloadSha256 | length == 64)' \
   "${candidate_root}/${first_commit}/release-manifest.json" >/dev/null

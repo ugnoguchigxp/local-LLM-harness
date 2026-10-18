@@ -57,6 +57,7 @@ embedding_dir="$(target_path /srv/ai/models/multilingual-e5-small-onnx-qint8)"
 laya_dir="$(target_path /srv/ai/models/laya-multilingual)"
 ruri_dir="$(target_path /srv/ai/models/ruri-v3-30m)"
 ruri_derived_dir="$(target_path /srv/ai/models/ruri-speaking-attitude-v1)"
+d1_dir="$(target_path /srv/ai/models/d1-3b)"
 candidate_dir="$(target_path /srv/ai/apps/larm-candidates)"
 release_dir="$(target_path /srv/ai/apps/larm-releases)"
 release_inbox_dir="$(target_path /var/lib/larm/release-inbox)"
@@ -117,6 +118,7 @@ else
     larm-embedding.service
     laya-system-one.service
     ruri-system-one.service
+    d1-system-one.service
     voicevox-tts.service
     kittentts-tts.service
     larm-music-ace-step.service
@@ -145,6 +147,7 @@ else
     "${laya_dir}"
     "${ruri_dir}"
     "${ruri_derived_dir}"
+    "${d1_dir}"
     "${staging_dir}"
     "${rollback_dir}"
     "${state_dir}"
@@ -372,7 +375,7 @@ systemctl_run daemon-reload
 systemctl_run enable "${enabled_units[@]}"
 if [[ "${install_scope}" == "all" ]]; then
   systemctl_run disable llama-server.service qwen-asr.service whisper-asr.service \
-    voicevox-tts.service qwen-tts.service larm-embedding.service laya-system-one.service ruri-system-one.service \
+    voicevox-tts.service qwen-tts.service larm-embedding.service laya-system-one.service ruri-system-one.service d1-system-one.service \
     larm-music-ace-step.service larm-image-qwen21.service kittentts-tts.service granite-asr.service
 fi
 

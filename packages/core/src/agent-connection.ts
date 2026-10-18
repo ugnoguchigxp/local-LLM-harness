@@ -29,6 +29,7 @@ export const agentProfileSelectorIdSchema = z.enum([
   "SAAA-gemma4-26b",
   "SAAA-gemma4-26b-64k",
   "ornith1.5Strix",
+  "ornith1.5Strix-game",
   "SAAA-w-Image",
   "SAAA-w-music",
   "embeddingCanary",
@@ -623,9 +624,22 @@ export const agentConnectionRequestSchema = z.object({
       seen.add(provider);
     }
   }).optional(),
+  ownership: z.object({
+    id: z.string().uuid(),
+    issuedAt: z.string().datetime(),
+  }).strict().optional(),
   ttlSeconds: z.number().int().min(1).max(86_400).default(300),
   allowFallback: z.boolean().default(false),
   deploymentPolicy: deploymentPolicySchema.default("existing-only"),
+}).strict();
+
+export const agentConnectionOwnershipUpdateSchema = z.object({
+  id: z.string().uuid(),
+  sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+}).strict();
+
+export const agentConnectionOwnershipReleaseSchema = z.object({
+  id: z.string().uuid(),
 }).strict();
 
 export const agentConnectionRenewRequestSchema = z.object({
@@ -866,6 +880,14 @@ export const publicAgentConnectionSchema = z.object({
   readyDeadline: z.string().datetime().optional(),
   lastForegroundActivityAt: z.string().datetime().optional(),
   idleReleaseAt: z.string().datetime().optional(),
+  ownership: z.object({
+    id: z.string().uuid(),
+    state: z.enum(["active", "expired", "released"]),
+    sequence: z.number().int().nonnegative(),
+    expiresAt: z.string().datetime(),
+    heartbeatSeconds: z.literal(30),
+    ttlSeconds: z.literal(90),
+  }).strict().optional(),
   releasedAt: z.string().datetime().optional(),
   error: z.object({
     code: z.string().min(1).max(128),
@@ -1096,7 +1118,7 @@ export const embeddingAgentProviderDescriptorSchema = z.object({
 
 export const systemOneAgentProviderDescriptorSchema = z.object({
   name: agentIdentifierSchema,
-  capability: z.enum(["decision.system-one", "decision.sentence-language"]),
+  capability: z.enum(["decision.system-one", "decision.game"]),
   apiStyle: z.literal("larm-system-one"),
   protocol: z.literal("larm.system-one.v1"),
   scheme: z.enum(["http", "https"]),

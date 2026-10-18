@@ -1,0 +1,199 @@
+<article lang="ja">
+  <h1>d1-3Bゲーム判断Providerの追加と比較モデルの配置</h1>
+  <p>
+    2026-10-16。利用者の承認により、H2O-Lightning-4Bとd1-3Bをrepository外へ配置し、d1-3Bをゲーム判断用のProviderとして追加する。<a
+      href="./real-time-game-decision-model-selection-2026-10-16.html"
+      >候補比較</a
+    >の方針に基づく。ゲームの入力取得や操作実行、ゲーム専用学習は今回の範囲に含めない。
+  </p>
+  <section id="selection">
+    <h2>明示的な選択とライフサイクル</h2>
+    <p>
+      ornith1.5Strix-gameを新しい公開selectorとし、従来のOrnith音声profileの6
+      Providerにgame-decisionを追加する。game-decisionはdecision.game
+      capability、game-decision-d1経路、d1-system-one
+      runtime、d1-system-one.serviceへ解決する。公開モデルはd1-3b-game、protocolはlarm.system-one.v1。通常のornith1.5StrixとContextStillの選択・Provider構成は維持する。
+    </p>
+    <p>
+      runtimeはmanagedで、warmの最小数は0。要求時に起動し、idle
+      TTLは120秒。推定メモリ10GB、確保4、同時推論1、待機4、待機期限100msとする。backendは127.0.0.1:8093。Providerの確保・credential・更新・解放は既存のLARM手順を使用する。公開経路を使わない直接同時要求は429で拒否する。
+    </p>
+    <p>
+      readinessはモデル名によらずdecision.game
+      capabilityに対して既知の移動問題を出し、右方向の回答を検証する。Ruri発話態度用のprobeと混同しない。単純なprobeの成功をゲームの強さの保証としない。
+    </p>
+  </section>
+  <aside>
+    <p>
+      実接続でclaimのcapabilityが既存判断器の固定値になっている問題を検出した。claimは解決済みProviderのcapabilityをschema検証して返すよう修正し、decision.gameの保持と画像転送を確保・claim・Gatewayまで通す回帰試験を追加した。主worktreeの全体checkは修正後も成功した。
+    </p>
+  </aside>
+  <section id="artifacts">
+    <h2>固定するモデルと実行環境</h2>
+    <table>
+      <caption>
+        repository外のnative snapshot
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル</th>
+          <th scope="col">revisionと配置先</th>
+          <th scope="col">用途</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LiquidAI/d1-3B</th>
+          <td>051bcc464b01b9f92942b364d9586b0ef5912432、/srv/ai/models/d1-3b</td>
+          <td>
+            14ファイル、6,265,050,901 bytes。BF16のnative
+            checkpointと公式の判断実装。Providerとして使用。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">h2oai/h2o-lightning-4b</th>
+          <td>9f256a64ee2c62eadf0e82229ae21c3f8571aed6、/srv/ai/models/h2o-lightning-4b</td>
+          <td>
+            17ファイル、9,101,723,558 bytes。merged
+            checkpoint、設定、tokenizer、提供用補助コード。比較用に配置し、公開Providerや常駐runtimeは追加しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      各ファイルのbyte数とSHA-256、snapshot全体のdigestをdeploy/local-node/models.yamlへ記録する。d1は起動前にもassets.jsonで検証する。upstreamのPython実装と重みはrepository外に置き、ローカルファイルだけから読み込む。prepare・provision・install手順をsourceとして保持する。
+    </p>
+    <p>
+      実行環境は/srv/ai/apps/d1-system-one/.venv、Python 3.11、PyTorch 2.11.0+rocm7.13.0のgfx1151
+      wheel、Transformers
+      5.17.0。GPUのBF16を明示し、CPUへの暗黙fallbackはしない。上流runnerがROCm上のcompileを拒否するため、compileは無効。依存関係はrequirements.lockに固定する。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>テキスト・盤面JSON・画像の入力契約</h2>
+    <p>
+      従来のmodel・state・questionsに、任意のimages配列を追加する。stateは従来の文字列・object・arrayに加え、画像があるときだけnullを許可する。画像はPNG・JPEG・WebPのbase64
+      data
+      URLに限定し、外部URLを受け取らない。1枚、decode後2MB、元画像1,048,576画素を上限とし、縦横比を保って384×384以内へ縮小する。既存の画像非対応Providerは画像要求を拒否できる。
+    </p>
+    <p>
+      choice・noul・scoreを扱い、質問は最大16。choiceは名前付き候補または重複のない文字列配列。scoreは2〜10段階。noulのyes確率を変更せず、LARMに必要なconfidenceにmax(p,1−p)を加える。入力tokenは質問を含め最大4096で、画像がある場合は追加1024を予約する。超過は422で拒否し、切り詰めない。
+    </p>
+    <p>
+      入力と複数質問の共有・確率の読出しは固定された公式実装を使用し、文章を生成して再解釈する処理は追加しない。確率はゲームでの勝率や正解率ではない。状態の版、操作期限、合法手の列挙と、古い結果の破棄は呼び出し側の責務とする。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証と稼働反映</h2>
+    <p>
+      両モデルの全31ファイルを配置し、byte数とSHA-256がmanifestに一致した。GPU認識、契約検証、通常profileを維持した明示game
+      profileの解決、game readinessの試験、主worktreeのbun run
+      checkが成功した。公開selectorの追加に合わせてOpenAPIの契約試験も更新した。
+    </p>
+    <p>
+      固定されたupstreamの複数質問用flash attentionは、このROCm版ではCUDAと異なるlog-sum-exp
+      tensor配置となり、複数質問で形状不一致になった。公式実装内の数学的に等価なexplicit GPU tree
+      attentionを選び、解消した。重みとupstreamファイルは変更せず、単一質問のSDPAではgfx1151向けAOTritonの明示opt-inを使用する。choice・noul・scoreの同時回答と画像判断が成功した。
+    </p>
+    <table>
+      <caption>
+        隔離したlocalhost HTTP、各20回の温間測定。既知の単純な例であり、ゲーム成績の評価ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力</th>
+          <th scope="col">P50 ms</th>
+          <th scope="col">P95 ms</th>
+          <th scope="col">最大 ms</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">短文・1質問</th>
+          <td>99.61</td>
+          <td>101.41</td>
+          <td>163.44</td>
+        </tr>
+        <tr>
+          <th scope="row">座標JSON・1質問</th>
+          <td>95.17</td>
+          <td>97.16</td>
+          <td>112.27</td>
+        </tr>
+        <tr>
+          <th scope="row">384角画像・1質問</th>
+          <td>158.87</td>
+          <td>163.87</td>
+          <td>182.34</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この測定はOrnithの生成と競合しない状態で、token化・画像前処理・推論・localhost
+      HTTPを含む。同じ小例を反復した結果であり、異なる盤面への汎化精度やP99を保証しない。誤モデル、外部画像URL、token超過は422、直接同時要求は200と429となった。ゲームを止めない実プレイでの性能評価は別途必要である。
+    </p>
+    <p>
+      証拠は/srv/ai/evidence/d1-game-decision-provider-20261016のartifact-verification.json、isolated-canary.json、native-inference.log、workspace-check.log。新unitと狭いstart/stop権限を登録済み。署名付きrelease反映とLARM経由の接続確認も完了した。最終的な稼働結果は後述する。
+    </p>
+  </section>
+  <section id="live-release">
+    <h2>稼働反映と公開Gatewayの検証</h2>
+    <p>
+      最終releaseはf3f29756698617496eae654d94bd747e0e06cef3、configRevisionは8abf3ae515eb3642b6c80339a8cee93085294520fceebb8fd5fc1123472e0af0。署名manifest、稼働health、activator成功を照合した。現行の稼働版を基に、この導入に必要な変更だけを隔離checkoutで配備し、既存のprofile・route・runtime・artifact設定を維持した。修正版の配備gateも全件成功した。
+    </p>
+    <p>
+      公開catalogでは通常OrnithとContextStillがそれぞれ従来の6 Provider、ゲーム用profileが7
+      Providerとなった。game-decisionのclaimはdecision.gameを返す。LARMから要求して停止状態のd1を起動し、choice・noul・score、画像入力、renew後の再claim、解放を確認した。別モデルへのcredential使用は400、解放後の使用は401。確認用Connectionは解放済み。
+    </p>
+    <table>
+      <caption>
+        LARM経由の短い座標JSON判断、各20回。HTTPとGatewayを含み、初期起動は除く
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">P50 ms</th>
+          <th scope="col">P95 ms</th>
+          <th scope="col">最大 ms</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">d1単独</th>
+          <td>97.10</td>
+          <td>100.36</td>
+          <td>104.54</td>
+        </tr>
+        <tr>
+          <th scope="row">OrnithのSSE文章生成中</th>
+          <td>161.94</td>
+          <td>173.19</td>
+          <td>238.16</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      併用試験ではOrnithの最初の文章deltaを受信した後に判断を開始し、生成終了前に20要求すべてが完了した。単にLLM要求が待機中であるだけの時間を、生成中の測定として報告していない。右・左の小さな座標問題を交互に与え、この例では両条件とも20／20で一致した。モデルが実際のテトリスを正しくプレイすることや、16.7ms以内の毎フレーム操作を保証する結果ではない。
+    </p>
+    <p>
+      追加証拠はlive-canary.json、shared-sse-canary.json、claim-regression.log、deployment-build-final.log。H2Oは比較用snapshotとして配置済みで、Providerは作成していない。d1の未使用120秒後の自動停止も確認した。ゲーム開始前にConnectionを確保してreadyを待ち、プレイ中はそのclaimを利用する。
+    </p>
+  </section>
+  <section id="usage">
+    <h2>呼び出し時の指定</h2>
+    <p>
+      公開selectorはornith1.5Strix-game、Provider名はgame-decision、modelはd1-3b-game。判断器だけを使う場合はConnection作成時のprovidersにgame-decisionだけを指定する。Ornithも使う場合はllmを加える。旧ConnectionのcredentialはLARM再起動で失効するため、catalogとclaimを再取得する。
+    </p>
+    <pre><code class="language-json">{
+  "model": "d1-3b-game",
+  "state": { "player_x": 1, "target_x": 3 },
+  "questions": {
+    "action": {
+      "type": "choice",
+      "instructions": "Move toward target_x. Right increases x; left decreases x.",
+      "criteria": { "left": "Move left", "right": "Move right", "wait": "Do not move" }
+    }
+  }
+}</code></pre>
+  </section>
+</article>

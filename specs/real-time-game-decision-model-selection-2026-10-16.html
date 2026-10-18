@@ -1,0 +1,130 @@
+<article lang="ja">
+  <h1>瞬発力を要するゲーム向け判断器の候補比較</h1>
+  <aside>
+    <p>
+      この比較後、利用者がd1-3B Providerの追加と両モデルの配置を承認した。導入状況と実測は<a
+        href="./d1-game-decision-provider-2026-10-16.html"
+        >Provider追加の記録</a
+      >を参照する。
+    </p>
+  </aside>
+  <p>
+    2026-10-16。利用者が指定したH2O-Lightning-4B、Liquid AI
+    d1-3B、既設Layaを、Ornithと組み合わせるゲーム用判断器として比較した。用途はテトリスのような素早い判断を要するゲーム。入力が画面画像か構造化された盤面か、毎フレームの操作か駒ごとの配置決定かは未確定である。モデルの追加、既存Providerの置換、性能試験は本調査では行っていない。
+  </p>
+  <section id="recommendation">
+    <h2>暫定的な推奨</h2>
+    <p>
+      複数のゲームを扱う汎用判断器なら、最初の実機評価候補をd1-3B、比較対象をH2O-Lightning-4Bとする。これは実機比較前の評価順であり、d1の速度・ゲーム成績の優位を確認した結論ではない。盤面・ルールを直接取得できるテトリス専用なら、合法配置の探索と評価関数、または小型のゲーム専用policyも優先候補となる。
+    </p>
+    <p>
+      現在のornith1.5Strixのsystem-oneはRuri発話態度専用である。ゲームの操作判断は別のgame-decision
+      Providerとして扱い、発話態度と混同しない。ContextStillのLaya選択も本調査によって変更しない。追加モデルはゲーム用の要求で明示選択し、現在動いているモデルから選択を逆算しない。
+    </p>
+  </section>
+  <section id="candidates">
+    <h2>候補と公開情報の限界</h2>
+    <table>
+      <caption>
+        公式のモデルカードを確認した候補
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">適合する使い方</th>
+          <th scope="col">制約と未確認事項</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LiquidAI/d1-3B</th>
+          <td>画像とテキスト・JSONを読み、選択肢の確率を返す汎用判断器。最初の評価候補。</td>
+          <td>
+            公式の温間・単一質問はRTX
+            4090で8ms、384px画像で17ms。NVIDIAの単一質問最速値はcompileを使用し、未使用時は16ms。Ryzen
+            AI MAX+ 395での値ではない。長い状態や画像で処理時間が増える。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">h2oai/h2o-lightning-4b</th>
+          <td>画像、文章、状態追跡やゲームを含む判断の比較候補。</td>
+          <td>
+            公式提供手順はvLLMとshim。公式の標準72件のclient P50/P95はRTX PRO 4500
+            Blackwellで29.6/29.8ms、H100
+            SXM5で28.8/29.3ms。同じ入力集合・実行系によるd1との比較ではなく、AMD
+            gfx1151での速度・導入可否も未確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Laya multilingual</th>
+          <td>
+            既設環境でテキスト・JSONの状態を評価する比較基準、またはゲーム専用に学習させる基盤。
+          </td>
+          <td>
+            公式モデルカードは、汎用baseのzero-shot判断には限界があり用途別学習を重視すると明記する。既設CPU実測の発話態度タスクでは4
+            threads条件でP50約259ms、P95約273ms。ゲーム用入力や現在の16
+            threads構成の速度とは扱わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">d1-omni-600M</th>
+          <td>小型の画像・テキスト判断器としての探索候補。</td>
+          <td>
+            公式は初期研究版とし、推論時間を公表していない。パラメータ数だけで速度を推定しない。公開Decision
+            Indexの結果を含めて3B版とは性能差があり、ゲームでの評価が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">探索・小型のゲーム専用policy</th>
+          <td>盤面配列とルールが得られるゲームで、合法手から配置・操作を選ぶ。</td>
+          <td>
+            ゲームごとの実装または学習が必要。汎用の文章理解を置き換える用途ではない。Cold
+            Clearは専用実装の一例であり、ここでは導入・実測していない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      H2Oの公式DOOMデモは、ゲームが各回答を待つ方式である。ゲームを止めない実時間での制御性能の証明には使わない。d1とH2Oの公開値も、GPU、入力長、画像条件、compile、HTTPを含む測定範囲が異なるため、数値を並べて速度順位を確定しない。
+    </p>
+  </section>
+  <section id="control">
+    <h2>ゲームでの組み合わせ</h2>
+    <p>
+      Ornithはルール解釈、戦略、利用者との会話などを担当し、短い周期の操作判断は別の判断器または専用controllerで行う。テトリスでは毎フレームの左右キーより、回転・列・holdを含む配置候補を選び、操作列の実行はcontrollerに任せる構成を最初の比較案とする。画像しか取得できない場合は画像入力版も評価する。
+    </p>
+    <p>
+      60Hzの操作なら全経路で約16.7msが1フレーム分となるが、駒ごとの判断に同じ制約が必要とは限らない。撮像、前処理、転送、待ち行列、推論、実行までを含む遅延を測る。状態の版と判断の有効期限を持ち、期限超過や古い盤面に対する結果を操作に使わない。
+    </p>
+  </section>
+  <section id="evaluation">
+    <h2>採用前の比較条件</h2>
+    <p>
+      同一の盤面・候補操作・seed・操作期限で比較し、ゲームを推論中も進めた状態で評価する。温間のP50・P95・P99、期限超過率、無効手率、得点・生存時間・game-over率を保存する。初回loadやcompileは別集計とし、ゲーム開始前に必要な形状を準備する。
+    </p>
+    <p>
+      現在のホストはRyzen AI MAX+ 395 / Radeon 8060S /
+      gfx1151、共有メモリ128GB。Ornithの要求profileから解決されるruntimeと、CPU・GPU・共有メモリ・待ち行列の競合を確認する。判断器単独だけでなく、Ornithが生成中の条件でも測る。採用判断は公開ベンチマーク順位より、この条件での期限内のゲーム成績を優先する。
+    </p>
+  </section>
+  <section id="sources">
+    <h2>確認した出典</h2>
+    <p>
+      Web出典は2026-10-16に確認した開発元のモデルカードと公式記事。数値は各開発元の公表値であり、このホストでの新規実測ではない。
+    </p>
+    <ul>
+      <li>Liquid AI d1-3Bモデルカード: https://huggingface.co/LiquidAI/d1-3B</li>
+      <li>H2O-Lightning-4Bモデルカード: https://huggingface.co/h2oai/h2o-lightning-4b</li>
+      <li>Layaモデルカード: https://huggingface.co/convaiinnovations/laya</li>
+      <li>Liquid AI d1-omni-600Mモデルカード: https://huggingface.co/LiquidAI/d1-omni-600M</li>
+      <li>Cold Clear作者のrepository: https://github.com/MinusKelvin/cold-clear</li>
+    </ul>
+    <p>
+      既設CPU実測の条件と結果は<a href="./avatar-speaking-attitude-evaluation-2026-10-09.html"
+        >発話態度評価</a
+      >、現在のRuri用途は<a href="./ruri-sentence-language-retirement-2026-10-16.html"
+        >日英判定廃止の記録</a
+      >を参照する。
+    </p>
+  </section>
+</article>

@@ -1,0 +1,91 @@
+<article lang="ja">
+  <h1>Ruri文章日英判定Providerの廃止</h1>
+  <p>
+    2026-10-16。利用者の判断により、Ruriによる文章単位の日本語・英語判定を廃止する。対象用途は正規表現で足りるため、言語判定のために推論を要求しない。
+  </p>
+  <section id="decision">
+    <h2>変更後の責務</h2>
+    <p>
+      日英判定は呼び出し側の正規表現で行う。LARMは言語判定Providerや代替の正規表現APIを公開しない。正規表現の具体的な条件、日英混在文、数字・記号のみの入力の扱いは、利用するアプリ側で定める。本変更では別リポジトリの実装を変更していない。
+    </p>
+    <p>
+      Ruriの発話態度判定は継続する。公開モデルruri-v3-30m-speaking-attitude、system-one-ruri経路、既存の6ラベル、入力形式と校正用データは維持する。ContextStillのsystem-oneは従来どおりLayaへ解決する。
+    </p>
+  </section>
+  <section id="changes">
+    <h2>削除する公開契約と起動依存</h2>
+    <ul>
+      <li>
+        Gemma音声、Ornith、ContextStillの各Agent
+        Profileからsentence-languageを削除する。各selectorは更新後のprofileを参照する。
+      </li>
+      <li>
+        system-one-ruri-language経路、decision.sentence-language capabilityと専用のreadiness
+        probeを削除する。
+      </li>
+      <li>
+        Ruriから言語headの読込・検証・準備推論・判定処理、language-assets.jsonとRURI_LANGUAGE_MODEL_ROOTの利用を削除する。healthのmodelsは発話態度モデルだけとなり、sentence_languageは返さない。
+      </li>
+      <li>
+        artifact準備処理から言語headの配置と専用引数を削除し、言語判定用の接続smokeを削除する。
+      </li>
+    </ul>
+    <p>
+      sentence-languageを明示的に要求した新規Connectionはunknown_connection_providerとしてHTTP
+      400で拒否する。Ruriへ廃止モデルを直接渡した場合も、発話態度モデルの検証で拒否する。別タスクとして受理したり発話態度へ読み替えたりしない。
+    </p>
+    <p>
+      ContextStillのprofile解決にRuriは含まれなくなる。ただしRuriは発話態度用に引き続きライフサイクル管理されるため、言語判定の廃止を理由にservice全体を停止・削除しない。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証結果</h2>
+    <p>
+      2026-10-16、bun run
+      checkを完走し、型・文書・単体試験・配備スクリプトの検証がすべて成功した。公開profileの期待値を更新し、廃止Providerの確保要求がHTTP
+      400となる試験も通過した。
+    </p>
+    <p>
+      repositoryの変更後コードを既設のCPU実行環境と発話態度モデルで隔離起動した。healthのmodelsが発話態度だけであること、encoder
+      sessionが一つであること、技術説明文をnoneと判定すること、廃止した日英モデルの要求を拒否することを確認した。その後、配備用に現行releaseへ今回の変更だけを適用し、配備用のbun
+      run checkも完走した。
+    </p>
+  </section>
+  <section id="live-validation">
+    <h2>稼働版での確認</h2>
+    <p>
+      release
+      d73eadd1c5f50694bffe010ae566c0257bcdd7ffを反映した。configRevisionはa947673af79a360819a901c1c2f00eddcc8c9a77d404ba0df53da3b868171644で、署名manifestと稼働healthの一致、root
+      activatorの成功を確認した。配備元は従来の稼働revision
+      86e879abe56ee54802d345c8b38f26f72b5e3570に本変更だけを適用した隔離checkoutとし、その他のprofile・route・runtime・artifact設定の意味が変わらないことも検査した。
+    </p>
+    <p>
+      Gemma・Ornith・ContextStillの公開catalogからsentence-languageが消え、各profileへの明示要求はHTTP
+      400
+      unknown_connection_providerとなった。Ruriのhealthは発話態度モデルだけを返し、廃止モデルへの直接要求は422。claimした発話態度Providerの実推論と解放後の401も成功した。Ruriはもともと一つのプロセスで二つの論理Providerを公開しており、再起動後は発話態度だけを提供する。
+    </p>
+    <p>
+      言語headの削除後に、新しいEngineを稼働版のコードから隔離起動し、言語headなしでの初期化と発話態度none判定を再確認した。repository内の実験ディレクトリ、外部benchmarkディレクトリ、配備済み言語headディレクトリがすべて存在しないことを確認した。
+    </p>
+    <p>
+      証拠は/srv/ai/evidence/ruri-sentence-language-retirement-20261016のlive-canary.jsonとcleanup.jsonに保存した。credentialは含めていない。主worktreeの全体checkで配備試験が同時実行中の固定ポートと競合したため、配備試験全体を単独で再実行し成功した。配備候補の全体checkは成功している。
+    </p>
+    <p>
+      追加の実接続確認で、ornith1.5StrixとcontextStillの各profileを6
+      Providerすべてで新規確保し、ready・acceptingRequestsを確認した。両方のLLM応答、System
+      One、384次元embeddingも成功した。Ornithの判断器はRuri、ContextStillの判断器はLayaであり、両profileは引き続き利用できる。確認用Connectionは解放済み。結果は同じ証拠ディレクトリのprofile-availability.jsonに保存した。
+    </p>
+  </section>
+  <section id="history">
+    <h2>過去の記録と稼働反映</h2>
+    <p>
+      <a href="./ruri-sentence-language-classification-2026-10-12.html">400文学習と追加50文の評価</a
+      >および<a href="./ruri-sentence-language-resident-integration-2026-10-12.html"
+        >常駐組込みとHTTP実測</a
+      >は当時の設計・結果の記録として保持する。利用者の追加指示により、benchmarks/sentence-languageの学習・評価データと実験コード、およびrepository外の/srv/ai/benchmarks/sentence-languageにある学習済み実験head・実測・ログを削除した。専用のtest:sentence-languageと全体checkからの呼び出しも削除した。過去のGit履歴と既存releaseのsnapshotは書き換えていない。
+    </p>
+    <p>
+      利用者の追加承認を受け、既存の署名付きrelease手順で稼働版を更新し、LARMとRuriを再起動した。発話態度判定を確認後、/srv/ai/models/ruri-sentence-language-v1/head.jsonと専用ディレクトリを削除した。共有encoder・発話態度用head・校正データは保持する。既存Connectionのcredentialはdaemon再起動で失効するため、呼び出し側は更新後のcatalogから再取得する。
+    </p>
+  </section>
+</article>

@@ -27,6 +27,8 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       if (operationId === "createImageGeneration") return "ImageGenerationRequest";
       if (operationId === "claimAgentConnection") return "AgentConnectionClaimRequest";
       if (operationId === "renewAgentConnection") return "AgentConnectionRenewRequest";
+      if (operationId === "refreshAgentConnectionOwnership") return "AgentConnectionOwnershipUpdate";
+      if (operationId === "releaseAgentConnectionOwnership") return "AgentConnectionOwnershipRelease";
       if (operationId === "planRuntimeDeployment") return "RuntimeReleasePlanRequest";
       if (operationId === "activateRuntimeDeployment") return "RuntimeReleaseSelection";
       if (operationId === "prepareLegacyLease") return "PrepareRequest";
@@ -274,6 +276,8 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
           }],
         }
         : ((operationId === "createAgentConnection"
+        || operationId === "refreshAgentConnectionOwnership"
+        || operationId === "releaseAgentConnectionOwnership"
         || operationId === "renewAgentConnection"
         || operationId === "createContext"
         || operationId === "createContextView"

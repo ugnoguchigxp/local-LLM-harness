@@ -1,0 +1,37 @@
+[Unit]
+Description=LARM d1-3B game decision Provider
+After=local-fs.target
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/larm-current/apps/d1-system-one
+Environment=HOME=/srv/ai/cache
+Environment=HF_HOME=/srv/ai/cache/huggingface/d1
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+Environment=D1_MODEL_ROOT=/srv/ai/models/d1-3b
+Environment=D1_DEVICE=cuda
+Environment=TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+Environment=HF_HUB_DISABLE_PROGRESS_BARS=1
+Environment=USE_TF=0
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=OMP_NUM_THREADS=4
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/srv/ai/apps/d1-system-one/.venv/bin/uvicorn d1_api:app --host 127.0.0.1 --port 8093 --workers 1 --no-access-log
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/srv/ai/cache /srv/ai/logs
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

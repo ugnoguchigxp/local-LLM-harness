@@ -1,0 +1,771 @@
+<article lang="ja">
+  <h1>依存管理・再現性とSLOの実装計画書</h1>
+  <p>
+    2026年10月16日、版1.1。依存関係の固定・監査・復元、および応答時間・成功率・復旧のSLOを実装するための作業順序、変更対象、データ契約、受入条件、切り戻しを定める。容量校正、最大同時実行数、飽和負荷、メモリ余裕のSLOは対象外。W0・W1に着手し、実装状況を末尾に記録する。Provider環境の移行、実機SLO校正、稼働設定変更の完了を示す文書ではない。
+  </p>
+  <section id="requirements">
+    <h2>実装要件と完了の単位</h2>
+    <dl>
+      <dt>DEP-1</dt>
+      <dd>
+        Bunの固定インストールと全依存のHigh以上の監査を、CI・release builderで同じ必須条件にする。
+      </dd>
+      <dt>DEP-2</dt>
+      <dd>
+        採用Providerの直接・推移依存、配布物hash、Python・uv・native実行条件を固定し、空の環境から復元する。
+      </dd>
+      <dt>DEP-3</dt>
+      <dd>検証済み環境を上書きせず、release・実行定義・環境を対応付けて切替と復帰を可能にする。</dd>
+      <dt>SLO-1</dt>
+      <dd>容量指標なしで、ProfileとProvider subsetごとの応答時間・起動・取消・復旧を判定する。</dd>
+      <dt>SLO-2</dt>
+      <dd>実利用の成功率を7日窓で集計し、欠測、policy拒否、preemption、利用者取消を区別する。</dd>
+      <dt>SLO-3</dt>
+      <dd>
+        基準値と実測のProfile・Provider revision・環境・fixtureを対応付け、比較不能を合格にしない。
+      </dd>
+    </dl>
+    <p>
+      repository実装、隔離環境での復元、実機での初回校正、7日間の運用受入を別の完了単位にする。文書化やunit
+      testの成功だけで後続の完了を宣言しない。モデル選択、優先度、admission
+      policyの変更、外部consumerの機能変更、全モデルの性能比較は本計画に含めない。
+    </p>
+  </section>
+  <section id="current-state">
+    <h2>現在の仕組みと不足</h2>
+    <table>
+      <caption>
+        作業ツリーのソースを確認して具体化した変更点
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">現状</th>
+          <th scope="col">実装方針</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Bun</th>
+          <td>
+            bun.lockとBun 1.4.0固定がある。改善案作成時のauditはbrace-expansion 5.0.9のHigh
+            2件で失敗。実装開始時に対象revisionで再確認する。
+          </td>
+          <td>影響パッケージを限定して修正し、監査と全体検査をrelease前に必須化する。</td>
+        </tr>
+        <tr>
+          <th scope="row">Python</th>
+          <td>
+            Providerごとのrequirementsはあるが、lockの有無、hash、Python・index固定が不統一。prepareは既存venvへの追加installが中心。
+          </td>
+          <td>Providerごとに全依存・hash・環境条件を固定し、新規環境へsyncして検証する。</td>
+        </tr>
+        <tr>
+          <th scope="row">Release</th>
+          <td>
+            CIはaudit・check・coverageを要求するが、build-larm-release.shの通常buildはcheckのみ。
+          </td>
+          <td>同一のrelease検証入口と、commit・lock digestに結び付く結果を使う。</td>
+        </tr>
+        <tr>
+          <th scope="row">SLO</th>
+          <td>
+            slo.yamlはuncalibrated。coreのv1 schemaは旧4系列とメモリ・queueの閾値を必須にする。
+          </td>
+          <td>
+            応答時間・成功率・復旧用のv2 schemaを追加し、必要なProfileと系列を選べるようにする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">計測</th>
+          <td>
+            performance-larm.tsのreportはversion 4でTTFT等を持つが、旧SLO
+            summaryと形式が異なる。測定routeもdefault固定。
+          </td>
+          <td>
+            Profile・Provider subsetを明示して測り、reportからSLO比較用データへ検証付きで変換する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="bun">
+    <h2>Bun依存とrelease検証の統一</h2>
+    <ol>
+      <li>
+        <strong>現在のHigh 2件を解消する。</strong>spec-html → html-validate → glob → minimatch →
+        brace-expansionの解決を更新する。既存rangeで修正版へ解決できればlock更新を優先し、必要な場合だけ5.0.11等の修正版へoverrideする。互換性を検証し、一括のmajor更新は含めない。
+      </li>
+      <li>
+        <strong>開発用・実行用の監査結果を記録する。</strong
+        >全依存のHigh以上0件をrelease条件にする。productionだけの結果も診断用に保存するが、開発依存の失敗を無視する抜け道にはしない。
+      </li>
+      <li>
+        <strong>新設するcheck:releaseをCIとbuilderの共通入口にする。</strong>frozen
+        install、audit、既存check、coverage、Provider依存manifestの検証を同じ順序で行う。実機SLOは別段階で実行し、GPU不要のCIから稼働モデルへアクセスしない。
+      </li>
+      <li>
+        <strong>取得不能を合格にしない。</strong>監査service障害は再実行可能な検査不能、High
+        advisoryは不合格として区別する。例外が必要ならadvisory、owner、理由、期限、影響する環境を明示する。
+      </li>
+      <li>
+        <strong>更新は定期的に確認し、適用は検証後にする。</strong
+        >週1回の監査と更新候補確認、release前の再監査を運用手順に定める。major更新、ROCm、推論engine更新は別の変更単位にする。自動で依存を変更・配備する処理は追加しない。
+      </li>
+    </ol>
+    <p>
+      変更対象はpackage.json、bun.lock、.github/workflows/ci.yml、build-larm-release.sh。共通検証結果にはsource
+      commit、Bun version、lock
+      SHA-256、実行時刻、各検査の成否を記録し、検証後にlockが変わった候補を同じ証跡で配備しない。既存coverage失敗を検証の省略で回避しない。
+    </p>
+  </section>
+  <section id="python">
+    <h2>Providerごとの再現可能な環境</h2>
+    <p>
+      Pythonの版を全Providerで揃える必要はない。CPU、ROCm、Vulkan、Python
+      ABIの条件をProviderごとに保持し、その環境で同じものを作れることを目標とする。既存のlockは検証済みversionの出発点として利用する。
+    </p>
+    <table>
+      <caption>
+        Providerごとに管理する入力と成果物
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">成果物</th>
+          <th scope="col">内容</th>
+          <th scope="col">検証条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">requirements.in</th>
+          <td>直接必要なpackageと、明示的なCPU／ROCm wheelの取得元。</td>
+          <td>余計な環境packageを取り込んだfreezeを依存の正本にしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">requirements.lock</th>
+          <td>
+            推移依存を含むexact versionと全配布物のSHA-256。既存requirements.txtとの役割を統一する。
+          </td>
+          <td>uv pip compileのhash生成を使用し、hashなし・浮動versionを検出する。</td>
+        </tr>
+        <tr>
+          <th scope="row">runtime manifest</th>
+          <td>
+            Python・uvの版と実体identity、OS／architecture、ABI、index、lock hash、engine
+            revision、native build条件。
+          </td>
+          <td>sources.lock.yamlと重複するidentityは同じ正本から取得し、不一致なら停止する。</td>
+        </tr>
+        <tr>
+          <th scope="row">復元・監査記録</th>
+          <td>実際のpackage一覧、native library identity、import／protocol smoke、監査結果。</td>
+          <td>
+            新規環境で成功すること。監査非対応の特殊wheelは検査済みと偽らず、範囲と理由を残す。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      インストール方式はuv pip
+      syncとhash必須化を基本とする。Torchだけを先にinstallして後から別lockをsyncすると、先行installが消えたり再解決されたりするため、Torch・torchvision・アダプタを一つの対象環境のlockに含める。ROCmとCPUのindex／wheelの出所を固定する。source
+      buildが必要なpackageは、固定toolchainでwheelを作り、そのwheelのhashを配備入力にする。
+    </p>
+    <p>
+      稼働中venvへのsyncは行わない。lockとtoolchainのidentityを持つ新しい環境をリポジトリ外へ作り、import、依存整合、Provider
+      protocol、実機で必要な推論を検証してからLARMの既存release・lifecycle経路で切り替える。旧環境と対応する実行定義を保持し、復帰先を明確にする。venvの別pathへの移動はshebang等を壊すため、最終配置先で構築する。
+    </p>
+    <p>
+      再現性の受入は「空の環境から同一package
+      versionと配布物hashを復元でき、protocol試験が成功すること」とする。native
+      binaryのbit単位一致やGPU計算の決定性までは要求しない。source revisionだけでなくcompiler、build
+      flags、OS package、driver／runtime条件を記録する。
+    </p>
+    <p>
+      移行はRuri・VOICEVOX・Granite等の常用経路から始め、KittenTTS・Laya・d1等のTorch／特殊wheel経路へ進む。実際の採用状態は着手時にcatalogで確認する。未採用の実験用環境を毎回の必須復元対象にしない。Pythonの既知脆弱性監査には固定versionのpip-auditを使い、監査可能packageと非対応packageの両方をinventoryへ残す。
+    </p>
+  </section>
+  <section id="slo-definition">
+    <h2>SLOの対象と暫定基準</h2>
+    <p>
+      初期対象は公開selector
+      ornith1.5StrixとcontextStill。前者のLLM・ASR・TTS、後者のLLM・Embeddingを、必要なProvider
+      subsetごとに測る。採用Profileが変わる場合は対象も明示的に変更する。全候補モデルの比較や最大負荷測定は行わない。
+    </p>
+    <table>
+      <caption>
+        初回校正に使う暫定基準。絶対時間の目標値は校正結果とともに確定し、現在達成済みとは扱わない。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">測り方</th>
+          <th scope="col">初期判定と確定方法</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">要求成功率</th>
+          <td>
+            受付済みの有効な推論要求が、protocol上の正常なterminalまで到達した割合。HTTP
+            200後のSSE破損・途中切断も結果に含める。
+          </td>
+          <td>
+            実利用を7日窓で集計し99.5%以上を暫定目標とする。母数と失敗理由を必ず表示し、0件・観測欠落は判定不能。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LLM応答開始</th>
+          <td>SSEの最初のmeaningful content deltaまでのp95。JSONは完了時間を別指標にする。</td>
+          <td>同一条件の校正p95をBとして、暫定上限を1.20 × B + 50 msに固定する。</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR・Embedding</th>
+          <td>固定fixtureの要求開始から正常な結果受信までのp95。</td>
+          <td>系列ごとのBから1.20 × B + 50 msを暫定上限にする。</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS応答開始</th>
+          <td>
+            固定文の最初の再生可能音声まで。非streamingの応答はその方式を明示し、完了時間も別記する。
+          </td>
+          <td>当該方式のBから1.20 × B + 50 msを暫定上限にする。</td>
+        </tr>
+        <tr>
+          <th scope="row">cold起動</th>
+          <td>Connection要求から必要subsetのsemantic readyまで。warm処理時間と別系列にする。</td>
+          <td>
+            初回は独立したcold起動5回の最大値を記録し、1.25倍 +
+            2秒を暫定deadlineにする。5回でp95を保証したとは表現しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">daemon復旧</th>
+          <td>Providerをwarmに保った条件で、daemon再起動開始からgateway readyと実要求成功まで。</td>
+          <td>60秒以内を暫定目標とし、初回3回の制御された試験で評価する。cold再起動は別系列。</td>
+        </tr>
+        <tr>
+          <th scope="row">取消・後始末</th>
+          <td>取消後にLARM内部の当該要求の実行参照と待機が解放されるまで。</td>
+          <td>
+            5秒以内を暫定目標とする。Providerのwarm保持は解放失敗に数えない。backendの停止確認待ちは別の結果として扱う。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      成功率の分母・除外理由を仕様化する。入力不正、認証失敗、利用者自身の取消は別分類。受付前のpolicy拒否と、文書化されたbackground
+      preemptionも件数を残す。予期しない中断、upstream failure、timeout、受付後のProvider
+      429は失敗に含める。受付前拒否を増やして成功率を良く見せないよう、全有効要求に対する拒否率とpreemption率を併記する。
+    </p>
+    <p>
+      latency上限は初回校正後に数値としてmanifestへ保存し、日々の遅い実測に合わせて自動で緩めない。これは現状からの悪化を検知するための暫定基準であり、現在の体感が十分速いことを証明しない。初回結果を見て利用体験として許せる絶対値を設定し、その後は絶対値と退行比較の両方を評価する。60秒と5秒の目標も初回試験で実現性を確認し、未達なら理由と修正案を示す。
+    </p>
+  </section>
+  <section id="measurement">
+    <h2>測定条件と判定の実装</h2>
+    <ol>
+      <li>
+        <strong>Profileから測定対象を解決する。</strong>default route固定をやめ、selector、Provider
+        subset、公開modelとclaimのBindingを記録する。外から観察したportや現在動くモデルを対象identityに代用しない。
+      </li>
+      <li>
+        <strong>入力を固定する。</strong
+        >短い会話、代表的な背景入力、固定ASR音声、固定TTS文、Embedding文を用意する。音声等のbinaryはリポジトリ外でhash照合し、Gitにはmanifestだけを置く。入力hash、生成上限、cache条件、音声長、Provider
+        revisionをreportへ記録する。
+      </li>
+      <li>
+        <strong>warmとcoldを分離する。</strong
+        >warmは同一の固定fixture構成でwarmup後に各系列100回を初回校正し、複数batchへ分けて再現性を見る。cacheを無効化するか、固定した複数fixtureを同じ順序で使い、完全一致promptの再利用だけで値を良くしない。cold起動は実際に未起動の対象で独立測定する。
+      </li>
+      <li>
+        <strong>既存reportを検証付きで変換する。</strong>performance report v4からv2 SLO
+        summaryを作るadapterを追加する。TTFT、first playable
+        audio、total、errorを対応付け、ない指標を0にしない。観測不能な必須値、identity変化、fixture不一致は不合格または検査不能として返す。
+      </li>
+      <li>
+        <strong>実機測定はrelease検証の別段階にする。</strong
+        >候補releaseを明示して検証し、校正済みlatency、正常終了、cold起動、取消、復旧を確認する。通常のPR
+        CIはschema・comparator・adapterのfixture試験までとし、モデルを起動しない。
+      </li>
+      <li>
+        <strong>日常観測は利用中の要求を使う。</strong
+        >既存metricsを継続収集し、集計欠落を成功扱いしない。監視のためだけにcold
+        Providerを定期起動しない。release時の合成試験は100回／warm系列で失敗0件を要求するが、これだけで実運用99.5%を保証したとは言わない。
+      </li>
+    </ol>
+    <p>
+      基準の比較条件にはselector、canonical Profile、Provider subset、runtime／Provider
+      revision、environment lock hash、fixture hash、出力条件を含める。candidateのdaemon
+      commitは変わってよいが、candidateとして指定したcommitとの一致は必須。Providerやfixtureが変わった場合は比較不能として校正をやり直し、異なるモデルを自動で同じ基準へ昇格させない。raw観測、比較結果、baseline
+      hashはリポジトリ外に保存する。
+    </p>
+    <p>
+      v2は系列を動的に選び、metric、単位、必須観測値、閾値、baseline
+      provenanceを持つ。v1のメモリ下限を0で埋めて校正済みにする対応はしない。既存v1
+      readerと旧canaryは移行期間に保持し、v2
+      reportを旧形式へ偽装しない。LARM本来のadmission制御を変更する作業は含めない。
+    </p>
+  </section>
+  <section id="delivery">
+    <h2>実装単位と完了条件</h2>
+    <table>
+      <caption>
+        4段階で実装し、各段階の受入後に次段階を統合する。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">変更対象</th>
+          <th scope="col">完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1：監査とrelease条件</th>
+          <td>Bun依存、CI、builder、共通check:release。</td>
+          <td>
+            High
+            2件解消。全体checkとcoverage成功。監査不能・監査失敗・lock変更をrelease成功にしない試験が通る。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">2：環境の固定と復元</th>
+          <td>
+            採用Providerのrequirements、sources.lock.yaml、prepareスクリプト、Provider依存inventory
+            checker。
+          </td>
+          <td>
+            全依存とhashが固定され、新規環境で復元・整合性・protocol検証が成功。既存環境を上書きせず復帰先が残る。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">3：SLO v2と測定経路</th>
+          <td>packages/core/src/slo.ts、compare-slo.ts、performance-larm.ts、adapter、canary。</td>
+          <td>
+            旧v1互換を維持し、容量指標なしのv2比較が可能。欠測・identity不一致・不正な成功率・壊れたSSEをfixture試験で拒否する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">4：初回校正と運用</th>
+          <td>deploy/local-node/slo.yaml、既存canary／release evidence、運用手順。</td>
+          <td>
+            対象2 Profileの必要系列を実測し、暫定閾値と根拠を保存。release
+            commit・config・環境・fixtureに対応する合否を表示し、7日窓の実利用SLOを別に集計する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      失敗時は候補を昇格せず、直前の検証済みartifact・環境・基準を保持する。モデル変更を含む場合のrollbackと、daemonだけのrollbackを区別する。依存更新、SLO比較器の変更、基準値の緩和を同じ変更へ混ぜず、性能劣化を基準更新で隠さない。
+    </p>
+  </section>
+  <section id="work-packages">
+    <h2>作業分解と実行順序</h2>
+    <p>
+      着手時に実装担当がbase
+      commitと既存差分を記録し、対象外の作業を保持する。検証するsourceとconfigは確定したrevisionへ固定する。以降の各作業単位は別commitまたはPRとし、先行作業の受入結果を引き継ぐ。以下の新設ファイル名・command名は実装時に作成する予定名であり、現時点で利用可能な機能ではない。
+    </p>
+    <table>
+      <caption>
+        作業ID、依存関係、担当責務、変更対象
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">作業</th>
+          <th scope="col">前提・担当</th>
+          <th scope="col">変更対象と成果物</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">W0：基準の記録</th>
+          <td>最初に実施。実装担当。</td>
+          <td>
+            対象commit、config
+            revision、Provider採用一覧、lock一覧、検査結果、現行の復帰先を記録する。以前のaudit・coverage失敗は再検査して確定する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">W1：依存修正・共通release gate</th>
+          <td>W0後。daemon／release担当。</td>
+          <td>
+            package.json、bun.lock、.github/workflows/ci.yml、deploy/local-node/scripts/build-larm-release.sh。新設scripts/check-release.tsとそのtooling
+            test。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">W2：Provider依存契約</th>
+          <td>W1後。Provider担当。</td>
+          <td>
+            deploy/local-node/sources.lock.yamlを環境identityの正本として拡張し、apps/*のrequirements.in／requirements.lockへ統一。新設scripts/check-provider-dependencies.tsとfixture
+            test。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">W3：環境復元と切替</th>
+          <td>W2後。Provider／backend担当。</td>
+          <td>
+            deploy/local-node/scripts/prepare-*-runtime.sh、関連installスクリプト、systemd
+            unit、releases.yaml。新設の共通環境復元helperと隔離試験。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">W4：SLO v2契約・比較器</th>
+          <td>W1後に実装可能。core担当。統合はW3受入後。</td>
+          <td>
+            packages/core/src/slo.tsと公開export、slo.test.ts、deploy/local-node/scripts/compare-slo.tsとtest。v1を保持したv2
+            schemaと比較関数。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">W5：Profile別の測定・変換</th>
+          <td>W3・W4後。daemon／計測担当。</td>
+          <td>
+            performance-larm.ts、performance-helpers.tsとtest。新設slo-report-adapter.ts、固定fixture
+            manifest、Embedding測定、cold・復旧・取消試験。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">W6：canary統合・初回校正</th>
+          <td>W5後。運用担当。</td>
+          <td>
+            slo.yaml、canary-gate.sh、record-larm-release-gate.shと関連試験。校正済み基準、candidate比較結果、復帰試験の証跡。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">W7：7日集計・運用受入</th>
+          <td>W5後に収集を開始。全体受入はW6後。運用担当。</td>
+          <td>
+            新設deploy/local-node/scripts/collect-slo.tsとreport-slo.ts、必要なsystemd
+            timer、deploy/local-node/README.md。欠測を含む7日窓reportと週次依存監査の手順。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <section id="w1-steps">
+      <h3>W1：依存修正とrelease gate</h3>
+      <ol>
+        <li>
+          Bun・監査toolの版を固定し、脆弱な推移依存を互換範囲で更新する。overrideが必要な場合は理由と解除条件を残す。
+        </li>
+        <li>
+          check:releaseを実装し、frozen
+          install、全依存audit、既存check、coverageの順に実行する。W2の受入後、Provider
+          manifest検査も同じ入口へ接続する。
+        </li>
+        <li>
+          CIとbuilderを共通入口へ接続する。builderは検査したcommit・lock
+          digestとpayloadを照合し、失敗した候補を署名・配備要求へ進めない。
+        </li>
+        <li>
+          監査通信失敗、High検出、coverage失敗、検査後のlock変更を注入し、すべて非成功で終了することを確認する。通常運用で使えるskip指定は追加しない。
+        </li>
+      </ol>
+      <p>
+        受入：frozen
+        install、audit、check、coverageが対象revisionで成功し、CIとbuilderの必須検査集合が一致する。既存coverageの未達が残る場合は重要な未検証分岐を補い、baselineを下げずに解消する。
+      </p>
+    </section>
+    <section id="w2-w3-steps">
+      <h3>W2・W3：依存契約から復元まで</h3>
+      <ol>
+        <li>
+          catalog上の採用Providerと外部engineを列挙し、supported、trial、retiredに分類する。supportedはすべてmanifest対象にし、依存のないnative
+          Providerもengine・toolchain identityを記録する。
+        </li>
+        <li>
+          Providerごとに実行条件を固定し、requirements.inからhash付きlockを生成する。Python
+          ABIごとのlockを区別し、Torchを含む推移依存を一回のsync対象にする。
+        </li>
+        <li>
+          checkerでmanifest欠落、浮動version、hash欠落、lock
+          digest不一致、不明な取得元を拒否する。監査対象外の特殊wheelは理由・owner・再評価日を伴う明示状態にし、監査0件へ集約しない。
+        </li>
+        <li>
+          固定uvを使い、最終配置先の新規環境でsync --require-hashes、依存整合検査、import、protocol
+          smokeを実行する。source buildは固定条件で作成したwheelを入力とする。
+        </li>
+        <li>
+          環境IDをlockとtoolchainのdigestから作り、同一IDの完成環境を再実行で変更しない。中断された環境は利用可能と表示せず、新規構築または明示的な再試行へ進める。
+        </li>
+        <li>
+          CPU経路、特殊wheel経路の順に一つずつ実機受入し、対応するProvider
+          revisionと環境IDで切り替える。切替時は既存Bindingを保護し、必要なdrainを行う。
+        </li>
+      </ol>
+      <p>
+        受入：各supported
+        Providerで空環境からの復元、再実行の不変性、hash不一致時の停止、途中失敗時の旧環境保持、切替後のprotocol成功、直前環境への復帰を確認する。OS
+        packageやdriverは記録と適合判定の対象とし、自動更新しない。
+      </p>
+    </section>
+    <section id="w4-w5-steps">
+      <h3>W4・W5：SLO v2と計測</h3>
+      <ol>
+        <li>
+          coreへSloManifestV2、SloSummaryV2、compareSloV2を追加し、既存v1のexportと振る舞いを保持する。CLIはschemaVersionで処理を選ぶ。
+        </li>
+        <li>
+          metricの単位、対象Provider、warm／cold、必須値、母数、baseline
+          identityをschemaで検証する。系列は動的に定義し、未取得値はnullと理由を持たせる。
+        </li>
+        <li>
+          計測入口でselectorとProvider
+          subsetを受け、discovery・Connection・claimを通してBindingを確定する。必要なProviderだけを取得し、成功・例外・取消の全経路でreleaseする。
+        </li>
+        <li>
+          Embeddingの固定入力測定を追加する。既存v4
+          reportに必要なidentityを追加する変更が互換性を壊す場合はreport
+          versionを上げ、旧reportの変換範囲を明示する。
+        </li>
+        <li>
+          cold起動は対象instanceが未起動であることを制御面で確認して測る。daemon復旧と取消は専用の実機試験へ分け、通常の性能測定中にProviderやdaemonを再起動しない。
+        </li>
+      </ol>
+      <p>
+        受入：v1既存fixtureが成功し、v2では容量値なしに比較できる。欠測、非数、負値、母数矛盾、identity不一致、標本不足、SSE途中破損を検出し、比較不能を成功扱いしない。
+      </p>
+    </section>
+    <section id="w6-w7-steps">
+      <h3>W6・W7：校正と継続観測</h3>
+      <ol>
+        <li>
+          対象selector、subset、fixture、cache条件、環境を固定し、warm各100回、cold各5回、daemon復旧3回を測る。対象外の利用が干渉した区間は理由を記録して再測定する。
+        </li>
+        <li>
+          暫定式から算出したlatency値、cold
+          deadline、復旧60秒・取消5秒の達成状況を一覧化する。実用上の絶対時間はこの結果で確定し、未達の目標を達成済みに変更しない。
+        </li>
+        <li>
+          校正済みslo.yamlとbaseline
+          hashを確定し、後続candidateのcanaryで比較する。依存・Provider更新と同じ変更で基準を緩めない。
+        </li>
+        <li>
+          collect-sloは全要求のterminal
+          counterを60秒間隔で採取し、リポジトリ外へ保存する。sampleされたtraceを成功率の母数にしない。再起動、counter
+          reset、欠測で失われた区間を明示する。
+        </li>
+        <li>
+          report-sloで直近7日を集計し、成功・失敗・除外・拒否・preemption・欠測を分けて出力する。releaseの合成試験と実利用を混ぜず、同じ要求を複数回数えない。
+        </li>
+      </ol>
+      <p>
+        受入：校正対象すべての基準と比較結果、取消・復旧・rollbackの実機証跡を保存する。7日窓の欠測や母数0件は判定不能とし、観測が足りない場合は運用受入を未完了として継続する。
+      </p>
+    </section>
+  </section>
+  <section id="data-contracts">
+    <h2>成果物のデータ契約</h2>
+    <table>
+      <caption>
+        実装時にschemaとfixtureで固定する必須情報
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">成果物</th>
+          <th scope="col">必須情報</th>
+          <th scope="col">判定規則</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Provider環境manifest</th>
+          <td>
+            schemaVersion、Provider ID、採用状態、platform／ABI、Python・uv identity、lock
+            pathとSHA-256、取得元、engine revision、native条件、監査範囲。
+          </td>
+          <td>
+            source manifestと導入後receiptを分離する。runtime上の成功状態をGitの宣言だけで作らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">環境receipt</th>
+          <td>
+            環境ID、manifest
+            digest、実際のpackage・配布物hash、構築時刻、各検査結果、前世代との対応。
+          </td>
+          <td>
+            新規環境の検証後だけ完成状態を原子的に公開する。credentialやprompt本文を保存しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">SLO manifest v2</th>
+          <td>
+            schemaVersion 2、校正状態、系列ID、selector、canonical
+            Profile、subset、metricと単位、測定条件、最低標本数、閾値、baseline hashとprovenance。
+          </td>
+          <td>
+            未校正を合格にしない。容量指標を必須にしない。公開selectorだけで異なるProvider世代を同じ基準と見なさない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">SLO summary・比較結果</th>
+          <td>
+            candidate commit、config revision、boot epoch、Provider revision、環境ID、fixture
+            hash、母数、除外理由、欠測、metric、baseline hash、理由付きstatus。
+          </td>
+          <td>
+            statusはpassed、failed、incomparable、insufficient_data。CLIの成功終了はpassedのみ。v1の終了値とcontractは維持する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">7日窓report</th>
+          <td>
+            窓の開始・終了、対象系列、観測区間、counter
+            reset、成功・失敗・除外・拒否・preemptionの件数、欠測区間。
+          </td>
+          <td>
+            除外後の有効母数を明示し、合計矛盾を拒否する。異なるProvider・fixture条件は系列を分ける。観測欠落があれば完全な7日SLO達成を宣言しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      schema・比較・集計のOS非依存ロジックはpackages/coreへ置く。ファイル保存、systemd、実機の再起動・環境切替はbackendsまたはdeployへ置く。candidate測定中のboot
+      epoch変化は失敗とし、長期観測中の計画された再起動は区間を分割して欠測と復旧結果を残す。raw
+      sampleによるrelease時のp95とhistogramによる運用時の近似値を区別する。
+    </p>
+  </section>
+  <section id="validation-and-rollback">
+    <h2>検証・移行・切り戻し</h2>
+    <table>
+      <caption>
+        検証の実行場所と失敗時の動作
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">必須検証</th>
+          <th scope="col">失敗時</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">PR・CI</th>
+          <td>
+            共通release gate、manifest checker、v1／v2
+            schema・比較器・adapter・集計fixture、builderとprepareの隔離試験。
+          </td>
+          <td>候補を昇格しない。監査tool障害と実装失敗を別理由で残す。</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider受入</th>
+          <td>空環境への復元、再実行、import、protocol、対応実機での推論、旧環境への復帰。</td>
+          <td>候補環境を未受入のまま保持し、旧実行定義と環境を使う。</td>
+        </tr>
+        <tr>
+          <th scope="row">Release canary</th>
+          <td>
+            対象Profile別のSLO比較、固定identity、cold、取消、daemon復旧、release evidenceの整合。
+          </td>
+          <td>
+            直前の検証済みreleaseを維持または復帰する。基準不一致なら再校正待ちとし、数値を自動で緩めない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">運用</th>
+          <td>7日窓report、欠測検出、週次依存監査、更新候補の検証。</td>
+          <td>
+            SLO未達・検査不能を理由付きで表示する。観測不足や単発の遅延だけで自動rollbackしない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      v1とv2を移行期間に併存させ、新しいcanaryはv2結果のbaseline hash・candidate
+      identityを検証してrelease
+      evidenceへ記録する。旧canaryの成功をv2達成へ読み替えない。v2の校正完了前は旧readerと基準を削除しない。
+    </p>
+    <p>
+      rollback前に原因と実行中Bindingを確認する。daemonのみの変更は既存release
+      rollbackを使う。Provider環境が変わった変更は、対応するProvider
+      revision・実行定義・環境を一組で戻し、既存参照のdrainとsemantic
+      readinessを確認する。venvを移動したり稼働中環境へ上書きinstallしたりして復旧しない。直前の検証済み環境は復帰試験が終わるまで削除しない。
+    </p>
+  </section>
+  <section id="completion">
+    <h2>最終完了条件と進捗記録</h2>
+    <ul>
+      <li>DEP-1〜3、SLO-1〜3に対応する実装commitと検証結果が揃っている。</li>
+      <li>
+        対象revisionのHigh以上の監査、check、coverage、Provider manifest検査がすべて成功する。
+      </li>
+      <li>supported Providerを全件inventory化し、新規環境への復元と旧環境への復帰を実証する。</li>
+      <li>
+        指定した2 Profileの必要系列が校正済みになり、candidate比較と実機の取消・復旧試験が成功する。
+      </li>
+      <li>
+        7日窓で欠測を含む状態を正しく表示でき、観測可能な実利用で99.5%目標の達成状況を判定する。未達なら運用受入は未完了とする。
+      </li>
+      <li>
+        週次監査、依存更新、再校正、障害切り分け、rollbackを運用手順へ記載し、文書検査が成功する。
+      </li>
+    </ul>
+    <p>
+      W0〜W7の各状態を未着手、実装中、repository受入済み、実機受入済み、運用受入済みで記録し、対象commit、証跡の保存先、残件を添える。現在の状態は次節に記録する。容量評価を追加の完了条件にしない。
+    </p>
+  </section>
+  <section id="implementation-progress">
+    <h2>実装進捗：W0・W1</h2>
+    <dl>
+      <dt>実装対象</dt>
+      <dd>
+        基準HEAD
+        f3e50e2148df5212bec5cfcd871a6c17014d9799と利用者の既存変更を含む作業ツリー。既存変更をreset・stash・commitしていない。
+      </dd>
+      <dt>W0</dt>
+      <dd>
+        repository受入済み。着手時に834ファイルのdigestと既存差分をリポジトリ外へ記録。主要847
+        testは成功、High advisory 2件、coverage基準3項目未達を再確認した。
+      </dd>
+      <dt>W1</dt>
+      <dd>
+        repository受入済み。共通release gate、CI・builder統合、source／lock
+        identity照合、拒否試験、coverageの補完を実装した。
+      </dd>
+      <dt>W2〜W7</dt>
+      <dd>未着手。Provider環境移行、SLO v2、校正、7日窓の運用受入は後続作業。</dd>
+    </dl>
+    <p>
+      brace-expansionを5.0.9から5.0.12へ既存range内で更新し、High
+      2件を解消した。全依存監査の閾値未満にfast-uri・honoのmoderate
+      advisoryが残るため、脆弱性を全件解消したとは表現しない。共通入口はscripts/check-release.tsで、skip指定を持たず、固定install、全依存audit、production
+      audit、check、coverageを実行する。全依存auditが失敗した場合はproductionだけの成功で代替しない。
+    </p>
+    <p>
+      receiptのkindはlarm-release-gate、schemaVersionは1。sourceCommit、sourceDirty、bunVersion、lockfileSha256、inputDigest、時刻、checks、productionAuditを持つ。inputDigestはソースとsymlinkの参照先文字列を含み、node_modules、coverage、生成receipt等は除く。各検査後の入力変化を検出し、builderはproduction依存への切替後も照合する。既存候補もreceiptとpayloadを検査して依存監査を再実行する。
+    </p>
+    <p>
+      foregroundへの切替時にbackgroundの実行参照が解放されるまで待つこと、pending
+      Connectionがreadyを偽装しないこと、IDの一意性とterminal履歴回収、未割当capability・protocol、古いcontext
+      view、resolve途中の実体変更を検証する6 testを追加した。基準値は変更せず、主要853
+      testとcritical coverage
+      gateが成功した。接続controllerは関数98.43%、行99.55%で、従来baselineの97.27%・98.65%を満たした。
+    </p>
+    <p>
+      <time>2026-10-16T17:25:16+09:00</time>、bun run
+      check:releaseが成功した。固定install、全依存・production依存audit、check、coverageがすべてpassed。対象sourceのinputDigestは<code>f60abf4d085d937e4d3c9ab46e98e37fd160ea14ee45feb66f1ebb7cdccdbdad</code>。検査結果は/tmp/larm-implementation-release-gate.json、検査出力は同名の.logへ保存した。この段落は検査後に追記した時点記録であり、同じdigestの一部ではない。これはdirty
+      worktreeの検査であり、immutable
+      releaseや実機配備の完了ではない。稼働Provider・モデル・サービスは変更していない。
+    </p>
+  </section>
+  <section id="references">
+    <h2>参照と確認範囲</h2>
+    <p>
+      改善案作成時の監査と調査を実装計画書へ具体化し、今回はW0・W1の依存修正と共通検査を実装した。Provider用hash
+      lockの新規生成、venv再構築、実機SLO校正は行っていない。ツールの仕様は改善案作成時にuv公式のLocking
+      environmentsとCLI reference、Bun公式audit文書、PyPA
+      pip-auditのREADMEを確認した。導入時は採用するuv・Bun・監査toolの固定versionでoptionと動作を再確認する。
+    </p>
+    <ul>
+      <li><a href="./project-assessment-2026-10-16.html">多角評価と検査結果</a></li>
+      <li>
+        <a href="./quality-maintainability-improvement-plan.html">既存の品質・保守性改善計画</a>
+      </li>
+      <li><a href="./performance-benchmark.html">既存性能診断仕様</a></li>
+      <li><a href="./observability.html">既存の計測・トレーシング</a></li>
+      <li><a href="./stable-release-gate.html">既存Stable Release Gate</a></li>
+    </ul>
+  </section>
+</article>

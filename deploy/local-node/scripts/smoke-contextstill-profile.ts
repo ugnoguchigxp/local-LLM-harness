@@ -28,7 +28,7 @@ export async function runContextStillSmoke(options: {
   const names = profile?.providers.map((provider) => `${provider.name}:${provider.protocol}`).sort();
   const expected = [
     "asr:openai.audio-transcriptions.v1", "embedding:larm.embedding.v1", "llm:openai.chat-completions.v1",
-    "sentence-language:larm.system-one.v1", "system-one:larm.system-one.v1",
+    "system-one:larm.system-one.v1",
     "tts:openai.audio-speech.v1", "tts-english:openai.audio-speech.v1",
   ].sort();
   if (!profile || JSON.stringify(names) !== JSON.stringify(expected)) throw new Error("ContextStill Provider catalog drift");
