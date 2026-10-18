@@ -70,6 +70,10 @@ export type DaemonConfig = {
   musicProviderEndpoint?: string;
   imageProviderEndpoint?: string;
   musicProviderApiKey?: string;
+  meshArtifactRoot: string;
+  meshArtifactMaxBytes: number;
+  meshFreeFloorBytes: number;
+  meshWorkBytes: number;
   musicArtifactRoot: string;
   musicPollIntervalMs: number;
   musicMaxAudioBytes: number;
@@ -491,6 +495,10 @@ export function parseDaemonConfig(
     ...(musicProviderEndpoint ? { musicProviderEndpoint } : {}),
     ...(imageProviderEndpoint ? { imageProviderEndpoint } : {}),
     musicProviderApiKey: optionalSecret(env.LARM_MUSIC_PROVIDER_API_KEY),
+    meshArtifactRoot: absolutePathSetting(env, "LARM_MESH_ARTIFACT_ROOT", "/srv/ai/data/generated/3d"),
+    meshArtifactMaxBytes: numberSetting(env, "LARM_MESH_ARTIFACT_MAX_BYTES", 50 * 1024 ** 3, { min: 1024, integer: true }),
+    meshFreeFloorBytes: numberSetting(env, "LARM_MESH_FREE_FLOOR_BYTES", 32 * 1024 ** 3, { min: 0, integer: true }),
+    meshWorkBytes: numberSetting(env, "LARM_MESH_WORK_BYTES", 20 * 1024 ** 3, { min: 0, integer: true }),
     musicArtifactRoot: absolutePathSetting(
       env,
       "LARM_MUSIC_ARTIFACT_ROOT",

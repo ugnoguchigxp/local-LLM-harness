@@ -119,6 +119,21 @@ export class ImageArtifactManager {
     });
   }
 
+  async copyForMesh(artifactId: string): Promise<{ data: Buffer; mimeType: "image/png" | "image/webp" } | undefined> {
+    return this.serialized(async () => {
+      const item = (await this.retention.list()).find((v) => v.artifactId === artifactId);
+      if (!item) return undefined;
+      const metadata = await this.readMetadata(item.directory, artifactId);
+      if (!metadata || metadata.bytes > 20 * 1024 ** 2 || metadata.width > 4096 || metadata.height > 4096) return undefined;
+      const path = join(item.directory, metadata.file);
+      const st = await lstat(path);
+      if (!st.isFile() || st.isSymbolicLink() || st.size !== metadata.bytes || await realpath(path) !== resolve(path)) return undefined;
+      const data = await readFile(path);
+      if (data.length !== metadata.bytes || new Bun.CryptoHasher("sha256").update(data).digest("hex") !== metadata.sha256) return undefined;
+      return { data, mimeType: metadata.mimeType };
+    });
+  }
+
   async delete(artifactId: string): Promise<boolean> {
     return await this.serialized(async () => await this.retention.remove(artifactId));
   }

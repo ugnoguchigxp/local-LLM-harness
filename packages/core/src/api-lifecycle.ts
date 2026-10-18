@@ -40,6 +40,7 @@ export type ApiOperationOwner =
   | "agent-connection"
   | "service-harness"
   | "inference-gateway"
+  | "mesh"
   | "music"
   | "image-artifact"
   | "release-management";
@@ -118,7 +119,8 @@ export function apiOperationPolicy(
     || path.startsWith("/v2/context-views") || path.startsWith("/v1/generation-attempts")
     || path.startsWith("/v1/context-forget-operations")) {
     owner = "personal-state";
-  } else if (path.startsWith("/v1/music/")) owner = "music";
+  } else if (path.startsWith("/v1/3d/")) owner = "mesh";
+  else if (path.startsWith("/v1/music/")) owner = "music";
   else if (path.startsWith("/v1/image-artifacts") || path === "/v1/images/generations") owner = "image-artifact";
   else if (path.startsWith("/v1/artifacts/") || path.startsWith("/v1/artifact-operations/")
     || path.startsWith("/v1/runtime-releases") || path.startsWith("/v1/deployments/")) {
@@ -175,6 +177,7 @@ export function apiOperationPolicy(
     "agent-connection": ["agent-consumer"],
     "service-harness": ["service-harness-consumer"],
     "inference-gateway": ["openai-compatible-consumer"],
+    mesh: ["mesh-consumer", "operator"],
     music: ["music-consumer", "operator"],
     "image-artifact": ["agent-consumer", "operator"],
     "release-management": ["operator"],

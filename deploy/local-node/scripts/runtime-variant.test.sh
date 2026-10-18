@@ -3,6 +3,7 @@ set -euo pipefail
 test_root="$(mktemp -d)"
 trap 'rm -rf "${test_root}"' EXIT
 export LARM_VARIANT_TEST_ROOT="${test_root}"
+export LARM_MEDIA_LOCK_PATH="${test_root}/variant.lock"
 mkdir "${test_root}/bin"
 cat >"${test_root}/bin/systemctl" <<'SH'
 #!/usr/bin/env bash
@@ -10,7 +11,7 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${LARM_VARIANT_TEST_ROOT}/calls"
 case "$1" in
   show) printf "ActiveState=inactive\nMainPID=%s\n" "${LARM_VARIANT_TEST_REMAINING_PID:-0}" ;;
-  is-active) [[ "${LARM_VARIANT_TEST_HEALTHY:-0}" == 1 ]] ;;
+  is-active) [[ "${LARM_VARIANT_TEST_HEALTHY:-0}" == 1 || "$*" == *"${LARM_VARIANT_TEST_ACTIVE_PEER:-never}"* ]] ;;
   stop) [[ "${LARM_VARIANT_TEST_STOP_FAIL:-0}" == 0 ]]; touch "${LARM_VARIANT_TEST_ROOT}/stopped" ;;
   start) [[ "${LARM_VARIANT_TEST_START_FAIL:-0}" == 0 ]]; touch "${LARM_VARIANT_TEST_ROOT}/started" ;;
   *) exit 2 ;;
@@ -19,7 +20,7 @@ SH
 cat >"${test_root}/bin/awk" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ -e "${LARM_VARIANT_TEST_ROOT}/stopped" && "${LARM_VARIANT_TEST_LOW_MEMORY:-0}" == 0 ]]; then
+if [[ "${LARM_VARIANT_TEST_LOW_MEMORY:-0}" == 0 ]]; then
   echo 67108864
 else
   echo 1048576
@@ -33,13 +34,13 @@ chmod +x "${test_root}/bin/"*
 export PATH="${test_root}/bin:${PATH}"
 script="$(dirname "${BASH_SOURCE[0]}")/runtime-variant.sh"
 
-# The incoming worker fits after the idle peer's memory is released.
+# The incoming worker starts only when its peers are inactive.
 bash "${script}" start music
 test -e "${test_root}/started"
-grep -Fx 'stop larm-image-qwen21.service' "${test_root}/calls" >/dev/null
+! grep -q '^stop larm-image' "${test_root}/calls"
 
 # Insufficient memory or a failed peer stop must prevent launch.
-rm "${test_root}/started" "${test_root}/stopped"
+rm -f "${test_root}/started" "${test_root}/stopped"
 if LARM_VARIANT_TEST_LOW_MEMORY=1 bash "${script}" start image >/dev/null 2>&1; then exit 1; fi
 test ! -e "${test_root}/started"
 
@@ -54,8 +55,8 @@ if LARM_MEDIA_START_TIMEOUT_SECONDS=0 bash "${script}" start image >/dev/null 2>
 test "$(tail -n 2 "${test_root}/calls" | head -n 1)" = 'stop larm-image-qwen21.service'
 unset -f curl
 rm -f "${test_root}/started"
-rm "${test_root}/stopped"
-if LARM_VARIANT_TEST_STOP_FAIL=1 bash "${script}" start image >/dev/null 2>&1; then exit 1; fi
+rm -f "${test_root}/stopped"
+if LARM_VARIANT_TEST_ACTIVE_PEER=larm-mesh-trellis2.service bash "${script}" start image >/dev/null 2>&1; then exit 1; fi
 test ! -e "${test_root}/started"
 
 # Rechecking a healthy warm worker must leave it and its peer untouched.
@@ -67,3 +68,6 @@ echo 'media variant switching tests passed'
 # Inactive alone is insufficient when the worker PID remains alive.
 if LARM_VARIANT_TEST_REMAINING_PID=123 bash "${script}" stop music >/dev/null 2>&1; then exit 1; fi
 bash "${script}" stop music
+
+bash "${script}" start mesh
+bash "${script}" stop mesh

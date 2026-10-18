@@ -337,3 +337,6 @@ export { UsageProtection } from "./usage-protection";
 
 
 export { agentConnectionIdleDeadline } from "./agent-connection-idle";
+export * from "./mesh";
+export * from "./mesh-library";
+export * from "./mesh-glb";

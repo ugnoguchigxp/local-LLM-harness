@@ -22,6 +22,85 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="contract" data-state="current" data-domain="mesh-generation-api">
+          <th scope="row">
+            <a href="./mesh-generation-api-2026-10-18.html">3D生成・ライブラリAPIとEumenes連携</a>
+          </th>
+          <td>
+            生成・検索・編集・削除、保存、SDK、worker調停と配備。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>mesh-generation-api</code></small
+            >
+          </td>
+          <td>
+            2026-10-18。API・SDK・保存管理を実装。画像IDとQwen
+            promptの実機生成・HTML表示・削除を確認。root設置と署名付きreleaseの本番反映待ち。
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="proposed" data-domain="mesh-generation-api-storage">
+          <th scope="row">
+            <a href="./mesh-generation-api-and-storage-plan-2026-10-18.html"
+              >3D生成の正式採用：生成・ライブラリAPIと保存先の実装計画</a
+            >
+          </th>
+          <td>
+            非同期生成、一覧・検索・削除・HTML表示、画像・楽曲と同じドライブへの保存、Eumenes連携と受入試験。
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>mesh-generation-api-storage</code></small
+            >
+          </td>
+          <td>2026-10-18。採用指示を受けた計画。API実装・設定変更・データ移動・配備は未実施。</td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="image-to-3d-local-node-trial"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-18"
+          data-target-revision="c0bed38"
+        >
+          <th scope="row">
+            <a href="./image-to-3d-local-node-trial-2026-10-18.html"
+              >Qwen ImageからTRELLIS.2への実機3D生成試験</a
+            >
+          </th>
+          <td>
+            8060S/Vulkanで512のUV・PBR GLB生成、時間・資源・表示・品質課題を記録。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>image-to-3d-local-node-trial</code></small
+            >
+          </td>
+          <td>
+            生成成立、素材品質は保留。<small data-audit-summary="true"
+              >観測日2026-10-18、対象trellis.cpp
+              c0bed38。色の暗さ、重複面と非多様体辺が残る。</small
+            >
+          </td>
+        </tr>
+        <tr data-kind="research" data-state="current" data-domain="image-to-3d-local-node">
+          <th scope="row">
+            <a href="./image-to-3d-local-node-evaluation-2026-10-18.html"
+              >画像からの3D生成・復元：Radeon 8060S機への適用調査</a
+            >
+          </th>
+          <td>
+            TRELLIS.2・trellis.cpp
+            Vulkanを先行候補に、実機環境、モデル一覧と条件、Pixal3D・MapAnything、導入と最小検証を整理。
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>image-to-3d-local-node</code></small
+            >
+          </td>
+          <td>
+            2026-10-18。読み取り専用調査と導入案まで。バイナリ・重み取得、環境変更、生成試験、LARM登録は未実施。
+          </td>
+        </tr>
         <tr data-kind="contract" data-state="current" data-domain="agent-connection-demand-refresh">
           <th scope="row">
             <a href="./agent-connection-demand-refresh-2026-10-18.html"

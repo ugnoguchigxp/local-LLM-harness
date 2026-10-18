@@ -1,3 +1,5 @@
+import { ClientMesh } from "./client-mesh";
+export { ClientMesh } from "./client-mesh";
 import {
   controlOperationSchema,
   chatInputTokenCountSchema,
@@ -87,6 +89,7 @@ export class LarmClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
   private readonly timeoutMs: number;
+  readonly mesh: ClientMesh;
   private readonly media: ClientMedia;
   private readonly allocationApi: ClientAllocationApi;
   private readonly contextApi: ClientContextApi;
@@ -108,6 +111,7 @@ export class LarmClient {
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) {
       throw new RangeError("LARM timeoutMs must be a positive finite number");
     }
+    this.mesh = new ClientMesh((path, init) => this.request(path, init ?? {}));
     this.media = new ClientMedia((path, init) => this.request(path, init));
     this.allocationApi = new ClientAllocationApi({
       request: (path, init, management, timeoutMs) => this.request(path, init, management, timeoutMs),

@@ -1,0 +1,1099 @@
+<article lang="ja">
+  <h1>画像からの3D生成・復元：Radeon 8060S搭載LARM機への適用調査</h1>
+  <p>
+    本書は初回の読み取り専用調査と導入案を保存したもの。利用者の追加指示後に実施した試験は
+    <a href="./image-to-3d-local-node-trial-2026-10-18.html"
+      >Qwen ImageからTRELLIS.2への実機3D生成試験</a
+    >に記録した。
+    後続試験では512のテクスチャGLB生成と表示に成功したが、色・メッシュ品質には課題が残った。
+  </p>
+  <p>
+    最初に試す組み合わせは、<strong
+      >TRELLIS.2＋trellis.cpp v0.8.1のLinux x64
+      Vulkan配布版＋ilintar/trellis2-ggufのルート階層の非量子化セット</strong
+    >とする。
+    透明背景のRGBA画像1枚、512解像度、CLI、同時生成1件から始める。現在のRADVドライバを利用でき、Python・ROCmの変更を避けられる見込みがあり、同型GPUで画像からテクスチャ付きGLBまでの作者報告があるためである。
+    ただし、配布物のELF依存関係と実生成は未検証であり、採用は初回試験の候補選定を意味する。導入完了・動作保証を意味しない。
+  </p>
+  <p>
+    確認日：2026-10-18、実機観測は16時台後半〜17時台前半（JST）。調査対象ソースはLARM
+    <code>ecc36bf4c14e0f700495eeb2d797a19b3eae9c6d</code>。
+    実稼働Controlのhealthが示したreleaseは<code>0baea1ede627b6b078f59db4d8cf3215709fe690</code>、configRevisionは
+    <code>8abf3ae515eb3642b6c80339a8cee93085294520fceebb8fd5fc1123472e0af0</code>である。ソースと配備版は区別する。
+  </p>
+  <aside>
+    <p>
+      今回実施したのは既存環境の読み取り、公開文書・ソース・APIメタデータの取得、この調査書の作成と文書検査だけである。
+      サービス停止・再起動、パッケージ導入・更新、実行バイナリ・モデル重みの取得、ビルド、GPU生成、設定変更、LARM登録は実施していない。
+      Vulkan/HSAの列挙は行ったが、生成やベンチマークは行っていない。SAAA実装には依存せず、同リポジトリは調査していない。
+    </p>
+  </aside>
+
+  <section id="purposes">
+    <h2>二つの目的と選定結果</h2>
+    <table>
+      <caption>
+        目的ごとの入口と成功条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">目的</th>
+          <th scope="col">候補</th>
+          <th scope="col">成功条件と限界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1枚からの素材生成</th>
+          <td>TRELLIS.2を先行、Pixal3Dを比較</td>
+          <td>
+            見えない部分を生成で補い、UV・PBR素材を含むGLBを得る。裏側や実寸を実物どおりに復元した証拠にはならない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">複数写真からの実物・空間復元</th>
+          <td>MapAnything Apache版を別枠で条件付き選定</td>
+          <td>
+            深度・姿勢・点群の整合性を評価し、必要なら融合・メッシュ化・UV・テクスチャ処理を追加する。学習による推定のため実寸の正確さは既知寸法で検証する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      同じGLB形式でも内容は異なる。MapAnythingの簡易書き出しと、生成モデルの仕上げ済みPBR素材を同一の成果物として比較しない。
+    </p>
+  </section>
+
+  <section id="host">
+    <h2>実機で確認できた事実</h2>
+    <table>
+      <caption>
+        既存環境の読み取り結果。負荷・空き容量・budgetは観測時点の値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">観測</th>
+          <th scope="col">判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">CPU・OS</th>
+          <td>
+            Ryzen AI MAX+ 395、16コア32スレッド。Ubuntu 26.04.1 LTS x86_64、kernel
+            7.0.0-34-generic、glibc 2.43。
+          </td>
+          <td>Linux x64配布物の対象と一致する。OS名だけでは実行互換性を確定できない。</td>
+        </tr>
+        <tr>
+          <th scope="row">Vulkan GPU</th>
+          <td>
+            Loader 1.4.341。GPU0はRadeon 8060S Graphics、RADV STRIX_HALO、device API 1.4.335、Mesa
+            26.0.8-1ubuntu0.3。GPU1はCPUのllvmpipe。
+          </td>
+          <td>
+            ハードウェアGPUの列挙に成功。実行時もログでRADVを選んだことを確認し、CPU経路への意図しない移行を検出する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">計算機能</th>
+          <td>
+            shaderFloat16、shaderInt8、shaderBufferFloat32AtomicAddがtrue。subgroupSize
+            64、VK_EXT_memory_budgetあり。maxMemoryAllocationSize 0xfffffffc、maxStorageBufferRange
+            4294967295。
+          </td>
+          <td>
+            計算機能は有望。ただし1回の割り当て・1バッファ範囲には約4
+            GiBの上限がある。総heap容量が大きくても巨大な単一バッファが通るとは限らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GUI</th>
+          <td>DISPLAY未設定でもvulkaninfoはGPUを列挙できた。surface列挙の警告は出た。</td>
+          <td>
+            CLI計算に画面は不要と考えられる。trellisの実行物での確認は残る。Studio用のGTK/WebKit等の充足は調べていない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">権限</th>
+          <td>
+            利用者はrender/videoグループ所属。/dev/kfdと/dev/dri/renderD128はグループ読み書き可能。
+          </td>
+          <td>
+            現在の利用者にはデバイス利用権限がある。将来のsystemd実行利用者には別途同じ権限が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">HSA・ROCm</th>
+          <td>
+            rocminfoはgfx1151・40 CUを認識。/usr/bin/hipccは/opt/rocm/core-10.0/bin/hipccを参照。HIP
+            7.15.26333、clang
+            23.0.0git。amdrocm10.0-gfx1151、core/blas/dnn等のgfx1151パッケージは10.0.0-4。
+          </td>
+          <td>
+            ホストの配布パッケージ系統はROCm
+            10.0.0-4と確認できた。HIPコンパイラの内部版と同じ番号ではない。/opt/rocm/.info/versionは存在せず、全プロセスが同じライブラリを使うとの保証はない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">既存PyTorch</th>
+          <td>
+            Qwen TTS用venvのversion.pyとMETADATAはtorch 2.11.0+rocm7.13.0、HIP 7.13.99004、ROCm
+            7.13.0、Python 3.13。
+          </td>
+          <td>
+            ホストSDKとは別系統の環境がある。静的メタデータだけを確認し、torchのimportやGPU初期化は行っていない。MapAnything用にこのvenvを書き換えない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">共有メモリ</th>
+          <td>
+            OS可視121.21 GiB、MemAvailable約75〜76 GiB、swap 8 GiB中約6.3 GiB使用。sysfsのVRAM 2
+            GiB、GTT 100 GiB、VRAM使用約1.90 GiB、GTT使用約40.29 GiB。
+          </td>
+          <td>
+            GTTは追加の独立VRAMではない。OS・GPUの数字を足さない。swap使用だけで現在の逼迫とは断定できず、memory
+            PSIの10/60/300秒平均は観測時0だった。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Vulkanメモリ</th>
+          <td>
+            RADVのdevice-local heap 68 GiB、budget約39.88 GiB。別heapは34 GiB、budget約19.94
+            GiB。列挙プロセスのusageは0。
+          </td>
+          <td>
+            100 GiBのGTT全量が単一Vulkan heapとして使えるわけではない。usage
+            0は他プロセスがGPUメモリ未使用という意味ではない。budgetは変動する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">現在の競合</th>
+          <td>
+            GPU busyは100%。LARM daemon、llama-swap-worker、Granite ASR、Qwen
+            TTS、embedding、Ruri、KittenTTS、VOICEVOX等がrunning。
+          </td>
+          <td>
+            稼働unit名は要求中のモデルや利用者を確定しない。生成試験を今すぐ同時実行してよい根拠はない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Controlの観測</th>
+          <td>
+            GET /healthはready。別時点のGET /v1/activityはidle、activeWorkloads
+            0、reservationGuaranteed false。GET /stateは認証なしでは401。
+          </td>
+          <td>
+            活動観測は予約ではなく瞬間値で、GPU
+            busyとも観測時刻が異なる。要求Profile・接続・実行中推論の所有関係は今回確定していない。設定ドリフトとは判定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">保存領域・ツール</th>
+          <td>
+            対象root filesystemの空き約859 GiB。cmake 4.2.3、Ninja 1.13.2、glslc shaderc
+            2026.1、libvulkan1/dev、libstdc++、libgompが存在。Docker/Podman/toolboxはPATHで見つからず。
+          </td>
+          <td>
+            配布版にはコンテナもビルド用ツールも不要。PATHで見つからないことを未導入の断定には用いない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      確認手段はuname、os-release、lscpu、free、df、vulkaninfo、rocminfo、hipcc
+      --version、dpkg-query、ldconfig、sysfs/proc、ps、systemctlの一覧・show、対象venvのメタデータ、ControlのGETである。
+      TTM pages_limitは26214400ページ（当機の4 KiBページで100
+      GiB）。amdgpuのgttsize/vramlimitパラメータは現在の利用者には読み取りできず、値を推定して記載しない。
+      AMDの<a
+        href="https://rocm.docs.amd.com/en/docs-10.0.0/compatibility/compatibility-matrix.html"
+        >ROCm 10.0.0互換性資料</a
+      >も参照したが、gfx1151やUbuntu対応表は個別アプリの対応保証ではない。
+    </p>
+  </section>
+
+  <section id="release">
+    <h2>推奨版・配布物・バックエンド</h2>
+    <p>
+      <a href="https://github.com/pwilkin/trellis.cpp/releases/tag/v0.8.1">v0.8.1リリース</a
+      >（2026-09-25公開）を固定する。
+      tagのcommitは<code>c0bed38c1578f7e36e3e50c8ff1e38fa0d47583f</code>、mainは<code>610c90e9aca282ac2fb489b5d62b7ed5d1c177c9</code>（2026-10-11）。
+      最初からmainの追加機能を追う必要はない。APIで配布物の存在・サイズ・digest・公開時刻を確認した。
+    </p>
+    <table>
+      <caption>
+        初回に選ぶ配布物
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">archive</th>
+          <td>
+            <code>trellis-vulkan-linux-x64.tar.gz</code>、16,128,213 bytes（約15.38
+            MiB）。2026-09-25 11:19 UTC作成。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">SHA-256</th>
+          <td><code>8c2ed7f76ab9f09d3e24dae82b1a52a75d308e853bdfd289e26d57b1f422f33b</code></td>
+        </tr>
+        <tr>
+          <th scope="row">内容の公開根拠</th>
+          <td>
+            <a
+              href="https://github.com/pwilkin/trellis.cpp/blob/c0bed38c1578f7e36e3e50c8ff1e38fa0d47583f/.github/workflows/release.yml"
+              >release workflow</a
+            >はtrellis-cli、trellis-server、libggml*.soを梱包し、RPATHを$ORIGINに設定する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">互換性の推定</th>
+          <td>
+            Linux Vulkan CIはUbuntu 22.04、Vulkan SDK
+            1.4.309.0。実機のglibc・loaderは新しく、後方互換の見込みは高い。ただしELFのNEEDED・GLIBC/GLIBCXX
+            symbol・CPU命令・同梱ライブラリの実照合は未実施。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">除外する初回取得物</th>
+          <td>
+            CUDA版、約195 MBのROCm版、Studioのdeb/AppImageは不要。配布版には任意のquad
+            retopologyツールは含まれないが、通常の三角形メッシュ・UV・PBR GLBの評価には不要。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <a href="https://github.com/pwilkin/trellis.cpp/blob/v0.8.1/docs/spec/29-perf-profile.md"
+        >作者のStrix Halo測定</a
+      >では、Vulkan・1024・12 steps・モデルロード込みで軽い例6分9秒、複雑な例12分39秒。
+      7月の測定・旧版のshowcaseを現行配布版の実機保証と取り違えない。ROCmはHIP graph
+      captureを無効にしてもVulkanより10〜40%遅いという報告がある。
+      同資料にはRADV/gfx1151でF16の高速attention経路が停止・クラッシュした記録もあるため、初回は<code>--fa-fast</code>を使わず、BF16/F32側の既定値を維持する。
+      このPCの現在のMesa版で同じ問題が起きるかは未確認である。
+    </p>
+    <p>
+      ROCm版は予備案とする。配布workflowはgfx1151を含むTheRockを利用するが、ROCm
+      CIはexperimentalでGPU実行確認もない。
+      当機の10.0.0-4と配布時のTheRockのABI・依存関係は一致を確認していない。システムROCmの入れ替えを初回試験の前提にしない。
+      <a href="https://github.com/pwilkin/trellis.cpp/blob/v0.8.1/docs/getting-started.md"
+        >公式導入ガイド</a
+      >の自動インストーラは配布物・重み・UI取得や設定作成をまとめて行うため、初回には手動で固定archiveを扱う。
+    </p>
+  </section>
+
+  <section id="models">
+    <h2>GGUFの一覧・由来・容量</h2>
+    <p>
+      取得対象は<a
+        href="https://huggingface.co/ilintar/trellis2-gguf/tree/a57397bd3d351599d9729fc144b3f87c3f87d65b"
+        >ilintar/trellis2-gguf、revision a57397bd3d351599d9729fc144b3f87c3f87d65b</a
+      >。
+      APIのsiblings.sizeを合計した容量であり、ディスク使用量や実行時メモリとは別である。GBは10億bytes、GiBは2の30乗bytes。
+      rootは非量子化セットとして推奨するが、全テンソルがFP16という意味ではない。正確な型・テンソル名・メタデータは取得後のGGUF
+      header検査に残す。
+    </p>
+    <table>
+      <caption>
+        root階層の10ファイル。元checkpoint対応はtrellis.cppのモデル説明・変換処理による
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ファイル</th>
+          <th scope="col">bytes</th>
+          <th scope="col">元モデル／役割</th>
+          <th scope="col">初回512</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>dinov3.gguf</code></th>
+          <td>606,773,440</td>
+          <td>timm/vit_large_patch16_dinov3.lvd1689m。画像特徴。</td>
+          <td>必要</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>ss_flow.gguf</code></th>
+          <td>2,586,488,480</td>
+          <td>TRELLIS.2-4B / ss_flow_img_dit_1_3B_64。疎構造flow。</td>
+          <td>必要</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>ss_dec.gguf</code></th>
+          <td>147,379,392</td>
+          <td>TRELLIS-image-large / ss_dec_conv3d_16l8。初代から共用。</td>
+          <td>必要</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>shape_flow_512.gguf</code></th>
+          <td>2,586,636,032</td>
+          <td>TRELLIS.2-4B / slat_flow_img2shape_dit_1_3B_512。</td>
+          <td>必要</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>shape_flow_1024.gguf</code></th>
+          <td>2,586,636,032</td>
+          <td>同上1024。cascadeの高解像度段階。</td>
+          <td>後日追加</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>shape_dec.gguf</code></th>
+          <td>948,745,344</td>
+          <td>TRELLIS.2-4B / shape_dec_next_dc_f16c32。形状decode。</td>
+          <td>必要</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>tex_flow_512.gguf</code></th>
+          <td>2,586,734,336</td>
+          <td>TRELLIS.2-4B / slat_flow_imgshape2tex_dit_1_3B_512。</td>
+          <td>必要</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>tex_flow_1024.gguf</code></th>
+          <td>2,586,734,336</td>
+          <td>同上1024。高解像度texture flow。</td>
+          <td>後日追加</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>tex_dec.gguf</code></th>
+          <td>948,713,888</td>
+          <td>TRELLIS.2-4B / tex_dec_next_dc_f16c32。PBR decode。</td>
+          <td>必要</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>birefnet.gguf</code></th>
+          <td>882,749,024</td>
+          <td>ZhengPeng7/BiRefNet。背景除去。RGBA入力なら省略。</td>
+          <td>不要</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      透明背景512用の7ファイルは<strong>10,411,470,912 bytes＝10.41 GB＝9.70 GiB</strong>。
+      1024の2ファイルを追加すると15,584,841,280 bytes＝15.58 GB＝14.51
+      GiB、背景除去込み全10ファイルは<strong>16,467,590,304 bytes＝16.47 GB＝15.34 GiB</strong>。
+      q8全10ファイルは10.00 GB、q4は6.55
+      GBだが、量子化の品質・backend差を同時に持ち込まないため初回は使用しない。
+      repository全体のsnapshot取得はroot/q4/q8を重複取得するため避け、必要なファイルを固定revisionで指定する。
+    </p>
+    <p>
+      <a
+        href="https://huggingface.co/ilintar/trellis2-gguf/blob/a57397bd3d351599d9729fc144b3f87c3f87d65b/README.md"
+        >変換モデルカード</a
+      >はTRELLIS.2としながらsource modelに初代TRELLIS-image-largeだけを記載し、BiRefNetをCUDA
+      onlyとしている。 一方、trellis.cpp
+      v0.8.1のモデル表・CLIソースはTRELLIS.2のflowとVulkanを含む背景除去経路を示す。カードだけでは由来・対応を説明しきれていない。
+      これは実重みとの数値一致を確認したという意味ではなく、取得後は変換スクリプトの期待tensor名・shape・dtypeと照合し、HFのLFS
+      SHA-256とローカルSHA-256を照合する。
+    </p>
+    <p>
+      GGUFは格納形式であり、モデル構造・演算・前後処理はtrellis.cpp固有である。llama.cpp、Ollama、既存llama-swapのLLM用modelとして登録しても動かない。
+      <a
+        href="https://github.com/pwilkin/trellis.cpp/blob/c0bed38c1578f7e36e3e50c8ff1e38fa0d47583f/tools/convert.py"
+        >固定版の変換処理</a
+      >を対応確認の基準にする。 初回に公式safetensorsまで追加取得して自前変換する必要はない。
+    </p>
+  </section>
+
+  <section id="license">
+    <h2>認証・同意とライセンスを分ける</h2>
+    <table>
+      <caption>
+        2026-10-18に確認した配布条件。公開取得可能であることと、利用条件がないことは異なる
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">確認した条件</th>
+          <th scope="col">初回の扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">trellis.cppコード</th>
+          <td>
+            <a href="https://github.com/pwilkin/trellis.cpp/blob/v0.8.1/LICENSE">MIT</a
+            >。同梱ggml/xatlas/meshoptimizer等のnoticeも配布物単位で保持する。
+          </td>
+          <td>コードのMITを重み全体へ適用しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">TRELLIS.2本体</th>
+          <td>
+            <a
+              href="https://huggingface.co/microsoft/TRELLIS.2-4B/tree/af44b45f2e35a493886929c6d786e563ec68364d"
+              >公式モデルcardはMIT</a
+            >、gated false。公式コードもMIT。
+          </td>
+          <td>公式Python実装のNVIDIA・24 GB以上という要件とC++移植版の必要量を区別する。</td>
+        </tr>
+        <tr>
+          <th scope="row">初代SS decoder</th>
+          <td>
+            <a
+              href="https://huggingface.co/microsoft/TRELLIS-image-large/tree/25e0d31ffbebe4b5a97464dd851910efc3002d96"
+              >TRELLIS-image-large</a
+            >はMIT、gated false。
+          </td>
+          <td>由来を別記する。</td>
+        </tr>
+        <tr>
+          <th scope="row">DINOv3特徴抽出</th>
+          <td>
+            <a
+              href="https://huggingface.co/timm/vit_large_patch16_dinov3.lvd1689m/tree/30c1109559f65dea34316b0d4842d35c5771fe11"
+              >timm mirror</a
+            >はgated falseだが、licenseはother / DINOv3 License。
+          </td>
+          <td>
+            <a href="https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md"
+              >DINOv3 License（2025-08-19版）</a
+            >の利用・再配布・研究公表時の条件を確認する。利用による同意も規定される。未ゲートmirrorで条件が消えるわけではなく、全体をMITのみの構成とは呼ばない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">背景除去</th>
+          <td>
+            <a
+              href="https://huggingface.co/ZhengPeng7/BiRefNet/tree/e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4"
+              >BiRefNet</a
+            >はcard上MIT、gated false。
+          </td>
+          <td>最小RGBA試験では取得不要。BRIA RMBG-2.0の重みをこの構成へ混ぜない。</td>
+        </tr>
+        <tr>
+          <th scope="row">TRELLIS GGUF</th>
+          <td>ilintarのcardはlicense other、source参照。gated false。</td>
+          <td>トークン・クリック同意ゲートはAPI上ない。各元モデル条件を引き継ぐ前提で記録する。</td>
+        </tr>
+        <tr>
+          <th scope="row">Pixal3D</th>
+          <td>
+            <a
+              href="https://huggingface.co/TencentARC/Pixal3D/tree/b0cb2e1b794cab9aa0ac38a95d794a4d9337437f"
+              >公式重み</a
+            >とvegax87のGGUFはMIT表示、いずれもgated false。公式NOTICEは第三者条件を別記。NAFは<a
+              href="https://github.com/valeoai/NAF/blob/main/LICENSE"
+              >Apache 2.0</a
+            >。
+          </td>
+          <td>
+            DINOv3・共用decoderの条件は引き続き必要。公式cardのextra_gated_eu_disallowed指定とAPI
+            gated falseも区別し、将来配布条件が変わった場合は再確認する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">MapAnything Apache版</th>
+          <td>
+            コードApache 2.0、指定重みもApache 2.0、gated
+            false。encoderはconfig上DINOv2で、DINOv3構成ではない。
+          </td>
+          <td>
+            既定のfacebook/map-anythingはCC BY-NC
+            4.0なので、必ず-apacheを明示。DINOv2コード等の第三者noticeも保持する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      上記のgated値はHF
+      APIを認証なしで取得した結果。重み本体のGETは実施していない。生成物の入力画像に関する権利や、第三者へのモデル再配布は運用用途が決まった時点で別途確認する。
+    </p>
+  </section>
+
+  <section id="pixal3d">
+    <h2>第二候補Pixal3D：共用範囲と比較条件</h2>
+    <p>
+      <a href="https://github.com/pwilkin/trellis.cpp/blob/v0.8.1/docs/pixal3d/README.md"
+        >v0.8.1のPixal3D実装説明</a
+      >によれば、同じ実行物・decoder・DINOv3・BiRefNetを共用し、モデルフォルダへ5ファイルだけ追加する。
+      共用ファイルがbyte-identicalという点は実装者の記述であり、今回元重みと照合していない。
+      配布元は<a
+        href="https://huggingface.co/vegax87/Pixal3D/tree/51de7d1764f4b735c4e3aaea40e5ba60c18ca707"
+        >vegax87/Pixal3D、revision 51de7d1764f4b735c4e3aaea40e5ba60c18ca707</a
+      >。
+    </p>
+    <table>
+      <caption>
+        追加取得物：合計11,009,738,144 bytes＝11.01 GB＝10.25 GiB
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ファイル</th>
+          <th scope="col">bytes</th>
+          <th scope="col">由来</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>pixal3d_ss_flow.gguf</code></th>
+          <td>2,681,588,992</td>
+          <td>Pixal3D ss_flow_img_dit_1_3B_64</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>pixal3d_shape_flow_512.gguf</code></th>
+          <td>2,775,572,064</td>
+          <td>Pixal3D slat_flow_img2shape_dit_1_3B_512</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>pixal3d_shape_flow_1024.gguf</code></th>
+          <td>2,775,572,064</td>
+          <td>同上1024</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>pixal3d_tex_flow_1024.gguf</code></th>
+          <td>2,775,670,368</td>
+          <td>Pixal3D slat_flow_imgshape2tex_dit_1_3B_1024</td>
+        </tr>
+        <tr>
+          <th scope="row"><code>pixal3d_naf.gguf</code></th>
+          <td>1,334,656</td>
+          <td>valeoai/NAF、naf_release.pthのimage encoder</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>512用texture flowはなく、--model pixal3d --res 512は形状のみになる。</strong>
+      テクスチャ込みの比較はTRELLIS.2の1024試験後、Pixal3Dも1024で行う。
+      MoGe-2によるFOV推定は未移植で、既定FOV約49.13度か既知の水平画角を指定する。全体の実重みによるPython版との数値一致は未確認、複数視点条件付けも対象外。
+      NAFはhostメモリとim2col bufferを追加使用するので、TRELLIS.2と同じピークとは扱わない。
+    </p>
+    <p>
+      同じRGBA画像・seed・1024・steps・faces・atlasとし、前面輪郭、色・細部の位置、裏面の一貫性、穴、処理時間・ピークメモリを対で記録する。
+      FOV不明の画像では既定値の結果と、根拠を記録した画角調整後を分ける。形状のみ512の結果をTRELLIS.2のテクスチャ付き512より高品質と結論しない。
+    </p>
+  </section>
+
+  <section id="mapanything">
+    <h2>複数写真の復元：MapAnything Apache版</h2>
+    <p>
+      コードは<a
+        href="https://github.com/facebookresearch/map-anything/tree/3d10cf7a3016fc0f9bb13a071ee66c47b10be0d9"
+        >3d10cf7a3016fc0f9bb13a071ee66c47b10be0d9</a
+      >（2026-08-07、pyproject version 1.1.4）を確認。 重みは<a
+        href="https://huggingface.co/facebook/map-anything-apache/tree/00f9c245bbcb60522d1ed7f9e9d88462c6e3f38a"
+        >00f9c245bbcb60522d1ed7f9e9d88462c6e3f38a</a
+      >、model.safetensorsは4,914,062,480 bytes＝4.91 GB＝4.58 GiB。
+      cardの最新リリース表記は2026-01-20、repositoryのlastModifiedは2026-02-04であり、更新日時とモデルのリリース日を区別する。
+    </p>
+    <p>
+      <a
+        href="https://github.com/facebookresearch/map-anything/blob/3d10cf7a3016fc0f9bb13a071ee66c47b10be0d9/pyproject.toml"
+        >pyproject</a
+      >はPython 3.10以上、uniception 0.1.7、opencv-python-headless 4.10.0.84、rerun-sdk
+      0.24系等を要求し、PyTorch/CUDAを固定しない。 公式サンプルはtorch.cuda
+      APIとCPU経路を使う。ROCm版PyTorchにも同名APIがあるのでcudaという表記だけで非対応とは判定しない。
+      ただしgfx1151で全演算・mixed
+      precision・依存モジュールが通る根拠は未確認であり、Vulkan版trellisと同じ確度ではない。
+    </p>
+    <p>
+      推奨案は専用Python 3.12環境、gfx1151向けの対応PyTorch
+      wheelを依存解決結果とともに固定し、基本のMapAnythingだけを導入すること。
+      既存TTSのvenvは流用しない。[all]指定は別モデル・追加CUDA依存まで増やすため避ける。ホストROCmとwheelの対応を静的に確認してから、別途許可された機会に演算互換性を検証する。
+      SDPA・xFormers等の実際の選択やDINOv2
+      torch.hubの初回コード取得・追加checkpoint取得の有無も、その隔離環境で確認する。
+    </p>
+    <p>
+      <a
+        href="https://github.com/facebookresearch/map-anything/blob/3d10cf7a3016fc0f9bb13a071ee66c47b10be0d9/scripts/demo_images_only_inference.py"
+        >公式画像demo</a
+      >には--apache、--save_glb、GUI表示を行わない経路があり、memory_efficient_inference=True、minibatch_size=1を使う。
+      <a
+        href="https://github.com/facebookresearch/map-anything/blob/3d10cf7a3016fc0f9bb13a071ee66c47b10be0d9/mapanything/utils/viz.py"
+        >GLB変換</a
+      >は視点ごとの画像格子から頂点色のメッシュを作る。
+      したがって「GLBを書けない」という説明は正しくないが、視点融合済みの閉じた物体・UV
+      atlas・PBR素材を自動で完成させる機能とは異なる。
+      点群PLY、カメラ、深度も保存し、外れ値除去→視点間の整合確認→融合/メッシュ化→穴や不要面の処理→UV/画像投影を別工程で評価する。
+    </p>
+    <p>
+      実機時間・最低VRAMは不明。公式の「140 GBで最大2000
+      views」という説明を当機の処理枚数へ比例換算しない。
+      後日の入口は重なりのある静物写真4〜8枚、minibatch 1。メモリは少枚数試験の準備枠として32
+      GiBを仮置きし、測定前には予約値として採用しない。 専用wheel・環境・キャッシュ込み20〜35
+      GiB程度のディスク準備枠と、初回環境調整を含む半日程度を見込むが、生成処理時間の予測値ではない。
+      光沢・透明・動体・露出差・視点不足は復元品質を別途損なう。既知寸法と保留写真に対する再投影で精度を確認する。
+    </p>
+  </section>
+
+  <section id="alternatives">
+    <h2>候補ごとの採否と保守状況</h2>
+    <table>
+      <caption>
+        初回導入の優先順位。保留・見送りはAMDで原理的に動かないとの断定ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">判定</th>
+          <th scope="col">根拠・制約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">TRELLIS.2 / trellis.cpp Vulkan</th>
+          <td>先行試験に採用</td>
+          <td>
+            同型GPUでテクスチャGLBまでの作者実績。現行RADVを使える見込み。v0.8.1固定、現在もmain更新。配布物・生成の実機確認が残る。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Pixal3D / 同エンジン</th>
+          <td>第二段階</td>
+          <td>
+            追加約11.01 GBで共有環境を使える。1024
+            texture、FOV・NAF・数値一致の制約があり先行モデルの成功後に比較。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">MapAnything Apache</th>
+          <td>復元用途で条件付き選定</td>
+          <td>
+            Apache版と非CUDA固定の基本構成が魅力。ROCm全経路と後工程は未検証。TRELLISの代替素材生成モデルではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a
+              href="https://github.com/xibushu/UniForge3D/tree/8b6094780e202b8a6b1d239e0997552e18547026"
+              >UniForge3D</a
+            >
+          </th>
+          <td>初回見送り</td>
+          <td>
+            2026-10-17更新。setupはtorch 2.6/cu124、flash-attn 2.7.3、nvdiffrast
+            0.4.0等を指定。CuMesh/FlexGEMMのHIP経路だけでは全体成立を示さない。コードMIT、VGGT由来重みはCC
+            BY-NC 4.0、RMBG-2.0は別条件。先行調査の主要9重み約26.93
+            GBは今回再集計せず、追加モデル・最低メモリ・gfx1151時間は未確定。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a
+              href="https://github.com/alicevision/Meshroom/tree/7c6f5c5192d6f090f26deec26cae4ec0ae0969b5"
+              >Meshroom</a
+            >
+            /
+            <a
+              href="https://github.com/alicevision/AliceVision/tree/3afba20bebd61a5564454cefbf814a81c1ecdcdc"
+              >AliceVision</a
+            >
+          </th>
+          <td>手軽な初回導入は見送り</td>
+          <td>
+            ともにdevelopは2026-10-16更新。MPL
+            2.0主体の写真測量で重み取得は基本不要。安定配布の高密度CUDA経路とCPU
+            Draftを区別する。現developのsrc/CMakeLists.txtとdepthMap_syclにAdaptiveCpp/SYCLを実際に確認したが、当機向けビルド・配布・高密度復元実績は未確認。放置プロジェクトとは扱わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a
+              href="https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1/tree/82920d643c0dc2f7bfd7255f45f62d386edfe60c"
+              >Hunyuan3D-2 / 2.1</a
+            >
+          </th>
+          <td>保留</td>
+          <td>
+            今回詳細を再確認した2.1は2025-10-17更新、公式メモリ説明は形状10 GB、texture 21
+            GB、合計29 GB。専用renderer等の移植が必要で、Linux
+            gfx1151の一貫した経路は未確定。Tencent独自community
+            licenseで地域等の条件もある。2系列の別モデルへこの値・条件を一律適用しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a
+              href="https://github.com/Stability-AI/stable-fast-3d/tree/ff21fc491b4dc5314bf6734c7c0dabd86b5f5bb2"
+              >Stable Fast 3D</a
+            >
+          </th>
+          <td>保留</td>
+          <td>
+            2025-01-22更新。公式約6
+            GB、UV付きGLB、CPU経路あり。texture_baker/setup.pyにHIP分岐は確認したが、gfx1151全体動作の根拠には不足。Stability
+            AI Community License条件と重みの取得条件を採用前に別途照合する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a
+              href="https://github.com/VAST-AI-Research/TripoSR/tree/107cefdc244c39106fa830359024f6a2f1c78871"
+              >TripoSR</a
+            >
+          </th>
+          <td>補欠・優先度低</td>
+          <td>
+            2026-06-04更新なので「最近まったく更新がない」とは断定できない。公式約6
+            GB、コード・重みMIT。torchmcubes等のAMD経路の確認が必要。A100の0.5秒を当機の速度とは扱わず、TRELLIS.2と同じPBR出力を前提にしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a
+              href="https://github.com/TencentARC/InstantMesh/tree/08822c52fdc399b93ea00e4fa9e596344ed52ccc"
+              >InstantMesh</a
+            >
+          </th>
+          <td>初回見送り</td>
+          <td>
+            2025-01-03更新。公式はCUDA
+            12.1等を推奨し、AMD移植と補助モデル条件の確認が必要。コードApache
+            2.0だけで重み一式も同条件とは判断しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            <a
+              href="https://github.com/VAST-AI-Research/TripoSG/tree/fc5c40990181e2a756c4e0b1c2f4d6b5202faf8c"
+              >TripoSG</a
+            >
+            /
+            <a
+              href="https://huggingface.co/cgb/triposg-onnx-webgpu/tree/4db41a2fec8b5785e3f7ec721a2c4b703943b57c"
+              >WebGPU変換版</a
+            >
+          </th>
+          <td>形状専用の補欠</td>
+          <td>
+            公式は2025-04-18更新、CUDA 8
+            GB以上。コード・主要重みMITだが既定RMBGは別条件。cgb版は約3.5
+            GB、ONNX/WebGPUの演算・前処理契約を説明しDINOv2はApache
+            2.0、BRIAを使わない。Linux/8060Sの実績・browserのshader-f16・buffer制限・完了時間が未確認で、PBR
+            textureも目的外。公開されているだけではAMD対応としない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">VGGT</th>
+          <td>MapAnythingに劣後</td>
+          <td>
+            VGGT-1Bの重みはCC BY-NC 4.0。今回の復元入口はApache版のあるMapAnythingを優先する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      上記commit日はGitHub APIのdefault
+      branch先端のcommitter日時。最終更新日だけで保守品質・不具合数を判定していない。保留候補の実行時間・全取得容量・全補助ライセンスは精査未完であり、先行試験と同じ準備度とは扱わない。
+    </p>
+  </section>
+
+  <section id="installation">
+    <h2>導入手順案と影響の分離</h2>
+    <ol>
+      <li>
+        承認された試験時間に、固定版archive・モデル一覧・hash・ライセンスを保存する。最初の取得は16.13
+        MBのVulkan archiveと文書だけにして、重み取得前に配布物を調べる。
+      </li>
+      <li>
+        repository外の専用ディレクトリへ展開する。候補は実行物が/srv/ai/apps/trellis-cpp-v0.8.1-vulkan、重みが/srv/ai/models/trellis2-gguf-a57397bd、作業領域が/srv/ai/results/trellis-trial-20261018。既存ファイルを置換しない。
+      </li>
+      <li>
+        archive内のパス、symlink、実行形式とdigestを検査。readelf/objdump等でNEEDED、RPATH、GLIBC/GLIBCXX、CPU命令要件を確認し、同梱.soと既存OSのライブラリで解決できるかを照合する。LD_LIBRARY_PATHをシステム全体へ設定しない。
+      </li>
+      <li>
+        静的確認が通ってから、モデルを指定せず--helpを確認する。必要なGPU列挙は元ソースと同じbuildのtrellis-devicesがある場合に行う（配布archiveには同梱が保証されない）。この段階では生成しない。
+      </li>
+      <li>
+        RGBA画像を準備し、512用7ファイルだけを固定revisionで取得。hash・GGUF
+        headerを照合して、後述の1件試験を行う。問題なければ1024の2ファイル、必要ならBiRefNetを追加。
+      </li>
+      <li>
+        運用方式の判断は品質・時間・資源の実測後に行う。UIが必要になったらブラウザ画面、継続利用ならloopback
+        HTTP workerを検討する。Studioはその後の選択肢とする。
+      </li>
+    </ol>
+    <p>
+      配布物が不足ライブラリやCPU命令で動かない場合の代案は、同じcommitの独立ソースビルドである。
+      git submoduleを固定して取得し、C++17 compiler、CMake、Ninja、Vulkan
+      headers/loader、glslc、ggmlが要求するSPIR-V開発ファイルを照合する。
+      当機に主要ツールはあるが、すべての開発依存が揃うことは未確認。ビルドを実行しない段階で「追加パッケージ不要」とは確定しない。
+      <a href="https://github.com/pwilkin/trellis.cpp/blob/v0.8.1/CMakeLists.txt">CMake定義</a
+      >は通常構成でもlibwebp v1.5.0をFetchContentで取得する。 quad
+      retopologyオプションは無効のままとし、CGAL/Boost/GMP等の追加取得・ビルドを初回へ持ち込まない。
+    </p>
+    <pre><code># 後日実施するソースビルド案。今回は実行していない。
+cmake -S /srv/ai/apps/trellis-cpp-source -B /srv/ai/apps/trellis-cpp-source/build-vulkan \
+  -G Ninja -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON
+cmake --build /srv/ai/apps/trellis-cpp-source/build-vulkan \
+  --target trellis-cli trellis-server -j 8</code></pre>
+    <p>
+      8並列は既存処理へのCPU・メモリ影響を抑える仮の開始値であり、隔離によってGPUやメモリ帯域の競合が消えるわけではない。Docker等の追加導入はどちらの案にも必要ない。
+    </p>
+  </section>
+
+  <section id="budget">
+    <h2>初回取得量・時間・メモリの準備枠</h2>
+    <table>
+      <caption>
+        容量の実測メタデータと、未測定の作業見積もりを区別する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">取得量</th>
+          <th scope="col">準備する空き領域</th>
+          <th scope="col">時間・メモリ</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">配布物確認</th>
+          <td>archive 16.13 MB、軽量な文書・metadata</td>
+          <td>展開・控え・検査に1 GiB枠</td>
+          <td>人手込み10〜20分の計画値。モデル/GPU生成なし。</td>
+        </tr>
+        <tr>
+          <th scope="row">最小512</th>
+          <td>7重み10.41 GB＋archive</td>
+          <td>40 GiB枠。重み9.70 GiB、作業20 GiB、取得途中・展開等の余裕。</td>
+          <td>
+            生成3〜15分/件を仮置きし、初回30分の上限で段階進捗も確認。実機予測の保証ではない。追加使用量の準備枠32
+            GiB。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">1024まで</th>
+          <td>512から追加5.17 GB。背景除去を足す場合さらに0.883 GB。全体16.47 GB。</td>
+          <td>60 GiB枠。ソースビルドの予備10 GiBも確保するならこの中の使用状況を見て拡張。</td>
+          <td>作者6〜13分。実機の試験枠は15〜30分/件。追加メモリ48 GiBの準備枠。</td>
+        </tr>
+        <tr>
+          <th scope="row">Pixal3D比較</th>
+          <td>追加11.01 GB。全重み合計27.48 GB。</td>
+          <td>80 GiB枠。共有重みの複製はしない。</td>
+          <td>
+            処理時間は未確認。最初は1件30分の観測枠を取り、NAFの増分を別に測定。48
+            GiB枠で足りるとは未確定。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      一時領域20
+      GiBは要求仕様ではなく、標準の三角形GLBを数件評価するための保守的な計画枠である。大量のlatent/POST
+      dumpやretopologyは無効とする。
+      TMPDIRはディスク上の専用領域にし、RAM上の/tmpを大きな中間出力で埋めない。GLB・PNG・PLY・ログは生成後に実サイズを記録する。
+      メモリ32/48 GiBも作者の実測値ではなく、OS/GPU/host複製・attention・decode・CPU
+      mesh処理を見込む準備枠である。 作者の「1024が16
+      GBカードで動く」という説明を、そのまま当APUのRSSや共有メモリ使用量へ置き換えない。
+    </p>
+    <p>
+      試験開始条件の仮値は、512ではMemAvailable 48 GiB以上かつRADV device-local budget 24
+      GiB以上、1024ではそれぞれ64 GiB・32 GiB以上。
+      さらにGPU負荷の継続観測、実際の要求Profile/Provider・活動・予約と競合しない時間を必要とする。数字を満たすだけでは開始しない。
+      MemAvailableが16 GiBを割る、継続的なswap-in/outやmemory PSIが増える、GPU
+      reset、既存処理の合意した遅延閾値超過があれば追加試験へ進まず、自分の試験処理だけを中断する。
+      cgroupのRSS上限だけでGPU/GTT割り当てを制限できるとは仮定しない。
+    </p>
+    <p>
+      回線速度は測定していない。100
+      Mbpsを維持できる仮定なら重み転送だけで512セット約14分、全セット約22分、Pixal追加約15分。実際はHF/CDN・検証・再取得で延びる。
+      初回512の人手込み作業枠は45〜90分、1024まで含む場合は1〜2時間を確保する案である。ダウンロード時間をGPU生成時間に含めて報告しない。
+    </p>
+  </section>
+
+  <section id="validation">
+    <h2>後日実施する最小検証計画</h2>
+    <ol>
+      <li>
+        <strong>配布物と依存関係の確認：</strong
+        >前述の固定archive検査を重み取得前に終える。不足があればパッケージ更新へ自動的に進まず、ローカルビルド案の必要変更を確定する。
+      </li>
+      <li>
+        <strong>512を1回：</strong>単純な不透明の静物、全体が写り、余白と正しいalphaを持つRGBA
+        PNGを用意する。seed 42、12
+        steps。初回はBiRefNet、量子化、高速attention、quad処理を増やさない。
+      </li>
+      <li>
+        <strong>GLBを検査：</strong>終了コードに加え、mesh・三角形・UV・material・baseColor
+        texture・metallic/roughness
+        textureの存在を調べ、実際に利用するviewer/editorで開く。頂点色へのfallbackだけで完了したものは「テクスチャ付き成功」に数えない。
+      </li>
+      <li>
+        <strong>1024：</strong
+        >512の実行成立と最低品質を確認できたら2重みを追加し、同じ入力・seedで比較。default
+        cascadeを使い、512と1024を同時実行しない。最初は1件、余力があれば連続2件で解放漏れも確認する。
+      </li>
+      <li>
+        <strong>Pixal3D：</strong
+        >5重みを追加し、1024で対比較する。既知のFOVがあれば指定。NAF無効化やtoken
+        budget変更が必要になったら、通常条件とは別の試験として記録する。
+      </li>
+    </ol>
+    <pre><code># 後日、開始条件を満たした時間に1回だけ実施する例。今回は未実行。
+TMPDIR=/srv/ai/results/trellis-trial-20261018/tmp \
+  /usr/bin/time -v /srv/ai/apps/trellis-cpp-v0.8.1-vulkan/trellis-cli \
+  /srv/ai/results/trellis-trial-20261018/input-rgba.png \
+  /srv/ai/results/trellis-trial-20261018/output-512.glb \
+  --models /srv/ai/models/trellis2-gguf-a57397bd \
+  --backend Vulkan --gpu 0 --require-gpu --res 512 --seed 42 --steps 12 \
+  --threads 8 --verbose</code></pre>
+    <p>
+      事前に存在するalphaを尊重する自動経路を使い、白背景のthreshold処理で光沢部分まで抜く失敗を避ける。
+      実際の配布版--helpで引数を照合し、ログのGPU名が8060Sであることを確認する。vulkaninfoのGPU番号とggml内の列挙番号が一致するとは決めつけない。
+      WebP素材はEXT_texture_webp対応viewerを要するため、利用先で開けなければ同条件の<code>--webp off</code>を別試験にする。これを形状生成の失敗と混同しない。
+    </p>
+    <table>
+      <caption>
+        1件ごとに保存する測定・品質記録
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">分類</th>
+          <th scope="col">記録項目</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">再現条件</th>
+          <td>
+            入力hash、alpha確認、版/commit、archive
+            hash、モデルrevision/hash、OS/driver、backend実名、seed、res、steps、faces、atlas、FOV。
+          </td>
+          <td>モデル・ドライバ・条件が違う結果を同じ測定として扱わない。</td>
+        </tr>
+        <tr>
+          <th scope="row">時間</th>
+          <td>
+            開始/終了、初回processか再利用serverか、ロード、DINO、SS、shape、texture、mesh/bake、総時間。既存cacheの状態。
+          </td>
+          <td>
+            初回のshader compilation・OS file cacheと生成演算を分ける。cold
+            cacheのためにホスト全体のcacheを消さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">メモリ・負荷</th>
+          <td>
+            time -vの最大RSS、プロセス/cgroup、MemAvailable最低値、VRAM/GTT増分、RADV
+            budget、可能ならDRM fdinfoのプロセス別使用量、GPU busy、swap-in/out、PSI、終了後回復。
+          </td>
+          <td>
+            RSSだけをピーク共有メモリとは報告しない。GPU/hostの重複を足し込まず、baselineからの増分も記録。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">既存サービス</th>
+          <td>
+            対象Profile→Provider→route→runtime、試験前後のactivity、既存要求の遅延・エラー、GPU
+            reset/timeout。
+          </td>
+          <td>
+            無断で既存推論を投げて負荷試験しない。既存観測指標を使い、試験中の新規要求との重なりを残す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実行成立</th>
+          <td>
+            終了コード、GLB
+            parse、geometry、UV、PBR画像参照、非空の出力、fallbackの有無、実利用viewerでの表示。
+          </td>
+          <td>
+            全部通って「テクスチャGLBの生成成立」。コード上uv_bake失敗で頂点色へfallbackし得るためexit
+            0だけでは不可。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">用途品質</th>
+          <td>
+            正面/左右/裏/上下面、穴・boundary
+            edge、離れたcomponent、法線、細い部分、裏側の破綻、前面輪郭、テクスチャのずれ/継ぎ目、面数・容量。
+          </td>
+          <td>
+            閉じた固体を期待する場合は意図しない穴なし。許容する面数・細部・誤差は素材用途ごとに決める。見えない裏側の実物忠実度は、1枚からは証明できない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      連続生成でも高速化を保証しない。<a
+        href="https://github.com/pwilkin/trellis.cpp/blob/c0bed38c1578f7e36e3e50c8ff1e38fa0d47583f/src/trellis-server.cpp"
+        >serverソース</a
+      >は要求ごとにtrellis_runを実行し、各段階の重みをロード・解放する。
+      常駐で省けるのは主にVulkanの再初期化であり、全重みを常時GPUへ置くserverではない。OSのfile
+      cacheが2回目以降を助ける可能性はあるが測定する。
+    </p>
+  </section>
+
+  <section id="larm">
+    <h2>将来のLARM接続案</h2>
+    <p>
+      初回CLI試験はLARMの外で、干渉しない試験時間に1件ずつ行う。将来は既存の
+      <a href="./media-on-demand-implementation-results-2026-10-06.html"
+        >画像・音楽オンデマンド生成</a
+      >と同じ「Controlは生存、重いworkerは要求時だけ起動、成果物を保存して停止」という方式を基礎にする。
+      ブラウザは操作用、HTTP APIは接続用、CLIは最初の切り分け用と役割を分ける。
+    </p>
+    <p>
+      trellis-serverはloopbackの未使用ポートを後日選び、GET /health、POST
+      /generate（image、resolution等のmultipart）で接続する。返るbodyはmodel/gltf-binary。
+      /healthは固定のokを返すだけで、重み・生成可否を保証しない。サーバー内のmutexは同時生成を直列化するが、LARM外のGPU利用を調停せず、待機要求数の制限にも代用できない。
+      初期workerには公開認証・job
+      APIがないので、LARM側の認証・容量制限・単一job・期限・入力検証を持つadapterを置く。
+      6〜13分級の処理を考慮して202
+      job→状態取得/SSE→成果物取得を提案する。GLBをControl側の永続領域へ保存・検証してからcompletedを公開し、その後workerを止めても取得できるようにする。
+    </p>
+    <p>
+      現在のpackages/core/src/agent-connection.tsのservice
+      protocolは画像/音楽の2種類だけ、media-policy.tsとpackages/backends/src/media-variants.tsもimage/musicに限定される。
+      runtime schemaにも3D protocolはなく、local-service.tsのprocess/container
+      serviceはgpuAccess:false固定である。
+      したがって<strong>設定ファイルへ3Dを1行足すだけの統合は不可</strong>。3D
+      service/job/artifactの契約、media
+      variant、GLB検証・保存、起動停止・health、容量会計と優先調停の実装拡張が必要である。
+      OS非依存の契約・planningはcore、systemd連携はbackends、HTTPとjob管理はdaemonに置く。
+    </p>
+    <p>
+      将来の要求は明示選択の3D Profile/service→3D
+      route/実行設定→TRELLISかPixal3Dの固定runtime→systemd workerと追跡できるようにする。
+      model名や現在空いているportから意図を逆算しない。GGUFをLLMのswapGroupへ入れない。初期方針はminWarmInstances
+      0、完了後idle TTL 0、同時実行1、少数待機、失敗時の自動生成再送なし。
+      foreground要求との競合はjob開始前に待つ方式を先行させ、実行中jobを中断する場合の成果物・再開規約は別途決める。単にsystemdを使ってもGPU優先度は自動的に制御されない。
+    </p>
+    <p>
+      資源検討の例として、source
+      catalogのcontextstill-backgroundのllmはllm-contextstill-ornithからornith15-strix-conversationへ解決され、推定54
+      GB、4要求枠、設定上のKV poolは1,048,576 tokens/4 slotsである。
+      contextstillの64Kを選ぶ場合は別routeからqwen-contextstill-64k（推定28 GB、1
+      slot）となる。全runtime定義を同時稼働と足したり、観測中のllama-serverを別Profileのモデルだと決めつけたりしない。
+      現在の要求所有者は未確定のため、これらは構成例であってライブ割り当ての説明ではない。導入時は配備版catalogと実際の要求を確認し、3Dの実測ピークを同じ共有メモリ予算に計上する。
+    </p>
+  </section>
+
+  <section id="remaining">
+    <h2>実行前に残る確認と完了判定</h2>
+    <ul>
+      <li>
+        配布archive本体のdigest・ELF依存・CPU命令・Vulkan
+        backendの実照合。失敗した場合に限り、ソースビルドの不足依存と追加変更を確定する。
+      </li>
+      <li>
+        固定モデルrevisionの取得条件・ライセンスを利用目的に照らして確認。特にDINOv3をMIT扱いしない。ダウンロード時のLFS
+        hashとheader一致を確認する。
+      </li>
+      <li>
+        試験時間、実要求ProfileとProvider、GPU
+        busyの継続状態、共有メモリbudget、既存サービスの遅延基準を確認する。activity
+        idleだけを資源予約と扱わない。
+      </li>
+      <li>
+        正しいRGBA画像と、GLB/PBRを確認できる既存のviewer/editor、ディスク上の一時領域、停止する場合は試験プロセスだけを対象にする監視手段を準備する。
+      </li>
+      <li>
+        MapAnythingは別の隔離環境計画としてPyTorch/依存演算を確認する。512のTRELLIS試験が通ったことを、そのまま複数写真復元の対応保証にしない。
+      </li>
+    </ul>
+    <p>
+      現段階の完了範囲は<strong>公開情報と実機環境から導入可能性を評価し、変更・取得量・検証手順・統合の追加開発を具体化したところまで</strong>である。
+      実際の生成成功、品質合格、同時運用容量、処理時間、配布バイナリ互換性の最終確認は未完である。
+    </p>
+  </section>
+</article>

@@ -1,3 +1,4 @@
+import { registerMeshRoutes } from "./routes/mesh";
 import { ZodError } from "zod";
 import { registerLocalServiceRoutes } from "./routes/local-services";
 import { LocalServiceError } from "./local-service-manager";
@@ -410,6 +411,7 @@ export function createAppComponents(deps: AppDeps) {
     handleGateway,
   });
 
+  registerMeshRoutes(app, { manager: deps.meshManager, maxBodyBytes: controlMaxBodyBytes, viewerPath: deps.meshViewerPath ?? "/srv/ai/apps/trellis-cpp-v0.8.1-vulkan/model-viewer-4.1.0.min.js" });
   registerImageArtifactRoutes(app, deps.imageArtifactManager);
   registerImageGenerationRoutes(app, deps.imageGenerationProvider);
 

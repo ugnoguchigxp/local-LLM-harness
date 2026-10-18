@@ -1,0 +1,560 @@
+<article lang="ja">
+  <h1>3D生成の正式採用：生成・ライブラリAPIと保存先の実装計画</h1>
+  <p>
+    2026-10-18。利用者はTRELLIS.2による3D生成を採用し、画像・楽曲と同様の生成・削除・一覧・検索API、同じドライブへの保存、Eumenesのスキルからの利用を希望した。
+    最新の指示は「まず計画」であるため、<strong>今回は読み取り確認と本計画の作成まで</strong>とする。
+    API実装、既存設定の変更、保存データの移動、モデル追加取得、生成、サービス操作、配備、Eumenes側のスキル追加は実施しない。
+  </p>
+  <p>
+    調査対象source revisionは<code>ecc36bf4c14e0f700495eeb2d797a19b3eae9c6d</code>。
+    監視APIに関する別作業の未コミット変更が存在するため、そのコードを本件の差分へ取り込まない。
+    採用根拠は<a href="./image-to-3d-local-node-trial-2026-10-18.html">512の実機生成・表示結果</a
+    >、運用の基礎は
+    <a href="./media-on-demand-implementation-results-2026-10-06.html"
+      >既存の画像・楽曲オンデマンド生成</a
+    >とする。
+    前段試験の色・トポロジーの課題は改善項目として引き継ぎ、今回の利用者による採用判断と区別する。
+  </p>
+
+  <p>
+    計画後の利用者指示により実装を開始した。現在の実装仕様と結果は<a
+      href="./mesh-generation-api-2026-10-18.html"
+      >3D生成・ライブラリAPIとEumenes連携</a
+    >に記録する。本計画の冒頭は計画作成時点の作業範囲を示す。
+  </p>
+
+  <section id="baseline">
+    <h2>確認できた現在の構成</h2>
+    <table>
+      <caption>
+        2026-10-18 17:45〜17:49 JST頃の読み取り結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">現在</th>
+          <th scope="col">計画への反映</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">画像</th>
+          <td>
+            POST
+            /v1/images/generationsは同期応答。/v1/image-artifactsに一覧・詳細・取得・削除がある。現在の一覧APIに検索条件はない。
+          </td>
+          <td>
+            生成の保存・取得の流儀を踏襲し、3Dの検索は楽曲ライブラリを基準に新設する。既存画像APIの検索機能が完成済みとは前提にしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">楽曲</th>
+          <td>
+            POST /v1/music/generationsは202
+            job、状態・SSE・キャンセルがある。/v1/music/tracksは検索・ページング・詳細・削除に対応。
+          </td>
+          <td>3Dも非同期jobと完成素材ライブラリを分ける。</td>
+        </tr>
+        <tr>
+          <th scope="row">画像保存先</th>
+          <td>
+            <code>/srv/ai/data/generated/images</code
+            >。実稼働workerのExecStart、Controlの既定設定、実ディレクトリを確認。現在約33 MiB。
+          </td>
+          <td>同じgenerated rootに3Dを追加。</td>
+        </tr>
+        <tr>
+          <th scope="row">楽曲保存先</th>
+          <td>
+            <code>/srv/ai/data/generated/music</code
+            >。稼働daemonの環境変数とsystemd設定で確認。現在約4.3 MiB。
+          </td>
+          <td>既存の曲の移動は不要。</td>
+        </tr>
+        <tr>
+          <th scope="row">実ドライブ</th>
+          <td>
+            images/musicとも<code>/dev/nvme0n1p4</code>、ext4、UUID
+            <code>073bf44e-d896-4e84-a932-7cf0c403c78e</code>。内蔵root filesystem、空き約847.5 GiB。
+          </td>
+          <td>
+            「同じドライブ」は現在の画像・楽曲と同じ内蔵ドライブとして計画する。パス名だけでなく実デバイスを照合する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Nextorage</th>
+          <td>
+            <code>/srv/storage/nextorage</code
+            >は別デバイス<code>/dev/nvme1n1p1</code>、UUID
+            <code>de97577d-c5d3-4b57-ac4b-3753a2f6d331</code>、空き約1.8 TiB。
+          </td>
+          <td>
+            今回確認した画像・楽曲の保存先とは異なる。3種類全部の外付け移行を今回の計画へ暗黙に含めない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">重い生成の調停</th>
+          <td>
+            MediaVariantManager、runtime-variant.sh、media-policyとProfileのservice
+            schemaはimage/musicの2種類を前提にする。
+          </td>
+          <td>3種類へ拡張する。systemd unitを増やすだけでは実装完了にならない。</td>
+        </tr>
+        <tr>
+          <th scope="row">試験済み経路</th>
+          <td>
+            TRELLIS.2、trellis.cpp v0.8.1、Vulkan、512、12
+            steps、GLB。背景除去約13秒、3D化約177秒。既知のモデル8ファイルを取得済み。
+          </td>
+          <td>
+            初版の対応はこの経路に固定。実行に必要なものは取得済みで、追加の大容量モデル取得を前提にしない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="contract">
+    <h2>追加する公開API案</h2>
+    <p>
+      公開namespaceは<code>/v1/3d</code>。生成jobと完成品を分け、完成品は<code>assets</code>と呼ぶ。
+      既存LLMのmodel一覧や取得済み重み管理と衝突させない。認証は既存ControlのBearerを踏襲し、生成用Provider
+      credentialを流用するために権限を広げない。
+      一覧・検索・取得・表示・削除では生成workerを起動しない。
+    </p>
+    <table>
+      <caption>
+        初版で用意する操作と応答
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">操作</th>
+          <th scope="col">API</th>
+          <th scope="col">契約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">生成</th>
+          <td><code>POST /v1/3d/generations</code></td>
+          <td>202、jobId、statusUrl、eventsUrl。受理記録と再送キーを永続化してから返す。</td>
+        </tr>
+        <tr>
+          <th scope="row">進捗</th>
+          <td><code>GET /v1/3d/generations/:jobId</code></td>
+          <td>
+            queued/running/completed/failed/cancelledと実測stage。completedでのみassetIdと成果物URLを公開。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">進捗通知</th>
+          <td><code>GET /v1/3d/generations/:jobId/events</code></td>
+          <td>
+            SSE。接続時の最新snapshotと以降の変化を返す。再接続時はGETでも最終状態を確認できる。推測の百分率は返さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">生成中断</th>
+          <td><code>DELETE /v1/3d/generations/:jobId</code></td>
+          <td>
+            対象jobの取消。終端済みならその状態を返し、完成素材の削除とは分ける。応答はjob表現。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">一覧・検索</th>
+          <td><code>GET /v1/3d/assets</code></td>
+          <td>q、tags、sort、order、limit、cursor。assets、total、nextCursorを返す。</td>
+        </tr>
+        <tr>
+          <th scope="row">詳細</th>
+          <td><code>GET /v1/3d/assets/:assetId</code></td>
+          <td>タイトル・タグ・由来・生成条件・面数・サイズ・hash・品質上の注意と取得URL。</td>
+        </tr>
+        <tr>
+          <th scope="row">モデル取得</th>
+          <td><code>GET /v1/3d/assets/:assetId/content</code></td>
+          <td>GLB、model/gltf-binary、サイズ・ETag、HTTP Range。worker終了後も取得可能。</td>
+        </tr>
+        <tr>
+          <th scope="row">由来の取得</th>
+          <td><code>GET /v1/3d/assets/:assetId/metadata</code></td>
+          <td>再現条件・モデル/実行ソフトの版・品質情報。絶対パス・認証情報は含めない。</td>
+        </tr>
+        <tr>
+          <th scope="row">元画像取得</th>
+          <td><code>GET /v1/3d/assets/:assetId/source</code></td>
+          <td>この素材に保存した入力画像のコピー。元の画像ライブラリの保持期間から独立する。</td>
+        </tr>
+        <tr>
+          <th scope="row">HTML表示</th>
+          <td><code>GET /v1/3d/assets/:assetId/preview</code></td>
+          <td>
+            固定viewerを使う回転・拡大可能なHTML。初版は検証済みの単体HTML方式を踏襲し、保存時に巨大HTMLを重複保管せず必要時に組み立てる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">メタデータ編集</th>
+          <td><code>PATCH /v1/3d/assets/:assetId</code></td>
+          <td>title/tagsの変更。変更後は検索へ即時反映。GLB本体は変更しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">完成品削除</th>
+          <td><code>DELETE /v1/3d/assets/:assetId</code></td>
+          <td>204。存在しないIDは404。モデル・入力コピー・派生ファイル・検索登録を削除する。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      公開modelは<code>trellis2-4b</code>、解像度は初版512、stepsは12、GLB/PBR出力とする。
+      不明modelや未対応解像度はworker起動前に400で拒否する。カタログにも対応範囲を広告し、将来の1024追加は別の検証とする。
+      sourceは既存画像artifactのID、またはQwen画像生成を含むpromptのどちらか1種類を指定できる。
+      任意のホストパスや取得先URLは受け付けず、画像参照の権限と内容を検証する。
+    </p>
+    <pre><code>POST /v1/3d/generations
+Idempotency-Key: 生成意図ごとに固定したUUID
+
+{
+  "model": "trellis2-4b",
+  "source": { "type": "image-artifact", "id": "image_4a2bb7dad9ee4d5c90823d00fe49ca3f" },
+  "title": "青緑のロボット",
+  "tags": ["ロボット", "試作"],
+  "resolution": 512,
+  "seed": 42
+}</code></pre>
+    <pre><code>{
+  "model": "trellis2-4b",
+  "source": {
+    "type": "prompt",
+    "prompt": "白背景に、青緑色の小さなロボットを全身で描く",
+    "imageModel": "qwen-image-2.1-turbo",
+    "imageSeed": 42
+  },
+  "title": "青緑のロボット",
+  "resolution": 512,
+  "seed": 42
+}</code></pre>
+    <p>
+      同じ再送キーと同じ要求は同じjobへ収束させ、異なる内容でのキー再使用は409。
+      通信断の復帰でQwenや3Dの生成を再送しない。キーの初期保持期間は24時間とし、受理済みjobの復元と同じ永続記録で管理する。
+      完成品を削除しても同じキーによる再送で再生成せず、削除済みの結果として返す。
+    </p>
+    <p>
+      容量不足は507、worker停止失敗・保存先利用不能は503、待機枠満杯は429＋Retry-After、入力不正は400。
+      長時間jobのGPU待ちはstageで表し、期限内に開始できなければqueue_timeoutで失敗する。
+      再起動で失われた実行中jobはinterruptedとしてfailedへ移し、自動の再生成はしない。保存済み完成品は復元する。
+    </p>
+  </section>
+
+  <section id="library">
+    <h2>検索と削除の仕様</h2>
+    <p>
+      qはtitle・元prompt・利用者タグを対象とし、NFKC・大小文字の正規化、空白区切りAND検索を楽曲と揃える。
+      日本語の部分一致、タグのAND絞り込み、createdAt/relevance順、asc/descに対応。
+      limitは既定20・最大100、qは最大512文字、タグは最大32個・各64文字を初期値とする。
+      cursorに検索条件と安定した日時/IDのキーを含め、異なる検索条件への持ち越しは400。重複・取りこぼしを固定fixtureで検査する。
+      意味検索や生成モデルの追加ロードは不要な構成にする。
+    </p>
+    <p>
+      小規模ライブラリ向けに、各完成素材のmetadataを正本として起動時に索引を再構築し、追加・編集・削除時に更新する。
+      一覧要求のたびに全GLBや全ディレクトリを再読込しない。検索用に新しい外部DBサービスを導入しない。
+      ID・サイズ・sha256・日時・生成モデル・由来・生成設定・品質注意を保存し、prompt由来のタグを実物の自動認識結果として表示しない。
+    </p>
+    <p>
+      削除は対象素材のディレクトリを同一filesystem内の削除待ち領域へatomic
+      renameし、一覧から除外してから内容を削除する。
+      途中で停止しても再起動後に削除を完了し、以後の詳細・GLB・元画像・preview取得は404にする。
+      実行中jobは完成品削除では操作せず、取消APIを使う。関連する進捗記録からもpromptや入力コピー、成果物URLを除き、削除済みである最小限の記録だけを残す。
+      元のimage-artifact、他の素材、取得済み生成モデルの重みは連鎖削除しない。3D入力コピーと元画像の別管理をEumenesへ明示する。
+      すでに開始したdownloadの完了を許す一方、新しい取得は拒否する契約とする。
+    </p>
+  </section>
+
+  <section id="storage">
+    <h2>同じドライブへの保存と保守</h2>
+    <pre><code>/srv/ai/data/generated/
+  images/                         既存画像
+  music/                          既存楽曲
+  3d/
+    assets/YYYY/MM/mesh_&lt;id&gt;/
+      model.glb
+      source.png
+      cutout.png
+      metadata.json
+    jobs/                         受理・状態・再送キーの永続記録
+    work/                         jobごとの実行中ファイル
+    .trash/                       削除を完了するための退避領域</code></pre>
+    <p>
+      3D保存先の初期案は<code>LARM_MESH_ARTIFACT_ROOT=/srv/ai/data/generated/3d</code>。
+      worker・Control・jobのTMPDIRを同じ領域の専用work配下へ明示し、RAM-backedの/tmpや試験用resultsへ本番出力を残さない。
+      既存画像・楽曲は移動せず、各設定・systemd
+      ReadWritePaths・実際の保存先を照合して同じfilesystemを使うことを受入条件にする。
+      モデル重みと実行物は引き続きrepository外の専用models/appsに置く。モデル重みは生成素材ライブラリの削除・容量回収対象にしない。
+    </p>
+    <p>
+      保存はworkへ書き、GLBの内容・hash・metadataの整合性を確認して永続化し、worker停止・資源解放の確認後にassetsへatomic公開する。
+      不完全なファイルや停止確認前の成果物は一覧に載せない。公開とjob完了記録の間で停止した場合は、永続記録と保存済み結果を照合して復元し、再生成しない。
+      画像参照は受理時に保護・コピーし、画像側の削除や容量回収で3D生成途中の入力が消えないようにする。
+      prompt経由で作ったQwen画像もartifactとして独立管理し、3D側へ必要な入力をコピーする。
+    </p>
+    <table>
+      <caption>
+        初期の保守設定案。実装時に設定可能にする
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">案</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">完成品の保持</th>
+          <td>
+            期限なし、明示削除。既定50
+            GiBの3D枠を設け、上限では新規保存を拒否。保存済み素材を自動追放しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">計上対象</th>
+          <td>
+            GLB、入力画像コピー、cutout、metadata、保存する派生画像を合計。重複HTMLは保管せず、previewは取得時に生成する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">入力・出力上限</th>
+          <td>
+            入力画像20 MiB、画像寸法上限を検証、GLB 256
+            MiBを初期上限。JSONへGLBをbase64で埋め込まない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">作業領域</th>
+          <td>
+            同時実行1件、20 GiBを作業枠とし、空き領域の最低32
+            GiBと受理済み予約分を別に確認。既存のホスト保存域制約を弱めない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">一時ファイル</th>
+          <td>
+            成功・取消時に作業用データを回収。失敗ログは期限付きで最小限保存し、起動時と定期保守で停止済みjobの孤立workを掃除する。稼働中のworkは保護。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">保存先異常</th>
+          <td>
+            実パス、期待filesystem、書込み可否、空き容量を確認。別領域への暗黙fallbackをせず、生成だけを利用不能にする。既存の一覧・他サービスを巻き込んで停止しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      現在のロボット試験は初期ライブラリへ登録する移行対象に含める。
+      GLBと入力のコピー、既存hashと生成日時・版の保持、品質注意の引継ぎで登録し、GPU再生成は行わない。
+      登録元は試験成果物として記録し、公開metadataへ絶対パスを出さない。現在の試験ファイルと閲覧リンクは移行検証が済むまで保持する。
+    </p>
+  </section>
+
+  <section id="lifecycle">
+    <h2>生成workerとLARMの調停</h2>
+    <ol>
+      <li>
+        Profileが広告する3D
+        serviceでmodel・対応入力を発見し、生成要求を受理・永続化する。素材の検索などでは会話Providerを不必要に起動しない。
+      </li>
+      <li>
+        prompt入力なら既存Qwen
+        Imageを先に確保して画像を生成・保存し、画像workerの停止を待って確保を解放する。3D枠を保持したまま画像枠を待たない。
+      </li>
+      <li>
+        3Dの実行枠・資源を確保し、loopbackの専用adapterをsystemdで起動する。adapterは固定CLIを引数配列で実行し、入力・workをjob専用にする。
+      </li>
+      <li>
+        alphaがあることだけで切り抜き済みと判断せず、必要に応じてBiRefNetを明示する。shape・texture・postprocessを実行し、認識できる段階だけを進捗へ反映する。
+      </li>
+      <li>
+        GLB
+        parse、geometry、UV、PBR画像、サイズ・hashを検査し、品質注意をmetadataへ保存する。モデル生成成立と色・編集向け品質を区別する。
+      </li>
+      <li>
+        成果物を永続化し、worker停止・資源解放を確認してcompletedを公開する。停止失敗時はworker_stop_failedとし、検証済みデータを非公開の回復対象として保護する。
+        このデータは通常の失敗work掃除で消さず、容量予約を維持して停止確認後に保存済み結果から復旧できるようにする。自動再生成しない。
+      </li>
+    </ol>
+    <p>
+      初版のadapterはtrellis-cliをjobごとの子プロセスとして管理する方針とする。
+      trellis-serverの素の/health・mutexだけでは永続job、進捗、中断、待機上限を提供できないため、既存の画像Providerと同じ管理境界を設ける。
+      readinessでは実行物・モデルmanifestと保存先を検査し、推論を健康確認のために実行しない。
+      新規unitの仮名は<code>larm-mesh-trellis2.service</code>、自動起動なし、Restart=no、常駐数0・完了後idle
+      TTL 0。 パッケージやドライバの更新は前提にせず、試験済み配布物とモデルhashを固定する。
+    </p>
+    <p>
+      画像・楽曲・3Dを同じ重量級生成グループに入れ、同時実行は全体で1件。
+      MediaVariantManagerの2択、waitingMusic固有の待機処理、runtime-variant.shのother指定、systemd
+      Conflicts、限定polkit権限、媒体設定・起動検査を3種類に対応させる。
+      他の要求が使用中のworkerを切替処理で強制停止しない。待機順と期限を定義し、既存音楽の待機動作を回帰試験する。
+      初期案は3D待機4件・開始待ち10分・実行30分。モデル未起動の待機と実行を分ける。
+    </p>
+    <p>
+      メモリは初期予約32 GiB＋既存の16 GiB余白を保守的な開始値とし、byte換算を既存会計と統一する。
+      実測RSS約1.46
+      GiBだけへ縮めない。共有GTT、host複製、冷えたcache、複雑な入力を考慮し、実行中もMemAvailableを監視する。
+      取消・期限切れ・メモリfloor割れでは対象jobの子プロセス群だけを止め、停止確認後にcancelled/failedへ遷移する。
+      画像・楽曲間の排他だけでLLMとの資源調停が済んだとはせず、実際のProfile→route→runtimeの割当・予約・優先度を確認して新しい3D実行を待機させる。
+      観測中のLLM名から利用者の意図を推定して停止・置換しない。
+    </p>
+  </section>
+
+  <section id="eumenes">
+    <h2>Eumenesスキルへ渡す連携契約</h2>
+    <p>
+      Profileのservice広告へname <code>mesh</code>、capability
+      <code>media.mesh.generate</code>、protocol
+      <code>larm.mesh-generation.v1</code>、 endpoint
+      <code>/v1/3d/generations</code>、model
+      <code>trellis2-4b</code>を追加する案とする。 audienceに沿ったControl
+      URLを使い、Eumenesへ内部worker portやホスト保存パスを指定させない。
+      既存の画像・音楽serviceやProfileの要求Provider
+      subsetを保ったまま広告・SDK・OpenAPIを拡張する。
+    </p>
+    <ol>
+      <li>生成依頼では入力画像IDかprompt、title/tagsを渡し、1つの意図につき再送キーを固定する。</li>
+      <li>
+        jobIdを保存して状態またはSSEを追跡する。Eumenes側の通信timeoutを生成失敗と取り違えず、同じjobを確認する。
+      </li>
+      <li>
+        完了時はassetId、モデルURL、preview
+        URLと品質注意を表示する。再表示は保存済み素材を取得し、再生成しない。
+      </li>
+      <li>
+        「前に作ったロボット」等はq/tagsで検索して候補を示す。削除は利用者の明示依頼と確定したassetIdへ行う。
+      </li>
+      <li>
+        HTMLはEumenes
+        backendの認証付き取得・中継、またはGLB取得後のBlob表示を使う。LARMのBearerをHTMLやURL
+        queryへ埋め込まない。
+      </li>
+    </ol>
+    <p>
+      viewerは固定した表示コードを使い、title/prompt等をHTMLとして実行させない。
+      単体previewをiframeへ載せる場合は表示用に隔離し、生成APIを操作する秘密情報を持たせない。
+      初版のGLBは試験済みWebP/PBRを踏襲し、対応viewer条件をdescriptionへ記載する。
+      Eumenes側へ渡す成果物は、API一覧、要求/応答例、状態遷移、検索・削除・再送手順、エラー対応、HTML表示方法をまとめた連携仕様とする。
+      Eumenes実装やスキルファイルの変更は、本計画の作成作業には含めない。
+    </p>
+  </section>
+
+  <section id="implementation">
+    <h2>実装順序と変更箇所</h2>
+    <table>
+      <caption>
+        後日の実装作業を具体化した順序
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">主な変更</th>
+          <th scope="col">完了条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1. 契約</th>
+          <td>
+            packages/coreに3D
+            request/job/asset/検索/削除schema、OpenAPI、service広告を追加。既存のmusic/image契約を維持。
+          </td>
+          <td>API例とschemaが一致し、入力不正・未対応model/resが起動前に拒否される。</td>
+        </tr>
+        <tr>
+          <th scope="row">2. 保存・ライブラリ</th>
+          <td>
+            daemonに3D artifact manager、検索索引、保持・容量・atomic保存/削除、再起動復元を実装。
+          </td>
+          <td>隔離fixtureで一覧・検索・編集・削除・クラッシュ復帰。GPUなしで検証できる。</td>
+        </tr>
+        <tr>
+          <th scope="row">3. job・実行</th>
+          <td>
+            daemonにjob manager/routes、CLI adapterを追加。backendsのmedia
+            variant、起動script、unit・polkit、設定を拡張。
+          </td>
+          <td>排他・待機・再送・取消・停止失敗・中断復帰と画像/音楽の回帰試験が通る。</td>
+        </tr>
+        <tr>
+          <th scope="row">4. 消費側契約</th>
+          <td>
+            packages/clientに3D
+            client、OpenAPI/SDK、Profileの完全URLとdescription、Eumenes向け手順を追加。
+          </td>
+          <td>同一SDKで生成から検索・表示・削除まで扱え、credential/絶対パスの漏れがない。</td>
+        </tr>
+        <tr>
+          <th scope="row">5. 隔離実機試験</th>
+          <td>専用保存領域・別APIで512を1回生成。既存試験モデルのimportも検証。</td>
+          <td>
+            応答前後の停止、永続保存、APIでGLB/HTML表示、再起動後の検索、明示削除後の404を確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">6. 本番反映</th>
+          <td>
+            保存先・権限・ReadWritePathsを作成し、既存の署名付きrelease手順で反映。実行中要求の終了を待つ。
+          </td>
+          <td>
+            既存画像・音楽のURLとデータ維持、3D広告・一連操作、保存実デバイスとworker解放を確認し、Eumenes連携仕様を引き渡す。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      OS非依存のschema・検索・状態規則はcore、systemdとデバイス・実行環境の接続はbackends、HTTP・job・保存の統合はdaemonに置く。
+      共通化は必要な範囲に限り、音楽manager全体の作り替えやLLM用llama-swapへのGGUF登録は行わない設計とする。
+      追加する実行adapterと配備定義はsourceとして管理し、重み・配布バイナリ・生成物はrepositoryへ入れない。
+    </p>
+    <p>
+      後日の配備には新規unit・限定権限とdaemonの設定反映・release切替が伴う。
+      この計画作成ではそれらを実施しない。rollbackは旧releaseと設定へ戻し、保存済み3D素材を残す方式とする。
+      失敗した新規jobの再実行や既存Providerの強制停止を、切り戻しの自動処理に含めない。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>受入試験</h2>
+    <ul>
+      <li>
+        画像ID入力とprompt入力の両方で、1つの生成意図が1つのjob・素材になり、再送・timeout・再起動で重複生成しない。
+      </li>
+      <li>
+        completedは検証・保存・worker停止の後に公開され、取得・検索・preview・削除ではworkerが起動しない。
+      </li>
+      <li>
+        実際の画像・楽曲・3Dの保存デバイスが一致し、3D
+        workもディスク上に置かれる。保存先不在・満杯・権限不足時に別場所へ逃げない。
+      </li>
+      <li>
+        日本語・英語・正規化・複数語・タグ・並び順・cursor不正・ページ間削除を含む検索試験を通す。
+      </li>
+      <li>
+        取消と完成品削除が区別され、途中停止からの削除完了、入力コピーとpreviewの回収、削除後の全URLの404、他の素材・元画像・重みの保護を確認する。
+      </li>
+      <li>
+        不正ID・パス逸脱・symlink・過大入力・壊れたGLB・未対応解像度・資格情報不正を拒否し、公開metadata/HTMLへホストパスや秘密を含めない。
+      </li>
+      <li>
+        画像・音楽・3Dが同時にGPU生成しない。会話の実割当と資源調停が保たれ、元の音楽待機・画像停止契約を回帰試験する。
+      </li>
+      <li>
+        色・トポロジーの警告は成功の事実と併記する。境界辺0だけを編集・3D印刷向け品質の合格とはしない。
+      </li>
+      <li>
+        実装後に関連固定試験、typecheck、deployment・docs検査、最後にbun run
+        checkを完了する。実生成は合意した一連操作で確認し、無条件の自動再送をしない。
+      </li>
+    </ul>
+    <p>
+      本計画の完了条件は、API・保存場所・ライフサイクル・Eumenes接続と実装順序をレビューできる状態にすること。
+      現時点で新APIの利用可能・本番反映済みとは報告しない。
+    </p>
+  </section>
+</article>

@@ -1,0 +1,328 @@
+<article lang="ja">
+  <h1>Qwen ImageからTRELLIS.2への実機3D生成試験</h1>
+  <p>
+    2026-10-18、利用者の実行指示に基づき、Qwen Image 2.1 Turboで元画像を作成し、 trellis.cpp
+    v0.8.1のLinux Vulkan配布版で512解像度のテクスチャ付きGLBを生成した。
+    <strong>実行経路は成立したが、そのまま完成素材として採用する品質判定は保留</strong>とする。
+    元画像より暗い色、重複面・非多様体辺、少数のUV縮退が残る。 前段の選定・容量・ライセンスは<a
+      href="./image-to-3d-local-node-evaluation-2026-10-18.html"
+      >適用調査</a
+    >を参照する。
+  </p>
+  <section id="scope">
+    <h2>実施範囲と保存先</h2>
+    <p>
+      17:16〜17:33
+      JST頃に配布物確認、取得、元画像生成、背景除去、512生成、GLB解析、ブラウザ表示と4方向の撮影を実施した。
+      パッケージ・ドライバ更新、ROCm変更、既存の会話サービス停止、LARM登録・配備は行っていない。
+      Qwen画像workerは既存LARMの要求時起動・応答前停止を利用した。TRELLISは独立CLIを1回実行し、終了後に常駐していない。
+      1024・Pixal3D・MapAnythingの生成は実施していない。512で品質課題が見つかったため、高解像度の比較より先に原因を切り分ける。
+    </p>
+    <table>
+      <caption>
+        repository外の実行物・取得物・成果物
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">分類</th>
+          <th scope="col">保存先</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">実行物</th>
+          <td><code>/srv/ai/apps/trellis-cpp-v0.8.1-vulkan</code></td>
+        </tr>
+        <tr>
+          <th scope="row">重み・hash一覧・条件文書</th>
+          <td>
+            <code>/srv/ai/models/trellis2-gguf-a57397bd</code>。8重み、11,294,219,936 bytes＝11.29
+            GB。1024の2重みは未取得。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">試験root</th>
+          <td><code>/srv/ai/results/trellis-trial-20261018</code></td>
+        </tr>
+        <tr>
+          <th scope="row">成果物</th>
+          <td>
+            試験rootの<code>source-qwen-robot.png</code>、<code>background_cutout.png</code>、<code>robot-512.glb</code>、<code>robot-preview.html</code>、<code>comparison.png</code>、<code>robot-front/right/back/left.png</code>。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">証跡</th>
+          <td>
+            <code>preflight.json</code
+            >、<code>source-request/response/metrics.json</code>、<code>input-inspection.json</code>、<code>background/robot-512.log</code>、各<code>-time.txt</code>・<code>-metrics.json</code>・<code>-resources.jsonl</code>、<code>robot-512.inspection.json</code>、<code>topology-audit.json</code>、<code>viewer-validation.json</code>。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      認証情報は保存していない。生成画像・重み・実行物・ログ・プレビューはソースrepositoryへ追加していない。
+    </p>
+  </section>
+  <section id="reproducibility">
+    <h2>固定した版と入力</h2>
+    <table>
+      <caption>
+        確認日2026-10-18の再現条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">条件・証拠</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">元画像</th>
+          <td>
+            <a href="./qwen-image-2.1-turbo-on-demand.html">既存Qwen Image API</a
+            >へ1回POST。768×768、8 steps、seed
+            42、PNG。被写体は丸い青緑のロボット、オレンジの目と胸、白背景、全身、太い手足。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">画像モデル</th>
+          <td>
+            応答metadataは<code>AtomicChat/Qwen-Image-2.1-Turbo-GGUF</code>、revision
+            <code>bb25d06bc74119c12207243d68917951e6d9c232</code>、artifact
+            <code>image_4a2bb7dad9ee4d5c90823d00fe49ca3f</code>。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">元画像hash</th>
+          <td><code>042f0ae1953f0a7558b9b4db317c20e2415e4f18545dfae626a1e7bad5ec7246</code>、544,935 bytes。</td>
+        </tr>
+        <tr>
+          <th scope="row">実行物</th>
+          <td>
+            <a href="https://github.com/pwilkin/trellis.cpp/releases/tag/v0.8.1">v0.8.1</a
+            >のtrellis-vulkan-linux-x64.tar.gz、16,128,213 bytes。SHA-256
+            <code>8c2ed7f76ab9f09d3e24dae82b1a52a75d308e853bdfd289e26d57b1f422f33b</code>と一致。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実行物の自己記録</th>
+          <td>
+            GLB asset.extrasはcommit <code>c0bed38c1578f7e36e3e50c8ff1e38fa0d47583f</code>、backend
+            vulkan、build 2026-09-25T11:16:28Z、seed 42を記録。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">重み</th>
+          <td>
+            <a
+              href="https://huggingface.co/ilintar/trellis2-gguf/tree/a57397bd3d351599d9729fc144b3f87c3f87d65b"
+              >固定revision a57397bd3d351599d9729fc144b3f87c3f87d65b</a
+            >。512用7ファイル＋BiRefNet。全8ファイルをLFS
+            SHA-256と照合。全量子化セットではなくroot階層のファイルを利用。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">環境</th>
+          <td>
+            Ubuntu 26.04.1、glibc 2.43、Radeon 8060S、RADV Mesa
+            26.0.8。配布物の動的依存は同梱ggmlと既存OSライブラリで解決し、--helpと全生成を通過。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">生成設定</th>
+          <td>
+            --backend Vulkan --gpu 0 --require-gpu --res 512 --seed 42 --steps 12 --threads 8
+            --verbose。xatlas、既定150K faces目標、1024 atlas、BF16 K/V＋F32
+            accumulation。高速attention・quad retopology・量子化は使わない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      元PNGはRGBAでAPIのhasAlphaもtrueだったが、alphaの範囲は249〜255で、意味のある透明背景ではなかった。
+      そのためBiRefNetを明示して--bg-onlyで先に切り抜き、518×518・alpha
+      0〜255のRGBAを目視確認してから3D化した。
+      channel数やhasAlphaだけを透明背景の判定に使わないことが、今回得た運用上の注意点である。
+    </p>
+    <p>
+      実行ログはRadeon 8060S Graphics (RADV STRIX_HALO) / Vulkan0を示す。形状生成、PBR decode、GPU
+      QEMを通過した。 ランナー表示の104448
+      MBは共有構成の表示値であり、その容量の独立VRAMを確保できたという意味ではない。
+    </p>
+  </section>
+  <section id="performance">
+    <h2>時間と資源の実測</h2>
+    <table>
+      <caption>
+        各1回の測定。転送時間と処理時間を区別する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">段階</th>
+          <th scope="col">結果</th>
+          <th scope="col">測定範囲</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">元画像</th>
+          <td>36.48秒。Provider応答内durationは35.266秒。</td>
+          <td>LARMへの要求から画像downloadまで。画像workerは応答時点でinactive/MainPID 0。</td>
+        </tr>
+        <tr>
+          <th scope="row">背景除去</th>
+          <td>native 13.0秒、time実測13.04秒、最大RSS 2.58 GiB。</td>
+          <td>BiRefNetロードとVulkan計算、切り抜きPNG保存。</td>
+        </tr>
+        <tr>
+          <th scope="row">512→GLB</th>
+          <td>
+            <strong>native 177.3秒＝約2分57秒</strong>、time実測177.34秒。監視wrapperは178.20秒。
+          </td>
+          <td>
+            モデルロード・全生成・後処理・GLB保存込み。背景除去と転送は除外。初回CLIだが取得直後のfile
+            cacheがある。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">主なflow</th>
+          <td>SS 56.3秒、shape 30.4秒。</td>
+          <td>
+            全体時間はdecode・texture flow・mesh/UV/bakeも含む。上記2値だけを総生成時間としない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">512の最大RSS</th>
+          <td>1,530,912 KiB＝約1.46 GiB。</td>
+          <td>プロセスRSS。GPU/GTTの総使用量を含む値とは扱わない。</td>
+        </tr>
+        <tr>
+          <th scope="row">512のシステムGTT</th>
+          <td>baseline 40.29 GiB、2秒間隔で観測した最大42.92 GiB、差分約2.63 GiB。</td>
+          <td>
+            他サービスを含むシステム値。サンプリング間のピークは見逃し得る。終了後40.29 GiBへ回復。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">512のOSメモリ余力</th>
+          <td>MemAvailable最低72.71 GiB。開始時75.95 GiBからの減少は約3.23 GiB。</td>
+          <td>
+            16 GiB floorを下回らず、中断なし。file
+            cacheや他処理も含む。RSSとGTTを加算して必要量としない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      重み転送は約10分を要し、上記生成時間には含めない。今回の512単純物体では初期の32
+      GiB準備枠より小さい増分だったが、
+      複雑な入力・1024・Pixal3Dの容量予約へこの値をそのまま適用しない。反復生成、warm
+      server、負荷をかけた同時運用の速度は測定していない。
+    </p>
+    <p>
+      GPU busyは試験前後とも100%表示だったが、開始前の2秒観測では既存llama-server等のDRM
+      computeカウンタは増加していなかった。 busy表示だけで稼働中の推論を特定できない。LARM
+      activityは開始前idleだったが、これは予約保証ではない。
+      既存の会話サービスとControlを停止せずに試験し、終了時ControlのMainPIDは同じ1442746でactive。
+      読み取り可能なkernel logで対象時間帯のGPU reset/timeout・OOM一致は見つからなかった。
+      既存Consumerの応答遅延は計測していないため、「性能影響なし」とは結論しない。
+    </p>
+  </section>
+  <section id="artifact">
+    <h2>成果物の成立と品質を分けた判定</h2>
+    <table>
+      <caption>
+        GLBの機械検査と表示確認
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">検査</th>
+          <th scope="col">結果</th>
+          <th scope="col">評価</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">形式・サイズ</th>
+          <td>
+            glTF 2.0 GLB、6,041,216 bytes＝約6.04 MB。SHA-256
+            <code>a745b8c2a29df1559f3dedf9b2968418bf34715ab69d6e9a7fb80d7ab5e555e9</code>。
+          </td>
+          <td>parse成功、exit 0。</td>
+        </tr>
+        <tr>
+          <th scope="row">形状・素材</th>
+          <td>
+            146,920三角形、UV分割後131,617頂点、POSITION/NORMAL/TEXCOORD_0。baseColorとmetallicRoughnessのWebP画像2枚、1024
+            atlas。
+          </td>
+          <td>頂点色だけのfallbackではなく、UV・PBRテクスチャ付き生成が成立。</td>
+        </tr>
+        <tr>
+          <th scope="row">表示・配布preview</th>
+          <td>
+            model-viewer
+            4.1.0をChromium/SwiftShaderで表示し、正面・右・裏・左を保存。画像・GLB・表示コードを内包するrobot-preview.htmlもfile
+            URLからロード成功。
+          </td>
+          <td>
+            表示のために追加GPU推論は使わず、ブラウザは検証後終了。GLBはEXT_texture_webp対応viewerが必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">見た目</th>
+          <td>
+            丸い頭、目、胸板、腕、脚、手のC字形を再現し、背面も生成。元画像より色が大幅に暗く、目や細部は変化する。
+          </td>
+          <td>形状の試作・閲覧には有用。元画像と同じ色の完成素材とは判定しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">色の問題</th>
+          <td>既定露出でのGLBだけでなく、書き出されたbaseColor PNG自体も暗い。</td>
+          <td>
+            viewerの照明だけの問題とは扱わない。texture生成・色空間・bake/exportのどこで差が生じたか未切り分け。露出や色補正で結果を隠す加工はしていない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">幾何境界</th>
+          <td>
+            UV seamを位置でweldして検査すると境界辺0。インデックスだけの検査ではseamを穴と誤認する。
+          </td>
+          <td>閉じて見えることは確認材料だが、多様体性・自己交差なしの保証ではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">トポロジー</th>
+          <td>
+            同じ位置を厳密一致で統合すると重複三角形701、3面以上が共有する辺5,976。小数5〜7桁への丸めでも同じ結果。
+          </td>
+          <td>
+            単なる丸め誤差・UV
+            seamだけでは説明できない。編集・リトポロジー・3D印刷前の修復と再監査が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">UVの残課題</th>
+          <td>native logに7 uncharted faces kept with point-collapsed UVs。</td>
+          <td>テクスチャ参照の存在だけで全表面の品質合格とはしない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      裏側の形はモデルが補ったもので、元画像にない実物形状を復元した証拠ではない。物理寸法・実物忠実度の評価も今回の対象外である。
+    </p>
+  </section>
+  <section id="decision">
+    <h2>今回の結論と次の切り分け</h2>
+    <p>
+      当機の既存ドライバと配布版だけで、Qwen画像→明示背景除去→TRELLIS.2→UV/PBR
+      GLB→実表示の経路は確認できた。 Python/ROCmを組み替える前に試す候補という選定は妥当だった。
+      一方、色とメッシュ品質に課題があるため、常用・LARM統合の実装や高解像度モデル追加を先行させない。
+    </p>
+    <p>
+      次に必要なのは、同じ入力でのtexture値・色空間・export経路の確認と、QEM後の重複面・辺共有数の監査である。
+      Vulkan backend固有か、移植実装全体か、特定入力や512設定の問題かは未確定。
+      1024の比較はこれらを踏まえて別runとして記録し、Pixal3Dはさらにその後とする。
+      今回の「実行成立」を全入力・高解像度・商用素材品質・同時運用の保証へ拡張しない。
+    </p>
+  </section>
+</article>

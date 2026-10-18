@@ -1,0 +1,237 @@
+<article lang="ja">
+  <h1>3D生成・ライブラリAPIとEumenes連携</h1>
+  <p>
+    2026-10-18。<a href="./mesh-generation-api-and-storage-plan-2026-10-18.html">採用計画</a
+    >に基づく初版。TRELLIS.2 4B、trellis.cpp v0.8.1、Vulkan、512、12
+    stepsに固定する。実装と配備の検証結果はこの文書の末尾で管理する。
+  </p>
+  <section id="entry">
+    <h2>入口と認証</h2>
+    <p>
+      ControlのURLとBearerを使用する。例は同一ホストのhttp://127.0.0.1:9810。LAN利用はProfile
+      audienceが返すControl originへ解決する。Provider credentialと内部worker
+      portを使用しない。SAAA-w-ImageとSAAA-w-musicのservicesにmesh、media.mesh.generate、larm.mesh-generation.v1、trellis2-4bを追加し、既存Provider
+      subsetを保持した。
+    </p>
+    <p>
+      すべての操作はBearer認証。生成時はIdempotency-KeyにUUIDを必須とする。同一キーと正規化後の同一要求は同じjob、変更した要求は409。キーと要求のhashはjobと同時に永続化し、24時間以上保持する。完成品削除後も同じキーでは再生成せずdeletedを返す。
+    </p>
+  </section>
+  <section id="operations">
+    <h2>操作一覧</h2>
+    <table>
+      <caption>
+        公開namespace /v1/3d
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">メソッド・パス</th>
+          <th scope="col">動作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>POST /generations</td>
+          <td>202。入力コピーと受理記録を保存してjobを返す。</td>
+        </tr>
+        <tr>
+          <td>GET /generations/:jobId</td>
+          <td>状態・実測stage・終端時のasset。</td>
+        </tr>
+        <tr>
+          <td>GET /generations/:jobId/events</td>
+          <td>SSE。最初に現在状態、その後の変更。終端で閉じる。</td>
+        </tr>
+        <tr>
+          <td>DELETE /generations/:jobId</td>
+          <td>対象jobを取消。停止確認後にjobを返す。完成品は削除しない。</td>
+        </tr>
+        <tr>
+          <td>GET /assets</td>
+          <td>一覧・検索。assets、total、nextCursor。</td>
+        </tr>
+        <tr>
+          <td>GET /assets/:assetId</td>
+          <td>詳細・由来・geometry・警告・取得URL。</td>
+        </tr>
+        <tr>
+          <td>PATCH /assets/:assetId</td>
+          <td>titleとtagsの編集。</td>
+        </tr>
+        <tr>
+          <td>DELETE /assets/:assetId</td>
+          <td>204。入力コピーを含む素材を削除。未知IDは404。</td>
+        </tr>
+        <tr>
+          <td>GET /assets/:assetId/content</td>
+          <td>GLB。model/gltf-binary、ETag、Range、条件付き取得。</td>
+        </tr>
+        <tr>
+          <td>GET /assets/:assetId/source</td>
+          <td>保護した元画像。PNGまたはWebP。</td>
+        </tr>
+        <tr>
+          <td>GET /assets/:assetId/metadata</td>
+          <td>詳細と同じ公開metadata。ホストパスや認証情報なし。</td>
+        </tr>
+        <tr>
+          <td>GET /assets/:assetId/preview</td>
+          <td>単体HTML。固定したmodel-viewer 4.1.0とGLB・元画像を内包。回転・拡大対応。</td>
+        </tr>
+      </tbody>
+    </table>
+    <pre><code>{
+  "model": "trellis2-4b",
+  "source": { "type": "image-artifact", "id": "image_4a2bb7dad9ee4d5c90823d00fe49ca3f" },
+  "title": "青緑のロボット",
+  "tags": ["ロボット", "試作"],
+  "resolution": 512,
+  "seed": 42
+}</code></pre>
+    <p>
+      prompt入力ではsourceだけを以下へ置き換える。Qwen Image 2.1 Turboを768角、8
+      steps、PNGで生成し、停止後に3Dの枠を取る。画像は独立したimage artifactとしても残る。
+    </p>
+    <pre><code>{
+  "type": "prompt",
+  "prompt": "白い背景に青緑の小さなロボットを全身で描く",
+  "imageModel": "qwen-image-2.1-turbo",
+  "imageSeed": 42
+}</code></pre>
+    <p>
+      stateはqueued、running、completed、failed、cancelled。stageはqueued、image、waiting_gpu、background、mesh、validating、stoppingと終端。進捗率は推測しない。completedでassetIdとassetのcontentUrl、metadataUrl、sourceUrl、previewUrlを公開する。削除後のjobはstage=deleted、deleted=trueで、prompt・画像参照・成果物URLを持たない。
+    </p>
+    <p>
+      検索条件はq（最大512文字）、tags（カンマ区切りAND、最大32個・各64文字）、sort=createdAtまたはrelevance、order=ascまたはdesc、limit=1〜100（既定20）、cursor。qはNFKC・大小文字正規化、空白区切りAND、title・prompt・tagsの部分一致。cursorは条件を固定して次ページへ渡す。条件変更時はcursorを破棄する。
+    </p>
+    <table>
+      <caption>
+        主な失敗と利用側の動作
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">状態・code</th>
+          <th scope="col">扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>400 invalid_mesh_request / invalid_source</td>
+          <td>要求、対応解像度、既存画像IDを修正。</td>
+        </tr>
+        <tr>
+          <td>401 unauthorized</td>
+          <td>Control Bearerと接続先を確認。</td>
+        </tr>
+        <tr>
+          <td>409 idempotency_conflict</td>
+          <td>同一意図なら要求を元に戻す。新しい意図の場合だけ新しいキー。</td>
+        </tr>
+        <tr>
+          <td>429 queue_full</td>
+          <td>Retry-Afterに従う。受理されたか不明な場合は同じキーで確認。</td>
+        </tr>
+        <tr>
+          <td>507 storage_full</td>
+          <td>不要素材を明示削除。既存素材は自動追放しない。</td>
+        </tr>
+        <tr>
+          <td>503 storage_unavailable</td>
+          <td>保存先・権限・filesystemを修復。別ドライブへfallbackしない。</td>
+        </tr>
+        <tr>
+          <td>failed / interrupted</td>
+          <td>再起動による中断。自動再生成しない。</td>
+        </tr>
+        <tr>
+          <td>failed / worker_stop_failed</td>
+          <td>
+            検証済み結果を非公開で保護。worker停止を修復して再起動すると保存済み結果から回復する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="storage">
+    <h2>保存と運用</h2>
+    <p>
+      保存先は/srv/ai/data/generated/3d。既存images/musicと同じ内蔵NVMe
+      filesystemを検証する。assets/YYYY/MM/mesh_IDにmodel.glb、source.image（内容のMIMEはmetadata）、cutout.png、metadata.jsonを保存する。jobsは再送・進捗、workは入力保護・作業・回復対象、.trashは削除の完遂に使う。HTMLは要求時だけ組み立てる。
+    </p>
+    <p>
+      完成品は期限なし・明示削除、既定50
+      GiB。LARM_MESH_ARTIFACT_ROOT、LARM_MESH_ARTIFACT_MAX_BYTES、LARM_MESH_FREE_FLOOR_BYTES（32
+      GiB）、LARM_MESH_WORK_BYTES（20 GiB）で設定する。受理済みの保存予約を追加計上する。入力20
+      MiB、寸法4096まで、GLB256
+      MiB。保存先変更時はworkerのartifact-rootとsystemdのReadWritePathsも揃える。
+    </p>
+    <p>
+      画像・楽曲・3Dの重い生成は全体で1件。待機はFIFO、3D受理枠4件、開始待ち10分、実行30分。画像を先に生成し、画像の枠を手放してからmeshを待つ。meshは32
+      GiBを既存resource
+      ledgerに予約し、実割当・resident・起動中runtimeを含む会計で判断する。別の稼働モデルを推測で停止しない。workerはMemAvailable
+      16 GiBの余白と作業枠を監視し、超過時に自分の子プロセスだけを停止する。
+    </p>
+    <p>
+      prepare-mesh-storage.pyは既存8重み・実行物・viewerをhash検証し、保存先を準備する。install-media-services.shはroot権限で3つのworker定義、限定polkit、daemonの3D書込み許可を設置する。busy
+      workerがある場合は変更を拒否する。自動起動は無効。新しいdaemon
+      releaseへの切替は署名付きbuilder・activatorを使用する。
+    </p>
+    <p>
+      GLB
+      container、buffer/accessor、geometry、UV、PBR、内包画像、サイズ・hashを検証して保存する。色と編集向け品質は保証しない。採用試験では暗いtexture、重複面・非多様体辺を確認したため警告を保持する。Blender
+      4.0以降とWebP拡張対応viewerを使用し、編集や印刷前に個別検査する。DINOv3の独立した利用条件も引き継ぐ。
+    </p>
+  </section>
+  <section id="eumenes">
+    <h2>Eumenesスキルの呼び出し手順</h2>
+    <ol>
+      <li>生成意図ごとにUUIDを作って保存。画像IDまたはprompt、title/tagsを決め、POSTする。</li>
+      <li>jobIdを保存。GETまたはSSEで同じjobを追跡し、通信timeoutだけで新規生成を送らない。</li>
+      <li>completedのassetId、URL、品質警告を表示。再表示は保存済みassetを取得する。</li>
+      <li>「前のロボット」などはqとtagsで検索し、候補からassetIdを選ぶ。</li>
+      <li>
+        削除は利用者が指定した完成品にDELETE /assets/:id。途中生成を止める場合はDELETE
+        /generations/:id。
+      </li>
+      <li>
+        previewはEumenes backendでBearer付き取得し、認証情報を除いたHTMLをsandbox
+        iframe等で表示する。BearerをURL
+        queryやHTMLへ埋め込まない。独立HTMLとして保存して開くこともできる。GLBを取得してBlob表示してもよい。
+      </li>
+    </ol>
+    <pre><code>const key = crypto.randomUUID(); // 同じ意図の再送でも保持
+const job = await client.mesh.generate({
+  source: { type: "prompt", prompt: "白背景の青緑ロボット" },
+  title: "ロボット", tags: ["試作"]
+}, key);
+const state = await client.mesh.job(job.jobId);
+const matches = await client.mesh.list({ q: "ロボット", limit: 20 });
+// completed後
+const html = await (await client.mesh.preview(state.assetId)).text();
+// 利用者の削除依頼時
+await client.mesh.delete(state.assetId);</code></pre>
+    <p>
+      SDKはLarmClient.meshにgenerate、job、events、cancel、list、get、patch、delete、content、source、metadata、previewを持つ。LARM側の契約と利用手順を提供し、Eumenes
+      repository内のスキル編集はここでは行わない。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証・配備状況</h2>
+    <p>
+      実装済み。画像ID入力の実機生成は195.483秒、Qwen Image 2.1
+      Turboのprompt入力からの一連生成は171.196秒でcompletedになった。両方とも公開前にworkerの終了を確認し、認証付きAPIと単体HTMLで回転表示を検証した。表示の検証にはChromium
+      SwiftShaderを使用した。
+    </p>
+    <p>
+      実物のDELETEでは詳細・GLB・元画像・metadata・previewがすべて404となり、jobからpromptと成果物参照が除去された。削除意図を最小限のmarkerとして先に永続化し、完成記録前のクラッシュでも削除結果が復活しない固定試験を追加した。停止失敗時の非公開保存と再起動時の無推論回復も固定試験で確認した。
+    </p>
+    <p>
+      既存の採用試験ロボットをmesh_a745b8c2a29df1559f3dedf9b2968418として本番保存先へ登録した。GLBのhashと入力画像のhash、元の生成日時、既知の品質注意を保持し、元の試験ファイルと画像ライブラリは残した。3種類の保存先は同じ/dev/nvme0n1p4のext4にあり、8つの重み・実行物・viewerのhashも確認した。
+    </p>
+    <p>
+      bun run
+      checkの全体検査に合格した。最後の削除競合対策を加えた版についてもtypecheckと関連固定試験を再確認し、署名付きrelease
+      gateで全体検査とcoverageを実行する。本番反映には新unit、限定polkitとdaemonの書込み許可の設置が必要で、現時点ではroot権限による設置とrelease切替が未完了。
+    </p>
+  </section>
+</article>

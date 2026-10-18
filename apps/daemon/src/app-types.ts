@@ -67,6 +67,8 @@ export type AppDeps = {
   personalStateMaxSourceBytes?: number;
   getGatewayReadiness?: () => GatewayReadiness;
   startupProbeToken?: string;
+  meshManager?: import("./mesh-manager").MeshManager;
+  meshViewerPath?: string;
   musicManager?: MusicGenerationManager;
   imageArtifactManager?: ImageArtifactManager;
   imageGenerationProvider?: ImageGenerationProvider;

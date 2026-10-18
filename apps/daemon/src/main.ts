@@ -1,3 +1,7 @@
+import { MediaVariantBusyError } from "@larm/backends";
+import { MeshManager } from "./mesh-manager";
+import { MeshStore } from "./mesh-store";
+import { OnDemandMeshProvider } from "./mesh-provider";
 import { agentPrincipal } from "./agent-connection-controller";
 import { observabilityFromEnvironment } from "./observability";
 import { LocalUsageRetentionStore } from "@larm/backends";
@@ -330,13 +334,22 @@ const mediaPolicy = mediaPolicySchema.parse(parse(readFileSync(join(config.confi
 const imageEndpoint = config.imageProviderEndpoint ?? new URL(mediaPolicy.variants.image.healthUrl).origin;
 const musicEndpoint = config.musicProviderEndpoint ?? new URL(mediaPolicy.variants.music.healthUrl).origin;
 const mediaVariants = new MediaVariantManager({
-  beforeStart: () => { if (serviceLedger.reservations().length) throw new Error("local service reserves host memory"); },
+  beforeStart: (variant) => {
+    if (serviceLedger.reservations().length) throw new MediaVariantBusyError();
+    if (variant === "mesh") {
+      try { serviceLedger.reserve("media-mesh", observer.getState().node.id, 32 * 1024 ** 3, {
+        registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(), maxAgeMs: config.telemetryMaxAgeMs,
+      }); } catch { throw new MediaVariantBusyError(); }
+    }
+  },
+  afterStart: (variant) => { if (variant === "mesh") serviceLedger.observe("media-mesh", 32 * 1024 ** 3); },
+  afterStop: (variant) => { if (variant === "mesh") serviceLedger.release("media-mesh"); },
   script: new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname,
-  idleTtlMs: { image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
+  idleTtlMs: { mesh: 0, image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
 });
 // Recover orphan workers without making the public API depend on media permissions.
-await Promise.all(["image", "music"].map(async (variant) => {
-  const unit = variant === "image" ? "larm-image-qwen21.service" : "larm-music-ace-step.service";
+await Promise.all(["image", "music", ...(mediaPolicy.variants.mesh ? ["mesh"] : [])].map(async (variant) => {
+  const unit = variant === "image" ? "larm-image-qwen21.service" : variant === "mesh" ? "larm-mesh-trellis2.service" : "larm-music-ace-step.service";
   const observed = Bun.spawn(["systemctl", "show", unit, "--property=ActiveState", "--value"], { stdout: "pipe", stderr: "ignore" });
   const state = (await new Response(observed.stdout).text()).trim();
   if (await observed.exited === 0 && state === "inactive") return;
@@ -388,6 +401,26 @@ const imageGenerationProvider = imageEndpoint
   ? new ImageGenerationProvider(imageEndpoint, mediaVariants, fetch,
     async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin())
   : undefined;
+const meshManager = mediaPolicy.variants.mesh ? new MeshManager(
+  new MeshStore(config.meshArtifactRoot, { maxBytes: config.meshArtifactMaxBytes, freeFloorBytes: config.meshFreeFloorBytes,
+    workBytes: config.meshWorkBytes, sameDeviceRoots: [config.imageArtifactRoot, config.musicArtifactRoot] }),
+  new OnDemandMeshProvider(mediaVariants, new URL(mediaPolicy.variants.mesh.healthUrl).origin, imageGenerationProvider), {
+    workerAvailable: () => mediaVariants.available,
+    copyImage: (id) => imageArtifactManager.copyForMesh(id),
+    admission: () => control.usage?.check(),
+    captureWorkload: () => {
+      const usage = control.usage, owner = usage?.owner;
+      return {
+        admit: () => usage?.run(owner, () => usage.check()),
+        begin: () => {
+          const finishUsage = usage?.run(owner, () => { usage.check(); return usage.protection.begin(owner); });
+          const finishTracked = requestTracker.begin();
+          return () => { try { finishTracked(); } finally { finishUsage?.(); } };
+        },
+      };
+    },
+  }) : undefined;
+await meshManager?.initialize();
 const appComponents = createAppComponents({
   observability,
   registry,
@@ -429,6 +462,7 @@ const appComponents = createAppComponents({
   personalStateMaxSourceBytes: config.contextSourceMaxBytes,
   getGatewayReadiness: () => gatewayLifecycle.snapshot(),
   startupProbeToken,
+  meshManager,
   musicManager,
   imageArtifactManager,
   imageGenerationProvider,
@@ -627,6 +661,7 @@ async function shutdown(signal: string): Promise<void> {
   artifactManager.beginDrain();
   executionGate.beginDrain();
   clearInterval(interval);
+  await meshManager?.close();
   musicManager?.close();
   const mediaClosed = mediaVariants.close().then(() => true, (error) => {
     console.error(`media shutdown failed: ${String(error)}`);

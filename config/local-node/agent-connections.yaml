@@ -359,6 +359,13 @@ profileSelectors:
   SAAA-w-Image:
     agentProfile: saaa-conversation-gemma4-26b-voice
     services:
+      - name: mesh
+        capability: media.mesh.generate
+        protocol: larm.mesh-generation.v1
+        endpoint: /v1/3d/generations
+        model: trellis2-4b
+        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
+        description: Async TRELLIS.2 512px textured GLB from image artifact or Qwen prompt; 12 steps; Control Bearer and Idempotency-Key UUID required. Saved library at /v1/3d/assets; WebP textures require Blender 4.0+.
       - name: image
         capability: media.image.generate
         protocol: larm.image-generation.v1
@@ -369,6 +376,13 @@ profileSelectors:
   SAAA-w-music:
     agentProfile: saaa-conversation-gemma4-26b-voice
     services:
+      - name: mesh
+        capability: media.mesh.generate
+        protocol: larm.mesh-generation.v1
+        endpoint: /v1/3d/generations
+        model: trellis2-4b
+        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
+        description: Async TRELLIS.2 512px textured GLB from image artifact or Qwen prompt; 12 steps; Control Bearer and Idempotency-Key UUID required. Saved library at /v1/3d/assets; WebP textures require Blender 4.0+.
       - name: music
         capability: media.music.generate
         protocol: larm.music-generation.v1

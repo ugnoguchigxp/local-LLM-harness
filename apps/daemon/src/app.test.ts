@@ -525,7 +525,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
       ],
-      services: [{ name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1-turbo" }],
+      services: [{ name: "mesh", endpoint: "/v1/3d/generations", model: "trellis2-4b" }, { name: "image", endpoint: "/v1/images/generations", model: "qwen-image-2.1-turbo" }],
     },
     "SAAA-w-music": {
       id: "saaa-conversation-gemma4-26b-voice",
@@ -537,7 +537,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
       ],
-      services: [{ name: "music", endpoint: "/v1/music/generations", model: "ace-step-1.5" }],
+      services: [{ name: "mesh", endpoint: "/v1/3d/generations", model: "trellis2-4b" }, { name: "music", endpoint: "/v1/music/generations", model: "ace-step-1.5" }],
     },
     "ornith1.5Strix": {
       id: "ornith1.5Strix",
@@ -5501,4 +5501,12 @@ test("game decision claims retain capability and forward inline images through t
   } finally {
     await app.request(`/v1/agent-connections/${connection.id}`, { method: "DELETE", headers: agentHeaders() });
   }
+});
+
+
+test("mesh library remains protected by Control credentials when discovery is anonymous", async () => {
+  const { app } = await makeApp(true, false, {}, { apiToken: agentApiToken, allowAnonymousAgentConnections: true });
+  expect((await app.request("/v1/3d/assets")).status).toBe(401);
+  expect((await app.request("/v1/3d/assets", { headers: { authorization: "Bearer larm_conn_v1.invalid" } })).status).toBe(401);
+  expect((await app.request("/v1/3d/assets", { headers: agentHeaders() })).status).toBe(503);
 });

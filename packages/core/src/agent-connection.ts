@@ -190,8 +190,8 @@ const agentCompatibilityAliasYamlSchema = z.object({
 export const agentProfileServiceSchema = z.object({
   name: agentIdentifierSchema,
   capability: agentIdentifierSchema,
-  protocol: z.enum(["larm.image-generation.v1", "larm.music-generation.v1"]),
-  endpoint: z.enum(["/v1/images/generations", "/v1/music/generations"]),
+  protocol: z.enum(["larm.image-generation.v1", "larm.music-generation.v1", "larm.mesh-generation.v1"]),
+  endpoint: z.enum(["/v1/images/generations", "/v1/music/generations", "/v1/3d/generations"]),
   model: agentIdentifierSchema,
   description: z.string().min(1).max(2048).optional(),
   url: z.string().url().optional(),
@@ -199,7 +199,7 @@ export const agentProfileServiceSchema = z.object({
 }).strict().superRefine((service, context) => {
   const expected = service.protocol === "larm.image-generation.v1"
     ? "/v1/images/generations"
-    : "/v1/music/generations";
+    : service.protocol === "larm.mesh-generation.v1" ? "/v1/3d/generations" : "/v1/music/generations";
   if (service.endpoint !== expected) {
     context.addIssue({ code: "custom", path: ["endpoint"], message: "endpoint must match protocol" });
   }

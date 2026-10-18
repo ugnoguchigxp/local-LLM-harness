@@ -1,3 +1,4 @@
+import { meshAssetSchema, meshAssetListSchema, meshGenerationRequestSchema, meshJobSchema, meshAssetPatchSchema } from "./mesh";
 import { chatInputContractSchema, chatInputTokenCountSchema } from "./chat-input";
 import { localServiceListSchema, localServiceStatusSchema, localServiceLeaseSchema, localServiceLeaseRequestSchema, localServiceRenewSchema } from "./local-service";
 import { z } from "zod";
@@ -223,7 +224,10 @@ function jsonSchema(schema: z.ZodType): Record<string, unknown> {
 }
 
 export function createOpenApiDocument(version: string): Record<string, unknown> {
+  const meshJson = (schema: z.ZodType) => z.toJSONSchema(schema, { io: "input" });
   const schemas = {
+    MeshAsset: meshJson(meshAssetSchema), MeshAssetList: meshJson(meshAssetListSchema),
+    MeshGenerationRequest: meshJson(meshGenerationRequestSchema), MeshJob: meshJson(meshJobSchema), MeshAssetPatch: meshJson(meshAssetPatchSchema),
     LocalServiceList: jsonSchema(localServiceListSchema),
     LocalServiceStatus: jsonSchema(localServiceStatusSchema),
     LocalServiceLease: jsonSchema(localServiceLeaseSchema),

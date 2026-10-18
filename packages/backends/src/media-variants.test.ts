@@ -44,7 +44,7 @@ test("a failed switch revalidates the previous worker before reusing it", async 
     (await manager.acquire("image"))();
     await expect(manager.acquire("music")).rejects.toThrow("start failed");
     (await manager.acquire("image"))();
-    expect(calls).toEqual(["start:image", "start:music", "stop:music", "start:image"]);
+    expect(calls).toEqual(["start:image", "stop:image", "start:music", "stop:music", "start:image"]);
   } finally {
     manager.close();
   }
@@ -198,4 +198,18 @@ test("closing interrupts cancellable startup and waits for cleanup", async () =>
   expect((await acquisition).message).toContain("closed");
   expect(calls).toEqual(["start:image", "stop:image"]);
   expect(manager.available).toBe(false);
+});
+
+
+test("mesh and music wait in FIFO order while immediate image requests cannot bypass them", async () => {
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0, mesh: 0 }, run: async (a, v) => { calls.push(`${a}:${v}`); } });
+  const releaseImage = await manager.acquire("image");
+  const mesh = manager.waitFor("mesh", new AbortController().signal);
+  const music = manager.waitForMusic(new AbortController().signal);
+  await expect(manager.acquire("image")).rejects.toBeInstanceOf(MediaVariantBusyError);
+  await releaseImage(); const releaseMesh = await mesh;
+  expect(calls).toEqual(["start:image", "stop:image", "start:mesh"]);
+  await releaseMesh(); const releaseMusic = await music; await releaseMusic();
+  expect(calls.slice(-3)).toEqual(["stop:mesh", "start:music", "stop:music"]); await manager.close();
 });

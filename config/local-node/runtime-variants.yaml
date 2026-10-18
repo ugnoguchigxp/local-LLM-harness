@@ -19,3 +19,10 @@ variants:
     group: accelerator-media-heavy
     estimatedMemoryGB: 34
     idleTtlSeconds: 0
+  mesh:
+    capability: media.mesh.generate
+    service: larm-mesh-trellis2.service
+    healthUrl: http://127.0.0.1:8093/health
+    group: accelerator-media-heavy
+    estimatedMemoryGB: 32
+    idleTtlSeconds: 0

@@ -42,6 +42,9 @@ test("production agent profiles compile to strict protocol-aware provider contra
       id: "SAAA-w-Image",
       agentProfile: "saaa-conversation-gemma4-26b-voice",
       services: [{
+        name: "mesh", capability: "media.mesh.generate", protocol: "larm.mesh-generation.v1", endpoint: "/v1/3d/generations",
+        model: "trellis2-4b", description: expect.stringContaining("TRELLIS"), startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 },
+      }, {
         name: "image",
         capability: "media.image.generate",
         protocol: "larm.image-generation.v1",
@@ -55,6 +58,9 @@ test("production agent profiles compile to strict protocol-aware provider contra
       id: "SAAA-w-music",
       agentProfile: "saaa-conversation-gemma4-26b-voice",
       services: [{
+        name: "mesh", capability: "media.mesh.generate", protocol: "larm.mesh-generation.v1", endpoint: "/v1/3d/generations",
+        model: "trellis2-4b", description: expect.stringContaining("TRELLIS"), startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 },
+      }, {
         name: "music",
         capability: "media.music.generate",
         protocol: "larm.music-generation.v1",

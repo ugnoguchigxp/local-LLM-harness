@@ -68,6 +68,7 @@ provider_config_dir="$(target_path /var/lib/larm/provider-config)"
 context_source_dir="$(target_path /srv/ai/context-sources)"
 generated_image_dir="$(target_path /srv/ai/data/generated/images)"
 generated_music_dir="$(target_path /srv/ai/data/generated/music)"
+generated_mesh_dir="$(target_path /srv/ai/data/generated/3d)"
 generated_music_upstream_dir="$(target_path /srv/ai/data/generated/music-upstream)"
 release_private_key="${release_builder_dir}/signing-key.pem"
 release_public_key="${credential_dir}/release-signing.pub"
@@ -106,7 +107,7 @@ systemctl_run() {
 if [[ "${install_scope}" == "gateway" ]]; then
   units=(larm-daemon.service larm-inference-audit-prune.service larm-inference-audit-prune.timer larm-release-activator.service larm-release-activator.path larm-http-provider-monitor.service larm-http-provider-monitor.timer)
   enabled_units=(larm-daemon.service larm-inference-audit-prune.timer larm-release-activator.path larm-http-provider-monitor.timer)
-  data_directories=("${staging_dir}" "${rollback_dir}" "${state_dir}" "${audit_dir}" "${candidate_dir}" "${release_inbox_dir}" "${release_builder_dir}" "${http_soak_dir}" "${context_source_dir}" "${generated_image_dir}" "${generated_music_dir}" "${generated_music_upstream_dir}")
+  data_directories=("${staging_dir}" "${rollback_dir}" "${state_dir}" "${audit_dir}" "${candidate_dir}" "${release_inbox_dir}" "${release_builder_dir}" "${http_soak_dir}" "${context_source_dir}" "${generated_image_dir}" "${generated_music_dir}" "${generated_music_upstream_dir}" "${generated_mesh_dir}")
 else
   units=(
     llama-server.service
@@ -123,6 +124,7 @@ else
     kittentts-tts.service
     larm-music-ace-step.service
     larm-image-qwen21.service
+    larm-mesh-trellis2.service
     larm-daemon.service
     larm-inference-audit-prune.service
     larm-inference-audit-prune.timer
@@ -159,7 +161,7 @@ else
     "${context_source_dir}"
     "${generated_image_dir}"
     "${generated_music_dir}"
-    "${generated_music_upstream_dir}"
+    "${generated_music_upstream_dir}" "${generated_mesh_dir}"
   )
 fi
 
@@ -376,7 +378,7 @@ systemctl_run enable "${enabled_units[@]}"
 if [[ "${install_scope}" == "all" ]]; then
   systemctl_run disable llama-server.service qwen-asr.service whisper-asr.service \
     voicevox-tts.service qwen-tts.service larm-embedding.service laya-system-one.service ruri-system-one.service d1-system-one.service \
-    larm-music-ace-step.service larm-image-qwen21.service kittentts-tts.service granite-asr.service
+    larm-music-ace-step.service larm-image-qwen21.service larm-mesh-trellis2.service kittentts-tts.service granite-asr.service
 fi
 
 if [[ "${install_scope}" == "gateway" ]]; then

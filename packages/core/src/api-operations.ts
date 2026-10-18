@@ -1,4 +1,17 @@
 export const API_OPERATIONS = [
+  ["post", "/v1/3d/generations", "createMeshGeneration"],
+  ["get", "/v1/3d/generations/{id}", "getMeshGeneration"],
+  ["delete", "/v1/3d/generations/{id}", "cancelMeshGeneration"],
+  ["get", "/v1/3d/generations/{id}/events", "getMeshGenerationEvents"],
+  ["get", "/v1/3d/assets", "listMeshAssets"],
+  ["get", "/v1/3d/assets/{id}", "getMeshAsset"],
+  ["patch", "/v1/3d/assets/{id}", "updateMeshAsset"],
+  ["delete", "/v1/3d/assets/{id}", "deleteMeshAsset"],
+  ["get", "/v1/3d/assets/{id}/content", "getMeshAssetContent"],
+  ["get", "/v1/3d/assets/{id}/source", "getMeshAssetSource"],
+  ["get", "/v1/3d/assets/{id}/metadata", "getMeshAssetMetadata"],
+  ["get", "/v1/3d/assets/{id}/preview", "getMeshAssetPreview"],
+
   ["get", "/v1/local-services", "listLocalServices"],
   ["get", "/v1/local-services/{id}", "getLocalService"],
   ["post", "/v1/local-services/{id}/leases", "ensureLocalService"],
@@ -104,6 +117,18 @@ export const API_OPERATIONS = [
 type ApiOperationId = typeof API_OPERATIONS[number][2];
 
 export const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> = {
+  createMeshGeneration: ["202"],
+  getMeshGeneration: ["200"],
+  cancelMeshGeneration: ["200"],
+  getMeshGenerationEvents: ["200"],
+  listMeshAssets: ["200"],
+  getMeshAsset: ["200"],
+  updateMeshAsset: ["200"],
+  deleteMeshAsset: ["204"],
+  getMeshAssetContent: ["200", "206", "304"],
+  getMeshAssetSource: ["200", "206", "304"],
+  getMeshAssetMetadata: ["200"],
+  getMeshAssetPreview: ["200"],
   listLocalServices: ["200"],
   getLocalService: ["200"],
   ensureLocalService: ["201", "202"],
@@ -207,6 +232,18 @@ export const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly stri
 };
 
 export const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
+  createMeshGeneration: "MeshJob",
+  getMeshGeneration: "MeshJob",
+  cancelMeshGeneration: "MeshJob",
+  getMeshGenerationEvents: "ServerSentEvents",
+  listMeshAssets: "MeshAssetList",
+  getMeshAsset: "MeshAsset",
+  updateMeshAsset: "MeshAsset",
+  deleteMeshAsset: "Empty",
+  getMeshAssetContent: "Binary",
+  getMeshAssetSource: "Binary",
+  getMeshAssetMetadata: "MeshAsset",
+  getMeshAssetPreview: "Binary",
   listLocalServices: "LocalServiceList",
   getLocalService: "LocalServiceStatus",
   ensureLocalService: "LocalServiceLease",

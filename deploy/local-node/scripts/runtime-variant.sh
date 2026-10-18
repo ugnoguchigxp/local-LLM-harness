@@ -4,16 +4,20 @@ export LC_ALL=C
 
 action="${1:-status}"
 variant="${2:-}"
+# Serialize cross-process switches as well as the daemon's in-memory admission.
+exec 9>"${LARM_MEDIA_LOCK_PATH:-/srv/ai/cache/larm-media-variant.lock}"
+flock -w 320 9
 case "${variant}" in
-  music) service=larm-music-ace-step.service; other=larm-image-qwen21.service; health=http://127.0.0.1:8090/health; reserve_gb=18 ;;
-  image) service=larm-image-qwen21.service; other=larm-music-ace-step.service; health=http://127.0.0.1:8091/health; reserve_gb=34 ;;
-  *) echo "usage: $0 status|start|stop music|image" >&2; exit 2 ;;
+  music) service=larm-music-ace-step.service; health=http://127.0.0.1:8090/health; reserve_gb=18 ;;
+  image) service=larm-image-qwen21.service; health=http://127.0.0.1:8091/health; reserve_gb=34 ;;
+  mesh) service=larm-mesh-trellis2.service; health=http://127.0.0.1:8093/health; reserve_gb=32 ;;
+  *) echo "usage: $0 status|start|stop music|image|mesh" >&2; exit 2 ;;
 esac
 
 ready() {
   local response
   response="$(curl -fsS --max-time 3 "${health}")" || return 1
-  python3 -c 'import json,sys; v=json.load(sys.stdin); d=v.get("data",v); sys.exit(0 if ((d.get("ready") is True or d.get("loaded") is True) if sys.argv[1]=="image" else d.get("models_initialized") is True) else 1)' "${variant}" <<<"${response}"
+  python3 -c 'import json,sys; v=json.load(sys.stdin); d=v.get("data",v); sys.exit(0 if ((d.get("ready") is True or d.get("loaded") is True) if sys.argv[1] in ("image", "mesh") else d.get("models_initialized") is True) else 1)' "${variant}" <<<"${response}"
 }
 
 stop_worker() {
@@ -37,9 +41,13 @@ case "${action}" in
     if systemctl is-active --quiet "${service}" && ready >/dev/null 2>&1; then
       exit 0
     fi
-    # A different idle variant owns memory that this request is replacing.
-    # Wait for its shutdown before measuring the available headroom.
-    stop_worker "${other}"
+    # A live peer may own an external request; never evict it here.
+    for other in larm-image-qwen21.service larm-music-ace-step.service larm-mesh-trellis2.service; do
+      if [[ "${other}" != "${service}" ]] && systemctl is-active --quiet "${other}"; then
+        echo "another media worker is active; refusing to evict it" >&2
+        exit 1
+      fi
+    done
     available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
     required_kib="$(( (reserve_gb + 16) * 1024 * 1024 ))"
     if (( available_kib < required_kib )); then
@@ -76,5 +84,5 @@ case "${action}" in
       sleep 1
     done
     ;;
-  *) echo "usage: $0 status|start|stop music|image" >&2; exit 2 ;;
+  *) echo "usage: $0 status|start|stop music|image|mesh" >&2; exit 2 ;;
 esac

@@ -23,6 +23,8 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       if (operationId === "createSpeech") return "AudioSpeechRequest";
       if (operationId === "createEmbedding") return "EmbeddingRequest";
       if (operationId === "createSystemOneDecision") return "SystemOneRequest";
+      if (operationId === "createMeshGeneration") return "MeshGenerationRequest";
+      if (operationId === "updateMeshAsset") return "MeshAssetPatch";
       if (operationId === "createMusicGeneration") return "MusicGenerationRequest";
       if (operationId === "createImageGeneration") return "ImageGenerationRequest";
       if (operationId === "claimAgentConnection") return "AgentConnectionClaimRequest";
@@ -87,7 +89,10 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
           "application/octet-stream": { schema: { $ref: "#/components/schemas/Binary" } },
         };
       }
-      if (operationId === "getMusicGenerationEvents") {
+      if (operationId === "getMeshAssetContent") return { "model/gltf-binary": { schema: { $ref: "#/components/schemas/Binary" } } };
+      if (operationId === "getMeshAssetPreview") return { "text/html": { schema: { type: "string" } } };
+      if (operationId === "getMeshAssetSource") return { "image/png": { schema: { $ref: "#/components/schemas/Binary" } }, "image/webp": { schema: { $ref: "#/components/schemas/Binary" } } };
+      if (operationId === "getMeshGenerationEvents" || operationId === "getMusicGenerationEvents") {
         return {
           "text/event-stream": { schema: { $ref: "#/components/schemas/ServerSentEvents" } },
         };
@@ -110,6 +115,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
         operationId === "releaseAgentConnection"
         || operationId === "deleteContext"
         || operationId === "unfavoriteMusicGeneration"
+        || operationId === "deleteMeshAsset"
         || operationId === "deleteMusicTrack"
       ) return undefined;
       return { "application/json": { schema: { $ref: `#/components/schemas/${successSchema}` } } };
@@ -315,6 +321,24 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
           },
         }
         : {}),
+      ...(operationId === "createMeshGeneration" ? { parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string", format: "uuid" } }], description: "Durable asynchronous TRELLIS.2 512 job. Same key and body returns the same job; different body is 409. No automatic regeneration after interruption or asset deletion." } : {}),
+      ...(operationId === "listMeshAssets" ? { parameters: [
+        ...["q", "tags", "cursor"].map((name) => ({ name, in: "query", schema: { type: "string" } })),
+        { name: "sort", in: "query", schema: { type: "string", enum: ["createdAt", "relevance"], default: "createdAt" } },
+        { name: "order", in: "query", schema: { type: "string", enum: ["asc", "desc"], default: "desc" } },
+        { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } },
+      ] } : {}),
+      ...(["getMeshAssetContent", "getMeshAssetSource"].includes(operationId) ? { parameters: [
+        { name: "Range", in: "header", schema: { type: "string" } }, { name: "If-Range", in: "header", schema: { type: "string" } }, { name: "If-None-Match", in: "header", schema: { type: "string" } },
+      ] } : {}),
+      ...(path.startsWith("/v1/3d/") && path.includes("{id}") ? {
+        parameters: [
+          { name: "id", in: "path", required: true, schema: { type: "string", pattern: path.includes("/generations/") ? "^meshjob_[a-f0-9]{32}$" : "^mesh_[a-f0-9]{32}$" } },
+          ...(["getMeshAssetContent", "getMeshAssetSource"].includes(operationId) ? [
+            { name: "Range", in: "header", schema: { type: "string" } }, { name: "If-Range", in: "header", schema: { type: "string" } }, { name: "If-None-Match", in: "header", schema: { type: "string" } },
+          ] : []),
+        ],
+      } : {}),
       responses: {
         ...Object.fromEntries(SUCCESS_STATUSES_BY_OPERATION[operationId].map((status) => [status, success])),
         ...(operationId === "getReadiness"
