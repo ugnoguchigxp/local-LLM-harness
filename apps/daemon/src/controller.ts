@@ -144,7 +144,7 @@ export class ControlPlane {
   getUsageState() {
     const state = this.usage?.protection.snapshot();
     return {
-      enabled: this.usage !== undefined, protected: (state?.protected ?? false) || (this.usage?.isTransitioning ?? false) || (this.usage?.hasOwnership ?? false),
+      enabled: this.usage !== undefined, protected: (state?.protected ?? false) || (this.usage?.isTransitioning ?? false),
       transitioning: this.usage?.isTransitioning ?? false,
       activeRequests: state?.activeRequests ?? 0, preparing: state?.preparing ?? 0,
       remainingMs: state?.remainingMs ?? 0,
@@ -320,7 +320,7 @@ export class ControlPlane {
       await this.handover.promise;
       return await this.prepareUsageHandover(nextRuntimeIds);
     }
-    const initialRetention = this.retainedOwner === undefined && usage.canProtect && (usage.protection.snapshot().preparing > 0 || usage.hasOwnership);
+    const initialRetention = this.retainedOwner === undefined && usage.canProtect && usage.protection.snapshot().preparing > 0;
     if (!initialRetention && !this.usageHandoverNeeded(nextRuntimeIds)) return;
     // A different profile cannot overwrite rollback state while readiness for
     // the previous accepted allocation is still unresolved.
@@ -496,7 +496,7 @@ export class ControlPlane {
         },
       };
     }
-    if (this.usage && (this.retainedOwner !== undefined || (this.usage.canProtect && (this.usage.protection.snapshot().preparing > 0 || this.usage.hasOwnership)))) {
+    if (this.usage && (this.retainedOwner !== undefined || (this.usage.canProtect && this.usage.protection.snapshot().preparing > 0))) {
       const resolved = resolveAllocationBindings({
         registry: this.registry, state: this.observer.getState(), request,
         getRuntimeRelease: this.options.getRuntimeRelease,

@@ -5285,10 +5285,13 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
   })).status).toBe(204);
 });
 
-test("Eumenes requests abort ContextStill, fence reacquisition until all foreground requests finish, and retain shared providers", async () => {
+test("Profiles without idle retention abort ContextStill, fence reacquisition until all foreground requests finish, and retain shared providers", async () => {
   const configDir = join(import.meta.dir, "../../../config/local-node");
   const production = loadRegistry(configDir);
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, production);
+  // This fixture exercises execution-only exclusion. Demand retention is
+  // exercised separately with the configured idle policy enabled.
+  for (const profile of catalog.profiles) profile.idleRelease = undefined;
   const probes = new Map(production.runtimes.map(runtime => [runtime.id, probe(runtime.id,
     runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0)]));
   const log = { ensure: [] as string[], stop: [] as string[] };

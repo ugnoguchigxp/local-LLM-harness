@@ -7,7 +7,7 @@ import { ControlPlane } from "./controller";
 import { Observer } from "./observer";
 import type { SemanticReadiness } from "./semantic-readiness";
 
-async function fixture(limit = 8) {
+async function fixture(limit = 8, idleSeconds?: number) {
   const registry: Registry = {
     nodes: [{ id: "node", endpoint: "http://127.0.0.1", resources: { memoryTotalGB: 32, reservedMemoryGB: 2 } }], profiles: [],
     runtimes: [{ id: "llm", capability: ["llm.general"], protocol: "openai.chat-completions.v1", backend: "systemd", node: "node",
@@ -25,7 +25,7 @@ async function fixture(limit = 8) {
   const catalog = parseAgentConnectionCatalog({ version: 1, defaultAgentProfile: "foreground",
     audiences: { local: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" } },
     agentProfiles: {
-      foreground: { description: "foreground", requestScheduling: "foreground-exclusive", schedulingPriority: 4000, providers: [provider] },
+      foreground: { description: "foreground", requestScheduling: "foreground-exclusive", schedulingPriority: 4000, ...(idleSeconds === undefined ? {} : { idleRelease: { enabled: true, idleSeconds, activityProtocols: ["openai.chat-completions.v1"] } }), providers: [provider] },
       background: { description: "background", requestScheduling: "background-when-idle", schedulingPriority: 1000, providers: [provider] },
     }, profileSelectors: { "ornith1.5Strix": { agentProfile: "foreground" }, contextStill: { agentProfile: "background" } },
   }, registry);
@@ -33,12 +33,16 @@ async function fixture(limit = 8) {
   const controller = new AgentConnectionController({ control, getCatalog: () => catalog, getCatalogRevision: () => "c".repeat(64),
     semantic: { check: async () => ready, peek: () => ready } as unknown as SemanticReadiness,
     tokenCodec: new ConnectionTokenCodec(new Uint8Array(32).fill(7), () => now),
-    readyTimeoutMs: 10_000, pollIntervalMs: 1, idempotencyTtlMs: 5, idempotencyLimit: 20, historyLimit: 1,
+    readyTimeoutMs: 10_000, pollIntervalMs: 1, idempotencyTtlMs: idleSeconds === undefined ? 5 : 300_000, idempotencyLimit: 100, historyLimit: 1,
     random: () => "repeating-source", now: () => now,
   });
   const create = (profile: "ornith1.5Strix" | "contextStill", client: string) => controller.create({ profile, audience: "local", client,
     ttlSeconds: 120, allowFallback: false, deploymentPolicy: "existing-only" }, "owner", client, "http://127.0.0.1:9810/v1/agent-connections");
-  return { control, controller, create, advance: () => { now += 10; } };
+  const demand = (key: string, principal = "owner", profile: "ornith1.5Strix" | "contextStill" = "ornith1.5Strix", client = "screen", ttlSeconds = 300) =>
+    controller.create({ profile, audience: "local", client, ttlSeconds, allowFallback: false, deploymentPolicy: "existing-only" },
+      principal, key, "http://127.0.0.1:9810/v1/agent-connections");
+  return { control, controller, create, demand, advance: (ms = 10) => { now += ms; }, now: () => now };
+
 }
 
 test("connection IDs stay unique with repeated random input; bounded history preserves the newest terminal result", async () => {
@@ -87,4 +91,129 @@ test("pending connection health reports its providers as not ready and release c
   await controller.release(connection.id, "owner");
   await control.releaseAllocation((held.body as { id: string }).id);
   await control.flush();
+});
+
+test("new POST demand keeps the same connection and allocation beyond six idle minutes; replay does not extend", async () => {
+  const f = await fixture(8, 300);
+  try {
+    const initial = await f.demand("first");
+    const first = initial.body as PublicAgentConnection;
+    expect(initial.replay).toBeUndefined();
+    expect(first.idleReleaseAt).toBeDefined();
+    for (let i = 1; i <= 13; i++) {
+      f.advance(30_000);
+      const result = await f.demand(`new-${i}`);
+      const current = result.body as PublicAgentConnection;
+      expect(result.status).toBe(201);
+      expect(result.replay).toBeUndefined();
+      expect(current).toMatchObject({ id: first.id, allocationId: first.allocationId, status: "ready" });
+      expect(Date.parse(current.idleReleaseAt!)).toBe(f.now() + 300_000);
+      expect(Date.parse(current.expiresAt)).toBe(f.now() + 300_000);
+      expect(current.lastForegroundActivityAt).toBeUndefined();
+      expect((await f.demand(`background-${i}`, "other", "contextStill", "screen")).status).toBe(409);
+    }
+    const before = f.controller.get(first.id, "owner").body as PublicAgentConnection;
+    f.advance(1_000);
+    expect((await f.demand("first")).replay).toBe(true);
+    expect(f.controller.get(first.id, "owner").body).toEqual(before);
+    expect((await f.demand("new-13")).body).toEqual(before);
+    expect(f.control.getAllocation(first.allocationId)?.status).toBe("ready");
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("new demand preserves old signed credentials to their expiry, claim refreshes and explicit renew revokes", async () => {
+  const f = await fixture(8, 300);
+  const token = (claim: unknown) => (claim as { providers: { credential: { token: string } }[] }).providers[0]!.credential.token;
+  try {
+    const connection = (await f.demand("first")).body as PublicAgentConnection;
+    const old = token((await f.controller.claim(connection.id, "owner", "openai-provider-v1")).body);
+    f.advance(240_000);
+    await f.demand("second");
+    expect(f.controller.verifyProviderToken(old).record.id).toBe(connection.id);
+    const fresh = token((await f.controller.claim(connection.id, "owner", "openai-provider-v1")).body);
+    f.advance(61_000);
+    expect(() => f.controller.verifyProviderToken(old)).toThrow();
+    expect(f.controller.verifyProviderToken(fresh).record.id).toBe(connection.id);
+    const before = (f.controller.get(connection.id, "owner").body as PublicAgentConnection).idleReleaseAt;
+    expect((await f.controller.renew(connection.id, 900, "owner", "renew")).status).toBe(200);
+    expect(() => f.controller.verifyProviderToken(fresh)).toThrow();
+    const renewed = token((await f.controller.claim(connection.id, "owner", "openai-provider-v1")).body);
+    f.advance(1_000);
+    const demanded = (await f.demand("third")).body as PublicAgentConnection;
+    expect(Date.parse(demanded.expiresAt)).toBeGreaterThanOrEqual(f.now() + 899_000);
+    expect(demanded.idleReleaseAt).not.toBe(before);
+    expect(f.controller.verifyProviderToken(renewed).record.id).toBe(connection.id);
+    await f.controller.release(connection.id, "owner");
+    expect(() => f.controller.verifyProviderToken(renewed)).toThrow();
+    expect((await f.demand("first")).body).toMatchObject({ id: connection.id });
+    expect(f.controller.get(connection.id, "owner").body).toMatchObject({ status: "released" });
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("concurrent demand wins through profile policy regardless of caller or client names and drains existing background execution", async () => {
+  const f = await fixture(8, 300);
+  try {
+    const background = (await f.demand("background", "other", "contextStill", "Eumenes")).body as PublicAgentConnection;
+    expect(await f.controller.beginProviderRequest(background.id, "running", "openai.chat-completions.v1")).toBe("accepted");
+    const foreground = f.demand("foreground", "owner", "ornith1.5Strix", "ContextStill");
+    await Bun.sleep(5);
+    expect(f.controller.get(background.id, "other").body).toMatchObject({ status: "failed", error: { code: "foreground_preempted" } });
+    expect((await f.demand("race-background", "other", "contextStill", "Eumenes")).status).toBe(409);
+    f.controller.finishProviderRequest(background.id, "running");
+    expect((await foreground).status).toBe(201);
+    const [a, b, c] = await Promise.all([
+      f.demand("foreground-again", "owner", "ornith1.5Strix", "ContextStill"),
+      f.demand("foreground-again-2", "owner", "ornith1.5Strix", "ContextStill"),
+      f.demand("race-background-2", "other", "contextStill", "Eumenes"),
+    ]);
+    expect((a.body as PublicAgentConnection).id).toBe((b.body as PublicAgentConnection).id);
+    expect(c.status).toBe(409);
+    expect(f.controller.get((a.body as PublicAgentConnection).id, "other").status).toBe(403);
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("stopping new requests returns to real idle release; GET, claim, renew, replay and rejected requests cannot postpone it", async () => {
+  const f = await fixture(8, 1);
+  try {
+    const first = (await f.demand("first")).body as PublicAgentConnection;
+    f.advance(500);
+    const updated = (await f.demand("second")).body as PublicAgentConnection;
+    expect(Date.parse(updated.idleReleaseAt!)).toBe(Date.parse(first.idleReleaseAt!) + 500);
+    f.advance(200);
+    expect((await f.demand("second")).replay).toBe(true);
+    expect((await f.demand("first", "owner", "ornith1.5Strix", "screen", 600)).status).toBe(409);
+    expect((await f.demand("different-options", "owner", "ornith1.5Strix", "screen", 600)).status).toBe(409);
+    expect((await f.controller.claim(first.id, "owner", "openai-provider-v1")).status).toBe(200);
+    expect((await f.controller.renew(first.id, 900, "owner", "renew-only")).status).toBe(200);
+    expect((f.controller.get(first.id, "owner").body as PublicAgentConnection).idleReleaseAt).toBe(updated.idleReleaseAt);
+    f.advance(800);
+    await Bun.sleep(1_050);
+    expect(f.controller.get(first.id, "owner").body).toMatchObject({ status: "released", error: { code: "foreground_idle_timeout" } });
+    expect((await f.demand("first")).replay).toBe(true);
+    expect(f.controller.get(first.id, "owner").body).toMatchObject({ status: "released" });
+    expect((await f.demand("worker-after", "other", "contextStill")).status).toBe(201);
+    expect((await f.controller.renew(first.id, 300, "owner", "late-renew")).status).toBe(409);
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("periodic demands recycle bounded replay capacity while the last key survives idle release", async () => {
+  const f = await fixture(8, 300);
+  try {
+    const first = (await f.demand("first")).body as PublicAgentConnection;
+    for (let i = 1; i <= 120; i++) {
+      f.advance(30_000);
+      const result = await f.demand(`periodic-${i}`);
+      expect(result.status).toBe(201);
+      expect((result.body as PublicAgentConnection).id).toBe(first.id);
+    }
+    const last = f.controller.get(first.id, "owner").body as PublicAgentConnection;
+    f.advance(300_000);
+    // Drive the same timer callback at the fixed deadline without a real
+    // five-minute sleep; the independent timer test exercises actual scheduling.
+    await (f.controller as unknown as { releaseIdleConnection(id: string, deadline: number): Promise<void> })
+      .releaseIdleConnection(first.id, Date.parse(last.idleReleaseAt!));
+    expect(f.controller.get(first.id, "owner").body).toMatchObject({ status: "released" });
+    expect((await f.demand("periodic-120")).replay).toBe(true);
+    expect(f.controller.get(first.id, "owner").body).toMatchObject({ status: "released" });
+  } finally { f.control.beginDrain(); await f.control.flush(); }
 });

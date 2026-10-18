@@ -1,9 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   activeAllocation,
-  type ConnectionOwnership,
-  ConnectionOwnershipRegistry,
-  OWNERSHIP_TTL_MS,
+  agentConnectionIdleDeadline,
   type ChatInputPolicy,
   agentProviderEndpoint,
   personalStateSubjectDigest,
@@ -58,7 +56,8 @@ type ConnectionRecord = {
   lastForegroundActivityAt?: string;
   idleReleaseAt?: string;
   idleTimer?: ReturnType<typeof setTimeout>;
-  ownership?: ConnectionOwnership;
+  lastProfileRequestAt: string;
+  usesUsageProtection: boolean;
   activeRequests: Map<string, { foreground: boolean; exclusive: boolean }>;
   preparationComplete?: (success: boolean) => void;
   releasedAt?: string;
@@ -106,7 +105,6 @@ export function agentPrincipal(apiToken: string): string {
 export class AgentConnectionController {
   private readonly records = new Map<string, ConnectionRecord>();
   private readonly idempotency = new Map<string, IdempotencyEntry>();
-  private readonly ownershipAcquisitions: ConnectionOwnershipRegistry;
   private readonly background = new Set<string>();
   private readonly sessionLocks = new Map<string, Promise<void>>();
   private sequence = 0;
@@ -129,9 +127,7 @@ export class AgentConnectionController {
     onEvent?: (event: { name: string; labels: Record<string, string> }) => void;
     now?: () => number;
     random?: () => string;
-  }) {
-    this.ownershipAcquisitions = new ConnectionOwnershipRegistry(options.idempotencyLimit, () => this.now());
-  }
+  }) {}
 
   listProfilesV1(): AgentConnectionApiResult {
     const catalog = this.options.getCatalog();
@@ -174,7 +170,7 @@ export class AgentConnectionController {
   }
 
   private publicIdlePolicy(profile: AgentProfile) {
-    return profile.idleRelease ? { ...structuredClone(profile.idleRelease), enabled: this.options.control.usage && profile.usageProtection ? false : profile.idleRelease.enabled } : undefined;
+    return profile.idleRelease ? { ...structuredClone(profile.idleRelease), enabled: this.options.control.usage?.canProtect && profile.usageProtection ? false : profile.idleRelease.enabled } : undefined;
   }
 
   listProfilesV2(): AgentConnectionApiResult {
@@ -309,7 +305,6 @@ export class AgentConnectionController {
       ttlSeconds: request.ttlSeconds,
       allowFallback: request.allowFallback,
       deploymentPolicy: request.deploymentPolicy,
-      ...(request.ownership ? { ownership: request.ownership } : {}),
     };
     const requestHash = hash(JSON.stringify({
       request: normalizedRequest,
@@ -342,11 +337,31 @@ export class AgentConnectionController {
               409,
             );
           }
+          const foreground = selectedProfile.requestScheduling === "foreground-exclusive";
+          if (foreground) this.foregroundCreations += 1;
+          try {
+            if (foreground) {
+              const conflict = await this.preemptBackgroundConnections(selectedProfile.schedulingPriority ?? 0);
+              if (conflict) return conflict;
+            }
+            // A new demand renews the allocation without rotating already issued
+            // credentials. Their signed expiry still limits each credential.
+            const ttl = Math.max(request.ttlSeconds, Math.ceil((Date.parse(reusable.expiresAt) - this.now()) / 1_000));
+            const renewed = this.options.control.renewAllocation(reusable.allocationId, ttl);
+            if (renewed.status !== 200) return { status: renewed.status, body: renewed.body };
+            reusable.expiresAt = renewed.body.expiresAt;
+            if (reusable.usesUsageProtection && this.options.control.usage) {
+              this.options.control.usage.prepare(reusable.profile.usageProtection!.idleSeconds * 1_000)(true);
+            }
+            reusable.lastProfileRequestAt = new Date(this.now()).toISOString();
+            this.scheduleIdleRelease(reusable);
+          } finally {
+            if (foreground) this.foregroundCreations -= 1;
+          }
           return {
             status: reusable.status === "ready" ? 201 : 202,
             body: this.public(reusable),
             location: `/v1/agent-connections/${reusable.id}`,
-            replay: true,
           };
         }
         const catalogRevision = this.options.getCatalogRevision();
@@ -361,38 +376,14 @@ export class AgentConnectionController {
           );
         }
         const usage = this.options.control.usage;
-        if (request.ownership && (!usage?.canProtect || usage.owner !== principal)) {
-          return error("consumer_credential_required", "ownership requires a dedicated consumer credential", 403);
-        }
-        let ownership: ConnectionOwnership | undefined;
-        if (request.ownership) {
-          const acquired = this.ownershipAcquisitions.acquire(request.ownership.id, Date.parse(request.ownership.issuedAt));
-          if (acquired === "expired") {
-            return error("ownership_request_expired", "ownership acquisition must be issued within the last 90 seconds", 410);
-          }
-          if (acquired === "conflict") {
-            return error("ownership_conflict", "ownership id was already acquired; use its Connection", 409);
-          }
-          if (acquired === "capacity") {
-            return error("ownership_capacity", "ownership acquisition capacity is temporarily exhausted", 503);
-          }
-          ownership = acquired;
-        }
-        // Explicit screen leases use their own deadline; legacy consumers retain
-        // the configured inference activity protection without any change.
-        const protection = !ownership && usage && selectedProfile.usageProtection;
-        if (protection && !this.options.control.usage?.canProtect) return error("consumer_credential_required", "protected profiles require a dedicated consumer credential", 403);
+        const protection = usage?.canProtect && selectedProfile.usageProtection;
         const preparationComplete = protection ? this.options.control.usage!.prepare(protection.idleSeconds * 1000, `${selectedProfile.canonicalProfile}:${selectedProfile.revision}`) : undefined;
         let preparationTransferred = false;
         let createdRecord: ConnectionRecord | undefined;
-        if (ownership) usage!.hold(ownership, () => !createdRecord || (
-          !isTerminal(createdRecord.status)
-          && activeAllocation(this.options.control.getAllocation(createdRecord.allocationId)?.status ?? "released")
-        ));
         const foregroundCreation = selectedProfile.requestScheduling === "foreground-exclusive";
         if (foregroundCreation) this.foregroundCreations += 1;
         try {
-          if (protection || ownership) await this.options.control.activateUsageProtection(selectedProfile.schedulingPriority ?? 0);
+          if (protection) await this.options.control.activateUsageProtection(selectedProfile.schedulingPriority ?? 0);
           if (foregroundCreation) {
             const conflict = await this.preemptBackgroundConnections(selectedProfile.schedulingPriority ?? 0);
             if (conflict) return conflict;
@@ -435,7 +426,8 @@ export class AgentConnectionController {
             requestHash,
             activeRequests: new Map(),
             preparationComplete,
-            ownership,
+            lastProfileRequestAt: new Date(now).toISOString(),
+            usesUsageProtection: Boolean(protection),
           };
           this.records.set(record.id, record);
           createdRecord = record;
@@ -472,9 +464,10 @@ export class AgentConnectionController {
           throw error;
         } finally {
           if (foregroundCreation) this.foregroundCreations -= 1;
-          if (!preparationTransferred) { preparationComplete?.(false); ownership?.release(); }
+          if (!preparationTransferred) preparationComplete?.(false);
         }
       }),
+      true,
     );
   }
 
@@ -723,44 +716,10 @@ export class AgentConnectionController {
     );
   }
 
-  async updateOwnership(
-    id: string, principal: string, ownershipId: string, sequence: number | undefined, idempotencyKey: string,
-  ): Promise<AgentConnectionApiResult> {
-    return this.idempotent(
-      `${principal}:${sequence === undefined ? "DELETE" : "PUT"}:/v1/agent-connections/${id}/ownership:${idempotencyKey}`,
-      hash(JSON.stringify({ ownershipId, sequence })),
-      async () => {
-        const usage = this.options.control.usage;
-        if (!usage?.canProtect || usage.owner !== principal) {
-          return error("consumer_credential_required", "ownership requires a dedicated consumer credential", 403);
-        }
-        const found = this.owned(id, principal);
-        if ("body" in found) return found;
-        this.refreshLifecycle(found);
-        if (!found.ownership || found.ownership.id !== ownershipId) {
-          return error("ownership_conflict", "ownership id does not match this Connection", 409);
-        }
-        if (sequence === undefined) {
-          found.ownership.release();
-        } else {
-          if (found.status === "expired") return error("connection_expired", "Connection credential has expired", 410);
-          if (isTerminal(found.status)) return error("connection_inactive", "Connection is no longer active", 409);
-          const updated = found.ownership.refresh(sequence);
-          if (updated === "inactive") return error("ownership_expired", "ownership has expired or was released; it cannot be refreshed", 410);
-          if (updated === "stale") return error("ownership_sequence_conflict", "sequence must increase for each new heartbeat", 409);
-        }
-        this.scheduleIdleRelease(found);
-        return { status: 200, body: this.public(found) };
-      },
-      true,
-    );
-  }
-
   async release(id: string, principal: string): Promise<AgentConnectionApiResult> {
     const found = this.owned(id, principal);
     if ("body" in found) return found;
     if (isTerminal(found.status)) return { status: 204, body: undefined };
-    found.ownership?.release();
     found.preparationComplete?.(false); found.preparationComplete = undefined;
     await this.options.control.releaseAllocation(found.allocationId);
     this.clearIdleTimer(found);
@@ -797,7 +756,7 @@ export class AgentConnectionController {
       || payload.audience !== record.audience.id
       || payload.generation !== record.generation
       || payload.iat !== record.tokenIssuedAt
-      || payload.exp !== Math.floor(Date.parse(record.expiresAt) / 1_000)
+      || payload.exp > Math.floor(Date.parse(record.expiresAt) / 1_000)
       || payload.providerRevision !== binding?.providerRevision
       || payload.instanceId !== binding?.instanceId
       || payload.instanceGeneration !== binding?.instanceGeneration
@@ -886,13 +845,19 @@ export class AgentConnectionController {
   }
 
   private backgroundBlocked(): boolean {
-    return this.foregroundCreations > 0 || [...this.records.values()].some(record =>
-      [...record.activeRequests.values()].some(request => request.exclusive)
-    );
+    return this.foregroundCreations > 0 || [...this.records.values()].some(record => {
+      this.refreshLifecycle(record);
+      return [...record.activeRequests.values()].some(request => request.exclusive)
+        || (!isTerminal(record.status)
+          && record.profile.requestScheduling === "foreground-exclusive"
+          && !record.usesUsageProtection
+          && record.profile.idleRelease?.enabled === true
+          && this.idleDeadline(record) > this.now());
+    });
   }
 
   private foregroundConflict(): AgentConnectionApiResult {
-    return { ...error("provider_conflict", "background work must wait for foreground requests to finish", 409), retryAfterSeconds: 1 };
+    return { ...error("provider_conflict", "background work must wait for the foreground connection to become idle", 409), retryAfterSeconds: 1 };
   }
 
   private async preemptBackgroundConnections(
@@ -1032,7 +997,7 @@ export class AgentConnectionController {
   }
 
   private refreshLifecycle(record: ConnectionRecord): void {
-    if (isTerminal(record.status)) { record.ownership?.release(); record.preparationComplete?.(false); record.preparationComplete = undefined; return; }
+    if (isTerminal(record.status)) { record.preparationComplete?.(false); record.preparationComplete = undefined; return; }
     const allocation = this.options.control.getAllocation(record.allocationId);
     if (!allocation) {
       record.preparationComplete?.(false); record.preparationComplete = undefined;
@@ -1069,7 +1034,6 @@ export class AgentConnectionController {
   }
 
   private public(record: ConnectionRecord): PublicAgentConnection {
-    if (isTerminal(record.status)) record.ownership?.release();
     const allocation = this.options.control.getAllocation(record.allocationId);
     const phase = isTerminal(record.status)
       ? "terminal" as const
@@ -1131,7 +1095,6 @@ export class AgentConnectionController {
       ...(record.lastForegroundActivityAt
         ? { lastForegroundActivityAt: record.lastForegroundActivityAt }
         : {}),
-      ...(record.ownership ? { ownership: record.ownership.snapshot() } : {}),
       ...(record.idleReleaseAt ? { idleReleaseAt: record.idleReleaseAt } : {}),
       ...(record.releasedAt ? { releasedAt: record.releasedAt } : {}),
       ...(record.error ? { error: record.error } : {}),
@@ -1219,7 +1182,7 @@ export class AgentConnectionController {
     const entry: IdempotencyEntry = {
       requestHash,
       result: Promise.resolve().then(operation),
-      expiresAt: this.now() + (pruneWhileActive ? Math.max(OWNERSHIP_TTL_MS, this.options.idempotencyTtlMs) : this.options.idempotencyTtlMs),
+      expiresAt: this.now() + this.options.idempotencyTtlMs,
       pruneWhileActive,
     };
     this.idempotency.set(scope, entry);
@@ -1228,6 +1191,15 @@ export class AgentConnectionController {
       this.idempotency.delete(scope);
     } else if (typeof result.body === "object" && result.body !== null && "id" in result.body) {
       entry.connectionId = String((result.body as { id: unknown }).id);
+      const record = this.records.get(entry.connectionId);
+      if (pruneWhileActive && record?.profile.idleRelease?.enabled) {
+        // Keep the last demand's replay through automatic release and the
+        // configured retry window, while older periodic demands can be pruned.
+        const idleSeconds = record.usesUsageProtection
+          ? record.profile.usageProtection!.idleSeconds : record.profile.idleRelease.idleSeconds;
+        entry.expiresAt = Math.max(entry.expiresAt,
+          agentConnectionIdleDeadline(record, idleSeconds) + this.options.idempotencyTtlMs);
+      }
     }
     return result;
   }
@@ -1273,21 +1245,23 @@ export class AgentConnectionController {
     if (isTerminal(record.status)) return;
     record.status = "ready";
     record.readyAt ??= new Date(this.now()).toISOString();
-    if ((record.profile.usageProtection || record.ownership) && this.options.control.usage) this.options.control.retainUsageProfile(record.allocationId);
+    if (record.usesUsageProtection && this.options.control.usage) this.options.control.retainUsageProfile(record.allocationId);
     this.options.control.completeUsageHandover(record.allocationId);
     record.preparationComplete?.(true);
     record.preparationComplete = undefined;
     this.scheduleIdleRelease(record);
   }
 
+  private idleDeadline(record: ConnectionRecord): number {
+    return agentConnectionIdleDeadline(record, record.profile.idleRelease?.idleSeconds ?? 0);
+  }
+
   private scheduleIdleRelease(record: ConnectionRecord): void {
     this.clearIdleTimer(record);
     const policy = record.profile.idleRelease;
-    if (this.options.control.usage && record.profile.usageProtection && !record.ownership) return;
+    if (record.usesUsageProtection) return;
     if (!policy?.enabled || record.status !== "ready" || record.activeRequests.size > 0) return;
-    const baseline = Date.parse(record.lastForegroundActivityAt ?? record.readyAt ?? record.createdAt);
-    const deadline = Math.max(baseline + policy.idleSeconds * 1_000,
-      record.ownership?.active ? Date.parse(record.ownership.snapshot().expiresAt) : 0);
+    const deadline = this.idleDeadline(record);
     record.idleReleaseAt = new Date(deadline).toISOString();
     const timer = setTimeout(() => {
       if (record.idleTimer !== timer) return;
@@ -1308,17 +1282,15 @@ export class AgentConnectionController {
     const record = this.records.get(id);
     const policy = record?.profile.idleRelease;
     if (!record || !policy?.enabled || record.status !== "ready") return;
-    const baseline = Date.parse(record.lastForegroundActivityAt ?? record.readyAt ?? record.createdAt);
-    const currentDeadline = baseline + policy.idleSeconds * 1_000;
-    if (record.ownership?.active || currentDeadline > deadline || record.activeRequests.size > 0 || this.now() < currentDeadline) {
+    const currentDeadline = this.idleDeadline(record);
+    if (currentDeadline > deadline || record.activeRequests.size > 0 || this.now() < currentDeadline) {
       this.scheduleIdleRelease(record);
       return;
     }
     const reason = new AllocationLifecycleError(
       "foreground_idle_timeout",
-      `connection released after ${policy.idleSeconds} seconds without LLM, ASR, or TTS activity`,
+      `connection released after ${policy.idleSeconds} seconds without a new Profile request or LLM, ASR, or TTS activity`,
     );
-    record.ownership?.release();
     record.status = "released";
     record.releasedAt = new Date(this.now()).toISOString();
     record.error = { code: reason.code, message: reason.message };

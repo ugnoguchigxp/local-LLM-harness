@@ -1,0 +1,127 @@
+<article lang="ja">
+  <h1>既存Profile利用依頼によるConnectionの占有延長</h1>
+  <p>
+    既存のPOST
+    /v1/agent-connectionsを定期送信すると、同一呼出元・client・Profile・audience・Provider集合のConnectionとAllocationを再利用し、自動解放期限を延長する。追加の保持API、入力項目、専用credential、モデル名による分岐は使用しない。
+  </p>
+  <section id="contract">
+    <h2>利用契約</h2>
+    <table>
+      <caption>
+        Eumenes backendからの定期利用依頼
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">契約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">method・path</th>
+          <td>POST /v1/agent-connections。既存の接続先とAuthorizationを継続する。</td>
+        </tr>
+        <tr>
+          <th scope="row">入力</th>
+          <td>
+            既存のprofile、client、audience、providers、ttlSeconds、allowFallback、deploymentPolicy、expectedCatalogRevisionをそのまま送る。各回に新しいIdempotency-Keyを付ける。同じ依頼の通信再送には同じKeyを使う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">応答</th>
+          <td>
+            readyは201、準備中は202。既存のid・allocationIdを維持し、idleReleaseAtとexpiresAtを更新する。Locationは同じConnectionを指す。新しい依頼はIdempotency-Replayedではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">周期</th>
+          <td>
+            30秒を推奨。現在の本番ProfileのidleSecondsは300秒であり、最終成功から約300秒で無操作解放する。応答にあるidleReleaseAtを実際の解放予定時刻とする。設定値は変更しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">要求停止・解除</th>
+          <td>
+            画面を閉じた場合や非表示時には定期送信を停止する。通知が届かない終了でも期限で解放する。即時に終える場合は既存DELETE
+            /v1/agent-connections/{id}を使う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">通信再送</th>
+          <td>
+            同じKeyは保存された応答を返し、占有・credential期限を進めない。解放後の再送もConnectionを復活させない。成功した利用依頼の再送結果は、その依頼による無操作解放予定時刻に既存idempotency保存期間を加えた時刻まで保持する。現在は300秒＋300秒で最長約10分となる。保存期間を過ぎたKeyを再利用しない。古い定期依頼の記録は保存期限後に回収し、画面を長時間開いていても再送記録を蓄積し続けない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>入力例は既存形式のまま。clientはbackendが使用中の同じ値を継続する。</p>
+    <pre><code>{"profile":"ornith1.5Strix","client":"既存client","audience":"saaa-desktop","ttlSeconds":900,"allowFallback":false,"deploymentPolicy":"existing-only","providers":["llm"]}</code></pre>
+  </section>
+  <section id="credentials">
+    <h2>期限とcredential</h2>
+    <p>
+      新しい利用依頼の成功時刻、ready時刻、最後のforeground活動時刻の最も新しいものから、設定済みidleSecondsで解放期限を求める。GET・health・claim・renew・通信再送・拒否された依頼は無操作期限を延長しない。
+    </p>
+    <p>
+      AllocationのexpiresAtも既存renew機構で延長する。既に長い期限が設定されている場合は短縮しない。POSTの再利用ではcredentialのgenerationを変更せず、既発行tokenは自身の署名済み有効期限まで使用できる。claimは現在のexpiresAtでcredentialを発行する。明示renewは従来どおりgenerationを進め、以前のcredentialを失効させる。取消・Allocation失効・boot
+      epoch変更も従来の契約に従う。
+    </p>
+    <p>
+      従来のconsumer
+      protectionを既に利用しているconsumerについては、その設定済みの保護期間を新しい利用依頼で更新する。通常の利用依頼に専用権限を要求しない。
+    </p>
+  </section>
+  <section id="arbitration">
+    <h2>調停とエラー</h2>
+    <p>
+      認証で呼出元を分離し、登録ProfileのrequestScheduling・schedulingPriority・idleReleaseで調停する。client名や自己申告の優先度は優先権を与えない。foreground-exclusiveの占有期限内はbackground-when-idleの新規取得と実行を拒否する。backgroundが先に実行中なら既存の取消、Allocation解放、実行参照のdrainを終えてからforegroundへ引き渡す。占有終了後は通常の取得に戻る。
+    </p>
+    <table>
+      <caption>
+        競合・失効時の応答
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">状態</th>
+          <th scope="col">応答</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">foreground占有中のbackground依頼</th>
+          <td>409 provider_conflict、Retry-After: 1。別consumerの繰返し要求で期限を変更しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">同じKeyで異なる入力</th>
+          <td>409 idempotency_conflict。</td>
+        </tr>
+        <tr>
+          <th scope="row">同じ有効sessionで異なる入力</th>
+          <td>409 connection_session_conflict。</td>
+        </tr>
+        <tr>
+          <th scope="row">認証不足・別呼出元の操作</th>
+          <td>既存の401・403を維持する。</td>
+        </tr>
+        <tr>
+          <th scope="row">解放後の古い要求</th>
+          <td>
+            同じKeyは以前の応答を再送するだけで復活しない。解放済みConnectionのrenewは409、期限切れは410。新しいKeyの明示的利用依頼は既存契約による新規取得になる。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="verification">
+    <h2>検証状況</h2>
+    <p>
+      実装済み。専用ownership
+      API・schema・SDKメソッド・保持registry・専用検証scriptは削除した。固定試験済み。881件が成功し、bun
+      run checkとbun run
+      test:coverageの基準を満たした。6分超の定期依頼、要求順序・同時要求、再送、停止後の実timer解放、credentialの署名期限・claim・renew・取消、既存の通常認証、長時間の再送記録回収を確認した。
+    </p>
+    <p>
+      本番実接続は、Eumenesが実際に作成したConnectionを既存credentialで取得し、認証principalの一致を確認した。LAN接続先・Profile・audience・TTLを一致させ、同じ本番daemonから実Providerまで通す。試験要求はLARMホストから送信し、Eumenesの画面操作そのものは行っていない。実測結果は検証終了後に記録する。別daemon・別認証を受入確認の代わりに使用しない。
+    </p>
+  </section>
+</article>

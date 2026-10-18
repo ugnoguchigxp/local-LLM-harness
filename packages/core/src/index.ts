@@ -335,4 +335,5 @@ export { inferenceStatistics, type InferenceStatistics } from "./inference-stati
 
 export { UsageProtection } from "./usage-protection";
 
-export { ConnectionOwnership, ConnectionOwnershipRegistry, OWNERSHIP_TTL_MS, OWNERSHIP_HEARTBEAT_SECONDS } from "./connection-ownership";
+
+export { agentConnectionIdleDeadline } from "./agent-connection-idle";

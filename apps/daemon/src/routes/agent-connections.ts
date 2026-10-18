@@ -1,8 +1,6 @@
 import { Hono, type Context } from "hono";
 import {
   agentConnectionClaimRequestSchema,
-  agentConnectionOwnershipUpdateSchema,
-  agentConnectionOwnershipReleaseSchema,
   agentConnectionRenewRequestSchema,
   agentConnectionRequestSchema,
   type AgentConnectionCatalog,
@@ -180,23 +178,6 @@ export function registerAgentConnectionRoutes(app: Hono, options: {
     if (!parsed.success) return c.json(errorBody("invalid_request", "invalid renewal request"), 400);
     return result(c, await controller.renew(c.req.param("id"), parsed.data.ttlSeconds, requestPrincipal(c), key));
   });
-
-  for (const method of ["put", "delete"] as const) {
-    app[method]("/v1/agent-connections/:id/ownership", async (c) => {
-      const controller = feature(c);
-      if (controller instanceof Response) return controller;
-      const key = idempotencyKey(c);
-      if (key instanceof Response) return key;
-      const schema = method === "put" ? agentConnectionOwnershipUpdateSchema : agentConnectionOwnershipReleaseSchema;
-      const parsed = schema.safeParse(await readJson(c, options.maxBodyBytes));
-      if (!parsed.success) return c.json(errorBody("invalid_request", "invalid ownership request"), 400);
-      c.header("cache-control", "no-store");
-      return result(c, await controller.updateOwnership(
-        c.req.param("id"), requestPrincipal(c), parsed.data.id,
-        "sequence" in parsed.data ? Number(parsed.data.sequence) : undefined, key,
-      ));
-    });
-  }
 
   app.delete("/v1/agent-connections/:id", async (c) => {
     const controller = feature(c);
