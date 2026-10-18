@@ -132,3 +132,16 @@ test("OpenAPI publishes multipart import, receipt, errors and Control authentica
   expect(post.parameters[0].name).toBe("Idempotency-Key"); expect(post.responses["201"]).toBeDefined(); expect(post.responses["202"]).toBeDefined();
   expect(spec.paths["/v1/image-imports/{requestId}"].get).toBeDefined(); expect(spec.components.schemas.ImageImportReceipt).toBeDefined();
 });
+
+test("real HTTP multipart accepts extensionless names and honors part MIME over misleading extensions", async () => {
+  let declared = "";
+  const f = await setup(async (data, mime, path) => { declared = mime; await writeFile(path, data); return { width: 1, height: 1, hasAlpha: false, bytes: data.length, format: "webp" }; });
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: f.app.fetch });
+  try {
+    for (const name of ["image", "private.jpg", "画像;name=ignored"]) {
+      const body = new FormData(); body.append("file", new Blob([source], { type: "image/webp" }), name);
+      const response = await fetch(new URL("/v1/image-artifacts/imports", server.url), { method: "POST", body, headers: { "idempotency-key": randomUUID(), authorization: "Bearer control" } });
+      expect(response.status).toBe(201); expect((await response.json() as any).artifact.format).toBe("webp"); expect(declared).toBe("image/webp");
+    }
+  } finally { server.stop(true); }
+});

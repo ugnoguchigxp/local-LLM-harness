@@ -1,3 +1,4 @@
+import { imagePartMimeType } from "../image-import-multipart";
 import { IMAGE_IMPORT_LIMITS, imageImportRequestIdSchema } from "@larm/core";
 import { ImageImportError } from "@larm/backends";
 import type { ImageImportManager } from "../image-import-manager";
@@ -26,8 +27,9 @@ export function registerImageArtifactRoutes(app: Hono, manager?: ImageArtifactMa
       const file = entries[0][1];
       if (!file.size) throw new ImageImportError("invalid_image", 400);
       if (file.size > IMAGE_IMPORT_LIMITS.inputBytes) throw new ImageImportError("image_input_too_large", 413);
-      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new ImageImportError("unsupported_image_format", 415);
-      const result = await imports.import(principal(c.req.header("authorization")), key!, new Uint8Array(await file.arrayBuffer()), file.type);
+      const fileBytes = new Uint8Array(await file.arrayBuffer());
+      const mimeType = imagePartMimeType(bytes, type, fileBytes);
+      const result = await imports.import(principal(c.req.header("authorization")), key!, fileBytes, mimeType);
       c.header("cache-control", "private, no-store");
       c.header("location", result.receipt.statusUrl);
       if (result.status === 202) c.header("retry-after", "1");
