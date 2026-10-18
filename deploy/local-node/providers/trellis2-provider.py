@@ -28,6 +28,23 @@ def validate_image(path):
         image.verify()
 
 
+def native_source(source, work):
+    # The native stb decoder does not accept WebP. Keep the saved/pinned source
+    # byte-for-byte and expand decoded pixels to a private, lossless PNG only
+    # for the native engine. This never recompresses the saved WebP.
+    with Image.open(source) as image:
+        if image.format != "WEBP":
+            return source
+        image.load()
+        mode = "RGBA" if "A" in image.getbands() else "RGB"
+        image = image.convert(mode)
+        clean = Image.frombytes(mode, image.size, image.tobytes())
+        target = work / "native-source.png"
+        with open(target, "xb") as output:
+            clean.save(output, format="PNG")
+        return target
+
+
 def available_memory():
     for line in Path("/proc/meminfo").read_text().splitlines():
         if line.startswith("MemAvailable:"):
@@ -104,10 +121,11 @@ class Adapter:
                 raise ValueError("unsafe work path")
             source = work / "source.image"
             validate_image(source)
+            input_image = native_source(source, work)
             (work / "tmp").mkdir(mode=0o700, exist_ok=True)
             # Force BiRefNet even if an alpha channel is almost entirely opaque.
             self.state = {"jobId": job_id, "stage": "background"}
-            self.run([str(source), str(work / "background.glb"), "--models", str(self.models), "--backend", "Vulkan", "--gpu", "0", "--require-gpu", "--bg-removal", "birefnet", "--bg-only", "--dump-bg", "--res", "512", "--seed", str(seed), "--steps", "12", "--threads", "8"], work)
+            self.run([str(input_image), str(work / "background.glb"), "--models", str(self.models), "--backend", "Vulkan", "--gpu", "0", "--require-gpu", "--bg-removal", "birefnet", "--bg-only", "--dump-bg", "--res", "512", "--seed", str(seed), "--steps", "12", "--threads", "8"], work)
             (work / "background_cutout.png").rename(work / "cutout.png")
             validate_image(work / "cutout.png")
             self.state = {"jobId": job_id, "stage": "mesh"}
