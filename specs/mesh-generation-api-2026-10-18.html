@@ -10,7 +10,8 @@
     <p>
       ControlのURLとBearerを使用する。例は同一ホストのhttp://127.0.0.1:9810。LAN利用はProfile
       audienceが返すControl originへ解決する。Provider credentialと内部worker
-      portを使用しない。SAAA-w-ImageとSAAA-w-musicのservicesにmesh、media.mesh.generate、larm.mesh-generation.v1、trellis2-4bを追加し、既存Provider
+      portを使用しない。通常catalogのroot
+      servicesに画像・楽曲・3Dを広告する。SAAA-w-ImageとSAAA-w-musicのservicesにもmesh、media.mesh.generate、larm.mesh-generation.v1、trellis2-4bを維持し、既存Provider
       subsetを保持した。
     </p>
     <p>
@@ -120,6 +121,24 @@ await postControlJson(mesh.url, {
     </table>
     <p>
       deletedは完成品削除後のjobに現れる。この場合はstatus=completed、deleted=trueで、assetと取得URLを持たない。UIはこの状態を生成完了の表示と分ける。未知のstageは処理中として表示し、推測の百分率を作らない。
+    </p>
+  </section>
+  <section id="catalog-verification">
+    <h2>catalog対応の本番確認</h2>
+    <p>
+      2026-10-18、code revision
+      <code>bcfc382991d3a50b18d9a168a0621957800fdc97</code
+      >を署名付きreleaseで配備した。install・依存監査・全体検査・coverageに合格し、固定試験899件成功、失敗0、critical
+      coverage ratchet 20ファイル合格を確認した。
+    </p>
+    <p>
+      正式APIの通常catalog、会話Profile指定、画像Profile指定を照合し、root
+      servicesには重複なく画像・楽曲・3Dの3件があり、model・url・descriptionが揃っていることを確認した。LANアドレスで読み取った場合も、その呼出先originに対応するurlが返り、内部worker
+      portやloopbackを誤って広告しないことを確認した。
+    </p>
+    <p>
+      3Dと画像のmodelを応答から取得して要求を組み立て、生成を行わないよう再送キーを省略した検査でinvalid_idempotency_keyへ到達した。これによりControl認証と両モデルの入力検証を通ることを確認した。Agent
+      Connectionは取得せず、保存済み素材は維持され、画像・楽曲・3Dのworkerもinactive、MainPID=0のままであった。
     </p>
   </section>
   <section id="operations">
@@ -334,7 +353,7 @@ await client.mesh.delete(state.assetId);</code></pre>
       既存の採用試験ロボットをmesh_a745b8c2a29df1559f3dedf9b2968418として本番保存先へ登録した。GLBのhashと入力画像のhash、元の生成日時、既知の品質注意を保持し、元の試験ファイルと画像ライブラリは残した。3種類の保存先は同じ/dev/nvme0n1p4のext4にあり、8つの重み・実行物・viewerのhashも確認した。
     </p>
     <p>
-      最終code revisionは<code>139137b0bc3aecfd1ba9294d6f3d72d5a131ab16</code>。署名付きrelease
+      初回の正式code revisionは<code>139137b0bc3aecfd1ba9294d6f3d72d5a131ab16</code>。署名付きrelease
       gateでinstall・依存監査・bun run check・coverageを実行し、898件成功、失敗0、critical coverage
       ratchet
       20ファイル合格、production依存監査合格を確認した。新unit・限定polkit・daemonの3D書込み許可も設置し、正式APIの稼働とreadyを確認した。
