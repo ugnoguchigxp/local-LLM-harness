@@ -229,9 +229,24 @@ await client.mesh.delete(state.assetId);</code></pre>
       既存の採用試験ロボットをmesh_a745b8c2a29df1559f3dedf9b2968418として本番保存先へ登録した。GLBのhashと入力画像のhash、元の生成日時、既知の品質注意を保持し、元の試験ファイルと画像ライブラリは残した。3種類の保存先は同じ/dev/nvme0n1p4のext4にあり、8つの重み・実行物・viewerのhashも確認した。
     </p>
     <p>
-      bun run
-      checkの全体検査に合格した。最後の削除競合対策を加えた版についてもtypecheckと関連固定試験を再確認し、署名付きrelease
-      gateで全体検査とcoverageを実行する。本番反映には新unit、限定polkitとdaemonの書込み許可の設置が必要で、現時点ではroot権限による設置とrelease切替が未完了。
+      最終code revisionは<code>139137b0bc3aecfd1ba9294d6f3d72d5a131ab16</code>。署名付きrelease
+      gateでinstall・依存監査・bun run check・coverageを実行し、898件成功、失敗0、critical coverage
+      ratchet
+      20ファイル合格、production依存監査合格を確認した。新unit・限定polkit・daemonの3D書込み許可も設置し、正式APIの稼働とreadyを確認した。
+    </p>
+    <p>
+      正式APIの生成job
+      <code>meshjob_7ade3dfca8ab4e05afa757723672231c</code
+      >は268.293秒で完成し、<code>mesh_ee97f993639145f8ac46efc2730a6cd8</code>を保存した。その後のrelease切替による再起動でも同じjob・assetを復元し、同じ再送キーでは再生成しなかった。GLB・入力画像のhash、Range、SSE、検索、タグ編集、取消済み・完成済みjobの再送、公開metadataのパス非開示、単体HTMLの表示を確認した。
+    </p>
+    <p>
+      本番試験で見つかった競合時のHTTP応答は、Honoのroute単位のエラー境界で修正した。同じキーと異なる要求は409、不正キーは400、保存枠不足は507を固定HTTP試験で確認し、本番でも409を再確認した。画像・楽曲の既存動作は全体回帰試験に含めた。
+    </p>
+    <p>
+      実workerが背景除去中のjobも正式APIから取り消し、cancelledになった後の再送が同じjobへ収束することを確認した。完成素材2件を維持したまま、画像・楽曲・3Dのworkerはいずれもinactive、MainPID=0、trellis-cliも残存なしとなった。元の画像artifactと重みは保持した。
+    </p>
+    <p>
+      実装は別作業を保護するため<code>codex/mesh-generation</code>に分離した。並行して確定したSpatial監視APIのcommitへ本件を混在させず、今回の配備にその監視機能を含めていない。Eumenes本体のスキル追加と、他の並行作業とのsource統合は別作業とする。
     </p>
   </section>
 </article>
