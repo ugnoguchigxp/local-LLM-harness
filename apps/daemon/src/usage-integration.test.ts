@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseAgentConnectionCatalog, agentConnectionClaimSchema, publicAgentConnectionSchema, type Registry } from "@larm/core";
+import { parseAgentConnectionCatalog, daemonHealthSchema, agentConnectionClaimSchema, publicAgentConnectionSchema, type Registry } from "@larm/core";
 import type { RuntimeBackend } from "@larm/backends";
 import { createAppComponents } from "./app";
 import { ControlPlane } from "./controller";
@@ -472,5 +472,17 @@ test("long-running ownership reclaims heartbeat replay capacity without releasin
     expect(f.control.getUsageState().protected).toBe(true);
     expect(f.starts).toEqual(["a"]);
     expect(f.fetches()).toBe(0);
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+
+test("protected consumer health remains compatible with the public client and OpenAPI schema", async () => {
+  const f = await fixture(false, true), h = ownershipRequests(f);
+  try {
+    expect((await h.create()).status).toBe(201);
+    const response = await f.app.request("/health");
+    expect(daemonHealthSchema.parse(await response.json()).usageProtection).toMatchObject({
+      enabled: true, protected: true, remainingMs: 0, retainedRuntimeIds: ["a"],
+    });
   } finally { f.control.beginDrain(); await f.control.flush(); }
 });
