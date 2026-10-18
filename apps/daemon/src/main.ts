@@ -1,3 +1,5 @@
+import { pythonImageNormalizer } from "@larm/backends";
+import { ImageImportManager } from "./image-import-manager";
 import { MediaVariantBusyError } from "@larm/backends";
 import { MeshManager } from "./mesh-manager";
 import { MeshStore } from "./mesh-store";
@@ -397,6 +399,9 @@ const imageArtifactManager = new ImageArtifactManager(config.imageArtifactRoot, 
   pruneIntervalMs: config.imagePruneIntervalMs,
 });
 await imageArtifactManager.initialize();
+const imageImportManager = new ImageImportManager(imageArtifactManager, pythonImageNormalizer(config.imageImportPython));
+await imageImportManager.initialize();
+if (!imageImportManager.ready) console.warn("image import journal unavailable; imports disabled, saved images retained");
 const imageGenerationProvider = imageEndpoint
   ? new ImageGenerationProvider(imageEndpoint, mediaVariants, fetch,
     async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin())
@@ -465,6 +470,7 @@ const appComponents = createAppComponents({
   meshManager,
   musicManager,
   imageArtifactManager,
+  imageImportManager,
   imageGenerationProvider,
   getReleaseConvergenceStatus: async () => await Bun.file(
     process.env.LARM_RELEASE_CONVERGENCE_STATUS ?? "/var/lib/larm/release-controller/status.json",
@@ -661,6 +667,7 @@ async function shutdown(signal: string): Promise<void> {
   artifactManager.beginDrain();
   executionGate.beginDrain();
   clearInterval(interval);
+  imageImportManager.beginDrain();
   await meshManager?.close();
   musicManager?.close();
   const mediaClosed = mediaVariants.close().then(() => true, (error) => {
@@ -673,11 +680,12 @@ async function shutdown(signal: string): Promise<void> {
   const operationsDrained = await Promise.race([
     Promise.all([
       control.flush(),
+      imageImportManager.drain(),
       artifactManager.flush(),
       mutationCoordinator.drain(config.shutdownTimeoutMs),
       reconciliationInFlight ?? Promise.resolve(),
       mediaClosed,
-    ]).then(([, , mutationDrained, , mediaDrained]) => mutationDrained && mediaDrained),
+    ]).then(([, , , mutationDrained, , mediaDrained]) => mutationDrained && mediaDrained),
     Bun.sleep(config.shutdownTimeoutMs).then(() => false),
   ]);
   const requestsDrained = await requestTracker.drain(Math.max(0, deadline - Date.now()));

@@ -1,3 +1,4 @@
+import { imageImportReceiptSchema } from "./image-import";
 import { meshAssetSchema, meshAssetListSchema, meshGenerationRequestSchema, meshJobSchema, meshAssetPatchSchema } from "./mesh";
 import { chatInputContractSchema, chatInputTokenCountSchema } from "./chat-input";
 import { localServiceListSchema, localServiceStatusSchema, localServiceLeaseSchema, localServiceLeaseRequestSchema, localServiceRenewSchema } from "./local-service";
@@ -304,6 +305,7 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     MusicFavorite: jsonSchema(musicFavoriteSchema),
     MusicFavoriteList: jsonSchema(musicFavoriteListSchema),
     ImageArtifact: jsonSchema(imageArtifactSchema),
+    ImageImportReceipt: jsonSchema(imageImportReceiptSchema),
     ImageGenerationRequest: jsonSchema(imageGenerationRequestSchema),
     ImageGenerationResponse: jsonSchema(imageGenerationResponseSchema),
     ImageArtifactList: jsonSchema(imageArtifactListSchema),

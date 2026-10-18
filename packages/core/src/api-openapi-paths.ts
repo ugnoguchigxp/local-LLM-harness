@@ -339,6 +339,12 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
           ] : []),
         ],
       } : {}),
+      ...(operationId === "importImageArtifact" ? {
+        description: "CPU-only static image import, no Provider or GPU acquisition. Exactly one multipart file (JPEG/PNG/WebP), <=16 MiB, each edge <=2000px (4,000,000 pixels). Output <=20 MiB. JPEG/PNG: EXIF orientation applied and metadata removed, saved as PNG. WebP: decoded validation and container metadata removal, compressed image payload preserved, no recompression; non-identity EXIF orientation rejected (orient before upload). No resizing. Idempotency-Key UUID is requestId (case normalized); scope is the Control bearer principal. Same key and original file bytes replays, different bytes 409. Poll statusUrl; 202 has Location and Retry-After. Receipts retained 7 days, expired keys return 410 and are never reused. Deleted artifacts replay succeeded/deleted=true without recreation. Failed imports do not rerun with the same key. After confirmed failure use a new UUID only for an intentional retry. Multipart or auth rejection before admission has no receipt; GET 404 means retry the same bytes and key. External URLs/host paths/extra fields rejected; filenames never persisted.",
+        parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string", format: "uuid" } }],
+        requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", additionalProperties: false, required: ["file"], properties: { file: { type: "string", format: "binary", description: "One static JPEG/PNG/WebP, matching part Content-Type, <=16777216 bytes, <=2000px per edge" } } }, encoding: { file: { contentType: "image/jpeg, image/png, image/webp" } } } } },
+      } : {}),
+      ...(operationId === "getImageImport" ? { description: "Read a durable receipt using the same Control bearer and the upload UUID. Does not start or retry work. 404: no admitted receipt (safe to resend same key/bytes); 410: expired key, do not automatically issue a new key. Failed receipt is HTTP 200 here.", parameters: [{ name: "requestId", in: "path", required: true, schema: { type: "string", format: "uuid" } }] } : {}),
       responses: {
         ...Object.fromEntries(SUCCESS_STATUSES_BY_OPERATION[operationId].map((status) => [status, success])),
         ...(operationId === "getReadiness"
@@ -361,6 +367,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
             },
           }
           : {}),
+        ...(operationId === "importImageArtifact" ? Object.fromEntries(["400", "413", "415", "503", "507"].map(status => [status, { description: "Rejected before admission (ErrorResponse), or durable failed import receipt", content: { "application/json": { schema: { oneOf: [{ $ref: "#/components/schemas/ErrorResponse" }, { $ref: "#/components/schemas/ImageImportReceipt" }] } } } }])) : {}),
         "4XX": {
           description: "Client error",
           ...(activityNoStoreHeader ? { headers: { "Cache-Control": activityNoStoreHeader } } : {}),

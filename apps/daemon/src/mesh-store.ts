@@ -9,8 +9,10 @@ export class MeshError extends Error {
 export const meshHash = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
 export async function durableJson(path: string, value: unknown): Promise<void> {
   const temp = `${path}.${randomUUID()}.tmp`, handle = await open(temp, "wx", 0o600);
-  try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); } finally { await handle.close(); }
-  await rename(temp, path); await syncDirectory(resolve(path, ".."));
+  try {
+    try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); } finally { await handle.close(); }
+    await rename(temp, path); await syncDirectory(resolve(path, ".."));
+  } finally { await rm(temp, { force: true }).catch(() => {}); }
 }
 export async function syncDirectory(path: string) {
   const handle = await open(path, "r"); try { await handle.sync(); } finally { await handle.close(); }

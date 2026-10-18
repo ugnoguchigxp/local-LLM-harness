@@ -5528,3 +5528,22 @@ test("mesh library remains protected by Control credentials when discovery is an
   expect((await app.request("/v1/3d/assets", { headers: { authorization: "Bearer larm_conn_v1.invalid" } })).status).toBe(401);
   expect((await app.request("/v1/3d/assets", { headers: agentHeaders() })).status).toBe(503);
 });
+
+test("image imports require Control auth, reject Provider credentials, and never acquire a runtime", async () => {
+  const key = "9bcfdd0f-d2ee-4551-8080-761c04e634cc";
+  const receipt = { requestId: key, status: "pending", createdAt: "2026-10-18T00:00:00.000Z", expiresAt: "2026-10-25T00:00:00.000Z", statusUrl: `/v1/image-imports/${key}` };
+  let calls = 0;
+  const manager = { ready: true, import: async () => { calls++; return { status: 202, receipt }; }, receipt: async () => receipt } as unknown as import("./image-import-manager").ImageImportManager;
+  const { app, log } = await makeApp(true, false, {}, { apiToken: "control", imageImportManager: manager });
+  const upload = (token?: string) => {
+    const body = new FormData(); body.append("file", new Blob(["pixels"], { type: "image/webp" }), "private.webp");
+    return app.request("/v1/image-artifacts/imports", { method: "POST", headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), "idempotency-key": key }, body });
+  };
+  expect((await upload()).status).toBe(401); expect((await upload("larm_conn_v1.fake")).status).toBe(401);
+  expect((await upload("control")).status).toBe(202); expect(calls).toBe(1);
+  expect((await app.request(receipt.statusUrl)).status).toBe(401);
+  expect((await app.request(receipt.statusUrl, { headers: { authorization: "Bearer control" } })).status).toBe(200);
+  expect(log.ensure).toHaveLength(0);
+  const missingAuthConfig = (await makeApp(true, false, {}, { imageImportManager: manager })).app;
+  expect((await missingAuthConfig.request(receipt.statusUrl)).status).toBe(503);
+});

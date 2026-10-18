@@ -1,4 +1,4 @@
-import { mkdir, lstat, readFile, realpath } from "node:fs/promises";
+import { mkdir, lstat, readFile, realpath, statfs, rename, open } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import {
   imageArtifactSchema,
@@ -136,6 +136,27 @@ export class ImageArtifactManager {
 
   async delete(artifactId: string): Promise<boolean> {
     return await this.serialized(async () => await this.retention.remove(artifactId));
+  }
+
+  /** Import admission never evicts another image to make room. */
+  async publishImport(stage: string, metadata: StoredImageArtifactMetadata): Promise<ImageArtifact> {
+    return this.serialized(async () => {
+      const used = (await this.retention.list()).reduce((sum, item) => sum + item.bytes, 0);
+      const reserved = metadata.bytes + 64 * 1024;
+      const fs = await statfs(this.artifactRoot);
+      if (used + reserved > this.retention.maxBytes || fs.bavail * fs.bsize < reserved + 64 * 1024 ** 2) {
+        const { ImageImportError } = await import("@larm/backends");
+        throw new ImageImportError("image_storage_full", 507);
+      }
+      const dir = join(this.artifactRoot, metadata.createdAt.slice(0, 4), metadata.createdAt.slice(5, 7));
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+      if (await realpath(dir) !== resolve(dir)) throw new Error("unsafe image storage directory");
+      await rename(stage, join(dir, metadata.id));
+      for (const parentDir of [dir, resolve(dir, ".."), resolve(this.artifactRoot)]) {
+        const parent = await open(parentDir, "r"); try { await parent.sync(); } finally { await parent.close(); }
+      }
+      return this.publicArtifact(metadata);
+    });
   }
 
   private async serialized<T>(operation: () => Promise<T>): Promise<T> {

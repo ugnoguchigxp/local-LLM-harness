@@ -412,7 +412,7 @@ export function createAppComponents(deps: AppDeps) {
   });
 
   registerMeshRoutes(app, { manager: deps.meshManager, maxBodyBytes: controlMaxBodyBytes, viewerPath: deps.meshViewerPath ?? "/srv/ai/apps/trellis-cpp-v0.8.1-vulkan/model-viewer-4.1.0.min.js" });
-  registerImageArtifactRoutes(app, deps.imageArtifactManager);
+  registerImageArtifactRoutes(app, deps.imageArtifactManager, deps.imageImportManager, Boolean(deps.apiToken));
   registerImageGenerationRoutes(app, deps.imageGenerationProvider);
 
   registerMusicRoutes(app, {

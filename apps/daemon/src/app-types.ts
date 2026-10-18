@@ -1,3 +1,4 @@
+import type { ImageImportManager } from "./image-import-manager";
 import type { LocalServiceManager } from "./local-service-manager";
 import type { LocalServicePrincipal } from "./routes/local-services";
 import type { AgentConnectionCatalog, ClusterState, Registry } from "@larm/core";
@@ -71,5 +72,6 @@ export type AppDeps = {
   meshViewerPath?: string;
   musicManager?: MusicGenerationManager;
   imageArtifactManager?: ImageArtifactManager;
+  imageImportManager?: ImageImportManager;
   imageGenerationProvider?: ImageGenerationProvider;
 };

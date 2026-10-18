@@ -215,6 +215,7 @@ export function mediaCompression(options: { gatewayMaxBodyBytes: number; speechM
       const raw = c.req.raw;
       const maxBytes = c.req.path === "/v1/audio/transcriptions" ? options.speechMaxBodyBytes
         : c.req.path === "/v1/embed" ? options.embeddingMaxBodyBytes ?? 2 * 1024 * 1024
+        : c.req.path === "/v1/image-artifacts/imports" ? 16 * 1024 ** 2 + 64 * 1024
         : c.req.path === "/v1/images/generations" ? 32 * 1024
         : options.gatewayMaxBodyBytes;
       validateContentLength(raw, maxBytes);

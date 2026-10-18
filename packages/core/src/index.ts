@@ -342,3 +342,4 @@ export * from "./mesh-library";
 export * from "./mesh-glb";
 
 export { controlCatalogServices } from "./control-service-catalog";
+export * from "./image-import";

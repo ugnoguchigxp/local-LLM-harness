@@ -365,7 +365,7 @@ profileSelectors:
         endpoint: /v1/3d/generations
         model: trellis2-4b
         startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
-        description: 'TRELLIS.2による3D生成は512固定、12 steps固定（要求にstepsフィールドは送らない）、GLB出力。sourceは既存のimage-artifact ID、またはpromptを指定。画像はPNG/WebP、20 MiB以内、最大4096px。任意URL・ホストパス・直接uploadは受け付けない。prompt入力のsource.imageModelは同じcatalogのmedia.image.generateサービスのmodelを使用する（元画像は768角・8 steps・PNG）。Control BearerとIdempotency-Key UUIDが必要。Agent Connection取得・Profile切替は不要。HTTP 202でjobを返し、statusUrlまたはeventsUrlを追跡する。既定seedは42。ライブラリは/v1/3d/assets。生成完了後にworkerを停止。WebP対応viewerまたはBlender 4.0以降で表示する。'
+        description: 'TRELLIS.2による3D生成は512固定、12 steps固定（要求にstepsフィールドは送らない）、GLB出力。sourceは既存のimage-artifact ID、またはpromptを指定。画像はPNG/WebP、20 MiB以内、最大4096px。3D要求に任意URL・ホストパス・直接uploadは受け付けない。端末画像はPOST /v1/image-artifacts/importsで画像IDを取得して指定する（Control認証、multipartのfile 1個、UUIDキー、JPEG/PNG/WebP静止画16 MiB・各辺2000pxまで。WebP圧縮payloadは再圧縮せず保存）。prompt入力のsource.imageModelは同じcatalogのmedia.image.generateサービスのmodelを使用する（元画像は768角・8 steps・PNG）。Control BearerとIdempotency-Key UUIDが必要。Agent Connection取得・Profile切替は不要。HTTP 202でjobを返し、statusUrlまたはeventsUrlを追跡する。既定seedは42。ライブラリは/v1/3d/assets。生成完了後にworkerを停止。WebP対応viewerまたはBlender 4.0以降で表示する。'
       - name: image
         capability: media.image.generate
         protocol: larm.image-generation.v1
@@ -382,7 +382,7 @@ profileSelectors:
         endpoint: /v1/3d/generations
         model: trellis2-4b
         startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
-        description: 'TRELLIS.2による3D生成は512固定、12 steps固定（要求にstepsフィールドは送らない）、GLB出力。sourceは既存のimage-artifact ID、またはpromptを指定。画像はPNG/WebP、20 MiB以内、最大4096px。任意URL・ホストパス・直接uploadは受け付けない。prompt入力のsource.imageModelは同じcatalogのmedia.image.generateサービスのmodelを使用する（元画像は768角・8 steps・PNG）。Control BearerとIdempotency-Key UUIDが必要。Agent Connection取得・Profile切替は不要。HTTP 202でjobを返し、statusUrlまたはeventsUrlを追跡する。既定seedは42。ライブラリは/v1/3d/assets。生成完了後にworkerを停止。WebP対応viewerまたはBlender 4.0以降で表示する。'
+        description: 'TRELLIS.2による3D生成は512固定、12 steps固定（要求にstepsフィールドは送らない）、GLB出力。sourceは既存のimage-artifact ID、またはpromptを指定。画像はPNG/WebP、20 MiB以内、最大4096px。3D要求に任意URL・ホストパス・直接uploadは受け付けない。端末画像はPOST /v1/image-artifacts/importsで画像IDを取得して指定する（Control認証、multipartのfile 1個、UUIDキー、JPEG/PNG/WebP静止画16 MiB・各辺2000pxまで。WebP圧縮payloadは再圧縮せず保存）。prompt入力のsource.imageModelは同じcatalogのmedia.image.generateサービスのmodelを使用する（元画像は768角・8 steps・PNG）。Control BearerとIdempotency-Key UUIDが必要。Agent Connection取得・Profile切替は不要。HTTP 202でjobを返し、statusUrlまたはeventsUrlを追跡する。既定seedは42。ライブラリは/v1/3d/assets。生成完了後にworkerを停止。WebP対応viewerまたはBlender 4.0以降で表示する。'
       - name: music
         capability: media.music.generate
         protocol: larm.music-generation.v1

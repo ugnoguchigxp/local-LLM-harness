@@ -83,6 +83,7 @@ export type DaemonConfig = {
   musicFavoriteMaxBytes: number;
   musicPruneIntervalMs: number;
   musicUpstreamOutputRoot?: string;
+  imageImportPython: string;
   imageArtifactRoot: string;
   imageArtifactMaxBytes: number;
   imageArtifactTargetBytes: number;
@@ -541,6 +542,7 @@ export function parseDaemonConfig(
     ...(musicUpstreamOutputRoot
       ? { musicUpstreamOutputRoot: resolve(musicUpstreamOutputRoot) }
       : {}),
+    imageImportPython: absolutePathSetting(env, "LARM_IMAGE_IMPORT_PYTHON", "/srv/ai/apps/qwen-image-2.1-runtime/.venv/bin/python"),
     imageArtifactRoot: absolutePathSetting(
       env,
       "LARM_IMAGE_ARTIFACT_ROOT",
