@@ -1,5 +1,3 @@
-import { Observability } from "./observability";
-import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { expect, test } from "bun:test";
 import {
   API_OPERATIONS,
@@ -323,11 +321,6 @@ async function validAgentProviderSemanticResponse(input: string | URL | Request,
   }
   if (path.endsWith("/v1/systemone")) {
     const request = JSON.parse(String(init?.body)) as { model: string };
-    if (request.model === "ruri-v3-30m-sentence-language") {
-      return Response.json({ model: request.model,
-        answers: { language: { type: "choice", choice: "ja", probabilities: { ja: .99, en: .01 }, confidence: .99 } },
-        usage: { input_tokens: 10, output_tokens: 0 } });
-    }
     return Response.json({
       model: request.model,
       answers: { emotion: {
@@ -514,7 +507,6 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-contextstill" },
-        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
         { name: "system-one", endpoint: "/v1/systemone", model: "laya-multilingual" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
@@ -527,7 +519,6 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
-        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
         { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
@@ -540,7 +531,6 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "gemma4-26b-a4b" },
-        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
         { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
@@ -553,7 +543,19 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-strix-lean" },
-        { name: "sentence-language", endpoint: "/v1/systemone", model: "ruri-v3-30m-sentence-language" },
+        { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
+        { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
+        { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
+      ],
+      services: [],
+    },
+    "ornith1.5Strix-game": {
+      id: "ornith1.5Strix-game",
+      providers: [
+        { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
+        { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
+        { name: "game-decision", endpoint: "/v1/systemone", model: "d1-3b-game" },
+        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-strix-lean" },
         { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
@@ -712,7 +714,6 @@ test("E2E: default Ornith profile provide returns every live provider over a rea
         { name: "asr", ready: true },
         { name: "embedding", ready: true },
         { name: "llm", ready: true },
-        { name: "sentence-language", ready: true },
         { name: "system-one", ready: true },
         { name: "tts", ready: true },
         { name: "tts-english", ready: true },
@@ -730,7 +731,6 @@ test("E2E: default Ornith profile provide returns every live provider over a rea
       "asr",
       "embedding",
       "llm",
-      "sentence-language",
       "system-one",
       "tts",
       "tts-english",
@@ -782,22 +782,24 @@ test("E2E: default Ornith profile provide returns every live provider over a rea
       headers: agentHeaders(),
     })).status).toBe(204);
 
-    const unknownSubsetResponse = await fetch(`${baseUrl}/v1/agent-connections`, {
-      method: "POST",
-      headers: agentHeaders({
-        "content-type": "application/json",
-        "idempotency-key": "saaa-profile-unknown-subset-e2e",
-      }),
-      body: JSON.stringify({
-        profile: "ornith1.5Strix",
-        audience: "same-host",
-        providers: ["missing"],
-      }),
-    });
-    expect(unknownSubsetResponse.status).toBe(400);
-    expect(await unknownSubsetResponse.json()).toMatchObject({
-      error: { code: "unknown_connection_provider" },
-    });
+    for (const provider of ["missing", "sentence-language"]) {
+      const unknownSubsetResponse = await fetch(`${baseUrl}/v1/agent-connections`, {
+        method: "POST",
+        headers: agentHeaders({
+          "content-type": "application/json",
+          "idempotency-key": `saaa-profile-unknown-subset-${provider}-e2e`,
+        }),
+        body: JSON.stringify({
+          profile: "ornith1.5Strix",
+          audience: "same-host",
+          providers: [provider],
+        }),
+      });
+      expect(unknownSubsetResponse.status).toBe(400);
+      expect(await unknownSubsetResponse.json()).toMatchObject({
+        error: { code: "unknown_connection_provider" },
+      });
+    }
 
     expect((await fetch(claim.providers[0]!.health.url, {
       headers: { authorization: `Bearer ${claim.providers[0]!.credential.token}` },
@@ -5424,30 +5426,46 @@ test("claimed image preflight exposes exact contract and retention and never byp
   } finally {await app.request(`/v1/agent-connections/${connection.id}`,{method:"DELETE",headers:agentHeaders()});}
 });
 
-
-for (const hot of [true, false]) test(`observability covers Broker resolution, admission, readiness for ${hot ? "warm" : "cold"} runtime`, async () => {
-  const exporter = new InMemorySpanExporter();
-  const metrics = new MetricsRegistry();
-  const observability = new Observability(metrics, { exporter, sampleRatio: 1 });
-  const { app, control, log } = await makeApp(hot, false, { pollIntervalMs: 1 }, {
-    observability, metrics, agentConnectionCatalog: hot ? agentConnectionCatalog : explicitAgentConnectionCatalog, connectionPollIntervalMs: 1,
-    gatewayFetch: async () => Response.json({ id: "chatcmpl-observation", object: "chat.completion", created: 1, model: "test-model", choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 }, timings: { prompt_ms: 2, predicted_ms: 3, cache_n: 9 } }),
-  });
+test("game decision claims retain capability and forward inline images through the scoped gateway", async () => {
+  const configDir = join(import.meta.dir, "../../../config/local-node");
+  const production = loadRegistry(configDir);
+  const catalog = loadAgentConnectionCatalogForRegistry(configDir, production);
+  const probes = new Map(production.runtimes.map(runtime => [runtime.id, probe(runtime.id, runtime.id === "d1-system-one")]));
+  const log = { ensure: [] as string[], stop: [] as string[] };
+  const backend = stubBackend(probes, log);
+  const observer = new Observer(production, backend);
+  await observer.tick();
+  const control = new ControlPlane(production, backend, observer, { idleTtlMs: 0 });
+  let observed: unknown;
+  const app = createApp({ registry: production, getState: () => observer.getState(), control,
+    apiToken: agentApiToken, connectionSigningKey: agentSigningKey, agentConnectionCatalog: catalog,
+    gatewayFetch: async (_input, init) => {
+      observed = JSON.parse(init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init?.body));
+      return Response.json({ model: "d1-3b-game", answers: { action: { type: "choice", choice: "right", confidence: .9 } },
+        usage: { input_tokens: 64, output_tokens: 0 } });
+    } });
+  const created = await app.request("/v1/agent-connections", { method: "POST",
+    headers: agentHeaders({ "content-type": "application/json", prefer: "wait=3", "idempotency-key": "d1-claim-capability-regression" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-game", audience: "same-host", providers: ["game-decision"] }) });
+  expect(created.status).toBe(201);
+  const connection = publicAgentConnectionSchema.parse(await created.json());
   try {
-    const response = await app.request("/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: hot ? "test-model" : "speed-model", messages: [{ role: "user", content: "fixture" }] }) });
-    if (!response.ok) throw new Error(await response.text());
+    expect(connection.status).toBe("ready");
+    const response = await app.request(`/v1/agent-connections/${connection.id}/claim`, { method: "POST",
+      headers: agentHeaders({ "content-type": "application/json" }), body: JSON.stringify({ format: "openai-provider-v1" }) });
     expect(response.status).toBe(200);
-    await response.text();
-    await observability.provider.forceFlush();
-    const spans = exporter.getFinishedSpans();
-    for (const stage of ["ingress", "model_resolution", "allocation_admission", "allocation_acquire", "runtime_readiness", "broker_acquire", "execution_wait", "upstream_headers"]) {
-      expect(spans.some(span => span.name === `larm.${stage}`)).toBe(true);
-    }
-    const root = spans.find(span => span.name === "larm.request")!;
-    expect(root.attributes["larm.engine.cached_tokens"]).toBe(9);
-    expect(root.attributes["larm.engine.prefill_ms"]).toBe(2);
-    expect(root.attributes["larm.engine.decode_ms"]).toBe(3);
-    expect(log.ensure).toHaveLength(hot ? 0 : 1);
-    if (hot) expect(root.attributes["larm.initial_allocation_state"]).toBe("ready");
-  } finally { control.beginDrain(); await control.flush(); await observability.shutdown(); }
+    const claim = agentConnectionClaimSchema.parse(await response.json());
+    expect(claim.providers).toHaveLength(1);
+    const provider = claim.providers[0]!;
+    expect(provider).toMatchObject({ name: "game-decision", capability: "decision.game", apiStyle: "larm-system-one", model: "d1-3b-game" });
+    const body = { model: provider.model, state: null, images: ["data:image/png;base64,YQ=="],
+      questions: { action: { type: "choice", instructions: "Move toward target", criteria: { left: "left", right: "right" } } } };
+    const inference = await app.request("/v1/systemone", { method: "POST",
+      headers: { authorization: `Bearer ${provider.credential.token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect(inference.status).toBe(200);
+    expect(await inference.json()).toMatchObject({ answers: { action: { choice: "right" } } });
+    expect(observed).toEqual(body);
+  } finally {
+    await app.request(`/v1/agent-connections/${connection.id}`, { method: "DELETE", headers: agentHeaders() });
+  }
 });

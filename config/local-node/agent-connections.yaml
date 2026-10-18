@@ -14,7 +14,6 @@ agentProfiles:
     description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, Japanese VOICEVOX and English KittenTTS, embedding, and Ruri speaking-attitude System One
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -63,17 +62,10 @@ agentProfiles:
         publicModel: ruri-v3-30m-speaking-attitude
         publishModel: false
         readiness: system-one
-      - name: sentence-language
-        capability: decision.sentence-language
-        route: system-one-ruri-language
-        publicModel: ruri-v3-30m-sentence-language
-        publishModel: false
-        readiness: system-one
   ornith1.5Strix:
     description: Ornith 1.5 STRIX_LEAN profile copied from the Gemma 4 26B voice profile with the same speech, embedding, and System One providers; image input enabled
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -122,17 +114,68 @@ agentProfiles:
         publicModel: ruri-v3-30m-speaking-attitude
         publishModel: false
         readiness: system-one
-      - name: sentence-language
-        capability: decision.sentence-language
-        route: system-one-ruri-language
-        publicModel: ruri-v3-30m-sentence-language
+  ornith1.5Strix-game:
+    description: Ornith STRIX_LEAN voice profile with an explicitly selected d1-3B game decision Provider
+    schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - larm.system-one.v1
+        - openai.audio-speech.v1
+        - openai.audio-transcriptions.v1
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-ornith15-strix
+        publicModel: ornith-1.5-strix-lean
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 262144
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
+        publishModel: false
+        readiness: tts-speech
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-ruri
+        publicModel: ruri-v3-30m-speaking-attitude
+        publishModel: false
+        readiness: system-one
+      - name: game-decision
+        capability: decision.game
+        route: game-decision-d1
+        publicModel: d1-3b-game
         publishModel: false
         readiness: system-one
   saaa-conversation-gemma4-26b-64k:
     description: SAAA auxiliary 64K LLM session sharing the Gemma 4 26B four-slot runtime with the main voice profile
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -181,12 +224,6 @@ agentProfiles:
         publicModel: kitten-tts-nano-0.8-fp32
         publishModel: false
         readiness: tts-speech
-      - name: sentence-language
-        capability: decision.sentence-language
-        route: system-one-ruri-language
-        publicModel: ruri-v3-30m-sentence-language
-        publishModel: false
-        readiness: system-one
       - name: system-one
         capability: decision.system-one
         route: system-one-laya
@@ -254,6 +291,14 @@ agentProfiles:
         route: llm-agent-worker
         publicModel: qwen-nightworker
         readiness: llm-inference
+  asr-granite:
+    description: Granite Speech 4.1 2B Q8 Vulkan provider for Japanese and English short voice dialogue
+    providers:
+      - name: asr
+        capability: speech.stt
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
+        readiness: stt-transcription
   asr-qwen:
     description: On-demand Qwen3 ASR OpenAI-compatible provider
     providers:
@@ -295,14 +340,6 @@ agentProfiles:
         route: embedding-multilingual-e5-small
         publicModel: multilingual-e5-small
         readiness: embedding
-  asr-granite:
-    description: Granite Speech 4.1 2B Q8 Vulkan provider for Japanese and English short voice dialogue
-    providers:
-      - name: asr
-        capability: speech.stt
-        route: stt-granite
-        publicModel: granite-speech-4.1-2b
-        readiness: stt-transcription
 
 profileSelectors:
   contextStill:
@@ -313,6 +350,8 @@ profileSelectors:
     agentProfile: saaa-conversation-gemma4-26b-64k
   ornith1.5Strix:
     agentProfile: ornith1.5Strix
+  ornith1.5Strix-game:
+    agentProfile: ornith1.5Strix-game
   SAAA-w-Image:
     agentProfile: saaa-conversation-gemma4-26b-voice
     services:

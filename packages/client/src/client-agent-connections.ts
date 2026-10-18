@@ -1,5 +1,7 @@
 import {
   agentConnectionClaimRequestSchema,
+  agentConnectionOwnershipUpdateSchema,
+  agentConnectionOwnershipReleaseSchema,
   agentConnectionClaimSchema,
   agentConnectionHealthSchema,
   agentConnectionRenewRequestSchema,
@@ -215,6 +217,23 @@ export class ClientAgentConnections {
       );
     }
     return { connection, claim };
+  }
+
+  async updateOwnership(
+    id: string, ownershipId: string, sequence: number | undefined, options: ClientRequestOptions = {},
+  ): Promise<PublicAgentConnection> {
+    const schema = sequence === undefined ? agentConnectionOwnershipReleaseSchema : agentConnectionOwnershipUpdateSchema;
+    const body = schema.parse({ id: ownershipId, ...(sequence === undefined ? {} : { sequence }) });
+    const response = await this.deps.request(`/v1/agent-connections/${encodeURIComponent(id)}/ownership`, {
+      method: sequence === undefined ? "DELETE" : "PUT",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": options.idempotencyKey ?? createIdempotencyKey(this.deps.random),
+      },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
+    return this.deps.parseJson(response, publicAgentConnectionSchema);
   }
 
   async release(id: string, signal?: AbortSignal): Promise<void> {

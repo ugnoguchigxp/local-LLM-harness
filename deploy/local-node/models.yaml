@@ -401,6 +401,7 @@ models:
     sha256: aa35045aab39163851c8584e6cf8cc6f33e8fc2ffe28ca627d3414ec66584704
     quantization: Q4_0_ROCMFP4_STRIX_LEAN
     runtime: q38rocm-vulkan
+
   granite-speech-4.1-2b-q8:
     kind: file
     role: dialogue-asr
@@ -412,3 +413,119 @@ models:
     sha256: 666d2f7736bfa140f44d67ba7bcb0827aa5718462f13850af294d72c1f09b218
     quantization: Q8_0
     runtime: transcribe.cpp-vulkan
+
+  d1-3b:
+    kind: snapshot
+    role: game-decision-provider
+    source: https://huggingface.co/LiquidAI/d1-3B
+    revision: 051bcc464b01b9f92942b364d9586b0ef5912432
+    path: /srv/ai/models/d1-3b
+    totalBytes: 6265050901
+    maxFiles: 14
+    snapshotDigest: 960b11f28c95f696e9e5b98e7aed0c613fe11e93ba4a45ea1f0813f4eb3dd005
+    runtime: d1-torch-rocm-gfx1151
+    files:
+      - path: LICENSE
+        bytes: 10574
+        sha256: 4d28ca14dedc0b3d0fcc2b3339f0e79931faa33874f3d24f522183a8fc70068c
+      - path: README.md
+        bytes: 10448
+        sha256: 175b0bd5f0b4272a67723e16d5e1994e7a8c2d162e7797c9f1c24c01fed83f1d
+      - path: api.py
+        bytes: 3478
+        sha256: 94e9f82eabfdf92c4abe1153e9a6dc4dd9821f9cc2fec3221e79e70723d8ada0
+      - path: chat_template.jinja
+        bytes: 5436
+        sha256: 86f4770449a4797c9b4212d110b0cc70fb993c1ce960095bcfb12eea22f61cca
+      - path: config.json
+        bytes: 2773
+        sha256: 0cbac0f580bd8036ef94ac83aa632a57a170e66d20f381ef47c3f6486c9a3e8c
+      - path: hybrid.py
+        bytes: 14416
+        sha256: ce579827b952a6978a3560f70e74be9e228f9029de46048996b0c5f58d7f1f39
+      - path: lfm2_vl.py
+        bytes: 5602
+        sha256: f9e8d3354572a169237865283594b0364209fdb858901121b9f99147328b5d95
+      - path: model.safetensors
+        bytes: 6247065504
+        sha256: 50e03317847caf6df9a9aee27ed40f20554a86a21e60d1d47ba41a422b546c0c
+      - path: modeling_d1.py
+        bytes: 1335
+        sha256: 7fc6a001f80fc2d146f2a51128478f3b3bd4f1423a3ac129bc10f3fd0caf1d98
+      - path: processor_config.json
+        bytes: 824
+        sha256: b9b82ad34a69e2f70a9033741e11f82b8a98bb5f8e6c13b3b2d5efdd3935d916
+      - path: prompt.py
+        bytes: 12478
+        sha256: a20b5f52e41a6d29e694bb8c861a5a4803ce3eb69364edad79511ccf8edb5c31
+      - path: runner.py
+        bytes: 11776
+        sha256: 24d3ae718e9f9717771c0df39c93d324d00aa27bf3e12bab085c0922096cb0dd
+      - path: tokenizer.json
+        bytes: 17905750
+        sha256: 8096ecb9f54599d756c8de728a598a340bc1e43c0deb77ddd62456c38349fcee
+      - path: tokenizer_config.json
+        bytes: 507
+        sha256: ef6770d12dd9ac58d334e979bf160c5cdfd41f13d205fd5d5516857645feb0ea
+  h2o-lightning-4b:
+    kind: snapshot
+    role: staged-game-decision-candidate
+    source: https://huggingface.co/h2oai/h2o-lightning-4b
+    revision: 9f256a64ee2c62eadf0e82229ae21c3f8571aed6
+    path: /srv/ai/models/h2o-lightning-4b
+    totalBytes: 9101723558
+    maxFiles: 17
+    snapshotDigest: cf4845cef44879f49fff2be5a64b266b4a6ead0745d90effd745d52c1f52f9eb
+    runtime: staged-only
+    files:
+      - path: LICENSE
+        bytes: 11544
+        sha256: bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a
+      - path: README.md
+        bytes: 45342
+        sha256: ecd8deb74faa5853dcc612f611696066caa968d5069ef0e75aede6d488d89dde
+      - path: chat_template.jinja
+        bytes: 7756
+        sha256: a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715
+      - path: config.json
+        bytes: 2872
+        sha256: 9217764b18e7182502c371c4309ec1757e1ba8d9ef2b9b1efbaf94de2d331bba
+      - path: generation_config.json
+        bytes: 116
+        sha256: 731e41edbcd0336b21c36d03fdf6fc54977dfc28cd9396491999ca8ddb052c42
+      - path: h2o_lightning_shim.py
+        bytes: 75045
+        sha256: 85f2f4d45ccdfae0203b5198955590140d9afd066b99093fa683ddba36232f5d
+      - path: merges.txt
+        bytes: 3353259
+        sha256: a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d
+      - path: model.safetensors
+        bytes: 9078620536
+        sha256: 2d51561f221e1549d91bd1c38b3512a1435dd32950d454a9f040f1d4d11497b6
+      - path: preprocessor_config.json
+        bytes: 390
+        sha256: 27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516
+      - path: serve.sh
+        bytes: 6359
+        sha256: f73b549d6deca5386f14f0ce681436404f256154b64a6799b3e9f7a8dea0b5f3
+      - path: serve_config.json
+        bytes: 2224
+        sha256: cdd4cd628c8b0ebbeffa0fde8c739ec32f9f9726b7b2539ffb1831d608eb2488
+      - path: test_security.py
+        bytes: 10016
+        sha256: 2c402d9713337c2b3c0f307176b5e8429b9c4ad1e7b99c49047663678f399fe9
+      - path: test_shim.py
+        bytes: 40263
+        sha256: cc0345785c846b156cdacf72f681080faac33babe8baea29127ec6ea270bae1a
+      - path: tokenizer.json
+        bytes: 12807982
+        sha256: 5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42
+      - path: tokenizer_config.json
+        bytes: 16710
+        sha256: 316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8
+      - path: video_preprocessor_config.json
+        bytes: 385
+        sha256: 7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13
+      - path: vocab.json
+        bytes: 6722759
+        sha256: ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003

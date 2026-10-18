@@ -32,16 +32,12 @@ const AUDIO_LIMIT = 1_048_576;
 
 type ProbeFormat = "json" | "sse" | "default" | "query" | "passage";
 
-function systemOneProbe(model: string): SystemOneRequest {
-  if (model === "ruri-v3-30m-sentence-language") {
-    return {
-      model,
-      state: "これは日本語の文章です。",
-      questions: { language: {
-        type: "choice", instructions: "文章全体が日本語か英語かを判定してください",
-        criteria: { ja: "日本語文章", en: "英語文章" },
-      } },
-    };
+function systemOneProbe(model: string, capability: string): SystemOneRequest {
+  if (capability === "decision.game") {
+    return { model, state: { player_x: 1, target_x: 3 }, questions: { action: {
+      type: "choice", instructions: "Move toward target_x. Right increases x; left decreases x.",
+      criteria: { left: "Move left", right: "Move right", wait: "Do not move" },
+    } } };
   }
   return {
     model,
@@ -429,7 +425,7 @@ export class SemanticReadiness {
       return await (this.options.fetchImpl ?? fetch)(`${base}/v1/systemone`, {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify(systemOneProbe(provider.publicModel)),
+        body: JSON.stringify(systemOneProbe(provider.publicModel, provider.capability)),
         signal,
         redirect: "manual",
       });
@@ -483,9 +479,8 @@ export class SemanticReadiness {
       return inspectEmbeddingResponse({ value, request, space: provider.embeddingSpace }).ok;
     }
     if (provider.protocol === "larm.system-one.v1") {
-      const inspected = inspectSystemOneResponse({ value, request: systemOneProbe(provider.publicModel) });
-      return inspected.ok && (provider.publicModel !== "ruri-v3-30m-sentence-language"
-        || inspected.response.answers.language?.choice === "ja");
+      const inspected = inspectSystemOneResponse({ value, request: systemOneProbe(provider.publicModel, provider.capability) });
+      return inspected.ok && (provider.capability !== "decision.game" || inspected.response.answers.action?.choice === "right");
     }
     if (provider.protocol !== "openai.chat-completions.v1") return validTranscription(value);
     const inspected = inspectOpenAiChatCompletionJson(value);

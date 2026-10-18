@@ -334,3 +334,5 @@ export * from "./chat-input";
 export { inferenceStatistics, type InferenceStatistics } from "./inference-statistics";
 
 export { UsageProtection } from "./usage-protection";
+
+export { ConnectionOwnership, ConnectionOwnershipRegistry, OWNERSHIP_TTL_MS, OWNERSHIP_HEARTBEAT_SECONDS } from "./connection-ownership";

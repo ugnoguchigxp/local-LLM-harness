@@ -132,7 +132,7 @@ export class ControlPlane {
     this.providerInstances.rollbackRetained(runtimeIds);
     this.retainedOwner = runtimeIds.length ? rollback.previousOwner : undefined;
     this.retentionRollback = undefined;
-    this.retentionChanged?.(runtimeIds, this.retainedOwner !== undefined && this.retainedOwner === this.usage?.protectedOwner);
+    this.retentionChanged?.(runtimeIds, this.retainedOwner !== undefined && this.retainedOwner === this.usage?.protectedOwner && this.usage.persistsLegacyProtection);
   }
   restoreUsageRetention(runtimeIds: string[], protectedConsumer: boolean, otherOwner = "(restored-other)"): void {
     if (!this.usage || !runtimeIds.length || runtimeIds.some(id => !getRuntime(this.registry, id))) return;
@@ -144,7 +144,7 @@ export class ControlPlane {
   getUsageState() {
     const state = this.usage?.protection.snapshot();
     return {
-      enabled: this.usage !== undefined, protected: (state?.protected ?? false) || (this.usage?.isTransitioning ?? false),
+      enabled: this.usage !== undefined, protected: (state?.protected ?? false) || (this.usage?.isTransitioning ?? false) || (this.usage?.hasOwnership ?? false),
       transitioning: this.usage?.isTransitioning ?? false,
       activeRequests: state?.activeRequests ?? 0, preparing: state?.preparing ?? 0,
       remainingMs: state?.remainingMs ?? 0,
@@ -320,7 +320,7 @@ export class ControlPlane {
       await this.handover.promise;
       return await this.prepareUsageHandover(nextRuntimeIds);
     }
-    const initialRetention = this.retainedOwner === undefined && usage.canProtect && usage.protection.snapshot().preparing > 0;
+    const initialRetention = this.retainedOwner === undefined && usage.canProtect && (usage.protection.snapshot().preparing > 0 || usage.hasOwnership);
     if (!initialRetention && !this.usageHandoverNeeded(nextRuntimeIds)) return;
     // A different profile cannot overwrite rollback state while readiness for
     // the previous accepted allocation is still unresolved.
@@ -335,7 +335,7 @@ export class ControlPlane {
       this.retainedOwner = owner;
       usage.protection.relinquish(owner);
       await this.observer.tick();
-      this.retentionChanged?.(this.providerInstances.retainedRuntimeIds(), owner === usage.protectedOwner);
+      this.retentionChanged?.(this.providerInstances.retainedRuntimeIds(), owner === usage.protectedOwner && usage.persistsLegacyProtection);
     });
     this.handover = { owner, promise };
     try { await promise; } finally { if (this.handover?.promise === promise) this.handover = undefined; }
@@ -348,7 +348,7 @@ export class ControlPlane {
     this.retainedOwner = owner;
     const runtimeIds = allocation.bindings.map(binding => binding.runtime);
     this.providerInstances.retainUntilNextProfile(runtimeIds, this.profileRetentionScope(runtimeIds));
-    this.retentionChanged?.(this.providerInstances.retainedRuntimeIds(), owner === this.usage?.protectedOwner);
+    this.retentionChanged?.(this.providerInstances.retainedRuntimeIds(), owner === this.usage?.protectedOwner && this.usage.persistsLegacyProtection);
     this.completeUsageHandover(allocationId);
   }
 
@@ -496,7 +496,7 @@ export class ControlPlane {
         },
       };
     }
-    if (this.usage && (this.retainedOwner !== undefined || (this.usage.canProtect && this.usage.protection.snapshot().preparing > 0))) {
+    if (this.usage && (this.retainedOwner !== undefined || (this.usage.canProtect && (this.usage.protection.snapshot().preparing > 0 || this.usage.hasOwnership)))) {
       const resolved = resolveAllocationBindings({
         registry: this.registry, state: this.observer.getState(), request,
         getRuntimeRelease: this.options.getRuntimeRelease,

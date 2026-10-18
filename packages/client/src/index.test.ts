@@ -1724,3 +1724,28 @@ test("image preflight uses only the claimed bearer, validates totals, and never 
   await expect(broken.countChatInputTokens({},"provider-secret")).rejects.toThrow("disconnect");
   expect(calls.filter(x=>x==="broken")).toHaveLength(1);
 });
+
+test("screen ownership methods authenticate and keep heartbeat and release bodies distinct", async () => {
+  const { connection } = decisionConnectionFixture("aconn_epoch-test_screen", "2026-08-28T00:10:00.000Z");
+  const ownershipId = "edebc447-e2c9-476e-81c0-f38821023299";
+  const requests: Request[] = [];
+  const client = new LarmClient({ baseUrl: "http://127.0.0.1:9810", apiToken: "dedicated-consumer",
+    fetch: async (input, init) => {
+      const request = new Request(input.toString(), init);
+      requests.push(request);
+      return json({ ...connection, ownership: { id: ownershipId,
+        state: request.method === "DELETE" ? "released" : "active", sequence: 1,
+        expiresAt: "2026-08-28T00:01:30.000Z", heartbeatSeconds: 30, ttlSeconds: 90 } });
+    },
+  });
+  const updated = await client.refreshAgentConnectionOwnership(connection.id, ownershipId, 1, { idempotencyKey: "heartbeat-1" });
+  const released = await client.releaseAgentConnectionOwnership(connection.id, ownershipId, { idempotencyKey: "screen-closed" });
+  expect(updated.ownership?.state).toBe("active");
+  expect(released.ownership?.state).toBe("released");
+  expect(requests.map(request => request.method)).toEqual(["PUT", "DELETE"]);
+  expect(requests.every(request => new URL(request.url).pathname === `/v1/agent-connections/${connection.id}/ownership`)).toBe(true);
+  expect(requests.every(request => request.headers.get("authorization") === "Bearer dedicated-consumer")).toBe(true);
+  expect(requests.map(request => request.headers.get("idempotency-key"))).toEqual(["heartbeat-1", "screen-closed"]);
+  expect(await requests[0]!.json()).toEqual({ id: ownershipId, sequence: 1 });
+  expect(await requests[1]!.json()).toEqual({ id: ownershipId });
+});
