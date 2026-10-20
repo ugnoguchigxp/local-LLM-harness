@@ -33,5 +33,7 @@ test("context-dependent defaults preserve a strict machine-readable public reque
   expect(schema.type).toBe("object");
   expect(schema.additionalProperties).toBeFalse();
   expect(schema.properties?.durationSeconds).toMatchObject({ description: expect.stringContaining("sound effects 5 seconds") });
+  expect(schema.properties?.durationSeconds).not.toHaveProperty("default");
+  expect(schema.properties?.instrumental).not.toHaveProperty("default");
   for (const input of [null, [], "test", 42]) expect(musicGenerationRequestSchema.safeParse(input).success).toBeFalse();
 });

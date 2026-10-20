@@ -22,9 +22,9 @@ export const musicGenerationRequestSchema = z.preprocess(musicRequestDefaults, z
   prompt: z.string().trim().min(1).max(16_384),
   lyrics: z.string().max(131_072).optional(),
   task: z.enum(["music", "sound-effect"]).optional(),
-  durationSeconds: z.number().min(1).max(600).default(180)
+  durationSeconds: z.number().min(1).max(600)
     .describe("Defaults: instrumental music 120 seconds; sound effects 5 seconds; vocals 180 seconds. Explicit durations are never shortened."),
-  instrumental: z.boolean().default(false),
+  instrumental: z.boolean().describe("Defaults to true for an explicit Stable Music model, false otherwise. Explicit false selects vocals."),
   language: z.string().min(2).max(32).optional(),
   bpm: z.number().int().min(20).max(300).optional(),
   key: z.string().min(1).max(32).optional(),

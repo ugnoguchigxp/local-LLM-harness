@@ -16,10 +16,10 @@ export function musicRequestDefaults(input: unknown): unknown {
   if (!input || typeof input !== "object" || Array.isArray(input)) return input;
   const request = { ...input } as Record<string, unknown>;
   const sfx = request.task === "sound-effect" || request.model === STABLE_SFX_MODEL;
-  if (request.instrumental === undefined && request.model === STABLE_MUSIC_MODEL) request.instrumental = true;
+  if (request.instrumental === undefined) request.instrumental = request.model === STABLE_MUSIC_MODEL;
   if (request.durationSeconds === undefined) {
-    if (sfx) request.durationSeconds = STABLE_SFX_DEFAULT_DURATION_SECONDS;
-    else if (request.instrumental === true) request.durationSeconds = STABLE_MAX_DURATION_SECONDS;
+    request.durationSeconds = sfx ? STABLE_SFX_DEFAULT_DURATION_SECONDS
+      : request.instrumental === true ? STABLE_MAX_DURATION_SECONDS : 180;
   }
   return request;
 }

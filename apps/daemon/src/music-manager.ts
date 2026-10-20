@@ -396,6 +396,7 @@ export class MusicGenerationManager {
   private running = 0;
   private readonly runningJobs = new Map<string, Promise<void>>();
   private closed = false;
+  private closePromise?: Promise<void>;
   private storageChain: Promise<void> = Promise.resolve();
   constructor(readonly provider: MusicProvider, private readonly options: {
     artifactRoot: string;
@@ -464,7 +465,8 @@ export class MusicGenerationManager {
     this.pruneTimer.unref?.();
   }
 
-  close(): void {
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
     for (const job of this.jobs.values()) {
       if (!["completed", "failed", "cancelled"].includes(job.status)) job.abort.abort(new Error("daemon shutting down"));
@@ -475,6 +477,11 @@ export class MusicGenerationManager {
     }
     if (this.pruneTimer) clearInterval(this.pruneTimer);
     this.pruneTimer = undefined;
+    this.closePromise = (async () => {
+      await Promise.allSettled([...this.runningJobs.values()]);
+      await this.storageChain;
+    })();
+    return this.closePromise;
   }
 
   async pruneArtifacts(): Promise<string[]> {

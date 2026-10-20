@@ -143,3 +143,28 @@ test("public requests with omitted Stable options are admitted with model-approp
     ]);
   } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+
+test("closing music waits for worker cleanup and storage before returning", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-music-close-"));
+  const stopping = Promise.withResolvers<void>();
+  const stopped = Promise.withResolvers<void>();
+  const provider = fake("test", [], async (request) => ({ model: "acestep-v15-turbo", audio: new Uint8Array([1]),
+    format: request.outputFormat, durationSeconds: request.durationSeconds, generationTimeMs: 1,
+    release: async () => { stopping.resolve(); await stopped.promise; } }));
+  const manager = new MusicGenerationManager(provider, { artifactRoot: root });
+  try {
+    await manager.initialize();
+    const job = manager.create(parse({}));
+    await stopping.promise;
+    let closed = false;
+    const closing = manager.close().then(() => { closed = true; });
+    const repeated = manager.close();
+    await Bun.sleep(1);
+    expect(closed).toBeFalse();
+    stopped.resolve();
+    await Promise.all([closing, repeated]);
+    expect(closed).toBeTrue();
+    expect(manager.get(job.jobId)?.status).toBe("cancelled");
+  } finally { stopped.resolve(); await manager.close(); await rm(root, { recursive: true, force: true }); }
+});
