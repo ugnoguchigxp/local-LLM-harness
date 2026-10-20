@@ -4,6 +4,10 @@ import { inferenceAuditModeSchema, type InferenceAuditMode } from "@larm/core";
 type Environment = Record<string, string | undefined>;
 
 export type DaemonConfig = {
+  computeEnabled: boolean;
+  computeRoot: string;
+  computeRuntimeRoot: string;
+  computePublicOrigin?: string;
   configDir: string;
   localServicesEnabled: boolean;
   localServicesJournal: string;
@@ -338,7 +342,25 @@ export function parseDaemonConfig(
     throw new Error("LARM_PERSONAL_STATE_JOURNAL_ROOT must not overlap context data roots");
   }
 
+  const computeEnabled = booleanSetting(env, "LARM_COMPUTE_ENABLED", false);
+  const computePublicOrigin = optionalSecret(env.LARM_COMPUTE_PUBLIC_ORIGIN);
+  if (computeEnabled) {
+    if (!apiToken || !computePublicOrigin) throw new Error("CPU compute requires LARM_API_TOKEN and LARM_COMPUTE_PUBLIC_ORIGIN");
+    const origin = new URL(computePublicOrigin);
+    if (!["http:", "https:"].includes(origin.protocol) || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
+      throw new Error("LARM_COMPUTE_PUBLIC_ORIGIN must be an HTTP(S) origin without credentials or path");
+    }
+    const computeRoot = absolutePathSetting(env, "LARM_COMPUTE_ROOT", "/var/lib/larm/compute");
+    const computeRuntimeRoot = absolutePathSetting(env, "LARM_COMPUTE_RUNTIME_ROOT", "/srv/ai/runtimes/larm-compute-cpu");
+    if (overlaps(computeRoot, computeRuntimeRoot) || computeRoot === "/" || computeRuntimeRoot === "/") {
+      throw new Error("Compute state and Python environment must be disjoint dedicated directories");
+    }
+  }
   return {
+    computeEnabled,
+    computeRoot: absolutePathSetting(env, "LARM_COMPUTE_ROOT", "/var/lib/larm/compute"),
+    computeRuntimeRoot: absolutePathSetting(env, "LARM_COMPUTE_RUNTIME_ROOT", "/srv/ai/runtimes/larm-compute-cpu"),
+    ...(computePublicOrigin ? { computePublicOrigin } : {}),
     localServicesEnabled: booleanSetting(env, "LARM_LOCAL_SERVICES_ENABLED", false),
     localServicesFile: absolutePathSetting(env, "LARM_LOCAL_SERVICES_FILE", resolve(env.LARM_CONFIG_DIR ?? join(sourceDir, "../../../config/local-node"), "local-services.yaml")),
     localServicesRequests: absolutePathSetting(env, "LARM_LOCAL_SERVICES_REQUESTS", "/var/lib/larm/local-services/requests"),

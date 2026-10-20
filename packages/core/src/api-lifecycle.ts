@@ -42,6 +42,7 @@ export type ApiOperationOwner =
   | "inference-gateway"
   | "mesh"
   | "decision-training"
+  | "compute"
   | "music"
   | "image-artifact"
   | "release-management";
@@ -121,6 +122,7 @@ export function apiOperationPolicy(
     || path.startsWith("/v1/context-forget-operations")) {
     owner = "personal-state";
   } else if (path.startsWith("/v1/3d/")) owner = "mesh";
+  else if (path.startsWith("/v1/compute/")) owner = "compute";
   else if (path.startsWith("/v1/decision/")) owner = "decision-training";
   else if (path.startsWith("/v1/music/")) owner = "music";
   else if (path.startsWith("/v1/image-artifacts") || path.startsWith("/v1/image-imports") || path === "/v1/images/generations") owner = "image-artifact";
@@ -181,6 +183,7 @@ export function apiOperationPolicy(
     "inference-gateway": ["openai-compatible-consumer"],
     mesh: ["mesh-consumer", "operator"],
     "decision-training": ["decision-consumer", "operator"],
+    compute: ["eumenes-compute", "agent-consumer", "operator"],
     music: ["music-consumer", "operator"],
     "image-artifact": ["agent-consumer", "operator"],
     "release-management": ["operator"],

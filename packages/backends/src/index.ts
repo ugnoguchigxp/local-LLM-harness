@@ -96,3 +96,4 @@ export { SystemdProcessBackend, LocalServiceRoutingBackend, processServiceObserv
 export * from "./chat-input-tokenizer";
 export { LocalUsageRetentionStore, type UsageRetentionSnapshot } from "./usage-retention-store";
 export { ImageImportError, pythonImageNormalizer, type ImageNormalizer, type NormalizedImage } from "./image-import-normalizer";
+export { LinuxCpuComputeExecutor } from "./compute/executor";

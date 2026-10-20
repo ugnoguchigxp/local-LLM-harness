@@ -2,6 +2,12 @@
 
 Linux Runtimeを観測・制御するLARM daemonです。既定で `config/local-node` を読み、SystemdBackendとLlamaSwapBackendへRuntime単位でルーティングします。
 
+## CPU compute
+
+CPU計算は独立したドメインで、`/v1/compute` に環境確認・投入・状態・取消・削除・成果物取得の6操作を提供します。Control Bearer必須、同時1件、最大60秒、CPU 1コアです。Dockerは使わず、bubblewrap・seccomp・address space上限で実行を制限します。NumPy・SciPy・SymPy・pandas・matplotlib・scikit-learn・statsmodelsを使えます。GPU・子process・利用者threadは使用できません。
+
+既定では無効です。`bash deploy/local-node/scripts/prepare-compute-cpu.sh` でrepository外にPython環境を用意し、配備時に `LARM_COMPUTE_ENABLED=true`、`LARM_COMPUTE_PUBLIC_ORIGIN`、専用の `LARM_COMPUTE_ROOT` と `LARM_COMPUTE_RUNTIME_ROOT` を設定します。準備scriptはサービスを操作しません。API・上限・Eumenes clientの例と配備状況は[CPU計算API契約](../../specs/eumenes-cpu-compute-api-2026-10-20.html)を参照してください。
+
 ## Music and sound effect generation
 
 local-nodeはPOST時に要求内容からモデルを選び、音声保存後にワーカーを停止します。`instrumental: true` はStable Audio 3 Small Music、`instrumental: false`（既存互換の既定）や歌詞付きはACE-Step 1.5 Turbo Normalです。`task: "sound-effect"` または `model: "stable-audio-3-small-sfx"` はStable Audio 3 Small SFXを選びます。効果音では歌詞を指定できません。XLは対象外です。`model: "auto"` を推奨し、既存のACE-Stepモデル名も自動選択の互換名として受け付けます。音楽では歌なしにする場合に `instrumental: true` を明示してください。

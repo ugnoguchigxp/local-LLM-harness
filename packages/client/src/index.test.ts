@@ -538,7 +538,7 @@ test("v3 agent profile discovery preserves advertised Chat Completions context b
   });
 
   const catalog = await client.listAgentProfilesV3();
-  expect(catalog.services[0]!.model).toBe("catalog-selected-model");
+  expect(catalog.services[0]).toMatchObject({ model: "catalog-selected-model" });
   expect(catalog.services[0]!.url).toBe("http://127.0.0.1:9810/v1/3d/generations");
   expect(catalog.profiles[0]!.providers[0]!.contextWindow)
     .toEqual({ maxTokens: 65_536, outputReserveTokens: 4_096, safetyMarginTokens: 1_976 });

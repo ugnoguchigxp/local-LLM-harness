@@ -50,6 +50,8 @@ import {
 } from "./errors";
 import { sendClientRequest } from "./client-transport";
 import { ClientMedia } from "./client-media";
+import { ClientCompute } from "./client-compute";
+export { ClientCompute } from "./client-compute";
 import { ClientAllocationApi } from "./client-allocation-api";
 import { ClientContextApi } from "./client-context-api";
 import type { ClientRequestOptions as RequestOptions, PersonalStateRequestOptions } from "./client-context-api";
@@ -88,6 +90,7 @@ export type AgentConnectionRefreshOptions = RequestOptions & {
 };
 
 export class LarmClient {
+  readonly compute: ClientCompute;
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
   private readonly timeoutMs: number;
@@ -117,6 +120,7 @@ export class LarmClient {
     this.images = new ClientImages((path, init) => this.request(path, init ?? {}));
     this.mesh = new ClientMesh((path, init) => this.request(path, init ?? {}));
     this.media = new ClientMedia((path, init) => this.request(path, init));
+    this.compute = new ClientCompute((path, init) => this.request(path, init));
     this.allocationApi = new ClientAllocationApi({
       request: (path, init, management, timeoutMs) => this.request(path, init, management, timeoutMs),
       parseJson: (response, schema) => this.parseJson(response, schema),

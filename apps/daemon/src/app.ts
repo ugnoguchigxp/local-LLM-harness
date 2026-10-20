@@ -62,6 +62,9 @@ import { registerInferenceRoutes } from "./routes/inference";
 import { registerImageArtifactRoutes } from "./routes/image-artifacts";
 import { registerImageGenerationRoutes } from "./routes/image-generations";
 import { registerMusicRoutes } from "./routes/music";
+import { registerComputeRoutes } from "./routes/compute";
+import { computeService } from "@larm/core";
+import { ComputeError } from "@larm/core";
 import { registerAllocationRoutes } from "./routes/allocations";
 import { registerAgentConnectionRoutes } from "./routes/agent-connections";
 import { registerLegacyControlRoutes } from "./routes/legacy-control";
@@ -141,6 +144,10 @@ export function createAppComponents(deps: AppDeps) {
   let lastObservedActivityState: ServiceActivityState | undefined;
 
   app.onError((err, c) => {
+    if (err instanceof ComputeError) {
+      if (err.status === 429 || err.status === 503) c.header("retry-after", "5");
+      return c.json(errorBody(err.code, err.message), err.status);
+    }
     if (err instanceof DecisionError) return c.json(errorBody(err.code, err.code), err.status);
     if (err instanceof UsageProtectionError) return protectionResponse(err, c.req.path);
     if (err instanceof ConnectionTokenError) return c.json(errorBody(err.code, err.message), err.code === "connection_idle_released" ? 409 : 401);
@@ -386,7 +393,8 @@ export function createAppComponents(deps: AppDeps) {
     personalStateMaxSourceBytes: deps.personalStateMaxSourceBytes ?? 256 * 1024 * 1024,
   });
 
-  registerAgentProfileRoutes(app, deps, agentFeature, agentResult);
+  registerAgentProfileRoutes(app, { ...deps, compute: () => deps.computeManager?.available && deps.computePublicOrigin ? computeService(deps.computePublicOrigin) : undefined }, agentFeature, agentResult);
+  registerComputeRoutes(app, { manager: deps.computeManager, apiToken: deps.apiToken, protectedToken: deps.protectedConsumerToken });
 
   registerAgentConnectionRoutes(app, {
     protectedConsumerToken: deps.protectedConsumerToken,

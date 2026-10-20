@@ -22,6 +22,71 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="contract" data-state="current" data-domain="compute-api">
+          <th scope="row">
+            <a href="./eumenes-cpu-compute-api-2026-10-20.html"
+              >Eumenes向けCPU計算API v1：実装契約と検証状況</a
+            >
+          </th>
+          <td>
+            CPU専用ドメイン、HTTP 6操作、Eumenes client、Dockerなしの実行制限、取消・保持。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>compute-api</code></small
+            >
+          </td>
+          <td>2026-10-20ソース実装と実機executor/API検証済み。本番配備・有効化は未実施。</td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="ltx-video-2b-local-trial">
+          <th scope="row">
+            <a href="./ltx-video-2b-local-trial-2026-10-20.html"
+              >LTX-Video 2B distilled：20秒・250フレーム以内の実機試験</a
+            >
+          </th>
+          <td>
+            専用runtime、静と動の4シナリオ、可変FPS、資源・画質・生成結果の記録。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ltx-video-2b-local-trial</code></small
+            >
+          </td>
+          <td>
+            2026-10-20試験完了・不採用。4本とも利用者の品質要求に届かず、参考動画用途とProvider化を見送り。実測・生成物は比較資料として保持。
+          </td>
+        </tr>
+        <tr data-kind="research" data-state="current" data-domain="video-generation-local-node">
+          <th scope="row">
+            <a href="./video-generation-local-node-research-2026-10-20.html"
+              >Radeon 8060S搭載PCでの動画生成モデル適用調査</a
+            >
+          </th>
+          <td>
+            実機資源、LTX・Wan・Hunyuanの比較と試験案。後続の利用者評価を反映しLTX-Video
+            2Bは不採用。<small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>video-generation-local-node</code></small
+            >
+          </td>
+          <td>
+            2026-10-20。調査後の2B実機試験は別記録。2B不採用、他候補は採否未定。Provider登録なし。
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="proposed" data-domain="eumenes-python-compute-service">
+          <th scope="row">
+            <a href="./eumenes-python-compute-service-design-2026-10-20.html"
+              >Eumenes向けPython計算サービス：HTTP API・MCP・資源調停の設計案</a
+            >
+          </th>
+          <td>
+            非同期Job API、MCP adapter、隔離runner、推論優先の調停と段階導入。<small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>eumenes-python-compute-service</code></small
+            >
+          </td>
+          <td>2026-10-20設計提案。実装・配備前。実機受入1〜9は未実施。</td>
+        </tr>
         <tr data-kind="contract" data-state="current" data-domain="audio-provider-routing">
           <th scope="row">
             <a href="./audio-provider-routing-2026-10-20.html"

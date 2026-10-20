@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { computeServiceSchema } from "./compute";
 import { chatInputContractSchema, type ChatInputPolicy } from "./chat-input";
 import { deploymentPolicySchema } from "./api-schema";
 import { embeddingSpaceSchema, type EmbeddingSpace } from "./embedding";
@@ -190,7 +191,7 @@ const agentCompatibilityAliasYamlSchema = z.object({
   providerCapabilities: z.record(agentIdentifierSchema, agentIdentifierSchema).default({}),
 }).strict();
 
-export const agentProfileServiceSchema = z.object({
+const agentMediaServiceSchema = z.object({
   name: agentIdentifierSchema,
   capability: agentIdentifierSchema,
   protocol: z.enum(["larm.image-generation.v1", "larm.music-generation.v1", "larm.mesh-generation.v1"]),
@@ -208,9 +209,11 @@ export const agentProfileServiceSchema = z.object({
   }
 });
 
+export const agentProfileServiceSchema = z.union([agentMediaServiceSchema, computeServiceSchema]);
+
 const agentProfileSelectorYamlSchema = z.object({
   agentProfile: agentIdentifierSchema,
-  services: z.array(agentProfileServiceSchema).max(8).default([]),
+  services: z.array(agentMediaServiceSchema).max(8).default([]),
 }).strict().superRefine((selector, context) => {
   if (new Set(selector.services.map((service) => service.name)).size !== selector.services.length) {
     context.addIssue({ code: "custom", path: ["services"], message: "service names must be unique" });
@@ -349,7 +352,7 @@ export type AgentConnectionCatalog = {
   profileSelectors: Array<{
     id: string;
     agentProfile: string;
-    services: Array<z.infer<typeof agentProfileServiceSchema>>;
+    services: Array<z.infer<typeof agentMediaServiceSchema>>;
   }>;
 };
 
@@ -721,7 +724,7 @@ export const publicAgentProfileListSchema = z.object({
 
 export const publicAgentProfileListV3Schema = z.object({
   contractVersion: z.literal("agent-connection.v3"),
-  services: z.array(agentProfileServiceSchema.safeExtend({ url: z.string().url() })).max(128).default([]),
+  services: z.array(z.union([agentMediaServiceSchema.safeExtend({ url: z.string().url() }), computeServiceSchema])).max(129).default([]),
   catalogRevision: z.string().min(1).max(128),
   defaultAgentProfile: agentIdentifierSchema,
   requestedProfile: agentIdentifierSchema.optional(),
@@ -786,7 +789,7 @@ export const publicAgentProfileListV3Schema = z.object({
         });
       }
     })).min(1).max(8),
-    services: z.array(agentProfileServiceSchema).max(8),
+    services: z.array(agentProfileServiceSchema).max(9),
   }).strict()),
   audiences: z.array(agentIdentifierSchema),
 }).strict().superRefine((value, context) => {

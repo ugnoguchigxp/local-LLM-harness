@@ -7,6 +7,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
   for (const [method, path, operationId] of API_OPERATIONS) {
     const successSchema = SUCCESS_SCHEMA_BY_OPERATION[operationId];
     const requestSchema = (() => {
+      if (operationId === "createComputeJob") return "ComputeRequest";
       if (operationId === "ensureLocalService") return "LocalServiceLeaseRequest";
       if (operationId === "renewLocalServiceLease") return "LocalServiceRenewRequest";
       if (operationId === "stopLocalService") return "LocalServiceStopRequest";
@@ -74,6 +75,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       || operationId === "createContextForgetOperation"
       || operationId === "getContextForgetOperation";
     const successContent = (() => {
+      if (operationId === "getComputeArtifact") return Object.fromEntries(["image/png", "image/svg+xml", "text/csv", "application/json"].map(mime => [mime, { schema: { $ref: "#/components/schemas/Binary" } }]));
       if (operationId === "getMetrics") {
         return { "text/plain": { schema: { $ref: "#/components/schemas/Metrics" } } };
       }
@@ -145,6 +147,14 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
     paths[path] ??= {};
     paths[path]![method] = {
       operationId,
+      ...(path.startsWith("/v1/compute/") ? {
+        description: "CPU-only Python calculation. Control Bearer required, no Provider claim. One job, 1 CPU, 60s maximum, 2GiB address space; no network, GPU, child processes or user-created threads. Idempotency is scoped to the Control token. Results expire 24h after terminal state; deleted receipts remain until 7 days after admission. No automatic POST retries. DELETE cancels active work or deletes terminal results; POST cancel preserves completed results.",
+        parameters: [
+          ...[...path.matchAll(/\{([^}]+)\}/g)].map(m => ({ name: m[1], in: "path", required: true, schema: { type: "string", format: "uuid" } })),
+          ...(operationId === "createComputeJob" ? [{ name: "Idempotency-Key", in: "header", required: true,
+            schema: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,128}$" } }] : []),
+        ],
+      } : {}),
       ...(operationId === "countChatInputTokens" ? {
         description: "Count the complete claimed LLM Chat Completions input, including template, tools, history and image embeddings, without running inference or retaining the payload. Use the same Provider bearer and model as inference. Returns fits=false for a context budget excess; generation rechecks the budget. This is not an inference reservation or an idempotency receipt. Context views and generation-attempt headers are not accepted; supply the complete messages.",
       } : operationId === "createImageGeneration" ? {
@@ -358,6 +368,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       ...(operationId === "getImageImport" ? { description: "Read a durable receipt using the same Control bearer and the upload UUID. Does not start or retry work. 404: no admitted receipt (safe to resend same key/bytes); 410: expired key, do not automatically issue a new key. Failed receipt is HTTP 200 here.", parameters: [{ name: "requestId", in: "path", required: true, schema: { type: "string", format: "uuid" } }] } : {}),
       responses: {
         ...Object.fromEntries(SUCCESS_STATUSES_BY_OPERATION[operationId].map((status) => [status, success])),
+        ...(operationId === "deleteComputeJob" ? { "204": { description: "Terminal calculation and artifacts deleted" } } : {}),
         ...(operationId === "getReadiness"
           ? { "503": { description: "Not ready", content: successContent } }
           : {}),

@@ -1,0 +1,314 @@
+<article lang="ja">
+  <h1>LTX-Video 2B distilled：20秒・250フレーム以内の実機試験</h1>
+  <p>
+    2026年10月20日。利用者の依頼により、Radeon 8060S搭載機へ専用runtimeを用意し、
+    静と動を組み合わせた20秒動画を4本生成する試験。Provider登録は行わない。 調査背景は<a
+      href="./video-generation-local-node-research-2026-10-20.html"
+      >動画生成モデル適用調査</a
+    >を参照。
+  </p>
+  <section id="status">
+    <h2>試験状態</h2>
+    <p>
+      完了。専用環境とモデルを導入し、モデルによる20秒動画を4本生成した。
+      全て512×320、生成244枚、書き出し240フレーム、正確に20.000秒。
+      5秒・10秒・15秒の区間境界と全フレームの時刻差をffprobeで検証した。
+      判定は<strong>不採用</strong>。生成物を確認した利用者は4本とも品質不足と判断した。
+      頭部から手が生える身体構造の破綻、車の芝生への逸脱・前後の逆転と逆走、
+      静止指示への不追従、cameraの不安定さがあり、
+      本格的な生成モデルへ渡す参考動画・下書きとしても今回の用途には採用しない。
+      初期の「下書きには利用できる」という評価はこの利用者判断に基づき修正した。
+      Provider登録・既存サービスの停止操作は行っていない。
+    </p>
+    <p>
+      2026年10月20日の利用者判断により、LTX-Video 2B distilledの採用とProvider化を見送る。
+      追加の調整・生成試験は進めず、取得済みのモデル、専用環境、生成物と計測記録は比較資料として保持する。
+      これは本機で今回試した構成と用途への採否であり、生成成功・速度・フレーム条件の達成とは分けて記録する。
+    </p>
+  </section>
+  <section id="conditions">
+    <h2>実行条件</h2>
+    <table>
+      <caption>
+        利用者が指定した条件と試験構成
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">依頼</th>
+          <td>
+            20秒の動画を4本、極端なシナリオ。全て静と動を組み合わせ、できるだけ250フレーム以内。Provider化は不要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">モデル</th>
+          <td>
+            Lightricks LTX-Video 2B v0.9.8 distilled、通常BF16
+            checkpoint。8つのcheckpoint対応timestep、CFG 1、STGなし。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">モデルrevision</th>
+          <td><code>8984fa25007f376c1a299016d0957a37a2f797bb</code></td>
+        </tr>
+        <tr>
+          <th scope="row">text encoder</th>
+          <td>
+            PixArt-alpha/PixArt-XL-2-1024-MSのT5 encoder、BF16。revision
+            <code>b89adadeccd9ead2adcb9fa2825d3fabec48d404</code
+            >。promptを先にencodeし、動画生成前にencoderを解放する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">推論engine</th>
+          <td>
+            公式LTX-Video、revision
+            <code>4b2d053057623ddd4d0a1d3e9cd28890e9ef487f</code
+            >。初回試験は単一解像度の8-step生成で、公式二段階upscale構成とは異なる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">専用環境</th>
+          <td>
+            <code>/srv/ai/apps/ltx-video-2b-trial-20261020/.venv</code>。既存画像runtimeのROCm
+            wheelを読み取り参照し、Diffusers・Transformers等を専用環境へ配置。既存環境は更新しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">主要package</th>
+          <td>
+            PyTorch 2.11.0+rocm7.13.0、Diffusers 0.33.1、Transformers 4.51.3、Accelerate
+            1.6.0。gfx1151 experimental AOTritonを試験processのみ有効化。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">画面と区間</th>
+          <td>
+            512×320、各動画は静5秒・動5秒・静5秒・動5秒。各区間の末尾画像を次区間のimage
+            conditionへ渡す。promptは固定英文、追加LLMでの自動拡張は無効。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">生成フレーム</th>
+          <td>
+            25＋97＋25＋97＝244枚。全区間をモデルの8n＋1制約に合わせる。再利用する末尾4枚を出力から除き、240枚で20秒にする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">FPS</th>
+          <td>
+            静は4.8fps、動は19.2fps。固定FPSへの複製や補間を行わず、時刻付きH.264／MP4として保存。生成器へも各区間のFPSを条件として渡す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">資源管理</th>
+          <td>
+            同時生成1件。開始時MemAvailable
+            32GiB以上、観測中16GiB未満なら次の制御点で中断。既存LLM・音声serviceを停止しないため、専有benchmarkではない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      低FPS区間はモデルの品質保証範囲を確かめる試験でもあり、静けさや動作速度が指示どおりになる保証はない。
+      各区間の端点条件だけでは、動きの速度・人物の姿・物体とカメラの連続性は保証できない。
+      244枚という値は4区間の一巡分で、失敗・再試行を含む実際の総計算量は実行記録と区別する。
+    </p>
+  </section>
+  <section id="scenarios">
+    <h2>4つのシナリオ</h2>
+    <table>
+      <caption>
+        静と動の極端な切替を含む20秒の構成
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">動画</th>
+          <th scope="col">静→動→静→動</th>
+          <th scope="col">主な評価点</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">01 人物</th>
+          <td>赤いcoatの人物が静止→激しい回転dance→静止→跳躍と大きな腕の動き</td>
+          <td>顔・衣服の保持、身体、髪と衣服の動き、停止できるか</td>
+        </tr>
+        <tr>
+          <th scope="row">02 車</th>
+          <td>濡れたtrackに停車→急加速とdrift→停止→再加速して通過</td>
+          <td>車体の剛性、進行方向、水しぶき、動静の切替</td>
+        </tr>
+        <tr>
+          <th scope="row">03 海</th>
+          <td>灯台の島と静かな海→巨大な砕波→穏やかな海→別方向から大波</td>
+          <td>流体・foamと固定建築物の保持、静止camera</td>
+        </tr>
+        <tr>
+          <th scope="row">04 建築</th>
+          <td>美術館の静止camera→高速orbit→camera停止→高速flythrough</td>
+          <td>物体の静止とcamera移動の区別、parallax、geometryの保持</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="results">
+    <h2>生成時間と資源の実測</h2>
+    <table>
+      <caption>
+        単発試験の有効な4区間の処理時間合計。モデル取得・読込・文章の事前encode・最終MP4包装は除外
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">動画</th>
+          <th scope="col">処理時間</th>
+          <th scope="col">計測上の注意</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">01 人物</th>
+          <td>218.53秒</td>
+          <td>
+            最初のCPU／GPU
+            VAE比較を含む。中断した97フレームのGPU復号待ち時間はこの合計に含まないため、初回の実際の待ち時間はさらに長い。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">02 車</th>
+          <td>67.94秒</td>
+          <td>準備後のGPU生成＋CPU復号。4区間合計。</td>
+        </tr>
+        <tr>
+          <th scope="row">03 海</th>
+          <td>65.02秒</td>
+          <td>同じ準備後の条件。</td>
+        </tr>
+        <tr>
+          <th scope="row">04 建築</th>
+          <td>67.34秒</td>
+          <td>同じ準備後の条件。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      25フレームの最初のdenoiseは2.76秒、97フレームの準備後のdenoiseはおおむね7〜9秒。 CPU
+      FP32で画像へ戻す時間は25フレームで約4秒、97フレームで保存込み約16〜19秒だった。
+      後半3本では20秒の動画を約65〜68秒で処理できたが、各シーン1回のみの試験で、反復測定した中央値ではない。
+    </p>
+    <p>
+      最初の25フレームのCPU復号は4.08秒、GPU復号は初回準備を含み133.50秒。
+      両者の全フレームRGB平均絶対差は0〜1正規化値で0.000852と小さく、sample画像にも目立つ縞や黒画面はなかった。
+      続く97フレームのGPU復号は初回準備に3分以上かかったため、試験processだけを終了し、
+      保存済みlatentからCPU復号で再開した。生成済みの区間を再生成していない。
+      これはこの環境でのcold初期化の観測であり、GPU復号の定常速度や全ての形状の正当性を保証する比較ではない。
+      再実行用wrapperの既定VAEはCPUにした。
+    </p>
+    <p>
+      CPU VAEを使った後半3本では、PyTorchのGPU peak allocatedは各3.85GiB、reservedは4.35GiB。
+      初回GPU VAE比較を含む人物の区間ではallocated 7.87GiB、reserved 8.61GiBだった。
+      文章encode・初期設定失敗・中断・再開を含む1秒間隔の全702 sampleでは、process RSS最大8.81GiB、
+      GPU allocated最大8.92GiB、MemAvailable最小56.34GiB。
+      RSSとGPU割当量は機械全体の物理メモリ消費を表すものではなく、共有メモリ機なので単純加算しない。
+      callbackの16GiB停止基準への到達やOOMはなかった。
+    </p>
+    <aside>
+      <p>
+        既存LLMを停止する操作はしていないが、初期に観測したllama-server processは試験中に終了し、
+        serviceはinactiveとなっていた。背景workloadは一定ではなく、終了原因の調査も本試験の対象外。
+        数値をLLM常駐・同時推論時の性能保証やruntime driftの証拠として扱わない。
+      </p>
+    </aside>
+  </section>
+  <section id="quality">
+    <h2>品質評価と利用者による動画確認</h2>
+    <p>
+      利用者の動画確認では、人物の頭部から手が生える、sports carが芝生を走行する、
+      車の前後が逆転して逆走するという具体的な破綻が報告された。
+      身体構造、物体の向き、走行経路と時間方向の整合性が保てていない。
+      「細部が粗い」「形が変わる」という初期の表現では重大さを過小評価していた。
+      agentの確認は抜き出したcontact sheetが中心で、動画全体での破綻を十分に捉えられていなかった。
+      これらを不採用の具体的な根拠として記録し、参考動画用途にも適合しないと判断する。
+    </p>
+    <table>
+      <caption>
+        各動画の16時点のcontact sheetを目視した定性的評価
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">動画</th>
+          <th scope="col">確認できたこと</th>
+          <th scope="col">残った課題</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">人物</th>
+          <td>最初の静止、腕を上げる動き、姿勢の変化と赤い衣服を生成できた。</td>
+          <td>
+            顔や手足が粗く、体形や頭部が変化する。静止指示の区間でも姿勢を戻す動きが残る。要求した回転・跳躍の正確な再現ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">車</th>
+          <td>停車した車から走行、水しぶき、camera追従への変化を生成できた。</td>
+          <td>
+            車体・前面形状と位置が変化する。2回目の静止区間では車が接近しており、停止指示を守れていない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">海</th>
+          <td>静かな海面と大きな砕波・白いfoamの差が分かりやすい。灯台は概ね継続して現れる。</td>
+          <td>
+            島と灯台の位置・大きさが変わり、静止cameraや剛体の厳密な保持はできない。静かな区間にも波の残りがある。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">建築</th>
+          <td>最初の静止構図からcamera移動と大きな遠近変化へ進む。</td>
+          <td>
+            orbit指定は正確でなく、静止区間でも視点が動く。球の支柱・床模様・建築のgeometryが変化する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      低FPS区間を設定するだけでは、被写体やcameraを停止させられない。
+      動きを止める指示、pose、区間の切り方や参照画像による制御を分けて設計する必要がある。
+      単純なpixel差分も保存したが、明るさ・camera移動・変形を区別する指標ではないため、motion品質の合否には使わない。
+      この試験は小さい解像度・単一pass・CFG 1の構成であり、2Bモデルの最高画質を測ったものではない。
+    </p>
+  </section>
+  <section id="artifacts">
+    <h2>再現と出力</h2>
+    <p>
+      wrapper sourceは<code>benchmarks/video/ltx2b-trial.py</code>。
+      保存rootは<code>/srv/ai/data/benchmarks/ltx-video-2b-20261020</code>。 manifest、モデル取得revision、prompt
+      embedding、区間latent、生成RGB frame、 MP4、contact sheet、区間別の時間・GPU
+      peak、1秒ごとの資源sampleをsource外へ保存した。 元の無音動画4本に加えて、
+      <code>comparison-4up-20s-vfr.mp4</code
+      >に4画面比較を保存した。比較版も20秒・240フレームで検証済み。
+      <code>summary.json</code>に全出力の集計と検証結果を記録した。
+    </p>
+    <p>
+      出力はffprobeで実際のフレーム数・再生時間・全フレームの時刻差を検査した。
+      20秒で240フレーム、静と動の境界が5秒・10秒・15秒であることを確認した。
+      画質は処理の正常終了とは分け、CPU／GPU
+      VAEの一致とsample画像での破綻・人物や物体の変化を記録した。
+    </p>
+    <pre><code>/srv/ai/apps/ltx-video-2b-trial-20261020/.venv/bin/python \
+  benchmarks/video/ltx2b-trial.py \
+  --output /srv/ai/data/benchmarks/ltx-video-2b-NEW-RUN \
+  --checkpoint /srv/ai/models/Lightricks/LTX-Video-2B-0.9.8/ltxv-2b-0.9.8-distilled.safetensors \
+  --encoder /srv/ai/models/PixArt-alpha/PixArt-XL-2-1024-MS \
+  --vae cpu</code></pre>
+    <p>
+      再測定では新しい出力directoryを使う。既存directoryでは完了した区間とlatentを再利用するため、全体の新規生成時間の測定にはならない。
+    </p>
+  </section>
+</article>
