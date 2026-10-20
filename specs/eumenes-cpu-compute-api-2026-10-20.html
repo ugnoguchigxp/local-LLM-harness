@@ -2,7 +2,7 @@
   <h1>Eumenes向けCPU計算API v1：実装契約と検証状況</h1>
   <p>
     2026-10-20。利用者の依頼により、このrepositoryにCPU計算ドメインを追加した。Dockerは使わず、bubblewrapによる名前空間・filesystemの分離とseccomp・resource
-    limitを使用する。<strong>ソース実装と実機executor/API試験は完了。本番サービスへの配備・有効化・再起動は未実施。</strong>将来のGPU・長時間実行については<a
+    limitを使用する。<strong>2026-10-21に本番Controlへの配備・有効化と実HTTP検証を完了した。稼働commitはadaff8036a0f6fc87b418e550313fc353fa52608。</strong>将来のGPU・長時間実行については<a
       href="./eumenes-python-compute-service-design-2026-10-20.html"
       >全体設計案</a
     >を参照する。本書をCPU初版の契約とする。
@@ -322,21 +322,30 @@ await client.compute.cancel(jobId); // 完成済み結果は維持する。
     </p>
     <pre><code>bash deploy/local-node/scripts/prepare-compute-cpu.sh
 
-# 配備時に設定する値。ここでは未適用。
+# 本番に設定済みの値。
 LARM_COMPUTE_ENABLED=true
-LARM_COMPUTE_PUBLIC_ORIGIN=https://実際のControlのorigin
+LARM_COMPUTE_PUBLIC_ORIGIN=http://gnosis.local:9810
 LARM_COMPUTE_RUNTIME_ROOT=/srv/ai/runtimes/larm-compute-cpu
 LARM_COMPUTE_ROOT=/var/lib/larm/compute
 # LARM_API_TOKENは既存Controlの設定を利用する。</code></pre>
     <p>
       prepare
-      scriptはPython依存だけを準備し、サービス操作を行わない。既定ではcompute無効。ソースをreleaseへ含め、設定を適用した上でControlを再起動すると有効になる。再起動には添付依頼§6の事前許可が必要なため、今回は行っていない。既存inference
+      scriptはPython依存だけを準備し、サービス操作を行わない。既定ではcompute無効。利用者のcommit・push・有効化の依頼に基づき、署名付きreleaseを配備しControlを再起動した。既存inference
       Providerの再起動は計算機能の導入手順に含めない。
     </p>
     <p>
       続く依頼で全変更のcommit・push・有効化が許可された。本番統合は稼働commit
       94df0ba3abc8を土台に行い、作業branchと分岐していた3D・画像取込・音声の実装を維持する。NoNewPrivileges・PrivateTmp・ProtectHome・ProtectSystemを本番unitと揃えた一時unitでも、環境確認とNumPy計算が成功した。署名付きrelease
-      builderのinstall・audit・check・coverage gateを経て配備する。
+      builderのinstall・audit・check・coverage gateを経て配備した。
+    </p>
+    <p>
+      本番unitのRestrictAddressFamiliesでは、bubblewrapがprivate
+      networkのloopbackを設定するためにAF_NETLINKが必要だった。既存のAF_UNIX・AF_INET・AF_INET6にAF_NETLINKを追加したところ、環境probeと実計算が成功した。利用者のPython実行前にはseccompが全socket
+      syscallを禁止し、AF_NETLINKを含めた通信を拒否することを確認した。再現用の任意drop-inはdeploy/local-node/systemd/larm-daemon-compute-cpu.conf。実hostでは/etc/systemd/system/larm-daemon.service.d/80-compute-cpu.confへ配置し、上記originを追加した。保存先はdaemon利用者所有・0700で作成した。
+    </p>
+    <p>
+      配備前の設定・unitのbackupと配備証跡はrepository外の/srv/ai/logs/larm-compute-rollout-20261020に保持する。署名付きbuilderのinstall・audit・check・coverageはすべて通過し、production依存監査も通過。統合版の通常suiteは974件成功・実機10件は別途すべて成功。稼働版のAPIは既存122操作を維持し、compute
+      6操作を加えて128操作となった。検証jobはすべて削除し、再送防止receiptだけを所定期間保持する。
     </p>
     <table>
       <caption>
@@ -444,7 +453,7 @@ LARM_COMPUTE_ROOT=/var/lib/larm/compute
       </tbody>
     </table>
     <p>
-      本レビューはCPU初版のソースと試験環境を対象とする。本番有効化、Eumenes実端末からの接続、他の推論と併用した際の遅延評価は引き続き未実施。
+      本レビューに続いて本番有効化と実HTTP検証を完了した。Eumenes実端末からの操作と、他の推論と併用した際の遅延評価は引き続き未実施。
     </p>
   </section>
 
@@ -502,9 +511,17 @@ LARM_COMPUTE_ROOT=/var/lib/larm/compute
           <td>通過。</td>
         </tr>
         <tr>
+          <th scope="row">本番Controlの計算API</th>
+          <td>http://gnosis.local:9810への実HTTP、Control Bearer認証</td>
+          <td>
+            通過。discovery・既存API維持・7 package・進捗・PNG・再送・隔離・100
+            KB入力・時間/メモリ上限・取消後の次job・削除後410を確認。
+          </td>
+        </tr>
+        <tr>
           <th scope="row">Eumenes実端末→稼働中Control</th>
           <td>本番接続</td>
-          <td>未実施。配備・有効化前。</td>
+          <td>未実施。APIは配備・有効化済み。Eumenesの実端末UIからの操作はこの検証に含めない。</td>
         </tr>
         <tr>
           <th scope="row">LLM/TTS併用時の遅延SLO</th>
