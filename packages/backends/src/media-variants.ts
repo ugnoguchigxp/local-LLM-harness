@@ -71,11 +71,13 @@ export class MediaVariantManager {
     return result;
   }
 
-  async acquire(variant: MediaVariant, signal?: AbortSignal, ticket?: symbol): Promise<() => Promise<void>> {
+  async acquire(variant: MediaVariant, signal?: AbortSignal, ticket?: symbol, deadline?: number): Promise<() => Promise<void>> {
     await this.serialized(async () => {
       if (this.closed) throw new Error("media variant manager is closed");
       signal?.throwIfAborted();
       if (this.faulted) throw new Error("media worker stop failed; runtime is quarantined");
+      // The serialized queue may have waited for a previous worker to stop.
+      if (deadline !== undefined && Date.now() >= deadline) throw new Error("media execution capacity wait expired");
       if ((this.options.idleTtlMs[variant] ?? 0) === 0 && Object.values(this.active).reduce((a, b) => a + b, 0) > 0) throw new MediaVariantBusyError();
       if (this.waiters.length > 0 && ticket !== this.waiters[0]) throw new MediaVariantBusyError();
       const others = (["image", "music", "mesh", "stable-audio"] as const).filter((v) => v !== variant);
@@ -150,7 +152,7 @@ export class MediaVariantManager {
         firstAttempt = false;
         try {
           if (this.waiters[0] !== ticket) throw new MediaVariantBusyError();
-          return await this.acquire(variant, signal, ticket);
+          return await this.acquire(variant, signal, ticket, timeoutMs > 0 ? deadline : undefined);
         }
         catch (error) {
           if (!(error instanceof MediaVariantBusyError)) throw error;

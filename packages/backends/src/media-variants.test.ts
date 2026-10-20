@@ -264,3 +264,26 @@ test("an expired media waiter cannot start when capacity becomes available after
     await release();
   } finally { await variants.close(); }
 });
+
+
+test("a waiter that expires behind a serialized worker stop never starts another runtime", async () => {
+  const stopping = Promise.withResolvers<void>();
+  const stopped = Promise.withResolvers<void>();
+  const calls: string[] = [];
+  const variants = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 }, run: async (action, variant) => {
+    calls.push(`${action}:${variant}`);
+    if (action === "stop" && variant === "image") { stopping.resolve(); await stopped.promise; }
+  } });
+  try {
+    const image = await variants.acquire("image");
+    const releasing = image();
+    await stopping.promise;
+    const outcome = variants.waitForMusic(new AbortController().signal, 50, "stable-audio")
+      .then(async (release) => { await release(); return "started"; }, (error: Error) => error.message);
+    await Bun.sleep(60);
+    stopped.resolve();
+    await releasing;
+    expect(await outcome).toBe("media execution capacity wait expired");
+    expect(calls).toEqual(["start:image", "stop:image"]);
+  } finally { stopped.resolve(); await variants.close(); }
+});
