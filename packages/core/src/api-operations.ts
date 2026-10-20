@@ -1,4 +1,10 @@
 export const API_OPERATIONS = [
+  ["get", "/v1/compute/environment", "getComputeEnvironment"],
+  ["post", "/v1/compute/jobs", "createComputeJob"],
+  ["get", "/v1/compute/jobs/{id}", "getComputeJob"],
+  ["post", "/v1/compute/jobs/{id}/cancel", "cancelComputeJob"],
+  ["delete", "/v1/compute/jobs/{id}", "deleteComputeJob"],
+  ["get", "/v1/compute/jobs/{id}/artifacts/{artifactId}", "getComputeArtifact"],
   ["get", "/v1/local-services", "listLocalServices"],
   ["get", "/v1/local-services/{id}", "getLocalService"],
   ["post", "/v1/local-services/{id}/leases", "ensureLocalService"],
@@ -117,6 +123,8 @@ export const API_OPERATIONS = [
 type ApiOperationId = typeof API_OPERATIONS[number][2];
 
 export const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> = {
+  getComputeEnvironment: ["200"], createComputeJob: ["202"], getComputeJob: ["200"],
+  cancelComputeJob: ["200", "202"], deleteComputeJob: ["200", "202", "204"], getComputeArtifact: ["200"],
   listLocalServices: ["200"],
   getLocalService: ["200"],
   ensureLocalService: ["201", "202"],
@@ -226,6 +234,8 @@ export const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly stri
 };
 
 export const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
+  getComputeEnvironment: "ComputeEnvironment", createComputeJob: "ComputeReceipt", getComputeJob: "ComputeJob",
+  cancelComputeJob: "ComputeJob", deleteComputeJob: "ComputeJob", getComputeArtifact: "Binary",
   listLocalServices: "LocalServiceList",
   getLocalService: "LocalServiceStatus",
   ensureLocalService: "LocalServiceLease",

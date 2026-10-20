@@ -343,3 +343,4 @@ export * from "./monitoring-events";
 
 export * from "./decision-general";
 export * from "./decision-head";
+export * from "./compute";

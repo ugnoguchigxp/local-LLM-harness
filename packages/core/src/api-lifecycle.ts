@@ -42,6 +42,7 @@ export type ApiOperationOwner =
   | "service-harness"
   | "inference-gateway"
   | "decision-training"
+  | "compute"
   | "music"
   | "image-artifact"
   | "release-management";
@@ -121,7 +122,8 @@ export function apiOperationPolicy(
     || path.startsWith("/v2/context-views") || path.startsWith("/v1/generation-attempts")
     || path.startsWith("/v1/context-forget-operations")) {
     owner = "personal-state";
-  } else if (path.startsWith("/v1/decision/")) owner = "decision-training";
+  } else if (path.startsWith("/v1/compute/")) owner = "compute";
+  else if (path.startsWith("/v1/decision/")) owner = "decision-training";
   else if (path.startsWith("/v1/music/")) owner = "music";
   else if (path.startsWith("/v1/image-artifacts") || path.startsWith("/v1/image-imports/") || path === "/v1/images/generations") owner = "image-artifact";
   else if (path.startsWith("/v1/artifacts/") || path.startsWith("/v1/artifact-operations/")
@@ -181,6 +183,7 @@ export function apiOperationPolicy(
     "service-harness": ["service-harness-consumer"],
     "inference-gateway": ["openai-compatible-consumer"],
     "decision-training": ["decision-consumer", "operator"],
+    compute: ["eumenes-compute", "agent-consumer", "operator"],
     music: ["music-consumer", "operator"],
     "image-artifact": ["agent-consumer", "operator"],
     "release-management": ["operator"],

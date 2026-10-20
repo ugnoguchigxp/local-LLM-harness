@@ -19,6 +19,8 @@ import type { ImageArtifactManager } from "./image-artifact-manager";
 import type { ImageGenerationProvider } from "./image-generation-provider";
 
 export type AppDeps = {
+  computeManager?: import("./compute/manager").ComputeManager;
+  computePublicOrigin?: string;
   monitoring?: import("./monitoring").MonitoringService;
   observability?: import("./observability").Observability;
   localServiceManager?: LocalServiceManager;

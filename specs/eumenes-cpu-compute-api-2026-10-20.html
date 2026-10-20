@@ -1,0 +1,512 @@
+<article lang="ja">
+  <h1>Eumenes向けCPU計算API v1：実装契約と検証状況</h1>
+  <p>
+    2026-10-20。利用者の依頼により、このrepositoryにCPU計算ドメインを追加した。Dockerは使わず、bubblewrapによる名前空間・filesystemの分離とseccomp・resource
+    limitを使用する。<strong>ソース実装と実機executor/API試験は完了。本番サービスへの配備・有効化・再起動は未実施。</strong>将来のGPU・長時間実行については<a
+      href="./eumenes-python-compute-service-design-2026-10-20.html"
+      >全体設計案</a
+    >を参照する。本書をCPU初版の契約とする。
+  </p>
+
+  <section id="scope">
+    <h2>初版の範囲と本数</h2>
+    <p>
+      計算の入口は1種類の任意Python実行。積分・回帰・作図を個別APIに増やさず、inputsとcodeで表現する。Eumenesが日常使うtoolは4本、環境確認と削除を加えて計6操作。HTTP
+      APIも6本とする。MCP serverそのものは追加していない。Eumenes backendはHTTPまたは付属TypeScript
+      clientを利用し、必要時に同じ契約をMCPで包める。
+    </p>
+    <table>
+      <caption>
+        toolとAPIの対応
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">tool名案</th>
+          <th scope="col">HTTP API</th>
+          <th scope="col">役割</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">python_submit</th>
+          <td>POST /v1/compute/jobs</td>
+          <td>計算を一度だけ投入しjobIdを取得。202。</td>
+        </tr>
+        <tr>
+          <th scope="row">python_status</th>
+          <td>GET /v1/compute/jobs/:id</td>
+          <td>状態・進捗・結果・エラー。200。</td>
+        </tr>
+        <tr>
+          <th scope="row">python_cancel</th>
+          <td>POST /v1/compute/jobs/:id/cancel</td>
+          <td>実行中を取消。完成済み結果は維持。200または202。</td>
+        </tr>
+        <tr>
+          <th scope="row">python_artifact</th>
+          <td>GET /v1/compute/jobs/:id/artifacts/:artifactId</td>
+          <td>PNG・SVG・CSV・JSONの認証付き取得。200。</td>
+        </tr>
+        <tr>
+          <th scope="row">compute_environment</th>
+          <td>GET /v1/compute/environment</td>
+          <td>補助。Python/package版、実効上限、制限方式。</td>
+        </tr>
+        <tr>
+          <th scope="row">python_delete</th>
+          <td>DELETE /v1/compute/jobs/:id</td>
+          <td>管理・清掃。終端結果を削除して204。実行中なら取消して200または202。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      calculateの式parser、GPU、PyTorch、子process、利用者が作る追加thread、実行中pip
+      install、複数計算の同時実行、ジョブ一覧・検索、SSE、MCP
+      Tasksは初版の範囲に含めない。scikit-learnの並列実行などにはn_jobs=1を使う。LLM・TTS・ASRなどの起動・停止・model選択には介入しない。
+    </p>
+  </section>
+
+  <section id="domain">
+    <h2>ドメイン分離</h2>
+    <table>
+      <caption>
+        責務の配置
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">場所</th>
+          <th scope="col">担当</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">packages/core/src/compute</th>
+          <td>型、入力検査、JSON上限、状態・環境・service契約。OS非依存。</td>
+        </tr>
+        <tr>
+          <th scope="row">packages/backends/src/compute</th>
+          <td>Linux executor、bubblewrap、bounded protocol、時間監督、停止。</td>
+        </tr>
+        <tr>
+          <th scope="row">apps/daemon/src/compute</th>
+          <td>ジョブ状態、単一実行、SQLite保存、idempotency、取消、保持期間・quota。</td>
+        </tr>
+        <tr>
+          <th scope="row">apps/daemon/src/routes/compute.ts</th>
+          <td>HTTP・認証・成果物応答だけを担当。</td>
+        </tr>
+        <tr>
+          <th scope="row">apps/compute-cpu</th>
+          <td>Python runner、package指定、版とhashを固定した依存lock。</td>
+        </tr>
+        <tr>
+          <th scope="row">packages/client/src/client-compute.ts</th>
+          <td>Eumenes等のbackend用client。生成POSTを自動再送しない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      computeの保存先とPython環境は専用かつ互いに重ならないdirectoryにする。既存のmusic・画像・Provider
+      leaseのstoreに計算データを混ぜない。SQLiteをexclusive
+      ownerとして開き、同じstoreを複数daemonが同時実行しない。code・inputsは終端化時に保存レコードから消し、APIから返さない。
+    </p>
+  </section>
+
+  <section id="contract">
+    <h2>認証・投入・結果</h2>
+    <p>
+      全操作で設定済みControl Bearerが必要。匿名modeでも必須で、Provider
+      Bearer・claim・agent-connectionsは使わない。標準Control
+      tokenと専用保護tokenを受け入れるが、job・artifact・idempotencyは使用したtokenのdigestごとに分ける。tokenを変更すると旧tokenのjobは照会できない。Eumenes
+      backendだけがcredentialを保持し、LLMやブラウザに渡さない。
+    </p>
+    <pre><code>POST /v1/compute/jobs
+Authorization: Bearer &lt;Control Bearer&gt;
+Content-Type: application/json
+Idempotency-Key: &lt;Eumenesの永続tool実行ID&gt;
+
+{
+  "code": "import numpy as np\nresult = int(np.sum(inputs['values']))\nreport('done', 1.0)",
+  "inputs": {"values": [1, 2, 3]},
+  "timeoutSec": 60,
+  "accelerator": "cpu"
+}
+
+202
+{"jobId":"UUID"}</code></pre>
+    <p>
+      codeは必須。inputsは省略時{}、timeoutSecは省略時60・1〜60の整数、acceleratorはcpu/autoのみで省略時auto。どちらもCPUに解決し、gpuは503
+      unavailable。未知field・非JSON値・深すぎるJSONを拒否する。上限はenvironmentのlimitsを参照する。
+    </p>
+    <p>
+      statusはqueued/running/completed/failed/cancelled。stageはqueued/starting/running/collectingと各終端名。queuedAt、startedAt、finishedAt、expiresAt、resolvedAccelerator、environmentRevision、cancelRequestedを返す。開始前・終了前の該当時刻はnull。進捗はreport(message,
+      ratio=None)の自己申告で、ratioは0〜1、更新は最大2回/秒。stdoutから進捗を解釈しない。
+    </p>
+    <pre><code>{
+  "status": "completed",
+  "stage": "completed",
+  "resolvedAccelerator": "cpu",
+  "result": {
+    "value": 6,
+    "stdout": "",
+    "stderr": "",
+    "stdoutTruncated": false,
+    "stderrTruncated": false,
+    "artifacts": []
+  }
+}</code></pre>
+    <p>
+      上例は状態応答の主要部分だけ。valueは変数resultから取得し、未定義はnull。NumPy配列・scalar、pandas表をJSON互換に変換する。非有限数はnull、安全な整数範囲を超える整数は10進文字列、他objectは上限付きrepr。循環・要素数・byte上限を超える結果は失敗する。
+    </p>
+    <p>
+      作業directoryは/work。成果物は/work/artifactsにPNG/SVG/CSV/JSONとして保存する。終了時に開いているmatplotlib図もPNGにする。artifact
+      metadataはid/name/mime/bytes。hostへの任意path指定は受け付けない。取得時はattachment・nosniff・CSP
+      sandboxを設定し、特にSVGを直接inline表示しない。Eumenes側も外部出力を指示として実行しない。
+    </p>
+  </section>
+
+  <section id="lifecycle">
+    <h2>再送・取消・保持</h2>
+    <p>
+      Idempotency-Keyは1〜128文字、使用可能文字は英数字・ピリオド・underscore・colon・hyphen。同じtoken/keyと正規化した本文は同じjobIdを返す。JSON
+      objectのkey順序と既定値の省略は同一として比較し、codeの文字列差は維持する。異なる本文は409
+      request_conflict。生成POSTを内部で自動再送しない。
+    </p>
+    <p>
+      cancel受付とcompleted公開の順序で勝者を決める。取消受付後は進捗・結果を公開せず、executor停止後にcancelledとする。停止待機が2秒を超えた場合は202とcancelRequestedを返す。cancel専用APIは完成結果を消さない。DELETEは進行中を取消し、終端なら結果・成果物を削除する複合操作なので、取消再試行にはcancel専用APIを使う。
+    </p>
+    <p>
+      終端から24時間保持。期限切れ・削除はGETで410
+      job_expired。key/hashのtombstoneは受理から7日間保持し、同じ本文で失効jobを再実行しない。7日経過後は同じkeyが新しい計算として受理され得る。receiptは最大4096件。GCは10秒間隔・起動時・API操作時に行う。
+    </p>
+    <p>
+      HTTP切断後もジョブは継続する。daemon再起動時、queuedは再開し、開始済みはfailed/unavailableにする。開始済み計算を自動再投入しない。bubblewrapの親死亡時停止で実行processを終了させる。通常停止では先に実行中の計算を停止してからstoreを閉じる。環境版が受理後に変わった場合やexecutor故障時は計算laneを利用不可にする。
+    </p>
+  </section>
+
+  <section id="limits">
+    <h2>実効上限とDockerなしの制限方式</h2>
+    <table>
+      <caption>
+        CPU初版の固定値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">値・方式</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">同時実行・CPU</th>
+          <td>1ジョブ。CPU affinityで1コアに制限し、利用者によるaffinity拡張を禁止。</td>
+        </tr>
+        <tr>
+          <th scope="row">時間</th>
+          <td>
+            最大60秒。startingから環境再確認・実行・回収までをhost
+            watchdogで監督。待機は別に最大300秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">memory</th>
+          <td>
+            RLIMIT_ASで単一Python processのaddress spaceを2
+            GiB。子process・利用者threadの作成をseccompで禁止する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">書込領域</th>
+          <td>
+            /workのtmpfs 128 MiBとprivate /dev/shm 16 MiB。root、/dev本体、実行環境はread-only。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">code・inputs</th>
+          <td>
+            64 KiB・256 KiB。UTF-8/正規化JSON byteで検査。生HTTP bodyは2
+            MiB、JSON深さ24・要素数20000。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">stdout・stderr</th>
+          <td>各256 KiB。継続してdrainし、超過分を捨ててtruncatedを返す。</td>
+        </tr>
+        <tr>
+          <th scope="row">value・結果JSON</th>
+          <td>1 MiB・2 MiB。過大な結果はoutput_exceeded。</td>
+        </tr>
+        <tr>
+          <th scope="row">成果物</th>
+          <td>最大10件、各5 MiB。hostで件数・byte・MIME等を再検査。</td>
+        </tr>
+        <tr>
+          <th scope="row">queue・保存</th>
+          <td>
+            待機上限8件、store予算256
+            MiB。1件ごとに最大結果容量を予約するため、空のstoreでも通常は実行中を含め最大4件の受付で容量条件に達する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>2 GiBはcgroupのresident memory上限ではなく、address space上限である。</strong>file
+      cacheやtmpfsを同じ数字に含めた説明はしない。tmpfs容量は別途制限する。numpy等のnative
+      libraryも同じprocessの上限を受け、OpenBLAS/OpenMP等のthread数は1。利用者が作るprocess/threadを禁止するため、複数processで上限を回避できない。初版はcgroup
+      delegationやsystemd transient serviceを必要としない。
+    </p>
+    <p>
+      bubblewrapでuser/PID/network等の名前空間を分け、/usrと専用venv・runner・必要なfont/loader設定だけをread-onlyで見せる。home、LARM設定・モデル・store・socket、GPU
+      deviceを見せない。/procはhost
+      processを参照できない空directoryとする。環境変数はclearenvで消し、Control
+      credentialを継承しない。追加のOS利用者は今回作成しておらず、実行は名前空間内で分離する。
+    </p>
+    <p>
+      seccompは実行前にcapture用の内部threadへも同期適用し、fork/clone/exec、socket、ptrace/process_vm、namespace変更、mount、signalによる別process操作等を禁止する。memfd、System
+      V IPC、POSIX message queue、keyring操作等も禁止する。CPU
+      affinityは内部thread生成前に設定し、全threadを1
+      CPUに制限する。runnerのPython内の検査を任意コード全体への防壁とみなさず、hostでも受信量・成果物・timeout・終了を検査する。利用可能なsandboxを構成できなければ503で止め、hostでの無制限実行へfallbackしない。
+    </p>
+    <p>
+      共有CPU・memory帯域を利用する以上、既存推論への遅延増加ゼロとは説明しない。今回、LLM/TTSとの同時負荷SLO試験は実施していない。大量処理や追加の並列性が必要になった際は、cgroup等の合算制御を追加してから上限を広げる。
+    </p>
+  </section>
+
+  <section id="errors">
+    <h2>エラー</h2>
+    <p>
+      HTTP失敗はerror.code/message。400 invalid_request/limit_exceeded、401 unauthorized、404
+      not_found、409 request_conflict/artifact_not_ready、410 job_expired、429 queue_full、503
+      unavailable。status照会自体が成功した場合、実行失敗はHTTP 200のjob.errorで返す。
+    </p>
+    <p>
+      job.error.codeはtimeout、memory_exceeded、runtime_error、syntax_error、limit_exceeded、output_exceeded、unavailable、cancelled、queue_timeout。runtime/syntaxのmessageはtraceback末尾8
+      KiB以内。結果・code・入力・traceback・進捗を監査ログへ出さない。stdout/stderrは制限付きの認証済み結果にだけ保存する。
+    </p>
+  </section>
+
+  <section id="client">
+    <h2>Eumenes側の利用例</h2>
+    <p>
+      付属clientはLarmClient.computeに6操作を用意する。以下のrequestKeyはEumenesの永続tool実行記録から取得し、通信失敗時に新しいkeyへ変更して重複計算を起こさない。例はbackend内で実行する。成果物の返却はbackendが代行し、Bearer付きURLをLLMへ渡さない。
+    </p>
+    <pre><code>const client = new LarmClient({ baseUrl: controlOrigin, apiToken: controlToken });
+const environment = await client.compute.environment();
+const { jobId } = await client.compute.submit({
+  code: "import sympy as s\nx=s.Symbol('x')\nresult=str(s.integrate(s.sin(x), x))",
+  timeoutSec: 30,
+  accelerator: "cpu"
+}, requestKey);
+const job = await client.compute.get(jobId);
+// queued/runningなら、backendのジョブ追跡で数秒後に再照会する。
+// completedならjob.result.valueとartifactsを利用する。
+await client.compute.cancel(jobId); // 完成済み結果は維持する。
+// 明示的に清掃する場合だけclient.compute.delete(jobId)を呼ぶ。</code></pre>
+    <p>
+      GET
+      /v3/agent-profilesのservicesにcapability=compute.python.execute、protocol=larm.compute.v1、endpoint=/v1/compute、絶対url、descriptionを追加する。catalog閲覧で計算を開始しない。機能が有効かつprobe済みの場合だけ広告する。既存image/musicのserviceを維持し、Provider
+      claimのschema・credentialを計算用に拡張しない。
+    </p>
+  </section>
+
+  <section id="deployment">
+    <h2>導入と本番反映</h2>
+    <p>
+      必要なhost依存はbubblewrap、libseccomp.so.2、Linuxのuser
+      namespace、Python、準備用uv。今回のhostで専用venvをrepository外の/srv/ai/runtimes/larm-compute-cpuに準備した。依存lockには全packageのversionとhashを記録した。source
+      repositoryにvenv、binary、cache、実行結果を置かない。
+    </p>
+    <pre><code>bash deploy/local-node/scripts/prepare-compute-cpu.sh
+
+# 配備時に設定する値。ここでは未適用。
+LARM_COMPUTE_ENABLED=true
+LARM_COMPUTE_PUBLIC_ORIGIN=https://実際のControlのorigin
+LARM_COMPUTE_RUNTIME_ROOT=/srv/ai/runtimes/larm-compute-cpu
+LARM_COMPUTE_ROOT=/var/lib/larm/compute
+# LARM_API_TOKENは既存Controlの設定を利用する。</code></pre>
+    <p>
+      prepare
+      scriptはPython依存だけを準備し、サービス操作を行わない。既定ではcompute無効。ソースをreleaseへ含め、設定を適用した上でControlを再起動すると有効になる。再起動には添付依頼§6の事前許可が必要なため、今回は行っていない。既存inference
+      Providerの再起動は計算機能の導入手順に含めない。
+    </p>
+    <table>
+      <caption>
+        実機で確認した実行環境
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">版</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Python</th>
+          <td>3.14.4</td>
+        </tr>
+        <tr>
+          <th scope="row">NumPy / SciPy / SymPy</th>
+          <td>2.5.4 / 1.18.1 / 1.14.0</td>
+        </tr>
+        <tr>
+          <th scope="row">pandas / matplotlib</th>
+          <td>3.0.6 / 3.11.2</td>
+        </tr>
+        <tr>
+          <th scope="row">scikit-learn / statsmodels</th>
+          <td>1.9.1 / 0.15.0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      environmentRevisionはrunner・依存lock・実際のPython/package版から計算する。受理時と実行前に一致を確認する。Docker
+      imageやdigestは使用しない。
+    </p>
+  </section>
+
+  <section id="review">
+    <h2>コードレビューと修正</h2>
+    <p>
+      2026-10-20。実装を再レビューし、再現試験で確認した問題を修正した。以下の回帰試験を追加した。
+    </p>
+    <table>
+      <caption>
+        レビューで確認した問題と修正後の動作
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">優先度・問題</th>
+          <th scope="col">修正・確認</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">P1：内部threadへのCPU制限漏れ</th>
+          <td>affinity設定をthread生成前へ移動。全3 threadのCPU集合が1個であることを実機確認。</td>
+        </tr>
+        <tr>
+          <th scope="row">P1：作業領域を迂回するメモリ・書込先</th>
+          <td>
+            memfd・IPC等をseccompで拒否し、/dev本体をread-only化。小容量の安全な試行でmemfd、共有メモリ、/dev書込の拒否を実機確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P1：停止確認待ちの無期限化</th>
+          <td>
+            kill後2秒で終了を確認できなければfailed/unavailableとし、計算laneを停止。取消成功とは報告しない。daemon側のclose待ちも2.5秒で打ち切る。終了・pipe故障を模擬して確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P1：保存障害による非同期例外</th>
+          <td>
+            保守timer・実行予約・保存transactionの故障を捕捉してlaneを停止。部分成果物を公開せず、初期化失敗時のDB接続も閉じる。障害注入試験で確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P1：保存先のsymlinkによる別領域への作用</th>
+          <td>
+            既存祖先を含めて実pathを検査し、runtimeとの重複とrootを拒否。DBおよび補助ファイルのsymlinkを拒否。対象ファイルの内容・権限が保持されることを確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P2：大きい成果物frameの反復コピー</th>
+          <td>
+            分割受信を保持して行ごとに一度だけ結合。frame・総量・UTF-8・末尾を検査し、大きい分割frameで確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P2：削除後のtraceback残留と失敗結果の容量漏れ</th>
+          <td>
+            削除時にerrorも消去し、失敗・削除済み状態の容量もquotaに計上。永続storeの検査で確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P2：明示保存した図と自動保存名の衝突</th>
+          <td>
+            自動PNG名に空きsuffixを付け、出力前に件数上限を確認。両方の図が得られることを実機確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">P2：catalogの静的なcompute項目と名前衝突</th>
+          <td>
+            computeは利用可能な実行環境から生成。停止中は広告せず、既存service名がcomputeならcompute-python-1等へ変更。元のcatalog配列を変更しないことも確認。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      本レビューはCPU初版のソースと試験環境を対象とする。本番有効化、Eumenes実端末からの接続、他の推論と併用した際の遅延評価は引き続き未実施。
+    </p>
+  </section>
+
+  <section id="validation">
+    <h2>検証状況</h2>
+    <table>
+      <caption>
+        実機とfixtureの範囲を区別する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">方式</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">package環境、四則演算、積分、最適化、回帰、pandas、PNG</th>
+          <td>実機bubblewrap内のPython</td>
+          <td>通過。</td>
+        </tr>
+        <tr>
+          <th scope="row">network、hostの設定/model領域、GPU、root書込、fork/thread</th>
+          <td>実機sandboxからの試行</td>
+          <td>制限を確認。</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            timeout、巨大配列、stdout切詰め、取消、過大result/artifact、syntax error
+          </th>
+          <td>実機executor</td>
+          <td>通過。失敗・取消後の次の計算も成功。</td>
+        </tr>
+        <tr>
+          <th scope="row">投入→実計算→PNG取得→取消→削除・再送</th>
+          <td>HTTP handlerとclientを実機executorへ接続</td>
+          <td>通過。新しい待受serverは起動せず、Honoのrequest経由で検証。</td>
+        </tr>
+        <tr>
+          <th scope="row">NoNewPrivileges下の実行・親process死亡時の停止</th>
+          <td>setpriv経由の実機試験、executor親のSIGKILL後に子孫process消滅を確認</td>
+          <td>通過。</td>
+        </tr>
+        <tr>
+          <th scope="row">認証、v3 discovery、client操作</th>
+          <td>既存appとfake executorの統合試験</td>
+          <td>通過。Providerのstart/stop呼出なし。</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            状態競合、token別参照、永続再送、code/input消去、TTL、queue/storage quota、環境版変更
+          </th>
+          <td>永続storeとfixture executor</td>
+          <td>通過。</td>
+        </tr>
+        <tr>
+          <th scope="row">Eumenes実端末→稼働中Control</th>
+          <td>本番接続</td>
+          <td>未実施。配備・有効化前。</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM/TTS併用時の遅延SLO</th>
+          <td>実負荷比較</td>
+          <td>未実施。遅延ゼロを保証しない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      実機試験は10件通過。再現にはLARM_COMPUTE_TEST_RUNTIMEに準備済みvenvの絶対pathを指定し、packages/backends/src/compute/executor.live.test.tsとapps/daemon/src/compute/api.live.test.tsを実行する。通常のunit
+      suiteではこの環境変数を指定しない限り実機試験をskipする。実機試験も既存サービスを操作しない。
+    </p>
+  </section>
+</article>

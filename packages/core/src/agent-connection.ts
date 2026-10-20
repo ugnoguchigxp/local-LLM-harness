@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { computeServiceSchema } from "./compute";
 import { chatInputContractSchema, type ChatInputPolicy } from "./chat-input";
 import { deploymentPolicySchema } from "./api-schema";
 import { embeddingSpaceSchema, type EmbeddingSpace } from "./embedding";
@@ -190,7 +191,7 @@ const agentCompatibilityAliasYamlSchema = z.object({
   providerCapabilities: z.record(agentIdentifierSchema, agentIdentifierSchema).default({}),
 }).strict();
 
-export const agentProfileServiceSchema = z.object({
+const agentMediaServiceSchema = z.object({
   name: agentIdentifierSchema,
   capability: agentIdentifierSchema,
   protocol: z.enum(["larm.image-generation.v1", "larm.music-generation.v1"]),
@@ -207,6 +208,8 @@ export const agentProfileServiceSchema = z.object({
     context.addIssue({ code: "custom", path: ["endpoint"], message: "endpoint must match protocol" });
   }
 });
+
+export const agentProfileServiceSchema = z.union([agentMediaServiceSchema, computeServiceSchema]);
 
 const agentProfileSelectorYamlSchema = z.object({
   agentProfile: agentIdentifierSchema,
@@ -785,7 +788,7 @@ export const publicAgentProfileListV3Schema = z.object({
         });
       }
     })).min(1).max(8),
-    services: z.array(agentProfileServiceSchema).max(8),
+    services: z.array(agentProfileServiceSchema).max(9),
   }).strict()),
   audiences: z.array(agentIdentifierSchema),
 }).strict().superRefine((value, context) => {

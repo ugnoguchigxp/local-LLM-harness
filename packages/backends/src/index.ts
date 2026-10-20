@@ -97,3 +97,4 @@ export * from "./chat-input-tokenizer";
 export { LocalUsageRetentionStore, type UsageRetentionSnapshot } from "./usage-retention-store";
 export * from "./linux-monitoring";
 export * from "./kernel-monitoring";
+export { LinuxCpuComputeExecutor } from "./compute/executor";

@@ -55,6 +55,16 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.configDir).toBe("/workspace/config/local-node");
 });
 
+test("CPU compute is opt-in and requires authenticated origin and disjoint dedicated directories", () => {
+  expect(parseDaemonConfig({}).computeEnabled).toBe(false);
+  expect(() => parseDaemonConfig({ LARM_COMPUTE_ENABLED: "true" })).toThrow("LARM_API_TOKEN");
+  const env = { LARM_COMPUTE_ENABLED: "true", LARM_API_TOKEN: "compute-test-token", LARM_COMPUTE_PUBLIC_ORIGIN: "https://control.example.invalid" };
+  expect(parseDaemonConfig(env).computeEnabled).toBe(true);
+  expect(() => parseDaemonConfig({ ...env, LARM_COMPUTE_PUBLIC_ORIGIN: "https://control.example.invalid/path" })).toThrow("origin");
+  expect(() => parseDaemonConfig({ ...env, LARM_COMPUTE_ROOT: "/srv/ai/runtimes/larm-compute-cpu/data" })).toThrow("disjoint");
+  expect(() => parseDaemonConfig({ ...env, LARM_COMPUTE_RUNTIME_ROOT: "/" })).toThrow("disjoint");
+});
+
 test("daemon configuration rejects invalid numbers", () => {
   expect(() => parseDaemonConfig({ LARM_PORT: "NaN" })).toThrow(/LARM_PORT/);
   expect(() => parseDaemonConfig({ LARM_PORT: "70000" })).toThrow(/LARM_PORT/);

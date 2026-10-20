@@ -50,6 +50,8 @@ import { RoutedMusicProvider } from "./music-routing";
 import { StableAudioMusicProvider } from "./stable-audio-provider";
 import { ImageArtifactManager } from "./image-artifact-manager";
 import { ImageGenerationProvider } from "./image-generation-provider";
+import { ComputeManager } from "./compute/manager";
+import { LinuxCpuComputeExecutor } from "@larm/backends";
 
 const config = parseDaemonConfig();
 const catalogGeneration = loadCatalogGeneration({
@@ -405,7 +407,27 @@ const imageGenerationProvider = imageEndpoint
   ? new ImageGenerationProvider(imageEndpoint, mediaVariants, fetch,
     async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin(), (id, state, reason) => monitoring.media("image", id, state, reason))
   : undefined;
+let computeManager: ComputeManager | undefined;
+if (config.computeEnabled) {
+  try {
+    computeManager = new ComputeManager({ root: config.computeRoot,
+      executor: new LinuxCpuComputeExecutor({ runtimeRoot: config.computeRuntimeRoot,
+        stateRoot: config.computeRoot,
+        runner: new URL("../../compute-cpu/runner.py", import.meta.url).pathname,
+        requirements: new URL("../../compute-cpu/requirements.txt", import.meta.url).pathname,
+      }),
+    });
+    await computeManager.initialize();
+  } catch {
+    await computeManager?.close().catch(() => undefined);
+    computeManager = undefined;
+    console.warn("CPU compute unavailable: initialization_failed");
+  }
+}
+
 const appComponents = createAppComponents({
+  computeManager,
+  computePublicOrigin: config.computePublicOrigin,
   monitoring,
   observability,
   registry,
@@ -646,6 +668,7 @@ async function shutdown(signal: string): Promise<void> {
   contextController.beginDrain();
   mutationCoordinator.beginDrain();
   await localServiceManager?.close();
+  await computeManager?.close();
   artifactManager.beginDrain();
   executionGate.beginDrain();
   clearInterval(interval);

@@ -63,6 +63,9 @@ import { registerImageArtifactRoutes } from "./routes/image-artifacts";
 import { registerImageImportRoutes } from "./routes/image-imports";
 import { registerImageGenerationRoutes } from "./routes/image-generations";
 import { registerMusicRoutes } from "./routes/music";
+import { registerComputeRoutes } from "./routes/compute";
+import { computeService } from "@larm/core";
+import { ComputeError } from "@larm/core";
 import { registerAllocationRoutes } from "./routes/allocations";
 import { registerAgentConnectionRoutes } from "./routes/agent-connections";
 import { registerLegacyControlRoutes } from "./routes/legacy-control";
@@ -151,6 +154,10 @@ export function createAppComponents(deps: AppDeps) {
     readiness: deps.getGatewayReadiness, music: deps.musicManager !== undefined, image: deps.imageGenerationProvider !== undefined });
 
   app.onError((err, c) => {
+    if (err instanceof ComputeError) {
+      if (err.status === 429 || err.status === 503) c.header("retry-after", "5");
+      return c.json(errorBody(err.code, err.message), err.status);
+    }
     if (err instanceof DecisionError) return c.json(errorBody(err.code, err.code), err.status);
     if (err instanceof UsageProtectionError) {
       deps.monitoring?.capture({ name: "monitoring_request_rejected", labels: { reason: err.code } });
@@ -400,7 +407,8 @@ export function createAppComponents(deps: AppDeps) {
     personalStateMaxSourceBytes: deps.personalStateMaxSourceBytes ?? 256 * 1024 * 1024,
   });
 
-  registerAgentProfileRoutes(app, deps, agentFeature, agentResult);
+  registerAgentProfileRoutes(app, { ...deps, compute: () => deps.computeManager?.available && deps.computePublicOrigin ? computeService(deps.computePublicOrigin) : undefined }, agentFeature, agentResult);
+  registerComputeRoutes(app, { manager: deps.computeManager, apiToken: deps.apiToken, protectedToken: deps.protectedConsumerToken });
 
   registerAgentConnectionRoutes(app, {
     protectedConsumerToken: deps.protectedConsumerToken,

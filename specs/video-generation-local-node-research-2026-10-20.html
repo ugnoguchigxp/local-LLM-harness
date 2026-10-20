@@ -1,0 +1,381 @@
+<article lang="ja">
+  <h1>Radeon 8060S搭載PCでの動画生成モデル適用調査</h1>
+  <p>
+    調査日：2026年10月20日。実機の読み取り専用確認と一次資料の調査を行った。
+    本稿の調査段階では動画モデルの取得・インストール・生成試験・LARM登録は実施していない。
+    ここでの推薦は試験の優先順位であり、このPCでの生成速度や品質を実証したものではない。
+    同日の後続作業で2Bの導入と4本の生成を完了した結果は、
+    <a href="./ltx-video-2b-local-trial-2026-10-20.html">20秒・250フレーム以内の実機試験</a
+    >に記録した。
+    以下の未検証という記述は導入前の調査時点を示し、実測値・制約は後続の試験記録を参照する。
+  </p>
+  <section id="conclusion">
+    <h2>結論</h2>
+    <p>
+      <strong>実機試験後の採否：LTX-Video 2B distilledは不採用。</strong>
+      2026年10月20日に20秒の動画を4本生成したが、利用者は全て品質不足と判断した。
+      形状の保持、静止指示への追従、細部品質が参考動画・下書きとしての要求にも届かず、
+      軽さや生成時間だけでは採用しない。2BのProvider化と追加試験は進めない。
+      他のモデルの採否は未決定であり、自動的に次候補を導入する判断ではない。
+    </p>
+    <p>
+      導入前の調査では、軽さ優先の試験候補を<strong>LTX-Video 2B v0.9.8 distilled</strong>とした。
+      以下の候補順位と試験案は当時の検討経緯として残し、現行の推薦とは区別する。
+      最新の品質・音声同時生成を重視する場合は<strong>LTX-2.5 22B distilled</strong
+      >を第二段階で評価する。 Wan2.2 TI2V-5BとHunyuanVideo-1.5の480p I2V
+      step-distilledも比較候補とする。
+    </p>
+    <p>
+      128GB共有メモリは大きな利点だが、容量に収まることと快適に生成できることは別である。
+      同型GPUのAMD公式試験では、Wan2.2の14B二専門家構成に4-step LoRAを使っても
+      640×640・81フレームの生成に定常26分51秒を要した。
+      数十秒で高解像度動画を繰り返し作る用途に、このPCが十分かどうかを保証する根拠はない。
+    </p>
+  </section>
+  <section id="host">
+    <h2>このPCで確認した条件</h2>
+    <table>
+      <caption>
+        2026年10月20日の読み取り専用観測
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">確認値と意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">CPU・GPU</th>
+          <td>Ryzen AI MAX+ 395、16コア32スレッド。Radeon 8060S、ROCmはgfx1151を認識。</td>
+        </tr>
+        <tr>
+          <th scope="row">OS</th>
+          <td>Ubuntu 26.04.1 LTS、kernel 7.0.0-34-generic。</td>
+        </tr>
+        <tr>
+          <th scope="row">メモリ</th>
+          <td>
+            構成128GB、OS表示121GiB。観測時53GiB使用、available 68GiB。swapは8GiB中7.4GiB使用。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GPUメモリ表示</th>
+          <td>
+            VRAM
+            2GiB、GTT上限100GiB、GTT使用約47GiB。共有メモリ機のためVRAM表示2GiBだけでモデルが入らないとは判断しない。GTT上限は空き容量でも単一tensorの確保保証でもない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">競合</th>
+          <td>
+            観測時GPU使用率100%。一時点の実行状態であり、構成異常や特定モデルの常駐必須を意味しない。単独性能と既存Provider競合時の性能を分ける必要がある。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ディスク</th>
+          <td>
+            /srv/aiを含むfilesystemの空き約821GiB。モデルとruntimeはsource
+            repository外へ配置できる。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      確認にはlscpu、free、df、os-release、uname、lspci、rocminfo、rocm-smiとsysfsを使用した。
+      新しいGPU負荷試験は行っていない。既存の
+      <a href="./qwen-image-2.1-local-evaluation.html">Qwen-Image評価</a>にはPyTorch/ROCmのGPU VAE
+      decodeで NaN・縞が発生し、CPU FP32 decodeで正常化した記録がある。一方、
+      <a href="./qwen-image-2.1-turbo-benchmark.html">native HIPの後続評価</a
+      >では正常なGPU画像を確認済み。
+      したがってGPU全般の不良や動画VAEの失敗を断定せず、選んだruntimeとVAEの組合せを確認する。
+    </p>
+  </section>
+  <section id="candidates">
+    <h2>比較候補</h2>
+    <table>
+      <caption>
+        実機生成未検証の候補と試す順序
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">公式資料から分かること</th>
+          <th scope="col">このPCへの評価</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LTX-Video 2B v0.9.8 distilled</th>
+          <td>
+            小型の蒸留モデル。公式は低メモリ・高速生成向けに位置付ける。画像・テキスト条件の動画生成に対応。公式設定はBF16、低解像度と高解像度の二段階処理。
+          </td>
+          <td>
+            軽さ優先の第一候補。2Bは生成器の規模で、text
+            encoder・VAE・中間tensorを含む総メモリではない。旧世代のため人物・細部・大きな動きの品質は確認が必要。8060Sでの秒数は未確定。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LTX-2.5 22B distilled</th>
+          <td>
+            現行公式推奨系列。音声と動画の同時生成、テキスト・画像からの生成。公式には8-stepの蒸留構成があり、Pythonの二段階pipelineは8＋4
+            steps。標準BF16部品一式の取得量は約66GiB。
+          </td>
+          <td>
+            品質と音声を求める場合の候補。取得量は実行時peakではなく、観測時available
+            68GiBでの共存を保証しない。最初から高解像度DFRを選ばず、短尺・低解像度・軽いconv
+            VAEで評価する。快適さは未検証。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Wan2.2 TI2V-5B</th>
+          <td>
+            単一5Bモデルでテキスト・画像から720p・24fps動画。公式offload構成は24GB以上のGPUを対象。公式の5秒720p・9分未満という値は他のGPUでの値。
+          </td>
+          <td>
+            容量面では有望だが、標準720p生成を速いと見なさない。まず低解像度・短尺の動作確認から始める。公式速度を8060Sへ換算しない。14B二専門家モデルとは区別する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">HunyuanVideo-1.5 480p I2V step-distilled</th>
+          <td>
+            8.3B、画像から動画を生成する蒸留版は8または12 stepsを推奨。公式はRTX
+            4090で75秒以内と報告。
+          </td>
+          <td>
+            画像を動かす用途の比較候補。4090の時間は当機の予測値にしない。通常のCFG-distilled版は50
+            stepsであり、step-distilled版を明示選択する。AMDで同じ最適化が使えるとは限らない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LTX-Videoの旧2BとLTX-2.5の22Bは別の世代・モデルであり、名前の近さで重みやVAEを交換しない。
+      上記の速度優先順位はモデル規模・蒸留・対応経路からの評価仮説で、同条件の実測ランキングではない。
+    </p>
+  </section>
+  <section id="deprioritized">
+    <h2>快適さ重視では後回しにする候補</h2>
+    <ul>
+      <li>
+        Wan2.2 A14B：AMD公式の同型395／8060S／128GB、Windows ROCm試験で、640×640・81 frames・4
+        stepsがcold 36分14秒、warm
+        26分51秒、peak約42GB。Linux上の当機の時間ではないが、容量だけで快適と判断できない強い根拠となる。
+      </li>
+      <li>
+        Wan2.1 T2V-1.3B：小型だが、公式でもRTX
+        4090で5秒480pに約4分。必要メモリ8.19GBの小ささだけで速度優先の第一候補にしない。
+      </li>
+      <li>
+        Helios
+        14B：研究のリアルタイム19.5fpsはH100での値。8060Sでの同等性能を示す根拠として使わない。
+      </li>
+      <li>
+        LTX-2.3／旧LTX
+        13B：新規導入では2Bの軽さと2.5の品質を先に比較する。選択したbackendとの相性が悪い場合の代替に残す。
+      </li>
+    </ul>
+  </section>
+  <section id="runtime">
+    <h2>実行環境と次の最小試験案</h2>
+    <p>
+      LTX-Video 2Bは既存serviceと分離したComfyUIまたは公式Python runtimeで試す。
+      AMDにはROCmを使った旧LTX-Video 2Bの公式Linuxチュートリアルがあるが、対象はv0.9.5であり、
+      v0.9.8 distilledと当機での動作保証ではない。既存ProviderのPython環境を更新せず、
+      gfx1151対応PyTorchと依存関係を専用環境に固定する。
+    </p>
+    <p>
+      Wan系とLTX-2.5にはstable-diffusion.cppのVulkan経路もある。 ただし同projectのLTX-2.5はconv
+      VAEを要求し、新しいdiffusion decoderは未実装。
+      蒸留scheduleの再現、対応部品、出力品質を別途確認する。 16GBの別AMD GPU・Windows
+      Vulkanでは最近の版の動画メモリ管理に回帰報告もあるため、
+      対応モデル一覧だけで採用せず、試験したrevisionを記録する。旧LTX-Video
+      2Bへの対応はこの経路から推定しない。
+    </p>
+    <ol>
+      <li>
+        LTX-Video 2B
+        distilled、BF16、画像1枚、512×320、49フレーム・24fps（約2秒）、同時生成1件を開始条件とする。これは試験提案で、公式品質推奨解像度ではない。拡大・補間・prompt自動拡張は初回比較から外す。
+      </li>
+      <li>
+        cold 1回とwarm 3回を分け、モデル読込、text encoder、denoise、VAE
+        decode、動画保存、総時間、peak
+        memoryを記録する。最初・中間・最後のフレームと動画全体で黒画面・NaN・縞・静止・ちらつき・人物の変形を確認する。
+      </li>
+      <li>
+        暫定目標をwarmで約2秒のpreviewが60秒以内、品質確認用の約5秒clipが5分以内と置く。これは利用者が指定した要件でも達成予測でもなく、快適さを測るための提案基準。
+      </li>
+      <li>
+        成立したら768×512・121フレーム程度へ拡大し、同じ入力でLTX-2.5やHunyuanの蒸留版と比較する。モデル固有の解像度・フレーム・schedule制約に合わせる。
+      </li>
+      <li>
+        GPU VAEに異常が出た場合は選択したbackendの既知問題を切り分ける。CPU
+        decodeを比較経路にできるが、動画ではCPU処理が長くなり得るため、その総時間を含めて採否を判断する。
+      </li>
+      <li>
+        LARM統合時は要求Agent ProfileとProvider
+        subsetからroute・runtime・backendを解決し、生成待ち行列、取消、idle停止、メモリとGPU競合を評価する。現在動いているLLMを固定の前提にせず、既存workloadを勝手に停止しない。
+      </li>
+    </ol>
+    <p>
+      モデル重みは<code>/srv/ai/models</code>、専用runtimeは<code>/srv/ai/apps</code>、
+      出力と計測結果は<code>/srv/ai/data</code>などsource外へ置く。
+      本調査では配備やサービス状態を変更していない。
+    </p>
+  </section>
+  <section id="ltx-2b-coexistence">
+    <h2>LTX-Video 2Bと既存LLMの共存見込み</h2>
+    <p>
+      追加調査で、v0.9.8 distilledの通常checkpoint配布量は6.34GB、空間upscalerは505MBと確認した。
+      公式設定のPixArt text encoderの配布量は2 shard合計約19.05GB。
+      このencoderをBF16で読み込む場合の重みは単純換算で約9.5GBとなり、
+      checkpointとupscalerを合わせた重み規模は概算16GB程度となる。
+      これは配布量とdtypeに基づく見積もりであり、実機のpeak memoryではない。
+      loaderの一時コピー、中間tensor、VAE
+      decode、allocator、任意のprompt拡張モデルは別に必要となる。
+    </p>
+    <p>
+      追加確認時点のavailableは約67GiBで、短尺・低解像度・同時生成1件なら、
+      現在のLLMを読み込んだまま2Bモデルを使える容量面の見込みはLTX-2.5より高い。
+      一方、GPU使用率は観測時100%であり、LLMと動画の同時推論が快適かは判断できない。
+      LLMはロードしたまま動画を空き時間に逐次実行する条件から試し、
+      同時生成時は要求Profileに解決されるruntimeのcontext・slot・KV cacheと動画のpeakを含めて測る。
+      LLMの追加ロードやcontext拡大後も同じ余裕が続くとは見なさない。
+    </p>
+    <p>
+      根拠は<a href="https://huggingface.co/Lightricks/LTX-Video/tree/main"
+        >公式checkpoint配布一覧</a
+      >、
+      <a href="https://huggingface.co/PixArt-alpha/PixArt-XL-2-1024-MS/tree/main/text_encoder"
+        >公式設定が参照するtext encoderの配布一覧</a
+      >、 および上記公式設定。実機動画生成と速度計測は引き続き未実施。
+    </p>
+  </section>
+  <section id="duration">
+    <h2>30秒動画を作る場合</h2>
+    <p>
+      最初の約2秒という提案は動作確認の長さであり、モデルの生成上限ではない。
+      30秒の完成動画は、例えば約5秒のclipを6本生成して編集する構成で計画できる。
+      一続きの動作を保つ30秒を求める場合は、短い生成結果の末尾を条件にして延長する方法を検証する。
+      独立生成したclipの単純連結では、人物・背景・動きの連続性は保証されない。
+    </p>
+    <p>
+      公式モデルカードは257フレーム未満での利用を得意範囲として記載しており、24fps換算で約10秒程度に相当する。
+      これはhard
+      limitではないが、30秒・24fpsの約720フレームを2Bで一括生成する品質・速度・メモリの保証にはならない。
+      公式repositoryの最大60秒という発表はLTXV-13Bのlong
+      shotとして記載されているため、2Bへそのまま適用しない。
+      また、モデルの重みが一定でも、長尺化すると中間tensor・attention・decodeの負荷が増える。
+      約16GBという重みの見積もりから、30秒一括生成の実行時peakを推定しない。
+    </p>
+    <p>
+      根拠：<a href="https://huggingface.co/Lightricks/LTX-Video">公式モデルカードのGeneral tips</a
+      >、
+      <a href="https://github.com/Lightricks/LTX-Video"
+        >公式repositoryの2025年7月16日発表とvideo extensionの説明</a
+      >。 当機での2Bの延長workflow、30秒一括生成、clip間の連続性、総生成時間は未検証。
+      30秒を目標にする場合も、最初は短尺の単独試験で必要メモリ・速度・品質を測り、分割構成から拡大する。
+    </p>
+  </section>
+  <section id="adaptive-fps">
+    <h2>静と動に応じたフレーム配分</h2>
+    <p>
+      静かな区間は少ない生成フレームや静止画保持、動きの大きい区間は多い生成フレームとする構成は可能。
+      LTX-Video公式pipelineは1回の呼び出しにつき単一のframe_rateを受け取るため、
+      内容を見て途中で自動的にFPSを切り替える標準機能があるとは扱わない。
+      シーンを先に分けて生成条件を変え、編集で接続する方法を試験案とする。
+      例えば静かな20秒を12fps、動きのある10秒を24fpsで設計すると、
+      元の生成フレームの目標は合計480枚で、全30秒を24fpsの720枚で作る場合より約33%少ない。
+      実際にはモデルのフレーム数制約、接続用重複と低FPSでの品質を考慮する。 生成時間やpeak
+      memoryが同じ比率で減るとの予測ではない。
+    </p>
+    <p>
+      最終動画は24fpsに統一し、静かな区間のフレームを繰り返して元の尺を維持できる。
+      これはフレーム補間で滑らかにする方法とは異なり、静と動の質感を残せる。
+      可変FPSでの保存も可能だが、まずは固定FPSの納品動画を使う案とする。
+      生成後にフレームを削るだけでは元の生成計算は減らない。
+      低FPSは動作速度を遅くする指示ではないため、静かな動作・間・カメラ固定をpromptと尺でも指定する。
+      被写体が静止していても、カメラが動く区間はフレーム数が必要になる。
+    </p>
+    <p>
+      根拠：<a
+        href="https://raw.githubusercontent.com/Lightricks/LTX-Video/main/ltx_video/pipelines/pipeline_ltx_video.py"
+        >LTX-Video公式pipelineのframe_rate引数と時間座標処理</a
+      >、
+      <a href="https://ffmpeg.org/ffmpeg.html#Advanced-options"
+        >FFmpeg公式のfps_mode、CFRとVFRの説明</a
+      >。 低FPSの2B生成と接続品質の実機検証は未実施。
+    </p>
+  </section>
+  <section id="previsualization">
+    <h2>高品質モデルへの参考にする試作工程</h2>
+    <p>
+      この節は導入前の案。実機で生成した4本に対する利用者の品質判断により、 LTX-Video
+      2Bをこの試作工程へ採用する案は見送った。
+    </p>
+    <p>
+      2Bを構図・尺・カット割り・静と動の切替を確認する仮動画の生成器として使い、
+      納得したシーンを高品質モデルで生成し直す構成を検討する。
+      引継ぎ用に各シーンの秒数、prompt、被写体とカメラの動き、静止の間、参照画像、開始・終了のkeyframeを残す。
+      2Bの出力は実現したい演出の参考であり、高品質モデルの画質・複雑な動作・生成速度の予測には使わない。
+      2B固有のseedやsampling設定で同じ映像を別モデルに再現できるとは扱わない。
+    </p>
+    <p>
+      参考動画を直接条件として渡せるかは、後段モデルとworkflowの動画入力・動きの制御への対応次第。
+      対応しない場合も、参照画像・keyframe・promptとシーン表を渡せる。
+      低FPS区間を含む仮動画は意図した尺を維持して24fpsなどにそろえる。
+      ただし後段で仮動画のコマ送り感や生成破綻を模倣する場合があるため、
+      保ちたいものが動作速度なのか更新頻度なのかを区別し、参照としての強さを検証する。
+      当機での試作生成と高品質モデルへの引継ぎは未実施。
+    </p>
+  </section>
+  <section id="sources">
+    <h2>一次資料</h2>
+    <p>以下は2026年10月20日閲覧。公開速度は記載されたGPU・OS・設定での値として扱う。</p>
+    <ul>
+      <li>
+        <a href="https://huggingface.co/Lightricks/LTX-Video">LTX-Video公式モデルカード</a>と<a
+          href="https://raw.githubusercontent.com/Lightricks/LTX-Video/main/configs/ltxv-2b-0.9.8-distilled.yaml"
+          >2B v0.9.8 distilled公式設定</a
+        >。
+      </li>
+      <li>
+        <a href="https://github.com/Lightricks/LTX-2">LTX-2公式runtime・2.5推奨構成</a>と<a
+          href="https://huggingface.co/Lightricks/LTX-2.5"
+          >LTX-2.5公式配布</a
+        >。配布アクセスには条件への同意が必要で、重みの取得は未実施。
+      </li>
+      <li>
+        <a
+          href="https://rocm.docs.amd.com/projects/ai-developer-hub/en/v12.0/notebooks/inference/t2v_comfyui_radeon.html"
+          >AMD公式：LinuxのLTX-Video 2B v0.9.5チュートリアル</a
+        >。
+      </li>
+      <li>
+        <a href="https://rocm.blogs.amd.com/artificial-intelligence/comfyui-windows/README.html"
+          >AMD公式：395／8060SでのWan2.2実測、2026年7月14日</a
+        >。
+      </li>
+      <li>
+        <a href="https://github.com/Wan-Video/Wan2.2">Wan2.2公式</a>と<a
+          href="https://github.com/Wan-Video/Wan2.1"
+          >Wan2.1公式</a
+        >。
+      </li>
+      <li>
+        <a href="https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5"
+          >HunyuanVideo-1.5公式：480p I2V step-distilled</a
+        >。
+      </li>
+      <li><a href="https://arxiv.org/abs/2603.04379">Helios論文</a>。</li>
+      <li>
+        <a href="https://github.com/leejet/stable-diffusion.cpp">stable-diffusion.cpp対応一覧</a
+        >、<a href="https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/ltx2.md"
+          >LTX-2.5部品制約</a
+        >、<a href="https://github.com/leejet/stable-diffusion.cpp/issues/1976"
+          >別機種Vulkanでの回帰再現報告</a
+        >。
+      </li>
+    </ul>
+  </section>
+</article>

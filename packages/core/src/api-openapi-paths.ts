@@ -9,6 +9,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
     const monitoring = path.startsWith("/v1/monitoring/");
     const successSchema = SUCCESS_SCHEMA_BY_OPERATION[operationId];
     const requestSchema = (() => {
+      if (operationId === "createComputeJob") return "ComputeRequest";
       if (operationId === "ensureLocalService") return "LocalServiceLeaseRequest";
       if (operationId === "renewLocalServiceLease") return "LocalServiceRenewRequest";
       if (operationId === "stopLocalService") return "LocalServiceStopRequest";
@@ -74,6 +75,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       || operationId === "createContextForgetOperation"
       || operationId === "getContextForgetOperation";
     const successContent = (() => {
+      if (operationId === "getComputeArtifact") return Object.fromEntries(["image/png", "image/svg+xml", "text/csv", "application/json"].map(mime => [mime, { schema: { $ref: "#/components/schemas/Binary" } }]));
       if (operationId === "getMetrics") {
         return { "text/plain": { schema: { $ref: "#/components/schemas/Metrics" } } };
       }
@@ -141,6 +143,14 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
     paths[path] ??= {};
     paths[path]![method] = {
       operationId,
+      ...(path.startsWith("/v1/compute/") ? {
+        description: "CPU-only Python calculation. Control Bearer required, no Provider claim. One job, 1 CPU, 60s maximum, 2GiB address space; no network, GPU, child processes or user-created threads. Idempotency is scoped to the Control token. Results expire 24h after terminal state; deleted receipts remain until 7 days after admission. No automatic POST retries. DELETE cancels active work or deletes terminal results; POST cancel preserves completed results.",
+        parameters: [
+          ...[...path.matchAll(/\{([^}]+)\}/g)].map(m => ({ name: m[1], in: "path", required: true, schema: { type: "string", format: "uuid" } })),
+          ...(operationId === "createComputeJob" ? [{ name: "Idempotency-Key", in: "header", required: true,
+            schema: { type: "string", pattern: "^[A-Za-z0-9._:-]{1,128}$" } }] : []),
+        ],
+      } : {}),
       ...(operationId === "importImageArtifact" ? {
         description: `Import one static WebP without re-encoding or metadata rewriting. Image limit ${IMAGE_IMPORT_MAX_BYTES} bytes; multipart body limit ${IMAGE_IMPORT_MAX_BODY_BYTES} bytes; maximum 2000 pixels per axis and 4,000,000 pixels. Fully decodes for validation. Does not invoke a model. Requires configured Control Bearer authentication even in anonymous development mode. UUID key is scoped to the authenticated token; identical bytes and MIME type replay the same artifact, independent of multipart boundary and filename. Different content returns 409. Receipts persist indefinitely across restart; deleted artifacts return 410 and are never recreated by the same key. Failures recorded after admission are terminal: query the receipt, then use a new UUID for an intentional retry. Before admission, 404 permits retry with the same key and content. Import capacity failures do not evict existing images. Journal capped at 64 MiB; exhaustion rejects new keys with 507. Identity content encoding only.`,
         parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string", format: "uuid" } }],
@@ -357,6 +367,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
           "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } },
         } }])) : {}),
         ...Object.fromEntries(SUCCESS_STATUSES_BY_OPERATION[operationId].map((status) => [status, success])),
+        ...(operationId === "deleteComputeJob" ? { "204": { description: "Terminal calculation and artifacts deleted" } } : {}),
         ...(operationId === "getReadiness"
           ? { "503": { description: "Not ready", content: successContent } }
           : {}),

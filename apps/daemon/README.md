@@ -2,6 +2,12 @@
 
 Linux Runtimeを観測・制御するLARM daemonです。既定で `config/local-node` を読み、SystemdBackendとLlamaSwapBackendへRuntime単位でルーティングします。
 
+## CPU compute
+
+CPU計算は独立したドメインで、`/v1/compute` に環境確認・投入・状態・取消・削除・成果物取得の6操作を提供します。Control Bearer必須、同時1件、最大60秒、CPU 1コアです。Dockerは使わず、bubblewrap・seccomp・address space上限で実行を制限します。NumPy・SciPy・SymPy・pandas・matplotlib・scikit-learn・statsmodelsを使えます。GPU・子process・利用者threadは使用できません。
+
+既定では無効です。`bash deploy/local-node/scripts/prepare-compute-cpu.sh` でrepository外にPython環境を用意し、配備時に `LARM_COMPUTE_ENABLED=true`、`LARM_COMPUTE_PUBLIC_ORIGIN`、専用の `LARM_COMPUTE_ROOT` と `LARM_COMPUTE_RUNTIME_ROOT` を設定します。準備scriptはサービスを操作しません。API・上限・Eumenes clientの例と配備状況は[CPU計算API契約](../../specs/eumenes-cpu-compute-api-2026-10-20.html)を参照してください。
+
 ## Read-only monitoring
 
 `GET /v1/monitoring/snapshot` と `GET /v1/monitoring/events` は、保存済みのCore・CPU・Memory・GPU計測と直近10分の出来事を返します。監視のGETはモデル起動、Connection作成、claim、lease更新、追加health probeを行いません。

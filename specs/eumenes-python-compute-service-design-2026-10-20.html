@@ -1,0 +1,829 @@
+<article lang="ja">
+  <h1>Eumenes向けPython計算サービス：HTTP API・MCP・資源調停の設計案</h1>
+  <aside>
+    <p>
+      後続の依頼によりCPU限定版を実装した。初版の現行契約は<a
+        href="./eumenes-cpu-compute-api-2026-10-20.html"
+        >CPU計算API v1</a
+      >を参照する。本書のDocker・GPU・長時間実行・並列数は将来案であり、CPU初版の実装値ではない。
+    </p>
+  </aside>
+  <p>
+    2026-10-20。目的はEumenesのtoolチェーンから計算資源をAPIまたはMCPで利用すること。添付依頼と既存sourceを確認した。本書は<strong>実装前の提案</strong>であり、公開済みAPIの確定仕様ではない。今回の成果は設計書と資料一覧への登録。サービス操作、コンテナ実行、image取得、配備、commit、pushは行っていない。
+  </p>
+
+  <section id="decision">
+    <h2>推奨構成</h2>
+    <p>
+      <strong>LARMの非同期HTTP Job APIを本体とし、MCPは同じAPIへの薄いadapterにする。</strong
+      >ジョブ保存、資源上限、取消、成果物、保持期間を一元化する。Eumenes
+      backendはcatalogで発見したAPIを直接利用し、他のMCPクライアントには同じAPIを包む窓口を提供できる。
+    </p>
+    <figure>
+      <pre>Eumenesのエージェント
+  ├─ calculate：制限付き数式の即時計算
+  └─ Pythonツール：コードとJSON入力
+       ├─ Eumenes backend → Control HTTP API
+       └─ MCP adapter     → 同じControl HTTP API
+                              ↓
+                     永続Job Store・資源admission
+                              ↓
+                     ホスト側Compute Supervisor
+                              ↓
+                 ジョブごとのrootlessコンテナ
+                   CPU枠 / 検証後に追加するGPU枠</pre>
+      <figcaption>
+        Control Bearerはbackendまたはadapterだけが保持し、LLMと計算コンテナには渡さない。
+      </figcaption>
+    </figure>
+    <table>
+      <caption>
+        計算の種類と担当
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">種類</th>
+          <th scope="col">用途</th>
+          <th scope="col">実行方針</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">calculate</th>
+          <td>四則演算など小さな確定的数式</td>
+          <td>Eumenes側の制限付きparser。任意Pythonやshellの権限を持たせない。</td>
+        </tr>
+        <tr>
+          <th scope="row">Python CPU</th>
+          <td>SymPy、SciPy、統計、pandas、scikit-learn、作図、小規模PyTorch</td>
+          <td>初期提供範囲。最大2ジョブ、各ジョブに時間・CPU・メモリ上限。</td>
+        </tr>
+        <tr>
+          <th scope="row">Python GPU</th>
+          <td>ROCm版PyTorchの学習など</td>
+          <td>同時1ジョブ。推論優先の調停と実機検証を通過してから公開。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Terminal経由の実行は運用者の調査用として残せるが、エージェントには構造化したツールを提供する。1時間の処理を1本のHTTP要求やMCP
+      tool callで待ち続けず、投入時にjobIdを返して後から照会する。MCP
+      Tasks拡張は対応クライアント向けの追加機能とし、基本経路はsubmit/status/cancelで成立させる。
+    </p>
+  </section>
+
+  <section id="baseline">
+    <h2>確認した事実と前提の補正</h2>
+    <p>
+      調査したHEADは<code>c1b10d831501626a1fefb99f5e6d0c1bc3f84f93</code>。音楽サービス等の未コミット変更がある作業ツリーを読み取り確認した。下記はこのsourceと確認時点のhostの事実であり、本番配備の一致を示さない。
+    </p>
+    <table>
+      <caption>
+        設計に反映する確認結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">確認結果</th>
+          <th scope="col">設計への反映</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">catalog schema</th>
+          <td>
+            agentProfileServiceSchemaはimage/musicのprotocol・endpointのみを許可し、modelが必須。
+          </td>
+          <td>computeは独立したschema分岐にし、Python環境を架空のLLM modelに見立てない。</td>
+        </tr>
+        <tr>
+          <th scope="row">v3 services</th>
+          <td>
+            listProfilesV3はselectorのservicesを返す。無指定などselectorが選ばれない経路では空配列。絶対URLは保証されない。
+          </td>
+          <td>
+            compute対象profileの発見契約と絶対URL生成を追加し、無指定一覧とprofile指定の両方を検証する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">認証</th>
+          <td>Provider Bearerの許可pathは限定され、computeは存在しない。</td>
+          <td>
+            Control Bearer限定で追加。Provider token、claim、agent-connectionsの作成を要求しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">media調停</th>
+          <td>
+            MediaVariantManagerはimage/music/stable-audioの排他とmusic待機を扱う。切替scriptはworkerを停止する。
+          </td>
+          <td>
+            computeから切替scriptを直接使わない。既存Providerを退避して計算用メモリを作らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">3D waiting_gpu</th>
+          <td>
+            この作業ツリーではmesh実装とwaiting_gpu処理を確認できなかった。3Dの仕様・計画書はある。
+          </td>
+          <td>完成済みの3D実装を流用できるとは扱わない。将来の共通admissionへの統合点を設ける。</td>
+        </tr>
+        <tr>
+          <th scope="row">host</th>
+          <td>
+            Ubuntu 26.04.1 LTS、kernel
+            7.0.0-34-generic。Podman・Docker・crunはPATHになく、amd-smi・rocm-smiはある。
+          </td>
+          <td>
+            rootless環境の導入・delegation検証が必要。Ubuntu 24.04のcontainerを使ってもhost
+            driverの互換性検証は別途必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">dmem</th>
+          <td>
+            cgroup
+            v2にdmemがあり、rootのcapacityに<code>drm/0000:c5:00.0/vram 2147483648</code>が見える。
+          </td>
+          <td>見えたregionは2 GiB。GTT・HIP全体の課金や制限を確認したことにはならない。</td>
+        </tr>
+        <tr>
+          <th scope="row">ROCm公式対応</th>
+          <td>
+            7.2.1 Ryzen matrixにgfx1151 / Ryzen AI Max+ 395、Ubuntu 24.04.4、PyTorch 2.9.1 / Python
+            3.12の記載。
+          </td>
+          <td>候補選定の根拠。現在のhost OSや任意dtypeでの学習成功を保証するものではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">Eumenes設計書</th>
+          <td>
+            添付にあるspec/compute-toolchain-design-2026-10-20.mdは隣接checkoutに見つからなかった。
+          </td>
+          <td>§12のQ1〜Q9本文は未確認。一括して合意済みとは宣言しない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      GPU判断の根拠は、要求されたAgent Profile・Provider
+      subset、解決されたroute/runtime、実行中request・lease・保護期間とする。現在動いているモデル名やportの見かけのidleだけから空きを推測しない。関連設計は<a
+        href="./provider-priority-scheduling.html"
+        >Provider優先度</a
+      >、<a href="./eumenes-protection-retention-implementation-plan-2026-10-16.html"
+        >利用保護期間</a
+      >、<a href="./mesh-generation-api-and-storage-plan-2026-10-18.html">3D API計画</a>を参照する。
+    </p>
+  </section>
+
+  <section id="catalog">
+    <h2>catalogと認証</h2>
+    <p>
+      GET
+      /v3/agent-profilesの対象profileのservicesにcomputeを追加する。protocolごとのschema分岐とし、既存image/musicのmodel・endpoint制約は維持する。computeにはmodelを要求しない。以下はCPU版公開時の例であり、現在利用できるURLの宣言ではない。
+    </p>
+    <pre><code>{
+  "name": "compute",
+  "capability": "compute.python.execute",
+  "protocol": "larm.compute.v1",
+  "endpoint": "/v1/compute",
+  "url": "https://control.example.invalid/v1/compute",
+  "description": "隔離Python計算。CPU対応、GPUは未提供。既定60秒・最大3600秒、CPU最大2ジョブ、コード64KiB、入力256KiB、結果24時間保持。実効上限はenvironmentを参照。"
+}</code></pre>
+    <p>
+      URLは設定した外部Control
+      originから構築し、任意のHost・転送headerをそのまま信頼しない。catalog閲覧、environment、status、成果物取得ではworkerを起動しない。backend未導入なら広告せず、GPUだけ未検証ならCPU
+      serviceとして広告する。無指定一覧ではcompute対象のcanonical
+      profileに表示し、selector指定でも同じ項目を得られるようにする。selectorごとに異なる既存image/musicの挙動は維持する。
+    </p>
+    <p>
+      compute API全体を既存Control Bearerで保護し、匿名アクセス・Provider
+      Bearerを拒否する。共有Bearerを使う初版では利用者は同じ計算権限を持ち、ユーザー単位の隔離を提供済みとは説明しない。将来複数principalを使う場合はjob・artifact・idempotency・quotaをprincipal単位に分離する。Bearerはbackendまたはadapterに留め、LLM、ブラウザ、container、生成物URLに渡さない。
+    </p>
+  </section>
+
+  <section id="http">
+    <h2>HTTP契約案</h2>
+    <p>
+      base
+      URLはcatalogのurl。通常応答はJSON、成果物取得成功時のみ対応MIMEの本体。HTTP失敗は<code>{"error":{"code":"snake_case","message":"..."}}</code>。状態照会のHTTP
+      200内にあるjob.errorと、API自体の入力・認証エラーを区別する。時刻はUTCのRFC
+      3339、未開始・未終了はnull。未知のrequest fieldは拒否する。
+    </p>
+    <table>
+      <caption>
+        公開操作の提案
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">操作</th>
+          <th scope="col">path</th>
+          <th scope="col">応答・補足</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">環境</th>
+          <td>GET /environment</td>
+          <td>
+            200。実行imageのpython、packages、accelerators、limits。imageDigest、environmentRevision、GPU
+            admissionの可否を追加。hostのPython版で代用しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">投入</th>
+          <td>POST /jobs</td>
+          <td>Idempotency-Key必須。202 {jobId}、Locationに状態URL。永続化完了後に応答する。</td>
+        </tr>
+        <tr>
+          <th scope="row">照会</th>
+          <td>GET /jobs/:jobId</td>
+          <td>
+            200。添付のstatus/stage/時刻/progress/result/errorに、resolvedAccelerator、environmentRevision、expiresAt、cancelRequestedを追加。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">成果物</th>
+          <td>GET /jobs/:jobId/artifacts/:artifactId</td>
+          <td>200。completedの公開済み成果物だけ。IDから保存先を引き、任意pathを受け付けない。</td>
+        </tr>
+        <tr>
+          <th scope="row">取消・削除</th>
+          <td>DELETE /jobs/:jobId</td>
+          <td>
+            添付の複合動作を維持。実行前・中なら取消。停止・回収確認後は200
+            cancelled、未完了なら202の状態表現。終端jobは結果・成果物を削除して204。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">取消専用</th>
+          <td>POST /jobs/:jobId/cancel</td>
+          <td>
+            追加提案。終端jobは削除せず200で現在状態を返す。取消受付中は202。MCP
+            cancelはこの操作を使う。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <pre><code>POST /v1/compute/jobs
+Authorization: Bearer &lt;Control Bearer&gt;
+Idempotency-Key: &lt;この計算意図に固定したUUID&gt;
+
+{
+  "code": "result = inputs['a'] + inputs['b']\nreport('done', 1.0)",
+  "inputs": {"a": 1, "b": 1},
+  "timeoutSec": 60,
+  "accelerator": "cpu"
+}</code></pre>
+    <p>
+      codeは空でないUTF-8文字列、inputsはJSON
+      object、timeoutSecは1〜3600の整数で省略時60、acceleratorはauto/cpu/gpuで省略時auto。非JSON値は拒否する。Idempotency-Keyは1〜128文字のASCII識別子。同一principal・key・正規化本文なら処理中でも同じjobIdを202で返す。objectのkey順は無視し、code文字列の差は維持する。省略値と既定値の明示は同じ意味とする。競合検査とjob作成は1
+      transaction。
+    </p>
+    <p>
+      本文hashとenvironmentRevisionを初回受理で固定し、同じkeyの再照会でimageを変更しない。削除・失効後も受理から7日間はkey/hashのtombstoneを保持し、同じ本文には410
+      job_expired、異なる本文には409
+      request_conflict。7日後のkey再利用は新規jobになり得る。生成POSTを内部で自動再送しない。通信失敗後の照合が必要なら、呼出元の明示操作で同じkeyを再使用する。
+    </p>
+    <table>
+      <caption>
+        HTTP失敗の分類
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">HTTP</th>
+          <th scope="col">code</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">400</th>
+          <td>invalid_request / limit_exceeded</td>
+          <td>型・必須header・値が不正、またはcode/input/request上限超過。</td>
+        </tr>
+        <tr>
+          <th scope="row">401 / 403</th>
+          <td>unauthorized / forbidden</td>
+          <td>Control認証失敗、または認めていないcredential・操作。</td>
+        </tr>
+        <tr>
+          <th scope="row">404</th>
+          <td>not_found</td>
+          <td>未知または閲覧できないjob/artifact。</td>
+        </tr>
+        <tr>
+          <th scope="row">409</th>
+          <td>request_conflict / artifact_not_ready</td>
+          <td>keyの本文不一致、または成果物未公開。</td>
+        </tr>
+        <tr>
+          <th scope="row">410</th>
+          <td>job_expired</td>
+          <td>削除・失効済み。tombstone期間のみ判別可能。</td>
+        </tr>
+        <tr>
+          <th scope="row">429</th>
+          <td>queue_full</td>
+          <td>受付件数・保存容量の予約上限。Retry-Afterを返すがPOSTを自動再試行しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">503</th>
+          <td>unavailable</td>
+          <td>実行環境が不健全、GPU未公開、必要な上限制御やtelemetryが利用できない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      job.error.codeは添付のtimeout、memory_exceeded、gpu_memory_exceeded、runtime_error、syntax_error、limit_exceeded、output_exceeded、unavailable、cancelledに、<strong>preempted</strong>と<strong>queue_timeout</strong>を追加提案する。前者は高優先推論による中断、後者は実行前の待機期限切れで、いずれもfailed。自動再実行しない。runtime_error・syntax_errorはtraceback末尾8
+      KiB以内をmessageに返す。exit code 137だけでOOMと断定せず、cgroup
+      event・監督側の停止理由で分類する。
+    </p>
+  </section>
+
+  <section id="lifecycle">
+    <h2>状態・取消・再起動</h2>
+    <p>
+      statusはqueued/running/completed/failed/cancelled。queuedのstageはqueued/waiting_gpu、runningはstarting/running/collecting、終端は同名stage。startingへの遷移をstartedAtと実行時間の起点とし、起動・実行・変換・成果物回収をtimeoutSecに含める。queued/waiting_gpuは含めず、別のmaxQueueWaitSecを設ける。
+    </p>
+    <p>
+      report(message, ratio=None)はmessageをUTF-8最大1
+      KiB、ratioを有限の0〜1または省略に限定。hostで最大2回/秒に間引き、最新値だけ保存する。進捗は自己申告であり、実行完了や資源使用量の根拠にしない。stdoutを進捗として解釈しない。通常poll間隔は2〜5秒、短いUI待機は最初の数秒だけにする。
+    </p>
+    <p>
+      取消受付と完了公開はversionを使う原子的更新で順序を決める。取消が先なら即座に結果公開を禁止し、部分結果・成果物を削除し、子孫processを含むcontainer全体を停止する。停止・除去確認まではcancelRequestedとし、cancelled確定・資源枠返却をしない。完了が先ならcancel専用APIはcompletedを維持し、DELETEは完成結果を削除する。DELETEの再試行では取消済みmetadataも削除され得るため、取消再試行にはcancel専用APIを使う。
+    </p>
+    <p>
+      cancelled
+      jobにはvalue/stdout/stderr/artifactsを残さず、最小の状態・時刻・分類だけ保持する。結果保持は終端から24時間。code・inputsは実行に不要になった時点で削除し、結果APIに返さない。起動時と定期GCで期限切れを削除する。
+    </p>
+    <p>
+      HTTP接続切断後もジョブは継続する。SupervisorはHTTP処理とは別processとし、Control再起動後は永続storeで追跡を再開する。Supervisor自体を失った場合は、回復時に所有label・container
+      ID・cgroupを照合して残存processを停止する。起動前queuedだけ再開可能とし、開始済み計算は自動再投入しない。回復不能はfailed/unavailable。停止不能・資源解放未確認ならlaneを隔離し、既存推論のunitやGPU全体をresetしない。
+    </p>
+  </section>
+
+  <section id="sandbox">
+    <h2>コンテナ・runner・成果物の境界</h2>
+    <p>
+      第一候補は専用OS利用者のrootless Podmanとcrun。cgroup v2のcpu/memory/pids
+      delegationと実際の設定を検査し、上限を適用できなければunavailable。rootfulへ自動fallbackしない。Supervisorはcompute所有labelのcontainerだけを管理する。Controlに汎用container
+      socketを渡さない。固定argvとstdinの長さ付きデータで入力を渡し、code・inputsをshell、argv、環境変数、labelに埋め込まない。
+    </p>
+    <table>
+      <caption>
+        実行時の必須設定
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">方針</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">通信・権限</th>
+          <td>
+            network none、read-only、cap-drop ALL、no-new-privileges、非root UID、private
+            IPC/PID/cgroup namespace。privileged、host namespace、seccomp=unconfinedは禁止。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">一時領域</th>
+          <td>
+            read-only-tmpfs=falseと明示的tmpfs。HOME・TMPDIR・MPLCONFIGDIR・cacheを作業領域に向け、/tmp等はimage内symlinkで集約。private
+            shmも含め書込可能領域の容量合計を1 GiB以下にする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">host分離</th>
+          <td>
+            host
+            directory・モデル・設定・credentials・socketをmountしない。入力はstdin、出力は上限付きpipe。不要な自動mountやimageのVOLUMEも抑止・検査する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">CPU版</th>
+          <td>GPU deviceを一切渡さない。環境変数で隠すだけでは隔離としない。</td>
+        </tr>
+        <tr>
+          <th scope="row">GPU版</th>
+          <td>
+            /dev/kfdと対象render nodeだけ。専用利用者の最小限のvideo/render
+            groupをcrunのkeep-groupsで引き継ぐ。group名だけでhost GIDが対応すると仮定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">process・出力</th>
+          <td>
+            pids-limit=256、core
+            dump無効、log-driver=none、restart=no、pull=never。stdout/stderrはhostが継続drainし、保存上限後は捨てる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">package</th>
+          <td>
+            numpy、scipy、sympy、pandas、matplotlib Agg、scikit-learn、statsmodels、ROCm
+            PyTorchをbuild時固定。実行中の依存追加は非対応。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      AMDのUbuntu 24.04ベースROCm PyTorch
+      imageを候補とし、gfx1151対応を検証後、baseと最終imageの両digest、Python・全package・runner版をmanifestに記録する。今回は取得・buildをしていないためdigestと実際のpackage版は未確定。pip実行file除去、read-only、network
+      noneで通常の実行中installを防ぐ。任意Pythonが入力からmoduleを生成することまで禁止できるとは説明しない。
+    </p>
+    <p>
+      runnerはinputs、report、作業directory、Agg、result収集を用意する小さなbootstrap。任意Pythonと同居するrunnerは改変可能なので、時間・メモリ・受信byte・件数の信頼境界はhost側Supervisorに置く。result/progress/artifactのframeはすべて信頼しないデータとして型・長さ・件数を検査する。host
+      pathやcommandを解釈する機能を持たせず、frameだけで完了を確定しない。
+    </p>
+    <p>
+      result未定義はnull。NumPy・pandas・torch値はcontainer内でJSON互換に変換し、非有限数はnull、大きな整数は精度を保つ10進文字列、非対応objectは上限付きrepr。循環・深さ・要素数・repr実行も制限し、value上限超過はoutput_exceeded。hostはJSONだけを読み、pickle・任意Python
+      object・torch checkpointをdeserializeしない。
+    </p>
+    <p>
+      成果物は作業領域のartifacts
+      directoryに保存したPNG/SVG/CSV/JSONと、終了時に開いているmatplotlib図のPNG。自動作図回収も件数・byte・時間上限の対象。tmpfsはcontainer除去で失われるため、runner終了前に成果物byteを長さ付きstreamでexportし、hostが上限付き一時storeに受ける。除去後のtmpfs回収、任意tar展開、host
+      directory
+      mountを前提にしない。hostは保存名を生成し、nameをpathに使わず、MIMEを検査する。成功・清掃完了後に結果を原子的公開し、失敗・取消では一時storeを削除する。
+    </p>
+    <p>
+      SVGは初版ではattachment取得だけとし、直接inline描画しない。Content-Disposition・nosniffを設定し、表示UIでscript・外部参照を実行しない。job出力は認証された結果storeだけに保存する。HTTP
+      access log、container
+      log、trace、例外logにcode・inputs・結果・progress・tracebackを複写せず、jobId・分類・所要時間・使用量だけを記録する。
+    </p>
+  </section>
+
+  <section id="limits">
+    <h2>実効上限と統合メモリ</h2>
+    <table>
+      <caption>
+        初期値の提案。environmentは実効値を返す
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">値</th>
+          <th scope="col">補足</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">時間</th>
+          <td>既定60秒、最大3600秒</td>
+          <td>maxTimeoutSec。maxQueueWaitSec=3600は別。取消・除去の監督期限も別管理。</td>
+        </tr>
+        <tr>
+          <th scope="row">CPU</th>
+          <td>各job最大8 CPU</td>
+          <td>
+            CPU並列2、GPU並列1。計算全体の親cgroupにも8 CPU相当のquotaを初期設定し、2件で16
+            CPUを使い切らない。BLAS/OpenMP thread数も設定。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">memory</th>
+          <td>CPU job 16 GiB</td>
+          <td>
+            memoryとmemory-swapを同値。tmpfs・shm・子processを含め、host全体の余裕は別途予約。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GPU memory</th>
+          <td>24 GiBは目標上限、初版公開値は未確定</td>
+          <td>
+            GPU容量・総RAM・推論予約・課金範囲を実測して決定。CPU版のacceleratorsにはCPUのみ。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">code / inputs</th>
+          <td>64 KiB / 256 KiB</td>
+          <td>
+            maxCodeBytesはUTF-8 code、maxInputBytesは正規化JSON入力。生HTTP body上限は別に2 MiB。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">stdout / stderr</th>
+          <td>各256 KiB</td>
+          <td>truncatedを独立設定。巨大printだけでは失敗にせず上限以降を捨てる。</td>
+        </tr>
+        <tr>
+          <th scope="row">value / JSON結果</th>
+          <td>1 MiB / 2 MiB</td>
+          <td>maxValueBytes追加。maxOutputBytesはresultのJSON全体。成果物本体は別枠。</td>
+        </tr>
+        <tr>
+          <th scope="row">成果物</th>
+          <td>最大10件、各5 MiB、合計50 MiB</td>
+          <td>maxArtifacts、maxArtifactBytes。超過はlimit_exceeded。</td>
+        </tr>
+        <tr>
+          <th scope="row">受付・保存</th>
+          <td>待機32件、principalあたり8件、store 2 GiB</td>
+          <td>受理時に最大結果容量を予約し、保存済み結果と予約の合計を制限。超過はqueue_full。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>CPU側16 GiBとGPU側24 GiBをmemory=16 GiBだけで同時に保証することはできない。</strong
+      >GPU確保がmemory cgroupに課金される構成では同じ枠を消費する。24 GiBを使うGPU
+      profileには、例えばCPU作業・tmpfsを含む合算40
+      GiB枠を別設定し、全体admissionを通す必要がある。40
+      GiBは現時点の採用値ではない。CPU/GPU独立上限と合算上限の強制範囲を実測後に明記する。VRAM表示とMemAvailableを別々のRAMとして二重に足し合わせない。
+    </p>
+    <p>
+      実機ではCPU、GPU
+      tensor、GTT・managed/pinned確保を段階的に試し、jobのmemory.current/events、利用可能なdmem.current/max等、DRM
+      fdinfo、amd-smi、host
+      MemAvailableを比較する。子process・別allocatorにも及ぶか確認する。dmemはkernel側の候補だが、今回の2
+      GiB regionだけでGTT・統合メモリ全体を制限できるとは結論しない。
+    </p>
+    <p>
+      torch.cuda.set_per_process_memory_fractionはPyTorch
+      allocatorの補助制限で、任意Python全体の強制上限ではない。hostのPID/cgroupに紐づくGPU使用量監視と全体reserve監視を併用し、超過時に停止する。ただし<strong>定期監視後のkillは事後停止であり、確保を拒否する強制上限と同等ではない</strong>。帰属・課金範囲・急増時の保護を検証できない場合、共有hostのGPU版は公開せず、必要なら別GPU・別hostを同じAPIのbackendにする。
+    </p>
+  </section>
+
+  <section id="scheduling">
+    <h2>推論優先の調停とauto</h2>
+    <p>
+      computeは低優先laneとし、要求者によるpriority指定は認めない。active
+      requestだけでなく、解決したruntimeのcontext/KV/slot、resident予約、保護期間、media実行、host
+      RAM reserve、GPU telemetryから開始可否を決める。telemetry不明時は開始しない。CPU
+      jobも共有RAM・CPUを使うため、GPU deviceがないことだけで推論に無影響とは扱わない。
+    </p>
+    <ol>
+      <li>
+        CPUはCPU laneと総予算が空くまでqueued。GPU
+        backend未公開なら投入時503、有効だが競合中ならqueued/waiting_gpu。
+      </li>
+      <li>
+        GPU開始は資源予約と実行権を原子的に確保してから行い、推論admissionと同じ排他境界で判定する。isOccupiedのpollだけで開始しない。
+      </li>
+      <li>
+        計算のためにLLM・TTS・ASR・画像・3DのProviderを停止、置換、unloadしない。mediaの開始・切替も共通予約と競合判定する。
+      </li>
+      <li>
+        高優先推論が来たら低優先GPU計算を中断して枠を回収する。failed/preemptedとし、途中再開・自動再投入は行わない。
+      </li>
+      <li>
+        GPU
+        kernelが即座に中断できるとは仮定しない。停止・解放時間を測定し、長いkernelやdriver異常で推論SLOを守れなければGPU公開の条件を満たさない。
+      </li>
+    </ol>
+    <p>
+      autoは<strong>開始時点でGPU laneと安全な予算が空いていればGPU、そうでなければCPU</strong
+      >。import文を解析してGPU要否を推測しない。動的importやaliasでは判定できないためである。CPUに決めた後でGPUに移行したり、失敗後にCPUで自動再実行したりしない。GPU必須コードはgpu、CPUで十分な処理はcpuを明示する。GPU未公開の初版ではautoもCPU。resolvedAcceleratorで実行先を確認できる。
+    </p>
+    <p>
+      同じGPU・メモリ帯域を使う任意計算に「既存推論の遅延増加ゼロ」は保証しない。厳密に無影響が必要なら別host/GPUが必要。共有hostでは同条件baselineとLLM
+      TTFT・tokens/sec、TTS初回音声時間、ASR遅延を比較する。profileごとのSLO、許容変化、回収時間を公開条件として先に定め、未測定の状態でGPU併用を検証済みとしない。
+    </p>
+  </section>
+
+  <section id="tools">
+    <h2>EumenesとMCPのtool契約</h2>
+    <p>
+      EumenesはHTTP clientを使うnative toolを先行し、必要なclientに同じschemaのMCP
+      adapterを追加する。MCPは最初はbackend内stdioを候補とし、remote公開が必要になった時点でStreamable
+      HTTPと認証を設計する。Controlの管理BearerをMCP clientへ配布しない。adapter
+      credentialの権限を共有できない利用者には任意コード実行を公開しない。
+    </p>
+    <table>
+      <caption>
+        tool名案とHTTP APIへの対応
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">tool</th>
+          <th scope="col">入力</th>
+          <th scope="col">役割</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">compute_environment</th>
+          <td>なし</td>
+          <td>package・accelerator・上限取得。投入時はLARMが再検証。</td>
+        </tr>
+        <tr>
+          <th scope="row">python_submit</th>
+          <td>code、inputs、timeoutSec、accelerator、requestKey</td>
+          <td>jobIdを返す。requestKeyはEumenesの永続tool実行記録で生成し、同じ計算意図に固定。</td>
+        </tr>
+        <tr>
+          <th scope="row">python_status</th>
+          <td>jobId</td>
+          <td>status・progress・result/error。GUIはbackendでpollし、毎回LLMを起動しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">python_artifact</th>
+          <td>jobId、artifactId</td>
+          <td>
+            backendが認証付き取得を代行。PNGは対応client向けimage、他は安全なresource/添付。Bearer付きURLを返さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">python_cancel</th>
+          <td>jobId</td>
+          <td>取消専用API。完了競合でも完成結果を消さない。取消後の古い完了通知を採用しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">python_delete</th>
+          <td>jobId</td>
+          <td>DELETEの取消・削除動作を明示し、破壊的操作として説明。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Eumenesの永続tool実行IDとjobIdを対応付け、会話再開後も追跡する。tool
+      callの取消と受理済みjobの取消は区別する。structured outputにはjobId・status・数値/表・artifact
+      metadataを返し、大量stdoutや画像base64をLLMに展開しない。code・progress・resultは外部データで、次のtool権限を与える指示として扱わない。MCP
+      Tasks対応時はversion/capabilityを確認してjobIdへの対応を追加し、Job Storeを二重化しない。
+    </p>
+    <p>
+      <strong>calculateはLARM公開待ちにせずEumenes側で独立して着手できる。</strong
+      >ただし未確認のQ1〜Q9を一括承認する意味ではない。最初は数値literal・括弧・許可した算術演算に限定し、decimal精度・丸め・ゼロ除算を明示する。token・桁数・指数・深さ・処理時間を制限し、JS
+      eval、Python eval、任意関数、import、filesystem、networkを使わない。記号計算や学習はPython
+      jobに送る。
+    </p>
+  </section>
+
+  <section id="implementation">
+    <h2>実装順序と責務</h2>
+    <ol>
+      <li>
+        契約とCPU版：schema、永続store、idempotency、取消・GC、fake backendによる状態競合検証、CPU
+        Supervisor/runner、catalogを追加。
+      </li>
+      <li>
+        CPU実機受入：rootless制限、隔離、OOM、timeout、fork、出力量、取消、再起動回復を検証。既存サービス操作が必要な導入・配備は具体的手順を用意して事前許可を得る。
+      </li>
+      <li>
+        Eumenes接続：native toolと永続ジョブ追跡、必要ならMCP
+        adapterを追加。CPUだけでもtoolチェーンを利用可能にする。
+      </li>
+      <li>
+        GPU試験：gfx1151、既定seccomp、メモリ課金、dmem/GTT、停止時間、推論SLOを検証し、条件を満たしたGPU版だけ公開。
+      </li>
+    </ol>
+    <table>
+      <caption>
+        リポジトリ内の配置案
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">領域</th>
+          <th scope="col">担当</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">packages/core</th>
+          <td>
+            compute schema、状態遷移、資源要求/admission policy、error分類、service
+            schemaのcompute分岐。OS非依存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">packages/backends</th>
+          <td>Podman/crun、cgroup/DRM/amd-smi、kill/cleanup、所有container照合、systemd連携。</td>
+        </tr>
+        <tr>
+          <th scope="row">apps/daemon</th>
+          <td>
+            HTTP route、認証、永続store、Supervisor client、catalog、GC。OpenAPI・client定義も追加。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">新規runner領域</th>
+          <td>
+            Python runner、Containerfile、依存lock、manifest生成。image・cacheはsource
+            repository外。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">deploy/local-node</th>
+          <td>専用利用者、delegation、Supervisor unit、容量・保持・policy設定、実機受入手順。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      共通GPU
+      admissionはcompute内だけのmutexでは成立しない。推論・mediaの開始処理も同じ予約境界に接続する。compute無効時に既存catalog・起動方針・API応答が変わらないことを回帰検証する。実機では小さな制限付き実験から始め、hostを圧迫するOOMやGPU限界試験を最初に行わない。
+    </p>
+  </section>
+
+  <section id="differences">
+    <h2>添付案との差分と引き渡し</h2>
+    <ul>
+      <li>非同期HTTP APIを本体とし、MCP adapterとEumenes tool mappingを追加。</li>
+      <li>取消・削除競合を避けるPOST cancelを追加提案。DELETEの複合動作は維持。</li>
+      <li>GPUはCPU版と分けて公開。autoは開始時の安全な空きで選択し、import解析はしない。</li>
+      <li>
+        HTTP共通エラー、待機期限・容量、value/結果byte定義、保存quota、削除後idempotencyを補完。
+      </li>
+      <li>preempted・queue_timeoutと実行先・環境版・取消受付fieldを追加提案。</li>
+      <li>GPU 24 GiBとmemory 16 GiBの関係、dmem検証、監視killの限界、推論SLOを公開条件に追加。</li>
+      <li>
+        host mountなしの成果物export、追加tmpfs、container
+        log無効化、runnerを信頼境界にしない設計を追加。
+      </li>
+    </ul>
+    <p>
+      Eumenes
+      §4の置換用「確定仕様」は、schema・OpenAPI・client・契約試験が揃った時点で引き渡す。その際にcatalogの実URL、image
+      digest/package版、統合メモリ課金、seccomp、受入結果を併記する。本書のAPIと値を利用可能な本番契約に置き換えてはいない。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>受入試験の現在地</h2>
+    <table>
+      <caption>
+        添付の実機受入1〜9
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">番号</th>
+          <th scope="col">対象</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1</th>
+          <td>environmentのpackage/GPU/limits</td>
+          <td>未実施。service・image未実装。</td>
+        </tr>
+        <tr>
+          <th scope="row">2</th>
+          <td>result=1+1</td>
+          <td>未実施。</td>
+        </tr>
+        <tr>
+          <th scope="row">3</th>
+          <td>SymPy/SciPy/scikit-learn/PNG</td>
+          <td>未実施。</td>
+        </tr>
+        <tr>
+          <th scope="row">4</th>
+          <td>GPU MLPと進捗</td>
+          <td>未実施。公式対応表の確認は実行成功ではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">5</th>
+          <td>network/filesystem/host/GPU隔離</td>
+          <td>未実施。</td>
+        </tr>
+        <tr>
+          <th scope="row">6</th>
+          <td>timeout/OOM/GPU上限/fork/出力量</td>
+          <td>未実施。失敗後のservice健全性も要確認。</td>
+        </tr>
+        <tr>
+          <th scope="row">7</th>
+          <td>idempotencyと本文競合</td>
+          <td>未実施。</td>
+        </tr>
+        <tr>
+          <th scope="row">8</th>
+          <td>取消とcontainer除去</td>
+          <td>未実施。完了競合、子process、再起動回復も追加試験。</td>
+        </tr>
+        <tr>
+          <th scope="row">9</th>
+          <td>GPU併用時のLLM/TTSと遅延差</td>
+          <td>未実施。ASRと高優先要求時の停止時間も測定。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      実機成功・失敗は現時点では0件、1〜9はすべて未実施。今回の検証範囲はsourceとhostのOS・tool存在・cgroup
+      fileの読み取り、公式資料確認、文書検査。既定seccompでのROCm動作、memoryのGPU課金、採用digestは未確定。
+    </p>
+  </section>
+
+  <section id="sources">
+    <h2>参照した公式資料</h2>
+    <p>
+      2026-10-20確認。以下は外部資料の識別情報。リポジトリ文書へのリンクは本文の相対リンクを使う。
+    </p>
+    <ul>
+      <li>
+        AMD ROCm 7.2.1 Ryzen Linux support matrix：<code>https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2.1/docs/compatibility/compatibilityryz/native_linux/native_linux_compatibility.html</code>
+      </li>
+      <li>AMD Install PyTorch for Ryzen APUs：<code>https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2.1/docs/install/installryz/native_linux/install-pytorch.html</code></li>
+      <li>
+        Podman run、read-only-tmpfs、keep-groups/crun、cgroup制限：<code
+          >https://docs.podman.io/en/latest/markdown/podman-run.1.html</code
+        >
+      </li>
+      <li>
+        Linux Control Group v2、memory・pids・DMEM：<code>https://docs.kernel.org/admin-guide/cgroup-v2.html</code>
+      </li>
+      <li>PyTorch allocator制限の実装・説明：<code>https://github.com/pytorch/pytorch/blob/main/torch/cuda/memory.py</code></li>
+      <li>MCP Tasks拡張、capabilityとpolling：<code>https://modelcontextprotocol.github.io/ext-tasks/specification/2026-07-28/tasks.html</code></li>
+    </ul>
+  </section>
+</article>

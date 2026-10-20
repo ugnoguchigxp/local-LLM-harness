@@ -1,4 +1,7 @@
 import { Observability } from "./observability";
+import { ComputeManager } from "./compute/manager";
+import { COMPUTE_LIMITS, computeEnvironmentSchema } from "@larm/core";
+import { LarmClient } from "../../../packages/client/src/index";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { expect, test } from "bun:test";
 import {
@@ -378,6 +381,51 @@ function stubBackend(probes: Map<string, RuntimeHealth>, log: { ensure: string[]
     },
   };
 }
+
+test("CPU compute authenticates, advertises v3 discovery and supports Eumenes client lifecycle", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-compute-api-"));
+  const manager = new ComputeManager({ root, executor: {
+    environment: async () => computeEnvironmentSchema.parse({ protocol: "larm.compute.v1", python: "test", packages: [], accelerators: [],
+      limits: COMPUTE_LIMITS, environmentRevision: "test", sandbox: { kind: "bubblewrap", network: false, gpu: false,
+        subprocesses: false, userThreads: false, memoryAccounting: "address_space" } }),
+    execute: async () => ({ value: 2, stdout: "", stderr: "", stdoutTruncated: false, stderrTruncated: false,
+      artifacts: [{ name: "table.json", mime: "application/json", data: Buffer.from("[1,2]") }] }),
+  } });
+  await manager.initialize();
+  try {
+    const { app, log } = await makeApp(true, false, {}, { apiToken: agentApiToken,
+      connectionSigningKey: agentSigningKey, agentConnectionCatalog, computeManager: manager, computePublicOrigin: "https://control.example.invalid" });
+    expect((await app.request("/v1/compute/environment")).status).toBe(401);
+    expect((await app.request("/v1/compute/environment", { headers: { authorization: "Bearer larm_conn_v1.invalid" } })).status).toBe(401);
+    for (const query of ["", "?profile=ornith1.5Strix"]) {
+      const discovery = publicAgentProfileListV3Schema.parse(await (await app.request(`/v3/agent-profiles${query}`, { headers: agentHeaders() })).json());
+      expect(discovery.profiles[0]!.services.some(service => service.protocol === "larm.compute.v1" && service.url === "https://control.example.invalid/v1/compute")).toBe(true);
+    }
+    const client = new LarmClient({ baseUrl: "http://larm.test", apiToken: agentApiToken, fetch: async (input, init) => app.request(String(input), init) });
+    expect((await client.compute.environment()).protocol).toBe("larm.compute.v1");
+    const receipt = await client.compute.submit({ code: "result=1+1" }, "stable-tool-execution");
+    expect(await client.compute.submit({ code: "result=1+1" }, "stable-tool-execution")).toEqual(receipt);
+    await expect(client.compute.submit({ code: "result=3" }, "stable-tool-execution")).rejects.toMatchObject({ code: "request_conflict", status: 409 });
+    let job = await client.compute.get(receipt.jobId);
+    for (let i = 0; i < 100 && job.status !== "completed"; i++) { await Bun.sleep(2); job = await client.compute.get(receipt.jobId); }
+    expect(job.result?.value).toBe(2);
+    const artifact = await client.compute.artifact(job.jobId, job.result!.artifacts[0]!.id);
+    expect(artifact.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(artifact.headers.get("content-disposition")).toStartWith("attachment;");
+    expect(await artifact.json()).toEqual([1, 2]);
+    expect((await client.compute.cancel(job.jobId)).status).toBe("completed");
+    expect(await client.compute.delete(job.jobId)).toBeUndefined();
+    await expect(client.compute.get(job.jobId)).rejects.toMatchObject({ code: "job_expired", status: 410 });
+    const invalid = await app.request("/v1/compute/jobs", { method: "POST", headers: { ...agentHeaders(), "content-type": "application/json" }, body: "{}" });
+    expect(invalid.status).toBe(400); expect((await invalid.json() as { error: { code: string } }).error.code).toBe("invalid_request");
+    expect(log.ensure).toEqual([]); expect(log.stop).toEqual([]);
+  } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("disabled CPU compute requires explicit Control auth even in development", async () => {
+  const { app } = await makeApp(true);
+  expect((await app.request("/v1/compute/environment")).status).toBe(503);
+});
 
 async function makeApp(
   generalHot: boolean,

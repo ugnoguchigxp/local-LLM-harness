@@ -2,6 +2,7 @@ import { decisionDatasetSchema, decisionTrainingJobSchema, decisionTrainingReque
 import { chatInputContractSchema, chatInputTokenCountSchema } from "./chat-input";
 import { localServiceListSchema, localServiceStatusSchema, localServiceLeaseSchema, localServiceLeaseRequestSchema, localServiceRenewSchema } from "./local-service";
 import { z } from "zod";
+import { computeEnvironmentSchema, computeJobSchema, computeRequestSchema, computeReceiptSchema } from "./compute";
 import { monitoringSnapshotSchema, monitoringEventsSchema, monitoringErrorSchema, monitoringJsonSchema } from "./monitoring";
 import {
   SUCCESS_SCHEMA_BY_OPERATION,
@@ -298,6 +299,10 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     DecisionDatasetList: jsonSchema(z.object({ datasets: z.array(decisionDatasetSchema) }).strict()),
     DecisionTrainingJob: jsonSchema(decisionTrainingJobSchema),
     DecisionTrainingRequest: jsonSchema(decisionTrainingRequestSchema),
+    ComputeEnvironment: jsonSchema(computeEnvironmentSchema),
+    ComputeJob: jsonSchema(computeJobSchema),
+    ComputeRequest: jsonSchema(computeRequestSchema),
+    ComputeReceipt: jsonSchema(computeReceiptSchema),
     DecisionAdapter: jsonSchema(decisionAdapterDetailSchema),
     DecisionAdapterList: jsonSchema(z.object({ adapters: z.array(decisionAdapterDetailSchema) }).strict()),
     DecisionDeleted: jsonSchema(z.object({ deleted: z.literal(true) }).strict()),
