@@ -3,7 +3,7 @@
   <p>
     2026-10-20。eumenes-pursuit からの R1〜R4
     と、高速判断のために学習結果をどう常駐させるかという追加依頼に対応する。実装と隔離 HTTP canary
-    での実モデル確認を記録する。現行サービスへの反映は未実施である。現行サービスはこの作業ツリーより新しい機能を含むため、全体をこのツリーで置換しない。
+    での実モデル確認、および利用者の承認後の本番反映と受入結果を記録する。本番の既存機能を保持するため、稼働リリースを基点にd1変更だけを取り込んだ。
   </p>
   <section id="selection">
     <h2>選択と実行基盤</h2>
@@ -479,7 +479,116 @@
       <code>bun run check</code>
       が成功した。型検査、API契約、旧判断Provider、Python、デプロイ用source検査を含む。文書は
       <code>bun run docs:check:fix</code>
-      を実施し、残る診断はゼロ。推論用canaryプロセスは停止し、検証用Connection・学習データ・adapterは解放・削除した。本番サービスのcatalog/APIを更新したという完了報告ではない。
+      を実施し、残る診断はゼロ。推論用canaryプロセスは停止し、検証用Connection・学習データ・adapterは解放・削除した。本番反映結果は次節に記録する。
+    </p>
+  </section>
+  <section id="production-rollout">
+    <h2>本番反映と受入結果</h2>
+    <p>
+      <time>2026-10-20 09:21 JST</time
+      >に本番反映を完了した。利用者から本番反映の明示承認を受け、稼働していた
+      <code>111af3557904b6579c6c3d7f4c09efd9fd859452</code> を基点にd1の変更だけを取り込んだ。本番releaseは
+      <code>88ab010f7a1e2688a2812e4ca3d32a837406ffbe</code>、configRevisionは
+      <code>e2b9da83166ecefef5b97f3c5675dac3d3ac8728b4470590f8625cba96323d4f</code>。
+    </p>
+    <p>
+      公開APIと基本モデルの実装を含む候補を既設の署名付きrelease機構から反映した。依存関係のhigh/critical監査、全体check、coverageの必須gateはすべて成功し、候補の924件のBunテストとcritical
+      coverage ratchetも通過した。release controllerは同じdesired/observed releaseに対して
+      <code>contract_verified / succeeded</code> を返した。
+    </p>
+    <p>
+      本番向けのソース系列は <code>codex/d1-general-production</code>。検証時のソースは
+      <code>/srv/ai/apps/larm-d1-general-release-source-20261020</code
+      >。開発worktree全体を本番へコピーせず、既存の画像取込・画像生成・音楽・3D生成の実装と設定を保持した。反映前後のcatalogを比較し、既存16
+      profileと3件のControl serviceが完全一致することを確認した。
+    </p>
+    <table>
+      <caption>
+        2026-10-20の本番API受入確認
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">catalog / claim</th>
+          <td>
+            decisionGeneralはexplicit-only、capability decision.general、protocol
+            larm.system-one.v1、endpoint /v1/systemone。descriptionとclaimのmodel
+            d1-3b-generalを確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">混合12問</th>
+          <td>
+            noul/choice/scoreを各4問、計12回答。464入力tokens・生成tokensゼロ。HTTP所要302.30ms（1要求の確認値、中央値ではない）。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">学習job</th>
+          <td>
+            300例、train180/calibration60/eval60でcompleted。特徴抽出30.30秒、CPU
+            fit等0.19秒、全体30.49秒、head JSON266 bytes。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">eval</th>
+          <td>
+            意図的な反転ラベルによる手続き検証。基本モデル0/60、head適用60/60。調整後Brier
+            0.000347・log loss 0.011996・ECE10
+            0.011908、混同行列[[30,0],[0,30]]。pursuit実データの判断品質を表す結果ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">選択・削除</th>
+          <td>
+            adapterあり/なしの両方が動作。質問定義不一致は409
+            decision_adapter_mismatch。データ削除後もadapter推論が動作し、adapter削除後の指定は404
+            decision_adapter_not_found。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">再送</th>
+          <td>
+            データ登録と学習jobの同じIdempotency-Keyで同じid/jobIdを確認。別内容での同じkeyは409
+            decision_idempotency_conflict。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">既存判断</th>
+          <td>
+            decision.gameのd1-3b-gameはright、decision.system-oneのruri-v3-30m-speaking-attitudeはnoneを返した。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">会話</th>
+          <td>
+            ornith1.5Strixのllmだけを確保し、ornith-1.5-strix-leanのJSON・SSEを確認。解放とcredential失効も確認した。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">本文非記録・後片付け</th>
+          <td>
+            LARMとd1のjournalで検証用state・質問・ラベルの5種類の本文markerを検索し、一致ゼロ。検証用Connection、データ、adapterを解放・削除し、最後のactivityはidle・activeWorkloads=0だった。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      本番の検証jobは <code>job-d88fcc1d-b7e8-44be-b2c9-ac5aceb9f035</code>。作成したadapter
+      <code>ad-b703504b-a456-4e51-9f24-f0bd883b7177 / version=1</code>
+      は削除済みで、利用者向けの学習済みadapterとして残していない。実際の質問セットとデータで新しいjobを作成する。
+    </p>
+    <p>
+      証拠はrepository外の
+      <code>/srv/ai/evidence/d1-general-production-20261020/</code>
+      に保存した。acceptance.jsonはd1本番受入、chat-smoke.jsonは会話JSON/SSE、log-privacy.jsonは本文marker確認、build.logは必須release
+      gateの結果。再実行用sourceは
+      <code>benchmarks/decision-general/verify-production.ts</code
+      >。継続的な低遅延利用はConnectionを保持・renewする。24時間soakなどの長期安定性をこの受入確認だけで保証するものではない。
     </p>
   </section>
 </article>
