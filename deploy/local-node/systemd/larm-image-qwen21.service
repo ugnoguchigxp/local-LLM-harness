@@ -1,7 +1,7 @@
 [Unit]
 Description=LARM on-demand Qwen-Image 2.1 Turbo AD-Q4_K variant
 After=network.target
-Conflicts=larm-music-ace-step.service
+Conflicts=larm-music-ace-step.service larm-audio-stable.service
 
 [Service]
 Type=simple

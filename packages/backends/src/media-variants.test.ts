@@ -1,6 +1,19 @@
 import { expect, test } from "bun:test";
 import { MediaVariantBusyError, MediaVariantManager } from "./media-variants";
 
+test("Stable Audio excludes images and ACE-Step and a failed stop quarantines all three", async () => {
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action, variant) => { calls.push(`${action}:${variant}`); if (action === "stop") throw new Error("still running"); } });
+  const release = await manager.acquire("stable-audio");
+  expect(manager.isOccupied()).toBeTrue();
+  for (const variant of ["music", "image", "stable-audio"] as const) await expect(manager.acquire(variant)).rejects.toBeInstanceOf(MediaVariantBusyError);
+  await expect(release()).rejects.toThrow("shutdown failed");
+  for (const variant of ["music", "image", "stable-audio"] as const) await expect(manager.acquire(variant)).rejects.toThrow("quarantined");
+  expect(calls).toEqual(["start:stable-audio", "stop:stable-audio"]);
+  await expect(manager.close()).rejects.toThrow("shutdown failed");
+});
+
 test("media requests start on demand, share an idle worker, and exclude the other variant", async () => {
   const calls: string[] = [];
   const manager = new MediaVariantManager({
@@ -44,7 +57,7 @@ test("a failed switch revalidates the previous worker before reusing it", async 
     (await manager.acquire("image"))();
     await expect(manager.acquire("music")).rejects.toThrow("start failed");
     (await manager.acquire("image"))();
-    expect(calls).toEqual(["start:image", "start:music", "stop:music", "start:image"]);
+    expect(calls).toEqual(["start:image", "stop:image", "start:music", "stop:music", "start:image"]);
   } finally {
     manager.close();
   }
@@ -198,4 +211,65 @@ test("closing interrupts cancellable startup and waits for cleanup", async () =>
   expect((await acquisition).message).toContain("closed");
   expect(calls).toEqual(["start:image", "stop:image"]);
   expect(manager.available).toBe(false);
+});
+
+
+test("Stable Audio and vocal requests wait in FIFO order without allowing an image to bypass them", async () => {
+  const calls: string[] = [];
+  const variants = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 }, run: async (action, variant) => { calls.push(`${action}:${variant}`); } });
+  try {
+    const image = await variants.acquire("image");
+    const signal = new AbortController().signal;
+    const stable = variants.waitForMusic(signal, 2000, "stable-audio");
+    const vocals = variants.waitForMusic(signal, 2000, "music");
+    await image();
+    await expect(variants.acquire("image")).rejects.toBeInstanceOf(MediaVariantBusyError);
+    const releaseStable = await stable;
+    expect(calls.at(-1)).toBe("start:stable-audio");
+    await releaseStable();
+    const releaseVocals = await vocals;
+    expect(calls.at(-1)).toBe("start:music");
+    await releaseVocals();
+    expect(calls).toEqual(["start:image", "stop:image", "start:stable-audio", "stop:stable-audio", "start:music", "stop:music"]);
+  } finally { await variants.close(); }
+});
+
+
+test("an expired media waiter cannot start when capacity becomes available after its deadline", async () => {
+  const calls: string[] = [];
+  const variants = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 }, run: async (action, variant) => { calls.push(`${action}:${variant}`); } });
+  try {
+    const image = await variants.acquire("image");
+    const outcome = variants.waitForMusic(new AbortController().signal, 50, "stable-audio")
+      .then(async (release) => { await release(); return "started"; }, (error: Error) => error.message);
+    await Bun.sleep(60);
+    await image();
+    expect(await outcome).toBe("media execution capacity wait expired");
+    expect(calls).toEqual(["start:image", "stop:image"]);
+    const release = await variants.waitForMusic(new AbortController().signal, 0, "music");
+    await release();
+  } finally { await variants.close(); }
+});
+
+
+test("a waiter that expires behind a serialized worker stop never starts another runtime", async () => {
+  const stopping = Promise.withResolvers<void>();
+  const stopped = Promise.withResolvers<void>();
+  const calls: string[] = [];
+  const variants = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 }, run: async (action, variant) => {
+    calls.push(`${action}:${variant}`);
+    if (action === "stop" && variant === "image") { stopping.resolve(); await stopped.promise; }
+  } });
+  try {
+    const image = await variants.acquire("image");
+    const releasing = image();
+    await stopping.promise;
+    const outcome = variants.waitForMusic(new AbortController().signal, 50, "stable-audio")
+      .then(async (release) => { await release(); return "started"; }, (error: Error) => error.message);
+    await Bun.sleep(60);
+    stopped.resolve();
+    await releasing;
+    expect(await outcome).toBe("media execution capacity wait expired");
+    expect(calls).toEqual(["start:image", "stop:image"]);
+  } finally { stopped.resolve(); await variants.close(); }
 });

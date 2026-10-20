@@ -1,0 +1,102 @@
+[
+  {
+    "id": "gravel8-first",
+    "text": "Footsteps walking steadily on gravel, close perspective, crisp natural stone crunches, outdoor field recording, no music, no speech.",
+    "options": {
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 45678,
+      "duration_seconds": 8
+    }
+  },
+  {
+    "id": "gravel8-repeat",
+    "text": "Footsteps walking steadily on gravel, close perspective, crisp natural stone crunches, outdoor field recording, no music, no speech.",
+    "options": {
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 45678,
+      "duration_seconds": 8
+    }
+  },
+  {
+    "id": "door5",
+    "text": "A heavy wooden door creaks slowly open and then slams shut with a solid thud, close perspective, indoors, dry isolated sound effect, no music, no speech.",
+    "options": {
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 56789,
+      "duration_seconds": 5
+    }
+  },
+  {
+    "id": "rain10",
+    "text": "Steady rain falling on tree leaves with distant low rolling thunder, realistic outdoor stereo ambience, no music, no voices.",
+    "options": {
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 67890,
+      "duration_seconds": 10
+    }
+  },
+  {
+    "id": "scifi4",
+    "text": "A futuristic science fiction energy weapon charging with a rising electronic whine, followed by a single sharp laser blast and a short decaying tail, isolated sound effect, no music, no speech.",
+    "options": {
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 78901,
+      "duration_seconds": 4
+    }
+  },
+  {
+    "id": "ui-confirm1p5",
+    "text": "A short futuristic user interface confirmation sound, two clean bright electronic beeps rising in pitch, positive and precise, a single isolated game UI sound, no music, no speech, no ambience.",
+    "options": {
+      "duration_seconds": 1.5,
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 10001
+    }
+  },
+  {
+    "id": "ui-denied1p5",
+    "text": "A short futuristic user interface access denied sound, two low electronic buzzes descending in pitch, a single isolated game UI error alert, dry and clear, no music, no speech, no ambience.",
+    "options": {
+      "duration_seconds": 1.5,
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 10002
+    }
+  },
+  {
+    "id": "magic4",
+    "text": "A fantasy game magic spell being cast: a soft shimmering magical energy swell rising into a bright sparkling chime impact with a short crystalline tail, one isolated sound effect, no music, no speech.",
+    "options": {
+      "duration_seconds": 4,
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 10003
+    }
+  },
+  {
+    "id": "laser3",
+    "text": "A single powerful science fiction laser rifle shot, a sharp synthetic pew followed by a short resonant electronic tail, punchy and clean isolated video game weapon sound, no music, no speech, no background noise.",
+    "options": {
+      "duration_seconds": 3,
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 10004
+    }
+  },
+  {
+    "id": "explosion5",
+    "text": "A single cinematic science fiction explosion, a sharp initial crack followed by a deep bass boom and debris falling, a short decaying reverberant tail, isolated video game sound effect, no music, no speech.",
+    "options": {
+      "duration_seconds": 5,
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 10005
+    }
+  }
+]

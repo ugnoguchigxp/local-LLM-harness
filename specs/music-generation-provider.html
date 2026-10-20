@@ -1,5 +1,14 @@
 <article lang="ja">
   <h1>Music Generation Provider Phase 1</h1>
+  <aside>
+    <p>
+      2026-10-20の追加実装では、歌なしはStable Audio Music、ボーカルは従来のACE-Step
+      Normal、効果音はStable Audio SFXへ振り分ける。モデル別上限と本番反映状況は<a
+        href="./audio-provider-routing-2026-10-20.html"
+        >Provider振り分け契約</a
+      >を参照する。
+    </p>
+  </aside>
   <p>
     LARM は音楽生成を LLM、ASR、TTS、Embedding とは独立した capability として扱う。最初の provider
     は ACE-Step 1.5 の公式非同期 HTTP API を adapter 経由で利用し、上流固有の task

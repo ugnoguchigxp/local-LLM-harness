@@ -61,7 +61,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
         capability: "media.music.generate",
         protocol: "larm.music-generation.v1",
         endpoint: "/v1/music/generations",
-        model: "ace-step-1.5",
+        model: "auto",
         description: expect.stringContaining("ACE-Step 1.5 Turbo"),
         startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 },
       }],

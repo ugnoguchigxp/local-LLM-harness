@@ -1,7 +1,7 @@
 [Unit]
 Description=LARM on-demand ACE-Step 1.5 music variant
 After=network.target
-Conflicts=larm-image-qwen21.service
+Conflicts=larm-image-qwen21.service larm-audio-stable.service
 
 [Service]
 Type=simple

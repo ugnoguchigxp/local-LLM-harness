@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-export type MediaVariant = "image" | "music";
+export type MediaVariant = "image" | "music" | "stable-audio";
 
 export class MediaVariantStopError extends Error {
   constructor(readonly variant: MediaVariant, cause: unknown) {
@@ -42,24 +42,26 @@ async function runVariantScript(script: string, action: "start" | "stop", varian
 }
 
 export class MediaVariantManager {
-  private active: Record<MediaVariant, number> = { image: 0, music: 0 };
-  private warm: Record<MediaVariant, boolean> = { image: false, music: false };
+  private active: Record<MediaVariant, number> = { image: 0, music: 0, "stable-audio": 0 };
+  private warm: Record<MediaVariant, boolean> = { image: false, music: false, "stable-audio": false };
   private timers: Partial<Record<MediaVariant, ReturnType<typeof setTimeout>>> = {};
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
   private faulted = false;
-  private waitingMusic = 0;
+  private waiters: symbol[] = [];
   private starting = false;
   private readonly shutdown = new AbortController();
 
-  isOccupied(): boolean { return this.starting || this.faulted || this.active.image > 0 || this.active.music > 0 || this.warm.image || this.warm.music; }
+  isOccupied(): boolean { return this.starting || this.faulted || Object.values(this.active).some(Boolean) || Object.values(this.warm).some(Boolean); }
 
   get available(): boolean { return !this.closed && !this.faulted; }
 
   constructor(private readonly options: {
     script: string;
-    idleTtlMs: Record<MediaVariant, number>;
-    beforeStart?: () => void;
+    idleTtlMs: { image: number; music: number; "stable-audio"?: number };
+    beforeStart?: (variant: MediaVariant) => void;
+    afterStart?: (variant: MediaVariant) => void;
+    afterStop?: (variant: MediaVariant) => void;
     run?: (action: "start" | "stop", variant: MediaVariant, signal?: AbortSignal) => Promise<void>;
   }) {}
 
@@ -69,27 +71,31 @@ export class MediaVariantManager {
     return result;
   }
 
-  async acquire(variant: MediaVariant, signal?: AbortSignal): Promise<() => Promise<void>> {
+  async acquire(variant: MediaVariant, signal?: AbortSignal, ticket?: symbol, deadline?: number): Promise<() => Promise<void>> {
     await this.serialized(async () => {
       if (this.closed) throw new Error("media variant manager is closed");
       signal?.throwIfAborted();
       if (this.faulted) throw new Error("media worker stop failed; runtime is quarantined");
-      if (this.options.idleTtlMs[variant] === 0 && (this.active.image + this.active.music) > 0) throw new MediaVariantBusyError();
-      if (variant === "image" && this.waitingMusic > 0) throw new MediaVariantBusyError();
-      const other = variant === "image" ? "music" : "image";
-      if (this.active[other] > 0) throw new MediaVariantBusyError();
+      // The serialized queue may have waited for a previous worker to stop.
+      if (deadline !== undefined && Date.now() >= deadline) throw new Error("media execution capacity wait expired");
+      if ((this.options.idleTtlMs[variant] ?? 0) === 0 && Object.values(this.active).reduce((a, b) => a + b, 0) > 0) throw new MediaVariantBusyError();
+      if (this.waiters.length > 0 && ticket !== this.waiters[0]) throw new MediaVariantBusyError();
+      const others = (["image", "music", "stable-audio"] as const).filter((v) => v !== variant);
+      if (others.some((v) => this.active[v] > 0)) throw new MediaVariantBusyError();
       const timer = this.timers[variant];
       if (timer) clearTimeout(timer);
       delete this.timers[variant];
       if (this.active[variant] === 0) {
-        this.options.beforeStart?.();
+        this.options.beforeStart?.(variant);
         // The script verifies health even for an already running worker. A
         // failed switch may have stopped the previous worker before failing.
         this.warm[variant] = false;
-        this.warm[other] = false;
-        const otherTimer = this.timers[other];
-        if (otherTimer) clearTimeout(otherTimer);
-        delete this.timers[other];
+        for (const other of others) {
+          if (this.warm[other]) await this.stop(other);
+          const timer = this.timers[other];
+          if (timer) clearTimeout(timer);
+          delete this.timers[other];
+        }
         this.starting = true;
         try {
           await this.run("start", variant, AbortSignal.any([this.shutdown.signal, ...(signal ? [signal] : [])]));
@@ -100,6 +106,7 @@ export class MediaVariantManager {
           throw error;
         } finally { this.starting = false; }
         this.warm[variant] = true;
+        this.options.afterStart?.(variant);
       }
       if (this.closed) throw new Error("media variant manager is closed");
       this.active[variant]++;
@@ -110,7 +117,7 @@ export class MediaVariantManager {
       releasePromise = this.serialized(async () => {
         this.active[variant]--;
         if (this.active[variant] !== 0) return;
-        if (this.closed || this.options.idleTtlMs[variant] === 0) {
+        if (this.closed || (this.options.idleTtlMs[variant] ?? 0) === 0) {
           if (this.warm[variant]) await this.stop(variant);
           return;
         }
@@ -129,13 +136,24 @@ export class MediaVariantManager {
     };
   }
 
-  async waitForMusic(signal: AbortSignal, timeoutMs = 300_000): Promise<() => Promise<void>> {
-    this.waitingMusic++;
+  async waitForMusic(signal: AbortSignal, timeoutMs = 300_000, variant: "music" | "stable-audio" = "music"): Promise<() => Promise<void>> {
+    return this.waitFor(variant, signal, timeoutMs);
+  }
+
+  async waitFor(variant: MediaVariant, signal: AbortSignal, timeoutMs = 600_000): Promise<() => Promise<void>> {
+    const ticket = Symbol();
+    this.waiters.push(ticket);
     const deadline = Date.now() + timeoutMs;
+    let firstAttempt = true;
     try {
       while (true) {
         signal.throwIfAborted();
-        try { return await this.acquire("music", signal); }
+        if (!firstAttempt && Date.now() >= deadline) throw new Error("media execution capacity wait expired");
+        firstAttempt = false;
+        try {
+          if (this.waiters[0] !== ticket) throw new MediaVariantBusyError();
+          return await this.acquire(variant, signal, ticket, timeoutMs > 0 ? deadline : undefined);
+        }
         catch (error) {
           if (!(error instanceof MediaVariantBusyError)) throw error;
           if (Date.now() >= deadline) throw new Error("media execution capacity wait expired");
@@ -147,7 +165,7 @@ export class MediaVariantManager {
           });
         }
       }
-    } finally { this.waitingMusic--; }
+    } finally { this.waiters = this.waiters.filter((v) => v !== ticket); }
   }
 
   quarantine(): void { this.faulted = true; }
@@ -158,7 +176,7 @@ export class MediaVariantManager {
     for (const timer of Object.values(this.timers)) if (timer) clearTimeout(timer);
     this.timers = {};
     await this.serialized(async () => {
-      for (const variant of ["image", "music"] as const) {
+      for (const variant of ["image", "music", "stable-audio"] as const) {
         if (this.warm[variant]) await this.stop(variant);
       }
     });
@@ -168,6 +186,7 @@ export class MediaVariantManager {
     try {
       await this.run("stop", variant);
       this.warm[variant] = false;
+      this.options.afterStop?.(variant);
     } catch (error) {
       this.faulted = true;
       throw new MediaVariantStopError(variant, error);

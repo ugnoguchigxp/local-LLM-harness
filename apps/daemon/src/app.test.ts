@@ -537,7 +537,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
       ],
-      services: [{ name: "music", endpoint: "/v1/music/generations", model: "ace-step-1.5" }],
+      services: [{ name: "music", endpoint: "/v1/music/generations", model: "auto" }],
     },
     "ornith1.5Strix": {
       id: "ornith1.5Strix",

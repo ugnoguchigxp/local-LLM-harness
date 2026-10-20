@@ -347,12 +347,14 @@ export class OnDemandMusicProvider implements MusicProvider {
   readonly id: string;
   readonly capabilities: MusicProviderCapabilities;
 
-  constructor(private readonly upstream: MusicProvider, private readonly variants: MediaVariantManager) {
+  constructor(private readonly upstream: MusicProvider, private readonly variants: MediaVariantManager,
+    private readonly variant: "music" | "stable-audio" = "music") {
     this.id = upstream.id;
     this.capabilities = upstream.capabilities;
   }
 
   async load(): Promise<void> {}
+  validate(request: MusicGenerationRequest): void { this.upstream.validate?.(request); }
   async unload(): Promise<void> { await this.upstream.unload(); }
   async health(): Promise<{ available: boolean; reason?: string }> {
     return { available: this.variants.available, ...(!this.variants.available ? { reason: "media runtime unavailable" } : {}) };
@@ -362,7 +364,7 @@ export class OnDemandMusicProvider implements MusicProvider {
   }
   async generate(request: MusicGenerationRequest, context: Parameters<MusicProvider["generate"]>[1]) {
     context.phase("loading");
-    const stopWorker = await this.variants.waitForMusic(context.signal);
+    const stopWorker = await this.variants.waitForMusic(context.signal, 300_000, this.variant);
     const release = async () => { await stopWorker(); await this.upstream.unload(); };
     try {
       context.signal.throwIfAborted();
@@ -394,6 +396,7 @@ export class MusicGenerationManager {
   private running = 0;
   private readonly runningJobs = new Map<string, Promise<void>>();
   private closed = false;
+  private closePromise?: Promise<void>;
   private storageChain: Promise<void> = Promise.resolve();
   constructor(readonly provider: MusicProvider, private readonly options: {
     artifactRoot: string;
@@ -463,7 +466,8 @@ export class MusicGenerationManager {
     this.pruneTimer.unref?.();
   }
 
-  close(): void {
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
     for (const job of this.jobs.values()) {
       if (!["completed", "failed", "cancelled"].includes(job.status)) job.abort.abort(new Error("daemon shutting down"));
@@ -474,6 +478,11 @@ export class MusicGenerationManager {
     }
     if (this.pruneTimer) clearInterval(this.pruneTimer);
     this.pruneTimer = undefined;
+    this.closePromise = (async () => {
+      await Promise.allSettled([...this.runningJobs.values()]);
+      await this.storageChain;
+    })();
+    return this.closePromise;
   }
 
   async pruneArtifacts(): Promise<string[]> {
@@ -558,6 +567,7 @@ export class MusicGenerationManager {
   }
 
   create(request: MusicGenerationRequest): MusicGenerationJob {
+    this.provider.validate?.(request);
     if (request.referenceAudio && !this.provider.capabilities.referenceAudio) throw new MusicProviderError("unsupported_feature", "referenceAudio is not supported by this provider");
     if (this.closed || this.queue.length >= 16) throw new MusicProviderError("queue_full", "music generation queue unavailable");
     request = { ...request, tags: deriveMusicTags(request) };

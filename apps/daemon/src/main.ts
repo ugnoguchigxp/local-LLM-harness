@@ -24,6 +24,7 @@ import {
   LlamaContextSlotEraseAdapter,
   LocalPersonalStateJournal,
   MediaVariantManager,
+  MediaVariantBusyError,
 } from "@larm/backends";
 import { createAppComponents } from "./app";
 import { ArtifactManager } from "./artifact-manager";
@@ -45,6 +46,8 @@ import { PersonalStateController } from "./personal-state-controller";
 import { GatewayLifecycle, type GatewayLifecycleState } from "./gateway-lifecycle";
 import { gatewayStartupVerificationIntent, verifyGatewayStartup } from "./gateway-startup";
 import { AceStepMusicProvider, MusicGenerationManager, OnDemandMusicProvider } from "./music-manager";
+import { RoutedMusicProvider } from "./music-routing";
+import { StableAudioMusicProvider } from "./stable-audio-provider";
 import { ImageArtifactManager } from "./image-artifact-manager";
 import { ImageGenerationProvider } from "./image-generation-provider";
 
@@ -338,15 +341,16 @@ await personalStateController.initialize();
 const startupProbeToken = crypto.randomUUID();
 const mediaPolicy = mediaPolicySchema.parse(parse(readFileSync(join(config.configDir, "runtime-variants.yaml"), "utf8")));
 const imageEndpoint = config.imageProviderEndpoint ?? new URL(mediaPolicy.variants.image.healthUrl).origin;
+const stableAudioEndpoint = new URL(mediaPolicy.variants["stable-audio"].healthUrl).origin;
 const musicEndpoint = config.musicProviderEndpoint ?? new URL(mediaPolicy.variants.music.healthUrl).origin;
 const mediaVariants = new MediaVariantManager({
-  beforeStart: () => { if (serviceLedger.reservations().length) throw new Error("local service reserves host memory"); },
+  beforeStart: () => { if (serviceLedger.reservations().length) throw new MediaVariantBusyError(); },
   script: new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname,
-  idleTtlMs: { image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
+  idleTtlMs: { image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000, "stable-audio": mediaPolicy.variants["stable-audio"].idleTtlSeconds * 1_000 },
 });
 // Recover orphan workers without making the public API depend on media permissions.
-await Promise.all(["image", "music"].map(async (variant) => {
-  const unit = variant === "image" ? "larm-image-qwen21.service" : "larm-music-ace-step.service";
+await Promise.all((["image", "music", "stable-audio"] as const).map(async (variant) => {
+  const unit = variant === "image" ? "larm-image-qwen21.service" : variant === "music" ? "larm-music-ace-step.service" : "larm-audio-stable.service";
   const observed = Bun.spawn(["systemctl", "show", unit, "--property=ActiveState", "--value"], { stdout: "pipe", stderr: "ignore" });
   const state = (await new Response(observed.stdout).text()).trim();
   if (await observed.exited === 0 && state === "inactive") return;
@@ -358,13 +362,15 @@ await Promise.all(["image", "music"].map(async (variant) => {
   }
 }));
 const musicManager = musicEndpoint
-  ? new MusicGenerationManager(new OnDemandMusicProvider(new AceStepMusicProvider({
+  ? new MusicGenerationManager(new RoutedMusicProvider(new OnDemandMusicProvider(new AceStepMusicProvider({
     endpoint: musicEndpoint,
     apiKey: config.musicProviderApiKey,
     pollIntervalMs: config.musicPollIntervalMs,
     maxAudioBytes: config.musicMaxAudioBytes,
     upstreamOutputRoot: config.musicUpstreamOutputRoot,
-  }), mediaVariants), {
+  }), mediaVariants), new OnDemandMusicProvider(new StableAudioMusicProvider({
+    endpoint: stableAudioEndpoint, maxAudioBytes: config.musicMaxAudioBytes,
+  }), mediaVariants, "stable-audio")), {
     artifactRoot: config.musicArtifactRoot,
     captureAdmission: () => {
       const usage = control.usage;
@@ -643,7 +649,10 @@ async function shutdown(signal: string): Promise<void> {
   artifactManager.beginDrain();
   executionGate.beginDrain();
   clearInterval(interval);
-  musicManager?.close();
+  const musicClosed = (musicManager?.close() ?? Promise.resolve()).then(() => true, (error) => {
+    console.error(`music shutdown failed: ${String(error)}`);
+    return false;
+  });
   const mediaClosed = mediaVariants.close().then(() => true, (error) => {
     console.error(`media shutdown failed: ${String(error)}`);
     return false;
@@ -658,7 +667,8 @@ async function shutdown(signal: string): Promise<void> {
       mutationCoordinator.drain(config.shutdownTimeoutMs),
       reconciliationInFlight ?? Promise.resolve(),
       mediaClosed,
-    ]).then(([, , mutationDrained, , mediaDrained]) => mutationDrained && mediaDrained),
+      musicClosed,
+    ]).then(([, , mutationDrained, , mediaDrained, musicDrained]) => mutationDrained && mediaDrained && musicDrained),
     Bun.sleep(config.shutdownTimeoutMs).then(() => false),
   ]);
   const requestsDrained = await requestTracker.drain(Math.max(0, deadline - Date.now()));

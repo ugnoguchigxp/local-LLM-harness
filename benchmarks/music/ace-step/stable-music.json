@@ -1,0 +1,32 @@
+[
+  {
+    "id": "ambient30-first",
+    "text": "Cinematic electronic ambient music, slow evolving synthesizers, deep bass, subtle percussion, no vocals, 120 BPM.",
+    "options": {
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 12345,
+      "duration_seconds": 30
+    }
+  },
+  {
+    "id": "ambient30-repeat",
+    "text": "Cinematic electronic ambient music, slow evolving synthesizers, deep bass, subtle percussion, no vocals, 120 BPM.",
+    "options": {
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 12345,
+      "duration_seconds": 30
+    }
+  },
+  {
+    "id": "jazz60",
+    "text": "Acoustic jazz trio, expressive grand piano melody, warm upright double bass, crisp brushed drums, intimate studio recording, natural dynamics, clear instrument separation, cheerful relaxed mood, no vocals, 100 BPM.",
+    "options": {
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "seed": 23456,
+      "duration_seconds": 60
+    }
+  }
+]
