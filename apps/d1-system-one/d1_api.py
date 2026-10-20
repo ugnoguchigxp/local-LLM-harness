@@ -2,6 +2,8 @@
 from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from general import DecisionError, GENERAL_MODEL
 from engine import Engine
 
 
@@ -24,7 +26,11 @@ def health(request: Request):
 def predict(request: Request, body: dict):
     try:
         return request.app.state.engine.predict(body)
+    except DecisionError as error:
+        return JSONResponse(status_code=error.status, content={'error': {'code': error.code, 'message': error.code}})
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except BlockingIOError as error:
+        if body.get('model') == GENERAL_MODEL:
+            return JSONResponse(status_code=429, content={'error': {'code': 'decision_busy', 'message': 'd1 is busy'}})
         raise HTTPException(status_code=429, detail='d1 is busy') from error

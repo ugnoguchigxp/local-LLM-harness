@@ -2,6 +2,7 @@ import {
   audioSpeechRequestSchema,
   embeddingRequestSchema,
   systemOneRequestSchema,
+  decisionGeneralLimitError,
   type AudioSpeechRequest,
   type EmbeddingRequest,
   type RuntimeProtocol,
@@ -84,7 +85,10 @@ export async function prepareGatewayRequestBody(input: {
   if (input.protocol === "larm.system-one.v1") {
     try {
       const bytes = await readBodyLimited(input.request.clone() as unknown as Request, input.maxBodyBytes);
-      const parsed = systemOneRequestSchema.safeParse(decodeJson(bytes));
+      const value = decodeJson(bytes);
+      const limit = decisionGeneralLimitError(value);
+      if (limit) return { ok: false, error: { ...limit, message: limit.code, format: "larm" } };
+      const parsed = systemOneRequestSchema.safeParse(value);
       if (!parsed.success) {
         return {
           ok: false,

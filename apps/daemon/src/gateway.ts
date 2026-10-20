@@ -1,3 +1,4 @@
+import { DecisionError } from "./decision-manager";
 import { claimUsageRequest, UsageProtectionError } from "./usage-coordinator";
 import { AudioObservation } from "./audio-observation";
 import { requestObservation } from "./observability";
@@ -118,7 +119,7 @@ export type GatewayProxyOptions = {
     request: EmbeddingRequest;
     space: EmbeddingSpace;
   };
-  validateSystemOneResponse?: { request: SystemOneRequest };
+  validateSystemOneResponse?: { request: SystemOneRequest; transform?: (response: import("@larm/core").SystemOneResponse) => import("@larm/core").SystemOneResponse };
   expectedSpeechFormat?: string;
   expectedModel?: string;
   maxResponseBytes?: number;
@@ -1056,6 +1057,16 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     const inspected = inspectSystemOneResponse({ value: parsed, request: options.validateSystemOneResponse.request });
     if (!inspected.ok) {
       return failure("upstream_response_invalid", `upstream System One response failed ${inspected.reason}`, 502, "upstream_protocol_error");
+    }
+    if (options.validateSystemOneResponse.transform) {
+      try {
+        const transformed = options.validateSystemOneResponse.transform(inspected.response);
+        responseBody = new TextEncoder().encode(JSON.stringify(transformed));
+        responseHeaders.delete("content-length");
+      } catch (error) {
+        if (error instanceof DecisionError) return failure(error.code, error.code, error.status, "decision_adapter_rejected");
+        return failure("decision_adapter_failed", "decision adapter failed", 502, "upstream_protocol_error");
+      }
     }
     await finalizeAudit();
     finish();

@@ -468,6 +468,8 @@ const appComponents = createAppComponents({
   getGatewayReadiness: () => gatewayLifecycle.snapshot(),
   startupProbeToken,
   meshManager,
+  decisionDataRoot: registry.runtimes.some(r => r.capability.includes("decision.general"))
+    ? process.env.LARM_DECISION_DATA_ROOT ?? "/var/lib/larm/d1-general" : undefined,
   musicManager,
   imageArtifactManager,
   imageImportManager,

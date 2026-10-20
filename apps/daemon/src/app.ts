@@ -1,4 +1,7 @@
 import { registerMeshRoutes } from "./routes/mesh";
+import { DecisionManager, DecisionError } from "./decision-manager";
+import { openDecisionSession } from "./decision-connection";
+import { registerDecisionRoutes } from "./routes/decision";
 import { ZodError } from "zod";
 import { registerLocalServiceRoutes } from "./routes/local-services";
 import { LocalServiceError } from "./local-service-manager";
@@ -138,6 +141,7 @@ export function createAppComponents(deps: AppDeps) {
   let lastObservedActivityState: ServiceActivityState | undefined;
 
   app.onError((err, c) => {
+    if (err instanceof DecisionError) return c.json(errorBody(err.code, err.code), err.status);
     if (err instanceof UsageProtectionError) return protectionResponse(err, c.req.path);
     if (err instanceof ConnectionTokenError) return c.json(errorBody(err.code, err.message), err.code === "connection_idle_released" ? 409 : 401);
     if (err instanceof ZodError) return c.json(errorBody("invalid_request", "invalid request"), 400);
@@ -294,7 +298,12 @@ export function createAppComponents(deps: AppDeps) {
   app.use("/v1/runtime-releases/*", requireManagement);
   app.use("/v1/inspection/*", requireManagement);
 
+  const decisionManager = deps.decisionDataRoot && deps.apiToken
+    ? new DecisionManager(deps.decisionDataRoot, onPhase => openDecisionSession(app, deps.apiToken!, onPhase))
+    : undefined;
+  registerDecisionRoutes(app, { manager: decisionManager, apiToken: deps.apiToken });
   const handleGateway = createGatewayHandler({
+    decisionManager,
     deps,
     identity,
     executionGate,

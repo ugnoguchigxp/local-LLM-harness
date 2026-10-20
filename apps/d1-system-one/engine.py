@@ -7,6 +7,8 @@ from pathlib import Path
 import threading
 import time
 
+from general import GENERAL_MODEL, DecisionError, validate_general
+
 from contract import (IMAGE, MAX_IMAGE_BYTES, MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS,
                       MAX_INPUT_TOKENS, PUBLIC_MODEL, REVISION, adapt_response, validate_request)
 
@@ -94,21 +96,32 @@ class Engine:
         self.load_ms = (time.perf_counter() - started) * 1000
 
     def predict(self, body):
-        state, questions, urls = validate_request(body)
+        general = body.get('model') == GENERAL_MODEL
+        state, questions, urls = validate_general(body) if general else validate_request(body)
         if not self.lock.acquire(blocking=False):
             raise BlockingIOError('d1 is processing another request')
         try:
             started = time.perf_counter()
-            pictures = decode_images(urls)
+            try:
+                pictures = decode_images(urls)
+            except ValueError as error:
+                if general:
+                    raise DecisionError('decision_image_limit', 413) from error
+                raise
             # Reserve the visual token budget after bounding the image to 384px.
             from importlib import import_module
             prompt = import_module(self.runner.__class__.__module__.rsplit('.', 1)[0] + '.prompt')
             typed = [prompt.as_question(q) for q in questions.values()]
             tokens = self.runner.tokens(state, typed)
             if tokens + (1024 if pictures else 0) > MAX_INPUT_TOKENS:
+                if general:
+                    raise DecisionError('decision_token_limit', 413)
                 raise ValueError('d1 input exceeds 4096-token budget; no truncation')
             result = adapt_response(self.model.system_one(state, questions, images=pictures), questions)
-            result['routing'] = {'model': PUBLIC_MODEL, 'revision': REVISION, 'device': self.device,
+            if general:
+                result['model'] = GENERAL_MODEL
+                result['adapter'] = None
+            result['routing'] = {'model': result['model'], 'revision': REVISION, 'device': self.device,
                                  'precision': self.precision, 'method': 'single_forward_decision',
                                  'tree_attention': self.tree_attention,
                                  'max_input_tokens': MAX_INPUT_TOKENS, 'max_image_edge': MAX_IMAGE_EDGE,
@@ -118,7 +131,7 @@ class Engine:
             self.lock.release()
 
     def health(self):
-        return {'status': 'ok', 'model': PUBLIC_MODEL, 'models': [PUBLIC_MODEL], 'revision': REVISION,
+        return {'status': 'ok', 'model': PUBLIC_MODEL, 'models': [PUBLIC_MODEL, GENERAL_MODEL], 'revision': REVISION,
                 'device': self.device, 'device_name': self.device_name, 'precision': self.precision,
                 'torch': self.torch_version, 'hip': self.hip_version, 'compile': False,
                 'tree_attention': self.tree_attention,

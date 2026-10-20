@@ -10,6 +10,42 @@ audiences:
     baseUrl: request-origin
 
 agentProfiles:
+  decision-training-background:
+    description: Idle-only d1 feature extraction for asynchronous training; yields to foreground conversations
+    schedulingPriority: 500
+    requestScheduling: background-when-idle
+    providers:
+      - name: decision
+        capability: decision.general
+        route: general-decision-d1
+        publicModel: d1-3b-general
+        publishModel: false
+        readiness: system-one
+        description: 学習job内部の特徴抽出用。通常の即時判断はdecisionGeneralを選択する。このprofileは会話中の処理を待つ。
+  decision-general-background:
+    description: Explicit background general d1 decisions with optional immutable learned output heads; no conversation Provider is allocated
+    schedulingPriority: 1000
+    providers:
+      - name: decision
+        capability: decision.general
+        route: general-decision-d1
+        publicModel: d1-3b-general
+        readiness: system-one
+        description: >-
+          汎用d1判断。claimのendpointへPOST {model,state,questions,adapter?,questionSet?}。
+          stateはJSON objectまたはtext、画像だけならnull。questionsはid→{type,instructions,criteria?}で1〜16問。
+          noulはP(yes)のnoulとconfidence、choiceは名前→基準文のcriteriaに対するchoice/confidence/probabilities、
+          scoreは2〜10段階の基準文配列に対する期待値score/confidence/probabilities/legend（0始まり）。
+          応答は{model,adapter:null|{id,version},answers,usage,routing}。
+          stateはUTF-8 JSONで50000 bytes、stateと全質問・画像を含む入力4096 tokens、要求全体2MiB。
+          imagesはPNG/JPEG/WebPのbase64 data URLを1枚まで、復号後1MiB・1048576 pixels、内部で最大辺384pxへ縮小。
+          adapter:{id,version}とquestionSet:{id,version}で学習済みheadを選択、省略時は基本モデル。質問定義も照合する。
+          学習例はControl BearerでPOST /v1/decision/datasetsへJSONL（8MiB・2000行まで、train/eval必須、課題単位分割）。
+          POST /v1/decision/training-jobs {model,datasetId,questionSet:{id,version,questions}}は202/jobIdを返し、GET /v1/decision/training-jobs/{jobId}で進捗・adapter・eval指標を取得。
+          データはGET/DELETE /v1/decision/datasets/{id}、adapterはGET /v1/decision/adapters、GET/DELETE /v1/decision/adapters/{id}/versions/{version}。
+          変更APIはIdempotency-Key必須。学習state/ラベルを推論時にロードせず、headのみCPUメモリ常駐。
+          未登録/削除済みはdecision_adapter_not_found、質問セット不一致はdecision_adapter_mismatch。
+          低遅延の継続利用はConnectionを保持してrenewする。最終解放後は120秒でidle停止。学習特徴抽出は会話のidle時に進め、会話中はwaiting_for_idleとなる。
   saaa-conversation-gemma4-26b-voice:
     description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, Japanese VOICEVOX and English KittenTTS, embedding, and Ruri speaking-attitude System One
     schedulingPriority: 4000
@@ -346,6 +382,10 @@ agentProfiles:
         readiness: stt-transcription
 
 profileSelectors:
+  decisionTraining:
+    agentProfile: decision-training-background
+  decisionGeneral:
+    agentProfile: decision-general-background
   contextStill:
     agentProfile: contextstill-background
   SAAA-gemma4-26b:

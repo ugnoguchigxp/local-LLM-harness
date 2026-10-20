@@ -289,3 +289,10 @@ routes:
     candidates:
       - runtime: d1-system-one
         purpose: primary
+
+  general-decision-d1:
+    capabilities: [ decision.general ]
+    explicitOnly: true
+    candidates:
+      - runtime: d1-system-one
+        purpose: primary

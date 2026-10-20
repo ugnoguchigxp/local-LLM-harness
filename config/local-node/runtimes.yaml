@@ -702,7 +702,7 @@ runtimes:
 
   d1-system-one:
     artifacts: [ d1-3b ]
-    capability: [ decision.game ]
+    capability: [ decision.game, decision.general ]
     protocol: larm.system-one.v1
     backend: systemd
     node: local-node

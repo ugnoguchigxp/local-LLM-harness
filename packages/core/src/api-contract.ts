@@ -1,5 +1,6 @@
 import { imageImportReceiptSchema } from "./image-import";
 import { meshAssetSchema, meshAssetListSchema, meshGenerationRequestSchema, meshJobSchema, meshAssetPatchSchema } from "./mesh";
+import { decisionDatasetSchema, decisionTrainingJobSchema, decisionTrainingRequestSchema, decisionAdapterDetailSchema } from "./decision-general";
 import { chatInputContractSchema, chatInputTokenCountSchema } from "./chat-input";
 import { localServiceListSchema, localServiceStatusSchema, localServiceLeaseSchema, localServiceLeaseRequestSchema, localServiceRenewSchema } from "./local-service";
 import { z } from "zod";
@@ -293,6 +294,13 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     AudioVoiceDiscovery: jsonSchema(audioVoiceDiscoverySchema),
     EmbeddingRequest: jsonSchema(embeddingRequestSchema),
     EmbeddingResponse: jsonSchema(embeddingResponseSchema),
+    DecisionDataset: jsonSchema(decisionDatasetSchema),
+    DecisionDatasetList: jsonSchema(z.object({ datasets: z.array(decisionDatasetSchema) }).strict()),
+    DecisionTrainingJob: jsonSchema(decisionTrainingJobSchema),
+    DecisionTrainingRequest: jsonSchema(decisionTrainingRequestSchema),
+    DecisionAdapter: jsonSchema(decisionAdapterDetailSchema),
+    DecisionAdapterList: jsonSchema(z.object({ adapters: z.array(decisionAdapterDetailSchema) }).strict()),
+    DecisionDeleted: jsonSchema(z.object({ deleted: z.literal(true) }).strict()),
     SystemOneRequest: jsonSchema(systemOneRequestSchema),
     SystemOneResponse: jsonSchema(systemOneResponseSchema),
     MusicTrack: jsonSchema(musicTrackSchema),

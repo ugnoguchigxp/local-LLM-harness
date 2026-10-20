@@ -33,6 +33,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
   expect(catalog.profileSelectors).toEqual([
     { id: "backchannelQwen35", agentProfile: "contextstill-backchannel-qwen35-2b", services: [] },
     { id: "contextStill", agentProfile: "contextstill-background", services: [] },
+    { id: "decisionGeneral", agentProfile: "decision-general-background", services: [] },
+    { id: "decisionTraining", agentProfile: "decision-training-background", services: [] },
     { id: "embeddingCanary", agentProfile: "contextstill-embedding", services: [] },
     { id: "ornith1.5Strix", agentProfile: "ornith1.5Strix", services: [] },
     { id: "ornith1.5Strix-game", agentProfile: "ornith1.5Strix-game", services: [] },
@@ -79,6 +81,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "contextstill-background-128k",
     "contextstill-background-64k",
     "contextstill-embedding",
+    "decision-general-background",
+    "decision-training-background",
     "nightworker-background",
     "ornith1.5Strix",
     "ornith1.5Strix-game",

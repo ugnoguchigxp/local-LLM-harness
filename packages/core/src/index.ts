@@ -343,3 +343,6 @@ export * from "./mesh-glb";
 
 export { controlCatalogServices } from "./control-service-catalog";
 export * from "./image-import";
+
+export * from "./decision-general";
+export * from "./decision-head";

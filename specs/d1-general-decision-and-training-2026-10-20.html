@@ -1,0 +1,485 @@
+<article lang="ja">
+  <h1>d1 汎用判断・学習 API と常駐 head の設計・実測</h1>
+  <p>
+    2026-10-20。eumenes-pursuit からの R1〜R4
+    と、高速判断のために学習結果をどう常駐させるかという追加依頼に対応する。実装と隔離 HTTP canary
+    での実モデル確認を記録する。現行サービスへの反映は未実施である。現行サービスはこの作業ツリーより新しい機能を含むため、全体をこのツリーで置換しない。
+  </p>
+  <section id="selection">
+    <h2>選択と実行基盤</h2>
+    <p>
+      推論は既存の <code>POST /v1/systemone</code> 一つに統一する。protocol は
+      <code>larm.system-one.v1</code> を維持する。新 capability は
+      <code>decision.general</code>、公開 model は
+      <code>d1-3b-general</code>。catalog の
+      <code>GET /v3/agent-profiles?profile=decisionGeneral</code> から選択する。selector は explicit-only の
+      background profile に解決し、Provider は
+      <code>decision</code> 一つだけで、会話用 LLM
+      や音声サービスの確保を伴わない。
+    </p>
+    <p>
+      経路は
+      <code>decisionGeneral → decision-general-background → general-decision-d1 → d1-system-one → d1-system-one.service</code
+      >。ゲーム用経路も同じ実行基盤へ解決する。利用する重みは LiquidAI/d1-3B の revision
+      <code>051bcc464b01b9f92942b364d9586b0ef5912432</code>。既存のゲーム用 Provider
+      も、この基本モデルをそのまま使っていた。ゲーム専用の追加学習済み重みではなかった。
+    </p>
+    <p>
+      基本モデルは利用側が Agent Connection を保持している間 warm に維持する。十分な ttlSeconds
+      を指定し、継続利用時は renew
+      する。常時warmの最小数を1へ上げると既存のメモリadmission試験で会話経路が確保できなくなったため、既存の
+      minWarmInstances=0 と最終解放後120秒の idle policy
+      は変更しない。推論要求ごとに基本モデルをロードし直す設計ではない。ゲーム用の要求・回答計算と既存
+      <code>decision.system-one</code> のモデル・経路は維持する。会話 runtime
+      とは別プロセスで、同一 swap-group に属さない。共有するのは GPU・メモリ帯域・ホスト資源である。
+    </p>
+  </section>
+  <section id="inference">
+    <h2>推論の要求・応答</h2>
+    <p>
+      Agent Connection を <code>{profile:"decisionGeneral",audience:"same-host",providers:["decision"]}</code> で作成し、ready 後に
+      <code>{format:"openai-provider-v1"}</code> で claim する。claim の endpoint に Provider
+      Bearer を付けて送る。baseUrl は既に
+      <code>/v1</code> を含むため、baseUrl を使う場合の追加パスは
+      <code>/systemone</code> である。
+    </p>
+    <pre><code>{
+  "model": "d1-3b-general",
+  "state": {"permission": "許可済み"},
+  "questions": {
+    "approved": {"type": "noul", "instructions": "この行動は許可済みですか？"},
+    "trajectory": {"type": "choice", "instructions": "進捗を分類してください。",
+      "criteria": {"progress": "目標へ前進", "thrashing": "同じ失敗の反復"}},
+    "risk": {"type": "score", "instructions": "危険度を評価してください。",
+      "criteria": ["低い", "中間", "高い"]}
+  },
+  "questionSet": {"id": "pursuit-guards", "version": 3},
+  "adapter": {"id": "ad-UUID", "version": 1}
+}</code></pre>
+    <p>
+      <code>adapter</code> と
+      <code>questionSet</code> は学習結果を使うときに指定する。adapter
+      を省略すれば基本モデルを使う。questionSet の id・版に加えて各質問の型・instructions・criteria
+      の正規化ハッシュも照合する。学習済み質問の部分集合を要求できる。選択肢の名前は ASCII
+      の識別子で、基準文と state は日本語を使える。
+    </p>
+    <table>
+      <caption>
+        質問型と回答フィールド
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">型</th>
+          <th scope="col">要求</th>
+          <th scope="col">回答</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">noul</th>
+          <td>instructions。任意で true/false の基準文</td>
+          <td>noul=P(yes)、confidence=max(P(yes),P(no))</td>
+        </tr>
+        <tr>
+          <th scope="row">choice</th>
+          <td>instructions、criteria は名前→基準文、2〜100選択肢</td>
+          <td>choice、confidence、名前→確率の probabilities</td>
+        </tr>
+        <tr>
+          <th scope="row">score</th>
+          <td>instructions、criteria は2〜10段階の配列</td>
+          <td>
+            0始まりの期待値 score、confidence、段階番号→確率の probabilities、番号→基準文の legend
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      応答は <code>{model,adapter,answers,usage,routing}</code>。adapter は適用した
+      <code>{id,version}</code>、基本モデルなら明示的な
+      <code>null</code>。usage は入力 token 数と
+      <code>output_tokens:0</code>。routing は基本モデルの revision、実行
+      device、所要時間を含む。選択肢の確率和・名前、score の期待値と legend も Gateway
+      で検証する。adapter 適用は一般判断モデルだけに限定し、旧 Provider に指定できない。
+    </p>
+    <table>
+      <caption>
+        一般判断の入力と実行上限
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">上限</th>
+          <th scope="col">値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">要求</th>
+          <td>
+            2 MiB、1〜16問。state と全質問・画像予約分を含む4,096 tokens。切り捨てず拒否する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">state</th>
+          <td>
+            JSON object または非空 text。UTF-8 JSON 表現で50,000 bytes。画像だけの場合は null。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">質問文</th>
+          <td>instructions は16,384文字、基準文は各4,096文字。token 上限も適用する。</td>
+        </tr>
+        <tr>
+          <th scope="row">画像</th>
+          <td>
+            images 配列に PNG/JPEG/WebP の base64 data URL を1枚。復号後1 MiB、1,048,576
+            pixels。内部で最大辺384pxへ縮小。任意URLとホストパスを取得しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">並行実行</th>
+          <td>
+            d1 runtime は同時実行1、待ち4、queue timeout 100ms。共有するゲーム要求と同じ admission
+            制御を通す。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="resident-heads">
+    <h2>調整方式とメモリ配置</h2>
+    <p>
+      公開・配置済みソースの prompt.py、runner.py、api.py を確認した。答えの位置の vocabulary logits
+      から選択肢の token 群を max-pool し、選択肢間で正規化して確率を得る。noul は yes/no、choice
+      は名前、score は段階番号で分布を構成する。文章を生成して後から解析する方式ではない。一次資料は
+      <code>https://huggingface.co/LiquidAI/d1-3B</code>。配置済みソースと重みは既存の固定
+      revision・checksum 検証を通す。
+    </p>
+    <p>
+      採用方式は <code>frozen-d1-log-probability-head</code>。基本モデルを固定し、質問ごとに
+      <code>softmax(W log(max(p,1e-7)) + b)</code> を学習する。W は単位行列、b
+      はゼロから開始し、train の cross-entropy と単位変換からの変化への正則化を使う。400
+      epoch、固定手順で fit する。calibration/eval
+      は勾配計算に使わず、利用側の課題単位分割を保持する。閾値の調整は行わない。
+    </p>
+    <p>
+      これは LoRA や基本モデルの fine-tuning
+      ではない。出力分布に残っている情報から判定の向き・選択肢間の関係を学習する小さな head
+      である。基本モデルが異なる state
+      に同じ分布を返す場合、その違いは復元できない。今回の確認だけで複雑な暴走検知が学習できるとは結論しない。効果が不足する場合は、固定
+      hidden representation への head、または differentiable な通常 forward を用いる LoRA
+      の追加検証が必要。モデルを黙って置換しない。
+    </p>
+    <table>
+      <caption>
+        学習データ・基本モデル・headの配置
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">配置・寿命</th>
+          <th scope="col">推論時の処理</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">基本モデル</th>
+          <td>d1 backend の GPU に一つ常駐</td>
+          <td>同じ重みで一括判断。adapter 切替で再ロードしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">学習データ・正解ラベル</th>
+          <td>private なディスク領域。学習 job 中だけメモリに読む。</td>
+          <td>検索・読込・prompt への例示挿入をしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">学習済み head</th>
+          <td>LARM daemon の CPU メモリに登録済み版を常駐。合計16 MiBを上限に新規作成を拒否。</td>
+          <td>id・版による Map 参照、定義照合、小さい行列演算。ディスクアクセス・GPU 転送なし。</td>
+        </tr>
+        <tr>
+          <th scope="row">学習計算</th>
+          <td>特徴抽出は通常の Agent Connection、fit は別 worker のCPU</td>
+          <td>HTTP event loop で最適化ループを実行しない。基本モデルへの backward はない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      k択なら係数は k²+k 個。二択で6個、10段階で110個。実測した二択 head の JSON は268 bytes。大きな
+      LoRA に置き換える場合、この常駐費用と GPU 側の切替は再検討が必要である。
+    </p>
+  </section>
+  <section id="training-api">
+    <h2>学習・管理 API</h2>
+    <p>
+      管理 API はすべて Control Bearer を必須とし、Provider token・匿名・protected consumer token
+      では受け付けない。変更要求には1〜128文字の可視ASCIIの
+      <code>Idempotency-Key</code> を必須とする。同じ key
+      と同じ要求は保存済み結果を返し、別内容なら409。同じ key の再送で削除済みデータや adapter
+      を再生成しない。
+    </p>
+    <table>
+      <caption>
+        学習と管理のHTTP契約
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">API</th>
+          <th scope="col">契約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">POST /v1/decision/datasets</th>
+          <td>
+            application/x-ndjson。依頼の JSONL 形式、2〜2,000行、8
+            MiB。id重複と同一taskのsplit跨ぎを拒否。train/eval必須。201で dataset
+            id・件数・split件数を返す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GET /v1/decision/datasets[/{id}]</th>
+          <td>一覧・メタデータ。state・正解ラベルの本文を返さない。</td>
+        </tr>
+        <tr>
+          <th scope="row">DELETE /v1/decision/datasets/{id}</th>
+          <td>学習データとラベルを削除。利用中jobがあれば409。</td>
+        </tr>
+        <tr>
+          <th scope="row">POST /v1/decision/training-jobs</th>
+          <td>
+            <code>{model,datasetId,questionSet:{id,version,questions}}</code>。要求512
+            KiB以内。202とjobId・Locationを返す。質問型に対するlabelを照合。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GET /v1/decision/training-jobs/{id}</th>
+          <td>
+            queued/running/completed/failed、phase、完了例数/全件数。完成時はadapter
+            id・版、質問型別のeval/calibration指標、特徴抽出/fit時間、head容量。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GET /v1/decision/adapters</th>
+          <td>版つき一覧。model・revision・質問セット・質問id・方式・容量を返す。</td>
+        </tr>
+        <tr>
+          <th scope="row">GET/DELETE /v1/decision/adapters/{id}/versions/{version}</th>
+          <td>
+            詳細・削除。削除で常駐参照とファイルを無効化。実行中の応答も返却時に再照合して拒否する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      noul の label は真偽、choice は選択肢名、score
+      は0始まりの整数。scoreの正解率は最大確率の段階で数え、期待値の丸めは使わない。各質問について
+      train/eval
+      の両方が必要。学習データのstateはtext/objectのみで、画像付き学習は今回未対応。指標は質問 id
+      ごとに型を併記し、accuracy・多クラスBrier（確率誤差二乗和の平均）・log loss・10bin
+      ECE・ラベル順つき混同行列を基本/調整後の両方で返す。
+    </p>
+    <p>
+      同時学習1件、特徴抽出は待機を含め30分、fit workerは質問ごとに120秒。データ全体64
+      MiB・100件、job履歴1,000件、adapter1,000版、head合計16
+      MiB、新規作業のidempotency記録10,000件が上限。上限到達後も学習データとadapterの削除は受け付け、その削除結果の再送記録を追加する。自動削除で学習結果を失わせず、新規要求を拒否する。新しい学習は新しい
+      adapter id と version=1 を作り、既存版を更新しない。
+    </p>
+    <p>
+      保存先の既定は <code>/var/lib/larm/d1-general</code>。必要時は
+      <code>LARM_DECISION_DATA_ROOT</code> を設定する。単一daemon
+      writer、directory0700/file0600。起動時にheadを復元し、中断jobは
+      <code>decision_job_interrupted</code>
+      で失敗にする。job状態とidempotency記録にstate・質問本文・個々のラベルは保存せず、学習用データファイルだけに保存する。Gatewayの会話payload監査はSystem
+      Oneを対象にしない。学習の集計指標はデータ削除後もjob結果に残る。物理媒体上のsecure
+      eraseは保証しない。
+    </p>
+    <table>
+      <caption>
+        エラーコードと拒否条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">HTTP / error.code</th>
+          <th scope="col">条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">400 invalid_system_one_request / decision_invalid_request</th>
+          <td>Gatewayの型不正、またはbackendの一般判断形式不正（backendは422）。</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            413 body_too_large / decision_state_limit / decision_image_limit / decision_token_limit
+          </th>
+          <td>
+            本文、state、画像、token上限。question数超過は422
+            decision_question_limit（Gatewayの64問上限等に先に当たれば400）。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">404 decision_adapter_not_found</th>
+          <td>未登録・削除済みのidまたは版。</td>
+        </tr>
+        <tr>
+          <th scope="row">409 decision_adapter_mismatch / decision_question_set_mismatch</th>
+          <td>model/revision、質問セット、質問定義の不一致。</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            400 decision_invalid_dataset / decision_invalid_label / decision_split_required /
+            decision_split_leakage
+          </th>
+          <td>JSONL、型に合わない正解、分割不足、id重複またはtask跨ぎ。</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            400 decision_idempotency_key_required / 409 decision_idempotency_conflict
+          </th>
+          <td>変更要求のkey不足・形式不正、keyの別内容再利用。</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            429 decision_training_busy / decision_storage_limit / decision_adapter_memory_limit
+          </th>
+          <td>実行数・保存数・常駐head容量。データ容量超過は413 decision_storage_limit。</td>
+        </tr>
+        <tr>
+          <th scope="row">429 decision_busy / Gateway admission errors</th>
+          <td>実行・待ちの上限。既存の実行制御が先に拒否する場合は既存のコードを返す。</td>
+        </tr>
+        <tr>
+          <th scope="row">401 unauthorized / 503 decision_not_configured</th>
+          <td>Control Bearer不正、管理機能未設定。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      要求・応答の機械可読schemaは core の <code>decision-general.ts</code>、<code
+        >system-one.ts</code
+      >
+      と OpenAPI の DecisionDataset/DecisionTrainingRequest/DecisionTrainingJob/DecisionAdapter
+      を正本とする。
+    </p>
+  </section>
+  <section id="measurements">
+    <h2>実測と検証範囲</h2>
+    <p>
+      Radeon 8060S、PyTorch2.11.0
+      ROCm7.13、BF16、explicit-fp32-rocm、compileなし。固定d1の実モデルを別portで起動し、現在のコードから組み立てた隔離LARM
+      HTTPでcatalog・確保・claim・推論・学習・削除を確認した。canaryのsystemd
+      lifecycleはfixtureであり、本番releaseの起動停止試験ではない。runtime読み込みとwarm-upは約8.82秒。
+    </p>
+    <p>
+      12問（3型を各4問）を同一要求で実行し、12回答・585入力tokens・生成tokensゼロを確認した。日本語state12例（許可6・禁止6）について、日本語基準と英語基準の同一質問を比較した。
+    </p>
+    <table>
+      <caption>
+        日本語stateに対する基準文の日英比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">基準文</th>
+          <th scope="col">正解率</th>
+          <th scope="col">Brier</th>
+          <th scope="col">log loss</th>
+          <th scope="col">ECE10</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">日本語</th>
+          <td>12/12</td>
+          <td>0.000704</td>
+          <td>0.01729</td>
+          <td>0.01711</td>
+        </tr>
+        <tr>
+          <th scope="row">英語</th>
+          <td>12/12</td>
+          <td>0.001593</td>
+          <td>0.02491</td>
+          <td>0.02450</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      二値確率の平均絶対差は0.00899。いずれも混同行列は[[6,0],[0,6]]。choiceも日英とも12/12正解。scoreの平均は、許可例で日0.150・英0.277、禁止例で日1.849・英1.646（0〜2）。明示的な許可/禁止という単純な小標本であり、自然な長文・否定・曖昧な指示やeumenes-pursuitの暴走検知に一般化できるという証拠ではない。
+    </p>
+    <p>
+      300例（train180、calibration60、eval60）・質問1個で学習jobが完了した。taskは行ごとに異なる。train/calibration/evalで行動語も分けた。この試験は意図的に「許可ならfalse、禁止ならtrue」という反転ラベルを与え、headの学習・適用経路を検証したもの。実運用上の質問品質を示す評価ではない。
+    </p>
+    <p>
+      held-out evalは基本モデル0/60、head適用55/60（91.67%）。Brierは0.88752→0.23037、log
+      lossは1.10938→0.35764、ECE10は0.66203→0.18271。調整後の混同行列は[[25,5],[0,30]]。特徴抽出30.41秒、CPU
+      fitと公開0.18秒、全体30.59秒、head
+      JSON268bytes。calibration60例は学習に使わず別に報告した。adapterの有無の両方で推論し、データとadapterを削除した後の同adapter要求は404
+      decision_adapter_not_foundだった。
+    </p>
+    <table>
+      <caption>
+        常駐headの有無と切替の応答時間
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">HTTPの1問推論</th>
+          <th scope="col">件数</th>
+          <th scope="col">中央値ms</th>
+          <th scope="col">p95 ms</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">基本モデル</th>
+          <td>20</td>
+          <td>97.11</td>
+          <td>99.14</td>
+        </tr>
+        <tr>
+          <th scope="row">head適用</th>
+          <td>20</td>
+          <td>97.39</td>
+          <td>102.43</td>
+        </tr>
+        <tr>
+          <th scope="row">二つのheadを交互に選択</th>
+          <td>20</td>
+          <td>97.42</td>
+          <td>98.63</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      12問一括の20回測定は中央値253.96ms・p95
+      262.53ms。二つ目のheadも同じ300例から31.26秒で作成し、異なるidを要求ごとに交互に指定した。両adapterとデータを削除済み。この測定ではhead選択による差は測定ゆらぎ内だった。現在のGPU経路で10ms級の要求レイテンシは達成していない。多数の質問はstateを共有する1要求にまとめる。より短い締切が必要なら、ROCm向け実行経路・shape
+      warm-up・batch/queue設定の追加測定が必要になる。
+    </p>
+    <p>
+      既存gameの移動質問はrightを返した。旧Python contract試験、旧gameのAgent
+      Connection/claim/画像Gateway試験と旧system-one試験を回帰確認する。学習中のデータ削除、型別head、認証、idempotency、再起動、削除後のGPU呼び出し前拒否も自動試験に含む。
+    </p>
+    <p>
+      同じマシンの実サービスで、要求した profile ornith1.5Strix の llm だけを確保し、claim の model
+      ornith-1.5-strix-lean を使って20件ずつ短い応答を測った。d1 warm idle時は中央値1451.54ms・p95
+      1574.14ms、d1特徴抽出をGPUで連続実行した時は中央値4262.14ms・p95
+      4591.88ms（特徴抽出911回）。会話の中央値は約2.94倍に悪化した。この負荷は学習jobのGPU特徴抽出を模した最大連続負荷で、CPU
+      head fitの影響ではない。確認用の会話Connectionは解放した。 この結果を受け、学習用には別の
+      explicit-only selector decisionTraining と idle-only profile
+      を用意した。同じd1・同じ推論endpointに解決するが、requestScheduling=background-when-idle、priority500。会話があると
+      waiting_for_idle で進捗を保持し、解放またはidle
+      release後に次の例から再開する。先行例は再計算せず、途中で中断された一例だけを再実行する。通常のdecisionGeneralはこの待機policyを持たず、即時判断に利用する。モデルは同じなのでゲーム・一般判断とは実行枠を共有する。会話と判断の同時推論そのもののGPU競合は残る。既に開始したd1のforwardは、Gatewayを中断してもGPU上で終了まで動く場合があるため、厳密な実時間の締切は保証しない。待機・再開のHTTP試験では、学習途中にforeground要求を開始し、waiting_for_idle中に完了件数が増えないこと、その要求の解放後に同じjobで100例が最後まで完了することを確認した。証拠はrepository外の
+      <code>/srv/ai/evidence/d1-general-20261020/summary.json</code
+      >、<code>language.json</code>、検証ログ。再実行用のsourceは
+      <code>benchmarks/decision-general/</code
+      >。学習データ・重み・生成ログはrepositoryに追加しない。
+    </p>
+    <p>
+      全体の
+      <code>bun run check</code>
+      が成功した。型検査、API契約、旧判断Provider、Python、デプロイ用source検査を含む。文書は
+      <code>bun run docs:check:fix</code>
+      を実施し、残る診断はゼロ。推論用canaryプロセスは停止し、検証用Connection・学習データ・adapterは解放・削除した。本番サービスのcatalog/APIを更新したという完了報告ではない。
+    </p>
+  </section>
+</article>

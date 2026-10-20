@@ -33,6 +33,9 @@ const AUDIO_LIMIT = 1_048_576;
 type ProbeFormat = "json" | "sse" | "default" | "query" | "passage";
 
 function systemOneProbe(model: string, capability: string): SystemOneRequest {
+  if (capability === "decision.general") {
+    return { model, state: { approved: true }, questions: { approved: { type: "noul", instructions: "Is approved true?" } } };
+  }
   if (capability === "decision.game") {
     return { model, state: { player_x: 1, target_x: 3 }, questions: { action: {
       type: "choice", instructions: "Move toward target_x. Right increases x; left decreases x.",

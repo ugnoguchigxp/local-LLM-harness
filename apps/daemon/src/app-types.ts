@@ -70,6 +70,7 @@ export type AppDeps = {
   startupProbeToken?: string;
   meshManager?: import("./mesh-manager").MeshManager;
   meshViewerPath?: string;
+  decisionDataRoot?: string;
   musicManager?: MusicGenerationManager;
   imageArtifactManager?: ImageArtifactManager;
   imageImportManager?: ImageImportManager;
