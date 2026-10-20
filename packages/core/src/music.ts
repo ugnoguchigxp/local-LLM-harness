@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { musicRequestDefaults } from "./music-routing";
 
 const identifierSchema = z.string().min(1).max(128)
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
@@ -15,13 +16,14 @@ export const musicGenerationStatusSchema = z.enum([
   "cancelled",
 ]);
 
-export const musicGenerationRequestSchema = z.object({
+export const musicGenerationRequestSchema = z.preprocess(musicRequestDefaults, z.object({
   title: z.string().trim().min(1).max(200).optional(),
   tags: z.array(z.string().trim().min(1).max(64)).max(32).optional(),
   prompt: z.string().trim().min(1).max(16_384),
   lyrics: z.string().max(131_072).optional(),
   task: z.enum(["music", "sound-effect"]).optional(),
-  durationSeconds: z.number().min(1).max(600).default(180),
+  durationSeconds: z.number().min(1).max(600).default(180)
+    .describe("Defaults: instrumental music 120 seconds; sound effects 5 seconds; vocals 180 seconds. Explicit durations are never shortened."),
   instrumental: z.boolean().default(false),
   language: z.string().min(2).max(32).optional(),
   bpm: z.number().int().min(20).max(300).optional(),
@@ -44,7 +46,7 @@ export const musicGenerationRequestSchema = z.object({
   if (request.task === "sound-effect" && request.lyrics?.trim()) {
     context.addIssue({ code: "custom", path: ["lyrics"], message: "sound effects do not accept lyrics" });
   }
-});
+}));
 
 export const musicProviderCapabilitiesSchema = z.object({
   instrumental: z.boolean(),
@@ -96,6 +98,7 @@ export const musicProviderModelSchema = z.object({
   id: identifierSchema,
   task: z.enum(["music", "vocals", "sound-effect"]),
   maxDurationSeconds: z.number().positive(),
+  defaultDurationSeconds: z.number().positive().optional(),
 }).strict();
 
 export const musicProviderListSchema = z.object({

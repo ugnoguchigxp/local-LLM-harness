@@ -1,12 +1,12 @@
-import { resolveMusicRoute, MusicRoutingError, STABLE_MUSIC_MODEL, STABLE_SFX_MODEL, STABLE_MAX_DURATION_SECONDS, type MusicGenerationRequest, type MusicProvider } from "@larm/core";
+import { resolveMusicRoute, MusicRoutingError, STABLE_MUSIC_MODEL, STABLE_SFX_MODEL, STABLE_MAX_DURATION_SECONDS, STABLE_SFX_DEFAULT_DURATION_SECONDS, type MusicGenerationRequest, type MusicProvider } from "@larm/core";
 import { MusicProviderError } from "./music-errors";
 
 export class RoutedMusicProvider implements MusicProvider {
   readonly id = "local-audio";
   readonly models: NonNullable<MusicProvider["models"]> = [
-    { id: STABLE_MUSIC_MODEL, task: "music", maxDurationSeconds: STABLE_MAX_DURATION_SECONDS },
-    { id: "acestep-v15-turbo", task: "vocals", maxDurationSeconds: 600 },
-    { id: STABLE_SFX_MODEL, task: "sound-effect", maxDurationSeconds: STABLE_MAX_DURATION_SECONDS },
+    { id: STABLE_MUSIC_MODEL, task: "music", maxDurationSeconds: STABLE_MAX_DURATION_SECONDS, defaultDurationSeconds: STABLE_MAX_DURATION_SECONDS },
+    { id: "acestep-v15-turbo", task: "vocals", maxDurationSeconds: 600, defaultDurationSeconds: 180 },
+    { id: STABLE_SFX_MODEL, task: "sound-effect", maxDurationSeconds: STABLE_MAX_DURATION_SECONDS, defaultDurationSeconds: STABLE_SFX_DEFAULT_DURATION_SECONDS },
   ];
   readonly capabilities: MusicProvider["capabilities"];
   constructor(private readonly vocals: MusicProvider, private readonly stable: MusicProvider) {

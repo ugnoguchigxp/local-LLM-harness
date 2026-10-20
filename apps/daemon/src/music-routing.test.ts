@@ -31,7 +31,7 @@ test("intent routes instrumentals, vocals, lyrics and SFX; legacy aliases preser
   }
   expect(parse({ task: "sound-effect", durationSeconds: 1.5 }).durationSeconds).toBe(1.5);
   expect(musicGenerationRequestSchema.safeParse({ prompt: "test", task: "sound-effect", lyrics: "words" }).success).toBeFalse();
-  for (const data of [{ model: "acestep-v15-xl-turbo" }, { model: STABLE_MUSIC_MODEL }, { task: "sound-effect", model: STABLE_MUSIC_MODEL }, { task: "music", model: STABLE_SFX_MODEL }]) {
+  for (const data of [{ model: "acestep-v15-xl-turbo" }, { model: STABLE_MUSIC_MODEL, instrumental: false }, { task: "sound-effect", model: STABLE_MUSIC_MODEL }, { task: "music", model: STABLE_SFX_MODEL }]) {
     expect(() => resolveMusicRoute(parse(data))).toThrow();
   }
 });
@@ -76,10 +76,14 @@ test("Stable adapter sends bounded, reserved options and preserves all output fo
     payloads.push(JSON.parse(String(init?.body)));
     return new Response(wav(), { headers: { "X-AudioCPP-Audio-Duration-Ms": "1500", "X-AudioCPP-Wall-Ms": "25" } });
   }) as typeof fetch });
-  for (const outputFormat of ["wav", "opus", "mp3", "flac"]) {
+  for (const outputFormat of ["wav", "opus", "mp3", "flac"] as const) {
     const result = await provider.generate(parse({ model: STABLE_SFX_MODEL, task: "sound-effect", outputFormat, durationSeconds: 1.5, seed: 42 }), context());
     expect(result.audio.length).toBeGreaterThan(0);
     expect(result).toMatchObject({ model: STABLE_SFX_MODEL, format: outputFormat, durationSeconds: 1.5, seed: 42 });
+    const probe = Bun.spawn(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name", "-of", "json", "pipe:0"], { stdin: result.audio, stdout: "pipe", stderr: "ignore", timeout: 10_000 });
+    const decoded = await new Response(probe.stdout).json() as { streams: { codec_name: string }[] };
+    expect(await probe.exited).toBe(0);
+    expect(decoded.streams[0]?.codec_name).toBe({ wav: "pcm_s16le", opus: "opus", mp3: "mp3", flac: "flac" }[outputFormat]);
   }
   expect(payloads[0]).toMatchObject({ model: STABLE_SFX_MODEL, response_format: "wav", options: { duration_seconds: 1.5, num_inference_steps: 8, seed: 42, guidance_scale: 1, truncate_output_to_duration: true } });
   for (const providerOptions of [{ duration_seconds: 600 }, { model: "XL" }, { guidance_scale: Infinity }, { guidance_scale: -1 }, { audio_input: "/tmp/file" }]) {
@@ -105,13 +109,37 @@ test("the public API rejects XL and invalid Stable options before admitting jobs
     await manager.initialize();
     const discovery = musicProviderListSchema.parse(await (await app.request("/v1/music/providers")).json());
     expect(discovery.providers[0]!.models).toEqual([
-      { id: STABLE_MUSIC_MODEL, task: "music", maxDurationSeconds: 120 },
-      { id: "acestep-v15-turbo", task: "vocals", maxDurationSeconds: 600 },
-      { id: STABLE_SFX_MODEL, task: "sound-effect", maxDurationSeconds: 120 },
+      { id: STABLE_MUSIC_MODEL, task: "music", maxDurationSeconds: 120, defaultDurationSeconds: 120 },
+      { id: "acestep-v15-turbo", task: "vocals", maxDurationSeconds: 600, defaultDurationSeconds: 180 },
+      { id: STABLE_SFX_MODEL, task: "sound-effect", maxDurationSeconds: 120, defaultDurationSeconds: 5 },
     ]);
     for (const data of [{ model: "acestep-v15-xl-turbo" }, { task: "sound-effect", durationSeconds: 1.5, providerOptions: { duration_seconds: 600 } }, { instrumental: true, model: STABLE_SFX_MODEL, lyrics: "words" }, { instrumental: true, durationSeconds: 121 }]) {
       const response = await app.request("/v1/music/generations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: "test", ...data }) });
       expect(response.status).toBe(400);
     }
+  } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("public requests with omitted Stable options are admitted with model-appropriate defaults", async () => {
+  const root = await mkdtemp(join(tmpdir(), "larm-music-defaults-"));
+  const captured: Parameters<MusicProvider["generate"]>[0][] = [];
+  const validator = new StableAudioMusicProvider({ endpoint: "http://unused" });
+  const stable: MusicProvider = { ...fake("stable", []), validate: (request) => validator.validate(request),
+    generate: async (request) => { captured.push(request); return { model: request.model!, audio: new Uint8Array([1]), format: request.outputFormat, durationSeconds: request.durationSeconds, generationTimeMs: 1 }; } };
+  const manager = new MusicGenerationManager(new RoutedMusicProvider(fake("ace", []), stable), { artifactRoot: root });
+  const app = new Hono(); registerMusicRoutes(app, { manager, maxBodyBytes: 1024 * 1024 });
+  try {
+    await manager.initialize();
+    for (const data of [{ instrumental: true }, { task: "sound-effect" }, { model: STABLE_MUSIC_MODEL }, { model: STABLE_SFX_MODEL }]) {
+      const response = await app.request("/v1/music/generations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: "test", ...data }) });
+      expect(response.status).toBe(202);
+      const accepted = await response.json() as { jobId: string };
+      for (let attempt = 0; attempt < 1000 && manager.get(accepted.jobId)?.status !== "completed"; attempt++) await Bun.sleep(1);
+      expect(manager.get(accepted.jobId)?.status).toBe("completed");
+    }
+    await manager.close();
+    expect(captured.map((request) => [request.model, request.durationSeconds])).toEqual([
+      [STABLE_MUSIC_MODEL, 120], [STABLE_SFX_MODEL, 5], [STABLE_MUSIC_MODEL, 120], [STABLE_SFX_MODEL, 5],
+    ]);
   } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
 });

@@ -6,7 +6,7 @@ Linux Runtimeを観測・制御するLARM daemonです。既定で `config/local
 
 local-nodeはPOST時に要求内容からモデルを選び、音声保存後にワーカーを停止します。`instrumental: true` はStable Audio 3 Small Music、`instrumental: false`（既存互換の既定）や歌詞付きはACE-Step 1.5 Turbo Normalです。`task: "sound-effect"` または `model: "stable-audio-3-small-sfx"` はStable Audio 3 Small SFXを選びます。効果音では歌詞を指定できません。XLは対象外です。`model: "auto"` を推奨し、既存のACE-Stepモデル名も自動選択の互換名として受け付けます。音楽では歌なしにする場合に `instrumental: true` を明示してください。
 
-音楽と効果音は共通のジョブ・試聴・ライブラリAPIを使います。`durationSeconds` はStable Music・SFXでは1〜120秒、ACE-Stepでは1〜600秒で、小数を受け付けます。既定は既存互換の180秒のため、Stableでは120秒以下を明示してください。上限超過は受付時に400で拒否します。`GET /v1/music/providers` の `models` に用途とモデル別上限を返します。出力形式の既定はOpus（128 kbps VBR、48 kHz）、WAV・FLAC・MP3も指定できます。Stable Audioはnative serverのWAV16をメモリで受け取り、ACE-StepのOpusはWAV32から変換します。Stable Audioの `bpm`・`key`・`timeSignature` はプロンプトへのヒントです。
+音楽と効果音は共通のジョブ・試聴・ライブラリAPIを使います。`durationSeconds` はStable Music・SFXでは1〜120秒、ACE-Stepでは1〜600秒で、小数を受け付けます。省略時は歌なし120秒、効果音5秒、ボーカル180秒です。Stable Musicのモデルだけを明示した場合は歌なしとして扱います。上限超過は受付時に400で拒否します。`GET /v1/music/providers` の `models` に用途・既定の長さ・モデル別上限を返します。出力形式の既定はOpus（128 kbps VBR、48 kHz）、WAV・FLAC・MP3も指定できます。Stable Audioはnative serverのWAV16をメモリで受け取り、ACE-StepのOpusはWAV32から変換します。Stable Audioの `bpm`・`key`・`timeSignature` はプロンプトへのヒントです。
 
 完成音声は既定で期限なしに保存し、容量上限では既存音声を自動削除せず保存を拒否します。通常枠とお気に入り枠を含めて既定50 GiBです。画像・Stable Audio・ACE-Stepは同時に起動しません。`deploy/local-node/scripts/install-media-services.sh` で3種類のオンデマンドサービスを導入し、検証済みリリースを反映してください。モデルとaudio.cppの実体はソースリポジトリの外に置きます。
 

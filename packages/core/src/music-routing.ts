@@ -7,8 +7,22 @@ export class MusicRoutingError extends Error {
 export const STABLE_MUSIC_MODEL = "stable-audio-3-small-music";
 export const STABLE_SFX_MODEL = "stable-audio-3-small-sfx";
 export const STABLE_MAX_DURATION_SECONDS = 120;
+export const STABLE_SFX_DEFAULT_DURATION_SECONDS = 5;
 
 export const MUSIC_ROUTING_MODELS: readonly string[] = ["auto", "ace-step-1.5", "acestep-v15-turbo", STABLE_MUSIC_MODEL, STABLE_SFX_MODEL];
+
+/** Apply defaults before parsing, so explicit values are never clamped or replaced. */
+export function musicRequestDefaults(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const request = { ...input } as Record<string, unknown>;
+  const sfx = request.task === "sound-effect" || request.model === STABLE_SFX_MODEL;
+  if (request.instrumental === undefined && request.model === STABLE_MUSIC_MODEL) request.instrumental = true;
+  if (request.durationSeconds === undefined) {
+    if (sfx) request.durationSeconds = STABLE_SFX_DEFAULT_DURATION_SECONDS;
+    else if (request.instrumental === true) request.durationSeconds = STABLE_MAX_DURATION_SECONDS;
+  }
+  return request;
+}
 
 /** Legacy ACE model names are service aliases; the requested task selects the runtime. */
 export function resolveMusicRoute(request: MusicGenerationRequest): { runtime: "music" | "stable-audio"; model: string } {

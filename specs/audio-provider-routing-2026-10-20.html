@@ -36,7 +36,8 @@
       </tbody>
     </table>
     <p>
-      既存契約のinstrumentalの既定falseとdurationSecondsの既定180秒は維持する。歌なしの場合はinstrumental:
+      ボーカル要求では従来のinstrumental既定falseと長さ180秒を維持する。歌なし音楽の既定は120秒、効果音は5秒とする。モデルをStable
+      Musicに明示しinstrumentalを省略した場合は歌なしとする。明示された秒数を自動短縮しない。歌なしの場合はinstrumental:
       trueを明示する。歌詞・ボーカルの判定は構造化された指定で行い、promptの単語から推測しない。効果音はinstrumentalの既定falseより優先する。効果音と歌詞、効果音と明示的なMusicモデルなどの矛盾は受付時に400で拒否する。
     </p>
     <p>
@@ -47,8 +48,8 @@
     <p>
       効果音の例：<code>{"prompt":"Short futuristic UI confirmation chime","task":"sound-effect","durationSeconds":1.5,"seed":42}</code>。公開スキーマの1〜600秒の範囲を維持し、小数の秒数を追加で受け付ける。ただしStableのMusic・SFXモデルはsample_size
       5,292,032、44,100
-      Hzのため実質120秒が上限である。Stableへの180秒指定が約120秒に短縮されたことを実機で確認した。Stableの120秒超はジョブ作成前に400で拒否する。既存の既定180秒は維持するため、StableではdurationSecondsを明示する。GET
-      /v1/music/providersのmodelsにはモデルごとの用途と最大秒数を返す。ACE-Stepの短音は指定秒数と一致しない場合があるため、効果音にはSFXを選ぶ。
+      Hzのため実質120秒が上限である。Stableへの180秒指定が約120秒に短縮されたことを実機で確認した。Stableの120秒超はジョブ作成前に400で拒否する。長さ省略時には用途別の有効な既定値を適用する。GET
+      /v1/music/providersのmodelsにはモデルごとの用途、既定の秒数defaultDurationSeconds、最大秒数を返す。ACE-Stepの短音は指定秒数と一致しない場合があるため、効果音にはSFXを選ぶ。
     </p>
   </section>
   <section id="api">
@@ -122,6 +123,22 @@
     <p>
       SAAAは利用者の指定によりUIを編集していない。ボーカル判定は既存のinstrumental指定と歌詞を使い、効果音はAPIのtaskまたはmodelで選ぶ。専用ソースは<code>/srv/ai/apps/larm-audio-provider-source-20261020</code>、ブランチは<code>codex/stable-audio-provider</code>。元の作業用checkoutにある別作業の変更は保持している。
     </p>
+  </section>
+  <section id="review-20261020">
+    <h2>コードレビューによる改善</h2>
+    <p>
+      2026-10-20の再レビューで、Stable要求の長さ省略が既定180秒となり上限超過で失敗する問題を修正した。歌なし120秒、効果音5秒、ボーカル180秒を用途別に適用し、明示値・明示的なボーカル指定・既存のボーカル既定は維持する。モデル情報にも既定の秒数を追加した。
+    </p>
+    <p>
+      StableのWAVは先頭文字列だけの確認から、RIFF全長、各chunkの境界、PCM16形式、チャンネル数、サンプルレート、バイトレート、ブロック境界、実サンプル数の確認へ変更した。不完全な音声、申告した秒数とサンプル数の不一致、無制限のストリーミング応答を拒否する。float32とサンプル数への変換で発生する誤差は2サンプル以内で許容する。非有限な処理時間はメタデータに保存しない。
+    </p>
+    <p>
+      変換失敗はaudio_encoding_failedとして返し、その場合もワーカー停止を検証する。4形式をffprobeで実際にデコードしてcodecを確認した。作業用checkoutの排他制御も本番版の方式に揃え、プロセス間ロックと待ち順を維持し、外部の実行中ワーカーは停止しない。Stableとボーカルが待つ間に画像生成が割り込まないことをテストした。
+    </p>
+    <p>
+      二巡目のレビューでは、待機期限の後にリソースが空くと期限切れ要求も起動できる境界条件を修正した。再試行の直前にも期限を確認し、待機なしの即時取得は維持する。期限超過後のStable起動が発生せず、次の正常な要求は利用できることを検証した。
+    </p>
+    <p>修正後の全体検証と本番への反映結果は完了後に追記する。</p>
   </section>
   <section id="related">
     <h2>関連記録</h2>

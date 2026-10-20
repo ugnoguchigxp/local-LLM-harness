@@ -142,9 +142,12 @@ export class MediaVariantManager {
     const ticket = Symbol();
     this.waiters.push(ticket);
     const deadline = Date.now() + timeoutMs;
+    let firstAttempt = true;
     try {
       while (true) {
         signal.throwIfAborted();
+        if (!firstAttempt && Date.now() >= deadline) throw new Error("media execution capacity wait expired");
+        firstAttempt = false;
         try {
           if (this.waiters[0] !== ticket) throw new MediaVariantBusyError();
           return await this.acquire(variant, signal, ticket);

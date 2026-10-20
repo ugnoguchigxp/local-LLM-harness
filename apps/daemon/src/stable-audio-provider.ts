@@ -2,6 +2,7 @@ import { randomInt } from "node:crypto";
 import type { MusicGenerationRequest, MusicProvider } from "@larm/core";
 import { MusicProviderError } from "./music-errors";
 import { encodeMusicAudio } from "./music-audio";
+import { inspectMusicWave } from "./music-wave";
 import { STABLE_MUSIC_MODEL, STABLE_SFX_MODEL, STABLE_MAX_DURATION_SECONDS } from "@larm/core";
 
 export class StableAudioMusicProvider implements MusicProvider {
@@ -70,20 +71,32 @@ export class StableAudioMusicProvider implements MusicProvider {
     } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
     const waveform = new Uint8Array(bytes); let offset = 0;
     for (const chunk of chunks) { waveform.set(chunk, offset); offset += chunk.byteLength; }
-    if (bytes < 44 || Buffer.from(waveform.subarray(0, 4)).toString() !== "RIFF" || Buffer.from(waveform.subarray(8, 12)).toString() !== "WAVE") {
-      throw new MusicProviderError("invalid_upstream_response", "Stable Audio did not return WAV audio");
+    let source: ReturnType<typeof inspectMusicWave>;
+    try { source = inspectMusicWave(waveform); }
+    catch (error) { throw new MusicProviderError("invalid_upstream_response", error instanceof Error ? error.message : "invalid Stable Audio WAV"); }
+    const { durationSeconds } = source;
+    const durationHeader = response.headers.get("X-AudioCPP-Audio-Duration-Ms");
+    const reportedDuration = durationHeader === null ? durationSeconds : Number(durationHeader) / 1000;
+    // The runtime converts the requested seconds to float32 before sample rounding.
+    if (!Number.isFinite(reportedDuration) || Math.abs(reportedDuration - durationSeconds) > 1 / source.sampleRateHz || Math.abs(durationSeconds - request.durationSeconds) > 2 / source.sampleRateHz) {
+      throw new MusicProviderError("invalid_upstream_response", "Stable Audio returned an unexpected duration");
     }
-    const durationSeconds = Number(response.headers.get("X-AudioCPP-Audio-Duration-Ms")) / 1000;
-    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || Math.abs(durationSeconds - request.durationSeconds) > 0.1) throw new MusicProviderError("invalid_upstream_response", "Stable Audio returned an unexpected duration");
     context.phase("encoding");
-    const audio = request.outputFormat === "wav" ? waveform : await encodeMusicAudio(waveform, request.outputFormat, context.signal, maxBytes);
+    let audio: Uint8Array;
+    try { audio = request.outputFormat === "wav" ? waveform : await encodeMusicAudio(waveform, request.outputFormat, context.signal, maxBytes); }
+    catch (error) {
+      context.signal.throwIfAborted();
+      throw new MusicProviderError("audio_encoding_failed", error instanceof Error ? error.message : "Stable Audio encoding failed");
+    }
     context.signal.throwIfAborted();
     const generationTimeMs = Date.now() - started;
+    const upstreamWallTimeMs = Number(response.headers.get("X-AudioCPP-Wall-Ms"));
     return { model: request.model!, audio, durationSeconds, format: request.outputFormat, seed, generationTimeMs,
       realtimeFactor: generationTimeMs / 1000 / durationSeconds,
       metadata: { backend: "audio.cpp", steps, prompt, musicalControls: "prompt-hints",
-        upstreamWallTimeMs: Number(response.headers.get("X-AudioCPP-Wall-Ms")) || undefined,
-        encoding: { intermediateFormat: "wav16", ...(request.outputFormat === "opus" ? { codec: "opus", container: "ogg", bitrateBps: 128_000, bitrateMode: "vbr", sampleRateHz: 48_000 } : {}) } },
+        ...(Number.isFinite(upstreamWallTimeMs) && upstreamWallTimeMs > 0 ? { upstreamWallTimeMs } : {}),
+        encoding: { intermediateFormat: "wav16", sourceSampleRateHz: source.sampleRateHz, sourceChannels: source.channels,
+          ...(request.outputFormat === "opus" ? { codec: "opus", container: "ogg", bitrateBps: 128_000, bitrateMode: "vbr", sampleRateHz: 48_000 } : {}) } },
     };
   }
   private fetch(path: string, init: RequestInit) { return (this.options.fetchImpl ?? fetch)(new URL(path, this.base), { ...init, redirect: "error" }); }

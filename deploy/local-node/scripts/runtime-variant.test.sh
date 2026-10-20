@@ -77,3 +77,13 @@ bash "${script}" start stable-audio
 grep -Fx 'start larm-audio-stable.service' "${test_root}/calls" >/dev/null
 if grep -Fx 'start larm-music-ace-step.service' "${test_root}/calls"; then exit 1; fi
 bash "${script}" stop stable-audio
+
+# An external request using either audio worker must never be stopped or replaced.
+for pair in "stable-audio larm-music-ace-step.service" "music larm-audio-stable.service" "image larm-audio-stable.service"; do
+  read -r requested peer <<<"${pair}"
+  rm -f "${test_root}/started"
+  : >"${test_root}/calls"
+  if LARM_VARIANT_TEST_ACTIVE_PEER="${peer}" bash "${script}" start "${requested}" >/dev/null 2>&1; then exit 1; fi
+  test ! -e "${test_root}/started"
+  if grep -q '^stop ' "${test_root}/calls"; then exit 1; fi
+done

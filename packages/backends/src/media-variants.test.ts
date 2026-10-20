@@ -226,3 +226,41 @@ test("mesh and music wait in FIFO order while immediate image requests cannot by
   await releaseMesh(); const releaseMusic = await music; await releaseMusic();
   expect(calls.slice(-3)).toEqual(["stop:mesh", "start:music", "stop:music"]); await manager.close();
 });
+
+
+test("Stable Audio and vocal requests wait in FIFO order without allowing an image to bypass them", async () => {
+  const calls: string[] = [];
+  const variants = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 }, run: async (action, variant) => { calls.push(`${action}:${variant}`); } });
+  try {
+    const image = await variants.acquire("image");
+    const signal = new AbortController().signal;
+    const stable = variants.waitForMusic(signal, 2000, "stable-audio");
+    const vocals = variants.waitForMusic(signal, 2000, "music");
+    await image();
+    await expect(variants.acquire("image")).rejects.toBeInstanceOf(MediaVariantBusyError);
+    const releaseStable = await stable;
+    expect(calls.at(-1)).toBe("start:stable-audio");
+    await releaseStable();
+    const releaseVocals = await vocals;
+    expect(calls.at(-1)).toBe("start:music");
+    await releaseVocals();
+    expect(calls).toEqual(["start:image", "stop:image", "start:stable-audio", "stop:stable-audio", "start:music", "stop:music"]);
+  } finally { await variants.close(); }
+});
+
+
+test("an expired media waiter cannot start when capacity becomes available after its deadline", async () => {
+  const calls: string[] = [];
+  const variants = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 }, run: async (action, variant) => { calls.push(`${action}:${variant}`); } });
+  try {
+    const image = await variants.acquire("image");
+    const outcome = variants.waitForMusic(new AbortController().signal, 50, "stable-audio")
+      .then(async (release) => { await release(); return "started"; }, (error: Error) => error.message);
+    await Bun.sleep(60);
+    await image();
+    expect(await outcome).toBe("media execution capacity wait expired");
+    expect(calls).toEqual(["start:image", "stop:image"]);
+    const release = await variants.waitForMusic(new AbortController().signal, 0, "music");
+    await release();
+  } finally { await variants.close(); }
+});
