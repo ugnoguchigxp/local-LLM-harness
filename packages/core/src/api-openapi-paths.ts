@@ -24,6 +24,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       if (operationId === "createChatCompletion" || operationId === "countChatInputTokens") return "ChatCompletionRequest";
       if (operationId === "createSpeech") return "AudioSpeechRequest";
       if (operationId === "createEmbedding") return "EmbeddingRequest";
+      if (operationId === "createDecisionTrainingJob") return "DecisionTrainingRequest";
       if (operationId === "createSystemOneDecision") return "SystemOneRequest";
       if (operationId === "createMusicGeneration") return "MusicGenerationRequest";
       if (operationId === "createImageGeneration") return "ImageGenerationRequest";
@@ -60,7 +61,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       || operationId === "createTranscription"
       || operationId === "createSpeech"
       || operationId === "createContext";
-    const providerOnlyOperation = operationId === "countChatInputTokens" || operationId === "createEmbedding"
+    const providerOnlyOperation = operationId === "countChatInputTokens" || operationId === "createEmbedding" || operationId === "createSystemOneDecision"
       || operationId === "getPersonalStateCapability"
       || operationId === "provisionContextSource"
       || operationId === "getContextSourceOperation"
@@ -317,6 +318,16 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       ...(operationId === "ensureLocalService" ? {
         parameters: [{ name: "Idempotency-Key", in: "header", required: true,
           schema: { type: "string", minLength: 1, maxLength: 192 } }],
+      } : {}),
+      ...(path.startsWith("/v1/decision/") ? {
+        description: "Control Bearer required. Data states, questions and labels are never logged. All mutations require Idempotency-Key (1-128 visible ASCII bytes). Dataset JSONL upload is limited to 8 MiB and 2000 examples, with task-exclusive train/calibration/eval splits; train and eval are required. One asynchronous training job at a time. Frozen d1 log-probability heads are immutable, resident in CPU memory (total 16 MiB), and selected through adapter:{id,version} and questionSet:{id,version} on the single inference endpoint. Dataset deletion is blocked while training. Interrupted jobs fail on restart. Calibration rows are reported, never fitted. Deleting an adapter immediately revokes inference, including in-flight results. Feature extraction waits for foreground idle and resumes the same job after preemption; phase waiting_for_idle reports this wait.",
+        ...(method !== "get" ? { parameters: [
+          ...[...path.matchAll(/\{([^}]+)\}/g)].map(m => ({ name: m[1], in: "path", required: true, schema: { type: "string" } })),
+          { name: "Idempotency-Key", in: "header", required: true, schema: { type: "string", minLength: 1, maxLength: 128 } },
+        ] } : {}),
+      } : {}),
+      ...(operationId === "createDecisionDataset" ? {
+        requestBody: { required: true, content: { "application/x-ndjson": { schema: { type: "string", maxLength: 8388608 } } } },
       } : {}),
       ...(operationId === "provisionContextSource"
         ? {

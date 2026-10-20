@@ -235,6 +235,7 @@ export class AgentConnectionController {
           ...(profile.idleRelease ? { idleRelease: this.publicIdlePolicy(profile) } : {}),
           providers: profile.providers.map((provider) => ({
             name: provider.name,
+            ...(provider.description ? { description: provider.description } : {}),
             capability: provider.capability,
             supportedCapabilities: provider.supportedCapabilities,
             protocol: provider.protocol,

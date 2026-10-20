@@ -1,3 +1,6 @@
+import { DecisionManager, DecisionError } from "./decision-manager";
+import { openDecisionSession } from "./decision-connection";
+import { registerDecisionRoutes } from "./routes/decision";
 import { ZodError } from "zod";
 import { registerLocalServiceRoutes } from "./routes/local-services";
 import { LocalServiceError } from "./local-service-manager";
@@ -148,6 +151,7 @@ export function createAppComponents(deps: AppDeps) {
     readiness: deps.getGatewayReadiness, music: deps.musicManager !== undefined, image: deps.imageGenerationProvider !== undefined });
 
   app.onError((err, c) => {
+    if (err instanceof DecisionError) return c.json(errorBody(err.code, err.code), err.status);
     if (err instanceof UsageProtectionError) {
       deps.monitoring?.capture({ name: "monitoring_request_rejected", labels: { reason: err.code } });
       return protectionResponse(err, c.req.path);
@@ -307,7 +311,12 @@ export function createAppComponents(deps: AppDeps) {
   app.use("/v1/runtime-releases/*", requireManagement);
   app.use("/v1/inspection/*", requireManagement);
 
+  const decisionManager = deps.decisionDataRoot && deps.apiToken
+    ? new DecisionManager(deps.decisionDataRoot, onPhase => openDecisionSession(app, deps.apiToken!, onPhase))
+    : undefined;
+  registerDecisionRoutes(app, { manager: decisionManager, apiToken: deps.apiToken });
   const handleGateway = createGatewayHandler({
+    decisionManager,
     deps,
     identity,
     executionGate,

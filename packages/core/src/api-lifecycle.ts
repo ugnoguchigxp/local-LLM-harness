@@ -41,6 +41,7 @@ export type ApiOperationOwner =
   | "agent-connection"
   | "service-harness"
   | "inference-gateway"
+  | "decision-training"
   | "music"
   | "image-artifact"
   | "release-management";
@@ -120,7 +121,8 @@ export function apiOperationPolicy(
     || path.startsWith("/v2/context-views") || path.startsWith("/v1/generation-attempts")
     || path.startsWith("/v1/context-forget-operations")) {
     owner = "personal-state";
-  } else if (path.startsWith("/v1/music/")) owner = "music";
+  } else if (path.startsWith("/v1/decision/")) owner = "decision-training";
+  else if (path.startsWith("/v1/music/")) owner = "music";
   else if (path.startsWith("/v1/image-artifacts") || path.startsWith("/v1/image-imports/") || path === "/v1/images/generations") owner = "image-artifact";
   else if (path.startsWith("/v1/artifacts/") || path.startsWith("/v1/artifact-operations/")
     || path.startsWith("/v1/runtime-releases") || path.startsWith("/v1/deployments/")) {
@@ -153,7 +155,7 @@ export function apiOperationPolicy(
     : ["listServices", "getAsrServiceHealth", "createTranscription"].includes(operationId)
     ? "configurable-api-bearer"
     : [
-      "countChatInputTokens", "createEmbedding", "getPersonalStateCapability", "provisionContextSource", "getContextSourceOperation",
+      "countChatInputTokens", "createEmbedding", "createSystemOneDecision", "getPersonalStateCapability", "provisionContextSource", "getContextSourceOperation",
       "createContextMeasurement", "getContextMeasurement", "createContextViewV2", "getContextViewV2",
       "getGenerationAttempt", "cancelGenerationAttempt", "createContextForgetOperation", "getContextForgetOperation",
     ].includes(operationId)
@@ -178,6 +180,7 @@ export function apiOperationPolicy(
     "agent-connection": ["agent-consumer"],
     "service-harness": ["service-harness-consumer"],
     "inference-gateway": ["openai-compatible-consumer"],
+    "decision-training": ["decision-consumer", "operator"],
     music: ["music-consumer", "operator"],
     "image-artifact": ["agent-consumer", "operator"],
     "release-management": ["operator"],

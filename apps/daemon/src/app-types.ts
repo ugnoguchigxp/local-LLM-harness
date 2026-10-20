@@ -68,6 +68,7 @@ export type AppDeps = {
   personalStateMaxSourceBytes?: number;
   getGatewayReadiness?: () => GatewayReadiness;
   startupProbeToken?: string;
+  decisionDataRoot?: string;
   musicManager?: MusicGenerationManager;
   imageArtifactManager?: ImageArtifactManager;
   imageGenerationProvider?: ImageGenerationProvider;

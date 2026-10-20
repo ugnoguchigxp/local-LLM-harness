@@ -34,6 +34,8 @@ export const agentProfileSelectorIdSchema = z.enum([
   "SAAA-w-music",
   "embeddingCanary",
   "backchannelQwen35",
+  "decisionGeneral",
+  "decisionTraining",
 ]);
 export type AgentProfileSelectorId = z.infer<typeof agentProfileSelectorIdSchema>;
 
@@ -121,6 +123,7 @@ const agentAudienceYamlSchema = z.object({
 
 const agentProviderYamlSchema = z.object({
   name: agentIdentifierSchema,
+  description: z.string().min(1).max(4096).optional(),
   capability: agentIdentifierSchema,
   route: agentIdentifierSchema,
   publicModel: agentIdentifierSchema,
@@ -252,6 +255,7 @@ export function resolveAgentAudienceBaseUrl(
 }
 
 export type AgentProviderProfile = {
+  description?: string;
   name: string;
   capability: string;
   supportedCapabilities: string[];
@@ -731,6 +735,7 @@ export const publicAgentProfileListV3Schema = z.object({
   idleRelease: agentConnectionIdleReleaseSchema.optional(),
     providers: z.array(z.object({
       name: agentIdentifierSchema,
+      description: z.string().min(1).max(4096).optional(),
       capability: agentIdentifierSchema,
       supportedCapabilities: z.array(agentIdentifierSchema).min(1).max(32),
       protocol: runtimeProtocolSchema,
@@ -1097,7 +1102,7 @@ export const embeddingAgentProviderDescriptorSchema = z.object({
 
 export const systemOneAgentProviderDescriptorSchema = z.object({
   name: agentIdentifierSchema,
-  capability: z.enum(["decision.system-one", "decision.game"]),
+  capability: z.enum(["decision.system-one", "decision.game", "decision.general"]),
   apiStyle: z.literal("larm-system-one"),
   protocol: z.literal("larm.system-one.v1"),
   scheme: z.enum(["http", "https"]),

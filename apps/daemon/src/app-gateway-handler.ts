@@ -1,3 +1,5 @@
+import { DECISION_MODEL } from "@larm/core";
+import { DecisionError, type DecisionManager } from "./decision-manager";
 import { requestObservation } from "./observability";
 import type { PersonalStateScope } from "@larm/core";
 import type { Context } from "hono";
@@ -19,6 +21,7 @@ import { errorBody } from "./app-http";
 
 export function createGatewayHandler(input: {
   deps: AppDeps;
+  decisionManager?: DecisionManager;
   identity: DaemonIdentity;
   executionGate: ExecutionGate;
   modelBroker?: ModelBroker;
@@ -85,6 +88,10 @@ export function createGatewayHandler(input: {
       systemOneRequestBytes,
     } = prepared;
     if (speechRequest) observation?.attribute("larm.input_characters", Array.from(speechRequest.input).length);
+    if (systemOneRequest?.model === DECISION_MODEL && systemOneRequest.adapter) {
+      if (!input.decisionManager) throw new DecisionError("decision_not_configured", 503);
+      input.decisionManager.validateAdapter(systemOneRequest);
+    }
     const brokeredResponse = await handleModelBrokerGateway({
       context: c,
       route: options,
@@ -202,7 +209,9 @@ export function createGatewayHandler(input: {
       return await proxyGateway({
         request: c.req.raw,
         ...((systemOneRequestBytes ?? embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes)
-          ? { requestBody: systemOneRequestBytes ?? embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes }
+          ? { requestBody: (systemOneRequest?.model === DECISION_MODEL
+              ? new TextEncoder().encode(JSON.stringify({ ...systemOneRequest, adapter: undefined, questionSet: undefined }))
+              : systemOneRequestBytes) ?? embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes }
           : {}),
         ...(contextViewId
           ? {
@@ -277,7 +286,11 @@ export function createGatewayHandler(input: {
         ...(embeddingRequest && runtime.embedding
           ? { validateEmbeddingResponse: { request: embeddingRequest, space: runtime.embedding } }
           : {}),
-        ...(systemOneRequest ? { validateSystemOneResponse: { request: systemOneRequest } } : {}),
+        ...(systemOneRequest ? { validateSystemOneResponse: {
+          request: systemOneRequest,
+          ...(systemOneRequest.model === DECISION_MODEL && input.decisionManager
+            ? { transform: (response: import("@larm/core").SystemOneResponse) => input.decisionManager!.apply(systemOneRequest, response) } : {}),
+        } } : {}),
         revalidate: () => {
           if (providerToken && agentConnections) {
             try {
