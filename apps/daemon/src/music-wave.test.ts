@@ -35,6 +35,11 @@ test("native WAV validation rejects truncation, forged RIFF sizes, bad format an
     mutate((b) => b.write("JUNK", 36)),
     mutate((b) => b.write("RIFF", 8)),
     mutate((b) => b.writeUInt16LE(0, 22)),
+    // ASCII decoding masks high bits; identifiers must match the exact bytes.
+    mutate((b) => { b[0] = 0xd2; }),
+    mutate((b) => { b[8] = 0xd7; }),
+    mutate((b) => { b[12] = 0xe6; }),
+    mutate((b) => { b[36] = 0xe4; }),
   ]) expect(() => inspectMusicWave(audio)).toThrow();
 });
 

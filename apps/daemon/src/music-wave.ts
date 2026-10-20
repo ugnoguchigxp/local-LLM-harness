@@ -5,7 +5,7 @@ export function inspectMusicWave(waveform: Uint8Array): {
   channels: number;
 } {
   const view = new DataView(waveform.buffer, waveform.byteOffset, waveform.byteLength);
-  const text = (offset: number, length: number) => Buffer.from(waveform.subarray(offset, offset + length)).toString("ascii");
+  const text = (offset: number, length: number) => Buffer.from(waveform.subarray(offset, offset + length)).toString("latin1");
   const invalid = () => new Error("Stable Audio returned an invalid or incomplete PCM16 WAV");
   if (waveform.byteLength < 44 || text(0, 4) !== "RIFF" || text(8, 4) !== "WAVE" || view.getUint32(4, true) + 8 !== waveform.byteLength) throw invalid();
   let format: { sampleRateHz: number; channels: number; blockAlign: number } | undefined;
