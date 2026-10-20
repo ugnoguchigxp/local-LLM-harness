@@ -108,7 +108,19 @@
       証拠はリポジトリ外の<code>/srv/ai/outputs/stable-audio-provider-20261020</code>に保存した。api-smoke.jsonに実行モデル・保存結果・起動停止履歴を残し、試験音声は同ディレクトリのlibraryに保持している。既存の本番データは変更していない。
     </p>
     <p>
-      オンデマンドサービスは管理者認証を使って登録済み。本番の現行版88ab010f7a1eを基に専用のソースcheckoutを作り、既存の画像・3D・その他Providerを維持したまま今回の音声変更を適用する。検証済みソースの署名付きリリースを反映し、実HTTPから同じ選択と停止を再確認する。SAAAは未コミット変更があるため更新せず、利用者の指示どおりUIの編集は今回の対象外とした。
+      本番反映済み。2026-10-20に現行版88ab010f7a1eを基にした専用checkoutから、署名付きリリース656338da8cb99cedb3a506ed32e9d948f6e97dcdを反映した。リリースの全体チェックは通常テスト931件、20ファイルのカバレッジ基準を含めて成功し、desired・observedの一致とcontract_verifiedを確認した。既存の画像・3D・その他Providerも維持している。
+    </p>
+    <p>
+      本番公開APIでも、旧ACE-Stepモデル名とinstrumental: trueによるStable Music 30秒、task:
+      sound-effectによるStable SFX 1.5秒、歌詞付きのACE-Step Normal
+      10秒を生成した。3件とも保存・取得・Range再生・お気に入り登録と解除を確認した。ジョブ受付から完了までの実測はmusic
+      6.68秒、sfx 5.16秒、vocals
+      17.44秒。Stableの120秒超、XL、生成量を上書きするオプションは受付時に400となり、実行中キャンセル後のワーカー停止も成功した。試験終了時のStable・ACE-Stepはともにinactive、MainPID
+      0、ControlのactiveWorkloads
+      0である。live-api-smoke.jsonとlive-job-latencies.jsonに証拠を保存した。
+    </p>
+    <p>
+      SAAAは利用者の指定によりUIを編集していない。ボーカル判定は既存のinstrumental指定と歌詞を使い、効果音はAPIのtaskまたはmodelで選ぶ。専用ソースは<code>/srv/ai/apps/larm-audio-provider-source-20261020</code>、ブランチは<code>codex/stable-audio-provider</code>。元の作業用checkoutにある別作業の変更は保持している。
     </p>
   </section>
   <section id="related">
