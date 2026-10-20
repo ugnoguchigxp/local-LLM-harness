@@ -20,7 +20,8 @@ export const musicGenerationRequestSchema = z.object({
   tags: z.array(z.string().trim().min(1).max(64)).max(32).optional(),
   prompt: z.string().trim().min(1).max(16_384),
   lyrics: z.string().max(131_072).optional(),
-  durationSeconds: z.number().int().min(1).max(600).default(180),
+  task: z.enum(["music", "sound-effect"]).optional(),
+  durationSeconds: z.number().min(1).max(600).default(180),
   instrumental: z.boolean().default(false),
   language: z.string().min(2).max(32).optional(),
   bpm: z.number().int().min(20).max(300).optional(),
@@ -39,6 +40,9 @@ export const musicGenerationRequestSchema = z.object({
       path: ["lyrics"],
       message: "lyrics must be omitted for instrumental generation",
     });
+  }
+  if (request.task === "sound-effect" && request.lyrics?.trim()) {
+    context.addIssue({ code: "custom", path: ["lyrics"], message: "sound effects do not accept lyrics" });
   }
 });
 
@@ -88,11 +92,18 @@ export const musicProviderHealthSchema = z.object({
   reason: z.string().optional(),
 }).strict();
 
+export const musicProviderModelSchema = z.object({
+  id: identifierSchema,
+  task: z.enum(["music", "vocals", "sound-effect"]),
+  maxDurationSeconds: z.number().positive(),
+}).strict();
+
 export const musicProviderListSchema = z.object({
   providers: z.array(z.object({
     id: identifierSchema,
     capabilities: musicProviderCapabilitiesSchema,
     health: musicProviderHealthSchema,
+    models: z.array(musicProviderModelSchema).optional(),
   }).strict()),
 }).strict();
 
@@ -190,6 +201,8 @@ export type MusicGenerationContext = {
 export interface MusicProvider {
   readonly id: string;
   readonly capabilities: MusicProviderCapabilities;
+  readonly models?: z.infer<typeof musicProviderModelSchema>[];
+  validate?(request: MusicGenerationRequest): void;
   load(): Promise<void>;
   unload(): Promise<void>;
   generate(

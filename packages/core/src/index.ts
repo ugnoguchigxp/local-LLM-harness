@@ -70,6 +70,7 @@ export * from "./service-harness";
 export * from "./service-activity";
 export * from "./agent-connection";
 export * from "./music";
+export * from "./music-routing";
 export * from "./music-library";
 export { paginateMusicFavorites } from "./music-pagination";
 export * from "./music-tags";

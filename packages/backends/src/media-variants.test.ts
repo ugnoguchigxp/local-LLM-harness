@@ -1,6 +1,19 @@
 import { expect, test } from "bun:test";
 import { MediaVariantBusyError, MediaVariantManager } from "./media-variants";
 
+test("Stable Audio excludes images and ACE-Step and a failed stop quarantines all three", async () => {
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action, variant) => { calls.push(`${action}:${variant}`); if (action === "stop") throw new Error("still running"); } });
+  const release = await manager.acquire("stable-audio");
+  expect(manager.isOccupied()).toBeTrue();
+  for (const variant of ["music", "image", "stable-audio"] as const) await expect(manager.acquire(variant)).rejects.toBeInstanceOf(MediaVariantBusyError);
+  await expect(release()).rejects.toThrow("shutdown failed");
+  for (const variant of ["music", "image", "stable-audio"] as const) await expect(manager.acquire(variant)).rejects.toThrow("quarantined");
+  expect(calls).toEqual(["start:stable-audio", "stop:stable-audio"]);
+  await expect(manager.close()).rejects.toThrow("shutdown failed");
+});
+
 test("media requests start on demand, share an idle worker, and exclude the other variant", async () => {
   const calls: string[] = [];
   const manager = new MediaVariantManager({

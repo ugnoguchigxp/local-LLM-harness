@@ -49,6 +49,8 @@ import { PersonalStateController } from "./personal-state-controller";
 import { GatewayLifecycle, type GatewayLifecycleState } from "./gateway-lifecycle";
 import { gatewayStartupVerificationIntent, verifyGatewayStartup } from "./gateway-startup";
 import { AceStepMusicProvider, MusicGenerationManager, OnDemandMusicProvider } from "./music-manager";
+import { RoutedMusicProvider } from "./music-routing";
+import { StableAudioMusicProvider } from "./stable-audio-provider";
 import { ImageArtifactManager } from "./image-artifact-manager";
 import { ImageGenerationProvider } from "./image-generation-provider";
 
@@ -334,6 +336,7 @@ await personalStateController.initialize();
 const startupProbeToken = crypto.randomUUID();
 const mediaPolicy = mediaPolicySchema.parse(parse(readFileSync(join(config.configDir, "runtime-variants.yaml"), "utf8")));
 const imageEndpoint = config.imageProviderEndpoint ?? new URL(mediaPolicy.variants.image.healthUrl).origin;
+const stableAudioEndpoint = new URL(mediaPolicy.variants["stable-audio"].healthUrl).origin;
 const musicEndpoint = config.musicProviderEndpoint ?? new URL(mediaPolicy.variants.music.healthUrl).origin;
 const mediaVariants = new MediaVariantManager({
   beforeStart: (variant) => {
@@ -347,11 +350,11 @@ const mediaVariants = new MediaVariantManager({
   afterStart: (variant) => { if (variant === "mesh") serviceLedger.observe("media-mesh", 32 * 1024 ** 3); },
   afterStop: (variant) => { if (variant === "mesh") serviceLedger.release("media-mesh"); },
   script: new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname,
-  idleTtlMs: { mesh: 0, image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
+  idleTtlMs: { "stable-audio": 0, mesh: 0, image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
 });
 // Recover orphan workers without making the public API depend on media permissions.
-await Promise.all(["image", "music", ...(mediaPolicy.variants.mesh ? ["mesh"] : [])].map(async (variant) => {
-  const unit = variant === "image" ? "larm-image-qwen21.service" : variant === "mesh" ? "larm-mesh-trellis2.service" : "larm-music-ace-step.service";
+await Promise.all(["image", "music", "stable-audio", ...(mediaPolicy.variants.mesh ? ["mesh"] : [])].map(async (variant) => {
+  const unit = variant === "image" ? "larm-image-qwen21.service" : variant === "mesh" ? "larm-mesh-trellis2.service" : variant === "stable-audio" ? "larm-audio-stable.service" : "larm-music-ace-step.service";
   const observed = Bun.spawn(["systemctl", "show", unit, "--property=ActiveState", "--value"], { stdout: "pipe", stderr: "ignore" });
   const state = (await new Response(observed.stdout).text()).trim();
   if (await observed.exited === 0 && state === "inactive") return;
@@ -363,13 +366,15 @@ await Promise.all(["image", "music", ...(mediaPolicy.variants.mesh ? ["mesh"] : 
   }
 }));
 const musicManager = musicEndpoint
-  ? new MusicGenerationManager(new OnDemandMusicProvider(new AceStepMusicProvider({
+  ? new MusicGenerationManager(new RoutedMusicProvider(new OnDemandMusicProvider(new AceStepMusicProvider({
     endpoint: musicEndpoint,
     apiKey: config.musicProviderApiKey,
     pollIntervalMs: config.musicPollIntervalMs,
     maxAudioBytes: config.musicMaxAudioBytes,
     upstreamOutputRoot: config.musicUpstreamOutputRoot,
-  }), mediaVariants), {
+  }), mediaVariants), new OnDemandMusicProvider(new StableAudioMusicProvider({
+    endpoint: stableAudioEndpoint, maxAudioBytes: config.musicMaxAudioBytes,
+  }), mediaVariants, "stable-audio")), {
     artifactRoot: config.musicArtifactRoot,
     captureAdmission: () => {
       const usage = control.usage;

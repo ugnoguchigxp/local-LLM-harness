@@ -28,7 +28,7 @@ fi
 SH
 cat >"${test_root}/bin/curl" <<'SH'
 #!/usr/bin/env bash
-echo '{"loaded":true,"data":{"loaded":true,"models_initialized":true}}'
+echo '{"status":"ok","loaded":true,"data":{"loaded":true,"models_initialized":true}}'
 SH
 chmod +x "${test_root}/bin/"*
 export PATH="${test_root}/bin:${PATH}"
@@ -71,3 +71,9 @@ bash "${script}" stop music
 
 bash "${script}" start mesh
 bash "${script}" stop mesh
+
+: >"${test_root}/calls"
+bash "${script}" start stable-audio
+grep -Fx 'start larm-audio-stable.service' "${test_root}/calls" >/dev/null
+if grep -Fx 'start larm-music-ace-step.service' "${test_root}/calls"; then exit 1; fi
+bash "${script}" stop stable-audio

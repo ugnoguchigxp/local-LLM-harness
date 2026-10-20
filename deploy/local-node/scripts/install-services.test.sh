@@ -93,8 +93,12 @@ done
 cmp --silent \
   "${repo_root}/deploy/local-node/polkit/50-larm-runtime-control.rules" \
   "${test_root}/etc/polkit-1/rules.d/50-larm-runtime-control.rules"
+cmp --silent \
+  "${repo_root}/deploy/local-node/polkit/60-larm-media-control.rules" \
+  "${test_root}/etc/polkit-1/rules.d/60-larm-media-control.rules"
 
 systemctl_log="${test_root}/var/lib/larm/install-systemctl.log"
+grep -F "larm-audio-stable.service" "${systemctl_log}" >/dev/null
 grep -F "enable llama-swap-worker.service larm-daemon.service" \
   "${systemctl_log}" >/dev/null
 grep -F "disable llama-server.service qwen-asr.service whisper-asr.service voicevox-tts.service qwen-tts.service larm-embedding.service laya-system-one.service ruri-system-one.service d1-system-one.service larm-music-ace-step.service larm-image-qwen21.service" \

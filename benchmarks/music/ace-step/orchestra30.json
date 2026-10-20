@@ -1,0 +1,13 @@
+[
+  {
+    "id": "orchestra30",
+    "text": "Classical symphonic orchestral music, a lyrical melody in first violins answered by woodwinds, warm cellos and double basses, expressive French horns and brass swells, delicate timpani and cymbal accents, graceful melodic development, rich natural acoustic orchestral timbres, wide concert hall stereo recording, clear instrument separation and dynamic phrasing, majestic and uplifting, no vocals, no choir, no electronic instruments, no drum kit, 96 BPM.",
+    "options": {
+      "duration_seconds": 30,
+      "seed": 45678,
+      "num_inference_steps": 8,
+      "guidance_scale": 1,
+      "bpm": 96
+    }
+  }
+]

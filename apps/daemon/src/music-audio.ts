@@ -14,12 +14,23 @@ export async function encodeMusicOpus(
   signal: AbortSignal,
   maxBytes: number,
 ): Promise<Uint8Array> {
+  return encodeMusicAudio(waveform, "opus", signal, maxBytes);
+}
+
+export async function encodeMusicAudio(
+  waveform: Uint8Array,
+  format: "opus" | "mp3" | "flac",
+  signal: AbortSignal,
+  maxBytes: number,
+): Promise<Uint8Array> {
   signal.throwIfAborted();
+  const codec = format === "opus" ? ["-c:a", "libopus", "-b:a", "128k", "-vbr", "on", "-application", "audio", "-ar", "48000", "-f", "opus"]
+    : format === "mp3" ? ["-c:a", "libmp3lame", "-b:a", "192k", "-f", "mp3"]
+    : ["-c:a", "flac", "-f", "flac"];
   const child = Bun.spawn([
     "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
     "-f", "wav", "-i", "pipe:0", "-map", "0:a:0", "-map_metadata", "-1",
-    "-c:a", "libopus", "-b:a", "128k", "-vbr", "on",
-    "-application", "audio", "-ar", "48000", "-f", "opus", "pipe:1",
+    ...codec, "pipe:1",
   ], {
     stdin: waveform, stdout: "pipe", stderr: "ignore", signal, timeout: 120_000,
   });
@@ -36,7 +47,7 @@ export async function encodeMusicOpus(
     }
     const code = await child.exited;
     signal.throwIfAborted();
-    if (code !== 0 || bytes === 0) throw new Error("music Opus encoding failed");
+    if (code !== 0 || bytes === 0) throw new Error(`music ${format} encoding failed`);
     const audio = new Uint8Array(bytes);
     let offset = 0;
     for (const chunk of chunks) { audio.set(chunk, offset); offset += chunk.byteLength; }

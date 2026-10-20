@@ -7,5 +7,5 @@ const variantSchema = z.object({
 
 /** Demand-only media workers must stop after each request. */
 export const mediaPolicySchema = z.object({
-  variants: z.object({ image: variantSchema, music: variantSchema, mesh: variantSchema.optional() }),
+  variants: z.object({ image: variantSchema, music: variantSchema, mesh: variantSchema.optional(), "stable-audio": variantSchema }),
 });

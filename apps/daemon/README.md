@@ -2,10 +2,13 @@
 
 Linux Runtimeを観測・制御するLARM daemonです。既定で `config/local-node` を読み、SystemdBackendとLlamaSwapBackendへRuntime単位でルーティングします。
 
-## ACE-Step music generation
+## Music and sound effect generation
 
-`LARM_MUSIC_PROVIDER_ENDPOINT` に ACE-Step 1.5 API の base URL を設定すると、非同期 Music API が有効になります。出力形式の既定は MP3 です。成果物の合計上限50 GiBは通常20 GiBとお気に入り30 GiBに分けます。通常成果物は既定で24時間、WAVだけは1時間保持し、各枠を超えると古いものから削除します。お気に入りはTTLの対象外です。掃除は起動時、生成完了後、5分ごとに実行されます。
-APIが有効でもACE-Step Providerが停止中なら生成できません。SAAAのAgent ConnectionがreadyになっただけではProviderは起動せず、local-nodeでは明示的なmedia Variant起動が必要です。
+local-nodeはPOST時に要求内容からモデルを選び、音声保存後にワーカーを停止します。`instrumental: true` はStable Audio 3 Small Music、`instrumental: false`（既存互換の既定）や歌詞付きはACE-Step 1.5 Turbo Normalです。`task: "sound-effect"` または `model: "stable-audio-3-small-sfx"` はStable Audio 3 Small SFXを選びます。効果音では歌詞を指定できません。XLは対象外です。`model: "auto"` を推奨し、既存のACE-Stepモデル名も自動選択の互換名として受け付けます。音楽では歌なしにする場合に `instrumental: true` を明示してください。
+
+音楽と効果音は共通のジョブ・試聴・ライブラリAPIを使います。`durationSeconds` はStable Music・SFXでは1〜120秒、ACE-Stepでは1〜600秒で、小数を受け付けます。既定は既存互換の180秒のため、Stableでは120秒以下を明示してください。上限超過は受付時に400で拒否します。`GET /v1/music/providers` の `models` に用途とモデル別上限を返します。出力形式の既定はOpus（128 kbps VBR、48 kHz）、WAV・FLAC・MP3も指定できます。Stable Audioはnative serverのWAV16をメモリで受け取り、ACE-StepのOpusはWAV32から変換します。Stable Audioの `bpm`・`key`・`timeSignature` はプロンプトへのヒントです。
+
+完成音声は既定で期限なしに保存し、容量上限では既存音声を自動削除せず保存を拒否します。通常枠とお気に入り枠を含めて既定50 GiBです。画像・Stable Audio・ACE-Stepは同時に起動しません。`deploy/local-node/scripts/install-media-services.sh` で3種類のオンデマンドサービスを導入し、検証済みリリースを反映してください。モデルとaudio.cppの実体はソースリポジトリの外に置きます。
 
 ```bash
 curl -sS -X POST http://127.0.0.1:9810/v1/music/generations \

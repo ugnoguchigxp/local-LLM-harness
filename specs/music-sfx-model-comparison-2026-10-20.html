@@ -1,0 +1,425 @@
+<article lang="ja">
+  <h1>ACE-Step XLとStable Audio 3の楽曲・効果音比較試験 2026-10-20</h1>
+  <p>
+    Ryzen AI MAX+ 395、Radeon 8060S、約121 GiBのunified memory上で、現在のACE-Step 1.5 TurboとXL
+    Turboを比較し、audio.cppによるStable Audio 3 Small MusicとSmall SFXの実機動作を調べる。
+    この文書は試験記録であり、Providerの採用・配備を決定するものではない。
+  </p>
+  <section id="intent">
+    <h2>現在の音楽生成経路と試験の境界</h2>
+    <p>
+      公開selectorはSAAA-w-music、serviceはmusic、modelはace-step-1.5である。
+      adapterがacestep-v15-turboへ対応付け、music variantがlarm-music-ace-step.serviceを起動する。
+      配備済みunitもACESTEP_CONFIG_PATH=acestep-v15-turboを指定する。 試験は既存ACE-Step
+      runtimeを利用する独立processで行い、通常のAgent Profile要求による
+      Provider解決とは区別する。試験開始時のmusic workerはinactiveだった。
+    </p>
+    <p>
+      runtime、重み、音声、ログはrepository外に置く。記録と試聴ページのrootは
+      <code>/srv/ai/outputs/ace-step-xl-trial-20261020</code>、試聴ページはその下の
+      <code>listening.html</code
+      >、集計値は<code>summary.json</code>である。
+    </p>
+  </section>
+  <section id="models">
+    <h2>試験対象</h2>
+    <table>
+      <caption>
+        モデルと実行環境
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">実行条件</th>
+          <th scope="col">固定したrevision</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ACE-Step 1.5 Turbo</th>
+          <td>既存checkpoint、ROCm、float32、補助LMなし</td>
+          <td>既存重みのSHA-256をruntime-manifest.jsonへ記録</td>
+        </tr>
+        <tr>
+          <th scope="row">ACE-Step 1.5 XL Turbo</th>
+          <td>公式checkpoint、通常版と同じ生成条件</td>
+          <td>d4a0b288b83ebb7e25a8c0b32c573c22e134e8ee</td>
+        </tr>
+        <tr>
+          <th scope="row">Stable Audio 3 Small Music</th>
+          <td>audio.cpp GGUF Q8_0</td>
+          <td>02f5de92a82339ebb722ea6fdadc14b7bec43a7f</td>
+        </tr>
+        <tr>
+          <th scope="row">Stable Audio 3 Small SFX</th>
+          <td>audio.cpp GGUF Q8_0</td>
+          <td>02f5de92a82339ebb722ea6fdadc14b7bec43a7f</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      ACE-Step runtimeはca1e85f、audio.cppは518550862785bc46d482517643001a6165170135。
+      取得したLFSファイルは配布元のSHA-256と照合する。ACE-Stepのモデル側Python/configは試験用に複製し、
+      大きな重みと共通VAE・text encoderは試験用checkpoint rootから参照する。
+      runtime-manifest.jsonには共通assetのhashとengineの完全なcommitを保存する。
+    </p>
+  </section>
+  <section id="method">
+    <h2>測定方法</h2>
+    <ul>
+      <li>
+        batch 1、8 steps、固定seed。電子音30秒は同じprocess内で2回生成し、初回と再実行を分ける。
+      </li>
+      <li>
+        楽曲比較は電子音30秒とacoustic jazz trio 60秒。ACE-Stepでは同じ自作歌詞の日本語pop
+        45秒も生成する。
+      </li>
+      <li>
+        効果音は砂利の足音8秒を2回、木製ドア5秒、雨と遠雷10秒、SF武器の充電と発射4秒を用意する。
+      </li>
+      <li>
+        利用者のゲーム・SF用途の指定を受け、UI決定音と拒否音を各1.5秒、魔法4秒、レーザー3秒、爆発5秒も追加する。
+        通常版ACE-Stepでは同じUI決定音とレーザーのprompt・seedで短時間指定を試す。
+      </li>
+      <li>
+        ACE-Stepは現在の運用と同じく補助LMを初期化せず、thinkingを無効にする。CPU
+        offloadとcompileも無効。
+      </li>
+      <li>
+        ACE-Stepのimport、モデルload、各generate_music呼出しを分けて測定する。GPU
+        synchronizeを計測境界に置く。
+      </li>
+      <li>
+        API受付・queue・polling・ネットワーク転送は生成時間に含めない。モデルload時間を生成時間と混ぜない。
+      </li>
+      <li>
+        0.5秒間隔でPID単位のROCm割当量、RSS、PSS、swapとsystem
+        MemAvailable、他PIDのROCm割当量を保存する。
+      </li>
+      <li>ACE-StepはPyTorchのpeak allocatedとpeak reservedも各生成前にresetして取得する。</li>
+      <li>試験用monitorはsystem MemAvailableが20 GiB未満になれば試験processを停止する。</li>
+      <li>元音声はfloat32 WAVで保存し、試聴用MP3へ追加の音量調整なしで変換する。</li>
+      <li>Stable Audio SFXは同じQ8 packageをCPU 8 threadsでも実行して比較する。</li>
+    </ul>
+    <aside>
+      <p>
+        unified memoryなのでROCm割当量とRSSを足して総使用量にしない。
+        allocatedはtensorが使用した量、reservedはallocatorの確保量、PID単位のROCm値はdriver側から見た割当量で、
+        同じ指標ではない。サンプリング値は瞬間的なpeakを取り逃す可能性がある。
+        常駐サービスがあるPCでの少数回の試行であり、専有環境の性能保証や同時session容量の判定には使わない。
+      </p>
+    </aside>
+    <p>
+      このaudio.cpp revisionのrequest-sequenceでは長さをoptions.duration_secondsに渡す。
+      options.duration_secでは長さが反映されず既定120秒になるため、最初の試行を本測定から除外し、
+      出力WAVの実時間を確認して再測定した。既存CPU binaryは対象familyを含まなかったため、同じsource
+      commitから別build directoryへHIP有効の実行ファイルを作った。
+      GPU向けの準備が終了してから通常版ACE-Stepも再測定し、turbo-finalを本測定に採用する。
+    </p>
+    <p>
+      最初のWAVまでの時間はmonitorのprocess起動直前とWAVの更新時刻との差である。 OSのpage
+      cacheや既存kernel cacheは消していないので、diskまで含む完全なcold startではない。 ACE-Step
+      F32とStable Audio Q8の比較は、engineと数値精度を含む実用構成の比較である。
+    </p>
+  </section>
+  <section id="results">
+    <h2>結果</h2>
+    <p>
+      主比較は33出力で完了した。通常版とXLの楽曲8件、Stable Audio Musicの3件、SFXのGPU/CPU各10件、
+      通常版ACE-Stepへの効果音prompt試行2件である。各processは正常終了した。
+      同じprocess内の同一seed再実行は、通常版、XL、Stable Audio Music、SFX GPU、SFX
+      CPUの全てで波形が完全一致した。
+    </p>
+    <table>
+      <caption>
+        モデル読み込み後の楽曲生成時間。APIのqueue・polling時間は含まない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">電子音30秒・初回</th>
+          <th scope="col">電子音30秒・2回目</th>
+          <th scope="col">ジャズ60秒</th>
+          <th scope="col">日本語歌唱45秒</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ACE-Step Turbo F32</th>
+          <td>15.95秒</td>
+          <td>12.08秒</td>
+          <td>24.30秒</td>
+          <td>17.56秒</td>
+        </tr>
+        <tr>
+          <th scope="row">ACE-Step XL Turbo F32</th>
+          <td>28.64秒</td>
+          <td>21.48秒</td>
+          <td>42.07秒</td>
+          <td>31.22秒</td>
+        </tr>
+        <tr>
+          <th scope="row">Stable Audio 3 Small Music Q8 / HIP</th>
+          <td>1.28秒</td>
+          <td>1.07秒</td>
+          <td>2.31秒</td>
+          <td>試行なし</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      同じ生成条件の通常版に対しXLは約1.7〜1.8倍の時間だった。通常版とXLのmain
+      modelの実parameter数は それぞれ2,393,872,518と4,987,310,726。両者ともfloat32、SDPAで動いた。
+      handlerのload呼出しは通常版8.40秒、XL29.21秒だった。
+      試聴を伴う音質順位はこの測定値だけでは決定しない。
+    </p>
+    <p>
+      2026-10-20、利用者はXLの試聴後に「きれいな音質で良好」と評価した。
+      これは利用者の聴感評価として記録し、客観的な品質指標やStable Audioとの順位とは区別する。
+      Stable Audio Musicの60秒ジャズも、XLと完全に同じprompt、seed 23456、8 stepsで生成済みである。
+      promptはacoustic jazz trio、grand piano、upright bass、brushed drums、100
+      BPM、歌なしを指定している。 Stable Audio側の試聴評価は、この時点では未確認である。
+    </p>
+    <table>
+      <caption>
+        各processの試験全体の観測最大。GPUとRSSは加算しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">GPU割当最大</th>
+          <th scope="col">RSS最大 VmHWM</th>
+          <th scope="col">最初のWAVまで</th>
+          <th scope="col">最低MemAvailable</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ACE-Step Turbo 楽曲</th>
+          <td>21.89 GiB</td>
+          <td>14.15 GiB</td>
+          <td>27.56秒</td>
+          <td>44.54 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">ACE-Step XL Turbo 楽曲</th>
+          <td>31.57 GiB</td>
+          <td>10.67 GiB</td>
+          <td>61.65秒</td>
+          <td>35.26 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">Stable Audio Music / HIP</th>
+          <td>1.43 GiB</td>
+          <td>1.24 GiB</td>
+          <td>6.46秒</td>
+          <td>65.96 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">Stable Audio SFX / HIP</th>
+          <td>1.39 GiB</td>
+          <td>1.22 GiB</td>
+          <td>5.41秒</td>
+          <td>66.24 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">Stable Audio SFX / CPU 8 threads</th>
+          <td>0 GiB</td>
+          <td>1.57 GiB</td>
+          <td>7.20秒</td>
+          <td>66.49 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">ACE-Step Turbo 効果音prompt</th>
+          <td>14.02 GiB</td>
+          <td>14.15 GiB</td>
+          <td>15.57秒</td>
+          <td>52.34 GiB</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      XLのGPU割当は通常版より約9.7 GiB多かった。RSSはload中も含むkernelのhigh-water markであり、
+      sharded checkpointの読み込みなどの影響を受ける。生成中のPyTorch
+      allocator値はsummary.jsonにも保存した。 XL processでは最大321.03
+      MiBのswapを観測し、試験前からsystem swapも使用されていた。 常駐する他Providerの動作、page
+      cache、swap、初回kernel準備は速度に影響し得る。
+    </p>
+    <table>
+      <caption>
+        ゲーム・SF効果音の指定長と生成時間。モデル読み込み後、各条件1回
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">効果音</th>
+          <th scope="col">指定長・実出力長</th>
+          <th scope="col">HIP</th>
+          <th scope="col">CPU 8 threads</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">UI決定音</th>
+          <td>1.5秒</td>
+          <td>0.467秒</td>
+          <td>1.741秒</td>
+        </tr>
+        <tr>
+          <th scope="row">UI拒否音</th>
+          <td>1.5秒</td>
+          <td>0.386秒</td>
+          <td>2.001秒</td>
+        </tr>
+        <tr>
+          <th scope="row">魔法</th>
+          <td>4秒</td>
+          <td>0.515秒</td>
+          <td>1.978秒</td>
+        </tr>
+        <tr>
+          <th scope="row">レーザー</th>
+          <td>3秒</td>
+          <td>0.501秒</td>
+          <td>1.868秒</td>
+        </tr>
+        <tr>
+          <th scope="row">爆発</th>
+          <td>5秒</td>
+          <td>0.526秒</td>
+          <td>2.196秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      比較用に通常版ACE-Stepへ同じUI決定音とレーザーのprompt・seedを渡すと、
+      1.5秒指定は5.83秒の処理で5.12秒の音声、3秒指定は2.93秒の処理で5.12秒の音声を返した。
+      短い指定長への適合を確認できなかった。これは音声内容の効果音としての適否を自動判定した結果ではない。
+    </p>
+    <h3>音声の検査と試聴</h3>
+    <p>
+      33出力全てに非有限sampleはなく、上記ACE-Step短時間試行2件を除き実音声長は指定値に一致した。
+      ACE-Stepは48 kHz stereo、Stable Audioは44.1 kHz stereoのfloat32 WAVである。 Stable Audio
+      Musicの電子音には各977 samples、約0.037%で絶対値1以上への到達があった。
+      UI拒否音の到達率はHIP約4.27%、CPU約3.70%だった。他の試験音源には到達がなかった。
+      上限到達だけでは聴感上の歪みや意図した音色を判別できないため、該当音は試聴対象として表示する。
+    </p>
+    <p>
+      listening.htmlは試聴用MP3とメモリ図を埋め込んだ単独HTMLである。元WAVは出力root内へ残す。
+      楽曲の比較では原WAVのintegrated LUFSを基に−23 LUFSへ減衰する切替を用意し、
+      元音声や効果音自体には追加の音量調整をしない。prompt・歌詞・seed、生成時間、RMS、LUFS、 sample
+      peak、true peak、指定長との差、メモリ推移を確認できる。
+      客観的な信号値から「XLの方が音質が良い」「ACE-Stepは効果音を生成不能」とは結論しない。
+    </p>
+    <p>
+      XLのmodel側Python 2ファイルはhandler初期化時にengine同梱版へ自動同期された。
+      実行したcodeのhashはxl/checkpoint-code.jsonに保存する。MIOpenのsystem
+      DB読み込み警告はlogへ保存したが、
+      全生成は成功した。配布元の重みと実行engineのrevision・codeを分けて記録している。
+    </p>
+  </section>
+  <section id="orchestra30">
+    <h2>追加比較：オーケストラ風クラシック30秒</h2>
+    <p>
+      利用者はStable Audio Musicのジャズを「十分に思える」と評価し、XL・通常版・Stable Audioで
+      オーケストラ風のクラシックを30秒ずつ生成する追加比較を依頼した。 3構成へ同一prompt、seed
+      45678、8 stepsを渡し、各構成の新しいprocessで1回ずつ生成した。
+      ACE-Stepは引き続きF32・補助LMなし、Stable AudioはSmall Music Q8・HIPである。
+    </p>
+    <p>
+      promptは、弦の旋律と木管の応答、低弦、ホルン・金管の盛り上がり、ティンパニとシンバル、
+      自然な演奏会場の響き、壮大で明るい展開、96 BPM、歌唱・合唱・電子楽器・drum kitなしを指定した。
+      完全な入力はrepositoryの<code>benchmarks/music/ace-step/orchestra30.json</code>と
+      出力root内の<code>requests.json</code>に保存する。
+    </p>
+    <table>
+      <caption>
+        30秒オーケストラの生成時間とメモリ。各条件1回の参考実測
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">生成時間</th>
+          <th scope="col">起動から最初のWAV</th>
+          <th scope="col">GPU割当最大</th>
+          <th scope="col">RSS最大 VmHWM</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ACE-Step XL Turbo F32</th>
+          <td>26.33秒</td>
+          <td>58.41秒</td>
+          <td>27.37 GiB</td>
+          <td>10.45 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">ACE-Step Turbo F32</th>
+          <td>14.41秒</td>
+          <td>27.38秒</td>
+          <td>17.68 GiB</td>
+          <td>14.15 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">Stable Audio 3 Small Music Q8 / HIP</th>
+          <td>2.15秒</td>
+          <td>8.56秒</td>
+          <td>1.40 GiB</td>
+          <td>1.14 GiB</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      生成時間はモデル読み込み後のgenerate処理を測る。今回のStable Audio構成は通常版の約6.7倍、
+      XLの約12.3倍の速度だった。XLは通常版の約1.83倍の時間と約9.69 GiB多いGPU割当を要した。
+      以前の表は複数の長さ・楽曲を同じprocess内で実行した最大値であり、この30秒1曲だけの値とは測定範囲が異なる。
+      起動時間には既存のOS・kernel cacheや他Providerの影響が含まれる。
+    </p>
+    <p>
+      3音源とも実時間30.000秒で、非有限sampleはなかった。元音声のintegrated loudnessは XL −8.8
+      LUFS、通常版 −13.6 LUFS、Stable Audio −12.8 LUFSだった。
+      音量差を抑えて比べるため、原WAVへ一定gainだけを適用した−23 LUFSの試聴用MP3も作った。
+      減衰量はXL −14.2 dB、通常版 −9.4 dB、Stable Audio −10.2 dBで、動的な音量圧縮は加えていない。
+      Stable Audioの元WAVでは6
+      samplesが絶対値1に達した。聴感上の音質や歪みはこの値だけでは判断しない。
+    </p>
+    <p>
+      出力rootは<code>/srv/ai/outputs/orchestra-comparison-20261020</code>。
+      <code>listening.html</code
+      >で3曲を比較でき、<code>listen-matched/</code>が音量をそろえた試聴用音源、
+      <code>listen/</code>が追加の音量調整をしないMP3、各model
+      directory内に元WAVと計測logがある。
+      <code>summary.json</code
+      >、<code>runtime-manifest.json</code>に条件・指標・asset hashを保存する。
+    </p>
+  </section>
+  <section id="selection">
+    <h2>用途別のモデル選定</h2>
+    <p>
+      オーケストラ比較後の利用者判断により、歌なし音楽にはStable Audio 3 Small
+      Music、効果音にはSmall SFXを採用する。ボーカル用は従来のACE-Step
+      Normalを残して必要時だけ起動し、XLは不採用とする。APIへの適用条件は<a
+        href="./audio-provider-routing-2026-10-20.html"
+        >Provider振り分け契約</a
+      >に記録する。
+    </p>
+    <p>
+      利用者の採用意向を受け、短いゲーム・SF効果音用にはStable Audio 3 Small SFX
+      Q8_0を採用する方針とする。 実測では1.5〜5秒の指定長で出力でき、GPUでは約0.39〜0.53秒、CPU 8
+      threadsでは約1.7〜2.2秒で生成した。
+      ただしUI拒否音には音量上限への到達があるので、個別音源の試聴と音量処理の確認が必要である。
+    </p>
+    <p>
+      ACE-Stepでも音声自体は生成できたので、「効果音が絶対に出せない」とは結論しない。
+      今回の通常版ではUI音を1.5秒、レーザーを3秒に指定しても実出力はどちらも5.12秒だった。
+      指定長に合った短音と、小さい実行負荷を重視して専用モデルを選ぶ。
+      ここで確定したのは用途別の採用方針であり、LARM公開APIやProviderの実運用への組み込みは別の実装作業である。
+    </p>
+  </section>
+  <section id="related">
+    <h2>関連記録</h2>
+    <ul>
+      <li><a href="./ace-step-music-trial-2026-09-24.html">通常版の2026-09-24試行</a></li>
+      <li><a href="./music-generation-provider.html">音楽生成ProviderのAPIと運用記録</a></li>
+    </ul>
+  </section>
+</article>

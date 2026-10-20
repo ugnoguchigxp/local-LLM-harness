@@ -1,0 +1,121 @@
+<article lang="ja">
+  <h1>音楽・ボーカル・効果音のProvider振り分け</h1>
+  <p>
+    2026-10-20。Stable Audio Small MusicとSmall SFXを採用し、ボーカル用には従来のACE-Step 1.5 Turbo
+    Normalを維持する。XLは公開APIの選択対象に含めない。API実装と運用への反映状況を分けて記録する。
+  </p>
+  <section id="routing">
+    <h2>要求と実行モデル</h2>
+    <table>
+      <caption>
+        POST /v1/music/generations の要求による選択
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指定</th>
+          <th scope="col">実モデル</th>
+          <th scope="col">起動対象</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>instrumental: true</td>
+          <td>Stable Audio 3 Small Music Q8_0</td>
+          <td>larm-audio-stable.service</td>
+        </tr>
+        <tr>
+          <td>instrumental: false、または歌詞付き</td>
+          <td>ACE-Step 1.5 Turbo Normal</td>
+          <td>larm-music-ace-step.service</td>
+        </tr>
+        <tr>
+          <td>task: sound-effect、またはmodel: stable-audio-3-small-sfx</td>
+          <td>Stable Audio 3 Small SFX Q8_0</td>
+          <td>larm-audio-stable.service</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      既存契約のinstrumentalの既定falseとdurationSecondsの既定180秒は維持する。歌なしの場合はinstrumental:
+      trueを明示する。歌詞・ボーカルの判定は構造化された指定で行い、promptの単語から推測しない。効果音はinstrumentalの既定falseより優先する。効果音と歌詞、効果音と明示的なMusicモデルなどの矛盾は受付時に400で拒否する。
+    </p>
+    <p>
+      Agent
+      Connectionのmodelはautoとする。既存のace-step-1.5とacestep-v15-turboは、自動選択を利用するサービス互換名として受け付ける。指定された旧モデル名を実行結果のモデル名として返さず、result.modelとmetadata.runtimeには実際に解決したモデルとRuntimeを記録する。明示的なStable
+      Musicとボーカル指定の組み合わせ、未対応のXLは400で拒否する。
+    </p>
+    <p>
+      効果音の例：<code>{"prompt":"Short futuristic UI confirmation chime","task":"sound-effect","durationSeconds":1.5,"seed":42}</code>。公開スキーマの1〜600秒の範囲を維持し、小数の秒数を追加で受け付ける。ただしStableのMusic・SFXモデルはsample_size
+      5,292,032、44,100
+      Hzのため実質120秒が上限である。Stableへの180秒指定が約120秒に短縮されたことを実機で確認した。Stableの120秒超はジョブ作成前に400で拒否する。既存の既定180秒は維持するため、StableではdurationSecondsを明示する。GET
+      /v1/music/providersのmodelsにはモデルごとの用途と最大秒数を返す。ACE-Stepの短音は指定秒数と一致しない場合があるため、効果音にはSFXを選ぶ。
+    </p>
+  </section>
+  <section id="api">
+    <h2>公開APIと保存</h2>
+    <p>
+      POSTの202応答、ジョブ照会、イベント、キャンセル、音声Range再生、メタデータ、ライブラリ検索、タグ、お気に入りを共通化する。provider識別子はlocal-audioとし、実際の上流Providerをmetadata.upstreamProviderに保存する。completedは音声の保存と選択ワーカーの停止が完了した状態とする。
+    </p>
+    <p>
+      出力形式は既定のOpusとWAV・FLAC・MP3を維持する。Opusは128 kbps VBR、48
+      kHz。ACE-Stepは既存のWAV32変換と中間ファイル削除を維持する。Stable Audioはaudio.cpp native
+      HTTP serverのPCM16 WAVをメモリ上で受信し、必要な形式へ変換する。Stable
+      Audioはdaemon側にも上流側にも中間音声ファイルを作らない。試験時のCLIによるfloat32
+      WAVと転送段階の精度が異なる。
+    </p>
+    <p>
+      Stable
+      Audioのbpm・key・timeSignatureはpromptに補足するヒントであり、ACE-Stepと同じ厳密な制御を保証しない。Stable
+      AudioのproviderOptionsはguidance_scaleの0〜10だけを許可し、モデル・長さ・入力ファイル・生成量の上書きを拒否する。qualityは両系統ともfast
+      4、balanced 8、high 12ステップで、highによる音質改善は保証しない。
+    </p>
+  </section>
+  <section id="lifecycle">
+    <h2>オンデマンド運用</h2>
+    <p>
+      画像・ACE-Step・Stable
+      Audioは同じ排他グループで扱い、要求から解決したワーカーだけを起動する。Stable
+      AudioはMusicとSFXの2モデルを許可リストで設定し、最大1モデルだけを読み込む。音声保存・エラー・キャンセルの終了処理でワーカーを停止する。停止に失敗した場合はグループを隔離し、次のモデルを起動しない。
+    </p>
+    <p>
+      Stable Audioには6 GiB、ACE-Stepには従来の18 GiB、画像には34
+      GiBを起動時の予約見積もりとし、別途16
+      GiBの空きメモリを確保する。見積もりは常駐保証値ではない。Stable
+      AudioのHIPビルドと検証済みQ8_0モデルはリポジトリ外の実体を参照し、バイナリ・重み・生成音声はコミットしない。
+    </p>
+    <p>
+      新しいsystemd
+      unitと、そのunitだけの起動・停止を許可するpolkit規則の導入には管理者権限が必要。install-media-services.shは既存の画像・音楽要求が動いているときは導入を拒否する。API側は検証済みリリースとして反映し、稼働中リリースを直接編集しない。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証と反映状態</h2>
+    <p>
+      全体のbun run
+      checkは成功し、通常テスト929件、ツール・関連アプリのテスト、配備・リリース・ネットワークの手順テストを通過した。型検査、API
+      consumer互換チェック、モジュール境界、ソース専用リポジトリ検査も成功した。
+    </p>
+    <p>
+      要求からの選択、旧モデル名の互換性、XL拒否、無効オプションの受付前拒否、選択ワーカーだけの起動、停止完了待ち、キャンセル後の別モデル利用、4出力形式、上流の不正音声・過大応答・長さ不一致をテストした。実機では共通の公開ルートとジョブ管理を使った隔離試験を行い、Stable
+      Music 30秒、SFX 1.5秒、ACE-Step
+      Normalの歌詞付き10秒を生成した。3件ともOpus音声の取得・Range再生・お気に入り登録と再起動後の復元が成功した。Stableの実行中キャンセル後もプロセスが停止し、占有が解除された。
+    </p>
+    <p>
+      API受付から完成までの時間はMusic 5.04秒、SFX
+      4.52秒、ボーカル20.48秒だった。いずれも起動と停止を含む単発値である。Stable単体では120秒音声をOpusに変換し、実時間120秒を確認した。元の180秒指定の切り詰めも検出し、120秒超は受付時の拒否へ修正した。
+    </p>
+    <p>
+      証拠はリポジトリ外の<code>/srv/ai/outputs/stable-audio-provider-20261020</code>に保存した。api-smoke.jsonに実行モデル・保存結果・起動停止履歴を残し、試験音声は同ディレクトリのlibraryに保持している。既存の本番データは変更していない。
+    </p>
+    <p>
+      オンデマンドサービスは管理者認証を使って登録済み。本番の現行版88ab010f7a1eを基に専用のソースcheckoutを作り、既存の画像・3D・その他Providerを維持したまま今回の音声変更を適用する。検証済みソースの署名付きリリースを反映し、実HTTPから同じ選択と停止を再確認する。SAAAは未コミット変更があるため更新せず、利用者の指示どおりUIの編集は今回の対象外とした。
+    </p>
+  </section>
+  <section id="related">
+    <h2>関連記録</h2>
+    <ul>
+      <li><a href="./music-sfx-model-comparison-2026-10-20.html">モデル比較試験と採用根拠</a></li>
+      <li><a href="./music-generation-provider.html">既存の音楽生成APIと保存契約</a></li>
+    </ul>
+  </section>
+</article>

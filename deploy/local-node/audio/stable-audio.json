@@ -1,0 +1,28 @@
+{
+  "host": "127.0.0.1",
+  "port": 8092,
+  "backend": "hip",
+  "threads": 8,
+  "lazy_load": true,
+  "log_request_body": false,
+  "max_request_body_bytes": 1048576,
+  "max_loaded_models": 1,
+  "busy_timeout_ms": 300000,
+  "model_spec_override": "/srv/ai/apps/audio.cpp/model_specs",
+  "models": [
+    {
+      "id": "stable-audio-3-small-music",
+      "family": "stable_audio",
+      "task": "gen",
+      "mode": "offline",
+      "path": "/srv/ai/models/audio-cpp-trial-20261020/Stable-Audio-3-Small-Music-GGUF/stable-audio-3-small-music-q8_0.gguf"
+    },
+    {
+      "id": "stable-audio-3-small-sfx",
+      "family": "stable_audio",
+      "task": "gen",
+      "mode": "offline",
+      "path": "/srv/ai/models/audio-cpp-trial-20261020/Stable-Audio-3-Small-SFX-GGUF/stable-audio-3-small-sfx-q8_0.gguf"
+    }
+  ]
+}

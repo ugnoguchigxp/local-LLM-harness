@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-export type MediaVariant = "image" | "music" | "mesh";
+export type MediaVariant = "image" | "music" | "mesh" | "stable-audio";
 
 export class MediaVariantStopError extends Error {
   constructor(readonly variant: MediaVariant, cause: unknown) {
@@ -42,8 +42,8 @@ async function runVariantScript(script: string, action: "start" | "stop", varian
 }
 
 export class MediaVariantManager {
-  private active: Record<MediaVariant, number> = { image: 0, music: 0, mesh: 0 };
-  private warm: Record<MediaVariant, boolean> = { image: false, music: false, mesh: false };
+  private active: Record<MediaVariant, number> = { image: 0, music: 0, mesh: 0, "stable-audio": 0 };
+  private warm: Record<MediaVariant, boolean> = { image: false, music: false, mesh: false, "stable-audio": false };
   private timers: Partial<Record<MediaVariant, ReturnType<typeof setTimeout>>> = {};
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
@@ -58,7 +58,7 @@ export class MediaVariantManager {
 
   constructor(private readonly options: {
     script: string;
-    idleTtlMs: { image: number; music: number; mesh?: number };
+    idleTtlMs: { image: number; music: number; mesh?: number; "stable-audio"?: number };
     beforeStart?: (variant: MediaVariant) => void;
     afterStart?: (variant: MediaVariant) => void;
     afterStop?: (variant: MediaVariant) => void;
@@ -78,7 +78,7 @@ export class MediaVariantManager {
       if (this.faulted) throw new Error("media worker stop failed; runtime is quarantined");
       if ((this.options.idleTtlMs[variant] ?? 0) === 0 && Object.values(this.active).reduce((a, b) => a + b, 0) > 0) throw new MediaVariantBusyError();
       if (this.waiters.length > 0 && ticket !== this.waiters[0]) throw new MediaVariantBusyError();
-      const others = (["image", "music", "mesh"] as const).filter((v) => v !== variant);
+      const others = (["image", "music", "mesh", "stable-audio"] as const).filter((v) => v !== variant);
       if (others.some((v) => this.active[v] > 0)) throw new MediaVariantBusyError();
       const timer = this.timers[variant];
       if (timer) clearTimeout(timer);
@@ -134,8 +134,8 @@ export class MediaVariantManager {
     };
   }
 
-  async waitForMusic(signal: AbortSignal, timeoutMs = 300_000): Promise<() => Promise<void>> {
-    return this.waitFor("music", signal, timeoutMs);
+  async waitForMusic(signal: AbortSignal, timeoutMs = 300_000, variant: "music" | "stable-audio" = "music"): Promise<() => Promise<void>> {
+    return this.waitFor(variant, signal, timeoutMs);
   }
 
   async waitFor(variant: MediaVariant, signal: AbortSignal, timeoutMs = 600_000): Promise<() => Promise<void>> {
@@ -171,7 +171,7 @@ export class MediaVariantManager {
     for (const timer of Object.values(this.timers)) if (timer) clearTimeout(timer);
     this.timers = {};
     await this.serialized(async () => {
-      for (const variant of ["image", "music", "mesh"] as const) {
+      for (const variant of ["image", "music", "mesh", "stable-audio"] as const) {
         if (this.warm[variant]) await this.stop(variant);
       }
     });

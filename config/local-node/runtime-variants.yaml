@@ -26,3 +26,10 @@ variants:
     group: accelerator-media-heavy
     estimatedMemoryGB: 32
     idleTtlSeconds: 0
+  stable-audio:
+    capability: media.music.generate
+    service: larm-audio-stable.service
+    healthUrl: http://127.0.0.1:8092/health
+    group: accelerator-media-heavy
+    estimatedMemoryGB: 6
+    idleTtlSeconds: 0

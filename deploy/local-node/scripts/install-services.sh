@@ -125,6 +125,7 @@ else
     larm-music-ace-step.service
     larm-image-qwen21.service
     larm-mesh-trellis2.service
+    larm-audio-stable.service
     larm-daemon.service
     larm-inference-audit-prune.service
     larm-inference-audit-prune.timer
@@ -233,6 +234,9 @@ for unit in "${units[@]}"; do
   safe_install_target "${unit_target}/${unit}" "unit target"
 done
 safe_install_target "${polkit_dir}/50-larm-runtime-control.rules" "polkit target"
+if [[ "${install_scope}" == "all" ]]; then
+  safe_install_target "${polkit_dir}/60-larm-media-control.rules" "media polkit target"
+fi
 safe_install_target "${credential_path}" "credential target"
 safe_install_target "${audit_config_path}" "audit configuration target"
 safe_install_target "${audit_key_path}" "audit key target"
@@ -284,6 +288,11 @@ install -d -o "${system_owner}" -g "${system_group}" -m 0755 "${polkit_dir}"
 install -o "${system_owner}" -g "${system_group}" -m 0644 \
   "${repo_root}/deploy/local-node/polkit/50-larm-runtime-control.rules" \
   "${polkit_dir}/50-larm-runtime-control.rules"
+if [[ "${install_scope}" == "all" ]]; then
+  install -o "${system_owner}" -g "${system_group}" -m 0644 \
+    "${repo_root}/deploy/local-node/polkit/60-larm-media-control.rules" \
+    "${polkit_dir}/60-larm-media-control.rules"
+fi
 if [[ ! -e "${provider_config_dir}/llama-swap.yaml" ]]; then
   install -o "${system_owner}" -g "${system_group}" -m 0644 \
     "${repo_root}/config/local-node/llama-swap.yaml" \
@@ -378,7 +387,7 @@ systemctl_run enable "${enabled_units[@]}"
 if [[ "${install_scope}" == "all" ]]; then
   systemctl_run disable llama-server.service qwen-asr.service whisper-asr.service \
     voicevox-tts.service qwen-tts.service larm-embedding.service laya-system-one.service ruri-system-one.service d1-system-one.service \
-    larm-music-ace-step.service larm-image-qwen21.service larm-mesh-trellis2.service kittentts-tts.service granite-asr.service
+    larm-music-ace-step.service larm-image-qwen21.service larm-mesh-trellis2.service larm-audio-stable.service kittentts-tts.service granite-asr.service
 fi
 
 if [[ "${install_scope}" == "gateway" ]]; then

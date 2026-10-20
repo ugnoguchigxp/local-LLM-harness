@@ -1,0 +1,28 @@
+[Unit]
+Description=LARM on-demand Stable Audio Music and SFX
+After=network.target
+Conflicts=larm-image-qwen21.service larm-music-ace-step.service larm-mesh-trellis2.service
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/audio.cpp
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+ExecStart=/srv/ai/apps/audio.cpp/build/linux-hip-trial-20261020/bin/audiocpp_server --config /srv/ai/apps/larm-current/deploy/local-node/audio/stable-audio.json --no-ui
+Restart=no
+TimeoutStartSec=120
+TimeoutStopSec=30
+KillSignal=SIGTERM
+LimitMEMLOCK=infinity
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/srv/ai/models /srv/ai/apps/audio.cpp
+ReadWritePaths=/srv/ai/cache
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
