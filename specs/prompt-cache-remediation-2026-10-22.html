@@ -1,9 +1,78 @@
 <article lang="ja">
-  <h1>STRIX ProviderのKV prefix再利用：原因と修正候補</h1>
+  <h1>STRIX ProviderのKV prefix再利用：原因・修正・実機検証</h1>
   <p>
-    担当者から再起動・本番反映・commitとpushの承認を受領した。隔離した実モデルで以下の試験が成功し、固定engineとv4
-    releaseの本番反映を準備した。以降の承認待ちという記述は承認前の作業範囲を説明する履歴である。
+    2026-10-22 JST、担当者の承認後に署名付きrelease
+    bc74d0bc90cbaae9bd3e0ac0b9a414f79c2c8864を本番へ反映した。Providerとdaemonの再起動、health・ready、主会話1＋補助3
+    Connectionの受入れが成功した。cache_nとcached_tokensの応答形式は維持した。
   </p>
+  <section id="production-results">
+    <h2>本番LARMの実Connectionによる受入れ結果</h2>
+    <p>
+      再起動直前に全Providerのallocation・request・mutation参照数が0、activity=idleであることを確認した。他consumerの接続は解放していない。主会話と補助3接続は同じ公開selectorのllmだけを取得し、ready確認とclaimを経由した。試験終了後は自身の4接続だけを解放した。
+    </p>
+    <table>
+      <caption>
+        本番の修正後実測。usageのcached_tokensは全行でcache_nと一致
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">prompt_n</th>
+          <th scope="col">cache_n</th>
+          <th scope="col">prompt_ms</th>
+          <th scope="col">入力全体</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">同じ内容・初回</th>
+          <td>3422</td>
+          <td>0</td>
+          <td>3175.486</td>
+          <td>3422</td>
+        </tr>
+        <tr>
+          <th scope="row">同じ内容・2回目</th>
+          <td>4</td>
+          <td>3418</td>
+          <td>25.554</td>
+          <td>3422</td>
+        </tr>
+        <tr>
+          <th scope="row">同じsystem・違うuser</th>
+          <td>521</td>
+          <td>2906</td>
+          <td>629.049</td>
+          <td>3427</td>
+        </tr>
+        <tr>
+          <th scope="row">別接続を挟む前の専用初回</th>
+          <td>3459</td>
+          <td>0</td>
+          <td>3454.792</td>
+          <td>3459</td>
+        </tr>
+        <tr>
+          <th scope="row">補助3接続の要求後の主会話</th>
+          <td>4</td>
+          <td>3455</td>
+          <td>26.314</td>
+          <td>3459</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      同一入力は99.88%を再利用し、Providerのprefill時間は約99.2%短縮した。system本文の推定3405
+      tokenに対して、違うuserでは2906 token、約85.3%を再利用した。後者はrecurrent
+      checkpointへ戻るため499
+      tokenのsystem末尾とuser部分を再処理する。完全なsystem境界でのsnapshotではないという限界を残す。
+    </p>
+    <p>
+      新releaseのcatalog
+      revisionはe1dfdbf6bd5ddf632f04c2ca56c7385b8dd47ee153dcbca49253e4855f13934c、daemon boot
+      epochはepoch-57d28afd-d0af-4c43-b136-23716279e80c。稼働engineの実パスはlarm-chat-input-engine-20261022-prefix-v1のllama-serverで、署名付きactivatorのcontract_verified=succeededを確認した。自動更新watcherも再開した。
+    </p>
+  </section>
   <section id="isolated-results">
     <h2>隔離した修正版の実機検証</h2>
     <p>
@@ -52,18 +121,80 @@
     <p>
       system本文の推定は3404 token。checkpoint 1個のログ実測は62.813 MiBで推計に一致した。KV
       poolを維持したまま最大32個の追加payload約1.963 GiBを予算に入れるため、runtimeとv4
-      releaseのestimatedMemoryGBを54から56へ変更する。音声併行の比較とLARM
-      Connection経由の受入れは本番反映後に行う。
+      releaseのestimatedMemoryGBを54から56へ変更した。本番のConnection経由の受入れと音声併行の比較は各結果節に記録する。
+    </p>
+  </section>
+  <section id="voice-contention">
+    <h2>LLM・ASR・TTSの同時実行と費用の比較</h2>
+    <p>
+      再起動前後に同じprofileからllm・asr・ttsをclaimした。LLMには約3420 tokenの合成文と64
+      tokenの出力上限を使用した。TTSは固定の合成テスト文からWAVを生成し、ASRはそのWAVをメモリ上で入力した。音声・認識文・LLMの生応答は証跡へ保存していない。各条件3回の中央値であり、統計的な有意差や全ワークロードでの性能維持を示す試験ではない。
+    </p>
+    <table>
+      <caption>
+        LLM・ASR・TTSを同時に要求した場合の中央値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">変更前・cacheなし</th>
+          <th scope="col">変更後・先頭が毎回異なる</th>
+          <th scope="col">変更後・先頭を再利用</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLMのHTTP全体 ms</th>
+          <td>6725.788</td>
+          <td>7058.343</td>
+          <td>3395.120</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider prefill ms</th>
+          <td>3397.237</td>
+          <td>3429.888</td>
+          <td>27.197</td>
+        </tr>
+        <tr>
+          <th scope="row">decode token/s</th>
+          <td>66.700</td>
+          <td>66.668</td>
+          <td>67.292</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR ms</th>
+          <td>420.102</td>
+          <td>415.631</td>
+          <td>377.087</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS ms</th>
+          <td>418.700</td>
+          <td>394.121</td>
+          <td>457.474</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      cacheが使えない場合、prefillの中央値は約1.0%増、decode速度は約0.05%減、LLMのHTTP全体は約4.9%増だった。ASRとTTSはそれぞれ約1.1%、5.9%短縮した。cacheを再利用した場合、変更前に比べLLMのHTTP全体は約49.5%短縮し、ASRは約10.2%短縮した一方、TTSには約39
+      ms、9.3%の増加を観測した。この短い標本だけではTTS差の原因を断定できない。
+    </p>
+    <p>
+      単独・逐次実行ではcold prefillが3393.681から3438.145 ms、decodeは67.739から67.438
+      token/sだった。checkpointの作成には追加の費用がある。主会話の大きなprefill削減と、最大約1.963
+      GiB＋管理領域の追加メモリ、観測した音声遅延差を取捨の判断材料とする。4 slots・1M
+      tokenの共有KV上限は維持した。稼働ProviderのVmSwapは0
+      KiB、確認時のvmstat連続標本のswap入出力も0だった。1M token全量や長時間のsoakは未実施である。
     </p>
   </section>
   <p>
     2026-10-22
-    JSTの調査。仕様確認、候補作成、稼働環境への適用、実接続検証を区別する。候補を準備した段階であり、再利用の改善や性能維持を実証したという報告ではない。
+    JSTの調査。以下の原因調査は変更前の状態を記録する。仕様確認、実装変更、本番反映、実接続検証を区別する。
   </p>
   <section id="findings">
     <h2>仕様と稼働状態の確認</h2>
     <p>
-      稼働daemonはrelease adaff8036a0f6fc87b418e550313fc353fa52608、catalog
+      変更前のdaemonはrelease adaff8036a0f6fc87b418e550313fc353fa52608、catalog
       revisionはc66a680edb445cb2b253e1ce2c4c7d90c92d3ccf52bc76518255ebded7c516a0。公開catalogの既定selector
       ornith1.5Strixは同名profileからllm-ornith15-strix route、ornith15-strix-conversation
       runtime、llama-swap
@@ -75,7 +206,7 @@
     </p>
     <table>
       <caption>
-        実際の起動設定と意味
+        変更前に確認した起動設定と意味
       </caption>
       <thead>
         <tr>
@@ -162,7 +293,7 @@
     <p>
       修正patchはこの判定をn_past &lt;=
       slot.prompt.n_tokens()へ変更し、既存のcheckpoint復元と安全なcold
-      fallbackを完全一致にも適用する。新しいモデル選択や応答形式は導入しない。これはソースによる原因分析と修正候補であり、当該モデルでのabort解消は承認後の再現試験で確認する。
+      fallbackを完全一致にも適用する。新しいモデル選択や応答形式は導入しない。短いJSON/SSE反復と長いprefixでの動作は隔離試験・本番試験の両方で確認した。
     </p>
     <p>
       --swa-fullはSWA用の保持量を増やす設定であり、このモデルの過去recurrent
@@ -173,7 +304,7 @@
     <h2>中継、slot割当てと保持期間</h2>
     <p>
       LARMのprepareChatInputは入力を検証し、max_tokensの既定補完・token
-      countを行う。messagesの先頭へ時刻・要求IDは追加しない。cache_promptやid_slotを強制変更する処理も見つからなかった。異なるrequestIdを用いた2回の前処理が同じmessages・明示cache_prompt・id_slotを保つことを回帰テストで確認した。実際にtoken化した結果の一致は別途実機検証が必要。
+      countを行う。messagesの先頭へ時刻・要求IDは追加しない。cache_promptやid_slotを強制変更する処理も見つからなかった。異なるrequestIdを用いた2回の前処理が同じmessages・明示cache_prompt・id_slotを保つことを回帰テストで確認した。実接続でもcount-onlyのtoken数と生成応答の入力数が一致した。
     </p>
     <p>
       一般のAgent
@@ -191,9 +322,9 @@
     </p>
   </section>
   <section id="candidate">
-    <h2>候補の変更と費用</h2>
+    <h2>エンジン変更と費用</h2>
     <p>
-      稼働設定・daemon・Providerには適用していない。prepare-prompt-cache-engine.pyで既存ビルドと同じdigestを確認し、別ディレクトリのソース1ファイルと静的archiveを差し替えて候補を再リンクした。外部ソースcheckoutと既存buildは変更していない。候補の--versionは244、0fc9568を報告し、build-manifestにはliveValidated=falseを記録した。
+      prepare-prompt-cache-engine.pyで既存ビルドと同じdigestを確認し、別ディレクトリのソース1ファイルと静的archiveを差し替えて候補を再リンクした。外部ソースcheckoutと既存buildは変更していない。候補の--versionは244、0fc9568を報告した。build-manifestのliveValidated=falseは作成時の値として保存し、その後の実接続検証は本書に記録する。
     </p>
     <p>
       コードレビュー後の候補はlarm-prompt-cache-reviewed-20261022に準備した。実行ファイルのSHA-256は3c25c5a9861e1a8410583e4f673d14671f09f55b72dd46b61b0b8efa747a2298。変更前のソースからcached
@@ -215,11 +346,12 @@
     </p>
     <p>
       KV
-      token上限は維持するが、総使用メモリとcheckpoint作成・復元の帯域消費は増える。4枠を全て使い、ASR/TTSを併行したときのRSS・利用可能RAM・swap入出力・LLMのprefill/decode・音声の遅延を測るまで性能維持を断定しない。8個は保持深度とメモリ上限の初期候補であり、採否は実測に基づく。
+      token上限は維持するが、総使用メモリとcheckpoint作成・復元の帯域消費は増える。8個は保持深度と追加メモリの上限を制御する値であり、主会話1＋補助3での保持確認と以下の音声併行測定を踏まえて採用した。1M
+      tokenを全て実入力した場合の性能や長時間soakまでを保証するものではない。
     </p>
   </section>
   <section id="verification">
-    <h2>検証記録と承認後の手順</h2>
+    <h2>検証記録と運用手順</h2>
     <p>
       リポジトリ全体のbun run
       checkは終了コード0で成功した。文書・型・モジュール境界・通常テスト・配備手順テストを含む。候補と稼働実行ファイルのdigest、patchの逆適用checkも成功し、元の実行ファイルが変わっていないことを確認した。これらはモデルを起動した修正後の受入れ試験を代替しない。
@@ -282,7 +414,7 @@
     </table>
     <table>
       <caption>
-        修正後に必要な受入れ試験。いずれも未実施
+        修正後の受入れ基準。3ケースとも本番の実Connectionで成功
       </caption>
       <thead>
         <tr>
@@ -324,16 +456,13 @@
       epochが変わったら試験を失敗させる。公開model名だけで同一runtimeと判断しない。レスポンスの既存フィールドは変更しない。
     </p>
     <ol>
+      <li>別portの隔離候補で短いJSON/SSE反復、3ケースの再利用、4枠同時生成を確認した。</li>
       <li>
-        担当者の承認後、別portの隔離候補で短いJSON/SSEを反復し、abortしないこと、3ケースの再利用、4枠・音声併行時の資源と応答速度を確認する。長いprefillと異なるuserへの分岐も含める。
+        固定した新engine digest・起動設定をv4
+        releaseへ記録し、install・依存関係audit・全体check・coverageの必須gateを全て通過した。追加メモリはruntimeの資源見積りにも反映した。
       </li>
       <li>
-        再現試験に合格後、既存の署名付きrelease経路で新engine
-        digest・起動設定を固定する。追加メモリの実測をruntimeの資源見積りにも反映し、稼働catalogとprovider
-        configのbaselineが変わっていないことを再確認する。
-      </li>
-      <li>
-        他consumerのallocationと実行要求がなくなった時点で適用する。接続を強制解放しない。再起動後、同じ検証スクリプトを通常モードで実行し、数値を本書へ追記する。
+        他consumerのallocationと実行要求がないことを確認して適用し、再起動後に同じ検証スクリプトを通常モード・補助3接続で実行した。
       </li>
       <li>
         abort、音声性能悪化、メモリ不足、キャッシュ受入れ失敗のいずれかがあれば元の固定engine・設定へ戻す。既存データの削除は不要。
@@ -344,7 +473,7 @@
     <h2>コードレビューで修正した事項</h2>
     <table>
       <caption>
-        レビュー指摘と対応。実モデルの検証は承認待ちのまま維持
+        レビュー指摘と対応。承認前に修正を終え、承認後に実モデルで検証した
       </caption>
       <thead>
         <tr>
