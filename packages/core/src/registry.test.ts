@@ -775,7 +775,11 @@ test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifa
   expect(swap.models[runtime.id].cmd).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");
   expect(swap.models[runtime.id].cmd).toContain("--spec-type none");
   expect(swap.models[runtime.id].cmd).not.toContain("draft-mtp");
-  expect(swap.models[runtime.id].cmd).toContain("--no-cache-prompt");
+  expect(swap.models[runtime.id].cmd).toContain("--cache-prompt");
+  expect(swap.models[runtime.id].cmd).toContain("-ctxcp 8");
+  expect(swap.models[runtime.id].cmd).toContain("--parallel 4");
+  expect(swap.models[runtime.id].cmd).toContain("--ctx-size 1048576");
+  expect(runtime.resources.estimatedMemoryGB).toBe(56);
 });
 test("registered llama-swap models leave idle shutdown to LARM", () => {
   const registry = loadRegistry(repoConfig);

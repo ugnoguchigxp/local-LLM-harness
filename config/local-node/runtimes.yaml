@@ -324,7 +324,7 @@ runtimes:
       warm: { minInstances: 1, idleTtlSeconds: 60 }
       swapGroup: conversation-llm-slot
     resources:
-      estimatedMemoryGB: 54
+      estimatedMemoryGB: 56
       maxConcurrentAllocations: 4
       maxConcurrentRequests: 4
       maxQueuedRequests: 16

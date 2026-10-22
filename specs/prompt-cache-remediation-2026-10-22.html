@@ -1,0 +1,389 @@
+<article lang="ja">
+  <h1>STRIX ProviderのKV prefix再利用：原因と修正候補</h1>
+  <p>
+    担当者から再起動・本番反映・commitとpushの承認を受領した。隔離した実モデルで以下の試験が成功し、固定engineとv4
+    releaseの本番反映を準備した。以降の承認待ちという記述は承認前の作業範囲を説明する履歴である。
+  </p>
+  <section id="isolated-results">
+    <h2>隔離した修正版の実機検証</h2>
+    <p>
+      4 slots・1M token・KV q4_0・batch2048・ubatch512を本番と同じ値にして別portで起動した。短い1
+      token要求のJSON/SSE交互8回、4枠の同時生成が成功し、試験終了時のプロセス終了コードは0。短いprobeにはcheckpointがないため全文再処理へfallbackする記録が出たが、部分削除のabortやcheckpoint復元失敗はなかった。試験プロセスは終了し、他consumerの接続を解放していない。
+    </p>
+    <table>
+      <caption>
+        隔離Providerの実測。合成入力のみ
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">prompt_n</th>
+          <th scope="col">cache_n</th>
+          <th scope="col">prompt_ms</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">同じ内容・初回</th>
+          <td>3421</td>
+          <td>0</td>
+          <td>3273.663</td>
+        </tr>
+        <tr>
+          <th scope="row">同じ内容・2回目</th>
+          <td>4</td>
+          <td>3417</td>
+          <td>27.772</td>
+        </tr>
+        <tr>
+          <th scope="row">同じsystem・違うuser</th>
+          <td>521</td>
+          <td>2905</td>
+          <td>614.910</td>
+        </tr>
+        <tr>
+          <th scope="row">別要求を2件挟んだ後</th>
+          <td>4</td>
+          <td>3422</td>
+          <td>30.830</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      system本文の推定は3404 token。checkpoint 1個のログ実測は62.813 MiBで推計に一致した。KV
+      poolを維持したまま最大32個の追加payload約1.963 GiBを予算に入れるため、runtimeとv4
+      releaseのestimatedMemoryGBを54から56へ変更する。音声併行の比較とLARM
+      Connection経由の受入れは本番反映後に行う。
+    </p>
+  </section>
+  <p>
+    2026-10-22
+    JSTの調査。仕様確認、候補作成、稼働環境への適用、実接続検証を区別する。候補を準備した段階であり、再利用の改善や性能維持を実証したという報告ではない。
+  </p>
+  <section id="findings">
+    <h2>仕様と稼働状態の確認</h2>
+    <p>
+      稼働daemonはrelease adaff8036a0f6fc87b418e550313fc353fa52608、catalog
+      revisionはc66a680edb445cb2b253e1ce2c4c7d90c92d3ccf52bc76518255ebded7c516a0。公開catalogの既定selector
+      ornith1.5Strixは同名profileからllm-ornith15-strix route、ornith15-strix-conversation
+      runtime、llama-swap
+      backendに解決する。公開modelはornith-1.5-strix-lean。Eumenesが保存したConnection自体の内容は取得していないため、その接続IDとの一致は未確認。
+    </p>
+    <p>
+      llama-swapのrunning、Providerのprops・slots、実プロセスの起動引数が一致した。起動エンジンは外部ディレクトリlarm-chat-input-engine-20261013のllama-serverで、upstream
+      revisionは0fc9568e07ccc8553010864cb8db1957e629cbfa、build表示はb244-0fc9568。既存ビルドと稼働実行ファイルのSHA-256はd7b699c6d8c051b54e357d730940647ff8331d11e7543e38c96921a6c09fc1bb。
+    </p>
+    <table>
+      <caption>
+        実際の起動設定と意味
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">稼働値</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">cache_prompt既定</th>
+          <td>--no-cache-prompt</td>
+          <td>prefix照合を無効化。要求でtrueを指定してもcheckpointがない問題は残る。</td>
+        </tr>
+        <tr>
+          <th scope="row">recurrent checkpoint</th>
+          <td>-ctxcp 0</td>
+          <td>過去のrecurrent stateを復元できない。</td>
+        </tr>
+        <tr>
+          <th scope="row">cache RAM</th>
+          <td>-cram 0</td>
+          <td>slot外のprompt退避を無効化。slot内のprefix再利用と異なる機能。</td>
+        </tr>
+        <tr>
+          <th scope="row">cache reuse</th>
+          <td>--cache-reuse 0</td>
+          <td>
+            KV位置を移動するchunk再利用を無効化。この値だけで先頭一致の再利用が無効になるわけではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">idle slot退避</th>
+          <td>--no-cache-idle-slots</td>
+          <td>
+            要求開始時にidle slotを自動退避・消去しない。未使用slotに残る状態の寿命保証ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">共有KVと実行枠</th>
+          <td>--ctx-size 1048576、--parallel 4、--kv-unified</td>
+          <td>slots APIは4枠、各262144を報告。LARMも最大4 allocations・4 requests。</td>
+        </tr>
+        <tr>
+          <th scope="row">KV型とbatch</th>
+          <td>K/Vともq4_0、batch2048、ubatch512</td>
+          <td>候補でも維持。</td>
+        </tr>
+        <tr>
+          <th scope="row">speculationとshift</th>
+          <td>--spec-type none、--no-context-shift</td>
+          <td>MTPは使わない。候補でも維持。</td>
+        </tr>
+        <tr>
+          <th scope="row">SWA full・slot永続化</th>
+          <td>--swa-full、--slot-save-pathとも指定なし</td>
+          <td>前者の既定はfalse。slotをディスクへ保存する構成ではない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      無効化は意図的だった。<a href="./ornith15-strix-profile-2026-10-12.html#repeated-probe-fix"
+        >10月12日の繰り返しprobe記録</a
+      >では同じ1 token出力要求の2回目でsequence
+      3のp0=12以降を除去できずabortし、無効化後はJSON/SSE交互8回が成功した。今回はその過去の生ログを再取得できておらず、この履歴を新しい再現実験として扱わない。
+    </p>
+    <p>
+      現行のjournalでforcing full prompt
+      re-processingに該当する記録は取得できなかった。llama-swapはlogToStdout:
+      proxyであり、ログが見つからないことを、当該コード経路が実行されない証明にはしない。
+    </p>
+  </section>
+  <section id="engine">
+    <h2>モデル制約とエンジンの境界判定</h2>
+    <p>
+      配備モデルのGGUFヘッダーを読み取り、architecture=qwen35moe、block_count=41、full_attention_interval=4、SSMのconv_kernel=4、state_size=128、group_count=16、time_step_rank=32、inner_size=4096を確認した。エンジンのモデル実装では主40層のうち30層がrecurrentで、残りの主10層はfull
+      attention、追加1層はMTP。通常のSWAだけの問題ではない。
+    </p>
+    <p>
+      実エンジンのserver-context.cppでは、共通prefix長n_pastが保持prompt長より厳密に短い場合だけcheckpoint復元に進む。その後、完全一致でもlogits取得のため最後の1
+      tokenを再評価する。等しい場合に復元判定を飛ばすと、保持する過去stateのないrecurrent
+      memoryへ部分削除を要求し、common_context_seq_rmがabortする経路がある。短いreadiness要求ではcheckpointを作成しないため、復元候補がない場合の全文再処理へのfallbackも必要になる。
+    </p>
+    <p>
+      修正patchはこの判定をn_past &lt;=
+      slot.prompt.n_tokens()へ変更し、既存のcheckpoint復元と安全なcold
+      fallbackを完全一致にも適用する。新しいモデル選択や応答形式は導入しない。これはソースによる原因分析と修正候補であり、当該モデルでのabort解消は承認後の再現試験で確認する。
+    </p>
+    <p>
+      --swa-fullはSWA用の保持量を増やす設定であり、このモデルの過去recurrent
+      stateを復元する代替にはならない。slotの固定もrecurrent rollbackの制約を解消しない。
+    </p>
+  </section>
+  <section id="routing">
+    <h2>中継、slot割当てと保持期間</h2>
+    <p>
+      LARMのprepareChatInputは入力を検証し、max_tokensの既定補完・token
+      countを行う。messagesの先頭へ時刻・要求IDは追加しない。cache_promptやid_slotを強制変更する処理も見つからなかった。異なるrequestIdを用いた2回の前処理が同じmessages・明示cache_prompt・id_slotを保つことを回帰テストで確認した。実際にtoken化した結果の一致は別途実機検証が必要。
+    </p>
+    <p>
+      一般のAgent
+      Connectionとclaimはllama.cppのslotを予約しない。エンジンは空きslotのうち共通prefix比率が既定0.1を超える候補を優先し、なければLRUで選ぶ。id_slotを明示するbackend経路はあるが、Connectionからslotへの自動対応付けと専有保証はない。consumer任意の固定slotを足すだけでは他接続との衝突を防げない。
+    </p>
+    <p>
+      共有KVとSession管理という既存文書の表現は、runtimeのKV容量とLARMの接続・allocation・同時要求の調停を指す。Connection単位で履歴やKV
+      snapshotを保存し、一定期間必ず保持する契約ではない。cache
+      RAMが0なので、slotが別要求で上書きされるとslot外からの復元はできない。runtimeの停止・交換・異常終了でも失われる。Connectionの有効期限とKVの寿命は異なる。
+    </p>
+    <p>
+      汎用のclaim・releaseでslot eraseする処理は見つからなかった。Personal Stateのforget・attempt
+      cleanupには専用erase経路があるが、通常の会話claimとは別。ASR・TTSは別ProviderでこのLLMのKVを直接使わない。同一LLMに解決する他Connectionの要求、readiness
+      probe、資源競合によるruntime交換はslot選択・状態維持に影響し得る。
+    </p>
+  </section>
+  <section id="candidate">
+    <h2>候補の変更と費用</h2>
+    <p>
+      稼働設定・daemon・Providerには適用していない。prepare-prompt-cache-engine.pyで既存ビルドと同じdigestを確認し、別ディレクトリのソース1ファイルと静的archiveを差し替えて候補を再リンクした。外部ソースcheckoutと既存buildは変更していない。候補の--versionは244、0fc9568を報告し、build-manifestにはliveValidated=falseを記録した。
+    </p>
+    <p>
+      コードレビュー後の候補はlarm-prompt-cache-reviewed-20261022に準備した。実行ファイルのSHA-256は3c25c5a9861e1a8410583e4f673d14671f09f55b72dd46b61b0b8efa747a2298。変更前のソースからcached
+      objectを再現し、既存のlink入力から稼働実行ファイルのdigestを再現できることも確認した。manifestのbaselineReproduced=trueはビルド整合性だけを表し、実モデルの検証完了ではない。
+    </p>
+    <p>
+      prepare-prompt-cache-config.tsは新しい候補ファイルだけを出力する。STRIXの実行ファイルを修正版へ変更し、--cache-prompt、-ctxcp
+      8、-cpent 1024を設定する。4枠、1M
+      tokenのKV、型、batch、モデル、mmproj、ASR・TTS・他モデルの定義は維持する。-cram
+      0、--no-cache-idle-slots、--cache-reuse 0も維持し、別の退避方式やKV shiftは追加しない。既定32
+      checkpointへ単純復帰しない。
+    </p>
+    <p>
+      checkpointはslotごとに最大8個、4枠で最大32個。ソース上のF32 recurrent
+      stateとGGUFメタデータから、1 snapshotのtensor payloadは30 × 4 × ((4−1) × (4096＋2 × 16 ×
+      128)＋128 × 4096) = 65,863,680 bytes、約62.8125 MiBと推計する。32個で約1.963
+      GiBにmetadata・allocation
+      overheadが加わる。ON_DEVICE保存を使うためGPUとCPUが共有する物理RAMへの追加負担となる。これは実測ピークではない。
+    </p>
+    <p>
+      KV
+      token上限は維持するが、総使用メモリとcheckpoint作成・復元の帯域消費は増える。4枠を全て使い、ASR/TTSを併行したときのRSS・利用可能RAM・swap入出力・LLMのprefill/decode・音声の遅延を測るまで性能維持を断定しない。8個は保持深度とメモリ上限の初期候補であり、採否は実測に基づく。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証記録と承認後の手順</h2>
+    <p>
+      リポジトリ全体のbun run
+      checkは終了コード0で成功した。文書・型・モジュール境界・通常テスト・配備手順テストを含む。候補と稼働実行ファイルのdigest、patchの逆適用checkも成功し、元の実行ファイルが変わっていないことを確認した。これらはモデルを起動した修正後の受入れ試験を代替しない。
+    </p>
+    <p>
+      候補エンジンのコンパイル・再リンク・--version、候補configの生成、型検査、前処理・候補設定・受入れ制御の19テストとビルド出力分離のPython
+      2テストが成功した。最初のbaseline試行では2接続目が容量待ちとなり30秒でready待ちを終了し、自身の接続だけを解放した。その後、同じ既存設定で2接続を確保でき、次表のbaselineを得た。自身が作成した接続だけを解放し、他consumerを解放していない。
+    </p>
+    <table>
+      <caption>
+        レビュー前スクリプトによる変更前の実接続baseline。全て合成入力、stream=false、出力上限16
+        token
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">prompt_n</th>
+          <th scope="col">cache_n</th>
+          <th scope="col">prompt_ms</th>
+          <th scope="col">cached_tokens</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">同じConnection・初回</th>
+          <td>3424</td>
+          <td>0</td>
+          <td>3397.300</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">同じ内容・2回目</th>
+          <td>3424</td>
+          <td>0</td>
+          <td>3313.719</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">同じsystem・違うuser</th>
+          <td>3429</td>
+          <td>0</td>
+          <td>3359.475</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">別Connection</th>
+          <td>64</td>
+          <td>0</td>
+          <td>185.237</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">別Connection後の主要求</th>
+          <td>3429</td>
+          <td>0</td>
+          <td>3345.044</td>
+          <td>0</td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        修正後に必要な受入れ試験。いずれも未実施
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ケース</th>
+          <th scope="col">記録する値と判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">同じConnection・同じ内容を2回</th>
+          <td>
+            各prompt_n、cache_n、prompt_ms、usage.prompt_tokens、cached_tokens。2回目は入力全体との差32
+            token以内を暫定許容。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">同じsystem・違う短いuser</th>
+          <td>
+            同じ5値。count-onlyでsystemあり・なしの入力差からsystem本文のtoken数を推定し、その値との差544
+            token以内を暫定許容。内訳はubatch512とtemplate境界32。入力全体を共通prefixと取り違えない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">他Connectionの要求を挟む</th>
+          <td>
+            主要求と同じ5値。1接続を挟む試験と、主1＋補助3を保持して3要求を挟む試験。主の2回目の入力全体との差32
+            token以内。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      verify-prompt-cache.tsはcatalog取得、Connection作成、ready待ち、claimを経てProviderへ送る。合成文だけを使い、証跡は数値・固定のケース名・解決runtime名に限定する。エラー応答本文・会話本文・資格情報を出力しない。cleanupは作成したConnectionだけを対象とする。LARM_CACHE_BASELINE=trueでは現在値の観測だけを行い、改善の受入れ判定は行わない。LARM_CACHE_AUXILIARIESは1から3まで。公開selectorの現構成では同じprofileのLLMだけを要求し、4接続の場合は各上限256Kで計1Mとなる。過去の補助64K
+      selectorを現行公開APIへ送らない。
+    </p>
+    <p>
+      このエンジンではtimings.prompt_nは新規に処理したtoken数、cache_nは再利用数。入力全体はusage.prompt_tokensで照合する。prompt_n＋cache_nと入力全体の一致、cache_nとcached_tokensの一致、正常なfinish_reasonも検証する。各生成の前後にcount-onlyを行い、runtime・release・engineBuild・config
+      revision・daemon boot
+      epochが変わったら試験を失敗させる。公開model名だけで同一runtimeと判断しない。レスポンスの既存フィールドは変更しない。
+    </p>
+    <ol>
+      <li>
+        担当者の承認後、別portの隔離候補で短いJSON/SSEを反復し、abortしないこと、3ケースの再利用、4枠・音声併行時の資源と応答速度を確認する。長いprefillと異なるuserへの分岐も含める。
+      </li>
+      <li>
+        再現試験に合格後、既存の署名付きrelease経路で新engine
+        digest・起動設定を固定する。追加メモリの実測をruntimeの資源見積りにも反映し、稼働catalogとprovider
+        configのbaselineが変わっていないことを再確認する。
+      </li>
+      <li>
+        他consumerのallocationと実行要求がなくなった時点で適用する。接続を強制解放しない。再起動後、同じ検証スクリプトを通常モードで実行し、数値を本書へ追記する。
+      </li>
+      <li>
+        abort、音声性能悪化、メモリ不足、キャッシュ受入れ失敗のいずれかがあれば元の固定engine・設定へ戻す。既存データの削除は不要。
+      </li>
+    </ol>
+  </section>
+  <section id="code-review">
+    <h2>コードレビューで修正した事項</h2>
+    <table>
+      <caption>
+        レビュー指摘と対応。実モデルの検証は承認待ちのまま維持
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指摘</th>
+          <th scope="col">改善</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">引数の部分一致と重複</th>
+          <td>
+            parallel
+            40を4と認識する問題、同じ引数・短縮aliasの競合、既存checkpoint間隔との衝突を拒否する。空白や改行があっても実行ファイルの置換を確実に行う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ビルド入力の不一致</th>
+          <td>
+            固定source
+            digest、変更前objectの再コンパイル一致、変更前実行ファイルの再リンク一致、ビルド前後の入力digest一致を必須にした。整合性確認のない旧manifestからconfigを生成しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">受入れの誤判定</th>
+          <td>
+            不完全な応答、不正なtoken数・合計、NaNの閾値を拒否する。system本文の推定token数を測り、別接続を挟むケースには専用の初回要求を設ける。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">接続作成・検証失敗時の処理</th>
+          <td>
+            応答が不明な作成要求は同じidempotency
+            keyで一度再取得する。claim失敗・別接続の推論失敗・runtime変更・cleanup失敗をテストし、cleanupの失敗で元のエラーを上書きしない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      コード・manifest・候補configを再確認し、修正済み指摘の回帰テストを通常の配備手順チェックへ組み込んだ。再レビュー時点で追加の具体的なコード修正指摘はない。短いJSON/SSE反復・修正後の3ケース・音声併行性能はコードレビューで完了扱いにしない。
+    </p>
+  </section>
+</article>

@@ -15,6 +15,20 @@ test("preflight reports exact counts and fit independently of HTTP bytes",async(
   expect(out.count).toMatchObject({promptTokens:161,inputBudgetTokens:160,requestedOutputTokens:32,fits:false});
   expect(JSON.parse(new TextDecoder().decode(out.body)).max_tokens).toBe(32);
 });
+test("repeated chat preflight preserves the prompt and explicit cache/slot controls", async () => {
+  const input = { ...plain, max_tokens: 16, cache_prompt: true, id_slot: 2 };
+  const body = new TextEncoder().encode(JSON.stringify(input));
+  const outputs: Uint8Array[] = [];
+  for (const requestId of ["first", "second"]) {
+    const checked = await prepareChatInput({ ...options, requestId, body, fetchImpl: async (_url, init) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject(input);
+      return countResponse();
+    } });
+    expect(JSON.parse(new TextDecoder().decode(checked.body))).toEqual(input);
+    outputs.push(checked.body);
+  }
+  expect(outputs[0]).toEqual(outputs[1]);
+});
 test("legacy text tokenizer or wrong image totals fail closed",async()=>{
   await expect(prepareChatInput({...options,body:new TextEncoder().encode(JSON.stringify(plain)),fetchImpl:async()=>Response.json({tokens:[1,2]})})).rejects.toMatchObject({code:"chat_token_count_unavailable"});
 });

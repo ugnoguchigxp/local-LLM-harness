@@ -250,6 +250,14 @@ runtimeReleases:
     providerConfigRevision: q38rocm-0fc9568-strix-lean-1m-p4-unified-q4-no-mtp-no-prompt-cache-v3-vision4096-chat-count-v1
     estimatedMemoryGB: 54
     healthPath: /health
+    default: false
+
+  ornith15-strix-conversation-p4-v4:
+    runtime: ornith15-strix-conversation
+    artifacts: [ ornith15-35b-strix-lean, ornith15-vision-bf16 ]
+    providerConfigRevision: q38rocm-0fc9568-strix-1m-p4-q4-cp8-prefix-v1-engine-3c25c5a9861e
+    estimatedMemoryGB: 56
+    healthPath: /health
     default: true
   granite-asr-current:
     runtime: granite-asr
