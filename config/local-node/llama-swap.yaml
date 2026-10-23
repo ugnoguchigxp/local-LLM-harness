@@ -370,11 +370,14 @@ models:
     # Explicit STRIX_LEAN voice profile, using the benchmarked custom-quant engine.
     # The pinned artifact has an old MTP head: keep speculation disabled.
     # Exact-prefix recovery fixes recurrent rollback; retain eight checkpoints per slot.
-    # Reserve a 1M unified KV pool without increasing the four execution slots.
+    # Partition the 1M KV into four 256K streams; scoped snapshots use bounded RAM.
     # Each session remains capped at 256K; the 64K auxiliary selector stays available.
     ttl: 0
     cmd: >
-      /srv/ai/apps/larm-chat-input-engine-20261022-prefix-v1/llama-server
+      /usr/bin/python3
+      /srv/ai/apps/larm-chat-input-engine-20261024-retention-v1/launch-prompt-retention.py
+      /etc/larm/prompt-retention.env.json
+      /srv/ai/apps/larm-chat-input-engine-20261024-retention-v1/llama-server
       -m /srv/ai/models/ornith-trial-20261012/strix-lean/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
       --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
       --image-max-tokens 4096
@@ -392,14 +395,14 @@ models:
       --cache-type-k q4_0
       --cache-type-v q4_0
       --cont-batching
-      --kv-unified
+      --no-kv-unified
       --host 127.0.0.1
       --port ${PORT}
       --reasoning off
       --spec-type none
       -ctxcp 8
       -cpent 1024
-      -cram 0
+      -cram 8192
       --no-cache-idle-slots
       --temp 0.6
       --top-p 0.95

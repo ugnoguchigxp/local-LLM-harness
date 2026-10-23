@@ -734,6 +734,30 @@
       本番systemd/llama-swapの配備、262k×4の最大入力負荷、allocator障害注入、長期連続運転は未実施である。
     </p>
   </section>
+  <section id="section-production-20261024" aria-labelledby="production-20261024">
+    <h2 id="production-20261024">2026-10-24の本番反映承認と準備</h2>
+    <p>
+      隔離E2Eの報告後、担当者から本番反映と.ssh/passwordを使った管理操作の明示承認を得た。
+      配備前に現在のcatalog・Provider
+      instance・実プロセスを再確認し、主会話の既存Connectionがある間は切替を待つ。他consumerの接続を強制解放しない。
+      本番用のengineはv8とSHA-256が一致するバイナリをsource外へ配置し、runtimeのpromptRetention、256k×4、RAM退避8192
+      MiBを同じreleaseで適用する。
+      daemonとProviderに同じ新規private鍵を渡す。秘密値はsource、argv、報告へ含めない。
+    </p>
+    <p>
+      資源予約の追加9.0625 GiBを計上すると、本番warm floorは79.0625 GiBとなる。usable 112
+      GiBに対する残りは32.9375 GiBである。 従来は追加の40
+      GiBのornith-generalを受付できたが、この構成では7.0625
+      GiB不足しmemory_exhaustedで受付制限となる。
+      ContextStillの主LLM・Laya・embedding・ASR/TTSの組み合わせは追加2
+      GiBで受付可能なことを回帰テストで確認した。
+      この費用を隠すために本番の予約上限を増やしたり、合意した保持予算を小さくしたりしない。
+    </p>
+    <p>
+      署名付きrelease builderのinstall・audit・check・coverageを通し、未使用の時間帯に切り替える。
+      既存releaseとProvider設定をロールバック用に保持し、変更前のデータやreleaseを削除しない。切替後はhealth・ready・実行バイナリと4枠の設定を確認し、本番LARMのConnectionから合成入力で再検証する。
+    </p>
+  </section>
   <section id="section-options" aria-labelledby="options">
     <h2 id="options">比較と推奨方式</h2>
     <table>
@@ -1132,7 +1156,7 @@
     </p>
     <p>
       実モデルでの保持成功、snapshot実費、4並列と音声処理のp50/p95、上限超過・取消・接続失効・runtime交換の測定結果は、上の隔離E2E節に記録した。
-      本番設定は未変更で、修正候補の本番反映も未承認である。
+      隔離検証の時点では本番設定は未変更だった。2026-10-24に本番反映の追加承認を得た。
     </p>
   </section>
   <section id="section-decision" aria-labelledby="decision">

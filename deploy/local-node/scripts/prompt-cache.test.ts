@@ -13,6 +13,9 @@ import { assertReuse, cacheSample } from "./verify-prompt-cache";
 function legacySource(): string {
   const config = parse(readFileSync(new URL("../../../config/local-node/llama-swap.yaml", import.meta.url), "utf8"));
   config.models["ornith15-strix-conversation"].cmd = config.models["ornith15-strix-conversation"].cmd
+    .replace(/^\/usr\/bin\/python3\s+\S+\/launch-prompt-retention\.py\s+\S+\s+/, "")
+    .replace("--no-kv-unified", "--kv-unified")
+    .replace(/-cram\s+8192\b/, "-cram 0")
     .replace("--cache-prompt", "--no-cache-prompt")
     .replace(/-ctxcp\s+8\b/, "-ctxcp 0")
     .replace(/-cpent\s+1024\b/, "");

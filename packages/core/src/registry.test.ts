@@ -681,7 +681,15 @@ test("production warm floor keeps shared Strix and speech warm while admitting C
       endpoint: runtime.deployment.endpoint, observedAt,
     })),
   };
-  expect(admitRuntimes({ registry, state, allocations: [], candidateRuntimeIds: ["ornith-general"] }).ok).toBe(true);
+  // Retained payloads reserve real memory; do not silently overbook the old
+  // 40 GiB secondary model alongside the production warm floor.
+  const secondary = admitRuntimes({ registry, state, allocations: [], candidateRuntimeIds: ["ornith-general"] });
+  expect(secondary).toMatchObject({ ok: false, reason: "memory_exhausted" });
+  expect(secondary.nodes[0]).toMatchObject({ usableMemoryGB: 112, committedMemoryGB: 79.0625,
+    incrementalMemoryGB: 40, availableMemoryGB: 32.9375 });
+  const withoutRetention = structuredClone(registry);
+  delete withoutRetention.runtimes.find(runtime => runtime.id === "ornith15-strix-conversation")!.promptRetention;
+  expect(admitRuntimes({ registry: withoutRetention, state, allocations: [], candidateRuntimeIds: ["ornith-general"] }).ok).toBe(true);
   const context = admitRuntimes({
     registry, state, allocations: [],
     candidateRuntimeIds: ["ornith15-strix-conversation", "laya-system-one", "multilingual-e5-small", "granite-asr", "voicevox-tts", "kittentts-nano"],
@@ -780,6 +788,12 @@ test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifa
   expect(swap.models[runtime.id].cmd).toContain("--parallel 4");
   expect(swap.models[runtime.id].cmd).toContain("--ctx-size 1048576");
   expect(runtime.resources.estimatedMemoryGB).toBe(56);
+  expect(runtime.promptRetention).toMatchObject({ protocol: "larm-prompt-cache.v1", maxBytes: 8 * 1024 ** 3,
+    principalMaxBytes: 4 * 1024 ** 3, idleTtlMs: 300_000, maxAgeMs: 1_800_000 });
+  expect(swap.models[runtime.id].cmd).toContain("--no-kv-unified");
+  expect(swap.models[runtime.id].cmd).toContain("-cram 8192");
+  expect(swap.models[runtime.id].cmd).toContain("launch-prompt-retention.py");
+
 });
 test("registered llama-swap models leave idle shutdown to LARM", () => {
   const registry = loadRegistry(repoConfig);

@@ -334,6 +334,17 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/ornith15-strix-conversation
       backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-strix-conversation
+    promptRetention:
+      protocol: larm-prompt-cache.v1
+      maxBytes: 8589934592
+      principalMaxBytes: 4294967296
+      entryMaxBytes: 1073741824
+      stagingMaxBytes: 1073741824
+      metadataMaxBytes: 67108864
+      maxEntries: 64
+      principalMaxEntries: 16
+      idleTtlMs: 300000
+      maxAgeMs: 1800000
 
   ornith15-conversation:
     artifacts:
