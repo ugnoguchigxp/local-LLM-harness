@@ -43,6 +43,14 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// These catalog/lifecycle fixtures use stub engines without native KV state.
+// Retention authentication and forwarding have their own integration fixture.
+function loadStubRegistry(configDir: string): Registry {
+  const registry = loadRegistry(configDir);
+  for (const runtime of registry.runtimes) delete runtime.promptRetention;
+  return registry;
+}
+
 const registry: Registry = {
   nodes: [
     {
@@ -527,7 +535,7 @@ test("claim request validation emits a reasoned rejection event", async () => {
 
 test("v3 public profile selectors return exact provider and service endpoints with models", async () => {
   const configDir = join(import.meta.dir, "../../../config/local-node");
-  const productionRegistry = loadRegistry(configDir);
+  const productionRegistry = loadStubRegistry(configDir);
   const productionCatalog = loadAgentConnectionCatalogForRegistry(configDir, productionRegistry);
   const probes = new Map<string, RuntimeHealth>();
   const log = { ensure: [] as string[], stop: [] as string[] };
@@ -671,7 +679,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
 test("E2E: default Ornith profile provide returns every live provider over a real HTTP listener", async () => {
   const catalogRevision = "e".repeat(64);
   const configDir = join(import.meta.dir, "../../../config/local-node");
-  const productionRegistry = loadRegistry(configDir);
+  const productionRegistry = loadStubRegistry(configDir);
   const productionCatalog = loadAgentConnectionCatalogForRegistry(configDir, productionRegistry);
   const liveRuntimeIds = new Set([
     "ornith15-strix-conversation",
@@ -881,7 +889,7 @@ test("E2E: default Ornith profile provide returns every live provider over a rea
 test("E2E: Gemma releases to ContextStill and then preempts its Strix runtime during replacement", async () => {
   const catalogRevision = "f".repeat(64);
   const configDir = join(import.meta.dir, "../../../config/local-node");
-  const productionRegistry = loadRegistry(configDir);
+  const productionRegistry = loadStubRegistry(configDir);
   const productionCatalog = loadAgentConnectionCatalogForRegistry(configDir, productionRegistry);
   const initiallyLive = new Set(productionRegistry.runtimes.filter(runtime =>
     runtime.id !== "ornith15-strix-conversation"
@@ -5354,7 +5362,7 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
 
 test("Profiles without idle retention abort ContextStill, fence reacquisition until all foreground requests finish, and retain shared providers", async () => {
   const configDir = join(import.meta.dir, "../../../config/local-node");
-  const production = loadRegistry(configDir);
+  const production = loadStubRegistry(configDir);
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, production);
   // This fixture exercises execution-only exclusion. Demand retention is
   // exercised separately with the configured idle policy enabled.
@@ -5461,7 +5469,7 @@ test("Profiles without idle retention abort ContextStill, fence reacquisition un
 
 test("claimed image preflight exposes exact contract and retention and never bypasses model or bearer scope", async () => {
   const dir=join(import.meta.dir,"../../../config/local-node");
-  const production=loadRegistry(dir);const catalog=loadAgentConnectionCatalogForRegistry(dir,production);
+  const production=loadStubRegistry(dir);const catalog=loadAgentConnectionCatalogForRegistry(dir,production);
   const live = new Set(["ornith15-strix-conversation", "granite-asr", "kittentts-nano", "ruri-system-one", "voicevox-tts", "multilingual-e5-small"]);
   const probes=new Map(production.runtimes.map(runtime=>[runtime.id,probe(runtime.id,live.has(runtime.id))]));
   const log={ensure:[] as string[],stop:[] as string[]};const observer=new Observer(production,stubBackend(probes,log));await observer.tick();
@@ -5528,7 +5536,7 @@ for (const hot of [true, false]) test(`observability covers Broker resolution, a
 
 test("game decision claims retain capability and forward inline images through the scoped gateway", async () => {
   const configDir = join(import.meta.dir, "../../../config/local-node");
-  const production = loadRegistry(configDir);
+  const production = loadStubRegistry(configDir);
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, production);
   const probes = new Map(production.runtimes.map(runtime => [runtime.id, probe(runtime.id, runtime.id === "d1-system-one")]));
   const log = { ensure: [] as string[], stop: [] as string[] };

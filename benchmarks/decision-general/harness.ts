@@ -20,7 +20,7 @@ export async function decisionHarness(root: string, endpoint: string) {
   const ticker = setInterval(() => { void observer.tick(); }, 1000);
   const apiToken = randomUUID();
   const app = createApp({ registry, getState: () => observer.getState(), control, apiToken,
-    connectionSigningKey: randomBytes(32), agentConnectionCatalog: catalog, connectionPollIntervalMs: 1,
+    connectionSigningKey: randomBytes(32), promptRetentionKey: randomBytes(32).toString("hex"), agentConnectionCatalog: catalog, connectionPollIntervalMs: 1,
     decisionDataRoot: root, gatewayFetch: fetch, providerProbeTimeoutMs: 30_000 });
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch });
   const base = `http://127.0.0.1:${server.port}`;
