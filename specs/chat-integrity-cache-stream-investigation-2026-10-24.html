@@ -1,0 +1,611 @@
+<article lang="ja">
+  <h1>2026-10-24：system欠落・補助接続キャッシュ・SSE終端・旧接続410の調査と修正</h1>
+  <p>
+    後方systemの欠落はProviderのchat
+    templateで再現した。roleと順序を保つテンプレート修正候補は5配置すべてで正式計数と値の読取りに合格した。古いテンプレート向けには欠落検出とHTTP
+    422を追加した。mainのキャッシュ保持・ヒットは維持している。空の正常SSE終了を拒否する別のLARM不具合も修正した。本番への配備切替は実施していない。
+  </p>
+  <section id="provenance">
+    <h2>検証対象と証拠の範囲</h2>
+    <p>
+      本番healthは開始・終了ともHTTP 200、status=okで、releaseCommit
+      <code>082b0bbdbb89caf3e3592b5254d6dbdb362317c9</code>、bootEpoch
+      <code>epoch-b01f6115-9e41-4ce7-867b-79ed2062a5f9</code>、configRevision
+      <code>1cbcb01cb336ee90ab617a6ef9f8cd8521cf926db302891b7e9e72d159d95e78</code
+      >。提示された世代と一致した。Eumenesのリポジトリや実会話本文は参照していない。
+    </p>
+    <p>
+      検証用選択はcatalog既定の
+      <code>ornith1.5Strix → llm-ornith15-strix → ornith15-strix-conversation → llama-swap</code
+      >。実要求の保存済みprofileを復元したという主張ではない。稼働Providerのpropsからテンプレートを取得し、同じバイナリ・重み・vision
+      projectorで隔離Providerを起動した。inference engine、重み、数値記録はリポジトリ外に置いた。
+    </p>
+    <p>
+      バイナリSHA-256は <code>c994e85f69f265c2e2260076f1a69240fd44c3318b3e7b20adf494408a39d937</code>、engineBuildは
+      <code>b244-0fc9568</code
+      >。baselineは本番releaseのソースを使用。candidateはHEAD
+      <code>42a1e0113102b428f78bbe693572952e781d8b7c</code>に本件の未commit修正を加えたworking
+      treeであり、healthのreleaseラベルに
+      <code>-working-tree</code>を付けた。配備済みreleaseとは扱わない。
+    </p>
+    <table>
+      <caption>
+        隔離試験の識別情報。各run内で正式計数とhealthの世代を照合。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">試験</th>
+          <th scope="col">releaseCommitラベル</th>
+          <th scope="col">bootEpoch</th>
+          <th scope="col">configRevision</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">before</th>
+          <td>082b0bbdbb89caf3e3592b5254d6dbdb362317c9</td>
+          <td>epoch-integrity-d7839cdd-53f1-479d-9d67-ddf6d6e3806a</td>
+          <td>dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd</td>
+        </tr>
+        <tr>
+          <th scope="row">candidate</th>
+          <td>42a1e0113102b428f78bbe693572952e781d8b7c-working-tree</td>
+          <td>epoch-integrity-e0188beb-7d63-43ec-ad4e-6d2ba544432b</td>
+          <td>5d05938e9d1b4538df2e2c198a6359ced5e7b86c783ea30c30fb49b479dd01a7</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      beforeのconfigRevisionは隔離fixtureに与えた固定識別子。candidateはregistry、catalog、templateを含む設定のSHA-256。隔離Providerは合計65536
+      context・4分割、1枠16384
+      token。本番の合計1048576・4分割、1枠262144とは異なる。cache設定は同じ8 GiB RAM、owner 4
+      GiB、entry 1 GiB、64 entries・owner 16 entries、idle
+      300秒・最大1800秒を維持した。隔離LARMは監査off、nativeログも無効。実会話、認証値、Providerの生応答は記録していない。生成テキストはメモリ中で固定値と照合して破棄し、記録には成否・識別子・計数・時間のみを残した。
+    </p>
+  </section>
+  <section id="instruction-loss">
+    <h2>1. system欠落：原因、修正、呼出し側の扱い</h2>
+    <p>
+      LARM受信後のJSON検証はroleや順序を削除しない。<code>prepareChatInput</code>が出力上限を補い、同一のmessagesを/tokenizeへ送り、その正規化済みbodyを生成にも使う。回帰試験でmessagesの一致とgeneration前の拒否を検査した。Providerの計数拡張も生成も
+      <code>oaicompat_chat_params_parse</code
+      >を使うため、同じ欠落が正式計数と生成の両方に現れる。
+    </p>
+    <p>
+      稼働templateの先頭処理はsystem／developerを最大2個だけ取り込む。その後のループが
+      <code>message.role != "system" and message.role != "developer"</code
+      >で除外する。この地点で後方systemと3個目以降が消える。「連続3個の2個目に資料」の成功も3個目の保持を意味しない。元template
+      SHA-256は <code>f55f52930aa8bf44ab5cb85f99370fcc3c56e9a85640b812086d5330bce5d86b</code>。
+    </p>
+    <p>
+      <code>prepare-instruction-template.ts</code
+      >はこのSHAに一致するtemplateだけを変更し、先頭2個の既存prefixとtools／vision／reasoning処理を保ち、後続system／developerを元の位置・元のroleで描画する。修正template
+      SHA-256は
+      <code>d5bd31a440a54192ae32eb65a4dbb96a1b401dc353a7a76585f0f634170e8edc</code
+      >。生成時にsystemをuserへ置換したり、後方情報を先頭へ移動したりしない。
+    </p>
+    <p>
+      追加防御は各system／developerに一意なmarkerを付けた検査用コピーだけを/apply-templateで描画し、全markerが残ることを確認する。実際の計数・生成bodyにmarkerを加えない。重複本文や空のinstructionも別々に確認する。markerが消える、またはtemplateが400で拒否する場合、正式計数と生成はともに
+      <code>422 chat_instruction_template_unsupported</code>。検査不能・応答異常は
+      <code>503 chat_template_validation_unavailable</code>。黙った削除や短い正式計数による成功は返さない。
+    </p>
+    <table>
+      <caption>
+        同一の合成資料・質問・履歴。数値は変更前 → 修正候補、時間はms。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">配置</th>
+          <th scope="col">正式入力token</th>
+          <th scope="col">再利用token</th>
+          <th scope="col">prefill ms</th>
+          <th scope="col">要求全体 ms</th>
+          <th scope="col">値の読取り</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">first-system</th>
+          <td>2068 → 2068</td>
+          <td>0 → 0</td>
+          <td>1889.874 → 2005.891</td>
+          <td>2060.343 → 2197.486</td>
+          <td>True → True</td>
+        </tr>
+        <tr>
+          <th scope="row">system-after-history</th>
+          <td>81 → 2072</td>
+          <td>0 → 0</td>
+          <td>262.044 → 2302.062</td>
+          <td>384.306 → 2548.660</td>
+          <td>False → True</td>
+        </tr>
+        <tr>
+          <th scope="row">second-leading-system</th>
+          <td>2068 → 2068</td>
+          <td>2064 → 2064</td>
+          <td>22.817 → 22.524</td>
+          <td>254.223 → 287.207</td>
+          <td>True → True</td>
+        </tr>
+        <tr>
+          <th scope="row">middle-of-three-systems</th>
+          <td>2068 → 2082</td>
+          <td>2064 → 1552</td>
+          <td>24.290 → 728.693</td>
+          <td>221.897 → 983.882</td>
+          <td>True → True</td>
+        </tr>
+        <tr>
+          <th scope="row">user-after-history</th>
+          <td>2072 → 2072</td>
+          <td>0 → 0</td>
+          <td>2271.440 → 2340.680</td>
+          <td>2515.661 → 2605.059</td>
+          <td>True → True</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      元資料とは別の約8.2k文字の合成資料を使い、固有のキーと値、質問、user／assistant履歴を固定した。3個連続の試験では2個目が資料、3個目は綴りを保つ短い指示。candidateの3個連続は3個目の14
+      token増加も確認した。旧template＋新防御ではfirst-system、second-leading-system、user-after-historyは200、system-after-historyとmiddle-of-three-systemsは422となった。前後で再利用状態が異なる行の時間は、速度比較として解釈しない。
+    </p>
+    <p>
+      呼出し側は422を入力配置の非対応として扱い、同じ要求の盲目的な再送をしない。修正template配備後は上記5配置を対応範囲とする。他のモデル・template、tools併用、画像併用、developer混在の生成品質まで受入済みとはしない。probeはmessage脱落を検出するもので、すべての内容の意味・権限・描画の忠実性を証明するものではない。未知templateの自動書換えはしない。
+    </p>
+  </section>
+  <section id="cache">
+    <h2>2. キャッシュ：所有、検索、保持、ヒットを分離</h2>
+    <p>
+      main／auxiliaryというclient表示名はcache所有者ではない。ownerは認証principal。既定scopeはprincipal・Connection
+      ID・bootEpochに依存し、Connectionを解放／失効させるとその既定scopeを無効化する。新規Connectionは同じconsumer・同じprefixでも別scopeになる。保持中のKVがあっても検索資格が違えばヒットしない。
+    </p>
+    <p>
+      <code>prompt_cache_key</code
+      >を明示するとprincipal・キー・bootEpochでscopeを作り、Connection
+      IDから独立する。同じ認証principal、キー、runtime／instanceの整合、token
+      prefixが一致すれば新規補助Connectionからも検索可能。1個のConnectionの解放で共有キーを破棄せず、native
+      TTL・容量予算で保持する。認証tokenのローテーションでprincipalが変わる場合、daemon再起動、runtime／instance／template変更、TTL切れ、容量追出し、画像入力の保持非対応、未完了処理などは別条件であり、再利用を保証しない。
+    </p>
+    <table>
+      <caption>
+        キャッシュ条件の分離。全件成功。before → candidate、時間はms。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">正式入力token</th>
+          <th scope="col">再利用token</th>
+          <th scope="col">prefill ms</th>
+          <th scope="col">要求全体 ms</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">cache-same-connection-cold</th>
+          <td>2889 → 2889</td>
+          <td>0 → 0</td>
+          <td>2954.944 → 3017.537</td>
+          <td>3084.158 → 3166.276</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-same-connection-same-prefix</th>
+          <td>2889 → 2889</td>
+          <td>2885 → 2885</td>
+          <td>28.865 → 29.412</td>
+          <td>126.736 → 128.444</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-same-connection-changed-suffix</th>
+          <td>2893 → 2893</td>
+          <td>2373 → 2373</td>
+          <td>604.591 → 619.982</td>
+          <td>718.372 → 743.787</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-same-connection-changed-prefix</th>
+          <td>2894 → 2894</td>
+          <td>0 → 0</td>
+          <td>2949.079 → 2973.127</td>
+          <td>3087.300 → 3129.423</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-new-connection-0-same-prefix</th>
+          <td>2889 → 2889</td>
+          <td>0 → 0</td>
+          <td>2960.439 → 3048.381</td>
+          <td>3045.233 → 3213.060</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-new-connection-0-repeat</th>
+          <td>2889 → 2889</td>
+          <td>2885 → 2885</td>
+          <td>29.300 → 29.525</td>
+          <td>113.168 → 137.689</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-new-connection-1-same-prefix</th>
+          <td>2889 → 2889</td>
+          <td>0 → 0</td>
+          <td>2958.590 → 6626.098</td>
+          <td>3101.305 → 6833.695</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-new-keyed-connection-0-same-prefix</th>
+          <td>2889 → 2889</td>
+          <td>0 → 0</td>
+          <td>2987.797 → 6794.717</td>
+          <td>3052.761 → 6938.856</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-new-keyed-connection-1-same-prefix</th>
+          <td>2889 → 2889</td>
+          <td>2885 → 2885</td>
+          <td>22.969 → 74.861</td>
+          <td>168.709 → 296.092</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-new-keyed-connection-1-changed-suffix</th>
+          <td>2893 → 2893</td>
+          <td>2889 → 2889</td>
+          <td>23.094 → 74.309</td>
+          <td>115.608 → 300.875</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-main-after-auxiliaries</th>
+          <td>2889 → 2889</td>
+          <td>2885 → 2885</td>
+          <td>23.148 → 49.881</td>
+          <td>92.915 → 190.937</td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        追加の新規接続×冒頭prefix差分。candidateのみ測定、全件成功。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">正式入力token</th>
+          <th scope="col">再利用token</th>
+          <th scope="col">prefill ms</th>
+          <th scope="col">要求全体 ms</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">cache-new-connection-0-changed-prefix</th>
+          <td>2894</td>
+          <td>0</td>
+          <td>3080.753</td>
+          <td>3191.894</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-new-connection-1-changed-prefix</th>
+          <td>2894</td>
+          <td>0</td>
+          <td>5238.085</td>
+          <td>5408.954</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-new-keyed-connection-1-changed-prefix</th>
+          <td>2894</td>
+          <td>0</td>
+          <td>7154.797</td>
+          <td>7384.861</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      先頭に短い文を足す条件は「同じ情報の大部分がある」だけで先頭token列が異なるため0。末尾userだけを変えた条件は共通prefixを2373
+      token再利用した。完全同一でも末尾4 tokenは処理し直す。suffix差分ではcheckpoint境界により約512
+      tokenを余分に処理する例もある。cache保持の有無はこのcache_nによるヒット計測と分ける。
+    </p>
+    <table>
+      <caption>
+        約14k token・出力上限512。全件成功。before → candidate、時間はms。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">正式入力token</th>
+          <th scope="col">再利用token</th>
+          <th scope="col">prefill ms</th>
+          <th scope="col">要求全体 ms</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">long-text-first</th>
+          <td>13903 → 13903</td>
+          <td>0 → 0</td>
+          <td>15514.759 → 15612.013</td>
+          <td>15658.618 → 15768.161</td>
+        </tr>
+        <tr>
+          <th scope="row">long-text-repeat</th>
+          <td>13903 → 13903</td>
+          <td>13899 → 13899</td>
+          <td>28.946 → 28.995</td>
+          <td>133.833 → 143.314</td>
+        </tr>
+        <tr>
+          <th scope="row">long-text-after-four-auxiliaries</th>
+          <td>13903 → 13903</td>
+          <td>13899 → 13899</td>
+          <td>26.300 → 86.138</td>
+          <td>146.842 → 364.688</td>
+        </tr>
+        <tr>
+          <th scope="row">long-json-first</th>
+          <td>13905 → 13905</td>
+          <td>13387 → 13387</td>
+          <td>770.487 → 776.555</td>
+          <td>1076.288 → 1092.044</td>
+        </tr>
+        <tr>
+          <th scope="row">long-json-repeat</th>
+          <td>13905 → 13905</td>
+          <td>13901 → 13901</td>
+          <td>28.742 → 28.614</td>
+          <td>291.266 → 370.998</td>
+        </tr>
+        <tr>
+          <th scope="row">long-json-after-four-auxiliaries</th>
+          <td>13905 → 13905</td>
+          <td>13901 → 13901</td>
+          <td>26.236 → 87.288</td>
+          <td>343.039 → 911.118</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      textとJSONで同じ長いsystem prefixを使ったので、JSON初回も13387 tokenを再利用した。独立したJSON
+      cold測定とは呼ばない。長文のtextは出力2 token、JSONは12〜17
+      tokenであり、上限512まで常に生成したわけではない。4補助Connectionのうち2本は既定scope、2本は共通キー付きで、順次作成・解放した。本文を欠落させず約14k
+      tokenを保持・ヒットしたことを確認した。4本同時保持、256k全長、画像KV、長時間待機、owner容量限界は今回未検証。
+    </p>
+    <p>
+      LARM
+      cacheの追加変更は不要。補助Connectionを保持して既定scopeを使い続けるか、同じconsumer内の論理的な補助セッションに安定した
+      <code>prompt_cache_key</code
+      >を付ければよい。キーに本文や認証値を含める必要はなく、無関係なconsumer間で共通化もしない。既存の所有分離・解放契約を緩める変更は行っていない。詳細は<a
+        href="./prompt-cache-retention-design-2026-10-23.html"
+        >キャッシュ保持の既存設計</a
+      >を参照。
+    </p>
+    <table>
+      <caption>
+        candidate・同一接続の2889 tokenヒット、出力2 token。ms。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">計測項目</th>
+          <th scope="col">値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">呼出し側で別途行った正式計数</th>
+          <td>50.380</td>
+        </tr>
+        <tr>
+          <th scope="row">接続確保（同一試験runのmain）</th>
+          <td>215.970。下記要求全体には含めない</td>
+        </tr>
+        <tr>
+          <th scope="row">要求全体</th>
+          <td>128.444</td>
+        </tr>
+        <tr>
+          <th scope="row">execution_wait</th>
+          <td>0.090</td>
+        </tr>
+        <tr>
+          <th scope="row">binding_revalidation</th>
+          <td>0.137</td>
+        </tr>
+        <tr>
+          <th scope="row">chat_input</th>
+          <td>45.486</td>
+        </tr>
+        <tr>
+          <th scope="row">forward_preparation</th>
+          <td>1.316</td>
+        </tr>
+        <tr>
+          <th scope="row">upstream_headers</th>
+          <td>77.560</td>
+        </tr>
+        <tr>
+          <th scope="row">upstream_body</th>
+          <td>0.271</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider報告prefill</th>
+          <td>29.412</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      chat_inputは生成内で再実施する正式計数とtemplate
+      probeを含み、別途行ったcount_msとは別。request_preparationはchat_inputを包含する。upstream_headersはJSON応答ではProviderのprefill・decode・応答生成を包含し、個々のstageを単純加算しない。probeによりinstruction付き入力は/apply-templateが1往復増え、今回の約2.9k
+      tokenではchat_inputがbefore約31 ms、candidate約45
+      msの例だった。relayとqueueは上表の範囲で小さかった。
+    </p>
+    <p>
+      提示された「cache hitでも約2秒」の当該要求を特定するrequest
+      IDや出力token数がないため、同じ2秒の所在は断定できない。本番はfull-required監査、隔離は監査offなので、今回の要求全体と本番を直接比較しない。Server-Timing、request_stage_seconds、Providerのprompt／predicted時間で追加切分け可能。SSEのServer-Timingはヘッダ送信時点の値であり、後続decode・EOF・cleanupの最終時間はrequest_stage_seconds側で確認する。今回の32
+      token→128 token生成は約2〜3秒で完了したが、本番の2秒と同じ原因という証拠ではない。
+    </p>
+  </section>
+  <section id="stream">
+    <h2>3. ストリーム：再現範囲、別途発見した不具合、終了契約</h2>
+    <p>
+      subjectId <code>84171f4d-2dbd-4e3b-8088-ec8e9951ed7c</code>に一致するメタデータはdaemon
+      journal検索で得られず、提示された24 token・128上限・4212
+      msの失敗そのものは再現していない。過去の別bootのinvalid_chunk記録を本件に結び付けない。
+    </p>
+    <table>
+      <caption>
+        各上限3要求。出力tokenは全件で指定上限と一致し、length・DONE・EOFを確認。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">出力上限</th>
+          <th scope="col">正式入力token</th>
+          <th scope="col">再利用token</th>
+          <th scope="col">before 全体 ms 最小〜最大</th>
+          <th scope="col">candidate 全体 ms 最小〜最大</th>
+          <th scope="col">成否</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1</th>
+          <td>32</td>
+          <td>0</td>
+          <td>187.688〜280.785</td>
+          <td>193.689〜322.217</td>
+          <td>3/3 → 3/3</td>
+        </tr>
+        <tr>
+          <th scope="row">128</th>
+          <td>32</td>
+          <td>0</td>
+          <td>2059.611〜2063.783</td>
+          <td>2095.974〜2667.553</td>
+          <td>3/3 → 3/3</td>
+        </tr>
+        <tr>
+          <th scope="row">512</th>
+          <td>32</td>
+          <td>0</td>
+          <td>7716.177〜7718.683</td>
+          <td>7939.621〜18302.636</td>
+          <td>3/3 → 3/3</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      追加の合成要求「Reply OK only.」＋
+      <code>stop:["OK"]</code>では、Providerはcontent長0のrole
+      chunk、空deltaのfinish_reason=stop、usage、DONEを正常に返した。一方、旧LARM
+      inspectorは表示deltaが0という理由で
+      <code>missing_delta</code
+      >を記録し、中継をエラーにしていた。今回のHTTP試験でも受信側がempty_streamとなる失敗を再現した。すでにDONEが出た後のエラーが受信側に見えるかはbufferingにも依存するため、EOFまで検査する。
+    </p>
+    <p>
+      修正後は全choiceのfinish_reasonとDONEがそろえば本文が空でも正常終了と認める。空のsemantic
+      readiness応答を正常な推論確認に使わないため、readiness側は引き続きmeaningful
+      deltaを要求する。空stop試験はbefore失敗155.356 ms → candidate成功335.704 ms。candidateは正式16
+      token、再利用0、prefill279.753 ms、生成1
+      token、stop、DONE、EOFを確認した。通常stopもbefore／candidateとも成功した。この別不具合を提示された1件の確定原因とは扱わない。
+    </p>
+    <ol>
+      <li>
+        role chunkやcontent／reasoning／tool deltaは0件以上。空本文だけでは未完了と判定しない。
+      </li>
+      <li>
+        各choiceについて非nullのfinish_reasonが必要。通常はstop、上限到達はlength。tool_calls等も既存の認識済み理由を維持する。
+      </li>
+      <li>
+        任意のusage-only chunkはchoices=[]でよい。最後に
+        <code>data: [DONE]</code>
+        とストリーム終了。DONE後の追加data、同一choiceのfinish後の追加choice deltaは拒否する。
+      </li>
+      <li>
+        EOFだけ、finish欠落、DONE欠落、JSON／chunk異常は正常終了ではない。HTTP
+        200の開始だけでは完了を保証しない。途中の失敗を偽のstopやDONEで補完しない。
+      </li>
+    </ol>
+    <p>
+      Providerの構造不備は
+      <code>gateway_stream_protocol_error</code> と固定reason、転送中のI/O例外は
+      <code>stream_error</code
+      >、deadlineはtimeout、クライアント取消やallocation失効は個別outcomeで区別する。エラーがHTTPヘッダ確定後ならstatusを書き換えられないためtransport終了／読取りエラーとなる。呼出し側は終端検査とx-request-idの保持が必要。接続断後の自動再送で実行が一度だけになる保証はない。
+    </p>
+  </section>
+  <section id="old-connections">
+    <h2>4. 旧接続410：再確保と処理中要求の保証</h2>
+    <p>
+      Control APIのget／health／claim／renew／releaseについて、別bootEpochを埋め込んだConnection
+      IDは <code>410 connection_epoch_expired</code>。期限切れの既存接続のhealth／claim／renewは
+      <code>410 connection_expired</code
+      >。getは同bootの既存recordをstatus=expired等の表現として200で返す場合がある。解放済み・失敗済みのhealth／claim／renewは
+      <code>409 connection_inactive</code>、同bootの不明IDは
+      <code>404 connection_not_found</code>。解放の再送は同bootの既存terminal
+      recordに対して204。
+    </p>
+    <p>
+      Provider BearerはControlの410契約と別。旧boot／不一致のtokenは通常
+      <code>401 invalid_token</code>、期限切れは
+      <code>401 expired_token</code>、idle releaseでは
+      <code>409 connection_idle_released</code
+      >。署名key変更でもinvalid_tokenになる。ControlとProviderのstatusを混同しない。
+    </p>
+    <p>
+      410
+      connection_epoch_expired／connection_expiredでは旧ID・claim・tokenを破棄し、現在のcatalogを取得して新規Connectionを確保してよい。処理は呼出し側の責務であり、LARMにEumenes固有の回復処理は追加しない。旧bootへのControl要求自体は新Provider推論へ転送しない。
+    </p>
+    <p>
+      410は過去の生成が未実行だったこと、取消完了、応答や外部副作用のrollbackを保証しない。graceful
+      shutdownは既存要求のdrainを期限まで待つが、期限超過・crash・通信断では旧Providerがどこまで実行したかは不明。Create／renewのIdempotency-Keyは制御操作用のmemory内再送保護で、bootを越えたchat生成のexactly-once保証ではない。新接続で生成を再送する際の重複応答やtool副作用は呼出し側で識別・抑止する。既存契約は<a
+        href="./agent-provider-connection-api.html"
+        >Agent Provider Connection API</a
+      >を参照。
+    </p>
+    <p>
+      旧epochに対する5つのControl操作と署名済み旧Provider
+      tokenの回帰試験を追加した。restart／crashを本番で発生させる検証は行っていない。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>実装、検証手順、残作業</h2>
+    <p>
+      変更箇所は <code>packages/backends/src/chat-input-tokenizer.ts</code> の欠落防御、<code
+        >packages/core/src/openai-sse.ts</code
+      >
+      の空終了判定、semantic
+      readinessの出力確認、および対応する回帰試験。配置fixture、template生成、監査offの隔離LARM、計数・生成・cache・streamの数値記録を
+      <code>deploy/local-node/scripts/*chat*integrity*</code> と
+      <code>prepare-instruction-template.ts</code>
+      に追加した。キャッシュ実装・予算・slot分割・重み・推論バイナリは変更していない。
+    </p>
+    <ol>
+      <li>
+        検証対象profileからroute、runtime、backend、engineとtemplateを確認し、propsのtemplateをリポジトリ外へ保存する。
+      </li>
+      <li>
+        <code>bun deploy/local-node/scripts/prepare-instruction-template.ts ORIGINAL.jinja NEW.jinja</code
+        >でSHAを検査して候補を作る。未知templateは停止し、個別レビューする。
+      </li>
+      <li>
+        別port19812に同じengineとモデルを起動する。元commandからcontext合計65536・parallel4へ変更し、その他のcache／vision／reasoning設定を維持する。独立した秘密鍵のretention環境を使い、<code>--chat-template-file</code>で元または修正templateを選択し、ログを無効にする。既存Providerを停止しない。
+      </li>
+      <li>
+        <code>LARM_CHAT_ENGINE_ENV</code
+        >に独立環境ファイル、<code>LARM_API_TOKEN</code>に検証専用credentialを設定して
+        <code>serve-chat-integrity-fixture.ts</code> を起動する。baselineは
+        <code>TEST_LARM_SOURCE</code>
+        に配備済みreleaseソースを指定し、candidateはworkspaceを使う。サーバーは起動停止を行わないfixture
+        backendで、監査off・loopback19811に限定する。
+      </li>
+      <li>
+        <code>verify-chat-message-integrity.ts</code>を実行する。baselineのみ
+        <code>LARM_CHAT_BASELINE=true</code
+        >で値読取り失敗を記録できる。candidateは5配置、cache分離／再利用、長文保持、全stream終端を検証する。正式計数とgenerationのtoken一致、run内の世代一致も検査する。
+      </li>
+      <li>
+        本番反映には、検証済みtemplateをversioned external
+        assetとして配備し、対象runtimeのcommandにそのtemplateを明示してprovider
+        release／configRevisionを更新する必要がある。LARMのコード修正だけでは元Providerのtemplateは置き換わらない。現在の本番は元releaseのままなので、修正済みと見なして接続回復や本番受入を省略しない。
+      </li>
+    </ol>
+    <p>
+      実モデルE2Eはcandidateの38生成要求すべてで成功。検証ソースと数値記録を束ねた外部verification-manifestのSHA-256は
+      <code>d10d5d1ac9d53e0a14b270d5f0594aed50a3d7a1bbaddc1141637a4361faf5ef</code
+      >。対象の単体・中継・所有境界試験も成功。<code>bun run check</code>は成功。新規文書も<code>bun run docs:check:fix</code>で整形・診断を確認した。生成試験は少数の逐次要求であり、専用機でのSLOベンチマークではない。並行するシステム負荷と256k設定差があるため時間差を速度改善と結論しない。
+    </p>
+  </section>
+</article>

@@ -408,6 +408,7 @@ models:
       --top-p 0.95
       --top-k 64
       --jinja
+      --chat-template-file /srv/ai/apps/larm-instruction-template-20261024-v1/chat-template.jinja
       --no-context-shift
       --cache-prompt
       --cache-reuse 0

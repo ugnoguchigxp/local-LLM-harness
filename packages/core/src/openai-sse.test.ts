@@ -140,11 +140,6 @@ test("rejects malformed, incomplete, and post-terminal streams", () => {
     event({ choices: [{ index: 0, delta: {}, finish_reason: null }] }) + "data: [DONE]\n\n",
   )).toEqual({ ok: false, reason: "missing_delta" });
   expect(inspectOpenAiChatCompletionSse([
-    event({ choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] }),
-    event({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }),
-    "data: [DONE]\n\n",
-  ].join(""))).toEqual({ ok: false, reason: "missing_delta" });
-  expect(inspectOpenAiChatCompletionSse([
     event({ choices: [{ index: 0, delta: { unknown: true, function_call: {} }, finish_reason: null }] }),
     "data: [DONE]\n\n",
   ].join(""))).toEqual({ ok: false, reason: "missing_delta" });
@@ -186,4 +181,17 @@ test("rejects malformed, incomplete, and post-terminal streams", () => {
     "data: [DONE]\n\n",
     event({ choices: [{ index: 0, delta: { content: "y" }, finish_reason: null }] }),
   ].join(""))).toEqual({ ok: false, reason: "data_after_done" });
+});
+
+test("EOS, stop sequences and length limits may complete with no visible delta", () => {
+  for (const finish_reason of ["stop", "length"]) {
+    const chunks = [
+      event({ choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] }),
+      event({ choices: [{ index: 0, delta: {}, finish_reason }] }),
+      event({ choices: [], usage: { prompt_tokens: 16, completion_tokens: 1, total_tokens: 17 } }),
+    ];
+    expect(inspectOpenAiChatCompletionSse(chunks.join("") + "data: [DONE]\n\n")).toMatchObject({ ok: true, deltas: 0, finishReasons: 1 });
+    expect(inspectOpenAiChatCompletionSse(chunks.join(""))).toEqual({ ok: false, reason: "missing_done" });
+    expect(inspectOpenAiChatCompletionSse(chunks.slice(0, 1).join("") + "data: [DONE]\n\n")).toEqual({ ok: false, reason: "missing_delta" });
+  }
 });
