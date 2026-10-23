@@ -737,10 +737,24 @@
   <section id="section-production-20261024" aria-labelledby="production-20261024">
     <h2 id="production-20261024">2026-10-24の本番反映承認と準備</h2>
     <p>
+      既存Connection 1件の正常終了を待った後、担当者から強制解放の追加承認を得た。
+      最初の切替では生成・mutation参照数が0の時点でdaemonとProviderを再起動し、残っていた接続1件を終了した。
+      release 3108fd8の起動時chat canaryがHTTP
+      502となったため、activatorは旧版bc74d0bへ自動ロールバックし、旧版のhealth・readyを確認した。
+    </p>
+    <p>
+      原因はprivate
+      header名の大文字・小文字だった。engineのserver-http.cppは受信した表記をstd::mapへ保持し、保持拡張は小文字の名前でfindしていた。
+      v8実モデルへHTTPで同じ鍵を送ると、x-larm-cache-keyはauthenticated=true、X-Larm-Cache-KeyとX-LARM-CACHE-KEYはfalseとなることを再現した。
+      中継がheader名をcanonicalizeする本番経路で顕在化し、直結の隔離E2Eだけでは見つけられなかった。
+      修正は認証とcontextの両headerをcase-insensitiveに検索し、表記違いで重複する曖昧なheaderは拒否する。
+      鍵の定数時間比較と値の検査は維持し、native回帰テストを追加した。
+    </p>
+    <p>
       隔離E2Eの報告後、担当者から本番反映と.ssh/passwordを使った管理操作の明示承認を得た。
       配備前に現在のcatalog・Provider
       instance・実プロセスを再確認し、主会話の既存Connectionがある間は切替を待つ。他consumerの接続を強制解放しない。
-      本番用のengineはv8とSHA-256が一致するバイナリをsource外へ配置し、runtimeのpromptRetention、256k×4、RAM退避8192
+      本番用のengineをsource外へ配置し、runtimeのpromptRetention、256k×4、RAM退避8192
       MiBを同じreleaseで適用する。
       daemonとProviderに同じ新規private鍵を渡す。秘密値はsource、argv、報告へ含めない。
     </p>

@@ -375,9 +375,9 @@ models:
     ttl: 0
     cmd: >
       /usr/bin/python3
-      /srv/ai/apps/larm-chat-input-engine-20261024-retention-v1/launch-prompt-retention.py
+      /srv/ai/apps/larm-chat-input-engine-20261024-retention-v2/launch-prompt-retention.py
       /etc/larm/prompt-retention.env.json
-      /srv/ai/apps/larm-chat-input-engine-20261024-retention-v1/llama-server
+      /srv/ai/apps/larm-chat-input-engine-20261024-retention-v2/llama-server
       -m /srv/ai/models/ornith-trial-20261012/strix-lean/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
       --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
       --image-max-tokens 4096

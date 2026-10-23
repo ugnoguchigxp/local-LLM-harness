@@ -10,11 +10,11 @@
 +    return key;
 +}
 +static bool larm_cache_authorized(const server_http_req & req) {
-+    const auto it = req.headers.find("x-larm-cache-key");
++    const auto * value = larm_retention_header(req.headers, "x-larm-cache-key");
 +    const auto & key = larm_cache_key();
-+    if (key.size() != 64 || it == req.headers.end() || it->second.size() != key.size()) return false;
++    if (key.size() != 64 || !value || value->size() != key.size()) return false;
 +    unsigned int difference = 0;
-+    for (size_t i = 0; i < key.size(); ++i) difference |= (unsigned char) key[i] ^ (unsigned char) it->second[i];
++    for (size_t i = 0; i < key.size(); ++i) difference |= (unsigned char) key[i] ^ (unsigned char) (*value)[i];
 +    return difference == 0;
 +}
 +static larm_retention_policy larm_cache_policy() {
@@ -49,9 +49,9 @@
 +static larm_cache_record larm_cache_context(const server_http_req & req) {
 +    larm_cache_record r;
 +    if (!larm_cache_authorized(req)) return r; // Maintenance or unscoped consumer: no retained state.
-+    const auto it = req.headers.find("x-larm-cache-context");
-+    if (it == req.headers.end() || it->second.size() > 1024) throw std::runtime_error("invalid cache context");
-+    const auto j = json::parse(it->second);
++    const auto * value = larm_retention_header(req.headers, "x-larm-cache-context");
++    if (!value || value->size() > 1024) throw std::runtime_error("invalid cache context");
++    const auto j = json::parse(*value);
 +    if (j.size() != 5) throw std::runtime_error("invalid cache context");
 +    r.owner = j.at("owner"); r.scope = j.at("scope"); r.instance = j.at("instance"); r.correlation = j.at("correlation");
 +    if (!larm_retention_policy::opaque(r.owner) || !larm_retention_policy::opaque(r.scope)

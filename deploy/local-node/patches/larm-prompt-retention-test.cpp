@@ -14,6 +14,16 @@ static server_prompt prompt(char owner, char scope, size_t bytes, int64_t t = 10
     p.data.main.resize(bytes); p.retention = record(owner, scope, t); return p;
 }
 int main() {
+    const std::string key(64, 'a');
+    for (const auto & name : {"x-larm-cache-key", "X-Larm-Cache-Key", "X-LARM-CACHE-KEY"}) {
+        const std::map<std::string, std::string> headers{{name, key}, {"X-Larm-Cache-Context", "context"}};
+        assert(larm_retention_header(headers, "x-larm-cache-key") && *larm_retention_header(headers, "x-larm-cache-key") == key);
+        assert(larm_retention_header(headers, "x-larm-cache-context") && *larm_retention_header(headers, "x-larm-cache-context") == "context");
+        assert(!larm_retention_header(headers, "missing"));
+    }
+    const std::map<std::string, std::string> duplicate{{"x-larm-cache-key", key}, {"X-Larm-Cache-Key", key}};
+    assert(!larm_retention_header(duplicate, "x-larm-cache-key"));
+
     larm_retention_policy policy; policy.enabled = true;
     policy.max_bytes = 1000; policy.owner_bytes = 600; policy.entry_bytes = policy.staging_bytes = 400;
     std::list<server_prompt> states;

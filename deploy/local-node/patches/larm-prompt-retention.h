@@ -9,6 +9,25 @@
 #include <set>
 #include <string>
 
+// HTTP field names are case-insensitive. Reverse proxies commonly title-case
+// them; reject ambiguous duplicate fields rather than selecting one credential.
+inline const std::string * larm_retention_header(const std::map<std::string, std::string> & headers, const std::string & name) {
+    const std::string * result = nullptr;
+    for (const auto & field : headers) {
+        if (field.first.size() != name.size()) continue;
+        bool same = true;
+        for (size_t i = 0; i < name.size(); ++i) {
+            auto c = (unsigned char) field.first[i];
+            if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+            if (c != (unsigned char) name[i]) { same = false; break; }
+        }
+        if (!same) continue;
+        if (result) return nullptr;
+        result = &field.second;
+    }
+    return result;
+}
+
 struct larm_cache_record {
     std::string owner, scope, instance, correlation;
     int64_t created = 0, used = 0, lease_until = 0, memory_floor = 0;
