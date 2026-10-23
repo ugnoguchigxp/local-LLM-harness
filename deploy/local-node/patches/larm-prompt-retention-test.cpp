@@ -21,8 +21,8 @@ int main() {
         assert(larm_retention_header(headers, "x-larm-cache-context") && *larm_retention_header(headers, "x-larm-cache-context") == "context");
         assert(!larm_retention_header(headers, "missing"));
     }
-    const std::map<std::string, std::string> duplicate{{"x-larm-cache-key", key}, {"X-Larm-Cache-Key", key}};
-    assert(!larm_retention_header(duplicate, "x-larm-cache-key"));
+    const std::map<std::string, std::string> duplicate_headers{{"x-larm-cache-key", key}, {"X-Larm-Cache-Key", key}};
+    assert(!larm_retention_header(duplicate_headers, "x-larm-cache-key"));
 
     larm_retention_policy policy; policy.enabled = true;
     policy.max_bytes = 1000; policy.owner_bytes = 600; policy.entry_bytes = policy.staging_bytes = 400;
