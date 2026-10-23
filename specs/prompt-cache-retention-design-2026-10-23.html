@@ -3,7 +3,7 @@
   <p>
     2026-10-23調査、2026-10-24に保持設計・実装・隔離E2Eの起動と入替を承認。
     同日、256k×4分割とOpenAI互換のキーの扱いを追加承認した。
-    隔離環境で変更前baselineと修正候補を測定し、6条件とキーの継続・分離を確認した。本番の設定変更・再起動・反映は未実施である。
+    隔離環境で変更前baselineと修正候補を測定し、6条件とキーの継続・分離を確認した。2026-10-24に本番へ反映し、本番の中継を通る実Connectionでも保持とRAM復元を確認した。
     <a href="./prompt-cache-remediation-2026-10-22.html">連続した同一要求の修正</a>と、
     今回の「異なる要求を挟んだ後の保持」を別問題として扱う。
   </p>
@@ -594,7 +594,7 @@
       ASRは＋40.734ms（約9.8%）、TTSは＋27.364ms（約8.3%）となった試行もある。単回の差をcache保持方式による因果的な増加と断定せず、改善した回も含めて測定幅として残す。
     </p>
     <p>
-      本番反映には別の明示許可が必要である。候補runtimeのpromptRetentionとProviderのRAM設定を同時に適用し、daemonにもProvider
+      隔離検証時点では本番反映に別の明示許可が必要だった。候補runtimeのpromptRetentionとProviderのRAM設定を同時に適用し、daemonにもProvider
       launcherと同じLARM_PROMPT_CACHE_KEYを秘密の環境設定から渡す必要がある。片側だけの設定ではcapability/keyの一致を検証できないためforwardingを拒否する。候補生成スクリプトはprivate設定ファイルを作るだけで、本番へ自動反映しない。秘密値をargv、ログ、commitへ入れない。
     </p>
   </section>
@@ -731,11 +731,123 @@
       fail、追加tooling・speech・deployment・Python/shellの検査も合格した。
       nativeの重複保存・容量・期限・checkpoint回帰テストも合格した。中断・失敗した先行試行や、完了記録のないexit
       0をこの合格数に含めない。
-      本番systemd/llama-swapの配備、262k×4の最大入力負荷、allocator障害注入、長期連続運転は未実施である。
+      このv8測定時点では本番systemd/llama-swapの配備は未実施だった。262k×4の最大入力負荷、allocator障害注入、長期連続運転は引き続き未実施である。
     </p>
   </section>
   <section id="section-production-20261024" aria-labelledby="production-20261024">
-    <h2 id="production-20261024">2026-10-24の本番反映承認と準備</h2>
+    <h2 id="production-20261024">2026-10-24の本番反映と実Connection検証</h2>
+    <p>
+      修正後の署名付きrelease 082b0bbdbb89caf3e3592b5254d6dbdb362317c9を本番へ反映した。
+      configRevisionは1cbcb01cb336ee90ab617a6ef9f8cd8521cf926db302891b7e9e72d159d95e78。
+      最終切替の直前は全Providerのallocation・request・mutation参照数が0、activity=idleを3回連続で確認した。
+      daemon・llama-swap
+      workerを再起動し、activatorのcontract_verified=succeeded、health・readyを確認した。署名付きbuilderのinstall・audit・check・coverageとproduction
+      auditは全て合格した。
+      本番の実行バイナリはlarm-chat-input-engine-20261024-retention-v2/llama-serverで、SHA-256はc994e85f69f265c2e2260076f1a69240fd44c3318b3e7b20adf494408a39d937。
+      4枠・各262144 token、--no-kv-unified、RAM 8192 MiBを実プロセスと/slotsで確認した。
+    </p>
+    <p>
+      最終v10ビルドでは配備済みbaselineのバイナリ再現、変更した全translation
+      unitの再ビルド、native回帰テストを完了した。 v10の実HTTP検査で小文字・title
+      case・大文字のprivate headerを全て認証し、誤った鍵と表記違いの重複headerは拒否した。
+      隔離LARMのSSE・JSON・キー継続と分離・RAM復元も全て完了とcleanup失敗0を確認した。
+      本番でもnative直結とllama-swap経由の両方でauthenticated=trueを確認した。既存の秘密鍵必須チェックを緩めていない。
+    </p>
+    <table>
+      <caption>
+        本番の合成入力による実Connection検証。時間はms、prompt_nは新規処理、cache_nは再利用token
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">総入力</th>
+          <th scope="col">prompt_n / cache_n</th>
+          <th scope="col">prompt_ms</th>
+          <th scope="col">最初のtoken</th>
+          <th scope="col">全体</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">SSE・初回</th>
+          <td>13995</td>
+          <td>13995 / 0</td>
+          <td>15787.891</td>
+          <td>18306.168</td>
+          <td>18351.112</td>
+        </tr>
+        <tr>
+          <th scope="row">SSE・同一入力再送</th>
+          <td>13995</td>
+          <td>4 / 13991</td>
+          <td>29.335</td>
+          <td>2610.938</td>
+          <td>2689.569</td>
+        </tr>
+        <tr>
+          <th scope="row">SSE・userのみ変更</th>
+          <td>13998</td>
+          <td>519 / 13479</td>
+          <td>808.096</td>
+          <td>3261.749</td>
+          <td>3311.564</td>
+        </tr>
+        <tr>
+          <th scope="row">SSE・補助4件後</th>
+          <td>13995</td>
+          <td>4 / 13991</td>
+          <td>25.452</td>
+          <td>2123.650</td>
+          <td>2170.160</td>
+        </tr>
+        <tr>
+          <th scope="row">JSON・補助4件後</th>
+          <td>13995</td>
+          <td>4 / 13991</td>
+          <td>26.655</td>
+          <td>—</td>
+          <td>2299.285</td>
+        </tr>
+        <tr>
+          <th scope="row">6つの別キー後・RAM復元</th>
+          <td>13264</td>
+          <td>4 / 13260</td>
+          <td>26.160</td>
+          <td>2570.615</td>
+          <td>2648.926</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      全行でusage.prompt_tokens_details.cached_tokensとtimings.cache_nの一致を検査した。
+      本番のRAM復元ではloadsが2→3に増えた。試験用Connectionは正常に解放し、明示キーの状態には通常の期限・予算を適用した。
+      本番はfull-required監査などを含む経路であり、入力読込み25.452msの要求でも最初のtokenまで2123.650ms、全体2170.160msだった。
+      残る約2秒を全て監査の費用と断定する計測はしていない。隔離直結の全体約100msと同一条件の性能比較として扱わず、cache保持の確認と要求全体の時間を分ける。
+    </p>
+    <p>
+      本番の音声併行は同一認証principalのLLM 4 ConnectionとASR/TTS
+      Connectionで実施し、LLM80件、ASR/TTS各20件を測定した。
+      4つ全てが最初の生成tokenを返してから音声を実行し、音声の前後でactive slot=4だった。128
+      token上限の生成を使用した。 p50/p95はLLM
+      TTFT4158.820/4275.767ms、全体4258.474/4354.452ms、ASR294.722/316.869ms、TTS337.333/351.638ms。
+      これは本番経路の現在値であり、直結・監査条件の異なる隔離baselineに対して性能改善率を計算しない。
+    </p>
+    <p>
+      本番のSSE・JSON・RAM復元・音声併行の全4試験で完了記録とcleanup失敗0を確認した。
+      engineの最大VmRSSは1,497,032 KiB、hostの最小MemAvailableは80.338
+      GiB。最後のRAM統計は2,769,483,940 bytes、metadata 2,252,736 bytes、11
+      entries、復元失敗0だった。
+      nativeの認証や状態復元で会話本文・認証値・Providerの生応答を報告へ出していない。 元のlifecycle
+      CLIは隔離endpoint限定のまま保ち、本番では同じ合成fixtureと検査手順を本番endpointへ向けた専用driverでrestore/audioだけを実行した。
+      このdriverのimport解決に失敗した開始前試行は合格へ含めない。本番での再起動は配備操作として行い、最大容量・予算超過・障害注入を本番で繰り返したとは主張しない。
+    </p>
+    <p>
+      検証用Connectionを全て解放し、更新監視larm-release-activator.pathと定期監視larm-http-provider-monitor.timerを元のactive状態へ戻した。
+      旧release・Provider設定・初回失敗時の署名要求を保持し、既存データを削除していない。
+      定期監視serviceは着手時からfailedで、既存のcoding-default指定も変更していない。監視timerの復帰と、本稿の主会話の実接続合格を区別する。
+      最後に本番のhealth・readyと稼働releaseを再確認した。初回切替で終了した既存接続は、利用側で再接続する必要がある。
+    </p>
+
     <p>
       既存Connection 1件の正常終了を待った後、担当者から強制解放の追加承認を得た。
       最初の切替では生成・mutation参照数が0の時点でdaemonとProviderを再起動し、残っていた接続1件を終了した。
@@ -1054,7 +1166,7 @@
     <p>
       資源増加とp50/p95の差を報告して判断する。音声処理に有意な悪化があれば、予算を小さくすることで保てる作業集合と追い出し増加を比較し、無影響とは宣言しない。
       まず隔離検証でRAM保存費用と全条件を確認する。隔離Providerの起動にも許可が必要。
-      本番の停止・起動・再起動・設定変更・反映は別途明示的な許可を受け、他consumerの接続を強制解放しない。
+      本番の停止・起動・再起動・設定変更・反映は別途明示的な許可を受け、通常は他consumerの接続を強制解放しない。今回の切替時の既存接続終了には追加の明示承認を得た。
     </p>
   </section>
   <section id="section-implementation" aria-labelledby="implementation">
@@ -1110,10 +1222,10 @@
       </thead>
       <tbody>
         <tr>
-          <th scope="row">修正候補</th>
+          <th scope="row">本番の保持engine</th>
           <td>
-            /srv/ai/apps/larm-prompt-retention-candidate-20261024-v8/llama-server。SHA-256
-            f0325741a7fc4128fe24b8c2f6c5a4bc69768b7a3cecfc397c577ca949e1ce22。
+            /srv/ai/apps/larm-chat-input-engine-20261024-retention-v2/llama-server。SHA-256
+            c994e85f69f265c2e2260076f1a69240fd44c3318b3e7b20adf494408a39d937。v10候補から検証して配置した。
           </td>
         </tr>
         <tr>
@@ -1143,7 +1255,8 @@
           <td>
             /srv/ai/apps/larm-prompt-retention-config-20261024-v8。repoのruntime→backend
             model対応から作成し、parallel 4、ctx-size 1048576、checkpoint設定を維持。RAM 8192
-            MiBとprivate launcherを追加した未適用の候補。認証情報や設定全文は報告に含めない。
+            MiBとprivate
+            launcherを追加した隔離検証用の候補。同じ予算と分割方式を上の署名付き本番releaseへ適用済み。認証情報や設定全文は報告に含めない。
           </td>
         </tr>
         <tr>
@@ -1179,7 +1292,7 @@
       合意した内容は、既存RAM退避・復元の再利用、認証Connection
       scope、複数分岐保持、実効prefix長での検索、期限と認証principal別予算、maintenance要求の扱い、上記の暫定予算と検証手順である。
       公開consumer APIの追加、Eumenesのslot固定、モデル・profile名による優先分岐は提案しない。
-      2026-10-24に設計合意と実装、隔離Providerの起動・入替・検証の承認を得た。本番反映は別途許可が必要である。
+      2026-10-24に設計合意と実装、隔離Providerの起動・入替・検証の承認を得た。その後に本番反映と切替時の接続終了の許可を得て、2026-10-24に反映した。
     </p>
     <p>
       隔離実モデルでは保持・復元・失効を確認した。262k
