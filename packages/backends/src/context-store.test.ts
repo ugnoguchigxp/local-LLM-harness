@@ -9,7 +9,7 @@ test("context backend declares its direct production package imports", () => {
   const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
     dependencies?: Record<string, string>;
   };
-  expect(manifest.dependencies?.zod).toBe("^4.4.3");
+  expect(manifest.dependencies?.zod).toBe("^4.6.7");
 });
 
 test("context metadata is saved and loaded atomically", async () => {

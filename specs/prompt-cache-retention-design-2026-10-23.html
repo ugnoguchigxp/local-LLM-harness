@@ -1,0 +1,1153 @@
+<article lang="ja">
+  <h1>LARMの会話キャッシュ保持：OpenAI互換キー・256k×4分割・実モデルE2E</h1>
+  <p>
+    2026-10-23調査、2026-10-24に保持設計・実装・隔離E2Eの起動と入替を承認。
+    同日、256k×4分割とOpenAI互換のキーの扱いを追加承認した。
+    隔離環境で変更前baselineと修正候補を測定し、6条件とキーの継続・分離を確認した。本番の設定変更・再起動・反映は未実施である。
+    <a href="./prompt-cache-remediation-2026-10-22.html">連続した同一要求の修正</a>と、
+    今回の「異なる要求を挟んだ後の保持」を別問題として扱う。
+  </p>
+  <section id="section-evidence" aria-labelledby="evidence">
+    <h2 id="evidence">現状確認と根拠の範囲</h2>
+    <p>
+      Eumenesの保存済み接続・稼働backend・既存claimは参照先がなく、独立に再確認できていない。
+      以下の追加E2EはLARMの現在のcatalogから選んだ検証用Connectionであり、Eumenesの保存済み意図を復元したものではない。
+      提示された過去の会話2件のslot割当ては不明である。合成試験で同じ失敗機序を再現したことと、過去の割当てを特定したことを混同しない。
+    </p>
+    <table>
+      <caption>
+        読み取り確認および検証用claimからの現runtime確認
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">確認値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">daemon</th>
+          <td>
+            releaseCommit bc74d0bc90cbaae9bd3e0ac0b9a414f79c2c8864。configRevision
+            e1dfdbf6bd5ddf632f04c2ca56c7385b8dd47ee153dcbca49253e4855f13934c。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">検証用の解決</th>
+          <td>
+            catalog既定selector ornith1.5Strix → llm-ornith15-strix route →
+            ornith15-strix-conversation runtime → llama-swap
+            backend。claimされたProviderへのtoken-count応答でruntime、release、engineBuild、configRevision、bootEpochを要求前後に照合した。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">bindingのrelease表記</th>
+          <td>
+            ornith15-strix-conversation-p4-v3。engineBuild
+            b244-0fc9568。releaseのラベルだけから実バイナリの未修正を推定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実プロセス</th>
+          <td>
+            確認時PID 1274741、port 58009。実行中exeのSHA-256は
+            3c25c5a9861e1a8410583e4f673d14671f09f55b72dd46b61b0b8efa747a2298。配備manifestと一致。PID・portは恒久的なProvider識別子ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">起動引数</th>
+          <td>
+            <code>--ctx-size 1048576 --parallel 4 --kv-unified --cache-prompt -ctxcp 8 -cpent 1024 -cram 0 --no-cache-idle-slots --cache-reuse 0</code
+            >。SSDキャッシュ・slot-save-path指定なし。speculationはnone。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">容量</th>
+          <td>
+            /propsと/slotsは4枠、各262144 token。KV総容量は1048576
+            token。Connectionはslot予約ではない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      実バイナリに対応するstaged sourceは
+      <code>/srv/ai/apps/larm-prompt-cache-reviewed-20261022/tools/server/server-context.cpp</code>。
+      SHA-256は5c552ef64dd9f2eb4c29894e2b8acc24eca559e4804456972dd38291c996d658。
+      共通cacheとcheckpointは、配備manifestが固定するupstream revision
+      0fc9568e07ccc8553010864cb8db1957e629cbfaの
+      <code>/srv/ai/apps/q38rocm/engine/src/tools/server/server-task.cpp</code>、同header、
+      <code>common/common.cpp</code
+      >を照合した。これらのファイルは当該checkoutの既存差分に含まれない。
+      将来のupstream既定値を現バイナリの仕様として扱わない。
+    </p>
+  </section>
+  <section id="section-cause" aria-labelledby="cause">
+    <h2 id="cause">原因と既存共通機構の評価</h2>
+    <ol>
+      <li>
+        <code>get_available_slot</code
+        >は空きslotのLCP比率、該当しなければLRUを使う。Connectionとの対応表はない。同じConnectionでも別要求がslotを書き換え得る。
+      </li>
+      <li>
+        <code>-cram 0</code
+        >かつSSD指定なしではprompt_cache自体を生成しない。上書き後に戻す別コピーがない。cache-promptは現在のslot内の再利用を有効にするが、無期限のConnection別保存を意味しない。cache-reuse
+        0は通常の先頭再利用を禁止する設定ではない。
+      </li>
+      <li>
+        RAM
+        cacheはvictimの上書き前に保存し、別の空きslotへ復元する既存機構を持つ。no-cache-idle-slotsを維持しても、この退避経路は利用できる。RAMのserver_promptにはtarget・draft・speculative状態に加えてrecurrent
+        checkpointの実データが含まれる。
+      </li>
+      <li>
+        現在のRAM復元は、保存側の残存率と新入力側の一致率が両方とも厳密に改善する候補しか選ばない。短い完全prefixを持つslotの残存率が1なら、長い保存状態の一致token数が大幅に多くても選べない場合がある。またRAM検索の呼出し自体がLRU選択または残存率0.5未満に限定される。これはソースから確認した取り逃し条件であり、本番RAM有効時の実測結果ではない。
+      </li>
+      <li>
+        現在のRAM制限は状態payload中心のbytes上限で、TTL・認証principal別の予算・Connection失効との連動はない。cramを増やすだけでは要求された保持契約・公平性を満たさない。
+      </li>
+    </ol>
+    <p>
+      RAMのcheckpointコピーはstorageのcloneを伴うため無料ではない。対してこのforkのSSD保存はcheckpoint位置のmetadataを保存しても、復元時にlive
+      checkpoint列を空にする。
+      slot-save/restoreやSSD保存を、recurrentの途中prefixまでRAM同様に戻せる手段として採用しない。
+      単なるtoken列一致では足りず、復元できるcheckpoint位置までの実効再利用長で評価する必要がある。
+    </p>
+    <p>
+      重複排除もtoken列の包含だけで判定しない。長い保存状態が短い要求向けのcheckpointを既に失っている場合、
+      有用な短いsnapshotを不要として捨てないことが必要である。
+      現在のallocation失敗処理は主なvector確保を扱うが、checkpointのdeep
+      cloneまで一括して保護する形ではない。 保存transaction全体の失敗時解放とcold
+      fallbackを追加設計に含め、allocator失敗を注入して確認する。
+    </p>
+    <p>
+      生成以外の経路も影響する。semantic-readiness.tsは成功結果を10秒間共有し、期限後の実probeではJSONとSSEのchat
+      completionを通常のslotに送る。 ready確認・claim・provider
+      healthの呼出しがprobeを起動する場合がある。cache_promptをfalseにするだけではslot上書きを防げない。
+      backendの単純な/health、/props、/slotsおよびcount-onlyのinput-tokensは生成とは区別する。
+      起動時の生成によるwarmupも、consumerが既に存在する状態で実行し得るなら同じ保護の対象にする。
+    </p>
+  </section>
+  <section id="section-partition-decision" aria-labelledby="partition-decision">
+    <h2 id="partition-decision">2026-10-24の追加合意：1Mを256kずつ4分割</h2>
+    <p>
+      ユーザーは合計1,048,576 tokenのKV領域を262,144 tokenずつ4枠に分割する構成を承認した。
+      候補設定は総contextとparallel=4を維持し、--kv-unifiedを--no-kv-unifiedに変更する。
+      照合したengineは、この設定でn_ctx_seq=n_ctx/n_seq_max、attentionのn_stream=n_seq_maxとする。
+      分割後は1要求が他枠の未使用容量を借りることはできない。
+    </p>
+    <p>
+      この変更は実行時のKV領域の分離であり、Connectionとslotの永続的な1対1割当てではない。
+      4件以上の異なる入力を挟んだ場合の保持は、承認済みのConnection別scopeと予算付きRAM退避・復元で扱う。
+      Eumenesへの固定id_slotの埋込みは不要とする。
+      共有領域の変更前baselineと、分割・保持を組み合わせた候補を隔離E2Eで比較する。
+      この追加合意は本番への反映許可を含まない。
+    </p>
+  </section>
+  <section id="section-openai-cache-key" aria-labelledby="openai-cache-key">
+    <h2 id="openai-cache-key">OpenAI互換の識別契約とLARM固有の保持上限</h2>
+    <p>
+      chat/completionsの標準項目prompt_cache_keyを任意の文字列として受け付け、推論bodyにもそのまま保持する。
+      null・未指定ではConnection IDを既定scopeとし、明示キーでは認証principal＋キー＋daemon
+      epochでscopeを作る。
+      キー自体は認証情報ではない。同じキーを指定した別principal、互換性のないruntime・engine世代とは再利用しない。
+      LARMでは入力長の上限を1024文字とし、不正な型は400で拒否する。
+    </p>
+    <p>
+      同じprincipal・明示キーならConnectionの作り直し後も、同じruntime契約・世代の保持済みprefixを候補にできる。
+      1つのConnectionの解放によって同じキーを利用する他のConnectionを失効させない。
+      明示キーの状態は有効な認証とlease、idle TTL、hard age、容量・件数上限に従って回収する。
+      Connectionのcredential失効は即時であり、キーを知っているだけではアクセスできない。
+      キーを変えると別scopeになり、同じ入力でも旧キーの状態を流用しない。変更だけで他キーを一括削除しない。
+    </p>
+    <p>
+      2026-10-24にOpenAIの公式Prompt cachingおよびConversation stateを確認した。
+      会話の継続指定とprefixキャッシュは別の契約であり、キーは固定GPU枠や永久保持、入力が変わった部分の再利用を保証しない。
+      LARMも入力先頭の一致を確認し、共通部分だけ再利用する。
+      256k×4の分割と、同じscopeの空きslot優先・上書き前退避はLARM側の実行方式であり、OpenAI
+      APIの物理実装と同じだとは主張しない。
+      クラウドへ切り替える際に同じbody項目を使えるが、LARMの保持上限やKVデータをクラウドへ移送するものではない。
+    </p>
+  </section>
+  <section id="section-baseline" aria-labelledby="baseline">
+    <h2 id="baseline">変更前の実接続E2E</h2>
+    <p>
+      catalog取得 → existing-onlyで検証用Connection作成 → ready待ち → claim →
+      公開Providerの推論APIを通した。
+      主Connectionを維持し、補助Connectionから先頭の異なる4要求を逐次送信した。
+      両方とも同一の認証consumerであり、「独立した別consumerの公平性」や4枠同時生成を検証したものではない。
+      固定id_slotもcache_prompt指定も使わず、生成上限は16 token、入力は無機密の合成文だけ。
+      count-onlyでtoken数を校正し、各要求前後のruntime identity不変も確認した。
+    </p>
+    <table>
+      <caption>
+        SSE baseline、各条件1回。時間の単位はミリ秒
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">総入力token</th>
+          <th scope="col">prompt_n</th>
+          <th scope="col">cache_n</th>
+          <th scope="col">prompt_ms</th>
+          <th scope="col">最初のtoken</th>
+          <th scope="col">全体</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">初回</th>
+          <td>13995</td>
+          <td>13995</td>
+          <td>0</td>
+          <td>16080.454</td>
+          <td>18930.220</td>
+          <td>18998.224</td>
+        </tr>
+        <tr>
+          <th scope="row">同一内容を直後に再送</th>
+          <td>13995</td>
+          <td>4</td>
+          <td>13991</td>
+          <td>29.239</td>
+          <td>2709.886</td>
+          <td>2752.780</td>
+        </tr>
+        <tr>
+          <th scope="row">同じsystem、user変更</th>
+          <td>13998</td>
+          <td>519</td>
+          <td>13479</td>
+          <td>796.066</td>
+          <td>3020.525</td>
+          <td>3117.180</td>
+        </tr>
+        <tr>
+          <th scope="row">補助4件の直前、元userに戻す</th>
+          <td>13995</td>
+          <td>516</td>
+          <td>13479</td>
+          <td>764.889</td>
+          <td>2814.043</td>
+          <td>2855.840</td>
+        </tr>
+        <tr>
+          <th scope="row">補助1</th>
+          <td>2304</td>
+          <td>2304</td>
+          <td>0</td>
+          <td>2468.601</td>
+          <td>4247.166</td>
+          <td>4367.092</td>
+        </tr>
+        <tr>
+          <th scope="row">補助2</th>
+          <td>2304</td>
+          <td>2304</td>
+          <td>0</td>
+          <td>2411.379</td>
+          <td>4755.019</td>
+          <td>4905.314</td>
+        </tr>
+        <tr>
+          <th scope="row">補助3</th>
+          <td>2304</td>
+          <td>2304</td>
+          <td>0</td>
+          <td>2435.145</td>
+          <td>4640.891</td>
+          <td>4731.582</td>
+        </tr>
+        <tr>
+          <th scope="row">補助4</th>
+          <td>2304</td>
+          <td>2304</td>
+          <td>0</td>
+          <td>2465.944</td>
+          <td>4244.557</td>
+          <td>4289.268</td>
+        </tr>
+        <tr>
+          <th scope="row">主要求を同じConnectionで再送</th>
+          <td>13995</td>
+          <td>13995</td>
+          <td>0</td>
+          <td>16001.364</td>
+          <td>17926.517</td>
+          <td>17996.949</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      system内容のtoken推定は13978。prompt_nは新規処理数であり、総入力数ではない。 全要求でprompt_n
+      + cache_n = usage.prompt_tokens、cache_n =
+      usage.prompt_tokens_details.cached_tokensを照合した。 直後の同一要求は合格、user変更も約512
+      tokenの巻き戻しを伴って再利用、補助4件後の保持は不合格。
+      warm時にもTTFTが約2.7秒あるため、KV修正だけで応答全体が数十ミリ秒になるとは主張しない。
+    </p>
+    <p>
+      前後の/slotsでは、主要求後のslot 2はtask 10371、補助4件後にはtask 10401、主再送後はslot
+      0がtask 10408だった。
+      これは安全な数値snapshotの変化であり、taskを各HTTP要求へ直接結び付ける新しいinstrumentationはまだない。
+      このslot記録を過去のEumenes会話へ遡って適用しない。 engine VmRSSは開始782592 KiB、終了786604
+      KiB、VmSwapは0。 MemAvailableの前後観測範囲は83017464〜83586896
+      KiB。これらはpeakではなく、RSSだけではUMA/GPU側の総使用量を表さない。
+      検証用2接続のcleanup失敗は0。他consumerの接続は解放していない。
+    </p>
+    <table>
+      <caption>
+        stream:false baseline、各条件1回。TTFTは観測不能、時間の単位はミリ秒
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">総入力token</th>
+          <th scope="col">prompt_n</th>
+          <th scope="col">cache_n</th>
+          <th scope="col">prompt_ms</th>
+          <th scope="col">全体</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">初回</th>
+          <td>13995</td>
+          <td>13995</td>
+          <td>0</td>
+          <td>16327.424</td>
+          <td>19091.279</td>
+        </tr>
+        <tr>
+          <th scope="row">同一内容を直後に再送</th>
+          <td>13995</td>
+          <td>4</td>
+          <td>13991</td>
+          <td>31.520</td>
+          <td>2477.968</td>
+        </tr>
+        <tr>
+          <th scope="row">同じsystem、user変更</th>
+          <td>13998</td>
+          <td>519</td>
+          <td>13479</td>
+          <td>806.760</td>
+          <td>2804.681</td>
+        </tr>
+        <tr>
+          <th scope="row">補助4件の直前、元userに戻す</th>
+          <td>13995</td>
+          <td>516</td>
+          <td>13479</td>
+          <td>768.736</td>
+          <td>2818.966</td>
+        </tr>
+        <tr>
+          <th scope="row">補助1</th>
+          <td>2304</td>
+          <td>2304</td>
+          <td>0</td>
+          <td>2474.351</td>
+          <td>4477.714</td>
+        </tr>
+        <tr>
+          <th scope="row">補助2</th>
+          <td>2304</td>
+          <td>2304</td>
+          <td>0</td>
+          <td>2444.856</td>
+          <td>4331.016</td>
+        </tr>
+        <tr>
+          <th scope="row">補助3</th>
+          <td>2304</td>
+          <td>2304</td>
+          <td>0</td>
+          <td>2420.711</td>
+          <td>4673.603</td>
+        </tr>
+        <tr>
+          <th scope="row">補助4</th>
+          <td>2304</td>
+          <td>2304</td>
+          <td>0</td>
+          <td>2397.215</td>
+          <td>4665.393</td>
+        </tr>
+        <tr>
+          <th scope="row">主要求を同じConnectionで再送</th>
+          <td>13995</td>
+          <td>13995</td>
+          <td>0</td>
+          <td>16131.806</td>
+          <td>18417.330</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      JSONでも同一内容の連続再利用は合格、補助4件後の保持は不合格。 VmRSSは開始786604
+      KiB、終了788920 KiB、VmSwapは0。 MemAvailableの前後観測範囲は82309152〜82952912
+      KiB。検証用2接続のcleanup失敗は0。
+      JSONでは最初のtoken到達を観測できないのでTTFTを全体時間で代用しない。
+      両試験とも既存consumerのConnectionを解放せず、同一のbootEpochとconfigRevisionを維持した。
+    </p>
+  </section>
+  <section id="section-isolated-e2e" aria-labelledby="isolated-e2e">
+    <h2 id="isolated-e2e">2026-10-24の隔離実モデルE2E：先行v5候補</h2>
+    <p>
+      明示的な起動・入替許可の範囲で、127.0.0.1:58109の実モデルと127.0.0.1:19810の独立LARMを使用した。比較元は配備済みprefix修正版とSHA-256一致のバイナリであり、連続再利用が壊れていた旧バイナリではない。総context=1,048,576、parallel=4、checkpoint設定と合成fixtureは共通で、変更前は統合KV・RAM退避なし、候補は262,144×4分割・scope付き退避を使用した。catalog→Connection作成→ready→claim→公開推論API→解放を通し、固定id_slotは指定していない。
+    </p>
+    <table>
+      <caption>
+        同一fixtureのbaselineと候補。時間はms、prompt_nは新規処理token、cache_nは再利用token
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">総入力</th>
+          <th scope="col">変更前 prompt_n / cache_n</th>
+          <th scope="col">変更後 prompt_n / cache_n</th>
+          <th scope="col">prompt_ms 前→後</th>
+          <th scope="col">変更後の最初のtoken</th>
+          <th scope="col">変更後全体</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">SSE・同一要求の連続再送</th>
+          <td>13995</td>
+          <td>4 / 13991</td>
+          <td>4 / 13991</td>
+          <td>31.867 → 30.423</td>
+          <td>82.469</td>
+          <td>100.835</td>
+        </tr>
+        <tr>
+          <th scope="row">SSE・同じsystem・user変更</th>
+          <td>13998</td>
+          <td>519 / 13479</td>
+          <td>519 / 13479</td>
+          <td>783.726 → 773.355</td>
+          <td>908.080</td>
+          <td>926.162</td>
+        </tr>
+        <tr>
+          <th scope="row">SSE・異なる補助4件後</th>
+          <td>13995</td>
+          <td>13995 / 0</td>
+          <td>4 / 13991</td>
+          <td>16174.629 → 26.423</td>
+          <td>94.441</td>
+          <td>113.506</td>
+        </tr>
+        <tr>
+          <th scope="row">JSON・同一要求の連続再送</th>
+          <td>13995</td>
+          <td>4 / 13991</td>
+          <td>4 / 13991</td>
+          <td>31.068 → 28.739</td>
+          <td>観測不可</td>
+          <td>99.846</td>
+        </tr>
+        <tr>
+          <th scope="row">JSON・同じsystem・user変更</th>
+          <td>13998</td>
+          <td>519 / 13479</td>
+          <td>519 / 13479</td>
+          <td>679.776 → 768.766</td>
+          <td>観測不可</td>
+          <td>916.741</td>
+        </tr>
+        <tr>
+          <th scope="row">JSON・異なる補助4件後</th>
+          <td>13995</td>
+          <td>13995 / 0</td>
+          <td>4 / 13991</td>
+          <td>16158.925 → 26.408</td>
+          <td>観測不可</td>
+          <td>120.910</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      同一要求は13,995 tokenのうち13,991を再利用し、残り4 tokenを再処理した。照合ソースでは末尾4
+      tokenと4+n_ubatch手前でcheckpointを作る。user変更では末尾付近の共通prefixに到達するcheckpointへ戻るため、このfixtureでは519
+      tokenを処理し、13,479
+      tokenを再利用した。これはSWA/recurrentの復元可能位置による差であり、全モデルで固定519
+      tokenになるとの主張ではない。試験の32 token・544
+      token許容はこの校正fixtureの回帰検出用であり、任意の入力分岐について同じ上限を保証しない。
+    </p>
+    <p>
+      OpenAI互換キーの実試験では、同じ認証principalの異なるConnection、SSE→JSON、Connectionの再作成後のすべてで13,264中13,260
+      tokenを再利用した。異なるキーと別principalはともにcache_n=0だった。元のキーに戻すとRAM
+      snapshotから再利用できた。数値以外の生成本文は保存・表示していない。
+    </p>
+    <p>
+      別consumerを含む4接続で、異なる先頭の補助要求を6件挟んだ後も主要求11,464中11,460
+      tokenを再利用した。4要求の並行送信では/slotsで4枠同時処理を観測し、128
+      token上限の各要求が完了した。続いて各lane20件を測定した。
+    </p>
+    <p>
+      保持予算超過では、22種類の分岐を作り、ownerの件数・bytes上限によるevictionを観測した。直近要求は2,306中2,302、別principalの主要求は11,464中11,460を再利用し、古い主要求はcache_n=0となった。native保存payloadは最大4,959,555,828
+      bytes、17 entry、metadata 4,642,240 bytesであり、global 8GiB・64 entry・metadata
+      64MiBを超えていない。
+    </p>
+    <p>
+      取消試験ではSSE受信後に中断して全slotの処理終了を確認し、別scopeの主要求は11,460
+      tokenを再利用した。明示解放と5秒leaseの期限切れ後は旧credentialが401となった。失効後のnative
+      RAM
+      entryは0だった。runtime交換では検証用LARMとProviderだけを置換し、旧credentialは401、同じキーの最初の要求は1,984処理・0再利用、次は4処理・1,980再利用となった。
+    </p>
+    <p>
+      ASR/TTSは本番の通常LARM経路で検証用の音声専用Connectionを作成し、既存の稼働Providerを利用した。日本語の合成TTS音声をASRへ渡し、生成音声のWAV形式と認識した合成語をメモリ内で確認した。実会話音声・認証情報・Providerの生応答は証跡に保存していない。LLM4lane×20件とASR/TTS各20件の並行試験が完了し、全80件のLLMで2,145中2,141
+      tokenを再利用した。検証用Connectionはすべて解放した。
+    </p>
+    <p>
+      音声経路のallow-listed準備はartifact_not_declaredとなったため成功に数えていない。既にHOTであることをprofile・instanceから確認し、existing-onlyによる通常の接続で試験を完了した。既存のProvider設定やartifact定義の変更は行っていない。試験CLIがready待ちで早期終了する問題も修正し、完了証跡のないexit
+      0は成功判定から除外した。
+    </p>
+    <p>
+      資源上限はRAM payload 8GiB＋保存中の追加領域1GiB＋metadata
+      64MiBで合計9.0625GiBを追加予約し、既存見積56GiBと合わせ65.0625GiBとしてadmissionに反映する。1M
+      tokenのactive KVと4枠は維持し、1要求は262,144
+      tokenの上限を超えて他枠を借りない。checkpointを含む1
+      snapshotの上限1GiBを超えたものは保存をbypassしてcold処理を継続する。
+    </p>
+    <p>
+      200ms間隔の監視で候補のVmRSS最大2,220,544KiB、MemAvailable最小49.084GiBを記録した。GPU/UMAの割当てはVmRSSだけでは表せず、hostの利用可能量とも単純加算できない。他の本番処理が存在するため、host差分すべてを候補だけの使用量とはみなさない。起動前には毎回65.0625GiB＋余裕8GiB以上を確認し、試験中に8GiB未満なら検証用プロセスだけを止める監視を付けた。
+    </p>
+  </section>
+  <section id="section-resource-comparison" aria-labelledby="resource-comparison">
+    <h2 id="resource-comparison">同条件の並行性能比較と確認範囲</h2>
+    <p>
+      同じ合成入力・4lane・20round・音声fixtureで変更前と変更後を比較した。各roundでLLM4要求とASR/TTSを並行し、LLMは計80件、ASR/TTSは各20件を測定した。以下はこの試行のnearest-rankのp50/p95であり、本番負荷全体での統計的保証ではない。
+    </p>
+    <table>
+      <caption>
+        音声併行時の遅延、単位ms
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">変更前 p50 / p95</th>
+          <th scope="col">変更後 p50 / p95</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLM 最初のtoken</th>
+          <td>338.115 / 372.438</td>
+          <td>276.387 / 348.923</td>
+        </tr>
+        <tr>
+          <th scope="row">LLM 全体</th>
+          <td>427.613 / 440.504</td>
+          <td>367.864 / 419.675</td>
+        </tr>
+        <tr>
+          <th scope="row">ASR 全体</th>
+          <td>395.067 / 418.453</td>
+          <td>395.891 / 417.039</td>
+        </tr>
+        <tr>
+          <th scope="row">TTS 全体</th>
+          <td>345.436 / 367.602</td>
+          <td>323.221 / 356.603</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      音声なしの4laneでは、初回cold roundを除く76要求のTTFT
+      p50/p95が変更前200.373/210.629ms、変更後186.181/206.108ms、全体p50/p95が256.046/276.679msから248.138/264.764msとなった。候補の初回並行試験では同時にリポジトリの検査も走っていたため、CPU負荷を厳密に一致させた性能保証としては用いない。cache
+      counterと4枠同時実行の確認は成立する。
+    </p>
+    <p>
+      予算・取消・lease失効・runtime交換も変更前の同条件で実行した。変更前はbudget試験の主要求・peerの古い要求とも再利用0、変更後は上限超過の古い要求だけcoldとなり、peerの11,460
+      tokenは残った。取消・credential失効・交換時の拒否は変更前から成立しており、今回の修正で退行していない。
+    </p>
+    <p>
+      本番の設定・バイナリ・サービスは変更していない。検証用Providerは隔離ポートでのみ起動・停止し、音声Providerは通常の検証用Connectionで利用した。他consumerを強制解放していない。実モデルへのallocator失敗注入、最大262k
+      tokenを全4枠に投入する境界試験、長期間の本番soakは今回の合格範囲に含めない。1M総KV・262k/枠は実引数と/props・/slotsおよび対応ソースで確認した。
+    </p>
+    <p>
+      最終チェック時にZodのhigh severity advisory
+      GHSA-mrhx-c7xc-m3w5でrelease検証が失敗したため、全workspaceの要求下限とlockfile、release
+      fixtureを修正版4.6.7へ更新した。schemaエラー文言に依存したテストは、拒否対象のpath/keyを検査する形へ更新し、拒否そのものの検査は維持した。
+    </p>
+  </section>
+  <section id="section-final-e2e" aria-labelledby="final-e2e">
+    <h2 id="final-e2e">先行候補の再検証と残る性能の幅</h2>
+    <p>
+      v5候補でキー・SSE・音声併行を再実行し、全件完了とcleanup失敗0を確認した。生成内容の検査では、同じgrammarがA/B両方を許す条件で2つの認証consumerに異なるmarkerを要求し、A→B→Aの全てでmarkerと7+11の計算結果が一致した。生成本文を保存せず、output_validと数値timingsだけを記録した。
+    </p>
+    <p>
+      さらに同じConnectionから6つの異なるprompt_cache_keyを挟み、4枠の実行KVから主要求を退避させた。再送は13,264中13,260
+      tokenを再利用し、private統計のRAM
+      loadsが2→3に増えた。native相関イベントでもsource=ramを確認した。単にhotな同じslotに残っていた成功とは区別できる。
+    </p>
+    <p>
+      v5候補の音声再測定はLLM80件、ASR/TTS各20件。TTFT
+      p50/p95は297.075/367.082ms、LLM全体409.183/441.096ms、ASR417.181/440.038ms、TTS339.109/370.913msだった。上のbaseline比でp95はそれぞれ−5.356ms、＋0.592ms、＋21.585ms、＋3.312ms。ASRは約5.2%増えた回があり、最初の候補測定417.039msとの差もある。試行順、背景負荷、GPU/UMAの温度・周波数まで制御した実験ではなく、常に無影響または性能向上との保証はしない。今回のcache保持の機能試験は合格であり、音声のこの幅は本番反映時の評価材料として残す。
+    </p>
+    <p>
+      さらに4要求の最初の生成tokenを全て確認してから音声を重ねる試験を両構成で実施し、ASR/TTSの前後でactive
+      slot=4だった。 この回のbaseline→v5候補のp95は、LLM
+      TTFT357.721→351.357ms、全体431.025→444.706ms、ASR415.801→456.535ms、TTS331.631→358.995ms。
+      ASRは＋40.734ms（約9.8%）、TTSは＋27.364ms（約8.3%）となった試行もある。単回の差をcache保持方式による因果的な増加と断定せず、改善した回も含めて測定幅として残す。
+    </p>
+    <p>
+      本番反映には別の明示許可が必要である。候補runtimeのpromptRetentionとProviderのRAM設定を同時に適用し、daemonにもProvider
+      launcherと同じLARM_PROMPT_CACHE_KEYを秘密の環境設定から渡す必要がある。片側だけの設定ではcapability/keyの一致を検証できないためforwardingを拒否する。候補生成スクリプトはprivate設定ファイルを作るだけで、本番へ自動反映しない。秘密値をargv、ログ、commitへ入れない。
+    </p>
+  </section>
+  <section id="section-review-hardening" aria-labelledby="review-hardening">
+    <h2 id="review-hardening">最終レビューでの修正</h2>
+    <p>
+      capabilityのenabledとpolicyが一致するだけでは秘密鍵の不一致を見つけられなかったため、daemonは各転送前の/propsにもprivate認証を付け、engineが返すauthenticatedを必須にした。
+      正しい鍵・違う鍵・鍵なしの3条件を検査する。公開応答に鍵そのものは含めない。
+    </p>
+    <p>
+      同じscope・token列・recurrent
+      checkpointを持つsnapshotの重複判定を、容量予約と状態取得より前へ移した。
+      これにより重複保存のために有用な既存snapshotを追い出さない。nativeテストではowner上限に近い状態で重複saveを呼び、件数・bytes・evictionsが増えないことを検査した。
+      Connection失効の既存callbackが失敗しても、追加したcache失効callbackを呼ぶようにし、回帰テストを追加した。
+    </p>
+    <p>
+      E2EのCLIは最上位で完了をawaitし、runnerもsummaryまたはphase-completeを必須とした。
+      待機中にprocessが終了しただけのexit
+      0を合格として扱わない。各試験では完了記録とcleanup失敗0の両方を確認する。
+      音声の重なりは、4つのLLM全てが最初の生成tokenを返した後にASR/TTSを呼び、その前後でactive
+      slotが4つあることを検査する。
+    </p>
+  </section>
+  <section id="section-v8-e2e" aria-labelledby="v8-e2e">
+    <h2 id="v8-e2e">最終v8候補の実モデル再検証</h2>
+    <p>
+      レビュー修正を含むv8バイナリでSSE、JSON、keys、mixed、audio、budget、lifecycle、restore、exchangeを順に再実行した。
+      全9試験で完了記録・exit
+      0・cleanup失敗0を確認した。設定変更前のbaselineと同じfixture、モデル、context、4枠を使用した。
+      変更前baselineは配備済みprefix修正版とSHA-256が一致し、v8の試験後にも実行バイナリとpatch/headerのmanifest一致を確認した。
+    </p>
+    <table>
+      <caption>
+        v8の受入れ結果。時間はms。prompt_nは新規処理、cache_nは再利用token
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">総入力</th>
+          <th scope="col">prompt_n / cache_n</th>
+          <th scope="col">prompt_ms</th>
+          <th scope="col">確認結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">同一要求の連続再送・SSE</th>
+          <td>13995</td>
+          <td>4 / 13991</td>
+          <td>29.890</td>
+          <td>最初のtoken 82.508、全体100.258</td>
+        </tr>
+        <tr>
+          <th scope="row">同じsystem・userのみ変更</th>
+          <td>13998</td>
+          <td>519 / 13479</td>
+          <td>785.680</td>
+          <td>共通prefixを再利用。checkpoint由来の再処理は前述の許容範囲内</td>
+        </tr>
+        <tr>
+          <th scope="row">異なる補助要求4件後・SSE</th>
+          <td>13995</td>
+          <td>4 / 13991</td>
+          <td>26.412</td>
+          <td>最初のtoken 107.857、全体126.326。baselineのprompt_msは16174.629</td>
+        </tr>
+        <tr>
+          <th scope="row">異なる補助要求4件後・JSON</th>
+          <td>13995</td>
+          <td>4 / 13991</td>
+          <td>27.000</td>
+          <td>全体122.996。usage.cached_tokensとtimings.cache_nの一致を検査</td>
+        </tr>
+        <tr>
+          <th scope="row">6つの別キー後のRAM復元</th>
+          <td>13264</td>
+          <td>4 / 13260</td>
+          <td>26.883</td>
+          <td>RAM loads 3→4。最初のtoken 211.824、全体229.690</td>
+        </tr>
+        <tr>
+          <th scope="row">予算超過後の直近要求</th>
+          <td>2306</td>
+          <td>4 / 2302</td>
+          <td>29.359</td>
+          <td>保持範囲内の直近状態は再利用</td>
+        </tr>
+        <tr>
+          <th scope="row">予算超過で追い出した古い要求</th>
+          <td>11464</td>
+          <td>11464 / 0</td>
+          <td>12983.727</td>
+          <td>意図した上限超過のcold処理。保持範囲内のmissと区別</td>
+        </tr>
+        <tr>
+          <th scope="row">別principalの主要求</th>
+          <td>11464</td>
+          <td>4 / 11460</td>
+          <td>32.950</td>
+          <td>他principalの連続投入後も保持</td>
+        </tr>
+        <tr>
+          <th scope="row">runtime交換後の再送</th>
+          <td>1984</td>
+          <td>4 / 1980</td>
+          <td>29.371</td>
+          <td>交換直後は1984 / 0。旧credentialは401、新世代で再利用</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      mixedでは別consumerと6件の補助処理を挟んだ保持、および4枠同時生成を確認した。
+      keysでは同一キーのConnection間共有・再接続後の継続、異なるキーとprincipalの分離、A→B→Aの生成内容の正しさを検査した。
+      /propsは正しいprivate鍵だけをauthenticated=trueとし、異なる鍵と鍵なしをfalseとした。
+      lifecycleでは取消後の主要求を再利用し、解放済み・期限切れのcredentialはいずれも401だった。他の有効な明示キーの状態まで一括削除する動作にはしない。
+    </p>
+    <p>
+      audioではLLM80件、ASR/TTS各20件を測定し、追加の重なり試験でも4要求全ての最初の生成tokenを確認した後、ASR/TTSの前後ともactive
+      slot=4だった。 v8のp50/p95はLLM
+      TTFT279.033/323.049ms、全体374.811/417.351ms、ASR395.024/415.012ms、TTS299.484/323.969ms。
+      同じ重なり条件のbaseline
+      p95は順に357.721、431.025、415.801、331.631msだった。この回は増加しなかったが、先行候補でのASR最大約41ms増加を含む試行間の幅は上に残す。
+      背景負荷や温度を固定した因果推定、本番での無劣化保証とはしない。
+    </p>
+    <p>
+      budgetの最終保存量は5,168,177,620 bytes、metadata 4,766,912 bytes、18 entries。全採取点で8
+      GiB・64 MiB・64 entriesの上限内だった。 9試験全体の最大engine VmRSSは2,341,880
+      KiB、hostの最小MemAvailableは39.782 GiBで、8 GiB未満による停止はなかった。
+      RSSとUMA/GPUメモリは重複し得るので合算しない。最初の起動前のMemAvailableは67.749
+      GiBで、承認済み53 GiB条件を満たした。 本番の予約65.0625 GiBと保持予算は変更していない。
+    </p>
+    <p>
+      最終コードのbun run checkは合格。主テスト989 pass・10 skip・0
+      fail、追加tooling・speech・deployment・Python/shellの検査も合格した。
+      nativeの重複保存・容量・期限・checkpoint回帰テストも合格した。中断・失敗した先行試行や、完了記録のないexit
+      0をこの合格数に含めない。
+      本番systemd/llama-swapの配備、262k×4の最大入力負荷、allocator障害注入、長期連続運転は未実施である。
+    </p>
+  </section>
+  <section id="section-options" aria-labelledby="options">
+    <h2 id="options">比較と推奨方式</h2>
+    <table>
+      <caption>
+        合意対象の選択肢
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">方式</th>
+          <th scope="col">利点</th>
+          <th scope="col">不足・判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">既存RAM cacheを設定だけで有効化</th>
+          <td>既存serializerとrecurrent checkpointを使い、物理slot外へ退避できる。</td>
+          <td>
+            比較試験の候補。ただし候補検索の取り逃し、TTL・scope・公平性が残るため、これだけで最終受入れとしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">既存RAM cache＋最小限の保持契約</th>
+          <td>退避・復元は共通機構を再利用し、scope、期限、bytes予算、検索と安全な相関を補う。</td>
+          <td>
+            推奨。coreは共通policy、gatewayは認証とライフサイクル、backendとengineは状態管理を担当する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Connectionごとのslot対応・専有</th>
+          <td>単純な連続要求なら移動を減らせる。</td>
+          <td>
+            4物理slotで5種類以上の作業状態を保持できず、他consumerと同時実行を圧迫する。固定id_slot、専有とも採らない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">SSDまたは外部slot-save/restore</th>
+          <td>RAMを減らして多数の状態を保存できる可能性。</td>
+          <td>
+            現実装ではrecurrent
+            checkpointの復元がRAMと等価でない。I/O・永続化・排他の費用も増すため初回対象外。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      推奨案では物理4枠は実行用のままとし、論理的な会話の作業状態をRAMに退避する。
+      同じConnectionに複数の内容分岐を保持し、「最後の要求だけ」で前の回答入力を消さない。 hot
+      slotとRAM候補を同じ適合性規則で評価し、実際に巻き戻せる共通token数が最大の状態を選ぶ。
+      現在の残存率と一致率の厳密な同時改善条件、および特定のslot選択時だけ検索する制限を置き換える。
+      同点ならhot状態、より少ない復元費用、最近の実利用を順に優先する。実行順・生成の優先度は変更しない。
+    </p>
+    <p>
+      no-cache-idle-slotsは維持して、全idle slotの一斉コピーを避ける。
+      消される有用な状態だけを上書き前に退避し、保存が失敗しても推論自体はcoldで継続する。
+      readiness・warmup要求は内部maintenance
+      scopeとし、自分の結果は長期保存せず、consumerの状態を上書きする前には同じ退避機構を通す。
+      maintenanceはconsumerのTTLを更新しない。専用slotの予約は作らない。
+    </p>
+  </section>
+  <section id="section-contract" aria-labelledby="contract">
+    <h2 id="contract">Connection・consumerとの契約案</h2>
+    <p>
+      公開APIにconsumer指定のslotやcache keyは追加しない。
+      gatewayが検証済みConnectionと認証principalから内部scopeを生成し、runtime
+      instance・generationと組み合わせる。 HTTP
+      bodyや外部headerに含まれる同名の内部metadataは信頼せず除去・上書きする。
+      engineへのmetadataと失効通知は認証された内部経路に限定し、無認証のheaderを権限の根拠にしない。
+      この内部契約を2026-10-24に実装した。稼働環境では未有効化である。
+    </p>
+    <p>
+      内部契約v1の要求metadataはowner、scope、instance、correlation、leaseMsである。
+      ownerは認証principal、scopeはprincipal・Connection・bootEpoch、instanceはruntime契約とProvider世代からHMACで導出する。
+      maintenanceは認証済みscopeを付けないことで区別する。leaseMsは最大300000であり、engineの単調時計へ変換する。名前は不透明なserver生成値で、本文hashやcredentialそのものを使わない。
+      private backend adapterが認証とcapability確認を担い、engineのtask queueで要求に結び付ける。
+      失効操作はscope・世代・reasonを受けてqueue上で反映し、ackまでの間もtombstoneで古い状態の再公開を禁止する。
+      public bearerのsubjectはPersonal State向けの任意項目なので、その存在をcache
+      scopeの前提にせず、 daemonが所有するConnection recordのprincipalから導出する。
+      TTLの経過判定は単調時計で行い、HTTP経由の自己申告時刻を使わない。
+    </p>
+    <ul>
+      <li>
+        再利用の境界は同じ認証principal・Connection・runtime互換世代。hot
+        slotにもRAMにも同じ境界を適用し、内容が同じという理由で別consumerの状態を選ばない。
+      </li>
+      <li>
+        Connectionはキャッシュのscopeであって保持保証やslot専有ではない。scope内に複数のtoken分岐を置き、候補の重複排除もscope内だけで行う。Connection
+        IDだけでhitとは判断せず、token列と状態の適合性を必ず確認する。
+      </li>
+      <li>
+        principalは認証に由来するものを使う。自己申告client名はquotaの認証境界にならない。同一API
+        credentialを共有する複数consumerは同じprincipal予算を共有する。独立したconsumer間の強い公平性には別credential等の認証上の識別が必要であり、この限界をAPI契約に明記する。
+      </li>
+      <li>
+        Connectionのrenew・keepalive・claim更新だけではcache TTLを延ばさない。独自の公開session
+        APIは追加しない。再接続をまたぐ共有が必要な場合は、追加合意した標準prompt_cache_keyを利用する。
+      </li>
+      <li>
+        Eumenes側の変更は原則不要。同じ主Connectionの維持と、現在どおり履歴全体の送信を続ける。cache
+        missでも応答の正しさは変えない。Connectionを作り直す場合の再利用を求めるconsumerは、同じprompt_cache_keyを送る。クラウドへのfallback時にも同じ標準項目を送れる。usageとtimingsの現在の応答形式を維持する。
+      </li>
+    </ul>
+  </section>
+  <section id="section-budgets" aria-labelledby="budgets">
+    <h2 id="budgets">保持範囲・追い出し・資源費用の提案</h2>
+    <p>
+      初回実機評価の予算案は、runtime当たり保存payload合計8 GiB、認証principal当たり4 GiB、1状態1
+      GiB。 保存状態はruntime合計64件・principal当たり16件、追加metadata/token列は合計64
+      MiBを別枠で制限する。
+      最終利用から300秒、作成から1800秒のいずれか早い期限で失効する。最終利用は実際に有用なprefixを再利用した生成で更新し、コピーし直しただけでは若返らせない。
+      これらは隔離候補で実装・評価した値であり、本番の設定値ではない。
+    </p>
+    <p>
+      消費bytesにはtarget・draft・speculative状態、recurrent checkpoint実体を含める。
+      コピーと復元中のstagingは最大1
+      GiBを追加上限とし、これを超えるコピーや同時復元はキャッシュ操作だけを抑制する。
+      追加資源の計画上限は約9.0625 GiBであり、allocator等の差はpeak実測と余裕枠で別途評価する。 8
+      GiBという値をプロセスRSSの厳密な上限と呼ばない。ホストRAMとGPU/UMAを合わせて重複なく測る。
+      admission前にsnapshotの全費用を見積り、backendのresource計画にも加算する。既存の1M token
+      KV枠と4並列枠を黙って縮小しない。
+    </p>
+    <p>
+      このruntimeの前回計測ではrecurrent checkpoint 1個が約62.813 MiB、8個なら約502.5
+      MiBで、これだけでは完全なsnapshot費用にならない。
+      5分岐が全て8個持つならcheckpoint部分だけで約2.45 GiBとなる。 8
+      GiB案はこの費用を踏まえた評価開始点である。今回の13,264 tokenの1 snapshotは669,457,600
+      bytesで、checkpointを含めて数えた。
+      生のKV状態を本番から書き出して費用を測る操作は今回行っていない。 現在のMemAvailable約79
+      GiBという観測だけから、音声処理併行時にも無影響と結論しない。
+    </p>
+    <ol>
+      <li>
+        期限切れ・失効世代・互換性不一致の状態を先に回収する。期限回収は検索時だけでなく、生成を伴わない定期処理でも行う。
+      </li>
+      <li>
+        principalが自分のbytes・件数上限に達した場合は、そのprincipal内の最終実利用が古い状態から回収する。他principalから奪って自己上限を超えない。
+      </li>
+      <li>
+        runtime全体が不足する場合は、entryを保有する認証principalと新規admissionを求めるprincipalの数Nに対して、
+        均等配分の目安をmin(4 GiB, 8 GiB /
+        N)とする。admission予定分を含めて目安を超える使用量が最も大きい側から回収し、
+        その中では最終実利用が古いentryを選ぶ。余剰の貸出しには恒久的な予約保証を付けない。
+        同じprincipal内では、そのprincipalの現在の保存量をConnection群で等分した目安を超える群から先に回収する。
+        追い出せる既存entryがなく、候補自体が公平配分を満たせない場合は新規保存を見送る。
+        主会話・モデル名・profile名を特別扱いしない。
+      </li>
+      <li>
+        単体上限超過やstaging不足では新状態を保存せずcold処理を許容する。接続数や生成成功を減らす手段としてキャッシュ不足を扱わない。
+      </li>
+    </ol>
+    <p>
+      保持保証の範囲は、完了した要求の復元可能な状態が期限内で、単体・principal・globalのbytes、件数、metadata制限を全て満たし、作業集合として保持可能な場合である。
+      他consumerの流入でその集合がglobal予算を超えれば追い出しが起きる。Connection生存だけでは永久保持しない。
+      cold理由をnot-admitted、budget-evicted、expired、invalidated、in-flight、restore-rejected等に分け、予算内の検索・復元不具合と混同しない。
+      同時処理で変化中の状態を他要求に共有せず、busyなslotを保持のために待たせたり専有したりしない。
+    </p>
+  </section>
+  <section id="section-restoration" aria-labelledby="restoration">
+    <h2 id="restoration">復元の成立条件とライフサイクル</h2>
+    <p>
+      state format、engineとモデル実体、KV layout、adapter、chat
+      template・tokenizer、target/draft構成などを互換性fingerprintに含める。
+      aliasやprofile名の一致だけでは復元しない。LCPより後ろのrecurrent状態をそのまま使わず、互換なcheckpointまで戻す。
+      checkpointの位置情報と実体、token
+      metadata、必要なspeculative状態を一体で扱い、読込bytes数と検証結果が合わなければtarget/draft両方を無効にしてcoldへ戻す。
+      完了前・取消途中の出力を別要求へ取り違えないことを、異なる合成sentinelを使う出力検査でも確認する。
+    </p>
+    <ul>
+      <li>
+        保存・復元・追い出し・失効はengineの状態操作と同じ直列化境界で実行する。復元中の状態にpinを持ち、解放済み領域や半分更新されたtoken列を参照しない。
+      </li>
+      <li>
+        取消時は新しい未完了状態を通常の保持entryとして公開しない。既存の不変snapshotがあれば保持し、移動して失われた場合はcancelによるcoldとして明示する。取消を理由に他scopeの有効状態を消さない。
+      </li>
+      <li>
+        明示release・idle失効時は当該scopeを失効させ、RAMとidle
+        hot状態を回収する。進行中の生成をキャッシュ回収だけのために強制停止しない。世代tombstoneを設け、完了処理が失効scopeを復活させない。
+      </li>
+      <li>
+        runtime交換・プロセス再起動時は旧世代のentryを破棄し、交換先ではcoldから開始する。cacheを理由にruntimeを常駐させたり、旧モデルを黙って維持したりしない。
+      </li>
+      <li>
+        engineが必要な保持capabilityを提供できない場合は、retention対応を宣言しない。既存Providerの推論契約を保ち、snapshot非対応を明示する。モデル名で分岐しない。
+      </li>
+    </ul>
+  </section>
+  <section id="section-validation" aria-labelledby="validation">
+    <h2 id="validation">検証条件と受入れ結果</h2>
+    <p>
+      同一のfixture、token数、並列度、出力上限、背景負荷、readiness
+      probe条件でbaselineと変更後を比較する。
+      新スクリプトは<code>deploy/local-node/scripts/verify-prompt-cache-retention.ts</code>。
+      baselineでは失敗を観測として報告し、baseline=falseでは保持失敗を非0終了にする。
+      この短いスクリプトは下記の全検証を完了するものではなく、未実施条件を合格扱いしない。
+    </p>
+    <p>
+      実行には認証済み環境のLARM_API_TOKEN、現在の実プロセスを再確認したLARM_CACHE_ENGINE_PID、
+      LARM_CACHE_SLOTS_URLを指定する。secretをコマンド引数や報告へ展開しない。
+      <code>LARM_CACHE_BASELINE=true</code
+      >で現状観測、<code>LARM_CACHE_STREAM=false</code>でJSON、既定でSSEを選ぶ。
+      <code>bun run deploy/local-node/scripts/verify-prompt-cache-retention.ts</code>を使う。
+      今回の2試行はそれぞれ新しいfixture識別子を使ったので、互いに本文全体が同一の試行ではない。
+      変更前後の本比較では記録した<code>LARM_CACHE_FIXTURE_ID</code>を揃えてbyte単位で同じfixtureを使い、
+      generation交換等で初回がcoldとなる条件も揃える。未指定時には新しいUUIDを使う。
+    </p>
+    <table>
+      <caption>
+        検証条件と現時点の実施範囲
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">受入れ・比較内容</th>
+          <th scope="col">現状</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1. 同一Connection・同一入力</th>
+          <td>
+            直後、slot退避後とも総入力−32 token以上を目安に再利用。現在のfixtureは4
+            token再処理。大きく超える場合はcheckpoint位置の根拠を個別に記録。
+          </td>
+          <td>SSE・JSONとも変更前・変更後で合格。変更後は13,991 token再利用。</td>
+        </tr>
+        <tr>
+          <th scope="row">2. 長いsystem・user変更</th>
+          <td>
+            実LCPと復元checkpoint位置、suffix
+            token数から再処理の許容値を算出。現fixtureの約512＋template余裕32は保守的な試験用閾値で、cpentから一般に保証される値ではない。
+          </td>
+          <td>SSE・JSONとも変更前・変更後で519 token処理、13,479再利用。</td>
+        </tr>
+        <tr>
+          <th scope="row">3. 1.4万token主要求＋4件以上の補助</th>
+          <td>
+            同じ補助Connectionへの4種入力と、補助Connectionを作成・解放する条件を両方実施。保存bytes・全制限内なら主再送のほぼ全文を再利用。
+          </td>
+          <td>変更前は再利用0。変更後はSSE・JSONとも13,991 token再利用で合格。</td>
+        </tr>
+        <tr>
+          <th scope="row">4. 主・補助・別consumer混在</th>
+          <td>
+            別認証principalと同credential共有の両方、同一Connection内の複数分岐、10秒超でのreadiness
+            probeを挟む。自己申告client違いだけで独立consumer試験を代用しない。
+          </td>
+          <td>
+            別認証consumerを含む4接続・補助6件の後も11,460 token再利用。明示キーの継続・分離も合格。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">5. 4枠同時生成・音声併行</th>
+          <td>
+            同じsynthetic ASR/TTS負荷でLLM
+            cold/warm、save/restoreの待ち、音声遅延・throughput、OOM・swap・KV容量を比較。現行の4枠と1M
+            tokenを維持。中央値・p95を採るには各条件20件以上測る。
+          </td>
+          <td>
+            4枠同時処理を観測。LLM80件とASR・TTS各20件の並行試験を完了し、変更前の同条件と比較した。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">6. 上限・取消・失効・交換</th>
+          <td>
+            bytes・件数・単体・TTL別に境界を超える。cold理由と回収量を確認。生成中の取消・release競合、staging失敗、engine交換で他scopeを壊さず、古い状態が復活しない。
+          </td>
+          <td>
+            native単体・LARM結合に加え、実モデルで予算超過・取消・解放・接続失効・検証用runtime交換が合格。allocator失敗注入は実モデルでは行っていない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      記録項目はprompt_n、cache_n、usageの総入力とcached_tokens、prompt_ms、最初の非空生成deltaまでの時間、全体時間、出力token数、状態bytes、copy/restore時間、CPU・GPU/UMAを含むpeakメモリとswap。
+      stream:falseはTTFTをnullとし、同条件のSSE試験を併記する。 slot・task・runtime
+      generation・要求相関ID、HMAC化したprincipal/Connection/entry識別子、save/load/evict理由、checkpoint位置を安全な構造化イベントで追う。
+      会話本文、raw
+      token列、認証情報、Provider生応答、無鍵の入力内容hashは報告・通常ログへ残さない。
+    </p>
+    <p>
+      資源増加とp50/p95の差を報告して判断する。音声処理に有意な悪化があれば、予算を小さくすることで保てる作業集合と追い出し増加を比較し、無影響とは宣言しない。
+      まず隔離検証でRAM保存費用と全条件を確認する。隔離Providerの起動にも許可が必要。
+      本番の停止・起動・再起動・設定変更・反映は別途明示的な許可を受け、他consumerの接続を強制解放しない。
+    </p>
+  </section>
+  <section id="section-implementation" aria-labelledby="implementation">
+    <h2 id="implementation">2026-10-24の実装と成果物</h2>
+    <p>
+      coreに保持policy・内部metadata schemaを追加し、追加9.0625 GiBをallocation
+      admission、resident合計、Service resource ledgerで加算する。
+      estimatedMemoryGBの既存値は重み・active KV・active
+      checkpointの基礎費用として維持し、cache費用を二重計上しない。
+      gatewayは外部からの内部headerを転送せず、認証済みConnectionからscopeを生成する。
+      prepare後に接続・bindingを再検証し、解放と競合した要求を送らない。
+      接続解放・TTL・idle失効ではscopeを失効させ、失効通知が遅れても有効期間を超えて再利用できない。
+    </p>
+    <p>
+      通常のOpenAI互換APIはConnectionを要求しないため、認証principalと公開modelを基準にした期限付きbroker
+      scopeを使う。
+      brokerの短い内部allocationの終了ごとに捨てず、同じ認証consumerの連続要求を再利用可能にする。
+      明示allocationの経路はallocation scopeとlifecycle
+      signalを使用する。どの経路も固定id_slotをconsumerへ要求しない。
+      認証credential共有時にconsumerを識別できない制約は同じである。
+    </p>
+    <p>
+      engineの既存server_prompt_cacheへscope・期限・quotaを追加し、target状態とcheckpointの既存save/loadを再利用した。
+      比率の同時改善条件から、実際に到達できるcheckpointを含む再利用token長へ選択基準を変更した。
+      異なる入力分岐を上書きする前に保存し、同一入力の単純な再送では不要なコピーを避ける。
+      metadata・entry件数も制限し、容量超過時は理由付きで古い状態を追い出す。
+      間違ったscope・復元失敗・取消途中の状態はhitとせず、生成をcoldで継続する。
+      idle時の回収は同じengine task queue上で毎秒行い、推論を起こさない。
+    </p>
+    <p>
+      private engine制御はx-larm-cache-keyによる認証を必須とし、scopeは別headerで渡す。
+      鍵をargv・推論body・通常ログへ入れないlauncherを追加した。鍵ファイルは同一所有者・0600・非symlinkを検証する。
+      /larm/cache/invalidateは同じqueueで失効とsafeな統計取得を処理する。
+      save/load/evictの相関情報はHMAC識別子、task/slot番号、checkpoint位置、bytesと理由のみである。
+    </p>
+    <p>
+      v1の保持対象はtext、target単独、LoRAなし、単一completionである。multimodal-capable
+      runtimeへの純textも対象とする。
+      画像等のmedia、draft/speculative状態、LoRA、複数completionは保存対象外として推論を継続し、他scopeの状態を流用しない。
+      engine自身のidle
+      sleepは無効な構成を要求し、起動時に不整合を拒否する。LARMによるruntime交換・停止は妨げない。
+      これらはモデル名による分岐ではなく、実際に復元できる状態のcapability境界である。
+    </p>
+    <table>
+      <caption>
+        成果物と確認状況
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">修正候補</th>
+          <td>
+            /srv/ai/apps/larm-prompt-retention-candidate-20261024-v8/llama-server。SHA-256
+            f0325741a7fc4128fe24b8c2f6c5a4bc69768b7a3cecfc397c577ca949e1ce22。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">再現確認</th>
+          <td>
+            配備中のprefix修正版SHA-256
+            3c25c5a9861e1a8410583e4f673d14671f09f55b72dd46b61b0b8efa747a2298を変更せず再ビルドして一致。新しいstructを使う全server
+            translation unitを隔離再ビルドし、元objectの一致も検証した。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">nativeテスト</th>
+          <td>
+            単体上限、principal間の追い出し、期限・失効・未完了状態、recurrent
+            checkpoint到達位置、純textとmediaの区別を実行して合格。モデルのロード・Providerの起動は行っていない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">LARM結合テスト</th>
+          <td>
+            in-processのConnection作成・claim・JSON/SSE転送、認証consumer分離、scopeの偽装防止、解放後の拒否、brokerの連続scopeを確認。fake
+            engine応答による結合テストであり、実モデルの保持成功とは区別する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">候補設定</th>
+          <td>
+            /srv/ai/apps/larm-prompt-retention-config-20261024-v8。repoのruntime→backend
+            model対応から作成し、parallel 4、ctx-size 1048576、checkpoint設定を維持。RAM 8192
+            MiBとprivate launcherを追加した未適用の候補。認証情報や設定全文は報告に含めない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">隔離E2Eの境界</th>
+          <td>
+            serve-prompt-retention-e2e.tsはlocalhostの独立LARM HTTP serverであり、staged
+            engineのPID・実行path・SHAを確認する。backendは実プロセスのhealthを参照し、起動・停止は検証用driverが所有するプロセスに限定する。
+            catalog→Connection→ready→claim→HTTP
+            gateway→実engineを通すが、本番systemd/llama-swapの配備受入れ試験ではない。本番runtime・他consumerを制御しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      起動候補は検証用engineを127.0.0.1:58109、独立LARMを127.0.0.1:19810に置く。
+      baselineと修正後のengineは同時に起動せず、検証用PIDだけを対象に入れ替える。
+      当初の起動条件はMemAvailableが見積り65.0625 GiBと安全余裕8 GiBを満たすことだった。
+      実測の増加が最大約33.3 GiBだったため、2026-10-24に検証専用の条件を45 GiB＋安全余裕8
+      GiBへ変更する明示承認を得た。 起動前に53 GiB以上を確認し、実行中に8
+      GiB未満となった場合は検証用プロセスだけを停止する。 本番の資源予約65.0625 GiB、モデル、1M
+      context、4枠、保持予算は変更しない。 2026-10-24の事前snapshotはMemAvailable 76.518
+      GiB、両portは未使用だった。このsnapshotを将来の起動可否の根拠として固定しない。
+      本番Providerを止めることで空きを作らず、足りなければ検証を待機する。
+    </p>
+    <p>
+      実モデルでの保持成功、snapshot実費、4並列と音声処理のp50/p95、上限超過・取消・接続失効・runtime交換の測定結果は、上の隔離E2E節に記録した。
+      本番設定は未変更で、修正候補の本番反映も未承認である。
+    </p>
+  </section>
+  <section id="section-decision" aria-labelledby="decision">
+    <h2 id="decision">合意事項と残る制約</h2>
+    <p>
+      合意した内容は、既存RAM退避・復元の再利用、認証Connection
+      scope、複数分岐保持、実効prefix長での検索、期限と認証principal別予算、maintenance要求の扱い、上記の暫定予算と検証手順である。
+      公開consumer APIの追加、Eumenesのslot固定、モデル・profile名による優先分岐は提案しない。
+      2026-10-24に設計合意と実装、隔離Providerの起動・入替・検証の承認を得た。本番反映は別途許可が必要である。
+    </p>
+    <p>
+      隔離実モデルでは保持・復元・失効を確認した。262k
+      tokenを4枠全てで満たす負荷、実allocator障害の注入、本番での長期連続運転は未実施である。
+      初期判断の形式違反による再生成、ContextWindowの並べ替え、監査処理の遅延は今回の修正対象外である。
+      実会話で同じ共通prefixが残るかはconsumerが送る入力にも依存するが、今回の合成同一入力がcoldになる現象はそれらと独立に再現した。
+    </p>
+  </section>
+</article>

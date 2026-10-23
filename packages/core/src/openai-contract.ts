@@ -27,6 +27,8 @@ export const chatCompletionRequestSchema = z.object({
   model: z.string().min(1),
   messages: z.array(chatCompletionMessageSchema),
   stream: z.boolean().optional(),
+  // Standard OpenAI field. It is a cache namespace, never an authentication token.
+  prompt_cache_key: z.string().max(1024).nullable().optional(),
   response_format: chatCompletionResponseFormatSchema.optional(),
 }).passthrough();
 

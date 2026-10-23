@@ -1,3 +1,4 @@
+import { runtimeMemoryGB } from "./prompt-retention";
 import type { ServiceMemoryReservation } from "./local-service";
 import { admittedAllocation, type Allocation } from "./allocation";
 import type { Registry } from "./registry";
@@ -141,12 +142,12 @@ export function admitRuntimes(input: {
     const committedMemoryGB = [...committedIds]
       .map((id) => runtimeById(input.registry, id))
       .filter((runtime): runtime is RuntimeDefinition => runtime?.node === nodeId)
-      .reduce((total, runtime) => total + runtime.resources.estimatedMemoryGB, 0);
+      .reduce((total, runtime) => total + runtimeMemoryGB(runtime), 0);
     const incrementalMemoryGB = [...candidateIds]
       .filter((id) => !committedIds.has(id))
       .map((id) => runtimeById(input.registry, id))
       .filter((runtime): runtime is RuntimeDefinition => runtime?.node === nodeId)
-      .reduce((total, runtime) => total + runtime.resources.estimatedMemoryGB, 0);
+      .reduce((total, runtime) => total + runtimeMemoryGB(runtime), 0);
     const services = (input.serviceReservations ?? []).filter(r => r.node === nodeId);
     const serviceMemoryGB = services.reduce((n, r) => n + r.bytes / (1024 ** 3), 0);
     const usableMemoryGB = node.resources.memoryTotalGB - node.resources.reservedMemoryGB - serviceMemoryGB;
@@ -154,7 +155,7 @@ export function admitRuntimes(input: {
     const reclaimableMemoryGB = [...replaceableIds]
       .map((id) => runtimeById(input.registry, id))
       .filter((runtime): runtime is RuntimeDefinition => runtime?.node === nodeId)
-      .reduce((total, runtime) => total + runtime.resources.estimatedMemoryGB, 0);
+      .reduce((total, runtime) => total + runtimeMemoryGB(runtime), 0);
     const summary: NodeAdmission = {
       node: nodeId,
       usableMemoryGB,

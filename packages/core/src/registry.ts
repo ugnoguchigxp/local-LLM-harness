@@ -1,3 +1,4 @@
+import { runtimeMemoryGB } from "./prompt-retention";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -92,6 +93,9 @@ export function parseRegistryDocuments(input: {
   }
 
   for (const runtime of runtimes) {
+    if (runtime.promptRetention && runtime.protocol !== "openai.chat-completions.v1") {
+      throw new RegistryError(`runtime ${runtime.id}: promptRetention requires Chat Completions`);
+    }
     if (runtime.chatInput && (runtime.protocol !== "openai.chat-completions.v1" || !runtime.capability.includes("llm.vision"))) {
       throw new RegistryError(`runtime ${runtime.id}: chatInput requires a vision Chat Completions runtime`);
     }
@@ -183,7 +187,7 @@ export function parseRegistryDocuments(input: {
   for (const node of nodes) {
     const residentMemoryGB = runtimes
       .filter((runtime) => runtime.node === node.id && runtime.policy.class === "resident")
-      .reduce((total, runtime) => total + runtime.resources.estimatedMemoryGB, 0);
+      .reduce((total, runtime) => total + runtimeMemoryGB(runtime), 0);
     const usableMemoryGB =
       node.resources.memoryTotalGB - node.resources.reservedMemoryGB;
     if (residentMemoryGB > usableMemoryGB) {

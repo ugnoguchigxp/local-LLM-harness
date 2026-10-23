@@ -29,6 +29,7 @@ export type AppDeps = {
   getState: () => ClusterState;
   control: ControlPlane;
   apiToken?: string;
+  promptRetentionKey?: string;
   protectedConsumerToken?: string;
   usageMonotonicNow?: () => number;
   allowAnonymousAgentConnections?: boolean;

@@ -8,6 +8,6 @@
   "dependencies": {
     "@larm/core": "workspace:*",
     "@node-rs/crc32": "1.10.7",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   }
 }

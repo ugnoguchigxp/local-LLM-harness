@@ -30,6 +30,7 @@ export type DaemonConfig = {
   historyLimit: number;
   activeAllocationLimit: number;
   apiToken?: string;
+  promptRetentionKey?: string;
   protectedConsumerToken?: string;
   usageRetentionPath: string;
   allowAnonymousAgentConnections: boolean;
@@ -243,6 +244,8 @@ export function parseDaemonConfig(
     throw new Error("LARM_HOST must not be empty");
   }
   const apiToken = optionalSecret(env.LARM_API_TOKEN);
+  const promptRetentionKey = optionalSecret(env.LARM_PROMPT_CACHE_KEY);
+  if (promptRetentionKey && !/^[a-f0-9]{64}$/.test(promptRetentionKey)) throw new Error("LARM_PROMPT_CACHE_KEY must be 32 random bytes encoded as hex");
   const protectedConsumerToken = optionalSecret(env.LARM_PROTECTED_CONSUMER_TOKEN);
   if (protectedConsumerToken && (!apiToken || protectedConsumerToken === apiToken)) throw new Error("LARM_PROTECTED_CONSUMER_TOKEN requires a distinct LARM_API_TOKEN");
   const serviceHarnessAuthEnabled = booleanSetting(
@@ -404,6 +407,7 @@ export function parseDaemonConfig(
       integer: true,
     }),
     apiToken,
+    promptRetentionKey,
     protectedConsumerToken,
     usageRetentionPath: absolutePathSetting(env, "LARM_USAGE_RETENTION_PATH", "/var/lib/larm/usage-retention.json"),
     allowAnonymousAgentConnections: booleanSetting(

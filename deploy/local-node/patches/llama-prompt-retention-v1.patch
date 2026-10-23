@@ -1,0 +1,696 @@
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -57,6 +57,65 @@
+     SERVER_STATE_READY,          // Server is ready and model is loaded
+ };
+ 
++
++static const std::string & larm_cache_key() {
++    static const std::string key = getenv("LARM_PROMPT_CACHE_KEY") ? getenv("LARM_PROMPT_CACHE_KEY") : "";
++    return key;
++}
++static bool larm_cache_authorized(const server_http_req & req) {
++    const auto it = req.headers.find("x-larm-cache-key");
++    const auto & key = larm_cache_key();
++    if (key.size() != 64 || it == req.headers.end() || it->second.size() != key.size()) return false;
++    unsigned int difference = 0;
++    for (size_t i = 0; i < key.size(); ++i) difference |= (unsigned char) key[i] ^ (unsigned char) it->second[i];
++    return difference == 0;
++}
++static larm_retention_policy larm_cache_policy() {
++    larm_retention_policy p;
++    p.enabled = !larm_cache_key().empty();
++    if (p.enabled && !larm_retention_policy::opaque(larm_cache_key())) throw std::runtime_error("invalid private cache key");
++    const char * text = getenv("LARM_PROMPT_CACHE_POLICY");
++    if (text && *text) {
++        const auto j = json::parse(text);
++        if (j.value("protocol", "") != "larm-prompt-cache.v1" || j.size() != 10) throw std::runtime_error("invalid retention policy");
++        auto number = [&](const char * name) -> uint64_t {
++            if (!j.at(name).is_number_integer() || j.at(name).get<int64_t>() <= 0) throw std::runtime_error("invalid retention bound");
++            return j.at(name).get<uint64_t>();
++        };
++        p.max_bytes = number("maxBytes"); p.owner_bytes = number("principalMaxBytes");
++        p.entry_bytes = number("entryMaxBytes"); p.staging_bytes = number("stagingMaxBytes"); p.metadata_bytes = number("metadataMaxBytes");
++        p.max_entries = number("maxEntries"); p.owner_entries = number("principalMaxEntries");
++        p.idle_ms = number("idleTtlMs"); p.age_ms = number("maxAgeMs");
++    }
++    if (p.entry_bytes > p.owner_bytes || p.owner_bytes > p.max_bytes || p.entry_bytes > p.staging_bytes
++        || p.owner_entries > p.max_entries || p.max_entries > 4096 || p.idle_ms < 1000 || p.idle_ms > 3600000
++        || p.age_ms < p.idle_ms || p.age_ms > 86400000) throw std::runtime_error("inconsistent retention policy");
++    return p;
++}
++static json larm_cache_properties() {
++    const auto p = larm_cache_policy();
++    return {{"enabled", p.enabled}, {"text_only", true}, {"speculative", false}, {"lora", false}, {"policy", {
++        {"protocol", "larm-prompt-cache.v1"}, {"maxBytes", p.max_bytes}, {"principalMaxBytes", p.owner_bytes},
++        {"entryMaxBytes", p.entry_bytes}, {"stagingMaxBytes", p.staging_bytes}, {"metadataMaxBytes", p.metadata_bytes},
++        {"maxEntries", p.max_entries}, {"principalMaxEntries", p.owner_entries}, {"idleTtlMs", p.idle_ms}, {"maxAgeMs", p.age_ms}}}};
++}
++static larm_cache_record larm_cache_context(const server_http_req & req) {
++    larm_cache_record r;
++    if (!larm_cache_authorized(req)) return r; // Maintenance or unscoped consumer: no retained state.
++    const auto it = req.headers.find("x-larm-cache-context");
++    if (it == req.headers.end() || it->second.size() > 1024) throw std::runtime_error("invalid cache context");
++    const auto j = json::parse(it->second);
++    if (j.size() != 5) throw std::runtime_error("invalid cache context");
++    r.owner = j.at("owner"); r.scope = j.at("scope"); r.instance = j.at("instance"); r.correlation = j.at("correlation");
++    if (!larm_retention_policy::opaque(r.owner) || !larm_retention_policy::opaque(r.scope)
++        || !larm_retention_policy::opaque(r.instance) || !larm_retention_policy::opaque(r.correlation)
++        || !j.at("leaseMs").is_number_integer()) throw std::runtime_error("invalid cache context");
++    const auto lease = j.at("leaseMs").get<int64_t>();
++    if (lease < 1 || lease > 300000) throw std::runtime_error("invalid cache lease");
++    r.created = r.used = larm_retention_policy::now(); r.lease_until = r.used + lease;
++    return r;
++}
++
+ struct server_slot {
+     int id;
+ 
+@@ -150,7 +209,12 @@
+             return false;
+         }
+ 
+-        return prompt_cache.save(prompt, ctx_tgt, ctx_dft, id, state_spec);
++        try {
++            const auto saved = prompt_cache.save(prompt, ctx_tgt, ctx_dft, id, state_spec);
++            if (prompt_cache.retention.enabled) SLT_INF(*this, "larm_cache event=save scope=%s success=%d bytes=%zu checkpoints=%zu\n",
++                prompt.retention.scope.c_str(), (int) saved, prompt_cache.size(), prompt.checkpoints.size());
++            return saved;
++        } catch (const std::bad_alloc &) { ++prompt_cache.retention.failures; return false; }
+     }
+ 
+     bool prompt_load(server_prompt_cache & prompt_cache, const server_tokens & tokens, bool spec_trailing_rm) {
+@@ -198,6 +262,8 @@
+         common_speculative_set_state(spec, id, {});
+ 
+         prompt.tokens.clear();
++        if (!larm_cache_key().empty()) prompt.checkpoints.clear();
++        prompt.retention = {};
+     }
+ 
+     std::vector<common_adapter_lora_info> lora;
+@@ -420,6 +486,8 @@
+             t_last_used        =  ggml_time_us();
+             t_token_generation = (ggml_time_us() - t_start_generation) / 1e3;
+ 
++            prompt.retention.completed = stop != STOP_TYPE_NONE;
++            if (prompt.retention.completed) prompt.retention.used = larm_retention_policy::now();
+             state = SLOT_STATE_IDLE;
+ 
+             // do not keep context of the child slots - the parent's context is enough
+@@ -1131,6 +1199,19 @@
+         } else {
+             SRV_INF("%s", "prompt cache is disabled - use `--cache-ram N` or `--cache-disk PATH` to enable it\n");
+         }
++        const auto retention = larm_cache_policy();
++        if (retention.enabled) {
++            if (!prompt_cache || params_base.cache_ram_mib <= 0 || cache_disk_enabled
++                || prompt_cache->limit_size != retention.max_bytes || params_base.cache_idle_slots || params_base.sleep_idle_seconds >= 0) {
++                throw std::runtime_error("retention requires matching bounded RAM, no disk and no idle slot copying");
++            }
++            prompt_cache->retention = retention;
++            prompt_cache->retention.event = [](const char * action, const char * reason, const larm_cache_record & r, size_t bytes) {
++                SRV_INF("larm_cache event=%s reason=%s scope=%s correlation=%s bytes=%zu\n", action, reason, r.scope.c_str(), r.correlation.c_str(), bytes);
++            };
++            prompt_cache->retention_swa = n_swa;
++            slots_debug = 0; // Never print token pieces/IDs for retained consumer states.
++        }
+         SRV_INF("%s", "for more info see https://github.com/ggml-org/llama.cpp/pull/16391\n");
+ 
+         if (!params_base.model_alias.empty()) {
+@@ -1165,6 +1246,7 @@
+         GGML_ASSERT(!sleeping);
+ 
+         // wiring up server queues
++        queue_tasks.on_maintenance([this]() { retention_prune(); });
+         queue_tasks.on_new_task([this](server_task && task) {
+             process_single_task(std::move(task));
+         });
+@@ -1261,7 +1343,57 @@
+         return nullptr;
+     }
+ 
++    void retention_prune() {
++        if (!prompt_cache || !prompt_cache->retention.enabled || !ctx_tgt) return;
++        const auto t = larm_retention_policy::now();
++        prompt_cache->retention.prune(prompt_cache->states, t);
++        for (auto & slot : slots) if (!slot.is_processing() && !slot.prompt.tokens.empty()
++            && !prompt_cache->retention.valid(slot.prompt.retention, t)) slot.prompt_clear(false);
++    }
++
++    server_slot * get_retained_slot(const server_task & task) {
++        retention_prune();
++        auto & p = prompt_cache->retention;
++        server_slot * best = nullptr;
++        size_t reusable = 0;
++        bool best_same_scope = false;
++        for (auto & slot : slots) {
++            if (slot.is_processing()) continue;
++            slot.prompt.retention.memory_floor = llama_memory_seq_pos_min(llama_get_memory(ctx_tgt), slot.id);
++            const bool same_scope = p.valid(task.retention, larm_retention_policy::now(), false)
++                && p.valid(slot.prompt.retention, larm_retention_policy::now())
++                && larm_retention_policy::same(slot.prompt.retention, task.retention);
++            const size_t prefix = same_scope ? larm_effective_prefix(slot.prompt, task.tokens, n_swa) : 0;
++            // Prefer the session's idle stream even when its new branch has no
++            // common prefix. Other sessions keep their partition untouched.
++            if (!best || (same_scope && !best_same_scope) || (same_scope == best_same_scope
++                && (prefix > reusable || (prefix == reusable && prefix == 0 && slot.t_last_used < best->t_last_used)))) {
++                best = &slot; reusable = prefix; best_same_scope = same_scope;
++            }
++        }
++        if (!best) return nullptr;
++        // Preserve independent branches even when a high-similarity hot slot wins.
++        const bool same_input = best->task_prev && best->task_prev->tokens.size() == task.tokens.size()
++            && best->task_prev->tokens.get_common_prefix(task.tokens) == task.tokens.size();
++        if (!larm_retention_policy::same(best->prompt.retention, task.retention) || !same_input) best->prompt_save(*prompt_cache);
++        auto incoming = task.retention;
++        if (reusable == 0) best->prompt_clear(false);
++        else { incoming.created = best->prompt.retention.created; incoming.memory_floor = best->prompt.retention.memory_floor; }
++        best->prompt.retention = incoming;
++        const auto loads = p.loads;
++        if (!best->prompt_load(*prompt_cache, task.tokens, false)) best->prompt_clear(false);
++        // A moved RAM snapshot retains its lifetime, but the refreshed lease and
++        // correlation come from this verified request, never from the old one.
++        if (p.loads > loads) { incoming.created = best->prompt.retention.created; incoming.memory_floor = best->prompt.retention.memory_floor; }
++        best->prompt.retention = incoming;
++        SLT_INF(*best, "larm_cache event=select scope=%s correlation=%s request_task=%d source=%s reusable=%zu\n",
++            incoming.scope.c_str(), incoming.correlation.c_str(), task.id, p.loads > loads ? "ram" : (reusable ? "hot" : "cold"),
++            larm_effective_prefix(best->prompt, task.tokens, n_swa));
++        return best;
++    }
++
+     server_slot * get_available_slot(const server_task & task) {
++        if (prompt_cache && prompt_cache->retention.enabled) return get_retained_slot(task);
+         server_slot * ret = nullptr;
+ 
+         bool update_cache = false;
+@@ -1388,6 +1520,7 @@
+             if (slot.prompt.n_tokens() > 0) {
+                 SRV_WRN("purging slot %d with %zu tokens\n", slot.id, slot.prompt.tokens.size());
+ 
++                if (prompt_cache && prompt_cache->retention.enabled) slot.prompt_save(*prompt_cache);
+                 slot.prompt_clear(false);
+ 
+                 res = true;
+@@ -1997,6 +2130,7 @@
+         size_t idx = 0;
+         GGML_ASSERT(child_slots.size() == parent_task.child_tasks.size());
+         for (auto * slot : child_slots) {
++            if (prompt_cache && prompt_cache->retention.enabled) { slot->prompt_save(*prompt_cache); slot->prompt_clear(false); }
+             int id_child = parent_task.child_tasks[idx].id;
+             if (!launch_slot_with_task(*slot, std::move(parent_task.child_tasks[idx]))) {
+                 SRV_ERR("failed to launch slot with child task, id_task = %d\n", id_child);
+@@ -2052,7 +2186,20 @@
+     }
+ 
+     void process_single_task(server_task && task) {
++        retention_prune();
+         switch (task.type) {
++            case SERVER_TASK_TYPE_CACHE_INVALIDATE: {
++                auto res = std::make_unique<server_task_result_retention>(); res->id = task.id;
++                if (prompt_cache && prompt_cache->retention.enabled) {
++                    auto & p = prompt_cache->retention;
++                    if (!task.retention_inspect) p.invalidate(task.retention.scope, larm_retention_policy::now());
++                    retention_prune();
++                    size_t metadata = 0; for (const auto & entry : prompt_cache->states) metadata += p.metadata(entry);
++                    res->data = {{"entries", prompt_cache->states.size()}, {"bytes", prompt_cache->size()}, {"metadataBytes", metadata},
++                        {"saves", p.saves}, {"loads", p.loads}, {"evictions", p.evictions}, {"bypasses", p.bypasses}, {"failures", p.failures}};
++                } else res->data = {{"enabled", false}};
++                queue_results.send(std::move(res));
++            } break;
+             case SERVER_TASK_TYPE_COMPLETION:
+             case SERVER_TASK_TYPE_INFILL:
+             case SERVER_TASK_TYPE_EMBEDDING:
+@@ -2133,7 +2280,9 @@
+                     // release slot linked with the task id
+                     for (auto & slot : slots) {
+                         if (slot.task && slot.task->id == task.id_target) {
++                            slot.prompt.retention = {};
+                             slot.release();
++                            if (prompt_cache && prompt_cache->retention.enabled) slot.prompt_clear(false);
+                             break;
+                         }
+                     }
+@@ -2339,6 +2488,10 @@
+                     }
+                     // TODO @ngxson : make lora_adapters a dedicated member of server_context
+                     params_base.lora_adapters = new_loras;
++                    if (prompt_cache && prompt_cache->retention.enabled) {
++                        prompt_cache->states.clear();
++                        for (auto & slot : slots) slot.prompt.retention = {};
++                    }
+                     auto res = std::make_unique<server_task_result_apply_lora>();
+                     res->id = task.id;
+                     queue_results.send(std::move(res));
+@@ -4155,6 +4308,14 @@
+                     meta->logit_bias_eog,
+                     data);
+             task.id_slot = json_value(data, "id_slot", -1);
++            if (!larm_cache_key().empty()) {
++                task.id_slot = -1;
++                task.retention = larm_cache_context(req);
++                // v1 retains text, target-only state. Unsupported requests still
++                // infer normally and cannot reuse another scope's state.
++                if (!larm_text_tokens(task.tokens) || ctx_server.ctx_dft || !task.params.lora.empty()
++                    || !params.lora_adapters.empty() || !task.params.cache_prompt || task.params.n_cmpl != 1) task.retention = {};
++            }
+ 
+             // OAI-compat
+             task.params.res_type          = res_type;
+@@ -4344,6 +4505,24 @@
+ }
+ 
+ void server_routes::init_routes() {
++    const json retention_properties = larm_cache_properties();
++    this->post_cache_invalidate = [this](const server_http_req & req) {
++        auto res = create_response(true);
++        if (!larm_cache_authorized(req)) { res->status = 403; res->data = "{}"; return res; }
++        try {
++            const auto body = json::parse(req.body);
++            server_task task(SERVER_TASK_TYPE_CACHE_INVALIDATE); task.id = res->rd.get_new_id();
++            task.retention_inspect = body.value("action", "") == "inspect";
++            if (!task.retention_inspect) {
++                task.retention.scope = body.at("scope");
++                if (!larm_retention_policy::opaque(task.retention.scope)) throw std::runtime_error("invalid scope");
++            }
++            res->rd.post_task(std::move(task), true);
++            auto result = res->rd.next(req.should_stop);
++            if (result) res->ok(result->to_json());
++        } catch (...) { res->status = 400; res->data = "{}"; }
++        return res;
++    };
+     // IMPORTANT: all lambda functions must start with create_response()
+     // this is to ensure that the server_res_generator can handle sleeping case correctly
+ 
+@@ -4541,7 +4720,7 @@
+         return res;
+     };
+ 
+-    this->get_props = [this](const server_http_req &) {
++    this->get_props = [this, retention_properties](const server_http_req & req) {
+         auto res = create_response(true);
+ 
+         // this endpoint can be accessed during sleeping
+@@ -4560,6 +4739,7 @@
+         std::string tmpl_tools   = common_chat_templates_source(meta->chat_params.tmpls.get(), "tool_use");
+ 
+         json props = {
++            { "larm_prompt_cache", [&]() { auto props = retention_properties; props["authenticated"] = larm_cache_authorized(req); return props; }() },
+             { "default_generation_settings", default_generation_settings_for_props },
+             { "total_slots",                 params.n_parallel },
+             { "model_alias",                 meta->model_name },
+--- a/tools/server/server-context.h
++++ b/tools/server/server-context.h
+@@ -102,6 +102,7 @@
+     server_http_context::handler_t get_health;
+     server_http_context::handler_t get_metrics;
+     server_http_context::handler_t get_slots;
++    server_http_context::handler_t post_cache_invalidate;
+     server_http_context::handler_t post_slots;
+     server_http_context::handler_t get_props;
+     server_http_context::handler_t post_props;
+--- a/tools/server/server-queue.cpp
++++ b/tools/server/server-queue.cpp
+@@ -160,6 +160,7 @@
+         QUE_DBG("%s", "update slots\n");
+ 
+         // this will run the main inference process for all slots
++        if (callback_maintenance) callback_maintenance();
+         callback_update_slots();
+         {
+             // update_slots() may take a while to finish, we need to make sure it's not counted as idle
+@@ -202,6 +203,8 @@
+                 if (res) {
+                     break; // new task arrived or terminate
+                 }
++                lock.unlock();
++                if (callback_maintenance) callback_maintenance();
+                 // otherwise, loop again to check sleeping condition
+             }
+         }
+--- a/tools/server/server-queue.h
++++ b/tools/server/server-queue.h
+@@ -28,6 +28,7 @@
+     // callback functions
+     std::function<void(server_task &&)> callback_new_task;
+     std::function<void(void)>           callback_update_slots;
++    std::function<void(void)>           callback_maintenance;
+     std::function<void(bool)>           callback_sleeping_state;
+ 
+ public:
+@@ -90,6 +91,8 @@
+         callback_new_task = std::move(callback);
+     }
+ 
++    void on_maintenance(std::function<void(void)> callback) { callback_maintenance = std::move(callback); }
++
+     // Register the function to be called when all slots data is ready to be processed
+     void on_update_slots(std::function<void(void)> callback) {
+         callback_update_slots = std::move(callback);
+--- a/tools/server/server-task.cpp
++++ b/tools/server/server-task.cpp
+@@ -2364,6 +2364,15 @@
+                llama_seq_id   id_slot,
+         const std::vector<uint8_t> & state_spec) {
+     bool saved = false;
++    if (retention.enabled) {
++        if (!larm_text_tokens(prompt.tokens) || !retention.valid(prompt.retention, larm_retention_policy::now())) {
++            ++retention.bypasses; return false;
++        }
++        retention.prune(states, larm_retention_policy::now());
++        // A duplicate must not reserve bytes or evict another retained state.
++        // This also avoids querying or cloning the engine's already saved KV.
++        for (const auto & entry : states) if (larm_same_snapshot(entry, prompt)) return false;
++    }
+ 
+     if (!disk_owned_path.empty()) {
+         saved = save_disk(prompt, ctx_main, ctx_drft, id_slot, state_spec) || saved;
+@@ -2376,7 +2385,27 @@
+     const size_t state_size_main = llama_state_seq_get_size_ext(ctx_main, id_slot, LLAMA_STATE_SEQ_FLAGS_NONE);
+     const size_t state_size_drft = ctx_drft ? llama_state_seq_get_size_ext(ctx_drft, id_slot, LLAMA_STATE_SEQ_FLAGS_NONE) : 0;
+ 
+-    auto * cur = alloc(prompt, state_size_main, state_size_drft, state_spec);
++    if (retention.enabled) {
++        size_t payload = state_size_main + state_size_drft + state_spec.size();
++        for (const auto & checkpoint : prompt.checkpoints) payload += checkpoint.size();
++        if (!retention.admit(states, prompt.retention, payload, retention.metadata(prompt), larm_retention_policy::now())) return false;
++    }
++    server_prompt * cur = nullptr;
++    try {
++        cur = alloc(prompt, state_size_main, state_size_drft, state_spec);
++    } catch (const std::bad_alloc &) {
++        ++retention.failures;
++        return false;
++    }
++    if (cur && retention.enabled) {
++        auto a = cur->checkpoints.begin();
++        for (const auto & original : prompt.checkpoints) {
++            if (a == cur->checkpoints.end() || a->size() != original.size()) {
++                states.pop_back(); ++retention.failures; return false;
++            }
++            ++a;
++        }
++    }
+     if (cur == nullptr) {
+         return saved;
+     }
+@@ -2399,6 +2428,7 @@
+         }
+     }
+ 
++    if (retention.enabled) ++retention.saves;
+     return true;
+ }
+ 
+@@ -2681,8 +2711,13 @@
+                     size_t state_size_tgt,
+                     size_t state_size_dft,
+         const std::vector<uint8_t> & state_spec) {
+-    // first check if the current state is contained fully in the cache
+-    for (auto it = states.begin(); it != states.end(); ++it) {
++    if (retention.enabled) {
++        for (const auto & entry : states) {
++            if (larm_same_snapshot(entry, prompt)) return nullptr;
++        }
++    }
++    // Scoped snapshots need checkpoint-aware selection; token containment alone is insufficient.
++    for (auto it = states.begin(); !retention.enabled && it != states.end(); ++it) {
+         const int cur_lcp_len = it->tokens.get_common_prefix(prompt.tokens);
+         const bool exact_tokens = cur_lcp_len == (int) prompt.tokens.size() &&
+             it->tokens.size() == prompt.tokens.size();
+@@ -2713,7 +2748,7 @@
+ 
+     // Stateful speculative blobs are exact-boundary states. Keep shorter
+     // boundaries instead of treating them as obsolete prefixes.
+-    if (state_spec.empty()) {
++    if (state_spec.empty() && !retention.enabled) {
+         for (auto it = states.begin(); it != states.end();) {
+             const int len = it->tokens.get_common_prefix(prompt.tokens);
+ 
+@@ -2747,6 +2782,9 @@
+     } catch (const std::bad_alloc & e) {
+         SRV_ERR("failed to allocate memory for prompt cache state: %s\n", e.what());
+ 
++        if (retention.enabled) {
++            ++retention.failures; retention.emit("bypass", "allocation-failed", prompt.retention, state_size_new); return nullptr;
++        }
+         limit_size = std::max<size_t>(1, 0.4*size());
+ 
+         SRV_WRN(" - cache size limit reduced to %.3f MiB\n", limit_size / (1024.0 * 1024.0));
+@@ -2764,6 +2802,7 @@
+             /*.spec =*/ state_spec,
+         },
+         /*.checkpoints =*/ prompt.checkpoints,
++        /*.retention   =*/ prompt.retention,
+     });
+ 
+     return &states.back();
+@@ -3007,7 +3046,9 @@
+         *disk_entry_id = 0;
+     }
+ 
++    if (retention.enabled) retention.prune(states, larm_retention_policy::now());
+     const int lcp_best = prompt.tokens.get_common_prefix(tokens_new);
++    size_t effective_best = retention.enabled ? larm_effective_prefix(prompt, tokens_new, retention_swa) : 0;
+ 
+     // With speculative decoding, an entry whose token sequence extends past the
+     // common prefix (lcp < cached_tokens, e.g. a client re-sending a normalized
+@@ -3055,6 +3096,9 @@
+     // Find the most similar RAM prompt first. On an equal match, the hot RAM
+     // copy wins and avoids SSD I/O.
+     for (auto it = states.begin(); it != states.end(); ++it) {
++        if (retention.enabled && (!retention.valid(it->retention, larm_retention_policy::now())
++            || !larm_retention_policy::same(it->retention, prompt.retention)
++            || !retention.valid(prompt.retention, larm_retention_policy::now(), false))) continue;
+         const int lcp_cur = it->tokens.get_common_prefix(tokens_new);
+ 
+         if (!spec_boundary_valid(it->tokens.size(), lcp_cur)) {
+@@ -3072,6 +3116,47 @@
+         const float sim_cur    = float(lcp_cur) / std::max<size_t>(1, tokens_new.size());
+ 
+         // don't trash large prompts
++        if (!retention.enabled && f_keep_cur < 0.25f) {
++            continue;
++        }
++
++        const size_t effective = retention.enabled ? larm_effective_prefix(*it, tokens_new, retention_swa) : 0;
++        const bool is_better = retention.enabled ? effective > effective_best : (spec_state_required
++            ? it->tokens.size() > spec_boundary_best
++            : f_keep_best < f_keep_cur && sim_best < sim_cur);
++        if (is_better) {
++            effective_best = effective;
++            f_keep_best = f_keep_cur;
++            sim_best    = sim_cur;
++            spec_boundary_best = it->tokens.size();
++
++            it_best_ram  = it;
++            it_best_disk = disk_states.end();
++            lcp_selected = lcp_cur;
++        }
++    }
++
++    for (auto it = disk_states.begin(); it != disk_states.end(); ++it) {
++        if (!it->usable) {
++            continue;
++        }
++
++        const int lcp_cur = it->tokens.get_common_prefix(tokens_new);
++
++        if (!spec_boundary_valid(it->tokens.size(), lcp_cur)) {
++            SRV_INF("prompt cache skip: reason=spec-boundary-mismatch source=disk entry=%" PRIu64 " lcp=%d cached_tokens=%zu request_tokens=%zu spec_bytes=%zu\n",
++                    it->id, lcp_cur, it->tokens.size(), tokens_new.size(), it->spec.size());
++            continue;
++        }
++        if (spec_state_required && it->spec.empty()) {
++            SRV_INF("prompt cache skip: reason=spec-state-missing source=disk entry=%" PRIu64 " cached_tokens=%zu request_tokens=%zu\n",
++                    it->id, it->tokens.size(), tokens_new.size());
++            continue;
++        }
++
++        const float f_keep_cur = float(lcp_cur) / std::max<size_t>(1, it->tokens.size());
++        const float sim_cur    = float(lcp_cur) / std::max<size_t>(1, tokens_new.size());
++
+         if (f_keep_cur < 0.25f) {
+             continue;
+         }
+@@ -3084,45 +3169,6 @@
+             sim_best    = sim_cur;
+             spec_boundary_best = it->tokens.size();
+ 
+-            it_best_ram  = it;
+-            it_best_disk = disk_states.end();
+-            lcp_selected = lcp_cur;
+-        }
+-    }
+-
+-    for (auto it = disk_states.begin(); it != disk_states.end(); ++it) {
+-        if (!it->usable) {
+-            continue;
+-        }
+-
+-        const int lcp_cur = it->tokens.get_common_prefix(tokens_new);
+-
+-        if (!spec_boundary_valid(it->tokens.size(), lcp_cur)) {
+-            SRV_INF("prompt cache skip: reason=spec-boundary-mismatch source=disk entry=%" PRIu64 " lcp=%d cached_tokens=%zu request_tokens=%zu spec_bytes=%zu\n",
+-                    it->id, lcp_cur, it->tokens.size(), tokens_new.size(), it->spec.size());
+-            continue;
+-        }
+-        if (spec_state_required && it->spec.empty()) {
+-            SRV_INF("prompt cache skip: reason=spec-state-missing source=disk entry=%" PRIu64 " cached_tokens=%zu request_tokens=%zu\n",
+-                    it->id, it->tokens.size(), tokens_new.size());
+-            continue;
+-        }
+-
+-        const float f_keep_cur = float(lcp_cur) / std::max<size_t>(1, it->tokens.size());
+-        const float sim_cur    = float(lcp_cur) / std::max<size_t>(1, tokens_new.size());
+-
+-        if (f_keep_cur < 0.25f) {
+-            continue;
+-        }
+-
+-        const bool is_better = spec_state_required
+-            ? it->tokens.size() > spec_boundary_best
+-            : f_keep_best < f_keep_cur && sim_best < sim_cur;
+-        if (is_better) {
+-            f_keep_best = f_keep_cur;
+-            sim_best    = sim_cur;
+-            spec_boundary_best = it->tokens.size();
+-
+             it_best_ram  = states.end();
+             it_best_disk = it;
+             lcp_selected = lcp_cur;
+@@ -3149,6 +3195,10 @@
+             const size_t n = llama_state_seq_set_data_ext(ctx_tgt, data.data(), size, id_slot, 0);
+             if (n != size) {
+                 SRV_ERR("failed to restore state with size %zu\n", size);
++                if (retention.enabled) {
++                    ++retention.failures; retention.emit("reject", "restore-rejected", it_best_ram->retention, size);
++                    states.erase(it_best_ram);
++                }
+ 
+                 return false;
+             }
+@@ -3167,6 +3217,10 @@
+                 const size_t n = llama_state_seq_set_data_ext(ctx_dft, data.data(), size, id_slot, 0);
+                 if (n != size) {
+                     SRV_WRN("failed to restore state with size %zu\n", size);
++                if (retention.enabled) {
++                    ++retention.failures; retention.emit("reject", "restore-rejected", it_best_ram->retention, size);
++                    states.erase(it_best_ram);
++                }
+ 
+                     return false;
+                 }
+@@ -3184,12 +3238,14 @@
+             *cache_hit = true;
+         }
+         ram_loaded = true;
++        if (retention.enabled) ++retention.loads;
+     }
+ 
+     return base_boundary_valid || ram_loaded;
+ }
+ 
+ void server_prompt_cache::update() {
++    if (retention.enabled) { retention.prune(states, larm_retention_policy::now()); return; }
+     if (limit_size > 0) {
+         while (!states.empty() && size() > limit_size) {
+             SRV_WRN(" - cache size limit reached, removing oldest entry (size = %.3f MiB)\n", states.front().size() / (1024.0 * 1024.0));
+--- a/tools/server/server-task.h
++++ b/tools/server/server-task.h
+@@ -10,6 +10,7 @@
+ 
+ // TODO: prevent including the whole server-common.h as we only use server_tokens
+ #include "server-common.h"
++#include "larm-prompt-retention.h"
+ 
+ using json = nlohmann::ordered_json;
+ 
+@@ -26,6 +27,7 @@
+     SERVER_TASK_TYPE_SLOT_ERASE,
+     SERVER_TASK_TYPE_GET_LORA,
+     SERVER_TASK_TYPE_SET_LORA,
++    SERVER_TASK_TYPE_CACHE_INVALIDATE,
+ };
+ 
+ // TODO: change this to more generic "response_format" to replace the "format_response_*" in server-common
+@@ -153,6 +155,8 @@
+     std::vector<raw_buffer> cli_files;
+ 
+     server_task_type type;
++    larm_cache_record retention;
++    bool retention_inspect = false;
+ 
+     // used by SERVER_TASK_TYPE_SLOT_SAVE, SERVER_TASK_TYPE_SLOT_RESTORE, SERVER_TASK_TYPE_SLOT_ERASE
+     struct slot_action {
+@@ -581,6 +585,7 @@
+     server_prompt_data data;
+ 
+     std::list<common_prompt_checkpoint> checkpoints;
++    larm_cache_record retention;
+ 
+     size_t size() const {
+         size_t res = 0;
+@@ -603,8 +608,43 @@
+             tokens.clone(),
+             data,
+             checkpoints,
++            retention,
+         };
+     }
++};
++
++inline bool larm_text_tokens(const server_tokens & tokens) {
++    for (size_t i = 0; i < tokens.size(); ++i) if (tokens[i] == LLAMA_TOKEN_NULL) return false;
++    return true;
++}
++inline bool larm_same_snapshot(const server_prompt & a, const server_prompt & b) {
++    if (!larm_retention_policy::same(a.retention, b.retention) || a.tokens.size() != b.tokens.size()
++        || a.tokens.get_common_prefix(b.tokens) != b.tokens.size() || a.checkpoints.size() != b.checkpoints.size()) return false;
++    auto other = b.checkpoints.begin();
++    for (const auto & checkpoint : a.checkpoints) {
++        if (checkpoint.n_tokens != other->n_tokens || checkpoint.pos_min != other->pos_min
++            || checkpoint.pos_max != other->pos_max || checkpoint.size() != other->size()) return false;
++        ++other;
++    }
++    return true;
++}
++inline size_t larm_effective_prefix(const server_prompt & p, const server_tokens & next, int swa) {
++    const size_t lcp = p.tokens.get_common_prefix(next);
++    if (lcp == 0 || !larm_text_tokens(p.tokens) || !larm_text_tokens(next)) return 0;
++    const auto pos = p.tokens.pos_next(lcp);
++    const auto threshold = std::max<int64_t>(0, pos - swa - (lcp < next.size() ? 0 : 1));
++    if (p.retention.memory_floor < threshold) return lcp;
++    for (auto it = p.checkpoints.rbegin(); it != p.checkpoints.rend(); ++it) {
++        if (it->pos_max > pos || (it->pos_min >= threshold && it->pos_min != 0)) continue;
++        const auto restored = std::min<int64_t>(pos, std::max(it->pos_min + 1, it->pos_max));
++        return std::min(p.tokens.size_up_to_pos(restored), (size_t) it->n_tokens);
++    }
++    return 0;
++}
++
++struct server_task_result_retention : server_task_result {
++    json data;
++    json to_json() override { return data; }
+ };
+ 
+ // The context checkpoint payloads may contain large host vectors and cloned
+@@ -656,6 +696,8 @@
+     std::list<server_prompt_disk_state> disk_states;
+ 
+     bool ram_enabled = false;
++    larm_retention_policy retention;
++    int retention_swa = 0;
+ 
+     // in bytes, 0 = no limit
+     size_t limit_size = 0;
+--- a/tools/server/server.cpp
++++ b/tools/server/server.cpp
+@@ -248,6 +248,7 @@
+     ctx_http.post("/lora-adapters",            ex_wrapper(routes.post_lora_adapters));
+     // Save & load slots
+     ctx_http.get ("/slots",                    ex_wrapper(routes.get_slots));
++    ctx_http.post("/larm/cache/invalidate",     ex_wrapper(routes.post_cache_invalidate));
+     ctx_http.post("/slots/:id_slot",           ex_wrapper(routes.post_slots));
+ 
+     // Google Cloud Platform (Vertex AI) compat

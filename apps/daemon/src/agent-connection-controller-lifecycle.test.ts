@@ -62,6 +62,37 @@ test("connection IDs stay unique with repeated random input; bounded history pre
   await controller.release((replacement.body as PublicAgentConnection).id, "owner");
 });
 
+test("a failing existing invalidator does not prevent the cache purge handler", async () => {
+  const f = await fixture();
+  const invalidated: string[] = [];
+  f.controller.setCacheInvalidator(() => { throw new Error("synthetic invalidator failure"); });
+  f.controller.setCacheInvalidator(record => { invalidated.push(record.id); });
+  try {
+    const c = (await f.create("ornith1.5Strix", "synthetic")).body as PublicAgentConnection;
+    await f.controller.release(c.id, "owner");
+    await Bun.sleep(0);
+    expect(invalidated).toEqual([c.id]);
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("cache invalidation follows explicit release and TTL expiry once per Connection", async () => {
+  const f = await fixture();
+  const invalidated: string[] = [];
+  f.controller.setCacheInvalidator(record => { invalidated.push(record.id); });
+  const a = (await f.create("ornith1.5Strix", "cache-a")).body as PublicAgentConnection;
+  const b = (await f.create("ornith1.5Strix", "cache-b")).body as PublicAgentConnection;
+  await f.controller.release(a.id, "owner");
+  await Bun.sleep(0);
+  expect(invalidated).toEqual([a.id]);
+  expect(f.controller.get(b.id, "owner").status).toBe(200);
+  f.advance(121_000);
+  f.controller.get(b.id, "owner");
+  await Bun.sleep(0);
+  expect(invalidated.sort()).toEqual([a.id, b.id].sort());
+  await f.controller.release(a.id, "owner");
+  expect(invalidated).toHaveLength(2);
+});
+
 test("foreground waits for background execution cleanup before granting a new connection", async () => {
   const { controller, control, create } = await fixture();
   const background = (await create("contextStill", "background")).body as PublicAgentConnection;

@@ -27,7 +27,7 @@ mkdir -p "${source_root}/packages/core/src" "${source_root}/apps/daemon/src" \
 git -C "${test_root}" init -q source
 git -C "${source_root}" config user.email test@example.invalid
 git -C "${source_root}" config user.name LARM-test
-printf '%s\n' '{"packageManager":"bun@1.4.0","scripts":{"check":"true","check:release":"bun run scripts/fixture-release.ts"},"dependencies":{"zod":"4.4.3"},"devDependencies":{"typescript":"5.9.2"}}' \
+printf '%s\n' '{"packageManager":"bun@1.4.0","scripts":{"check":"true","check:release":"bun run scripts/fixture-release.ts"},"dependencies":{"zod":"4.6.7"},"devDependencies":{"typescript":"5.9.2"}}' \
   >"${source_root}/package.json"
 mkdir -p "${source_root}/scripts"
 cp "${repo_root}/scripts/check-release.ts" "${source_root}/scripts/check-release.ts"

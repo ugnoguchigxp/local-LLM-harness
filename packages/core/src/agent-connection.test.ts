@@ -507,7 +507,7 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
   expect(() => parseAgentConnectionCatalog({
     ...base,
     profileSelectors: { unknownConsumer: { agentProfile: "coding" } },
-  }, registry)).toThrow(/Invalid key in record/);
+  }, registry)).toThrow(/profileSelectors:.*unknownConsumer/);
   expect(() => parseAgentConnectionCatalog({
     ...base,
     profileSelectors: { "ornith1.5Strix": { agentProfile: "missing" } },
