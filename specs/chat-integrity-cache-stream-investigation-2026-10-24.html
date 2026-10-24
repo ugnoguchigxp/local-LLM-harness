@@ -3,7 +3,7 @@
   <p>
     後方systemの欠落はProviderのchat
     templateで再現した。roleと順序を保つテンプレート修正候補は5配置すべてで正式計数と値の読取りに合格した。古いテンプレート向けには欠落検出とHTTP
-    422を追加した。mainのキャッシュ保持・ヒットは維持している。空の正常SSE終了を拒否する別のLARM不具合も修正した。本番への配備切替は実施していない。
+    422を追加した。mainのキャッシュ保持・ヒットは維持している。空の正常SSE終了を拒否する別のLARM不具合も修正した。2026-10-24に本番配備も完了した。以下の各項目は配備前の隔離調査記録で、本番の識別子と受入結果は末尾に記載する。
   </p>
   <section id="provenance">
     <h2>検証対象と証拠の範囲</h2>
@@ -599,13 +599,176 @@
       <li>
         本番反映には、検証済みtemplateをversioned external
         assetとして配備し、対象runtimeのcommandにそのtemplateを明示してprovider
-        release／configRevisionを更新する必要がある。LARMのコード修正だけでは元Providerのtemplateは置き換わらない。現在の本番は元releaseのままなので、修正済みと見なして接続回復や本番受入を省略しない。
+        release／configRevisionを更新する必要がある。LARMのコード修正だけでは元Providerのtemplateは置き換わらない。本番への反映と接続世代の更新は末尾の配備記録を参照する。
       </li>
     </ol>
     <p>
       実モデルE2Eはcandidateの38生成要求すべてで成功。検証ソースと数値記録を束ねた外部verification-manifestのSHA-256は
       <code>d10d5d1ac9d53e0a14b270d5f0594aed50a3d7a1bbaddc1141637a4361faf5ef</code
       >。対象の単体・中継・所有境界試験も成功。<code>bun run check</code>は成功。新規文書も<code>bun run docs:check:fix</code>で整形・診断を確認した。生成試験は少数の逐次要求であり、専用機でのSLOベンチマークではない。並行するシステム負荷と256k設定差があるため時間差を速度改善と結論しない。
+    </p>
+  </section>
+  <section id="production-deployment">
+    <h2>2026-10-24 本番配備と最終確認</h2>
+    <p>
+      利用者の配備依頼を受け、署名・frozen install・依存audit・全体check・coverage
+      ratchetを通したrelease
+      <code>ca9e2c2d397a2de2899b31f577e8aa8fbaa0cd86</code>を本番へ反映した。health/readyはHTTP
+      200、status=ok/ready。モデル・engineバイナリ・context合計1048576・parallel4・1枠262144・既存cache予算を維持した。対象runtimeのcommandへ版固定の修正templateを明示し、provider
+      releaseは <code>ornith15-strix-conversation-p4-v5</code>へ更新した。
+    </p>
+    <p>
+      最終bootEpochは <code>epoch-83af07da-adaf-44e7-984e-73f8ea8a12cd</code>、configRevisionは
+      <code>30cfc59bb106d508e3ccdfd3453b86ea55814a73ae490c87476bbc49f93cf4b8</code>。版固定のtemplate SHA-256は
+      <code>d5bd31a440a54192ae32eb65a4dbb96a1b401dc353a7a76585f0f634170e8edc</code>、engine SHA-256は
+      <code>c994e85f69f265c2e2260076f1a69240fd44c3318b3e7b20adf494408a39d937</code
+      >。署名済みreleaseのmanifestとhealth/configRevisionが一致した。
+    </p>
+    <p>
+      生成試験では原文やProvider応答を残さないよう監査を一時metadataに限定し、本番API経由の38件を同一boot
+      <code>epoch-81829f88-8b4b-4a0d-a57f-a885eaea083d</code
+      >で実行した。全件成功し、5配置の値読取り、正式計数とgenerationのtoken一致、cache所有分離と接続間キー共有、約14k
+      tokenのtext/JSON保持、上限1/128/512のlength・DONE・EOF、空本文のstop・DONE・EOFを確認した。下表の時間は監査metadata時点の値であり、元のfull-required運用や隔離結果との速度優劣を結論しない。
+    </p>
+    <table>
+      <caption>
+        本番HTTP経由、runtime release v5。38件すべて成功。代表値。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">正式入力token</th>
+          <th scope="col">再利用token</th>
+          <th scope="col">prefill ms</th>
+          <th scope="col">要求全体 ms</th>
+          <th scope="col">終了理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">first-system</th>
+          <td>2068</td>
+          <td>0</td>
+          <td>1909.995</td>
+          <td>2099.893</td>
+          <td>stop</td>
+        </tr>
+        <tr>
+          <th scope="row">system-after-history</th>
+          <td>2072</td>
+          <td>0</td>
+          <td>2201.305</td>
+          <td>2793.790</td>
+          <td>stop</td>
+        </tr>
+        <tr>
+          <th scope="row">second-leading-system</th>
+          <td>2068</td>
+          <td>2064</td>
+          <td>22.976</td>
+          <td>605.698</td>
+          <td>stop</td>
+        </tr>
+        <tr>
+          <th scope="row">middle-of-three-systems</th>
+          <td>2082</td>
+          <td>1552</td>
+          <td>694.934</td>
+          <td>1197.365</td>
+          <td>stop</td>
+        </tr>
+        <tr>
+          <th scope="row">user-after-history</th>
+          <td>2072</td>
+          <td>0</td>
+          <td>2266.724</td>
+          <td>2807.818</td>
+          <td>stop</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-new-keyed-connection-1-same-prefix</th>
+          <td>2889</td>
+          <td>2885</td>
+          <td>22.994</td>
+          <td>447.090</td>
+          <td>stop</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-new-connection-0-same-prefix</th>
+          <td>2889</td>
+          <td>0</td>
+          <td>2953.629</td>
+          <td>3385.131</td>
+          <td>stop</td>
+        </tr>
+        <tr>
+          <th scope="row">cache-new-keyed-connection-1-changed-prefix</th>
+          <td>2894</td>
+          <td>0</td>
+          <td>2896.084</td>
+          <td>3293.863</td>
+          <td>stop</td>
+        </tr>
+        <tr>
+          <th scope="row">long-text-after-four-auxiliaries</th>
+          <td>13903</td>
+          <td>13899</td>
+          <td>26.470</td>
+          <td>463.348</td>
+          <td>stop</td>
+        </tr>
+        <tr>
+          <th scope="row">long-json-after-four-auxiliaries</th>
+          <td>13905</td>
+          <td>13901</td>
+          <td>26.378</td>
+          <td>703.213</td>
+          <td>stop</td>
+        </tr>
+        <tr>
+          <th scope="row">stream-cap-128-0</th>
+          <td>32</td>
+          <td>0</td>
+          <td>124.663</td>
+          <td>2029.914</td>
+          <td>length</td>
+        </tr>
+        <tr>
+          <th scope="row">stream-cap-512-0</th>
+          <td>32</td>
+          <td>0</td>
+          <td>135.815</td>
+          <td>7674.103</td>
+          <td>length</td>
+        </tr>
+        <tr>
+          <th scope="row">stream-empty-stop</th>
+          <td>16</td>
+          <td>0</td>
+          <td>94.876</td>
+          <td>204.395</td>
+          <td>stop</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      その後、監査設定を元のfull-requiredへ戻してdaemonのみ再起動し、最終bootで5配置の正式計数、runtime
+      release v5、context上限262144、旧boot IDの410
+      connection_epoch_expiredを再確認した。最終bootで38生成を再実行したという主張ではない。監査復元時の起動確認が作った合成要求については、本文を読まずにboot・pre-ready期間・既知のrequest
+      hashで照合し、該当する自己試験captureだけを削除した（1件）。他consumerの監査記録は変更していない。監視timerと配備watcherも従前の状態へ戻した。
+    </p>
+    <p>
+      切替は処理中request/mutationが0の窓で実施し、daemonのdrainを待った。旧epochの待機Connection
+      1本は再起動で無効となった。Provider
+      releaseの台帳更新時には旧releaseを保持する待機refによるrevision_conflictも観測し、要求が処理中でないことを確認した追加のdaemon再起動で世代を更新した。モデルの設定不良や内容driftとは扱わない。v5の登録で不足していたvision
+      artifactのstagingは同じ既存revisionを検証して準備し、runtime
+      activationのcurrent-artifact経路で重みや実行プロセスを交換せず台帳を更新した。
+    </p>
+    <p>
+      配備前sourceには別調査の未commit作業があったため、それらを含めず、専用clean sourceと
+      <code>codex/chat-integrity-deploy-20261024</code>
+      branchで署名済みcommitを作成した。workspaceの既存作業は保持した。rollback用に旧releaseとprovider設定・runtime台帳を退避した。24時間soakやEumenes側の接続回復完了までは今回の成功に含めない。旧Connection
+      IDとtokenは再確保が必要。
     </p>
   </section>
 </article>
