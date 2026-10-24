@@ -9,7 +9,11 @@ from common import CRITERIA, INSTRUCTION, LABELS, sha256
 
 
 class AttitudeModel:
-    def __init__(self, key, manifest, method='similarity', head_path=None, onnx_path=None):
+    def __init__(self, key, manifest, method='similarity', head_path=None, onnx_path=None, contract=None):
+        self.labels = contract['labels'] if contract else LABELS
+        if contract and (key != 'ruri30' or method != 'head'):
+            raise ValueError('versioned contract requires the Ruri trained classifier')
+        criteria = contract['criteria'] if contract else CRITERIA
         self.key,self.config,self.method=key,manifest,method
         if manifest['kind']=='laya' or not onnx_path:
             raise ValueError('this adapter requires an exported encoder')
@@ -32,14 +36,17 @@ class AttitudeModel:
         self.truncated=False
         if method=='head':
             self.head=json.loads(head_path.read_text())
-            if self.head['revision']!=manifest['revision'] or self.head['labels']!=LABELS:
+            if self.head['revision']!=manifest['revision'] or self.head['labels']!=self.labels or self.head.get('contract') != contract:
                 raise ValueError('head identity mismatch')
+            trained_encoder = self.head.get('inference_encoder_sha256')
+            if trained_encoder and trained_encoder != sha256(onnx_path):
+                raise ValueError('training and inference INT8 encoders differ')
             self.score_kind='trained_linear_logits'
         else:
             if manifest['kind']=='head-only': raise ValueError('model requires a trained head')
             self.score_kind='cosine_similarity'
             start=time.perf_counter()
-            self.candidates=np.stack([self.encode(manifest['candidate_prefix']+INSTRUCTION+'\n'+CRITERIA[l]) for l in LABELS])
+            self.candidates=np.stack([self.encode(manifest['candidate_prefix']+INSTRUCTION+'\n'+criteria[l]) for l in self.labels])
             self.cached_candidates_ms=(time.perf_counter()-start)*1000
 
     def encode(self,text):

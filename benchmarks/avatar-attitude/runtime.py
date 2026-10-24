@@ -52,7 +52,11 @@ class Encoder:
 
 
 class AttitudeModel:
-    def __init__(self, key, manifest, method='similarity', head_path=None, onnx_path=None):
+    def __init__(self, key, manifest, method='similarity', head_path=None, onnx_path=None, contract=None):
+        self.labels = contract['labels'] if contract else LABELS
+        if contract and (key != 'ruri30' or method != 'head'):
+            raise ValueError('versioned contract requires the Ruri trained classifier')
+        criteria = contract['criteria'] if contract else CRITERIA
         self.key = key
         self.config = manifest
         self.method = method
@@ -63,6 +67,8 @@ class AttitudeModel:
         self.token_count = 0
         self.truncated = False
         if manifest['kind'] == 'laya':
+            if contract:
+                raise ValueError('Laya comparison supports the legacy six-class contract only')
             if onnx_path or method != 'similarity':
                 raise ValueError('Laya uses its shipped typed decision head')
             from laya import Agent
@@ -89,13 +95,13 @@ class AttitudeModel:
                                 if self.encoder.model is not None else None)
         if method == 'head':
             self.head = json.loads(head_path.read_text())
-            if self.head['revision'] != manifest['revision'] or self.head['labels'] != LABELS:
+            if self.head['revision'] != manifest['revision'] or self.head['labels'] != self.labels or self.head.get('contract') != contract:
                 raise ValueError('head identity mismatch')
             self.score_kind = 'trained_linear_logits'
         else:
             self.score_kind = 'cosine_similarity'
             start = time.perf_counter()
-            texts = [manifest['candidate_prefix'] + INSTRUCTION + '\n' + CRITERIA[label] for label in LABELS]
+            texts = [manifest['candidate_prefix'] + INSTRUCTION + '\n' + criteria[label] for label in self.labels]
             # Fixed candidate cache only: one encoder call per candidate, batch=1.
             self.candidates = np.stack([self.encoder.encode(t) for t in texts])
             self.cached_candidates_ms = (time.perf_counter() - start) * 1000

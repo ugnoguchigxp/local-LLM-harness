@@ -1,0 +1,311 @@
+<article lang="ja">
+  <h1>Ruri発話態度15種v2の学習・校正・評価結果</h1>
+  <p>
+    2026-10-24。ユーザーの「一旦入れて構わない、これで学習」の指示を受け、sadnessに悲しい声色での寄り添いを含める前提で修正版1,500件を学習した。15種の学習済みモデルを別revisionへ保存し、APIの検証を完了した。本番サービスの切替は行っていない。
+  </p>
+  <p>
+    未使用の合成評価300件では224件正解、正解率74.7%、Macro F1
+    0.744076。既存の技術的な通常発話14件では6件に不要な感情を付け、現行6種の0/14件から悪化した。学習完了と本番への採用は区別し、技術的な通常発話の追加と別評価を次の改善対象とする。評価結果を見た後の再学習・再調整は行っていない。
+  </p>
+  <section id="data">
+    <h2>確定したデータとタスク</h2>
+    <p>
+      入力はattitude_expanded_1500_v2.jsonl、SHA-256は<code>b77bd3d3a63bab3a3082b287765d26889745b9bcf46bd04369dba613ec84e3eb</code>。15種各100件、全件合成短文。元レコードとgroupを保ち、同じ会話・群・近似文をまたがせず、seed
+      1729でtrain 900件、calibration 300件、eval
+      300件へ分割した。各ラベル60/20/20件。既存evalとの近似で固定された群は0件。
+    </p>
+    <p>
+      契約はexpanded-v2、公開名は<code>ruri-v3-30m-speaking-attitude-v2</code>。候補はnone、joy、enjoyment、wry、curiosity、admiration、relief、shy、surprise、confusion、sadness、apologetic、worry、dislike、anger。warmth・empathyは独立ラベルとして含めず、旧6種の上位互換とはしない。sadnessの寄り添い包含は今回のユーザーの指示による採用である。
+    </p>
+    <p>
+      現在チャンクだけを使う入力A、固定instruction、トピックprefix、左側512
+      tokens切詰めを維持した。ユーザー発言や履歴をEncoderへ渡さない。レビューの完了はユーザーの報告を根拠にファイル単位で記録し、個別の人手承認は捏造しない。
+    </p>
+  </section>
+  <section id="method">
+    <h2>学習と校正</h2>
+    <p>
+      固定cl-nagoya/ruri-v3-30m Encoder、revision
+      <code>24899e5de370b56d179604a007c0d727bf144504</code>。既存の動的INT8 ONNXとTokenizerを再利用し、CPU
+      4推論thread、256次元の埋め込みからFP32の15クラス線形headを学習した。Encoder全体の微調整は行っていない。
+    </p>
+    <p>
+      ロジスティック回帰、lbfgs、max_iter 2000、seed
+      1729。正則化Cはtrain内の3分割グループ交差検証だけで選び、同率時は小さいCを優先した。選択はC=100、学習一致率92.3%。calibration/evalのラベルはC選択へ使っていない。
+    </p>
+    <table>
+      <caption>
+        train内のMacro F1平均
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">C</th>
+          <th scope="col">3分割平均</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1</th>
+          <td>0.629492</td>
+        </tr>
+        <tr>
+          <th scope="row">10</th>
+          <td>0.671522</td>
+        </tr>
+        <tr>
+          <th scope="row">100</th>
+          <td>0.743895</td>
+        </tr>
+        <tr>
+          <th scope="row">1000</th>
+          <td>0.735646</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      温度はcalibration 300件だけの負の対数尤度で適合し、T=0.466991318。calibration
+      NLLは1.015315から0.736279へ改善した。温度は首位ラベルを変えない。reportのcalibration限定の方策選択はmargin
+      0、hysteresis 0、alpha
+      1となり、平滑化や切替保留を採用していない。旧0.6の採用閾値は本番へ設定していない。
+    </p>
+  </section>
+  <section id="quality">
+    <h2>未使用300件の結果</h2>
+    <table>
+      <caption>
+        各クラスの評価。各20件のため、1件でrecallが5ポイント変わる。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ラベル</th>
+          <th scope="col">Precision</th>
+          <th scope="col">Recall</th>
+          <th scope="col">F1</th>
+          <th scope="col">件数</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>0.667</td>
+          <td>0.800</td>
+          <td>0.727</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>0.792</td>
+          <td>0.950</td>
+          <td>0.864</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">enjoyment</th>
+          <td>0.889</td>
+          <td>0.800</td>
+          <td>0.842</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">wry</th>
+          <td>0.722</td>
+          <td>0.650</td>
+          <td>0.684</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>0.667</td>
+          <td>0.800</td>
+          <td>0.727</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">admiration</th>
+          <td>0.842</td>
+          <td>0.800</td>
+          <td>0.821</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">relief</th>
+          <td>0.850</td>
+          <td>0.850</td>
+          <td>0.850</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">shy</th>
+          <td>0.762</td>
+          <td>0.800</td>
+          <td>0.780</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>0.750</td>
+          <td>0.600</td>
+          <td>0.667</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">confusion</th>
+          <td>0.444</td>
+          <td>0.400</td>
+          <td>0.421</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">sadness</th>
+          <td>0.682</td>
+          <td>0.750</td>
+          <td>0.714</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">apologetic</th>
+          <td>0.792</td>
+          <td>0.950</td>
+          <td>0.864</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">worry</th>
+          <td>0.875</td>
+          <td>0.700</td>
+          <td>0.778</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">dislike</th>
+          <td>0.812</td>
+          <td>0.650</td>
+          <td>0.722</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">anger</th>
+          <td>0.700</td>
+          <td>0.700</td>
+          <td>0.700</td>
+          <td>20</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      誤りは76/300件。noneの誤感情付与は4/20件、感情表現をnoneへ落とす例は8/280件。怒り・嫌悪を不適切に付けた例は9/300件。confusionは8/20件の正解、surpriseは12/20件で、改善の余地が大きい。代表的な混同はsurprise→curiosity
+      4件、sadness→wry 4件、enjoyment→joy 3件。
+    </p>
+    <p>
+      未使用eval上のNLLは校正前1.057486、校正後0.766586。10
+      binのECEは0.275818から0.043647へ改善した。これは合成分布上の参考値であり、実利用での正解確率を保証しない。新データにはtechnicalタグや連続チャンクがないため、同データだけの技術誤感情率・遷移品質は分母0の未測定であり、0%と解釈しない。
+    </p>
+  </section>
+  <section id="regression">
+    <h2>既存評価集合での追加診断</h2>
+    <p>
+      旧eval
+      81件から、双方にあるnone・joy・curiosity・surpriseの58件だけを抜き出し、保存した新版と現行v1を同じ現在チャンクで比較した。warmth・empathyを新ラベルへ変換せず、全6種と全15種のMacro
+      F1を同列には比較しない。この診断からheadや温度を調整していない。
+    </p>
+    <table>
+      <caption>
+        共通ラベルと通常発話の診断
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル</th>
+          <th scope="col">共通58件の正解</th>
+          <th scope="col">none 23件への誤感情</th>
+          <th scope="col">技術none 14件への誤感情</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">v1</th>
+          <td>54/58</td>
+          <td>0/23</td>
+          <td>0/14</td>
+        </tr>
+        <tr>
+          <th scope="row">v2</th>
+          <td>45/58</td>
+          <td>9/23</td>
+          <td>6/14</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      v2は追加表現を学べた一方、今回のnone例が生活操作の短文へ偏っているため、通常の技術説明に対する抑制は十分ではない。これは誤りの分布に基づく推測であり、原因を切り分けた実験の結論ではない。次は技術説明・引用・否定・通常の確認質問を追加し、実際の配信チャンクで別の最終評価を行う。
+    </p>
+  </section>
+  <section id="performance">
+    <h2>速度とAPI検証</h2>
+    <p>
+      新しいCPUプロセスで3反復。品質は反復0の300件だけを数え、速度はevalの計900推論で集計した。P50
+      3.08ms、P95
+      8.13ms。観測RSS最大311.0MiB、PSS最大299.7MiB。反復間の予測変化0件、logit最大差0。推論時間はtokenization・Encoder・pooling・headを含み、HTTP往復・TTS開始時間は含まない。
+    </p>
+    <p>
+      保存したartifactをFastAPI
+      TestClientのlifespanから読み、health、全15ラベル、候補subsetのnone応答、旧モデル名・未知ラベルへの422、履歴がlogitへ入らないことを確認した。eval
+      5例では保存logitとAPI応答の差が1e-5未満で一致した。これは独立プロセス内のAPI検証であり、本番経由の通信確認ではない。
+    </p>
+  </section>
+  <section id="artifacts">
+    <h2>保存と再現に必要な識別子</h2>
+    <p>
+      学習出力・分割・生スコア・校正・集計は<code>/srv/ai/benchmarks/avatar-attitude/training/2026-10-24-expanded-v2</code>。学習済みモデルの配置先は<code>/srv/ai/models/ruri-speaking-attitude-expanded-v2-20261024</code>。sourceの<code>apps/ruri-system-one/assets-expanded-v2.json</code>に4ファイルのhashと契約を記録し、係数・モデル本体・学習データ・ログはcommitしない。
+    </p>
+    <table>
+      <caption>
+        出力のSHA-256
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ファイル</th>
+          <th scope="col">SHA-256</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">dataset/manifest.json</th>
+          <td><code>5ea8cc1668262b7bf2e5f075794a6035240b2ce802b26dad58d9ed2db04f039c</code></td>
+        </tr>
+        <tr>
+          <th scope="row">dataset/examples.jsonl</th>
+          <td><code>7af4c9e95809d52cdecba6a53e4629b87d4cc72e971e89a42532a6673eaae77b</code></td>
+        </tr>
+        <tr>
+          <th scope="row">head.json</th>
+          <td><code>a822463185da258f65797e07a5d256f8398d28b2caaaa406062a05cb0fac8f6d</code></td>
+        </tr>
+        <tr>
+          <th scope="row">calibration.json</th>
+          <td><code>2d1e9cd26bc732df57d6aab86ac810066fa1294c53d4cd1844bc330cc144b53a</code></td>
+        </tr>
+        <tr>
+          <th scope="row">bundle/assets.json</th>
+          <td><code>bed246622c33b42f8f4782122633e93c7b39e6493f4c25f5d31a986b6537c218</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      起動時には配置rootと対応するassets.jsonを明示する。現在の既定assets.json、Agent
+      Profile、route、service、sources.lock.yamlと有効releaseは切り替えていない。利用側の15種の表情・声色対応と、技術的な通常発話の改善を経てから本番採用を判断する。
+    </p>
+  </section>
+  <section id="references">
+    <h2>関連文書</h2>
+    <ul>
+      <li>
+        <a href="./ruri-attitude-expanded-data-review-2026-10-24.html"
+          >データ確認・先行準備の実装と作業一覧</a
+        >
+      </li>
+      <li>
+        <a href="./gemma-ruri-speaking-attitude-provider-2026-10-09.html">現行6種Providerの契約</a>
+      </li>
+    </ul>
+  </section>
+</article>

@@ -1,0 +1,71 @@
+{
+  "model": "cl-nagoya/ruri-v3-30m",
+  "revision": "24899e5de370b56d179604a007c0d727bf144504",
+  "contract": {
+    "schema_version": 1,
+    "version": "expanded-v2",
+    "public_model": "ruri-v3-30m-speaking-attitude-v2",
+    "labels": [
+      "none",
+      "joy",
+      "enjoyment",
+      "wry",
+      "curiosity",
+      "admiration",
+      "relief",
+      "shy",
+      "surprise",
+      "confusion",
+      "sadness",
+      "apologetic",
+      "worry",
+      "dislike",
+      "anger"
+    ],
+    "criteria": {
+      "none": "通常。落ち着いた説明・事実・操作手順。",
+      "joy": "喜び。良い結果や知らせを一緒に喜ぶ。",
+      "enjoyment": "楽しさ。会話や活動そのものを楽しむ。",
+      "wry": "苦笑。軽い困り事をユーモアや自嘲で受け止める。",
+      "curiosity": "好奇心。相手の話の続きを知りたがる。",
+      "admiration": "感心。工夫や能力を称賛する。",
+      "relief": "安堵。懸念が解消されてほっとする。",
+      "shy": "照れ。自身への称賛などに照れる。",
+      "surprise": "驚き。予想外の出来事に反応する。",
+      "confusion": "困惑。矛盾や理解できなさに戸惑う。",
+      "sadness": "悲しみ。アシスタント自身の悲しみや落胆、喪失への悲しい声色での寄り添いを含む。",
+      "apologetic": "申し訳なさ。自身の謝罪態度が表れる。",
+      "worry": "心配。相手や状況への懸念が表れる。",
+      "dislike": "嫌悪。自身の嫌がる声色や気乗りしなさが表れる。",
+      "anger": "怒り。アシスタント自身の憤りが表れる。"
+    },
+    "input_mode": "A",
+    "instruction": "判断対象は現在の回答チャンクだけ。アシスタント自身がそのチャンクを話す表情と声色を選ぶ。文章中の感情やユーザーの感情を分類しない。引用、否定、技術上の失敗は感情表現ではない。"
+  },
+  "head_revision": "sha256:a822463185da258f65797e07a5d256f8398d28b2caaaa406062a05cb0fac8f6d",
+  "calibration_revision": "sha256:2d1e9cd26bc732df57d6aab86ac810066fa1294c53d4cd1844bc330cc144b53a",
+  "input_mode": "A",
+  "preliminary": true,
+  "files": [
+    {
+      "path": "calibration.json",
+      "bytes": 14148,
+      "sha256": "2d1e9cd26bc732df57d6aab86ac810066fa1294c53d4cd1844bc330cc144b53a"
+    },
+    {
+      "path": "head.json",
+      "bytes": 242001,
+      "sha256": "a822463185da258f65797e07a5d256f8398d28b2caaaa406062a05cb0fac8f6d"
+    },
+    {
+      "path": "model.onnx",
+      "bytes": 115924487,
+      "sha256": "8e6124684aff3f86ac4c0bcfe37806d8fa4a76100c20b06942d8f726babe90bd"
+    },
+    {
+      "path": "tokenizer.json",
+      "bytes": 6724873,
+      "sha256": "0a94ac9a0a02c067bdef25b72ae9f4ee33f48f552e55988d444f6d25eeb1d062"
+    }
+  ]
+}

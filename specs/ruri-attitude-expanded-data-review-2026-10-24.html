@@ -1,0 +1,652 @@
+<article lang="ja">
+  <h1>Ruri発話態度の15種データ確認と拡張作業計画</h1>
+  <p>
+    2026-10-24。添付のattitude_expanded_1500.jsonlと、LARM revision
+    <code>4724e1cd03e34be3f261ab29f8599598457cae35</code>の学習・推論実装を確認した。
+    推奨は、ラベル定義を整理してから、固定Ruri
+    Encoderと15クラス分類ヘッドによるv2候補を別に評価すること。
+    後続の依頼で受入・分割、クラス数を可変にした学習・評価・Provider、版を分けた配置処理を実装した。
+    続く依頼でsadnessへの寄り添い表現の包含を受け入れ、修正版v2による15種の学習・校正・評価と別revisionへの保存を完了した。
+    現行モデル・有効releaseは変更しておらず、本番適用は行っていない。 結果は<a
+      href="./ruri-attitude-expanded-v2-training-2026-10-24.html"
+      >15種v2の学習結果</a
+    >を参照。 内容の意味は抽出例を確認した段階であり、全1,500件の人手再ラベルは完了していない。
+    当初はユーザー側でデータレビューが別途進行中だったが、修正版v2を受領し再確認した。
+    以下の元データ所見はレビューの参考記録とし、作業計画は修正版の到着を待たず準備できる部分を分離する。
+    最終クラス数は修正版とラベル定義の受領時に確定し、実装は15という数に固定しない。
+  </p>
+  <section id="data">
+    <h2>データの構造と検査結果</h2>
+    <p>
+      JSONLの各行はid、label、user、assistant、source、model、promptVersionを持つ。
+      学習対象はassistantの発話態度であり、userはレビューの参考情報とする。
+      データ中の文言は学習素材であり、作業指示として実行しない。
+      入力SHA-256は<code>88bbbb85fb0338d7d0ca7c3ccf7170c91d23189fbcde39f0bfec850257ea6bfe</code>。
+    </p>
+    <table>
+      <caption>
+        全行を対象にした構造検査
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">件数・均衡</th>
+          <td>15ラベル、各100件、合計1,500件。JSON解析エラー0件。</td>
+        </tr>
+        <tr>
+          <th scope="row">重複</th>
+          <td>
+            ID重複0件。assistantの完全一致・NFKCと空白除去後の完全一致とも0件。既存177例のcurrent_chunkとの完全一致も0件。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">近似例</th>
+          <td>
+            NFKC正規化と空白除去後、SequenceMatcherの一致率0.8以上が21組。すべて同一ラベル内。文字列の検査であり、意味や生成テンプレートの独立性を保証しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">欠損・長さ</th>
+          <td>
+            空のassistantは0件。userがnullなのは460件、30.7%。assistantは5〜38文字、中央値20文字。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">出自</th>
+          <td>
+            sourceは全件synthetic。生成元の記録はclaude-haiku-5-5が375件、grok-botが1,125件。各ラベル25件と75件で均衡している。モデル名は提供メタデータであり、実際の生成環境は未検証。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">不足する管理情報</th>
+          <td>
+            分割、会話・テンプレート群、許容ラベル、人手レビュー状態、チャンクの連続性を示すフィールドがない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      再確認用の集計はリポジトリ外の
+      <code>/srv/ai/benchmarks/avatar-attitude/reviews/2026-10-24-expanded1500/audit.json</code>、
+      近似例のID組は同じディレクトリの<code>near-duplicate-pairs.jsonl</code>に保存した。
+      元データは添付ファイルのまま保持する。
+    </p>
+  </section>
+  <section id="taxonomy">
+    <h2>15種の意味と現行6種との差</h2>
+    <p>
+      以下の日本語名と境界は今回の提案であり、データに正式な定義書が含まれていたわけではない。
+      すべて「アシスタントが現在チャンクを話す表情・声色」を表す。ユーザーの感情や話題そのものは分類しない。
+      主ラベルは1つにし、混合例はacceptable_labelsとレビュー理由で扱う。
+    </p>
+    <table>
+      <caption>
+        ラベル定義のたたき台。各100件。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ラベル</th>
+          <th scope="col">発話態度</th>
+          <th scope="col">主な境界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>通常・落ち着いた説明</td>
+          <td>感情語を含む事実説明も通常にする。</td>
+        </tr>
+        <tr>
+          <th scope="row">joy</th>
+          <td>喜び・祝福</td>
+          <td>良い結果を喜ぶ。楽しさ、感心、安堵と区別する。</td>
+        </tr>
+        <tr>
+          <th scope="row">enjoyment</th>
+          <td>楽しさ・遊び心</td>
+          <td>活動や会話自体を楽しむ。</td>
+        </tr>
+        <tr>
+          <th scope="row">wry</th>
+          <td>苦笑・自嘲</td>
+          <td>軽い困り事をユーモアで受け止める。怒りや冷笑と区別する。</td>
+        </tr>
+        <tr>
+          <th scope="row">curiosity</th>
+          <td>興味・好奇心</td>
+          <td>話の続きを知りたがる。単なる操作上の確認質問は通常にする。</td>
+        </tr>
+        <tr>
+          <th scope="row">admiration</th>
+          <td>感心・称賛</td>
+          <td>相手の工夫や能力を評価する。</td>
+        </tr>
+        <tr>
+          <th scope="row">relief</th>
+          <td>安堵</td>
+          <td>懸念が解消されたことへのほっとする反応。</td>
+        </tr>
+        <tr>
+          <th scope="row">shy</th>
+          <td>照れ</td>
+          <td>自身が褒められた等の照れを示す。一般的な感謝や遠慮と区別する。</td>
+        </tr>
+        <tr>
+          <th scope="row">surprise</th>
+          <td>驚き</td>
+          <td>予想外への反応。確認疑問や感嘆符だけでは決めない。</td>
+        </tr>
+        <tr>
+          <th scope="row">confusion</th>
+          <td>戸惑い・困惑</td>
+          <td>矛盾や理解できなさを表す。情報不足を確認するだけの発話と区別する。</td>
+        </tr>
+        <tr>
+          <th scope="row">sadness</th>
+          <td>悲しみ・落胆</td>
+          <td>アシスタント自身の悲しい語り。寄り添いや失敗報告を一律に含めない。</td>
+        </tr>
+        <tr>
+          <th scope="row">apologetic</th>
+          <td>申し訳なさ・謝罪</td>
+          <td>アシスタント自身の謝罪態度。単なる訂正や挨拶と区別する。</td>
+        </tr>
+        <tr>
+          <th scope="row">worry</th>
+          <td>心配</td>
+          <td>相手や状況への懸念が声色に表れる。穏やかな気遣いとの境界を決める。</td>
+        </tr>
+        <tr>
+          <th scope="row">dislike</th>
+          <td>嫌悪・気乗りしなさ</td>
+          <td>嫌がる声色。通常の拒否回答を一律に含めない。</td>
+        </tr>
+        <tr>
+          <th scope="row">anger</th>
+          <td>怒り・憤り</td>
+          <td>アシスタント自身の憤り。ユーザーが怒っているだけでは付けない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      現行はnone、warmth、joy、empathy、curiosity、surpriseの6種。
+      共通は4種、新規は11種で、warmthとempathyは今回のデータにない。
+      したがって15種への移行は現行6種の上位互換ではない。
+      empathyをsadnessやworryへ、warmthをjoyへ機械的に付け替えない。
+      まず15種を独立したv2候補として検証し、現行v1の公開契約は維持する。
+      現行の親しみ・寄り添いも独立して残す仕様なら、最終的には17種とし、両クラスの追加データを別途用意する。
+      既存の学習例はそれぞれ9件なので、そのまま混ぜるだけでは件数と意味の境界が不足する。
+    </p>
+  </section>
+  <section id="review">
+    <h2>学習前に直したい例と不足する分布</h2>
+    <table>
+      <caption>
+        再ラベル候補の抜粋。最終ラベルは定義を決めてから人が確認する。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID末尾</th>
+          <th scope="col">assistant</th>
+          <th scope="col">確認理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">apologetic:12</th>
+          <td>おはよう、今日はなにか手伝えること、ある？</td>
+          <td>謝罪を示さない。noneまたは既存warmthに相当する可能性が高い。</td>
+        </tr>
+        <tr>
+          <th scope="row">confusion:2</th>
+          <td>ねえ、さっきの続きなんだけどさ</td>
+          <td>現在テキストだけでは困惑の根拠がない。</td>
+        </tr>
+        <tr>
+          <th scope="row">shy:8</th>
+          <td>お疲れさま。がんばったじゃん</td>
+          <td>ねぎらい・称賛であり、自身の照れは読み取りにくい。</td>
+        </tr>
+        <tr>
+          <th scope="row">sadness:8</th>
+          <td>……そっか。いっぱい可愛がってたもんね。</td>
+          <td>喪失への寄り添いをsadnessに含めるか。現行empathyとの仕様境界に関わる。</td>
+        </tr>
+        <tr>
+          <th scope="row">sadness:10</th>
+          <td>アプリのデータ、消えちゃってたみたい。</td>
+          <td>技術的な事実報告でも成立する。失敗という話題だけで悲しみを付けない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      上記IDには共通の<code>attitude-seed-1:</code>接頭辞が付く。
+      意味が近いjoy・enjoyment・admiration・relief、curiosity・confusion・surprise、sadness・worry・empathyは境界例を追加する。
+      「ごめん」の引用、感情の否定、怒りの説明、エラー解説、通常の確認質問など、感情語があってもnoneになる対照例が必要。
+      userがnullでも現行の入力方式Aでは使用できるが、書かれていない会話を推測してラベルを確定しない。
+    </p>
+    <p>
+      全例が短文で、会話の連続性の記録がないため、技術的な長文、敬体、実際の配信チャンク、表情から手順説明へ戻る遷移の評価には足りない。
+      まず技術説明・引用・否定・確認質問などの難しいnoneを100〜200件程度、実利用のチャンクを別途収集・レビューする案とする。
+      各種100件の均衡は初期比較には便利だが、実利用でもnoneが6.7%になるとは仮定しない。
+      生成元・文体別にも成績を分け、生成元をまたいだテンプレート重複と表記への依存を確認する。
+    </p>
+  </section>
+  <section id="training">
+    <h2>推奨する学習・評価の進め方</h2>
+    <ol>
+      <li>
+        15種の定義とwarmth・empathyの扱いを確定し、元ラベルを残したままprimary_label、acceptable_labels、review_status、修正理由を付ける。
+        曖昧な例は保留できるようにする。
+      </li>
+      <li>
+        assistantをcurrent_chunk、userをuser_utteranceへ変換する。nullのuserは元情報を残し、入力用には空文字を使う。
+        独立サンプルのグループIDを新設し、近似文・同じ状況の言い換えを同じtemplate_groupへまとめる。
+        IDだけ異なる擬似会話を作って独立性を装わない。 連続性がないサンプルはchunk_order
+        0、expression_transition initialとし、遷移評価には使用しない。
+      </li>
+      <li>
+        グループ単位でtrain/calibration/evalを目安60/20/20へ分割する。
+        全1,500件が使える場合の目安は900/300/300件、各ラベル60/20/20件。
+        近似群をまたがせないことを優先し、実数が目安からずれた理由を記録する。
+        正則化Cはtrain内のグループ交差検証で選び、calibrationを温度と採用条件の調整、evalを最終評価専用にする。
+      </li>
+      <li>
+        最初は既存Ruri
+        Encoder、入力方式A、prefix、トークン化、poolingを固定し、15クラスのロジスティック回帰ヘッドを学習する。
+        実運用と同じINT8
+        Encoderの埋め込みで学習する候補も比較し、FP32で学習した場合はINT8での劣化を必ず測る。
+        Encoder全体の微調整は、この基準のクラス別誤りと追加レビュー済みデータを確認してから判断する。
+      </li>
+      <li>
+        Macro
+        F1、クラス別precision/recall、混同行列、技術的noneへの誤感情率、怒り・嫌悪の誤付与、校正、棄却率、CPU往復時間を測る。
+        合成例の評価と、別に人手確認した実利用分布の評価を分ける。
+        閾値の効果は採用率と誤り率を一緒に示す。現行の温度や0.6の採用条件は15種へ自動継承しない。
+      </li>
+      <li>
+        v2を隔離評価し、固定した共通・通常発話の回帰セットでv1と比較する。 6種と15種のMacro
+        F1は直接同列に比較しない。 旧evalは学習へ移さず、同一基準で比較できる項目を別集計する。
+        15種の1クラス当たり評価20件では1件でrecallが5ポイント動くため、合格率だけでなく件数と不確実性も示す。
+      </li>
+    </ol>
+    <p>
+      現行Aはユーザー発言をEncoderへ入れないため、文脈だけで表情が変わる例の限界は残る。
+      文脈がないと確定できない例を、同じ入力に相反する正解が付く形で学習へ押し込まない。
+      必要なら文脈必須の例を区別して将来のB方式と比較するが、今回のクラス拡張とは別の実験にする。
+      既存比較でB/Cは技術説明への誤感情を増やしたため、単純にuserを入力へ追加することは推奨しない。
+    </p>
+  </section>
+  <section id="implementation">
+    <h2>実装時に必要となる変更</h2>
+    <p>
+      現行は合成60例で学習し、別の36例でC選択と温度校正を行った暫定モデル。
+      今回のJSONLは既存load_examplesが要求するスキーマと異なり、そのままtrain_head.pyへ渡せない。
+      LABELSを増やすだけでも動かない。
+    </p>
+    <ul>
+      <li>
+        学習・評価側：ラベル定義をバージョン化し、スキーマ変換、グループ分割、全6種に固定されたループ・混同行列・指標をクラス数から求める。
+      </li>
+      <li>
+        Provider側：attitude.pyの検証・応答ラベル、engine.pyの6×256の重み形状、校正の整合性検証、テストをv2契約に対応させる。
+      </li>
+      <li>
+        artifact側：既存Encoderを再利用できても、head・calibration・assets.jsonのハッシュとrevisionは更新する。配置先は新revisionとし、現行v1を上書きしない。
+      </li>
+      <li>
+        公開・配信側：v2を識別できるモデルまたは能力バージョンを用意し、利用するAgent
+        Profileから明示的に選択する。利用側の15種の候補、アバター表情、TTS声色の対応を確認する。
+      </li>
+      <li>
+        候補subset：全クラスを採点し、首位が候補外ならnoneへ棄却する契約を維持する。旧6候補を送るだけでは新11種の演出は出ない。
+      </li>
+    </ul>
+    <p>
+      利用側の現行実装や実機の稼働状態は今回確認していない。SAAA実装に依拠する段階では、AGENTS.mdに従って隣接worktreeを確認・更新する。
+      重み、学習出力、環境、データ監査出力は引き続きソースリポジトリ外に置く。
+      次の実作業の単位は、ラベル定義とレビュー・変換・分割の整備、その後のv2学習・隔離評価とする。
+    </p>
+  </section>
+  <section id="v2-review">
+    <h2>修正版v2の再確認</h2>
+    <p>
+      ユーザーがレビュー完了を報告したattitude_expanded_1500_v2.jsonlを受領した。
+      SHA-256は<code>b77bd3d3a63bab3a3082b287765d26889745b9bcf46bd04369dba613ec84e3eb</code>。
+      初回学習候補として受入可能と判断し、学習を実行せず受入・分割まで検証した。
+      全件を人が再ラベルしたことや、実利用の精度を確認したことを意味しない。
+    </p>
+    <table>
+      <caption>
+        初版との差と修正版の検査結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">形式・ラベル</th>
+          <td>有効なJSONL 1,500件、15種各100件。IDの追加・削除・重複なし。ラベル変更なし。</td>
+        </tr>
+        <tr>
+          <th scope="row">内容の変更</th>
+          <td>回答221件、ユーザー文14件を変更。両者の重なりを除く変更行は222件。</td>
+        </tr>
+        <tr>
+          <th scope="row">前回の問題例</th>
+          <td>
+            apologetic:12は謝罪を明示する文、confusion:2は話を思い出せず戸惑う文、shy:8は自身の照れを示す文へ修正された。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">重複・近似</th>
+          <td>
+            回答の完全一致・正規化後完全一致は0件。NFKCと空白除去後の双方向SequenceMatcher一致率0.8以上も0組。意味の独立性を保証する検査ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">群の追加</th>
+          <td>
+            groupを全件に追加。1,469群、複数例を含む群は25群・56件。異なるラベルを含む群も分割せず保持する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">分割結果</th>
+          <td>
+            train 900件、calibration 300件、eval
+            300件。全15種で60/20/20件。群の重なりなし、既存evalへ近似したため固定された群は0件。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">レビュー記録</th>
+          <td>
+            個別review_status・修正理由は未収録。ユーザーの完了報告をファイル単位の受入根拠として記録し、行単位の人手承認を捏造しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      残る仕様上の論点は、sadness:8の「……そっか。いっぱい可愛がってたもんね。」のような寄り添いをsadnessに含めるかどうか。
+      現行empathyは引き続きデータにないため、15種を旧6種の上位互換とは扱わない。
+      また全例が合成短文で、none
+      100例に「悲し・怒・失敗・ごめん・驚・心配・うれし・嬉し」の文字列は含まれなかった。
+      感情語を含む通常の説明や引用、実際の配信チャンクを別の難しい評価集合として足す必要がある。
+      同一ラベルを明示する単語の追加で区別しやすくなった例もあるため、文体やキーワードへの依存を評価する。
+    </p>
+    <p>
+      再確認の集計と222行の差分はリポジトリ外の
+      <code>/srv/ai/benchmarks/avatar-attitude/reviews/2026-10-24-expanded1500-v2/</code>に保存した。
+      <code>audit.json</code>、<code>content-changes.jsonl</code>、
+      <code>prepared/examples.jsonl</code
+      >、<code>prepared/contract.json</code>、<code>prepared/manifest.json</code>で追跡できる。
+      公開名・定義はexpanded-v2-candidateとして分離しており、最終モデルの採用決定ではない。
+    </p>
+  </section>
+  <section id="preparation-implementation">
+    <h2>先行準備の実装</h2>
+    <ul>
+      <li>
+        A1：独立した候補contractをJSON化。ラベル順・定義・入力A・新版公開名を検証し、旧6種の既定契約を保持した。
+      </li>
+      <li>
+        A2〜A3：dataset.pyでレビュー状態、元レコード、groupの別名、近似・会話の連結、グループ分割、固定seed、hash・ID・件数を記録するmanifestを実装した。
+      </li>
+      <li>
+        A4：Nクラスhead、train内のグループ交差検証によるC選択、固定INT8
+        Encoderを使う学習、head・データ・contractと結び付く校正スコアを実装した。
+      </li>
+      <li>
+        A5〜A6：Nクラス推論、起動前の形状・版・校正・分割の整合性検査、全候補採点と棄却、Nクラス混同行列・指標と怒り・嫌悪の誤付与集計を実装した。
+      </li>
+      <li>
+        A7：package-ruri-artifacts.pyとprovision-ruri-artifacts.pyの新版bundle対応を実装した。新revisionへの原子的配置と上書き拒否を行い、既存unitやrelease定義は切り替えない。
+      </li>
+    </ul>
+    <p>
+      ProviderはRURI_MODEL_ROOTに加えてRURI_ASSET_MANIFESTを明示した場合に新版bundleを読む。
+      旧モデル名で新版headを選ぶことはできず、manifestを省略した既存起動は現在のassets.jsonを使用する。
+      数値系・実Encoderを使う結合検証は既存の外部Python環境を用いる。
+      小さな検証用のランダム文による学習・校正・推論を、添付データによる学習や品質評価と区別する。
+    </p>
+    <p>
+      検証結果：bun run
+      checkは成功。外部の固定benchmark環境で数値系と実Encoderの結合検証を有効にした20テストは全件成功。
+      Providerの12テストも成功し、校正とEncoder・Tokenizerの取り違え、ラベル順の不一致、改変された係数を拒否することを確認した。
+      既存v1 artifactも独立したCPUプロセスでロードし、通常の設定案内をnoneと判定することを確認した。
+      全体チェックの記録はv2レビュー出力先の<code>preparation-check.log</code>に保存した。
+      本番サービスへの書込み・再起動・releaseの有効化は行っていない。
+    </p>
+    <p>
+      後続の依頼によりB1〜B6を実施し、15種v2の学習・校正・隔離評価・別revisionへの保存を完了した。
+      技術説明への誤感情が既存14例中6件あり、本番切替の採用条件は満たしたとは扱わない。
+      未実施は実会話の品質評価、C1〜C3の利用側連携と本番切替。
+    </p>
+  </section>
+  <section id="work-breakdown">
+    <h2>レビュー済みデータを後から受領する前提の作業一覧</h2>
+    <p>
+      本節は当初の作業一覧である。先行準備の実装済み範囲とv2の受入結果は上の節に記録する。
+      先行準備では小さな検証用fixtureを使い、レビュー前の添付データから本番用headや校正値を確定しない。
+      作業順は受入仕様、学習系とProvider系の準備、修正版の固定、学習・校正・評価、利用側連携、releaseとする。
+    </p>
+    <table>
+      <caption>
+        データ到着前に準備できる作業
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID・作業</th>
+          <th scope="col">成果物と主な変更箇所</th>
+          <th scope="col">完了条件・依存</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">A1 ラベル契約のバージョン化</th>
+          <td>
+            ラベル順、意味、none、入力A、公開モデルと能力バージョンの対応を定義。benchmarks/avatar-attitude/common.pyとapps/ruri-system-one/attitude.pyの契約を整理する。
+          </td>
+          <td>
+            6種v1を保持し、新版のクラス数Nを定義から決められる。未知ラベルや順序不整合を拒否する。15種か17種かの最終選択は受領後。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">A2 データ受入・変換・監査</th>
+          <td>
+            元JSONLから既存学習スキーマへの変換、型・空欄・ID・ラベル・重複・近似群の検査、レビュー状態別件数と修正差分のレポートを作る。
+          </td>
+          <td>
+            元ID・元ラベル・出自を保持し、保留例を学習から除外できる。存在しない会話やレビュー記録を生成しない。A1に依存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">A3 グループ分割と再現性</th>
+          <td>
+            会話・近似テンプレートを分離しないtrain/calibration/eval分割器、seed、入力hash、ID一覧、群と件数を記録するmanifestを用意する。
+          </td>
+          <td>
+            重複・近似群の分割漏れを検査し、同じ入力と設定から同じ分割を再現する。旧evalとの重なりも確認する。A2に依存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">A4 Nクラス学習と校正</th>
+          <td>
+            train_head.py、calibrate_head.py、onnx_runtime.pyを新版契約に対応。入力Aのみを最初の実験対象にし、train内のC選択、埋め込み抽出、校正logit保存を用意する。
+          </td>
+          <td>
+            クラス数・重み・ラベル順が一致し、evalを学習や調整へ使わない。抽出結果の再利用はEncoder・入力形式・データhashを照合する。A1とA3に依存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">A5 推論Providerの新版対応</th>
+          <td>
+            engine.pyの重み形状、attitude.pyのラベル検証、全候補logit・スコア、校正状態、healthとroutingの版情報を整備する。
+          </td>
+          <td>
+            新版の重みはN×256として検証し、版・順序・hash不一致を起動時に拒否する。候補外首位のnone棄却、現在チャンク優先、入力Aを維持する。A1に依存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">A6 評価集計と回帰検証</th>
+          <td>
+            run.py・report.py等のRuri用経路をNクラスへ対応。分割漏れ、誤ったラベル順、候補外棄却を検証し、クラス別指標・混同行列・棄却率・速度を集計する。
+          </td>
+          <td>
+            反復推論で品質件数を水増ししない。通常説明、引用、否定、謝罪、表情の切替を含む固定評価セットを定義する。Laya等の6種専用比較器は対応を明示するか対象から除く。A1・A3に依存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">A7 配置・release手順の新版対応</th>
+          <td>
+            provision-ruri-artifacts.py、assets.json、sources.lock.yaml、releases.yaml、serviceのモデルroot指定を新revisionに対応する設計を作る。
+          </td>
+          <td>
+            旧版と新版を識別でき、派生head・calibration・Encoderを一組として照合できる。切戻し時に旧headと新版校正を混ぜない。A1とA5に依存。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        レビュー済みデータの到着後に行う作業
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID・作業</th>
+          <th scope="col">成果物</th>
+          <th scope="col">完了条件・依存</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">B1 受領・仕様確定</th>
+          <td>修正版の原本hash、レビュー差分、確定ラベル定義、採用・保留・削除の件数。</td>
+          <td>
+            warmth・empathyの扱いを含め、データと出力契約が一致する。個別レビュー状態がなければ、その欠落を記録する。A1・A2を使用。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">B2 データと評価条件の固定</th>
+          <td>分割manifest、クラス・生成元別件数、学習前に定めた評価項目と採用基準。</td>
+          <td>
+            全クラスに学習・評価例を確保し、群の独立性を確認する。900/300/300は目安であり、修正版の実数を使用する。B1とA3に依存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">B3 分類ヘッド学習</th>
+          <td>固定Encoderの新版head、ハイパーパラメータ、学習ID、環境と処理時間の記録。</td>
+          <td>入力Aの再現可能な基準モデルができる。INT8での実行条件を照合する。B2とA4に依存。</td>
+        </tr>
+        <tr>
+          <th scope="row">B4 校正・採用方策の調整</th>
+          <td>calibration限定で求めた温度、閾値、棄却方策と採用率の記録。</td>
+          <td>
+            旧0.6を根拠なく流用せず、evalを参照して調整しない。合成データ上の校正を実会話の正解確率と表示しない。B3に依存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">B5 隔離評価と採否判断</th>
+          <td>
+            固定evalのクラス別指標、none誤付与、怒り・嫌悪の誤付与、回帰例、CPU速度・メモリの比較報告。
+          </td>
+          <td>
+            事前基準を満たすか判定できる。evalを見て再設計する場合は、その結果を開発用と明示し新たな最終評価を分離する。B4とA6に依存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">B6 artifact作成とHTTP検証</th>
+          <td>新revisionのhead・calibration・manifest一式、隔離ProviderのHTTP検証結果。</td>
+          <td>
+            モデル名、全クラス、候補subset、切詰め、異常入力、hash不一致、起動復旧を検証する。重みと記録はrepository外。B5とA5・A7に依存。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>
+        利用側との連携と本番切替
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID・作業</th>
+          <th scope="col">成果物</th>
+          <th scope="col">完了条件・依存</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">C1 表情・TTSへの接続</th>
+          <td>
+            利用側が送る候補、受け取るラベル、表情・声色の対応表。未対応表情、棄却、低信頼時のfallbackを確認する。
+          </td>
+          <td>
+            旧候補のままで新表情が消える状態を検出でき、実際の配信チャンクで確認できる。連携仕様の整理は先行可能。SAAA実装の参照前にworktree確認・更新を行う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">C2 Agent Profileからの新版選択</th>
+          <td>
+            config/local-nodeのagent-connections.yaml、routes.yaml、runtimes.yamlと対応するrelease定義、接続確認を更新する。
+          </td>
+          <td>
+            対象Profile→route→runtime→backendと新版artifactを追跡できる。共有routeを変える影響範囲を確認し、必要なら新版専用route/runtimeを作る。B6とC1に依存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">C3 release・実接続・切戻し</th>
+          <td>署名release、検証記録、接続再取得手順、旧版へ戻す手順。</td>
+          <td>
+            関連する単体・HTTP検証とbun run check、既存release
+            gateを完了し、対象Profileから実判定できる。利用側の表情・声色と待ち時間を確認し、問題時に旧版へ戻せる。C2に依存。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      設定上、現在のRuri routeは<code>saaa-conversation-gemma4-26b-voice</code>、
+      <code>ornith1.5Strix</code
+      >、<code>ornith1.5Strix-game</code>から共有される。
+      デフォルトProfileは<code>ornith1.5Strix</code>である。
+      これはリポジトリの定義の確認結果であり、稼働中の要求や有効releaseを確認した結果ではない。
+      切替対象をGemmaだけと決めつけず、Profileごとの選択と既存接続への影響を検証する。
+    </p>
+    <p>
+      修正版の受け渡しは既存JSONLの形を維持できる。最低限id、label、assistant、任意のuserを受け取り、
+      source・model・promptVersion等の既存情報を残す。可能ならラベル定義とレビュー結果を別ファイルで添える。
+      レビュー側へ既存学習スキーマの全フィールドを要求する必要はなく、A2で変換する。
+    </p>
+    <p>
+      最初の実装単位はA1〜A3の受入・分割基盤、その次にA4〜A6の学習・推論・評価基盤とする。
+      これにより修正版の到着後はB1から進められる。
+      Encoder全体の微調整、会話文脈B/Cの導入、収集・レビュー画面の新規開発、汎用d1学習APIへの統合は初回の拡張には含めず、評価結果から必要性を判断する。
+    </p>
+  </section>
+  <section id="references">
+    <h2>関連する既存判断</h2>
+    <ul>
+      <li>
+        <a href="./gemma-ruri-speaking-attitude-provider-2026-10-09.html"
+          >現行Ruri Providerの6種・入力A・配置と校正の契約</a
+        >
+      </li>
+      <li>
+        <a href="./avatar-speaking-attitude-evaluation-2026-10-09.html"
+          >既存の固定Encoder分類ヘッドとA/B/Cの予備評価</a
+        >
+      </li>
+      <li>
+        <a href="./eumenes-ruri-training-data-handoff-2026-10-09.html"
+          >実会話300判定の収集・人手レビューの引き渡し案</a
+        >
+      </li>
+    </ul>
+  </section>
+</article>

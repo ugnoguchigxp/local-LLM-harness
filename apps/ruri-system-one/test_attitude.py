@@ -3,9 +3,35 @@ from pathlib import Path
 import sys
 import unittest
 from attitude import LABELS, PUBLIC_MODEL, choice_answer, current_chunk, format_input, validate_request
+from attitude import validate_contract
 
 
 class AttitudeTests(unittest.TestCase):
+    def test_expanded_contract_matches_benchmark_and_rejects_legacy_model_reuse(self):
+        import copy
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'benchmarks/avatar-attitude'))
+        from common import load_contract
+        path = Path(__file__).with_name('contracts')/'expanded-v2-candidate.json'
+        contract = validate_contract(json.loads(path.read_text()))
+        self.assertEqual(contract, load_contract(path))
+        body = self.request({label: label for label in contract['labels']})
+        body['model'] = contract['public_model']
+        validate_request(body, contract['labels'], contract['public_model'])
+        with self.assertRaises(ValueError):
+            validate_request(body)
+        scores = [0.] * len(contract['labels'])
+        scores[-1] = 5.
+        result = choice_answer(scores, ['none'], labels=contract['labels'])
+        self.assertEqual(result['choice'], 'none')
+        self.assertEqual(result['answer_confidence'], 0.)
+        self.assertEqual(len(result['probabilities']), 15)
+        changed = copy.deepcopy(contract)
+        changed['public_model'] = PUBLIC_MODEL
+        with self.assertRaises(ValueError): validate_contract(changed)
+        changed = copy.deepcopy(contract)
+        changed['labels'][0], changed['labels'][1] = changed['labels'][1], changed['labels'][0]
+        with self.assertRaises(ValueError): validate_contract(changed)
+
     def request(self, criteria=None):
         return {'model': PUBLIC_MODEL, 'state': {'response': '設定を開きます。', 'conversation': '悲しい、失敗した'},
                 'questions': {'emotion': {'type': 'choice', 'instructions': '発話態度',
