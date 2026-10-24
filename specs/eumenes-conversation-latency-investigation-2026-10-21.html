@@ -1,0 +1,157 @@
+<article lang="ja">
+  <h1>Eumenes会話の遅延とinvalid_conversation_operationの調査</h1>
+  <p>
+    2026年10月21日、JST
+    06:16〜06:21の既存要求を調査した。推論や再起動を追加せず、LARMのjournal、監査記録、実行中の設定とメトリクスを照合した。会話本文・音声・認証情報・Providerの生応答はこの文書へ収録しない。
+  </p>
+  <section id="conclusions">
+    <h2>結論と確認範囲</h2>
+    <p>
+      Eumenesの要求はornith1.5Strix → llm-ornith15-strix → ornith15-strix-conversation →
+      llama-swap配下のSTRIX_LEAN実行プロセスへ解決されていた。解決されたreleaseはornith15-strix-conversation-p4-v3。別profileとのモデル差を設定不整合とは判定しない。
+    </p>
+    <p>
+      遅延の主因は、各段階で約1.4万トークンの入力を再計算することと、出力契約違反による再生成が重なることだった。返答の生成速度自体は約62〜67トークン毎秒で、25トークンの生成は0.38秒、20トークンの生成は0.32秒。これに対し入力処理は18〜19秒かかる。
+    </p>
+    <p>
+      invalid_conversation_operationはEumenesが出力を採用できなかった場合の共通エラーであり、LARMのHTTP障害を直接意味しない。監査記録で一回目の回答に対するspoken_reply_too_longを確認し、その再生成も現在のEumenesの同じ検査関数で不合格になることを確認した。Mac上の稼働EumenesのrunId、ログ、実行revisionは取得できていないため、画面に出た特定のエラーとの最終的な対応付けは未確認。
+    </p>
+  </section>
+  <section id="timings">
+    <h2>入力処理と再生成の実測</h2>
+    <table>
+      <caption>
+        監査応答のtimings。cache_nはすべて0。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求ID</th>
+          <th scope="col">役割</th>
+          <th scope="col">入力トークン</th>
+          <th scope="col">入力処理</th>
+          <th scope="col">出力生成</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">req_a30290fb-339b-4893-aca3-f2dcf57dbedf</th>
+          <td>機能選択の初回</td>
+          <td>13,422</td>
+          <td>18.300秒</td>
+          <td>25トークン、0.375秒</td>
+        </tr>
+        <tr>
+          <th scope="row">req_6bfe8982-2db3-438e-9fec-fb6e9e7d30b4</th>
+          <td>選択修正後の回答生成</td>
+          <td>13,576</td>
+          <td>19.125秒</td>
+          <td>6トークン、0.182秒</td>
+        </tr>
+        <tr>
+          <th scope="row">req_1fb0c354-6b84-49a8-98f9-2847c7827016</th>
+          <td>次の会話の回答生成</td>
+          <td>13,602</td>
+          <td>18.646秒</td>
+          <td>48トークン、0.757秒</td>
+        </tr>
+        <tr>
+          <th scope="row">req_b47ab21e-5f1e-4552-8ad9-05ecb1c2589a</th>
+          <td>音声回答の構造修正</td>
+          <td>13,832</td>
+          <td>19.110秒</td>
+          <td>20トークン、0.320秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      最初の機能選択要求はmessage本文が合計1,116文字だったが、24個の関数定義がJSON換算で33,929文字あり、最終promptは13,422トークンになった。自然文を返して関数を呼ばなかったため、次の要求にはanalysis_call_requiredの修正情報が含まれる。再生成後はanswer関数を返している。
+    </p>
+    <p>
+      その後の回答要求は268メッセージ、本文合計25,790文字、13,576トークンで、長い履歴等の処理負担もある。JST
+      06:16:52.574の機能選択開始から06:17:56.779の回答要求終了まで約64.2秒。前段の候補検索やブラウザ表示にかかる時間はこの値に含まれない。
+    </p>
+    <p>
+      次の会話では機能選択が8関数、4,484トークンに減っても、関数呼出しがなく再生成した。JST
+      06:18:23.549から06:19:23.415まで約59.9秒で、その中に機能選択2回と回答生成2回がある。
+    </p>
+  </section>
+  <section id="output-contract">
+    <h2>音声回答制限と追加エラー</h2>
+    <p>
+      Eumenesの参照実装は、音声整形後の回答を160文字以内かつ2文以内に制限し、不合格の場合は一度だけモデルに構造修正を求める。再び不合格ならinvalid_conversation_operationで終了する。文字数が少なくても文数の超過で失敗する。
+    </p>
+    <table>
+      <caption>
+        保存済み応答をspokenReplyMeasureとisBriefSpokenReplyへ渡した結果。内容は非掲載。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求ID</th>
+          <th scope="col">整形後の文字数</th>
+          <th scope="col">文数</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">req_1fb0c354-6b84-49a8-98f9-2847c7827016</th>
+          <td>97</td>
+          <td>4</td>
+          <td>不合格。次の要求の修正情報にもspoken_reply_too_longを確認。</td>
+        </tr>
+        <tr>
+          <th scope="row">req_b47ab21e-5f1e-4552-8ad9-05ecb1c2589a</th>
+          <td>31</td>
+          <td>3</td>
+          <td>不合格。再生成しても2文以内を満たさない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      参照したEumenes
+      checkoutはcleanであることを確認後、fast-forwardで1cc8ce2fへ更新した。稼働側のrevision一致は未検証。initial_instructionsというMCPツールはこの環境の利用可能なツール一覧に存在しない。稼働API・製品DBへはアクセスしていない。
+    </p>
+    <p>
+      LARMの一部終了ログはclient_cancelledまたはbinding_invalidatedだが、同じ監査応答にはfinish_reason=stopとtimingsがある。これだけで利用者の取消、ネットワーク障害、生成中断を原因と断定しない。
+    </p>
+  </section>
+  <section id="resources">
+    <h2>キャッシュと資源の状態</h2>
+    <p>
+      該当runtimeは起動済みで、prompt再利用はno-cache-promptとcache-reuse
+      0で明示的に無効だった。監査応答もcache_n=0で一致する。過去に同じ実行エンジンの繰り返しprobeでprompt再利用がabortを起こしたための設定であり、理由を無視して有効化しない。詳細は<a
+        href="./ornith15-strix-profile-2026-10-12.html#repeated-probe-fix"
+        >STRIX profileの繰り返しprobe調査</a
+      >を参照。
+    </p>
+    <p>
+      照会時の利用可能RAMは約79
+      GiB、vmstatの連続標本ではswap入出力は0、モデルプロセスのVmSwapは0。swapの使用済み容量約7.2
+      GiBだけでは今回の原因と判断できない。LLMの主要求に実行キュー待ちの記録はなく、ContextStillはforeground保護によるprovider_conflictで拒否されていた。ContextStillが当該要求と並行して推論していた証拠はない。
+    </p>
+    <p>
+      補助接続には06:18:10.929〜06:18:14.320の約3.4秒、および06:18:11.627〜06:18:22.935の約11.3秒の割当待ちがあった。これは一部の補助処理の遅延要因であり、入力処理18〜19秒の代わりになる説明ではない。
+    </p>
+  </section>
+  <section id="next-actions">
+    <h2>対策の優先順位と残る確認</h2>
+    <ol>
+      <li>
+        Eumenesの失敗した回答の「詳細」にある診断レポートまたはrunIdで、稼働ログのdialogue.operation_rejectedを対応付ける。音声制限の適用条件と再生成の最終判定を確定する。
+      </li>
+      <li>
+        関数呼出し必須の段階で自然文を返す問題と、2文以内の回答指示に従えない問題を、現在の設計に沿って修正・実モデルで検証する。表示した生テキストから操作を復元したり、制約を黙って緩めたりしない。
+      </li>
+      <li>
+        機能選択に24関数すべてが提示された理由を、候補検索のログで確認する。候補と関数定義、回答に渡す履歴の量を既存方針に沿って減らせるか検討する。
+      </li>
+      <li>
+        promptキャッシュの再有効化は、abortの原因修正と同一エンジンでの繰り返し・同時実行検証を先に行う。今回の調査では設定変更・サーバー再起動・追加の実推論は行っていない。
+      </li>
+    </ol>
+    <p>
+      HTTP
+      Provider監視unitにも継続失敗があるが、今回の実要求は上流200で生成が完了しており、監視失敗と会話遅延の因果関係は未確認。別件として扱う。
+    </p>
+  </section>
+</article>

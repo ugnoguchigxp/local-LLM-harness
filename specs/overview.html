@@ -22,6 +22,28 @@
         </tr>
       </thead>
       <tbody>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="chat-integrity-cache-stream-20261024"
+        >
+          <th scope="row">
+            <a href="./chat-integrity-cache-stream-investigation-2026-10-24.html"
+              >後方system欠落・補助cache・SSE終端・旧接続410</a
+            >
+          </th>
+          <td>
+            合成5配置と約14k
+            tokenの隔離E2E、template修正と欠落拒否、空の正常stream終了の修正。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>chat-integrity-cache-stream-20261024</code></small
+            >
+          </td>
+          <td>
+            2026-10-24本番配備・38件成功。監査復元後の計数も確認。提示された失敗1件の原因は未確定。
+          </td>
+        </tr>
         <tr data-kind="decision" data-state="current" data-domain="prompt-cache-retention">
           <th scope="row">
             <a href="./prompt-cache-retention-design-2026-10-23.html"
@@ -36,6 +58,21 @@
             >
           </td>
           <td>2026-10-24本番反映・実Connection E2E合格。中継header認証も修正。</td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="llm-response-latency-20261023">
+          <th scope="row">
+            <a href="./llm-response-latency-investigation-2026-10-23.html"
+              >LLM応答遅延：入力再処理・関数呼出し再試行・監査全件走査</a
+            >
+          </th>
+          <td>
+            実要求の44.7〜48.9秒、会話KV再利用ゼロ、監査4,736件の走査費用と未確定事項。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>llm-response-latency-20261023</code></small
+            >
+          </td>
+          <td>2026-10-23の観測。設定変更・再起動・追加生成なし。修正は未実施。</td>
         </tr>
         <tr data-kind="evidence" data-state="current" data-domain="strix-prompt-cache">
           <th scope="row">
@@ -53,6 +90,23 @@
           </td>
           <td>
             2026-10-22本番反映済み。主1＋補助3のprefix再利用を確認。追加メモリと音声遅延差も記録。
+          </td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="eumenes-conversation-latency">
+          <th scope="row">
+            <a href="./eumenes-conversation-latency-investigation-2026-10-21.html"
+              >Eumenes会話の遅延とinvalid_conversation_operationの調査</a
+            >
+          </th>
+          <td>
+            入力再計算、機能選択と回答の再生成、音声回答の文数制限の実測。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>eumenes-conversation-latency</code></small
+            >
+          </td>
+          <td>
+            2026-10-21の既存要求を調査。約60〜64秒の経過と文数超過を確認。稼働EumenesのrunId対応付け・修正は未実施。
           </td>
         </tr>
         <tr data-kind="contract" data-state="current" data-domain="compute-api">
@@ -2777,6 +2831,39 @@
             >
           </td>
           <td>repository実装済みの範囲と残るruntime・durability gateを分離して記録</td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="historical"
+          data-domain="ornith-mtp-strix-halo-2026-10-24"
+          data-successor="none"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-24"
+          data-target-revision="0fc9568"
+        >
+          <th scope="row">
+            <a href="./ornith-mtp-strix-halo-2026-10-24.html"
+              >Ornith MTP Strix Halo検証準備・保留 2026-10-24</a
+            >
+          </th>
+          <td>
+            並行する再起動検証のため保留。調査・独立engine・再実行手順を保存
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>historical</code> · 正本領域:
+              <code>ornith-mtp-strix-halo-2026-10-24</code></small
+            >
+          </td>
+          <td>
+            途中実測は公平な性能比較に使用不可。採用判断は次回へ持ち越し
+            <span data-successor-note="後継文書なし"
+              >独立した日付付き検証記録のため後継文書なし</span
+            >
+            <small data-audit-summary="true">観測 2026-10-24 · target revision 0fc9568</small>
+            <small data-successor-note="後継文書なし"
+              >後継文書なし: 日付付きの実機検証記録として保持。</small
+            >
+          </td>
         </tr>
         <tr
           data-kind="research"

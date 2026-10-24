@@ -459,7 +459,7 @@ export class SemanticReadiness {
         return rejectResponseBody(response, "semantic probe content type mismatch");
       }
       const inspected = inspectOpenAiChatCompletionSse(await responseBytes(response, JSON_LIMIT, signal));
-      return inspected.ok;
+      return inspected.ok && inspected.deltas > 0;
     }
     if (mediaType(response) !== "application/json") {
       return rejectResponseBody(response, "semantic probe content type mismatch");

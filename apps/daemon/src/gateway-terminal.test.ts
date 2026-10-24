@@ -233,3 +233,30 @@ test("allocation preemption cancels an unread SSE stream and releases its execut
   expect(gate.snapshot(runtime.id)).toEqual({ active: 0, queued: 0 });
   await expect(response.text()).rejects.toThrow("foreground requires the provider");
 });
+
+test("empty stop/length completion verifies its terminal and releases the execution slot", async () => {
+  for (const finish_reason of ["stop", "length"]) {
+    const gate = new ExecutionGate();
+    const events: string[] = [];
+    const metadata = { id: "synthetic", object: "chat.completion.chunk", created: 1, model: "fixture" };
+    const wire = [
+      { ...metadata, choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] },
+      { ...metadata, choices: [{ index: 0, delta: {}, finish_reason }] },
+      { ...metadata, choices: [], usage: { prompt_tokens: 16, completion_tokens: 1, total_tokens: 17 } },
+    ].map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n";
+    const response = await proxyGateway({
+      request: new Request("http://localhost/v1/chat/completions", { method: "POST", body: JSON.stringify({ model: "fixture", messages: [], stream: true }) }),
+      allocationId: "synthetic", protocol: "openai.chat-completions.v1", upstreamPath: "/v1/chat/completions", runtime,
+      bodyMode: "buffered", maxBodyBytes: 1024, timeoutMs: 1000, bootEpoch: "synthetic", executionGate: gate,
+      responseFormat: "sse", expectedModel: "fixture",
+      revalidate: () => ({ ok: true, binding: { endpoint: runtime.deployment.endpoint, runtime: runtime.id } }),
+      fetchImpl: async () => new Response(wire, { headers: { "content-type": "text/event-stream" } }),
+      onEvent: event => { events.push(event.name); },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(wire);
+    expect(events).toContain("gateway_stream_terminal_verified");
+    expect(events).not.toContain("gateway_stream_protocol_error");
+    expect(gate.snapshot(runtime.id).active).toBe(0);
+  }
+});

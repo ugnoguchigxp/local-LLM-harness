@@ -1,0 +1,179 @@
+<article lang="ja">
+  <h1>LLM応答遅延の調査：入力再処理・関数呼出し再試行・監査全件走査</h1>
+  <p>
+    2026年10月23日JST、主に22:36〜22:41の既存要求を調査した。journal、暗号化監査記録、稼働プロセス、メトリクス、配備コードを照合した。追加の生成要求、設定変更、サービス再起動は行っていない。会話本文・モデルの生応答・認証情報は掲載しない。
+  </p>
+  <section id="conclusions">
+    <h2>結論</h2>
+    <p>
+      観測したEumenesの会話では、約1.4万トークンの入力をキャッシュなしで再処理する約19.5秒が大きな遅延要因だった。機能選択の関数呼出し失敗と再試行が加わり、機能選択開始から回答生成終了まで44.7秒と47.8秒を要した。ブラウザ表示・音声再生までの時間は取得していない。
+    </p>
+    <p>
+      後続には、必須関数を呼ばず1,536トークンの出力上限まで自然文を生成した48.9秒の要求もあった。さらにLARMの監査開始処理が要求ごとに保存済み記録を3回全件走査するため、推論前の約2〜3秒を増幅している可能性が高い。モデルの出力速度だけを改善しても、この一連の待ち時間は解消しない。
+    </p>
+  </section>
+  <section id="resolution">
+    <h2>要求と稼働実体</h2>
+    <p>
+      requestedProfileはornith1.5Strix。llm-ornith15-strix routeからornith15-strix-conversation
+      runtime、llama-swap
+      backend、STRIX_LEANモデルの実プロセスへ解決していた。公開modelはornith-1.5-strix-lean。allocationログのreleaseラベルはornith15-strix-conversation-p4-v3だが、実エンジンはlarm-chat-input-engine-20261022-prefix-v1であり、daemon配備先はbc74d0bc90cbである。ラベルだけから旧キャッシュ設定と判断しない。
+    </p>
+    <p>
+      起動引数はcache-prompt、checkpoint数8、間隔1024、cache RAM 0、cache-reuse
+      0、no-cache-idle-slots。共有KVは1,048,576トークン、4枠、K/Vともq4_0。LARMも同runtimeへ同時4要求を許可する。モデル違い・意図しないfallbackの証拠はなかった。前日の変更と受入れは<a
+        href="./prompt-cache-remediation-2026-10-22.html"
+        >KV prefix再利用の調査・実機検証</a
+      >を参照。
+    </p>
+  </section>
+  <section id="measurements">
+    <h2>実要求の所要時間</h2>
+    <table>
+      <caption>
+        22:37:53.300〜22:38:41.103
+        JSTの一連の要求。全体はgateway開始から終了、入力・生成はProviderのtimings。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">処理・要求ID</th>
+          <th scope="col">入力全体／再利用</th>
+          <th scope="col">入力処理</th>
+          <th scope="col">出力生成</th>
+          <th scope="col">全体</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">機能選択 req_ea4901de-92cf-43e9-b247-72d9e7ae4a56</th>
+          <td>7,169／0</td>
+          <td>9.501秒</td>
+          <td>47トークン、0.706秒</td>
+          <td>13.687秒</td>
+        </tr>
+        <tr>
+          <th scope="row">機能選択の修正 req_db87375f-f6a0-44ac-ac82-7f1c552eb2a1</th>
+          <td>7,679／2,048</td>
+          <td>7.637秒</td>
+          <td>64トークン、0.969秒</td>
+          <td>10.950秒</td>
+        </tr>
+        <tr>
+          <th scope="row">会話本体 req_06ac5e88-745f-426f-88d5-5b5f3def5c53</th>
+          <td>13,804／0</td>
+          <td>19.450秒</td>
+          <td>13トークン、0.196秒</td>
+          <td>22.479秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      機能選択には6関数が渡され、初回は関数呼出しなし、次回はanswer関数を呼び出していた。修正要求にはanalysis_call_requiredを確認した。7,169トークン要求の関数定義はJSON換算8,217文字。会話本体は272メッセージで、最初の意味のある出力まで22.253秒だった。主要求は、短い最終出力でも入力処理の終了まで何も返せない。
+    </p>
+    <p>
+      直前の22:36:44.494〜22:37:29.173
+      JSTにも同じ形で44.679秒を要した。会話本体req_7c4b313d-ffb7-4094-93b8-157f34c35355は13,773トークン、再利用0、入力19.570秒、出力13トークン・0.364秒だった。この2件だけから全会話の分布は推定しない。
+    </p>
+    <table>
+      <caption>
+        後続の関数必須要求
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">観測値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">要求ID</th>
+          <td>req_a286b2da-86bd-402b-bd82-b47828b5bb7b</td>
+        </tr>
+        <tr>
+          <th scope="row">開始・終了 JST</th>
+          <td>22:39:43.699〜22:40:32.580、48.881秒</td>
+        </tr>
+        <tr>
+          <th scope="row">入力</th>
+          <td>14,706トークン、再利用0、21.164秒</td>
+        </tr>
+        <tr>
+          <th scope="row">出力</th>
+          <td>1,536トークン、25.414秒、finish_reason=length</td>
+        </tr>
+        <tr>
+          <th scope="row">要求と応答の契約</th>
+          <td>
+            check_request関数1個、tool_choice=required。保存済みSSEに関数呼出しはなく、contentが4,093文字、reasoning_contentは0文字。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      これは長い思考内容が返された証拠ではなく、関数必須の出力契約を守らず文章を生成し続けた事例である。利用者にその文章が表示されたか、最終的に採用されたかは取得していない。
+    </p>
+  </section>
+  <section id="cache">
+    <h2>キャッシュは有効だが会話本体では失われている</h2>
+    <p>
+      修正要求でcache_n=2048を確認しており、キャッシュ全体が無効という説明は成立しない。一方、上記2回の会話本体は共通の先頭13,719トークンを持つのに再利用はともに0だった。共通prefixは監査に保存されたtoken配列の先頭一致で比較し、本文は出力していない。
+    </p>
+    <p>
+      機能選択の初回どうしは、先頭systemメッセージが同じでも関数定義が異なり、最終promptの先頭一致は389トークンに限られた。機能選択の低い再利用と、ほぼ同じ長い会話本体の再利用ゼロを同じ原因と断定しない。
+    </p>
+    <p>
+      主要求の間には4種類以上の補助要求と、短いConnection
+      readiness推論が入っていた。Connectionは推論slotを専有せず、cache RAM
+      0ではslot外に退避しない。補助要求やprobeによるslot上書きは有力な仮説だが、現行journalには要求ごとのslot選択・checkpoint復元が出ていないため、どの要求が会話のKVを失わせたかは未確定。単にキャッシュを再有効化する対処では解決しない。
+    </p>
+  </section>
+  <section id="audit">
+    <h2>LARMの監査開始前にかかる時間</h2>
+    <p>
+      gateway開始からinference_audit_startedまで通常約1.9〜3.4秒、補助要求の一例では4.351秒かかった。会話本体req_06ac5e88-745f-426f-88d5-5b5f3def5c53では2.715秒で、そのうち監査metadataのcreatedAtまでが2.502秒。前処理全体を監査の暗号化時間と呼ぶことはできない。
+    </p>
+    <p>
+      FileInferenceAuditRecorder.beginは推論を送る前にLocalInferenceAuditStore.beginを待つ。beginはpruneを呼び、pruneは削除不要の場合もscanRecordsを3回実行する。全保存記録のmetadata、payloadサイズ、active
+      marker等を逐次検査する。さらにapply-template、tokenize、暗号化保存を完了してから推論へ進む。
+    </p>
+    <p>
+      読み取りだけのstore.listを3回計測したところ、4,736件に対して845、680、530
+      msだった。1回全件走査の費用から、毎回3走査が秒単位の前処理に強く寄与すると推定する。今回、走査だけの内訳を稼働要求へ計測注入していないため、2.715秒すべての原因と断定しない。該当時刻のtokenizeやapply-templateのproxy処理は概ね数十msであり、これらだけでは差を説明できない。
+    </p>
+  </section>
+  <section id="resources">
+    <h2>競合と資源</h2>
+    <p>
+      単独に近い生成は概ね64〜68トークン毎秒。補助要求と機能選択が重なった区間では約32〜50トークン毎秒の要求もあり、同時実行による速度低下は補助的な要因として観測した。因果を分離する負荷試験は追加していない。
+    </p>
+    <p>
+      確認時の利用可能RAMは約78
+      GiB、LLMプロセスのVmSwapは0、vmstatの連続標本でswap入出力は0。swap使用量だけを主原因としない。LARMの該当範囲にqueueイベントはなく、Providerの確認時requests_deferredも0。ContextStillは同区間にprovider_conflictで28回拒否されており、当該処理を並行実行した証拠はない。
+    </p>
+    <p>
+      gateway終了のclient_cancelledやbinding_invalidatedと、監査の正常finishや上流200が同時に存在する。終了ログの名前だけで利用者による取消やネットワーク故障を主因と断定しない。HTTP
+      Provider監視の継続失敗は別途存在するが、観測した会話遅延との因果は未確認。
+    </p>
+  </section>
+  <section id="actions">
+    <h2>修正の優先順位と検証条件</h2>
+    <ol>
+      <li>
+        関数必須段階で自然文を返す問題を、実際のprompt・template・出力制約の対応から修正する。モデルが関数を呼ばず上限まで出力する事例と、機能選択の再試行を実モデルで回帰検証する。
+      </li>
+      <li>
+        主会話、補助4種類以上、Connection
+        readinessを含む実順序で、各要求のslot・共通prefix・checkpoint復元・cache_nを観測する。会話本体のキャッシュ保持方針を検証し、consumer任意のslot番号だけで専有を仮定しない。
+      </li>
+      <li>
+        監査の必須性・保持期限・容量保証を維持しながら、要求ごとの3回全件走査を減らす。約4,700件以上を保持する条件で監査開始の時間、並行予約、期限切れ・容量回収、再起動後の整合性を検証する。
+      </li>
+      <li>
+        機能選択の関数定義と会話の272メッセージの入力予算を、consumerの設計に沿って削減する。補助処理が主回答の採用・表示を待たせるかは、稼働EumenesのrunIdとログで対応付ける。
+      </li>
+    </ol>
+    <p>
+      今回の結論はLARMから観測できる範囲の調査結果であり、修正完了を意味しない。稼働Eumenes側のrevision・runId・画面表示時刻は取得していない。SAAAの実装には依存していない。
+    </p>
+  </section>
+</article>

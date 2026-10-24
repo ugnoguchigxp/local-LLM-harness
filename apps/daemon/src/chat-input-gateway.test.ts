@@ -59,3 +59,33 @@ test("lease invalidation during preprocessing cannot forward generation", async 
   const res=await proxyGateway({...base,request:request(),executionGate:gate,revalidate:()=>invalid?{ok:false as const,status:410,body:{error:{code:"connection_expired",message:"expired"}}}:{ok:true as const,binding},fetchImpl:async(url)=>{calls.push(String(url));invalid=true;return countResponse();}});
   expect(res.status).toBe(410);expect(calls).toEqual(["http://provider/tokenize"]);expect(gate.snapshot(runtime.id).active).toBe(0);
 });
+
+test("both formal counting and generation reject dropped instructions before tokenization or inference", async () => {
+  const input = { model: "fixture", messages: [{ role: "system", content: "synthetic" }, { role: "user", content: "hi" }, { role: "system", content: "late synthetic" }] };
+  for (const countChatInputOnly of [false, true]) {
+    const calls: string[] = [];
+    const gate = new ExecutionGate();
+    const response = await proxyGateway({ ...base, request: new Request("http://larm/v1/chat/completions", { method: "POST", body: JSON.stringify(input) }),
+      countChatInputOnly, executionGate: gate, fetchImpl: async (url, init) => {
+        calls.push(String(url));
+        const probe = JSON.parse(String(init?.body));
+        return Response.json({ prompt: probe.messages[0].content + probe.messages[1].content });
+      } });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: { code: "chat_instruction_template_unsupported" } });
+    expect(calls).toEqual(["http://provider/apply-template"]);
+    expect(gate.snapshot(runtime.id).active).toBe(0);
+  }
+});
+
+test("count and generation keep every byte of supported instruction arrays", async () => {
+  const messages = [{ role: "system", content: "first" }, { role: "user", content: "history" },
+    { role: "assistant", content: "ready" }, { role: "system", content: "late synthetic reference" }, { role: "user", content: "question" }];
+  const original = { model: "fixture", messages, max_tokens: 16 };
+  const checked = await prepareChatInput({ ...options, body: new TextEncoder().encode(JSON.stringify(original)), fetchImpl: async (url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (String(url).endsWith("/apply-template")) return Response.json({ prompt: JSON.stringify(body.messages) });
+    expect(body).toEqual(original); return countResponse();
+  } });
+  expect(JSON.parse(new TextDecoder().decode(checked.body))).toEqual(original);
+});

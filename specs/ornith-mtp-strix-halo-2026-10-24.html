@@ -1,0 +1,91 @@
+<article lang="ja">
+  <h1>Ornith 1.5 35B Strix Halo MTP検証準備・保留 2026-10-24</h1>
+  <p>
+    利用者の指示により実機検証を保留した。背後でStrixの再起動検証が動いていたため、今回の途中結果は
+    公平な性能比較・採用判断に使用しない。100 / 120 tok/sの達成可否と最速構成は未判定。
+    既存Eumenes、LARM、llama-swap、モデルと起動設定を維持し、準備と途中データだけを保存する。
+    今回用の検証プロセスが残っていないことを確認した。自動再開は設定しない。
+  </p>
+  <section id="environment">
+    <h2>現行構成</h2>
+    <p>
+      Ubuntu 26.04.1、kernel 7.0.0-34、Ryzen AI MAX+ 395、Radeon 8060S、物理128 GB。
+      現行engineはllama.cpp派生build 244 / 0fc9568、Vulkan0、ROCmFP4 STRIX_LEAN、q4_0 K/V、 Flash
+      Attention有効。unified KV 1048576 tokensを4 slotsで共有し、1slotは262144 tokens。 MTP
+      headは存在するが、起動引数とpropsの両方でspec-type noneを確認した。
+    </p>
+    <p>
+      Profile ornith1.5Strixのllm Providerは、route llm-ornith15-strix、runtime
+      ornith15-strix-conversation、同名llama-swap model IDへ解決する。観測した本番子ポートは58009。
+      別のprompt-retention検証用58109は別workloadとして扱い、差異をdriftとは判定しない。
+    </p>
+  </section>
+  <section id="measurements">
+    <h2>保存した途中実測・公平な比較には使用不可</h2>
+    <table>
+      <caption>
+        途中記録の抜粋。並行検証の影響があり採否判定に使用不可。greedy、Thinking無効、warmup除外
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">回数</th>
+          <th scope="col">平均decode</th>
+          <th scope="col">MTP採用</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">現行・MTP無効</th>
+          <td>3</td>
+          <td>67.92 tok/s</td>
+          <td>対象外</td>
+        </tr>
+        <tr>
+          <th scope="row">旧head・MTP n1 / p0.6</th>
+          <td>3</td>
+          <td>55.84 tok/s</td>
+          <td>115 / 180 tokens、63.89%</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      本番の日本語長文、英語長文、TypeScript、JSON、複数ステップ推論、Tool
+      Callingも3回ずつ実行した。
+      JSONとToolは各3回の機能試験に合格した。長文・コード・推論の一部は出力上限へ達し、完結性と
+      内容の正確性には未解決の問題がある。短いJSONとTool応答を会話速度の平均へ含めない。
+    </p>
+    <p>
+      4K context試験中に他のGPU engineが起動したため監視が中断した。中断前の完了試行を保持し、
+      完了していないcontext比較を3回測定済みとはしない。既存の最大約90 tok/sは元の測定条件が未特定。
+    </p>
+  </section>
+  <section id="compatibility">
+    <h2>調査済みの更新情報と次回の確認事項</h2>
+    <p>
+      公式BF16は2026-08-23、公式GGUFは8月24日にMTP重みを更新している。公式最新safetensorsの norm
+      tensorをHTTP Rangeで確認し、保存済み更新GGUFのnormと変換時の加算を考慮して一致した。
+      現行旧ファイルとの差も確認した。Shisa蒸留headと公式更新headを同一視しない。
+    </p>
+    <p>
+      hipfireの公開約150 tok/sはcode-editing、greedy、Thinking無効、MTPとN-gramの組合せであり、
+      日本語会話での保証ではない。通常single-slot APIはJSON Schemaを強制しないという互換性上の
+      制約もある。採否は保留し、競合検証の終了後に日本語会話の平均と安定性、JSON、Tool、長期履歴を再測定する。
+    </p>
+  </section>
+  <section id="artifacts">
+    <h2>成果物と再現</h2>
+    <p>
+      再開時は別の再起動検証の終了、空き資源、稼働構成と版を確認する。新しい出力先で現行構成から
+      同条件・各3回を測り直し、今回の参考値とは平均しない。短時間のidle監視だけでは公平性を保証できない。
+      取得済みモデルと独立engineは /srv/ai/apps/ornith-mtp-trial-20261024/ に保持する。
+    </p>
+    <p>
+      repository直下のornith-mtp-research.md、ornith-mtp-benchmark.md、ornith-mtp-results.csv、
+      ornith-mtp-reproduce.shを参照。読み取り情報、合成prompt、response、metrics、resource
+      sampling、 buildとdownloadの証跡は /srv/ai/evidence/ornith-mtp-20261024/
+      に保存し、モデル、binary、ログを repositoryへ追加しない。GPU busy
+      sysfsはidleでも100%を返すため使用率としては未取得とする。
+    </p>
+  </section>
+</article>

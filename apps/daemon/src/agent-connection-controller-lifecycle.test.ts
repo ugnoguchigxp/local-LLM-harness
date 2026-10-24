@@ -248,3 +248,21 @@ test("periodic demands recycle bounded replay capacity while the last key surviv
     expect(f.controller.get(first.id, "owner").body).toMatchObject({ status: "released" });
   } finally { f.control.beginDrain(); await f.control.flush(); }
 });
+
+test("old-epoch control IDs return 410 while Provider credentials use authentication errors", async () => {
+  const f = await fixture();
+  const old = "aconn_epoch-previous_synthetic";
+  try {
+    for (const response of [f.controller.get(old, "owner"), await f.controller.health(old, "owner"),
+      await f.controller.claim(old, "owner", "openai-provider-v1"), await f.controller.renew(old, 120, "owner", "synthetic-renew"),
+      await f.controller.release(old, "owner")]) {
+      expect(response).toMatchObject({ status: 410, body: { error: { code: "connection_epoch_expired" } } });
+    }
+    expect(f.controller.get("aconn_epoch-local_missing", "owner")).toMatchObject({ status: 404, body: { error: { code: "connection_not_found" } } });
+    const codec = new ConnectionTokenCodec(new Uint8Array(32).fill(7), f.now);
+    const now = Math.floor(f.now() / 1000);
+    const token = codec.sign({ v: 1, epoch: "epoch-previous", connection: old, allocation: "old-allocation", provider: "llm", capability: "llm.general",
+      audience: "local", generation: 1, iat: now, exp: now + 120 });
+    expect(() => f.controller.verifyProviderToken(token)).toThrow(expect.objectContaining({ code: "invalid_token" }));
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});

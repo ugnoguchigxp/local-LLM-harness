@@ -550,7 +550,9 @@ export class OpenAiChatCompletionSseInspector {
   private finalInspection(): OpenAiChatCompletionSseInspection {
     if (this.failed) return { ok: false, reason: this.failed };
     if (this.receivedCharacters === 0) return this.fail("empty_stream");
-    if (this.deltas === 0) return this.fail("missing_delta");
+    // EOS or a stop sequence can finish successfully before visible output.
+    // Completion is established by every choice's finish plus DONE, not text.
+    if (this.deltas === 0 && this.finishReasons === 0) return this.fail("missing_delta");
     if (!this.done) return this.fail("missing_done");
     if (
       this.finishReasons === 0
