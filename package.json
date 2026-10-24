@@ -39,7 +39,7 @@
     "typecheck": "bun ./node_modules/typescript/bin/tsc --noEmit",
     "test": "bun test apps packages",
     "test:coverage": "bun test --coverage apps packages && bun run scripts/check-coverage.ts",
-    "test:avatar-attitude": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s benchmarks/avatar-attitude -p test_protocol.py",
+    "test:avatar-attitude": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s benchmarks/avatar-attitude -p 'test_*.py'",
     "test:tooling": "bun test scripts/check-coverage.test.ts scripts/check-spec-catalog.test.ts scripts/check-api-consumers.test.ts scripts/check-module-boundaries.test.ts scripts/check-release.test.ts",
     "check:release": "bun run scripts/check-release.ts",
     "check:module-boundaries": "bun run scripts/check-module-boundaries.ts",

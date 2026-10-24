@@ -10,6 +10,7 @@ import tempfile
 source_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(source_root / 'apps/ruri-system-one'))
 from attitude import PUBLIC_MODEL
+from artifacts import load_artifacts
 
 
 def install_snapshot(target, entries):
@@ -41,7 +42,26 @@ def digest(path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--benchmark-root', type=Path, default=Path('/srv/ai/benchmarks/avatar-attitude'))
+    parser.add_argument('--bundle', type=Path, help='install a versioned package prepared by package-ruri-artifacts.py')
+    parser.add_argument('--target', type=Path, help='new external model revision directory; required with --bundle')
     args = parser.parse_args()
+    if args.bundle:
+        if args.target is None:
+            raise ValueError('--bundle requires an explicit new --target')
+        if args.target.resolve() == source_root or source_root in args.target.resolve().parents:
+            raise ValueError('artifact target must be outside the repository')
+        manifest_path = args.bundle/'assets.json'
+        assets, _, _, _, model = load_artifacts(args.bundle, manifest_path)
+        if 'contract' not in assets:
+            raise ValueError('--bundle requires a versioned contract')
+        entries = [(args.bundle/e['path'], e['path'], e['bytes'], e['sha256']) for e in assets['files']]
+        entries.append((manifest_path, 'assets.json', manifest_path.stat().st_size, digest(manifest_path)))
+        install_snapshot(args.target, entries)
+        load_artifacts(args.target, args.target/'assets.json')
+        print(json.dumps({'model': model, 'target': str(args.target), 'installed': True, 'activated': False}))
+        return
+    if args.target is not None:
+        raise ValueError('--target is supported only with --bundle')
     benchmark = args.benchmark_root.resolve()
     if benchmark == source_root or source_root in benchmark.parents:
         raise ValueError('benchmark artifacts must be outside the source repository')

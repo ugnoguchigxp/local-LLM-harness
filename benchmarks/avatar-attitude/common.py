@@ -2,6 +2,8 @@
 import difflib
 import hashlib
 import json
+import re
+import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -32,14 +34,53 @@ def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
 
 
-def load_examples(path=ROOT / 'examples.jsonl'):
+def load_contract(path=None):
+    """JSON interchange only; benchmark and Provider have no Python dependency."""
+    if path is None:
+        return None
+    value = json.loads(Path(path).read_text())
+    required = {'schema_version', 'version', 'public_model', 'labels', 'criteria', 'input_mode', 'instruction'}
+    if not isinstance(value, dict) or set(value) != required or value['schema_version'] != 1:
+        raise ValueError('invalid attitude contract schema')
+    labels = value['labels']
+    if (not isinstance(labels, list) or not 3 <= len(labels) <= 64
+            or any(not isinstance(l, str) or not re.fullmatch('[a-z][a-z0-9_]*', l) for l in labels)
+            or len(set(labels)) != len(labels) or labels[0] != 'none'):
+        raise ValueError('contract requires unique ordered labels starting with none')
+    if (not isinstance(value['criteria'], dict) or set(value['criteria']) != set(labels)
+            or any(not isinstance(v, str) or not v.strip() for v in value['criteria'].values())):
+        raise ValueError('contract requires a description for each label')
+    if (value['input_mode'] != 'A' or value['instruction'] != INSTRUCTION
+            or not isinstance(value['version'], str) or not re.fullmatch('[a-z0-9][a-z0-9._-]*', value['version'])
+            or not isinstance(value['public_model'], str)
+            or not re.fullmatch('ruri-v3-30m-speaking-attitude-[a-z0-9][a-z0-9._-]*', value['public_model'])):
+        raise ValueError('versioned contract must explicitly name a new model and retain input A')
+    return value
+
+
+def normalized_target(text):
+    return ''.join(unicodedata.normalize('NFKC', text).split())
+
+
+def near_targets(left, right):
+    left, right = normalized_target(left), normalized_target(right)
+    # SequenceMatcher can be asymmetric; detect leakage in either orientation.
+    for a, b in [(left, right), (right, left)]:
+        matcher = difflib.SequenceMatcher(None, a, b, autojunk=False)
+        if matcher.real_quick_ratio() >= .8 and matcher.quick_ratio() >= .8 and matcher.ratio() >= .8:
+            return True
+    return False
+
+
+def load_examples(path=ROOT / 'examples.jsonl', labels=None):
+    labels = LABELS if labels is None else labels
     rows = [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
     ids, conversation_splits, template_splits, sequences = set(), {}, {}, {}
     for row in rows:
         if row['id'] in ids:
             raise ValueError('duplicate example id')
         ids.add(row['id'])
-        if row['primary_label'] not in LABELS or not set(row['acceptable_labels']) <= set(LABELS):
+        if row['primary_label'] not in labels or not set(row['acceptable_labels']) <= set(labels):
             raise ValueError('invalid labels')
         if row['primary_label'] not in row['acceptable_labels']:
             raise ValueError('primary label must be acceptable')
@@ -63,14 +104,13 @@ def load_examples(path=ROOT / 'examples.jsonl'):
     # Exact repeated targets across partitions also signal possible unmarked template leakage.
     targets = {}
     for row in rows:
-        target = row['current_chunk'].strip()
+        target = normalized_target(row['current_chunk'])
         if target in targets and targets[target] != row['split']:
             raise ValueError('identical target across splits')
         targets[target] = row['split']
     for i, row in enumerate(rows):
         for other in rows[i + 1:]:
-            if row['split'] != other['split'] and difflib.SequenceMatcher(
-                None, row['current_chunk'], other['current_chunk']).ratio() >= .8:
+            if row['split'] != other['split'] and near_targets(row['current_chunk'], other['current_chunk']):
                 raise ValueError('near-identical target template across splits')
     return sorted(rows, key=lambda r: (r['conversation_id'], r['chunk_order']))
 

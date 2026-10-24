@@ -14,6 +14,34 @@ def row(cid, order, label, scores, transition='initial'):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_expanded_scores_and_repetition_summary_use_all_labels(self):
+        labels = ['none'] + [f'new_{i}' for i in range(13)] + ['anger']
+        scores = {label: (4 if label=='anger' else 0) for label in labels}
+        target = row('new', 0, 'anger', [0]*6)
+        target['decision_scores'] = scores
+        m = metrics(replay([target], labels=labels), labels)
+        self.assertEqual(m['per_class']['anger']['f1'], 1.)
+        self.assertEqual(len(m['confusion_matrix']['counts']), 15)
+        target['acceptable_labels'] = ['none']
+        self.assertEqual(metrics(replay([target], labels=labels), labels)['anger_dislike_misassigned']['count'], 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            for rep in range(3):
+                records = []
+                for split in ('calibration', 'eval'):
+                    r = dict(target, id=split, conversation_id=split, split=split, repetition=rep,
+                             acceptable_labels=['anger'], mode='A', variant='expanded', input_sha256='fixed',
+                             raw_scores=scores, inference_ms=1., cpu_ms=1., token_count=10, truncated=False)
+                    records.append(r)
+                file = folder/f'expanded-rep{rep}.jsonl'
+                file.write_text(''.join(json.dumps(r)+'\n' for r in records))
+                file.with_suffix('.meta.json').write_text(json.dumps(dict(labels=labels, load_ms=1, candidate_cache_ms=0,
+                    memory_peak_observed_kib={'Rss':1,'Pss':1,'Swap':0}, memory_baseline_kib={}, memory_loaded_kib={},
+                    data_sha256='fixed', revision='fixture', runtime={})))
+            result = summarize([folder], folder)[0]
+            self.assertEqual(result['quality']['n'], 1)
+            self.assertEqual(result['unstable_examples'], 0)
+
     def test_inputs_use_only_allowed_temporal_context(self):
         example=dict(user_utterance='USER_SECRET',current_chunk='CURRENT_TARGET',_previous_chunk='PAST_TARGET',future='FUTURE_SECRET')
         a,b,c=[format_input(example,m) for m in 'ABC']

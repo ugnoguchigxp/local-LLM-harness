@@ -4,6 +4,24 @@ The sentence-language Provider was retired on 2026-10-16. Japanese/English
 selection belongs in the consumer, using regular expressions. The runtime serves
 only the speaking-attitude model and does not load a language head.
 
+The deployed six-label model and its pinned `assets.json` remain the default.
+A separate 15-label model was trained on the reviewed synthetic v2 dataset on
+2026-10-24 (900 train, 300 calibration, 300 evaluation). Its public name is
+`ruri-v3-30m-speaking-attitude-v2`, with the frozen contract in
+`contracts/expanded-v2.json` and artifact hashes in `assets-expanded-v2.json`.
+The user accepted sad empathetic speech within `sadness` for this version;
+`warmth` and `empathy` are absent as separate labels. The earlier
+`expanded-v2-candidate.json` remains a draft/fixture contract.
+Versioned contracts require `none` first, unique labels and descriptions,
+input A, and a distinct public model name.
+
+The model is saved at `/srv/ai/models/ruri-speaking-attitude-expanded-v2-20261024`
+but is **not activated**. Synthetic evaluation accuracy is 224/300 (74.7%),
+Macro F1 0.744. A separate regression check misclassified 6/14 technical neutral
+examples as expressive (v1: 0/14). Add technical neutral examples before
+considering deployment. The full training receipt, raw scores and report are in
+`/srv/ai/benchmarks/avatar-attitude/training/2026-10-24-expanded-v2/`.
+
 `ruri-v3-30m-speaking-attitude` implements the `choice` portion of `larm.system-one.v1`
 for the fixed labels `none`, `warmth`, `joy`, `empathy`, `curiosity`, `surprise`.
 The Gemma profile uses this Provider. ContextStill retains the general Laya Provider,
@@ -56,6 +74,88 @@ all six FP32 logits, temperature-scaled scores and calibration status. Truncatio
 is reported at the response top level to retain the strict System One usage
 contract. Input longer than 512 tokens is truncated from the left, as in evaluation.
 HTTP timing and inference timing are distinct; neither measures actual TTS onset.
+
+## Preparing a reviewed dataset and classifier
+
+All outputs must be outside this source repository. Use a new output directory
+for each dataset/model revision; existing outputs are not overwritten.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 benchmarks/avatar-attitude/dataset.py \
+  --data /path/to/reviewed.jsonl \
+  --contract apps/ruri-system-one/contracts/expanded-v2.json \
+  --reviewed-input \
+  --output /srv/ai/benchmarks/avatar-attitude/datasets/reviewed-v2
+```
+
+`--reviewed-input` records a file-level review attestation when rows do not have
+`review_status`; it does not invent per-row human approval. Explicit pending,
+hold and rejected rows are excluded. Source records remain intact. `group`,
+`template_group_id` and `template_group` are accepted template identities.
+Conversation links, supplied groups, and normalized lexical similarity are
+combined before splitting. Matches against the original evaluation partition
+are pinned to evaluation. Every class must occur in all three partitions.
+Outputs include `examples.jsonl`, `contract.json`, `audit.json` and a manifest of
+hashes, IDs, groups, actual class counts, exclusions and split settings.
+
+Use the pinned benchmark Python environment for training and evaluation:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /srv/ai/benchmarks/avatar-attitude/.venv/bin/python \
+  benchmarks/avatar-attitude/train_head.py \
+  --sandbox /srv/ai/benchmarks/avatar-attitude --model ruri30 \
+  --data /srv/ai/benchmarks/avatar-attitude/datasets/reviewed-v2/examples.jsonl \
+  --contract /srv/ai/benchmarks/avatar-attitude/datasets/reviewed-v2/contract.json \
+  --onnx /srv/ai/benchmarks/avatar-attitude/onnx/ruri30-int8.onnx \
+  --select-c --output /srv/ai/benchmarks/avatar-attitude/heads/reviewed-v2.json
+```
+
+Versioned contracts default to input A; legacy experiments retain A/B/C.
+`--select-c` selects regularization using train-only
+stratified group folds, retaining calibration for temperature/policy selection.
+`run.py` takes the same `--data`, `--contract`, `--head` and `--onnx` identities;
+use `--models ruri30 --method head` and a new `--output` run directory. It runs A
+for versioned contracts and saves three independent timing repetitions. Pass
+repetition-zero scores to `calibrate_head.py --scores ... --head ... --output ...`.
+`report.py --runs ... --output ...` reports quality once per example, including
+all classes, technical false expressions and anger/dislike misassignments.
+Calibration scores are bound to the exact head, dataset and contract hashes.
+Synthetic scores remain provisional; the report does not establish accuracy on
+real conversation chunks. The legacy Laya comparator accepts only its six-label
+contract; it is not silently included in a versioned comparison.
+
+Package an evaluated candidate with the existing pinned encoder:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 deploy/local-node/scripts/package-ruri-artifacts.py \
+  --head /path/to/new-head.json --calibration /path/to/new-calibration.json \
+  --output /srv/ai/benchmarks/avatar-attitude/bundles/reviewed-v2
+PYTHONDONTWRITEBYTECODE=1 python3 deploy/local-node/scripts/provision-ruri-artifacts.py \
+  --bundle /srv/ai/benchmarks/avatar-attitude/bundles/reviewed-v2 \
+  --target /srv/ai/models/ruri-speaking-attitude-v2
+```
+
+Packaging/installing does not activate a model or edit an Agent Profile. To load a
+versioned package in an isolated process, explicitly set both `RURI_MODEL_ROOT`
+and `RURI_ASSET_MANIFEST` (the installed package's `assets.json`). The manifest
+binds the contract, encoder, tokenizer, head and calibration. Legacy model names
+cannot select a versioned head. The existing unit continues to load v1 until a
+separate release and consumer integration are completed.
+
+Validation:
+
+```bash
+bun run test:avatar-attitude
+bun run test:ruri-system-one
+RURI_RUN_PIPELINE=1 PYTHONDONTWRITEBYTECODE=1 \
+  /srv/ai/benchmarks/avatar-attitude/.venv/bin/python \
+  -m unittest discover -s benchmarks/avatar-attitude -p 'test_*.py'
+```
+
+The opt-in integration uses test-only random text and the installed CPU encoder
+to exercise import, training, three score repetitions, calibration, reporting,
+packaging, installation and in-process inference. Temporary models are removed;
+it does not train on attachments, change services or activate a release.
 
 Preparation (unprivileged, outside the source tree):
 

@@ -8,7 +8,7 @@ import platform
 import subprocess
 import sys
 import time
-from common import ROOT, CRITERIA, INSTRUCTION, LABELS, format_input, load_examples, require_external, sha256, write_json
+from common import ROOT, CRITERIA, INSTRUCTION, LABELS, format_input, load_contract, load_examples, require_external, sha256, write_json
 
 
 def memory():
@@ -28,6 +28,11 @@ def system_snapshot():
 
 
 def worker(args):
+    contract = load_contract(args.contract)
+    labels = contract['labels'] if contract else LABELS
+    criteria = contract['criteria'] if contract else CRITERIA
+    if contract and (args.model != 'ruri30' or args.method != 'head' or args.modes != ['A']):
+        raise ValueError('versioned evaluation supports ruri30 trained head input A only')
     if args.onnx:
         from onnx_runtime import AttitudeModel
     else:
@@ -45,7 +50,7 @@ def worker(args):
         file = Path(manifest['path']) / name
         if sha256(file) != info['sha256']:
             raise ValueError('artifact changed: ' + name)
-    all_rows = load_examples(args.data)
+    all_rows = load_examples(args.data, labels)
     rows = [r for r in all_rows if r['split'] in args.splits]
     if args.method == 'head':
         if not args.head:
@@ -53,7 +58,7 @@ def worker(args):
         head = json.loads(Path(args.head).read_text())
         allowed_ids = {r['id'] for r in all_rows if r['split'] == 'train'}
         allowed_calibration = {r['id'] for r in all_rows if r['split'] == 'calibration'}
-        if (not head['train_only'] or not set(head['train_ids']) <= allowed_ids
+        if (head.get('contract') != contract or head['labels'] != labels or not head['train_only'] or not set(head['train_ids']) <= allowed_ids
                 or not set(head.get('calibration_ids', [])) <= allowed_calibration
                 or head['data_sha256'] != sha256(args.data)):
             raise ValueError('head training provenance or data split mismatch')
@@ -61,7 +66,7 @@ def worker(args):
     host_before = system_snapshot()
     started = time.perf_counter()
     classifier = AttitudeModel(args.model, manifest, args.method,
-                               Path(args.head) if args.head else None, Path(args.onnx) if args.onnx else None)
+                               Path(args.head) if args.head else None, Path(args.onnx) if args.onnx else None, contract)
     load_ms = (time.perf_counter() - started) * 1000
     loaded = memory()
     peak = dict(loaded)
@@ -77,9 +82,9 @@ def worker(args):
                     runtime=packages, imported_frameworks={k: k in sys.modules for k in ['torch','transformers','onnxruntime']}, precision='ONNX dynamic INT8 weights / FP32 pooling and head' if args.onnx else 'FP32',
                     device='cpu', execution_providers=['CPUExecutionProvider'] if args.onnx else None,
                     artifact_manifest=manifest, batch=1, threads=4, interop_threads=1, max_tokens=512,
-                    warmup_per_mode=10, modes=['A','B','C'], input_embedding_cache=False,
-                    candidate_cache='six in-process embeddings computed at load' if classifier.candidates is not None else 'none',
-                    candidate_cache_ms=classifier.cached_candidates_ms, labels=LABELS, criteria=CRITERIA,
+                    warmup_per_mode=10, modes=args.modes, input_embedding_cache=False,
+                    candidate_cache=f'{len(labels)} in-process embeddings computed at load' if classifier.candidates is not None else 'none',
+                    candidate_cache_ms=classifier.cached_candidates_ms, labels=labels, criteria=criteria, contract=contract,
                     instruction=INSTRUCTION, score_kind=classifier.score_kind,
                     score_probability_claim=False, tokenizer_truncation='left for embeddings; Laya over-budget inputs rejected',
                     laya_head_max_len=384 if args.model=='laya' else None,
@@ -91,11 +96,11 @@ def worker(args):
                     timestamp_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),
                     load_ms=load_ms, memory_baseline_kib=baseline, memory_loaded_kib=loaded,
                     host_before=host_before, tts_start_delay_ms=None,
-                    timing_scope='tokenization + encoder + pooling + six scores; excludes HTTP, TTS and playback; Laya includes typed request formatting',
+                    timing_scope=f'tokenization + encoder + pooling + {len(labels)} scores; excludes HTTP, TTS and playback; Laya includes typed request formatting',
                     load_scope='adapter initialization, local tokenizer/model and fixed candidates; excludes framework imports and download; warm filesystem pages after hash verification')
     total_wall = total_cpu = 0
     with out.open('w') as f:
-        for mode in ['A','B','C']:
+        for mode in args.modes:
             warm = [format_input(r, mode) for r in rows[:10]]
             for text in warm:
                 classifier.validate_input(text)
@@ -115,7 +120,10 @@ def worker(args):
                 record = dict((k,v) for k,v in row.items() if not k.startswith('_'))
                 record.update(model=args.model, method=args.method, variant=name, revision=manifest['revision'],
                               mode=mode, repetition=args.rep, score_kind=classifier.score_kind,
-                              raw_scores=dict(zip(LABELS, raw)), decision_scores=dict(zip(LABELS,decision)),
+                              raw_scores=dict(zip(labels, raw)), decision_scores=dict(zip(labels,decision)),
+                              contract=contract, data_sha256=metadata['data_sha256'], head_sha256=metadata['head_sha256'],
+                              inference_encoder_sha256=metadata['onnx_sha256'],
+                              tokenizer_sha256=manifest['files']['tokenizer.json']['sha256'],
                               sdk_probabilities=probabilities, inference_ms=elapsed, cpu_ms=cpu_ms,
                               cpu_core_equivalents=cpu_ms/elapsed, memory_kib=mem, token_count=classifier.token_count,
                               truncated=classifier.truncated, input_sha256=__import__('hashlib').sha256(text.encode()).hexdigest())
@@ -135,6 +143,8 @@ if __name__ == '__main__':
     p.add_argument('--models',nargs='+',default=['laya','verdict','ruri30'])
     p.add_argument('--method',choices=['similarity','head'],default='similarity')
     p.add_argument('--head')
+    p.add_argument('--contract')
+    p.add_argument('--modes', nargs='+', choices=['A','B','C'])
     p.add_argument('--tag',default='',help='distinct name for a head/runtime condition')
     p.add_argument('--onnx')
     p.add_argument('--splits',nargs='+',default=['calibration','eval'])
@@ -142,6 +152,7 @@ if __name__ == '__main__':
     p.add_argument('--model',help=argparse.SUPPRESS)
     p.add_argument('--rep',type=int,default=0,help=argparse.SUPPRESS)
     args=p.parse_args()
+    args.modes = args.modes or (['A'] if args.contract else ['A','B','C'])
     require_external(args.output)
     if args.tag and not __import__('re').fullmatch('[a-z0-9][a-z0-9-]*',args.tag):
         raise ValueError('tag must use lowercase letters, digits and hyphens')
@@ -156,13 +167,15 @@ if __name__ == '__main__':
         from shutil import copy2
         source_directory = require_external(args.output) / 'source'
         source_directory.mkdir(parents=True, exist_ok=True)
-        for source in [*ROOT.glob('*.py'), ROOT/'models.json', Path(args.data)]:
+        for source in [*ROOT.glob('*.py'), ROOT/'models.json', Path(args.data), *([Path(args.contract)] if args.contract else [])]:
             copy2(source, source_directory / source.name)
         for model in args.models:
             for rep in range(3):
                 cmd=[sys.executable,str(Path(__file__).resolve()),'--worker','--model',model,'--rep',str(rep),
                      '--sandbox',args.sandbox,'--output',args.output,'--data',args.data,'--method',args.method,
                      '--tag',args.tag,'--splits',*args.splits]
+                cmd += ['--modes', *args.modes]
+                if args.contract: cmd += ['--contract', args.contract]
                 if args.head: cmd+=['--head',args.head]
                 if args.onnx: cmd+=['--onnx',args.onnx]
                 subprocess.run(cmd,env=env,check=True)

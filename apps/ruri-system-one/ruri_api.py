@@ -7,7 +7,8 @@ from engine import Engine
 
 @asynccontextmanager
 async def lifespan(app):
-    app.state.engine = Engine(os.environ.get('RURI_MODEL_ROOT', '/srv/ai/models/ruri-speaking-attitude-v1'))
+    app.state.engine = Engine(os.environ.get('RURI_MODEL_ROOT', '/srv/ai/models/ruri-speaking-attitude-v1'),
+                              os.environ.get('RURI_ASSET_MANIFEST'))
     yield
 
 

@@ -1,4 +1,4 @@
-"""Replay saved six-way scores without model calls. Quality counts repetition zero only."""
+"""Replay saved N-way scores without model calls. Quality counts repetition zero only."""
 import argparse
 import csv
 import itertools
@@ -20,7 +20,8 @@ def rate(numerator, denominator):
     return {'count': numerator, 'denominator': denominator, 'rate': numerator/denominator if denominator else None}
 
 
-def replay(rows, margin=0., hysteresis=0., alpha=1.):
+def replay(rows, margin=0., hysteresis=0., alpha=1., labels=None):
+    labels = LABELS if labels is None else labels
     if margin < 0 or hysteresis < 0 or not 0 < alpha <= 1:
         raise ValueError('invalid replay parameters')
     predictions = []
@@ -29,31 +30,32 @@ def replay(rows, margin=0., hysteresis=0., alpha=1.):
     for row in sorted(rows,key=lambda r:(r['conversation_id'],r['chunk_order'])):
         if row['conversation_id'] != last_conversation:
             current, smooth = None, None
-        if set(row['decision_scores']) != set(LABELS):
-            raise ValueError('all six candidate scores are required')
-        scores = [row['decision_scores'][l] for l in LABELS]
+        if set(row['decision_scores']) != set(labels):
+            raise ValueError('all contract candidate scores are required')
+        scores = [row['decision_scores'][l] for l in labels]
         if not all(math.isfinite(s) for s in scores):
             raise ValueError('non-finite candidate score')
         smooth = scores if smooth is None else [alpha*v+(1-alpha)*old for v,old in zip(scores,smooth)]
-        top = max(range(6),key=lambda k:smooth[k])
+        top = max(range(len(labels)),key=lambda k:smooth[k])
         second = sorted(smooth,reverse=True)[1]
         proposed = 0 if smooth[top]-second < margin else top
         # The neutral fallback is also subject to hysteresis; no ground truth enters this policy.
         if current is not None and proposed != current and smooth[proposed]-smooth[current] < hysteresis:
             proposed = current
-        predictions.append((row,LABELS[proposed]))
+        predictions.append((row,labels[proposed]))
         current, last_conversation = proposed, row['conversation_id']
     return predictions
 
 
-def metrics(predictions):
-    matrix = [[0]*6 for _ in LABELS]
+def metrics(predictions, labels=None):
+    labels = LABELS if labels is None else labels
+    matrix = [[0]*len(labels) for _ in labels]
     incorrect = suppressed = tech_wrong = 0
     expressive_n = tech_n = 0
     conversations = {}
     errors=[]
     for row, predicted in predictions:
-        matrix[LABELS.index(row['primary_label'])][LABELS.index(predicted)] += 1
+        matrix[labels.index(row['primary_label'])][labels.index(predicted)] += 1
         outside = predicted not in row['acceptable_labels']
         incorrect += outside
         expressive = row['primary_label'] != 'none' and 'none' not in row['acceptable_labels']
@@ -67,7 +69,7 @@ def metrics(predictions):
             errors.append({'id':row['id'],'expected':row['primary_label'],'acceptable':row['acceptable_labels'],
                            'predicted':predicted,'target':row['current_chunk']})
     per_class = {}
-    for i,label in enumerate(LABELS):
+    for i,label in enumerate(labels):
         tp=matrix[i][i]
         support=sum(matrix[i])
         predicted_n=sum(r[i] for r in matrix)
@@ -101,22 +103,26 @@ def metrics(predictions):
             else: completed_delays.append(delay)
             changes.append({'id':row['id'],'delay_chunks':delay,'censored':delay is None})
     n=len(predictions)
-    return dict(n=n,agreement=sum(matrix[i][i] for i in range(6))/n if n else None,
-                macro_f1=sum(v['f1'] for v in per_class.values())/6,
-                confusion_matrix={'rows':'primary truth','columns':'prediction','labels':LABELS,'counts':matrix},
+    risky = {'anger', 'dislike'} & set(labels)
+    negative_wrong = sum(predicted in risky and predicted not in row['acceptable_labels'] for row, predicted in predictions)
+    return dict(n=n,agreement=sum(matrix[i][i] for i in range(len(labels)))/n if n else None,
+                macro_f1=sum(v['f1'] for v in per_class.values())/len(labels),
+                confusion_matrix={'rows':'primary truth','columns':'prediction','labels':labels,'counts':matrix},
                 per_class=per_class,unacceptable=rate(incorrect,n),
+                anger_dislike_misassigned=rate(negative_wrong,n),
                 expressive_to_none=rate(suppressed,expressive_n),technical_wrong_emotion=rate(tech_wrong,tech_n),
                 unnecessary_switch=rate(unnecessary,hold_n),necessary_change_late=rate(late,change_n),
                 unresolved_change=rate(unresolved,change_n),completed_change_delay_chunks=completed_delays,
                 changes=changes,errors=errors)
 
 
-def select_policy(calibration):
+def select_policy(calibration, labels=None):
+    labels = LABELS if labels is None else labels
     if not calibration:
         raise ValueError('calibration partition is required for policy selection')
     best = None
     for margin,hysteresis,alpha in itertools.product([0.,.2,.6,1.2],[0.,.2,.6],[1.,.75,.5]):
-        quality=metrics(replay(calibration,margin,hysteresis,alpha))
+        quality=metrics(replay(calibration,margin,hysteresis,alpha,labels),labels)
         # Preregistered objective; penalties are inactive when calibration has no transitions.
         objective=(quality['macro_f1'] - .1*(quality['unnecessary_switch']['rate'] or 0)
                    - .1*(quality['necessary_change_late']['rate'] or 0))
@@ -154,21 +160,26 @@ def summarize(run_dirs, output, policy=None):
         eval_rows=[r for r in representative if r['split']=='eval']
         calibration=[r for r in representative if r['split']=='calibration']
         eval_times=[r for r in rows if r['split']=='eval']
-        selected=select_policy(calibration)
-        selected_quality=metrics(replay(eval_rows,**selected['parameters']))
-        raw=metrics(replay(eval_rows))
-        chosen=metrics(replay(eval_rows,**policy)) if policy else None
+        labels = list(metas[(variant,mode)].values())[0].get('labels', LABELS)
+        if not labels or labels[0] != 'none' or len(set(labels)) != len(labels):
+            raise ValueError('invalid report label contract')
+        if not eval_rows:
+            raise ValueError('evaluation partition is required')
+        selected=select_policy(calibration, labels)
+        selected_quality=metrics(replay(eval_rows,labels=labels,**selected['parameters']),labels)
+        raw=metrics(replay(eval_rows,labels=labels),labels)
+        chosen=metrics(replay(eval_rows,labels=labels,**policy),labels) if policy else None
         meta=list(metas[(variant,mode)].values())
         for field in ['revision','repository','runtime','precision','device','execution_providers','threads',
-                      'max_tokens','labels','criteria','instruction','head_sha256','onnx_sha256','protocol_sha256']:
+                      'max_tokens','labels','contract','criteria','instruction','head_sha256','onnx_sha256','protocol_sha256']:
             if len({json.dumps(m.get(field),sort_keys=True) for m in meta}) != 1:
                 raise ValueError('experiment identity changed between repetitions: ' + field)
         hashes={m['data_sha256'] for m in meta}
         if len(hashes)!=1: raise ValueError('data identity differs')
-        raw_preds={r['id']:max(LABELS,key=lambda l:r['decision_scores'][l]) for r in eval_rows}
-        instability=len({r['id'] for r in eval_times if max(LABELS,key=lambda l:r['decision_scores'][l])!=raw_preds[r['id']]})
+        raw_preds={r['id']:max(labels,key=lambda l:r['decision_scores'][l]) for r in eval_rows}
+        instability=len({r['id'] for r in eval_times if max(labels,key=lambda l:r['decision_scores'][l])!=raw_preds[r['id']]})
         score_delta=max(abs(r['raw_scores'][l]-next(x for x in eval_rows if x['id']==r['id'])['raw_scores'][l])
-                        for r in eval_times for l in LABELS)
+                        for r in eval_times for l in labels)
         memory_peak={k:max(m['memory_peak_observed_kib'][k] for m in meta) for k in meta[0]['memory_peak_observed_kib']}
         item=dict(variant=variant,mode=mode,preliminary=True,quality=raw,
                   selected_policy=selected,selected_policy_eval=selected_quality,requested_policy=policy,requested_policy_eval=chosen,
