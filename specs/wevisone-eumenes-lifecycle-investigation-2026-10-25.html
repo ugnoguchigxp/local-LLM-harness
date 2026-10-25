@@ -11,7 +11,7 @@
       取消直後の再取得は、停止処理中の旧instanceを再利用できてしまうLARM側の競合と整合する。遅延stopを使う再現試験で、旧世代へ結び付くことと取消が無視されることを確認した。停止完了を待って世代を再解決する修正により同じ3条件が合格した。利用側の3条件が今回の停滞を起こした証拠はない。
     </p>
     <p>
-      修正コード・契約試験は合格。本番配備と、実モデルのclaim→取消→待ち時間なしの再取得を4回行う受入試験は配備後に追記する。
+      修正版ae62948340e2e0959bbbae9eca362dba7a060626を本番配備し、実モデルのclaim→取消→待ち時間なしの再取得を4回連続で確認した。すべて成功し、最後は公開APIの新鮮なCOLDとホスト側のMainPID=0が一致した。
     </p>
     <p>
       証跡はソース外の <code>/srv/ai/evidence/wevisone-vl-eumenes-investigation-20261025</code>。収集は時刻・ID・状態・世代・HTTP
@@ -222,6 +222,71 @@
     <p>
       再現試験の修正前は3件すべて失敗、修正後は既存14件と合わせ17件合格。停止中の再取得、health応答とstopの競合、待機中の取消を確認した。追加の公開API認証とキャッシュ契約試験も含むBun全試験・coverageは1013
       pass・10 skip・0 failで、既存critical coverage基準を通過した。
+    </p>
+  </section>
+  <section id="production-acceptance">
+    <h2>修正版の本番受入</h2>
+    <p>
+      2026-10-25 21:02:52 JST、署名付き配備のcontract_verified=succeededを確認した。runtime code
+      commitはae62948340e2e0959bbbae9eca362dba7a060626。install・開発/本番依存audit・全check・coverageを通過し、inspection権限は拡大していない。
+    </p>
+    <p>
+      実モデルで、Connection取得→ready→claim→推論POSTを送らずDELETE→停止を待たず次を取得、を4回繰り返した。業務画像の推論は送らず、LARM内の固定画像readinessだけを実行した。
+    </p>
+    <table>
+      <caption>
+        本番中央APIの連続取消・再取得
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">回</th>
+          <th scope="col">instance generation</th>
+          <th scope="col">取得からclaimまで</th>
+          <th scope="col">status / readiness / claimable</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">1</th>
+          <td>1</td>
+          <td>17.129秒</td>
+          <td>ready / ready / true</td>
+        </tr>
+        <tr>
+          <th scope="row">2</th>
+          <td>2</td>
+          <td>29.190秒</td>
+          <td>ready / ready / true</td>
+        </tr>
+        <tr>
+          <th scope="row">3</th>
+          <td>3</td>
+          <td>17.336秒</td>
+          <td>ready / ready / true</td>
+        </tr>
+        <tr>
+          <th scope="row">4</th>
+          <td>4</td>
+          <td>17.341秒</td>
+          <td>ready / ready / true</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      例えば21:03:57.127の解放に対して21:03:57.131に次の要求が入り、旧世代2の停止完了は21:03:57.348だった。修正後は停止を待って世代3を起動し21:04:12.384にbackendがreadyとなった。21:04:14.466の解放から21:04:14.468の次要求でも、旧世代3の停止完了21:04:14.677を待ち、世代4で成功した。回避用のsleepは入れていない。
+    </p>
+    <p>
+      最終解放後に通常API BearerでGET
+      /stateのobservedAt=2026-10-25T12:04:33.256Z、wevisone-vl-4b=COLDを取得し、MainPID=0と一致した。21:05の再読でも/stateは200・Cache-Control:no-store・COLD、/v1/inspection/runtimesは403のままだった。GET
+      /stateは対象を起動しない。
+    </p>
+    <p>
+      今回のdaemon再起動でbootEpochはepoch-dda002ea-1ede-4504-aa8f-c4a58f14e484へ変わった。提示された旧接続IDは410
+      connection_epoch_expiredになることを確認した。Eumenesは現在の接続を新規取得する。元の接続・allocation・operationは反映前に状態メタデータを照合・保存済み。
+    </p>
+    <p>
+      証跡はlive/lifecycle.json、fixed-live-timeline-metadata.json、final-public-api-checks.json、release-gate.json。テストとlive
+      APIを区別し、Eumenes画面そのものは今回操作していない。Eumenes側で修正版への再接続と、必要に応じた待機判定の改善を確認する。
     </p>
   </section>
   <section id="optional-strict-contract">
