@@ -732,3 +732,26 @@ runtimes:
       healthPort: 8093
       healthPath: /health
       endpoint: http://127.0.0.1:8093
+
+  wevisone-vl-4b:
+    artifacts: [ wevisone-vl-4b ]
+    capability: [ vision.perception ]
+    protocol: larm.visual-perception.v1
+    backend: systemd
+    node: local-node
+    policy:
+      class: elastic
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 0 }
+    resources:
+      estimatedMemoryGB: 20
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 100
+    deployment:
+      scope: user
+      service: wevisone-vl.service
+      healthPort: 8094
+      healthPath: /health
+      endpoint: http://127.0.0.1:8094

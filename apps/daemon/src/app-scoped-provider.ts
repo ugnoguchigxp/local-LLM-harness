@@ -18,6 +18,8 @@ export async function validateScopedProviderModel(input: {
     let modelValues: unknown[] = [];
     if (input.protocol === "larm.embedding.v1") {
       modelValues = [input.publicModel];
+    } else if (input.protocol === "larm.visual-perception.v1") {
+      modelValues = input.prepared.visualPerceptionRequest ? [input.prepared.visualPerceptionRequest.model] : [];
     } else if (input.protocol === "larm.system-one.v1") {
       modelValues = input.prepared.systemOneRequest ? [input.prepared.systemOneRequest.model] : [];
     } else if (input.protocol === "openai.chat-completions.v1") {

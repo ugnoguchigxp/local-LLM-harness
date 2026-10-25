@@ -27,6 +27,7 @@ export const runtimeProtocolSchema = z.enum([
   "openai.audio-speech.v1",
   "larm.embedding.v1",
   "larm.system-one.v1",
+  "larm.visual-perception.v1",
 ]);
 
 export const runtimeStatusSchema = z.enum([
@@ -101,6 +102,7 @@ export const llamaSwapDeploymentSchema = z.object({
 }).strict();
 
 export const systemdDeploymentSchema = z.object({
+  scope: z.enum(["system", "user"]).optional(),
   service: z.string().max(256).regex(/^[a-zA-Z0-9][a-zA-Z0-9_.@:-]*\.service$/),
   healthPort: z.number().int().min(1).max(65535),
   healthPath: z.string().min(1).max(256).startsWith("/").optional(),

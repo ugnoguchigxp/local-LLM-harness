@@ -528,3 +528,48 @@ models:
       - path: vocab.json
         bytes: 6722759
         sha256: ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003
+
+  wevisone-vl-4b:
+    kind: snapshot
+    role: on-demand-visual-perception
+    source: https://huggingface.co/tencent/WeVisOne-VL-4B
+    revision: 4a7bed92750ac9d8b8a124cede14759036932dc2
+    path: /srv/ai/models/tencent/WeVisOne-VL-4B/4a7bed92750ac9d8b8a124cede14759036932dc2
+    totalBytes: 19372593249
+    maxFiles: 11
+    snapshotDigest: ae8f27e154ca8017c634488231296cd41144a0dd49c1a7af9aa72d00d754eaa1
+    runtime: transformers-5.12.1-rocm-bf16
+    files:
+      - path: .gitattributes
+        bytes: 1570
+        sha256: 34448b82c17d60fec9b65b1f093c115ddbaadc04beb1b0140b6bfed2e012a930
+      - path: LICENSE
+        bytes: 24539
+        sha256: df97da91b705606ff9657f8ce4b4becff382c014e6b94069d1e55224b9d7d6d2
+      - path: README.md
+        bytes: 2967
+        sha256: 2ea80f93490d3bd5e11eea5d942474700ea65a94803b451582a5317997749be8
+      - path: chat_template.jinja
+        bytes: 5292
+        sha256: 3636d0f0bd6bef02654cdffdc447b79cb2cef8ab02cc75267345946291a489e4
+      - path: config.json
+        bytes: 1664
+        sha256: 69da45bf7cdb6776dc3949034ff9c4ab711abddc696adc272a8cf18bc5399697
+      - path: generation_config.json
+        bytes: 228
+        sha256: 5583d8b7fa1515aaabdfbca2cf412d99a86c98d9dd57dd66cfb132504f1fa4ad
+      - path: mask_decoder.pt
+        bytes: 38534741
+        sha256: 8528460481bd09d0780c53559b08194c7abbd29dff0d51783b619158acbe7b46
+      - path: model.safetensors
+        bytes: 19322413240
+        sha256: c5cedda4ee797a0232f16b1b809c14fb0ce771a229da5007095cc2eede4efbba
+      - path: processor_config.json
+        bytes: 1191
+        sha256: d89ef49ce9cd37fbf510158e13c1ef063d9286411c1ec9049932dbe0487143b1
+      - path: tokenizer.json
+        bytes: 11607393
+        sha256: 3bb172429b952469b51c64783f52fa01c26d1b30f1f31a4693e385a43f9cfc5e
+      - path: tokenizer_config.json
+        bytes: 424
+        sha256: af3b0fe802740ae544beb2b395b9b498fc942d8df2323cd0117bf1dfdec1d943

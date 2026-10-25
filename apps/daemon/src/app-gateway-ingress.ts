@@ -147,7 +147,7 @@ export async function prepareGatewayIngress(input: {
   if (options.countChatInputOnly && (contextViewId || attemptId)) {
     return { ok: false, response: c.json(errorBody("invalid_request", "token counting requires the complete materialized messages without context or attempt headers"), 400) };
   }
-  if ((options.protocol === "larm.embedding.v1" || options.protocol === "larm.system-one.v1") && !scoped) {
+  if ((options.protocol === "larm.embedding.v1" || options.protocol === "larm.system-one.v1" || options.protocol === "larm.visual-perception.v1") && !scoped) {
     return {
       ok: false,
       response: c.json(errorBody(

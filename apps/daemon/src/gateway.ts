@@ -10,6 +10,8 @@ import {
   inspectOpenAiChatCompletionJson,
   inspectOpenAiTranscriptionJson,
   inspectSystemOneResponse,
+  inspectVisualPerceptionResponse,
+  type VisualPerceptionRequest,
   isOpenAiSpeechMediaType,
   OpenAiChatCompletionSseInspector,
   OpenAiChatCompletionSseNormalizer,
@@ -120,6 +122,7 @@ export type GatewayProxyOptions = {
     request: EmbeddingRequest;
     space: EmbeddingSpace;
   };
+  validateVisualPerceptionResponse?: { request: VisualPerceptionRequest };
   validateSystemOneResponse?: { request: SystemOneRequest; transform?: (response: import("@larm/core").SystemOneResponse) => import("@larm/core").SystemOneResponse };
   expectedSpeechFormat?: string;
   expectedModel?: string;
@@ -1054,6 +1057,26 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         inputType: options.validateEmbeddingResponse.request.type,
       },
     });
+    await finalizeAudit();
+    finish();
+    return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
+  }
+  if (options.validateVisualPerceptionResponse && options.protocol === "larm.visual-perception.v1" && upstream.ok) {
+    if (upstream.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+      await upstream.body?.cancel().catch(() => undefined);
+      return failure("upstream_response_format_mismatch", "visual perception provider did not return JSON", 502, "upstream_protocol_error");
+    }
+    let responseBody: Uint8Array;
+    let parsed: unknown;
+    try {
+      responseBody = await readUpstreamBody(8 * 1024 * 1024);
+      parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody)) as unknown;
+    } catch {
+      return failure("upstream_response_invalid", "invalid or oversized visual perception response", 502, "upstream_protocol_error");
+    }
+    if (!inspectVisualPerceptionResponse(parsed, options.validateVisualPerceptionResponse.request).ok) {
+      return failure("upstream_response_invalid", "visual perception response does not match the request", 502, "upstream_protocol_error");
+    }
     await finalizeAudit();
     finish();
     return new Response(responseBody, { status: upstream.status, headers: responseHeaders });

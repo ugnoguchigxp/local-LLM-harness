@@ -1,0 +1,199 @@
+<article lang="ja">
+  <h1>WeVisOne-VL-4B オンデマンド配備 — 2026-10-25</h1>
+  <p>
+    画像の意味・関係・行動を使った対象検索と画像説明を補助する専用Providerとして配備する。利用者はvisualPerceptionを明示的に選ぶ。通常の会話、YOLO、OCRの既定選択には追加しない。
+  </p>
+  <section id="section-state" aria-labelledby="state">
+    <h2 id="state">検証状態</h2>
+    <p>
+      隔離したLARMから実際のユーザーsystemdサービスを起動し、1536×1024の生成画像でreferring・describe・segmentationを実行した。接続解放でプロセス終了と資格失効を確認し、再度COLDから起動して推論・終了まで合格。本番の署名付きリリースへの反映は最終検証後に行う。
+    </p>
+    <p>
+      証跡はホスト外部保存先
+      <code>/srv/ai/evidence/wevisone-vl-deployment-20261025</code>。画像や重みをソースリポジトリへ入れない。先行の<a
+        href="./wevisone-vl-investigation-2026-10-25.html"
+        >モデル取得記録</a
+      >と<a href="./wevisone-vl-semantic-trial-2026-10-25.html">意味理解の探索試験</a>を参照。
+    </p>
+  </section>
+  <section id="section-resolution" aria-labelledby="resolution">
+    <h2 id="resolution">選択と寿命</h2>
+    <table>
+      <caption>
+        要求から実行までの対応
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">層</th>
+          <th scope="col">値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">selector / Agent Profile</th>
+          <td>visualPerception / visual-perception</td>
+        </tr>
+        <tr>
+          <th scope="row">Provider / capability</th>
+          <td>vision / vision.perception</td>
+        </tr>
+        <tr>
+          <th scope="row">route / runtime / model</th>
+          <td>vision-wevisone / wevisone-vl-4b / wevisone-vl-4b</td>
+        </tr>
+        <tr>
+          <th scope="row">protocol / API</th>
+          <td>larm.visual-perception.v1 / POST /v1/vision/perceive</td>
+        </tr>
+        <tr>
+          <th scope="row">backend</th>
+          <td>
+            ユーザー単位のsystemd、wevisone-vl.service、loopback
+            8094。systemスコープは既存の既定値を維持。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">policy</th>
+          <td>
+            elastic / managed、warm=0、idle TTL=0、同時接続1・同時要求1・キュー0、推定メモリ20GB。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">終了</th>
+          <td>
+            最終Connectionのrelease後に終了。放置された接続は無通信60秒で解放。推論中の実行参照は維持。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      モデルの常駐起動は有効化しない。ユーザーmanagerのlingerだけを有効にして再起動後も要求時に起動できるようにする。プロセス終了でモデルとGPUメモリを解放する。要求を続ける利用者はConnectionを保持・renewし、処理後にreleaseする。
+    </p>
+  </section>
+  <section id="section-contract" aria-labelledby="contract">
+    <h2 id="contract">利用契約</h2>
+    <ol>
+      <li>GET /v3/agent-profiles?profile=visualPerceptionで最新catalogを取得する。</li>
+      <li>
+        POST
+        /v1/agent-connectionsへprofile=visualPerception、audience=same-host、providers=[vision]を指定する。
+      </li>
+      <li>
+        readyになるまで待ち、claimする。healthの確認だけではなく、赤い円の実画像による推論が成功してからreadyになる。
+      </li>
+      <li>
+        claimのendpointとcredentialを用いて下記のJSONをPOSTする。共有Control資格による直接推論は許可しない。
+      </li>
+      <li>
+        最後にDELETE /v1/agent-connections/{id}で解放する。解放済みのProvider資格は401になる。
+      </li>
+    </ol>
+    <pre><code>{
+  "model": "wevisone-vl-4b",
+  "image": "data:image/png;base64,&lt;base64&gt;",
+  "task": "referring",
+  "query": "the cup that has spilled liquid",
+  "maxNewTokens": 160
+}</code></pre>
+    <p>
+      taskはdetection、referring、count_box、ocr、ocr_grounding、segmentation、matting、describe。detectionだけqueryにカテゴリ配列も指定できる。ocrのqueryは空文字可。describeは上流freeformを使い、生テキストを返す。説明中の疑似座標はdetectionsへ転載しない。
+    </p>
+    <p>
+      PNG/JPEG/WebPの静止画1枚、復号後4MiB・4194304
+      pixels・各辺8192px以内。MIMEと実データを照合し、EXIF回転を適用してRGBにする。URL・ホストパス・アニメーションを受け付けない。maxNewTokensは16〜512、省略256。
+    </p>
+    <p>
+      応答はresponse、detections（labelと正規化後の元画像pixelによるxyxy）、masks、truncated、execution、timings。confidenceは作らない。count_boxのcountは切断のない出力で検出した箱の個数であり、真の物体数の保証ではない。truncated=trueの場合は結果が不完全。
+    </p>
+    <p>
+      segmentationは0.5閾値の二値PNG、mattingは8bitの連続alpha
+      PNGをbase64で返す。最大8対象・PNG合計4MiB。上流出力順を保ち、繰り返したラベルでもdetectionIndexとマスクの対応を照合する。非有限値・範囲外座標・サイズ不一致・空マスクを成功として返さない。
+    </p>
+    <p>
+      timingsはimageDecodeMs、preprocessMs、generationMs、maskMs、postprocessMs、totalMs。マスク用の再入力処理はmaskMsに含む。HTTP転送・JSON直列化・Connection作成・モデル起動時間は別で測る。通常検索ではoverlay・cutout等を描画せず、画像も結果もworkerのディスクへ保存しない。LARM中央の暗号化推論監査方針は適用される。
+    </p>
+  </section>
+  <section id="measured-performance">
+    <h2>隔離LARMでの実測</h2>
+    <p>
+      1536×1024のdesk-spill画像を各条件1回、検索だけ別プロセスで2回実行した。統計値ではない。COLDからclaimまで16.89秒と17.10秒で、ファイル完全照合・モデルロード・実画像readinessを含む。
+    </p>
+    <table>
+      <caption>
+        worker内部の段階別時間
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">task</th>
+          <th scope="col">生成</th>
+          <th scope="col">マスク</th>
+          <th scope="col">後処理</th>
+          <th scope="col">全体</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">referring</th>
+          <td>13.52秒</td>
+          <td>0</td>
+          <td>0.164ms</td>
+          <td>13.58秒</td>
+        </tr>
+        <tr>
+          <th scope="row">describe</th>
+          <td>21.00秒</td>
+          <td>0</td>
+          <td>0.018ms</td>
+          <td>21.16秒</td>
+        </tr>
+        <tr>
+          <th scope="row">segmentation</th>
+          <td>13.36秒</td>
+          <td>12.76秒</td>
+          <td>11.05ms</td>
+          <td>26.28秒</td>
+        </tr>
+        <tr>
+          <th scope="row">referring（再起動）</th>
+          <td>13.58秒</td>
+          <td>0</td>
+          <td>0.165ms</td>
+          <td>13.64秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      JSON検索で公式のsave_resultを省いたため、先行試験の約1.64秒の画像保存処理は発生しない。マスクもPNGだけをメモリで符号化する。Connection解放からPID=0までは0.289秒と0.306秒で、どちらも解放済み資格の401を確認した。
+    </p>
+  </section>
+  <section id="section-runtime" aria-labelledby="runtime">
+    <h2 id="runtime">固定した実行環境と制限</h2>
+    <p>
+      上流ソース40f735b8daed437ece982db9718e9c9856f52a79、重み4a7bed92750ac9d8b8a124cede14759036932dc2。全11ファイルのサイズ・SHA-256を起動時に照合する。BF16
+      backbone、上流内部のFP32 pixel decoder、Transformers 5.12.1、torch
+      2.11.0+rocm7.13.0、gfx1151、SDPA、decoder batch=1。CPUへの切替は許可しない。
+    </p>
+    <p>
+      Python環境・固定ソース・モデルは/srv/ai/appsおよび/srv/ai/modelsの外部配備物。installerはrequirements.lockの全バージョンとソースの清浄性を確認し、アプリケーションだけを内容ハッシュ付きディレクトリへコピーする。既存の共有Python環境やCPU専用local-servicesのデバイス隔離設定を変更しない。
+    </p>
+    <p>
+      MIOPEN_FIND_MODE=FAST、TORCH_BLAS_PREFER_HIPBLASLT=1、完全オフライン。通常のconvolution探索が長時間停滞したため、実測で成功した設定を固定した。UnitはMemoryMax=32G、CPUQuota=400%、TasksMax=512、Restart=no。
+    </p>
+    <p>
+      GPU呼び出し中のPythonスレッドを放棄して同時実行を許さない。生成は120秒の協調上限、要求全体は180秒の専用プロセス終了期限。GPU障害ではworkerを終了し、後続要求で新しいworkerを起動する。クライアント期限は185秒を推奨する。
+    </p>
+  </section>
+  <section id="section-verification" aria-labelledby="verification">
+    <h2 id="verification">検証と運用</h2>
+    <p>
+      smoke-wevisone-profile.tsは実際の停止状態から2回起動し、画像検索・説明・マスク・再検索、資格失効、PID=0を検証する。--isolatedではWeVisOneだけを管理する独立したLARMを使う。本番では同じ手順を中央Gatewayへ実行する。
+    </p>
+    <p>
+      HTTP契約テストは選択・claim・画像readiness・要求とモデルの照合・不正JSON・サイズ超過・上流不正応答・429・解放後401を確認。Pythonテストは入力上限、破損・回転・アニメーション・画像サイズ、A/B/Aラベルのマスク順と二値/alpha変換を確認する。実モデルの意味理解評価は別の探索試験に記録しており、小標本を統計的な精度として扱わない。
+    </p>
+    <p>
+      配備は稼働版ca9e2c2d397aを土台にした独立ブランチで行う。署名付きrelease
+      builderのinstall・audit・全check・coverageを通過してから中央daemonを切り替える。障害時は既存の署名付きrollback経路を使い、必要なら停止中のユーザーUnitを無効化して除去できる。モデルの重みは再ダウンロード不要。
+    </p>
+  </section>
+</article>

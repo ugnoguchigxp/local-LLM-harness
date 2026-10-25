@@ -5,6 +5,8 @@ import {
   inspectOpenAiChatCompletionJson,
   inspectOpenAiChatCompletionSse,
   inspectSystemOneResponse,
+  inspectVisualPerceptionResponse,
+  visualPerceptionProbe,
   type EmbeddingRequest,
   type AgentProviderHealth,
   type AgentProviderProfile,
@@ -424,6 +426,12 @@ export class SemanticReadiness {
         redirect: "manual",
       });
     }
+    if (provider.protocol === "larm.visual-perception.v1") {
+      return await (this.options.fetchImpl ?? fetch)(`${base}/v1/vision/perceive`, {
+        method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(visualPerceptionProbe(provider.publicModel)), signal, redirect: "manual",
+      });
+    }
     if (provider.protocol === "larm.system-one.v1") {
       return await (this.options.fetchImpl ?? fetch)(`${base}/v1/systemone`, {
         method: "POST",
@@ -480,6 +488,9 @@ export class SemanticReadiness {
         priority: "low",
       };
       return inspectEmbeddingResponse({ value, request, space: provider.embeddingSpace }).ok;
+    }
+    if (provider.protocol === "larm.visual-perception.v1") {
+      return inspectVisualPerceptionResponse(value, visualPerceptionProbe(provider.publicModel)).ok;
     }
     if (provider.protocol === "larm.system-one.v1") {
       const inspected = inspectSystemOneResponse({ value, request: systemOneProbe(provider.publicModel, provider.capability) });

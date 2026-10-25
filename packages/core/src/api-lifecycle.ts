@@ -130,7 +130,7 @@ export function apiOperationPolicy(
     || path.startsWith("/v1/runtime-releases") || path.startsWith("/v1/deployments/")) {
     owner = "release-management";
   } else if (path.startsWith("/v1/chat/") || path.startsWith("/v1/audio/")
-    || path.startsWith("/v1/embed") || path.startsWith("/v1/systemone") || path === "/v1/models") {
+    || path.startsWith("/v1/vision/") || path.startsWith("/v1/embed") || path.startsWith("/v1/systemone") || path === "/v1/models") {
     owner = "inference-gateway";
   } else if (path.startsWith("/v1/allocations/") || path === "/v1/allocations"
     || path === "/prepare" || path === "/resolve" || path === "/release"
@@ -157,7 +157,7 @@ export function apiOperationPolicy(
     : ["listServices", "getAsrServiceHealth", "createTranscription"].includes(operationId)
     ? "configurable-api-bearer"
     : [
-      "countChatInputTokens", "createEmbedding", "createSystemOneDecision", "getPersonalStateCapability", "provisionContextSource", "getContextSourceOperation",
+      "countChatInputTokens", "createEmbedding", "createSystemOneDecision", "createVisualPerception", "getPersonalStateCapability", "provisionContextSource", "getContextSourceOperation",
       "createContextMeasurement", "getContextMeasurement", "createContextViewV2", "getContextViewV2",
       "getGenerationAttempt", "cancelGenerationAttempt", "createContextForgetOperation", "getContextForgetOperation",
     ].includes(operationId)

@@ -86,6 +86,7 @@ import {
 } from "./agent-connection";
 import { embeddingRequestSchema, embeddingResponseSchema } from "./embedding";
 import { systemOneRequestSchema, systemOneResponseSchema } from "./system-one";
+import { visualPerceptionRequestSchema, visualPerceptionResponseSchema } from "./visual-perception";
 import {
   musicArtifactMetadataSchema,
   musicFavoriteListSchema,
@@ -306,6 +307,8 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     DecisionAdapter: jsonSchema(decisionAdapterDetailSchema),
     DecisionAdapterList: jsonSchema(z.object({ adapters: z.array(decisionAdapterDetailSchema) }).strict()),
     DecisionDeleted: jsonSchema(z.object({ deleted: z.literal(true) }).strict()),
+    VisualPerceptionRequest: jsonSchema(visualPerceptionRequestSchema),
+    VisualPerceptionResponse: jsonSchema(visualPerceptionResponseSchema),
     SystemOneRequest: jsonSchema(systemOneRequestSchema),
     SystemOneResponse: jsonSchema(systemOneResponseSchema),
     MusicTrack: jsonSchema(musicTrackSchema),

@@ -117,6 +117,9 @@ export function parseRegistryDocuments(input: {
       if (runtime.protocol === "larm.system-one.v1") {
         return capability === "decision.system-one" || capability === "decision.game" || capability === "decision.general";
       }
+      if (runtime.protocol === "larm.visual-perception.v1") {
+        return capability === "vision.perception";
+      }
       return capability.startsWith("speech.tts");
     });
     if (!compatible) {

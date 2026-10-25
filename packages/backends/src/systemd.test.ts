@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { compileProviderRevision, type SystemdRuntimeDefinition } from "@larm/core";
-import { SystemdBackend, parseSystemctlState } from "./systemd";
+import { SystemdBackend, parseSystemctlState, systemdInvocation } from "./systemd";
 
 function definition(
   port: number,
@@ -23,6 +23,36 @@ function definition(
     },
   };
 }
+
+test("systemd user scope selects the daemon account bus without changing system defaults", () => {
+  expect(systemdInvocation("start", "worker.service")).toEqual({ args: ["start", "worker.service"], options: {} });
+  if (process.getuid?.() === 0) {
+    expect(() => systemdInvocation("start", "worker.service", "user")).toThrow();
+  } else {
+    const invocation = systemdInvocation("start", "worker.service", "user");
+    expect(invocation.args).toEqual(["--user", "start", "worker.service"]);
+    expect(invocation.options.env?.DBUS_SESSION_BUS_ADDRESS).toBe(`unix:path=/run/user/${process.getuid?.()}/bus`);
+  }
+});
+
+test("systemd user scope follows the runtime through health, start and instance stop", async () => {
+  const server = Bun.serve({ port: 0, fetch: () => Response.json({ status: "ok" }) });
+  const runtime = definition(server.port!); runtime.deployment.scope = "user";
+  const calls: string[] = [];
+  const backend = new SystemdBackend([runtime], {
+    queryService: async (_name, scope) => { calls.push(`query:${scope}`); return "Running"; },
+    control: { start: async (_name, _signal, scope) => { calls.push(`start:${scope}`); },
+      stop: async (_name, scope) => { calls.push(`stop:${scope}`); } },
+  });
+  try {
+    await backend.ensure(runtime);
+    const revision = compileProviderRevision({ runtime, runtimeRelease: "vision-v1" });
+    const instance = await backend.ensureInstance(revision, runtime);
+    await backend.stopInstance(instance.id); await backend.stop(runtime.id);
+    expect(calls).toContain("query:user"); expect(calls.filter(c => c === "start:user")).toHaveLength(2);
+    expect(calls.filter(c => c === "stop:user")).toHaveLength(2);
+  } finally { server.stop(true); }
+});
 
 test("parseSystemctlState maps systemd states", () => {
   expect(parseSystemctlState("active\n", "", 0)).toBe("Running");

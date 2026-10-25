@@ -1,0 +1,394 @@
+<article lang="ja">
+  <h1>WeVisOne-VL-4B実機試験：画像の意味・対象指定・後処理時間</h1>
+  <p>
+    2026年10月25日。生成画像2場面とカップの色を入れ替えた1枚を使い、25条件・再試験を含む33回のGPU推論を完了した。
+    <strong
+      >この少数の場面では、状態・役割・位置関係を含む指示から対象を選ぶ能力を確認できた。</strong
+    >
+    画像の自由説明も可能だったが、OCRの文字脱落、文字のない画像への誤検出、FP16時の空マスクも確認した。
+    本書は探索試験の記録であり、一般的な認識精度や本番採用を保証するものではない。
+  </p>
+  <section id="scope">
+    <h2>試験画像と評価の範囲</h2>
+    <p>
+      <a href="./wevisone-vl-investigation-2026-10-25.html">事前調査・モデル取得記録</a
+      >の固定snapshotを使用した。
+      試験画像はimagegenの組み込みtoolで生成し、モデルへ渡す前に目視確認した。
+      画像生成prompt・正解の説明・期待boxはWeVisOneへ渡していない。推論に渡したのは画像と各試験のqueryだけである。
+      画像・結果・生成条件はrepository外の<code>/srv/ai/evidence/wevisone-vl-trial-20261025/</code>に保存した。
+    </p>
+    <table>
+      <caption>
+        全画像は1536×1024。実画像の代わりになる代表性は確認していない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">画像</th>
+          <th scope="col">目視で確認した内容</th>
+          <th scope="col">意味の試験</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">desk-spill.png</th>
+          <td>
+            倒れた赤いカップ、立った青いカップ、液体、点灯したPC、消灯したスマートフォン、布で拭く手。
+          </td>
+          <td>状態、画面の点灯、用途、液体に近い電子機器、対象なし、状況説明。</td>
+        </tr>
+        <tr>
+          <th scope="row">repair-workbench.png</th>
+          <td>
+            左の人がtoy
+            carを修理し、右の人が説明書を読む。机上に3本のドライバー、手持ち分は別に1本。
+          </td>
+          <td>人の役割、使用中の道具、2物体の間、条件付きcount、警告label、日英OCR。</td>
+        </tr>
+        <tr>
+          <th scope="row">desk-colors-swapped.png</th>
+          <td>同じ場面で、倒れたカップを青、立ったカップを赤へ変更。配置と状態は維持。</td>
+          <td>色を指定せず、こぼした方と直立した方を再度選ばせる。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      元の22条件に対し、時間の詳細計測4条件と追加3条件、BF16による4回の追加確認を実行した。
+      終了した33回にはFP16の空マスク等の内容上の失敗も含む。「正常終了」と「認識成功」を同じ意味にしない。
+      最初の長時間待ちで中止した試行は33回に含めない。
+      同じ画像の反復、生成した場面、近似的な手動boxを使うため、成功率を一般的なbenchmark精度として提示しない。
+    </p>
+  </section>
+  <section id="meaning">
+    <h2>画像の意味と位置特定で確認できたこと</h2>
+    <table>
+      <caption>
+        各queryに対する実際の位置を目視確認。日本語・英語の双方を含む
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指示</th>
+          <th scope="col">結果</th>
+          <th scope="col">評価上の限界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">飲み物をこぼして倒れているカップ</th>
+          <td>赤いカップを選択。英語でも同じ対象を選択。</td>
+          <td>物理的な因果推論全般を確認したものではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">立っている青いカップ</th>
+          <td>奥の直立したカップを選択。</td>
+          <td>2個だけの明瞭な場面である。</td>
+        </tr>
+        <tr>
+          <th scope="row">色を入れ替えた後の、こぼしたカップ／直立したカップ</th>
+          <td>倒れた青と直立した赤をそれぞれ選択。</td>
+          <td>少なくともこの例では元の色に依存した選択ではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">画面が消灯したdevice／点灯したノートPC</th>
+          <td>スマートフォンとPCを区別。</td>
+          <td>画面内容の詳細を理解した試験ではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">こぼれた液体を拭くために使われている物</th>
+          <td>白い布を選択。</td>
+          <td>用途・動作の手掛かりがはっきり見える場面である。</td>
+        </tr>
+        <tr>
+          <th scope="row">液体で最も危険になりそうな電子機器</th>
+          <td>液体に隣接したノートPCを選択。</td>
+          <td>近接を使って答えられる例であり、高度な危険予測を証明しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">toy carを修理している人／説明書を読んでいる人</th>
+          <td>左と右の人物を区別。後者は日本語query。</td>
+          <td>作業の進行や実際の修理成功までは分からない。</td>
+        </tr>
+        <tr>
+          <th scope="row">修理に使われているドライバー</th>
+          <td>机上の3本ではなく、手持ちの小さい道具を選択。</td>
+          <td>道具の細い先端を含む厳密なpixel精度は別評価。</td>
+        </tr>
+        <tr>
+          <th scope="row">赤と黒のドライバーの間のドライバー</th>
+          <td>黄色い道具を選択。</td>
+          <td>左右が明瞭に並ぶ場面である。</td>
+        </tr>
+        <tr>
+          <th scope="row">机上に置かれたドライバーの数</th>
+          <td>手持ち分を除いた3本と返答。3本のboxも返した。</td>
+          <td>大規模・密集countの精度は未評価。</td>
+        </tr>
+        <tr>
+          <th scope="row">机上のはさみ</th>
+          <td>noneを返し、boxは空。</td>
+          <td>対象なしは1種類のみで、一般的な棄却率は未測定。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      元の試験の、存在する対象を指定した15条件はすべて期待位置に重なり、手動近似boxとの最大IoUは最低約0.786だった。
+      色入替の追加2条件も期待位置を選んだ。これは正解boxを厳密に作った公開benchmarkの結果ではない。
+      信頼度scoreは生成していない。
+    </p>
+    <p>
+      英語のdesk説明は、PC付近のこぼれた液体と白い布で拭く動作を説明した。
+      日本語でも、こぼれた液体をタオルで拭くことを説明したが、PCへの危険には触れなかった。
+      修理場面では、左の人の組立作業と右の人の説明書読みを説明した。
+      英語の自由回答にはrefとboxが付き、「座標ではなく文章」という指示を完全には守らない例がある。
+      説明文に付いたboxを、文中の各人物と正しく対応するannotationだと無条件には扱えない。
+    </p>
+  </section>
+  <section id="ocr">
+    <h2>OCRと現行方式の比較</h2>
+    <p>
+      修理場面のWeVisOneはCAUTION、SN:、A1058を出力した。
+      日本語は「電源」と「切る」に分かれ、<strong
+        >「を」が脱落した。FP16でもBF16でも同じ脱落を再現した。</strong
+      >
+      「電源を切る」を指定したocr_groundingは正しいlabel位置を返したが、全文転記成功の根拠にはしない。
+      文字のないdesk画像へのOCRは「.」を1箇所出し、空結果にはならなかった。
+    </p>
+    <table>
+      <caption>
+        配備済みengineを変更せず、別processで同じ画像をCPU実行した単発値。API・画像読込は含まない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">既存方式</th>
+          <th scope="col">desk</th>
+          <th scope="col">修理場面</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">YOLO26n</th>
+          <td>約29.75ms。PC、カップ、スマートフォン等を検出。重複候補もあった。</td>
+          <td>約21.40ms。人物等を検出したが、ドライバーや作業の役割は出力しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">PP-OCRv6-small／RapidOCR</th>
+          <td>約341.91ms。文字のないカップ付近をQと誤認識。</td>
+          <td>約193.95ms。CAUTION、SN: A1058、電源を切るの3行を正しく出力。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この資料では日本語転記と速度の両面から専用OCRを維持する根拠がある。
+      WeVisOneは意味による対象指定を追加する候補として扱い、現行YOLOの固定カテゴリ検出やOCRを全面置換しない。
+      現行OCRにも文字なし資料で誤検出があり、いずれもこの2画像だけで全体の品質を判断できない。
+      自然言語queryを受けないYOLOに同じ意味指定taskの成功率を付ける比較は行っていない。
+    </p>
+  </section>
+  <section id="timing">
+    <h2>前処理・推論・後処理の時間</h2>
+    <p>
+      GPUの開始前後を同期し、前処理、generate、tokenからの文字列復元、追加mask処理、座標解析、描画、PNG保存を分けた。
+      次表は機能が成立した<strong>BF16 backbone・FP32 pixel decoder</strong>の単発観測値。
+      入力は1536×1024、gridは1×64×96、空間merge後のvisual tokenは1536。 cold OS
+      cacheを作っておらず、warm-up専用の反復もないため、P50/P95やcold-start保証値とはしない。
+    </p>
+    <table>
+      <caption>
+        秒。後処理は座標解析と全artifact保存。合計には画像読込等も含む
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">task</th>
+          <th scope="col">初回前処理</th>
+          <th scope="col">生成</th>
+          <th scope="col">追加mask処理</th>
+          <th scope="col">後処理・保存</th>
+          <th scope="col">local合計</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">倒れたカップの対象指定</th>
+          <td>0.059</td>
+          <td>12.907</td>
+          <td>なし</td>
+          <td>1.642</td>
+          <td>14.639</td>
+        </tr>
+        <tr>
+          <th scope="row">修理場面OCR</th>
+          <td>0.028</td>
+          <td>16.082</td>
+          <td>なし</td>
+          <td>1.232</td>
+          <td>17.386</td>
+        </tr>
+        <tr>
+          <th scope="row">カップsegmentation</th>
+          <td>0.043</td>
+          <td>13.329</td>
+          <td>11.504</td>
+          <td>2.099</td>
+          <td>27.010</td>
+        </tr>
+        <tr>
+          <th scope="row">布のmatting</th>
+          <td>0.024</td>
+          <td>12.228</td>
+          <td>11.467</td>
+          <td>1.478</td>
+          <td>25.230</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      generateは画像encoder・prefill・自己回帰生成を含む。追加mask処理はteacher
+      forcing用の2回目の前処理・backbone forward・pixel decoder・CPU転送を含む。
+      内包されるstageを二重加算しない。HTTP受付、queue、LAN、ブラウザ描画の時間はこの合計に含まれない。
+      初期のFP16
+      runでは対象指定が概ね11.6〜12.7秒、物体検出約17.6秒、英語の状況説明約14.2〜15.7秒、日本語説明約24.4秒だった。
+    </p>
+    <table>
+      <caption>
+        後処理の詳細例：FP16のdesk-spilled-en再試験。単位ms
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">処理</th>
+          <th scope="col">時間</th>
+          <th scope="col">範囲</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">tokenの文字列復元</th>
+          <td>0.267</td>
+          <td>processor.batch_decode。上表の推論側に含む。</td>
+        </tr>
+        <tr>
+          <th scope="row">座標解析</th>
+          <td>0.047</td>
+          <td>responseからboxを取り出すparse_predictions。</td>
+        </tr>
+        <tr>
+          <th scope="row">overlay描画</th>
+          <td>30.929</td>
+          <td>枠・label・合成。PNG圧縮は含まない。</td>
+        </tr>
+        <tr>
+          <th scope="row">PNG圧縮と書込</th>
+          <td>1240.189</td>
+          <td>overlay 648.049、alpha 3.569、cutout 588.570。</td>
+        </tr>
+        <tr>
+          <th scope="row">後処理全体</th>
+          <td>1282.905</td>
+          <td>解析、描画、上記PNG、text・JSON等の保存。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この例の後処理は文字列や座標の解析より画像出力が支配的である。
+      公式save_resultはmaskがないtaskでもalphaとcutoutを保存するため、全出力の時間が含まれている。
+      JSONのみ返し、必要なときに画像を描画・保存するAPIなら省ける処理があるが、そのAPIの速度は今回測っていない。
+      全観測値は<code>timings.csv</code>と<code>timing-stages.json</code>に保存した。未取得欄は空であり、0ではない。
+    </p>
+  </section>
+  <section id="precision">
+    <h2>GPU互換性とマスクの精度形式</h2>
+    <p>
+      ROCm GPU上の小さな行列積、4B load、推論tensorのcuda:0配置を確認した。
+      既定の環境変数では最初の画像推論が数分進まず、その試験processを中止した。
+      専用processにMIOPEN_FIND_MODE=FASTとTORCH_BLAS_PREFER_HIPBLASLT=1を適用すると進行し、
+      小さなConv3dのprobeは約0.431秒、SDPAは約0.170秒で終了した。
+      待ちの厳密な内部原因を証明したものではない。共有serviceの環境変数は変更していない。
+    </p>
+    <p>
+      FP16ではboxとOBJ tokenを返しても、保存されたsegmentation・mattingのalphaが全画素0だった。
+      同一画像・queryをBF16で再実行すると、カップのmaskが有限値となり、最大alpha約0.999987、
+      threshold 0.5以上が42,296 pixelsとなった。形と取っ手の穴が一致することを目視確認した。
+      BF16で布のmattingも確認し、手に隠れた部分を除く布の領域が得られた。
+      こちらは有限値、最大alpha約0.999997、threshold 0.5以上34,361 pixelsだった。
+    </p>
+    <p>
+      <strong>今後の試験候補はBF16 backboneとFP32 decoderとする。</strong>
+      FP16失敗の内部原因を特定しておらず、モデル全般や全ROCm環境でFP16が使用不能だとは結論しない。
+      segmentation用にはthreshold 0.5のbinary
+      mask・overlayを別保存し、mattingの連続alphaと区別した。 正解pixel
+      maskがないため、maskのIoUや毛髪・透明境界の精度は未測定である。
+    </p>
+    <p>
+      torch allocatorによるGPU peak allocationは概ね14.50〜14.56 GiB。 model
+      loadは複数processで約3秒前後だったが、既にdisk cacheがある状態である。
+      GPU使用率は試験前から100%表示で他processとも共有するため、個別taskのGPU占有率として解釈しない。
+      他Providerへの遅延影響、長時間連続動作、同時要求の上限は未評価である。
+    </p>
+  </section>
+  <section id="environment">
+    <h2>専用環境と再実行</h2>
+    <p>
+      環境は<code>/srv/ai/apps/wevisone-vl-eval-20261025/.venv</code>。 Python 3.13.15、torch
+      2.11.0+rocm7.13.0、torchvision 0.26.0+rocm7.13.0、 Transformers 5.12.1、gfx1151。依存61
+      packagesはuv pip checkを通過した。
+      上流sourceは取得時の固定revisionをそのまま使用し、上流code・モデル重みは改変していない。
+    </p>
+    <p>
+      AMDの既存wheel
+      indexが403を返したため、稼働済みTTS環境からtorch・ROCmと依存closureを専用環境へ独立copyした。
+      共有環境へのsymlinkやhardlinkは作っておらず、sourceとcopyのinodeが異なることを確認した。
+      その後専用環境だけへ上流の必要依存を固定導入した。vLLMとGradioは導入していない。
+      copy対象と出典は<code>rocm-copy-plan.json</code>、失敗した解決と導入logも証拠directoryに保持した。
+      完全な新規取得による再構築はAMD配布元への到達性を別途確認する必要がある。
+    </p>
+    <p>
+      再実行sourceは<code>benchmarks/vision/wevisone/</code>のtrial.py、cases.json、baseline.py、render_report.py、summarize.py。
+      requirements.txtは上流の基本pinにROCm
+      buildを明示し、requirements.lockは実際の全依存を保存している。 モデルのhashとsource
+      revisionを実行前に検査し、HF offline設定で推論する。
+      case選択と計測wrapper以外の推論・画像前処理・decoderは上流を使用した。
+    </p>
+    <pre><code>MIOPEN_FIND_MODE=FAST TORCH_BLAS_PREFER_HIPBLASLT=1 \
+  /srv/ai/apps/wevisone-vl-eval-20261025/.venv/bin/python \
+  benchmarks/vision/wevisone/trial.py \
+  --model /srv/ai/models/tencent/WeVisOne-VL-4B/4a7bed92750ac9d8b8a124cede14759036932dc2 \
+  --source /srv/ai/apps/wevisone-vl-source-20261025 \
+  --evidence /srv/ai/evidence/wevisone-vl-trial-20261025 \
+  --dtype bfloat16 --output-name manual-bfloat16 \
+  --only desk-spilled-en repair-held-tool repair-ocr desk-semantic-segmentation</code></pre>
+    <p>
+      新しいoutput-nameを指定すれば過去の画像・計測JSONを保持できる。
+      完了後はprocessを終了してGPUメモリを解放する。常駐server、systemd
+      unit、本番routeを追加していない。
+      既存のOS・driver・service設定・既存Python環境を変更する操作は実施していない。
+    </p>
+  </section>
+  <section id="artifacts">
+    <h2>確認画面と成果物</h2>
+    <p>
+      証拠directoryの<code>index.html</code>はローカルで開ける結果閲覧画面。
+      case切替、元画像、SVGによるbox・日本語label、box選択時の強調、layer切替、mask表示、raw応答、JSON、現行方式の結果を確認できる。
+      FP16の空maskには注意文を付けた。ブラウザで実描画を確認し、<code>preview-repair-held-tool.png</code>を保存した。
+      これは保存済み結果の閲覧画面であり、画像upload・推論実行APIを備えた完成版Detection
+      Previewではない。
+    </p>
+    <p>
+      元画像はimages配下、生成promptはimage-generation-prompts.jsonとcounterfactual-generation-prompt.json。
+      推論と計測はtrial.json、timing-detail.json、dense-bfloat16.json、bfloat16-followup.json。
+      各runのresults配下へresponse、JSON、overlay、mask、alpha、cutoutを保存した。
+      現行方式はbaseline.json、試験中の一部process・GPU観測はtelemetry.jsonlにある。
+    </p>
+  </section>
+  <section id="decision">
+    <h2>現時点の判断</h2>
+    <p>
+      意味から対象位置を探す用途には実際に動く根拠が得られた。
+      「何があるか」に加えて「どの状態の物か」「どの作業をしている人か」「何に使っている物か」を指定する次段階の候補とする。
+      一方、専用OCRより遅く、日本語の文字脱落もあり、YOLOの高速な連続検出やOCRを全面置換する判断はしない。
+      まず専用OCR・YOLOを維持し、意味による検索や説明を要求時のBF16処理として追加する構成が検証候補になる。
+    </p>
+    <p>
+      次は利用者の実際の画像・要求に対する成功条件、解像度別の速度、複数回のP50/P95、
+      他Providerと同時に動いた際の遅延、画像なし・破損入力・復旧、独立APIの受入を確認する。
+      これらと未実装のupload・推論UIを、本試験で完了したものとして扱わない。
+    </p>
+  </section>
+</article>

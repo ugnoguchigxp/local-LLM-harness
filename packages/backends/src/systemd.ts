@@ -35,14 +35,14 @@ function appendOutput(current: string, chunk: unknown): string {
 }
 
 export type SystemdServiceControl = {
-  start: (name: string, signal?: AbortSignal) => Promise<void>;
-  stop: (name: string) => Promise<void>;
+  start: (name: string, signal?: AbortSignal, scope?: "system" | "user") => Promise<void>;
+  stop: (name: string, scope?: "system" | "user") => Promise<void>;
 };
 
 export type SystemdBackendOptions = {
   probeTimeoutMs?: number;
   readyTimeoutMs?: number;
-  queryService?: (service: string) => Promise<ServiceState>;
+  queryService?: (service: string, scope?: "system" | "user") => Promise<ServiceState>;
   control?: SystemdServiceControl;
   systemctlPath?: string;
   sleep?: (ms: number) => Promise<void>;
@@ -52,7 +52,7 @@ export class SystemdBackend implements RuntimeBackend {
   private readonly runtimes: Map<string, SystemdRuntimeDefinition>;
   private readonly probeTimeoutMs: number;
   private readonly readyTimeoutMs: number;
-  private readonly queryService: (service: string) => Promise<ServiceState>;
+  private readonly queryService: (service: string, scope?: "system" | "user") => Promise<ServiceState>;
   private readonly control: SystemdServiceControl;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly instances = new Map<string, {
@@ -85,7 +85,7 @@ export class SystemdBackend implements RuntimeBackend {
     }
 
     const [service, listening] = await Promise.all([
-      this.queryService(runtime.deployment.service),
+      this.queryService(runtime.deployment.service, runtime.deployment.scope),
       isListening(runtime.deployment.healthPort, this.probeTimeoutMs),
     ]);
     if (!listening) {
@@ -121,7 +121,7 @@ export class SystemdBackend implements RuntimeBackend {
     this.assertControllable(runtime, "ensure");
     throwIfAborted(signal);
     this.runtimes.set(runtime.id, runtime);
-    await this.control.start(runtime.deployment.service, signal);
+    await this.control.start(runtime.deployment.service, signal, runtime.deployment.scope);
     throwIfAborted(signal);
     await this.waitHealthy(runtime, signal);
     throwIfAborted(signal);
@@ -160,7 +160,7 @@ export class SystemdBackend implements RuntimeBackend {
     }
     throwIfAborted(signal);
     this.runtimes.set(runtime.id, runtime);
-    await this.control.start(runtime.deployment.service, signal);
+    await this.control.start(runtime.deployment.service, signal, runtime.deployment.scope);
     throwIfAborted(signal);
     await this.waitHealthy(runtime, signal);
     const generation = (this.generations.get(runtime.id) ?? 0) + 1;
@@ -201,7 +201,7 @@ export class SystemdBackend implements RuntimeBackend {
   async stopInstance(instanceId: string): Promise<void> {
     const record = this.instances.get(instanceId);
     if (!record) return;
-    await this.control.stop(record.runtime.deployment.service);
+    await this.control.stop(record.runtime.deployment.service, record.runtime.deployment.scope);
     this.instances.delete(instanceId);
   }
 
@@ -211,7 +211,7 @@ export class SystemdBackend implements RuntimeBackend {
       throw new LifecycleError("stop_failed", `runtime ${runtimeId} is not registered`);
     }
     this.assertControllable(runtime, "stop");
-    await this.control.stop(runtime.deployment.service);
+    await this.control.stop(runtime.deployment.service, runtime.deployment.scope);
   }
 
   private assertControllable(runtime: SystemdRuntimeDefinition, action: string): void {
@@ -318,9 +318,10 @@ export function parseSystemctlState(stdout: string, stderr: string, exitCode: nu
 }
 
 function createSystemdQuery(systemctlPath: string) {
-  return (service: string): Promise<ServiceState> =>
+  return (service: string, scope?: "system" | "user"): Promise<ServiceState> =>
     new Promise((resolve) => {
-      const child = spawn(systemctlPath, ["is-active", service]);
+      const invocation = systemdInvocation("is-active", service, scope);
+      const child = spawn(systemctlPath, invocation.args, invocation.options);
       let stdout = "";
       let stderr = "";
       let settled = false;
@@ -353,9 +354,9 @@ function createSystemdQuery(systemctlPath: string) {
 
 function createSystemdControl(systemctlPath: string): SystemdServiceControl {
   return {
-    start: (name, signal) =>
-      runSystemctl(systemctlPath, "start", name, "start_failed", signal),
-    stop: (name) => runSystemctl(systemctlPath, "stop", name, "stop_failed"),
+    start: (name, signal, scope) =>
+      runSystemctl(systemctlPath, "start", name, "start_failed", signal, scope),
+    stop: (name, scope) => runSystemctl(systemctlPath, "stop", name, "stop_failed", undefined, scope),
   };
 }
 
@@ -365,9 +366,11 @@ function runSystemctl(
   service: string,
   failCode: "start_failed" | "stop_failed",
   signal?: AbortSignal,
+  scope?: "system" | "user",
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(systemctlPath, [action, service]);
+    const invocation = systemdInvocation(action, service, scope);
+    const child = spawn(systemctlPath, invocation.args, invocation.options);
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -433,4 +436,15 @@ function runSystemctl(
       );
     });
   });
+}
+
+/** The daemon and optional user services run as the same account. */
+export function systemdInvocation(action: string, service: string, scope?: "system" | "user") {
+  if (scope !== "user") return { args: [action, service], options: {} };
+  const uid = process.getuid?.();
+  if (uid === undefined || uid === 0) throw new Error("user systemd runtime requires an unprivileged daemon account");
+  const directory = `/run/user/${uid}`;
+  return { args: ["--user", action, service], options: { env: {
+    ...process.env, XDG_RUNTIME_DIR: directory, DBUS_SESSION_BUS_ADDRESS: `unix:path=${directory}/bus`,
+  } } };
 }

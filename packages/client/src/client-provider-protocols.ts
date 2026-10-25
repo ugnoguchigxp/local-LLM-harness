@@ -6,6 +6,11 @@ import {
   inspectSystemOneResponse,
   systemOneAgentProviderDescriptorSchema,
   systemOneRequestSchema,
+  visualPerceptionAgentProviderDescriptorSchema,
+  visualPerceptionRequestSchema,
+  inspectVisualPerceptionResponse,
+  type VisualPerceptionRequest,
+  type VisualPerceptionResponse,
   type AgentConnectionClaim,
   type EmbeddingRequest,
   type EmbeddingResponse,
@@ -23,6 +28,8 @@ export type SystemOneAgentProvider = Extract<
   AgentConnectionClaim["providers"][number],
   { apiStyle: "larm-system-one" }
 >;
+
+export type VisualPerceptionAgentProvider = Extract<AgentConnectionClaim["providers"][number], { apiStyle: "larm-visual-perception" }>;
 
 export type ProviderFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -145,11 +152,45 @@ export async function systemOneWithClaimedProvider(input: {
   return inspected.response;
 }
 
-async function readResponseLimited(response: Response, maxBytes: number): Promise<Uint8Array> {
+export async function perceiveWithClaimedProvider(input: {
+  fetch: ProviderFetch; claimedProvider: VisualPerceptionAgentProvider;
+  requestInput: VisualPerceptionRequest; signal?: AbortSignal;
+}): Promise<VisualPerceptionResponse> {
+  const provider = visualPerceptionAgentProviderDescriptorSchema.parse(input.claimedProvider);
+  const request = visualPerceptionRequestSchema.parse(input.requestInput);
+  if (request.model !== provider.model) throw new LarmApiError(400, "model_mismatch", "model must match the claimed provider");
+  const deadline = AbortSignal.timeout(185_000);
+  const signal = input.signal ? AbortSignal.any([input.signal, deadline]) : deadline;
+  const response = await input.fetch(provider.endpoint, {
+    method: "POST", headers: { authorization: `Bearer ${provider.credential.token}`,
+      "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify(request), redirect: "manual", signal,
+  });
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new LarmApiError(502, "provider_redirect_forbidden", "visual perception provider returned a redirect");
+  }
+  const bytes = await readResponseLimited(response, 8 * 1024 * 1024, "visual_perception");
+  let value: unknown;
+  try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+  catch { throw new LarmApiError(502, "visual_perception_response_invalid", "invalid visual perception JSON"); }
+  if (!response.ok) {
+    const parsed = errorResponseSchema.safeParse(value);
+    throw new LarmApiError(response.status, parsed.success ? parsed.data.error.code : "visual_perception_http_error",
+      parsed.success ? parsed.data.error.message : "visual perception request failed");
+  }
+  const inspected = inspectVisualPerceptionResponse(value, request);
+  if (response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json" || !inspected.ok) {
+    throw new LarmApiError(502, "visual_perception_response_invalid", "visual perception response does not match the request");
+  }
+  return inspected.response;
+}
+
+async function readResponseLimited(response: Response, maxBytes: number, errorPrefix = "embedding"): Promise<Uint8Array> {
   const declared = response.headers.get("content-length");
   if (declared && /^\d+$/.test(declared) && Number(declared) > maxBytes) {
     await response.body?.cancel(new Error("provider response too large")).catch(() => undefined);
-    throw new LarmApiError(502, "embedding_response_too_large", "provider response is too large");
+    throw new LarmApiError(502, `${errorPrefix}_response_too_large`, "provider response is too large");
   }
   if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
@@ -161,7 +202,7 @@ async function readResponseLimited(response: Response, maxBytes: number): Promis
       if (next.done) break;
       total += next.value.byteLength;
       if (total > maxBytes) {
-        throw new LarmApiError(502, "embedding_response_too_large", "provider response is too large");
+        throw new LarmApiError(502, `${errorPrefix}_response_too_large`, "provider response is too large");
       }
       chunks.push(next.value);
     }

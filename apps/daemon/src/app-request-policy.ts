@@ -71,7 +71,7 @@ export function createAppRequestPolicy(
           "/v1/audio/transcriptions",
           "/v1/audio/speech",
           "/v1/embed",
-          "/v1/systemone",
+          "/v1/vision/perceive", "/v1/systemone",
         ]).has(c.req.path)
         && !(
           gatewayReadiness.state === "verifying"

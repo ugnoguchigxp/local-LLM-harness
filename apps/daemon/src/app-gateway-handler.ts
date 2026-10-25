@@ -87,6 +87,8 @@ export function createGatewayHandler(input: {
       voicevoxOnlyParameter,
       embeddingRequest,
       embeddingRequestBytes,
+      visualPerceptionRequest,
+      visualPerceptionRequestBytes,
       systemOneRequest,
       systemOneRequestBytes,
     } = prepared;
@@ -213,10 +215,10 @@ export function createGatewayHandler(input: {
     try {
       return await proxyGateway({
         request: c.req.raw,
-        ...((systemOneRequestBytes ?? embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes)
+        ...((visualPerceptionRequestBytes ?? systemOneRequestBytes ?? embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes)
           ? { requestBody: (systemOneRequest?.model === DECISION_MODEL
               ? new TextEncoder().encode(JSON.stringify({ ...systemOneRequest, adapter: undefined, questionSet: undefined }))
-              : systemOneRequestBytes) ?? embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes }
+              : systemOneRequestBytes) ?? visualPerceptionRequestBytes ?? embeddingRequestBytes ?? chatRequestBytes ?? speechRequestBytes }
           : {}),
         ...(contextViewId
           ? {
@@ -303,6 +305,7 @@ export function createGatewayHandler(input: {
         ...(embeddingRequest && runtime.embedding
           ? { validateEmbeddingResponse: { request: embeddingRequest, space: runtime.embedding } }
           : {}),
+        ...(visualPerceptionRequest ? { validateVisualPerceptionResponse: { request: visualPerceptionRequest } } : {}),
         ...(systemOneRequest ? { validateSystemOneResponse: {
           request: systemOneRequest,
           ...(systemOneRequest.model === DECISION_MODEL && input.decisionManager

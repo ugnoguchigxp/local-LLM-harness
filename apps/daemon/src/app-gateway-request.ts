@@ -2,6 +2,8 @@ import {
   audioSpeechRequestSchema,
   embeddingRequestSchema,
   systemOneRequestSchema,
+  visualPerceptionRequestSchema,
+  type VisualPerceptionRequest,
   decisionGeneralLimitError,
   type AudioSpeechRequest,
   type EmbeddingRequest,
@@ -20,6 +22,8 @@ export type PreparedGatewayRequestBody = {
   voicevoxOnlyParameter?: string;
   embeddingRequest?: EmbeddingRequest;
   embeddingRequestBytes?: Uint8Array;
+  visualPerceptionRequest?: VisualPerceptionRequest;
+  visualPerceptionRequestBytes?: Uint8Array;
   systemOneRequest?: SystemOneRequest;
   systemOneRequestBytes?: Uint8Array;
 };
@@ -80,6 +84,17 @@ export async function prepareGatewayRequestBody(input: {
     } catch (error) {
       return { ok: false, error: larmError(error) };
     }
+  }
+
+  if (input.protocol === "larm.visual-perception.v1") {
+    try {
+      const bytes = await readBodyLimited(input.request.clone() as unknown as Request, input.maxBodyBytes);
+      const parsed = visualPerceptionRequestSchema.safeParse(decodeJson(bytes));
+      if (!parsed.success) return { ok: false, error: { status: 400, code: "invalid_visual_perception_request",
+        message: "model, image data URI, task and query must match the visual perception contract", format: "larm" } };
+      body.visualPerceptionRequest = parsed.data;
+      body.visualPerceptionRequestBytes = new TextEncoder().encode(JSON.stringify(parsed.data));
+    } catch (error) { return { ok: false, error: larmError(error) }; }
   }
 
   if (input.protocol === "larm.system-one.v1") {

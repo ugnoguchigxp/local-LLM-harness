@@ -283,3 +283,11 @@ runtimeReleases:
     estimatedMemoryGB: 10
     healthPath: /health
     default: true
+
+  wevisone-vl-bf16-current:
+    runtime: wevisone-vl-4b
+    artifacts: [ wevisone-vl-4b ]
+    providerConfigRevision: wevisone-40f735b8-rocm-gfx1151-bf16-native-v1
+    estimatedMemoryGB: 20
+    healthPath: /health
+    default: true

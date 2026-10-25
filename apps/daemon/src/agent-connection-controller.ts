@@ -8,6 +8,7 @@ import {
   personalStateSubjectDigest,
   resolveAgentAudienceBaseUrl,
   systemOneAgentProviderDescriptorSchema,
+  visualPerceptionAgentProviderDescriptorSchema,
   type AgentAudience,
   type AgentConnectionCatalog,
   type AgentConnectionClaim,
@@ -649,6 +650,35 @@ export class AgentConnectionController {
           },
           configuration: {
             kind: "larm-system-one-provider-v1" as const,
+            fields: { daemonURL: found.audience.baseUrl, model: provider.publicModel },
+            secretFields: { accessToken: "credential.token" as const },
+          },
+        };
+      }
+      if (provider.protocol === "larm.visual-perception.v1") {
+        return {
+          name: provider.name,
+          capability: visualPerceptionAgentProviderDescriptorSchema.shape.capability.parse(provider.capability),
+          apiStyle: "larm-visual-perception" as const,
+          protocol: "larm.visual-perception.v1" as const,
+          scheme,
+          host: base.hostname,
+          port,
+          baseUrl: found.audience.baseUrl,
+          endpoint: `${base.origin}/v1/vision/perceive`,
+          model: provider.publicModel,
+          health: {
+            url: `${found.audience.baseUrl}/agent-connections/${found.id}/providers/${provider.name}/health`,
+            kind: "semantic-inference" as const,
+            maxAgeMs: 10_000 as const,
+          },
+          credential: {
+            type: "bearer" as const,
+            token: this.providerToken(found, provider.name, provider.capability),
+            expiresAt: found.expiresAt,
+          },
+          configuration: {
+            kind: "larm-visual-perception-provider-v1" as const,
             fields: { daemonURL: found.audience.baseUrl, model: provider.publicModel },
             secretFields: { accessToken: "credential.token" as const },
           },

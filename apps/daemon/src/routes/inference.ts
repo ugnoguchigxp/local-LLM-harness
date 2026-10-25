@@ -69,4 +69,9 @@ export function registerInferenceRoutes(app: Hono, options: {
     bodyMode: "buffered",
     maxBodyBytes: 2 * 1024 * 1024,
   }));
+  app.post("/v1/vision/perceive", (c) => options.handleGateway(c, {
+    protocol: "larm.visual-perception.v1", upstreamPath: "/v1/vision/perceive",
+    bodyMode: "buffered", maxBodyBytes: 8 * 1024 * 1024,
+  }));
+
 }

@@ -296,3 +296,10 @@ routes:
     candidates:
       - runtime: d1-system-one
         purpose: primary
+
+  vision-wevisone:
+    capabilities: [ vision.perception ]
+    explicitOnly: true
+    candidates:
+      - runtime: wevisone-vl-4b
+        purpose: primary

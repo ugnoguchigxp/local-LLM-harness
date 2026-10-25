@@ -25,6 +25,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       if (operationId === "createEmbedding") return "EmbeddingRequest";
       if (operationId === "createDecisionTrainingJob") return "DecisionTrainingRequest";
       if (operationId === "createSystemOneDecision") return "SystemOneRequest";
+      if (operationId === "createVisualPerception") return "VisualPerceptionRequest";
       if (operationId === "createMeshGeneration") return "MeshGenerationRequest";
       if (operationId === "updateMeshAsset") return "MeshAssetPatch";
       if (operationId === "createMusicGeneration") return "MusicGenerationRequest";
@@ -62,7 +63,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       || operationId === "createTranscription"
       || operationId === "createSpeech"
       || operationId === "createContext";
-    const providerOnlyOperation = operationId === "countChatInputTokens" || operationId === "createEmbedding" || operationId === "createSystemOneDecision"
+    const providerOnlyOperation = operationId === "countChatInputTokens" || operationId === "createEmbedding" || operationId === "createSystemOneDecision" || operationId === "createVisualPerception"
       || operationId === "getPersonalStateCapability"
       || operationId === "provisionContextSource"
       || operationId === "getContextSourceOperation"

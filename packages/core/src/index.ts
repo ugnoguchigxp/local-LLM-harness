@@ -63,6 +63,7 @@ export {
 export * from "./protocol";
 export * from "./embedding";
 export * from "./system-one";
+export * from "./visual-perception";
 export * from "./speech-segmentation";
 export * from "./openai-audio";
 export * from "./network";

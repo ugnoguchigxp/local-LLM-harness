@@ -3,7 +3,7 @@ import { agentPrincipal, type AgentConnectionController } from "./agent-connecti
 import { secretMatcher, authenticatedBearerKinds } from "./app-auth";
 import { UsageProtectionError, type UsageCoordinator } from "./usage-coordinator";
 
-const gatewayPaths = new Set(["/v1/chat/completions", "/v1/chat/completions/input-tokens", "/v1/audio/transcriptions", "/v1/audio/speech", "/v1/embed", "/v1/systemone"]);
+const gatewayPaths = new Set(["/v1/chat/completions", "/v1/chat/completions/input-tokens", "/v1/audio/transcriptions", "/v1/audio/speech", "/v1/embed", "/v1/vision/perceive", "/v1/systemone"]);
 function inference(method: string, path: string): boolean {
   return method === "POST" && (gatewayPaths.has(path)
     || /^\/v[12]\/(contexts|context-views|context-measurements|images\/generations|music\/generations|3d\/generations)(?:\/|$)/.test(path));

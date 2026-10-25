@@ -1,0 +1,442 @@
+<article lang="ja">
+  <h1>WeVisOne-VL-4B：YOLO・OCR代替候補の調査と公式モデル取得</h1>
+  <aside>
+    <p>
+      後続のGPU推論・意味理解・OCR・マスク・後処理時間の実測は<a
+        href="./wevisone-vl-semantic-trial-2026-10-25.html"
+        >実機試験記録</a
+      >を参照。本書は取得段階の調査結果を保持する。
+    </p>
+  </aside>
+  <p>
+    2026年10月25日。利用者の「まず詳しく調べてモデルをダウンロードする」という依頼に対する調査記録。
+    <strong>公式4B snapshot全11ファイル、19,372,593,249 bytesの取得と整合性確認を完了した。</strong>
+    現時点の判断は、自然言語による対象指定・領域抽出の実証へ進める候補である。
+    GPU推論、精度・速度測定、Detection
+    Preview、APIの実装と採用判断は次段階であり、完了とはしていない。
+  </p>
+  <section id="summary">
+    <h2>今回分かったこと</h2>
+    <ul>
+      <li>
+        Qwen3-VLを基盤とし、物体検出、自然言語による位置特定、カウント、OCR、マスク・alpha出力を扱う公式実装がある。
+      </li>
+      <li>
+        既存の配備済み比較対象はYOLO26nとRapidOCR経由のPP-OCRv6-small。双方ともCPU実行である。
+      </li>
+      <li>論文のOCR比較相手はPP-OCRv5。現行PP-OCRv6-smallや日本語資料に勝つ根拠にはならない。</li>
+      <li>
+        Transformers経由の実装に独自CUDA拡張の必須箇所は見当たらず、ROCmで試す経路はある。ただし実機での動作保証ではない。
+      </li>
+      <li>
+        生成モデルのため、対象数・文字量・出力長によって応答時間が変わる。YOLOの連続処理を置換できるかは未測定。
+      </li>
+    </ul>
+    <p>
+      公式の機能説明は<a href="https://github.com/Tencent/WeVisOne-VL">公式repository</a>、
+      評価条件は<a href="https://arxiv.org/html/2610.31329v1">技術報告v1</a>を確認した。
+      以下では配布元の主張、sourceの観察、実機で確認した事実、今後の試験を区別する。
+    </p>
+  </section>
+  <section id="download">
+    <h2>取得したファイルと再現性</h2>
+    <table>
+      <caption>
+        公式原本をrevision固定で保存。量子化版・変換済みモデルへの差し替えは行っていない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">確認結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">配布元</th>
+          <td>
+            <a href="https://huggingface.co/tencent/WeVisOne-VL-4B">tencent/WeVisOne-VL-4B</a
+            >。公開・gatingなし。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">モデルrevision</th>
+          <td><code>4a7bed92750ac9d8b8a124cede14759036932dc2</code></td>
+        </tr>
+        <tr>
+          <th scope="row">保存先</th>
+          <td><code>/srv/ai/models/tencent/WeVisOne-VL-4B/4a7bed92750ac9d8b8a124cede14759036932dc2</code></td>
+        </tr>
+        <tr>
+          <th scope="row">本体</th>
+          <td>
+            <code>model.safetensors</code>：19,322,413,240 bytes。headerを読み、714
+            tensor・4,830,581,248要素がF32であることを確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">追加デコーダー</th>
+          <td>
+            <code>mask_decoder.pt</code>：38,534,741 bytes。公式説明では9,609,764
+            parameters。今回このファイルを実行・ロードしてはいない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">その他</th>
+          <td>
+            tokenizer、processor、generation設定、chat
+            template、config、README、LICENSE、.gitattributesを含む全11ファイル。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">source revision</th>
+          <td><code>40f735b8daed437ece982db9718e9c9856f52a79</code></td>
+        </tr>
+        <tr>
+          <th scope="row">公式source保存先</th>
+          <td><code>/srv/ai/apps/wevisone-vl-source-20261025</code>。調査時worktreeはclean。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      取得した全ファイルのサイズとSHA-256を記録し、LFS対象の本体・追加デコーダー・tokenizerは配布元SHA-256と一致した。
+      本体のSHA-256は<code>c5cedda4ee797a0232f16b1b809c14fb0ce771a229da5007095cc2eede4efbba</code>、
+      追加デコーダーは<code>8528460481bd09d0780c53559b08194c7abbd29dff0d51783b619158acbe7b46</code>。
+      tokenizerには<code>&lt;OBJ&gt; = 152678</code>、座標tokenの両端<code>&lt;0&gt;</code>と<code>&lt;1000&gt;</code>がある。
+    </p>
+    <p>
+      取得記録は<code>/srv/ai/evidence/wevisone-vl-research-20261025/model-receipt.json</code>、
+      header・tokenizer検査は同directoryの<code>snapshot-inspection.json</code>。
+      <code>upstream-model-info.json</code
+      >、<code>download.log</code>、環境調査・配備済みモデル情報も保存した。
+      モデル重み、上流source、論文の写し、実機記録はすべて本repository外にある。
+    </p>
+    <p>
+      再取得用sourceは<code>benchmarks/vision/wevisone/provision.py</code>と<code>models.json</code>。
+      使用したdownload専用依存は既存のhuggingface-hub 1.33.0、hf-xet
+      1.7.0であり、その環境の依存を変更していない。
+      このscriptはPyTorchや上流推論codeをimportせず、追加デコーダーも忘れず取得する。
+    </p>
+    <pre><code>/srv/ai/apps/vision-recognition-eval/.venv/bin/python benchmarks/vision/wevisone/provision.py \
+  --root /srv/ai/models/tencent \
+  --evidence /srv/ai/evidence/wevisone-vl-research-20261025</code></pre>
+    <p>
+      コードと重みそれぞれのLICENSEがApache-2.0を宣言していることを確認した。
+      第三者部分には元の条件が残る旨の記載があるため、組み込む依存関係のライセンス確認は推論環境を固定する際に行う。
+      2Bの存在は確認したが、今回の取得対象は4Bのみとした。
+    </p>
+  </section>
+  <section id="machine">
+    <h2>実機の状態と既存環境</h2>
+    <table>
+      <caption>
+        読み取り専用調査のsnapshot。空き容量と負荷は変動する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">観測内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">OS・kernel</th>
+          <td>Ubuntu 26.04.1 LTS、Linux 7.0.0-34-generic。</td>
+        </tr>
+        <tr>
+          <th scope="row">CPU・GPU</th>
+          <td>AMD Ryzen AI MAX+ 395、32 logical CPU、Radeon 8060S、rocminfoでgfx1151を確認。</td>
+        </tr>
+        <tr>
+          <th scope="row">RAM</th>
+          <td>約121 GiB。最初の観測でavailable約84 GiB、swap使用約2.6 GiB。</td>
+        </tr>
+        <tr>
+          <th scope="row">GPUメモリ</th>
+          <td>
+            rocm-smiのVRAM欄は2 GiB。sysfsのGTT上限は100 GiB、使用約30.3
+            GiB。統合メモリ全量を空きVRAMとは解釈しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ROCm</th>
+          <td>
+            system側にamdrocm 10.0.0-4のpackage群。既存TTS環境のtorchは2.11.0+rocm7.13.0、HIP
+            7.13.99004。package版と環境内runtimeを区別する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Python</th>
+          <td>
+            systemは3.14.4。既存TTS環境は3.13、CPU画像評価環境は3.12。WeVisOne用推論環境は未作成。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">PyTorch・Transformers</th>
+          <td>
+            既存TTSはtorch 2.11.0+rocm7.13.0／torchvision 0.26.0+rocm7.13.0／Transformers
+            4.57.3。CPU画像評価環境はtorch 2.11.0+cpu／Transformers 5.17.0。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">負荷・共有サービス</th>
+          <td>
+            調査開始時GPU使用率100%。llama-server、Whisper、TTS、ASR等のprocessとGatewayが存在する。現在のモデルと他profileとの差はdriftとは判定していない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">port</th>
+          <td>
+            8080、8082、8083、8084、8085、8087、8088、8089等を使用中。今回serverは起動していない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">disk</th>
+          <td>取得開始前の空き約755 GiB。今回モデル一式は約18.04 GiB。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      既存の公開Gatewayから配備releaseを特定し、そのrelease内のengines.pyとmodels.jsonを確認した。
+      物体認識は<code>yolo26n.onnx</code>、640×640入力、ONNX Runtime
+      CPUExecutionProvider。 OCRはRapidOCR
+      3.10.0、PP-OCRv6-smallのdet/rec、LangRec.JAPAN設定である。
+      workerは要求時起動のため、待受Gatewayの存在とモデルの常駐を同一視しない。
+      稼働確認を目的とした推論要求は送信していない。
+    </p>
+    <p>
+      既存の小規模CPU評価・fixtureは画像認識の実証記録（2026-10-18、別途保管）を再利用候補にする。
+      当時の日本語OCR P50約319
+      msは資料・測定範囲が限定された過去値であり、今回の速度比較結果ではない。
+    </p>
+  </section>
+  <section id="compatibility">
+    <h2>ROCm互換性と導入経路</h2>
+    <p>
+      固定revisionの<a
+        href="https://github.com/Tencent/WeVisOne-VL/blob/40f735b8daed437ece982db9718e9c9856f52a79/requirements.txt"
+        >requirements.txt</a
+      >は torch 2.11.0、torchvision 0.26.0、Transformers 5.12.1、Triton 3.6.0、vLLM
+      0.23.0等を固定する。 一方、<a
+        href="https://github.com/Tencent/WeVisOne-VL/blob/40f735b8daed437ece982db9718e9c9856f52a79/pyproject.toml"
+        >pyproject.toml</a
+      >では vLLM・Tritonはoptional dependencyで、基本のTransformers実行に必須ではない。
+      そのためrequirements全体を既存環境へ適用する手順は採用しない。
+    </p>
+    <p>
+      古い<a
+        href="https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityryz/native_linux/native_linux_compatibility.html"
+        >Ryzen向け7.2.1 matrix</a
+      >は PyTorch 2.9.1／Python 3.12／Ubuntu 24.04.4とFP16の検証を記載しており、
+      これだけを現在の実機の適否に当てはめるのは不十分である。 新しい<a
+        href="https://rocm.docs.amd.com/en/docs-10.0.0/compatibility/compatibility-matrix.html"
+        >10.0.0統合matrix</a
+      >では Ubuntu 26.04・kernel 7.0とPyTorchの複数版を扱うが、hardware条件で適用行が変わる。
+      systemの10.0 packageと既存torchの7.13
+      runtimeの混在がWeVisOneで動くことは、今回まだ実証していない。
+    </p>
+    <p>
+      <a
+        href="https://github.com/Tencent/WeVisOne-VL/blob/40f735b8daed437ece982db9718e9c9856f52a79/wevisone_vl/engine.py"
+        >engine.py</a
+      >は deviceを明示でき、通常経路のattentionはSDPA。
+      <a
+        href="https://github.com/Tencent/WeVisOne-VL/blob/40f735b8daed437ece982db9718e9c9856f52a79/wevisone_vl/msda.py"
+        >deformable attention</a
+      >は PyTorchのgrid_sample実装で、CUDA専用拡張のビルドを要求しない。
+      これはROCmでの実証を進める根拠にはなるが、GPUでの演算・精度・安定性を確認したという意味ではない。
+      ROCm版PyTorchでもdevice表記はcuda:0となる。
+    </p>
+    <ol>
+      <li>
+        別directoryのPython
+        3.12または3.13環境を作り、gfx1151対応ROCm版torch・対応torchvisionの出典と版を固定する。
+      </li>
+      <li>
+        Transformers
+        5.12.1等の必要依存を個別に解決し、環境全体のlockを作成する。既存TTSのTransformersを更新しない。
+      </li>
+      <li>依存解決のdry-runと整合性検査後、上流packageを依存の自動置換なしで導入する。</li>
+      <li>
+        torch.version.hip、GPU名・architecture、GPU上の小さな演算を確認し、明示的なcuda:0／float16／sdpaで4Bを単独検証する。
+      </li>
+      <li>
+        backboneとpixel
+        decoderの双方を確認してから最適化を検討する。vLLM・2Bは必要性を確認して追加する。
+      </li>
+    </ol>
+    <p>
+      上流はdtypeの既定値がbfloat16である。さらに
+      <a
+        href="https://github.com/Tencent/WeVisOne-VL/blob/40f735b8daed437ece982db9718e9c9856f52a79/wevisone_vl/mask_decoder.py"
+        >mask_decoder.py</a
+      >は forward内部でself.float()を行いFP32で動く。 初期試験はbackbone FP16、decoder
+      FP32を区別して記録する。
+      vLLM経路でも別途Transformers本体をロードする実装なので、通常経路よりメモリを減らせると仮定しない。
+    </p>
+    <p>
+      実ファイルの要素数から計算したFP16のbackbone重み量は9,661,162,496 bytes、約9.00 GiB。
+      configの36層・8 KV heads・head_dim 128から、FP16 KVは1 tokenあたり144 KiB、8,192
+      tokenで約1.125 GiBと計算できる。
+      これは理論的な内訳であり、実測メモリではない。画像特徴、activation、decoder、allocator、load時の一時領域を加える必要がある。
+      現在のGPU負荷と他Providerのleaseを確認せず、空きRAMだけを根拠に同時起動はしない。
+    </p>
+  </section>
+  <section id="comparison">
+    <h2>YOLO・OCRを置換できる可能性と未確定事項</h2>
+    <table>
+      <caption>
+        採用判断前に分けて評価する用途
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">期待できる差</th>
+          <th scope="col">確認が必要な点</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">固定カテゴリの連続検出</th>
+          <td>同じ入力での精度差を比較できる。</td>
+          <td>現行YOLO26nに対する精度・遅延・CPU/GPU資源。論文にYOLO26nとの直接比較はない。</td>
+        </tr>
+        <tr>
+          <th scope="row">自然言語での対象指定</th>
+          <td>位置・色・特徴を含むqueryで対象候補を探せる。既存YOLOのカテゴリ外を扱う候補。</td>
+          <td>日本語query、言い換え、曖昧な指示、存在しない対象、見逃しと誤検出。</td>
+        </tr>
+        <tr>
+          <th scope="row">OCR・文字位置</th>
+          <td>全文の検出転記と、指定文字列の位置検索を同じモデルで扱う。</td>
+          <td>
+            日本語、小字、serial番号、回転文字、0/O・1/I等。現行v6-smallと同一資料でCER・完全一致・IoUを測る。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">segmentation・matting</th>
+          <td>別の大型segmentation modelなしに対象ごとのalphaを生成できる。</td>
+          <td>
+            両taskのpromptは共通。decoderは連続alphaを返すため、segmentation用二値化とmatting用連続値を区別する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">動画</th>
+          <td>独立したframe画像として試験する余地はある。</td>
+          <td>
+            pixel decoderはvideo gridを拒否する。既存2
+            fps抽出処理、追跡、一貫性をそのまま代替できるとはしない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      論文Table 6のOCR Mean F1は、WeVisOne-4BがHierText 39.0／ICDAR2015 47.8／TotalText 52.0／SROIE
+      68.1、 比較対象PP-OCRv5が30.5／25.6／25.7／58.6。公開値であり、本機の測定結果ではない。
+      同論文の検出評価はconfidenceを前提とするAPではなく、IoU 0.5〜0.95のF1を用いる。
+      YOLOのmAPとそのまま比較せず、共通fixtureとmatching条件を用意する。
+    </p>
+    <p>
+      論文はOCRに転記一致と位置一致を要求すると説明する一方、
+      <a
+        href="https://github.com/Tencent/WeVisOne-VL/blob/40f735b8daed437ece982db9718e9c9856f52a79/evaluation/metrics/other_metric.py"
+        >公開metric実装</a
+      >には lowercase化・空白とunderscore除去がある。
+      serial番号やUI文字の評価では、そのままの完全一致・CERと正規化後の一致を別々に記録する。
+      <a href="https://github.com/PaddlePaddle/PaddleOCR/releases/tag/v3.7.0"
+        >PaddleOCR v3.7.0の公開情報</a
+      >にもPP-OCRv6があるため、
+      追加比較を行う場合はframework版、モデル世代、small等のtier、言語、実行backendを固定する。
+    </p>
+  </section>
+  <section id="preview">
+    <h2>添付プロンプトを実行する際の修正点</h2>
+    <p>
+      調査→独立環境→実測→Previewという順序は妥当である。
+      ただし「GPU実行が未成立ならUIを完成扱いにしない」「最新OCRとの比較」「実際の出力形式」を計画へ明示する必要がある。
+      OCRの使い方は<a
+        href="https://github.com/Tencent/WeVisOne-VL/blob/40f735b8daed437ece982db9718e9c9856f52a79/tutorials/02_ocr_pipeline.ipynb"
+        >OCR Cookbook</a
+      >、 可視化と実測の入口は上流sourceで確認した。
+    </p>
+    <ul>
+      <li>
+        <code>InferenceResult.boxes</code
+        >は通常のdetection/OCRのbox一覧ではない。これらはresponseをparse_predictionsで解析する。OCR文字列はlabelとしてboxに対応する。
+      </li>
+      <li>
+        <code>save_result</code
+        >はresponse、JSON、overlay、mask、alpha、cutoutを保存する。マスク・文字列・対象名の対応と座標のvalidationはwrapperでも確認する。
+      </li>
+      <li>
+        座標tokenは0〜1000で、元画像の幅・高さへ戻す。入力でEXIFを正規化し、範囲外値・逆転box・重複・出力打切りを扱う。confidenceは生成しない。
+      </li>
+      <li>
+        defaultの可視化font・描画は日本語を保証しない。ブラウザSVG
+        labelと日本語fontで表示を確認する。
+      </li>
+      <li>
+        公式Gradioにはtask選択、prompt、元画像、描画変更、layer切替、処理時間があるが、要件の結果選択連動や独立API・保存契約は別途受入が必要。
+      </li>
+      <li>
+        公式デモの初期値は0.0.0.0:8080で、dtypeのCLI引数がない。FP16を明示する薄いwrapperを使い、loopbackの空きportを選ぶ。shareは使用しない。
+      </li>
+      <li>
+        max_pixels既定値は2025×32×32。論文は最大1960 visual
+        tokenで、評価条件が同一ではない。元解像度と実際の処理解像度・visual token数を記録する。
+      </li>
+      <li>
+        mask処理は追加のteacher-forcing forwardを行う。全taskの時間を一括にせず、前処理・生成・mask
+        decode・保存・API待ち時間を区別する。
+      </li>
+    </ul>
+    <p>
+      参照した実装は
+      <a
+        href="https://github.com/Tencent/WeVisOne-VL/blob/40f735b8daed437ece982db9718e9c9856f52a79/wevisone_vl/visualization.py"
+        >visualization.py</a
+      >、
+      <a
+        href="https://github.com/Tencent/WeVisOne-VL/blob/40f735b8daed437ece982db9718e9c9856f52a79/demo/app.py"
+        >demo/app.py</a
+      >、
+      <a
+        href="https://github.com/Tencent/WeVisOne-VL/blob/40f735b8daed437ece982db9718e9c9856f52a79/wevisone_vl/prompts.py"
+        >prompts.py</a
+      >、
+      <a
+        href="https://github.com/Tencent/WeVisOne-VL/blob/40f735b8daed437ece982db9718e9c9856f52a79/evaluation/README.md"
+        >evaluation手順</a
+      >である。
+      evaluationのobject/OCR経路はvLLM中心で、segmentation用scriptのattention既定値はflash_attention_2。
+      初回のROCm実証では小さいTransformers呼出しとSDPAを使う。
+    </p>
+  </section>
+  <section id="next">
+    <h2>次段階の実証と現在の結論</h2>
+    <ol>
+      <li>
+        GPUの競合が少ない時点に独立環境を用意し、model
+        load、GPU演算、detection、ocr、ocr_grounding、segmentation、mattingの順に実画像で確認する。
+      </li>
+      <li>
+        既存の日本語fixture・bus画像等から始め、未知対象、対象なし、密集、小字、装置label、数字の正解データを追加する。外部サービスへ画像は送らない。
+      </li>
+      <li>
+        512×512、1024×1024、1920×1080でcold/warmを分離し、実行回数・warm-up・token上限・dtypeを記録する。GPU同期を含む時間、P50/P95、メモリをJSONへ保存する。
+      </li>
+      <li>
+        同一資料をYOLO26n・PP-OCRv6-smallと比較し、速度優先の経路、意味指定を使う経路、専用OCRとの併用を判断する。
+      </li>
+      <li>
+        成立したtaskを使って薄いAPIとPreviewを作り、要求サイズ、並列1、timeout、mask別resource、終了・復旧、leaseによる起動と解放を受入する。
+      </li>
+    </ol>
+    <p>
+      <strong>結論は「検証候補として進める」。YOLO・OCRの一括置換はまだ判断できない。</strong>
+      今回は公式モデル取得、hash照合、構造の非実行検査、source・論文・既存環境調査まで完了。
+      モデル推論は実施しておらず、load時間、GPU推論速度、実測メモリ、CER、検出精度、同時稼働性能はすべて未測定である。
+      既存共有サービスの設定・起動状態、OS、driver、既存Python依存は変更していない。
+      本番導入時には要求profile→route→runtime→backendとleaseの経路を定義し、現在のprocessの種類をモデル選択の根拠にしない。
+    </p>
+  </section>
+</article>

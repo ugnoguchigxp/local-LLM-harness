@@ -61,11 +61,13 @@ export type { RefreshedAgentConnection } from "./client-agent-connections";
 import {
   embedWithClaimedProvider,
   systemOneWithClaimedProvider,
+  perceiveWithClaimedProvider,
+  type VisualPerceptionAgentProvider,
   type EmbeddingAgentProvider,
   type SystemOneAgentProvider,
 } from "./client-provider-protocols";
 
-export type { EmbeddingAgentProvider, SystemOneAgentProvider } from "./client-provider-protocols";
+export type { EmbeddingAgentProvider, SystemOneAgentProvider, VisualPerceptionAgentProvider } from "./client-provider-protocols";
 export { compressClientRequest as compressLarmMediaRequest } from "./client-compression";
 
 export { LarmApiError, LarmClientConfigurationError, LarmEpochChangedError, LarmStreamProtocolError } from "./errors";
@@ -530,6 +532,14 @@ export class LarmClient {
       requestInput: input,
       signal,
     });
+  }
+
+  async perceive(
+    claimedProvider: VisualPerceptionAgentProvider,
+    input: import("@larm/core").VisualPerceptionRequest,
+    signal?: AbortSignal,
+  ): Promise<import("@larm/core").VisualPerceptionResponse> {
+    return await perceiveWithClaimedProvider({ fetch: this.fetchImpl, claimedProvider, requestInput: input, signal });
   }
 
   async systemOne(

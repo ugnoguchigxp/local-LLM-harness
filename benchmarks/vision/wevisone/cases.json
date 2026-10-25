@@ -1,0 +1,30 @@
+{
+  "note": "Exploratory synthetic images, inspected by the evaluator before inference. Expected boxes are approximate manual pixel boxes, not a benchmark annotation set. Generation prompts and expected answers are never passed to the model.",
+  "cases": [
+    {"id":"desk-detection","image":"desk-spill.png","task":"detection","query":["laptop","mug","smartphone","cloth","potted plant"],"max_new_tokens":384},
+    {"id":"desk-spilled-en","image":"desk-spill.png","task":"referring","query":"the cup that has spilled its drink","expected_boxes":[[829,298,1098,523]]},
+    {"id":"desk-spilled-ja","image":"desk-spill.png","task":"referring","query":"飲み物をこぼして倒れているカップ","expected_boxes":[[829,298,1098,523]]},
+    {"id":"desk-upright-ja","image":"desk-spill.png","task":"referring","query":"倒れておらず、立っている青いカップ","expected_boxes":[[1225,238,1485,477]]},
+    {"id":"desk-screen-off","image":"desk-spill.png","task":"referring","query":"the device with its screen turned off","expected_boxes":[[184,707,619,945]]},
+    {"id":"desk-screen-on-ja","image":"desk-spill.png","task":"referring","query":"画面が点灯しているノートパソコン","expected_boxes":[[0,0,764,722]]},
+    {"id":"desk-wiping-tool","image":"desk-spill.png","task":"referring","query":"the object being used to wipe up the spilled liquid","expected_boxes":[[925,547,1406,780]]},
+    {"id":"desk-at-risk","image":"desk-spill.png","task":"referring","query":"the electronic device most at risk from the spilled liquid","expected_boxes":[[0,0,764,722]]},
+    {"id":"desk-absent","image":"desk-spill.png","task":"referring","query":"a pair of scissors on the desk","expected_boxes":[]},
+    {"id":"desk-explanation-en","image":"desk-spill.png","task":"freeform","query":"Describe what is happening in this image. What is the immediate problem and what is the person doing about it? Answer in plain English, not bounding boxes.","max_new_tokens":256,"review":"Should mention a fallen cup, spilled liquid near a laptop, and a hand wiping with a cloth. Do not credit invented intent or invisible damage."},
+    {"id":"desk-explanation-ja","image":"desk-spill.png","task":"freeform","query":"この画像では何が起きていますか。問題と、人が何をして対処しているかを日本語で説明してください。座標ではなく文章で答えてください。","max_new_tokens":256,"review":"倒れたカップ、液体、パソコンの近く、布で拭いていることを根拠に確認する。"},
+    {"id":"repair-repairer-en","image":"repair-workbench.png","task":"referring","query":"the person repairing the toy car","expected_boxes":[[0,0,687,576]]},
+    {"id":"repair-reader-ja","image":"repair-workbench.png","task":"referring","query":"説明書を読んでいる人","expected_boxes":[[1022,0,1536,591]]},
+    {"id":"repair-held-tool","image":"repair-workbench.png","task":"referring","query":"the screwdriver being used to repair the toy car","expected_boxes":[[341,433,411,530]]},
+    {"id":"repair-between","image":"repair-workbench.png","task":"referring","query":"the screwdriver between the red-handled and black-handled screwdrivers","expected_boxes":[[632,786,973,857]]},
+    {"id":"repair-warning-instrument","image":"repair-workbench.png","task":"referring","query":"the instrument with the yellow warning label","expected_boxes":[[649,121,909,380]]},
+    {"id":"repair-count","image":"repair-workbench.png","task":"count_box","query":"screwdrivers lying on the workbench","expected_count":3,"max_new_tokens":256},
+    {"id":"repair-ocr","image":"repair-workbench.png","task":"ocr","query":"","max_new_tokens":512,"expected_texts":["CAUTION","SN: A1058","電源を切る"]},
+    {"id":"repair-ocr-grounding-ja","image":"repair-workbench.png","task":"ocr_grounding","query":"電源を切る","expected_boxes":[[904,335,1043,373]]},
+    {"id":"repair-explanation-en","image":"repair-workbench.png","task":"freeform","query":"What are the two people doing? Explain how their activities differ, using visible evidence. Answer in plain English.","max_new_tokens":256,"review":"The person on the left is working on the open toy car with a screwdriver; the person on the right is reading a paper instruction sheet."},
+    {"id":"desk-semantic-segmentation","image":"desk-spill.png","task":"segmentation","query":"the cup that has spilled its drink","expected_boxes":[[829,298,1098,523]],"max_new_tokens":128},
+    {"id":"desk-semantic-matting","image":"desk-spill.png","task":"matting","query":"the object being used to wipe up the spilled liquid","expected_boxes":[[925,547,1406,780]],"max_new_tokens":128},
+    {"id":"swapped-spilled-en","image":"desk-colors-swapped.png","task":"referring","query":"the cup that has spilled its drink","expected_boxes":[[829,298,1098,523]]},
+    {"id":"swapped-upright-en","image":"desk-colors-swapped.png","task":"referring","query":"the cup that is standing upright","expected_boxes":[[1225,238,1485,477]]},
+    {"id":"desk-ocr-negative","image":"desk-spill.png","task":"ocr","query":"","expected_texts":[],"max_new_tokens":256}
+  ]
+}

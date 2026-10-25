@@ -72,6 +72,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
         startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 },
       }],
     },
+    { id: "visualPerception", agentProfile: "visual-perception", services: [] },
   ]);
   expect(catalog.profiles.map((profile) => profile.id)).toEqual([
     "asr-granite",
@@ -92,6 +93,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "tts-default",
     "tts-english",
     "tts-expressive",
+    "visual-perception",
   ]);
   expect(catalog.audiences.map((audience) => audience.id)).toEqual([
     "saaa-desktop",
