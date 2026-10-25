@@ -63,7 +63,6 @@ def load_engine():
                                  config["speed_priors"], config["voice_aliases"])
     finally:
         ort.InferenceSession = original_session
-    engine.generate("Ready.", voice="Rosie", clean_text=True)
     return engine
 
 

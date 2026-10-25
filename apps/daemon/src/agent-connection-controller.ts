@@ -858,7 +858,7 @@ export class AgentConnectionController {
         ...(provider.chatInput ? { chatInput: this.publicChatInput(provider.chatInput) } : {}),
         health: {
           url: `${found.audience.baseUrl}/agent-connections/${found.id}/providers/${provider.name}/health`,
-          kind: "semantic-inference" as const,
+          kind: provider.protocol === "openai.audio-speech.v1" ? "health-check" as const : "semantic-inference" as const,
           maxAgeMs: 10_000 as const,
         },
         credential: {

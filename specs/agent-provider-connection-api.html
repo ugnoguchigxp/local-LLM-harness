@@ -961,9 +961,11 @@ Content-Type: application/json
         bytes。transcript内容は評価しない。
       </li>
       <li>
-        TTSは<code>{ "model": "&lt;publicModel&gt;", "input": "a", "response_format": "wav" }</code>
-        を送り、2xx、<code>audio/wav</code>、RIFF/WAVE header、非空data
-        chunkを検証する。response body上限は1,048,576 bytes。音質は評価しない。
+        TTSはGET /healthの2xx
+        JSONからready/statusと、提供される場合はmodelを検証する。接続作成・claim・healthから試験合成しない。descriptorとprobeのkindはhealth-checkとなり、合成の成功や音質を保証しない。<a
+          href="./tts-readiness-without-synthesis-2026-10-25.html"
+          >明示要求以外のTTS合成禁止</a
+        >を参照。
       </li>
     </ul>
 
@@ -972,7 +974,8 @@ Content-Type: application/json
       <li>
         live probeは通常request用queueへ入れず、execution
         slotを即時取得できる場合だけ実行する。同じcache keyの
-        同時probeはsingle-flightで一つに集約する。
+        同時probeはsingle-flightで一つに集約する。TTSの状態確認は推論slotを取得せず、GET
+        /healthだけを送る。
       </li>
       <li>
         成功cacheは10,000 ms、失敗cacheは1,000 ms。cache keyはboot epoch、Runtime、release、runtime

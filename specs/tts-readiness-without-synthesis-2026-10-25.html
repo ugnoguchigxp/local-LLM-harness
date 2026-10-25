@@ -1,0 +1,51 @@
+<article lang="ja">
+  <h1>TTSは明示的な読み上げ要求でのみ合成する</h1>
+  <p>
+    2026年10月25日。接続の準備・claim・health確認を理由に、LARMが試験音声を生成していた問題を修正する。以下は作業checkoutの変更であり、稼働環境への反映は未実施。
+  </p>
+  <section id="cause">
+    <h2>確認できた原因と限界</h2>
+    <p>
+      LARMのSemanticReadinessはTTSの合成APIへinput="a"をPOSTしていた。Eumenesによる接続の取得や確認からこの処理が呼ばれるため、英語文の読み上げ要求がなくてもKittenTTSで合成していた。20:06
+      JSTのEumenes用Allocationには日本語・英語の両TTSを含む6
+      Providerが記録され、20:12、20:22、20:34にもKittenTTSのprobe実行が記録されている。
+    </p>
+    <p>
+      当時の接続要求bodyは未取得であり、EumenesがProvider集合を省略したか、全体を明示したかは断定しない。確認用の音声はLARM内部で検査する処理であり、聞こえた女性声や二重再生の原因と確定したわけではない。LFM試用サービスは最初の調査時点で停止中だった。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>合成を起こさない準備確認</h2>
+    <p>
+      日本語・英語・表現用TTSすべてをモデル名によらずopenai.audio-speech.v1で扱う。接続作成、claim、health、cache更新はGET
+      /healthだけを使用する。音声合成APIへの試験要求、失敗時の合成による代替確認、推論枠の取得を行わない。KittenTTSの起動時にあった「Ready.」の試験生成も削除する。明示的なPOST
+      /v1/audio/speechは従来の認証・選択・容量制限・音声検証で処理する。
+    </p>
+    <p>
+      healthのJSONはready=true、またはready未指定かつstatusがokまたはhealthyのときに利用可能とする。ready=false、不明な状態、異なるmodel、不正なJSON、通信失敗は準備完了としない。Qwenの既存healthが示す遅延ロード可能な状態は維持する。readyはサービスが要求を受け付けられることを意味し、合成成功や初回生成の所要時間を保証しない。
+    </p>
+    <p>
+      health
+      descriptorとprobeのkindにhealth-checkを追加し、TTSをsemantic-inferenceと表示しない。クライアントはこの列挙値を受理する必要がある。既存SDKは共通schemaで受理する。外部クライアントの対応・稼働版反映は別途確認が必要である。
+    </p>
+    <p>
+      ASR・LLM・Embedding・System
+      Oneの既存確認方法、ProfileのProvider集合とライフサイクル方針は本修正の対象外。<a
+        href="./independent-audio-provider-connections.html"
+        >音声接続の独立化</a
+      >とは別の変更であり、双方の意図を維持する。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証</h2>
+    <p>
+      作業checkoutでbun run
+      check全体が成功した。アプリ・packageの929件、およびKittenTTSのPython試験10件が成功した。文書修正後もbun
+      run
+      docs:check:fixと差分の空白検査が成功した。本番サービスは再起動しておらず、合成処理の実機呼出しも行っていない。
+    </p>
+    <p>
+      回帰試験では、3種類のTTS能力の確認、同時確認、cache期限切れ、不正・失敗応答で合成要求が0件であることを確認する。接続とclaimとhealthの後も0件、明示的な読み上げ要求の後だけ1件となるHTTP経路を検証する。KittenTTSはエンジン初期化とmetadata取得でgenerateが呼ばれないこと、明示要求では従来の音声形式と話者選択が維持されることを検証する。実モデルへの試験生成は行わない。
+    </p>
+  </section>
+</article>

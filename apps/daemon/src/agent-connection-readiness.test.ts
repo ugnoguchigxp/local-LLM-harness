@@ -179,6 +179,7 @@ test("HTTP: held LLM KV, protection and model handover cannot block independentl
       if (init?.body instanceof ReadableStream) await new Response(init.body).arrayBuffer();
       const path = new URL(String(input)).pathname;
       forwarded.push(path);
+      if (path === "/health") return Response.json({ ready: true });
       if (path === "/v1/audio/transcriptions") return Response.json({ text: "合成試験" });
       if (path === "/v1/audio/speech") return new Response(syntheticWav(), { headers: { "content-type": "audio/wav" } });
       throw new Error("audio test must not send LLM inference");
@@ -210,6 +211,10 @@ test("HTTP: held LLM KV, protection and model handover cannot block independentl
     const claim = agentConnectionClaimSchema.parse(await claimed.json());
     const asr = claim.providers.find(p => p.name === "asr")!;
     const tts = claim.providers.find(p => p.name === "tts")!;
+    expect(tts.health.kind).toBe("health-check");
+    const ttsHealth = await app.request(new URL(tts.health.url).pathname, { headers: { authorization: `Bearer ${tts.credential.token}` } });
+    expect(ttsHealth.status).toBe(200);
+    expect(forwarded.filter(path => path === "/v1/audio/speech")).toHaveLength(0);
     const asrHealth = await app.request(new URL(asr.health.url).pathname, { headers: { authorization: `Bearer ${asr.credential.token}` } });
     expect(asrHealth.status).toBe(200);
     const audio = new FormData(); audio.set("model", "asr"); audio.set("file", new Blob([syntheticWav()], { type: "audio/wav" }), "synthetic.wav");
@@ -224,6 +229,7 @@ test("HTTP: held LLM KV, protection and model handover cannot block independentl
       authorization: `Bearer ${tts.credential.token}`, "content-type": "application/json", "x-larm-allocation-id": claim.allocationId,
     }, body: JSON.stringify({ model: "tts", input: "合成試験", response_format: "wav" }) });
     expect(speech.status).toBe(200); await speech.arrayBuffer();
+    expect(forwarded.filter(path => path === "/v1/audio/speech")).toHaveLength(1);
     finishHandover(); await handover;
     const standalone = await post("/v1/agent-connections", { profile: "ornith1.5Strix", audience: "local", client: "synthetic-other", providers: ["asr"] }, "shared");
     expect(standalone.status).toBe(201);
@@ -231,7 +237,7 @@ test("HTTP: held LLM KV, protection and model handover cannot block independentl
     expect(f.control.getUsageState().retainedRuntimeIds).toEqual(["llm"]);
     expect(f.control.usage!.protection.snapshot().activeRequests).toBe(0);
     expect(f.control.getAllocation(heldId)?.status).toBe("ready");
-    expect(forwarded.every(path => path.startsWith("/v1/audio/"))).toBeTrue();
+    expect(forwarded.every(path => path === "/health" || path.startsWith("/v1/audio/"))).toBeTrue();
     expect((await post("/v1/audio/speech", { model: "tts", input: "合成試験" }, "invalid")).status).toBe(401);
     await app.request(`/v1/agent-connections/${parent.id}`, { method: "DELETE", headers: controlHeaders });
     expect((await app.request(new URL(asr.health.url).pathname, { headers: { authorization: `Bearer ${asr.credential.token}` } })).status).toBe(401);

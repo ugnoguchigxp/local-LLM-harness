@@ -3,13 +3,14 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import wave
 
 import numpy as np
 from fastapi.testclient import TestClient
-from kitten_api import MODEL, create_app, verify_files
+from kitten_api import MODEL, create_app, load_engine, verify_files
 
 
 class FakeEngine:
@@ -40,6 +41,29 @@ class SpeechApiTests(unittest.TestCase):
 
     def request(self, **values):
         return self.client.post("/v1/audio/speech", json={"model": MODEL, "input": "Hello.", **values})
+
+    def test_startup_and_metadata_never_synthesize(self):
+        self.assertEqual(self.engine.calls, [])
+        for path in ("/health", "/v1/models", "/v1/audio/voices"):
+            self.assertEqual(self.client.get(path).status_code, 200)
+        self.assertEqual(self.engine.calls, [])
+
+    def test_load_engine_does_not_generate_a_warmup_utterance(self):
+        original_session = object()
+        ort = SimpleNamespace(
+            SessionOptions=lambda: SimpleNamespace(add_session_config_entry=lambda *_: None),
+            InferenceSession=original_session,
+        )
+        frontend = SimpleNamespace(KittenTTS_1_Onnx=lambda *_: self.engine)
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, "config.json").write_text(json.dumps({
+                "model_file": "model.onnx", "voices": "voices.npz", "speed_priors": {}, "voice_aliases": {},
+            }))
+            with patch("kitten_api.verify_files"), patch.dict("os.environ", {"KITTENTTS_MODEL_ROOT": root}), \
+                    patch.dict("sys.modules", {"onnxruntime": ort, "kittentts.onnx_model": frontend}):
+                self.assertIs(load_engine(), self.engine)
+        self.assertEqual(self.engine.calls, [])
+        self.assertIs(ort.InferenceSession, original_session)
 
     def test_default_and_voice_switch_share_engine_with_number_preprocessing(self):
         first = self.request(input="  At 3:30 PM, I paid $12.50.  ")

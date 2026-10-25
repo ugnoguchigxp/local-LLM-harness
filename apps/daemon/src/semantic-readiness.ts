@@ -30,7 +30,6 @@ type CachedProbe = {
 };
 
 const JSON_LIMIT = 65_536;
-const AUDIO_LIMIT = 1_048_576;
 
 type ProbeFormat = "json" | "sse" | "default" | "query" | "passage";
 
@@ -133,22 +132,6 @@ function silenceWav(): Uint8Array {
   text(36, "data");
   view.setUint32(40, dataBytes, true);
   return bytes;
-}
-
-function validWav(bytes: Uint8Array): boolean {
-  if (bytes.byteLength < 45) return false;
-  const ascii = (offset: number, length: number) =>
-    String.fromCharCode(...bytes.subarray(offset, offset + length));
-  if (ascii(0, 4) !== "RIFF" || ascii(8, 4) !== "WAVE") return false;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let offset = 12;
-  while (offset + 8 <= bytes.byteLength) {
-    const id = ascii(offset, 4);
-    const size = view.getUint32(offset + 4, true);
-    if (id === "data") return size > 0 && offset + 8 + size <= bytes.byteLength;
-    offset += 8 + size + (size % 2);
-  }
-  return false;
 }
 
 function validTranscription(value: unknown): boolean {
@@ -273,7 +256,10 @@ export class SemanticReadiness {
     const abort = new AbortController();
     const timeout = setTimeout(() => abort.abort(new Error("semantic probe timeout")), this.options.timeoutMs);
     timeout.unref?.();
-    const release = this.options.executionGate.tryAcquire(
+    // TTS readiness observes service state; it must never synthesize or take an
+    // inference slot away from a consumer's explicit speech request.
+    const isSpeech = input.provider.protocol === "openai.audio-speech.v1";
+    const release = isSpeech ? () => {} : this.options.executionGate.tryAcquire(
       resolved.runtime!.id,
       resolved.runtime!.resources,
       abort.signal,
@@ -327,7 +313,7 @@ export class SemanticReadiness {
         ready: true,
         acceptingRequests: !resolved.busy,
         probe: {
-          kind: "semantic-inference",
+          kind: isSpeech ? "health-check" : "semantic-inference",
           protocol: input.provider.protocol,
           ...(resolved.release ? { release: resolved.release } : {}),
           latencyMs: Math.max(0, this.now() - startedAt),
@@ -335,7 +321,7 @@ export class SemanticReadiness {
           cached: false,
           observedAt,
         },
-      }, resolved.runtime!, 1);
+      }, resolved.runtime!, isSpeech ? 0 : 1);
       return this.remember(resolved.key, health, true);
     } catch (error) {
       const reason = abort.signal.aborted ? "probe_timeout" : "invalid_response";
@@ -441,10 +427,10 @@ export class SemanticReadiness {
         redirect: "manual",
       });
     }
-    return await (this.options.fetchImpl ?? fetch)(`${base}/v1/audio/speech`, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "audio/wav" },
-      body: JSON.stringify({ model: provider.publicModel, input: "a", response_format: "wav" }),
+    if (provider.protocol !== "openai.audio-speech.v1") throw new Error("unsupported readiness protocol");
+    return await (this.options.fetchImpl ?? fetch)(`${base}/health`, {
+      method: "GET",
+      headers: { accept: "application/json" },
       signal,
       redirect: "manual",
     });
@@ -456,12 +442,6 @@ export class SemanticReadiness {
     signal: AbortSignal,
     format: ProbeFormat,
   ): Promise<boolean> {
-    if (provider.protocol === "openai.audio-speech.v1") {
-      if (mediaType(response) !== "audio/wav") {
-        return rejectResponseBody(response, "semantic probe content type mismatch");
-      }
-      return validWav(await responseBytes(response, AUDIO_LIMIT, signal));
-    }
     if (provider.protocol === "openai.chat-completions.v1" && format === "sse") {
       if (mediaType(response) !== "text/event-stream") {
         return rejectResponseBody(response, "semantic probe content type mismatch");
@@ -478,6 +458,14 @@ export class SemanticReadiness {
       value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
     } catch {
       return false;
+    }
+    if (provider.protocol === "openai.audio-speech.v1") {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+      const health = value as Record<string, unknown>;
+      if (health.model !== undefined && health.model !== provider.publicModel) return false;
+      if (health.ready !== undefined && health.ready !== true) return false;
+      if (health.status !== undefined && health.status !== "ok" && health.status !== "healthy") return false;
+      return health.ready === true || health.status === "ok" || health.status === "healthy";
     }
     if (provider.protocol === "larm.embedding.v1") {
       if (!provider.embeddingSpace || (format !== "query" && format !== "passage")) return false;
