@@ -4,7 +4,7 @@ import type { RuntimeBackend } from "@larm/backends";
 import { createAppComponents } from "./app";
 import { agentPrincipal, AgentConnectionController } from "./agent-connection-controller";
 import { ConnectionTokenCodec } from "./connection-token";
-import { ControlPlane } from "./controller";
+import { ControlPlane, type ControlEvent } from "./controller";
 import { Observer } from "./observer";
 import { UsageCoordinator } from "./usage-coordinator";
 import type { SemanticReadiness } from "./semantic-readiness";
@@ -17,6 +17,7 @@ async function fixture(options: {
   unavailableLlm?: boolean;
   protectedProfile?: boolean;
   audioLimit?: number;
+  onControlEvent?: (event: ControlEvent) => void;
   ensure?: (name: string, signal?: AbortSignal) => Promise<void>;
 } = {}) {
   let offset = 0;
@@ -40,7 +41,7 @@ async function fixture(options: {
     ensure: async (runtime, signal) => { await options.ensure?.(runtime.id, signal); loaded.add(runtime.id as "llm" | "asr" | "tts"); return health(runtime.id); }, stop: async () => {} };
   const observer = new Observer(registry, backend, { now });
   await observer.tick();
-  const control = new ControlPlane(registry, backend, observer, { now });
+  const control = new ControlPlane(registry, backend, observer, { now, onEvent: options.onControlEvent });
   const catalog = parseAgentConnectionCatalog({ version: 1, defaultAgentProfile: "voice", audiences: { local: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" } },
     agentProfiles: { voice: { description: "voice", ...(options.protectedProfile ? { usageProtection: { idleSeconds: 600, retention: "until-next-profile" } } : {}), providers: providers.map(p => ({ name: p.name, capability: p.capability, readiness: p.readiness, route: p.name, publicModel: p.name })) } },
     profileSelectors: { "ornith1.5Strix": { agentProfile: "voice" } },
@@ -385,5 +386,27 @@ test("audio capacity promotion starts a stopped audio backend and reaches readin
     expect((f.controller.get(waiting.id, "owner").body as PublicAgentConnection).status).toBe("ready");
     expect((await f.controller.claim(waiting.id, "owner", "openai-provider-v1")).status).toBe(200);
     await f.controller.release(waiting.id, "owner");
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+
+test("audio startup failure remains isolated when its event collector also fails", async () => {
+  const events: string[] = [];
+  const f = await fixture({ cold: ["asr"], ensure: async name => { if (name === "asr") throw new Error("synthetic backend unavailable"); },
+    onControlEvent: event => {
+      events.push(event.name);
+      if (event.name === "allocation_failed") throw new Error("synthetic event collector unavailable");
+    },
+  });
+  try {
+    const result = await f.create("voice");
+    const parent = result.body as PublicAgentConnection;
+    const deadline = performance.now() + 2000;
+    while (!events.includes("audio_control_task_failed") && performance.now() < deadline) await Bun.sleep(1);
+    expect(events).toContain("audio_control_task_failed");
+    const current = publicAgentConnectionSchema.parse(f.controller.get(parent.id, "owner").body);
+    expect(current.providers.find(provider => provider.name === "asr")?.readiness).toBe("failed");
+    expect((await f.controller.claim(parent.id, "owner", "openai-provider-v1", false, ["llm", "tts"])).status).toBe(200);
+    await f.controller.release(parent.id, "owner");
   } finally { f.control.beginDrain(); await f.control.flush(); }
 });
