@@ -6,7 +6,7 @@
   <section id="section-state" aria-labelledby="state">
     <h2 id="state">検証状態</h2>
     <p>
-      隔離したLARMから実際のユーザーsystemdサービスを起動し、1536×1024の生成画像でreferring・describe・segmentationを実行した。接続解放でプロセス終了と資格失効を確認し、再度COLDから起動して推論・終了まで合格。本番の署名付きリリースへの反映は最終検証後に行う。
+      隔離したLARMから実際のユーザーsystemdサービスを起動し、1536×1024の生成画像でreferring・describe・segmentationを実行した。接続解放でプロセス終了と資格失効を確認し、再度COLDから起動して推論・終了まで合格。本番は修正版ca5242bd421fd376d6de2c5b747d14427dc70a0eで同じ起動・推論・解放・再起動を完了し、放置接続の自動終了も確認した。
     </p>
     <p>
       証跡はホスト外部保存先
@@ -122,7 +122,7 @@
       共通猶予の適用をPreferredに限定し、elasticはruntime自身のTTLを使うよう修正する。Preferredの既存挙動は維持する。60000msの共通猶予下でelasticの即時停止・実行中要求の保護・指定5秒のTTL、およびPreferredの60000ms維持をテストする。隔離smokeも共通猶予60000msへ変更し、試験条件の差をなくす。
     </p>
     <p>
-      別の実プロセス試験では、claim後に要求を送らず放置したConnectionが60.236秒でreleasedとなり、PID=0を確認した。修正版の中央API再試験は配備後に記録する。
+      別の実プロセス試験では、claim後に要求を送らず放置したConnectionが60.236秒でreleasedとなり、PID=0を確認した。修正版の中央API再試験は下記のとおり合格した。
     </p>
   </section>
   <section id="measured-performance">
@@ -193,6 +193,77 @@
     </p>
     <p>
       GPU呼び出し中のPythonスレッドを放棄して同時実行を許さない。生成は120秒の協調上限、要求全体は180秒の専用プロセス終了期限。GPU障害ではworkerを終了し、後続要求で新しいworkerを起動する。クライアント期限は185秒を推奨する。
+    </p>
+  </section>
+  <section id="production-acceptance">
+    <h2>本番配備と受入結果</h2>
+    <p>
+      2026-10-25、本番中央daemonを署名付きリリースca5242bd421fd376d6de2c5b747d14427dc70a0eへ切り替え、contract_verified=succeeded・health.ready=trueを確認した。最終ゲートはinstall・開発/本番依存audit・全check・coverageがすべて合格。Bunの本体試験は1009
+      pass・10 skip・0 fail、既存の20ファイルのcritical
+      coverage基準も通過した。Pythonの軽量契約2件と準備済み環境での画像処理4件も合格。
+    </p>
+    <table>
+      <caption>
+        中央API経由、1536×1024画像、各条件1回の実測
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">task</th>
+          <th scope="col">COLDからclaim</th>
+          <th scope="col">生成</th>
+          <th scope="col">マスク</th>
+          <th scope="col">後処理</th>
+          <th scope="col">worker全体</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">referring</th>
+          <td>17.15秒</td>
+          <td>13.57秒</td>
+          <td>0.00秒</td>
+          <td>0.157ms</td>
+          <td>13.63秒</td>
+        </tr>
+        <tr>
+          <th scope="row">describe</th>
+          <td>17.15秒</td>
+          <td>20.66秒</td>
+          <td>0.00秒</td>
+          <td>0.017ms</td>
+          <td>20.80秒</td>
+        </tr>
+        <tr>
+          <th scope="row">segmentation</th>
+          <td>17.15秒</td>
+          <td>13.30秒</td>
+          <td>12.96秒</td>
+          <td>10.966ms</td>
+          <td>26.40秒</td>
+        </tr>
+        <tr>
+          <th scope="row">referring（再起動）</th>
+          <td>17.08秒</td>
+          <td>13.72秒</td>
+          <td>0.00秒</td>
+          <td>0.170ms</td>
+          <td>13.78秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      COLDからclaimは各プロセス初回のみ発生する。中央APIのHTTP往復は検索13.66秒、説明20.83秒、segmentation26.44秒、再起動後の検索13.79秒だった。通常のreleaseからPID=0までは0.310秒と0.290秒で、資格失効401も確認した。
+    </p>
+    <p>
+      別の本番Connectionでは、claim後に推論や明示releaseを行わず60.242秒でreleasedになり、PID=0まで確認した。終了時はwevisone-vl.serviceがinactive、MainPID=0、中央daemonの/readyはready。linger=yes、Unitはstaticで自動常駐起動しない。
+    </p>
+    <p>
+      検索箱と先行の概略手動箱とのIoUは0.870。segmentationのPNGは1536×1024・Lモード・0/255の二値、前景42288
+      pixels（2.69%）、範囲837,301〜1085,515で、空や全面のマスクではなかった。これは単一の合成画像の動作確認であり統計的精度ではない。
+    </p>
+    <p>
+      既存runtimes・routes・Agent
+      Profiles・selectorsから今回の追加を除くと、前の稼働版と同一であることを照合した。llama-swap設定も同一。証跡のproduction/lifecycle.json、production-idle/lifecycle.json、release-gate-final.json、production-output-validation.json、existing-config-preserved.jsonに記録した。入力画像・生の応答・マスクはソース外の証跡ディレクトリに置く。
     </p>
   </section>
   <section id="section-verification" aria-labelledby="verification">
