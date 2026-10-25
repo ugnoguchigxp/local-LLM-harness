@@ -75,9 +75,13 @@ test("protected profile rejects all other entry points and retains its model aft
     const connection = publicAgentConnectionSchema.parse(await response.json());
     const bearer = await f.claim(connection.id, "consumer");
     expect((await f.app.request(`/v1/agent-connections/${connection.id}/providers/llm/health`, { headers: { authorization: "Bearer consumer" } })).status).toBe(200);
-    for (const path of ["/v1/chat/completions", "/v1/audio/transcriptions", "/v1/audio/speech", "/v1/embed", "/v1/systemone", "/v1/images/generations", "/v1/music/generations", "/v1/allocations", "/v1/contexts"]) {
+    for (const path of ["/v1/chat/completions", "/v1/embed", "/v1/systemone", "/v1/images/generations", "/v1/music/generations", "/v1/allocations", "/v1/contexts"]) {
       const denied = await f.post(path, "shared", {});
       expect(denied.status).toBe(409); expect((await denied.json() as { error: { code: string } }).error.code).toBe("foreground_protected");
+    }
+    // Audio is validated independently, rather than rejected by LLM usage protection.
+    for (const path of ["/v1/audio/transcriptions", "/v1/audio/speech"]) {
+      expect((await f.post(path, "shared", {})).status).toBe(400);
     }
     expect((await f.create("worker", "shared")).status).toBe(409);
     expect(f.fetches()).toBe(0); expect(f.starts).toEqual(["a"]);

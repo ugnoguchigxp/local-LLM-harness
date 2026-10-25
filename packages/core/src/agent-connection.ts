@@ -648,6 +648,7 @@ export const agentConnectionRenewRequestSchema = z.object({
 
 export const agentConnectionClaimRequestSchema = z.object({
   format: z.enum(["openai-provider-v1", "larm-embedding-provider-v1"]),
+  providers: z.array(agentIdentifierSchema).min(1).max(8).refine(names => new Set(names).size === names.length, "duplicate providers").optional(),
 }).strict();
 
 export const publicAgentProfileListV1Schema = z.object({

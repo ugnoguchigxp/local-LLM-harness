@@ -118,7 +118,8 @@ export async function prepareGatewayIngress(input: {
         response: c.json(errorBody("connection_forbidden", "provider token is not valid for this endpoint"), 403),
       };
     }
-    if (declaredAllocationId !== undefined && declaredAllocationId !== scoped.record.allocationId) {
+    if (declaredAllocationId !== undefined && declaredAllocationId !== scoped.record.allocationId
+      && declaredAllocationId !== scoped.record.parentAllocationId) {
       return {
         ok: false,
         response: c.json(errorBody("connection_forbidden", "allocation header does not match provider token"), 403),

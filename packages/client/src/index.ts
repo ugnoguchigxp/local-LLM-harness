@@ -376,7 +376,7 @@ export class LarmClient {
 
   async waitForAgentConnection(
     connection: PublicAgentConnection,
-    options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number } = {},
+    options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number; providers?: string[] } = {},
   ): Promise<PublicAgentConnection> {
     return this.agentConnections.waitUntilReady(connection, options);
   }
@@ -390,7 +390,7 @@ export class LarmClient {
 
   async claimAgentConnection(
     id: string,
-    formatOrSignal: AgentConnectionClaimRequest["format"] | AbortSignal = "openai-provider-v1",
+    formatOrSignal: AgentConnectionClaimRequest["format"] | AgentConnectionClaimRequest | AbortSignal = "openai-provider-v1",
     signal?: AbortSignal,
   ): Promise<AgentConnectionClaim> {
     return this.agentConnections.claim(id, formatOrSignal, signal);

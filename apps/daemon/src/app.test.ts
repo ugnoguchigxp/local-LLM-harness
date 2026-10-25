@@ -5377,7 +5377,7 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
   })).status).toBe(204);
 });
 
-test("Profiles without idle retention abort ContextStill, fence reacquisition until all foreground requests finish, and retain shared providers", async () => {
+test("LLM foreground fences ContextStill while independent audio leaves its background LLM running", async () => {
   const configDir = join(import.meta.dir, "../../../config/local-node");
   const production = loadStubRegistry(configDir);
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, production);
@@ -5470,7 +5470,11 @@ test("Profiles without idle retention abort ContextStill, fence reacquisition un
     const form = new FormData(); form.set("model", asr.model); form.set("file", new Blob([await validSemanticWavResponse().arrayBuffer()], { type: "audio/wav" }), "silence.wav");
     const transcription = await app.request("/v1/audio/transcriptions", { method: "POST", headers: { authorization: `Bearer ${asr.credential.token}` }, body: form });
     expect(transcription.status).toBe(200); await transcription.text();
-    const aborted2 = await bg2; expect(aborted2.status).toBe(409); await aborted2.text();
+    expect(events.filter(event => event === "background-aborted").length).toBe(1);
+    expect(control.getAllocation(resumed.connection.allocationId)?.status).toBe("ready");
+    // Audio does not abort an unrelated LLM; explicit cleanup closes this request.
+    await app.request(`/v1/agent-connections/${resumed.connection.id}`, { method: "DELETE", headers: agentHeaders() });
+    const aborted2 = await bg2; expect(aborted2.status).toBe(401); await aborted2.text();
     expect(events.filter(event => event === "background-aborted").length).toBe(2);
     expect(control.getAllocation(resumed.connection.allocationId)).toMatchObject({ status: "released" });
     const again = await ready("contextStill");

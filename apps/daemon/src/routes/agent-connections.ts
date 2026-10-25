@@ -61,6 +61,7 @@ export function registerAgentConnectionRoutes(app: Hono, options: {
         return c.json(errorBody("forbidden", "valid management token required for deployment"), 403);
       }
     }
+    const startedAt = performance.now();
     const created = await controller.create(
       parsed.data,
       requestPrincipal(c),
@@ -84,6 +85,10 @@ export function registerAgentConnectionRoutes(app: Hono, options: {
         canonicalProfile: options.catalog?.profiles.find((profile) => profile.id === selector?.agentProfile)
           ?.canonicalProfile ?? "(unknown)",
         status: String(created.status),
+        elapsedMs: String(Math.round(performance.now() - startedAt)),
+        ...(typeof created.body === "object" && created.body !== null && "id" in created.body
+          ? { connection: String(created.body.id) } : {}),
+        providers: parsed.data.providers?.join(",") ?? "profile-default",
         ...(errorCode ? { code: errorCode } : {}),
       },
     });
@@ -117,7 +122,7 @@ export function registerAgentConnectionRoutes(app: Hono, options: {
     const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
     try {
       const verified = controller.verifyProviderToken(token);
-      if (verified.record.id !== c.req.param("id") || verified.provider.name !== c.req.param("name")) {
+      if (verified.record.id !== controller.providerConnectionId(c.req.param("id"), c.req.param("name")) || verified.provider.name !== c.req.param("name")) {
         return c.json(errorBody("connection_forbidden", "provider token scope does not match this health endpoint"), 403);
       }
       return result(c, await controller.providerHealth(c.req.param("id"), c.req.param("name")));
@@ -151,6 +156,7 @@ export function registerAgentConnectionRoutes(app: Hono, options: {
     const claimed = await controller.claim(
       c.req.param("id"), requestPrincipal(c), parsed.data.format,
       standard(c.req.header("authorization")),
+      parsed.data.providers,
     );
     const providers = typeof claimed.body === "object" && claimed.body !== null && "providers" in claimed.body
       && Array.isArray(claimed.body.providers) ? claimed.body.providers : [];

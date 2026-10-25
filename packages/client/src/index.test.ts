@@ -1728,3 +1728,37 @@ test("image preflight uses only the claimed bearer, validates totals, and never 
   await expect(broken.countChatInputTokens({},"provider-secret")).rejects.toThrow("disconnect");
   expect(calls.filter(x=>x==="broken")).toHaveLength(1);
 });
+
+test("SDK waits for and claims TTS even when the connection's LLM failed", async () => {
+  const connection = {
+    id: "aconn_epoch-test_audio", allocationId: allocation.id, bootEpoch: "epoch-test", catalogRevision: "catalog-test",
+    profile: "ornith1.5Strix" as const, agentProfile: "voice", profileRevision: "1".repeat(64), audience: "same-host", audienceRevision: "2".repeat(64),
+    status: "failed" as const, services: [], createdAt: allocation.createdAt, expiresAt: allocation.expiresAt,
+    providers: [
+      { name: "llm", capability: "llm.general", supportedCapabilities: ["llm.general"], protocol: "openai.chat-completions.v1" as const,
+        endpoint: "/v1/chat/completions" as const, model: "llm", readiness: "failed" as const, claimable: false },
+      { name: "tts", capability: "speech.tts", supportedCapabilities: ["speech.tts"], protocol: "openai.audio-speech.v1" as const,
+        endpoint: "/v1/audio/speech" as const, model: "tts", readiness: "probing" as const, claimable: false },
+    ],
+  };
+  const requests: Request[] = [];
+  const client = new LarmClient({ baseUrl: "http://127.0.0.1:9810", fetch: async (input, init) => {
+    const request = new Request(input.toString(), init); requests.push(request);
+    if (request.method === "GET") return json({ ...connection, providers: [connection.providers[0], { ...connection.providers[1], readiness: "ready", claimable: true }] });
+    return json({ id: connection.id, allocationId: connection.allocationId, status: "ready", audience: "same-host", expiresAt: connection.expiresAt,
+      providers: [{ name: "tts", capability: "speech.tts", apiStyle: "openai", protocol: "openai.audio-speech.v1", scheme: "http", host: "127.0.0.1", port: 9810,
+        baseUrl: "http://127.0.0.1:9810/v1", model: "tts",
+        health: { url: `http://127.0.0.1:9810/v1/agent-connections/${connection.id}/providers/tts/health`, kind: "semantic-inference", maxAgeMs: 10000 },
+        credential: { type: "bearer", token: "synthetic-token", expiresAt: connection.expiresAt },
+        configuration: { kind: "openai-provider-v1", fields: { baseURL: "http://127.0.0.1:9810/v1", model: "tts" }, secretFields: { apiKey: "credential.token" } },
+      }],
+    });
+  } });
+  const ready = await client.waitForAgentConnection(connection, { providers: ["tts"], pollIntervalMs: 0, timeoutMs: 100 });
+  expect(ready.status).toBe("failed");
+  expect(ready.providers.find(provider => provider.name === "tts")?.readiness).toBe("ready");
+  const claim = await client.claimAgentConnection(connection.id, { format: "openai-provider-v1", providers: ["tts"] });
+  expect(claim.providers.map(provider => provider.name)).toEqual(["tts"]);
+  expect(await requests.at(-1)!.json()).toEqual({ format: "openai-provider-v1", providers: ["tts"] });
+  await expect(client.waitForAgentConnection(connection, { providers: ["llm"], timeoutMs: 100 })).rejects.toMatchObject({ code: "connection_not_ready" });
+});

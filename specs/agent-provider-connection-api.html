@@ -1,5 +1,11 @@
 <article lang="ja">
   <h1>Agent Provider Connection API 実装仕様</h1>
+  <p>
+    2026-10-25の音声独立化：ASR/TTSはLLMと別に確保・確認し、任意providersを指定したclaimで独立して利用できる。POST/GETの応答項目と列挙値を維持する。省略時のclaimは従来どおり全Providerを対象にする。詳細は<a
+      href="./independent-audio-provider-connections.html"
+      >音声Provider独立化仕様</a
+    >を参照。
+  </p>
 
   <p>
     必要なAgent種別をAPIで要求し、LARMがRuntimeをAllocationした後、そのAgentが動的に設定できる

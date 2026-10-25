@@ -1,0 +1,250 @@
+<article lang="ja">
+  <h1>Eumenes 音声接続の待機調査と期限・観測の修正</h1>
+  <p>
+    2026-10-25 JST の本番 systemd journal、配備済み
+    source・設定を読み取り専用で照合した。設定変更、再配備、Provider 再起動、他 consumer
+    の接続解放は実施していない。会話本文・音声・認証情報・Provider 生応答は採取していない。
+  </p>
+  <section id="deployment-evidence">
+    <h2>仕様と配備の確認</h2>
+    <p>
+      20時台は ca5242bd421fd376d6de2c5b747d14427dc70a0e、21:02:39 以降は
+      ae62948340e2e0959bbbae9eca362dba7a060626。どちらも configRevision は
+      2097ca20a2a00da328624dee552d7c84c6b66f0fa3630e5879f285fa8a729c3a。配備先は
+      /srv/ai/apps/larm-current の指す immutable release であり、作業 checkout の HEAD
+      7c9f409b739af4783105b8682d963b90067d97fd とは異なる。本変更は作業 checkout
+      への未配備パッチである。
+    </p>
+    <p>
+      要求 Profile ornith1.5Strix の llm は route llm-ornith15-strix → runtime
+      ornith15-strix-conversation → llama-swap の同名 model entry に解決される。ASR は stt-granite →
+      granite-asr → granite-asr.service、TTS は tts-voicevox → voicevox-tts →
+      voicevox-tts.service。実際の本番要求では embedding、system-one、tts-english も含む全6 Provider
+      の Allocation と claim が記録されている。Eumenes の「Provider 3 個」は LARM
+      の確保対象数と一致しない。providers を省略すると Profile 全体になるが、当時の要求 body
+      は保存されておらず、省略したかどうかまでは断定しない。
+    </p>
+    <p>
+      POST の同一 client・Profile・audience・Provider 集合の再依頼は既存 Connection と Allocation
+      を再利用し、ready を probing に戻さない。通常 GET は推論をせず状態を読む。claim
+      は別処理で、10秒の semantic probe cache が古ければ推論による確認を行う。従来の public
+      readiness は Connection 全体の状態を全 Provider
+      に複写しており、個別の進捗を示していなかった。<a href="./agent-provider-connection-api.html"
+        >接続 API 正本</a
+      >、<a href="./agent-connection-demand-refresh-2026-10-18.html">再依頼仕様</a>を参照。
+    </p>
+  </section>
+  <section id="capacity-wait">
+    <h2>21:22 の容量待ち</h2>
+    <p>
+      21:22:25.072、Allocation d2677fb9-1aff-4aa1-9630-0cad08457e72 が allocation_waiting
+      になった。対象 runtime は
+      granite-asr、multilingual-e5-small、ornith15-strix-conversation、ruri-system-one、voicevox-tts、kittentts-nano。21:24:16.458
+      の allocation_released まで admitted・ready・failed
+      の記録はない。待機は111.386秒であり、申告の開始時刻21:22:24から数えても約112.5秒。「2分以上」という申告とは区別する。
+    </p>
+    <table>
+      <caption>
+        待機開始直後に4枠を占めていた LLM Allocation（同一 epoch 内の UUID）
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">UUID</th>
+          <th scope="col">ready または admission の時刻</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>866b52d0-3539-4bf1-8d5c-97c45f748108</td>
+          <td>21:22:17.995</td>
+        </tr>
+        <tr>
+          <td>5144edae-c9ae-47c7-b8d7-6671c92279cf</td>
+          <td>21:22:19.214</td>
+        </tr>
+        <tr>
+          <td>ca3adc8a-c950-4ea9-8da0-bd87153dd04d</td>
+          <td>21:22:20.250</td>
+        </tr>
+        <tr>
+          <td>e18e1619-3f53-4457-9d1a-c1bd8d0412f1</td>
+          <td>21:22:25.053</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      21:22:25.051 に従来の LLM Allocation が解放されたが、その2ミリ秒後に先行待機の e18e1619
+      が昇格し、4枠を再び使用した。配備 runtime の maxConcurrentAllocations
+      は4。実行中の推論数とは独立に、保持中の Allocation
+      が枠を占める。したがってモデル読込み、ASR/TTS の起動、claim の競合ではなく、LLM の Allocation
+      容量待ちが原因と特定できる。
+    </p>
+    <p>
+      当該 Connection UUID 自体と GET 応答は既存ログに記録されていない。Allocation
+      と配備コードから、Connection は pending、phase は waiting-capacity、全 Provider の readiness
+      は waiting と復元できる。これは GET 応答の実測保存ではない。既存 unit の
+      LARM_CONNECTION_READY_TIMEOUT_SECONDS=300 により上限は5分で、推定 readyDeadline
+      は21:27:25付近。Eumenes
+      再起動による解放が先だったため、期限切れには至らなかった。無期限停止が実証されたわけではない。ただし従来は
+      background loop が probe を await
+      した後でしか期限を判定せず、厳密な終了時刻を守る実装でもなかった。
+    </p>
+  </section>
+  <section id="latency-evidence">
+    <h2>20時台の内訳と記録の限界</h2>
+    <table>
+      <caption>
+        LARM journal で追える claim の semantic 確認区間（JST）
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">申告の完了時刻</th>
+          <th scope="col">LARM の記録</th>
+          <th scope="col">最後の確認</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>20:12:39、22.6秒</td>
+          <td>
+            POST 201 が20:12:36.508。claim の probe は20:12:37.856〜38.935、約1.079秒。LLM
+            約0.736秒、ASR 約0.032秒、VOICEVOX 約0.168秒。
+          </td>
+          <td>KittenTTS 約0.116秒、claim 成功38.936</td>
+        </tr>
+        <tr>
+          <td>20:41:28、12.0秒</td>
+          <td>
+            POST 201 が20:41:27.709。claim の非LLM probe は27.717〜27.924、約0.207秒。LLM
+            確認は別の接続と共有した26.483〜27.081、約0.598秒。ASR 約0.023秒、VOICEVOX 約0.103秒。
+          </td>
+          <td>KittenTTS 約0.064秒、claim 成功27.925</td>
+        </tr>
+        <tr>
+          <td>20:53:45、17.4秒</td>
+          <td>
+            claim の probe は20:53:44.409〜45.165、約0.756秒。LLM 約0.554秒、ASR 約0.026秒、VOICEVOX
+            約0.089秒。POST 201 は45.191にも記録。
+          </td>
+          <td>KittenTTS 約0.068秒、claim 成功45.166</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この表は claim 周辺の実行イベントの内訳であり、各 POST の受信から ready
+      までを測った表ではない。既存ログには POST の受信開始、Connection ID、Provider 別 readiness
+      の推移がなく、並行要求もあるため、申告の同一 Connection にすべてを一意に帰属できない。既存
+      ready Connection の再依頼では readiness を再設定する経路がない。申告の12〜22秒全体を ASR/TTS
+      の読込みや LARM の準備処理と結論することはできない。
+    </p>
+    <p>
+      直前に同じ LLM の生成完了や別接続の解放がある。20:12:35.073、20:41:26.482 の LLM
+      接続解放、20:53:43.011 の LLM 生成完了と、続く claim の短い確認区間は確認できるが、Eumenes
+      内のキャンセル・解放待ち、ネットワーク、POST
+      前処理のどれかは現資料では確定できない。再検証では Eumenes 側でも POST 送信直前・応答直後・GET
+      の値・claim 開始終了を時刻と ID で記録する必要がある。
+    </p>
+  </section>
+  <section id="lifecycle-and-cost">
+    <h2>待機・解放・同時利用と費用</h2>
+    <p>
+      ASR と VOICEVOX の service は両方とも2026-10-24
+      06:18:54から連続稼働。調査窓に起動停止やモデル読込みのイベントはない。両 runtime は
+      managed、warm.minInstances=1、idleTtlSeconds=60。60秒無通信で必ず止める設定ではなく、Profile
+      の需要・warm floor・swap group・資源方針で維持または置換する。Connection
+      自身の無操作解放300秒とも別である。
+    </p>
+    <p>
+      宣言メモリ見積りは LLM 56 GB、Granite 3.5 GB、VOICEVOX 1 GB、主要3個で計60.5 GB。これは実測
+      RSS や GPU 専用メモリ値ではない。VOICEVOX は CPU 実行。現在すでに warm floor
+      が1なので、ASR/TTS を常駐させるだけでは今回の LLM 接続枠不足は解消しない。主会話 LLM と背景
+      LLM が別々の Allocation を保持すればそれぞれ1枠を使い、ASR/TTS
+      も含む接続がもう1枠を必要とする。
+    </p>
+    <p>
+      構成案は、consumer が自分の未使用接続を再利用・解放して4枠内に収める、または承認後に
+      maxConcurrentAllocations を増やして maxConcurrentRequests=4
+      とキュー上限16を維持する、のいずれか。後者は同時推論スロットや KV
+      を増設する変更ではなく、追加の待機・キュー遅延を受け入れる方針変更である。8本の同時生成を保証する意味はない。真の同時実行数を増やす構成の
+      KV/GPU 費用は別の実測が必要で、ここでは断定しない。
+    </p>
+  </section>
+  <section id="local-implementation">
+    <h2>修正方針の確定</h2>
+    <p>
+      KV保持のためのLLM接続を減らすことはASR/TTSの依存解消策ではない。容量待ちを10秒で接続全体の失敗にする初期案は撤回した。ASR/TTSを個別に確保・確認・claim・利用し、LLMの接続枠・probe・占有・切替・失敗を待たせない実装へ変更した。<a
+        href="./independent-audio-provider-connections.html"
+        >音声Provider独立化仕様</a
+      >を正本とする。
+    </p>
+    <p>
+      元のProvider
+      readinessは全体状態の複写であり、ASR/TTSプロセス自身の停止を示すものではなかった。20時台の全遅延の発生区間は未確定のままである。LLMの容量待ちが確認できたことと、ASR/TTSに利用許可を発行できなかった設計上の結合を区別する。
+    </p>
+  </section>
+  <section id="deployment-approval">
+    <h2>設定変更・配備</h2>
+    <p>
+      本番反映は2026-10-25に承認された。作業 checkout の既存変更を保持している。配備中の新しい
+      release に本パッチを取り込み、release
+      検査を通してから適用する必要がある。設定変更、再配備、daemon
+      の再起動は今回の承認に含まれる。Provider 再起動は今回の修正の前提ではない。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証</h2>
+    <p>
+      旧案の918件・統合候補1,016件の成功は、当初の期限・観測パッチに対する結果であり、音声独立化の証跡には流用しない。最新実装では独立確保・部分claim・HTTP転送・KV保持・cold
+      startupの分離・SDK部分待機の回帰試験を追加し、作業側923件と配備版統合候補1,021件が成功した。最後の音声更新・取消の補強もSDKと音声の46件で確認した。本番Providerを用いた速度の証明は未実施。
+    </p>
+    <table>
+      <caption>
+        実接続受入れは今回承認された配備後に実施する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">記録・判定</th>
+          <th scope="col">現状</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>新規 llm/asr/tts 接続</td>
+          <td>
+            POST 開始から ready、GET ごとの status と各 readiness、readyDeadline。warm
+            かつ枠に余裕がある場合2秒以内。
+          </td>
+          <td>未実施</td>
+        </tr>
+        <tr>
+          <td>ready の同一構成へ新しい Idempotency-Key で POST</td>
+          <td>ID維持、各 readiness、2秒以内。別途 claim の時間も分離記録。</td>
+          <td>未実施</td>
+        </tr>
+        <tr>
+          <td>別接続で LLM 生成しながら新規接続</td>
+          <td>
+            合成テキストのみ。LLM
+            要求との実重複、容量枠数、準備時間と進捗。LLMが満枠でもASR/TTSだけは先にclaimして使えること。
+          </td>
+          <td>未実施</td>
+        </tr>
+        <tr>
+          <td>ASR/TTS を10分無使用にして新規接続</td>
+          <td>
+            合成音声・テキストのみ。10分間の Provider 推論数と PID を記録し、他 consumer
+            の利用があれば無使用試験不成立とする。
+          </td>
+          <td>未実施</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      検証前に他 consumer の処理を preempt しない試験時間・枠を確保し、専用 client
+      を用いる。作成した試験接続だけを後片付けする。既存接続の解放、機密を含む音声・本文のログ採取は行わない。21:22
+      の正確な Connection ID
+      と、20時台の全遅延区間の帰属は観測不足により未確定であることを受入れ結果でも維持する。
+    </p>
+  </section>
+</article>

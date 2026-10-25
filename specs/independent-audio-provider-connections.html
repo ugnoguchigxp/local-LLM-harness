@@ -1,0 +1,113 @@
+<article lang="ja">
+  <h1>ASR・TTS の接続と利用を LLM から独立させる</h1>
+  <p>
+    2026-10-25 の修正仕様。音声 Provider
+    の起動・確保・readiness・claim・推論・認証情報の更新は、その Provider
+    自身の状態だけを条件にする。LLM の KV 保持、Allocation 枠、生成、起動、semantic
+    probe、占有保護、Profile
+    切替の完了を条件にしない。本番反映は2026-10-25に承認され、配備準備中であり、以下はローカル実装の契約である。
+  </p>
+  <section id="allocation">
+    <h2>確保と起動</h2>
+    <p>
+      Profile の音声 Provider（openai.audio-transcriptions.v1 と
+      openai.audio-speech.v1）を個別の内部 Connection と Allocation に分ける。Provider
+      名やモデル名には分岐しない。LLM を含む非音声部分は既存の Allocation を継続し、KV 保持のための
+      LLM 接続枠を減らさない。ASR/TTS の確保に LLM の枠を使用しない。
+    </p>
+    <p>
+      音声の準備処理と容量待ちからの昇格を独立した実行経路で処理する。LLM の読込みが既存 Control
+      の処理列を占めていても音声の起動は開始できる。同一音声 runtime の同時起動は既存 Provider
+      instance 管理でまとめ、メモリ見積り・live telemetry・音声自身の容量・queue・quarantine
+      の制限は維持する。物理資源不足を成功として扱う変更ではない。
+    </p>
+    <p>
+      音声接続は LLM の usage handover や retain-until-next-profile の置換を起こさず、音声要求は LLM
+      の foreground 排他による背景処理の取消を起こさない。音声要求は LLM 保護期間の activeRequests
+      にも数えない。通常の認証と Provider token の能力・モデル・audience・principal・instance
+      世代の検証は維持する。
+    </p>
+  </section>
+  <section id="readiness">
+    <h2>POST と GET の互換性</h2>
+    <p>
+      POST /v1/agent-connections と GET /v1/agent-connections/{id} の応答項目・status と readiness
+      の列挙値は変えない。各 Provider の readiness と claimable を自身の内部 Connection
+      から返す。LLM が waiting のままでも ASR/TTS を ready、claimable=true として返す。接続全体の
+      status=ready は全要求 Provider が準備できたという従来の意味を維持する。
+    </p>
+    <pre><code>{"status":"probing","providers":[{"name":"asr","readiness":"ready","claimable":true},{"name":"llm","readiness":"waiting","claimable":false},{"name":"tts","readiness":"ready","claimable":true}]}</code></pre>
+    <p>
+      この例は該当項目のみの抜粋。全体が probing でも ASR/TTS は利用可能である。LLM が失敗して全体が
+      failed になった場合でも、独立した音声 Provider が ready なら、その Provider のみの claim
+      と利用は自身の期限まで可能である。POST は一部 Provider の接続を受理できた場合、202
+      と接続情報を返す。全体の ready を偽装しない。
+    </p>
+  </section>
+  <section id="claim">
+    <h2>Provider を指定した claim</h2>
+    <p>
+      既存 POST /v1/agent-connections/{id}/claim に任意の providers を追加する。省略時は従来どおり全
+      Provider を取得する。指定時は、その Provider だけの状態と semantic readiness
+      を検証して、既存と同じ応答形で descriptor と認証情報を返す。他の Provider の probe
+      を待たず、他の Provider の失敗によって拒否しない。
+    </p>
+    <pre><code>{"format":"openai-provider-v1","providers":["asr"]}</code></pre>
+    <pre><code>{"format":"openai-provider-v1","providers":["tts"]}</code></pre>
+    <p>
+      claim 応答の status=ready は、返した Provider 集合の準備完了を表す。元の Connection 全体が
+      ready になったという意味ではない。health URL は引き続き公開 Connection ID と Provider
+      名を指し、音声だけを検証する。認証情報は音声自身の Allocation と instance
+      世代に結び付ける。親の allocationId を header に指定する既存 consumer も受け入れるが、実転送は
+      token が示す音声自身の Allocation で行う。無関係の Allocation header は拒否する。
+    </p>
+    <p>
+      同じ client と構成の新しい POST は各 Provider
+      の内部接続・Allocation・有効な認証情報を再利用する。明示 renew
+      は独立した音声の認証情報も更新する。明示 DELETE はその公開 Connection
+      が所有する音声接続も終了させる。LLM の probe 期限切れや LLM 側の idle release
+      を理由に、音声接続を取り消さない。音声自身の期限・無操作解放は引き続き適用する。
+    </p>
+  </section>
+  <section id="consumer">
+    <h2>Eumenes の呼出し</h2>
+    <p>
+      音声開始時には GET の providers 内で asr の readiness=ready を待ち、providers=["asr"] で claim
+      して文字起こしを開始する。発話時には tts の readiness=ready を待ち、providers=["tts"] で claim
+      する。LLM は自身の ready を待って別に claim する。全体の status=ready と全 Provider の ready
+      を待ってから ASR を始める consumer 側の手順は、引き続き LLM
+      を待つため変更が必要である。本修正では Eumenes のコード・設定・配備は変更していない。
+    </p>
+    <p>
+      既存 API だけでも providers=["asr"]、providers=["tts"] をそれぞれ指定して別 Connection
+      を作成でき、これらも LLM の占有・切替を待たない。SDK には既存 waitForAgentConnection の
+      providers オプションと claimAgentConnection の Provider 指定を追加した。
+    </p>
+    <pre><code>const audio = await client.waitForAgentConnection(connection, { providers: ["asr"] });
+const claim = await client.claimAgentConnection(audio.id, {
+  format: "openai-provider-v1", providers: ["asr"]
+});</code></pre>
+  </section>
+  <section id="validation">
+    <h2>検証と配備状況</h2>
+    <p>
+      ローカルで、LLM 枠を保持した容量待ち、LLM/ASR probe の停止、LLM の期限切れ、LLM
+      の確保拒否、LLM の占有・切替、LLM の cold startup の各状態でも、正常な音声だけを claim
+      できる試験を追加した。HTTP 経路を使い、合成 WAV と合成テキストによる ASR/TTS の転送、親
+      Allocation header の互換性、health URL、明示解放後の token 失効、通常認証の拒否を確認する。SDK
+      の部分待機・claim も検証する。
+    </p>
+    <p>
+      検証完了：作業checkoutのbun run
+      check全体が成功し、アプリ・packageの923件のテストが成功した。配備済みae629483を基点にした統合候補でもtypecheckと1,021件のテストが成功し、環境条件による10件はskipされた。最後の音声更新・取消の補強はSDKと音声の46件の試験で確認した。
+    </p>
+    <p>
+      これらはローカルの合成 backend による回帰試験であり、本番 Provider
+      の速度測定ではない。本番反映と実接続の新規・再依頼・LLM
+      同時生成・音声10分無使用後の4条件は未実施。本番反映の承認は受領済みで、正式リリース検証と実接続の確認を進める。<a
+        href="./eumenes-voice-readiness-investigation-2026-10-25.html"
+        >当日の調査記録</a
+      >は原因の確定範囲と不足する観測を示す。
+    </p>
+  </section>
+</article>
