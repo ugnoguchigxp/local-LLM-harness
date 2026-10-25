@@ -55,7 +55,7 @@ async function fixture(options: {
     onEvent: event => events.push(event),
   });
   const create = (client: string, key = client, subset?: string[]) => controller.create({ profile: "ornith1.5Strix", client, audience: "local", ...(subset ? { providers: subset } : {}), ttlSeconds: 120, allowFallback: false, deploymentPolicy: "existing-only" }, "owner", key, "http://127.0.0.1:9810/v1/agent-connections");
-  return { registry, catalog, observer, controller, control, create, calls, events, ready, advance: (ms: number) => { offset += ms; } };
+  return { registry, catalog, observer, controller, control, create, calls, events, ready, setLoaded: (name: "llm" | "asr" | "tts", value: boolean) => { if (value) loaded.add(name); else loaded.delete(name); }, advance: (ms: number) => { offset += ms; } };
 }
 
 test("a stalled ASR or LLM cannot delay TTS claim, while whole-connection readiness stays truthful", async () => {
@@ -366,4 +366,24 @@ test("audio capacity wait is promoted while the LLM startup lane remains occupie
     if (heldLlm) await f.control.releaseAllocation(heldLlm);
     f.control.beginDrain(); await f.control.flush();
   }
+});
+
+
+test("audio capacity promotion starts a stopped audio backend and reaches readiness", async () => {
+  const starts: string[] = [];
+  const f = await fixture({ audioLimit: 1, ensure: async name => { starts.push(name); } });
+  try {
+    const held = (await f.create("held-asr", "held-asr", ["asr"])).body as PublicAgentConnection;
+    const waiting = (await f.create("waiting-asr", "waiting-asr", ["asr"])).body as PublicAgentConnection;
+    expect(waiting.status).toBe("pending");
+    f.setLoaded("asr", false);
+    await f.observer.tick();
+    await f.controller.release(held.id, "owner");
+    const deadline = performance.now() + 2000;
+    while ((f.controller.get(waiting.id, "owner").body as PublicAgentConnection).status !== "ready" && performance.now() < deadline) await Bun.sleep(1);
+    expect(starts).toContain("asr");
+    expect((f.controller.get(waiting.id, "owner").body as PublicAgentConnection).status).toBe("ready");
+    expect((await f.controller.claim(waiting.id, "owner", "openai-provider-v1")).status).toBe(200);
+    await f.controller.release(waiting.id, "owner");
+  } finally { f.control.beginDrain(); await f.control.flush(); }
 });
