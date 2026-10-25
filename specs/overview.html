@@ -22,6 +22,183 @@
         </tr>
       </thead>
       <tbody>
+        <tr
+          data-kind="plan"
+          data-state="current"
+          data-domain="eumenes-independent-audio-integration-request"
+        >
+          <th scope="row">
+            <a href="./eumenes-independent-audio-integration-request-2026-10-25.html"
+              >Eumenes音声開始の独立化・実装依頼</a
+            >
+          </th>
+          <td>
+            Provider別ready待機、部分claim、個別期限と取消、KV保持、実接続の受入条件。<small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>eumenes-independent-audio-integration-request</code></small
+            >
+          </td>
+          <td>LARM本番反映済み仕様に対応するconsumer側の変更依頼。Eumenesは本タスクでは未変更。</td>
+        </tr>
+        <tr data-kind="contract" data-state="current" data-domain="tts-readiness-without-synthesis">
+          <th scope="row">
+            <a href="./tts-readiness-without-synthesis-2026-10-25.html"
+              >TTSは明示的な読み上げ要求でのみ合成する</a
+            >
+          </th>
+          <td>
+            接続確認の試験合成とKittenTTS起動時の合成を廃止する。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>tts-readiness-without-synthesis</code></small
+            >
+          </td>
+          <td>
+            本番反映済み。GET /healthで確認し、health-checkと表示。23:10
+            JSTに日本語・英語の接続を合成なしで検証。二重再生との因果関係は未確定。
+          </td>
+        </tr>
+        <tr
+          data-kind="contract"
+          data-state="current"
+          data-domain="independent-audio-provider-connections"
+        >
+          <th scope="row">
+            <a href="./independent-audio-provider-connections.html"
+              >ASR・TTSの接続・claim・利用をLLMから独立させる</a
+            >
+          </th>
+          <td>
+            音声個別Allocation、部分readinessとclaim、LLMのKV・占有・切替・起動待ちからの分離。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>independent-audio-provider-connections</code></small
+            >
+          </td>
+          <td>
+            本番反映・4条件の実接続を確認済み。POST/GET応答形を維持。EumenesのProvider別待機・claimが必要。
+          </td>
+        </tr>
+
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="eumenes-voice-readiness-investigation"
+        >
+          <th scope="row">
+            <a href="./eumenes-voice-readiness-investigation-2026-10-25.html"
+              >Eumenes音声接続の容量待ち・期限・Provider別進捗</a
+            >
+          </th>
+          <td>
+            配備済み実装・journalによる調査と未配備の期限・観測修正。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>eumenes-voice-readiness-investigation</code></small
+            >
+          </td>
+          <td>
+            2026-10-25。本番反映済み。4条件の実接続を検証。20時台の全遅延帰属は未確定。標準canaryの固定文検査は未合格。
+          </td>
+        </tr>
+
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="docling-desk-candidate-activation"
+        >
+          <th scope="row">
+            <a href="./docling-desk-candidate-activation-2026-10-25.html"
+              >Docling Desk修正候補の切替・実環境受入</a
+            >
+          </th>
+          <td>
+            配備定義の整合、実ブラウザ取得hash、認証・文書状態、gateway連動再起動の逸脱と影響確認。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>docling-desk-candidate-activation</code></small
+            >
+          </td>
+          <td>
+            2026-10-25。候補反映とready確認済み。OCR・物体認識gateway連動再起動あり。Eumenes入口と保存版解説の受入は未実施。
+          </td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="wevisone-vl-semantic-trial">
+          <th scope="row">
+            <a href="./wevisone-vl-semantic-trial-2026-10-25.html"
+              >WeVisOne実機試験：画像の意味・対象指定・後処理時間</a
+            >
+          </th>
+          <td>
+            生成画像・色入替の25条件、33回のGPU推論、BF16マスク、OCR脱落、前処理・生成・描画・保存の内訳。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>wevisone-vl-semantic-trial</code></small
+            >
+          </td>
+          <td>
+            2026-10-25。意味による位置特定を確認。専用OCR・YOLOの全面置換は保留。結果viewer・JSON・CSV保存済み。
+          </td>
+        </tr>
+        <tr data-kind="research" data-state="current" data-domain="wevisone-vl-investigation">
+          <th scope="row">
+            <a href="./wevisone-vl-investigation-2026-10-25.html"
+              >WeVisOne-VL-4B：YOLO・OCR代替候補の調査と公式モデル取得</a
+            >
+          </th>
+          <td>
+            公式source・ROCm互換性・既存YOLO26n／PP-OCRv6との差、19.37GB取得とhash検証、次段階の実証計画。
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>wevisone-vl-investigation</code></small
+            >
+          </td>
+          <td>2026-10-25。4B全11ファイル取得済み。GPU推論・Preview・採用判断は未実施。</td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="lfm25-asr-vs-granite-long-evaluation"
+        >
+          <th scope="row">
+            <a href="./lfm25-asr-vs-granite-long-evaluation-2026-10-25.html"
+              >LFM ASRと現行Granite：200文字長文の精度・速度・補正傾向比較</a
+            >
+          </th>
+          <td>
+            12原稿・通常16音声、雑音・早口8音声、無発話3音声。同一区間と全文入力、文字誤り率、補正傾向、無音対策を実測。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>lfm25-asr-vs-granite-long-evaluation</code></small
+            >
+          </td>
+          <td>
+            2026-10-25。利用者判断でGranite維持、LFMのASRは不採用と確定。精度・中央値速度で優位なし。本番切替なし。
+          </td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="lfm25-audio-jp-local-evaluation">
+          <th scope="row">
+            <a href="./lfm25-audio-jp-local-evaluation-2026-10-25.html"
+              >LFM2.5-Audio-1.5B-JPのCPUホスティングとSystem Context・MCP調査</a
+            >
+          </th>
+          <td>
+            Ryzen AI MAX+
+            395上のQ8_0音声認識・読み上げ・音声対話、前提差し替え、模擬ツールJSON試験と再試用手順。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>lfm25-audio-jp-local-evaluation</code></small
+            >
+          </td>
+          <td>
+            2026-10-25利用者試用後、音声対話は不採用。ASR・TTSの精度は利用者評価で悪くない。
+            長文比較後、ASR単独も不採用と確定。試用serverは停止済み、本番ASRはGraniteを維持。
+          </td>
+        </tr>
         <tr data-kind="contract" data-state="current" data-domain="image-artifact-import-api">
           <th scope="row">
             <a href="./image-artifact-import-api-2026-10-18.html"
@@ -987,6 +1164,40 @@
           <td>
             2026-10-10
             署名付きrelease・本番unit反映済み。確保・claimの説明とURL、要求時起動・生成後停止・画像取得を実APIで確認。
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="proposed" data-domain="eumenes-docling-integration">
+          <th scope="row">
+            <a href="./eumenes-docling-integration-prompt-2026-10-25.html"
+              >Eumenes向けDocling Desk連携プロンプト</a
+            >
+          </th>
+          <td>
+            接続先、Bearerと一回限りログイン、起動・停止、文書API、prefix中継の制約と受入条件。<small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>eumenes-docling-integration</code></small
+            >
+          </td>
+          <td>
+            2026-10-25。配備設定とsourceを照合した引き渡し文。Eumenes実装・送信・共有OCRへの切替は未実施。
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="implemented" data-domain="docling-desk-on-demand-hosting">
+          <th scope="row">
+            <a href="./docling-desk-on-demand-hosting-2026-10-24.html"
+              >Docling Deskのホストプロセス配備とオンデマンド起動</a
+            >
+          </th>
+          <td>
+            固定release、専用UID、要求時起動と処理中の停止抑止、登録手順と検証範囲。<small
+              >分類: <code>plan</code> · 状態:
+              <code>implemented</code> · 正本領域:
+              <code>docling-desk-on-demand-hosting</code></small
+            >
+          </td>
+          <td>
+            2026-10-24。本番配備済み。要求時起動、Word・OCR変換、自動停止、再起動後の文書・ログイン保持を実機確認。
           </td>
         </tr>
         <tr

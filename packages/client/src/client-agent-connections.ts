@@ -114,14 +114,23 @@ export class ClientAgentConnections {
 
   async waitUntilReady(
     connection: PublicAgentConnection,
-    options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number } = {},
+    options: { signal?: AbortSignal; pollIntervalMs?: number; timeoutMs?: number; providers?: string[] } = {},
   ): Promise<PublicAgentConnection> {
     const timeoutMs = options.timeoutMs ?? this.deps.timeoutMs;
     const pollIntervalMs = options.pollIntervalMs ?? 250;
     validatePollingOptions(timeoutMs, pollIntervalMs);
     const deadline = Date.now() + timeoutMs;
     let current = publicAgentConnectionSchema.parse(connection);
-    while (current.status === "pending" || current.status === "probing") {
+    if (options.providers && (options.providers.length === 0 || options.providers.some(name => !current.providers.some(provider => provider.name === name)))) {
+      throw new LarmApiError(400, "unknown_connection_provider", "requested provider does not exist in this connection", current);
+    }
+    const requested = () => current.providers.filter(provider => !options.providers || options.providers.includes(provider.name));
+    const ready = () => options.providers ? current.status !== "released" && current.status !== "expired"
+      && requested().every(provider => provider.readiness === "ready") : current.status === "ready";
+    const waiting = () => options.providers ? current.status !== "released" && current.status !== "expired"
+      && requested().some(provider => provider.readiness !== "ready" && provider.readiness !== "failed")
+      : current.status === "pending" || current.status === "probing";
+    while (!ready() && waiting()) {
       if (Date.now() >= deadline) {
         throw new LarmApiError(408, "connection_timeout", `connection ${current.id} did not become ready`, current);
       }
@@ -135,7 +144,7 @@ export class ClientAgentConnections {
         throw error;
       }
     }
-    if (current.status !== "ready") {
+    if (!ready()) {
       throw new LarmApiError(
         409,
         current.error?.code ?? "connection_not_ready",
@@ -159,12 +168,14 @@ export class ClientAgentConnections {
 
   async claim(
     id: string,
-    formatOrSignal: AgentConnectionClaimRequest["format"] | AbortSignal = "openai-provider-v1",
+    formatOrSignal: AgentConnectionClaimRequest["format"] | AgentConnectionClaimRequest | AbortSignal = "openai-provider-v1",
     signal?: AbortSignal,
   ): Promise<AgentConnectionClaim> {
-    const format = typeof formatOrSignal === "string" ? formatOrSignal : "openai-provider-v1";
-    const requestSignal = typeof formatOrSignal === "string" ? signal : formatOrSignal;
-    const body = agentConnectionClaimRequestSchema.parse({ format });
+    const scopedRequest = typeof formatOrSignal === "object" && "format" in formatOrSignal ? formatOrSignal : undefined;
+    const requestSignal = typeof formatOrSignal === "string" || scopedRequest ? signal : formatOrSignal as AbortSignal;
+    const body = agentConnectionClaimRequestSchema.parse(scopedRequest ?? {
+      format: typeof formatOrSignal === "string" ? formatOrSignal : "openai-provider-v1",
+    });
     const response = await this.deps.request(`/v1/agent-connections/${encodeURIComponent(id)}/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },

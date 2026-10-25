@@ -720,6 +720,7 @@ Content-Type: application/json
       </li>
       <li>
         初回probeはAllocation期限と<code>LARM_CONNECTION_READY_TIMEOUT_SECONDS</code>の早い方まで再試行する。
+        未配備の音声独立化では、ASR/TTSに別々の接続・準備期限を持たせ、LLMの待機や失敗で音声を失効させない。準備専用timerにより各接続の期限を守る。容量待ちを一律10秒で打ち切る初期案は採用しない。
         retry間隔は既存<code>LARM_STARTUP_POLL_INTERVAL_MS</code>と失敗cache
         TTLの大きい方とする。ただし固定probeへのHTTP 400、404、405、422は
         <code>provider_contract_mismatch</code
@@ -913,13 +914,23 @@ Content-Type: application/json
   <section id="semantic-health">
     <h2>Semantic readiness contract</h2>
     <p>
+      未配備の音声独立化では、ASR/TTSをLLMとは別に確保し、Providerごとのreadinessを返す。既存claimの任意providers項目で音声だけを取得でき、LLMを確認・待機しない。省略時は従来どおり全Providerの確認を要求する。詳細とconsumerの呼出方法は<a
+        href="./independent-audio-provider-connections.html"
+        >音声Provider独立化仕様</a
+      >を参照。
+    </p>
+    <p>
       Aggregate healthは全required Provider、Provider
       healthはpathで指定した一つだけを検証します。どちらも
       connection、allocation、epoch、catalog、release、Binding
       freshnessを先に検証し、probeはadvertised URLへのHTTP self-callではなく、同じGateway
       dispatchと固定Bindingを内部から使用します。これによりprotocol、 tokenizer、scheduler、model
       forward pass、response serializationまでを通しつつ、Audience DNSやTLSの外部到達性は
-      commissioning testへ分離します。
+      commissioning testへ分離します。TTSは例外としてGET
+      /healthによる状態確認だけを使用し、合成APIを呼ばない。<a
+        href="./tts-readiness-without-synthesis-2026-10-25.html"
+        >明示要求以外のTTS合成禁止</a
+      >を参照。
     </p>
 
     <h3>LLM probe</h3>
@@ -955,9 +966,8 @@ Content-Type: application/json
         bytes。transcript内容は評価しない。
       </li>
       <li>
-        TTSは<code>{ "model": "&lt;publicModel&gt;", "input": "a", "response_format": "wav" }</code>
-        を送り、2xx、<code>audio/wav</code>、RIFF/WAVE header、非空data
-        chunkを検証する。response body上限は1,048,576 bytes。音質は評価しない。
+        TTSはGET /healthの2xx
+        JSONからready/statusと、提供される場合はmodelを検証する。接続作成・claim・healthから試験合成しない。descriptorとprobeのkindはhealth-checkとなり、合成の成功や音質を保証しない。本番反映前の旧版はinput="a"で試験合成していた。
       </li>
     </ul>
 
@@ -966,7 +976,8 @@ Content-Type: application/json
       <li>
         live probeは通常request用queueへ入れず、execution
         slotを即時取得できる場合だけ実行する。同じcache keyの
-        同時probeはsingle-flightで一つに集約する。
+        同時probeはsingle-flightで一つに集約する。TTSの状態確認は推論slotを取得せず、GET
+        /healthだけを送る。
       </li>
       <li>
         成功cacheは10,000 ms、失敗cacheは1,000 ms。cache keyはboot epoch、Runtime、release、runtime

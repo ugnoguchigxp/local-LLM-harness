@@ -235,7 +235,7 @@ export class ModelBroker {
       deploymentPolicy: "existing-only",
       priority: entry.descriptor.schedulingPriority,
       capacityPolicy: "wait",
-    });
+    }, { independentAudio: entry.descriptor.protocol === "openai.audio-transcriptions.v1" || entry.descriptor.protocol === "openai.audio-speech.v1" });
     allocationEnd?.();
     if (result.status !== 200 && result.status !== 202) {
       throw brokerFailure(result.status, result.body);

@@ -1,0 +1,489 @@
+<article lang="ja">
+  <h1>LFM2.5-Audio JP ASRと現行Granite：200文字長文の精度・速度・補正傾向比較</h1>
+  <p>
+    2026年10月25日に同じPCで比較した。比較後、利用者は現行Graniteの維持とLFMのASR不採用を選択した。
+    同じ短い音声区間を与えたとき、Graniteの読みCERは0.77%、LFMは2.16%。
+    区間ごとの処理時間中央値はそれぞれ0.753秒、1.123秒だった。
+    LFMは一部のフィラーを残すが、数値の欠落や口語表現の整形もあり、精度改善を目的とする置換の根拠は得られなかった。
+    本番のASR・TTS・会話LLMとLARMの設定は変更せず、評価用LFM serverは終了した。
+  </p>
+  <section id="identity">
+    <h2>現行ASRの特定</h2>
+    <p>
+      配備中のAgent Profileを確認すると、既定のornith1.5StrixとSAAAの会話用profileは stt-granite →
+      granite-asr → granite-asr.service → loopback 8089へ解決する。
+      healthはgranite-speech-4.1-2b、transcribe.cpp-vulkan、Q8_0、最大12秒を返した。
+      汎用stt-defaultがWhisperを指すことや、Whisper
+      processの常駐だけを根拠に現行の会話ASRを判断しない。 配備releaseはca9e2c2d397a。稼働Granite
+      wrapperと作業treeのwrapperはSHA-256が一致した。
+    </p>
+    <dl>
+      <dt>現行Granite</dt>
+      <dd>
+        Granite Speech 4.1 2B Q8_0、transcribe.cpp / Vulkan、CPU 16 threads、decoder context
+        512、言語指定なし、promptなし、temperature 0。本番APIの12秒制限を保持。
+      </dd>
+      <dt>LFM候補</dt>
+      <dd>
+        LFM2.5-Audio-1.5B-JP Q8_0、audio.cpp CPU 8 threads、engine revision
+        4efa395944ffaa6017909487bed0a98b684cad29、重みrevision
+        64b96718b341dbd5650f9e85627cecdcbd4ac61b。ASRはgreedy、出力上限1024 tokens。
+      </dd>
+      <dt>参考Whisper</dt>
+      <dd>
+        Whisper large-v3-turbo Q5_0、whisper.cpp HIP、16 threads、beam 5、日本語、既存8085
+        endpoint。現在の会話profileの主ASRとは区別する。
+      </dd>
+      <dt>PC</dt>
+      <dd>
+        Ryzen AI MAX+ 395、Radeon 8060S、OS認識121
+        GiB。既存Providerを維持した逐次測定で、同時負荷試験ではない。
+      </dd>
+    </dl>
+    <p>
+      比較は現行GPU構成と候補CPU構成の実用比較であり、同一アクセラレーター上のモデル計算効率比較ではない。
+      LARMの接続・lease・admissionを介さず、backendへ直接要求した。
+    </p>
+  </section>
+  <section id="corpus">
+    <h2>音声と測定条件</h2>
+    <p>
+      12原稿は206〜219文字。通常音声は春日部つむぎ12本とずんだもん4本の計16本、
+      長さ33.70〜41.97秒、平均36.74秒。 通常音声の合計は587.82秒。
+      数値、技術用語、固有名詞、否定、同音異義語、引用された指示、不自然な設定、言い直し、フィラー、重複、口語表現を含む。
+    </p>
+    <p>
+      VOICEVOX Core 0.17.0 CPU16、normal、speed 1.0で5文を個別合成し、250 msの間隔で連結した。
+      音声クレジットはVOICEVOX:春日部つむぎ、VOICEVOX:ずんだもん。 各文は16 kHz mono
+      PCM16へ変換した。最長区間は9.333秒で、強制切断は0回。
+      これは既知の文境界を使った理想的な区間分割であり、実マイクのVAD精度を評価したものではない。
+    </p>
+    <p>
+      4原稿の春日部つむぎ版に、区間ごとSNR 15 dBの白色Gaussian noiseを加えた4本と、 音高を保つatempo
+      1.2で早口化した4本を追加した。さらに3秒無音、10秒無音、10秒低振幅白色雑音の3本を用意した。
+      全27入力を共通利用。ノイズは実際の生活雑音や残響の代用ではない。
+    </p>
+    <p>
+      現行GraniteとLFM全文自動分割の通常音声は各3回、順番を入れ替えて測定した。
+      LFM共通区間分割・全文一括・Whisper参考、および雑音・早口・無音の各追加条件は各1回。
+      読みの精度は同じ音声の初回結果だけで集計し、反復で分母を水増ししない。
+      速度は全測定を使用。warmup
+      6回を除く180回の文章単位試験、500回の認識HTTP要求が完了し、HTTP失敗は0件。
+      Graniteへ約200文字全文を直接送るとHTTP
+      413になることも別途確認した。これは仕様通りの拒否で、認識失敗の500件には含めない。
+    </p>
+  </section>
+  <section id="metrics">
+    <h2>指標の定義</h2>
+    <ul>
+      <li>
+        表記CER：NFKC、小文字化、空白・Unicode句読点除去後の文字編集距離÷参照文字数。数値の漢数字・算用数字表記差も残る。
+      </li>
+      <li>
+        表記補正後CER：桁区切りを含む整数の漢数字化と、API・CPU・GPUの既知の表記対応だけを追加する。未知の誤認識を正解へ置き換えない。
+      </li>
+      <li>
+        読みCER：同じ正規化のあとpykakasi
+        2.3.0でひらがな化する。同音異義語の意味の誤りは消えるので、表記指標と実際の応答を併読する。
+      </li>
+      <li>
+        CERの置換・削除・挿入を全て数える。精度集計で失敗や空の出力を除外しない。無音のCERは定義せず、誤発言の有無を別集計する。
+      </li>
+      <li>
+        速度は音声HTTP要求の開始から確定テキスト受信まで。生成音声の再生時間、マイク録音時間、発話終了判定時間は含まない。p95は線形補間。
+      </li>
+      <li>
+        約200文字の処理時間は、分割方式では区間の処理時間の合計。全文方式では1要求の時間。実会話では区間を発話中に処理できるため、合計値をそのまま発話終了後の待ち時間と解釈しない。
+      </li>
+      <li>
+        RTFは全処理時間÷音声時間。補正強度の共通設定値はないため、注釈語の保持率と変更例で比較する。保持されない語が全て意図的な補正とは限らない。
+      </li>
+    </ul>
+  </section>
+  <section id="accuracy">
+    <h2>通常音声の文字起こし精度</h2>
+    <table>
+      <caption>
+        同一通常音声16本。CERは小さいほど参照に近い
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">方式</th>
+          <th scope="col">音声数</th>
+          <th scope="col">表記CER</th>
+          <th scope="col">表記補正後CER</th>
+          <th scope="col">読みCER</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">現行Granite・共通区間分割</th>
+          <td>16</td>
+          <td>4.78%</td>
+          <td>2.05%</td>
+          <td>0.77%</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM・共通区間分割</th>
+          <td>16</td>
+          <td>6.42%</td>
+          <td>3.87%</td>
+          <td>2.16%</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM・全文入力／自動分割</th>
+          <td>16</td>
+          <td>6.52%</td>
+          <td>3.84%</td>
+          <td>2.18%</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM・全文一括／分割なし</th>
+          <td>16</td>
+          <td>6.58%</td>
+          <td>3.90%</td>
+          <td>2.04%</td>
+        </tr>
+        <tr>
+          <th scope="row">参考Whisper・全文入力</th>
+          <td>16</td>
+          <td>9.44%</td>
+          <td>6.80%</td>
+          <td>5.64%</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      現行Graniteが全指標で良好だった。LFMに同じ5区間を与えても精度差が残るため、全文自動分割だけが差の原因とは言えない。
+      全文一括の16本は33.70〜41.97秒であり、これ以上長い自然発話へ一般化しない。
+      Whisperの全文入力は速かったが、この長文セットの文字起こし精度は最も低かった。
+    </p>
+  </section>
+  <section id="speed">
+    <h2>認識処理の速度</h2>
+    <table>
+      <caption>
+        単位は秒。分割と全文では要求の単位が異なる
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">方式</th>
+          <th scope="col">文章測定回数</th>
+          <th scope="col">200文字処理p50</th>
+          <th scope="col">200文字処理p95</th>
+          <th scope="col">1区間p50</th>
+          <th scope="col">1区間p95</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">現行Granite・共通区間分割</th>
+          <td>48</td>
+          <td>3.737</td>
+          <td>7.148</td>
+          <td>0.753</td>
+          <td>1.597</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM・共通区間分割</th>
+          <td>16</td>
+          <td>5.490</td>
+          <td>5.796</td>
+          <td>1.123</td>
+          <td>1.310</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM・全文入力／自動分割</th>
+          <td>48</td>
+          <td>5.294</td>
+          <td>6.736</td>
+          <td>5.294</td>
+          <td>6.736</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM・全文一括／分割なし</th>
+          <td>16</td>
+          <td>5.078</td>
+          <td>5.609</td>
+          <td>5.078</td>
+          <td>5.609</td>
+        </tr>
+        <tr>
+          <th scope="row">参考Whisper・全文入力</th>
+          <td>16</td>
+          <td>1.292</td>
+          <td>1.436</td>
+          <td>1.292</td>
+          <td>1.436</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      共通分割の区間中央値ではGraniteがLFMより約1.49倍速かった。
+      ただしGraniteには遅い測定があり、区間p95ではLFMの方が短かった。 通常条件の合算RTFはGranite
+      0.113、LFM共通区間分割 0.150、LFM全文自動分割 0.150。
+      いずれもこの逐次実行条件では1未満。短い音声の初回試験で得た約1秒という値を、200文字全文の処理時間として流用しない。
+    </p>
+  </section>
+  <section id="robustness">
+    <h2>雑音・早口への耐性</h2>
+    <table>
+      <caption>
+        同じ4原稿・同じ声の対応比較。数値は読みCER
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">方式</th>
+          <th scope="col">対応する通常4本</th>
+          <th scope="col">白色雑音15 dB・4本</th>
+          <th scope="col">1.2倍速・4本</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">現行Granite・共通区間分割</th>
+          <td>0.66%</td>
+          <td>0.66%</td>
+          <td>0.95%</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM・共通区間分割</th>
+          <td>2.37%</td>
+          <td>2.65%</td>
+          <td>2.94%</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM・全文入力／自動分割</th>
+          <td>1.04%</td>
+          <td>2.65%</td>
+          <td>1.99%</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      雑音・早口でも現行Graniteが良好だった。雑音で通常より値が小さくなる箇所もあり、4本の小標本で普遍的な改善・悪化を断定しない。
+      LFM全文自動分割では早口化によって一部が30秒未満になり、分割方式も変わる。
+      そのためLFMにも同一の短区間を与えた追加測定を実施し、入力長と分割の影響を分けて確認した。
+    </p>
+  </section>
+  <section id="correction">
+    <h2>補正・整文の傾向</h2>
+    <table>
+      <caption>
+        注釈語の保持数／原稿内の出現数。表記の一致であり意味評価の正答率ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">Granite共通区間</th>
+          <th scope="col">LFM共通区間</th>
+          <th scope="col">LFM全文自動分割</th>
+          <th scope="col">参考Whisper全文</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">フィラー保持</th>
+          <td>6/9（66.67%）</td>
+          <td>7/9（77.78%）</td>
+          <td>8/9（88.89%）</td>
+          <td>8/9（88.89%）</td>
+        </tr>
+        <tr>
+          <th scope="row">繰り返し保持</th>
+          <td>8/9（88.89%）</td>
+          <td>7/9（77.78%）</td>
+          <td>8/9（88.89%）</td>
+          <td>8/9（88.89%）</td>
+        </tr>
+        <tr>
+          <th scope="row">口語表現保持</th>
+          <td>8/8（100.00%）</td>
+          <td>6/8（75.00%）</td>
+          <td>7/8（87.50%）</td>
+          <td>8/8（100.00%）</td>
+        </tr>
+        <tr>
+          <th scope="row">訂正前の語の保持</th>
+          <td>6/6（100.00%）</td>
+          <td>6/6（100.00%）</td>
+          <td>6/6（100.00%）</td>
+          <td>5/6（83.33%）</td>
+        </tr>
+        <tr>
+          <th scope="row">訂正後の語の保持</th>
+          <td>10/10（100.00%）</td>
+          <td>5/10（50.00%）</td>
+          <td>8/10（80.00%）</td>
+          <td>9/10（90.00%）</td>
+        </tr>
+        <tr>
+          <th scope="row">不自然な時制の保持</th>
+          <td>2/2（100.00%）</td>
+          <td>2/2（100.00%）</td>
+          <td>2/2（100.00%）</td>
+          <td>1/2（50.00%）</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LFMはフィラーをGraniteより多く残す条件がある一方、共通区間では「見といて」を2例とも「見ておいて」へ展開した。
+      Graniteは注釈した口語表現を8/8保持した。両者とも意図的に不自然にした「明日は雨だった」を保持した。
+      補正が強い・弱いという単一の順位にはまとめず、フィラー処理と口語の整文、意味の変化を区別する。
+    </p>
+    <p>
+      自己訂正の訂正後の語には同音の漢字誤りも含まれる。保持率だけから予定や人数を正しく理解したとは断定しない。
+      Graniteのフィラー欠落の一部は削除ではなく「ええと」を「8」にする誤変換であり、整文能力として評価しない。
+    </p>
+    <table>
+      <caption>
+        実際の差分例。文字表記と音の一致を分けて読む
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">原稿</th>
+          <th scope="col">Granite共通区間</th>
+          <th scope="col">LFM共通区間</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">追加料金が千二百円を超える場合</th>
+          <td>追加料金が1200円を超える場合</td>
+          <td>追加料金が1000円を超える場合（2声とも）</td>
+        </tr>
+        <tr>
+          <th scope="row">すみません七人でした／七人分の席</th>
+          <td>7人でした／7人分の席</td>
+          <td>市民でした／市民軍の席（春日部つむぎ）</td>
+        </tr>
+        <tr>
+          <th scope="row">先に資料を見といてください</th>
+          <td>先に資料を見といてください</td>
+          <td>先に資料を見ておいてください（2声とも）</td>
+        </tr>
+        <tr>
+          <th scope="row">次の会議は水曜日、いや木曜日</th>
+          <td>次の会議は水曜日いや木曜日</td>
+          <td>次の会議は水曜日、金曜日（ずんだもん）</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      数値の1200円→1000円は有益な補正とは扱わない。LFMの全文自動分割では同じ金額を7,500円・1,200円という形で保持したため、
+      結果はモデル名だけでなく区間長・文脈条件にも依存する。上記の原稿と生成音声の発音を人間が全件聴取して検証したわけではない。
+    </p>
+  </section>
+  <section id="silence">
+    <h2>無音・雑音だけの入力</h2>
+    <table>
+      <caption>
+        3秒無音、10秒無音、10秒白色雑音。CERではなく誤発言を数える
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">方式</th>
+          <th scope="col">存在しない発言を返した入力数</th>
+          <th scope="col">処理時間p50・秒</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">現行Granite・共通区間分割</th>
+          <td>0/3</td>
+          <td>0.024</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM・全文入力／自動分割</th>
+          <td>3/3</td>
+          <td>1.050</td>
+        </tr>
+        <tr>
+          <th scope="row">参考Whisper・全文入力</th>
+          <td>3/3</td>
+          <td>0.350</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM・常時VAD（無音対策の追加試験）</th>
+          <td>0/3</td>
+          <td>0.041</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Graniteの完全無音は本番wrapperの振幅guardで空文字となる。雑音だけの入力も空文字だった。
+      LFM既定autoは30秒以下をVAD分割せずに認識するため、3入力全てに存在しない文字列を返した。
+      10秒の白色雑音では「このように、私は」の反復が出力上限まで続き、25.737秒を要した。
+      参考Whisperも3入力全てで文字列を返した。
+    </p>
+    <p>
+      LFMに常時VADを指定した追加試験では、3入力全てが空の結果となり、0.02〜0.06秒程度で終了した。
+      この追加試験は無発話の3本だけであり、常時VAD時の全通常音声の精度や、小声・雑音下での取りこぼしを検証したものではない。
+      ASR単独試用を進める場合も、VAD・無音除外・出力長上限を組み込むことを受入条件にする。
+    </p>
+  </section>
+  <section id="decision">
+    <h2>判断と適用範囲</h2>
+    <p>
+      この合成音声セットでは、現行GraniteからLFMへ置き換える精度・中央値速度上の利点は確認できなかった。
+      利用者はこの比較結果に基づきGranite維持を選択し、LFMをASRの試用候補からも外した。
+      音声対話とASRのいずれもLFMは不採用。ASRの本採用・route切替は行っていない。
+    </p>
+    <p>
+      参照はTTS原稿であり、生成音声に読み間違いがないという保証はない。
+      2声は同じTTSエンジン由来で、独立した自然話者2人の評価ではない。
+      文ごとの合成と既知の区切りは、ためらい・連続発話・割り込みを含む実利用より有利な条件である。
+      人間の自然音声、残響、実環境雑音、混合負荷、長時間運用は別の評価が必要。
+    </p>
+    <p>
+      モデルロードはwarmupへ分離した。実行順を交替したが完全な無負荷専用機ではなく、区間p95には実行時のばらつきが残る。
+      また共通区間のGraniteは3回、LFMは1回の文章測定であり、反復回数と区間標本数が異なる。
+      小標本の差に統計的有意性を主張しない。
+    </p>
+  </section>
+  <section id="reproduce">
+    <h2>証跡と再測定</h2>
+    <p>
+      原稿と実行・採点コードはrepositoryのbenchmarks/asr/long-japaneseにある。
+      重み、音声、ログ、応答、CSVは全てrepository外の<code>/srv/ai/evidence/asr-long-comparison-20261025</code>へ保存した。
+      <code>report/comparison.csv</code
+      >は集計、<code>report/transcripts.csv</code>は原稿と全文応答、
+      <code>report/scored.jsonl</code>は編集数と注釈語の採点。
+      モデルhash、稼働profileのhash、実行process、条件、後処理の停止確認も保持している。
+    </p>
+    <p>
+      測定用LFM
+      serverは全て自身のprocessを停止した。途中の追加測定1回はportのTIME_WAITにより起動前に拒否され、認識要求は実行していない。
+      事前port確認へSO_REUSEADDRを設定して再実行した。測定データは成功した2つのrun
+      directoryから集計した。
+    </p>
+    <pre><code>uv venv /srv/ai/apps/larm-asr-long-benchmark-20261025/.venv
+uv pip install --python /srv/ai/apps/larm-asr-long-benchmark-20261025/.venv/bin/python \
+  -r benchmarks/asr/long-japanese/requirements.txt
+python3 benchmarks/asr/long-japanese/prepare.py --output /srv/ai/evidence/NEW-ASR-CORPUS
+PYTHONDONTWRITEBYTECODE=1 python3 benchmarks/asr/long-japanese/run.py \
+  --corpus /srv/ai/evidence/NEW-ASR-CORPUS --output /srv/ai/evidence/NEW-ASR-RUN \
+  --phase all --repeats 3
+PYTHONDONTWRITEBYTECODE=1 python3 benchmarks/asr/long-japanese/run.py \
+  --corpus /srv/ai/evidence/NEW-ASR-CORPUS --output /srv/ai/evidence/NEW-ASR-STRESS \
+  --phase stress-matched --repeats 1
+PYTHONDONTWRITEBYTECODE=1 /srv/ai/apps/larm-asr-long-benchmark-20261025/.venv/bin/python \
+  benchmarks/asr/long-japanese/analyze.py \
+  --input /srv/ai/evidence/NEW-ASR-RUN/runs.jsonl \
+  --input /srv/ai/evidence/NEW-ASR-STRESS/runs.jsonl --output /srv/ai/evidence/NEW-ASR-REPORT</code></pre>
+    <p>
+      出力先には未使用の新しいdirectoryを指定する。現行Granite、VOICEVOX、参考WhisperのAPIが起動している必要がある。
+      集計器の編集距離、数値表記、同音異義語、反復数、部分一致する整文表現、反復測定の分母について8件の単体検査を通過した。
+    </p>
+    <pre><code>PYTHONDONTWRITEBYTECODE=1 /srv/ai/apps/larm-asr-long-benchmark-20261025/.venv/bin/python \
+  -m unittest discover -s benchmarks/asr/long-japanese -p 'test_*.py'</code></pre>
+    <p>
+      関連資料：<a href="./lfm25-audio-jp-local-evaluation-2026-10-25.html"
+        >音声会話の試用と不採用判断</a
+      >、
+      <a href="./granite-asr-standard-dialogue-provider-2026-10-13.html">Graniteの標準会話ASR契約</a
+      >。 長音声分割の実装仕様はaudio.cpp固定revisionのdocs/models/lfm2_audio.mdを確認した。
+      一次資料：<cite>https://github.com/0xShug0/audio.cpp/blob/4efa395944ffaa6017909487bed0a98b684cad29/docs/models/lfm2_audio.md</cite>。
+    </p>
+  </section>
+</article>

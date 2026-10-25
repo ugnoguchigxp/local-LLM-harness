@@ -4,28 +4,6 @@ import type { ControlPlane } from "./controller";
 import { ExecutionGate } from "./execution-gate";
 import { SemanticReadiness } from "./semantic-readiness";
 
-function wav(dataBytes = 2): Uint8Array {
-  const result = new Uint8Array(44 + dataBytes);
-  const view = new DataView(result.buffer);
-  const write = (offset: number, value: string) => {
-    for (let index = 0; index < value.length; index += 1) result[offset + index] = value.charCodeAt(index);
-  };
-  write(0, "RIFF");
-  view.setUint32(4, 36 + dataBytes, true);
-  write(8, "WAVE");
-  write(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, 16_000, true);
-  view.setUint32(28, 32_000, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  write(36, "data");
-  view.setUint32(40, dataBytes, true);
-  return result;
-}
-
 function fixture(protocol: AgentProviderProfile["protocol"], capability: string) {
   let status: "HOT" | "BUSY" = "HOT";
   const embeddingSpace = protocol === "larm.embedding.v1" ? {
@@ -297,36 +275,66 @@ test("STT semantic probe sends the fixed 8,044-byte silence WAV", async () => {
   expect(calls).toBe(1);
 });
 
-test("TTS semantic probe validates audio/wav and a nonempty RIFF data chunk", async () => {
-  const { registry, control, provider } = fixture("openai.audio-speech.v1", "speech.tts");
-  const bodies: unknown[] = [];
-  const readiness = new SemanticReadiness({
-    control,
-    getRegistry: () => registry,
-    executionGate: new ExecutionGate(),
-    timeoutMs: 100,
-    fetchImpl: async (_input, init) => {
-      bodies.push(JSON.parse(String(init?.body)) as unknown);
-      return new Response(wav(), { headers: { "content-type": "audio/wav" } });
-    },
-  });
-  expect((await readiness.check({ allocationId: "alloc", provider })).ready).toBeTrue();
-  expect(bodies).toEqual([{ model: "public-model", input: "a", response_format: "wav" }]);
-
-  const invalid = new SemanticReadiness({
-    control,
-    getRegistry: () => registry,
-    executionGate: new ExecutionGate(),
-    timeoutMs: 100,
-    fetchImpl: async () => new Response(wav(0), { headers: { "content-type": "audio/wav" } }),
-  });
-  expect(await invalid.check({ allocationId: "alloc", provider })).toMatchObject({
-    ready: false,
-    reason: "invalid_response",
-  });
+test("TTS readiness never synthesizes, including after cache expiry and concurrent checks", async () => {
+  for (const capability of ["speech.tts", "speech.tts.english", "speech.tts.expressive"]) {
+    const { registry, control, provider } = fixture("openai.audio-speech.v1", capability);
+    const requests: string[] = [];
+    const executionGate = new ExecutionGate();
+    let clock = 1_000;
+    const readiness = new SemanticReadiness({
+      control, getRegistry: () => registry, executionGate, timeoutMs: 100, now: () => clock,
+      fetchImpl: async (input, init) => {
+        requests.push(String(input));
+        expect(new URL(String(input)).pathname).toBe("/health");
+        expect(init?.method).toBe("GET");
+        expect(init?.body).toBeUndefined();
+        expect(init?.redirect).toBe("manual");
+        expect(executionGate.snapshot("provider-runtime").active).toBe(0);
+        return Response.json({ ready: true, status: "ok", model: "public-model" });
+      },
+    });
+    const input = { allocationId: "alloc", provider };
+    const checks = await Promise.all([readiness.check(input), readiness.check(input)]);
+    for (const health of checks) expect(health).toMatchObject({
+      ready: true, acceptingRequests: true, probe: { kind: "health-check", validated: true },
+    });
+    expect(requests).toHaveLength(1);
+    expect(readiness.peek(input)?.probe?.kind).toBe("health-check");
+    expect((await readiness.check(input)).probe?.cached).toBeTrue();
+    clock += 10_001;
+    expect((await readiness.check(input)).ready).toBeTrue();
+    expect(requests).toHaveLength(2);
+  }
 });
 
-test("TTS semantic probe classifies fixed request rejection as a contract mismatch", async () => {
+test("TTS readiness accepts service health, rejects unhealthy or malformed responses without a synthesis fallback", async () => {
+  for (const [body, ready] of [
+    [{ status: "healthy" }, true],
+    [{ ready: true }, true],
+    [{ status: "healthy", backend: { ready: false } }, true], // lazy loading is allowed
+    [{ ready: false, status: "healthy" }, false],
+    [{ ready: true, status: "starting" }, false],
+    [{ ready: true, model: "wrong-model" }, false],
+    [{ ready: "true" }, false],
+    [{}, false], [null, false], [[], false],
+  ] as const) {
+    const { registry, control, provider } = fixture("openai.audio-speech.v1", "speech.tts");
+    let calls = 0;
+    const readiness = new SemanticReadiness({
+      control, getRegistry: () => registry, executionGate: new ExecutionGate(), timeoutMs: 100,
+      fetchImpl: async (input, init) => {
+        calls += 1;
+        expect(String(input)).toEndWith("/health");
+        expect(init?.method).toBe("GET");
+        return Response.json(body);
+      },
+    });
+    expect((await readiness.check({ allocationId: "alloc", provider })).ready).toBe(ready);
+    expect(calls).toBe(1);
+  }
+});
+
+test("TTS health endpoint rejection is a contract mismatch without synthesis fallback", async () => {
   const { registry, control, provider } = fixture("openai.audio-speech.v1", "speech.tts");
   const readiness = new SemanticReadiness({
     control,

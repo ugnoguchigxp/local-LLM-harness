@@ -635,6 +635,7 @@ export const agentConnectionRenewRequestSchema = z.object({
 
 export const agentConnectionClaimRequestSchema = z.object({
   format: z.enum(["openai-provider-v1", "larm-embedding-provider-v1"]),
+  providers: z.array(agentIdentifierSchema).min(1).max(8).refine(names => new Set(names).size === names.length, "duplicate providers").optional(),
 }).strict();
 
 export const publicAgentProfileListV1Schema = z.object({
@@ -903,7 +904,7 @@ export const agentProviderHealthSchema = z.object({
     completionGuaranteed: z.literal(false),
   }).strict().optional(),
   probe: z.object({
-    kind: z.literal("semantic-inference"),
+    kind: z.enum(["semantic-inference", "health-check"]),
     protocol: runtimeProtocolSchema,
     release: agentIdentifierSchema.optional(),
     latencyMs: z.number().int().nonnegative(),
@@ -948,7 +949,7 @@ export const agentProviderDescriptorSchema = z.object({
   ).optional(),
   health: z.object({
     url: z.string().url(),
-    kind: z.literal("semantic-inference"),
+    kind: z.enum(["semantic-inference", "health-check"]),
     maxAgeMs: z.literal(10_000),
   }).strict(),
   credential: z.object({
@@ -1042,7 +1043,7 @@ export const embeddingAgentProviderDescriptorSchema = z.object({
   }).strict(),
   health: z.object({
     url: z.string().url(),
-    kind: z.literal("semantic-inference"),
+    kind: z.enum(["semantic-inference", "health-check"]),
     maxAgeMs: z.literal(10_000),
   }).strict(),
   credential: z.object({
@@ -1108,7 +1109,7 @@ export const systemOneAgentProviderDescriptorSchema = z.object({
   model: agentIdentifierSchema,
   health: z.object({
     url: z.string().url(),
-    kind: z.literal("semantic-inference"),
+    kind: z.enum(["semantic-inference", "health-check"]),
     maxAgeMs: z.literal(10_000),
   }).strict(),
   credential: z.object({

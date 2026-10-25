@@ -1,0 +1,68 @@
+<article lang="ja">
+  <h1>Eumenes向けプロンプト：Docling Deskのオンデマンド利用</h1>
+  <p>
+    2026年10月25日。配備済みDoclingの設定とsource、Eumenesの既存連携資料を読み取り、実装担当へ渡す依頼文を整理した。Eumenes側の変更・外部送信・サービス起動は行っていない。gatewayは稼働、本体は停止、LARMの登録と健全性を確認した。
+  </p>
+  <p>
+    配備の正本は<a href="./docling-desk-on-demand-hosting-2026-10-24.html"
+      >Docling Deskの配備と検証</a
+    >を参照する。
+  </p>
+  <section id="prompt">
+    <h2>実装担当へ渡すプロンプト</h2>
+    <pre>Eumenesから、gnosisに配備済みのDocling Deskを利用できるようにしてください。Eumenesの既存の設定・認証・画面設計に合わせ、利用者が「Docling Deskを開く」を選ぶと必要時に起動し、文書の取り込み・閲覧を使える入口を実装してください。
+
+2026年10月25日時点の接続情報と前提は次のとおりです。
+
+1. 配備済みサービスと接続先
+- Local Service IDは docling-desk。gnosis側では配備済みです。
+- 通常の画面・業務APIの入口は http://127.0.0.1:28765 です。
+- LARM Controlはgnosis内部で http://127.0.0.1:9810 です。Eumenesからはsettings domainの読み取り専用操作で取得する保存済みLARM接続設定を使ってください。接続先を環境変数で再指定させたり、利用者に同じ情報を再入力させたりしないでください。
+- 127.0.0.1:28766 はDocling本体です。leaseに返るendpointもこの内部URLですが、通常の通信は起動を管理する28765のgatewayへ送ります。
+- 上記127.0.0.1はgnosis自身を指します。EumenesがMacなど別PCで動く場合は、既存の認可されたSSH中継などを確認し、backend用gateway URLとブラウザ用の到達可能なURLを区別して設定してください。DoclingのLAN入口はまだ用意していません。Controlに接続できることだけでDoclingも到達可能とは判断しないでください。
+
+2. 画面の開き方と認証
+- Doclingは DOCLING_AUTH_MODE=larm で動作し、backendからの Authorization: Bearer &lt;既存のLARM_API_TOKEN&gt; を受理します。保存済みの資格情報をbackend内で取得してください。LARM側の eumenes-hosted-apps consumerには docling-desk が追加済みです。Excalidraw専用のconsumerToken/appTokenとは別の契約です。
+- 認証済みのEumenes利用者の操作を受け、backendからgatewayの POST /auth/ui-tickets をBearer付きで呼びます。この要求自体で停止中のDoclingが起動します。
+- 応答は {"url":"/auth/exchange?ticket=...","expires_in":60} です。backendで交換URLを先に開かず、許可済みのDocling公開originと組み合わせて、利用者のブラウザに開かせてください。ticketは一回限りで、期限切れ時は再発行します。
+- 交換するとHTTP 303、Doclingのsession cookie、画面への遷移が返ります。CookieはSecure・HttpOnly・SameSite=Noneです。redirectとSet-Cookieを保持し、実ブラウザで確認してください。
+- 長期Bearerをブラウザ・URL・会話・モデル引数・ログへ出さず、追加のキー入力画面を作らないでください。ticketとcookieもログや永続的な会話履歴へ保存しないでください。
+- 現在のDoclingはこの資格情報で共通ライブラリにアクセスします。利用者別の文書分離が備わっているとは扱わず、Eumenes側の認可を適用してください。
+
+3. 中継時に確認する事項
+- 現行gatewayが受理するHostは 127.0.0.1:28765 または localhost:28765 です。トンネルで接続portを変える場合も、この上流Host契約を満たしてください。
+- 現行gatewayは X-Forwarded-* を取り除きます。Docling本体にはprefix対応がありますが、X-Forwarded-Prefixを送るだけで /docling/ 配下に埋め込めるとは扱わないでください。
+- まずDoclingのルートを提供する到達可能な入口を使い、別タブなどで開く構成を検討してください。Doclingの画面にはSAMEORIGIN／frame-ancestors 'self' の制約があります。異なるoriginのiframeに入れるために保護ヘッダーを削除しないでください。
+- Eumenes配下への埋め込みが必要なら、prefix、asset、API、redirect、cookie、Origin検査を含む設計と、必要なLARM側の追加対応を明示してください。未検証の中継を完成済みとして扱わないでください。
+
+4. 起動と停止
+- gatewayがLARMのlease取得・更新・解放を担当します。通常の利用のためにEumenesからsystemdや内部lifecycle APIを操作する必要はありません。
+- 初回要求では本体の準備に最大180秒を見込み、画面に「起動中」を表示してください。短いtimeoutで同じ処理を連続作成しないでください。
+- 最後の通信から60秒後にgatewayがleaseを解放し、さらに約120秒のidle確認後に本体が停止します。本番では約190〜195秒で停止しました。変換中や通信中は停止を抑止します。
+- 状態監視はLARMの GET /v1/local-services/docling-desk、入口の健全性確認はgatewayの GET /health/live を使います。これらは本体を起動しません。GET /api/jobsなどの通常APIを常時監視に使うと本体を起こし続けるため、進行中の処理に必要な期間だけ問い合わせてください。
+- Eumenesで別途leaseを持つ必要がある場合は、既存LocalServicesPortを使い、終了・取消時に自分のleaseだけを解放します。取得は POST /v1/local-services/docling-desk/leases、確認は GET /v1/local-service-leases/{id}、更新は POST /v1/local-service-leases/{id}/renew に generation と bootEpoch、解放は DELETE /v1/local-service-leases/{id} です。serviceId・revision・generation・bootEpochの照合を維持してください。
+
+5. 業務APIを使う場合
+- 以下はgateway起点のパスで、LARM Controlの /v1 配下ではありません。
+- POST /api/upload：multipart/form-dataの file が必須、folder_id と ocr_provider は任意。文書は最大50 MiB。HTTP 202でJobとidを返します。
+- GET /api/jobs、GET /api/jobs/{id}：一覧・進捗。状態は queued / running / success / partial / failed です。partialのwarningsとfailedのerrorを表示してください。
+- GET /api/library：ライブラリ。GET /view/{id}/pdf、/word、/workbook、/extracted：文書種別に応じた表示。GET /api/diagnostics/features：利用可能な機能の確認。
+- アップロード応答を失った場合、無条件にPOSTを再送しないでください。上流に冪等作成があると仮定せず、取得できたjob IDとEumenes側の操作状態から復帰してください。
+- 文書の正本はDocling側です。Eumenesには必要な参照を保存し、gnosisの文書DBやファイルを直接操作しないでください。
+
+6. OCRと任意機能
+- 現在動くOCRはDocling内のTesseractです。ocr_providerは local / azure_read / disabled ですが、Azure OCRは未設定です。
+- gnosisには別の ocr-host（RapidOCR／PP-OCRv6 Small、入口127.0.0.1:18794）があります。ただしDoclingからこれを呼ぶadapterは未実装です。「共有OCRに接続済み」と表示したり、Azure用URLを置き換えたりしないでください。
+- 共有OCRの利用には、ページ画像の送信と文字領域・座標の変換が必要です。今回のEumenes接続と区別して追加対応として整理してください。
+- 翻訳・解説用の外部認証、Azure embedding・Blob、TeX組版も未設定です。利用可否は機能診断に従って表示してください。
+
+7. 参照資料と受入条件
+- gnosisの配備記録：/srv/ai/apps/local-LLM-harness/specs/docling-desk-on-demand-hosting-2026-10-24.html
+- gatewayとlogin helper：同repositoryの deploy/local-node/scripts/docling-gateway.ts と docling-login.py
+- 配備対象source：/srv/ai/local-services-prepared/docling-desk/source、revision 621d860671bce2694977c250bdf99e243a1a61f9。/opt/docling-desk はroot管理の元cloneです。
+- EumenesのAGENTS.md、docs/larm.md、docs/excalidraw.md、既存のLocalServicesPortとsettings公開操作を確認して進めてください。
+- 停止状態からの起動、追加キー入力なしの画面表示、文書アップロード、Wordプレビュー、PDFのOCR、無通信後の停止、再起動後の文書・ログイン保持を確認してください。
+- 401/403、ticketの期限切れ・再利用、接続失敗、起動失敗、アップロード上限、partial/failedも確認してください。Eumenesの対象domain検証と必要な利用側の検証を実行してください。
+- gnosis上での起動・停止・文書保持・Word/PDF変換は確認済みです。Eumenesからの実接続と実ブラウザでのログイン・表示は今回の受入対象です。fixture、live API、実ブラウザの結果を分け、実装内容・設定・未対応事項を報告してください。</pre>
+  </section>
+</article>

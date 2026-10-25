@@ -1,0 +1,208 @@
+<article lang="ja">
+  <h1>Docling Deskのホストプロセス配備とオンデマンド起動</h1>
+  <p>
+    2026年10月24日。対象はdocling-deskのrevision <code>621d860671bce2694977c250bdf99e243a1a61f9</code>。
+    利用者が配置した<code>/opt/docling-desk</code>はroot管理のソースとして保持し、完成済みの実行環境を別の固定releaseへ配備する。
+    本番登録と入口の有効化は完了した。要求時起動、文書変換、自動停止、再起動後の文書とログイン状態の保持を実機で確認した。
+  </p>
+  <section id="deployment">
+    <h2>採用する構成</h2>
+    <p>
+      <a href="./local-service-host-process-design-and-acceptance.html"
+        >ホストプロセスの設計と受入仕様</a
+      >に従い、 既存のLocalServiceManager、利用権API、systemd-process
+      backend、固定process-controllerを利用する。
+      以前のdocling向けcontainer-group設定は互換用の例として残し、本番へは読み込ませない。
+      Dockerは追加しない。
+    </p>
+    <table>
+      <caption>
+        配備先と権限
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">場所・主体</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">利用者のclone</th>
+          <td>
+            <code>/opt/docling-desk</code>。root所有を維持し、直接ビルド・実行しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">準備</th>
+          <td>
+            <code>/srv/ai/local-services-prepared/docling-desk</code
+            >。一般ユーザーで別clone、依存取得、画面ビルド、モデル取得、試験を行う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">完成済みrelease</th>
+          <td>
+            <code>/opt/larm-local-services/releases/docling-desk/{digest}</code>。root所有。専用ユーザーから変更できない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">共有runtime</th>
+          <td>
+            既存のroot管理Python
+            3.12.14とBunを固定パス・SHA-256で照合する。Docling専用のPython依存はrelease内に保持する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">文書・状態・cache・作業領域</th>
+          <td>
+            <code>/srv/storage/nextorage/larm/apps/docling-desk/{data,state,cache,work/app}</code
+            >。専用ユーザー<code>larm-docling</code>が書き込む。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">専用HOME・設定</th>
+          <td><code>/var/lib/larm-apps/docling-desk</code>。専用ユーザー所有、0700。</td>
+        </tr>
+        <tr>
+          <th scope="row">管理設定</th>
+          <td>
+            <code>/etc/larm-local-services/docling-desk</code
+            >。root管理。認証情報は必要な実行groupだけに読取りを許可する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Nextorageの要求UUIDは<code>de97577d-c5d3-4b57-ac4b-3753a2f6d331</code>、空き容量は最低2 GiB。
+      通常アプリはCPU最大4コア相当、メモリー上限8 GiB、GPU非公開、単一workerで起動する。
+      LARMの起動時資源予約も8 GiBとする。推論Providerの選択・モデル常駐方針は変更しない。
+    </p>
+    <p>
+      Officeの隔離実行ではbubblewrapが専用network namespace内のloopbackを設定するため、
+      Docling本体に限り<code>AF_NETLINK</code>を許可する。hostの管理capabilityは付与せず、
+      LibreOfficeはnetwork分離、read-only system、専用作業領域、macro無効のまま動作する。
+      共通テンプレートと他サービスの許可範囲は変更しない。
+    </p>
+  </section>
+  <section id="lifecycle">
+    <h2>アクセスと停止条件</h2>
+    <p>
+      軽量な入口は<code>127.0.0.1:28765</code>で常駐する。画面・APIへの要求時に
+      <code>docling-desk</code
+      >の利用権を取得し、<code>127.0.0.1:28766</code>の本体がreadyになるまで待つ。
+      公開leaseのendpointは認証付きアプリ本体を指す。入口自身を返して転送が循環しないようにする。
+      入口の<code>/health/live</code>はアプリを起動しない。
+    </p>
+    <p>
+      DoclingのBearer認証、ブラウザーの一回限りticket、session cookie、redirectを維持する。
+      <code>docling-login.py</code
+      >は既存LARM資格情報をローカルに読み、60秒有効のログインURLを出力する。
+      継続利用する認証情報はURLやログへ出力しない。LAN公開・認証解除は行わない。
+    </p>
+    <p>
+      入口は50
+      MiBの文書アップロードと応答のstream転送を扱う。応答が完了・切断するまで利用権を維持する。
+      最後の通信完了から60秒後に入口の利用権を解放し、LARMが利用権と活動のない状態をさらに120秒確認して停止する。
+      開いている画面からの定期通信、別Consumerの利用権、処理待ちは停止を遅らせる。
+    </p>
+    <p>
+      ASGI wrapperは文書変換・翻訳・解説の利用slot、Knowledgeのqueued/running task、
+      協調writerの活動lock、処理中のHTTP応答を観測する。観測不能をidleと扱わない。
+      drain開始後は新規の通常要求を拒否し、boot IDとdrain
+      tokenを固定controllerが照合してから停止する。
+      外部の入口から<code>/internal/larm/</code>へは転送しない。
+    </p>
+  </section>
+  <section id="installation">
+    <h2>準備・登録・復旧</h2>
+    <p>
+      <code>prepare-docling-hosting.py</code>はupstream指定のNode.js 24.22.1、pnpm
+      10.24.0を使用する。
+      Python依存はupstreamのhash付きlockから取得する。一般lockに重複記載されたtorch/torchvisionだけを除外し、
+      <code>requirements-torch.txt</code>のCPU wheelとそのhashを使用する。
+      layout・tableモデルとtoken
+      encodingは事前取得し、モデル整合検査を通す。実行中のダウンロードは行わない。
+    </p>
+    <p>
+      <code>install-docling-hosting.py</code>は既定で読取りのみのdry-run。
+      <code>--apply --expected-digest</code
+      >で配備し、<code>--install-native</code>でOfficeプレビューとOCR用の
+      LibreOffice・bubblewrap・Tesseract・日本語フォント等を導入する。<code>--activate</code>でLARMの追加設定を有効化し、
+      daemonを再起動して入口を有効化する。本体は自動起動に登録しない。
+    </p>
+    <p>
+      installerは稼働daemonの設定ファイル指定を読み、既存のExcalidraw・OCR等の定義とConsumerを維持した合成設定を新規作成する。
+      既存ファイルや共有controllerは上書きしない。既存のDocling登録がある場合は初回導入を拒否する。
+      同じdigestであっても再実行を更新操作の代用にしない。
+    </p>
+    <p>
+      設定の参照元は<code>previous-config.json</code>へ記録する。
+      有効化を戻す場合はDoclingの利用が終了したことを確認し、入口を停止、
+      <code>75-docling-hosting.conf</code>を外してdaemonを再起動する。
+      Doclingの文書、認証設定、releaseは保持する。稼働中のleaseがあるdaemon再起動はその利用権を失効させる。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証結果と対象外の機能</h2>
+    <p>
+      連携テストでは認証・redirect・cookieの保持、20 MiB応答の転送、同時要求の起動集約、
+      streaming中の利用権維持、内部制御経路の遮断を確認する。
+      lifecycleテストはdrain中の受付拒否、処理中の件数、古いtokenの拒否、観測不能時の停止抑止を確認する。
+      登録テストでは既存サービスの保持、専用実行ユーザー、固定runtime、digestと改変・symlink・path
+      traversalの拒否を確認する。
+    </p>
+    <p>
+      <code>verify-docling-hosting.ts</code
+      >は隔離したローカル環境で実際のDocling、LocalServiceManager、利用権API、入口を組み合わせる。
+      要求時起動、ログイン、テキスト文書の取り込み、無通信後の停止、再起動後の文書とsessionの保持を検証し、
+      repository外の<code>acceptance.json</code>へ結果を保存する。
+    </p>
+    <p>
+      2026年10月24日の隔離実機試験では、要求時起動、ログイン、テキスト文書の変換成功、idle停止、
+      次回起動後の文書とsession保持を確認した。LARMの全チェックも成功した。 実行環境は約2.2
+      GiBでrepository外に準備した。
+    </p>
+    <p>
+      本番systemdで専用UIDによる起動、認証付き画面、Wordの本文抽出とLibreOfficeの原本プレビュー、
+      画像だけのPDFからTesseractによる所定の文字列の抽出を確認した。
+      最後の通信から約190秒で本体とcgroupが消え、再アクセスで別のsystemd invocationが起動した。
+      その後もsession cookieと保存文書を利用できた。検証用文書だけを削除している。
+      健全性確認だけでは本体が起動しないこと、既存のExcalidraw・物体認識・OCRの定義を保持したことも確認した。
+    </p>
+    <p>
+      配備releaseのdigestは<code>cf0f883193376149007102bff433a7922eb462e20e2874257cf985bdca290c49</code>、
+      Office隔離実行の設定を含むmanifest digestは<code>81ab0bdc3a9838cf24caa20ff3fde7c0551f335c87edce6168da413287af6135</code>。
+      本番受入の記録は準備領域の<code>production-acceptance.json</code>と
+      <code>production-ocr-content.json</code>に保存する。認証情報を記録へ含めない。
+    </p>
+    <p>
+      任意機能のAzure
+      OCR・embedding・Blobミラー、翻訳・解説用の外部認証、TeX組版用Tectonicは今回設定していない。
+      ローカル閲覧・全文検索・文書変換・ローカルOCR・Officeプレビューを利用できる構成とした。
+    </p>
+  </section>
+  <section id="shared-ocr">
+    <h2>既存OCRサービスの再利用可能性</h2>
+    <p>
+      利用者の追加質問を受け、配備済み<code>ocr-host</code>とDocling
+      Deskのsourceを照合した。 現在の共有OCRはRapidOCR 3.10.0とPP-OCRv6
+      Smallの日本語モデルをCPUで実行し、
+      <code>POST /api/analyze</code
+      >への画像送信に対して文字列、行ごとのpolygon、confidence、画像の幅と高さを返す。
+      入口は<code>127.0.0.1:18794</code>で、既存の要求時起動・idle停止を利用できる。
+    </p>
+    <p>
+      Docling
+      Deskの現在のOCR選択肢は<code>local</code>、<code>azure_read</code>、<code>disabled</code>。
+      Azure用endpointには形式と接続先の制約があり、共有OCRのURLへ置き換えるだけでは使えない。
+      PDFページを画像化して共有OCRへ送り、返された行領域をDoclingのTextCellへ変換する専用adapterを追加すれば接続可能と判断する。
+      PDFのCropBox・回転・描画倍率を考慮した座標変換と、既存テキストとの重複処理が必要になる。
+    </p>
+    <p>
+      接続時は共有OCRの正式gatewayと限定したConsumer認証を使い、停止中のworkerのportへ直接送らない。
+      画像ごとの16 MiB・1600万画素の上限、timeout・取消・失敗の伝達を扱う。
+      文書解析・表構造の処理はDoclingに残し、OCR推論を共有する構成である。
+      この時点では互換性の調査までで、adapter実装・OCR切替・共有OCRを使ったDoclingの品質比較は実施していない。
+    </p>
+  </section>
+</article>

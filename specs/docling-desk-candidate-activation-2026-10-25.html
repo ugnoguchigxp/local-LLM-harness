@@ -1,0 +1,279 @@
+<article lang="ja">
+  <h1>Docling Desk修正候補の切替・実環境受入記録</h1>
+  <p>
+    2026年10月25日、gnosis内の操作で候補releaseを反映した。入口28765経由のready、LARMが保持する定義と観測release・manifestDigest、実ブラウザのfrontend資産一致を確認した。
+    時刻は特記がなければ日本時間。SSH、トンネル、新しいLAN公開は使用していない。
+  </p>
+  <aside>
+    <p>
+      禁止条件からの逸脱が発生した。LARMの正常終了と既存の自動再起動を使ったが、systemdの依存関係によりOCR
+      gateway・物体認識gateway・OCR ingressも連動再起動した。
+      自動再起動ならgatewayを維持できるという実施者の判断は誤りだった。利用者へ直ちに報告し、追加の再起動を行わず復旧状態を検証した。
+      Docling gatewayとExcalidraw
+      gatewayは同じPID・InvocationIDを維持した。すべての禁止条件を満たした配備とは評価しない。
+    </p>
+  </aside>
+  <section id="identity">
+    <h2>反映した版</h2>
+    <dl>
+      <dt>release</dt>
+      <dd><code>0def63e62fb824f1162fbee447fab8b0fbb282db7a24692b0363c0acd951804a</code></dd>
+      <dt>manifestDigest</dt>
+      <dd><code>160d7d7660e51e6ec851dc702e49f46165fa36e1d4d1806d6356f036dce7497c</code></dd>
+      <dt>実行backend</dt>
+      <dd>
+        Docling Desk 0.1.0、Python 3.12.14、解説PROMPT_VERSION 5。受入時のapp
+        PIDは3953902。cwdとPYTHONPATHが候補releaseを参照することを確認。
+      </dd>
+      <dt>候補ディレクトリ</dt>
+      <dd><code>/opt/larm-local-services/releases/docling-desk/0def63e62fb824f1162fbee447fab8b0fbb282db7a24692b0363c0acd951804a</code></dd>
+      <dt>同梱wheelのSHA-256</dt>
+      <dd>
+        <code>d8f9b28be6322d54e66b8c87fb9e53849465b25115b705af67add242b8f8c26b</code
+        >。backendとfrontendは同じwheelから準備された候補を使用。
+      </dd>
+      <dt>LARMが保持するDocling定義revision</dt>
+      <dd>
+        <code>b3afde26ff9ff0543593993dd8443e3d03e5650e6f4a140cabb21379990ebf5d</code>。起動時generation 9、ready、busy
+        false、activityFresh true。
+      </dd>
+      <dt>LARM自体の版</dt>
+      <dd>
+        <code>ae62948340e2e0959bbbae9eca362dba7a060626</code>。releaseとconfigRevisionは切替前後で同一。
+      </dd>
+    </dl>
+  </section>
+  <section id="preflight">
+    <h2>切替前の確認と変更範囲</h2>
+    <p>
+      指定されたqa報告の2026-10-25追補とlarm-review/handoff.jsonを確認した。切替直前にも候補28,205資産のSHA-256と31,044のファイル・親ディレクトリのroot所有、非symlink、group/world書込不可を照合した。
+      manifestの正規化digestとunit hashも一致した。
+    </p>
+    <table>
+      <caption>
+        handoff.jsonに記録された切替前SHA-256との一致
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ファイル</th>
+          <th scope="col">SHA-256</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">process manifest</th>
+          <td><code>8d863445a9b95d8a9bfa5a4d0d206172469c4189c0fa0adc926cdbd606acf517</code></td>
+          <td>一致</td>
+        </tr>
+        <tr>
+          <th scope="row">app unit</th>
+          <td><code>565095a3edfd18024b47cd32934c2958af712bd750a1ee5b517bf3ba15c5973e</code></td>
+          <td>一致</td>
+        </tr>
+        <tr>
+          <th scope="row">active registry</th>
+          <td><code>d7a0049b9bbed450893ec76776ca7bc429c0f00d3225d1f73dcb227b3c118de7</code></td>
+          <td>一致</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      21:29:13に既存gatewayから文書一覧と解説状態を読み取り、success 2件・partial 1件・failed
+      1件、queued/running 0件、解説実行0件、保存済み解説0件を確認した。
+      ブラウザを待機させ、LARMが通常のidle処理でDoclingを停止した後に反映した。
+      他用途のallocationが残っていたため利用者に実施時点を確認し、「そのまま再起動していい」との回答を受けた。
+      21:32:52の直前観測ではactiveWorkloads
+      0、全Providerのrequest/mutation参照0、ornith15-strix-conversationのallocation参照1、4つのlocal
+      serviceはいずれもstoppedだった。
+    </p>
+    <p>
+      変更対象は次の3ファイル。registryはその場で読み取った現行値を基にDocling
+      deploymentのreleaseとmanifestDigestだけを置換し、他サービス・Doclingの他設定が同一であることを反映後にも照合した。
+    </p>
+    <ul>
+      <li>
+        <code>/etc/larm-local-services/process/docling-desk.json</code
+        >：release、manifestDigest、対応するunitHashes・assetHashes。
+      </li>
+      <li><code>/etc/systemd/system/larm-local-service-docling-desk-app.service</code>：release参照パスだけを変更。</li>
+      <li><code>/etc/larm-local-services/docling-desk/active-services.json</code>：Docling deploymentの2値だけを変更。</li>
+    </ul>
+    <p>
+      入口127.0.0.1:28765、内部127.0.0.1:28766、専用実行ユーザー、CPU・メモリー制限、認証、lifecycle、起動停止unit、lease方針は維持した。
+      gateway設定・認証設定・資格情報は変更していない。DBへの直接操作・移行・初期化、文書の変更・削除、Eumenesの操作は実施していない。
+    </p>
+  </section>
+  <section id="operations">
+    <h2>操作と時刻</h2>
+    <table>
+      <caption>
+        2026-10-25の実施記録
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">時刻</th>
+          <th scope="col">操作・結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">21:32:32</th>
+          <td>
+            直前版3ファイルと候補をroot管理のバックアップ領域に保存。handoff
+            hash一致、候補全資産照合成功。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">21:32:52.989</th>
+          <td>
+            既存release lockとDocling controller
+            lockの下で、停止証明と現行registryの変更有無を再確認し、3ファイルを反映。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">21:32:53.157</th>
+          <td>systemctl daemon-reloadでapp unit定義を読込。</td>
+        </tr>
+        <tr>
+          <th scope="row">21:32:55.104</th>
+          <td>
+            既存process
+            controllerのload/preflight成功。ストレージ、保護権限、全資産、unit制限を検証。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">21:32:55.133</th>
+          <td>LARM main processへSIGTERM。正常終了と既存Restart=alwaysで定義再読込を実施。</td>
+        </tr>
+        <tr>
+          <th scope="row">21:33:00.326〜21:33:06.850</th>
+          <td>systemdがOCR・物体認識gatewayとOCR ingressを連動再起動。禁止条件からの逸脱。</td>
+        </tr>
+        <tr>
+          <th scope="row">21:33:06.845</th>
+          <td>
+            LARM ready。正常終了から約11.7秒。PID
+            3934261から3952724へ変更。Docling定義のみ新revisionとなり、観測release/digest一致。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">21:34:49〜21:36:32</th>
+          <td>既存gateway経由で候補をオンデマンド起動し、実ブラウザ受入・認証再確認。</td>
+        </tr>
+        <tr>
+          <th scope="row">21:35:48</th>
+          <td>
+            入口28765のhealth/readyが200・ready。候補backend稼働、LARM
+            ready、queued/running/processor/activeRequestsすべて0を確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">21:38:24</th>
+          <td>
+            連動再起動したgatewayの認証付き状態照会200、静的UI 200、未認証401。既存OCR
+            ingressの状態照会200を確認。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">21:39:46</th>
+          <td>
+            通常のgateway lease解放とLARM idle管理による停止を確認。appはinactive・PID
+            0、観測stopConfirmed true。gatewayはhealth/live 200を維持。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      依存関係の誤判断による影響はDoclingコードの不具合とは区別した。候補のready・データ状態・認証を確認できたため、さらに連動再起動を起こすロールバックは実行していない。
+      今回の操作用helperは同じapply/rollbackを再実行できないようガードした。
+      SIGTERMとRestart=alwaysだけでは、現在のsystemd依存関係に対してgateway無再起動を保証できない。今後の再読込はこの方法をそのまま再利用してはならない。
+    </p>
+    <p>
+      受入後はオンデマンド待機状態。本体の手動停止は行っておらず、次の利用時も同じ候補版を起動する定義が残っている。idle-verification.jsonに通常停止、final-summary.jsonに最終状態と逸脱をまとめた。
+    </p>
+  </section>
+  <section id="browser">
+    <h2>配備先の実ブラウザ受入</h2>
+    <p>
+      gnosis上のChromium 149.0.7827.55から既存loopback gatewayを利用した。
+      切替前のセッションによる再入場と再読込、既存3文書の表示、warnings
+      1・2・2件の表示と再読込後の維持、診断と解説画面の認証未設定理由の一致、生成操作の無効化を確認した。
+      文書・解説状態一覧のdigestは前後同一。文書変更APIの試行は0件。新しいfixtureは配備先へ投入していない。
+    </p>
+    <p>
+      未認証401、不正資格情報401、正規ログイン、交換後303、一回限りの再使用拒否401、60秒期限切れ401、Secure・HttpOnly・SameSite=None、frame-ancestorsの保護を確認した。
+      初回のCSP検査はAPIテストクライアントがloopback HTTPへSecure
+      Cookieを送らず401となったため誤検知した。 実際のChromium
+      fetchでは認証済み200と保護ヘッダーを確認し、認証検査を再実施して成功した。
+      Bearer・ticket・Cookie値・交換URL、ブラウザの通信trace・HAR・認証スクリーンショットは記録していない。
+    </p>
+    <table>
+      <caption>
+        ブラウザ取得資産の代表SHA-256。切替後90応答・10種類すべてが候補と一致
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">資産</th>
+          <th scope="col">SHA-256</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">index-Dy2_QxEn.js</th>
+          <td><code>25ae3664010312e4297427f5bcdb64c0de1885c95fe0869e39e4031d89d81416</code></td>
+        </tr>
+        <tr>
+          <th scope="row">DocumentViewer-D26vT4NC.js</th>
+          <td><code>82bf1e7bbf8d13778f4bc0584e9b6307628a2d75ec3e27a03d92075fe6473c29</code></td>
+        </tr>
+        <tr>
+          <th scope="row">index-Cg5xmoKC.css</th>
+          <td><code>60b26c19b03d493df6dc2be5fba025caf95bad83fc89d6b9a07b851978d1b943</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      同梱index.htmlのファイルSHA-256は<code>32486041bbde7c82d146c84de34addd9c0f9dbdbf02cf27f0f142f5b814dbc40</code>。この値はディスク上の同梱ファイルの照合であり、ブラウザ応答hashとは区別する。
+    </p>
+  </section>
+  <section id="limits">
+    <h2>未実施事項と証拠の保存先</h2>
+    <ul>
+      <li>
+        Eumenes画面からの受入：同サーバー内の既定入口5173・8787はChromiumでも接続拒否。ローカルEumenesサービスも見つからず、利用可能な入口を確認できなかった。別サーバーへの接続や新しい中継は作成していない。
+      </li>
+      <li>
+        保存版解説の閲覧・UIからのMarkdown/JSON書き出し：配備環境の保存済み解説が0件のため未実施。
+      </li>
+      <li>
+        実生成・再生成、認証設定4条件の切替、異常warningsのfixture注入：既存文書・認証を変更しない条件に従い配備環境では未実施。引渡し報告にある隔離環境19項目成功とは区別する。
+      </li>
+      <li>
+        Python107件・frontend48件のfixture：候補作成時の引渡し結果を使用し、この配備作業では再実行していない。
+      </li>
+      <li>
+        OCR・物体認識の実ジョブ再実行：gatewayの回復と認証・状態照会のみ検証し、別サービスの仕事は新規作成していない。
+      </li>
+    </ul>
+    <p>
+      証拠JSONと実施用スクリプトは<code>/home/ugnoguchi/docling-desk-larm-activation-20261025/</code>に保存した。
+      activation.jsonは操作直後の記録で、gateway_process_changedで停止した。後続のreload-verification.json、runtime-verification.json、browser-results.json、auth-browser-recheck.json、gateway-recovery-verification.jsonが最終確認を補う。
+      systemd-timeline.jsonには連動再起動時刻を記録した。生成物・ログはsource
+      repositoryへ追加していない。
+    </p>
+    <p>
+      直前版の定義とコード参照の退避先は<code>/var/lib/larm-local-services/deployments/docling-desk-20261025-activation</code>。
+      旧releaseは<code>cf0f883193376149007102bff433a7922eb462e20e2874257cf985bdca290c49</code>、旧manifestDigestは<code>81ab0bdc3a9838cf24caa20ff3fde7c0551f335c87edce6168da413287af6135</code>。
+      文書データはバックアップ・巻戻し対象に含めていない。将来の復旧時にもregistry全体を戻さず、Doclingの2値と対応manifest・app
+      unitだけを戻す必要がある。
+    </p>
+    <p>
+      基本構成は<a href="./docling-desk-on-demand-hosting-2026-10-24.html"
+        >Docling Deskのオンデマンド配備記録</a
+      >、利用契約は<a href="./eumenes-docling-integration-prompt-2026-10-25.html"
+        >Eumenes向け利用情報</a
+      >を参照する。
+    </p>
+  </section>
+</article>

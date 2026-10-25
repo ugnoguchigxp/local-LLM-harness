@@ -21,6 +21,7 @@ export function claimUsageRequest(request: Request): UsageRequest | undefined {
 export class UsageCoordinator {
   readonly protection: UsageProtection;
   private readonly context = new AsyncLocalStorage<string | undefined>();
+  private readonly audioContext = new AsyncLocalStorage<boolean>();
   private transitioning?: string;
   private profileKey?: string;
   private readonly recordDuration?: (seconds: number) => void;
@@ -33,9 +34,12 @@ export class UsageCoordinator {
   }
   get owner(): string | undefined { return this.context.getStore(); }
   get isTransitioning(): boolean { return this.transitioning !== undefined; }
+  get independentAudio(): boolean { return this.audioContext.getStore() === true; }
+  runIndependentAudio<T>(fn: () => T): T { return this.audioContext.run(true, fn); }
   get canProtect(): boolean { return this.owner !== undefined && (this.protectedOwner === undefined || this.owner === this.protectedOwner); }
   run<T>(owner: string | undefined, fn: () => T): T { return this.context.run(owner, fn); }
   check(owner = this.owner): void {
+    if (this.independentAudio) return;
     const denied = (this.transitioning !== undefined && this.transitioning !== owner) || this.protection.denied(owner);
     if (denied) {
         this.record({ name: "protection_rejections", labels: { reason: "foreground_protected" } });
@@ -74,10 +78,12 @@ export class UsageCoordinator {
     this.check(owner);
     // Internal handover work may re-enter the control plane as its owner, but
     // new inference must not acquire references while that owner's model stops.
-    if (this.isTransitioning) throw new UsageProtectionError(1);
+    if (this.isTransitioning && !this.independentAudio) throw new UsageProtectionError(1);
     try { this.recordDuration?.((performance.now() - started) / 1000); } catch { /* Telemetry cannot change admission. */ }
-    const release = countAsActivity ? this.protection.begin(owner) : () => {};
-    const usage: UsageRequest = { owner, claimed: false, check: () => this.run(owner, () => this.check()), run: fn => this.run(owner, fn), finish: release };
+    const release = countAsActivity && !this.independentAudio ? this.protection.begin(owner) : () => {};
+    const audio = this.independentAudio;
+    const run = <T>(fn: () => T): T => this.run(owner, () => audio ? this.runIndependentAudio(fn) : fn());
+    const usage: UsageRequest = { owner, claimed: false, check: () => run(() => this.check()), run, finish: release };
     requests.set(request, usage);
     return usage;
   }

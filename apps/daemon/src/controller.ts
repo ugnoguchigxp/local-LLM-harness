@@ -157,7 +157,9 @@ export class ControlPlane {
 
   private usageHandoverNeeded(nextRuntimeIds: string[]): boolean {
     if (this.retainedOwner === undefined) return false;
-    const sameRuntimes = JSON.stringify([...new Set(nextRuntimeIds)].sort()) === JSON.stringify(this.providerInstances.retainedRuntimeIds());
+    const primaryRuntimes = (ids: string[]) => [...new Set(ids)].filter(id =>
+      !["openai.audio-transcriptions.v1", "openai.audio-speech.v1"].includes(getRuntime(this.registry, id)?.protocol ?? "")).sort();
+    const sameRuntimes = JSON.stringify(primaryRuntimes(nextRuntimeIds)) === JSON.stringify(primaryRuntimes(this.providerInstances.retainedRuntimeIds()));
     return this.retainedOwner !== this.usage?.owner || !sameRuntimes;
   }
 
@@ -180,6 +182,8 @@ export class ControlPlane {
   private readonly allocationApi: AllocationApiLifecycle;
   private readonly preemption: AllocationPreemption;
   private applyChain: Promise<void> = Promise.resolve();
+  private readonly audioTasks = new Set<Promise<void>>();
+  private audioPromotion?: Promise<void>;
   private queuedTasks = 0;
   private draining = false;
   private idSequence = 0;
@@ -272,7 +276,7 @@ export class ControlPlane {
       clearAllocationTimer: (id) => this.clearAllocationTimer(id),
       detachLegacyAllocation: (id) => this.detachLegacyAllocation(id),
       scheduleIdleReconcile: () => this.scheduleIdleReconcile(),
-      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations(), "waiting_promotion"),
+      enqueueWaitingPromotion: () => this.enqueueWaitingPromotions(),
       pruneHistory: () => this.pruneHistory(),
     });
     this.allocationApi = new AllocationApiLifecycle({
@@ -295,7 +299,7 @@ export class ControlPlane {
       holdForegroundProviders: (allocation) => this.holdForegroundProviders(allocation),
       allocationLabels: (allocation) => this.allocationLabels(allocation),
       emit: (name, labels) => this.emit(name, labels),
-      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations(), "waiting_promotion"),
+      enqueueWaitingPromotion: () => this.enqueueWaitingPromotions(),
       scheduleIdleReconcile: () => this.scheduleIdleReconcile(),
       pruneHistory: () => this.pruneHistory(),
     });
@@ -479,7 +483,15 @@ export class ControlPlane {
     return countActiveAllocations([...this.allocations.values()]);
   }
 
-  async allocate(request: AllocationRequest, options: { waitForSemanticReadiness?: boolean } = {}) {
+  async allocate(request: AllocationRequest, options: { waitForSemanticReadiness?: boolean; independentAudio?: boolean } = {}) {
+    if (options.independentAudio) {
+      const resolved = resolveAllocationBindings({ registry: this.registry, state: this.observer.getState(), request,
+        getRuntimeRelease: this.options.getRuntimeRelease, getRuntimeReleaseDefinition: this.options.getRuntimeReleaseDefinition, onRejected: () => {} });
+      if (!resolved.ok) return resolved.result;
+      if (resolved.bindings.some(binding => !["openai.audio-transcriptions.v1", "openai.audio-speech.v1"].includes(getRuntime(this.registry, binding.runtime)?.protocol ?? ""))) {
+        throw new Error("independent audio allocation contains a non-audio runtime");
+      }
+    }
     this.usage?.check();
     if (this.draining) {
       return {
@@ -499,7 +511,7 @@ export class ControlPlane {
         },
       };
     }
-    if (this.usage && (this.retainedOwner !== undefined || (this.usage.canProtect && this.usage.protection.snapshot().preparing > 0))) {
+    if (!options.independentAudio && this.usage && (this.retainedOwner !== undefined || (this.usage.canProtect && this.usage.protection.snapshot().preparing > 0))) {
       const resolved = resolveAllocationBindings({
         registry: this.registry, state: this.observer.getState(), request,
         getRuntimeRelease: this.options.getRuntimeRelease,
@@ -512,7 +524,7 @@ export class ControlPlane {
     this.expireDueAllocations();
     const activeLimit = Math.max(1, this.options.maxActiveAllocations ?? 1_000);
     if (this.activeAdmissionCount() >= activeLimit) {
-      this.rollbackUsageProfile();
+      if (!options.independentAudio) this.rollbackUsageProfile();
       this.emit("allocation_rejected", { reason: "allocation_capacity" });
       return {
         status: 503 as const,
@@ -548,7 +560,7 @@ export class ControlPlane {
       }),
     });
     admissionEnd?.();
-    if (!admission.ok) { this.rollbackUsageProfile(); return admission.result; }
+    if (!admission.ok) { if (!options.independentAudio) this.rollbackUsageProfile(); return admission.result; }
     const now = this.now();
     const allocationId = this.uniqueId(
       createAllocationId(this.getBootEpoch(), this.options.random),
@@ -565,9 +577,9 @@ export class ControlPlane {
       now,
       storeAllocation: (allocation) => {
         this.allocations.set(allocation.id, allocation);
-        if (this.usage?.owner) this.usageAllocations.set(allocation.id, this.usage.owner);
+        if (!options.independentAudio && this.usage?.owner) this.usageAllocations.set(allocation.id, this.usage.owner);
         const rollback = this.retentionRollback;
-        if (rollback && rollback.nextOwner === this.usage?.owner
+        if (!options.independentAudio && rollback && rollback.nextOwner === this.usage?.owner
           && JSON.stringify(rollback.nextRuntimeIds) === JSON.stringify([...new Set(allocation.bindings.map(binding => binding.runtime))].sort())) {
           rollback.allocations.add(allocation.id);
           if (options.waitForSemanticReadiness) rollback.semanticAllocations.add(allocation.id);
@@ -587,10 +599,12 @@ export class ControlPlane {
       startupDeadline: (allocation) => this.allocationStartupDeadline(allocation),
       createOperationId: () => this.createOperationId(),
       storeOperation: (operation) => this.operations.set(operation.id, operation),
-      enqueueWaitingPromotion: () => this.enqueue(() => this.promoteWaitingAllocations(), "waiting_promotion"),
-      enqueueStartup: (allocation, operation, deadline) => this.enqueue(
-        () => this.runAllocationEnsure(allocation, operation, deadline), "allocation_startup",
-      ),
+      enqueueWaitingPromotion: () => this.enqueueWaitingPromotions(),
+      enqueueStartup: (allocation, operation, deadline) => {
+        const work = () => this.runAllocationEnsure(allocation, operation, deadline);
+        if (options.independentAudio) this.enqueueAudio(work);
+        else this.enqueue(work, "allocation_startup");
+      },
       pruneHistory: () => this.pruneHistory(),
     });
   }
@@ -635,8 +649,8 @@ export class ControlPlane {
   async flush(): Promise<void> {
     while (true) {
       const current = this.applyChain;
-      await current;
-      if (this.applyChain === current) {
+      await Promise.all([current, ...this.audioTasks]);
+      if (this.applyChain === current && this.audioTasks.size === 0) {
         return;
       }
     }
@@ -656,6 +670,28 @@ export class ControlPlane {
       isRuntimeMutating: this.options.isRuntimeMutating,
       emit: (name, labels) => this.emit(name, labels),
     });
+  }
+
+  private enqueueAudio(work: () => Promise<void>): Promise<void> {
+    const task = Promise.resolve().then(() => this.usage ? this.usage.runIndependentAudio(work) : work())
+      .catch(() => this.emit("audio_control_task_failed"))
+      .finally(() => this.audioTasks.delete(task));
+    this.audioTasks.add(task);
+    return task;
+  }
+
+  private isAudioAllocation(allocation: Allocation): boolean {
+    return allocation.bindings.length > 0 && allocation.bindings.every(binding =>
+      ["openai.audio-transcriptions.v1", "openai.audio-speech.v1"].includes(getRuntime(this.registry, binding.runtime)?.protocol ?? ""));
+  }
+
+  private enqueueWaitingPromotions(): void {
+    this.enqueue(() => this.promoteWaitingAllocations(), "waiting_promotion");
+    if (!this.audioPromotion && [...this.allocations.values()].some(allocation => allocation.status === "waiting" && this.isAudioAllocation(allocation))) {
+      const task = this.enqueueAudio(() => this.promoteWaitingAllocations(true));
+      this.audioPromotion = task;
+      void task.finally(() => { if (this.audioPromotion === task) this.audioPromotion = undefined; });
+    }
   }
 
   private enqueue(work: () => Promise<void>, kind = "maintenance"): void {
@@ -843,14 +879,23 @@ export class ControlPlane {
     });
   }
 
-  private async promoteWaitingAllocations(): Promise<void> {
+  getAllocationWaitReason(id: string): { reason: string; runtime?: string } | undefined {
+    const allocation = this.allocations.get(id);
+    if (allocation?.status !== "waiting") return undefined;
+    const admission = this.allocationAdmission(allocation);
+    return admission.ok
+      ? { reason: "scheduling_policy" }
+      : { reason: admission.reason, ...("runtime" in admission ? { runtime: admission.runtime } : {}) };
+  }
+
+  private async promoteWaitingAllocations(audioOnly = false): Promise<void> {
     const pollIntervalMs = this.options.pollIntervalMs ?? 500;
     await promoteWaitingAllocationBatch({
       queue: {
         draining: this.draining,
         hasFreshState: () => this.hasFreshState(),
         tick: () => this.observer.tick(),
-        allocations: () => this.allocations.values(),
+        allocations: () => [...this.allocations.values()].filter(allocation => this.isAudioAllocation(allocation) === audioOnly),
         now: () => this.now(),
         pollIntervalMs,
         scheduleRetry: (delayMs) => this.scheduleWaitingPromotion(delayMs),
@@ -899,7 +944,7 @@ export class ControlPlane {
       draining: this.draining,
       hasWaiting: [...this.allocations.values()].some((allocation) => allocation.status === "waiting"),
       delayMs,
-      promote: () => this.enqueue(() => this.promoteWaitingAllocations(), "waiting_promotion"),
+      promote: () => this.enqueueWaitingPromotions(),
     });
   }
 

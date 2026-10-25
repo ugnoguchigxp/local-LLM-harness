@@ -1,0 +1,540 @@
+<article lang="ja">
+  <h1>LFM2.5-Audio-1.5B-JP：local-nodeホスティング調査とCPU実機試験</h1>
+  <p>
+    2026年10月25日、Liquid AIの日本語音声モデルをgnosisで隔離評価した。
+    このPCでローカルホスティング可能だが、利用者の会話トライアル後の判断は音声対話として不採用。
+    長文ASR比較後、利用者はGranite維持を選び、LFMのASR単独利用も不採用とした。CPUのみで音声認識、読み上げ、音声対話、
+    System Contextの差し替えに成功した。ただし、任意の指示への追従やMCPツール操作の信頼性を
+    保証する試験ではない。ツール要求JSONの生成は今回の1問では失敗した。
+    LARMへのProvider登録、本番Profile変更、既存サービスの停止は行っていない。
+  </p>
+  <section id="user-decision">
+    <h2>確定判断：Granite維持、LFMは音声対話・ASRとも不採用</h2>
+    <p>
+      その後の依頼に基づき、約200文字の長文で現行GraniteとのASR比較を実施した。
+      <a href="./lfm25-asr-vs-granite-long-evaluation-2026-10-25.html">長文ASR比較の結果</a>では
+      現行維持を推奨した。利用者も比較結果に基づきGranite維持とLFM不採用を選択した。
+      ASR単独利用を試用候補から外し、本番切替は行っていない。
+    </p>
+    <p>
+      2026年10月25日、利用者がMacBook側からトライアルしたあと、不採用と判断した。
+      利用者はASR・TTSの精度については悪くないと評価し、ASRだけしばらく試す可能性を示した。
+      この評価は利用者の試用感想であり、ASRの誤り率やTTS品質の定量試験の合格判定ではない。
+      その時点ではASR単独を保留候補としていたが、後続の長文比較後にASRも不採用と確定した。
+    </p>
+    <p>
+      会話試用用の<code>larm-lfm25-audio-jp-trial.service</code>を停止し、 port
+      18096の待ち受けがないことを確認した。現行のASR・TTS・会話LLMとLARMのProfile・routeは変更していない。
+      重み・エンジン・測定結果は再評価用に保持する。
+    </p>
+    <p>
+      ASR単独試用候補の段階で、外部保存先へ<code>server-asr-only.json</code>と
+      <code>start-asr-demo.sh</code
+      >を用意した。モデルIDは<code>lfm25-jp-asr</code>のみ、 CPU 8
+      threads、loopback port 18096、最大1モデルの構成で、現在は起動していない。
+      利用者の判断記録は<code>user-trial-decision.json</code>に保存した。
+    </p>
+  </section>
+  <section id="model">
+    <h2>公式仕様と実行経路</h2>
+    <p>
+      Liquid AI株式会社の公式発表日は2026年6月5日。1.5B級の日本語音声・テキストモデルで、
+      独立したASRとTTSを必須とせず音声から音声へ回答できる。公式model cardは
+      LM本体1.2B、FastConformer音声encoder 115M、context 32768 tokens、 bfloat16、LFM Open License
+      v1.0を記載している。 「LFM2.5-1.2B-JP-202606」という別のテキストモデルのtool使用性能を、
+      このAudioモデルの性能として扱わない。
+    </p>
+    <p>
+      公式Python実装はLiquid4All/liquid-audio。今回使用した実行エンジンは
+      community実装のaudio.cppであり、公式Python実装との同一出力をこのPCで照合したわけではない。
+      公式GGUFはbackbone、mmproj、vocoder、tokenizerの4ファイルを使用する。
+      通常のテキスト用llama-serverを起動しただけで音声出力まで使えるとはみなさない。
+    </p>
+    <p>
+      モデルのcontext仕様と実行エンジンの制約は別である。評価したaudio.cppの複数ターン会話は
+      promptと出力を合わせ8192 stepsまでで、stepにはテキストtokenと80 ms単位の音声が含まれる。
+      公式の32768 tokensすべてを今回のAPI経路で自由に使えるという意味ではない。
+      長い会話、長大なSystem Context、割り込み、同時会話、長時間連続稼働は未検証。
+    </p>
+  </section>
+  <section id="environment">
+    <h2>PCと隔離試験の条件</h2>
+    <dl>
+      <dt>ホスト</dt>
+      <dd>gnosis、Linux x86_64、AMD Ryzen AI MAX+ 395 / Radeon 8060S、16 cores / 32 threads</dd>
+      <dt>メモリと空き容量</dt>
+      <dd>OS認識121 GiB、調査開始時available約84 GiB、保存先空き約757 GiB</dd>
+      <dt>エンジン</dt>
+      <dd>
+        audio.cpp revision <code>4efa395944ffaa6017909487bed0a98b684cad29</code>、Release、CPU、8 threads
+      </dd>
+      <dt>重み</dt>
+      <dd>
+        LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF、Q8_0、revision
+        <code>64b96718b341dbd5650f9e85627cecdcbd4ac61b</code>
+      </dd>
+      <dt>ダウンロード容量</dt>
+      <dd>4ファイル合計1,820,023,680 bytes、約1.82 GB。実行メモリとは異なる</dd>
+      <dt>実行メモリ</dt>
+      <dd>
+        ASR・TTS・S2Sの3エントリを順にロードしたserver全体のVmHWM 4,899,528 KiB、約4.67
+        GiB。1モデル1セッションの値ではない
+      </dd>
+      <dt>推論条件</dt>
+      <dd>
+        音声生成seed 42、最大384 steps、ASR最大128
+        tokens。他のsamplingはエンジン既定。S2S音声temperature 1.0 / top-k 4、テキストgreedy
+      </dd>
+      <dt>入力</dt>
+      <dd>
+        既存VOICEVOXのKasukabe_Tsumugiで作った合成日本語音声。人間のマイク入力や実環境の雑音は未評価
+      </dd>
+      <dt>本番との関係</dt>
+      <dd>
+        既存LLM・ASR・TTSを維持。独立port
+        18096、loopback接続。既存の定義・稼働モデルの差をdriftとは判定していない
+      </dd>
+    </dl>
+    <p>
+      CPU版で成立したため、AMD GPU・ROCm・Vulkan・NPUの利用可否や高速化率は実測していない。
+      以下は各条件1回のsmoke試験であり、平均、p95、専用機無負荷性能、混合推論負荷時の保証値ではない。
+      時間はHTTP要求開始からのclient実測。音声入力全体をファイルとして送っており、発話開始からの時間ではない。
+      coldは当該エントリの初回ロードを含み、warmは同じS2Sエントリの次の要求である。
+    </p>
+  </section>
+  <section id="results">
+    <h2>実測結果</h2>
+    <table>
+      <caption>
+        2026年10月25日のCPU 8 threads、Q8_0、逐次実行
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">試験</th>
+          <th scope="col">最初の音声</th>
+          <th scope="col">完了時間</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">TTS初回</th>
+          <td>0.520秒</td>
+          <td>2.108秒</td>
+          <td>
+            4.08秒の音声を生成。入力は「こんにちは。この音声は、このパソコンで生成しています。」
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ASR初回</th>
+          <td>対象外</td>
+          <td>0.934秒</td>
+          <td>3.648秒の入力を「日本の首都はどこですか?短く答えてください。」と認識</td>
+        </tr>
+        <tr>
+          <th scope="row">S2S初回</th>
+          <td>0.933秒</td>
+          <td>1.621秒</td>
+          <td>「日本の首都は東京です。」、1.60秒の音声</td>
+        </tr>
+        <tr>
+          <th scope="row">S2S warm</th>
+          <td>0.546秒</td>
+          <td>1.244秒</td>
+          <td>同じ回答、1.60秒の音声</td>
+        </tr>
+        <tr>
+          <th scope="row">System Context A</th>
+          <td>0.611秒</td>
+          <td>2.624秒</td>
+          <td>「案内係はこはるです。会議室はさくらです。」、3.92秒の音声</td>
+        </tr>
+        <tr>
+          <th scope="row">System Context B</th>
+          <td>0.626秒</td>
+          <td>2.863秒</td>
+          <td>「案内係はあおいです。今日の会議室は「かえで」です。」、4.48秒の音声</td>
+        </tr>
+        <tr>
+          <th scope="row">模擬ツールJSON要求</th>
+          <td>0.660秒</td>
+          <td>1.452秒</td>
+          <td>
+            失敗。JSON要求に対し「日本の首都は東京です。」と通常回答。実際のMCP通信やツール実行は行っていない
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      TTSとS2Sの保存WAVは24 kHz mono、非無音であることを確認。
+      既存Whisperを使った独立の再文字起こしでは、TTS文と「日本の首都は東京です。」の音声内容が一致した。
+      Context AはWhisperが「案内係はコアルです会議室はサクラです」と認識した。
+      名前の差が発音側と認識側のどちらに由来するかは、この試験では確定していない。
+      返却テキストの正しさと固有名詞の発音精度は区別する。人間による聴取評価は未実施。
+    </p>
+    <p>
+      ブラウザUIはHTTP
+      200でHTML取得を確認した。マイク権限、音声デバイス、ブラウザ上の録音・再生操作までは試していない。
+      <code>/v1/chat/completions</code>への要求はHTTP 404。 このエンジンの音声APIをOpenAI
+      Chat Completionsのtools対応APIとしては利用できない。
+      これは今回のserver経路の制約であり、別adapterや追加学習でも不可能という結論ではない。
+      試験後、自分で起動したserverを停止した。
+    </p>
+  </section>
+  <section id="context-and-mcp">
+    <h2>System ContextとMCPの扱い</h2>
+    <p>
+      System Contextをsystem prompt、会話の前提、キャラクター設定、外部情報という意味で解釈すると、
+      公式PythonのChatStateではsystem turnに任意のテキストを追加できる。
+      音声対話には公式例の<code>Respond with interleaved text and audio.</code>を保ち、その後に追加指示を置く。
+      任意のテキストを入力できることと、すべての指示を確実に守ることは異なる。
+      ASR/TTSにはそれぞれ専用のタスク指定promptがあり、自由な会話指示として置き換えると同じ動作を期待できない。
+    </p>
+    <p>
+      今回のaudio.cpp S2S APIでは<code>request.text</code>がsystem
+      promptを置き換える。
+      同じ4.011秒の音声質問「案内係の名前と、今日の会議室を教えてください。」を使い、
+      前提だけを「こはる・さくら」から「あおい・かえで」へ変更し、2条件とも返却テキストに反映された。
+      標準S2S UIにはこの追加テキストの入力欄がないため、自由な前提注入にはAPIまたは専用UIが必要。
+      LARM固有のSystemContext連携を実装したという意味ではない。
+    </p>
+    <p>
+      MCPはモデル重みに直接追加する機能ではなく、利用アプリのhost/clientがMCP serverへ接続し、
+      tools・resources・promptsを取得する仕組みである。取得した情報のテキスト注入は構成可能だが、
+      モデルによるtool選択、構造化引数、実行、結果の再注入にはアプリ側の制御が必要。
+      音声モデルの公式資料に、当該JP checkpointの任意MCP serverへの即時接続や、 native function
+      callingの信頼性保証は確認できなかった。
+    </p>
+    <p>
+      模擬試験では、systemに<code>lookup_capital(country: string)</code>というツールと
+      JSON例を与え、日本の首都を尋ねる音声から要求JSONを作らせたが、普通の音声回答になった。
+      1問の失敗でモデルの全tool能力を否定せず、今回の音声対話モードでは採用根拠不足とする。
+      MCP操作が主目的なら、ASR → 既存の会話LLMとMCP host → TTSの分業を第一候補とし、
+      このモデルは日本語音声の入口・出口として別途評価する。
+      agentの実装やSAAA連携は今回の調査範囲に含めていない。
+    </p>
+  </section>
+  <section id="live-api-and-supervisor">
+    <h2>LIVE API追加試験と上位LLMへの入出力トレース</h2>
+    <p>
+      CPU専用モデルではない。公式liquid-audioにはAMD ROCm向けPyTorchの導入例があり、
+      評価エンジンにはCPU・CUDA・Metalの検証記載がある。このPCではCPUだけで動作するためGPUは必須ではない。
+      当該AMD GPU経路の対応と性能は未検証。CPU測定をモデルの標準・唯一の実行方式とは扱わない。
+    </p>
+    <p>
+      追加試験では<code>POST /v1/audio/speech/live</code>に16 kHz mono s16le PCMを HTTP
+      chunkedで100 msごとに送り、<code>return_text=true</code>を指定した。
+      3.648秒の合成音声を3.670秒かけて送信し、入力終了後0.410秒で最初の返答音声を受信した。
+      回答テキストは「日本の首都は東京です。」、出力音声は1.68秒、HTTP 200。
+      <code>speech.text.delta</code>、<code>speech.text.done</code>、
+      <code>speech.audio.delta</code
+      >、<code>speech.audio.done</code>の4種、合計26イベントを保存した。
+      初回エントリ利用でありモデルロードは送信と重なり得る。1回の実測で、マイク・VADを含むブラウザ会話試験ではない。
+    </p>
+    <p>
+      LFMのこの実装は入力終了後に回答を生成する。入力音声を逐次送れても、
+      ユーザーの発話途中から回答するfull-duplex会話という意味ではない。
+      発話終了の判定、録音、再生、割り込み時の出力停止は利用アプリ側で構成する必要がある。 またLIVE
+      endpointはhistory artifactsを受け取らず、要求ごとに初回会話となる。
+      履歴を維持するには<code>/v1/tasks/stream</code>と履歴artifactsを使うか、 LIVE
+      endpointを拡張する。単一LIVE要求の成功を、永続的な多ターンセッションの実装済み証拠としない。
+    </p>
+    <p>
+      音声会話をLFMに任せ、その入出力を上位LLMへ渡して記憶・判断・MCP処理を担当させる構成は可能。
+      APIの前後に中継層を置き、入力音声、出力音声、回答テキスト、発話・会話ID、時刻を記録する。
+      回答テキストは生成イベントから取得できるが、S2Sはユーザー音声の文字起こしを自動では返さない。
+      入力をテキストLLMへ渡す場合は、同じ音声を別のASR要求にも送り、その認識結果を関連付ける。
+      音声対応LLMであれば入力音声を直接渡す構成も選べる。
+    </p>
+    <p>
+      上位LLMは非同期に会話を観測し、記憶や次のターンのSystem Contextを更新できる。
+      外部ツールの結果を発話へ反映するには、アプリがその結果を次の生成へ明示的に渡す必要がある。
+      発話済みの音声を上位LLMが後から修正することはできないため、発話前の承認が必要な用途では
+      出力を一時保留する制御が必要で、その分の待ち時間が増える。
+      上位LLMへの転送・セッション管理・MCP制御の中継層は今回未実装。
+    </p>
+    <p>
+      証跡は既存の外部保存先にある<code>live-summary.json</code>、<code>live-events.json</code>、
+      <code>live-reply.wav</code
+      >、<code>test-live-trace.py</code>。追加試験serverも終了後に停止した。
+    </p>
+  </section>
+  <section id="voicevox-speed-comparison">
+    <h2>VOICEVOXとのTTS速度比較</h2>
+    <p>
+      同じPCでLFM Q8_0 / audio.cpp CPU 8 threadsとVOICEVOX Core 0.17.0 CPUを比較した。
+      公平なthread数比較用にVOICEVOXの8 threads版をport 18097へ隔離起動し、 現行16
+      threads版・春日部つむぎも測定した。各方式に短文1回のwarmupを行ったあと、
+      短・中・長の同じ3文をそれぞれ3回測定し、順番を交替した。推論は方式ごとに逐次実行し、
+      競合負荷を意図的には発生させていない。起動・重みロード時間とLLMの文章生成時間は含まない。
+    </p>
+    <p>
+      短文は「はい、了解です。」8文字、中文は「今日の予定を確認して、次にやることを一緒に決めましょう。」28文字、
+      長文は既存latency
+      corpusのlong-01「現在の状態を確認したところ、ネットワーク接続は正常ですが、…」81文字。
+      同じ入力でも声・話速が異なるため、生成音声の長さとRTFも記録した。 LFMはseed 42、最大1024
+      steps、temperature 0.8 / top-k 64の既定値を使用。 VOICEVOXはspeed
+      1.0。全文が揃ってからHTTP要求を送り、LFMの最初の再生可能WAV chunkと
+      全体完了を別に計測した。VOICEVOXの現行APIは全文合成後にWAVを返すため、この2時刻はほぼ同じになる。
+    </p>
+    <table>
+      <caption>
+        各3回の中央値、CPU 8 threads同士、単位は秒
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">文章</th>
+          <th scope="col">LFM最初の音声</th>
+          <th scope="col">VOICEVOX最初の音声</th>
+          <th scope="col">LFM生成完了</th>
+          <th scope="col">VOICEVOX生成完了</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">短文8文字</th>
+          <td>0.176</td>
+          <td>0.168</td>
+          <td>0.785</td>
+          <td>0.169</td>
+        </tr>
+        <tr>
+          <th scope="row">中文28文字</th>
+          <td>0.241</td>
+          <td>0.389</td>
+          <td>2.053</td>
+          <td>0.389</td>
+        </tr>
+        <tr>
+          <th scope="row">長文81文字</th>
+          <td>0.358</td>
+          <td>1.274</td>
+          <td>5.895</td>
+          <td>1.275</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      音声全体の生成完了はVOICEVOXが約4.6〜5.3倍速かった。
+      LFMは途中から音声を返すため中・長文の話し始めは早く、短文ではほぼ同等だった。
+      これはモデルの計算速度と、音声の返却方式を分けて解釈する必要がある。
+      VOICEVOXを文ごとに分割して送る場合の体感差は今回の全文一括測定とは異なる。
+    </p>
+    <table>
+      <caption>
+        生成音声の長さとRTF、および現行VOICEVOX 16 threadsの参考値
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">文章</th>
+          <th scope="col">LFM音声長</th>
+          <th scope="col">VOICEVOX音声長</th>
+          <th scope="col">LFM RTF</th>
+          <th scope="col">VOICEVOX 8 threads RTF</th>
+          <th scope="col">VOICEVOX 16 threads生成完了</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">短文</th>
+          <td>1.44秒</td>
+          <td>1.781秒</td>
+          <td>0.545</td>
+          <td>0.095</td>
+          <td>0.214秒</td>
+        </tr>
+        <tr>
+          <th scope="row">中文</th>
+          <td>4.00秒</td>
+          <td>4.181秒</td>
+          <td>0.513</td>
+          <td>0.093</td>
+          <td>0.348秒</td>
+        </tr>
+        <tr>
+          <th scope="row">長文</th>
+          <td>12.80秒</td>
+          <td>13.611秒</td>
+          <td>0.461</td>
+          <td>0.094</td>
+          <td>1.079秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      RTFは生成時間÷音声長で小さいほど速い。LFMも全3条件で1を下回り、
+      この逐次実行条件では再生時間より速く音声を生成した。16 threadsへ増やす効果は文章長に依存し、
+      現行VOICEVOXの短文は8 threadsの隔離版より遅かった。
+      3文・各3回の測定を全日本語文章、全話者、同時負荷、音質の順位へ一般化しない。
+      長文のLFM生成音声は既存Whisperによる独立の再文字起こしで入力本文と一致した。
+    </p>
+    <p>
+      音声対話の入出力テキストを上位LLMへ渡し、LLMのtool要求をMCP hostが実行する構成は可能。
+      LFMの回答生成テキストと、ASRで取得した入力文字列を会話・発話IDで対応付ける。
+      監視だけではツールの結果は発話へ反映されないので、MCP処理中の応答と、
+      結果を受けたあとの追加発話・次ターンへの反映を中継側で制御する。
+      本節の実装済み範囲はTTS比較であり、上位LLMとMCPの自動連携は未実装。
+    </p>
+    <p>
+      証跡は外部保存先の<code>tts-comparison/</code>にあり、全27要求とwarmup、全文corpus、
+      各方式のhealth、音声、runner、中央値、server終了確認を保存した。 自分で起動したLFMとVOICEVOX 8
+      threadsを終了し、現行VOICEVOX 16 threadsは維持した。
+    </p>
+  </section>
+  <section id="macbook-trial">
+    <h2>MacBookからの会話トライアル</h2>
+    <p>
+      以下は実施した会話トライアルの接続記録。利用者による不採用判断後、試用serverは停止済み。
+      現在の採否とASR単独候補の状態は冒頭の利用者判断を参照する。
+    </p>
+    <p>
+      2026年10月25日、利用者の希望に合わせ、user systemd transient service
+      <code>larm-lfm25-audio-jp-trial.service</code>として試用serverを起動した。 CPU 8
+      threads、既存Q8_0設定、gnosisの<code>127.0.0.1:18096</code>で待ち受ける。
+      LARMのProfile・routeや既存Providerは変更していない。
+      一時serviceであり、ホスト再起動後の自動起動は設定していない。
+    </p>
+    <p>
+      gnosis側でUI
+      HTML取得、UIと同じ<code>/v1/ui/upload</code>によるWAVアップロード、
+      <code>/v1/tasks/stream</code>のSSE出力、履歴を添えた2回目の推論を確認した。
+      同じ質問の再送に2回とも「日本の首都は東京です。」と応答し、終了済み返答artifactを返した。
+      履歴APIの動作試験であり、記憶精度の評価ではない。
+      その後、利用者がMacBook側から試用し、不採用と回答した。
+      クライアント側の実装や操作ログは収集していない。
+      証跡は外部保存先の<code>macbook-trial/readiness.json</code>。
+    </p>
+    <p>
+      同じLANにあるMacBookのターミナルで下記SSH転送を開いたままにする。
+      <code>192.168.0.130</code>は試用開始時に確認したgnosisのLANアドレスで、SSH
+      port 22の待ち受けも確認した。
+      gnosisの<code>ugnoguchi</code>アカウントへのSSH接続権限が必要。
+      別ネットワークでは到達可能な既存のSSH接続先に置き換える。
+    </p>
+    <pre><code>ssh -N -o ExitOnForwardFailure=yes \
+  -L 18096:127.0.0.1:18096 ugnoguchi@192.168.0.130</code></pre>
+    <p>
+      MacBookで<code>http://127.0.0.1:18096/</code>を開き、
+      <code>Voice Conversion / S2S</code
+      >から<code>lfm25-jp-s2s</code>を選ぶ。
+      マイク録音を開始し、発話後に停止してRunを押すと、返答が生成されながら再生される。
+      続けて録音・送信すれば画面が履歴を添える。<code>New conversation</code>で新しい会話を開始する。
+      マイク利用の許可が必要で、常時待ち受け・自動VAD・割り込み会話を備えた画面ではない。
+    </p>
+    <table>
+      <caption>
+        SSH転送後にMacBookから使う接続先
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">接続先・形式</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ブラウザ画面</th>
+          <td><code>http://127.0.0.1:18096/</code></td>
+        </tr>
+        <tr>
+          <th scope="row">稼働確認</th>
+          <td><code>GET http://127.0.0.1:18096/health</code></td>
+        </tr>
+        <tr>
+          <th scope="row">履歴付き音声会話</th>
+          <td>
+            <code>POST http://127.0.0.1:18096/v1/tasks/stream</code>、model
+            <code>lfm25-jp-s2s</code
+            >、<code>stream_format: sse</code>、音声pathと履歴artifacts
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">単発の逐次音声入力</th>
+          <td><code>POST http://127.0.0.1:18096/v1/audio/speech/live?model=lfm25-jp-s2s&amp;sample_rate=16000&amp;channels=1&amp;sample_format=s16le&amp;return_text=true</code>、chunked raw PCM入力、SSE出力</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      SSH転送内の試用APIに追加API keyは設定していない。 OpenAI Realtime互換WebSocket
+      APIではないため、独自クライアントはPCM入力・SSE出力、
+      録音・再生・履歴をこの仕様に合わせる必要がある。
+      LIVE接続口は単発会話なので、継続会話には履歴対応APIを使う。
+    </p>
+    <p>
+      試用serverを停止する場合はgnosisで以下を実行する。Mac側のSSHを終了すると接続経路だけが閉じる。
+    </p>
+    <pre><code>systemctl --user stop larm-lfm25-audio-jp-trial.service</code></pre>
+  </section>
+  <section id="reproduce">
+    <h2>保存先と再試用</h2>
+    <dl>
+      <dt>エンジン</dt>
+      <dd><code>/srv/ai/apps/audio.cpp-lfm25-jp-20261025</code></dd>
+      <dt>モデル</dt>
+      <dd><code>/srv/ai/models/LFM2.5-Audio-1.5B-JP-GGUF</code></dd>
+      <dt>証跡</dt>
+      <dd>
+        <code>/srv/ai/evidence/lfm25-audio-jp-20261025</code
+        >。重みSHA-256、取得・buildログ、server設定、試験runner、要求・応答、生成音声、計測値を保持
+      </dd>
+    </dl>
+    <p>
+      一時serviceが稼働中なら追加の手動起動は不要。
+      service停止後、gnosisで以下を実行すると同じCPU構成のserverを手動起動できる。終了はCtrl+C。
+    </p>
+    <pre><code>/srv/ai/evidence/lfm25-audio-jp-20261025/start-demo.sh</code></pre>
+    <p>
+      同じPCのブラウザでは<code>http://127.0.0.1:18096</code>を開く。
+      手元端末からgnosisを利用する場合は、SSHで下記の転送を開いたうえで手元の同じURLを開く。
+      実際のSSH接続名・ユーザー指定は利用環境に合わせる。localhostでの利用はブラウザのマイク権限設定も必要。
+    </p>
+    <pre><code>ssh -N -L 18096:127.0.0.1:18096 gnosis</code></pre>
+    <p>
+      試験runnerを再実行する例。出力先は存在しない新しいディレクトリを指定する。port
+      18096が使用中なら実行を拒否する。
+    </p>
+    <pre><code>python3 /srv/ai/evidence/lfm25-audio-jp-20261025/run-trial.py \
+  --output /srv/ai/evidence/lfm25-audio-jp-20261025/trial-2</code></pre>
+    <p>System Contextを付けたS2S要求の形式。音声pathはserverと同じPCのファイルを指定する。</p>
+    <pre><code>{
+  "model": "lfm25-jp-s2s",
+  "request": {
+    "audio": "/srv/ai/evidence/lfm25-audio-jp-20261025/context-question.wav",
+    "text": "Respond with interleaved text and audio. あなたは案内係です。名前はこはる、今日の会議室はさくらです。日本語で短く答えてください。",
+    "options": {"seed": 42, "max_tokens": 384}
+  }
+}</code></pre>
+    <p>
+      POST先は<code>/v1/tasks/run</code>。ストリーミング時は<code>/v1/tasks/stream</code>へ送り、
+      最上位に<code>"stream_format": "sse"</code>を追加する。返却音声はbase64のWAV。
+      再現用資材と生成メディアはsource repository外に保管している。
+    </p>
+  </section>
+  <section id="sources">
+    <h2>確認した一次資料</h2>
+    <ul>
+      <li>
+        Liquid AI株式会社、2026年6月5日公開発表：<cite
+          >https://prtimes.jp/main/html/rd/p/000000006.000175118.html</cite
+        >
+      </li>
+      <li>公式model card：<cite>https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-JP</cite></li>
+      <li>公式GGUF：<cite>https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF</cite></li>
+      <li>
+        公式Python実装と日本語例：<cite>https://github.com/Liquid4All/liquid-audio</cite>、<code
+          >README_JP.md</code
+        >
+      </li>
+      <li>
+        評価エンジンの実装・API・制約：<cite>https://github.com/0xShug0/audio.cpp</cite>、上記固定revisionの<code>docs/models/lfm2_audio.md</code>と<code
+          >app/server/api.md</code
+        >
+      </li>
+      <li>
+        MCP公式architecture：<cite
+          >https://modelcontextprotocol.io/docs/2026-07-28/learn/architecture</cite
+        >
+      </li>
+    </ul>
+  </section>
+</article>

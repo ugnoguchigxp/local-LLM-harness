@@ -30,13 +30,19 @@ export function usagePolicy(usage: UsageCoordinator, token: string, connections?
       // Verify before treating a bearer prefix as an authenticated owner.
       owner = connections?.verifyProviderToken(authorization.slice(7)).record.principal;
     }
-    await usage.run(owner, async () => {
+    const providerHealth = /^\/v1\/agent-connections\/([^/]+)\/providers\/([^/]+)\/health$/.exec(c.req.path);
+    const audio = ["/v1/audio/transcriptions", "/v1/audio/speech", "/v1/audio/voices"].includes(c.req.path)
+      || (providerHealth !== null && connections?.isIndependentAudioProvider(providerHealth[1]!, providerHealth[2]!) === true);
+    const work = () => usage.run(owner, async () => {
       const isInference = inference(c.req.method, c.req.path);
-      if (!isInference && guarded(c.req.method, c.req.path)) usage.check();
+      // Connection creation selects its Provider scope before applying LLM policy.
+      if (!isInference && guarded(c.req.method, c.req.path) && c.req.path !== "/v1/agent-connections") usage.check();
       const activity = isInference || c.req.path === "/v1/audio/voices" ? usage.request(c.req.raw, isInference && !trustedProbe?.(c.req.raw)) : undefined;
       try { await next(); }
       finally { if (activity && (!activity.claimed || c.error)) activity.finish(c.res.status < 400 || c.res.status >= 500); }
     });
+    if (audio) await usage.runIndependentAudio(work);
+    else await work();
   };
 }
 

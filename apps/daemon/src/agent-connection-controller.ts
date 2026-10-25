@@ -23,6 +23,7 @@ import { AllocationLifecycleError } from "./allocation-lifecycle";
 import type { ControlPlane } from "./controller";
 import { ConnectionTokenCodec, ConnectionTokenError, type ConnectionTokenPayload } from "./connection-token";
 import type { SemanticReadiness } from "./semantic-readiness";
+import { withAbort } from "./http-body";
 
 const PERSONAL_STATE_SCOPES = [
   "context.source.provision",
@@ -34,9 +35,18 @@ const PERSONAL_STATE_SCOPES = [
   "context.operation.read",
 ] as const;
 
+function independentAudio(protocol: RuntimeProtocol): boolean {
+  return protocol === "openai.audio-transcriptions.v1" || protocol === "openai.audio-speech.v1";
+}
+
+type AudioConnection = { id: string; request: AgentConnectionRequest };
+
 type ConnectionRecord = {
   id: string;
   allocationId: string;
+  parentAllocationId?: string;
+  audioConnections?: Map<string, AudioConnection>;
+  requestedProfile?: AgentProfile;
   principal: string;
   bootEpoch: string;
   catalogRevision: string;
@@ -47,6 +57,10 @@ type ConnectionRecord = {
   createdAt: string;
   expiresAt: string;
   readyDeadline: number;
+  readyTimer?: ReturnType<typeof setTimeout>;
+  readinessAbort: AbortController;
+  providerHealth: Map<string, AgentProviderHealth>;
+  lastReadinessEvent?: string;
   generation: number;
   tokenIssuedAt: number;
   personalStateAuthorized: boolean;
@@ -258,6 +272,7 @@ export class AgentConnectionController {
     requestUrl: string,
     personalStateAuthorized = false,
     waitMs = 0,
+    backgroundOnly = false,
   ): Promise<AgentConnectionApiResult> {
     const catalog = this.options.getCatalog();
     if (!catalog) return error("agent_connections_not_configured", "agent connection catalog is unavailable", 503);
@@ -280,6 +295,15 @@ export class AgentConnectionController {
       ...structuredClone(profile),
       providers: profile.providers.filter((provider) => requestedProviders?.has(provider.name) ?? true),
     };
+    const audioOnly = selectedProfile.providers.every(provider => independentAudio(provider.protocol));
+    if (audioOnly && this.options.control.usage && !this.options.control.usage.independentAudio) {
+      return await this.options.control.usage.runIndependentAudio(() => this.create(request, principal, idempotencyKey, requestUrl, personalStateAuthorized, waitMs, backgroundOnly));
+    }
+    if (!audioOnly) this.options.control.usage?.check();
+    if (audioOnly) {
+      selectedProfile.requestScheduling = undefined;
+      selectedProfile.usageProtection = undefined;
+    }
     const selectedProviderNames = selectedProfile.providers.map((provider) => provider.name);
     const configuredAudience = catalog.audiences.find((item) => item.id === request.audience);
     if (!configuredAudience) return error(
@@ -337,6 +361,7 @@ export class AgentConnectionController {
               409,
             );
           }
+          await this.refreshAudioDemand(reusable, principal, idempotencyKey);
           const foreground = selectedProfile.requestScheduling === "foreground-exclusive";
           if (foreground) this.foregroundCreations += 1;
           try {
@@ -359,7 +384,7 @@ export class AgentConnectionController {
             if (foreground) this.foregroundCreations -= 1;
           }
           return {
-            status: reusable.status === "ready" ? 201 : 202,
+            status: this.public(reusable).status === "ready" ? 201 : 202,
             body: this.public(reusable),
             location: `/v1/agent-connections/${reusable.id}`,
           };
@@ -375,6 +400,22 @@ export class AgentConnectionController {
             409,
           );
         }
+        const requestedProfile = structuredClone(selectedProfile);
+        const audioConnections = new Map<string, AudioConnection>();
+        const primaryAudio = audioOnly ? selectedProfile.providers[0] : undefined;
+        const detachedAudio = selectedProfile.providers.filter(provider => independentAudio(provider.protocol) && provider !== primaryAudio);
+        if (detachedAudio.length) {
+          await Promise.all(detachedAudio.map(async provider => {
+            const childRequest = { ...request, providers: [provider.name], client: `larm-audio-${randomUUID()}` };
+            const result = await this.create(childRequest, principal, hash(`${idempotencyKey}:${provider.name}`), requestUrl, false, 0, true);
+            if (result.status !== 201 && result.status !== 202 && !(typeof result.body === "object" && result.body !== null && "id" in result.body)) {
+              audioConnections.set(provider.name, { id: "", request: childRequest });
+              return;
+            }
+            audioConnections.set(provider.name, { id: (result.body as PublicAgentConnection).id, request: childRequest });
+          }));
+          selectedProfile.providers = selectedProfile.providers.filter(provider => !independentAudio(provider.protocol) || provider === primaryAudio);
+        }
         const usage = this.options.control.usage;
         const protection = usage?.canProtect && selectedProfile.usageProtection;
         const preparationComplete = protection ? this.options.control.usage!.prepare(protection.idleSeconds * 1000, `${selectedProfile.canonicalProfile}:${selectedProfile.revision}`) : undefined;
@@ -383,28 +424,39 @@ export class AgentConnectionController {
         const foregroundCreation = selectedProfile.requestScheduling === "foreground-exclusive";
         if (foregroundCreation) this.foregroundCreations += 1;
         try {
-          if (protection) await this.options.control.activateUsageProtection(selectedProfile.schedulingPriority ?? 0);
-          if (foregroundCreation) {
-            const conflict = await this.preemptBackgroundConnections(selectedProfile.schedulingPriority ?? 0);
-            if (conflict) return conflict;
-          }
-          const allocated = await this.options.control.allocate({
-            requirements: selectedProfile.providers.map((provider) => ({
-              capability: provider.capability,
-              route: provider.route,
-            })),
-            ...(request.client ? { client: request.client } : {}),
-            ttlSeconds: request.ttlSeconds,
-            allowFallback: request.allowFallback,
-            deploymentPolicy: request.deploymentPolicy,
-            priority: selectedProfile.schedulingPriority ?? 0,
-            capacityPolicy: "wait",
-          }, { waitForSemanticReadiness: true });
+          const allocatePrimary = async () => {
+            if (protection) await this.options.control.activateUsageProtection(selectedProfile.schedulingPriority ?? 0);
+            if (foregroundCreation) {
+              const conflict = await this.preemptBackgroundConnections(selectedProfile.schedulingPriority ?? 0);
+              if (conflict) return conflict;
+            }
+            return await this.options.control.allocate({
+              requirements: selectedProfile.providers.map(provider => ({ capability: provider.capability, route: provider.route })),
+              ...(request.client ? { client: request.client } : {}),
+              ttlSeconds: request.ttlSeconds,
+              allowFallback: request.allowFallback,
+              deploymentPolicy: request.deploymentPolicy,
+              priority: selectedProfile.schedulingPriority ?? 0,
+              capacityPolicy: "wait",
+            }, { waitForSemanticReadiness: true, independentAudio: audioOnly });
+          };
+          let primaryError: { code: string; message: string } | undefined;
+          const allocated = await allocatePrimary().catch(error => {
+            if (!audioConnections.size) throw error;
+            return { status: 503 as const, body: { error: { code: "connection_prepare_failed", message: "primary provider preparation failed" } } };
+          });
           if (allocated.status !== 200 && allocated.status !== 202) {
-            this.options.control.rollbackUsageProfile();
-            return { status: allocated.status, body: allocated.body };
+            if (!audioOnly) this.options.control.rollbackUsageProfile();
+            if (!audioConnections.size) return { status: allocated.status, body: allocated.body };
+            primaryError = (allocated.body as { error: { code: string; message: string } }).error;
           }
-          const allocation = allocated.body;
+          const anchor = [...audioConnections.values()].map(child => this.records.get(child.id)).find(Boolean);
+          if (primaryError && !anchor) return { status: allocated.status, body: allocated.body };
+          const allocation = primaryError ? {
+            id: anchor!.allocationId, status: "failed", expiresAt: anchor!.expiresAt,
+            catalogRevision: this.options.getCatalogRevision(),
+          } : allocated.body as { id: string; status: string; expiresAt: string; catalogRevision?: string };
+
           const now = this.now();
           const record: ConnectionRecord = {
             id: this.createId(),
@@ -415,10 +467,14 @@ export class AgentConnectionController {
             selector: structuredClone(selector),
             profile: selectedProfile,
             audience,
-            status: allocation.status === "ready" ? "probing" : "pending",
+            status: primaryError ? "failed" : allocation.status === "ready" ? "probing" : "pending",
+            ...(primaryError ? { error: primaryError } : {}),
             createdAt: new Date(now).toISOString(),
             expiresAt: allocation.expiresAt,
             readyDeadline: Math.min(Date.parse(allocation.expiresAt), now + this.options.readyTimeoutMs),
+            ...(audioConnections.size ? { audioConnections, requestedProfile } : {}),
+            providerHealth: new Map(),
+            readinessAbort: new AbortController(),
             generation: 1,
             tokenIssuedAt: Math.floor(now / 1_000),
             personalStateAuthorized,
@@ -430,7 +486,14 @@ export class AgentConnectionController {
             usesUsageProtection: Boolean(protection),
           };
           this.records.set(record.id, record);
+          for (const child of audioConnections.values()) {
+            const childRecord = this.records.get(child.id);
+            if (childRecord) childRecord.parentAllocationId = record.allocationId;
+          }
+          this.scheduleReadyDeadline(record);
+          this.recordReadiness(record);
           createdRecord = record;
+          if (primaryError) { preparationComplete?.(false); record.preparationComplete = undefined; }
           preparationTransferred = true;
           if (selectedProfile.requestScheduling === "background-when-idle" && this.backgroundBlocked()) {
             await this.options.control.releaseAllocation(record.allocationId, "released", new AllocationLifecycleError(
@@ -440,18 +503,23 @@ export class AgentConnectionController {
             return this.foregroundConflict();
           }
           let complete = false;
-          if (record.status === "probing") complete = await this.probeInitial(record);
-          if (!complete && !isTerminal(record.status) && waitMs > 0) {
+          if (record.status === "probing" && !backgroundOnly && !audioConnections.size) complete = await this.probeInitial(record);
+          if (!complete && !isTerminal(record.status) && waitMs > 0 && !backgroundOnly) {
             complete = await this.waitForReadiness(record, waitMs);
           }
           if (!complete && !isTerminal(record.status)) this.startBackground(record);
+          const snapshot = this.public(record);
+          const usablePart = !isTerminal(record.status) || [...audioConnections.values()].some(child => {
+            const childRecord = this.records.get(child.id);
+            return childRecord && !isTerminal(childRecord.status);
+          });
           return {
-            status: record.status === "ready" ? 201 : isTerminal(record.status) ? 503 : 202,
-            body: this.public(record),
+            status: snapshot.status === "ready" ? 201 : usablePart ? 202 : 503,
+            body: snapshot,
             location: `/v1/agent-connections/${record.id}`,
           };
         } catch (error) {
-          this.options.control.rollbackUsageProfile(createdRecord?.allocationId);
+          if (!audioOnly) this.options.control.rollbackUsageProfile(createdRecord?.allocationId);
           preparationComplete?.(false);
           if (createdRecord) {
             this.options.control.rollbackUsageProfile(createdRecord.allocationId);
@@ -471,6 +539,26 @@ export class AgentConnectionController {
     );
   }
 
+  private async refreshAudioDemand(record: ConnectionRecord, principal: string, key: string): Promise<void> {
+    await Promise.all([...(record.audioConnections ?? [])].map(async ([name, child]) => {
+      const result = await this.create(child.request, principal, hash(`${key}:${name}`), `${record.audience.baseUrl}/agent-connections`, false, 0, true);
+      if (result.status !== 201 && result.status !== 202 && !(typeof result.body === "object" && result.body !== null && "id" in result.body)) return;
+      child.id = (result.body as PublicAgentConnection).id;
+      const childRecord = this.records.get(child.id);
+      if (childRecord) childRecord.parentAllocationId = record.allocationId;
+    }));
+  }
+
+  isIndependentAudioProvider(id: string, name: string): boolean {
+    const record = this.records.get(id);
+    const provider = (record?.requestedProfile ?? record?.profile)?.providers.find(provider => provider.name === name);
+    return provider !== undefined && independentAudio(provider.protocol);
+  }
+
+  providerConnectionId(id: string, name: string): string {
+    return this.records.get(id)?.audioConnections?.get(name)?.id ?? id;
+  }
+
   get(id: string, principal: string): AgentConnectionApiResult {
     const found = this.owned(id, principal);
     if ("body" in found) return found;
@@ -482,10 +570,23 @@ export class AgentConnectionController {
     const found = this.owned(id, principal);
     if ("body" in found) return found;
     this.refreshLifecycle(found);
-    if (found.status === "expired") return error("connection_expired", `connection ${id} has expired`, 410);
-    if (found.status === "released" || found.status === "failed") {
-      return error("connection_inactive", `connection ${id} is ${found.status}`, 409);
+    if (found.audioConnections?.size && found.status !== "released" && found.status !== "expired") {
+      const results = await Promise.all([
+        this.healthRecord(found),
+        ...[...found.audioConnections.values()].map(child => this.health(child.id, principal)),
+      ]);
+      const providers = results.flatMap(result => (result.body as Partial<AgentConnectionHealth>).providers ?? []);
+      const snapshot = this.public(found);
+      const ready = snapshot.status === "ready" && providers.every(provider => provider.ready);
+      return { status: ready ? 200 : 503, body: {
+        id: found.id, status: snapshot.status, ready,
+        acceptingRequests: ready && providers.every(provider => provider.acceptingRequests),
+        checkedAt: new Date(this.now()).toISOString(),
+        providers: found.requestedProfile!.providers.map(provider => providers.find(item => item.name === provider.name)
+          ?? this.notReadyHealth(provider.name, provider.capability)),
+      } satisfies AgentConnectionHealth };
     }
+    if (isTerminal(found.status)) return error("connection_inactive", `connection ${id} is ${found.status}`, 409);
     return await this.healthRecord(found);
   }
 
@@ -497,6 +598,12 @@ export class AgentConnectionController {
     const found = principal ? this.owned(id, principal) : this.records.get(id) ?? this.lookupError(id);
     if ("body" in found) return found;
     const record = found;
+    const child = record.audioConnections?.get(providerName);
+    if (child && record.status !== "released" && record.status !== "expired") return await this.providerHealth(child.id, providerName, principal);
+    const usage = this.options.control.usage;
+    if (record.profile.providers.every(provider => independentAudio(provider.protocol)) && usage && !usage.independentAudio) {
+      return await usage.runIndependentAudio(() => this.providerHealth(id, providerName, principal));
+    }
     this.refreshLifecycle(record);
     if (record.status === "expired") return error("connection_expired", `connection ${id} has expired`, 410);
     if (record.status === "released" || record.status === "failed") {
@@ -515,13 +622,64 @@ export class AgentConnectionController {
   }
 
   async claim(
+    id: string, principal: string, format: "openai-provider-v1" | "larm-embedding-provider-v1",
+    personalStateAuthorized = false, providerNames?: string[],
+  ): Promise<AgentConnectionApiResult> {
+    const found = this.owned(id, principal);
+    if ("body" in found) return found;
+    const available = found.requestedProfile?.providers ?? found.profile.providers;
+    if (providerNames?.some(name => !available.some(provider => provider.name === name))) {
+      return error("unknown_connection_provider", "requested provider does not exist in this connection", 400);
+    }
+    if (!found.audioConnections?.size) return await this.claimPrimary(id, principal, format, personalStateAuthorized, providerNames);
+    if (found.status === "released" || found.status === "expired") return error("connection_inactive", "connection is closed", 409);
+    const selected = available.filter(provider => !providerNames || providerNames.includes(provider.name));
+    const expectedFormat = selected.every(provider => provider.protocol === "larm.embedding.v1") ? "larm-embedding-provider-v1" : "openai-provider-v1";
+    if (format !== expectedFormat) return error("claim_format_mismatch", "claim format does not match requested providers", 409);
+    const primary = selected.filter(provider => !found.audioConnections!.has(provider.name));
+    const primaryFormat = primary.every(provider => provider.protocol === "larm.embedding.v1") ? "larm-embedding-provider-v1" : "openai-provider-v1";
+    const results = await Promise.all([
+      ...(primary.length ? [this.claimPrimary(id, principal, primaryFormat, personalStateAuthorized, primary.map(provider => provider.name))] : []),
+      ...selected.filter(provider => found.audioConnections!.has(provider.name)).map(provider =>
+        this.claimPrimary(found.audioConnections!.get(provider.name)!.id, principal, format, false)),
+    ]);
+    const rejected = results.find(result => result.status !== 200);
+    if (rejected) return rejected;
+    const claims = results.map(result => result.body as AgentConnectionClaim);
+    const providers = claims.flatMap(claim => claim.providers);
+    const expiresAt = new Date(Math.min(...claims.map(claim => Date.parse(claim.expiresAt)))).toISOString();
+    const body: AgentConnectionClaim = {
+      id: found.id, allocationId: found.allocationId, status: "ready", audience: found.audience.id,
+      providers: selected.map(provider => {
+        const descriptor = providers.find(item => item.name === provider.name)!;
+        const child = found.audioConnections!.get(provider.name);
+        const owner = child ? this.records.get(child.id)! : found;
+        return { ...descriptor, credential: { ...descriptor.credential, expiresAt,
+          token: this.providerToken({ ...owner, expiresAt }, provider.name, provider.capability),
+        }, health: { ...descriptor.health,
+          url: `${found.audience.baseUrl}/agent-connections/${found.id}/providers/${provider.name}/health`,
+        } };
+      }),
+      services: this.services(found),
+      expiresAt,
+      ...(claims.find(claim => claim.contextControl)?.contextControl ? { contextControl: claims.find(claim => claim.contextControl)!.contextControl } : {}),
+    };
+    return { status: 200, body };
+  }
+
+  private async claimPrimary(
     id: string,
     principal: string,
     format: "openai-provider-v1" | "larm-embedding-provider-v1",
     personalStateAuthorized = false,
+    providerNames?: string[],
   ): Promise<AgentConnectionApiResult> {
     const found = this.owned(id, principal);
     if ("body" in found) return found;
+    const usage = this.options.control.usage;
+    if (found.profile.providers.every(provider => independentAudio(provider.protocol)) && usage && !usage.independentAudio) {
+      return await usage.runIndependentAudio(() => this.claimPrimary(id, principal, format, personalStateAuthorized, providerNames));
+    }
     if (found.personalStateAuthorized && !personalStateAuthorized) {
       return error(
         "connection_auth_required",
@@ -539,7 +697,8 @@ export class AgentConnectionController {
       }
       return error("connection_inactive", `connection ${id} is ${found.status}`, 409);
     }
-    const embeddingOnly = found.profile.providers.every(
+    const selected = found.profile.providers.filter(provider => !providerNames || providerNames.includes(provider.name));
+    const embeddingOnly = selected.every(
       (provider) => provider.protocol === "larm.embedding.v1",
     );
     const expectedFormat = embeddingOnly ? "larm-embedding-provider-v1" : "openai-provider-v1";
@@ -550,7 +709,7 @@ export class AgentConnectionController {
         409,
       );
     }
-    const current = await this.healthRecord(found);
+    const current = await this.healthRecord(found, selected);
     this.refreshLifecycle(found);
     if (found.status !== "ready") return error("connection_inactive", `connection ${id} is ${found.status}`, 409);
     if (current.status !== 200) {
@@ -560,7 +719,7 @@ export class AgentConnectionController {
     const scheme: "http" | "https" = base.protocol === "https:" ? "https" : "http";
     const port = base.port ? Number(base.port) : scheme === "https" ? 443 : 80;
     const health = (current.body as AgentConnectionHealth).providers;
-    const embeddingUnavailable = found.profile.providers
+    const embeddingUnavailable = selected
       .filter((provider) => provider.protocol === "larm.embedding.v1")
       .some((provider) =>
         !provider.embeddingSpace
@@ -569,7 +728,7 @@ export class AgentConnectionController {
     if (embeddingUnavailable) {
       return error("provider_capacity_unavailable", "embedding provider capacity is unavailable", 503);
     }
-    const providers = found.profile.providers.map((provider) => {
+    const providers = selected.map((provider) => {
       const providerHealth = health.find((item) => item.name === provider.name);
       if (provider.protocol === "larm.embedding.v1") {
         const embeddingSpace = provider.embeddingSpace!;
@@ -655,7 +814,7 @@ export class AgentConnectionController {
         ...(provider.chatInput ? { chatInput: this.publicChatInput(provider.chatInput) } : {}),
         health: {
           url: `${found.audience.baseUrl}/agent-connections/${found.id}/providers/${provider.name}/health`,
-          kind: "semantic-inference" as const,
+          kind: provider.protocol === "openai.audio-speech.v1" ? "health-check" as const : "semantic-inference" as const,
           maxAgeMs: 10_000 as const,
         },
         credential: {
@@ -677,7 +836,7 @@ export class AgentConnectionController {
       audience: found.audience.id,
       providers,
       services: this.services(found),
-      ...(this.personalStateAuthorized(found) ? {
+      ...(selected.some(provider => provider.protocol === "openai.chat-completions.v1") && this.personalStateAuthorized(found) ? {
         contextControl: {
           contractVersion: "larm-personal-state.v1" as const,
           subjectDigest: personalStateSubjectDigest(found.principal),
@@ -705,7 +864,18 @@ export class AgentConnectionController {
         if (found.status === "expired") {
           return error("connection_expired", `connection ${id} has expired`, 410);
         }
-        if (isTerminal(found.status)) return error("connection_inactive", `connection ${id} is ${found.status}`, 409);
+        if (isTerminal(found.status) && !found.audioConnections?.size) return error("connection_inactive", `connection ${id} is ${found.status}`, 409);
+        if (found.status === "released") return error("connection_inactive", "connection was released", 409);
+        let renewedAudio = 0;
+        for (const child of found.audioConnections?.values() ?? []) {
+          const childRenewal = await this.renew(child.id, ttlSeconds, principal, hash(`${idempotencyKey}:${child.id}`));
+          if (childRenewal.status === 200) renewedAudio += 1;
+        }
+        if (found.status === "failed") {
+          if (!renewedAudio) return error("connection_inactive", "no audio providers remain active", 409);
+          found.expiresAt = new Date(this.now() + ttlSeconds * 1000).toISOString();
+          return { status: 200, body: this.public(found) };
+        }
         const renewed = this.options.control.renewAllocation(found.allocationId, ttlSeconds);
         if (renewed.status !== 200) return { status: renewed.status, body: renewed.body };
         found.expiresAt = renewed.body.expiresAt;
@@ -719,7 +889,8 @@ export class AgentConnectionController {
   async release(id: string, principal: string): Promise<AgentConnectionApiResult> {
     const found = this.owned(id, principal);
     if ("body" in found) return found;
-    if (isTerminal(found.status)) return { status: 204, body: undefined };
+    for (const child of found.audioConnections?.values() ?? []) await this.release(child.id, principal);
+    if (found.status === "released" || found.status === "expired") return { status: 204, body: undefined };
     found.preparationComplete?.(false); found.preparationComplete = undefined;
     await this.options.control.releaseAllocation(found.allocationId);
     this.clearIdleTimer(found);
@@ -781,7 +952,7 @@ export class AgentConnectionController {
     const foreground = countsAsForegroundActivity
       && record.profile.idleRelease?.enabled === true
       && record.profile.idleRelease.activityProtocols.some((candidate) => candidate === protocol);
-    const exclusive = countsAsForegroundActivity && record.profile.requestScheduling === "foreground-exclusive";
+    const exclusive = countsAsForegroundActivity && !independentAudio(protocol) && record.profile.requestScheduling === "foreground-exclusive";
     record.activeRequests.set(requestId, { foreground, exclusive });
     if (foreground) this.clearIdleTimer(record);
     try {
@@ -816,23 +987,37 @@ export class AgentConnectionController {
     this.scheduleIdleRelease(record);
   }
 
-  private async healthRecord(record: ConnectionRecord): Promise<AgentConnectionApiResult> {
+  private async healthRecord(record: ConnectionRecord, selectedProviders = record.profile.providers): Promise<AgentConnectionApiResult> {
     this.refreshLifecycle(record);
     const providers: AgentProviderHealth[] = [];
     if (isTerminal(record.status) || record.status === "pending") {
-      for (const provider of record.profile.providers) {
+      for (const provider of selectedProviders) {
         providers.push(this.notReadyHealth(provider.name, provider.capability));
       }
     } else {
-      for (const provider of record.profile.providers) {
-        providers.push(await this.options.semantic.check({ allocationId: record.allocationId, provider }));
+      const checks = Promise.all(selectedProviders.map(async provider => {
+        const health = await this.options.semantic.check({ allocationId: record.allocationId, provider });
+        if (!isTerminal(record.status)) {
+          record.providerHealth.set(provider.name, health);
+          this.recordReadiness(record);
+        }
+        return health;
+      }));
+      try {
+        providers.push(...await (record.status === "ready" ? checks : withAbort(checks, record.readinessAbort.signal)));
+      } catch (error) {
+        if (!record.readinessAbort.signal.aborted) throw error;
       }
     }
     // Readiness may await a backend while the allocation expires or is released.
     this.refreshLifecycle(record);
+    if (isTerminal(record.status)) {
+      providers.splice(0, providers.length, ...selectedProviders.map(provider =>
+        this.notReadyHealth(provider.name, provider.capability)));
+    }
     const ready = !isTerminal(record.status) && record.status !== "pending" && providers.every((provider) => provider.ready);
     const acceptingRequests = ready && providers.every((provider) => provider.acceptingRequests);
-    if (ready && record.status === "probing") this.markReady(record);
+    if (ready && selectedProviders.length === record.profile.providers.length && record.status === "probing") this.markReady(record);
     const body: AgentConnectionHealth = {
       id: record.id,
       status: record.status,
@@ -938,6 +1123,7 @@ export class AgentConnectionController {
     if (this.background.has(record.id)) return;
     this.background.add(record.id);
     void this.runBackground(record).catch(async () => {
+      if (isTerminal(record.status)) return;
       this.options.control.rollbackUsageProfile(record.allocationId);
       record.preparationComplete?.(false); record.preparationComplete = undefined;
       record.status = "failed";
@@ -982,22 +1168,72 @@ export class AgentConnectionController {
         else await this.sleep(Math.min(remaining, Math.max(1_000, this.options.pollIntervalMs)));
       }
     }
-    if (!isTerminal(record.status)) {
-      this.options.control.rollbackUsageProfile(record.allocationId);
-      record.preparationComplete?.(false); record.preparationComplete = undefined;
-      record.status = "failed";
-      this.clearIdleTimer(record);
-      record.error = {
-        code: "connection_ready_timeout",
-        message: "connection did not become semantically ready before its deadline",
-      };
-      await this.options.control.releaseAllocation(record.allocationId);
-      this.pruneHistory();
-    }
+    this.expireReadiness(record);
+  }
+
+  private scheduleReadyDeadline(record: ConnectionRecord): void {
+    record.readyTimer = setTimeout(() => {
+      record.readyTimer = undefined;
+      this.refreshLifecycle(record);
+      if (!isTerminal(record.status) && record.status !== "ready") this.scheduleReadyDeadline(record);
+    }, Math.max(1, record.readyDeadline - this.now()));
+    record.readyTimer.unref?.();
+  }
+
+  private expireReadiness(record: ConnectionRecord): void {
+    if (isTerminal(record.status) || record.status === "ready" || this.now() < record.readyDeadline) return;
+    const waiting = this.options.control.getAllocation(record.allocationId)?.status === "waiting";
+    const reason = this.options.control.getAllocationWaitReason(record.allocationId);
+    this.options.control.rollbackUsageProfile(record.allocationId);
+    record.preparationComplete?.(false); record.preparationComplete = undefined;
+    record.status = "failed";
+    record.readinessAbort.abort(new Error("connection readiness deadline exceeded"));
+    record.error = {
+      code: waiting ? "connection_capacity_timeout" : "connection_ready_timeout",
+      message: waiting
+        ? `connection capacity wait exceeded its deadline (${reason?.reason ?? "scheduling_policy"}${reason?.runtime ? `: ${reason.runtime}` : ""})`
+        : "connection did not become semantically ready before its deadline",
+    };
+    this.clearIdleTimer(record);
+    this.pruneHistory();
+    this.recordReadiness(record);
+    // Publish the terminal state before waiting for backend cleanup.
+    void this.options.control.releaseAllocation(record.allocationId).catch(() => {
+      this.options.onEvent?.({ name: "agent_connection_cleanup_failed", labels: { connection: record.id, allocation: record.allocationId } });
+    });
+  }
+
+  private recordReadiness(record: ConnectionRecord): void {
+    if (!this.options.onEvent) return;
+    const allocation = this.options.control.getAllocation(record.allocationId);
+    const wait = this.options.control.getAllocationWaitReason(record.allocationId);
+    const labels = {
+      connection: record.id, allocation: record.allocationId, profile: record.selector.id,
+      status: record.status, allocationStatus: allocation?.status ?? "missing",
+      providers: record.profile.providers.map(provider => `${provider.name}:${
+        record.providerHealth.get(provider.name)?.ready ? "ready" : record.providerHealth.get(provider.name)?.reason ?? "connection_not_ready"
+      }`).join(","),
+      reason: record.error?.code ?? wait?.reason ?? "semantic_readiness",
+      ...(wait?.runtime ? { runtime: wait.runtime } : {}),
+      readyDeadline: new Date(record.readyDeadline).toISOString(),
+    };
+    const fingerprint = JSON.stringify(labels);
+    if (record.lastReadinessEvent === fingerprint) return;
+    record.lastReadinessEvent = fingerprint;
+    this.options.onEvent({ name: "agent_connection_readiness_changed", labels });
   }
 
   private refreshLifecycle(record: ConnectionRecord): void {
-    if (isTerminal(record.status)) { record.preparationComplete?.(false); record.preparationComplete = undefined; return; }
+    if (isTerminal(record.status)) {
+      record.readinessAbort.abort(new Error("connection is terminal"));
+      if (record.readyTimer) clearTimeout(record.readyTimer);
+      record.readyTimer = undefined;
+      record.preparationComplete?.(false); record.preparationComplete = undefined;
+      this.recordReadiness(record);
+      return;
+    }
+    this.expireReadiness(record);
+    if (isTerminal(record.status)) return;
     const allocation = this.options.control.getAllocation(record.allocationId);
     if (!allocation) {
       record.preparationComplete?.(false); record.preparationComplete = undefined;
@@ -1034,6 +1270,7 @@ export class AgentConnectionController {
   }
 
   private public(record: ConnectionRecord): PublicAgentConnection {
+    this.recordReadiness(record);
     const allocation = this.options.control.getAllocation(record.allocationId);
     const phase = isTerminal(record.status)
       ? "terminal" as const
@@ -1053,7 +1290,7 @@ export class AgentConnectionController {
       : allocation?.status === "waiting"
       ? "waiting" as const
       : "deploying" as const;
-    return {
+    const result: PublicAgentConnection = {
       id: record.id,
       allocationId: record.allocationId,
       bootEpoch: record.bootEpoch,
@@ -1083,7 +1320,8 @@ export class AgentConnectionController {
           ...(provider.embeddingSpace ? { embeddingSpace: provider.embeddingSpace } : {}),
           ...(provider.contextWindow ? { contextWindow: provider.contextWindow } : {}),
         ...(provider.chatInput ? { chatInput: this.publicChatInput(provider.chatInput) } : {}),
-          readiness: providerReadiness,
+          readiness: record.status === "probing" && record.providerHealth.get(provider.name)?.ready
+            ? "ready" : providerReadiness,
           claimable: record.status === "ready"
             && this.options.semantic.peek({ allocationId: record.allocationId, provider })?.ready === true,
         };
@@ -1099,6 +1337,28 @@ export class AgentConnectionController {
       ...(record.releasedAt ? { releasedAt: record.releasedAt } : {}),
       ...(record.error ? { error: record.error } : {}),
     };
+    if (record.audioConnections?.size) {
+      const children = [...record.audioConnections.values()].map(child => {
+        const childRecord = this.records.get(child.id);
+        if (!childRecord) return undefined;
+        this.refreshLifecycle(childRecord);
+        return this.public(childRecord);
+      });
+      result.expiresAt = new Date(Math.min(Date.parse(record.expiresAt), ...children.flatMap(child => child ? [Date.parse(child.expiresAt)] : []))).toISOString();
+      const providers = [...result.providers, ...children.flatMap(child => child?.providers ?? [])];
+      result.providers = record.requestedProfile!.providers.map(provider => providers.find(item => item.name === provider.name) ?? {
+        name: provider.name, capability: provider.capability, supportedCapabilities: provider.supportedCapabilities,
+        protocol: provider.protocol, endpoint: agentProviderEndpoint(provider.protocol), model: provider.publicModel,
+        readiness: "failed", claimable: false,
+      });
+      if (record.status !== "released" && record.status !== "expired") {
+        const statuses = [record.status, ...children.map(child => child?.status ?? "failed")];
+        result.status = statuses.every(status => status === "ready") ? "ready"
+          : statuses.some(status => status === "pending" || status === "probing") ? "probing" : "failed";
+        result.phase = result.status === "ready" ? "ready" : result.status === "failed" ? "terminal" : "probing";
+      }
+    }
+    return result;
   }
 
   private services(record: ConnectionRecord): PublicAgentConnection["services"] {
@@ -1230,9 +1490,20 @@ export class AgentConnectionController {
   }
 
   private pruneHistory(): void {
+    for (const record of this.records.values()) {
+      if (isTerminal(record.status)) {
+        record.readinessAbort.abort(new Error("connection is terminal"));
+        if (record.readyTimer) clearTimeout(record.readyTimer);
+        record.readyTimer = undefined;
+      }
+    }
     const limit = Math.max(1, this.options.historyLimit ?? 1_000);
     const terminal = [...this.records.values()]
-      .filter((record) => isTerminal(record.status) && record.activeRequests.size === 0)
+      .filter((record) => isTerminal(record.status) && record.activeRequests.size === 0
+        && ![...(record.audioConnections?.values() ?? [])].some(child => {
+          const status = this.records.get(child.id)?.status;
+          return status !== undefined && !isTerminal(status);
+        }))
       .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
     for (const record of terminal.slice(0, Math.max(0, terminal.length - limit))) {
       this.clearIdleTimer(record);
@@ -1244,6 +1515,9 @@ export class AgentConnectionController {
     this.refreshLifecycle(record);
     if (isTerminal(record.status)) return;
     record.status = "ready";
+    if (record.readyTimer) clearTimeout(record.readyTimer);
+    record.readyTimer = undefined;
+    this.recordReadiness(record);
     record.readyAt ??= new Date(this.now()).toISOString();
     if (record.usesUsageProtection && this.options.control.usage) this.options.control.retainUsageProfile(record.allocationId);
     this.options.control.completeUsageHandover(record.allocationId);
