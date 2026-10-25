@@ -329,7 +329,10 @@ export class ProviderInstanceManager {
     if (this.referenceCount(record) > 0 || record.warmRefs > 0) return;
     this.cancelIdle(record);
     const configured = managedWarmPolicy(record.runtime).idleTtlSeconds * 1_000;
-    const ttl = record.stopWhenIdle ? 0 : this.options.idleTtlMs ?? configured;
+    // The daemon-wide Preferred grace period must not override an elastic
+    // runtime's explicit on-demand lifetime (including immediate release).
+    const ttl = record.stopWhenIdle ? 0 : record.runtime.policy.class === "preferred"
+      ? this.options.idleTtlMs ?? configured : configured;
     const expectedGeneration = record.instance.generation;
     record.idleDeadline = new Date(this.now() + Math.max(0, ttl)).toISOString();
     const stop = () => void this.stopIfIdle(record.instance.id, expectedGeneration);

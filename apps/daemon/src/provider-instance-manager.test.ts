@@ -66,6 +66,34 @@ function fixture(idleTtlMs = 0) {
   return { manager, stopped, getEnsureCount: () => ensureCount };
 }
 
+test("elastic lifetimes keep their runtime TTL under the production Preferred grace period", async () => {
+  const { manager, stopped } = fixture(60_000);
+  const elastic = { ...runtime, policy: { ...runtime.policy, class: "elastic" as const } };
+  const instance = await manager.acquire(elastic, "vision", "release-a");
+  manager.retainRequest(instance.id, "inflight-image");
+  manager.releaseAllocation("vision");
+  await Bun.sleep(0);
+  expect(stopped).toEqual([]);
+  manager.releaseRequest(instance.id, "inflight-image");
+  await Bun.sleep(0);
+  expect(stopped).toEqual([instance.id]);
+
+  const delayed = { ...elastic, policy: { ...elastic.policy, warm: { minInstances: 0, idleTtlSeconds: 5 } } };
+  await manager.acquire(delayed, "delayed", "release-b");
+  manager.releaseAllocation("delayed");
+  expect(manager.inspect()[0]?.idleDeadline).toBe(new Date(5000).toISOString());
+  manager.close();
+});
+
+test("Preferred runtimes retain the configured daemon grace period", async () => {
+  const { manager, stopped } = fixture(60_000);
+  await manager.acquire(runtime, "preferred", "release-a");
+  manager.releaseAllocation("preferred");
+  expect(manager.inspect()[0]?.idleDeadline).toBe(new Date(60_000).toISOString());
+  expect(stopped).toEqual([]);
+  manager.close();
+});
+
 test("shares a revision and stops only after the last allocation reference", async () => {
   const { manager, stopped, getEnsureCount } = fixture();
   const [first, second] = await Promise.all([

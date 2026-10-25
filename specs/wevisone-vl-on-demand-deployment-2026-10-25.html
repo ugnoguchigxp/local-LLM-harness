@@ -113,6 +113,18 @@
       timingsはimageDecodeMs、preprocessMs、generationMs、maskMs、postprocessMs、totalMs。マスク用の再入力処理はmaskMsに含む。HTTP転送・JSON直列化・Connection作成・モデル起動時間は別で測る。通常検索ではoverlay・cutout等を描画せず、画像も結果もworkerのディスクへ保存しない。LARM中央の暗号化推論監査方針は適用される。
     </p>
   </section>
+  <section id="production-lifetime-regression">
+    <h2>本番の停止猶予との整合</h2>
+    <p>
+      初回リリース873ce123beaaでは中央APIの検索・説明・segmentationが成功したが、接続解放から停止まで約60秒かかった。隔離試験の共通猶予0msと本番の60000msに差があり、ProviderInstanceManagerがPreferred用の共通猶予をelasticの明示TTL=0にも適用していた。
+    </p>
+    <p>
+      共通猶予の適用をPreferredに限定し、elasticはruntime自身のTTLを使うよう修正する。Preferredの既存挙動は維持する。60000msの共通猶予下でelasticの即時停止・実行中要求の保護・指定5秒のTTL、およびPreferredの60000ms維持をテストする。隔離smokeも共通猶予60000msへ変更し、試験条件の差をなくす。
+    </p>
+    <p>
+      別の実プロセス試験では、claim後に要求を送らず放置したConnectionが60.236秒でreleasedとなり、PID=0を確認した。修正版の中央API再試験は配備後に記録する。
+    </p>
+  </section>
   <section id="measured-performance">
     <h2>隔離LARMでの実測</h2>
     <p>

@@ -31,7 +31,7 @@ if (values.isolated) {
   const backend = new SystemdBackend(registry.runtimes);
   const observer = new Observer(registry, backend);
   await observer.tick();
-  control = new ControlPlane(registry, backend, observer, { idleTtlMs: 0, pollIntervalMs: 100 });
+  control = new ControlPlane(registry, backend, observer, { idleTtlMs: 60_000, pollIntervalMs: 100 });
   ticker = setInterval(() => { void observer.tick(); }, 250);
   apiToken = randomBytes(32).toString("hex");
   const app = createApp({ registry, getState: () => observer.getState(), control, apiToken,

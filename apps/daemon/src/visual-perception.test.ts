@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
-import { loadRegistry, loadAgentConnectionCatalogForRegistry, visualPerceptionProbe } from "@larm/core";
+import { loadRegistry, loadAgentConnectionCatalogForRegistry, visualPerceptionProbe, type ProviderInstance } from "@larm/core";
 import type { RuntimeBackend, RuntimeHealth } from "@larm/backends";
 import { LarmClient, LarmApiError, type VisualPerceptionAgentProvider } from "../../../packages/client/src/index";
 import { createApp } from "./app";
@@ -29,9 +29,20 @@ test("vision Provider discovery, actual-image readiness, scoped validation, upst
   } });
   runtime.deployment.endpoint = `http://127.0.0.1:${peer.port}`;
   const health = (): RuntimeHealth => ({ runtimeId: runtime.id, service: "Running", listening: true, healthOk: true, busy: false });
-  const backend: RuntimeBackend = { list: async () => [health()], health: async () => health(), ensure: async () => health(), stop: async () => {} };
+  const stopped: string[] = [];
+  let instance: ProviderInstance;
+  const backend: RuntimeBackend = {
+    list: async () => [health()], health: async () => health(), ensure: async () => health(), stop: async id => { stopped.push(id); },
+    ensureInstance: async revision => {
+      instance = { id: "vision-instance", runtimeId: runtime.id, revision: revision.revision, generation: 1, node: runtime.node,
+        endpoint: runtime.deployment.endpoint, backendEndpoint: runtime.deployment.endpoint, status: "HOT", createdAt: new Date().toISOString() };
+      return instance;
+    },
+    healthInstance: async () => ({ ...instance, ...health() }),
+    drainInstance: async () => {}, stopInstance: async () => { stopped.push(runtime.id); },
+  };
   const observer = new Observer(registry, backend); await observer.tick();
-  const control = new ControlPlane(registry, backend, observer, { idleTtlMs: 0, pollIntervalMs: 1 });
+  const control = new ControlPlane(registry, backend, observer, { idleTtlMs: 60_000, pollIntervalMs: 1 });
   const apiToken = randomUUID();
   const app = createApp({ registry, getState: () => observer.getState(), control, apiToken,
     connectionSigningKey: randomBytes(32), promptRetentionKey: randomBytes(32).toString("hex"),
@@ -71,6 +82,8 @@ test("vision Provider discovery, actual-image readiness, scoped validation, upst
     await expect(client.perceive(provider, input)).rejects.toMatchObject({ status: 429 });
     mode = "valid";
     await client.releaseAgentConnection(id); id = undefined;
+    await Bun.sleep(0);
+    expect(stopped).toContain(runtime.id);
     expect((await raw(input)).status).toBe(401);
     expect(await fetch(`${base}/v1/vision/perceive`, { method: "POST", body: "{}" }).then(r => r.status)).toBe(401);
   } finally {
