@@ -4,8 +4,8 @@
     2026-10-25 の修正仕様。音声 Provider
     の起動・確保・readiness・claim・推論・認証情報の更新は、その Provider
     自身の状態だけを条件にする。LLM の KV 保持、Allocation 枠、生成、起動、semantic
-    probe、占有保護、Profile
-    切替の完了を条件にしない。本番反映は2026-10-25に承認され、配備準備中であり、以下はローカル実装の契約である。
+    probe、占有保護、Profile 切替の完了を条件にしない。2026-10-25 22:49:59 JSTにrelease
+    cab4d8aとして本番反映済み。runtime設定は変更していない。
   </p>
   <section id="allocation">
     <h2>確保と起動</h2>
@@ -98,16 +98,15 @@ const claim = await client.claimAgentConnection(audio.id, {
       の部分待機・claim も検証する。
     </p>
     <p>
-      検証完了：作業checkoutのbun run
-      check全体が成功し、アプリ・packageの923件のテストが成功した。配備済みae629483を基点にした統合候補でもtypecheckと1,021件のテストが成功し、環境条件による10件はskipされた。最後の音声更新・取消の補強はSDKと音声の46件の試験で確認した。
+      正式release
+      gateのinstall・audit・check・coverageはすべて成功。配備commitに対するアプリ・packageの1,026件が成功し、環境条件による10件はskipされた。LLM容量待ちとcold
+      startup、音声起動失敗、event collector失敗からの独立性も含む。
     </p>
     <p>
-      これらはローカルの合成 backend による回帰試験であり、本番 Provider
-      の速度測定ではない。本番反映と実接続の新規・再依頼・LLM
-      同時生成・音声10分無使用後の4条件は未実施。本番反映の承認は受領済みで、正式リリース検証と実接続の確認を進める。<a
-        href="./eumenes-voice-readiness-investigation-2026-10-25.html"
-        >当日の調査記録</a
-      >は原因の確定範囲と不足する観測を示す。
+      本番の実接続で、新規323.6ms、同構成への再依頼2.8ms、LLM生成中の新規106.4msを確認。600秒間の音声処理数増加なし、音声ProviderのPID維持。接続全体readyまで319.7ms。切替後最初の測定はLLMだけの待ちで6.332秒かかったが、音声は約0.23秒以内にreadyになった。標準canaryの固定文検査は不合格のため、全疎通検査に合格したとは扱っていない。詳細と配備時のLLM再読込みは<a
+        href="./eumenes-voice-readiness-investigation-2026-10-25.html#verification"
+        >実接続の検証記録</a
+      >を参照する。
     </p>
   </section>
 </article>

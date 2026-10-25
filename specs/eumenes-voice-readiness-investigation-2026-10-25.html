@@ -162,11 +162,8 @@
       も含む接続がもう1枠を必要とする。
     </p>
     <p>
-      構成案は、consumer が自分の未使用接続を再利用・解放して4枠内に収める、または承認後に
-      maxConcurrentAllocations を増やして maxConcurrentRequests=4
-      とキュー上限16を維持する、のいずれか。後者は同時推論スロットや KV
-      を増設する変更ではなく、追加の待機・キュー遅延を受け入れる方針変更である。8本の同時生成を保証する意味はない。真の同時実行数を増やす構成の
-      KV/GPU 費用は別の実測が必要で、ここでは断定しない。
+      LLMの接続枠とKVはLLM自身の制約として扱う。今回の修正は枠数の増減や未使用LLM接続の解放を解決策とせず、音声をその制約から切り離す。音声のwarm
+      floorとGPU/メモリ設定は既存のままで、独立化に伴うモデルの追加常駐は行っていない。実際の追加管理コストは音声ごとのConnection・Allocationであり、LLMのKVや推論スロットを増設する変更ではない。
     </p>
   </section>
   <section id="local-implementation">
@@ -185,66 +182,73 @@
   <section id="deployment-approval">
     <h2>設定変更・配備</h2>
     <p>
-      本番反映は2026-10-25に承認された。作業 checkout の既存変更を保持している。配備中の新しい
-      release に本パッチを取り込み、release
-      検査を通してから適用する必要がある。設定変更、再配備、daemon
-      の再起動は今回の承認に含まれる。Provider 再起動は今回の修正の前提ではない。
+      2026-10-25の利用者の明示承認に従い本番へ反映した。sudoは指定されたpasswordファイルを標準入力から渡し、認証情報を出力していない。事前バックアップを取得し、既存の署名付きrelease
+      builderとroot activatorを使用した。
+    </p>
+    <p>
+      2026-10-25 22:49:59 JSTにrelease
+      cab4d8a6df382905e9b025e5c87a30960ca7d3ebのcontract_verifiedを確認した。configRevisionは2097ca20a2a00da328624dee552d7c84c6b66f0fa3630e5879f285fa8a729c3aのままで、runtime・モデル・枠数・timeout設定は変更していない。ASR・VOICEVOX・KittenTTSのPIDと起動時刻は切替前後で同じだった。
+    </p>
+    <p>
+      daemonは再起動され、既存のin-memory
+      Connection/tokenは新bootEpochへ持ち越されない。LLMのllama-serverプロセスは3934403から4146003へ変わり、モデル再読込みが発生した。llama-swapの親プロセスは2509212のまま。配備時にLLMのKVが保持されたとは主張しない。運用APIで他consumerのConnectionをDELETEする操作は行っていない。
     </p>
   </section>
   <section id="verification">
     <h2>検証</h2>
     <p>
-      旧案の918件・統合候補1,016件の成功は、当初の期限・観測パッチに対する結果であり、音声独立化の証跡には流用しない。最新実装では独立確保・部分claim・HTTP転送・KV保持・cold
-      startupの分離・SDK部分待機の回帰試験を追加し、作業側923件と配備版統合候補1,021件が成功した。最後の音声更新・取消の補強もSDKと音声の46件で確認した。本番Providerを用いた速度の証明は未実施。
+      配備commitに対する正式なbun run check:releaseが成功した。frozen
+      install、全依存とproduction依存のhigh以上のaudit、全体check、coverageを含む。アプリ・packageは1,026件成功、環境条件による10件skip、0件失敗。既存のcoverage基準は変更していない。
     </p>
     <table>
       <caption>
-        実接続受入れは今回承認された配備後に実施する
+        本番の実接続結果（2026-10-25、合成入力のみ）
       </caption>
       <thead>
         <tr>
           <th scope="col">条件</th>
-          <th scope="col">記録・判定</th>
-          <th scope="col">現状</th>
+          <th scope="col">測定結果</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td>新規 llm/asr/tts 接続</td>
-          <td>
-            POST 開始から ready、GET ごとの status と各 readiness、readyDeadline。warm
-            かつ枠に余裕がある場合2秒以内。
-          </td>
-          <td>未実施</td>
+          <td>新規llm/asr/tts</td>
+          <td>warm追試323.6ms。ASR・TTSは113.5ms時点でready。</td>
         </tr>
         <tr>
-          <td>ready の同一構成へ新しい Idempotency-Key で POST</td>
-          <td>ID維持、各 readiness、2秒以内。別途 claim の時間も分離記録。</td>
-          <td>未実施</td>
+          <td>同じclient・構成で新しいIdempotency-Key</td>
+          <td>2.8ms、Connection ID維持、全Provider readyを維持。</td>
         </tr>
         <tr>
-          <td>別接続で LLM 生成しながら新規接続</td>
+          <td>別ConnectionでLLM生成中</td>
           <td>
-            合成テキストのみ。LLM
-            要求との実重複、容量枠数、準備時間と進捗。LLMが満枠でもASR/TTSだけは先にclaimして使えること。
+            106.4msで全Provider
+            ready。生成が継続中であることとactiveWorkloads=1を確認。無音WAV入力のASR往復は24.8ms、TTSは216.9ms、いずれもHTTP
+            200。LLMは約9.6秒間のSSEで515イベントを受信。
           </td>
-          <td>未実施</td>
         </tr>
         <tr>
-          <td>ASR/TTS を10分無使用にして新規接続</td>
-          <td>
-            合成音声・テキストのみ。10分間の Provider 推論数と PID を記録し、他 consumer
-            の利用があれば無使用試験不成立とする。
-          </td>
-          <td>未実施</td>
+          <td>音声10分無使用後</td>
+          <td>600秒間の音声処理数増加なし、音声ProviderのPID維持。接続全体readyまで319.7ms。</td>
         </tr>
       </tbody>
     </table>
     <p>
-      検証前に他 consumer の処理を preempt しない試験時間・枠を確保し、専用 client
-      を用いる。作成した試験接続だけを後片付けする。既存接続の解放、機密を含む音声・本文のログ採取は行わない。21:22
-      の正確な Connection ID
-      と、20時台の全遅延区間の帰属は観測不足により未確定であることを受入れ結果でも維持する。
+      切替後最初の測定は全体readyに6,332.3msかかった。一方ASRは127.1ms、TTSは228.8ms時点でreadyになり、LLMだけを待っていた。この測定時には標準疎通試験のLLM要求も並行していた。warm追試の値と区別し、全条件のLLM準備時間が必ず2秒以内になったとは主張しない。
+    </p>
+    <p>
+      追加の合成発話試験では、LLM生成と重なったままTTSが359.5ms、生成音声のASRが492.7msでHTTP
+      200となり、空でない文字起こしを確認した。音声・文字起こし本文は保存していない。
+    </p>
+    <p>
+      標準HTTP Provider canaryのJSON
+      schema検査は通ったが、固定文が厳密な「OK」だけであるという検査はshort_text_completion_invalidで不合格。HTTP
+      200・finish_reason=stop・応答の形は確認でき、返答本文は保存していない。音声独立化の実接続試験は成功したが、標準canary全体、consumer完了、24時間soakは合格扱いにせず、release収束状態はcontract_verifiedのままとする。
+    </p>
+    <p>
+      試験用ConnectionだけをDELETEし、すべて204を確認した。本文・音声・認証情報・Provider生応答は調査証跡へ記録していない。status/readinessと時間の証跡は
+      <code>/srv/ai/logs/larm-canary/audio-independent-20261025T133436Z-ae62948340e2</code> に保存した。21:22の正確なConnection
+      IDと20時台の全遅延の帰属は、当時の観測不足により未確定のままである。
     </p>
   </section>
 </article>

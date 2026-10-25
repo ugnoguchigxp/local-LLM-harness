@@ -1,0 +1,76 @@
+<article lang="ja">
+  <h1>Eumenesの音声開始をLLMの準備待ちから切り離す実装依頼</h1>
+  <section id="background">
+    <h2>反映済みのLARM仕様</h2>
+    <p>
+      LARMの音声Provider独立化は2026-10-25に本番反映済み。releaseはcab4d8a6df382905e9b025e5c87a30960ca7d3eb。ASR・TTSはLLMのKV保持、接続枠、生成、起動・切替を待たずに確保・ready・claim・利用できる。POST/GETの既存応答形と接続全体status=readyの意味は維持した。
+    </p>
+    <p>
+      Eumenesが接続全体のstatus=readyと全Providerのreadyを待ってからASRを開始する現状の手順では、引き続きLLM待ちが残る。Providerごとの待機とclaimに変更し、実接続で検証して本番反映すること。
+    </p>
+  </section>
+  <section id="implementation">
+    <h2>変更内容</h2>
+    <ol>
+      <li>
+        Profile・client・audience・必要Provider構成は維持してPOST
+        /v1/agent-connectionsを送る。GETを共有して監視し、ASR・TTS・LLMそれぞれを別の待機状態として扱う。
+      </li>
+      <li>
+        ASRはproviders内のasr.readiness=readyになり次第、接続全体のstatusや他Providerを待たずにclaimして文字起こしを開始する。TTSとLLMも自身のreadyだけを待つ。ASR準備中の音声を失わないよう既存の録音・バッファ・取消処理を保つ。
+      </li>
+      <li>
+        claimはPOST /v1/agent-connections/{id}/claimへ、例えば
+        {"format":"openai-provider-v1","providers":["asr"]}
+        を送る。TTSは["tts"]、LLMは["llm"]。応答で返されたProviderのendpoint、model、credentialを使う。認証情報をProvider間で流用しない。
+      </li>
+      <li>
+        接続全体がprobingでも音声Providerがreadyなら利用する。LLM失敗で全体がfailedでも、readyの音声Providerを一律停止しない。released・expired、対象Providerの失敗、利用者の取消は区別する。
+      </li>
+      <li>
+        ASRのクラウド切替はASR自身の準備・要求の失敗や期限超過で判断する。LLM/TTS未準備だけを理由に15秒後のASR切替を発動しない。各Providerの待機に期限と取消を設け、無期限待ちをなくす。
+      </li>
+      <li>
+        KV保持のLLM接続や背景LLM接続は維持する。接続枠を空けるための解放を解決策にしない。LLMだけの失敗・取消を理由に、まだ使う公開Connection全体をDELETEしない。会話終了時は自分の接続だけを適切に終了する。
+      </li>
+    </ol>
+  </section>
+  <section id="sdk">
+    <h2>SDKを使う場合</h2>
+    <pre><code>const audio = await client.waitForAgentConnection(connection, {
+  providers: ["asr"], timeoutMs: asrReadyTimeoutMs, signal
+});
+const claim = await client.claimAgentConnection(audio.id, {
+  format: "openai-provider-v1", providers: ["asr"]
+}, signal);</code></pre>
+    <p>
+      本番反映済みソースの@larm/clientにはProvider指定のwaitとclaimがある。Eumenesの導入版で型・挙動が一致することを確認する。既存の全Providerを待つラッパーを残したまま呼び出さない。
+    </p>
+  </section>
+  <section id="acceptance">
+    <h2>検証と報告</h2>
+    <ol>
+      <li>新規音声会話で、asrがreadyになり次第文字起こしが始まる。</li>
+      <li>
+        同じ構成の再POSTで既存readyを保持し、warmかつ対象の枠に余裕があれば2秒以内に準備できる。
+      </li>
+      <li>
+        主会話LLMと背景LLMを生成・KV保持させたまま、ASR・TTSを利用できる。LLM満枠時も音声のreadyと部分claimを確認する。音声確認中に既存LLM接続を解放しない。
+      </li>
+      <li>音声10分無使用後も同じ確認を行う。</li>
+      <li>
+        LLMだけの遅延・失敗、ASRだけの失敗・期限超過、会話取消と終了を検証し、対象外Providerを巻き込まない。
+      </li>
+    </ol>
+    <p>
+      POSTから各Provider
+      ready・claim・最初の音声要求までの時間、各readinessの遷移、ASRクラウド切替の有無と対象エラー理由を記録する。合成音声・テキストのみを使い、本文・音声・認証情報・Provider生応答をログや報告へ残さない。仕様確認、コード・設定変更、実接続検証、本番反映を分けて報告する。
+    </p>
+    <p>
+      LARM側の実測はwarm新規324ms、再依頼3ms、LLM生成中106ms、音声10分無使用後320ms。これらはEumenesの検証を代替しない。切替直後にはLLMだけの待ちで全体6.3秒、音声は約0.23秒以内にreadyという測定もあり、接続全体を待たないことが必要である。LARM標準canaryの厳密な固定文検査は別件で未合格。詳細は<a
+        href="./eumenes-voice-readiness-investigation-2026-10-25.html#verification"
+        >本番検証記録</a
+      >と<a href="./independent-audio-provider-connections.html">API仕様</a>を参照する。
+    </p>
+  </section>
+</article>
