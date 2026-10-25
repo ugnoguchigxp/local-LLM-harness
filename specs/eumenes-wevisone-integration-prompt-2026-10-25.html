@@ -1,0 +1,172 @@
+<article lang="ja">
+  <h1>Eumenes向けプロンプト：WeVisOneのオンデマンド利用</h1>
+  <p>
+    配備済みのAPI
+    schema、SDK、実画像の本番受入記録に基づく実装担当向け依頼文。Eumenes側の実装・接続試験・外部送信はこの文書作成には含まない。
+  </p>
+  <p>
+    配備の正本は<a href="./wevisone-vl-on-demand-deployment-2026-10-25.html"
+      >WeVisOneの配備・本番受入記録</a
+    >を参照する。
+  </p>
+  <section id="integration-prompt">
+    <h2>実装担当へ渡すプロンプト</h2>
+    <pre>Eumenesから、gnosisのLARMに配備済みのWeVisOne-VL-4Bをオンデマンドで利用できるようにしてください。既存のLARM連携を確認し、以下の契約に沿って実装・検証してください。
+
+目的
+- 自然文で指定した対象の検索、物体同士の関係や行動の理解、画像説明、必要に応じたマスク生成を追加します。
+- 既存のYOLOとOCRは通常の高速処理に引き続き使用します。WeVisOneは利用者が明示的に使う補助機能にしてください。
+- LARM側の配備・実画像推論・停止・再起動は検証済みです。Eumenesからの接続と画面への統合は今回の実装対象です。
+
+1. 接続先と新設した契約
+- 接続先はEumenesに設定済みのLARM Control originを使用してください。gnosis上の入口は http://127.0.0.1:9810 です。Eumenesが別ホストの場合、そのlocalhostを接続先にしないでください。
+- 新設の推論API：POST /v1/vision/perceive
+- protocol：larm.visual-perception.v1
+- apiStyle：larm-visual-perception
+- profile selector：visualPerception
+- Agent Profile：visual-perception
+- Provider名：vision
+- capability：vision.perception
+- model：wevisone-vl-4b
+- OpenAI Chat Completionsとして扱わず、専用のJSON契約を実装してください。
+- 内部workerの8094番ポートやsystemdを直接操作せず、LARM経由で利用してください。
+
+2. 接続の取得・認証・解放
+新設したのは推論APIと上記のProvider契約です。接続の取得・claim・解放には既存のAgent Connection APIを使います。
+
+(1) GET /v3/agent-profiles?profile=visualPerception
+- catalogRevision、Provider定義、audienceを取得してください。
+- gnosisと同一ホストの呼び出しはsame-hostを使用できます。別ホストではcatalogに公開された到達可能なaudienceを選び、claimのendpointがEumenesから届くことを確認してください。
+- 旧SDKに新しいselector・protocol・apiStyleがない場合は、対応するSDKまたは利用側の型・検証を更新してください。
+
+(2) POST /v1/agent-connections
+- Eumenesの既存LARM API Bearerを使用します。
+- Content-Type: application/json
+- Idempotency-Key: 操作ごとのUUID
+- 本文例：
+{
+  "profile": "visualPerception",
+  "expectedCatalogRevision": "&lt;直前のcatalogRevision&gt;",
+  "audience": "same-host",
+  "client": "eumenes-visual-perception",
+  "providers": ["vision"],
+  "ttlSeconds": 600,
+  "allowFallback": false,
+  "deploymentPolicy": "existing-only"
+}
+- pending/probingの場合はGET /v1/agent-connections/{id}でreadyまで待ちます。待機上限はまず120秒を確保し、failed/released/expiredを成功扱いしないでください。
+- 別ホストでは本文のaudienceを上記で選んだものへ変更します。
+
+(3) POST /v1/agent-connections/{id}/claim
+- 同じLARM API Bearerで、本文 {"format":"openai-provider-v1"} を送ります。
+- format名は既存契約の指定です。返ってくるvision Provider自体はapiStyle=larm-visual-perceptionです。
+- providersからname=vision、capability=vision.perception、protocol=larm.visual-perception.v1のProviderを確認してください。
+- 推論には、そのProviderのendpoint、model、credential.tokenを使用します。ControlのAPI Bearerだけで推論APIを直接呼ぶことはできません。
+- Providerの資格をブラウザの永続領域やログへ保存しないでください。
+
+(4) 処理後はfinally相当でDELETE /v1/agent-connections/{id}
+- 解放には接続取得時と同じLARM API Bearerを使います。Eumenes自身が取得した接続を解放してください。
+- 連続処理中に必要ならPOST /v1/agent-connections/{id}/renewへ {"ttlSeconds":600} を送ります。更新後の資格は再claim、またはSDKのrefreshAgentConnectionで取得してください。
+- 最終接続の解放でモデルが終了し、放置した接続も無通信60秒で自動解放されます。推論中の要求は保護されます。
+- 接続のTTL更新だけで無通信の自動解放を無効化できると仮定しないでください。再利用時に接続が終了していたら新しく取得します。
+
+3. 推論APIの要求
+claimで返されたendpointへ次の要求を送ります。
+- Authorization: Bearer &lt;Providerのcredential.token&gt;
+- Content-Type: application/json
+- Accept: application/json
+- 推論のクライアント期限は185秒程度。応答は同期のHTTP 200 JSONで、生成jobの202応答ではありません。
+
+{
+  "model": "wevisone-vl-4b",
+  "image": "data:image/png;base64,&lt;画像のbase64&gt;",
+  "task": "referring",
+  "query": "飲み物をこぼして倒れているカップ",
+  "maxNewTokens": 160
+}
+
+画像と要求の制限：
+- PNG/JPEG/WebPの静止画を1枚。実際の形式とdata URIのMIMEを一致させます。
+- 復号後4MiB以下、4194304 pixels以下、各辺8192px以下。要求全体8MiB以下。
+- imageはbase64 data URIです。URL、ホストのファイルパス、既存のimage-artifact IDは受け付けません。
+- EXIFの向きが正規化されます。表示と座標の基準を揃えてください。
+- queryは通常2048文字以内の文字列です。
+- maxNewTokensは16〜512、省略時256。未知のフィールドは追加しないでください。
+
+taskの使い分け：
+- referring：関係・行動・状態を自然文で指定して対象を検索。
+- detection：カテゴリによる検出。queryに最大32個の文字列配列も指定可能、各要素1〜128文字。
+- describe：画像の内容を説明。queryに説明してほしい内容を指定。
+- count_box：対象を箱で検出して数える。
+- segmentation：自然文で対象を指定し、二値マスクを取得。
+- matting：自然文で対象を指定し、連続alphaを取得。
+- ocr：文字領域と文字列。queryは必須ですが空文字を指定可能。
+- ocr_grounding：queryに指定した文字列の位置を検索。
+- 画像説明の例：{"task":"describe","query":"この画像で何が起きているか説明してください。"}。他の必須フィールドも共通で送ります。
+
+4. 応答の扱い
+主なフィールド：
+- contractVersion：larm.visual-perception.v1
+- model、modelRevision、task
+- image：width、height、orientation="exif-normalized"
+- response：モデルの生テキスト
+- detections：[{label,box:[x1,y1,x2,y2],text?}]
+- masks：[{detectionIndex,encoding,mode,width,height,data}]
+- count：切断されていないcount_boxの場合に返る検出箱の個数
+- truncated：生成上限によって結果が途中で切れたか
+- timings：imageDecodeMs、preprocessMs、generationMs、maskMs、postprocessMs、totalMs
+- execution：device、backend、dtype、decoderDtype、outputTokens、visualTokens
+
+表示と検証：
+- boxはEXIF正規化後の元画像pixelによるxyxyです。0〜1や0〜1000の座標ではありません。表示画像への縮尺を反映してください。
+- 座標はdetectionsを使い、response内の特殊トークンから再計算しないでください。responseをHTMLとして描画せず、テキストとして扱います。
+- describeではresponseを説明として表示し、detectionsは空です。
+- confidenceは提供しません。独自の確信度を作らないでください。
+- truncated=trueは不完全な結果として表示します。countも真の物体数を保証するものではありません。
+- segmentationのmaskは0.5閾値の二値PNG、mattingは8bit連続alpha PNGです。
+- masks[].dataはdata URIではなくPNGのbase64本体、encodingはpng-base64、modeはbinaryまたはalphaです。
+- detectionIndexでdetectionsと対応させます。同じlabelが複数あってもlabelだけで結合しないでください。
+- 最大8マスク、PNG合計4MiB。元画像と同じ寸法です。
+- timingsの単位はミリ秒です。モデル起動・HTTP転送・JSON直列化・中央の監査処理はworkerのtotalMsに含まれません。Eumenes側の待ち時間も別に測定してください。
+
+5. 操作感・失敗時の扱い
+- 「起動中」「解析中」「完了」「失敗」を区別してください。
+- 本番の1536×1024画像では、COLDからclaimまで約17秒、検索約14秒、説明約21秒、マスク生成約26秒でした。小標本の目安です。
+- 後処理は検索約0.16ms、マスク約11ms。通常検索ではoverlay画像の保存を行いません。
+- 同時実行1要求、推論キュー0。Eumenes側で並列要求を抑制してください。
+- 400：要求形式・model不一致などを修正。
+- 413：画像・要求・マスク出力などの上限超過。
+- 401：接続・資格の期限切れや解放済みを確認し、必要なら接続を再取得。
+- 429：競合を画面で示し、無制限に再送しない。
+- 接続管理の409や、503/504も区別して扱ってください。
+- 推論POSTの冪等性は提供していません。timeoutや通信断だけで同じ推論を無条件に並列再送しないでください。
+- 日本語OCRには文字の欠落や無文字画像の誤読がありました。通常のOCRを置き換えないでください。
+- workerは入力・結果画像をディスクに保存しませんが、LARM中央の暗号化推論監査方針は適用されます。「一切保存されない」と表示しないでください。
+
+6. SDKと正本
+対応済みTypeScript SDKでは以下を利用できます。
+- listAgentProfilesV3("visualPerception")
+- createAgentConnection / waitForAgentConnection / claimAgentConnection
+- LarmClient.perceive(claimedProvider, request, signal?)
+- refreshAgentConnection / releaseAgentConnection
+- VisualPerceptionAgentProvider型
+
+gnosis上の参照先：
+- 配備中のruntime code commit：ca5242bd421fd376d6de2c5b747d14427dc70a0e
+- API schema：/srv/ai/apps/larm-current/packages/core/src/visual-perception.ts
+- 接続・claim schema：/srv/ai/apps/larm-current/packages/core/src/agent-connection.ts
+- SDK：/srv/ai/apps/larm-current/packages/client/src/client-provider-protocols.ts
+- 実API試験：/srv/ai/apps/larm-current/deploy/local-node/scripts/smoke-wevisone-profile.ts
+- 本番受入記録：/srv/ai/apps/larm-wevisone-on-demand-20261025/specs/wevisone-vl-on-demand-deployment-2026-10-25.html
+- 実応答・計測の証跡：/srv/ai/evidence/wevisone-vl-deployment-20261025/production/
+
+7. 受入条件
+- Eumenesの既存接続設定・認証・秘密情報の管理方法を再利用する。
+- Eumenesから停止状態のモデルを起動し、画像検索・画像説明・segmentationの実応答を表示する。
+- 座標と表示画像の対応、マスクの対応、truncated、処理時間を確認する。
+- 終了・失敗・取消時の接続解放、放置後の自動終了、再取得による再利用を確認する。
+- 既存のYOLO・OCR・通常会話の経路を維持する。
+- 契約テスト、Eumenesからのlive API試験、画面での確認結果を分けて報告する。
+</pre>
+  </section>
+</article>
