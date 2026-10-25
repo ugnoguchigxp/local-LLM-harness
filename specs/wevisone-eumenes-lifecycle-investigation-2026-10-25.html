@@ -1,0 +1,247 @@
+<article lang="ja">
+  <h1>Eumenes視覚解析：停止観測と取消直後の再取得 — 2026-10-25</h1>
+  <section id="conclusions">
+    <h2>確認した結論</h2>
+    <p>
+      稼働版ca5242bd421fd376d6de2c5b747d14427dc70a0eのコード、通常API資格による読み取り、20:21〜20:29
+      JSTの状態メタデータを照合した。既存のGET /stateは通常のAPI Bearerで200、GET
+      /v1/inspection/runtimesは同じ資格で403だった。inspection権限の拡大は不要。
+    </p>
+    <p>
+      取消直後の再取得は、停止処理中の旧instanceを再利用できてしまうLARM側の競合と整合する。遅延stopを使う再現試験で、旧世代へ結び付くことと取消が無視されることを確認した。停止完了を待って世代を再解決する修正により同じ3条件が合格した。利用側の3条件が今回の停滞を起こした証拠はない。
+    </p>
+    <p>
+      修正コード・契約試験は合格。本番配備と、実モデルのclaim→取消→待ち時間なしの再取得を4回行う受入試験は配備後に追記する。
+    </p>
+    <p>
+      証跡はソース外の <code>/srv/ai/evidence/wevisone-vl-eumenes-investigation-20261025</code>。収集は時刻・ID・状態・世代・HTTP
+      status等のメタデータに限定した。トークン、画像、推論本文、Providerの生応答は通常ログへ出していない。元の配備は<a
+        href="./wevisone-vl-on-demand-deployment-2026-10-25.html"
+        >本番配備記録</a
+      >を参照。
+    </p>
+  </section>
+  <section id="existing-observation">
+    <h2>既存権限での停止観測</h2>
+    <table>
+      <caption>
+        公開APIと認証条件
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">API</th>
+          <th scope="col">用途</th>
+          <th scope="col">認証</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">GET /v1/agent-connections/{id}</th>
+          <td>自分の接続のallocationId・releasedAt・statusを確認</td>
+          <td>接続取得時と同じAPI Bearer</td>
+        </tr>
+        <tr>
+          <th scope="row">GET /v1/allocations/{allocationId}</th>
+          <td>bindingsからvision.perceptionのruntimeを特定</td>
+          <td>通常のAPI Bearer。実機で200を確認</td>
+        </tr>
+        <tr>
+          <th scope="row">GET /runtimes/{runtimeId}</th>
+          <td>静的なcapability・protocol・startupPolicyを確認</td>
+          <td>通常のAPI Bearer。実機で200を確認</td>
+        </tr>
+        <tr>
+          <th scope="row">GET /state</th>
+          <td>runtimeの稼働状態とobservedAtを観測</td>
+          <td>通常のAPI Bearer。実機で200を確認。Provider専用資格ではない</td>
+        </tr>
+        <tr>
+          <th scope="row">GET /v1/inspection/runtimes</th>
+          <td>内部配備情報。今回は利用しない</td>
+          <td>管理資格が必要。通常資格では403を維持</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      接続のallocationIdからbindingsのcapability=vision.perception・route=vision-wevisoneを選ぶと、今回のruntimeはwevisone-vl-4bだった。モデル名やポートから推測せず、要求が解決されたbindingを使う。解放済みallocationのbindingも参照できた。
+    </p>
+    <pre><code>{
+  "generatedAt": "2026-10-25T11:43:14.321Z",
+  "online": true,
+  "runtimes": [{
+    "id": "wevisone-vl-4b",
+    "status": "COLD",
+    "class": "elastic",
+    "capability": ["vision.perception"],
+    "observedAt": "2026-10-25T11:43:14.321Z",
+    "health": {"ok": false}
+  }]
+}</code></pre>
+    <p>
+      上記は実応答から対象runtimeだけ抜粋した例。日時はUTCである。GET
+      /stateは既存Observerのsnapshotを読むだけで、モデルを起動せず、semantic推論も行わない。利用側はcache:
+      no-storeで500ms〜1秒間隔、まず30秒を上限として観測する。online=true、対象runtimeが存在、status=COLD、observedAtが接続のreleasedAt以降で新鮮なことを確認する。修正ではサーバー側にもCache-Control:
+      no-storeを付ける。
+    </p>
+    <p>
+      releasedは接続の解放であり、単独ではプロセス終了の証拠ではない。health.ok=falseも単独では停止の証拠にしない。古いsnapshot・offline・未知のruntime・daemonのboot
+      epoch変更では停止未確認とする。他の利用者が再取得すればHOTになるため、自分の解放後にCOLDが見えないことだけで障害と判断しない。
+    </p>
+    <p>
+      COLDは非稼働の観測値で、公開応答にPID・cgroup・GPUメモリはない。現在のderiveStatusはservice=Unknownかつ待受なしの場合もCOLDにするため、COLDをOSのPID消滅の厳密な証明とは呼ばない。今回の過去のプロセス終了は、LARMと独立したユーザーsystemdのStopped記録でも照合した。
+    </p>
+  </section>
+  <section id="timeline">
+    <h2>該当時間帯の時系列</h2>
+    <table>
+      <caption>
+        2026-10-25、すべてJST。画像・推論内容は含まない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">時刻</th>
+          <th scope="col">確認した事実</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">20:21:50.900</th>
+          <td>無通信解放試験のallocationを受理。primary-startable。</td>
+        </tr>
+        <tr>
+          <th scope="row">20:22:17.967〜22.622</th>
+          <td>世代9のbackend準備完了、画像readiness probe完了。</td>
+        </tr>
+        <tr>
+          <th scope="row">20:23:22.622</th>
+          <td>aconn末尾4a710f5d-2292-4c94-b7c4-7c23aa1dadc1を60秒の無通信で解放。</td>
+        </tr>
+        <tr>
+          <th scope="row">20:23:22.830 / 22.874</th>
+          <td>systemdのStopped記録 / LARMの世代9停止完了。接続解放後約0.25秒。</td>
+        </tr>
+        <tr>
+          <th scope="row">20:23:24.078</th>
+          <td>次の接続を取得。primary-startable。</td>
+        </tr>
+        <tr>
+          <th scope="row">20:23:58.656〜20:24:01.303</th>
+          <td>世代10のbackend準備完了、画像readiness probe完了。</td>
+        </tr>
+        <tr>
+          <th scope="row">20:24:02.105〜02.112</th>
+          <td>aconn末尾7463f8b3-5a66-4554-a322-ff49da3e79a9を解放し、systemdがStoppingへ。</td>
+        </tr>
+        <tr>
+          <th scope="row">20:24:02.275</th>
+          <td>
+            直後の再取得を受理。allocation末尾242cc17e-3fb9-4149-bf8f-d003246df7d6。primary-liveだがpending。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">20:24:02.329 / 02.354</th>
+          <td>世代10のsystemd停止 / LARM停止完了。直前の再取得は停止完了より前に入った。</td>
+        </tr>
+        <tr>
+          <th scope="row">20:24:02〜20:26:02</th>
+          <td>
+            この再取得に新しいprovider_instance_ensuredもallocation_readyもなく、operationはverifying-runtimeのまま。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">20:26:02.303</th>
+          <td>
+            約120秒後、利用側の解放によりoperationがcancelled。LARM自身のstartup
+            deadlineは20:29:02.275だった。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">20:28:05.338〜25.255</th>
+          <td>
+            再実行でprimary-startableを選び、世代11を起動。backend起動18.068秒、probe完了までは約19.917秒。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">20:28:26.317〜36.379</th>
+          <td>利用側の推論POSTが成功。HTTP 200。</td>
+        </tr>
+        <tr>
+          <th scope="row">20:28:36.390〜36.666</th>
+          <td>接続解放から世代11の停止完了。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      停滞したoperationはop_d7a6ecf4-e62f-418e-a7a9-5e22a25a841c。公開APIでもstatus=cancelled、phase=verifying-runtime、createdAt=11:24:02.275Z、completedAt=11:26:02.303Zを確認できた。この要求は資源待ちのwaitingではなく、受理後のruntime検証で停滞していた。
+    </p>
+    <p>
+      当時の個々のhealth応答や全内部参照の履歴は残していないため、旧listenerが返した詳細と内部の全命令順は過去ログだけでは復元できない。一方、停止中に旧instanceを返してしまう競合は現行コードで再現し、世代・再起動・待ち状態の記録とも一致した。Eumenesの25.8秒という起動計測とサーバーの18.068秒は測定区間が異なり、その差の内訳はEumenes側の計測開始点なしでは確定しない。
+    </p>
+  </section>
+  <section id="readiness-contract">
+    <h2>Eumenesの待機条件</h2>
+    <p>
+      status=ready、対象Providerのreadiness=ready、claimable=trueという条件は現行schemaに存在し、初回の利用可能状態を確かめる十分条件として整合する。今回の停滞ではallocation自体がreadyになっておらず、条件を緩めても正しく推論できない。
+    </p>
+    <p>
+      ただしreadinessは接続statusから生成され、claimableはsemantic.peekの10秒キャッシュに依存する。GET
+      Connectionはキャッシュを更新しない。したがって次の状態も契約上あり得る。Providerの欠落・型の変更ではない。
+    </p>
+    <pre><code>{
+  "status": "ready",
+  "phase": "ready",
+  "providers": [{
+    "name": "vision",
+    "capability": "vision.perception",
+    "protocol": "larm.visual-perception.v1",
+    "endpoint": "/v1/vision/perceive",
+    "model": "wevisone-vl-4b",
+    "readiness": "ready",
+    "claimable": false
+  }]
+}</code></pre>
+    <p>
+      例は関連フィールドの抜粋。推奨はpending/probingを待ち、status=readyでProvider識別を照合してPOST
+      claimへ進むこと。claimはfreshなsemantic checkを行い、そのHTTP
+      200と資格付きdescriptorを最終判定にする。provider_semantic_not_readyの503は接続が有効な範囲で短いbackoff、connection_not_readyの409は状態を再取得する。failed/released/expiredなら終了する。claimable=falseだけを理由にGET
+      Connectionを無期限に繰り返さない。
+    </p>
+    <p>
+      claimのformatは引き続きopenai-provider-v1、ProviderのapiStyleはlarm-visual-perception。SDKのwaitForAgentConnection→claimAgentConnectionもこの順序を使う。11秒進めた時計による契約試験でready/claimable=falseを再現し、claimによる再probeと成功、その後のclaimable=trueを確認した。
+    </p>
+  </section>
+  <section id="fix">
+    <h2>LARM側の修正範囲</h2>
+    <p>
+      ProviderInstanceManagerで進行中のstopを追跡し、同じrevisionのacquireはその完了を待って再解決する。非同期health応答やensureの完了後にもrecordが現行か確認し、停止済みの旧世代を復活させない。待機中の取消は呼び出し元だけを中断し、共有の停止処理は中断しない。停止中のrecordをretainExistingから返さない。
+    </p>
+    <p>
+      停止後の再起動を遅延sleepやモデル名の特例で回避しない。モデル、route、資源予約、通常のPreferred猶予、Provider資格、inspectionの権限は変更しない。GET
+      /stateのno-store指定だけを読み取りAPIへ追加する。
+    </p>
+    <p>
+      再現試験の修正前は3件すべて失敗、修正後は既存14件と合わせ17件合格。停止中の再取得、health応答とstopの競合、待機中の取消を確認した。追加の公開API認証とキャッシュ契約試験も含むBun全試験・coverageは1013
+      pass・10 skip・0 failで、既存critical coverage基準を通過した。
+    </p>
+  </section>
+  <section id="optional-strict-contract">
+    <h2>厳密なプロセス終了が必要な場合の最小契約案</h2>
+    <p>
+      この節は未実装の提案である。COLDの観測で足りる利用には既存APIを使う。OSプロセスの終了を専用の保証として必要とする場合は、GET
+      /v1/agent-connections/{id}/providers/{name}/lifecycleを追加し、自分のConnectionの元bindingに限定した読み取りを公開する。通常API
+      Bearerで接続所有者を照合し、解放後も履歴保持期間内は利用可能とする。解放で失効したProvider資格や匿名には許可しない。
+    </p>
+    <pre><code>{
+  "contractVersion": "larm.provider-lifecycle.v1",
+  "provider": "vision",
+  "model": "wevisone-vl-4b",
+  "state": "stopped",
+  "processStopped": true,
+  "observedAt": "2026-10-25T11:43:14.321Z",
+  "fresh": true
+}</code></pre>
+    <p>
+      stopped/trueは対象世代のbackendによる肯定的な停止観測に限定し、systemdならunit停止・MainPID=0・対象cgroup空を確認する。共有server型など個別プロセス停止が意味を持たないbackendや観測失敗ではprocessStopped=null、state=unknownとする。古い観測や履歴消失を停止成功に変換しない。PID・unit名・ホストパス・他の利用者・推論内容・資格は返さず、ensure/startやsemantic推論を起こさない。GPU全体の空きメモリを保証する契約にはしない。
+    </p>
+  </section>
+</article>

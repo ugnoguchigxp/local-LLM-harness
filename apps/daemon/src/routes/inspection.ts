@@ -23,7 +23,10 @@ export function registerInspectionRoutes(app: Hono, deps: InspectionRouteDeps): 
     return c.json(publicRuntime(runtime));
   });
 
-  app.get("/state", (c) => c.json(publicClusterState(deps.getState())));
+  app.get("/state", (c) => {
+    c.header("cache-control", "no-store");
+    return c.json(publicClusterState(deps.getState()));
+  });
 
   app.get("/v1/inspection/runtimes", (c) => c.json({
     runtimes: deps.registry.runtimes.map(inspectionRuntime),

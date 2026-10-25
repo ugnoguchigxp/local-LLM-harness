@@ -6,6 +6,7 @@ import {
   type RuntimeDefinition,
 } from "@larm/core";
 import { LifecycleError, type RuntimeBackend } from "@larm/backends";
+import { withAbort } from "./http-body";
 
 type RefKind = "allocation" | "request" | "mutation";
 
@@ -102,6 +103,7 @@ export class ProviderInstanceManager {
   ): ProviderInstance | undefined {
     const record = [...this.byId.values()].find(
       (item) => item.instance.runtimeId === runtimeId
+        && !this.stopping.has(item.instance.id)
         && ["STARTING", "HOT", "BUSY"].includes(item.instance.status)
         && (!providerRevision || item.instance.revision === providerRevision),
     );
@@ -122,113 +124,134 @@ export class ProviderInstanceManager {
     const revision = typeof runtimeRelease === "string" || runtimeRelease === undefined
       ? compileProviderRevision({ runtime, runtimeRelease })
       : compileProviderRevision({ runtime, release: runtimeRelease });
-    let record = this.byRevision.get(revision.revision);
-    if (record && this.backend.healthInstance && this.backend.ensureInstance) {
-      const observed = await this.backend.healthInstance(record.instance.id);
-      record.instance.status = observed.status;
-      if (!["STARTING", "HOT", "BUSY"].includes(observed.status)) {
-        record.instance = await this.backend.ensureInstance(revision, runtime, signal);
+    for (;;) {
+      signal?.throwIfAborted();
+      let record = this.byRevision.get(revision.revision);
+      const retirement = record && this.stopping.get(record.instance.id);
+      if (retirement) {
+        // A stop already sent to the backend cannot be undone by a healthy old
+        // listener. Wait for retirement, then resolve the revision again.
+        await (signal ? withAbort(retirement, signal) : retirement);
+        continue;
       }
-    }
-    if (record?.instance.status === "FAILED" && this.referenceCount(record) === 0 && record.warmRefs === 0) {
-      this.cancelIdle(record);
-      if (await this.stopIfIdle(record.instance.id, record.instance.generation)) {
-        record = undefined;
+      if (record && this.backend.healthInstance && this.backend.ensureInstance) {
+        let observed;
+        try {
+          const health = this.backend.healthInstance(record.instance.id);
+          observed = await (signal ? withAbort(health, signal) : health);
+        } catch (error) {
+          if (!this.isCurrent(record)) continue;
+          throw error;
+        }
+        if (!this.isCurrent(record)) continue;
+        record.instance.status = observed.status;
+        if (!["STARTING", "HOT", "BUSY"].includes(observed.status)) {
+          const recovered = await this.backend.ensureInstance(revision, runtime, signal);
+          if (!this.isCurrent(record)) continue;
+          record.instance = recovered;
+        }
       }
-    }
-    if (record && !["STARTING", "HOT", "BUSY"].includes(record.instance.status)) {
-      throw new LifecycleError(
-        "revision_conflict",
-        `runtime ${runtime.id} revision ${revision.revision.slice(0, 12)} is ${record.instance.status}`,
-      );
-    }
-    if (!record) {
-      const conflictingFlight = [...this.ensures.values()].find(
-        (item) => item.runtimeId === runtime.id && item.revision !== revision.revision,
-      );
-      if (conflictingFlight) {
+      if (record?.instance.status === "FAILED" && this.referenceCount(record) === 0 && record.warmRefs === 0) {
+        this.cancelIdle(record);
+        if (await this.stopIfIdle(record.instance.id, record.instance.generation)) {
+          record = undefined;
+        }
+      }
+      if (record && !["STARTING", "HOT", "BUSY"].includes(record.instance.status)) {
         throw new LifecycleError(
           "revision_conflict",
-          `runtime ${runtime.id} is starting a different revision`,
+          `runtime ${runtime.id} revision ${revision.revision.slice(0, 12)} is ${record.instance.status}`,
         );
       }
-      const conflicting = [...this.byId.values()].find(
-        (item) => item.instance.runtimeId === runtime.id
-          && item.instance.revision !== revision.revision,
-      );
-      if (conflicting) {
-        if (this.referenceCount(conflicting) > 0 || conflicting.warmRefs > 0) {
+      if (!record) {
+        const conflictingFlight = [...this.ensures.values()].find(
+          (item) => item.runtimeId === runtime.id && item.revision !== revision.revision,
+        );
+        if (conflictingFlight) {
           throw new LifecycleError(
             "revision_conflict",
-            `runtime ${runtime.id} still has references to revision ${conflicting.instance.revision.slice(0, 12)}`,
+            `runtime ${runtime.id} is starting a different revision`,
           );
         }
-        this.cancelIdle(conflicting);
-        if (!await this.stopIfIdle(conflicting.instance.id, conflicting.instance.generation)) {
-          throw new LifecycleError(
-            "revision_conflict",
-            `runtime ${runtime.id} could not retire its previous revision`,
-          );
-        }
-      }
-
-      let flight = this.ensures.get(revision.revision);
-      if (!flight) {
-        const controller = new AbortController();
-        let createdFlight!: EnsureFlight;
-        const promise = (async () => {
-          const instance = this.backend.ensureInstance
-            ? await this.backend.ensureInstance(revision, runtime, controller.signal)
-            : await this.ensureLegacy(revision.revision, runtime, controller.signal);
-          const created: ManagedInstance = {
-            instance,
-            runtime,
-            refs: { allocation: new Set(), request: new Set(), mutation: new Set() },
-            warmRefs: 0,
-          };
-          this.byRevision.set(revision.revision, created);
-          this.byId.set(instance.id, created);
-          this.emit("provider_instance_ensured", created);
-          if (createdFlight.waiters.size === 0) this.scheduleIfIdle(created);
-          return created;
-        })().finally(() => {
-          createdFlight.settled = true;
-          if (this.ensures.get(revision.revision) === createdFlight) {
-            this.ensures.delete(revision.revision);
+        const conflicting = [...this.byId.values()].find(
+          (item) => item.instance.runtimeId === runtime.id
+            && item.instance.revision !== revision.revision,
+        );
+        if (conflicting) {
+          if (this.referenceCount(conflicting) > 0 || conflicting.warmRefs > 0) {
+            throw new LifecycleError(
+              "revision_conflict",
+              `runtime ${runtime.id} still has references to revision ${conflicting.instance.revision.slice(0, 12)}`,
+            );
           }
-        });
-        createdFlight = {
-          runtimeId: runtime.id,
-          revision: revision.revision,
-          controller,
-          promise,
-          settled: false,
-          waiters: new Set(),
-        };
-        flight = createdFlight;
-        this.ensures.set(revision.revision, flight);
-      }
+          this.cancelIdle(conflicting);
+          if (!await this.stopIfIdle(conflicting.instance.id, conflicting.instance.generation)) {
+            throw new LifecycleError(
+              "revision_conflict",
+              `runtime ${runtime.id} could not retire its previous revision`,
+            );
+          }
+        }
 
-      const waiter = Symbol(allocationId);
-      flight.waiters.add(waiter);
-      let completed = false;
-      try {
-        record = await this.waitForFlight(flight, signal);
-        completed = true;
-      } finally {
-        flight.waiters.delete(waiter);
-        if (!flight.settled && flight.waiters.size === 0) {
-          flight.controller.abort(new Error("provider ensure has no remaining waiters"));
-        } else if (!completed && flight.waiters.size === 0) {
-          const orphan = this.byRevision.get(flight.revision);
-          if (orphan) this.scheduleIfIdle(orphan);
+        let flight = this.ensures.get(revision.revision);
+        if (!flight) {
+          const controller = new AbortController();
+          let createdFlight!: EnsureFlight;
+          const promise = (async () => {
+            const instance = this.backend.ensureInstance
+              ? await this.backend.ensureInstance(revision, runtime, controller.signal)
+              : await this.ensureLegacy(revision.revision, runtime, controller.signal);
+            const created: ManagedInstance = {
+              instance,
+              runtime,
+              refs: { allocation: new Set(), request: new Set(), mutation: new Set() },
+              warmRefs: 0,
+            };
+            this.byRevision.set(revision.revision, created);
+            this.byId.set(instance.id, created);
+            this.emit("provider_instance_ensured", created);
+            if (createdFlight.waiters.size === 0) this.scheduleIfIdle(created);
+            return created;
+          })().finally(() => {
+            createdFlight.settled = true;
+            if (this.ensures.get(revision.revision) === createdFlight) {
+              this.ensures.delete(revision.revision);
+            }
+          });
+          createdFlight = {
+            runtimeId: runtime.id,
+            revision: revision.revision,
+            controller,
+            promise,
+            settled: false,
+            waiters: new Set(),
+          };
+          flight = createdFlight;
+          this.ensures.set(revision.revision, flight);
+        }
+
+        const waiter = Symbol(allocationId);
+        flight.waiters.add(waiter);
+        let completed = false;
+        try {
+          record = await this.waitForFlight(flight, signal);
+          completed = true;
+        } finally {
+          flight.waiters.delete(waiter);
+          if (!flight.settled && flight.waiters.size === 0) {
+            flight.controller.abort(new Error("provider ensure has no remaining waiters"));
+          } else if (!completed && flight.waiters.size === 0) {
+            const orphan = this.byRevision.get(flight.revision);
+            if (orphan) this.scheduleIfIdle(orphan);
+          }
         }
       }
+      if (!this.isCurrent(record)) continue;
+      this.cancelIdle(record);
+      record.stopWhenIdle = false;
+      record.refs.allocation.add(allocationId);
+      return record.instance;
     }
-    this.cancelIdle(record);
-    record.stopWhenIdle = false;
-    record.refs.allocation.add(allocationId);
-    return record.instance;
   }
 
   retainRequest(instanceId: string, requestId: string): void {
@@ -318,6 +341,11 @@ export class ProviderInstanceManager {
     const record = this.byId.get(instanceId);
     if (!record) throw new Error(`provider instance ${instanceId} is not managed`);
     return record;
+  }
+
+  private isCurrent(record: ManagedInstance): boolean {
+    return this.byRevision.get(record.instance.revision) === record
+      && !this.stopping.has(record.instance.id);
   }
 
   private referenceCount(record: ManagedInstance): number {

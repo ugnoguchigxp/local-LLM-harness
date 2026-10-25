@@ -8,7 +8,7 @@ import { createApp } from "../../../apps/daemon/src/app";
 import { ControlPlane } from "../../../apps/daemon/src/controller";
 import { Observer } from "../../../apps/daemon/src/observer";
 
-const { values } = parseArgs({ options: { isolated: { type: "boolean" }, "idle-only": { type: "boolean" }, image: { type: "string" }, evidence: { type: "string" } } });
+const { values } = parseArgs({ options: { isolated: { type: "boolean" }, "idle-only": { type: "boolean" }, "cancel-reacquire": { type: "boolean" }, image: { type: "string" }, evidence: { type: "string" } } });
 if (!values.image || !values.evidence) throw new Error("--image and external --evidence directory are required");
 const repository = resolve(import.meta.dir, "../../..");
 const evidence = resolve(values.evidence);
@@ -53,7 +53,7 @@ try {
   const discovery = await client.listAgentProfilesV3("visualPerception");
   if (discovery.profiles[0]?.providers[0]?.capability !== "vision.perception") throw new Error("vision discovery mismatch");
   if (await command("is-active", "wevisone-vl.service") === "active") throw new Error("smoke must begin with the worker stopped");
-  for (let cycle = 0; cycle < (values["idle-only"] ? 0 : 2); cycle++) {
+  for (let cycle = 0; cycle < (values["idle-only"] || values["cancel-reacquire"] ? 0 : 2); cycle++) {
     const start = performance.now();
     const created = await client.createAgentConnection({ profile: "visualPerception", audience: "same-host", providers: ["vision"],
       client: "wevisone-deployment-smoke", ttlSeconds: 600, allowFallback: false, deploymentPolicy: "existing-only" });
@@ -85,6 +85,42 @@ try {
     const finalPid = await command("show", "wevisone-vl.service", "-p", "MainPID", "--value");
     if (finalPid !== "0") throw new Error("worker did not stop after release");
     records.push({ cycle, stopped: true, releaseMs: performance.now() - releaseStart, credentialRevoked: true, finalPid });
+  }
+  if (values["cancel-reacquire"]) {
+    for (let cycle = 0; cycle < 4; cycle++) {
+      const start = performance.now();
+      const created = await client.createAgentConnection({ profile: "visualPerception", audience: "same-host", providers: ["vision"],
+        client: "wevisone-cancel-reacquire-smoke", ttlSeconds: 600, allowFallback: false, deploymentPolicy: "existing-only" });
+      connectionId = created.id;
+      const ready = await client.waitForAgentConnection(created, { timeoutMs: 120_000, pollIntervalMs: 250 });
+      const claim = await client.claimAgentConnection(ready.id);
+      const provider = claim.providers.find(p => p.name === "vision" && p.apiStyle === "larm-visual-perception");
+      if (!provider) throw new Error("vision claim missing");
+      const releaseStart = performance.now();
+      await client.releaseAgentConnection(ready.id);
+      connectionId = undefined;
+      records.push({ cycle, id: ready.id, readyMs: releaseStart-start, releaseAckMs: performance.now()-releaseStart,
+        status: ready.status, providers: ready.providers.map(p => ({ name: p.name, readiness: p.readiness, claimable: p.claimable })) });
+      // Intentionally no stop polling or pause before the next allocation.
+    }
+    const last = records.at(-1) as { id: string };
+    const released = await client.getAgentConnection(last.id);
+    const deadline = Date.now() + 30_000;
+    let observed: { id: string; status: string; observedAt: string } | undefined;
+    while (Date.now() < deadline) {
+      const response = await fetch(`${baseUrl}/state`, { headers: { authorization: `Bearer ${apiToken}` }, cache: "no-store" });
+      if (!response.ok) throw new Error(`public state returned ${response.status}`);
+      const state = await response.json() as { online: boolean; runtimes: Array<{ id: string; status: string; observedAt: string }> };
+      observed = state.runtimes.find(r => r.id === "wevisone-vl-4b");
+      if (state.online && observed?.status === "COLD" && released.releasedAt && Date.parse(observed.observedAt) >= Date.parse(released.releasedAt)) break;
+      await Bun.sleep(500);
+    }
+    if (!observed || observed.status !== "COLD" || !released.releasedAt || Date.parse(observed.observedAt) < Date.parse(released.releasedAt)) {
+      throw new Error("fresh COLD observation not available after final release");
+    }
+    const finalPid = await command("show", "wevisone-vl.service", "-p", "MainPID", "--value");
+    if (finalPid !== "0") throw new Error("worker PID is still present");
+    records.push({ finalPublicState: observed, finalPid });
   }
   if (values["idle-only"]) {
     const created = await client.createAgentConnection({ profile: "visualPerception", audience: "same-host", providers: ["vision"], client: "wevisone-idle-smoke", ttlSeconds: 600 });

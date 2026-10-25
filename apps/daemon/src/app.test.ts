@@ -1415,6 +1415,23 @@ test("GET /state exposes only capability-centered state", async () => {
   expect(body.runtimes[0]).not.toHaveProperty("endpoint");
   expect(body.runtimes[0]).not.toHaveProperty("backend");
   expect(body.runtimes[0]?.health).not.toHaveProperty("detail");
+  expect(res.headers.get("cache-control")).toBe("no-store");
+});
+
+test("ordinary API bearer observes public cold state without management access or starting a runtime", async () => {
+  const { app, log } = await makeApp(false, false, {}, { apiToken: "consumer", managementToken: "manage" });
+  const headers = { authorization: "Bearer consumer" };
+  expect((await app.request("/state")).status).toBe(401);
+  const state = await app.request("/state", { headers });
+  expect(state.status).toBe(200);
+  expect(state.headers.get("cache-control")).toBe("no-store");
+  const body = publicClusterStateSchema.parse(await state.json());
+  expect(body.online).toBe(true);
+  expect(body.runtimes.find(r => r.id === "qwen-general")).toMatchObject({ status: "COLD", observedAt: expect.any(String) });
+  expect((await app.request("/runtimes/qwen-general", { headers })).status).toBe(200);
+  expect((await app.request("/v1/inspection/runtimes", { headers })).status).toBe(403);
+  expect(log.ensure).toEqual([]);
+  expect(log.stop).toEqual([]);
 });
 
 test("management inspection preserves full runtime and state detail", async () => {

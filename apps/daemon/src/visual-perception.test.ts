@@ -44,7 +44,9 @@ test("vision Provider discovery, actual-image readiness, scoped validation, upst
   const observer = new Observer(registry, backend); await observer.tick();
   const control = new ControlPlane(registry, backend, observer, { idleTtlMs: 60_000, pollIntervalMs: 1 });
   const apiToken = randomUUID();
+  let clock = Date.now();
   const app = createApp({ registry, getState: () => observer.getState(), control, apiToken,
+    now: () => clock,
     connectionSigningKey: randomBytes(32), promptRetentionKey: randomBytes(32).toString("hex"),
     agentConnectionCatalog: catalog, connectionPollIntervalMs: 1, gatewayFetch: fetch, providerProbeTimeoutMs: 3000 });
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch });
@@ -62,6 +64,13 @@ test("vision Provider discovery, actual-image readiness, scoped validation, upst
     const provider = claim.providers[0] as VisualPerceptionAgentProvider;
     expect(provider.apiStyle).toBe("larm-visual-perception");
     expect(seenImages).toBeGreaterThan(0);
+    clock += 11_000;
+    expect(await client.getAgentConnection(ready.id)).toMatchObject({ status: "ready",
+      providers: [{ name: "vision", readiness: "ready", claimable: false }] });
+    const beforeReclaim = seenImages;
+    expect((await client.claimAgentConnection(ready.id)).providers[0]?.apiStyle).toBe("larm-visual-perception");
+    expect(seenImages).toBeGreaterThan(beforeReclaim);
+    expect((await client.getAgentConnection(ready.id)).providers[0]?.claimable).toBe(true);
     const input = { ...visualPerceptionProbe(provider.model), query: "real target" };
     expect((await client.perceive(provider, input)).detections).toHaveLength(1);
     const raw = (body: unknown, token = provider.credential.token) => fetch(provider.endpoint, {
