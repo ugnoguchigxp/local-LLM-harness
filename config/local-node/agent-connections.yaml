@@ -215,7 +215,7 @@ agentProfiles:
           maxTokens: 32768
           outputReserveTokens: 4096
           safetyMarginTokens: 0
-        description: "一時試用: Qwen3.8 ROCmFP4 FAST、MTP有効、32K×4並列、会話KV保持・復元。reasoning_effort省略時medium。"
+        description: "一時試用: Qwen3.8 ROCmFP4 FAST、MTP有効、32K×4並列、会話KV保持・復元。reasoning_effort省略時medium。 reasoning_effort: noneで非思考モード、low・medium・high・maxも使用可。省略時medium。"
       - name: asr
         capability: speech.stt
         route: stt-granite
@@ -370,7 +370,7 @@ agentProfiles:
         capability: llm.general
         route: llm-lfm25
         publicModel: qwen3.8-27b-rocmfp4-fast
-        description: "一時試用: Qwen3.8 ROCmFP4 FAST、MTP有効、32K×4並列、会話KV保持・復元。reasoning_effort省略時medium。"
+        description: "一時試用: Qwen3.8 ROCmFP4 FAST、MTP有効、32K×4並列、会話KV保持・復元。reasoning_effort省略時medium。 reasoning_effort: noneで非思考モード、low・medium・high・maxも使用可。省略時medium。"
         readiness: llm-inference
         contextWindow:
           maxTokens: 32768

@@ -38,4 +38,15 @@
       digestを保存する。engine配置は/srv/ai/apps/larm-qwen38-mtp-120141f-v3、証跡は/srv/ai/evidence/qwen38-mtp-trial-20261029。
     </p>
   </section>
+  <section id="reasoning-none-update">
+    <h2>非思考モードの追加</h2>
+    <p>
+      2026-10-29。利用者の再起動指示に従い、FASTのままreasoning_effort:
+      noneを許可する更新を準備した。 Qwen公式仕様と取得済みGGUFのテンプレートでenable_thinking:
+      falseへの対応を確認済み。 allowNoneを明示したruntimeだけnoneを受け付け、内部でenable_thinking:
+      falseと予算-1へ変換する。 未指定はmedium。MTP・32K×4・会話KV保持・補助Providerを維持する。
+      STRIXより先にFASTのnoneを観察する。モデル再構築とベンチマークは行わず、配備手順の必須チェック後にAPIを再起動する。
+      反映後は短いnone要求1件で受付と応答を確認する。
+    </p>
+  </section>
 </article>

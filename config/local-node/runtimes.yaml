@@ -1,15 +1,21 @@
 runtimes:
   lfm3-vl:
     chatInput: {}
-    artifacts: [ lfm3-vl-2b-qad-q4-0, lfm3-vl-2b-vision-f16 ]
-    capability: [ llm.general, llm.vision ]
+    artifacts:
+      - lfm3-vl-2b-qad-q4-0
+      - lfm3-vl-2b-vision-f16
+    capability:
+      - llm.general
+      - llm.vision
     protocol: openai.chat-completions.v1
     backend: llama-swap
     node: local-node
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
     resources:
       estimatedMemoryGB: 4
       maxConcurrentAllocations: 1
@@ -927,6 +933,7 @@ runtimes:
         medium: 256
         high: 512
         max: -1
+      allowNone: true
     backend: llama-swap
     node: local-node
     policy:

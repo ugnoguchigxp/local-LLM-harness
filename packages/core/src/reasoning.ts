@@ -5,6 +5,7 @@ export const reasoningEffortSchema = z.enum(["low", "medium", "high", "max"]);
 // Internal runtime policy. Public requests use reasoning_effort only.
 export const reasoningPolicySchema = z.object({
   defaultEffort: reasoningEffortSchema,
+  allowNone: z.boolean().optional(),
   readinessDisableThinking: z.boolean().optional(),
   budgets: z.object({
     low: z.number().int().positive(),
