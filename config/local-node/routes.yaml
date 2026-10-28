@@ -1,4 +1,10 @@
 routes:
+  llm-lfm3-vl:
+    capabilities: [ llm.general, llm.vision ]
+    explicitOnly: true
+    candidates:
+      - runtime: lfm3-vl
+        purpose: primary
   llm-default:
     capabilities:
       - llm.general

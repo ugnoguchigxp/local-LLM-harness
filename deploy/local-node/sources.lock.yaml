@@ -1,4 +1,13 @@
 sources:
+  lfm3-vl-chat-engine:
+    repository: https://github.com/ggml-org/llama.cpp.git
+    revision: 19cce6919992fdffd92e0ac152caaf1e2b8f254e
+    path: /srv/ai/apps/llama-lfm3-vl-larm-20261028
+    runtimePath: /srv/ai/apps/larm-lfm3-vl-19cce69-v1
+    protocol: llama-chat-token-count.v1
+    patch: deploy/local-node/patches/llama-lfm3-vl-token-count-19cce69-experimental.patch
+    patchSha256: e765864f450bf56ff72935a3eec15670825a16bf5806b93647905ef3eb82f0f8
+    prepareScript: deploy/local-node/scripts/prepare-lfm3-vl-engine.sh
   ruri-system-one:
     repository: https://huggingface.co/cl-nagoya/ruri-v3-30m
     revision: 24899e5de370b56d179604a007c0d727bf144504

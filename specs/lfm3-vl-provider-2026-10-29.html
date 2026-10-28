@@ -1,0 +1,40 @@
+<article lang="ja">
+  <h1>LFM3-VL-2Bのオンデマンド画像Chat Provider</h1>
+  <p>
+    LFM3-VL-2Bを明示profile
+    <code>lfm3-vl-2b</code
+    >として追加する。既定の会話、OCR、WeVisOne、画像生成は変更しない。Chat Completionsの画像data
+    URLに対応するが、WeVisOneの物体位置・マスクを含むvisual-perception APIと同等ではない。
+  </p>
+  <section id="contract">
+    <h2>契約と管理</h2>
+    <p>
+      Agent Profile selector <code>lfm3-vl-2b</code>からroute
+      <code>llm-lfm3-vl</code>、runtime
+      <code>lfm3-vl</code>、llama-swap model
+      <code>lfm3-vl-2b</code
+      >へ解決する。Providerは<code>openai.chat-completions.v1</code>と<code>llm.vision</code>を提供する。画像契約はPNG・JPEG・BMPのdata
+      URL、最大8画像、入力token計数APIとSSEを含む。音声入力や画像生成には対応しない。
+    </p>
+    <p>
+      CPU 8 threads、8192 token、出力予約512、安全余白256、同時1要求。常駐最小数0、接続のidle
+      release 60秒、解放後runtime idle TTL 60秒。既存の会話モデルのswap
+      groupには属さない。使用中はleaseと実行参照で保護する。重みはQAD-Q4_0とF16投影器で、推定memory
+      4 GBは上限ではない。
+    </p>
+  </section>
+  <section id="engine-and-verification">
+    <h2>準備と検証</h2>
+    <p>
+      画像入力の事前token計数を提供するllama.cpp revision
+      19cce6919992fdffd92e0ac152caaf1e2b8f254eと固定差分を使用する。<code>deploy/local-node/scripts/prepare-lfm3-vl-engine.sh</code>は既存の隔離されたpatched
+      worktreeとRelease buildを検証し、repository外の独立runtimeへ出力する。元worktreeを編集しない。
+    </p>
+    <p>
+      実環境のrelease commit
+      6f9321ea6774b08e46abcf4064e6c1a9559ab502を基点に既存の専用視覚APIを維持した候補で検証した。隔離LARM・llama-swapを用い、画像1枚と2枚のChat応答と公開token計数の一致、SSE終了、外部URL拒否、接続解放と資格失効を確認した。runtime
+      idle TTLを3秒に短縮した試験では解放後3.5秒でworker停止を確認した。正式60秒での停止、artifact
+      release管理、および既存consumerとの接続は正式配備後の確認対象である。
+    </p>
+  </section>
+</article>

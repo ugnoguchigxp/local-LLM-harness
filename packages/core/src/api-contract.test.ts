@@ -153,7 +153,7 @@ test("OpenAPI is generated from the public contract schemas", () => {
       minLength: 1,
       maxLength: 128,
       pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
-      enum: ["lfm2.5", "lfm3.1.7b", "contextStill", "SAAA-gemma4-26b", "SAAA-gemma4-26b-64k", "ornith1.5Strix", "ornith1.5Strix-vision", "ornith1.5Strix-game", "SAAA-w-Image", "SAAA-w-music", "embeddingCanary", "backchannelQwen35", "decisionGeneral", "decisionTraining", "visualPerception"],
+      enum: ["lfm2.5", "lfm3.1.7b", "lfm3-vl-2b", "contextStill", "SAAA-gemma4-26b", "SAAA-gemma4-26b-64k", "ornith1.5Strix", "ornith1.5Strix-vision", "ornith1.5Strix-game", "SAAA-w-Image", "SAAA-w-music", "embeddingCanary", "backchannelQwen35", "decisionGeneral", "decisionTraining", "visualPerception"],
     },
   }]);
   expect(paths["/v1/embed"]?.post?.security).toEqual([{ providerBearer: [] }]);

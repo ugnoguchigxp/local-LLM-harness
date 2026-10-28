@@ -29,6 +29,7 @@ export const agentProviderEndpointSchema = z.enum([
 export const agentProfileSelectorIdSchema = z.enum([
   "lfm2.5",
   "lfm3.1.7b",
+  "lfm3-vl-2b",
   "contextStill",
   "SAAA-gemma4-26b",
   "SAAA-gemma4-26b-64k",

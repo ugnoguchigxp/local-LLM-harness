@@ -8,6 +8,23 @@ audiences:
     network: host-private
     baseUrl: request-origin
 agentProfiles:
+  lfm3-vl-2b:
+    description: LFM3-VL-2Bによる画像理解。画像とテキストをChat Completions APIで受け付け、必要時に起動します。
+    idleRelease:
+      enabled: true
+      idleSeconds: 60
+      activityProtocols:
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-lfm3-vl
+        publicModel: lfm3-vl-2b
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 8192
+          outputReserveTokens: 512
+          safetyMarginTokens: 256
   visual-perception:
     description: On-demand semantic object search and visual understanding with WeVisOne-VL-4B BF16
     schedulingPriority: 1000
@@ -500,6 +517,8 @@ agentProfiles:
         publishModel: false
         readiness: system-one
 profileSelectors:
+  lfm3-vl-2b:
+    agentProfile: lfm3-vl-2b
   visualPerception:
     agentProfile: visual-perception
   decisionTraining:

@@ -1,4 +1,26 @@
 models:
+  lfm3-vl-2b-qad-q4-0:
+    kind: file
+    role: on-demand-vision-llm
+    source: https://huggingface.co/LiquidAI/LFM3-VL-2B-GGUF
+    revision: 7c3b4a43c9023e80bf234fec5e826a3365c8dda8
+    filename: LFM3-VL-2B-QAD-Q4_0.gguf
+    path: /srv/ai/models/lfm3-vl-2b-gguf/LFM3-VL-2B-QAD-Q4_0.gguf
+    bytes: 1049615648
+    sha256: 621c455376cb96a20891697deb9975c6fb47dd5ea98ed3ad1f3b7e8f24f0b1e6
+    quantization: QAD_Q4_0
+    runtime: llama.cpp-cpu
+  lfm3-vl-2b-vision-f16:
+    kind: file
+    role: vision-projector
+    source: https://huggingface.co/LiquidAI/LFM3-VL-2B-GGUF
+    revision: 7c3b4a43c9023e80bf234fec5e826a3365c8dda8
+    filename: mmproj-LFM3-VL-2B-F16.gguf
+    path: /srv/ai/models/lfm3-vl-2b-gguf/mmproj-LFM3-VL-2B-F16.gguf
+    bytes: 378996032
+    sha256: 1d8e6e58eefc093e09d6332f081516e1ddbd5b35cfca7f35463fb270db230b1e
+    quantization: F16
+    runtime: llama.cpp-cpu
   ruri-v3-30m:
     kind: snapshot
     role: speaking-attitude-encoder
