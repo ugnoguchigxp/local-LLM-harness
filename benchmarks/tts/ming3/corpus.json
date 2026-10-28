@@ -1,0 +1,12 @@
+[
+  {"id":"ja-short","category":"plain","text":"こんにちは。今日はいい天気ですね。"},
+  {"id":"ja-medium","category":"plain","text":"次の会議は午後三時からです。資料を確認して、気になる点があれば教えてください。"},
+  {"id":"ja-long","category":"plain","text":"音声アシスタントを快適に使うには、自然な声と素早い応答の両方が大切です。今回は同じ文章を複数の音声モデルで読み上げて、生成にかかる時間を比較します。日本語だけでなく英語でも、短い返事から少し長い説明まで確認します。"},
+  {"id":"ja-numbers","category":"numbers-raw","text":"10月12日の午後3時30分に集合です。料金は1,280円で、割引率は12.5パーセントです。バージョンは0.6と1.7です。"},
+  {"id":"ja-numbers-kana","category":"numbers-reading-control","text":"じゅうがつじゅうににちの、ごごさんじさんじゅっぷんにしゅうごうです。りょうきんはせんにひゃくはちじゅうえんで、わりびきりつはじゅうにてんごパーセントです。バージョンはゼロてんろくと、いちてんななです。"},
+  {"id":"mixed-raw","category":"mixed-raw","text":"今日の議題は、OpenAI APIとGitHub Actionsの連携です。まずREADMEを確認してから、Hello worldのサンプルを実行してください。"},
+  {"id":"mixed-kana","category":"mixed-reading-control","text":"今日の議題は、オープンエーアイのエーピーアイとギットハブ・アクションズの連携です。まずリードミーを確認してから、ハロー・ワールドのサンプルを実行してください。"},
+  {"id":"ja-counters","category":"counters","text":"一人で二本の傘と三冊の本を持ち、四月一日に二十歳になりました。今日は二十日で、二人で一泊二日の旅行に出かけます。"},
+  {"id":"ja-context","category":"contextual-reading","text":"今日は日本橋で待ち合わせです。市場の動向を調べてから、近所の市場で買い物をします。この生地で作った服は、着心地が良いです。"},
+  {"id":"ja-minimal","category":"short-reply","text":"はい、わかりました。ありがとうございます。"}
+]
