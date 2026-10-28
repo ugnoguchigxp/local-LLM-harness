@@ -1,7 +1,9 @@
 runtimeReleases:
   lfm3-vl-current:
     runtime: lfm3-vl
-    artifacts: [ lfm3-vl-2b-qad-q4-0, lfm3-vl-2b-vision-f16 ]
+    artifacts:
+      - lfm3-vl-2b-qad-q4-0
+      - lfm3-vl-2b-vision-f16
     providerConfigRevision: llama-lfm3-vl-qad-q4-0-cpu-8k-p1-v1
     estimatedMemoryGB: 4
     healthPath: /health
@@ -280,7 +282,9 @@ runtimeReleases:
     default: true
   lfm3-vl-perception-current:
     runtime: lfm3-vl-perception
-    artifacts: [ lfm3-vl-2b-qad-q4-0, lfm3-vl-2b-vision-f16 ]
+    artifacts:
+      - lfm3-vl-2b-qad-q4-0
+      - lfm3-vl-2b-vision-f16
     providerConfigRevision: lfm3-vl-qad-q4-cpu-perception-v1
     estimatedMemoryGB: 4
     healthPath: /health
@@ -306,6 +310,14 @@ runtimeReleases:
     artifacts:
       - qwen38-primary
     providerConfigRevision: rocmfpx-120141f-fast-32k-p4-mtp3-scoped-cache-v1
+    estimatedMemoryGB: 40
+    healthPath: /health
+    default: true
+  qwen38-rocmfp4-strix-conversation-mtp-retained-p4-v1:
+    runtime: qwen38-rocmfp4-strix-conversation
+    artifacts:
+      - qwen38-rocmfp4-strix-imatrix
+    providerConfigRevision: rocmfpx-120141f-strix-32k-p4-mtp3-scoped-cache-v1
     estimatedMemoryGB: 40
     healthPath: /health
     default: true

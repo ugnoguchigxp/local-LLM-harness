@@ -1,6 +1,8 @@
 routes:
   llm-lfm3-vl:
-    capabilities: [ llm.general, llm.vision ]
+    capabilities:
+      - llm.general
+      - llm.vision
     explicitOnly: true
     candidates:
       - runtime: lfm3-vl
@@ -11,7 +13,7 @@ routes:
       - llm.reasoning
       - llm.coding
     candidates:
-      - runtime: qwen38-rocmfp4-fast-conversation
+      - runtime: qwen38-rocmfp4-strix-conversation
         purpose: primary
   llm-saaa-qwen38:
     capabilities:
@@ -284,7 +286,7 @@ routes:
       - llm.coding
     explicitOnly: true
     candidates:
-      - runtime: qwen38-rocmfp4-fast-conversation
+      - runtime: qwen38-rocmfp4-strix-conversation
         purpose: primary
   llm-lfm3:
     capabilities:
@@ -301,5 +303,5 @@ routes:
       - llm.coding
     explicitOnly: true
     candidates:
-      - runtime: qwen38-rocmfp4-fast-conversation
+      - runtime: qwen38-rocmfp4-strix-conversation
         purpose: primary

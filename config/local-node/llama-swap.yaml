@@ -6,16 +6,9 @@ globalTTL: 300
 unloadTimeout: 30
 models:
   lfm3-vl-2b:
-    # LARM manages idle release. Keep this independent of conversation swap groups.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/larm-lfm3-vl-19cce69-v1/llama-server
-      -m /srv/ai/models/lfm3-vl-2b-gguf/LFM3-VL-2B-QAD-Q4_0.gguf
-      --mmproj /srv/ai/models/lfm3-vl-2b-gguf/mmproj-LFM3-VL-2B-F16.gguf
-      -dev none -ngl 0 --no-mmproj-offload --fit off
-      --ctx-size 8192 --parallel 1 --batch-size 512 --ubatch-size 256
-      --threads 8 --host 127.0.0.1 --port ${PORT}
-      --jinja --no-cache-prompt --no-webui
+    cmd: |
+      /srv/ai/apps/larm-lfm3-vl-19cce69-v1/llama-server -m /srv/ai/models/lfm3-vl-2b-gguf/LFM3-VL-2B-QAD-Q4_0.gguf --mmproj /srv/ai/models/lfm3-vl-2b-gguf/mmproj-LFM3-VL-2B-F16.gguf -dev none -ngl 0 --no-mmproj-offload --fit off --ctx-size 8192 --parallel 1 --batch-size 512 --ubatch-size 256 --threads 8 --host 127.0.0.1 --port ${PORT} --jinja --no-cache-prompt --no-webui
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
@@ -223,6 +216,15 @@ models:
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
+  qwen38-rocmfp4-strix-conversation:
+    ttl: 0
+    cmd: |
+      /usr/bin/python3 /srv/ai/apps/larm-qwen38-mtp-120141f-v3/launch-prompt-retention.py /etc/larm/prompt-retention.env.json /srv/ai/apps/larm-qwen38-mtp-120141f-v3/llama-server -m /srv/ai/models/qwen38-rocmfp4-strix/Qwen3.8-27B-Q4_0_ROCMFP4_STRIX-imatrix-headQ6K.gguf -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 131072 --parallel 4 --batch-size 2048 --ubatch-size 256 --threads 16 --cache-type-k q4_0 --cache-type-v q4_0 --host 127.0.0.1 --port ${PORT} --reasoning on --reasoning-format deepseek --reasoning-budget -1 --temp 1.0 --top-k 20 --top-p 0.95 --min-p 0 --repeat-penalty 1.0 --jinja --no-context-shift --cache-prompt --cache-reuse 0 --no-kv-unified --ctx-checkpoints 1 --checkpoint-min-step 1024 --cache-ram 8192 --no-cache-idle-slots --spec-type draft-mtp --no-spec-mtp-strict-qwen --spec-draft-n-max 3 --spec-draft-p-min 0 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --metrics --no-webui
+    aliases:
+      - qwen3.8-27b-rocmfp4-strix
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
 groups:
   conversation-llm-slot:
     swap: true
@@ -236,6 +238,7 @@ groups:
       - gemma4-conversation
       - ornith15-conversation
       - qwen38-rocmfp4-fast-conversation
+      - qwen38-rocmfp4-strix-conversation
   qwen-decision-slot:
     swap: false
     exclusive: false

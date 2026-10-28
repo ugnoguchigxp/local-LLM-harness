@@ -1,0 +1,34 @@
+<article lang="ja">
+  <h1>Qwen3.8 STRIXへのAPI切替</h1>
+  <p>
+    2026-10-29。利用者のFAST検証終了と切替指示に従い、STRIX imatrix
+    headQ6Kを既存APIの会話モデルへ適用する。
+    基準releaseはefce931c39cef7139ebc7172db783f5ed17aebb3。直前のFAST none対応を維持する。
+  </p>
+  <section id="contract">
+    <h2>解決経路と設定</h2>
+    <p>
+      既存lfm2.5・ornith1.5Strix selectorからprofile lfm2.5、route llm-lfm25、runtime
+      qwen38-rocmfp4-strix-conversation、llama-swapへ解決する。 既定routeとContextStillも同じSTRIX
+      runtimeを使う。公開modelはqwen3.8-27b-rocmfp4-strix、ContextStillは末尾-contextstillで区別する。
+    </p>
+    <p>
+      通常MTP・draft最大3、32,768 tokens×4並列、targetとdraft K/V q4_0、会話KV保持・復元を使用する。
+      noneを明示許可し、未指定はmedium。取得済み重みとFASTと共通の構築済みMTP保持エンジンを使用する。
+      STRIXのwarm floorを1、FASTを0にする。補助Providerは基準releaseから維持する。
+    </p>
+    <p>
+      STRIX重みは15,381,478,400
+      bytes、SHA256は4ecfb6f4081b1916e6c09d513bfebf679a44bf37e947cb195c3bb1d7d4c6fb26。
+      以前の取得時に照合済みで、今回の全体再ハッシュとエンジン再構築は行わない。
+    </p>
+    <p>
+      準備済みconfigRevisionは96214f7f383b4fde094181fbd21f7f000c3debf94c09889eaa9bcc0a3f222430。
+      署名付きreleaseの必須ソフトウェアチェック後に適用する。旧root操作bundleを使わずnone対応済みの基準から作成する。
+      切替後は公開設定・実process・起動状態だけ確認し、推論試験・ベンチマークは省略する。
+    </p>
+    <p>
+      モデル切替をまたぐKV保存は行わない。新しいConnectionでclaimされたmodelを使い、会話履歴はmessagesで再送する。
+    </p>
+  </section>
+</article>

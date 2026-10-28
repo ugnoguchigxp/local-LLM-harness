@@ -940,7 +940,7 @@ runtimes:
       class: preferred
       lifecycle: managed
       warm:
-        minInstances: 1
+        minInstances: 0
         idleTtlSeconds: 60
       swapGroup: conversation-llm-slot
     resources:
@@ -955,6 +955,58 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/qwen38-rocmfp4-fast-conversation
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen38-rocmfp4-fast-conversation
+    promptRetention:
+      protocol: larm-prompt-cache.v1
+      maxBytes: 8589934592
+      principalMaxBytes: 4294967296
+      entryMaxBytes: 1073741824
+      stagingMaxBytes: 1073741824
+      metadataMaxBytes: 67108864
+      maxEntries: 64
+      principalMaxEntries: 16
+      idleTtlMs: 300000
+      maxAgeMs: 1800000
+  qwen38-rocmfp4-strix-conversation:
+    textInput:
+      protocol: llama-chat-input-tokens.v1
+      engineBuild: rocmfpx-120141f-larm-mtp-retention-v1
+    artifacts:
+      - qwen38-rocmfp4-strix-imatrix
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    protocol: openai.chat-completions.v1
+    reasoning:
+      defaultEffort: medium
+      allowNone: true
+      readinessDisableThinking: true
+      budgets:
+        low: 64
+        medium: 256
+        high: 512
+        max: -1
+    backend: llama-swap
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 60
+      swapGroup: conversation-llm-slot
+    resources:
+      estimatedMemoryGB: 40
+      maxConcurrentAllocations: 4
+      maxConcurrentRequests: 4
+      maxQueuedRequests: 16
+      queueTimeoutMs: 30000
+    deployment:
+      chatAdapter: llama-reasoning-budget-v1
+      modelId: qwen38-rocmfp4-strix-conversation
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/qwen38-rocmfp4-strix-conversation
+      backendEndpoint: http://127.0.0.1:8083/upstream/qwen38-rocmfp4-strix-conversation
     promptRetention:
       protocol: larm-prompt-cache.v1
       maxBytes: 8589934592

@@ -4,10 +4,10 @@ import { loadRegistry, compileProviderRevision } from "@larm/core";
 import { prepareLlamaChatRequest } from "./llama-chat";
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
-test("FAST explicitly permits none and keeps other runtime contracts", () => {
+test("STRIX explicitly permits none and keeps other runtime contracts", () => {
   const qwen = loadRegistry(join(import.meta.dir, "../../../config/local-node")).runtimes
-    .find(item => item.id === "qwen38-rocmfp4-fast-conversation")!;
-  const input = { model: "qwen3.8-27b-rocmfp4-fast", messages: [], reasoning_effort: "none", prompt_cache_key: "none-case" };
+    .find(item => item.id === "qwen38-rocmfp4-strix-conversation")!;
+  const input = { model: "qwen3.8-27b-rocmfp4-strix", messages: [], reasoning_effort: "none", prompt_cache_key: "none-case" };
   const result = JSON.parse(new TextDecoder().decode(prepareLlamaChatRequest(bytes(input), qwen)));
   expect(result).toMatchObject({ chat_template_kwargs: { enable_thinking: false }, reasoning_budget_tokens: -1,
     prompt_cache_key: "none-case" });
