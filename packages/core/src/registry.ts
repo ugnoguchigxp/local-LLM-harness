@@ -92,6 +92,12 @@ export function parseRegistryDocuments(input: {
   }
 
   for (const runtime of runtimes) {
+    const reasoningAdapter = runtime.backend === "llama-swap"
+      && runtime.deployment.chatAdapter === "llama-reasoning-budget-v1";
+    if ((runtime.reasoning !== undefined || reasoningAdapter)
+      && (runtime.protocol !== "openai.chat-completions.v1" || !runtime.reasoning || !reasoningAdapter)) {
+      throw new RegistryError(`runtimes.yaml: ${runtime.id} requires a chat reasoning policy and matching adapter`);
+    }
     if (runtime.chatInput && (runtime.protocol !== "openai.chat-completions.v1" || !runtime.capability.includes("llm.vision"))) {
       throw new RegistryError(`runtime ${runtime.id}: chatInput requires a vision Chat Completions runtime`);
     }

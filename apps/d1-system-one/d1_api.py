@@ -7,7 +7,7 @@ from engine import Engine
 
 @asynccontextmanager
 async def lifespan(app):
-    app.state.engine = Engine(os.environ.get('D1_MODEL_ROOT', '/srv/ai/models/d1-3b'),
+    app.state.engine = Engine(os.environ.get('D1_MODEL_ROOT', '/srv/ai/models/d1-2b'),
                               os.environ.get('D1_DEVICE', 'cuda'))
     yield
 

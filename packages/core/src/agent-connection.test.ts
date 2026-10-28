@@ -29,11 +29,13 @@ test("agent provider protocols map to stable public endpoint paths", () => {
 
 test("production agent profiles compile to strict protocol-aware provider contracts", () => {
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
-  expect(catalog.defaultAgentProfile).toBe("ornith1.5Strix");
+  expect(catalog.defaultAgentProfile).toBe("lfm2.5");
   expect(catalog.profileSelectors).toEqual([
     { id: "backchannelQwen35", agentProfile: "contextstill-backchannel-qwen35-2b", services: [] },
     { id: "contextStill", agentProfile: "contextstill-background", services: [] },
     { id: "embeddingCanary", agentProfile: "contextstill-embedding", services: [] },
+    { id: "lfm2.5", agentProfile: "lfm2.5", services: [] },
+    { id: "lfm3.1.7b", agentProfile: "lfm3.1.7b", services: [] },
     { id: "ornith1.5Strix", agentProfile: "ornith1.5Strix", services: [] },
     { id: "ornith1.5Strix-game", agentProfile: "ornith1.5Strix-game", services: [] },
     { id: "SAAA-gemma4-26b", agentProfile: "saaa-conversation-gemma4-26b-voice", services: [] },
@@ -73,6 +75,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "contextstill-background-128k",
     "contextstill-background-64k",
     "contextstill-embedding",
+    "lfm2.5",
+    "lfm3.1.7b",
     "nightworker-background",
     "ornith1.5Strix",
     "ornith1.5Strix-game",
@@ -94,7 +98,10 @@ test("production agent profiles compile to strict protocol-aware provider contra
     });
   const primary = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
   expect(primary).toMatchObject({
-    selectionPolicy: "default", canonicalProfile: "ornith1.5Strix", deprecated: false, schedulingPriority: 4000,
+    selectionPolicy: "explicit-only", canonicalProfile: "ornith1.5Strix", deprecated: false, schedulingPriority: 4000,
+  });
+  expect(catalog.profiles.find(profile => profile.id === "lfm2.5")).toMatchObject({
+    selectionPolicy: "default", canonicalProfile: "lfm2.5", schedulingPriority: 4000,
   });
   expect(primary.providers.find(provider => provider.name === "llm")).toMatchObject({
     capability: "llm.general", supportedCapabilities: ["llm.general", "llm.vision"],

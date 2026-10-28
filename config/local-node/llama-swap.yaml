@@ -10,6 +10,84 @@ globalTTL: 300
 unloadTimeout: 30
 
 models:
+  lfm3-conversation:
+    ttl: 0
+    cmd: >
+      /srv/ai/apps/larm-lfm25-engine-d05706b/llama-server
+      -m /srv/ai/models/lfm3-1.7b-gguf/LFM3-1.7B-QAD-Q4_0.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --load-mode none
+      --flash-attn on
+      --ctx-size 131072
+      --parallel 4
+      --batch-size 2048
+      --ubatch-size 512
+      --threads 16
+      --cache-type-k q4_0
+      --cache-type-v q4_0
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning on
+      --reasoning-format deepseek
+      --reasoning-budget -1
+      --temp 0.1
+      --top-k 50
+      --top-p 1
+      --min-p 0
+      --repeat-penalty 1.1
+      --jinja
+      --no-context-shift
+      --no-cache-prompt
+      --no-cache-idle-slots
+      --metrics
+      --no-webui
+    aliases:
+      - lfm3-1.7b
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
+  lfm25-conversation:
+    ttl: 0
+    cmd: >
+      /srv/ai/apps/larm-lfm25-engine-d05706b/llama-server
+      -m /srv/ai/models/lfm25-24b-a2b/LFM2.5-24B-A2B-QAD-Q4_0.gguf
+      -dev Vulkan0
+      -ngl 999
+      --fit off
+      --load-mode none
+      --flash-attn on
+      --ctx-size 524288
+      --parallel 4
+      --batch-size 2048
+      --ubatch-size 512
+      --threads 16
+      --cache-type-k q4_0
+      --cache-type-v q4_0
+      --host 127.0.0.1
+      --port ${PORT}
+      --reasoning on
+      --reasoning-format deepseek
+      --reasoning-budget -1
+      --temp 0.1
+      --top-k 50
+      --top-p 1
+      --min-p 0
+      --repeat-penalty 1.05
+      --jinja
+      --no-context-shift
+      --no-cache-prompt
+      --no-cache-idle-slots
+      --metrics
+      --no-webui
+    aliases:
+      - lfm2.5-24b-a2b
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
+
   qwen-agent:
     # LARM owns idle shutdown and retention until the next selected Profile.
     ttl: 0
@@ -670,6 +748,8 @@ groups:
     swap: true
     exclusive: false
     members:
+      - lfm3-conversation
+      - lfm25-conversation
       - ornith-contextstill
       - gemma4-26b-conversation
       - ornith15-strix-conversation

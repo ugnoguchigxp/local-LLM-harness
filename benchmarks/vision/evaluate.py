@@ -183,7 +183,7 @@ def main():
             sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'apps' / 'd1-system-one'))
             from engine import Engine
             started = time.perf_counter()
-            engine = Engine('/srv/ai/models/d1-3b', device='cpu')
+            engine = Engine('/srv/ai/models/d1-2b', device='cpu')
             result['load_and_warmup_ms'] = (time.perf_counter()-started)*1000
             result['engine'] = engine.health()
 
@@ -192,7 +192,7 @@ def main():
                 image.thumbnail((384, 384))
                 stream = io.BytesIO()
                 image.save(stream, format='PNG')
-                return engine.predict({'model': 'd1-3b-game', 'state': 'Judge only the visible image.',
+                return engine.predict({'model': 'd1-2b-game', 'state': 'Judge only the visible image.',
                     'images': ['data:image/png;base64,' + base64.b64encode(stream.getvalue()).decode()],
                     'questions': {
                         'person': {'type': 'noul', 'instructions': 'Is a person visibly present in the image?'},

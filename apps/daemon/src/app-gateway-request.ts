@@ -7,7 +7,7 @@ import {
   type RuntimeProtocol,
   type SystemOneRequest,
 } from "@larm/core";
-import { normalizeQwen38ChatRequest } from "./app-http";
+import { normalizeChatRequest } from "./app-http";
 import { RequestBodyError, readBodyLimited } from "./http-body";
 
 export type PreparedGatewayRequestBody = {
@@ -106,7 +106,7 @@ export async function prepareGatewayRequestBody(input: {
   if (input.protocol === "openai.chat-completions.v1") {
     try {
       const bytes = await readBodyLimited(input.request.clone() as unknown as Request, input.maxBodyBytes);
-      body.chatRequest = normalizeQwen38ChatRequest(decodeJson(bytes));
+      body.chatRequest = normalizeChatRequest(decodeJson(bytes));
       body.chatRequestBytes = new TextEncoder().encode(JSON.stringify(body.chatRequest));
       if (
         body.chatRequest
@@ -117,7 +117,7 @@ export async function prepareGatewayRequestBody(input: {
         body.chatResponseFormat = "sse";
       }
     } catch (error) {
-      return { ok: false, error: larmError(error) };
+      return { ok: false, error: openAiError(error) };
     }
   }
 

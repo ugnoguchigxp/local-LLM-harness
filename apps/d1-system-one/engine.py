@@ -1,4 +1,4 @@
-"""Local-only, pinned d1-3B inference; weights and upstream model code stay external."""
+"""Local-only, pinned d1-2B inference; weights and upstream model code stay external."""
 import base64
 import hashlib
 from io import BytesIO
@@ -71,7 +71,7 @@ class Engine:
             # explicit GPU tree path; the weights and model files stay untouched.
             from importlib import import_module
             package = self.runner.__class__.__module__.rsplit('.', 1)[0]
-            import_module(package + '.hybrid')._fused = lambda queries: False
+            import_module(package + '.attention')._fused = lambda queries: False
             self.tree_attention = 'explicit-fp32-rocm'
         self.lock = threading.Lock()
         self.torch_version = torch.__version__
@@ -100,14 +100,12 @@ class Engine:
         try:
             started = time.perf_counter()
             pictures = decode_images(urls)
-            # Reserve the visual token budget after bounding the image to 384px.
-            from importlib import import_module
-            prompt = import_module(self.runner.__class__.__module__.rsplit('.', 1)[0] + '.prompt')
-            typed = [prompt.as_question(q) for q in questions.values()]
-            tokens = self.runner.tokens(state, typed)
-            if tokens + (1024 if pictures else 0) > MAX_INPUT_TOKENS:
+            # Count the actual packed prompt, including all questions and image tokens.
+            typed = list(self.runner.named(questions).values())
+            sequences = self.runner._sequences([(state, typed, pictures)])
+            if sum(len(sequence[2]) for sequence in sequences) > MAX_INPUT_TOKENS:
                 raise ValueError('d1 input exceeds 4096-token budget; no truncation')
-            result = adapt_response(self.model.system_one(state, questions, images=pictures), questions)
+            result = adapt_response(self.model.system_one(state, questions, media=pictures), questions)
             result['routing'] = {'model': PUBLIC_MODEL, 'revision': REVISION, 'device': self.device,
                                  'precision': self.precision, 'method': 'single_forward_decision',
                                  'tree_attention': self.tree_attention,

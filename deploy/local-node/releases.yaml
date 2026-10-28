@@ -1,6 +1,22 @@
 # Runtime releases combine immutable artifact entries into one deployable unit.
 # Model data stays outside this repository; every artifact is pinned in models.yaml.
 runtimeReleases:
+  lfm3-conversation-current:
+    runtime: lfm3-conversation
+    artifacts: [ lfm3-1.7b-qad-q4-0 ]
+    providerConfigRevision: llama-lfm3-qad-q4-0-32k-p4-reasoning-effort-v1
+    estimatedMemoryGB: 12
+    healthPath: /health
+    default: true
+
+  lfm25-conversation-current:
+    runtime: lfm25-conversation
+    artifacts: [ lfm25-24b-a2b-qad-q4-0 ]
+    providerConfigRevision: llama-lfm25-qad-q4-0-128k-p4-reasoning-effort-v1
+    estimatedMemoryGB: 40
+    healthPath: /health
+    default: true
+
   kittentts-nano-fp32-current:
     runtime: kittentts-nano
     artifacts: [ kitten-tts-nano-fp32, kitten-tts-nano-voices, kitten-tts-nano-config ]
@@ -262,8 +278,8 @@ runtimeReleases:
 
   d1-game-current:
     runtime: d1-system-one
-    artifacts: [ d1-3b ]
-    providerConfigRevision: d1-051bcc464b01-native-bf16-rocm-gfx1151-v1
+    artifacts: [ d1-2b ]
+    providerConfigRevision: d1-97c57047d585-native-bf16-rocm-gfx1151-v2
     estimatedMemoryGB: 10
     healthPath: /health
     default: true

@@ -480,6 +480,438 @@ ROCmFP4 artifact and service remain installed but are not selected by these Agen
 The LARM 20M source-token limit is a managed-source budget, NOT a 20M attention window.</code></pre>
   </section>
 
+  <section id="reasoning-effort-api">
+    <h2>Chat CompletionsのReasoning指定</h2>
+    <p>
+      LARMは明示された<code>reasoning_effort</code>をバックエンドに渡し、
+      <code>none</code
+      >では<code>chat_template_kwargs.enable_thinking</code>をfalse、
+      <code>minimal</code
+      >、<code>low</code>、<code>medium</code>、<code>high</code>、<code>xhigh</code>ではtrueにする。
+      相反する明示指定や不正な値はHTTP 400で拒否する。未指定時の既存の挙動は維持する。
+    </p>
+    <p>
+      これはthinkingのON/OFFを要求する仕組みであり、段階別の思考量は各エンジン・モデルのテンプレートに依存する。
+      現行Ornith
+      STRIXのテンプレートはenable_thinkingを参照するが、reasoning_effortの段階を参照しない。
+      したがってlowとhighの異なる予算や品質は保証しない。対応しないモデルでの効果は未検証。
+      ONでは出力予算が思考に消費され、本文が返らない可能性がある。
+    </p>
+    <p>
+      2026-10-28の確認では稼働中のOrnithエンジンのテンプレート適用により、enable_thinkingのtrueとfalseで
+      生成開始位置が変わることを確認した。推論結果のON/OFF比較と配備後の受入は未実施。
+    </p>
+  </section>
+  <section id="ornith-reasoning-live-20261028">
+    <h2>2026-10-28 稼働中OrnithのReasoning試験</h2>
+    <p>
+      配備済みcommit ae08a8b84a80のdaemonで、ornith1.5StrixのLLMだけを要求し、 route
+      llm-ornith15-strixからornith15-strix-conversationに解決された実機を使用した。
+      修正後のソースは未配備であり、この試験は配備後の検証ではない。試験開始時のactivityはidle。
+    </p>
+    <p>
+      赤玉3個と青玉2個から無作為に2個を戻さず選ぶ確率を日本語で尋ね、temperature 0、出力上限1024、
+      ストリーミング、同一要求を使用した。思考ONはreasoning_effort highとenable_thinking true、
+      OFFはnoneとfalseを指定した。経路はAgent Connectionで、入力から最初の文字までを計測。
+      生成速度はサーバーtimingsのpredicted_per_secondで、思考と本文の生成を含む。
+    </p>
+    <table>
+      <caption>
+        計測結果。ONは3回、他は各1回であり小規模の動作確認
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">思考開始秒</th>
+          <th scope="col">本文開始秒</th>
+          <th scope="col">生成速度 token/秒</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">highのみ</th>
+          <td>なし</td>
+          <td>2.894</td>
+          <td>69.28</td>
+          <td>思考欄なし、正答</td>
+        </tr>
+        <tr>
+          <th scope="row">high・思考ON 1</th>
+          <td>3.109</td>
+          <td>6.192</td>
+          <td>68.10</td>
+          <td>思考欄あり、正答</td>
+        </tr>
+        <tr>
+          <th scope="row">high・思考ON 2</th>
+          <td>4.459</td>
+          <td>7.830</td>
+          <td>69.19</td>
+          <td>思考欄あり、正答</td>
+        </tr>
+        <tr>
+          <th scope="row">high・思考ON 3</th>
+          <td>3.190</td>
+          <td>6.157</td>
+          <td>68.51</td>
+          <td>思考欄あり、正答</td>
+        </tr>
+        <tr>
+          <th scope="row">none・思考OFF</th>
+          <td>なし</td>
+          <td>4.641</td>
+          <td>68.41</td>
+          <td>思考欄なし、数値正答だが復元抽出という誤記あり</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      全応答はstopで完了。high単独では思考欄が出ず、思考ONを明示した3回では出た。
+      初回応答にはゲートウェイの待ち時間も含み、サーバーのprompt処理時間は約0.16〜0.19秒。
+      一問と少数の試行であり品質や性能一般の保証、lowとhighの段階差の証明ではない。
+      詳細な計測値と回答はrepository外の<code>/srv/ai/evidence/reasoning-live-20261028-0828/results.json</code>。
+    </p>
+  </section>
+  <section id="ornith-lfm-reasoning-depth-20261028">
+    <h2>OrnithとLFM2.5の思考段階要求：2026-10-28</h2>
+    <p>
+      現在のOrnith STRIXとLFM2.5 24B QAD Q4_0を同じ整数の組合せ問題で測った。両方Vulkan、temperature
+      0、 生成上限1024、各条件2回。直接loopback backendを使用したためLARM gatewayの遅延は含まない。
+      現行Ornithの1M KV・4 slotsと独立LFMの8K KV・1 slotは異なり、実機負荷も変動した。
+      数字0〜5から異なる3桁を作り5で割り切れる数の正解は36。
+    </p>
+    <p>
+      OpenAI形式のreasoning_effortをnone、low、medium、high、maxで送り、同時に試験上の補助条件として
+      enable_thinkingとreasoning_budget_tokensを指定。予算は順に0、64、256、512、-1（無制限）。
+      これらの予算は比較のための仮定でありOpenAIの各effortに定められた値ではない。maxも標準APIの対応を示さない。
+      さらに両エンジンが要求予算を守ることは確認できず、段階ごとの実効深度を保証しない。
+    </p>
+    <table>
+      <caption>
+        2回の平均。秒は最初の非空白本文または思考、生成速度は思考を含むサーバー計測値。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">Ornith 思考開始秒</th>
+          <th scope="col">Ornith 本文開始秒</th>
+          <th scope="col">Ornith token/秒</th>
+          <th scope="col">LFM 思考開始秒</th>
+          <th scope="col">LFM 本文開始秒</th>
+          <th scope="col">LFM token/秒</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>なし</td>
+          <td>0.21</td>
+          <td>68.52</td>
+          <td>0.20</td>
+          <td>なし</td>
+          <td>84.84</td>
+        </tr>
+        <tr>
+          <th scope="row">low</th>
+          <td>0.22</td>
+          <td>7.33</td>
+          <td>68.53</td>
+          <td>0.26</td>
+          <td>なし</td>
+          <td>70.60</td>
+        </tr>
+        <tr>
+          <th scope="row">medium</th>
+          <td>0.22</td>
+          <td>10.07</td>
+          <td>56.19</td>
+          <td>0.20</td>
+          <td>なし</td>
+          <td>83.42</td>
+        </tr>
+        <tr>
+          <th scope="row">high</th>
+          <td>0.22</td>
+          <td>8.42</td>
+          <td>58.50</td>
+          <td>0.20</td>
+          <td>なし</td>
+          <td>81.02</td>
+        </tr>
+        <tr>
+          <th scope="row">max</th>
+          <td>0.22</td>
+          <td>11.96（1回のみ）</td>
+          <td>61.63</td>
+          <td>0.20</td>
+          <td>なし</td>
+          <td>80.55</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Ornithのnoneからhighは全8回とも正答・stop。maxは2回とも1024 tokenでlength終了、1回は本文なし。
+      LFMはnoneを含む全10回で思考のみ出力し1024 tokenでlength終了。LFMサーバーはreasoning
+      onで起動し、 リクエストによるnone・予算0は効かなかった。Ornith
+      lowは要求64に対し、出力思考を同モデルtokenizerで 462・507
+      tokenと再計数した。どちらも個別要求の予算を保証できないことを示す。
+    </p>
+    <p>
+      小規模試験である。エンジンやテンプレート、KV、同期負荷、出力量が違い、速度差をモデルの純粋な優劣に還元しない。
+      全生応答とtimingsはrepository外の<code>/srv/ai/evidence/reasoning-depth-ornith-lfm25-v2-20261028/results.json</code>。
+      別の短い確率問題で思考ONの本文開始はOrnith中央値3.31秒、LFM中央値1.12秒、生成速度は69.27と89.12
+      token/秒だった。 そちらも独立した小標本である。
+    </p>
+  </section>
+  <section id="lfm-official-reasoning-retest-20261028">
+    <h2>LFM2.5公式仕様の確認と起動時予算の再試験</h2>
+    <p>
+      <a href="https://huggingface.co/LiquidAI/LFM2.5-24B-A2B">Liquid AI公式モデルカード</a>は
+      LFM2.5 24Bを常に回答前に思考するReasoning専用モデルと明記し、temperature 0.1、top-k 50、
+      repetition penalty 1.05を示す。max_new_tokens
+      4096は公式の実行例であり、唯一の推奨上限ではない。
+      モデル本来のnoneやlow・medium・highが存在すると確認できない。
+    </p>
+    <p>
+      前節でLFMの要求ごとのnone・思考予算が効かなかったことを「思考設定の不具合」とだけ解釈しない。
+      本モデルは常時思考し、起動時の<a
+        href="https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md"
+        >llama.cppの予算設定</a
+      >は 思考を強制終了させる実験である。0・64・256・512・無制限の試験値はOpenAI
+      effortへの標準対応ではない。
+    </p>
+    <p>
+      前節と同じ整数問題、4096出力上限、temperature 0.1、top-k 50、top-p 1、min-p 0、repeat penalty
+      1.05、 seed 20261016・20261017、各2回。LFMのGGUF QAD
+      Q4_0をVulkanで独立起動し、予算ごとにプロセスを再起動した。
+      思考文字列を同モデルtokenizerで再計数し、ログでも予算到達を確認。起動時の予算0のみoffを併用。
+      先行Ornith試験とはsamplingと出力上限が異なる。試験終盤に別のLFM3
+      GPU試験が始まり、無制限の2回目には 競合が入っているため、速度は厳密な性能比較に使えない。
+    </p>
+    <table>
+      <caption>
+        2試行平均。正解は36。初回本文開始は非空白文字、速度は思考を含む。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">予算</th>
+          <th scope="col">思考再計数</th>
+          <th scope="col">思考開始秒</th>
+          <th scope="col">本文開始秒</th>
+          <th scope="col">token/秒</th>
+          <th scope="col">正答</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">0</th>
+          <td>0・0</td>
+          <td>なし</td>
+          <td>0.23</td>
+          <td>86.0</td>
+          <td>1/2</td>
+        </tr>
+        <tr>
+          <th scope="row">64</th>
+          <td>64・64</td>
+          <td>0.22</td>
+          <td>0.99</td>
+          <td>79.7</td>
+          <td>0/2</td>
+        </tr>
+        <tr>
+          <th scope="row">256</th>
+          <td>257・257</td>
+          <td>0.22</td>
+          <td>3.34</td>
+          <td>80.2</td>
+          <td>1/2</td>
+        </tr>
+        <tr>
+          <th scope="row">512</th>
+          <td>513・512</td>
+          <td>0.23</td>
+          <td>6.88</td>
+          <td>79.9</td>
+          <td>2/2</td>
+        </tr>
+        <tr>
+          <th scope="row">無制限</th>
+          <td>1920・2076</td>
+          <td>0.20</td>
+          <td>27.88</td>
+          <td>73.1</td>
+          <td>2/2</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      全10試行は本文を返しstop。トークン再計数の1差は生成時の予算カウンタと再計数の違いを含む。
+      一問だけの少数試行であり予算別の品質を一般化しない。現在のOrnithはリクエスト予算の実効性を確認できず、
+      公式条件での同等予算比較は未完了。証跡はrepository外
+      <code>/srv/ai/evidence/lfm25-reasoning-official-v2-20261028/results.json</code>と各server log。
+    </p>
+  </section>
+  <section id="ornith-lfm-side-by-side-20261028">
+    <h2>現行OrnithとLFM2.5：同一問題・生成条件の比較</h2>
+    <p>
+      直前の公式設定を用いたLFMの測定に加え、LFM3試験終了後に現行Ornith STRIXを同じ問題、
+      temperature 0.1、top-k 50、top-p 1、min-p 0、repetition penalty 1.05、seed
+      20261016・20261017、
+      出力上限4096で2回ずつ測った。backendへ直接アクセスし、gatewayの遅延を含めない。
+      Ornithは思考OFFと予算無制限のONだけを測り、思考文字列の再tokenizeは0・0、570・616。 LFM
+      OFFはモデル本来のOFFではなく起動時予算0による強制終了。
+      モデル、エンジン、コンテキスト、slot数、運用状態が異なるため厳密な公平比較ではない。
+      LFM無制限の2回目には別GPU試験との競合があった。
+    </p>
+    <table>
+      <caption>
+        2回の平均。本文開始秒、思考を含む生成token/秒、本文完了までの秒。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">Ornith 本文開始</th>
+          <th scope="col">Ornith 速度</th>
+          <th scope="col">Ornith 完了</th>
+          <th scope="col">LFM 本文開始</th>
+          <th scope="col">LFM 速度</th>
+          <th scope="col">LFM 完了</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">思考OFF／予算0</th>
+          <td>0.20</td>
+          <td>63.6</td>
+          <td>7.62</td>
+          <td>0.23</td>
+          <td>86.0</td>
+          <td>9.79</td>
+        </tr>
+        <tr>
+          <th scope="row">思考ON・無制限</th>
+          <td>9.90</td>
+          <td>61.3</td>
+          <td>15.85</td>
+          <td>27.88</td>
+          <td>73.1</td>
+          <td>35.58</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Ornithはいずれも2/2が36個と正答。LFMは予算0が1/2、無制限が2/2。正答は数字0〜5の異なる3桁で
+      5の倍数の個数を問う1問に限る。答えは一の位0で5×4＝20、一の位5で4×4＝16、合計36。
+      この正答数は一般的な品質の評価ではない。Ornithの64・256・512予算は制御が確認できず表に記載しない。
+      詳細はrepository外の<code>/srv/ai/evidence/ornith-reasoning-official-v2-20261028/results.json</code>と
+      <code>/srv/ai/evidence/lfm25-reasoning-official-v2-20261028/results.json</code>。
+    </p>
+  </section>
+  <section id="ornith-lfm-json-tool-budget-20261028">
+    <h2>同一予算でのJSON・ツール比較</h2>
+    <p>
+      2026-10-28、同じ固定エンジン、Vulkan、8K context、1 slot、Q4 KV、temperature 0.1、top-k 50、
+      top-p 1、min-p 0、repeat penalty 1.05、seed
+      20261016、最大出力4096で試験した。現行Ornithの重みと chat
+      templateを独立起動し、projectorはロードしない。現行の1M context・4 slot・画像対応のProviderや
+      LARM gatewayのE2E評価ではない。LFM2.5 QAD Q4_0を同様に別起動し、モデルは順番に実行した。
+    </p>
+    <p>
+      試験のnone・low・medium・high・無制限は起動時予算0・64・256・512・-1に対応する仮のラベルであり、
+      OpenAIのeffortの標準のトークン割当ではない。ログと応答から両モデルの予算64適用を確認。
+      予算は上限で、自然に先に終了する場合がある。LFM
+      noneは常時思考モデルをエンジンが強制終了する条件。
+    </p>
+    <p>
+      各条件でJSON本文2問、模擬ツール2問を1回ずつ実施。JSON本文は制約なしでJSONだけを指示し、
+      厳密なJSON構文と値・型・余分なキーを検証する。ツールは実行せず、名前・引数のJSON構文・値・型と
+      完了状態を検証。別にJSON Schema指定2問を実施した。各行は各ケース1回で正答率一般ではない。
+    </p>
+    <table>
+      <caption>
+        厳密一致数と要求から最初の本文またはツール出力までの時間。速度は4応答のサーバー生成速度平均で思考を含む。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">予算</th>
+          <th scope="col">Ornith JSON</th>
+          <th scope="col">LFM JSON</th>
+          <th scope="col">Ornith tool</th>
+          <th scope="col">LFM tool</th>
+          <th scope="col">Ornith 本文・tool開始秒</th>
+          <th scope="col">LFM 本文・tool開始秒</th>
+          <th scope="col">Ornith・LFM token/秒</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">0</th>
+          <td>0/2</td>
+          <td>2/2</td>
+          <td>2/2</td>
+          <td>2/2</td>
+          <td>0.41・1.01</td>
+          <td>0.27・0.41</td>
+          <td>46.7・94.4</td>
+        </tr>
+        <tr>
+          <th scope="row">64</th>
+          <td>0/2</td>
+          <td>2/2</td>
+          <td>2/2</td>
+          <td>1/2</td>
+          <td>1.80・1.72</td>
+          <td>0.98・0.96</td>
+          <td>56.5・91.8</td>
+        </tr>
+        <tr>
+          <th scope="row">256</th>
+          <td>1/2</td>
+          <td>2/2</td>
+          <td>2/2</td>
+          <td>2/2</td>
+          <td>3.93・1.96</td>
+          <td>3.05・1.46</td>
+          <td>57.1・84.1</td>
+        </tr>
+        <tr>
+          <th scope="row">512</th>
+          <td>1/2</td>
+          <td>2/2</td>
+          <td>2/2</td>
+          <td>2/2</td>
+          <td>3.94・1.79</td>
+          <td>3.72・1.32</td>
+          <td>56.6・85.5</td>
+        </tr>
+        <tr>
+          <th scope="row">無制限</th>
+          <td>1/2</td>
+          <td>2/2</td>
+          <td>2/2</td>
+          <td>2/2</td>
+          <td>3.62・1.81</td>
+          <td>3.64・1.87</td>
+          <td>55.5・70.0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      OrnithのJSON本文失敗は全てMarkdownコードフェンス付きで、その内部のJSON値は一致した。
+      LFMの64予算のツール1件はJSON構文は正しいが、指定の「東京」を「Tokyo」に変換したため厳密一致では失敗。
+      JSON Schema指定はOrnithが全条件2/2、LFMは予算0で2/2、思考ありの4条件は各0/2でpeg-native
+      parserエラー。
+      ツールを使わないSchema要求に<code>tool_choice: none</code>を追加したLFMの別試行は全条件2/2。
+      ツール呼出し能力全般、長い引数、曖昧な要求、実操作の成功をこの小標本から保証しない。
+    </p>
+    <p>
+      JSON本文とツール開始時刻はそれぞれ2ケースの平均。トークン速度はtokenizerと出力量の差・競合に影響される。
+      生データとエンジンログはrepository外の<code>/srv/ai/evidence/reasoning-json-comparison-20261028/</code>、
+      <code>/srv/ai/evidence/reasoning-json-schema-comparison-20261028/</code>、 <code>/srv/ai/evidence/reasoning-json-schema-none-20261028/</code>。
+    </p>
+  </section>
   <section id="repository-sources">
     <h2>repository内の正本</h2>
     <ul>

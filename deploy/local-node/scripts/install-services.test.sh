@@ -104,7 +104,7 @@ grep -F "disable llama-server.service qwen-asr.service whisper-asr.service voice
 [[ -d "${test_root}/srv/ai/models/laya-multilingual" ]]
 [[ -d "${test_root}/srv/ai/models/ruri-v3-30m" ]]
 [[ -d "${test_root}/srv/ai/models/ruri-speaking-attitude-v1" ]]
-[[ -d "${test_root}/srv/ai/models/d1-3b" ]]
+[[ -d "${test_root}/srv/ai/models/d1-2b" ]]
 [[ -d "${test_root}/srv/ai/models/qwen36-35b" ]]
 [[ -d "${test_root}/srv/ai/models/ornith15-35b" ]]
 [[ "$(stat -c '%a' "${test_root}/var/lib/larm/inference-audit")" == "700" ]]

@@ -1,4 +1,5 @@
 import { claimUsageRequest, UsageProtectionError } from "./usage-coordinator";
+import { prepareLlamaChatRequest, LlamaChatRequestError } from "@larm/backends";
 import { AudioObservation } from "./audio-observation";
 import { requestObservation } from "./observability";
 import { ChatInputError, validateChatImages, type AgentProviderContextWindow } from "@larm/core";
@@ -611,11 +612,17 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
           "context materialization requires a buffered request body",
         );
       }
+      // Reject invalid provider controls before consuming a context view. Keep
+      // the original bytes here so its measured request digest stays valid.
+      if (options.protocol === "openai.chat-completions.v1") {
+        prepareLlamaChatRequest(body, options.runtime);
+      }
       const contextEnd = observation?.stage("context_preparation");
       body = await options.prepareRequestBody(body, abort.signal);
       contextEnd?.();
     }
     if (options.protocol === "openai.chat-completions.v1" && body instanceof Uint8Array) {
+      body = prepareLlamaChatRequest(body, options.runtime);
       if (options.runtime.chatInput) {
         if (!options.chatInputWindow) throw new ChatInputError(503, "chat_input_contract_unavailable");
         const chatInputEnd = observation?.stage("chat_input");
@@ -675,6 +682,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       return lifecycleFailure();
     }
     if (error instanceof ChatInputError) {
+      return failure(error.code, error.message, error.status, error.code);
+    }
+    if (error instanceof LlamaChatRequestError) {
       return failure(error.code, error.message, error.status, error.code);
     }
     if (error instanceof RequestBodyError) {

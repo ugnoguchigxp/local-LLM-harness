@@ -2,6 +2,7 @@ import { z } from "zod";
 import { chatInputPolicySchema } from "./chat-input";
 import { embeddingSpaceSchema } from "./embedding";
 import { runtimeContextPolicySchema } from "./context";
+import { reasoningPolicySchema } from "./reasoning";
 
 const identifierSchema = z.string().min(1).max(128).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 const httpUrlSchema = z.string().url().refine((value) => {
@@ -71,6 +72,7 @@ const runtimeShared = {
   context: runtimeContextPolicySchema.optional(),
   embedding: embeddingSpaceSchema.optional(),
   chatInput: chatInputPolicySchema.optional(),
+  reasoning: reasoningPolicySchema.optional(),
   artifacts: uniqueStringList.optional(),
   node: identifierSchema,
   policy: z.object({
@@ -92,6 +94,7 @@ const runtimeShared = {
 };
 
 export const llamaSwapDeploymentSchema = z.object({
+  chatAdapter: z.literal("llama-reasoning-budget-v1").optional(),
   modelId: identifierSchema,
   listen: httpUrlSchema,
   endpoint: httpUrlSchema,

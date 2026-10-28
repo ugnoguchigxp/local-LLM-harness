@@ -17,7 +17,7 @@ def verify(path, entry):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--models', nargs='+', choices=['d1-3b', 'h2o-lightning-4b'], default=['d1-3b', 'h2o-lightning-4b'])
+    parser.add_argument('--models', nargs='+', choices=['d1-2b', 'd1-3b', 'h2o-lightning-4b'], default=['d1-2b'])
     parser.add_argument('--verify-only', action='store_true')
     args = parser.parse_args()
     manifest = yaml.safe_load((SOURCE / 'deploy/local-node/models.yaml').read_text())['models']

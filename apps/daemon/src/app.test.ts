@@ -556,7 +556,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
       providers: [
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
-        { name: "game-decision", endpoint: "/v1/systemone", model: "d1-3b-game" },
+        { name: "game-decision", endpoint: "/v1/systemone", model: "d1-2b-game" },
         { name: "llm", endpoint: "/v1/chat/completions", model: "ornith-1.5-strix-lean" },
         { name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-speaking-attitude" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
@@ -601,7 +601,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
   }
 });
 
-test("E2E: default Ornith profile provide returns every live provider over a real HTTP listener", async () => {
+test("E2E: explicit Ornith profile provide returns every live provider over a real HTTP listener", async () => {
   const catalogRevision = "e".repeat(64);
   const configDir = join(import.meta.dir, "../../../config/local-node");
   const productionRegistry = loadRegistry(configDir);
@@ -685,7 +685,7 @@ test("E2E: default Ornith profile provide returns every live provider over a rea
       services: [],
     });
     expect(connection.providers.find((provider) => provider.name === "llm")?.startupPolicy)
-      .toEqual({ minWarmInstances: 1, idleTtlSeconds: 60 });
+      .toEqual({ minWarmInstances: 0, idleTtlSeconds: 60 });
     expect(connection.providers.map((provider) => ({
       name: provider.name,
       endpoint: provider.endpoint,
@@ -2488,7 +2488,7 @@ test("Qwen 3.8 preserves explicit reasoning controls and rejects unknown named t
     body: JSON.stringify({ model: "qwen3.8", messages: [], reasoning_effort: "medium" }),
   });
   expect(reasoned.status).toBe(200);
-  expect(upstreamBody).not.toHaveProperty("chat_template_kwargs");
+  expect(upstreamBody).toMatchObject({ reasoning_effort: "medium", chat_template_kwargs: { enable_thinking: true } });
 
   const invalid = await app.request("/v1/chat/completions", {
     method: "POST",
@@ -5505,7 +5505,7 @@ test("game decision claims retain capability and forward inline images through t
     apiToken: agentApiToken, connectionSigningKey: agentSigningKey, agentConnectionCatalog: catalog,
     gatewayFetch: async (_input, init) => {
       observed = JSON.parse(init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init?.body));
-      return Response.json({ model: "d1-3b-game", answers: { action: { type: "choice", choice: "right", confidence: .9 } },
+      return Response.json({ model: "d1-2b-game", answers: { action: { type: "choice", choice: "right", confidence: .9 } },
         usage: { input_tokens: 64, output_tokens: 0 } });
     } });
   const created = await app.request("/v1/agent-connections", { method: "POST",
@@ -5521,7 +5521,7 @@ test("game decision claims retain capability and forward inline images through t
     const claim = agentConnectionClaimSchema.parse(await response.json());
     expect(claim.providers).toHaveLength(1);
     const provider = claim.providers[0]!;
-    expect(provider).toMatchObject({ name: "game-decision", capability: "decision.game", apiStyle: "larm-system-one", model: "d1-3b-game" });
+    expect(provider).toMatchObject({ name: "game-decision", capability: "decision.game", apiStyle: "larm-system-one", model: "d1-2b-game" });
     const body = { model: provider.model, state: null, images: ["data:image/png;base64,YQ=="],
       questions: { action: { type: "choice", instructions: "Move toward target", criteria: { left: "left", right: "right" } } } };
     const inference = await app.request("/v1/systemone", { method: "POST",

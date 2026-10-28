@@ -1,4 +1,5 @@
 export { LARM_VERSION } from "./version";
+export { reasoningEffortSchema, reasoningPolicySchema, type ReasoningPolicy } from "./reasoning";
 export { runtimeSetsConflict } from "./allocation-resource-conflict";
 export {
   compileProviderRevision,

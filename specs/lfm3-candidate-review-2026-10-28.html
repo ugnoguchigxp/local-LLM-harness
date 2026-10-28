@@ -1,0 +1,307 @@
+<article lang="ja">
+  <h1>LFM3モデル候補の調査</h1>
+  <p>
+    2026-10-28時点の公開情報とlocal-nodeの構成に基づく候補調査。実機推論や既存Providerとの品質比較は未実施であり、採用決定ではない。
+  </p>
+  <p>
+    Liquid AIは2026-10-27にLFM3を公開した。各候補はLFM Open License
+    v1.0で提供される。利用前に各モデルのライセンスを確認する。出典は<a
+      href="https://huggingface.co/blog/LiquidAI/lfm3"
+      >公式紹介</a
+    >と各モデルカード。
+  </p>
+  <table>
+    <caption>
+      LFM3モデル候補と評価項目
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">候補</th>
+        <th scope="col">用途と確認点</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row"><a href="https://huggingface.co/LiquidAI/d1-2B">d1-2B</a></th>
+        <td>
+          既存d1-3Bゲーム判断Providerの比較候補。テキスト・画像・動画から構造化判断を返す。日本語ゲーム状態で精度、確率、遅延と既存system-one契約の互換性を検証する。公式のd1-3B比較は提供者による評価である。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><a href="https://huggingface.co/LiquidAI/LFM3-1.7B">LFM3-1.7B</a></th>
+        <td>
+          日本語対応の軽量文章モデル。短文分類、構造化出力、ツール呼び出し、相槌において既存LFM2.5
+          JPと比較する。256Kはモデルの最大コンテキストであり実運用容量ではない。複雑な推論やコーディング向けとは推奨されていない。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <a href="https://huggingface.co/LiquidAI/LFM3-Audio-2B">LFM3-Audio-2B</a>
+        </th>
+        <td>
+          日本語を含む音声認識、音声合成、音声対話の候補。認識精度、合成品質、遅延、各ProviderのAPIやストリーミングの接続を検証する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><a href="https://huggingface.co/LiquidAI/LFM3-VL-2B">LFM3-VL-2B</a></th>
+        <td>
+          画像・動画の説明や読み取りに使う軽量候補。日本語の画面や文字に対する精度を検証する。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <a href="https://huggingface.co/LiquidAI/LFM3-Omni-2B">LFM3-Omni-2B</a>／<a
+            href="https://huggingface.co/LiquidAI/d1-Omni-2B"
+            >d1-Omni-2B</a
+          >
+        </th>
+        <td>
+          画像と音声を組み合わせる用途の研究候補。前者は音声を含む生成、後者は構造化判断向け。独立したProviderとの接続と同時利用時の実測が必要。
+        </td>
+      </tr>
+      <tr>
+        <th scope="row">
+          <a href="https://huggingface.co/LiquidAI/LFM3-1.7B-Base">LFM3-1.7B-Base</a>
+        </th>
+        <td>追加学習用の基盤。通常の対話やツール呼び出しの最初の比較にはpost-trained版を使う。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    調査時のホストはStrix Halo、メモリ総量121 GiB、利用可能75 GiB、空きディスク727
+    GiB。これらは一時点の共有資源であり、同時利用の保証ではない。公式は1.7Bの4-bit版を約1
+    GBと説明するが、実際にはコンテキスト、KV
+    cache、スロット、バックエンドと他Providerを含む容量評価が必要である。公式はRyzen AI Max+
+    395、Windows、Vulkanでの実行も報告しているが、本Linux環境の実測ではない。
+  </p>
+  <p>
+    固定されたllama.cppのsource
+    revisionはcb300598d5f90189cb69d2702f4930aaf99d32a2で、調査時のsourceにlfm3の文字列は見つからなかった。<a
+      href="https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF"
+      >公式GGUF</a
+    >はLFM3対応buildを要求するため、既存buildの互換性は未確認。別buildでの検証から始め、稼働中のProviderを置換する前にprofileからroute、runtime、backendを解決して競合とライフサイクルを確認する。d1-2BのTransformers経路も、既存d1環境の依存関係とROCm上の動作を別途検証する。
+  </p>
+  <p>
+    推奨検証順は、d1-2B対d1-3B、LFM3-1.7B対LFM2.5
+    JP、必要に応じてAudioまたはVL。対象となる実データと成功基準を決め、日本語品質、応答遅延、メモリ、同時実行、およびAPI互換性を測る。
+  </p>
+  <section id="d1-update">
+    <h2>d1-2B更新準備と実機確認</h2>
+    <p>
+      2026-10-28、既存d1-3Bゲーム判断Providerをd1-2Bへ更新する変更を準備した。新しい公開modelはd1-2b-gameであり、profileとProviderはornith1.5Strix-gameとgame-decisionのまま。利用者は反映後にConnectionとclaimを再取得する。既存d1-3Bは保存したままとする。
+    </p>
+    <p>
+      公式revision 97c57047d5852d77e02dfac211f8768aff77a8b2の35ファイル、3,854,722,915
+      bytesをrepository外に配置し、SHA-256で固定した。別のPython環境でTransformers 5.20.2、ROCm
+      BF16、gfx1151を使用する。画像は新APIのmediaとして渡し、複数質問と画像を含む実際の入力を4096
+      token以内に制限する。ROCmではupstreamのexplicit attentionを使用する。
+    </p>
+    <p>
+      隔離したHTTP経路で赤画像の選択、長すぎる入力と旧モデル名の拒否を確認した。GPU上のchoice・noul・scoreの同時回答も確認した。既知の小例であり、ゲーム品質、他のProviderとの同時負荷、運用中のLARM経由の確認ではない。稼働環境の更新には署名済みreleaseと管理者によるservice
+      unit登録が必要であり、この確認時点では旧版が稼働構成に残る。
+    </p>
+    <p>Omniは画像と音声を扱う別の検討候補であり、今回のd1更新には含めない。</p>
+  </section>
+  <section id="conversation-benchmark">
+    <h2>LFM3-1.7Bの会話・推論と速度の実機評価</h2>
+    <p>
+      2026-10-28。Radeon 8060S、Linux、Vulkan、llama.cpp revision
+      d05706b4f32a545814856e98ca518292585443b9の別buildで隔離測定した。モデルはLiquidAI/LFM3-1.7B-GGUF
+      revision b3f2ae5d73cd3c91bf40e8ba752c648aa05dffdfのQAD Q4_0、SHA-256
+      43a7d09a0e9cba91b63eb7052488b9564569bddfd65754d2e426465e572a7452。モデルとbuildはrepository外。32,768
+      token、1 slot、cache無効、最大出力1024、temperature 0.1、top-k 50、seed
+      42。既存Providerは稼働したままで、競合の影響を含みうる。
+    </p>
+    <p>
+      公式chat
+      templateはenable_thinkingの真偽のみを読み、reasoning_effortを使用しない。サーバーのcapabilityもreasoning_effort_levelsが空。noneはthinking無効、それ以外のlow、medium、high、maxは同じthinking有効の入力になる。数値は別々の試行のばらつきであり、思考の強度や予算を比較するものではない。noneでも複雑な問題でthinking抑制が常に成功する保証は公式にはない。
+    </p>
+    <table>
+      <caption>
+        短い会話、計算、論理問題の各1回、3件の中央値。初動は見える回答が始まるまで
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指定</th>
+          <th scope="col">最初の生成</th>
+          <th scope="col">見える回答の開始</th>
+          <th scope="col">全体</th>
+          <th scope="col">生成速度</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none</th>
+          <td>0.13秒</td>
+          <td>0.13秒</td>
+          <td>0.79秒</td>
+          <td>86.7 token/秒</td>
+        </tr>
+        <tr>
+          <th scope="row">low</th>
+          <td>0.12秒</td>
+          <td>1.71秒</td>
+          <td>2.62秒</td>
+          <td>80.8 token/秒</td>
+        </tr>
+        <tr>
+          <th scope="row">medium</th>
+          <td>0.10秒</td>
+          <td>1.77秒</td>
+          <td>2.37秒</td>
+          <td>88.7 token/秒</td>
+        </tr>
+        <tr>
+          <th scope="row">high</th>
+          <td>0.09秒</td>
+          <td>1.71秒</td>
+          <td>2.36秒</td>
+          <td>88.7 token/秒</td>
+        </tr>
+        <tr>
+          <th scope="row">max</th>
+          <td>0.08秒</td>
+          <td>1.74秒</td>
+          <td>2.34秒</td>
+          <td>89.5 token/秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      生成速度は内部のthinkingと回答を含むサーバーのdecode速度。最初の生成はthinkingまたは回答の先頭、見える回答の開始は最初のcontentを受け取った時刻。例えばhigh指定の論理問題では見える回答まで2.82秒、全体3.09秒だった。3問各1回の小標本で、速度保証ではない。モデルloadと初回warmupは除外した。
+    </p>
+    <p>
+      計算問題は両設定で480円と正答。論理問題はthinking有効の4指定で緑と回答したが、noneは冒頭で青と述べ、その理由で緑と述べる矛盾があった。実際に生成した4往復では、名前、猫の名前の訂正、飲み物、旅行先、移動手段の5項目をnoneとhighの両方が最終的に保持した。途中の応答には不要な祝辞や「お待ちしています」のような不自然な表現があった。
+    </p>
+    <p>
+      約8,500 tokenと約30,100
+      tokenの人工的な反復文章の先頭に埋めた3項目をnoneとhighの両方が回収した。30,100
+      tokenの初回入力ではキャッシュなしで最初の見える回答までnone 12.82秒、high
+      13.89秒。長文回収の1例であり、32K全域や公称256Kにおける長期会話の信頼性を保証しない。
+    </p>
+    <p>
+      再現用sourceはbenchmarks/lfm3/benchmark.py、詳細な回答と測定は/srv/ai/evidence/lfm3-1.7b-benchmark-20261028に保存した。通常の日本語会話と独立した複数段階reasoning、ツール呼び出しや同時負荷の広い評価は別途必要。
+    </p>
+  </section>
+  <section id="budget-benchmark">
+    <h2>思考予算による段階別再測定</h2>
+    <p>
+      前節ではモデルのreasoning_effortだけを送っており、サーバーで思考予算を設定していなかった。ユーザーの指摘により、並行したLFM2.5-24B検証と同じくサーバー起動時のreasoning
+      budgetを適用して再測定した。lowは64、mediumは256、highは512、maxは無制限であり、これらはモデル固有の深度ではなくテスト側の割当である。条件ごとにサーバーを停止・起動し、各2回測定した。
+    </p>
+    <p>
+      同じ問題「0〜5から異なる3桁を作り、5で割り切れる数を数える」を使い、正答は20＋16＝36個。temperature
+      0.1、top-k 50、top-p 1、min-p 0、repetition penalty 1.05、生成上限4096、seed
+      20261016と20261017、コンテキスト8192、Vulkan、単一slot、cacheなし。LFM3のモデルカードに記載された一般用途のrepetition
+      penalty
+      1.1とは異なり、比較先に揃えた実験設定である。LFM3のモデルとエンジンrevisionは前節と同じ。Ornithはresidentであり、他の負荷の影響を受けうる。
+    </p>
+    <table>
+      <caption>
+        同じ問題の2回の平均。本文開始は最初の非空contentまで、生成速度は思考と本文を含む
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">予算</th>
+          <th scope="col">思考トークン実測</th>
+          <th scope="col">本文開始</th>
+          <th scope="col">生成速度</th>
+          <th scope="col">完了時間</th>
+          <th scope="col">最終答えが36</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">none：本来の思考オフ</th>
+          <td>0、0</td>
+          <td>0.05秒</td>
+          <td>108.3 token/秒</td>
+          <td>7.94秒</td>
+          <td>0/2</td>
+        </tr>
+        <tr>
+          <th scope="row">64</th>
+          <td>65、65</td>
+          <td>0.55秒</td>
+          <td>131.6 token/秒</td>
+          <td>18.27秒</td>
+          <td>0/2。うち1回は出力上限到達</td>
+        </tr>
+        <tr>
+          <th scope="row">256</th>
+          <td>257、256</td>
+          <td>2.00秒</td>
+          <td>131.2 token/秒</td>
+          <td>13.16秒</td>
+          <td>1/2</td>
+        </tr>
+        <tr>
+          <th scope="row">512</th>
+          <td>512、513</td>
+          <td>3.94秒</td>
+          <td>131.2 token/秒</td>
+          <td>12.05秒</td>
+          <td>2/2</td>
+        </tr>
+        <tr>
+          <th scope="row">無制限</th>
+          <td>3314、2227</td>
+          <td>23.86秒</td>
+          <td>117.4 token/秒</td>
+          <td>27.30秒</td>
+          <td>2/2</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      思考文字列の再tokenizeは強制終了境界等のため予算より1程度多い場合がある。予算は最大値であり、モデルが早く思考を終える場合もある。実測はこの問題で制限に到達したことを示す。無制限にも出力全体の4096
+      token上限があり、無限生成ではない。正答の回数はこの1問の最終答えのみを採点したもの。
+    </p>
+    <p>
+      並行試験を忠実に模倣した、thinking
+      offと起動時予算0の併用では、思考は0だったが余分な閉じタグが本文冒頭に露出した。表のnoneは予算の強制を外し、モデル本来のenable_thinking
+      falseで測り直した値。予算0の別実験は開始0.05秒、速度132.4
+      token/秒、完了16.57秒、正答0/2。前節の4つのラベルは同じthinking設定であり、予算試験で段階を与えた場合と異なる。
+    </p>
+    <p>
+      思考を長くしても回答の長さや正しさは保証されない。高い予算では回答開始が遅くなり、低い予算では4096
+      tokenの出力上限まで終わらない例があった。実験sourceはbenchmarks/lfm3/budget_benchmark.py、証拠はrepository外の/srv/ai/evidence/lfm3-reasoning-budget-20261028と/srv/ai/evidence/lfm3-native-no-thinking-20261028にある。並行LFM2.5の結果は<a
+        href="./qwen38-model-and-host-profile.html#ornith-lfm-side-by-side-20261028"
+        >比較記録</a
+      >を参照する。両者はエンジン、モデル、測定時の負荷が異なる。
+    </p>
+  </section>
+  <section id="provider-preparation">
+    <h2>LFM3試験用会話Providerの準備</h2>
+    <p>
+      2026-10-28。LFM2.5会話Providerの設計に合わせ、明示的selector lfm3.1.7b、model
+      lfm3-1.7b、llm-lfm3 route、lfm3-conversation
+      runtimeを主worktreeに準備した。音声認識、音声合成、embedding、発話態度はLFM2.5と同じProviderのrouteを用いる。試験版は既定profileにせず、使用時に要求して起動し、共通のconversation-llm-slotで既存の会話モデルと競合を管理する。LFM2.5側で準備された共通のAPI変換を利用する。署名付き配備は未了。
+    </p>
+    <p>
+      APIは同じreasoning_effort、既定medium、low 64・medium 256・high
+      512・max無制限という内部予算。新しいllama.cppは要求の予算-1を起動時既定値へ戻すため、起動時予算を-1として、通常のmediumはLARMが要求ごとに256を送る。そうしなければmaxは無制限にならない。各要求でこの予算を明示し、内部項目は公開APIとして扱わない。モデル固有の深度ではなくengineによる打切りである。
+    </p>
+    <p>
+      レビューでは、同じengineが内部パラメータのn_predictをmax_tokensより優先し、reasoning_formatで思考部分を本文に含められることを実機で確認した。両Providerの公開APIではこれらを拒否し、出力上限と応答の分離を維持する。LFM2.5の1-token
+      readinessは、本文が空でもreasoning_contentを含むJSONとSSEで成功することを実機で確認した。
+    </p>
+    <p>
+      4 slot、各32768 token、合計131072 token、KV
+      q4_0で起動し、短い4要求の同時処理に成功。32Kは試験profileの実装上限で、モデル自体の公称256Kとは異なる。12GBのresource見積りは暫定値で、32K×4の最大負荷や競合状態の実測は未了。モデルはQAD
+      Q4_0、実行engineはLFM2.5と同じ固定revisionの専用buildを使用し、どちらもrepository外に置く。専用engineはprepare-lfm25-engine.shで再構築できる。
+    </p>
+    <p>
+      隔離backendでは64、256、512の個別budgetを確認し、無制限は4096の出力上限に達するまで256より長く思考した。短文4並列、天気toolの呼び出しと結果を使った回答、JSON
+      Schema、thinkingを無効化した1-token JSON/SSE readinessを確認した。LARMのready
+      probeは通常1-tokenを使うため、思考がデフォルトのモデルでは本文が空になり失敗する。候補はruntimeでreadinessDisableThinkingを明示した場合にだけprobeをthinking
+      offにする修正を含み、既存Providerのprobeを変更しない。隔離LARMでは共通予算adapterを通した各段階、JSON
+      Schema、tool、4並列を確認した。別の隔離試験では仮のbackend
+      lifecycleを使用し、selector発見、llmのみのConnection確保、claim、認証付き会話、解放まで成功した。稼働環境への配備後の実接続は未検証である。
+    </p>
+    <p>
+      候補の保存先は/srv/ai/apps/larm-lfm3-provider-candidate、測定結果は/srv/ai/evidence/lfm3-provider-20261028、隔離LARMの結果は/srv/ai/evidence/lfm3-main-api-preparation-20261028と/srv/ai/evidence/lfm3-connection-shared-engine-20261028。別checkoutはLFM2.5設定の途中snapshotを含む検証用で、主worktreeの変更を正本とする。稼働中の既定profile、signed
+      release、公開APIには反映していない。
+    </p>
+  </section>
+</article>

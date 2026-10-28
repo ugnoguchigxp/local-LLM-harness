@@ -1,0 +1,122 @@
+<article lang="ja">
+  <h1>LFM3-VL-2Bのlocal-node試験</h1>
+  <p>
+    2026-10-28
+    JSTの探索的実測。合成画像をローカルで処理した。実際の画面やカメラは使用していない。試験中は既存のOrnith
+    35Bプロセスが稼働しており、他の負荷もあった。測定は性能保証や本番Providerの承認ではない。
+  </p>
+  <section id="environment">
+    <h2>環境と構成</h2>
+    <p>
+      Ubuntu 26.04.1、Ryzen AI Max+ 395、Radeon 8060S、メモリ121 GiB、観測時の利用可能メモリ78
+      GiB。Vulkan 1.4.335、Mesa 26.0.8。既存のllama-swapはv251、既存のllama.cppはbuild
+      10655で、既存稼働エンジンは別のbuild 244。公式の<a
+        href="https://github.com/ggml-org/llama.cpp/pull/31252"
+        >画像対応PR</a
+      >はマージ済みで、試験用にコミット19cce6919992fdffd92e0ac152caaf1e2b8f254e、build
+      11938を分離ビルドした。既存版のLFM3-VL画像入力の実動作は未確認。
+    </p>
+    <p>
+      <a href="https://huggingface.co/LiquidAI/LFM3-VL-2B-GGUF">公式GGUF</a> revision
+      7c3b4a43c9023e80bf234fec5e826a3365c8dda8のLFM3-VL-2B-QAD-Q4_0.ggufは1,049,615,648
+      bytes、LFM3-VL-2B-Q8_0.ggufは1,846,238,496 bytes、mmproj-LFM3-VL-2B-F16.ggufは378,996,032
+      bytes。Q4とmmprojの合計は1,428,611,680
+      bytes。Q4_0として提供されるのは量子化損失を回復するよう学習したQAD版で、別の通常Q4_0はこのrevisionのファイル一覧にはない。ファイルと実行環境はそれぞれ/srv/ai/models/lfm3-vl-2b-gguf、/srv/ai/apps/llama-lfm3-vl-20261028に配置。
+    </p>
+    <p>
+      Vulkan0、ngl 999、fit off、8192コンテキスト、1スロット、batch 512、ubatch 256、CPU threads
+      8。温度0.1、top-p 1、top-k 50、min-p 0、repeat penalty 1.1、seed 42、出力上限512、prompt
+      cache無効。診断ログで言語モデル25/25層と画像エンコーダーのVulkan使用を確認した。
+    </p>
+  </section>
+  <section id="performance">
+    <h2>速度と資源</h2>
+    <p>
+      同じ1000×400の設定画面画像と同じ日本語質問を3回、thinking無効で計測。最初の1回はウォームアップ前。最初のトークンは最初の非空ストリーム出力まで。prefillはサーバー報告の画像処理を含むprompt処理速度、decodeはサーバー報告値である。
+    </p>
+    <table>
+      <caption>
+        測定結果。秒とtoken/秒
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル</th>
+          <th scope="col">初回応答開始 / 完了</th>
+          <th scope="col">温機後2回の応答開始 / 完了</th>
+          <th scope="col">温機後prefill / decode</th>
+          <th scope="col">生成token</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">QAD Q4</th>
+          <td>0.510 / 0.721</td>
+          <td>0.226 / 0.441、0.227 / 0.442</td>
+          <td>1877–1891 / 126</td>
+          <td>各28</td>
+        </tr>
+        <tr>
+          <th scope="row">Q8</th>
+          <td>0.270 / 0.998</td>
+          <td>0.248 / 0.973、0.250 / 0.979</td>
+          <td>1693–1711 / 88</td>
+          <td>各65</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      起動からhealth成功までQ4 1.015秒、Q8
+      1.257秒。OSファイルキャッシュは消去しておらず、ディスクの完全なコールドスタートではない。Q4の待機時RSSは219,644
+      KiB、試験中のプロセス高水位RSSは411,652 KiB、Q8は各219,908 KiBと381,100
+      KiB。RSSはGPU共有メモリを含む総占有量ではない。Q4の別の診断でVulkanモデルバッファ993
+      MiB、KV約104 MiB、計算バッファ約70 MiB、画像計算バッファ372
+      MiBが報告されたが、全体ピークの測定ではない。GPU使用率は試験前から100%、試験中の1秒間隔サンプルも100%で、モデル固有の利用率や増分は分離できない。CPUはpsの累積平均でQ4最大98%、Q8最大88.8%を観測、瞬間的な推論CPU使用率は未取得。
+    </p>
+    <p>
+      Ornithへの短い日本語質問を直接送った同時負荷試験では、LFM3-VL要求なしの2回は完了2.207秒と2.128秒、decode
+      63.8と65.7
+      token/秒。同時にQ4のthinking有効の画像要求を走らせると、Ornithは5.935秒と3.806秒、decode
+      24.4と40.6
+      token/秒になった。各2回で他の負荷や生成長も異なり、厳密な因果比率ではない。LFM3-VLの同時要求は両回とも512
+      token上限で打ち切られた。既存Providerの本番利用への影響と同時実行制御が課題。試験プロセスは終了済み。
+    </p>
+  </section>
+  <section id="vision">
+    <h2>画像と時系列の結果</h2>
+    <p>
+      Q4の1000×400の合成設定画面に「画面全体を簡潔に説明してください」と尋ねると、接続済みと音量75%は正しいが、「保存はキャンセル」とボタンを状態に誤解した。Q8も同じ誤解をした。「ネットワークの状態と音量は何ですか？」には両者とも接続済み、75%と正答。
+    </p>
+    <p>
+      1000×400の合成端末画像で「何が起き、どのファイルが見つからないですか？」にQ4は「モジュール
+      config.json が見つかりません」と回答し、ビルド失敗の説明を省略。Q8はnpm run
+      buildとconfig.jsonに言及した。760×380の日本語表について「表の内容を行ごとに正確に書き出してください」と尋ねると、両者とも見出しと、りんご
+      12 100、みかん 5 80を正しく出力した。
+    </p>
+    <p>
+      1000×400の合成編集画面で「今何をしているように見えますか？直接確認できることと推測を分けてください」と尋ねると、Q4は表示内容を列挙して最後に作成・保存中と推測した。ただしユーザーが実際に操作していることも確認済みのように述べており、画面の表示と現実の行動を完全には分離できなかった。Q8も直接確認の項目に実際の行動を含めた。
+    </p>
+    <p>
+      同じ要求内の2枚の1000×400画像で「1枚目から2枚目に何が変化しましたか？」にQ4は「保存前」というテキストが「保存しました」に変更されたと正答し、Q8も同趣旨だった。この実測は複数画像の受付と当該変化の認識を示すが、動画入力や一般的な時間推論の保証ではない。PRは動画入力を後日対応と明記しており、動画ファイル入力は試験していない。対応済みの別ランタイムかフレーム抽出と時刻付き複数画像入力を別途評価する。
+    </p>
+    <p>
+      Q4の同じUI質問でthinking無効はreasoning出力なし、0.337秒と0.370秒、thinking有効はreasoning出力あり、1.426秒。両方とも正答したが、1問であり品質改善は判断できない。画像評価の全試行はstopで終了し、タイムアウトや出力上限到達はなかった。同時負荷試験では別途上限到達があった。
+    </p>
+  </section>
+  <section id="operation">
+    <h2>管理方式と再実行</h2>
+    <p>
+      LARMはAgent
+      ProfileのProviderからroute、runtime、llama-swapへ解決し、lifecycleと資源方針で管理する。既存設定の変更やサービス停止はしていない。別ポートのllama-swapで未起動から画像付き要求を送り、自動起動して「接続済み」と回答したことを1.546秒で確認した。ただし稼働中のLARMへのProvider登録、LARM
+      gateway経由の画像とleaseの検証、アイドル停止の実証は未実施で、LARM上で利用可能と結論していない。
+    </p>
+    <p>
+      再実行はrepositoryのbenchmarks/lfm3-vl/benchmark.pyを、Pillowが利用可能なPythonで実行する。例:
+      <code>PYTHONDONTWRITEBYTECODE=1 LFM_VL_OUT=/srv/ai/evidence/lfm3-vl-repeat /srv/ai/apps/vision-recognition-eval/.venv/bin/python benchmarks/lfm3-vl/benchmark.py</code
+      >。固定ポート18096と配置済みモデル・専用ビルド、既存の安全な表画像を使用する。出力、画像、コマンド、各回答、計測値、分離llama-swap設定およびログは/srv/ai/evidence/lfm3-vl-20261028に保存した。
+    </p>
+    <p>
+      Eumenes接続前に、専用の明示選択Profileとroute、runtime、成果物を登録し、既存の優先度とswap
+      groupを維持しながらgateway経由の画像、起動と解放、並行要求と既存Providerの遅延を検証する。実画面サイズ、小文字、複雑なUI、カメラと時系列、確信度や事実と推測の分離、個人情報の処理も追加評価が必要。
+    </p>
+  </section>
+</article>

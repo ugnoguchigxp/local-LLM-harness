@@ -1,5 +1,5 @@
 version: 1
-defaultAgentProfile: ornith1.5Strix
+defaultAgentProfile: lfm2.5
 
 audiences:
   same-host:
@@ -31,6 +31,112 @@ agentProfiles:
         readiness: llm-inference
         contextWindow:
           maxTokens: 262144
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
+        publishModel: false
+        readiness: tts-speech
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-ruri
+        publicModel: ruri-v3-30m-speaking-attitude
+        publishModel: false
+        readiness: system-one
+  lfm2.5:
+    description: LFM2.5 24B A2B main text conversation provider with OpenAI reasoning_effort and medium default, speech, embedding, and System One providers
+    schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
+    usageProtection: { idleSeconds: 600, retention: until-next-profile }
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - larm.system-one.v1
+        - openai.audio-speech.v1
+        - openai.audio-transcriptions.v1
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-lfm25
+        publicModel: lfm2.5-24b-a2b
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 131072
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
+        publishModel: false
+        readiness: tts-speech
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-ruri
+        publicModel: ruri-v3-30m-speaking-attitude
+        publishModel: false
+        readiness: system-one
+  lfm3.1.7b:
+    description: LFM3 1.7B experimental text conversation provider with OpenAI reasoning_effort and medium default, speech, embedding, and System One providers
+    schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
+    usageProtection: { idleSeconds: 600, retention: until-next-profile }
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - larm.system-one.v1
+        - openai.audio-speech.v1
+        - openai.audio-transcriptions.v1
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-lfm3
+        publicModel: lfm3-1.7b
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 32768
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
       - name: asr
@@ -172,7 +278,7 @@ agentProfiles:
       - name: game-decision
         capability: decision.game
         route: game-decision-d1
-        publicModel: d1-3b-game
+        publicModel: d1-2b-game
         publishModel: false
         readiness: system-one
   saaa-conversation-gemma4-26b-64k:
@@ -346,6 +452,10 @@ agentProfiles:
         readiness: stt-transcription
 
 profileSelectors:
+  lfm3.1.7b:
+    agentProfile: lfm3.1.7b
+  lfm2.5:
+    agentProfile: lfm2.5
   contextStill:
     agentProfile: contextstill-background
   SAAA-gemma4-26b:

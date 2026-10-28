@@ -22,6 +22,23 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="plan" data-state="current" data-domain="lfm25-main-provider-reasoning-api">
+          <th scope="row">
+            <a href="./lfm25-main-provider-reasoning-api-preparation-2026-10-28.html"
+              >LFM2.5メインProvider切替準備とReasoning API</a
+            >
+          </th>
+          <td>
+            公開effortと非公開予算の変換、専用エンジン、既定Profile切替設定とAPI実機検証。
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>lfm25-main-provider-reasoning-api</code></small
+            >
+          </td>
+          <td>2026-10-28。source上の準備と隔離した実機API試験を完了。本番配備は未実施。</td>
+        </tr>
+
         <tr
           data-kind="plan"
           data-state="current"
@@ -877,6 +894,69 @@
           <td>
             2026-10-12
             JST測定完了。Qwen全5版・Kokoro・Fish・VOICEVOX、12構成273件と読み検証。モデル・生成音声はrepository外。
+          </td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="lfm3-omni-evaluation">
+          <th scope="row">
+            <a href="./lfm3-omni-evaluation-2026-10-28.html">LFM3-Omni-2Bの音声・画像評価</a>
+          </th>
+          <td>
+            日本語ASR、画像、音声と画像の同時入力の探索的実測。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>lfm3-omni-evaluation</code></small
+            >
+          </td>
+          <td>2026-10-28実測。既存Providerを停止せず比較。</td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="lfm3-vl-evaluation">
+          <th scope="row">
+            <a href="./lfm3-vl-evaluation-2026-10-28.html">LFM3-VL-2Bのlocal-node試験</a>
+          </th>
+          <td>
+            静止画、複数画像、速度と分離バックエンドの試験記録。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>lfm3-vl-evaluation</code></small
+            >
+          </td>
+          <td>2026-10-28の探索的実測。</td>
+        </tr>
+        <tr data-kind="research" data-state="current" data-domain="lfm3-candidate-review">
+          <th scope="row">
+            <a href="./lfm3-candidate-review-2026-10-28.html">LFM3モデル候補の調査</a>
+          </th>
+          <td>
+            文章、判断、音声、画像モデルの候補とlocal-nodeでの検証課題。<small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>lfm3-candidate-review</code></small
+            >
+          </td>
+          <td>2026-10-28公開情報調査。実機評価は未実施。</td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="granite-speech-5-evaluation"
+          data-audit="point-in-time"
+          data-observed-on="2026-10-27"
+          data-target-revision="1dd23f46f6d4e6eae2531982ba2e33220086dd97"
+        >
+          <th scope="row">
+            <a href="./granite-speech-5-evaluation-2026-10-27.html">Granite Speech 5.0の実機評価</a>
+          </th>
+          <td>
+            多言語470MのCPU実行と日本語合成音声の初期評価。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>granite-speech-5-evaluation</code></small
+            >
+          </td>
+          <td>
+            24音声で処理成功。実音声と同時負荷は未評価。<small data-audit-summary="true"
+              >時点監査: 2026-10-27、対象revision 1dd23f46f6d4e6eae2531982ba2e33220086dd97。</small
+            >
           </td>
         </tr>
         <tr

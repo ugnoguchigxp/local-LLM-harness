@@ -286,7 +286,7 @@ export class SemanticReadiness {
         : ["default"] as const;
       for (const format of formats) {
         const response = await withAbort(
-          this.send(input.provider, resolved.endpoint, abort.signal, format),
+          this.send(input.provider, resolved.endpoint, abort.signal, format, resolved.runtime?.reasoning?.readinessDisableThinking === true),
           abort.signal,
         );
         if (!response.ok) {
@@ -359,6 +359,7 @@ export class SemanticReadiness {
     endpoint: string,
     signal: AbortSignal,
     format: ProbeFormat,
+    disableThinking = false,
   ): Promise<Response> {
     const base = endpoint.replace(/\/+$/, "");
     if (provider.protocol === "openai.chat-completions.v1") {
@@ -374,6 +375,7 @@ export class SemanticReadiness {
           messages: [{ role: "user", content: "0" }],
           temperature: 0,
           max_tokens: 1,
+          ...(disableThinking ? { chat_template_kwargs: { enable_thinking: false } } : {}),
           stream,
         }),
         signal,

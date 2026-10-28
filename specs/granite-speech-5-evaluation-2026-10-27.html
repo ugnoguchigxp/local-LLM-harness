@@ -1,0 +1,140 @@
+<article lang="ja">
+  <h1>Granite Speech 5.0のlocal-node適合性：2026年10月27日</h1>
+  <p>
+    IBMは2026年10月20日に<a href="https://huggingface.co/ibm-granite/granite-speech-5.0-2b"
+      >Granite Speech 5.0 2B</a
+    >を公開し、10月21日に<a
+      href="https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc"
+      >5.0 470M TurboCTC</a
+    >を日本語を含む多言語モデルに更新した。どちらもApache
+    2.0。470MはASR専用で、2Bは音声翻訳やキーワード指定にも対応する。
+  </p>
+  <p>
+    470Mの日本語版はこのPCのCPUで実行できた。既存4.1の置換を決めるには実音声、同時負荷、API適合性の評価が必要である。2Bの実行は今回未検証。
+  </p>
+  <section id="method">
+    <h2>環境と方法</h2>
+    <p>
+      AMD Ryzen AI Max+ 395、Radeon 8060S、メモリ121 GiBのLinux。CPUの8スレッド、PyTorch 2.14.1
+      CPU、Transformers
+      5.21.0を使用。モデルrevisionは<code>1dd23f46f6d4e6eae2531982ba2e33220086dd97</code>。既存サービスとは別の環境で、16
+      kHz mono
+      WAVを読み込んだ後の前処理・推論・デコード時間を測った。ロード時間、ファイル読込、HTTP、待機時間は含まない。通常サービスは動作中で、負荷は制御していない。
+    </p>
+    <p>
+      <a href="asr-tts-japanese-evaluation-2026-10-12.html">既存の4.1評価</a
+      >と同じ、VOICEVOXの2声による12文、計24本を各1回処理した。最初の1回も含む。結果は<code>/srv/ai/apps/granite5-eval-20261027/results.txt</code>に記録した。
+    </p>
+  </section>
+  <section id="results">
+    <h2>結果と制約</h2>
+    <p>
+      24本すべてで処理成功。内容は表記・句読点の違いを除いて概ね一致し、1本で「文字起こし」が「文字起越し」になった。句読点は今回の日本語出力には付かなかった。人間の声、騒音、実際の固有名詞を含む精度は未評価。
+    </p>
+    <p>
+      短文12本は0.055〜0.068秒、長文12本は0.077〜0.107秒。過去の4.1
+      Vulkan試験は短文中央値0.326秒、長文中央値0.950秒だったが、別日・異なる実行方式と測定手順であり厳密な速度比較ではない。今回の測定は繰り返しや同時負荷、エンドツーエンドの遅延を評価していない。
+    </p>
+    <p>
+      稼働中の<code>granite-asr.service</code>は4.1 2B Q8のtranscribe.cpp
+      Vulkan実装で、health応答の上限は12秒。5.0
+      TurboCTCは別のCTCモデルであり、既存の実行系やProviderでそのまま利用できることは未確認。5.0向け実装とAPI、実音声品質、LLM・TTS同時負荷を検証してから採用を判断する。
+    </p>
+  </section>
+  <section id="paired-benchmark">
+    <h2>同一条件の比較と置換判断</h2>
+    <p>
+      追加検証の結果、5.0は応答時間が短いものの、実音声で文字化けと数量の誤認識を確認した。品質が明らかに優位とは判定できず、4.1の運用を維持する。5.0
+      shadowは評価用の最小HTTP実装で、入力検証、キャンセル、待機制限など現行Providerの契約を実装していない。
+    </p>
+    <p>
+      <a href="https://huggingface.co/datasets/google/fleurs">FLEURS</a>日本語test固定revision
+      <code>86d16aee3bf3cff25a23a354882b8e36a721f9b1</code>から、12秒以下286件のうちseed
+      20261027で100件を抽出。既存VOICEVOX合成音声24本を追加し、実音声は各1回、合成音声は各3回、2方式を同じ音声で順序をシャッフルしながら交互にHTTP呼び出しした。各群で事前にwarmupし、他のサービスは通常稼働。現行4.1は稼働中のQ8
+      Vulkan Provider、5.0は固定revision・CPU 8スレッドのshadow。HTTP
+      multipart送信からJSON読込完了までを測り、エラーは両方式とも0。既存サービスとの負荷の揺らぎやHTTP実装の違いは残る。
+    </p>
+    <p>
+      文字誤り率はNFKC正規化、英小文字化、空白・句読点・区切り記号除去後の文字編集距離の合計を参照文字数の合計で除した。数詞の漢字と算用数字は統一していない。品質は音声を重複して数えず各1回の出力で集計した。FLEURSは読み上げ音声で、IBM自身が5.0を評価したデータでもあり、未知の自然な会話や固有名詞に一般化できない。
+    </p>
+    <table>
+      <caption>
+        実音声100本と合成音声24本の対照比較。時間は秒
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">方式</th>
+          <th scope="col">CER</th>
+          <th scope="col">完全一致</th>
+          <th scope="col">HTTP p50</th>
+          <th scope="col">HTTP p95</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">実音声100本</th>
+          <td>4.1</td>
+          <td>7.82%</td>
+          <td>31 / 100</td>
+          <td>0.674</td>
+          <td>0.876</td>
+        </tr>
+        <tr>
+          <th scope="row">実音声100本</th>
+          <td>5.0</td>
+          <td>6.88%</td>
+          <td>27 / 100</td>
+          <td>0.164</td>
+          <td>0.190</td>
+        </tr>
+        <tr>
+          <th scope="row">合成短文12本</th>
+          <td>4.1</td>
+          <td>0%</td>
+          <td>12 / 12</td>
+          <td>0.227</td>
+          <td>0.248</td>
+        </tr>
+        <tr>
+          <th scope="row">合成短文12本</th>
+          <td>5.0</td>
+          <td>0%</td>
+          <td>12 / 12</td>
+          <td>0.101</td>
+          <td>0.119</td>
+        </tr>
+        <tr>
+          <th scope="row">合成長文12本</th>
+          <td>4.1</td>
+          <td>0.38%</td>
+          <td>10 / 12</td>
+          <td>0.683</td>
+          <td>0.793</td>
+        </tr>
+        <tr>
+          <th scope="row">合成長文12本</th>
+          <td>5.0</td>
+          <td>0.57%</td>
+          <td>9 / 12</td>
+          <td>0.150</td>
+          <td>0.168</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      実音声のCER差は5.0−4.1で−0.93ポイント。音声単位のpaired bootstrap
+      1万回による95%区間は−2.37〜＋0.54ポイントで、ゼロをまたぐ。話者・内容の偏りを含むため品質の優越を確定しない。5.0は100本中3本にUnicode置換文字「�」を出力、4.1は0本。例えば「中枢神経系」が5.0では「中��神経系」、4.1では正しく出力された。別の音声で5.0は「2017年3月」を「二十七年三月」、「6インチ」を「六日」と出力し、4.1は双方を正しく出力した。別のバス番号では両方式とも誤りがあり、片方がすべてのケースで優れるわけではない。
+    </p>
+    <p>
+      同時負荷はliveの <code>ornith1.5Strix</code> からexisting-onlyでOrnith
+      LLMとVOICEVOXをclaimし、ASRを各方式のloopbackに直接送信。7.53秒の同一音声、48出力token上限のLLM、同一TTS文を同時に実行し、方式ごとwarmup後5回、順序を交互に変更した。30リクエスト全て200、releaseとconfig
+      identityは安定。ASR応答ヘッダーまでの中央値は4.1が0.696秒、5.0が0.209秒。LLM全応答中央値は4.227秒と4.332秒、TTS全応答中央値は0.400秒と0.365秒。5回ずつの小標本で、同時負荷や運用性能全般の保証ではない。
+    </p>
+    <p>
+      使用した評価スクリプト、音声別出力、選択音声のハッシュ、時間、対照集計と同時負荷の原記録は
+      <code>/srv/ai/apps/granite5-eval-20261027/</code>
+      に保存した。公開読み上げデータには個別の話者情報と参照文が含まれるためrepository外に置く。追加のAPI互換性、無音・雑音、実マイク、日常会話、数量・固有名詞、長期運用試験は未実施。文字化けの原因はモデル、tokenizer、実行ライブラリのどれか未特定。
+    </p>
+  </section>
+</article>

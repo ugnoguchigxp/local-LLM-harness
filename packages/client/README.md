@@ -134,6 +134,27 @@ function contextStillModel(promptTokens: number, maxOutputTokens: number): strin
 }
 ```
 
+## LFM2.5・LFM3のReasoning
+
+メイン切替用のProfile selectorは`lfm2.5`、公開modelは`lfm2.5-24b-a2b`です。
+Chat Completionsでは`reasoning_effort`に`low`、`medium`、`high`、`max`を指定します。
+未指定は`medium`。`max`はLARMの拡張で、全出力上限の範囲で思考を無制限にします。
+内部の思考予算や推論エンジンのパラメータをConsumerが指定する必要はありません。
+試験用のLFM3はProfile selector `lfm3.1.7b`、公開model `lfm3-1.7b`で、同じ指定を使えます。
+両Providerは内部設定の`n_predict`と`reasoning_format`を受け付けません。出力上限には`max_tokens`を使用します。
+
+```ts
+await larm.createChatCompletion({
+  model: "lfm2.5-24b-a2b", // Agent Connectionを使う場合はclaimで返されたmodel
+  reasoning_effort: "medium",
+  messages: [{ role: "user", content: "依頼内容" }],
+  max_tokens: 4096,
+});
+```
+
+LFM2.5はテキスト専用です。画像入力が必要な場合は`ornith1.5Strix`を明示選択してください。
+この切替設定は本番配備前の準備です。
+
 ## SAAA Provider選択
 
 SAAAは対象Agent Profileを作成し、必要なProvider subsetを指定します。特定のモデル、内部runtime、portを

@@ -1,0 +1,212 @@
+<article lang="ja">
+  <h1>LFM2.5メインProvider切替準備とReasoning API</h1>
+  <p>
+    <time>2026-10-28</time>。LFM2.5 24B
+    A2Bをメイン会話Providerに切り替えるための実装・設定・受入記録。
+    作業中の設定ではLFMを既定にするが、稼働中daemonへの配備・既定切替はまだ実施していない。
+  </p>
+  <section id="public-api">
+    <h2>利用側の契約</h2>
+    <p>
+      既存のOpenAI互換Chat CompletionsのURLとBearer認証を使用する。
+      公開モデルは<code>lfm2.5-24b-a2b</code>、Agent Profile
+      selectorは<code>lfm2.5</code>。
+      Consumerはモデル名を固定せず、対象Profileを要求してclaimに返されたmodelとbaseUrlを使う。
+      指定する項目は<code>reasoning_effort</code>だけで、未指定・nullはmedium。
+      low、medium、high、maxを受理する。maxはこのAPIの拡張で、公式OpenAI
+      APIの全モデルに共通する値ではない。
+    </p>
+    <pre><code>{
+  "model": "lfm2.5-24b-a2b",
+  "messages": [{ "role": "user", "content": "こんにちは" }],
+  "reasoning_effort": "medium",
+  "max_tokens": 4096,
+  "stream": true
+}</code></pre>
+    <p>
+      内部の思考予算はAPIの公開設定に含めない。native budget、reasoning
+      control等をConsumerが送ると400で拒否する。
+      このProviderはnoneをサポートしない。許可値は解決されたruntimeのpolicyに基づき判定するため、
+      名前やaliasでモデル固有の例外を判定しない。通常の本文、reasoning_content、tool_calls、JSON
+      Schema、SSEは既存経路を通る。
+    </p>
+  </section>
+  <section id="internal-policy">
+    <h2>内部設定とエンジン互換性</h2>
+    <table>
+      <caption>
+        管理用の非公開対応。モデル本来のeffort段階ではなく、LARMの上限制御。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">API値</th>
+          <th scope="col">思考上限</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">low</th>
+          <td>64 token</td>
+        </tr>
+        <tr>
+          <th scope="row">medium</th>
+          <td>256 token、既定</td>
+        </tr>
+        <tr>
+          <th scope="row">high</th>
+          <td>512 token</td>
+        </tr>
+        <tr>
+          <th scope="row">max</th>
+          <td>無制限。ただし全出力上限は有効</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      公式llama.cpp revision <code>d05706b4f32a545814856e98ca518292585443b9</code>を
+      <code>/srv/ai/apps/larm-lfm25-engine-d05706b</code>へ専用配置する。
+      source、build、バイナリ、重みはrepository外。再構築手順は<code>deploy/local-node/scripts/prepare-lfm25-engine.sh</code>。
+      sourceのclean状態・revision・build元を照合してから配置する。既存buildの再利用時はVulkan有効・Release構成も検証する。
+      実行ファイルと共有ライブラリを専用directoryにコピーし、
+      そのdirectoryの共有ライブラリを使用するwrapperとSHA256SUMSを保存する。
+    </p>
+    <p>
+      旧固定版244ではChat APIが<code>thinking_budget_tokens</code>を読み、以前送った
+      <code>reasoning_budget_tokens</code>では予算が効かなかった。新しい公式版では
+      <code>reasoning_budget_tokens</code>を使う。adapter名とエンジンのpinを合わせ、 default
+      mediumも含めて各リクエストで予算を設定する。サーバー起動時の既定は-1とし、maxが有限の既定値へ戻らないようにする。
+    </p>
+    <p>
+      JSON
+      Schemaでtoolsがなくtool_choice未指定の場合、adapterは<code>tool_choice: none</code>を内部で補う。
+      toolsがある場合や明示的なtool_choiceは維持する。旧エンジンでmath＋Schemaのstream終端に
+      peg-native parser errorを再現したため、その版での本番切替準備は不採用にした。
+    </p>
+  </section>
+  <section id="profile-and-capacity">
+    <h2>プロファイル・容量・切替</h2>
+    <p>
+      Agent Profile lfm2.5からroute llm-lfm25、runtime lfm25-conversation、llama-swap model
+      lfm25-conversationへ解決する。
+      llm-defaultもLFMを第一候補にする。既定warmはLFMの1インスタンスで、Ornithのwarm
+      floorを0にする。 既存のOrnith
+      Profileは明示選択として保持する。Consumerが旧Profileを明示要求すれば旧モデルへ解決される。
+      公開モデルをOrnith名のままLFMへ差し替えない。
+    </p>
+    <p>
+      LFMのcontext windowは1会話131072、4 slots、総context524288、Q4 KV、推定予約40GB。 output
+      reserve4096・safety margin1976。4 concurrent allocation・4 concurrent request、queue16。
+      この数値はランタイム設定で、長文4並列の性能・最大メモリ測定は未実施。
+      LFMはテキスト専用でvisionは広告しない。画像が必要なConsumerはOrnith Profileを選択する。
+    </p>
+    <p>
+      ASR、日英TTS、embedding、System Oneは現行Ornithの通常会話Profileと同じProviderを組み合わせる。
+      名前付きContextStill Profileの解決先は既存定義を維持する。 llama-swapのconversation swap
+      groupにLFMを加え、要求Profileによる切替と既存の資源・優先順位制御を使用する。
+    </p>
+  </section>
+  <section id="live-validation">
+    <h2>実機検証</h2>
+    <p>
+      稼働中のLARMを変更せず、予定の524288 context・4 slotsで専用LFMエンジンを起動し、
+      作業中のdaemonの本物のHTTP listenerとModel Brokerから推論した。runtime
+      lifecycleの観測は試験用backendで提供し、 実推論、gateway、公開model正規化、JSON
+      SchemaとSSE検査、予算adapterは本実装を使用。
+      本番systemd・llama-swapによる配備後受入は別途必要。
+    </p>
+    <table>
+      <caption>
+        利用側はreasoning_effortだけを指定。生成された思考を同モデルtokenizerで再計数。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">API指定</th>
+          <th scope="col">思考token</th>
+          <th scope="col">JSON本文</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">low</th>
+          <td>64</td>
+          <td>count: 0</td>
+        </tr>
+        <tr>
+          <th scope="row">medium</th>
+          <td>256</td>
+          <td>count: 12</td>
+        </tr>
+        <tr>
+          <th scope="row">high</th>
+          <td>512</td>
+          <td>count: 36</td>
+        </tr>
+        <tr>
+          <th scope="row">max</th>
+          <td>2313</td>
+          <td>count: 36</td>
+        </tr>
+        <tr>
+          <th scope="row">未指定</th>
+          <td>256</td>
+          <td>count: 12</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      この整数問題の正解は36。全5応答は構造が正しいJSONを返しSSEのstopとDONEで完了したが、low・medium・未指定の
+      算術回答は誤答。ここでの合格はAPIの予算変換・プロトコルの確認であり、全回答の内容品質の合格ではない。
+      mediumの採用は利用者の選択による。複雑な課題ではhighまたはmaxを明示選択できる。
+    </p>
+    <p>
+      さらにmediumの実tool_callsでget_weatherとcity東京の一致、4同時JSON要求の値の分離・全件完了、
+      native予算指定・none・不正値の400拒否を確認。
+      証跡はrepository外の<code>/srv/ai/evidence/lfm25-main-api-preparation-official-v2-20261028/</code>。
+      公開APIだけを使う4段階canaryも実行し、各段階で思考と正しいfixture JSONを確認した。 Agent
+      Profile lfm2.5を作成し、LLM
+      subsetのclaimから短期credentialでJSON推論してreleaseする経路も検証済み。
+      追加証跡は<code>/srv/ai/evidence/lfm25-main-api-scope-and-canary-20261028/</code>と
+      <code>/srv/ai/evidence/lfm25-main-api-scope-v2-20261028/</code>。
+      <code>bun run check</code
+      >は全体成功。配備後は<code>deploy/local-node/scripts/smoke-lfm25-reasoning.ts</code>で公開APIだけを使った4段階canaryを再実行できる。
+    </p>
+  </section>
+  <section id="code-review">
+    <h2>コードレビューと回帰防止</h2>
+    <p>
+      2026-10-28、Reasoning API・内部予算adapter・LFM2.5切替準備を再レビューした。
+      固定した公式llama.cppのリクエスト解析・sampling
+      schemaと照合し、予算field・alias・maxの既定値を確認した。
+      並行作業中の別モデルの評価やD1変更はこのレビューの対象に含めない。
+    </p>
+    <ul>
+      <li>Chat本文の不正JSON・容量超過・Reasoning指定エラーをOpenAI互換のerror形式に統一した。</li>
+      <li>
+        Qwenのreasoning_effortがnullのとき、未指定と同じ既定動作を適用する。明示したtemplate設定は維持する。
+      </li>
+      <li>
+        不正なprovider制御は、会話context viewを消費する前に拒否する。
+        context照合には元の公開リクエストを渡し、内部予算への変換はcontext準備後の本文に適用する。
+      </li>
+      <li>再利用buildがCPU専用・Debug構成の場合は配備を拒否する。</li>
+      <li>
+        エンジンの配置・hash・失敗時の後始末・既存配置の保護をテストし、公開API canaryとともに
+        test:deploymentへ組み込んだ。今後のbun run checkでも実行する。
+      </li>
+    </ul>
+  </section>
+  <section id="deployment">
+    <h2>配備前後の手順</h2>
+    <p>
+      source変更・必須checkを確認し、関係のない並行作業を混ぜずにreview済み完全commitを作る。
+      専用エンジン・重みのhashを検証し、署名済みreleaseの通常手順でbundle・desired
+      intentを作成する。 Activatorによる切替・daemon再起動後、release identity、catalog default、LLM
+      subsetのclaim、 4段階canary、同時実行、旧Ornithへの明示切替を確認する。現在のdirty
+      worktreeのままrelease builderへ渡さない。
+    </p>
+    <p>
+      この文書は切替準備の記録である。稼働中のAPIは引き続き配備済みreleaseで動いており、
+      この設定による本番既定変更はまだ実行していない。
+    </p>
+  </section>
+</article>

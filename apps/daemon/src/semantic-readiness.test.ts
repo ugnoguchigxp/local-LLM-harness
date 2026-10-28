@@ -652,3 +652,19 @@ test("game decision readiness validates the known action independently of model 
       questions: { action: { criteria: { left: "Move left", right: "Move right", wait: "Do not move" } } } });
   }
 });
+
+test("reasoning-configured LLM readiness requests a visible token without thinking", async () => {
+  const { registry, control, provider } = fixture("openai.chat-completions.v1", "llm.general");
+  Object.assign(registry.runtimes[0]!, { reasoning: { defaultEffort: "medium", readinessDisableThinking: true, budgets: { low: 64, medium: 256, high: 512, max: -1 } } });
+  const requests: unknown[] = [];
+  const readiness = new SemanticReadiness({
+    control, getRegistry: () => registry, executionGate: new ExecutionGate(), timeoutMs: 100,
+    fetchImpl: async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return validLlmProbeResponse(init);
+    },
+  });
+  expect(await readiness.check({ allocationId: "alloc", provider })).toMatchObject({ ready: true });
+  expect(requests).toHaveLength(2);
+  for (const body of requests) expect(body).toMatchObject({ max_tokens: 1, chat_template_kwargs: { enable_thinking: false } });
+});

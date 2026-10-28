@@ -27,6 +27,8 @@ export const chatCompletionRequestSchema = z.object({
   model: z.string().min(1),
   messages: z.array(chatCompletionMessageSchema),
   stream: z.boolean().optional(),
+  reasoning_effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable().optional()
+    .describe("Model-dependent reasoning effort. LFM2.5 and LFM3 support low, medium (default), high, and the local max extension."),
   response_format: chatCompletionResponseFormatSchema.optional(),
 }).passthrough();
 

@@ -7,6 +7,7 @@ export {
   type LlamaSwapProcess,
   type LlamaSwapRequest,
 } from "./llama-swap";
+export { prepareLlamaChatRequest, LlamaChatRequestError } from "./llama-chat";
 export {
   createRuntimeBackend,
   RoutingBackend,

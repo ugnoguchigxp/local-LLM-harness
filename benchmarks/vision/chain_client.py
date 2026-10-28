@@ -32,7 +32,7 @@ class LocalBackend:
             executable = '/srv/ai/apps/vision-recognition-eval/florence-legacy/bin/python'
         elif operation == 'judge':
             kind = 'd1'
-            executable = '/srv/ai/apps/d1-system-one/.venv/bin/python'
+            executable = '/srv/ai/apps/d1-system-one-v2/.venv/bin/python'
         else:
             kind = 'native'
             executable = '/srv/ai/apps/vision-recognition-eval/.venv/bin/python'

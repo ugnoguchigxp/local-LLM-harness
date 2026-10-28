@@ -98,15 +98,32 @@ export function normalizedAllocationRequestHash(request: AllocationRequest): str
   return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
 
-export function normalizeQwen38ChatRequest(value: unknown): Record<string, unknown> {
+export function normalizeChatRequest(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new RequestBodyError("invalid_request", "chat request must be a JSON object", 400);
   }
   const request = structuredClone(value as Record<string, unknown>);
+  const effort = request.reasoning_effort;
+  if (effort !== undefined && effort !== null) {
+    if (typeof effort !== "string" || !["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(effort)) {
+      throw new RequestBodyError("invalid_request", "reasoning_effort must be none, minimal, low, medium, high, xhigh, or max", 400);
+    }
+    const template = request.chat_template_kwargs;
+    if (template !== undefined && (!template || typeof template !== "object" || Array.isArray(template))) {
+      throw new RequestBodyError("invalid_request", "chat_template_kwargs must be an object when reasoning_effort is specified", 400);
+    }
+    const kwargs = (template ?? {}) as Record<string, unknown>;
+    const enabled = effort !== "none";
+    if (kwargs.enable_thinking !== undefined && kwargs.enable_thinking !== enabled) {
+      throw new RequestBodyError("invalid_request", "reasoning_effort conflicts with chat_template_kwargs.enable_thinking", 400);
+    }
+    kwargs.enable_thinking = enabled;
+    request.chat_template_kwargs = kwargs;
+  }
   if (request.model !== "qwen3.8") return request;
 
   const template = request.chat_template_kwargs;
-  if (request.reasoning_effort === undefined) {
+  if (effort === undefined || effort === null) {
     if (template === undefined) {
       request.chat_template_kwargs = { enable_thinking: false };
     } else if (template && typeof template === "object" && !Array.isArray(template)) {
@@ -130,6 +147,9 @@ export function normalizeQwen38ChatRequest(value: unknown): Record<string, unkno
     : undefined;
   if (
     exactLiteral
+    && !(typeof effort === "string" && effort !== "none")
+    && !(template && typeof template === "object" && !Array.isArray(template)
+      && (template as Record<string, unknown>).enable_thinking === true)
     && request.grammar === undefined
     && request.response_format === undefined
     && request.tools === undefined

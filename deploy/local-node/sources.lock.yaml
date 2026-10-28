@@ -1,6 +1,18 @@
 # Source/release identities used to reconstruct binaries under /srv/ai/apps.
 # No artifact from these projects is vendored into this repository.
 sources:
+  lfm25-engine:
+    repository: https://github.com/ggml-org/llama.cpp.git
+    revision: d05706b4f32a545814856e98ca518292585443b9
+    path: /srv/ai/apps/lfm25-engine-source
+    runtimePath: /srv/ai/apps/larm-lfm25-engine-d05706b
+    builds:
+      - directory: build-larm-vulkan
+        cmake:
+          - -DGGML_VULKAN=ON
+          - -DCMAKE_BUILD_TYPE=Release
+          - -DLLAMA_CURL=OFF
+
   ruri-system-one:
     repository: https://huggingface.co/cl-nagoya/ruri-v3-30m
     revision: 24899e5de370b56d179604a007c0d727bf144504
@@ -41,6 +53,18 @@ sources:
         cmake:
           - -DGGML_VULKAN=ON
           - -DCMAKE_BUILD_TYPE=Release
+
+  llama-cpp-lfm3:
+    repository: https://github.com/ggml-org/llama.cpp.git
+    revision: d05706b4f32a545814856e98ca518292585443b9
+    path: /srv/ai/apps/llama-lfm3-benchmark
+    builds:
+      - directory: build-vulkan
+        cmake:
+          - -DGGML_VULKAN=ON
+          - -DCMAKE_BUILD_TYPE=Release
+          - -DLLAMA_BUILD_TESTS=OFF
+          - -DLLAMA_BUILD_EXAMPLES=ON
 
   q38rocm:
     repository: https://github.com/julianmb/q38rocm.git
@@ -121,16 +145,16 @@ sources:
     threads: 16
 
   d1-system-one:
-    repository: https://huggingface.co/LiquidAI/d1-3B
-    revision: 051bcc464b01b9f92942b364d9586b0ef5912432
-    path: /srv/ai/apps/d1-system-one
+    repository: https://huggingface.co/LiquidAI/d1-2B
+    revision: 97c57047d5852d77e02dfac211f8768aff77a8b2
+    path: /srv/ai/apps/d1-system-one-v2
     python: "3.11"
     torch: 2.11.0+rocm7.13.0
     torchIndex: https://repo.amd.com/rocm/whl/gfx1151/
-    transformers: 5.17.0
+    transformers: 5.20.2
     device: gfx1151
     compile: false
     treeAttention: explicit-fp32-rocm
     aotritonExperimental: true
-    requirementsSha256: 155362e86c80ab1ffe20f3912c98cae060024dea94ff0978cf5236a59e2eb4f4
-    assetManifestSha256: 1d5cf6efa5b5f46fa8fbafc4dc120f624b76bae778aa4ac468a948e8a7704f77
+    requirementsSha256: 6192ea0f746a33aa93d7e18698774893ba6b7b228436c12854d4c508afa11e61
+    assetManifestSha256: 6d0644ef69342141aac48cec16cc5d776445e3155a9749e3e7183aa2cd4fdcdc

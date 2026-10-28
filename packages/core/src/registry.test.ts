@@ -14,6 +14,26 @@ import {
 const repoConfig = join(import.meta.dir, "../../../config/local-node");
 const fixtures = join(import.meta.dir, "../test/fixtures");
 
+test("prepared main LFM profile exposes text chat with internal reasoning policy and bounded capacity", () => {
+  const registry = loadRegistry(repoConfig);
+  const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry);
+  expect(catalog.defaultAgentProfile).toBe("lfm2.5");
+  const profile = catalog.profiles.find(profile => profile.id === "lfm2.5")!;
+  expect(profile.providers.find(provider => provider.name === "llm")).toMatchObject({
+    route: "llm-lfm25", publicModel: "lfm2.5-24b-a2b", contextWindow: { maxTokens: 131072 },
+  });
+  const runtime = registry.runtimes.find(runtime => runtime.id === "lfm25-conversation")!;
+  expect(runtime.reasoning).toEqual({ defaultEffort: "medium", budgets: { low: 64, medium: 256, high: 512, max: -1 } });
+  expect(runtime.capability).not.toContain("llm.vision");
+  expect(runtime.resources.maxConcurrentRequests).toBe(4);
+  const configured = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
+  expect(configured.models["lfm25-conversation"].cmd).toContain("--ctx-size 524288");
+  expect(configured.models["lfm25-conversation"].cmd).toContain("--parallel 4");
+  // A finite server default would turn a request budget of -1 back into that default.
+  expect(configured.models["lfm25-conversation"].cmd).toContain("--reasoning-budget -1");
+  expect(registry.runtimes.find(runtime => runtime.id === "ornith15-strix-conversation")?.policy.warm?.minInstances).toBe(0);
+});
+
 test("loads the Linux production registry", () => {
   const registry = loadRegistry(repoConfig);
   const general = registry.runtimes.find((runtime) => runtime.id === "ornith-general");
@@ -142,7 +162,7 @@ test("loads the Linux production registry", () => {
   expect(agent35b?.resources.estimatedMemoryGB).toBe(32);
   expect(registry.profiles.some((profile) => profile.id === "voice-expressive")).toBe(true);
   expect(defaultRoute?.candidates[0]).toEqual({
-    runtime: "ornith15-strix-conversation",
+    runtime: "lfm25-conversation",
     purpose: "primary",
   });
   expect(defaultRoute?.candidates).toHaveLength(1);
@@ -204,7 +224,7 @@ test("loads the Linux production registry", () => {
     purpose: "primary",
   });
   expect(defaultRoute?.candidates).toEqual([
-    { runtime: "ornith15-strix-conversation", purpose: "primary" },
+    { runtime: "lfm25-conversation", purpose: "primary" },
   ]);
   expect(registry.runtimes.some((runtime) => runtime.id === "qwen-general")).toBe(false);
   expect(registry.runtimes.some((runtime) => runtime.id.includes("35b"))).toBe(true);
@@ -620,14 +640,14 @@ test("rejects a resident floor that exceeds usable node memory", () => {
   );
 });
 
-test("ContextStill resolves the warm Strix backend shared with the distinct voice profile", () => {
+test("ContextStill resolves the explicit Strix backend shared with the distinct voice profile", () => {
   const registry = loadRegistry(repoConfig);
   const route = registry.routes.find((route) => route.id === "llm-contextstill-ornith");
   expect(route?.candidates).toEqual([{ runtime: "ornith15-strix-conversation", purpose: "primary" }]);
   const runtime = registry.runtimes.find((runtime) => runtime.id === "ornith15-strix-conversation");
   expect(runtime).toMatchObject({
     artifacts: ["ornith15-35b-strix-lean", "ornith15-vision-bf16"],
-    policy: { warm: { minInstances: 1 }, swapGroup: "conversation-llm-slot" },
+    policy: { warm: { minInstances: 0 }, swapGroup: "conversation-llm-slot" },
     resources: { maxConcurrentAllocations: 4, maxConcurrentRequests: 4 },
     deployment: { modelId: "ornith15-strix-conversation" },
   });
@@ -667,7 +687,7 @@ test("ContextStill resolves the warm Strix backend shared with the distinct voic
     .toMatchObject({ maxConcurrentAllocations: 4, maxConcurrentRequests: 1 });
 });
 
-test("production warm floor keeps shared Strix and speech warm while admitting ContextStill Laya", () => {
+test("production warm floor keeps LFM and speech warm while admitting explicit ContextStill Laya", () => {
   const registry = loadRegistry(repoConfig);
   const observedAt = "2026-10-04T09:00:00.000Z";
   const state: ClusterState = {
@@ -687,10 +707,10 @@ test("production warm floor keeps shared Strix and speech warm while admitting C
     candidateRuntimeIds: ["ornith15-strix-conversation", "laya-system-one", "multilingual-e5-small", "granite-asr", "voicevox-tts", "kittentts-nano"],
   });
   expect(context.ok).toBe(true);
-  expect(context.nodes[0]?.reclaimableMemoryGB ?? 0).toBe(0);
+  expect(context.nodes[0]?.reclaimableMemoryGB ?? 0).toBe(40);
   expect(registry.runtimes.find(runtime => runtime.id === "gemma4-26b-conversation")?.policy.warm?.minInstances).toBe(0);
   expect(registry.runtimes.find(runtime => runtime.id === "qwen-asr")?.policy.warm?.minInstances).toBe(0);
-  for (const id of ["ornith15-strix-conversation", "granite-asr", "voicevox-tts", "kittentts-nano"]) {
+  for (const id of ["lfm25-conversation", "granite-asr", "voicevox-tts", "kittentts-nano"]) {
     expect(registry.runtimes.find(runtime => runtime.id === id)?.policy.warm?.minInstances).toBe(1);
   }
 });
@@ -791,7 +811,7 @@ test("d1 game decisions require the explicit Ornith game profile and leave ordin
   const ordinary = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
   const game = catalog.profiles.find(profile => profile.id === "ornith1.5Strix-game")!;
   const gameProvider = game.providers.find(provider => provider.name === "game-decision");
-  expect(gameProvider).toMatchObject({ capability: "decision.game", publicModel: "d1-3b-game",
+  expect(gameProvider).toMatchObject({ capability: "decision.game", publicModel: "d1-2b-game",
     route: "game-decision-d1", protocol: "larm.system-one.v1", readiness: "system-one" });
   expect(game.providers.filter(provider => provider.name !== "game-decision")).toEqual(ordinary.providers);
   expect(ordinary.providers.some(provider => provider.capability === "decision.game")).toBe(false);

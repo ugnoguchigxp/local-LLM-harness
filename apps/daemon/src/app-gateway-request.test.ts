@@ -101,3 +101,60 @@ test("speech without a body does not attempt JSON parsing", async () => {
   });
   expect(result).toEqual({ ok: true, body: {} });
 });
+
+test("reasoning effort is forwarded and selects the corresponding thinking mode", async () => {
+  for (const [effort, enabled] of [["none", false], ["low", true], ["medium", true], ["high", true]] as const) {
+    const result = await prepareGatewayRequestBody({ ...defaults, protocol: "openai.chat-completions.v1",
+      request: request(JSON.stringify({ model: "ornith-1.5-strix-lean", messages: [], reasoning_effort: effort,
+        chat_template_kwargs: { custom: "preserved" } })) });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(JSON.parse(new TextDecoder().decode(result.body.chatRequestBytes!))).toMatchObject({
+      reasoning_effort: effort, chat_template_kwargs: { enable_thinking: enabled, custom: "preserved" },
+    });
+  }
+});
+
+test("reasoning effort rejects invalid or contradictory controls", async () => {
+  for (const fields of [
+    { reasoning_effort: "extreme" },
+    { reasoning_effort: "high", chat_template_kwargs: { enable_thinking: false } },
+    { reasoning_effort: "none", chat_template_kwargs: { enable_thinking: true } },
+  ]) {
+    const result = await prepareGatewayRequestBody({ ...defaults, protocol: "openai.chat-completions.v1",
+      request: request(JSON.stringify({ model: "test", messages: [], ...fields })) });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatchObject({ status: 400, format: "openai" });
+  }
+});
+
+test("chat JSON and body limit errors retain the OpenAI error contract", async () => {
+  for (const [body, maxBodyBytes, status] of [["{", 1024, 400], ["[]", 1024, 400], ["{}", 1, 413]] as const) {
+    const result = await prepareGatewayRequestBody({ ...defaults, maxBodyBytes,
+      protocol: "openai.chat-completions.v1", request: request(body) });
+    expect(result).toMatchObject({ ok: false, error: { status, format: "openai" } });
+  }
+});
+
+test("null effort uses Qwen's omitted-effort default and preserves explicit template controls", async () => {
+  for (const enabled of [undefined, true, false]) {
+    const result = await prepareGatewayRequestBody({ ...defaults, protocol: "openai.chat-completions.v1",
+      request: request(JSON.stringify({ model: "qwen3.8", messages: [{ role: "user", content: "Reply with just OK." }],
+        reasoning_effort: null, ...(enabled === undefined ? {} : { chat_template_kwargs: { enable_thinking: enabled } }) })) });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.body.chatRequest).toMatchObject({ chat_template_kwargs: { enable_thinking: enabled ?? false } });
+      expect(Object.hasOwn(result.body.chatRequest as object, "grammar")).toBe(enabled !== true);
+    }
+  }
+});
+
+test("explicit thinking is not suppressed by Qwen literal-response grammar", async () => {
+  const result = await prepareGatewayRequestBody({ ...defaults, protocol: "openai.chat-completions.v1",
+    request: request(JSON.stringify({ model: "qwen3.8", messages: [{ role: "user", content: "Reply with just OK." }],
+      reasoning_effort: "high" })) });
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.body.chatRequest).not.toHaveProperty("grammar");
+    expect(result.body.chatRequest).toMatchObject({ chat_template_kwargs: { enable_thinking: true } });
+  }
+});

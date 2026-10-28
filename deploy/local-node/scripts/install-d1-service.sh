@@ -5,8 +5,8 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-test -x /srv/ai/apps/d1-system-one/.venv/bin/uvicorn
-test -f /srv/ai/models/d1-3b/model.safetensors
+test -x /srv/ai/apps/d1-system-one-v2/.venv/bin/uvicorn
+test -f /srv/ai/models/d1-2b/model.safetensors
 for target in /etc/systemd/system/d1-system-one.service /etc/polkit-1/rules.d/52-larm-d1-runtime-control.rules; do
   if [[ -L "${target}" || ( -e "${target}" && ! -f "${target}" ) ]]; then
     echo "Refusing unsafe installation target: ${target}" >&2

@@ -143,12 +143,12 @@ class Engines:
             sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'apps' / 'd1-system-one'))
             from engine import Engine
             if operation not in self.loaded:
-                self.loaded[operation] = Engine('/srv/ai/models/d1-3b', device='cpu')
+                self.loaded[operation] = Engine('/srv/ai/models/d1-2b', device='cpu')
             image = Image.open(path).convert('RGB')
             image.thumbnail((384, 384))
             stream = io.BytesIO()
             image.save(stream, format='PNG')
-            result = self.loaded[operation].predict({'model': 'd1-3b-game', 'state': 'Judge only the visible image.',
+            result = self.loaded[operation].predict({'model': 'd1-2b-game', 'state': 'Judge only the visible image.',
                 'images': ['data:image/png;base64,'+base64.b64encode(stream.getvalue()).decode()],
                 'questions': {'table': {'type': 'noul', 'instructions': 'Does the image contain a structured data table with rows and columns?'},
                               'formula': {'type': 'noul', 'instructions': 'Does the image contain a mathematical equation?'}}})

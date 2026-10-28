@@ -1,0 +1,114 @@
+<article lang="ja">
+  <h1>LFM3-Omni-2Bの日本語音声・画像評価</h1>
+  <p>
+    2026年10月28日、既存Providerを停止・変更せず、独立した評価サーバーで測定した。ASR専用の現行Graniteを置換する根拠は不足する。画像と音声を同時に扱う補助モデルとしては試用する価値があるが、誤認識を伴うため自動操作の根拠とするには追加検証が必要である。評価サーバーは終了した。
+  </p>
+  <section id="conditions">
+    <h2>構成と条件</h2>
+    <p>
+      Ryzen AI MAX+ 395、Radeon 8060S、認識メモリ121 GiB、Ubuntu系Linux
+      7.0.0-34。観測時のavailableは61 GiB、swap 8 GiB中6.9
+      GiB使用。別の処理によりGPU使用率は高かった。ornith1.5Strixの経路はASRがstt-granite →
+      granite-asr → Granite Speech 4.1 2B Q8_0、画像はllm-ornith15-strix → Ornith 1.5 35B
+      STRIX_LEAN。汎用stt-defaultの第一候補はWhisper large-v3-turbo
+      Q5_0であり、会話profileと区別する。対象は稼働backendに直接、逐次要求した。LARMのleaseや受付待ちを含まない。
+    </p>
+    <p>
+      公式LiquidAI/LFM3-Omni-2B-GGUF revision 5bcc26f7968f71d26e066027a70978529dbb605d、本体Q4_K_M
+      1.10 GB、共通投影器Q8_0 0.541 GB。llama.cpp revision
+      8ca4060b7e30e76baaa5670ee1ec1b760b7f8552。公式カードにある対応PR
+      31257は2026年10月27日にマージ済み。公式カードにはTransformers、ONNXなども記載される。初回の比較は本体のGPU層0、投影器のGPU
+      offload既定有効であり、GPU側の実際の実行状況は詳細ログ不足のため断定しない。後続の反復はGPUデバイスを無効、投影器もCPU固定した。両方とも8
+      threads、context 8192、1 slot、greedy、音声は完全なファイルを一括入力した。
+    </p>
+    <p>
+      入力音声はVOICEVOX Coreによる合成6区間とJSUTの人の読み上げ3区間、合成の長文1本、15
+      dB白色雑音付き1区間、3秒無音1本。人の読み上げは一人で、自然会話や実マイク環境の代表ではない。参照文と出力をNFKC、小文字化し空白・Unicode句読点・記号を除去した表記CERを用いた。漢数字と数字、読みが同じ表記差は補正しておらず意味誤りの割合ではない。
+    </p>
+  </section>
+  <section id="asr">
+    <h2>音声結果</h2>
+    <table>
+      <caption>
+        同じ入力の逐次比較。時間はHTTP送信開始から最終結果までで、バッチ終了後の遅延に相当する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル</th>
+          <th scope="col">合成6件 CER / 249文字</th>
+          <th scope="col">人の読み上げ3件 CER / 60文字</th>
+          <th scope="col">合成6件の中央値 / 最悪</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Omni Q4_K_M、投影器GPU許可</th>
+          <td>25 / 249、10.04%</td>
+          <td>9 / 60、15.00%</td>
+          <td>0.952 / 1.233秒</td>
+        </tr>
+        <tr>
+          <th scope="row">Granite Q8、Vulkan</th>
+          <td>25 / 249、10.04%</td>
+          <td>5 / 60、8.33%</td>
+          <td>0.782 / 1.407秒</td>
+        </tr>
+        <tr>
+          <th scope="row">Whisper Q5、HIP</th>
+          <td>23 / 249、9.24%</td>
+          <td>4 / 60、6.67%</td>
+          <td>0.666 / 0.786秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      合成区間は6.70〜7.86秒、人の区間は2.82〜4.97秒。表記CERの25誤り中、Omniの14は数値表記などを含む数字例、6は「エーピーアイ」と「API」の表記差であり、精度順位の根拠として扱わない。全モデルは否定指示「古いファイルは削除しないでください」を保持した。Omniは言い直し「水曜日、いや木曜日」を「水曜日、火木曜日」とし、意図を尋ねると「火曜日」と返した。人音声の「傭兵団」は「洋兵団」、「双璧」は「総壁」になった。
+    </p>
+    <p>
+      35.37秒の合成長文は4.65秒、表記距離5 / 196文字。変更を「健康」、急がずを「急がす」とした。15
+      dB雑音付き合成1件は1 /
+      43文字、3秒無音は空出力。少数のため頑健性を結論できない。ファイル全体を入力するバッチであり、発話中の逐次認識の遅延ではない。
+    </p>
+  </section>
+  <section id="vision">
+    <h2>画像・同時入力</h2>
+    <p>
+      1000×620の自作日本語画面では、設定ボタンの右上の位置、音声認識「稼働中」、未処理3件を正答し、存在しない削除ボタンの質問には「いいえ」と返した。1100×1000の自作表ではりんご12・100、みかん5・80、合計17・180を全て書き出し、同じ質問のOrnithも正答した。OpenCVの512×480果物写真ではOmniもOrnithも主な果物を説明したが、Omniは左のバナナを列挙せず、ライムを緑色のレモンと呼んだ。Ornithはバナナとライムも挙げた。画面のOrnith比較は既存処理中のため見送った。小さい字や複雑な実画面は未評価。
+    </p>
+    <p>
+      同一画面と合成音声「この画面で設定を開きたいです。どこを押せばいいですか。」を1リクエストに渡すと、Omniは右上の設定ボタンを指した。これは1例であり、実環境での操作成功率ではない。
+    </p>
+  </section>
+  <section id="operations">
+    <h2>CPU固定の再測定と運用</h2>
+    <p>
+      GPUデバイス無効、投影器GPU無効のログはGPU層0、画像・音声エンコーダーCPU、演算buffer
+      CPUを示した。読み込み完了1.52秒は既にファイルがキャッシュされた再起動であり、ディスクのコールドロードではない。7.18秒の同一音声3回は0.868〜0.989秒、中央値0.912秒。画面の同一質問3回は3.30〜3.90秒、中央値3.70秒。音声＋画面1回は2.91秒。サーバーの観測RSS最大3,118,300
+      KiB、最大CPU使用率740%（1コア100%換算）、プロセスswap
+      0。mmap、ページキャッシュ、統合GPUの共有メモリがあるため、RSSを全システムの増分と扱わない。GraniteやOrnithの同条件の増分メモリ、既存ユーザーへの影響、GPUのみでのOmni速度は未測定。
+    </p>
+    <p>
+      同時稼働中の実用比較だが負荷は変動し、速度の優劣を厳密には断定できない。公式カードはrealtime対応について更新前の注意書きを残しており、今回用いたHTTP測定では発話中ストリーミングを検証していない。常駐よりも、明示選択のオンデマンド補助候補として評価し、人の音声・雑音・専門語・画面操作の誤り率、streaming
+      API、GPU競合、lease・swap-group・停止条件を確認してから導入を判断する。
+    </p>
+  </section>
+  <section id="reproduce">
+    <h2>再現</h2>
+    <p>
+      モデルカード：<cite>https://huggingface.co/LiquidAI/LFM3-Omni-2B-GGUF</cite>。ランタイム変更：<cite>https://github.com/ggml-org/llama.cpp/pull/31257</cite>。人音声：<cite
+        >https://huggingface.co/datasets/FluidInference/JSUT-basic5000</cite
+      >
+      revision cd13cc9c9fe70d8d4f62ffe6fbbb872aef79835c、BASIC5000_4503〜4505。写真：OpenCV revision
+      6dc5ff5c1f84fc3fd22534503a116585919c772cのsamples/data/fruits.jpg。合成音声と表は既存評価の素材。
+    </p>
+    <p>
+      評価記録・スクリプトはsource-only repository外の /srv/ai/evidence/lfm3-omni-20261028
+      に保存した。重みは /srv/ai/models/lfm3-omni-2b-gguf
+      に保存した。結果のresults.jsonはGPU投影器を許可した一連の比較、pure-cpu-repeat.jsonはCPU固定の反復である。
+    </p>
+    <pre><code>python3 /srv/ai/evidence/lfm3-omni-20261028/launch-pure.py</code></pre>
+    <p>
+      上記は評価用ローカルサーバーを開始し、反復測定後に停止する。初回読み込みのディスクキャッシュ条件、他Providerの負荷、プロセスの占有状況を確認してから実行すること。既存backendへ比較を送る一連の評価はrun.pyとlaunch.pyに記録される。
+    </p>
+  </section>
+</article>

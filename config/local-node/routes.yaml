@@ -1,12 +1,22 @@
 routes:
   llm-default:
-    capabilities:
-      - llm.general
-      - llm.reasoning
-      - llm.coding
-      - llm.vision
+    capabilities: [ llm.general, llm.reasoning, llm.coding ]
     candidates:
-      - runtime: ornith15-strix-conversation
+      - runtime: lfm25-conversation
+        purpose: primary
+
+  llm-lfm25:
+    capabilities: [ llm.general, llm.reasoning, llm.coding ]
+    explicitOnly: true
+    candidates:
+      - runtime: lfm25-conversation
+        purpose: primary
+
+  llm-lfm3:
+    capabilities: [ llm.general, llm.reasoning ]
+    explicitOnly: true
+    candidates:
+      - runtime: lfm3-conversation
         purpose: primary
 
   llm-saaa-qwen38:

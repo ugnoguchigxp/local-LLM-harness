@@ -10,7 +10,7 @@ def main():
     parser.add_argument('--runtime-root', type=Path, default=Path('/srv/ai/apps/vision-recognition-eval'))
     parser.add_argument('--baseline-python', type=Path,
         default=Path('/srv/ai/apps/vision-ocr-build/runtimes/4ae2add0fa9d4732dd06-7c6b567f98c1/bin/python'))
-    parser.add_argument('--d1-python', type=Path, default=Path('/srv/ai/apps/d1-system-one/.venv/bin/python'))
+    parser.add_argument('--d1-python', type=Path, default=Path('/srv/ai/apps/d1-system-one-v2/.venv/bin/python'))
     parser.add_argument('--stages', nargs='+', choices=['baseline', 'florence', 'table', 'docling', 'd1'], required=True)
     parser.add_argument('--run-id', required=True)
     parser.add_argument('--warm-repeats', type=int, default=20)

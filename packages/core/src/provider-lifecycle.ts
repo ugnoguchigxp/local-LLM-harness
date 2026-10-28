@@ -80,6 +80,7 @@ export function compileProviderRevision(input: {
     protocol: runtime.protocol,
     node: runtime.node,
     deployment: runtime.deployment,
+    ...(runtime.reasoning ? { reasoning: runtime.reasoning } : {}),
     artifacts,
     providerConfigRevision: input.release?.providerConfigRevision ?? null,
     releaseDigest: input.release?.digest ?? null,

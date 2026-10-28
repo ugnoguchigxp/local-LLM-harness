@@ -1,10 +1,10 @@
 # Python 3.11. Install the matching AMD gfx1151 Torch wheels first (prepare script).
 torch==2.11.0+rocm7.13.0
 torchvision==0.26.0+rocm7.13.0
-transformers==5.17.0
+transformers==5.20.2
 accelerate==1.15.0
 safetensors==0.8.0
-tokenizers==0.23.2
+tokenizers==0.23.3
 Pillow==12.2.0
 fastapi==0.141.1
 uvicorn==0.54.0

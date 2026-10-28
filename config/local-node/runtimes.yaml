@@ -305,6 +305,61 @@ runtimes:
       endpoint: http://127.0.0.1:8083/upstream/gemma4-26b-conversation
       backendEndpoint: http://127.0.0.1:8083/upstream/gemma4-26b-conversation
 
+  lfm25-conversation:
+    artifacts: [ lfm25-24b-a2b-qad-q4-0 ]
+    capability: [ llm.general, llm.reasoning, llm.coding ]
+    protocol: openai.chat-completions.v1
+    reasoning:
+      defaultEffort: medium
+      budgets: { low: 64, medium: 256, high: 512, max: -1 }
+    backend: llama-swap
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      swapGroup: conversation-llm-slot
+    resources:
+      estimatedMemoryGB: 40
+      maxConcurrentAllocations: 4
+      maxConcurrentRequests: 4
+      maxQueuedRequests: 16
+      queueTimeoutMs: 30000
+    deployment:
+      chatAdapter: llama-reasoning-budget-v1
+      modelId: lfm25-conversation
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/lfm25-conversation
+      backendEndpoint: http://127.0.0.1:8083/upstream/lfm25-conversation
+
+  lfm3-conversation:
+    artifacts: [ lfm3-1.7b-qad-q4-0 ]
+    capability: [ llm.general, llm.reasoning ]
+    protocol: openai.chat-completions.v1
+    reasoning:
+      defaultEffort: medium
+      readinessDisableThinking: true
+      budgets: { low: 64, medium: 256, high: 512, max: -1 }
+    backend: llama-swap
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      swapGroup: conversation-llm-slot
+    resources:
+      estimatedMemoryGB: 12
+      maxConcurrentAllocations: 4
+      maxConcurrentRequests: 4
+      maxQueuedRequests: 16
+      queueTimeoutMs: 30000
+    deployment:
+      chatAdapter: llama-reasoning-budget-v1
+      modelId: lfm3-conversation
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/lfm3-conversation
+      backendEndpoint: http://127.0.0.1:8083/upstream/lfm3-conversation
+
   ornith15-strix-conversation:
     chatInput: {}
     artifacts:
@@ -321,7 +376,7 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: conversation-llm-slot
     resources:
       estimatedMemoryGB: 54
@@ -701,7 +756,7 @@ runtimes:
       endpoint: http://127.0.0.1:8089
 
   d1-system-one:
-    artifacts: [ d1-3b ]
+    artifacts: [ d1-2b ]
     capability: [ decision.game ]
     protocol: larm.system-one.v1
     backend: systemd
