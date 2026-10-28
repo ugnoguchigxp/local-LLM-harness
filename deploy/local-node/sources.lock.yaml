@@ -146,3 +146,12 @@ sources:
           - -DGGML_VULKAN=ON
           - -DCMAKE_BUILD_TYPE=Release
           - -DLLAMA_BUILD_UI=OFF
+
+  qwen38-rocmfp4-mtp-engine:
+    repository: https://github.com/ROCmFPX/ROCmFPX.git
+    revision: 120141f1f9da0a82bb109135c82cd173107fac25
+    path: /srv/ai/apps/qwen38-rocmfp4-mtp-source-120141f
+    runtimePath: /srv/ai/apps/larm-qwen38-mtp-120141f-v3
+    prepareScript: deploy/local-node/scripts/prepare-qwen38-mtp-engine.py
+    patch: deploy/local-node/patches/llama-prompt-retention-rocmfpx-120141f-mtp-v1.patch
+    patchSha256: d84ce56cb258e9816fbaf3cfaa26ba2d307c493b88d3e351afec1a9d61f1de50

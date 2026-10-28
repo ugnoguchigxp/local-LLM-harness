@@ -301,3 +301,11 @@ runtimeReleases:
     estimatedMemoryGB: 12
     healthPath: /health
     default: true
+  qwen38-rocmfp4-fast-conversation-mtp-retained-p4-v1:
+    runtime: qwen38-rocmfp4-fast-conversation
+    artifacts:
+      - qwen38-primary
+    providerConfigRevision: rocmfpx-120141f-fast-32k-p4-mtp3-scoped-cache-v1
+    estimatedMemoryGB: 40
+    healthPath: /health
+    default: true
