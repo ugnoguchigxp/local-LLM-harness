@@ -278,12 +278,11 @@ runtimeReleases:
     estimatedMemoryGB: 10
     healthPath: /health
     default: true
-  wevisone-vl-bf16-current:
-    runtime: wevisone-vl-4b
-    artifacts:
-      - wevisone-vl-4b
-    providerConfigRevision: wevisone-40f735b8-rocm-gfx1151-bf16-native-v1
-    estimatedMemoryGB: 20
+  lfm3-vl-perception-current:
+    runtime: lfm3-vl-perception
+    artifacts: [ lfm3-vl-2b-qad-q4-0, lfm3-vl-2b-vision-f16 ]
+    providerConfigRevision: lfm3-vl-qad-q4-cpu-perception-v1
+    estimatedMemoryGB: 4
     healthPath: /health
     default: true
   lfm25-conversation-current:

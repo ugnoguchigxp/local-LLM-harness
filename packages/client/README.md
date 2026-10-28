@@ -165,6 +165,8 @@ async function runContextStillJob(): Promise<void> {
 
 The on-demand `lfm3-vl-2b` selector exposes the same claimed Chat Completions image-input contract. It runs one request at a time with an 8192-token context and uses CPU. After the connection is released and the provider is idle, it is eligible for shutdown after 60 seconds. It does not implement the separate visual-perception detection or segmentation API.
 
+The `visualPerception` selector also uses LFM3-VL for on-demand image descriptions through `client.perceive`. Use the claimed provider's `model` and `task: "describe"`. Detection, OCR, grounding and mask tasks are not supported by this provider; continue to use the dedicated object-recognition and OCR services for those functions.
+
 Read the LLM Provider's `chatInput` in v3 discovery and claim. It advertises JPEG,
 PNG and uncompressed BMP data URLs, raw-image dimensions and bytes, request and
 history image counts, token counting, and the configured inference-audit payload

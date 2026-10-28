@@ -781,9 +781,10 @@ runtimes:
       healthPort: 8093
       healthPath: /health
       endpoint: http://127.0.0.1:8093
-  wevisone-vl-4b:
+  lfm3-vl-perception:
     artifacts:
-      - wevisone-vl-4b
+      - lfm3-vl-2b-qad-q4-0
+      - lfm3-vl-2b-vision-f16
     capability:
       - vision.perception
     protocol: larm.visual-perception.v1
@@ -796,17 +797,17 @@ runtimes:
         minInstances: 0
         idleTtlSeconds: 0
     resources:
-      estimatedMemoryGB: 20
+      estimatedMemoryGB: 4
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 0
       queueTimeoutMs: 100
     deployment:
       scope: user
-      service: wevisone-vl.service
-      healthPort: 8094
+      service: lfm3-vl-perception.service
+      healthPort: 8095
       healthPath: /health
-      endpoint: http://127.0.0.1:8094
+      endpoint: http://127.0.0.1:8095
   lfm25-conversation:
     textInput:
       protocol: llama-chat-input-tokens.v1

@@ -26,7 +26,7 @@ agentProfiles:
           outputReserveTokens: 512
           safetyMarginTokens: 256
   visual-perception:
-    description: On-demand semantic object search and visual understanding with WeVisOne-VL-4B BF16
+    description: On-demand image description with LFM3-VL-2B on CPU
     schedulingPriority: 1000
     idleRelease:
       enabled: true
@@ -36,10 +36,10 @@ agentProfiles:
     providers:
       - name: vision
         capability: vision.perception
-        route: vision-wevisone
-        publicModel: wevisone-vl-4b
+        route: vision-lfm3-vl
+        publicModel: lfm3-vl-2b
         readiness: visual-perception
-        description: 意味による対象検索・画像説明用の補助モデル。visualPerceptionを明示してConnectionを取得しclaimする。 claimのendpointへPOST {model:"wevisone-vl-4b",image:"data:image/png;base64,...",task,query,maxNewTokens?}。 taskはreferring（関係・行動で対象を検索）、detection（queryにカテゴリ配列も可）、count_box、describe、ocr、ocr_grounding、segmentation、matting。 queryは自然文、ocrだけ空文字可。画像はPNG/JPEG/WebP静止画1枚、復号後4MiB・4194304 pixels・各辺8192px以内、EXIF正規化。 maxNewTokensは16〜512、省略256。応答はresponse（生テキスト）、detections（labelと元画像pixelのxyxy）、masks、truncated、timings（各段階のms）。 segmentationは0.5閾値の二値PNG、mattingは連続alpha PNGをmasks[].dataのbase64で返す。最大8対象・PNG合計4MiB。 countは切断なしのcount_boxで検出した箱の個数。truncated:trueでは結果が不完全。confidenceは返さない。 1536x1024の探索試験では対象検索約13秒、マスク約25秒。日本語OCRには欠落・無文字画像の誤読あり。通常のYOLO/OCRは既存の専用モデルを使う。 BF16・ROCm GPU専用、同時1要求。終了時はConnectionをreleaseする。最終解放で停止、無通信60秒でも自動解放。推論中は保持される。 workerは入力画像や結果画像を保存しない。LARM中央の推論監査方針は適用される。呼び出し期限は185秒程度を推奨。
+        description: 画像説明専用。taskはdescribeのみ対応し、位置検出・OCR・マスクは対応しません。CPUでオンデマンド起動し、Connectionのreleaseまたは無通信60秒で停止します。
   decision-training-background:
     description: Idle-only d1 feature extraction for asynchronous training; yields to foreground conversations
     schedulingPriority: 500

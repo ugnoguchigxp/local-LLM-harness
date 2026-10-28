@@ -37,4 +37,23 @@
       release管理、および既存consumerとの接続は正式配備後の確認対象である。
     </p>
   </section>
+  <section id="visual-perception-replacement">
+    <h2>画像説明APIへの採用</h2>
+    <p>
+      <code>visualPerception</code>の<code>vision</code>
+      ProviderはCPUのLFM3-VL-2Bをオンデマンドで起動し、従来の<code>/v1/vision/perceive</code>入口で<code>describe</code>を受け付ける。モデル名は接続claimが返す<code>lfm3-vl-2b</code>を使用する。従来の検出、位置、OCR、マスク等は提供せず、要求にはエラーを返す。専用のOCR・物体検出サービスは維持する。
+    </p>
+    <p>
+      入力は既存のPNG、JPEG、WebP data
+      URLを検査しEXIF正規化後にローカルのllama.cppへ渡す。文章、切断状態、画像寸法、CPU実行情報を返す。画像ファイルは保存しない。利用終了後の接続releaseでProviderを停止し、無通信60秒でも解放対象になる。systemd
+      user unitは<code>deploy/local-node/scripts/install-lfm3-vl-perception.py</code>で独立して準備する。
+    </p>
+    <p>
+      隔離LARMで同一APIのclaimと画像説明を2回検証し、準備2.54〜2.78秒、説明7.89〜7.93秒、release後の停止と資格失効を確認した。未対応taskの拒否も実画像で確認した。記録は<code>/srv/ai/evidence/lfm3-vl-perception-20261029</code>。現実環境への切替と既存利用者の移行は別途確認が必要。
+    </p>
+    <p>
+      旧WeVisOneモデルの削除は実環境切替後に行う。Qwen3-VL-8Bの本体はQwen-Image
+      2.1画像生成サービスのencoderとしても参照されており、画像説明からの引退だけでは削除できない。
+    </p>
+  </section>
 </article>

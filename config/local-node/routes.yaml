@@ -270,12 +270,12 @@ routes:
     candidates:
       - runtime: d1-system-one
         purpose: primary
-  vision-wevisone:
+  vision-lfm3-vl:
     capabilities:
       - vision.perception
     explicitOnly: true
     candidates:
-      - runtime: wevisone-vl-4b
+      - runtime: lfm3-vl-perception
         purpose: primary
   llm-lfm25:
     capabilities:

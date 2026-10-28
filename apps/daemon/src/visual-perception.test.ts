@@ -11,12 +11,12 @@ test("vision Provider discovery, actual-image readiness, scoped validation, upst
   const directory = new URL("../../../config/local-node", import.meta.url).pathname;
   const registry = loadRegistry(directory);
   const catalog = loadAgentConnectionCatalogForRegistry(directory, registry);
-  const runtime = registry.runtimes.find(r => r.id === "wevisone-vl-4b")!;
+  const runtime = registry.runtimes.find(r => r.id === "lfm3-vl-perception")!;
   let mode = "valid", seenImages = 0;
   const peer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async req => {
     const b = await req.json() as any;
     expect(b.image).toStartWith("data:image/png;base64,"); seenImages++;
-    const activeMode = b.query === "a red circle" ? "valid" : mode;
+    const activeMode = b.query === "Describe the image briefly." ? "valid" : mode;
     if (activeMode === "text") return new Response("wrong", { headers: { "content-type": "text/plain" } });
     if (activeMode === "json") return new Response("{broken", { headers: { "content-type": "application/json" } });
     if (activeMode === "large") return Response.json({ response: "a".repeat(8 * 1024 * 1024) });

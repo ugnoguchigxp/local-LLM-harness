@@ -11,7 +11,7 @@ const provider: VisualPerceptionAgentProvider = {
 };
 const input = visualPerceptionProbe(provider.model);
 function result(): VisualPerceptionResponse {
-  return { contractVersion: "larm.visual-perception.v1", model: provider.model, modelRevision: "a".repeat(40), task: "referring",
+  return { contractVersion: "larm.visual-perception.v1", model: provider.model, modelRevision: "a".repeat(40), task: input.task,
     image: { width: 128, height: 128, orientation: "exif-normalized" }, response: "circle", detections: [], masks: [], truncated: false,
     timings: { imageDecodeMs: 1, preprocessMs: 1, generationMs: 1, maskMs: 0, postprocessMs: 1, totalMs: 4 },
     execution: { device: "cuda:0", backend: "transformers", dtype: "bfloat16", decoderDtype: "float32", outputTokens: 12, visualTokens: 16 } };

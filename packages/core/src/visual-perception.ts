@@ -42,9 +42,11 @@ export const visualPerceptionResponseSchema = z.object({
   truncated: z.boolean(),
   timings: z.object({ imageDecodeMs: ms, preprocessMs: ms, generationMs: ms,
     maskMs: ms, postprocessMs: ms, totalMs: ms }).strict(),
-  execution: z.object({ device: z.literal("cuda:0"), backend: z.literal("transformers"),
+  execution: z.union([z.object({ device: z.literal("cuda:0"), backend: z.literal("transformers"),
     dtype: z.literal("bfloat16"), decoderDtype: z.literal("float32"),
     outputTokens: z.number().int().positive(), visualTokens: z.number().int().positive() }).strict(),
+    z.object({ device: z.literal("cpu"), backend: z.literal("llama.cpp"), dtype: z.literal("qad-q4_0"),
+      outputTokens: z.number().int().nonnegative(), inputTokens: z.number().int().positive() }).strict()]),
 }).strict();
 export type VisualPerceptionRequest = z.infer<typeof visualPerceptionRequestSchema>;
 export type VisualPerceptionResponse = z.infer<typeof visualPerceptionResponseSchema>;
@@ -71,6 +73,6 @@ export function inspectVisualPerceptionResponse(value: unknown, request: VisualP
 
 // A real image request exercises the visual encoder before a claim is ready.
 export function visualPerceptionProbe(model: string): VisualPerceptionRequest {
-  return { model, task: "referring", query: "a red circle", maxNewTokens: 32,
+  return { model, task: "describe", query: "Describe the image briefly.", maxNewTokens: 32,
     image: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAACPUlEQVR4nO3dy04jURAE0Tbi/3/ZLEpqIfEwxr4ZeeWINfLU1OmyWQzM5Xq9Hsb1Rg/w6gkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwDcOz3A/V0uN75gq5942ATg5tJ/+uJ6jG6Au/b++yu0SrQCPL76b1+wj6EP4Omr//riTQxl3wUt3X74T/lbNRcQXkrNKXRcAPVIFpxCAQC7BdqABqD//vgMKEDD9iduEg6gZ/sTNA8E0Lb9iZiKAOjc/hSfjf4QfvniAM2P/5SdMAvQv/0pOKdvQXBBgF0e/yk1rRcAlwLY6/GfIjN7AXACwEUAdnz/mdZP7gXACQAnANx6gH0/AKbF83sBcALACQAnAJwAcALACQAnAJwAcALArQco+Df4D7V4fi8ATgA4AeAiAPt+DKyf3AuAEwAuBbDju1BkZi8ALgiw1xGkpvUC4LIAuxxBcM74BfQbZCf0LQiOAGg+gvhs0AV0GhBTcW9BbQbQPOhnQI8BNwn9IdxggM5AAxy0Af0EFAAc3Bbo7R9Fv7RvdhH7YYKC1U8dF3CW2UvN9o+iCzhbegpNq5/6AKanM/StfmoFmM6t/Vuide9n3QBnn/fo/x8At9V+b1b2XdDrJQCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwCcAHACwAkAJwDcB1GDXhPLJFSdAAAAAElFTkSuQmCC" };
 }

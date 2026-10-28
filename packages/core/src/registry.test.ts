@@ -68,7 +68,7 @@ test("loads the Linux production registry", () => {
   expect(asr?.capability).toContain("speech.stt");
   expect(realtimeTts?.capability).toContain("speech.tts");
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");
-  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd" && !["laya-system-one", "d1-system-one", "qwen-asr", "ornith-general", "wevisone-vl-4b"].includes(item.id))) {
+  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd" && !["laya-system-one", "d1-system-one", "qwen-asr", "ornith-general", "lfm3-vl-perception"].includes(item.id))) {
     expect(runtime.policy.warm?.minInstances).toBe(1);
   }
   expect(model35b?.policy).toEqual({

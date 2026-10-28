@@ -41,10 +41,10 @@ test("vision is explicit, isolated, single-request, zero-warm and user-scoped", 
   expect(profile.providers.map(p => p.capability)).toEqual(["vision.perception"]);
   expect(profile.idleRelease).toMatchObject({ enabled: true, idleSeconds: 60, activityProtocols: ["larm.visual-perception.v1"] });
   expect(catalog.defaultAgentProfile).toBe("lfm2.5");
-  expect(registry.routes.find(r => r.id === "vision-wevisone")?.explicitOnly).toBe(true);
-  expect(registry.runtimes.find(r => r.id === "wevisone-vl-4b")).toMatchObject({
+  expect(registry.routes.find(r => r.id === "vision-lfm3-vl")?.explicitOnly).toBe(true);
+  expect(registry.runtimes.find(r => r.id === "lfm3-vl-perception")).toMatchObject({
     policy: { lifecycle: "managed", warm: { minInstances: 0, idleTtlSeconds: 0 } },
     resources: { maxConcurrentAllocations: 1, maxConcurrentRequests: 1, maxQueuedRequests: 0 },
-    deployment: { scope: "user", healthPort: 8094 },
+    deployment: { scope: "user", healthPort: 8095 },
   });
 });
