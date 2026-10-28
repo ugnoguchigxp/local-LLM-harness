@@ -1,6 +1,5 @@
 version: 1
-defaultAgentProfile: ornith1.5Strix
-
+defaultAgentProfile: lfm2.5
 audiences:
   same-host:
     network: loopback
@@ -8,7 +7,6 @@ audiences:
   saaa-desktop:
     network: host-private
     baseUrl: request-origin
-
 agentProfiles:
   visual-perception:
     description: On-demand semantic object search and visual understanding with WeVisOne-VL-4B BF16
@@ -16,24 +14,15 @@ agentProfiles:
     idleRelease:
       enabled: true
       idleSeconds: 60
-      activityProtocols: [ larm.visual-perception.v1 ]
+      activityProtocols:
+        - larm.visual-perception.v1
     providers:
       - name: vision
         capability: vision.perception
         route: vision-wevisone
         publicModel: wevisone-vl-4b
         readiness: visual-perception
-        description: >-
-          意味による対象検索・画像説明用の補助モデル。visualPerceptionを明示してConnectionを取得しclaimする。
-          claimのendpointへPOST {model:"wevisone-vl-4b",image:"data:image/png;base64,...",task,query,maxNewTokens?}。
-          taskはreferring（関係・行動で対象を検索）、detection（queryにカテゴリ配列も可）、count_box、describe、ocr、ocr_grounding、segmentation、matting。
-          queryは自然文、ocrだけ空文字可。画像はPNG/JPEG/WebP静止画1枚、復号後4MiB・4194304 pixels・各辺8192px以内、EXIF正規化。
-          maxNewTokensは16〜512、省略256。応答はresponse（生テキスト）、detections（labelと元画像pixelのxyxy）、masks、truncated、timings（各段階のms）。
-          segmentationは0.5閾値の二値PNG、mattingは連続alpha PNGをmasks[].dataのbase64で返す。最大8対象・PNG合計4MiB。
-          countは切断なしのcount_boxで検出した箱の個数。truncated:trueでは結果が不完全。confidenceは返さない。
-          1536x1024の探索試験では対象検索約13秒、マスク約25秒。日本語OCRには欠落・無文字画像の誤読あり。通常のYOLO/OCRは既存の専用モデルを使う。
-          BF16・ROCm GPU専用、同時1要求。終了時はConnectionをreleaseする。最終解放で停止、無通信60秒でも自動解放。推論中は保持される。
-          workerは入力画像や結果画像を保存しない。LARM中央の推論監査方針は適用される。呼び出し期限は185秒程度を推奨。
+        description: 意味による対象検索・画像説明用の補助モデル。visualPerceptionを明示してConnectionを取得しclaimする。 claimのendpointへPOST {model:"wevisone-vl-4b",image:"data:image/png;base64,...",task,query,maxNewTokens?}。 taskはreferring（関係・行動で対象を検索）、detection（queryにカテゴリ配列も可）、count_box、describe、ocr、ocr_grounding、segmentation、matting。 queryは自然文、ocrだけ空文字可。画像はPNG/JPEG/WebP静止画1枚、復号後4MiB・4194304 pixels・各辺8192px以内、EXIF正規化。 maxNewTokensは16〜512、省略256。応答はresponse（生テキスト）、detections（labelと元画像pixelのxyxy）、masks、truncated、timings（各段階のms）。 segmentationは0.5閾値の二値PNG、mattingは連続alpha PNGをmasks[].dataのbase64で返す。最大8対象・PNG合計4MiB。 countは切断なしのcount_boxで検出した箱の個数。truncated:trueでは結果が不完全。confidenceは返さない。 1536x1024の探索試験では対象検索約13秒、マスク約25秒。日本語OCRには欠落・無文字画像の誤読あり。通常のYOLO/OCRは既存の専用モデルを使う。 BF16・ROCm GPU専用、同時1要求。終了時はConnectionをreleaseする。最終解放で停止、無通信60秒でも自動解放。推論中は保持される。 workerは入力画像や結果画像を保存しない。LARM中央の推論監査方針は適用される。呼び出し期限は185秒程度を推奨。
   decision-training-background:
     description: Idle-only d1 feature extraction for asynchronous training; yields to foreground conversations
     schedulingPriority: 500
@@ -55,26 +44,14 @@ agentProfiles:
         route: general-decision-d1
         publicModel: d1-3b-general
         readiness: system-one
-        description: >-
-          汎用d1判断。claimのendpointへPOST {model,state,questions,adapter?,questionSet?}。
-          stateはJSON objectまたはtext、画像だけならnull。questionsはid→{type,instructions,criteria?}で1〜16問。
-          noulはP(yes)のnoulとconfidence、choiceは名前→基準文のcriteriaに対するchoice/confidence/probabilities、
-          scoreは2〜10段階の基準文配列に対する期待値score/confidence/probabilities/legend（0始まり）。
-          応答は{model,adapter:null|{id,version},answers,usage,routing}。
-          stateはUTF-8 JSONで50000 bytes、stateと全質問・画像を含む入力4096 tokens、要求全体2MiB。
-          imagesはPNG/JPEG/WebPのbase64 data URLを1枚まで、復号後1MiB・1048576 pixels、内部で最大辺384pxへ縮小。
-          adapter:{id,version}とquestionSet:{id,version}で学習済みheadを選択、省略時は基本モデル。質問定義も照合する。
-          学習例はControl BearerでPOST /v1/decision/datasetsへJSONL（8MiB・2000行まで、train/eval必須、課題単位分割）。
-          POST /v1/decision/training-jobs {model,datasetId,questionSet:{id,version,questions}}は202/jobIdを返し、GET /v1/decision/training-jobs/{jobId}で進捗・adapter・eval指標を取得。
-          データはGET/DELETE /v1/decision/datasets/{id}、adapterはGET /v1/decision/adapters、GET/DELETE /v1/decision/adapters/{id}/versions/{version}。
-          変更APIはIdempotency-Key必須。学習state/ラベルを推論時にロードせず、headのみCPUメモリ常駐。
-          未登録/削除済みはdecision_adapter_not_found、質問セット不一致はdecision_adapter_mismatch。
-          低遅延の継続利用はConnectionを保持してrenewする。最終解放後は120秒でidle停止。学習特徴抽出は会話のidle時に進め、会話中はwaiting_for_idleとなる。
+        description: 汎用d1判断。claimのendpointへPOST {model,state,questions,adapter?,questionSet?}。 stateはJSON objectまたはtext、画像だけならnull。questionsはid→{type,instructions,criteria?}で1〜16問。 noulはP(yes)のnoulとconfidence、choiceは名前→基準文のcriteriaに対するchoice/confidence/probabilities、 scoreは2〜10段階の基準文配列に対する期待値score/confidence/probabilities/legend（0始まり）。 応答は{model,adapter:null|{id,version},answers,usage,routing}。 stateはUTF-8 JSONで50000 bytes、stateと全質問・画像を含む入力4096 tokens、要求全体2MiB。 imagesはPNG/JPEG/WebPのbase64 data URLを1枚まで、復号後1MiB・1048576 pixels、内部で最大辺384pxへ縮小。 adapter:{id,version}とquestionSet:{id,version}で学習済みheadを選択、省略時は基本モデル。質問定義も照合する。 学習例はControl BearerでPOST /v1/decision/datasetsへJSONL（8MiB・2000行まで、train/eval必須、課題単位分割）。 POST /v1/decision/training-jobs {model,datasetId,questionSet:{id,version,questions}}は202/jobIdを返し、GET /v1/decision/training-jobs/{jobId}で進捗・adapter・eval指標を取得。 データはGET/DELETE /v1/decision/datasets/{id}、adapterはGET /v1/decision/adapters、GET/DELETE /v1/decision/adapters/{id}/versions/{version}。 変更APIはIdempotency-Key必須。学習state/ラベルを推論時にロードせず、headのみCPUメモリ常駐。 未登録/削除済みはdecision_adapter_not_found、質問セット不一致はdecision_adapter_mismatch。 低遅延の継続利用はConnectionを保持してrenewする。最終解放後は120秒でidle停止。学習特徴抽出は会話のidle時に進め、会話中はwaiting_for_idleとなる。
   saaa-conversation-gemma4-26b-voice:
     description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, Japanese VOICEVOX and English KittenTTS, embedding, and Ruri speaking-attitude System One
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -127,7 +104,9 @@ agentProfiles:
     description: Ornith 1.5 STRIX_LEAN profile copied from the Gemma 4 26B voice profile with the same speech, embedding, and System One providers; image input enabled
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -180,7 +159,9 @@ agentProfiles:
     description: Ornith STRIX_LEAN voice profile with an explicitly selected d1-3B game decision Provider
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -239,7 +220,9 @@ agentProfiles:
     description: SAAA auxiliary 64K LLM session sharing the Gemma 4 26B four-slot runtime with the main voice profile
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -257,19 +240,20 @@ agentProfiles:
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
   contextstill-background:
-    description: ContextStill background profile sharing the warm Ornith STRIX_LEAN vision LLM, Laya System One, and multilingual E5 embedding
+    description: ContextStill background profile sharing the default LFM2.5 text LLM, Laya System One, and multilingual E5 embedding
     schedulingPriority: 1000
     requestScheduling: background-when-idle
     providers:
       - name: llm
         capability: llm.coding
-        route: llm-contextstill-ornith
-        publicModel: ornith-contextstill
+        route: llm-contextstill-lfm25
+        publicModel: lfm2.5-contextstill
         readiness: llm-inference
         contextWindow:
           maxTokens: 32768
           outputReserveTokens: 4096
           safetyMarginTokens: 0
+        description: LFM2.5を共有するバックグラウンド用テキストLLM。32K入力枠、出力最大4096 tokens。reasoning_effortはlow・medium・high・max、省略時medium。画像入力は非対応。
       - name: asr
         capability: speech.stt
         route: stt-granite
@@ -404,7 +388,117 @@ agentProfiles:
         route: stt-granite
         publicModel: granite-speech-4.1-2b
         readiness: stt-transcription
-
+  lfm2.5:
+    description: LFM2.5 24B-A2B（標準）— テキスト会話・コード・JSON出力、128K入力、Reasoning省略時medium。音声認識・日英音声合成・embedding・System One付き。
+    schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - larm.system-one.v1
+        - openai.audio-speech.v1
+        - openai.audio-transcriptions.v1
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-lfm25
+        publicModel: lfm2.5-24b-a2b
+        description: 標準のテキスト会話モデルはLFM2.5 24B-A2B。会話・文章作成・コード・JSON形式の出力に使用する。 reasoning_effortはlow・medium・high・max、省略時はmedium。maxでもmax_tokensと入力上限は適用される。 contextは131072 tokens、出力は最大4096 tokens、4並列。画像入力は非対応。 prompt_cache_keyで会話ごとの入力キャッシュを再利用できる。毎回、必要な会話履歴をmessagesに含める。
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 131072
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
+        publishModel: false
+        readiness: tts-speech
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-ruri
+        publicModel: ruri-v3-30m-speaking-attitude
+        publishModel: false
+        readiness: system-one
+  lfm3.1.7b:
+    description: LFM3 1.7B experimental text conversation provider with OpenAI reasoning_effort and medium default, speech, embedding, and System One providers
+    schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - larm.system-one.v1
+        - openai.audio-speech.v1
+        - openai.audio-transcriptions.v1
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-lfm3
+        publicModel: lfm3-1.7b
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 32768
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
+        publishModel: false
+        readiness: tts-speech
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-ruri
+        publicModel: ruri-v3-30m-speaking-attitude
+        publishModel: false
+        readiness: system-one
 profileSelectors:
   visualPerception:
     agentProfile: visual-perception
@@ -430,15 +524,19 @@ profileSelectors:
         protocol: larm.mesh-generation.v1
         endpoint: /v1/3d/generations
         model: trellis2-4b
-        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
-        description: 'TRELLIS.2による3D生成は512固定、12 steps固定（要求にstepsフィールドは送らない）、GLB出力。sourceは既存のimage-artifact ID、またはpromptを指定。画像はPNG/WebP、20 MiB以内、最大4096px。3D要求に任意URL・ホストパス・直接uploadは受け付けない。端末画像はPOST /v1/image-artifacts/importsで画像IDを取得して指定する（Control認証、multipartのfile 1個、UUIDキー、JPEG/PNG/WebP静止画16 MiB・各辺2000pxまで。WebP圧縮payloadは再圧縮せず保存）。prompt入力のsource.imageModelは同じcatalogのmedia.image.generateサービスのmodelを使用する（元画像は768角・8 steps・PNG）。Control BearerとIdempotency-Key UUIDが必要。Agent Connection取得・Profile切替は不要。HTTP 202でjobを返し、statusUrlまたはeventsUrlを追跡する。既定seedは42。ライブラリは/v1/3d/assets。生成完了後にworkerを停止。WebP対応viewerまたはBlender 4.0以降で表示する。'
+        startupPolicy:
+          minWarmInstances: 0
+          idleTtlSeconds: 0
+        description: TRELLIS.2による3D生成は512固定、12 steps固定（要求にstepsフィールドは送らない）、GLB出力。sourceは既存のimage-artifact ID、またはpromptを指定。画像はPNG/WebP、20 MiB以内、最大4096px。3D要求に任意URL・ホストパス・直接uploadは受け付けない。端末画像はPOST /v1/image-artifacts/importsで画像IDを取得して指定する（Control認証、multipartのfile 1個、UUIDキー、JPEG/PNG/WebP静止画16 MiB・各辺2000pxまで。WebP圧縮payloadは再圧縮せず保存）。prompt入力のsource.imageModelは同じcatalogのmedia.image.generateサービスのmodelを使用する（元画像は768角・8 steps・PNG）。Control BearerとIdempotency-Key UUIDが必要。Agent Connection取得・Profile切替は不要。HTTP 202でjobを返し、statusUrlまたはeventsUrlを追跡する。既定seedは42。ライブラリは/v1/3d/assets。生成完了後にworkerを停止。WebP対応viewerまたはBlender 4.0以降で表示する。
       - name: image
         capability: media.image.generate
         protocol: larm.image-generation.v1
         endpoint: /v1/images/generations
         model: qwen-image-2.1-turbo
-        description: 'Qwen-Image 2.1 Turbo AD-Q4_Kによる画像生成。POSTでpromptを指定すると起動し、画像保存後に停止します。width/heightは縦横それぞれ100〜1280の整数を自由指定できます（省略時512）。内部では各辺を32の倍数へ切り上げて生成し、指定どおりの寸法へ縮小して返します。stepsは8固定、seedは任意、formatはwebpまたはpng（省略時webp）。このPCで起動から応答まで512角約16秒・768角約31秒・1024角約58秒、中間サイズの個別生成試験では1216角約87秒・1280角約97秒でした。応答のartifacts[0].contentUrlをControlのURLに解決してGETすると画像を取得できます。写真・イラスト・構図検討に対応。参照画像による編集はこのAPIでは未対応。'
-        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
+        description: Qwen-Image 2.1 Turbo AD-Q4_Kによる画像生成。POSTでpromptを指定すると起動し、画像保存後に停止します。width/heightは縦横それぞれ100〜1280の整数を自由指定できます（省略時512）。内部では各辺を32の倍数へ切り上げて生成し、指定どおりの寸法へ縮小して返します。stepsは8固定、seedは任意、formatはwebpまたはpng（省略時webp）。このPCで起動から応答まで512角約16秒・768角約31秒・1024角約58秒、中間サイズの個別生成試験では1216角約87秒・1280角約97秒でした。応答のartifacts[0].contentUrlをControlのURLに解決してGETすると画像を取得できます。写真・イラスト・構図検討に対応。参照画像による編集はこのAPIでは未対応。
+        startupPolicy:
+          minWarmInstances: 0
+          idleTtlSeconds: 0
   SAAA-w-music:
     agentProfile: saaa-conversation-gemma4-26b-voice
     services:
@@ -447,18 +545,25 @@ profileSelectors:
         protocol: larm.mesh-generation.v1
         endpoint: /v1/3d/generations
         model: trellis2-4b
-        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
-        description: 'TRELLIS.2による3D生成は512固定、12 steps固定（要求にstepsフィールドは送らない）、GLB出力。sourceは既存のimage-artifact ID、またはpromptを指定。画像はPNG/WebP、20 MiB以内、最大4096px。3D要求に任意URL・ホストパス・直接uploadは受け付けない。端末画像はPOST /v1/image-artifacts/importsで画像IDを取得して指定する（Control認証、multipartのfile 1個、UUIDキー、JPEG/PNG/WebP静止画16 MiB・各辺2000pxまで。WebP圧縮payloadは再圧縮せず保存）。prompt入力のsource.imageModelは同じcatalogのmedia.image.generateサービスのmodelを使用する（元画像は768角・8 steps・PNG）。Control BearerとIdempotency-Key UUIDが必要。Agent Connection取得・Profile切替は不要。HTTP 202でjobを返し、statusUrlまたはeventsUrlを追跡する。既定seedは42。ライブラリは/v1/3d/assets。生成完了後にworkerを停止。WebP対応viewerまたはBlender 4.0以降で表示する。'
+        startupPolicy:
+          minWarmInstances: 0
+          idleTtlSeconds: 0
+        description: TRELLIS.2による3D生成は512固定、12 steps固定（要求にstepsフィールドは送らない）、GLB出力。sourceは既存のimage-artifact ID、またはpromptを指定。画像はPNG/WebP、20 MiB以内、最大4096px。3D要求に任意URL・ホストパス・直接uploadは受け付けない。端末画像はPOST /v1/image-artifacts/importsで画像IDを取得して指定する（Control認証、multipartのfile 1個、UUIDキー、JPEG/PNG/WebP静止画16 MiB・各辺2000pxまで。WebP圧縮payloadは再圧縮せず保存）。prompt入力のsource.imageModelは同じcatalogのmedia.image.generateサービスのmodelを使用する（元画像は768角・8 steps・PNG）。Control BearerとIdempotency-Key UUIDが必要。Agent Connection取得・Profile切替は不要。HTTP 202でjobを返し、statusUrlまたはeventsUrlを追跡する。既定seedは42。ライブラリは/v1/3d/assets。生成完了後にworkerを停止。WebP対応viewerまたはBlender 4.0以降で表示する。
       - name: music
         capability: media.music.generate
         protocol: larm.music-generation.v1
         endpoint: /v1/music/generations
         model: auto
-        description: '要求に応じた音声生成。instrumental:trueはStable Audio 3 Small Music、instrumental:false（既存互換の既定）はACE-Step 1.5 Turbo Normalでボーカル生成。歌詞はlyricsに指定します。効果音はtask:"sound-effect"またはmodel:"stable-audio-3-small-sfx"でStable Audio 3 Small SFXを使います。XLは使用しません。既存のmodel:"ace-step-1.5"と"acestep-v15-turbo"も自動選択の互換名です。POSTでprompt（曲調・編成）を指定すると起動し、音声保存後に停止します。durationSecondsはStable Music・SFXでは1〜120秒、ACE-Stepでは1〜600秒で小数も指定できます。省略時は歌なし120秒、効果音5秒、ボーカル180秒です。Stable Musicのモデルだけを明示した場合は歌なしを既定とします。明示された長さを自動短縮しません。GET /v1/music/providersのmodelsで用途別の既定値と上限を確認できます。qualityはfast（4ステップ・高速試作）、balanced（8ステップ・標準、省略時）、high（12ステップ）から選択。試作例：{"prompt":"軽快なピアノのBGM","durationSeconds":30,"quality":"fast","instrumental":true}。instrumentalは歌なし指定（省略時false）で、trueの場合はlyricsを指定しません。歌詞はlyrics、seedは任意、outputFormatはopus・mp3・wav・flac（省略時opus、128 kbps VBR・48 kHz）。OpusはACE-Stepの一時WAV32またはStable Audioのメモリ上のWAV16から変換します。ACE-Stepの中間ファイルは変換直後に削除し、Stable Audioは中間ファイルを作りません。Stable Audioのbpm・key・timeSignatureはプロンプトへのヒントで、厳密な制御ではありません。providerOptionsはStable Audioではguidance_scale（0〜10）のみ指定できます。title（曲名）とtags（タグ一覧）は任意。説明からテンポ・雰囲気・ジャンル・楽器のタグを自動生成します。GET /v1/music/tagsでタグと曲数を取得し、GET /v1/music/tracks?tags=アップテンポ,明るいで複数タグに絞れます。sort=createdAt&order=ascで古い順（既定は新しい順）、q=検索語&sort=relevanceで一致度順を指定できます。楽曲・お気に入り・タグ一覧はすべて既定50件（limitは1〜100）。nextCursorをcursorに渡すと続き、totalは全件数です。ページ継続時は同じAPIで検索・タグ・並び順を維持し、生成・削除後のタグ一覧は先頭から再取得してください。完成曲は既定で期限なしに保存し、GET /v1/music/tracks?q=検索語で曲名・prompt・歌詞・タグを検索できます（limitは1〜100、nextCursorをcursorに渡すと続き）。GET /v1/music/tracks/{id}/audioで再生、GET /v1/music/favoritesでお気に入り一覧、PUTまたはDELETE /v1/music/generations/{id}/favoriteで登録・解除、DELETE /v1/music/tracks/{id}で楽曲を削除できます。容量上限では自動削除せずmusic_storage_fullで保存を拒否します。HTTP 202で返るjobIdを使いGET /v1/music/generations/{jobId}で状態を確認し、statusがcompletedになったらresult.audioUrlをControlのURLに解決してGETすると音声を取得できます。短い曲とfast設定で試作し、必要な長さとbalanced設定で本番生成できます。起動時間が加わり、highで音質向上を保証するものではありません。参照音源による編集は未対応。'
-        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
+        description: 要求に応じた音声生成。instrumental:trueはStable Audio 3 Small Music、instrumental:false（既存互換の既定）はACE-Step 1.5 Turbo Normalでボーカル生成。歌詞はlyricsに指定します。効果音はtask:"sound-effect"またはmodel:"stable-audio-3-small-sfx"でStable Audio 3 Small SFXを使います。XLは使用しません。既存のmodel:"ace-step-1.5"と"acestep-v15-turbo"も自動選択の互換名です。POSTでprompt（曲調・編成）を指定すると起動し、音声保存後に停止します。durationSecondsはStable Music・SFXでは1〜120秒、ACE-Stepでは1〜600秒で小数も指定できます。省略時は歌なし120秒、効果音5秒、ボーカル180秒です。Stable Musicのモデルだけを明示した場合は歌なしを既定とします。明示された長さを自動短縮しません。GET /v1/music/providersのmodelsで用途別の既定値と上限を確認できます。qualityはfast（4ステップ・高速試作）、balanced（8ステップ・標準、省略時）、high（12ステップ）から選択。試作例：{"prompt":"軽快なピアノのBGM","durationSeconds":30,"quality":"fast","instrumental":true}。instrumentalは歌なし指定（省略時false）で、trueの場合はlyricsを指定しません。歌詞はlyrics、seedは任意、outputFormatはopus・mp3・wav・flac（省略時opus、128 kbps VBR・48 kHz）。OpusはACE-Stepの一時WAV32またはStable Audioのメモリ上のWAV16から変換します。ACE-Stepの中間ファイルは変換直後に削除し、Stable Audioは中間ファイルを作りません。Stable Audioのbpm・key・timeSignatureはプロンプトへのヒントで、厳密な制御ではありません。providerOptionsはStable Audioではguidance_scale（0〜10）のみ指定できます。title（曲名）とtags（タグ一覧）は任意。説明からテンポ・雰囲気・ジャンル・楽器のタグを自動生成します。GET /v1/music/tagsでタグと曲数を取得し、GET /v1/music/tracks?tags=アップテンポ,明るいで複数タグに絞れます。sort=createdAt&order=ascで古い順（既定は新しい順）、q=検索語&sort=relevanceで一致度順を指定できます。楽曲・お気に入り・タグ一覧はすべて既定50件（limitは1〜100）。nextCursorをcursorに渡すと続き、totalは全件数です。ページ継続時は同じAPIで検索・タグ・並び順を維持し、生成・削除後のタグ一覧は先頭から再取得してください。完成曲は既定で期限なしに保存し、GET /v1/music/tracks?q=検索語で曲名・prompt・歌詞・タグを検索できます（limitは1〜100、nextCursorをcursorに渡すと続き）。GET /v1/music/tracks/{id}/audioで再生、GET /v1/music/favoritesでお気に入り一覧、PUTまたはDELETE /v1/music/generations/{id}/favoriteで登録・解除、DELETE /v1/music/tracks/{id}で楽曲を削除できます。容量上限では自動削除せずmusic_storage_fullで保存を拒否します。HTTP 202で返るjobIdを使いGET /v1/music/generations/{jobId}で状態を確認し、statusがcompletedになったらresult.audioUrlをControlのURLに解決してGETすると音声を取得できます。短い曲とfast設定で試作し、必要な長さとbalanced設定で本番生成できます。起動時間が加わり、highで音質向上を保証するものではありません。参照音源による編集は未対応。
+        startupPolicy:
+          minWarmInstances: 0
+          idleTtlSeconds: 0
   embeddingCanary:
     agentProfile: contextstill-embedding
   backchannelQwen35:
     agentProfile: contextstill-backchannel-qwen35-2b
-
+  lfm2.5:
+    agentProfile: lfm2.5
+  lfm3.1.7b:
+    agentProfile: lfm3.1.7b
 compatibilityAliases: {}

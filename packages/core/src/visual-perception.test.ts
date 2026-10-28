@@ -40,7 +40,7 @@ test("vision is explicit, isolated, single-request, zero-warm and user-scoped", 
   const profile = catalog.profiles.find(p => p.id === "visual-perception")!;
   expect(profile.providers.map(p => p.capability)).toEqual(["vision.perception"]);
   expect(profile.idleRelease).toMatchObject({ enabled: true, idleSeconds: 60, activityProtocols: ["larm.visual-perception.v1"] });
-  expect(catalog.defaultAgentProfile).toBe("ornith1.5Strix");
+  expect(catalog.defaultAgentProfile).toBe("lfm2.5");
   expect(registry.routes.find(r => r.id === "vision-wevisone")?.explicitOnly).toBe(true);
   expect(registry.runtimes.find(r => r.id === "wevisone-vl-4b")).toMatchObject({
     policy: { lifecycle: "managed", warm: { minInstances: 0, idleTtlSeconds: 0 } },

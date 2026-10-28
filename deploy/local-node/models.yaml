@@ -1,5 +1,3 @@
-# Model binaries live under /srv/ai/models and are deliberately not part of this repository.
-# Pin the source revision here; record a checksum after each deliberate model replacement.
 models:
   ruri-v3-30m:
     kind: snapshot
@@ -12,10 +10,15 @@ models:
     snapshotDigest: d263781470cc3568afa6b847bf6c5249a56fad37ae88ce585e860a093ea1b522
     runtime: ruri-ort-1.30.0-cpu
     files:
-      - { path: config.json, bytes: 1323, sha256: 3230a8666ce50d245a0e68f5bff4682c419c541f1212ba001a497f327fb7a9e5 }
-      - { path: model.safetensors, bytes: 146828152, sha256: e94155e342cbfc33280c345c6e2912905fb5de6e1a3adeb938f395aafd2f8832 }
-      - { path: tokenizer.json, bytes: 6724873, sha256: 0a94ac9a0a02c067bdef25b72ae9f4ee33f48f552e55988d444f6d25eeb1d062 }
-
+      - path: config.json
+        bytes: 1323
+        sha256: 3230a8666ce50d245a0e68f5bff4682c419c541f1212ba001a497f327fb7a9e5
+      - path: model.safetensors
+        bytes: 146828152
+        sha256: e94155e342cbfc33280c345c6e2912905fb5de6e1a3adeb938f395aafd2f8832
+      - path: tokenizer.json
+        bytes: 6724873
+        sha256: 0a94ac9a0a02c067bdef25b72ae9f4ee33f48f552e55988d444f6d25eeb1d062
   laya-multilingual:
     kind: snapshot
     role: evaluation-system-one
@@ -27,12 +30,26 @@ models:
     snapshotDigest: f3db11bdcf3eb23c56453fadf4332cd4ba2dcbd095f5286ba015bf04936fcbaa
     runtime: laya-0.3.20-cpu
     files:
-      - { path: encoder/config.json, sourcePath: multilingual/encoder/config.json, bytes: 1938, sha256: 83f6916d13ef0f556ac461f28308dc2bffa7ebeadee8ec9e2db5812020ea5bb4 }
-      - { path: model.safetensors, sourcePath: multilingual/model.safetensors, bytes: 643835514, sha256: 9d628fd971b700382ac6f65920a86f149777b2e748e0c955fb3b19695aa8f204 }
-      - { path: rl_agent_config.json, sourcePath: multilingual/rl_agent_config.json, bytes: 472, sha256: 25061739243b617ad88d1219ba6f8a9c86c5881ca28df024fa2d9b3b2fcc30c6 }
-      - { path: tokenizer/tokenizer.json, sourcePath: multilingual/tokenizer/tokenizer.json, bytes: 34363188, sha256: 609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f }
-      - { path: tokenizer/tokenizer_config.json, sourcePath: multilingual/tokenizer/tokenizer_config.json, bytes: 524, sha256: 6c6b2d8e3c84ce0e671c129cd6b374b235d6f9863042a5836358d00a89bbb5a1 }
-
+      - path: encoder/config.json
+        sourcePath: multilingual/encoder/config.json
+        bytes: 1938
+        sha256: 83f6916d13ef0f556ac461f28308dc2bffa7ebeadee8ec9e2db5812020ea5bb4
+      - path: model.safetensors
+        sourcePath: multilingual/model.safetensors
+        bytes: 643835514
+        sha256: 9d628fd971b700382ac6f65920a86f149777b2e748e0c955fb3b19695aa8f204
+      - path: rl_agent_config.json
+        sourcePath: multilingual/rl_agent_config.json
+        bytes: 472
+        sha256: 25061739243b617ad88d1219ba6f8a9c86c5881ca28df024fa2d9b3b2fcc30c6
+      - path: tokenizer/tokenizer.json
+        sourcePath: multilingual/tokenizer/tokenizer.json
+        bytes: 34363188
+        sha256: 609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f
+      - path: tokenizer/tokenizer_config.json
+        sourcePath: multilingual/tokenizer/tokenizer_config.json
+        bytes: 524
+        sha256: 6c6b2d8e3c84ce0e671c129cd6b374b235d6f9863042a5836358d00a89bbb5a1
   multilingual-e5-small-onnx-qint8:
     kind: snapshot
     role: preferred-embedding
@@ -45,13 +62,30 @@ models:
     quantization: QInt8
     runtime: fastembed-5.17.4-ort
     files:
-      - { path: config.json, sourcePath: onnx/config.json, bytes: 653, sha256: bbb7c1333fc4b3e27fbc9cd5d2070aabcc1d4dfb99917c3633e772f97545a6b6 }
-      - { path: model.onnx, sourcePath: onnx/model_qint8_avx512_vnni.onnx, bytes: 118346824, sha256: dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88 }
-      - { path: sentencepiece.bpe.model, sourcePath: onnx/sentencepiece.bpe.model, bytes: 5069051, sha256: cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865 }
-      - { path: special_tokens_map.json, sourcePath: onnx/special_tokens_map.json, bytes: 167, sha256: d05497f1da52c5e09554c0cd874037a083e1dc1b9cfd48034d1c717f1afc07a7 }
-      - { path: tokenizer.json, sourcePath: onnx/tokenizer.json, bytes: 17082730, sha256: 0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39 }
-      - { path: tokenizer_config.json, sourcePath: onnx/tokenizer_config.json, bytes: 443, sha256: a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b }
-
+      - path: config.json
+        sourcePath: onnx/config.json
+        bytes: 653
+        sha256: bbb7c1333fc4b3e27fbc9cd5d2070aabcc1d4dfb99917c3633e772f97545a6b6
+      - path: model.onnx
+        sourcePath: onnx/model_qint8_avx512_vnni.onnx
+        bytes: 118346824
+        sha256: dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88
+      - path: sentencepiece.bpe.model
+        sourcePath: onnx/sentencepiece.bpe.model
+        bytes: 5069051
+        sha256: cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865
+      - path: special_tokens_map.json
+        sourcePath: onnx/special_tokens_map.json
+        bytes: 167
+        sha256: d05497f1da52c5e09554c0cd874037a083e1dc1b9cfd48034d1c717f1afc07a7
+      - path: tokenizer.json
+        sourcePath: onnx/tokenizer.json
+        bytes: 17082730
+        sha256: 0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39
+      - path: tokenizer_config.json
+        sourcePath: onnx/tokenizer_config.json
+        bytes: 443
+        sha256: a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b
   qwen38-primary:
     kind: file
     role: resident-llm
@@ -63,7 +97,6 @@ models:
     sha256: fb89c78d2be91cdb68eaaaa45b1270710bf34aa721dc1f0b9e3aa7b98d2e1da9
     quantization: ROCmFP4_FAST
     runtime: q38rocm
-
   qwen38-worker-quality:
     kind: file
     role: preferred-llm
@@ -75,7 +108,6 @@ models:
     sha256: 3f227079003add2511437e5b1e94812e363385225bf6a9b47b0054a72bc8b01e
     quantization: UD-Q4_K_XL
     runtime: llama.cpp-vulkan
-
   qwen38-worker-efficientthink-q3:
     kind: file
     role: preferred-llm
@@ -88,7 +120,6 @@ models:
     sha256: 89bb7b2ef82dd758f001f2c7d58e035f9188d2c0ccb35ef42fb56f51870f6e48
     quantization: Q3-LynnStyle
     runtime: llama.cpp-vulkan
-
   qwen38-efficientthink-mtp:
     kind: file
     role: mtp-draft
@@ -100,7 +131,6 @@ models:
     bytes: 1680271648
     sha256: 051a1764cff8c4f3ee6ae8b00593a0364c7539c67fa50ffc58f3f96509fca38e
     quantization: Q4_0
-
   qwen38-worker-fast:
     kind: file
     role: preferred-llm
@@ -112,7 +142,6 @@ models:
     sha256: ede16c7b36e578ca87a8c70e011e4b4633a32c831c0ce76d0f474582384e671d
     quantization: Q4_0
     runtime: llama.cpp-vulkan
-
   qwen38-mtp:
     kind: file
     role: mtp-draft
@@ -124,7 +153,6 @@ models:
     bytes: 1369590656
     sha256: 50d9ce5a6da381bbcfb31061cf73df94a90e6faf8efeddee379a9cb8f1501c6e
     quantization: Q4_0
-
   qwen35-2b-q4-k-m:
     kind: file
     role: preferred-decision-llm
@@ -136,7 +164,6 @@ models:
     sha256: aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223
     quantization: Q4_K_M
     runtime: llama.cpp-vulkan
-
   lfm25-1.2b-jp-q4-k-m:
     kind: file
     role: evaluation-backchannel-llm
@@ -148,7 +175,6 @@ models:
     sha256: 608beed14e975a4edd8932c42ac3e64cf1c97da4ee2c5f2c7b6bfbcdb1a90680
     quantization: Q4_K_M
     runtime: llama.cpp-vulkan
-
   gemma3-1b-it-q4-k-m:
     kind: file
     role: evaluation-backchannel-llm
@@ -160,7 +186,6 @@ models:
     sha256: 8ccc5cd1f1b3602548715ae25a66ed73fd5dc68a210412eea643eb20eb75a135
     quantization: Q4_K_M
     runtime: llama.cpp-vulkan
-
   gemma4-e4b-it-qat-q4-0:
     kind: file
     role: preferred-conversation-llm
@@ -172,7 +197,6 @@ models:
     sha256: 676c35070db6dbe52f93e9c864ee0fba4eddea94b9c875d9cb10daff453fbaee
     quantization: QAT-Q4_0
     runtime: llama.cpp-vulkan
-
   gemma4-26b-a4b-it-qat-q4-0:
     kind: file
     role: evaluation-conversation-llm
@@ -184,7 +208,6 @@ models:
     sha256: 3eca3b8f6d7baf218a7dd6bba5fb59a56ee25fe2d567b6f5f589b4f697eca51d
     quantization: QAT-Q4_0
     runtime: llama.cpp-vulkan
-
   qwen36-35b-speed:
     kind: file
     role: preferred-llm
@@ -196,7 +219,6 @@ models:
     sha256: ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61
     quantization: UD-Q4_K_M
     runtime: llama.cpp-vulkan
-
   ornith15-35b-speed:
     kind: file
     role: preferred-llm
@@ -208,7 +230,6 @@ models:
     sha256: 0f907917a1bfe4e0ca0d281e5709dcf34b6277063e94fab29491bb5c80fda696
     quantization: Q4_0_ROCMFP4_STRIX_LEAN
     runtime: q38rocm-vulkan
-
   ornith15-vision-bf16:
     kind: file
     role: vision-projector
@@ -220,7 +241,6 @@ models:
     sha256: d9ce31026d1cb1f3f8d5152e2e2a014d9d2b302b6c93a7dc07bb0a0487f52837
     quantization: BF16
     runtime: llama.cpp-vulkan
-
   ornith15-35b-quality:
     kind: file
     role: preferred-llm
@@ -232,7 +252,6 @@ models:
     sha256: 91df97de5845100e850b4b5ec5ff35695382020b880fad6f7f51787b3a953bd0
     quantization: Q5_K_M
     runtime: llama.cpp-vulkan
-
   qwen3-asr-main:
     kind: snapshot
     role: resident-stt
@@ -243,17 +262,36 @@ models:
     maxFiles: 10
     snapshotDigest: 40c5daeda5f7b72437f9a87c2a17b684e5d8cdf53e60f78a306c4a96821a27bc
     files:
-      - { path: chat_template.json, bytes: 1161, sha256: 75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff }
-      - { path: config.json, bytes: 6194, sha256: 2e74a751548b8ad7d7526d29365ad8144c345d8b412b1152d25dc6698452712f }
-      - { path: generation_config.json, bytes: 142, sha256: 1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c }
-      - { path: merges.txt, bytes: 1671853, sha256: 8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5 }
-      - { path: model-00001-of-00002.safetensors, bytes: 4220320824, sha256: a4cd1f1a04d90b757dc7f7dd26254e69a013b19e80efe590a83c6a3bde8608d6 }
-      - { path: model-00002-of-00002.safetensors, bytes: 478200688, sha256: 6e0b9d9e09e2e0238e7ef3cc8a484ab387e91b90f1900bedf88bc92d7929ccfc }
-      - { path: model.safetensors.index.json, bytes: 64821, sha256: f994739fe38e5210b9e3e8ce6c6307315e2ceac3cb630e7b7414d69dce520f60 }
-      - { path: preprocessor_config.json, bytes: 330, sha256: 45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d }
-      - { path: tokenizer_config.json, bytes: 12487, sha256: 4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c }
-      - { path: vocab.json, bytes: 2776833, sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910 }
-
+      - path: chat_template.json
+        bytes: 1161
+        sha256: 75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff
+      - path: config.json
+        bytes: 6194
+        sha256: 2e74a751548b8ad7d7526d29365ad8144c345d8b412b1152d25dc6698452712f
+      - path: generation_config.json
+        bytes: 142
+        sha256: 1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c
+      - path: merges.txt
+        bytes: 1671853
+        sha256: 8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5
+      - path: model-00001-of-00002.safetensors
+        bytes: 4220320824
+        sha256: a4cd1f1a04d90b757dc7f7dd26254e69a013b19e80efe590a83c6a3bde8608d6
+      - path: model-00002-of-00002.safetensors
+        bytes: 478200688
+        sha256: 6e0b9d9e09e2e0238e7ef3cc8a484ab387e91b90f1900bedf88bc92d7929ccfc
+      - path: model.safetensors.index.json
+        bytes: 64821
+        sha256: f994739fe38e5210b9e3e8ce6c6307315e2ceac3cb630e7b7414d69dce520f60
+      - path: preprocessor_config.json
+        bytes: 330
+        sha256: 45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d
+      - path: tokenizer_config.json
+        bytes: 12487
+        sha256: 4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c
+      - path: vocab.json
+        bytes: 2776833
+        sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
   qwen3-asr-fallback:
     kind: snapshot
     role: optional-stt
@@ -264,15 +302,30 @@ models:
     maxFiles: 8
     snapshotDigest: f875aed4bba9e00f466773ed70bf08db6b3ceecdf59b5877d269e9da5ae2dcea
     files:
-      - { path: chat_template.json, bytes: 1161, sha256: 75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff }
-      - { path: config.json, bytes: 6193, sha256: 76d3ae4601ce939830b2517f4a6cadb86cc51316c3900af6b020b051c21a478c }
-      - { path: generation_config.json, bytes: 142, sha256: 1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c }
-      - { path: merges.txt, bytes: 1671853, sha256: 8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5 }
-      - { path: model.safetensors, bytes: 1876091704, sha256: 79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea }
-      - { path: preprocessor_config.json, bytes: 330, sha256: 45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d }
-      - { path: tokenizer_config.json, bytes: 12487, sha256: 4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c }
-      - { path: vocab.json, bytes: 2776833, sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910 }
-
+      - path: chat_template.json
+        bytes: 1161
+        sha256: 75a8cfca24f00de72d796fbfed6858fc9614ef3dabd8696684cc3bc03a9c58ff
+      - path: config.json
+        bytes: 6193
+        sha256: 76d3ae4601ce939830b2517f4a6cadb86cc51316c3900af6b020b051c21a478c
+      - path: generation_config.json
+        bytes: 142
+        sha256: 1da527824d81e07118facff437e03f2e24a23311e3bdeb2368973fe77e5f275c
+      - path: merges.txt
+        bytes: 1671853
+        sha256: 8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5
+      - path: model.safetensors
+        bytes: 1876091704
+        sha256: 79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea
+      - path: preprocessor_config.json
+        bytes: 330
+        sha256: 45e120a4eda2c20c5d7f2ea9354e63536bf35e27aa573fb7cdf78017b378770d
+      - path: tokenizer_config.json
+        bytes: 12487
+        sha256: 4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c
+      - path: vocab.json
+        bytes: 2776833
+        sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
   reazonspeech-k2-v2-shadow:
     kind: snapshot
     role: evaluation-stt
@@ -285,12 +338,21 @@ models:
     quantization: int8-fp32
     runtime: sherpa-onnx-cpu
     files:
-      - { path: README.md, bytes: 1188, sha256: 7debad4c9430f3310ad6d119fce385787c1c19f3ebc0cabe685a48dbe72a4de0 }
-      - { path: decoder-epoch-99-avg-1.onnx, bytes: 11767836, sha256: 58b18211ae06265466bfa17172dab574df94f76c8bcb61a3640c28ba860e4124 }
-      - { path: encoder-epoch-99-avg-1.int8.onnx, bytes: 154670139, sha256: 2c7bd08a8a99f9ddd0d9e458456577b1f6279214e51426f114f9eced44c54e1d }
-      - { path: joiner-epoch-99-avg-1.onnx, bytes: 10720115, sha256: d38a81d1191c9ed6de6a1719503692e07e3e973e2364adde0abae5eaaded1174 }
-      - { path: tokens.txt, bytes: 45754, sha256: 2c3ac659818a48a0c04010e0593bbc4d7c8a24a054340b01131499c05fd52def }
-
+      - path: README.md
+        bytes: 1188
+        sha256: 7debad4c9430f3310ad6d119fce385787c1c19f3ebc0cabe685a48dbe72a4de0
+      - path: decoder-epoch-99-avg-1.onnx
+        bytes: 11767836
+        sha256: 58b18211ae06265466bfa17172dab574df94f76c8bcb61a3640c28ba860e4124
+      - path: encoder-epoch-99-avg-1.int8.onnx
+        bytes: 154670139
+        sha256: 2c7bd08a8a99f9ddd0d9e458456577b1f6279214e51426f114f9eced44c54e1d
+      - path: joiner-epoch-99-avg-1.onnx
+        bytes: 10720115
+        sha256: d38a81d1191c9ed6de6a1719503692e07e3e973e2364adde0abae5eaaded1174
+      - path: tokens.txt
+        bytes: 45754
+        sha256: 2c3ac659818a48a0c04010e0593bbc4d7c8a24a054340b01131499c05fd52def
   reazonspeech-espnet-v2-shadow:
     kind: snapshot
     role: evaluation-stt
@@ -303,13 +365,24 @@ models:
     quantization: fp32
     runtime: espnet-pytorch-rocm
     files:
-      - { path: .gitattributes, bytes: 1519, sha256: 11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361 }
-      - { path: README.md, bytes: 1156, sha256: 5bb9e4ad635675b30a5ebf9ba376379653c16cf05fe756ee6759fe0baa03483d }
-      - { path: exp/asr_stats_raw_jp_char/train/feats_stats.npz, bytes: 1402, sha256: e7072024477dacaacefee023eb0f20909b9a364cc6a1f1a705e2911c357a9029 }
-      - { path: exp/asr_train_asr_conformer_raw_jp_char/config.yaml, bytes: 35307, sha256: b3cdd227cd79e1505f7d89d68997e281120bb3fad95b196b3be39f54445a092c }
-      - { path: exp/asr_train_asr_conformer_raw_jp_char/valid.acc.ave_10best.pth, bytes: 475764096, sha256: 50fb91cd12aed7ea9f8e7035c659c98ee3bc56b15c831f6dbbbf66b380838f5c }
-      - { path: meta.yaml, bytes: 400, sha256: a530523d90b425b4ca28d8c58c8730a3015521e0c15bbf7d2962fefee5bf938e }
-
+      - path: .gitattributes
+        bytes: 1519
+        sha256: 11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361
+      - path: README.md
+        bytes: 1156
+        sha256: 5bb9e4ad635675b30a5ebf9ba376379653c16cf05fe756ee6759fe0baa03483d
+      - path: exp/asr_stats_raw_jp_char/train/feats_stats.npz
+        bytes: 1402
+        sha256: e7072024477dacaacefee023eb0f20909b9a364cc6a1f1a705e2911c357a9029
+      - path: exp/asr_train_asr_conformer_raw_jp_char/config.yaml
+        bytes: 35307
+        sha256: b3cdd227cd79e1505f7d89d68997e281120bb3fad95b196b3be39f54445a092c
+      - path: exp/asr_train_asr_conformer_raw_jp_char/valid.acc.ave_10best.pth
+        bytes: 475764096
+        sha256: 50fb91cd12aed7ea9f8e7035c659c98ee3bc56b15c831f6dbbbf66b380838f5c
+      - path: meta.yaml
+        bytes: 400
+        sha256: a530523d90b425b4ca28d8c58c8730a3015521e0c15bbf7d2962fefee5bf938e
   kotoba-whisper-v2-q5-shadow:
     kind: file
     role: evaluation-stt
@@ -321,7 +394,6 @@ models:
     sha256: 4a3b92192b5d3578ff854a5876213e2e27af0c2d357492c2d14271e82c303658
     quantization: Q5_0
     runtime: whisper.cpp-cpu
-
   whisper-large-v3-turbo-q5-trial:
     kind: file
     role: trial-resident-stt
@@ -333,7 +405,6 @@ models:
     sha256: 394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2
     quantization: Q5_0
     runtime: whisper.cpp-hip
-
   kitten-tts-nano-fp32:
     kind: file
     role: english-tts
@@ -345,7 +416,6 @@ models:
     sha256: 320564d2615f235de972ca27a7f39551c94185cfa24ca85b07a29084135f1e5e
     quantization: FP32
     runtime: kittentts-onnx
-
   kitten-tts-nano-voices:
     kind: file
     role: english-tts-voices
@@ -356,7 +426,6 @@ models:
     bytes: 3278902
     sha256: 8aa7cee235abb0739cb51e6559685f65a4dacd95568833d05699b1633f519b3f
     runtime: kittentts-onnx
-
   kitten-tts-nano-config:
     kind: file
     role: english-tts-config
@@ -367,7 +436,6 @@ models:
     bytes: 688
     sha256: b66006ccbeccd4de5fc3c9272059c47f5725df7215fd889785c03602652fab64
     runtime: kittentts-onnx
-
   qwen3-tts-expressive:
     kind: snapshot
     role: preferred-tts
@@ -378,18 +446,39 @@ models:
     maxFiles: 11
     snapshotDigest: b28faa06766da85c667918066dc441079fd88122f80e69eb175710587f385583
     files:
-      - { path: config.json, bytes: 4908, sha256: 81aca2b6fac304944d8acf345272d8a9a727d5fc2e2e66b222ab4729340c7455 }
-      - { path: generation_config.json, bytes: 245, sha256: f1b90b4513f3b34c62851049e2492d7b4c5940daf1276f89c82b8ef04127f3aa }
-      - { path: merges.txt, bytes: 1671839, sha256: 599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3 }
-      - { path: model.safetensors, bytes: 1811626576, sha256: bc3c7e785eb961179c25450d1acff03f839e0002f2f3a5aeb67b5735c0fa2adb }
-      - { path: preprocessor_config.json, bytes: 127, sha256: efdde1022ea9d76928bf7a9cd53139138f5ba2e466e837f08f6105ab1af1c119 }
-      - { path: speech_tokenizer/config.json, bytes: 2336, sha256: ee65bb901c876664ab8707c487157aa1a6ee57c65969b28fb5ec9dc211e68167 }
-      - { path: speech_tokenizer/configuration.json, bytes: 76, sha256: 6bc26d64eb5024b4d1dab5a52371958b429256d6c9d59787f1f5294a54e0cebd }
-      - { path: speech_tokenizer/model.safetensors, bytes: 682293092, sha256: 836b7b357f5ea43e889936a3709af68dfe3751881acefe4ecf0dbd30ba571258 }
-      - { path: speech_tokenizer/preprocessor_config.json, bytes: 234, sha256: fcb3805e597e786d4067706e602f6688524640f8d3396790e2e09b5942fcbdfb }
-      - { path: tokenizer_config.json, bytes: 7344, sha256: dc3c31c3bdaedd5016382bb3cbe07323026775ad51f5a4fb564505992ae4a670 }
-      - { path: vocab.json, bytes: 2776833, sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910 }
-
+      - path: config.json
+        bytes: 4908
+        sha256: 81aca2b6fac304944d8acf345272d8a9a727d5fc2e2e66b222ab4729340c7455
+      - path: generation_config.json
+        bytes: 245
+        sha256: f1b90b4513f3b34c62851049e2492d7b4c5940daf1276f89c82b8ef04127f3aa
+      - path: merges.txt
+        bytes: 1671839
+        sha256: 599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3
+      - path: model.safetensors
+        bytes: 1811626576
+        sha256: bc3c7e785eb961179c25450d1acff03f839e0002f2f3a5aeb67b5735c0fa2adb
+      - path: preprocessor_config.json
+        bytes: 127
+        sha256: efdde1022ea9d76928bf7a9cd53139138f5ba2e466e837f08f6105ab1af1c119
+      - path: speech_tokenizer/config.json
+        bytes: 2336
+        sha256: ee65bb901c876664ab8707c487157aa1a6ee57c65969b28fb5ec9dc211e68167
+      - path: speech_tokenizer/configuration.json
+        bytes: 76
+        sha256: 6bc26d64eb5024b4d1dab5a52371958b429256d6c9d59787f1f5294a54e0cebd
+      - path: speech_tokenizer/model.safetensors
+        bytes: 682293092
+        sha256: 836b7b357f5ea43e889936a3709af68dfe3751881acefe4ecf0dbd30ba571258
+      - path: speech_tokenizer/preprocessor_config.json
+        bytes: 234
+        sha256: fcb3805e597e786d4067706e602f6688524640f8d3396790e2e09b5942fcbdfb
+      - path: tokenizer_config.json
+        bytes: 7344
+        sha256: dc3c31c3bdaedd5016382bb3cbe07323026775ad51f5a4fb564505992ae4a670
+      - path: vocab.json
+        bytes: 2776833
+        sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
   ornith15-35b-strix-lean:
     kind: file
     role: preferred-llm
@@ -412,7 +501,6 @@ models:
     sha256: 666d2f7736bfa140f44d67ba7bcb0827aa5718462f13850af294d72c1f09b218
     quantization: Q8_0
     runtime: transcribe.cpp-vulkan
-
   d1-3b:
     kind: snapshot
     role: game-decision-provider
@@ -528,7 +616,6 @@ models:
       - path: vocab.json
         bytes: 6722759
         sha256: ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003
-
   wevisone-vl-4b:
     kind: snapshot
     role: on-demand-visual-perception
@@ -573,3 +660,25 @@ models:
       - path: tokenizer_config.json
         bytes: 424
         sha256: af3b0fe802740ae544beb2b395b9b498fc942d8df2323cd0117bf1dfdec1d943
+  lfm25-24b-a2b-qad-q4-0:
+    kind: file
+    role: preferred-conversation-llm
+    source: https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-GGUF
+    revision: 0912d33141f77e10705345a6732bfd83f0252fdc
+    filename: LFM2.5-24B-A2B-QAD-Q4_0.gguf
+    path: /srv/ai/models/lfm25-24b-a2b/LFM2.5-24B-A2B-QAD-Q4_0.gguf
+    bytes: 13578190880
+    sha256: d1c03f73ecaf61017d70419eec9e5dc0b05d50ae26c23d522829b934fbabf8a5
+    quantization: QAD_Q4_0
+    runtime: llama.cpp-vulkan
+  lfm3-1.7b-qad-q4-0:
+    kind: file
+    role: experimental-conversation-llm
+    source: https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF
+    revision: b3f2ae5d73cd3c91bf40e8ba752c648aa05dffdf
+    filename: LFM3-1.7B-QAD-Q4_0.gguf
+    path: /srv/ai/models/lfm3-1.7b-gguf/LFM3-1.7B-QAD-Q4_0.gguf
+    bytes: 1049615680
+    sha256: 43a7d09a0e9cba91b63eb7052488b9564569bddfd65754d2e426465e572a7452
+    quantization: QAD_Q4_0
+    runtime: llama.cpp-vulkan

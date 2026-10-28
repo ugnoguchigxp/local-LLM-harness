@@ -44,6 +44,6 @@ test("public request schema permits text, image-only, ordered multi-image and to
 });
 test("a profile discovers its selected runtime input contract without reviving retired selectors", () => {
   const dir=join(import.meta.dir,"../../../config/local-node"); const registry=loadRegistry(dir); const catalog=loadAgentConnectionCatalogForRegistry(dir,registry);
-  for(const id of ["ornith1.5Strix","contextstill-background"]) expect(catalog.profiles.find(p=>p.id===id)!.providers.find(p=>p.name==="llm")!.chatInput?.tokenCounting.endpoint).toBe("/v1/chat/completions/input-tokens");
+  for(const id of ["ornith1.5Strix"]) expect(catalog.profiles.find(p=>p.id===id)!.providers.find(p=>p.name==="llm")!.chatInput?.tokenCounting.endpoint).toBe("/v1/chat/completions/input-tokens");
   expect(catalog.profiles.some(p=>p.id==="ornith1.5Strix-64k")).toBe(false);
 });

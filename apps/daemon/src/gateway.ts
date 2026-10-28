@@ -1,4 +1,5 @@
 import { DecisionError } from "./decision-manager";
+import { prepareLlamaChatRequest, LlamaChatRequestError } from "@larm/backends";
 import { claimUsageRequest, UsageProtectionError } from "./usage-coordinator";
 import { AudioObservation } from "./audio-observation";
 import { requestObservation } from "./observability";
@@ -602,6 +603,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
           "context materialization requires a buffered request body",
         );
       }
+      if (options.protocol === "openai.chat-completions.v1") prepareLlamaChatRequest(body, options.runtime);
       const contextEnd = observation?.stage("context_preparation");
       body = await options.prepareRequestBody(body, abort.signal);
       contextEnd?.();
@@ -611,11 +613,12 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       if (!chatCompletionRequestSchema.shape.prompt_cache_key.safeParse(chatFields?.prompt_cache_key).success) {
         throw new ChatInputError(400, "invalid_request");
       }
-      if (options.runtime.chatInput) {
+      body = prepareLlamaChatRequest(body, options.runtime);
+      if (options.runtime.chatInput || options.runtime.textInput) {
         if (!options.chatInputWindow) throw new ChatInputError(503, "chat_input_contract_unavailable");
         const chatInputEnd = observation?.stage("chat_input");
         const checked = await withAbort(prepareChatInput({
-          body, endpoint: current.binding.endpoint, policy: options.runtime.chatInput,
+          body, endpoint: current.binding.endpoint, policy: options.runtime.chatInput, textInput: options.runtime.textInput,
           window: options.chatInputWindow, runtime: options.runtime.id,
           runtimeRelease: options.auditContext?.runtimeRelease,
           configRevision: options.auditContext?.configRevision ?? "unknown",
@@ -669,6 +672,7 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     if (options.lifecycleSignal?.aborted) {
       return lifecycleFailure();
     }
+    if (error instanceof LlamaChatRequestError) return failure(error.code, error.message, error.status, error.code);
     if (error instanceof ChatInputError) {
       return failure(error.code, error.message, error.status, error.code);
     }

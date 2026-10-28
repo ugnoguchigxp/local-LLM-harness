@@ -98,3 +98,7 @@ export { LocalUsageRetentionStore, type UsageRetentionSnapshot } from "./usage-r
 export { ImageImportError, pythonImageNormalizer, type ImageNormalizer, type NormalizedImage } from "./image-import-normalizer";
 export { LinuxCpuComputeExecutor } from "./compute/executor";
 export { LlamaPromptRetention } from "./prompt-retention";
+
+export * from "./llama-chat";
+
+export * from "./native-text-chat-input";

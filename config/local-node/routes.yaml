@@ -4,11 +4,9 @@ routes:
       - llm.general
       - llm.reasoning
       - llm.coding
-      - llm.vision
     candidates:
-      - runtime: ornith15-strix-conversation
+      - runtime: lfm25-conversation
         purpose: primary
-
   llm-saaa-qwen38:
     capabilities:
       - llm.general
@@ -18,7 +16,6 @@ routes:
     candidates:
       - runtime: ornith-general
         purpose: primary
-
   llm-saaa-gemma4:
     capabilities:
       - llm.general
@@ -26,7 +23,6 @@ routes:
     candidates:
       - runtime: gemma4-conversation
         purpose: primary
-
   llm-saaa-gemma4-26b:
     capabilities:
       - llm.general
@@ -34,7 +30,6 @@ routes:
     candidates:
       - runtime: gemma4-26b-conversation
         purpose: primary
-
   llm-ornith15-strix:
     capabilities:
       - llm.general
@@ -43,7 +38,6 @@ routes:
     candidates:
       - runtime: ornith15-strix-conversation
         purpose: primary
-
   llm-agent-worker:
     capabilities:
       - llm.general
@@ -57,7 +51,6 @@ routes:
         purpose: fallback
       - runtime: qwen-worker-agent-efficientthink
         purpose: fallback
-
   llm-contextstill-ornith:
     capabilities:
       - llm.general
@@ -68,10 +61,6 @@ routes:
     candidates:
       - runtime: ornith15-strix-conversation
         purpose: primary
-
-  # ContextStill chooses one of these explicit tiers from its final prompt
-  # token count. Keeping them separate prevents a 128K request from silently
-  # falling back to a 64K runtime.
   llm-contextstill-64k:
     capabilities:
       - llm.general
@@ -81,7 +70,6 @@ routes:
     candidates:
       - runtime: qwen-contextstill-64k
         purpose: primary
-
   llm-contextstill-128k:
     capabilities:
       - llm.general
@@ -91,7 +79,6 @@ routes:
     candidates:
       - runtime: qwen-worker-fast
         purpose: primary
-
   llm-speed:
     capabilities:
       - llm.general
@@ -100,7 +87,6 @@ routes:
     candidates:
       - runtime: qwen-worker-fast
         purpose: primary
-
   llm-decision-default:
     capabilities:
       - llm.decision.default
@@ -108,7 +94,6 @@ routes:
     candidates:
       - runtime: qwen35-decision
         purpose: primary
-
   llm-backchannel-qwen35-2b:
     capabilities:
       - llm.backchannel.classifier
@@ -116,7 +101,6 @@ routes:
     candidates:
       - runtime: qwen35-decision
         purpose: primary
-
   llm-saaa-qwen35-2b:
     capabilities:
       - llm.decision.default
@@ -125,7 +109,6 @@ routes:
     candidates:
       - runtime: qwen35-decision
         purpose: primary
-
   llm-backchannel-default:
     capabilities:
       - llm.backchannel.classifier
@@ -133,7 +116,6 @@ routes:
     candidates:
       - runtime: qwen35-decision
         purpose: primary
-
   llm-backchannel-lfm25-jp-1.2b:
     capabilities:
       - llm.backchannel.classifier
@@ -141,7 +123,6 @@ routes:
     candidates:
       - runtime: lfm25-backchannel-jp
         purpose: primary
-
   llm-backchannel-gemma3-1b:
     capabilities:
       - llm.backchannel.classifier
@@ -149,7 +130,6 @@ routes:
     candidates:
       - runtime: gemma3-backchannel
         purpose: primary
-
   llm-35b:
     capabilities:
       - llm.general
@@ -165,7 +145,6 @@ routes:
         purpose: fallback
       - runtime: qwen-worker-fast
         purpose: fallback
-
   llm-35b-speed:
     capabilities:
       - llm.general
@@ -179,7 +158,6 @@ routes:
         purpose: fallback
       - runtime: qwen-worker-fast
         purpose: fallback
-
   llm-agent-35b:
     capabilities:
       - llm.general
@@ -191,7 +169,6 @@ routes:
         purpose: primary
       - runtime: qwen-worker-fast
         purpose: fallback
-
   llm-qwen36-35b:
     capabilities:
       - llm.general
@@ -203,7 +180,6 @@ routes:
         purpose: primary
       - runtime: qwen-worker-fast
         purpose: fallback
-
   stt-default:
     capabilities:
       - speech.stt
@@ -212,7 +188,6 @@ routes:
         purpose: primary
       - runtime: qwen-asr
         purpose: fallback
-
   stt-qwen:
     capabilities:
       - speech.stt
@@ -220,14 +195,12 @@ routes:
     candidates:
       - runtime: qwen-asr
         purpose: primary
-
   tts-default:
     capabilities:
       - speech.tts
     candidates:
       - runtime: voicevox-tts
         purpose: primary
-
   tts-voicevox:
     capabilities:
       - speech.tts
@@ -235,7 +208,6 @@ routes:
     candidates:
       - runtime: voicevox-tts
         purpose: primary
-
   tts-kittentts-nano:
     capabilities:
       - speech.tts.english
@@ -243,7 +215,6 @@ routes:
     candidates:
       - runtime: kittentts-nano
         purpose: primary
-
   tts-expressive:
     capabilities:
       - speech.tts.expressive
@@ -251,7 +222,6 @@ routes:
     candidates:
       - runtime: qwen-tts
         purpose: primary
-
   embedding-multilingual-e5-small:
     capabilities:
       - embedding.multilingual-e5-small
@@ -259,7 +229,6 @@ routes:
     candidates:
       - runtime: multilingual-e5-small
         purpose: primary
-
   system-one-laya:
     capabilities:
       - decision.system-one
@@ -267,14 +236,13 @@ routes:
     candidates:
       - runtime: laya-system-one
         purpose: primary
-
   system-one-ruri:
-    capabilities: [ decision.system-one ]
+    capabilities:
+      - decision.system-one
     explicitOnly: true
     candidates:
       - runtime: ruri-system-one
         purpose: primary
-
   stt-granite:
     capabilities:
       - speech.stt
@@ -282,24 +250,50 @@ routes:
     candidates:
       - runtime: granite-asr
         purpose: primary
-
   game-decision-d1:
-    capabilities: [ decision.game ]
+    capabilities:
+      - decision.game
     explicitOnly: true
     candidates:
       - runtime: d1-system-one
         purpose: primary
-
   general-decision-d1:
-    capabilities: [ decision.general ]
+    capabilities:
+      - decision.general
     explicitOnly: true
     candidates:
       - runtime: d1-system-one
         purpose: primary
-
   vision-wevisone:
-    capabilities: [ vision.perception ]
+    capabilities:
+      - vision.perception
     explicitOnly: true
     candidates:
       - runtime: wevisone-vl-4b
+        purpose: primary
+  llm-lfm25:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: lfm25-conversation
+        purpose: primary
+  llm-lfm3:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+    explicitOnly: true
+    candidates:
+      - runtime: lfm3-conversation
+        purpose: primary
+  llm-contextstill-lfm25:
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    explicitOnly: true
+    candidates:
+      - runtime: lfm25-conversation
         purpose: primary

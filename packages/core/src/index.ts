@@ -350,3 +350,5 @@ export * from "./image-import";
 export * from "./decision-general";
 export * from "./decision-head";
 export * from "./compute";
+
+export * from "./reasoning";

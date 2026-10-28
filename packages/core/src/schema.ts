@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { chatInputPolicySchema } from "./chat-input";
+import { reasoningPolicySchema } from "./reasoning";
+import { chatInputPolicySchema, textChatInputPolicySchema } from "./chat-input";
 import { promptRetentionPolicySchema } from "./prompt-retention";
 import { embeddingSpaceSchema } from "./embedding";
 import { runtimeContextPolicySchema } from "./context";
@@ -73,6 +74,8 @@ const runtimeShared = {
   context: runtimeContextPolicySchema.optional(),
   embedding: embeddingSpaceSchema.optional(),
   chatInput: chatInputPolicySchema.optional(),
+  textInput: textChatInputPolicySchema.optional(),
+  reasoning: reasoningPolicySchema.optional(),
   promptRetention: promptRetentionPolicySchema.optional(),
   artifacts: uniqueStringList.optional(),
   node: identifierSchema,
@@ -95,6 +98,7 @@ const runtimeShared = {
 };
 
 export const llamaSwapDeploymentSchema = z.object({
+  chatAdapter: z.literal("llama-reasoning-budget-v1").optional(),
   modelId: identifierSchema,
   listen: httpUrlSchema,
   endpoint: httpUrlSchema,

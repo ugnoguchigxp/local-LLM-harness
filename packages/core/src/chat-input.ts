@@ -1,5 +1,15 @@
 import { z } from "zod";
 
+/** Internal text-only engine contract; public callers use the existing count API. */
+export const textChatInputPolicySchema = z.object({
+  protocol: z.literal("llama-chat-input-tokens.v1"),
+  engineBuild: z.string().min(1).max(128),
+  maxRequestBytes: z.number().int().positive().max(64 * 1024 * 1024).default(4 * 1024 * 1024),
+}).strict();
+export type TextChatInputPolicy = z.infer<typeof textChatInputPolicySchema>;
+
+
+
 export const chatInputPolicySchema = z.object({
   contractVersion: z.literal("larm-chat-input.v1").default("larm-chat-input.v1"),
   maxRequestBytes: z.number().int().positive().max(64 * 1024 * 1024).default(4 * 1024 * 1024),

@@ -1,22 +1,22 @@
-# Runtime releases combine immutable artifact entries into one deployable unit.
-# Model data stays outside this repository; every artifact is pinned in models.yaml.
 runtimeReleases:
   kittentts-nano-fp32-current:
     runtime: kittentts-nano
-    artifacts: [ kitten-tts-nano-fp32, kitten-tts-nano-voices, kitten-tts-nano-config ]
+    artifacts:
+      - kitten-tts-nano-fp32
+      - kitten-tts-nano-voices
+      - kitten-tts-nano-config
     providerConfigRevision: kittentts-0.8.1-nano-fp32-cpu4-clean-text-voice-catalog-v2
     estimatedMemoryGB: 1.5
     healthPath: /health
     default: true
-
   ruri-system-one-current:
     runtime: ruri-system-one
-    artifacts: [ ruri-v3-30m ]
+    artifacts:
+      - ruri-v3-30m
     providerConfigRevision: ruri-ort-int8-speaking-attitude-only-v1
     estimatedMemoryGB: 1
     healthPath: /health
     default: true
-
   laya-system-one-current:
     runtime: laya-system-one
     artifacts:
@@ -25,7 +25,6 @@ runtimeReleases:
     estimatedMemoryGB: 2
     healthPath: /health
     default: true
-
   multilingual-e5-small-current:
     runtime: multilingual-e5-small
     artifacts:
@@ -42,7 +41,6 @@ runtimeReleases:
     estimatedMemoryGB: 40
     healthPath: /health
     default: true
-
   qwen-worker-agent-current:
     runtime: qwen-worker-agent
     artifacts:
@@ -52,7 +50,6 @@ runtimeReleases:
     estimatedMemoryGB: 28
     healthPath: /health
     default: true
-
   qwen-worker-agent-efficientthink-v1:
     runtime: qwen-worker-agent-efficientthink
     artifacts:
@@ -62,7 +59,6 @@ runtimeReleases:
     estimatedMemoryGB: 28
     healthPath: /health
     default: true
-
   qwen-worker-fast-current:
     runtime: qwen-worker-fast
     artifacts:
@@ -89,7 +85,6 @@ runtimeReleases:
     estimatedMemoryGB: 8
     healthPath: /health
     default: true
-
   lfm25-backchannel-jp-current:
     runtime: lfm25-backchannel-jp
     artifacts:
@@ -98,7 +93,6 @@ runtimeReleases:
     estimatedMemoryGB: 3
     healthPath: /health
     default: true
-
   gemma3-backchannel-current:
     runtime: gemma3-backchannel
     artifacts:
@@ -107,7 +101,6 @@ runtimeReleases:
     estimatedMemoryGB: 3
     healthPath: /health
     default: true
-
   gemma4-conversation-current:
     runtime: gemma4-conversation
     artifacts:
@@ -116,7 +109,6 @@ runtimeReleases:
     estimatedMemoryGB: 20
     healthPath: /health
     default: true
-
   gemma4-26b-conversation-canary-v1:
     runtime: gemma4-26b-conversation
     artifacts:
@@ -141,7 +133,6 @@ runtimeReleases:
     estimatedMemoryGB: 48
     healthPath: /health
     default: true
-
   ornith15-conversation-current:
     runtime: ornith15-conversation
     artifacts:
@@ -151,7 +142,6 @@ runtimeReleases:
     estimatedMemoryGB: 50
     healthPath: /health
     default: true
-
   qwen36-35b-current:
     runtime: qwen36-35b
     artifacts:
@@ -160,7 +150,6 @@ runtimeReleases:
     estimatedMemoryGB: 44
     healthPath: /health
     default: true
-
   ornith15-35b-current:
     runtime: ornith15-35b
     artifacts:
@@ -170,7 +159,6 @@ runtimeReleases:
     estimatedMemoryGB: 50
     healthPath: /health
     default: true
-
   ornith15-35b-speed-current:
     runtime: ornith15-35b-speed
     artifacts:
@@ -180,7 +168,6 @@ runtimeReleases:
     estimatedMemoryGB: 46
     healthPath: /health
     default: true
-
   ornith-contextstill-current:
     runtime: ornith-contextstill
     artifacts:
@@ -190,7 +177,6 @@ runtimeReleases:
     estimatedMemoryGB: 46
     healthPath: /health
     default: true
-
   ornith15-35b-agent-current:
     runtime: ornith15-35b-agent
     artifacts:
@@ -200,7 +186,6 @@ runtimeReleases:
     estimatedMemoryGB: 32
     healthPath: /health
     default: true
-
   qwen-asr-current:
     runtime: qwen-asr
     artifacts:
@@ -209,7 +194,6 @@ runtimeReleases:
     estimatedMemoryGB: 10
     healthPath: /health
     default: true
-
   whisper-asr-trial:
     runtime: whisper-asr
     artifacts:
@@ -218,7 +202,6 @@ runtimeReleases:
     estimatedMemoryGB: 1
     healthPath: /health
     default: true
-
   qwen-tts-current:
     runtime: qwen-tts
     artifacts:
@@ -227,42 +210,47 @@ runtimeReleases:
     estimatedMemoryGB: 5
     healthPath: /health
     default: true
-
   ornith15-strix-conversation-p4-v1:
     runtime: ornith15-strix-conversation
-    artifacts: [ ornith15-35b-strix-lean, ornith15-vision-bf16 ]
+    artifacts:
+      - ornith15-35b-strix-lean
+      - ornith15-vision-bf16
     providerConfigRevision: q38rocm-0fc9568-strix-lean-512k-p4-unified-q4-no-mtp-v1-vision4096-v1
     estimatedMemoryGB: 50
     healthPath: /health
     default: false
-
   ornith15-strix-conversation-p4-v2:
     runtime: ornith15-strix-conversation
-    artifacts: [ ornith15-35b-strix-lean, ornith15-vision-bf16 ]
+    artifacts:
+      - ornith15-35b-strix-lean
+      - ornith15-vision-bf16
     providerConfigRevision: q38rocm-0fc9568-strix-lean-512k-p4-unified-q4-no-mtp-no-prompt-cache-v2-vision4096-v1
     estimatedMemoryGB: 50
     healthPath: /health
     default: false
-
   ornith15-strix-conversation-p4-v3:
     runtime: ornith15-strix-conversation
-    artifacts: [ ornith15-35b-strix-lean, ornith15-vision-bf16 ]
+    artifacts:
+      - ornith15-35b-strix-lean
+      - ornith15-vision-bf16
     providerConfigRevision: q38rocm-0fc9568-strix-lean-1m-p4-unified-q4-no-mtp-no-prompt-cache-v3-vision4096-chat-count-v1
     estimatedMemoryGB: 54
     healthPath: /health
     default: false
-
   ornith15-strix-conversation-p4-v4:
     runtime: ornith15-strix-conversation
-    artifacts: [ ornith15-35b-strix-lean, ornith15-vision-bf16 ]
+    artifacts:
+      - ornith15-35b-strix-lean
+      - ornith15-vision-bf16
     providerConfigRevision: q38rocm-0fc9568-strix-1m-p4-q4-cp8-prefix-v1-engine-3c25c5a9861e
     estimatedMemoryGB: 56
     healthPath: /health
     default: false
-
   ornith15-strix-conversation-p4-v5:
     runtime: ornith15-strix-conversation
-    artifacts: [ ornith15-35b-strix-lean, ornith15-vision-bf16 ]
+    artifacts:
+      - ornith15-35b-strix-lean
+      - ornith15-vision-bf16
     providerConfigRevision: q38rocm-0fc9568-strix-1m-p4-q4-cp8-retention-v2-engine-c994e85f69f2-instructions-d5bd31a440a5
     estimatedMemoryGB: 56
     healthPath: /health
@@ -275,19 +263,35 @@ runtimeReleases:
     estimatedMemoryGB: 3.5
     healthPath: /health
     default: true
-
   d1-game-current:
     runtime: d1-system-one
-    artifacts: [ d1-3b ]
+    artifacts:
+      - d1-3b
     providerConfigRevision: d1-051bcc464b01-native-bf16-rocm-gfx1151-v1
     estimatedMemoryGB: 10
     healthPath: /health
     default: true
-
   wevisone-vl-bf16-current:
     runtime: wevisone-vl-4b
-    artifacts: [ wevisone-vl-4b ]
+    artifacts:
+      - wevisone-vl-4b
     providerConfigRevision: wevisone-40f735b8-rocm-gfx1151-bf16-native-v1
     estimatedMemoryGB: 20
+    healthPath: /health
+    default: true
+  lfm25-conversation-current:
+    runtime: lfm25-conversation
+    artifacts:
+      - lfm25-24b-a2b-qad-q4-0
+    providerConfigRevision: llama-lfm25-qad-q4-0-128k-p4-reasoning-effort-v1-scoped-cache-v2
+    estimatedMemoryGB: 40
+    healthPath: /health
+    default: true
+  lfm3-conversation-current:
+    runtime: lfm3-conversation
+    artifacts:
+      - lfm3-1.7b-qad-q4-0
+    providerConfigRevision: llama-lfm3-qad-q4-0-32k-p4-reasoning-effort-v1-scoped-cache-v2
+    estimatedMemoryGB: 12
     healthPath: /health
     default: true
