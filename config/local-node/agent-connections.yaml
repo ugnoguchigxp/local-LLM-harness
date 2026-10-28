@@ -100,61 +100,6 @@ agentProfiles:
         publicModel: ruri-v3-30m-speaking-attitude
         publishModel: false
         readiness: system-one
-  ornith1.5Strix:
-    description: Ornith 1.5 STRIX_LEAN profile copied from the Gemma 4 26B voice profile with the same speech, embedding, and System One providers; image input enabled
-    schedulingPriority: 4000
-    requestScheduling: foreground-exclusive
-    usageProtection:
-      idleSeconds: 600
-      retention: until-next-profile
-    idleRelease:
-      enabled: true
-      idleSeconds: 300
-      activityProtocols:
-        - larm.system-one.v1
-        - openai.audio-speech.v1
-        - openai.audio-transcriptions.v1
-        - openai.chat-completions.v1
-    providers:
-      - name: llm
-        capability: llm.general
-        route: llm-ornith15-strix
-        publicModel: ornith-1.5-strix-lean
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 262144
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
-      - name: asr
-        capability: speech.stt
-        route: stt-granite
-        publicModel: granite-speech-4.1-2b
-        publishModel: false
-        readiness: stt-transcription
-      - name: tts
-        capability: speech.tts
-        route: tts-voicevox
-        publicModel: voicevox-core
-        publishModel: false
-        readiness: tts-speech
-      - name: embedding
-        capability: embedding.multilingual-e5-small
-        route: embedding-multilingual-e5-small
-        publicModel: multilingual-e5-small
-        publishModel: false
-        readiness: embedding
-      - name: tts-english
-        capability: speech.tts.english
-        route: tts-kittentts-nano
-        publicModel: kitten-tts-nano-0.8-fp32
-        publishModel: false
-        readiness: tts-speech
-      - name: system-one
-        capability: decision.system-one
-        route: system-one-ruri
-        publicModel: ruri-v3-30m-speaking-attitude
-        publishModel: false
-        readiness: system-one
   ornith1.5Strix-game:
     description: Ornith STRIX_LEAN voice profile with an explicitly selected d1-3B game decision Provider
     schedulingPriority: 4000
@@ -499,6 +444,61 @@ agentProfiles:
         publicModel: ruri-v3-30m-speaking-attitude
         publishModel: false
         readiness: system-one
+  ornith1.5Strix-vision:
+    description: Ornith 1.5 STRIX_LEAN（画像対応・明示選択）。画像を含む会話に使用する。標準のテキスト会話はlfm2.5。
+    schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - larm.system-one.v1
+        - openai.audio-speech.v1
+        - openai.audio-transcriptions.v1
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-ornith15-strix
+        publicModel: ornith-1.5-strix-lean
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 262144
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
+        publishModel: false
+        readiness: tts-speech
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-ruri
+        publicModel: ruri-v3-30m-speaking-attitude
+        publishModel: false
+        readiness: system-one
 profileSelectors:
   visualPerception:
     agentProfile: visual-perception
@@ -513,7 +513,7 @@ profileSelectors:
   SAAA-gemma4-26b-64k:
     agentProfile: saaa-conversation-gemma4-26b-64k
   ornith1.5Strix:
-    agentProfile: ornith1.5Strix
+    agentProfile: lfm2.5
   ornith1.5Strix-game:
     agentProfile: ornith1.5Strix-game
   SAAA-w-Image:
@@ -566,4 +566,6 @@ profileSelectors:
     agentProfile: lfm2.5
   lfm3.1.7b:
     agentProfile: lfm3.1.7b
+  ornith1.5Strix-vision:
+    agentProfile: ornith1.5Strix-vision
 compatibilityAliases: {}

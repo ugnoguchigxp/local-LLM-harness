@@ -33,6 +33,7 @@ export const agentProfileSelectorIdSchema = z.enum([
   "SAAA-gemma4-26b",
   "SAAA-gemma4-26b-64k",
   "ornith1.5Strix",
+  "ornith1.5Strix-vision",
   "ornith1.5Strix-game",
   "SAAA-w-Image",
   "SAAA-w-music",

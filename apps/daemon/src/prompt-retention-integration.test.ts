@@ -25,7 +25,7 @@ async function fixture() {
   const catalog = parseAgentConnectionCatalog({ version: 1, defaultAgentProfile: "test",
     audiences: { local: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" } },
     agentProfiles: { test: { description: "synthetic", providers: [{ name: "llm", capability: "llm.general", route: "route", publicModel: "fixture", readiness: "llm-inference" }] } },
-    profileSelectors: { "ornith1.5Strix": { agentProfile: "test" } },
+    profileSelectors: { "ornith1.5Strix-vision": { agentProfile: "test" } },
   }, registry);
   const forwarded: { body: Record<string, unknown>; headers: Headers }[] = [];
   const invalidated: string[] = [];
@@ -55,7 +55,7 @@ async function fixture() {
   const create = async (client: string, auth = "synthetic-owner") => {
     const response = await app.request("http://127.0.0.1:9810/v1/agent-connections", { method: "POST",
       headers: { authorization: `Bearer ${auth}`, "content-type": "application/json", "idempotency-key": crypto.randomUUID(), prefer: "wait=1" },
-      body: JSON.stringify({ profile: "ornith1.5Strix", providers: ["llm"], client, audience: "local", ttlSeconds: 120, allowFallback: false, deploymentPolicy: "existing-only" }) });
+      body: JSON.stringify({ profile: "ornith1.5Strix-vision", providers: ["llm"], client, audience: "local", ttlSeconds: 120, allowFallback: false, deploymentPolicy: "existing-only" }) });
     expect(response.status).toBe(201);
     const connection = await response.json() as { id: string };
     const claim = await app.request(`http://127.0.0.1:9810/v1/agent-connections/${connection.id}/claim`, { method: "POST",

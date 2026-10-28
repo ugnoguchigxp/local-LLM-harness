@@ -27,7 +27,7 @@ async function fixture(limit = 8, idleSeconds?: number) {
     agentProfiles: {
       foreground: { description: "foreground", requestScheduling: "foreground-exclusive", schedulingPriority: 4000, ...(idleSeconds === undefined ? {} : { idleRelease: { enabled: true, idleSeconds, activityProtocols: ["openai.chat-completions.v1"] } }), providers: [provider] },
       background: { description: "background", requestScheduling: "background-when-idle", schedulingPriority: 1000, providers: [provider] },
-    }, profileSelectors: { "ornith1.5Strix": { agentProfile: "foreground" }, contextStill: { agentProfile: "background" } },
+    }, profileSelectors: { "ornith1.5Strix-vision": { agentProfile: "foreground" }, contextStill: { agentProfile: "background" } },
   }, registry);
   const ready = { name: "llm", capability: "llm.general", ready: true, acceptingRequests: true };
   const controller = new AgentConnectionController({ control, getCatalog: () => catalog, getCatalogRevision: () => "c".repeat(64),
@@ -36,9 +36,9 @@ async function fixture(limit = 8, idleSeconds?: number) {
     readyTimeoutMs: 10_000, pollIntervalMs: 1, idempotencyTtlMs: idleSeconds === undefined ? 5 : 300_000, idempotencyLimit: 100, historyLimit: 1,
     random: () => "repeating-source", now: () => now,
   });
-  const create = (profile: "ornith1.5Strix" | "contextStill", client: string) => controller.create({ profile, audience: "local", client,
+  const create = (profile: "ornith1.5Strix-vision" | "contextStill", client: string) => controller.create({ profile, audience: "local", client,
     ttlSeconds: 120, allowFallback: false, deploymentPolicy: "existing-only" }, "owner", client, "http://127.0.0.1:9810/v1/agent-connections");
-  const demand = (key: string, principal = "owner", profile: "ornith1.5Strix" | "contextStill" = "ornith1.5Strix", client = "screen", ttlSeconds = 300) =>
+  const demand = (key: string, principal = "owner", profile: "ornith1.5Strix-vision" | "contextStill" = "ornith1.5Strix-vision", client = "screen", ttlSeconds = 300) =>
     controller.create({ profile, audience: "local", client, ttlSeconds, allowFallback: false, deploymentPolicy: "existing-only" },
       principal, key, "http://127.0.0.1:9810/v1/agent-connections");
   return { control, controller, create, demand, advance: (ms = 10) => { now += ms; }, now: () => now };
@@ -47,8 +47,8 @@ async function fixture(limit = 8, idleSeconds?: number) {
 
 test("connection IDs stay unique with repeated random input; bounded history preserves the newest terminal result", async () => {
   const { controller, create, advance } = await fixture();
-  const first = (await create("ornith1.5Strix", "one")).body as PublicAgentConnection;
-  const second = (await create("ornith1.5Strix", "two")).body as PublicAgentConnection;
+  const first = (await create("ornith1.5Strix-vision", "one")).body as PublicAgentConnection;
+  const second = (await create("ornith1.5Strix-vision", "two")).body as PublicAgentConnection;
   expect(first.id).not.toBe(second.id);
   expect(first.id).toMatch(/_[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
   await controller.release(first.id, "owner");
@@ -56,7 +56,7 @@ test("connection IDs stay unique with repeated random input; bounded history pre
   await controller.release(second.id, "owner");
   expect(controller.get(first.id, "owner").status).toBe(404);
   expect(controller.get(second.id, "owner").body).toMatchObject({ status: "released" });
-  const replacement = await create("ornith1.5Strix", "one");
+  const replacement = await create("ornith1.5Strix-vision", "one");
   expect(replacement.status).toBe(201);
   expect((replacement.body as PublicAgentConnection).id).not.toBe(first.id);
   await controller.release((replacement.body as PublicAgentConnection).id, "owner");
@@ -68,7 +68,7 @@ test("a failing existing invalidator does not prevent the cache purge handler", 
   f.controller.setCacheInvalidator(() => { throw new Error("synthetic invalidator failure"); });
   f.controller.setCacheInvalidator(record => { invalidated.push(record.id); });
   try {
-    const c = (await f.create("ornith1.5Strix", "synthetic")).body as PublicAgentConnection;
+    const c = (await f.create("ornith1.5Strix-vision", "synthetic")).body as PublicAgentConnection;
     await f.controller.release(c.id, "owner");
     await Bun.sleep(0);
     expect(invalidated).toEqual([c.id]);
@@ -79,8 +79,8 @@ test("cache invalidation follows explicit release and TTL expiry once per Connec
   const f = await fixture();
   const invalidated: string[] = [];
   f.controller.setCacheInvalidator(record => { invalidated.push(record.id); });
-  const a = (await f.create("ornith1.5Strix", "cache-a")).body as PublicAgentConnection;
-  const b = (await f.create("ornith1.5Strix", "cache-b")).body as PublicAgentConnection;
+  const a = (await f.create("ornith1.5Strix-vision", "cache-a")).body as PublicAgentConnection;
+  const b = (await f.create("ornith1.5Strix-vision", "cache-b")).body as PublicAgentConnection;
   await f.controller.release(a.id, "owner");
   await Bun.sleep(0);
   expect(invalidated).toEqual([a.id]);
@@ -98,7 +98,7 @@ test("foreground waits for background execution cleanup before granting a new co
   const background = (await create("contextStill", "background")).body as PublicAgentConnection;
   expect(await controller.beginProviderRequest(background.id, "active", "openai.chat-completions.v1")).toBe("accepted");
   let settled = false;
-  const foreground = create("ornith1.5Strix", "foreground").then(result => { settled = true; return result; });
+  const foreground = create("ornith1.5Strix-vision", "foreground").then(result => { settled = true; return result; });
   await Bun.sleep(5);
   expect(settled).toBe(false);
   expect(controller.get(background.id, "owner").body).toMatchObject({ status: "failed", error: { code: "foreground_preempted" } });
@@ -186,15 +186,15 @@ test("concurrent demand wins through profile policy regardless of caller or clie
   try {
     const background = (await f.demand("background", "other", "contextStill", "Eumenes")).body as PublicAgentConnection;
     expect(await f.controller.beginProviderRequest(background.id, "running", "openai.chat-completions.v1")).toBe("accepted");
-    const foreground = f.demand("foreground", "owner", "ornith1.5Strix", "ContextStill");
+    const foreground = f.demand("foreground", "owner", "ornith1.5Strix-vision", "ContextStill");
     await Bun.sleep(5);
     expect(f.controller.get(background.id, "other").body).toMatchObject({ status: "failed", error: { code: "foreground_preempted" } });
     expect((await f.demand("race-background", "other", "contextStill", "Eumenes")).status).toBe(409);
     f.controller.finishProviderRequest(background.id, "running");
     expect((await foreground).status).toBe(201);
     const [a, b, c] = await Promise.all([
-      f.demand("foreground-again", "owner", "ornith1.5Strix", "ContextStill"),
-      f.demand("foreground-again-2", "owner", "ornith1.5Strix", "ContextStill"),
+      f.demand("foreground-again", "owner", "ornith1.5Strix-vision", "ContextStill"),
+      f.demand("foreground-again-2", "owner", "ornith1.5Strix-vision", "ContextStill"),
       f.demand("race-background-2", "other", "contextStill", "Eumenes"),
     ]);
     expect((a.body as PublicAgentConnection).id).toBe((b.body as PublicAgentConnection).id);
@@ -212,8 +212,8 @@ test("stopping new requests returns to real idle release; GET, claim, renew, rep
     expect(Date.parse(updated.idleReleaseAt!)).toBe(Date.parse(first.idleReleaseAt!) + 500);
     f.advance(200);
     expect((await f.demand("second")).replay).toBe(true);
-    expect((await f.demand("first", "owner", "ornith1.5Strix", "screen", 600)).status).toBe(409);
-    expect((await f.demand("different-options", "owner", "ornith1.5Strix", "screen", 600)).status).toBe(409);
+    expect((await f.demand("first", "owner", "ornith1.5Strix-vision", "screen", 600)).status).toBe(409);
+    expect((await f.demand("different-options", "owner", "ornith1.5Strix-vision", "screen", 600)).status).toBe(409);
     expect((await f.controller.claim(first.id, "owner", "openai-provider-v1")).status).toBe(200);
     expect((await f.controller.renew(first.id, 900, "owner", "renew-only")).status).toBe(200);
     expect((f.controller.get(first.id, "owner").body as PublicAgentConnection).idleReleaseAt).toBe(updated.idleReleaseAt);

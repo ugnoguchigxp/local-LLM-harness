@@ -42,7 +42,7 @@ async function fixture(warmWorker = false, fixedClock = false) {
   const catalog = parseAgentConnectionCatalog({ version: 1, defaultAgentProfile: "voice", audiences: { local: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" } }, agentProfiles: {
     voice: { description: "protected", requestScheduling: "foreground-exclusive", schedulingPriority: 4000, usageProtection: { idleSeconds: 600, retention: "until-next-profile" }, idleRelease: { enabled: true, idleSeconds: 300, activityProtocols: ["openai.chat-completions.v1"] }, providers: [{ name: "llm", capability: "llm.general", route: "route-a", publicModel: "model-a", readiness: "llm-inference" }] },
     worker: { description: "worker", requestScheduling: "background-when-idle", schedulingPriority: 1000, providers: [{ name: "llm", capability: "llm.general", route: "route-b", publicModel: "model-b", readiness: "llm-inference" }] },
-  }, profileSelectors: { "ornith1.5Strix": { agentProfile: "voice" }, contextStill: { agentProfile: "worker" } } }, registry);
+  }, profileSelectors: { "ornith1.5Strix-vision": { agentProfile: "voice" }, contextStill: { agentProfile: "worker" } } }, registry);
   let failReadiness = false;
   let readinessHook: (() => Promise<void>) | undefined;
   const connections = new AgentConnectionController({ control, getCatalog: () => catalog, getCatalogRevision: () => "test", tokenCodec: new ConnectionTokenCodec(new Uint8Array(32).fill(1), wallNow), semantic: { peek: ({ provider }: { provider: { name: string; capability: string } }) => ({ name: provider.name, capability: provider.capability, ready: true, acceptingRequests: true }), check: async ({ provider }: { provider: { name: string; capability: string } }) => { await readinessHook?.(); if (failReadiness) throw new Error("synthetic readiness failure"); return { name: provider.name, capability: provider.capability, ready: true, acceptingRequests: true }; } } as unknown as SemanticReadiness, now: wallNow, readyTimeoutMs: 3000, pollIntervalMs: 60_000, idempotencyTtlMs: 1000, idempotencyLimit: 100 });
@@ -59,7 +59,7 @@ async function fixture(warmWorker = false, fixedClock = false) {
   } });
   let sequence = 0;
   const post = (path: string, token: string, body: unknown, extra: Record<string, string> = {}) => app.request(path, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...extra }, body: JSON.stringify(body) });
-  const create = async (profile: string, token: string) => post("/v1/agent-connections", token, { profile: profile === "voice" ? "ornith1.5Strix" : "contextStill", audience: "local", ttlSeconds: 3600, allowFallback: false, deploymentPolicy: "existing-only" }, { "idempotency-key": `create-${++sequence}`, prefer: "wait=3" });
+  const create = async (profile: string, token: string) => post("/v1/agent-connections", token, { profile: profile === "voice" ? "ornith1.5Strix-vision" : "contextStill", audience: "local", ttlSeconds: 3600, allowFallback: false, deploymentPolicy: "existing-only" }, { "idempotency-key": `create-${++sequence}`, prefer: "wait=3" });
   const claim = async (id: string, token: string) => {
     const response = await post(`/v1/agent-connections/${id}/claim`, token, { format: "openai-provider-v1" });
     expect(response.status).toBe(200);
@@ -138,7 +138,7 @@ test("client and profile names do not grant ownership, and cancel releases prote
   try {
     const created = publicAgentConnectionSchema.parse(await (await f.create("voice", "consumer")).json());
     const bearer = await f.claim(created.id, "consumer");
-    const spoofed = await f.post("/v1/agent-connections", "shared", { profile: "ornith1.5Strix", client: "Eumenes", audience: "local", ttlSeconds: 60 }, { "idempotency-key": "spoof" });
+    const spoofed = await f.post("/v1/agent-connections", "shared", { profile: "ornith1.5Strix-vision", client: "Eumenes", audience: "local", ttlSeconds: 60 }, { "idempotency-key": "spoof" });
     expect(spoofed.status).toBe(409);
     const response = await f.post("/v1/chat/completions", bearer, { model: "model-a", messages: [{ role: "user", content: "hello" }], stream: true });
     f.setNow(800_000);
@@ -299,7 +299,7 @@ test("protected consumer health remains compatible with the public schema", asyn
 
 test("ordinary existing authentication can refresh demand without a protected consumer token or extra fields", async () => {
   const f = await fixture(false, true);
-  const input = { profile: "ornith1.5Strix", audience: "local", client: "ordinary", ttlSeconds: 300 };
+  const input = { profile: "ornith1.5Strix-vision", audience: "local", client: "ordinary", ttlSeconds: 300 };
   const demand = (key: string, token = "shared", body: unknown = input) => f.post("/v1/agent-connections", token, body, { "idempotency-key": key, prefer: "wait=3" });
   try {
     const created = await demand("first");

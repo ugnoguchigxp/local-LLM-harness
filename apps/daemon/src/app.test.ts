@@ -147,7 +147,7 @@ const agentConnectionCatalog = parseAgentConnectionCatalog({
       }],
     },
   },
-  profileSelectors: { "ornith1.5Strix": { agentProfile: "coding" } },
+  profileSelectors: { "ornith1.5Strix-vision": { agentProfile: "coding" } },
 }, registry);
 
 const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
@@ -173,7 +173,7 @@ const dynamicAgentConnectionCatalog = parseAgentConnectionCatalog({
       }],
     },
   },
-  profileSelectors: { "ornith1.5Strix": { agentProfile: "coding" } },
+  profileSelectors: { "ornith1.5Strix-vision": { agentProfile: "coding" } },
 }, registry);
 
 const explicitAgentConnectionCatalog = parseAgentConnectionCatalog({
@@ -205,7 +205,7 @@ const explicitAgentConnectionCatalog = parseAgentConnectionCatalog({
     },
   },
   profileSelectors: {
-    "ornith1.5Strix": { agentProfile: "coding" },
+    "ornith1.5Strix-vision": { agentProfile: "coding" },
     contextStill: { agentProfile: "speed" },
     "SAAA-gemma4-26b": { agentProfile: "coding" },
   },
@@ -246,7 +246,7 @@ const idleSaaaAgentConnectionCatalog = parseAgentConnectionCatalog({
     },
   },
   profileSelectors: {
-    "ornith1.5Strix": { agentProfile: "coding" },
+    "ornith1.5Strix-vision": { agentProfile: "coding" },
     contextStill: { agentProfile: "coding" },
     "SAAA-gemma4-26b": { agentProfile: "saaa" },
   },
@@ -406,7 +406,7 @@ test("CPU compute authenticates, advertises v3 discovery and supports Eumenes cl
       connectionSigningKey: agentSigningKey, agentConnectionCatalog, computeManager: manager, computePublicOrigin: "https://control.example.invalid" });
     expect((await app.request("/v1/compute/environment")).status).toBe(401);
     expect((await app.request("/v1/compute/environment", { headers: { authorization: "Bearer larm_conn_v1.invalid" } })).status).toBe(401);
-    for (const query of ["", "?profile=ornith1.5Strix"]) {
+    for (const query of ["", "?profile=ornith1.5Strix-vision"]) {
       const discovery = publicAgentProfileListV3Schema.parse(await (await app.request(`/v3/agent-profiles${query}`, { headers: agentHeaders() })).json());
       expect(discovery.profiles[0]!.services.some(service => service.protocol === "larm.compute.v1" && service.url === "https://control.example.invalid/v1/compute")).toBe(true);
     }
@@ -596,8 +596,8 @@ test("v3 public profile selectors return exact provider and service endpoints wi
       ],
       services: [{ name: "mesh", endpoint: "/v1/3d/generations", model: "trellis2-4b" }, { name: "music", endpoint: "/v1/music/generations", model: "auto" }],
     },
-    "ornith1.5Strix": {
-      id: "ornith1.5Strix",
+    "ornith1.5Strix-vision": {
+      id: "ornith1.5Strix-vision",
       providers: [
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
@@ -626,7 +626,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
   try {
     // Control services must be discoverable from the saved origin without any
     // Connection, including while selecting an unrelated conversation Profile.
-    for (const path of ["/v3/agent-profiles", "/v3/agent-profiles?profile=ornith1.5Strix"]) {
+    for (const path of ["/v3/agent-profiles", "/v3/agent-profiles?profile=ornith1.5Strix-vision"]) {
       const catalog = publicAgentProfileListV3Schema.parse(await (await fetch(baseUrl + path)).json());
       expect(catalog.services).toHaveLength(3);
       expect(catalog.services.filter((s) => s.capability === "media.mesh.generate")).toHaveLength(1);
@@ -725,7 +725,7 @@ test("E2E: explicit Ornith profile provide returns every live provider over a re
   appFetch = app.fetch;
 
   try {
-    const discoveryResponse = await fetch(`${baseUrl}/v3/agent-profiles?profile=ornith1.5Strix`, {
+    const discoveryResponse = await fetch(`${baseUrl}/v3/agent-profiles?profile=ornith1.5Strix-vision`, {
       headers: agentHeaders(),
     });
     expect(discoveryResponse.status).toBe(200);
@@ -739,7 +739,7 @@ test("E2E: explicit Ornith profile provide returns every live provider over a re
         prefer: "wait=3",
       }),
       body: JSON.stringify({
-        profile: "ornith1.5Strix",
+        profile: "ornith1.5Strix-vision",
         expectedCatalogRevision: discovery.catalogRevision,
         audience: "same-host",
         client: "saaa-e2e",
@@ -753,8 +753,8 @@ test("E2E: explicit Ornith profile provide returns every live provider over a re
     const connection = publicAgentConnectionSchema.parse(await createResponse.json());
     expect(createResponse.headers.get("location")).toBe(`/v1/agent-connections/${connection.id}`);
     expect(connection).toMatchObject({
-      profile: "ornith1.5Strix",
-      agentProfile: "ornith1.5Strix",
+      profile: "ornith1.5Strix-vision",
+      agentProfile: "ornith1.5Strix-vision",
       catalogRevision: discovery.catalogRevision,
       status: "ready",
       services: [],
@@ -767,7 +767,7 @@ test("E2E: explicit Ornith profile provide returns every live provider over a re
       model: provider.model,
       readiness: provider.readiness,
       claimable: provider.claimable,
-    }))).toEqual(catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!.providers.map(provider => ({
+    }))).toEqual(catalog.profiles.find(profile => profile.id === "ornith1.5Strix-vision")!.providers.map(provider => ({
       name: provider.name, endpoint: agentProviderEndpoint(provider.protocol), model: provider.publicModel,
       readiness: "ready", claimable: true,
     })));
@@ -832,7 +832,7 @@ test("E2E: explicit Ornith profile provide returns every live provider over a re
         prefer: "wait=3",
       }),
       body: JSON.stringify({
-        profile: "ornith1.5Strix",
+        profile: "ornith1.5Strix-vision",
         expectedCatalogRevision: discovery.catalogRevision,
         audience: "same-host",
         client: "ornith-llm-subset-e2e",
@@ -867,7 +867,7 @@ test("E2E: explicit Ornith profile provide returns every live provider over a re
           "idempotency-key": `saaa-profile-unknown-subset-${provider}-e2e`,
         }),
         body: JSON.stringify({
-          profile: "ornith1.5Strix",
+          profile: "ornith1.5Strix-vision",
           audience: "same-host",
           providers: [provider],
         }),
@@ -4321,7 +4321,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
       "content-type": "application/json",
       "idempotency-key": "agent-create-1",
     }),
-    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-vision", audience: "loopback" }),
   });
   expect(create.status).toBe(201);
   const connection = publicAgentConnectionSchema.parse(await create.json());
@@ -4355,7 +4355,7 @@ test("agent connection claims a scoped OpenAI provider and revokes generations",
       "content-type": "application/json",
       "idempotency-key": "agent-create-1",
     }),
-    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-vision", audience: "loopback" }),
   });
   expect(replay.headers.get("x-larm-idempotent-replay")).toBe("true");
   expect((await replay.json() as { id: string }).id).toBe(connection.id);
@@ -4633,7 +4633,7 @@ test("embedding Agent Connection claims, validates, renews, and releases a scope
       },
     },
     profileSelectors: {
-      "ornith1.5Strix": { agentProfile: "coding" },
+      "ornith1.5Strix-vision": { agentProfile: "coding" },
       embeddingCanary: { agentProfile: "embedding" },
     },
   }, embeddingRegistry);
@@ -4932,7 +4932,7 @@ test("Agent Connection Prefer wait converges to ready and validates catalog revi
       "idempotency-key": "revision-mismatch",
     }),
     body: JSON.stringify({
-      profile: "ornith1.5Strix",
+      profile: "ornith1.5Strix-vision",
       expectedCatalogRevision: "0".repeat(64),
       audience: "loopback",
     }),
@@ -4948,11 +4948,11 @@ test("Agent Connection Prefer wait converges to ready and validates catalog revi
       "idempotency-key": "bounded-wait",
       prefer: "wait=2",
     }),
-    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-vision", audience: "loopback" }),
   });
   expect(response.status).toBe(201);
   expect(response.headers.get("preference-applied")).toBe("wait=2");
-  expect(await response.json()).toMatchObject({ profile: "ornith1.5Strix", status: "ready" });
+  expect(await response.json()).toMatchObject({ profile: "ornith1.5Strix-vision", status: "ready" });
   expect(semanticProbes).toBeGreaterThanOrEqual(2);
 });
 
@@ -4970,7 +4970,7 @@ test("Agent Connection caps synchronous Prefer wait at three seconds", async () 
       "idempotency-key": "bounded-long-wait",
       prefer: "wait=300",
     }),
-    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-vision", audience: "loopback" }),
   });
   expect(response.status).toBe(201);
   expect(response.headers.get("preference-applied")).toBe("wait=3");
@@ -5168,7 +5168,7 @@ test("agent connection derives a host-private claim from the request origin", as
       "x-forwarded-host": "attacker.example",
       "x-forwarded-proto": "https",
     }),
-    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "remote" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-vision", audience: "remote" }),
   });
   expect(create.status).toBe(201);
   const connection = publicAgentConnectionSchema.parse(await create.json());
@@ -5209,7 +5209,7 @@ test("agent connection derives a host-private claim from the request origin", as
       "content-type": "application/json",
       "idempotency-key": "dynamic-origin-create",
     }),
-    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "remote" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-vision", audience: "remote" }),
   });
   expect(conflictingOrigin.status).toBe(409);
   expect(await conflictingOrigin.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
@@ -5227,7 +5227,7 @@ test("host-private request-origin audiences reject loopback ingress", async () =
       "content-type": "application/json",
       "idempotency-key": "loopback-origin-rejected",
     }),
-    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "remote" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-vision", audience: "remote" }),
   });
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ error: { code: "connection_audience_unavailable" } });
@@ -5254,7 +5254,7 @@ test("agent semantic health rejects an HTTP-alive model that does not complete e
       "content-type": "application/json",
       "idempotency-key": "bad-semantic-model",
     }),
-    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-vision", audience: "loopback" }),
   });
   expect(created.status).toBe(202);
   const connection = publicAgentConnectionSchema.parse(await created.json());
@@ -5288,7 +5288,7 @@ test("agent connection fails immediately when a provider rejects the fixed readi
       "content-type": "application/json",
       "idempotency-key": "provider-contract-mismatch",
     }),
-    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-vision", audience: "loopback" }),
   });
   expect(created.status).toBe(503);
   expect(publicAgentConnectionSchema.parse(await created.json())).toMatchObject({
@@ -5336,7 +5336,7 @@ test("anonymous Agent Connection lifecycle still issues a scoped provider creden
       "content-type": "application/json",
       "idempotency-key": "anonymous-create-1",
     },
-    body: JSON.stringify({ profile: "ornith1.5Strix", audience: "loopback" }),
+    body: JSON.stringify({ profile: "ornith1.5Strix-vision", audience: "loopback" }),
   });
   expect(createdResponse.status).toBe(201);
   const created = publicAgentConnectionSchema.parse(await createdResponse.json());
@@ -5502,8 +5502,8 @@ test("claimed image preflight exposes exact contract and retention and never byp
       if(String(input).endsWith("/tokenize")){countCalls++;return Response.json({contractVersion:"llama-chat-token-count.v1",promptTokens,textTokens:promptTokens,imageTokens:0,imageCount:0,engineBuild:"fixture"});}
       return validAgentProviderSemanticResponse(input,init);
     }});
-  const discovery=publicAgentProfileListV3Schema.parse(await (await app.request("/v3/agent-profiles?profile=ornith1.5Strix",{headers:agentHeaders()})).json());
-  const createdResponse=await app.request("/v1/agent-connections",{method:"POST",headers:agentHeaders({"content-type":"application/json","idempotency-key":"chat-count-contract",prefer:"wait=3"}),body:JSON.stringify({profile:"ornith1.5Strix",audience:"same-host",providers:["llm"],client:"input-count-fixture",ttlSeconds:300,allowFallback:false,deploymentPolicy:"existing-only"})});
+  const discovery=publicAgentProfileListV3Schema.parse(await (await app.request("/v3/agent-profiles?profile=ornith1.5Strix-vision",{headers:agentHeaders()})).json());
+  const createdResponse=await app.request("/v1/agent-connections",{method:"POST",headers:agentHeaders({"content-type":"application/json","idempotency-key":"chat-count-contract",prefer:"wait=3"}),body:JSON.stringify({profile:"ornith1.5Strix-vision",audience:"same-host",providers:["llm"],client:"input-count-fixture",ttlSeconds:300,allowFallback:false,deploymentPolicy:"existing-only"})});
   expect(createdResponse.status).toBe(201);const connection=publicAgentConnectionSchema.parse(await createdResponse.json());
   try {
     const claimed=agentConnectionClaimSchema.parse(await (await app.request(`/v1/agent-connections/${connection.id}/claim`,{method:"POST",headers:agentHeaders({"content-type":"application/json"}),body:JSON.stringify({format:"openai-provider-v1"})})).json());

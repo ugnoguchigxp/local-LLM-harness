@@ -38,8 +38,9 @@ test("production agent profiles compile to strict protocol-aware provider contra
     { id: "embeddingCanary", agentProfile: "contextstill-embedding", services: [] },
     { id: "lfm2.5", agentProfile: "lfm2.5", services: [] },
     { id: "lfm3.1.7b", agentProfile: "lfm3.1.7b", services: [] },
-    { id: "ornith1.5Strix", agentProfile: "ornith1.5Strix", services: [] },
+    { id: "ornith1.5Strix", agentProfile: "lfm2.5", services: [] },
     { id: "ornith1.5Strix-game", agentProfile: "ornith1.5Strix-game", services: [] },
+    { id: "ornith1.5Strix-vision", agentProfile: "ornith1.5Strix-vision", services: [] },
     { id: "SAAA-gemma4-26b", agentProfile: "saaa-conversation-gemma4-26b-voice", services: [] },
     { id: "SAAA-gemma4-26b-64k", agentProfile: "saaa-conversation-gemma4-26b-64k", services: [] },
     {
@@ -89,8 +90,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "lfm2.5",
     "lfm3.1.7b",
     "nightworker-background",
-    "ornith1.5Strix",
     "ornith1.5Strix-game",
+    "ornith1.5Strix-vision",
     "saaa-backchannel-default",
     "saaa-conversation-gemma4-26b-64k",
     "saaa-conversation-gemma4-26b-voice",
@@ -108,9 +109,9 @@ test("production agent profiles compile to strict protocol-aware provider contra
       network: "host-private",
       baseUrl: "request-origin",
     });
-  const primary = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  const primary = catalog.profiles.find(profile => profile.id === "ornith1.5Strix-vision")!;
   expect(primary).toMatchObject({
-    selectionPolicy: "explicit-only", canonicalProfile: "ornith1.5Strix", deprecated: false, schedulingPriority: 4000,
+    selectionPolicy: "explicit-only", canonicalProfile: "ornith1.5Strix-vision", deprecated: false, schedulingPriority: 4000,
   });
   expect(primary.providers.find(provider => provider.name === "llm")).toMatchObject({
     capability: "llm.general", supportedCapabilities: ["llm.general", "llm.vision"],
@@ -125,7 +126,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
   }
   const contextStill = catalog.profiles.find((profile) => profile.id === "contextstill-background");
   expect(contextStill?.requestScheduling).toBe("background-when-idle");
-  expect(catalog.profiles.find(profile => profile.id === "ornith1.5Strix")?.requestScheduling).toBe("foreground-exclusive");
+  expect(catalog.profiles.find(profile => profile.id === "ornith1.5Strix-vision")?.requestScheduling).toBe("foreground-exclusive");
   expect(contextStill)
     .toMatchObject({
       canonicalProfile: "contextstill-background",
@@ -448,7 +449,7 @@ test("Gemma main and auxiliary context tiers share four allocations within one K
 
 test("four retained Ornith profile sessions share one KV pool without the retired auxiliary profile", () => {
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
-  const main = catalog.profiles.find((profile) => profile.id === "ornith1.5Strix")!;
+  const main = catalog.profiles.find((profile) => profile.id === "ornith1.5Strix-vision")!;
   const mainLlm = main.providers.find((provider) => provider.name === "llm")!;
   const route = registry.routes.find((route) => route.id === mainLlm.route)!;
   const runtimeId = route.candidates[0]!.runtime;
@@ -516,8 +517,8 @@ test("agent profile compilation rejects unknown fields and semantic protocol dri
   }, registry)).toThrow(/profileSelectors:.*unknownConsumer/);
   expect(() => parseAgentConnectionCatalog({
     ...base,
-    profileSelectors: { "ornith1.5Strix": { agentProfile: "missing" } },
-  }, registry)).toThrow(/profile selector ornith1\.5Strix references unknown agent profile missing/);
+    profileSelectors: { "ornith1.5Strix-vision": { agentProfile: "missing" } },
+  }, registry)).toThrow(/profile selector ornith1\.5Strix-vision references unknown agent profile missing/);
   expect(() => parseAgentConnectionCatalog({
     ...base,
     profileSelectors: {
@@ -856,7 +857,7 @@ test("embedding failover candidates must preserve the exact semantic space", () 
 
 test("Agent Connection creation requires a public selector and a strict new request shape", () => {
   expect(agentConnectionRequestSchema.safeParse({
-    profile: "ornith1.5Strix",
+    profile: "ornith1.5Strix-vision",
     audience: "same-host",
     providers: ["llm"],
   }).success).toBeTrue();

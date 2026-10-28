@@ -754,11 +754,11 @@ test("Gemma adds an English CPU speech provider while Japanese TTS and auxiliary
   }
 });
 
-test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifact", () => {
+test("ornith1.5Strix-vision is an explicit Gemma voice copy routed to the tested artifact", () => {
   const registry = loadRegistry(repoConfig);
   const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry)!;
   const base = catalog.profiles.find(profile => profile.id === "saaa-conversation-gemma4-26b-voice")!;
-  const strix = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  const strix = catalog.profiles.find(profile => profile.id === "ornith1.5Strix-vision")!;
   expect(strix).toBeDefined();
   expect(strix.providers.filter(provider => provider.name !== "llm"))
     .toEqual(base.providers.filter(provider => provider.name !== "llm"));
@@ -771,7 +771,7 @@ test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifa
     publicModel: "ornith-1.5-strix-lean",
     chatInput: registry.runtimes.find(runtime => runtime.id === "ornith15-strix-conversation")!.chatInput,
   });
-  expect(catalog.profileSelectors.find(selector => selector.id === "ornith1.5Strix"))
+  expect(catalog.profileSelectors.find(selector => selector.id === "ornith1.5Strix-vision"))
     .toMatchObject({ agentProfile: strix.id });
   const route = registry.routes.find(route => route.id === "llm-ornith15-strix")!;
   expect(route.explicitOnly).toBe(true);
@@ -806,7 +806,7 @@ test("registered llama-swap models leave idle shutdown to LARM", () => {
 test("d1 game decisions require the explicit Ornith game profile and leave ordinary profiles intact", () => {
   const registry = loadRegistry(repoConfig);
   const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry);
-  const ordinary = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  const ordinary = catalog.profiles.find(profile => profile.id === "ornith1.5Strix-vision")!;
   const game = catalog.profiles.find(profile => profile.id === "ornith1.5Strix-game")!;
   const gameProvider = game.providers.find(provider => provider.name === "game-decision");
   expect(gameProvider).toMatchObject({ capability: "decision.game", publicModel: "d1-3b-game",

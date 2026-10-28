@@ -41,7 +41,7 @@ function harness(options: { failClaim?: boolean; failPeer?: boolean; failRelease
   }) as typeof fetch;
   return {
     released, emitted, completions, creates,
-    run: (baseline = false) => verifyPromptCache({ baseUrl: "http://fixture", apiToken: "private", profile: "ornith1.5Strix", baseline }, {
+    run: (baseline = false) => verifyPromptCache({ baseUrl: "http://fixture", apiToken: "private", profile: "ornith1.5Strix-vision", baseline }, {
       client: fakeClient as unknown as NonNullable<Parameters<typeof verifyPromptCache>[1]>["client"],
       fetch: fetchImpl, emit: value => emitted.push(value), sleep: async () => {},
     }),
