@@ -3,8 +3,24 @@
   <p>
     <time>2026-10-28</time>。LFM2.5 24B
     A2Bをメイン会話Providerに切り替えるための実装・設定・受入記録。
-    作業中の設定ではLFMを既定にするが、稼働中daemonへの配備・既定切替はまだ実施していない。
+    作業中の設定ではLFMを既定にする。正式なLFM名での配備は未実施だが、 2026-10-28 17:44
+    JSTから利用者の指定によりOrnith名を保つLFM2.5の一時構成を稼働させた。 同日19:28
+    JSTからは、追加の指定により同じ公開名の裏側をLFM3-1.7Bへ一時置換した。 同日19:52
+    JSTに利用者の指定で元のOrnith STRIX_LEANと配備済みdaemonへ復帰した。
   </p>
+  <aside>
+    <p>
+      2026-10-28追記：入力KVキャッシュの差分を統合し、LFM2.5・LFM3の隔離実機試験を完了した。
+      稼働Ornithの保持機能もsourceへ復元した。Reasoningと入力再利用を両立する切替準備は完了。
+      その後、Ornithの公開名を保つLFM2.5への一時切替と実稼働APIの受入検証を完了した。
+      続いてLFM3-1.7Bへの一時切替と実稼働APIの受入検証を完了した。 両LFMの一時試行は終了し、19:52
+      JST時点では元のOrnith STRIX_LEANへ戻した。 その後20:47
+      JSTにLFM2.5を正式な標準モデルとして配備した。 現行の公開名と互換selectorは<a
+        href="./lfm25-default-model-card.html"
+        >標準LLMモデルカード</a
+      >を参照する。 正式なLFM名での既定切替とは分けて扱う。
+    </p>
+  </aside>
   <section id="public-api">
     <h2>利用側の契約</h2>
     <p>
@@ -63,10 +79,11 @@
       </tbody>
     </table>
     <p>
-      公式llama.cpp revision <code>d05706b4f32a545814856e98ca518292585443b9</code>を
-      <code>/srv/ai/apps/larm-lfm25-engine-d05706b</code>へ専用配置する。
-      source、build、バイナリ、重みはrepository外。再構築手順は<code>deploy/local-node/scripts/prepare-lfm25-engine.sh</code>。
-      sourceのclean状態・revision・build元を照合してから配置する。既存buildの再利用時はVulkan有効・Release構成も検証する。
+      公式llama.cpp revision <code>d05706b4f32a545814856e98ca518292585443b9</code>に
+      retention対応patchを加え、<code>/srv/ai/apps/larm-lfm-retention-d05706b-v1</code>へ専用配置した。
+      source、build、バイナリ、重みはrepository外。再構築手順は<code>deploy/local-node/scripts/prepare-lfm-retention-engine.py</code>。
+      revision・patch全文・header・native試験sourceを照合し、Vulkan有効・Release構成で構築する。 Web
+      UIの取得を無効化し、モデルをロードせずnative回帰試験を実行してから配置する。
       実行ファイルと共有ライブラリを専用directoryにコピーし、
       そのdirectoryの共有ライブラリを使用するwrapperとSHA256SUMSを保存する。
     </p>
@@ -195,18 +212,437 @@
       </li>
     </ul>
   </section>
+  <section id="input-cache-review">
+    <h2>入力KVキャッシュの比較レビュー：修正前</h2>
+    <p>
+      以下は修正前のcommit <code>04f98b1a53e523f638fc95aae4e48479e2d98891</code>に対する記録。
+      現在の修正内容と受入結果は次節を参照する。LFM2.5 selectorからllm-lfm25
+      route、lfm25-conversation runtime、同名llama-swap modelへ解決する。
+      比較対象はornith1.5Strixからllm-ornith15-strix、ornith15-strix-conversationへ解決する稼働版。
+      稼働daemonは<code>/srv/ai/apps/larm-current</code>以下を実行し、現在のsource
+      checkoutとは別である。 観測時のrelease
+      directoryは<code>ae08a8b84a80</code>、configRevisionは
+      <code>2097ca20a2a00da328624dee552d7c84c6b66f0fa3630e5879f285fa8a729c3a</code>。
+      LFMがまだ起動していないことを設定異常とは判定しない。
+    </p>
+    <table>
+      <caption>
+        稼働中のOrnithと切替準備中のLFMの差分
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">稼働Ornith</th>
+          <th scope="col">LFM2.5・LFM3準備版</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">入力prefix再利用</th>
+          <td>cache-prompt有効</td>
+          <td>no-cache-promptで既定無効</td>
+        </tr>
+        <tr>
+          <th scope="row">エンジン</th>
+          <td>専用retention-v2修正版</td>
+          <td>公式llama.cpp d05706b</td>
+        </tr>
+        <tr>
+          <th scope="row">会話単位の保持</th>
+          <td>認証principal・Connectionまたはprompt_cache_keyからscopeを導出</td>
+          <td>scope生成・native保持protocolなし</td>
+        </tr>
+        <tr>
+          <th scope="row">RAM保持と期限</th>
+          <td>総8 GiB、principal別4 GiB、idle 300秒・最大1800秒</td>
+          <td>同じpolicyの接続なし</td>
+        </tr>
+        <tr>
+          <th scope="row">状態復元</th>
+          <td>4分割KV、slot毎8 checkpoint、RAM退避・復元</td>
+          <td>Ornithと同等の受入検証なし</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>P1：LFMの入力キャッシュは既定で効かない。</strong>
+      llama-swap起動設定の両LFMにno-cache-promptがあり、Reasoning
+      adapterもcache_promptをtrueに変換しない。
+      cache-type-k/vのq4_0はKVの保存形式であり、前の要求からの入力再利用を有効にする指定ではない。
+      no-cache-idle-slotsもprefix再利用とは別の設定で、cache-reuse
+      0は移動したchunkの再利用を止める指定である。
+      公式版もcache_promptがtrueのときに共通prefixを再利用し、未処理suffixだけを評価する。
+      <a
+        href="https://raw.githubusercontent.com/ggml-org/llama.cpp/d05706b4f32a545814856e98ca518292585443b9/tools/server/README.md"
+        >固定revisionの公式server仕様</a
+      >とsourceの解析経路で確認した。
+    </p>
+    <p>
+      <strong>P1：稼働中の保持機能がsourceへ統合されていない。</strong>
+      稼働版にはcoreのpromptRetention
+      policy、backendのLlamaPromptRetention、gatewayの認証付き内部header、
+      失効処理、保持memoryの資源予約がある。現在のsourceにはこれらがなく、稼働Ornith
+      runtimeをschemaに入力すると
+      promptRetentionを未定義fieldとして拒否した。sourceのOrnith起動設定も古いcache無効構成を残している。
+      このsourceをそのまま配備すると、明示的なOrnith選択にも現在と同じ保持を提供できない。
+      前回のReasoningレビューでは、この稼働版との統合差分を見落としていた。
+    </p>
+    <p>
+      nativeのcache_promptを利用者がtrueで送ればadapterは通すが、prompt_cache_keyも検証・scope生成せず本文に残るだけで、
+      固定した公式engineにはそのキーを解釈する実装がない。単にcache-promptへ変更するだけでは、稼働Ornithと同等にならない。
+      一方、cache_n／usage.prompt_tokens_details.cached_tokensを数値として記録する既存の観測経路はsourceにもある。
+    </p>
+    <p>
+      稼働プロセスの起動引数とpropsをread-onlyで照合し、larm_prompt_cache.enabled=trueを確認した。
+      未認証propsのauthenticated=falseは未認証照会を表す値であり、保持機能の故障とは判定しない。
+      schema・adapterの合成入力による確認は
+      <code>/srv/ai/evidence/lfm-input-cache-review-20261028/static-audit.json</code>へ保存した。 本レビューでは実推論のcache
+      hit率・初期応答時間を測っていない。本番の推論・停止・設定変更も行っていない。
+    </p>
+    <p>
+      切替前には、稼働版保持機能のsource統合と再現可能なengine
+      pinを先に行い、LFMのengineへ対応させる。
+      その後cacheを有効化し、反復入力・会話追記・別会話を挟んだ復元・4並列・所有者分離・失効を隔離環境で検証する。
+      同一payloadのcold/hitでcached_tokens、prompt_n、prefill時間、初回reasoning
+      tokenと初回本文までの時間を分けて比較し、
+      cached_tokensが実際に増えることと出力整合性を受入条件にする。旧Ornithのrollback修正をLFMへそのまま適用できるとは仮定しない。
+    </p>
+  </section>
+  <section id="input-cache-implementation">
+    <h2>入力KVキャッシュの統合と実機受入</h2>
+    <p>
+      稼働版からcoreの保持policy・資源計算、backendの認証付き保持処理、gatewayのscope生成・binding再検証、
+      接続解放・期限切れ時の失効処理を復元した。prompt_cache_keyはnullまたは1024文字以内の文字列として検証する。
+      同じ認証principalの同じキーは接続を作り直しても同じscope、異なるprincipalまたはキーは別scopeになる。
+      未指定のConnectionは接続単位、通常のOpenAI要求は認証principal・公開model単位のscopeとする。
+      再起動をまたぐ永続履歴の保存機能ではなく、messagesは毎回送信する。
+    </p>
+    <p>
+      LFM用の公式d05706bへ保持処理を移植した。新しいengineのprompt metadata・状態payloadの分離と、
+      decodeのyieldを含むtask queueに合わせて保存・復元・maintenanceを実装した。 private
+      headerの認証、到達可能checkpointを含む実効prefix長による選択、所有者分離、期限・byte数・entry数制限を維持する。
+      未完了状態、media、draft、LoRA、複数completionは保持対象外。
+      native単体試験ではquota・公平な追い出し・期限・失効・未完了状態・checkpoint・重複保存を確認した。
+    </p>
+    <p>
+      両LFMのcache-promptを有効にし、KVを4分割、checkpoint 8、spacing 1024、RAM cache 8192
+      MiBとした。 cache-reuse
+      0・no-cache-idle-slotsは維持する。思考の設定は既存のreasoning_effortを使用する。
+      保持の追加予約はpayload 8 GiB＋staging 1 GiB＋metadata 64 MiB、計9.0625 GiB。
+      基礎予約と合わせてLFM2.5は49.0625 GiB、LFM3は21.0625 GiB、Ornithは65.0625 GiBとなり、
+      admissionとService resource ledgerの両方で計上する。保持policyの変更はProvider
+      revisionへ反映する。
+    </p>
+    <p>
+      Ornithは稼働retention-v2 engine、4分割KV、checkpoint 8、RAM 8192
+      MiBとinstruction修正版templateをsource設定へ戻した。
+      稼働バイナリとtemplateのSHA-256をsources.lock.yamlに固定し、実ファイルとの一致を確認した。
+      LFM用patch・header・試験source・バイナリのhashもlockと配置manifestへ記録した。
+    </p>
+    <table>
+      <caption>
+        各モデル3,104入力tokenの単発比較。medium、実HTTP gateway・Model Broker経由。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル・条件</th>
+          <th scope="col">再利用token</th>
+          <th scope="col">再処理token</th>
+          <th scope="col">入力処理</th>
+          <th scope="col">初回思考token</th>
+          <th scope="col">初回本文</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LFM2.5 cold</th>
+          <td>0</td>
+          <td>3104</td>
+          <td>1882.525 ms</td>
+          <td>1892.481 ms</td>
+          <td>4618.841 ms</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM2.5 repeat</th>
+          <td>3100</td>
+          <td>4</td>
+          <td>27.465 ms</td>
+          <td>37.476 ms</td>
+          <td>3779.096 ms</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM2.5 RAM復元</th>
+          <td>3100</td>
+          <td>4</td>
+          <td>27.857 ms</td>
+          <td>56.105 ms</td>
+          <td>2796.554 ms</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM3 cold</th>
+          <td>0</td>
+          <td>3104</td>
+          <td>748.016 ms</td>
+          <td>765.241 ms</td>
+          <td>2124.411 ms</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM3 repeat</th>
+          <td>2588</td>
+          <td>516</td>
+          <td>156.432 ms</td>
+          <td>167.291 ms</td>
+          <td>2093.123 ms</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM3 RAM復元</th>
+          <td>2611</td>
+          <td>493</td>
+          <td>150.307 ms</td>
+          <td>175.567 ms</td>
+          <td>2044.586 ms</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      初回思考tokenは最初の非空reasoning_content、初回本文は最初の非空contentまでのwall-clock時間。
+      生成速度は各応答のtimings.predicted_per_secondとして証跡に保存した。
+      初回本文には思考時間も含まれ、入力cacheの短縮がそのまま全応答時間の短縮になるとは限らない。
+      他処理が共存する環境の単発受入測定であり、p50/p95や最大context長での性能保証ではない。
+    </p>
+    <p>
+      両モデルでcache無効時・最初の入力・異なる会話・別所有者の同じキーはcached_tokens 0、
+      同一要求・会話追記・別の5会話を挟んだRAM復元ではcached_tokensが増えた。
+      RAMのloadsは0から1へ増えた。4同時要求は最大4件の転送が重なり、値31・32・33・34を取り違えずJSONで完了した。
+      Connection→ready→claimでもcold/hitが成立し、release後はnative失効通知1件・旧credentialの401を確認した。
+      low・medium・high・maxの全段階で思考とfixture JSONが成功した。
+    </p>
+    <p>
+      証跡は<code>/srv/ai/evidence/lfm25-cache-preparation-v3-20261028/</code>と
+      <code>/srv/ai/evidence/lfm3-cache-preparation-v2-20261028/</code>。
+      <code>deploy/local-node/scripts/verify-lfm-input-cache.ts PROFILE NEW_EVIDENCE_DIRECTORY</code>で再実行できる。 driverは新規のloopback
+      listener、独立した秘密鍵、所有するengine processだけを使用し、
+      稼働Providerの起動・停止・設定変更は行わない。試験後は検証用processを終了した。
+      最初のdriverはProvider
+      generationの登録がなく失効試験が不成立だったため、本番と同じreconciliationを追加して再検証した。
+    </p>
+  </section>
   <section id="deployment">
     <h2>配備前後の手順</h2>
     <p>
-      source変更・必須checkを確認し、関係のない並行作業を混ぜずにreview済み完全commitを作る。
+      source変更・必須checkを確認してreview済み完全commitを作る。
       専用エンジン・重みのhashを検証し、署名済みreleaseの通常手順でbundle・desired
-      intentを作成する。 Activatorによる切替・daemon再起動後、release identity、catalog default、LLM
-      subsetのclaim、 4段階canary、同時実行、旧Ornithへの明示切替を確認する。現在のdirty
-      worktreeのままrelease builderへ渡さない。
+      intentを作成する。installerはdaemon credentialのLARM_PROMPT_CACHE_KEYを保持し、
+      prepare-prompt-retention-environment.tsで同じ鍵・policyをengine用のowner-only JSONへ設定する。
+      鍵の不一致・symlink・duplicate keyは拒否し、鍵をargvや推論本文へ入れない。
+      Activatorによる切替・daemon再起動後、release identity、catalog default、LLM subsetのclaim、
+      4段階canary、同時実行、旧Ornithへの明示切替を確認する。現在のdirty worktreeのままrelease
+      builderへ渡さない。
     </p>
     <p>
-      この文書は切替準備の記録である。稼働中のAPIは引き続き配備済みreleaseで動いており、
-      この設定による本番既定変更はまだ実行していない。
+      この節は正式なLFM名での配備手順であり、まだ実行していない。
+      次節の一時切替では配備済みreleaseの複製へ必要な差分を適用し、公開Ornith名の裏側をLFM2.5へ変更した。
+    </p>
+  </section>
+  <section id="temporary-ornith-alias">
+    <h2>Ornith名を保つLFM2.5の一時稼働</h2>
+    <p>
+      利用者の明示指示により、2026-10-28 17:44:41 JSTに一時切替を完了した。
+      URLは従来の9810番、selectorはornith1.5Strix、公開modelはornith-1.5-strix-lean、
+      runtimeはornith15-strix-conversationを維持する。実体はLFM2.5-24B-A2B-QAD-Q4_0であり、
+      要求profileから同じrouteとruntimeを経由してLFM2.5 processへ解決する意図的な置換である。
+      ContextStillの同runtimeを使うrouteも置換対象となる。既存clientの再接続・claim成功をdaemon
+      logで確認した。
+    </p>
+    <p>
+      一時releaseは<code>/srv/ai/apps/larm-lfm25-as-ornith-20261028-v1/release/</code>。
+      稼働版ae08a8b84a80の複製へReasoning policy・adapter・gatewayの差分だけを移植した。
+      元のlarm-current symlinkとreleaseは変更していない。systemdの
+      <code>95-lfm25-as-ornith-trial.conf</code
+      >で実行先・catalog・モデルmanifestを一時releaseに指定する。
+      入力キャッシュは既存の認証鍵・同じ保持policyで新しい保持対応engineを使用する。
+      この作業tree全体を稼働版へ上書きしていない。
+    </p>
+    <p>
+      LFM2.5は4並列・各131072 tokensで稼働する。Ornith profileの最大context表示を131072へ下げ、
+      ContextStillの32768枠は維持した。画像capabilityと旧vision
+      chatInput契約を削除し、画像要求は415で拒否する。
+      テキストの入力検査・入力token数APIは、engineの正確な
+      <code>/v1/chat/completions/input_tokens</code>を使う一時adapterで継続する。 claim
+      Bearerを使った公開input-tokens APIの1705 tokensと全推論のusage.prompt_tokensが一致した。
+      system/developer instructionのtemplate検査と4096 tokensの出力上限も維持する。
+    </p>
+    <p>
+      初回起動では、元の保存済みactiveReleaseが一時catalogに存在しないことを検出して起動を拒否したため、
+      自動rollbackでOrnithへ復旧した。その後、元の配備履歴を変更せず、
+      <code>/var/lib/larm/lfm25-as-ornith-trial-20261028-v1/runtime-releases.json</code>へ履歴を複製し、
+      対象runtimeのactiveReleaseだけを一時releaseへ変更した。再起動後はこの履歴を使ってreadyになった。
+      一時構成のcatalogRevisionは<code>0d2491c9a367eb84802d0dfac390742c7e2c71d3a3740393dc7fba8c1a0c2e03</code>。
+    </p>
+    <h3>稼働APIでの単発確認</h3>
+    <p>
+      公開profileから検証専用のLLM Connectionを作成・claimし、公開Ornith名で同じ1705-token入力と
+      JSON Schemaを送った。思考と本文を別々に測定し、全件でstatus=readyのJSON、stop、
+      reasoning_content、公開model名の維持を確認した。試験後は検証専用Connectionだけを解放した。
+      日常の処理が共存する単発canaryであり、モデル間比較やp50/p95を示す測定ではない。
+    </p>
+    <table>
+      <caption>
+        一時稼働APIの確認値。初回本文は思考終了後の最初のcontent。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">effort</th>
+          <th scope="col">初回思考</th>
+          <th scope="col">初回本文</th>
+          <th scope="col">生成速度</th>
+          <th scope="col">生成tokens合計</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">low</th>
+          <td>4.710 s</td>
+          <td>5.385 s</td>
+          <td>96.13 tokens/s</td>
+          <td>72</td>
+        </tr>
+        <tr>
+          <th scope="row">medium</th>
+          <td>3.867 s</td>
+          <td>6.585 s</td>
+          <td>94.62 tokens/s</td>
+          <td>267</td>
+        </tr>
+        <tr>
+          <th scope="row">high</th>
+          <td>5.518 s</td>
+          <td>10.789 s</td>
+          <td>97.31 tokens/s</td>
+          <td>520</td>
+        </tr>
+        <tr>
+          <th scope="row">max</th>
+          <td>4.880 s</td>
+          <td>11.947 s</td>
+          <td>97.89 tokens/s</td>
+          <td>699</td>
+        </tr>
+        <tr>
+          <th scope="row">省略時medium・cold</th>
+          <td>3.921 s</td>
+          <td>6.576 s</td>
+          <td>96.79 tokens/s</td>
+          <td>267</td>
+        </tr>
+        <tr>
+          <th scope="row">省略時medium・同じ入力再送</th>
+          <td>3.316 s</td>
+          <td>5.969 s</td>
+          <td>96.91 tokens/s</td>
+          <td>267</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      生成速度はnative timings.predicted_per_secondで、思考・本文・区切りを含む生成全体の速度。
+      生成tokens合計も思考だけのtokensではない。
+      同じ入力再送ではcached_tokensが0から1701へ増え、prompt_nは1705から4、
+      prompt_msは975.710から23.192へ減った。API全体の初動には監査保存や共存処理の待ち時間も含む。
+      none、内部budget指定、thinking無効化、出力4097は400、画像入力は415を確認した。
+      maxは思考予算上限を外す意味で、max_tokens・context・要求期限は引き続き適用される。
+    </p>
+    <p>
+      証跡は<code>/srv/ai/evidence/lfm25-as-ornith-live-20261028-v1/results.json</code>。
+      一時releaseのtypecheck、入力計数・effortの4試験、既存の関連44試験を通過した。
+      元へ戻す操作は<code>sudo /usr/bin/python3 /srv/ai/apps/larm-lfm25-as-ornith-20261028-v1/operate.py rollback</code>。
+      対象providerを解放して保存済みllama-swap設定を戻し、一時systemd指定を削除して元のdaemonを再起動する。
+      外部変更が入っていれば上書きを拒否する。LFM2.5の一時稼働は次節のLFM3への切替まで継続した。
+    </p>
+  </section>
+  <section id="temporary-lfm3-ornith-alias">
+    <h2>小型LFM3-1.7Bへの一時置換</h2>
+    <p>
+      利用者の指定により、2026-10-28 19:28:42 JSTにLFM2.5からLFM3-1.7B-QAD-Q4_0へ置換した。 selector
+      ornith1.5Strix、公開model ornith-1.5-strix-lean、既存URL、同runtimeを使うrouteは維持する。
+      対象は会話用LLM Providerであり、既存の音声・embedding・System One
+      Providerの選択は変えていない。
+      メインprofileとContextStillから同runtimeへ解決される要求はLFM3-1.7Bを使用する。
+    </p>
+    <p>
+      一時releaseは<code>/srv/ai/apps/larm-lfm3-as-ornith-20261028-v1/release/</code>。
+      直前のLFM2.5一時releaseを複製し、対象runtimeの重み・資源予約・release定義・起動引数を更新した。
+      入力上限は各32768 tokens、4並列、出力上限4096 tokens、テキスト専用。
+      profileの入力上限も32768に合わせた。保持を含む資源予約は21.0625 GiB。
+      Reasoningは未指定時medium、low=64、medium=256、high=512、max=-1の内部予算を使う。
+      maxは思考予算の制限を外す意味で、出力長・入力上限・要求期限は適用される。
+    </p>
+    <p>
+      重みSHA-256は<code>43a7d09a0e9cba91b63eb7052488b9564569bddfd65754d2e426465e572a7452</code>、
+      保持対応engineのSHA-256は<code>a51c43e64bce0254180459cb9763a649a41c42e4b8cb486d0646a0971d099ad2</code>で実ファイルと照合した。
+      起動・ready確認用の1-token
+      probeだけはpolicyのreadinessDisableThinkingを使ってthinkingを無効にする。
+      実際の会話APIでは従来のadapterがthinkingを有効にし、利用者による無効化は400で拒否する。
+      この区別は準備済みsourceから移植し、probeのJSONとSSE両方を試験した。
+    </p>
+    <p>
+      systemdの<code>96-lfm3-as-ornith-trial.conf</code>を追加してデーモンを再起動した。
+      直前の95番の指定とLFM2.5 releaseは維持し、配備履歴だけを
+      <code>/var/lib/larm/lfm3-as-ornith-trial-20261028-v1/</code>へ独立させた。 元のlarm-current
+      symlinkも変更していない。 稼働catalogRevisionは<code>a731e4969b8a8261fba5b6e425031332e7f24d6bd9d0dc3ee8474d74f4c963bf</code>。
+      実processの重み、engineの各32K・4 slot・保持有効、daemon
+      ready、既存clientの再接続・claim成功を確認した。
+    </p>
+    <p>
+      型検査と関連46試験が成功した。公開profileから検証用Connectionを作成してclaimし、
+      low・medium・high・max・省略時の全件で思考とstatus=readyのJSON、stop、公開Ornith名の維持を確認した。
+      入力計数APIの1705 tokensは全応答のusage.prompt_tokensと一致した。
+      同じ入力の再送ではcached_tokensが0から1189へ増え、残りの入力処理は1705から516 tokens、
+      prompt_msは416.006から119.875へ減った。
+      none・内部budget・thinking無効化・出力4097は400、画像入力は415を確認し、検証用Connectionを解放した。
+      通常のAPI Bearerを使うModel Broker経由でもlowのJSON応答と思考を確認した。
+    </p>
+    <p>
+      単発canaryでは初回本文がlow 6.002秒、medium 8.300秒、high 11.228秒、max 9.212秒だった。
+      native生成速度は順に54.81、113.22、108.75、115.05 tokens/sで、思考・本文・区切りを含む。
+      省略時mediumのcold・再送は初回本文9.185秒・6.717秒、生成速度70.08・132.84 tokens/s。
+      他の要求と共存する受入測定であり、この値でLFM2.5との優劣やp50/p95を評価しない。
+      maxは予算上限なので、自然に思考が終わればhighより短い生成になることもある。
+      証跡は<code>/srv/ai/evidence/lfm3-as-ornith-live-20261028-v1/results.json</code>。
+    </p>
+    <p>
+      直前のLFM2.5へ戻す操作は
+      <code>sudo /usr/bin/python3 /srv/ai/apps/larm-lfm3-as-ornith-20261028-v1/operate.py rollback</code>。
+      対象providerを解放して保存済み設定を戻し、96番の指定を削除してデーモンを再起動する。
+      本来のOrnithへ戻す場合は、LFM2.5へ戻した後に前節のrollbackを実行する。
+      外部変更が入っていれば上書きを拒否する。LFM3-1.7Bの一時稼働は次節のOrnith復帰まで継続した。
+    </p>
+  </section>
+  <section id="ornith-strix-restored">
+    <h2>Ornith STRIX_LEANへの復帰</h2>
+    <p>
+      利用者の指定により、2026-10-28 19:52:59 JSTに元のOrnith-1.5-35B-ROCmFP4-STRIX_LEANと vision
+      mmprojへ戻した。復旧前に稼働設定・保存済み設定・両systemd一時指定の一致を確認し、
+      他Providerの配備履歴に差分や未完了操作がないことも確認した。
+      LFM2.5を中間起動せず、デーモンの処理を終了させてLFM3を解放し、
+      最初に保存したllama-swap設定を戻して95・96番の一時指定を削除した。
+      デーモンは元のlarm-currentから1回の再起動で復旧した。
+    </p>
+    <p>
+      復旧したProvider設定のSHA-256は<code>f5e8bde74a1104abf5e0647f1d1dd6824288fd173bbbfb63bce3025b1ed73b86</code>で元のbackupと一致する。
+      稼働catalogRevisionも<code>2097ca20a2a00da328624dee552d7c84c6b66f0fa3630e5879f285fa8a729c3a</code>へ戻った。
+      Ornithの入力上限は各262144 tokens・4並列で、画像入力契約と保持対応engineも元の構成を使用する。
+      起動引数は元のreasoning offを含めて復元され、LFM用のReasoning変換は稼働構成から解除された。
+      source側のLFM切替準備と過去の測定結果は維持している。
+    </p>
+    <p>
+      復旧後にOrnith
+      profileのLLMだけを取得・claimし、テキストJSON応答、入力計数、入力cache再利用を確認した。
+      1214入力tokensの再送でcached_tokensは1210、prompt_nは4、prompt_msは1344.255から64.950へ減った。
+      生成した赤色64×64 PNGの画像入力計数と、color=redの実推論も成功した。 通常のModel
+      Broker経由でもstatus=readyのJSONを返した。検証用Connectionは解放済み。
+      証跡は<code>/srv/ai/evidence/ornith-strix-restored-20261028-v1/results.json</code>、
+      復旧処理と照合記録は<code>/srv/ai/apps/larm-ornith-strix-restore-20261028-v1/</code>に保存した。
     </p>
   </section>
 </article>

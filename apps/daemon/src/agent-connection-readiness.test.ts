@@ -44,7 +44,7 @@ async function fixture(options: {
   const control = new ControlPlane(registry, backend, observer, { now, onEvent: options.onControlEvent });
   const catalog = parseAgentConnectionCatalog({ version: 1, defaultAgentProfile: "voice", audiences: { local: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" } },
     agentProfiles: { voice: { description: "voice", ...(options.protectedProfile ? { usageProtection: { idleSeconds: 600, retention: "until-next-profile" } } : {}), providers: providers.map(p => ({ name: p.name, capability: p.capability, readiness: p.readiness, route: p.name, publicModel: p.name })) } },
-    profileSelectors: { "ornith1.5Strix": { agentProfile: "voice" } },
+    profileSelectors: { "ornith1.5Strix-vision": { agentProfile: "voice" } },
   }, registry);
   const ready = (name: string): AgentProviderHealth => ({ name, capability: providers.find(p => p.name === name)!.capability, ready: true, acceptingRequests: true });
   const calls: string[] = [];
@@ -55,7 +55,7 @@ async function fixture(options: {
     readyTimeoutMs: options.timeoutMs ?? 60_000, pollIntervalMs: 1, idempotencyTtlMs: 1000, idempotencyLimit: 100,
     onEvent: event => events.push(event),
   });
-  const create = (client: string, key = client, subset?: string[]) => controller.create({ profile: "ornith1.5Strix", client, audience: "local", ...(subset ? { providers: subset } : {}), ttlSeconds: 120, allowFallback: false, deploymentPolicy: "existing-only" }, "owner", key, "http://127.0.0.1:9810/v1/agent-connections");
+  const create = (client: string, key = client, subset?: string[]) => controller.create({ profile: "ornith1.5Strix-vision", client, audience: "local", ...(subset ? { providers: subset } : {}), ttlSeconds: 120, allowFallback: false, deploymentPolicy: "existing-only" }, "owner", key, "http://127.0.0.1:9810/v1/agent-connections");
   return { registry, catalog, observer, controller, control, create, calls, events, ready, setLoaded: (name: "llm" | "asr" | "tts", value: boolean) => { if (value) loaded.add(name); else loaded.delete(name); }, advance: (ms: number) => { offset += ms; } };
 }
 
@@ -195,7 +195,7 @@ test("HTTP: held LLM KV, protection and model handover cannot block independentl
       ttlSeconds: 120, deploymentPolicy: "existing-only", allowFallback: false, capacityPolicy: "reject", priority: 0 });
     const heldId = (held.body as { id: string }).id;
     f.control.restoreUsageRetention(["llm"], true);
-    const response = await post("/v1/agent-connections", { profile: "ornith1.5Strix", audience: "local", client: "synthetic-voice", ttlSeconds: 120 });
+    const response = await post("/v1/agent-connections", { profile: "ornith1.5Strix-vision", audience: "local", client: "synthetic-voice", ttlSeconds: 120 });
     expect(response.status).toBe(202);
     let parent = publicAgentConnectionSchema.parse(await response.json());
     const deadline = performance.now() + 2000;
@@ -231,7 +231,7 @@ test("HTTP: held LLM KV, protection and model handover cannot block independentl
     expect(speech.status).toBe(200); await speech.arrayBuffer();
     expect(forwarded.filter(path => path === "/v1/audio/speech")).toHaveLength(1);
     finishHandover(); await handover;
-    const standalone = await post("/v1/agent-connections", { profile: "ornith1.5Strix", audience: "local", client: "synthetic-other", providers: ["asr"] }, "shared");
+    const standalone = await post("/v1/agent-connections", { profile: "ornith1.5Strix-vision", audience: "local", client: "synthetic-other", providers: ["asr"] }, "shared");
     expect(standalone.status).toBe(201);
     const other = publicAgentConnectionSchema.parse(await standalone.json());
     expect(f.control.getUsageState().retainedRuntimeIds).toEqual(["llm"]);

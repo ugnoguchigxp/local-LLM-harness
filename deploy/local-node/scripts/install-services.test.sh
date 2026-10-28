@@ -62,8 +62,10 @@ credential="${test_root}/etc/larm/larm.env"
 initial_credential="$(<"${credential}")"
 grep -Eq '^LARM_MANAGEMENT_TOKEN=[a-f0-9]{64}$' "${credential}"
 grep -Eq '^LARM_API_TOKEN=[a-f0-9]{64}$' "${credential}"
+grep -Eq '^LARM_PROMPT_CACHE_KEY=[a-f0-9]{64}$' "${credential}"
+[[ "$(stat -c '%a' "${test_root}/etc/larm/prompt-retention.env.json")" == "600" ]]
 grep -Eq '^LARM_CONNECTION_SIGNING_KEY=[A-Za-z0-9_-]{43}$' "${credential}"
-[[ "$(wc -l <"${credential}")" -eq 3 ]]
+[[ "$(wc -l <"${credential}")" -eq 4 ]]
 [[ "$(stat -c '%a' "${credential}")" == "640" ]]
 audit_key="${test_root}/etc/larm/inference-audit.key"
 grep -Eq '^[A-Za-z0-9_-]{43}$' "${audit_key}"

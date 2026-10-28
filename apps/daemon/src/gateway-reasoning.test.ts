@@ -21,6 +21,7 @@ test("resolved gateway forwards one native budget for every public effort and re
       headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const response = await proxyGateway({ request, allocationId: "test", protocol: "openai.chat-completions.v1",
       upstreamPath: "/v1/chat/completions", runtime, bodyMode: "buffered", maxBodyBytes: 4096, timeoutMs: 1000,
+      chatInputWindow: { maxTokens: 131072, outputReserveTokens: 4096, safetyMarginTokens: 1976 },
       bootEpoch: "test", executionGate: new ExecutionGate(), errorFormat: "openai",
       prepareRequestBody: async bytes => {
         contextPreparations++;
@@ -30,7 +31,8 @@ test("resolved gateway forwards one native budget for every public effort and re
           messages: [{ role: "user", content: "materialized context" }] }));
       },
       revalidate: () => ({ ok: true, binding: { runtime: runtime.id, endpoint: runtime.deployment.endpoint } }),
-      fetchImpl: async (_url, init) => {
+      fetchImpl: async (url, init) => {
+        if (String(url).endsWith("/v1/chat/completions/input_tokens")) return Response.json({ input_tokens: 12 });
         sent = JSON.parse(new TextDecoder().decode(init!.body as Uint8Array));
         return Response.json({ choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }] });
       } });

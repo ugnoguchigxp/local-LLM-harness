@@ -158,3 +158,35 @@ sources:
     aotritonExperimental: true
     requirementsSha256: 6192ea0f746a33aa93d7e18698774893ba6b7b228436c12854d4c508afa11e61
     assetManifestSha256: 6d0644ef69342141aac48cec16cc5d776445e3155a9749e3e7183aa2cd4fdcdc
+  lfm-retention-engine:
+    repository: https://github.com/ggml-org/llama.cpp.git
+    revision: d05706b4f32a545814856e98ca518292585443b9
+    path: /srv/ai/apps/lfm-retention-engine-source-d05706b
+    runtimePath: /srv/ai/apps/larm-lfm-retention-d05706b-v1
+    protocol: larm-prompt-cache.v1
+    patch: deploy/local-node/patches/llama-prompt-retention-d05706b-v1.patch
+    patchSha256: f0e6f520ba9acd17e00661814985fdb1615861ee8a9f9cf221472f90ab85c71e
+    headerSha256: 3fcf157ea1a249d5a2ef125ffbed7a2a27b6157d8586a25d82f6173a8dc028c1
+    executableSha256: a51c43e64bce0254180459cb9763a649a41c42e4b8cb486d0646a0971d099ad2
+    buildScript: deploy/local-node/scripts/prepare-lfm-retention-engine.py
+    builds:
+      - directory: build-larm-vulkan
+        cmake:
+          - -DGGML_VULKAN=ON
+          - -DCMAKE_BUILD_TYPE=Release
+          - -DLLAMA_BUILD_UI=OFF
+  ornith-prompt-retention-engine:
+    repository: https://github.com/charlie12345/ROCmFPX.git
+    revision: 0fc9568e07ccc8553010864cb8db1957e629cbfa
+    path: /srv/ai/apps/q38rocm/engine/src
+    runtimePath: /srv/ai/apps/larm-chat-input-engine-20261024-retention-v2
+    protocol: larm-prompt-cache.v1
+    executableSha256: c994e85f69f265c2e2260076f1a69240fd44c3318b3e7b20adf494408a39d937
+    patch: deploy/local-node/patches/llama-prompt-retention-v1.patch
+    patchSha256: dd170355a9e20ad44f0b2ddbfcedc58bf2414feec6516024c2326ba2dcefc9a8
+    buildScript: deploy/local-node/scripts/prepare-prompt-retention-engine.py
+  ornith-instruction-template:
+    path: /srv/ai/apps/larm-instruction-template-20261024-v1/chat-template.jinja
+    sha256: d5bd31a440a54192ae32eb65a4dbb96a1b401dc353a7a76585f0f634170e8edc
+    sourceTemplateSha256: f55f52930aa8bf44ab5cb85f99370fcc3c56e9a85640b812086d5330bce5d86b
+    prepareScript: deploy/local-node/scripts/prepare-instruction-template.ts

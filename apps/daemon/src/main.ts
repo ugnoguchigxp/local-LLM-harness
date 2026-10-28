@@ -406,6 +406,7 @@ const appComponents = createAppComponents({
   getState: () => observer.getState(),
   control,
   apiToken: config.apiToken,
+  promptRetentionKey: config.promptRetentionKey,
   protectedConsumerToken: config.protectedConsumerToken,
   allowAnonymousAgentConnections: config.allowAnonymousAgentConnections,
   serviceHarnessAuthEnabled: config.serviceHarnessAuthEnabled,

@@ -1,6 +1,5 @@
 version: 1
 defaultAgentProfile: lfm2.5
-
 audiences:
   same-host:
     network: loopback
@@ -8,13 +7,14 @@ audiences:
   saaa-desktop:
     network: host-private
     baseUrl: request-origin
-
 agentProfiles:
   saaa-conversation-gemma4-26b-voice:
     description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, Japanese VOICEVOX and English KittenTTS, embedding, and Ruri speaking-attitude System One
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -64,10 +64,12 @@ agentProfiles:
         publishModel: false
         readiness: system-one
   lfm2.5:
-    description: LFM2.5 24B A2B main text conversation provider with OpenAI reasoning_effort and medium default, speech, embedding, and System One providers
+    description: LFM2.5 24B-A2B（標準）— テキスト会話・コード・JSON出力、128K入力、Reasoning省略時medium。音声認識・日英音声合成・embedding・System One付き。
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -81,6 +83,7 @@ agentProfiles:
         capability: llm.general
         route: llm-lfm25
         publicModel: lfm2.5-24b-a2b
+        description: 標準のテキスト会話モデルはLFM2.5 24B-A2B。会話・文章作成・コード・JSON形式の出力に使用する。 reasoning_effortはlow・medium・high・max、省略時はmedium。maxでもmax_tokensと入力上限は適用される。 contextは131072 tokens、出力は最大4096 tokens、4並列。画像入力は非対応。 prompt_cache_keyで会話ごとの入力キャッシュを再利用できる。毎回、必要な会話履歴をmessagesに含める。
         readiness: llm-inference
         contextWindow:
           maxTokens: 131072
@@ -120,7 +123,9 @@ agentProfiles:
     description: LFM3 1.7B experimental text conversation provider with OpenAI reasoning_effort and medium default, speech, embedding, and System One providers
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -169,64 +174,13 @@ agentProfiles:
         publicModel: ruri-v3-30m-speaking-attitude
         publishModel: false
         readiness: system-one
-  ornith1.5Strix:
-    description: Ornith 1.5 STRIX_LEAN profile copied from the Gemma 4 26B voice profile with the same speech, embedding, and System One providers; image input enabled
-    schedulingPriority: 4000
-    requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
-    idleRelease:
-      enabled: true
-      idleSeconds: 300
-      activityProtocols:
-        - larm.system-one.v1
-        - openai.audio-speech.v1
-        - openai.audio-transcriptions.v1
-        - openai.chat-completions.v1
-    providers:
-      - name: llm
-        capability: llm.general
-        route: llm-ornith15-strix
-        publicModel: ornith-1.5-strix-lean
-        readiness: llm-inference
-        contextWindow:
-          maxTokens: 262144
-          outputReserveTokens: 4096
-          safetyMarginTokens: 1976
-      - name: asr
-        capability: speech.stt
-        route: stt-granite
-        publicModel: granite-speech-4.1-2b
-        publishModel: false
-        readiness: stt-transcription
-      - name: tts
-        capability: speech.tts
-        route: tts-voicevox
-        publicModel: voicevox-core
-        publishModel: false
-        readiness: tts-speech
-      - name: embedding
-        capability: embedding.multilingual-e5-small
-        route: embedding-multilingual-e5-small
-        publicModel: multilingual-e5-small
-        publishModel: false
-        readiness: embedding
-      - name: tts-english
-        capability: speech.tts.english
-        route: tts-kittentts-nano
-        publicModel: kitten-tts-nano-0.8-fp32
-        publishModel: false
-        readiness: tts-speech
-      - name: system-one
-        capability: decision.system-one
-        route: system-one-ruri
-        publicModel: ruri-v3-30m-speaking-attitude
-        publishModel: false
-        readiness: system-one
   ornith1.5Strix-game:
     description: Ornith STRIX_LEAN voice profile with an explicitly selected d1-3B game decision Provider
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -285,7 +239,9 @@ agentProfiles:
     description: SAAA auxiliary 64K LLM session sharing the Gemma 4 26B four-slot runtime with the main voice profile
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
-    usageProtection: { idleSeconds: 600, retention: until-next-profile }
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
     idleRelease:
       enabled: true
       idleSeconds: 300
@@ -303,14 +259,15 @@ agentProfiles:
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
   contextstill-background:
-    description: ContextStill background profile sharing the warm Ornith STRIX_LEAN vision LLM, Laya System One, and multilingual E5 embedding
+    description: ContextStill background profile sharing the default LFM2.5 text LLM, Laya System One, and multilingual E5 embedding
     schedulingPriority: 1000
     requestScheduling: background-when-idle
     providers:
       - name: llm
         capability: llm.coding
-        route: llm-contextstill-ornith
-        publicModel: ornith-contextstill
+        route: llm-contextstill-lfm25
+        publicModel: lfm2.5-contextstill
+        description: LFM2.5を共有するバックグラウンド用テキストLLM。32K入力枠、出力最大4096 tokens。reasoning_effortはlow・medium・high・max、省略時medium。画像入力は非対応。
         readiness: llm-inference
         contextWindow:
           maxTokens: 32768
@@ -450,7 +407,61 @@ agentProfiles:
         route: stt-granite
         publicModel: granite-speech-4.1-2b
         readiness: stt-transcription
-
+  ornith1.5Strix-vision:
+    description: Ornith 1.5 STRIX_LEAN（画像対応・明示選択）。画像を含む会話に使用する。標準のテキスト会話はlfm2.5。
+    schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - larm.system-one.v1
+        - openai.audio-speech.v1
+        - openai.audio-transcriptions.v1
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-ornith15-strix
+        publicModel: ornith-1.5-strix-lean
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 262144
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+      - name: asr
+        capability: speech.stt
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
+        publishModel: false
+        readiness: tts-speech
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-ruri
+        publicModel: ruri-v3-30m-speaking-attitude
+        publishModel: false
+        readiness: system-one
 profileSelectors:
   lfm3.1.7b:
     agentProfile: lfm3.1.7b
@@ -463,7 +474,7 @@ profileSelectors:
   SAAA-gemma4-26b-64k:
     agentProfile: saaa-conversation-gemma4-26b-64k
   ornith1.5Strix:
-    agentProfile: ornith1.5Strix
+    agentProfile: lfm2.5
   ornith1.5Strix-game:
     agentProfile: ornith1.5Strix-game
   SAAA-w-Image:
@@ -474,8 +485,10 @@ profileSelectors:
         protocol: larm.image-generation.v1
         endpoint: /v1/images/generations
         model: qwen-image-2.1-turbo
-        description: 'Qwen-Image 2.1 Turbo AD-Q4_Kによる画像生成。POSTでpromptを指定すると起動し、画像保存後に停止します。width/heightは縦横それぞれ100〜1280の整数を自由指定できます（省略時512）。内部では各辺を32の倍数へ切り上げて生成し、指定どおりの寸法へ縮小して返します。stepsは8固定、seedは任意、formatはwebpまたはpng（省略時webp）。このPCで起動から応答まで512角約16秒・768角約31秒・1024角約58秒、中間サイズの個別生成試験では1216角約87秒・1280角約97秒でした。応答のartifacts[0].contentUrlをControlのURLに解決してGETすると画像を取得できます。写真・イラスト・構図検討に対応。参照画像による編集はこのAPIでは未対応。'
-        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
+        description: Qwen-Image 2.1 Turbo AD-Q4_Kによる画像生成。POSTでpromptを指定すると起動し、画像保存後に停止します。width/heightは縦横それぞれ100〜1280の整数を自由指定できます（省略時512）。内部では各辺を32の倍数へ切り上げて生成し、指定どおりの寸法へ縮小して返します。stepsは8固定、seedは任意、formatはwebpまたはpng（省略時webp）。このPCで起動から応答まで512角約16秒・768角約31秒・1024角約58秒、中間サイズの個別生成試験では1216角約87秒・1280角約97秒でした。応答のartifacts[0].contentUrlをControlのURLに解決してGETすると画像を取得できます。写真・イラスト・構図検討に対応。参照画像による編集はこのAPIでは未対応。
+        startupPolicy:
+          minWarmInstances: 0
+          idleTtlSeconds: 0
   SAAA-w-music:
     agentProfile: saaa-conversation-gemma4-26b-voice
     services:
@@ -484,11 +497,14 @@ profileSelectors:
         protocol: larm.music-generation.v1
         endpoint: /v1/music/generations
         model: ace-step-1.5
-        description: 'ACE-Step 1.5 Turboによる楽曲生成。POSTでprompt（曲調・編成）を指定すると起動し、音声保存後に停止します。durationSecondsは曲の長さを1〜600秒で指定（省略時180秒）。qualityはfast（4ステップ・高速試作）、balanced（8ステップ・標準、省略時）、high（12ステップ）から選択。試作例：{"prompt":"軽快なピアノのBGM","durationSeconds":30,"quality":"fast","instrumental":true}。instrumentalは歌なし指定（省略時false）で、trueの場合はlyricsを指定しません。歌詞はlyrics、seedは任意、outputFormatはopus・mp3・wav・flac（省略時opus、128 kbps VBR・48 kHz）。Opusは一時的な32 bit浮動小数点WAVから変換し、中間音声は変換直後に削除します。title（曲名）とtags（タグ一覧）は任意。説明からテンポ・雰囲気・ジャンル・楽器のタグを自動生成します。GET /v1/music/tagsでタグと曲数を取得し、GET /v1/music/tracks?tags=アップテンポ,明るいで複数タグに絞れます。sort=createdAt&order=ascで古い順（既定は新しい順）、q=検索語&sort=relevanceで一致度順を指定できます。楽曲・お気に入り・タグ一覧はすべて既定50件（limitは1〜100）。nextCursorをcursorに渡すと続き、totalは全件数です。ページ継続時は同じAPIで検索・タグ・並び順を維持し、生成・削除後のタグ一覧は先頭から再取得してください。完成曲は既定で期限なしに保存し、GET /v1/music/tracks?q=検索語で曲名・prompt・歌詞・タグを検索できます（limitは1〜100、nextCursorをcursorに渡すと続き）。GET /v1/music/tracks/{id}/audioで再生、GET /v1/music/favoritesでお気に入り一覧、PUTまたはDELETE /v1/music/generations/{id}/favoriteで登録・解除、DELETE /v1/music/tracks/{id}で楽曲を削除できます。容量上限では自動削除せずmusic_storage_fullで保存を拒否します。HTTP 202で返るjobIdを使いGET /v1/music/generations/{jobId}で状態を確認し、statusがcompletedになったらresult.audioUrlをControlのURLに解決してGETすると音声を取得できます。短い曲とfast設定で試作し、必要な長さとbalanced設定で本番生成できます。起動時間が加わり、highで音質向上を保証するものではありません。参照音源による編集は未対応。'
-        startupPolicy: { minWarmInstances: 0, idleTtlSeconds: 0 }
+        description: ACE-Step 1.5 Turboによる楽曲生成。POSTでprompt（曲調・編成）を指定すると起動し、音声保存後に停止します。durationSecondsは曲の長さを1〜600秒で指定（省略時180秒）。qualityはfast（4ステップ・高速試作）、balanced（8ステップ・標準、省略時）、high（12ステップ）から選択。試作例：{"prompt":"軽快なピアノのBGM","durationSeconds":30,"quality":"fast","instrumental":true}。instrumentalは歌なし指定（省略時false）で、trueの場合はlyricsを指定しません。歌詞はlyrics、seedは任意、outputFormatはopus・mp3・wav・flac（省略時opus、128 kbps VBR・48 kHz）。Opusは一時的な32 bit浮動小数点WAVから変換し、中間音声は変換直後に削除します。title（曲名）とtags（タグ一覧）は任意。説明からテンポ・雰囲気・ジャンル・楽器のタグを自動生成します。GET /v1/music/tagsでタグと曲数を取得し、GET /v1/music/tracks?tags=アップテンポ,明るいで複数タグに絞れます。sort=createdAt&order=ascで古い順（既定は新しい順）、q=検索語&sort=relevanceで一致度順を指定できます。楽曲・お気に入り・タグ一覧はすべて既定50件（limitは1〜100）。nextCursorをcursorに渡すと続き、totalは全件数です。ページ継続時は同じAPIで検索・タグ・並び順を維持し、生成・削除後のタグ一覧は先頭から再取得してください。完成曲は既定で期限なしに保存し、GET /v1/music/tracks?q=検索語で曲名・prompt・歌詞・タグを検索できます（limitは1〜100、nextCursorをcursorに渡すと続き）。GET /v1/music/tracks/{id}/audioで再生、GET /v1/music/favoritesでお気に入り一覧、PUTまたはDELETE /v1/music/generations/{id}/favoriteで登録・解除、DELETE /v1/music/tracks/{id}で楽曲を削除できます。容量上限では自動削除せずmusic_storage_fullで保存を拒否します。HTTP 202で返るjobIdを使いGET /v1/music/generations/{jobId}で状態を確認し、statusがcompletedになったらresult.audioUrlをControlのURLに解決してGETすると音声を取得できます。短い曲とfast設定で試作し、必要な長さとbalanced設定で本番生成できます。起動時間が加わり、highで音質向上を保証するものではありません。参照音源による編集は未対応。
+        startupPolicy:
+          minWarmInstances: 0
+          idleTtlSeconds: 0
   embeddingCanary:
     agentProfile: contextstill-embedding
   backchannelQwen35:
     agentProfile: contextstill-backchannel-qwen35-2b
-
+  ornith1.5Strix-vision:
+    agentProfile: ornith1.5Strix-vision
 compatibilityAliases: {}

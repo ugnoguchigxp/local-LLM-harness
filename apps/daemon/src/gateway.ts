@@ -79,6 +79,7 @@ export type GatewayProxyOptions = {
   chatInputWindow?: AgentProviderContextWindow;
   countChatInputOnly?: boolean;
   prepareRequestBody?: (body: Uint8Array, signal: AbortSignal) => Promise<Uint8Array>;
+  prepareUpstreamHeaders?: (binding: GatewayBinding, requestId: string, signal: AbortSignal, metadata: { promptCacheKey?: string }) => Promise<Headers>;
   maxBodyBytes: number;
   timeoutMs: number;
   bootEpoch: string;
@@ -623,11 +624,11 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     }
     if (options.protocol === "openai.chat-completions.v1" && body instanceof Uint8Array) {
       body = prepareLlamaChatRequest(body, options.runtime);
-      if (options.runtime.chatInput) {
+      if (options.runtime.chatInput || options.runtime.textInput) {
         if (!options.chatInputWindow) throw new ChatInputError(503, "chat_input_contract_unavailable");
         const chatInputEnd = observation?.stage("chat_input");
         const checked = await withAbort(prepareChatInput({
-          body, endpoint: current.binding.endpoint, policy: options.runtime.chatInput,
+          body, endpoint: current.binding.endpoint, policy: options.runtime.chatInput, textInput: options.runtime.textInput,
           window: options.chatInputWindow, runtime: options.runtime.id,
           runtimeRelease: options.auditContext?.runtimeRelease,
           configRevision: options.auditContext?.configRevision ?? "unknown",
@@ -790,6 +791,18 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
   let upstream: Response;
   try {
     abort.signal.throwIfAborted();
+    if (options.prepareUpstreamHeaders) {
+      const chat = options.protocol === "openai.chat-completions.v1" && body instanceof Uint8Array
+        ? JSON.parse(new TextDecoder().decode(body)) as { prompt_cache_key?: string | null } : undefined;
+      const privateHeaders = await options.prepareUpstreamHeaders(current.binding, requestId, abort.signal,
+        { ...(typeof chat?.prompt_cache_key === "string" ? { promptCacheKey: chat.prompt_cache_key } : {}) });
+      for (const [key, value] of privateHeaders) headers.set(key, value);
+      abort.signal.throwIfAborted();
+      const validated = options.revalidate();
+      if (!validated.ok || validated.binding.endpoint !== current.binding.endpoint || validated.binding.runtime !== current.binding.runtime) {
+        return failure("connection_invalidated", "provider binding changed during cache preparation", 409, "allocation_invalidated");
+      }
+    }
     await options.onForwarded?.();
     forwardPreparationEnd?.();
     const init: GatewayFetchRequestInit & { duplex?: "half" } = {

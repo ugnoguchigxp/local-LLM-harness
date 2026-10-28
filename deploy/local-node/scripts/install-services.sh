@@ -42,6 +42,7 @@ target_path() {
 unit_target="$(target_path /etc/systemd/system)"
 credential_dir="$(target_path /etc/larm)"
 credential_path="${credential_dir}/larm.env"
+prompt_retention_env="${credential_dir}/prompt-retention.env.json"
 audit_config_path="${credential_dir}/inference-audit.env"
 audit_key_path="${credential_dir}/inference-audit.key"
 polkit_dir="$(target_path /etc/polkit-1/rules.d)"
@@ -232,6 +233,7 @@ for unit in "${units[@]}"; do
 done
 safe_install_target "${polkit_dir}/50-larm-runtime-control.rules" "polkit target"
 safe_install_target "${credential_path}" "credential target"
+safe_install_target "${prompt_retention_env}" "prompt retention environment"
 safe_install_target "${audit_config_path}" "audit configuration target"
 safe_install_target "${audit_key_path}" "audit key target"
 safe_install_target "${release_private_key}" "release private key target"
@@ -297,11 +299,15 @@ if [[ ! -e "${credential_path}" ]]; then
   {
     printf 'LARM_MANAGEMENT_TOKEN=%s\n' "${management_token}"
     printf 'LARM_API_TOKEN=%s\n' "${api_token}"
+    printf 'LARM_PROMPT_CACHE_KEY=%s\n' "$(openssl rand -hex 32)"
     printf 'LARM_CONNECTION_SIGNING_KEY=%s\n' "${connection_signing_key}"
   } >"${credential_path}"
 else
   credential_update="$(mktemp "${credential_dir}/.larm.env.XXXXXX")"
   cp -- "${credential_path}" "${credential_update}"
+  if ! grep -Eq '^LARM_PROMPT_CACHE_KEY=.+$' "${credential_update}"; then
+    printf 'LARM_PROMPT_CACHE_KEY=%s\n' "$(openssl rand -hex 32)" >>"${credential_update}"
+  fi
   if ! grep -Eq '^LARM_API_TOKEN=.+$' "${credential_update}"; then
     printf 'LARM_API_TOKEN=%s\n' "$(openssl rand -hex 32)" >>"${credential_update}"
   fi
@@ -318,6 +324,8 @@ else
 fi
 chown "${credential_owner}":"${credential_group}" "${credential_path}"
 chmod 0640 "${credential_path}"
+"/home/${operator}/.bun/bin/bun" run "${repo_root}/deploy/local-node/scripts/prepare-prompt-retention-environment.ts" \
+  "${repo_root}/config/local-node" "${credential_path}" "${prompt_retention_env}" "$(id -u "${data_owner}")" "$(id -g "${data_owner}")"
 
 if [[ ! -e "${audit_config_path}" ]]; then
   umask 0077

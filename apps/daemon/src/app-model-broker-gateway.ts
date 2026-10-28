@@ -15,6 +15,7 @@ import { proxyGateway } from "./gateway";
 import type { InferenceAuditRecorder } from "./inference-audit";
 import type { ControlPlane } from "./controller";
 import type { MetricsRegistry, RequestTracker } from "./metrics";
+import type { LlamaPromptRetention } from "@larm/backends";
 
 export type ModelBrokerGatewayRoute = {
   protocol: RuntimeProtocol;
@@ -50,6 +51,8 @@ export async function handleModelBrokerGateway(input: {
   directRequestBytes?: Uint8Array;
   chatRequest?: unknown;
   chatResponseFormat?: "sse";
+  promptRetention?: LlamaPromptRetention;
+  retentionPrincipal?: string;
   expectedSpeechFormat?: string;
 }): Promise<Response | undefined> {
   const { context: c, route: options, broker } = input;
@@ -118,6 +121,17 @@ export async function handleModelBrokerGateway(input: {
       bootEpoch: input.identity.bootEpoch,
       executionGate: input.executionGate,
       fetchImpl: input.gatewayFetch,
+      ...(runtime.promptRetention && input.promptRetention && input.retentionPrincipal ? {
+        prepareUpstreamHeaders: (binding, requestId, signal, metadata) => input.promptRetention!.headers({
+          cacheKey: metadata.promptCacheKey,
+          principal: input.retentionPrincipal!, connection: `broker:${directModel}`, epoch: input.identity.bootEpoch,
+          instance: [binding.runtime, binding.endpoint, runtime, lease.release,
+            input.control.getProviderInstances().filter(({ instance }) => instance.runtimeId === binding.runtime).map(({ instance }) => [instance.id, instance.generation, instance.revision])],
+          expiresAt: (input.now ?? Date.now)() + runtime.promptRetention!.idleTtlMs, now: (input.now ?? Date.now)(),
+          requestId, endpoint: binding.endpoint, policy: runtime.promptRetention!, signal,
+          runtimeId: binding.runtime,
+        }),
+      } : {}),
       metrics: input.metrics,
       requestTracker: input.requestTracker,
       lifecycleSignal: lease.lifecycleSignal,

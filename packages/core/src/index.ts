@@ -340,3 +340,5 @@ export { UsageProtection } from "./usage-protection";
 export { agentConnectionIdleDeadline } from "./agent-connection-idle";
 export * from "./monitoring";
 export * from "./monitoring-events";
+export { promptRetentionPolicySchema, promptRetentionContextSchema, promptRetentionMemoryGB, runtimeMemoryGB,
+  type PromptRetentionPolicy, type PromptRetentionContext } from "./prompt-retention";

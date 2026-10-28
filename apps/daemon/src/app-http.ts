@@ -1,4 +1,4 @@
-import { providerStartupPolicy, type Allocation, type AllocationRequest, type ClusterState, type Registry } from "@larm/core";
+import { chatCompletionRequestSchema, providerStartupPolicy, type Allocation, type AllocationRequest, type ClusterState, type Registry } from "@larm/core";
 import { createHash } from "node:crypto";
 import { readBodyLimited, RequestBodyError } from "./http-body";
 
@@ -103,6 +103,9 @@ export function normalizeChatRequest(value: unknown): Record<string, unknown> {
     throw new RequestBodyError("invalid_request", "chat request must be a JSON object", 400);
   }
   const request = structuredClone(value as Record<string, unknown>);
+  if (!chatCompletionRequestSchema.shape.prompt_cache_key.safeParse(request.prompt_cache_key).success) {
+    throw new RequestBodyError("invalid_request", "prompt_cache_key must be null or a string of at most 1024 characters", 400);
+  }
   const effort = request.reasoning_effort;
   if (effort !== undefined && effort !== null) {
     if (typeof effort !== "string" || !["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(effort)) {

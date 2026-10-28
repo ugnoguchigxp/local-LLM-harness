@@ -147,6 +147,7 @@ Chat Completionsでは`reasoning_effort`に`low`、`medium`、`high`、`max`を�
 await larm.createChatCompletion({
   model: "lfm2.5-24b-a2b", // Agent Connectionを使う場合はclaimで返されたmodel
   reasoning_effort: "medium",
+  prompt_cache_key: "conversation-123", // 同じ会話では同じキーを使う
   messages: [{ role: "user", content: "依頼内容" }],
   max_tokens: 4096,
 });
@@ -154,6 +155,11 @@ await larm.createChatCompletion({
 
 LFM2.5はテキスト専用です。画像入力が必要な場合は`ornith1.5Strix`を明示選択してください。
 この切替設定は本番配備前の準備です。
+
+入力キャッシュの再利用には、同じ会話で同じ`prompt_cache_key`を指定します。別の会話には別のキーを使います。
+キーを省略したAgent Connectionは接続単位で保持します。指定したキーは同じ認証利用者の接続を作り直しても使用できます。
+履歴は毎回`messages`へ送ってください。キーは履歴の保存IDではなく、共通の入力部分を再利用するための指定です。
+思考の深度は引き続き`reasoning_effort`で選び、キャッシュ用の内部設定はConsumerから指定しません。
 
 ## SAAA Provider選択
 

@@ -1,4 +1,5 @@
 import { ZodError } from "zod";
+import { LlamaPromptRetention } from "@larm/backends";
 import { registerLocalServiceRoutes } from "./routes/local-services";
 import { LocalServiceError } from "./local-service-manager";
 import type { ServiceActivityState } from "@larm/core";
@@ -109,6 +110,11 @@ export function createAppComponents(deps: AppDeps) {
     fetchImpl: deps.gatewayFetch,
     now: deps.now,
   });
+  const promptRetention = deps.promptRetentionKey ? new LlamaPromptRetention(deps.promptRetentionKey, deps.gatewayFetch,
+    target => deps.control.getProviderInstances().some(({ instance }) => instance.runtimeId === target.runtimeId
+      && ["HOT", "BUSY"].includes(instance.status) && instance.endpoint === target.endpoint
+      && (!target.providerId || instance.id === target.providerId))) : undefined;
+  if (deps.registry.runtimes.some(r => r.promptRetention) && !promptRetention) throw new Error("configured prompt retention requires LARM_PROMPT_CACHE_KEY");
   const agentConnections = deps.agentConnectionController ?? (deps.connectionSigningKey
     ? new AgentConnectionController({
       control: deps.control,
@@ -128,6 +134,7 @@ export function createAppComponents(deps: AppDeps) {
       random: deps.random,
     })
     : undefined);
+  if (promptRetention) agentConnections?.setCacheInvalidator(record => promptRetention.invalidate(record.principal, record.id, record.bootEpoch));
   const modelBroker = deps.modelBroker ?? (deps.agentConnectionCatalog
     ? new ModelBroker(deps.control, deps.agentConnectionCatalog, {
       startupTimeoutMs: deps.connectionReadyTimeoutMs ?? 300_000,
@@ -313,6 +320,8 @@ export function createAppComponents(deps: AppDeps) {
     executionGate,
     modelBroker,
     agentConnections,
+    promptRetention,
+    requestPrincipal: agentRequestPrincipal,
     agentFeature,
     principal,
     contextFeature,

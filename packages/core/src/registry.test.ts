@@ -31,7 +31,29 @@ test("prepared main LFM profile exposes text chat with internal reasoning policy
   expect(configured.models["lfm25-conversation"].cmd).toContain("--parallel 4");
   // A finite server default would turn a request budget of -1 back into that default.
   expect(configured.models["lfm25-conversation"].cmd).toContain("--reasoning-budget -1");
+  expect(configured.models["lfm25-conversation"].cmd).toContain("--cache-prompt");
+  expect(configured.models["lfm25-conversation"].cmd).toContain("--no-kv-unified");
+  expect(configured.models["lfm25-conversation"].cmd).not.toContain("--no-cache-prompt");
+  expect(runtime.promptRetention?.protocol).toBe("larm-prompt-cache.v1");
   expect(registry.runtimes.find(runtime => runtime.id === "ornith15-strix-conversation")?.policy.warm?.minInstances).toBe(0);
+});
+
+test("configured scoped caches use bounded RAM, partitioned KV and matching runtime revisions", () => {
+  const registry = loadRegistry(repoConfig);
+  const swap = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
+  const cached = registry.runtimes.filter(r => r.promptRetention);
+  expect(cached.map(r => r.id).sort()).toEqual(["lfm25-conversation", "lfm3-conversation", "ornith15-strix-conversation"].sort());
+  for (const runtime of cached) {
+    if (runtime.backend !== "llama-swap") throw new Error("fixture expects llama backend");
+    const args = swap.models[runtime.deployment.modelId].cmd.trim().split(/\s+/);
+    expect(args).toContain("--cache-prompt");
+    expect(args).not.toContain("--no-cache-prompt");
+    expect(args).toContain("--no-kv-unified");
+    expect(args).toContain("--no-cache-idle-slots");
+    const ram = args.findIndex((arg: string) => ["--cache-ram", "-cram"].includes(arg));
+    expect(Number(args[ram + 1]) * 1024 ** 2).toBe(runtime.promptRetention!.maxBytes);
+    expect(args.some((arg: string) => arg.endsWith("/launch-prompt-retention.py"))).toBe(true);
+  }
 });
 
 test("loads the Linux production registry", () => {
@@ -640,33 +662,33 @@ test("rejects a resident floor that exceeds usable node memory", () => {
   );
 });
 
-test("ContextStill resolves the explicit Strix backend shared with the distinct voice profile", () => {
+test("ContextStill resolves the default LFM2.5 backend shared with the distinct voice profile", () => {
   const registry = loadRegistry(repoConfig);
-  const route = registry.routes.find((route) => route.id === "llm-contextstill-ornith");
-  expect(route?.candidates).toEqual([{ runtime: "ornith15-strix-conversation", purpose: "primary" }]);
-  const runtime = registry.runtimes.find((runtime) => runtime.id === "ornith15-strix-conversation");
+  const route = registry.routes.find((route) => route.id === "llm-contextstill-lfm25");
+  expect(route?.candidates).toEqual([{ runtime: "lfm25-conversation", purpose: "primary" }]);
+  const runtime = registry.runtimes.find((runtime) => runtime.id === "lfm25-conversation");
   expect(runtime).toMatchObject({
-    artifacts: ["ornith15-35b-strix-lean", "ornith15-vision-bf16"],
-    policy: { warm: { minInstances: 0 }, swapGroup: "conversation-llm-slot" },
+    artifacts: ["lfm25-24b-a2b-qad-q4-0"],
+    policy: { warm: { minInstances: 1 }, swapGroup: "conversation-llm-slot" },
     resources: { maxConcurrentAllocations: 4, maxConcurrentRequests: 4 },
-    deployment: { modelId: "ornith15-strix-conversation" },
+    deployment: { modelId: "lfm25-conversation" },
   });
   const configured = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
   if (!runtime || runtime.backend !== "llama-swap") throw new Error("expected llama-swap runtime");
   const command = configured.models[runtime.deployment.modelId].cmd;
-  expect(command).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");
-  expect(command).toContain("--ctx-size 1048576");
+  expect(command).toContain("LFM2.5-24B-A2B-QAD-Q4_0.gguf");
+  expect(command).toContain("--ctx-size 524288");
   expect(command).toContain("--parallel 4");
   expect(command).toContain("--cache-type-k q4_0");
   expect(command).toContain("--cache-type-v q4_0");
-  expect(command).toContain("--spec-type none");
+  expect(command).toContain("--reasoning on");
   const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry);
   const context = catalog.profiles.find(profile => profile.id === "contextstill-background")!;
-  const voice = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  const voice = catalog.profiles.find(profile => profile.id === "lfm2.5")!;
   expect(context.id).not.toBe(voice.id);
   expect(context.schedulingPriority).toBe(1000);
   expect(context.providers.find(provider => provider.name === "llm")).toMatchObject({
-    publicModel: "ornith-contextstill", contextWindow: { maxTokens: 32768 },
+    publicModel: "lfm2.5-contextstill", contextWindow: { maxTokens: 32768 },
   });
   for (const name of ["asr", "tts", "tts-english", "embedding"]) {
     expect(context.providers.find(provider => provider.name === name))
@@ -687,7 +709,7 @@ test("ContextStill resolves the explicit Strix backend shared with the distinct 
     .toMatchObject({ maxConcurrentAllocations: 4, maxConcurrentRequests: 1 });
 });
 
-test("production warm floor keeps LFM and speech warm while admitting explicit ContextStill Laya", () => {
+test("production warm floor keeps shared LFM2.5 and speech warm while admitting ContextStill Laya", () => {
   const registry = loadRegistry(repoConfig);
   const observedAt = "2026-10-04T09:00:00.000Z";
   const state: ClusterState = {
@@ -701,13 +723,21 @@ test("production warm floor keeps LFM and speech warm while admitting explicit C
       endpoint: runtime.deployment.endpoint, observedAt,
     })),
   };
-  expect(admitRuntimes({ registry, state, allocations: [], candidateRuntimeIds: ["ornith-general"] }).ok).toBe(true);
+  // The lower LFM2.5 base reservation leaves room for this 40 GiB secondary.
+  // Retained payloads still reserve their complete independent memory budget.
+  const secondary = admitRuntimes({ registry, state, allocations: [], candidateRuntimeIds: ["ornith-general"] });
+  expect(secondary).toMatchObject({ ok: true });
+  expect(secondary.nodes[0]).toMatchObject({ usableMemoryGB: 112, committedMemoryGB: 63.0625,
+    incrementalMemoryGB: 40, availableMemoryGB: 48.9375 });
+  const withoutRetention = structuredClone(registry);
+  delete withoutRetention.runtimes.find(runtime => runtime.id === "lfm25-conversation")!.promptRetention;
+  expect(admitRuntimes({ registry: withoutRetention, state, allocations: [], candidateRuntimeIds: ["ornith-general"] }).ok).toBe(true);
   const context = admitRuntimes({
     registry, state, allocations: [],
-    candidateRuntimeIds: ["ornith15-strix-conversation", "laya-system-one", "multilingual-e5-small", "granite-asr", "voicevox-tts", "kittentts-nano"],
+    candidateRuntimeIds: ["lfm25-conversation", "laya-system-one", "multilingual-e5-small", "granite-asr", "voicevox-tts", "kittentts-nano"],
   });
   expect(context.ok).toBe(true);
-  expect(context.nodes[0]?.reclaimableMemoryGB ?? 0).toBe(40);
+  expect(context.nodes[0]?.reclaimableMemoryGB ?? 0).toBe(0);
   expect(registry.runtimes.find(runtime => runtime.id === "gemma4-26b-conversation")?.policy.warm?.minInstances).toBe(0);
   expect(registry.runtimes.find(runtime => runtime.id === "qwen-asr")?.policy.warm?.minInstances).toBe(0);
   for (const id of ["lfm25-conversation", "granite-asr", "voicevox-tts", "kittentts-nano"]) {
@@ -766,11 +796,11 @@ test("Gemma adds an English CPU speech provider while Japanese TTS and auxiliary
   }
 });
 
-test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifact", () => {
+test("ornith1.5Strix-vision is an explicit Gemma voice copy routed to the tested artifact", () => {
   const registry = loadRegistry(repoConfig);
   const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry)!;
   const base = catalog.profiles.find(profile => profile.id === "saaa-conversation-gemma4-26b-voice")!;
-  const strix = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  const strix = catalog.profiles.find(profile => profile.id === "ornith1.5Strix-vision")!;
   expect(strix).toBeDefined();
   expect(strix.providers.filter(provider => provider.name !== "llm"))
     .toEqual(base.providers.filter(provider => provider.name !== "llm"));
@@ -783,7 +813,7 @@ test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifa
     publicModel: "ornith-1.5-strix-lean",
     chatInput: registry.runtimes.find(runtime => runtime.id === "ornith15-strix-conversation")!.chatInput,
   });
-  expect(catalog.profileSelectors.find(selector => selector.id === "ornith1.5Strix"))
+  expect(catalog.profileSelectors.find(selector => selector.id === "ornith1.5Strix-vision"))
     .toMatchObject({ agentProfile: strix.id });
   const route = registry.routes.find(route => route.id === "llm-ornith15-strix")!;
   expect(route.explicitOnly).toBe(true);
@@ -795,7 +825,12 @@ test("ornith1.5Strix is an explicit Gemma voice copy routed to the tested artifa
   expect(swap.models[runtime.id].cmd).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");
   expect(swap.models[runtime.id].cmd).toContain("--spec-type none");
   expect(swap.models[runtime.id].cmd).not.toContain("draft-mtp");
-  expect(swap.models[runtime.id].cmd).toContain("--no-cache-prompt");
+  expect(swap.models[runtime.id].cmd).toContain("--cache-prompt");
+  expect(swap.models[runtime.id].cmd).toContain("-ctxcp 8");
+  expect(swap.models[runtime.id].cmd).toContain("--no-kv-unified");
+  expect(swap.models[runtime.id].cmd).toContain("launch-prompt-retention.py");
+  expect(runtime.resources.estimatedMemoryGB).toBe(56);
+  expect(runtime.promptRetention).toMatchObject({ protocol: "larm-prompt-cache.v1", maxBytes: 8 * 1024 ** 3 });
 });
 test("registered llama-swap models leave idle shutdown to LARM", () => {
   const registry = loadRegistry(repoConfig);
@@ -808,7 +843,7 @@ test("registered llama-swap models leave idle shutdown to LARM", () => {
 test("d1 game decisions require the explicit Ornith game profile and leave ordinary profiles intact", () => {
   const registry = loadRegistry(repoConfig);
   const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry);
-  const ordinary = catalog.profiles.find(profile => profile.id === "ornith1.5Strix")!;
+  const ordinary = catalog.profiles.find(profile => profile.id === "ornith1.5Strix-vision")!;
   const game = catalog.profiles.find(profile => profile.id === "ornith1.5Strix-game")!;
   const gameProvider = game.providers.find(provider => provider.name === "game-decision");
   expect(gameProvider).toMatchObject({ capability: "decision.game", publicModel: "d1-2b-game",

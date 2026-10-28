@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { countLlamaChatInput } from "@larm/backends";
-import { ChatInputError, validateChatImages, chatCompletionRequestSchema, type ChatInputPolicy, type AgentProviderContextWindow, type ChatInputTokenCount } from "@larm/core";
+import { countLlamaChatInput, countNativeTextChatInput } from "@larm/backends";
+import { ChatInputError, validateChatImages, chatCompletionRequestSchema, type TextChatInputPolicy, type ChatInputPolicy, type AgentProviderContextWindow, type ChatInputTokenCount } from "@larm/core";
 
 export async function prepareChatInput(input: {
   body: Uint8Array;
   endpoint: string;
-  policy: ChatInputPolicy;
+  policy?: ChatInputPolicy;
+  textInput?: TextChatInputPolicy;
   window: AgentProviderContextWindow;
   runtime: string;
   runtimeRelease?: string;
@@ -15,7 +16,9 @@ export async function prepareChatInput(input: {
   signal: AbortSignal;
   fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
 }): Promise<{ body: Uint8Array; count: ChatInputTokenCount }> {
-  if (input.body.byteLength > input.policy.maxRequestBytes) throw new ChatInputError(413, "body_too_large");
+  if (Boolean(input.policy) === Boolean(input.textInput)) throw new ChatInputError(503, "chat_input_contract_unavailable");
+  const maxRequestBytes = (input.policy ?? input.textInput)!.maxRequestBytes;
+  if (input.body.byteLength > maxRequestBytes) throw new ChatInputError(413, "body_too_large");
   let request: Record<string, unknown>;
   try {
     request = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(input.body));
@@ -28,8 +31,11 @@ export async function prepareChatInput(input: {
   if (!Number.isSafeInteger(requestedOutputTokens) || (requestedOutputTokens as number) < 1 || (requestedOutputTokens as number) > input.window.outputReserveTokens) throw new ChatInputError(400, "output_budget_exceeded");
   request.max_tokens = requestedOutputTokens;
   const body = new TextEncoder().encode(JSON.stringify(request));
-  if (body.byteLength > input.policy.maxRequestBytes) throw new ChatInputError(413, "body_too_large");
-  const measured = await countLlamaChatInput({ ...input, request, expectedImageCount: imageCount });
+  if (body.byteLength > maxRequestBytes) throw new ChatInputError(413, "body_too_large");
+  const countInput = { ...input, request, expectedImageCount: imageCount };
+  const measured = input.textInput
+    ? await countNativeTextChatInput({ ...countInput, engineBuild: input.textInput.engineBuild })
+    : await countLlamaChatInput(countInput);
   const count: ChatInputTokenCount = {
     contractVersion: "larm-chat-input-token-count.v1",
     model: String(request.model),

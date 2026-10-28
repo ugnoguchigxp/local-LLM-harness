@@ -4,7 +4,7 @@ runtimeReleases:
   lfm3-conversation-current:
     runtime: lfm3-conversation
     artifacts: [ lfm3-1.7b-qad-q4-0 ]
-    providerConfigRevision: llama-lfm3-qad-q4-0-32k-p4-reasoning-effort-v1
+    providerConfigRevision: llama-lfm3-qad-q4-0-32k-p4-reasoning-effort-v1-scoped-cache-v2
     estimatedMemoryGB: 12
     healthPath: /health
     default: true
@@ -12,7 +12,7 @@ runtimeReleases:
   lfm25-conversation-current:
     runtime: lfm25-conversation
     artifacts: [ lfm25-24b-a2b-qad-q4-0 ]
-    providerConfigRevision: llama-lfm25-qad-q4-0-128k-p4-reasoning-effort-v1
+    providerConfigRevision: llama-lfm25-qad-q4-0-128k-p4-reasoning-effort-v1-scoped-cache-v2
     estimatedMemoryGB: 40
     healthPath: /health
     default: true
@@ -266,7 +266,7 @@ runtimeReleases:
     providerConfigRevision: q38rocm-0fc9568-strix-lean-1m-p4-unified-q4-no-mtp-no-prompt-cache-v3-vision4096-chat-count-v1
     estimatedMemoryGB: 54
     healthPath: /health
-    default: true
+    default: false
   granite-asr-current:
     runtime: granite-asr
     artifacts:
@@ -281,5 +281,14 @@ runtimeReleases:
     artifacts: [ d1-2b ]
     providerConfigRevision: d1-97c57047d585-native-bf16-rocm-gfx1151-v2
     estimatedMemoryGB: 10
+    healthPath: /health
+    default: true
+  ornith15-strix-conversation-p4-cache-v4:
+    runtime: ornith15-strix-conversation
+    artifacts:
+      - ornith15-35b-strix-lean
+      - ornith15-vision-bf16
+    providerConfigRevision: q38rocm-0fc9568-strix-lean-1m-p4-partitioned-q4-prompt-retention-v2
+    estimatedMemoryGB: 56
     healthPath: /health
     default: true

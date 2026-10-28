@@ -16,6 +16,7 @@ import { resolveGatewayAllocation } from "./app-allocation-gateway";
 import { prepareGatewayIngress, type GatewayRouteOptions } from "./app-gateway-ingress";
 import { preparePersonalStateAttempt } from "./app-personal-state-attempt";
 import { errorBody } from "./app-http";
+import type { LlamaPromptRetention } from "@larm/backends";
 
 export function createGatewayHandler(input: {
   deps: AppDeps;
@@ -23,6 +24,8 @@ export function createGatewayHandler(input: {
   executionGate: ExecutionGate;
   modelBroker?: ModelBroker;
   agentConnections?: AgentConnectionController;
+  promptRetention?: LlamaPromptRetention;
+  requestPrincipal: (context: Context) => string;
   agentFeature: (context: Context) => AgentConnectionController | Response;
   principal: () => string;
   contextFeature: (context: Context) => ContextController | Response;
@@ -111,6 +114,8 @@ export function createGatewayHandler(input: {
       directRequestBytes: directRequestBytes ?? chatRequestBytes,
       chatRequest,
       chatResponseFormat,
+      promptRetention: input.promptRetention,
+      retentionPrincipal: input.requestPrincipal(c),
       expectedSpeechFormat: directSpeechFormat,
     });
     if (brokeredResponse) return brokeredResponse;
@@ -230,6 +235,18 @@ export function createGatewayHandler(input: {
         bootEpoch: identity.bootEpoch,
         executionGate,
         fetchImpl: deps.gatewayFetch,
+        ...(runtime.promptRetention && input.promptRetention && !options.countChatInputOnly ? {
+          prepareUpstreamHeaders: (binding, requestId, signal, metadata) => input.promptRetention!.headers({
+            cacheKey: metadata.promptCacheKey,
+            principal: scoped?.record.principal ?? input.requestPrincipal(c), connection: scoped?.record.id ?? `allocation:${allocationId}`,
+            epoch: identity.bootEpoch,
+            instance: [binding.runtime, binding.endpoint, runtime, release, selected.binding.instanceId, selected.binding.instanceGeneration, selected.binding.providerRevision],
+            expiresAt: scoped ? Date.parse(scoped.record.expiresAt) : Date.parse(allocation.expiresAt),
+            now: (deps.now ?? Date.now)(), requestId, endpoint: binding.endpoint, policy: runtime.promptRetention!, signal,
+            ...(!scoped ? { scopeSignal: deps.control.getAllocationSignal(allocationId) } : {}),
+            runtimeId: binding.runtime, providerId: selected.binding.instanceId,
+          }),
+        } : {}),
         metrics: deps.metrics,
         requestTracker: deps.requestTracker,
         lifecycleSignal: deps.control.getAllocationSignal(allocationId),

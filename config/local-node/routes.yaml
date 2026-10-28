@@ -12,6 +12,13 @@ routes:
       - runtime: lfm25-conversation
         purpose: primary
 
+  llm-contextstill-lfm25:
+    capabilities: [ llm.general, llm.reasoning, llm.coding ]
+    explicitOnly: true
+    candidates:
+      - runtime: lfm25-conversation
+        purpose: primary
+
   llm-lfm3:
     capabilities: [ llm.general, llm.reasoning ]
     explicitOnly: true

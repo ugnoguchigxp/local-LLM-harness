@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Allocation } from "./allocation";
 import { admitRuntimes } from "./admission";
+import { promptRetentionPolicySchema } from "./prompt-retention";
 import type { Registry } from "./registry";
 import type { ClusterState, RuntimeSnapshot } from "./schema";
 
@@ -43,6 +44,17 @@ const registry: Registry = {
   profiles: [],
   routes: [],
 };
+
+test("cache payload, staging and metadata consume admission capacity without shrinking execution context", () => {
+  const withCache = structuredClone(registry);
+  const snapshotState = state([snapshot("resident", "HOT"), snapshot("worker", "COLD")]);
+  expect(admitRuntimes({ registry: withCache, state: snapshotState, allocations: [], candidateRuntimeIds: ["worker"] }).ok).toBe(true);
+  withCache.runtimes[1]!.promptRetention = promptRetentionPolicySchema.parse({});
+  const result = admitRuntimes({ registry: withCache, state: snapshotState, allocations: [], candidateRuntimeIds: ["worker"] });
+  expect(result.ok).toBe(false);
+  expect(result.nodes[0]!.incrementalMemoryGB).toBe(33.0625);
+  expect(withCache.runtimes[1]!.resources.maxConcurrentRequests).toBe(1);
+});
 
 function snapshot(id: string, status: RuntimeSnapshot["status"]): RuntimeSnapshot {
   const runtime = registry.runtimes.find((item) => item.id === id)!;

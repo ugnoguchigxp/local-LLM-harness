@@ -1,0 +1,133 @@
+<article lang="ja">
+  <h1>LFM2.5 標準LLMモデルカード</h1>
+  <p>
+    2026-10-28。比較試行後に採用する標準の会話LLMと、利用者へ公開するProfile・API設定を定義する。
+  </p>
+  <table>
+    <caption>
+      標準の会話モデル
+    </caption>
+    <tbody>
+      <tr>
+        <th scope="row">表示名</th>
+        <td>LFM2.5 24B-A2B（標準）</td>
+      </tr>
+      <tr>
+        <th scope="row">Profile selector・canonical Profile</th>
+        <td>lfm2.5</td>
+      </tr>
+      <tr>
+        <th scope="row">公開API model</th>
+        <td>lfm2.5-24b-a2b</td>
+      </tr>
+      <tr>
+        <th scope="row">route・runtime</th>
+        <td>llm-lfm25 → lfm25-conversation</td>
+      </tr>
+      <tr>
+        <th scope="row">用途</th>
+        <td>テキスト会話、文章作成、コード、JSON形式の出力</td>
+      </tr>
+      <tr>
+        <th scope="row">入力</th>
+        <td>テキスト。画像入力は非対応。</td>
+      </tr>
+      <tr>
+        <th scope="row">context</th>
+        <td>131072 tokens、出力予約4096、余裕1976。同時4要求。</td>
+      </tr>
+      <tr>
+        <th scope="row">Reasoning</th>
+        <td>reasoning_effortはlow・medium・high・max。未指定・nullはmedium。</td>
+      </tr>
+      <tr>
+        <th scope="row">入力キャッシュ</th>
+        <td>会話ごとのprompt_cache_key。毎回、必要なmessagesを再送する。</td>
+      </tr>
+      <tr>
+        <th scope="row">補助Provider</th>
+        <td>
+          Granite音声認識、VOICEVOX日本語音声合成、KittenTTS英語音声合成、多言語embedding、Ruri
+          System One。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Controlのv3 Agent Profileカタログに上記Profileと説明を公開し、v1/modelsに公開modelを登録する。
+    Profileを取得してclaimに返るbaseUrl・model・credentialを使う。Ornith名による一時的な識別は終了する。
+    旧デフォルトselector ornith1.5Strixはlfm2.5へ解決する互換名とし、claimは正式なLFM2.5
+    modelを返す。画像用Ornithはornith1.5Strix-visionで明示選択する。
+  </p>
+  <pre><code>{
+  "model": "lfm2.5-24b-a2b",
+  "messages": [{"role": "user", "content": "こんにちは"}],
+  "reasoning_effort": "medium",
+  "max_tokens": 4096,
+  "stream": true
+}</code></pre>
+  <p>
+    思考予算の数値は内部設定であり、利用側はreasoning_effortだけを指定する。
+    maxは思考予算の上限を外す意味で、max_tokens・context・要求期限は適用される。
+    思考と表示本文は別々に返し、初回本文までの時間には思考時間も含む。
+    JSON出力の形式試験は用途別に評価し、単純なcanary成功を一般的な正答率やtool選択精度と扱わない。
+  </p>
+  <section id="selection">
+    <h2>共有と明示選択</h2>
+    <p>
+      ContextStillはlfm2.5-contextstillからllm-contextstill-lfm25を経由して同じLFM2.5
+      runtimeを共有する。
+      優先度1000・入力枠32768・バックグラウンド実行は維持し、通常会話の優先度4000を優先する。 Ornith
+      STRIX_LEANのornith1.5Strixとゲーム向けProfileは画像対応の明示選択肢として残す。
+      LFM3-1.7Bはlfm3.1.7bの明示試行用で、既定では起動しない。 LFM2.5だけを会話用のwarm
+      floorにし、モデルは要求Profileとrouteから選ぶ。
+    </p>
+  </section>
+  <section id="input-retention">
+    <h2>入力計数と保持</h2>
+    <p>
+      テキスト専用のtextInput runtime
+      policyから、配備されたengineの正確なchat入力計数APIを使用する。 公開のinput-tokens
+      APIはclaim済みLLM Bearerで利用できる。画像用契約を偽って公開しない。 system/developer
+      instructionの保持、出力予約、context超過、画像非対応は推論前に検査する。
+      保持は認証された所有者・会話scopeごとに分離し、Connectionの解放・失効時に既定scopeを失効させる。
+      保持を含むLFM2.5の資源予約は49.0625 GiB。重みとengineはsource repository外に置く。
+    </p>
+  </section>
+  <section id="deployment">
+    <h2>配備と受入</h2>
+    <p>
+      稼働中release ae08a8b84a80を基に、既存の独立した音声処理・画像認識・CPU
+      computeなどを維持したreleaseを作る。
+      元のOrnithのruntime・過去release・モデルファイルは残し、署名付きreleaseの検証と切替手順を使う。
+      daemonの実行先を正式releaseへ更新し、LLM ProviderもLFM2.5へ切り替える。
+      配備後は既定Profile、カタログの説明、実際の重み、128K・4 slot、4段階Reasoning、
+      入力計数、JSON応答、入力cache再利用、画像拒否を実APIで確認する。 過去の一時試行は<a
+        href="./lfm25-main-provider-reasoning-api-preparation-2026-10-28.html"
+        >準備と比較の記録</a
+      >を参照する。
+    </p>
+  </section>
+  <section id="live-acceptance">
+    <h2>正式配備の確認</h2>
+    <p>
+      2026-10-28 20:47:34 JST、署名付きrelease
+      <code>6f9321ea6774b08e46abcf4064e6c1a9559ab502</code>を配備し、デーモンを再起動した。
+      設定revisionは<code>56340be5096813ab3c3f0c3b632987fb4365201dd9576a7a608f31884a16a27a</code>。
+      稼働版の既存機能を保つ専用branchで、全体check・coverage・production
+      auditを含む必須gateを通過した。
+      最初の正式配備後に旧selectorでOrnithへ再接続するclientを観測したため、
+      上記releaseで旧デフォルト名をLFM2.5へ移行した。旧selectorからcanonical
+      lfm2.5への実接続・claim成功を確認した。
+    </p>
+    <p>
+      実プロセスはlfm25-conversationのLFM2.5-24B-A2B-QAD-Q4_0で、各131072 tokens・4 slot。
+      正式なProfileとモデル説明、入力計数、low・medium・high・max・未指定時mediumの思考とJSON応答、
+      通常のModel Brokerを確認した。同じ1705入力tokensの再送は1701 tokensを再利用し、
+      prompt_msは941.889から22.008へ短縮した。none・内部budget・thinking無効化・出力4097は400、画像入力は415。
+      これらは共存処理のある単発受入検証であり、モデル間の性能順位を示す測定ではない。
+      証跡は<code>/srv/ai/evidence/lfm25-default-live-20261028-v1/results.json</code>、
+      切替と署名記録は<code>/srv/ai/apps/larm-lfm25-main-rollout-20261028-v1/</code>へ保存した。
+    </p>
+  </section>
+</article>

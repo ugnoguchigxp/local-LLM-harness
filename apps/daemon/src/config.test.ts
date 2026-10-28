@@ -55,6 +55,13 @@ test("daemon configuration has bounded production defaults", () => {
   expect(config.configDir).toBe("/workspace/config/local-node");
 });
 
+test("daemon configuration accepts only the private retention key encoding", () => {
+  expect(parseDaemonConfig({ LARM_PROMPT_CACHE_KEY: "a".repeat(64) }).promptRetentionKey).toBe("a".repeat(64));
+  for (const key of ["short", "a".repeat(63), "A".repeat(64), "a".repeat(65)]) {
+    expect(() => parseDaemonConfig({ LARM_PROMPT_CACHE_KEY: key })).toThrow("LARM_PROMPT_CACHE_KEY");
+  }
+});
+
 test("daemon configuration rejects invalid numbers", () => {
   expect(() => parseDaemonConfig({ LARM_PORT: "NaN" })).toThrow(/LARM_PORT/);
   expect(() => parseDaemonConfig({ LARM_PORT: "70000" })).toThrow(/LARM_PORT/);

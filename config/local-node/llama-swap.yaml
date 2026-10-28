@@ -13,7 +13,10 @@ models:
   lfm3-conversation:
     ttl: 0
     cmd: >
-      /srv/ai/apps/larm-lfm25-engine-d05706b/llama-server
+      /usr/bin/python3
+      /srv/ai/apps/larm-lfm-retention-d05706b-v1/launch-prompt-retention.py
+      /etc/larm/prompt-retention.env.json
+      /srv/ai/apps/larm-lfm-retention-d05706b-v1/llama-server
       -m /srv/ai/models/lfm3-1.7b-gguf/LFM3-1.7B-QAD-Q4_0.gguf
       -dev Vulkan0
       -ngl 999
@@ -39,7 +42,12 @@ models:
       --repeat-penalty 1.1
       --jinja
       --no-context-shift
-      --no-cache-prompt
+      --cache-prompt
+      --cache-reuse 0
+      --no-kv-unified
+      --ctx-checkpoints 8
+      --checkpoint-min-step 1024
+      --cache-ram 8192
       --no-cache-idle-slots
       --metrics
       --no-webui
@@ -52,7 +60,10 @@ models:
   lfm25-conversation:
     ttl: 0
     cmd: >
-      /srv/ai/apps/larm-lfm25-engine-d05706b/llama-server
+      /usr/bin/python3
+      /srv/ai/apps/larm-lfm-retention-d05706b-v1/launch-prompt-retention.py
+      /etc/larm/prompt-retention.env.json
+      /srv/ai/apps/larm-lfm-retention-d05706b-v1/llama-server
       -m /srv/ai/models/lfm25-24b-a2b/LFM2.5-24B-A2B-QAD-Q4_0.gguf
       -dev Vulkan0
       -ngl 999
@@ -78,7 +89,12 @@ models:
       --repeat-penalty 1.05
       --jinja
       --no-context-shift
-      --no-cache-prompt
+      --cache-prompt
+      --cache-reuse 0
+      --no-kv-unified
+      --ctx-checkpoints 8
+      --checkpoint-min-step 1024
+      --cache-ram 8192
       --no-cache-idle-slots
       --metrics
       --no-webui
@@ -447,12 +463,15 @@ models:
   ornith15-strix-conversation:
     # Explicit STRIX_LEAN voice profile, using the benchmarked custom-quant engine.
     # The pinned artifact has an old MTP head: keep speculation disabled.
-    # Repeated one-token probes abort this engine when prompt reuse is enabled.
-    # Reserve a 1M unified KV pool without increasing the four execution slots.
+    # Exact-prefix recovery fixes recurrent rollback; retain eight checkpoints per slot.
+    # Partition the 1M KV into four 256K streams; scoped snapshots use bounded RAM.
     # Each session remains capped at 256K; the 64K auxiliary selector stays available.
     ttl: 0
     cmd: >
-      /srv/ai/apps/larm-chat-input-engine-20261013/llama-server
+      /usr/bin/python3
+      /srv/ai/apps/larm-chat-input-engine-20261024-retention-v2/launch-prompt-retention.py
+      /etc/larm/prompt-retention.env.json
+      /srv/ai/apps/larm-chat-input-engine-20261024-retention-v2/llama-server
       -m /srv/ai/models/ornith-trial-20261012/strix-lean/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
       --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
       --image-max-tokens 4096
@@ -470,20 +489,22 @@ models:
       --cache-type-k q4_0
       --cache-type-v q4_0
       --cont-batching
-      --kv-unified
+      --no-kv-unified
       --host 127.0.0.1
       --port ${PORT}
       --reasoning off
       --spec-type none
-      -ctxcp 0
-      -cram 0
+      -ctxcp 8
+      -cpent 1024
+      -cram 8192
       --no-cache-idle-slots
       --temp 0.6
       --top-p 0.95
       --top-k 64
       --jinja
+      --chat-template-file /srv/ai/apps/larm-instruction-template-20261024-v1/chat-template.jinja
       --no-context-shift
-      --no-cache-prompt
+      --cache-prompt
       --cache-reuse 0
       --metrics
       --no-webui

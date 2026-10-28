@@ -86,6 +86,8 @@ export function compileProviderRevision(input: {
     releaseDigest: input.release?.digest ?? null,
   };
   const resourceSpec = {
+    ...(runtime.textInput ? { textInput: runtime.textInput } : {}),
+    ...(runtime.promptRetention ? { promptRetention: runtime.promptRetention } : {}),
     resources: runtime.resources,
     context: runtime.context ?? null,
     embedding: runtime.embedding ?? null,

@@ -306,6 +306,9 @@ runtimes:
       backendEndpoint: http://127.0.0.1:8083/upstream/gemma4-26b-conversation
 
   lfm25-conversation:
+    textInput:
+      protocol: llama-chat-input-tokens.v1
+      engineBuild: llama.cpp-d05706b-larm-retention-v1
     artifacts: [ lfm25-24b-a2b-qad-q4-0 ]
     capability: [ llm.general, llm.reasoning, llm.coding ]
     protocol: openai.chat-completions.v1
@@ -331,8 +334,22 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/lfm25-conversation
       backendEndpoint: http://127.0.0.1:8083/upstream/lfm25-conversation
+    promptRetention:
+      protocol: larm-prompt-cache.v1
+      maxBytes: 8589934592
+      principalMaxBytes: 4294967296
+      entryMaxBytes: 1073741824
+      stagingMaxBytes: 1073741824
+      metadataMaxBytes: 67108864
+      maxEntries: 64
+      principalMaxEntries: 16
+      idleTtlMs: 300000
+      maxAgeMs: 1800000
 
   lfm3-conversation:
+    textInput:
+      protocol: llama-chat-input-tokens.v1
+      engineBuild: llama.cpp-d05706b-larm-retention-v1
     artifacts: [ lfm3-1.7b-qad-q4-0 ]
     capability: [ llm.general, llm.reasoning ]
     protocol: openai.chat-completions.v1
@@ -359,6 +376,17 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/lfm3-conversation
       backendEndpoint: http://127.0.0.1:8083/upstream/lfm3-conversation
+    promptRetention:
+      protocol: larm-prompt-cache.v1
+      maxBytes: 8589934592
+      principalMaxBytes: 4294967296
+      entryMaxBytes: 1073741824
+      stagingMaxBytes: 1073741824
+      metadataMaxBytes: 67108864
+      maxEntries: 64
+      principalMaxEntries: 16
+      idleTtlMs: 300000
+      maxAgeMs: 1800000
 
   ornith15-strix-conversation:
     chatInput: {}
@@ -379,7 +407,7 @@ runtimes:
       warm: { minInstances: 0, idleTtlSeconds: 60 }
       swapGroup: conversation-llm-slot
     resources:
-      estimatedMemoryGB: 54
+      estimatedMemoryGB: 56
       maxConcurrentAllocations: 4
       maxConcurrentRequests: 4
       maxQueuedRequests: 16
@@ -389,6 +417,17 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/ornith15-strix-conversation
       backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-strix-conversation
+    promptRetention:
+      protocol: larm-prompt-cache.v1
+      maxBytes: 8589934592
+      principalMaxBytes: 4294967296
+      entryMaxBytes: 1073741824
+      stagingMaxBytes: 1073741824
+      metadataMaxBytes: 67108864
+      maxEntries: 64
+      principalMaxEntries: 16
+      idleTtlMs: 300000
+      maxAgeMs: 1800000
 
   ornith15-conversation:
     artifacts:

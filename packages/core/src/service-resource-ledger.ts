@@ -1,3 +1,4 @@
+import { runtimeMemoryGB } from "./prompt-retention";
 import type { Allocation } from "./allocation";
 import { admittedAllocation } from "./allocation";
 import type { Registry } from "./registry";
@@ -25,14 +26,14 @@ export class ServiceResourceLedger {
     for (const r of input.registry.runtimes) if (r.policy.class === "resident") ids.add(r.id);
     for (const r of input.state.runtimes) if (!["COLD", "FAILED"].includes(r.status)) ids.add(r.id);
     const ai = input.registry.runtimes.filter(r => r.node === nodeId && ids.has(r.id));
-    const aiBytes = ai.reduce((n, r) => n + r.resources.estimatedMemoryGB * 1024 ** 3, 0);
+    const aiBytes = ai.reduce((n, r) => n + runtimeMemoryGB(r) * 1024 ** 3, 0);
     const existing = this.reservations().filter(r => r.node === nodeId);
     if (aiBytes + existing.reduce((n, r) => n + r.bytes, 0) + bytes > (node.resources.memoryTotalGB - node.resources.reservedMemoryGB) * 1024 ** 3) {
       throw new Error("memory_exhausted");
     }
     // Pending AI starts aren't yet reflected in MemAvailable. Account for them once.
     const pendingAi = ai.filter(r => !input.state.runtimes.some(s => s.id === r.id && ["HOT", "BUSY"].includes(s.status)))
-      .reduce((n, r) => n + r.resources.estimatedMemoryGB * 1024 ** 3, 0);
+      .reduce((n, r) => n + runtimeMemoryGB(r) * 1024 ** 3, 0);
     if (bytes + pendingAi + existing.reduce((n, r) => n + r.pendingBytes, 0) > t.systemMemoryAvailableBytes) throw new Error("live_memory_exhausted");
     this.restore(id, nodeId, bytes);
   }

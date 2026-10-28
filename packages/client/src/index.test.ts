@@ -890,7 +890,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
-    profile: "ornith1.5Strix" as const,
+    profile: "ornith1.5Strix-vision" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -979,7 +979,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   });
 
   const created = await client.createAgentConnection({
-    profile: "ornith1.5Strix",
+    profile: "ornith1.5Strix-vision",
     audience: "same-host",
     providers: ["llm"],
   }, { waitSeconds: 300 });
@@ -987,7 +987,7 @@ test("typed agent connection client creates, polls, checks, claims, renews, and 
   expect(requests[0]?.headers.get("idempotency-key")).toBe("client_agent-fixed");
   expect(requests[0]?.headers.get("prefer")).toBe("wait=300");
   expect(await requests[0]!.clone().json()).toEqual({
-    profile: "ornith1.5Strix",
+    profile: "ornith1.5Strix-vision",
     audience: "same-host",
     providers: ["llm"],
     ttlSeconds: 300,
@@ -1322,7 +1322,7 @@ test("agent connection polling deadline aborts an in-flight HTTP request", async
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
-    profile: "ornith1.5Strix" as const,
+    profile: "ornith1.5Strix-vision" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -1365,7 +1365,7 @@ test("withAgentConnection claims and releases with a fresh cleanup signal", asyn
     allocationId: allocation.id,
     bootEpoch: "epoch-test",
     catalogRevision: "catalog-test",
-    profile: "ornith1.5Strix" as const,
+    profile: "ornith1.5Strix-vision" as const,
     agentProfile: "coding-default",
     profileRevision: "1".repeat(64),
     audience: "same-host",
@@ -1439,7 +1439,7 @@ test("withAgentConnection claims and releases with a fresh cleanup signal", asyn
   });
 
   await expect(client.withAgentConnection({
-    profile: "ornith1.5Strix",
+    profile: "ornith1.5Strix-vision",
     audience: "same-host",
   }, async (_ready, receivedClaim) => {
     expect(receivedClaim.providers[0]?.model).toBe("coding-default");
@@ -1728,7 +1728,7 @@ test("image preflight uses only the claimed bearer, validates totals, and never 
 test("SDK waits for and claims TTS even when the connection's LLM failed", async () => {
   const connection = {
     id: "aconn_epoch-test_audio", allocationId: allocation.id, bootEpoch: "epoch-test", catalogRevision: "catalog-test",
-    profile: "ornith1.5Strix" as const, agentProfile: "voice", profileRevision: "1".repeat(64), audience: "same-host", audienceRevision: "2".repeat(64),
+    profile: "ornith1.5Strix-vision" as const, agentProfile: "voice", profileRevision: "1".repeat(64), audience: "same-host", audienceRevision: "2".repeat(64),
     status: "failed" as const, services: [], createdAt: allocation.createdAt, expiresAt: allocation.expiresAt,
     providers: [
       { name: "llm", capability: "llm.general", supportedCapabilities: ["llm.general"], protocol: "openai.chat-completions.v1" as const,

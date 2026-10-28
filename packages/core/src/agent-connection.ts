@@ -31,6 +31,7 @@ export const agentProfileSelectorIdSchema = z.enum([
   "SAAA-gemma4-26b",
   "SAAA-gemma4-26b-64k",
   "ornith1.5Strix",
+  "ornith1.5Strix-vision",
   "ornith1.5Strix-game",
   "SAAA-w-Image",
   "SAAA-w-music",
@@ -123,6 +124,7 @@ const agentAudienceYamlSchema = z.object({
 
 const agentProviderYamlSchema = z.object({
   name: agentIdentifierSchema,
+  description: z.string().min(1).max(4096).optional(),
   capability: agentIdentifierSchema,
   route: agentIdentifierSchema,
   publicModel: agentIdentifierSchema,
@@ -255,6 +257,7 @@ export function resolveAgentAudienceBaseUrl(
 
 export type AgentProviderProfile = {
   name: string;
+  description?: string;
   capability: string;
   supportedCapabilities: string[];
   route: string;
@@ -648,6 +651,7 @@ export const publicAgentProfileListV1Schema = z.object({
     description: z.string().min(1).max(256),
     providers: z.array(z.object({
       name: agentIdentifierSchema,
+      description: z.string().min(1).max(4096).optional(),
       capability: agentIdentifierSchema,
       protocol: runtimeProtocolSchema,
       model: agentIdentifierSchema,

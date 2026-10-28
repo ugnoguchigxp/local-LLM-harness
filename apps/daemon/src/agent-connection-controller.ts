@@ -70,6 +70,8 @@ type ConnectionRecord = {
   lastForegroundActivityAt?: string;
   idleReleaseAt?: string;
   idleTimer?: ReturnType<typeof setTimeout>;
+  cacheExpiryTimer?: ReturnType<typeof setTimeout>;
+  cacheInvalidated?: boolean;
   lastProfileRequestAt: string;
   usesUsageProtection: boolean;
   activeRequests: Map<string, { foreground: boolean; exclusive: boolean }>;
@@ -138,6 +140,7 @@ export class AgentConnectionController {
     idempotencyLimit: number;
     historyLimit?: number;
     personalStateAvailable?: boolean;
+    onCacheInvalidate?: (record: Pick<ConnectionRecord, "id" | "principal" | "bootEpoch">) => void | Promise<void>;
     onEvent?: (event: { name: string; labels: Record<string, string> }) => void;
     now?: () => number;
     random?: () => string;
@@ -156,6 +159,7 @@ export class AgentConnectionController {
           description: profile.description,
           providers: profile.providers.map((provider) => ({
             name: provider.name,
+            ...(provider.description ? { description: provider.description } : {}),
             capability: provider.capability,
             protocol: provider.protocol,
             model: provider.publicModel,
@@ -164,6 +168,14 @@ export class AgentConnectionController {
         audiences: catalog.audiences.map((audience) => audience.id),
       },
     };
+  }
+
+  setCacheInvalidator(handler: NonNullable<AgentConnectionController["options"]["onCacheInvalidate"]>): void {
+    const previous = this.options.onCacheInvalidate;
+    this.options.onCacheInvalidate = previous ? async record => {
+      await Promise.all([Promise.resolve().then(() => previous(record)), Promise.resolve().then(() => handler(record))]);
+    } : handler;
+    for (const record of this.records.values()) if (record.status === "ready") this.scheduleCacheExpiry(record);
   }
 
   private publicChatInput(policy: ChatInputPolicy) {
@@ -879,6 +891,7 @@ export class AgentConnectionController {
         const renewed = this.options.control.renewAllocation(found.allocationId, ttlSeconds);
         if (renewed.status !== 200) return { status: renewed.status, body: renewed.body };
         found.expiresAt = renewed.body.expiresAt;
+        this.scheduleCacheExpiry(found);
         found.generation += 1;
         found.tokenIssuedAt = Math.floor(this.now() / 1_000);
         return { status: 200, body: this.public(found) };
@@ -1492,6 +1505,7 @@ export class AgentConnectionController {
   private pruneHistory(): void {
     for (const record of this.records.values()) {
       if (isTerminal(record.status)) {
+        this.invalidateCache(record);
         record.readinessAbort.abort(new Error("connection is terminal"));
         if (record.readyTimer) clearTimeout(record.readyTimer);
         record.readyTimer = undefined;
@@ -1524,6 +1538,29 @@ export class AgentConnectionController {
     record.preparationComplete?.(true);
     record.preparationComplete = undefined;
     this.scheduleIdleRelease(record);
+    this.scheduleCacheExpiry(record);
+  }
+
+  private invalidateCache(record: ConnectionRecord): void {
+    if (record.cacheExpiryTimer) clearTimeout(record.cacheExpiryTimer);
+    record.cacheExpiryTimer = undefined;
+    if (record.cacheInvalidated || !this.options.onCacheInvalidate) return;
+    record.cacheInvalidated = true;
+    Promise.resolve().then(() => this.options.onCacheInvalidate!(record)).catch(() => {
+      this.options.onEvent?.({ name: "prompt_cache_invalidation_failed", labels: { reason: "backend_unavailable" } });
+    });
+  }
+
+  private scheduleCacheExpiry(record: ConnectionRecord): void {
+    if (!this.options.onCacheInvalidate || isTerminal(record.status)) return;
+    if (record.cacheExpiryTimer) clearTimeout(record.cacheExpiryTimer);
+    record.cacheExpiryTimer = setTimeout(() => {
+      record.cacheExpiryTimer = undefined;
+      this.refreshLifecycle(record);
+      if (isTerminal(record.status)) this.invalidateCache(record);
+      else this.scheduleCacheExpiry(record);
+    }, Math.max(10, Date.parse(record.expiresAt) - this.now()));
+    record.cacheExpiryTimer.unref?.();
   }
 
   private idleDeadline(record: ConnectionRecord): number {
