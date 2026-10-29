@@ -63,6 +63,121 @@
       integrationであり、別ホストのEumenes
       UI操作や製品DBの変更とは区別する。200k×4を全て埋める負荷試験や速度ベンチマークは行わない。
     </p>
-    <p>証跡は/srv/ai/evidence/ornith-strix-200k-restore-20261030。実機結果は配備後に追記する。</p>
+    <p>証跡は/srv/ai/evidence/ornith-strix-200k-restore-20261030。実機結果は次節に記録する。</p>
+  </section>
+  <section id="live-results">
+    <h2>配備後の実機結果</h2>
+    <p>
+      署名付きrelease
+      95961280a2b4905106755b0e23b0dc93bb51aceeを配備し、controllerのcontract_verified /
+      succeededを確認した。Ornith runtime
+      releaseはornith15-strix-conversation-200k-p4-retention-v6、Provider構成revisionはornith-strix-800k-p4-q4-cp8-retention24g-v6へ更新した。更新直後は旧v5の接続参照が残り、新規接続がrevision_conflict
+      /
+      409となることを最初のE2Eで検出した。ユーザーが指定した再起動の範囲でAPIを正常終了・再起動し、v6から新しい接続を作成する状態へ揃えた。その後のE2Eは全件成功した。
+    </p>
+    <p>
+      公開契約は200000 tokens×4、native propsは4 slots・各200192 tokens。認証済みcache policyは24
+      GiB pool・8 GiB entry /
+      staging。LFMの会話Providerは停止し、ornith15-strix-conversationだけがreadyとなった。
+    </p>
+    <table>
+      <caption>
+        公開API E2Eの入力再利用と再計算
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ケース</th>
+          <th scope="col">入力tokens</th>
+          <th scope="col">cached_tokens</th>
+          <th scope="col">再計算tokens</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">cold</th>
+          <td>623</td>
+          <td>0</td>
+          <td>623</td>
+        </tr>
+        <tr>
+          <th scope="row">repeat</th>
+          <td>623</td>
+          <td>619</td>
+          <td>4</td>
+        </tr>
+        <tr>
+          <th scope="row">append</th>
+          <td>645</td>
+          <td>625</td>
+          <td>20</td>
+        </tr>
+        <tr>
+          <th scope="row">changed-user</th>
+          <td>626</td>
+          <td>107</td>
+          <td>519</td>
+        </tr>
+        <tr>
+          <th scope="row">stream-repeat</th>
+          <td>623</td>
+          <td>619</td>
+          <td>4</td>
+        </tr>
+        <tr>
+          <th scope="row">ram-restore</th>
+          <td>623</td>
+          <td>619</td>
+          <td>4</td>
+        </tr>
+        <tr>
+          <th scope="row">parallel-repeat-Q</th>
+          <td>622</td>
+          <td>618</td>
+          <td>4</td>
+        </tr>
+        <tr>
+          <th scope="row">parallel-repeat-P</th>
+          <td>622</td>
+          <td>618</td>
+          <td>4</td>
+        </tr>
+        <tr>
+          <th scope="row">parallel-repeat-R</th>
+          <td>622</td>
+          <td>618</td>
+          <td>4</td>
+        </tr>
+        <tr>
+          <th scope="row">parallel-repeat-S</th>
+          <td>622</td>
+          <td>618</td>
+          <td>4</td>
+        </tr>
+        <tr>
+          <th scope="row">new-connection-same-key</th>
+          <td>623</td>
+          <td>619</td>
+          <td>4</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      公開APIの23要求すべてHTTP 200、正しい合成記憶語、stopで完了した。native
+      cache_nと公開cached_tokensが一致し、cached_tokens＋prompt_nが入力tokensに一致した。RAM
+      loadsは0から2、failuresとbypassesは前後とも0。質問の書き換えでは107/626
+      tokensの再利用に留まり、同一入力や追記と同じ再利用率にはならない。到達できる復元点による制約を含む結果として記録する。
+    </p>
+    <p>
+      Eumenesの実client libraryを使った4要求も成功した。初回504 tokens・cached
+      0、同じ入力の再送はcached 500・再計算4、追記は526 tokens・cached
+      506・再計算20。streamでもproviderCachedTokens 500・再計算4・content
+      deltaを観測した。Eumenes自身が行う正式な入力token計数は4件ともHTTP
+      200で成功し、catalogの200k契約から解決したmodelはornith1.5-strixだった。別ホストのEumenes
+      UI試験は行っていない。
+    </p>
+    <p>
+      結果はapi-e2e-final/results.json、eumenes-client-results.json、summary.jsonに保存する。最初の409試行もapi-e2e/results.jsonに残す。ソフトウェアの必須release
+      gate、型検査、更新した構成テストも通過した。200k×4を全て埋める負荷試験は行っていない。
+    </p>
   </section>
 </article>
