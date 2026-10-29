@@ -6,6 +6,14 @@
     STRIXのprocessが存在せずFASTが動作していることを確認してから、STRIXの重みを実ファイルから削除した。
     先行するクラッシュ調査では原因を特定できていない。廃止は利用者の運用判断に基づく。
   </p>
+  <aside>
+    <p>
+      入力キャッシュ修正後のcheckpoint数・メモリ予約・保存上限と実API結果は<a
+        href="./qwen38-fast-input-cache-e2e-2026-10-29.html"
+        >Qwen FAST入力キャッシュE2E</a
+      >を参照する。本書の6 GiB entryと40 GiB実行予約は当初の配備値である。
+    </p>
+  </aside>
   <section id="deletion">
     <h2>削除したモデルと再選択の防止</h2>
     <p>

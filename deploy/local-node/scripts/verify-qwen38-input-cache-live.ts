@@ -16,7 +16,11 @@ const env = Object.fromEntries(readFileSync("/etc/larm/larm.env", "utf8").split(
   .filter(line => line && !line.startsWith("#") && line.includes("="))
   .map(line => { const i = line.indexOf("="); return [line.slice(0, i), line.slice(i + 1).replace(/^['"]|['"]$/g, "")]; }));
 const privateEnv = JSON.parse(readFileSync(process.env.LARM_PROMPT_RETENTION_ENV_FILE, "utf8"));
-const client = new LarmClient({ baseUrl: "http://127.0.0.1:9810", apiToken: env.LARM_API_TOKEN, timeoutMs: 300000 });
+// Match the running release's client schema even when the source workspace is
+// ahead of the deployed API. A test must follow the actual resolved service.
+const clientModule = "/srv/ai/apps/larm-current/packages/client/src/index.ts";
+const { LarmClient: LiveLarmClient } = await import(clientModule) as { LarmClient: typeof LarmClient };
+const client = new LiveLarmClient({ baseUrl: "http://127.0.0.1:9810", apiToken: env.LARM_API_TOKEN, timeoutMs: 300000 });
 const runKey = `qwen-cache-e2e-${Date.now()}`;
 const result: any = { ok: false, profile, cases: [] };
 const save = () => writeFileSync(resolve(directory, "results.json"), JSON.stringify(result, null, 2) + "\n");
@@ -96,8 +100,8 @@ try {
   cold(await chat("unkeyed-cold", "unused", "cobalt", a, { prompt_cache_key: undefined }));
   hit(await chat("changed-user", "unused", "cobalt", [a[0], { role: "user", content: "Print the secret remembered word and nothing else." }], { prompt_cache_key: undefined }));
   hit(await chat("stream-repeat", "A", "cobalt", a, { stream: true, stream_options: { include_usage: true } }));
-  hit(await chat("default-medium", "A", "cobalt", a, { reasoning_effort: undefined, max_tokens: 384 }));
-  hit(await chat("default-medium-repeat", "A", "cobalt", a, { reasoning_effort: undefined, max_tokens: 384 }));
+  cold(await chat("default-medium", "medium", "cobalt", a, { reasoning_effort: undefined, max_tokens: 384 }));
+  hit(await chat("default-medium-repeat", "medium", "cobalt", a, { reasoning_effort: undefined, max_tokens: 384 }));
   result.beforeDisplace = await stats();
   for (const [scope, word] of [["B", "amber"], ["C", "jade"], ["D", "coral"], ["E", "ivory"], ["F", "ochre"]]) {
     cold(await chat(`other-${scope}`, scope!, word!, messages(scope!, word!, false)));

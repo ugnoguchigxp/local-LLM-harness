@@ -35,6 +35,18 @@
       lease最大5分は維持する。再起動をまたぐKV永続化ではない。
     </p>
   </section>
+  <section id="usage-semantics">
+    <h2>思考設定とusageの読み方</h2>
+    <p>
+      noneからmediumへ変えるとテンプレート自体が変わる。この合成fixtureでは659 tokensと623
+      tokensとなり、共通prefixは先頭3 tokensだけだった。この切替直後のcache
+      missは期待される。E2Eはmediumの初回をcoldとして、同じ設定での再送をhitとして検証する。最初の試行で切替直後のhitまで要求していた期待値を訂正し、失敗した試行の証跡も残す。
+    </p>
+    <p>
+      prompt_tokensは入力全体のtoken数を示すため、hitでも減らない。再利用量はusage.prompt_tokens_details.cached_tokens、今回処理した残りはnative
+      timings.prompt_nで確認する。入力の先頭部分を変更した場合、scope・keyが同じでも任意の一致部分を再利用できるわけではない。
+    </p>
+  </section>
   <section id="acceptance">
     <h2>E2Eの受入条件</h2>
     <p>
@@ -50,7 +62,112 @@
       <li>cache failure counterが増えない。</li>
     </ul>
     <p>
-      速度比較や200k×4を全て埋める負荷試験は行わない。証跡は/srv/ai/evidence/qwen38-fast-cache-e2e-20261029。反映後の合否と数値は実機結果で追記する。
+      速度比較や200k×4を全て埋める負荷試験は行わない。証跡は/srv/ai/evidence/qwen38-fast-cache-e2e-20261029。反映後の合否と数値は次節に記録する。
+    </p>
+  </section>
+  <section id="live-results">
+    <h2>反映後の実API結果</h2>
+    <p>
+      署名付きrelease
+      e80ecf62344438148be5b6210d15a037de1d529cを反映し、controllerのcontract_verified /
+      succeededを確認した。公開selector
+      ornith1.5Strixからqwen3.8-27b-rocmfp4-fastへ解決し、25要求すべてHTTP
+      200、正しい記憶語、finish_reason stopで完了した。noneと省略時mediumの両方で再利用が成立した。
+    </p>
+    <table>
+      <caption>
+        公開usageの入力token数と再利用量
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ケース</th>
+          <th scope="col">prompt_tokens</th>
+          <th scope="col">cached_tokens</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">cold</th>
+          <td>623</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">repeat</th>
+          <td>623</td>
+          <td>619</td>
+        </tr>
+        <tr>
+          <th scope="row">append</th>
+          <td>645</td>
+          <td>625</td>
+        </tr>
+        <tr>
+          <th scope="row">changed-user</th>
+          <td>626</td>
+          <td>605</td>
+        </tr>
+        <tr>
+          <th scope="row">stream-repeat</th>
+          <td>623</td>
+          <td>619</td>
+        </tr>
+        <tr>
+          <th scope="row">default-medium</th>
+          <td>659</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">default-medium-repeat</th>
+          <td>659</td>
+          <td>655</td>
+        </tr>
+        <tr>
+          <th scope="row">ram-restore</th>
+          <td>623</td>
+          <td>619</td>
+        </tr>
+        <tr>
+          <th scope="row">parallel-repeat-P</th>
+          <td>622</td>
+          <td>618</td>
+        </tr>
+        <tr>
+          <th scope="row">parallel-repeat-Q</th>
+          <td>622</td>
+          <td>618</td>
+        </tr>
+        <tr>
+          <th scope="row">parallel-repeat-R</th>
+          <td>622</td>
+          <td>618</td>
+        </tr>
+        <tr>
+          <th scope="row">parallel-repeat-S</th>
+          <td>622</td>
+          <td>618</td>
+        </tr>
+        <tr>
+          <th scope="row">new-connection-same-key</th>
+          <td>623</td>
+          <td>619</td>
+        </tr>
+        <tr>
+          <th scope="row">new-connection-unkeyed</th>
+          <td>623</td>
+          <td>0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      5つの別会話後の復元でnative RAM
+      loadsは0から1、接続作り直し後までで2になった。failuresは前後とも0、bypassesも0。4並列の初回は4件ともcached
+      tokens
+      0、再送は4件とも618だった。MTPのdraft受入も観測し、質問変更・RAM復元・再接続後を含め、記憶語の取り違えはなかった。native
+      propsでは4 slots・各200192 tokens、公開契約では各200000 tokens、認証済み保持policyの24 GiB
+      pool / 8 GiB entryを確認した。
+    </p>
+    <p>
+      完成した証跡は/srv/ai/evidence/qwen38-fast-cache-e2e-20261029/after-complete/results.json。修正前の分岐再現はbranch-before.json、最初の試行はafter/results.jsonに保存する。合成入力による機能E2Eであり、200k×4を埋める試験や速度ベンチマークは実施していない。
     </p>
   </section>
 </article>
