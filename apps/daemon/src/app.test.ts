@@ -562,7 +562,7 @@ test("v3 public profile selectors return exact provider and service endpoints wi
   const expected = {
     "ruri-user-intent": {
       id: "ruri-user-intent",
-      providers: [{ name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-user-intent-v1" }],
+      providers: [{ name: "system-one", endpoint: "/v1/systemone", model: "in" }],
       services: [],
     },
     contextStill: {

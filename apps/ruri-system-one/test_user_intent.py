@@ -70,16 +70,17 @@ class IntentTests(unittest.TestCase):
         with TestClient(app) as client:
             health=client.get('/health').json()
             self.assertEqual(health['encoder_session_count'],1)
-            self.assertEqual(set(health['models']),{PUBLIC_MODEL,user_intent.PUBLIC_MODEL})
+            self.assertEqual(set(health['models']),{PUBLIC_MODEL,user_intent.PUBLIC_MODEL,'em','in'})
             for row in rows:
-                body=request();body['state']={k:row[k] for k in ['text','previous_agent']}
+                body=request();body['model']='in';body['state']={k:row[k] for k in ['text','previous_agent']}
                 result=client.post('/v1/systemone',json=body)
                 self.assertEqual(result.status_code,200)
+                self.assertEqual(result.json()['model'],'in')
                 answer=result.json()['answers']['intent']
                 self.assertEqual(answer['choice'],row['prediction'])
                 np.testing.assert_allclose([answer['logits'][l] for l in user_intent.LABELS],
                                            [row['logits'][l] for l in user_intent.LABELS],atol=5e-5,rtol=0)
-            attitude=dict(model=PUBLIC_MODEL,state={'response':'設定を保存しました。'},questions={
+            attitude=dict(model='em',state={'response':'設定を保存しました。'},questions={
                 'emotion':dict(type='choice',instructions='表情',criteria={l:l for l in LABELS})})
             baseline=client.post('/v1/systemone',json=attitude).json()['answers']
             def invoke(i):

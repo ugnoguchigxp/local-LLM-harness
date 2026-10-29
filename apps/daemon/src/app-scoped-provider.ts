@@ -1,4 +1,4 @@
-import type { RuntimeProtocol } from "@larm/core";
+import { systemOneModelIdentity, type RuntimeProtocol } from "@larm/core";
 import type { PreparedGatewayRequestBody } from "./app-gateway-request";
 import { RequestBodyError, readBodyLimited } from "./http-body";
 
@@ -41,7 +41,9 @@ export async function validateScopedProviderModel(input: {
     if (
       modelValues.length !== 1
       || typeof modelValues[0] !== "string"
-      || modelValues[0] !== input.publicModel
+      || (input.protocol === "larm.system-one.v1"
+        ? systemOneModelIdentity(modelValues[0]) !== systemOneModelIdentity(input.publicModel)
+        : modelValues[0] !== input.publicModel)
     ) {
       return {
         ok: false,

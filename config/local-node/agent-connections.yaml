@@ -14,7 +14,7 @@ agentProfiles:
       - name: system-one
         capability: decision.system-one
         route: system-one-ruri
-        publicModel: ruri-v3-30m-user-intent-v1
+        publicModel: in
         publishModel: false
         readiness: system-one
   lfm3-vl-2b:

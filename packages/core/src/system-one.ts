@@ -119,3 +119,10 @@ export function inspectSystemOneResponse(input: {
   }
   return { ok: true, response: parsed.data };
 }
+
+/** Public short names and their existing artifact names identify the same task. */
+export function systemOneModelIdentity(model: string): string {
+  if (model === "in") return "ruri-v3-30m-user-intent-v1";
+  if (model === "em") return "ruri-v3-30m-speaking-attitude";
+  return model;
+}

@@ -655,7 +655,7 @@ test("game decision readiness validates the known action independently of model 
 
 test("intent readiness uses user text and five intent labels instead of attitude", async () => {
   const { registry, control, provider } = fixture("larm.system-one.v1", "decision.system-one");
-  provider.publicModel = "ruri-v3-30m-user-intent-v1";
+  provider.publicModel = "in";
   let observed: any;
   const readiness = new SemanticReadiness({ control, getRegistry: () => registry,
     executionGate: new ExecutionGate(), timeoutMs: 100,

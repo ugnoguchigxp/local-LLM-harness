@@ -78,6 +78,12 @@ class Engine:
             return (self.weights @ vector + self.bias).tolist(), len(encoded.ids), max(0, full_count - len(encoded.ids))
 
     def predict(self, body):
+        if isinstance(body,dict) and body.get('model') in ('in','em'):
+            model = body['model']
+            target = user_intent.PUBLIC_MODEL if model == 'in' else PUBLIC_MODEL
+            result = self.predict(dict(body,model=target))
+            result['model'] = result['routing']['model'] = model
+            return result
         if isinstance(body,dict) and body.get('model') == user_intent.PUBLIC_MODEL:
             if self.intent_head is None:
                 raise ValueError('user-intent model is not loaded')
@@ -104,7 +110,7 @@ class Engine:
                 'execution_providers': self.session.get_providers(), 'threads': 4, 'batch': 1,
                 'max_tokens': 512, 'load_ms': self.load_ms, 'input_cache': False,
                 'candidate_cache': False, 'preliminary': True, 'labels': list(LABELS),
-                'models': [PUBLIC_MODEL] + ([user_intent.PUBLIC_MODEL] if self.intent_head else []), 'encoder_session_count': 1,
+                'models': [PUBLIC_MODEL, 'em'] + (['in', user_intent.PUBLIC_MODEL] if self.intent_head else []), 'encoder_session_count': 1,
                 'user_intent': self.intent_health(),
                 'onnxruntime': ort.__version__, 'temperature': self.temperature}
 
@@ -140,6 +146,6 @@ class Engine:
     def intent_health(self):
         if not self.intent_head:
             return None
-        return dict(model=user_intent.PUBLIC_MODEL,labels=list(user_intent.LABELS),
+        return dict(model='in',artifact_model=user_intent.PUBLIC_MODEL,labels=list(user_intent.LABELS),
                     head_revision=self.intent_head['head_revision'],calibration_revision=self.intent_head['calibration_revision'],
                     temperature=self.intent_head['temperature'],preliminary=True,encoder_calls=2,max_tokens_per_call=512)

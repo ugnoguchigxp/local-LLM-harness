@@ -1,7 +1,8 @@
 # Ruri shared speaking-attitude and user-intent Provider
 
-`model` selects either `ruri-v3-30m-speaking-attitude` or
-`ruri-v3-30m-user-intent-v1` on `POST /v1/systemone`. Both heads are verified,
+`model` selects `em` (speaking attitude) or `in` (user intent) on
+`POST /v1/systemone`. Existing long names remain accepted aliases and responses
+echo the requested model. Both heads are verified,
 loaded and warmed at startup and share exactly one CPU ONNX session and request
 lock. Intent uses two sequential Encoder calls plus fixed character features;
 it does not reload or replace the attitude head. Existing attitude inputs and
@@ -21,7 +22,7 @@ profiles keep their original Provider sets.
 
 ```json
 {
-  "model": "ruri-v3-30m-user-intent-v1",
+  "model": "in",
   "state": {"previous_agent": null, "text": "明日の天気を調べてください"},
   "questions": {"intent": {
     "type": "choice",

@@ -1,6 +1,9 @@
 <article lang="ja">
   <h1>Ruri意図判定APIの共有常駐とEumenes試用手順</h1>
   <p>
+    公開modelは意図判定がin、表情判定がem。ユーザーの短い名称の指定により2文字に統一した。既存の長いmodel名は同じタスクの互換名として受理し、応答のmodelは要求した名前を返す。意図と表情をまたぐcredentialの利用は認めない。
+  </p>
+  <p>
     2026-10-29
     JST。ユーザーの「APIを更新して配備し、Eumenesで試用する」という指示に基づき、modelパラメータで表情判定と会話意図判定を選択できるようにする。両headは起動時に検証・Warm準備し、一つのCPU
     ONNX sessionと要求ロックを共有する。既存の表情契約を保持する。
@@ -14,7 +17,7 @@
         /v1/agent-connectionsへprofile=ruri-user-intent、audience=saaa-desktop、providers=[system-one]を指定し、readyを待ってclaimする。同一ホストの検証ではaudience=same-hostを使用する。
       </li>
       <li>
-        claimされたsystem-oneのendpointとcredential.tokenを使用する。公開modelはruri-v3-30m-user-intent-v1。既存の表情用credentialは別modelに切り替えて使用できない。
+        claimされたsystem-oneのendpointとcredential.tokenを使用する。公開modelはin。既存の表情用credentialは別modelに切り替えて使用できない。
       </li>
       <li>
         利用中は接続をrenewし、終了時はreleaseする。接続を解放してもruntimeのWarm下限1は維持される。
@@ -31,7 +34,7 @@
       POST先はclaimにある/v1/systemone。AuthorizationはclaimされたBearer、Content-Typeはapplication/jsonとする。
     </p>
     <pre><code>{
-  "model": "ruri-v3-30m-user-intent-v1",
+  "model": "in",
   "state": {
     "previous_agent": "何をお手伝いしましょうか？",
     "text": "明日の天気を調べてください"
@@ -71,7 +74,7 @@
       sourceを実行しない。学習データとモデル係数はGit管理外のまま保持する。
     </p>
     <p>
-      health.modelsにruri-v3-30m-speaking-attitudeとruri-v3-30m-user-intent-v1を公開し、encoder_session_count=1、user_intentにhead
+      health.modelsにem、inと各タスクの長い互換名を公開し、encoder_session_count=1、user_intentにhead
       revisionと校正revisionを返す。モデルはリクエスト単位で選び、全体の現在headを書き換えない。両用途の推論を同じロックで直列化する。
     </p>
   </section>
