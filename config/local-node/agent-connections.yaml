@@ -148,7 +148,7 @@ agentProfiles:
         publicModel: ornith-1.5-strix-lean
         readiness: llm-inference
         contextWindow:
-          maxTokens: 262144
+          maxTokens: 200000
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
       - name: asr
@@ -211,20 +211,20 @@ agentProfiles:
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
   contextstill-background:
-    description: ContextStill background profile sharing the default LFM2.5 text LLM, Laya System One, and multilingual E5 embedding
+    description: Ornith 1.5 STRIX_LEAN、200000 tokens×4並列、認証付き入力cache・会話KV保持復元。既存の補助Providerを維持。
     schedulingPriority: 1000
     requestScheduling: background-when-idle
     providers:
       - name: llm
         capability: llm.coding
         route: llm-contextstill-lfm25
-        publicModel: lfm2.5-contextstill
+        publicModel: ornith1.5-strix-contextstill
         readiness: llm-inference
         contextWindow:
-          maxTokens: 32768
+          maxTokens: 200000
           outputReserveTokens: 4096
           safetyMarginTokens: 0
-        description: LFM2.5を共有するバックグラウンド用テキストLLM。32K入力枠、出力最大4096 tokens。reasoning_effortはlow・medium・high・max、省略時medium。画像入力は非対応。
+        description: Ornith 1.5 STRIX_LEAN。200000 tokens、4並列、入力cacheとRAM保持復元。必要な履歴を毎回messagesへ送信。思考は無効。画像入力契約はcatalogとclaimを参照。
       - name: asr
         capability: speech.stt
         route: stt-granite
@@ -360,7 +360,7 @@ agentProfiles:
         publicModel: granite-speech-4.1-2b
         readiness: stt-transcription
   lfm2.5:
-    description: LFM2.5 24B-A2B（標準）— テキスト会話・コード・JSON出力、128K入力、Reasoning省略時medium。音声認識・日英音声合成・embedding・System One付き。
+    description: Ornith 1.5 STRIX_LEAN、200000 tokens×4並列、認証付き入力cache・会話KV保持復元。既存の補助Providerを維持。
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
     usageProtection:
@@ -378,11 +378,11 @@ agentProfiles:
       - name: llm
         capability: llm.general
         route: llm-lfm25
-        publicModel: lfm2.5-24b-a2b
-        description: 標準のテキスト会話モデルはLFM2.5 24B-A2B。会話・文章作成・コード・JSON形式の出力に使用する。 reasoning_effortはlow・medium・high・max、省略時はmedium。maxでもmax_tokensと入力上限は適用される。 contextは131072 tokens、出力は最大4096 tokens、4並列。画像入力は非対応。 prompt_cache_keyで会話ごとの入力キャッシュを再利用できる。毎回、必要な会話履歴をmessagesに含める。
+        publicModel: ornith1.5-strix
+        description: Ornith 1.5 STRIX_LEAN。200000 tokens、4並列、入力cacheとRAM保持復元。必要な履歴を毎回messagesへ送信。思考は無効。画像入力契約はcatalogとclaimを参照。
         readiness: llm-inference
         contextWindow:
-          maxTokens: 131072
+          maxTokens: 200000
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
       - name: asr
@@ -492,7 +492,7 @@ agentProfiles:
         publicModel: ornith-1.5-strix-lean
         readiness: llm-inference
         contextWindow:
-          maxTokens: 262144
+          maxTokens: 200000
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
       - name: asr

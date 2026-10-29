@@ -15,7 +15,8 @@ function legacySource(): string {
   config.models["ornith15-strix-conversation"].cmd = config.models["ornith15-strix-conversation"].cmd
     .replace(/^\/usr\/bin\/python3\s+\S+\/launch-prompt-retention\.py\s+\S+\s+/, "")
     .replace("--no-kv-unified", "--kv-unified")
-    .replace(/-cram\s+8192\b/, "-cram 0")
+    .replace(/-cram\s+(?:8192|24576)\b/, "-cram 0")
+    .replace("--ctx-size 800000", "--ctx-size 1048576")
     .replace("--cache-prompt", "--no-cache-prompt")
     .replace(/-ctxcp\s+8\b/, "-ctxcp 0")
     .replace(/-cpent\s+1024\b/, "");

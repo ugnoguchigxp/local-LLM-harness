@@ -12,8 +12,9 @@ routes:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     candidates:
-      - runtime: lfm25-conversation
+      - runtime: ornith15-strix-conversation
         purpose: primary
   llm-saaa-qwen38:
     capabilities:
@@ -284,9 +285,10 @@ routes:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     explicitOnly: true
     candidates:
-      - runtime: lfm25-conversation
+      - runtime: ornith15-strix-conversation
         purpose: primary
   llm-lfm3:
     capabilities:
@@ -301,12 +303,16 @@ routes:
       - llm.general
       - llm.reasoning
       - llm.coding
+      - llm.vision
     explicitOnly: true
     candidates:
-      - runtime: lfm25-conversation
+      - runtime: ornith15-strix-conversation
         purpose: primary
   llm-qwen38-rocmfp4-fast:
-    capabilities: [llm.general, llm.reasoning, llm.coding]
+    capabilities:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
     explicitOnly: true
     candidates:
       - runtime: qwen38-rocmfp4-fast-conversation

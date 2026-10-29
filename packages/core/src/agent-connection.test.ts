@@ -120,7 +120,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
   expect(primary.providers.find(provider => provider.name === "llm")).toMatchObject({
     capability: "llm.general", supportedCapabilities: ["llm.general", "llm.vision"],
     publicModel: "ornith-1.5-strix-lean", route: "llm-ornith15-strix",
-    contextWindow: { maxTokens: 262_144, outputReserveTokens: 4_096, safetyMarginTokens: 1_976 },
+    contextWindow: { maxTokens: 200_000, outputReserveTokens: 4_096, safetyMarginTokens: 1_976 },
   });
   for (const id of ["coding-default", "saaa-conversation-ornith15", "ornith1.5Strix-64k"]) {
     expect(catalog.profiles.some(profile => profile.id === id)).toBe(false);
@@ -150,12 +150,12 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "embedding",
       }, {
         capability: "llm.coding",
-        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
+        supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning", "llm.vision"],
         route: "llm-contextstill-lfm25",
         protocol: "openai.chat-completions.v1",
-        publicModel: "lfm2.5-contextstill",
+        publicModel: "ornith1.5-strix-contextstill",
         readiness: "llm-inference",
-        contextWindow: { maxTokens: 32768, outputReserveTokens: 4096, safetyMarginTokens: 0 },
+        contextWindow: { maxTokens: 200000, outputReserveTokens: 4096, safetyMarginTokens: 0 },
       }, {
         name: "system-one",
         route: "system-one-laya",
@@ -420,7 +420,7 @@ test("Gemma main and auxiliary context tiers share four allocations within one K
   expect(matchAgentProfileContextWindow(auxiliaryRequest)?.inputBudgetTokens).toBe(59_464);
   expect(matchAgentProfileContextWindow({ ...auxiliaryRequest, promptTokens: 59_465 })).toBeUndefined();
   expect(matchAgentProfileContextWindow({
-    catalog, profileIds: [main.id], promptTokens: 256_072, requestedOutputTokens: 4_096,
+    catalog, profileIds: [main.id], promptTokens: 193_928, requestedOutputTokens: 4_096,
   })?.profile.id).toBe(main.id);
 
   const observedAt = "2026-10-07T00:00:00.000Z";
@@ -457,9 +457,9 @@ test("four retained Ornith profile sessions share one KV pool without the retire
   const mainLlm = main.providers.find((provider) => provider.name === "llm")!;
   const route = registry.routes.find((route) => route.id === mainLlm.route)!;
   const runtimeId = route.candidates[0]!.runtime;
-  expect(mainLlm.contextWindow!.maxTokens * 4).toBe(1_048_576);
+  expect(mainLlm.contextWindow!.maxTokens * 4).toBe(800_000);
   expect(matchAgentProfileContextWindow({
-    catalog, profileIds: [main.id], promptTokens: 256_072, requestedOutputTokens: 4_096,
+    catalog, profileIds: [main.id], promptTokens: 193_928, requestedOutputTokens: 4_096,
   })?.profile.id).toBe(main.id);
 
   const observedAt = "2026-10-07T00:00:00.000Z";

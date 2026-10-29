@@ -1,0 +1,68 @@
+<article lang="ja">
+  <h1>Eumenes向けOrnith 1.5 STRIXの200k復帰と入力キャッシュ受入</h1>
+  <p>
+    2026-10-30。利用者の指定により、Eumenesが使用している会話LLMをLFM2.5からOrnith 1.5
+    STRIX_LEANへ戻す。200000
+    tokensのContextWindow、入力cache、Provider停止・再起動・署名付き配備・実API
+    E2Eを受入条件とする。
+  </p>
+  <section id="resolution">
+    <h2>要求からの解決</h2>
+    <p>
+      現在の配備36ecea04bb6302c456c479e6d850204f368b6319を基準にする。直近のLARMログではlfm2.5
+      selectorのprofile-defaultおよびllm要求を確認した。Eumenesは設定に保存されたprofileを使い、modelと入力契約をcatalog・claimから取得する。接続先SQLiteがこのホストにないため、Eumenesの製品設定・DBは変更しない。
+    </p>
+    <p>
+      保存済み互換selector
+      lfm2.5とornith1.5Strixを維持し、そのprofileのllm-lfm25、既定llm-default、共有ContextStillのllm-contextstill-lfm25をornith15-strix-conversationへ解決する。公開modelはornith1.5-strix、背景用はornith1.5-strix-contextstillとする。ContextStillと既存のOrnith画像profileも200000
+      tokensに揃え、実backendより大きな枠をadvertiseしない。最新のRuri shared Encoder・in/em
+      model名・補助Providerを維持する。
+    </p>
+    <p>
+      LFM2.5のwarm minInstancesを0、Ornithを1とし、同じswap groupで交代する。Qwen
+      FASTとLFMの重み・再利用用構成は保存する。削除済みのQwen
+      STRIXは対象と異なるモデルで、復活させない。
+    </p>
+  </section>
+  <section id="runtime">
+    <h2>実行構成と保持上限</h2>
+    <p>
+      既存のOrnith-1.5-35B-ROCmFP4-STRIX_LEAN.ggufとmmproj、保持対応retention-v2 engineとinstruction
+      templateを使う。native contextは800000 tokensを4分割し、公開200000 tokens×4とする。target
+      K/Vはq4_0、checkpoint 8、spacing 1024、cache-prompt、no-kv-unified、cache-reuse
+      0、no-cache-idle-slotsを使用する。旧MTP
+      headは既存の検証済み構成どおり無効、reasoningもoffとする。
+    </p>
+    <p>
+      Ornith専用private environmentを作成し、既存の認証keyを使う。RAM poolと同一所有者上限は24
+      GiB、1 entryとstagingは各8 GiB、metadata 64 MiB。従来の1 GiB entryでは大きなKV
+      snapshotを保存できないため上限を合わせる。実行メモリ予約56 GiBに保存枠32.0625
+      GiBを加え、Ornithの予約は88.0625
+      GiB。通常の資源判定で補助Providerとの共存と競合モデルの拒否を確認する。
+    </p>
+    <p>
+      idle 5分・最大30分・内部scope
+      lease最大5分と所有者分離を維持する。再起動をまたぐKVの永続化ではなく、必要な会話履歴はmessagesに含める。モデル切替で古いKVは引き継がない。
+    </p>
+  </section>
+  <section id="deployment">
+    <h2>配備と受入</h2>
+    <p>
+      dirtyなmain作業を配備せず、現在の配備のcleanなsourceから独立した候補を作る。必須release
+      gateを通して署名付きrequestを通常のcontrollerへ渡し、Provider再起動後のcontract_verified /
+      succeededを確認する。稼働releaseを直接書き換えない。
+    </p>
+    <p>
+      E2EはProfile選択・Connection作成・claim・token counting・認証付き公開推論・native
+      cacheまでを通す。同一入力・追記・質問変更・SSE・4並列・5会話後のRAM復元・接続解放後の明示keyの復元を検証し、合成記憶語の正答とstop、cached_tokensとnative
+      counterの整合を確認する。別の巨大engineは起動せず、他利用者のcacheを消去しない。
+    </p>
+    <p>
+      Eumenes側の実client libraryも使用し、catalogから得たmodel・入力契約によるtoken
+      countと回答、再送・streamでの再利用を確認する。これは同ホスト上のclient
+      integrationであり、別ホストのEumenes
+      UI操作や製品DBの変更とは区別する。200k×4を全て埋める負荷試験や速度ベンチマークは行わない。
+    </p>
+    <p>証跡は/srv/ai/evidence/ornith-strix-200k-restore-20261030。実機結果は配備後に追記する。</p>
+  </section>
+</article>

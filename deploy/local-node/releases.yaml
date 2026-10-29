@@ -263,7 +263,7 @@ runtimeReleases:
     providerConfigRevision: q38rocm-0fc9568-strix-1m-p4-q4-cp8-retention-v2-engine-c994e85f69f2-instructions-d5bd31a440a5
     estimatedMemoryGB: 56
     healthPath: /health
-    default: true
+    default: false
   granite-asr-current:
     runtime: granite-asr
     artifacts:
@@ -319,5 +319,14 @@ runtimeReleases:
       - qwen38-primary
     providerConfigRevision: rocmfpx-120141f-fast-200k-p4-mtp3-scoped-cache-24g-v1
     estimatedMemoryGB: 40
+    healthPath: /health
+    default: true
+  ornith15-strix-conversation-200k-p4-retention-v6:
+    runtime: ornith15-strix-conversation
+    artifacts:
+      - ornith15-35b-strix-lean
+      - ornith15-vision-bf16
+    providerConfigRevision: ornith-strix-800k-p4-q4-cp8-retention24g-v6
+    estimatedMemoryGB: 56
     healthPath: /health
     default: true
