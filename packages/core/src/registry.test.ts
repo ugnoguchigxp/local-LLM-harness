@@ -628,7 +628,7 @@ test("ContextStill resolves the temporary Qwen FAST 200k MTP backend shared with
   expect(runtime).toMatchObject({
     artifacts: ["qwen38-primary"],
     policy: { warm: { minInstances: 1 }, swapGroup: "conversation-llm-slot" },
-    resources: { maxConcurrentAllocations: 4, maxConcurrentRequests: 4 },
+    resources: { estimatedMemoryGB: 48, maxConcurrentAllocations: 4, maxConcurrentRequests: 4 },
     deployment: { modelId: "qwen38-rocmfp4-fast-conversation" },
   });
   const configured = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
@@ -637,6 +637,8 @@ test("ContextStill resolves the temporary Qwen FAST 200k MTP backend shared with
   expect(command).toContain("Qwen3.8-27B-ROCmFP4-FAST.gguf");
   expect(command).toContain("--ctx-size 800000");
   expect(command).toContain("--parallel 4");
+  expect(command).toContain("--ctx-checkpoints 8");
+  expect(runtime.promptRetention).toMatchObject({ entryMaxBytes: 8 * 1024 ** 3, stagingMaxBytes: 8 * 1024 ** 3 });
   expect(command).toContain("--cache-type-k q4_0");
   expect(command).toContain("--cache-type-v q4_0");
   expect(command).toContain("--reasoning on");

@@ -944,7 +944,7 @@ runtimes:
         idleTtlSeconds: 60
       swapGroup: conversation-llm-slot
     resources:
-      estimatedMemoryGB: 40
+      estimatedMemoryGB: 48
       maxConcurrentAllocations: 4
       maxConcurrentRequests: 4
       maxQueuedRequests: 16
@@ -959,8 +959,8 @@ runtimes:
       protocol: larm-prompt-cache.v1
       maxBytes: 25769803776
       principalMaxBytes: 25769803776
-      entryMaxBytes: 6442450944
-      stagingMaxBytes: 6442450944
+      entryMaxBytes: 8589934592
+      stagingMaxBytes: 8589934592
       metadataMaxBytes: 67108864
       maxEntries: 64
       principalMaxEntries: 16

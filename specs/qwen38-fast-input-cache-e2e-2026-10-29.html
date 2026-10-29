@@ -1,0 +1,56 @@
+<article lang="ja">
+  <h1>Qwen FASTの会話分岐で入力キャッシュが失われる問題と実API E2E</h1>
+  <p>
+    2026-10-29。対象は現在の公開会話Providerから解決されるQwen3.8-27B ROCmFP4 FAST、MTP有効、200000
+    tokens×4並列。削除済みQwen STRIXは使用しない。
+  </p>
+  <section id="cause">
+    <h2>再現と原因</h2>
+    <p>
+      従来のE2Eは同一入力・追記・RAM復元を確認したが、最後のuserメッセージを変更する分岐を確認していなかった。実APIの再試験では同一入力2023
+      tokensの再送は2019 cached
+      tokens、追記は2025、RAM復元は2019となった。一方、systemを維持してuserの質問を変えると2026
+      tokensすべてが再処理され、cached tokensは0だった。
+    </p>
+    <p>
+      このモデルには巻き戻せないrecurrent
+      stateがある。保持済みtoken列に共通prefixがあっても、その位置以前のcheckpointが必要である。FASTの設定は1個で、prompt末尾直前のcheckpointに置き換わり、質問の分岐点以前のstateを失う。Ornithの保持対応構成は8個を使用していた。モデルのMTPを停止する必要はない。
+    </p>
+    <p>
+      実際の利用履歴でも同一接続で共通prefixを持つ異なる入力とキャンセルが交互に送られていた。内容自体は証跡へ転記せず、role・長さ・hash・共通token数・usageだけを集計した。キャンセルされた未完了stateは共有しない従来の所有者分離を維持する。APIへのprompt_cache_key指定は必須ではなく、省略時はConnection単位の保持になる。
+    </p>
+  </section>
+  <section id="fix">
+    <h2>修正と資源上限</h2>
+    <p>
+      FASTのcheckpoint数をOrnithと同じ8にする。cache-prompt、分離KV、MTP、reasoning
+      none、200k×4は維持する。中間checkpointが増える分、実行メモリ予約を40から48 GiBへ増やす。RAM
+      poolは24 GiBのまま、1 entryとstagingの上限を6から8 GiBに増やす。モデルの長いdraft
+      KVを含むcheckpointを保持できるようにする。
+    </p>
+    <p>
+      FAST専用のowner-only実行環境ファイルを新設し、認証keyは従来のものを使う。全体予約は48＋24＋8＋0.0625＝80.0625
+      GiB、常駐補助Provider込みで約94.0625 GiB。利用可能112
+      GiBを超える競合Providerは通常の資源判定で拒否する。idle 5分・最大30分、内部scope
+      lease最大5分は維持する。再起動をまたぐKV永続化ではない。
+    </p>
+  </section>
+  <section id="acceptance">
+    <h2>E2Eの受入条件</h2>
+    <p>
+      verify-qwen38-input-cache-live.tsはProfile選択・Connection作成・claim・公開認証API・native
+      engine・公開usageまでを通す。別のengineを起動せず、他利用者のキャッシュを消去しない。合成記憶語の正答とstopを全件で確認する。
+    </p>
+    <ul>
+      <li>無効指定と新規scopeはcached tokens 0。</li>
+      <li>同一入力・会話追記・最後の質問の変更・SSE最終usageはcached tokensが正。</li>
+      <li>5つの別会話後に元の会話を正しく復元し、native RAM loadsも増加する。</li>
+      <li>4並列の独立会話の初回と再送を確認する。</li>
+      <li>接続解放後、同一所有者の明示cache keyは再利用でき、省略時の新接続はcoldとなる。</li>
+      <li>cache failure counterが増えない。</li>
+    </ul>
+    <p>
+      速度比較や200k×4を全て埋める負荷試験は行わない。証跡は/srv/ai/evidence/qwen38-fast-cache-e2e-20261029。反映後の合否と数値は実機結果で追記する。
+    </p>
+  </section>
+</article>
