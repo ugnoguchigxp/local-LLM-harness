@@ -1,0 +1,55 @@
+<article lang="ja">
+  <h1>LFM2.5への本番復帰とQwen FASTの保存</h1>
+  <p>
+    2026-10-29。利用者はQwen
+    FASTの本番試用を終了し、以前のLFMへ戻すこと、Qwenは保存しておくことを指定した。切替直前の基準release
+    103be6fe84aadaf1e068e235f9dfedfedb70a679を確認し、LFM2.5-24B-A2B-QAD-Q4_0へ戻す。
+  </p>
+  <section id="intent">
+    <h2>要求からの解決</h2>
+    <p>
+      標準・lfm2.5・既存ornith1.5Strix
+      selectorのLLMはllm-lfm25からlfm25-conversationへ解決する。公開modelはlfm2.5-24b-a2b、131072
+      tokens×4。ContextStillはllm-contextstill-lfm25から同じruntimeを共有し、公開model
+      lfm2.5-contextstill、以前の32768-token契約へ戻す。音声・画像・embedding・System
+      Oneは維持する。
+    </p>
+    <p>
+      LFM2.5の保持対応engine、分離KV、checkpoint 8、RAM pool 8
+      GiB、既存の保持期限・reasoning設定を使用する。LFMのwarm
+      minInstancesを1、Qwenを0とし、LLMのswap groupで現在の要求に従って交代する。別のLFM3
+      profileや画像用LFM3-VLは変更しない。
+    </p>
+  </section>
+  <section id="preservation">
+    <h2>Qwen FASTの保存</h2>
+    <p>
+      FASTの重み・MTP保持engine・private実行環境・runtime定義・release履歴・試験証跡を残す。200000
+      tokens×4、MTP draft最大3、none許可、checkpoint 8、RAM pool 24 GiB、entryとstaging各8
+      GiBを保存する。新しい配備でもFAST runtimeは削除せず、明示専用route
+      llm-qwen38-rocmfp4-fastとして残し、標準ルートからは選択しない。
+    </p>
+    <p>
+      試用した署名付きrelease e80ecf62344438148be5b6210d15a037de1d529cと、結果を記録したsource
+      revision
+      aaf4a58も残る。保存内容は/srv/ai/evidence/lfm25-restore-preserve-qwen-20261029/preserved-qwen.jsonに記録する。認証鍵はコピーせず、既存のowner-onlyファイルを保持する。削除済みのQwen
+      STRIXは復活させない。
+    </p>
+    <p>
+      Qwen専用の実API E2Eは、選択したprofileがFASTへ解決しない場合、native
+      cache検査を行う前に停止する。LFM稼働中に古い互換selector名だけを根拠にQwenを起動しない。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>反映と確認</h2>
+    <p>
+      現在のreleaseを基に必要な設定だけを戻し、署名付きreleaseの必須チェックを通して通常のcontrollerで反映する。切替後は新しいConnectionからの短いAPI応答、Profile→route→runtimeの解決、実プロセス、Qwen重みのinode・サイズ・更新日時が維持されたことを確認する。ベンチマークや長い入力の再検証は行わない。
+    </p>
+    <p>
+      証跡は/srv/ai/evidence/lfm25-restore-preserve-qwen-20261029。QwenのキャッシュE2E結果は<a
+        href="./qwen38-fast-input-cache-e2e-2026-10-29.html"
+        >別文書</a
+      >に保存する。
+    </p>
+  </section>
+</article>

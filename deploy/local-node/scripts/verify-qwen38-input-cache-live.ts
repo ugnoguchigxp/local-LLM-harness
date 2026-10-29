@@ -35,6 +35,7 @@ async function connect() {
   const claimed = await client.claimAgentConnection(connection.id);
   provider = claimed.providers.find(p => p.name === "llm" && p.apiStyle === "openai");
   requireThat(provider, "missing OpenAI LLM claim");
+  requireThat(provider.model === "qwen3.8-27b-rocmfp4-fast", "requested profile does not resolve to Qwen FAST; select FAST explicitly before running this E2E");
   result.model = provider.model;
   result.catalogRevision = catalog.catalogRevision;
 }

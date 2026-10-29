@@ -151,9 +151,9 @@ test("production agent profiles compile to strict protocol-aware provider contra
         supportedCapabilities: ["llm.coding", "llm.general", "llm.reasoning"],
         route: "llm-contextstill-lfm25",
         protocol: "openai.chat-completions.v1",
-        publicModel: "qwen3.8-27b-rocmfp4-fast-contextstill",
+        publicModel: "lfm2.5-contextstill",
         readiness: "llm-inference",
-        contextWindow: { maxTokens: 200000, outputReserveTokens: 4096, safetyMarginTokens: 0 },
+        contextWindow: { maxTokens: 32768, outputReserveTokens: 4096, safetyMarginTokens: 0 },
       }, {
         name: "system-one",
         route: "system-one-laya",

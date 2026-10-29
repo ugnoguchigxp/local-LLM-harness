@@ -202,20 +202,20 @@ agentProfiles:
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
   contextstill-background:
-    description: Qwen3.8 FAST 27B、200k×4並列、MTP・会話KV保持復元・none対応。STRIX廃止。補助Providerは従来どおり。
+    description: ContextStill background profile sharing the default LFM2.5 text LLM, Laya System One, and multilingual E5 embedding
     schedulingPriority: 1000
     requestScheduling: background-when-idle
     providers:
       - name: llm
         capability: llm.coding
         route: llm-contextstill-lfm25
-        publicModel: qwen3.8-27b-rocmfp4-fast-contextstill
+        publicModel: lfm2.5-contextstill
         readiness: llm-inference
         contextWindow:
-          maxTokens: 200000
+          maxTokens: 32768
           outputReserveTokens: 4096
           safetyMarginTokens: 0
-        description: "Qwen3.8 27B ROCmFP4 FAST。1会話200000 tokens、4並列。MTP・会話KV保持復元、reasoning_effort none・low・medium・high・max、省略時medium。履歴はmessagesで送信。"
+        description: LFM2.5を共有するバックグラウンド用テキストLLM。32K入力枠、出力最大4096 tokens。reasoning_effortはlow・medium・high・max、省略時medium。画像入力は非対応。
       - name: asr
         capability: speech.stt
         route: stt-granite
@@ -351,7 +351,7 @@ agentProfiles:
         publicModel: granite-speech-4.1-2b
         readiness: stt-transcription
   lfm2.5:
-    description: Qwen3.8 FAST 27B、200k×4並列、MTP・会話KV保持復元・none対応。STRIX廃止。補助Providerは従来どおり。
+    description: LFM2.5 24B-A2B（標準）— テキスト会話・コード・JSON出力、128K入力、Reasoning省略時medium。音声認識・日英音声合成・embedding・System One付き。
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
     usageProtection:
@@ -369,11 +369,11 @@ agentProfiles:
       - name: llm
         capability: llm.general
         route: llm-lfm25
-        publicModel: qwen3.8-27b-rocmfp4-fast
-        description: "Qwen3.8 27B ROCmFP4 FAST。1会話200000 tokens、4並列。MTP・会話KV保持復元、reasoning_effort none・low・medium・high・max、省略時medium。履歴はmessagesで送信。"
+        publicModel: lfm2.5-24b-a2b
+        description: 標準のテキスト会話モデルはLFM2.5 24B-A2B。会話・文章作成・コード・JSON形式の出力に使用する。 reasoning_effortはlow・medium・high・max、省略時はmedium。maxでもmax_tokensと入力上限は適用される。 contextは131072 tokens、出力は最大4096 tokens、4並列。画像入力は非対応。 prompt_cache_keyで会話ごとの入力キャッシュを再利用できる。毎回、必要な会話履歴をmessagesに含める。
         readiness: llm-inference
         contextWindow:
-          maxTokens: 200000
+          maxTokens: 131072
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
       - name: asr
