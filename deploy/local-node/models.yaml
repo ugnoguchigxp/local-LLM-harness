@@ -660,14 +660,3 @@ models:
     sha256: 43a7d09a0e9cba91b63eb7052488b9564569bddfd65754d2e426465e572a7452
     quantization: QAD_Q4_0
     runtime: llama.cpp-vulkan
-  qwen38-rocmfp4-strix-imatrix:
-    kind: file
-    role: experimental-conversation-llm
-    source: https://huggingface.co/kingjones777/Qwen3.8-27B-ROCmFP4-STRIX-MTP-GGUF
-    revision: dcba5906c7a86d4af2b2edcfbc7940a250eebed4
-    filename: Qwen3.8-27B-Q4_0_ROCMFP4_STRIX-imatrix-headQ6K.gguf
-    path: /srv/ai/models/qwen38-rocmfp4-strix/Qwen3.8-27B-Q4_0_ROCMFP4_STRIX-imatrix-headQ6K.gguf
-    bytes: 15381478400
-    sha256: 4ecfb6f4081b1916e6c09d513bfebf679a44bf37e947cb195c3bb1d7d4c6fb26
-    quantization: ROCmFP4_STRIX_IMATRIX_HEAD_Q6_K
-    runtime: rocmfpx-vulkan-120141f

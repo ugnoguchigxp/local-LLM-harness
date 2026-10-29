@@ -142,7 +142,7 @@ test("loads the Linux production registry", () => {
   expect(agent35b?.resources.estimatedMemoryGB).toBe(32);
   expect(registry.profiles.some((profile) => profile.id === "voice-expressive")).toBe(true);
   expect(defaultRoute?.candidates[0]).toEqual({
-    runtime: "qwen38-rocmfp4-strix-conversation",
+    runtime: "qwen38-rocmfp4-fast-conversation",
     purpose: "primary",
   });
   expect(defaultRoute?.candidates).toHaveLength(1);
@@ -204,7 +204,7 @@ test("loads the Linux production registry", () => {
     purpose: "primary",
   });
   expect(defaultRoute?.candidates).toEqual([
-    { runtime: "qwen38-rocmfp4-strix-conversation", purpose: "primary" },
+    { runtime: "qwen38-rocmfp4-fast-conversation", purpose: "primary" },
   ]);
   expect(registry.runtimes.some((runtime) => runtime.id === "qwen-general")).toBe(false);
   expect(registry.runtimes.some((runtime) => runtime.id.includes("35b"))).toBe(true);
@@ -620,22 +620,22 @@ test("rejects a resident floor that exceeds usable node memory", () => {
   );
 });
 
-test("ContextStill resolves the temporary Qwen STRIX MTP backend shared with the distinct voice profile", () => {
+test("ContextStill resolves the temporary Qwen FAST 200k MTP backend shared with the distinct voice profile", () => {
   const registry = loadRegistry(repoConfig);
   const route = registry.routes.find((route) => route.id === "llm-contextstill-lfm25");
-  expect(route?.candidates).toEqual([{ runtime: "qwen38-rocmfp4-strix-conversation", purpose: "primary" }]);
-  const runtime = registry.runtimes.find((runtime) => runtime.id === "qwen38-rocmfp4-strix-conversation");
+  expect(route?.candidates).toEqual([{ runtime: "qwen38-rocmfp4-fast-conversation", purpose: "primary" }]);
+  const runtime = registry.runtimes.find((runtime) => runtime.id === "qwen38-rocmfp4-fast-conversation");
   expect(runtime).toMatchObject({
-    artifacts: ["qwen38-rocmfp4-strix-imatrix"],
+    artifacts: ["qwen38-primary"],
     policy: { warm: { minInstances: 1 }, swapGroup: "conversation-llm-slot" },
     resources: { maxConcurrentAllocations: 4, maxConcurrentRequests: 4 },
-    deployment: { modelId: "qwen38-rocmfp4-strix-conversation" },
+    deployment: { modelId: "qwen38-rocmfp4-fast-conversation" },
   });
   const configured = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
   if (!runtime || runtime.backend !== "llama-swap") throw new Error("expected llama-swap runtime");
   const command = configured.models[runtime.deployment.modelId].cmd;
-  expect(command).toContain("Qwen3.8-27B-Q4_0_ROCMFP4_STRIX-imatrix-headQ6K.gguf");
-  expect(command).toContain("--ctx-size 131072");
+  expect(command).toContain("Qwen3.8-27B-ROCmFP4-FAST.gguf");
+  expect(command).toContain("--ctx-size 800000");
   expect(command).toContain("--parallel 4");
   expect(command).toContain("--cache-type-k q4_0");
   expect(command).toContain("--cache-type-v q4_0");
@@ -646,7 +646,7 @@ test("ContextStill resolves the temporary Qwen STRIX MTP backend shared with the
   expect(context.id).not.toBe(voice.id);
   expect(context.schedulingPriority).toBe(1000);
   expect(context.providers.find(provider => provider.name === "llm")).toMatchObject({
-    publicModel: "qwen3.8-27b-rocmfp4-strix-contextstill", contextWindow: { maxTokens: 32768 },
+    publicModel: "qwen3.8-27b-rocmfp4-fast-contextstill", contextWindow: { maxTokens: 200000 },
   });
   for (const name of ["asr", "tts", "tts-english", "embedding"]) {
     expect(context.providers.find(provider => provider.name === name))
@@ -667,7 +667,7 @@ test("ContextStill resolves the temporary Qwen STRIX MTP backend shared with the
     .toMatchObject({ maxConcurrentAllocations: 4, maxConcurrentRequests: 1 });
 });
 
-test("trial warm floor keeps shared Qwen STRIX MTP and speech warm while admitting ContextStill Laya", () => {
+test("trial warm floor keeps shared Qwen FAST 200k MTP and speech warm while admitting ContextStill Laya", () => {
   const registry = loadRegistry(repoConfig);
   const observedAt = "2026-10-04T09:00:00.000Z";
   const state: ClusterState = {
@@ -681,24 +681,22 @@ test("trial warm floor keeps shared Qwen STRIX MTP and speech warm while admitti
       endpoint: runtime.deployment.endpoint, observedAt,
     })),
   };
-  // The lower LFM2.5 base reservation leaves room for this 40 GiB secondary.
+  // The expanded 200k snapshot pool leaves too little room for this 40 GiB secondary.
   // Retained payloads still reserve their complete independent memory budget.
   const secondary = admitRuntimes({ registry, state, allocations: [], candidateRuntimeIds: ["ornith-general"] });
-  expect(secondary).toMatchObject({ ok: true });
-  expect(secondary.nodes[0]).toMatchObject({ usableMemoryGB: 112, committedMemoryGB: 63.0625,
-    incrementalMemoryGB: 40, availableMemoryGB: 48.9375 });
+  expect(secondary.ok).toBe(false);
   const withoutRetention = structuredClone(registry);
-  delete withoutRetention.runtimes.find(runtime => runtime.id === "qwen38-rocmfp4-strix-conversation")!.promptRetention;
+  delete withoutRetention.runtimes.find(runtime => runtime.id === "qwen38-rocmfp4-fast-conversation")!.promptRetention;
   expect(admitRuntimes({ registry: withoutRetention, state, allocations: [], candidateRuntimeIds: ["ornith-general"] }).ok).toBe(true);
   const context = admitRuntimes({
     registry, state, allocations: [],
-    candidateRuntimeIds: ["qwen38-rocmfp4-strix-conversation", "laya-system-one", "multilingual-e5-small", "granite-asr", "voicevox-tts", "kittentts-nano"],
+    candidateRuntimeIds: ["qwen38-rocmfp4-fast-conversation", "laya-system-one", "multilingual-e5-small", "granite-asr", "voicevox-tts", "kittentts-nano"],
   });
   expect(context.ok).toBe(true);
   expect(context.nodes[0]?.reclaimableMemoryGB ?? 0).toBe(0);
   expect(registry.runtimes.find(runtime => runtime.id === "gemma4-26b-conversation")?.policy.warm?.minInstances).toBe(0);
   expect(registry.runtimes.find(runtime => runtime.id === "qwen-asr")?.policy.warm?.minInstances).toBe(0);
-  for (const id of ["qwen38-rocmfp4-strix-conversation", "granite-asr", "voicevox-tts", "kittentts-nano"]) {
+  for (const id of ["qwen38-rocmfp4-fast-conversation", "granite-asr", "voicevox-tts", "kittentts-nano"]) {
     expect(registry.runtimes.find(runtime => runtime.id === id)?.policy.warm?.minInstances).toBe(1);
   }
 });

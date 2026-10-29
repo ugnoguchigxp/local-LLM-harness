@@ -202,20 +202,20 @@ agentProfiles:
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
   contextstill-background:
-    description: ContextStill background profile sharing the default LFM2.5 text LLM, Laya System One, and multilingual E5 embedding
+    description: Qwen3.8 FAST 27B、200k×4並列、MTP・会話KV保持復元・none対応。STRIX廃止。補助Providerは従来どおり。
     schedulingPriority: 1000
     requestScheduling: background-when-idle
     providers:
       - name: llm
         capability: llm.coding
         route: llm-contextstill-lfm25
-        publicModel: qwen3.8-27b-rocmfp4-strix-contextstill
+        publicModel: qwen3.8-27b-rocmfp4-fast-contextstill
         readiness: llm-inference
         contextWindow:
-          maxTokens: 32768
+          maxTokens: 200000
           outputReserveTokens: 4096
           safetyMarginTokens: 0
-        description: "一時試用: Qwen3.8 ROCmFP4 STRIX、MTP有効、32K×4並列、会話KV保持・復元。reasoning_effortはnone・low・medium・high・max、省略時medium。"
+        description: "Qwen3.8 27B ROCmFP4 FAST。1会話200000 tokens、4並列。MTP・会話KV保持復元、reasoning_effort none・low・medium・high・max、省略時medium。履歴はmessagesで送信。"
       - name: asr
         capability: speech.stt
         route: stt-granite
@@ -351,7 +351,7 @@ agentProfiles:
         publicModel: granite-speech-4.1-2b
         readiness: stt-transcription
   lfm2.5:
-    description: 一時Qwen3.8 STRIX MTP試用（既存lfm2.5・ornith1.5Strix selector互換）。32K×4並列、会話KV保持・復元。
+    description: Qwen3.8 FAST 27B、200k×4並列、MTP・会話KV保持復元・none対応。STRIX廃止。補助Providerは従来どおり。
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
     usageProtection:
@@ -369,11 +369,11 @@ agentProfiles:
       - name: llm
         capability: llm.general
         route: llm-lfm25
-        publicModel: qwen3.8-27b-rocmfp4-strix
-        description: "一時試用: Qwen3.8 ROCmFP4 STRIX、MTP有効、32K×4並列、会話KV保持・復元。reasoning_effortはnone・low・medium・high・max、省略時medium。"
+        publicModel: qwen3.8-27b-rocmfp4-fast
+        description: "Qwen3.8 27B ROCmFP4 FAST。1会話200000 tokens、4並列。MTP・会話KV保持復元、reasoning_effort none・low・medium・high・max、省略時medium。履歴はmessagesで送信。"
         readiness: llm-inference
         contextWindow:
-          maxTokens: 32768
+          maxTokens: 200000
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
       - name: asr

@@ -312,12 +312,12 @@ runtimeReleases:
     providerConfigRevision: rocmfpx-120141f-fast-32k-p4-mtp3-scoped-cache-v1
     estimatedMemoryGB: 40
     healthPath: /health
-    default: true
-  qwen38-rocmfp4-strix-conversation-mtp-retained-p4-v1:
-    runtime: qwen38-rocmfp4-strix-conversation
+    default: false
+  qwen38-rocmfp4-fast-conversation-mtp-retained-200k-p4-v1:
+    runtime: qwen38-rocmfp4-fast-conversation
     artifacts:
-      - qwen38-rocmfp4-strix-imatrix
-    providerConfigRevision: rocmfpx-120141f-strix-32k-p4-mtp3-scoped-cache-v1
+      - qwen38-primary
+    providerConfigRevision: rocmfpx-120141f-fast-200k-p4-mtp3-scoped-cache-24g-v1
     estimatedMemoryGB: 40
     healthPath: /health
     default: true

@@ -13,7 +13,7 @@ routes:
       - llm.reasoning
       - llm.coding
     candidates:
-      - runtime: qwen38-rocmfp4-strix-conversation
+      - runtime: qwen38-rocmfp4-fast-conversation
         purpose: primary
   llm-saaa-qwen38:
     capabilities:
@@ -286,7 +286,7 @@ routes:
       - llm.coding
     explicitOnly: true
     candidates:
-      - runtime: qwen38-rocmfp4-strix-conversation
+      - runtime: qwen38-rocmfp4-fast-conversation
         purpose: primary
   llm-lfm3:
     capabilities:
@@ -303,5 +303,5 @@ routes:
       - llm.coding
     explicitOnly: true
     candidates:
-      - runtime: qwen38-rocmfp4-strix-conversation
+      - runtime: qwen38-rocmfp4-fast-conversation
         purpose: primary
