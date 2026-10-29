@@ -8,6 +8,32 @@ audiences:
     network: host-private
     baseUrl: request-origin
 agentProfiles:
+  ruri-user-intent:
+    description: Ruri会話・依頼意図5分類の試用。表情判定とCPU Encoderを共有し、Warm常駐します。
+    providers:
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-ruri
+        publicModel: in
+        publishModel: false
+        readiness: system-one
+  lfm3-vl-2b:
+    description: LFM3-VL-2Bによる画像理解。画像とテキストをChat Completions APIで受け付け、必要時に起動します。
+    idleRelease:
+      enabled: true
+      idleSeconds: 60
+      activityProtocols:
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-lfm3-vl
+        publicModel: lfm3-vl-2b
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 8192
+          outputReserveTokens: 512
+          safetyMarginTokens: 256
   saaa-conversation-gemma4-26b-voice:
     description: SAAA Gemma 4 26B-A4B profile with warm LLM, ASR, Japanese VOICEVOX and English KittenTTS, embedding, and Ruri speaking-attitude System One
     schedulingPriority: 4000
@@ -64,7 +90,7 @@ agentProfiles:
         publishModel: false
         readiness: system-one
   lfm2.5:
-    description: LFM2.5 24B-A2B（標準）— テキスト会話・コード・JSON出力、128K入力、Reasoning省略時medium。音声認識・日英音声合成・embedding・System One付き。
+    description: Ornith 1.5 STRIX_LEAN、200000 tokens×4並列、認証付き入力cache・会話KV保持復元。既存の補助Providerを維持。
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
     usageProtection:
@@ -82,11 +108,11 @@ agentProfiles:
       - name: llm
         capability: llm.general
         route: llm-lfm25
-        publicModel: lfm2.5-24b-a2b
-        description: 標準のテキスト会話モデルはLFM2.5 24B-A2B。会話・文章作成・コード・JSON形式の出力に使用する。 reasoning_effortはlow・medium・high・max、省略時はmedium。maxでもmax_tokensと入力上限は適用される。 contextは131072 tokens、出力は最大4096 tokens、4並列。画像入力は非対応。 prompt_cache_keyで会話ごとの入力キャッシュを再利用できる。毎回、必要な会話履歴をmessagesに含める。
+        publicModel: ornith1.5-strix
+        description: Ornith 1.5 STRIX_LEAN。200000 tokens、4並列、入力cacheとRAM保持復元。必要な履歴を毎回messagesへ送信。思考は無効。画像入力契約はcatalogとclaimを参照。
         readiness: llm-inference
         contextWindow:
-          maxTokens: 131072
+          maxTokens: 200000
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
       - name: asr
@@ -196,7 +222,7 @@ agentProfiles:
         publicModel: ornith-1.5-strix-lean
         readiness: llm-inference
         contextWindow:
-          maxTokens: 262144
+          maxTokens: 200000
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
       - name: asr
@@ -259,18 +285,18 @@ agentProfiles:
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
   contextstill-background:
-    description: ContextStill background profile sharing the default LFM2.5 text LLM, Laya System One, and multilingual E5 embedding
+    description: Ornith 1.5 STRIX_LEAN、200000 tokens×4並列、認証付き入力cache・会話KV保持復元。既存の補助Providerを維持。
     schedulingPriority: 1000
     requestScheduling: background-when-idle
     providers:
       - name: llm
         capability: llm.coding
         route: llm-contextstill-lfm25
-        publicModel: lfm2.5-contextstill
-        description: LFM2.5を共有するバックグラウンド用テキストLLM。32K入力枠、出力最大4096 tokens。reasoning_effortはlow・medium・high・max、省略時medium。画像入力は非対応。
+        publicModel: ornith1.5-strix-contextstill
+        description: Ornith 1.5 STRIX_LEAN。200000 tokens、4並列、入力cacheとRAM保持復元。必要な履歴を毎回messagesへ送信。思考は無効。画像入力契約はcatalogとclaimを参照。
         readiness: llm-inference
         contextWindow:
-          maxTokens: 32768
+          maxTokens: 200000
           outputReserveTokens: 4096
           safetyMarginTokens: 0
       - name: asr
@@ -429,7 +455,7 @@ agentProfiles:
         publicModel: ornith-1.5-strix-lean
         readiness: llm-inference
         contextWindow:
-          maxTokens: 262144
+          maxTokens: 200000
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
       - name: asr
@@ -462,7 +488,69 @@ agentProfiles:
         publicModel: ruri-v3-30m-speaking-attitude
         publishModel: false
         readiness: system-one
+  qwen3.8-fast:
+    description: Qwen3.8 FAST 27B、200k×4並列、MTP・会話KV保持復元・none対応。STRIX廃止。補助Providerは従来どおり。
+    schedulingPriority: 4000
+    requestScheduling: foreground-exclusive
+    usageProtection:
+      idleSeconds: 600
+      retention: until-next-profile
+    idleRelease:
+      enabled: true
+      idleSeconds: 300
+      activityProtocols:
+        - larm.system-one.v1
+        - openai.audio-speech.v1
+        - openai.audio-transcriptions.v1
+        - openai.chat-completions.v1
+    providers:
+      - name: llm
+        capability: llm.general
+        route: llm-qwen38-rocmfp4-fast
+        publicModel: qwen3.8-27b-rocmfp4-fast
+        readiness: llm-inference
+        contextWindow:
+          maxTokens: 200000
+          outputReserveTokens: 4096
+          safetyMarginTokens: 1976
+        description: Qwen3.8 27B ROCmFP4 FAST。1会話200000 tokens、4並列。MTP・会話KV保持復元、reasoning_effort none・low・medium・high・max、省略時medium。履歴はmessagesで送信。
+      - name: asr
+        capability: speech.stt
+        route: stt-granite
+        publicModel: granite-speech-4.1-2b
+        publishModel: false
+        readiness: stt-transcription
+      - name: tts
+        capability: speech.tts
+        route: tts-voicevox
+        publicModel: voicevox-core
+        publishModel: false
+        readiness: tts-speech
+      - name: embedding
+        capability: embedding.multilingual-e5-small
+        route: embedding-multilingual-e5-small
+        publicModel: multilingual-e5-small
+        publishModel: false
+        readiness: embedding
+      - name: tts-english
+        capability: speech.tts.english
+        route: tts-kittentts-nano
+        publicModel: kitten-tts-nano-0.8-fp32
+        publishModel: false
+        readiness: tts-speech
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-ruri
+        publicModel: ruri-v3-30m-speaking-attitude
+        publishModel: false
+        readiness: system-one
 profileSelectors:
+  ruri-user-intent:
+    agentProfile: ruri-user-intent
+  lfm3-vl-2b:
+    agentProfile: lfm3-vl-2b
+  qwen3.8-fast:
+    agentProfile: qwen3.8-fast
   lfm3.1.7b:
     agentProfile: lfm3.1.7b
   lfm2.5:

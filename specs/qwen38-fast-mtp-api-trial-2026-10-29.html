@@ -1,0 +1,55 @@
+<article lang="ja">
+  <h1>Qwen3.8 FAST MTPの一時API試用</h1>
+  <p>
+    <time>2026-10-29</time>。利用者の明示指示により、現在のLFM2.5をQwen3.8 ROCmFP4
+    FASTへ一時置換した。署名付きreleaseの通常経路で適用し、直前のreleaseへ戻せる。
+  </p>
+  <section id="connection-contract">
+    <h2>接続契約</h2>
+    <p>
+      URLは既存の9810番を維持する。lfm2.5とornith1.5Strix
+      selectorは既存互換の入口として維持し、公開modelはqwen3.8-27b-rocmfp4-fastになる。ContextStillの公開modelはqwen3.8-27b-rocmfp4-fast-contextstill。claimで返るmodelを利用する。対象routeの候補は専用qwen38-rocmfp4-fast-conversationへ変更し、旧LFMのwarm
+      floorを0、新Qwenを1にする。音声・embedding・System Oneは変更しない。
+    </p>
+  </section>
+  <section id="mtp-retention">
+    <h2>MTPと保持</h2>
+    <p>
+      通常MTPを有効にし、draft最大3、strict Qwen MTPは使用しない。各32,768 tokens、4並列、K/Vとdraft
+      K/Vはq4_0。会話KVはLFMと同じRAM保持policyで利用者ごとに分離する。MTPの境界hidden
+      rowをcheckpointとsnapshotへ保存し、復元時にdraft KVとともに復元する。cold
+      slotでは境界状態と候補語彙を初期化する。MTP状態の容量もentry・staging・全体の上限に含める。32Kの4枠を全て埋める長時間試験とは区別する。
+    </p>
+    <p>
+      RAM保持はProvider終了やモデル切替をまたがない。履歴messagesを毎回送る。内部scope
+      leaseは最大5分で、長い処理で期限を超えた状態は再利用せず再計算する。
+    </p>
+  </section>
+  <section id="scope-and-validation">
+    <h2>変更の範囲と確認</h2>
+    <p>
+      画像認識Providerの同時更新を維持するため、最新版の稼働release
+      103be6fe84aadaf1e068e235f9dfedfedb70a679から独立した一時sourceを作成した。native
+      policy・snapshot容量試験が成功し、保持・復元・MTP採用数・4並列の隔離実機試験を実行する。releaseのinstall・audit・全体check・coverageを通常builderで確認した候補を適用した。切替後は公開profile・claim・reasoning応答・cache再利用と、実processの重み・MTP引数・旧LFM停止を確認する。
+    </p>
+    <p>
+      modelとengineはrepository外。engineはROCmFPX revision
+      120141f1f9da0a82bb109135c82cd173107fac25に固定し、patch・binary
+      digestを保存する。engine配置は/srv/ai/apps/larm-qwen38-mtp-120141f-v3、証跡は/srv/ai/evidence/qwen38-mtp-trial-20261029。
+    </p>
+  </section>
+  <section id="live-trial">
+    <h2>一時稼働の状態</h2>
+    <p>
+      2026-10-29 06:07 JSTにrelease
+      207075841414b7a93e82e1ab695b8f5983f8cd2cへの切替を完了した。9810番のhealthはready、旧LFM
+      processは停止し、FASTのMTP processが各32K・4 slotsで稼働している。既存ornith1.5Strix
+      clientの接続作成も成功した。画像認識Providerの同時更新を維持している。
+    </p>
+    <p>
+      隔離証跡はfast-v4/results.json。RAM復元後のMTP採用は135
+      tokens、4並列と解放後401も成功。追加のsemantic-restore/results.jsonでは異なる6会話の単語をすべて正しく回答し、元の会話への復帰で731
+      tokensを再利用した。既存配備へ戻す手順は外部証跡のrollback-trial.shに保存し、適用先が変わっていれば停止する。
+    </p>
+  </section>
+</article>

@@ -1,0 +1,113 @@
+<article lang="ja">
+  <h1>Qwen3.8 STRIX MTPの切替準備</h1>
+  <aside>
+    <p>
+      2026-10-29、利用者の指示でこのSTRIXモデルを廃止し、重みと作業用copyを削除済み。
+      <a href="./qwen38-fast-200k-retire-strix-2026-10-29.html">FASTへの復帰と200k×4拡張</a
+      >を参照。以下は廃止前の履歴。
+    </p>
+  </aside>
+  <aside>
+    <p>
+      利用者のFAST検証終了後、STRIXへ切替済み。旧root切替bundleは使用せず、none対応後の署名付きreleaseで配備した。
+      <a href="./qwen38-strix-api-switch-2026-10-29.html">現在の配備記録</a
+      >を参照。以下の操作は準備時点の履歴であり、現在の切替手順ではない。
+    </p>
+  </aside>
+  <p>
+    <time>2026-10-29</time
+    >。STRIXの重み・構築済みエンジン・API接続設定・切替と復旧の操作を準備した。
+    現在のFASTには切り替え操作を行っていない。利用者がベンチマークを実施中のため、
+    STRIXの起動、推論試験、ベンチマーク、エンジン再構築、モデル全体の再ハッシュを省略した。
+    設定の読み込みと操作スクリプトの構文だけを静的に確認した。
+  </p>
+  <p>
+    追加指示により、STRIX切替より先に<a href="./qwen38-fast-reasoning-none-2026-10-29.html"
+      >FASTのnone対応</a
+    >を観察する。FAST改修の適用後は基準releaseが変わるため、このSTRIX
+    bundleを更新してから切り替える。
+  </p>
+  <section id="prepared">
+    <h2>用意した設定</h2>
+    <table>
+      <caption>
+        切替後の会話Provider
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">モデル</th>
+          <td>
+            Qwen3.8-27B-Q4_0_ROCMFP4_STRIX-imatrix-headQ6K.gguf。取得済み、15,381,478,400 bytes。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">エンジン</th>
+          <td>
+            <code>/srv/ai/apps/larm-qwen38-mtp-120141f-v3</code>。FASTで構築・使用済みのMTP保持対応版を共用。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">MTP</th>
+          <td>通常MTP、draft最大3、strict Qwenは無効。targetとdraftのK/Vはq4_0。</td>
+        </tr>
+        <tr>
+          <th scope="row">コンテキスト</th>
+          <td>1会話32,768 tokens、4並列。engine合計131,072 tokens、枠を分離。</td>
+        </tr>
+        <tr>
+          <th scope="row">会話の保持・復元</th>
+          <td>
+            LFM3と同じ認証付きscope、RAM pool 8 GiB・64件、利用者4 GiB・16件、1件1 GiB、idle
+            5分・最大30分。MTP境界状態も保持する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">要求の解決</th>
+          <td>
+            既存lfm2.5・ornith1.5Strix selector → profile lfm2.5 → llm-lfm25 →
+            qwen38-rocmfp4-strix-conversation →
+            llama-swap。既定routeとContextStillの同じ会話経路もSTRIXへ変更。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">公開モデル</th>
+          <td>
+            qwen3.8-27b-rocmfp4-strix。ContextStillは末尾-contextstillで区別。補助Providerは現在のreleaseから維持。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      会話履歴はmessagesへ含める。KV保持は同じengine世代のRAM内であり、FASTからSTRIXへの切替や再起動をまたぐ永続保存ではない。
+      切替時にはLARMが再起動するため既存Connectionは再接続し、履歴を再送する。
+      STRIXのMTP実機動作は未検証。過去のSTRIX target-only保持試験とFASTのMTP試験の結果は
+      <a href="./qwen38-rocmfp4-host-preparation-2026-10-28.html">ホスト準備記録</a>と
+      <a href="./qwen38-fast-mtp-api-trial-2026-10-29.html">FAST MTP試用記録</a>で区別する。
+    </p>
+  </section>
+  <section id="switch">
+    <h2>残っている切替操作</h2>
+    <p>
+      配置先は<code>/srv/ai/apps/larm-qwen38-strix-ready-20261029-v1</code>。
+      ready.jsonにファイルdigest、重みの既存digest、共有エンジンのidentity、検証省略を記録した。
+      OPERATIONS.txtに以下の操作を保存した。準備時点ではいずれも実行していない。
+    </p>
+    <pre><code>sudo python3 /srv/ai/apps/larm-qwen38-strix-ready-20261029-v1/switch.py activate</code></pre>
+    <p>FASTへ戻す操作。</p>
+    <pre><code>sudo python3 /srv/ai/apps/larm-qwen38-strix-ready-20261029-v1/switch.py rollback</code></pre>
+    <p>
+      これは現在のdaemonを共用する一時設定切替で、署名付きreleaseの発行ではない。
+      通常releaseの検証receiptは作成しない。root権限で明示的に実行した時だけ設定をroot管理領域へ複製し、
+      専用systemd drop-inを追加してdaemonを再起動する。通常releaseと同じactivation lockを取得し、
+      基準release・設定・drop-inの変更や保留中のreleaseがあれば適用を拒否する。
+      起動後はhealthの設定revisionを照合し、失敗時はFAST設定へ復旧する。試験promptは送信しない。
+      通常releaseへ戻る前にこの一時設定をrollbackする。
+    </p>
+    <p>
+      基準releaseは<code>207075841414b7a93e82e1ab695b8f5983f8cd2c</code>、
+      基準configRevisionは<code>16636d9ef84859b248de1d35406639ca8ca1a845ae9e5ae65cbb9889ad27e050</code>。 準備済みSTRIX
+      configRevisionは<code>87bb7d1fe83ce70874c041b0e8adfa0bee62871a220c5a3944327dde50b18437</code>。
+      基準releaseに含まれるLFM3-VLと他の補助機能も維持する。
+    </p>
+  </section>
+</article>

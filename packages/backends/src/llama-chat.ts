@@ -19,19 +19,29 @@ export function prepareLlamaChatRequest(bytes: Uint8Array, runtime: RuntimeDefin
   for (const field of ["n_predict", "reasoning_format"]) {
     if (body[field] !== undefined) throw new LlamaChatRequestError(`${field} is not supported by this provider`);
   }
-  const effort = reasoningEffortSchema.safeParse(body.reasoning_effort ?? runtime.reasoning.defaultEffort);
-  if (!effort.success) throw new LlamaChatRequestError("this provider supports reasoning_effort low, medium, high, or max");
+  const requestedEffort = body.reasoning_effort ?? runtime.reasoning.defaultEffort;
+  const disableThinking = requestedEffort === "none" && runtime.reasoning.allowNone === true;
+  const effort = reasoningEffortSchema.safeParse(requestedEffort);
+  if (!disableThinking && !effort.success) {
+    throw new LlamaChatRequestError(runtime.reasoning.allowNone
+      ? "this provider supports reasoning_effort none, low, medium, high, or max"
+      : "this provider supports reasoning_effort low, medium, high, or max");
+  }
   const kwargs = body.chat_template_kwargs;
   if (kwargs !== undefined && (!kwargs || typeof kwargs !== "object" || Array.isArray(kwargs))) {
     throw new LlamaChatRequestError("chat_template_kwargs must be an object");
   }
   const template = (kwargs ?? {}) as Record<string, unknown>;
-  if (template.enable_thinking !== undefined && template.enable_thinking !== true) {
-    throw new LlamaChatRequestError("this provider requires reasoning; use reasoning_effort to select its effort");
+  if (template.enable_thinking !== undefined && template.enable_thinking !== !disableThinking) {
+    throw new LlamaChatRequestError(disableThinking
+      ? "reasoning_effort conflicts with chat_template_kwargs.enable_thinking"
+      : "this provider requires reasoning; use reasoning_effort to select its effort");
   }
-  body.chat_template_kwargs = { ...template, enable_thinking: true };
+  body.chat_template_kwargs = { ...template, enable_thinking: !disableThinking };
   // This adapter targets the pinned official llama.cpp engine, which reads reasoning_budget_tokens.
-  body.reasoning_budget_tokens = runtime.reasoning.budgets[effort.data];
+  // None uses the template's non-thinking path, without a budget-exhaustion prompt.
+  if (disableThinking) body.reasoning_budget_tokens = -1;
+  else if (effort.success) body.reasoning_budget_tokens = runtime.reasoning.budgets[effort.data];
   // The backend implements effort through its budget, not the effort label in its template.
   delete body.reasoning_effort;
   if (body.tool_choice === undefined && (!Array.isArray(body.tools) || body.tools.length === 0)

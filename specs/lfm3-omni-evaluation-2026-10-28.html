@@ -92,6 +92,217 @@
       API、GPU競合、lease・swap-group・停止条件を確認してから導入を判断する。
     </p>
   </section>
+  <section id="ocr-comparison">
+    <h2>追試：既存RapidOCRとの文字起こし比較</h2>
+    <p>
+      同日の追加追試では、既存OCRホスティングと同じRapidOCR 3.10.0、PP-OCRv6
+      Smallの検出器と認識器、ONNX Runtime CPUを独立processで実行し、同じ画像をOmni
+      Q4_K_M・CPU固定へ渡した。既存workerを起動・停止せず、配備済み重みのSHA-256が一致することを確認した。RapidOCRは4
+      threads、Omniは8
+      threads。RapidOCRは画像を読み込み済みで推論部分、Omniは画像を含むHTTP要求の往復を測り、前処理や通信の範囲は異なる。各画像3回は反復速度を示し、異なる標本ではない。
+    </p>
+    <table>
+      <caption>
+        文字列比較はNFKCと空白除去のみ。記号・大小文字・数字・句読点は残す
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">画像</th>
+          <th scope="col">RapidOCR</th>
+          <th scope="col">Omni</th>
+          <th scope="col">中央値 RapidOCR / Omni</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">技術指示 26 px</th>
+          <td>0 / 91文字の誤り</td>
+          <td>0 / 91文字の誤り</td>
+          <td>0.638 / 3.834秒</td>
+        </tr>
+        <tr>
+          <th scope="row">同一文 14 px</th>
+          <td>0 / 91文字の誤り</td>
+          <td>0 / 91文字の誤り</td>
+          <td>0.644 / 4.131秒</td>
+        </tr>
+        <tr>
+          <th scope="row">日本語画像</th>
+          <td>0 / 21文字の誤り</td>
+          <td>1 / 21文字の誤り</td>
+          <td>0.777 / 1.667秒</td>
+        </tr>
+        <tr>
+          <th scope="row">日本語画面</th>
+          <td>表示文字を抽出</td>
+          <td>表示文字を抽出</td>
+          <td>0.301 / 5.414秒</td>
+        </tr>
+        <tr>
+          <th scope="row">日本語表を含むページ</th>
+          <td>文字列を抽出</td>
+          <td>文字列を抽出</td>
+          <td>0.354 / 9.478秒</td>
+        </tr>
+        <tr>
+          <th scope="row">白紙</th>
+          <td>空出力</td>
+          <td>「文字なし」</td>
+          <td>0.182 / 1.864秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      日本語画像の正解「認識番号
+      12345」に対しRapidOCRは「認識番号12345」、Omniは「認証番号12345」を3回とも出力した。正解付き文字画像3種類・計203文字ではRapidOCRの表記CER
+      0 / 203、Omni 1 /
+      203。画像は全て合成で、読み順が複雑な画面はCER集計に入れていない。表ページでは両者が同じ文字列を抽出したが、RapidOCR単体は文字と座標を返すOCRであり、行列の構造化は別処理を要する。前回の同じ日本語表を用いた別試験では、RapidOCRとTable
+      Transformer等の表抽出パイプラインも全セル一致だった。実帳票や自然画像への精度はこの少数例から判断できない。
+    </p>
+    <p>
+      重みはRapidOCR検出器と認識器の合計約31.2 MB、Omni本体と投影器の合計約1.64 GB。今回のRapidOCR
+      processの最大RSSは659,512 KiB、以前のCPU固定Omni試験の最大RSSは3,118,300
+      KiBであり別実行の参考値。両者のロード後待機RSSやシステム全体の増分ではない。文字を忠実に抽出し座標を返す既存OCRを維持し、Omniは画像の意味や音声指示を合わせた解釈に使う。OmniでOCRを置き換える判断には細字、縦書き、実画面、帳票、誤補完を含む代表データでの同一条件比較が必要。
+    </p>
+    <p>
+      追試の入力と出力、実行スクリプトは /srv/ai/evidence/lfm3-omni-ocr-20261028
+      に保存した。入力の技術指示と14 px版は自作、他は既存の合成fixtureである。
+    </p>
+  </section>
+  <section id="ocr-vl-comparison">
+    <h2>追加追試：他のVLモデルとの比較</h2>
+    <p>
+      上記と全く同じ6画像、文字の逐語転記と白紙判定を求める同じ日本語promptを、LFM3-VL-2B
+      QAD-Q4_0とQwen3-VL-8B-Instruct Q8_0にも与えた。どちらも別のllama.cpp process、CPU固定、8
+      threads、context
+      8192、greedyで各画像1回。OmniとRapidOCRの値は既存の3回の中央値で、計測日は同日だが逐次の別実行である。RapidOCRは画像読込後の推論、VLはHTTP転送を含む。時間はバックエンドやその時の負荷に依存し、GPUの性能を意味しない。
+    </p>
+    <table>
+      <caption>
+        同じ画像の探索結果。文字列比較はNFKCと空白除去のみ、203文字は3画像の合計
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル</th>
+          <th scope="col">誤り / 203文字</th>
+          <th scope="col">14 px文字画像</th>
+          <th scope="col">日本語表ページ</th>
+          <th scope="col">白紙</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">RapidOCR</th>
+          <td>0 / 203</td>
+          <td>0.64秒</td>
+          <td>0.35秒</td>
+          <td>空出力</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM3-Omni-2B Q4_K_M</th>
+          <td>1 / 203</td>
+          <td>4.13秒</td>
+          <td>9.48秒</td>
+          <td>文字なし</td>
+        </tr>
+        <tr>
+          <th scope="row">LFM3-VL-2B QAD-Q4_0</th>
+          <td>0 / 203</td>
+          <td>3.55秒</td>
+          <td>7.23秒</td>
+          <td>文字なし</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen3-VL-8B Q8_0</th>
+          <td>0 / 203</td>
+          <td>21.78秒</td>
+          <td>53.05秒</td>
+          <td>文字なし</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      両VLモデルはOmniが「認証番号」とした「認識番号」を正しく再現し、日本語表ページの行と数値も正しく出力した。LFM3-VLは表をMarkdownで構造化し、Qwenは行を並べた。表画像のOCR文字列や構造化は同一の文字列指標で集計しておらず、空間座標、読み順、複雑な表に対する優劣も未測定。3文字画像中2つは同じ文の異なる文字サイズで、生成した合成画像である。順位の一般化やOCRの置換判断はできない。
+    </p>
+    <p>
+      LFM3-VLの重みはQAD-Q4_0 1,049,615,648 bytesとF16投影器378,996,032 bytes。QwenはQ8_0
+      8,709,519,456 bytesとF16投影器1,159,029,824
+      bytes。LFM3-VLの重みrevisionは7c3b4a43c9023e80bf234fec5e826a3365c8dda8。Qwen重みのrevisionは未確認。両者の今回の実行はllama.cpp
+      revision 8ca4060b7e30e76baaa5670ee1ec1b760b7f8552。測定中Qwen
+      processのVmHWMを一時点で11,942,240
+      KiB観測し、最終peakは未測定。既存のOrnithは先の表比較に限り正答したが、他の同一OCR画像は未比較である。既存サービスの設定を変えず、比較processを終了した。
+    </p>
+    <p>
+      入力、全回答、コマンド、所要時間は /srv/ai/evidence/lfm3-omni-ocr-20261028
+      のlfm3-vl.jsonとqwen3-vl.jsonに保存。再実行は同directoryのcompare_vl.pyにlfm3-vlまたはqwen3-vlを指定する。
+    </p>
+  </section>
+  <section id="scene-description-comparison">
+    <h2>追試：画像の状況説明と具体度</h2>
+    <p>
+      2026年10月28日、Qwen3-VL-8B Q8、LFM3-VL-2B QAD-Q4、LFM3-Omni-2B
+      Q4_K_Mに同じ4画像を1回ずつ与えた。日本語promptは「この画像には何が写っていて、何が起きていますか？
+      見える根拠を具体的に挙げて、日本語で簡潔に説明してください。分からないことは断定しないでください。」。別process、CPU固定8
+      threads、context 8192、temperature
+      0、最大220生成token、HTTPの要求開始から最終結果までを計測した。モデルの起動は測定に含まない。既存Providerは維持し、測定中の別の負荷は制御していない。
+    </p>
+    <table>
+      <caption>
+        各画像1回の完了時間。QwenとOmniの全回答は220 token上限で途中終了した
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力</th>
+          <th scope="col">LFM3-VL</th>
+          <th scope="col">Omni</th>
+          <th scope="col">Qwen3-VL</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">バスと歩行者 810×1080</th>
+          <td>6.58秒</td>
+          <td>12.18秒</td>
+          <td>84.18秒</td>
+        </tr>
+        <tr>
+          <th scope="row">果物 512×480</th>
+          <td>3.49秒</td>
+          <td>7.17秒</td>
+          <td>40.45秒</td>
+        </tr>
+        <tr>
+          <th scope="row">合成管理画面 1000×620</th>
+          <td>4.17秒</td>
+          <td>9.82秒</td>
+          <td>50.01秒</td>
+        </tr>
+        <tr>
+          <th scope="row">合成在庫表と数式 900×1000</th>
+          <td>6.14秒</td>
+          <td>13.85秒</td>
+          <td>68.93秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LFM3-VLはバスと歩行者、車体のcero
+      emisiones表示、管理画面の稼働中・待機中・未処理3件、在庫表の品目と数式を認識した。果物写真ではオレンジ・レモン・キウイと赤キャベツを挙げたが、バナナとライムに触れなかった。4回答とも64〜98
+      tokenで終了した。表の説明では品目名と数式を挙げたが数量・金額は示さなかった。
+    </p>
+    <p>
+      QwenはバスのEMT
+      MADRIDや行先表示、在庫表の品目・数量・金額まで詳しく述べた。ただし果物写真の丸いライムを切られていると記述し、画面の「待機中」を「停止または準備中」と解釈した。画面だけで後者は確定できない。Omniはバスの行先を「M11
+      SOL
+      SCUULLA」と誤読し、管理画面の設定に不自然な読みを付けた。Omniの在庫表の数値と数式は正しかったが、確認作業が実際に行われているとまでは画像から分からない。QwenとOmniの出力は全て上限で途切れ、見えていない続きについて評価しない。
+    </p>
+    <p>
+      観測process最大RSSはLFM3-VL 2,993,476 KiB、Omni 3,123,020 KiB、Qwen 11,965,380
+      KiB。回答後に取得したVmHWMであって、システム増分やGPUメモリではない。各画像1回の4例は具体度の定性的観察で、回答量と処理時間の両方が異なるため、速度比をモデルの固定性能と扱わない。バス画像は既存の物体認識acceptance
+      fixture、果物はOpenCVのfruits.jpg、管理画面と文書は合成fixture。全入力path、回答、終了理由、token、メモリと実行commandはrepository外の
+      /srv/ai/evidence/vl-scene-comparison-20261028 に保存した。
+    </p>
+  </section>
   <section id="reproduce">
     <h2>再現</h2>
     <p>

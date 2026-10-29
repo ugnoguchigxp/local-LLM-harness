@@ -1,6 +1,7 @@
 import { constants, openSync, closeSync, fstatSync, readFileSync, writeFileSync, renameSync, unlinkSync, chownSync } from "node:fs";
-import { resolve, dirname, isAbsolute } from "node:path";
+import { resolve, dirname, isAbsolute, join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { parse } from "yaml";
 import { loadRegistry } from "../../../packages/core/src/registry";
 
 function readRegular(path: string): string {
@@ -16,7 +17,15 @@ function readRegular(path: string): string {
 export function preparePromptRetentionEnvironment(input: {
   configDir: string; credentialPath: string; outputPath: string; uid: number; gid: number;
 }) {
-  const policies = loadRegistry(input.configDir).runtimes.flatMap(r => r.promptRetention ? [r.promptRetention] : []);
+  const swap = parse(readFileSync(join(input.configDir, "llama-swap.yaml"), "utf8"));
+  // Dedicated runtime environments have independent policies. Only the commands
+  // using this shared deployment path must agree, even in an isolated install root.
+  const policies = loadRegistry(input.configDir).runtimes.flatMap(r => {
+    if (!r.promptRetention || r.backend !== "llama-swap") return [];
+    const command = swap.models?.[r.deployment.modelId]?.cmd;
+    if (typeof command !== "string") throw new Error(`missing retention engine command for ${r.id}`);
+    return command.split(/\s+/).includes("/etc/larm/prompt-retention.env.json") ? [r.promptRetention] : [];
+  });
   if (policies.length === 0) return;
   if (policies.some(p => JSON.stringify(p) !== JSON.stringify(policies[0]))) throw new Error("shared engine environment requires matching retention policies");
   const keys = readRegular(input.credentialPath).split("\n").filter(line => line.startsWith("LARM_PROMPT_CACHE_KEY="));

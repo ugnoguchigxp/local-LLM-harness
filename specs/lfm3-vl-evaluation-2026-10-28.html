@@ -119,4 +119,163 @@
       groupを維持しながらgateway経由の画像、起動と解放、並行要求と既存Providerの遅延を検証する。実画面サイズ、小文字、複雑なUI、カメラと時系列、確信度や事実と推測の分離、個人情報の処理も追加評価が必要。
     </p>
   </section>
+  <section id="comparison-followup">
+    <h2>同じ画像でのYOLO・OCRとの追加比較</h2>
+    <p>
+      2026-10-28の追加検証。既存fixtureの公開バス・車の写真、以前作成した実写風の合成机・修理画像、合成画面と表など9画像、15質問をQAD
+      Q4で各2回試し、同じ画像を配備済みYOLO26nとPP-OCRv6
+      Smallのエンジンに別プロセスのCPUで各2回渡した。さらに低コントラスト、ぼけ、傾き、文書の4画像でも各2回試した。実際の私的な画面・カメラは取得していない。38件のLFM応答に失敗・出力上限到達はなかった。これは限定した探索評価であり、正答率や一般性能を統計的に推定しない。
+    </p>
+    <p>
+      机画像ではYOLOがlaptop、2個のcup、cell
+      phoneの位置とconfidenceを返した。LFMは赤いカップが倒れ液体が広がり手が布に触れていることを説明し、カップ2個と色、犬が写っていないことを両回正答した。発生直後という断定や飲料の種類は画像だけでは確証できない。スマートフォンの位置は両回「下部」と回答したが、YOLOのような具体的な矩形座標は今回検証していない。
+    </p>
+    <p>
+      修理画像ではYOLOは人物2人を検出したがドライバーは出力しなかった。LFMは手前のドライバー3本と赤・黄・黒を両回正答し、左の作業と右の説明書を描写した一方、右の人が組み立てもしていると両回述べた。右の人が組み立てていることは画像から確認できない。日本語注意書き「電源を切る」、CAUTION、SN:
+      A1058はLFMと専用OCRともに両回読み取った。OCRは文字領域の座標とconfidenceも返す。
+    </p>
+    <p>
+      低コントラストの表、ぼけた表、4度傾いた英語表、本文と日本語表を含む文書では、LFMとOCRの両者が文字・数値を両回取得した。LFMは空欄や0012を含む傾いた表を行列として返した。専用OCRは文字列と座標を返すが、今回直接呼んだOCRエンジンの出力順は表の行列順ではなかった。机画像では専用OCRが文字のない位置に「Q」を誤検出し、白紙ではLFMは文字・物体なしと正答した。表の評価はこの4例に限られ、現行の表構造解析chain全体との比較ではない。
+    </p>
+    <p>
+      1000×620の合成管理画面では、右上の設定、音声認識の稼働中、未処理3件と、削除ボタンが見えないことをLFMが両回正答した。文字領域はOCRも検出した。公開bus・car写真ではLFMが主要物体を説明し、YOLOは物体枠を返した。Q4は修理画像の文字質問で2.80〜2.87秒、対応するOCRは約0.32秒だったが、OCRのengine直接実行とLFMのHTTP完了時間であり、負荷や処理内容が異なるため厳密な速度比較ではない。
+    </p>
+    <p>
+      再実行:
+      <code>PYTHONDONTWRITEBYTECODE=1 LFM_VL_OUT=/srv/ai/evidence/lfm3-vl-compare-repeat /srv/ai/apps/vision-recognition-eval/.venv/bin/python benchmarks/lfm3-vl/compare.py</code
+      >。低コントラスト等は<code>LFM_VL_STRESS=1</code>を追加する。質問、回答、2回の測定、画像hash、OCR・物体枠は/srv/ai/evidence/lfm3-vl-followup-20261028と/srv/ai/evidence/lfm3-vl-stress-20261028に保存した。上記の合成画像の実写風外観は実写カメラ撮影の証明ではない。
+    </p>
+  </section>
+  <section id="isolated-larm-followup">
+    <h2>隔離LARMでの画像とライフサイクル</h2>
+    <p>
+      同日の追加検証。正式daemonや既存の登録を変更せず、別ポートのLARMとllama-swap、独立した設定と状態保存先を使用した。隔離catalogのAgent
+      Profileからroute、llama-swap
+      runtime、画像対応llama-serverを解決する。既存のselector制約のため、この隔離catalogに限って既存のlfm3.1.7b
+      selectorを試験Profileへ割り当てた。正式環境のselector変更ではない。
+    </p>
+    <p>
+      未改変の画像対応llama.cppではLARMの入力検証が要求するllama-chat-token-count.v1を提供しないため、起動probeはchat_token_count_unavailableで503になった。既存のトークン計数拡張を19cce691向けに適応した別ビルドを使用した。試験用差分はdeploy/local-node/patches/llama-lfm3-vl-token-count-19cce69-experimental.patch。モデルのテンプレートと画像前処理を用い、入力本文はデバッグログに出さない。これは特定の画像で一致を確認した試作であり、拡張全体の安全性・正確性を全入力で証明したものではない。
+    </p>
+    <p>
+      接続を取得して画像1枚をgatewayへ送り、接続済み・音量75%と正答。事前計数393 token、実推論も393
+      token。2枚の画像は事前計数・実推論とも772
+      tokenで、保存前から保存済みへの変化を正答した。接続DELETEは204、解放後の資格情報は401。短縮した全体idle
+      TTL
+      3秒で、それぞれ解放後3.5秒と4.5秒にworker不在を確認した。停止後に接続を再取得するとworkerが再起動し、準備完了まで1.52秒だった。OSキャッシュは残っており、完全なディスクコールドスタートではない。
+    </p>
+    <p>
+      ログ上のprovider instance generation 1の停止とgeneration
+      2の起動・停止を確認した。隔離daemonとswapは試験終了後に停止した。正式LARMへの登録、正式環境の他Providerとの優先度・メモリ競合、Eumenesの画像取得から表示までの実接続は未実施。隔離設定とprobe、結果は/srv/ai/evidence/lfm3-vl-followup-20261028に保存した。
+    </p>
+  </section>
+  <section id="on-demand-provider-preparation">
+    <h2>2026年10月29日：オンデマンドProviderの準備</h2>
+    <p>
+      画像説明用のLFM3-VLを明示的なAgent Profile selector
+      <code>lfm3-vl-2b</code>として追加した。selectorから<code
+        >llm-lfm3-vl</code
+      >
+      route、<code>lfm3-vl</code>
+      runtime、llama-swapの<code>lfm3-vl-2b</code>へ解決する。既定の会話profile、画像生成用のQwen
+      encoder、既存OCRは変更しない。公開契約は<code>openai.chat-completions.v1</code>、モデル名は<code>lfm3-vl-2b</code>。JPEG・PNG・BMPのdata
+      URLを既存の画像入力契約で受け、入力token計数とSSEにも対応する。画像生成や音声入力のAPIではない。
+    </p>
+    <p>
+      8,192
+      token、出力予約512、安全余白256、1並列。GPUが既存処理に使用されている場合でも共存しやすいよう、モデル・画像encoderともCPUを選択する。runtimeはmanaged、最小常駐0、解放後のidle
+      TTLは60秒。専用profileの接続idle releaseも60秒とし、既存会話のswap
+      groupには入れない。メモリ見積もり4
+      GBは一部の入力での観測に基づく暫定値で、上限や他の入力での実測ピークを保証しない。
+    </p>
+    <p>
+      固定モデルはLFM3-VL-2B QAD-Q4_0とF16画像投影器。画像のtoken計数拡張を含むllama.cpp revision
+      19cce6919992fdffd92e0ac152caaf1e2b8f254eを独立runtimeへ用意した。専用sourceのrevision、差分、設定済みbuildが一致することを確認してから<code>deploy/local-node/scripts/prepare-lfm3-vl-engine.sh</code>で別directoryへ組み立てる。重みとbinaryはrepository外。
+    </p>
+    <p>
+      隔離LARMとllama-swapを使い、同じprofile、route、CPU実行commandで、画像1枚と2枚のAPI応答、公開入力token計数と実際の使用量の一致、SSEと終了marker、外部URL拒否、接続解放204、解放後の資格情報拒否401を確認した。停止確認だけは隔離環境でidle
+      TTLを3秒に短縮し、解放後3.5秒でworker不在を確認した。正式環境の60秒では未試験。隔離試験はartifact
+      catalogの管理を外しており、実環境のartifact配置とrelease
+      activationは別の検証が必要である。記録は<code>/srv/ai/evidence/lfm3-vl-larm-20261029/public_contract_probe.json</code>。
+    </p>
+    <p>
+      正式LARMにはまだ反映していない。通常のrelease手順はsource
+      worktreeの未コミット変更を拒否し、新しいreleaseの有効化には稼働中daemonの再起動を要する。別の未コミット作業を保全し、利用中の接続を中断しないため、無断でdirty
+      treeを配備またはサービス再起動しない。実環境のcatalog反映後、既存の接続管理・障害復旧・対象consumerからの画像入力を確認する。
+    </p>
+  </section>
+  <section id="visual-perception-comparison">
+    <h2>2026年10月29日：実稼働visualPerceptionとの比較</h2>
+    <p>
+      実稼働の<code>visualPerception</code>はQwen3-VL系のWeVisOne-VL-4Bをオンデマンドで使う。先に比較したQwen3-VL-8Bとは別モデルである。APIは画像説明のほか検出、位置、個数、OCR、領域マスクを返す。前節のLFM用Chat
+      Completions追加はこのAPIの代替ではなく、実環境にも未配備である。
+    </p>
+    <p>
+      既存の1536×1024の評価用合成画像2枚と2026年10月25日のWeVisOne FP16
+      ROCm試験記録を使い、同じ入力画像と質問または同じ生成用指示で、2026年10月29日にLFM3-VL
+      QAD-Q4_0をCPUで1回ずつ追加測定した。LFMはモデル読み込み済みのHTTP応答時間、WeVisOneは以前の直接推論時間であり、端末負荷、バックエンド、日付、API経路、精度、生成設定が異なる。速度の優劣を確定する同条件比較ではない。LFMのサーバー起動からhealth応答までは1.01秒だった。
+    </p>
+    <table>
+      <caption>
+        同じ画像と指示に対する探索的比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">問い</th>
+          <th scope="col">LFM</th>
+          <th scope="col">WeVisOne</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>液体がこぼれた机の説明</td>
+          <td>7.80秒。赤いカップと拭く行動を説明したが、電子機器が濡れていると断定した。</td>
+          <td>24.40秒。液体をタオルで拭く手と背景を説明。</td>
+        </tr>
+        <tr>
+          <td>2人の作業の違いの説明</td>
+          <td>7.79秒。左は車模型を工具で作業し右は説明書を読むと説明。</td>
+          <td>15.69秒。左の模型組立と右の説明書を識別。</td>
+        </tr>
+        <tr>
+          <td>倒れたカップの位置</td>
+          <td>
+            5.83秒。<code>[542, 291, 708, 505]</code>を返した。座標規約と他の入力に対する安定性は未検証。
+          </td>
+          <td>12.10秒。位置を構造化して返し、正解枠とのIoUは約0.87。</td>
+        </tr>
+        <tr>
+          <td>画像内文字と位置</td>
+          <td>
+            6.62秒。<code>CAUTION SN: A1058 電源を切る</code>を読んだが、要求された位置は返さなかった。
+          </td>
+          <td>16.04秒。単語ごとの位置を返したが「電源を切る」の「を」を落とした。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      同一入力の文字抽出でもタスク形式が異なるため、文字と位置を含むAPI全体の精度比較ではない。WeVisOneのBF16追加試験でも文字の「を」が欠落し、同じ机でマスクを生成した。LFMのマスク生成やvisualPerceptionの完全互換は未実証である。説明専用の軽量候補としては有望だが、位置・OCR・マスクの既存契約を置き換える根拠はない。専用OCRやOpenCV等の現行機能を維持し、実際の利用ケースと契約に沿って個別に検証する。
+    </p>
+    <p>
+      再現用の入力と結果は<code>/srv/ai/evidence/lfm3-vl-wevisone-20261029/compare.py</code>と<code>results.json</code>、過去の比較元は<code>/srv/ai/evidence/wevisone-vl-trial-20261025/trial.json</code>。比較中に実稼働サービスの停止や設定変更は行っていない。
+    </p>
+  </section>
+  <section id="visual-perception-adoption">
+    <h2>2026年10月29日：画像説明への採用</h2>
+    <p>
+      利用者の許可を得て制御サービスを再起動し、実稼働commit
+      <code>103be6fe84aadaf1e068e235f9dfedfedb70a679</code
+      >へ更新した。<code>visualPerception</code>の<code>describe</code>はLFM3-VL-2B
+      QAD-Q4_0をCPUでオンデマンド起動する。旧WeVisOneの検出、位置、OCR、マスクはこのProviderではサポートせず、専用のOCR・物体検出サービスは維持する。
+    </p>
+    <p>
+      本番の公開APIから同じ1536×1024の安全な画像を2回送り、接続準備1.77〜2.54秒、画像説明7.23〜7.24秒を観測した。両回とも接続release後の資格失効とworker停止を確認した。結果は<code>/srv/ai/evidence/lfm3-vl-perception-20261029/lifecycle.json</code>。正式release
+      gateのcheckとcoverageは通過した。
+    </p>
+    <p>
+      旧WeVisOne
+      snapshotとQwen3-VL-8Bの画像投影器は、使用中でないことを確認しゴミ箱へ移動した。復元可能で、ディスク容量はまだ解放されていない。Qwen3-VL-8B本体はQwen-Image
+      2.1生成サービスのencoderにも使うため保持する。
+    </p>
+  </section>
 </article>

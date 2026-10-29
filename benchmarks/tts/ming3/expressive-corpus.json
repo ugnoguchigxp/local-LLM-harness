@@ -1,0 +1,44 @@
+[
+  {
+    "id": "neutral",
+    "label": "落ち着いた通常の声",
+    "text": "今日は来てくれて、ありがとう。あなたに会えるのを、ずっと楽しみにしていました。",
+    "emotion": "中性",
+    "reading": "きょうはきてくれて、ありがとう。あなたにあえるのを、ずっとたのしみにしていました。"
+  },
+  {
+    "id": "happy",
+    "label": "うれしさを込めて",
+    "text": "今日は来てくれて、ありがとう。あなたに会えるのを、ずっと楽しみにしていました。",
+    "emotion": "高兴",
+    "reading": "きょうはきてくれて、ありがとう。あなたにあえるのを、ずっとたのしみにしていました。"
+  },
+  {
+    "id": "sad",
+    "label": "寂しさ・名残惜しさを込めて",
+    "text": "今日は来てくれて、ありがとう。あなたに会えるのを、ずっと楽しみにしていました。",
+    "emotion": "悲伤",
+    "reading": "きょうはきてくれて、ありがとう。あなたにあえるのを、ずっとたのしみにしていました。"
+  },
+  {
+    "id": "surprised",
+    "label": "驚きと喜び",
+    "text": "えっ、本当に来てくれたの？ もう会えないと思っていたから、びっくりしたよ。",
+    "emotion": "惊讶",
+    "reading": "えっ、ほんとうにきてくれたの？ もうあえないとおもっていたから、びっくりしたよ。"
+  },
+  {
+    "id": "encourage",
+    "label": "力強く励ます",
+    "text": "大丈夫、ここまで頑張ってきたんだから。深呼吸して。さあ、一緒に、もう一度やってみよう！",
+    "instruction": "Speak in natural Japanese as an encouraging coach. Use warm, energetic intonation, clear emphasis and reassuring pauses, without shouting.",
+    "reading": "だいじょうぶ、ここまでがんばってきたんだから。しんこきゅうして。さあ、いっしょに、もういちどやってみよう！"
+  },
+  {
+    "id": "gentle",
+    "label": "やさしく語りかける",
+    "text": "もう大丈夫ですよ。今日はゆっくり休んでくださいね。続きは、明日、一緒に考えましょう。",
+    "instruction": "Speak in natural Japanese with a soft, warm, reassuring voice, gentle falling intonation and unhurried pauses. Keep the words clear; do not whisper or sing.",
+    "reading": "もうだいじょうぶですよ。きょうはゆっくりやすんでくださいね。つづきは、あした、いっしょにかんがえましょう。"
+  }
+]

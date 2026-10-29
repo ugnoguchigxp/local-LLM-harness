@@ -22,6 +22,267 @@
         </tr>
       </thead>
       <tbody>
+        <tr
+          data-kind="decision"
+          data-state="current"
+          data-domain="ornith-strix-200k-eumenes-restore"
+        >
+          <th scope="row">
+            <a href="./ornith-strix-200k-eumenes-restore-2026-10-30.html"
+              >Eumenes向けOrnith STRIX 200k復帰</a
+            >
+          </th>
+          <td>
+            LFM停止、200k×4、入力cacheと実API・Eumenes client E2E。<small
+              >分類: <code>decision</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ornith-strix-200k-eumenes-restore</code></small
+            >
+          </td>
+          <td>2026-10-30 配備・受入</td>
+        </tr>
+        <tr data-kind="plan" data-state="proposed" data-domain="ruri-tool-routing-data">
+          <th scope="row">
+            <a href="./ruri-tool-routing-data-plan-2026-10-29.html"
+              >LLM入力前のTool探索要否と追加データ方針</a
+            >
+          </th>
+          <td>
+            LLMの回答可能性に依存しないラベル基準と、Tool探索用二値headの追加学習案。<small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>ruri-tool-routing-data</code></small
+            >
+          </td>
+          <td>2026-10-29 判定目的を確認。新基準での再学習は未実施。</td>
+        </tr>
+        <tr data-kind="contract" data-state="current" data-domain="ruri-user-intent-api">
+          <th scope="row">
+            <a href="./ruri-user-intent-api-deployment-2026-10-29.html"
+              >Ruri意図判定APIとEumenes試用手順</a
+            >
+          </th>
+          <td>
+            model切替、共有Encoder、専用接続と配備確認。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ruri-user-intent-api</code></small
+            >
+          </td>
+          <td>2026-10-29 in・emを配備。共有session、実接続、認可、renew・releaseを確認済み。</td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="ruri-user-intent-training">
+          <th scope="row">
+            <a href="./ruri-user-intent-training-2026-10-29.html"
+              >Ruri会話・依頼意図5分類の学習結果</a
+            >
+          </th>
+          <td>
+            Git管理外の提供データによる固定Encoder分類器の学習、評価、保存と再読込み検証。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ruri-user-intent-training</code></small
+            >
+          </td>
+          <td>2026-10-29 学習完了。評価69.6%、実発話52.6%。本番・Warm組込みは未実施。</td>
+        </tr>
+        <tr data-kind="plan" data-state="proposed" data-domain="ruri-user-intent-shared-runtime">
+          <th scope="row">
+            <a href="./ruri-user-intent-shared-runtime-plan-2026-10-29.html"
+              >Ruri共有インスタンスでの会話・依頼意図判定</a
+            >
+          </th>
+          <td>
+            固定Encoderと用途別headを共有し、意図判定の学習・評価・Warm常駐を追加する案。
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>ruri-user-intent-shared-runtime</code></small
+            >
+          </td>
+          <td>2026-10-29 現状確認・設計案。学習とAPI追加は未実施。</td>
+        </tr>
+        <tr data-kind="decision" data-state="current" data-domain="lfm25-restore-preserve-qwen">
+          <th scope="row">
+            <a href="./lfm25-restore-preserve-qwen-2026-10-29.html">LFM2.5復帰とQwen FAST保存</a>
+          </th>
+          <td>
+            標準APIを以前のLFMへ戻し、Qwenのモデル・設定・検証結果を保存する。<small
+              >分類: <code>decision</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>lfm25-restore-preserve-qwen</code></small
+            >
+          </td>
+          <td>2026-10-29 本番復帰</td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="qwen38-fast-input-cache-e2e">
+          <th scope="row">
+            <a href="./qwen38-fast-input-cache-e2e-2026-10-29.html"
+              >Qwen FAST 入力キャッシュ修正と実API E2E</a
+            >
+          </th>
+          <td>
+            会話分岐の再現、8 checkpoint、200k×4での実API受入。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>qwen38-fast-input-cache-e2e</code></small
+            >
+          </td>
+          <td>2026-10-29 修正・受入</td>
+        </tr>
+        <tr data-kind="plan" data-state="current" data-domain="qwen38-fast-200k-retire-strix">
+          <th scope="row">
+            <a href="./qwen38-fast-200k-retire-strix-2026-10-29.html"
+              >STRIX廃止とFAST 200k×4並列への復帰</a
+            >
+          </th>
+          <td>
+            STRIX重みと作業用copyを削除し、FASTの200k×4枠・MTP・拡張KV保存へ復帰する。<small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>qwen38-fast-200k-retire-strix</code></small
+            >
+          </td>
+          <td>
+            2026-10-29。STRIX重み・copy削除済み。FASTの各200k×4枠、24
+            GiB保持とMTP・none対応を反映し起動確認済み。
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="current"
+          data-domain="qwen38-host-reboot-investigation"
+        >
+          <th scope="row">
+            <a href="./qwen38-host-reboot-investigation-2026-10-29.html"
+              >Qwen3.8 STRIX切替後のホスト異常再起動調査</a
+            >
+          </th>
+          <td>
+            時系列・メモリ統計・未完了推論・kernel記録を照合し、確認事実と因果関係の限界を整理する。<small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>qwen38-host-reboot-investigation</code></small
+            >
+          </td>
+          <td>
+            2026-10-29。ホストの異常終了は確認。STRIXとの因果は未確定。再現試験・設定変更なし。
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="current" data-domain="qwen38-strix-api-switch">
+          <th scope="row">
+            <a href="./qwen38-strix-api-switch-2026-10-29.html">Qwen3.8 STRIXへのAPI切替</a>
+          </th>
+          <td>
+            none対応・MTP・32K×4・KV保持を引き継いだSTRIXへの署名付き切替。<small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>qwen38-strix-api-switch</code></small
+            >
+          </td>
+          <td>2026-10-29。STRIX稼働・FAST停止を確認。追加の推論試験・ベンチマークは省略。</td>
+        </tr>
+        <tr data-kind="plan" data-state="current" data-domain="qwen38-fast-reasoning-none">
+          <th scope="row">
+            <a href="./qwen38-fast-reasoning-none-2026-10-29.html"
+              >Qwen3.8 FASTの非思考モード対応</a
+            >
+          </th>
+          <td>
+            公式仕様・取得済みテンプレートの非思考対応、noneのopt-in変換、FAST用の配備構成。<small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>qwen38-fast-reasoning-none</code></small
+            >
+          </td>
+          <td>
+            2026-10-29。署名付きreleaseを反映しAPI再起動済み。FASTのnoneでHTTP
+            200・本文OK・思考出力0文字を確認。
+          </td>
+        </tr>
+        <tr data-kind="plan" data-state="current" data-domain="qwen38-strix-switch-readiness">
+          <th scope="row">
+            <a href="./qwen38-strix-switch-readiness-2026-10-29.html"
+              >Qwen3.8 STRIX MTPの切替準備</a
+            >
+          </th>
+          <td>
+            MTP・32K×4並列・会話KV保持と、既存APIの一時切替・FASTへの復旧。<small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>qwen38-strix-switch-readiness</code></small
+            >
+          </td>
+          <td>2026-10-29。切替待ち。利用者のベンチマークを優先し、起動・推論検証は省略。</td>
+        </tr>
+        <tr data-kind="plan" data-state="current" data-domain="qwen38-fast-mtp-api-trial">
+          <th scope="row">
+            <a href="./qwen38-fast-mtp-api-trial-2026-10-29.html">Qwen3.8 FAST MTPの一時API試用</a>
+          </th>
+          <td>
+            32K×4並列・MTP境界状態を含む会話KV復元と、既存APIでの一時切替。<small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>qwen38-fast-mtp-api-trial</code></small
+            >
+          </td>
+          <td>2026-10-29 06:07 JST。MTP・32K×4・保持復元で一時API切替済み。旧LFM停止。</td>
+        </tr>
+
+        <tr data-kind="plan" data-state="current" data-domain="qwen38-rocmfp4-host-preparation">
+          <th scope="row">
+            <a href="./qwen38-rocmfp4-host-preparation-2026-10-28.html"
+              >Qwen3.8 ROCmFP4 FAST・STRIX 会話Providerのホスト準備</a
+            >
+          </th>
+          <td>
+            専用Vulkanエンジン、明示Profile、32K×4枠、LFM共通の会話KV保持・復元とReasoning API。
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>qwen38-rocmfp4-host-preparation</code></small
+            >
+          </td>
+          <td>
+            2026-10-29。初期target-only保持を両方で確認済み。FAST MTPは一時APIへ適用済み、STRIX
+            MTPは推論確認を省略して切替待ち。
+          </td>
+        </tr>
+        <tr data-kind="research" data-state="current" data-domain="qwen38-strix-generation-speed">
+          <th scope="row">
+            <a href="./qwen38-27b-strix-speed-research-2026-10-28.html"
+              >Qwen3.8 27B Dense派生モデルのStrix Halo生成速度調査</a
+            >
+          </th>
+          <td>
+            このPCの過去実測とDFlash2・ROCmFP4・GSQ-RCOの公開測定を照合する。
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>qwen38-strix-generation-speed</code></small
+            >
+          </td>
+          <td>2026-10-28。UD-Q4_K_XL＋Gufo DFlash2を優先検証候補とする。実機最速は未確定。</td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="ming3-tts-japanese-evaluation">
+          <th scope="row">
+            <a href="./ming3-tts-japanese-evaluation-2026-10-28.html"
+              >Ming 3.0 TTSの日本語発声・生成速度の実機評価</a
+            >
+          </th>
+          <td>
+            公式重み取得、ROCm隔離実行、日本語の読みと生成速度、VOICEVOX対照と二つのASRによる照合。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ming3-tts-japanese-evaluation</code></small
+            >
+          </td>
+          <td>
+            2026-10-28。通常TTSは自然との試聴評価。軽量抑揚版は中国語のアクセント・韻律が強いとの評価。最大割当6.83GiBまで削減したが、速度・読込時CPUメモリ・日本語の自然さに課題。正式採用は未実施。
+          </td>
+        </tr>
         <tr data-kind="contract" data-state="current" data-domain="lfm25-default-model-card">
           <th scope="row">
             <a href="./lfm25-default-model-card.html">LFM2.5 標準LLMモデルカード</a>

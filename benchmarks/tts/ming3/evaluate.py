@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import statistics
 import subprocess
 import time
@@ -27,12 +28,38 @@ def distance(a, b):
     return prev[-1]
 
 
+# These intended readings come from the corpus's paired mixed-kana control.
+# Apply the same glossary to reference and ASR text; preserve literal CER too.
+READING_GLOSSARY = {
+    'OpenAI': 'オープンエーアイ', 'API': 'エーピーアイ',
+    'GitHub Actions': 'ギットハブアクションズ', 'README': 'リードミー',
+    'Hello world': 'ハローワールド',
+}
+
+
+def score_record(record, g2p):
+    def kana(text):
+        for word, reading in READING_GLOSSARY.items():
+            pattern = re.escape(word).replace(r'\ ', r'[\s,、・-]*')
+            text = re.sub(pattern, reading, text, flags=re.IGNORECASE)
+        return normalized(g2p(text, kana=True))
+    ref, hyp = normalized(record['expected']), normalized(record['text'])
+    ref_kana, hyp_kana = kana(record['expected']), kana(record['text'])
+    record.update(edits=distance(ref, hyp), reference_characters=len(ref),
+        cer=distance(ref, hyp) / max(1, len(ref)), reference_kana=ref_kana,
+        recognized_kana=hyp_kana, kana_edits=distance(ref_kana, hyp_kana),
+        kana_reference_characters=len(ref_kana),
+        kana_cer=distance(ref_kana, hyp_kana) / max(1, len(ref_kana)),
+        reading_score_version=2)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--root', type=Path, required=True)
     p.add_argument('--corpus', type=Path, default=Path(__file__).with_name('corpus.json'))
     p.add_argument('--baseline', action='store_true')
     p.add_argument('--transcribe', action='store_true')
+    p.add_argument('--rescore', action='store_true')
     p.add_argument('--qwen-driver', type=Path, default=Path('/srv/ai/apps/asr-eval-20261012/qwen-native-driver'))
     p.add_argument('--qwen-model', type=Path, default=Path('/srv/ai/models/qwen-asr/Qwen3-ASR-1.7B'))
     args = p.parse_args()
@@ -40,9 +67,15 @@ def main():
     if not args.root.is_absolute() or args.root.resolve() == repo or repo in args.root.resolve().parents:
         p.error('Results must be outside the source repository')
     import soundfile as sf
-    import numpy as np
     import pyopenjtalk
     cases = json.loads(args.corpus.read_text())
+    if args.rescore:
+        output = args.root / 'readings.jsonl'
+        records = [json.loads(s) for s in output.read_text().splitlines()]
+        for record in records:
+            if record.get('success'):
+                score_record(record, pyopenjtalk.g2p)
+        output.write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in records))
     if args.baseline:
         directory = args.root / 'voicevox-cpu'
         if directory.exists():
@@ -99,7 +132,8 @@ def main():
             metadata = {'qwen': {'driver': str(args.qwen_driver), 'model': str(args.qwen_model), **ready},
                 'whisper': {'url': 'http://127.0.0.1:8085', 'model': 'large-v3-turbo-q5_0'},
                 'interpretation': 'ASR agreement and diagnostic character errors; not human pronunciation accuracy or MOS',
-                'kana_normalizer': 'pyopenjtalk.g2p(kana=True); dictionary errors remain possible'}
+                'kana_normalizer': 'pyopenjtalk.g2p(kana=True), technical glossary from paired kana corpus; dictionary errors remain possible',
+                'reading_glossary': READING_GLOSSARY, 'reading_score_version': 2}
             (args.root / 'asr-metadata.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
             for directory in sorted(args.root.iterdir()):
                 if not directory.is_dir() or not (directory / 'completed.json').exists():
@@ -139,14 +173,8 @@ def main():
                                 with urllib.request.urlopen(request, timeout=180) as res:
                                     response = json.load(res)
                                 text = response['text']
-                            ref, hyp = normalized(row['text']), normalized(text)
-                            ref_kana = normalized(pyopenjtalk.g2p(row['text'], kana=True))
-                            hyp_kana = normalized(pyopenjtalk.g2p(text, kana=True))
-                            record.update(success=True, text=text, seconds=time.perf_counter() - start,
-                                edits=distance(ref, hyp), reference_characters=len(ref), cer=distance(ref, hyp) / max(1, len(ref)),
-                                reference_kana=ref_kana, recognized_kana=hyp_kana,
-                                kana_edits=distance(ref_kana, hyp_kana), kana_reference_characters=len(ref_kana),
-                                kana_cer=distance(ref_kana, hyp_kana) / max(1, len(ref_kana)))
+                            record.update(success=True, text=text, seconds=time.perf_counter() - start)
+                            score_record(record, pyopenjtalk.g2p)
                         except Exception as exc:
                             record.update(success=False, error=repr(exc))
                         with output.open('a') as f:

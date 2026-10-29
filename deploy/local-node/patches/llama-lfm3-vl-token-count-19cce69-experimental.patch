@@ -1,0 +1,76 @@
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index da0d58fb4..b66462239 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -6264,6 +6264,37 @@ void server_routes::init_routes() {
+     this->post_tokenize = [this](const server_http_req & req) {
+         auto res = create_response();
+         const json body = json::parse(req.body);
++        // LARM preflight uses exactly the Chat Completions template and MTMD
++        // preprocessing path, without enqueuing inference or touching KV state.
++        if (body.contains("messages")) {
++            json chat = body;
++            std::vector<raw_buffer> files;
++            json parsed;
++            try {
++                common_chat_session session;
++                parsed = oaicompat_chat_params_parse(ctx_server.vocab, chat, meta->chat_params, files, session);
++            } catch (const std::exception &) {
++                throw std::invalid_argument("larm_chat_input_invalid");
++            }
++            server_tokens input;
++            try {
++                input = ctx_server.mctx != nullptr
++                    ? process_mtmd_prompt(ctx_server.mctx, parsed.at("prompt").get<std::string>(), files, ctx_server.init_opt, true)
++                    : std::move(tokenize_input_prompts(ctx_server.vocab, nullptr, parsed.at("prompt"), true, true, ctx_server.init_opt)[0]);
++            } catch (const std::exception &) {
++                throw std::invalid_argument(files.empty() ? "larm_chat_input_invalid" : "larm_image_invalid");
++            }
++            const size_t text_tokens = input.get_text_tokens().size();
++            res->ok(json{
++                {"contractVersion", "llama-chat-token-count.v1"},
++                {"promptTokens", input.size()},
++                {"textTokens", text_tokens},
++                {"imageTokens", input.size() - text_tokens},
++                {"imageCount", files.size()},
++                {"engineBuild", meta->build_info},
++            });
++            return res;
++        }
+         json tokens_response = json::array();
+         if (body.count("content") != 0) {
+             const bool add_special = json_value(body, "add_special", false);
+diff --git a/tools/server/server-http.cpp b/tools/server/server-http.cpp
+index cf147c7e7..6a5671f9c 100644
+--- a/tools/server/server-http.cpp
++++ b/tools/server/server-http.cpp
+@@ -67,6 +67,11 @@ static void log_server_request(const httplib::Request & req, const httplib::Resp
+ 
+     SRV_TRC("done request: %s %s %s %d\n", req.method.c_str(), req.path.c_str(), req.remote_addr.c_str(), res.status);
+ 
++    // Chat and token-count requests can contain private text and image bytes.
++    // Preserve metadata tracing, but never dump these bodies at debug verbosity.
++    if (req.path == "/tokenize" || req.path == "/v1/chat/completions" || req.path == "/chat/completions" || req.path == "/apply-template") {
++        return;
++    }
+     SRV_DBG("request:  %s\n", req.body.c_str());
+     SRV_DBG("response: %s\n", res.body.c_str());
+ }
+diff --git a/tools/server/server.cpp b/tools/server/server.cpp
+index 8b1d42650..98eeebe9a 100644
+--- a/tools/server/server.cpp
++++ b/tools/server/server.cpp
+@@ -81,6 +81,13 @@ static server_http_context::handler_t ex_wrapper(server_http_context::handler_t
+             message = "unknown error";
+         }
+ 
++        if (req.path == "/tokenize" || req.path == "/v1/chat/completions" || req.path == "/chat/completions" || req.path == "/apply-template") {
++            // Exception diagnostics can embed content parts or tool arguments.
++            // Only stable, value-free extension codes are safe to retain.
++            if (message != "larm_chat_input_invalid" && message != "larm_image_invalid") {
++                message = "chat input rejected";
++            }
++        }
+         auto res = std::make_unique<server_http_res>();
+         res->status = 500;
+         try {

@@ -6,7 +6,7 @@ import { createOpenAiModelCatalog, getOpenAiModel, loadRegistry, loadAgentConnec
 
 const config = resolve(import.meta.dir, "../../../config/local-node");
 
-test("LFM3 is explicit, demand-driven, and keeps the same auxiliary providers as LFM2.5", () => {
+test("LFM3 is explicit, demand-driven, and keeps the same auxiliary providers as the default profile", () => {
   const registry = loadRegistry(config);
   const catalog = loadAgentConnectionCatalogForRegistry(config, registry);
   const lfm25 = catalog.profiles.find(p => p.id === "lfm2.5")!;
@@ -18,7 +18,7 @@ test("LFM3 is explicit, demand-driven, and keeps the same auxiliary providers as
   expect(getOpenAiModel(models, "lfm3-1.7b", "openai.chat-completions.v1")).toMatchObject({
     route: "llm-lfm3", profileIds: ["lfm3.1.7b"],
   });
-  expect(getOpenAiModel(models, "lfm2.5-24b-a2b", "openai.chat-completions.v1")).toMatchObject({ route: "llm-lfm25" });
+  expect(getOpenAiModel(models, "ornith1.5-strix", "openai.chat-completions.v1")).toMatchObject({ route: "llm-lfm25" });
   expect(catalog.profileSelectors.find(s => s.id === "lfm3.1.7b")?.agentProfile).toBe(lfm3.id);
   expect(registry.routes.find(r => r.id === "llm-lfm3")).toMatchObject({ explicitOnly: true, candidates: [{ runtime: "lfm3-conversation", purpose: "primary" }] });
   expect(registry.runtimes.find(r => r.id === "lfm3-conversation")).toMatchObject({

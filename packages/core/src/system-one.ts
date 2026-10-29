@@ -69,6 +69,13 @@ export const systemOneResponseSchema = z.object({
 export type SystemOneRequest = z.infer<typeof systemOneRequestSchema>;
 export type SystemOneResponse = z.infer<typeof systemOneResponseSchema>;
 
+/** Public short names and their existing artifact names identify the same task. */
+export function systemOneModelIdentity(model: string): string {
+  if (model === "in") return "ruri-v3-30m-user-intent-v1";
+  if (model === "em") return "ruri-v3-30m-speaking-attitude";
+  return model;
+}
+
 export function inspectSystemOneResponse(input: {
   value: unknown;
   request: SystemOneRequest;

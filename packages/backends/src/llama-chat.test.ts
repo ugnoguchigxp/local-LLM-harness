@@ -31,6 +31,34 @@ test("the experimental LFM3 uses the same effort policy and rejects backend over
   }
 });
 
+test("opted-in Qwen none disables template thinking without consuming a reasoning budget", () => {
+  const registry = loadRegistry(join(import.meta.dir, "../../../config/local-node"));
+  const qwen = registry.runtimes.find(item => item.id === "qwen38-rocmfp4-fast-conversation")!;
+  const adaptQwen = (fields: Record<string, unknown>) => JSON.parse(new TextDecoder().decode(
+    prepareLlamaChatRequest(bytes({ model: "public-alias", messages: [], ...fields }), qwen)));
+  const result = adaptQwen({ reasoning_effort: "none", prompt_cache_key: "conversation",
+    chat_template_kwargs: { preserve_thinking: false }, stream: true, max_tokens: 128 });
+  expect(result).toMatchObject({ model: "public-alias", prompt_cache_key: "conversation", stream: true,
+    max_tokens: 128, chat_template_kwargs: { enable_thinking: false, preserve_thinking: false },
+    reasoning_budget_tokens: -1 });
+  expect(result).not.toHaveProperty("reasoning_effort");
+  expect(adaptQwen({}).chat_template_kwargs.enable_thinking).toBe(true);
+  expect(adaptQwen({}).reasoning_budget_tokens).toBe(256);
+  for (const fields of [
+    { reasoning_effort: "none", chat_template_kwargs: { enable_thinking: true } },
+    { reasoning_effort: "medium", chat_template_kwargs: { enable_thinking: false } },
+    { chat_template_kwargs: { enable_thinking: false } },
+    { reasoning_effort: "none", reasoning_budget_tokens: 0 },
+    { reasoning_effort: "none", reasoning_format: "none" },
+  ]) expect(() => adaptQwen(fields)).toThrow();
+  const disabled = structuredClone(qwen);
+  delete disabled.reasoning!.allowNone;
+  expect(() => prepareLlamaChatRequest(bytes({ messages: [], reasoning_effort: "none" }), disabled))
+    .toThrow("this provider supports");
+  expect(compileProviderRevision({ runtime: qwen }).revision)
+    .not.toBe(compileProviderRevision({ runtime: disabled }).revision);
+});
+
 test("public callers cannot override internal budgets or disable required thinking", () => {
   for (const field of ["thinking_budget_tokens", "thinking_token_budget", "reasoning_budget_tokens", "reasoning_control"]) {
     expect(() => adapt({ messages: [], [field]: 0 })).toThrow("use reasoning_effort");

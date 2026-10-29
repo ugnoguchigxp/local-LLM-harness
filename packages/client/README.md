@@ -143,6 +143,15 @@ Chat Completionsでは`reasoning_effort`に`low`、`medium`、`high`、`max`を�
 試験用のLFM3はProfile selector `lfm3.1.7b`、公開model `lfm3-1.7b`で、同じ指定を使えます。
 両Providerは内部設定の`n_predict`と`reasoning_format`を受け付けません。出力上限には`max_tokens`を使用します。
 
+Qwen3.8 ROCmFP4 FASTの明示selectorは`qwen3.8-fast`、公開modelは`qwen3.8-27b-rocmfp4-fast`です。
+上記のReasoning指定に加え、`reasoning_effort: "none"`で非思考モードを選べます。省略時は`medium`です。
+FASTを1会話200,000 tokens×4並列に拡張し、engine合計は800,000 tokensです。
+会話KVとMTP境界状態を保持・復元する通常MTPを使用します。
+RAM snapshot枠は全体・同一利用者とも24GiB、1件・staging各6GiB。`prompt_cache_key`と履歴`messages`の使い方は共通です。
+STRIX imatrix headQ6Kは利用者指示で廃止し、重みと作業用コピーを削除しました。対応するProfile・route・artifact定義も除外しています。
+音声などの補助Providerは維持します。200kを4枠すべて埋める負荷試験は省略しています。
+設定の本番反映状況はProfile discoveryで確認してください。
+
 ```ts
 await larm.createChatCompletion({
   model: "lfm2.5-24b-a2b", // Agent Connectionを使う場合はclaimで返されたmodel
@@ -153,7 +162,10 @@ await larm.createChatCompletion({
 });
 ```
 
-LFM2.5はテキスト専用です。画像入力が必要な場合は`ornith1.5Strix`を明示選択してください。
+LFM2.5はテキスト専用です。画像入力には`ornith1.5Strix-vision`または
+オンデマンドの`lfm3-vl-2b`を明示選択してください。`lfm3-vl-2b`はChat Completionsの
+`image_url` data URLと入力トークン計数を使い、最大8192 tokens・1並列です。
+接続解除後、使用されていなければ60秒でモデルを停止します。音声入力には対応しません。
 この切替設定は本番配備前の準備です。
 
 入力キャッシュの再利用には、同じ会話で同じ`prompt_cache_key`を指定します。別の会話には別のキーを使います。

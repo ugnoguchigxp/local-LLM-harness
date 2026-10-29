@@ -152,8 +152,8 @@ def main():
             elapsed = time.perf_counter() - start
             signal.alarm(0)
             audio = wave.detach().float().cpu().numpy().reshape(-1)
-            if not np.isfinite(audio).all() or not audio.size:
-                raise ValueError('Empty or non-finite waveform')
+            if not np.isfinite(audio).all() or not audio.size or not np.any(audio):
+                raise ValueError('Empty, non-finite or silent waveform')
             duration = audio.size / model.sample_rate
             name = f"{case['id']}-{'warmup' if warmup else iteration}.wav"
             sf.write(args.output / 'audio' / name, audio, model.sample_rate, subtype='PCM_16')

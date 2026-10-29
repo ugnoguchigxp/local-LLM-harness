@@ -1,0 +1,287 @@
+<article lang="ja">
+  <h1>Qwen3.8 27B Dense派生モデルのStrix Halo生成速度調査</h1>
+  <aside>
+    <p>
+      2026-10-29、利用者の指示でこのSTRIXモデルを廃止し、重みと作業用copyを削除済み。
+      <a href="./qwen38-fast-200k-retire-strix-2026-10-29.html">FASTへの復帰と200k×4拡張</a
+      >を参照。以下は廃止前の履歴。
+    </p>
+  </aside>
+
+  <p>
+    調査日：<time>2026-10-28</time>。対象はこのPCでの単一リクエストの生成速度（decode tok/s）。
+    Qwen3.8-27Bを基にした量子化と追加学習モデルを含める。入力処理速度、複数要求の合計速度、
+    回答を短くする効果は別に扱う。今回、新しい推論試験やProviderの変更は実施していない。
+  </p>
+
+  <section id="conclusion">
+    <h2>結論</h2>
+    <p>
+      最初に比較する構成は、既にこのPCにあるUnsloth
+      <code>Qwen3.8-27B-UD-Q4_K_XL.gguf</code>と、
+      <code>z-lab/Qwen3.8-27B-DFlash2-GGUF</code>の
+      <code>Qwen3.8-27B-DFlash2-Q4_K_M.gguf</code>をGufoで動かす組合せとする。
+      公開資料には通常のコード生成で約54
+      tok/sの例があり、先読み生成をMTPからDFlash2へ変える価値がある。
+      これは検証優先順位の判断であり、このPCでの最速確定ではない。
+    </p>
+    <p>
+      速度優先の対抗候補はSuper ROC用
+      <code>Qwen3.8-27B-Q4_0_ROCMFP4_STRIX-imatrix-headQ6K.gguf</code>＋DFlash2。
+      GSQ-RCOの低ビット版も比較候補だが、ファイルが小さいことだけでは速度の勝者にできない。
+      公開値は異なるプロンプトとエンジンで測られており、候補間の厳密な順位は未確定。
+    </p>
+  </section>
+
+  <section id="host-and-routing">
+    <h2>このPCと比較対象の実行経路</h2>
+    <p>
+      実機確認：AMD Ryzen AI MAX+ 395、16コア32スレッド、Radeon 8060S（gfx1151）、
+      Linuxから見えるメモリ121 GiB（128 GB級）、Ubuntu 26.04.1、kernel 7.0.0-34-generic。
+      調査開始時は別のTTS評価が動作しており、GPU使用率100%を観測した。
+      稼働していたLFM2.5をQwenの比較値として扱わず、新しいGPU負荷も加えなかった。
+    </p>
+    <p>
+      調査時のrepository revisionは<code>4451136f76b9147ad77ba279833375865b979053</code>。
+      公開既定Profileは<code>lfm2.5</code>。
+      Qwenの明示経路は<code>contextstill-background-128k</code>→
+      <code>llm-contextstill-128k</code
+      >→<code>qwen-worker-fast</code>→llama-swap
+      <code>qwen-fast</code>→Vulkan版llama-server→Q4_0＋Base専用MTPである。
+      公開入力枠131,072とエンジンの確保枠230,400を区別する。parallel 1、MTP最大2、KVはK/Vともq4_0。
+      この経路の存在は、観測時にQwenが稼働していたことを意味しない。
+    </p>
+  </section>
+
+  <section id="local-evidence">
+    <h2>このPCに保存されていた過去の実測</h2>
+    <table>
+      <caption>
+        サーバー累積生成token数÷累積生成秒。今回の再測定ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">生成 tok/s</th>
+          <th scope="col">測定条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Base Q4_0＋MTP</th>
+          <td>26.899</td>
+          <td>2026-09-16、128K確保枠、3回×192生成token</td>
+        </tr>
+        <tr>
+          <th scope="row">Base UD-Q4_K_XL＋MTP</th>
+          <td>24.468</td>
+          <td>2026-09-16、128K確保枠、3回×192生成token</td>
+        </tr>
+        <tr>
+          <th scope="row">EfficientThink Q3-LynnStyle＋専用MTP</th>
+          <td>25.279</td>
+          <td>2026-09-12、64K確保枠、3回×128生成token</td>
+        </tr>
+        <tr>
+          <th scope="row">Signal AP-Q4_K_XL＋MTP draft 3</th>
+          <td>24.424</td>
+          <td>2026-09-12、64K確保枠、3回×128生成token</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      全て短いcoding promptによる探索試験。確保枠は埋まった履歴長ではない。temperature 0.2、 top-p
+      0.9、reasoning effort mediumで、生成上限によるlength終了。
+      EfficientThink・Signalと9月16日のBaseには日付・枠・出力長の差があり、厳密な同条件順位ではない。
+      EfficientThinkの25.279は中央値ではなく累積速度である。
+    </p>
+    <p>
+      原本：<code>/srv/ai/evidence/qwen38-worker-context-20260916/</code>と
+      <code>/srv/ai/evidence/qwen38-candidates/20260912/</code>。
+      <a href="./qwen38-derivative-candidate-evaluation.html">既存派生モデル評価</a>と
+      <a href="./qwen38-q4-0-standard-profile-decision.html">Q4_0採用の履歴</a>も参照。
+    </p>
+  </section>
+
+  <section id="public-evidence">
+    <h2>同じSoC・GPUでの公開測定</h2>
+    <table>
+      <caption>
+        作者または利用者の報告。表の行どうしは同じ試験ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデルと方式</th>
+          <th scope="col">単一要求の生成 tok/s</th>
+          <th scope="col">条件・一次資料</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">UD-Q4_K_XL＋DFlash2／Gufo</th>
+          <td>コード54.12、文章24.84。別の短い反復試験71.55</td>
+          <td>
+            10月21日コード720・文章347生成token、sampling有効・thinking無効。
+            71.55は10月19日の別コーパス、C1、最大128生成token、greedy・反復出力。
+            <a
+              href="https://github.com/gufo-org/gufo/blob/main/docs/models/qwen3.8-27b/BENCHMARKS.md"
+              >Gufo測定資料</a
+            >。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ROCmFP4 STRIX imatrix headQ6K＋DFlash2／Super ROC</th>
+          <td>コード平均50.6（45.4〜54.9）、文書質問への回答27.6</td>
+          <td>
+            128 GB、ROCm 7.2.4、temperature 0、cold prompt cache。
+            コード6問、各最大256生成token。回答27.6は入力1,566 token。
+            <a
+              href="https://github.com/kingjones30/superroc/blob/main/docs/models/qwen3.8-27b/SUPERROC.md"
+              >Super ROC測定資料</a
+            >。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ROCmFP4 FAST＋FP4 DFlash2／Laurent系Vulkan fork</th>
+          <td>構造化出力65.6、文章26.1</td>
+          <td>
+            greedy、300生成token、adaptive draft最小3・最大7。
+            <a href="https://github.com/Strix-Halo/strix-llama.cpp">forkの測定資料</a>。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ROCmFP4 FAST＋MTP n4／q38rocm HIP</th>
+          <td>4種類の中央値36.8。文章24.2、コード39.9、JSON44.7</td>
+          <td>
+            2026-09-28、128K確保枠、600生成token、temperature 0。
+            <a href="https://github.com/sypherin/strix-halo-setup#performance-benchmarks"
+              >利用者の再現記録</a
+            >。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">halogen p1w4d-d2＋DFlash2</th>
+          <td>10種類の平均31.71、範囲20.8〜44.2</td>
+          <td>
+            約6.3 bpw、262K確保枠、greedy、HTTP経由。
+            <a href="https://github.com/peonist-ai/halogen-server#performance">halogen測定資料</a>。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Gufoの71.55を通常会話の期待速度にしない。長い履歴でも同じ速度とは限らない。 10月21日の約54
+      tok/sは最適化branchの限定試験であり、全条件の再測定や遅延検証が完了した値ではない。
+      Gufoはgreedy出力と通常生成の一致試験を公開するが、上流BF16との全面的な品質一致を保証していない。
+      <a href="https://github.com/gufo-org/gufo/blob/main/docs/models/qwen3.8-27b/QUALITY.md"
+        >品質確認の範囲</a
+      >。 Super ROCの量子化品質比較ではSTRIXのBF16からの差がUD-Q4_K_XLより大きい。
+      同資料のSTRIXとstockの速度は別のPCで測られており、量子化だけの改善率を計算しない。
+    </p>
+  </section>
+
+  <section id="other-derivatives">
+    <h2>低ビット版と追加学習モデル</h2>
+    <p>
+      <a href="https://huggingface.co/ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF">GSQ-RCO配布元</a>には
+      IQ2_XS 8.4 GB、IQ2_S 9.3 GB、IQ3_XXS 10.1 GB、IQ3_S 11.8 GBとMTP内蔵版がある。
+      最小容量のIQ2_XSと、品質寄りのIQ3_S-mtpは速度試験の対象になる。
+      今回確認した一次資料からは、このSoCにおける同条件の勝利を立証できなかった。
+      低ビット化による読み出し削減と復元処理の費用、MTP採択率を実機で測る必要がある。
+    </p>
+    <p>
+      EfficientThinkとSignalには既存のこのPCの測定があるが、大幅なtok/s改善は確認されていない。
+      Qwopus
+      FlashやSharp／Dirkの回答短縮は完了時間には寄与し得るが、それだけでは生成tok/sの向上を示さない。
+      他GPUの数値やMoEのFlash-Next・Ornithは今回の27B Dense順位に混ぜない。
+    </p>
+    <p>
+      <a href="https://github.com/KyaniteLabs/qwen38-27b-strix-halo">KyaniteLabsの記録</a>にある
+      150〜312 tok/sは作者自身が反復パターンによる特殊な測定と分類している。
+      最大の数字だけを選ぶと、通常の文章生成の判断を誤る。
+    </p>
+  </section>
+
+  <section id="verification-plan">
+    <h2>このPCで最速を確定する比較条件</h2>
+    <p>
+      比較順はQ4_0＋MTPの再基準測定、既存UD-Q4_K_XL＋Gufo DFlash2、 STRIX imatrix headQ6K＋Super ROC
+      DFlash2、GSQ-RCO IQ3_S-mtpとIQ2_XS-mtp。
+      明示した実験用Profileで一つずつ解決し、既存の利用要求とGPU競合がない時間に実施する。
+      DFlash2はMTP sidecarとは別artifactであり、既存のMTPファイルを代用しない。
+    </p>
+    <p>
+      単一slot、同じ日本語文章・新規コード・JSON、同じ出力上限1,024、履歴長8K・32K・64K・128Kを用い、
+      greedyと実運用sampling、thinking ON/OFFを分け、各3回以上測る。
+      実際の履歴長と確保context、KV形式、重みとengineのrevision、MTP／DFlash2の方式を記録する。
+      生成tok/s、入力処理tok/s、最初の本文までの秒、完了時間、採択率、メモリを別々に集計する。
+      EOS誤受理、空本文、反復、tool引数、コード実行結果を確認し、完了した通常出力の速度で判定する。
+    </p>
+  </section>
+
+  <section id="downloaded-artifacts">
+    <h2>2026-10-28 モデル取得・整合性確認</h2>
+    <p>
+      利用者の依頼により次の2モデルをsource-only repository外へ配置した。
+      ファイルサイズ、GGUFヘッダー、ファイル全体のSHA-256を確認し、配布元のLFS
+      digestとの一致を検証済み。 今回は重みの配置までで、推論動作と速度は未測定。
+    </p>
+    <table>
+      <caption>
+        取得したモデルと固定した配布revision
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル・配置先</th>
+          <th scope="col">配布元・revision</th>
+          <th scope="col">bytes・SHA-256</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">FAST：<code>/srv/ai/models/qwen38-rocmfp4/Qwen3.8-27B-ROCmFP4-FAST.gguf</code></th>
+          <td>
+            <code>julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF</code>、
+            <code>1e67b67e0e23324a29a7a4449279685fac364b37</code>
+          </td>
+          <td>
+            14,562,236,384 bytes、
+            <code>fb89c78d2be91cdb68eaaaa45b1270710bf34aa721dc1f0b9e3aa7b98d2e1da9</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">STRIX imatrix headQ6K：<code>/srv/ai/models/qwen38-rocmfp4-strix/Qwen3.8-27B-Q4_0_ROCMFP4_STRIX-imatrix-headQ6K.gguf</code></th>
+          <td>
+            <code>kingjones777/Qwen3.8-27B-ROCmFP4-STRIX-MTP-GGUF</code>、
+            <code>dcba5906c7a86d4af2b2edcfbc7940a250eebed4</code>
+          </td>
+          <td>
+            15,381,478,400 bytes、
+            <code>4ecfb6f4081b1916e6c09d513bfebf679a44bf37e947cb195c3bb1d7d4c6fb26</code>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      各GGUFの隣に<code>.manifest.json</code>を保存した。
+      取得・検証記録は<code>/srv/ai/evidence/qwen38-rocmfp4-download-20261028/results.json</code>。
+      FASTは既存registryが指す配布元のartifactで、kingjones777配布のFASTとは別ファイルである。
+    </p>
+  </section>
+
+  <section id="provenance">
+    <h2>調査資料の固定</h2>
+    <p>
+      参照した本文、モデルidentity、取得URLとSHA-256のmanifestはrepository外の
+      <code>/srv/ai/evidence/qwen38-speed-research-20261028/</code>に保存した。 調査時の上流mainはGufo
+      <code>78d741856d0063825482660e1b1081184419c7a8</code>、 Super ROC
+      <code>5c2b07abd7c432e81180ed70edfa62ed7be4c105</code>。 公開ベンチマークの測定revisionと、取得時のmain
+      revisionは別である。
+    </p>
+    <p>
+      Gufoが公開したtarget snapshotは<code>4ca720788d1e01f1bff70c033e0d0028fd02e502</code>、
+      DFlash2配布revisionは<code>2d9571f8ce46e151f61c6499c99dee6079e1d610</code>。
+      同名のこのPCの既存ファイルとのdigest一致は今回検証していない。
+    </p>
+  </section>
+</article>

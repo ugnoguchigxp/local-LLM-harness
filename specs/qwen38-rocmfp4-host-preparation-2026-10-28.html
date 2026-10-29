@@ -1,0 +1,238 @@
+<article lang="ja">
+  <h1>Qwen3.8 ROCmFP4 FAST・STRIX 会話Providerのホスト準備</h1>
+  <aside>
+    <p>
+      2026-10-29、利用者の指示でこのSTRIXモデルを廃止し、重みと作業用copyを削除済み。
+      <a href="./qwen38-fast-200k-retire-strix-2026-10-29.html">FASTへの復帰と200k×4拡張</a
+      >を参照。以下は廃止前の履歴。
+    </p>
+  </aside>
+  <p>
+    <time>2026-10-28</time>。取得済みのFASTとSTRIX imatrix headQ6Kを、LFM3と同じAgent
+    Connection経路で明示選択できるよう準備した。現在の構成は32K × 4並列で、
+    LFM3と同じ認証付き会話KV保持・復元を専用エンジンへ移植した。この準備tree全体は未配備。FASTは2026-10-29に別の署名付き一時releaseで既存APIへ切替済み。
+    既定Profileはlfm2.5を維持する。
+  </p>
+
+  <section id="selection">
+    <h2>選択と解決経路</h2>
+    <table>
+      <caption>
+        明示選択専用で、相互fallbackは設定しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">selector</th>
+          <th scope="col">公開model</th>
+          <th scope="col">routeとruntime</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row"><code>qwen3.8-fast</code></th>
+          <td><code>qwen3.8-27b-rocmfp4-fast</code></td>
+          <td>
+            <code>llm-qwen38-rocmfp4-fast</code> →
+            <code>qwen38-rocmfp4-fast-conversation</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row"><code>qwen3.8-strix</code></th>
+          <td><code>qwen3.8-27b-rocmfp4-strix</code></td>
+          <td>
+            <code>llm-qwen38-rocmfp4-strix</code> →
+            <code>qwen38-rocmfp4-strix-conversation</code>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      backendはllama-swap。音声認識、VOICEVOX、英語KittenTTS、multilingual E5 embedding、
+      Ruri発話態度のProviderはLFM3 Profileの定義を共有する。両LLMはconversation-llm-slotへ登録し、
+      選択された会話モデルの切替と資源管理を既存のLARMに委ねる。起動は要求時、minInstancesは0。
+      LFM3と同じ補助Provider構成であり、今回その補助Providerの全体再試験はしていない。
+    </p>
+  </section>
+
+  <section id="engine">
+    <h2>専用エンジンと重み</h2>
+    <p>
+      ROCmFPX/ROCmFPX revision <code>120141f1f9da0a82bb109135c82cd173107fac25</code>に LFM3と同じprivate
+      retention拡張を移植した。Release・Vulkan・Web UIなし、build 12501、version 0.6.0-dev。
+      両モデルともMTP境界状態の保持を加えた<code>/srv/ai/apps/larm-qwen38-mtp-120141f-v3</code>を使用する設定。STRIXのMTP構成は未起動で、切替待ち。
+      SHA256SUMS、SOURCE_REVISION、patch・header・binaryのdigestを含むbuild-manifest.jsonを保存する。
+      既存q38rocm、初期のMTP用engine、LFM用engineは置換しない。
+    </p>
+    <p>
+      再構築は<code>python3 deploy/local-node/scripts/prepare-qwen38-retention-engine.py</code>。 upstream
+      revisionとHEADからの差分全体、追加header・native testを照合してから構築する。
+      予期しない変更や既存配置先の上書きを拒否する。保存期限・利用者分離・容量・重複snapshot・
+      recurrent checkpointのnative testsが通ったbundleのみ公開する。
+      source、patch、runtimeのidentityは<code>deploy/local-node/sources.lock.yaml</code>へ固定する。
+      FASTのMTP版は<code>python3 deploy/local-node/scripts/prepare-qwen38-mtp-engine.py</code>で構築する。
+    </p>
+    <p>
+      FASTは既存artifact <code>qwen38-primary</code>、STRIXは新artifact
+      <code>qwen38-rocmfp4-strix-imatrix</code>を参照する。取得元とdigestは
+      <a href="./qwen38-27b-strix-speed-research-2026-10-28.html#downloaded-artifacts"
+        >モデル取得記録</a
+      >を参照。 両ファイルは866 tensors、block_count 65、nextn_predict_layers
+      1を持ち、MTPを内蔵する。 Base専用MTP sidecarは指定しない。FASTはtype 101を505個、STRIXはtype
+      101を421個と type 100を82個持ち、STRIXのembeddingとoutputの2 tensorsはQ6_Kである。
+    </p>
+  </section>
+
+  <section id="serving-contract">
+    <h2>試験用のホスト契約</h2>
+    <p>
+      公開枠は各会話32,768 tokens、エンジン確保枠は合計131,072 tokens、parallel 4。
+      KVはK/Vともq4_0、no-kv-unifiedにより4枠を分離する。 全layerをVulkan0へoffloadする。batch
+      2,048、ubatch 256、threads 16。
+      公開枠には出力予約4,096と安全余白1,976を含み、32K全てを入力に使う意味ではない。
+      maxConcurrentAllocationsとmaxConcurrentRequestsはいずれも4。resource見積り40 GBは暫定値。
+    </p>
+    <p>
+      両モデルとも利用者の追加指示により通常MTPを有効にし、draft最大3、draft K/Vもq4_0とする。
+      strict Qwen MTPは1 slot制約があるため使用しない。draft KVに加えて境界hidden rowも
+      checkpointとRAM snapshotへ保存・復元し、cold slotでは内部状態を初期化する。
+      保持容量へ境界状態も算入し、single-head MTP以外の未対応speculatorは拒否する。
+      STRIXもMTP設定へ更新した。DFlash2は両方で無効。STRIXの推論確認は利用者のベンチマークを優先して省略し、<a
+        href="./qwen38-strix-switch-readiness-2026-10-29.html"
+        >切替操作だけを残した</a
+      >。 初期のtarget-only試験と、追加のMTP・一時API切替は
+      <a href="./qwen38-fast-mtp-api-trial-2026-10-29.html">MTP試用記録</a>で区別する。
+    </p>
+    <p>
+      公開reasoning_effortはlow・medium・high・max、省略時medium。共通adapterが内部予算64・256・512・-1へ変換し、
+      thinkingを有効にする。モデル固有の推論深度ではなくengineの予算上限である。
+      起動時予算は-1とし、要求maxの意味を維持する。FASTの稼働APIには<a
+        href="./qwen38-fast-reasoning-none-2026-10-29.html"
+        >none対応の改修</a
+      >を未適用ソースに準備した。内部予算の直接指定、n_predict、
+      reasoning_formatによる変更は拒否する。通常samplingはtemperature 1.0、top-k 20、top-p 0.95、
+      min-p 0、repeat penalty 1.0。
+    </p>
+    <p>
+      native入力token計数を使用し、画像は受け付けない。readinessだけthinkingを無効にして1-token
+      probeを行う。 会話履歴は毎回messagesへ含め、同じ会話では同じprompt_cache_keyを使用する。
+      LARMが利用者、会話、Provider世代に結び付けた不透明なscopeとprivate credentialをengineへ渡す。
+      Consumerによる内部headerや保存位置の指定は受け付けない。
+    </p>
+    <table>
+      <caption>
+        LFM3と同じRAM保持policy
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">RAM snapshot保持枠</th>
+          <td>8 GiB、64 entries</td>
+        </tr>
+        <tr>
+          <th scope="row">利用者ごとの上限</th>
+          <td>4 GiB、16 entries</td>
+        </tr>
+        <tr>
+          <th scope="row">1 entryとstaging上限</th>
+          <td>各1 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">metadata上限</th>
+          <td>64 MiB</td>
+        </tr>
+        <tr>
+          <th scope="row">idle TTL・hard age</th>
+          <td>5分・30分</td>
+        </tr>
+        <tr>
+          <th scope="row">Connection解放</th>
+          <td>scopeを無効化し、解放済みcredentialでの再利用を拒否</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      RAM保持枠はsnapshot poolの上限であり、実行中4枠のKVやモデル重みを含む総メモリ上限ではない。
+      同じengine世代内で保持し、Provider終了・モデル切替・再起動をまたぐdisk永続化は行わない。
+      LFM3と同じく要求受領時の内部scope
+      leaseも最大5分で、処理がlease期限を超えた会話の状態は再利用しない。
+      長い初回入力や長時間の生成でも必ず保存される保証ではなく、履歴messagesからの再計算に戻る。
+      cache-prompt、cache-ram 8192、cache-reuse 0、no-cache-idle-slotsを使用する。 Qwenのrecurrent
+      checkpointのrecurrent部分は約149.6 MiBあるため、1 GiB
+      entry上限に収める設計としてcheckpoint数は1、 最小間隔は1,024
+      tokensとする。LFM3のcheckpoint数8とは異なるが、保持policy・分離・復元契約は同じである。
+      32K時のq4_0 attention KVは約576 MiB、recurrent本体とcheckpoint各約149.6
+      MiBで、target-onlyでは合計約875.3 MiBにtoken・metadataが加わる。両モデルのMTP設定ではdraft
+      KVとcheckpoint内のdraft KV各約36 MiB、境界hidden rowも追加される。
+      checkpointが2個だとtarget-onlyでも合計約1,024.9 MiBとなり、 1
+      GiB上限を超えるため採用しない。この値は構造からの見積りで、32Kを4枠同時に満たす負荷試験値ではない。
+    </p>
+  </section>
+
+  <section id="verification">
+    <h2>保持・復元の受入条件</h2>
+    <p>
+      LFM3と同じverify-lfm-input-cache.tsの検証をQwen用入口から実行する。
+      cache無効指定、cold、同じ会話のrepeatとappend、他会話処理後のRAM復元、別利用者の同名keyのcold処理、
+      4要求同時処理、Connectionの作成・claim・解放と無効化、low・medium・high・maxのJSON/SSE応答を確認する。
+      request timeoutを延ばした試験用listenerを使い、重いprefillを10秒の既定idle
+      timeoutで切断しない。
+    </p>
+    <p id="retention-verification-status">
+      <time>2026-10-29</time>、MTPを無効にした初期保持構成で両モデルの実機試験に合格した。
+      両方ともpropsのcontextは32,768、slotsは4。repeat・append・RAM復元で3,688 tokensを再利用し、
+      別会話と別利用者ではcached tokensが0だった。RAM loadsは0から1へ増加した。
+      別会話5件は、idle期限内に4つのhot slotを入れ替えるため短い入力を使う。
+    </p>
+    <table>
+      <caption>
+        初期target-only構成の隔離LARM実機結果。MTP版の結果とは区別する。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">model</th>
+          <th scope="col">復元時の再利用</th>
+          <th scope="col">同時処理</th>
+          <th scope="col">解放・推論設定</th>
+          <th scope="col">証跡</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">FAST</th>
+          <td>3,688 / 3,692 tokens、RAM loads 1</td>
+          <td>4件すべて正しいJSON/SSE、peak forwards 4</td>
+          <td>無効化1件、解放済みcredentialは401、low・medium・high・maxすべて成功</td>
+          <td><code>fast-v6/results.json</code></td>
+        </tr>
+        <tr>
+          <th scope="row">STRIX</th>
+          <td>3,688 / 3,692 tokens、RAM loads 1</td>
+          <td>4件すべて正しいJSON/SSE、peak forwards 4</td>
+          <td>無効化1件、解放済みcredentialは401、low・medium・high・maxすべて成功</td>
+          <td><code>strix-v1/results.json</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      4並列試験の入力は各約3,700 tokens。32Kを4枠すべて埋めた長時間負荷試験ではない。
+      Qwen試験のHTTP待機は240秒、listener idle timeoutは255秒。
+      <code>bun run check</code
+      >は成功し、以後の試験fixture調整もtypecheckを通過した。 native
+      retention試験と配置bundleのSHA256照合も成功した。全体チェック証跡は
+      <code>full-check-v3.log</code
+      >、最終typecheckは<code>final-typecheck.log</code>、
+      bundle照合は<code>bundle-integrity.log</code>に保存した。
+    </p>
+    <p>
+      再実行は<code>bun run deploy/local-node/scripts/verify-qwen38-profiles.ts fast /絶対パス/新規証跡ディレクトリ</code>。
+      strixも同じ形式で指定する。ハーネス所有の一時engineと隔離LARMを使用し、本番Providerを制御しない。
+      証跡はrepository外の<code>/srv/ai/evidence/qwen38-kv-retention-20261028</code>。 初期の128K ×
+      1・MTP構成に対する接続・toolの確認は
+      <code>/srv/ai/evidence/qwen38-provider-preparation-20261028</code>に残すが、現在のcache検証とは区別する。
+    </p>
+    <p>
+      本番利用には、この変更を含む署名付きreleaseの適用と、Profile
+      discovery・接続経路の再確認が必要。
+      既定Profileを変更せず、実行要求に応じて対象runtimeを解決する。
+    </p>
+  </section>
+</article>

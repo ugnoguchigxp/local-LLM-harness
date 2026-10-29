@@ -1,0 +1,122 @@
+<article lang="ja">
+  <h1>Qwen3.8 STRIX切替後のホスト異常再起動調査</h1>
+  <p>
+    <time>2026-10-29</time
+    >、利用者からPCが自動再起動したとの報告を受け、既存ログと監査metadataだけを調べた。
+    PC全体の正常終了を経ない再起動は確認できたが、STRIX・MTP・KV保持との因果関係は確定できない。
+    調査のためのモデル起動・切替・サービス再起動・推論・ベンチマーク・ホスト設定変更は行っていない。
+  </p>
+  <section id="timeline">
+    <h2>確認できた時系列</h2>
+    <table>
+      <caption>
+        日時はすべて2026-10-29、日本時間
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">時刻</th>
+          <th scope="col">記録</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">08:28:34</th>
+          <td>STRIX release b5fb4bdf7fa6f8c7ac04442c1c0949ce23481725の反映とAPI再起動が完了。</td>
+        </tr>
+        <tr>
+          <th scope="row">09:00:01</th>
+          <td>
+            sysstatでは利用可能メモリ92,949,432 KiB、約88.6 GiB。メモリ使用率24.52%、CPU idle
+            98.39%。直近区間のswap-in・swap-outは各0。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">09:00:58</th>
+          <td>STRIXの直前の生成要求がHTTP 200で完了。次の要求が開始。</td>
+        </tr>
+        <tr>
+          <th scope="row">09:01:02.925</th>
+          <td>
+            最後の要求の監査記録を作成。runtimeはqwen38-rocmfp4-strix-conversation、入力4,604
+            tokens。完了記録はなくactiveのまま残存。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">09:01:29.896746</th>
+          <td>
+            前回bootのjournal末尾。STRIXと補助ProviderのhealthはHTTP
+            200。通常のshutdown記録はなく、この後のログが欠落。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">09:18:55</th>
+          <td>現在のboot開始。これは再起動後の起動時刻であり、障害発生時刻そのものではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">09:18:58–09:19:06</th>
+          <td>
+            ファイルシステムのjournal復旧、未正常アンマウントのdirty bit、system.journalとuser
+            journalのunclean shutdown記録。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">09:21:41</th>
+          <td>APIが自動起動しreadyへ復帰。STRIX backendもready。調査側からの起動操作ではない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      構成の解決経路は既存selector ornith1.5Strix → profile lfm2.5 → route llm-lfm25 →
+      qwen38-rocmfp4-strix-conversation → llama-swap。最後の要求の監査metadataでもこのSTRIX
+      runtimeを確認した。 32K×4は構成上の上限であり、今回確認できた最後の入力は4,604 tokensである。
+      CPU使用率の低さからGPU負荷の低さは判断できず、メモリ値も障害直前の瞬間値ではない。
+    </p>
+  </section>
+  <section id="findings">
+    <h2>原因について分かることと限界</h2>
+    <p>
+      正常なOS再起動や単独の推論process終了より、ホスト全体が突然停止・リセットした状況と整合する。
+      ただしログ欠落により、停止・ハング・リセットの正確な順序と発生時刻は確定できない。
+      今回の時刻に対応するOOM killer、amdgpu ring timeout・GPU reset、kernel panic、hardware
+      errorの記録は、
+      参照できるjournal・kern.log・syslogからは見つからなかった。記録がないことは、それらの発生を完全に否定する根拠ではない。
+    </p>
+    <p>
+      最後のSTRIX要求は未完了であり、推論中だったという時間的な関連はある。
+      しかし、モデル重み、MTP、KV復元、GPU
+      driver、電源・firmware・hardwareのいずれが引き金かは区別できない。
+      09:00時点のメモリには余裕があり、持続的なメモリ枯渇やswapの大量往復を示す記録はない。
+      約17分のログ欠落を、そのまま障害処理時間と解釈することもできない。
+    </p>
+    <p>
+      比較材料として、10月25日16:49:55と16:50:02に同じAMD GPUでcompute ring timeoutとqueue
+      resetがあり、
+      当時はreset成功と記録されている。これは今回のQwen切替より前の事象で、今回の原因を証明するものではない。
+      また10月29日05:44のapportは初期FAST engine
+      v1のSIGABRTであり、今回の09時台のホスト停止とは区別する。
+    </p>
+    <p>
+      vmcoreは見つからず、pstoreの起動時アーカイブは空。pstore自体の直接参照は権限不足だったが、
+      systemdは起動時にpstoreが空であるためアーカイブをスキップしたと記録している。 現在はkdump
+      kernelのロードを確認できるが、障害前に有効だったかをこの事実だけからは判断しない。
+      kernelは障害前のsysstat記録では7.0.0-34-generic、現在は7.0.0-38-genericへ変わっているため、
+      今後の比較ではこの環境差も考慮する。
+    </p>
+  </section>
+  <section id="state-and-next-step">
+    <h2>現在の状態と次の切り分け</h2>
+    <p>
+      同じSTRIX releaseとconfigRevision
+      96214f7f383b4fde094181fbd21f7f000c3debf94c09889eaa9bcc0a3f222430でAPIとbackendは復帰済み。
+      今回は設定を維持し、再現試験やMTP無効化は行っていない。
+      原因をさらに絞るには、次回の障害時のkernel記録を確保した上で、利用者の指示に基づき条件を一つずつ変えて比較する必要がある。
+      一度にモデル・MTP・保持設定・kernelを変えると原因を区別できなくなる。
+    </p>
+    <p>
+      証跡はrepository外の<code>/srv/ai/evidence/qwen38-host-reboot-20261029</code>。
+      findings.json、boots.txt、pre-crash-resources.txt、previous-boot-tail.log、recovery.log、last-completions.log、
+      kernel-on-incident-day.log、older-gpu-resets.logを保存した。監査のprompt・応答本文は復号・転載していない。
+      配備時の状態は<a href="./qwen38-strix-api-switch-2026-10-29.html">STRIX切替記録</a>を参照。
+    </p>
+  </section>
+</article>

@@ -1,8 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, statSync, symlinkSync, cpSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { preparePromptRetentionEnvironment } from "./prepare-prompt-retention-environment";
+import { parse, stringify } from "yaml";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -10,11 +11,13 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "larm-retention-env-test-")); roots.push(root);
   const credentialPath = join(root, "daemon.env"), outputPath = join(root, "retention.json");
   writeFileSync(credentialPath, `LARM_API_TOKEN=unrelated\nLARM_PROMPT_CACHE_KEY=${"a".repeat(64)}\n`, { mode: 0o600 });
-  return { credentialPath, outputPath, configDir: resolve(import.meta.dir, "../../../config/local-node"),
+  const configDir = join(root, "config");
+  cpSync(resolve(import.meta.dir, "../../../config/local-node"), configDir, { recursive: true });
+  return { credentialPath, outputPath, configDir,
     uid: process.getuid!(), gid: process.getgid!() };
 }
 
-test("installation gives daemon and engine the same key and bounded runtime policy", () => {
+test("installation shares the daemon key and 8 GiB policy while dedicated 24 GiB engines remain independent", () => {
   const f = fixture(); preparePromptRetentionEnvironment(f);
   const first = readFileSync(f.outputPath, "utf8");
   const env = JSON.parse(first);
@@ -24,6 +27,16 @@ test("installation gives daemon and engine the same key and bounded runtime poli
   expect(statSync(f.outputPath).mode & 0o777).toBe(0o600);
   preparePromptRetentionEnvironment(f);
   expect(readFileSync(f.outputPath, "utf8")).toBe(first);
+});
+
+test("installation refuses conflicting policies for engines using the same environment", () => {
+  const f = fixture();
+  const path = join(f.configDir, "runtimes.yaml");
+  const runtimes = parse(readFileSync(path, "utf8"));
+  runtimes.runtimes["lfm3-conversation"].promptRetention.maxBytes = 24 * 1024 ** 3;
+  writeFileSync(path, stringify(runtimes));
+  expect(() => preparePromptRetentionEnvironment(f)).toThrow("matching retention policies");
+  expect(existsSync(f.outputPath)).toBe(false);
 });
 
 test("installation refuses key mismatch, duplicate credentials and symlink outputs", () => {

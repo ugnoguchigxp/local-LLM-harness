@@ -44,3 +44,36 @@ test("resolved gateway forwards one native budget for every public effort and re
       messages: [{ role: "user", content: "materialized context" }] });
   }
 });
+
+test("Qwen none reaches token counting and generation with the same non-thinking request", async () => {
+  const qwen = loadRegistry(join(import.meta.dir, "../../../config/local-node")).runtimes
+    .find(item => item.id === "qwen38-rocmfp4-fast-conversation")!;
+  const body = normalizeChatRequest({ model: "qwen3.8-27b-rocmfp4-fast", reasoning_effort: "none",
+    messages: [{ role: "user", content: "fixture" }], prompt_cache_key: "none-monitor", max_tokens: 128 });
+  let counted: unknown;
+  let forwarded: unknown;
+  const response = await proxyGateway({
+    request: new Request("http://localhost/v1/chat/completions", { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    allocationId: "test", protocol: "openai.chat-completions.v1", upstreamPath: "/v1/chat/completions",
+    runtime: qwen, bodyMode: "buffered", maxBodyBytes: 4096, timeoutMs: 1000,
+    chatInputWindow: { maxTokens: 32768, outputReserveTokens: 4096, safetyMarginTokens: 1976 },
+    bootEpoch: "test", executionGate: new ExecutionGate(), errorFormat: "openai",
+    revalidate: () => ({ ok: true, binding: { runtime: qwen.id, endpoint: qwen.deployment.endpoint } }),
+    fetchImpl: async (url, init) => {
+      const sent = JSON.parse(typeof init!.body === "string" ? init!.body
+        : new TextDecoder().decode(init!.body as Uint8Array));
+      if (String(url).endsWith("/v1/chat/completions/input_tokens")) {
+        counted = sent;
+        return Response.json({ input_tokens: 12 });
+      }
+      forwarded = sent;
+      return Response.json({ choices: [{ message: { role: "assistant", content: "fixture" }, finish_reason: "stop" }] });
+    },
+  });
+  await response.arrayBuffer();
+  expect(response.status).toBe(200);
+  expect(counted).toMatchObject({ chat_template_kwargs: { enable_thinking: false }, reasoning_budget_tokens: -1 });
+  expect(counted).not.toHaveProperty("reasoning_effort");
+  expect(forwarded).toEqual(counted);
+});

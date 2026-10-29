@@ -511,12 +511,17 @@ test("v3 public profile selectors return exact provider and service endpoints wi
   const baseUrl = `http://127.0.0.1:${server.port}`;
 
   const expected = {
+    "ruri-user-intent": {
+      id: "ruri-user-intent",
+      providers: [{ name: "system-one", endpoint: "/v1/systemone", model: "in" }],
+      services: [],
+    },
     contextStill: {
       id: "contextstill-background",
       providers: [
         { name: "asr", endpoint: "/v1/audio/transcriptions", model: "granite-speech-4.1-2b" },
         { name: "embedding", endpoint: "/v1/embed", model: "multilingual-e5-small" },
-        { name: "llm", endpoint: "/v1/chat/completions", model: "lfm2.5-contextstill" },
+        { name: "llm", endpoint: "/v1/chat/completions", model: "ornith1.5-strix-contextstill" },
         { name: "system-one", endpoint: "/v1/systemone", model: "laya-multilingual" },
         { name: "tts", endpoint: "/v1/audio/speech", model: "voicevox-core" },
         { name: "tts-english", endpoint: "/v1/audio/speech", model: "kitten-tts-nano-0.8-fp32" },
@@ -693,7 +698,7 @@ test("E2E: explicit Ornith profile provide returns every live provider over a re
       services: [],
     });
     expect(connection.providers.find((provider) => provider.name === "llm")?.startupPolicy)
-      .toEqual({ minWarmInstances: 0, idleTtlSeconds: 60 });
+      .toEqual({ minWarmInstances: 1, idleTtlSeconds: 60 });
     expect(connection.providers.map((provider) => ({
       name: provider.name,
       endpoint: provider.endpoint,
@@ -825,7 +830,7 @@ test("E2E: Gemma releases to ContextStill and then preempts its Strix runtime du
   const productionRegistry = loadStubRegistry(configDir);
   const productionCatalog = loadAgentConnectionCatalogForRegistry(configDir, productionRegistry);
   const initiallyLive = new Set(productionRegistry.runtimes.filter(runtime =>
-    runtime.id !== "lfm25-conversation"
+    runtime.id !== "ornith15-strix-conversation"
     && (runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0)
   ).map(runtime => runtime.id));
   const probes = new Map(productionRegistry.runtimes.map((runtime) => [
@@ -962,7 +967,7 @@ test("E2E: Gemma releases to ContextStill and then preempts its Strix runtime du
 
     const contextStill = await createConnection("contextStill");
     expect(contextStill).toMatchObject({ profile: "contextStill", status: "ready" });
-    expect(log.ensure).toContain("lfm25-conversation");
+    expect(log.ensure).toContain("ornith15-strix-conversation");
     expect(log.ensure).toContain("laya-system-one");
     const contextClaim = await claimConnection(contextStill);
     await infer(contextClaim);
@@ -982,7 +987,7 @@ test("E2E: Gemma releases to ContextStill and then preempts its Strix runtime du
         message: "request stopped because a higher-priority foreground task requires the provider",
       },
     });
-    expect(log.stop).toContain("lfm25-conversation");
+    expect(log.stop).toContain("ornith15-strix-conversation");
 
     const contextLlm = contextClaim.providers.find((provider) => provider.name === "llm")!;
     const revokedContext = await fetch(`${contextLlm.baseUrl}/chat/completions`, {
@@ -5422,7 +5427,7 @@ test("LLM foreground fences ContextStill while independent audio leaves its back
     expect(control.getAllocation(resumed.connection.allocationId)).toMatchObject({ status: "released" });
     const again = await ready("contextStill");
     expect(again.connection.id).not.toBe(background.connection.id);
-    for (const runtime of ["lfm25-conversation", "granite-asr", "voicevox-tts", "kittentts-nano"]) expect(log.stop).not.toContain(runtime);
+    for (const runtime of ["ornith15-strix-conversation", "granite-asr", "voicevox-tts", "kittentts-nano"]) expect(log.stop).not.toContain(runtime);
     expect(control.getAllocation(foreground.connection.allocationId)?.status).toBe("ready");
   } finally {
     foregroundReleases.forEach(release => release());

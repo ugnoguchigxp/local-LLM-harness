@@ -1,140 +1,39 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
-# Optional worker pool. Agent connection profiles use bounded 64K workers that can coexist with the
-# resident ROCmFP4 provider on :8080.
-
 healthCheckTimeout: 300
 logLevel: info
 logToStdout: proxy
 startPort: 58000
 globalTTL: 300
 unloadTimeout: 30
-
 models:
+  lfm3-vl-2b:
+    ttl: 0
+    cmd: |
+      /srv/ai/apps/larm-lfm3-vl-19cce69-v1/llama-server -m /srv/ai/models/lfm3-vl-2b-gguf/LFM3-VL-2B-QAD-Q4_0.gguf --mmproj /srv/ai/models/lfm3-vl-2b-gguf/mmproj-LFM3-VL-2B-F16.gguf -dev none -ngl 0 --no-mmproj-offload --fit off --ctx-size 8192 --parallel 1 --batch-size 512 --ubatch-size 256 --threads 8 --host 127.0.0.1 --port ${PORT} --jinja --no-cache-prompt --no-webui
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
   lfm3-conversation:
     ttl: 0
-    cmd: >
-      /usr/bin/python3
-      /srv/ai/apps/larm-lfm-retention-d05706b-v1/launch-prompt-retention.py
-      /etc/larm/prompt-retention.env.json
-      /srv/ai/apps/larm-lfm-retention-d05706b-v1/llama-server
-      -m /srv/ai/models/lfm3-1.7b-gguf/LFM3-1.7B-QAD-Q4_0.gguf
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --load-mode none
-      --flash-attn on
-      --ctx-size 131072
-      --parallel 4
-      --batch-size 2048
-      --ubatch-size 512
-      --threads 16
-      --cache-type-k q4_0
-      --cache-type-v q4_0
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning on
-      --reasoning-format deepseek
-      --reasoning-budget -1
-      --temp 0.1
-      --top-k 50
-      --top-p 1
-      --min-p 0
-      --repeat-penalty 1.1
-      --jinja
-      --no-context-shift
-      --cache-prompt
-      --cache-reuse 0
-      --no-kv-unified
-      --ctx-checkpoints 8
-      --checkpoint-min-step 1024
-      --cache-ram 8192
-      --no-cache-idle-slots
-      --metrics
-      --no-webui
+    cmd: |
+      /usr/bin/python3 /srv/ai/apps/larm-lfm-retention-d05706b-v1/launch-prompt-retention.py /etc/larm/prompt-retention.env.json /srv/ai/apps/larm-lfm-retention-d05706b-v1/llama-server -m /srv/ai/models/lfm3-1.7b-gguf/LFM3-1.7B-QAD-Q4_0.gguf -dev Vulkan0 -ngl 999 --fit off --load-mode none --flash-attn on --ctx-size 131072 --parallel 4 --batch-size 2048 --ubatch-size 512 --threads 16 --cache-type-k q4_0 --cache-type-v q4_0 --host 127.0.0.1 --port ${PORT} --reasoning on --reasoning-format deepseek --reasoning-budget -1 --temp 0.1 --top-k 50 --top-p 1 --min-p 0 --repeat-penalty 1.1 --jinja --no-context-shift --cache-prompt --cache-reuse 0 --no-kv-unified --ctx-checkpoints 8 --checkpoint-min-step 1024 --cache-ram 8192 --no-cache-idle-slots --metrics --no-webui
     aliases:
       - lfm3-1.7b
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   lfm25-conversation:
     ttl: 0
-    cmd: >
-      /usr/bin/python3
-      /srv/ai/apps/larm-lfm-retention-d05706b-v1/launch-prompt-retention.py
-      /etc/larm/prompt-retention.env.json
-      /srv/ai/apps/larm-lfm-retention-d05706b-v1/llama-server
-      -m /srv/ai/models/lfm25-24b-a2b/LFM2.5-24B-A2B-QAD-Q4_0.gguf
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --load-mode none
-      --flash-attn on
-      --ctx-size 524288
-      --parallel 4
-      --batch-size 2048
-      --ubatch-size 512
-      --threads 16
-      --cache-type-k q4_0
-      --cache-type-v q4_0
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning on
-      --reasoning-format deepseek
-      --reasoning-budget -1
-      --temp 0.1
-      --top-k 50
-      --top-p 1
-      --min-p 0
-      --repeat-penalty 1.05
-      --jinja
-      --no-context-shift
-      --cache-prompt
-      --cache-reuse 0
-      --no-kv-unified
-      --ctx-checkpoints 8
-      --checkpoint-min-step 1024
-      --cache-ram 8192
-      --no-cache-idle-slots
-      --metrics
-      --no-webui
+    cmd: |
+      /usr/bin/python3 /srv/ai/apps/larm-lfm-retention-d05706b-v1/launch-prompt-retention.py /etc/larm/prompt-retention.env.json /srv/ai/apps/larm-lfm-retention-d05706b-v1/llama-server -m /srv/ai/models/lfm25-24b-a2b/LFM2.5-24B-A2B-QAD-Q4_0.gguf -dev Vulkan0 -ngl 999 --fit off --load-mode none --flash-attn on --ctx-size 524288 --parallel 4 --batch-size 2048 --ubatch-size 512 --threads 16 --cache-type-k q4_0 --cache-type-v q4_0 --host 127.0.0.1 --port ${PORT} --reasoning on --reasoning-format deepseek --reasoning-budget -1 --temp 0.1 --top-k 50 --top-p 1 --min-p 0 --repeat-penalty 1.05 --jinja --no-context-shift --cache-prompt --cache-reuse 0 --no-kv-unified --ctx-checkpoints 8 --checkpoint-min-step 1024 --cache-ram 8192 --no-cache-idle-slots --metrics --no-webui
     aliases:
       - lfm2.5-24b-a2b
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   qwen-agent:
-    # LARM owns idle shutdown and retention until the next selected Profile.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/qwen38-worker/Qwen3.8-27B-UD-Q4_K_XL.gguf
-      -md /srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
-      --spec-type draft-mtp
-      --spec-draft-n-max 2
-      -dev Vulkan0
-      -devd Vulkan0
-      -ngl 999
-      -ngld 999
-      --fit off
-      --flash-attn on
-      --ctx-size 65536
-      --parallel 1
-      --cache-type-k q4_0
-      --cache-type-v q4_0
-      --spec-draft-type-k q4_0
-      --spec-draft-type-v q4_0
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning auto
-      --temp 0.2
-      --top-p 0.9
-      --jinja
-      --context-shift
-      --cache-reuse 256
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/qwen38-worker/Qwen3.8-27B-UD-Q4_K_XL.gguf -md /srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf --spec-type draft-mtp --spec-draft-n-max 2 -dev Vulkan0 -devd Vulkan0 -ngl 999 -ngld 999 --fit off --flash-attn on --ctx-size 65536 --parallel 1 --cache-type-k q4_0 --cache-type-v q4_0 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --host 127.0.0.1 --port ${PORT} --reasoning auto --temp 0.2 --top-p 0.9 --jinja --context-shift --cache-reuse 256 --metrics --no-webui
     aliases:
       - qwen3.8-agent
       - qwen-agent-worker
@@ -142,151 +41,39 @@ models:
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   qwen-agent-efficientthink:
-    # LARM owns idle shutdown and retention until the next selected Profile.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/qwen38-efficientthink/Qwen3.8-27B-EfficientThink-SimPO-Q3-LynnStyle.gguf
-      -md /srv/ai/models/qwen38-efficientthink/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
-      --spec-type draft-mtp
-      --spec-draft-n-max 2
-      -dev Vulkan0
-      -devd Vulkan0
-      -ngl 999
-      -ngld 999
-      --fit off
-      --flash-attn on
-      --ctx-size 65536
-      --parallel 1
-      --cache-type-k q4_0
-      --cache-type-v q4_0
-      --spec-draft-type-k q4_0
-      --spec-draft-type-v q4_0
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning auto
-      --temp 0.2
-      --top-p 0.9
-      --jinja
-      --context-shift
-      --cache-reuse 256
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/qwen38-efficientthink/Qwen3.8-27B-EfficientThink-SimPO-Q3-LynnStyle.gguf -md /srv/ai/models/qwen38-efficientthink/MTP/mtp-Qwen3.8-27B-Q4_0.gguf --spec-type draft-mtp --spec-draft-n-max 2 -dev Vulkan0 -devd Vulkan0 -ngl 999 -ngld 999 --fit off --flash-attn on --ctx-size 65536 --parallel 1 --cache-type-k q4_0 --cache-type-v q4_0 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --host 127.0.0.1 --port ${PORT} --reasoning auto --temp 0.2 --top-p 0.9 --jinja --context-shift --cache-reuse 256 --metrics --no-webui
     aliases:
       - qwen3.8-efficientthink-agent
       - qwen-efficientthink-agent
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   qwen-fast:
-    # LARM owns idle shutdown and retention until the next selected Profile.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/qwen38-worker/Qwen3.8-27B-Q4_0.gguf
-      -md /srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
-      --spec-type draft-mtp
-      --spec-draft-n-max 2
-      -dev Vulkan0
-      -devd Vulkan0
-      -ngl 999
-      -ngld 999
-      --fit off
-      --flash-attn on
-      --ctx-size 230400
-      --parallel 1
-      --batch-size 2048
-      --ubatch-size 256
-      --cache-type-k q4_0
-      --cache-type-v q4_0
-      --spec-draft-type-k q4_0
-      --spec-draft-type-v q4_0
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning auto
-      --temp 0.2
-      --top-p 0.9
-      --jinja
-      --context-shift
-      --cache-reuse 256
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/qwen38-worker/Qwen3.8-27B-Q4_0.gguf -md /srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf --spec-type draft-mtp --spec-draft-n-max 2 -dev Vulkan0 -devd Vulkan0 -ngl 999 -ngld 999 --fit off --flash-attn on --ctx-size 230400 --parallel 1 --batch-size 2048 --ubatch-size 256 --cache-type-k q4_0 --cache-type-v q4_0 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --host 127.0.0.1 --port ${PORT} --reasoning auto --temp 0.2 --top-p 0.9 --jinja --context-shift --cache-reuse 256 --metrics --no-webui
     aliases:
       - qwen3.8-fast
       - qwen-stable
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   qwen-contextstill-64k:
-    # LARM owns idle shutdown and retention until the next selected Profile.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/qwen38-worker/Qwen3.8-27B-Q4_0.gguf
-      -md /srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
-      --spec-type draft-mtp
-      --spec-draft-n-max 2
-      -dev Vulkan0
-      -devd Vulkan0
-      -ngl 999
-      -ngld 999
-      --fit off
-      --flash-attn on
-      --ctx-size 65536
-      --parallel 1
-      --batch-size 2048
-      --ubatch-size 256
-      --cache-type-k q4_0
-      --cache-type-v q4_0
-      --spec-draft-type-k q4_0
-      --spec-draft-type-v q4_0
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning auto
-      --temp 0.2
-      --top-p 0.9
-      --jinja
-      --context-shift
-      --cache-reuse 256
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/qwen38-worker/Qwen3.8-27B-Q4_0.gguf -md /srv/ai/models/qwen38-worker/MTP/mtp-Qwen3.8-27B-Q4_0.gguf --spec-type draft-mtp --spec-draft-n-max 2 -dev Vulkan0 -devd Vulkan0 -ngl 999 -ngld 999 --fit off --flash-attn on --ctx-size 65536 --parallel 1 --batch-size 2048 --ubatch-size 256 --cache-type-k q4_0 --cache-type-v q4_0 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --host 127.0.0.1 --port ${PORT} --reasoning auto --temp 0.2 --top-p 0.9 --jinja --context-shift --cache-reuse 256 --metrics --no-webui
     aliases:
       - qwen3.8-contextstill-64k
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   qwen35-decision:
-    # The SAAA Agent Connection owns this lightweight provider's lifetime.
-    # LARM releases it with the connection; llama-swap must not evict it first.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/qwen35-decision/Qwen3.5-2B-Q4_K_M.gguf
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --flash-attn on
-      --ctx-size 65536
-      --parallel 1
-      --batch-size 512
-      --ubatch-size 512
-      --threads 16
-      --poll 100
-      --cache-type-k q8_0
-      --cache-type-v q8_0
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning off
-      --temp 0
-      --top-p 1
-      --jinja
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/qwen35-decision/Qwen3.5-2B-Q4_K_M.gguf -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 65536 --parallel 1 --batch-size 512 --ubatch-size 512 --threads 16 --poll 100 --cache-type-k q8_0 --cache-type-v q8_0 --host 127.0.0.1 --port ${PORT} --reasoning off --temp 0 --top-p 1 --jinja --metrics --no-webui
     aliases:
       - qwen3.5-2b-decision
       - decision-default
@@ -294,11 +81,7 @@ models:
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   lfm25-backchannel-jp:
-    # LARM owns lifecycle through the SAAA Agent Connection. Do not let the
-    # proxy's independent idle timer evict this model while that connection is
-    # being renewed; LARM still unloads it after release or expiry.
     ttl: 0
     filters:
       setParams:
@@ -321,449 +104,118 @@ models:
               required:
                 - kind
               additionalProperties: false
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/lfm25-1.2b-jp/LFM2.5-1.2B-JP-Q4_K_M.gguf
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --flash-attn on
-      --ctx-size 65536
-      --parallel 1
-      --batch-size 512
-      --ubatch-size 512
-      --threads 16
-      --poll 100
-      --cache-type-k q8_0
-      --cache-type-v q8_0
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning off
-      --temp 0
-      --top-p 1
-      --repeat-penalty 1.05
-      --jinja
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/lfm25-1.2b-jp/LFM2.5-1.2B-JP-Q4_K_M.gguf -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 65536 --parallel 1 --batch-size 512 --ubatch-size 512 --threads 16 --poll 100 --cache-type-k q8_0 --cache-type-v q8_0 --host 127.0.0.1 --port ${PORT} --reasoning off --temp 0 --top-p 1 --repeat-penalty 1.05 --jinja --metrics --no-webui
     aliases:
       - backchannel-lfm25-jp-1.2b
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   gemma3-backchannel:
-    # LARM owns idle shutdown and retention until the next selected Profile.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/gemma3-1b-it/gemma-3-1b-it-Q4_K_M.gguf
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --flash-attn on
-      --ctx-size 4096
-      --parallel 1
-      --batch-size 512
-      --ubatch-size 512
-      --threads 16
-      --poll 100
-      --cache-type-k q8_0
-      --cache-type-v q8_0
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning off
-      --temp 0
-      --top-p 1
-      --jinja
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/gemma3-1b-it/gemma-3-1b-it-Q4_K_M.gguf -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 4096 --parallel 1 --batch-size 512 --ubatch-size 512 --threads 16 --poll 100 --cache-type-k q8_0 --cache-type-v q8_0 --host 127.0.0.1 --port ${PORT} --reasoning off --temp 0 --top-p 1 --jinja --metrics --no-webui
     aliases:
       - backchannel-gemma3-1b
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   gemma4-conversation:
-    # The SAAA Agent Connection owns this provider's lifetime. Keep llama-swap
-    # from applying an independent idle eviction while SAAA renews the lease;
-    # LARM unloads the provider when the connection is released or expires.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/gemma4-e4b-it-gguf/gemma-4-E4B_q4_0-it.gguf
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --flash-attn on
-      --ctx-size 230400
-      --parallel 1
-      --batch-size 2048
-      --ubatch-size 512
-      --threads 16
-      --poll 100
-      --cache-type-k q8_0
-      --cache-type-v q8_0
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning off
-      --temp 0.6
-      --top-p 0.95
-      --top-k 20
-      --jinja
-      --context-shift
-      --cache-reuse 256
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/gemma4-e4b-it-gguf/gemma-4-E4B_q4_0-it.gguf -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 230400 --parallel 1 --batch-size 2048 --ubatch-size 512 --threads 16 --poll 100 --cache-type-k q8_0 --cache-type-v q8_0 --host 127.0.0.1 --port ${PORT} --reasoning off --temp 0.6 --top-p 0.95 --top-k 20 --jinja --context-shift --cache-reuse 256 --metrics --no-webui
     aliases:
       - gemma4-e4b
       - conversation-default
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   gemma4-26b-conversation:
-    # Shared SAAA conversation and background provider. Keep one warm instance;
-    # unified KV shares 512K across one 256K main and three 64K auxiliary sessions.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/gemma4-26b-a4b-it-gguf/gemma-4-26B_q4_0-it.gguf
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --flash-attn on
-      --ctx-size 524288
-      --parallel 4
-      --batch-size 2048
-      --ubatch-size 512
-      --threads 16
-      --poll 100
-      --cache-type-k q4_0
-      --cache-type-v q4_0
-      --cont-batching
-      --kv-unified
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning off
-      --temp 0.6
-      --top-p 0.95
-      --top-k 64
-      --jinja
-      --context-shift
-      --cache-reuse 256
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/gemma4-26b-a4b-it-gguf/gemma-4-26B_q4_0-it.gguf -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 524288 --parallel 4 --batch-size 2048 --ubatch-size 512 --threads 16 --poll 100 --cache-type-k q4_0 --cache-type-v q4_0 --cont-batching --kv-unified --host 127.0.0.1 --port ${PORT} --reasoning off --temp 0.6 --top-p 0.95 --top-k 64 --jinja --context-shift --cache-reuse 256 --metrics --no-webui
     aliases:
       - gemma4-26b-a4b
       - gemma4-26b-conversation-canary
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   ornith15-strix-conversation:
-    # Explicit STRIX_LEAN voice profile, using the benchmarked custom-quant engine.
-    # The pinned artifact has an old MTP head: keep speculation disabled.
-    # Exact-prefix recovery fixes recurrent rollback; retain eight checkpoints per slot.
-    # Partition the 1M KV into four 256K streams; scoped snapshots use bounded RAM.
-    # Each session remains capped at 256K; the 64K auxiliary selector stays available.
     ttl: 0
-    cmd: >
-      /usr/bin/python3
-      /srv/ai/apps/larm-chat-input-engine-20261024-retention-v2/launch-prompt-retention.py
-      /etc/larm/prompt-retention.env.json
-      /srv/ai/apps/larm-chat-input-engine-20261024-retention-v2/llama-server
-      -m /srv/ai/models/ornith-trial-20261012/strix-lean/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf
-      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
-      --image-max-tokens 4096
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --no-mmap
-      --flash-attn on
-      --ctx-size 1048576
-      --parallel 4
-      --batch-size 2048
-      --ubatch-size 512
-      --threads 16
-      --poll 100
-      --cache-type-k q4_0
-      --cache-type-v q4_0
-      --cont-batching
-      --no-kv-unified
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning off
-      --spec-type none
-      -ctxcp 8
-      -cpent 1024
-      -cram 8192
-      --no-cache-idle-slots
-      --temp 0.6
-      --top-p 0.95
-      --top-k 64
-      --jinja
-      --chat-template-file /srv/ai/apps/larm-instruction-template-20261024-v1/chat-template.jinja
-      --no-context-shift
-      --cache-prompt
-      --cache-reuse 0
-      --metrics
-      --no-webui
+    cmd: |
+      /usr/bin/python3 /srv/ai/apps/larm-chat-input-engine-20261024-retention-v2/launch-prompt-retention.py /srv/ai/apps/larm-ornith-strix-200k-p4-runtime/private-retention.env.json /srv/ai/apps/larm-chat-input-engine-20261024-retention-v2/llama-server -m /srv/ai/models/ornith-trial-20261012/strix-lean/Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf --image-max-tokens 4096 -dev Vulkan0 -ngl 999 --fit off --no-mmap --flash-attn on --ctx-size 800000 --parallel 4 --batch-size 2048 --ubatch-size 512 --threads 16 --poll 100 --cache-type-k q4_0 --cache-type-v q4_0 --cont-batching --no-kv-unified --host 127.0.0.1 --port ${PORT} --reasoning off --spec-type none -ctxcp 8 -cpent 1024 -cram 24576 --no-cache-idle-slots --temp 0.6 --top-p 0.95 --top-k 64 --jinja --chat-template-file /srv/ai/apps/larm-instruction-template-20261024-v1/chat-template.jinja --no-context-shift --cache-prompt --cache-reuse 0 --metrics --no-webui
     aliases:
       - ornith-1.5-strix-lean
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   ornith15-conversation:
-    # Candidate only: this model starts exclusively through the explicit SAAA
-    # Agent Connection and remains loaded while that connection is renewed.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-Q5_K_M.gguf
-      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
-      --image-max-tokens 4096
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --flash-attn on
-      --ctx-size 230400
-      --parallel 1
-      --batch-size 2048
-      --ubatch-size 2048
-      --threads 16
-      --poll 100
-      --cache-type-k q8_0
-      --cache-type-v q8_0
-      --no-mmap
-      --cont-batching
-      --kv-unified
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning off
-      --temp 0.6
-      --top-p 0.95
-      --top-k 20
-      --jinja
-      --no-context-shift
-      --cache-reuse 0
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-Q5_K_M.gguf --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf --image-max-tokens 4096 -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 230400 --parallel 1 --batch-size 2048 --ubatch-size 2048 --threads 16 --poll 100 --cache-type-k q8_0 --cache-type-v q8_0 --no-mmap --cont-batching --kv-unified --host 127.0.0.1 --port ${PORT} --reasoning off --temp 0.6 --top-p 0.95 --top-k 20 --jinja --no-context-shift --cache-reuse 0 --metrics --no-webui
     aliases:
       - ornith-1.5-35b-conversation
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   qwen36-35b:
-    # LARM owns idle shutdown and retention until the next selected Profile.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/qwen36-35b/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --flash-attn on
-      --ctx-size 262144
-      --parallel 1
-      --cache-type-k q4_0
-      --cache-type-v q4_0
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning auto
-      --temp 0.2
-      --top-p 0.9
-      --jinja
-      --context-shift
-      --cache-reuse 256
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/qwen36-35b/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 262144 --parallel 1 --cache-type-k q4_0 --cache-type-v q4_0 --host 127.0.0.1 --port ${PORT} --reasoning auto --temp 0.2 --top-p 0.9 --jinja --context-shift --cache-reuse 256 --metrics --no-webui
     aliases:
       - qwen3.6-35b
       - qwen-35b
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   ornith15-35b:
-    # LARM owns idle shutdown and retention until the next selected Profile.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server
-      -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-Q5_K_M.gguf
-      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
-      --image-max-tokens 4096
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --flash-attn on
-      --ctx-size 262144
-      --parallel 1
-      --batch-size 2048
-      --ubatch-size 2048
-      --threads 16
-      --poll 100
-      --cache-type-k q8_0
-      --cache-type-v q8_0
-      --no-mmap
-      --cont-batching
-      --kv-unified
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning auto
-      --temp 0.6
-      --top-p 0.95
-      --top-k 20
-      --jinja
-      --no-context-shift
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/llama.cpp/build-vulkan/bin/llama-server -m /srv/ai/models/ornith15-35b/Ornith-1.5-35B-Q5_K_M.gguf --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf --image-max-tokens 4096 -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 262144 --parallel 1 --batch-size 2048 --ubatch-size 2048 --threads 16 --poll 100 --cache-type-k q8_0 --cache-type-v q8_0 --no-mmap --cont-batching --kv-unified --host 127.0.0.1 --port ${PORT} --reasoning auto --temp 0.6 --top-p 0.95 --top-k 20 --jinja --no-context-shift --metrics --no-webui
     aliases:
       - ornith-1.5-35b
       - ornith-35b
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   ornith15-35b-speed:
-    # LARM owns idle shutdown and retention until the next selected Profile.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/q38rocm/engine/bin/llama-server
-      -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
-      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
-      --image-max-tokens 4096
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --flash-attn on
-      --ctx-size 262144
-      --parallel 1
-      --batch-size 2048
-      --ubatch-size 2048
-      --threads 16
-      --poll 100
-      --cache-type-k q8_0
-      --cache-type-v q8_0
-      --no-mmap
-      --cont-batching
-      --kv-unified
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning auto
-      --temp 0.6
-      --top-p 0.95
-      --top-k 20
-      --jinja
-      --no-context-shift
-      --spec-type draft-mtp
-      --spec-draft-n-max 4
-      --spec-draft-p-min 0.6
-      -ctxcp 0
-      -cram 0
-      --no-cache-prompt
-      --no-cache-idle-slots
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/q38rocm/engine/bin/llama-server -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf --image-max-tokens 4096 -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 262144 --parallel 1 --batch-size 2048 --ubatch-size 2048 --threads 16 --poll 100 --cache-type-k q8_0 --cache-type-v q8_0 --no-mmap --cont-batching --kv-unified --host 127.0.0.1 --port ${PORT} --reasoning auto --temp 0.6 --top-p 0.95 --top-k 20 --jinja --no-context-shift --spec-type draft-mtp --spec-draft-n-max 4 --spec-draft-p-min 0.6 -ctxcp 0 -cram 0 --no-cache-prompt --no-cache-idle-slots --metrics --no-webui
     aliases:
       - ornith-1.5-35b-speed
       - ornith-35b-speed
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   ornith-contextstill:
-    # LARM owns idle shutdown and retention until the next selected Profile.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/q38rocm/engine/bin/llama-server
-      -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
-      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
-      --image-max-tokens 4096
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --flash-attn on
-      --ctx-size 262144
-      --parallel 4
-      --batch-size 2048
-      --ubatch-size 2048
-      --threads 16
-      --poll 100
-      --cache-type-k q8_0
-      --cache-type-v q8_0
-      --no-mmap
-      --cont-batching
-      --kv-unified
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning auto
-      --temp 0.6
-      --top-p 0.95
-      --top-k 20
-      --jinja
-      --no-context-shift
-      --spec-type none
-      -ctxcp 0
-      -cram 0
-      --no-cache-prompt
-      --no-cache-idle-slots
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/q38rocm/engine/bin/llama-server -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf --image-max-tokens 4096 -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 262144 --parallel 4 --batch-size 2048 --ubatch-size 2048 --threads 16 --poll 100 --cache-type-k q8_0 --cache-type-v q8_0 --no-mmap --cont-batching --kv-unified --host 127.0.0.1 --port ${PORT} --reasoning auto --temp 0.6 --top-p 0.95 --top-k 20 --jinja --no-context-shift --spec-type none -ctxcp 0 -cram 0 --no-cache-prompt --no-cache-idle-slots --metrics --no-webui
     aliases:
       - ornith-1.5-contextstill
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
   ornith15-35b-agent:
-    # LARM owns idle shutdown and retention until the next selected Profile.
     ttl: 0
-    cmd: >
-      /srv/ai/apps/q38rocm/engine/bin/llama-server
-      -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf
-      --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf
-      --image-max-tokens 4096
-      -dev Vulkan0
-      -ngl 999
-      --fit off
-      --flash-attn on
-      --ctx-size 65536
-      --parallel 1
-      --batch-size 2048
-      --ubatch-size 2048
-      --threads 16
-      --poll 100
-      --cache-type-k q8_0
-      --cache-type-v q8_0
-      --no-mmap
-      --cont-batching
-      --kv-unified
-      --host 127.0.0.1
-      --port ${PORT}
-      --reasoning auto
-      --temp 0.6
-      --top-p 0.95
-      --top-k 20
-      --jinja
-      --no-context-shift
-      --spec-type draft-mtp
-      --spec-draft-n-max 4
-      --spec-draft-p-min 0.6
-      -ctxcp 0
-      -cram 0
-      --no-cache-prompt
-      --no-cache-idle-slots
-      --metrics
-      --no-webui
+    cmd: |
+      /srv/ai/apps/q38rocm/engine/bin/llama-server -m /srv/ai/models/halofpx/ornith-1.5-35b/Ornith-1.5-35B-A3B-ROCmFP4.gguf --mmproj /srv/ai/models/ornith-trial-20261012/strix-lean/mmproj-Ornith-1.5-35B-BF16.gguf --image-max-tokens 4096 -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 65536 --parallel 1 --batch-size 2048 --ubatch-size 2048 --threads 16 --poll 100 --cache-type-k q8_0 --cache-type-v q8_0 --no-mmap --cont-batching --kv-unified --host 127.0.0.1 --port ${PORT} --reasoning auto --temp 0.6 --top-p 0.95 --top-k 20 --jinja --no-context-shift --spec-type draft-mtp --spec-draft-n-max 4 --spec-draft-p-min 0.6 -ctxcp 0 -cram 0 --no-cache-prompt --no-cache-idle-slots --metrics --no-webui
     aliases:
       - ornith-1.5-35b-agent
       - ornith-35b-agent
     env:
       - HIP_VISIBLE_DEVICES=-1
       - ROCR_VISIBLE_DEVICES=-1
-
+  qwen38-rocmfp4-fast-conversation:
+    ttl: 0
+    cmd: |
+      /usr/bin/python3 /srv/ai/apps/larm-qwen38-mtp-120141f-v3/launch-prompt-retention.py /srv/ai/apps/larm-qwen38-fast-200k-p4-checkpoints8-runtime/private-retention.env.json /srv/ai/apps/larm-qwen38-mtp-120141f-v3/llama-server -m /srv/ai/models/qwen38-rocmfp4/Qwen3.8-27B-ROCmFP4-FAST.gguf -dev Vulkan0 -ngl 999 --fit off --flash-attn on --ctx-size 800000 --parallel 4 --batch-size 2048 --ubatch-size 256 --threads 16 --cache-type-k q4_0 --cache-type-v q4_0 --host 127.0.0.1 --port ${PORT} --reasoning on --reasoning-format deepseek --reasoning-budget -1 --temp 1.0 --top-k 20 --top-p 0.95 --min-p 0 --repeat-penalty 1.0 --jinja --no-context-shift --cache-prompt --cache-reuse 0 --no-kv-unified --ctx-checkpoints 8 --checkpoint-min-step 1024 --cache-ram 24576 --no-cache-idle-slots --spec-type draft-mtp --no-spec-mtp-strict-qwen --spec-draft-n-max 3 --spec-draft-p-min 0 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --metrics --no-webui
+    aliases:
+      - qwen3.8-27b-rocmfp4-fast
+    env:
+      - HIP_VISIBLE_DEVICES=-1
+      - ROCR_VISIBLE_DEVICES=-1
 groups:
   conversation-llm-slot:
     swap: true
@@ -776,20 +228,18 @@ groups:
       - ornith15-strix-conversation
       - gemma4-conversation
       - ornith15-conversation
-
+      - qwen38-rocmfp4-fast-conversation
   qwen-decision-slot:
     swap: false
     exclusive: false
     members:
       - qwen35-decision
-
   backchannel-llm-slot:
     swap: true
     exclusive: false
     members:
       - lfm25-backchannel-jp
       - gemma3-backchannel
-
   qwen-worker-slot:
     swap: true
     exclusive: false

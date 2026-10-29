@@ -4,6 +4,21 @@ import { validateScopedProviderModel } from "./app-scoped-provider";
 
 const emptyPrepared = {};
 
+test("System One short aliases retain task-specific credential isolation", async () => {
+  const check = (bound: string, model: string) => validateScopedProviderModel({
+    request: new Request("http://larm.test/v1/systemone"), protocol: "larm.system-one.v1",
+    maxBodyBytes: 4096, publicModel: bound, prepared: { systemOneRequest: {
+      model, state: "test", questions: { intent: { type: "choice", instructions: "test", criteria: { request: "test" } } },
+    } },
+  });
+  expect(await check("in", "ruri-v3-30m-user-intent-v1")).toEqual({ ok: true });
+  expect(await check("ruri-v3-30m-user-intent-v1", "in")).toEqual({ ok: true });
+  expect(await check("ruri-v3-30m-speaking-attitude", "em")).toEqual({ ok: true });
+  expect(await check("em", "ruri-v3-30m-speaking-attitude")).toEqual({ ok: true });
+  expect(await check("em", "in")).toMatchObject({ ok: false, code: "model_mismatch" });
+  expect(await check("in", "em")).toMatchObject({ ok: false, code: "model_mismatch" });
+});
+
 test("scoped Provider binds Chat, speech, and System One model selectors to its public model", async () => {
   expect(await validateScopedProviderModel({
     request: new Request("http://larm.test/v1/chat/completions"),

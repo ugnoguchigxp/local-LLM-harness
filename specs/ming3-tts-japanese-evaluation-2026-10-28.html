@@ -1,0 +1,471 @@
+<article lang="ja">
+  <h1>Ming 3.0 TTSの日本語発声と生成速度の実機評価</h1>
+  <p>
+    2026-10-28 JST。Ryzen AI Max+ 395 / Radeon 8060S / 121 GiB RAMのlocal-nodeで、
+    inclusionAIのMing-3.0-ttsを取得し、日本語の読みと生成速度を評価する。
+    Providerへの登録・既定音声の変更を伴わない隔離実行である。
+  </p>
+  <section id="finding">
+    <h2>確認できた結果</h2>
+    <p>
+      通常生成96本、二つのASRによる照合192件を完了した。0.5Bは中国語参照30本・日本語合成参照18本、
+      tinyは中国語参照18本、VOICEVOXは対照30本。すべて生成・照合ともエラーなく完了した。
+      tinyは短文・長文・数字原文・助数詞の4種類について、全3 seedの読みが両ASRで一致した。
+      日本語の読みを優先する追加試聴候補はtinyである。ただしREADMEは「ランダ」「ランド」などに崩れ、
+      専門用語や英字を原文のまま確実に読めるモデルとは判定しない。
+    </p>
+    <p>
+      0.5Bの公式中国語参照条件では10文×3回の通常生成30本が完了した。
+      短文と中程度の平易文はQwen3-ASRとWhisperの双方で、全seedの読みが照合できた。
+      一方、数字、助数詞、地名、日英混在の原文には両認識器で内容が崩れる例があり、
+      日本語全般の発音精度が十分とは判定しない。全条件を対象にした自然さの採点は未実施である。
+    </p>
+    <p>
+      0.5Bの日本語合成参照条件では長文などの読みが改善したが、数字の金額やREADME、助数詞の誤読候補は残る。
+      声質や話速も異なる参照条件の比較であり、参照言語だけの効果には分解できない。
+    </p>
+    <p>
+      同一短文の生成時間中央値はMing 0.5Bが2.411秒、現行VOICEVOXが0.181秒。
+      約13.3倍の待ち時間で、通常生成30本のRTF中央値は1.013であった。
+      現時点で低遅延日本語会話のVOICEVOX代替として採用する根拠はない。
+      これはAMD・ROCm上の今回の実行経路の評価であり、他の実装やGPU全般の性能順位ではない。
+    </p>
+    <p>
+      tinyは同一短文6.234秒、長文31.764秒で、通常生成のRTFは約2.1。
+      読みの改善と引き換えに、今回の公開MoE loop経路ではリアルタイム生成に届かなかった。
+      利用者は提示したtinyの数字サンプルを「かなりいい」「自然」と評価した。
+      これは一つのサンプルへの試聴評価であり、全条件のMOSではない。
+      同時にGPUメモリ17.5GiBを許容できないと明示し、削減目標は「できるだけ小さく」とした。
+      追加試聴では、提示した軽量tinyの抑揚付き音声について、利用者が中国語のアクセント・韻律が強い日本語に聞こえると評価した。
+      通常読み上げの好評を、日本語の表現制御へそのまま適用しない。正式採用は未実施である。
+    </p>
+  </section>
+  <section id="artifacts">
+    <h2>取得物と固定revision</h2>
+    <table>
+      <caption>
+        外部保存した公式ソースと重み
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">revision</th>
+          <th scope="col">保存先</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">公式ソース</th>
+          <td><code>9332fb9443325d4726ce02cefd4ec1c211df4079</code></td>
+          <td><code>/srv/ai/runtimes/ming-3.0-tts-source</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Ming-3.0-tts-0.5B</th>
+          <td><code>7247f4c94a5b2e987404ed28a5cfec41b1a4ca61</code></td>
+          <td><code>/srv/ai/models/inclusionAI/Ming-3.0-tts-0.5B</code></td>
+        </tr>
+        <tr>
+          <th scope="row">Ming-3.0-tts-tiny</th>
+          <td><code>4715ef5a2f02901f75687d538b6920fd0dd11e6b</code></td>
+          <td><code>/srv/ai/models/inclusionAI/Ming-3.0-tts-tiny</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      公式配布元は<code>https://github.com/inclusionAI/Ming-3.0-tts</code>と Hugging
+      Faceの<code>inclusionAI/Ming-3.0-tts-0.5B</code>・<code>inclusionAI/Ming-3.0-tts-tiny</code>。
+      配布一覧の合計は約3.00 GBと18.01 GB。PDFを除き、取得一覧の全ファイルの存在とサイズを照合した。
+      tinyのXet取得が途中で進まなくなり、同じrevisionの通常HTTP取得で残りを完了した。
+    </p>
+  </section>
+  <section id="method">
+    <h2>測定条件</h2>
+    <ul>
+      <li>
+        入力正本は<code>benchmarks/tts/ming3/corpus.json</code>。短文、中程度の文、長文、数字原文と仮名指定、日英混在原文と仮名指定、助数詞、文脈による読み、短い返答の10文。
+      </li>
+      <li>
+        各文3回、seed
+        42・43・44、同時生成1件。短文の準備生成を別記し、モデルロード、参照音声準備、通常生成を分離する。
+        VOICEVOXはseedを制御せず、同一入力の音声は決定的であり、3回を独立した品質標本とは扱わない。
+      </li>
+      <li>
+        0.5BはBF16、PyTorch 2.11.0+rocm7.13.0、Transformers 4.46.3、x-transformers 2.9.2。CPU
+        threadは16。FlashAttentionの外部wheelを使用せず、公開コードのPyTorch経路を使用する。
+      </li>
+      <li>
+        tinyはx-transformers 2.7.4、fla-core 0.4.2、同じROCm PyTorchで実行する。
+        公開APIの<code>moe_backend=loop</code>、BF16、SDPA、Flow 10 step、cfg
+        2.0、sigma 0.25、temperature 0.0。
+        NVIDIA用の公式参照環境をそのまま再現したものではなく、AMD上の互換実行である。
+      </li>
+      <li>
+        公式の参照音声は<code>data/voice_presets/voice_audio/lingguang.wav</code>。参照テキスト・音声と話者埋め込みを使用する。日本語は<code>language_id=Japanese</code>を指定する。
+      </li>
+      <li>
+        日本語を中国語として処理しないよう、中英用の数値正規化は無効とする。0.5Bの既定分割長24と末尾無音trimは維持し、実際に渡した分割テキストも記録する。
+      </li>
+      <li>
+        新しいTorchAudioでは指定済みsoundfile
+        backendがTorchCodecに置き換わるため、計測器内で明示的にSoundFileのfloat32読み込みを使用する。公式ソースは変更しない。
+      </li>
+      <li>
+        MingはGPU同期を含む波形生成完了までを測り、WAV保存は計測外。VOICEVOXは既存CPU
+        Providerへのloopback
+        HTTPで、WAV化と転送を含む。ブラウザの再生開始時間・ストリーミング初音時間は測っていない。
+      </li>
+      <li>
+        既存サービスを維持した共存測定である。モデル取得が一部同時進行し、GPU・CPUの占有状態は固定していない。ASR照合と各TTS構成の速度測定は順に実施する。
+      </li>
+    </ul>
+    <p>
+      日本語参照の対照条件は、試験文とは異なる「お待たせしました。こちらで内容を確認して、順番にご案内します。」を
+      VOICEVOXで合成したもの。creditはVOICEVOX:春日部つむぎ。
+      公式中国語参照と日本語合成参照の差は、言語・声質・話速などを含む条件差である。
+      言語だけの因果効果やモデルサイズだけの差を主張しない。
+    </p>
+    <p>
+      日本語参照の0.5Bとtinyの追加条件は、短文、長文、数字原文、日英混在原文、助数詞、文脈の6文を対象とする。
+      公式中国語参照の0.5BとVOICEVOXは10文すべてを対象とするため、全入力の集約RTF同士は同一構成の比較ではない。
+      構成間の速度は同じ文の中央値を優先して比べる。
+    </p>
+  </section>
+  <section id="speed">
+    <h2>生成速度とメモリ</h2>
+    <table>
+      <caption>
+        同一文3回の生成時間中央値。秒。最大割当はGiB
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">通常生成本数</th>
+          <th scope="col">短文</th>
+          <th scope="col">長文</th>
+          <th scope="col">数字原文</th>
+          <th scope="col">日英混在原文</th>
+          <th scope="col">GPU最大割当</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">VOICEVOX CPU</th>
+          <td>30</td>
+          <td>0.181</td>
+          <td>1.443</td>
+          <td>0.823</td>
+          <td>1.031</td>
+          <td>対象外</td>
+        </tr>
+        <tr>
+          <th scope="row">Ming 0.5B・中国語参照</th>
+          <td>30</td>
+          <td>2.411</td>
+          <td>18.441</td>
+          <td>10.904</td>
+          <td>9.988</td>
+          <td>2.86</td>
+        </tr>
+        <tr>
+          <th scope="row">Ming 0.5B・日本語合成参照</th>
+          <td>18</td>
+          <td>2.708</td>
+          <td>18.835</td>
+          <td>10.984</td>
+          <td>10.061</td>
+          <td>2.87</td>
+        </tr>
+        <tr>
+          <th scope="row">Ming tiny・中国語参照</th>
+          <td>18</td>
+          <td>6.234</td>
+          <td>31.764</td>
+          <td>21.270</td>
+          <td>18.285</td>
+          <td>17.48</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      0.5Bの中国語参照条件ではモデルロード3.306秒、参照音声準備0.459秒、最初の準備生成3.761秒。日本語合成参照では4.029秒、0.322秒、2.970秒。tinyはロード23.489秒、初回の準備生成121.010秒で、初回にはTriton等の準備を含む。0.5Bは参照latentを事前にcacheし、tinyは公開APIが毎回参照音声をencodeするため通常生成時間に含む。
+    </p>
+    <p>
+      tinyの通常生成18本はすべて停止判定で終了し、生成上限による打ち切りはなかった。GPU最大予約は0.5B中国語参照3.00
+      GiB、日本語合成参照3.02 GiB、tiny17.74
+      GiB。共有メモリGPUのPyTorch割当統計であり、専用VRAMの必要量と同一視しない。
+    </p>
+    <p>
+      全入力のRTF中央値は0.5B中国語参照1.013、日本語合成参照0.995、tiny2.136、VOICEVOX0.072。測定入力の集合が異なる点に注意する。RTFは生成秒数÷生成音声秒数で、1未満なら再生時間より速い。声・話速・音声長も構成ごとに異なるため、同一文の待ち時間を優先して比較する。
+    </p>
+  </section>
+  <section id="reading">
+    <h2>読みの照合と限界</h2>
+    <p>
+      全seedの生成音声を16 kHz mono PCMへ変換し、Qwen3-ASR 1.7Bの既存HIP C実行系と Whisper
+      large-v3-turbo Q5_0の既存HTTP Providerで独立に再認識する。
+      正解文はASRへ与えず、認識された全文・音声SHA-256を保存する。
+      文字CERは表記差を含む診断値。読みCERはpyopenjtalkと、対照文から定義した技術用語の読み辞書を使う。
+      同じ読みの表記差を減らす補助指標であり、辞書の誤りやASRの補完・誤認識を取り除くものではない。
+      人間による発音正答率や自然さ・MOSへ変換しない。
+    </p>
+    <table>
+      <caption>
+        3 seedを集計した補助診断の読みCER。各セルはQwen / Whisper、単位%。低いほど照合差が小さい
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力</th>
+          <th scope="col">0.5B・中国語参照</th>
+          <th scope="col">0.5B・日本語合成参照</th>
+          <th scope="col">tiny・中国語参照</th>
+          <th scope="col">VOICEVOX</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">短文</th>
+          <td>0.00 / 0.00</td>
+          <td>0.00 / 0.00</td>
+          <td>0.00 / 0.00</td>
+          <td>0.00 / 0.00</td>
+        </tr>
+        <tr>
+          <th scope="row">長文</th>
+          <td>5.20 / 5.91</td>
+          <td>0.47 / 0.00</td>
+          <td>0.00 / 0.00</td>
+          <td>0.71 / 0.71</td>
+        </tr>
+        <tr>
+          <th scope="row">数字原文</th>
+          <td>42.46 / 19.65</td>
+          <td>6.67 / 5.26</td>
+          <td>0.00 / 0.00</td>
+          <td>2.11 / 0.00</td>
+        </tr>
+        <tr>
+          <th scope="row">助数詞</th>
+          <td>12.21 / 21.60</td>
+          <td>7.04 / 7.98</td>
+          <td>0.00 / 0.00</td>
+          <td>2.82 / 0.00</td>
+        </tr>
+        <tr>
+          <th scope="row">日英混在原文</th>
+          <td>8.75 / 22.08</td>
+          <td>9.17 / 7.08</td>
+          <td>10.00 / 9.17</td>
+          <td>11.25 / 5.42</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      このCERにはASR自身の誤りが含まれ、1から引いて発音正答率にしない。
+      「生地」と「記事」のように同音の表記差は読みで相殺する。
+      逆に、同じ漢字へASRが戻す場合は「市場」の「しじょう／いちば」のような読み分けを証明できない。
+      「日本橋」は地域を指定しておらず、東京と大阪のどちらの読みを期待するかを固定した試験ではない。
+      文脈文の音韻上の正解、アクセント、話者の自然さは人間による試聴で別に確認する必要がある。
+    </p>
+    <p>
+      tinyのseed
+      42では、数字原文の10月12日・午後3時30分・1280円・12.5%・0.6・1.7を両ASRで照合できた。
+      助数詞文も一人・二本・三冊・四月一日・二十歳・二十日・一泊二日を照合できた。
+      一方、READMEはQwenが「ランダ」、Whisperが「ランド」と認識した。
+      0.5B日本語合成参照の同箇所も「Red
+      Laser」「レッドレズエ」となり、参照音声の変更だけでは解消しなかった。
+    </p>
+    <table>
+      <caption>
+        0.5Bの公式中国語参照、seed 42の主な認識結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力箇所</th>
+          <th scope="col">Qwen3-ASR</th>
+          <th scope="col">Whisper</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">平易な短文・中程度の文</th>
+          <td>内容一致</td>
+          <td>内容一致</td>
+        </tr>
+        <tr>
+          <th scope="row">10月12日、1,280円</th>
+          <td>「次第次来日」「一日八十円」</td>
+          <td>「10日」「1.2%支援」</td>
+        </tr>
+        <tr>
+          <th scope="row">README</th>
+          <td>「Let's say」</td>
+          <td>「Rate88」</td>
+        </tr>
+        <tr>
+          <th scope="row">一人、四月一日、一泊二日</th>
+          <td>「イタリア」「三月一日」「一泊無駄地」</td>
+          <td>「イトリン」「数月1日」「一泊無駄地」</td>
+        </tr>
+        <tr>
+          <th scope="row">日本橋、着心地</th>
+          <td>「ミフンバシ」「着地地」</td>
+          <td>「2分場所」「着地地」</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      数字の仮名指定条件ではseed 42のWhisperは日付・時刻・金額・割合・両バージョンを照合できた。
+      Qwen側は同音声の金額を12180円と認識したため、片方のASRだけでTTSの誤読を確定しない。
+      日英混在の仮名指定でもASRが英字へ戻す場合があり、表記一致だけの点数は過大な誤差になる。
+    </p>
+  </section>
+  <section id="expressive-and-memory-followup">
+    <h2>利用者の試聴後：抑揚サンプルとメモリ削減</h2>
+    <aside>
+      <p>
+        追加サンプル提示後、利用者は「抑揚付いたら、明らかに中国人が喋ってる日本語になりました」と評価した。
+        対象は今回提示した軽量tinyの表現制御サンプルであり、通常のmultilingual
+        TTSの肯定評価とは分ける。
+        ASRで文面が一致しても、日本語らしいアクセント・韻律・自然さが保たれたとは判定できない。
+      </p>
+      <p>
+        表現制御taskへの変更、参照音声の条件、仮名入力、量子化が同時に変わっている。
+        同じ表現制御条件のBF16対照は今回作っていないため、違和感の原因を量子化だけ、またはモデル全体の特性に限定しない。
+        公開emotion/freeformが通常TTSと同じ日本語指定を許可しないことは実装上の差だが、原因の確定証拠ではない。
+      </p>
+    </aside>
+    <p>
+      利用者がtinyの数字サンプルの自然さを肯定し、抑揚付きの追加音声を依頼した。
+      同時にGPUメモリ17.5GiBは許容できず、目標は「できるだけ小さく」と指定した。
+      正式なProvider採用や既定音声の変更ではなく、外部実行環境で音声と重み圧縮を試作する。
+    </p>
+    <p>
+      通常・喜び・悲しみ・驚き・力強い励まし・やさしい語りかけの6条件を用意した。
+      最初の3条件は同じ文章・seed 42でemotionのみを変更し、驚きは別の発話文を使う。
+      4条件は公式参照音声からのspeaker embeddingを使用し、後半2条件は参照なしのfreeform指示を使う。
+      後半の条件では声質自体も変わり得る。ラベルは指定した感情・話し方であり、実現度の人間評価やMOSではない。
+      音量・話速・ピッチの後加工はしていない。
+    </p>
+    <table>
+      <caption>
+        今回のメモリ試作。GPUはPyTorch統計のGiB、元tinyは前回の測定
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成</th>
+          <th scope="col">GPU最大割当</th>
+          <th scope="col">GPU最大予約</th>
+          <th scope="col">数字文・seed 42の生成秒数</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">tiny・BF16</th>
+          <td>17.48</td>
+          <td>17.74</td>
+          <td>21.270</td>
+        </tr>
+        <tr>
+          <th scope="row">tiny・routed experts INT4</th>
+          <td>7.69</td>
+          <td>7.99</td>
+          <td>25.993</td>
+        </tr>
+        <tr>
+          <th scope="row">tiny・routed experts INT4＋残りLinear INT8</th>
+          <td>6.83</td>
+          <td>7.35</td>
+          <td>43.229</td>
+        </tr>
+        <tr>
+          <th scope="row">0.5B・表現サンプル</th>
+          <td>約2.87</td>
+          <td>約2.98</td>
+          <td>今回の追加条件では未測定</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      最小だった試作はGPU最大割当が約61%減ったが、数字文の生成時間は約2倍になった。
+      表の新しい時間は各条件1回の参考値であり、新しい速度分布を推定したものではない。
+      最初の生成には追加準備が含まれるため、短文の初回時間を前回のwarm中央値と直接比較しない。
+      この値を量子化実装全般の速度とはしない。
+    </p>
+    <p>
+      INT4は23層×128 routed expert×3 Linearの8832個をCPU上で変換してからGPUへ置く。
+      入力方向64要素ごとの非対称4bit、scaleとminimumはBF16、二つの4bit値を1 byteに格納する。
+      expert重みの保存量は13,891,534,848 byteから3,906,994,176 byteになった。
+      追加INT8条件では残り757個のnn.Linearを出力行ごとの対称8bitで保持する。
+      この追加部分は元の重み3,576,527,872 byteに対し、biasを含め1,791,635,760 byteである。
+      embedding、独自Parameterで実装されたrouterなどは維持する。
+    </p>
+    <p>
+      実行時は呼び出されたLinearの重みをBF16へ一時展開して既存の演算を使う。
+      展開したexpert重みを永続cacheしない。専用の高速INT4演算kernelではないため、メモリ削減と速度向上は同時に得られていない。
+      元の公式重みや公式ソースは変更せず、計測器内の置換を使う非公式の試作である。
+    </p>
+    <aside>
+      <p>
+        CPUへ移すだけの削減ではなく、生成中の重みの保存量を減らしている。 ただし元のBF16
+        checkpointをCPUで読み込んでから毎回圧縮するため、読み込み中のprocess最大RSSは
+        INT4-onlyで約21.53GiB、INT4＋INT8で約25.93GiBだった。
+        CPUとGPUは同じ物理RAMを共有するため、GPU統計の低下をシステム全体のピーク使用量削減と同一視しない。
+        圧縮済みcheckpointを直接読む実装や、本番の常駐運用はまだ作成していない。
+      </p>
+    </aside>
+    <p>
+      軽量化前と同じ通常TTSの短文・数字文をseed
+      42で再生成し、二つの軽量化条件とも両ASRで読みを照合できた。
+      これは2文の確認であり、前回の全コーパスと全seedの精度維持を保証しない。
+      軽量化後の自然さは今回提示する試聴サンプルで別に判断する必要がある。
+    </p>
+    <p>
+      表現制御の漢字入力では、大丈夫が「ダジャンフ」「タタンフォ」、今日が「チンル」「ジンル」、
+      深呼吸が「寸不死」などと認識された。通常のmultilingual TTSと同一の入力条件ではない。
+      tinyの公開emotion/freeform contractはTarget language行の追加を許可しないため、
+      日本語指定と感情を独自に混ぜず、追加対照として読みを仮名で指定したサンプルを再生成した。
+      この読み指定版は漢字原文の精度とは分け、実際のモデル入力も保存する。
+    </p>
+    <p>
+      追加試験は合計34音声・ASR照合68件を完了した。各モデルの6種類の表現サンプル、
+      二つの軽量化条件の通常TTS確認、仮名指定の0.5Bと最小メモリtinyを含む。
+      最小メモリtinyの仮名指定は、喜び・励まし・やさしい声で両ASRの読みが一致した。
+      一方、通常声の冒頭「きょう」は「ジョン」「チョン」、悲しみではWhisperが「チョウ」と認識しており、
+      仮名指定で完全に解消したとは判定しない。0.5Bの仮名指定版も比較試聴として保持する。
+      抑揚・声質の自然さ自体は利用者が音声を聴いて判断する項目である。
+    </p>
+    <p>
+      追加の入力正本は<code>benchmarks/tts/ming3/expressive-corpus.json</code>、生成器は<code>expressive.py</code>、
+      圧縮試作は<code>packed_experts.py</code>。
+      nibble順序と復元、全zero行とbias、root/nested
+      Linearの置換を確認する3件のCPU数値テストが通過した。
+      音声、環境、速度、最大メモリ、ASR照合と比較試聴一覧は
+      <code>/srv/ai/results/larm/tts/2026-10-28-ming3-expressive</code>に保存する。
+      <code>index.html</code
+      >で読み指定版、漢字入力の試行、前回の通常BF16音声を比較できる。
+    </p>
+  </section>
+  <section id="reproduction">
+    <h2>計測器と保存先</h2>
+    <p>
+      計測器は<code>benchmarks/tts/ming3/run.py</code>、既存VOICEVOXとの対照・二つのASRによる照合は
+      <code>evaluate.py</code
+      >、試聴一覧の生成は<code>report.py</code>。
+      すべての音声、ログ、環境、時系列測定、照合結果、集計と試聴一覧は
+      <code>/srv/ai/results/larm/tts/2026-10-28-ming3</code>に保存する。
+      <code>index.html</code
+      >が全seedの試聴一覧、<code>readings.jsonl</code>がASR照合、
+      各構成の<code>runs.jsonl</code>が通常生成と準備生成の生測定である。
+    </p>
+    <pre><code>OMP_NUM_THREADS=16 MKL_NUM_THREADS=16 /srv/ai/runtimes/ming3-env/bin/python benchmarks/tts/ming3/run.py \
+  --source /srv/ai/runtimes/ming-3.0-tts-source \
+  --model /srv/ai/models/inclusionAI/Ming-3.0-tts-0.5B \
+  --variant 05b --output /srv/ai/results/larm/tts/NEW-RUN/05b-default</code></pre>
+    <p>
+      新しい外部出力先を指定する。環境は<code>/srv/ai/runtimes/ming3-env</code>と
+      <code>/srv/ai/runtimes/ming3-tiny-env</code>に分離し、既存ROCm PyTorchを参照する。
+      実際のライブラリ版と参照音声のhashは各構成の<code>environment.json</code>に保存する。
+      本番Providerを通したTTSの接続試験、同時生成、LLMとの意図的な競合試験は今回の対象に含めない。
+    </p>
+  </section>
+</article>

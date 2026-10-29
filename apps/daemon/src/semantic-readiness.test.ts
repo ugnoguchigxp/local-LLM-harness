@@ -144,6 +144,24 @@ function embeddingResponse(type: "query" | "passage", dimension = 384): Response
   });
 }
 
+test("intent readiness uses user text and five intent labels instead of attitude", async () => {
+  const { registry, control, provider } = fixture("larm.system-one.v1", "decision.system-one");
+  provider.publicModel = "in";
+  let observed: any;
+  const readiness = new SemanticReadiness({ control, getRegistry: () => registry,
+    executionGate: new ExecutionGate(), timeoutMs: 100,
+    fetchImpl: async (_input, init) => {
+      observed = JSON.parse(String(init?.body));
+      return Response.json({ model: provider.publicModel, answers: { intent: {
+        type: "choice", choice: "request", confidence: 0.8,
+      } }, usage: { input_tokens: 20, output_tokens: 0 } });
+    },
+  });
+  expect(await readiness.check({ allocationId: "alloc", provider })).toMatchObject({ ready: true, probe: { validated: true } });
+  expect(observed.state).toEqual({ text: "明日の天気を調べてください。", previous_agent: null });
+  expect(Object.keys(observed.questions.intent.criteria).sort()).toEqual(["chat", "followup", "incomplete", "noise", "request"]);
+});
+
 test("embedding readiness validates capacity plus query and passage canaries", async () => {
   const { registry, control, provider } = fixture(
     "larm.embedding.v1",

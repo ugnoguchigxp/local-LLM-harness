@@ -11,7 +11,7 @@ import { LarmClient } from "../../../packages/client/src/index";
 import { runLfm25ReasoningSmoke } from "./smoke-lfm25-reasoning";
 
 /** Owns one isolated engine and HTTP listener. Never controls production Providers. */
-export async function verifyLfmInputCache(profileSelector: string, evidenceDir: string) {
+export async function verifyLfmInputCache(profileSelector: string, evidenceDir: string, requestTimeoutMs = 180_000) {
   const configDir = resolve(import.meta.dir, "../../../config/local-node");
   const registry = loadRegistry(configDir);
   const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
@@ -78,19 +78,24 @@ export async function verifyLfmInputCache(profileSelector: string, evidenceDir: 
     const app = createApp({ registry, control, getState: () => observer.getState(), agentConnectionCatalog: catalog,
       identity: { version: "isolated-cache", releaseCommit: "a".repeat(40), configRevision: "b".repeat(64), bootEpoch: control.getBootEpoch() },
       getConfigRevision: () => "b".repeat(64), apiToken, protectedConsumerToken: peerToken, promptRetentionKey: key,
-      connectionSigningKey: randomBytes(32), gatewayTimeoutMs: 180_000,
+      connectionSigningKey: randomBytes(32), gatewayTimeoutMs: requestTimeoutMs,
       gatewayFetch: async (url, init) => {
         if (String(url).endsWith("/larm/cache/invalidate")) invalidationRequests++;
         if (!String(url).endsWith("/v1/chat/completions")) return fetch(url, init);
         activeForwards++; peakForwards = Math.max(peakForwards, activeForwards);
         try { return await fetch(url, init); } finally { activeForwards--; }
       } });
-    server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch });
+    server = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 255, fetch: app.fetch });
     const api = `http://127.0.0.1:${server.port}`;
     catalog.audiences.forEach(a => { a.baseUrl = `${api}/v1`; });
     ticking = setInterval(() => { void observer.tick(); }, 1000);
     const stats = async () => (await (await fetch(`${origin}/larm/cache/invalidate`, { method: "POST",
       headers: { "x-larm-cache-key": key, "content-type": "application/json" }, body: JSON.stringify({ action: "inspect" }) })).json()) as Record<string, number>;
+    const speculation = async () => {
+      const metrics = await (await fetch(`${origin}/metrics`)).text();
+      const count = (name: string) => Number(new RegExp(`^llamacpp:spec_decode_num_${name}_total ([0-9.eE+-]+)$`, "m").exec(metrics)?.[1] ?? 0);
+      return { draftedTokens: count("draft_tokens"), acceptedTokens: count("accepted_tokens"), drafts: count("drafts") };
+    };
     const schema = { type: "json_schema", json_schema: { name: "cache_fixture", strict: true, schema: { type: "object",
       properties: { value: { type: "integer" } }, required: ["value"], additionalProperties: false } } };
     const context = Array.from({ length: 220 }, (_, i) => `record ${i}: The stable synthetic cache fixture contains no private information.`).join("\n");
@@ -100,7 +105,7 @@ export async function verifyLfmInputCache(profileSelector: string, evidenceDir: 
       const started = performance.now();
       const response = await fetch(`${api}/v1/chat/completions`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify({ model: provider!.publicModel, messages: input, max_tokens: 1536, reasoning_effort: "medium", response_format: schema,
-          stream: true, stream_options: { include_usage: true }, ...(cacheKey ? { prompt_cache_key: cacheKey } : {}), ...extra }), signal: AbortSignal.timeout(180_000) });
+          stream: true, stream_options: { include_usage: true }, ...(cacheKey ? { prompt_cache_key: cacheKey } : {}), ...extra }), signal: AbortSignal.timeout(requestTimeoutMs) });
       if (!response.ok || !response.body) throw new Error(`${label}: HTTP ${response.status} ${await response.text()}`);
       let pending = "", content = "", reasoning = "", done = false, finish: string | null = null;
       let usage: any, timings: any, firstReasonMs: number | undefined, firstContentMs: number | undefined;
@@ -130,8 +135,19 @@ export async function verifyLfmInputCache(profileSelector: string, evidenceDir: 
     requireHit(await chat("repeat", "thread-A"));
     requireHit(await chat("append", "thread-A", 29, apiToken, {}, [...messages(17), { role: "assistant", content: '{"value":17}' }, { role: "user", content: "Now return value 29." }]));
     const before = await stats();
-    for (const key of ["B", "C", "D", "E", "F"]) requireCold(await chat(`other-${key}`, `thread-${key}`));
+    // Occupy every hot slot without spending the retained conversation's five
+    // minute idle lifetime on unrelated large prefills on slower engines.
+    const displacementInput = [{ role: "user", content: "Return JSON with value equal to 17." }];
+    for (const key of ["B", "C", "D", "E", "F"]) {
+      requireCold(await chat(`other-${key}`, `thread-${key}`, 17, apiToken, {}, displacementInput));
+    }
+    const mtpBeforeRestore = props.larm_prompt_cache.speculative ? await speculation() : undefined;
     requireHit(await chat("restore-A", "thread-A"));
+    if (mtpBeforeRestore) {
+      const restoredMtp = await speculation();
+      result.mtpRestoration = { before: mtpBeforeRestore, after: restoredMtp };
+      if (restoredMtp.acceptedTokens <= mtpBeforeRestore.acceptedTokens) throw new Error("restored conversation did not accept MTP drafts");
+    }
     const after = await stats(); result.retention = { before, after };
     if (!(after.loads! > before.loads!)) throw new Error("RAM restoration not exercised");
     requireCold(await chat("other-owner-same-key", "thread-A", 17, peerToken));
@@ -161,6 +177,7 @@ export async function verifyLfmInputCache(profileSelector: string, evidenceDir: 
     await released.arrayBuffer();
     result.invalidation = { requests: invalidationRequests, releasedCredentialStatus: released.status };
     result.reasoning = await runLfm25ReasoningSmoke({ baseUrl: api, apiToken, model: provider.publicModel });
+    result.speculation = await speculation();
     result.ok = true; save(); return result;
   } catch (error) {
     result.error = error instanceof Error ? error.message : String(error); save(); throw error;

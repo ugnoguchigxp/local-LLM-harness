@@ -1,4 +1,32 @@
 runtimes:
+  lfm3-vl:
+    chatInput: {}
+    artifacts:
+      - lfm3-vl-2b-qad-q4-0
+      - lfm3-vl-2b-vision-f16
+    capability:
+      - llm.general
+      - llm.vision
+    protocol: openai.chat-completions.v1
+    backend: llama-swap
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
+    resources:
+      estimatedMemoryGB: 4
+      maxConcurrentAllocations: 1
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 2
+      queueTimeoutMs: 30000
+    deployment:
+      modelId: lfm3-vl-2b
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/lfm3-vl-2b
+      backendEndpoint: http://127.0.0.1:8083/upstream/lfm3-vl-2b
   ornith-general:
     artifacts:
       - ornith15-35b-speed
@@ -27,9 +55,6 @@ runtimes:
         - source-rebuild
     resources:
       estimatedMemoryGB: 40
-      # Ornith exposes one llama.cpp execution slot. Keep allocation ownership
-      # exclusive as well so SAAA priority can preempt or fence lower-priority
-      # OpenAI requests before they contend in the non-preemptive request queue.
       maxConcurrentAllocations: 1
       maxConcurrentRequests: 1
       maxQueuedRequests: 16
@@ -38,7 +63,6 @@ runtimes:
       service: llama-server.service
       healthPort: 8080
       endpoint: http://127.0.0.1:8080
-
   qwen-worker-agent:
     artifacts:
       - qwen38-worker-quality
@@ -53,7 +77,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 28
@@ -66,7 +92,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/qwen-agent
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen-agent
-
   qwen-worker-agent-efficientthink:
     artifacts:
       - qwen38-worker-efficientthink-q3
@@ -81,7 +106,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 28
@@ -94,7 +121,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/qwen-agent-efficientthink
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen-agent-efficientthink
-
   qwen-worker-fast:
     artifacts:
       - qwen38-worker-fast
@@ -109,7 +135,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 36
@@ -122,7 +150,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/qwen-fast
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen-fast
-
   ornith-contextstill:
     artifacts:
       - ornith15-35b-speed
@@ -138,7 +165,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: conversation-llm-slot
     resources:
       estimatedMemoryGB: 46
@@ -151,7 +180,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/ornith-contextstill
       backendEndpoint: http://127.0.0.1:8083/upstream/ornith-contextstill
-
   qwen-contextstill-64k:
     artifacts:
       - qwen38-worker-fast
@@ -166,7 +194,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 28
@@ -179,7 +209,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/qwen-contextstill-64k
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen-contextstill-64k
-
   qwen35-decision:
     artifacts:
       - qwen35-2b-q4-k-m
@@ -192,7 +221,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 300 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 300
     resources:
       estimatedMemoryGB: 8
       maxConcurrentAllocations: 1
@@ -204,7 +235,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/qwen35-decision
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen35-decision
-
   lfm25-backchannel-jp:
     artifacts:
       - lfm25-1.2b-jp-q4-k-m
@@ -216,7 +246,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: backchannel-llm-slot
     resources:
       estimatedMemoryGB: 3
@@ -229,7 +261,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/lfm25-backchannel-jp
       backendEndpoint: http://127.0.0.1:8083/upstream/lfm25-backchannel-jp
-
   gemma3-backchannel:
     artifacts:
       - gemma3-1b-it-q4-k-m
@@ -241,7 +272,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: backchannel-llm-slot
     resources:
       estimatedMemoryGB: 3
@@ -254,7 +287,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/gemma3-backchannel
       backendEndpoint: http://127.0.0.1:8083/upstream/gemma3-backchannel
-
   gemma4-conversation:
     artifacts:
       - gemma4-e4b-it-qat-q4-0
@@ -266,7 +298,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: conversation-llm-slot
     resources:
       estimatedMemoryGB: 20
@@ -279,7 +313,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/gemma4-conversation
       backendEndpoint: http://127.0.0.1:8083/upstream/gemma4-conversation
-
   gemma4-26b-conversation:
     artifacts:
       - gemma4-26b-a4b-it-qat-q4-0
@@ -291,7 +324,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: conversation-llm-slot
     resources:
       estimatedMemoryGB: 48
@@ -304,23 +339,32 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/gemma4-26b-conversation
       backendEndpoint: http://127.0.0.1:8083/upstream/gemma4-26b-conversation
-
   lfm25-conversation:
     textInput:
       protocol: llama-chat-input-tokens.v1
       engineBuild: llama.cpp-d05706b-larm-retention-v1
-    artifacts: [ lfm25-24b-a2b-qad-q4-0 ]
-    capability: [ llm.general, llm.reasoning, llm.coding ]
+    artifacts:
+      - lfm25-24b-a2b-qad-q4-0
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
     protocol: openai.chat-completions.v1
     reasoning:
       defaultEffort: medium
-      budgets: { low: 64, medium: 256, high: 512, max: -1 }
+      budgets:
+        low: 64
+        medium: 256
+        high: 512
+        max: -1
     backend: llama-swap
     node: local-node
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: conversation-llm-slot
     resources:
       estimatedMemoryGB: 40
@@ -345,24 +389,32 @@ runtimes:
       principalMaxEntries: 16
       idleTtlMs: 300000
       maxAgeMs: 1800000
-
   lfm3-conversation:
     textInput:
       protocol: llama-chat-input-tokens.v1
       engineBuild: llama.cpp-d05706b-larm-retention-v1
-    artifacts: [ lfm3-1.7b-qad-q4-0 ]
-    capability: [ llm.general, llm.reasoning ]
+    artifacts:
+      - lfm3-1.7b-qad-q4-0
+    capability:
+      - llm.general
+      - llm.reasoning
     protocol: openai.chat-completions.v1
     reasoning:
       defaultEffort: medium
       readinessDisableThinking: true
-      budgets: { low: 64, medium: 256, high: 512, max: -1 }
+      budgets:
+        low: 64
+        medium: 256
+        high: 512
+        max: -1
     backend: llama-swap
     node: local-node
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: conversation-llm-slot
     resources:
       estimatedMemoryGB: 12
@@ -387,7 +439,6 @@ runtimes:
       principalMaxEntries: 16
       idleTtlMs: 300000
       maxAgeMs: 1800000
-
   ornith15-strix-conversation:
     chatInput: {}
     artifacts:
@@ -404,7 +455,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 60
       swapGroup: conversation-llm-slot
     resources:
       estimatedMemoryGB: 56
@@ -419,16 +472,15 @@ runtimes:
       backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-strix-conversation
     promptRetention:
       protocol: larm-prompt-cache.v1
-      maxBytes: 8589934592
-      principalMaxBytes: 4294967296
-      entryMaxBytes: 1073741824
-      stagingMaxBytes: 1073741824
+      maxBytes: 25769803776
+      principalMaxBytes: 25769803776
+      entryMaxBytes: 8589934592
+      stagingMaxBytes: 8589934592
       metadataMaxBytes: 67108864
       maxEntries: 64
       principalMaxEntries: 16
       idleTtlMs: 300000
       maxAgeMs: 1800000
-
   ornith15-conversation:
     artifacts:
       - ornith15-35b-quality
@@ -441,7 +493,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: conversation-llm-slot
     resources:
       estimatedMemoryGB: 50
@@ -454,7 +508,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/ornith15-conversation
       backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-conversation
-
   qwen36-35b:
     artifacts:
       - qwen36-35b-speed
@@ -468,7 +521,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 44
@@ -481,7 +536,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/qwen36-35b
       backendEndpoint: http://127.0.0.1:8083/upstream/qwen36-35b
-
   ornith15-35b:
     artifacts:
       - ornith15-35b-quality
@@ -497,7 +551,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 50
@@ -510,7 +566,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/ornith15-35b
       backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-35b
-
   ornith15-35b-speed:
     artifacts:
       - ornith15-35b-speed
@@ -526,7 +581,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 46
@@ -539,7 +596,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/ornith15-35b-speed
       backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-35b-speed
-
   ornith15-35b-agent:
     artifacts:
       - ornith15-35b-speed
@@ -555,7 +611,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
       swapGroup: qwen-worker-slot
     resources:
       estimatedMemoryGB: 32
@@ -568,7 +626,6 @@ runtimes:
       listen: http://127.0.0.1:8083
       endpoint: http://127.0.0.1:8083/upstream/ornith15-35b-agent
       backendEndpoint: http://127.0.0.1:8083/upstream/ornith15-35b-agent
-
   qwen-asr:
     artifacts:
       - qwen3-asr-main
@@ -580,7 +637,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
     resources:
       estimatedMemoryGB: 10
       maxConcurrentRequests: 1
@@ -590,7 +649,6 @@ runtimes:
       service: qwen-asr.service
       healthPort: 8081
       endpoint: http://127.0.0.1:8081
-
   whisper-asr:
     artifacts:
       - whisper-large-v3-turbo-q5-trial
@@ -602,7 +660,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 60
     resources:
       estimatedMemoryGB: 1
       maxConcurrentRequests: 1
@@ -612,7 +672,6 @@ runtimes:
       service: whisper-asr.service
       healthPort: 8085
       endpoint: http://127.0.0.1:8085
-
   voicevox-tts:
     capability:
       - speech.tts
@@ -622,7 +681,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 60
     resources:
       estimatedMemoryGB: 1
       maxConcurrentRequests: 1
@@ -632,7 +693,6 @@ runtimes:
       service: voicevox-tts.service
       healthPort: 8084
       endpoint: http://127.0.0.1:8084
-
   kittentts-nano:
     artifacts:
       - kitten-tts-nano-fp32
@@ -646,7 +706,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 60
     resources:
       estimatedMemoryGB: 1.5
       maxConcurrentRequests: 1
@@ -656,7 +718,6 @@ runtimes:
       service: kittentts-tts.service
       healthPort: 8088
       endpoint: http://127.0.0.1:8088
-
   qwen-tts:
     artifacts:
       - qwen3-tts-expressive
@@ -668,7 +729,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 60
     resources:
       estimatedMemoryGB: 5
       maxConcurrentRequests: 1
@@ -678,7 +741,6 @@ runtimes:
       service: qwen-tts.service
       healthPort: 8082
       endpoint: http://127.0.0.1:8082
-
   multilingual-e5-small:
     artifacts:
       - multilingual-e5-small-onnx-qint8
@@ -711,7 +773,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 60
     resources:
       estimatedMemoryGB: 1
       maxConcurrentAllocations: 8
@@ -723,7 +787,6 @@ runtimes:
       healthPort: 44512
       healthPath: /health
       endpoint: http://127.0.0.1:44512
-
   laya-system-one:
     artifacts:
       - laya-multilingual
@@ -735,7 +798,9 @@ runtimes:
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
     resources:
       estimatedMemoryGB: 2
       maxConcurrentAllocations: 1
@@ -747,17 +812,20 @@ runtimes:
       healthPort: 8086
       healthPath: /health
       endpoint: http://127.0.0.1:8086
-
   ruri-system-one:
-    artifacts: [ ruri-v3-30m ]
-    capability: [ decision.system-one ]
+    artifacts:
+      - ruri-v3-30m
+    capability:
+      - decision.system-one
     protocol: larm.system-one.v1
     backend: systemd
     node: local-node
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 1, idleTtlSeconds: 60 }
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 60
     resources:
       estimatedMemoryGB: 1
       maxConcurrentAllocations: 4
@@ -793,17 +861,20 @@ runtimes:
       healthPort: 8089
       healthPath: /health
       endpoint: http://127.0.0.1:8089
-
   d1-system-one:
-    artifacts: [ d1-2b ]
-    capability: [ decision.game ]
+    artifacts:
+      - d1-2b
+    capability:
+      - decision.game
     protocol: larm.system-one.v1
     backend: systemd
     node: local-node
     policy:
       class: preferred
       lifecycle: managed
-      warm: { minInstances: 0, idleTtlSeconds: 120 }
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 120
     resources:
       estimatedMemoryGB: 10
       maxConcurrentAllocations: 4
@@ -815,3 +886,55 @@ runtimes:
       healthPort: 8093
       healthPath: /health
       endpoint: http://127.0.0.1:8093
+  qwen38-rocmfp4-fast-conversation:
+    textInput:
+      protocol: llama-chat-input-tokens.v1
+      engineBuild: rocmfpx-120141f-larm-mtp-retention-v1
+    artifacts:
+      - qwen38-primary
+    capability:
+      - llm.general
+      - llm.reasoning
+      - llm.coding
+    protocol: openai.chat-completions.v1
+    reasoning:
+      defaultEffort: medium
+      allowNone: true
+      readinessDisableThinking: true
+      budgets:
+        low: 64
+        medium: 256
+        high: 512
+        max: -1
+    backend: llama-swap
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm:
+        minInstances: 0
+        idleTtlSeconds: 60
+      swapGroup: conversation-llm-slot
+    resources:
+      estimatedMemoryGB: 48
+      maxConcurrentAllocations: 4
+      maxConcurrentRequests: 4
+      maxQueuedRequests: 16
+      queueTimeoutMs: 30000
+    deployment:
+      chatAdapter: llama-reasoning-budget-v1
+      modelId: qwen38-rocmfp4-fast-conversation
+      listen: http://127.0.0.1:8083
+      endpoint: http://127.0.0.1:8083/upstream/qwen38-rocmfp4-fast-conversation
+      backendEndpoint: http://127.0.0.1:8083/upstream/qwen38-rocmfp4-fast-conversation
+    promptRetention:
+      protocol: larm-prompt-cache.v1
+      maxBytes: 25769803776
+      principalMaxBytes: 25769803776
+      entryMaxBytes: 8589934592
+      stagingMaxBytes: 8589934592
+      metadataMaxBytes: 67108864
+      maxEntries: 64
+      principalMaxEntries: 16
+      idleTtlMs: 300000
+      maxAgeMs: 1800000

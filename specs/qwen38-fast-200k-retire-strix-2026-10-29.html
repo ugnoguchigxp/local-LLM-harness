@@ -1,0 +1,130 @@
+<article lang="ja">
+  <h1>STRIX廃止とFAST 200k×4並列への復帰</h1>
+  <p>
+    2026-10-29。利用者がSTRIXを危険と判断して削除を指示したため、まず確認済みFAST release
+    efce931c39cef7139ebc7172db783f5ed17aebb3へ戻した。
+    STRIXのprocessが存在せずFASTが動作していることを確認してから、STRIXの重みを実ファイルから削除した。
+    先行するクラッシュ調査では原因を特定できていない。廃止は利用者の運用判断に基づく。
+  </p>
+  <aside>
+    <p>
+      入力キャッシュ修正後のcheckpoint数・メモリ予約・保存上限と実API結果は<a
+        href="./qwen38-fast-input-cache-e2e-2026-10-29.html"
+        >Qwen FAST入力キャッシュE2E</a
+      >を参照する。本書の6 GiB entryと40 GiB実行予約は当初の配備値である。
+    </p>
+  </aside>
+  <section id="deletion">
+    <h2>削除したモデルと再選択の防止</h2>
+    <p>
+      対象はQwen3.8-27B-Q4_0_ROCMFP4_STRIX-imatrix-headQ6K.gguf、15,381,478,400 bytes。
+      配置先/srv/ai/models/qwen38-rocmfp4-strixと、同じinodeを持つ取得作業用/srv/ai/models/.larm-staging/qwen38-rocmfp4-download-20261028/strixを削除した。
+      削除前のhard link数は2。両方の実体参照を削除し、modelsとHugging Face
+      cache内に同じinodeが残らないことを確認した。
+      STRIX用manifestの写しは証跡として保存し、重みのbackupは作成していない。
+    </p>
+    <p>
+      runtime・route・model artifact・release定義・明示selectorから、このQwen STRIXを除く。
+      旧準備bundleも廃止扱いにして起動scriptを無効化する。
+      Ornithなど別モデルのStrixという名前や、FASTと共有するMTP engineは削除対象にしない。
+    </p>
+  </section>
+  <section id="capacity">
+    <h2>FASTの200k×4枠</h2>
+    <table>
+      <caption>
+        1会話200kを4並列として解釈した設定
+      </caption>
+      <tbody>
+        <tr>
+          <th scope="row">重み</th>
+          <td>Qwen3.8-27B-ROCmFP4-FAST.gguf。既存の取得・照合済み重みを使用。</td>
+        </tr>
+        <tr>
+          <th scope="row">コンテキスト枠</th>
+          <td>
+            各200,000 tokens、4 slots、engine合計800,000
+            tokens。枠には出力予約4,096と安全余白1,976を含む。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">同時実行</th>
+          <td>
+            maxConcurrentAllocationsとmaxConcurrentRequestsは各4、KVはno-kv-unifiedで4枠を分離。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">MTPとKV形式</th>
+          <td>
+            通常MTP、draft最大3。targetとdraftのK/Vはq4_0。reasoning_effort
+            noneを許可、省略時medium。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">保存枠</th>
+          <td>
+            全体24 GiB・同一利用者24 GiB、1件6 GiB、staging 6 GiB。metadata 64 MiB、64
+            entries・利用者16 entries。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">保持期限</th>
+          <td>
+            idle 5分・最大30分、内部scope lease最大5分。再起動やモデル切替をまたぐ永続化ではない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      従来の1 GiB entry上限では200kのsnapshotが入らないため、保存上限も拡張した。
+      既存の32K時の構造見積りを200kへ換算すると、attention KV約3.43
+      GiB、recurrent本体・checkpoint約0.29 GiB、 draft KVとcheckpoint内のdraft KV約0.43
+      GiBなどで約4.15 GiBとなり、6 GiB entryに余裕を持たせる。
+      これは構造からの見積りで、200kを実際に埋めた試験結果ではない。
+    </p>
+    <p>
+      実行用の資源見積り40 GiBに、snapshot pool・staging・metadataを別枠で約30.06 GiB予約する。
+      FASTだけの合計予約は約70.06 GiB。既存の常駐補助Provider込みで約84.06 GiBとなる。 追加40
+      GiBの競合モデルは資源不足として拒否し、ContextStillの既存補助構成は許容する。
+      モデルfamily名で特別扱いせず、要求profileから解決したruntimeの資源見積りを使う。
+    </p>
+    <p>
+      拡張policyはFAST専用のprivate environment fileに置き、globalの認証keyは維持する。 他のLFM
+      Providerの8 GiB policyは変更しない。認証key自体はrepositoryや証跡へ保存しない。
+    </p>
+  </section>
+  <section id="rollout">
+    <h2>反映と確認範囲</h2>
+    <p>
+      公開modelはqwen3.8-27b-rocmfp4-fast、ContextStillは末尾-contextstill。
+      既存lfm2.5・ornith1.5Strix selectorを維持し、対象routeをFASTへ戻す。補助Providerは維持する。
+      構築済みMTP保持engineを共用し、再構築やモデル再取得は行わない。
+      署名付きreleaseの必須ソフトウェアチェック後に反映し、props・process・policyで200k×4を確認する。
+      長い入力、4枠をすべて埋める試験、ベンチマークは行わない。
+    </p>
+    <p>
+      証跡は/srv/ai/evidence/qwen38-fast-200k-retire-strix-20261029。
+      会話履歴はmessagesで再送し、新しいConnectionでclaimされたmodelを使用する。
+    </p>
+  </section>
+  <section id="activated">
+    <h2>反映結果</h2>
+    <p>
+      release <code>3026e4d61d0e35a77576fa57cfad6d39ee85bd50</code>を署名付き配備で適用した。
+      configRevisionは<code>a11590af76a3c07b0c5076a7dfc87e46928355232372e6b869ac849bb781acf8</code>。 APIはready、release
+      controllerはcontract_verified・succeeded。実processはFASTの重みでPID 104870、backend port
+      58019。
+    </p>
+    <p>
+      engineは要求800,000 tokensを内部の整列により200,192 tokens×4へ切り上げる。 公開枠は各200,000
+      tokensで、切り上げ分を公開入力上限には含めない。 propsで4
+      slots、MTP境界状態対応、認証付きKV保持、24 GiB pool・利用者24 GiB・entry/staging各6
+      GiBを確認した。
+      STRIXの配置先と作業用copyは存在しない。追加の推論要求とベンチマークは送っていない。
+    </p>
+    <p>
+      前提となるソフトウェアチェックとcoverageは通過済み。最初のチェックではContextStillの古い32K期待値が一か所残っていたため200kへ修正し、再実行して通過した。
+      起動後の最初の確認はengineの整列切り上げを考慮しない厳密値比較で止まったが、実枠が200kを超えており、公開枠とprocess引数が意図どおりであることを確認した。
+    </p>
+  </section>
+</article>

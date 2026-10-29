@@ -1,0 +1,99 @@
+<article lang="ja">
+  <h1>Qwen3.8 FASTの非思考モード対応</h1>
+  <p>
+    その後、STRIXモデルは利用者指示で削除し、FASTへ復帰した。<a
+      href="./qwen38-fast-200k-retire-strix-2026-10-29.html"
+      >200k×4への拡張記録</a
+    >を参照。
+  </p>
+  <p>
+    FASTの検証終了後、利用者の指示で<a href="./qwen38-strix-api-switch-2026-10-29.html"
+      >STRIXへ切替済み</a
+    >。noneを許可する改修は引き継いだ。以下のOK応答はFASTでの確認記録。
+  </p>
+  <p>
+    <time>2026-10-29</time>。利用者の指示により、STRIXへの切替より先に現在のFASTで reasoning_effort:
+    noneを観察できるよう改修した。その後の再起動指示に従い署名付きreleaseを反映し、FASTのAPIを再起動した。
+    none指定1件がHTTP
+    200、本文OK、思考出力0文字で完了した。STRIXには切り替えていない。ベンチマークは実行していない。
+  </p>
+  <section id="support">
+    <h2>モデルと使用中エンジンの仕様</h2>
+    <p>
+      <a href="https://huggingface.co/Qwen/Qwen3.8-27B#instruct-or-non-thinking-mode"
+        >Qwen公式モデル仕様</a
+      >
+      は非思考モードをサポートし、chat_template_kwargs.enable_thinking: falseで有効にする。
+      公式のreasoning_effortによる深度指定と非思考モードの切替は別の機構であり、
+      LARMではnoneをこの切替へ変換する。low・medium・high・maxの既存予算契約は変更しない。
+    </p>
+    <p>
+      取得済みFAST GGUFのtokenizer.chat_templateにも同じ分岐がある。
+      enable_thinkingがfalseの場合は生成用assistant prefixへ空のthinkブロックを付け、
+      応答本文から生成する。template SHA256は
+      <code>701ba13a085c0c1b5e05414dec1aa3069904f962beee36f0899e441720b83974</code>。
+      GGUFのメタデータだけを読み、tensorデータの走査やロードはしていない。
+      falseとtrueのテンプレート描画を静的に確認した。
+    </p>
+    <p>
+      使用中のROCmFPX revision
+      <code>120141f1f9da0a82bb109135c82cd173107fac25</code>の
+      tools/server/server-common.cppは要求ごとのenable_thinkingを受理し、 native reasoning_effort:
+      noneも思考無効へ変換する。 起動時のreasoning
+      onは要求ごとに上書きできる。エンジン再構築やモデル再取得は不要。
+      MTPも通常の生成経路を使い続ける設定であり、非思考時のMTP速度・受理率は未測定。
+    </p>
+  </section>
+  <section id="implementation">
+    <h2>APIの改修</h2>
+    <p>
+      reasoning policyへallowNoneを追加し、明示許可したruntimeだけnoneを受理する。
+      準備treeではFASTとSTRIXに許可し、既存LFMの契約は維持する。 llama-reasoning-budget-v1
+      adapterはnoneをenable_thinking: falseへ変換し、
+      reasoning_budget_tokensは-1にする。予算0による思考の強制打切りは使わない。
+      外向きのreasoning_effortフィールドは従来どおりengine転送前に除く。
+    </p>
+    <p>
+      未指定とnullはmedium。noneとenable_thinking:
+      trueの矛盾、内部予算やreasoning_formatの直接指定は拒否する。
+      token計数と生成には同じ変換後の要求を渡す。MTP、32K×4並列、KV保持・復元、sampling、
+      出力上限は今回の変更対象に含めない。非思考モードは過去の会話履歴や思考履歴を消す指定ではない。
+    </p>
+    <p>
+      ソフトウェア内の小さなテスト9件に合格した。新規確認はnoneの変換、矛盾の拒否、
+      opt-inの分離、provider revisionの変化、token計数と生成の一致。
+      準備段階の外部推論先はモックで、実機への要求は省略した。再起動指示後の配備では必須のinstall・audit・check・coverageを通過し、実機確認は短いnone要求1件だけとした。
+    </p>
+  </section>
+  <section id="activation">
+    <h2>FASTへの反映と試し方</h2>
+    <p>
+      更新前のrelease <code>207075841414b7a93e82e1ab695b8f5983f8cd2c</code>を基準に、
+      非稼働ソース<code>/srv/ai/apps/larm-qwen38-mtp-trial-20261029-source</code>にも
+      schema・adapter・FASTのallowNoneと説明を用意した。現在の互換selectorとroute、補助Providerを維持する。
+      準備済みconfigRevisionは <code>fbcf7ec15b6673520b5bcb0e77d7150934306cca67b1832584c8ae6fa200856e</code>。
+      設定読み込みとadapter変換を確認した後、release
+      efce931c39cef7139ebc7172db783f5ed17aebb3として配備した。configRevisionは上記と一致する。
+    </p>
+    <p>
+      利用者の明示的な再起動指示で署名付きreleaseを反映した。正規の必須検証receiptを使用し、稼働releaseの直接書き換えは行っていない。
+      STRIXの準備bundleはこのFAST改修を適用した後の状態へ合わせて更新してから使用する。
+    </p>
+    <p>適用後は既存の接続で得たmodelに対し、reasoning_effortだけをnoneにして観察する。</p>
+    <pre><code>{
+  "model": "qwen3.8-27b-rocmfp4-fast",
+  "messages": [{"role": "user", "content": "こんにちは"}],
+  "reasoning_effort": "none"
+}</code></pre>
+    <p>
+      証跡は<code>/srv/ai/evidence/qwen38-none-preparation-20261029</code>。 実機確認はreasoning_effort:
+      none、max_tokens 32、短い入力17 tokensに対して本文OKを2
+      tokensで生成し、思考出力0文字、finish_reason stop。品質や速度のベンチマークは未実施。
+      先行するMTP・保持復元の実測は
+      <a href="./qwen38-fast-mtp-api-trial-2026-10-29.html">FAST試用記録</a>、 後続の切替は<a
+        href="./qwen38-strix-switch-readiness-2026-10-29.html"
+        >STRIX準備記録</a
+      >を参照。
+    </p>
+  </section>
+</article>
