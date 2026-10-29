@@ -1,8 +1,62 @@
-# Ruri speaking-attitude Provider
+# Ruri shared speaking-attitude and user-intent Provider
+
+`model` selects either `ruri-v3-30m-speaking-attitude` or
+`ruri-v3-30m-user-intent-v1` on `POST /v1/systemone`. Both heads are verified,
+loaded and warmed at startup and share exactly one CPU ONNX session and request
+lock. Intent uses two sequential Encoder calls plus fixed character features;
+it does not reload or replace the attitude head. Existing attitude inputs and
+outputs retain their contract.
+
+The intent head is loaded from `RURI_INTENT_MODEL_ROOT` (default
+`/srv/ai/models/ruri-user-intent-v1-20261029`) against the pinned
+`assets-intent.json`. `RURI_INTENT_ASSET_MANIFEST` can select another explicitly
+verified manifest. Intent requires the same encoder revision, graph and
+tokenizer hashes as the attitude model; startup fails on mismatch.
+
+For LARM access, create/claim profile `ruri-user-intent`, Provider `system-one`.
+Its descriptor supplies the model, endpoint and scoped credential. The existing
+attitude credential cannot authorize the other model. Profile requests resolve
+through `system-one-ruri` to the same Warm runtime; existing conversation
+profiles keep their original Provider sets.
+
+```json
+{
+  "model": "ruri-v3-30m-user-intent-v1",
+  "state": {"previous_agent": null, "text": "明日の天気を調べてください"},
+  "questions": {"intent": {
+    "type": "choice",
+    "instructions": "最新のユーザー発言の意図を分類してください",
+    "criteria": {
+      "request": "依頼", "chat": "会話", "followup": "作業への返答",
+      "noise": "雑音", "incomplete": "発話途中"
+    }
+  }}
+}
+```
+
+Read `answers.intent.choice` and all five `probabilities`. All five labels are
+required; instruction/criteria descriptions cannot redefine the trained task.
+State is either the latest text string or an object containing `text` and
+optional `previous_agent` (null or a nonempty string). Other state fields are
+rejected, keeping assistant text and user intent separate. Text fields are
+limited to 50,000 characters. Invalid/unknown models return 422 at the backend;
+a mismatched scoped credential returns 400 at the Gateway.
+
+Intent returns summed token usage across both Encoder calls, history truncation
+separately from input truncation, per-head revisions and provisional calibration
+status. It returns a classifier label, never an execution instruction. Evaluation
+accuracy is 69.6%, real-utterance accuracy 52.6%; its five-way output is suitable
+for the requested trial, not a verified basis for automatically discarding speech.
+
+Run artifact integration tests with
+`RURI_ARTIFACT_TESTS=1 PYTHONDONTWRITEBYTECODE=1 /srv/ai/apps/ruri-system-one/.venv/bin/python -m unittest discover -s apps/ruri-system-one -p 'test_*.py'`.
+They compare all 270 saved eval logits through the API and interleave both tasks
+under concurrent callers while verifying one shared session.
+
 
 The sentence-language Provider was retired on 2026-10-16. Japanese/English
-selection belongs in the consumer, using regular expressions. The runtime serves
-only the speaking-attitude model and does not load a language head.
+selection belongs in the consumer, using regular expressions. The runtime does
+not load a language head.
 
 `ruri-v3-30m-speaking-attitude` implements the `choice` portion of `larm.system-one.v1`
 for the fixed labels `none`, `warmth`, `joy`, `empathy`, `curiosity`, `surprise`.

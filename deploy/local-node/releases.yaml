@@ -22,7 +22,7 @@ runtimeReleases:
     runtime: ruri-system-one
     artifacts:
       - ruri-v3-30m
-    providerConfigRevision: ruri-ort-int8-speaking-attitude-only-v1
+    providerConfigRevision: ruri-ort-int8-attitude-and-user-intent-v1
     estimatedMemoryGB: 1
     healthPath: /health
     default: true

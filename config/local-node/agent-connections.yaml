@@ -8,6 +8,15 @@ audiences:
     network: host-private
     baseUrl: request-origin
 agentProfiles:
+  ruri-user-intent:
+    description: Ruri会話・依頼意図5分類の試用。表情判定とCPU Encoderを共有し、Warm常駐します。
+    providers:
+      - name: system-one
+        capability: decision.system-one
+        route: system-one-ruri
+        publicModel: ruri-v3-30m-user-intent-v1
+        publishModel: false
+        readiness: system-one
   lfm3-vl-2b:
     description: LFM3-VL-2Bによる画像理解。画像とテキストをChat Completions APIで受け付け、必要時に起動します。
     idleRelease:
@@ -517,6 +526,8 @@ agentProfiles:
         publishModel: false
         readiness: system-one
 profileSelectors:
+  ruri-user-intent:
+    agentProfile: ruri-user-intent
   lfm3-vl-2b:
     agentProfile: lfm3-vl-2b
   visualPerception:

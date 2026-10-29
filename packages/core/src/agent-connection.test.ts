@@ -42,6 +42,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     { id: "ornith1.5Strix", agentProfile: "lfm2.5", services: [] },
     { id: "ornith1.5Strix-game", agentProfile: "ornith1.5Strix-game", services: [] },
     { id: "ornith1.5Strix-vision", agentProfile: "ornith1.5Strix-vision", services: [] },
+    { id: "ruri-user-intent", agentProfile: "ruri-user-intent", services: [] },
     { id: "SAAA-gemma4-26b", agentProfile: "saaa-conversation-gemma4-26b-voice", services: [] },
     { id: "SAAA-gemma4-26b-64k", agentProfile: "saaa-conversation-gemma4-26b-64k", services: [] },
     {
@@ -94,6 +95,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "nightworker-background",
     "ornith1.5Strix-game",
     "ornith1.5Strix-vision",
+    "ruri-user-intent",
     "saaa-backchannel-default",
     "saaa-conversation-gemma4-26b-64k",
     "saaa-conversation-gemma4-26b-voice",

@@ -1,0 +1,156 @@
+<article lang="ja">
+  <h1>Ruri共有インスタンスによる会話・依頼意図判定の追加案</h1>
+  <p>
+    2026-10-29
+    JST。ユーザーから、現在表情判定を担うRuriに会話・依頼の判断を学習させ、専用の学習済み判定をWarmで保持し、パラメータによって一つのインスタンスで切り替えられるかという相談を受けた。本書は共有インスタンスの設計案であり、API追加と稼働サービスの変更は未実施である。
+  </p>
+  <p>
+    同日の後続指示で提供データを受け取り、意図判定の専用分類器をGit管理外で学習した。実際の学習は本書の3ラベル案を置き換え、提供されたrequest、chat、followup、noise、incompleteの5ラベルを使用した。
+    <a href="./ruri-user-intent-training-2026-10-29.html">学習・評価結果</a>を参照する。
+  </p>
+  <section id="conclusion">
+    <h2>提案する構成</h2>
+    <p>
+      固定したRuri
+      EncoderとTokenizerを一つだけロードし、既存の発話態度headと新しいユーザー意図headを同じプロセスへ常駐させる。headは埋め込みを分類結果へ変換する小さな学習済み係数であり、リクエストの公開model名で選択する。学習データは学習時に使用し、通常の推論時には学習済みheadと校正情報だけを使用する。
+    </p>
+    <p>
+      Warmはモデルとheadをロードした状態の保持であり、自動的な追加学習や会話記憶ではない。まずEncoderを変更せず意図headだけを学習する。専用の追加学習でEncoder自体を変更する場合は、既存headとの互換性を別途評価する必要があり、本案のそのままの共有を前提にしない。
+    </p>
+    <p>
+      パラメータによる切替はリクエスト単位でheadを選択する。プロセス全体の現在headを書き換えず、用途別の前処理・係数・校正情報を不変の辞書から取得する。両方をロードしておけばリクエストごとのモデル再ロードは不要となる。ただし発話態度はアシスタント発話、意図判定はユーザー発話と履歴を対象とするため、通常は入力が異なり、Encoderの実行もそれぞれ必要になる。
+    </p>
+  </section>
+  <section id="observed">
+    <h2>確認した現状</h2>
+    <p>
+      リポジトリのlfm2.5等のAgent
+      Profileではsystem-oneがsystem-one-ruri経路を通ってruri-system-oneへ解決する。ContextStillの既存用途は独立した経路として扱い、別のProfileでRuriが動作していることから設定不一致を推定しない。今回、実際のユーザー要求やConnectionの追跡は行っていない。
+    </p>
+    <p>
+      ruri-system-oneの定義はCPU実行、managed、warm.minInstances=1。割当上限4、同時要求上限1、待機要求上限16である。これらはインスタンス数や並列推論数と同義ではない。実機のサービスはactiveで、healthはruri-v3-30m-speaking-attitude、6ラベル、encoder_session_count=1、CPUExecutionProvider、4
+      threads、最大512 tokensを返した。公開modelはこの1種類だけだった。
+    </p>
+    <p>
+      現行Engineは起動時に単一のheadと校正情報を読み、一つのONNX
+      sessionを生成する。入力の固定instructionはアシスタント自身の現在チャンクの表情・声色を選ぶもので、会話履歴をEncoderへ渡さない。呼び出し側のinstructionsやcriteriaを書き換えても別タスクの判定器にはならず、別公開model名も現在は拒否される。
+    </p>
+    <p>
+      モデルの公式カードではRuriは日本語埋め込みモデルであり、30m版の出力は256次元、分類用prefixは「トピック:
+      」とされている。公式モデルの最大長8192 tokensと、この配備で採用する512
+      tokens制限は区別する。公式カードは調査時に確認したが、意図判定の品質を実証する資料ではない。
+    </p>
+  </section>
+  <section id="labels">
+    <h2>学習前に固定するラベルと入力</h2>
+    <p>
+      最初の案はconversation、request、unclearの3分類とする。conversationは共感・雑談・対話の継続を求める発言、requestは具体的な成果や回答・調査・操作を求める発言、unclearは履歴や対象が不足し判断できない発言である。知識質問を会話に含めるか依頼に含めるかは製品の振り分け方針であり、正解データを作る前に確定する。この3分類と例は未採用の提案である。
+    </p>
+    <table>
+      <caption>
+        ラベル方針を合わせるための候補例
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力</th>
+          <th scope="col">想定する判定・扱い</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">今日は疲れた。少し話したい</th>
+          <td>conversation</td>
+        </tr>
+        <tr>
+          <th scope="row">明日の予定を一覧にして</th>
+          <td>request</td>
+        </tr>
+        <tr>
+          <th scope="row">一覧にできますか</th>
+          <td>文脈上の実行依頼ならrequest。疑問形だけで会話にしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">それでお願い</th>
+          <td>直前の提案が分かればrequest、対象不明ならunclear。</td>
+        </tr>
+        <tr>
+          <th scope="row">疲れたので、休みの連絡文を作って</th>
+          <td>共感を伴うrequest。感情の有無だけで決めない。</td>
+        </tr>
+        <tr>
+          <th scope="row">昨日「予約して」と言ったんだ</th>
+          <td>引用だけで新しい依頼としない。残りの文脈で判定する。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      意図判定には現在のユーザー発言を明示し、必要な直近の会話を役割付きで別領域に入れる。履歴量とtoken予算を固定し、現在発言を優先して保持する。現在発言が長すぎる場合の拒否・切詰めと通知方法も契約へ記載する。学習と推論で同じ前処理を使用し、発話態度の現行入力形式は維持する。
+    </p>
+    <p>
+      停止・取消・否定、引用、仮定、短い承諾、依頼と雑談の混在、ASR由来の崩れを含める。停止や取消を含む既存の制御は優先する。意図判定は応答方針の選択に使い、具体的な操作の権限や引数の確定を代替しない。unclearまたは低信頼時は確認や通常LLMへ引き継ぐ。
+    </p>
+  </section>
+  <section id="training">
+    <h2>学習・評価の進め方</h2>
+    <ol>
+      <li>
+        各ラベルの定義と境界例をレビューし、実利用に近い日本語の候補データを作る。初回は各ラベル数百件を目安とするが、必要件数と品質は評価で判断する。
+      </li>
+      <li>
+        会話・テンプレート・近似文のグループでtrain、calibration、未使用testを分離する。同じ会話の別turnをまたがせない。合成データの結果と実会話の結果を分ける。
+      </li>
+      <li>
+        本番と同じrevision・INT8
+        Encoder・Tokenizer・入力形式で埋め込みを作り、ロジスティック回帰等の小さな意図headを学習する。正則化の選択はtrain内で行う。
+      </li>
+      <li>
+        独立したcalibration集合で温度と保留閾値を決める。testを見て閾値を合わせず、誤り分析後の再学習では新しい評価設計を記録する。
+      </li>
+      <li>
+        未使用testでラベル別Precision・Recall・Macro
+        F1、会話を依頼と誤る率、依頼の見逃し率、unclearへの保留率と保留を除く精度を報告する。履歴依存・引用・取消を別集計する。
+      </li>
+      <li>
+        同じ共有プロセスで表情と意図を交互に要求し、既存表情判定の回帰、モデルごとの係数の分離、head不正時の拒否、Warm後のHTTP
+        P50・P95、メモリ、待機時間を測る。意図入力は長くなるため既存の短文速度を流用しない。
+      </li>
+    </ol>
+    <p>
+      学習データ、重み、評価ログはリポジトリ外へ保存する。リポジトリには契約、学習・評価コード、artifact
+      hashとrevision、結果文書を保持する。既存のavatar-attitude用学習処理は固定instructionとラベルの制約を持つため、意図データをそのまま渡す手順とはしない。共通のEncoder処理を再利用し、意図専用の前処理と契約を追加する。
+    </p>
+  </section>
+  <section id="integration">
+    <h2>APIとLARMへの組込み案</h2>
+    <p>
+      既存のmodel=ruri-v3-30m-speaking-attitudeを維持し、新しい論理modelとしてruri-v3-30m-user-intent-v1を追加する。後者は提案名であり現在は使用できない。Engineを共有Encoderと用途別headのregistryへ分割し、各headにラベル、前処理、校正、入力制限、artifact識別子を持たせる。意図のunclearと発話態度のnoneを混同せず、既存の発話態度専用バリデータをそのまま再利用しない。
+    </p>
+    <p>
+      Agent Profileには必要な場合だけ専用Providerを明示的に追加し、意図用routeを同じruri-system-one
+      runtimeへ解決させる。公開modelの許可とreadiness
+      probeはProvider別に定義する。二つの論理Providerの割当・解放でruntimeが二重起動せず、一方の利用中に他方の解放で停止しないことを確認する。registry、解決、leaseの共通処理はpackages/core、OS統合はpackages/backendsの境界を保つ。
+    </p>
+    <p>
+      同じruntimeを共有するためWarmの下限は1のままでよい。起動時に両headを検証し、各用途の準備推論を実施し、healthへmodel別のhead
+      revisionと校正revisionを公開する。現在の直列推論・待機上限を出発点とし、表情要求と長い意図入力が競合したときの遅延を実測してから並列設定を変更する。
+    </p>
+  </section>
+  <section id="related">
+    <h2>関連する設計記録</h2>
+    <ul>
+      <li>
+        <a href="./gemma-ruri-speaking-attitude-provider-2026-10-09.html"
+          >発話態度Providerの既存契約</a
+        >
+      </li>
+      <li>
+        <a href="./ruri-sentence-language-resident-integration-2026-10-12.html"
+          >過去の共有Encoderによる二つの論理Providerの常駐記録</a
+        >
+      </li>
+      <li>
+        <a href="./ruri-sentence-language-retirement-2026-10-16.html">日英判定の廃止と現行責務</a>
+      </li>
+    </ul>
+  </section>
+</article>

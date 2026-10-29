@@ -34,6 +34,12 @@ const JSON_LIMIT = 65_536;
 type ProbeFormat = "json" | "sse" | "default" | "query" | "passage";
 
 function systemOneProbe(model: string, capability: string): SystemOneRequest {
+  if (model === "ruri-v3-30m-user-intent-v1") {
+    return { model, state: { text: "明日の天気を調べてください。", previous_agent: null }, questions: { intent: {
+      type: "choice", instructions: "最新のユーザー発言の意図を分類してください",
+      criteria: { request: "依頼", chat: "会話", followup: "作業への返答", noise: "雑音", incomplete: "発話途中" },
+    } } };
+  }
   if (capability === "decision.general") {
     return { model, state: { approved: true }, questions: { approved: { type: "noul", instructions: "Is approved true?" } } };
   }

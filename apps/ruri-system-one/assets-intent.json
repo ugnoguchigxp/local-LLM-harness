@@ -1,0 +1,25 @@
+{
+  "model": "ruri-v3-30m-user-intent-v1",
+  "files": [
+    {
+      "path": "head.json",
+      "sha256": "a8197c9136ad5fac4f04b006563d025a35bd3b61f48bca8d15990484da9bc968",
+      "bytes": 640106
+    },
+    {
+      "path": "calibration.json",
+      "sha256": "2460f79fa88e4c6c94d032643da11074262bbd8bd801b8c8f2dd7d4568668613",
+      "bytes": 3887
+    },
+    {
+      "path": "encoder-manifest.json",
+      "sha256": "121aa557b2c878204c575f2ce08499a20e6d021361de3d3edf00ccfc2eda1a48",
+      "bytes": 869
+    },
+    {
+      "path": "dataset-manifest.json",
+      "sha256": "bdcee6279a668c48d40702878e1e4a11f554d6f97d458ef6ef48981992dfa825",
+      "bytes": 37794
+    }
+  ]
+}

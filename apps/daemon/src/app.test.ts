@@ -560,6 +560,11 @@ test("v3 public profile selectors return exact provider and service endpoints wi
   const baseUrl = `http://127.0.0.1:${server.port}`;
 
   const expected = {
+    "ruri-user-intent": {
+      id: "ruri-user-intent",
+      providers: [{ name: "system-one", endpoint: "/v1/systemone", model: "ruri-v3-30m-user-intent-v1" }],
+      services: [],
+    },
     contextStill: {
       id: "contextstill-background",
       providers: [

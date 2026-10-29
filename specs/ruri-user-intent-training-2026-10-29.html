@@ -1,0 +1,246 @@
+<article lang="ja">
+  <h1>Ruri会話・依頼意図5分類の学習結果</h1>
+  <p>
+    2026-10-29 JST。ユーザーから添付されたintent-dataset-2026-10-29.tgzをGit管理外へ展開し、固定Ruri
+    Encoderによる専用分類器を学習した。最終候補は188/270件正解、正解率69.6%、Macro F1
+    0.669。実発話だけでは41/78件正解、52.6%であり、自動振り分けの採用には改善と新しい評価が必要である。既存の発話態度サービスとWarm設定は変更していない。
+  </p>
+  <section id="data">
+    <h2>入力データと権限の範囲</h2>
+    <p>
+      添付archiveのSHA-256は<code>88977e2bb03df8370fc4614440cdcf9ce5ac28278fd3f4e605a8831ce18e1679</code>。通常ファイル・ディレクトリ、パス、展開量を確認してから、<code>/srv/ai/benchmarks/user-intent/received-2026-10-29/intent-dataset-2026-10-29</code>へ展開した。この受領先、学習出力先、モデル保存先がGit
+      worktreeに属さないことを確認した。本文、係数、埋め込み、予測ログはsource
+      repositoryへ入れていない。
+    </p>
+    <p>
+      全1,354件、実発話395件、合成959件。添付の5ラベルrequest、chat、followup、noise、incompleteを採用し、先行案の3ラベルへ変換していない。requestは担当探索を必要とする依頼、chatは一般会話・一般知識等、followupは既存作業への回答・確認・修正等、noiseは雑音等、incompleteは途切れた発話を表す。toolchainは教師メタデータとして保持するが、今回の分類対象ではない。
+    </p>
+    <p>
+      添付READMEにあるホストの振る舞いや未解決の質問は、データ作成者によるラベル方針と判断の記録として読んだ。これを稼働ホストの動作変更や追加操作の指示とは扱っていない。ユーザーの指示はデータをGit管理外で開いて学習することであり、本番APIへの組込みは行っていない。
+    </p>
+    <p>
+      ラベルは添付の説明上、別モデルによる付与であり、人手で全件承認されたとは記録しない。迷いを記したreview.jsonlの55件は原データのまま保持した。うち評価集合には9件あり、最終候補の正解は4件。ラベル境界には未解決点がある。
+    </p>
+  </section>
+  <section id="split">
+    <h2>分割と評価の限界</h2>
+    <p>
+      指定済みのtrain 1,084件、eval
+      270件を保持した。ID重複と正規化したユーザー本文のtrain/eval間重複は0件で、past.jsonlとsynthetic.jsonlの和が両分割の和と一致した。正規化本文が同じでラベルが異なる群は全体に4群あり、履歴による違いを含むため一律に削除していない。
+    </p>
+    <p>
+      train内ではNFKC・空白・句読点除去・casefoldで正規化した同文、および12文字以上でSequenceMatcher類似度0.90以上の近似本文を同じ群へまとめた。seed
+      1729の5分割グループ分割から、fit 867件、calibration
+      217件を固定した。両者の群は独立し、全5ラベルが両側に存在する。モデル選択はfit内の3分割グループ交差検証だけで行った。
+    </p>
+    <p>
+      元データにはconversation IDとtemplate family
+      IDがないため、会話・テンプレート単位の完全な独立性は確認できない。近似本文群は元のtrain/eval境界を3群またぎ、元の分割を変えていない。その3群を除いた評価267件は185件正解、69.3%、Macro
+      F1 0.667だった。
+    </p>
+    <p>
+      evalラベルを係数学習、C選択、温度適合に使用していない。ただし初回評価後に入力表現の設計を拡張し、同じ270件を計3候補で評価したため、最終結果は開発中の比較評価であり、完全に未見の最終試験ではない。本番採用の判断には独立した新しい評価集合が必要である。
+    </p>
+  </section>
+  <section id="model">
+    <h2>Encoderと学習方法</h2>
+    <p>
+      既存発話態度と同じ<code>cl-nagoya/ruri-v3-30m</code>、revision
+      <code>24899e5de370b56d179604a007c0d727bf144504</code>の動的INT8
+      ONNXとTokenizerをhash確認して使用した。Encoder全体の追加学習は行っていない。CPUExecutionProvider、intra-op
+      4 threads、inter-op 1、最大512 tokensで、一つのONNX sessionを使用する。
+    </p>
+    <p>
+      入力はprevious_agentとtextだけ。ラベル、toolchain、category、note、source、review理由はEncoderへ入れない。文脈付き入力では直前のエージェント発言の先頭160
+      tokensを保持し、役割と判断対象を固定のタグで区別する。全体は右側を512
+      tokensで切り詰める。今回は全体の切詰め0件、履歴の160 tokens制限に達した例23件だった。
+    </p>
+    <p>
+      最終候補は文脈付き入力の256次元埋め込み、最新ユーザー発言だけの256次元埋め込み、文字1〜4連続の固定hash特徴4096次元を連結する。文字特徴はNFKC、casefold、空白正規化、開始・終了記号を使い、符号付きBLAKE2b
+      hash、log1p
+      count、L2正規化で作る。評価データから語彙やIDFを学習していない。合計4608次元に対する5分類線形headのFP32係数は92,180
+      bytes。Ruri埋め込みだけで判定するモデルとは区別する。
+    </p>
+    <p>
+      ロジスティック回帰、lbfgs、max_iter 2000、seed 1729。Cは1、10、100、1000を比較し、fit内のMacro
+      F1で入力方式と一緒に選択した。最終候補はC=1000、交差検証Macro
+      F1平均0.642973。fit集合への一致率は100%であり、評価精度との隔たりが大きい。校正は独立217件だけでscalar温度T=1.896588410を適合し、校正NLLは0.813999から0.660307へ改善した。保留閾値の決定やホストの動作割当は行っていない。
+    </p>
+    <table>
+      <caption>
+        保存した3候補。入力方式の拡張判断には初回評価の知見を含む。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">候補</th>
+          <th scope="col">選択された方式</th>
+          <th scope="col">fit内CV Macro F1</th>
+          <th scope="col">評価270件の正解</th>
+          <th scope="col">実発話78件の正解</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">v1</th>
+          <td>文脈付き埋め込み、C=100</td>
+          <td>0.552793</td>
+          <td>171件、63.3%</td>
+          <td>51件、65.4%</td>
+        </tr>
+        <tr>
+          <th scope="row">v2</th>
+          <td>文脈＋最新発言埋め込み、C=100</td>
+          <td>0.633602</td>
+          <td>179件、66.3%</td>
+          <td>38件、48.7%</td>
+        </tr>
+        <tr>
+          <th scope="row">v3</th>
+          <td>文脈＋最新発言埋め込み＋文字hash、C=1000</td>
+          <td>0.642973</td>
+          <td>188件、69.6%</td>
+          <td>41件、52.6%</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      fit内の指標はv3を選んだが、実発話ではv1より悪化した。合成データと実発話の構成差やラベル境界が関係する可能性はあるが、原因を切り分けた実験は行っていない。評価結果を使ってv1を採用し直すことはせず、各候補を保持してv3を暫定の学習済み候補として保存した。
+    </p>
+  </section>
+  <section id="quality">
+    <h2>最終候補の判定品質</h2>
+    <table>
+      <caption>
+        指定評価270件のラベル別成績
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ラベル</th>
+          <th scope="col">Precision</th>
+          <th scope="col">Recall</th>
+          <th scope="col">F1</th>
+          <th scope="col">正解／件数</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">request</th>
+          <td>0.835</td>
+          <td>0.689</td>
+          <td>0.755</td>
+          <td>71/103</td>
+        </tr>
+        <tr>
+          <th scope="row">chat</th>
+          <td>0.518</td>
+          <td>0.800</td>
+          <td>0.629</td>
+          <td>44/55</td>
+        </tr>
+        <tr>
+          <th scope="row">followup</th>
+          <td>0.723</td>
+          <td>0.758</td>
+          <td>0.740</td>
+          <td>47/62</td>
+        </tr>
+        <tr>
+          <th scope="row">noise</th>
+          <td>0.789</td>
+          <td>0.625</td>
+          <td>0.698</td>
+          <td>15/24</td>
+        </tr>
+        <tr>
+          <th scope="row">incomplete</th>
+          <td>0.688</td>
+          <td>0.423</td>
+          <td>0.524</td>
+          <td>11/26</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      依頼の見逃し32/103件、依頼以外を依頼と誤る例14/167件。request・chat・followupの有効発話220件をnoiseへ落とした例は3件、incompleteへ回した例は5件。incomplete
+      26件のうち15件を取り逃した。requestをchatへ誤る例が25件あり、担当探索の開始を安定して決められる段階にはない。
+    </p>
+    <p>
+      合成評価は147/192件正解、76.6%、Macro F1 0.728。実発話評価は41/78件正解、52.6%、Macro F1
+      0.457。実発話の評価にはnoiseが5件、incompleteが3件しかなく、各クラスの実運用品質を精密に推定できる分母ではない。
+    </p>
+    <p>
+      校正後の全評価NLLは1.080038、10 bin
+      ECEは0.103431。校正前の1.611176と0.191883からは改善したが、実利用での正解確率を保証しない。低信頼時の保留処理は未設定であり、保存adapterは常に5ラベルの首位を返す。誤判定の残るnoise・incompleteを、そのまま発話破棄・無期限待機へ結びつける採用判断はしていない。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>再読込みと速度の検証</h2>
+    <p>
+      外部保存した係数・校正・Encoder
+      manifestと、学習時の入力処理sourceを3回の新しいプロセスで読み直し、毎回評価270件すべての判定とlogitを照合した。3回の判定変化は0件、保存logitとの差の最大は6.08e-6、確率差の最大は4.23e-7だった。品質の分母は270件であり、速度測定の反復を独立した品質例として数えていない。
+    </p>
+    <p>
+      Warm後の推論P50は2.73〜2.79ms、P95は4.61〜4.96ms。Tokenizer、二つの入力に対する同一Encoderの2回実行、文字特徴、head、確率計算と応答辞書作成を含み、HTTP往復や既存サービスとの競合は含まない。読込みと10回の準備推論は502〜673ms。終了時点のRSSは418.6〜420.1MiB、PSSは393.8〜395.2MiBで、ピーク計測ではない。
+    </p>
+    <p>
+      推論時のONNX
+      sessionは各プロセス一つで、Torchとscikit-learnをimportせずに動作した。これは独立した意図判定adapterの検証であり、表情用headとの稼働プロセス共有を実装・検証したという意味ではない。単体試験9件も成功し、入力への教師情報混入防止、履歴制限、グループ分離、数値安定性、エラー集計、出力先制限、文字特徴の再現性を確認した。
+    </p>
+  </section>
+  <section id="artifacts">
+    <h2>保存先と識別子</h2>
+    <p>
+      学習・分割・埋め込み・全予測・元ラベル・実測は<code>/srv/ai/benchmarks/user-intent/training/2026-10-29-v1</code>、<code>2026-10-29-v2</code>、<code>2026-10-29-v3</code>へ保存した。v3の再読込み結果は同ディレクトリのverification/summary.json。元データは受領先にそのまま保持した。
+    </p>
+    <p>
+      最終候補は<code>/srv/ai/models/ruri-user-intent-v1-20261029</code>。head.json、calibration.json、dataset-manifest.json、encoder-manifest.json、assets.json、report.json、学習と推論のsource
+      snapshotを保存した。公開候補名はruri-v3-30m-user-intent-v1だが、稼働APIではまだ使用できない。Encoder本体は既存の発話態度用artifactを参照し、重複コピーしなかった。
+    </p>
+    <table>
+      <caption>
+        最終候補のSHA-256
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ファイル</th>
+          <th scope="col">SHA-256</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">head.json</th>
+          <td><code>a8197c9136ad5fac4f04b006563d025a35bd3b61f48bca8d15990484da9bc968</code></td>
+        </tr>
+        <tr>
+          <th scope="row">calibration.json</th>
+          <td><code>2460f79fa88e4c6c94d032643da11074262bbd8bd801b8c8f2dd7d4568668613</code></td>
+        </tr>
+        <tr>
+          <th scope="row">dataset-manifest.json</th>
+          <td><code>bdcee6279a668c48d40702878e1e4a11f554d6f97d458ef6ef48981992dfa825</code></td>
+        </tr>
+        <tr>
+          <th scope="row">assets.json</th>
+          <td><code>262e11b6f80e6cbe74eeb038f760af456366d16738d9870cdffe93278b74fc86</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      学習環境はNumPy 2.5.3、SciPy 1.18.1、scikit-learn 1.9.1、ONNX Runtime 1.30.0、Tokenizers
+      0.23.2。source
+      repositoryにはbenchmarks/user-intentの学習・推論・検証コード、試験、再現手順と本記録を保存した。
+    </p>
+  </section>
+  <section id="next">
+    <h2>未実施の作業</h2>
+    <p>
+      意図判定のAPI公開、既存の表情用Encoder
+      sessionとの共有、Profile・route・readinessの追加、Warm時の両head保持、保留閾値の設定と利用側の実行方針の変更は未実施。既存の表情headと稼働サービスは変更していない。実発話の追加とラベル境界の再確認を進め、新しい評価集合で5分類と担当探索の要否を分けて再評価するのが次の改善対象となる。
+    </p>
+    <p>
+      <a href="./ruri-user-intent-shared-runtime-plan-2026-10-29.html"
+        >共有インスタンスとWarm常駐の設計案</a
+      >
+    </p>
+  </section>
+</article>

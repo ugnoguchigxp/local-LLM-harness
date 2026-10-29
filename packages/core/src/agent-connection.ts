@@ -27,6 +27,7 @@ export const agentProviderEndpointSchema = z.enum([
 ]);
 
 export const agentProfileSelectorIdSchema = z.enum([
+  "ruri-user-intent",
   "lfm2.5",
   "lfm3.1.7b",
   "lfm3-vl-2b",

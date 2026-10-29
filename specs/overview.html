@@ -22,6 +22,53 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="contract" data-state="current" data-domain="ruri-user-intent-api">
+          <th scope="row">
+            <a href="./ruri-user-intent-api-deployment-2026-10-29.html"
+              >Ruri意図判定APIとEumenes試用手順</a
+            >
+          </th>
+          <td>
+            model切替、共有Encoder、専用接続と配備確認。<small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ruri-user-intent-api</code></small
+            >
+          </td>
+          <td>2026-10-29 API実装・配備準備</td>
+        </tr>
+        <tr data-kind="plan" data-state="proposed" data-domain="ruri-user-intent-shared-runtime">
+          <th scope="row">
+            <a href="./ruri-user-intent-shared-runtime-plan-2026-10-29.html"
+              >Ruri共有インスタンスでの会話・依頼意図判定</a
+            >
+          </th>
+          <td>
+            固定Encoderと用途別headを共有し、意図判定の学習・評価・Warm常駐を追加する案。
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>ruri-user-intent-shared-runtime</code></small
+            >
+          </td>
+          <td>2026-10-29 現状確認・設計案。学習とAPI追加は未実施。</td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="ruri-user-intent-training">
+          <th scope="row">
+            <a href="./ruri-user-intent-training-2026-10-29.html"
+              >Ruri会話・依頼意図5分類の学習結果</a
+            >
+          </th>
+          <td>
+            Git管理外の提供データによる固定Encoder分類器の学習、評価、保存と再読込み検証。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>ruri-user-intent-training</code></small
+            >
+          </td>
+          <td>2026-10-29 学習完了。評価69.6%、実発話52.6%。本番・Warm組込みは未実施。</td>
+        </tr>
         <tr data-kind="decision" data-state="current" data-domain="lfm25-restore-preserve-qwen">
           <th scope="row">
             <a href="./lfm25-restore-preserve-qwen-2026-10-29.html">LFM2.5復帰とQwen FAST保存</a>

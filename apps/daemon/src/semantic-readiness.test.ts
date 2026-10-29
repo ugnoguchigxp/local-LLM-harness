@@ -652,3 +652,21 @@ test("game decision readiness validates the known action independently of model 
       questions: { action: { criteria: { left: "Move left", right: "Move right", wait: "Do not move" } } } });
   }
 });
+
+test("intent readiness uses user text and five intent labels instead of attitude", async () => {
+  const { registry, control, provider } = fixture("larm.system-one.v1", "decision.system-one");
+  provider.publicModel = "ruri-v3-30m-user-intent-v1";
+  let observed: any;
+  const readiness = new SemanticReadiness({ control, getRegistry: () => registry,
+    executionGate: new ExecutionGate(), timeoutMs: 100,
+    fetchImpl: async (_input, init) => {
+      observed = JSON.parse(String(init?.body));
+      return Response.json({ model: provider.publicModel, answers: { intent: {
+        type: "choice", choice: "request", confidence: 0.8,
+      } }, usage: { input_tokens: 20, output_tokens: 0 } });
+    },
+  });
+  expect(await readiness.check({ allocationId: "alloc", provider })).toMatchObject({ ready: true, probe: { validated: true } });
+  expect(observed.state).toEqual({ text: "明日の天気を調べてください。", previous_agent: null });
+  expect(Object.keys(observed.questions.intent.criteria).sort()).toEqual(["chat", "followup", "incomplete", "noise", "request"]);
+});

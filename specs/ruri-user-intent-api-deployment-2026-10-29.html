@@ -1,0 +1,91 @@
+<article lang="ja">
+  <h1>Ruri意図判定APIの共有常駐とEumenes試用手順</h1>
+  <p>
+    2026-10-29
+    JST。ユーザーの「APIを更新して配備し、Eumenesで試用する」という指示に基づき、modelパラメータで表情判定と会話意図判定を選択できるようにする。両headは起動時に検証・Warm準備し、一つのCPU
+    ONNX sessionと要求ロックを共有する。既存の表情契約を保持する。
+  </p>
+  <section id="connection">
+    <h2>Eumenesからの接続</h2>
+    <ol>
+      <li>既存のLARM接続先でGET /v3/agent-profiles?profile=ruri-user-intentを取得する。</li>
+      <li>
+        POST
+        /v1/agent-connectionsへprofile=ruri-user-intent、audience=saaa-desktop、providers=[system-one]を指定し、readyを待ってclaimする。同一ホストの検証ではaudience=same-hostを使用する。
+      </li>
+      <li>
+        claimされたsystem-oneのendpointとcredential.tokenを使用する。公開modelはruri-v3-30m-user-intent-v1。既存の表情用credentialは別modelに切り替えて使用できない。
+      </li>
+      <li>
+        利用中は接続をrenewし、終了時はreleaseする。接続を解放してもruntimeのWarm下限1は維持される。
+      </li>
+    </ol>
+    <p>
+      Profile → system-one-ruri route → ruri-system-one runtime →
+      ruri-system-one.serviceの解決で、既存の表情と同じプロセスを使用する。通常会話ProfileのProvider構成やLLM選択を変更しない。用途別の論理接続はモデル単位の認可を維持する。
+    </p>
+  </section>
+  <section id="request">
+    <h2>要求と結果</h2>
+    <p>
+      POST先はclaimにある/v1/systemone。AuthorizationはclaimされたBearer、Content-Typeはapplication/jsonとする。
+    </p>
+    <pre><code>{
+  "model": "ruri-v3-30m-user-intent-v1",
+  "state": {
+    "previous_agent": "何をお手伝いしましょうか？",
+    "text": "明日の天気を調べてください"
+  },
+  "questions": {
+    "intent": {
+      "type": "choice",
+      "instructions": "最新のユーザー発言の意図を分類してください",
+      "criteria": {
+        "request": "依頼",
+        "chat": "会話",
+        "followup": "作業への返答",
+        "noise": "雑音",
+        "incomplete": "発話途中"
+      }
+    }
+  }
+}</code></pre>
+    <p>
+      answers.intent.choiceが5ラベルの首位で、answers.intent.probabilitiesに全スコアを返す。担当名は推定せず、ツール実行や音声破棄はこのAPI内で行わない。ユーザー発言をstate.text、直前のエージェント発言をstate.previous_agentへ入れる。履歴がなければnullか省略。文字列stateは最新ユーザー発言だけの省略形として受理する。
+    </p>
+    <p>
+      全5ラベルをcriteriaへ指定する。instructionsや説明文だけでタスクの意味を変更することはできない。未知model、別タスクのラベル、score/noul型、表情用のresponseを意図stateへ渡す要求はbackendで422にする。別model用のclaimを使った要求はGatewayでmodel_mismatchとして400になる。
+    </p>
+    <p>
+      一つの要求につき、文脈付き入力と最新発言単独入力の2回を同じEncoderで順番に処理し、文字hash特徴と結合する。各Encoder入力の最大長は512
+      tokens、文脈の先頭160
+      tokensを保持する。usage.input_tokensは2回の合計。truncatedは履歴制限か全体切詰めを示し、history_tokens_droppedとstate_tokens_droppedを別に返す。各入力文字列の上限は50,000文字。
+    </p>
+  </section>
+  <section id="artifacts">
+    <h2>モデルと起動確認</h2>
+    <p>
+      意図headは/srv/ai/models/ruri-user-intent-v1-20261029。既存Ruri
+      EncoderとTokenizerのrevision・hash一致、係数と校正のhash、学習と校正の分離を起動時に検証する。API
+      sourceのassets-intent.jsonを期待hashの正本とし、保存された任意のPython
+      sourceを実行しない。学習データとモデル係数はGit管理外のまま保持する。
+    </p>
+    <p>
+      health.modelsにruri-v3-30m-speaking-attitudeとruri-v3-30m-user-intent-v1を公開し、encoder_session_count=1、user_intentにhead
+      revisionと校正revisionを返す。モデルはリクエスト単位で選び、全体の現在headを書き換えない。両用途の推論を同じロックで直列化する。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>配備と確認状況</h2>
+    <p>
+      変更前の稼働release
+      8010aecf9f5217b27efeda8f7b87ce25a64099a2を基準に隔離したsourceで配備する。作業中の主worktreeは稼働版と異なる変更を含むため、意図APIの追加差分だけを適用し、既存の画像・判断器・会話ルート等の機能を保持する。
+    </p>
+    <p>
+      配備前にAPI経由で評価270件の判定とlogitを保存値と照合し、同時32要求で表情と意図を交互に実行して混線がないことを確認した。単体・artifact試験15件、catalogとreadiness等の対象TypeScript試験148件と型チェックが成功した。配備の全必須チェックと実接続確認はこの文書の後続記録へ追記する。
+    </p>
+    <p>
+      分類精度は提供評価上69.6%、実発話上52.6%。同じ評価集合を開発中に複数回使った結果であり、独立した最終試験ではない。今回の配備はユーザーが指示した試用用であり、精度の改善やホストの自動処理方針の変更は含めない。
+    </p>
+  </section>
+</article>
