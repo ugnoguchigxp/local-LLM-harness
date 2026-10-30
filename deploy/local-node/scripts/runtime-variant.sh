@@ -6,7 +6,7 @@ action="${1:-status}"
 variant="${2:-}"
 # Serialize cross-process switches as well as the daemon's in-memory admission.
 exec 9>"${LARM_MEDIA_LOCK_PATH:-/srv/ai/cache/larm-media-variant.lock}"
-flock -w 320 9
+flock -w "${LARM_MEDIA_LOCK_TIMEOUT_SECONDS:-10}" 9 || { echo "media control lock is busy" >&2; exit 1; }
 case "${variant}" in
   music) service=larm-music-ace-step.service; health=http://127.0.0.1:8090/health; reserve_gb=18 ;;
   image) service=larm-image-qwen21.service; health=http://127.0.0.1:8091/health; reserve_gb=34 ;;
@@ -19,6 +19,15 @@ ready() {
   local response
   response="$(curl -fsS --max-time 3 "${health}")" || return 1
   python3 -c 'import json,sys; v=json.load(sys.stdin); d=v.get("data",v); sys.exit(0 if ((d.get("ready") is True or d.get("loaded") is True) if sys.argv[1] in ("image", "mesh") else (v.get("status")=="ok" if sys.argv[1]=="stable-audio" else d.get("models_initialized") is True)) else 1)' "${variant}" <<<"${response}"
+}
+
+worker_alive() {
+  local state
+  state="$(systemctl show "${service}" --property=ActiveState --value)" || return 1
+  case "${state}" in
+    active|activating|reloading) return 0 ;;
+    *) echo "${variant} worker exited before becoming healthy (state=${state})" >&2; return 1 ;;
+  esac
 }
 
 stop_worker() {
@@ -55,13 +64,16 @@ case "${action}" in
       echo "insufficient available memory for ${variant}: need ${required_kib} KiB including safety floor, have ${available_kib} KiB" >&2
       exit 1
     fi
-    if ! timeout 310 systemctl start "${service}"; then
+    startup_seconds="${LARM_MEDIA_START_TIMEOUT_SECONDS:-300}"
+    if [[ "${variant}" == image ]]; then startup_seconds="${LARM_MEDIA_START_TIMEOUT_SECONDS:-60}"; fi
+    deadline=$((SECONDS + startup_seconds))
+    if ! timeout "$((startup_seconds + 1))" systemctl start "${service}"; then
       stop_worker "${service}"
       exit 1
     fi
-    deadline=$((SECONDS + ${LARM_MEDIA_START_TIMEOUT_SECONDS:-300}))
     if [[ "${variant}" == music ]] && ! ready >/dev/null 2>&1; then
       until curl -fsS --max-time 3 "${health}" >/dev/null 2>&1; do
+        if ! worker_alive; then stop_worker "${service}"; exit 1; fi
         if (( SECONDS >= deadline )); then stop_worker "${service}"; exit 1; fi
         sleep 1
       done
@@ -76,7 +88,9 @@ case "${action}" in
         fi
       fi
     fi
-    until ready >/dev/null 2>&1; do
+    while true; do
+      if ! worker_alive; then stop_worker "${service}"; exit 1; fi
+      if ready >/dev/null 2>&1; then break; fi
       if (( SECONDS >= deadline )); then
         echo "${variant} variant did not become healthy" >&2
         stop_worker "${service}"

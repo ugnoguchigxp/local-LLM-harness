@@ -2,6 +2,20 @@ import { expect, test } from "bun:test";
 import { MediaVariantManager } from "@larm/backends";
 import { ImageGenerationProvider } from "./image-generation-provider";
 
+test("native image startup handles process exits, live listeners and media TIME_WAIT without inference", async () => {
+  const child = Bun.spawn(["python3", "-B",
+    new URL("../../../deploy/local-node/providers/qwen-image21-turbo-provider.test.py", import.meta.url).pathname,
+    "TurboProviderTest.test_occupied_engine_port_is_not_taken_over",
+    "TurboProviderTest.test_restart_accepts_closed_engine_connections_in_time_wait",
+    "TurboProviderTest.test_audio_time_wait_cannot_break_the_native_reuseport_listener",
+    "TurboProviderTest.test_native_exit_including_zero_fails_startup_with_exit_status",
+  ], { stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+  ]);
+  expect({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }).toEqual({ exitCode: 0, output: "" });
+});
+
 test("cancellation during cold startup does not submit an image and releases the media reservation", async () => {
   const started = Promise.withResolvers<void>();
   const finish = Promise.withResolvers<void>();
@@ -90,5 +104,61 @@ test("invalid Turbo requests including dimension bounds are rejected before star
       expect(result.status).toBe(400);
     }
     expect(calls).toEqual([]);
+  } finally { await manager.close(); }
+});
+
+test("a worker exit returns 503, logs a terminal event without input, and allows a later request", async () => {
+  const { Hono } = await import("hono");
+  const { registerImageGenerationRoutes } = await import("./routes/image-generations");
+  const calls: string[] = [];
+  const events: unknown[] = [];
+  let fail = true;
+  let submitted = 0;
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action, variant) => {
+      calls.push(`${action}:${variant}`);
+      if (action === "start" && fail) throw new Error("image worker exited before becoming healthy (state=failed)");
+    },
+  });
+  const provider = new ImageGenerationProvider("http://image.test", manager, async () => {
+    submitted++;
+    throw new Error("upstream failed");
+  });
+  const app = new Hono(); registerImageGenerationRoutes(app, provider, event => events.push(event));
+  const request = () => app.request("/v1/images/generations", { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: "private-input-marker" }) });
+  try {
+    const response = await request();
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: { code: "image_generation_failed" } });
+    expect(submitted).toBe(0);
+    expect(calls).toEqual(["start:image", "stop:image"]);
+    expect(manager.isOccupied()).toBe(false);
+    expect(events).toMatchObject([
+      { name: "image_generation_started" },
+      { name: "image_generation_completed", labels: { status: "503", outcome: "image_generation_failed" } },
+    ]);
+    expect(JSON.stringify(events)).not.toContain("private-input-marker");
+    fail = false;
+    expect((await request()).status).toBe(503);
+    expect(submitted).toBe(1);
+    expect(manager.isOccupied()).toBe(false);
+  } finally { await manager.close(); }
+});
+
+test("image deadline errors return structured 504 after cleanup", async () => {
+  const { Hono } = await import("hono");
+  const { registerImageGenerationRoutes } = await import("./routes/image-generations");
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 }, run: async () => {} });
+  const provider = new ImageGenerationProvider("http://image.test", manager, async () => {
+    throw new DOMException("deadline", "TimeoutError");
+  });
+  const app = new Hono(); registerImageGenerationRoutes(app, provider);
+  try {
+    const response = await app.request("/v1/images/generations", { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: "test" }) });
+    expect(response.status).toBe(504);
+    expect(await response.json()).toMatchObject({ error: { code: "image_generation_timeout" } });
+    expect(manager.isOccupied()).toBe(false);
   } finally { await manager.close(); }
 });

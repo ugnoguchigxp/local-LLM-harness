@@ -21,6 +21,16 @@ test("OpenAPI advertises the integer dimension range and exact output behavior",
   }
 });
 
+test("image service advertises independent Control authentication and bounded failure responses", () => {
+  const document = createOpenApiDocument("test") as {
+    paths: Record<string, { post: { description: string; responses: Record<string, unknown> } }>;
+  };
+  const operation = document.paths["/v1/images/generations"]!.post;
+  expect(operation.description).toContain("Agent Connection creation, readiness polling, renewal and Provider credentials are not required");
+  expect(operation.description).toContain("60 seconds");
+  for (const status of ["409", "503", "504"]) expect(operation.responses[status]).toBeDefined();
+});
+
 test("image dimensions independently accept integer pixels from 100 through 1280", () => {
   for (const axis of ["width", "height"]) {
     for (const value of [100, 101, 127, 256, 512, 777, 1200, 1279, 1280]) {

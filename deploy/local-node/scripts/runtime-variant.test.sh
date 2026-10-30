@@ -10,7 +10,12 @@ cat >"${test_root}/bin/systemctl" <<'SH'
 set -euo pipefail
 printf '%s\n' "$*" >>"${LARM_VARIANT_TEST_ROOT}/calls"
 case "$1" in
-  show) printf "ActiveState=inactive\nMainPID=%s\n" "${LARM_VARIANT_TEST_REMAINING_PID:-0}" ;;
+  show)
+    if [[ "$*" == *"--value"* ]]; then
+      echo "${LARM_VARIANT_TEST_START_STATE:-active}"
+    else
+      printf "ActiveState=inactive\nMainPID=%s\n" "${LARM_VARIANT_TEST_REMAINING_PID:-0}"
+    fi ;;
   is-active) [[ "${LARM_VARIANT_TEST_HEALTHY:-0}" == 1 || "$*" == *"${LARM_VARIANT_TEST_ACTIVE_PEER:-never}"* ]] ;;
   stop) [[ "${LARM_VARIANT_TEST_STOP_FAIL:-0}" == 0 ]]; touch "${LARM_VARIANT_TEST_ROOT}/stopped" ;;
   start) [[ "${LARM_VARIANT_TEST_START_FAIL:-0}" == 0 ]]; touch "${LARM_VARIANT_TEST_ROOT}/started" ;;
@@ -77,6 +82,22 @@ bash "${script}" start stable-audio
 grep -Fx 'start larm-audio-stable.service' "${test_root}/calls" >/dev/null
 if grep -Fx 'start larm-music-ace-step.service' "${test_root}/calls"; then exit 1; fi
 bash "${script}" stop stable-audio
+
+# A Type=simple start can succeed before its process immediately exits. Even
+# an unrelated healthy HTTP listener must not mask a failed systemd worker.
+for state in failed inactive deactivating; do
+  : >"${test_root}/calls"
+  if LARM_VARIANT_TEST_START_STATE="${state}" bash "${script}" start image >"${test_root}/failure" 2>&1; then exit 1; fi
+  grep -F "worker exited before becoming healthy (state=${state})" "${test_root}/failure" >/dev/null
+  grep -Fx 'stop larm-image-qwen21.service' "${test_root}/calls" >/dev/null
+done
+
+# Cross-process contention has a bounded wait and must not start a worker.
+(
+  flock -x 8
+  if LARM_MEDIA_LOCK_TIMEOUT_SECONDS=0 bash "${script}" start image >"${test_root}/failure" 2>&1; then exit 1; fi
+  grep -F 'media control lock is busy' "${test_root}/failure" >/dev/null
+) 8>"${LARM_MEDIA_LOCK_PATH}"
 
 # An external request using either audio worker must never be stopped or replaced.
 for pair in "stable-audio larm-music-ace-step.service" "music larm-audio-stable.service" "image larm-audio-stable.service"; do

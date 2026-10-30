@@ -1,0 +1,323 @@
+<article lang="ja">
+  <h1>画像生成APIの起動失敗・無応答調査と修正 2026-10-31</h1>
+  <p>
+    結論：画像エンジンが起動直後に終了した後もLARMがその終了を検知せず300秒の健康確認を続け、Eumenesの271秒期限まで失敗を返さなかった。
+  </p>
+  <p>
+    対象時刻はすべてJST。調査対象の稼働releaseは1bb672dd0530f467c0465520017cb14157f7039a。最初は読み取りのみで調査し、その後、利用者から画像生成APIの改修・配備の指示を受けた。実モデルの起動・画像生成・推論による再現試験は行わない。
+  </p>
+  <section id="evidence">
+    <h2>証拠と時系列</h2>
+    <p>
+      systemd journalを読み、本文・資格情報を除いた抽出を
+      <code>/srv/ai/evidence/image-api-investigation-20261031/</code>
+      に保存した。以下のDはfailure-larm-daemon.service.log、Iはfailure-larm-image-qwen21.service.log、Mはmidnight-larm-daemon.service.logを示す。元のjournalのunit名・マイクロ秒付き時刻も各行に残している。
+    </p>
+    <table>
+      <caption>
+        失敗した画像生成の時系列
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">時刻</th>
+          <th scope="col">LARMの事象</th>
+          <th scope="col">根拠</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">08:33:41〜08:33:50</th>
+          <td>
+            Stable
+            Audioが8092で起動し、停止した。同じ8092が画像エンジンの内部portにも指定されている。
+          </td>
+          <td>
+            journal larm-audio-stable.service、08:33:41.492898〜08:33:50.132356。画像unitのExecStart
+            --engine-port 8092。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">08:34:20.230〜08:34:33.550</th>
+          <td>
+            直前の会話要求はlfm2.5 → llm-lfm25 → ornith15-strix-conversationへ解決し、HTTP
+            200で完了した。
+          </td>
+          <td>D:25〜31。</td>
+        </tr>
+        <tr>
+          <th scope="row">08:34:33.855〜08:34:34.858</th>
+          <td>
+            SAAA-w-Imageのllm接続を作成。llm-saaa-gemma4-26b →
+            gemma4-26b-conversationへ解決し、memory_exhaustedによるallocation waiting、connection
+            pending。Prefer wait後に202を返した。
+          </td>
+          <td>D:32〜34。接続ID末尾fd9b8222-b003-4b6f-a0a9-aecacbcdf80b。</td>
+        </tr>
+        <tr>
+          <th scope="row">08:34:34.982</th>
+          <td>
+            画像要求に対応してlarm-image-qwen21.serviceを起動。connection
+            pendingとは別のMediaVariantManager経路である。
+          </td>
+          <td>
+            I:1。apps/daemon/src/image-generation-provider.tsのgenerateTracked → variants.acquire。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">08:34:35.295〜08:34:35.653</th>
+          <td>
+            ROCm認識、重みmetadata読込、内部port
+            8092へのlisten開始をログ出力。これはlisten成功を保証しない。native
+            main.cppはsvr.listenの前にこの行を出す。
+          </td>
+          <td>
+            I:2〜21。外部runtime
+            examples/server/main.cpp:151〜152。推論用tensorロード完了や生成開始の記録はない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">08:34:35.762〜08:34:35.773</th>
+          <td>
+            native子プロセスが既に終了し、PythonがTurbo engine failed to startを送出。unitはexit
+            1、failed。起動後約0.79秒で終了した。
+          </td>
+          <td>
+            I:22〜32。旧Python
+            Provider.start:78〜80。30秒期限前なのでchild.pollが終了を検知した分岐。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">08:34:35〜08:39:04</th>
+          <td>
+            旧runtime-variant.shはfailed
+            unitを見ずに/healthを最大300秒確認し続ける。生成APIはacquire待ちで、Pythonの/v1/generationsへまだ転送していない。
+          </td>
+          <td>
+            旧deploy/local-node/scripts/runtime-variant.shのdeadlineとuntil
+            ready、旧ImageGenerationProvider.generateTrackedのacquire後fetch。要求開始・完了の画像専用ログは旧版にはないため、個別要求の対応付けは時刻と制御経路による。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">08:39:04.573〜08:39:04.617</th>
+          <td>
+            対象allocation解放、DELETEは204。connectionはpendingからreleased。画像unitは08:34:35に既に終了しており、DELETEが止めたのではない。
+          </td>
+          <td>D:50〜53。readyDeadlineは08:39:33.855で、期限到来より前に明示解放。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      08:38:33.688〜08:38:38.552には別allocation上のOrnith要求のHTTP
+      200もある（D:40〜46）。同じAPI利用者か別の利用者かはこのログだけでは確定しない。Eumenes側の「他の推論なし」という観測と同一要求だとは扱わない。
+    </p>
+  </section>
+  <section id="hypotheses">
+    <h2>仮説の評価</h2>
+    <table>
+      <caption>
+        a〜dの当否
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">仮説</th>
+          <th scope="col">判断</th>
+          <th scope="col">根拠</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">a 無通信60秒の自動解放</th>
+          <td>今回の原因ではない。</td>
+          <td>
+            対象はreadyに到達せずidle
+            timerの対象外。08:39:04の明示DELETEで解放。実際の選択profileのidleReleaseは300秒。画像workloadはConnectionではなくMediaVariantManagerが保持し、Control
+            Bearerの要求を特定ConnectionのactiveRequestsへ紐付けない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">b 起動前の受付</th>
+          <td>接続ready待ちの不足ではない。画像の起動失敗伝播に不具合。</td>
+          <td>
+            servicesは独立Control API。Connection
+            pendingでも呼べる。画像要求自身がworkerを起動し健康確認後に転送する。今回は健康確認中にworker終了を検知しなかった。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">c メモリ・配置</th>
+          <td>追加llm接続のメモリ待ちは事実。画像停止の直接原因としてのOOMは確認できない。</td>
+          <td>
+            要求先Gemmaは見積48GB、常駐Ornithは56GB、同じconversation-llm-slot。画像経路は別の実メモリ事前判定を通過して起動した。kernelに該当時間のOOM記録なし。画像nativeは実生成開始前に終了している。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">d 10-30最後の成功後の変更</th>
+          <td>画像API・起動処理のコード変更による回帰は認められない。</td>
+          <td>
+            成功時release
+            95961280a2b4と失敗時1bb672dd0530のimage-generations.ts、image-generation-provider.ts、media-variants.ts、runtime-variant.sh、Turbo
+            PythonはSHA-256一致。長い待ちの欠陥は成功時も存在し、起動失敗時に露呈した。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      画像native終了の引き金として、直前のStable AudioのTIME_WAITとSO_REUSEADDR /
+      SO_REUSEPORTの不一致が有力。Linuxの実ソケットを使い、推論なしで「音楽相当の終了後にnative相当のbindが失敗する」条件を再現した。ただし当時のerrno・socket一覧・native終了コードは保存されておらず、歴史的な直接原因の確定とは区別する。旧nativeはlisten失敗をログにせず、戻り値も検査せずexit
+      0へ進める。
+    </p>
+  </section>
+  <section id="midnight">
+    <h2>00:05:53の409</h2>
+    <p>
+      LARM側で画像用と時刻が一致するSAAA-w-Image接続は、00:05:53.800にGemmaのメモリ待ちとなり、00:05:54.809にPOST
+      /v1/agent-connectionsが202を返し、00:05:54.844にDELETEが204で完了している（M:17〜21）。この接続作成を409とする根拠はなく、利用者からの要約とは一致しない。
+    </p>
+    <p>
+      同時刻は00:05:47.519からStable Audioが起動中。画像生成ルートは他のmedia要求の占有時に409
+      media_variant_busyを返すため、画像POSTの409が候補である。旧版は画像要求の応答statusを記録していないため、実際のAPI・error.code・競合job
+      IDは断定できない。00:05:50.743と00:05:59.451の別の409はcontextStillのPOST
+      /v1/agent-connections、provider_conflictであり、画像の失敗と混同しない。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>画像・音楽サービスの契約</h2>
+    <table>
+      <caption>
+        Eumenesが利用するAPIと項目
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">契約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">サービス発見</th>
+          <td>
+            GET /v3/agent-profilesのトップレベルservices[]からcapability media.image.generate /
+            media.music.generateを選び、url・model・protocolを使う。選択Profileを取得したい場合はprofiles[].services[]も利用できる。Agent
+            Connectionの作成は不要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ready・資格</th>
+          <td>
+            services[]にConnection相当のstatus/readinessはない。Connectionのstatus /
+            phaseとproviders[].readiness /
+            claimableは選んだProviderの状態。画像・音楽workerのreadyではない。サービスURLへControl
+            Bearerで送る。Provider credentialやGET connectionのready待ちは不要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">生成中の維持</th>
+          <td>
+            画像の同期POSTがmedia占有とworkloadを保持する。heartbeat・connection
+            renewは不要。音楽はPOST /v1/music/generationsで202/jobを受け、GET
+            /v1/music/generations/{jobId}のstatusがcompletedになるまで追跡する。音楽job自身が占有を保持する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Provider推論との違い</th>
+          <td>
+            LLM等のConnection Providerを使う場合はstatus ready、claim後のProvider
+            Bearerを使う。推論中保護はこの経路のactiveRequestsで管理される。renewはexpiresAtを更新するが無通信idle
+            timerのheartbeatとは異なる。画像用に不要なllm接続を作っても画像の保護にはならない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">画像の応答</th>
+          <td>
+            成功200/status
+            succeeded/artifactまたはartifacts[0]。競合409/media_variant_busy。起動・上流失敗503/image_generation_failed。停止失敗503/worker_stop_failed。生成期限900秒の超過は改修後504/image_generation_timeout。既定の起動健康確認60秒、制御lock待ち10秒、停止は各75秒の上限が別途加わる。60秒が要求全体の上限という意味ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">音楽の失敗</th>
+          <td>
+            同期画像のHTTP
+            statusと同一視しない。POSTの受付拒否と、202後のjob失敗を区別する。GETのjob.status
+            failed/cancelledとerrorを処理する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="remediation">
+    <h2>対策と責任範囲</h2>
+    <table>
+      <caption>
+        実装修正と利用側の対応
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">側</th>
+          <th scope="col">変更</th>
+          <th scope="col">状態</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LARM</th>
+          <td>
+            systemd
+            failed/inactive/deactivatingを健康確認ごとに検知し、停止確認後すぐ503へ戻す。画像の既定起動確認60秒、cross-process
+            lock待ち10秒。
+          </td>
+          <td>実装済み。模擬systemd試験に含む。</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM</th>
+          <td>
+            閉じた接続のTIME_WAITだけが残る内部portは空きportへ変更し、子プロセス引数と接続先を一致させる。生きた他listenerの乗っ取りは禁止。native終了コードと30秒起動期限をエラーに残す。
+          </td>
+          <td>実装済み。実TCP socketによる非推論試験に含む。</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM</th>
+          <td>
+            画像要求ごとに開始・終了・status・elapsedMs・追跡IDを記録し、入力本文やcredentialは記録しない。画像期限を504へ分類し、公開OpenAPIに認証・寿命・失敗契約を明記する。
+          </td>
+          <td>実装済み。503/504、失敗後の予約解放、入力非記録を試験。</td>
+        </tr>
+        <tr>
+          <th scope="row">Eumenes</th>
+          <td>
+            画像・音楽はcatalog.services[]から直接呼び、サービス取得のためのproviders:[llm]接続作成を除く。画像待ちを理由に会話Providerのreadyを待たない。heartbeat追加は不要。
+          </td>
+          <td>利用側への提案。Eumenesは変更していない。</td>
+        </tr>
+        <tr>
+          <th scope="row">Eumenes</th>
+          <td>
+            失敗時にHTTP
+            method、path、status、error.code、要求時刻を本文・資格情報なしで記録する。409は競合として扱い、無条件のPOST再送をしない。音楽はjob完了をポーリングする。
+          </td>
+          <td>利用側への提案。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LARMの起動失敗伝播が今回の無応答の修正対象。Eumenesの余分なLLM接続は別のメモリ待ちを作るため除くのが適切だが、それだけではLARMの無応答不具合は直らない。
+    </p>
+  </section>
+  <section id="validation">
+    <h2>検証と配備</h2>
+    <p>
+      画像ProviderのPython全11試験、画像HTTPとmedia排他の模擬試験、socketとnative終了の非推論試験を通過。稼働版1bb672dd0530を基に独立した作業場所を作り、画像API関係だけを反映する。署名済みreleaseの検証・配備結果は完了後にここへ追記する。
+    </p>
+    <p>
+      実画像の生成成功は未検証。受入試験が必要なら、利用者の生成操作で「音楽完了後すぐ画像生成」「worker起動失敗」「別media占有中」を確認し、HTTP応答・開始終了event・終了後unit状態を照合する。起動失敗の故障注入は本番では行わず隔離環境で実施する。
+    </p>
+  </section>
+  <section id="unknowns">
+    <h2>確認できなかったこと</h2>
+    <ul>
+      <li>当時のnative子プロセスの終了コード、listen errno、TCP状態、GPU/RAMの瞬間値。</li>
+      <li>
+        旧画像ルートには受付・応答ログがないため、00:05:53の409を返した実APIとerror.code、08:34要求のHTTP転送trace。
+      </li>
+      <li>EumenesのDB・本文・認証情報、画面状態、実生成での修正後受入結果。</li>
+    </ul>
+  </section>
+</article>

@@ -54,6 +54,11 @@ class Provider:
         import socket
         from urllib.parse import urlparse
         address = urlparse(self.endpoint)
+        def port_states() -> list[str]:
+            return [fields[3]
+                for table in ("/proc/net/tcp", "/proc/net/tcp6")
+                for line in Path(table).read_text().splitlines()[1:]
+                if (fields := line.split()) and int(fields[1].rsplit(":", 1)[1], 16) == address.port]
         with socket.socket() as probe:
             # sd-server uses SO_REUSEPORT on Linux. A REUSEADDR-only probe
             # cannot bind its TIME_WAIT sockets; do not enable REUSEPORT here,
@@ -64,20 +69,30 @@ class Provider:
             except OSError as error:
                 states = []
                 if error.errno == errno.EADDRINUSE:
-                    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
-                        for line in Path(table).read_text().splitlines()[1:]:
-                            fields = line.split()
-                            if int(fields[1].rsplit(":", 1)[1], 16) == address.port:
-                                states.append(fields[3])
+                    states = port_states()
                 # Only closed TCP connections may remain; LISTEN, active
                 # connections, or an unexplained reservation still fail.
                 if not states or any(state != "06" for state in states):
                     raise
+        # Another media server uses this port with REUSEADDR, whereas
+        # sd-server uses REUSEPORT. Its closed sockets can prevent the native
+        # listener from binding even when the probe above accepts them.
+        if "06" in port_states():
+            with socket.socket() as fresh:
+                fresh.bind((address.hostname, 0))
+                port = fresh.getsockname()[1]
+            index = self.command.index("--listen-port")
+            self.command = [*self.command]
+            self.command[index + 1] = str(port)
+            self.endpoint = f"http://{address.hostname}:{port}"
         self.child = subprocess.Popen(self.command)
         deadline = time.monotonic() + 30
         while not self.ready():
-            if self.child.poll() is not None or time.monotonic() >= deadline:
-                raise RuntimeError("Turbo engine failed to start")
+            status = self.child.poll()
+            if status is not None:
+                raise RuntimeError(f"Turbo engine exited before readiness (exit={status})")
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Turbo engine readiness timed out after 30 seconds")
             time.sleep(0.1)
 
     def ready(self) -> bool:
