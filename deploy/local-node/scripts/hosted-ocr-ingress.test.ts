@@ -24,7 +24,7 @@ test("OCR ingress resolves the registered gateway instead of using a port as ide
   } finally { rmSync(root, { recursive: true }); }
 });
 
-test("LAN ingress preserves gateway auth, non-waking status, multipart, jobs and owner boundaries", async () => {
+for (const serviceId of ["ocr-host", "object-recognition-host"] as const) test(`${serviceId} LAN ingress preserves auth, non-waking status, multipart, jobs and owner boundaries`, async () => {
   const root = mkdtempSync(join(tmpdir(), "larm-ocr-ingress-"));
   const shared = "fixture-shared-" + "s".repeat(40);
   const ownerA = "fixture-owner-a", ownerB = "fixture-owner-b";
@@ -51,11 +51,11 @@ test("LAN ingress preserves gateway auth, non-waking status, multipart, jobs and
   } });
   const lease = { id: "fixture-lease", status: "ready", expiresAt: new Date(Date.now() + 120000).toISOString(), endpoint: worker.url.origin };
   const client = { async ensure() { ensures++; return lease; }, async renew() { return lease; }, async release() {},
-    async status() { return { id: "ocr-host", state: "stopped", generation: 7 }; } } as unknown as ClientLocalServices;
+    async status() { return { id: serviceId, state: "stopped", generation: 7 }; } } as unknown as ClientLocalServices;
   // A real hosted gateway exercises its Host check and owner translation.
   const reservation = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
   const port = reservation.port!; await reservation.stop();
-  const gateway = startHostedGateway({ hostname: "127.0.0.1", port, serviceId: "ocr-host", webRoot: root,
+  const gateway = startHostedGateway({ hostname: "127.0.0.1", port, serviceId, webRoot: root,
     clientTokens: [ownerA, ownerB], apiToken: shared, allowedEndpoints: [worker.url.origin], userIdleSeconds: 1, renewSeconds: 1 }, client);
   const publicOrigin = "http://192.168.1.20:29007";
   const handler = createOcrIngressHandler(publicOrigin, () => gateway.server.url.origin);
@@ -72,7 +72,7 @@ test("LAN ingress preserves gateway auth, non-waking status, multipart, jobs and
     }
     const status = await call("/hosting/status", shared);
     expect(status.status).toBe(200);
-    expect(await status.json()).toEqual({ id: "ocr-host", state: "stopped", generation: 7 });
+    expect(await status.json()).toEqual({ id: serviceId, state: "stopped", generation: 7 });
     expect(ensures).toBe(0); expect(upstreamCalls).toBe(0);
     for (const [name, content] of [["image.png", "日本語12345"], ["video.mp4", "fixture-video"]]) {
       const form = new FormData(); form.set("file", new File([content!], name!));
@@ -176,4 +176,29 @@ print('passed')
   const result = Bun.spawnSync(["python3", "-c", script], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } });
   expect(result.stderr.toString()).toBe("");
   expect(result.exitCode).toBe(0);
+});
+
+test("object ingress resolves only its own registration and installer unit", () => {
+  const root = mkdtempSync(join(tmpdir(), "larm-object-discovery-")), file = join(root, "gateway.json");
+  try {
+    writeFileSync(file, JSON.stringify({ gateway: { serviceId: "object-recognition-host", hostname: "127.0.0.1", port: 29019 } }));
+    expect(ocrGatewayOrigin(file, "object-recognition-host")).toBe("http://127.0.0.1:29019");
+    expect(() => ocrGatewayOrigin(file)).toThrow();
+    writeFileSync(file, JSON.stringify({ gateway: { serviceId: "ocr-host", hostname: "127.0.0.1", port: 29019 } }));
+    expect(() => ocrGatewayOrigin(file, "object-recognition-host")).toThrow();
+  } finally { rmSync(root, { recursive: true }); }
+  const script = `import importlib.util,pathlib
+s=importlib.util.spec_from_file_location('ingress','deploy/local-node/scripts/install-ocr-ingress.py')
+m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+m.select_service('object-recognition-host')
+assert str(m.CONFIG)=='/etc/larm-local-services/object-recognition-ingress/config.json'
+assert m.UNIT=='larm-object-recognition-host-ingress.service'
+text=m.unit_text({'user':'fixture','group':'fixture','bun':'/opt/runtime/bun'},pathlib.Path('/opt/release'))
+assert 'Requires=larm-object-recognition-host-gateway.service' in text
+assert 'PartOf=larm-object-recognition-host-gateway.service' in text
+assert 'WantedBy=multi-user.target larm-object-recognition-host-gateway.service' in text
+assert 'larm-ocr-host-gateway' not in text
+`;
+  const result = Bun.spawnSync(["python3", "-c", script], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } });
+  expect(result.stderr.toString()).toBe(""); expect(result.exitCode).toBe(0);
 });

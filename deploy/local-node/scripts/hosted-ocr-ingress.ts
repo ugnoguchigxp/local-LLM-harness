@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 
+export type HostedVisionService = "ocr-host" | "object-recognition-host";
 export type OcrIngressConfig = {
-  serviceId: "ocr-host";
+  serviceId: HostedVisionService;
   listenAddress: string;
   port: number;
   gatewayConfigFile: string;
@@ -15,9 +16,9 @@ const privateAddress = (address: string) => isIP(address) === 4 && (
 );
 
 // Resolve the registered gateway, never a lease endpoint or a worker port.
-export function ocrGatewayOrigin(file: string): string {
+export function ocrGatewayOrigin(file: string, serviceId: HostedVisionService = "ocr-host"): string {
   const { gateway } = JSON.parse(readFileSync(file, "utf8"));
-  if (gateway?.serviceId !== "ocr-host" || gateway.hostname !== "127.0.0.1" || !validPort(gateway.port)) {
+  if (gateway?.serviceId !== serviceId || gateway.hostname !== "127.0.0.1" || !validPort(gateway.port)) {
     throw new Error("invalid_ocr_gateway");
   }
   return `http://127.0.0.1:${gateway.port}`;
@@ -66,14 +67,14 @@ export function createOcrIngressHandler(origin: string, upstreamOrigin: () => st
 }
 
 export function startOcrIngress(config: OcrIngressConfig) {
-  if (config.serviceId !== "ocr-host" || !privateAddress(config.listenAddress) || !validPort(config.port)
+  if (!["ocr-host", "object-recognition-host"].includes(config.serviceId) || !privateAddress(config.listenAddress) || !validPort(config.port)
     || !config.gatewayConfigFile.startsWith("/")) throw new Error("invalid_ocr_ingress_config");
-  ocrGatewayOrigin(config.gatewayConfigFile);
+  ocrGatewayOrigin(config.gatewayConfigFile, config.serviceId);
   const origin = `http://${config.listenAddress}:${config.port}`;
   const server = Bun.serve({
     hostname: config.listenAddress, port: config.port, idleTimeout: 255,
     maxRequestBodySize: 17 * 1024 ** 2,
-    fetch: createOcrIngressHandler(origin, () => ocrGatewayOrigin(config.gatewayConfigFile)),
+    fetch: createOcrIngressHandler(origin, () => ocrGatewayOrigin(config.gatewayConfigFile, config.serviceId)),
   });
   return { server, origin };
 }
@@ -82,8 +83,9 @@ if (import.meta.main) {
   try {
     const file = process.env.LARM_OCR_INGRESS_CONFIG;
     if (!file) throw new Error("ocr_ingress_config_required");
-    const { server, origin } = startOcrIngress(JSON.parse(readFileSync(file, "utf8")));
-    console.log(JSON.stringify({ serviceId: "ocr-host", origin }));
+    const config: OcrIngressConfig = JSON.parse(readFileSync(file, "utf8"));
+    const { server, origin } = startOcrIngress(config);
+    console.log(JSON.stringify({ serviceId: config.serviceId, origin }));
     const shutdown = async () => { await server.stop(); process.exit(0); };
     process.on("SIGTERM", shutdown); process.on("SIGINT", shutdown);
   } catch {

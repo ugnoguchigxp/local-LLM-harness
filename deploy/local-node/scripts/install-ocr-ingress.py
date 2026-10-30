@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Initial installation of the LAN OCR ingress; existing gateway/daemon are untouched."""
+"""Install authenticated LAN ingress for a registered OCR or object gateway."""
 import argparse
 import hashlib
 import ipaddress
@@ -19,6 +19,20 @@ GATEWAY = 'larm-ocr-host-gateway.service'
 CONFIG = Path('/etc/larm-local-services/ocr-ingress/config.json')
 RECEIPT = CONFIG.with_name('installation.json')
 UNIT_FILE = Path('/etc/systemd/system') / UNIT
+SERVICE_ID = 'ocr-host'
+
+
+def select_service(service_id):
+    global SERVICE_ID, UNIT, GATEWAY, CONFIG, RECEIPT, UNIT_FILE
+    if service_id not in {'ocr-host', 'object-recognition-host'}:
+        raise RuntimeError('invalid_ingress_service')
+    SERVICE_ID = service_id
+    UNIT = f'larm-{service_id}-ingress.service'
+    GATEWAY = f'larm-{service_id}-gateway.service'
+    directory = 'ocr-ingress' if service_id == 'ocr-host' else 'object-recognition-ingress'
+    CONFIG = Path('/etc/larm-local-services') / directory / 'config.json'
+    RECEIPT = CONFIG.with_name('installation.json')
+    UNIT_FILE = Path('/etc/systemd/system') / UNIT
 
 
 def run(*args):
@@ -51,7 +65,7 @@ def sha(data):
 
 def unit_text(plan, release):
     return f'''[Unit]
-Description=LARM authenticated OCR LAN ingress
+Description=LARM authenticated {SERVICE_ID} LAN ingress
 After=network-online.target {GATEWAY}
 Wants=network-online.target
 Requires={GATEWAY}
@@ -91,7 +105,7 @@ def make_plan(bundle, port=None):
     gateway_file = Path(files[0])
     gateway_bytes = gateway_file.read_bytes()
     gateway = json.loads(gateway_bytes).get('gateway', {})
-    if gateway.get('serviceId') != 'ocr-host' or gateway.get('hostname') != '127.0.0.1' or type(gateway.get('port')) is not int or not 0 < gateway['port'] < 65536:
+    if gateway.get('serviceId') != SERVICE_ID or gateway.get('hostname') != '127.0.0.1' or type(gateway.get('port')) is not int or not 0 < gateway['port'] < 65536:
         raise RuntimeError('registered_ocr_gateway_required')
     network = private_network(json.loads(run('ip', '-4', '-json', 'route', 'show', 'default')), json.loads(run('ip', '-4', '-json', 'address', 'show')))
     # Reuse only the current port allocation on the distinct LAN address. The
@@ -118,7 +132,7 @@ def make_plan(bundle, port=None):
     bun = Path(f'/proc/{pid}/exe').resolve(strict=True)
     if not str(bun).startswith('/opt/larm-local-services/runtimes/') or bun.stat().st_uid != 0 or bun.stat().st_mode & 0o022:
         raise RuntimeError('protected_bun_runtime_required')
-    payload = {'schemaVersion': 1, 'serviceId': 'ocr-host', **network, 'port': port,
+    payload = {'schemaVersion': 1, 'serviceId': SERVICE_ID, **network, 'port': port,
                'origin': f'http://{network["listenAddress"]}:{port}', 'gatewayConfigFile': str(gateway_file),
                'gatewayConfigSha256': sha(gateway_bytes), 'bundleSha256': sha(bundle.read_bytes()),
                'firewallSha256': sha(firewall.encode()), 'user': user, 'group': group, 'bun': str(bun)}
@@ -164,7 +178,7 @@ def apply(plan, bundle):
                 if attempt == 29:
                     raise RuntimeError('ingress_readiness_timed_out') from None
                 time.sleep(0.1)
-        subprocess.run(['/usr/sbin/ufw', 'allow', *firewall_rule, 'comment', 'LARM ocr-host ingress'], check=True)
+        subprocess.run(['/usr/sbin/ufw', 'allow', *firewall_rule, 'comment', f'LARM {SERVICE_ID} ingress'], check=True)
         added = True
         subprocess.run(['systemctl', 'enable', UNIT], check=True)
         RECEIPT.write_bytes(canonical({**plan, 'firewallRule': firewall_rule, 'release': str(release)}))
@@ -183,13 +197,15 @@ def apply(plan, bundle):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bundle', type=Path, required=True)
+    parser.add_argument('--service-id', choices=['ocr-host', 'object-recognition-host'], default='ocr-host')
     parser.add_argument('--port', type=int)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--expected-digest')
     args = parser.parse_args()
+    select_service(args.service_id)
     if args.apply:
         import fcntl
-        lock = open('/run/lock/larm-ocr-ingress.lock', 'a')
+        lock = open(f'/run/lock/larm-{SERVICE_ID}-ingress.lock', 'a')
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     # Capture the exact reviewed bytes so a concurrent build cannot replace
     # the payload after its digest has been checked.

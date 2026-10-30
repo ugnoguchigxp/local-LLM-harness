@@ -46,8 +46,10 @@ export const visualPerceptionResponseSchema = z.object({
     dtype: z.literal("bfloat16"), decoderDtype: z.literal("float32"),
     outputTokens: z.number().int().positive(), visualTokens: z.number().int().positive() }).strict(),
     z.object({ device: z.literal("cpu"), backend: z.literal("llama.cpp"), dtype: z.literal("qad-q4_0"),
+      decoderDtype: z.null().describe("No pixel/mask decoder exists in this description-only runtime; not unknown precision. Required, never omitted."),
+      visualTokens: z.number().int().positive().describe("Image tokens measured by the pinned engine's MTMD preprocessing of the exact inference payload; never estimated."),
       outputTokens: z.number().int().nonnegative(), inputTokens: z.number().int().positive() }).strict()]),
-}).strict();
+}).strict().describe("larm.visual-perception.v1 schema revision 2026-10-31: execution.decoderDtype and visualTokens are required in every branch. CPU description-only execution uses decoderDtype:null for an absent pixel decoder, never unknown precision.");
 export type VisualPerceptionRequest = z.infer<typeof visualPerceptionRequestSchema>;
 export type VisualPerceptionResponse = z.infer<typeof visualPerceptionResponseSchema>;
 
@@ -57,6 +59,8 @@ export function inspectVisualPerceptionResponse(value: unknown, request: VisualP
   if (!parsed.success) return { ok: false };
   const r = parsed.data;
   if (r.model !== request.model || r.task !== request.task
+    || (r.execution.backend === "llama.cpp" && (r.task !== "describe" || r.detections.length > 0 || r.masks.length > 0
+      || r.count !== undefined || r.execution.visualTokens >= r.execution.inputTokens))
     || r.image.width * r.image.height > 4_194_304
     || r.detections.some(d => d.box[0] >= d.box[2] || d.box[1] >= d.box[3]
       || d.box[2] > r.image.width || d.box[3] > r.image.height)

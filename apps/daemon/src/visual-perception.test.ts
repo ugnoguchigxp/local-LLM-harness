@@ -23,9 +23,12 @@ test("vision Provider discovery, actual-image readiness, scoped validation, upst
     if (activeMode === "busy") return Response.json({ error: { code: "provider_busy", message: "provider_busy" } }, { status: 429 });
     return Response.json({ contractVersion: "larm.visual-perception.v1", model: activeMode === "wrong" ? "wrong" : b.model,
       modelRevision: "a".repeat(40), task: b.task, image: { width: 128, height: 128, orientation: "exif-normalized" },
-      response: "circle", detections: [{ label: "circle", box: [32, 32, 96, 96] }], masks: [], truncated: false,
+      response: "circle", detections: activeMode.startsWith("cpu") ? [] : [{ label: "circle", box: [32, 32, 96, 96] }], masks: [], truncated: false,
       timings: { imageDecodeMs: 1, preprocessMs: 1, generationMs: 10, maskMs: 0, postprocessMs: 1, totalMs: 13 },
-      execution: { device: "cuda:0", backend: "transformers", dtype: "bfloat16", decoderDtype: "float32", outputTokens: 12, visualTokens: 16 } });
+      execution: activeMode.startsWith("cpu") ? { device: "cpu", backend: "llama.cpp", dtype: "qad-q4_0", outputTokens: 12, inputTokens: 100,
+        ...(activeMode !== "cpu-missing-decoder" ? { decoderDtype: null } : {}),
+        ...(activeMode !== "cpu-missing-tokens" ? { visualTokens: 64 } : {}) }
+        : { device: "cuda:0", backend: "transformers", dtype: "bfloat16", decoderDtype: "float32", outputTokens: 12, visualTokens: 16 } });
   } });
   runtime.deployment.endpoint = `http://127.0.0.1:${peer.port}`;
   const health = (): RuntimeHealth => ({ runtimeId: runtime.id, service: "Running", listening: true, healthOk: true, busy: false });
@@ -83,7 +86,9 @@ test("vision Provider discovery, actual-image readiness, scoped validation, upst
     const invalidJson = await fetch(provider.endpoint, { method: "POST", headers: { authorization: `Bearer ${provider.credential.token}`, "content-type": "application/json" }, body: "{broken" });
     expect(invalidJson.status).toBe(400);
     expect(seenImages).toBe(before);
-    for (const failure of ["text", "json", "large", "wrong"]) {
+    mode = "cpu";
+    expect((await client.perceive(provider, input)).execution).toMatchObject({ decoderDtype: null, visualTokens: 64, inputTokens: 100 });
+    for (const failure of ["text", "json", "large", "wrong", "cpu-missing-decoder", "cpu-missing-tokens"]) {
       mode = failure;
       await expect(client.perceive(provider, input)).rejects.toBeInstanceOf(LarmApiError);
     }

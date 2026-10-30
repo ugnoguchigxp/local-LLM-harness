@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { inspectVisualPerceptionResponse, visualPerceptionProbe, visualPerceptionRequestSchema, type VisualPerceptionResponse } from "./visual-perception";
 import { loadAgentConnectionCatalogForRegistry } from "./agent-connection";
 import { loadRegistry } from "./registry";
+import { createOpenApiDocument } from "./api-contract";
 
 const request = visualPerceptionProbe("wevisone-vl-4b");
 function response(): VisualPerceptionResponse {
@@ -47,4 +48,34 @@ test("vision is explicit, isolated, single-request, zero-warm and user-scoped", 
     resources: { maxConcurrentAllocations: 1, maxConcurrentRequests: 1, maxQueuedRequests: 0 },
     deployment: { scope: "user", healthPort: 8095 },
   });
+});
+
+test("description-only execution requires explicit decoder absence and measured image tokens", () => {
+  const cpu = { ...response(), detections: [], execution: { device: "cpu", backend: "llama.cpp", dtype: "qad-q4_0",
+    decoderDtype: null, visualTokens: 64, outputTokens: 0, inputTokens: 100 } };
+  expect(inspectVisualPerceptionResponse(cpu, request).ok).toBe(true);
+  for (const execution of [
+    { ...cpu.execution, decoderDtype: undefined }, { ...cpu.execution, decoderDtype: "float32" },
+    { ...cpu.execution, visualTokens: undefined }, { ...cpu.execution, visualTokens: null },
+    { ...cpu.execution, visualTokens: 0 }, { ...cpu.execution, visualTokens: 100 },
+    { ...cpu.execution, visualTokens: -1 },
+  ]) expect(inspectVisualPerceptionResponse({ ...cpu, execution }, request).ok).toBe(false);
+  expect(inspectVisualPerceptionResponse({ ...cpu, detections: response().detections }, request).ok).toBe(false);
+  expect(inspectVisualPerceptionResponse({ ...cpu, task: "segmentation" }, { ...request, task: "segmentation" }).ok).toBe(false);
+  // Unknown precision is not the same as an absent decoder on a mask-capable runtime.
+  expect(inspectVisualPerceptionResponse({ ...response(), execution: { ...response().execution, decoderDtype: null } }, request).ok).toBe(false);
+});
+
+test("published OpenAPI requires both execution fields and documents the null meaning", () => {
+  const document = createOpenApiDocument("test") as any;
+  const schema = document.components.schemas.VisualPerceptionResponse;
+  expect(schema.description).toContain("2026-10-31");
+  for (const branch of schema.properties.execution.anyOf) {
+    expect(branch.required).toContain("decoderDtype");
+    expect(branch.required).toContain("visualTokens");
+    if (branch.properties.backend.const === "llama.cpp") {
+      expect(branch.properties.decoderDtype.type).toBe("null");
+      expect(branch.properties.decoderDtype.description).toContain("not unknown precision");
+    }
+  }
 });

@@ -1,0 +1,112 @@
+<article lang="ja">
+  <h1>視覚解析APIの応答契約・物体検出LAN入口の修正</h1>
+  <p>
+    2026-10-31 JST。詳細分析の説明専用Providerと通常物体検出のhosted
+    serviceを別経路として調査・修正する。API側を対象とし、Eumenes稼働環境の操作・表示確認は対象外。
+  </p>
+  <section id="cause">
+    <h2>原因の確定</h2>
+    <p>
+      追跡ID req_c0a39087-5491-47ef-9207-2c5f84ccdf56 と req_284f4ff6-31d8-4ebd-b718-8d4b77e5f645
+      は、daemon journalでそれぞれ2026-10-31 00:13:45、00:14:46 JSTにruntime
+      lfm3-vl-perceptionへ解決しHTTP
+      200で終了している。実稼働releaseは95961280a2b4905106755b0e23b0dc93bb51acee。配備中snapshotと同releaseのソースはいずれもdecoderDtypeとvisualTokensを出力しない。
+    </p>
+    <p>
+      2026-10-29の説明用ランタイム採用時、larm.visual-perception.v1のexecutionにCPU用union分岐を追加し、2項目を欠く応答をLARM内で正常と認めた。Eumenesの必須契約とは異なっていた。配備忘れではなく、公開契約の非互換な拡張と実行metadata実装漏れの組み合わせである。元のdecoderDtypeはマスク生成用pixel
+      decoderの精度であり、言語モデルの量子化形式やlogitsの精度ではない。説明用ランタイムにpixel
+      decoderは存在しない。
+    </p>
+    <p>
+      通常検出のobject-recognition-hostはloopback gateway 127.0.0.1:18796で稼働していた。LAN
+      addressの同portにはlistenerが存在せず、OCRにだけLAN
+      ingressがあった。保存済みEumenes設定をこちらでは取得していないため、その接続先との一致は未確認。
+    </p>
+  </section>
+  <section id="contract">
+    <h2>正式なv1応答スキーマ改訂：2026-10-31</h2>
+    <p>
+      protocolとcontractVersionはlarm.visual-perception.v1、endpointはPOST
+      /v1/vision/perceiveを維持する。CPU分岐の欠落を廃止し、execution.decoderDtypeとexecution.visualTokensを両方必須とする。非搭載decoderにnullを許すのはCPU説明専用分岐だけである。この改訂はdecoderDtypeをstringのみとする利用側に明示的な移行を要する。従来の利用側でそのまま受理できるとは主張しない。公開OpenAPIのVisualPerceptionResponseを機械可読な正本とする。
+    </p>
+    <table>
+      <caption>
+        executionの分岐ごとの意味
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">Transformers・マスク対応</th>
+          <th scope="col">llama.cpp・CPU説明専用</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">device / backend / dtype</th>
+          <td>cuda:0 / transformers / bfloat16</td>
+          <td>cpu / llama.cpp / qad-q4_0</td>
+        </tr>
+        <tr>
+          <th scope="row">decoderDtype</th>
+          <td>float32。pixel decoderが存在する分岐。</td>
+          <td>
+            nullを必須とする。pixel
+            decoder非搭載であり、精度不明や計測失敗を意味しない。省略は契約違反。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">visualTokens</th>
+          <td>画像processorのgridとspatial mergeによる実測値。</td>
+          <td>
+            同一の正規化PNG・query・chat template・オプションをpinned
+            engineの/tokenizeへ渡し、MTMDが返すimageTokensを使用する。正整数必須。省略、null、0、寸法からの推定は禁止。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">inputTokens / outputTokens</th>
+          <td>outputTokens必須。</td>
+          <td>
+            推論usageのprompt_tokens /
+            completion_tokens。tokenizeのpromptTokensとprompt_tokensが一致し、textTokens +
+            imageTokens = promptTokensであることも検証する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      画像tokens取得の失敗、欠落、不整合はHTTP 502
+      execution_metadata_invalidとし、成功応答に仮の値を入れない。CPU分岐はdescribeだけで、detectionsとmasksは空配列、countは禁止。visualTokensはinputTokens未満とする。マスク対応分岐にnullを許さない。
+    </p>
+    <pre><code>{"device":"cpu","backend":"llama.cpp","dtype":"qad-q4_0","decoderDtype":null,"visualTokens":64,"outputTokens":4,"inputTokens":120}</code></pre>
+    <p>上記数値は構造を示す例であり、実測結果ではない。APIは毎回engineの値を使用する。</p>
+  </section>
+  <section id="ingress">
+    <h2>通常検出の公開入口</h2>
+    <p>
+      既存OCR ingressを登録service IDを検証する共通実装へ拡張する。installerの--service-id
+      object-recognition-hostで専用unit・config・receiptを作成する。登録済みgatewayからupstreamを解決し、既存OCR設定は変更しない。LANのprivate
+      addressだけで待受し、同LANのsource CIDRだけをfirewallで許可する。
+    </p>
+    <p>
+      GET /hosting/status、POST /api/analyze、GET /api/jobs/{id}、POST
+      /api/jobs/{id}/cancelを転送する。Authorization以外のowner
+      assertion、cookie、転送headerを渡さず、既存gatewayの共通LARM API
+      token認証を使用する。status参照ではworkerを起動しない。gateway再起動・boot後の復帰はRequires、PartOf、WantedByで維持する。
+    </p>
+  </section>
+  <section id="migration">
+    <h2>Eumenes側への引き継ぎPrompt</h2>
+    <pre><code>LARM視覚解析APIの2026-10-31スキーマ改訂へ移行してください。
+接続先は保存済み設定を読み、catalogのcapability vision.perception / protocol larm.visual-perception.v1から発見してください。profileやmodel名は固定しないでください。
+execution.decoderDtypeとexecution.visualTokensは引き続き必須です。decoderDtypeの省略を許さないでください。
+CPU/llama.cpp/qad-q4_0かつdescribe専用・detections/masks空・countなしの分岐だけdecoderDtype:nullを受理してください。これはpixel decoder非搭載を意味し、精度不明とは区別して表示してください。Transformersのマスク対応分岐はfloat32を維持してください。
+visualTokensは正整数必須で、CPUではinputTokens未満を検証してください。欠落、null、0を補完しないでください。
+公開OpenAPIのVisualPerceptionResponseと照合し、正常応答・必須項目欠落・不正なnull・途中取消を試験してください。失敗/取消時もfinallyで接続をDELETEし、資格失効とCOLDの新しい観測を確認してください。
+通常検出の公開入口は配備結果記載のLAN URLを使用し、保存済み接続先が異なる場合だけ設定APIで更新してください。詳細分析の接続先とは分離してください。
+説明結果の受理と画面表示、通常検出APIへの到達はEumenes側でlive受入してください。LARM側からEumenesの表示完了は確認していません。</code></pre>
+  </section>
+  <section id="verification">
+    <h2>配備と検証結果</h2>
+    <p>修正・検証中。最終結果を追記する。</p>
+  </section>
+</article>

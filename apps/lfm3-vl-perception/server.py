@@ -1,5 +1,5 @@
 """Demand-started image description service with an isolated CPU llama.cpp child."""
-import base64, io, json, os, socket, subprocess, threading, time, urllib.request
+import base64, io, json, os, socket, subprocess, threading, time, urllib.error, urllib.request
 from contract import MODEL, REVISION, Rejected, validate_request
 from imaging import decode_image
 from handler import Handler, Server
@@ -23,6 +23,20 @@ class Worker:
                 {'type': 'image_url', 'image_url': {'url': uri}}, {'type': 'text', 'text': request['query']}]}],
                 'temperature': 0, 'max_tokens': request['maxNewTokens'], 'cache_prompt': False,
                 'chat_template_kwargs': {'enable_thinking': False}}
+            # The pinned engine uses the same chat template and MTMD image
+            # preprocessing for /tokenize and inference. Do not estimate from
+            # image dimensions or subtract a separately templated text prompt.
+            count_request = urllib.request.Request(self.url + '/tokenize', data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+            try:
+                with urllib.request.urlopen(count_request, timeout=30) as res:
+                    counts = json.load(res)
+            except (urllib.error.URLError, TimeoutError, ValueError) as error:
+                raise Rejected('execution_metadata_invalid', 502) from error
+            if (not isinstance(counts, dict) or counts.get('contractVersion') != 'llama-chat-token-count.v1'
+                or any(type(counts.get(key)) is not int for key in ('promptTokens', 'textTokens', 'imageTokens', 'imageCount'))
+                or counts['imageCount'] != 1 or counts['imageTokens'] <= 0 or counts['textTokens'] <= 0
+                or counts['promptTokens'] != counts['textTokens'] + counts['imageTokens']):
+                raise Rejected('execution_metadata_invalid', 502)
             upstream = urllib.request.Request(self.url + '/v1/chat/completions', data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
             with urllib.request.urlopen(upstream, timeout=150) as res:
                 result = json.load(res)
@@ -32,12 +46,18 @@ class Worker:
             if not isinstance(content, str) or len(content) > 65536:
                 raise Rejected('invalid_model_response', 502)
             timings = result.get('timings', {})
+            if (type(result['usage']['prompt_tokens']) is not int
+                or result['usage']['prompt_tokens'] != counts['promptTokens']):
+                raise Rejected('execution_metadata_invalid', 502)
             return {'contractVersion': 'larm.visual-perception.v1', 'model': MODEL, 'modelRevision': REVISION,
                 'task': 'describe', 'image': {'width': img.width, 'height': img.height, 'orientation': 'exif-normalized'},
                 'response': content, 'detections': [], 'masks': [], 'truncated': choice.get('finish_reason') == 'length',
                 'timings': {'imageDecodeMs': (decoded-started)*1000, 'preprocessMs': float(timings.get('prompt_ms', 0)),
                     'generationMs': float(timings.get('predicted_ms', 0)), 'maskMs': 0, 'postprocessMs': 0, 'totalMs': (end-started)*1000},
                 'execution': {'device': 'cpu', 'backend': 'llama.cpp', 'dtype': 'qad-q4_0',
+                    # This image-description graph has no pixel/mask decoder.
+                    # null means absent, never an unknown or inferred precision.
+                    'decoderDtype': None, 'visualTokens': counts['imageTokens'],
                     'outputTokens': result['usage']['completion_tokens'], 'inputTokens': result['usage']['prompt_tokens']}}
         finally:
             self.lock.release()
