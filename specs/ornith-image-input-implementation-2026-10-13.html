@@ -5,6 +5,14 @@
     metadata、claim、入力token事前計数、推論前の検査を実装する。EumenesのUI・保存・設定は変更しない。モデル・projectorと1M共有KV／4枠は維持し、主profileとContextStillの解決先に明示したchatInput
     policyを適用する。廃止した64K selectorは復活させない。
   </p>
+  <aside>
+    <p>
+      2026-10-31の稼働確認では、release 95961280a2b4のOrnith公開contextWindowは200000、
+      outputReserveTokensは4096。解決先はornith15-strix-conversationで、実backendの
+      max_tokensとn_predictの既定値はともに−1だった。4096の出力制限はLARMの事前検査・値の補完に存在した。
+      本変更はOrnithへ解決する主・画像・game・ContextStillの各Providerにremaining-contextを指定する。
+    </p>
+  </aside>
   <section id="usage">
     <h2>consumerから使う手順</h2>
     <ol>
@@ -101,15 +109,21 @@
           <th scope="row">context</th>
           <td>主262144 token、ContextStillはそのprofileのcontextWindow</td>
           <td>
-            requested
-            max_tokensはoutputReserveTokens以下。省略は出力予約値を挿入。n_predict／max_completion_tokensによる別経路は拒否
+            2026-10-31更新。OrnithのcontextWindowはoutputLimit: remaining-contextを公開する。
+            outputReserveTokensの4096は出力上限には使わない。max_tokensを省略した場合は、
+            正式な入力計数後のmaxTokens − promptTokens − safetyMarginTokensを生成上限とする。
+            明示したmax_tokensは4096を超えても受け付け、入力との合計で検査する。
+            n_predict／max_completion_tokensによる別経路は拒否
           </td>
         </tr>
         <tr>
           <th scope="row">token budget</th>
           <td>promptTokens + requestedOutputTokens + safetyMarginTokens ≤ maxTokens</td>
           <td>
-            主は出力4096、安全余白1976なら入力256072以下。明示max_tokensが小さい場合はその予約で計算
+            現在のOrnithは1セッション200000 token。安全余白1976、入力10000なら出力188024まで。
+            ContextStillはそのprofileの安全余白を使う。outputLimit未指定のProviderは従来の出力予約値を上限とする。
+            入力が残りcontextを使い切った場合は推論前に拒否する。画像のimage-max-tokens
+            4096は画像入力の予算であり、出力制限とは独立する。
           </td>
         </tr>
         <tr>

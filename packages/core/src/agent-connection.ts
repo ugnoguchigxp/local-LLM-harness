@@ -142,6 +142,7 @@ const agentProviderYamlSchema = z.object({
   contextWindow: z.object({
     maxTokens: z.number().int().min(1).max(1_000_000),
     outputReserveTokens: z.number().int().min(1).max(1_000_000),
+    outputLimit: z.literal("remaining-context").optional(),
     safetyMarginTokens: z.number().int().min(0).max(1_000_000),
   }).strict().refine(
     (value) => value.outputReserveTokens + value.safetyMarginTokens < value.maxTokens,
@@ -285,6 +286,7 @@ export type AgentProviderProfile = {
 export type AgentProviderContextWindow = {
   maxTokens: number;
   outputReserveTokens: number;
+  outputLimit?: "remaining-context";
   safetyMarginTokens: number;
 };
 
@@ -317,7 +319,7 @@ export function matchAgentProfileContextWindow(input: {
     allowed.has(profile.id)
       ? profile.providers.flatMap((provider) => {
         const window = provider.contextWindow;
-        if (!window || input.requestedOutputTokens > window.outputReserveTokens) return [];
+        if (!window || (window.outputLimit !== "remaining-context" && input.requestedOutputTokens > window.outputReserveTokens)) return [];
         const requiredTokens = input.promptTokens
           + input.requestedOutputTokens
           + window.safetyMarginTokens;
@@ -327,7 +329,7 @@ export function matchAgentProfileContextWindow(input: {
           provider,
           requiredTokens,
           inputBudgetTokens: window.maxTokens
-            - window.outputReserveTokens
+            - (window.outputLimit === "remaining-context" ? input.requestedOutputTokens : window.outputReserveTokens)
             - window.safetyMarginTokens,
         }];
       })
@@ -762,6 +764,7 @@ export const publicAgentProfileListV3Schema = z.object({
       contextWindow: z.object({
         maxTokens: z.number().int().min(1).max(1_000_000),
         outputReserveTokens: z.number().int().min(1).max(1_000_000),
+        outputLimit: z.literal("remaining-context").optional(),
         safetyMarginTokens: z.number().int().min(0).max(1_000_000),
       }).strict().refine(
         (value) => value.outputReserveTokens + value.safetyMarginTokens < value.maxTokens,
@@ -852,6 +855,7 @@ export const publicAgentConnectionProviderSchema = z.object({
   contextWindow: z.object({
     maxTokens: z.number().int().min(1).max(1_000_000),
     outputReserveTokens: z.number().int().min(1).max(1_000_000),
+    outputLimit: z.literal("remaining-context").optional(),
     safetyMarginTokens: z.number().int().min(0).max(1_000_000),
   }).strict().optional(),
   readiness: agentProviderReadinessStatusSchema,
@@ -962,6 +966,7 @@ export const agentProviderDescriptorSchema = z.object({
   contextWindow: z.object({
     maxTokens: z.number().int().min(1).max(1_000_000),
     outputReserveTokens: z.number().int().min(1).max(1_000_000),
+    outputLimit: z.literal("remaining-context").optional(),
     safetyMarginTokens: z.number().int().min(0).max(1_000_000),
   }).strict().refine(
     (value) => value.outputReserveTokens + value.safetyMarginTokens < value.maxTokens,

@@ -89,3 +89,45 @@ test("count and generation keep every byte of supported instruction arrays", asy
   } });
   expect(JSON.parse(new TextDecoder().decode(checked.body))).toEqual(original);
 });
+
+const remainingContextOptions = {
+  ...options,
+  window: { maxTokens: 200000, outputReserveTokens: 4096, safetyMarginTokens: 1976, outputLimit: "remaining-context" as const },
+};
+test("remaining-context output uses the measured prompt instead of a fixed 4096 cap", async () => {
+  const checked = await prepareChatInput({ ...remainingContextOptions,
+    body: new TextEncoder().encode(JSON.stringify(plain)), fetchImpl: async () => countResponse(10000) });
+  expect(checked.count).toMatchObject({ requestedOutputTokens: 188024, inputBudgetTokens: 10000, fits: true });
+  expect(JSON.parse(new TextDecoder().decode(checked.body)).max_tokens).toBe(188024);
+});
+test("remaining-context output accepts explicit budgets above 4096 and still checks total context", async () => {
+  for (const [promptTokens, fits] of [[10000, true], [190000, false]] as const) {
+    const checked = await prepareChatInput({ ...remainingContextOptions,
+      body: new TextEncoder().encode(JSON.stringify({ ...plain, max_tokens: 8192 })),
+      fetchImpl: async () => countResponse(promptTokens) });
+    expect(checked.count).toMatchObject({ requestedOutputTokens: 8192, fits });
+    expect(JSON.parse(new TextDecoder().decode(checked.body)).max_tokens).toBe(8192);
+  }
+});
+test("remaining-context output rejects a prompt with no generation room", async () => {
+  const checked = await prepareChatInput({ ...remainingContextOptions,
+    body: new TextEncoder().encode(JSON.stringify(plain)), fetchImpl: async () => countResponse(198024) });
+  expect(checked.count).toMatchObject({ requestedOutputTokens: 1, fits: false });
+});
+test("count and generation apply the same remaining-context budget", async () => {
+  for (const countChatInputOnly of [false, true]) {
+    let generations = 0;
+    const response = await proxyGateway({ ...base, executionGate: new ExecutionGate(), chatInputWindow: remainingContextOptions.window,
+      request: request(), countChatInputOnly, fetchImpl: async (url, init) => {
+        if (String(url).endsWith("/tokenize")) return countResponse(10000);
+        generations++;
+        expect(JSON.parse(new TextDecoder().decode(init?.body as Uint8Array)).max_tokens).toBe(188024);
+        return Response.json({ id: "fixture", created: 0, object: "chat.completion", model: "fixture",
+          choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }] });
+      } });
+    const responseBody = await response.json();
+    expect(responseBody).not.toHaveProperty("error");
+    expect(response.status).toBe(200);
+    expect(generations).toBe(countChatInputOnly ? 0 : 1);
+  }
+});

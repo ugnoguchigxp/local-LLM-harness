@@ -150,6 +150,7 @@ agentProfiles:
         contextWindow:
           maxTokens: 200000
           outputReserveTokens: 4096
+          outputLimit: remaining-context
           safetyMarginTokens: 1976
       - name: asr
         capability: speech.stt
@@ -223,6 +224,7 @@ agentProfiles:
         contextWindow:
           maxTokens: 200000
           outputReserveTokens: 4096
+          outputLimit: remaining-context
           safetyMarginTokens: 0
         description: Ornith 1.5 STRIX_LEAN。200000 tokens、4並列、入力cacheとRAM保持復元。必要な履歴を毎回messagesへ送信。思考は無効。画像入力契約はcatalogとclaimを参照。
       - name: asr
@@ -384,6 +386,7 @@ agentProfiles:
         contextWindow:
           maxTokens: 200000
           outputReserveTokens: 4096
+          outputLimit: remaining-context
           safetyMarginTokens: 1976
       - name: asr
         capability: speech.stt
@@ -494,6 +497,7 @@ agentProfiles:
         contextWindow:
           maxTokens: 200000
           outputReserveTokens: 4096
+          outputLimit: remaining-context
           safetyMarginTokens: 1976
       - name: asr
         capability: speech.stt
