@@ -56,4 +56,14 @@
       2.1画像生成サービスのencoderとしても参照されており、画像説明からの引退だけでは削除できない。
     </p>
   </section>
+  <section id="execution-contract-correction">
+    <h2>2026-10-31：execution応答契約の修正</h2>
+    <p>
+      採用時のCPU用execution分岐にはdecoderDtypeとvisualTokensの必須契約との不一致があった。<a
+        href="./vision-api-contract-repair-2026-10-31.html"
+        >正式なスキーマ改訂と移行・検証結果</a
+      >に従い、非搭載pixel
+      decoderは必須のnull、visualTokensは同一入力に対するengineのMTMD実測値とする。省略や推測値による補完は行わない。旧string限定の利用側には明示的な移行が必要。
+    </p>
+  </section>
 </article>

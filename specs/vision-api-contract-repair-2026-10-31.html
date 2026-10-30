@@ -107,6 +107,74 @@ visualTokensは正整数必須で、CPUではinputTokens未満を検証してく
   </section>
   <section id="verification">
     <h2>配備と検証結果</h2>
-    <p>修正・検証中。最終結果を追記する。</p>
+    <p>
+      2026-10-31 00:30〜00:31 JST、本番release
+      8fb87c76fd3210f9a8c0058207240bac604e58beへ署名済みrelease経路で反映済み。daemonのtrusted
+      activation・軽量契約検証、/ready、公開/openapi.jsonを確認した。worker
+      snapshotは468debc721b632ba、engineは既存のpinned 19cce69拡張を使用する。
+    </p>
+    <p>
+      正式release gateは固定依存install、audit、bun run check、coverage、production
+      auditがすべてpassed。主試験は1042 passed・10 skipped・0 failed、critical coverage
+      ratchetもpassed。Python
+      workerの4試験をPillow導入済み環境で別途実施しpassed。欠落・不正型・不一致metadataの拒否、gatewayでの必須項目検証、両serviceの認証・owner境界を含む。
+    </p>
+    <table>
+      <caption>
+        実接続結果。LARM実行hostから公開APIへ接続。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">入力/操作</th>
+          <th scope="col">結果</th>
+          <th scope="col">後始末</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">32×16 PNGの説明</th>
+          <td>
+            HTTP
+            200。decoderDtype:null、visualTokens:72、inputTokens:90、outputTokens:21。改訂後SDKで受理。
+          </td>
+          <td>DELETE 204、旧資格401、新しいCOLD観測。</td>
+        </tr>
+        <tr>
+          <th scope="row">1536×1024 PNGの説明</th>
+          <td>
+            HTTP
+            200。decoderDtype:null、visualTokens:1536、inputTokens:1554、outputTokens:34。改訂後SDKで受理。
+          </td>
+          <td>DELETE 204、旧資格401、新しいCOLD観測。</td>
+        </tr>
+        <tr>
+          <th scope="row">画像decode失敗</th>
+          <td>HTTP 400。</td>
+          <td>DELETE 204、旧資格401、新しいCOLD観測。</td>
+        </tr>
+        <tr>
+          <th scope="row">推論開始100ms後に取消</th>
+          <td>client_cancelledをgateway journalで確認。</td>
+          <td>取消signalを解放へ流用せずDELETE 204、旧資格401、新しいCOLD観測。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      正常2件のrequest
+      IDはreq_f99591a1-dc59-462a-8b59-8b902a69542a、req_7077803b-0ddb-4407-818c-0fc9f6d62a78。失敗はreq_3a3b457b-c389-4680-af03-c107199fe90a、取消はreq_97f48b19-5c1d-49b4-a4c1-b959dc8cb3f9。最終的にworker
+      MainPID=0、user service inactive、8095のlistener消失を確認した。
+    </p>
+    <p>
+      通常検出の公開入口はhttp://192.168.0.130:18796。専用LAN
+      ingressはenabled/active、192.168.0.0/24から当該address/portだけを許可するfirewall
+      ruleを追加した。LARM hostからLAN address経由のGET /hosting/statusは200・stopped、合成640×480
+      PNGをPOST
+      /api/analyzeへ送り200・kind:image・objects配列を確認した。単色矩形のためobjectsは空であり、検出精度の試験ではない。認証なしのstatus/analyzeは401。daemon更新後もgatewayとingressが自動復帰し、status
+      200を確認した。
+    </p>
+    <p>
+      証跡はリポジトリ外の/srv/ai/evidence/object-ingress-20261031/に保存。live-visual.json、visual-small.json、visual-large.json、live-object.json、published-response-schema.json、plan.json、applied.txt、release-build.logを含む。移行前Eumenesによる受理・表示、別hostからのLAN/firewall通過、保存済みEumenes
+      URLとの照合は未検証。利用者の指示によりEumenes環境の探索・変更は行わず、API整備と引き継ぎまでを実施した。string必須のままのEumenesがnullを受理できるという意味ではない。
+    </p>
   </section>
 </article>
