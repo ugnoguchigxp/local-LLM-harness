@@ -211,9 +211,70 @@
       schemaは新しい追加項目を拒否し、http_errorとして扱う可能性がある。これは完全な双方向互換ではない。配備時にはSDKと消費側のエラー分岐を先に更新し、allocationの503への変更も確認する。外部消費側の実装・配備状況は今回のレビューでは監査していない。
     </p>
     <p>
-      実装済み。オンデマンドサービスを対象に、署名付きreleaseの検証と本番反映まで実施する。契約、静的・live
+      実装・本番反映済み。オンデマンドサービスを対象とする。契約、静的・live
       admission、画像の起動前拒否、Local
-      Serviceの詳細保持、音楽の保存・再読込、3Dの再開、clientのエラー保持を検証対象とする。
+      Serviceの詳細保持、音楽の保存・再読込、3Dの再開、clientのエラー保持を検証した。
+    </p>
+  </section>
+  <section id="production-acceptance">
+    <h2>本番反映と受入結果</h2>
+    <p>
+      2026年11月1日07:58:10 JST、署名付きrelease
+      <code>5e86dbd4e1e7348df449db1f3d5a861b65e63158</code
+      >を本番へ反映した。desiredRelease・observedRelease・healthのreleaseCommitが一致し、contract_verified
+      /
+      succeeded、health・readyが正常であることを確認した。配備はdaemonの切替のみで、モデル構成の変更は行っていない。
+    </p>
+    <p>
+      configRevisionは<code>4e3761479cea399d2d3c3e2e577d99741546d221338b760337ddddb2f3c929bf</code>、新しいbootEpochは<code>epoch-6a71e801-778f-4c8e-b469-eaf5668e85c2</code>。frozen
+      install、開発・本番依存関係の監査、全体check、coverageの全release
+      gateが成功した。通常・coverageの各テストは1,132件成功、10件skip、失敗0件である。
+    </p>
+    <table>
+      <caption>
+        同一の本番releaseで確認したメモリー拒否。単位はGiB
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">追加必要量 / 静的空き</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">POST /v1/allocations、llm.general / llm-35b → ornith15-35b</th>
+          <td>50 / 33.9375</td>
+          <td>
+            503、resource_exhausted、resource=memory、reason=memory_exhausted、retry=after_capacity_change。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">POST /v1/images/generations、qwen-image-2.1-turbo → image variant</th>
+          <td>34 / 33.9375</td>
+          <td>同じ503と共通エラー。Retry-Afterは両経路とも付かない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      要求前に新鮮なstateから予約不足と解放可能候補がないことを再計算した。物理メモリーを消費する故障注入は行っていない。両要求の前後でruntime
+      stateが同一であり、image
+      workerのInvocationID・ActiveStateも同一だった。必要量と追加可能量は応答のadmissionから機械的に取得できた。
+    </p>
+    <p>
+      08:00:06 JSTまでに、公開Agent Profile <code>ornith1.5Strix-vision</code>のllm
+      subsetを要求し、llm-ornith15-strix →
+      ornith15-strix-conversationでJSON・SSE、Connection解放とcredential失効を確認した。Graniteの無音ASR、VOICEVOXのWAV・24
+      kHz s16le PCMも成功し、最後のactivityはidle、health / readyは正常だった。
+    </p>
+    <p>
+      汎用smoke:http-provider-liveはJSON
+      schema試験の後、短文の完全一致試験でshort_text_completion_invalidとなった。診断用の同一要求はHTTP
+      200、finish_reason=stop、content=<code>OK.</code>であり、試験が要求する<code>OK</code>との句点の差だった。この汎用suite全体を成功とは記録しない。上記の公開Agent
+      Connectionによる既存のHTTP smokeと個別音声契約試験を別途成功させた。
+    </p>
+    <p>
+      証跡はrepository外の<code>/srv/ai/logs/larm-canary/memory-errors-503-20261101.3O4Civ</code>に保存した。build.log、submission.json、health-after.json、convergence-after.json、memory-errors-live.json、agent-http-live.json、audio-live.json、deployment-summary.jsonを含む。長時間soakや外部consumerの業務完了を検証したという主張ではない。
     </p>
   </section>
 </article>
