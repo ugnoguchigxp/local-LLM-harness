@@ -3,7 +3,7 @@
   <p>
     対象はEumenesのR2D2、job ID
     <code>meshjob_a593160ce60046c0b2fbc74d583c32d4</code
-    >。本記録は稼働版87b1c624abb738ac2345762b6a06050fc8d02cf9の観測と、作業treeでの修正を区別する。常駐解除・推論停止・予約上限変更・修正配備は実施していない。
+    >。10月31日の稼働版87b1c624abb738ac2345762b6a06050fc8d02cf9で原因を調査し、11月1日に修正版を配備して元jobの完了を確認した。以下は修正前の観測、候補の検証、本番受入を時点別に記録する。常駐方針と通常実行予約は維持した。
   </p>
   <section id="observation">
     <h2>観測と拒否理由</h2>
@@ -110,7 +110,7 @@
   <section id="resume">
     <h2>再開条件とセッション縮小案</h2>
     <p>
-      現予約体系では他の確保量を80
+      修正前の予約体系では他の確保量を80
       GiB以下にする必要がある。停止・解放後は新鮮なtelemetryと未反映予約を用いて再判定し、3D 32
       GiBとlive safety floor 16
       GiBを満たす必要がある。利用可能量の表示だけでは実生成成功を保証しない。
@@ -157,7 +157,7 @@
       IDを追加する必要はなく、接続IDと認証情報の対応は制御側で保持する。
     </p>
     <p>
-      サブ担当は容量を明示指定せず、既定の128k用poolへ割り当てる方針とする。主担当用200kの確保枠はサブ担当の既定候補へ含めない。全体3枠案は主担当1・サブ担当2とし、空きがない場合は待機または容量不足として扱う。要求fieldや新規endpointの具体名、混在KVの実装方式は未確定であり、既存本番APIが既にこの振分けを実装しているとは扱わない。
+      サブ担当は容量を明示指定せず、既定の128k用poolへ割り当てる方針とする。主担当用200kの確保枠はサブ担当の既定候補へ含めない。全体3枠案は主担当1・サブ担当2とし、空きがない場合は待機または容量不足として扱う。この設計検討時には具体名が未確定だった。確定した制御fieldは後節のcontextTokensであり、11月1日に混在KVとともに配備した。
     </p>
     <p>
       確認にはまず既存のGET
@@ -170,7 +170,7 @@
       keyを全担当が共有する経路だけでは担当の違いを識別できないため、利用側が別制御面で得た接続情報を担当ごとに対応付ける必要がある。
     </p>
     <p>
-      以上は設計条件の確定であり、混在容量の実装・配備完了を意味しない。単に128kのcontextWindowを広告することと、native
+      以上の設計条件に対応する実装と本番受入は後節に記録する。単に128kのcontextWindowを広告することと、native
       KVを128k相当に確保することを区別する。受入では主1・サブ2の経路と認証の対応、入力上限、同時実行時の実際のKV割当、既存JSON・SSE契約、3Dとの共存、worker停止と予約解放まで確認する。
     </p>
   </section>
@@ -191,7 +191,7 @@
       tokens、engine内の256単位整列後は462336
       tokens。独立streamの均等分割で128kを広告するだけの構成ではない。private起動設定の本数、訓練上限、合計KV量を照合し、不一致なら起動しない。既定pool以外の選択はprivate認証が必要である。元の保持engineを同じlink入力から再現した後、task
       ABIの変更に合わせて全server
-      objectを再buildし、既存保持試験と新しい容量境界試験を通した。まだ本番engineは起動・交換していない。
+      objectを再buildし、既存保持試験と新しい容量境界試験を通した。この候補は11月1日に本番engineとして配備し、実際のpropsと実生成を後節で照合した。
     </p>
     <p>
       cacheのinstance識別には容量も含め、同じprompt_cache_keyでも200kから128kへ大きいsnapshotを無条件復元しない。engineのpropsで実際の容量列と既定poolがLARM構成と一致することを要求前に検証する。nによる複数completionは選択poolの本数以内とし、child
@@ -199,7 +199,7 @@
     </p>
     <table>
       <caption>
-        資源候補の強制上限。GiB、未配備
+        11月1日に配備した資源上限。GiB
       </caption>
       <thead>
         <tr>
@@ -334,7 +334,7 @@
       未実施項目は本番配備、native
       propsの200000・131072・131072確認、通常Bearerによるmain・subの実生成、cacheの保持復元、共有メモリの観測、元R2D2
       jobの管理retryとGLB検証・worker停止である。元jobのfailedを完了と扱わない。管理retryは新しいUUIDを要求し、元のjob
-      ID・createdAt・要求・seedを保持してqueue時刻だけを更新する。稼働版は引き続き87b1c624abb738ac2345762b6a06050fc8d02cf9である。
+      ID・createdAt・要求・seedを保持してqueue時刻だけを更新する。ここまでが10月31日の未配備時点の状態であり、11月1日の配備・受入結果は次節以降を参照する。
     </p>
   </section>
   <section id="live-deployment-20261101">
@@ -369,6 +369,47 @@
       policy・provider既定値を一致させる。SystemdBackendは選択したunitがRunningの場合だけHTTP健康応答を採用する。停止済みunitのportに別workerが応答してもCOLDのままとし、起動待機でも同じ判定を使う。coreのmedia
       policy検証で異なるservice間のhealth
       port重複を拒否し、main起動時に照合する。受付済みR2D2の処理を中断せず、完了後にこの追加修正を配備する。
+    </p>
+  </section>
+  <section id="final-acceptance-20261101">
+    <h2>ポート分離後の最終受入</h2>
+    <p>
+      11月1日06:12:37
+      JSTに58c24f37b5e07f3e9f5baee1e5a7fececce5ebf1の配備契約確認が成功した。install・production
+      audit・full check・coverageの必須gateを通過し、main suiteは1111 passed・10 skipped・0
+      failed、critical coverage ratchetは20 filesで通過した。mesh
+      unitの実起動引数も8096へ更新した。native実行fileのSHA-256は候補manifestと一致し、実際の3枠と保持quotaを再確認した。
+    </p>
+    <p>
+      確認専用job
+      meshjob_ec0cfa77ea58451f9f58361d279a10bcを通常の資源受付経路で作成し、新portで3Dを実行中に、200k接続1本と既定128k接続2本から同時に実生成した。native
+      metricsで同時処理3を観測した。d1は全観測でCOLDのままであり、ポート取り違えによる10
+      GiBの予約や停止反復は解消した。3DもcompletedとなりGLB headerとhash、worker inactive・MainPID
+      0を確認した。検証専用assetだけを削除し、利用者の元R2D2 assetとcompleted状態は維持した。
+    </p>
+    <p>
+      生成入力はmain 9965 tokens、各sub 9966 tokens。mainの再利用は9961 tokensがcached、再計算4
+      tokensであり、元接続をreleaseして作り直した後も同じprompt_cache_keyによる復元が成功した。200kと128k間ではcache
+      instanceに容量を含め、snapshotを混同しない。140012
+      tokensの入力計測はmainのmaxContextTokens=200000でfits=true、subの131072でfits=falseとなり、subへの実生成要求も400
+      context_budget_exceededで拒否された。通常のOpenAI
+      JSONとSSE完了を確認し、生成bodyへ担当やconnection IDを追加していない。
+    </p>
+    <p>
+      3D共存の全観測期間でsystem availableの最小は80.7326 GiB。会話側検証期間ではaccelerator
+      availableの最小は69.1011 GiBだった。約48秒のprocess samplingではLLMのDRM
+      allocationは最大24.8890 GiB、meshは2.6352 GiBとなった。DRM client
+      IDを重複排除した集計であり、RSSと合算した物理使用量ではない。これらは今回の512生成と約1万tokens×3の観測値であり、全枠を最大入力まで埋め、保存cacheも上限まで満たすstress試験ではない。通常実行56
+      GiB、media 32 GiB、cache強制上限、静的・live判定、常駐方針は維持した。
+    </p>
+    <p>
+      v7の管理上の有効化直後は、変更前v6のwarm
+      Provider参照が残ってrevision_conflictになったため、新規受付をdrainし、処理数0を確認してdaemonを正常再起動した。最終配備後のactive/desired
+      releaseはともにv7で一致し、会話の再受付・実生成が成功している。管理上のrelease情報だけを変更する際の参照同期が必要であることを運用上の注意として残す。
+    </p>
+    <p>
+      接続APIのcontextTokens=200000で主担当枠を選ぶ。省略時は131072であり、LARMが会話本文やclient名から担当を自動推測する実装ではない。各consumerは初回接続で容量を選び、claimで得たProvider
+      Bearerを従来のOpenAI生成要求に使う。生成処理のためのメモリ判定を無効にしたり、しきい値を緩和したりしていない。
     </p>
   </section>
 </article>
