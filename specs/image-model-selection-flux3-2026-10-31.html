@@ -7,8 +7,7 @@
   </p>
   <aside>
     <p>
-      ソースとモデルなしの検証までを完了した段階。FLUXの重み・対応エンジン・補完モデルはこのホストに未準備で、
-      本番には配備していない。実画像による画質、速度、gfx1151の互換性、ピークメモリは未検証。
+      初期実装時点ではソース検証だけで、本番未配備だった。現在の実配備・受入の記録は本書の実配備節に記す。ピークメモリの専用測定は行っていない。
       この節は初期実装時の記録。実配備のため、2026年10月31日に共有image
       workerと明示的なmodels設定を追加し、既存unitのままFLUXを起動できるよう改修している。配備と受入の結果は別途記録する。
     </p>
@@ -173,6 +172,35 @@
       GiBのMemAvailableをbackend起動前に確認する。
       実機peakを測った値ではなく、初期の保守的な受付条件。実生成時の観測をもって再評価する。 128GB
       UMAの全量が利用可能だとは見積もらない。Qwenの既存34 GiB予約は継続する。
+    </p>
+  </section>
+  <section id="live-deployment">
+    <h2>実配備と要求単位の停止確認</h2>
+    <p>
+      2026年10月31日13:11 JST、配備用コピーのcommit
+      ec8ba70e9c89955a9d544509f7a2a396ba64da53を署名付きで配備した。
+      元の稼働版0a112d77baf5f200be59a97b19557c8957ddeac7はmodelがQwen固定・stepsが8固定だった。
+      接続先、Control認証、既存image unitを維持し、配備先のOpenAPIの2モデル・8/16
+      stepsとcatalog説明を確認した。 不正要求6件は400、FLUX実行中の別画像要求は409
+      media_variant_busyになった。
+    </p>
+    <p>
+      steps省略、指定例の猫・768角・seed 42・WebPでFLUX要求はHTTP 200、約101.5秒。
+      返された画像はGET・デコード・SHA256一致を確認した。実native processの重みパスとFlux.3
+      FLOWログ、 artifactの16 steps・重みrevisionでFLUX実行を確認した。 元のworkerとnative
+      processの終了後にも、同じ保存画像をGETできた。
+    </p>
+    <p>
+      初回確認スクリプトは、元worker停止直後に別の3D要求が起動したQwen
+      workerを見て停止失敗と判定した。
+      生成POSTそのものは成功しており再送しなかった。確認を生成要求のPID・開始時刻とartifact作成時刻で照合する方式へ修正し、
+      後続要求・PID再利用を区別する固定試験を追加した。別要求を停止したり、現在のunit名から実モデルを推定しない。
+    </p>
+    <p>
+      この節の画像と証跡はrepository外の /srv/ai/evidence/flux3-image-deployment-20261031/
+      に保持する。
+      既定Qwenの独立した実生成試験は、別の3D要求のGPU待ちにより409を返したため、競合解消後の受入が残る。
+      自動的なPOST再送は行わない。
     </p>
   </section>
   <section id="verification">

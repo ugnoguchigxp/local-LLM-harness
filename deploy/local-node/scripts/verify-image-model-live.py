@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Submit exactly one image request, verify its saved content and stopped worker."""
 import argparse
+from datetime import datetime
 import hashlib
 import io
 import json
 import os
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -16,6 +18,71 @@ from pathlib import Path
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+def process_identity(pid, proc_root=Path("/proc")):
+    try:
+        fields = (proc_root / str(pid) / "stat").read_text().rsplit(") ", 1)[1].split()
+        return {"pid": int(pid), "parentPid": int(fields[1]), "startTicks": int(fields[19])}
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def process_stopped(identity, proc_root=Path("/proc")):
+    current = process_identity(identity["pid"], proc_root)
+    return current is None or current["startTicks"] != identity["startTicks"]
+
+
+def select_request_process(observations, model, created_at):
+    created = datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp()
+    needle = "flux3imageklein" if model == "flux-3-image-klein" else "qwenimage21turbo"
+    candidates = [item for item in observations
+        if needle in "".join(c for c in Path(item["modelPath"]).name.lower() if c.isalnum())
+        and item["startedAtEpoch"] <= created]
+    if not candidates:
+        raise RuntimeError("the requested generation's native process was not observed")
+    return max(candidates, key=lambda item: item["startedAtEpoch"])
+
+
+class WorkerObserver:
+    def __init__(self, unit):
+        self.unit = unit
+        self.stop = threading.Event()
+        self.observations = {}
+        self.boot_epoch = time.time() - time.clock_gettime(time.CLOCK_BOOTTIME)
+        self.ticks = os.sysconf("SC_CLK_TCK")
+        self.thread = threading.Thread(target=self.observe, daemon=True)
+
+    def observe(self):
+        group = None
+        while not self.stop.is_set():
+            try:
+                if group is None:
+                    value = subprocess.check_output(["systemctl", "show", self.unit,
+                        "--property=ControlGroup", "--value"], text=True, stderr=subprocess.DEVNULL, timeout=1).strip()
+                    if value:
+                        group = Path("/sys/fs/cgroup") / value.lstrip("/") / "cgroup.procs"
+                for pid in group.read_text().split() if group is not None and group.exists() else []:
+                    command = (Path("/proc") / pid / "cmdline").read_bytes().decode().split("\0")
+                    if not command or Path(command[0]).name != "sd-server" or "--diffusion-model" not in command:
+                        continue
+                    native = process_identity(pid)
+                    worker = process_identity(native["parentPid"]) if native else None
+                    if native and worker:
+                        self.observations[(native["pid"], native["startTicks"])] = {
+                            "native": native, "worker": worker,
+                            "modelPath": command[command.index("--diffusion-model") + 1],
+                            "startedAtEpoch": self.boot_epoch + native["startTicks"] / self.ticks}
+            except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+                pass
+            self.stop.wait(0.1)
+
+    def start(self):
+        self.thread.start()
+
+    def close(self):
+        self.stop.set()
+        self.thread.join(timeout=2)
 
 
 def main():
@@ -45,6 +112,8 @@ def main():
     opener = urllib.request.build_opener(NoRedirect())
     summary = {"modelRequested": args.model, "size": args.size, "generationPosts": 0, "status": "failed"}
     started = time.monotonic()
+    observer = WorkerObserver(args.unit)
+    observer.start()
 
     def request(path, body=None):
         url = urllib.parse.urljoin(base + "/", path)
@@ -65,6 +134,7 @@ def main():
         with request("/v1/images/generations", payload) as response:
             summary["httpStatus"] = response.status
             result = json.load(response)
+        observer.close()
         (args.output / "response.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
         artifact = (result.get("artifacts") or [result["artifact"]])[0]
         expected_steps = 16 if args.model == "flux-3-image-klein" else 8
@@ -95,12 +165,14 @@ def main():
             "--property=ActiveState,MainPID,ControlGroup"], text=True, timeout=10)
         properties = dict(line.split("=", 1) for line in state.splitlines() if "=" in line)
         summary["worker"] = properties
-        if properties.get("ActiveState") != "inactive" or properties.get("MainPID") != "0":
-            raise RuntimeError("worker is not inactive with MainPID 0")
-        group = properties.get("ControlGroup")
-        processes = Path("/sys/fs/cgroup") / group.lstrip("/") / "cgroup.procs" if group else None
-        if processes is not None and processes.exists() and processes.read_text().strip():
-            raise RuntimeError("worker cgroup still contains processes")
+        own = select_request_process(list(observer.observations.values()), args.model, artifact["createdAt"])
+        summary["requestProcesses"] = own
+        if not process_stopped(own["native"]) or not process_stopped(own["worker"]):
+            raise RuntimeError("the requested generation's worker or native process remains alive")
+        summary["requestProcessesStopped"] = True
+        # A new request may already own this same unit. Its PID is a different
+        # execution, so never stop it or classify it as the prior job leaking.
+        summary["otherRequestActive"] = properties.get("MainPID") not in ("0", str(own["worker"]["pid"]))
         summary["stage"] = "saved-artifact-get-after-stop"
         with request(path) as response:
             saved = response.read(32 * 1024 * 1024 + 1)
@@ -117,6 +189,7 @@ def main():
     except Exception as error:
         summary["error"] = {"code": "verification_failed", "message": str(error)}
     finally:
+        observer.close()
         summary["elapsedSeconds"] = round(time.monotonic() - started, 3)
         (args.output / "verification.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
         print(json.dumps(summary, ensure_ascii=False))

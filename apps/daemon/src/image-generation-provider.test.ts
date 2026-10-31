@@ -17,14 +17,16 @@ test("FLUX caption failures and process cleanup run without inference or image d
   expect({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }).toEqual({ exitCode: 0, output: "" });
 });
 
-test("the shared image worker starts only the selected backend and closes it on failure", async () => {
-  const child = Bun.spawn(["python3", "-B",
-    new URL("../../../deploy/local-node/providers/image-model-router.test.py", import.meta.url).pathname,
-  ], { stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
-  ]);
-  expect({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }).toEqual({ exitCode: 0, output: "" });
+test("shared worker selection and request-specific stop verification handle later workloads", async () => {
+  for (const path of ["providers/image-model-router.test.py", "scripts/verify-image-model-live.test.py"]) {
+    const child = Bun.spawn(["python3", "-B",
+      new URL(`../../../deploy/local-node/${path}`, import.meta.url).pathname,
+    ], { stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+    ]);
+    expect({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }).toEqual({ exitCode: 0, output: "" });
+  }
 });
 
 const imageArtifact = (model: string, steps: number) => ({ id: "image_test", createdAt: new Date().toISOString(),
