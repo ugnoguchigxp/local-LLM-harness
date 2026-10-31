@@ -198,8 +198,9 @@
       後続要求・PID再利用を区別する固定試験を追加した。別要求を停止したり、現在のunit名から実モデルを推定しない。
     </p>
     <p>
-      最終配備は2026年10月31日13:24 JST、commit 59c523aa99de34e197f7305fa90e5c8cb453ae2e。
-      署名付き通常配備のcontract_verified / succeededを確認した。
+      初回受入時の最終配備は2026年10月31日13:24 JST、commit
+      59c523aa99de34e197f7305fa90e5c8cb453ae2e。 署名付き通常配備のcontract_verified /
+      succeededを確認した。
       configRevisionはe75de08526117e12612ed08a49112470fbb1d2bbc55a97a4ab3f221512e45cc6。
       配備先の公開OpenAPIとv3
       catalogを再取得し、2モデル・モデル別steps・寸法・形式の契約と広告を照合した。 FLUX
@@ -210,7 +211,7 @@
     </p>
     <table>
       <caption>
-        最終配備版の実生成。猫のprompt・seed 42・WebP、steps省略
+        初回受入版の実生成。猫のprompt・seed 42・WebP、steps省略
       </caption>
       <thead>
         <tr>
@@ -257,8 +258,8 @@
       未設定判定がworkerで行われる共有構成では、受付workerを起動しても推論エンジンは起動せず、失敗後に停止する。
     </p>
     <p>
-      Controlはworker応答のmodel
-      source・40桁revision・steps・寸法・形式・seed・contentUrlを要求と照合し、
+      Controlはworker応答のmodel source・steps・寸法・形式・seed・contentUrlを要求と照合し、
+      revisionは40桁のcommit SHAであることを確認する。
       異なるモデルや別artifactへのリンクを成功として返さない。workerのJSON応答は64 KiBまでとし、
       読取り中も要求の取消・期限を適用する。不一致・過大応答・期限超過でも確保したworkerを解放し、生成POSTを再送しない。
       不正な補完モデルのweights
@@ -267,13 +268,27 @@
     <p>
       これらは通常の固定試験に組み込み、実HTTPを通した未設定エラー伝播、FLUX欠落時のQwen独立性、
       両モデルでのmetadata不一致の拒否、PNG・非既定寸法・seedの正常系、応答サイズ超過・停止しない応答の取消を確認する。
-      初回実生成確認後の追加修正であり、修正版の配備と実機結果は本節へ追記する。
+      修正版commit f2fda31757a4ffad66e357f7adf39e806a06746cを2026年10月31日13:36
+      JSTに通常の署名付き手順で配備し、 contract_verified /
+      succeededと公開OpenAPI・catalogの契約維持を確認した。 必須release
+      gateのcheck・audit・coverage・production auditは成功し、1063 pass・10 skip・0 fail、critical
+      coverage 20 filesを通過した。 作業treeのbun run
+      checkも成功した。修正コードと実配備の一致を確認し、並行作業のメモリ管理変更は配備に含めなかった。
+    </p>
+    <p>
+      修正版でsteps省略の実生成を各1回実施した。model省略のQwenはHTTP 200、8 steps・512×512
+      WebP・17.842秒、 FLUX指定はHTTP 200、16 steps・768×768 WebP・92.821秒だった。
+      両方で返された画像のGET・デコード・寸法と形式・SHA256一致、要求ごとのworker/native停止、停止後の再取得を確認した。
+      FLUX実行は実重みパスとengineログでも確認した。
+      証跡は同じrepository外ディレクトリのcode-review.json、review-release-gate.json、review-activation.json、
+      review-deployed-contract.json、review-final-acceptance.jsonとreview-qwen-default512/、review-flux768/に保持する。
+      修正後の再レビューで、今回の画像生成対応に未解決の修正事項は見つからなかった。
     </p>
   </section>
   <section id="verification">
     <h2>検証範囲と完了結果</h2>
     <p>
-      最終配備commitの必須release gateでinstall、audit、bun run check、coverage、production
+      初回受入時の配備commitの必須release gateでinstall、audit、bun run check、coverage、production
       auditが全て成功した。 試験結果は1058 pass、10 skip、0 fail、critical coverage ratchet 20
       files通過。 画像runtimeのPython環境でもQwen adapterの11件、FLUX
       adapterの6件、routerの4件が成功した。
