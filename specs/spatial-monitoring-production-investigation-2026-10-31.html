@@ -1,10 +1,87 @@
 <article lang="ja">
-  <h1>Spatial向けLARM監視API：本番未公開の調査と統合</h1>
+  <h1>Spatial向けLARM監視API：本番公開調査と復旧</h1>
   <p>
     2026-10-31
-    JST。実接続の404を調査し、既存のlarm-monitoring.v1を現行稼働版へ統合する。配備・再起動は利用者の許可後に行う。Codex
-    SDK経由LLMの接続判定は対象外。
+    JST。実接続の404を調査し、既存のlarm-monitoring.v1を現行稼働版へ統合する。配備前に変更内容と再起動影響を提示し、利用者の復旧指示を受けて19:57
+    JSTに配備・再起動を実施した。Codex SDK経由LLMの接続判定は対象外。
   </p>
+  <section id="restored">
+    <h2>本番復旧結果：2026-10-31 19:58 JST</h2>
+    <p>
+      提示済みの監視統合commit
+      87b1c624abb738ac2345762b6a06050fc8d02cf9を署名付きrelease経路で配備した。固定依存install・依存監査・全体check・coverage・production依存監査はすべてpassed。daemonは19:57:57
+      JSTにactive、配備controllerは19:58:06
+      JSTにcontract_verified/succeeded。新bootEpochはepoch-dc1e0a9c-cd5f-42f9-a4a2-137804ebb54c。configRevisionはe75de08526117e12612ed08a49112470fbb1d2bbc55a97a4ab3f221512e45cc6のまま。
+    </p>
+    <table>
+      <caption>
+        19:58:18〜19:58:48 JST：LARM hostから公開LAN Control入口へ、既存Control認証で実HTTP確認
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">本番結果</th>
+          <th scope="col">契約検証</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">GET /v1/monitoring/snapshot?contractVersion=larm-monitoring.v1</th>
+          <td>
+            200、application/json、Cache-Control:
+            no-store。初回に加え5秒周期7回でsnapshotIdと観測時刻の更新を確認。
+          </td>
+          <td>元の共有JSON Schemaと公開OpenAPIのMonitoringSnapshotの両方に適合。</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            GET /v1/monitoring/events?contractVersion=larm-monitoring.v1&amp;limit=500
+          </th>
+          <td>
+            200。初回41件、nextCursorあり、hasMore=false。cursor続行と30秒後の続行も200で新規0件。
+          </td>
+          <td>元の共有JSON Schemaと公開OpenAPIのMonitoringEventsの両方に適合。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      eventsのcontinuityはcomplete_since_start、droppedEventsTotalは0、previousBootHistoryはfalse。LARM
+      gateway・Control操作・Music・Image・kernelのcoverageはavailableで、since/throughを保持する。Provider内部queueとLARM外直接要求はunsupported/outside_larm_observation。再起動前の要求履歴は復元したと扱わない。boot/config
+      headerが稼働identityと一致する。
+    </p>
+    <p>
+      本番最終観測は2026-10-31T10:58:48.011〜.013Z。Core
+      readiness=ready・品質ok、CPU=0.5004691898654934%・品質ok・差分interval=2001.03268ms、MemTotal=130148806656
+      bytes、MemAvailable=91631247360
+      bytes・いずれも品質ok、GPU利用率=100%・温度53℃・品質ok、VRAM使用=1947918336
+      bytes、GTT使用=30284759040
+      bytes。GPU平均窓は未定義なのでinterval=nullを維持する。これらはAPIが返した値で、LARM
+      activityや特定Profileの推論量と同一視しない。5秒周期7回のCore/CPU/Memory/GPUの主要値はすべてokで、観測時刻が更新された。
+    </p>
+    <p>
+      本番でも取得不能な項目はvalueなしで保持した。CPU full
+      PSIはunsupported/cpu_full_not_defined、GPU
+      throttlingはunsupported/driver_metric_not_decoded、RuntimeとGPUの対応とGPU別要求・速度はunsupported/runtime_device_mapping_absent、一部RuntimeのmodelLoadStateはunsupported/model_load_signal_absent。待ち要求がない最長待ちはunavailable/no_waiters、成功sample未蓄積の速度・初回応答はunavailable/no_completed_sample。未配置の4保存先の容量8値はunsupported/sensor_not_supported。0や正常値による補完は行わない。
+    </p>
+    <p>
+      両監視APIで匿名・不正Provider
+      tokenは401、未知contractVersionは406を返し、エラーも共有schemaに適合した。本番にprotected
+      Control
+      tokenは設定されていないため、その受理は固定試験の結果であり本番確認とは分ける。公開OpenAPIに両pathが存在し、/healthと23
+      Profileのcatalogは200。OCR・物体検出・Excalidraw・Docling gatewayとOCR・物体検出LAN ingressの6
+      unitはactiveを確認した。
+    </p>
+    <p>
+      監視の成功11応答で、本文読み取りまでのHTTP時間は約2.00〜5.30ms、snapshot本文は約133.5kB、初回eventsは約22.4kB、空の続行pageは約1.75kBだった。LARM
+      hostから自hostのLAN
+      addressへの測定で、Eumenesのネットワーク経路・多数同時読者・推論競合下の性能保証ではない。snapshot
+      5秒＋events
+      30秒の推奨は維持する。通常snapshot転送量は圧縮なしで約1.6MB/分。恒常的な許容requests/sを保証する負荷試験は行っていない。
+    </p>
+    <p>
+      本番HTTP成功とschema適合を確認済みだが、Eumenes保存済みoriginのbackend読み取り、Eumenes実行hostからの再取得と画面表示は未確認。保存済み設定を使って次回pollまたは手動再取得で受入する。接続先変更や新credential配布は不要。以降の404表は復旧前の調査記録である。
+    </p>
+  </section>
   <section id="cause">
     <h2>原因と稼働版</h2>
     <p>
@@ -81,7 +158,7 @@
       2020-12検証器でも検証した。Zod更新による日時正規表現の生成差だけを、元のcalendar正規表現の固定により解消し、生成schemaの完全一致を維持する。移行は同じ契約のAPI有効化で、Eumenesのpathやversionの変更は必要ない。
     </p>
     <p>
-      本番反映は未実施。sourceの固定試験成功、単発collectorでの実機読み取り、本番HTTPでの200とschema適合、Eumenes側の表示受入を別々に記録する。
+      配備前の調査では本番反映は未実施だった。sourceの固定試験成功、単発collectorでの実機読み取り、本番HTTPでの200とschema適合、Eumenes側の表示受入を別々に記録する。
     </p>
   </section>
   <section id="verification">
