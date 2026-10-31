@@ -21,10 +21,11 @@ async function fixture(options: { live?: number; stopFails?: boolean; freeAfterS
     routes: ["target", "large", "small"].map(id => ({ id, capabilities: [id], explicitOnly: false, candidates: [{ runtime: id, purpose: "primary" }] })),
   };
   const running = new Set(["large", "small"]);
+  const busy = new Set<string>();
   let free = options.live ?? 20;
   const calls: string[] = [];
   const health = (id: string): RuntimeHealth => ({ runtimeId: id, service: running.has(id) ? "Running" : "Stopped",
-    listening: running.has(id), healthOk: running.has(id), busy: false });
+    listening: running.has(id), healthOk: running.has(id), busy: busy.has(id) });
   const backend: RuntimeBackend = {
     health: async id => health(id), list: async () => registry.runtimes.map(r => health(r.id)),
     ensure: async r => { calls.push(`start:${r.id}`); running.add(r.id); return health(r.id); },
@@ -44,7 +45,7 @@ async function fixture(options: { live?: number; stopFails?: boolean; freeAfterS
   });
   const allocate = (id = "target", priority = 3000) => control.allocate({ requirements: [{ capability: id, route: id }],
     ttlSeconds: 300, allowFallback: false, deploymentPolicy: "existing-only", capacityPolicy: "wait", priority });
-  return { registry, running, calls, control, observer, backend, allocate };
+  return { registry, running, busy, calls, control, observer, backend, allocate };
 }
 
 test("a Profile allocation reclaims only enough idle memory before starting the resolved runtime", async () => {
@@ -69,6 +70,37 @@ test("memory recovery stops a managed instance immediately instead of waiting fo
     await f.allocate(); await f.control.flush();
     expect(f.calls).toEqual(["start:large", "stop:large", "start:target"]);
   } finally { f.control.beginDrain(); }
+});
+
+test("a promoted waiter waits for an in-progress idle stop and retains the replacement instance", async () => {
+  const f = await fixture({ live: 56 });
+  const stopping = Promise.withResolvers<void>(), stopped = Promise.withResolvers<void>();
+  const stop = f.backend.stop;
+  f.backend.stop = async id => {
+    if (id === "large") { stopping.resolve(); await stopped.promise; }
+    await stop(id);
+  };
+  try {
+    const runtime = f.registry.runtimes.find(r => r.id === "large")!;
+    runtime.policy.class = "elastic";
+    runtime.policy.warm!.idleTtlSeconds = 0;
+    runtime.resources.maxConcurrentAllocations = 1;
+    f.running.delete("large"); await f.observer.refresh();
+    const first = await f.allocate("large", 1000); await f.control.flush();
+    const waiter = await f.allocate("large", 1000);
+    const waiterId = (waiter.body as { id: string }).id;
+    expect(waiter.body).toMatchObject({ status: "waiting" });
+    await f.control.releaseAllocation((first.body as { id: string }).id);
+    await stopping.promise;
+    expect(f.control.getAllocation(waiterId)?.status).not.toBe("ready");
+    stopped.resolve(); await f.control.flush();
+    expect(f.control.getAllocation(waiterId)?.status).toBe("ready");
+    expect(typeof f.control.getAllocation(waiterId)?.bindings[0]?.instanceId).toBe("string");
+    expect(f.control.getProviderInstances()).toMatchObject([{ refs: { allocation: 1 } }]);
+    expect(f.running.has("large")).toBe(true);
+    const instance = f.control.retainProviderRequest(waiterId, "large", "next");
+    f.control.releaseProviderRequest(instance, "next");
+  } finally { stopped.resolve(); f.control.beginDrain(); }
 });
 test("higher-priority foreground memory pressure preempts an unrelated lower-priority allocation", async () => {
   const f = await fixture();
@@ -101,7 +133,7 @@ test("memory retirement drains an in-flight request normally and blocks new requ
   } finally { f.control.beginDrain(); }
 });
 
-test("drain timeout preserves a running request and releases the drain reservation", async () => {
+test("a rejected memory request keeps its victim draining and stops it as soon as inference finishes", async () => {
   const f = await fixture({ control: { memoryDrainTimeoutMs: 10 } });
   try {
     const lower = await f.allocate("large", 1000);
@@ -111,11 +143,209 @@ test("drain timeout preserves a running request and releases the drain reservati
     expect((await f.allocate()).status).toBe(409);
     expect(signal.aborted).toBe(false);
     expect(f.calls).toEqual(["stop:small"]);
-    expect(f.control.isRuntimeTransitioning("large")).toBe(false);
-    expect(() => f.control.retainProviderRequest(id, "large", "next-request")).not.toThrow();
+    expect(f.control.isRuntimeTransitioning("large")).toBe(true);
+    expect(() => f.control.retainProviderRequest(id, "large", "next-request")).toThrow("provider is draining");
+    await f.control.flush(); // Does not wait for the still-running inference.
+    expect(signal.aborted).toBe(false);
     f.control.releaseProviderRequest(undefined, "long-request");
-    f.control.releaseProviderRequest(undefined, "next-request");
+    await f.control.flush();
+    expect(f.calls).toEqual(["stop:small", "stop:large"]);
+    expect(signal.aborted).toBe(true);
+    expect(f.control.isRuntimeTransitioning("large")).toBe(false);
+    // Eumenes can poll again; the failed request did not start the target itself.
+    expect((await f.allocate()).status).toBe(202);
+    await f.control.flush();
+    expect(f.calls).toEqual(["stop:small", "stop:large", "start:target"]);
   } finally { f.control.beginDrain(); }
+});
+
+test("repeated polls cannot reuse a draining managed instance and retirement waits for every request", async () => {
+  const f = await fixture({ live: 56, control: { memoryDrainTimeoutMs: 5 } });
+  const stopping = Promise.withResolvers<void>(), stopped = Promise.withResolvers<void>();
+  const stop = f.backend.stop;
+  f.backend.stop = async id => {
+    if (id === "large") { stopping.resolve(); await stopped.promise; }
+    await stop(id);
+  };
+  try {
+    f.running.delete("large"); await f.observer.refresh();
+    const lower = await f.allocate("large", 1000); await f.control.flush();
+    const id = (lower.body as { id: string }).id;
+    const instance = f.control.retainProviderRequest(id, "large", "first");
+    expect(instance).toBeDefined();
+    f.control.retainProviderRequest(id, "large", "second");
+    expect((await f.allocate()).status).toBe(409);
+    expect((await f.allocate()).status).toBe(409);
+    const sameRuntime = await f.allocate("large", 1000);
+    expect(sameRuntime.body).toMatchObject({ status: "waiting" });
+    f.control.releaseProviderRequest(instance, "first"); await f.control.flush();
+    expect(f.calls).toEqual(["start:large", "stop:small"]);
+    f.control.releaseProviderRequest(instance, "second");
+    await stopping.promise;
+    await f.control.releaseAllocation((sameRuntime.body as { id: string }).id);
+    stopped.resolve(); await f.control.flush();
+    expect(f.calls).toEqual(["start:large", "stop:small", "stop:large"]);
+    expect(f.control.getProviderInstances()).toEqual([]);
+    expect(f.observer.getState().runtimes.find(r => r.id === "large")?.status).toBe("COLD");
+    expect((await f.allocate()).status).toBe(202); await f.control.flush();
+    expect(f.calls.at(-1)).toBe("start:target");
+  } finally { stopped.resolve(); f.control.beginDrain(); }
+});
+
+test("deferred retirement stops waiting when cancelled or the daemon shuts down", async () => {
+  for (const shutdown of [false, true]) {
+    const f = await fixture({ control: { memoryDrainTimeoutMs: 5 } });
+    try {
+      const lower = await f.allocate("large", 1000);
+      const id = (lower.body as { id: string }).id;
+      const instance = f.control.retainProviderRequest(id, "large", "running");
+      const abort = new AbortController();
+      await f.control.reclaimMemory({ priority: 3000, requestedRuntimeIds: ["target"], signal: abort.signal,
+        evaluateAdmission: () => ({ ok: false, reason: "live_memory_exhausted", node: "node" }) });
+      expect(f.control.isRuntimeTransitioning("large")).toBe(true);
+      if (shutdown) f.control.beginDrain();
+      else abort.abort(new Error("request cancelled"));
+      await f.control.flush();
+      expect(f.control.isRuntimeTransitioning("large")).toBe(false);
+      f.control.releaseProviderRequest(instance, "running"); await f.control.flush();
+      expect(f.calls).toEqual(["stop:small"]);
+      expect(f.control.getAllocation(id)?.status).toBe("ready");
+    } finally { f.control.beginDrain(); }
+  }
+});
+
+test("deferred retirement rechecks memory need and protection before stopping", async () => {
+  for (const protect of [false, true]) {
+    const f = await fixture({ control: { memoryDrainTimeoutMs: 5 } });
+    try {
+      const lower = await f.allocate("large", 1000);
+      const id = (lower.body as { id: string }).id;
+      const instance = f.control.retainProviderRequest(id, "large", "running");
+      expect((await f.allocate()).status).toBe(409);
+      if (protect) f.registry.runtimes.find(r => r.id === "large")!.policy.warm!.minInstances = 1;
+      else f.registry.runtimes.find(r => r.id === "target")!.resources.estimatedMemoryGB = 1;
+      f.control.releaseProviderRequest(instance, "running"); await f.control.flush();
+      expect(f.calls).toEqual(["stop:small"]);
+      expect(f.control.isRuntimeTransitioning("large")).toBe(false);
+      expect(f.control.getAllocation(id)?.status).toBe("ready");
+      expect(() => f.control.retainProviderRequest(id, "large", "next")).not.toThrow();
+      f.control.releaseProviderRequest(instance, "next");
+    } finally { f.control.beginDrain(); }
+  }
+});
+
+test("a legacy lease acquired during drain protects its runtime before retirement", async () => {
+  const f = await fixture({ control: { memoryDrainTimeoutMs: 5 } });
+  try {
+    f.registry.runtimes.find(r => r.id === "large")!.capability.push("legacy-only");
+    const lower = await f.allocate("large", 1000);
+    const id = (lower.body as { id: string }).id;
+    const instance = f.control.retainProviderRequest(id, "large", "running");
+    expect((await f.allocate()).status).toBe(409);
+    expect((await f.control.prepare({ capabilities: ["legacy-only"] })).status).toBe(200);
+    f.control.releaseProviderRequest(instance, "running"); await f.control.flush();
+    expect(f.calls).toEqual(["stop:small"]);
+    expect(f.control.getAllocation(id)?.status).toBe("ready");
+    expect(f.control.isRuntimeTransitioning("large")).toBe(false);
+  } finally { f.control.beginDrain(); }
+});
+
+test("deferred retirement does not stop a runtime after pressure moves to another node", async () => {
+  const f = await fixture({ control: { memoryDrainTimeoutMs: 5 } });
+  try {
+    const lower = await f.allocate("large", 1000);
+    const id = (lower.body as { id: string }).id;
+    const instance = f.control.retainProviderRequest(id, "large", "running");
+    let node = "node";
+    await f.control.reclaimMemory({ priority: 3000, requestedRuntimeIds: ["target"],
+      evaluateAdmission: () => ({ ok: false, reason: "memory_exhausted", node }) });
+    expect(f.control.isRuntimeTransitioning("large")).toBe(true);
+    node = "remote";
+    f.control.releaseProviderRequest(instance, "running"); await f.control.flush();
+    expect(f.calls).toEqual(["stop:small"]);
+    expect(f.control.getAllocation(id)?.status).toBe("ready");
+    expect(f.control.isRuntimeTransitioning("large")).toBe(false);
+  } finally { f.control.beginDrain(); }
+});
+
+test("a request for a draining runtime does not reclaim unrelated services", async () => {
+  const f = await fixture({ control: { memoryDrainTimeoutMs: 5 } });
+  try {
+    const lower = await f.allocate("large", 1000);
+    const id = (lower.body as { id: string }).id;
+    const instance = f.control.retainProviderRequest(id, "large", "running");
+    expect((await f.allocate()).status).toBe(409);
+    f.running.add("small");
+    f.registry.nodes[0]!.resources.memoryTotalGB = 48;
+    await f.observer.refresh();
+    expect((await f.allocate("large", 1000)).body).toMatchObject({ status: "waiting" });
+    expect(f.calls).toEqual(["stop:small"]);
+    f.control.beginDrain();
+    f.control.releaseProviderRequest(instance, "running");
+  } finally { f.control.beginDrain(); }
+});
+
+test("simultaneous completions reclaim only enough memory across deferred victims", async () => {
+  const f = await fixture({ control: { memoryDrainTimeoutMs: 5 } });
+  try {
+    f.registry.runtimes.find(r => r.id === "target")!.resources.estimatedMemoryGB = 16;
+    const large = await f.allocate("large", 1000);
+    const small = await f.allocate("small", 1000);
+    const largeId = (large.body as { id: string }).id;
+    const smallId = (small.body as { id: string }).id;
+    const largeInstance = f.control.retainProviderRequest(largeId, "large", "large-request");
+    const smallInstance = f.control.retainProviderRequest(smallId, "small", "small-request");
+    expect((await f.allocate()).status).toBe(409);
+    expect(f.control.isRuntimeTransitioning("large")).toBe(true);
+    expect(f.control.isRuntimeTransitioning("small")).toBe(true);
+    f.control.releaseProviderRequest(largeInstance, "large-request");
+    f.control.releaseProviderRequest(smallInstance, "small-request");
+    await f.control.flush();
+    expect(f.calls).toEqual(["stop:large"]);
+    expect(f.control.isRuntimeTransitioning("small")).toBe(false);
+    expect(f.control.getAllocation(smallId)?.status).toBe("ready");
+    expect((await f.allocate()).status).toBe(202); await f.control.flush();
+  } finally { f.control.beginDrain(); }
+});
+
+test("backend BUSY after request completion also delays retirement until the process is idle", async () => {
+  const f = await fixture({ control: { memoryDrainTimeoutMs: 5 } });
+  try {
+    const lower = await f.allocate("large", 1000);
+    const id = (lower.body as { id: string }).id;
+    const instance = f.control.retainProviderRequest(id, "large", "running");
+    expect((await f.allocate()).status).toBe(409);
+    f.busy.add("large");
+    f.control.releaseProviderRequest(instance, "running"); await f.control.flush();
+    expect(f.calls).toEqual(["stop:small"]);
+    expect(f.control.isRuntimeTransitioning("large")).toBe(true);
+    f.busy.delete("large");
+    for (let i = 0; i < 100 && f.control.isRuntimeTransitioning("large"); i++) await Bun.sleep(2);
+    await f.control.flush();
+    expect(f.calls).toEqual(["stop:small", "stop:large"]);
+    expect((await f.allocate()).status).toBe(202); await f.control.flush();
+  } finally { f.control.beginDrain(); }
+});
+
+test("a failed observation after deferred stop cannot publish the stale HOT runtime", async () => {
+  const f = await fixture({ control: { memoryDrainTimeoutMs: 5 } });
+  const list = f.backend.list;
+  try {
+    const lower = await f.allocate("large", 1000);
+    const id = (lower.body as { id: string }).id;
+    const instance = f.control.retainProviderRequest(id, "large", "running");
+    expect((await f.allocate()).status).toBe(409);
+    f.backend.list = async () => {
+      if (!f.running.has("large")) throw new Error("post-stop observation failed");
+      return await list();
+    };
+    f.control.releaseProviderRequest(instance, "running"); await f.control.flush();
+    expect(f.calls).toEqual(["stop:small", "stop:large"]);
+    expect((await f.allocate("large", 1000)).status).toBe(503);
+    f.backend.list = list;
+    await f.observer.refresh();
+    expect((await f.allocate()).status).toBe(202); await f.control.flush();
+  } finally { f.backend.list = list; f.control.beginDrain(); }
 });
 
 test("swap-group priority preemption also preserves an active request after memory drain times out", async () => {

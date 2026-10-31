@@ -41,6 +41,11 @@ export class Observer {
     return this.snapshot;
   }
 
+  /** A completed lifecycle change makes the old observation unsafe for admission. */
+  invalidate(): void {
+    this.snapshot = { ...this.snapshot, generatedAt: new Date(0).toISOString() };
+  }
+
   tick(): Promise<ClusterState> {
     if (this.tickInFlight) {
       return this.tickInFlight;

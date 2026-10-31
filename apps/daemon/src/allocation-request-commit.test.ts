@@ -115,7 +115,7 @@ describe("allocation request commit", () => {
   });
 
   test("waiting allocations use expiry as deadline and enqueue promotion only", () => {
-    const state = fixture({ admission: admitted("COLD", true) });
+    const state = fixture({ admission: admitted("HOT", true) });
     const result = commitAllocationRequest(state.port);
     expect(result.status).toBe(202);
     expect(result.body.status).toBe("waiting");
@@ -125,7 +125,6 @@ describe("allocation request commit", () => {
     });
     expect(state.events).toEqual([
       "store-allocation",
-      "retain-existing",
       "register-abort",
       "emit-created",
       "schedule-expiry",

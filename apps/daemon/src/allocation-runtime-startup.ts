@@ -11,7 +11,7 @@ export async function startAndVerifyAllocationRuntimes(input: {
   registry: Registry;
   backend: RuntimeBackend;
   observer: Pick<Observer, "getState" | "tick">;
-  providerInstances: Pick<ProviderInstanceManager, "acquire">;
+  providerInstances: Pick<ProviderInstanceManager, "acquire" | "hasManagedRuntime">;
   deadline: number;
   signal: AbortSignal;
   isActive: () => boolean;
@@ -51,7 +51,10 @@ export async function startAndVerifyAllocationRuntimes(input: {
       const runtime = getRuntime(input.registry, runtimeId);
       if (!runtime) throw new Error(`runtime ${runtimeId} disappeared from registry`);
       const status = input.observer.getState().runtimes.find((item) => item.id === runtimeId)?.status;
-      if (status === "COLD" || input.backend.ensureInstance) {
+      const missingInstance = input.allocation.bindings.some(binding =>
+        binding.runtime === runtimeId && binding.instanceId === undefined);
+      if (status === "COLD" || input.backend.ensureInstance
+        || (missingInstance && input.providerInstances.hasManagedRuntime(runtimeId))) {
         input.setPhase("starting-runtime");
         const startup = observation?.operation("runtime_start");
         startup?.attribute("larm.runtime", runtimeId);

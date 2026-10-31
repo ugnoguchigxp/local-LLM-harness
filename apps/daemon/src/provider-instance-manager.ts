@@ -82,6 +82,7 @@ export class ProviderInstanceManager {
   }
   private readonly byRevision = new Map<string, ManagedInstance>();
   private readonly byId = new Map<string, ManagedInstance>();
+  private readonly managedRuntimeIds = new Set<string>();
   private readonly ensures = new Map<string, EnsureFlight>();
 
   constructor(
@@ -95,6 +96,11 @@ export class ProviderInstanceManager {
 
   hasRuntime(runtimeId: string): boolean {
     return [...this.byId.values()].some((record) => record.instance.runtimeId === runtimeId);
+  }
+
+  hasManagedRuntime(runtimeId: string): boolean {
+    // Retired runtimes must rebind even when an old probe still reports HOT.
+    return this.managedRuntimeIds.has(runtimeId);
   }
 
   async reclaimIdle(runtimeId: string): Promise<boolean> {
@@ -223,6 +229,7 @@ export class ProviderInstanceManager {
             };
             this.byRevision.set(revision.revision, created);
             this.byId.set(instance.id, created);
+            this.managedRuntimeIds.add(runtime.id);
             this.emit("provider_instance_ensured", created);
             if (createdFlight.waiters.size === 0) this.scheduleIfIdle(created);
             return created;

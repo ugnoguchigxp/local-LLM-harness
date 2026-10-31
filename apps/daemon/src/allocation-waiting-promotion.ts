@@ -32,6 +32,7 @@ export type WaitingPromotionLifecyclePort = {
   getOperation: (allocation: Allocation) => Operation | undefined;
   isoNow: () => string;
   startupDeadline: (allocation: Allocation) => number;
+  retainProviders?: (allocation: Allocation) => boolean;
   onAdmitted: (allocation: Allocation) => void;
   onReady: (allocation: Allocation) => void;
   failMissingOperation: (allocation: Allocation) => void;
@@ -97,6 +98,7 @@ export async function promoteWaitingAllocationBatch(input: {
       operation: lifecycle.getOperation(allocation),
       now: lifecycle.isoNow,
       startupDeadline: () => lifecycle.startupDeadline(allocation),
+      retainProviders: lifecycle.retainProviders,
       onAdmitted: lifecycle.onAdmitted,
       onReady: lifecycle.onReady,
       failMissingOperation: lifecycle.failMissingOperation,
@@ -166,6 +168,7 @@ export async function commitWaitingAllocationPromotion(input: {
   operation?: Operation;
   now: () => string;
   startupDeadline: () => number;
+  retainProviders?: (allocation: Allocation) => boolean;
   onAdmitted: (allocation: Allocation) => void;
   onReady: (allocation: Allocation) => void;
   failMissingOperation: (allocation: Allocation) => void;
@@ -176,7 +179,8 @@ export async function commitWaitingAllocationPromotion(input: {
     if (status) binding.status = status;
   }
   const ready = input.allocation.deploymentPolicy === "existing-only"
-    && input.allocation.bindings.every((binding) => binding.status === "HOT" || binding.status === "BUSY");
+    && input.allocation.bindings.every((binding) => binding.status === "HOT" || binding.status === "BUSY")
+    && (input.retainProviders?.(input.allocation) ?? true);
   input.allocation.status = ready ? "ready" : "pending";
   input.onAdmitted(input.allocation);
   if (ready) {

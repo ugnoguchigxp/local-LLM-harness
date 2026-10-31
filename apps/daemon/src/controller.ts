@@ -34,15 +34,15 @@ import { AllocationStartupLifecycle } from "./allocation-startup-lifecycle";
 import { AllocationApiLifecycle } from "./allocation-api-lifecycle";
 import { AllocationTimers } from "./allocation-timers";
 import { planAllocationRequestAdmission } from "./allocation-request-admission";
-import { commitAllocationRequest } from "./allocation-request-commit";
+import { commitAllocationRequest, retainAllocationProviders } from "./allocation-request-commit";
 import {
   promoteWaitingAllocationBatch,
 } from "./allocation-waiting-promotion";
 import { reconcileOrphanedPreferredRuntimes } from "./control-plane-startup-reconciliation";
 import { AllocationPreemption } from "./allocation-preemption";
 import { MemoryReclaimer } from "./memory-reclaimer";
+import { MemoryRetirements } from "./memory-retirements";
 import { ProviderRequestAdmissionError } from "./provider-request-admission";
-import { withAbort } from "./http-body";
 import { LegacyLeaseRegistry } from "./legacy-lease-registry";
 import { LegacyPrepareCoordinator } from "./legacy-prepare-coordinator";
 import { runLegacyPrepareOperation } from "./legacy-prepare-operation";
@@ -116,6 +116,7 @@ export type ControlPlaneOptions = {
 
 export class ControlPlane {
   private readonly memoryReclaimer: MemoryReclaimer;
+  private readonly memoryRetirements = new MemoryRetirements();
   private readonly memoryRecoveryRequests = new Map<symbol, { runtimeIds: string[]; priority: number }>();
   private readonly memoryDrainingAllocations = new Set<string>();
   private readonly memoryDrainingRuntimes = new Set<string>();
@@ -275,7 +276,7 @@ export class ControlPlane {
       allocations: () => [...this.allocations.values()],
       protectedRuntimeIds: () => this.memoryProtectedRuntimes(),
       foregroundPriorityThreshold: () => this.foregroundPriorityThreshold(),
-      retire: (victim, priority, signal) => this.stopForMemory(victim, priority, signal),
+      retire: (victim, priority, signal, stillNeeded) => this.stopForMemory(victim, priority, signal, stillNeeded),
       emit: (name, labels) => this.emit(name, labels),
     });
     this.allocationStartup = new AllocationStartupLifecycle({
@@ -411,7 +412,10 @@ export class ControlPlane {
 
   releaseProviderRequest(instanceId: string | undefined, requestId: string): void {
     try { if (instanceId) this.providerInstances.releaseRequest(instanceId, requestId); }
-    finally { this.providerRequests.delete(requestId); }
+    finally {
+      this.providerRequests.delete(requestId);
+      this.memoryRetirements.notify();
+    }
   }
 
   async reconcileProviderInstances(signal?: AbortSignal): Promise<void> {
@@ -444,6 +448,7 @@ export class ControlPlane {
 
   beginDrain(): void {
     this.draining = true;
+    this.memoryRetirements.close();
     this.cancelIdle();
     this.cancelWaitingPromotion();
     this.providerInstances.close();
@@ -707,7 +712,7 @@ export class ControlPlane {
   async flush(): Promise<void> {
     while (true) {
       const current = this.applyChain;
-      await Promise.all([current, ...this.audioTasks, this.memoryReclaimer.flush()]);
+      await Promise.all([current, ...this.audioTasks, this.memoryReclaimer.flush(), this.memoryRetirements.flush()]);
       if (this.applyChain === current && this.audioTasks.size === 0) {
         return;
       }
@@ -950,7 +955,7 @@ export class ControlPlane {
 
   /** Also used by services that reserve memory outside Agent allocations. */
   async reclaimMemory(input: {
-    evaluateAdmission: () => MemoryPressure;
+    evaluateAdmission: (drainingRuntimeId?: string) => MemoryPressure;
     requestedRuntimeIds?: readonly string[];
     priority?: number;
     signal?: AbortSignal;
@@ -962,11 +967,13 @@ export class ControlPlane {
   }
 
   private reclaimAllocationMemory(runtimeIds: string[], priority: number, allocation?: Allocation): Promise<void> | undefined {
-    const evaluateAdmission = () => {
+    const evaluateAdmission = (drainingRuntimeId?: string) => {
+      // Only the victim's own reservation is ignored when rechecking its stop.
+      // A new admission must still respect every existing lifecycle reservation.
       const busy = this.registry.runtimes.some(runtime =>
         (runtimeIds.includes(runtime.id) || (runtime.policy.swapGroup && runtimeIds.some(id =>
           getRuntime(this.registry, id)?.policy.swapGroup === runtime.policy.swapGroup)))
-        && (this.lifecycleReservations.has(runtime.id) || this.options.isRuntimeMutating?.(runtime.id)));
+        && ((this.lifecycleReservations.has(runtime.id) && runtime.id !== drainingRuntimeId) || this.options.isRuntimeMutating?.(runtime.id)));
       if (this.draining || (allocation && (allocation.status !== "waiting" || Date.parse(allocation.expiresAt) <= this.now()))
         || busy || this.providerSwitchHoldUntil(runtimeIds, priority, false) !== undefined
         || this.hasExclusiveResourceConflict(runtimeIds, a => admittedAllocation(a.status) && (a.priority ?? 0) > priority)) return { ok: true };
@@ -985,16 +992,16 @@ export class ControlPlane {
       .finally(() => this.memoryRecoveryRequests.delete(recovery));
   }
 
-  private memoryProtectedRuntimes(): Set<string> {
+  private memoryProtectedRuntimes(ownReservation?: string): Set<string> {
     const legacyCapabilities = new Set(this.legacyLeases.values().flatMap(lease => lease.capabilities));
     return new Set(this.registry.runtimes.filter(runtime =>
-      this.draining || this.lifecycleReservations.has(runtime.id) || this.options.isRuntimeMutating?.(runtime.id)
+      this.draining || (this.lifecycleReservations.has(runtime.id) && runtime.id !== ownReservation) || this.options.isRuntimeMutating?.(runtime.id)
       || this.providerInstances.isRetained(runtime.id)
       || runtime.capability.some(capability => legacyCapabilities.has(capability)))
       .map(runtime => runtime.id));
   }
 
-  private async stopForMemory(victim: { runtime: string; allocations: string[] }, priority: number, signal?: AbortSignal): Promise<boolean> {
+  private async stopForMemory(victim: { runtime: string; allocations: string[] }, priority: number, signal: AbortSignal | undefined, stillNeeded: () => boolean): Promise<boolean> {
     const runtimeId = victim.runtime;
     signal?.throwIfAborted();
     // Reserve before yielding so a new allocation cannot join this victim during drain.
@@ -1003,49 +1010,63 @@ export class ControlPlane {
     this.lifecycleReservations.add(runtimeId);
     this.memoryDrainingRuntimes.add(runtimeId);
     for (const id of victim.allocations) this.memoryDrainingAllocations.add(id);
-    try {
-      const affectedRuntimeIds = new Set([runtimeId, ...victim.allocations.flatMap(id =>
-        this.allocations.get(id)?.bindings.map(binding => binding.runtime) ?? [])]);
-      const deadline = performance.now() + Math.max(0, this.options.memoryDrainTimeoutMs ?? 10_000);
-      for (;;) {
+    const affectedRuntimeIds = new Set([runtimeId, ...victim.allocations.flatMap(id =>
+      this.allocations.get(id)?.bindings.map(binding => binding.runtime) ?? [])]);
+    const hasActiveWork = () => {
+      const activeRequests = [...this.providerRequests.values()].some(request => request.runtimeId === runtimeId
+        || victim.allocations.includes(request.allocationId));
+      const instanceBusy = this.providerInstances.inspect().some(record => affectedRuntimeIds.has(record.instance.runtimeId)
+        && (record.refs.request > 0 || record.refs.mutation > 0));
+      return activeRequests || instanceBusy;
+    };
+    return await this.memoryRetirements.run({
+      runtimeId, signal, timeoutMs: this.options.memoryDrainTimeoutMs ?? 10_000,
+      retryMs: this.options.pollIntervalMs ?? 500,
+      eligible: () => {
+        const runtime = getRuntime(this.registry, runtimeId);
+        return !this.draining && runtime !== undefined && runtime.policy.class !== "resident"
+          && (runtime.policy.warm?.minInstances ?? 0) === 0
+          && !this.memoryProtectedRuntimes(runtimeId).has(runtimeId);
+      },
+      busy: hasActiveWork,
+      retire: async () => {
+        await this.observer.refresh();
         signal?.throwIfAborted();
-        if (this.draining || this.options.isRuntimeMutating?.(runtimeId) || this.providerInstances.isRetained(runtimeId)) return false;
-        const activeRequests = [...this.providerRequests.values()].some(request => request.runtimeId === runtimeId
-          || victim.allocations.includes(request.allocationId));
-        const instanceBusy = this.providerInstances.inspect().some(record => affectedRuntimeIds.has(record.instance.runtimeId)
-          && (record.refs.request > 0 || record.refs.mutation > 0));
-        if (!activeRequests && !instanceBusy) break;
-        const remaining = deadline - performance.now();
-        if (remaining <= 0) return false;
-        const pause = Bun.sleep(Math.min(25, remaining));
-        await (signal ? withAbort(pause, signal) : pause);
-      }
-      await this.observer.refresh();
-      signal?.throwIfAborted();
-      const runtime = getRuntime(this.registry, runtimeId);
-      if (this.draining || !runtime || runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0
-        || this.options.isRuntimeMutating?.(runtimeId) || this.providerInstances.isRetained(runtimeId)) return false;
-      // Unknown external work must finish naturally too, even if LARM has no request reference.
-      if (this.observer.getState().runtimes.find(s => s.id === runtimeId)?.status !== "HOT") return false;
-      for (const id of victim.allocations) {
-        const allocation = this.allocations.get(id);
-        if (allocation && admittedAllocation(allocation.status)) {
-          if ((allocation.priority ?? 0) >= priority) return false;
-          const result = await this.preemptAllocation(id, priority);
-          if (result.status !== 200) return false;
+        const runtime = getRuntime(this.registry, runtimeId);
+        if (this.draining || !runtime || runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0
+          || this.memoryProtectedRuntimes(runtimeId).has(runtimeId) || !stillNeeded()) return false;
+        if (hasActiveWork()) return "busy";
+        // Unknown external work must finish naturally too, even if LARM has no request reference.
+        const status = this.observer.getState().runtimes.find(s => s.id === runtimeId)?.status;
+        if (status === "BUSY") return "busy";
+        if (status !== "HOT") return false;
+        // Releasing an allocation may already stop and forget its managed instance.
+        const managed = this.providerInstances.hasRuntime(runtimeId);
+        for (const id of victim.allocations) {
+          const allocation = this.allocations.get(id);
+          if (allocation && admittedAllocation(allocation.status)) {
+            if ((allocation.priority ?? 0) >= priority) return false;
+            const result = await this.preemptAllocation(id, priority);
+            if (result.status !== 200) return false;
+          }
         }
-      }
-      signal?.throwIfAborted();
-      if (this.providerInstances.hasRuntime(runtimeId)) return await this.providerInstances.reclaimIdle(runtimeId);
-      await this.backend.stop(runtimeId);
-      return true;
-    } catch {
-      return false;
-    } finally {
-      this.lifecycleReservations.delete(runtimeId);
-      this.memoryDrainingRuntimes.delete(runtimeId);
-      for (const id of victim.allocations) this.memoryDrainingAllocations.delete(id);
-    }
+        signal?.throwIfAborted();
+        const stopped = managed
+          ? await this.providerInstances.reclaimIdle(runtimeId)
+          : await this.backend.stop(runtimeId).then(() => true);
+        if (stopped) {
+          try { await this.observer.refresh(); }
+          catch (error) { this.observer.invalidate(); throw error; }
+        }
+        return stopped;
+      },
+      release: () => {
+        this.lifecycleReservations.delete(runtimeId);
+        this.memoryDrainingRuntimes.delete(runtimeId);
+        for (const id of victim.allocations) this.memoryDrainingAllocations.delete(id);
+        this.enqueueWaitingPromotions();
+      },
+    });
   }
 
   getAllocationWaitReason(id: string): { reason: string; runtime?: string } | undefined {
@@ -1111,6 +1132,12 @@ export class ControlPlane {
           : undefined,
         isoNow: () => this.isoNow(),
         startupDeadline: (allocation) => this.allocationStartupDeadline(allocation),
+        retainProviders: (allocation) => retainAllocationProviders(
+          allocation,
+          (runtimeId, id, revision) => this.providerInstances.retainExisting(runtimeId, id, revision),
+          Boolean(this.backend.ensureInstance) || allocation.bindings.some(binding =>
+            this.providerInstances.hasManagedRuntime(binding.runtime)),
+        ),
         onAdmitted: (allocation) => this.emit("allocation_admitted", this.allocationLabels(allocation)),
         onReady: (allocation) => this.emit("allocation_ready", this.allocationLabels(allocation)),
         failMissingOperation: (allocation) =>

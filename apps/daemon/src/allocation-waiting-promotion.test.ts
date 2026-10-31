@@ -133,6 +133,7 @@ describe("waiting allocation promotion policy", () => {
       operation: currentOperation,
       now: () => "2026-09-29T00:00:01.000Z",
       startupDeadline: () => { throw new Error("ready allocation has no startup deadline"); },
+      retainProviders: () => { events.push("retain"); return true; },
       onAdmitted: () => events.push("admitted"),
       onReady: () => events.push("ready"),
       failMissingOperation: () => { throw new Error("operation exists"); },
@@ -146,7 +147,7 @@ describe("waiting allocation promotion policy", () => {
       phase: "runtime-ready",
       completedAt: "2026-09-29T00:00:01.000Z",
     });
-    expect(events).toEqual(["admitted", "ready"]);
+    expect(events).toEqual(["retain", "admitted", "ready"]);
   });
 
   test("fails closed if a non-ready waiter lost its startup operation", async () => {
@@ -167,6 +168,26 @@ describe("waiting allocation promotion policy", () => {
       error: { code: "operation_missing", message: "waiting allocation lost its startup operation" },
     });
     expect(events).toEqual(["admitted", "abort"]);
+  });
+
+  test("a HOT runtime without a retained instance goes through startup before becoming ready", async () => {
+    const candidate = allocation();
+    const currentOperation = operation();
+    const events: string[] = [];
+    await commitWaitingAllocationPromotion({
+      allocation: candidate,
+      runtimeStatuses: new Map([[runtimeId, "HOT"]]),
+      operation: currentOperation,
+      now: () => "2026-09-29T00:00:01.000Z",
+      startupDeadline: () => 10_000,
+      retainProviders: () => { events.push("retain"); return false; },
+      onAdmitted: () => events.push("admitted"),
+      onReady: () => { throw new Error("unretained instance cannot be ready"); },
+      failMissingOperation: () => { throw new Error("operation exists"); },
+      runEnsure: async () => { expect(candidate.status).toBe("pending"); events.push("ensure"); },
+    });
+    expect(events).toEqual(["retain", "admitted", "ensure"]);
+    expect(currentOperation.ready).toBe(false);
   });
 
   test("schedules startup only after admitted allocation and operation are transitioned", async () => {

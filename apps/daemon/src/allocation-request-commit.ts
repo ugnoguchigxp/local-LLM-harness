@@ -35,6 +35,21 @@ export type AllocationRequestCommitPort = {
   pruneHistory: () => void;
 };
 
+export function retainAllocationProviders(
+  allocation: Allocation,
+  retainExisting: AllocationRequestCommitPort["retainExisting"],
+  requiresInstanceTracking: boolean,
+): boolean {
+  for (const binding of allocation.bindings) {
+    const instance = retainExisting(binding.runtime, allocation.id, binding.providerRevision);
+    if (!instance) continue;
+    binding.instanceId = instance.id;
+    binding.instanceGeneration = instance.generation;
+    binding.endpoint = instance.endpoint;
+  }
+  return !requiresInstanceTracking || allocation.bindings.every(binding => binding.instanceId !== undefined);
+}
+
 export function commitAllocationRequest(input: AllocationRequestCommitPort):
   | { status: 200; body: Allocation }
   | { status: 202; body: Allocation } {
@@ -62,19 +77,10 @@ export function commitAllocationRequest(input: AllocationRequestCommitPort):
   };
 
   input.storeAllocation(allocation);
-  for (const binding of allocation.bindings) {
-    const instance = input.retainExisting(binding.runtime, allocation.id, binding.providerRevision);
-    if (!instance) continue;
-    binding.instanceId = instance.id;
-    binding.instanceGeneration = instance.generation;
-    binding.endpoint = instance.endpoint;
-  }
-  if (
-    allocation.status === "ready"
-    && input.requiresInstanceTracking
-    && allocation.bindings.some((binding) => binding.instanceId === undefined)
-  ) {
-    allocation.status = "pending";
+  // Waiting requests express demand but must not pin an instance being drained.
+  if (allocation.status !== "waiting") {
+    const retained = retainAllocationProviders(allocation, input.retainExisting, input.requiresInstanceTracking);
+    if (allocation.status === "ready" && !retained) allocation.status = "pending";
   }
   input.registerLifecycleAbort(allocation.id);
   input.emitCreated(allocation);

@@ -11,12 +11,12 @@ export class MemoryReclaimer {
     allocations: () => readonly Allocation[];
     protectedRuntimeIds: () => ReadonlySet<string>;
     foregroundPriorityThreshold: () => number;
-    retire: (victim: { runtime: string; allocations: string[] }, priority: number, signal?: AbortSignal) => Promise<boolean>;
+    retire: (victim: { runtime: string; allocations: string[] }, priority: number, signal: AbortSignal | undefined, stillNeeded: () => boolean) => Promise<boolean>;
     emit: (name: string, labels: Record<string, string>) => void;
   }) {}
 
   async reclaim(input: {
-    evaluateAdmission: () => MemoryPressure;
+    evaluateAdmission: (drainingRuntimeId?: string) => MemoryPressure;
     requestedRuntimeIds: readonly string[];
     priority: number;
     signal?: AbortSignal;
@@ -38,7 +38,10 @@ export class MemoryReclaimer {
         })[0];
         if (!victim) return;
         attempted.add(victim.runtime);
-        const stopped = await d.retire(victim, input.priority, input.signal);
+        const stopped = await d.retire(victim, input.priority, input.signal, () => {
+          const current = input.evaluateAdmission(victim.runtime);
+          return isMemoryPressure(current) && current.node === admission.node;
+        });
         d.emit("memory_reclamation", {
           runtime: victim.runtime, reason: admission.reason!, result: stopped ? "stopped" : "not_stopped",
           priority: String(input.priority),
