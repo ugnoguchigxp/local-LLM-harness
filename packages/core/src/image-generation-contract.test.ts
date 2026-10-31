@@ -10,6 +10,22 @@ test("Turbo advertised model and eight-step schedule are the public generation c
   }
 });
 
+test("FLUX selection has its own sixteen-step schedule and never changes the default", () => {
+  for (const input of [{ model: "flux-3-image-klein" }, { model: "flux-3-image-klein", steps: 16 }]) {
+    expect(imageGenerationRequestSchema.safeParse({ prompt: "A studio portrait", ...input }).success).toBe(true);
+  }
+  for (const input of [{ steps: 16 }, { model: "qwen-image-2.1-turbo", steps: 16 },
+    { model: "flux-3-image-klein", steps: 8 }, { model: "flux-3-image-klein-base" }]) {
+    expect(imageGenerationRequestSchema.safeParse({ prompt: "A studio portrait", ...input }).success).toBe(false);
+  }
+  const document = createOpenApiDocument("test") as {
+    components: { schemas: { ImageGenerationRequest: { properties: Record<string, unknown> } } };
+  };
+  expect(document.components.schemas.ImageGenerationRequest.properties.model).toMatchObject({
+    enum: ["qwen-image-2.1-turbo", "flux-3-image-klein"],
+  });
+});
+
 test("OpenAPI advertises the integer dimension range and exact output behavior", () => {
   const document = createOpenApiDocument("test") as {
     components: { schemas: { ImageGenerationRequest: { properties: Record<string, unknown> } } };

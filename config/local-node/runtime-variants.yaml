@@ -14,11 +14,20 @@ variants:
     idleTtlSeconds: 0
   image:
     capability: media.image.generate
+    models: [qwen-image-2.1-turbo, flux-3-image-klein]
     service: larm-image-qwen21.service
     healthUrl: http://127.0.0.1:8091/health
     group: accelerator-media-heavy
     estimatedMemoryGB: 34
     idleTtlSeconds: 0
+  # Optional: enable after preparing the FLUX runtime and installing its unit.
+  # image-flux3:
+  #   capability: media.image.generate
+  #   service: larm-image-flux3.service
+  #   healthUrl: http://127.0.0.1:8094/health
+  #   group: accelerator-media-heavy
+  #   estimatedMemoryGB: 48
+  #   idleTtlSeconds: 0
   mesh:
     capability: media.mesh.generate
     service: larm-mesh-trellis2.service

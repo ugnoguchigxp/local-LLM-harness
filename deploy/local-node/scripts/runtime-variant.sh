@@ -10,15 +10,16 @@ flock -w "${LARM_MEDIA_LOCK_TIMEOUT_SECONDS:-10}" 9 || { echo "media control loc
 case "${variant}" in
   music) service=larm-music-ace-step.service; health=http://127.0.0.1:8090/health; reserve_gb=18 ;;
   image) service=larm-image-qwen21.service; health=http://127.0.0.1:8091/health; reserve_gb=34 ;;
+  image-flux3) service=larm-image-flux3.service; health=http://127.0.0.1:8094/health; reserve_gb=48 ;;
   stable-audio) service=larm-audio-stable.service; health=http://127.0.0.1:8092/health; reserve_gb=6 ;;
   mesh) service=larm-mesh-trellis2.service; health=http://127.0.0.1:8093/health; reserve_gb=32 ;;
-  *) echo "usage: $0 status|start|stop music|image|mesh|stable-audio" >&2; exit 2 ;;
+  *) echo "usage: $0 status|start|stop music|image|image-flux3|mesh|stable-audio" >&2; exit 2 ;;
 esac
 
 ready() {
   local response
   response="$(curl -fsS --max-time 3 "${health}")" || return 1
-  python3 -c 'import json,sys; v=json.load(sys.stdin); d=v.get("data",v); sys.exit(0 if ((d.get("ready") is True or d.get("loaded") is True) if sys.argv[1] in ("image", "mesh") else (v.get("status")=="ok" if sys.argv[1]=="stable-audio" else d.get("models_initialized") is True)) else 1)' "${variant}" <<<"${response}"
+  python3 -c 'import json,sys; v=json.load(sys.stdin); d=v.get("data",v); sys.exit(0 if ((d.get("ready") is True or d.get("loaded") is True) if sys.argv[1] in ("image", "image-flux3", "mesh") else (v.get("status")=="ok" if sys.argv[1]=="stable-audio" else d.get("models_initialized") is True)) else 1)' "${variant}" <<<"${response}"
 }
 
 worker_alive() {
@@ -52,7 +53,7 @@ case "${action}" in
       exit 0
     fi
     # A live peer may own an external request; never evict it here.
-    for other in larm-image-qwen21.service larm-music-ace-step.service larm-mesh-trellis2.service larm-audio-stable.service; do
+    for other in larm-image-qwen21.service larm-image-flux3.service larm-music-ace-step.service larm-mesh-trellis2.service larm-audio-stable.service; do
       if [[ "${other}" != "${service}" ]] && systemctl is-active --quiet "${other}"; then
         echo "another media worker is active; refusing to evict it" >&2
         exit 1
@@ -65,7 +66,7 @@ case "${action}" in
       exit 1
     fi
     startup_seconds="${LARM_MEDIA_START_TIMEOUT_SECONDS:-300}"
-    if [[ "${variant}" == image ]]; then startup_seconds="${LARM_MEDIA_START_TIMEOUT_SECONDS:-60}"; fi
+    if [[ "${variant}" == image || "${variant}" == image-flux3 ]]; then startup_seconds="${LARM_MEDIA_START_TIMEOUT_SECONDS:-60}"; fi
     deadline=$((SECONDS + startup_seconds))
     if ! timeout "$((startup_seconds + 1))" systemctl start "${service}"; then
       stop_worker "${service}"
@@ -99,5 +100,5 @@ case "${action}" in
       sleep 1
     done
     ;;
-  *) echo "usage: $0 status|start|stop music|image|mesh|stable-audio" >&2; exit 2 ;;
+  *) echo "usage: $0 status|start|stop music|image|image-flux3|mesh|stable-audio" >&2; exit 2 ;;
 esac

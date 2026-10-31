@@ -100,7 +100,8 @@ done
 ) 8>"${LARM_MEDIA_LOCK_PATH}"
 
 # An external request using either audio worker must never be stopped or replaced.
-for pair in "stable-audio larm-music-ace-step.service" "music larm-audio-stable.service" "image larm-audio-stable.service"; do
+for pair in "stable-audio larm-music-ace-step.service" "music larm-audio-stable.service" "image larm-audio-stable.service" \
+    "image-flux3 larm-image-qwen21.service" "image larm-image-flux3.service" "music larm-image-flux3.service"; do
   read -r requested peer <<<"${pair}"
   rm -f "${test_root}/started"
   : >"${test_root}/calls"
@@ -108,3 +109,13 @@ for pair in "stable-audio larm-music-ace-step.service" "music larm-audio-stable.
   test ! -e "${test_root}/started"
   if grep -q '^stop ' "${test_root}/calls"; then exit 1; fi
 done
+
+# FLUX uses its own unit and health endpoint; failure cleans up only that unit.
+: >"${test_root}/calls"
+bash "${script}" start image-flux3
+grep -Fx 'start larm-image-flux3.service' "${test_root}/calls" >/dev/null
+bash "${script}" stop image-flux3
+: >"${test_root}/calls"
+if LARM_VARIANT_TEST_START_STATE=failed bash "${script}" start image-flux3 >"${test_root}/failure" 2>&1; then exit 1; fi
+grep -Fx 'stop larm-image-flux3.service' "${test_root}/calls" >/dev/null
+if grep -Fx 'start larm-image-qwen21.service' "${test_root}/calls"; then exit 1; fi

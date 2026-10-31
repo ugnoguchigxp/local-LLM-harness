@@ -67,15 +67,22 @@ export const imageArtifactDeleteSchema = z.object({
 
 export const imageGenerationRequestSchema = z.object({
   prompt: z.string().min(1).max(8_192),
-  model: z.literal("qwen-image-2.1-turbo").optional(),
+  model: z.enum(["qwen-image-2.1-turbo", "flux-3-image-klein"]).optional()
+    .describe("Select the on-demand image model; defaults to qwen-image-2.1-turbo. FLUX requires a configured runtime and never falls back to Qwen."),
   width: z.number().int().min(100).max(1280).optional()
-    .describe("Output width in pixels, 100 through 1280 inclusive; defaults to 512. Generation rounds up to a multiple of 32, then resizes to this exact width."),
+    .describe("Output width in pixels, 100 through 1280 inclusive; defaults to 512. Generation rounds up to model alignment (Qwen: 32, FLUX: 16), then resizes to this exact width."),
   height: z.number().int().min(100).max(1280).optional()
-    .describe("Output height in pixels, 100 through 1280 inclusive; defaults to 512. Generation rounds up to a multiple of 32, then resizes to this exact height."),
-  steps: z.literal(8).optional(),
+    .describe("Output height in pixels, 100 through 1280 inclusive; defaults to 512. Generation rounds up to model alignment (Qwen: 32, FLUX: 16), then resizes to this exact height."),
+  steps: z.union([z.literal(8), z.literal(16)]).optional()
+    .describe("Fixed model schedule: Qwen Turbo uses 8 steps, FLUX 3 Image Klein uses 16. Omit to use the selected model's schedule."),
   seed: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   format: imageArtifactFormatSchema.optional(),
-}).strict();
+}).strict().superRefine((request, context) => {
+  const steps = request.model === "flux-3-image-klein" ? 16 : 8;
+  if (request.steps !== undefined && request.steps !== steps) context.addIssue({
+    code: "custom", path: ["steps"], message: `selected image model requires ${steps} steps`,
+  });
+});
 
 export const imageGenerationResponseSchema = z.object({
   object: z.literal("image_generation"),

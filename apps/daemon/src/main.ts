@@ -338,6 +338,9 @@ await personalStateController.initialize();
 const startupProbeToken = crypto.randomUUID();
 const mediaPolicy = mediaPolicySchema.parse(parse(readFileSync(join(config.configDir, "runtime-variants.yaml"), "utf8")));
 const imageEndpoint = config.imageProviderEndpoint ?? new URL(mediaPolicy.variants.image.healthUrl).origin;
+const sharedImageWorker = mediaPolicy.variants.image.models?.includes("flux-3-image-klein") ?? false;
+const flux3Endpoint = sharedImageWorker ? imageEndpoint : mediaPolicy.variants["image-flux3"]
+  ? new URL(mediaPolicy.variants["image-flux3"].healthUrl).origin : undefined;
 const stableAudioEndpoint = new URL(mediaPolicy.variants["stable-audio"].healthUrl).origin;
 const musicEndpoint = config.musicProviderEndpoint ?? new URL(mediaPolicy.variants.music.healthUrl).origin;
 const mediaVariants = new MediaVariantManager({
@@ -352,11 +355,11 @@ const mediaVariants = new MediaVariantManager({
   afterStart: (variant) => { if (variant === "mesh") serviceLedger.observe("media-mesh", 32 * 1024 ** 3); },
   afterStop: (variant) => { if (variant === "mesh") serviceLedger.release("media-mesh"); },
   script: new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname,
-  idleTtlMs: { "stable-audio": 0, mesh: 0, image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
+  idleTtlMs: { "stable-audio": 0, mesh: 0, "image-flux3": 0, image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
 });
 // Recover orphan workers without making the public API depend on media permissions.
-await Promise.all(["image", "music", "stable-audio", ...(mediaPolicy.variants.mesh ? ["mesh"] : [])].map(async (variant) => {
-  const unit = variant === "image" ? "larm-image-qwen21.service" : variant === "mesh" ? "larm-mesh-trellis2.service" : variant === "stable-audio" ? "larm-audio-stable.service" : "larm-music-ace-step.service";
+await Promise.all(["image", "music", "stable-audio", ...(flux3Endpoint && !sharedImageWorker ? ["image-flux3"] : []), ...(mediaPolicy.variants.mesh ? ["mesh"] : [])].map(async (variant) => {
+  const unit = variant === "image" ? "larm-image-qwen21.service" : variant === "image-flux3" ? "larm-image-flux3.service" : variant === "mesh" ? "larm-mesh-trellis2.service" : variant === "stable-audio" ? "larm-audio-stable.service" : "larm-music-ace-step.service";
   const observed = Bun.spawn(["systemctl", "show", unit, "--property=ActiveState", "--value"], { stdout: "pipe", stderr: "ignore" });
   const state = (await new Response(observed.stdout).text()).trim();
   if (await observed.exited === 0 && state === "inactive") return;
@@ -411,7 +414,7 @@ await imageImportManager.initialize();
 if (!imageImportManager.ready) console.warn("image import journal unavailable; imports disabled, saved images retained");
 const imageGenerationProvider = imageEndpoint
   ? new ImageGenerationProvider(imageEndpoint, mediaVariants, fetch,
-    async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin())
+    async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin(), flux3Endpoint, sharedImageWorker ? "image" : "image-flux3")
   : undefined;
 const meshManager = mediaPolicy.variants.mesh ? new MeshManager(
   new MeshStore(config.meshArtifactRoot, { maxBytes: config.meshArtifactMaxBytes, freeFloorBytes: config.meshFreeFloorBytes,

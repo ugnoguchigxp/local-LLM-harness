@@ -2,6 +2,121 @@ import { expect, test } from "bun:test";
 import { MediaVariantManager } from "@larm/backends";
 import { ImageGenerationProvider } from "./image-generation-provider";
 
+test("FLUX caption failures and process cleanup run without inference or image dependencies", async () => {
+  const child = Bun.spawn(["python3", "-B",
+    new URL("../../../deploy/local-node/providers/flux3-image-provider.test.py", import.meta.url).pathname,
+    "FluxProviderTest.test_rejects_qwen_and_crossed_schedules_before_caption_or_submission",
+    "FluxProviderTest.test_caption_failure_never_submits_a_job_and_releases_lock",
+    "FluxProviderTest.test_caption_process_finishes_before_return_and_invalid_output_fails",
+    "FluxProviderTest.test_caption_memory_floor_terminates_its_process",
+    "FluxProviderTest.test_caption_timeout_kills_a_process_that_ignores_termination",
+  ], { stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+  ]);
+  expect({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }).toEqual({ exitCode: 0, output: "" });
+});
+
+test("the shared image worker starts only the selected backend and closes it on failure", async () => {
+  const child = Bun.spawn(["python3", "-B",
+    new URL("../../../deploy/local-node/providers/image-model-router.test.py", import.meta.url).pathname,
+  ], { stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+  ]);
+  expect({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }).toEqual({ exitCode: 0, output: "" });
+});
+
+const imageArtifact = (model: string, steps: number) => ({ id: "image_test", createdAt: new Date().toISOString(),
+  format: "png", mimeType: "image/png", width: 512, height: 512, hasAlpha: false, bytes: 10,
+  sha256: "a".repeat(64), contentUrl: "/v1/image-artifacts/image_test/content", model, steps });
+
+test("explicit model selection routes and stops each worker before returning, with Qwen still the default", async () => {
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action, variant) => { calls.push(`${action}:${variant}`); },
+  });
+  const provider = new ImageGenerationProvider("http://qwen.test", manager, async (url, init) => {
+    const input = JSON.parse(String(init.body));
+    const flux = input.model === "flux-3-image-klein";
+    expect(url.origin).toBe(flux ? "http://flux.test" : "http://qwen.test");
+    return Response.json({ object: "image_generation", status: "succeeded", durationMs: 1,
+      artifact: imageArtifact(flux ? "leejet/flux-3-image-klein-GGUF" : "AtomicChat/Qwen-Image-2.1-Turbo-GGUF", flux ? 16 : 8) });
+  }, async () => true, undefined, "http://flux.test");
+  try {
+    for (const input of [{}, { model: "flux-3-image-klein" as const, steps: 16 as const },
+      { model: "qwen-image-2.1-turbo" as const }]) {
+      const result = await provider.generate({ prompt: "A photograph", ...input });
+      expect(manager.isOccupied()).toBe(false);
+      expect(result.artifact.steps).toBe(input.model === "flux-3-image-klein" ? 16 : 8);
+    }
+    expect(calls).toEqual(["start:image", "stop:image", "start:image-flux3", "stop:image-flux3", "start:image", "stop:image"]);
+  } finally { await manager.close(); }
+});
+
+test("unconfigured FLUX fails before allocation and never falls back to Qwen", async () => {
+  const { Hono } = await import("hono");
+  const { registerImageGenerationRoutes } = await import("./routes/image-generations");
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action, variant) => { calls.push(`${action}:${variant}`); },
+  });
+  const provider = new ImageGenerationProvider("http://qwen.test", manager, async () => {
+    throw new Error("must not submit to Qwen");
+  }, undefined, () => { calls.push("workload"); return () => {}; });
+  const app = new Hono(); registerImageGenerationRoutes(app, provider);
+  try {
+    const response = await app.request("/v1/images/generations", { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: "A photograph", model: "flux-3-image-klein" }) });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: { code: "image_model_unavailable" } });
+    expect(calls).toEqual([]);
+  } finally { await manager.close(); }
+});
+
+test("a shared image worker receives explicit FLUX intent on the existing endpoint", async () => {
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action, variant) => { calls.push(`${action}:${variant}`); },
+  });
+  const provider = new ImageGenerationProvider("http://image.test", manager, async (url, init) => {
+    expect(url.origin).toBe("http://image.test");
+    expect(JSON.parse(String(init.body))).toMatchObject({ model: "flux-3-image-klein" });
+    return Response.json({ object: "image_generation", status: "succeeded", durationMs: 1,
+      artifact: imageArtifact("leejet/flux-3-image-klein-GGUF", 16) });
+  }, undefined, undefined, "http://image.test", "image");
+  try {
+    const result = await provider.generate({ prompt: "A cat", model: "flux-3-image-klein" });
+    expect(result.artifact.steps).toBe(16);
+    expect(calls).toEqual(["start:image", "stop:image"]);
+  } finally { await manager.close(); }
+});
+
+test("Qwen and FLUX cannot overlap and a failed FLUX request releases only its own worker", async () => {
+  const submitted = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    run: async (action, variant) => { calls.push(`${action}:${variant}`); },
+  });
+  const provider = new ImageGenerationProvider("http://qwen.test", manager, async () => {
+    submitted.resolve(); await finish.promise; throw new Error("failed flux job");
+  }, undefined, undefined, "http://flux.test");
+  try {
+    const generation = provider.generate({ prompt: "A photograph", model: "flux-3-image-klein" }).catch(error => error);
+    await submitted.promise;
+    const { MediaVariantBusyError } = await import("@larm/backends");
+    for (const variant of ["image", "image-flux3", "music", "mesh", "stable-audio"] as const) {
+      await expect(manager.acquire(variant)).rejects.toBeInstanceOf(MediaVariantBusyError);
+    }
+    finish.resolve();
+    expect((await generation).message).toBe("failed flux job");
+    expect(calls).toEqual(["start:image-flux3", "stop:image-flux3"]);
+    await (await manager.acquire("image"))();
+    expect(manager.isOccupied()).toBe(false);
+  } finally { finish.resolve(); await manager.close(); }
+});
+
 test("native image startup handles process exits, live listeners and media TIME_WAIT without inference", async () => {
   const child = Bun.spawn(["python3", "-B",
     new URL("../../../deploy/local-node/providers/qwen-image21-turbo-provider.test.py", import.meta.url).pathname,

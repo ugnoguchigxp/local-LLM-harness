@@ -2,7 +2,7 @@ import type { Hono } from "hono";
 import { MediaVariantBusyError } from "@larm/backends";
 import { imageGenerationRequestSchema } from "@larm/core";
 import { errorBody, readJson } from "../app-http";
-import { ImageWorkerStopError, type ImageGenerationProvider } from "../image-generation-provider";
+import { ImageModelUnavailableError, ImageWorkerStopError, type ImageGenerationProvider } from "../image-generation-provider";
 import type { ControlEvent } from "../controller";
 
 export function registerImageGenerationRoutes(app: Hono, provider: ImageGenerationProvider | undefined,
@@ -12,16 +12,21 @@ export function registerImageGenerationRoutes(app: Hono, provider: ImageGenerati
     const request = imageGenerationRequestSchema.safeParse(await readJson(c, 32 * 1024));
     if (!request.success) return c.json(errorBody("invalid_image_request", "invalid image generation request"), 400);
     const id = `image_req_${crypto.randomUUID()}`;
+    const model = request.data.model ?? "qwen-image-2.1-turbo";
     const started = Date.now();
     let status = 503;
     let outcome = "image_generation_failed";
-    onEvent?.({ name: "image_generation_started", labels: { request: id } });
+    onEvent?.({ name: "image_generation_started", labels: { request: id, model } });
     try {
       const result = await provider.generate(request.data, c.req.raw.signal);
       status = 200;
       outcome = "succeeded";
       return c.json(result);
     } catch (error) {
+      if (error instanceof ImageModelUnavailableError) {
+        outcome = "image_model_unavailable";
+        return c.json(errorBody(outcome, error.message), 503);
+      }
       if (error instanceof MediaVariantBusyError) {
         status = 409;
         outcome = "media_variant_busy";
@@ -39,7 +44,7 @@ export function registerImageGenerationRoutes(app: Hono, provider: ImageGenerati
       return c.json(errorBody("image_generation_failed", error instanceof Error ? error.message : "image generation failed"), 503);
     } finally {
       onEvent?.({ name: "image_generation_completed", labels: {
-        request: id, status: String(status), outcome, elapsedMs: String(Date.now() - started),
+        request: id, model, status: String(status), outcome, elapsedMs: String(Date.now() - started),
       } });
     }
   });

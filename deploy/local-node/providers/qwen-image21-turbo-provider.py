@@ -31,6 +31,13 @@ def available_bytes() -> int:
 
 
 class Provider:
+    model_name = MODEL
+    model_source = MODEL_SOURCE
+    model_revision = MODEL_REVISION
+    steps = 8
+    alignment = 32
+    sigmas = SIGMAS
+
     def __init__(self, command: list[str], endpoint: str, artifact_root: Path) -> None:
         self.command, self.endpoint, self.artifact_root = command, endpoint, artifact_root
         self.child: subprocess.Popen | None = None
@@ -90,9 +97,9 @@ class Provider:
         while not self.ready():
             status = self.child.poll()
             if status is not None:
-                raise RuntimeError(f"Turbo engine exited before readiness (exit={status})")
+                raise RuntimeError(f"{self.model_name} engine exited before readiness (exit={status})")
             if time.monotonic() >= deadline:
-                raise RuntimeError("Turbo engine readiness timed out after 30 seconds")
+                raise RuntimeError(f"{self.model_name} engine readiness timed out after 30 seconds")
             time.sleep(0.1)
 
     def ready(self) -> bool:
@@ -113,7 +120,7 @@ class Provider:
                 self.child.kill()
                 self.child.wait()
 
-    def generate(self, request: dict) -> dict:
+    def validate_request(self, request: dict) -> tuple:
         allowed = {"prompt", "model", "width", "height", "steps", "seed", "format"}
         if request.keys() - allowed:
             raise ValueError("unknown image request field")
@@ -122,32 +129,41 @@ class Provider:
         seed, output_format = request.get("seed", 0), request.get("format", "webp")
         if not isinstance(prompt, str) or not 1 <= len(prompt) <= 8192:
             raise ValueError("prompt must contain 1 to 8192 characters")
-        if request.get("model", MODEL) != MODEL:
-            raise ValueError("model must match the advertised Turbo service")
+        if request.get("model", self.model_name) != self.model_name:
+            raise ValueError("model must match the selected image service")
         if type(width) is not int or type(height) is not int or not 100 <= width <= 1280 or not 100 <= height <= 1280:
             raise ValueError("width and height must be integers from 100 to 1280")
-        if type(request.get("steps", 8)) is not int or request.get("steps", 8) != 8:
-            raise ValueError("Turbo uses exactly 8 steps")
+        if type(request.get("steps", self.steps)) is not int or request.get("steps", self.steps) != self.steps:
+            raise ValueError(f"{self.model_name} uses exactly {self.steps} steps")
         if type(seed) is not int or not 0 <= seed <= 2**53 - 1:
             raise ValueError("seed must be a non-negative safe integer")
         if output_format not in ("webp", "png"):
             raise ValueError("format must be webp or png")
+        return prompt, width, height, seed, output_format
+
+    def prepare_prompt(self, prompt: str, width: int, height: int) -> str:
+        return prompt
+
+    def generate(self, request: dict) -> dict:
+        prompt, width, height, seed, output_format = self.validate_request(request)
         if not self.generation_lock.acquire(blocking=False):
             raise RuntimeError("image provider is busy")
         try:
             started = time.monotonic()
-            # Qwen's native engine requires multiples of 32. Keep the public
-            # artifact dimensions exact by resizing after validated generation.
-            engine_width, engine_height = ((value + 31) // 32 * 32 for value in (width, height))
+            prompt = self.prepare_prompt(prompt, width, height)
+            # Preserve exact public dimensions after native model alignment.
+            engine_width, engine_height = ((value + self.alignment - 1) // self.alignment * self.alignment for value in (width, height))
+            sample_params = {"sample_method": "euler", "sample_steps": self.steps, "guidance": {"txt_cfg": 1.0}}
+            if self.sigmas is not None:
+                sample_params["custom_sigmas"] = self.sigmas
             job = self.request("/sdcpp/v1/img_gen", {
                 "prompt": prompt, "width": engine_width, "height": engine_height, "seed": seed,
                 "batch_count": 1, "output_format": "png", "preview": "none",
-                "sample_params": {"sample_method": "euler", "sample_steps": 8,
-                    "custom_sigmas": SIGMAS, "guidance": {"txt_cfg": 1.0}},
+                "sample_params": sample_params,
             })
             while True:
                 if self.child is None or self.child.poll() is not None:
-                    raise RuntimeError("Turbo engine exited during generation")
+                    raise RuntimeError(f"{self.model_name} engine exited during generation")
                 if available_bytes() < 16 * 1024**3:
                     self.close()
                     raise RuntimeError("generation stopped at the 16 GiB memory floor")
@@ -158,7 +174,7 @@ class Provider:
                 if result["status"] == "completed":
                     break
                 if result["status"] in ("failed", "cancelled"):
-                    raise RuntimeError("Turbo generation failed")
+                    raise RuntimeError(f"{self.model_name} generation failed")
                 time.sleep(0.2)
             from PIL import Image
             raw = base64.b64decode(result["result"]["images"][0]["b64_json"], validate=True)
@@ -181,7 +197,7 @@ class Provider:
                 "format": output_format, "mimeType": f"image/{output_format}", "file": filename,
                 "width": width, "height": height, "hasAlpha": image.mode in ("RGBA", "LA"),
                 "bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest(),
-                "model": MODEL_SOURCE, "modelRevision": MODEL_REVISION, "seed": seed, "steps": 8,
+                "model": self.model_source, "modelRevision": self.model_revision, "seed": seed, "steps": self.steps,
             }
             metadata_path = directory / "metadata.json"
             metadata_path.write_text(json.dumps(metadata, ensure_ascii=False) + "\n")
@@ -213,7 +229,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(404, {"error": "not_found"})
         ready = self.provider.ready()
         # sd-server loads weights lazily on the first image; ready means accepting work.
-        self.respond(200 if ready else 503, {"ready": ready, "model": MODEL,
+        self.respond(200 if ready else 503, {"ready": ready, "model": self.provider.model_name,
             "busy": self.provider.generation_lock.locked()})
 
     def do_POST(self) -> None:
@@ -240,6 +256,8 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1"])
     parser.add_argument("--port", type=int, default=8091)
     parser.add_argument("--engine-port", type=int, default=8092)
+    parser.add_argument("--models-config", type=Path,
+        default=Path(__file__).resolve().parents[3] / "config/local-node/image-models.json")
     for field in ("engine", "model", "encoder", "vae", "artifact-root"):
         parser.add_argument(f"--{field}", type=Path, required=True)
     args = parser.parse_args()
@@ -255,6 +273,12 @@ def main() -> None:
         "--sigmas", ",".join(map(str, SIGMAS)), "--listen-ip", "127.0.0.1",
         "--listen-port", str(args.engine_port)]
     provider = Provider(command, f"http://127.0.0.1:{args.engine_port}", args.artifact_root)
+    if args.models_config.is_file():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("larm_image_router", Path(__file__).with_name("image-model-router.py"))
+        router = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(router)
+        provider = router.ImageModelRouter(provider, args.models_config, args.engine_port)
     Handler.provider = provider
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     try:

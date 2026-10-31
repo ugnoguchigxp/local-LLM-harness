@@ -1,0 +1,205 @@
+<article lang="ja">
+  <h1>画像生成APIのモデル選択とFLUX 3 Kleinのオンデマンド起動</h1>
+  <p>
+    2026年10月31日。既存の画像生成APIでmodelパラメータを受け、Qwen-Image-2.1-Turboと FLUX 3 Image
+    Kleinを明示的に選べる実装を追加した。model省略時はQwenを使う。
+    FLUXも共通の重量級排他制御に参加し、画像保存後に停止する。実配備では既存の画像service内で要求modelを解決し、選択したbackendだけを起動する。
+  </p>
+  <aside>
+    <p>
+      ソースとモデルなしの検証までを完了した段階。FLUXの重み・対応エンジン・補完モデルはこのホストに未準備で、
+      本番には配備していない。実画像による画質、速度、gfx1151の互換性、ピークメモリは未検証。
+      この節は初期実装時の記録。実配備のため、2026年10月31日に共有image
+      workerと明示的なmodels設定を追加し、既存unitのままFLUXを起動できるよう改修している。配備と受入の結果は別途記録する。
+    </p>
+  </aside>
+  <section id="request">
+    <h2>要求契約</h2>
+    <p>
+      Control認証でPOST /v1/images/generationsへ要求する。接続先や認証方式は従来と同じ。
+      呼び出し側がsystemdの状態を確認したり、Providerのportを選ぶ必要はない。
+    </p>
+    <pre><code class="language-json">{
+  "model": "flux-3-image-klein",
+  "prompt": "窓から自然光が入る部屋。左に緑の椅子、右に赤いソファ、中央に木のテーブル。写真風。",
+  "width": 768,
+  "height": 768,
+  "steps": 16,
+  "seed": 42,
+  "format": "webp"
+}</code></pre>
+    <table>
+      <caption>
+        モデル選択と固定schedule
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">model</th>
+          <th scope="col">steps</th>
+          <th scope="col">起動先</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">省略、またはqwen-image-2.1-turbo</th>
+          <td>省略、または8</td>
+          <td>image variant、larm-image-qwen21.service</td>
+        </tr>
+        <tr>
+          <th scope="row">flux-3-image-klein</th>
+          <td>省略、または16</td>
+          <td>
+            image variant、larm-image-qwen21.service内のFLUX backend（専用unit構成も選択可能）
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      既定寸法512角、各辺100〜1280の整数、既定seed 0、WebP/PNGという契約を継続する。
+      Qwenは32、FLUXは16の倍数へ内部寸法を切り上げ、検証後に要求どおりの実寸へ縮小する。
+      stepsは選択したモデルと一致する場合だけ指定できる。FLUX Base、4K、8-step
+      Klein、参照編集、boxの構造化入力は今回の対象外。
+    </p>
+    <p>
+      FLUXが未設定の場合は、workerの確保・起動前に503 image_model_unavailableを返す。
+      未知のmodelや、FLUXにsteps=8を付けた要求は400。Qwenへ自動的に代替しない。
+      異なるモデルや音楽・3Dとの競合は409
+      media_variant_busy。生成、停止、期限超過の失敗契約は従来どおり。
+    </p>
+  </section>
+  <section id="lifecycle">
+    <h2>モデル選択とライフサイクル</h2>
+    <ol>
+      <li>
+        Coreの入力schemaでmodel、steps、寸法等を検証する。Daemonは選択モデルの設定有無を確認する。
+      </li>
+      <li>
+        選択したmedia
+        variantを確保する。Qwen・FLUX・音楽・3Dは同じ排他制御を通り、他の実行中要求を追い出さない。
+      </li>
+      <li>
+        共有構成では既存8091のPython
+        workerが要求を受け付ける。healthのreadyは受付可能を表し、モデル読込完了を表さない。
+      </li>
+      <li>
+        ローカルの公式9B補完モデルを子プロセスで起動し、場面全体を記述するcaptionへ変換する。その終了を待つ。
+      </li>
+      <li>
+        補完終了後に、共有構成では内部8092の対応native engineを起動し、FLUX専用の16-step
+        scheduleとCFG 1で生成する。Qwenの専用sigmasを流用しない。
+      </li>
+      <li>
+        画像実寸と形式を検証し、hash、実際の重みsource/revision、seed、stepsをmetadataとともに保存する。
+      </li>
+      <li>
+        Controlから画像が読めることを確認し、選択したworkerの停止完了後に200を返す。保存画像は停止後も取得できる。
+      </li>
+    </ol>
+    <p>
+      FLUX workerは1要求を処理した後に再利用しない。補完モデルと画像モデルを同時に常駐させないため、
+      補完が終了するまでnative
+      processを起動しない。補完の失敗時には画像生成を送信せず、呼び出し元が後処理する。
+      システム停止時は同じcgroup内の補完子プロセス・native子プロセスも終了する。
+    </p>
+    <p>
+      補完モデルはlocal_files_onlyで読み、追加downloadや外部APIは使わない。
+      公式system_prompts.jsonのt2iを用い、要求の縦横比を添え、greedyで最大1536新規tokenを生成する。
+      token上限到達、空caption、8192文字超過、子プロセスの失敗は成功にしない。原promptとcaptionは画像metadataへ保存しない。
+      補完の時間上限は180秒、memory floorは16 GiB。生成要求全体はControlの900秒期限を共有する。
+    </p>
+  </section>
+  <section id="host-preparation">
+    <h2>実機で有効にする前の準備</h2>
+    <table>
+      <caption>
+        repository外へ用意するもの
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">構成要素</th>
+          <th scope="col">要件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">native engine</th>
+          <td>FLUX 3対応済みsd.cpp HIP buildのsd-server。Qwen用の既存buildは上書きしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">画像本体</th>
+          <td>
+            蒸留版black-forest-labs/flux-3-image-klein、またはleejetのGGUF変換。Baseは選ばない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">encoder・VAE</th>
+          <td>対応するQwen3-VL 4BとFLUX.2 VAE。現在のQwen画像用8B encoder・専用VAEは使わない。</td>
+        </tr>
+        <tr>
+          <th scope="row">補完モデル</th>
+          <td>
+            公式flux-3-image-klein-pupの完全なローカルsnapshot。config、tokenizer、system_prompts、全weight
+            shard。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Python環境</th>
+          <td>
+            既存qwen-image-2.1-runtimeのPython。Pillow、ROCm
+            PyTorch、Qwen3_5ForConditionalGeneration対応Transformersが必要。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      パスと取得revisionを記録したJSON
+      manifestを作り、prepare-flux3-image-runtime.pyへ--manifestで渡す。
+      必須keyはengine、model、encoder、vae、upsampler、modelSource、modelRevision、engineRevision、upsamplerRevision。
+      パスはunitが読み込める/srv/ai/appsまたは/srv/ai/models以下とし、revisionには取得時の40桁commit
+      SHAを入れる。
+      この準備処理はdownload・生成・unit操作を行わず、ファイル不足を拒否し、環境ファイルを0600で新規作成する。
+      既存の環境ファイルは上書きしない。revisionの宣言と配置ファイルの一致は取得工程で検証する。
+    </p>
+    <pre><code class="language-bash">python3 deploy/local-node/scripts/prepare-flux3-image-runtime.py \
+  --manifest /srv/ai/config/flux3-runtime-manifest.json \
+  --output /srv/ai/config/flux3-image.env</code></pre>
+    <p>
+      共有構成では既存のlarm-image-qwen21.serviceとmedia用polkit規則を利用する。config/local-node/image-models.jsonに検証済みmanifestを配置し、runtime-variants.yamlのimage.modelsへqwen-image-2.1-turboとflux-3-image-kleinを明示する。環境ファイルの作成と専用image-flux3
+      unitの設置は共有構成では不要であり、上記CLIは専用unitを使う場合の手順である。
+      profileの会話モデルや起動中backendの名前から画像モデルを推測せず、要求modelによってimageまたはimage-flux3を解決する。
+    </p>
+    <p>
+      共有workerでもFLUX選択時は48 GiBと安全余白16 GiB、合計64
+      GiBのMemAvailableをbackend起動前に確認する。
+      実機peakを測った値ではなく、初期の保守的な受付条件。実生成時の観測をもって再評価する。 128GB
+      UMAの全量が利用可能だとは見積もらない。Qwenの既存34 GiB予約は継続する。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証範囲と残る受入</h2>
+    <p>
+      bun run check、bun run docs:check:fix、git diff --checkが成功した。
+      画像runtimeのPython環境でもQwen adapterの11件、FLUX adapterの6件が成功した。
+      補完用Transformersクラスのimportも確認した。これらに実重みのロード・モデル推論は含まない。
+    </p>
+    <p>
+      モデル・stepsの組合せ、Qwen既定維持、FLUXへの転送先、未設定の503、重量級処理の排他、
+      エラー後の選択worker停止と再受付をテストした。Pythonのadapter試験では補完失敗・期限・memory
+      floor・子プロセス停止、
+      FLUX専用schedule、16刻みの内部寸法、実寸・重みrevision付き画像保存を検証する。実モデルの推論は使わない。
+    </p>
+    <p>
+      実機受入には、対応engineと重みを配置した上で、QwenとFLUXの交互要求、各画像のhash・実寸・model
+      metadata、
+      生成後の全子プロセス停止、起動時間・補完時間・生成時間・メモリ、要求途中の失敗を確認する必要がある。
+      この未実施の受入を、ソーステストの成功と混同しない。
+    </p>
+    <p>
+      既存運用は<a href="./qwen-image-2.1-turbo-on-demand.html">Qwenのオンデマンド仕様</a>、
+      比較・ライセンス・外部一次資料は<a
+        href="./flux3-klein-vs-qwen-image21-turbo-research-2026-10-31.html"
+        >FLUXとQwenの比較調査</a
+      >を参照する。
+    </p>
+  </section>
+</article>

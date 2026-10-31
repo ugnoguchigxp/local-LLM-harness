@@ -1,0 +1,13 @@
+{
+  "flux-3-image-klein": {
+    "engine": "/srv/ai/apps/flux3-image-runtime/stable-diffusion.cpp/build-hip/bin/sd-server",
+    "model": "/srv/ai/models/leejet/flux-3-image-klein-GGUF/flux3-image-klein-Q8_0.gguf",
+    "encoder": "/srv/ai/models/Qwen/Qwen3-VL-4B-Instruct-GGUF/Qwen3VL-4B-Instruct-Q8_0.gguf",
+    "vae": "/srv/ai/models/Comfy-Org/flux2-dev/split_files/vae/flux2-vae.safetensors",
+    "upsampler": "/srv/ai/models/black-forest-labs/flux-3-image-klein-pup",
+    "modelSource": "leejet/flux-3-image-klein-GGUF",
+    "modelRevision": "1c2ad2f9b9247ccca6506a23bdb033fdb0873321",
+    "engineRevision": "e239e4b0fd3de49834cec67031a44796ca465abc",
+    "upsamplerRevision": "3f3edb52b2c55de0d49feab28598b68f7f8e4830"
+  }
+}
