@@ -1,6 +1,7 @@
 import type { ServiceMemoryReservation } from "@larm/core";
 import {
   admittedAllocation,
+  memoryResourceError,
   type Allocation,
   type ClusterState,
   type Registry,
@@ -17,12 +18,16 @@ export type AllocationCapacityPlan =
     ok: false;
     reason: string;
     result: {
-      status: 409;
+      status: 409 | 503;
       body: {
         error: {
           code: "resource_exhausted";
           message: string;
           admission?: ReturnType<typeof evaluateAllocationAdmission>["nodes"];
+          type?: string;
+          resource?: "memory";
+          reason?: "memory_exhausted" | "live_memory_exhausted";
+          retry?: "after_capacity_change";
         };
       };
     };
@@ -91,13 +96,14 @@ export function planAllocationCapacity(input: {
       : admission.ok
       ? "runtime resources are unavailable"
       : admission.message;
+    const memoryError = memoryResourceError(reason, message, admission.nodes);
     return {
       ok: false,
       reason,
       result: {
-        status: 409,
+        status: memoryError ? 503 : 409,
         body: {
-          error: {
+          error: memoryError ?? {
             code: "resource_exhausted",
             message,
             admission: admission.nodes,

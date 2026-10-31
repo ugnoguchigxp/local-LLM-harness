@@ -1,3 +1,4 @@
+import { resourceErrorFields } from "./resource-errors";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -895,6 +896,7 @@ export const publicAgentConnectionSchema = z.object({
   idleReleaseAt: z.string().datetime().optional(),
   releasedAt: z.string().datetime().optional(),
   error: z.object({
+    ...resourceErrorFields,
     code: z.string().min(1).max(128),
     message: z.string().min(1).max(512),
   }).strict().optional(),

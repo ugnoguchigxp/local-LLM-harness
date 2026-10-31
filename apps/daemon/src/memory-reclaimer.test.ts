@@ -140,7 +140,7 @@ test("a rejected memory request keeps its victim draining and stops it as soon a
     const id = (lower.body as { id: string }).id;
     f.control.retainProviderRequest(id, "large", "long-request");
     const signal = f.control.getAllocationSignal(id)!;
-    expect((await f.allocate()).status).toBe(409);
+    expect((await f.allocate()).status).toBe(503);
     expect(signal.aborted).toBe(false);
     expect(f.calls).toEqual(["stop:small"]);
     expect(f.control.isRuntimeTransitioning("large")).toBe(true);
@@ -174,8 +174,8 @@ test("repeated polls cannot reuse a draining managed instance and retirement wai
     const instance = f.control.retainProviderRequest(id, "large", "first");
     expect(instance).toBeDefined();
     f.control.retainProviderRequest(id, "large", "second");
-    expect((await f.allocate()).status).toBe(409);
-    expect((await f.allocate()).status).toBe(409);
+    expect((await f.allocate()).status).toBe(503);
+    expect((await f.allocate()).status).toBe(503);
     const sameRuntime = await f.allocate("large", 1000);
     expect(sameRuntime.body).toMatchObject({ status: "waiting" });
     f.control.releaseProviderRequest(instance, "first"); await f.control.flush();
@@ -221,7 +221,7 @@ test("deferred retirement rechecks memory need and protection before stopping", 
       const lower = await f.allocate("large", 1000);
       const id = (lower.body as { id: string }).id;
       const instance = f.control.retainProviderRequest(id, "large", "running");
-      expect((await f.allocate()).status).toBe(409);
+      expect((await f.allocate()).status).toBe(503);
       if (protect) f.registry.runtimes.find(r => r.id === "large")!.policy.warm!.minInstances = 1;
       else f.registry.runtimes.find(r => r.id === "target")!.resources.estimatedMemoryGB = 1;
       f.control.releaseProviderRequest(instance, "running"); await f.control.flush();
@@ -241,7 +241,7 @@ test("a legacy lease acquired during drain protects its runtime before retiremen
     const lower = await f.allocate("large", 1000);
     const id = (lower.body as { id: string }).id;
     const instance = f.control.retainProviderRequest(id, "large", "running");
-    expect((await f.allocate()).status).toBe(409);
+    expect((await f.allocate()).status).toBe(503);
     expect((await f.control.prepare({ capabilities: ["legacy-only"] })).status).toBe(200);
     f.control.releaseProviderRequest(instance, "running"); await f.control.flush();
     expect(f.calls).toEqual(["stop:small"]);
@@ -274,7 +274,7 @@ test("a request for a draining runtime does not reclaim unrelated services", asy
     const lower = await f.allocate("large", 1000);
     const id = (lower.body as { id: string }).id;
     const instance = f.control.retainProviderRequest(id, "large", "running");
-    expect((await f.allocate()).status).toBe(409);
+    expect((await f.allocate()).status).toBe(503);
     f.running.add("small");
     f.registry.nodes[0]!.resources.memoryTotalGB = 48;
     await f.observer.refresh();
@@ -295,7 +295,7 @@ test("simultaneous completions reclaim only enough memory across deferred victim
     const smallId = (small.body as { id: string }).id;
     const largeInstance = f.control.retainProviderRequest(largeId, "large", "large-request");
     const smallInstance = f.control.retainProviderRequest(smallId, "small", "small-request");
-    expect((await f.allocate()).status).toBe(409);
+    expect((await f.allocate()).status).toBe(503);
     expect(f.control.isRuntimeTransitioning("large")).toBe(true);
     expect(f.control.isRuntimeTransitioning("small")).toBe(true);
     f.control.releaseProviderRequest(largeInstance, "large-request");
@@ -314,7 +314,7 @@ test("backend BUSY after request completion also delays retirement until the pro
     const lower = await f.allocate("large", 1000);
     const id = (lower.body as { id: string }).id;
     const instance = f.control.retainProviderRequest(id, "large", "running");
-    expect((await f.allocate()).status).toBe(409);
+    expect((await f.allocate()).status).toBe(503);
     f.busy.add("large");
     f.control.releaseProviderRequest(instance, "running"); await f.control.flush();
     expect(f.calls).toEqual(["stop:small"]);
@@ -334,7 +334,7 @@ test("a failed observation after deferred stop cannot publish the stale HOT runt
     const lower = await f.allocate("large", 1000);
     const id = (lower.body as { id: string }).id;
     const instance = f.control.retainProviderRequest(id, "large", "running");
-    expect((await f.allocate()).status).toBe(409);
+    expect((await f.allocate()).status).toBe(503);
     f.backend.list = async () => {
       if (!f.running.has("large")) throw new Error("post-stop observation failed");
       return await list();
@@ -371,11 +371,11 @@ test("equal-priority allocations, warm floors and lifecycle mutations are not me
   const f = await fixture({ control: { isRuntimeMutating: id => id === "small" } });
   try {
     await f.allocate("large", 3000);
-    expect((await f.allocate()).status).toBe(409);
+    expect((await f.allocate()).status).toBe(503);
     expect(f.calls).toEqual([]);
     for (const a of f.control.getAllocations()) await f.control.releaseAllocation(a.id);
     f.registry.runtimes.find(r => r.id === "large")!.policy.warm!.minInstances = 1;
-    expect((await f.allocate()).status).toBe(409);
+    expect((await f.allocate()).status).toBe(503);
     expect(f.calls).toEqual([]);
   } finally { f.control.beginDrain(); }
 });
@@ -383,7 +383,7 @@ test("stop failures or insufficient measured recovery never start the requested 
   for (const options of [{ stopFails: true }, { freeAfterStop: 1 }]) {
     const f = await fixture(options);
     try {
-      expect((await f.allocate()).status).toBe(409);
+      expect((await f.allocate()).status).toBe(503);
       await f.control.flush();
       expect(f.calls.some(c => c === "start:target")).toBe(false);
       expect(f.calls.filter(c => c === "stop:large")).toHaveLength(1);
@@ -437,7 +437,7 @@ test("a physically impossible request or unavailable telemetry never evicts usef
   const f = await fixture();
   try {
     f.registry.runtimes[0]!.resources.estimatedMemoryGB = 100;
-    expect((await f.allocate()).status).toBe(409);
+    expect((await f.allocate()).status).toBe(503);
     expect(f.calls).toEqual([]);
   } finally { f.control.beginDrain(); }
   const unavailable = await fixture({ telemetryUnavailable: true });

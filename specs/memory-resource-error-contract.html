@@ -1,0 +1,219 @@
+<article lang="ja">
+  <h1>メモリー資源不足エラーの共通契約</h1>
+  <p>
+    2026年11月1日のソースレビューと統一仕様。対象は、要求されたAgent ProfileとProvider
+    subsetからroute、runtime、backendを解決した後のオンデマンド起動前メモリーadmission、および同じ判定を使うLocal
+    Service・画像・音楽・3D生成である。起動中の別モデルを要求モデルと取り違えず、実行中のワークロードと構成上の候補を分けて判定する。
+  </p>
+  <section id="scope">
+    <h2>採用範囲</h2>
+    <p>
+      2026年11月1日の合意として、503への統一はオンデマンドサービスを対象とする。要求に応じたProvider・Local
+      Service・media
+      workerの起動で、必要なメモリーを確保できず要求を拒否する場合に適用する。常駐サービスの自律起動・保守処理のエラー体系や、実行中OOMの共通検出には拡張しない。
+    </p>
+    <p>
+      対象はruntimeのclass名だけで決めず、要求から解決された起動経路で判断する。既に起動済みのProviderを再利用し追加予約が不要な場合、現在の空きメモリーが少ないことだけで503を返さない。音楽・3Dの受付済みjobは取得HTTPを200に保ち、job内の共通エラーで不足を示す。
+    </p>
+  </section>
+  <section id="review">
+    <h2>レビュー結果</h2>
+    <p>
+      変更前は内部のadmission理由に共通性があったが、公開応答は統一されていなかった。同じ不足がAPIごとに違うcode・HTTP
+      statusになり、詳細が失われる経路もあった。
+    </p>
+    <table>
+      <caption>
+        変更前の経路と問題点
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">経路</th>
+          <th scope="col">変更前</th>
+          <th scope="col">問題</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Profile / allocation</th>
+          <td>409、resource_exhausted、message、admission</td>
+          <td>
+            memory_exhaustedとlive_memory_exhaustedが公開reasonに残らず、同時実行枠や優先度による拒否と同じcodeになる。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">画像</th>
+          <td>503、memory_exhaustedまたはlive_memory_exhausted</td>
+          <td>allocationとcodeが異なり、Service ledgerのnode別admissionが変換時に消える。</td>
+        </tr>
+        <tr>
+          <th scope="row">Local Service</th>
+          <td>503、元例外のmessageをcodeに変換</td>
+          <td>
+            ServiceMemoryAdmissionErrorの構造化情報を失い、一律Retry-After:
+            5も付く。本番用補助appではmessage自体がない応答もある。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">音楽job</th>
+          <td>一般例外としてgeneration_failed</td>
+          <td>MediaVariantResourceErrorの理由が保存・poll・eventから判別できない。</td>
+        </tr>
+        <tr>
+          <th scope="row">3D job</th>
+          <td>memory_exhaustedまたはlive_memory_exhausted</td>
+          <td>理由を残すが共通code・再試行方針・node別詳細を持たない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      根拠はpackages/core/src/admission.ts、service-resource-ledger.ts、local-service-manager.ts、apps/daemon/src/allocation-admission-planner.ts、main.ts、routes/image-generations.ts、music-manager.ts、mesh-provider.ts、mesh-manager.ts。既存のメモリー解放・優先度・warm
+      floorの修正がある作業treeを対象として確認した。稼働プロセスの監査や配備結果ではない。
+    </p>
+  </section>
+  <section id="response">
+    <h2>共通の公開応答</h2>
+    <p>
+      起動前にメモリーadmissionが拒否された同期APIはHTTP 503 Service
+      Unavailableを返す。JSONの外形は既存のerror
+      envelopeを維持する。これはLARM固有の契約であり、HTTP自体がメモリー不足専用のJSON形式を規定するものではない。HTTP
+      statusの根拠はRFC 9110の15.6.4、Retry-Afterは10.2.3である。
+    </p>
+    <pre><code>{
+  "error": {
+    "code": "resource_exhausted",
+    "type": "resource_error",
+    "resource": "memory",
+    "reason": "memory_exhausted",
+    "message": "node local-node needs 32 GiB but static headroom is 10 GiB",
+    "retry": "after_capacity_change",
+    "admission": [{
+      "node": "local-node",
+      "usableMemoryGB": 112,
+      "committedMemoryGB": 102,
+      "incrementalMemoryGB": 32,
+      "availableMemoryGB": 10
+    }]
+  }
+}</code></pre>
+    <table>
+      <caption>
+        機械判定に用いる項目
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">code</th>
+          <td>resource_exhausted。資源拒否の共通code。memoryかどうかはresourceも確認する。</td>
+        </tr>
+        <tr>
+          <th scope="row">type / resource</th>
+          <td>resource_error / memory。</td>
+        </tr>
+        <tr>
+          <th scope="row">reason = memory_exhausted</th>
+          <td>
+            構成上の予約枠不足。OS予約、resident、既存runtime、prompt
+            retention、Service予約などを含む。現在の物理メモリー不足を意味しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">reason = live_memory_exhausted</th>
+          <td>
+            新鮮な実測値を用いた有効空き容量の不足。必要な経路ではsystemとacceleratorの小さい方を使い、安全余裕、未反映の予約、交換可能なメモリーを既存規則で処理する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">retry</th>
+          <td>
+            after_capacity_change。競合処理の終了、許可された解放、予約設定の変更、要求するprofile・Provider
+            subsetの明示変更など、条件の変化後に再評価する。成功保証や自動再送の許可ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">message</th>
+          <td>人向けの説明。クライアントは文言を解析しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">admission</th>
+          <td>
+            判定時のnode別情報。保持している場合は欠落させず渡す。旧データなどにない場合は省略し、数値を推測しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      既存のフィールド名はGBだが値の単位はGiB（1024の3乗bytes）である。互換性のため名前を維持し、説明文はGiBで統一する。incrementalMemoryGBは既存予約への追加必要量、availableMemoryGBは静的予約の追加可能量で、負値は既存予約の超過を表す。
+    </p>
+    <p>
+      liveAvailableMemoryGBは既存値との互換性を維持する。runtime admissionでは補正前、Service
+      ledgerでは安全余裕・未反映予約の差引後だったため、共通の判定値としてeffectiveLiveAvailableMemoryGBを追加する。live_memory_exhausted時はこの値とincrementalMemoryGBを比較する。live判定前に拒否した場合は省略する。reclaimableMemoryGBは交換候補の見積りであり、解放済み量ではない。
+    </p>
+    <p>
+      復旧時刻を見積もれないメモリー拒否にはRetry-Afterを付けない。1秒・5秒などの一律値で再送を促さない。503は現在この要求を提供できないことを示し、時間経過だけで解消するとは約束しない。要求自体が構成上収まらない場合もあり、設定や要求条件の見直しが必要になる。
+    </p>
+  </section>
+  <section id="retry">
+    <h2>待機、非同期処理、再試行</h2>
+    <p>
+      既存の解放処理は、停止確認とobserver更新後にadmissionを再実行する。共通エラーは、解放処理後も拒否された場合の最終理由を返す。停止失敗はmemory_reclamation_failedなど固有の運用障害として残し、単なるメモリー不足に置き換えない。
+    </p>
+    <p>
+      allocationのcapacityPolicy、mediaの待機期限、優先度、warm
+      floorは既存方針を維持する。受付済みの待機は待機のままとし、直ちに拒否する経路だけ503を返す。今回の統一は自動停止の対象や待機条件を変更しない。
+    </p>
+    <p>
+      音楽・3Dの受付済みjobでは、取得HTTPは従来どおり200とし、job.status =
+      failedのerrorに同じ構造を格納する。保存・再読込・poll・eventで項目を落とさない。受付応答の202と、その後の生成失敗を区別する。受付済みjobを同じPOSTで自動再送せず、各APIのidempotency・再開手続きに従う。3Dは既存の管理者によるretryで元入力とseedを維持する。
+    </p>
+    <p>
+      安全な再送には、処理が受付済みか、結果や課金相当の副作用が発生したかの確認が必要である。LARM
+      clientは共通errorをLarmApiErrorとして保持し、再送しない。
+    </p>
+  </section>
+  <section id="classification">
+    <h2>メモリー不足と区別するエラー</h2>
+    <ul>
+      <li>telemetry_unavailableは情報不足。空き容量ゼロと解釈せず、観測回復を待つ。</li>
+      <li>
+        runtime_capacity、swap_group_conflict、media_variant_busy、優先度による拒否は同時実行・排他の問題。既存の409等を維持する。
+      </li>
+      <li>429は要求数・利用枠の制限、507は既存のストレージ容量不足の用途を維持する。</li>
+      <li>
+        computeのmemory_exceededは利用者のCPU実行に設定されたメモリー制限の超過であり、Providerの起動資源不足とは別契約である。
+      </li>
+      <li>
+        workerの起動失敗、HTTP
+        500、プロセス終了、timeout、応答切断だけではOOMと断定しない。任意のmessageに含まれるOOM等の文字列も分類根拠にしない。
+      </li>
+    </ul>
+    <p>
+      現在のbackendには全Provider共通で確定OOMを収集する仕組みがない。この変更で実行中OOMの自動検出を追加したとは扱わない。将来の拡張ではcgroupのOOMイベント等の確定証拠、要求に対応したinstance、発生phase、副作用の状態を揃えたうえで専用reasonを追加する。既知のadmission不足と原因不明の生成失敗を混同しない。
+    </p>
+  </section>
+  <section id="compatibility">
+    <h2>互換性と実装状況</h2>
+    <p>
+      共通生成関数とスキーマはpackages/core/src/resource-errors.tsに置く。backend・daemonはこれを使い、独自形式への変換で詳細を落とさない。公開ErrorResponseとallocation、connection、音楽、3Dの保存形式に追加項目を許可し、従来のcode/messageのみのエラーも読み込める。
+    </p>
+    <p>
+      公開上の変更点は、allocationのメモリー拒否が409から503へ移ること、画像・Local
+      Service・3Dのcodeがresource_exhaustedへ変わること、音楽のgeneration_failedから原因が分離されること。消費側はHTTP
+      statusだけや旧codeだけで判定せず、code・resource・reasonを用いる。旧保存jobは書き換えない。
+    </p>
+    <p>
+      新clientは旧応答を読み込めるが、旧clientのstrict
+      schemaは新しい追加項目を拒否し、http_errorとして扱う可能性がある。これは完全な双方向互換ではない。配備時にはSDKと消費側のエラー分岐を先に更新し、allocationの503への変更も確認する。外部消費側の実装・配備状況は今回のレビューでは監査していない。
+    </p>
+    <p>
+      実装済み。オンデマンドサービスを対象に、署名付きreleaseの検証と本番反映まで実施する。契約、静的・live
+      admission、画像の起動前拒否、Local
+      Serviceの詳細保持、音楽の保存・再読込、3Dの再開、clientのエラー保持を検証対象とする。
+    </p>
+  </section>
+</article>

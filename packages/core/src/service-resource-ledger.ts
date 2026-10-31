@@ -62,6 +62,7 @@ export class ServiceResourceLedger {
     const pendingBytes = pendingAi + existing.reduce((n, r) => n + r.pendingBytes, 0);
     const availableBytes = Math.max(0, liveBytes - (input.liveSafetyFloorBytes ?? 0) - pendingBytes);
     summary.liveAvailableMemoryGB = availableBytes / gib;
+    summary.effectiveLiveAvailableMemoryGB = availableBytes / gib;
     if (bytes > availableBytes) return failure("live_memory_exhausted",
       `node ${nodeId} needs ${bytes / gib} GiB but live headroom after safety floor and pending reservations is ${availableBytes / gib} GiB`, [summary]);
     return { ok: true, nodes: [summary] };

@@ -3,10 +3,12 @@ import {
   serviceInstanceToken, legacyServiceInstanceToken, localServiceIdle, localServiceRevision, localServiceLeaseRequestSchema, localServiceRenewSchema, localServiceDefinitionSchema,
   type LocalServiceActivity, type LocalServiceDefinition, type LocalServiceLease, type LocalServiceBackend, type LocalServiceJournal,
 } from "./local-service";
-import type { ServiceResourceLedger } from "./service-resource-ledger";
+import { ServiceMemoryAdmissionError, type ServiceResourceLedger } from "./service-resource-ledger";
+import { memoryResourceError } from "./resource-errors";
 
 export class LocalServiceError extends Error {
-  constructor(readonly code: string, readonly status: 400 | 401 | 403 | 404 | 409 | 429 | 503 = 409) { super(code); }
+  constructor(readonly code: string, readonly status: 400 | 401 | 403 | 404 | 409 | 429 | 503 = 409,
+    readonly resourceError?: NonNullable<ReturnType<typeof memoryResourceError>>) { super(code); }
 }
 type Entry = {
   definition: LocalServiceDefinition; revision: string; generation: number;
@@ -187,7 +189,10 @@ export class LocalServiceManager {
           // Recheck idempotency, shutdown, capacity and generation after recovery.
           return this.ensure(id, principal, key, request, true);
         }
-        throw new LocalServiceError(err instanceof Error ? err.message : "resource_exhausted", 503);
+        const resourceError = err instanceof ServiceMemoryAdmissionError
+          ? memoryResourceError(err.admission.reason, err.admission.message, err.admission.nodes)
+          : err instanceof Error ? memoryResourceError(err.message, err.message) : undefined;
+        throw new LocalServiceError(resourceError?.code ?? (err instanceof Error ? err.message : "resource_exhausted"), 503, resourceError);
       }
       e.generation++; e.state = "starting"; e.error = undefined; e.idleSince = undefined; e.nextPollAt = undefined; e.activity = undefined; e.appBootId = undefined; e.drainToken = undefined; e.instanceToken = null;
       const task = this.start(e); e.pending = task;

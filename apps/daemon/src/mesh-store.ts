@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, rm, lstat, realpath, statfs } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
-import { meshIdSchema, meshJobIdSchema, meshAssetSchema, meshUrls, meshAssetPatchSchema, listMeshAssets, type MeshAsset, type MeshQuery } from "@larm/core";
+import { meshIdSchema, meshJobIdSchema, meshAssetSchema, meshUrls, meshAssetPatchSchema, listMeshAssets, memoryResourceError, type MeshAsset, type MeshQuery } from "@larm/core";
 
 export class MeshError extends Error {
-  constructor(readonly code: string, readonly status: 400 | 404 | 409 | 429 | 503 | 507, message: string) { super(message); }
+  constructor(readonly code: string, readonly status: 400 | 404 | 409 | 429 | 503 | 507, message: string,
+    readonly resourceError?: NonNullable<ReturnType<typeof memoryResourceError>>) { super(message); }
 }
 export const meshHash = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
 export async function durableJson(path: string, value: unknown): Promise<void> {

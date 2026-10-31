@@ -1,3 +1,4 @@
+import { resourceErrorFields } from "./resource-errors";
 import { z } from "zod";
 import {
   allocationCapacityPolicySchema,
@@ -50,6 +51,7 @@ export const allocationBindingSchema = allocationBindingObjectSchema.superRefine
 });
 
 export const allocationErrorSchema = z.object({
+  ...resourceErrorFields,
   code: z.string().min(1),
   message: z.string().min(1),
 }).strict();

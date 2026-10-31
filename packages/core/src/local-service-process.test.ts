@@ -59,3 +59,19 @@ test("corrupt or unsupported journal is preserved and disables new activation", 
   await expect(f.manager.close()).rejects.toThrow("journal_recovery_required");
   expect(f.saved()).toEqual(corrupt);
 });
+
+test("local service refusal keeps admission details and never starts", async () => {
+  const { ServiceMemoryAdmissionError } = await import("./service-resource-ledger");
+  const f = await fixture();
+  let starts = 0;
+  f.backend.start = async () => { starts++; };
+  f.options.reserve = () => { throw new ServiceMemoryAdmissionError({ ok: false, reason: "memory_exhausted",
+    message: "needs 6 GiB but static headroom is 4 GiB", node: "local-node",
+    nodes: [{ node: "local-node", usableMemoryGB: 12, committedMemoryGB: 8, incrementalMemoryGB: 6, availableMemoryGB: 4 }] }); };
+  await expect(f.manager.ensure("fixture", "a", "1", {})).rejects.toMatchObject({
+    code: "resource_exhausted", status: 503, resourceError: { reason: "memory_exhausted",
+      retry: "after_capacity_change", admission: [{ incrementalMemoryGB: 6, availableMemoryGB: 4 }] },
+  });
+  expect(starts).toBe(0); expect(f.ledger.reservations()).toEqual([]);
+  await f.manager.close();
+});

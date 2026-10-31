@@ -241,7 +241,8 @@ test("live admission counts a pending runtime once until its memory is observed 
   const input = { registry: expanded, state: observed, candidateRuntimeIds: ["worker"],
     allocations: [one, { ...one, id: "same-runtime-another-ref" }],
     liveTelemetry: { requiredForNonResident: true, maxAgeMs: 1000, now: Date.parse(observed.generatedAt) } };
-  expect(admitRuntimes(input)).toMatchObject({ ok: false, reason: "live_memory_exhausted" });
+  expect(admitRuntimes(input)).toMatchObject({ ok: false, reason: "live_memory_exhausted",
+    nodes: [{ liveAvailableMemoryGB: 48, effectiveLiveAvailableMemoryGB: 16 }] });
   observed.node.telemetry.systemMemoryAvailableBytes = 56 * 1024 ** 3;
   expect(admitRuntimes(input).ok).toBe(true);
   observed.node.telemetry.systemMemoryAvailableBytes = 48 * 1024 ** 3;
@@ -353,6 +354,7 @@ test("admission replaces an idle HOT peer in the same swap group", () => {
       availableMemoryGB: 44,
       liveAvailableMemoryGB: 8,
       reclaimableMemoryGB: 40,
+      effectiveLiveAvailableMemoryGB: 48,
     }],
   });
 });

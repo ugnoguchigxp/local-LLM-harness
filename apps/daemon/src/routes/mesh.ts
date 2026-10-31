@@ -16,7 +16,7 @@ export function registerMeshRoutes(parent: Hono, options: { manager?: MeshManage
   app.onError((error, c) => {
     if (error instanceof MeshError) {
       if (error.status === 429) c.header("retry-after", "10");
-      return c.json(errorBody(error.code, error.message), error.status);
+      return c.json({ error: error.resourceError ?? errorBody(error.code, error.message).error }, error.status);
     }
     if (error instanceof InvalidMeshCursorError) return c.json(errorBody("invalid_cursor", error.message), 400);
     throw error;

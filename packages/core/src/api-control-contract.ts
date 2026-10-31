@@ -1,3 +1,4 @@
+import { resourceErrorFields } from "./resource-errors";
 import { z } from "zod";
 import {
   allocationBindingObjectSchema,
@@ -22,18 +23,9 @@ const identifierSchema = z.string().min(1).max(192);
 export const errorDetailSchema = z.object({
   code: z.string().min(1).max(128),
   message: z.string().min(1),
-  type: z.string().min(1).max(128).optional(),
+  ...resourceErrorFields,
   param: z.string().min(1).max(128).nullable().optional(),
   blockers: z.array(z.string().min(1)).optional(),
-  admission: z.array(z.object({
-    node: z.string().min(1),
-    usableMemoryGB: z.number(),
-    committedMemoryGB: z.number(),
-    incrementalMemoryGB: z.number(),
-    availableMemoryGB: z.number(),
-    liveAvailableMemoryGB: z.number().optional(),
-    reclaimableMemoryGB: z.number().optional(),
-  }).strict()).optional(),
 }).strict();
 
 export const publicRuntimeSchema = z.object({

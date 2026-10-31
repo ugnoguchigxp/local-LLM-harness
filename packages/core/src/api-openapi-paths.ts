@@ -380,11 +380,15 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
           ? { "503": { description: "Semantic provider not ready", content: successContent } }
           : {}),
         ...(operationId === "createAgentConnection"
-          ? { "503": { description: "Connection reached a terminal readiness failure", content: successContent } }
+          ? { "503": { description: "Memory admission refused (resource_exhausted), or connection reached a terminal readiness failure", content: { "application/json": { schema: { oneOf: [{ $ref: "#/components/schemas/ErrorResponse" }, { $ref: "#/components/schemas/AgentConnection" }] } } } } }
           : {}),
+        ...(operationId === "createAllocation" ? { "503": {
+          description: "resource_exhausted: memory admission refused; reason distinguishes static reservation and live headroom. Retry after capacity changes; no estimated Retry-After.",
+          content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+        } } : {}),
         ...(operationId === "createImageGeneration" ? Object.fromEntries([
           ["409", "media_variant_busy: another media workload owns capacity"],
-          ["503", "image_model_unavailable, image_generation_failed or worker_stop_failed: model unavailable, startup, generation or cleanup failed"],
+          ["503", "resource_exhausted (memory admission; retry after capacity changes), image_model_unavailable, image_generation_failed or worker_stop_failed"],
           ["504", "image_generation_timeout: generation deadline exceeded, cleanup completed"],
         ].map(([status, description]) => [status!, { description, content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }])) : {}),
         ...(operationId === "getServiceActivity"

@@ -68,7 +68,10 @@ test("unrecoverable service memory pressure is rejected after one recovery attem
     reserve: () => { throw new Error("live_memory_exhausted"); }, reclaimMemory: async () => { recoveries++; },
   });
   await manager.initialize();
-  await expect(manager.ensure("docling-desk", "a", "k", {})).rejects.toThrow("live_memory_exhausted");
+  await expect(manager.ensure("docling-desk", "a", "k", {})).rejects.toMatchObject({
+    code: "resource_exhausted", status: 503,
+    resourceError: { reason: "live_memory_exhausted", retry: "after_capacity_change" },
+  });
   expect(f.starts).toBe(0); expect(recoveries).toBe(1);
 });
 test("expired consumer never stops active jobs; idle requires a fresh full interval", async () => {

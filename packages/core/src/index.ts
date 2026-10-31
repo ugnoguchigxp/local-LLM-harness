@@ -353,3 +353,4 @@ export * from "./decision-head";
 export * from "./compute";
 
 export * from "./reasoning";
+export { memoryResourceError, resourceErrorFields, nodeAdmissionSchema } from "./resource-errors";

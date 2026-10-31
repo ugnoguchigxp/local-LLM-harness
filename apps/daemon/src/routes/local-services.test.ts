@@ -23,3 +23,15 @@ test("service API enforces its own scope, rejects runtime overrides and separate
   expect((await app.request("/v1/management/local-services/docling-desk/stop", { method: "POST", headers, body: "{}" })).status).toBe(403);
   expect(calls).toBe(1);
 });
+
+test("scoped service HTTP app returns the shared error contract without an invented retry time", async () => {
+  const { memoryResourceError, errorResponseSchema } = await import("@larm/core");
+  const { createLocalServiceControlApp } = await import("./local-service-control-app");
+  const detail = memoryResourceError("live_memory_exhausted", "needs 6 GiB")!;
+  const manager = { ensure: async () => { throw new LocalServiceError("resource_exhausted", 503, detail); } } as unknown as LocalServiceManager;
+  const app = createLocalServiceControlApp({ manager, principals: [{ id: "a", token: "x".repeat(40), services: ["fixture"] }], maxBodyBytes: 1000 });
+  const response = await app.request("/v1/local-services/fixture/leases", { method: "POST",
+    headers: { authorization: `Bearer ${"x".repeat(40)}`, "idempotency-key": "one", "content-type": "application/json" }, body: "{}" });
+  expect(response.status).toBe(503); expect(response.headers.get("retry-after")).toBeNull();
+  expect(errorResponseSchema.parse(await response.json()).error).toEqual(detail);
+});

@@ -86,3 +86,36 @@ test("lower-priority work shares a warm multi-slot runtime and waits when all sl
   expect(planAllocationCapacity(input({ registry: sharedRegistry, allocations: full, capacityPolicy: "wait", conflictsWithAdmitted: true })))
     .toEqual({ ok: true, waiting: true });
 });
+
+test("static and live memory refusals use 503 with distinct machine-readable reasons", () => {
+  const memoryRegistry = structuredClone(registry);
+  memoryRegistry.runtimes[0]!.policy.class = "preferred";
+  memoryRegistry.runtimes[0]!.resources.estimatedMemoryGB = 120;
+  const result = planAllocationCapacity(input({ registry: memoryRegistry }));
+  expect(result).toMatchObject({ ok: false, result: { status: 503, body: { error: {
+    code: "resource_exhausted", resource: "memory", reason: "memory_exhausted", retry: "after_capacity_change",
+    admission: [{ incrementalMemoryGB: 120, availableMemoryGB: 112 }],
+  } } } });
+  memoryRegistry.runtimes[0]!.resources.estimatedMemoryGB = 8;
+  const liveState = structuredClone(state);
+  liveState.node.telemetry = { status: "available", source: "test", observedAt: liveState.generatedAt,
+    systemMemoryAvailableBytes: 4 * 1024 ** 3 };
+  expect(planAllocationCapacity(input({ registry: memoryRegistry, state: liveState, requireFreshTelemetry: true })))
+    .toMatchObject({ ok: false, result: { status: 503, body: { error: {
+      code: "resource_exhausted", reason: "live_memory_exhausted",
+      admission: [{ effectiveLiveAvailableMemoryGB: 4 }],
+    } } } });
+});
+
+test("reusing a warm provider needs no new memory despite zero live headroom", () => {
+  for (const policyClass of ["resident", "preferred"] as const) {
+    const warmRegistry = structuredClone(registry);
+    warmRegistry.runtimes[0]!.policy.class = policyClass;
+    const warmState = structuredClone(state);
+    warmState.runtimes = [{ id: "runtime", status: "HOT" } as ClusterState["runtimes"][number]];
+    warmState.node.telemetry = { status: "available", source: "test", observedAt: warmState.generatedAt,
+      systemMemoryAvailableBytes: 0 };
+    expect(planAllocationCapacity(input({ registry: warmRegistry, state: warmState, requireFreshTelemetry: true })))
+      .toEqual({ ok: true, waiting: false });
+  }
+});

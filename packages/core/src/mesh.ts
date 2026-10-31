@@ -1,3 +1,4 @@
+import { resourceErrorFields } from "./resource-errors";
 import { z } from "zod";
 
 export const meshIdSchema = z.string().regex(/^mesh_[a-f0-9]{32}$/);
@@ -46,7 +47,7 @@ export const meshJobSchema = z.object({
   stage: z.enum(["queued", "image", "waiting_gpu", "background", "mesh", "validating", "stopping", "completed", "failed", "cancelled", "deleted"]),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
   statusUrl: z.string(), eventsUrl: z.string(), assetId: meshIdSchema.optional(), asset: meshAssetSchema.optional(),
-  error: z.object({ code: z.string(), message: z.string() }).strict().optional(), deleted: z.boolean().optional(),
+  error: z.object({ ...resourceErrorFields, code: z.string(), message: z.string() }).strict().optional(), deleted: z.boolean().optional(),
 }).strict();
 export type MeshJob = z.infer<typeof meshJobSchema>;
 export const meshAssetListSchema = z.object({ assets: z.array(meshAssetSchema), total: z.number().int().nonnegative(), nextCursor: z.string().optional() });

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rm, open, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { meshGenerationRequestSchema, meshJobSchema, meshAssetSchema, meshUrls, inspectMeshGlb,
+import { memoryResourceError, meshGenerationRequestSchema, meshJobSchema, meshAssetSchema, meshUrls, inspectMeshGlb,
   type MeshGenerationRequest, type MeshJob, type MeshAsset } from "@larm/core";
 import { MeshStore, MeshError, durableJson, meshHash, safeFile } from "./mesh-store";
 import type { MeshProvider } from "./mesh-provider";
@@ -196,7 +196,7 @@ export class MeshManager {
         const error = e instanceof MeshError ? e : new MeshError(signal.aborted ? "cancelled_or_timeout" : "generation_failed", 503, signal.aborted ? "generation cancelled or timed out" : "3D generation failed; inspect restricted logs");
         preserve = error.code === "worker_stop_failed";
         console.warn(`3D job ${r.job.jobId} failed: ${error.code}`);
-        await this.update(r, { status: controller.signal.aborted && !preserve ? "cancelled" : "failed", stage: controller.signal.aborted && !preserve ? "cancelled" : "failed", error: { code: error.code, message: error.message } });
+        await this.update(r, { status: controller.signal.aborted && !preserve ? "cancelled" : "failed", stage: controller.signal.aborted && !preserve ? "cancelled" : "failed", error: error.resourceError ?? memoryResourceError(error.code, error.message) ?? { code: error.code, message: error.message } });
       } finally {
         this.controllers.delete(r.job.jobId); this.workloads.delete(r.job.jobId); finish?.();
         if (!preserve) await rm(this.workPath(r.job.jobId), { recursive: true, force: true });

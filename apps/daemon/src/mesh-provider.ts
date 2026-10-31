@@ -1,6 +1,7 @@
 import { MediaVariantBusyError, MediaVariantResourceError, type MediaVariantManager } from "@larm/backends";
 import type { ImageGenerationProvider } from "./image-generation-provider";
 import type { MeshGenerationRequest, MeshJob } from "@larm/core";
+import { memoryResourceError } from "@larm/core";
 import { MeshError } from "./mesh-store";
 
 export interface MeshProvider {
@@ -22,7 +23,8 @@ export class OnDemandMeshProvider implements MeshProvider {
         return result.artifact.id;
       } catch (error) {
         if (!(error instanceof MediaVariantBusyError) && !(error instanceof MediaVariantResourceError)) throw error;
-        if (Date.now() >= deadline) throw new MeshError(error instanceof MediaVariantResourceError ? error.reason : "queue_timeout", 503, error instanceof MediaVariantResourceError ? error.message : "image capacity wait expired");
+        if (Date.now() >= deadline) throw new MeshError(error instanceof MediaVariantResourceError ? error.reason : "queue_timeout", 503, error instanceof MediaVariantResourceError ? error.message : "image capacity wait expired",
+          error instanceof MediaVariantResourceError ? memoryResourceError(error.reason, error.message, error.admission) : undefined);
         await Bun.sleep(100);
       }
     }
@@ -30,7 +32,7 @@ export class OnDemandMeshProvider implements MeshProvider {
   async generate(id: string, seed: number, signal: AbortSignal, stage: (stage: MeshJob["stage"]) => Promise<void>) {
     await stage("waiting_gpu");
     const release = await this.variants.waitFor("mesh", signal).catch(error => {
-      if (error instanceof MediaVariantResourceError) throw new MeshError(error.reason, 503, error.message);
+      if (error instanceof MediaVariantResourceError) throw new MeshError(error.reason, 503, error.message, memoryResourceError(error.reason, error.message, error.admission));
       throw error;
     });
     let poll: ReturnType<typeof setInterval> | undefined, polling = false, acceptingProgress = true, lastStage = "";

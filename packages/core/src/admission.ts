@@ -13,6 +13,7 @@ export type NodeAdmission = {
   incrementalMemoryGB: number;
   availableMemoryGB: number;
   liveAvailableMemoryGB?: number;
+  effectiveLiveAvailableMemoryGB?: number;
   reclaimableMemoryGB?: number;
 };
 
@@ -189,7 +190,7 @@ export function admitRuntimes(input: {
     const memoryFailure = incrementalMemoryGB > availableMemoryGB ? {
       ok: false as const,
       reason: "memory_exhausted" as const,
-      message: `node ${nodeId} needs ${incrementalMemoryGB} GB but only ${availableMemoryGB} GB is available`,
+      message: `node ${nodeId} needs ${incrementalMemoryGB} GiB but static headroom is ${availableMemoryGB} GiB`,
       node: nodeId,
       nodes,
     } : undefined;
@@ -242,11 +243,12 @@ export function admitRuntimes(input: {
       const effectiveLiveAvailableMemoryGB = Math.max(0,
         liveAvailableMemoryGB + reclaimableMemoryGB - pendingServiceGB - pendingRuntimeMemoryGB);
       summary.liveAvailableMemoryGB = liveAvailableMemoryGB;
+      summary.effectiveLiveAvailableMemoryGB = effectiveLiveAvailableMemoryGB;
       if (incrementalMemoryGB > effectiveLiveAvailableMemoryGB) {
         return {
           ok: false,
           reason: "live_memory_exhausted",
-          message: `node ${nodeId} needs ${incrementalMemoryGB} GB but live headroom plus reclaimable swap memory is ${effectiveLiveAvailableMemoryGB.toFixed(2)} GB`,
+          message: `node ${nodeId} needs ${incrementalMemoryGB} GiB but effective live headroom is ${effectiveLiveAvailableMemoryGB.toFixed(2)} GiB`,
           node: nodeId,
           nodes,
         };

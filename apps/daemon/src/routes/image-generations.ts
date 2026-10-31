@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 import { MediaVariantBusyError, MediaVariantResourceError } from "@larm/backends";
-import { imageGenerationRequestSchema } from "@larm/core";
+import { imageGenerationRequestSchema, memoryResourceError } from "@larm/core";
 import { errorBody, readJson } from "../app-http";
 import { ImageModelUnavailableError, ImageWorkerStopError, type ImageGenerationProvider } from "../image-generation-provider";
 import type { ControlEvent } from "../controller";
@@ -29,7 +29,7 @@ export function registerImageGenerationRoutes(app: Hono, provider: ImageGenerati
       }
       if (error instanceof MediaVariantResourceError) {
         outcome = error.reason;
-        return c.json(errorBody(outcome, error.message), 503);
+        return c.json({ error: memoryResourceError(error.reason, error.message, error.admission) ?? { code: outcome, message: error.message } }, 503);
       }
       if (error instanceof MediaVariantBusyError) {
         status = 409;

@@ -370,7 +370,7 @@ const mediaVariants = new MediaVariantManager({
         maxAgeMs: config.telemetryMaxAgeMs, liveSafetyFloorBytes, accelerator: true,
       });
     } catch (error) {
-      if (error instanceof ServiceMemoryAdmissionError) throw new MediaVariantResourceError(error.admission.reason, error.admission.message);
+      if (error instanceof ServiceMemoryAdmissionError) throw new MediaVariantResourceError(error.admission.reason, error.admission.message, error.admission.nodes);
       throw error;
     }
   },

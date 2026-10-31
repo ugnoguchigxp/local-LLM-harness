@@ -393,3 +393,29 @@ test("image deadline errors return structured 504 after cleanup", async () => {
     expect(manager.isOccupied()).toBe(false);
   } finally { await manager.close(); }
 });
+
+test("image memory admission returns the common contract without starting or forwarding", async () => {
+  const { Hono } = await import("hono");
+  const { MediaVariantResourceError } = await import("@larm/backends");
+  const { errorResponseSchema } = await import("@larm/core");
+  const { registerImageGenerationRoutes } = await import("./routes/image-generations");
+  let starts = 0, submissions = 0;
+  const variants = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 }, beforeStart: () => {
+    throw new MediaVariantResourceError("memory_exhausted", "needs 32 GiB", [{ node: "n",
+      usableMemoryGB: 112, committedMemoryGB: 102, incrementalMemoryGB: 32, availableMemoryGB: 10 }]);
+  }, run: async () => { starts++; } });
+  const provider = new ImageGenerationProvider("http://image.test", variants, async () => { submissions++; throw new Error("must not submit"); });
+  const app = new Hono(); registerImageGenerationRoutes(app, provider);
+  try {
+    const response = await app.request("/v1/images/generations", { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: "test" }) });
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBeNull();
+    expect(errorResponseSchema.parse(await response.json()).error).toMatchObject({
+      code: "resource_exhausted", reason: "memory_exhausted", resource: "memory", retry: "after_capacity_change",
+      admission: [{ incrementalMemoryGB: 32, availableMemoryGB: 10 }],
+    });
+    expect(starts).toBe(0); expect(submissions).toBe(0);
+    expect(variants.isOccupied()).toBe(false);
+  } finally { await variants.close(); }
+});

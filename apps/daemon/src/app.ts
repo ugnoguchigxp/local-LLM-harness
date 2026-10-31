@@ -16,6 +16,7 @@ import {
   releaseRequestSchema,
   resolveRequestSchema,
   getRuntime,
+  errorResponseSchema,
 } from "@larm/core";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import type { AppDeps } from "./app-types";
@@ -161,6 +162,7 @@ export function createAppComponents(deps: AppDeps) {
     if (err instanceof ConnectionTokenError) return c.json(errorBody(err.code, err.message), err.code === "connection_idle_released" ? 409 : 401);
     if (err instanceof ZodError) return c.json(errorBody("invalid_request", "invalid request"), 400);
     if (err instanceof LocalServiceError) {
+      if (err.resourceError) return c.json({ error: err.resourceError }, 503);
       if (err.status === 503 || err.status === 429) c.header("retry-after", "5");
       return c.json(errorBody(err.code, err.code), err.status);
     }
@@ -385,7 +387,8 @@ export function createAppComponents(deps: AppDeps) {
     if (result.replay) c.header("x-larm-idempotent-replay", "true");
     if (result.location) c.header("location", result.location);
     if (result.retryAfterSeconds) c.header("retry-after", String(result.retryAfterSeconds));
-    else if (result.status === 202 || result.status === 503) c.header("retry-after", "1");
+    else if (result.status === 202 || (result.status === 503
+      && errorResponseSchema.safeParse(result.body).data?.error.retry !== "after_capacity_change")) c.header("retry-after", "1");
     if (result.status === 204) return c.body(null, 204);
     return c.json(result.body, result.status as 200 | 201 | 202 | 400 | 401 | 403 | 404 | 409 | 410 | 429 | 503);
   };

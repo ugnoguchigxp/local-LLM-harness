@@ -381,3 +381,25 @@ test("queued jobs hold activity leases and expire without provider submission", 
     expect(active).toBe(0);
   } finally { proceed.resolve(); manager.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test("music memory refusal remains structured in the persisted terminal job", async () => {
+  const { MediaVariantResourceError } = await import("@larm/backends");
+  const { musicGenerationJobSchema } = await import("@larm/core");
+  const root = await mkdtemp(join(tmpdir(), "larm-music-memory-"));
+  const upstream = new AceStepMusicProvider({ endpoint: "http://unused" });
+  const manager = new MusicGenerationManager({ id: upstream.id, capabilities: upstream.capabilities,
+    load: async () => {}, unload: async () => {}, health: async () => ({ available: true }),
+    generate: async () => { throw new MediaVariantResourceError("live_memory_exhausted", "needs 32 GiB"); },
+  }, { artifactRoot: root });
+  try {
+    const job = manager.create(musicGenerationRequestSchema.parse({ prompt: "test" }));
+    const terminal = musicGenerationJobSchema.parse(await waitForTerminal(manager, job.jobId));
+    expect(terminal.error).toMatchObject({ code: "resource_exhausted", resource: "memory",
+      reason: "live_memory_exhausted", retry: "after_capacity_change" });
+    // Loading the on-disk job uses the same strict schema as HTTP polling and events.
+    const restored = new MusicGenerationManager(upstream, { artifactRoot: root });
+    await restored.initialize();
+    try { expect(restored.get(job.jobId)?.error).toEqual(terminal.error); }
+    finally { restored.close(); }
+  } finally { manager.close(); await rm(root, { recursive: true, force: true }); }
+});

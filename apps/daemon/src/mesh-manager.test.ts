@@ -155,7 +155,7 @@ test("HTTP handlers preserve domain error statuses through Hono composition", as
 test("operator retry resumes the same expired job, preserves input and seed, and replays one attempt", async () => {
   const first = await setup(() => ({ image: async () => "", generate: async () => { throw new MeshError("memory_exhausted", 503, "needs 32 GiB"); } }));
   const request = input(), key = randomUUID(), job = await first.m.create(request, key);
-  expect((await done(first.m, job.jobId)).error?.code).toBe("memory_exhausted");
+  expect((await done(first.m, job.jobId)).error).toMatchObject({ code: "resource_exhausted", reason: "memory_exhausted", resource: "memory", retry: "after_capacity_change" });
   await first.m.close();
   const recordPath = join(first.root, "jobs", `${job.jobId}.json`), saved = JSON.parse(await readFile(recordPath, "utf8"));
   saved.job.createdAt = "2000-01-01T00:00:00.000Z"; await writeFile(recordPath, JSON.stringify(saved));

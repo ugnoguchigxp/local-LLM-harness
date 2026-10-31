@@ -17,7 +17,8 @@ import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { MusicArtifactRetention } from "./music-artifact-retention";
 import { encodeMusicOpus, verifyMusicOpusEncoder } from "./music-audio";
-import { MediaVariantStopError, type MediaVariantManager } from "@larm/backends";
+import { MediaVariantResourceError, MediaVariantStopError, type MediaVariantManager } from "@larm/backends";
+import { memoryResourceError } from "@larm/core";
 
 type FetchLike = typeof fetch;
 
@@ -738,7 +739,7 @@ export class MusicGenerationManager {
       try { await release?.(); } catch (error) { failure = error; }
       try {
         if (failure instanceof MediaVariantStopError || (!signal.aborted && failure)) {
-          job.error = {
+          job.error = (failure instanceof MediaVariantResourceError ? memoryResourceError(failure.reason, failure.message, failure.admission) : undefined) ?? {
             code: failure instanceof MediaVariantStopError ? "worker_stop_failed" : failure instanceof MusicProviderError ? failure.code : failure instanceof Error && "code" in failure && failure.code === "foreground_protected" ? "foreground_protected" : "generation_failed",
             message: failure instanceof Error ? failure.message : String(failure),
           };

@@ -1,3 +1,4 @@
+import { resourceErrorFields } from "./resource-errors";
 import { z } from "zod";
 import { musicRequestDefaults } from "./music-routing";
 
@@ -86,7 +87,7 @@ export const musicGenerationJobSchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   result: musicGenerationResultSchema.optional(),
-  error: z.object({ code: z.string(), message: z.string() }).strict().optional(),
+  error: z.object({ ...resourceErrorFields, code: z.string(), message: z.string() }).strict().optional(),
 }).strict();
 
 export const musicProviderHealthSchema = z.object({

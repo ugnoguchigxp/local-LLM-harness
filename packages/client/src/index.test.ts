@@ -1762,3 +1762,13 @@ test("SDK waits for and claims TTS even when the connection's LLM failed", async
   expect(await requests.at(-1)!.json()).toEqual({ format: "openai-provider-v1", providers: ["tts"] });
   await expect(client.waitForAgentConnection(connection, { providers: ["llm"], timeoutMs: 100 })).rejects.toMatchObject({ code: "connection_not_ready" });
 });
+
+test("client preserves memory reason and retry guidance as a LarmApiError", async () => {
+  const { memoryResourceError } = await import("@larm/core");
+  const body = { error: memoryResourceError("memory_exhausted", "needs 32 GiB")! };
+  let calls = 0;
+  const client = new LarmClient({ baseUrl: "http://127.0.0.1:9810", fetch: async () => { calls++; return json(body, "epoch-test", 503); } });
+  await expect(client.allocate({ requirements: [{ capability: "llm.general", route: "llm-default" }], ttlSeconds: 120 }))
+    .rejects.toMatchObject({ constructor: LarmApiError, status: 503, code: "resource_exhausted", responseBody: body });
+  expect(calls).toBe(1);
+});

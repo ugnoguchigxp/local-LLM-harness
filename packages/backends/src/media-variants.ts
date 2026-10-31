@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { NodeAdmission } from "@larm/core";
 
 export type MediaVariant = "image" | "image-flux3" | "music" | "mesh" | "stable-audio";
 
@@ -17,7 +18,7 @@ export class MediaVariantBusyError extends Error {
 
 /** Retryable resource pressure, distinct from another request owning the worker. */
 export class MediaVariantResourceError extends Error {
-  constructor(readonly reason: string, message: string) { super(message); this.name = "MediaVariantResourceError"; }
+  constructor(readonly reason: string, message: string, readonly admission?: readonly NodeAdmission[]) { super(message); this.name = "MediaVariantResourceError"; }
 }
 
 async function runVariantScript(script: string, action: "start" | "stop", variant: MediaVariant, signal?: AbortSignal): Promise<void> {
