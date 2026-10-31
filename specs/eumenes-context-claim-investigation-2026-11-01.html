@@ -1,0 +1,87 @@
+<article lang="ja">
+  <h1>Eumenes接続不調とcontext契約の不一致</h1>
+  <p>
+    2026年11月1日08:01–08:05
+    JSTの調査。利用者からEumenesがLARMへ接続できないとの報告を受け、本番の稼働状態と、同じprofile要求で返る公開契約を確認した。サービス設定や稼働releaseは変更していない。
+  </p>
+  <section id="status">
+    <h2>本番の観測状態</h2>
+    <p>
+      LARM daemonは07:58:10 JSTからactive /
+      running、異常再起動0回。releaseCommitは<code>5e86dbd4e1e7348df449db1f3d5a861b65e63158</code>。health・readyはloopbackとLAN
+      address 192.168.0.130:9810でHTTP 200、gnosis.localも同じLAN
+      addressへ解決できた。ただしホスト自身からLAN
+      addressへの到達確認だけで、すべての端末経路を検証したとはしない。
+    </p>
+    <p>
+      192.168.0.34から9810へのTCP接続が継続しており、Eumenes識別のclientがlfm2.5のConnection作成201、claim
+      200、release
+      204を繰り返していた。推論の要求開始前に解放している。08:01のログ集計時点で見つかったメモリー不足拒否は、07:58の受入試験として意図的に送った割当・画像要求だった。
+    </p>
+  </section>
+  <section id="reproduction">
+    <h2>本番で再現した公開契約の差</h2>
+    <p>
+      公開profile <code>lfm2.5</code>、Provider subset
+      <code>llm</code>、audience
+      <code>saaa-desktop</code
+      >を、contextTokensを省略して確保した。要求はllm-lfm25からornith15-strix-conversationへ解決され、モデル表示はornith1.5-strix、Provider
+      baseUrlはLAN addressの/v1だった。この稼働モデルとprofile名の違いをdriftとはしない。
+    </p>
+    <table>
+      <caption>
+        同一profileのカタログとclaim
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">カタログ</th>
+          <th scope="col">claim</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">contextWindow.maxTokens</th>
+          <td>200000</td>
+          <td>131072</td>
+        </tr>
+        <tr>
+          <th scope="row">outputReserveTokens</th>
+          <td>4096</td>
+          <td>4096</td>
+        </tr>
+        <tr>
+          <th scope="row">outputLimit</th>
+          <td>remaining-context</td>
+          <td>remaining-context</td>
+        </tr>
+        <tr>
+          <th scope="row">safetyMarginTokens</th>
+          <td>1976</td>
+          <td>1976</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      LARMはcontextTokens省略時にruntimeのcontextPools.defaultTokensを選ぶ。現在は131072であり、カタログは最大200000を示す。調査用Connectionはclaimの確認後に解放し、推論は送っていない。200000の枠を使うには明示指定が必要な現行設計である。
+    </p>
+  </section>
+  <section id="consumer">
+    <h2>消費側との関係と確度</h2>
+    <p>
+      参照できた/srv/ai/apps/eumenes/api/domains/larm/service/connect.tsでは、createConnectionがcontextTokensを送らず、claimProvidersがカタログのcontextWindowの各値とclaimの値を完全一致で照合する。不一致は<code>larm_claim_context_mismatch</code>となる。この実装に本番の公開応答を与えると接続を採用できず、作成・claim直後に解放するログとも整合する。
+    </p>
+    <p>
+      本番Eumenes自身のエラー文・運用ログと、その実行revisionは未取得である。したがってEumenesで実際に記録されたエラーcodeを取得したとはしない。LARM側のcontext契約差は実機再現済みであり、消費側の拒否原因として有力である。
+    </p>
+    <p>
+      先行の配備受入はJSON・SSE・音声の利用を確認したが、Eumenes固有のcontextWindow完全一致照合を検証していなかった。接続経路の到達性と消費側の契約受理を別の受入項目として扱う必要がある。
+    </p>
+  </section>
+  <section id="next">
+    <h2>未解決の範囲</h2>
+    <p>
+      この時点では修正・再配備を行っていない。最大容量の広告値と、省略時の確保容量を区別して公開・選択・検証する契約を揃える必要がある。単に常に200000を確保する変更は、主200kと補助128kの枠構成や同時利用へ影響するため、この調査の結論として採用しない。
+    </p>
+  </section>
+</article>
