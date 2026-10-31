@@ -12,14 +12,9 @@ import { assertReuse, cacheSample } from "./verify-prompt-cache";
 // current catalog's other Providers. Live configuration is never read in tests.
 function legacySource(): string {
   const config = parse(readFileSync(new URL("../../../config/local-node/llama-swap.yaml", import.meta.url), "utf8"));
-  config.models["ornith15-strix-conversation"].cmd = config.models["ornith15-strix-conversation"].cmd
-    .replace(/^\/usr\/bin\/python3\s+\S+\/launch-prompt-retention\.py\s+\S+\s+/, "")
-    .replace("--no-kv-unified", "--kv-unified")
-    .replace(/-cram\s+(?:8192|24576)\b/, "-cram 0")
-    .replace("--ctx-size 800000", "--ctx-size 1048576")
-    .replace("--cache-prompt", "--no-cache-prompt")
-    .replace(/-ctxcp\s+8\b/, "-ctxcp 0")
-    .replace(/-cpent\s+1024\b/, "");
+  // This migration targets a fixed predecessor; production may now use a
+  // heterogeneous layout. Keep the original command as an explicit fixture.
+  config.models["ornith15-strix-conversation"].cmd = "/baseline/llama-server --model /models/Ornith.gguf --parallel 4 --ctx-size 1048576 --spec-type none -cram 0 --no-cache-idle-slots --cache-reuse 0 --no-cache-prompt -ctxcp 0 --kv-unified";
   return stringify(config);
 }
 

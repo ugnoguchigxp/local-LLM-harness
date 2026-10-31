@@ -18,7 +18,7 @@ export {
   type SystemdBackendOptions,
   type SystemdServiceControl,
 } from "./systemd";
-export { MediaVariantStopError, MediaVariantBusyError, MediaVariantManager, type MediaVariant } from "./media-variants";
+export { MediaVariantStopError, MediaVariantBusyError, MediaVariantResourceError, MediaVariantManager, type MediaVariant } from "./media-variants";
 export { systemServiceAnonymousMemoryBytes } from "./service-memory";
 export {
   LifecycleError,

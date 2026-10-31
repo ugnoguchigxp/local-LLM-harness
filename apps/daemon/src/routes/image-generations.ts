@@ -1,5 +1,5 @@
 import type { Hono } from "hono";
-import { MediaVariantBusyError } from "@larm/backends";
+import { MediaVariantBusyError, MediaVariantResourceError } from "@larm/backends";
 import { imageGenerationRequestSchema } from "@larm/core";
 import { errorBody, readJson } from "../app-http";
 import { ImageModelUnavailableError, ImageWorkerStopError, type ImageGenerationProvider } from "../image-generation-provider";
@@ -25,6 +25,10 @@ export function registerImageGenerationRoutes(app: Hono, provider: ImageGenerati
     } catch (error) {
       if (error instanceof ImageModelUnavailableError) {
         outcome = "image_model_unavailable";
+        return c.json(errorBody(outcome, error.message), 503);
+      }
+      if (error instanceof MediaVariantResourceError) {
+        outcome = error.reason;
         return c.json(errorBody(outcome, error.message), 503);
       }
       if (error instanceof MediaVariantBusyError) {

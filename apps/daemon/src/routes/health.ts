@@ -9,10 +9,15 @@ import type { ControlPlane } from "../controller";
 import type { MetricsRegistry, RequestTracker } from "../metrics";
 import type { DaemonIdentity } from "../identity";
 import type { GatewayReadiness } from "../gateway-lifecycle";
-import { errorBody } from "../app-http";
+import { secretMatches } from "../app-auth";
+import { errorBody, readJson } from "../app-http";
 
 export type HealthRouteDeps = {
   getState: () => ClusterState;
+  apiToken?: string;
+  managementToken?: string;
+  isAdmissionPaused: () => boolean;
+  pauseAdmission: () => void;
   control: ControlPlane;
   metrics?: MetricsRegistry;
   observability?: { collect(): void };
@@ -31,6 +36,20 @@ export function registerHealthRoutes(
   deps: HealthRouteDeps,
   activityState: { current?: string },
 ): void {
+  app.post("/v1/management/drain", async c => {
+    if (!deps.apiToken || !deps.managementToken
+      || !secretMatches(c.req.header("x-larm-management-token"), deps.managementToken)) {
+      return c.json(errorBody("forbidden", "management credential required"), 403);
+    }
+    const body = await readJson(c, 1024);
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length || new URL(c.req.url).search) {
+      return c.json(errorBody("invalid_request", "drain requires an empty object without query parameters"), 400);
+    }
+    deps.pauseAdmission();
+    c.header("cache-control", "no-store");
+    return c.json({ state: "draining", activeRequests: deps.requestTracker?.count() ?? null });
+  });
+
   app.get("/health", (c) => {
     const gateway = deps.getGatewayReadiness?.();
     return c.json({
@@ -68,7 +87,7 @@ export function registerHealthRoutes(
     }
     const generated = Date.parse(deps.getState().generatedAt);
     const age = (deps.now?.() ?? Date.now()) - generated;
-    if (deps.control.isDraining()) {
+    if ((deps.control.isDraining() || deps.isAdmissionPaused())) {
       return c.json({ status: "draining" }, 503);
     }
     if (!Number.isFinite(age) || age < 0 || age > (deps.stateMaxAgeMs ?? 10_000)) {
@@ -88,7 +107,7 @@ export function registerHealthRoutes(
     const startedAt = performance.now();
     const activity = createServiceActivity({
       httpActiveWorkloads: deps.requestTracker.count(),
-      draining: deps.control.isDraining(),
+      draining: (deps.control.isDraining() || deps.isAdmissionPaused()),
       observedAt: new Date(deps.now?.() ?? Date.now()).toISOString(),
       bootEpoch: deps.identity.bootEpoch,
       configRevision: deps.getConfigRevision?.() ?? deps.identity.configRevision,

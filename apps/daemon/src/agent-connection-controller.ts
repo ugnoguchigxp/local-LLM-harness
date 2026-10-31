@@ -308,8 +308,22 @@ export class AgentConnectionController {
     }
     const selectedProfile: AgentProfile = {
       ...structuredClone(profile),
-      providers: profile.providers.filter((provider) => requestedProviders?.has(provider.name) ?? true),
+      providers: structuredClone(profile.providers.filter((provider) => requestedProviders?.has(provider.name) ?? true)),
     };
+    let contextSelected = false;
+    for (const provider of selectedProfile.providers) {
+      if (provider.protocol !== "openai.chat-completions.v1") continue;
+      const pools = this.options.control.getRouteContextPools(provider.route);
+      if (!pools) continue;
+      const tokens = request.contextTokens ?? pools.defaultTokens;
+      if (!pools.pools.some(pool => pool.maxTokens === tokens) || !provider.contextWindow || tokens > provider.contextWindow.maxTokens
+        || tokens <= provider.contextWindow.outputReserveTokens + provider.contextWindow.safetyMarginTokens) {
+        return error("context_capacity_unavailable", "requested context capacity is unavailable for this profile", 400);
+      }
+      provider.contextWindow = { ...provider.contextWindow, maxTokens: tokens };
+      contextSelected = true;
+    }
+    if (request.contextTokens !== undefined && !contextSelected) return error("context_capacity_unavailable", "this profile does not offer selectable context capacity", 400);
     const audioOnly = selectedProfile.providers.every(provider => independentAudio(provider.protocol));
     if (audioOnly && this.options.control.usage && !this.options.control.usage.independentAudio) {
       return await this.options.control.usage.runIndependentAudio(() => this.create(request, principal, idempotencyKey, requestUrl, personalStateAuthorized, waitMs, backgroundOnly));
@@ -341,6 +355,7 @@ export class AgentConnectionController {
       audience: request.audience,
       ...(request.client ? { client: request.client } : {}),
       providers: selectedProviderNames,
+      ...(request.contextTokens !== undefined ? { contextTokens: request.contextTokens } : {}),
       ttlSeconds: request.ttlSeconds,
       allowFallback: request.allowFallback,
       deploymentPolicy: request.deploymentPolicy,

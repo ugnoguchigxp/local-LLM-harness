@@ -15,11 +15,22 @@ def environment(path):
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
             raise ValueError('private retention environment must be owner-only')
         data = json.load(stream)
-    if set(data) != {'LARM_PROMPT_CACHE_KEY', 'LARM_PROMPT_CACHE_POLICY'} or not re.fullmatch('[a-f0-9]{64}', data['LARM_PROMPT_CACHE_KEY']):
+    required = {'LARM_PROMPT_CACHE_KEY', 'LARM_PROMPT_CACHE_POLICY'}
+    optional = {'LARM_CONTEXT_SLOTS', 'LARM_CONTEXT_DEFAULT_TOKENS'}
+    if set(data) not in (required, required | optional) or not re.fullmatch('[a-f0-9]{64}', data['LARM_PROMPT_CACHE_KEY']):
         raise ValueError('invalid private retention environment')
     if not isinstance(data['LARM_PROMPT_CACHE_POLICY'], str) or len(data['LARM_PROMPT_CACHE_POLICY']) > 4096:
         raise ValueError('invalid retention policy')
-    return {**os.environ, **data}
+    if optional <= set(data):
+        slots, default = data['LARM_CONTEXT_SLOTS'], data['LARM_CONTEXT_DEFAULT_TOKENS']
+        if not isinstance(slots, str) or not isinstance(default, str) or len(slots) > 2048 or not re.fullmatch(r'[0-9]+(?:,[0-9]+)*', slots) or not re.fullmatch(r'[0-9]+', default):
+            raise ValueError('invalid context pools')
+        values = list(map(int, slots.split(',')))
+        if len(values) > 256 or any(value < 1 or value > 1000000 for value in values) or int(default) not in values:
+            raise ValueError('invalid context pools')
+    # A legacy launch must not inherit unrelated mixed-context settings.
+    env = {key: value for key, value in os.environ.items() if key not in optional}
+    return {**env, **data}
 
 
 def main():

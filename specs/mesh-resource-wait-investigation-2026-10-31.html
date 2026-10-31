@@ -1,0 +1,314 @@
+<article lang="ja">
+  <h1>3D生成のGPU待機と資源予約の調査（2026年10月31日）</h1>
+  <p>
+    対象はEumenesのR2D2、job ID
+    <code>meshjob_a593160ce60046c0b2fbc74d583c32d4</code
+    >。本記録は稼働版87b1c624abb738ac2345762b6a06050fc8d02cf9の観測と、作業treeでの修正を区別する。常駐解除・推論停止・予約上限変更・修正配備は実施していない。
+  </p>
+  <section id="observation">
+    <h2>観測と拒否理由</h2>
+    <p>
+      21:49:30 JSTに受付。元画像はimage_038ba9179b4c41e290a568f7c3d292d8、seedは668352459、TRELLIS.2
+      512生成のワーカー起動前で待機していた。21:59:30
+      JST、既存の10分待機期限に達し、generation_failedになった。生成は開始されず、完了していない。受付recordと固定済み元画像をrepository外の証跡領域へ退避した。
+    </p>
+    <p>
+      21:56:40 JSTのmanagement snapshotでは32 runtimes中24がCOLD、8がHOT。8件はclass
+      residentではなくpreferredだが、managed warm
+      minInstances=1であり解放候補から除外される。停止済みruntimeとの相違をdriftとは判定しない。
+    </p>
+    <table>
+      <caption>
+        同じsnapshotと稼働configによる予約の再計算。単位はGiB
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">値</th>
+          <th scope="col">根拠・意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ノードの管理上限</th>
+          <td>112</td>
+          <td>構成上128からOS等予約16を差し引く。</td>
+        </tr>
+        <tr>
+          <th scope="row">HOTの通常実行予約</th>
+          <td>70</td>
+          <td>
+            Ornith 56、Granite 3.5、KittenTTS 1.5、embedding 1、Qwen TTS 5、Ruri 1、VOICEVOX
+            1、Whisper 1。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Ornith入力保存枠</th>
+          <td>32.0625</td>
+          <td>
+            RAM pool 24、staging 8、metadata 0.0625。実使用量にかかわらず独立予約する既存仕様。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">管理上の確保量</th>
+          <td>102.0625</td>
+          <td>通常実行と入力保存枠の合計。</td>
+        </tr>
+        <tr>
+          <th scope="row">追加できる予約</th>
+          <td>9.9375</td>
+          <td>112から102.0625を差し引く。</td>
+        </tr>
+        <tr>
+          <th scope="row">3D追加要求</th>
+          <td>32</td>
+          <td>mesh variantの既存見積り。</td>
+        </tr>
+        <tr>
+          <th scope="row">予約不足</th>
+          <td>22.0625</td>
+          <td>必要32から追加可能9.9375を差し引く。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      同時点のMemAvailableは91900067840 bytes（約85.59 GiB）、accelerator availableは77149204480
+      bytes（約71.85 GiB）。静的予約で既にmemory_exhaustedになることを、空のService
+      ledgerと稼働config・snapshotを用いて再現した。物理的に22.0625
+      GiB不足しているという意味ではない。共有メモリの利用可能量と、将来使用可能なcacheを含む予約の保証は別である。
+    </p>
+    <p>
+      登録済み4 local
+      servicesは全てstopped。空ledgerでも同じ拒否になるため、残留Service予約を本件の必要原因とはしない。保存cacheが現在空でも、その上限予約は自動では減らない。通常のruntime
+      inspectionはpromptRetentionを返さなかったため、通常実行70だけを見ると拒否理由を説明できなかった。
+    </p>
+  </section>
+  <section id="repair">
+    <h2>既存の解放経路と修正</h2>
+    <p>
+      作業treeにはMemoryReclaimerによるprofile allocation・local
+      service・media共通の解放経路があるが、稼働版のmedia
+      beforeStartには存在しない。稼働版はmesh予約の全例外をMediaVariantBusyErrorへ変換し、資源不足を別mediaの使用中として10分間再試行する。このため停止後も待機する理由が隠れる。
+    </p>
+    <p>
+      既存MemoryReclaimerは最小常駐数、実行中要求、優先度、保護対象を尊重し、停止後のobserver更新と通常admissionを再実行する。推定解放量だけで開始しない。現状態では24
+      COLDに解放余地はなく、8 HOT全てがwarm
+      floorで保護される。再配備だけで本件が実行可能になるとはしない。
+    </p>
+    <p>
+      今回のソース修正ではService
+      ledgerから構造化したnode別admissionを返し、実際の不足をMemoryReclaimerへ渡す。解放可能な候補全部でも足りない場合は無益な停止を避ける。mediaはCPU
+      service予約の存在だけでは拒否せず、予約量を通常の判定へ加算する。media用のlive判定にはsystemとacceleratorの小さい側、既存の16
+      GiB floor、未反映予約を用いる。CPU serviceの判定はsystem memoryだけを用いる。
+    </p>
+    <p>
+      資源待機は他mediaの排他と異なる例外で再試行し、拒否理由が変化した際にoperator
+      eventを記録する。meshの待機期限では不足理由を保持し、image
+      APIでも資源不足を503で返す。inspectionにはpromptRetentionを追加する。この原因修正ではしきい値、通常実行見積り、常駐方針を維持する。追加の資源対策として、後述の候補ではcacheを実際の強制上限付きで縮小する。
+    </p>
+  </section>
+  <section id="resume">
+    <h2>再開条件とセッション縮小案</h2>
+    <p>
+      現予約体系では他の確保量を80
+      GiB以下にする必要がある。停止・解放後は新鮮なtelemetryと未反映予約を用いて再判定し、3D 32
+      GiBとlive safety floor 16
+      GiBを満たす必要がある。利用可能量の表示だけでは実生成成功を保証しない。
+    </p>
+    <p>
+      Ornithの一時常駐解除は88.0625
+      GiBの予約を外せる候補だが、受付済み会話のallocationが残る間は通常の予約に数える。自然終了まで待ち、新しい会話の開始を抑える必要がある。停止時はRAM保存cacheが失われ、再計算が必要になる。利用者へ理由と影響を提示済みだが、まだ実施承認は得ていない。
+    </p>
+    <p>
+      利用者から3 sessionと128kの検討案を受けた。現native propsは200192 tokens×4
+      slots、公開200000×4。配備engineのslot初期化は全枠同じn_ctx_slotであり、128kの入力制限を付けるだけではnative
+      KV予約は減らない。主担当200kと補助担当128kを混在させるには、engineでの異容量対応または別runtimeと呼び出し側のProfile選択が必要。利用者はその後、会話メイン担当だけ200k、サブ担当は128kと指定した。利用者は一度主1・サブ3を指定し、続いて主1・サブ2を提案した。現在の候補構成は主1・サブ2を対象にする。全枠128kまたは200kへの一律変更は採用しない。
+    </p>
+    <p>
+      重みmetadataでは40主層のうち10層がfull attention、K/Vは各512要素、q4_0は32要素あたり18
+      bytes。通常KV部分は1 tokenあたり5760 bytes。800768 tokensから3×131072
+      tokensへ減らす場合、この部分の削減見積りは約2.19 GiBである。recurrent
+      state、checkpoint、compute workspace、保存cacheを含む全体の実測ではない。22.0625
+      GiBを解消したとは扱わず、縮小版の実測と予約の裏付けが必要である。
+    </p>
+    <p>
+      再開時は同じ受付依頼・元画像・seedを使う。元recordは期限切れfailedであり、同じidempotency
+      keyでPOSTしても再生成されない。新規ジョブの成功を元ジョブの完了と取り違えないよう、元job
+      IDの再開・結果照合の手順も必要。完了確認はGLBの検証・公開asset・HTTP取得・hash照合・worker終了まで含める。
+    </p>
+  </section>
+  <section id="openai-compatible-sessions">
+    <h2>利用者が指定したセッションとAPIの境界</h2>
+    <p>
+      会話の主担当は200k、サブ担当は128kとする。生成APIはOpenAI互換を維持し、POST
+      /v1/chat/completionsの要求・応答・SSEへsession
+      ID、担当種別、slot番号などの独自必須項目を追加しない。通常のSDKから、提供されたbase
+      URL・model・API keyを使用する呼び出しを維持する。
+    </p>
+    <p>
+      主担当・サブ担当の選択と容量契約は生成とは別のLARM接続・Profile制御側で確定し、その接続へ発行したProvider
+      Bearerを通常のAuthorizationで使用する。現実装のProvider
+      Bearerは接続・Providerへ結び付いており、Gatewayは接続のProfileとcontextWindowを解決できる。会話本文や要求サイズから担当を推測して主担当枠を消費する方式にはしない。
+    </p>
+    <p>
+      初回の入力cacheがない段階でも、主担当は生成とは別の制御APIで200kの接続を明示要求し、serverが発行したconnection
+      IDを受け取る。そのIDでProviderをclaimし、返されたBearerを生成APIの通常認証に使う。初回要求で未発行のconnection
+      IDをconsumerが指定する方式ではない。生成bodyへconnection
+      IDを追加する必要はなく、接続IDと認証情報の対応は制御側で保持する。
+    </p>
+    <p>
+      サブ担当は容量を明示指定せず、既定の128k用poolへ割り当てる方針とする。主担当用200kの確保枠はサブ担当の既定候補へ含めない。全体3枠案は主担当1・サブ担当2とし、空きがない場合は待機または容量不足として扱う。要求fieldや新規endpointの具体名、混在KVの実装方式は未確定であり、既存本番APIが既にこの振分けを実装しているとは扱わない。
+    </p>
+    <p>
+      確認にはまず既存のGET
+      /v1/agent-connections/:idを使用する。この応答は接続ID、選択Profile、Provider、model、contextWindow、状態を返し、呼出principalの所有確認を行う。確認操作のために生成を実行したり新しい容量を確保したりしない。担当種別や現在の割当を明示する追加APIが必要な場合も、生成APIとは独立した制御APIに置く。
+    </p>
+    <p>
+      ここで会話sessionの識別に使う接続IDと、現在実行を担うnative
+      slotは異なる。slotは移動・解放・再起動で変わり得る実行状態であり、恒久的な会話IDとして公開しない。認証・所有境界の外へ別接続や会話本文、cache
+      key、認証情報を返さない。同じAPI
+      keyを全担当が共有する経路だけでは担当の違いを識別できないため、利用側が別制御面で得た接続情報を担当ごとに対応付ける必要がある。
+    </p>
+    <p>
+      以上は設計条件の確定であり、混在容量の実装・配備完了を意味しない。単に128kのcontextWindowを広告することと、native
+      KVを128k相当に確保することを区別する。受入では主1・サブ2の経路と認証の対応、入力上限、同時実行時の実際のKV割当、既存JSON・SSE契約、3Dとの共存、worker停止と予約解放まで確認する。
+    </p>
+  </section>
+  <section id="mixed-capacity-candidate">
+    <h2>200k主担当1枠と128k補助2枠の実装候補</h2>
+    <p>
+      制御API POST
+      /v1/agent-connectionsへ任意のcontextTokensを追加した。混在poolを持つ解決先では省略時131072、明示200000で主担当を選ぶ。非対応の値や非対応Profileは400、同じclientの生存接続へ異なる指定を再送すると409とする。claimは従来のOpenAI
+      Provider形式を維持し、選んだcontextWindowを返す。通常の生成bodyは変更しない。
+    </p>
+    <p>
+      runtimeのcontextPoolsは既定値と容量・本数の組で定義し、全poolの同時実行数合計をruntime全体の上限と一致させる。Gatewayはpool別に待機してからruntime全体の実行枠を得る。主担当の待機で補助枠を塞がず、取消・drain・quarantineは両方の待機へ届く。正規の認証・Profileから導いた容量だけをprivate
+      engine headerへ設定し、consumerが同名headerを送っても流用しない。
+    </p>
+    <p>
+      native候補は統合KV bufferに200000＋131072＋131072
+      tokensを確保し、各slotへ個別の上限を与える。必要量は462144
+      tokens、engine内の256単位整列後は462336
+      tokens。独立streamの均等分割で128kを広告するだけの構成ではない。private起動設定の本数、訓練上限、合計KV量を照合し、不一致なら起動しない。既定pool以外の選択はprivate認証が必要である。元の保持engineを同じlink入力から再現した後、task
+      ABIの変更に合わせて全server
+      objectを再buildし、既存保持試験と新しい容量境界試験を通した。まだ本番engineは起動・交換していない。
+    </p>
+    <p>
+      cacheのinstance識別には容量も含め、同じprompt_cache_keyでも200kから128kへ大きいsnapshotを無条件復元しない。engineのpropsで実際の容量列と既定poolがLARM構成と一致することを要求前に検証する。nによる複数completionは選択poolの本数以内とし、child
+      taskも同じ容量のslotに限定する。
+    </p>
+    <table>
+      <caption>
+        資源候補の強制上限。GiB、未配備
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">候補</th>
+          <th scope="col">根拠と影響</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">LLM実行領域</th>
+          <td>56</td>
+          <td>従来の見積りを維持。KV縮小分だけを理由にしきい値を緩めない。</td>
+        </tr>
+        <tr>
+          <th scope="row">RAM保存pool</th>
+          <td>6</td>
+          <td>
+            最大2 GiBのsnapshotを3本分。過去の別分岐は既存の公平回収・LRUに従い、保持数が減る。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">単体snapshot・一時領域</th>
+          <td>各2</td>
+          <td>
+            clone前にサイズを検査し、超過は保存をbypassする。生成結果や利用側の履歴は削除しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">cache全予約</th>
+          <td>8.0625</td>
+          <td>保存6＋一時2＋metadata 0.0625。idle 5分・最大30分は維持。</td>
+        </tr>
+        <tr>
+          <th scope="row">他Provider</th>
+          <td>14</td>
+          <td>常駐方針を維持する。</td>
+        </tr>
+        <tr>
+          <th scope="row">3D追加</th>
+          <td>32</td>
+          <td>既存見積りとlive safety floor 16を維持する。</td>
+        </tr>
+        <tr>
+          <th scope="row">全AI予約</th>
+          <td>110.0625</td>
+          <td>静的上限112以内。推定解放量をlive空きへ加算しない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      単体snapshotの検討では、モデルmetadataのfull attention 10層・K/V各512要素・q4_0の18
+      bytes/32要素から通常KVを5760 bytes/tokenと計算する。主担当200kで約1.073 GiB、recurrent
+      stateは30層×（24576＋524288）要素×4 bytesで約62.81 MiB。現在状態と8 checkpointの合計は約565.31
+      MiBで、通常KVとの合計は約1.63 GiBとなる。token metadataは別の64 MiB枠で数える。2
+      GiBを超える状態はnativeの予算判定で保存しない。この算術は実入力の保存・復元を用いた実測の代わりではなく、実機での保持・復元とpeak観測を受入条件とする。
+    </p>
+    <p>
+      2026年10月31日22:24 JST、元のLLMのCPU RSSは約570 MiB、GPU driverのresident VRAM＋GTTは約25
+      GiBだった。待機時の観測であり56 GiBの上限を下げる根拠にはしない。raw KVは旧4.30
+      GiBから候補2.48 GiBへ減るが、実際のcompute workspaceやvision経路のpeakは別途確認する。
+    </p>
+    <p>
+      期限切れの元3D jobを同じID・seed・元画像で再開するため、management限定のPOST
+      /v1/3d/generations/:id/retryを追加した。API認証に加えmanagement
+      token、空object、試行ごとのUUID
+      Idempotency-Keyが必要。生存job・停止未確認worker・入力消去済みjobは再開しない。同じretry
+      keyは再実行せず、完了済みjobも再生成しない。元のcreatedAtを維持し、新しいqueue時刻を内部recordへ保存する。自動再生成は導入しない。
+    </p>
+    <p>
+      反映時にはLLMの配置変更による再起動が必要となり、RAM
+      cacheは失われる。進行中要求は正常終了を待ち、新しい要求を止めた上で切り替える。会話履歴は利用側のmessagesから再計算する。常駐方針は変更しない。現時点ではcandidate
+      buildと固定試験のみであり、反映・3D完了・混在構成の実機受入は未完了である。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>修正の検証状況</h2>
+    <p>
+      作業treeのbun run
+      check、追加修正後の型検査、docs:check:fixが成功した。関連61試験では、保存枠込みの102.0625
+      GiBと不足22.0625
+      GiB、停止後の再判定、CPUとaccelerator判定の区別、解放候補全部でも足りない場合の停止抑止、空き回復後の開始、待機期限で不足理由を保持することを確認した。これらは固定試験であり、本番3Dの完了証跡ではない。
+    </p>
+    <p>
+      修正は未配備。Ornithの常駐・cache・session構成は変更していない。R2D2は21:59:30
+      JSTの期限切れfailedのままであり、入力と受付情報の保全を完了した。希望容量は主担当200k・サブ担当128kで確定した。混在KV配置・利用側の担当との対応・変更後の資源保証の実測と、元ジョブの安全な再開が残る。
+    </p>
+  </section>
+  <section id="references">
+    <h2>関連仕様</h2>
+    <p>
+      <a href="./ornith-strix-200k-eumenes-restore-2026-10-30.html"
+        >200k×4と入力cache予約の設計・受入</a
+      >、<a href="./image-to-3d-local-node-trial-2026-10-18.html">3D生成の初回試行</a>、<a
+        href="./image-model-selection-flux3-2026-10-31.html"
+        >mediaの既存配備範囲</a
+      >を参照する。証跡はrepository外の /srv/ai/evidence/mesh-waiting-gpu-20261031/ に保持する。
+    </p>
+  </section>
+  <section id="safe-activation">
+    <h2>処理中要求を中断しない切替手順</h2>
+    <p>
+      管理専用POST
+      /v1/management/drainは空objectとControl・management両認証を要求する。新規の変更・生成要求を503で止め、既に受け付けた要求、待機中の推論、応答streamをabortしない。GET
+      /v1/activityのdrainingとactiveWorkloadsで完了を待ち、native側の処理数も0と確認する。解除はdaemonの再起動で行う。
+    </p>
+    <p>
+      まず現在と同じbackend構成のコードだけを配備し、受付停止機能を使える状態にする。その後にdrainして混在構成を配備する。llama-swapの設定watcherがdaemonの終了より先にbackendを交換する危険を避ける。受付停止は永続化せず、管理中にdaemonが予期せず再起動した場合は再度停止・無負荷確認する。常駐方針は変更せず、切替時のRAM
+      cache消失と再計算を利用者へ事前提示した。
+    </p>
+  </section>
+</article>

@@ -475,6 +475,12 @@ export class ControlPlane {
     return this.allocations.get(id);
   }
 
+  getRouteContextPools(routeId: string) {
+    const route = this.registry.routes.find(route => route.id === routeId);
+    const candidate = route?.candidates.find(candidate => candidate.purpose === "primary");
+    return candidate ? getRuntime(this.registry, candidate.runtime)?.contextPools : undefined;
+  }
+
   getRuntimeStartupPolicy(runtimeId: string) {
     const runtime = this.registry.runtimes.find((item) => item.id === runtimeId);
     return runtime ? providerStartupPolicy(runtime) : undefined;

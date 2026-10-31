@@ -1,5 +1,6 @@
 export const API_OPERATIONS = [
   ["post", "/v1/3d/generations", "createMeshGeneration"],
+  ["post", "/v1/3d/generations/{id}/retry", "retryMeshGeneration"],
   ["get", "/v1/3d/generations/{id}", "getMeshGeneration"],
   ["delete", "/v1/3d/generations/{id}", "cancelMeshGeneration"],
   ["get", "/v1/3d/generations/{id}/events", "getMeshGenerationEvents"],
@@ -26,6 +27,7 @@ export const API_OPERATIONS = [
   ["delete", "/v1/local-service-leases/{id}", "releaseLocalServiceLease"],
   ["post", "/v1/management/local-services/{id}/stop", "stopLocalService"],
 
+  ["post", "/v1/management/drain", "drainAdmission"],
   ["get", "/health", "getHealth"],
   ["get", "/ready", "getReadiness"],
   ["get", "/v1/activity", "getServiceActivity"],
@@ -136,6 +138,7 @@ type ApiOperationId = typeof API_OPERATIONS[number][2];
 
 export const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly string[]> = {
   createMeshGeneration: ["202"],
+  retryMeshGeneration: ["202"],
   getMeshGeneration: ["200"],
   cancelMeshGeneration: ["200"],
   getMeshGenerationEvents: ["200"],
@@ -157,6 +160,7 @@ export const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly stri
   releaseLocalServiceLease: ["204"],
   stopLocalService: ["204"],
 
+  drainAdmission: ["200"],
   getHealth: ["200"],
   getReadiness: ["200"],
   getServiceActivity: ["200"],
@@ -258,6 +262,7 @@ export const SUCCESS_STATUSES_BY_OPERATION: Record<ApiOperationId, readonly stri
 
 export const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   createMeshGeneration: "MeshJob",
+  retryMeshGeneration: "MeshJob",
   getMeshGeneration: "MeshJob",
   cancelMeshGeneration: "MeshJob",
   getMeshGenerationEvents: "ServerSentEvents",
@@ -279,6 +284,7 @@ export const SUCCESS_SCHEMA_BY_OPERATION: Record<ApiOperationId, string> = {
   releaseLocalServiceLease: "Empty",
   stopLocalService: "Empty",
 
+  drainAdmission: "AdmissionDrainResponse",
   getHealth: "Health",
   getReadiness: "Readiness",
   getServiceActivity: "ServiceActivity",

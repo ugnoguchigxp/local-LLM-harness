@@ -68,3 +68,15 @@ test("OpenAI cache keys group one principal across Connections without changing 
   await expect(context({ cacheKey: "synthetic-thread" })).rejects.toThrow("scope_revoked");
   expect((await context({ connection: "other", cacheKey: "synthetic-thread" })).scope).toBe(a.scope);
 });
+
+test("mixed context readiness attests both capacities and the default pool before inference", async () => {
+  const contextPools = { defaultTokens: 131072, pools: [{ maxTokens: 200000, slots: 1 }, { maxTokens: 131072, slots: 2 }] };
+  for (const capacities of [[200000, 131072, 131072], [200000, 200000, 200000], undefined]) {
+    const adapter = new LlamaPromptRetention("a".repeat(64), async () => {
+      const response = await props();
+      return Response.json({ ...await response.json() as object, larm_context_pools: { defaultTokens: 131072, capacities } });
+    });
+    if (capacities?.[1] === 131072) expect((await adapter.headers({ ...input(), contextPools })).has("x-larm-cache-context")).toBe(true);
+    else await expect(adapter.headers({ ...input(), contextPools })).rejects.toThrow("context_pool_capability_mismatch");
+  }
+});

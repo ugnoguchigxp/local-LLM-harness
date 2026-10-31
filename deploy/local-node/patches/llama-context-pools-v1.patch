@@ -1,0 +1,124 @@
+--- a/tools/server/server-task.h
++++ b/tools/server/server-task.h
+@@ -129,6 +129,7 @@
+ };
+ 
+ struct server_task {
++    int32_t larm_context_tokens = 0;
+     int id = -1; // to be filled by server_queue
+ 
+     // TODO @ngxson : remove this field and implement a mapping task_id -> idx in the response_reader
+@@ -235,6 +236,7 @@
+         copy.id        = id_child;
+         copy.id_parent = id_parent;
+         copy.params    = params;
++        copy.larm_context_tokens = larm_context_tokens;
+         copy.type      = type;
+         copy.tokens    = tokens.clone();
+         copy.id_slot   = -1; // child tasks cannot specify slot
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -1,5 +1,6 @@
+ 
+ #include "server-context.h"
++#include "larm-context-pools.h"
+ #include "server-chat.h"
+ #include "server-common.h"
+ #include "server-http.h"
+@@ -69,6 +70,21 @@
+     unsigned int difference = 0;
+     for (size_t i = 0; i < key.size(); ++i) difference |= (unsigned char) key[i] ^ (unsigned char) (*value)[i];
+     return difference == 0;
++}
++static const larm_context_layout & larm_context_pools() {
++    static const auto pools = larm_context_layout::parse(
++        getenv("LARM_CONTEXT_SLOTS") ? getenv("LARM_CONTEXT_SLOTS") : "",
++        getenv("LARM_CONTEXT_DEFAULT_TOKENS") ? getenv("LARM_CONTEXT_DEFAULT_TOKENS") : "");
++    return pools;
++}
++static int32_t larm_request_context_tokens(const server_http_req & req) {
++    const auto & pools = larm_context_pools();
++    if (!pools.enabled()) return 0;
++    const auto * text = larm_retention_header(req.headers, "x-larm-context-tokens");
++    if (!text || !larm_cache_authorized(req)) return pools.default_tokens;
++    const int32_t tokens = larm_context_layout::number(*text);
++    if (!pools.accepts(tokens)) throw std::runtime_error("unconfigured context pool");
++    return tokens;
+ }
+ static larm_retention_policy larm_cache_policy() {
+     larm_retention_policy p;
+@@ -1092,6 +1108,9 @@
+             n_ctx_slot = n_ctx_train;
+         }
+ 
++        const auto & context_pools = larm_context_pools();
++        context_pools.validate(params_base.n_parallel, llama_n_ctx(ctx_tgt), n_ctx_train, params_base.kv_unified);
++        if (context_pools.enabled() && larm_cache_key().empty()) throw std::runtime_error("context pools require private engine authentication");
+         slots.clear();
+ 
+         ctx_tgt_seq_rm_type = common_context_can_seq_rm(ctx_tgt);
+@@ -1136,7 +1155,7 @@
+             slot.ctx_tgt = ctx_tgt;
+             slot.ctx_dft = ctx_dft.get();
+             slot.spec    = spec.get();
+-            slot.n_ctx   = n_ctx_slot;
++            slot.n_ctx   = context_pools.enabled() ? context_pools.capacities.at(i) : n_ctx_slot;
+ 
+             slot.mctx                   = mctx;
+             slot.prompt.tokens.has_mtmd = mctx != nullptr;
+@@ -1359,6 +1378,7 @@
+         bool best_same_scope = false;
+         for (auto & slot : slots) {
+             if (slot.is_processing()) continue;
++            if (larm_context_pools().enabled() && slot.n_ctx != task.larm_context_tokens) continue;
+             slot.prompt.retention.memory_floor = llama_memory_seq_pos_min(llama_get_memory(ctx_tgt), slot.id);
+             const bool same_scope = p.valid(task.retention, larm_retention_policy::now(), false)
+                 && p.valid(slot.prompt.retention, larm_retention_policy::now())
+@@ -2091,10 +2111,10 @@
+         return true;
+     }
+ 
+-    std::vector<server_slot *> get_free_slots(size_t n_slots_needed, int exclude_id_slot) {
++    std::vector<server_slot *> get_free_slots(size_t n_slots_needed, int exclude_id_slot, int32_t context_tokens) {
+         std::vector<server_slot *> free_slots;
+         for (auto & slot : slots) {
+-            if (!slot.is_processing() && slot.id != exclude_id_slot) {
++            if (!slot.is_processing() && slot.id != exclude_id_slot && (!larm_context_pools().enabled() || slot.n_ctx == context_tokens)) {
+                 free_slots.push_back(&slot);
+             }
+             if (free_slots.size() >= n_slots_needed) {
+@@ -2239,7 +2259,7 @@
+                     if (task.is_parent()) {
+                         // try getting free slots for all child tasks
+                         size_t n_child_tasks = task.child_tasks.size();
+-                        std::vector<server_slot *> child_slots = get_free_slots(n_child_tasks, slot->id);
++                        std::vector<server_slot *> child_slots = get_free_slots(n_child_tasks, slot->id, task.larm_context_tokens);
+                         if (child_slots.size() < n_child_tasks) {
+                             SRV_DBG("not enough free slots for child tasks, n_free = %zu, n_children = %zu, defer task, id_task = %d\n", child_slots.size(), n_child_tasks, id_task);
+                             queue_tasks.defer(std::move(task));
+@@ -3906,7 +3926,7 @@
+     }
+ 
+     int get_slot_n_ctx() {
+-        return slots.back().n_ctx;
++        return larm_context_pools().enabled() ? larm_context_pools().maximum() : slots.back().n_ctx;
+     }
+ 
+     json diffusion_completion_json(
+@@ -4317,6 +4337,8 @@
+                     || !params.lora_adapters.empty() || !task.params.cache_prompt || task.params.n_cmpl != 1) task.retention = {};
+             }
+ 
++            task.larm_context_tokens = larm_request_context_tokens(req);
++            if (larm_context_pools().enabled() && (size_t) task.params.n_cmpl > larm_context_pools().count(task.larm_context_tokens)) throw std::runtime_error("completion count exceeds context pool capacity");
+             // OAI-compat
+             task.params.res_type          = res_type;
+             task.params.oaicompat_cmpl_id = completion_id;
+@@ -4739,6 +4761,7 @@
+         std::string tmpl_tools   = common_chat_templates_source(meta->chat_params.tmpls.get(), "tool_use");
+ 
+         json props = {
++            { "larm_context_pools", {{"capacities", larm_context_pools().capacities}, {"defaultTokens", larm_context_pools().default_tokens}} },
+             { "larm_prompt_cache", [&]() { auto props = retention_properties; props["authenticated"] = larm_cache_authorized(req); return props; }() },
+             { "default_generation_settings", default_generation_settings_for_props },
+             { "total_slots",                 params.n_parallel },

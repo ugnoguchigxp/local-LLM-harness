@@ -52,6 +52,8 @@ export function inspectionRuntime(runtime: Registry["runtimes"][number]) {
     node: runtime.node,
     policy: runtime.policy,
     resources: runtime.resources,
+    ...(runtime.contextPools ? { contextPools: runtime.contextPools } : {}),
+    ...(runtime.promptRetention ? { promptRetention: runtime.promptRetention } : {}),
     deployment: runtime.deployment,
   };
 }

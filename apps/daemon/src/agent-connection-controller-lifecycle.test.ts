@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseAgentConnectionCatalog, type Registry, type PublicAgentConnection } from "@larm/core";
+import { chatInputPolicySchema, promptRetentionPolicySchema, parseAgentConnectionCatalog, type Registry, type PublicAgentConnection } from "@larm/core";
 import type { RuntimeBackend } from "@larm/backends";
 import { AgentConnectionController } from "./agent-connection-controller";
 import { ConnectionTokenCodec } from "./connection-token";
@@ -7,7 +7,7 @@ import { ControlPlane } from "./controller";
 import { Observer } from "./observer";
 import type { SemanticReadiness } from "./semantic-readiness";
 
-async function fixture(limit = 8, idleSeconds?: number) {
+async function fixture(limit = 8, idleSeconds?: number, pools = false) {
   const registry: Registry = {
     nodes: [{ id: "node", endpoint: "http://127.0.0.1", resources: { memoryTotalGB: 32, reservedMemoryGB: 2 } }], profiles: [],
     runtimes: [{ id: "llm", capability: ["llm.general"], protocol: "openai.chat-completions.v1", backend: "systemd", node: "node",
@@ -15,13 +15,21 @@ async function fixture(limit = 8, idleSeconds?: number) {
       deployment: { service: "fixture.service", healthPort: 8080, endpoint: "http://127.0.0.1:8080" } }],
     routes: [{ id: "default", explicitOnly: true, capabilities: ["llm.general"], candidates: [{ runtime: "llm", purpose: "primary" }] }],
   };
+  if (pools) {
+    registry.routes[0]!.capabilities.push("llm.vision");
+    registry.runtimes[0] = { ...registry.runtimes[0]!, backend: "llama-swap", capability: ["llm.general", "llm.vision"],
+      deployment: { modelId: "fixture", listen: "http://127.0.0.1", endpoint: "http://127.0.0.1:8080" },
+      resources: { ...registry.runtimes[0]!.resources, maxConcurrentRequests: 3 },
+      chatInput: chatInputPolicySchema.parse({}), promptRetention: promptRetentionPolicySchema.parse({}),
+      contextPools: { defaultTokens: 131072, pools: [{ maxTokens: 200000, slots: 1 }, { maxTokens: 131072, slots: 2 }] } };
+  }
   const health = { runtimeId: "llm", service: "Running" as const, listening: true, healthOk: true, busy: false };
   const backend: RuntimeBackend = { list: async () => [health], health: async () => health, ensure: async () => health, stop: async () => {} };
   let now = Date.now();
   const observer = new Observer(registry, backend, { now: () => now });
   await observer.tick();
   const control = new ControlPlane(registry, backend, observer, { now: () => now });
-  const provider = { name: "llm", capability: "llm.general", route: "default", publicModel: "fixture", readiness: "llm-inference" };
+  const provider = { name: "llm", capability: "llm.general", route: "default", publicModel: "fixture", readiness: "llm-inference", ...(pools ? { contextWindow: { maxTokens: 200000, outputReserveTokens: 4096, safetyMarginTokens: 1024 } } : {}) };
   const catalog = parseAgentConnectionCatalog({ version: 1, defaultAgentProfile: "foreground",
     audiences: { local: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" } },
     agentProfiles: {
@@ -36,7 +44,7 @@ async function fixture(limit = 8, idleSeconds?: number) {
     readyTimeoutMs: 10_000, pollIntervalMs: 1, idempotencyTtlMs: idleSeconds === undefined ? 5 : 300_000, idempotencyLimit: 100, historyLimit: 1,
     random: () => "repeating-source", now: () => now,
   });
-  const create = (profile: "ornith1.5Strix-vision" | "contextStill", client: string) => controller.create({ profile, audience: "local", client,
+  const create = (profile: "ornith1.5Strix-vision" | "contextStill", client: string, contextTokens?: number) => controller.create({ profile, audience: "local", client, ...(contextTokens !== undefined ? { contextTokens } : {}),
     ttlSeconds: 120, allowFallback: false, deploymentPolicy: "existing-only" }, "owner", client, "http://127.0.0.1:9810/v1/agent-connections");
   const demand = (key: string, principal = "owner", profile: "ornith1.5Strix-vision" | "contextStill" = "ornith1.5Strix-vision", client = "screen", ttlSeconds = 300) =>
     controller.create({ profile, audience: "local", client, ttlSeconds, allowFallback: false, deploymentPolicy: "existing-only" },
@@ -265,4 +273,29 @@ test("old-epoch control IDs return 410 while Provider credentials use authentica
       audience: "local", generation: 1, iat: now, exp: now + 120 });
     expect(() => f.controller.verifyProviderToken(token)).toThrow(expect.objectContaining({ code: "invalid_token" }));
   } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+
+test("context selection defaults to the subagent pool and explicit main claims keep the standard OpenAI descriptor", async () => {
+  const f = await fixture(8, undefined, true);
+  try {
+    const sub = (await f.create("ornith1.5Strix-vision", "sub")).body as PublicAgentConnection;
+    const main = (await f.create("ornith1.5Strix-vision", "main", 200000)).body as PublicAgentConnection;
+    expect(sub.providers[0]!.contextWindow?.maxTokens).toBe(131072);
+    expect(main.providers[0]!.contextWindow?.maxTokens).toBe(200000);
+    const claim = await f.controller.claim(main.id, "owner", "openai-provider-v1");
+    expect(claim.status).toBe(200);
+    const descriptor = (claim.body as { providers: { apiStyle: string; contextWindow: { maxTokens: number }; credential: { token: string } }[] }).providers[0]!;
+    expect(descriptor.apiStyle).toBe("openai"); expect(descriptor.contextWindow.maxTokens).toBe(200000);
+    expect(f.controller.verifyProviderToken(descriptor.credential.token).record.id).toBe(main.id);
+    expect((await f.create("ornith1.5Strix-vision", "bad", 140000)).status).toBe(400);
+    expect((await f.create("ornith1.5Strix-vision", "sub", 200000)).status).toBe(409);
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("capacity selection is rejected when the resolved route does not support it", async () => {
+  const f = await fixture();
+  try { expect((await f.create("ornith1.5Strix-vision", "main", 200000)).status).toBe(400);
+    expect(f.control.getRouteContextPools("missing")).toBeUndefined(); }
+  finally { f.control.beginDrain(); await f.control.flush(); }
 });

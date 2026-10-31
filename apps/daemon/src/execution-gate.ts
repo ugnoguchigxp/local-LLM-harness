@@ -44,6 +44,7 @@ type ExclusiveEntry = {
 };
 
 export class ExecutionGate {
+  private readonly partitions = new Map<string, ExecutionGate>();
   private readonly runtimes = new Map<string, RuntimeGate>();
   private readonly quarantinedRuntimes = new Set<string>();
   private draining = false;
@@ -64,6 +65,7 @@ export class ExecutionGate {
 
   beginDrain(): void {
     this.draining = true;
+    for (const gate of this.partitions.values()) gate.beginDrain();
     if (this.exclusive?.phase === "pending") {
       const entry = this.exclusive;
       this.clearExclusiveListeners(entry);
@@ -82,6 +84,7 @@ export class ExecutionGate {
 
   quarantineRuntime(runtime: string): void {
     this.quarantinedRuntimes.add(runtime);
+    for (const gate of this.partitions.values()) gate.quarantineRuntime(runtime);
     const state = this.runtimes.get(runtime);
     if (!state) return;
     for (const entry of state.queue.splice(0)) {
@@ -96,6 +99,7 @@ export class ExecutionGate {
   }
 
   clearRuntimeQuarantine(runtime: string): void {
+    for (const gate of this.partitions.values()) gate.clearRuntimeQuarantine(runtime);
     if (this.quarantinedRuntimes.delete(runtime)) {
       this.emit("execution_request", runtime, "runtime_quarantine_cleared");
     }
@@ -185,6 +189,20 @@ export class ExecutionGate {
       );
       this.emitState(runtime, state);
     });
+  }
+
+  async acquirePartition(runtime: string, partition: string, slots: number, policy: ExecutionPolicy, signal: AbortSignal, priority = 0): Promise<() => void> {
+    if (this.draining) throw new ExecutionGateError("draining", "execution gate is draining");
+    if (this.quarantinedRuntimes.has(runtime)) throw new ExecutionGateError("runtime_quarantined", "runtime is quarantined");
+    const key = `${runtime}:${partition}`;
+    let gate = this.partitions.get(key);
+    if (!gate) { gate = new ExecutionGate(); this.partitions.set(key, gate); }
+    const releasePartition = await gate.acquire(runtime, { ...policy, maxConcurrentRequests: slots }, signal, priority);
+    try {
+      const release = await this.acquire(runtime, policy, signal, priority);
+      let released = false;
+      return () => { if (released) return; released = true; try { release(); } finally { releasePartition(); } };
+    } catch (error) { releasePartition(); throw error; }
   }
 
   async acquireExclusive(

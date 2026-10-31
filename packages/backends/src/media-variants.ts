@@ -15,6 +15,11 @@ export class MediaVariantBusyError extends Error {
   }
 }
 
+/** Retryable resource pressure, distinct from another request owning the worker. */
+export class MediaVariantResourceError extends Error {
+  constructor(readonly reason: string, message: string) { super(message); this.name = "MediaVariantResourceError"; }
+}
+
 async function runVariantScript(script: string, action: "start" | "stop", variant: MediaVariant, signal?: AbortSignal): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(script, [action, variant], { stdio: ["ignore", "ignore", "pipe"], detached: true });
@@ -62,6 +67,7 @@ export class MediaVariantManager {
     beforeStart?: (variant: MediaVariant, signal?: AbortSignal) => void | Promise<void>;
     afterStart?: (variant: MediaVariant) => void | Promise<void>;
     afterStop?: (variant: MediaVariant) => void;
+    onResourceWait?: (variant: MediaVariant, error: MediaVariantResourceError) => void;
     run?: (action: "start" | "stop", variant: MediaVariant, signal?: AbortSignal) => Promise<void>;
   }) {}
 
@@ -152,18 +158,24 @@ export class MediaVariantManager {
     this.waiters.push(ticket);
     const deadline = Date.now() + timeoutMs;
     let firstAttempt = true;
+    let resourceError: MediaVariantResourceError | undefined, lastResourceReason: string | undefined;
     try {
       while (true) {
         signal.throwIfAborted();
-        if (!firstAttempt && Date.now() >= deadline) throw new Error("media execution capacity wait expired");
+        if (!firstAttempt && Date.now() >= deadline) throw resourceError ?? new Error("media execution capacity wait expired");
         firstAttempt = false;
         try {
           if (this.waiters[0] !== ticket) throw new MediaVariantBusyError();
           return await this.acquire(variant, signal, ticket, timeoutMs > 0 ? deadline : undefined);
         }
         catch (error) {
-          if (!(error instanceof MediaVariantBusyError)) throw error;
-          if (Date.now() >= deadline) throw new Error("media execution capacity wait expired");
+          if (!(error instanceof MediaVariantBusyError) && !(error instanceof MediaVariantResourceError)) throw error;
+          resourceError = error instanceof MediaVariantResourceError ? error : undefined;
+          if (resourceError && resourceError.reason !== lastResourceReason) {
+            lastResourceReason = resourceError.reason;
+            this.options.onResourceWait?.(variant, resourceError);
+          }
+          if (Date.now() >= deadline) throw resourceError ?? new Error("media execution capacity wait expired");
           signal.throwIfAborted();
           await new Promise<void>((resolve, reject) => {
             const abort = () => { clearTimeout(timer); reject(signal.reason); };

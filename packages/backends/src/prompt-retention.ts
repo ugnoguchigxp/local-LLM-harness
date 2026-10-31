@@ -33,6 +33,7 @@ export class LlamaPromptRetention {
   }
   async headers(input: { principal: string; connection: string; epoch: string; instance: unknown; cacheKey?: string;
     expiresAt: number; now: number; requestId: string; endpoint: string; policy: PromptRetentionPolicy; signal: AbortSignal;
+    contextPools?: { defaultTokens: number; pools: { maxTokens: number; slots: number }[] };
     runtimeId: string; providerId?: string; scopeSignal?: AbortSignal }): Promise<Headers> {
     this.prune();
     if (this.disabled) return new Headers();
@@ -42,10 +43,15 @@ export class LlamaPromptRetention {
       headers: { "x-larm-cache-key": this.key }, redirect: "error", signal: input.signal,
     });
     if (!response.ok) { await response.body?.cancel(); throw new Error("prompt_retention_capability_unavailable"); }
-    const props = await response.json() as { larm_prompt_cache?: { enabled?: boolean; authenticated?: boolean; policy?: unknown } };
+    const props = await response.json() as { larm_context_pools?: { capacities?: number[]; defaultTokens?: number }; larm_prompt_cache?: { enabled?: boolean; authenticated?: boolean; policy?: unknown } };
     const policy = promptRetentionPolicySchema.safeParse(props.larm_prompt_cache?.policy);
     if (props.larm_prompt_cache?.enabled !== true || props.larm_prompt_cache.authenticated !== true || !policy.success
       || JSON.stringify(policy.data) !== JSON.stringify(input.policy)) throw new Error("prompt_retention_capability_mismatch");
+    if (input.contextPools) {
+      const expected = input.contextPools.pools.flatMap(pool => Array(pool.slots).fill(pool.maxTokens));
+      if (props.larm_context_pools?.defaultTokens !== input.contextPools.defaultTokens
+        || JSON.stringify(props.larm_context_pools?.capacities) !== JSON.stringify(expected)) throw new Error("context_pool_capability_mismatch");
+    }
     const context = promptRetentionContextSchema.parse({ owner: this.digest("owner", input.principal),
       scope: this.scope(input.principal, input.connection, input.epoch, input.cacheKey), instance: this.digest("instance", input.instance),
       correlation: this.digest("request", input.requestId), leaseMs: Math.min(300_000, Math.floor(input.expiresAt - input.now)) });

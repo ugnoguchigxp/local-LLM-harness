@@ -3,6 +3,7 @@ import { z } from "zod";
 export const meshIdSchema = z.string().regex(/^mesh_[a-f0-9]{32}$/);
 export const meshJobIdSchema = z.string().regex(/^meshjob_[a-f0-9]{32}$/);
 const tagsSchema = z.array(z.string().trim().min(1).max(64)).max(32).transform((v) => [...new Set(v)]);
+export const meshRetryRequestSchema = z.object({}).strict();
 export const meshGenerationRequestSchema = z.object({
   model: z.literal("trellis2-4b").default("trellis2-4b"),
   source: z.discriminatedUnion("type", [

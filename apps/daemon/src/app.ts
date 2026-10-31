@@ -148,6 +148,7 @@ export function createAppComponents(deps: AppDeps) {
       onEvent: deps.onEvent,
     })
     : undefined);
+  let admissionPaused = false;
   let lastObservedActivityState: ServiceActivityState | undefined;
 
   app.onError((err, c) => {
@@ -177,6 +178,18 @@ export function createAppComponents(deps: AppDeps) {
   }));
   if (deps.observability) app.use("*", deps.observability.middleware());
   app.use("*", createAppRequestPolicy(deps, identity));
+
+  // Pause new mutations before replacing backend configuration. Requests which
+  // already passed this boundary finish normally, including queued inference.
+  app.use("*", async (c, next) => {
+    if (admissionPaused && !["GET", "HEAD", "OPTIONS"].includes(c.req.method)
+      && c.req.path !== "/v1/management/drain"
+      && !/^\/v1\/(?:runtime-releases\/[^/]+\/stage|deployments\/[^/]+\/(?:plan|activate|rollback))$/.test(c.req.path)) {
+      c.header("retry-after", "1");
+      return c.json(errorBody("draining", "new work is paused for maintenance"), 503);
+    }
+    await next();
+  });
 
   const agentFeature = (c: Context): AgentConnectionController | Response => {
     if (!deps.apiToken) {
@@ -348,7 +361,7 @@ export function createAppComponents(deps: AppDeps) {
   });
 
   registerLocalServiceRoutes(app, { manager: deps.localServiceManager, principals: deps.localServicePrincipals, managementToken: deps.managementToken, maxBodyBytes: controlMaxBodyBytes });
-  registerHealthRoutes(app, { ...deps, identity }, {
+  registerHealthRoutes(app, { ...deps, identity, isAdmissionPaused: () => admissionPaused, pauseAdmission: () => { admissionPaused = true; } }, {
     get current() { return lastObservedActivityState; },
     set current(value) { lastObservedActivityState = value; },
   });
@@ -437,7 +450,7 @@ export function createAppComponents(deps: AppDeps) {
     handleGateway,
   });
 
-  registerMeshRoutes(app, { manager: deps.meshManager, maxBodyBytes: controlMaxBodyBytes, viewerPath: deps.meshViewerPath ?? "/srv/ai/apps/trellis-cpp-v0.8.1-vulkan/model-viewer-4.1.0.min.js" });
+  registerMeshRoutes(app, { manager: deps.meshManager, managementToken: deps.managementToken, maxBodyBytes: controlMaxBodyBytes, viewerPath: deps.meshViewerPath ?? "/srv/ai/apps/trellis-cpp-v0.8.1-vulkan/model-viewer-4.1.0.min.js" });
   registerImageArtifactRoutes(app, deps.imageArtifactManager, deps.imageImportManager, Boolean(deps.apiToken));
   registerImageGenerationRoutes(app, deps.imageGenerationProvider, deps.onEvent);
 

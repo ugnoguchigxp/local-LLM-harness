@@ -1,6 +1,6 @@
 import { pythonImageNormalizer } from "@larm/backends";
 import { ImageImportManager } from "./image-import-manager";
-import { MediaVariantBusyError } from "@larm/backends";
+import { MediaVariantBusyError, MediaVariantResourceError } from "@larm/backends";
 import { systemServiceAnonymousMemoryBytes } from "@larm/backends";
 import { MeshManager } from "./mesh-manager";
 import { MeshStore } from "./mesh-store";
@@ -11,7 +11,7 @@ import { LocalUsageRetentionStore } from "@larm/backends";
 import { startProcessMetrics } from "./process-metrics";
 import { LocalServiceManager } from "./local-service-manager";
 import { z } from "zod";
-import { parseLocalServices, ServiceResourceLedger } from "@larm/core";
+import { parseLocalServices, ServiceResourceLedger, ServiceMemoryAdmissionError } from "@larm/core";
 import { LocalServiceSystemdBackend, SystemdProcessBackend, LocalServiceRoutingBackend, LocalServiceFileJournal } from "@larm/backends";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -347,33 +347,33 @@ const flux3Endpoint = sharedImageWorker ? imageEndpoint : mediaPolicy.variants["
   ? new URL(mediaPolicy.variants["image-flux3"].healthUrl).origin : undefined;
 const stableAudioEndpoint = new URL(mediaPolicy.variants["stable-audio"].healthUrl).origin;
 const musicEndpoint = config.musicProviderEndpoint ?? new URL(mediaPolicy.variants.music.healthUrl).origin;
-function serviceMemoryAdmission(node: string, bytes: number, liveSafetyFloorBytes = 0) {
-  try {
-    serviceLedger.check(node, bytes, {
-      registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(),
-      maxAgeMs: config.telemetryMaxAgeMs, liveSafetyFloorBytes,
-    });
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, node, reason: error instanceof Error ? error.message : "resource_exhausted" };
-  }
+function serviceMemoryAdmission(node: string, bytes: number, liveSafetyFloorBytes = 0, accelerator = false) {
+  return serviceLedger.admission(node, bytes, {
+    registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(),
+    maxAgeMs: config.telemetryMaxAgeMs, liveSafetyFloorBytes, accelerator,
+  });
 }
 const mediaVariants = new MediaVariantManager({
   beforeStart: async (variant, signal) => {
-    if (serviceLedger.reservations().length) throw new MediaVariantBusyError();
     const policy = mediaPolicy.variants[variant];
     if (!policy) throw new Error(`media variant ${variant} is not configured`);
     const node = observer.getState().node.id;
     const bytes = policy.estimatedMemoryGB * 1024 ** 3;
     const liveSafetyFloorBytes = mediaPolicy.groups["accelerator-media-heavy"].minimumAvailableMemoryGB * 1024 ** 3;
     await observer.refresh();
-    await control.reclaimMemory({ signal, evaluateAdmission: () => serviceMemoryAdmission(node, bytes, liveSafetyFloorBytes) });
+    await control.reclaimMemory({ signal, evaluateAdmission: () => serviceMemoryAdmission(node, bytes, liveSafetyFloorBytes, true) });
     signal?.throwIfAborted();
-    serviceLedger.reserve(`media-${variant}`, node, bytes, {
-      registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(),
-      maxAgeMs: config.telemetryMaxAgeMs, liveSafetyFloorBytes,
-    });
+    try {
+      serviceLedger.reserve(`media-${variant}`, node, bytes, {
+        registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(),
+        maxAgeMs: config.telemetryMaxAgeMs, liveSafetyFloorBytes, accelerator: true,
+      });
+    } catch (error) {
+      if (error instanceof ServiceMemoryAdmissionError) throw new MediaVariantResourceError(error.admission.reason, error.admission.message);
+      throw error;
+    }
   },
+  onResourceWait: (variant, error) => writeEvent({ name: "media_resource_wait", labels: { variant, reason: error.reason, message: error.message } }),
   afterStart: async variant => {
     const used = await systemServiceAnonymousMemoryBytes(mediaPolicy.variants[variant]!.service);
     await observer.refresh();

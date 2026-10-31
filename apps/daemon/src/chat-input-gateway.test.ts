@@ -131,3 +131,40 @@ test("count and generation apply the same remaining-context budget", async () =>
     expect(generations).toBe(countChatInputOnly ? 0 : 1);
   }
 });
+
+test("mixed context pools keep OpenAI bodies unchanged and use authenticated internal placement", async () => {
+  const mixed = { ...runtime, resources: { ...runtime.resources, maxConcurrentRequests: 3 }, contextPools: {
+    defaultTokens: 128, pools: [{ maxTokens: 200, slots: 1 }, { maxTokens: 128, slots: 2 }],
+  } };
+  for (const contextTokens of [undefined, 200, 199]) {
+    const forwarded: { headers: Headers; body: Record<string, unknown> }[] = [];
+    const req = new Request("http://larm/v1/chat/completions", { method: "POST", headers: { "x-larm-context-tokens": "200" }, body: JSON.stringify(plain) });
+    const res = await proxyGateway({ ...base, request: req, runtime: mixed, contextTokens, executionGate: new ExecutionGate(), validateChatResponse: false,
+      prepareUpstreamHeaders: async (_binding, _id, _signal, metadata) => {
+        expect(metadata.contextTokens).toBe(contextTokens ?? 128);
+        return new Headers({ "x-larm-cache-key": "private-fixture" });
+      }, fetchImpl: async (url, init) => {
+        if (String(url).endsWith("/tokenize")) return countResponse();
+        forwarded.push({ headers: new Headers(init?.headers), body: JSON.parse(new TextDecoder().decode(init?.body as Uint8Array)) });
+        return Response.json({ choices: [] });
+      } });
+    await res.text();
+    if (contextTokens === 199) { expect(res.status).toBe(503); expect(forwarded).toHaveLength(0); continue; }
+    expect(res.status).toBe(200); expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]!.headers.get("x-larm-context-tokens")).toBe(String(contextTokens ?? 128));
+    expect(forwarded[0]!.body).toEqual({ ...plain, max_tokens: 32 });
+  }
+});
+
+test("mixed context generation refuses missing private authentication and excessive completion count", async () => {
+  const mixed = { ...runtime, contextPools: { defaultTokens: 200, pools: [{ maxTokens: 200, slots: 1 }] } };
+  for (const n of [undefined, 2]) {
+    let generated = false;
+    const res = await proxyGateway({ ...base, request: new Request("http://larm/v1/chat/completions", { method: "POST", body: JSON.stringify({ ...plain, ...(n ? { n } : {}) }) }),
+      runtime: mixed, executionGate: new ExecutionGate(), fetchImpl: async (url) => {
+        if (String(url).endsWith("/tokenize")) return countResponse();
+        generated = true; return Response.json({});
+      } });
+    await res.text(); expect(res.status).toBe(n ? 400 : 503); expect(generated).toBe(false);
+  }
+});

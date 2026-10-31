@@ -47,7 +47,7 @@ import { join } from "node:path";
 // Retention authentication and forwarding have their own integration fixture.
 function loadStubRegistry(configDir: string): Registry {
   const registry = loadRegistry(configDir);
-  for (const runtime of registry.runtimes) { delete runtime.promptRetention; delete runtime.textInput; }
+  for (const runtime of registry.runtimes) { delete runtime.promptRetention; delete runtime.contextPools; delete runtime.textInput; }
   return registry;
 }
 
@@ -1309,6 +1309,46 @@ test("service activity observes a live Gateway request until its response closes
     state: "idle",
     activeWorkloads: 0,
   });
+});
+
+test("operator admission drain preserves active inference and rejects new mutations", async () => {
+  let started!: () => void, finish!: () => void;
+  const active = new Promise<void>(resolve => { started = resolve; });
+  const released = new Promise<void>(resolve => { finish = resolve; });
+  const tracker = new RequestTracker();
+  const { app, control } = await makeApp(true, false, {}, {
+    apiToken: "secret", managementToken: "manage", requestTracker: tracker,
+    gatewayFetch: async () => { started(); await released; return Response.json({ choices: [] }); },
+  });
+  const headers = { authorization: "Bearer secret", "content-type": "application/json" };
+  const operator = { ...headers, "x-larm-management-token": "manage" };
+  const drain = (body = "{}", withManagement = true, query = "") => app.request(`/v1/management/drain${query}`, {
+    method: "POST", headers: withManagement ? operator : headers, body,
+  });
+  expect((await drain("{}", false)).status).toBe(403);
+  expect((await drain('{"extra":true}')).status).toBe(400);
+  expect((await drain("[]")).status).toBe(400);
+  expect((await drain("{}", true, "?force=true")).status).toBe(400);
+  expect((await app.request("/v1/management/drain", { method: "POST", body: "{}" })).status).toBe(401);
+  const allocation = await (await app.request("/v1/allocations", {
+    method: "POST", headers, body: JSON.stringify({ requirements: [{ capability: "llm.general", route: "llm-default" }] }),
+  })).json() as { id: string };
+  const response = app.request("/v1/chat/completions", { method: "POST",
+    headers: { ...headers, "x-larm-allocation-id": allocation.id },
+    body: JSON.stringify({ model: "test", messages: [] }),
+  });
+  await active;
+  expect(await (await drain()).json()).toEqual({ state: "draining", activeRequests: 1 });
+  expect(control.isDraining()).toBeFalse(); // No active allocation or inference is aborted.
+  expect((await app.request("/ready")).status).toBe(503);
+  expect((await app.request("/v1/allocations", { method: "POST", headers, body: "{}" })).status).toBe(503);
+  finish();
+  expect((await response).status).toBe(200);
+  await (await response).body?.cancel();
+  expect(await (await drain()).json()).toEqual({ state: "draining", activeRequests: 0 });
+  expect(await (await app.request("/v1/activity", { headers })).json()).toMatchObject({ state: "draining", activeWorkloads: 0 });
+  const noManagement = (await makeApp(true, false, {}, { apiToken: "secret" })).app;
+  expect((await noManagement.request("/v1/management/drain", { method: "POST", headers, body: "{}" })).status).toBe(403);
 });
 
 test("GET /openapi.json exposes the machine-readable v1 contract", async () => {

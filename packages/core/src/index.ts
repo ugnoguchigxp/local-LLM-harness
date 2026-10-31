@@ -328,7 +328,7 @@ export {
 
 export { mediaPolicySchema } from "./media-policy";
 export * from "./local-service";
-export { ServiceResourceLedger } from "./service-resource-ledger";
+export { ServiceResourceLedger, ServiceMemoryAdmissionError, type ServiceAdmissionInput } from "./service-resource-ledger";
 
 export { LocalServiceManager, LocalServiceError } from "./local-service-manager";
 

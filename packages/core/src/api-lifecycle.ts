@@ -5,7 +5,8 @@ export function apiOperationLifecycle(
   operationId: string,
 ): { classification: ApiLifecycleClass; successor?: string } {
   if (
-    path.startsWith("/v1/management/local-services/")
+    operationId === "retryMeshGeneration"
+    || path.startsWith("/v1/management/")
     || path.startsWith("/v1/artifacts/")
     || path.startsWith("/v1/artifact-operations/")
     || path.startsWith("/v1/runtime-releases")
@@ -104,7 +105,7 @@ export function apiOperationPolicy(
 } {
   let owner: ApiOperationOwner;
   if (/^\/v1\/(local-services|local-service-leases|management\/local-services)/.test(path)) owner = "local-services";
-  else if (path === "/health" || path === "/ready" || path === "/v1/release-convergence") owner = "health";
+  else if (path === "/v1/management/drain" || path === "/health" || path === "/ready" || path === "/v1/release-convergence") owner = "health";
   else if (path === "/v1/activity") owner = "service-activity";
   else if (path === "/metrics") owner = "telemetry";
   else if (path === "/openapi.json") owner = "api-contract";

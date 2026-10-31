@@ -126,3 +126,33 @@ test("exclusive execution drains active work and blocks every runtime until rele
   releaseQueued();
   expect(gate.totals()).toEqual({ active: 0, queued: 0 });
 });
+
+test("a queued main request leaves both subagent lanes available and cancellation preserves active work", async () => {
+  const gate = new ExecutionGate(), signal = new AbortController().signal;
+  const p = { maxConcurrentRequests: 3, maxQueuedRequests: 4, queueTimeoutMs: 1000 };
+  const main = await gate.acquirePartition("runtime", "200000", 1, p, signal);
+  const cancelled = new AbortController();
+  const waitingMain = gate.acquirePartition("runtime", "200000", 1, p, cancelled.signal);
+  const sub1 = await gate.acquirePartition("runtime", "131072", 2, p, signal);
+  const sub2 = await gate.acquirePartition("runtime", "131072", 2, p, signal);
+  expect(gate.snapshot("runtime").active).toBe(3);
+  cancelled.abort(); await expect(waitingMain).rejects.toMatchObject({ code: "request_cancelled" });
+  main(); main(); sub1(); sub2();
+  expect(gate.snapshot("runtime").active).toBe(0);
+  const again = await gate.acquirePartition("runtime", "200000", 1, p, signal); again();
+});
+
+test("drain and quarantine reach queued partitions without interrupting active requests", async () => {
+  const gate = new ExecutionGate(), signal = new AbortController().signal;
+  const p = { maxConcurrentRequests: 3, maxQueuedRequests: 4, queueTimeoutMs: 1000 };
+  const main = await gate.acquirePartition("runtime", "main", 1, p, signal);
+  const pending = gate.acquirePartition("runtime", "main", 1, p, signal);
+  gate.quarantineRuntime("runtime"); await expect(pending).rejects.toMatchObject({ code: "runtime_quarantined" });
+  await expect(gate.acquirePartition("runtime", "sub", 2, p, signal)).rejects.toMatchObject({ code: "runtime_quarantined" });
+  gate.clearRuntimeQuarantine("runtime"); main();
+  const next = await gate.acquirePartition("runtime", "main", 1, p, signal);
+  const waiting = gate.acquirePartition("runtime", "main", 1, p, signal);
+  gate.beginDrain(); await expect(waiting).rejects.toMatchObject({ code: "draining" });
+  expect(gate.snapshot("runtime").active).toBe(1); next();
+  await expect(gate.acquirePartition("runtime", "main", 1, p, signal)).rejects.toMatchObject({ code: "draining" });
+});

@@ -7,6 +7,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
   for (const [method, path, operationId] of API_OPERATIONS) {
     const successSchema = SUCCESS_SCHEMA_BY_OPERATION[operationId];
     const requestSchema = (() => {
+      if (operationId === "drainAdmission") return "AdmissionDrainRequest";
       if (operationId === "createComputeJob") return "ComputeRequest";
       if (operationId === "ensureLocalService") return "LocalServiceLeaseRequest";
       if (operationId === "renewLocalServiceLease") return "LocalServiceRenewRequest";
@@ -26,6 +27,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       if (operationId === "createDecisionTrainingJob") return "DecisionTrainingRequest";
       if (operationId === "createSystemOneDecision") return "SystemOneRequest";
       if (operationId === "createVisualPerception") return "VisualPerceptionRequest";
+      if (operationId === "retryMeshGeneration") return "MeshRetryRequest";
       if (operationId === "createMeshGeneration") return "MeshGenerationRequest";
       if (operationId === "updateMeshAsset") return "MeshAssetPatch";
       if (operationId === "createMusicGeneration") return "MusicGenerationRequest";
@@ -39,7 +41,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       if (operationId === "releaseLegacyLease") return "ReleaseRequest";
       return undefined;
     })();
-    const management = path.startsWith("/v1/artifacts/")
+    const management = operationId === "drainAdmission" || operationId === "retryMeshGeneration" || path.startsWith("/v1/artifacts/")
       || path.startsWith("/v1/artifact-operations/")
       || path.startsWith("/v1/runtime-releases")
       || path.startsWith("/v1/deployments/")
@@ -356,6 +358,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       ...(path.startsWith("/v1/3d/") && path.includes("{id}") ? {
         parameters: [
           { name: "id", in: "path", required: true, schema: { type: "string", pattern: path.includes("/generations/") ? "^meshjob_[a-f0-9]{32}$" : "^mesh_[a-f0-9]{32}$" } },
+          ...(operationId === "retryMeshGeneration" ? [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string", format: "uuid" } }] : []),
           ...(["getMeshAssetContent", "getMeshAssetSource"].includes(operationId) ? [
             { name: "Range", in: "header", schema: { type: "string" } }, { name: "If-Range", in: "header", schema: { type: "string" } }, { name: "If-None-Match", in: "header", schema: { type: "string" } },
           ] : []),

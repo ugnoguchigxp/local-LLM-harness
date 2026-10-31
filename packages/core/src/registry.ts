@@ -96,6 +96,10 @@ export function parseRegistryDocuments(input: {
     if (runtime.textInput && (runtime.protocol !== "openai.chat-completions.v1" || runtime.chatInput || runtime.capability.includes("llm.vision"))) {
       throw new RegistryError(`runtime ${runtime.id}: textInput requires a text-only Chat Completions runtime`);
     }
+    if (runtime.contextPools && (runtime.backend !== "llama-swap" || runtime.protocol !== "openai.chat-completions.v1"
+      || !runtime.promptRetention || !runtime.chatInput || runtime.contextPools.pools.reduce((n, pool) => n + pool.slots, 0) !== runtime.resources.maxConcurrentRequests)) {
+      throw new RegistryError(`runtime ${runtime.id}: context pools require an authenticated llama chat runtime and matching concurrency`);
+    }
     if (runtime.promptRetention && runtime.protocol !== "openai.chat-completions.v1") {
       throw new RegistryError(`runtime ${runtime.id}: promptRetention requires Chat Completions`);
     }

@@ -1,3 +1,4 @@
+import { ServiceResourceLedger } from "@larm/core";
 import { expect, test } from "bun:test";
 import type { Registry, RuntimeDefinition, NodeTelemetry } from "@larm/core";
 import type { RuntimeBackend, RuntimeHealth } from "@larm/backends";
@@ -296,4 +297,22 @@ test("a concurrent admission cannot exceed the active allocation limit during me
     expect(f.control.getActiveAllocationCount()).toBe(1);
     expect(f.calls).toEqual(["stop:large"]);
   } finally { gate.resolve(); f.control.beginDrain(); }
+});
+
+
+test("service recovery uses the full ledger result and never stops insufficient victims", async () => {
+  const f = await fixture({ live: 56 });
+  const ledger = new ServiceResourceLedger();
+  try {
+    // 36 GiB cannot be reclaimed; the remaining eligible 8 GiB cannot fit a 32 GiB service.
+    f.registry.runtimes.find(r => r.id === "large")!.policy.warm!.minInstances = 1;
+    const evaluateAdmission = () => ledger.admission("node", 32 * gb, {
+      registry: f.registry, state: f.observer.getState(), allocations: f.control.getAllocations(),
+      now: Date.now(), maxAgeMs: 1000,
+    });
+    expect(evaluateAdmission()).toMatchObject({ ok: false, reason: "memory_exhausted" });
+    await f.control.reclaimMemory({ evaluateAdmission });
+    expect(f.calls).toEqual([]);
+    expect(ledger.reservations()).toEqual([]);
+  } finally { f.control.beginDrain(); }
 });

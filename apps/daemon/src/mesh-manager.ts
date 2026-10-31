@@ -8,6 +8,7 @@ import { MeshStore, MeshError, durableJson, meshHash, safeFile } from "./mesh-st
 import type { MeshProvider } from "./mesh-provider";
 
 const recordSchema = z.object({ key: z.string().uuid(), requestHash: z.string(), job: meshJobSchema,
+  queuedAt: z.string().datetime().optional(), retryKey: z.string().uuid().optional(),
   request: meshGenerationRequestSchema.optional(), sourceMimeType: z.enum(["image/png", "image/webp"]).optional(), sourceImageId: z.string().optional() });
 type Record = z.infer<typeof recordSchema>;
 const terminal = (job: MeshJob) => ["completed", "failed", "cancelled"].includes(job.status);
@@ -119,6 +120,36 @@ export class MeshManager {
       return structuredClone(r.job);
     });
   }
+  async retry(id: string, key: string) {
+    key = z.string().uuid().parse(key).toLowerCase();
+    const workload = this.options.captureWorkload?.();
+    return this.serial(async () => {
+      const r = this.records.get(id);
+      if (!r) throw new MeshError("not_found", 404, "3D job not found");
+      if (r.retryKey === key || r.job.status === "completed") return structuredClone(r.job);
+      if (r.job.status !== "failed" || r.job.error?.code === "worker_stop_failed" || !r.request || this.controllers.has(id)) {
+        throw new MeshError("job_not_retryable", 409, "job is active, unavailable, or requires worker recovery");
+      }
+      if (!this.storageReady || this.closed || this.options.workerAvailable?.() === false) throw new MeshError("storage_unavailable", 503, "3D generation unavailable");
+      this.options.admission?.(); workload?.admit();
+      const reserved = [...this.records.values()].filter(r => !terminal(r.job) || r.job.error?.code === "worker_stop_failed").length;
+      if (reserved >= 4) throw new MeshError("queue_full", 429, "3D generation queue is full");
+      await this.store.capacity((reserved + 1) * reservation);
+      await rm(this.workPath(id), { recursive: true, force: true });
+      await mkdir(this.workPath(id), { mode: 0o700 });
+      const previous = { ...r };
+      try {
+        const image = r.sourceImageId ?? (r.request.source.type === "image-artifact" ? r.request.source.id : undefined);
+        if (image) await this.pinImage(r, image);
+        r.queuedAt = new Date().toISOString(); r.retryKey = key;
+        r.job = { ...r.job, status: "queued", stage: "queued", updatedAt: r.queuedAt, error: undefined };
+        await this.save(r);
+      } catch (error) { Object.assign(r, previous); await rm(this.workPath(id), { recursive: true, force: true }); throw error; }
+      if (workload) this.workloads.set(id, workload);
+      this.emit(r.job); queueMicrotask(() => this.startDrain());
+      return structuredClone(r.job);
+    });
+  }
   private async pinImage(r: Record, id: string) {
     const source = await this.options.copyImage(id);
     if (!source || source.data.length > 20 * 1024 ** 2) throw new MeshError("invalid_source", 400, "image artifact unavailable or exceeds limits");
@@ -139,13 +170,13 @@ export class MeshManager {
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(this.options.runTimeoutMs ?? 1800_000)]);
       let finish: (() => void) | undefined, preserve = false;
       try {
-        if (Date.now() - Date.parse(r.job.createdAt) > (this.options.queueTimeoutMs ?? 600_000)) throw new MeshError("queue_timeout", 503, "3D queue wait expired");
+        if (Date.now() - Date.parse(r.queuedAt ?? r.job.createdAt) > (this.options.queueTimeoutMs ?? 600_000)) throw new MeshError("queue_timeout", 503, "3D queue wait expired");
         const workload = this.workloads.get(r.job.jobId);
         workload?.admit();
         finish = workload ? workload.begin() : this.options.beginWorkload?.();
         const request = r.request!;
         await this.update(r, { status: "running", stage: request.source.type === "prompt" ? "image" : "waiting_gpu" });
-        if (request.source.type === "prompt") { const image = await this.provider.image(request, signal); await this.pinImage(r, image); await this.save(r); }
+        if (request.source.type === "prompt" && !r.sourceImageId) { const image = await this.provider.image(request, signal); await this.pinImage(r, image); await this.save(r); }
         await this.provider.generate(r.job.jobId, request.seed, signal, async (stage) => {
           // Validation is persisted before releasing the worker, so a stop failure is recoverable.
           if (stage === "stopping") {

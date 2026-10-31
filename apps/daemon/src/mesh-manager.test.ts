@@ -151,3 +151,52 @@ test("HTTP handlers preserve domain error statuses through Hono composition", as
   const full = await setup(undefined, { maxBytes: 1024 }), fullApp = new Hono(); registerMeshRoutes(fullApp, { manager: full.m, maxBodyBytes: 65536, viewerPath: "/missing" });
   expect((await fullApp.request("/v1/3d/generations", { method: "POST", headers: { "content-type": "application/json", "idempotency-key": randomUUID() }, body: JSON.stringify(input()) })).status).toBe(507);
 });
+
+test("operator retry resumes the same expired job, preserves input and seed, and replays one attempt", async () => {
+  const first = await setup(() => ({ image: async () => "", generate: async () => { throw new MeshError("memory_exhausted", 503, "needs 32 GiB"); } }));
+  const request = input(), key = randomUUID(), job = await first.m.create(request, key);
+  expect((await done(first.m, job.jobId)).error?.code).toBe("memory_exhausted");
+  await first.m.close();
+  const recordPath = join(first.root, "jobs", `${job.jobId}.json`), saved = JSON.parse(await readFile(recordPath, "utf8"));
+  saved.job.createdAt = "2000-01-01T00:00:00.000Z"; await writeFile(recordPath, JSON.stringify(saved));
+  let generations = 0;
+  const next = new MeshManager(new MeshStore(first.root, { freeFloorBytes: 0, workBytes: 0 }), {
+    image: async () => { throw new Error("must reuse pinned image"); },
+    generate: async (id, seed, _signal, stage) => {
+      generations++; expect(id).toBe(job.jobId); expect(seed).toBe(request.seed);
+      expect(await readFile(join(first.root, "work", id, "source.image"), "utf8")).toBe("original source");
+      await writeFile(join(first.root, "work", id, "cutout.png"), "cutout");
+      await writeFile(join(first.root, "work", id, "model.glb"), meshFixtureGlb()); await stage("stopping");
+    },
+  }, { copyImage: async () => ({ data: Buffer.from("original source"), mimeType: "image/png" }) });
+  managers.push(next); await next.initialize();
+  const retryKey = randomUUID();
+  await next.retry(job.jobId, retryKey); await next.retry(job.jobId, retryKey);
+  const completed = await done(next, job.jobId); expect(completed.status).toBe("completed");
+  expect(completed.createdAt).toBe("2000-01-01T00:00:00.000Z");
+  expect((await next.create(request, key)).jobId).toBe(job.jobId);
+  await next.retry(job.jobId, randomUUID()); expect(generations).toBe(1);
+});
+
+test("retry is operator-only and does not interrupt an active job", async () => {
+  let succeed = false;
+  const { m } = await setup(root => ({ image: async () => "", generate: async (id, _seed, signal, stage) => {
+    if (!succeed) throw new MeshError("memory_exhausted", 503, "memory shortage");
+    await writeFile(join(root, "work", id, "cutout.png"), "cutout");
+    await writeFile(join(root, "work", id, "model.glb"), meshFixtureGlb()); signal.throwIfAborted(); await stage("stopping");
+  } }));
+  const job = await m.create(input(), randomUUID()); await done(m, job.jobId);
+  const app = new Hono(); registerMeshRoutes(app, { manager: m, managementToken: "operator", maxBodyBytes: 65536, viewerPath: "/missing" });
+  const path = `${job.statusUrl}/retry`, retryKey = randomUUID();
+  const send = (token?: string, key: string = retryKey, body = {}) => app.request(path, { method: "POST", headers: {
+    "content-type": "application/json", "idempotency-key": key, ...(token ? { "x-larm-management-token": token } : {}),
+  }, body: JSON.stringify(body) });
+  expect((await send()).status).toBe(403);
+  expect((await send("operator", "bad")).status).toBe(400);
+  expect((await send("operator", retryKey, { seed: 99 })).status).toBe(400);
+  succeed = true;
+  expect((await send("operator")).status).toBe(202);
+  await expect(m.retry(job.jobId, randomUUID())).rejects.toMatchObject({ code: "job_not_retryable" });
+  expect((await done(m, job.jobId)).status).toBe("completed");
+  expect((await send("operator")).status).toBe(202);
+});

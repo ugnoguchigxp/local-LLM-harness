@@ -80,8 +80,9 @@ export type GatewayProxyOptions = {
   requestBody?: Uint8Array;
   chatInputWindow?: AgentProviderContextWindow;
   countChatInputOnly?: boolean;
+  contextTokens?: number;
   prepareRequestBody?: (body: Uint8Array, signal: AbortSignal) => Promise<Uint8Array>;
-  prepareUpstreamHeaders?: (binding: GatewayBinding, requestId: string, signal: AbortSignal, metadata: { promptCacheKey?: string }) => Promise<Headers>;
+  prepareUpstreamHeaders?: (binding: GatewayBinding, requestId: string, signal: AbortSignal, metadata: { promptCacheKey?: string; contextTokens?: number }) => Promise<Headers>;
   maxBodyBytes: number;
   timeoutMs: number;
   bootEpoch: string;
@@ -501,6 +502,13 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
     },
   });
 
+  const contextPools = options.protocol === "openai.chat-completions.v1" ? options.runtime.contextPools : undefined;
+  const contextTokens = contextPools ? options.contextTokens ?? contextPools.defaultTokens : undefined;
+  const contextPool = contextPools?.pools.find(pool => pool.maxTokens === contextTokens);
+  if (contextPools && (!contextPool || !options.chatInputWindow || contextTokens! > options.chatInputWindow.maxTokens)) {
+    return failure("context_capacity_unavailable", "requested context capacity is not configured", 503, "context_capacity_unavailable");
+  }
+  if (contextPool && options.chatInputWindow) options = { ...options, chatInputWindow: { ...options.chatInputWindow, maxTokens: contextTokens! } };
   const queueEnd = observation?.stage("execution_wait");
   const queueState = options.executionGate.snapshot(options.runtime.id);
   observation?.attribute("larm.queue_depth_at_arrival", queueState.queued);
@@ -513,6 +521,8 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
         abort.signal,
         options.priority ?? 0,
       )
+      : contextPool ? options.executionGate.acquirePartition(options.runtime.id, String(contextPool.maxTokens), contextPool.slots,
+        options.runtime.resources, abort.signal, options.priority ?? 0)
       : options.executionGate.acquire(
       options.runtime.id,
       options.runtime.resources,
@@ -612,6 +622,9 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       const chatFields = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
       if (!chatCompletionRequestSchema.shape.prompt_cache_key.safeParse(chatFields?.prompt_cache_key).success) {
         throw new ChatInputError(400, "invalid_request");
+      }
+      if (contextPool && (chatFields.n !== undefined && (!Number.isInteger(chatFields.n) || (chatFields.n as number) < 1 || (chatFields.n as number) > contextPool.slots))) {
+        throw new GatewayRequestPreparationError(400, "invalid_request", "completion count exceeds this context pool capacity");
       }
       body = prepareLlamaChatRequest(body, options.runtime);
       if (options.runtime.chatInput || options.runtime.textInput) {
@@ -783,13 +796,17 @@ export async function proxyGateway(options: GatewayProxyOptions): Promise<Respon
       const chat = options.protocol === "openai.chat-completions.v1" && body instanceof Uint8Array
         ? JSON.parse(new TextDecoder().decode(body)) as { prompt_cache_key?: string | null } : undefined;
       const privateHeaders = await options.prepareUpstreamHeaders(current.binding, requestId, abort.signal,
-        { ...(typeof chat?.prompt_cache_key === "string" ? { promptCacheKey: chat.prompt_cache_key } : {}) });
+        { ...(typeof chat?.prompt_cache_key === "string" ? { promptCacheKey: chat.prompt_cache_key } : {}), ...(contextPool ? { contextTokens: contextPool.maxTokens } : {}) });
       for (const [key, value] of privateHeaders) headers.set(key, value);
       abort.signal.throwIfAborted();
       const validated = options.revalidate();
       if (!validated.ok || validated.binding.endpoint !== current.binding.endpoint || validated.binding.runtime !== current.binding.runtime) {
         return failure("connection_invalidated", "provider binding changed during cache preparation", 409, "allocation_invalidated");
       }
+    }
+    if (contextPool) {
+      if (!headers.has("x-larm-cache-key")) return failure("context_capacity_unavailable", "context pool authentication is unavailable", 503, "context_capacity_unavailable");
+      headers.set("x-larm-context-tokens", String(contextPool.maxTokens));
     }
     await options.onForwarded?.();
     forwardPreparationEnd?.();

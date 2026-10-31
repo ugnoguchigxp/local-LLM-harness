@@ -68,6 +68,16 @@ export const nodeDefinitionSchema = z.object({
   resources: nodeResourcesSchema,
 }).strict();
 
+export const contextPoolsSchema = z.object({
+  defaultTokens: z.number().int().min(1).max(1_000_000),
+  pools: z.array(z.object({ maxTokens: z.number().int().min(1).max(1_000_000), slots: z.number().int().min(1).max(256) }).strict()).min(1).max(16),
+}).strict().superRefine((value, context) => {
+  if (!value.pools.some(pool => pool.maxTokens === value.defaultTokens)
+    || new Set(value.pools.map(pool => pool.maxTokens)).size !== value.pools.length) {
+    context.addIssue({ code: "custom", message: "context pools need unique capacities and an explicit default pool" });
+  }
+});
+
 const runtimeShared = {
   capability: uniqueStringList,
   protocol: runtimeProtocolSchema,
@@ -77,6 +87,7 @@ const runtimeShared = {
   textInput: textChatInputPolicySchema.optional(),
   reasoning: reasoningPolicySchema.optional(),
   promptRetention: promptRetentionPolicySchema.optional(),
+  contextPools: contextPoolsSchema.optional(),
   artifacts: uniqueStringList.optional(),
   node: identifierSchema,
   policy: z.object({

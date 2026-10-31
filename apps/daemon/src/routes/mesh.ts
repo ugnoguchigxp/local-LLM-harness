@@ -1,5 +1,7 @@
+import { z } from "zod";
+import { secretMatches } from "../app-auth";
 import { Hono, type Context } from "hono";
-import { InvalidMeshCursorError, meshAssetPatchSchema, meshGenerationRequestSchema, meshQuerySchema } from "@larm/core";
+import { InvalidMeshCursorError, meshRetryRequestSchema, meshAssetPatchSchema, meshGenerationRequestSchema, meshQuerySchema } from "@larm/core";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { errorBody, readJson } from "../app-http";
@@ -8,7 +10,7 @@ import type { MeshManager } from "../mesh-manager";
 
 const viewerDigest = "8367184a607fbe07a78b650c0d359e5ebbd96f7e2b22f95f761f559b63430386";
 const escape = (s: string) => s.replace(/[&<>"']/g, (v) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[v]!);
-export function registerMeshRoutes(parent: Hono, options: { manager?: MeshManager; maxBodyBytes: number; viewerPath: string }) {
+export function registerMeshRoutes(parent: Hono, options: { manager?: MeshManager; managementToken?: string; maxBodyBytes: number; viewerPath: string }) {
   const app = new Hono();
   const { manager } = options;
   app.onError((error, c) => {
@@ -29,6 +31,13 @@ export function registerMeshRoutes(parent: Hono, options: { manager?: MeshManage
     if (!parsed.success) return c.json(errorBody("invalid_mesh_request", "invalid 3D generation request"), 400);
     const job = await manager!.create(parsed.data, c.req.header("idempotency-key") ?? "");
     c.header("location", job.statusUrl); c.header("retry-after", "1"); return c.json(job, 202);
+  });
+  app.post("/v1/3d/generations/:id/retry", async c => {
+    if (!options.managementToken || !secretMatches(c.req.header("x-larm-management-token"), options.managementToken)) return c.json(errorBody("forbidden", "management credential required"), 403);
+    const key = z.string().uuid().safeParse(c.req.header("idempotency-key"));
+    if (!key.success || !meshRetryRequestSchema.safeParse(await readJson(c, options.maxBodyBytes)).success) return c.json(errorBody("invalid_request", "retry requires an empty object and a UUID Idempotency-Key"), 400);
+    const job = await manager!.retry(c.req.param("id"), key.data);
+    c.header("location", job.statusUrl); return c.json(job, 202);
   });
   app.get("/v1/3d/generations/:id", (c) => { const job = manager!.get(c.req.param("id")); return job ? c.json(job) : c.json(errorBody("not_found", "3D job not found"), 404); });
   app.delete("/v1/3d/generations/:id", async (c) => { const job = await manager!.cancel(c.req.param("id")); return job ? c.json(job) : c.json(errorBody("not_found", "3D job not found"), 404); });

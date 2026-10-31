@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { MediaVariantBusyError, MediaVariantManager } from "./media-variants";
+import { MediaVariantResourceError } from "./media-variants";
 
 test("failed readmission keeps the existing warm worker tracked until its normal idle stop", async () => {
   const calls: string[] = [];
@@ -337,4 +338,28 @@ test("a waiter that expires behind a serialized worker stop never starts another
     expect(await outcome).toBe("media execution capacity wait expired");
     expect(calls).toEqual(["start:image", "stop:image"]);
   } finally { stopped.resolve(); await variants.close(); }
+});
+
+test("a resource waiter starts the accepted work only after actual admission changes", async () => {
+  let allowed = false, starts = 0;
+  const waits: string[] = [];
+  const variants = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    beforeStart: () => { if (!allowed) throw new MediaVariantResourceError("memory_exhausted", "needs 32 GiB but static headroom is 9.9375 GiB"); },
+    onResourceWait: (_variant, error) => waits.push(error.reason), run: async action => { if (action === "start") starts++; } });
+  try {
+    const waiting = variants.waitFor("mesh", new AbortController().signal, 1000);
+    await Bun.sleep(120);
+    expect(starts).toBe(0); expect(waits).toEqual(["memory_exhausted"]);
+    allowed = true;
+    const release = await waiting;
+    expect(starts).toBe(1); await release();
+  } finally { await variants.close(); }
+});
+
+test("resource wait expiry preserves the shortage reason without starting a worker", async () => {
+  const error = new MediaVariantResourceError("memory_exhausted", "needs 32 GiB but static headroom is 9.9375 GiB");
+  const variants = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    beforeStart: () => { throw error; }, run: async () => { throw new Error("must not start"); } });
+  try { await expect(variants.waitFor("mesh", new AbortController().signal, 20)).rejects.toBe(error); }
+  finally { await variants.close(); }
 });

@@ -1,5 +1,5 @@
 import { imageImportReceiptSchema } from "./image-import";
-import { meshAssetSchema, meshAssetListSchema, meshGenerationRequestSchema, meshJobSchema, meshAssetPatchSchema } from "./mesh";
+import { meshRetryRequestSchema, meshAssetSchema, meshAssetListSchema, meshGenerationRequestSchema, meshJobSchema, meshAssetPatchSchema } from "./mesh";
 import { decisionDatasetSchema, decisionTrainingJobSchema, decisionTrainingRequestSchema, decisionAdapterDetailSchema } from "./decision-general";
 import { chatInputContractSchema, chatInputTokenCountSchema } from "./chat-input";
 import { localServiceListSchema, localServiceStatusSchema, localServiceLeaseSchema, localServiceLeaseRequestSchema, localServiceRenewSchema } from "./local-service";
@@ -231,7 +231,11 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
   const meshJson = (schema: z.ZodType) => z.toJSONSchema(schema, { io: "input" });
   const schemas = {
     MeshAsset: meshJson(meshAssetSchema), MeshAssetList: meshJson(meshAssetListSchema),
-    MeshGenerationRequest: meshJson(meshGenerationRequestSchema), MeshJob: meshJson(meshJobSchema), MeshAssetPatch: meshJson(meshAssetPatchSchema),
+    AdmissionDrainRequest: { type: "object", additionalProperties: false },
+    AdmissionDrainResponse: { type: "object", additionalProperties: false, required: ["state", "activeRequests"], properties: {
+      state: { const: "draining" }, activeRequests: { type: ["integer", "null"], minimum: 0 },
+    } },
+    MeshRetryRequest: meshJson(meshRetryRequestSchema), MeshGenerationRequest: meshJson(meshGenerationRequestSchema), MeshJob: meshJson(meshJobSchema), MeshAssetPatch: meshJson(meshAssetPatchSchema),
     LocalServiceList: jsonSchema(localServiceListSchema),
     LocalServiceStatus: jsonSchema(localServiceStatusSchema),
     LocalServiceLease: jsonSchema(localServiceLeaseSchema),

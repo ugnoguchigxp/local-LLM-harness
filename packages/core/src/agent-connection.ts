@@ -631,6 +631,7 @@ export const agentConnectionRequestSchema = z.object({
   expectedCatalogRevision: sha256Schema.optional(),
   audience: agentIdentifierSchema,
   client: agentIdentifierSchema.optional(),
+  contextTokens: z.number().int().min(1).max(1_000_000).optional(),
   providers: z.array(agentIdentifierSchema).min(1).max(8).superRefine((providers, context) => {
     const seen = new Set<string>();
     for (const [index, provider] of providers.entries()) {
