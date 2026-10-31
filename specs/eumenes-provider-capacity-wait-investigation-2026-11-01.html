@@ -1,0 +1,201 @@
+<article lang="ja">
+  <h1>EumenesのProvider準備待ちと接続保持枠の調査</h1>
+  <p>
+    2026年11月1日JST。容量契約の不一致はEumenes側で修正済みという利用者の報告を前提に、08:24–08:29のProvider準備待ちを本番journal、Connection、allocation、稼働Providerと照合した。主200000の明示要求、補助131072の省略時確保、200k×1・128k×2の生成枠を維持する。
+  </p>
+  <section id="conclusion">
+    <h2>結論</h2>
+    <p>
+      直接原因は<code>runtime_capacity</code>である。対象runtimeの<code>maxConcurrentAllocations=4</code>を既存の接続保持allocationが使い切っていた。メモリー不足、実際の生成3枠の混雑、モデルの起動失敗ではない。LARMの起動・解放・待機昇格は現行契約どおりに動いており、この事象に対する本番動作の修正は行わない。
+    </p>
+    <p>
+      08:29:11.484と08:29:11.487に旧接続2件がidleSeconds=300で自動解放され、その直後に待機allocationが昇格した。Eumenes再起動が直接復旧させたとの結論にはしない。再起動後の旧接続が、最後のProfile要求から300秒残ったことが復旧時刻を決めている。
+    </p>
+  </section>
+  <section id="identity">
+    <h2>要求と稼働版</h2>
+    <p>
+      3件はいずれもProfile <code>lfm2.5</code>からroute
+      <code>llm-lfm25</code>、runtime
+      <code>ornith15-strix-conversation</code>、release
+      <code>ornith15-strix-conversation-mixed-p3-retention-v7</code
+      >へ解決されている。daemonのreleaseCommitは<code>5e86dbd4e1e7348df449db1f3d5a861b65e63158</code>、bootEpochは<code>epoch-6a71e801-778f-4c8e-b469-eaf5668e85c2</code>である。要求名と実行モデルの文字列の差をdriftとは扱わない。
+    </p>
+    <p>
+      08:35のinspectionで当該ProviderはHOT、allocation参照3、実行中request参照0、warm参照1だった。起動済み実機のslotsを読み取り、n_ctxが200000・131072・131072の3本であることも確認した。この現在のsnapshotだけを過去の状態の証拠には使わず、過去の待ち理由はjournalと当時のallocation遷移から確定した。
+    </p>
+  </section>
+  <section id="timeline">
+    <h2>指定された3接続の時系列</h2>
+    <table>
+      <caption>
+        時刻はすべて2026年11月1日JST
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">遷移</th>
+          <th scope="col">判定</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">d4e20672-1881-48bb-bc5f-2ee9c2dc0ed8</th>
+          <td>
+            08:27:41.146にpending / allocation
+            waiting、理由runtime_capacity。readyDeadlineは08:32:41.146。08:28:41.125に要求側から解放され、08:28:44.813にreleasedが観測された。
+          </td>
+          <td>約59.98秒で待機を打ち切った。モデル起動の中断ではなく、保持枠待ちの取消である。</td>
+        </tr>
+        <tr>
+          <th scope="row">4de63d25-d2c1-40e0-8161-779e2fd85c0f</th>
+          <td>
+            08:25:18.531にruntime_capacity。08:29:11.485にallocation admitted /
+            ready、08:29:11.680にConnection ready。
+          </td>
+          <td>
+            約233.15秒、同じConnectionで待ってから成功。ASR・TTSは独立allocationなので先にreadyになった。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">87da43a1-8751-4f23-a375-a8aa7a1881bb</th>
+          <td>
+            08:29:04.858にruntime_capacity。08:29:11.487にallocation admitted /
+            ready、08:29:11.680にConnection ready、08:29:11.732にclaim 200、08:29:16.970に推論HTTP
+            200。
+          </td>
+          <td>約6.88秒でclaim成功。旧接続の解放時刻と一致し、新モデルの起動完了が転機ではない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Connection
+      IDの共通prefixは<code>aconn_epoch-6a71e801-778f-4c8e-b469-eaf5668e85c2_</code>。対応allocationは順に<code>aeb60cdc-30f1-4e20-8c89-dcdbe9f3cdae</code>、<code>c713a187-01eb-481b-ba43-57fb55662560</code>、<code>1b4436cf-d263-44a9-8776-e50c65bd0ffa</code>であり、allocationの共通prefixも同じepochを持つ。
+    </p>
+    <p>
+      08:29:11.775のgateway
+      outcome=pendingは正式入力計数の要求に対応する経路のeventであり、その後08:29:16.970の生成要求はHTTP
+      200で終わっている。outcome文字列だけを生成障害と判定しない。
+    </p>
+  </section>
+  <section id="holders">
+    <h2>上限4件を占めたallocation</h2>
+    <table>
+      <caption>
+        08:24:41から待機を生んだ4件。IDは共通prefixを省略
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">allocation / Connection</th>
+          <th scope="col">最後のProfile要求</th>
+          <th scope="col">その後</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">c8cf6508 / a4fae111</th>
+          <td>08:24以降も約30秒ごとに継続</td>
+          <td>
+            需要が継続する保持接続。少なくとも08:33:35まで再要求されているので、放置された接続とは呼ばない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">07d3da22 / 955dad61</th>
+          <td>08:24:11.482</td>
+          <td>
+            08:29:11.484にallocation
+            released、08:29:11.486にagent_connection_idle_released。idleSeconds=300。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">ad924eb1 / 1d1ff6d0</th>
+          <td>08:24:11.484</td>
+          <td>
+            08:29:11.487にallocation
+            released、08:29:11.488にagent_connection_idle_released。idleSeconds=300。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">fbf04000 / 55860a15</th>
+          <td>08:24:13.778</td>
+          <td>
+            08:29:13.778にallocation releasedとagent_connection_idle_released。idleSeconds=300。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      07d3da22・ad924eb1には対象journal内で生成要求がなく、fbf04000の最後の生成完了は08:23:20.735。08:24–08:29の当該runtimeで観測したexecution_requestは疎通probeの開始・終了で、生成要求のqueue_full・queue_timeoutやメモリー拒否は観測していない。
+    </p>
+    <p>
+      旧2件のallocation解放と待機昇格の順序は、07d3da22を08:29:11.484に解放 →
+      c713a187を.485に昇格、ad924eb1を.487に解放 →
+      1b4436cfを同じ.487に昇格である。単にreleasedを見つけたのではなく、先行する4件の保持、待ち理由、idle原因と期限、昇格までを照合した。
+    </p>
+  </section>
+  <section id="contracts">
+    <h2>接続保持と生成枠の契約</h2>
+    <p>
+      packages/core/src/admission.tsは、同じruntimeにbindingされたpending / ready
+      allocationを数えてmaxConcurrentAllocationsで制限する。接続を保持したまま生成していないallocationも数える。これは新しいモデルを4本起動する意味でも、4本の生成枠を持つ意味でもない。
+    </p>
+    <p>
+      apps/daemon/src/gateway.tsとexecution-gate.tsは、生成要求のときだけ全体3本とcontext
+      poolの200k×1・128k×2を確保し、処理終了時に解放する。接続の保持数制限とは独立である。主1・補助2に加えて疎通確認用の接続を1本保持すれば上限4件に達し、さらに全Provider接続や再起動後の別client接続を作ると、生成がidleでも接続準備がwaitingになり得る。
+    </p>
+    <p>
+      音声以外のembedding・LLM・system-oneは同じ親allocationにまとめられていたため、LLMのruntime_capacityで親がwaitingになると、ほかの2
+      Providerもwaitingと表示される。各モデルが個別に停止・故障したという意味ではない。ASR・TTSは独立した子allocationによりreadyを保てる。
+    </p>
+    <p>
+      接続作成の202とphase=waiting-capacityは、受理した同一IDで待機している状態である。各応答のreadyDeadlineを基準にGETで追跡し、terminal状態または利用者の取消まで同じConnectionを扱う。今回の本番期限は300秒。60秒で必ずDELETEして新規作成する契約ではない。
+    </p>
+    <p>
+      新しいIdempotency-Keyで同じprincipal・profile・audience・client・Provider
+      subsetと同じ要求をPOSTすると、既存Connectionを再利用し、新しいProfile需要としてidle期限を延長する。同じkeyの単なるreplay、GET、claim、renewはidle期限を延長しない。clientやsubsetが異なると別allocationになり得る。異なる容量などのoptionsを同じsessionに要求すると409になる。
+    </p>
+  </section>
+  <section id="consumer-actions">
+    <h2>Eumenesに必要な対応</h2>
+    <ol>
+      <li>
+        主・補助・監視・全Provider接続の所有者と実際のConnection
+        IDを管理し、同じ用途の接続を二重に確保しない。正常終了・再設定・再起動の終了処理で、不要になるready
+        /
+        pending両方の所有Connectionを明示DELETEし、確認済みの結果を記録する。ほかの用途で利用中の接続まで解放しない。
+      </li>
+      <li>
+        再接続時は安定した用途別client identityと既存Connection
+        IDで再利用可能性を確認する。主200000と省略時の補助131072を区別し、容量・subsetを変える場合は既存の所有接続を安全に終了してから新規確保する。clientを毎回変えて残存allocationを増やさない。
+      </li>
+      <li>
+        準備処理の60秒は利用者向けの進捗通知に使ってもよいが、waiting-capacityを自動解放・再作成する固定期限にしない。返却済みreadyDeadlineまで同一IDをpollし、capacity待ち・起動中・probe待ちを区別して表示する。readyDeadline到達時はconnection_capacity_timeout
+        / connection_ready_timeout等のterminal結果を受け取り、無限再試行しない。
+      </li>
+      <li>
+        生成のPOSTは接続準備の再試行と分離する。今回の調査を根拠に、不明な生成POSTを再送しない。主を常に200kへ寄せたり、補助も200kへ変更したり、別モデルへ切り替えたりしない。
+      </li>
+    </ol>
+    <p>
+      検証では主200k・補助128k×2と通常の接続確認を保持してから、正常終了と再起動後の残存allocation数を観測する。旧用途のConnectionが明示解放され、新しい同一用途が1本に収まり、LLM保持数が上限4件を超えないことを確かめる。強制終了ではDELETEが届かないことを前提に、300秒idle猶予内でも同一IDを追跡できることを確認する。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>回帰試験と実機受入</h2>
+    <p>
+      agent-connection-controller-lifecycle.test.tsへ、200k・128kの保持allocation4件で待機し、別waiterを60秒で取り消しても既存4件の占有は変わらず、300秒idle解放後に継続中の同一Connectionがready・claim可能になる回帰試験を追加した。音声の独立準備、context
+      pool生成枠の分離を含む関連35件と型検査が成功した。実装の仕様変更ではなく、今回の事象と既存契約の固定である。
+    </p>
+    <p>
+      本番受入は既存consumerのConnectionを解放せず、主200kと補助128kを順次確認して成功した。主はcontextTokens=200000を明示し、Connection
+      <code>aconn_epoch-6a71e801-778f-4c8e-b469-eaf5668e85c2_55c7ac33-ab86-44de-87e0-a711c80b2510</code
+      >を約81.8秒保持した。補助はcontextTokensを省略して131072を確保し、Connection
+      <code>aconn_epoch-6a71e801-778f-4c8e-b469-eaf5668e85c2_0e93d713-7e47-4f31-b39b-be400e2e6e9e</code
+      >を約82.7秒保持した。両接続とも保持前後のJSON・SSEがすべてHTTP
+      200・契約検証成功で、同じIDを維持してから自分の接続だけを解放した。releaseCommit・bootEpochは前後で一致した。3本の生成を同時に実行した結果ではなく、既存利用者を維持した役割ごとの受入である。
+    </p>
+    <p>
+      原journalと実機受入の証跡はrepository外の<code>/srv/ai/logs/larm-canary/provider-wait-20261101.rySFaN</code>へ保存する。会話本文・credentialは調査文書と受入結果へ記録しない。
+    </p>
+  </section>
+</article>

@@ -22,6 +22,21 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="evidence" data-state="current" data-domain="eumenes-provider-capacity-wait">
+          <th scope="row">
+            <a href="./eumenes-provider-capacity-wait-investigation-2026-11-01.html"
+              >EumenesのProvider準備待ちと保持枠</a
+            >
+          </th>
+          <td>
+            runtime_capacityの直接原因、旧接続の300秒idle解放と08:29復旧、生成枠との分離、消費側対応と受入。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>eumenes-provider-capacity-wait</code></small
+            >
+          </td>
+          <td>2026-11-01本番ログ照合。LARMの現行動作を維持、回帰試験追加。</td>
+        </tr>
         <tr
           data-kind="evidence"
           data-state="current"
@@ -39,7 +54,7 @@
               <code>eumenes-context-claim-investigation</code></small
             >
           </td>
-          <td>2026-11-01調査。契約差は再現済み、Eumenes実行ログは未取得、未修正。</td>
+          <td>08:05時点の調査。Eumenes側で修正・受入済みとの利用者報告あり。</td>
         </tr>
         <tr data-kind="contract" data-state="current" data-domain="memory-resource-errors">
           <th scope="row">

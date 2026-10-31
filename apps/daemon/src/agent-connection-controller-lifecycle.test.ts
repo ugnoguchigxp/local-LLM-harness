@@ -7,7 +7,7 @@ import { ControlPlane } from "./controller";
 import { Observer } from "./observer";
 import type { SemanticReadiness } from "./semantic-readiness";
 
-async function fixture(limit = 8, idleSeconds?: number, pools = false) {
+async function fixture(limit = 8, idleSeconds?: number, pools = false, readyTimeoutMs = 10_000) {
   const registry: Registry = {
     nodes: [{ id: "node", endpoint: "http://127.0.0.1", resources: { memoryTotalGB: 32, reservedMemoryGB: 2 } }], profiles: [],
     runtimes: [{ id: "llm", capability: ["llm.general"], protocol: "openai.chat-completions.v1", backend: "systemd", node: "node",
@@ -41,7 +41,7 @@ async function fixture(limit = 8, idleSeconds?: number, pools = false) {
   const controller = new AgentConnectionController({ control, getCatalog: () => catalog, getCatalogRevision: () => "c".repeat(64),
     semantic: { check: async () => ready, peek: () => ready } as unknown as SemanticReadiness,
     tokenCodec: new ConnectionTokenCodec(new Uint8Array(32).fill(7), () => now),
-    readyTimeoutMs: 10_000, pollIntervalMs: 1, idempotencyTtlMs: idleSeconds === undefined ? 5 : 300_000, idempotencyLimit: 100, historyLimit: 1,
+    readyTimeoutMs, pollIntervalMs: 1, idempotencyTtlMs: idleSeconds === undefined ? 5 : 300_000, idempotencyLimit: 100, historyLimit: 1,
     random: () => "repeating-source", now: () => now,
   });
   const create = (profile: "ornith1.5Strix-vision" | "contextStill", client: string, contextTokens?: number) => controller.create({ profile, audience: "local", client, ...(contextTokens !== undefined ? { contextTokens } : {}),
@@ -298,4 +298,45 @@ test("capacity selection is rejected when the resolved route does not support it
   try { expect((await f.create("ornith1.5Strix-vision", "main", 200000)).status).toBe(400);
     expect(f.control.getRouteContextPools("missing")).toBeUndefined(); }
   finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("retained mixed-context allocations block admission until idle release, independently of cancelling another waiter", async () => {
+  const f = await fixture(4, 300, true, 300_000);
+  const owned: PublicAgentConnection[] = [];
+  const request = async (client: string, contextTokens?: number) => {
+    const result = await f.controller.create({ profile: "ornith1.5Strix-vision", audience: "local", client,
+      ttlSeconds: 900, allowFallback: false, deploymentPolicy: "existing-only",
+      ...(contextTokens === undefined ? {} : { contextTokens }) }, "owner", client, "http://127.0.0.1:9810/v1/agent-connections");
+    const connection = result.body as PublicAgentConnection;
+    owned.push(connection);
+    return connection;
+  };
+  try {
+    const held = [await request("main", 200000), await request("aux-one"), await request("aux-two"), await request("control-probe")];
+    expect(held.map(c => c.providers[0]!.contextWindow!.maxTokens)).toEqual([200000, 131072, 131072, 131072]);
+    expect(held.every(c => c.status === "ready")).toBe(true);
+    const aborted = await request("cancelled-at-sixty-seconds", 200000);
+    expect(aborted.phase).toBe("waiting-capacity");
+    expect(f.control.getAllocationWaitReason(aborted.allocationId)).toEqual({ reason: "runtime_capacity", runtime: "llm" });
+    f.advance(60_000);
+    expect(f.controller.get(aborted.id, "owner").body).toMatchObject({ status: "pending", phase: "waiting-capacity" });
+    await f.controller.release(aborted.id, "owner");
+    const continuing = await request("keep-same-waiter", 200000);
+    expect(continuing.phase).toBe("waiting-capacity");
+    expect(held.every(c => f.control.getAllocation(c.allocationId)?.status === "ready")).toBe(true);
+    f.advance(240_000);
+    await (f.controller as unknown as { releaseIdleConnection(id: string, deadline: number): Promise<void> })
+      .releaseIdleConnection(held[1]!.id, Date.parse(held[1]!.idleReleaseAt!));
+    await f.control.flush();
+    for (let attempt = 0; attempt < 20 && (f.controller.get(continuing.id, "owner").body as PublicAgentConnection).status !== "ready"; attempt++) await Bun.sleep(1);
+    expect(f.control.getAllocation(held[1]!.allocationId)).toMatchObject({ status: "released", error: { code: "foreground_idle_timeout" } });
+    const admitted = f.controller.get(continuing.id, "owner").body as PublicAgentConnection;
+    expect(admitted).toMatchObject({ id: continuing.id, allocationId: continuing.allocationId, status: "ready" });
+    expect(admitted.providers[0]!.contextWindow!.maxTokens).toBe(200000);
+    expect((await f.controller.claim(admitted.id, "owner", "openai-provider-v1")).status).toBe(200);
+  } finally {
+    for (const connection of owned) await f.controller.release(connection.id, "owner");
+    f.control.beginDrain();
+    await f.control.flush();
+  }
 });
