@@ -307,8 +307,34 @@
       /v1/activityのdrainingとactiveWorkloadsで完了を待ち、native側の処理数も0と確認する。解除はdaemonの再起動で行う。
     </p>
     <p>
-      まず現在と同じbackend構成のコードだけを配備し、受付停止機能を使える状態にする。その後にdrainして混在構成を配備する。llama-swapの設定watcherがdaemonの終了より先にbackendを交換する危険を避ける。受付停止は永続化せず、管理中にdaemonが予期せず再起動した場合は再度停止・無負荷確認する。常駐方針は変更せず、切替時のRAM
-      cache消失と再計算を利用者へ事前提示した。
+      現行llama-swap
+      v251（4ec3175）のwatcherは2秒周期でmtime・sizeを比較し、同一内容を再配置してもreloadする。reloadは旧serverのShutdownを呼び、実装上は呼出前のHTTP
+      drainを前提とする。現行activatorはprovider設定を先に再配置してからdaemonを再起動するため、コードだけの先行配備も安全な受付停止の代替にはならないと確認した。現行daemonには管理drainがまだないため、管理者によるsystemctl
+      stop
+      larm-daemon.serviceで既存の正常終了経路を通し、HTTPとnativeの実行数0を確認してから署名済み混在候補を配備する。OSは本作業ユーザーの停止操作をAccess
+      deniedとして拒否し、sudoの非対話実行も認証が必要だった。利用者へ必要操作と理由を提示しており、受付・engine・常駐方針はまだ変更していない。
+    </p>
+  </section>
+  <section id="verification-status">
+    <h2>検証済み候補と残作業</h2>
+    <p>
+      混在候補commit
+      a134100412a46a9e1f41273269c49628a06d93c0は、sourceがcleanなarchiveからinstall、production
+      audit、bun run check、coverageの必須配備gateを通過した。main suiteは1109 passed・10 skipped・0
+      failed、critical coverage ratchetは20
+      filesで通過した。コードのみの候補073e94f2d65c7e317b6aa894c13278a44856fe54も別途gateを通過したが、watcherの挙動により先行配備は実施しない。並列検証時の固定test
+      port衝突は直列の再検証で解消した。gateを緩めていない。
+    </p>
+    <p>
+      21:56:40のsnapshotに混在候補policyを適用した投影では、Ornith全予約64.0625、AI既存予約78.0625、追加可能33.9375、3D追加32のadmissionはokとなる。live
+      telemetryに基づく当時のheadroomは55.8508
+      GiBだが、新engine・満杯cache・3Dの実測ではない。native候補sha256はce696c001d259ccc39fae2f2ba4b11778f3f288e4e3b9541adfb271c99c1e809、baseline再現とnative保持・容量境界試験は合格した。
+    </p>
+    <p>
+      未実施項目は本番配備、native
+      propsの200000・131072・131072確認、通常Bearerによるmain・subの実生成、cacheの保持復元、共有メモリの観測、元R2D2
+      jobの管理retryとGLB検証・worker停止である。元jobのfailedを完了と扱わない。管理retryは新しいUUIDを要求し、元のjob
+      ID・createdAt・要求・seedを保持してqueue時刻だけを更新する。稼働版は引き続き87b1c624abb738ac2345762b6a06050fc8d02cf9である。
     </p>
   </section>
 </article>
