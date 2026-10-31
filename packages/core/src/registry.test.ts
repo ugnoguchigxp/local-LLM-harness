@@ -628,15 +628,15 @@ test("ContextStill resolves the default Ornith STRIX backend shared with the dis
   expect(runtime).toMatchObject({
     artifacts: ["ornith15-35b-strix-lean", "ornith15-vision-bf16"],
     policy: { warm: { minInstances: 1 }, swapGroup: "conversation-llm-slot" },
-    resources: { maxConcurrentAllocations: 4, maxConcurrentRequests: 4 },
+    resources: { maxConcurrentAllocations: 4, maxConcurrentRequests: 3 },
     deployment: { modelId: "ornith15-strix-conversation" },
   });
   const configured = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
   if (!runtime || runtime.backend !== "llama-swap") throw new Error("expected llama-swap runtime");
   const command = configured.models[runtime.deployment.modelId].cmd;
   expect(command).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");
-  expect(command).toContain("--ctx-size 800000");
-  expect(command).toContain("--parallel 4");
+  expect(command).toContain("--ctx-size 462144");
+  expect(command).toContain("--parallel 3");
   expect(command).toContain("--cache-type-k q4_0");
   expect(command).toContain("--cache-type-v q4_0");
   expect(command).toContain("--reasoning off");
@@ -777,21 +777,21 @@ test("ornith1.5Strix-vision is an explicit Gemma voice copy routed to the tested
   expect(route.candidates).toEqual([{ runtime: "ornith15-strix-conversation", purpose: "primary" }]);
   const runtime = registry.runtimes.find(runtime => runtime.id === route.candidates[0]!.runtime)!;
   expect(runtime.artifacts).toEqual(["ornith15-35b-strix-lean", "ornith15-vision-bf16"]);
-  expect(runtime.resources.maxConcurrentRequests).toBe(4);
+  expect(runtime.resources.maxConcurrentRequests).toBe(3);
   const swap = parseYaml(readFileSync(join(repoConfig, "llama-swap.yaml"), "utf8"));
   expect(swap.models[runtime.id].cmd).toContain("Ornith-1.5-35B-ROCmFP4-STRIX_LEAN.gguf");
   expect(swap.models[runtime.id].cmd).toContain("--spec-type none");
   expect(swap.models[runtime.id].cmd).not.toContain("draft-mtp");
   expect(swap.models[runtime.id].cmd).toContain("--cache-prompt");
   expect(swap.models[runtime.id].cmd).toContain("-ctxcp 8");
-  expect(swap.models[runtime.id].cmd).toContain("--parallel 4");
-  expect(swap.models[runtime.id].cmd).toContain("--ctx-size 800000");
+  expect(swap.models[runtime.id].cmd).toContain("--parallel 3");
+  expect(swap.models[runtime.id].cmd).toContain("--ctx-size 462144");
   expect(runtime.resources.estimatedMemoryGB).toBe(56);
-  expect(runtime.promptRetention).toMatchObject({ protocol: "larm-prompt-cache.v1", maxBytes: 24 * 1024 ** 3,
-    principalMaxBytes: 24 * 1024 ** 3, idleTtlMs: 300_000, maxAgeMs: 1_800_000 });
-  expect(swap.models[runtime.id].cmd).toContain("--no-kv-unified");
-  expect(swap.models[runtime.id].cmd).toContain("-cram 24576");
-  expect(swap.models[runtime.id].cmd).toContain("launch-prompt-retention.py");
+  expect(runtime.promptRetention).toMatchObject({ protocol: "larm-prompt-cache.v1", maxBytes: 6 * 1024 ** 3,
+    principalMaxBytes: 6 * 1024 ** 3, idleTtlMs: 300_000, maxAgeMs: 1_800_000 });
+  expect(swap.models[runtime.id].cmd).toContain("--kv-unified");
+  expect(swap.models[runtime.id].cmd).toContain("-cram 6144");
+  expect(swap.models[runtime.id].cmd).toContain("larm-mixed-context-runtime-20261031-v1/launch.py");
 
 });
 test("registered llama-swap models leave idle shutdown to LARM", () => {

@@ -212,7 +212,7 @@ agentProfiles:
           outputReserveTokens: 4096
           safetyMarginTokens: 1976
   contextstill-background:
-    description: Ornith 1.5 STRIX_LEAN、200000 tokens×4並列、認証付き入力cache・会話KV保持復元。既存の補助Providerを維持。
+    description: Ornith 1.5 STRIX_LEAN。200k×1と128k×2の共通実行基盤。接続時contextTokens省略は128k、200000指定は主担当枠。
     schedulingPriority: 1000
     requestScheduling: background-when-idle
     providers:
@@ -226,7 +226,7 @@ agentProfiles:
           outputReserveTokens: 4096
           outputLimit: remaining-context
           safetyMarginTokens: 0
-        description: Ornith 1.5 STRIX_LEAN。200000 tokens、4並列、入力cacheとRAM保持復元。必要な履歴を毎回messagesへ送信。思考は無効。画像入力契約はcatalogとclaimを参照。
+        description: Ornith 1.5 STRIX_LEAN。接続時contextTokens省略は131072、200000指定は主担当枠。入力cacheはRAM 6 GiB、一時2 GiB。履歴は毎回messagesへ送信。
       - name: asr
         capability: speech.stt
         route: stt-granite
@@ -362,7 +362,7 @@ agentProfiles:
         publicModel: granite-speech-4.1-2b
         readiness: stt-transcription
   lfm2.5:
-    description: Ornith 1.5 STRIX_LEAN、200000 tokens×4並列、認証付き入力cache・会話KV保持復元。既存の補助Providerを維持。
+    description: Ornith 1.5 STRIX_LEAN。200k×1と128k×2の共通実行基盤。接続時contextTokens省略は128k、200000指定は主担当枠。
     schedulingPriority: 4000
     requestScheduling: foreground-exclusive
     usageProtection:
@@ -381,7 +381,7 @@ agentProfiles:
         capability: llm.general
         route: llm-lfm25
         publicModel: ornith1.5-strix
-        description: Ornith 1.5 STRIX_LEAN。200000 tokens、4並列、入力cacheとRAM保持復元。必要な履歴を毎回messagesへ送信。思考は無効。画像入力契約はcatalogとclaimを参照。
+        description: Ornith 1.5 STRIX_LEAN。接続時contextTokens省略は131072、200000指定は主担当枠。入力cacheはRAM 6 GiB、一時2 GiB。履歴は毎回messagesへ送信。
         readiness: llm-inference
         contextWindow:
           maxTokens: 200000
