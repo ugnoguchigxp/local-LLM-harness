@@ -10,7 +10,7 @@ from pathlib import Path
 
 def prepare(manifest: dict) -> str:
     required = {"engine", "model", "encoder", "vae", "upsampler", "modelSource", "modelRevision", "engineRevision", "upsamplerRevision"}
-    if set(manifest) != required or not all(isinstance(value, str) for value in manifest.values()):
+    if not isinstance(manifest, dict) or set(manifest) != required or not all(isinstance(value, str) for value in manifest.values()):
         raise ValueError("manifest must contain exactly the documented runtime paths and revisions")
     for key in ("modelRevision", "engineRevision", "upsamplerRevision"):
         if not re.fullmatch(r"[a-f0-9]{40}", manifest[key]):
@@ -33,10 +33,16 @@ def prepare(manifest: dict) -> str:
         if not (pup / name).is_file():
             raise ValueError(f"upsampler is missing {name}")
     prompts = json.loads((pup / "system_prompts.json").read_text())
-    if not isinstance(prompts.get("t2i"), str) or not prompts["t2i"].strip():
+    if not isinstance(prompts, dict) or not isinstance(prompts.get("t2i"), str) or not prompts["t2i"].strip():
         raise ValueError("upsampler is missing the official t2i system prompt")
     index = pup / "model.safetensors.index.json"
-    shards = set(json.loads(index.read_text())["weight_map"].values()) if index.is_file() else {"model.safetensors"}
+    if index.is_file():
+        data = json.loads(index.read_text())
+        if not isinstance(data, dict) or not isinstance(data.get("weight_map"), dict):
+            raise ValueError("upsampler has an invalid weights index")
+        shards = list(data["weight_map"].values())
+    else:
+        shards = ["model.safetensors"]
     if not shards or any(not isinstance(name, str) or Path(name).name != name or not (pup / name).is_file() for name in shards):
         raise ValueError("upsampler weights are incomplete")
     names = {"engine": "ENGINE", "model": "MODEL", "encoder": "ENCODER", "vae": "VAE",

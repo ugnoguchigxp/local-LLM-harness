@@ -7,9 +7,9 @@
   </p>
   <aside>
     <p>
-      初期実装時点ではソース検証だけで、本番未配備だった。現在の実配備・受入の記録は本書の実配備節に記す。ピークメモリの専用測定は行っていない。
-      この節は初期実装時の記録。実配備のため、2026年10月31日に共有image
-      workerと明示的なmodels設定を追加し、既存unitのままFLUXを起動できるよう改修している。配備と受入の結果は別途記録する。
+      初期実装時点ではソース検証だけで、本番未配備だった。2026年10月31日に共有image
+      workerと明示的なmodels設定を追加し、既存unitのままFLUXを起動できるよう改修した。
+      現在の実配備・受入の記録は本書の実配備節に記す。ピークメモリの専用測定は行っていない。
     </p>
   </aside>
   <section id="request">
@@ -60,7 +60,8 @@
       Klein、参照編集、boxの構造化入力は今回の対象外。
     </p>
     <p>
-      FLUXが未設定の場合は、workerの確保・起動前に503 image_model_unavailableを返す。
+      FLUX経路が未設定の場合は、workerの確保・起動前に503 image_model_unavailableを返す。
+      共有workerのFLUX設定・assetが欠ける場合も同じ503を返し、推論エンジンを起動しない。
       未知のmodelや、FLUXにsteps=8を付けた要求は400。Qwenへ自動的に代替しない。
       異なるモデルや音楽・3Dとの競合は409
       media_variant_busy。生成、停止、期限超過の失敗契約は従来どおり。
@@ -197,18 +198,86 @@
       後続要求・PID再利用を区別する固定試験を追加した。別要求を停止したり、現在のunit名から実モデルを推定しない。
     </p>
     <p>
-      この節の画像と証跡はrepository外の /srv/ai/evidence/flux3-image-deployment-20261031/
-      に保持する。
-      既定Qwenの独立した実生成試験は、別の3D要求のGPU待ちにより409を返したため、競合解消後の受入が残る。
-      自動的なPOST再送は行わない。
+      最終配備は2026年10月31日13:24 JST、commit 59c523aa99de34e197f7305fa90e5c8cb453ae2e。
+      署名付き通常配備のcontract_verified / succeededを確認した。
+      configRevisionはe75de08526117e12612ed08a49112470fbb1d2bbc55a97a4ab3f221512e45cc6。
+      配備先の公開OpenAPIとv3
+      catalogを再取得し、2モデル・モデル別steps・寸法・形式の契約と広告を照合した。 FLUX
+      Q8重み、Qwen3-VL 4B Q8 encoder、Flux2
+      VAE、公式pup補完モデルをrepository外に配置し、4つの重みファイルのSHA256を公開LFS
+      metadataと照合した。
+      対応stable-diffusion.cppはe239e4b0fd3de49834cec67031a44796ca465abcをROCmで別途buildし、Qwen用engineを保持した。
+    </p>
+    <table>
+      <caption>
+        最終配備版の実生成。猫のprompt・seed 42・WebP、steps省略
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">結果</th>
+          <th scope="col">artifact</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">model省略</th>
+          <td>HTTP 200、Qwen 8 steps、512×512、40098 bytes、14.262秒</td>
+          <td>image_185c845f03d04678827fd9df8030b1d5</td>
+        </tr>
+        <tr>
+          <th scope="row">flux-3-image-klein</th>
+          <td>HTTP 200、FLUX 16 steps、768×768、63822 bytes、92.119秒</td>
+          <td>image_0c30a3852cba48eca5c8ac2c046dfbb9</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      両方で返されたcontentUrlを既存Control認証でGETし、WebPのデコード・寸法・SHA256一致を確認した。
+      各要求のworker/native PIDと実重みパスを観測し、両プロセスの終了、unit inactive・MainPID
+      0、停止後の同一画像再取得も確認した。 FLUXは実engineのFlux.3 Image Klein / Flux.3
+      FLOWログでも確認した。画像はリポジトリ外に保存した。
+    </p>
+    <p>
+      証跡はrepository外の /srv/ai/evidence/flux3-image-deployment-20261031/ に保持する。
+      deployed-contract-v2.json、activation-status-v2.json、release-gate-v2.jsonと、
+      flux768-final/verification.json、qwen-default512-final/verification.jsonが最終結果である。
+      最初の既定Qwen試験は別の3D要求のGPU待ちにより409となった。自動再送せず、競合終了を読取確認した後に独立した最終試験を各1
+      POSTで実施した。 別モデルへの代替、実行中の別要求の停止、失敗POSTの自動再送は行っていない。
+      作業treeで並行変更中のmemory-reclamation改修は今回の画像配備に含めず、稼働版を基点に画像変更だけを隔離して配備した。
+    </p>
+  </section>
+  <section id="code-review">
+    <h2>実配備後のコードレビューと改善</h2>
+    <p>
+      2026年10月31日の追加レビューで、任意のFLUX設定・重みをworker構築時に検証すると、
+      FLUXが使えないノードで既定Qwenまで起動できなくなる問題を修正した。
+      FLUXの設定読取・asset検証・backend構築は明示選択後に行い、設定欠落・不正JSON・不完全なassetは
+      workerからControlまで503 image_model_unavailableとして伝える。Qwenへ代替しない。
+      未設定判定がworkerで行われる共有構成では、受付workerを起動しても推論エンジンは起動せず、失敗後に停止する。
+    </p>
+    <p>
+      Controlはworker応答のmodel
+      source・40桁revision・steps・寸法・形式・seed・contentUrlを要求と照合し、
+      異なるモデルや別artifactへのリンクを成功として返さない。workerのJSON応答は64 KiBまでとし、
+      読取り中も要求の取消・期限を適用する。不一致・過大応答・期限超過でも確保したworkerを解放し、生成POSTを再送しない。
+      不正な補完モデルのweights
+      indexも例外の種類によらず設定不備として扱えるよう、入力形状を検証する。
+    </p>
+    <p>
+      これらは通常の固定試験に組み込み、実HTTPを通した未設定エラー伝播、FLUX欠落時のQwen独立性、
+      両モデルでのmetadata不一致の拒否、PNG・非既定寸法・seedの正常系、応答サイズ超過・停止しない応答の取消を確認する。
+      初回実生成確認後の追加修正であり、修正版の配備と実機結果は本節へ追記する。
     </p>
   </section>
   <section id="verification">
-    <h2>検証範囲と残る受入</h2>
+    <h2>検証範囲と完了結果</h2>
     <p>
-      bun run check、bun run docs:check:fix、git diff --checkが成功した。
-      画像runtimeのPython環境でもQwen adapterの11件、FLUX adapterの6件が成功した。
-      補完用Transformersクラスのimportも確認した。これらに実重みのロード・モデル推論は含まない。
+      最終配備commitの必須release gateでinstall、audit、bun run check、coverage、production
+      auditが全て成功した。 試験結果は1058 pass、10 skip、0 fail、critical coverage ratchet 20
+      files通過。 画像runtimeのPython環境でもQwen adapterの11件、FLUX
+      adapterの6件、routerの4件が成功した。
+      要求単位の停止確認helperには後続要求・PID再利用を区別する4件の固定試験を追加し、通常チェックに組み込んだ。
     </p>
     <p>
       モデル・stepsの組合せ、Qwen既定維持、FLUXへの転送先、未設定の503、重量級処理の排他、
@@ -217,10 +286,10 @@
       FLUX専用schedule、16刻みの内部寸法、実寸・重みrevision付き画像保存を検証する。実モデルの推論は使わない。
     </p>
     <p>
-      実機受入には、対応engineと重みを配置した上で、QwenとFLUXの交互要求、各画像のhash・実寸・model
-      metadata、
-      生成後の全子プロセス停止、起動時間・補完時間・生成時間・メモリ、要求途中の失敗を確認する必要がある。
-      この未実施の受入を、ソーステストの成功と混同しない。
+      ソース実装・本番配備・両モデルの実生成はそれぞれ完了した。400と409は実APIでも確認した。
+      未設定ノードの503
+      image_model_unavailable、PNGと境界寸法、途中失敗時の停止と再受付は固定試験で確認した。
+      稼働環境の設定を外す503試験や生成途中の強制失敗、全寸法の実推論、専用ピークメモリ測定は行っていない。
     </p>
     <p>
       既存運用は<a href="./qwen-image-2.1-turbo-on-demand.html">Qwenのオンデマンド仕様</a>、

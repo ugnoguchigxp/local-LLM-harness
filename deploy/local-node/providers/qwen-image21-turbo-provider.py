@@ -245,7 +245,9 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(200, self.provider.generate(request))
         except ValueError as error:
             self.respond(400, {"error": "invalid_request", "message": str(error)})
-        except Exception:
+        except Exception as error:
+            if getattr(error, "code", None) == "image_model_unavailable":
+                return self.respond(503, {"error": "image_model_unavailable", "message": "selected image model is unavailable"})
             import traceback
             traceback.print_exc()
             self.respond(503, {"error": "generation_failed", "message": "image generation failed"})
@@ -273,12 +275,11 @@ def main() -> None:
         "--sigmas", ",".join(map(str, SIGMAS)), "--listen-ip", "127.0.0.1",
         "--listen-port", str(args.engine_port)]
     provider = Provider(command, f"http://127.0.0.1:{args.engine_port}", args.artifact_root)
-    if args.models_config.is_file():
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("larm_image_router", Path(__file__).with_name("image-model-router.py"))
-        router = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(router)
-        provider = router.ImageModelRouter(provider, args.models_config, args.engine_port)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("larm_image_router", Path(__file__).with_name("image-model-router.py"))
+    router = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(router)
+    provider = router.ImageModelRouter(provider, args.models_config, args.engine_port)
     Handler.provider = provider
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     try:
