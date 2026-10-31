@@ -28,6 +28,7 @@ export type LlamaSwapRequest = (
 ) => Promise<LlamaSwapHttpResponse>;
 
 export type LlamaSwapBackendOptions = {
+  onModelLoad?: (runtime: string, state: "loading" | "loaded" | "failed") => void;
   probeTimeoutMs?: number;
   readyTimeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -113,6 +114,7 @@ function mapProcessState(state: string | undefined): {
 }
 
 export class LlamaSwapBackend implements RuntimeBackend {
+  private readonly onModelLoad?: LlamaSwapBackendOptions["onModelLoad"];
   private readonly runtimes: Map<string, LlamaSwapRuntimeDefinition>;
   private readonly probeTimeoutMs: number;
   private readonly readyTimeoutMs: number;
@@ -125,6 +127,7 @@ export class LlamaSwapBackend implements RuntimeBackend {
   private readonly generations = new Map<string, number>();
 
   constructor(runtimes: RuntimeDefinition[], options: LlamaSwapBackendOptions = {}) {
+    this.onModelLoad = options.onModelLoad;
     this.runtimes = new Map(
       runtimes.filter(isLlamaSwapRuntime).map((runtime) => [runtime.id, runtime]),
     );
@@ -161,6 +164,7 @@ export class LlamaSwapBackend implements RuntimeBackend {
         healthOk: false,
         busy: false,
         detail: "llama-swap is unreachable",
+        observationStatus: "error",
       };
     }
 
@@ -174,6 +178,8 @@ export class LlamaSwapBackend implements RuntimeBackend {
         healthOk: false,
         busy: false,
         detail: process ? `llama-swap state ${process.state}` : "model is not running",
+        ...(!process || ["stopped", "shutdown"].includes(process.state) ? { modelLoadState: "unloaded" as const }
+          : process.state === "starting" ? { modelLoadState: "loading" as const } : {}),
       };
     }
 
@@ -190,6 +196,7 @@ export class LlamaSwapBackend implements RuntimeBackend {
       busy: slot.status === 503,
       httpStatus: plain.status,
       detail: plain.detail,
+      modelLoadState: "loaded",
     };
   }
 
@@ -200,8 +207,7 @@ export class LlamaSwapBackend implements RuntimeBackend {
     this.assertControllable(runtime, "ensure");
     throwIfAborted(signal);
     this.runtimes.set(runtime.id, runtime);
-    await this.load(runtime, signal);
-    await this.waitHealthy(runtime, signal);
+    await this.loadObserved(runtime, signal);
     throwIfAborted(signal);
     return this.health(runtime.id, signal);
   }
@@ -245,8 +251,7 @@ export class LlamaSwapBackend implements RuntimeBackend {
     }
     throwIfAborted(signal);
     this.runtimes.set(runtime.id, runtime);
-    await this.load(runtime, signal);
-    await this.waitHealthy(runtime, signal);
+    await this.loadObserved(runtime, signal);
     const generation = (this.generations.get(runtime.id) ?? 0) + 1;
     this.generations.set(runtime.id, generation);
     const instance: ProviderInstance = {
@@ -389,6 +394,13 @@ export class LlamaSwapBackend implements RuntimeBackend {
     );
   }
 
+  private async loadObserved(runtime: LlamaSwapRuntimeDefinition, signal?: AbortSignal): Promise<void> {
+    const emit = (state: "loading" | "loaded" | "failed") => { try { this.onModelLoad?.(runtime.id, state); } catch { /* Observation only. */ } };
+    emit("loading");
+    try { await this.load(runtime, signal); await this.waitHealthy(runtime, signal); throwIfAborted(signal); emit("loaded"); }
+    catch (e) { if (!signal?.aborted) emit("failed"); throw e; }
+  }
+
   private async running(
     listen: string,
     signal?: AbortSignal,
@@ -401,6 +413,8 @@ export class LlamaSwapBackend implements RuntimeBackend {
       if (!response.ok) {
         return undefined;
       }
+      const parsed = JSON.parse(response.body) as { running?: unknown; model?: unknown } | null;
+      if (!parsed || typeof parsed !== "object" || (!Array.isArray(parsed.running) && typeof parsed.model !== "string")) return undefined;
       return parseRunning(response.body);
     } catch {
       throwIfAborted(signal);

@@ -54,6 +54,8 @@ type ResolvedModel = {
 };
 
 type SharedModelLease = {
+  prepared?: boolean;
+  runtimeIds?: string[];
   descriptor: OpenAiModelBinding;
   abort: AbortController;
   refs: number;
@@ -207,6 +209,13 @@ export class ModelBroker {
     };
   }
 
+  /** Copy demand already resolved by Allocation; never resolves or renews it. */
+  monitoringPreparation(): Map<string, number> {
+    const result = new Map<string, number>();
+    for (const entry of this.shared.values()) if (!entry.prepared) for (const id of entry.runtimeIds ?? []) result.set(id, (result.get(id) ?? 0) + entry.refs);
+    return result;
+  }
+
   private async prepare(entry: SharedModelLease): Promise<ResolvedModel> {
     const startedAt = this.now();
     this.options.onEvent?.({
@@ -236,6 +245,7 @@ export class ModelBroker {
       throw new ModelBrokerError(503, "invalid_allocation", "control plane returned an invalid allocation");
     }
     entry.allocationId = parsed.data.id;
+    entry.runtimeIds = [...new Set(parsed.data.bindings.map(binding => binding.runtime))];
     observation?.attribute("larm.initial_allocation_state", parsed.data.status);
     const readinessEnd = observation?.stage("runtime_readiness");
     const deadline = startedAt + this.startupTimeoutMs;
@@ -267,6 +277,7 @@ export class ModelBroker {
         });
         readinessEnd?.();
         this.control.completeUsageHandover(allocation.id);
+        entry.prepared = true;
         return { allocation, binding };
       }
       if (allocation.status !== "pending" && allocation.status !== "waiting") {

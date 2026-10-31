@@ -8,9 +8,11 @@ import { agentPrincipal } from "./agent-connection-controller";
 import { observabilityFromEnvironment } from "./observability";
 import { LocalUsageRetentionStore } from "@larm/backends";
 import { startProcessMetrics } from "./process-metrics";
+import { MonitoringService } from "./monitoring";
+import { LinuxMonitoringSampler, KernelMonitoringReader } from "@larm/backends";
 import { LocalServiceManager } from "./local-service-manager";
 import { z } from "zod";
-import { parseLocalServices, ServiceResourceLedger } from "@larm/core";
+import { parseLocalServices, ServiceResourceLedger, primaryNode } from "@larm/core";
 import { LocalServiceSystemdBackend, SystemdProcessBackend, LocalServiceRoutingBackend, LocalServiceFileJournal } from "@larm/backends";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -70,7 +72,14 @@ const identity = {
   bootEpoch: createBootEpoch(),
 };
 
-const backend = createRuntimeBackend(registry.runtimes);
+const monitoring = new MonitoringService(registry, identity.bootEpoch, {
+  startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+  startedMonotonic: performance.now() - process.uptime() * 1000,
+  sampler: new LinuxMonitoringSampler({ nodeId: primaryNode(registry.nodes, registry.runtimes).id, artifacts }),
+  kernel: new KernelMonitoringReader(),
+});
+
+const backend = createRuntimeBackend(registry.runtimes, { llamaSwap: { onModelLoad: (runtime, state) => monitoring.capture({ name: "runtime_model_load", labels: { runtime, state } }) } });
 const serviceLedger = new ServiceResourceLedger();
 let localServiceManager: LocalServiceManager | undefined;
 let localServicePrincipals: { id: string; token: string; services: string[] }[] | undefined;
@@ -102,6 +111,7 @@ const requestTracker = new RequestTracker();
 const mutationCoordinator = new MutationCoordinator(observability);
 let control: ControlPlane;
 const writeEvent = (event: ControlEvent) => {
+  monitoring.capture(event);
   console.log(JSON.stringify({
     timestamp: new Date().toISOString(),
     event: event.name,
@@ -392,6 +402,7 @@ const musicManager = musicEndpoint
       const finishTracked = requestTracker.begin();
       return () => { try { finishTracked(); } finally { finishUsage?.(); } };
     },
+    onMonitoringTransition: (id, state, reason) => monitoring.media("music", id, state, reason),
     concurrency: 1,
     retentionMs: config.musicArtifactRetentionMs,
     wavRetentionMs: config.musicWavRetentionMs,
@@ -414,7 +425,7 @@ await imageImportManager.initialize();
 if (!imageImportManager.ready) console.warn("image import journal unavailable; imports disabled, saved images retained");
 const imageGenerationProvider = imageEndpoint
   ? new ImageGenerationProvider(imageEndpoint, mediaVariants, fetch,
-    async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin(), flux3Endpoint, sharedImageWorker ? "image" : "image-flux3")
+    async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin(), flux3Endpoint, sharedImageWorker ? "image" : "image-flux3", (id, state, reason) => monitoring.media("image", id, state, reason))
   : undefined;
 const meshManager = mediaPolicy.variants.mesh ? new MeshManager(
   new MeshStore(config.meshArtifactRoot, { maxBytes: config.meshArtifactMaxBytes, freeFloorBytes: config.meshFreeFloorBytes,
@@ -457,6 +468,7 @@ if (config.computeEnabled) {
 const appComponents = createAppComponents({
   computeManager,
   computePublicOrigin: config.computePublicOrigin,
+  monitoring,
   observability,
   registry,
   getState: () => observer.getState(),
@@ -510,6 +522,7 @@ const appComponents = createAppComponents({
   ).json(),
 });
 const { app, modelBroker } = appComponents;
+const stopMonitoring = monitoring.start(config.observeIntervalMs);
 
 const notifySystemd = async (...args: string[]): Promise<void> => {
   if (!process.env.NOTIFY_SOCKET) return;
@@ -656,6 +669,7 @@ try {
     },
   });
   server.stop(true);
+  stopMonitoring();
   throw error;
 }
 
@@ -732,6 +746,7 @@ async function shutdown(signal: string): Promise<void> {
   }
   server.stop(true);
   stopProcessMetrics();
+  stopMonitoring();
   await observability?.shutdown();
   await usageRetentionStore?.flush();
   process.exit(operationsDrained && requestsDrained ? 0 : 1);

@@ -352,3 +352,5 @@ export * from "./decision-head";
 export * from "./compute";
 
 export * from "./reasoning";
+export * from "./monitoring";
+export * from "./monitoring-events";

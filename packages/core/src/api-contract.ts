@@ -5,6 +5,7 @@ import { chatInputContractSchema, chatInputTokenCountSchema } from "./chat-input
 import { localServiceListSchema, localServiceStatusSchema, localServiceLeaseSchema, localServiceLeaseRequestSchema, localServiceRenewSchema } from "./local-service";
 import { z } from "zod";
 import { computeEnvironmentSchema, computeJobSchema, computeRequestSchema, computeReceiptSchema } from "./compute";
+import { monitoringSnapshotSchema, monitoringEventsSchema, monitoringErrorSchema, monitoringJsonSchema } from "./monitoring";
 import {
   SUCCESS_SCHEMA_BY_OPERATION,
   SUCCESS_STATUSES_BY_OPERATION,
@@ -243,6 +244,9 @@ export function createOpenApiDocument(version: string): Record<string, unknown> 
     Health: jsonSchema(daemonHealthSchema),
     Readiness: jsonSchema(readinessSchema),
     ServiceActivity: jsonSchema(serviceActivitySchema),
+    MonitoringSnapshot: monitoringJsonSchema(monitoringSnapshotSchema),
+    MonitoringEvents: monitoringJsonSchema(monitoringEventsSchema),
+    MonitoringError: monitoringJsonSchema(monitoringErrorSchema),
     Runtime: jsonSchema(publicRuntimeSchema),
     RuntimeList: jsonSchema(runtimeListSchema),
     PublicClusterState: jsonSchema(publicClusterStateSchema),

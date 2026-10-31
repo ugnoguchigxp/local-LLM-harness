@@ -401,6 +401,7 @@ export class MusicGenerationManager {
   constructor(readonly provider: MusicProvider, private readonly options: {
     artifactRoot: string;
     beginWorkload?: () => () => void;
+    onMonitoringTransition?: (jobId: string, status: string, reason?: string) => void;
     captureAdmission?: () => () => void;
     concurrency?: number;
     now?: () => number;
@@ -591,6 +592,7 @@ export class MusicGenerationManager {
     if (admission) this.admissions.set(jobId, admission);
     this.jobs.set(jobId, job);
     this.queue.push(jobId);
+    try { this.options.onMonitoringTransition?.(jobId, "queued"); } catch { /* Observation only. */ }
     queueMicrotask(() => void this.drain());
     return this.publicJob(job);
   }
@@ -770,6 +772,7 @@ export class MusicGenerationManager {
       job.error = { code: "job_persistence_failed", message: "unable to persist music job status" };
     }
     if (["completed", "failed", "cancelled"].includes(job.status)) this.finishWorkload(job.jobId);
+    try { this.options.onMonitoringTransition?.(job.jobId, job.status, job.error?.code); } catch { /* Observation only. */ }
     const publicJob = this.publicJob(job);
     for (const listener of this.listeners.get(job.jobId) ?? []) {
       try { listener(structuredClone(publicJob)); } catch { this.listeners.get(job.jobId)?.delete(listener); }

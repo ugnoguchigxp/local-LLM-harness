@@ -1,0 +1,472 @@
+<article lang="ja">
+  <h1>LARM Spatial監視API v1：確定仕様・検証・Eumenes引き渡し</h1>
+  <p>
+    2026-10-18に利用者が<a href="./eumenes-spatial-monitoring-api-plan-2026-10-18.html"
+      >調査・契約案</a
+    >を承認し、 読み取り専用APIをsourceへ実装した。この文書は監視APIの実装contract。
+    LARM稼働プロセスへの配備とEumenes backendへの接続は未実施であり、APIのsource完成とは分けて扱う。
+    停止・起動・再起動や本番設定変更は実施していない。
+  </p>
+  <p>
+    利用者の指示により監視用の追加資格情報を廃止し、既存LARM_API_TOKENの再利用へ統一した。
+    設定、認証分岐、SDKオプション、OpenAPIの追加認証定義を削除し、以下に現行契約を反映した。
+  </p>
+
+  <p>
+    2026-10-31追補：本番未公開の原因と現行稼働版への統合・配備承認待ちの状況は、<a
+      href="./spatial-monitoring-production-investigation-2026-10-31.html"
+      >本番公開調査記録</a
+    >を参照する。以下の10月18日の検証数・実機確認は当日の記録である。
+  </p>
+
+  <section id="contract">
+    <h2>APIと認証</h2>
+    <table>
+      <caption>
+        既存Control APIのlistenerに追加したGET
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">確定内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">snapshot</th>
+          <td>
+            <code>GET /v1/monitoring/snapshot</code
+            >。任意queryはcontractVersionのみ。保存したCore、nodes[]のCPU/Memory/GPU、modelStorage、coverage、eventStreamを返す。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">events</th>
+          <td>
+            <code>GET /v1/monitoring/events</code
+            >。任意queryはcontractVersion、cursor、limit。limitは既定500、1〜1000。bodyなし。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">version</th>
+          <td>
+            bodyのcontractVersionは<code>larm-monitoring.v1</code>。明示された別versionは406
+            unsupported_monitoring_contract。未知pathや旧daemonの未登録routeは404。GET以外は405、Allow:
+            GET。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">認証</th>
+          <td>
+            <code>Authorization: Bearer …</code
+            >。既存の<code>LARM_API_TOKEN</code>を再利用する。既存のprotected
+            Control Bearerも可。Provider短期token、管理header単独、匿名では不可。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">権限</th>
+          <td>
+            既存Control
+            Bearerの権限をそのまま使う。監視GETは読み取り専用だが、token自体の権限を読み取りへ制限するものではない。
+            他methodは405。LARM_API_TOKENが未設定なら503
+            monitoring_auth_not_configured。無効・無認証は401。追加の監視用資格情報は不要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">応答</th>
+          <td>
+            application/json、Cache-Control: no-store、既存boot/config revision
+            header。計測の部分失敗は200で各statusに表現。draining中も返す。readinessやbusyの悪化をHTTP接続断へ変換しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">期限と並行数</th>
+          <td>
+            保存viewを読むhandlerの予算250ms、同時handler上限8。上限は429
+            rate_limited、view不能/予算超過は503 monitoring_unavailable。Retry-After: 1。SDK
+            timeoutは最大5秒で、再試行は自動実行しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">入力検証</th>
+          <td>
+            未知query、重複query、GET body、不正limit、改変cursorは400
+            invalid_request。cursorは最大1024文字。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Eumenes backendの既存Control originとLARM_API_TOKENのsecret設定を再利用する。
+      ブラウザへcredentialを渡さず、既存TLS/CA設定を使う。新port、CORS例外、管理tokenの追加配布は不要。
+      接続先とcredentialの具体値は本資料・応答例に含めない。
+    </p>
+    <p>
+      正本は<code>packages/core/src/monitoring.ts</code>のZod schemaと
+      <code>GET /openapi.json</code
+      >のMonitoringSnapshot/MonitoringEvents/MonitoringError。 単独で渡せる<a
+        href="./assets/spatial-monitoring-v1/responses.schema.json"
+        >JSON Schema Draft 2020-12</a
+      >も同じsourceから生成し、
+      固定試験で一致を確認する。未知fieldは禁止し、取得状態とvalueの整合条件もJSON Schemaへ含める。
+    </p>
+  </section>
+
+  <section id="values">
+    <h2>値・単位・時刻の読み方</h2>
+    <p>
+      generatedAtは応答組立時刻、snapshotIdは保存viewの世代、bootEpochはdaemon起動識別子。
+      各Observationはstatus、source、unit、kind、observedAt、interval、counterEpoch、maxAgeMs、lastAttemptを持つ。
+      ok/staleだけがvalueを持ち、それ以外ではvalueを省略する。実測0はok value=0。
+      observedAt・interval・lastAttemptはGETで書き換えない。時刻はUTCのISO 8601、ミリ秒3桁・Z付き。
+      counterは非負10進文字列で、epochが変われば差分を作らない。 statusの意味と各値の詳細定義は<a
+        href="./eumenes-spatial-monitoring-api-plan-2026-10-18.html#schema"
+        >計測包絡</a
+      >と
+      <a href="./eumenes-spatial-monitoring-api-plan-2026-10-18.html#measurements"
+        >取得元・単位一覧</a
+      >に従う。
+    </p>
+    <table>
+      <caption>
+        更新周期と解釈上の要点
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">範囲</th>
+          <th scope="col">取得元・周期・単位</th>
+          <th scope="col">限界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Core</th>
+          <td>
+            起動identity、GatewayLifecycle、Observer保存state、Provider inspect
+            copy。通常2秒のview更新。uptimeと待ち時間はms。
+          </td>
+          <td>
+            既存正式状態COLD/STARTING/HOT/BUSY/STOPPING/FAILEDを保持。STOPPINGも型に含め、未知の状態へ丸めない。state取得失敗はerror。generic
+            healthをモデルloadedにしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">要求数</th>
+          <td>
+            既存TrackerとGatewayの開始/queue/forwarded/terminal、Brokerの解決済み準備待ち、ExecutionGateの読み取りcopy。通常2秒。単位count。
+          </td>
+          <td>
+            activeWorkloadsはGatewayとMusic/Imageを含む。Runtime別inFlightはpreparing/queued/forwardedを内包する。これらを足さない。gateOccupiedSlotsはprobeやcleanupを含み得る。forwardedは上流応答待ちでありGPU演算中の証明ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">CPU</th>
+          <td>
+            /proc/stat差分率%、論理online数、loadavgのtasks、CPU PSI。通常2秒、maxAge
+            10秒。CPU率は必ず実際のinterval付き。
+          </td>
+          <td>
+            初回・counter不整合・hotplug等はbaseline_required。guestを重複加算しない。CPU full
+            PSIはsystem-wideで未定義のためunsupported。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Memory</th>
+          <td>
+            meminfoのMemTotal/MemAvailable、swap総量と使用量bytes、vmstatのswap入出力pagesとOOM
+            kill累積、PSIの割合%と累積μs。通常2秒、maxAge 10秒。
+          </td>
+          <td>
+            pageSizeを別返却。hostBootIdが得られない場合はhost-unavailableで、epochが必要なcounterはunavailable
+            host_epoch_unavailable。既知のOOM累積値を新規事件数としない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GPU</th>
+          <td>
+            DRM
+            bus/vendor/device/driver、gpu_busy_percent、hwmon温度℃/クロックHz、VRAM/GTTのused/limit
+            bytes。通常2秒、maxAge 10秒。
+          </td>
+          <td>
+            デバイスとsensorは配列。識別取得失敗時はdrm-card番号による一時IDと取得失敗を返す。GPU一台の失敗で他GPUを失わない。使用率のdriver平均窓が不明ならinterval=null。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">model storage</th>
+          <td>
+            artifact manifestの内部保存先をstat/statfsでfilesystemごとに重複除去。60秒、maxAge
+            120秒。totalとdaemon利用可能bytes。
+          </td>
+          <td>
+            公開はopaque filesystem IDとartifact
+            ID。実path、内部URLは出さない。配置されていない保存先は取得状態で表し、0で補わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">速度・初回応答</th>
+          <td>
+            成功terminal時にengineのdecode
+            tokens/sと、Gateway開始から最初のbodyまでのmsを保存。maxAge 600秒。
+          </td>
+          <td>
+            engine統計が未提供ならunsupported
+            engine_statistics_absent。初回応答はTTFTではない。取消・失敗の値は成功sampleへ入れない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">kernel事実</th>
+          <td>
+            既存user権限のjournalctl -k。通常2秒、1回1秒・1 MiB・5001行以内。前回journal
+            cursorから読む。
+          </td>
+          <td>
+            5001行到達は上限による欠落としてcoverage
+            error。journal権限・vacuum/cursor消失・timeoutを隠さない。GPU reset/ring timeout/page
+            fault、OOMの明示logだけを正規化。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      初期案との差分は、既存正式enumのSTOPPING追加、GPU列挙も含む通常2秒の採取、
+      activeWorkloadsへの既存media追跡の反映、forwardedRequests、OOM検知区間observationInterval、
+      host識別不能時の明示表現である。これらは既存の実装・意味に合わせた調整で、警報ルールの追加ではない。
+      観測処理はsingle-flightで、同じfile/操作が未完了なら重複起動しない。CPU
+      baselineは監視producerだけが所有する。
+      通常のadmissionで使う既存LinuxNodeTelemetryの会計を変更していない。
+    </p>
+    <aside>
+      <p>
+        memory.aggregationPolicyはdo_not_add_host_vram_gtt。
+        MemAvailable、VRAM、GTTは重複し得るため合算しない。GPU
+        poolのlimit−usedも物理空き容量の保証ではない。 GTTをhost
+        RAMへ足して総量を増やさない。GPU数、Runtime数、モデル名、CPUコア数は固定しない。
+      </p>
+    </aside>
+  </section>
+
+  <section id="history">
+    <h2>イベント・保持・再起動</h2>
+    <p>
+      id=bootEpochとsequenceの組、occurredAt、recordedAt、kind、target、workId、reasonCode、outcome、sourceを返す。
+      workIdは監視用のopaque IDで、caller request ID、client名、会話内容を返さない。 Control
+      operation、要求結果、モデルload、Observer状態遷移、kernel事実を区別する。
+      要求の結果集計にはrequest.terminal/request.rejectedを使い、control.terminal、枠解放、load完了を要求成功へ加算しない。
+    </p>
+    <p>
+      保持目標600000ms、上限100000件または64
+      MiB。容量破棄・記録欠落はcontinuity=gapとdroppedEventsTotalで通知する。
+      GETは履歴のackや消費を行わず、複数読者が独立にcursorを保存する。
+      初回cursorなしは保存範囲内の直近10分。ページ取得のwindow/highWaterSequenceは固定し、
+      hasMore=falseまで取得したnextCursorから次回の新しいwindowへ進む。
+    </p>
+    <table>
+      <caption>
+        欠落と再取得の扱い
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">応答・Eumenesの処理</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">保持期限・容量欠落</th>
+          <td>
+            410
+            monitoring_cursor_expired。reasonCodeはretention_expiredまたはcapacity_evicted。履歴欠落を記録し、cursorなしで再取得する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">daemon再起動</th>
+          <td>
+            409
+            monitoring_epoch_changed。previousBootHistory=false。旧daemonの履歴を復旧したように扱わず、cursorなしから始める。snapshotのbootEpoch変更も検査する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">センサー側の観測欠落</th>
+          <td>
+            coverageのstatus、since、through、reasonCodeを検査する。イベントstoreに保存できた範囲と、sourceで観測できた範囲は別。回復時のsinceを確認し、不明な窓を正常0件としない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">取消と遅延結果</th>
+          <td>
+            取消terminalを一度だけ保持し、遅延成功や遅延例外で成功/障害へ変更しない。Control操作もterminalを一度だけ投影する。共有loadとcaller取消は別対象。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">OOMの二つの証拠</th>
+          <td>
+            oom_counter_changedは検知区間と増分、oom_kill_observedは明示kernel記録。両者を足さない。counterだけでは発生の厳密時刻・被害process・LARM起因を断定しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      再起動前履歴の永続化、過負荷でも完全な10分保持、新しい高権限collectorは実装していない。 kernel
+      journalのbackfillはkernel事実の範囲だけで、旧daemonの要求履歴を補完しない。 event
+      kindと取得理由の一覧はJSON Schemaおよび<a
+        href="./eumenes-spatial-monitoring-api-plan-2026-10-18.html#events"
+        >設計のイベント表</a
+      >を参照する。
+    </p>
+  </section>
+
+  <section id="examples">
+    <h2>応答例</h2>
+    <p>
+      次の固定例は実装schemaで検査済み。実機の本文・credential・Provider生応答を元に作っていない。
+    </p>
+    <ul>
+      <li><a href="./assets/spatial-monitoring-v1/snapshot-idle.json">正常取得・未使用</a></li>
+      <li>
+        <a href="./assets/spatial-monitoring-v1/snapshot-partial.json"
+          >一部の権限不足と古い計測値</a
+        >
+      </li>
+      <li><a href="./assets/spatial-monitoring-v1/snapshot-unsupported.json">GPU非対応</a></li>
+      <li>
+        <a href="./assets/spatial-monitoring-v1/events-cancelled.json">短い要求と取消のイベント</a>
+      </li>
+      <li>
+        <a href="./assets/spatial-monitoring-v1/cursor-expired.json">保持期限切れ</a>、<a
+          href="./assets/spatial-monitoring-v1/epoch-changed.json"
+          >再起動reset</a
+        >
+      </li>
+    </ul>
+  </section>
+
+  <section id="verification">
+    <h2>検証結果</h2>
+    <p>
+      固定試験では、状態・取得品質・partial
+      response、独立cursorと固定ページ、保持期限/容量/再起動/改変、
+      取消後の遅延成功、trace無効時の数値抽出、既存Control
+      Bearerの認証と未認証拒否、秘密canary、並行GETを検証した。 監視反復でProvider
+      ensure/stop/probe呼出数、保存済みAllocationとexpiresAt、Provider参照/idle期限、 usage
+      protectionの期限が変化しないことを確認する。期限切れ処理を持つgetterは監視依存に渡していない。
+    </p>
+    <table>
+      <caption>
+        固定データ試験と実機確認を区別する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">区分</th>
+          <th scope="col">確認内容</th>
+          <th scope="col">未確認・限界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">関連固定試験</th>
+          <td>
+            Core/Backend/daemon/SDKとモデルloadの監視固有18試験、既存Gateway・Provider・API
+            inventoryの回帰試験。JSON Schemaと6応答例の一致・適合も確認。
+          </td>
+          <td>稼働中の本番listenerを置き換えた試験ではない。</td>
+        </tr>
+        <tr>
+          <th scope="row">repository全体</th>
+          <td>
+            bun run
+            check成功。主unit/integrationは899件成功・失敗0。source-only、operations、Spec、API
+            consumer、module boundary、typecheck、tooling・protocol・deployment
+            fixtureとPython試験も通過。
+          </td>
+          <td>deployment fixtureは模擬環境であり本番配備を行わない。</td>
+        </tr>
+        <tr>
+          <th scope="row">実機読み取り</th>
+          <td>
+            2026-10-18 18:01
+            JST前後に新collectorを単発実行。CPU初回unavailable、約2秒後ok/interval付き。MemTotal/MemAvailable/swap/PSI/OOM、1
+            GPUの識別・busy・温度・クロック・VRAM/GTT、モデル保存filesystemを取得。監視serviceの組立結果が実装schemaに適合。kernel
+            readerの初回とcursor続行がavailable。
+          </td>
+          <td>
+            本番daemonのsystemd
+            sandbox内での可読性、新endpointの本番HTTP、実workloadとの対応、再起動跨ぎの実機確認は未実施。GPU障害・OOMを誘発していない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      調査時にjournalctlの長いoptionがこのhostで非対応と判明し、既存の-kを使うよう修正した。
+      取得失敗が個別coverage
+      errorになることも確認した。コマンドのstderrやkernelの生MESSAGEは監視応答・保存履歴へ含めない。
+      実機確認はProvider操作、Connection作成、ダミー推論、daemonの停止・起動・再起動を行っていない。
+    </p>
+    <p>
+      回帰試験でObserverの成功Promiseの順序変更が既存lifecycleへ影響することを検出し、
+      失敗観測を元の成功Promiseから独立させて修正した。同じ再接続・モデル交代試験と全体checkの通過を確認した。
+      event容量の64 MiBは保存するJSONの合計bytes上限であり、JavaScript
+      process全体のRSS上限を表さない。
+    </p>
+  </section>
+
+  <section id="limits">
+    <h2>未対応と別途合意が必要な事項</h2>
+    <ul>
+      <li>
+        GPUと要求の正式なbinding、GPU別のactive/queued/最古待ち/速度/初回応答はunsupported
+        runtime_device_mapping_absent。GPUが一台でも自動対応付けしない。
+      </li>
+      <li>
+        thermalThrottledはunsupported driver_metric_not_decoded。温度やクロックから推定しない。
+      </li>
+      <li>
+        明示信号がないProviderのmodelLoadState、Provider内部queue、LARMを経由しない要求、remote
+        nodeのhost計測は観測できない。
+      </li>
+      <li>
+        ROCm/HIP固有障害は正式な構造化記録が未整備のため初版で追加抽出しない。一般的なHTTP
+        500やtimeoutをGPU障害へ変換しない。
+      </li>
+      <li>
+        本番sandboxのjournal権限が足りなければpermission_deniedを返す。root
+        collector、debugfs、group/capability追加は行っていない。
+      </li>
+      <li>
+        永続event
+        journal、TTFT、既存admissionメモリ会計の変更、警報しきい値、平常比遅延や入れ替え頻度の判定は別途合意対象。
+      </li>
+    </ul>
+  </section>
+
+  <section id="eumenes">
+    <h2>Eumenes側の接続作業</h2>
+    <ol>
+      <li>
+        LARMの新release配備とdaemon再起動を利用者の許可後に行う。 Eumenes
+        backendの既存LARM_API_TOKEN、Control originとTLSを再利用する。
+      </li>
+      <li>
+        Eumenes
+        backendからSpatial表示中だけ60秒間隔でsnapshotとeventsを取得する。SDKならgetMonitoringSnapshotとgetMonitoringEventsを使う。重複pollを避け、eventはhasMore=falseまで取得してcursorを保存する。
+      </li>
+      <li>
+        既存監視snapshotへLARM
+        Core/CPU/Memory/GPUを追加し、配列の識別子と各Observationのstatus/observedAt/intervalを維持する。
+      </li>
+      <li>
+        通信到達不能、401、旧daemonの404、503、部分センサー未取得、履歴gapを別状態として扱う。失敗時に直前snapshotの応答時刻だけを更新しない。
+      </li>
+      <li>
+        event
+        IDで重複排除し、409/410で欠落を記録して初回窓へ戻す。daemon再起動前履歴の非保持を表示上も隠さない。
+      </li>
+      <li>
+        表示色、アニメーション、4対象と既存9対象の集約をEumenesで決める。外部連携の実行履歴・代理アクセスは本APIへ追加しない。
+      </li>
+    </ol>
+    <p>
+      LARM側はsource実装と検証を完了してから配備許可を求める。
+      Eumenes側の実装変更・接続試験はこのリポジトリでは実施していないため、「Spatialへの接続完了」とは報告しない。
+    </p>
+  </section>
+</article>

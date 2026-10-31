@@ -1,5 +1,6 @@
 import {
   compatibilityApiOperation,
+  monitoringError,
 } from "@larm/core";
 import type { MiddlewareHandler } from "hono";
 import type { AppDeps } from "./app-types";
@@ -33,6 +34,15 @@ export function createAppRequestPolicy(
     try {
       c.header("x-larm-boot-epoch", identity.bootEpoch);
       c.header("x-larm-config-revision", deps.getConfigRevision?.() ?? identity.configRevision);
+      const monitorPath = c.req.path === "/v1/monitoring/snapshot" || c.req.path === "/v1/monitoring/events";
+      const authorization = c.req.header("authorization");
+      if (monitorPath) {
+        c.header("cache-control", "no-store");
+        if (!deps.apiToken) return c.json(monitoringError(identity.bootEpoch, "monitoring_auth_not_configured", null, "fix_auth"), 503);
+        if (!standardMatches(authorization) && !protectedMatches(authorization)) return c.json(monitoringError(identity.bootEpoch, "unauthorized", null, "fix_auth"), 401);
+        if (c.req.method !== "GET") { c.header("allow", "GET"); return c.json(monitoringError(identity.bootEpoch, "invalid_request", "method_not_allowed"), 405); }
+        await next(); return;
+      }
       if (c.req.path === "/v1/activity" || c.req.path === "/v1/chat/completions/input-tokens") c.header("cache-control", "no-store");
       if (isPersonalStateApiPath(c.req.path)) c.header("cache-control", "no-store");
       if (/^\/v1\/(?:local-services|local-service-leases|management\/local-services)(?:\/|$)/.test(c.req.path)) {

@@ -1,4 +1,4 @@
-import { errorResponseSchema } from "@larm/core";
+import { errorResponseSchema, monitoringErrorSchema } from "@larm/core";
 import { LarmApiError } from "./errors";
 import { compressClientRequest } from "./client-compression";
 
@@ -67,7 +67,7 @@ export async function sendClientRequest(options: {
     await response.body?.cancel().catch(() => undefined);
     clearTimeout(timeout);
     upstreamSignal?.removeEventListener("abort", onAbort);
-    const parsed = errorResponseSchema.safeParse(body);
+    const parsed = errorResponseSchema.or(monitoringErrorSchema).safeParse(body);
     throw new LarmApiError(
       response.status,
       parsed.success ? parsed.data.error.code : "http_error",

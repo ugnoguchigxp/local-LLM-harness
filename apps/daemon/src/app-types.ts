@@ -22,6 +22,7 @@ import type { ImageGenerationProvider } from "./image-generation-provider";
 export type AppDeps = {
   computeManager?: import("./compute/manager").ComputeManager;
   computePublicOrigin?: string;
+  monitoring?: import("./monitoring").MonitoringService;
   observability?: import("./observability").Observability;
   localServiceManager?: LocalServiceManager;
   localServicePrincipals?: LocalServicePrincipal[];

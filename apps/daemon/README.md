@@ -2,6 +2,16 @@
 
 Linux Runtimeを観測・制御するLARM daemonです。既定で `config/local-node` を読み、SystemdBackendとLlamaSwapBackendへRuntime単位でルーティングします。
 
+## Read-only monitoring
+
+`GET /v1/monitoring/snapshot` と `GET /v1/monitoring/events` は、保存済みのCore・CPU・Memory・GPU計測と直近10分の出来事を返します。監視のGETはモデル起動、Connection作成、claim、lease更新、追加health probeを行いません。
+
+Eumenes backendは既存の `LARM_API_TOKEN` を `Authorization: Bearer …` に付けて取得してください。既存のprotected Control Bearerも利用できます。追加の監視用資格情報は不要です。ブラウザへcredentialを渡さず、ログへ記録しないでください。`LARM_API_TOKEN` が未設定なら監視APIは503で閉じます。
+
+計測の0・未取得・非対応・staleは別の状態です。VRAM/GTTとhostメモリは合算しません。イベントは読者ごとのcursorで再読でき、410は保持期限/容量欠落、409はdaemon再起動によるresetです。保持はdaemon内で、再起動前の履歴は復元しません。
+
+計測定義、応答例、保持上限、未対応項目、検証・配備状況は[Spatial監視API引き渡し仕様](../../specs/eumenes-spatial-monitoring-api-handoff-2026-10-18.html)を参照してください。
+
 ## CPU compute
 
 CPU計算は独立したドメインで、`/v1/compute` に環境確認・投入・状態・取消・削除・成果物取得の6操作を提供します。Control Bearer必須、同時1件、最大60秒、CPU 1コアです。Dockerは使わず、bubblewrap・seccomp・address space上限で実行を制限します。NumPy・SciPy・SymPy・pandas・matplotlib・scikit-learn・statsmodelsを使えます。GPU・子process・利用者threadは使用できません。

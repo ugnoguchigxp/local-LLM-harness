@@ -102,3 +102,5 @@ export { LlamaPromptRetention } from "./prompt-retention";
 export * from "./llama-chat";
 
 export * from "./native-text-chat-input";
+export * from "./linux-monitoring";
+export * from "./kernel-monitoring";

@@ -1,0 +1,12 @@
+{
+  "error": {
+    "code": "monitoring_cursor_expired",
+    "message": "Monitoring history is no longer retained",
+    "bootEpoch": "epoch-example",
+    "reasonCode": "retention_expired",
+    "supportedContractVersions": [
+      "larm-monitoring.v1"
+    ],
+    "recovery": "restart_window"
+  }
+}

@@ -1,0 +1,197 @@
+<article lang="ja">
+  <h1>Spatial向けLARM監視API：本番未公開の調査と統合</h1>
+  <p>
+    2026-10-31
+    JST。実接続の404を調査し、既存のlarm-monitoring.v1を現行稼働版へ統合する。配備・再起動は利用者の許可後に行う。Codex
+    SDK経由LLMの接続判定は対象外。
+  </p>
+  <section id="cause">
+    <h2>原因と稼働版</h2>
+    <p>
+      18:51:52 JST、daemon直結とLAN公開入口の両方でsnapshot/eventsの404
+      not_foundを再現した。/healthは200、releaseCommitはf2fda31757a4ffad66e357f7adf39e806a06746c、bootEpochはepoch-a537701a-1d6d-4862-a68e-01bb197e1a74、configRevisionはe75de08526117e12612ed08a49112470fbb1d2bbc55a97a4ab3f221512e45cc6。23
+      Profileを返す/v3/agent-profilesと/openapi.jsonは200、公開OpenAPIにmonitoringのpathが存在しない。
+    </p>
+    <p>
+      稼働版には監視実装とroute登録がない。元の実装81392e62920ae943d62b852980717bc6cc06b1d4とControl認証への統一de224966a5ba0ddb97d2d0c815aaebbb2cc83987はmain側の履歴にあるが、現行配備系列へ未統合だった。<a
+        href="./mesh-generation-api-2026-10-18.html#verification"
+        >10月18日の別機能の配備記録</a
+      >も監視commitを配備対象外と明記する。<a
+        href="./eumenes-spatial-monitoring-api-handoff-2026-10-18.html"
+        >元の引き渡し仕様</a
+      >もsource完成と未配備を分けている。
+    </p>
+    <p>
+      larm-daemon.serviceのMainPID 2359378が0.0.0.0:9810で直接待受し、process cwdとcurrent
+      linkは同じreleaseを指す。起動は13:36:05、activeは13:36:19
+      JST。LAN宛とloopback宛のboot/config識別子・HTTP結果は一致する。公開Control入口の前段に別のHTTP
+      gateway/proxy listenerはなく、ここではproxyのpath
+      allowlistによる遮断ではない。別portのhosted-service
+      gatewayはこのControl経路を担当しない。Eumenes保存済み接続先のbackend設定は本作業で取得していないため、保存originの直接照合やEumenes実行hostからのHTTP成功は未確認。
+    </p>
+    <p>
+      既存Control
+      Bearerを実行中daemonの設定からメモリ内だけで利用した。認証付き監視要求は401ではなく404で、認証層の後にある未登録routeへ到達している。X-Request-Idは監視だけでなく比較したhealth/profile/OpenAPI応答にもないため、欠落だけからproxyを原因としない。監視はtraceの自己観測を避け、boot/config
+      headerで識別する。
+    </p>
+    <table>
+      <caption>
+        本番HTTP：18:51:52 JST、LAN公開入口とdaemon直結で同結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求</th>
+          <th scope="col">結果</th>
+          <th scope="col">契約検証</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">GET /v1/monitoring/snapshot?contractVersion=larm-monitoring.v1</th>
+          <td>404 not_found</td>
+          <td>成功応答未取得、検証成功とは扱わない</td>
+        </tr>
+        <tr>
+          <th scope="row">
+            GET /v1/monitoring/events?contractVersion=larm-monitoring.v1&amp;limit=500
+          </th>
+          <td>404 not_found</td>
+          <td>cursor・coverage・continuity未取得</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="repair">
+    <h2>統合内容と互換性</h2>
+    <p>
+      専用branch
+      codex/spatial-monitoring-20261031を実際の稼働commitから作成し、元の監視実装・collector・event記録・route・OpenAPI・SDKを統合する。稼働版のFLUX/Qwen選択、画像import、mesh、CPU
+      compute等を保持して衝突を解消した。元の変更に含まれた無関係な研究文書は取り込まない。
+    </p>
+    <p>
+      パス・契約名・認証は変更しない。追加secret、port、proxy例外、systemd権限の拡張は不要。標準・protected
+      Control Bearerを受理し、匿名・Provider token・管理headerだけの要求を拒否する。Control
+      token未設定では503で閉じる。
+    </p>
+    <p>
+      正本はcoreのmonitoring.ts、生成したOpenAPIのMonitoringSnapshot/MonitoringEvents/MonitoringError、および<a
+        href="./assets/spatial-monitoring-v1/responses.schema.json"
+        >共有済みJSON Schema Draft 2020-12</a
+      >。共有済みschemaは内容を変更しない。SHA-256は0d751d83b5d6b48eb3370b37986f22f1cc9da707bd73bcaf3fd0c6d2db4dc300で、元commitのファイルとバイト一致し、6つの応答例を独立したDraft
+      2020-12検証器でも検証した。Zod更新による日時正規表現の生成差だけを、元のcalendar正規表現の固定により解消し、生成schemaの完全一致を維持する。移行は同じ契約のAPI有効化で、Eumenesのpathやversionの変更は必要ない。
+    </p>
+    <p>
+      本番反映は未実施。sourceの固定試験成功、単発collectorでの実機読み取り、本番HTTPでの200とschema適合、Eumenes側の表示受入を別々に記録する。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証と取得不能な項目</h2>
+    <p>
+      関連固定試験40件成功、失敗0。認証、route登録、未知query・method・version、並行GET、drain中の応答、取消と遅延結果、partial計測、cursorの期限切れ・容量破棄・再起動・改変、共有schemaと応答例、秘密情報の非開示を含む。反復GETがProvider起動・停止・probe、lease期限、保護期限を変更しないことも確認した。bun
+      run
+      check全体も成功。主unit/integrationは1081件成功・10件skip・失敗0（skipは任意のCPU実環境試験）。tooling・deployment・Python試験、source-only、operations、docs、API
+      consumer、module boundary、typecheckも成功。bun run
+      test:coverageも1081件成功・10件skip・失敗0で、critical coverage ratchet 20ファイルが合格。
+    </p>
+    <p>
+      18:53:52〜18:53:58
+      JST、既存user権限で新collectorを単発4回実行した。本番daemon内ではない。CPU初回はunavailable/baseline_requiredでvalueを省略、後続はok・約2008〜2015msのinterval付きで2.05〜4.89%。MemTotalは130148806656
+      bytes、最終MemAvailableは91710832640 bytes。GPU
+      1台の識別・利用率・温度・clock・VRAM/GTT（最終観測09:53:58.540〜.541Z：100%、54℃、2.9GHz、VRAM使用1953198080
+      bytes、GTT使用30286970880 bytes）、kernel journalのcoverage
+      availableとcursor継続を取得。nodesとmodelStorageの実装schema検証に成功した。本番serviceの保護設定内での可読性とHTTP応答は配備後に再確認する。
+    </p>
+    <table>
+      <caption>
+        取得できない計測と扱い
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">品質と理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">CPU full PSI</th>
+          <td>unsupported / cpu_full_not_defined。system-wideでは意味を定義しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">GPU thermalThrottled</th>
+          <td>unsupported / driver_metric_not_decoded。driver情報を未解釈。</td>
+        </tr>
+        <tr>
+          <th scope="row">GPU別要求数・queue待ち・速度</th>
+          <td>unsupported / runtime_device_mapping_absent。RuntimeとGPUの信頼できる対応がない。</td>
+        </tr>
+        <tr>
+          <th scope="row">一部のモデル保存先4件の容量</th>
+          <td>
+            unsupported /
+            sensor_not_supported。manifestに定義された任意assetの保存directoryが未配置。稼働requestとの不整合とは判定しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">未完了の速度・初回応答sample</th>
+          <td>
+            unavailable / no_completed_sample。engine統計未提供ならunsupported /
+            engine_statistics_absent。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Provider内部queue・LARM外直接要求</th>
+          <td>coverage unsupported / outside_larm_observation。観測範囲外。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      取得不能な計測には正常値や0を置かない。ok/staleだけがvalueを持ち、observedAt・interval・lastAttemptは実測時刻を維持する。kernelの権限不足等が本番で判明したらcoverageへその理由を記録する。VRAM/GTTとhost
+      RAMを合算しない。
+    </p>
+  </section>
+  <section id="polling">
+    <h2>取得周期と許容負荷</h2>
+    <p>
+      推奨はEumenes
+      backendの読者1本でsnapshotを5秒ごと、eventsを30秒ごと。イベント通知の遅れを60秒まで許容するならeventsの現状60秒も契約上可能。APIは独立しており、GETで計測や履歴消費を発生させない。Eumenes現行collectorは60秒周期内でsnapshotとeventsを連続取得するため、周期分離はEumenes側で実装する。今回Eumenesのコード・設定は変更しない。
+    </p>
+    <p>
+      producerの通常採取は2秒、host値のmaxAgeMsは10000。snapshot
+      5秒なら、正常な採取と短い通信遅延では表示ageを概ね7秒以内に抑えられる。これは遅延・採取失敗時の保証ではない。60秒では最新sample取得後の概ね8〜10秒だけが新鮮で、その後は古い参考値となる。generatedAtでobservedAtを更新したり、maxAgeMsを60秒へ引き伸ばして隠さない。
+    </p>
+    <p>
+      この構成の基礎負荷はsnapshot 12回/分＋events 2回/分＝14回/分、約0.233
+      requests/s。各読者は同時要求1件に抑え、複数画面にはbackendの保存結果を配る。2秒より速いsnapshot
+      pollingは新しい情報をほぼ増やさないため推奨しない。handlerの契約上の上限は同時8件、保存view処理予算250msであり、requests/sや8読者分の性能保証ではない。429/503のRetry-After:
+      1を尊重し、timeoutは5秒、重複周期や即時再試行の集中を避ける。
+    </p>
+    <p>
+      初回eventsはcursorなしでlimit=500、以後nextCursorを保持し、hasMore=falseまで固定窓を進める。page分だけ追加要求が発生する。readerごとにcursorを持ち、読取は他readerへ影響しない。409はboot変更、410は保持期限/容量欠落として欠落を記録して初回窓へ戻る。保持目標10分、最大100000件/64MiBだが、過負荷時の完全保持は保証しない。60秒pollでもsource
+      coverageとcontinuityを毎回評価する。
+    </p>
+    <p>
+      単発collectorの後続3回はwall 6.06〜6.51ms、当該Bun processのCPU
+      8.99〜9.83ms/回。2秒周期なら約0.45〜0.49%の1 CPU core相当という参考値で、child
+      journalctl/getconfのCPU、推論競合、本番HTTP・TLS・高負荷時を含めた性能保証ではない。採取は読者数によらずsingle-flightで共有する。本番公開後にpayload
+      bytes、HTTP latency、daemon CPUと推論への影響を測定して運用上限を確定する。
+    </p>
+  </section>
+  <section id="deployment">
+    <h2>承認対象と配備後の受入</h2>
+    <p>
+      承認対象はこの稼働版ベースの監視統合releaseへの切替と、larm-daemon.serviceのgraceful再起動。既存Connectionやprocess内履歴は再起動を跨げず、bootEpochが変わる。処理中要求をdrainし、lease・接続の再取得が必要になる可能性がある。Control
+      APIは再起動・startup検証の間、一時利用不能になる。運用上のTimeoutStartSecは330秒、TimeoutStopSecは360秒であり、秒数を固定した無停止更新とは約束しない。新collectorは通常2秒の/proc・sysfs・既存権限journal読み取り、storageは60秒を追加する。
+    </p>
+    <p>
+      systemd依存ではOCR・物体検出gatewayがdaemonをRequires/Afterし、daemon側が両gatewayをWantsする。これらの入口はdaemon再起動に伴って停止・復帰する可能性がある。Excalidraw・DoclingはdaemonをAfterする。確認した4
+      gatewayにPartOf/BindsToはなく、配備後は関連gatewayの稼働を確認する。推論Providerを設定変更・明示停止する配備ではないが、既存の終了時cleanupやstartup検証による影響はあり得る。18:57:29
+      JSTの/v1/activityはidle・activeWorkloads=0だったが、実行前の再確認を省略できる予約ではない。
+    </p>
+    <p>
+      許可後、署名付きrelease手順のinstall・audit・全体check・coverage・production
+      auditを通し、配備直前にactive
+      commitが調査時と同一か確認する。変わっていれば新たな稼働版へ統合し直す。反映後に公開Control経路で両GETの200、共有JSON
+      Schema適合、Core/CPU/Memory/GPUのvalue・品質・時刻、eventsのcursor続行・coverage・continuityを検証し、401拒否とOpenAPI掲載も確認する。失敗時は旧releaseへrollbackする。Eumenes保存済みoriginとの照合と同hostからの受入は別途確認が必要。
+    </p>
+  </section>
+</article>

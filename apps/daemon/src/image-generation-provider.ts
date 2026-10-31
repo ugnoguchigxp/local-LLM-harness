@@ -43,13 +43,18 @@ export class ImageGenerationProvider {
     private readonly verifyArtifact?: (id: string) => Promise<boolean>,
     private readonly beginWorkload?: () => () => void,
     private readonly flux3Endpoint?: string,
-    private readonly flux3Variant: "image" | "image-flux3" = "image-flux3") {}
+    private readonly flux3Variant: "image" | "image-flux3" = "image-flux3",
+    private readonly onMonitoringTransition?: (id: string, state: string, reason?: string) => void) {}
 
   async generate(input: ImageGenerationRequest, signal?: AbortSignal) {
     input = imageGenerationRequestSchema.parse(input);
     if (input.model === "flux-3-image-klein" && !this.flux3Endpoint) throw new ImageModelUnavailableError();
+    const monitoringId = `image-${crypto.randomUUID()}`;
+    const observe = (state: string, reason?: string) => { try { this.onMonitoringTransition?.(monitoringId, state, reason); } catch { /* Observation only. */ } };
     const finish = this.beginWorkload?.();
-    try { return await this.generateTracked(input, signal); }
+    observe("started");
+    try { const result = await this.generateTracked(input, signal); observe(signal?.aborted ? "cancelled" : "completed"); return result; }
+    catch (e) { observe(signal?.aborted ? "cancelled" : "failed", "generation_failed"); throw e; }
     finally { finish?.(); }
   }
 

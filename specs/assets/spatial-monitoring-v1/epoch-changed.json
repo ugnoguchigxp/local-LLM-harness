@@ -1,0 +1,12 @@
+{
+  "error": {
+    "code": "monitoring_epoch_changed",
+    "message": "Monitoring stream changed after daemon restart",
+    "bootEpoch": "epoch-example",
+    "reasonCode": "daemon_restart",
+    "supportedContractVersions": [
+      "larm-monitoring.v1"
+    ],
+    "recovery": "restart_window"
+  }
+}

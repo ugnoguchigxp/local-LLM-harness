@@ -32,6 +32,7 @@ export type ApiOperationOwner =
   | "health"
   | "service-activity"
   | "telemetry"
+  | "monitoring"
   | "api-contract"
   | "operator-inspection"
   | "allocation"
@@ -107,6 +108,7 @@ export function apiOperationPolicy(
   else if (path === "/health" || path === "/ready" || path === "/v1/release-convergence") owner = "health";
   else if (path === "/v1/activity") owner = "service-activity";
   else if (path === "/metrics") owner = "telemetry";
+  else if (path.startsWith("/v1/monitoring/")) owner = "monitoring";
   else if (path === "/openapi.json") owner = "api-contract";
   else if (path.startsWith("/v1/inspection/")) owner = "operator-inspection";
   else if (path.startsWith("/v1/agent-profiles") || path.startsWith("/v1/agent-connections")
@@ -173,6 +175,7 @@ export function apiOperationPolicy(
     health: ["operator", "service-monitor"],
     "service-activity": ["daemon-consumer", "service-monitor"],
     telemetry: ["operator", "monitoring"],
+    monitoring: ["eumenes-spatial", "service-monitor", "operator"],
     "api-contract": ["api-consumer", "operator"],
     "operator-inspection": ["operator"],
     allocation: ["advanced-consumer", "agent-consumer", "operator"],

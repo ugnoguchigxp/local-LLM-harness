@@ -85,6 +85,23 @@ test("parseRunning accepts array and legacy single-object shapes", () => {
   expect(parseRunning("{}")).toEqual([]);
 });
 
+test("model load monitoring records short failures and excludes cancelled late results", async () => {
+  const runtime = definition("http://fixture");
+  const states: string[] = [];
+  const failing = new LlamaSwapBackend([runtime], { onModelLoad: (_id, state) => states.push(state), request: async () => ({ ok: false, status: 500, body: "PRIVATE upstream response" }) });
+  await expect(failing.ensure(runtime)).rejects.toBeInstanceOf(LifecycleError);
+  expect(states).toEqual(["loading", "failed"]);
+  let finish!: () => void; const blocked = new Promise<void>(resolve => { finish = resolve; });
+  let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
+  const cancelledStates: string[] = [], abort = new AbortController();
+  const cancelled = new LlamaSwapBackend([runtime], { onModelLoad: (_id, state) => cancelledStates.push(state), request: async (_url, init) => {
+    if (init?.method === "POST") { entered(); await blocked; return { ok: true, status: 200, body: "ok" }; }
+    return { ok: true, status: 200, body: JSON.stringify({ running: [{ model: "qwen-worker", state: "ready" }] }) };
+  } });
+  const pending = cancelled.ensure(runtime, abort.signal); await started; abort.abort(new Error("caller cancelled")); finish();
+  await expect(pending).rejects.toThrow(); expect(cancelledStates).toEqual(["loading"]);
+});
+
 test("HOT when llama-swap reports ready and upstream health is ok", async () => {
   const fake = fakeSwap({ states: new Map([["qwen-worker", "ready"]]) });
   try {

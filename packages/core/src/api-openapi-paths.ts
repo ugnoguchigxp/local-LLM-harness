@@ -5,6 +5,7 @@ import { agentProfileSelectorIdSchema } from "./agent-connection";
 export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
   const paths: Record<string, Record<string, unknown>> = {};
   for (const [method, path, operationId] of API_OPERATIONS) {
+    const monitoring = path.startsWith("/v1/monitoring/");
     const successSchema = SUCCESS_SCHEMA_BY_OPERATION[operationId];
     const requestSchema = (() => {
       if (operationId === "createComputeJob") return "ComputeRequest";
@@ -124,7 +125,7 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
       ) return undefined;
       return { "application/json": { schema: { $ref: `#/components/schemas/${successSchema}` } } };
     })();
-    const activityNoStoreHeader = operationId === "getServiceActivity"
+    const activityNoStoreHeader = operationId === "getServiceActivity" || monitoring
       ? {
         description: "Activity snapshots and errors must not be cached",
         schema: { type: "string", const: "no-store" },
@@ -182,7 +183,12 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
         : providerBearerOperation
         ? [{ bearerAuth: [] }, { providerBearer: [] }]
         : [{ bearerAuth: [] }],
-      ...(operationId === "getPersonalStateCapability"
+      ...(monitoring ? {
+        description: "Read-only saved observations. Partial sensor failures return 200 with per-value status and original observedAt. Events retain up to ten minutes in this daemon boot; 409 resets the stream, 410 detects expired or lost history. Never loads a model, creates a connection, or renews a lease.",
+        parameters: [{ name: "contractVersion", in: "query", required: false, schema: { type: "string", const: "larm-monitoring.v1" } },
+          ...(operationId === "getMonitoringEvents" ? [{ name: "cursor", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 1024 } },
+            { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 1000, default: 500 } }] : [])],
+      } : operationId === "getPersonalStateCapability"
         ? {
           parameters: [{
             name: "X-LARM-Allocation-ID",
@@ -399,12 +405,12 @@ export function createOpenApiPaths(): Record<string, Record<string, unknown>> {
         "4XX": {
           description: "Client error",
           ...(activityNoStoreHeader ? { headers: { "Cache-Control": activityNoStoreHeader } } : {}),
-          content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          content: { "application/json": { schema: { $ref: monitoring ? "#/components/schemas/MonitoringError" : "#/components/schemas/ErrorResponse" } } },
         },
         "5XX": {
           description: "Service error",
           ...(activityNoStoreHeader ? { headers: { "Cache-Control": activityNoStoreHeader } } : {}),
-          content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+          content: { "application/json": { schema: { $ref: monitoring ? "#/components/schemas/MonitoringError" : "#/components/schemas/ErrorResponse" } } },
         },
       },
     };

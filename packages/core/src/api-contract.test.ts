@@ -101,6 +101,10 @@ test("OpenAPI is generated from the public contract schemas", () => {
     }
   }
   const paths = document.paths as Record<string, Record<string, Record<string, unknown>>>;
+  for (const [path, operationId] of [["/v1/monitoring/snapshot", "getMonitoringSnapshot"], ["/v1/monitoring/events", "getMonitoringEvents"]] as const) {
+    expect(paths[path]!.get!.security).toEqual([{ bearerAuth: [] }]);
+    expect(apiOperationPolicy(path, operationId).authority).toBe("api-bearer");
+  }
   expect(paths["/v1/allocations"]?.post?.requestBody).toBeDefined();
   expect(JSON.stringify(paths["/v1/agent-connections"]?.post)).toContain('"name":"Prefer"');
   expect(paths["/v1/inspection/state"]?.get?.security).toEqual([{

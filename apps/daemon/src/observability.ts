@@ -45,7 +45,7 @@ export class Observability {
   middleware(): MiddlewareHandler {
     return async (c, next) => {
       // Scrapes and health checks must not create traces or recursive metrics.
-      if (!/^\/v[1-9][0-9]*\//.test(c.req.path)) return await next();
+      if (!/^\/v[1-9][0-9]*\//.test(c.req.path) || c.req.path.startsWith("/v1/monitoring/")) return await next();
       let observation: RequestObservation | undefined;
       safely(() => { observation = new RequestObservation(this, c.req.raw); });
       if (!observation) return await next();
