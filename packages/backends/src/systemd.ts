@@ -88,13 +88,16 @@ export class SystemdBackend implements RuntimeBackend {
       this.queryService(runtime.deployment.service, runtime.deployment.scope),
       isListening(runtime.deployment.healthPort, this.probeTimeoutMs),
     ]);
-    if (!listening) {
+    // A healthy listener may belong to another process (for example a media
+    // worker on a conflicting port). Only the selected unit owns this runtime.
+    if (service !== "Running" || !listening) {
       return {
         runtimeId,
         service,
         listening: false,
         healthOk: false,
         busy: false,
+        ...(listening ? { detail: "listener is not owned by a running runtime service" } : {}),
       };
     }
 
@@ -230,14 +233,9 @@ export class SystemdBackend implements RuntimeBackend {
     const deadline = Date.now() + this.readyTimeoutMs;
     while (Date.now() < deadline) {
       throwIfAborted(signal);
-      const probe = await probeHealth(
-        runtime.deployment.healthPort,
-        runtime.deployment.healthPath ?? "/health",
-        false,
-        this.probeTimeoutMs,
-        signal,
-      );
-      if (probe.ok) {
+      const probe = await this.health(runtime.id);
+      throwIfAborted(signal);
+      if (probe.healthOk) {
         return;
       }
       await this.sleep(Math.min(2000, this.probeTimeoutMs));

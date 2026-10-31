@@ -326,7 +326,7 @@ export {
   type RecoverablePausedJob,
 } from "./provider-recovery";
 
-export { mediaPolicySchema } from "./media-policy";
+export { mediaPolicySchema, validateMediaPolicyPorts } from "./media-policy";
 export * from "./local-service";
 export { ServiceResourceLedger, ServiceMemoryAdmissionError, type ServiceAdmissionInput } from "./service-resource-ledger";
 

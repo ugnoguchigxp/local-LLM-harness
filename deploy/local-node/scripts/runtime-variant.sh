@@ -12,7 +12,7 @@ case "${variant}" in
   image) service=larm-image-qwen21.service; health=http://127.0.0.1:8091/health; reserve_gb=34 ;;
   image-flux3) service=larm-image-flux3.service; health=http://127.0.0.1:8094/health; reserve_gb=48 ;;
   stable-audio) service=larm-audio-stable.service; health=http://127.0.0.1:8092/health; reserve_gb=6 ;;
-  mesh) service=larm-mesh-trellis2.service; health=http://127.0.0.1:8093/health; reserve_gb=32 ;;
+  mesh) service=larm-mesh-trellis2.service; health=http://127.0.0.1:8096/health; reserve_gb=32 ;;
   *) echo "usage: $0 status|start|stop music|image|image-flux3|mesh|stable-audio" >&2; exit 2 ;;
 esac
 

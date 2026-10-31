@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { compileProviderRevision, type SystemdRuntimeDefinition } from "@larm/core";
+import { deriveStatus, compileProviderRevision, type SystemdRuntimeDefinition } from "@larm/core";
 import { SystemdBackend, parseSystemctlState, systemdInvocation } from "./systemd";
 
 function definition(
@@ -194,4 +194,25 @@ test("ensure stops before health polling when caller cancellation follows start"
   await expect(backend.ensure(runtime, controller.signal)).rejects.toBe(reason);
   expect(starts).toBe(1);
   expect(receivedSignal).toBe(controller.signal);
+});
+
+
+test("a stopped systemd runtime cannot borrow a different worker's healthy listener", async () => {
+  let requests = 0;
+  const server = Bun.serve({ port: 0, fetch: () => { requests++; return Response.json({ ready: true }); } });
+  const runtime = definition(server.port!);
+  try {
+    for (const service of ["Stopped", "Unknown", "NotFound"] as const) {
+      const backend = new SystemdBackend([runtime], { queryService: async () => service });
+      const health = await backend.health(runtime.id);
+      expect(health).toMatchObject({ service, listening: false, healthOk: false, busy: false });
+      expect(deriveStatus({ ...health, startingGraceExpired: false })).toBe(service === "NotFound" ? "FAILED" : "COLD");
+    }
+    expect(requests).toBe(0);
+    const backend = new SystemdBackend([runtime], { queryService: async () => "Stopped",
+      control: { start: async () => {}, stop: async () => {} }, readyTimeoutMs: 5, sleep: async () => { await Bun.sleep(6); } });
+    await expect(backend.ensure(runtime)).rejects.toMatchObject({ code: "start_failed" });
+    await expect(backend.ensureInstance(compileProviderRevision({ runtime }), runtime)).rejects.toMatchObject({ code: "start_failed" });
+    expect(requests).toBe(0);
+  } finally { server.stop(true); }
 });

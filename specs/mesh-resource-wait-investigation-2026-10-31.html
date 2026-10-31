@@ -337,4 +337,38 @@
       ID・createdAt・要求・seedを保持してqueue時刻だけを更新する。稼働版は引き続き87b1c624abb738ac2345762b6a06050fc8d02cf9である。
     </p>
   </section>
+  <section id="live-deployment-20261101">
+    <h2>11月1日の本番配備と元R2D2の完了</h2>
+    <p>
+      利用者から管理者認証と配備継続の許可を受け、11月1日06:03
+      JSTにLARMを正常停止した。nativeの処理中・待機中0を確認し、署名済み候補a134100を配備、06:04:13
+      JSTに契約確認が成功した。native propsは200000・131072・131072、既定131072、cache上限6
+      GiB・単体2 GiB・一時2 GiBと一致した。runtime releaseは管理APIでv7へ更新し、artifact
+      activationの成功を確認した。
+    </p>
+    <p>
+      元job
+      meshjob_a593160ce60046c0b2fbc74d583c32d4は管理retryで06:04:56に再開し、waiting_gpuからbackground、meshへ進み、06:07:58
+      JSTにcompletedとなった。元createdAt、source image ID、seed 668352459を維持した。asset
+      mesh_869682f83d07411c80ff48fa5ddd924cは5337556 bytes、102873 vertices・143468 triangles・2
+      texturesで、GLB
+      header、HTTP取得bytes、SHA-256、元画像hashを照合した。workerはinactive・MainPID 0で終了した。
+    </p>
+  </section>
+  <section id="port-identity-repair">
+    <h2>3D実行時の誤った10 GiB占有判定</h2>
+    <p>
+      3D実行中の追加会話受付で、static headroomが-8.0625
+      GiBとなる409を観測した。systemdのd1-system-one.serviceはinactive・MainPID
+      0だが、observerは同runtimeをHOTと判定していた。8093の実際のlisten PIDはTRELLIS.2
+      providerであり、そのready応答をd1の稼働として採用したことを確認した。reclaimerはd1停止を繰り返しても、別processの応答が残るため再びHOTとなり、架空の10
+      GiBが予約に加算された。物理メモリ不足でも、常駐d1の解放拒否でもない。
+    </p>
+    <p>
+      修正ではmeshの内部portを未使用の8096へ移し、unit・制御script・media
+      policy・provider既定値を一致させる。SystemdBackendは選択したunitがRunningの場合だけHTTP健康応答を採用する。停止済みunitのportに別workerが応答してもCOLDのままとし、起動待機でも同じ判定を使う。coreのmedia
+      policy検証で異なるservice間のhealth
+      port重複を拒否し、main起動時に照合する。受付済みR2D2の処理を中断せず、完了後にこの追加修正を配備する。
+    </p>
+  </section>
 </article>

@@ -10,7 +10,7 @@ WorkingDirectory=/srv/ai/apps/larm-current
 Environment=HOME=/srv/ai/cache
 Environment=XDG_CACHE_HOME=/srv/ai/cache
 Environment=TMPDIR=/srv/ai/data/generated/3d/work
-ExecStart=/srv/ai/apps/qwen-image-2.1-runtime/.venv/bin/python -u /srv/ai/apps/larm-current/deploy/local-node/providers/trellis2-provider.py --port 8093 --engine /srv/ai/apps/trellis-cpp-v0.8.1-vulkan/trellis-cli --models /srv/ai/models/trellis2-gguf-a57397bd --artifact-root /srv/ai/data/generated/3d
+ExecStart=/srv/ai/apps/qwen-image-2.1-runtime/.venv/bin/python -u /srv/ai/apps/larm-current/deploy/local-node/providers/trellis2-provider.py --port 8096 --engine /srv/ai/apps/trellis-cpp-v0.8.1-vulkan/trellis-cli --models /srv/ai/models/trellis2-gguf-a57397bd --artifact-root /srv/ai/data/generated/3d
 Restart=no
 TimeoutStartSec=30
 TimeoutStopSec=60

@@ -143,7 +143,7 @@ class Adapter:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8093)
+    parser.add_argument("--port", type=int, default=8096)
     parser.add_argument("--engine", type=Path, required=True)
     parser.add_argument("--models", type=Path, required=True)
     parser.add_argument("--artifact-root", type=Path, required=True)

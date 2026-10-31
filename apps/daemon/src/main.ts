@@ -16,7 +16,7 @@ import { LocalServiceSystemdBackend, SystemdProcessBackend, LocalServiceRoutingB
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { LARM_VERSION, mediaPolicySchema } from "@larm/core";
+import { LARM_VERSION, mediaPolicySchema, validateMediaPolicyPorts } from "@larm/core";
 import {
   createRuntimeBackend,
   LocalArtifactStore,
@@ -341,6 +341,7 @@ await personalStateController.initialize();
 
 const startupProbeToken = crypto.randomUUID();
 const mediaPolicy = mediaPolicySchema.parse(parse(readFileSync(join(config.configDir, "runtime-variants.yaml"), "utf8")));
+validateMediaPolicyPorts(mediaPolicy, registry.runtimes, observer.getState().node.id);
 const imageEndpoint = config.imageProviderEndpoint ?? new URL(mediaPolicy.variants.image.healthUrl).origin;
 const sharedImageWorker = mediaPolicy.variants.image.models?.includes("flux-3-image-klein") ?? false;
 const flux3Endpoint = sharedImageWorker ? imageEndpoint : mediaPolicy.variants["image-flux3"]
