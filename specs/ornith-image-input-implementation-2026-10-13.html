@@ -5,6 +5,40 @@
     metadata、claim、入力token事前計数、推論前の検査を実装する。EumenesのUI・保存・設定は変更しない。モデル・projectorと1M共有KV／4枠は維持し、主profileとContextStillの解決先に明示したchatInput
     policyを適用する。廃止した64K selectorは復活させない。
   </p>
+  <aside>
+    <p>
+      2026-10-31の稼働確認では、release 95961280a2b4のOrnith公開contextWindowは200000、
+      outputReserveTokensは4096。解決先はornith15-strix-conversationで、実backendの
+      max_tokensとn_predictの既定値はともに−1だった。4096の出力制限はLARMの事前検査・値の補完に存在した。
+      本変更はOrnithへ解決する主・画像・game・ContextStillの各Providerにremaining-contextを指定する。
+    </p>
+  </aside>
+  <aside>
+    <p>
+      2026-10-31、release 1bb672dd0530f467c0465520017cb14157f7039aを稼働環境へ反映済み。 同じ16
+      tokenの入力で、省略時のrequestedOutputTokensは4096から198008へ変わった。 明示max_tokens:
+      8192の事前計数はHTTP 400から200へ変わり、省略・8192指定とも実推論がHTTP 200、 finish_reason:
+      stopで完了した。公開contextWindowのoutputLimitはremaining-context。
+      install・依存監査・全check・coverageのrelease gateはすべて成功し、coverage時は1047成功、10
+      skip、失敗0。
+      4096のoutputReserveTokensは互換metadataとして残るが、これらのProviderの生成上限には使用しない。
+    </p>
+  </aside>
+  <section id="generation-timeout">
+    <h2>長時間推論のタイムアウト</h2>
+    <p>
+      2026-10-31に稼働中のdaemonの環境変数を確認し、LARM_GATEWAY_TIMEOUT_SECONDSは7200秒（2時間）だった。
+      HTTP serverのidleTimeoutは既定0、上流fetchはtimeout:
+      falseのため、Bunの既定5分の無通信切断は適用しない。
+      10分程度の推論を待つためのLARM設定変更は不要。リクエスト全体の期限には待ち行列と前処理も含む。
+    </p>
+    <p>
+      稼働中のOrnith engineは--timeoutを指定しておらず、同じ実行ファイルのhelpはread/write
+      timeoutの既定値を600秒と表示する。
+      これは通信の読み書き用で、生成全体の実行時間を600秒に制限する設定ではない。
+      接続元アプリ独自のリクエスト期限は今回の確認対象外。実際に10分間生成を続ける耐久試験は実施していない。
+    </p>
+  </section>
   <section id="usage">
     <h2>consumerから使う手順</h2>
     <ol>
@@ -101,15 +135,21 @@
           <th scope="row">context</th>
           <td>主262144 token、ContextStillはそのprofileのcontextWindow</td>
           <td>
-            requested
-            max_tokensはoutputReserveTokens以下。省略は出力予約値を挿入。n_predict／max_completion_tokensによる別経路は拒否
+            2026-10-31更新。OrnithのcontextWindowはoutputLimit: remaining-contextを公開する。
+            outputReserveTokensの4096は出力上限には使わない。max_tokensを省略した場合は、
+            正式な入力計数後のmaxTokens − promptTokens − safetyMarginTokensを生成上限とする。
+            明示したmax_tokensは4096を超えても受け付け、入力との合計で検査する。
+            n_predict／max_completion_tokensによる別経路は拒否
           </td>
         </tr>
         <tr>
           <th scope="row">token budget</th>
           <td>promptTokens + requestedOutputTokens + safetyMarginTokens ≤ maxTokens</td>
           <td>
-            主は出力4096、安全余白1976なら入力256072以下。明示max_tokensが小さい場合はその予約で計算
+            現在のOrnithは1セッション200000 token。安全余白1976、入力10000なら出力188024まで。
+            ContextStillはそのprofileの安全余白を使う。outputLimit未指定のProviderは従来の出力予約値を上限とする。
+            入力が残りcontextを使い切った場合は推論前に拒否する。画像のimage-max-tokens
+            4096は画像入力の予算であり、出力制限とは独立する。
           </td>
         </tr>
         <tr>

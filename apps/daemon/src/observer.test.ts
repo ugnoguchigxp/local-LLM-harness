@@ -90,6 +90,26 @@ test("concurrent ticks share one backend observation", async () => {
   expect(calls).toBe(1);
 });
 
+test("refresh observes again after a probe that began before a lifecycle change", async () => {
+  const gate = Promise.withResolvers<void>();
+  let running = true, calls = 0;
+  const backend = stub(startingProbe);
+  backend.list = async () => {
+    calls++;
+    const wasRunning = running;
+    if (calls === 1) await gate.promise;
+    return [{ ...startingProbe, service: wasRunning ? "Running" : "Stopped", listening: wasRunning, healthOk: wasRunning }];
+  };
+  const observer = new Observer(registry, backend);
+  const stale = observer.tick();
+  running = false;
+  const fresh = observer.refresh();
+  gate.resolve();
+  expect((await stale).runtimes[0]?.status).toBe("HOT");
+  expect((await fresh).runtimes[0]?.status).toBe("COLD");
+  expect(calls).toBe(2);
+});
+
 test("telemetry failure degrades telemetry without losing runtime observation", async () => {
   const observer = new Observer(registry, stub({
     ...startingProbe,

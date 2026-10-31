@@ -55,6 +55,12 @@ export class Observer {
     return tracked;
   }
 
+  /** Observe after a lifecycle change, without reusing a probe begun before it. */
+  async refresh(): Promise<ClusterState> {
+    if (this.tickInFlight) await this.tickInFlight;
+    return await this.tick();
+  }
+
   private async observe(): Promise<ClusterState> {
     const now = this.now();
     const observedAt = new Date(now).toISOString();

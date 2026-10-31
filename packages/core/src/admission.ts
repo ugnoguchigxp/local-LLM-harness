@@ -91,6 +91,27 @@ export function admitRuntimes(input: {
     candidateBySwapGroup.set(swapGroup, id);
   }
 
+  for (const runtimeId of candidateIds) {
+    const runtime = runtimeById(input.registry, runtimeId);
+    if (!runtime?.resources.maxConcurrentAllocations) {
+      continue;
+    }
+    const activeCount = input.allocations.filter(
+      (allocation) =>
+        admittedAllocation(allocation.status) &&
+        allocation.bindings.some((binding) => binding.runtime === runtimeId),
+    ).length;
+    if (activeCount >= runtime.resources.maxConcurrentAllocations) {
+      return {
+        ok: false,
+        reason: "runtime_capacity",
+        message: `runtime ${runtimeId} reached allocation capacity ${runtime.resources.maxConcurrentAllocations}`,
+        runtime: runtimeId,
+        nodes: [],
+      };
+    }
+  }
+
   const replaceableIds = new Set<string>();
   for (const snapshot of input.state.runtimes) {
     if (MEMORY_COMMITTED.has(snapshot.status)) {
@@ -165,15 +186,13 @@ export function admitRuntimes(input: {
       ...(reclaimableMemoryGB > 0 ? { reclaimableMemoryGB } : {}),
     };
     nodes.push(summary);
-    if (incrementalMemoryGB > availableMemoryGB) {
-      return {
-        ok: false,
-        reason: "memory_exhausted",
-        message: `node ${nodeId} needs ${incrementalMemoryGB} GB but only ${availableMemoryGB} GB is available`,
-        node: nodeId,
-        nodes,
-      };
-    }
+    const memoryFailure = incrementalMemoryGB > availableMemoryGB ? {
+      ok: false as const,
+      reason: "memory_exhausted" as const,
+      message: `node ${nodeId} needs ${incrementalMemoryGB} GB but only ${availableMemoryGB} GB is available`,
+      node: nodeId,
+      nodes,
+    } : undefined;
     const needsLiveTelemetry = input.liveTelemetry?.requiredForNonResident === true
       && [...candidateIds].some((id) => {
         const runtime = runtimeById(input.registry, id);
@@ -201,6 +220,8 @@ export function admitRuntimes(input: {
           nodes,
         };
       }
+      if (memoryFailure) return memoryFailure;
+
       const liveBytes = telemetry.acceleratorMemoryAvailableBytes === undefined
         ? telemetry.systemMemoryAvailableBytes
         : Math.min(
@@ -212,7 +233,14 @@ export function admitRuntimes(input: {
       // would double-count it and incorrectly reject unified-memory hosts.
       const liveAvailableMemoryGB = Math.max(0, liveBytes / (1024 ** 3));
       const pendingServiceGB = services.reduce((n, r) => n + r.pendingBytes / (1024 ** 3), 0);
-      const effectiveLiveAvailableMemoryGB = Math.max(0, liveAvailableMemoryGB + reclaimableMemoryGB - pendingServiceGB);
+      const pendingRuntimeMemoryGB = [...committedIds]
+        .map(id => runtimeById(input.registry, id))
+        .filter((runtime): runtime is RuntimeDefinition => runtime?.node === nodeId)
+        .filter(runtime => !input.state.runtimes.some(snapshot => snapshot.id === runtime.id
+          && (snapshot.status === "HOT" || snapshot.status === "BUSY")))
+        .reduce((total, runtime) => total + runtimeMemoryGB(runtime), 0);
+      const effectiveLiveAvailableMemoryGB = Math.max(0,
+        liveAvailableMemoryGB + reclaimableMemoryGB - pendingServiceGB - pendingRuntimeMemoryGB);
       summary.liveAvailableMemoryGB = liveAvailableMemoryGB;
       if (incrementalMemoryGB > effectiveLiveAvailableMemoryGB) {
         return {
@@ -224,27 +252,7 @@ export function admitRuntimes(input: {
         };
       }
     }
-  }
-
-  for (const runtimeId of candidateIds) {
-    const runtime = runtimeById(input.registry, runtimeId);
-    if (!runtime?.resources.maxConcurrentAllocations) {
-      continue;
-    }
-    const activeCount = input.allocations.filter(
-      (allocation) =>
-        admittedAllocation(allocation.status) &&
-        allocation.bindings.some((binding) => binding.runtime === runtimeId),
-    ).length;
-    if (activeCount >= runtime.resources.maxConcurrentAllocations) {
-      return {
-        ok: false,
-        reason: "runtime_capacity",
-        message: `runtime ${runtimeId} reached allocation capacity ${runtime.resources.maxConcurrentAllocations}`,
-        runtime: runtimeId,
-        nodes,
-      };
-    }
+    if (memoryFailure) return memoryFailure;
   }
 
   return { ok: true, nodes };

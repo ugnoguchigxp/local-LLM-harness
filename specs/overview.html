@@ -22,6 +22,78 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="contract" data-state="current" data-domain="image-model-selection">
+          <th scope="row">
+            <a href="./image-model-selection-flux3-2026-10-31.html"
+              >画像APIのモデル選択とFLUX 3起動</a
+            >
+          </th>
+          <td>
+            model指定、専用schedule、補完LLM、重量級排他、未設定応答と配置条件。
+            <small
+              >分類: <code>contract</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>image-model-selection</code></small
+            >
+          </td>
+          <td>2026-10-31ソース実装。重み未配置、本番未配備。</td>
+        </tr>
+        <tr data-kind="research" data-state="current" data-domain="flux3-qwen21-comparison">
+          <th scope="row">
+            <a href="./flux3-klein-vs-qwen-image21-turbo-research-2026-10-31.html"
+              >FLUX 3 Image KleinとQwen 2.1 Turboの比較調査</a
+            >
+          </th>
+          <td>
+            公式仕様、Turbo直接比較、日本語、補完LLM、AMD経路、ライセンスの整理。
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>flux3-qwen21-comparison</code></small
+            >
+          </td>
+          <td>2026-10-31公開資料調査。Kleinの実機測定・配備は未実施。</td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="image-api-startup-failure-investigation"
+        >
+          <th scope="row">
+            <a href="./image-api-startup-failure-investigation-2026-10-31.html"
+              >画像生成APIの起動失敗・無応答調査と修正</a
+            >
+          </th>
+          <td>
+            起動終了の検知、内部port、独立サービス契約の照合。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>image-api-startup-failure-investigation</code></small
+            >
+          </td>
+          <td>2026-10-31。起動失敗の応答遅延を修正。実生成による受入は未実施。</td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="current"
+          data-domain="notification-sfx-quality-investigation"
+        >
+          <th scope="row">
+            <a href="./notification-sfx-investigation-2026-10-31.html"
+              >Eumenes通知効果音の品質不良調査</a
+            >
+          </th>
+          <td>
+            原音10件、実モデル・推論設定、CPU比較6件による切り分け。<small
+              >分類: <code>research</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>notification-sfx-quality-investigation</code></small
+            >
+          </td>
+          <td>
+            2026-10-31調査。短時間生成と原音の飽和を確認。根本原因・試聴合格は未確定、本番変更なし。
+          </td>
+        </tr>
         <tr
           data-kind="contract"
           data-state="current"

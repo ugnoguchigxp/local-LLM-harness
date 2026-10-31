@@ -150,6 +150,7 @@ agentProfiles:
         contextWindow:
           maxTokens: 200000
           outputReserveTokens: 4096
+          outputLimit: remaining-context
           safetyMarginTokens: 1976
       - name: asr
         capability: speech.stt
@@ -223,6 +224,7 @@ agentProfiles:
         contextWindow:
           maxTokens: 200000
           outputReserveTokens: 4096
+          outputLimit: remaining-context
           safetyMarginTokens: 0
         description: Ornith 1.5 STRIX_LEAN。200000 tokens、4並列、入力cacheとRAM保持復元。必要な履歴を毎回messagesへ送信。思考は無効。画像入力契約はcatalogとclaimを参照。
       - name: asr
@@ -384,6 +386,7 @@ agentProfiles:
         contextWindow:
           maxTokens: 200000
           outputReserveTokens: 4096
+          outputLimit: remaining-context
           safetyMarginTokens: 1976
       - name: asr
         capability: speech.stt
@@ -494,6 +497,7 @@ agentProfiles:
         contextWindow:
           maxTokens: 200000
           outputReserveTokens: 4096
+          outputLimit: remaining-context
           safetyMarginTokens: 1976
       - name: asr
         capability: speech.stt
@@ -563,7 +567,7 @@ profileSelectors:
         protocol: larm.image-generation.v1
         endpoint: /v1/images/generations
         model: qwen-image-2.1-turbo
-        description: Qwen-Image 2.1 Turbo AD-Q4_Kによる画像生成。POSTでpromptを指定すると起動し、画像保存後に停止します。width/heightは縦横それぞれ100〜1280の整数を自由指定できます（省略時512）。内部では各辺を32の倍数へ切り上げて生成し、指定どおりの寸法へ縮小して返します。stepsは8固定、seedは任意、formatはwebpまたはpng（省略時webp）。このPCで起動から応答まで512角約16秒・768角約31秒・1024角約58秒、中間サイズの個別生成試験では1216角約87秒・1280角約97秒でした。応答のartifacts[0].contentUrlをControlのURLに解決してGETすると画像を取得できます。写真・イラスト・構図検討に対応。参照画像による編集はこのAPIでは未対応。
+        description: Qwen-Image 2.1 Turbo AD-Q4_KとFLUX 3 Image Kleinによる画像生成。POSTでpromptを指定すると起動し、画像保存後に停止します。width/heightは縦横それぞれ100〜1280の整数を自由指定できます（省略時512）。内部ではQwenは32、FLUXは16の倍数へ各辺を切り上げて生成し、指定どおりの寸法へ縮小して返します。model省略時はqwen-image-2.1-turbo（stepsは8固定）。FLUX workerを準備したノードではmodel=flux-3-image-kleinでFLUX（stepsは16固定、指示文の自動補完付き）を選べます。未準備なら503 image_model_unavailableを返し、Qwenへ読み替えません。seedは任意、formatはwebpまたはpng（省略時webp）。Qwenの過去実測では起動から応答まで512角約16秒・768角約31秒・1024角約58秒、中間サイズの個別生成試験では1216角約87秒・1280角約97秒でした。応答のartifacts[0].contentUrlをControlのURLに解決してGETすると画像を取得できます。写真・イラスト・構図検討に対応。参照画像による編集はこのAPIでは未対応。
         startupPolicy:
           minWarmInstances: 0
           idleTtlSeconds: 0

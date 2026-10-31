@@ -75,11 +75,13 @@ export class AllocationPreemption {
     priority: number;
     runtimeIds: string[];
     allocations: readonly Allocation[];
+    canPreempt?: (allocation: Allocation) => boolean;
     preempt: (allocationId: string, priority: number) => unknown;
   }): void {
     if (input.priority < this.foregroundPriorityThreshold()) return;
     const victims = input.allocations.filter((allocation) => {
-      if (!admittedAllocation(allocation.status) || (allocation.priority ?? 0) >= input.priority) return false;
+      if (!admittedAllocation(allocation.status) || (allocation.priority ?? 0) >= input.priority
+        || input.canPreempt?.(allocation) === false) return false;
       return runtimeSetsConflict(
         this.registry,
         input.runtimeIds,

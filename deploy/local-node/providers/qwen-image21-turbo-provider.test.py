@@ -18,7 +18,7 @@ class TurboProviderTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.provider = module.Provider(["unused"], "http://127.0.0.1:18291", Path(self.temp.name))
+        self.provider = module.Provider(["unused", "--listen-port", "18291"], "http://127.0.0.1:18291", Path(self.temp.name))
         self.provider.child = Mock()
         self.provider.child.poll.return_value = None
 
@@ -141,7 +141,43 @@ class TurboProviderTest(unittest.TestCase):
         self.provider.endpoint = f"http://127.0.0.1:{address[1]}"
         self.provider.ready = Mock(return_value=True)
         self.provider.start()
-        popen.assert_called_once_with(["unused"])
+        popen.assert_called_once_with(self.provider.command)
+        self.assertNotEqual(self.provider.endpoint, f"http://127.0.0.1:{address[1]}")
+        self.assertTrue(self.provider.endpoint.endswith(":" + self.provider.command[-1]))
+
+    @patch.object(module.subprocess, "Popen")
+    def test_audio_time_wait_cannot_break_the_native_reuseport_listener(self, popen):
+        with socket.socket() as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            address = listener.getsockname()
+            with socket.create_connection(address) as client:
+                accepted, _ = listener.accept()
+                accepted.close()
+                self.assertEqual(client.recv(1), b"")
+        # Reproduce the actual socket option mismatch without loading a model.
+        with socket.socket() as native:
+            native.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            with self.assertRaises(OSError):
+                native.bind(address)
+        self.provider.endpoint = f"http://127.0.0.1:{address[1]}"
+        self.provider.ready = Mock(return_value=True)
+        self.provider.start()
+        port = int(self.provider.command[-1])
+        self.assertNotEqual(port, address[1])
+        with socket.socket() as native:
+            native.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            native.bind(("127.0.0.1", port))
+        self.assertEqual(self.provider.endpoint, f"http://127.0.0.1:{port}")
+
+    @patch.object(module.subprocess, "Popen")
+    def test_native_exit_including_zero_fails_startup_with_exit_status(self, popen):
+        self.provider.ready = Mock(return_value=False)
+        for status in (0, 1, -9):
+            popen.return_value.poll.return_value = status
+            with self.subTest(status=status), self.assertRaisesRegex(RuntimeError, f"exit={status}"):
+                self.provider.start()
 
 
 if __name__ == "__main__":

@@ -44,6 +44,7 @@ export class LocalServiceManager {
   constructor(definitions: LocalServiceDefinition[], private readonly backend: LocalServiceBackend, private readonly options: {
     bootEpoch: string; journal: LocalServiceJournal; ledger: ServiceResourceLedger;
     reserve: (id: string, d: LocalServiceDefinition) => void;
+    reclaimMemory?: (d: LocalServiceDefinition) => Promise<void>;
     now?: () => number; sleep?: (ms: number) => Promise<void>; onEvent?: (name: string, service: string, reason?: string) => void;
   }) {
     if (definitions.length > 64) throw new Error("too_many_local_services");
@@ -153,7 +154,7 @@ export class LocalServiceManager {
     const { principal: _, endpoint: __, ...publicLease } = l;
     return { ...publicLease, ...(l.status === "ready" ? { endpoint: e.definition.deployment.publicEndpoint } : {}) };
   }
-  async ensure(id: string, principal: string, key: string, raw: unknown): Promise<LocalServiceLease> {
+  async ensure(id: string, principal: string, key: string, raw: unknown, memoryReclaimed = false): Promise<LocalServiceLease> {
     if (this.journalBlocked) throw new LocalServiceError("journal_recovery_required", 503);
     if (this.closing) throw new LocalServiceError("draining", 503);
     if (!key || key.length > 192) throw new LocalServiceError("idempotency_key_required", 400);
@@ -170,7 +171,7 @@ export class LocalServiceManager {
     if (e.pending && !["starting", "ready", "draining"].includes(e.state)) {
       // Recheck idempotency, capacity, closing and state after the transition.
       await e.pending.catch(() => {});
-      return this.ensure(id, principal, key, request);
+      return this.ensure(id, principal, key, request, memoryReclaimed);
     }
     if (e.state === "ready" && !this.fresh(e)) throw new LocalServiceError("readiness_unknown", 503);
     if (e.state === "failed") throw new LocalServiceError(e.error ?? "service_failed", 503);
@@ -178,7 +179,16 @@ export class LocalServiceManager {
       if (e.startupFailures >= 3) throw new LocalServiceError("startup_retry_limit");
       if (this.now() < e.nextStartAt) throw new LocalServiceError("startup_cooldown", 503);
       // No await between AI accounting, Service reservation, and marking STARTING.
-      try { this.options.reserve(id, e.definition); } catch (err) { throw new LocalServiceError(err instanceof Error ? err.message : "resource_exhausted", 503); }
+      try { this.options.reserve(id, e.definition); } catch (err) {
+        if (!memoryReclaimed && this.options.reclaimMemory && err instanceof Error
+          && ["memory_exhausted", "live_memory_exhausted"].includes(err.message)) {
+          try { await this.options.reclaimMemory(e.definition); }
+          catch { throw new LocalServiceError("memory_reclamation_failed", 503); }
+          // Recheck idempotency, shutdown, capacity and generation after recovery.
+          return this.ensure(id, principal, key, request, true);
+        }
+        throw new LocalServiceError(err instanceof Error ? err.message : "resource_exhausted", 503);
+      }
       e.generation++; e.state = "starting"; e.error = undefined; e.idleSince = undefined; e.nextPollAt = undefined; e.activity = undefined; e.appBootId = undefined; e.drainToken = undefined; e.instanceToken = null;
       const task = this.start(e); e.pending = task;
       void task.then(() => { if (e.pending === task) e.pending = undefined; }, () => { if (e.pending === task) e.pending = undefined; e.state = "failed"; e.error = "journal_failed"; });

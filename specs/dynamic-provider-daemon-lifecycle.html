@@ -52,6 +52,60 @@
     </p>
   </section>
 
+  <section id="memory-reclamation">
+    <h2>メモリー不足時の能動的回収</h2>
+    <p>
+      2026-10-31更新。要求されたAgent ProfileのProvider集合からRouteとRuntimeを解決し、
+      静的メモリー予算または実測の空き容量が不足するときは、他サービスのidle TTL満了を待つ前に、
+      同じノードの未使用オンデマンドRuntimeを即時停止する。画像・音楽・メッシュとLocal Serviceの
+      独立した起動要求にも同じ回収処理を適用する。
+    </p>
+    <ol>
+      <li>未使用Runtimeを先に選び、その中では解放見積もりの大きいものから一つずつ停止する。</li>
+      <li>
+        未使用サービスだけで不足するときは、既存のforeground優先度のしきい値以上の要求に限り、
+        その要求より優先度が低いAllocationを退避できる。swap-groupが別でも同じノードの
+        メモリー競合として扱う。同優先度・高優先度のAllocationや要求自身のProviderを共有するAllocationは退避しない。
+      </li>
+      <li>
+        停止候補を予約し、新規リクエストの受付を止めてから、実行中の全リクエストとmutationの正常終了を待つ。
+        既定の終了待ちは10秒で、期限内に完了しなければそのRuntimeの停止を見送る。
+        実行中の要求を回収目的で強制中断しない。終了確認後に低優先度Allocationを解放し、
+        通常のbackend停止を使う。swap-groupの優先度切替も実行中要求を保護し、
+        高優先度の待機要求がある間は旧Allocationの新規要求を受け付けない。
+      </li>
+      <li>
+        resident、最低warm
+        instance数が1以上のRuntime、Profile保持中のRuntime、更新中・停止中のRuntime、 legacy
+        leaseが使うRuntimeは保護する。管理外のBUSY・STARTINGプロセスは停止候補にしない。
+        Instanceのrequest・mutation参照とgenerationを停止直前に再確認する。
+      </li>
+      <li>
+        停止ごとにプロセス状態とtelemetryを再観測し、通常のAdmissionを再実行する。
+        必要な容量が確保できた時点で追加停止を打ち切る。停止失敗や実測容量の不足を見積もりで補って起動を許可しない。
+      </li>
+      <li>
+        待機済みAllocationの再評価時にも回収を試みる。回収できる候補がない場合は既存の待機・拒否契約を適用する。
+        取り消し・期限切れ・daemon終了は停止直前まで確認し、途中の観測失敗で他の待機要求を取り残さない。
+        slot満杯・telemetry不明などメモリー不足以外のエラーや、候補をすべて回収しても予算に収まらない要求では停止しない。
+      </li>
+    </ol>
+    <p>
+      メディア要求は起動前に見積メモリーを共通ledgerへ予約し、起動後の再観測まではpendingとして扱う。
+      起動後もcgroupのanonymous
+      memory実測値だけを消費済みとして差し引き、未ロードのmodelや観測不能な容量はpendingに残す。 AI
+      Runtimeの起動予約も実測前は一度だけ加算し、別要求の起動が同じ実メモリーを二重に使用することを防ぐ。
+      終了確認後に予約を解放し、停止失敗時は予約とquarantineを維持する。実行中の別メディア要求と
+      Local Serviceの占有は既存の排他契約で保護する。回収判断はpackages/core、停止調整はdaemon、
+      systemdとllama-swapの操作はpackages/backendsに置く。
+    </p>
+    <p>
+      2026-10-31のレビューでは、正常終了待ち、受付停止と再開、停止中instanceへの新規参照拒否、
+      待機取り消し、回収キューの中断、観測失敗後の再試行、pending容量の重複排除、
+      実行slot満杯・実行不可能な要求による不要停止の抑止、メディア再受付失敗時の既存idle停止を回帰試験に追加した。
+    </p>
+  </section>
+
   <section id="revision">
     <h2>不変Provider revision</h2>
     <p>

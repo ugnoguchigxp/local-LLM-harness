@@ -201,13 +201,15 @@ export function createGatewayHandler(input: {
     });
     providerEnd?.();
     if (!gatewayRequest.ok) {
-      if (gatewayRequest.code === "foreground_active") c.header("retry-after", "1");
+      if (gatewayRequest.code === "foreground_active" || gatewayRequest.code === "provider_draining") c.header("retry-after", "1");
       return c.json(errorBody(
         gatewayRequest.code,
         gatewayRequest.code === "foreground_active"
           ? "background work must wait for foreground requests to finish"
           : gatewayRequest.code === "foreground_preemption_failed"
           ? "background work has not released its execution resources"
+          : gatewayRequest.code === "provider_draining"
+          ? "provider is waiting for existing requests to finish before stopping"
           : "agent connection is no longer active",
       ), 409);
     }

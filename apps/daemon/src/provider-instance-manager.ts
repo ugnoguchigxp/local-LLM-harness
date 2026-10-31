@@ -7,6 +7,7 @@ import {
 } from "@larm/core";
 import { LifecycleError, type RuntimeBackend } from "@larm/backends";
 import { withAbort } from "./http-body";
+import { ProviderRequestAdmissionError } from "./provider-request-admission";
 
 type RefKind = "allocation" | "request" | "mutation";
 
@@ -94,6 +95,19 @@ export class ProviderInstanceManager {
 
   hasRuntime(runtimeId: string): boolean {
     return [...this.byId.values()].some((record) => record.instance.runtimeId === runtimeId);
+  }
+
+  async reclaimIdle(runtimeId: string): Promise<boolean> {
+    const records = [...this.byId.values()].filter(record => record.runtime.id === runtimeId);
+    if (this.isRetained(runtimeId) || [...this.ensures.values()].some(f => f.runtimeId === runtimeId)) return false;
+    if (records.some(record => record.runtime.policy.class === "resident"
+      || managedWarmPolicy(record.runtime).minInstances > 0
+      || this.referenceCount(record) > 0 || record.warmRefs > 0)) return false;
+    for (const record of records) {
+      this.cancelIdle(record);
+      if (!await this.stopIfIdle(record.instance.id, record.instance.generation)) return false;
+    }
+    return true;
   }
 
   retainExisting(
@@ -256,6 +270,7 @@ export class ProviderInstanceManager {
 
   retainRequest(instanceId: string, requestId: string): void {
     const record = this.required(instanceId);
+    if (this.stopping.has(instanceId) || record.instance.status === "STOPPING") throw new ProviderRequestAdmissionError("provider_draining");
     this.cancelIdle(record);
     record.refs.request.add(requestId);
   }
@@ -283,6 +298,7 @@ export class ProviderInstanceManager {
 
   retainMutation(instanceId: string, mutationId: string): void {
     const record = this.required(instanceId);
+    if (this.stopping.has(instanceId) || record.instance.status === "STOPPING") throw new ProviderRequestAdmissionError("provider_draining");
     this.cancelIdle(record);
     record.refs.mutation.add(mutationId);
   }

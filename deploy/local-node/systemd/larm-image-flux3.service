@@ -1,0 +1,33 @@
+[Unit]
+Description=LARM on-demand FLUX 3 Image Klein variant
+After=network.target
+
+[Service]
+Type=simple
+User=ugnoguchi
+Group=ugnoguchi
+WorkingDirectory=/srv/ai/apps/larm-current
+Environment=HOME=/srv/ai/cache
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
+Environment=TOKENIZERS_PARALLELISM=false
+EnvironmentFile=/srv/ai/config/flux3-image.env
+ExecStart=/srv/ai/apps/qwen-image-2.1-runtime/.venv/bin/python -B -u /srv/ai/apps/larm-current/deploy/local-node/providers/flux3-image-provider.py --host 127.0.0.1 --port 8094 --engine-port 8095 --engine ${LARM_FLUX3_ENGINE} --model ${LARM_FLUX3_MODEL} --encoder ${LARM_FLUX3_ENCODER} --vae ${LARM_FLUX3_VAE} --upsampler ${LARM_FLUX3_UPSAMPLER} --model-source ${LARM_FLUX3_MODEL_SOURCE} --model-revision ${LARM_FLUX3_MODEL_REVISION} --artifact-root /srv/ai/data/generated/images
+Restart=no
+TimeoutStartSec=30
+TimeoutStopSec=60
+KillSignal=SIGINT
+KillMode=control-group
+LimitMEMLOCK=infinity
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/srv/ai/models /srv/ai/apps /srv/ai/config
+ReadWritePaths=/srv/ai/cache /srv/ai/logs /srv/ai/data/generated/images
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -18,10 +18,12 @@ export type WaitingPromotionQueuePort = {
 
 export type WaitingPromotionAdmissionPort = {
   registry: Registry;
+  prepareAdmission?: (allocation: Allocation) => void;
   providerSwitchHoldUntil: (runtimeIds: string[], priority: number) => number | undefined;
   isRuntimeBusy: (runtimeId: string) => boolean;
   hasHigherPriorityConflict: (allocation: Allocation, runtimeIds: string[]) => boolean;
   evaluateAdmission: (allocation: Allocation) => { ok: boolean };
+  reclaimMemory?: (allocation: Allocation) => Promise<void>;
   hasAdmittedResourceConflict: (runtimeIds: string[]) => boolean;
 };
 
@@ -62,7 +64,8 @@ export async function promoteWaitingAllocationBatch(input: {
   for (const allocation of prioritizeWaitingAllocations(queue.allocations())) {
     if (allocation.status !== "waiting" || Date.parse(allocation.expiresAt) <= queue.now()) continue;
     const runtimeIds = [...new Set(allocation.bindings.map((binding) => binding.runtime))];
-    const promotionDecision = evaluateWaitingPromotion({
+    admission.prepareAdmission?.(allocation);
+    const evaluate = () => evaluateWaitingPromotion({
       registry: admission.registry,
       runtimeIds,
       providerSwitchHoldUntil: admission.providerSwitchHoldUntil(runtimeIds, allocation.priority ?? 0),
@@ -73,6 +76,17 @@ export async function promoteWaitingAllocationBatch(input: {
       evaluateAdmission: () => admission.evaluateAdmission(allocation),
       hasAdmittedResourceConflict: () => admission.hasAdmittedResourceConflict(runtimeIds),
     });
+    let promotionDecision = evaluate();
+    if (promotionDecision.kind === "wait" && admission.reclaimMemory) {
+      try { await admission.reclaimMemory(allocation); }
+      catch {
+        // Cancellation or a failed observation must not strand the rest of the queue.
+        if (allocation.status === "waiting") requestRetry();
+        continue;
+      }
+      if (allocation.status !== "waiting" || Date.parse(allocation.expiresAt) <= queue.now()) continue;
+      promotionDecision = evaluate();
+    }
     if (promotionDecision.kind === "wait") {
       if (promotionDecision.retryDelayMs !== undefined) requestRetry(promotionDecision.retryDelayMs);
       continue;

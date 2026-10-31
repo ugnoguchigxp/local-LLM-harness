@@ -1,0 +1,392 @@
+<article lang="ja">
+  <h1>Eumenes通知効果音の品質不良調査 2026-10-31</h1>
+  <p>
+    利用者から、生成した通知音10種類がすべて雑音に聞こえるとの報告を受けた。
+    本調査は保存済み原音、要求・結果、稼働版、モデル実体、公式実装を照合したもの。
+    本番配備、サービス再起動、既存音源の置換は実施していない。
+  </p>
+  <section id="conclusion">
+    <h2>結論と確度</h2>
+    <p>
+      モード指定の誤りやEumenesの後処理だけでは説明できない。全件がSFX要求として保存され、
+      原WAVの段階で5件に0.93〜7.56%の飽和sampleがある。
+      代表要求を同じseedでCPU実行すると保存済みHIP音声との波形相関は0.958だった。
+      HIP固有の故障だけを原因とする仮説は弱まる。
+    </p>
+    <p>
+      同一prompt・seed・8 steps・guidance 1で、1.5秒と5秒の要求を比較すると出力が大きく変化した。
+      長い元promptと短い肯定文promptの両方で、5秒出力は減衰して静かになる一方、
+      1.5秒出力は持続する波形、または終盤の大きな増幅・飽和を示した。
+      現在のnative実装とcheckpointによる短時間生成が重点調査対象である。
+      モデル本来の制約か、変換・量子化・native実装の問題かは未確定。
+    </p>
+    <aside>
+      <p>
+        聴感評価は利用者の報告を根拠とする。調査者による試聴合格判定は実施していない。
+        波形、再生成功、スペクトル、無音への減衰は通知音としての品質を証明しない。
+        5秒は比較・試聴候補であり、保証された回避策やモデルの最低対応秒数ではない。
+      </p>
+    </aside>
+  </section>
+  <section id="provenance">
+    <h2>実行経路とモデル実体</h2>
+    <p>
+      調査時の稼働releaseは95961280a2b4905106755b0e23b0dc93bb51acee。 daemonは2026-10-30 07:04
+      JSTから稼働し、対象生成は翌31日00:05〜00:07 JST。 releaseのStable Providerコード、systemd
+      unit、モデルファイルの更新時刻はいずれも生成より前である。 現在Stable
+      workerはinactive、MainPID 0。過去のロード済みメモリや生成時のHTTP生ボディは採取されていない。
+    </p>
+    <p>
+      保存要求のtaskはsound-effect、modelはauto。ルートはstable-audio、実モデルIDはstable-audio-3-small-sfx。
+      ProviderはそのIDをnative serverのPOST
+      /v1/audio/speechへ明示し、serverはIDに対応する設定のpathをロードする。
+      unitはaudio.cppのlinux-hip-trial-20261020
+      buildと、稼働release内のstable-audio.jsonを使用する。 この設定はSmall MusicとSmall
+      SFXを別のGGUF pathに対応させ、最大1モデルを許可している。
+    </p>
+    <p>
+      対象ファイルは
+      <code>/srv/ai/models/audio-cpp-trial-20261020/Stable-Audio-3-Small-SFX-GGUF/stable-audio-3-small-sfx-q8_0.gguf</code>。 1,683,576,512 bytes、SHA-256は
+      <code>bfe435d2c5841868a7025433929ee250e51e491be369a279f341221539c71841</code>。 調査時のHugging Face配布ファイルのLFS
+      hashと一致した。CLIのinspectでもmodel_weightsとt5_weightsが
+      このファイルに解決され、内部configのprompt conditionerはSFX checkpointのT5Gemmaを参照する。
+      返却ラベルだけでなく、設定・ロードコード・checkpoint実体まで整合を確認した。
+    </p>
+    <p>
+      CLIとserverはともにaudio.cpp dev、git 5185508、Release、gcc 15.2.0、cpu/hip対応。
+      ソースcheckoutは518550862785bc46d482517643001a6165170135で未変更。
+      nativeの通常ログにはモデルロードの詳細traceが残らないため、各要求の歴史的なメモリ実体を直接証明したものではない。
+    </p>
+  </section>
+  <section id="parameters">
+    <h2>要求と推論設定</h2>
+    <table>
+      <caption>
+        保存記録とコードから確認した設定
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">値と根拠</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">要求</th>
+          <td>
+            全10件がsound-effect、1.5秒、wav、balanced、auto。lyrics・language・providerOptionsなし。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">instrumental</th>
+          <td>
+            LARMの既定値falseが保存されるが、taskによるSFX選択が優先される。ACE-Stepへの誤振り分けを示さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">steps・guidance</th>
+          <td>
+            全件metadata.stepsは8。Providerコードはbalancedを8
+            steps、guidance_scale未指定を1へ変換する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">sampler・scheduler</th>
+          <td>
+            sampler未指定はpingpong。推論用shift未指定はlogsnr、anchor -6.2、end 2、rate
+            0。公式実装の既定と整合する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">conditioning</th>
+          <td>
+            元promptをそのまま使用し、seconds_totalは1.5秒。T5Gemma最大256 tokens、seconds
+            conditioner範囲0〜384。SFXにはInstrumentalの追記をしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">negative conditioning</th>
+          <td>
+            No
+            hiss等は通常のprompt本文。専用negative_promptは渡されない。本文中の否定文の効果は保証されない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">precision</th>
+          <td>
+            Q8 packageは1024 tensors中Q8_0 408、F32 397、BF16 122、F16
+            97の混在。sessionはNative指定で、attention等にも混合精度処理がある。WAV
+            float32と推論dtypeは別である。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">decode</th>
+          <td>
+            SAME-S autoencoder、chunked_decode true。元音声は44,100 Hz、2 channels。1.5秒は各channel
+            66,150 samplesで、WAV構造・長さ・デコードに異常はなかった。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">保存</th>
+          <td>
+            native sessionはfloat音声を±1へhard clipし、serverもclampしてPCM16化する。outputFormat
+            wavではLARM ProviderはそのWAV bytesを変換せず保存する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      公式モデルカードは8 steps、cfg_scale 1.0、pingpongを例示する。 highの12
+      stepsへの変更で直るという根拠はなく、今回highでの再生成は行っていない。
+      globalな推論dtypeや中間latentsの生成時traceはないため、公式PyTorchとの数値的な一致は未検証である。
+    </p>
+    <details>
+      <summary>schedulerの調査で撤回した仮説</summary>
+      <p>
+        内部configのdistribution_shift_optionsはfullだが、nativeがsampling_distribution_shift_optionsだけを読む点を
+        当初は不整合と疑った。公式のモデルfactoryまで追うと、前者は学習用、後者は推論用であり、
+        後者省略時の公式既定もlogsnrだった。この相違自体を不具合や修正対象とは判定しない。
+        隔離したfullスケジュールの比較2件も、1.5秒出力に減衰の改善を示さなかった。
+        試験ファイル名のfixedは作業上の名称であり、修正済み版を意味しない。
+      </p>
+    </details>
+  </section>
+  <section id="affected">
+    <h2>対象10件と原音の飽和</h2>
+    <p>
+      元音声は各IDの<code>/srv/ai/data/generated/music/2026/10/</code>配下のoutput.wav、
+      metadata.jsonと、music/jobs内のjob
+      JSONを確認した。飽和率はPCM16値が+32767または−32767のsample数を ステレオ合計132,300
+      samplesで割った値。飽和のない5件の音色が正常だという意味ではない。
+    </p>
+    <table>
+      <caption>
+        実生成のID・seed・飽和率
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">音</th>
+          <th scope="col">job ID</th>
+          <th scope="col">seed</th>
+          <th scope="col">飽和率</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">soft-chime</th>
+          <td>music_63ffe3e3-ac87-4d8a-92d8-fd30910d5c6c</td>
+          <td>89159347</td>
+          <td>0%</td>
+        </tr>
+        <tr>
+          <th scope="row">wooden-notes</th>
+          <td>music_c154840e-1427-4f79-8742-7ac543355811</td>
+          <td>297930630</td>
+          <td>0%</td>
+        </tr>
+        <tr>
+          <th scope="row">glass-bell</th>
+          <td>music_2b24ef61-5e8a-47b2-a757-3dffe7b75701</td>
+          <td>593424811</td>
+          <td>3.8783%</td>
+        </tr>
+        <tr>
+          <th scope="row">water-drop</th>
+          <td>music_6ad2625c-7de5-408d-979a-dff291851a60</td>
+          <td>2035021046</td>
+          <td>0%</td>
+        </tr>
+        <tr>
+          <th scope="row">warm-marimba</th>
+          <td>music_f81dca46-9a3e-418a-9e98-b218e87bf8f7</td>
+          <td>1362369238</td>
+          <td>0%</td>
+        </tr>
+        <tr>
+          <th scope="row">tiny-harp</th>
+          <td>music_d987763f-cd1f-4db7-925a-febb8aca0df9</td>
+          <td>1169219012</td>
+          <td>7.5563%</td>
+        </tr>
+        <tr>
+          <th scope="row">felt-piano</th>
+          <td>music_d6d83d41-4c16-45f9-b47f-e6e985b29376</td>
+          <td>26557847</td>
+          <td>4.4316%</td>
+        </tr>
+        <tr>
+          <th scope="row">soft-sparkle</th>
+          <td>music_ab163d40-6551-40b6-b873-42e60f291fce</td>
+          <td>1365141964</td>
+          <td>0.9305%</td>
+        </tr>
+        <tr>
+          <th scope="row">bamboo</th>
+          <td>music_c66a106e-b82d-475f-904c-6cd032146000</td>
+          <td>1668771178</td>
+          <td>2.2411%</td>
+        </tr>
+        <tr>
+          <th scope="row">gentle-bloom</th>
+          <td>music_4497e72f-3ea5-47c2-ae8c-e461f2e0b4d7</td>
+          <td>2089842710</td>
+          <td>0%</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      2026-10-20の既存UI音・magic音のCPU/HIP出力、公開APIのWAV・Opus検証音とも比較した。
+      CPU/HIPの両系統に似た特徴があり、以前の公開API検証音にも飽和があった。
+      これらは生成・保存・再生の検証例であって、通知チャイムの音色について合格済みの基準音ではない。
+      以前の長さ・再生成功の確認を、今回の通知SEの品質保証として使用しない。
+    </p>
+  </section>
+  <section id="comparisons">
+    <h2>少数の隔離比較と短時間処理</h2>
+    <p>
+      追加生成は計6件、すべて同じGGUF・CLIのCPU 4 threadsで行った。seedは代表要求と同じ89159347、 8
+      steps・guidance 1・pingpong。元promptの1.5秒と5秒、短い肯定文promptの1.5秒と5秒、
+      元promptにfull推論スケジュールを指定した1.5秒と5秒である。元10件の一括再生成はしていない。
+      full試験は専用のmodel specとconfigのコピーを使用し、元GGUF・ソース・本番設定を変更していない。
+    </p>
+    <table>
+      <caption>
+        波形の観測。音色の合否判定ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">長さ</th>
+          <th scope="col">観測</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">元prompt・logsnr</th>
+          <td>1.5秒</td>
+          <td>
+            CPUと保存済みHIPの相関0.958。0.5秒ごとのmono
+            RMSは0.0700、0.0633、0.0672で、終端まで持続。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">元prompt・logsnr</th>
+          <td>5秒</td>
+          <td>前半0.5秒RMS 0.0305から末尾0.5秒0.000041へ減衰。飽和なし。</td>
+        </tr>
+        <tr>
+          <th scope="row">短い肯定文・logsnr</th>
+          <td>1.5秒</td>
+          <td>末尾0.5秒RMS 0.2474。sampleの約1.01%が上限へ到達。</td>
+        </tr>
+        <tr>
+          <th scope="row">短い肯定文・logsnr</th>
+          <td>5秒</td>
+          <td>前半0.5秒RMS 0.0134から末尾0.5秒0.000040へ減衰。飽和なし。</td>
+        </tr>
+        <tr>
+          <th scope="row">元prompt・full</th>
+          <td>1.5秒</td>
+          <td>0.5秒ごとのRMSは0.0566、0.0534、0.0528で持続。改善を示す根拠なし。</td>
+        </tr>
+        <tr>
+          <th scope="row">元prompt・full</th>
+          <td>5秒</td>
+          <td>前半0.5秒RMS 0.0441から末尾0.5秒0.000038へ減衰。飽和なし。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      nativeは要求秒数に6秒を加えてdownsamplingとchunk境界へ丸め、モデル上限を適用する。
+      1.5秒では335,872 samples、約7.616秒・82 latent tokensを内部生成し、先頭66,150
+      samplesを保存する。 seconds_totalのconditioning自体は1.5秒。padding
+      attentionの有効長は17+64=81 tokens。 5秒では491,520 samples、約11.146秒・120 latent
+      tokensで、有効長54+64=118 tokens。
+      保存時の切り詰めは再生速度変更ではない。モデル内部長の適応と6秒paddingは公式実装にもある。
+    </p>
+    <p>
+      長さ変更はconditioning、内部token数、乱数配列の形も変える。同じseedでも出力冒頭が同じとは限らない。
+      今回の結果だけで、1.5秒一般の非対応、すべてのseedでの失敗、5秒の品質保証は結論できない。
+    </p>
+  </section>
+  <section id="actions">
+    <h2>対応案とEumenesへの引き渡し</h2>
+    <ol>
+      <li>
+        現在の10音は合格扱いにせず、原音を保持する。後段の音量調整では元のhard
+        clippingは復元できない。
+      </li>
+      <li>
+        既に生成済みの5秒比較音を先に試聴し、チャイム・木琴等の意図した音色、ノイズ、歪み、余韻を確認する。合格した音だけ必要な長さへ編集する。5秒をそのまま先頭1.5秒で切ればよいとは限らない。
+      </li>
+      <li>
+        LARM側の次の切り分けは、公式PyTorch実装・元checkpointの1.5秒/5秒と、native F16
+        packageの同条件比較。必要なモデルと依存関係の用意、追加生成は今回実施していない。
+      </li>
+      <li>
+        hard clip前のpeakと飽和率、実scheduler・sampler・guidance・内部長・binary/checkpoint
+        hashを安全な診断情報として残す改善を検討する。単純なPCM形式・長さ検査を音質判定にしない。
+      </li>
+      <li>
+        元のfloat波形を回収できる段階でpeak管理を行う案を評価する。既存PCM16にgainを下げるだけでは飽和は直らない。変更は隔離比較と試聴後に判断し、勝手に本番設定を変えない。
+      </li>
+    </ol>
+    <p>
+      Eumenesのtask指定は今回の原因を示さず、そのままでよい。instrumentalやlanguageの追加、
+      highへの変更を必須の修正として依頼しない。比較用の明示seedと5秒指定の要求例は次のとおり。
+      APIは従来のPOST /v1/music/generations、既存gateway・認証を使う。
+    </p>
+    <pre><code>{
+  "prompt": "Two soft bell notes, a clean isolated notification chime with a gentle decay.",
+  "model": "auto",
+  "task": "sound-effect",
+  "durationSeconds": 5,
+  "outputFormat": "wav",
+  "quality": "balanced",
+  "seed": 89159347
+}</code></pre>
+    <p>
+      このAPI例での本番HIP再生成は未実施。今回の同条件CPU音を候補として先に確認できる。
+      Mac側の原音・加工後音源にはアクセスしておらず、Eumenes後処理は依頼文の情報に基づく。
+      LARM保存原音の問題を確認したことで後処理だけを原因とする説明は除外できるが、
+      加工による音色や歪みの追加変化は別途確認が必要。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>証拠と参照</h2>
+    <p>
+      出力rootは<code>/srv/ai/outputs/notification-sfx-investigation-20261031</code>。
+      affected-jobs.json、saved-audio-analysis.json、checkpoint-provenance.json、binary-provenance.json、
+      comparison-requests.json、simple-requests.json、fixed-requests.json、all-comparison-analysis.jsonと
+      cpu-audio内の比較音を保持する。音声・ログ・モデルはリポジトリ外に置き、認証情報やProvider生応答は通常ログへ出していない。
+    </p>
+    <ul>
+      <li>
+        <a href="./audio-provider-routing-2026-10-20.html">既存のProvider振り分け契約と実機検証</a>
+      </li>
+      <li><a href="./music-sfx-model-comparison-2026-10-20.html">以前の音楽・効果音比較</a></li>
+      <li>
+        <a href="https://huggingface.co/stabilityai/stable-audio-3-small-sfx"
+          >公式Small SFXモデルカード：8 steps・CFG 1・pingpong</a
+        >
+      </li>
+      <li>
+        <a href="https://github.com/Stability-AI/stable-audio-3/blob/main/stable_audio_3/model.py"
+          >公式生成処理：時間conditioning、内部長の適応、切り詰め</a
+        >
+      </li>
+      <li>
+        <a
+          href="https://github.com/Stability-AI/stable-audio-tools/blob/main/stable_audio_tools/models/diffusion.py"
+          >公式factory：学習用shiftと推論用shiftの区別</a
+        >
+      </li>
+      <li>
+        <a
+          href="https://github.com/0xShug0/audio.cpp/blob/518550862785bc46d482517643001a6165170135/src/models/stable_audio/session.cpp"
+          >使用版native session：decode後のhard clipと切り詰め</a
+        >
+      </li>
+    </ul>
+  </section>
+</article>

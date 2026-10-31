@@ -2,6 +2,18 @@ import { expect, test } from "bun:test";
 import type { RuntimeProtocol } from "@larm/core";
 import type { VerifiedProviderToken } from "./agent-connection-controller";
 import { beginGatewayProviderRequest } from "./gateway-request-lifecycle";
+import { ProviderRequestAdmissionError } from "./provider-request-admission";
+
+test("a drain refusal returns a retryable request error and releases the connection reference", async () => {
+  let released = false;
+  const request = await beginGatewayProviderRequest({ allocationId: "allocation-1", capability: "llm.general",
+    protocol: "openai.chat-completions.v1", bodyMode: "buffered", scoped: scoped(),
+    control: { retainProviderRequest: () => { throw new ProviderRequestAdmissionError("provider_draining"); } } as never,
+    connections: { beginProviderRequest: () => "accepted", finishProviderRequest: () => { released = true; } } as never,
+  });
+  expect(request).toEqual({ ok: false, code: "provider_draining" });
+  expect(released).toBe(true);
+});
 
 function scoped(errorCode?: string): VerifiedProviderToken {
   return {

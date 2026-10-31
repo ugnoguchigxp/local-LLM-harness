@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-export type MediaVariant = "image" | "music" | "mesh" | "stable-audio";
+export type MediaVariant = "image" | "image-flux3" | "music" | "mesh" | "stable-audio";
 
 export class MediaVariantStopError extends Error {
   constructor(readonly variant: MediaVariant, cause: unknown) {
@@ -42,8 +42,8 @@ async function runVariantScript(script: string, action: "start" | "stop", varian
 }
 
 export class MediaVariantManager {
-  private active: Record<MediaVariant, number> = { image: 0, music: 0, mesh: 0, "stable-audio": 0 };
-  private warm: Record<MediaVariant, boolean> = { image: false, music: false, mesh: false, "stable-audio": false };
+  private active: Record<MediaVariant, number> = { image: 0, "image-flux3": 0, music: 0, mesh: 0, "stable-audio": 0 };
+  private warm: Record<MediaVariant, boolean> = { image: false, "image-flux3": false, music: false, mesh: false, "stable-audio": false };
   private timers: Partial<Record<MediaVariant, ReturnType<typeof setTimeout>>> = {};
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
@@ -58,9 +58,9 @@ export class MediaVariantManager {
 
   constructor(private readonly options: {
     script: string;
-    idleTtlMs: { image: number; music: number; mesh?: number; "stable-audio"?: number };
-    beforeStart?: (variant: MediaVariant) => void;
-    afterStart?: (variant: MediaVariant) => void;
+    idleTtlMs: { image: number; music: number; "image-flux3"?: number; mesh?: number; "stable-audio"?: number };
+    beforeStart?: (variant: MediaVariant, signal?: AbortSignal) => void | Promise<void>;
+    afterStart?: (variant: MediaVariant) => void | Promise<void>;
     afterStop?: (variant: MediaVariant) => void;
     run?: (action: "start" | "stop", variant: MediaVariant, signal?: AbortSignal) => Promise<void>;
   }) {}
@@ -80,16 +80,11 @@ export class MediaVariantManager {
       if (deadline !== undefined && Date.now() >= deadline) throw new Error("media execution capacity wait expired");
       if ((this.options.idleTtlMs[variant] ?? 0) === 0 && Object.values(this.active).reduce((a, b) => a + b, 0) > 0) throw new MediaVariantBusyError();
       if (this.waiters.length > 0 && ticket !== this.waiters[0]) throw new MediaVariantBusyError();
-      const others = (["image", "music", "mesh", "stable-audio"] as const).filter((v) => v !== variant);
+      const others = (["image", "image-flux3", "music", "mesh", "stable-audio"] as const).filter((v) => v !== variant);
       if (others.some((v) => this.active[v] > 0)) throw new MediaVariantBusyError();
-      const timer = this.timers[variant];
-      if (timer) clearTimeout(timer);
-      delete this.timers[variant];
       if (this.active[variant] === 0) {
-        this.options.beforeStart?.(variant);
         // The script verifies health even for an already running worker. A
         // failed switch may have stopped the previous worker before failing.
-        this.warm[variant] = false;
         for (const other of others) {
           if (this.warm[other]) await this.stop(other);
           const timer = this.timers[other];
@@ -98,17 +93,29 @@ export class MediaVariantManager {
         }
         this.starting = true;
         try {
-          await this.run("start", variant, AbortSignal.any([this.shutdown.signal, ...(signal ? [signal] : [])]));
-          signal?.throwIfAborted();
-          if (this.closed) throw new Error("media variant manager is closed");
-        } catch (error) {
-          await this.stop(variant);
-          throw error;
+          const startSignal = AbortSignal.any([this.shutdown.signal, ...(signal ? [signal] : [])]);
+          await this.options.beforeStart?.(variant, startSignal);
+          try {
+            this.warm[variant] = false;
+            startSignal.throwIfAborted();
+            if (deadline !== undefined && Date.now() >= deadline) throw new Error("media execution capacity wait expired");
+            await this.run("start", variant, startSignal);
+            startSignal.throwIfAborted();
+            if (this.closed) throw new Error("media variant manager is closed");
+            await this.options.afterStart?.(variant);
+            startSignal.throwIfAborted();
+            if (this.closed) throw new Error("media variant manager is closed");
+          } catch (error) {
+            await this.stop(variant);
+            throw error;
+          }
         } finally { this.starting = false; }
         this.warm[variant] = true;
-        this.options.afterStart?.(variant);
       }
       if (this.closed) throw new Error("media variant manager is closed");
+      const timer = this.timers[variant];
+      if (timer) clearTimeout(timer);
+      delete this.timers[variant];
       this.active[variant]++;
     });
     let releasePromise: Promise<void> | undefined;
@@ -176,7 +183,7 @@ export class MediaVariantManager {
     for (const timer of Object.values(this.timers)) if (timer) clearTimeout(timer);
     this.timers = {};
     await this.serialized(async () => {
-      for (const variant of ["image", "music", "mesh", "stable-audio"] as const) {
+      for (const variant of ["image", "image-flux3", "music", "mesh", "stable-audio"] as const) {
         if (this.warm[variant]) await this.stop(variant);
       }
     });

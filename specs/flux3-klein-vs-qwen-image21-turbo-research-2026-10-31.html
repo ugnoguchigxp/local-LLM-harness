@@ -1,0 +1,404 @@
+<article lang="ja">
+  <h1>FLUX 3 Image KleinとQwen-Image-2.1-Turboの比較調査</h1>
+  <p>
+    調査日：2026年10月31日。結論：FLUX 3 Image
+    Kleinは配置制御・4K生成・小さい画像本体に魅力がある追加候補だが、
+    現在のQwen-Image-2.1-Turboの全面的な上位互換とは判断できない。同じGPUでTurboと直接比較した公開測定では、
+    標準16ステップのKleinが遅い例もある。Radeon
+    8060Sでの速度・品質・総メモリは未測定であり、置換の判断には実機比較が必要。
+  </p>
+  <p>
+    公開一次資料、測定者本人の比較報告、本リポジトリの既存実測を調べた。新しいモデルの取得・実生成・配備は行っていない。
+    比較対象の「Qwen Image Turbo」は、repositoryの画像serviceが広告するQwen-Image-2.1-Turboを指す。
+    Qwen-Image-2512 Lightning、Qwen-Image-Edit-2511
+    Lightning、Viggle蒸留、通常版2.1を同じモデルとして扱わない。
+  </p>
+  <section id="verdict">
+    <h2>用途別の判断</h2>
+    <table>
+      <caption>
+        公開情報に基づく候補選択。採用変更の決定ではない。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">判断</th>
+          <th scope="col">根拠の限界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">現在のAMD機で普段の画像生成</th>
+          <td>既存Turboを基準にKleinを追加評価する。</td>
+          <td>Turboの過去実測がある。Kleinの8060S実測は確認できない。</td>
+        </tr>
+        <tr>
+          <th scope="row">明示的な座標配置、複数要素のレイアウト</th>
+          <td>Kleinの有力な用途。</td>
+          <td>boxは配置と大きさの誘導で、領域外の画素保持を保証しない。[S2]</td>
+        </tr>
+        <tr>
+          <th scope="row">短い看板・ロゴ、日本語の見出し</th>
+          <td>Kleinも比較する価値がある。</td>
+          <td>文字の長さ・言語・seedで結果が変わる。[S7][S9]</td>
+        </tr>
+        <tr>
+          <th scope="row">日本語長文、値段や日付の厳密な文字再現</th>
+          <td>Qwenを残し、同一課題でTurboとの比較を優先する。</td>
+          <td>日本語の公開試験で優位だったのはQwen通常版。Turboへの優位性の転用はできない。[S9]</td>
+        </tr>
+        <tr>
+          <th scope="row">画像編集、人物・商品の保持</th>
+          <td>両方とも候補。Kleinの一律優位は未証明。</td>
+          <td>
+            短い編集命令だけではKleinが構図を変える場合がある。現在のLARM公開画像APIは参照編集未対応。[S2]
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">透過素材</th>
+          <td>Qwen系の対応経路を優先する。</td>
+          <td>
+            2.1の公式仕様にRGBAがあり、Turboにも透過作例がある。現在のLARM契約での透過生成を保証するものではない。[S4][S5]
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="models">
+    <h2>モデルの構成と機能</h2>
+    <p>
+      KleinはBFLが2026年10月15日に発表したFLUX 3 Imageファミリーのopen weightsモデル。 FLUX.2 Klein
+      4B/9Bとは別物で、旧版の4ステップ設定やApache 2.0ライセンスを引き継ぐとは限らない。[S1][S2]
+    </p>
+    <table>
+      <caption>
+        公式仕様の比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">FLUX 3 Image Klein</th>
+          <th scope="col">Qwen-Image-2.1-Turbo</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">画像生成本体</th>
+          <td>5.6B。Qwen比で約20%少ない。</td>
+          <td>7B。</td>
+        </tr>
+        <tr>
+          <th scope="row">テキストエンコーダー</th>
+          <td>Qwen3-VL-4B-Instruct。5.6Bとは別。</td>
+          <td>Qwen3-VL-8B。7Bとは別。</td>
+        </tr>
+        <tr>
+          <th scope="row">通常の高速生成</th>
+          <td>蒸留版16 steps、CFGなし。</td>
+          <td>8 steps、CFG 1。checkpoint保存の専用sigmasを使う。</td>
+        </tr>
+        <tr>
+          <th scope="row">通常版・学習用</th>
+          <td>Klein Baseは50 steps、CFGあり。</td>
+          <td>通常版2.1は40 stepsが公式例。Turboとは別checkpoint。</td>
+        </tr>
+        <tr>
+          <th scope="row">プロンプト補完</th>
+          <td>公式は強く推奨。専用Qwen3.5-9B派生pup、または別LLMで全文caption化。</td>
+          <td>Turbo pipelineは直接入力できる。Qwen側にも任意の補完モデルがある。</td>
+        </tr>
+        <tr>
+          <th scope="row">生成・編集</th>
+          <td>同じ重みで生成、編集、最大10参照、box配置、最大4K。</td>
+          <td>生成・編集、2Kの公式例、透過作例。2.1系の公式仕様は最大10参照。</td>
+        </tr>
+        <tr>
+          <th scope="row">量子化・実行環境</th>
+          <td>BF16、FP8、INT8、NVFP4、第三者GGUF。Diffusers、ComfyUI、sd.cpp等。</td>
+          <td>BF16、ComfyUI配布、第三者GGUF等。この環境の基準はsd.cpp HIPのAD-Q4_K。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      機能の出典は[S1]〜[S5][S11]。画像本体のparameter数だけで構成全体の容量や速さを比較しない。
+      Qwenの8 stepsはnum_inference_stepsだけを変更しても保存scheduleが置き換わらない。[S4]
+      BaseのCFGはBFL
+      READMEが4、モデルカードが3.5と異なるため、将来試す際は採用revisionと実設定を固定する。
+    </p>
+  </section>
+  <section id="quality">
+    <h2>画質評価の読み方</h2>
+    <p>
+      BFLの社内評価では生成・編集・複数参照で高評価だが、比較図のQwen表記は通常版2.1。
+      これを公式Turboとの勝率や独立した品質保証に読み替えない。[S1]
+    </p>
+    <p>
+      測定者本人によるRTX
+      5090の428枚比較では、写真は近く、短い文字とレイアウトはKlein、長い文章や一部編集はQwenという評価。
+      両者とも短い依頼を補完すると改善した。主観採点・少数seed・初期ComfyUIであり、通常版とTurboを併記する集計をTurbo単独の勝率にしない。[S7]
+    </p>
+    <p>
+      日本語の別試験では、看板など短文6題×2
+      seedはKleinも正確だったが、長いお品書きの漢数字で誤字があり、
+      算用数字への変更で改善した。比較Qwenは40-step通常版で、Turboは未比較。日本語全般の性能順位や誤字の原因までは証明しない。[S9]
+    </p>
+    <p>
+      初日のComfyUI
+      workflowに誤りがあることをBFL担当者自身が認め、補完組込みのworkflowへ更新している。
+      初期の失敗画像だけで最終性能を決めず、再評価では現在のworkflow、モデルvariant、steps、補完有無を記録する。
+      同時に、更新だけで人体や文字の問題がすべて解消したとも主張しない。[S10]
+    </p>
+    <aside>
+      <p>
+        BFL APIのpixel restorationと、ローカル重みでのbox誘導は同一の保証ではない。
+        モデルカードはboxがhard maskではなく、編集領域外も変化し得ると明記する。
+        部分編集で未編集画素を完全保持する場合は、選択した実装の復元・合成処理を別に検証する。[S1][S2]
+      </p>
+    </aside>
+  </section>
+  <section id="speed">
+    <h2>速度：通常版Qwenとの宣伝比較とTurbo直接比較を分ける</h2>
+    <p>
+      BFLの公表例は1024角、16 stepsでRTX 5090が約4秒、RTX 4070が9秒未満。
+      各GPUで最速の量子化・frameworkを選んだ測定で、GPU生成時間とAPI待ち時間も異なる。
+      API比較は相手側にpoll・networkが含まれる非対称な条件で、AMDローカル性能の推定には使わない。[S1]
+    </p>
+    <table>
+      <caption>
+        測定者本人のTurbo直接比較。RTX 5090、両者INT8、warm 3回の中央値。1 MP等は画素数帯。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">モデル・条件</th>
+          <th scope="col">1 MP</th>
+          <th scope="col">2 MP</th>
+          <th scope="col">4 MP</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Klein 16 steps</th>
+          <td>2.6秒</td>
+          <td>4.5秒</td>
+          <td>9.7秒</td>
+        </tr>
+        <tr>
+          <th scope="row">Klein 8 steps・設定変更</th>
+          <td>1.9秒</td>
+          <td>3.0秒</td>
+          <td>6.1秒</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen 2.1 Turbo 8 steps</th>
+          <td>2.4秒</td>
+          <td>4.2秒</td>
+          <td>8.4秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      [S7]。補完処理は別で、Kleinでは約3秒加算との報告。8-step
+      Kleinの品質確認は少数例で、標準16-stepとの一般的な同等性は未証明。 別のRTX
+      4090比較もportraitでKlein 7秒・Turbo 4秒。Kleinは15
+      steps、補完条件の記載も限定的なので参考値とする。[S8] Sogniの「Qwenより高速」は旧2512/2511
+      Lightningとの比較であり、本調査のTurbo比較から除外する。[S14]
+    </p>
+    <table>
+      <caption>
+        このPCの既存Turbo実測。2026年10月10日、起動・生成・保存・停止を含む通常API、3回中央値。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">サイズ</th>
+          <th scope="col">応答まで</th>
+          <th scope="col">観測条件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">512角</th>
+          <td>16.05秒</td>
+          <td rowspan="3">8060S、AD-Q4_K、8 steps、GPU VAE、OS file cacheは消去せず。</td>
+        </tr>
+        <tr>
+          <th scope="row">768角</th>
+          <td>31.41秒</td>
+        </tr>
+        <tr>
+          <th scope="row">1024角</th>
+          <td>57.53秒</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      出典は<a href="./qwen-image-2.1-turbo-benchmark.html#photographic-on-demand-2026-10-10"
+        >既存の写真生成評価</a
+      >。 これは過去の成功時の値で、現在の稼働保証や今回の再測定ではない。
+      <a href="./image-api-startup-failure-investigation-2026-10-31.html">別の起動失敗調査</a
+      >も存在する。 NVIDIAのwarm生成値とこのオンデマンド値を割って高速化倍率を算出しない。
+    </p>
+  </section>
+  <section id="memory-amd">
+    <h2>メモリとAMDでの実行経路</h2>
+    <p>
+      Kleinの画像本体はBF16約11.2 GB、FP8約5.6 GB。[S1]
+      これはencoder、VAE、補完LLM、workspaceを含まない。INT8で8GBのNVIDIA GPUでも動くという公表は、
+      全部品が8GBに常駐できるという意味ではない。
+    </p>
+    <table>
+      <caption>
+        Kleinの公開メモリ値。framework・GPU・観測指標が違うので同一条件の比較ではない。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">実装・条件</th>
+          <th scope="col">値</th>
+          <th scope="col">含まないもの・留意点</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">BFL reference、B200、1024角</th>
+          <td>BF16 31 GB、FP8 26 GB、NVFP4 25 GB</td>
+          <td>補完なしのGPU peak。pupは80GB GPUでさらに約28 GBとの記載。[S2]</td>
+        </tr>
+        <tr>
+          <th scope="row">Diffusersのメモリ表</th>
+          <td>BF16 20.72 GiB、FP8 16.27 GiB、NVFP4 15.3 GiB</td>
+          <td>
+            推論後のpeak allocated。速度測定表は別に23.8
+            GiBと記載。補完込みの総量として採用しない。[S3]
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">このPCのQwen native基準</th>
+          <td>weight確保約12.0 GiB、1024角写真でMemAvailable減少22.43 GiB</td>
+          <td>UMAではRSSやVRAM表示だけで総量を表せない。後者は背景負荷・cache込みの観測。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      BFL referenceはB200で検証され、CUDA系の導入手順が中心。NVFP4の同実装はBlackwell向けであり、
+      8060Sにその最適化を適用できるとは扱わない。AMDではDiffusersのBF16経路かsd.cppのHIP/GGUF経路を候補にする。
+      最新sd.cppにはFLUX
+      3対応と10参照の文書があり、10月26日には分割実行の修正もmergeされている。[S11]
+    </p>
+    <p>
+      このPCで指定されるsd.cpp checkoutのHEADは<code>f89d9b13d730eabeede7314ce49dacd18d3c90c2</code>で、
+      10月10日のTurbo評価と同じrevision。新しいFLUX
+      3対応済みとは見なさず、別checkout/buildで検証する。 モデル本体、4B encoder、FLUX.2
+      VAE、caption補完を揃える必要があり、Qwen用の重みだけの入替では成立しない。
+      HIP対応という一般仕様だけではgfx1151の正常画像・速度・メモリを保証しない。
+    </p>
+    <p>
+      補完は専用9Bを常駐させる以外に、別LLMでcaptionを作ってから画像モデルを起動する構成も公式が認める。[S2][S12]
+      既存LLMの流用は追加容量を減らせる可能性があるが、同等品質は未検証。補完待ち、runtimeの交換、
+      captionの長さ、原文の文字列やbox識別子の保持を含めて測る必要がある。
+    </p>
+  </section>
+  <section id="license">
+    <h2>ライセンスの実質的な違い</h2>
+    <p>
+      Kleinの重みはFLUX Kommunity License
+      v1.0。非商用利用に加え、関連会社込みの年間換算総収益が500万米ドル未満の Qualifying
+      Userには、条件付きで商用output生成とそのためのproduction実行の例外がある。
+      filteringまたは配布前review等の条件があり、商用の追加学習・モデル配布全般を一括で許す条項ではない。
+      条件外は別契約を確認する。コード・encoder・pupのApache 2.0と画像重みの条件は区別する。[S6]
+    </p>
+    <p>
+      Qwen-Image-2.1-TurboはQwen Research
+      Licenseで、非商用を研究・評価に限定し、商用は別許諾とする。[S13]
+      旧Qwen-ImageやQwen言語モデルのApache条件を2.1へ当てはめない。
+      小規模な商用output生成ではKleinの例外が選択理由になり得るが、用途が条項を満たすかは原文で確認する。
+    </p>
+  </section>
+  <section id="next-evaluation">
+    <h2>追加評価で解消すべき不確実性</h2>
+    <ol>
+      <li>
+        8060S用に別のsd.cpp HIP
+        buildまたはDiffusers環境を用意し、BF16とQ8/Q4等を区別して正常出力を確認する。
+      </li>
+      <li>
+        既存Turboを同時期に再測定し、512・768・1024角で起動から保存・停止までとwarm生成を各3回以上分けて測る。file
+        cache条件も記録する。
+      </li>
+      <li>
+        Klein
+        16-stepを基準に、8-stepは追加候補として比較。専用pup、既存LLM補完、完成caption直接入力の時間・品質を分ける。
+      </li>
+      <li>
+        写真、手と顔、複数人物、数量、左右配置、box、日本語短文・長文・漢数字、参照編集を複数seedで比較する。見栄えと文字の完全一致を別に採点する。
+      </li>
+      <li>
+        メモリ、VAEの正常性、背景Providerとの競合、複数参照時の時間増加を記録する。128GB
+        UMA全体が画像生成に使えるとは見積もらない。
+      </li>
+    </ol>
+    <p>
+      LARMへ追加する場合も要求するProfileとProvider
+      subsetを起点に選択し、既存model名をKleinへ黙って読み替えない。
+      画像serviceは<code>SAAA-w-Image</code>の広告、media
+      variantの<code>image</code>、
+      <code>larm-image-qwen21.service</code>、native子プロセスへ進む既存経路を基準に比較する。
+      起動中の会話モデルを画像モデルの誤配備とは判定しない。本調査はlive
+      backendのdrift診断を行っていない。
+    </p>
+  </section>
+  <section id="sources">
+    <h2>資料と確認revision</h2>
+    <p>
+      外部資料は2026年10月31日閲覧。公式の仕様・測定と、測定者本人の主観比較を分けた。
+      repository調査時のHEADは<code>e3b202421e8d495c9f46255a1901891adea5b04f</code>、未commitの既存変更あり。
+      BFL reference HEADは<code>bfc8889a4497f846416f253a3972a1941ac698b9</code>、 sd.cpp upstream
+      HEADは<code>e239e4b0fd3de49834cec67031a44796ca465abc</code>。 upstream
+      revisionは公開APIで確認したもので、ローカル配備revisionではない。
+    </p>
+    <dl>
+      <dt>[S1] BFL発表、公式評価・GPU速度・APIとの差</dt>
+      <dd><code>https://bfl.ai/blog/flux-3-image-klein</code></dd>
+      <dt>[S2] BFLモデルカードとreference実装</dt>
+      <dd>
+        <code>https://huggingface.co/black-forest-labs/flux-3-image-klein</code>、<code>https://github.com/black-forest-labs/flux-3-image-klein</code>
+      </dd>
+      <dt>[S3] Diffusers実装者による公開測定</dt>
+      <dd><code>https://huggingface.co/blog/flux-3</code></dd>
+      <dt>[S4] Qwen公式Turboカード、8-step schedule・編集・作例</dt>
+      <dd><code>https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo</code></dd>
+      <dt>[S5] Qwen通常版の公式機能と2.1実装</dt>
+      <dd>
+        <code>https://huggingface.co/Qwen/Qwen-Image-2.1</code>、<code>https://github.com/QwenLM/Qwen-Image-2.1</code>
+      </dd>
+      <dt>[S6] FLUX重みのライセンス原文</dt>
+      <dd><code>https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/main/LICENSE.md</code></dd>
+      <dt>[S7] Stuubzzz本人の428枚比較、RTX 5090</dt>
+      <dd><code>https://stuubzzz.studio/blog/flux-3-klein-vs-qwen-image-2-1-comfyui/</code></dd>
+      <dt>[S8] Wissnox本人のRTX 4090直接比較</dt>
+      <dd><code>https://wissnox.de/flux-3-klein-lokal-test/</code></dd>
+      <dt>[S9] Hikoza_AI本人の日本語比較、相手はQwen通常版</dt>
+      <dd><code>https://note.com/hikoza2045/n/n1252511b1bc9</code></dd>
+      <dt>[S10] BFL担当者の初期workflow不具合説明と更新</dt>
+      <dd>
+        <code>https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/discussions/7</code>、<code>https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/discussions/33</code>
+      </dd>
+      <dt>[S11] sd.cpp実装者の仕様、対応追加、分割実行修正</dt>
+      <dd>
+        <code>https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/flux3.md</code
+        >、<code>https://github.com/leejet/stable-diffusion.cpp/pull/2143</code>、<code>https://github.com/leejet/stable-diffusion.cpp/pull/2224</code>
+      </dd>
+      <dt>[S12] 公式補完LLMカードとComfyUI導入文書</dt>
+      <dd>
+        <code>https://huggingface.co/black-forest-labs/flux-3-image-klein-pup</code>、<code>https://docs.comfy.org/tutorials/flux/flux-3-klein</code>
+      </dd>
+      <dt>[S13] Qwen重みのライセンス原文</dt>
+      <dd><code>https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo/blob/main/LICENSE</code></dd>
+      <dt>[S14] Sogni本人の旧Qwen Lightning比較。2.1 Turboの直接比較には不採用</dt>
+      <dd><code>https://blog.sogni.ai/blogs/flux-3-image-klein-vs-turbo-models/</code></dd>
+    </dl>
+    <p>
+      ローカル比較の出典：<a href="./qwen-image-2.1-turbo-benchmark.html">Turbo派生の実機評価</a>、
+      <a href="./qwen-image-2.1-turbo-on-demand.html">オンデマンド採用と公開契約</a>、
+      <a href="./qwen-image-2.1-local-evaluation.html">通常版2.1のROCm評価</a>。
+    </p>
+  </section>
+</article>

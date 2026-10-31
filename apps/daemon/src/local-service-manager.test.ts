@@ -43,6 +43,34 @@ test("two callers coalesce startup; scoped idempotency and ownership", async () 
   f.manager.release(l1.id, "alice"); await expect(f.manager.stop("docling-desk")).rejects.toThrow("service_busy");
   f.manager.release(l2.id, "bob"); await f.manager.stop("docling-desk"); expect(f.stops).toBe(1); expect(f.ledger.reservations()).toHaveLength(0);
 });
+
+test("memory recovery retries atomic admission and rechecks concurrent idempotency", async () => {
+  const f = await fixture();
+  let recovered = false, recoveries = 0;
+  const gate = Promise.withResolvers<void>();
+  const manager = new LocalServiceManager(f.definitions, f.backend, { ...f.opts,
+    reserve: id => { if (!recovered) throw new Error("memory_exhausted"); f.opts.reserve(id); },
+    reclaimMemory: async () => { recoveries++; await gate.promise; recovered = true; },
+  });
+  await manager.initialize();
+  const first = manager.ensure("docling-desk", "a", "same", {});
+  const second = manager.ensure("docling-desk", "a", "same", {});
+  gate.resolve();
+  const [one, two] = await Promise.all([first, second]); await manager.flush();
+  expect(one.id).toBe(two.id);
+  expect(f.starts).toBe(1);
+  expect(recoveries).toBe(2);
+  await manager.close();
+});
+test("unrecoverable service memory pressure is rejected after one recovery attempt", async () => {
+  const f = await fixture(); let recoveries = 0;
+  const manager = new LocalServiceManager(f.definitions, f.backend, { ...f.opts,
+    reserve: () => { throw new Error("live_memory_exhausted"); }, reclaimMemory: async () => { recoveries++; },
+  });
+  await manager.initialize();
+  await expect(manager.ensure("docling-desk", "a", "k", {})).rejects.toThrow("live_memory_exhausted");
+  expect(f.starts).toBe(0); expect(recoveries).toBe(1);
+});
 test("expired consumer never stops active jobs; idle requires a fresh full interval", async () => {
   const f = await fixture(); await f.manager.ensure("docling-desk", "a", "k", {}); await f.manager.flush();
   f.advance(400000); f.busy(1); await f.manager.tick(); f.advance(200000); await f.manager.tick(); expect(f.stops).toBe(0);

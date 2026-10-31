@@ -9,6 +9,15 @@
   <section id="implementation">
     <h2>実装と配備の区別</h2>
     <p>
+      2026年10月31日の<a href="./image-model-selection-flux3-2026-10-31.html"
+        >モデル選択の追加契約</a
+      >では、
+      model=flux-3-image-kleinのオンデマンド起動経路を追加した。model省略時は本書のQwenを継続し、
+      FLUXが未準備のノードでは503を返す。2026年10月31日に既存の接続先・Control認証を維持して2モデル契約を本番配備し、
+      FLUXの768角WebPとモデル省略時のQwenの512角WebPを実生成した。両方で画像GET・デコード・生成worker停止後の再取得を確認済み。
+      最新の配備commitと受入証跡は上記の追加契約に記す。
+    </p>
+    <p>
       ソースの画像service広告、公開入力schema、native
       engine接続、systemd起動設定、確保応答の説明と完全URLを変更した。隔離APIで実生成と停止後の画像読出しを確認し、利用者指定の認証情報で管理者所有の本番unitを更新した。release
       <code>08fecdae29a7029ee5ef711182b27a97256b30a3</code

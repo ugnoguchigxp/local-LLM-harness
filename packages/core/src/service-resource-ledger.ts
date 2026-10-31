@@ -12,9 +12,15 @@ export class ServiceResourceLedger {
   restore(id: string, node: string, bytes: number): void { this.entries.set(id, { node, bytes, pendingBytes: bytes }); }
   release(id: string): void { this.entries.delete(id); }
   reserve(id: string, nodeId: string, bytes: number, input: {
-    registry: Registry; state: ClusterState; allocations: readonly Allocation[]; now: number; maxAgeMs: number;
+    registry: Registry; state: ClusterState; allocations: readonly Allocation[]; now: number; maxAgeMs: number; liveSafetyFloorBytes?: number;
   }): void {
     if (this.entries.has(id)) return;
+    this.check(nodeId, bytes, input);
+    this.restore(id, nodeId, bytes);
+  }
+  check(nodeId: string, bytes: number, input: {
+    registry: Registry; state: ClusterState; allocations: readonly Allocation[]; now: number; maxAgeMs: number; liveSafetyFloorBytes?: number;
+  }): void {
     const node = input.registry.nodes.find(n => n.id === nodeId);
     const t = input.state.node.id === nodeId ? input.state.node.telemetry : undefined;
     const observed = t ? Date.parse(t.observedAt) : NaN;
@@ -34,8 +40,7 @@ export class ServiceResourceLedger {
     // Pending AI starts aren't yet reflected in MemAvailable. Account for them once.
     const pendingAi = ai.filter(r => !input.state.runtimes.some(s => s.id === r.id && ["HOT", "BUSY"].includes(s.status)))
       .reduce((n, r) => n + runtimeMemoryGB(r) * 1024 ** 3, 0);
-    if (bytes + pendingAi + existing.reduce((n, r) => n + r.pendingBytes, 0) > t.systemMemoryAvailableBytes) throw new Error("live_memory_exhausted");
-    this.restore(id, nodeId, bytes);
+    if (bytes + (input.liveSafetyFloorBytes ?? 0) + pendingAi + existing.reduce((n, r) => n + r.pendingBytes, 0) > t.systemMemoryAvailableBytes) throw new Error("live_memory_exhausted");
   }
   observe(id: string, usedBytes: number): void {
     const r = this.entries.get(id);

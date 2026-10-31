@@ -226,6 +226,29 @@ test("resident-only admission does not depend on live telemetry", () => {
   expect(result.ok).toBe(true);
 });
 
+test("live admission counts a pending runtime once until its memory is observed hot", () => {
+  const expanded = structuredClone(registry);
+  expanded.nodes[0]!.resources.memoryTotalGB = 128;
+  const pending = structuredClone(expanded.runtimes[1]!);
+  pending.id = "pending";
+  pending.resources.estimatedMemoryGB = 32;
+  delete pending.resources.maxConcurrentAllocations;
+  expanded.runtimes.push(pending);
+  const observed = state([snapshot("resident", "HOT"), { ...snapshot("worker", "STARTING"), id: "pending" }]);
+  observed.node.telemetry = { status: "available", observedAt: observed.generatedAt, source: "test",
+    systemMemoryTotalBytes: 128 * 1024 ** 3, systemMemoryAvailableBytes: 48 * 1024 ** 3 };
+  const one = { ...allocation("pending"), status: "pending" as const };
+  const input = { registry: expanded, state: observed, candidateRuntimeIds: ["worker"],
+    allocations: [one, { ...one, id: "same-runtime-another-ref" }],
+    liveTelemetry: { requiredForNonResident: true, maxAgeMs: 1000, now: Date.parse(observed.generatedAt) } };
+  expect(admitRuntimes(input)).toMatchObject({ ok: false, reason: "live_memory_exhausted" });
+  observed.node.telemetry.systemMemoryAvailableBytes = 56 * 1024 ** 3;
+  expect(admitRuntimes(input).ok).toBe(true);
+  observed.node.telemetry.systemMemoryAvailableBytes = 48 * 1024 ** 3;
+  observed.runtimes[1]!.status = "HOT";
+  expect(admitRuntimes(input).ok).toBe(true);
+});
+
 const swapRegistry: Registry = {
   nodes: [{
     id: "local-node",

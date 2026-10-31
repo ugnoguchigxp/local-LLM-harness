@@ -27,15 +27,22 @@ export async function prepareChatInput(input: {
   if (!chatCompletionRequestSchema.safeParse(request).success) throw new ChatInputError(400, "invalid_request");
   const imageCount = validateChatImages(request, input.policy);
   if (request.n_predict !== undefined || request.max_completion_tokens !== undefined) throw new ChatInputError(400, "output_parameter_unsupported");
-  const requestedOutputTokens = request.max_tokens ?? input.window.outputReserveTokens;
-  if (!Number.isSafeInteger(requestedOutputTokens) || (requestedOutputTokens as number) < 1 || (requestedOutputTokens as number) > input.window.outputReserveTokens) throw new ChatInputError(400, "output_budget_exceeded");
-  request.max_tokens = requestedOutputTokens;
-  const body = new TextEncoder().encode(JSON.stringify(request));
-  if (body.byteLength > maxRequestBytes) throw new ChatInputError(413, "body_too_large");
+  const useRemainingContext = input.window.outputLimit === "remaining-context";
+  const explicitOutputTokens = request.max_tokens;
+  const outputCeiling = useRemainingContext
+    ? input.window.maxTokens - input.window.safetyMarginTokens - 1
+    : input.window.outputReserveTokens;
+  if (explicitOutputTokens !== undefined && (!Number.isSafeInteger(explicitOutputTokens) || (explicitOutputTokens as number) < 1 || (explicitOutputTokens as number) > outputCeiling)) throw new ChatInputError(400, "output_budget_exceeded");
   const countInput = { ...input, request, expectedImageCount: imageCount };
   const measured = input.textInput
     ? await countNativeTextChatInput({ ...countInput, engineBuild: input.textInput.engineBuild })
     : await countLlamaChatInput(countInput);
+  const requestedOutputTokens = (explicitOutputTokens ?? (useRemainingContext
+    ? Math.max(1, input.window.maxTokens - measured.promptTokens - input.window.safetyMarginTokens)
+    : input.window.outputReserveTokens)) as number;
+  request.max_tokens = requestedOutputTokens;
+  const body = new TextEncoder().encode(JSON.stringify(request));
+  if (body.byteLength > maxRequestBytes) throw new ChatInputError(413, "body_too_large");
   const count: ChatInputTokenCount = {
     contractVersion: "larm-chat-input-token-count.v1",
     model: String(request.model),

@@ -1,6 +1,57 @@
 import { expect, test } from "bun:test";
 import { MediaVariantBusyError, MediaVariantManager } from "./media-variants";
 
+test("failed readmission keeps the existing warm worker tracked until its normal idle stop", async () => {
+  const calls: string[] = [];
+  let reject = false;
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 20, music: 0 },
+    beforeStart: () => { if (reject) throw new Error("memory_exhausted"); },
+    run: async (action, variant) => { calls.push(`${action}:${variant}`); },
+  });
+  try {
+    await (await manager.acquire("image"))();
+    reject = true;
+    await expect(manager.acquire("image")).rejects.toThrow("memory_exhausted");
+    expect(manager.isOccupied()).toBe(true);
+    await Bun.sleep(40);
+    expect(calls).toEqual(["start:image", "stop:image"]);
+    expect(manager.isOccupied()).toBe(false);
+  } finally { await manager.close(); }
+});
+
+test("async memory recovery occupies the media group and aborts before starting a worker", async () => {
+  const entered = Promise.withResolvers<void>(), recovered = Promise.withResolvers<void>();
+  const calls: string[] = [];
+  const abort = new AbortController();
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    beforeStart: async () => { entered.resolve(); await recovered.promise; },
+    run: async (action, variant) => { calls.push(`${action}:${variant}`); },
+  });
+  const acquiring = manager.acquire("image", abort.signal);
+  await entered.promise;
+  expect(manager.isOccupied()).toBe(true);
+  expect(calls).toEqual([]);
+  abort.abort(new Error("request cancelled")); recovered.resolve();
+  await expect(acquiring).rejects.toThrow("request cancelled");
+  expect(calls).toEqual(["stop:image"]);
+  expect(manager.isOccupied()).toBe(false);
+  await manager.close();
+});
+
+test("failure while refreshing post-start memory cleans up the worker before releasing its reservation", async () => {
+  const calls: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    beforeStart: async () => { calls.push("reserve"); },
+    afterStart: async () => { throw new Error("observation failed"); },
+    afterStop: () => { calls.push("release"); },
+    run: async action => { calls.push(action); },
+  });
+  await expect(manager.acquire("image")).rejects.toThrow("observation failed");
+  expect(calls).toEqual(["reserve", "start", "stop", "release"]);
+  expect(manager.isOccupied()).toBe(false);
+  await manager.close();
+});
+
 test("Stable Audio excludes images and ACE-Step and a failed stop quarantines all three", async () => {
   const calls: string[] = [];
   const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },

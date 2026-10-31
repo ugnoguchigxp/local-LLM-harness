@@ -765,7 +765,7 @@ test("ornith1.5Strix-vision is an explicit Gemma voice copy routed to the tested
   expect(strix.providers.find(provider => provider.name === "llm")).toEqual({
     ...base.providers.find(provider => provider.name === "llm")!,
     supportedCapabilities: ["llm.general", "llm.vision"],
-    contextWindow: { ...base.providers.find(provider => provider.name === "llm")!.contextWindow!, maxTokens: 200000 },
+    contextWindow: { ...base.providers.find(provider => provider.name === "llm")!.contextWindow!, maxTokens: 200000, outputLimit: "remaining-context" },
     route: "llm-ornith15-strix",
     publicModel: "ornith-1.5-strix-lean",
     chatInput: registry.runtimes.find(runtime => runtime.id === "ornith15-strix-conversation")!.chatInput,

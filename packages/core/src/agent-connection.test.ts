@@ -980,3 +980,13 @@ test("agent claim validation rejects inconsistent HTTP descriptors", () => {
     }],
   }).providers[0]?.baseUrl).toBe("http://127.example:9810/v1");
 });
+
+test("Ornith profiles advertise context-limited output and select budgets above the reserve", () => {
+  const registry = loadRegistry(import.meta.dir + "/../../../config/local-node");
+  const catalog = loadAgentConnectionCatalogForRegistry(configDir, registry);
+  const profile = catalog.profiles.find(p => p.id === "ornith1.5Strix-vision")!;
+  expect(profile.providers.find(p => p.name === "llm")!.contextWindow?.outputLimit).toBe("remaining-context");
+  const match = matchAgentProfileContextWindow({ catalog, profileIds: [profile.id], promptTokens: 10000, requestedOutputTokens: 8192 });
+  expect(match?.inputBudgetTokens).toBe(189832);
+  expect(matchAgentProfileContextWindow({ catalog, profileIds: [profile.id], promptTokens: 190000, requestedOutputTokens: 8192 })).toBeUndefined();
+});

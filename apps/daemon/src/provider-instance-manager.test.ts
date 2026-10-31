@@ -94,6 +94,26 @@ test("Preferred runtimes retain the configured daemon grace period", async () =>
   manager.close();
 });
 
+test("memory reclamation overrides idle TTL but rechecks request, mutation and retention references", async () => {
+  const { manager, stopped } = fixture(60_000);
+  try {
+    const instance = await manager.acquire(runtime, "allocation", "release-a");
+    expect(await manager.reclaimIdle(runtime.id)).toBe(false);
+    manager.retainRequest(instance.id, "request");
+    manager.retainMutation(instance.id, "mutation");
+    manager.releaseAllocation("allocation");
+    expect(await manager.reclaimIdle(runtime.id)).toBe(false);
+    manager.releaseRequest(instance.id, "request");
+    expect(await manager.reclaimIdle(runtime.id)).toBe(false);
+    manager.retainUntilNextProfile([runtime.id]);
+    manager.releaseMutation(instance.id, "mutation");
+    expect(await manager.reclaimIdle(runtime.id)).toBe(false);
+    manager.retainUntilNextProfile([]);
+    expect(await manager.reclaimIdle(runtime.id)).toBe(true);
+    expect(stopped).toEqual([instance.id]);
+  } finally { manager.close(); }
+});
+
 test("shares a revision and stops only after the last allocation reference", async () => {
   const { manager, stopped, getEnsureCount } = fixture();
   const [first, second] = await Promise.all([

@@ -10,6 +10,8 @@ import {
   createAllocationId,
   getRuntime,
   compareRouteSelection,
+  isMemoryPressure,
+  runtimeSetsConflict,
   createLeaseId,
   findDefaultRoute,
   planTransition,
@@ -24,6 +26,7 @@ import {
   type ResolveResult,
   type RouteShadowComparison,
   type RuntimeReleaseDefinition,
+  type MemoryPressure,
 } from "@larm/core";
 import type { RuntimeBackend } from "@larm/backends";
 import type { Observer } from "./observer";
@@ -37,6 +40,9 @@ import {
 } from "./allocation-waiting-promotion";
 import { reconcileOrphanedPreferredRuntimes } from "./control-plane-startup-reconciliation";
 import { AllocationPreemption } from "./allocation-preemption";
+import { MemoryReclaimer } from "./memory-reclaimer";
+import { ProviderRequestAdmissionError } from "./provider-request-admission";
+import { withAbort } from "./http-body";
 import { LegacyLeaseRegistry } from "./legacy-lease-registry";
 import { LegacyPrepareCoordinator } from "./legacy-prepare-coordinator";
 import { runLegacyPrepareOperation } from "./legacy-prepare-operation";
@@ -102,12 +108,18 @@ export type ControlPlaneOptions = {
   telemetryMaxAgeMs?: number;
   foregroundPriorityThreshold?: number;
   providerSwitchHoldMs?: number;
+  memoryDrainTimeoutMs?: number;
   getCatalogRevision?: () => string;
   getRuntimeRelease?: (runtimeId: string) => string | undefined;
   getRuntimeReleaseDefinition?: (runtimeId: string) => RuntimeReleaseDefinition | undefined;
 };
 
 export class ControlPlane {
+  private readonly memoryReclaimer: MemoryReclaimer;
+  private readonly memoryRecoveryRequests = new Map<symbol, { runtimeIds: string[]; priority: number }>();
+  private readonly memoryDrainingAllocations = new Set<string>();
+  private readonly memoryDrainingRuntimes = new Set<string>();
+  private readonly providerRequests = new Map<string, { allocationId: string; runtimeId: string }>();
   usage?: UsageCoordinator;
   private readonly notifications = new AllocationNotifications();
   private readonly usageAllocations = new Map<string, string>();
@@ -256,6 +268,16 @@ export class ControlPlane {
       now: options.now,
       onEvent: (name, labels) => options.onEvent?.({ name, labels }),
     });
+    this.memoryReclaimer = new MemoryReclaimer({
+      registry,
+      state: () => observer.getState(),
+      tick: () => observer.refresh(),
+      allocations: () => [...this.allocations.values()],
+      protectedRuntimeIds: () => this.memoryProtectedRuntimes(),
+      foregroundPriorityThreshold: () => this.foregroundPriorityThreshold(),
+      retire: (victim, priority, signal) => this.stopForMemory(victim, priority, signal),
+      emit: (name, labels) => this.emit(name, labels),
+    });
     this.allocationStartup = new AllocationStartupLifecycle({
       registry,
       backend,
@@ -369,17 +391,27 @@ export class ControlPlane {
 
   retainProviderRequest(allocationId: string, capability: string, requestId: string): string | undefined {
     const allocation = this.allocations.get(allocationId);
-    if (!allocation || allocation.status !== "ready") return undefined;
-    const instanceId = allocation.bindings.find(
+    if (!allocation || allocation.status !== "ready") throw new ProviderRequestAdmissionError("connection_inactive");
+    const binding = allocation.bindings.find(
       (binding) => binding.capability === capability,
-    )?.instanceId;
-    if (!instanceId) return undefined;
-    this.providerInstances.retainRequest(instanceId, requestId);
-    return instanceId;
+    );
+    if (!binding) throw new ProviderRequestAdmissionError("connection_inactive");
+    const priority = allocation.priority ?? 0;
+    const runtimeIds = allocation.bindings.map(binding => binding.runtime);
+    const higherRequestWaiting = [...this.allocations.values()].some(waiter => waiter.status === "waiting"
+      && (waiter.priority ?? 0) > priority && (waiter.priority ?? 0) >= this.foregroundPriorityThreshold()
+      && runtimeSetsConflict(this.registry, runtimeIds, waiter.bindings.map(binding => binding.runtime), true));
+    if (this.memoryDrainingAllocations.has(allocationId) || this.memoryDrainingRuntimes.has(binding.runtime) || higherRequestWaiting) {
+      throw new ProviderRequestAdmissionError("provider_draining");
+    }
+    if (binding.instanceId) this.providerInstances.retainRequest(binding.instanceId, requestId);
+    this.providerRequests.set(requestId, { allocationId, runtimeId: binding.runtime });
+    return binding.instanceId;
   }
 
   releaseProviderRequest(instanceId: string | undefined, requestId: string): void {
-    if (instanceId) this.providerInstances.releaseRequest(instanceId, requestId);
+    try { if (instanceId) this.providerInstances.releaseRequest(instanceId, requestId); }
+    finally { this.providerRequests.delete(requestId); }
   }
 
   async reconcileProviderInstances(signal?: AbortSignal): Promise<void> {
@@ -534,6 +566,29 @@ export class ControlPlane {
       };
     }
     const admissionEnd = currentObservation()?.stage("allocation_admission");
+    const resolvedForMemory = resolveAllocationBindings({
+      registry: this.registry, state: this.observer.getState(), request,
+      getRuntimeRelease: this.options.getRuntimeRelease,
+      getRuntimeReleaseDefinition: this.options.getRuntimeReleaseDefinition,
+      onRejected: () => {},
+    });
+    if (resolvedForMemory.ok) {
+      const recovery = this.reclaimAllocationMemory(resolvedForMemory.bindings.map(b => b.runtime), request.priority ?? 0);
+      if (recovery) {
+        try { await recovery; }
+        catch (error) {
+          if (!options.independentAudio) this.rollbackUsageProfile();
+          admissionEnd?.();
+          this.emit("allocation_rejected", { reason: "memory_reclamation_failed" });
+          return { status: 503 as const, body: { error: { code: "memory_reclamation_failed", message: "could not safely reclaim runtime memory" } } };
+        }
+        // Recovery yields to other admissions; enforce the limit again before commit.
+        if (this.draining || this.activeAdmissionCount() >= activeLimit) {
+          if (!options.independentAudio) this.rollbackUsageProfile();
+          return { status: 503 as const, body: { error: { code: this.draining ? "draining" : "allocation_capacity", message: "allocation admission is unavailable" } } };
+        }
+      }
+    }
     const admission = planAllocationRequestAdmission({
       registry: this.registry,
       request,
@@ -646,7 +701,7 @@ export class ControlPlane {
   async flush(): Promise<void> {
     while (true) {
       const current = this.applyChain;
-      await Promise.all([current, ...this.audioTasks]);
+      await Promise.all([current, ...this.audioTasks, this.memoryReclaimer.flush()]);
       if (this.applyChain === current && this.audioTasks.size === 0) {
         return;
       }
@@ -814,6 +869,7 @@ export class ControlPlane {
       priority,
       runtimeIds,
       allocations: [...this.allocations.values()],
+      canPreempt: allocation => !this.allocationHasProviderRequests(allocation),
       preempt: (allocationId, requestedPriority) => this.preemptAllocation(allocationId, requestedPriority),
     });
   }
@@ -824,8 +880,20 @@ export class ControlPlane {
     this.preemption.holdForegroundProviders(allocation);
   }
 
-  private providerSwitchHoldUntil(runtimeIds: string[], priority: number): number | undefined {
-    return this.preemption.holdUntil(runtimeIds, priority);
+  private providerSwitchHoldUntil(runtimeIds: string[], priority: number, includeActiveDrain = true): number | undefined {
+    const held = this.preemption.holdUntil(runtimeIds, priority);
+    const recovering = [...this.memoryRecoveryRequests.values()].some(request => request.priority > priority
+      && runtimeSetsConflict(this.registry, runtimeIds, request.runtimeIds, true));
+    const finishing = includeActiveDrain && priority >= this.foregroundPriorityThreshold() && this.admittedAllocations().some(allocation =>
+      (allocation.priority ?? 0) < priority && this.allocationHasProviderRequests(allocation)
+      && runtimeSetsConflict(this.registry, runtimeIds, allocation.bindings.map(b => b.runtime), true));
+    return recovering || finishing ? Math.max(held ?? 0, this.now() + (this.options.pollIntervalMs ?? 500)) : held;
+  }
+
+  private allocationHasProviderRequests(allocation: Allocation): boolean {
+    return [...this.providerRequests.values()].some(request => request.allocationId === allocation.id)
+      || this.providerInstances.inspect().some(record => (record.refs.request > 0 || record.refs.mutation > 0)
+        && allocation.bindings.some(binding => binding.instanceId === record.instance.id));
   }
 
   private hasResourceConflict(
@@ -874,6 +942,106 @@ export class ControlPlane {
     });
   }
 
+  /** Also used by services that reserve memory outside Agent allocations. */
+  async reclaimMemory(input: {
+    evaluateAdmission: () => MemoryPressure;
+    requestedRuntimeIds?: readonly string[];
+    priority?: number;
+    signal?: AbortSignal;
+  }): Promise<void> {
+    if (this.draining) return;
+    await this.memoryReclaimer.reclaim({
+      ...input, requestedRuntimeIds: input.requestedRuntimeIds ?? [], priority: input.priority ?? 0,
+    });
+  }
+
+  private reclaimAllocationMemory(runtimeIds: string[], priority: number, allocation?: Allocation): Promise<void> | undefined {
+    const evaluateAdmission = () => {
+      const busy = this.registry.runtimes.some(runtime =>
+        (runtimeIds.includes(runtime.id) || (runtime.policy.swapGroup && runtimeIds.some(id =>
+          getRuntime(this.registry, id)?.policy.swapGroup === runtime.policy.swapGroup)))
+        && (this.lifecycleReservations.has(runtime.id) || this.options.isRuntimeMutating?.(runtime.id)));
+      if (this.draining || (allocation && (allocation.status !== "waiting" || Date.parse(allocation.expiresAt) <= this.now()))
+        || busy || this.providerSwitchHoldUntil(runtimeIds, priority, false) !== undefined
+        || this.hasExclusiveResourceConflict(runtimeIds, a => admittedAllocation(a.status) && (a.priority ?? 0) > priority)) return { ok: true };
+      return evaluateAllocationAdmission({
+        registry: this.registry, state: this.observer.getState(), allocations: this.admittedAllocations(),
+        candidateRuntimeIds: runtimeIds, serviceReservations: this.options.getServiceReservations?.(),
+        requireFreshTelemetry: this.options.requireFreshTelemetry ?? false,
+        telemetryMaxAgeMs: this.options.telemetryMaxAgeMs ?? 10_000, now: this.now(),
+      });
+    };
+    if (!isMemoryPressure(evaluateAdmission())) return;
+    const recovery = Symbol("memory-recovery");
+    this.memoryRecoveryRequests.set(recovery, { runtimeIds, priority });
+    return this.reclaimMemory({ requestedRuntimeIds: runtimeIds, priority, evaluateAdmission,
+      signal: allocation ? this.allocationLifecycleAborts.get(allocation.id)?.signal : undefined })
+      .finally(() => this.memoryRecoveryRequests.delete(recovery));
+  }
+
+  private memoryProtectedRuntimes(): Set<string> {
+    const legacyCapabilities = new Set(this.legacyLeases.values().flatMap(lease => lease.capabilities));
+    return new Set(this.registry.runtimes.filter(runtime =>
+      this.draining || this.lifecycleReservations.has(runtime.id) || this.options.isRuntimeMutating?.(runtime.id)
+      || this.providerInstances.isRetained(runtime.id)
+      || runtime.capability.some(capability => legacyCapabilities.has(capability)))
+      .map(runtime => runtime.id));
+  }
+
+  private async stopForMemory(victim: { runtime: string; allocations: string[] }, priority: number, signal?: AbortSignal): Promise<boolean> {
+    const runtimeId = victim.runtime;
+    signal?.throwIfAborted();
+    // Reserve before yielding so a new allocation cannot join this victim during drain.
+    if (this.memoryProtectedRuntimes().has(runtimeId) || this.admittedAllocations().some(a =>
+      a.bindings.some(b => b.runtime === runtimeId) && (!victim.allocations.includes(a.id) || (a.priority ?? 0) >= priority))) return false;
+    this.lifecycleReservations.add(runtimeId);
+    this.memoryDrainingRuntimes.add(runtimeId);
+    for (const id of victim.allocations) this.memoryDrainingAllocations.add(id);
+    try {
+      const affectedRuntimeIds = new Set([runtimeId, ...victim.allocations.flatMap(id =>
+        this.allocations.get(id)?.bindings.map(binding => binding.runtime) ?? [])]);
+      const deadline = performance.now() + Math.max(0, this.options.memoryDrainTimeoutMs ?? 10_000);
+      for (;;) {
+        signal?.throwIfAborted();
+        if (this.draining || this.options.isRuntimeMutating?.(runtimeId) || this.providerInstances.isRetained(runtimeId)) return false;
+        const activeRequests = [...this.providerRequests.values()].some(request => request.runtimeId === runtimeId
+          || victim.allocations.includes(request.allocationId));
+        const instanceBusy = this.providerInstances.inspect().some(record => affectedRuntimeIds.has(record.instance.runtimeId)
+          && (record.refs.request > 0 || record.refs.mutation > 0));
+        if (!activeRequests && !instanceBusy) break;
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) return false;
+        const pause = Bun.sleep(Math.min(25, remaining));
+        await (signal ? withAbort(pause, signal) : pause);
+      }
+      await this.observer.refresh();
+      signal?.throwIfAborted();
+      const runtime = getRuntime(this.registry, runtimeId);
+      if (this.draining || !runtime || runtime.policy.class === "resident" || (runtime.policy.warm?.minInstances ?? 0) > 0
+        || this.options.isRuntimeMutating?.(runtimeId) || this.providerInstances.isRetained(runtimeId)) return false;
+      // Unknown external work must finish naturally too, even if LARM has no request reference.
+      if (this.observer.getState().runtimes.find(s => s.id === runtimeId)?.status !== "HOT") return false;
+      for (const id of victim.allocations) {
+        const allocation = this.allocations.get(id);
+        if (allocation && admittedAllocation(allocation.status)) {
+          if ((allocation.priority ?? 0) >= priority) return false;
+          const result = await this.preemptAllocation(id, priority);
+          if (result.status !== 200) return false;
+        }
+      }
+      signal?.throwIfAborted();
+      if (this.providerInstances.hasRuntime(runtimeId)) return await this.providerInstances.reclaimIdle(runtimeId);
+      await this.backend.stop(runtimeId);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this.lifecycleReservations.delete(runtimeId);
+      this.memoryDrainingRuntimes.delete(runtimeId);
+      for (const id of victim.allocations) this.memoryDrainingAllocations.delete(id);
+    }
+  }
+
   getAllocationWaitReason(id: string): { reason: string; runtime?: string } | undefined {
     const allocation = this.allocations.get(id);
     if (allocation?.status !== "waiting") return undefined;
@@ -898,6 +1066,16 @@ export class ControlPlane {
       },
       admission: {
         registry: this.registry,
+        prepareAdmission: allocation => {
+          const runtimeIds = allocation.bindings.map(binding => binding.runtime);
+          if (this.providerSwitchHoldUntil(runtimeIds, allocation.priority ?? 0) === undefined
+            && !this.registry.runtimes.some(runtime =>
+              (runtimeIds.includes(runtime.id) || (runtime.policy.swapGroup && runtimeIds.some(id =>
+                getRuntime(this.registry, id)?.policy.swapGroup === runtime.policy.swapGroup)))
+              && (this.lifecycleReservations.has(runtime.id) || this.options.isRuntimeMutating?.(runtime.id)))) {
+            this.preemptLowerPriorityConflicts(allocation.priority ?? 0, runtimeIds);
+          }
+        },
         providerSwitchHoldUntil: (runtimeIds, priority) =>
           this.providerSwitchHoldUntil(runtimeIds, priority),
         isRuntimeBusy: (runtimeId) =>
@@ -910,6 +1088,9 @@ export class ControlPlane {
               && (candidate.priority ?? 0) > (allocation.priority ?? 0),
           ),
         evaluateAdmission: (allocation) => this.allocationAdmission(allocation),
+        reclaimMemory: async (allocation) => {
+          await this.reclaimAllocationMemory(allocation.bindings.map(b => b.runtime), allocation.priority ?? 0, allocation);
+        },
         hasAdmittedResourceConflict: (runtimeIds) => this.hasResourceConflict(
           runtimeIds,
           (candidate) => admittedAllocation(candidate.status),

@@ -58,6 +58,8 @@ test("immediate reacquisition waits for an irreversible stop and binds a new gen
     const first = await f.manager.acquire(runtime, "cancelled", "release-a");
     f.manager.releaseAllocation("cancelled");
     await f.stopping.promise;
+    expect(() => f.manager.retainRequest(first.id, "late-request")).toThrow("provider is draining");
+    expect(() => f.manager.retainMutation(first.id, "late-mutation")).toThrow("provider is draining");
     let settled = false;
     const acquiring = f.manager.acquire(runtime, "replacement", "release-a").then(value => { settled = true; return value; });
     await Bun.sleep(0);

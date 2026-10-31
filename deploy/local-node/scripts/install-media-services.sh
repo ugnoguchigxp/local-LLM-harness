@@ -10,13 +10,13 @@ fi
   echo "run prepare-mesh-storage.py as the LARM user first" >&2; exit 1;
 }
 # Existing workloads must finish before replacing worker configuration.
-for service in larm-image-qwen21.service larm-music-ace-step.service larm-mesh-trellis2.service larm-audio-stable.service; do
+for service in larm-image-qwen21.service larm-music-ace-step.service larm-mesh-trellis2.service larm-audio-stable.service larm-image-flux3.service; do
   if systemctl is-active --quiet "${service}"; then
     echo "${service} is active; wait for its request to finish before installation" >&2
     exit 1
   fi
 done
-for service in larm-image-qwen21.service larm-music-ace-step.service larm-mesh-trellis2.service larm-audio-stable.service; do
+for service in larm-image-qwen21.service larm-music-ace-step.service larm-mesh-trellis2.service larm-audio-stable.service larm-image-flux3.service; do
   install -m 0644 "${source_root}/deploy/local-node/systemd/${service}" "/etc/systemd/system/${service}"
 done
 install -m 0644 "${source_root}/deploy/local-node/polkit/60-larm-media-control.rules" /etc/polkit-1/rules.d/60-larm-media-control.rules
@@ -26,5 +26,5 @@ cat >/etc/systemd/system/larm-daemon.service.d/30-mesh-storage.conf <<'CONF'
 ReadWritePaths=/srv/ai/data/generated/3d
 CONF
 systemctl daemon-reload
-systemctl disable larm-image-qwen21.service larm-music-ace-step.service larm-mesh-trellis2.service larm-audio-stable.service
+systemctl disable larm-image-qwen21.service larm-music-ace-step.service larm-mesh-trellis2.service larm-audio-stable.service larm-image-flux3.service
 printf '%s\n' 'Media workers installed for demand-only start/stop; no model was started.'

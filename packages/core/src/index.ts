@@ -1,5 +1,6 @@
 export { LARM_VERSION } from "./version";
 export { runtimeSetsConflict } from "./allocation-resource-conflict";
+export { isMemoryPressure, memoryReclamationCandidates, type MemoryPressure } from "./memory-reclamation";
 export {
   compileProviderRevision,
   managedWarmPolicy,

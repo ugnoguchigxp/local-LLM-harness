@@ -124,6 +124,7 @@ else
     kittentts-tts.service
     larm-music-ace-step.service
     larm-image-qwen21.service
+    larm-image-flux3.service
     larm-mesh-trellis2.service
     larm-audio-stable.service
     larm-daemon.service
@@ -387,7 +388,7 @@ systemctl_run enable "${enabled_units[@]}"
 if [[ "${install_scope}" == "all" ]]; then
   systemctl_run disable llama-server.service qwen-asr.service whisper-asr.service \
     voicevox-tts.service qwen-tts.service larm-embedding.service laya-system-one.service ruri-system-one.service d1-system-one.service \
-    larm-music-ace-step.service larm-image-qwen21.service larm-mesh-trellis2.service larm-audio-stable.service kittentts-tts.service granite-asr.service
+    larm-music-ace-step.service larm-image-qwen21.service larm-mesh-trellis2.service larm-audio-stable.service kittentts-tts.service granite-asr.service larm-image-flux3.service
 fi
 
 if [[ "${install_scope}" == "gateway" ]]; then

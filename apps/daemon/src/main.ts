@@ -1,6 +1,7 @@
 import { pythonImageNormalizer } from "@larm/backends";
 import { ImageImportManager } from "./image-import-manager";
 import { MediaVariantBusyError } from "@larm/backends";
+import { systemServiceAnonymousMemoryBytes } from "@larm/backends";
 import { MeshManager } from "./mesh-manager";
 import { MeshStore } from "./mesh-store";
 import { OnDemandMeshProvider } from "./mesh-provider";
@@ -228,6 +229,9 @@ if (config.localServicesEnabled) {
       if (mediaVariants.isOccupied()) throw new Error("media_conflict");
       serviceLedger.reserve(id, d.node, d.resources.startupReservationBytes, { registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(), maxAgeMs: config.telemetryMaxAgeMs });
     },
+    reclaimMemory: async d => {
+      await control.reclaimMemory({ evaluateAdmission: () => serviceMemoryAdmission(d.node, d.resources.startupReservationBytes) });
+    },
     onEvent: (name, service, reason) => observeEvent({ name, labels: { service, ...(reason ? { reason } : {}) } }),
   });
   await localServiceManager.initialize();
@@ -338,25 +342,51 @@ await personalStateController.initialize();
 const startupProbeToken = crypto.randomUUID();
 const mediaPolicy = mediaPolicySchema.parse(parse(readFileSync(join(config.configDir, "runtime-variants.yaml"), "utf8")));
 const imageEndpoint = config.imageProviderEndpoint ?? new URL(mediaPolicy.variants.image.healthUrl).origin;
+const sharedImageWorker = mediaPolicy.variants.image.models?.includes("flux-3-image-klein") ?? false;
+const flux3Endpoint = sharedImageWorker ? imageEndpoint : mediaPolicy.variants["image-flux3"]
+  ? new URL(mediaPolicy.variants["image-flux3"].healthUrl).origin : undefined;
 const stableAudioEndpoint = new URL(mediaPolicy.variants["stable-audio"].healthUrl).origin;
 const musicEndpoint = config.musicProviderEndpoint ?? new URL(mediaPolicy.variants.music.healthUrl).origin;
+function serviceMemoryAdmission(node: string, bytes: number, liveSafetyFloorBytes = 0) {
+  try {
+    serviceLedger.check(node, bytes, {
+      registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(),
+      maxAgeMs: config.telemetryMaxAgeMs, liveSafetyFloorBytes,
+    });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, node, reason: error instanceof Error ? error.message : "resource_exhausted" };
+  }
+}
 const mediaVariants = new MediaVariantManager({
-  beforeStart: (variant) => {
+  beforeStart: async (variant, signal) => {
     if (serviceLedger.reservations().length) throw new MediaVariantBusyError();
-    if (variant === "mesh") {
-      try { serviceLedger.reserve("media-mesh", observer.getState().node.id, 32 * 1024 ** 3, {
-        registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(), maxAgeMs: config.telemetryMaxAgeMs,
-      }); } catch { throw new MediaVariantBusyError(); }
-    }
+    const policy = mediaPolicy.variants[variant];
+    if (!policy) throw new Error(`media variant ${variant} is not configured`);
+    const node = observer.getState().node.id;
+    const bytes = policy.estimatedMemoryGB * 1024 ** 3;
+    const liveSafetyFloorBytes = mediaPolicy.groups["accelerator-media-heavy"].minimumAvailableMemoryGB * 1024 ** 3;
+    await observer.refresh();
+    await control.reclaimMemory({ signal, evaluateAdmission: () => serviceMemoryAdmission(node, bytes, liveSafetyFloorBytes) });
+    signal?.throwIfAborted();
+    serviceLedger.reserve(`media-${variant}`, node, bytes, {
+      registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(),
+      maxAgeMs: config.telemetryMaxAgeMs, liveSafetyFloorBytes,
+    });
   },
-  afterStart: (variant) => { if (variant === "mesh") serviceLedger.observe("media-mesh", 32 * 1024 ** 3); },
-  afterStop: (variant) => { if (variant === "mesh") serviceLedger.release("media-mesh"); },
+  afterStart: async variant => {
+    const used = await systemServiceAnonymousMemoryBytes(mediaPolicy.variants[variant]!.service);
+    await observer.refresh();
+    // Unmeasured model memory remains pending, including models loaded lazily after readiness.
+    if (used !== undefined) serviceLedger.observe(`media-${variant}`, used);
+  },
+  afterStop: variant => serviceLedger.release(`media-${variant}`),
   script: new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname,
-  idleTtlMs: { "stable-audio": 0, mesh: 0, image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
+  idleTtlMs: { "stable-audio": 0, mesh: 0, "image-flux3": 0, image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
 });
 // Recover orphan workers without making the public API depend on media permissions.
-await Promise.all(["image", "music", "stable-audio", ...(mediaPolicy.variants.mesh ? ["mesh"] : [])].map(async (variant) => {
-  const unit = variant === "image" ? "larm-image-qwen21.service" : variant === "mesh" ? "larm-mesh-trellis2.service" : variant === "stable-audio" ? "larm-audio-stable.service" : "larm-music-ace-step.service";
+await Promise.all(["image", "music", "stable-audio", ...(flux3Endpoint && !sharedImageWorker ? ["image-flux3"] : []), ...(mediaPolicy.variants.mesh ? ["mesh"] : [])].map(async (variant) => {
+  const unit = variant === "image" ? "larm-image-qwen21.service" : variant === "image-flux3" ? "larm-image-flux3.service" : variant === "mesh" ? "larm-mesh-trellis2.service" : variant === "stable-audio" ? "larm-audio-stable.service" : "larm-music-ace-step.service";
   const observed = Bun.spawn(["systemctl", "show", unit, "--property=ActiveState", "--value"], { stdout: "pipe", stderr: "ignore" });
   const state = (await new Response(observed.stdout).text()).trim();
   if (await observed.exited === 0 && state === "inactive") return;
@@ -411,7 +441,7 @@ await imageImportManager.initialize();
 if (!imageImportManager.ready) console.warn("image import journal unavailable; imports disabled, saved images retained");
 const imageGenerationProvider = imageEndpoint
   ? new ImageGenerationProvider(imageEndpoint, mediaVariants, fetch,
-    async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin())
+    async (id) => Boolean(await imageArtifactManager.content(id)), () => requestTracker.begin(), flux3Endpoint, sharedImageWorker ? "image" : "image-flux3")
   : undefined;
 const meshManager = mediaPolicy.variants.mesh ? new MeshManager(
   new MeshStore(config.meshArtifactRoot, { maxBytes: config.meshArtifactMaxBytes, freeFloorBytes: config.meshFreeFloorBytes,

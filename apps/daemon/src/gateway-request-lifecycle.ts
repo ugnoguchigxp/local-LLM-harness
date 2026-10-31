@@ -1,12 +1,13 @@
 import type { RuntimeProtocol } from "@larm/core";
 import type { AgentConnectionController, VerifiedProviderToken } from "./agent-connection-controller";
 import type { ControlPlane } from "./controller";
+import { ProviderRequestAdmissionError } from "./provider-request-admission";
 
 type ConnectionRequestTracker = Pick<AgentConnectionController, "beginProviderRequest" | "finishProviderRequest">;
 type ProviderRequestReferences = Pick<ControlPlane, "retainProviderRequest" | "releaseProviderRequest">;
 
 export type GatewayProviderRequest =
-  | { ok: false; code: "connection_idle_released" | "connection_inactive" | "foreground_active" | "foreground_preemption_failed" }
+  | { ok: false; code: "connection_idle_released" | "connection_inactive" | "foreground_active" | "foreground_preemption_failed" | "provider_draining" }
   | { ok: true; requestId: string; providerInstanceId?: string; release: () => void };
 
 export async function beginGatewayProviderRequest(input: {
@@ -45,6 +46,7 @@ export async function beginGatewayProviderRequest(input: {
     providerInstanceId = input.control.retainProviderRequest?.(input.allocationId, input.capability, requestId);
   } catch (error) {
     if (connectionRequestTracked && input.scoped) input.connections?.finishProviderRequest(input.scoped.record.id, requestId);
+    if (error instanceof ProviderRequestAdmissionError) return { ok: false, code: error.code };
     throw error;
   }
   let released = false;
