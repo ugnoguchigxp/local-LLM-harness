@@ -437,6 +437,8 @@ export class AgentConnectionController {
         if (detachedAudio.length) {
           await Promise.all(detachedAudio.map(async provider => {
             const childRequest = { ...request, providers: [provider.name], client: `larm-audio-${randomUUID()}` };
+            // Context pools belong to the LLM; audio routes have no context selection.
+            delete childRequest.contextTokens;
             const result = await this.create(childRequest, principal, hash(`${idempotencyKey}:${provider.name}`), requestUrl, false, 0, true);
             if (result.status !== 201 && result.status !== 202 && !(typeof result.body === "object" && result.body !== null && "id" in result.body)) {
               audioConnections.set(provider.name, { id: "", request: childRequest });

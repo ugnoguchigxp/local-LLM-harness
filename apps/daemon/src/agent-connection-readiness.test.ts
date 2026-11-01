@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { agentConnectionClaimSchema, parseAgentConnectionCatalog, publicAgentConnectionSchema, type AgentProviderHealth, type PublicAgentConnection, type Registry } from "@larm/core";
+import { agentConnectionClaimSchema, chatInputPolicySchema, promptRetentionPolicySchema, parseAgentConnectionCatalog, publicAgentConnectionSchema, type AgentProviderHealth, type PublicAgentConnection, type Registry } from "@larm/core";
 import type { RuntimeBackend } from "@larm/backends";
 import { createAppComponents } from "./app";
 import { agentPrincipal, AgentConnectionController } from "./agent-connection-controller";
@@ -17,6 +17,7 @@ async function fixture(options: {
   unavailableLlm?: boolean;
   protectedProfile?: boolean;
   audioLimit?: number;
+  mixedContextPools?: boolean;
   onControlEvent?: (event: ControlEvent) => void;
   ensure?: (name: string, signal?: AbortSignal) => Promise<void>;
 } = {}) {
@@ -34,6 +35,13 @@ async function fixture(options: {
       deployment: { service: `${p.name}.service`, healthPort: 8080, endpoint: "http://127.0.0.1:8080" } })),
     routes: providers.map(p => ({ id: p.name, explicitOnly: true, capabilities: [p.capability], candidates: [{ runtime: p.name, purpose: "primary" }] })),
   };
+  if (options.mixedContextPools) {
+    registry.routes[0]!.capabilities.push("llm.vision");
+    registry.runtimes[0] = { ...registry.runtimes[0]!, backend: "llama-swap", capability: ["llm.general", "llm.vision"],
+      deployment: { modelId: "fixture", listen: "http://127.0.0.1", endpoint: "http://127.0.0.1:8080" },
+      chatInput: chatInputPolicySchema.parse({}), promptRetention: promptRetentionPolicySchema.parse({}),
+      contextPools: { defaultTokens: 131072, pools: [{ maxTokens: 200000, slots: 1 }, { maxTokens: 131072, slots: 2 }] } };
+  }
   const loaded = new Set(providers.map(p => p.name).filter(name => !options.cold?.includes(name) && !(name === "llm" && options.unavailableLlm)));
   const health = (runtimeId: string) => ({ runtimeId, service: loaded.has(runtimeId as "llm" | "asr" | "tts") ? "Running" as const : "Stopped" as const,
     listening: loaded.has(runtimeId as "llm" | "asr" | "tts"), healthOk: loaded.has(runtimeId as "llm" | "asr" | "tts"), busy: false });
@@ -43,7 +51,8 @@ async function fixture(options: {
   await observer.tick();
   const control = new ControlPlane(registry, backend, observer, { now, onEvent: options.onControlEvent });
   const catalog = parseAgentConnectionCatalog({ version: 1, defaultAgentProfile: "voice", audiences: { local: { network: "loopback", baseUrl: "http://127.0.0.1:9810/v1" } },
-    agentProfiles: { voice: { description: "voice", ...(options.protectedProfile ? { usageProtection: { idleSeconds: 600, retention: "until-next-profile" } } : {}), providers: providers.map(p => ({ name: p.name, capability: p.capability, readiness: p.readiness, route: p.name, publicModel: p.name })) } },
+    agentProfiles: { voice: { description: "voice", ...(options.protectedProfile ? { usageProtection: { idleSeconds: 600, retention: "until-next-profile" } } : {}), providers: providers.map(p => ({ name: p.name, capability: p.capability, readiness: p.readiness, route: p.name, publicModel: p.name,
+      ...(p.name === "llm" && options.mixedContextPools ? { contextWindow: { maxTokens: 200000, outputReserveTokens: 4096, safetyMarginTokens: 1024 } } : {}) })) } },
     profileSelectors: { "ornith1.5Strix-vision": { agentProfile: "voice" } },
   }, registry);
   const ready = (name: string): AgentProviderHealth => ({ name, capability: providers.find(p => p.name === name)!.capability, ready: true, acceptingRequests: true });
@@ -120,6 +129,29 @@ test("full LLM KV allocation capacity does not block audio allocation or revoke 
     await f.controller.release(parent.id, "owner");
     for (const token of tokens) expect(() => f.controller.verifyProviderToken(token)).toThrow();
     expect(f.control.getAllocation(held.allocationId)?.status).toBe("ready");
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("explicit main context capacity does not apply to independent audio children", async () => {
+  const f = await fixture({ mixedContextPools: true });
+  try {
+    const request = { profile: "ornith1.5Strix-vision", client: "main-with-audio", audience: "local",
+      providers: ["llm", "asr", "tts"], contextTokens: 200000, ttlSeconds: 120, allowFallback: false, deploymentPolicy: "existing-only" } as const;
+    const result = await f.controller.create({ ...request, providers: [...request.providers] },
+      "owner", "main-with-audio", "http://127.0.0.1:9810/v1/agent-connections");
+    const parent = result.body as PublicAgentConnection;
+    await Bun.sleep(1);
+    const current = publicAgentConnectionSchema.parse(f.controller.get(parent.id, "owner").body);
+    expect(current.providers.filter(p => p.name !== "llm").every(p => p.readiness === "ready")).toBeTrue();
+    expect(current).toMatchObject({ status: "ready", phase: "ready" });
+    const claim = agentConnectionClaimSchema.parse((await f.controller.claim(parent.id, "owner", "openai-provider-v1")).body);
+    const llm = claim.providers.find(p => p.name === "llm");
+    if (llm?.apiStyle !== "openai") throw new Error("expected an OpenAI LLM descriptor");
+    expect(llm.contextWindow?.maxTokens).toBe(200000);
+    expect(claim.providers.filter(p => p.name !== "llm")).toHaveLength(2);
+    const repeated = await f.controller.create({ ...request, providers: [...request.providers] }, "owner", "new-demand", "http://127.0.0.1:9810/v1/agent-connections");
+    expect(repeated).toMatchObject({ status: 201, body: { id: parent.id, status: "ready" } });
+    await f.controller.release(parent.id, "owner");
   } finally { f.control.beginDrain(); await f.control.flush(); }
 });
 

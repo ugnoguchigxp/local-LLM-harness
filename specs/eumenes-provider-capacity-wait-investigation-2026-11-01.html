@@ -73,10 +73,25 @@
       cleanupは冪等処理を再実行でき、途中失敗後のDELETE再試行でも解放を完了できる。Connection経由ではない外部allocation解放は従来どおり異常として検出する。既に発生していた実際のエラーを一律に消去する修正ではない。
     </p>
     <p>
-      関連40試験が成功した。容量待ちの親とreadyな音声、readyな親と容量待ちの音声、cold起動と音声ready、実際のprobe、容量待ち期限到達、取消と子cleanup・遅延probeの競合、cleanup失敗後の再試行、外部allocation解放を検証した。主200000・補助131072の選択、生成poolの分離、保持上限とidle解放からの待機昇格も引き続き成功した。
+      関連41試験が成功した。容量待ちの親とreadyな音声、readyな親と容量待ちの音声、cold起動と音声ready、実際のprobe、容量待ち期限到達、取消と子cleanup・遅延probeの競合、cleanup失敗後の再試行、外部allocation解放を検証した。主200000・補助131072の選択、生成poolの分離、保持上限とidle解放からの待機昇格も引き続き成功した。実機受入で見つかった音声へのcontextTokens伝播についても、明示200kと音声の同時確保・claim・同一接続の再需要を追加検証した。
     </p>
     <p>
       保持上限4件、生成枠200k×1・128k×2、300秒idleとready期限、モデル選択は変更しない。保持制限による待機そのものを解消したとは報告しない。本番適用と実接続の受入は、署名releaseの全体検査後に別途記録する。
+    </p>
+  </section>
+  <section id="explicit-context-audio-fix">
+    <h2>本番受入で見つかった音声子接続への容量指定伝播</h2>
+    <p>
+      最初の修正版7f2228ed961da8a2ee4d92cd23e8ae216dc0e80dを09:46:57
+      JSTに本番適用した。全体検査・coverageは1138成功、10skip、失敗0。主200000・補助131072を2本、計3本の同時確保と各JSON/SSEの初回推論が成功した。追加の容量待ちConnectionは公開phase=waiting-capacityとなり、正常DELETE後にallocation_releasedも付かなかった。
+    </p>
+    <p>
+      ただし、追加Connectionで明示contextTokens=200000とASR/TTSを組み合わせると音声がreadyにならず、10秒の受入条件で試験を中止して自分の接続を解放した。70秒維持と保持後の推論はこの試行では未実施であり、受入全体の成功とは扱わない。Eumenesから新たな需要も到着しており、解放後にその待機allocationが昇格した。
+    </p>
+    <p>
+      原因はLARMの内部子要求へのcontextTokensの複写である。音声専用の子要求にはcontext
+      poolがないため、主LLM用の200000指定で容量選択の検証に失敗する。mixed
+      poolを持つfixtureでも音声readinessがfailedになることを再現した。独立音声への子要求を作る際にcontextTokensを取り除き、親LLMの200000指定は維持する最小修正を追加した。Eumenesに音声を含む明示200k要求を避けさせる変更は求めない。
     </p>
   </section>
   <section id="identity">
