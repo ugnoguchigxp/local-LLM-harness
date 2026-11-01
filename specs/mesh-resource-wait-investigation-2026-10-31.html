@@ -541,7 +541,7 @@
         <tr>
           <th scope="row">増減時間</th>
           <td>
-            取消を含む最終分離試験でgrow 6回、shrink 7回、失敗0回、最大542.451
+            取消を含む最終分離試験でgrow 6回、shrink 7回、失敗0回、最大531.973
             ms。前段の領域だけの約0.10–0.21秒に加え、sequenceの転送と計算準備を含む。最大入力や負荷時のp95を保証する測定ではない。3本同時のprefillと長めの出力を含む応答全体には12–15秒程度かかり、その全時間をKV増設時間とは扱わない。
           </td>
         </tr>
@@ -556,7 +556,7 @@
       </tbody>
     </table>
     <p>
-      候補engineは既存mixed版と同じlink入力からbaselineのSHA-256を再現してから、coreのKV・context処理とserverのopt-in制御を差し替えた。最終候補のSHA-256は<code>2ad80f2e81d93c3ffbe5b2c45f8d55a1b213dfb68d6729a374497ddc8861657d</code>。分離受入の証跡はrepository外の<code>/srv/ai/logs/larm-canary/on-demand-kv-20261101-v4</code>へ保存し、検証用processは終了した。固定版の<code>/srv/ai/apps/larm-mixed-context-runtime-20261031-v1</code>と実行fileは変更していない。
+      候補engineは既存mixed版と同じlink入力からbaselineのSHA-256を再現してから、coreのKV・context処理とserverのopt-in制御を差し替えた。最終候補のSHA-256は<code>fc9d8bfaa88f55d8c6c809957d0d1e7b09b973fe177d9b9494cd0e1f07ffc9e5</code>。分離受入の証跡はrepository外の<code>/srv/ai/logs/larm-canary/on-demand-kv-20261101-v6</code>へ保存し、検証用processは終了した。固定版の<code>/srv/ai/apps/larm-mixed-context-runtime-20261031-v1</code>と実行fileは変更していない。
     </p>
     <p>
       試行用runtimeは<code>/srv/ai/apps/larm-on-demand-kv-runtime-20261101-v1</code>へ分離し、release
