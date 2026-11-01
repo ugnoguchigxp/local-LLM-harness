@@ -24,7 +24,6 @@ variants:
   #   service: larm-image-flux3.service
   #   healthUrl: http://127.0.0.1:8094/health
   #   group: accelerator-media-heavy
-  #   estimatedMemoryGB: 48
   #   idleTtlSeconds: 0
   mesh:
     capability: media.mesh.generate

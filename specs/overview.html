@@ -22,20 +22,22 @@
         </tr>
       </thead>
       <tbody>
-        <tr data-kind="plan" data-state="proposed" data-domain="on-demand-live-memory-admission">
+        <tr data-kind="evidence" data-state="current" data-domain="on-demand-live-memory-admission">
           <th scope="row">
             <a href="./on-demand-live-memory-admission-repair-2026-11-01.html"
-              >オンデマンド起動の実測メモリー判定への修正案</a
+              >オンデマンド起動の実測メモリー判定と実機受入</a
             >
           </th>
           <td>
             固定予約を除去し、実測空き・ホスト安全余裕・bytesを持たない起動順序制御へ統一。<small
-              >分類: <code>plan</code> · 状態:
-              <code>proposed</code> · 正本領域:
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
               <code>on-demand-live-memory-admission</code></small
             >
           </td>
-          <td>2026-11-01利用者の前提訂正を反映した修正案。実装・配備は未実施。</td>
+          <td>
+            2026-11-01に実装し935ea04を配備。公開画像APIとOrnith 3セッションの同時実行で検証。
+          </td>
         </tr>
         <tr data-kind="evidence" data-state="current" data-domain="image-memory-reservation">
           <th scope="row">

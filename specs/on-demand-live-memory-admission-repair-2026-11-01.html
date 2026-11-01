@@ -1,9 +1,9 @@
 <article lang="ja">
-  <h1>オンデマンド起動を実測メモリー判定へ戻す修正案</h1>
+  <h1>オンデマンド起動の実測メモリー判定と実機受入</h1>
   <p>
     2026年11月1日。利用者の指示は、オンデマンド起動に固定の予約サイズを持たせないことである。画像起動を拒否した78.0625
     GiBの固定合算を廃止する。56
-    GiBを別の固定値に調整する案は採らない。利用者の指示により実装を進め、公開画像APIとOrnith主200k・補助128k×2の同時実行を受入条件とする。実機結果と配備は末尾に追記する。
+    GiBを別の固定値に調整する案は採らない。公開画像APIとOrnith主200k・補助128k×2の同時実行を受入条件として実装・配備した。実機結果は末尾に記録する。
   </p>
   <section id="problem">
     <h2>修正する誤り</h2>
@@ -55,7 +55,7 @@
     </p>
     <p>
       実メモリー不足が期限まで解消しない場合、telemetryが取得できない場合、workerの起動・実行失敗は理由を保持してエラーとする。HTTP
-      200で失敗を隠したり503を無条件に握り潰したりしない。画像の同期要求は現在の900秒の総期限を超えて保持せず、期限超過は既存の504契約と整合させる。待機・測定・起動・完了の段階を区別して追跡する。これは提案であり現行本番へ反映していない。
+      200で失敗を隠したり503を無条件に握り潰したりしない。画像の同期要求は現在の900秒の総期限を超えて保持せず、期限超過は既存の504契約と整合させる。待機・測定・起動・完了の段階を区別して追跡する。
     </p>
   </section>
   <section id="implementation-changes">
@@ -115,7 +115,7 @@
     </table>
   </section>
   <section id="implementation">
-    <h2>実装と受入準備</h2>
+    <h2>実装と受入方法</h2>
     <p>
       共通のadmitLiveMemoryをcoreに実装し、実測値とhost floorだけを比較する。旧Service
       ledgerは互換用のlifecycle
@@ -156,6 +156,118 @@
         href="./image-memory-reservation-investigation-2026-11-01.html"
         >画像生成の予約不足と再試行の調査</a
       >を参照する。
+    </p>
+  </section>
+  <section id="release">
+    <h2>配備と自動検査</h2>
+    <p>
+      修正本体は104c3b4、固定予約を前提とした本番設定fixtureの更新は935ea04。 2026-11-01 19:12:53
+      JSTに通常の署名付きrelease経路で935ea04を配備し、desiredReleaseとobservedReleaseの一致、contract_verified・succeeded、公開healthのreadyを確認した。
+      必須のinstall、high以上のaudit、full check、coverage
+      ratchetを通過している。主試験は1143成功・10 skip・失敗0。
+    </p>
+    <p>
+      再実行用のdeploy/local-node/scripts/verify-ornith-media-coexist.tsは、公開接続APIで要求したProfileをclaimし、配備されたclientとAPIの契約を使う。
+      EXPECTED_RELEASEとLARM_PROMPT_RETENTION_ENV_FILEを指定し、証跡の出力先とProfileを引数に渡す。既定の画像サイズは1024、LARM_E2E_IMAGE_SIZEで変更できる。
+      画像や実測ログはsource
+      repositoryへ保存せず、今回の証跡は/srv/ai/evidence/on-demand-memory-e2e-20261101に保存する。
+    </p>
+  </section>
+  <section id="semantic-fixture">
+    <h2>応答内容の判定</h2>
+    <p>
+      初回の512角試験では画像2件と並行推論6件はすべてHTTP
+      200だったが、画像終了後の長文要求でamberを先頭に出すという副指示を省略したため、試験全体を不合格として保存した。
+      画像を生成せずcache未使用の状態でも同じ省略を再現し、実際の合成応答を保存した。別セッションのcobaltやjadeへの置換は観測していない。
+      この長文指示だけをセッション分離の判定にせず、長文同時生成の完了確認と、同一contextの指定語だけを回答する独立した意味確認を併用する。
+      意味確認では正しい指定語、他セッションの指定語を含まないこと、finish_reasonがstopであることを要求する。HTTP
+      200だけでは合格にしない。
+    </p>
+  </section>
+  <section id="e2e-results">
+    <h2>公開APIの実機結果</h2>
+    <p>
+      2026-11-01 19:18:53〜19:22:52 JSTの1024角試験は合格。要求Profile
+      lfm2.5が解決したProviderはornith1.5-strixであり、公開接続を3本作成した。
+      claimのcontext上限は200000、131072、131072
+      tokens。入力は各約4千tokensの独立した合成contextであり、各contextを上限まで埋める試験ではない。
+      JSONとSSEを併用し、各画像生成中にnativeのrequests_processingが3であることを実測した。以下の空き量は同時実行中の観測最小値である。
+    </p>
+    <table>
+      <caption>
+        Ornith 3セッションと公開画像生成の同時実行
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">画像モデル・寸法</th>
+          <th scope="col">画像応答</th>
+          <th scope="col">並行推論</th>
+          <th scope="col">system空き最小</th>
+          <th scope="col">GPU空き最小</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Qwen 1024×1024</th>
+          <td>HTTP 200、71.513秒</td>
+          <td>3本すべてHTTP 200、約77秒</td>
+          <td>62.360 GiB</td>
+          <td>51.159 GiB</td>
+        </tr>
+        <tr>
+          <th scope="row">FLUX 1024×1024</th>
+          <td>HTTP 200、126.999秒</td>
+          <td>3本すべてHTTP 200、約11〜15秒</td>
+          <td>48.301 GiB</td>
+          <td>53.270 GiB</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      両画像は公開content
+      URLからGETし、bytes・SHA-256・PNG形式・要求寸法の一致を確認し、Pillowで全画素をdecodeした。
+      画像workerは各要求終了時にinactive・MainPID
+      0へ戻った。画像終了後の3本の長文再利用と、各画像終了後および最後の合計9件の指定語確認はすべて成功した。
+      nativeのKV確保量は462336 tokensまで増加し、確保・縮小失敗counterは0。保存cacheは約1.075
+      GiBであり、6 GiBの上限を物理占有として加算していない。
+      作成した3接続はすべて正常に解放し、利用者の接続・保存cacheは全消去していない。
+    </p>
+    <p>
+      19:12:53〜19:22:54 JSTのdaemon記録では画像4件がすべてstatus 200・outcome succeeded。
+      startup_resource_waitおよびメモリー解放eventは0件であり、固定予約由来の503やメモリー解放待ちは再発していない。
+      先行512角試験の画像応答はQwen 20.740秒、FLUX
+      76.397秒だった。画像の生成時間にはモデルロード・指示文補完・GPU処理を含み、メモリー解放待機時間とは区別する。
+    </p>
+    <p>
+      telemetry採取は200 ms間隔で重複実行を避け、853件を保存した。native
+      metricsの1秒timeout等で58回の採取欠落があるため、表は全瞬間を網羅したpeak保証値ではない。
+      実機合格は上記のモデル・寸法・3セッション条件に対する結果であり、実メモリー不足、backend故障、既存の実行枠競合まで常にHTTP
+      200にする保証ではない。
+    </p>
+  </section>
+  <section id="reusable-e2e">
+    <h2>再実行用scriptの実機確認</h2>
+    <p>
+      19:23:05〜19:25:36
+      JSTにはrepositoryへ追加した再実行用scriptを512角で実行し、全体合格を確認した。
+      Qwenは21.209秒、FLUXは77.109秒でHTTP 200。workerのPIDを最初に観測するまでの時間はそれぞれ201
+      msと300 msであり、メモリー解放待ちへ入っていない。
+      両モデルの生成中にnative同時処理3を観測し、長文推論9件・指定語確認9件はすべて成功、KV増減失敗0、試験用接続3本の解放も成功した。
+      19:12:53〜19:25:38 JSTに範囲を広げたdaemon記録でも、画像6件すべてHTTP
+      200、startup_resource_waitとメモリー解放eventは0件だった。
+    </p>
+  </section>
+  <section id="monitor-alert">
+    <h2>残る監視上の警告</h2>
+    <p>
+      再実行の19:23:21 JST、補助KV拡張のlastResizeMs・maxResizeMsが2113.010
+      msとなり、既存の受動監視が1000 msの基準超過をkv-resize-slowとして記録し、失敗状態で停止した。
+      当該時点のallocatedTokensは331264、確保失敗は0。その後も3本の推論と画像生成は正常完了し、最終native確認も失敗0だった。
+      公開APIの機能受入は合格しているが、監視の1秒という性能基準は未達である。画像との同時稼働中に観測した値であり、この結果だけで遅延の内訳を確定していない。
+    </p>
+    <p>
+      停止したのは推論を行わない補助監視であり、Ornithやdaemonではない。警告を消すための閾値引上げ、engine再起動、固定KVへの切戻しは行っていない。
+      この警告snapshotは/srv/ai/logs/larm-on-demand-kv-trial-20261101/status.jsonに保持する。監視が継続中であるとは報告しない。
     </p>
   </section>
 </article>
