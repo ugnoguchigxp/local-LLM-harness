@@ -15,7 +15,7 @@
   <section id="larm-rereview">
     <h2>LARM側の修正点を先に確認した結果</h2>
     <p>
-      利用者の「まずはそれを確認して」という指示に従い、実装変更の前に既存fixtureへ期待値を追加して再現した。以下の2件は推測ではなく、現行コードで試験が失敗することを確認した不具合である。再現用patchと出力はrepository外の<code>/srv/ai/logs/larm-canary/provider-wait-rereview-20261101.icp4pm0p</code>へ保存し、一時的なassertionは試験後に取り除いた。本確認では本番を変更していない。
+      利用者の「まずはそれを確認して」という指示に従い、実装変更の前に既存fixtureへ期待値を追加して再現した。以下の2件は推測ではなく、修正前のコードで試験が失敗することを確認した不具合である。再現用patchと出力はrepository外の<code>/srv/ai/logs/larm-canary/provider-wait-rereview-20261101.icp4pm0p</code>へ保存し、一時的なassertionは試験後に取り除いた。この初回確認では本番を変更していない。その後の修正と本番受入は以下に記録する。
     </p>
     <table>
       <caption>
@@ -76,7 +76,7 @@
       関連41試験が成功した。容量待ちの親とreadyな音声、readyな親と容量待ちの音声、cold起動と音声ready、実際のprobe、容量待ち期限到達、取消と子cleanup・遅延probeの競合、cleanup失敗後の再試行、外部allocation解放を検証した。主200000・補助131072の選択、生成poolの分離、保持上限とidle解放からの待機昇格も引き続き成功した。実機受入で見つかった音声へのcontextTokens伝播についても、明示200kと音声の同時確保・claim・同一接続の再需要を追加検証した。
     </p>
     <p>
-      保持上限4件、生成枠200k×1・128k×2、300秒idleとready期限、モデル選択は変更しない。保持制限による待機そのものを解消したとは報告しない。本番適用と実接続の受入は、署名releaseの全体検査後に別途記録する。
+      保持上限4件、生成枠200k×1・128k×2、300秒idleとready期限、モデル選択は変更しない。保持制限による待機そのものを解消したとは報告しない。本番適用と実接続の最終受入は以下に記録する。
     </p>
   </section>
   <section id="explicit-context-audio-fix">
@@ -92,6 +92,65 @@
       原因はLARMの内部子要求へのcontextTokensの複写である。音声専用の子要求にはcontext
       poolがないため、主LLM用の200000指定で容量選択の検証に失敗する。mixed
       poolを持つfixtureでも音声readinessがfailedになることを再現した。独立音声への子要求を作る際にcontextTokensを取り除き、親LLMの200000指定は維持する最小修正を追加した。Eumenesに音声を含む明示200k要求を避けさせる変更は求めない。
+    </p>
+  </section>
+  <section id="production-final">
+    <h2>追加修正版の本番反映と最終受入</h2>
+    <p>
+      2026年11月1日09:53:40 JST、3件の修正を含むcommit
+      <code>0b314b7c1590de11198592b399f556212f07a5c0</code>が署名releaseのcontract_verified /
+      succeededに到達した。適用直前はactivity=idle・activeWorkloads=0を3回確認した。frozen
+      install、開発・本番依存のaudit、全体検査とcoverageがすべて成功し、試験結果は1139成功・10skip・失敗0だった。
+    </p>
+    <p>
+      09:55:05
+      JSTに実機受入が成功した。主200000明示・補助は容量指定省略で131072を2本、計3本を同時に保持した。各接続でJSONとSSEを実行し、75秒経過後に同じIDで両形式を再実行した。計12要求がHTTP
+      200かつ応答契約の検証に成功し、3本とも約83.3秒維持した。
+    </p>
+    <table>
+      <caption>
+        最終受入のConnection。共通prefixはaconn_epoch-983cf509-3b6a-48a9-8f77-0484e56162fc_
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">用途</th>
+          <th scope="col">ID suffix</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">主</th>
+          <td>823aec31-572c-494c-b4e0-49da59c10a00</td>
+          <td>200000、JSON/SSEを保持前後に成功</td>
+        </tr>
+        <tr>
+          <th scope="row">補助1</th>
+          <td>1f26c64a-6993-4b80-88fd-1a842fd49f9c</td>
+          <td>省略時131072、JSON/SSEを保持前後に成功</td>
+        </tr>
+        <tr>
+          <th scope="row">補助2</th>
+          <td>2f631137-8425-4699-ba1d-0d26e028ae8d</td>
+          <td>省略時131072、JSON/SSEを保持前後に成功</td>
+        </tr>
+        <tr>
+          <th scope="row">容量待ち取消</th>
+          <td>e20687d8-8f60-4eb8-8549-73007a06dd2b</td>
+          <td>
+            主200000明示、LLM waiting・ASR/TTS
+            ready、音声個別claim成功、正常取消後released・errorなし
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      追加した容量待ちConnectionの公開phaseはwaiting-capacityを保った。200000指定が音声へ伝播せず、ASR/TTSがreadyになり、2本の個別claimも成功した。DELETE後はreleased・terminalとなり、allocation_releasedエラーは付かなかった。試験中に他consumerの接続も到着しており、この容量待ちは試験接続3本を含む保持上限4件の状態での検証である。08:24の障害が自然再発した証拠として扱わない。試験で作った接続だけを解放し、他consumerの接続は解放していない。
+    </p>
+    <p>
+      受入の前後でreleaseCommit・bootEpochが一致し、configRevisionは調査時と同じ<code>4e3761479cea399d2d3c3e2e577d99741546d221338b760337ddddb2f3c929bf</code>だった。最終health・readyはHTTP
+      200、activityはidle。native
+      slotsも200000・131072・131072の3本で、観測時はすべて非実行だった。証跡はrepository外の<code>/srv/ai/logs/larm-canary/provider-wait-final-20261101.ki67i2tg</code>に保存する。
     </p>
   </section>
   <section id="identity">
