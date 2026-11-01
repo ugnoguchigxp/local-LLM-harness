@@ -270,4 +270,18 @@
       この警告snapshotは/srv/ai/logs/larm-on-demand-kv-trial-20261101/status.jsonに保持する。監視が継続中であるとは報告しない。
     </p>
   </section>
+  <section id="primary-conversation-kv">
+    <h2>会話用200kの確保は維持する</h2>
+    <p>
+      利用者の追加確認：主担当の会話用200kは起動時に確保し、維持してよい。今回の固定見積もり合算の廃止によって、この主担当KVを要求ごとの確保へ変えてはいない。
+      nativeのon-demand設定がenabledでも、baselineは主200000を256
+      token単位へ切り上げた200192である。必要時に増減させる対象は補助131072の2枠であり、主担当のbaselineを下回らない。
+      比較用のQwenとFLUXの構成も維持する。
+    </p>
+    <p>
+      追加のlive確認でallocatedTokens=200192、baselineTokens=200192、maxTokens=462336、補助2枠はidle、KV確保失敗0を確認した。
+      起動中の主担当KVは実際にメモリーを使用し、その使用量はOS・driverの実測空きに反映される。これとは別に旧56
+      GiBの固定見積もりやcache上限を追加の物理占有として合算しない。
+    </p>
+  </section>
 </article>
