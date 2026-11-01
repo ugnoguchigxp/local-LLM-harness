@@ -260,7 +260,7 @@ test("production media variants are exclusive, bounded, and remain outside the b
       group: string;
       service: string;
       healthUrl: string;
-      estimatedMemoryGB: number;
+      estimatedMemoryGB?: number;
     }>;
   };
   expect(variants.baseProfile).toBe("saaa-conversation-gemma4-26b-voice");
@@ -272,14 +272,15 @@ test("production media variants are exclusive, bounded, and remain outside the b
     group: "accelerator-media-heavy",
     service: "larm-music-ace-step.service",
     healthUrl: "http://127.0.0.1:8090/health",
-    estimatedMemoryGB: 18,
   });
   expect(variants.variants.image).toMatchObject({
     group: "accelerator-media-heavy",
     service: "larm-image-qwen21.service",
     healthUrl: "http://127.0.0.1:8091/health",
-    estimatedMemoryGB: 34,
   });
+  for (const variant of Object.values(variants.variants)) {
+    expect(variant.estimatedMemoryGB).toBeUndefined();
+  }
 });
 
 test("production swap group matches llama-swap model membership", () => {
