@@ -104,18 +104,53 @@
     </p>
     <p>
       最初の統合候補v3は認証済みprobeにcache contextがないためHTTP
-      400となり、停止した。本番へは反映していない。認証済みprobeだけの例外と、旧固定版でheaderを送らない能力判定を追加した最終候補ではOOM
-      rollback改善済み基盤v4へ追加patchを重ね、認証済みprobeの反復、認証のないmarkerの拒否、主cache維持を含む同じ実時間試験を再実行する。最終受入・release
-      gate・本番反映の結果は完了後に追記する。現時点で本番反映済みとはしない。
+      400となり、停止した。認証済みprobeだけの例外と、旧固定版でheaderを送らない能力判定を追加した。最終candidate-v4はOOM
+      rollback改善済み基盤v4を使い、実行fileのSHA-256は30f1731436a51a23552d9cb1b64e0a71dc4819ebade8675804be91c3195a9e65である。
+    </p>
+    <p>
+      最終native受入v2は予定した長生成が約2秒でEOS終了し、期限をまたぐ試験条件を満たさなかった。engineは変更せず、試験だけをEOS無効・単一tokenの生成に固定し、初期2枠の遅い方の期限を越えて判定するよう修正した。scopeがRAMへ退避されて別の物理slotへ復元されても、枠の順序に依存しない。
+    </p>
+    <p>
+      最終native受入v3は全成功した。認証済みJSON/SSE
+      probeを20秒ごとに繰り返しても補助の時計は延長されなかった。31.94秒・2048
+      tokenのSSEを継続したまま、未使用peerだけを462336から331264へ縮小し、driver使用量が1451524096
+      bytes減少した。主の2722
+      tokensのcache再利用、生成完了後299996msの新しい保持期間、明示scope解放で200192への縮小、再確保、認証のないmarkerが通常の推論として時計を更新することまで成功した。resize失敗0件、最大481.847ms、検証process停止済みである。証跡はrepository外の
+      /srv/ai/logs/larm-canary/aux-kv-idle-final-20261101-v3/results.json に保存する。
+    </p>
+    <p>
+      dc846ecの正式release gateは1142成功・10
+      skip・0失敗で、型・配備・Spec検査も通過した。2026年11月1日11:00
+      JST台にdc846ecを本番へ反映し、runtime release
+      ornith15-strix-conversation-mixed-p3-ondemand-v8と上記SHAのlive
+      engineを確認した。configRevisionはd8113b5f71a32693641ddb79dd026e70b395a121c987b85ae8fc265d9ae3823aである。
+    </p>
+    <p>
+      本番API受入の初回はConnection作成時に503
+      revision_conflictとなり、生成は0件だった。既存のwarm参照が旧releaseを指していたため、受付をdrainし処理中要求0件を確認した。所有者のdaemonへSIGTERMで正常終了を求め、既存unitのRestart=alwaysによる再起動で同commitの参照状態を再構築した。再起動後のbootEpochはepoch-dc7ab6e7-cc0c-4a3a-8aa6-a828f23acb59で、受付を再開しv8のactiveとdesiredが一致した。health・readyだけではこの不整合を検出できず、実際のConnection作成と推論で確認する必要があった。
+    </p>
+    <p>
+      再起動後の本番API受入は全成功した。主200000を明示し、補助2本は容量指定を省略してclaim実容量131072を確認した。3本を同時に71.0019秒保持し、各接続のJSON/SSEを保持前後に実行した計12要求はすべてHTTP
+      200、正常終了した。保持後の入力cacheは全接続3316
+      tokensを再利用した。保持中のnative容量462336から、自作Connection全解放後は主担当の200192へ縮小し、resize失敗0件、最大459.294msだった。証跡は
+      /srv/ai/logs/larm-on-demand-kv-trial-20261101/public-held-connections.json に保存する。
+    </p>
+    <p>
+      本番codeはdc846ec7b8b95e0690503a50393be2ba9dbfab06のままであり、このSpecとcatalogの最終結果追記だけが後続の文書commitとなる。/health・/readyはHTTP
+      200、正式収束結果はcontract_verified/succeeded、受入用Connectionはすべて解放済みである。
     </p>
   </section>
   <section id="operations">
     <h2>監視と切戻し</h2>
     <p>
-      既存のuser monitorは推論を発生させず、loaded
+      larm-on-demand-kv-monitor.serviceはuser
+      unitとしてenabled・active・runningで、statusはmonitoringである。監視は推論を発生させず、loaded
       ProviderのallocatedTokens、resize失敗数、所要時間を観測する。補助が解放されても主担当の領域と同じProvider
       processが生存することを照合する。固定KVの元engineは保持し、private
-      selectorをfixedへ戻す既存経路を維持する。監視は問題のない定常状態で通知を増やさない。
+      selectorをfixedへ戻す既存経路を維持する。元の固定engineのSHA-256
+      ce696c001d259ccc39fae2f2ba4b11778f3f288e4e3b9541adfb271c99c1e809を保持した。監視状態は
+      /srv/ai/logs/larm-on-demand-kv-trial-20261101/status.json
+      に記録し、問題のない定常状態で通知を増やさない。
     </p>
     <p>
       <a href="./mesh-resource-wait-investigation-2026-10-31.html">動的KVの基盤実装と資源待機調査</a
