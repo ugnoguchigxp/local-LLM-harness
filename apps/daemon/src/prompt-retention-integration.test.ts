@@ -65,7 +65,7 @@ async function fixture() {
     return { ...connection, auth, token: result.providers[0]!.credential.token };
   };
   const chat = (token: string, stream = false, cacheKey?: unknown) => app.request("http://127.0.0.1:9810/v1/chat/completions", { method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-larm-cache-key": "attacker", "x-larm-cache-context": "attacker" },
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-larm-cache-key": "attacker", "x-larm-cache-context": "attacker", "x-larm-kv-probe": "1" },
     body: JSON.stringify({ model: "fixture", stream, max_tokens: 16,
       ...(cacheKey !== undefined ? { prompt_cache_key: cacheKey } : {}), messages: [{ role: "user", content: "synthetic" }] }) });
   const release = async (connection: Awaited<ReturnType<typeof create>>) => {
@@ -91,6 +91,7 @@ test("Connection/claim/JSON/SSE forwarding shares scope while authenticating int
   expect(contexts[0].instance).toBe(contexts[1].instance);
   expect(contexts[0].owner).not.toBe(contexts[2].owner);
   expect(requests.every(r => r.headers.get("x-larm-cache-key") === "f".repeat(64))).toBe(true);
+  expect(requests.every(r => !r.headers.has("x-larm-kv-probe"))).toBe(true);
   await f.release(a); expect(f.invalidated).toContain(contexts[0].scope);
   expect(f.invalidated).not.toContain(contexts[2].scope);
   const expired = await f.chat(a.token); expect(expired.status).not.toBe(200);

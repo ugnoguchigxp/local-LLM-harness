@@ -109,6 +109,7 @@ export function createAppComponents(deps: AppDeps) {
     getRegistry: () => deps.registry,
     executionGate,
     timeoutMs: deps.providerProbeTimeoutMs ?? 15_000,
+    promptRetentionKey: deps.promptRetentionKey,
     fetchImpl: deps.gatewayFetch,
     now: deps.now,
   });

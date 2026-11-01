@@ -1,0 +1,115 @@
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -2,6 +2,7 @@
+ #include "server-context.h"
+ #include "larm-context-pools.h"
+ #include "larm-on-demand-kv.h"
++#include "larm-aux-kv-idle.h"
+ #include "server-chat.h"
+ #include "server-common.h"
+ #include "server-http.h"
+@@ -171,6 +172,8 @@
+ 
+     // used to determine the slot that has been used the longest
+     int64_t t_last_used = -1;
++    larm_aux_kv_idle auxiliary_kv_idle;
++    std::string auxiliary_kv_scope;
+ 
+     // generation props
+     int32_t n_ctx       = 0;  // context size per slot
+@@ -505,6 +508,10 @@
+ 
+             prompt.retention.completed = stop != STOP_TYPE_NONE;
+             if (prompt.retention.completed) prompt.retention.used = larm_retention_policy::now();
++            if (!task->larm_kv_probe) {
++                auxiliary_kv_idle.completed(larm_retention_policy::now());
++                auxiliary_kv_scope = task->retention.scope;
++            }
+             state = SLOT_STATE_IDLE;
+ 
+             // do not keep context of the child slots - the parent's context is enough
+@@ -1379,9 +1386,18 @@
+     }
+ 
+     json larm_kv_stats() const {
++        json auxiliary = json::array();
++        const auto now = larm_retention_policy::now();
++        if (larm_kv_policy.enabled) for (const auto & slot : slots) {
++            if (uint32_t(slot.n_ctx) == larm_kv_policy.auxiliary) {
++                auxiliary.push_back({{"id", slot.id}, {"processing", slot.is_processing()},
++                    {"idleRemainingMs", slot.auxiliary_kv_idle.remaining_ms(now)}});
++            }
++        }
+         return {{"enabled", larm_kv_policy.enabled}, {"allocatedTokens", llama_larm_kv_capacity(ctx_tgt)},
+             {"baselineTokens", larm_kv_policy.enabled ? larm_kv_policy.capacity(0) : 0},
+-            {"maxTokens", larm_kv_policy.maximum}, {"grows", larm_kv_grows}, {"shrinks", larm_kv_shrinks},
++            {"maxTokens", larm_kv_policy.maximum}, {"idleReleaseMs", larm_aux_kv_idle::timeout_ms},
++            {"auxiliarySlots", auxiliary}, {"grows", larm_kv_grows}, {"shrinks", larm_kv_shrinks},
+             {"failures", larm_kv_failures}, {"lastResizeMs", larm_kv_last_ms}, {"maxResizeMs", larm_kv_max_ms}};
+     }
+     bool larm_kv_resize(uint32_t tokens) {
+@@ -1402,7 +1418,8 @@
+         size_t auxiliary = 0;
+         for (const auto & slot : slots) {
+             if (uint32_t(slot.n_ctx) == larm_kv_policy.auxiliary
+-                && (slot.id == pending_slot || slot.is_processing() || !slot.prompt.tokens.empty())) ++auxiliary;
++                && (slot.id == pending_slot || slot.auxiliary_kv_idle.needed(larm_retention_policy::now(), slot.is_processing())
++                    || !slot.prompt.tokens.empty())) ++auxiliary;
+         }
+         if (pending_slot >= 0 && uint32_t(slots.at(pending_slot).n_ctx) == larm_kv_policy.auxiliary) {
+             auxiliary = std::min(size_t(2), auxiliary + completions - 1);
+@@ -1413,8 +1430,16 @@
+         if (!prompt_cache || !prompt_cache->retention.enabled || !ctx_tgt) return;
+         const auto t = larm_retention_policy::now();
+         prompt_cache->retention.prune(prompt_cache->states, t);
+-        for (auto & slot : slots) if (!slot.is_processing() && !slot.prompt.tokens.empty()
+-            && !prompt_cache->retention.valid(slot.prompt.retention, t)) slot.prompt_clear(false);
++        for (auto & slot : slots) {
++            if (slot.is_processing()) continue;
++            const bool auxiliary = larm_kv_policy.enabled && uint32_t(slot.n_ctx) == larm_kv_policy.auxiliary;
++            const bool idle_expired = auxiliary && slot.auxiliary_kv_idle.expired(t);
++            const bool revoked = auxiliary && prompt_cache->retention.revoked.count(slot.auxiliary_kv_scope) != 0;
++            if (idle_expired || revoked) { slot.auxiliary_kv_idle.clear(); slot.auxiliary_kv_scope.clear(); }
++            if (!slot.prompt.tokens.empty() && (idle_expired || !prompt_cache->retention.valid(slot.prompt.retention, t))) {
++                slot.prompt_clear(false);
++            }
++        }
+         if (larm_kv_policy.enabled) {
+             const auto needed = larm_kv_needed();
+             if (needed < llama_larm_kv_capacity(ctx_tgt)) larm_kv_resize(needed);
+@@ -4401,6 +4426,8 @@
+             }
+ 
+             task.larm_context_tokens = larm_request_context_tokens(req);
++            const auto * kv_probe = larm_retention_header(req.headers, "x-larm-kv-probe");
++            task.larm_kv_probe = kv_probe && *kv_probe == "1" && larm_cache_authorized(req);
+             if (larm_context_pools().enabled() && (size_t) task.params.n_cmpl > larm_context_pools().count(task.larm_context_tokens)) throw std::runtime_error("completion count exceeds context pool capacity");
+             // OAI-compat
+             task.params.res_type          = res_type;
+@@ -4824,7 +4851,7 @@
+         std::string tmpl_tools   = common_chat_templates_source(meta->chat_params.tmpls.get(), "tool_use");
+ 
+         json props = {
+-            { "larm_on_demand_kv", {{"enabled", getenv("LARM_KV_ON_DEMAND") && std::string(getenv("LARM_KV_ON_DEMAND")) == "1"}, {"taskScopedContextTokens", larm_context_pools().default_tokens}} },
++            { "larm_on_demand_kv", {{"enabled", getenv("LARM_KV_ON_DEMAND") && std::string(getenv("LARM_KV_ON_DEMAND")) == "1"}, {"taskScopedContextTokens", larm_context_pools().default_tokens}, {"idleReleaseMs", larm_aux_kv_idle::timeout_ms}} },
+             { "larm_context_pools", {{"capacities", larm_context_pools().capacities}, {"defaultTokens", larm_context_pools().default_tokens}} },
+             { "larm_prompt_cache", [&]() { auto props = retention_properties; props["authenticated"] = larm_cache_authorized(req); return props; }() },
+             { "default_generation_settings", default_generation_settings_for_props },
+--- a/tools/server/server-task.h
++++ b/tools/server/server-task.h
+@@ -130,6 +130,7 @@
+ 
+ struct server_task {
+     int32_t larm_context_tokens = 0;
++    bool larm_kv_probe = false;
+     int id = -1; // to be filled by server_queue
+ 
+     // TODO @ngxson : remove this field and implement a mapping task_id -> idx in the response_reader
+@@ -237,6 +238,7 @@
+         copy.id_parent = id_parent;
+         copy.params    = params;
+         copy.larm_context_tokens = larm_context_tokens;
++        copy.larm_kv_probe = larm_kv_probe;
+         copy.type      = type;
+         copy.tokens    = tokens.clone();
+         copy.id_slot   = -1; // child tasks cannot specify slot

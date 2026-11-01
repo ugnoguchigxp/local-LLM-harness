@@ -1,0 +1,124 @@
+<article lang="ja">
+  <h1>補助KVの推論終了後5分解放</h1>
+  <p>
+    2026年11月1日、利用者は主担当200000のKVを維持し、補助131072の2枠だけを未使用時に解放する方針を選択した。対象はProfile
+    lfm2.5からroute llm-lfm25、runtime
+    ornith15-strix-conversationへ解決される混在poolである。モデル重みと主担当の確保領域を維持し、補助KVの物理的な割当量を縮小する。接続保持数やcache内容の失効とは別の制御である。
+  </p>
+  <section id="contract">
+    <h2>解放期限の契約</h2>
+    <ol>
+      <li>
+        補助slotごとに、実際の推論が終了した単調時刻から300000msを数える。要求受付時刻やcache
+        leaseの発行時刻を起点にしない。
+      </li>
+      <li>推論中のslotは期限を超えても解放しない。終了すると新たに5分の保持期間を与える。</li>
+      <li>
+        Profile再要求、GET、claim、renew、cache
+        inspection、ほかのslotの推論は、その補助slotの期限を延長しない。
+      </li>
+      <li>
+        LARMの認証済み内部疎通確認は実推論を行うが、完了しても補助slotの期限を更新しない。主担当へprobeを移してhot
+        cacheを退避させる方式は採用しない。
+      </li>
+      <li>
+        所有taskの明示取消・scope失効は、そのslotが処理中でなければ5分を待たずに解放できる。別のtaskや主担当の状態を一括で無効化しない。
+      </li>
+      <li>
+        次の補助推論で必要なKVを再確保する。確保失敗時は既存状態を維持し、要求へ503を返す。結果不明の生成POSTを自動再送しない。
+      </li>
+    </ol>
+    <p>
+      5分は解放可能になる期限であり、その後に既存server task
+      queueのmaintenanceが縮小を実行する。GPU同期や処理中slotの終了による遅延はあり得る。縮小が失敗しているのに、解放済みとして報告しない。
+    </p>
+  </section>
+  <section id="capacity">
+    <h2>公開容量とnative割当</h2>
+    <table>
+      <caption>
+        公開context容量を変えず、256 token単位のnative領域を段階的に確保する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">補助の使用数</th>
+          <th scope="col">native allocatedTokens</th>
+          <th scope="col">維持する契約</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">0</th>
+          <td>200192</td>
+          <td>主担当200000を維持</td>
+        </tr>
+        <tr>
+          <th scope="row">1</th>
+          <td>331264</td>
+          <td>主200000と補助131072を維持</td>
+        </tr>
+        <tr>
+          <th scope="row">2</th>
+          <td>462336</td>
+          <td>主200000と補助131072を2本維持</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      補助の通常KVは1本約720MiB、2本約1440MiBである。driverで観測する使用量には計算用workspaceなども含むため、変化量をすべてKVだけの費用とみなさない。モデル重み、recurrent
+      state、RAM退避cacheも別に扱う。通常の予約見積り56GiBとcache予算は保守的に維持し、物理解放だけを根拠にadmissionの予約を減らさない。
+    </p>
+  </section>
+  <section id="implementation">
+    <h2>実装と内部probeの認証</h2>
+    <p>
+      larm-aux-kv-idle.hはslotごとの推論終了時計を持つ。server_slotのrelease時だけ時計を進め、retention_pruneで処理中のslotを除外して期限到達を確認する。cache
+      leaseが先に切れて内容が削除されても、推論終了後5分まで補助領域を保持できる。nativeの既存transactional
+      resizeで生存中の主・補助状態を移し、縮小前の領域を解放する。
+    </p>
+    <p>
+      SemanticReadinessはpromptRetentionとcontextPoolsを持つruntimeに限り、private
+      keyとx-larm-kv-probe:1を送る。nativeはkeyを検証してserver_task.larm_kv_probeへ識別を保持する。認証のない同名headerは通常の推論として扱う。consumerから送られたprivate
+      headerはgatewayの許可リストで転送しない。識別は子taskにも引き継ぎ、server_taskのlayoutが変わるためserver
+      archiveの全objectとentry objectを再buildする。
+    </p>
+    <p>
+      追加builderは基盤candidateの成功したnative受入とSHA-256を検証し、元のlink結果を再現してから追加patchを適用する。基盤source・archive・compiler
+      flags・patchを変更せず、新しいrepository外candidateだけを生成する。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>検証</h2>
+    <p>
+      固定時計のnative試験で、5分直前・期限到達、長い推論、補助2本の独立期限、明示取消、時計異常時の早期解放防止を確認した。daemon試験ではJSON/SSEの内部probeにだけ識別を付与し、対象外runtimeへprivate
+      keyを送らず、外部のprobe偽装headerを生成要求へ転送しないことを検証した。
+    </p>
+    <p>
+      probe除外追加前の候補では実時間の5分待ちに成功した。cache
+      leaseを1秒にしても補助領域を5分前に縮小せず、片方の期限到達時に他方の32秒SSEを継続した。主の2722
+      tokensのcache再利用と、解放後の補助再確保が成功した。driver使用量の差は1451524096
+      bytesで、workspaceの変化も含む。証跡はrepository外の
+      /srv/ai/logs/larm-canary/aux-kv-idle-20261101-v2 に保存する。
+    </p>
+    <p>
+      最終候補ではOOM
+      rollback改善済み基盤v4へ追加patchを重ね、認証済みprobeの反復、認証のないmarkerの拒否、主cache維持を含む同じ実時間試験を再実行する。最終受入・release
+      gate・本番反映の結果は完了後に追記する。現時点で本番反映済みとはしない。
+    </p>
+  </section>
+  <section id="operations">
+    <h2>監視と切戻し</h2>
+    <p>
+      既存のuser monitorは推論を発生させず、loaded
+      ProviderのallocatedTokens、resize失敗数、所要時間を観測する。補助が解放されても主担当の領域と同じProvider
+      processが生存することを照合する。固定KVの元engineは保持し、private
+      selectorをfixedへ戻す既存経路を維持する。監視は問題のない定常状態で通知を増やさない。
+    </p>
+    <p>
+      <a href="./mesh-resource-wait-investigation-2026-10-31.html">動的KVの基盤実装と資源待機調査</a
+      >、<a href="./eumenes-provider-capacity-wait-investigation-2026-11-01.html"
+        >接続保持上限とProvider準備待ち</a
+      >も参照する。KV解放は接続保持上限4件を変更する実装ではなく、RAM入力cacheの永久保持を保証する実装でもない。解放後の再prefill時間は入力長に依存する。
+    </p>
+  </section>
+</article>

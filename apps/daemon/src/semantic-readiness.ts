@@ -164,6 +164,7 @@ export class SemanticReadiness {
     getRegistry: () => Registry;
     executionGate: ExecutionGate;
     timeoutMs: number;
+    promptRetentionKey?: string;
     fetchImpl?: FetchLike;
     now?: () => number;
   }) {}
@@ -297,7 +298,9 @@ export class SemanticReadiness {
         : ["default"] as const;
       for (const format of formats) {
         const response = await withAbort(
-          this.send(input.provider, resolved.endpoint, abort.signal, format, resolved.runtime?.reasoning?.readinessDisableThinking === true),
+          this.send(input.provider, resolved.endpoint, abort.signal, format,
+            resolved.runtime?.reasoning?.readinessDisableThinking === true,
+            Boolean(resolved.runtime?.promptRetention && resolved.runtime.contextPools)),
           abort.signal,
         );
         if (!response.ok) {
@@ -371,6 +374,7 @@ export class SemanticReadiness {
     signal: AbortSignal,
     format: ProbeFormat,
     disableThinking = false,
+    privateKvProbe = false,
   ): Promise<Response> {
     const base = endpoint.replace(/\/+$/, "");
     if (provider.protocol === "openai.chat-completions.v1") {
@@ -380,6 +384,10 @@ export class SemanticReadiness {
         headers: {
           "content-type": "application/json",
           accept: stream ? "text/event-stream" : "application/json",
+          ...(privateKvProbe && this.options.promptRetentionKey ? {
+            "x-larm-cache-key": this.options.promptRetentionKey,
+            "x-larm-kv-probe": "1",
+          } : {}),
         },
         body: JSON.stringify({
           model: provider.publicModel,

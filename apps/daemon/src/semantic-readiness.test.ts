@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { AgentProviderProfile, Registry } from "@larm/core";
+import { promptRetentionPolicySchema, type AgentProviderProfile, type Registry } from "@larm/core";
 import type { ControlPlane } from "./controller";
 import { ExecutionGate } from "./execution-gate";
 import { SemanticReadiness } from "./semantic-readiness";
@@ -432,6 +432,31 @@ test("concurrent semantic health checks share one fixed-binding probe", async ()
   expect((await first).ready).toBeTrue();
   expect((await second).ready).toBeTrue();
   expect(calls).toBe(2);
+});
+
+test("only local retained context pools receive the authenticated non-activity probe marker", async () => {
+  const { registry, control, provider } = fixture("openai.chat-completions.v1", "llm.general");
+  const configured: Registry = { ...registry, runtimes: [{ ...registry.runtimes[0]!,
+    backend: "llama-swap", deployment: { modelId: "fixture", listen: "http://engine", endpoint: "http://engine" },
+    promptRetention: promptRetentionPolicySchema.parse({}),
+    contextPools: { defaultTokens: 131072, pools: [{ maxTokens: 200000, slots: 1 }, { maxTokens: 131072, slots: 2 }] },
+  }] };
+  for (const current of [configured, registry]) {
+    const headers: Headers[] = [];
+    const readiness = new SemanticReadiness({ control, getRegistry: () => current, executionGate: new ExecutionGate(),
+      timeoutMs: 100, promptRetentionKey: "b".repeat(64), fetchImpl: async (_url, init) => {
+        headers.push(new Headers(init?.headers));
+        return validLlmProbeResponse(init);
+      },
+    });
+    expect((await readiness.check({ allocationId: "alloc", provider })).ready).toBeTrue();
+    expect(headers).toHaveLength(2);
+    for (const sent of headers) {
+      expect(sent.get("x-larm-kv-probe")).toBe(current === configured ? "1" : null);
+      expect(sent.get("x-larm-cache-key")).toBe(current === configured ? "b".repeat(64) : null);
+      expect(sent.has("x-larm-context-tokens")).toBeFalse();
+    }
+  }
 });
 
 test("LLM semantic readiness requires both one-token JSON and OpenAI SSE", async () => {
