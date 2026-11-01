@@ -145,12 +145,13 @@
     <p>
       larm-on-demand-kv-monitor.serviceはuser
       unitとしてenabled・active・runningで、statusはmonitoringである。監視は推論を発生させず、loaded
-      ProviderのallocatedTokens、resize失敗数、所要時間を観測する。補助が解放されても主担当の領域と同じProvider
-      processが生存することを照合する。固定KVの元engineは保持し、private
-      selectorをfixedへ戻す既存経路を維持する。元の固定engineのSHA-256
-      ce696c001d259ccc39fae2f2ba4b11778f3f288e4e3b9541adfb271c99c1e809を保持した。監視状態は
+      Providerを15秒間隔で照会する。想定外のallocatedTokens、resize失敗数の増加、最大所要時間の新規1000ms超過、3回連続の照会失敗を検出し、status.jsonとserviceの失敗状態へ記録する。ProviderのPIDを保持・比較する機能は持たず、同じprocessで主担当を維持した事実はnative受入で確認した。監視状態は
       /srv/ai/logs/larm-on-demand-kv-trial-20261101/status.json
-      に記録し、問題のない定常状態で通知を増やさない。
+      に保存する。切戻しとchat通知は運用者が判断する。
+    </p>
+    <p>
+      固定KVへの切戻しにはruntime/set-on-demand-kv-mode.pyへPRIVATE_ENVとfixedを渡す。次回Provider開始から元の固定engineを選び、daemonのprobeは旧propsの能力判定により既存のheaderなし要求へ戻る。monitorはfixed-engineとして正常終了する。元の固定engineのSHA-256
+      ce696c001d259ccc39fae2f2ba4b11778f3f288e4e3b9541adfb271c99c1e809を保持した。
     </p>
     <p>
       <a href="./mesh-resource-wait-investigation-2026-10-31.html">動的KVの基盤実装と資源待機調査</a
