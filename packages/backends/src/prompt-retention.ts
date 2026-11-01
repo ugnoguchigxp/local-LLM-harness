@@ -4,7 +4,8 @@ import { promptRetentionContextSchema, promptRetentionPolicySchema, type PromptR
 type Target = { endpoint: string; instance: string; runtimeId: string; providerId?: string };
 /** Private engine protocol. Never derive scope or quota identity from consumer headers. */
 export class LlamaPromptRetention {
-  private readonly targets = new Map<string, { bindings: Map<string, Target>; expires: number }>();
+  private readonly targets = new Map<string, { bindings: Map<string, Target>; expires: number; connectionScope?: string }>();
+  private readonly taskScopes = new Map<string, Set<string>>();
   private targetCount = 0;
   private readonly revoked = new Map<string, number>();
   private disabled = false;
@@ -20,7 +21,13 @@ export class LlamaPromptRetention {
     return this.digest("scope", [principal, cacheKey === undefined ? ["connection", connection] : ["key", cacheKey], epoch]);
   }
   private forget(scope: string): void {
-    this.targetCount -= this.targets.get(scope)?.bindings.size ?? 0;
+    const target = this.targets.get(scope);
+    this.targetCount -= target?.bindings.size ?? 0;
+    if (target?.connectionScope) {
+      const scopes = this.taskScopes.get(target.connectionScope);
+      scopes?.delete(scope);
+      if (scopes?.size === 0) this.taskScopes.delete(target.connectionScope);
+    }
     this.targets.delete(scope);
     const watched = this.scopeSignals.get(scope);
     watched?.signal.removeEventListener("abort", watched.listener);
@@ -33,7 +40,7 @@ export class LlamaPromptRetention {
   }
   async headers(input: { principal: string; connection: string; epoch: string; instance: unknown; cacheKey?: string;
     expiresAt: number; now: number; requestId: string; endpoint: string; policy: PromptRetentionPolicy; signal: AbortSignal;
-    contextPools?: { defaultTokens: number; pools: { maxTokens: number; slots: number }[] };
+    contextPools?: { defaultTokens: number; pools: { maxTokens: number; slots: number }[] }; contextTokens?: number;
     runtimeId: string; providerId?: string; scopeSignal?: AbortSignal }): Promise<Headers> {
     this.prune();
     if (this.disabled) return new Headers();
@@ -43,7 +50,8 @@ export class LlamaPromptRetention {
       headers: { "x-larm-cache-key": this.key }, redirect: "error", signal: input.signal,
     });
     if (!response.ok) { await response.body?.cancel(); throw new Error("prompt_retention_capability_unavailable"); }
-    const props = await response.json() as { larm_context_pools?: { capacities?: number[]; defaultTokens?: number }; larm_prompt_cache?: { enabled?: boolean; authenticated?: boolean; policy?: unknown } };
+    const props = await response.json() as { larm_on_demand_kv?: { enabled?: boolean; taskScopedContextTokens?: number };
+      larm_context_pools?: { capacities?: number[]; defaultTokens?: number }; larm_prompt_cache?: { enabled?: boolean; authenticated?: boolean; policy?: unknown } };
     const policy = promptRetentionPolicySchema.safeParse(props.larm_prompt_cache?.policy);
     if (props.larm_prompt_cache?.enabled !== true || props.larm_prompt_cache.authenticated !== true || !policy.success
       || JSON.stringify(policy.data) !== JSON.stringify(input.policy)) throw new Error("prompt_retention_capability_mismatch");
@@ -52,8 +60,17 @@ export class LlamaPromptRetention {
       if (props.larm_context_pools?.defaultTokens !== input.contextPools.defaultTokens
         || JSON.stringify(props.larm_context_pools?.capacities) !== JSON.stringify(expected)) throw new Error("context_pool_capability_mismatch");
     }
+    // The opt-in auxiliary pool owns its cache for the lifetime of this task's
+    // Connection. Keep main-pool and legacy cross-Connection keys unchanged.
+    const taskScoped = props.larm_on_demand_kv?.enabled === true
+      && input.contextPools !== undefined
+      && props.larm_on_demand_kv.taskScopedContextTokens === input.contextPools.defaultTokens
+      && (input.contextTokens ?? input.contextPools.defaultTokens) === input.contextPools.defaultTokens;
+    const connectionScope = this.scope(input.principal, input.connection, input.epoch);
+    const cacheKey = taskScoped && input.cacheKey !== undefined
+      ? this.digest("task-cache-key", [input.connection, input.cacheKey]) : input.cacheKey;
     const context = promptRetentionContextSchema.parse({ owner: this.digest("owner", input.principal),
-      scope: this.scope(input.principal, input.connection, input.epoch, input.cacheKey), instance: this.digest("instance", input.instance),
+      scope: this.scope(input.principal, input.connection, input.epoch, cacheKey), instance: this.digest("instance", input.instance),
       correlation: this.digest("request", input.requestId), leaseMs: Math.min(300_000, Math.floor(input.expiresAt - input.now)) });
     this.prune();
     if (this.disabled) return new Headers();
@@ -72,10 +89,16 @@ export class LlamaPromptRetention {
     }
     target.expires = performance.now() + 300_000;
     bindings.set(context.instance, { endpoint, instance: context.instance, runtimeId: input.runtimeId, providerId: input.providerId });
+    if (taskScoped) {
+      target.connectionScope = connectionScope;
+      let scopes = this.taskScopes.get(connectionScope);
+      if (!scopes) { scopes = new Set(); this.taskScopes.set(connectionScope, scopes); }
+      scopes.add(context.scope);
+    }
     // Explicit keys may be shared by several authorized Connections. Releasing
     // one revokes its credential/default scope, not the other Connections' key.
     // Keyed snapshots expire under the same bounded native TTL and byte budget.
-    if (input.cacheKey === undefined && input.scopeSignal && !this.scopeSignals.has(context.scope)) {
+    if ((input.cacheKey === undefined || taskScoped) && input.scopeSignal && !this.scopeSignals.has(context.scope)) {
       const { principal, connection, epoch } = input;
       const listener = () => { void this.invalidate(principal, connection, epoch).catch(() => undefined); };
       this.scopeSignals.set(context.scope, { signal: input.scopeSignal, listener });
@@ -89,10 +112,13 @@ export class LlamaPromptRetention {
     this.prune();
     if (this.revoked.size >= 16384) this.disabled = true;
     else this.revoked.set(scope, performance.now() + 300_000);
-    const bindings = this.targets.get(scope)?.bindings;
-    this.forget(scope);
-    if (!bindings) return;
-    const results = await Promise.allSettled([...bindings.values()].map(async target => {
+    const scopes = new Set([scope, ...this.taskScopes.get(scope) ?? []]);
+    const targets: { scope: string; target: Target }[] = [];
+    for (const item of scopes) {
+      for (const target of this.targets.get(item)?.bindings.values() ?? []) targets.push({ scope: item, target });
+      this.forget(item);
+    }
+    const results = await Promise.allSettled(targets.map(async ({ scope, target }) => {
       if (!this.isLive(target)) return; // Never wake a replaced or stopped Provider to prune a cache.
       const response = await this.fetchImpl(`${target.endpoint}/larm/cache/invalidate`, { method: "POST",
         headers: { "content-type": "application/json", "x-larm-cache-key": this.key },

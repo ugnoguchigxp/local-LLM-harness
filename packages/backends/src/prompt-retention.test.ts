@@ -80,3 +80,49 @@ test("mixed context readiness attests both capacities and the default pool befor
     else await expect(adapter.headers({ ...input(), contextPools })).rejects.toThrow("context_pool_capability_mismatch");
   }
 });
+
+test("opt-in auxiliary task keys are retained within a Connection and invalidated together on release", async () => {
+  const contextPools = { defaultTokens: 131072, pools: [{ maxTokens: 200000, slots: 1 }, { maxTokens: 131072, slots: 2 }] };
+  const invalidated: string[] = [];
+  const adapter = new LlamaPromptRetention("a".repeat(64), async (url, init) => {
+    if (String(url).endsWith("/invalidate")) {
+      invalidated.push(JSON.parse(String(init?.body)).scope);
+      return Response.json({});
+    }
+    return Response.json({ larm_prompt_cache: { enabled: true, authenticated: true, policy },
+      larm_context_pools: { defaultTokens: 131072, capacities: [200000, 131072, 131072] },
+      larm_on_demand_kv: { enabled: true, taskScopedContextTokens: 131072 } });
+  }, () => true);
+  const i = { ...input(), contextPools, cacheKey: "shared-task-name" };
+  const context = async (extra: Partial<typeof i> & { contextTokens?: number } = {}) =>
+    JSON.parse((await adapter.headers({ ...i, ...extra })).get("x-larm-cache-context")!);
+  const a = await context();
+  expect((await context()).scope).toBe(a.scope);
+  const b = await context({ cacheKey: "second-branch" });
+  const peer = await context({ connection: "peer" });
+  expect(peer.scope).not.toBe(a.scope);
+  expect(b.scope).not.toBe(a.scope);
+  // Explicit main capacity preserves the established cross-Connection contract.
+  const main = await context({ contextTokens: 200000 });
+  expect((await context({ contextTokens: 200000, connection: "peer" })).scope).toBe(main.scope);
+  await adapter.invalidate(i.principal, i.connection, i.epoch);
+  expect(invalidated.sort()).toEqual([a.scope, b.scope].sort());
+  expect((await context({ connection: "peer" })).scope).toBe(peer.scope);
+  await expect(context()).rejects.toThrow("scope_revoked");
+});
+
+test("allocation cancellation invalidates opted-in keyed auxiliary retention", async () => {
+  const scopeSignal = new AbortController();
+  let posts = 0;
+  const adapter = new LlamaPromptRetention("a".repeat(64), async (_url, init) => {
+    if (init?.method === "POST") { posts++; return Response.json({}); }
+    return Response.json({ larm_prompt_cache: { enabled: true, authenticated: true, policy },
+      larm_context_pools: { defaultTokens: 131072, capacities: [200000, 131072, 131072] },
+      larm_on_demand_kv: { enabled: true, taskScopedContextTokens: 131072 } });
+  }, () => true);
+  await adapter.headers({ ...input(), cacheKey: "task", scopeSignal: scopeSignal.signal,
+    contextPools: { defaultTokens: 131072, pools: [{ maxTokens: 200000, slots: 1 }, { maxTokens: 131072, slots: 2 }] } });
+  scopeSignal.abort();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(posts).toBe(1);
+});

@@ -338,4 +338,13 @@ runtimeReleases:
     providerConfigRevision: ornith-strix-main200k-sub128k-p3-retention6g-v7
     estimatedMemoryGB: 56
     healthPath: /health
+    default: false
+  ornith15-strix-conversation-mixed-p3-ondemand-v8:
+    runtime: ornith15-strix-conversation
+    artifacts:
+      - ornith15-35b-strix-lean
+      - ornith15-vision-bf16
+    providerConfigRevision: ornith-strix-main200k-sub128k-p3-ondemandkv-v8
+    estimatedMemoryGB: 56
+    healthPath: /health
     default: true

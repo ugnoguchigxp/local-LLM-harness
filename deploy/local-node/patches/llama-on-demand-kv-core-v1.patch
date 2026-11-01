@@ -1,0 +1,163 @@
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -148,6 +148,8 @@
+     // llama_kv_cache specific API
+     //
+ 
++    std::unique_ptr<llama_kv_cache> larm_resized(uint32_t tokens) const;
++
+     uint32_t get_size()     const;
+     uint32_t get_n_stream() const;
+ 
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -2586,3 +2586,63 @@
+ void llama_kv_cache_context::set_input_v_rot(ggml_tensor * dst) const {
+     kv->set_input_v_rot(dst);
+ }
++
++// Build an independent cache before touching the live one. Recurrent state stays
++// in the hybrid memory module; sequence snapshots here contain attention KV only.
++std::unique_ptr<llama_kv_cache> llama_kv_cache::larm_resized(uint32_t tokens) const {
++    if (!tokens || tokens % n_pad || n_stream != 1 || v_trans || n_swa != 0 || layers.empty()
++        || map_layer_ids.size() != layers.size() || hparams.no_alloc) {
++        throw std::runtime_error("unsupported on-demand KV memory");
++    }
++    auto buft = ggml_backend_buffer_get_type(layers.front().k->buffer);
++    for (const auto & layer : layers) {
++        if (!layer.v || layer.k->type != type_k() || layer.v->type != type_v()
++            || ggml_backend_buffer_get_type(layer.k->buffer) != buft
++            || ggml_backend_buffer_get_type(layer.v->buffer) != buft) {
++            throw std::runtime_error("unsupported mixed on-demand KV buffers");
++        }
++    }
++    const auto included = map_layer_ids;
++    auto next = std::make_unique<llama_kv_cache>(model, hparams, type_k(), type_v(), v_trans,
++        !ggml_backend_buft_is_host(buft), true, tokens, n_seq_max, n_pad, n_swa, swa_type,
++        [included](int32_t il) { return included.count(il) != 0; }, nullptr);
++    if (ggml_backend_buffer_get_type(next->layers.front().k->buffer) != buft) {
++        throw std::runtime_error("on-demand KV backend changed");
++    }
++    struct transfer : llama_io_write_i, llama_io_read_i {
++        std::vector<uint8_t> data;
++        size_t offset = 0;
++        size_t n_bytes() override { return offset; }
++        void write(const void * src, size_t size) override {
++            if (size > 2ULL*1024*1024*1024 - data.size()) throw std::runtime_error("on-demand KV transfer budget");
++            const size_t start = data.size(); data.resize(start + size);
++            if (size) memcpy(data.data() + start, src, size);
++            offset += size;
++        }
++        void write_tensor(ggml_tensor * t, size_t start, size_t size) override {
++            if (size > 2ULL*1024*1024*1024 - data.size()) throw std::runtime_error("on-demand KV transfer budget");
++            const size_t old = data.size(); data.resize(old + size);
++            if (size) ggml_backend_tensor_get(t, data.data() + old, start, size);
++            offset += size;
++        }
++        void read(void * dst, size_t size) override {
++            if (offset > data.size() || size > data.size() - offset) throw std::runtime_error("on-demand KV transfer truncated");
++            if (size) memcpy(dst, data.data() + offset, size);
++            offset += size;
++        }
++        void read_tensor(ggml_tensor * t, size_t start, size_t size) override {
++            if (offset > data.size() || size > data.size() - offset) throw std::runtime_error("on-demand KV transfer truncated");
++            if (size) ggml_backend_tensor_set(t, data.data() + offset, start, size);
++            offset += size;
++        }
++    };
++    for (uint32_t seq = 0; seq < n_seq_max; ++seq) {
++        if (seq_pos_max(seq) < 0) continue;
++        transfer io;
++        state_write(io, seq);
++        io.offset = 0;
++        next->state_read(io, seq);
++        if (io.offset != io.data.size()) throw std::runtime_error("on-demand KV transfer size mismatch");
++    }
++    return next;
++}
+--- a/src/llama-memory-hybrid.h
++++ b/src/llama-memory-hybrid.h
+@@ -80,13 +80,16 @@
+     // llama_memory_hybrid specific API
+     //
+ 
++    std::unique_ptr<llama_kv_cache> larm_replace_attn(std::unique_ptr<llama_kv_cache> next) {
++        mem_attn.swap(next); return next;
++    }
+     llama_kv_cache * get_mem_attn() const;
+     llama_memory_recurrent * get_mem_recr() const;
+ 
+ private:
+     const llama_hparams & hparams;
+ 
+-    const std::unique_ptr<llama_kv_cache> mem_attn;
++    std::unique_ptr<llama_kv_cache> mem_attn;
+     const std::unique_ptr<llama_memory_recurrent> mem_recr;
+ };
+ 
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -71,6 +71,8 @@
+     uint32_t n_threads()       const;
+     uint32_t n_threads_batch() const;
+ 
++    bool larm_resize_kv(uint32_t tokens);
++    uint32_t larm_kv_capacity() const;
+     llama_memory_t get_memory() const;
+     llama_context * get_ctx_other() const;
+ 
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -1,4 +1,5 @@
+ #include "llama-context.h"
++#include "llama-memory-hybrid.h"
+ 
+ #include "ggml.h"
+ #include "llama-arch.h"
+@@ -4452,3 +4453,46 @@
+ llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * ctx) {
+     return ctx->memory_breakdown();
+ }
++
++uint32_t llama_context::larm_kv_capacity() const {
++    auto * hybrid = dynamic_cast<llama_memory_hybrid *>(memory.get());
++    return hybrid ? hybrid->get_mem_attn()->get_size() : 0;
++}
++
++bool llama_context::larm_resize_kv(uint32_t tokens) {
++    auto * hybrid = dynamic_cast<llama_memory_hybrid *>(memory.get());
++    if (!hybrid || !cparams.kv_unified || tokens == 0 || tokens > cparams.n_ctx || tokens % 256) return false;
++    if (tokens == larm_kv_capacity()) return true;
++    synchronize();
++    std::unique_ptr<llama_kv_cache> previous;
++    try {
++        auto next = hybrid->get_mem_attn()->larm_resized(tokens);
++        previous = hybrid->larm_replace_attn(std::move(next));
++        // Both cached graphs and scheduler views refer to the old tensors.
++        // Rebuild while the previous cache is still alive for rollback.
++        sched_need_reserve = true;
++        sched_reserve();
++        synchronize();
++        return true;
++    } catch (const std::exception & error) {
++        LLAMA_LOG_ERROR("larm_kv resize_failed: %s\n", error.what());
++        if (previous) {
++            auto failed = hybrid->larm_replace_attn(std::move(previous));
++            // Free views and the failed allocation before rebuilding the old
++            // scheduler, especially when the new reserve failed due to OOM.
++            if (sched) ggml_backend_sched_synchronize(sched.get());
++            gf_res_prev.reset();
++            gf_res_reserve.reset();
++            sched.reset();
++            failed.reset();
++            sched_need_reserve = true;
++            try { sched_reserve(); synchronize(); }
++            catch (...) { GGML_ABORT("on-demand KV rollback failed"); }
++        }
++        return false;
++    }
++}
++extern "C" bool llama_larm_resize_kv(llama_context * ctx, uint32_t tokens);
++extern "C" uint32_t llama_larm_kv_capacity(const llama_context * ctx);
++bool llama_larm_resize_kv(llama_context * ctx, uint32_t tokens) { return ctx && ctx->larm_resize_kv(tokens); }
++uint32_t llama_larm_kv_capacity(const llama_context * ctx) { return ctx ? ctx->larm_kv_capacity() : 0; }

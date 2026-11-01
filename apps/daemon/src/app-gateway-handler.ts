@@ -251,7 +251,7 @@ export function createGatewayHandler(input: {
         fetchImpl: deps.gatewayFetch,
         ...(runtime.promptRetention && input.promptRetention && !options.countChatInputOnly ? {
           prepareUpstreamHeaders: (binding, requestId, signal, metadata) => input.promptRetention!.headers({
-            cacheKey: metadata.promptCacheKey,
+            cacheKey: metadata.promptCacheKey, contextTokens: metadata.contextTokens,
             principal: scoped?.record.principal ?? input.requestPrincipal(c), connection: scoped?.record.id ?? `allocation:${allocationId}`,
             epoch: identity.bootEpoch,
             instance: [binding.runtime, binding.endpoint, runtime, release, selected.binding.instanceId, selected.binding.instanceGeneration, selected.binding.providerRevision, metadata.contextTokens],

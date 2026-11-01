@@ -122,7 +122,7 @@ export async function handleModelBrokerGateway(input: {
       fetchImpl: input.gatewayFetch,
       ...(runtime.promptRetention && input.promptRetention && input.retentionPrincipal ? {
         prepareUpstreamHeaders: (binding, requestId, signal, metadata) => input.promptRetention!.headers({
-          cacheKey: metadata.promptCacheKey,
+          cacheKey: metadata.promptCacheKey, contextTokens: metadata.contextTokens,
           principal: input.retentionPrincipal!, connection: `broker:${directModel}`, epoch: input.identity.bootEpoch,
           instance: [binding.runtime, binding.endpoint, runtime, lease.release,
             input.control.getProviderInstances().filter(({ instance }) => instance.runtimeId === binding.runtime).map(({ instance }) => [instance.id, instance.generation, instance.revision]), metadata.contextTokens],

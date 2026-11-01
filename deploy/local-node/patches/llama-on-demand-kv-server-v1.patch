@@ -1,0 +1,137 @@
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -1,6 +1,7 @@
+ 
+ #include "server-context.h"
+ #include "larm-context-pools.h"
++#include "larm-on-demand-kv.h"
+ #include "server-chat.h"
+ #include "server-common.h"
+ #include "server-http.h"
+@@ -806,6 +807,10 @@
+     common_init_result_ptr llama_init;
+ 
+     llama_context * ctx_tgt = nullptr;
++    larm_on_demand_kv_policy larm_kv_policy;
++    bool larm_kv_allocation_failed = false;
++    uint64_t larm_kv_grows = 0, larm_kv_shrinks = 0, larm_kv_failures = 0;
++    double larm_kv_last_ms = 0, larm_kv_max_ms = 0;
+     mutable std::mutex diffusion_mutex;
+ 
+     llama_batch batch {};
+@@ -1247,6 +1252,17 @@
+         model_aliases = params_base.model_alias;
+         model_tags    = params_base.model_tags;
+ 
++        larm_kv_policy = larm_on_demand_kv_policy::parse(
++            getenv("LARM_KV_ON_DEMAND") ? getenv("LARM_KV_ON_DEMAND") : "", larm_context_pools());
++        if (larm_kv_policy.enabled) {
++            if (!params_base.kv_unified || ctx_dft || !prompt_cache || !prompt_cache->retention.enabled
++                || (std::any_of(params_base.speculative.types.begin(), params_base.speculative.types.end(), [](common_speculative_type type) { return type != COMMON_SPECULATIVE_TYPE_NONE; })) || n_swa != 0) {
++                SRV_ERR("on-demand KV guard: unified=%d draft=%d cache=%d retention=%d swa=%d types=%zu\n", params_base.kv_unified, bool(ctx_dft), bool(prompt_cache), prompt_cache ? prompt_cache->retention.enabled : false, n_swa, params_base.speculative.types.size());
++                throw std::runtime_error("on-demand KV requires unified hybrid retention without speculation or SWA");
++            }
++            if (llama_larm_kv_capacity(ctx_tgt) != larm_kv_policy.maximum
++                || !larm_kv_resize(larm_kv_policy.capacity(0))) throw std::runtime_error("on-demand KV initialization failed");
++        }
+         // propagate new defaults back to caller
+         params = params_base;
+ 
+@@ -1362,12 +1378,47 @@
+         return nullptr;
+     }
+ 
++    json larm_kv_stats() const {
++        return {{"enabled", larm_kv_policy.enabled}, {"allocatedTokens", llama_larm_kv_capacity(ctx_tgt)},
++            {"baselineTokens", larm_kv_policy.enabled ? larm_kv_policy.capacity(0) : 0},
++            {"maxTokens", larm_kv_policy.maximum}, {"grows", larm_kv_grows}, {"shrinks", larm_kv_shrinks},
++            {"failures", larm_kv_failures}, {"lastResizeMs", larm_kv_last_ms}, {"maxResizeMs", larm_kv_max_ms}};
++    }
++    bool larm_kv_resize(uint32_t tokens) {
++        const auto before = llama_larm_kv_capacity(ctx_tgt);
++        if (before == tokens) return true;
++        const auto started = ggml_time_us();
++        const bool ok = llama_larm_resize_kv(ctx_tgt, tokens);
++        larm_kv_last_ms = double(ggml_time_us() - started) / 1000.0;
++        larm_kv_max_ms = std::max(larm_kv_max_ms, larm_kv_last_ms);
++        if (!ok) ++larm_kv_failures;
++        else if (tokens > before) ++larm_kv_grows;
++        else ++larm_kv_shrinks;
++        SRV_INF("larm_kv event=%s before=%u after=%u ms=%.3f\n", ok ? (tokens > before ? "grow" : "shrink") : "failure",
++            before, llama_larm_kv_capacity(ctx_tgt), larm_kv_last_ms);
++        return ok;
++    }
++    uint32_t larm_kv_needed(int pending_slot = -1, size_t completions = 1) const {
++        size_t auxiliary = 0;
++        for (const auto & slot : slots) {
++            if (uint32_t(slot.n_ctx) == larm_kv_policy.auxiliary
++                && (slot.id == pending_slot || slot.is_processing() || !slot.prompt.tokens.empty())) ++auxiliary;
++        }
++        if (pending_slot >= 0 && uint32_t(slots.at(pending_slot).n_ctx) == larm_kv_policy.auxiliary) {
++            auxiliary = std::min(size_t(2), auxiliary + completions - 1);
++        }
++        return larm_kv_policy.capacity(auxiliary);
++    }
+     void retention_prune() {
+         if (!prompt_cache || !prompt_cache->retention.enabled || !ctx_tgt) return;
+         const auto t = larm_retention_policy::now();
+         prompt_cache->retention.prune(prompt_cache->states, t);
+         for (auto & slot : slots) if (!slot.is_processing() && !slot.prompt.tokens.empty()
+             && !prompt_cache->retention.valid(slot.prompt.retention, t)) slot.prompt_clear(false);
++        if (larm_kv_policy.enabled) {
++            const auto needed = larm_kv_needed();
++            if (needed < llama_larm_kv_capacity(ctx_tgt)) larm_kv_resize(needed);
++        }
+     }
+ 
+     server_slot * get_retained_slot(const server_task & task) {
+@@ -1392,6 +1443,10 @@
+             }
+         }
+         if (!best) return nullptr;
++        if (larm_kv_policy.enabled && !larm_kv_resize(larm_kv_needed(best->id, task.params.n_cmpl))) {
++            larm_kv_allocation_failed = true;
++            return nullptr;
++        }
+         // Preserve independent branches even when a high-similarity hot slot wins.
+         const bool same_input = best->task_prev && best->task_prev->tokens.size() == task.tokens.size()
+             && best->task_prev->tokens.get_common_prefix(task.tokens) == task.tokens.size();
+@@ -2215,7 +2270,7 @@
+                     if (!task.retention_inspect) p.invalidate(task.retention.scope, larm_retention_policy::now());
+                     retention_prune();
+                     size_t metadata = 0; for (const auto & entry : prompt_cache->states) metadata += p.metadata(entry);
+-                    res->data = {{"entries", prompt_cache->states.size()}, {"bytes", prompt_cache->size()}, {"metadataBytes", metadata},
++                    res->data = {{"onDemandKv", larm_kv_stats()}, {"entries", prompt_cache->states.size()}, {"bytes", prompt_cache->size()}, {"metadataBytes", metadata},
+                         {"saves", p.saves}, {"loads", p.loads}, {"evictions", p.evictions}, {"bypasses", p.bypasses}, {"failures", p.failures}};
+                 } else res->data = {{"enabled", false}};
+                 queue_results.send(std::move(res));
+@@ -2243,6 +2298,11 @@
+                     //
+ 
+                     if (slot == nullptr) {
++                        if (larm_kv_allocation_failed) {
++                            larm_kv_allocation_failed = false;
++                            send_error(task, "On-demand KV allocation failed; existing sessions preserved", ERROR_TYPE_UNAVAILABLE);
++                            break;
++                        }
+                         // if no slot is available, we defer this task for processing later
+                         SRV_DBG("no slot is available, defer task, id_task = %d\n", id_task);
+                         queue_tasks.defer(std::move(task));
+@@ -2269,6 +2329,9 @@
+                             SRV_ERR("failed to launch slot with parent task, id_task = %d\n", id_task);
+                             break; // drop the task
+                         }
++                    } else if (larm_kv_policy.enabled && id_slot != -1 && !larm_kv_resize(larm_kv_needed(slot->id))) {
++                        send_error(task, "On-demand KV allocation failed", ERROR_TYPE_UNAVAILABLE);
++                        break;
+                     } else if (!launch_slot_with_task(*slot, std::move(task))) {
+                         SRV_ERR("failed to launch slot with task, id_task = %d\n", id_task);
+                         break; // drop the task
+@@ -4761,6 +4824,7 @@
+         std::string tmpl_tools   = common_chat_templates_source(meta->chat_params.tmpls.get(), "tool_use");
+ 
+         json props = {
++            { "larm_on_demand_kv", {{"enabled", getenv("LARM_KV_ON_DEMAND") && std::string(getenv("LARM_KV_ON_DEMAND")) == "1"}, {"taskScopedContextTokens", larm_context_pools().default_tokens}} },
+             { "larm_context_pools", {{"capacities", larm_context_pools().capacities}, {"defaultTokens", larm_context_pools().default_tokens}} },
+             { "larm_prompt_cache", [&]() { auto props = retention_properties; props["authenticated"] = larm_cache_authorized(req); return props; }() },
+             { "default_generation_settings", default_generation_settings_for_props },

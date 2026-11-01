@@ -412,4 +412,161 @@
       Bearerを従来のOpenAI生成要求に使う。生成処理のためのメモリ判定を無効にしたり、しきい値を緩和したりしていない。
     </p>
   </section>
+  <section id="subagent-cache-lifetime">
+    <h2>サブ担当の作業期間とKVメモリの寿命</h2>
+    <p>
+      2026年11月1日、利用者はサブ担当2本について「作業中はinput
+      cacheを利用し、作業完了後は解放したい」と希望した。これは妥当な寿命の指定であり、未使用時も過去の入力を保持し続ける必要はない。1回の生成完了と、複数の生成・ツール呼出しからなる作業全体の完了を区別する。作業途中の要求間では再利用し、完了・取消時にその作業の接続と保持状態を解放する方針とする。idle期限は完了通知が失われた場合の回収に使い、通常の完了処理の代わりにしない。
+    </p>
+    <p>
+      接続allocation、入力再利用の保持状態、native KV
+      bufferの確保量は別の資源である。現在の解決先はProfile lfm2.5、route llm-lfm25、runtime
+      ornith15-strix-conversationであり、同じengineが主200000と補助131072×2を統合KV内に先行確保する。接続やcacheを解放しても、その操作だけではnative
+      bufferを縮小せず、ほかのプロセスが使える物理メモリが同量増えるとは限らない。入力再利用を無効にすることも、固定KV予約を減らす手段ではない。
+    </p>
+    <p>
+      現行のConnectionに従う既定cache
+      scopeにはrelease時の無効化経路がある。一方、明示prompt_cache_keyは認可された複数Connection間で共有できるため、1本のreleaseではそのkeyのsnapshotを無効化せず、上限とTTLで回収する。runtimeの保持予算6
+      GiBは必ず6
+      GiBを起動時に埋める意味ではない。完了時に確実に作業cacheを破棄する要件では、既定scopeを使うか、作業別keyの所有と明示破棄を別途設計・検証する必要がある。別作業や主担当のcacheを巻き添えにしない。
+    </p>
+    <p>
+      サブ未使用時に確保済みメモリ自体を返すには、モデル重みを共有したまま補助用contextを個別生成・破棄する仕組み、または段階的なKV割当など、engine側の対応が必要である。補助を別プロセスに分けて停止する方法もあるが、重みの重複と起動遅延を評価する必要がある。共有engine全体の停止・再起動は主担当にも影響する。現行通常KVの算術上、補助2本の領域は合計約1.41
+      GiBであり、モデル重み、recurrent
+      state、checkpoint、保存snapshot、workspaceは別に評価する。ここでは動的解放の実装・配備や、解放後の実メモリ増加を確認したとはしない。
+    </p>
+  </section>
+  <section id="subagent-kv-allocation-timing">
+    <h2>要求時KV確保の時間見積り</h2>
+    <p>
+      2026年11月1日、利用者は追加待ち時間が10秒程度になる方式は採用しにくいとして、要求後の確保時間の見積りを求めた。モデル本体の読み込みとKV領域の確保を分け、配備engineのlink入力と同じ静的Vulkan・GGMLライブラリで、領域の確保、ゼロ初期化、同期、解放を測定した。deviceはRadeon
+      8060S Graphics、RADV STRIX_HALO。通常KVの5760 bytes/tokenから補助1本は720 MiB、2本は1440
+      MiBとした。各測定の前にLARMのactivityがidle、activeWorkloads=0であることを確認し、各容量を5回測定した。
+    </p>
+    <table>
+      <caption>
+        KV相当領域の分離測定。時間はミリ秒、各5回
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">対象</th>
+          <th scope="col">確保の中央値</th>
+          <th scope="col">ゼロ初期化・同期の中央値</th>
+          <th scope="col">確保と初期化の合計中央値</th>
+          <th scope="col">合計の最小–最大</th>
+          <th scope="col">解放の中央値</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">補助1本、720 MiB</th>
+          <td>32.206</td>
+          <td>71.212</td>
+          <td>103.615</td>
+          <td>102.749–104.112</td>
+          <td>2.857</td>
+        </tr>
+        <tr>
+          <th scope="row">補助2本、1440 MiB</th>
+          <td>65.667</td>
+          <td>142.082</td>
+          <td>207.625</td>
+          <td>207.461–208.454</td>
+          <td>5.293</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      各試行は独立した測定プロセスで実行し、Vulkan backend初期化の約20–22
+      msを上表から除外した。別途行った最初の1本測定ではbackend初期化53.714 ms、確保・初期化104.453
+      msだった。常駐modelや計算準備を再利用してKV領域だけを追加する設計に対し、領域確保部分の目安は1本約0.10秒、2本約0.21秒となる。これは10秒級のmodel
+      Cold起動とは区別できる測定である。ただし、生存中contextへの増設そのものは未実装であり、この数値をAPIの開始待ち時間全体の保証にはしない。
+    </p>
+    <p>
+      測定にはmodel読み込み、tensor・slot metadata生成、recurrent
+      state、checkpoint、計算graph準備、consumerの接続待ち、最初の入力のprefillを含まない。既存入力cacheを破棄した後の再計算は入力長に依存し、KV確保より長くなる場合がある。context全体を要求ごとに再生成する方式は、領域だけの確保とは別に実測する必要がある。採用判断には、候補実装で最初のtokenまでの追加時間と主担当への影響、確保失敗時の動作、実メモリの回収を確認する。5回のidle測定から高負荷時やp95の上限を主張しない。
+    </p>
+    <p>
+      測定用source、実行file、各試行のstderrとJSON、集計をrepository外の<code>/srv/ai/logs/larm-canary/kv-allocation-20261101.9z5p3xgr</code>へ保存した。測定用processは終了し、Providerの停止・再起動、構成変更やmodelの追加ロードは行っていない。
+    </p>
+  </section>
+  <section id="on-demand-kv-trial">
+    <h2>128k補助2枠のオンデマンドKV試行</h2>
+    <p>
+      2026年11月1日、利用者の指示により、固定確保版を残したまま補助128k×2を必要時に確保する候補を実装した。主担当200kのモデル重み、recurrent
+      state、実行中の生成、入力cacheを維持し、統合attention KVを200192、331264、462336
+      tokensの3段階へ変更する。privateの明示opt-inでのみ有効になり、公開contextTokens、入力上限、3本の同時実行、6
+      GiBのcache予算、runtimeの保守的な56 GiB予約は維持する。
+    </p>
+    <p>
+      共有領域のため、単に補助用の末尾を切り捨てるのではなく、新しいKV領域を用意し、生存中の各sequenceを詰め直して移す。転送は1
+      sequenceずつ、RAM上限2
+      GiBとする。旧領域を残したまま新領域への復元と計算schedulerの再準備を行い、成功後に旧領域を解放する。確保・復元・準備の失敗時は旧領域へ戻す。拡張できなかった新規要求には503を返し、既存sequenceを破棄しない。処理はengineの直列queue境界で同期して行うため、増減中は主担当の生成にも短い待ちが発生する。recurrent領域、checkpoint、モデル重みまで補助ごとに動的解放する実装ではない。
+    </p>
+    <p>
+      補助の最初の生成要求で拡張し、有効なhot入力cacheまたは実行中要求がある間はその分の容量を保持する。Connection解放、取消、保持期限の終了で不要になった補助領域を縮小する。試行engineが広告する補助poolだけは、明示prompt_cache_keyもConnection内に区切り、そのConnectionの解放で一緒に無効化する。主担当と固定版のConnection間cache共有は維持する。利用側が作業完了時にConnectionを解放しない場合、LARMが作業終了を推測することはせず、従来の300秒のcache期限を回収の上限として使う。
+    </p>
+    <table>
+      <caption>
+        分離候補の実生成による受入結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">確認項目</th>
+          <th scope="col">結果と範囲</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">拡張・縮小と入力再利用</th>
+          <td>
+            主担当と補助2本の約3530 tokensの独立入力で正答とcache hitを確認。200192 → 331264 →
+            462336 → 331264 → 200192を同一processで往復し、主担当と残る補助のcacheを維持した。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">3本同時と取消</th>
+          <td>
+            主担当を含む3本の生成、補助SSEの最初のcontent受信後の切断、補助leaseの期限切れを実行した。cleanup後の200192への縮小と主担当のcache
+            hitを確認した。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">失敗時の状態保全</th>
+          <td>
+            別のnative helperで、実KVを256
+            tokensより多く使った状態から256へ縮小して復元を失敗させ、attentionとrecurrentを含むsequenceの全保存bytesが試験前と一致することを確認した。成功する4096・8192間の往復でも一致した。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">増減時間</th>
+          <td>
+            取消を含む最終分離試験でgrow 6回、shrink 7回、失敗0回、最大542.451
+            ms。前段の領域だけの約0.10–0.21秒に加え、sequenceの転送と計算準備を含む。最大入力や負荷時のp95を保証する測定ではない。3本同時のprefillと長めの出力を含む応答全体には12–15秒程度かかり、その全時間をKV増設時間とは扱わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">メモリ回収</th>
+          <td>
+            分離試験v3のdriver allocationは補助2本保持時24920.01 MiB、解放後の主担当だけで22086.66
+            MiBだった。DRM
+            clientを重複排除したVRAM＋GTTでありRSSとの合計ではない。workspaceやcheckpointの変動も含むため、差の全量を通常KVそのものとしない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      候補engineは既存mixed版と同じlink入力からbaselineのSHA-256を再現してから、coreのKV・context処理とserverのopt-in制御を差し替えた。最終候補のSHA-256は<code>2ad80f2e81d93c3ffbe5b2c45f8d55a1b213dfb68d6729a374497ddc8861657d</code>。分離受入の証跡はrepository外の<code>/srv/ai/logs/larm-canary/on-demand-kv-20261101-v4</code>へ保存し、検証用processは終了した。固定版の<code>/srv/ai/apps/larm-mixed-context-runtime-20261031-v1</code>と実行fileは変更していない。
+    </p>
+    <p>
+      試行用runtimeは<code>/srv/ai/apps/larm-on-demand-kv-runtime-20261101-v1</code>へ分離し、release
+      v8として有効化する構成を用意した。launch
+      selectorのprivate設定LARM_KV_ON_DEMAND=0では、候補ではなく既存固定版の実行fileを選ぶ。戻す際はset-on-demand-kv-mode.pyでfixedを選び、実行中要求の終了後、管理されたProvider再起動で適用する。engine再起動で入力cacheは失われるため、履歴のmessages再送から再構築する。LARM全体を戻す場合は既存の署名済みrelease切替を使い、直前の稼働releaseも保持する。
+    </p>
+    <p>
+      user serviceのlarm-on-demand-kv-monitorは15秒ごとに稼働Providerのnative loopback
+      portへ認証付きでcache統計を照会する。モデルを起動するproxy経由のprobeや生成は行わない。KV増減失敗、想定外の容量、1000
+      ms超の増減、3回連続の照会失敗を問題として記録して停止する。ほかのProfileへの切替で対象Providerが停止している間は待機し、その差だけをdriftや障害と判定しない。結果は<code>/srv/ai/logs/larm-on-demand-kv-trial-20261101/status.json</code>とserviceのjournalに記録する。試行の実際の有効化・監視開始はrelease収束状態とこのstatusで確認する。
+    </p>
+  </section>
 </article>

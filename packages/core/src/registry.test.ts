@@ -791,7 +791,8 @@ test("ornith1.5Strix-vision is an explicit Gemma voice copy routed to the tested
     principalMaxBytes: 6 * 1024 ** 3, idleTtlMs: 300_000, maxAgeMs: 1_800_000 });
   expect(swap.models[runtime.id].cmd).toContain("--kv-unified");
   expect(swap.models[runtime.id].cmd).toContain("-cram 6144");
-  expect(swap.models[runtime.id].cmd).toContain("larm-mixed-context-runtime-20261031-v1/launch.py");
+  expect(swap.models[runtime.id].cmd).toContain("larm-on-demand-kv-runtime-20261101-v1/launch-on-demand-kv.py");
+  expect(swap.models[runtime.id].cmd).toContain("larm-mixed-context-runtime-20261031-v1/llama-server");
 
 });
 test("registered llama-swap models leave idle shutdown to LARM", () => {

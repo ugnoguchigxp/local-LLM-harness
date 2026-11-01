@@ -1,0 +1,17 @@
+[Unit]
+Description=Passive monitor for the opt-in auxiliary KV trial
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /srv/ai/apps/larm-on-demand-kv-runtime-20261101-v1/monitor-on-demand-kv.py --private-env /srv/ai/apps/larm-on-demand-kv-runtime-20261101-v1/private-retention.env.json --state /srv/ai/logs/larm-on-demand-kv-trial-20261101/status.json --model-id ornith15-strix-conversation
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/srv/ai/logs/larm-on-demand-kv-trial-20261101
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=default.target
