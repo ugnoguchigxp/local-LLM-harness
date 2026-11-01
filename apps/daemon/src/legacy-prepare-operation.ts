@@ -1,4 +1,4 @@
-import { getRuntime, type Registry } from "@larm/core";
+import { getRuntime, type Registry, type RuntimeDefinition } from "@larm/core";
 import { LifecycleError, type RuntimeBackend } from "@larm/backends";
 import type { Observer } from "./observer";
 import type { Operation } from "./controller";
@@ -13,6 +13,7 @@ export async function runLegacyPrepareOperation(input: {
   deleteAbortedOperation: (operationId: string) => void;
   clearOperationAbort: (operationId: string, abort: AbortController) => void;
   pruneHistory: () => void;
+  withStartup?: <T>(runtime: RuntimeDefinition, signal: AbortSignal | undefined, work: () => Promise<T>) => Promise<T>;
 }): Promise<void> {
   const { operation, abort } = input;
   if (abort.signal.aborted) {
@@ -35,7 +36,8 @@ export async function runLegacyPrepareOperation(input: {
       if (abort.signal.aborted) throw abort.signal.reason;
       const runtime = getRuntime(input.registry, runtimeId);
       if (!runtime) throw new Error(`runtime ${runtimeId} disappeared from registry`);
-      await input.backend.ensure(runtime, abort.signal);
+      const load = () => input.backend.ensure(runtime, abort.signal);
+      await (input.withStartup?.(runtime, abort.signal, load) ?? load());
       if (abort.signal.aborted) throw abort.signal.reason;
       await input.observer.tick();
       if (abort.signal.aborted) throw abort.signal.reason;

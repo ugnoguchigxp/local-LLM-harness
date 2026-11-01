@@ -1,6 +1,5 @@
 import { admittedAllocation, type Allocation } from "./allocation";
 import { managedWarmPolicy } from "./provider-lifecycle";
-import { runtimeMemoryGB } from "./prompt-retention";
 import type { Registry } from "./registry";
 import type { ClusterState } from "./schema";
 import type { NodeAdmission } from "./admission";
@@ -39,12 +38,8 @@ export function memoryReclamationCandidates(input: {
         || a.bindings.some(b => requested.has(b.runtime)))) return [];
     return [{ runtime, allocations, priority: Math.max(...allocations.map(a => a.priority ?? 0)) }];
   });
-  const node = input.admission.nodes?.find(node => node.node === input.admission.node);
-  // Do not retire work if even reclaiming every eligible runtime cannot fit the request.
-  if (node && node.incrementalMemoryGB > node.availableMemoryGB
-    + candidates.reduce((total, candidate) => total + runtimeMemoryGB(candidate.runtime), 0)) return [];
   return candidates.sort((a, b) => {
     if (a.priority !== b.priority) return a.priority < b.priority ? -1 : 1;
-    return runtimeMemoryGB(b.runtime) - runtimeMemoryGB(a.runtime) || a.runtime.id.localeCompare(b.runtime.id);
+    return a.runtime.id.localeCompare(b.runtime.id);
   }).map(candidate => ({ runtime: candidate.runtime.id, allocations: candidate.allocations.map(a => a.id) }));
 }

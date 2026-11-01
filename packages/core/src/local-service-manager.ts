@@ -47,6 +47,7 @@ export class LocalServiceManager {
     bootEpoch: string; journal: LocalServiceJournal; ledger: ServiceResourceLedger;
     reserve: (id: string, d: LocalServiceDefinition) => void;
     reclaimMemory?: (d: LocalServiceDefinition) => Promise<void>;
+    runStartup?: (d: LocalServiceDefinition, work: () => Promise<void>) => Promise<void>;
     now?: () => number; sleep?: (ms: number) => Promise<void>; onEvent?: (name: string, service: string, reason?: string) => void;
   }) {
     if (definitions.length > 64) throw new Error("too_many_local_services");
@@ -206,6 +207,17 @@ export class LocalServiceManager {
     return this.get(leaseId, principal);
   }
   private async start(e: Entry): Promise<void> {
+    try {
+      if (this.options.runStartup) return await this.options.runStartup(e.definition, () => this.startTracked(e));
+      return await this.startTracked(e);
+    } catch (error) {
+      e.state = "failed";
+      e.error = error instanceof Error && error.name === "TimeoutError" ? "startup_timeout" : "startup_failed";
+      this.failLeases(e, e.error); this.event(e, e.error);
+      await this.save();
+    }
+  }
+  private async startTracked(e: Entry): Promise<void> {
     const deadline = this.now() + e.definition.readiness.timeoutSeconds * 1000;
     try {
       await this.save(); await this.backend.start(e.definition);

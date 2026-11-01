@@ -1,10 +1,8 @@
-import { runtimeMemoryGB } from "./prompt-retention";
+import { admitLiveMemory } from "./live-memory";
 import type { ServiceMemoryReservation } from "./local-service";
 import { admittedAllocation, type Allocation } from "./allocation";
 import type { Registry } from "./registry";
 import type { ClusterState, RuntimeDefinition } from "./schema";
-
-const MEMORY_COMMITTED = new Set(["HOT", "BUSY", "STARTING", "STOPPING"]);
 
 export type NodeAdmission = {
   node: string;
@@ -65,12 +63,6 @@ export function admitRuntimes(input: {
   };
 }): AdmissionResult {
   const activeIds = uniqueActiveRuntimeIds(input.allocations);
-  const committedIds = new Set(activeIds);
-  for (const runtime of input.registry.runtimes) {
-    if (runtime.policy.class === "resident") {
-      committedIds.add(runtime.id);
-    }
-  }
 
   const candidateIds = new Set(input.candidateRuntimeIds);
   const candidateBySwapGroup = new Map<string, string>();
@@ -94,6 +86,10 @@ export function admitRuntimes(input: {
 
   for (const runtimeId of candidateIds) {
     const runtime = runtimeById(input.registry, runtimeId);
+    const conflicting = runtime?.policy.swapGroup && [...activeIds].find(id => id !== runtimeId
+      && runtimeById(input.registry, id)?.policy.swapGroup === runtime.policy.swapGroup);
+    if (conflicting) return { ok: false, reason: "swap_group_conflict", runtime: runtimeId,
+      node: runtime!.node, nodes: [], message: `runtime ${conflicting} holds the requested swap group` };
     if (!runtime?.resources.maxConcurrentAllocations) {
       continue;
     }
@@ -113,149 +109,24 @@ export function admitRuntimes(input: {
     }
   }
 
-  const replaceableIds = new Set<string>();
-  for (const snapshot of input.state.runtimes) {
-    if (MEMORY_COMMITTED.has(snapshot.status)) {
-      const runtime = runtimeById(input.registry, snapshot.id);
-      const selectedForGroup = runtime?.policy.swapGroup
-        ? candidateBySwapGroup.get(runtime.policy.swapGroup)
-        : undefined;
-      if (
-        runtime
-        && snapshot.status === "HOT"
-        && selectedForGroup !== undefined
-        && selectedForGroup !== runtime.id
-        && !activeIds.has(runtime.id)
-      ) {
-        replaceableIds.add(runtime.id);
-        continue;
-      }
-      committedIds.add(snapshot.id);
-    }
-  }
-
-  const nodeIds = new Set<string>();
-  for (const id of [...committedIds, ...candidateIds]) {
-    const runtime = runtimeById(input.registry, id);
-    if (!runtime) {
-      return {
-        ok: false,
-        reason: "unknown_runtime",
-        message: `runtime ${id} is not in the registry`,
-        runtime: id,
-        nodes: [],
-      };
-    }
-    nodeIds.add(runtime.node);
-  }
-
   const nodes: NodeAdmission[] = [];
-  for (const nodeId of [...nodeIds].sort()) {
-    const node = input.registry.nodes.find((item) => item.id === nodeId);
-    if (!node) {
-      return {
-        ok: false,
-        reason: "unknown_node",
-        message: `node ${nodeId} is not in the registry`,
-        node: nodeId,
-        nodes,
-      };
-    }
-    const committedMemoryGB = [...committedIds]
-      .map((id) => runtimeById(input.registry, id))
-      .filter((runtime): runtime is RuntimeDefinition => runtime?.node === nodeId)
-      .reduce((total, runtime) => total + runtimeMemoryGB(runtime), 0);
-    const incrementalMemoryGB = [...candidateIds]
-      .filter((id) => !committedIds.has(id))
-      .map((id) => runtimeById(input.registry, id))
-      .filter((runtime): runtime is RuntimeDefinition => runtime?.node === nodeId)
-      .reduce((total, runtime) => total + runtimeMemoryGB(runtime), 0);
-    const services = (input.serviceReservations ?? []).filter(r => r.node === nodeId);
-    const serviceMemoryGB = services.reduce((n, r) => n + r.bytes / (1024 ** 3), 0);
-    const usableMemoryGB = node.resources.memoryTotalGB - node.resources.reservedMemoryGB - serviceMemoryGB;
-    const availableMemoryGB = usableMemoryGB - committedMemoryGB;
-    const reclaimableMemoryGB = [...replaceableIds]
-      .map((id) => runtimeById(input.registry, id))
-      .filter((runtime): runtime is RuntimeDefinition => runtime?.node === nodeId)
-      .reduce((total, runtime) => total + runtimeMemoryGB(runtime), 0);
-    const summary: NodeAdmission = {
-      node: nodeId,
-      usableMemoryGB,
-      committedMemoryGB,
-      incrementalMemoryGB,
-      availableMemoryGB,
-      ...(reclaimableMemoryGB > 0 ? { reclaimableMemoryGB } : {}),
-    };
-    nodes.push(summary);
-    const memoryFailure = incrementalMemoryGB > availableMemoryGB ? {
-      ok: false as const,
-      reason: "memory_exhausted" as const,
-      message: `node ${nodeId} needs ${incrementalMemoryGB} GiB but static headroom is ${availableMemoryGB} GiB`,
-      node: nodeId,
-      nodes,
-    } : undefined;
-    const needsLiveTelemetry = input.liveTelemetry?.requiredForNonResident === true
-      && [...candidateIds].some((id) => {
-        const runtime = runtimeById(input.registry, id);
-        return runtime?.node === nodeId
-          && runtime.policy.class !== "resident"
-          && !committedIds.has(id);
-      });
-    if (needsLiveTelemetry) {
-      const telemetry = input.state.node.id === nodeId ? input.state.node.telemetry : undefined;
-      const observedAt = telemetry ? Date.parse(telemetry.observedAt) : Number.NaN;
-      const now = input.liveTelemetry?.now ?? Date.now();
-      if (
-        !telemetry
-        || telemetry.status !== "available"
-        || telemetry.systemMemoryAvailableBytes === undefined
-        || !Number.isFinite(observedAt)
-        || observedAt > now
-        || now - observedAt > input.liveTelemetry!.maxAgeMs
-      ) {
-        return {
-          ok: false,
-          reason: "telemetry_unavailable",
-          message: `fresh resource telemetry is unavailable for node ${nodeId}`,
-          node: nodeId,
-          nodes,
-        };
-      }
-      if (memoryFailure) return memoryFailure;
-
-      const liveBytes = telemetry.acceleratorMemoryAvailableBytes === undefined
-        ? telemetry.systemMemoryAvailableBytes
-        : Math.min(
-          telemetry.systemMemoryAvailableBytes,
-          telemetry.acceleratorMemoryAvailableBytes,
-        );
-      // The static gate above already preserves node.reservedMemoryGB. MemAvailable and
-      // accelerator available values are live headroom, so subtracting the reserve again
-      // would double-count it and incorrectly reject unified-memory hosts.
-      const liveAvailableMemoryGB = Math.max(0, liveBytes / (1024 ** 3));
-      const pendingServiceGB = services.reduce((n, r) => n + r.pendingBytes / (1024 ** 3), 0);
-      const pendingRuntimeMemoryGB = [...committedIds]
-        .map(id => runtimeById(input.registry, id))
-        .filter((runtime): runtime is RuntimeDefinition => runtime?.node === nodeId)
-        .filter(runtime => !input.state.runtimes.some(snapshot => snapshot.id === runtime.id
-          && (snapshot.status === "HOT" || snapshot.status === "BUSY")))
-        .reduce((total, runtime) => total + runtimeMemoryGB(runtime), 0);
-      const effectiveLiveAvailableMemoryGB = Math.max(0,
-        liveAvailableMemoryGB + reclaimableMemoryGB - pendingServiceGB - pendingRuntimeMemoryGB);
-      summary.liveAvailableMemoryGB = liveAvailableMemoryGB;
-      summary.effectiveLiveAvailableMemoryGB = effectiveLiveAvailableMemoryGB;
-      if (incrementalMemoryGB > effectiveLiveAvailableMemoryGB) {
-        return {
-          ok: false,
-          reason: "live_memory_exhausted",
-          message: `node ${nodeId} needs ${incrementalMemoryGB} GiB but effective live headroom is ${effectiveLiveAvailableMemoryGB.toFixed(2)} GiB`,
-          node: nodeId,
-          nodes,
-        };
-      }
-    }
-    if (memoryFailure) return memoryFailure;
+  for (const id of candidateIds) {
+    const runtime = runtimeById(input.registry, id);
+    if (!runtime) return { ok: false, reason: "unknown_runtime", runtime: id,
+      message: `runtime ${id} is not in the registry`, nodes };
+    const node = input.registry.nodes.find(n => n.id === runtime.node);
+    if (!node) return { ok: false, reason: "unknown_node", node: runtime.node,
+      message: `node ${runtime.node} is not in the registry`, nodes };
+    const running = input.state.runtimes.some(s => s.id === id && (s.status === "HOT" || s.status === "BUSY"));
+    // Existing connections and cache limits do not reserve physical memory.
+    // The common startup gate rechecks telemetry immediately before a cold load.
+    if (running || runtime.policy.class === "resident" || !input.liveTelemetry?.requiredForNonResident) continue;
+    if (nodes.some(n => n.node === node.id)) continue;
+    const result = admitLiveMemory({ state: input.state, node: node.id,
+      now: input.liveTelemetry.now ?? Date.now(), maxAgeMs: input.liveTelemetry.maxAgeMs,
+      safetyFloorBytes: node.resources.reservedMemoryGB * 1024 ** 3, accelerator: true });
+    if (!result.ok) return result;
+    nodes.push(...result.nodes);
   }
-
   return { ok: true, nodes };
 }

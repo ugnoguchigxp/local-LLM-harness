@@ -5,7 +5,8 @@ import { isLiteralLoopbackHost } from "./network";
 const variantSchema = z.object({
   healthUrl: z.string().url(),
   idleTtlSeconds: z.literal(0),
-  estimatedMemoryGB: z.number().positive(),
+  // Read old deployments, but never use this historical estimate as a reservation.
+  estimatedMemoryGB: z.number().positive().optional(),
   service: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.@:-]*\.service$/),
   models: z.array(z.enum(["qwen-image-2.1-turbo", "flux-3-image-klein"])).optional(),
 });

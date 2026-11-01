@@ -1,5 +1,13 @@
 <article lang="ja">
   <h1>メモリー資源不足エラーの共通契約</h1>
+  <aside>
+    <p>
+      2026年11月1日の後続修正：オンデマンドの固定予約によるmemory_exhaustedは廃止対象である。従来の数値と07:58受入は当時の記録として残す。現在の実測空き・host
+      floor・起動順序制御は<a href="./on-demand-live-memory-admission-repair-2026-11-01.html"
+        >実測メモリー判定への修正</a
+      >を参照する。旧reasonは保存済みエラーとの互換読取りに残す。
+    </p>
+  </aside>
   <p>
     2026年11月1日のソースレビューと統一仕様。対象は、要求されたAgent ProfileとProvider
     subsetからroute、runtime、backendを解決した後のオンデマンド起動前メモリーadmission、および同じ判定を使うLocal

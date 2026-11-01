@@ -90,6 +90,7 @@ export class ProviderInstanceManager {
     private readonly options: {
       now?: () => number;
       idleTtlMs?: number;
+      withStartup?: <T>(runtime: RuntimeDefinition, signal: AbortSignal | undefined, work: () => Promise<T>) => Promise<T>;
       onEvent?: (name: string, labels: Record<string, string>) => void;
     } = {},
   ) {}
@@ -166,7 +167,8 @@ export class ProviderInstanceManager {
         if (!this.isCurrent(record)) continue;
         record.instance.status = observed.status;
         if (!["STARTING", "HOT", "BUSY"].includes(observed.status)) {
-          const recovered = await this.backend.ensureInstance(revision, runtime, signal);
+          const recover = () => this.backend.ensureInstance!(revision, runtime, signal);
+          const recovered = await (this.options.withStartup?.(runtime, signal, recover) ?? recover());
           if (!this.isCurrent(record)) continue;
           record.instance = recovered;
         }
@@ -218,9 +220,10 @@ export class ProviderInstanceManager {
           const controller = new AbortController();
           let createdFlight!: EnsureFlight;
           const promise = (async () => {
-            const instance = this.backend.ensureInstance
-              ? await this.backend.ensureInstance(revision, runtime, controller.signal)
-              : await this.ensureLegacy(revision.revision, runtime, controller.signal);
+            const load = () => this.backend.ensureInstance
+              ? this.backend.ensureInstance(revision, runtime, controller.signal)
+              : this.ensureLegacy(revision.revision, runtime, controller.signal);
+            const instance = await (this.options.withStartup?.(runtime, controller.signal, load) ?? load());
             const created: ManagedInstance = {
               instance,
               runtime,

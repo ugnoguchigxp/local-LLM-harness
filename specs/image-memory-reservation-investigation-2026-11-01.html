@@ -1,0 +1,413 @@
+<article lang="ja">
+  <h1>画像生成の予約不足と再試行の調査（2026年11月1日）</h1>
+  <aside>
+    <p>
+      利用者の前提訂正：オンデマンド起動には固定の予約サイズを持たせない。本書の予約量は現行実装が行った計算の調査記録であり、正しい製品仕様として追認しない。56
+      GiBの再調整という初期提案を撤回し、<a
+        href="./on-demand-live-memory-admission-repair-2026-11-01.html"
+        >固定予約を廃止する修正案</a
+      >へ置き換える。
+    </p>
+  </aside>
+  <aside>
+    <p>
+      追加調査：初回の「64
+      MiBの予約不足」という説明は拒否条件の再現までで、予約値そのものの由来を説明していなかった。18:37
+      JSTまでに計測元・判定への接続・git履歴を追跡した。空きメモリの計測はOSと一致するが、画像の静的判定に使う56
+      GiBは旧構成から継承した設定値であり、現在の実測値を反映する処理がない。10月31日に画像経路へこの静的判定を追加した変更が、現在構成へ再校正していない見積もりを画像の起動拒否へ結び付けている。以下の追加節で根拠を記録する。
+    </p>
+  </aside>
+  <p>
+    18:26〜18:32 JSTの画像要求を調査した。実メモリは十分に空いているが、LARMの静的予約は画像の追加34
+    GiBに対し33.9375 GiBしか残らず、64
+    MiBの予約超過で起動前に503を返している。画像workerの起動失敗や実行中OOMではない。稼働設定と状態を使い、生成やサービス操作なしで同じ拒否を再現した。
+  </p>
+  <section id="identity">
+    <h2>対象と解決経路</h2>
+    <p>
+      稼働releaseはdc846ec7b8b95e0690503a50393be2ba9dbfab06、configRevisionはd8113b5f71a32693641ddb79dd026e70b395a121c987b85ae8fc265d9ae3823a。healthはready。要求modelはqwen-image-2.1-turbo、POST
+      /v1/images/generationsからImageGenerationProvider、MediaVariantManagerのimage、larm-image-qwen21.serviceへ進む構成だが、beforeStartのServiceResourceLedgerで止まる。
+    </p>
+    <p>
+      同時刻の会話はProfile lfm2.5からroute llm-lfm25、runtime
+      ornith15-strix-conversationへ解決される。稼働backendはllama-swapが管理する混在poolのengineで、主200000と補助131072×2を提供する。別の画像用接続が要求するGemmaと稼働Ornithの違いだけをdriftとは扱わない。
+    </p>
+  </section>
+  <section id="memory">
+    <h2>物理的な空きと固定予約</h2>
+    <table>
+      <caption>
+        18:29:43 JSTのmanagement snapshot。単位はGiB
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">値</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">system available</th>
+          <td>89.0953</td>
+          <td>955億bytes超の実測空き。</td>
+        </tr>
+        <tr>
+          <th scope="row">accelerator available</th>
+          <td>75.2384</td>
+          <td>UMAのためsystem availableとは加算しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">管理上限</th>
+          <td>112</td>
+          <td>構成上128からOS等予約16を引く。</td>
+        </tr>
+        <tr>
+          <th scope="row">HOT 8 runtimeの通常予約</th>
+          <td>70</td>
+          <td>
+            Ornith 56、Granite 3.5、KittenTTS 1.5、embedding 1、Qwen TTS 5、Ruri 1、VOICEVOX
+            1、Whisper 1。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Ornithの追加保存予約</th>
+          <td>8.0625</td>
+          <td>RAM cache 6、一時staging 2、metadata 0.0625。</td>
+        </tr>
+        <tr>
+          <th scope="row">合計予約</th>
+          <td>78.0625</td>
+          <td>空のService ledgerと追加allocationなしで再計算した下限。</td>
+        </tr>
+        <tr>
+          <th scope="row">追加可能量</th>
+          <td>33.9375</td>
+          <td>112 − 78.0625。</td>
+        </tr>
+        <tr>
+          <th scope="row">画像要求</th>
+          <td>34</td>
+          <td>image variantの固定見積もり。</td>
+        </tr>
+        <tr>
+          <th scope="row">予約不足</th>
+          <td>0.0625</td>
+          <td>64 MiB。物理メモリの不足量ではない。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      ServiceResourceLedger.admissionは静的判定を先に行うため、実測空きが十分でもmemory_exhaustedとなる。空のledgerとallocation配列でも「needs
+      34 GiB but static headroom is 33.9375
+      GiB」を返した。残留Service予約や、画像用に作られたwaiting
+      allocationがなくても成立する原因である。waitingはadmittedAllocationの対象外である。
+    </p>
+    <p>
+      比較として同じsnapshotで32 GiBを要求すると静的・live判定の両方を通過し、live safety floor 16
+      GiBを引いた有効空きは59.2384 GiBだった。これは演算上の比較であり、画像の見積もりを32
+      GiBへ変更したり実生成したりした結果ではない。
+    </p>
+    <p>
+      補助KVの物理解放は静的なestimatedMemoryGBを変更しない。通常実行56 GiBと保存予約8.0625
+      GiBは別に計上する既存仕様で、cacheが空でも上限予約は残る。今回の計算では二重計上の不具合は確認していない。全8
+      HOTはmanaged warm
+      minInstances=1で、既存reclaimerの停止対象外となるため、時間経過だけで静的な空きが増える状態ではない。
+    </p>
+  </section>
+  <section id="requests">
+    <h2>待機と再試行の実際</h2>
+    <table>
+      <caption>
+        LARMの画像要求終了event。日付は2026年11月1日、時刻はJST
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">開始</th>
+          <th scope="col">所要ms</th>
+          <th scope="col">結果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">18:26:08.228</th>
+          <td>64</td>
+          <td>503 / memory_exhausted</td>
+        </tr>
+        <tr>
+          <th scope="row">18:26:39.680</th>
+          <td>64</td>
+          <td>503 / memory_exhausted</td>
+        </tr>
+        <tr>
+          <th scope="row">18:27:11.318</th>
+          <td>63</td>
+          <td>503 / memory_exhausted</td>
+        </tr>
+        <tr>
+          <th scope="row">18:27:42.753</th>
+          <td>60</td>
+          <td>503 / memory_exhausted</td>
+        </tr>
+        <tr>
+          <th scope="row">18:28:14.234</th>
+          <td>62</td>
+          <td>503 / memory_exhausted</td>
+        </tr>
+        <tr>
+          <th scope="row">18:28:45.639</th>
+          <td>65</td>
+          <td>503 / memory_exhausted</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      同じLARM要求が待機と生成を繰り返すのではなく、約31.5秒ごとに別request
+      IDのPOSTが到着している。同期画像経路はacquireを1回呼び、拒否後に終了する。LARM内部の画像再送loopではない。対象workerはinactive・MainPID
+      0で、今回の起動記録はない。直近30分のkernel journalにOOMの一致記録はない。
+    </p>
+    <p>
+      各POSTの直前にはclient eumenes-service-UUIDがProfile
+      SAAA-w-Image、providers=[llm]を要求する。この接続はsaaa-conversation-gemma4-26b-voice、route
+      llm-saaa-gemma4-26b、runtime
+      gemma4-26b-conversationへ解決され、memory_exhaustedでwaitingとなり、約1秒後に202が返る。画像POSTが503で終わると接続もDELETEされる。画像の起動をこのLLMが担当するわけではなく、不要な接続作成と別の待機表示を増やしている。
+    </p>
+    <p>
+      Eumenesのcleanな参照checkout
+      62e91216では、api/domains/larm/service/playground.tsがサービス取得にもproviders=[llm]の接続を作り、pendingでも画像をPOSTし、finallyで解放する。この実装とLARMログの順序は一致する。ただしこのcheckoutが呼出元の稼働版と同じこと、外側の約30秒再試行の実装箇所、対象job・画面は確定していない。ローカルの標準Eumenesログファイルは存在せず、製品DBにはアクセスしていない。
+    </p>
+  </section>
+  <section id="measurement-chain">
+    <h2>追加調査：計測元と判定値が接続されていない</h2>
+    <p>
+      LinuxNodeTelemetryは /proc/meminfo のMemAvailableを1024倍してbytesへ変換し、GPUは
+      /sys/class/drm/cardN/device
+      のVRAM・GTTのtotal/usedを読む。Observerは約2秒ごとにこれらを更新する。18:37:33〜35
+      JSTの3回の読み取りで、OSのMemAvailableは89.1057〜89.1082 GiB、daemon
+      telemetryは89.0997〜89.1141
+      GiBだった。取得時刻の差に相当する約数MiBの違いで、単位変換や桁落ちによる数十GiBの誤差はない。
+    </p>
+    <p>
+      同時点の稼働Ornith PID 3770130のDRM clientをdeviceとclient
+      IDで重複排除して集計すると、GPU確保量は21.38498
+      GiBで3回とも一致した。nativeのinspectでは保存cache 0 bytes・0
+      entries、補助2枠は非処理中、KVは主担当分200192
+      tokensまで縮小済みだった。GPU確保量にRSSを加算して物理総量とはしていない。ホストのMemTotal −
+      MemAvailableは約32.10 GiBであり、全ホストの値でも静的予約78.0625 GiBとは大きく違う。
+    </p>
+    <p>
+      ServiceResourceLedger.admissionの43〜55行はHOT等のruntime
+      IDを一意に集め、runtimeMemoryGBを合算する。runtimeMemoryGBはestimatedMemoryGBとpromptRetentionの上限予約を足す関数であり、実使用量を読む関数ではない。その合計で拒否を返した後に、59〜66行の実測空きの判定がある。現在のGPU使用量、cache実使用量、動的KV容量からestimatedMemoryGBを更新する処理はこの経路に存在しない。
+    </p>
+    <p>
+      稼働snapshotのtelemetryだけを60・89・100・120
+      GiBへ置き換えるオフライン比較を行った。全て同じ34 /
+      33.9375のmemory_exhaustedになった。実測空きを増やしても判定が変わらないことを再現した。これは試験内の入力差替えであり、本番telemetryや予約値は変更していない。
+    </p>
+  </section>
+  <section id="reservation-origin">
+    <h2>追加調査：56 GiBが作られ、残った経緯</h2>
+    <table>
+      <caption>
+        config/local-node/runtimes.yamlの変更履歴。単位はGiB
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">日付・commit</th>
+          <th scope="col">予約値</th>
+          <th scope="col">根拠・変更内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">10月12日 / 1226a0e</th>
+          <td>48</td>
+          <td>
+            Gemmaの構成をコピーしてOrnith STRIXを追加。資料に「容量予約は元と同じ48
+            GBを維持する」と明記。Ornith固有の最大実測から導いた値ではない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">10月13日 / 6e30195</th>
+          <td>52</td>
+          <td>共有KVを524288から1048576 tokensへ拡張して4を加算。</td>
+        </tr>
+        <tr>
+          <th scope="row">10月13日 / c639bee</th>
+          <td>54</td>
+          <td>vision projector対応で2を加算。</td>
+        </tr>
+        <tr>
+          <th scope="row">10月22日 / bc74d0b</th>
+          <td>56</td>
+          <td>checkpoint 62.813 MiB×32個、約1.963 GiBを見込み2を加算。</td>
+        </tr>
+        <tr>
+          <th scope="row">10月31日 / a134100</th>
+          <td>56のまま</td>
+          <td>
+            KVを800000から462144
+            tokens指定へ、同時実行4から3へ縮小。保存quotaは縮小したが、通常実行予約を再算出していない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">11月1日 / 稼働v8</th>
+          <td>56のまま</td>
+          <td>
+            補助KVを動的確保・解放するengineを導入しても、runtimeとreleaseの両方に同じ56を継承。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      旧1M時の通常attention KVは5760 bytes/tokenから5.625 GiB。現在の最大462336 tokensでは約2.4802
+      GiB、観測時200192では約1.0739 GiBである。checkpoint数の算術上限も4枠32個の約1.963
+      GiBから3枠24個の約1.472 GiBへ変わる。これらが変わっても56は減っていない。さらに24から6
+      GiBへ縮小した保存quotaの変更は独立枠にだけ反映され、通常実行56の妥当性の検証にはなっていない。
+    </p>
+    <p>
+      過去の1M・4枠canaryにも /srv/ai/evidence/strix-1m-context-20261013/canary.json
+      があり、起動前後のMemAvailable差は28.8462 GiB、GTT差は28.6901
+      GiBだった。vision対応の同構成の30サンプルでもホストGTT増加は最大約29.7725
+      GiB。これらは当時の短い合成要求の測定であり、現在の最大負荷の保証値ではない。ただし、48→56という設定値を現在の実測peakと呼ぶ根拠にはできない。現在構成の全最大負荷から56を導いた証跡は本調査では確認できなかった。
+    </p>
+  </section>
+  <section id="regression-origin">
+    <h2>追加調査：古い見積もりが画像を止めるようになった変更</h2>
+    <p>
+      a7e3cc5581e5c18ca208d33924202a9d1d696b7c（10月31日13:37のcommit）はapps/daemon/src/main.tsのmedia
+      beforeStartを変更し、画像を含む全variantへServiceResourceLedgerの固定予約判定を追加した。直前はService
+      ledgerに他処理がないことだけを確認し、画像の実メモリ確認はruntime-variant.shのMemAvailable ≥
+      34＋16 GiBに委ねていた。新経路はそれに加えて、古いruntime見積もりを合算して起動前に拒否する。
+    </p>
+    <p>
+      現在の約89 GiBなら従来の50 GiB事前条件を満たす。新経路は78.0625＋34 = 112.0625
+      GiBという固定計算で拒否する。構成変更に伴って実使用量は減り、取得した実測空きも大きいが、固定計算へ反映されないため結果が逆転する。画像側の34も9月25日の初期variantで導入した値をTurboへ継承しており、現在のimage
+      model別計測から自動導出する処理はない。
+    </p>
+    <p>
+      関連するLinux telemetryとService
+      ledgerの既存試験8件を実行し全て成功した。これらは計測値の読取りと固定式どおりの拒否を検証する試験であり、配備構成の予約値が実機に対して適切であることを検証していない。07:58の受入も画像の34
+      /
+      33.9375を503契約の成功例として記録していた。このため拒否処理の正常性が確認されても、画像の利用可否の回帰は残った。
+    </p>
+    <p>
+      確認できた原因は、古い構成から継承した非計測の予約値を、画像の起動拒否に使い始めたことと、その後の構成縮小・実測を予約へ反映する仕組みがないことである。今回の64
+      MiBはその式の超過量であって、適切な実行メモリ値ではない。再試行や追加LLM接続は主因ではなく、利用側の変更を本調査の解決条件にはしない。現在の最大負荷peakと適切な予約値の確定は、今回の受動計測だけでは完了していない。
+    </p>
+  </section>
+  <section id="response">
+    <h2>18:47 JSTの現在使用量</h2>
+    <p>
+      2026-11-01 18:47:40 JSTのOS管理対象は121.2105 GiB、MemAvailableは89.1284 GiB。MemTotal −
+      MemAvailableで評価する使用量は32.0821 GiBである。MemFreeは45.8485 GiB、Cachedは43.8053
+      GiB。cacheは大部分が必要に応じて再利用できるため、cacheを含むMemTotal − MemFreeの75.3621
+      GiBを、起動に使えない占有量とはしない。swap使用は0.4172 GiBで、RAMの使用量とは別である。
+    </p>
+    <table>
+      <caption>
+        稼働中の主な処理。CPUはPSS、GPUはDRM clientを重複排除した確保量。単位はGiB
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">処理</th>
+          <th scope="col">CPU側</th>
+          <th scope="col">GPU確保</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Ornith（主KV・重み・計算領域等）</th>
+          <td>0.414</td>
+          <td>21.385</td>
+        </tr>
+        <tr>
+          <th scope="row">Granite ASR</th>
+          <td>0.193</td>
+          <td>3.123</td>
+        </tr>
+        <tr>
+          <th scope="row">Whisper / system service</th>
+          <td>0.280</td>
+          <td>0.910</td>
+        </tr>
+        <tr>
+          <th scope="row">Whisper / user service</th>
+          <td>0.279</td>
+          <td>0.911</td>
+        </tr>
+        <tr>
+          <th scope="row">E5 embedding</th>
+          <td>1.697</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">Qwen TTS</th>
+          <td>0.697</td>
+          <td>0.250</td>
+        </tr>
+        <tr>
+          <th scope="row">Ruri</th>
+          <td>0.521</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">VOICEVOX</th>
+          <td>0.510</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">KittenTTS</th>
+          <td>0.375</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">LARM daemon ＋ llama-swap</th>
+          <td>0.239</td>
+          <td>0</td>
+        </tr>
+        <tr>
+          <th scope="row">画像・3D・音楽・Stable Audio worker</th>
+          <td>0</td>
+          <td>0</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      CPU
+      PSSとGPU確保量には共有RAM等の重複や観測範囲の違いがあるため、表の2列を単純加算してホスト使用量とはしない。OS・kernel・他のprocessを含む全体の使用量は前述のOS値から判断する。読み取り可能な全processのDRM
+      clientをdevice・client IDで一意化した合計は26.5788
+      GiBだった。全processの権限があるという主張ではない。
+    </p>
+    <p>
+      nativeの追跡確認ではOrnithの保存cacheは0 bytes・0 entries、KVは200192
+      tokens、補助2枠は非処理中だった。通常attention KVの算術量は約1.074 GiBで、GPU確保量21.385
+      GiBの内数である。重み・projector・workspaceの個々の実使用量はDRMのprocess合計から分離していない。Whisperはsystemとuserで別PID・別DRM
+      clientの2プロセスが稼働し、それぞれが上記メモリーを使う。調査中に停止していない。
+    </p>
+    <p>
+      snapshotはrepository外の
+      /srv/ai/evidence/image-memory-investigation-20261101/memory-breakdown-20261101.json、全読取り可能GPU
+      clientの一覧はgpu-client-inventory-20261101.jsonへ保存した。画像・3D・音楽・Stable
+      Audioは全てinactive・MainPID 0を確認した。
+    </p>
+  </section>
+  <section id="verification-scope">
+    <h2>検証の範囲と証跡</h2>
+    <p>
+      本調査ではread-only
+      API、journald、稼働構成、参照sourceを照合し、静的判定をオフライン再現した。設定変更、worker起動、サービス再起動、画像生成、Eumenes変更は実施していない。実生成成功は未検証。snapshot・要求event・再現scriptと結果はrepository外の
+      /srv/ai/evidence/image-memory-investigation-20261101
+      に保存した。ソースと稼働版のservice-resource-ledger.ts、runtime-variants.yamlはSHA-256が一致した。
+    </p>
+    <p>
+      既存の<a href="./memory-resource-error-contract.html">メモリー資源不足エラー契約</a
+      >には07:58配備時点で同じ34 /
+      33.9375の拒否が記録されている。今回初めて発生したKV回帰とは判定しない。関連する<a
+        href="./auxiliary-kv-five-minute-idle-release.html"
+        >補助KVの5分解放</a
+      >、<a href="./image-api-startup-failure-investigation-2026-10-31.html">前日の起動失敗調査</a
+      >とは原因と検証時点を区別する。
+    </p>
+  </section>
+</article>

@@ -45,17 +45,6 @@ const registry: Registry = {
   routes: [],
 };
 
-test("cache payload, staging and metadata consume admission capacity without shrinking execution context", () => {
-  const withCache = structuredClone(registry);
-  const snapshotState = state([snapshot("resident", "HOT"), snapshot("worker", "COLD")]);
-  expect(admitRuntimes({ registry: withCache, state: snapshotState, allocations: [], candidateRuntimeIds: ["worker"] }).ok).toBe(true);
-  withCache.runtimes[1]!.promptRetention = promptRetentionPolicySchema.parse({});
-  const result = admitRuntimes({ registry: withCache, state: snapshotState, allocations: [], candidateRuntimeIds: ["worker"] });
-  expect(result.ok).toBe(false);
-  expect(result.nodes[0]!.incrementalMemoryGB).toBe(33.0625);
-  expect(withCache.runtimes[1]!.resources.maxConcurrentRequests).toBe(1);
-});
-
 function snapshot(id: string, status: RuntimeSnapshot["status"]): RuntimeSnapshot {
   const runtime = registry.runtimes.find((item) => item.id === id)!;
   return {
@@ -107,282 +96,58 @@ function allocation(runtime: string): Allocation {
   };
 }
 
-test("admission counts each runtime once across multiple capabilities", () => {
-  const result = admitRuntimes({
-    registry,
-    state: state([]),
-    allocations: [],
-    candidateRuntimeIds: ["worker", "worker"],
-  });
-  expect(result).toEqual({
-    ok: true,
-    nodes: [{
-      node: "local-node",
-      usableMemoryGB: 48,
-      committedMemoryGB: 24,
-      incrementalMemoryGB: 24,
-      availableMemoryGB: 24,
-    }],
-  });
-});
-
-test("admission reserves resident memory even while its observation is cold", () => {
-  registry.runtimes[1]!.resources.estimatedMemoryGB = 25;
-  const result = admitRuntimes({
-    registry,
-    state: state([snapshot("resident", "COLD")]),
-    allocations: [],
-    candidateRuntimeIds: ["worker"],
-  });
-  registry.runtimes[1]!.resources.estimatedMemoryGB = 24;
-  expect(result).toEqual(expect.objectContaining({
-    ok: false,
-    reason: "memory_exhausted",
-  }));
-});
-
-test("admission rejects memory oversubscription while preserving the resident reserve", () => {
-  const result = admitRuntimes({
-    registry,
-    state: state([snapshot("resident", "HOT")]),
-    allocations: [],
-    candidateRuntimeIds: ["worker"],
-  });
-  expect(result).toEqual(expect.objectContaining({
-    ok: true,
-  }));
-
-  registry.runtimes[1]!.resources.estimatedMemoryGB = 25;
-  const rejected = admitRuntimes({
-    registry,
-    state: state([snapshot("resident", "HOT")]),
-    allocations: [],
-    candidateRuntimeIds: ["worker"],
-  });
-  registry.runtimes[1]!.resources.estimatedMemoryGB = 24;
-  expect(rejected).toEqual(expect.objectContaining({
-    ok: false,
-    reason: "memory_exhausted",
-  }));
-});
-
-test("admission rejects a runtime at declared allocation capacity", () => {
-  const result = admitRuntimes({
-    registry,
-    state: state([snapshot("worker", "HOT")]),
-    allocations: [allocation("worker")],
-    candidateRuntimeIds: ["worker"],
-  });
-  expect(result).toEqual(expect.objectContaining({
-    ok: false,
-    reason: "runtime_capacity",
-    runtime: "worker",
-  }));
-});
-
-test("non-resident startup fails closed on stale or insufficient live telemetry", () => {
-  const observed = state([]);
-  observed.node.telemetry = {
-    status: "available",
-    observedAt: "2026-08-28T00:00:00.000Z",
-    source: "test",
-    systemMemoryTotalBytes: 64 * 1024 ** 3,
-    systemMemoryAvailableBytes: 20 * 1024 ** 3,
-  };
-  const liveTelemetry = {
-    requiredForNonResident: true,
-    maxAgeMs: 10_000,
-    now: Date.parse("2026-08-28T00:00:01.000Z"),
-  };
-  const exhausted = admitRuntimes({
-    registry,
-    state: observed,
-    allocations: [],
-    candidateRuntimeIds: ["worker"],
-    liveTelemetry,
-  });
-  expect(exhausted.ok).toBe(false);
-  if (!exhausted.ok) expect(exhausted.reason).toBe("live_memory_exhausted");
-
-  const stale = admitRuntimes({
-    registry,
-    state: observed,
-    allocations: [],
-    candidateRuntimeIds: ["worker"],
-    liveTelemetry: { ...liveTelemetry, now: Date.parse("2026-08-28T00:01:00.000Z") },
-  });
-  expect(stale.ok).toBe(false);
-  if (!stale.ok) expect(stale.reason).toBe("telemetry_unavailable");
-});
-
-test("resident-only admission does not depend on live telemetry", () => {
-  const result = admitRuntimes({
-    registry,
-    state: state([]),
-    allocations: [],
-    candidateRuntimeIds: ["resident"],
-    liveTelemetry: { requiredForNonResident: true, maxAgeMs: 1, now: Date.now() },
-  });
-  expect(result.ok).toBe(true);
-});
-
-test("live admission counts a pending runtime once until its memory is observed hot", () => {
-  const expanded = structuredClone(registry);
-  expanded.nodes[0]!.resources.memoryTotalGB = 128;
-  const pending = structuredClone(expanded.runtimes[1]!);
-  pending.id = "pending";
-  pending.resources.estimatedMemoryGB = 32;
-  delete pending.resources.maxConcurrentAllocations;
-  expanded.runtimes.push(pending);
-  const observed = state([snapshot("resident", "HOT"), { ...snapshot("worker", "STARTING"), id: "pending" }]);
-  observed.node.telemetry = { status: "available", observedAt: observed.generatedAt, source: "test",
-    systemMemoryTotalBytes: 128 * 1024 ** 3, systemMemoryAvailableBytes: 48 * 1024 ** 3 };
-  const one = { ...allocation("pending"), status: "pending" as const };
-  const input = { registry: expanded, state: observed, candidateRuntimeIds: ["worker"],
-    allocations: [one, { ...one, id: "same-runtime-another-ref" }],
-    liveTelemetry: { requiredForNonResident: true, maxAgeMs: 1000, now: Date.parse(observed.generatedAt) } };
-  expect(admitRuntimes(input)).toMatchObject({ ok: false, reason: "live_memory_exhausted",
-    nodes: [{ liveAvailableMemoryGB: 48, effectiveLiveAvailableMemoryGB: 16 }] });
-  observed.node.telemetry.systemMemoryAvailableBytes = 56 * 1024 ** 3;
-  expect(admitRuntimes(input).ok).toBe(true);
-  observed.node.telemetry.systemMemoryAvailableBytes = 48 * 1024 ** 3;
-  observed.runtimes[1]!.status = "HOT";
-  expect(admitRuntimes(input).ok).toBe(true);
-});
-
-const swapRegistry: Registry = {
-  nodes: [{
-    id: "local-node",
-    endpoint: "http://127.0.0.1",
-    resources: { memoryTotalGB: 100, reservedMemoryGB: 16 },
-  }],
-  runtimes: [
-    {
-      id: "resident-27b",
-      capability: ["llm.general"],
-      protocol: "openai.chat-completions.v1",
-      backend: "systemd",
-      node: "local-node",
-      policy: { class: "resident" },
-      resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
-      deployment: { service: "resident.service", healthPort: 8080, endpoint: "http://127.0.0.1:8080" },
-    },
-    {
-      id: "worker-27b",
-      capability: ["llm.general"],
-      protocol: "openai.chat-completions.v1",
-      backend: "llama-swap",
-      node: "local-node",
-      policy: { class: "preferred", swapGroup: "worker-slot" },
-      resources: { estimatedMemoryGB: 40, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
-      deployment: {
-        modelId: "worker-27b",
-        listen: "http://127.0.0.1:8083",
-        endpoint: "http://127.0.0.1:8083/upstream/worker-27b",
-      },
-    },
-    {
-      id: "worker-35b",
-      capability: ["llm.general"],
-      protocol: "openai.chat-completions.v1",
-      backend: "llama-swap",
-      node: "local-node",
-      policy: { class: "preferred", swapGroup: "worker-slot" },
-      resources: { estimatedMemoryGB: 44, maxConcurrentRequests: 1, maxQueuedRequests: 0, queueTimeoutMs: 100 },
-      deployment: {
-        modelId: "worker-35b",
-        listen: "http://127.0.0.1:8083",
-        endpoint: "http://127.0.0.1:8083/upstream/worker-35b",
-      },
-    },
-  ],
-  profiles: [],
-  routes: [],
-};
-
-function swapState(statuses: Record<string, RuntimeSnapshot["status"]>): ClusterState {
-  return {
-    generatedAt: "2026-08-29T00:00:00.000Z",
-    node: {
-      id: "local-node",
-      online: true,
-      endpoint: "http://127.0.0.1",
-      resources: { memoryTotalGB: 100, reservedMemoryGB: 16 },
-      telemetry: {
-        status: "available",
-        observedAt: "2026-08-29T00:00:00.000Z",
-        source: "test",
-        systemMemoryTotalBytes: 100 * 1024 ** 3,
-        systemMemoryAvailableBytes: 8 * 1024 ** 3,
-      },
-    },
-    runtimes: Object.entries(statuses).map(([id, status]) => {
-      const runtime = swapRegistry.runtimes.find((item) => item.id === id)!;
-      return {
-        id,
-        status,
-        class: runtime.policy.class,
-        capability: runtime.capability,
-        node: runtime.node,
-        backend: runtime.backend,
-        endpoint: runtime.deployment.endpoint,
-        observedAt: "2026-08-29T00:00:00.000Z",
-      };
-    }),
-  };
+const gib = 1024 ** 3;
+function live(runtimes: RuntimeSnapshot[] = [], free = 40) {
+  const value = state(runtimes);
+  value.node.telemetry = { status: "available", observedAt: value.generatedAt, source: "test",
+    systemMemoryTotalBytes: 64*gib, systemMemoryAvailableBytes: free*gib };
+  return value;
 }
-
-test("admission replaces an idle HOT peer in the same swap group", () => {
-  const result = admitRuntimes({
-    registry: swapRegistry,
-    state: swapState({ "resident-27b": "HOT", "worker-27b": "HOT", "worker-35b": "COLD" }),
-    allocations: [],
-    candidateRuntimeIds: ["worker-35b"],
-    liveTelemetry: {
-      requiredForNonResident: true,
-      maxAgeMs: 10_000,
-      now: Date.parse("2026-08-29T00:00:01.000Z"),
-    },
-  });
-  expect(result).toEqual({
-    ok: true,
-    nodes: [{
-      node: "local-node",
-      usableMemoryGB: 84,
-      committedMemoryGB: 40,
-      incrementalMemoryGB: 44,
-      availableMemoryGB: 44,
-      liveAvailableMemoryGB: 8,
-      reclaimableMemoryGB: 40,
-      effectiveLiveAvailableMemoryGB: 48,
-    }],
-  });
+const fresh = { requiredForNonResident: true, maxAgeMs: 1000, now: Date.parse("2026-08-28T00:00:00Z") };
+function check(observed = live(), extra: Partial<Parameters<typeof admitRuntimes>[0]> = {}) {
+  return admitRuntimes({registry, state:observed, allocations:[], candidateRuntimeIds:["worker"], liveTelemetry:fresh, ...extra});
+}
+test("live admission ignores old runtime estimates, cache maxima and service reservations", () => {
+  const changed = structuredClone(registry);
+  changed.runtimes[0]!.resources.estimatedMemoryGB = 1000;
+  changed.runtimes[1]!.resources.estimatedMemoryGB = 1000;
+  changed.runtimes[0]!.promptRetention = promptRetentionPolicySchema.parse({});
+  expect(check(live(), {registry:changed, serviceReservations:[{node:"local-node",bytes:1000*gib,pendingBytes:1000*gib}]}))
+    .toMatchObject({ok:true,nodes:[{incrementalMemoryGB:0, liveAvailableMemoryGB:40,effectiveLiveAvailableMemoryGB:24}]});
 });
-
-test("admission never swaps a peer with an active allocation", () => {
-  const active = allocation("worker-27b");
-  const result = admitRuntimes({
-    registry: swapRegistry,
-    state: swapState({ "resident-27b": "HOT", "worker-27b": "HOT", "worker-35b": "COLD" }),
-    allocations: [active],
-    candidateRuntimeIds: ["worker-35b"],
-  });
-  expect(result).toEqual(expect.objectContaining({ ok: false, reason: "memory_exhausted" }));
+test("cold starts need fresh physical headroom above the host floor", () => {
+  expect(check(live([],16))).toMatchObject({ok:false,reason:"live_memory_exhausted"});
+  expect(check(live([],17)).ok).toBe(true);
+  expect(check(state([]))).toMatchObject({ok:false,reason:"telemetry_unavailable"});
+  expect(check(live(),{liveTelemetry:{...fresh,now:fresh.now+2000}})).toMatchObject({ok:false,reason:"telemetry_unavailable"});
 });
-
-test("admission rejects two members of one swap group in one allocation", () => {
-  const result = admitRuntimes({
-    registry: swapRegistry,
-    state: swapState({ "resident-27b": "HOT", "worker-27b": "COLD", "worker-35b": "COLD" }),
-    allocations: [],
-    candidateRuntimeIds: ["worker-27b", "worker-35b"],
-  });
-  expect(result).toEqual(expect.objectContaining({ ok: false, reason: "swap_group_conflict" }));
+test("accelerator and system headroom are not added on UMA", () => {
+  const value=live(); value.node.telemetry!.acceleratorMemoryAvailableBytes=10*gib;
+  expect(check(value)).toMatchObject({ok:false,reason:"live_memory_exhausted"});
 });
-
-test("AI admission accounts for Service reservations in static and live capacity", () => {
-  const state: ClusterState = { generatedAt: "2026-08-28T00:00:00.000Z", node: { ...registry.nodes[0]!, online: true }, runtimes: [] };
-  const result = admitRuntimes({ registry, state, allocations: [], candidateRuntimeIds: ["worker"], serviceReservations: [{ node: "local-node", bytes: 9 * 1024 ** 3, pendingBytes: 9 * 1024 ** 3 }] });
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.reason).toBe("memory_exhausted");
+test("pending references do not reserve a guessed number of bytes", () => {
+  expect(check(live([snapshot("resident","STARTING")]),{allocations:[allocation("resident")]}).ok).toBe(true);
+});
+test("warm reuse and resident lifecycle do not require a new cold allocation", () => {
+  expect(check(live([snapshot("worker","HOT")],0)).ok).toBe(true);
+  expect(check(state([]),{candidateRuntimeIds:["resident"]}).ok).toBe(true);
+});
+test("allocation capacity is enforced independently of physical memory", () => {
+  expect(check(live([snapshot("worker","HOT")]),{allocations:[allocation("worker")]}))
+    .toMatchObject({ok:false,reason:"runtime_capacity",runtime:"worker"});
+});
+test("unknown runtime and node references remain rejected", () => {
+  expect(check(live(),{candidateRuntimeIds:["missing"]})).toMatchObject({ok:false,reason:"unknown_runtime"});
+  expect(check(live(),{registry:{...registry,nodes:[]}})).toMatchObject({ok:false,reason:"unknown_node"});
+});
+test("two members of one swap group cannot be requested together", () => {
+  const changed=structuredClone(registry); changed.runtimes.forEach(r=>{r.policy.swapGroup="shared";});
+  expect(check(live(),{registry:changed,candidateRuntimeIds:["resident","worker"]})).toMatchObject({ok:false,reason:"swap_group_conflict"});
+});
+test("duplicate requirements do not duplicate physical accounting", () => {
+  expect(check(live(),{candidateRuntimeIds:["worker","worker"]})).toMatchObject({ok:true,nodes:[{incrementalMemoryGB:0}]});
+  expect(check(live(),{candidateRuntimeIds:["worker","worker"]}).nodes).toHaveLength(1);
+});
+test("offline structural validation does not fabricate a memory reservation", () => {
+  expect(check(state([]),{liveTelemetry:undefined})).toEqual({ok:true,nodes:[]});
 });

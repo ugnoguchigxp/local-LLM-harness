@@ -22,6 +22,39 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="plan" data-state="proposed" data-domain="on-demand-live-memory-admission">
+          <th scope="row">
+            <a href="./on-demand-live-memory-admission-repair-2026-11-01.html"
+              >オンデマンド起動の実測メモリー判定への修正案</a
+            >
+          </th>
+          <td>
+            固定予約を除去し、実測空き・ホスト安全余裕・bytesを持たない起動順序制御へ統一。<small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>on-demand-live-memory-admission</code></small
+            >
+          </td>
+          <td>2026-11-01利用者の前提訂正を反映した修正案。実装・配備は未実施。</td>
+        </tr>
+        <tr data-kind="evidence" data-state="current" data-domain="image-memory-reservation">
+          <th scope="row">
+            <a href="./image-memory-reservation-investigation-2026-11-01.html"
+              >画像生成の予約不足と再試行</a
+            >
+          </th>
+          <td>
+            物理空き89 GiB、旧構成から継承した56
+            GiBと実測を反映しない固定判定、画像起動前503の導入履歴。<small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>image-memory-reservation</code></small
+            >
+          </td>
+          <td>
+            2026-11-01 18:37までにOS値・DRM・native状態・git履歴を照合。調査のみ、設定変更なし。
+          </td>
+        </tr>
         <tr data-kind="contract" data-state="current" data-domain="auxiliary-kv-idle-release">
           <th scope="row">
             <a href="./auxiliary-kv-five-minute-idle-release.html">補助KVの推論終了後5分解放</a>

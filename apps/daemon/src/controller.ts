@@ -41,6 +41,7 @@ import {
 import { reconcileOrphanedPreferredRuntimes } from "./control-plane-startup-reconciliation";
 import { AllocationPreemption } from "./allocation-preemption";
 import { MemoryReclaimer } from "./memory-reclaimer";
+import { admitLiveMemory } from "@larm/core";
 import { MemoryRetirements } from "./memory-retirements";
 import { ProviderRequestAdmissionError } from "./provider-request-admission";
 import { LegacyLeaseRegistry } from "./legacy-lease-registry";
@@ -106,6 +107,7 @@ export type ControlPlaneOptions = {
   getServiceReservations?: () => readonly ServiceMemoryReservation[];
   requireFreshTelemetry?: boolean;
   telemetryMaxAgeMs?: number;
+  withStartup?: NonNullable<ConstructorParameters<typeof ProviderInstanceManager>[1]>["withStartup"];
   foregroundPriorityThreshold?: number;
   providerSwitchHoldMs?: number;
   memoryDrainTimeoutMs?: number;
@@ -265,6 +267,7 @@ export class ControlPlane {
       observeRouteShadow: (capability, result) => this.observeRouteShadow(capability, result),
     });
     this.providerInstances = new ProviderInstanceManager(backend, {
+      withStartup: options.withStartup,
       idleTtlMs: options.idleTtlMs,
       now: options.now,
       onEvent: (name, labels) => options.onEvent?.({ name, labels }),
@@ -796,6 +799,7 @@ export class ControlPlane {
 
   private async runEnsure(operation: Operation, abort: AbortController): Promise<void> {
     await runLegacyPrepareOperation({
+      withStartup: this.options.withStartup,
       operation,
       abort,
       registry: this.registry,
@@ -977,12 +981,16 @@ export class ControlPlane {
       if (this.draining || (allocation && (allocation.status !== "waiting" || Date.parse(allocation.expiresAt) <= this.now()))
         || busy || this.providerSwitchHoldUntil(runtimeIds, priority, false) !== undefined
         || this.hasExclusiveResourceConflict(runtimeIds, a => admittedAllocation(a.status) && (a.priority ?? 0) > priority)) return { ok: true };
-      return evaluateAllocationAdmission({
-        registry: this.registry, state: this.observer.getState(), allocations: this.admittedAllocations(),
-        candidateRuntimeIds: runtimeIds, serviceReservations: this.options.getServiceReservations?.(),
-        requireFreshTelemetry: this.options.requireFreshTelemetry ?? false,
-        telemetryMaxAgeMs: this.options.telemetryMaxAgeMs ?? 10_000, now: this.now(),
-      });
+      // Memory reclamation must not be hidden by a separate swap-group conflict.
+      // Only actual cold loading needs new physical headroom.
+      const state = this.observer.getState();
+      const cold = runtimeIds.map(id => getRuntime(this.registry, id)).find(runtime => runtime
+        && !state.runtimes.some(s => s.id === runtime.id && (s.status === "HOT" || s.status === "BUSY")));
+      if (!cold || !this.options.requireFreshTelemetry) return { ok: true };
+      const node = this.registry.nodes.find(n => n.id === cold.node)!;
+      return admitLiveMemory({ state, node: cold.node, now: this.now(),
+        maxAgeMs: this.options.telemetryMaxAgeMs ?? 10_000, accelerator: true,
+        safetyFloorBytes: node.resources.reservedMemoryGB * 1024 ** 3 });
     };
     if (!isMemoryPressure(evaluateAdmission())) return;
     const recovery = Symbol("memory-recovery");

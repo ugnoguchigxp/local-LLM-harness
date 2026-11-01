@@ -56,6 +56,7 @@ export class MediaVariantManager {
   private faulted = false;
   private waiters: symbol[] = [];
   private starting = false;
+  private readonly startupLeases: Partial<Record<MediaVariant, () => void>> = {};
   private readonly shutdown = new AbortController();
 
   isOccupied(): boolean { return this.starting || this.faulted || Object.values(this.active).some(Boolean) || Object.values(this.warm).some(Boolean); }
@@ -66,6 +67,7 @@ export class MediaVariantManager {
     script: string;
     idleTtlMs: { image: number; music: number; "image-flux3"?: number; mesh?: number; "stable-audio"?: number };
     beforeStart?: (variant: MediaVariant, signal?: AbortSignal) => void | Promise<void>;
+    acquireStartup?: (signal: AbortSignal) => Promise<() => void>;
     afterStart?: (variant: MediaVariant) => void | Promise<void>;
     afterStop?: (variant: MediaVariant) => void;
     onResourceWait?: (variant: MediaVariant, error: MediaVariantResourceError) => void;
@@ -101,7 +103,9 @@ export class MediaVariantManager {
         this.starting = true;
         try {
           const startSignal = AbortSignal.any([this.shutdown.signal, ...(signal ? [signal] : [])]);
-          await this.options.beforeStart?.(variant, startSignal);
+          this.startupLeases[variant] = await this.options.acquireStartup?.(startSignal);
+          try { await this.options.beforeStart?.(variant, startSignal); }
+          catch (error) { this.releaseStartup(variant); throw error; }
           try {
             this.warm[variant] = false;
             startSignal.throwIfAborted();
@@ -207,10 +211,16 @@ export class MediaVariantManager {
       await this.run("stop", variant);
       this.warm[variant] = false;
       this.options.afterStop?.(variant);
+      this.releaseStartup(variant);
     } catch (error) {
       this.faulted = true;
       throw new MediaVariantStopError(variant, error);
     }
+  }
+
+  private releaseStartup(variant: MediaVariant): void {
+    this.startupLeases[variant]?.();
+    delete this.startupLeases[variant];
   }
 
   private run(action: "start" | "stop", variant: MediaVariant, signal?: AbortSignal): Promise<void> {

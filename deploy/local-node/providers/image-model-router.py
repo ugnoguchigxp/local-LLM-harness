@@ -73,8 +73,7 @@ class ImageModelRouter:
             provider.validate_request(request)
             self.accepting = False
             self.selected = provider
-            reserve = 48 if name == "flux-3-image-klein" else 34
-            if self.flux.native.available_bytes() < (reserve + 16) * 1024**3:
+            if self.flux.native.available_bytes() <= 16 * 1024**3:
                 raise RuntimeError("insufficient available memory for selected image model")
             provider.start()
             return provider.generate(request)

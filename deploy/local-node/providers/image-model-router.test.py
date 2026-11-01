@@ -113,10 +113,10 @@ class ImageRouterTest(unittest.TestCase):
         router.qwen.start.assert_not_called()
         self.assertFalse(router.generation_lock.locked())
 
-    def test_selected_memory_reserve_prevents_launch(self):
+    def test_actual_safety_floor_prevents_launch(self):
         router = self.router()
         router.start()
-        router.flux.native.available_bytes = lambda: 60 * 1024**3
+        router.flux.native.available_bytes = lambda: 15 * 1024**3
         with self.assertRaisesRegex(RuntimeError, "insufficient"):
             router.generate({"model": "flux-3-image-klein", "prompt": "A cat"})
         router.flux_provider.start.assert_not_called()

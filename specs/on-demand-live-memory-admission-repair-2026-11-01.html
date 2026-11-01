@@ -1,0 +1,161 @@
+<article lang="ja">
+  <h1>オンデマンド起動を実測メモリー判定へ戻す修正案</h1>
+  <p>
+    2026年11月1日。利用者の指示は、オンデマンド起動に固定の予約サイズを持たせないことである。画像起動を拒否した78.0625
+    GiBの固定合算を廃止する。56
+    GiBを別の固定値に調整する案は採らない。利用者の指示により実装を進め、公開画像APIとOrnith主200k・補助128k×2の同時実行を受入条件とする。実機結果と配備は末尾に追記する。
+  </p>
+  <section id="problem">
+    <h2>修正する誤り</h2>
+    <p>
+      ServiceResourceLedgerは既存runtimeのestimatedMemoryGB、cacheの上限、Service予約を合算し、構成上の112
+      GiBから差し引いている。実測空きが約89 GiBあっても追加可能量を33.9375
+      GiBと判断し、画像を起動する前に拒否する。これはオンデマンドの実使用状況を判定する処理になっていない。取得したtelemetryの精度を上げるだけでは、この固定合算による先行拒否は消えない。
+    </p>
+    <p>
+      requested Profile → route → runtime →
+      backendで対象を確定し、その対象を起動する際に増えるメモリーと現在の空きを評価する。起動済みProviderの使用量はOS・driverの利用可能量に反映されている。停止済み定義、接続保持、warm方針、保存cacheの上限を物理的な占有量として足さない。warm方針は停止対象を選ぶ規則として扱う。
+    </p>
+  </section>
+  <section id="admission">
+    <h2>新しい判定</h2>
+    <p>
+      GPUを使う起動ではsystem availableと対象GPUのavailableの小さい側、CPUだけの起動ではsystem
+      availableを使う。UMAでsystemとGPUの空きを加算しない。ホスト全体の安全余裕を一度だけ差し引き、実際の空きが残る場合に起動する。将来量の予測を新しい固定予約へ置き換えず、ロード・生成の実際の増分は実機検証で観測する。既存runtimeの見積もり、cache上限、Serviceの固定予約をさらに差し引かない。
+    </p>
+    <pre><code>実測有効空き = max(0, 対象の実測利用可能量 − ホストの安全余裕)
+起動可能 = 新鮮な計測が利用可能 かつ 実測有効空き &gt; 0</code></pre>
+    <p>
+      測定結果はモデルと実行構成へ対応付けて診断に保存し、起動後に専用の占有枠として残さない。モデルの将来peak全体を起動前に確保できるという保証はしない。既存の16
+      GiB safety
+      floorを維持し、確保失敗・生成中のfloor割込みを正常な失敗処理で片付ける。過去の設定値34や56、cache上限を判定へ戻さない。
+    </p>
+    <p>
+      プロセス別の増分測定では、同じDRM
+      clientを複数fdから二重集計しない。UMAのGPU量とRSSをそのまま加算して物理総量と呼ばない。起動時・モデルの遅延ロード・初回生成のpeak、処理終了後を区別し、globalな空き容量と対応付けて記録する。
+    </p>
+  </section>
+  <section id="coordination">
+    <h2>同時起動を容量予約に置き換えない</h2>
+    <p>
+      ノード単位の共通起動gateを導入し、LLM・画像・音楽・3D・オンデマンドServiceが同じ観測値を見て同時にモデルをロードする競合を防ぐ。gateは実行順序だけを管理し、bytesを持たない。取得後に新鮮なtelemetryを読み直し、起動・実際のモデルロードを行い、その結果を再観測してから次の起動へ進む。既に起動済みProviderの通常推論はこの起動gateで直列化しない。
+    </p>
+    <p>
+      HTTP
+      listenerのreadyだけではモデル未ロードの場合がある。画像のように初回生成でロードする経路では、そのロードを含む最初の要求までgateの対象にする。開始失敗・取消では対象workerの終了を確認し、再観測後にgateを解放する。停止を確認できない場合は、対象の起動経路を隔離して失敗を返す。gate待ちの取消やdaemon終了も処理する。
+    </p>
+    <p>
+      実測で不足する場合だけ、既存の優先度・実行中要求・最小常駐数に従って解放候補を選び、停止後に再計測する。推定解放量だけで起動を許可しない。処理中のメモリー増加と動的KV確保には実際の確保失敗・既存の安全余裕監視を適用する。cache等の上限は使用を制限する値として維持し、起動時の常時占有枠としては使わない。
+    </p>
+  </section>
+  <section id="changes">
+    <h2>503の抑制</h2>
+    <p>
+      固定予約の誤判定による503は、固定合算を外すことで解消する。一時的に実測空きが足りない場合は、同じ要求をLARM内で既存の要求期限まで待機・再判定する経路を設け、直ちに503を返す動作を抑制する。待機中にconsumerへ生成POSTの再送を要求しない。起動gateの待機も同じ期限と取消に従う。
+    </p>
+    <p>
+      実メモリー不足が期限まで解消しない場合、telemetryが取得できない場合、workerの起動・実行失敗は理由を保持してエラーとする。HTTP
+      200で失敗を隠したり503を無条件に握り潰したりしない。画像の同期要求は現在の900秒の総期限を超えて保持せず、期限超過は既存の504契約と整合させる。待機・測定・起動・完了の段階を区別して追跡する。これは提案であり現行本番へ反映していない。
+    </p>
+  </section>
+  <section id="implementation-changes">
+    <h2>変更箇所</h2>
+    <table>
+      <caption>
+        共通の誤った固定合算を外し、各経路で再導入しない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">場所</th>
+          <th scope="col">変更</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">packages/core/src/service-resource-ledger.ts</th>
+          <td>
+            オンデマンド起動の固定合算とbytes予約を廃止。実測空きとホスト安全余裕による共通判定へ置き換える。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">packages/core/src/admission.ts</th>
+          <td>
+            オンデマンドruntimeの既存・候補をruntimeMemoryGBで固定合算する分岐を外す。Profile、Provider
+            subset、同時実行数、swap groupの判定はそれぞれの規則で行う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">
+            apps/daemon/src/main.ts、controller、allocation startup、local-service-manager
+          </th>
+          <td>
+            mediaだけを特例にせず共通起動gateと実測判定へ接続。reserve/observe/releaseによる架空の容量予約を除く。lifecycleの保持とメモリーの占有を分離する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">packages/backends</th>
+          <td>
+            OS・driverの観測と対象backendの起動・停止・モデルロード観測を担当。CPU
+            anonだけをGPU込みの実使用量として扱わない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">runtime-variant.sh、image-model-router.py</th>
+          <td>
+            固定値34/48を予約サイズとして使う重複判定も共通の実測起動判定と整合させる。直接workerを起動して共通gateを迂回する経路も確認する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">設定・release・公開診断</th>
+          <td>
+            estimatedMemoryGB等の旧値をオンデマンドの拒否根拠から除外。cacheの強制上限とホスト安全余裕は用途を明示。診断は実測時刻、空き、安全余裕、観測増分、拒否理由を返し、予約済み量を実使用量と表示しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="implementation">
+    <h2>実装と受入準備</h2>
+    <p>
+      共通のadmitLiveMemoryをcoreに実装し、実測値とhost floorだけを比較する。旧Service
+      ledgerは互換用のlifecycle
+      markerとしてbytesとpendingBytesを0に固定し、判定へ渡さない。media設定から固定サイズを除き、shellと画像routerの34/48
+      GiBの重複事前判定も除いた。実際のモデルのロード・初回生成によるメモリー増加は同時実行の実機観測で確認する。
+    </p>
+    <p>
+      起動gateはProvider Instance、旧prepare、local service、mediaの起動を共有する。mediaのlistener
+      readyはモデルロード完了ではないため、生成とworker停止までgateを保持する。既存Ornithへのclaim・通常推論はgateを取得しない。別runtime同士のswap
+      groupの排他は固定メモリー式に依存しない独立判定へ修正した。メモリー解放候補の選択でも、古いサイズの合計から解放できた量を推定しない。
+    </p>
+    <p>
+      実機受入では公開接続APIから主200kと補助128k×2をclaimし、Qwen画像とFLUX画像の各生成中に3本のJSON/SSE推論を同時実行する。nativeの同時処理3、画像の速やかな起動、画像GETとhash・decode・worker終了、終了後の3本再利用、KV増減失敗0、資源待機eventなしを確認する。作成した接続だけを解放し、利用者の接続やcacheを全消去しない。
+    </p>
+  </section>
+  <section id="verification">
+    <h2>今回の受入条件</h2>
+    <ol>
+      <li>
+        現snapshotのsystem約89 GiB・GPU約75 GiBで、旧56
+        GiBやcache上限により画像が拒否されない。起動済み定義の旧見積もりだけを変えても起動判定が変わらない。
+      </li>
+      <li>
+        実際の空きが不足する場合とtelemetryが古い場合は、根拠付きで拒否または既存の待機規則へ進む。同時起動を直列化し、ロード後に新鮮な計測をやり直す。
+      </li>
+      <li>
+        異なる種類の同時起動、遅延ロード、取消、起動失敗、停止失敗を検証する。同じ空き容量を見た複数の起動が同時ロードへ進まない。
+      </li>
+      <li>
+        公開画像APIから実生成し、生成前後のsystem/GPU値、worker停止、結果画像の取得まで確認する。直接workerを起動する試験だけで合格にしない。
+      </li>
+      <li>
+        主200k・補助128k×2の既存推論と画像を併行させ、動的KVの増減を含むメモリー推移と処理結果を確認する。解放が実際の空きと次の判定へ反映される。
+      </li>
+    </ol>
+    <p>
+      既存資料の固定予約を前提とする記述と試験をこの修正方針に合わせる。HTTPエラーの形式だけの成功を、オンデマンド生成が利用可能であることの受入に置き換えない。原因調査と実測証跡は<a
+        href="./image-memory-reservation-investigation-2026-11-01.html"
+        >画像生成の予約不足と再試行の調査</a
+      >を参照する。
+    </p>
+  </section>
+</article>

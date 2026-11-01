@@ -16,7 +16,7 @@ function runtime(id: string, memory: number): RuntimeDefinition {
 }
 async function fixture(options: { live?: number; stopFails?: boolean; freeAfterStop?: number; telemetryUnavailable?: boolean; control?: ControlPlaneOptions } = {}) {
   const registry: Registry = {
-    nodes: [{ id: "node", endpoint: "http://localhost", resources: { memoryTotalGB: 64, reservedMemoryGB: 8 } }],
+    nodes: [{ id: "node", endpoint: "http://localhost", resources: { memoryTotalGB: 64, reservedMemoryGB: 40 } }],
     runtimes: [runtime("target", 40), runtime("large", 36), runtime("small", 8)], profiles: [],
     routes: ["target", "large", "small"].map(id => ({ id, capabilities: [id], explicitOnly: false, candidates: [{ runtime: id, purpose: "primary" }] })),
   };
@@ -28,7 +28,7 @@ async function fixture(options: { live?: number; stopFails?: boolean; freeAfterS
     listening: running.has(id), healthOk: running.has(id), busy: busy.has(id) });
   const backend: RuntimeBackend = {
     health: async id => health(id), list: async () => registry.runtimes.map(r => health(r.id)),
-    ensure: async r => { calls.push(`start:${r.id}`); running.add(r.id); return health(r.id); },
+    ensure: async r => { calls.push(`start:${r.id}`); if (!running.has(r.id)) free -= r.resources.estimatedMemoryGB; running.add(r.id); return health(r.id); },
     stop: async id => {
       calls.push(`stop:${id}`);
       if (options.stopFails) throw new Error("stop failed");
@@ -45,7 +45,7 @@ async function fixture(options: { live?: number; stopFails?: boolean; freeAfterS
   });
   const allocate = (id = "target", priority = 3000) => control.allocate({ requirements: [{ capability: id, route: id }],
     ttlSeconds: 300, allowFallback: false, deploymentPolicy: "existing-only", capacityPolicy: "wait", priority });
-  return { registry, running, busy, calls, control, observer, backend, allocate };
+  return { registry, running, busy, calls, control, observer, backend, allocate, setFree: (value: number) => { free = value; } };
 }
 
 test("a Profile allocation reclaims only enough idle memory before starting the resolved runtime", async () => {
@@ -223,7 +223,7 @@ test("deferred retirement rechecks memory need and protection before stopping", 
       const instance = f.control.retainProviderRequest(id, "large", "running");
       expect((await f.allocate()).status).toBe(503);
       if (protect) f.registry.runtimes.find(r => r.id === "large")!.policy.warm!.minInstances = 1;
-      else f.registry.runtimes.find(r => r.id === "target")!.resources.estimatedMemoryGB = 1;
+      else { f.setFree(56); await f.observer.refresh(); }
       f.control.releaseProviderRequest(instance, "running"); await f.control.flush();
       expect(f.calls).toEqual(["stop:small"]);
       expect(f.control.isRuntimeTransitioning("large")).toBe(false);
@@ -433,13 +433,14 @@ test("a cancelled queued recovery returns promptly and never stops another servi
   } finally { gate.resolve(); f.control.beginDrain(); }
 });
 
-test("a physically impossible request or unavailable telemetry never evicts useful work", async () => {
-  const f = await fixture();
+test("a historical estimate is not an occupied reservation; unavailable telemetry never evicts", async () => {
+  const f = await fixture({ live: 56 });
   try {
     f.registry.runtimes[0]!.resources.estimatedMemoryGB = 100;
-    expect((await f.allocate()).status).toBe(503);
-    expect(f.calls).toEqual([]);
+    expect((await f.allocate()).status).toBe(202);
+    expect(f.calls.filter(c => c.startsWith("stop:"))).toEqual([]);
   } finally { f.control.beginDrain(); }
+
   const unavailable = await fixture({ telemetryUnavailable: true });
   try {
     expect((await unavailable.allocate()).status).toBe(409);
@@ -460,7 +461,7 @@ test("recovery observation failure returns a retryable response and leaves the q
   } finally { f.control.beginDrain(); }
 });
 
-test("an existing waiter reclaims idle memory when its execution slot becomes available", async () => {
+test("an existing waiter reuses a hot instance without evicting unrelated memory", async () => {
   const f = await fixture();
   try {
     f.registry.runtimes[0]!.resources.maxConcurrentAllocations = 1;
@@ -472,7 +473,7 @@ test("an existing waiter reclaims idle memory when its execution slot becomes av
     await f.control.releaseAllocation((first.body as { id: string }).id);
     await f.control.flush();
     expect(f.control.getAllocation((second.body as { id: string }).id)?.status).toBe("ready");
-    expect(f.calls).toEqual(["stop:large"]);
+    expect(f.calls).toEqual([]);
   } finally { f.control.beginDrain(); }
 });
 
@@ -497,7 +498,7 @@ test("cancelling a waiter during recovery observation prevents victim preemption
     const first = await f.allocate();
     const waiter = await f.allocate();
     const waiterId = (waiter.body as { id: string }).id;
-    f.running.add("large"); await f.observer.refresh();
+    f.running.add("large"); f.running.delete("target"); await f.observer.refresh();
     const list = f.backend.list;
     f.backend.list = async () => {
       if (f.control.isRuntimeTransitioning("large")) { entered.resolve(); await gate.promise; }
@@ -530,17 +531,17 @@ test("a concurrent admission cannot exceed the active allocation limit during me
 });
 
 
-test("service recovery uses the full ledger result and never stops insufficient victims", async () => {
+test("service recovery does not evict work based on historical reservations", async () => {
   const f = await fixture({ live: 56 });
   const ledger = new ServiceResourceLedger();
   try {
-    // 36 GiB cannot be reclaimed; the remaining eligible 8 GiB cannot fit a 32 GiB service.
+    // Fresh live headroom is sufficient even when old estimates suggest otherwise.
     f.registry.runtimes.find(r => r.id === "large")!.policy.warm!.minInstances = 1;
     const evaluateAdmission = () => ledger.admission("node", 32 * gb, {
       registry: f.registry, state: f.observer.getState(), allocations: f.control.getAllocations(),
       now: Date.now(), maxAgeMs: 1000,
     });
-    expect(evaluateAdmission()).toMatchObject({ ok: false, reason: "memory_exhausted" });
+    expect(evaluateAdmission()).toMatchObject({ ok: true });
     await f.control.reclaimMemory({ evaluateAdmission });
     expect(f.calls).toEqual([]);
     expect(ledger.reservations()).toEqual([]);

@@ -681,10 +681,9 @@ test("production warm floor keeps shared Ornith STRIX and speech warm while admi
       endpoint: runtime.deployment.endpoint, observedAt,
     })),
   };
-  // The Ornith cache reservation keeps this 40 GiB secondary outside node capacity.
-  // Retained payloads still reserve their complete independent memory budget.
+  // Structural planning does not reserve unallocated cache or historical estimates.
   const secondary = admitRuntimes({ registry, state, allocations: [], candidateRuntimeIds: ["ornith-general"] });
-  expect(secondary.ok).toBe(false);
+  expect(secondary.ok).toBe(true);
   const withoutRetention = structuredClone(registry);
   delete withoutRetention.runtimes.find(runtime => runtime.id === "ornith15-strix-conversation")!.promptRetention;
   expect(admitRuntimes({ registry: withoutRetention, state, allocations: [], candidateRuntimeIds: ["ornith-general"] }).ok).toBe(true);

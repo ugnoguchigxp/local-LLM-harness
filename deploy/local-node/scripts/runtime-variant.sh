@@ -8,11 +8,11 @@ variant="${2:-}"
 exec 9>"${LARM_MEDIA_LOCK_PATH:-/srv/ai/cache/larm-media-variant.lock}"
 flock -w "${LARM_MEDIA_LOCK_TIMEOUT_SECONDS:-10}" 9 || { echo "media control lock is busy" >&2; exit 1; }
 case "${variant}" in
-  music) service=larm-music-ace-step.service; health=http://127.0.0.1:8090/health; reserve_gb=18 ;;
-  image) service=larm-image-qwen21.service; health=http://127.0.0.1:8091/health; reserve_gb=34 ;;
-  image-flux3) service=larm-image-flux3.service; health=http://127.0.0.1:8094/health; reserve_gb=48 ;;
-  stable-audio) service=larm-audio-stable.service; health=http://127.0.0.1:8092/health; reserve_gb=6 ;;
-  mesh) service=larm-mesh-trellis2.service; health=http://127.0.0.1:8096/health; reserve_gb=32 ;;
+  music) service=larm-music-ace-step.service; health=http://127.0.0.1:8090/health ;;
+  image) service=larm-image-qwen21.service; health=http://127.0.0.1:8091/health ;;
+  image-flux3) service=larm-image-flux3.service; health=http://127.0.0.1:8094/health ;;
+  stable-audio) service=larm-audio-stable.service; health=http://127.0.0.1:8092/health ;;
+  mesh) service=larm-mesh-trellis2.service; health=http://127.0.0.1:8096/health ;;
   *) echo "usage: $0 status|start|stop music|image|image-flux3|mesh|stable-audio" >&2; exit 2 ;;
 esac
 
@@ -60,7 +60,7 @@ case "${action}" in
       fi
     done
     available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
-    required_kib="$(( (reserve_gb + 16) * 1024 * 1024 ))"
+    required_kib="$(( 16 * 1024 * 1024 ))"
     if (( available_kib < required_kib )); then
       echo "insufficient available memory for ${variant}: need ${required_kib} KiB including safety floor, have ${available_kib} KiB" >&2
       exit 1

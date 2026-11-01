@@ -18,7 +18,7 @@ function allocation(id: string, runtimeId: string, priority: number): Allocation
 const input = { registry, state, allocations: [] as Allocation[], admission: { ok: false, reason: "memory_exhausted", node: "node" },
   requestedRuntimeIds: ["requested"], protectedRuntimeIds: new Set<string>(), priority: 3000, foregroundPriorityThreshold: 3000 };
 
-test("memory recovery prefers unused large runtimes on the pressured node and protects explicit warmth", () => {
+test("memory recovery respects priority and warmth without treating estimates as reclaimable capacity", () => {
   expect(memoryReclamationCandidates(input).map(v => v.runtime)).toEqual(["idle-large", "idle-small"]);
   expect(memoryReclamationCandidates({ ...input, protectedRuntimeIds: new Set(["idle-large"]) }).map(v => v.runtime)).toEqual(["idle-small"]);
 });

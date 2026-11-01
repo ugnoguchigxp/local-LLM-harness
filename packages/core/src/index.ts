@@ -327,6 +327,7 @@ export {
 } from "./provider-recovery";
 
 export { mediaPolicySchema, validateMediaPolicyPorts } from "./media-policy";
+export { admitLiveMemory } from "./live-memory";
 export * from "./local-service";
 export { ServiceResourceLedger, ServiceMemoryAdmissionError, type ServiceAdmissionInput } from "./service-resource-ledger";
 

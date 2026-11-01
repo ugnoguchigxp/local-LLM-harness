@@ -2,6 +2,32 @@ import { expect, test } from "bun:test";
 import { MediaVariantBusyError, MediaVariantManager } from "./media-variants";
 import { MediaVariantResourceError } from "./media-variants";
 
+test("the shared startup gate covers lazy loading until the request worker has stopped", async () => {
+  const events: string[] = [];
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    acquireStartup: async () => { events.push("gate"); return () => { events.push("release-gate"); }; },
+    run: async action => { events.push(action); },
+  });
+  const release = await manager.acquire("image");
+  expect(events).toEqual(["gate", "start"]);
+  // A healthy listener may still have no model loaded; the gate is held through generation.
+  await release();
+  expect(events).toEqual(["gate", "start", "stop", "release-gate"]);
+  await manager.close();
+});
+
+test("a preflight failure returns the startup gate without starting a worker", async () => {
+  let released = false;
+  const manager = new MediaVariantManager({ script: "unused", idleTtlMs: { image: 0, music: 0 },
+    acquireStartup: async () => () => { released = true; },
+    beforeStart: () => { throw new Error("cancelled preflight"); },
+    run: async () => { throw new Error("must not launch"); },
+  });
+  await expect(manager.acquire("image")).rejects.toThrow("cancelled preflight");
+  expect(released).toBe(true);
+  await manager.close();
+});
+
 test("failed readmission keeps the existing warm worker tracked until its normal idle stop", async () => {
   const calls: string[] = [];
   let reject = false;

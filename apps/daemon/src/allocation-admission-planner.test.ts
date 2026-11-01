@@ -87,23 +87,18 @@ test("lower-priority work shares a warm multi-slot runtime and waits when all sl
     .toEqual({ ok: true, waiting: true });
 });
 
-test("static and live memory refusals use 503 with distinct machine-readable reasons", () => {
+test("old estimates do not refuse demand starts; real live shortage remains structured", () => {
   const memoryRegistry = structuredClone(registry);
   memoryRegistry.runtimes[0]!.policy.class = "preferred";
   memoryRegistry.runtimes[0]!.resources.estimatedMemoryGB = 120;
-  const result = planAllocationCapacity(input({ registry: memoryRegistry }));
-  expect(result).toMatchObject({ ok: false, result: { status: 503, body: { error: {
-    code: "resource_exhausted", resource: "memory", reason: "memory_exhausted", retry: "after_capacity_change",
-    admission: [{ incrementalMemoryGB: 120, availableMemoryGB: 112 }],
-  } } } });
-  memoryRegistry.runtimes[0]!.resources.estimatedMemoryGB = 8;
+  expect(planAllocationCapacity(input({registry:memoryRegistry}))).toEqual({ok:true,waiting:false});
   const liveState = structuredClone(state);
   liveState.node.telemetry = { status: "available", source: "test", observedAt: liveState.generatedAt,
     systemMemoryAvailableBytes: 4 * 1024 ** 3 };
   expect(planAllocationCapacity(input({ registry: memoryRegistry, state: liveState, requireFreshTelemetry: true })))
     .toMatchObject({ ok: false, result: { status: 503, body: { error: {
       code: "resource_exhausted", reason: "live_memory_exhausted",
-      admission: [{ effectiveLiveAvailableMemoryGB: 4 }],
+      admission: [{ effectiveLiveAvailableMemoryGB: 0 }],
     } } } });
 });
 

@@ -72,7 +72,11 @@ export function planAllocationCapacity(input: {
     telemetryMaxAgeMs: input.telemetryMaxAgeMs,
     ...(input.requireFreshTelemetry ? { now: input.now } : {}),
   });
-  const capacityBlocked = !admission.ok && input.conflictsWithAdmitted;
+  // Swap-group exclusion is independent of memory capacity. Multiple leases
+  // of the same multi-session runtime must remain shareable.
+  const exclusiveConflict = hasAllocationResourceConflict(input.registry, input.allocations,
+    input.runtimeIds, a => admittedAllocation(a.status), true);
+  const capacityBlocked = exclusiveConflict || (!admission.ok && input.conflictsWithAdmitted);
   const waiting = input.capacityPolicy === "wait" && (
     conflictsWithWaiter
     || conflictsWithHigherPriority
@@ -80,7 +84,7 @@ export function planAllocationCapacity(input: {
     || capacityBlocked
     || input.providerSwitchHoldUntil !== undefined
   );
-  if ((!admission.ok || input.providerSwitchHoldUntil !== undefined || conflictsWithHigherPriority) && !waiting) {
+  if ((!admission.ok || exclusiveConflict || input.providerSwitchHoldUntil !== undefined || conflictsWithHigherPriority) && !waiting) {
     const held = input.providerSwitchHoldUntil !== undefined;
     const reason = conflictsWithHigherPriority
       ? "higher_priority_allocation_active"

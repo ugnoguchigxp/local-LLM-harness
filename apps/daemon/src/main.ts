@@ -1,7 +1,8 @@
+import { StartupGate } from "./startup-gate";
+import { admitLiveMemory } from "@larm/core";
 import { pythonImageNormalizer } from "@larm/backends";
 import { ImageImportManager } from "./image-import-manager";
 import { MediaVariantBusyError, MediaVariantResourceError } from "@larm/backends";
-import { systemServiceAnonymousMemoryBytes } from "@larm/backends";
 import { MeshManager } from "./mesh-manager";
 import { MeshStore } from "./mesh-store";
 import { OnDemandMeshProvider } from "./mesh-provider";
@@ -99,6 +100,32 @@ const observer = new Observer(registry, backend, {
     }
   },
 });
+const startupGate = new StartupGate();
+async function waitForStartupMemory(node: string, accelerator: boolean, signal: AbortSignal): Promise<void> {
+  let lastReason: string | undefined;
+  for (;;) {
+    signal.throwIfAborted();
+    await observer.refresh();
+    const evaluate = () => admitLiveMemory({ state: observer.getState(), node, now: Date.now(),
+      maxAgeMs: config.telemetryMaxAgeMs, accelerator,
+      safetyFloorBytes: (registry.nodes.find(n => n.id === node)?.resources.reservedMemoryGB ?? 16) * 1024 ** 3 });
+    let admission = evaluate();
+    if (admission.ok) return;
+    if (admission.reason !== lastReason) {
+      lastReason = admission.reason;
+      writeEvent({ name: "startup_resource_wait", labels: { node, reason: admission.reason } });
+      if (admission.reason === "live_memory_exhausted") await control.reclaimMemory({ signal, evaluateAdmission: evaluate });
+      admission = evaluate();
+      if (admission.ok) return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(signal.reason); };
+      const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, 250);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
+  }
+}
 const requestTracker = new RequestTracker();
 const mutationCoordinator = new MutationCoordinator(observability);
 let control: ControlPlane;
@@ -202,7 +229,12 @@ control = new ControlPlane(registry, backend, observer, {
   historyLimit: config.historyLimit,
   maxActiveAllocations: config.activeAllocationLimit,
   stateMaxAgeMs: config.stateMaxAgeMs,
-  getServiceReservations: () => serviceLedger.reservations(),
+  withStartup: (runtime, signal, work) => startupGate.run(async () => {
+    const bounded = signal ?? AbortSignal.timeout(config.startupTimeoutMs);
+    await waitForStartupMemory(runtime.node, runtime.backend === "llama-swap", bounded);
+    try { return await work(); }
+    finally { await observer.refresh(); }
+  }, signal),
   requireFreshTelemetry: true,
   telemetryMaxAgeMs: config.telemetryMaxAgeMs,
   getCatalogRevision: () => catalogGeneration.revision,
@@ -225,12 +257,13 @@ if (config.localServicesEnabled) {
   if (new Set(localServicePrincipals.map(p => p.id)).size !== localServicePrincipals.length || new Set(localServicePrincipals.map(p => p.token)).size !== localServicePrincipals.length) throw new Error("duplicate local service principal");
   localServiceManager = new LocalServiceManager(definitions, new LocalServiceRoutingBackend(new LocalServiceSystemdBackend({ secretRoot: config.localServicesSecrets, observationRoot: config.localServicesObservations }), new SystemdProcessBackend({ secretRoot: config.localServicesSecrets, observationRoot: config.localServicesObservations, requestRoot: config.localServicesRequests })), {
     bootEpoch: identity.bootEpoch, journal: new LocalServiceFileJournal(config.localServicesJournal), ledger: serviceLedger,
-    reserve: (id, d) => {
-      if (mediaVariants.isOccupied()) throw new Error("media_conflict");
-      serviceLedger.reserve(id, d.node, d.resources.startupReservationBytes, { registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(), maxAgeMs: config.telemetryMaxAgeMs });
-    },
-    reclaimMemory: async d => {
-      await control.reclaimMemory({ evaluateAdmission: () => serviceMemoryAdmission(d.node, d.resources.startupReservationBytes) });
+    reserve: () => {},
+    runStartup: (d, work) => {
+      const signal = AbortSignal.timeout(d.readiness.timeoutSeconds * 1000);
+      return startupGate.run(async () => {
+        await waitForStartupMemory(d.node, d.resources.gpuAccess, signal);
+        try { await work(); } finally { await observer.refresh(); }
+      }, signal);
     },
     onEvent: (name, service, reason) => observeEvent({ name, labels: { service, ...(reason ? { reason } : {}) } }),
   });
@@ -348,40 +381,13 @@ const flux3Endpoint = sharedImageWorker ? imageEndpoint : mediaPolicy.variants["
   ? new URL(mediaPolicy.variants["image-flux3"].healthUrl).origin : undefined;
 const stableAudioEndpoint = new URL(mediaPolicy.variants["stable-audio"].healthUrl).origin;
 const musicEndpoint = config.musicProviderEndpoint ?? new URL(mediaPolicy.variants.music.healthUrl).origin;
-function serviceMemoryAdmission(node: string, bytes: number, liveSafetyFloorBytes = 0, accelerator = false) {
-  return serviceLedger.admission(node, bytes, {
-    registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(),
-    maxAgeMs: config.telemetryMaxAgeMs, liveSafetyFloorBytes, accelerator,
-  });
-}
 const mediaVariants = new MediaVariantManager({
-  beforeStart: async (variant, signal) => {
-    const policy = mediaPolicy.variants[variant];
-    if (!policy) throw new Error(`media variant ${variant} is not configured`);
-    const node = observer.getState().node.id;
-    const bytes = policy.estimatedMemoryGB * 1024 ** 3;
-    const liveSafetyFloorBytes = mediaPolicy.groups["accelerator-media-heavy"].minimumAvailableMemoryGB * 1024 ** 3;
-    await observer.refresh();
-    await control.reclaimMemory({ signal, evaluateAdmission: () => serviceMemoryAdmission(node, bytes, liveSafetyFloorBytes, true) });
-    signal?.throwIfAborted();
-    try {
-      serviceLedger.reserve(`media-${variant}`, node, bytes, {
-        registry, state: observer.getState(), allocations: control.getAllocations(), now: Date.now(),
-        maxAgeMs: config.telemetryMaxAgeMs, liveSafetyFloorBytes, accelerator: true,
-      });
-    } catch (error) {
-      if (error instanceof ServiceMemoryAdmissionError) throw new MediaVariantResourceError(error.admission.reason, error.admission.message, error.admission.nodes);
-      throw error;
-    }
+  acquireStartup: signal => startupGate.acquire(signal),
+  beforeStart: async (_variant, signal) => {
+    await waitForStartupMemory(observer.getState().node.id, true, signal!);
   },
-  onResourceWait: (variant, error) => writeEvent({ name: "media_resource_wait", labels: { variant, reason: error.reason, message: error.message } }),
-  afterStart: async variant => {
-    const used = await systemServiceAnonymousMemoryBytes(mediaPolicy.variants[variant]!.service);
-    await observer.refresh();
-    // Unmeasured model memory remains pending, including models loaded lazily after readiness.
-    if (used !== undefined) serviceLedger.observe(`media-${variant}`, used);
-  },
-  afterStop: variant => serviceLedger.release(`media-${variant}`),
+  afterStart: async () => { await observer.refresh(); },
+  afterStop: () => {},
   script: new URL("../../../deploy/local-node/scripts/runtime-variant.sh", import.meta.url).pathname,
   idleTtlMs: { "stable-audio": 0, mesh: 0, "image-flux3": 0, image: mediaPolicy.variants.image.idleTtlSeconds * 1_000, music: mediaPolicy.variants.music.idleTtlSeconds * 1_000 },
 });
@@ -716,6 +722,7 @@ async function shutdown(signal: string): Promise<void> {
   }
   shuttingDown = true;
   gatewayLifecycle.beginDrain(signal);
+  startupGate.close();
   await notifySystemd("--stopping", `--status=LARM draining after ${signal}`).catch((error) => {
     console.warn(error instanceof Error ? error.message : String(error));
   });
