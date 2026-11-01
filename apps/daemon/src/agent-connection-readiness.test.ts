@@ -76,6 +76,7 @@ test("a stalled ASR or LLM cannot delay TTS claim, while whole-connection readin
     expect(new Set(f.calls)).toEqual(new Set(["asr", "llm", "tts"]));
     const partial = publicAgentConnectionSchema.parse(f.controller.get(id, "owner").body);
     expect(partial.status).toBe("probing");
+    expect(partial.phase).toBe("probing");
     expect(Object.fromEntries(partial.providers.map(p => [p.name, p.readiness]))).toEqual({ asr: "probing", llm: "probing", tts: "ready" });
     expect((await f.controller.claim(id, "owner", "openai-provider-v1", false, ["tts"])).status).toBe(200);
     expect((await f.controller.claim(id, "owner", "openai-provider-v1")).status).toBe(409);
@@ -98,6 +99,7 @@ test("full LLM KV allocation capacity does not block audio allocation or revoke 
     const partial = publicAgentConnectionSchema.parse(f.controller.get(parent.id, "owner").body);
     expect(partial.providers.find(p => p.name === "asr")?.readiness).toBe("ready");
     expect(partial.providers.find(p => p.name === "tts")?.readiness).toBe("ready");
+    expect(partial.phase).toBe("waiting-capacity");
     expect(f.control.getAllocationWaitReason(parent.allocationId)).toEqual({ reason: "runtime_capacity", runtime: "llm" });
     const claim = await f.controller.claim(parent.id, "owner", "openai-provider-v1", false, ["asr", "tts"]);
     expect(claim.status).toBe(200);
@@ -107,6 +109,7 @@ test("full LLM KV allocation capacity does not block audio allocation or revoke 
     f.advance(60_001);
     const failed = publicAgentConnectionSchema.parse(f.controller.get(parent.id, "owner").body);
     expect(failed.status).toBe("failed");
+    expect(failed.phase).toBe("terminal");
     expect(failed.providers.find(p => p.name === "tts")?.readiness).toBe("ready");
     for (const token of tokens) expect(f.controller.verifyProviderToken(token).record.status).toBe("ready");
     expect((await f.controller.claim(parent.id, "owner", "openai-provider-v1", false, ["asr"])).status).toBe(200);
@@ -118,6 +121,74 @@ test("full LLM KV allocation capacity does not block audio allocation or revoke 
     for (const token of tokens) expect(() => f.controller.verifyProviderToken(token)).toThrow();
     expect(f.control.getAllocation(held.allocationId)?.status).toBe("ready");
   } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("an audio child capacity wait remains visible while the primary LLM is ready", async () => {
+  const f = await fixture({ audioLimit: 1 });
+  try {
+    const held = (await f.create("held-asr", "held-asr", ["asr"])).body as PublicAgentConnection;
+    const parent = (await f.create("voice")).body as PublicAgentConnection;
+    await Bun.sleep(1);
+    const partial = publicAgentConnectionSchema.parse(f.controller.get(parent.id, "owner").body);
+    expect(partial).toMatchObject({ status: "probing", phase: "waiting-capacity" });
+    expect(partial.providers.find(p => p.name === "llm")?.readiness).toBe("ready");
+    expect(partial.providers.find(p => p.name === "asr")?.readiness).toBe("waiting");
+    expect((await f.controller.claim(parent.id, "owner", "openai-provider-v1", false, ["llm", "tts"])).status).toBe(200);
+    await f.controller.release(held.id, "owner");
+    const deadline = performance.now() + 2000;
+    while ((f.controller.get(parent.id, "owner").body as PublicAgentConnection).status !== "ready" && performance.now() < deadline) await Bun.sleep(1);
+    expect(f.controller.get(parent.id, "owner").body).toMatchObject({ status: "ready", phase: "ready" });
+    await f.controller.release(parent.id, "owner");
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("cold primary deployment is not reported as probing when audio is ready", async () => {
+  let finishStartup!: () => void;
+  const startup = new Promise<void>(resolve => { finishStartup = resolve; });
+  const f = await fixture({ cold: ["llm"], ensure: async name => { if (name === "llm") await startup; } });
+  try {
+    const parent = (await f.create("voice")).body as PublicAgentConnection;
+    await Bun.sleep(1);
+    const partial = publicAgentConnectionSchema.parse(f.controller.get(parent.id, "owner").body);
+    expect(partial).toMatchObject({ status: "probing", phase: "deploying" });
+    expect(partial.providers.find(p => p.name === "llm")?.readiness).toBe("deploying");
+    expect(partial.providers.filter(p => p.name !== "llm").every(p => p.readiness === "ready")).toBeTrue();
+    finishStartup();
+    await f.control.flush();
+    const deadline = performance.now() + 2000;
+    while ((f.controller.get(parent.id, "owner").body as PublicAgentConnection).status !== "ready" && performance.now() < deadline) await Bun.sleep(1);
+    expect(f.controller.get(parent.id, "owner").body).toMatchObject({ status: "ready", phase: "ready" });
+    await f.controller.release(parent.id, "owner");
+  } finally { finishStartup(); f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("release is terminal before child cleanup and a late probe cannot resurrect the parent", async () => {
+  let finishProbe!: () => void;
+  const probe = new Promise<void>(resolve => { finishProbe = resolve; });
+  const f = await fixture({ check: async name => { if (name === "llm") await probe; return f.ready(name); } });
+  let finishCleanup!: () => void;
+  const cleanup = new Promise<void>(resolve => { finishCleanup = resolve; });
+  const releaseAllocation = f.control.releaseAllocation.bind(f.control);
+  f.control.releaseAllocation = async (...args) => { const result = await releaseAllocation(...args); await cleanup; return result; };
+  try {
+    const parent = (await f.create("voice")).body as PublicAgentConnection;
+    await Bun.sleep(1);
+    const partial = publicAgentConnectionSchema.parse(f.controller.get(parent.id, "owner").body);
+    expect(partial.phase).toBe("probing");
+    const released = f.controller.release(parent.id, "owner");
+    await Bun.sleep(1);
+    f.advance(60_001);
+    expect(f.controller.get(parent.id, "owner").body).toMatchObject({ status: "released", phase: "terminal" });
+    expect((f.controller.get(parent.id, "owner").body as PublicAgentConnection).error).toBeUndefined();
+    finishProbe();
+    finishCleanup();
+    await released;
+    await Bun.sleep(1);
+    const terminal = publicAgentConnectionSchema.parse(f.controller.get(parent.id, "owner").body);
+    expect(terminal.status).toBe("released");
+    expect(terminal.error).toBeUndefined();
+    expect(f.control.getAllocations().every(a => a.status === "released")).toBeTrue();
+  } finally { finishProbe(); finishCleanup(); f.control.beginDrain(); await f.control.flush(); }
 });
 
 test("warm repeated demand preserves each allocation and credentials while another LLM request is active", async () => {
@@ -204,6 +275,7 @@ test("HTTP: held LLM KV, protection and model handover cannot block independentl
       parent = publicAgentConnectionSchema.parse(await (await app.request(`/v1/agent-connections/${parent.id}`, { headers: controlHeaders })).json());
     }
     expect(parent.providers.find(p => p.name === "llm")?.readiness).toBe("waiting");
+    expect(parent.phase).toBe("waiting-capacity");
     expect(parent.providers.filter(p => p.name !== "llm").every(p => p.readiness === "ready")).toBeTrue();
     const claimed = await app.request(`/v1/agent-connections/${parent.id}/claim`, { method: "POST", headers: controlHeaders,
       body: JSON.stringify({ format: "openai-provider-v1", providers: ["asr", "tts"] }) });

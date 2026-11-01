@@ -128,8 +128,41 @@ test("pending connection health reports its providers as not ready and release c
   expect(result.status).toBe(503);
   expect(result.body).toMatchObject({ ready: false, providers: [{ name: "llm", reason: "connection_not_ready" }] });
   await controller.release(connection.id, "owner");
+  expect(controller.get(connection.id, "owner").body).toMatchObject({ status: "released", phase: "terminal" });
+  expect((controller.get(connection.id, "owner").body as PublicAgentConnection).error).toBeUndefined();
   await control.releaseAllocation((held.body as { id: string }).id);
   await control.flush();
+  expect(controller.get(connection.id, "owner").body).toMatchObject({ status: "released" });
+  expect((controller.get(connection.id, "owner").body as PublicAgentConnection).error).toBeUndefined();
+});
+
+test("external allocation release still fails the connection", async () => {
+  const f = await fixture();
+  try {
+    const connection = (await f.create("ornith1.5Strix-vision", "external-release")).body as PublicAgentConnection;
+    await f.control.releaseAllocation(connection.allocationId);
+    expect(f.controller.get(connection.id, "owner").body).toMatchObject({
+      status: "failed", phase: "terminal", error: { code: "allocation_released" },
+    });
+  } finally { f.control.beginDrain(); await f.control.flush(); }
+});
+
+test("explicit release can retry allocation cleanup without reopening the connection", async () => {
+  const f = await fixture();
+  const releaseAllocation = f.control.releaseAllocation.bind(f.control);
+  let failCleanup = true;
+  f.control.releaseAllocation = async (...args) => {
+    if (failCleanup) { failCleanup = false; throw new Error("synthetic cleanup failure"); }
+    return await releaseAllocation(...args);
+  };
+  try {
+    const connection = (await f.create("ornith1.5Strix-vision", "retry-release")).body as PublicAgentConnection;
+    await expect(f.controller.release(connection.id, "owner")).rejects.toThrow("synthetic cleanup failure");
+    expect(f.controller.get(connection.id, "owner").body).toMatchObject({ status: "released" });
+    expect((await f.controller.release(connection.id, "owner")).status).toBe(204);
+    expect(f.control.getAllocation(connection.allocationId)?.status).toBe("released");
+    expect((f.controller.get(connection.id, "owner").body as PublicAgentConnection).error).toBeUndefined();
+  } finally { f.control.beginDrain(); await f.control.flush(); }
 });
 
 test("new POST demand keeps the same connection and allocation beyond six idle minutes; replay does not extend", async () => {

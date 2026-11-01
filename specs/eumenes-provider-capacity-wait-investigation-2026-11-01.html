@@ -6,10 +6,77 @@
   <section id="conclusion">
     <h2>結論</h2>
     <p>
-      直接原因は<code>runtime_capacity</code>である。対象runtimeの<code>maxConcurrentAllocations=4</code>を既存の接続保持allocationが使い切っていた。メモリー不足、実際の生成3枠の混雑、モデルの起動失敗ではない。LARMの起動・解放・待機昇格は現行契約どおりに動いており、この事象に対する本番動作の修正は行わない。
+      直接原因は<code>runtime_capacity</code>である。対象runtimeの<code>maxConcurrentAllocations=4</code>を既存の接続保持allocationが使い切っていた。メモリー不足、実際の生成3枠の混雑、モデルの起動失敗ではない。ただし、再レビューでLARM側の状態表示と正常取消の不具合を2件再現し、修正した。「LARM側に修正不要」という初回結論は撤回する。保持上限4件の妥当性も、現行実装どおりであることとは別に評価する必要がある。
     </p>
     <p>
       08:29:11.484と08:29:11.487に旧接続2件がidleSeconds=300で自動解放され、その直後に待機allocationが昇格した。Eumenes再起動が直接復旧させたとの結論にはしない。再起動後の旧接続が、最後のProfile要求から300秒残ったことが復旧時刻を決めている。
+    </p>
+  </section>
+  <section id="larm-rereview">
+    <h2>LARM側の修正点を先に確認した結果</h2>
+    <p>
+      利用者の「まずはそれを確認して」という指示に従い、実装変更の前に既存fixtureへ期待値を追加して再現した。以下の2件は推測ではなく、現行コードで試験が失敗することを確認した不具合である。再現用patchと出力はrepository外の<code>/srv/ai/logs/larm-canary/provider-wait-rereview-20261101.icp4pm0p</code>へ保存し、一時的なassertionは試験後に取り除いた。本確認では本番を変更していない。
+    </p>
+    <table>
+      <caption>
+        LARM側で確認した問題と最小修正の方針
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">問題</th>
+          <th scope="col">再現と影響</th>
+          <th scope="col">修正と検証の要件</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">複数Providerの容量待ち表示</th>
+          <td>
+            agent-connection-readiness.test.tsの「full LLM KV allocation capacity does not block
+            audio allocation or revoke audio on LLM
+            timeout」で、LLMのallocationがruntime_capacity待ち、ASR/TTSがreadyでも、公開phaseはwaiting-capacityではなくprobingになる。controllerのpublic()が子接続を集約する際、元のphaseを一律probingへ上書きするためである。対象2件目と同じ構造であり、consumerは容量待ちを疎通確認中と誤認し得る。
+          </td>
+          <td>
+            子接続を含む集約で容量待ち・起動中・実際のprobeを区別し、既存phaseの意味を維持する。親LLM待ち・音声ready、親ready・子待ち、実際のprobe、期限到達を検証する。ASR/TTSの独立claimを維持する。詳細なruntime_capacity理由は現在公開Connectionに含まれず、必要な情報公開は別途契約として設計する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">正常取消の異常解放扱い</th>
+          <td>
+            agent-connection-controller-lifecycle.test.tsの「pending connection health reports its
+            providers as not ready and release cancels the
+            wait」で、正常release後のstatusはreleasedだが、errorにallocation_releasedと「owned
+            allocation was released
+            unexpectedly」が残る。release()がallocation解放をawaitしてからConnectionをterminalにするため、その間に待機処理が解放を異常検出する。対象1件目の保存済み応答にも同じエラーがある。
+          </td>
+          <td>
+            意図的な取消を、非同期cleanupが他処理へ観測される前にConnectionへ反映する。待機・probe・子接続の取消と競合を試験し、正常取消に異常解放エラーが付かないこと、実際の外部解放は引き続き検出できること、取消後にreadyへ戻らないことを確認する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      別の設計上の見直し点は保持上限4件である。この値は2026年10月13日の設定から引き継がれ、2026年10月31日の生成3枠・context
+      pool導入時にも維持されている。実行枠はgateway側で別に制御されるため、生成が空いていても旧接続の300秒idle猶予で新接続を止める。今回の主1・補助2・追加確認や再起動の構成に4件が適切という資源上の根拠は、今回確認できていない。値の単純増加や無制限化を決めず、保持するmetadata・cacheの予算、待機数、公平性、旧接続と新需要の共存、生成キュー上限を評価して適正化する。これは再現済み2件とは区別した設計評価事項である。
+    </p>
+    <p>
+      この2件の修正だけで保持上限による待機そのものが解消するとは判断しない。Eumenesに一方的な変更を求める前に、LARMの表示・取消を修正し、保持制限の方針を明確にする。初回35件の成功は既存の保持制限と昇格動作の検証であり、今回追加した期待値や保持上限の妥当性まで検証していたわけではない。
+    </p>
+  </section>
+  <section id="larm-fix">
+    <h2>既存契約内の修正と回帰試験</h2>
+    <p>
+      複数Providerの公開phaseは、全体readyならready、進行中の接続がなければterminal、それ以外は親・子のphaseからwaiting-capacity、deploying、probingの順に選ぶ。容量待ちや起動待ちが残っているのに、接続全体を疎通確認中と表示しない。既存statusの集約規則、Provider別readinessと独立claim、公開schemaは維持する。
+    </p>
+    <p>
+      明示releaseは、子接続やallocationの非同期cleanupより先に親Connectionをreleasedへ更新し、準備処理を中断して期限timerを解除する。正常取消にallocation_releasedを付与せず、遅れて完了したprobeでもreadyへ戻さない。allocation
+      cleanupは冪等処理を再実行でき、途中失敗後のDELETE再試行でも解放を完了できる。Connection経由ではない外部allocation解放は従来どおり異常として検出する。既に発生していた実際のエラーを一律に消去する修正ではない。
+    </p>
+    <p>
+      関連40試験が成功した。容量待ちの親とreadyな音声、readyな親と容量待ちの音声、cold起動と音声ready、実際のprobe、容量待ち期限到達、取消と子cleanup・遅延probeの競合、cleanup失敗後の再試行、外部allocation解放を検証した。主200000・補助131072の選択、生成poolの分離、保持上限とidle解放からの待機昇格も引き続き成功した。
+    </p>
+    <p>
+      保持上限4件、生成枠200k×1・128k×2、300秒idleとready期限、モデル選択は変更しない。保持制限による待機そのものを解消したとは報告しない。本番適用と実接続の受入は、署名releaseの全体検査後に別途記録する。
     </p>
   </section>
   <section id="identity">
@@ -148,7 +215,7 @@
       Providerもwaitingと表示される。各モデルが個別に停止・故障したという意味ではない。ASR・TTSは独立した子allocationによりreadyを保てる。
     </p>
     <p>
-      接続作成の202とphase=waiting-capacityは、受理した同一IDで待機している状態である。各応答のreadyDeadlineを基準にGETで追跡し、terminal状態または利用者の取消まで同じConnectionを扱う。今回の本番期限は300秒。60秒で必ずDELETEして新規作成する契約ではない。
+      接続作成の202とphase=waiting-capacityは、受理した同一IDで待機している状態である。ただし、調査時の版では音声子接続を含む場合にphaseがprobingへ上書きされる不具合があり、修正版で是正した。各応答のreadyDeadlineを基準にGETで追跡し、terminal状態または利用者の取消まで同じConnectionを扱う。今回の本番期限は300秒。60秒で必ずDELETEして新規作成する契約ではない。
     </p>
     <p>
       新しいIdempotency-Keyで同じprincipal・profile・audience・client・Provider
@@ -156,7 +223,10 @@
     </p>
   </section>
   <section id="consumer-actions">
-    <h2>Eumenesに必要な対応</h2>
+    <h2>Eumenes側で確認する事項</h2>
+    <p>
+      LARM側の不具合と保持制限の評価を踏まえて照合する確認項目であり、Eumenesだけに原因や修正責任があるとの結論ではない。
+    </p>
     <ol>
       <li>
         主・補助・監視・全Provider接続の所有者と実際のConnection

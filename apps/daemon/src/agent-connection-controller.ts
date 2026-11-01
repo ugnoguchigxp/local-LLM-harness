@@ -949,13 +949,18 @@ export class AgentConnectionController {
   async release(id: string, principal: string): Promise<AgentConnectionApiResult> {
     const found = this.owned(id, principal);
     if ("body" in found) return found;
+    const releasePrimary = found.status !== "released" && found.status !== "expired";
+    if (releasePrimary) {
+      // Publish cancellation before child cleanup or allocation release can wake
+      // readiness work and make it mistake this release for an external failure.
+      found.status = "released";
+      found.releasedAt = new Date(this.now()).toISOString();
+      this.clearIdleTimer(found);
+      this.refreshLifecycle(found);
+    }
     for (const child of found.audioConnections?.values() ?? []) await this.release(child.id, principal);
-    if (found.status === "released" || found.status === "expired") return { status: 204, body: undefined };
-    found.preparationComplete?.(false); found.preparationComplete = undefined;
+    // Allocation release is idempotent, including retries after cleanup failed.
     await this.options.control.releaseAllocation(found.allocationId);
-    this.clearIdleTimer(found);
-    found.status = "released";
-    found.releasedAt = new Date(this.now()).toISOString();
     this.pruneHistory();
     return { status: 204, body: undefined };
   }
@@ -1415,7 +1420,12 @@ export class AgentConnectionController {
         const statuses = [record.status, ...children.map(child => child?.status ?? "failed")];
         result.status = statuses.every(status => status === "ready") ? "ready"
           : statuses.some(status => status === "pending" || status === "probing") ? "probing" : "failed";
-        result.phase = result.status === "ready" ? "ready" : result.status === "failed" ? "terminal" : "probing";
+        const phases = [phase, ...children.map(child => child?.phase)];
+        // A ready subset remains claimable, but the whole connection still has
+        // to pass capacity admission and deployment before probing can finish.
+        result.phase = result.status === "ready" ? "ready" : result.status === "failed" ? "terminal"
+          : phases.includes("waiting-capacity") ? "waiting-capacity"
+          : phases.includes("deploying") ? "deploying" : "probing";
       }
     }
     return result;
