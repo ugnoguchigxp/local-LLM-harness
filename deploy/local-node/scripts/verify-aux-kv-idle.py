@@ -80,6 +80,17 @@ def main():
         return hashlib.sha256(('auxiliary-idle-acceptance-' + label).encode()).hexdigest()
     def infer(label, capacity, word, lease=300000, stream=False):
         idle()
+        forced_token = None
+        if stream:
+            # Keep this timing probe generating across both original deadlines.
+            # A natural answer may emit EOS after only a few seconds.
+            for candidate_word in (word, 'blue', 'red'):
+                tokens = request(base + '/tokenize', {'content': ' ' + candidate_word, 'add_special': False})['tokens']
+                if len(tokens) == 1:
+                    word, forced_token = candidate_word, tokens[0]
+                    break
+            if forced_token is None:
+                raise RuntimeError('no single-token word for the deterministic streaming probe')
         prefix = '\n'.join(f'Record {i}: An independent synthetic retention test record.' for i in range(200))
         body = {'model': 'ornith1.5-strix', 'messages': [
             {'role': 'system', 'content': prefix + '\nThe remembered word is ' + word + '. Follow the requested output format.'},
@@ -91,6 +102,7 @@ def main():
         started = time.monotonic()
         if stream:
             body['stream_options'] = {'include_usage': True}
+            body.update(ignore_eos=True, logit_bias={str(forced_token): 100})
             req = urllib.request.Request(base + '/v1/chat/completions', data=json.dumps(body).encode(),
                 headers={'content-type': 'application/json', **call_headers})
             text, chunks, done, finish = '', 0, False, None
@@ -156,6 +168,7 @@ def main():
         infer('aux-two', 131072, 'jade')
         full = stats('two-auxiliaries')
         if full['onDemandKv']['allocatedTokens'] != 462336: raise RuntimeError('auxiliary capacity was not allocated')
+        peer_deadline = full['monotonic'] + max(s['idleRemainingMs'] for s in full['onDemandKv']['auxiliarySlots']) / 1000
         time.sleep(3)
         if stats('short-cache-lease-expired')['onDemandKv']['allocatedTokens'] != 462336:
             raise RuntimeError('cache lease shortened the inference idle grace period')
@@ -171,7 +184,9 @@ def main():
             time.sleep(min(20, max(.1, remaining - 5)))
         with ThreadPoolExecutor(max_workers=1) as executor:
             active = executor.submit(infer, 'aux-two', 131072, 'jade', 3000, True)
-            while time.monotonic() < first_deadline + 2:
+            # Probes can move retained prompts to RAM, so the next inference may
+            # use either physical slot. Cross both original slot deadlines.
+            while time.monotonic() < peer_deadline + 2:
                 idle(); time.sleep(.5)
             crossed = stats('one-idle-one-streaming')
             if active.done() or not any(s['processing'] for s in crossed['onDemandKv']['auxiliarySlots']):
