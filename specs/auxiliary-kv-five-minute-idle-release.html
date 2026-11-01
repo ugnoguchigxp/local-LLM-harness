@@ -22,7 +22,7 @@
         cacheを退避させる方式は採用しない。
       </li>
       <li>
-        所有taskの明示取消・scope失効は、そのslotが処理中でなければ5分を待たずに解放できる。別のtaskや主担当の状態を一括で無効化しない。
+        所有taskのscope失効・接続解放は、そのslotが処理中でなければ5分を待たずに解放できる。別のtaskや主担当の状態を一括で無効化しない。
       </li>
       <li>
         次の補助推論で必要なKVを再確保する。確保失敗時は既存状態を維持し、要求へ503を返す。結果不明の生成POSTを自動再送しない。
@@ -77,8 +77,10 @@
       resizeで生存中の主・補助状態を移し、縮小前の領域を解放する。
     </p>
     <p>
-      SemanticReadinessはpromptRetentionとcontextPoolsを持つruntimeに限り、private
-      keyとx-larm-kv-probe:1を送る。nativeはkeyを検証してserver_task.larm_kv_probeへ識別を保持する。認証のない同名headerは通常の推論として扱う。consumerから送られたprivate
+      SemanticReadinessはpromptRetentionとcontextPoolsを持つruntimeに限り、同じ固定bindingのGET
+      /propsを既存timeout内・redirect拒否で照会する。private認証成功、on-demand有効、idleReleaseMs=300000を確認できた場合だけprivate
+      keyとx-larm-kv-probe:1を生成probeへ送る。旧固定版・能力未対応・認証失敗の場合は従来のheaderなしprobeへ戻す。nativeはkeyを検証し、認証済みprobeだけcache
+      context必須判定を省略してserver_task.larm_kv_probeへ識別を保持する。認証のない同名headerは通常の推論として扱う。consumerから送られたprivate
       headerはgatewayの許可リストで転送しない。識別は子taskにも引き継ぎ、server_taskのlayoutが変わるためserver
       archiveの全objectとentry objectを再buildする。
     </p>
@@ -101,7 +103,8 @@
       /srv/ai/logs/larm-canary/aux-kv-idle-20261101-v2 に保存する。
     </p>
     <p>
-      最終候補ではOOM
+      最初の統合候補v3は認証済みprobeにcache contextがないためHTTP
+      400となり、停止した。本番へは反映していない。認証済みprobeだけの例外と、旧固定版でheaderを送らない能力判定を追加した最終候補ではOOM
       rollback改善済み基盤v4へ追加patchを重ね、認証済みprobeの反復、認証のないmarkerの拒否、主cache維持を含む同じ実時間試験を再実行する。最終受入・release
       gate・本番反映の結果は完了後に追記する。現時点で本番反映済みとはしない。
     </p>

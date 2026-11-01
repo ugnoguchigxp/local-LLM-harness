@@ -441,19 +441,41 @@ test("only local retained context pools receive the authenticated non-activity p
     promptRetention: promptRetentionPolicySchema.parse({}),
     contextPools: { defaultTokens: 131072, pools: [{ maxTokens: 200000, slots: 1 }, { maxTokens: 131072, slots: 2 }] },
   }] };
-  for (const current of [configured, registry]) {
+  const advertised = { larm_prompt_cache: { authenticated: true },
+    larm_on_demand_kv: { enabled: true, idleReleaseMs: 300000 } };
+  const scenarios = [
+    { current: configured, props: advertised, marked: true },
+    { current: registry, props: advertised, marked: false },
+    { current: configured, props: {}, marked: false }, // Original fixed engine.
+    { current: configured, props: { ...advertised, larm_on_demand_kv: { enabled: false, idleReleaseMs: 300000 } }, marked: false },
+    { current: configured, props: { ...advertised, larm_prompt_cache: { authenticated: false } }, marked: false },
+    { current: configured, props: { ...advertised, larm_on_demand_kv: { enabled: true } }, marked: false },
+    { current: configured, props: advertised, redirected: true, marked: false },
+  ];
+  for (const scenario of scenarios) {
     const headers: Headers[] = [];
-    const readiness = new SemanticReadiness({ control, getRegistry: () => current, executionGate: new ExecutionGate(),
-      timeoutMs: 100, promptRetentionKey: "b".repeat(64), fetchImpl: async (_url, init) => {
+    let propsCalls = 0;
+    const readiness = new SemanticReadiness({ control, getRegistry: () => scenario.current, executionGate: new ExecutionGate(),
+      timeoutMs: 100, promptRetentionKey: "b".repeat(64), fetchImpl: async (url, init) => {
+        if (new URL(String(url)).pathname === "/props") {
+          propsCalls += 1;
+          expect(String(url)).toBe("http://127.0.0.1:8080/props");
+          expect(init?.method).toBe("GET");
+          expect(init?.redirect).toBe("error");
+          expect(new Headers(init?.headers).get("x-larm-cache-key")).toBe("b".repeat(64));
+          if (scenario.redirected) throw new TypeError("redirect rejected");
+          return Response.json(scenario.props);
+        }
         headers.push(new Headers(init?.headers));
         return validLlmProbeResponse(init);
       },
     });
     expect((await readiness.check({ allocationId: "alloc", provider })).ready).toBeTrue();
+    expect(propsCalls).toBe(scenario.current === configured ? 1 : 0);
     expect(headers).toHaveLength(2);
     for (const sent of headers) {
-      expect(sent.get("x-larm-kv-probe")).toBe(current === configured ? "1" : null);
-      expect(sent.get("x-larm-cache-key")).toBe(current === configured ? "b".repeat(64) : null);
+      expect(sent.get("x-larm-kv-probe")).toBe(scenario.marked ? "1" : null);
+      expect(sent.get("x-larm-cache-key")).toBe(scenario.marked ? "b".repeat(64) : null);
       expect(sent.has("x-larm-context-tokens")).toBeFalse();
     }
   }

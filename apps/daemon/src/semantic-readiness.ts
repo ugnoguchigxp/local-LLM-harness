@@ -296,11 +296,14 @@ export class SemanticReadiness {
         : input.provider.protocol === "larm.embedding.v1"
           ? ["query", "passage"] as const
         : ["default"] as const;
+      const privateKvProbe = input.provider.protocol === "openai.chat-completions.v1"
+        && Boolean(resolved.runtime?.promptRetention && resolved.runtime.contextPools)
+        && await this.supportsPrivateKvProbe(resolved.endpoint, abort.signal);
       for (const format of formats) {
         const response = await withAbort(
           this.send(input.provider, resolved.endpoint, abort.signal, format,
             resolved.runtime?.reasoning?.readinessDisableThinking === true,
-            Boolean(resolved.runtime?.promptRetention && resolved.runtime.contextPools)),
+            privateKvProbe),
           abort.signal,
         );
         if (!response.ok) {
@@ -366,6 +369,31 @@ export class SemanticReadiness {
         completionGuaranteed: false,
       },
     };
+  }
+
+  private async supportsPrivateKvProbe(endpoint: string, signal: AbortSignal): Promise<boolean> {
+    if (!this.options.promptRetentionKey) return false;
+    try {
+      const response = await withAbort((this.options.fetchImpl ?? fetch)(`${endpoint.replace(/\/+$/, "")}/props`, {
+        method: "GET",
+        headers: { accept: "application/json", "x-larm-cache-key": this.options.promptRetentionKey },
+        signal,
+        redirect: "error",
+      }), signal);
+      if (!response.ok || mediaType(response) !== "application/json") {
+        return rejectResponseBody(response, "private probe capability unavailable");
+      }
+      const props = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(
+        await responseBytes(response, JSON_LIMIT, signal),
+      ));
+      return props?.larm_prompt_cache?.authenticated === true
+        && props?.larm_on_demand_kv?.enabled === true
+        && props?.larm_on_demand_kv?.idleReleaseMs === 300_000;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      // Fixed engines and earlier trial engines keep their existing probe contract.
+      return false;
+    }
   }
 
   private async send(

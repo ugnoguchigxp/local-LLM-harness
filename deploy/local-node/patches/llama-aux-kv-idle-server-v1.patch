@@ -8,7 +8,16 @@
  #include "server-chat.h"
  #include "server-common.h"
  #include "server-http.h"
-@@ -171,6 +172,8 @@
+@@ -119,6 +120,8 @@
+ static larm_cache_record larm_cache_context(const server_http_req & req) {
+     larm_cache_record r;
+     if (!larm_cache_authorized(req)) return r; // Maintenance or unscoped consumer: no retained state.
++    const auto * kv_probe = larm_retention_header(req.headers, "x-larm-kv-probe");
++    if (kv_probe && *kv_probe == "1") return r; // Authenticated maintenance has no retained consumer scope.
+     const auto * value = larm_retention_header(req.headers, "x-larm-cache-context");
+     if (!value || value->size() > 1024) throw std::runtime_error("invalid cache context");
+     const auto j = json::parse(*value);
+@@ -171,6 +174,8 @@
  
      // used to determine the slot that has been used the longest
      int64_t t_last_used = -1;
@@ -17,7 +26,7 @@
  
      // generation props
      int32_t n_ctx       = 0;  // context size per slot
-@@ -505,6 +508,10 @@
+@@ -505,6 +510,10 @@
  
              prompt.retention.completed = stop != STOP_TYPE_NONE;
              if (prompt.retention.completed) prompt.retention.used = larm_retention_policy::now();
@@ -28,7 +37,7 @@
              state = SLOT_STATE_IDLE;
  
              // do not keep context of the child slots - the parent's context is enough
-@@ -1379,9 +1386,18 @@
+@@ -1379,9 +1388,18 @@
      }
  
      json larm_kv_stats() const {
@@ -48,7 +57,7 @@
              {"failures", larm_kv_failures}, {"lastResizeMs", larm_kv_last_ms}, {"maxResizeMs", larm_kv_max_ms}};
      }
      bool larm_kv_resize(uint32_t tokens) {
-@@ -1402,7 +1418,8 @@
+@@ -1402,7 +1420,8 @@
          size_t auxiliary = 0;
          for (const auto & slot : slots) {
              if (uint32_t(slot.n_ctx) == larm_kv_policy.auxiliary
@@ -58,7 +67,7 @@
          }
          if (pending_slot >= 0 && uint32_t(slots.at(pending_slot).n_ctx) == larm_kv_policy.auxiliary) {
              auxiliary = std::min(size_t(2), auxiliary + completions - 1);
-@@ -1413,8 +1430,16 @@
+@@ -1413,8 +1432,16 @@
          if (!prompt_cache || !prompt_cache->retention.enabled || !ctx_tgt) return;
          const auto t = larm_retention_policy::now();
          prompt_cache->retention.prune(prompt_cache->states, t);
@@ -77,7 +86,7 @@
          if (larm_kv_policy.enabled) {
              const auto needed = larm_kv_needed();
              if (needed < llama_larm_kv_capacity(ctx_tgt)) larm_kv_resize(needed);
-@@ -4401,6 +4426,8 @@
+@@ -4401,6 +4428,8 @@
              }
  
              task.larm_context_tokens = larm_request_context_tokens(req);
@@ -86,7 +95,7 @@
              if (larm_context_pools().enabled() && (size_t) task.params.n_cmpl > larm_context_pools().count(task.larm_context_tokens)) throw std::runtime_error("completion count exceeds context pool capacity");
              // OAI-compat
              task.params.res_type          = res_type;
-@@ -4824,7 +4851,7 @@
+@@ -4824,7 +4853,7 @@
          std::string tmpl_tools   = common_chat_templates_source(meta->chat_params.tmpls.get(), "tool_use");
  
          json props = {
