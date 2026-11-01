@@ -1,0 +1,220 @@
+<article lang="ja">
+  <h1>Supertonic 3の日本語CPU音声サンプル実測</h1>
+  <p>
+    2026-11-01 JST、Ryzen AI MAX+ 395で公式FP32モデルをCPU実行し、日本語WAVを10本生成した。
+    同一会話文の4話者比較では、約8.7〜9.1秒の音声を0.649〜0.829秒で生成した。
+    読み・自然さ・表情タグの効果は人による試聴で判断する。今回の結果はProvider採用の決定ではない。
+  </p>
+  <section id="environment">
+    <h2>モデルと実行条件</h2>
+    <dl>
+      <dt>ホスト</dt>
+      <dd>AMD RYZEN AI MAX+ 395、16コア32スレッド、システムRAM約121 GiB。</dd>
+      <dt>推論</dt>
+      <dd>
+        ONNX Runtime 1.23.1、CPUExecutionProvider、FP32、intra-op 4、inter-op
+        1、逐次実行。GPUは使っていない。
+      </dd>
+      <dt>音声設定</dt>
+      <dd>
+        日本語指定 ja、速度1.05、8ステップ（比較用1本のみ5）、乱数seed 42、44.1 kHz・mono・PCM16。
+      </dd>
+      <dt>モデル出所</dt>
+      <dd>
+        <code>supertone-oss-archive/supertonic-3@aafc6e32416a594460b32413efc49d7fe4ce6d46</code>。公式保存先のONNX 4ファイル合計398,075,273
+        bytes。モデルライセンスはOpenRAIL-M。
+      </dd>
+      <dt>推論コード</dt>
+      <dd>
+        <code>supertone-oss-archive/supertonic@1e9799e964ea4c0dad7cde993b65c3c813a7b373</code>のPython
+        helper。コードはMIT。公式リポジトリはアーカイブ済み。
+      </dd>
+      <dt>LARM開始時revision</dt>
+      <dd>
+        <code>20ba531eb7ef6ffb62298a23e719291692e4eaf3</code
+        >。既存の未コミット変更がある状態で、独立したサンプルrunnerを追加した。
+      </dd>
+      <dt>依存関係</dt>
+      <dd>Python 3.11.16、NumPy 2.4.6、SoundFile 0.14.0。外部の専用仮想環境を使用した。</dd>
+      <dt>共存条件</dt>
+      <dd>
+        既存サービスの停止・再設定は行わず、単一TTSプロセスから逐次生成。LLM同時リクエストを制御した負荷試験は実施していない。
+      </dd>
+    </dl>
+  </section>
+  <section id="measurements">
+    <h2>サンプルと速度</h2>
+    <p>
+      モデル読み込み0.331秒、別途ウォームアップ0.227秒。表はウォームアップ後の各1回測定で、ファイル書き込みを除く。
+      RTFは生成時間をWAV長で割った値。p50・p95や性能保証ではない。
+    </p>
+    <table>
+      <caption>
+        CPU 4スレッドの日本語生成結果
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">ID・用途</th>
+          <th scope="col">話者</th>
+          <th scope="col">ステップ</th>
+          <th scope="col">音声長（秒）</th>
+          <th scope="col">生成（秒）</th>
+          <th scope="col">RTF</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">01 会話</th>
+          <td>F1</td>
+          <td>8</td>
+          <td>9.110</td>
+          <td>0.778</td>
+          <td>0.085</td>
+        </tr>
+        <tr>
+          <th scope="row">02 同文会話</th>
+          <td>F2</td>
+          <td>8</td>
+          <td>8.656</td>
+          <td>0.649</td>
+          <td>0.075</td>
+        </tr>
+        <tr>
+          <th scope="row">03 同文会話</th>
+          <td>M1</td>
+          <td>8</td>
+          <td>9.119</td>
+          <td>0.749</td>
+          <td>0.082</td>
+        </tr>
+        <tr>
+          <th scope="row">04 同文会話</th>
+          <td>M2</td>
+          <td>8</td>
+          <td>8.969</td>
+          <td>0.829</td>
+          <td>0.092</td>
+        </tr>
+        <tr>
+          <th scope="row">05 情景の朗読</th>
+          <td>F1</td>
+          <td>8</td>
+          <td>16.096</td>
+          <td>1.461</td>
+          <td>0.091</td>
+        </tr>
+        <tr>
+          <th scope="row">06 日付・数字・英字の原文</th>
+          <td>F1</td>
+          <td>8</td>
+          <td>14.092</td>
+          <td>1.320</td>
+          <td>0.094</td>
+        </tr>
+        <tr>
+          <th scope="row">07 同内容の読み仮名展開</th>
+          <td>F1</td>
+          <td>8</td>
+          <td>17.545</td>
+          <td>1.629</td>
+          <td>0.093</td>
+        </tr>
+        <tr>
+          <th scope="row">08 表情タグの試行</th>
+          <td>F1</td>
+          <td>8</td>
+          <td>7.263</td>
+          <td>0.743</td>
+          <td>0.102</td>
+        </tr>
+        <tr>
+          <th scope="row">09 同文会話のステップ比較</th>
+          <td>F1</td>
+          <td>5</td>
+          <td>9.110</td>
+          <td>0.644</td>
+          <td>0.071</td>
+        </tr>
+        <tr>
+          <th scope="row">10 長文3段落</th>
+          <td>F1</td>
+          <td>8</td>
+          <td>39.292</td>
+          <td>3.771</td>
+          <td>0.096</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      長文の最初の段落の波形は1.310秒で完成した。これはプロセス内で最初の波形が利用可能になる時間で、
+      HTTP転送や再生開始の遅延を含まない。runnerは全文完成後にWAVを保存するため、実際のストリーミング配信を検証した値ではない。
+    </p>
+    <p>
+      プロセスの累積peak RSSは687.1 MiB（約0.67 GiB）で、読み込み直後から最終生成まで同じ値だった。
+      Python・ONNXセッション・最適化時の一時領域を含む高水位値であり、常時使用量や最大リクエスト時の上限を保証しない。
+      参考生成を含む2回の実行で音声のSHA-256が一致したが、タイミングの統計比較は行っていない。
+    </p>
+  </section>
+  <section id="listening-notes">
+    <h2>試聴ポイントと実装上の注意</h2>
+    <p>
+      追加で男性プリセットM1〜M5を同一会話文・8ステップ・seed
+      42で比較し、低い声の試聴候補にM2を選んだ。 librosa 0.11.0のpYINで16
+      kHzへリサンプルした波形の有声フレームを解析したところ、基本周波数の中央値は M1 130.1 Hz、M2
+      86.3 Hz、M3 98.0 Hz、M4 119.3 Hz、M5 87.6 Hzだった。 解析範囲は55〜400 Hz、frame 1024、hop
+      256。M2とM5は近く、声の太さは音高だけでは決まらないため、
+      全文・全話者に対する声質順位を示すものではない。 比較用WAV 5本・解析結果・再現用スクリプトは
+      <code>/srv/ai/results/larm/tts/supertonic3-male-voices-2026-11-01</code>に保存した。
+    </p>
+    <ul>
+      <li>01〜04は同じ会話文。話者ごとの声質・アクセント・語尾を比較できる。</li>
+      <li>
+        05は情景描写の朗読。06と07は日付、金額、CPU・GPU・LLMの読みを比較するための原文と手作業の展開文。
+      </li>
+      <li>
+        08は<code>&lt;sigh&gt;</code>と<code>&lt;laugh&gt;</code>の入力例。タグの効果や日本語の自然さは未判定。
+      </li>
+      <li>
+        09は01と同じ話者・文・seedで5ステップにした例。品質と速度の優劣は各1回の生成だけでは確定しない。
+      </li>
+      <li>
+        全10本で有限値・非無音の波形、44.1 kHz mono
+        PCM16、サンプル振幅のクリッピングなしを確認。ASRによる正誤判定や人による聴覚品質評価は実施していない。
+      </li>
+    </ul>
+    <p>
+      公式helperの日本語チャンク長目安は120文字だが、文の分割は主に欧文の句読点と空白、または空行で行われる。
+      日本語の「。」だけでは120文字を超えても分割されない例がある。長文サンプルは空行で3段落に分けた。
+      runnerはチャンクごとに予測長へトリムしてから0.3秒の無音で連結し、vocoderの末尾パディングによる切り詰めを避ける。
+      Provider化する場合は、日本語の文境界分割と実際の初回再生遅延を別途検証する。
+    </p>
+  </section>
+  <section id="artifacts">
+    <h2>保存先と再実行</h2>
+    <dl>
+      <dt>モデル</dt>
+      <dd><code>/srv/ai/models/supertonic-3</code></dd>
+      <dt>公式ソース</dt>
+      <dd><code>/srv/ai/apps/supertonic3-trial</code></dd>
+      <dt>実行環境</dt>
+      <dd><code>/srv/ai/apps/supertonic3-env</code></dd>
+      <dt>成果物</dt>
+      <dd>
+        <code>/srv/ai/results/larm/tts/supertonic3-ja-2026-11-01-cpu4</code>内のWAV
+        10本、入力文付き<code>listen.html</code>、設定・計測・ハッシュを含む<code>results.json</code>。
+      </dd>
+      <dt>リポジトリ内の再現用ソース</dt>
+      <dd>
+        <code>benchmarks/tts/supertonic3/run.py</code
+        >と<code>corpus.json</code>。モデル・エンジン・生成音声はリポジトリ外に保存。
+      </dd>
+    </dl>
+    <pre><code>PYTHONDONTWRITEBYTECODE=1 /srv/ai/apps/supertonic3-env/bin/python \
+  benchmarks/tts/supertonic3/run.py \
+  --runtime /srv/ai/apps/supertonic3-trial \
+  --model /srv/ai/models/supertonic-3 \
+  --output /srv/ai/results/larm/tts/supertonic3-ja-new-run \
+  --threads 4</code></pre>
+    <p>出力先には新しいディレクトリ名を指定する。生成済み音声の上書きは行わない。</p>
+  </section>
+</article>

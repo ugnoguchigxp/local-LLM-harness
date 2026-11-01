@@ -1,6 +1,8 @@
 import {
   chatCompletionRequestSchema,
   getRuntime,
+  audioSpeechRequestSchema,
+  inspectSpeechControls,
   type Registry,
   type AgentProviderContextWindow,
   type RuntimeProtocol,
@@ -102,6 +104,14 @@ export async function handleModelBrokerGateway(input: {
       "resolved model runtime does not support Chat Completions",
       "model",
     ), 503);
+  }
+  if (options.protocol === "openai.audio-speech.v1" && directRequestBytes) {
+    const request = audioSpeechRequestSchema.parse(JSON.parse(new TextDecoder().decode(directRequestBytes)));
+    const error = inspectSpeechControls(runtime.speech, request);
+    if (error) {
+      await lease.close();
+      return c.json(openAiErrorBody(error.code, error.message, error.param), 400);
+    }
   }
   try {
     return await proxyGateway({

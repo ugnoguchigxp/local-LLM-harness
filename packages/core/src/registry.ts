@@ -93,6 +93,9 @@ export function parseRegistryDocuments(input: {
   }
 
   for (const runtime of runtimes) {
+    if (runtime.speech && runtime.protocol !== "openai.audio-speech.v1") {
+      throw new RegistryError(`runtime ${runtime.id}: speech controls require the speech protocol`);
+    }
     if (runtime.textInput && (runtime.protocol !== "openai.chat-completions.v1" || runtime.chatInput || runtime.capability.includes("llm.vision"))) {
       throw new RegistryError(`runtime ${runtime.id}: textInput requires a text-only Chat Completions runtime`);
     }

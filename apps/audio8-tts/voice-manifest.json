@@ -1,0 +1,35 @@
+{
+  "model_revision": "1e857568bfd4f02931aca3988ee773a44d2d26d3",
+  "version": 2,
+  "default_voice": "audio8-ja-butler-v1",
+  "voices": [
+    {
+      "id": "audio8-ja-butler-v1",
+      "display_name": "Audio8 執事（胸の響き強め・1.43倍速）",
+      "reference_text": "お帰りなさいませ。準備は整っております。どうぞ、ご指示を。",
+      "file": "audio8-ja-butler-v1.npy",
+      "bytes": 10528,
+      "sha256": "2a2cc6e3773896b245898d1742172eb9cd8db6ba7769169873b11029a29b39b9",
+      "source_case": "baritone-07",
+      "output_preset": "butler-chest-speed143-v1"
+    },
+    {
+      "id": "audio8-ja-01",
+      "display_name": "Audio8 日本語 01",
+      "reference_text": "やったあ！ ついに、できたんだね！ すごい、本当にすごいよ！ ここまで頑張ってくれて、ありがとう！",
+      "file": "audio8-ja-01.npy",
+      "bytes": 11648,
+      "sha256": "f08ff2c476136ef045046c08b75a2522c42724fbbefd772f6dca31d502327dc6",
+      "source_case": "ja-03-celebration"
+    },
+    {
+      "id": "audio8-ja-02",
+      "display_name": "Audio8 日本語 02",
+      "reference_text": "そのとき、廊下の奥で、コツン、と音がした。えっ……誰か、いるの？ そっと扉を開けると、そこには、小さな猫がいた。なんだ、君だったの！",
+      "file": "audio8-ja-02.npy",
+      "bytes": 23888,
+      "sha256": "d2144309a3d093711cb7b952198b09e1c7d32a40ca0b34bd3e8425e6a2814074",
+      "source_case": "ja-06-story"
+    }
+  ]
+}

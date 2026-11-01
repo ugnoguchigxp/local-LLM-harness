@@ -1,0 +1,737 @@
+<article lang="ja">
+  <h1>Audio8日本語TTS Provider：共通API・一時比較・VOICEVOXへの復帰</h1>
+  <p>
+    2026-11-01。状態は承認済み声による標準経路への配備・実API検証済み。利用者の要望は、常時warmのAudio8をVOICEVOXと同じ呼出し方式で利用し、VOICEVOXへすぐ戻せる構成、および失う機能の明示である。本書では独立したAudio8
+    Providerを追加し、既存VOICEVOXを復帰先として保持する方式を採る。比較用Providerの実装と一時起動での同文生成を完了した。声の比較後、承認された候補7と胸のEQ・1.43倍速をAudio8の既定voice
+    presetに設定した。標準の日本語TTSをこの声へ切り替えた。以下の比較時点の記録と切替設定を区別する。
+  </p>
+  <section id="default-route-switch">
+    <h2>承認済み声を標準経路へ切り替える設定</h2>
+    <p>
+      利用者の切替指示により、tts-default と日本語 tts を持つ複合 Agent Profile は tts-audio8
+      を明示選択し、publicModel を audio8-tts-realistic-0.6b とする。汎用 tts-default route の候補も
+      Audio8 にする。参照声は audio8-ja-butler-v1、テンポ1.43倍、胸のEQは160 Hz +4.5 dB、300 Hz +2.5
+      dB。音程は変更しない。
+    </p>
+    <p>
+      Audio8 は systemd user scope の audio8-tts.service、内部ポート8097、warm
+      最低数1とする。VOICEVOX は元のサービス・モデル・話者設定を保持し、warm 最低数0、idle TTL
+      0へ変更する。戻すための tts-voicevox Profile と route を保持する。標準選択と warm
+      設定を完全に戻す際は、保存した切替前の署名済みリリースを再提出する。新しい Connection と
+      descriptor を取得し、VOICEVOX の数値話者IDや未対応の速度指定を送らない。
+    </p>
+    <p>
+      既存の SAAA checkout に未コミット変更があるため consumer 実装は変更しない。LARM の共通 API
+      とカタログを更新する。consumer が古い model・voice
+      を固定していた場合には再接続後も設定変更が必要となり、その動作は別途確認する。
+    </p>
+  </section>
+  <section id="default-route-switch-verification">
+    <h2>標準経路切替の配備結果</h2>
+    <p>
+      2026-11-01 JST。署名済みリリース c0c02d4bb7f96a21d8ff8d2d6f551ac40fcc6e7c を通常の release
+      builder と root activator で反映した。依存監査、全体 check、coverage
+      の必須検査がすべて成功し、contract_verified / succeeded
+      を確認した。配備ソースは切替前リリース935ea04a02e0を基点にした独立cloneで、並行作業の文書・実装を含めない。
+    </p>
+    <p>
+      ornith1.5Strix-vision と contextStill の公開 selector から tts subset を要求し、いずれも
+      Audio8 の model を持つ ready descriptor を取得した。tts-default は内部 Agent Profile
+      名であり、公開 Connection 作成の selector としては送らない。claim の baseUrl に /audio/speech
+      を付け、取得した scoped token で voice・speed 指定なしの WAV を生成した。既定声は
+      audio8-ja-butler-v1。音声は24
+      kHz、mono、PCM16、7.2217秒、HTTP全文完成12.9547秒で、承認済みサンプルとPCMが完全一致した。
+    </p>
+    <p>
+      Audio8 user service は active、VOICEVOX system service は inactive / PID 0。VOICEVOX は
+      allocation/request/mutation refs 0、warm refs 0 を確認して停止した。Audio8 の生成後
+      MemoryCurrent は約2.82 GiBだが、共有GPUメモリを含む総量の指標とは区別する。既存 Connection
+      は再取得し、新しい model と voice catalog を使う。SAAA
+      UIでの再接続と実発話は利用者側の試用対象とする。
+    </p>
+    <p>
+      検証結果、実APIの音声、切替前のunit、復帰スクリプトは repository 外の
+      /srv/ai/results/larm/tts/2026-11-01-audio8-route-switch に保存した。restore-voicevox.sh
+      は保存済み署名候補935ea04a02e0を通常のbuilderで再提出し、旧設定反映後にAudio8を停止する。旧候補の必須検査receiptとscript構文を確認した。今回、旧リリースへの再切替実行は行っていない。
+    </p>
+  </section>
+  <section id="retained-provider-policy">
+    <h2>利用者の運用確定：Audio8を維持し、VOICEVOXはWarmなし</h2>
+    <p>
+      2026-11-01
+      JST。利用者は現在のAudio8構成を維持し、VOICEVOXは当面使わずWarm待機をなくす方針とした。配備済み設定と作業checkoutの両方で、VOICEVOXはminInstances=0、idleTtlSeconds=0であることを再確認した。system
+      serviceはinactive、PID 0、自動起動はdisabledで、保持中のProvider
+      instanceも存在しない。すでに希望する状態のため、サービス再起動や追加のリリース切替は行わない。
+    </p>
+    <p>
+      Audio8は標準日本語TTSとしてminInstances=1を維持する。VOICEVOXのモデル・話者設定・明示選択経路・復帰手順は保存し、削除やmaskは行わない。VOICEVOXを明示要求した際の必要時起動と、使用しない間のWarm維持は区別する。
+    </p>
+  </section>
+  <section id="lifecycle-correction">
+    <h2>利用者の追記：二重warmは比較中だけ</h2>
+    <p>
+      同日の実装開始指示で、両方を常時warmにする案は撤回された。今回の比較ではVOICEVOXを既存のまま使い、Audio8を必要な間だけ起動して終了時に停止する。常用する段階では選択した片方だけをwarmにする。以下の即時復帰手順で両方のConnectionを保持する記述は、比較・切替試験の間だけに限定する。非選択側を停止した常用運転での復帰には、保存済み設定での再起動とモデル読込時間を要し、常時二重warmの無待ち復帰とは区別する。
+    </p>
+    <p>
+      実装した比較用Audio8
+      runtimeはminInstances=0、idleTtlSeconds=0。現在のVOICEVOX標準経路は維持し、既定の変更やVOICEVOX停止は行っていない。常用選択のconsumer
+      UIや切替制御は今回の比較Provider実装に含めていない。
+    </p>
+  </section>
+  <section id="decision">
+    <h2>採用する構成</h2>
+    <p>
+      Agent ProfileのProvider
+      subsetを要求し、route、runtime、backendを解決する既存方式を使う。Audio8とVOICEVOXはそれぞれ別runtime・別systemd
+      unitで管理する。公開protocolは両方 <code>openai.audio-speech.v1</code>、Provider名は
+      <code>tts</code>、能力は
+      <code>speech.tts</code>
+      に揃える。モデルと話者の識別子は実際の選択を示す値を使用し、Audio8をvoicevox-coreや春日部つむぎとして扱わない。
+    </p>
+    <table>
+      <caption>
+        提案する解決経路。Audio8の行は追加案で、VOICEVOXの行は現行構成。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">要求Profile／Provider</th>
+          <th scope="col">route</th>
+          <th scope="col">runtime／backend</th>
+          <th scope="col">publicModel</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">tts-audio8／tts</th>
+          <td>tts-audio8（explicitOnly）</td>
+          <td>audio8-tts-realistic／audio8-tts.service</td>
+          <td>audio8-tts-realistic-0.6b</td>
+        </tr>
+        <tr>
+          <th scope="row">tts-default／tts</th>
+          <td>tts-voicevox（explicitOnly）</td>
+          <td>voicevox-tts／voicevox-tts.service</td>
+          <td>voicevox-core</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      移行時は音声用Connectionだけを取得する。LLM・ASR・英語KittenTTSのProfileや既存Allocationを切り替える必要はない。現在のtts-defaultだけでなく、複合Agent
+      Profileのttsもtts-voicevoxを直接参照しているため、routes.yamlのtts-defaultだけを書き換えても全consumerがAudio8へ移行するわけではない。consumerが共通のTTS呼出し処理へ、選んだProvider
+      descriptorを渡す方式を基本とする。
+    </p>
+    <p>
+      Audio8は比較中だけ一時起動し、warm
+      minInstances=0、idleTtlSeconds=0、preferred、managed、単一process、同時要求1、待ち行列0、メモリ見積もり8
+      GiB相当とする。常用時は選択した片方だけをwarmにし、非選択側は停止する。LLMや画像のswapGroupには入れず、音声要求にLLMの占有枠を使わない。profile
+      retentionとConnection期限を考慮し、比較中だけ両方のConnectionを保持する。常用時は非選択のConnectionを解放し、そのruntimeを停止する。単にunitの起動状態だけを利用可能性としない。実装時はLARM既存の資源制限・quarantine・release管理に従う。
+    </p>
+  </section>
+  <section id="api">
+    <h2>共通API契約</h2>
+    <table>
+      <caption>
+        両Providerで揃えるHTTP面
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">API</th>
+          <th scope="col">共通の意味</th>
+          <th scope="col">Audio8の初版</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">GET /health</th>
+          <td>モデルの準備状態と受付可否。認証・LARM readinessは現行方式。</td>
+          <td>
+            本体・codec・固定参照声をロード後にready=true。modelはpublicModelと一致。fail_on_no_slot=trueでbusyなら503。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GET /v1/models</th>
+          <td>実際に利用できるmodelの一覧。</td>
+          <td>audio8-tts-realistic-0.6b。</td>
+        </tr>
+        <tr>
+          <th scope="row">GET /v1/audio/voices?model=…</th>
+          <td>default_voiceとvoices、対応する調整項目を返す。</td>
+          <td>
+            既存audioVoiceDiscoverySchemaの一般Provider形式を使う。VOICEVOXのspeaker_uuidや数値style_idは捏造しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">POST /v1/audio/speech</th>
+          <td>model、input、voice、response_format等のJSONを受け取り、WAVまたはPCMを返す。</td>
+          <td>24 kHz・mono・PCM16。stream=false。inputの初期上限150文字。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      consumerはclaimから得たbaseUrl、credential、modelを使用し、voice一覧からそのmodelの既定voiceを選ぶ。同じ関数で両Providerを呼べるが、model・voice・tokenまで同一値に固定する設計ではない。現行のscoped
+      tokenはmodelに結び付いているため、Audio8のtokenにvoicevox-coreを渡すとmodel_mismatchになる。切替時はdescriptor一式を交換する。
+    </p>
+    <pre><code>// 共通の呼出し。providerとcatalogは選択したエンジンのclaim・一覧から得る。
+fetch(`${provider.baseUrl}/audio/speech`, {
+  method: "POST",
+  headers: {
+    authorization: `Bearer ${provider.credential.token}`,
+    "content-type": "application/json"
+  },
+  body: JSON.stringify({
+    model: provider.model,
+    input: "大丈夫。ゆっくり、一緒に進めましょう。",
+    voice: catalog.default_voice,
+    response_format: "pcm",
+    speed: 1.0,
+    stream: false,
+    language: "ja"
+  })
+});</code></pre>
+    <p>
+      PCMのContent-Typeは
+      <code>audio/pcm;rate=24000;channels=1;format=s16le</code
+      >、X-Audio-Sample-Rateは24000、X-Audio-Sample-Formatはs16leとする。現行gatewayはPCM応答を24
+      kHzとして扱うため、Audio8の44.1
+      kHzデータをそのまま流すと再生速度と音程が壊れる。ヘッダだけを変更せず、実波形を高品質resamplerで24
+      kHzへ変換する。互換モードのWAVも24 kHzに揃える。元の44.1
+      kHz試聴音声との差は採用前にA/B試聴する。44.1 kHzネイティブ出力の公開は後続拡張として分ける。
+    </p>
+    <p>
+      Audio8のvoice一覧案は次の形。voice
+      idは固定参照音声・正確なtranscript・checksumを含む外部assetに結び付け、変更時は版管理する。初版の固定話者はAudio8生成音声由来の参照codesを2種類用意した。以下は01の契約例で、実装は02も返す。安定した声として採用するかは再試聴で判断する。
+    </p>
+    <pre><code>{
+  "default_voice": "audio8-ja-01",
+  "voices": [{
+    "id": "audio8-ja-01", "name": "audio8-ja-01",
+    "display_name": "Audio8 日本語 01", "language": "ja",
+    "voice_presentation": "unspecified", "styles": [],
+    "capabilities": {
+      "speed": {"minimum": 1, "maximum": 1, "default": 1},
+      "pitch_scale": {"minimum": 0, "maximum": 0, "default": 0},
+      "intonation_scale": {"minimum": 1, "maximum": 1, "default": 1}
+    }
+  }]
+}</code></pre>
+    <p>
+      上の固定範囲は、既定値を送るconsumerとの共通化に使う。調整できるという表示にはしない。対応範囲外の指定は400
+      unsupported_parameterで拒否し、黙って無視しない。styleは省略のみを基本とし、normalを受け付ける場合も自然な発話という既定の別名に限定する。gatewayは解決したruntimeのspeech制御契約を検証する実装へ変更した。Audio8のpitch_scale=0とintonation_scale=1は受理し、style指定は拒否する。
+    </p>
+  </section>
+  <section id="compatibility">
+    <h2>維持・縮小・非対応となる機能</h2>
+    <table>
+      <caption>
+        現在のLARM VOICEVOX adapterとの比較。VOICEVOX本体の全APIとの比較ではない。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">現行VOICEVOX</th>
+          <th scope="col">Audio8初版の方針と差分</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">日本語、WAV／PCM、認証、health、busy応答</th>
+          <td>対応。</td>
+          <td>共通化する。音声生成時間の同等性は含まない。</td>
+        </tr>
+        <tr>
+          <th scope="row">話者の選択と固定</th>
+          <td>
+            ライブ一覧は四国めたん、ずんだもん、春日部つむぎ、雨晴はう、玄野武宏、剣崎雌雄の6話者。
+          </td>
+          <td>
+            これらの声は引き継げない。別の固定参照声を用意する。参照なしのseed固定だけでは話者固定を保証できず、現状の試聴スクリプトはProviderの代用にならない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">スタイル選択</th>
+          <td>めたん・ずんだもんにはnormal、sweet、tsuntsun、sexy。他4話者はnormal。</td>
+          <td>
+            同じスタイル指定を再現するnative
+            APIはない。初版は選択不可。感情語や句読点による自然な表現は利用するが、sweet等の保証はしない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">話速</th>
+          <td>speed 0.5〜2.0。</td>
+          <td>
+            初版は1.0だけ。後処理による速度変更は追加候補だが、音質とVOICEVOXの制御意味が同じとは限らず、検証前に対応を宣言しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">声の高さ</th>
+          <td>pitch_scale -0.15〜0.15。</td>
+          <td>初版は0だけ。単純なピッチシフトで同じscaleの意味を再現したとはしない。</td>
+        </tr>
+        <tr>
+          <th scope="row">抑揚幅の数値調整</th>
+          <td>intonation_scale 0〜2。</td>
+          <td>初版は1だけ。表情豊かな音声の生成と、抑揚幅を数値で指定できることは別である。</td>
+        </tr>
+        <tr>
+          <th scope="row">長文入力</th>
+          <td>adapterはinput最大4096文字。</td>
+          <td>
+            初版は単発150文字までを上限案とし、境界の品質・停止性を検証する。超過を明示拒否。長文分割、同一話者の維持、文間の接続とdeadlineの検証後に拡張する。途中までの音声を成功として返さない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">細かな読み・アクセント編集、辞書API</th>
+          <td>現在のadapterではaudio_query、accent_phrases、user_dictを公開していない。</td>
+          <td>
+            現行共通APIから新たに失う公開機能ではない。Audio8にはOpenJTalkと同じ解析・修正機構はなく、読みの安定性は別途検証が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">自然言語の発声指示</th>
+          <td>instruct指定を拒否。</td>
+          <td>独立したinstruct引数は非対応。両方で非対応を明示し、本文に指示文を挿入しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">native streaming</th>
+          <td>stream=trueを拒否し、全文完成後に返す。</td>
+          <td>初版も同じ。既存の公開機能を失う項目ではないが、会話の初音遅延は改善しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">クレジットとキャラクター名</th>
+          <td>voice一覧のcreditとX-VOICEVOX-Creditを返す。</td>
+          <td>
+            VOICEVOXの名前・クレジットを偽って返さない。VOICEVOX利用時の表示を維持し、Audio8利用時は実モデルに合う表示にする。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Audio8本来の音声帯域</th>
+          <td>現行PCM契約は24 kHz。</td>
+          <td>
+            互換出力では44.1→24 kHz変換により12 kHzを超える帯域を保持できない。今回の44.1
+            kHz原音と同じ品質と決め付けず、変換後を試聴する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">CPU実行・GPU競合</th>
+          <td>現行サービスはCPU実行。</td>
+          <td>
+            検証済みAudio8はGPU実行。GPU
+            workloadと競合し得る。CPUでの代替性能や同時LLM生成時の遅延は未検証。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      全機能を共通部分へ切り捨てる設計にはしない。VOICEVOXを選べば、元の6話者・スタイル・調整範囲・入力上限がそのまま使える。consumerのUIは選択中Providerのcapabilitiesに合わせ、対応しない操作を無効にして理由を示す。VOICEVOXで設定した話者・スタイル・速度等はエンジンごとに保持し、Audio8への切替で上書きしない。
+    </p>
+  </section>
+  <section id="rollback">
+    <h2>VOICEVOXへの即時復帰</h2>
+    <ol>
+      <li>
+        移行前にVOICEVOXの有効なtts-only
+        Connectionとclaimを確保し、healthと実際のWAV／PCM生成を確認する。モデルファイル・VVM・unit・routeをそのまま復帰用に保持する。
+      </li>
+      <li>
+        Audio8用の別Connectionをproviders=["tts"]で作り、準備できたdescriptorと専用のvoice設定を別に保持する。両方のConnectionとtokenの有効期限をrenewする。
+      </li>
+      <li>
+        選択設定 japaneseTtsEngine=audio8|voicevox
+        はconsumer側の提案名とし、既存LARM設定キーと偽らない。切替は新しい発話からactive
+        descriptorを一括交換する。baseUrlだけを変え、古いmodel・voice・tokenを残す操作は禁止する。
+      </li>
+      <li>
+        戻す際はVOICEVOXのdescriptor、保存済みvoice・style・調整値に戻す。健康で空き枠があるwarm
+        Providerなら再ダウンロードやモデル再ロードを待たず、次の発話をVOICEVOXへ送れる。実際の復帰所要時間は試験で確認する。
+      </li>
+      <li>
+        実行中のAudio8発話は完了させるか、明示取消して再生を止める。取消処理後もworkerがGPUを使用している間はその枠を解放しない。古い発話を自動再送せず、二重再生を防止する。
+      </li>
+    </ol>
+    <p>
+      既存Connection・tokenは選択時のruntime世代に結び付いているため、routeの候補順を変えただけで既存発話が別エンジンへ移るとは考えない。将来、標準Profileの既定をAudio8へ変更する場合はrouteとpublicModelをセットで更新し、新規Connectionを取得する。切替直後も旧VOICEVOX
+      Connectionを復帰用に残す。backendを隠して自動fallbackする機構は初版に入れず、エラー時の変更先を利用者が選べる形にする。
+    </p>
+  </section>
+  <section id="implementation">
+    <h2>実装境界と運用要件</h2>
+    <p>
+      固定話者は参照音声と正確なtranscriptを選定し、固定したmodel／codec
+      revisionで事前にreference_codesへ変換する案とする。外部manifestに参照音声・transcript・codesのchecksumとrevisionを記録し、Providerは起動時に検証済みcodesを読み込んで再利用する。毎要求で参照音声をencodeしない。参照なしで測った従来のメモリ・速度がそのまま成立するとは扱わず、参照codesを含む入力予算、生成速度、起動・常駐メモリを再測定して8
+      GiBの初期見積もりを確かめる。
+    </p>
+    <p>
+      提案するadapterはapps/audio8-ttsに置き、実行環境、モデル重み、参照声、checksum付きmanifestはrepository外に置く。固定revisionのAudio8、独立venvと依存lock、ROCmのfusion回避・MIOPEN_FIND_MODE=FASTを適用する。本体とcodec、参照声を起動時にロードする。health・claim・readinessによる試験音声の自動生成は行わず、warmはロード済みの意味とする。最初の合成で形状別の準備費用が残ることはhealth成功と区別する。
+    </p>
+    <p>
+      GPU
+      workerは1つに直列化し、ASGI側でhealthと取消を処理できるようにする。生成は有限のmax_new_tokensとdeadlineで制限し、EOSに到達しない音声、NaN、空音声、過大出力を成功として返さない。初期案は150文字、最大650
+      frames、Provider deadline
+      90秒。実生成は30秒程度までの音声を上限とし、gatewayとconsumerのtimeoutをそれより長く整合させる。現在のgateway既定300秒に頼らず、consumer側のtimeoutも確認する。
+    </p>
+    <p>
+      client disconnect・deadline・releaseをworkerのstopping
+      criteriaへ伝える。codec実行中など即時中断できないGPU処理では、処理の終了を待って枠を解放する。途中WAVや途中PCMを返さず、成功ヘッダを送る前に生成と24
+      kHzへの変換・検証を終える。同時要求は429＋Retry-After:1、準備中は503＋Retry-After:1、不正・未対応指定は400、発話不能な本文は422、本文64
+      KiB超は413、生成未完了・不正音声は502として分類する。合成を伴わないGETには推論枠を取得しない。
+    </p>
+    <p>
+      LARM側はapp-gateway-request.tsのmodel名によるvoicevox専用判定を、解決したruntimeの制御契約に基づく検証へ改める。runtime
+      schemaへ任意のspeech制御契約を追加し、modelの文字列だけで許可しない。一般schemaの型・範囲検査は入口で行い、対応機能の検査はscoped
+      token／Allocationからruntimeを確定してから行う。VOICEVOXの全範囲、Audio8の固定範囲、KittenTTSの話速だけという違いを宣言し、未知のruntimeは未宣言の調整を拒否する。これにより既存Providerへの誤った制御の透過を防ぐ。
+    </p>
+    <p>
+      voice一覧の汎用schemaは既に存在するため、VOICEVOXの数値ID形式を全Providerへ強制しない。PCMの24
+      kHz契約は維持する。実エンジンの監査はtokenに結び付くruntime/modelで記録し、新しい任意の応答headerに依存しない。X-VOICEVOX-Creditの透過はVOICEVOXで維持する。Audio8のクレジットを独自headerへ追加する場合はgatewayのresponse
+      header allowlistとconsumerを合わせて変更する。
+    </p>
+  </section>
+  <section id="gates">
+    <h2>昇格条件と検証順序</h2>
+    <ol>
+      <li>
+        Providerを別portに起動して、WAV／PCMが実際に24
+        kHz・mono・s16leであること、再生速度・音程・clipが正しいことを検証する。44.1 kHz原音と24
+        kHz互換出力を同文で試聴する。portは既存・オンデマンド停止中を含む構成台帳と照合して決め、VOICEVOXの8084を再利用しない。
+      </li>
+      <li>
+        固定参照声を選定し、異なる日本語文章・複数seed・再起動後で声質の継続性と読みを確認する。VOICEVOX音声を無断で参照声に転用しない。現状の参照なし6サンプルだけで固定voice対応を完了扱いにしない。
+      </li>
+      <li>
+        同じcontract試験を両Providerへ実行し、形式、カタログ、既定値、未知voice、未対応調整、150文字境界、busy、起動中、EOSなし、取消中のslot保持、OOM後の回復、healthで合成しないことを確認する。VOICEVOXの数値voice/style指定と既存範囲の回帰試験を維持する。
+      </li>
+      <li>
+        LARM経由のclaim、model拘束、音声転送、voices取得を試し、Audio8→VOICEVOX→Audio8で設定と再生が復元できることを確認する。古いtokenが新しいruntimeへすり替わらないことを確認する。
+      </li>
+      <li>
+        代表的な日本語文と数字・固有名詞を同文比較し、最初の再生開始時間、全文完成時間、読みの不一致、長時間warm後のメモリ、LLMとの同時GPU利用を測る。反復とrollbackの所要時間を保存する。
+      </li>
+      <li>
+        150文字超の分割・結合を導入する場合は、声質の連続性、句読点・数字の分断、文間の無音、全文のdeadline、途中失敗時に成功を返さないことを検証してから入力上限を拡張する。
+      </li>
+    </ol>
+    <p>
+      比較用HTTP adapter、2種類の固定参照codes、24
+      kHzへの実波形変換、同文12本の生成と文字起こし確認を完了した。変換後の音質・話者の継続性の利用者評価、LARM正式配備後の切替、実consumerの受入は未実施であり、常用移行が完了したとは扱わない。
+    </p>
+  </section>
+  <section id="implementation-result">
+    <h2>比較用実装と実機結果</h2>
+    <p>
+      apps/audio8-tts/audio8_api.pyにFastAPI
+      adapterを追加した。モデル・codec・参照codesをロードし、150文字までの日本語、2つの参照voice、24
+      kHz PCM16
+      WAV／PCM、単一生成枠、busy、期限切れ、client切断、EOS未到達・不正音声の拒否に対応する。health・voices・modelsでは合成しない。各参照codes・transcript・model
+      codeをchecksumで確認してから読み込み、モデルと参照assetはrepository外に保持する。
+    </p>
+    <p>
+      packages/core/src/speech-controls.tsでruntime別の対応制御を定義し、model名によるVOICEVOX専用判定を除いた。標準BearerとAllocation経由の両方に適用し、VOICEVOXの既存範囲を維持する。Audio8の明示Profile／route／runtime／release／artifact定義、増分登録用unit・polkit・準備scriptを追加した。unitは有効化していない。比較は作業checkoutの一時HTTP
+      processで実行した。
+    </p>
+    <p>
+      外部の専用実行環境 /srv/ai/apps/audio8-tts-runtime/.venv
+      は、既存の検証済みROCm環境を独立コピーし、依存versionを照合した。既存Qwen
+      TTSの環境は変更していない。再現用freezeはapps/audio8-tts/requirements.lockに保存した。参照codesは既存Audio8試聴の01＝喜び・感謝、02＝物語から取り込み、外部manifestとソースに保持するvoice-manifest.jsonで固定した。参照codesは公開配布物ではないため、HTTP配布を前提とするモデルartifact欄には混ぜず、adapter起動時に全manifestと各codesのchecksumを検証する。
+    </p>
+    <p>
+      deploy/local-node/scripts/compare-audio8-voicevox.pyはAudio8をloopbackの8095に一時起動し、3文章×Audio8
+      2声・VOICEVOX 2声の計12本を同一JSON契約で生成した後、必ず自分が起動したAudio8
+      processを停止する。VOICEVOXの既存serviceを停止・切替しない。再実行の出力先はrepository外の新しいdirectoryを指定する。実行例：<code>python3 -B deploy/local-node/scripts/compare-audio8-voicevox.py --output /srv/ai/results/larm/tts/audio8-voicevox-next</code>。
+    </p>
+    <p>
+      最初の12本の保存先は
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-voicevox-provider/</code
+      >。listening.htmlで4声を文章ごとに比較できる。comparison.jsonにHTTP時間、lifecycle.jsonに起動前後のhealthとAudio8停止を記録した。全WAVは24
+      kHz・mono・PCM16として検査済み。固定参照声を使った音声は以前の参照なしサンプルと同一音声ではないため、新しい試聴結果を採否に使う。
+    </p>
+    <table>
+      <caption>
+        各1回のHTTP全文完成時間。常用中ホストで逐次実行。単位は秒。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">文章</th>
+          <th scope="col">Audio8 01</th>
+          <th scope="col">Audio8 02</th>
+          <th scope="col">春日部つむぎ</th>
+          <th scope="col">玄野武宏</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">喜び・感謝</th>
+          <td>8.962</td>
+          <td>11.206</td>
+          <td>0.726</td>
+          <td>0.517</td>
+        </tr>
+        <tr>
+          <th scope="row">優しく励ます</th>
+          <td>9.695</td>
+          <td>12.757</td>
+          <td>0.882</td>
+          <td>0.568</td>
+        </tr>
+        <tr>
+          <th scope="row">物語・緊張から驚きへ</th>
+          <td>16.844</td>
+          <td>19.640</td>
+          <td>1.128</td>
+          <td>0.913</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      今回の同文比較ではAudio8の生成待ちはVOICEVOXより大きい。常時warmでも速度が互角と扱う根拠は得られなかった。音質・抑揚の主観評価と全文完成の速度を分ける。Audio8の起動は約5.78秒で、ファイルchecksum確認を含む。比較終了後Audio8は停止、VOICEVOXは同じ6話者を公開してhealthyだった。
+    </p>
+  </section>
+  <section id="implementation-validation">
+    <h2>実装の検査結果</h2>
+    <p>
+      作業checkoutでbun run
+      check全体が成功した。アプリ・packageのBun試験は1,148件成功、環境条件による10件skip、失敗0。Audio8のPython
+      API試験11件では、実resample後の音声長・1
+      kHz音程、WAV／PCM同一性、入力上限、未対応制御、busy、期限切れとclient
+      disconnect後のworker枠保持、参照assetの改変拒否、healthで合成しないことを検証した。配備script試験・型検査・文書検査・source-only検査も成功した。
+    </p>
+    <p>
+      実機比較は本体とcodecをRadeon 8060S／ROCm／BF16のGPU上で実行し、CPUはHTTP受付や24 kHz
+      resample等に使用した。比較先VOICEVOXは既存CPU 16
+      threads。12本の音声はすべて検査でき、比較後Audio8の8095
+      listenerがなく、VOICEVOXはhealthyであることを再確認した。full-check.txtとimplementation-validation.jsonを外部の比較結果directoryに保存した。稼働中LARMのreleaseは変更していない。
+    </p>
+  </section>
+  <section id="voice-design-trial">
+    <h2>渋い男性声への変更試験</h2>
+    <p>
+      利用者が求める声は、低く聞き取りやすい男性、執事・JARVISの雰囲気から、さらに太さ・ざらつき・貫禄のあるバリトンへ具体化した。初回の低音候補は「元の男性の声を暗くした感じ」と評価された。推定音高の低さや音声認識の成功だけでは、希望する声質を満たしたと判断しない。俳優名は方向の説明であり、実在人物との声の類似度は検証していない。
+    </p>
+    <p>
+      Audio8の現行processorには声質を文章で指定する専用引数がない。初回は参照なしの日本語8候補・英語4候補と既存生成音声から参照を選んだ。別文で試した英語参照候補には「承知しました」が音声認識で「チェンジしました」となる例があり、主候補から外した。初回成果は
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-butler</code>
+      に保存した。常用Providerの既定声は変更していない。
+    </p>
+    <p>
+      次の試験ではQwen3-TTS-12Hz-1.7B-VoiceDesignを参照声の作成だけに使い、「50代の日本語男性、太い胸の響き、乾いた軽いざらつき、落ち着いた力強さ、明瞭な発音」といった記述から2種類の合成参照声を作成した。参照文は「お帰りなさいませ。準備は整っております。どうぞ、ご指示を。」。Qwenの生成後にそのprocessを終了し、Audio8のcodecで参照WAVをcodesへ変換し、同じ参照で別の日本語本文を生成する。参照音声そのものとAudio8出力を区別して試聴する。
+    </p>
+    <p>
+      VoiceDesignは公式snapshot
+      <code>5ecdb67327fd37bb2e042aab12ff7391903235d3</code>、計4,520,162,313 bytesを外部model
+      directoryへ取得し、サイズとSHA256を確認した。声質設計時の本体はGPU／BF16、Qwenのcodecは既存の検証済みCPU経路。Audio8の本体・参照符号化・復号はGPU／BF16で実行する。Qwenの公開説明は
+      <code>https://github.com/QwenLM/Qwen3-TTS#voice-design</code
+      >、Audio8の参照入力契約は固定snapshotのREADMEとprocessor実装で確認した。この組合せで希望する声質を保持できるかは、試聴による評価対象である。
+    </p>
+    <p>
+      新候補の成果と独立した試聴用voice bankは
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-baritone</code>
+      に保存した。2種類の参照それぞれで出迎え文・力強い台詞を生成し、4本ともEOS到達、有限の非無音波形、24
+      kHz
+      monoを確認した。音声認識は4本とも本文相当の結果だが、声質の主観評価とは分ける。ざらつきのある新候補は高信頼の推定音高frameが少ないため、音高中央値で順位付けしない。試聴ページは参照声、Audio8出力、初回候補を区別し、音量だけを調整した比較用音声と原音の両方を置いた。既存のaudio8-ja-01／02と固定manifestを保持し、候補の採用前にvoice
+      ID、参照codes、本文、checksum、既定声を明示して版を更新する。生成モデルを常駐させる追加Providerは作らず、比較・生成後は一時processを終了する。
+    </p>
+  </section>
+  <section id="voice-design-refinement">
+    <h2>候補2を基準に声の太さを増やす試験</h2>
+    <p>
+      利用者は前節の候補2（audio8-baritone-02-v1）を候補1より好み、さらに太い声、乾いたざらつきと胸に響く重さの中間を求めた。候補2は比較上の基準として保持し、常用の既定声としては採用していない。前回と同じVoiceDesign生成seed123を使い、声質の記述を変えた参照声を2種類作成した。同じseedでも記述が違えば同じ話者になる保証はない。
+    </p>
+    <p>
+      候補3（audio8-baritone-03-v1）は乾いたざらつきと声の厚み、候補4（audio8-baritone-04-v1）は胸の響きと声の重さを重点とした指定である。これは設計意図のラベルであり、聞こえる声質の評価結果ではない。両参照を固定し、前回と同じ出迎え文・力強い台詞をAudio8で生成して比較する。音高やフォルマントを下げる後処理は使わず、試聴用には音量だけをRMSの目安に合わせ、原音も保持する。
+    </p>
+    <p>
+      成果は
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-baritone-round2</code>
+      に保存した。4本ともEOS到達、有限の非無音波形、24 kHz
+      monoを確認し、音声認識は本文相当の結果だった。声質の目標達成は試聴で判断する。比較ページに前回候補2と新候補3・4を同じ本文で並べ、参照声とAudio8出力を区別した。QwenとAudio8は順に一時起動し、作業後に停止済み。既存の固定voice
+      manifest、稼働中LARM、VOICEVOXの設定を保持する。
+    </p>
+  </section>
+  <section id="voice-choice-speed">
+    <h2>利用者選択：候補4と1.3倍速</h2>
+    <p>
+      利用者は候補4（audio8-baritone-04-v1）を指定し、速度を30%上げるよう依頼した。試聴用の選択presetをspeed=1.3として保存し、候補4のAudio8生成済み音声2本をFFmpegのatempo=1.3で変換した。音程を保つテンポ変換で、出力長の目安は元の長さを1.3で割った値。音量を合わせた比較用音声を入力に使い、Audio8・Qwenは再起動していない。
+    </p>
+    <p>
+      力強い台詞は11.89秒から9.15秒、出迎え文は11.56秒から8.91秒になった。24 kHz
+      mono、有限の非無音波形を確認し、音声認識は2本とも本文相当の結果だった。選択preset、固定参照の所在、checksum、変換方式、音声は
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-baritone-selected-04-speed130</code>
+      に保存した。現行Providerの公開speedは引き続き固定値1であり、今回の1.3倍速は試聴音声の後処理。常用Providerの既定声・可変速度APIへの適用は未実施である。
+    </p>
+  </section>
+  <section id="voice-expressive-speed143">
+    <h2>さらに太い声・追加10%の速度・抑揚4パターン</h2>
+    <p>
+      利用者は候補4の1.3倍速を試聴後、さらに太い声、追加約10%の速度、抑揚を効かせた4サンプルを求めた。速度は直前の1.3に1.10を掛けた1.43倍として扱う。候補4の方向性を基準に、胴鳴り・密度・豊かな倍音を強め、明瞭な日本語と活発な抑揚を狙う記述で新しい参照声05を設計した。前回候補4を直接変換した同一話者とは扱わず、別voice
+      IDのaudio8-baritone-05-v1として保存する。
+    </p>
+    <p>
+      参照文は「準備は整った。さあ、始めよう！ おや……どうしました？
+      大丈夫、私がついています。」。言い切り、勢いのある呼びかけ、疑問、安心させる結びを含め、音声認識で本文相当の読みを確認した。Audio8の専用感情指示・抑揚数値を有効化したものではない。表情を含む固定参照と、本文の言い回し・句読点・区切りを使い、報告、驚きと問いかけ、励まし、制止と力強い約束の4種類を生成した。
+    </p>
+    <p>
+      4本ともGPU／BF16のAudio8本体とcodecでEOSまで生成した。Qwenは参照作成後、Audio8は4本の生成後に停止した。仕上げはFFmpegのatempo=1.43による音程を保つテンポ変換と比較用の音量調整。速度変更前の原音、速度変更後の原音、試聴版、参照codes、本文、checksum、検査結果は
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-baritone-expressive-speed143</code>
+      に保存した。仕上げた4本は約6.99・9.17・8.49・8.48秒で、24 kHz
+      mono、有限の非無音波形、速度変換後の長さを確認した。音声認識は4本とも本文相当の結果だった。声の太さ・抑揚の目標達成は試聴で判断し、音声認識や推定音高だけで合否を決めない。常用Providerへの採用や公開speed契約の変更は行っていない。
+    </p>
+  </section>
+  <section id="voice-chest-priority">
+    <h2>候補4への回帰と胸の響き・重さの優先指定</h2>
+    <p>
+      利用者は新候補05より候補4を好み、続けて「胸の響き・重さ」をもっと重み付けするよう指定した。候補4を比較の基準として保持し、候補05の表情を含む参照文は使わない。候補4と同じ参照文、VoiceDesignのseed123、sampling条件を使い、声質の指示文の先頭で胸の共鳴・声の密度・重い芯を最優先とし、ざらつきを副次的な質感とする指定を追加した。これは自然言語の優先指定であり、Audio8の数値weightやモデル重みを編集する機能ではない。
+    </p>
+    <p>
+      新しい参照声はaudio8-baritone-06-v1として分け、同じ参照で報告、力強い決意、驚きと問いかけ、励ましの4本を生成する。最初の2本は候補4と同じ本文にして比較できるようにする。速度は直近の希望に合わせた1.43倍を維持する。候補4自体の参照codesと音声は保持し、声質の指定変更によって同じ話者のままになるとは仮定しない。
+    </p>
+    <p>
+      成果は
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-chest-weight-speed143</code>
+      に保存した。4本ともEOS到達、速度変換後の24 kHz
+      mono・有限の非無音波形・想定した長さを確認し、音声認識は本文相当の結果だった。比較ページに候補4の同文2本を同じ1.43倍速・音量の目安で配置した。QwenとAudio8は順に一時起動し、作業後に停止済み。常用Providerの既定声・公開speed契約は変更していない。
+    </p>
+  </section>
+  <section id="voice-chest-lower-pitch">
+    <h2>胸の響きを基準に音程を下げる1本の試聴</h2>
+    <p>
+      利用者は胸の響き・重さを重視した状態でさらに低い声を求め、サンプルは1本と指定した。候補06の出迎え文の試聴音声を使い、FFmpeg
+      rubberbandのformant=preserved、pitchq=quality、tempo=1で音程を2半音下げた。pitch倍率は約0.8909。声の共鳴を保つ設定の後処理であり、新しい話者の生成やAudio8ネイティブのpitch制御ではない。
+    </p>
+    <p>
+      元の1.43倍速と8.61秒の長さを維持し、24 kHz
+      mono、有限の非無音波形を確認した。音声認識は本文相当の結果。音量のみ比較用のRMS目安へ合わせ、生成モデルは起動していない。音声1本と処理条件・checksumは
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-chest-low2-speed143</code>
+      に保存した。常用Providerの設定は変更していない。
+    </p>
+  </section>
+  <section id="voice04-lower-pitch">
+    <h2>候補4の響き・重さへ戻してさらに音程を下げる</h2>
+    <p>
+      利用者は胸の響き・重さを候補4程度に戻し、直前の候補06低音版より低い声を求めた。候補4本人の生成済み出迎え文を使い、音程を元の候補4から4半音下げた。Rubberbandのpitch倍率は約0.7937、formant=preserved、pitchq=quality、tempo=1。試聴は1本とし、元の約1.43倍速と8.10秒の長さを維持した。
+    </p>
+    <p>
+      24 kHz
+      mono、有限の非無音波形を確認し、音声認識は本文相当の結果だった。異なる参照声間の絶対的な低さをこの検査だけで判定せず、試聴で評価する。音声と条件・checksumは
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-voice04-low4-speed143</code>
+      に保存した。生成モデルは起動せず、常用Providerの設定も変更していない。
+    </p>
+  </section>
+  <section id="voice-dry-husky-tone">
+    <h2>ロボット感への指摘を受けて乾いた低音を再設計する</h2>
+    <p>
+      利用者は候補4を4半音下げた試聴にロボットらしさを感じ、津田健次郎のトーンを目標にするよう指定した。音程を大きく下げる後処理が自然さを損ねた可能性があるが、原因を聴感比較以外で確定したものではない。新候補07は、自然な低いバリトン、乾いた細かいざらつき、軽い息の質感、近い響き、抑えた語尾をVoiceDesignへ指定する。極端な低音化や胸の量感を最優先にする指定から、自然な話し声を優先する方向へ変更した。
+    </p>
+    <p>
+      参照文とseed123は従来と同じにし、audio8-baritone-07-v1として参照codes・本文・checksumを分けて保存する。出迎え文1本をAudio8で生成し、音程・フォルマントを下げる加工を加えず、テンポだけを1.43倍にする。人物名は声質設計の方向を示す指定で、本人の録音や実在人物との類似度検証は用いていない。
+    </p>
+    <p>
+      成果は
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-dry-husky-tone-speed143</code>
+      に保存した。Audio8はEOSまで生成し、仕上げた約7.22秒の1本について24 kHz
+      mono、有限の非無音波形、速度変更後の長さを確認した。音声認識は本文相当の結果だった。声質の目標達成は試聴で判断する。モデルは順に一時起動して生成後に停止し、常用Providerの設定は保持した。
+    </p>
+  </section>
+  <section id="voice07-chest-eq">
+    <h2>候補7の声を保ったまま胸の厚みを加える試聴</h2>
+    <p>
+      利用者は候補7で胸の響き・重さが不足したとして、約2段階分加えるよう依頼した。以前のサンプル1本という希望を引き継ぎ、声を設計し直して別話者にする代わりに、候補7の生成済み音声へ低〜中音域のEQを加えた。160
+      Hz・Q0.8を+4.5 dB、300 Hz・Q1を+2.5
+      dBとし、最後にRMSの目安へ音量を合わせた。「plus2」は試聴用の強さのラベルであり、Audio8の数値制御項目ではない。
+    </p>
+    <p>
+      音程・フォルマント・速度・リバーブの変更は加えず、約1.43倍速、7.22秒、24 kHz
+      monoの1本を保存した。有限の非無音波形と元音声と同じsample数を確認し、音声認識は本文相当の結果だった。成果と処理条件・checksumは
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-voice07-chest-plus2-speed143</code>
+      に保存した。胸の響きや重さの主観的な強まりは試聴で判断する。生成モデルは起動せず、常用Providerの設定は変更していない。
+    </p>
+  </section>
+  <section id="approved-default-voice">
+    <h2>採用した既定声：候補7＋胸の響き強め・1.43倍速</h2>
+    <p>
+      利用者が候補7へ胸のEQを加えた版を承認し、一旦デフォルトへ設定するよう指示した。Audio8のvoice省略時は新しい
+      <code>audio8-ja-butler-v1</code>
+      を選ぶ。参照codesは候補07と同じで、声の公開IDに固定の出力presetを結び付けた。音程は下げない。以前のaudio8-ja-01／02も明示選択でき、その2声は従来どおり出力presetなしで利用できる。
+    </p>
+    <table>
+      <caption>
+        既定voiceに含める承認済み出力処理
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">固定値・意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">preset ID</th>
+          <td>butler-chest-speed143-v1</td>
+        </tr>
+        <tr>
+          <th scope="row">テンポ</th>
+          <td>
+            音程を保った1.43倍。atempoで変換後にRMS 0.08・peak 0.95を目安に音量調整しPCM16へ変換。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">胸の厚み</th>
+          <td>
+            160 Hz・Q0.8を+4.5 dB、300 Hz・Q1を+2.5 dB。EQ後も同じ音量目安へ合わせてPCM16へ変換。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">共通APIのspeed=1</th>
+          <td>
+            選んだvoice
+            presetをそのまま使う。既定声では上記の1.43倍を含み、追加で1.43を掛ける意味ではない。公開speedは引き続き固定1。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">出力</th>
+          <td>
+            WAV／PCMとも24 kHz mono
+            PCM16。healthにdefault_voice、default_output_preset、default_output_processingを公開。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      固定参照bankは
+      <code>/srv/ai/models/Edge0/audio8-ja-voices-v2</code>
+      に準備し、sourceのvoice-manifest.jsonと全参照assetのchecksumを照合する。旧bankを保持し、差し替えで上書きしない。参照07を準備済み試聴directoryから取り込むため、常用時にQwenを起動する必要はない。FFmpegのatempo・equalizerを準備時に検査し、実APIでは処理失敗を502、期限切れ・cancelを既存のworker寿命管理で扱う。
+    </p>
+    <p>
+      実機検証ではvoiceとspeedを省略した通常のPOSTで出迎え文を生成し、承認された試聴版と7.22秒のPCMデータが完全一致した。最大sample差0、波形相関1.0。検証結果は
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-default-butler-v1</code>
+      に保存した。一時起動後Audio8は停止し、VOICEVOXは元の6話者のままhealthyだった。
+    </p>
+    <p>
+      この変更はAudio8
+      Providerの既定声の設定であり、tts-defaultのVOICEVOX経路と稼働中LARMのreleaseは保持している。Audio8のunitは未登録・未常駐で、次回この実装を起動すると新しい既定声を使う。参照bankのパスとproviderConfigRevisionもv2へ更新し、正式配備時の固定設定として扱う。
+    </p>
+  </section>
+  <section id="evidence">
+    <h2>確認根拠と未確認のconsumer</h2>
+    <p>
+      現行adapterはapps/voicevox-tts/voicevox_api.py、公開schemaはpackages/core/src/openai-contract.ts、gatewayのPCM処理はapps/daemon/src/gateway.ts、model拘束はapps/daemon/src/app-scoped-provider.tsで確認した。ライブVOICEVOXはcore
+      0.17.0、CPU 16 threads、VVM 0.vvmと4.vvmをロードし、6話者を公開していた。
+    </p>
+    <p>
+      SAAAは../SAAAの作業ツリーにsrc-tauri/src/providers/dynamic_lan/mod.d/02.rs、04.rs、05.rsの未コミット変更があった。pull・上書き・stash・実装の参照は行っていない。SAAAを最新状態として扱わず、その実装に基づくUI互換性や設定切替の成立は未確認とする。SAAA側の実装・受入確認へ進むときは作業ツリーの状態を解決し、AGENTS.mdの更新手順に従う。現時点の設計はLARMの公開契約に基づく。
+    </p>
+    <ul>
+      <li>
+        <a href="./audio8-realistic-japanese-prosody-2026-11-01.html"
+          >Audio8の試聴・日本語速度・メモリ実測</a
+        >
+      </li>
+      <li>
+        <a href="./independent-audio-provider-connections.html">音声ProviderとLLMの接続分離</a>
+      </li>
+      <li>
+        <a href="./tts-readiness-without-synthesis-2026-10-25.html"
+          >readinessで音声を合成しない契約</a
+        >
+      </li>
+    </ul>
+  </section>
+</article>

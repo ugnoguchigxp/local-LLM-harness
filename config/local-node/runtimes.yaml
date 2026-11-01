@@ -579,7 +579,40 @@ runtimes:
       service: whisper-asr.service
       healthPort: 8085
       endpoint: http://127.0.0.1:8085
+  audio8-tts-realistic:
+    artifacts:
+      - audio8-tts-realistic-snapshot
+    capability:
+      - speech.tts
+    protocol: openai.audio-speech.v1
+    speech:
+      speed: { minimum: 1, maximum: 1, default: 1 }
+      pitch_scale: { minimum: 0, maximum: 0, default: 0 }
+      intonation_scale: { minimum: 1, maximum: 1, default: 1 }
+    backend: systemd
+    node: local-node
+    policy:
+      class: preferred
+      lifecycle: managed
+      warm:
+        minInstances: 1
+        idleTtlSeconds: 0
+    resources:
+      estimatedMemoryGB: 8
+      maxConcurrentRequests: 1
+      maxQueuedRequests: 0
+      queueTimeoutMs: 1000
+    deployment:
+      scope: user
+      service: audio8-tts.service
+      healthPort: 8097
+      endpoint: http://127.0.0.1:8097
   voicevox-tts:
+    speech:
+      style: true
+      speed: { minimum: 0.5, maximum: 2, default: 1 }
+      pitch_scale: { minimum: -0.15, maximum: 0.15, default: 0 }
+      intonation_scale: { minimum: 0, maximum: 2, default: 1 }
     capability:
       - speech.tts
     protocol: openai.audio-speech.v1
@@ -589,8 +622,8 @@ runtimes:
       class: preferred
       lifecycle: managed
       warm:
-        minInstances: 1
-        idleTtlSeconds: 60
+        minInstances: 0
+        idleTtlSeconds: 0
     resources:
       estimatedMemoryGB: 1
       maxConcurrentRequests: 1
@@ -601,6 +634,8 @@ runtimes:
       healthPort: 8084
       endpoint: http://127.0.0.1:8084
   kittentts-nano:
+    speech:
+      speed: { minimum: 0.5, maximum: 2, default: 1 }
     artifacts:
       - kitten-tts-nano-fp32
       - kitten-tts-nano-voices

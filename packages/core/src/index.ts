@@ -355,3 +355,5 @@ export * from "./compute";
 
 export * from "./reasoning";
 export { memoryResourceError, resourceErrorFields, nodeAdmissionSchema } from "./resource-errors";
+
+export { speechControlsSchema, inspectSpeechControls, type SpeechControls } from "./speech-controls";

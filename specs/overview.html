@@ -22,6 +22,77 @@
         </tr>
       </thead>
       <tbody>
+        <tr data-kind="research" data-state="proposed" data-domain="matanyone2-integration">
+          <th scope="row">
+            <a href="./matanyone2-integration-evaluation-2026-11-01.html"
+              >MatAnyone 2の人物動画マッティング導入検討</a
+            >
+          </th>
+          <td>
+            Radeon
+            8060SとROCmの適合性、動画I/O互換性、全フレーム保持の制約、ライセンス、短尺試験とProvider化の条件。
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>matanyone2-integration</code></small
+            >
+          </td>
+          <td>
+            2026-11-01調査。既存環境からGPU認識と動画読込APIの欠落を確認。モデル導入・推論は未実施。
+          </td>
+        </tr>
+        <tr data-kind="research" data-state="proposed" data-domain="unlimited-ocr-comparison">
+          <th scope="row">
+            <a href="./unlimited-ocr-comparison-2026-11-01.html">Unlimited-OCR 2と現行OCRの比較</a>
+          </th>
+          <td>
+            現行配備の特定、長文書解析との用途差、AMD環境の制約、日本語の比較条件。<small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>unlimited-ocr-comparison</code></small
+            >
+          </td>
+          <td>
+            2026-11-01調査。現行OCR維持と別サービス候補の評価を提案。同条件の推論比較・配備は未実施。
+          </td>
+        </tr>
+        <tr
+          data-kind="research"
+          data-state="proposed"
+          data-domain="apex-35b-tool-use-json-evaluation"
+        >
+          <th scope="row">
+            <a href="./apex-35b-tool-use-json-evaluation-2026-11-01.html"
+              >Apex-35Bの単一タスク・ツール利用・JSON生成調査</a
+            >
+          </th>
+          <td>公開ベンチマークの条件、JSON特化の未確認事項、ローカル比較手順</td>
+          <td>
+            2026-11-01の公開資料調査。推論・重み取得・配備は未実施。
+            <small>
+              分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>apex-35b-tool-use-json-evaluation</code>
+            </small>
+          </td>
+        </tr>
+        <tr data-kind="research" data-state="proposed" data-domain="real-esrgan-integration">
+          <th scope="row">
+            <a href="./real-esrgan-integration-evaluation-2026-11-01.html"
+              >Real-ESRGANの画像拡大・補修機能の導入検討</a
+            >
+          </th>
+          <td>
+            Radeon
+            8060SのVulkan列挙、静止画4倍拡大の候補、専用API・artifact保存・実測資源管理への接続と受入条件。
+            <small
+              >分類: <code>research</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>real-esrgan-integration</code></small
+            >
+          </td>
+          <td>2026-11-01調査。導入可能性と構成案を整理。推論・性能測定・配備は未実施。</td>
+        </tr>
         <tr data-kind="evidence" data-state="current" data-domain="on-demand-live-memory-admission">
           <th scope="row">
             <a href="./on-demand-live-memory-admission-repair-2026-11-01.html"
@@ -1108,6 +1179,77 @@
           <td>
             2026-10-12
             JST。本番反映済み。CPU常駐、Rosie／HugoのLARM経由生成とrelease後の常駐維持を検証。Eumenesの通常ttsはVOICEVOXを維持。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="supertonic3-japanese-cpu-samples"
+        >
+          <th scope="row">
+            <a href="./supertonic3-japanese-cpu-samples-2026-11-01.html"
+              >Supertonic 3の日本語CPU音声サンプル実測</a
+            >
+          </th>
+          <td>
+            公式FP32モデルをCPU
+            4スレッドで実行し、4話者・朗読・数字読み・表情タグ・5ステップ・長文の10本を生成。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>supertonic3-japanese-cpu-samples</code></small
+            >
+          </td>
+          <td>
+            2026-11-01 JST。会話文RTF 0.075〜0.092、累積peak RSS 687.1
+            MiB。音声は外部保存。聴覚品質とProvider採用は未判定。
+          </td>
+        </tr>
+        <tr
+          data-kind="plan"
+          data-state="proposed"
+          data-domain="audio8-voicevox-compatible-provider"
+        >
+          <th scope="row">
+            <a href="./audio8-voicevox-compatible-provider-plan-2026-11-01.html"
+              >Audio8／VOICEVOXの共通APIと即時復帰設計</a
+            >
+          </th>
+          <td>
+            一時起動で比較するTTS
+            Provider、共通WAV／PCM契約、話者・調整機能の差、Connection単位の切替を定義する。
+            <small
+              >分類: <code>plan</code> · 状態:
+              <code>proposed</code> · 正本領域:
+              <code>audio8-voicevox-compatible-provider</code></small
+            >
+          </td>
+          <td>
+            2026-11-01
+            JST。承認済み声を標準日本語TTSへ配備。実APIのPCM一致とVOICEVOX停止を確認。consumerは再接続して試用する。
+          </td>
+        </tr>
+        <tr
+          data-kind="evidence"
+          data-state="current"
+          data-domain="audio8-realistic-japanese-prosody"
+        >
+          <th scope="row">
+            <a href="./audio8-realistic-japanese-prosody-2026-11-01.html"
+              >Audio8 Realisticの日本語抑揚とKittenTTS比較</a
+            >
+          </th>
+          <td>
+            Audio8の日本語6本・英語2本と、KittenTTS Rosie／Hugoの同文英語を実機生成。
+            <small
+              >分類: <code>evidence</code> · 状態:
+              <code>current</code> · 正本領域:
+              <code>audio8-realistic-japanese-prosody</code></small
+            >
+          </td>
+          <td>
+            2026-11-01
+            JST。モデル・音声は外部保存。句読点・感情語による表現と読みを検証。Provider採用判断は未実施。
           </td>
         </tr>
         <tr

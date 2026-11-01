@@ -1,0 +1,238 @@
+<article lang="ja">
+  <h1>MatAnyone 2の人物動画マッティング導入検討</h1>
+  <p>
+    2026年11月1日。結論は条件付きで導入可能性が高い。Radeon 8060S・gfx1151で動くROCm版PyTorchを
+    利用し、専用環境と動画入出力の修正を用意すれば、人物の背景除去・背景合成用の候補になる。
+    ただし、MatAnyone 2自体の推論、画質、速度、最大メモリーは未検証。
+    非商用の短尺試験を先行し、合格後にLARMのオンデマンドProvider化を検討する。
+  </p>
+  <p>
+    LARM調査対象revisionは<code>20ba531eb7ef6ffb62298a23e719291692e4eaf3</code>、 MatAnyone
+    2の調査対象revisionは<code>0079197acd6d16a741f71558809c06c586c579e0</code>。
+    公開ソースと配布情報、ローカル資源、既存専用環境のPython packageとGPU認識を確認した。
+    外部ソースは一時ディレクトリで参照した。モデル・追加packageの導入、推論、サービス変更は実施していない。
+    作業ツリーに既存の変更があるため、それらを保持して本資料と目録の追記のみを行う。SAAA実装は参照していない。
+  </p>
+
+  <section id="use-case">
+    <h2>用途と入出力</h2>
+    <p>
+      主用途は人物動画から、髪などの境界を含む連続値のalpha matteを推定する処理。
+      人物動画と最初のフレームの対象マスクを入力する。マスクを自動生成する機能は本体と分けて考える。
+      公式デモはSAMによるクリック指定を追加するため、まずは手元のマスクを渡すPython
+      APIによる試験を優先する。
+      一般物体・アニメ・複数人物の個別分離に対する品質は、人物用途から推測せず個別に評価する。
+    </p>
+    <p>
+      公式処理はalpha動画と緑背景に合成したRGB動画を出力する。
+      名前がforegroundであっても、背景と分離したRGBとalphaを持つ透過動画がそのまま得られる実装ではない。
+      透過素材として利用する場合は、元RGBとalphaからRGBA画像列またはalpha対応の動画形式を作る。
+      alphaは公式既定の圧縮MP4だけに頼らず、PNG等の可逆形式でも比較する。
+      音声、可変フレームレートの時刻、回転metadataの扱いもアプリ側の仕事になる。
+    </p>
+  </section>
+
+  <section id="host">
+    <h2>本機の適合性</h2>
+    <table>
+      <caption>
+        2026年11月1日の読み取り確認
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">確認内容</th>
+          <th scope="col">判断</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">GPU</th>
+          <td>Radeon 8060S、gfx1151。既存PyTorchから認識成功。</td>
+          <td>ROCm経由で試験可能。モデル演算の互換性は未検証。</td>
+        </tr>
+        <tr>
+          <th scope="row">既存試験用環境</th>
+          <td>Python 3.11.16、PyTorch 2.11.0+rocm7.13.0、Torchvision 0.26.0+rocm7.13.0。</td>
+          <td>独立環境を作る際の候補。既存環境へ依存関係を追加・降格しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">メモリー</th>
+          <td>
+            OS表示の総量121GiB、観測時MemAvailable約88GiB。PyTorchはGPU総メモリーを102400MiBと表示。
+          </td>
+          <td>統合メモリーのためCPU用とGPU用を加算しない。将来の同時利用可能量でもない。</td>
+        </tr>
+        <tr>
+          <th scope="row">ストレージ</th>
+          <td>
+            観測時の空き約634GiB。公式PTHは141,429,115 bytes、HF safetensorsは141,199,924 bytes。
+          </td>
+          <td>本体重みは約141MB。ただし実行環境・デコード画像・出力の容量を別途確保する。</td>
+        </tr>
+        <tr>
+          <th scope="row">動画ツール</th>
+          <td>FFmpegとffprobeを導入済み。</td>
+          <td>逐次デコード、出力、時刻と音声の検証に利用可能。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      GPU確認には<code>/srv/ai/apps/ltx-video-2b-trial-20261020/.venv</code>を読み取り利用した。
+      <code>torch.cuda.is_available()</code
+      >はtrueで、<code>gcnArchName</code>はgfx1151。
+      PyTorchのROCm版もcudaというAPI名を使うため、ソース中のcuda表記だけでNVIDIA専用とは判断しない。
+      主要モデル処理はPyTorchの畳み込み・attention等で構成され、調査した本体ソースに独自CUDA拡張のビルドは見当たらなかった。
+      ROCmで動く見込みという推論であり、ロードや推論成功の証拠ではない。
+      rocm-smiの固定VRAM表示2GiBだけを本機のGPU利用上限とは扱わない。
+    </p>
+  </section>
+
+  <section id="compatibility">
+    <h2>導入時に必要な調整</h2>
+    <table>
+      <caption>
+        公式の導入手順をそのまま適用しない理由
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">根拠</th>
+          <th scope="col">対応案</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">CUDA向け設定</th>
+          <td>
+            pyproject.tomlのuv sourcesはtorchとtorchvisionをcu128
+            indexへ向ける。一方、主要dependenciesにtorch・torchvision・CLI用typerの明示指定がない。
+          </td>
+          <td>
+            検証済みROCmのtorch・torchvisionを明示固定し、推論に必要な依存を専用lockで管理する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Python版</th>
+          <td>OS標準は3.14.4。公式依存のpyqtdarktheme 2.1.0はPython 3.7以上3.12未満を要求する。</td>
+          <td>
+            最初はPython 3.11の独立環境。GUI・学習用依存を分離する場合は本体importを実証する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">動画読込</th>
+          <td>
+            inference_utils.pyがtorchvision.io.read_videoを呼ぶ。本機のTorchvision
+            0.26.0では属性が存在しないことを実測した。
+          </td>
+          <td>
+            FFmpegまたはPyAVの読込へ差し替える。画像列による暫定試験も可能だが既定24fpsを引き継がない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">全フレーム保持</th>
+          <td>
+            CLIとprocess_videoの両方が入力を全件float32化し、出力alpha・合成RGBも全件保持する。max_sizeによる縮小は全読込後。
+          </td>
+          <td>
+            初回は短い事前縮小済み動画。長尺はstepを使い、モデルの時系列メモリーを保ったまま逐次読込・逐次保存する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">checkpointの指定</th>
+          <td>CLIと従来scriptは受け取ったcheckpoint pathを自動取得した既定パスで上書きする。</td>
+          <td>
+            取得revisionとchecksumを固定し、管理済みローカル重みをロードする専用runnerを用意する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">追加の暗黙ダウンロード</th>
+          <td>
+            ResNet
+            encoderの初期化はpretrainedを既定trueとし、ResNet重みを取得し得る。公式GUIもSAMや旧MatAnyone等を取得する。
+          </td>
+          <td>
+            必要な成果物を列挙する。全重みを正しく上書きすることを確認してResNet事前取得を省くか、取得対象として管理する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">GUI</th>
+          <td>公式requirementsはGradio 4.31.0等の固定版とSAM関連依存を追加する。</td>
+          <td>初期試験では本体Python APIを使う。操作画面とマスク生成は別段階で評価する。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      1080p・30fps・30秒＝900枚の入力RGBをfloat32で保持するだけで約20.86GiB、
+      uint8の合成RGBとalphaで約6.95GiB、合計約27.81GiBになる。
+      これは配列payloadの算術値であり実測ではない。モデル・時系列特徴・読込元・一時コピー・warmupを含まず、
+      リストから配列へ変換するときにもpeakが増える。60秒では同じpayloadが約55.62GiBになる。
+      約141MBのcheckpointから必要RAMやGPUメモリーを見積もらない。
+      max_sizeは短辺の上限であり、長辺の上限ではない。
+    </p>
+  </section>
+
+  <section id="license">
+    <h2>利用条件</h2>
+    <p>
+      公式LICENSE.txtはS-Lab License 1.0で、非商用の利用・再配布を対象とする。
+      商用利用・再配布については貢献者への連絡を求めている。
+      商用の製品・サービスに組み込む場合は、権利者と利用条件を確認する必要がある。 Hugging
+      Face側のLICENSEファイルは調査時0 bytesであり、別の商用許諾の根拠にはしない。
+      自動マスク生成を追加する場合は、そのモデルと依存ライブラリの条件も別途記録する。
+    </p>
+  </section>
+
+  <section id="plan">
+    <h2>試験とLARM連携の案</h2>
+    <ol>
+      <li>
+        エンジン・専用venvはリポジトリ外、重みは<code>/srv/ai/models/</code>配下に置き、revision・checksum・依存を固定する。
+      </li>
+      <li>
+        手動マスク付きの人物動画を5〜10秒、720p、同時実行1件で試す。髪、指、速い動き、遮蔽、背景と似た色の境界を確認する。
+      </li>
+      <li>
+        GPU実行、処理時間、fps、RSS、GPU割当peak、ホストMemAvailableを記録する。FP32と混合精度の安定性、NaN、ちらつきも確認する。
+      </li>
+      <li>
+        逐次入出力へ変更し、1080pと長尺でメモリーが入力時間に比例して増え続けないことを確認する。フレーム数・時刻・音声・alphaの保持も受入条件にする。
+      </li>
+      <li>
+        品質・資源の基準を満たしたら、ジョブAPI・進捗・取消・成果物取得を持つProviderを追加する。
+      </li>
+    </ol>
+    <p>
+      LARM側では、例えば<code>video.matting</code>を新規capabilityとする案が考えられるが、登録済み契約ではない。
+      Agent ProfileとProvider
+      subsetからroute、runtime、backendへ解決し、要求時起動・未使用時解放を行う。
+      初期同時実行数は1、資源量は実測後に決定する。固定メモリー量や他モデル停止をこの調査だけで設定しない。
+      解決されたruntimeの負荷、推論peakと実測空きに基づいて既存Providerとの競合を管理する。
+      モデル推論・動画処理は外部runtime、OS非依存の登録と計画はpackages/core、systemd連携はpackages/backendsの境界を守る。
+    </p>
+    <p>
+      次に必要なのは独立環境での短尺の推論試験。本調査の完了は導入済み・本番対応済み・リアルタイム動作の保証を意味しない。
+      公開APIの実装、デモ公開、LARM設定の変更は今回の調査対象に含めない。
+    </p>
+  </section>
+
+  <section id="sources">
+    <h2>参照情報</h2>
+    <p>以下は参照元の識別情報。外部サイトへのリンクや取得物はSpec内に配置しない。</p>
+    <ul>
+      <li>
+        公式リポジトリ：<code>https://github.com/pq-yang/MatAnyone2</code>。README、pyproject.toml、LICENSE.txtと上記revisionの本体・CLI・GUIソース。
+      </li>
+      <li>
+        本体配布：<code>https://api.github.com/repos/pq-yang/MatAnyone2/releases</code>のv1.0.0と、<code>https://huggingface.co/api/models/PeiqingYang/MatAnyone2/tree/main</code>。
+      </li>
+      <li>PyTorch ROCmのAPI：<code>https://docs.pytorch.org/docs/2.15/notes/hip.html</code>。</li>
+      <li>動画I/O廃止の告知：<code>https://docs.pytorch.org/vision/0.24/generated/torchvision.io.read_video.html</code>。</li>
+      <li>Python制約：<code>https://pypi.org/pypi/pyqtdarktheme/json</code>の2.1.0 metadata。</li>
+      <li>
+        既存実機試験：<a href="./ltx-video-2b-local-trial-2026-10-20.html">LTX-Video試験記録</a
+        >。今回の用途・モデルの品質評価には流用しない。
+      </li>
+    </ul>
+  </section>
+</article>

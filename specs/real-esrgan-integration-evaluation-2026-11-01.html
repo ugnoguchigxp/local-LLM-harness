@@ -1,0 +1,301 @@
+<article lang="ja">
+  <h1>Real-ESRGANの画像拡大・補修機能の導入検討</h1>
+  <p>
+    2026年11月1日。結論は条件付きで導入可能。LARMに静止画の超解像Providerを追加し、
+    既存の画像生成結果と取込画像を入力にできる構成を推奨する。
+    第一候補はReal-ESRGAN-ncnn-vulkan。実機のRadeon 8060SをVulkanから認識できたが、
+    Real-ESRGANの推論・速度・peakメモリー・画質は未測定であり、配備済みという意味ではない。
+  </p>
+  <p>
+    LARM調査対象revisionは<code>20ba531eb7ef6ffb62298a23e719291692e4eaf3</code>。
+    調査は公開資料・ソース・release情報とローカル設定の読み取り、GPU列挙、文書作成に限定した。
+    パッケージ導入、モデル・実行物の取得、既存サービスの変更、推論は実施していない。
+    SAAA実装は参照していない。
+  </p>
+
+  <section id="value">
+    <h2>利用価値と初期対象</h2>
+    <table>
+      <caption>
+        機能ごとの導入判断
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">機能</th>
+          <th scope="col">判断</th>
+          <th scope="col">条件・限界</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">生成画像・写真の拡大と劣化補修</th>
+          <td>初期対象。汎用のrealesrgan-x4plusを明示選択する。</td>
+          <td>JPEG劣化や細部の見栄えを評価する。失われた細部の正確な復元は保証しない。</td>
+        </tr>
+        <tr>
+          <th scope="row">イラスト・アニメ画像</th>
+          <td>realesrgan-x4plus-animeを追加候補とする。</td>
+          <td>汎用モデルと分けて選択する。画像内容から自動でモデルを切り替えない。</td>
+        </tr>
+        <tr>
+          <th scope="row">顔の補修</th>
+          <td>後続。Python版のGFPGAN統合を別途評価する。</td>
+          <td>
+            ncnn版のREADMEでは未対応項目。本人らしさが変化する可能性を含め、通常拡大と区別する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">動画の高解像度化</th>
+          <td>後続。初期対象から外す。</td>
+          <td>
+            フレーム処理に加え、音声・時刻・再エンコード・長時間ジョブ管理とちらつき評価が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">文字・図面・OCRの前処理</th>
+          <td>任意の比較用途。標準の前処理にはしない。</td>
+          <td>文字形状や細線が変わる可能性がある。原画像を残し、認識精度の改善を別途測定する。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      512角を2048角へ、1024角を4096角へ拡大する用途が最初の評価に適する。
+      4倍は各辺の倍率で、画素数は16倍になる。高解像度で直接生成する処理との速度差や画質差は、
+      この実機では未比較。常に高速・高品質になるとは決めない。
+    </p>
+  </section>
+
+  <section id="backend">
+    <h2>実行方式の選定</h2>
+    <table>
+      <caption>
+        Vulkan版を先行し、追加機能が必要な場合にPython版を検討する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">方式</th>
+          <th scope="col">適合性</th>
+          <th scope="col">確認事項</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Real-ESRGAN-ncnn-vulkan</th>
+          <td>
+            Linux・AMD
+            GPU向けの第一候補。CUDA・PyTorchを必要とせず、CLIを子プロセスとして管理できる。
+          </td>
+          <td>
+            古い配布物と現行RADVの実行互換性、モデルごとの倍率、タイル境界、黒画像の発生を実機確認する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">Real-ESRGAN Python・PyTorch</th>
+          <td>GFPGAN、denoise strength、任意の最終倍率、16-bit等が必要な場合の候補。</td>
+          <td>
+            gfx1151対応PyTorch・ROCmとBasicSR等の組合せを専用環境で固定する。既存Providerの仮想環境へ追加しない。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Python版の任意倍率はモデル本来の倍率で推論した後のリサイズを含む。 ncnn
+      CLIのヘルプには2・3・4倍があるが、すべてのモデルが各倍率へ対応するという意味ではない。
+      初期契約は汎用x4plusと任意追加のanimeモデルの4倍に限定する。 2倍出力が必要なら、native
+      2倍モデルを使う方式と4倍推論後に縮小する方式を別々に評価する。
+      Python版の.pthとncnn版の.param・.binは実行資産として区別する。
+    </p>
+    <p>
+      実機のvulkaninfo --summaryは正常終了。GPU0はRadeon 8060S Graphics、RADV STRIX_HALO、 device
+      API 1.4.335、Mesa 26.0.8-1ubuntu0.3。GPU1はCPUのllvmpipeだった。
+      実行時はハードウェアGPUを明示し、ログでも選択を確認する。GPU列挙成功だけでは推論成功を保証しない。
+    </p>
+    <p>
+      上流APIで確認した最新releaseはPython版v0.3.0（2022-09-20）、ncnn版v0.2.0（2022-04-24）。
+      調査時のmasterはそれぞれ<code>a4abfb2979a7bbff3f69f58f58ae324608821e27</code>、
+      <code>37026f49824c5cf84062e7c6a5dd71445dcf610f</code>だった。
+      更新間隔が長いため、READMEの最小依存バージョンを現行環境の動作保証とは扱わない。
+      配布バイナリが動かなければ、固定revisionと依存関係でのビルドを評価する。
+    </p>
+  </section>
+
+  <section id="integration">
+    <h2>LARMへの接続案</h2>
+    <p>
+      既存のPOST
+      /v1/images/generationsはpromptを受ける画像生成APIで、現在のschemaはQwen・FLUXのみを許可する。
+      Real-ESRGANをこのmodel列挙へ加えるだけでは、入力画像を受け取れず、
+      Daemonの生成モデル・steps・寸法の検証にも一致しない。画像拡大の専用操作を設ける。
+    </p>
+    <p>
+      API案はPOST /v1/images/upscales、capability案はmedia.image.upscale、 runtime
+      variant案はimage-upscale。これらは提案名であり、現在の公開APIには存在しない。 Agent
+      ProfileのProvider subsetからroute、runtime、backendを明示解決し、
+      独立したControlのメディア操作でも明示したvariant設定から同じ実行対象へ到達させる。
+      実行中の画像モデルやsystemd unitの状態を要求モデルの代用にしない。
+    </p>
+    <pre><code class="language-json">{
+  "source": { "type": "image-artifact", "id": "image_0123456789abcdef0123456789abcdef" },
+  "model": "realesrgan-x4plus",
+  "scale": 4,
+  "format": "png"
+}</code></pre>
+    <ol>
+      <li>
+        Controlの既存認証で入力artifactを解決する。外部の写真は既存の画像取込APIで先に登録できる。
+        入力は検証済み画像の専用コピーを確保し、読込中の削除・retentionとの競合を防ぐ。
+      </li>
+      <li>
+        明示modelに対応するmanifest・資産の存在と入力・出力上限を、GPU起動前に検証する。
+        未配備モデルは別モデルへ自動代替しない。
+      </li>
+      <li>
+        既存のaccelerator-media-heavy排他groupと共通起動gateを通し、要求時にだけworkerを起動する。
+        画像生成・音楽・3Dと競合する場合は既存の競合契約へ合わせる。
+      </li>
+      <li>
+        専用の内部workerがncnn
+        CLIを引数配列で起動する。モデル・GPU・tile・作業領域は管理側で制限する。
+        公開ネットワークで上流CLIを直接操作できる構成にはしない。
+      </li>
+      <li>
+        出力をdecodeし、要求寸法・形式・alpha・hashを検証して新しいartifactとして原子的に公開する。
+        元画像を上書きしない。出力をControlから取得でき、workerと子プロセスが終了した後に成功を返す。
+      </li>
+    </ol>
+    <p>
+      初期試行は同時実行1件、4倍、出力各辺4096以下・16メガピクセル以下を提案する。
+      1280角の4倍は5120角になるので、この初期上限では起動前に明示エラーにする。
+      暗黙に縮小して成功にしない。上限拡張は実測後に判断する。
+      RGBのPNG出力を先行し、WebP・RGBAは透過境界と再エンコードの受入後に有効にする。
+    </p>
+  </section>
+
+  <section id="boundaries">
+    <h2>再利用できる部分と変更が必要な部分</h2>
+    <table>
+      <caption>
+        既存の画像保管・資源管理を活用する
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">場所</th>
+          <th scope="col">対応</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">packages/core</th>
+          <td>
+            拡大要求・応答schema、capability・モデル選択・上限、API契約と操作一覧を追加する。OS操作は入れない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">packages/backends</th>
+          <td>
+            既存MediaVariantManager、起動gate、実測メモリー判定へ接続し、systemd起動・停止を担う。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">apps/daemon・packages/client</th>
+          <td>
+            専用route・Provider・入力画像コピー・出力検証・取消・期限・Client操作を追加する。認証・イベント・エラー契約にも登録する。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">画像artifact・retention</th>
+          <td>
+            既存のPNG/WebP保存、取得URL、hash、容量制御を再利用する。sourceArtifactId・scale・engine
+            revision等の来歴はstrict schemaの明示拡張が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">deploy/local-node</th>
+          <td>
+            専用worker・unit・variant・モデルmanifest・準備手順を追加する。必要なsystemd操作権限も登録する。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      image artifactの寸法schemaは各辺16384まで許容するが、既存の画像取込normalizerは各辺2000・
+      4メガピクセルまでで、入力16 MiB・保存20 MiBの制限もある。
+      拡大結果を取込APIへ送り直す設計は採らず、処理結果専用の検証・公開経路を追加する。
+      取込の防御的な上限を一律に緩和しない。既存copyForMeshにも4096辺・20 MiBの制限があり、
+      画像の保存成功だけで3D入力としての利用まで保証しない。
+    </p>
+    <p>
+      メモリーは<a href="./on-demand-live-memory-admission-repair-2026-11-01.html"
+        >現行の実測空き判定</a
+      >を継承する。 UMAのsystem・GPU空きを加算せず、ホスト安全余裕を一度だけ適用する。
+      モデルファイル容量や旧画像生成の固定予約値を起動判定へ流用しない。
+      tile処理でも出力全体・decode・encode用のメモリーが必要であり、tileだけでpeakが一定になるとは考えない。
+      待機・モデルロード・処理・停止は要求の総期限と取消に従う。
+    </p>
+    <p>
+      実行物・専用環境はrepository外の<code>/srv/ai/apps/real-esrgan-runtime</code>、
+      モデルは<code>/srv/ai/models/Real-ESRGAN</code>等へ分離する案とする。
+      manifestへ配布元・revision・各ファイルのSHA-256を記録し、要求中の追加downloadは行わない。
+      ソースのLICENSEはPython版がBSD-3-Clause、ncnn版がMIT。
+      配布物・モデル資産・依存物の付属条件と著作権表示も実際の採用品ごとに記録する。
+    </p>
+  </section>
+
+  <section id="acceptance">
+    <h2>導入前の試験と採用条件</h2>
+    <ol>
+      <li>
+        repository外で固定したLinux実行物とモデルを準備し、RADVを使う単体CLI試験を行う。
+        写真、圧縮画像、生成画像、イラスト、細線・文字を含む画像について通常のLanczos拡大と比較する。
+      </li>
+      <li>
+        512角→2048角、1024角→4096角で、起動・ロード・処理・保存の時間とOS・GPUのpeakを測る。
+        tile設定を変えて境界・速度・メモリーの差を調べる。既存会話Providerが稼働する条件でも評価する。
+      </li>
+      <li>
+        黒画像、継ぎ目、輪郭の過強調、文字変形、色変化を目視確認する。
+        upstreamはncnn版とPyTorch版の差やタイル不整合の可能性を説明しており、同一出力を前提にしない。
+        終了codeだけで成功とせず、出力decode・寸法・hashを機械検証する。
+      </li>
+      <li>
+        CLI試験後にLARMへ統合し、初回起動、競合、取消、期限超過、メモリー不足、資産不足、保存失敗、
+        worker停止失敗を試験する。失敗時に半端なartifactを公開せず、子プロセス・作業ファイルを回収する。
+      </li>
+      <li>
+        PNG取得とhashの一致、原画像保持、処理中の削除・pruneとの整合、来歴、停止後の画像取得を受け入れる。
+        WebP・RGBA、顔補修、動画はそれぞれ追加の受入を行う。
+      </li>
+    </ol>
+    <p>
+      単体CLIで動作・画質・負荷の受入を満たせば、静止画4倍拡大から導入を進める。
+      現時点の未解決事項は、古いncnn実行物と現行GPUの互換性、実測性能、実際の画質、
+      適切なtile設定と出力上限である。技術的な接続案と導入完了を区別する。
+    </p>
+  </section>
+
+  <section id="references">
+    <h2>参照資料</h2>
+    <p>外部資料の取得日は2026-11-01。再調査できるようURLを文字列で記録する。</p>
+    <ul>
+      <li>上流概要・機能：<code>https://github.com/xinntao/Real-ESRGAN</code></li>
+      <li>モデル一覧：<code>https://github.com/xinntao/Real-ESRGAN/blob/a4abfb2979a7bbff3f69f58f58ae324608821e27/docs/model_zoo.md</code></li>
+      <li>Python推論：<code>https://github.com/xinntao/Real-ESRGAN/blob/a4abfb2979a7bbff3f69f58f58ae324608821e27/inference_realesrgan.py</code></li>
+      <li>タイル・出力処理：<code>https://github.com/xinntao/Real-ESRGAN/blob/a4abfb2979a7bbff3f69f58f58ae324608821e27/realesrgan/utils.py</code></li>
+      <li>ncnn概要・制約：<code>https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/tree/37026f49824c5cf84062e7c6a5dd71445dcf610f</code></li>
+      <li>ncnnモデル選択：<code>https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/blob/37026f49824c5cf84062e7c6a5dd71445dcf610f/src/main.cpp</code></li>
+      <li>
+        release確認：<code>https://api.github.com/repos/xinntao/Real-ESRGAN/releases/latest</code>、<code
+          >https://api.github.com/repos/xinntao/Real-ESRGAN-ncnn-vulkan/releases/latest</code
+        >
+      </li>
+      <li>
+        ライセンス：両repositoryの上記固定revisionの<code>LICENSE</code>。
+      </li>
+      <li>
+        既存画像API：<a href="./image-model-selection-flux3-2026-10-31.html"
+          >モデル選択・オンデマンド起動</a
+        >、<a href="./image-artifact-import-api-2026-10-18.html">画像取込API</a>。
+      </li>
+    </ul>
+  </section>
+</article>

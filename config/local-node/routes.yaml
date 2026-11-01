@@ -208,7 +208,14 @@ routes:
     capabilities:
       - speech.tts
     candidates:
-      - runtime: voicevox-tts
+      - runtime: audio8-tts-realistic
+        purpose: primary
+  tts-audio8:
+    capabilities:
+      - speech.tts
+    explicitOnly: true
+    candidates:
+      - runtime: audio8-tts-realistic
         purpose: primary
   tts-voicevox:
     capabilities:

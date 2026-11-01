@@ -1,3 +1,4 @@
+import { speechControlsSchema } from "./speech-controls";
 import { z } from "zod";
 import { reasoningPolicySchema } from "./reasoning";
 import { chatInputPolicySchema, textChatInputPolicySchema } from "./chat-input";
@@ -79,6 +80,7 @@ export const contextPoolsSchema = z.object({
 });
 
 const runtimeShared = {
+  speech: speechControlsSchema.optional(),
   capability: uniqueStringList,
   protocol: runtimeProtocolSchema,
   context: runtimeContextPolicySchema.optional(),

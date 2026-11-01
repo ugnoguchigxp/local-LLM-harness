@@ -68,7 +68,7 @@ test("loads the Linux production registry", () => {
   expect(asr?.capability).toContain("speech.stt");
   expect(realtimeTts?.capability).toContain("speech.tts");
   expect(expressiveTts?.capability).toContain("speech.tts.expressive");
-  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd" && !["laya-system-one", "d1-system-one", "qwen-asr", "ornith-general", "lfm3-vl-perception"].includes(item.id))) {
+  for (const runtime of registry.runtimes.filter((item) => item.backend === "systemd" && !["laya-system-one", "d1-system-one", "qwen-asr", "ornith-general", "lfm3-vl-perception", "voicevox-tts"].includes(item.id))) {
     expect(runtime.policy.warm?.minInstances).toBe(1);
   }
   expect(model35b?.policy).toEqual({
@@ -690,13 +690,13 @@ test("production warm floor keeps shared Ornith STRIX and speech warm while admi
   expect(admitRuntimes({ registry: withoutRetention, state, allocations: [], candidateRuntimeIds: ["ornith-general"] }).ok).toBe(true);
   const context = admitRuntimes({
     registry, state, allocations: [],
-    candidateRuntimeIds: ["ornith15-strix-conversation", "laya-system-one", "multilingual-e5-small", "granite-asr", "voicevox-tts", "kittentts-nano"],
+    candidateRuntimeIds: ["ornith15-strix-conversation", "laya-system-one", "multilingual-e5-small", "granite-asr", "audio8-tts-realistic", "kittentts-nano"],
   });
   expect(context.ok).toBe(true);
   expect(context.nodes[0]?.reclaimableMemoryGB ?? 0).toBe(0);
   expect(registry.runtimes.find(runtime => runtime.id === "gemma4-26b-conversation")?.policy.warm?.minInstances).toBe(0);
   expect(registry.runtimes.find(runtime => runtime.id === "qwen-asr")?.policy.warm?.minInstances).toBe(0);
-  for (const id of ["ornith15-strix-conversation", "granite-asr", "voicevox-tts", "kittentts-nano"]) {
+  for (const id of ["ornith15-strix-conversation", "granite-asr", "audio8-tts-realistic", "kittentts-nano"]) {
     expect(registry.runtimes.find(runtime => runtime.id === id)?.policy.warm?.minInstances).toBe(1);
   }
 });
@@ -731,7 +731,7 @@ test("Gemma adds an English CPU speech provider while Japanese TTS and auxiliary
   const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry);
   const gemma = catalog.profiles.find((profile) => profile.id === "saaa-conversation-gemma4-26b-voice")!;
   expect(gemma.providers.find((provider) => provider.name === "tts")).toMatchObject({
-    capability: "speech.tts", route: "tts-voicevox", publicModel: "voicevox-core",
+    capability: "speech.tts", route: "tts-audio8", publicModel: "audio8-tts-realistic-0.6b",
   });
   expect(gemma.providers.find((provider) => provider.name === "tts-english")).toMatchObject({
     capability: "speech.tts.english", route: "tts-kittentts-nano",
@@ -838,4 +838,30 @@ test("Qwen FAST remains prepared with 200k four-slot MTP and branch cache but is
     expect(command).toContain(option);
   expect(registry.routes.find(route => route.id === "llm-qwen38-rocmfp4-fast"))
     .toMatchObject({ explicitOnly: true, candidates: [{ runtime: runtime.id, purpose: "primary" }] });
+});
+
+
+test("Japanese TTS selects Audio8 while VOICEVOX remains an explicit cold rollback route", () => {
+  const registry = loadRegistry(repoConfig);
+  const audio8 = registry.runtimes.find(r => r.id === "audio8-tts-realistic")!;
+  expect(audio8.policy.warm).toEqual({ minInstances: 1, idleTtlSeconds: 0 });
+  expect(audio8.deployment).toMatchObject({ scope: "user", service: "audio8-tts.service", healthPort: 8097 });
+  expect(registry.runtimes.find(r => r.id === "voicevox-tts")?.policy.warm)
+    .toEqual({ minInstances: 0, idleTtlSeconds: 0 });
+  expect(audio8.speech?.pitch_scale).toEqual({ minimum: 0, maximum: 0, default: 0 });
+  expect(registry.routes.find(r => r.id === "tts-audio8")).toMatchObject({ explicitOnly: true });
+  expect(registry.routes.find(r => r.id === "tts-default")?.candidates[0]?.runtime).toBe("audio8-tts-realistic");
+  expect(registry.routes.find(r => r.id === "tts-voicevox")?.candidates[0]?.runtime).toBe("voicevox-tts");
+  const catalog = loadAgentConnectionCatalogForRegistry(repoConfig, registry);
+  expect(catalog.profiles.find(p => p.id === "tts-audio8")?.providers).toMatchObject([{ name: "tts", publicModel: "audio8-tts-realistic-0.6b" }]);
+  expect(catalog.profiles.find(p => p.id === "tts-voicevox")?.providers)
+    .toMatchObject([{ name: "tts", route: "tts-voicevox", publicModel: "voicevox-core" }]);
+  for (const profile of catalog.profiles.filter(p => p.id !== "tts-voicevox")) {
+    for (const provider of profile.providers.filter(p => p.name === "tts" && p.capability === "speech.tts")) {
+      expect(provider.publicModel).toBe("audio8-tts-realistic-0.6b");
+    }
+  }
+  for (const runtime of registry.runtimes.filter(r => r.id !== audio8.id && r.backend === "systemd")) {
+    if (runtime.backend === "systemd") expect(runtime.deployment.healthPort).not.toBe(8097);
+  }
 });

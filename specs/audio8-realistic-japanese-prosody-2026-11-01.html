@@ -1,0 +1,404 @@
+<article lang="ja">
+  <h1>Audio8 Realistic 0.6B：日本語の抑揚サンプルとKittenTTS比較</h1>
+  <p>
+    2026-11-01
+    JST、gnosisでのローカル生成試験。Audio8の日本語対応と抑揚を試すため、参照音声なしで日本語6本・英語2本を生成し、同じ英語2文を既存KittenTTS
+    NanoのRosie／Hugoでも生成する。モデル・音声・実行スクリプトはソース専用repositoryの外部に保存する。
+  </p>
+  <section id="model-environment">
+    <h2>モデルと実行条件</h2>
+    <p>
+      対象は Edge0/Audio8-TTS-Realistic-0.6b、revision
+      <code>1e857568bfd4f02931aca3988ee773a44d2d26d3</code>。ダウンロードした推論ファイルは合計2,565,482,033
+      bytes。モデル、同梱codec、tokenizer、custom Transformersコードを含む。モデルディレクトリは
+      <code>/srv/ai/models/Edge0/Audio8-TTS-Realistic-0.6b</code
+      >。全ファイルのSHA-256は外部結果のdownload-manifest.jsonに保存した。
+    </p>
+    <p>
+      Python 3.13.15、PyTorch 2.11.0+rocm7.13.0、Transformers 4.57.3、Radeon 8060S、BF16、CPU
+      4スレッド。既存の
+      <code>/srv/ai/apps/qwen-speech/tts/.venv/bin/python</code> を依存関係の変更なしに利用。seed 42、temperature
+      0.8、top-p 0.95、top-k 50、max_new_tokens
+      650、1本ずつ生成。参照声は使用しないため、同一seedでもサンプル間の話者固定は保証されない。
+    </p>
+    <p>
+      最初のcodec復号はTorchScriptのGPU pointwise
+      fusionでBF16のコンパイルエラーとなった。本試験プロセスのみ
+      <code>torch._C._jit_set_texpr_fuser_enabled(False)</code> と
+      <code>torch._C._jit_override_can_fuse_on_gpu(False)</code>
+      でfusionを無効化し、MIOpenの形状別探索時間を抑えるため
+      <code>MIOPEN_FIND_MODE=FAST</code>
+      を指定した。モデル重み・配布コードの改変はない。既存Providerの停止・切替、Agent
+      Profileやruntime定義の変更は行っていない。
+    </p>
+  </section>
+  <section id="prosody-conditions">
+    <h2>抑揚を促す条件と評価の限界</h2>
+    <p>
+      公開processorの引数はtext、reference_text、reference_audio、reference_codes等で、独立した感情instruction引数はない。非対応タグや「喜んで読んで」という指示を読み上げ文に混ぜず、感情を含む語句、疑問符、感嘆符、読点、三点リーダで表現を促した。喜び・励まし・落胆・物語は狙った読み方のラベルであり、モデルがその感情を正確に表したという判定ではない。音程・話速・抑揚の後加工、音量正規化は行わない。PCM16への保存時にpeakが0.999を超えた場合のみクリップ回避する実装とした。
+    </p>
+    <p>
+      最初の2本は同じ言葉で句読点を変えた比較。ただし参照声を使わず話者が固定されないため、差を句読点だけの効果や同一話者の感情制御成功とは断定できない。好ましさ・自然さ・感情の伝わり方は利用者の試聴で判断する。自動文字起こしは読み抜けの補助確認であり、抑揚の評価には使わない。
+    </p>
+  </section>
+  <section id="generation-results">
+    <h2>生成結果</h2>
+    <table>
+      <caption>
+        各1回の生成。Audio8はGPU推論＋codec復号、KittenTTSはCPUのHTTP全応答時間。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">音声秒</th>
+          <th scope="col">生成秒</th>
+          <th scope="col">RTF</th>
+          <th scope="col">推定音高の10〜90%幅</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">ja-01-neutral Audio8</th>
+          <td>4.087</td>
+          <td>5.726</td>
+          <td>1.401</td>
+          <td>3.5半音</td>
+        </tr>
+        <tr>
+          <th scope="row">ja-02-delighted Audio8</th>
+          <td>3.622</td>
+          <td>4.306</td>
+          <td>1.189</td>
+          <td>3.3半音</td>
+        </tr>
+        <tr>
+          <th scope="row">ja-03-celebration Audio8</th>
+          <td>6.687</td>
+          <td>7.985</td>
+          <td>1.194</td>
+          <td>13.6半音</td>
+        </tr>
+        <tr>
+          <th scope="row">ja-04-reassurance Audio8</th>
+          <td>8.731</td>
+          <td>10.397</td>
+          <td>1.191</td>
+          <td>5.8半音</td>
+        </tr>
+        <tr>
+          <th scope="row">ja-05-disappointment Audio8</th>
+          <td>11.099</td>
+          <td>13.257</td>
+          <td>1.194</td>
+          <td>4.3半音</td>
+        </tr>
+        <tr>
+          <th scope="row">ja-06-story Audio8</th>
+          <td>13.793</td>
+          <td>16.502</td>
+          <td>1.196</td>
+          <td>8.4半音</td>
+        </tr>
+        <tr>
+          <th scope="row">en-01-delighted Audio8</th>
+          <td>7.477</td>
+          <td>9.046</td>
+          <td>1.210</td>
+          <td>14.8半音</td>
+        </tr>
+        <tr>
+          <th scope="row">en-02-reassurance Audio8</th>
+          <td>9.056</td>
+          <td>10.865</td>
+          <td>1.200</td>
+          <td>4.4半音</td>
+        </tr>
+        <tr>
+          <th scope="row">en-01-delighted Rosie</th>
+          <td>12.808</td>
+          <td>0.584</td>
+          <td>0.046</td>
+          <td>3.9半音</td>
+        </tr>
+        <tr>
+          <th scope="row">en-01-delighted Hugo</th>
+          <td>9.233</td>
+          <td>0.803</td>
+          <td>0.087</td>
+          <td>12.4半音</td>
+        </tr>
+        <tr>
+          <th scope="row">en-02-reassurance Rosie</th>
+          <td>12.642</td>
+          <td>1.238</td>
+          <td>0.098</td>
+          <td>4.6半音</td>
+        </tr>
+        <tr>
+          <th scope="row">en-02-reassurance Hugo</th>
+          <td>9.217</td>
+          <td>0.955</td>
+          <td>0.104</td>
+          <td>8.8半音</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      RTF＝生成時間÷音声長。モデル読込は約1.78秒で生成計時に含まない。常用中の共有ホストにおける非最適化の参考値であり、CUDA向け最適化、SGLang、compile、同条件CPU比較、初回採音時の反復性能試験は未実施。Audio8単独の追加反復は次節に記す。Audio8とKittenTTSは実行device・計時範囲・声・音声長が違うため、この表だけから一般的な速度順位は確定しない。
+    </p>
+    <p>
+      比較対象は現在この環境に導入されている英語専用
+      <code>KittenML/kitten-tts-nano-0.8-fp32</code>、revision
+      <code>7a1db645b1f3ab9420761d87428e042b9cec3f26</code>、公式0.8.1実装、CPU 4スレッド、speed
+      1.0。KittenTTS 2の多言語機能と混同しない。日本語は既存HTTP
+      providerが明示的に拒否するため、日本語の品質比較は実施せず、同じ英語文章でRosieとHugoを比較した。
+    </p>
+  </section>
+  <section id="resource-profile">
+    <h2>追加測定：日本語の速度・メモリ・常駐費用</h2>
+    <p>
+      利用者から日本語音声に肯定的な試聴評価を得て、同日、同じBF16モデル・参照声なし・サンプリング設定で資源使用量を測定した。短文1本、喜びの文3回、物語1本の計5回を1プロセスで直列実行。試聴用WAVは変更せず、生成のEOS到達と有限値を確認した。各回でGPU完了を同期して音声コード生成とcodec復号を別計時し、保存は計時から除外した。PyTorchのこのプロセス専用allocator統計、100
+      msごとのプロセスRSS、DRM clientのGTT確保、システム全体の空きメモリを記録した。
+    </p>
+    <table>
+      <caption>
+        同じ設定の追加測定。GPU推論、CPU 4スレッド。喜びは同文3反復。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">条件</th>
+          <th scope="col">音声秒</th>
+          <th scope="col">音声コード生成秒</th>
+          <th scope="col">波形復号秒</th>
+          <th scope="col">合計秒</th>
+          <th scope="col">GPU tensor peak GiB</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">短い確認（試行1）</th>
+          <td>4.087</td>
+          <td>4.343</td>
+          <td>0.726</td>
+          <td>5.069</td>
+          <td>2.205</td>
+        </tr>
+        <tr>
+          <th scope="row">喜び・感謝（試行2）</th>
+          <td>6.687</td>
+          <td>6.686</td>
+          <td>0.575</td>
+          <td>7.260</td>
+          <td>2.449</td>
+        </tr>
+        <tr>
+          <th scope="row">物語（試行3）</th>
+          <td>13.793</td>
+          <td>13.978</td>
+          <td>1.167</td>
+          <td>15.145</td>
+          <td>3.123</td>
+        </tr>
+        <tr>
+          <th scope="row">喜び・感謝（試行4）</th>
+          <td>6.687</td>
+          <td>6.717</td>
+          <td>0.222</td>
+          <td>6.940</td>
+          <td>2.449</td>
+        </tr>
+        <tr>
+          <th scope="row">喜び・感謝（試行5）</th>
+          <td>6.687</td>
+          <td>6.754</td>
+          <td>0.220</td>
+          <td>6.975</td>
+          <td>2.449</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      最初の試聴用日本語6本は計48.019秒の音声に58.173秒、RTF中央値1.194だった。追加測定の6.687秒の喜びは6.940〜7.260秒、RTF
+      1.038〜1.086。13.793秒の物語は15.145秒。準備後の波形復号は喜びで0.220〜0.222秒に短縮したが、音声コード生成には6.7秒程度を要する。コード生成が支配的であり、WAV保存を省くことや波形復号だけの改善では待ち時間を大きく減らせない。試行順、既存cache、共有ホストの負荷が影響するため、この差を特定の最適化効果とは断定しない。
+    </p>
+    <p>
+      ライブラリimport・GPU初期化まで2.358秒、その後モデルとcodecの読込に1.741秒、合計約4.10秒。既存のOSファイルcacheとMIOpen
+      cacheがある起動であり、初ダウンロードやkernelの初回探索時間は含まない。常駐しなければ、生成の前にこの起動費用も必要になる。現在の試験スクリプトは全文生成後に一括復号する。最初の再生可能な音が届くまでの時間、ストリーミング、文分割、同時リクエスト処理は未測定である。準備後もRTFが1を少し超えるため、そのまま無期限の連続再生に追従できるとはいえない。
+    </p>
+    <table>
+      <caption>
+        メモリはGiB＝2の30乗bytes。CPUとGPUの数字は異なる計数方法。
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">指標</th>
+          <th scope="col">実測</th>
+          <th scope="col">意味</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">BF16の重み合計</th>
+          <td>1.748 GiB</td>
+          <td>
+            本体601,159,424 parameters＋codec 337,428,866
+            parameters。0.6Bの表記には別codecを含まない。合計938,588,290 parameters。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">本体＋codec読込直後のGPU tensor</th>
+          <td>1.760 GiB</td>
+          <td>このプロセスのPyTorch割当。予約1.801 GiB。</td>
+        </tr>
+        <tr>
+          <th scope="row">生成・復号中のGPU tensor最大</th>
+          <td>3.123 GiB</td>
+          <td>物語の波形復号時。喜びは2.449 GiB。長さによる一時領域の増加を含む。</td>
+        </tr>
+        <tr>
+          <th scope="row">PyTorchがGPUに予約した最大領域</th>
+          <td>3.328 GiB</td>
+          <td>使用中tensorと再利用用の空き領域を含む。GPUドライバなどPyTorch外の確保を除く。</td>
+        </tr>
+        <tr>
+          <th scope="row">DRMで観測したGPU GTT確保最大</th>
+          <td>3.514 GiB</td>
+          <td>
+            このプロセスのDRM clientを重複除去。ROCm等の確保も含む。VRAM指標は別途最大約2.5
+            MiBで、主な確保先はGTT。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">プロセスRSS・読込直後／生成後待機</th>
+          <td>2.719／2.903 GiB</td>
+          <td>CPU側で観測する常駐ページ。ライブラリ、CPU buffer、モデル読込処理などを含む。</td>
+        </tr>
+        <tr>
+          <th scope="row">プロセスRSSの生涯最大</th>
+          <td>3.483 GiB</td>
+          <td>読込時の一時bufferを含む。100 msサンプルでは3.470 GiB、kernelのVmHWMを優先した。</td>
+        </tr>
+        <tr>
+          <th scope="row">このプロセスのswap</th>
+          <td>0 bytes</td>
+          <td>試験中のVmSwapはゼロ。</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Ryzen AI MAX+ 395／Radeon 8060SはCPUとGPUがシステムメモリを共有する。RSS、GPU
+      tensor、GPU予約領域、DRM確保は重複や計数範囲の違いがあり、合計して正確な物理消費量として扱わない。システム全体のMemAvailableの最大〜最小差は約6.11
+      GiBだったが、既存LLM・他サービス・OS
+      cacheの変動も含む。今回の最大約14秒までの単発音声・1プロセス用には、まずシステム全体で8
+      GiB程度の余裕を見込む案が妥当。ただしこれは運用開始時の仮予算であり、固有物理RAM消費量の確定値、長文上限、同時セッション容量の保証ではない。
+    </p>
+    <p>
+      生成後待機ではGPUの使用中tensor約1.815 GiBに対し、PyTorch予約は3.113 GiB、DRM GTT確保は約3.514
+      GiBを保持した。再利用cacheをempty_cacheで解放すると、tensor使用量は1.815 GiBのまま、予約1.857
+      GiB、DRM GTT約2.262 GiBになった。従って「常駐時1.8
+      GiB」はtensor本体の説明であって、ドライバとcacheまで含む常駐費用ではない。毎要求後に解放する運用の速度影響は未測定。
+    </p>
+    <p>
+      生成中のプロセスCPU時間÷生成実時間は約1.28〜1.33コア相当。CPU
+      4スレッド設定は4コアの固定占有を意味しない。5秒の待機計測は監視threadを含みCPU時間0.114秒、1コアの約2.3%だったため、監視なしの待機CPUとは区別する。GPU
+      busy値はデバイス全体の値で他workloadを含むため、このモデル単独のGPU使用率としては報告しない。
+    </p>
+    <p>
+      追加計測コードは外部の <code>/srv/ai/apps/audio8-tts-trial/profile_resources.py</code>、詳細は
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-realistic/resource-profile/</code>
+      のmetadata.json、runs.json、checkpoints.json、samples.json、summary.json、idle.jsonに保存。計測プロセスは終了しており、Audio8を常駐serviceとしては起動していない。現行LLMと同時に生成したときの遅延やLARMでの収容数は未検証。採用を進めるなら、音質設定を保ったROCm高速化と初音の待ち時間を次に評価する。
+    </p>
+  </section>
+  <section id="reading-validation">
+    <h2>読み上げ文と自動検証</h2>
+    <h3>落ち着いた確認</h3>
+    <p>本当に、来てくれるんですか。うれしいです。</p>
+    <p>Whisper再認識：本当に書いてくれるんですか嬉しいです</p>
+    <h3>同じ言葉・驚きと喜び</h3>
+    <p>本当に！？ 来てくれるんですか！ うれしいです！</p>
+    <p>Whisper再認識：本当に?ラテくれるんですか?嬉しいです。</p>
+    <h3>喜び・感謝</h3>
+    <p>
+      やったあ！ ついに、できたんだね！ すごい、本当にすごいよ！
+      ここまで頑張ってくれて、ありがとう！
+    </p>
+    <p>
+      Whisper再認識：やったー!ついにできたんだね!すごい!本当にすごいよ!ここまで頑張ってくれてありがとう!
+    </p>
+    <h3>優しく励ます</h3>
+    <p>
+      大丈夫。急がなくて、いいんだよ。少し休んだら、もう一度、一緒にやってみよう。きっと、うまくいくから。
+    </p>
+    <p>
+      Whisper再認識：大丈夫、丘がなくていいんだよ。少し休んだらもう一度一緒にやってみよう。きっとうまくいくから。
+    </p>
+    <h3>落胆から前向きへ</h3>
+    <p>
+      そっか……。今日は、会えないんだね。楽しみにしてたから、ちょっと残念。でも、また今度、ゆっくり話そうね。
+    </p>
+    <p>
+      Whisper再認識：そっか。今日は会えないんだね。楽しみにしてたからちょっと残念。でもまた今度ゆっくり話そうね。
+    </p>
+    <h3>物語・緊張から驚きへ</h3>
+    <p>
+      そのとき、廊下の奥で、コツン、と音がした。えっ……誰か、いるの？
+      そっと扉を開けると、そこには、小さな猫がいた。なんだ、君だったの！
+    </p>
+    <p>
+      Whisper再認識：そのとき、廊下の奥でコツンと音がした。え、誰かいるの。そっと扉を開けると、そこには小さな猫がいた。なんだ、君だったの。
+    </p>
+    <h3>英語・喜び</h3>
+    <p>
+      Really? You&#x27;re coming! That&#x27;s wonderful! I&#x27;ve been looking forward to this all
+      week. Thank you so much!
+    </p>
+    <p>
+      Whisper再認識： really. You&#x27;re coming. That&#x27;s wonderful. I&#x27;ve been looking
+      forward to this all week. Thank you so much.
+    </p>
+    <h3>英語・優しい励まし</h3>
+    <p>
+      It&#x27;s okay. Take your time. We don&#x27;t have to get everything right today. Let&#x27;s
+      take a breath, and try again together.
+    </p>
+    <p>
+      Whisper再認識： It&#x27;s okay. Take your time. We don&#x27;t have to get everything right
+      today. Let&#x27;s take a breath and try again together.
+    </p>
+    <p>
+      日本語の喜び・落胆・物語の3本は再認識がおおむね原文と一致した。励ましでは「急がなくて」が「丘がなくて」と再認識された。また、最初の短文2本は「来てくれる」が「書いてくれる」「ラテくれる」と再認識された。TTSの発音とASR誤認識の切り分けは未実施で、短文の読みの正確さを保証しない。全12
+      WAVは非空・有限値で、Audio8全8本はEOSに到達した。
+    </p>
+    <p>
+      音高はlibrosa.pyin、16 kHzに変換、65〜600 Hz、frame 2048、hop
+      160、有声確率0.5以上で算出。10〜90
+      percentile幅は声の高さの変化を記述する補助値で、感情の正確さ・人間らしさを採点しない。ピッチ推定のオクターブ誤り、声質・話者差、異なる文章の影響を含み得る。
+    </p>
+  </section>
+  <section id="artifacts-reproduction">
+    <h2>保存物と再実行</h2>
+    <p>
+      試聴ページと全WAVは
+      <code>/srv/ai/results/larm/tts/2026-11-01-audio8-realistic/listening.html</code
+      >。同じdirectoryにcorpus.json、metrics.jsonl、kitten-metrics.jsonl、environment.json、validation.json、download-manifest.jsonを保存。audio8配下には生成コードと44.1
+      kHz WAV、kitten配下には24 kHz WAVがある。
+    </p>
+    <p>
+      実行スクリプトは
+      <code>/srv/ai/apps/audio8-tts-trial/</code>
+      のrun_samples.py、compare_kitten.py、validate_samples.py、build_listening.py。run_samples.pyは既存WAVを再生成せず、固定条件をenvironment.jsonへ保存する。検証はWhisperのローカルHTTP
+      endpoint 8085で行い、元WAVを変更せず16 kHzの一時ファイルを使用する。
+    </p>
+    <p>
+      この結果は単発のローカル推論試験であり、LARMへのProvider統合、常用採用、他モデルの置換を意味しない。
+    </p>
+  </section>
+  <section id="sources">
+    <h2>確認した配布元</h2>
+    <p>
+      配布元：<code>https://huggingface.co/Edge0/Audio8-TTS-Realistic-0.6b</code>、<code>https://github.com/Edge0-AI/Audio8_TTS</code>。固定revisionのREADMEとprocessing_arktts.pyで対応言語と引数を確認。AMDのMIOpen
+      find/immediate modeドキュメントでFAST設定を確認した。関連する既存の比較条件は
+      <a href="./kittentts-nano-rosie-hugo-evaluation-2026-10-12.html">KittenTTSの実測</a> を参照。
+    </p>
+  </section>
+</article>

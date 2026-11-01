@@ -84,7 +84,6 @@ export function createGatewayHandler(input: {
       chatResponseFormat,
       speechRequest,
       speechRequestBytes,
-      voicevoxOnlyParameter,
       embeddingRequest,
       embeddingRequestBytes,
       visualPerceptionRequest,
@@ -139,7 +138,7 @@ export function createGatewayHandler(input: {
       scoped,
       capabilityHeader: c.req.header("x-larm-capability"),
       contextViewId,
-      voicevoxOnlyParameter,
+      speechRequest,
       metrics: deps.metrics,
       onEvent: deps.onEvent,
     });

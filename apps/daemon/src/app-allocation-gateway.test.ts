@@ -55,7 +55,7 @@ test("gateway preserves resolver failures and rejects provider-specific options 
   const failed = await request({ control: { ...input.control, resolveAllocation: () => ({ status: 503, body: { error: { code: "runtime_not_ready", message: "stopped" } } }) } });
   expect(failed.status).toBe(503);
   expect(await failed.json()).toMatchObject({ error: { code: "runtime_not_ready" } });
-  const unsupported = await request({ voicevoxOnlyParameter: "speedScale" });
+  const unsupported = await request({ speechRequest: { model: "any", input: "x", style: "sweet" } });
   expect(unsupported.status).toBe(400);
-  expect(await unsupported.json()).toMatchObject({ error: { code: "unsupported_parameter", param: "speedScale" } });
+  expect(await unsupported.json()).toMatchObject({ error: { code: "unsupported_parameter", param: "style" } });
 });

@@ -348,3 +348,11 @@ runtimeReleases:
     estimatedMemoryGB: 56
     healthPath: /health
     default: true
+  audio8-tts-realistic-current:
+    runtime: audio8-tts-realistic
+    artifacts:
+      - audio8-tts-realistic-snapshot
+    providerConfigRevision: audio8-realistic-bf16-butler-chest-speed143-v2-pcm24k-temporary
+    estimatedMemoryGB: 8
+    healthPath: /health
+    default: true

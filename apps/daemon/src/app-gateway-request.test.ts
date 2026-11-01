@@ -79,7 +79,7 @@ test("gateway body preparation preserves protocol-specific validation errors", a
   const speech = await prepareGatewayRequestBody({
     ...defaults,
     protocol: "openai.audio-speech.v1",
-    request: request(JSON.stringify({ model: "voicevox-core", input: "hello", voice: "1", speed: 3 })),
+    request: request(JSON.stringify({ model: "voicevox-core", input: "hello", voice: "1", speed: 0 })),
   });
 
   expect(embedding).toMatchObject({

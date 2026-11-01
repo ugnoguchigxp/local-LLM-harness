@@ -22,6 +22,10 @@ const runtime = (
   backend: "systemd" as const,
   node: "local-node",
   policy: { class: "resident" as const },
+  ...(id === "voicevox" ? { speech: { style: true,
+    speed: { minimum: 0.5, maximum: 2, default: 1 },
+    pitch_scale: { minimum: -0.15, maximum: 0.15, default: 0 },
+    intonation_scale: { minimum: 0, maximum: 2, default: 1 } } } : {}),
   resources: {
     estimatedMemoryGB: 1,
     maxConcurrentRequests: 1,
@@ -45,6 +49,9 @@ const registry: Registry = {
     runtime("qwen-general", "llm.general", "openai.chat-completions.v1", 8080),
     runtime("qwen-asr", "speech.stt", "openai.audio-transcriptions.v1", 8081),
     runtime("voicevox", "speech.tts", "openai.audio-speech.v1", 8084),
+    { ...runtime("audio8", "speech.tts", "openai.audio-speech.v1", 8095), speech: {
+      style: false, speed: { minimum: 1, maximum: 1, default: 1 },
+      pitch_scale: { minimum: 0, maximum: 0, default: 0 }, intonation_scale: { minimum: 1, maximum: 1, default: 1 } } },
     runtime("qwen-tts", "speech.tts.expressive", "openai.audio-speech.v1", 8082),
   ],
   profiles: [],
@@ -52,8 +59,9 @@ const registry: Registry = {
     { id: "llm-default", capabilities: ["llm.general"], explicitOnly: false, candidates: [{ runtime: "qwen-general", purpose: "primary" }] },
     { id: "stt-default", capabilities: ["speech.stt"], explicitOnly: false, candidates: [{ runtime: "qwen-asr", purpose: "primary" }] },
     { id: "stt-qwen", capabilities: ["speech.stt"], explicitOnly: true, candidates: [{ runtime: "qwen-asr", purpose: "primary" }] },
+    { id: "tts-audio8", capabilities: ["speech.tts"], explicitOnly: true, candidates: [{ runtime: "audio8", purpose: "primary" }] },
     { id: "tts-default", capabilities: ["speech.tts"], explicitOnly: false, candidates: [{ runtime: "voicevox", purpose: "primary" }] },
-    { id: "tts-expressive", capabilities: ["speech.tts.expressive"], explicitOnly: false, candidates: [{ runtime: "qwen-tts", purpose: "primary" }] },
+    { id: "tts-expressive", capabilities: ["speech.tts.expressive"], explicitOnly: true, candidates: [{ runtime: "qwen-tts", purpose: "primary" }] },
   ],
 };
 
@@ -73,6 +81,16 @@ const speechAgentCatalog = parseAgentConnectionCatalog({
         publicModel: "voicevox-core",
         readiness: "tts-speech",
       }],
+    },
+    audio8: {
+      description: "Temporary Audio8 speech provider",
+      providers: [{ name: "tts", capability: "speech.tts", route: "tts-audio8",
+        publicModel: "audio8-tts-realistic-0.6b", readiness: "tts-speech" }],
+    },
+    expressive: {
+      description: "Expressive speech provider",
+      providers: [{ name: "tts", capability: "speech.tts.expressive", route: "tts-expressive",
+        publicModel: "qwen3-tts-expressive", readiness: "tts-speech" }],
     },
     asr: {
       description: "Explicit ASR provider",
@@ -123,10 +141,10 @@ async function makeSpeechApp(options: Partial<AppDeps>) {
   });
 }
 
-async function allocate(app: ReturnType<typeof createApp>, requirements: object[]) {
+async function allocate(app: ReturnType<typeof createApp>, requirements: object[], token?: string) {
   const response = await app.request("/v1/allocations", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ requirements }),
   });
   expect(response.status).toBe(200);
@@ -704,4 +722,30 @@ test.each([
   expect(response.status).toBe(status);
   expect(response.headers.get("retry-after")).toBe(retryAfter ?? null);
   expect(await response.json()).toEqual({ error });
+});
+
+
+test("Audio8 uses the same speech endpoint and accepts only declared neutral controls on both gateway paths", async () => {
+  const targets: string[] = [];
+  const app = await makeSpeechApp({ apiToken: "control-token", gatewayFetch: async (url) => {
+    targets.push(String(url));
+    return new Response("PCM", { headers: { "content-type": "audio/pcm;rate=24000;channels=1;format=s16le" } });
+  } });
+  const body = { model: "audio8-tts-realistic-0.6b", input: "こんにちは", response_format: "pcm", speed: 1, pitch_scale: 0, intonation_scale: 1 };
+  const direct = (extra: object) => app.request("/v1/audio/speech", { method: "POST", headers: {
+    authorization: "Bearer control-token", "content-type": "application/json" }, body: JSON.stringify({ ...body, ...extra }) });
+  const directResponse = await direct({});
+  expect(directResponse.status).toBe(200);
+  await directResponse.arrayBuffer();
+  const unsupported = await direct({ intonation_scale: 1.2 });
+  expect(unsupported.status).toBe(400);
+  expect(await unsupported.json()).toMatchObject({ error: { code: "unsupported_parameter", param: "intonation_scale" } });
+  const allocationId = await allocate(app, [{ capability: "speech.tts", route: "tts-audio8" }], "control-token");
+  const allocated = (extra: object) => app.request("/v1/audio/speech", { method: "POST", headers: {
+    "content-type": "application/json", "authorization": "Bearer control-token", "x-larm-allocation-id": allocationId }, body: JSON.stringify({ ...body, ...extra }) });
+  const allocatedResponse = await allocated({});
+  expect(allocatedResponse.status).toBe(200);
+  await allocatedResponse.arrayBuffer();
+  expect((await allocated({ pitch_scale: .03 })).status).toBe(400);
+  expect(targets).toEqual(["http://127.0.0.1:8095/v1/audio/speech", "http://127.0.0.1:8095/v1/audio/speech"]);
 });

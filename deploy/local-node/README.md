@@ -489,3 +489,35 @@ reviewed port and an IPv4 `/24`–`/32` only; first restore that Provider's oper
 verify its network listener, then use `rollback-plan` and its separate confirmation digest. If a
 multi-rule apply or its post-check fails, the tool restores every rule it already removed and reports
 explicitly if that compensation is incomplete.
+
+### Audio8 と VOICEVOX の一時比較
+
+標準の `tts-default` と複合プロファイルの日本語 `tts` は Audio8 を選択します。
+Audio8 は warm 最低数 1、VOICEVOX は 0、両方とも解放後の待機時間 0 です。
+`tts-voicevox` は元の VOICEVOX を明示選択する復帰用プロファイルとして残します。
+Audio8 はユーザーサービス、内部待受先は 127.0.0.1:8097 です。
+
+準備済みの Audio8 モデルと検証済み ROCm 環境があるホストでは、
+`bash deploy/local-node/scripts/prepare-audio8-runtime.sh` で独立した実行環境と参照声を準備できます。
+比較は `python3 -B deploy/local-node/scripts/compare-audio8-voicevox.py --output /srv/ai/results/larm/tts/audio8-voicevox-next`
+で行います。このコマンドは Audio8 を一時起動し、同じ文章を両 API で生成し、終了時に Audio8 を停止します。
+既存 VOICEVOX は停止せず、音声と試聴ページは指定した外部ディレクトリへ保存します。
+
+両方とも `/v1/audio/speech` で 24 kHz mono PCM16 の WAV／PCM を返します。
+Audio8 は 150 文字までです。voice 省略時は `audio8-ja-butler-v1` を使います。
+これは選択済みの候補7を参照とし、音程を変えない1.43倍のテンポ、胸の厚みを足すEQ
+（160 Hz +4.5 dB、300 Hz +2.5 dB）、各段の音量調整を含む固定presetです。
+`speed=1` はこの選択した声のpresetをそのまま使う意味で、1.43を再度掛けません。
+`audio8-ja-01`／`audio8-ja-02` も明示選択でき、この2声は従来どおり後処理なしです。
+`/health` は `default_voice`、`default_output_preset`、`default_output_processing` を返します。
+
+公開する調整は引き続き speed=1、pitch_scale=0、intonation_scale=1 に限定します。
+未対応の調整や stream=true は明示的に拒否します。既定声の後処理には FFmpeg の
+atempo／equalizer が必要です。準備コマンドはこの依存と固定参照のchecksumを確認し、
+`/srv/ai/models/Edge0/audio8-ja-voices-v2` に参照bankを作成します。元のbankは保持します。
+参照07の元試聴ディレクトリを移した場合は `AUDIO8_SELECTED_VOICE_SAMPLES` で指定します。
+
+正式な LARM リリースへ組み込む際の増分登録は `install-audio8-service.sh` で行えますが、
+LARM daemon と同じユーザーで実行します。この登録はサービスの有効化・起動を行いません。
+既存 Connection は再取得し、新しい descriptor の model と voice を使用してください。
+VOICEVOX の数値話者 ID や speed 調整値は Audio8 に引き継げません。

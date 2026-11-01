@@ -1,0 +1,269 @@
+<article lang="ja">
+  <h1>Apex-35B-V1.0の単一タスク・ツール利用・JSON生成の導入前調査</h1>
+  <p>
+    調査日：2026-11-01。結論は、ツールを使って一つの依頼を最後まで遂行するworkerの比較候補として有望。
+    JSON専用モデルとしての優位性は未確認。公開ベンチマークは開発元の報告であり、local-nodeでの推論、
+    日本語精度、速度、量子化による精度差は測定していない。今回は資料調査と文書作成を行い、重み取得と配備は行っていない。
+  </p>
+  <p>
+    LARM調査時HEAD：<code>20ba531eb7ef6ffb62298a23e719291692e4eaf3</code>。
+    作業ツリーには他作業の変更がある。SAAA実装は参照していない。 評価時は要求Agent Profile・Provider
+    subsetからroute、runtime、backendを解決し、
+    その要求のbaselineと比較する。実行中モデルの名前をbaselineや構成不整合の根拠にしない。
+  </p>
+
+  <section id="model">
+    <h2>モデルの性格と配布</h2>
+    <p>
+      Apex IntelligenceがQwen3.6-35B-A3Bにmid-training・post-trainingを加えたモデル。 公称35B
+      total・約3B active/tokenのMoEで、入力と出力を合わせて262,144 tokensに対応する。
+      公開配布のライセンス表示はApache-2.0。Hugging Face API上の本体repository作成日は2026-10-28。
+      研究軌跡、計算、コード実行、実行結果からの修正を重視している。
+    </p>
+    <p>
+      動的thinkingにより各turnの推論量を判断する。RSIは開発時のデータ生成・実験・学習改善の仕組みを指す。
+      配布重みを通常推論で使うだけで、その重みが自動更新されるという意味ではない。
+      公式の入出力仕様はtext/text。設定にvision項目が残っていても、画像能力の実証とは扱わない。
+      ロボット・Real2SimのデモはGPT-6.1-Solを使う共通Vision MCPからテキスト観察を受け取っている。
+    </p>
+    <table>
+      <caption>
+        公式GGUFの代表的なファイル容量（GB、実行時使用量ではない）
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">形式</th>
+          <th scope="col">容量</th>
+          <th scope="col">評価上の用途</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Q4_K_M</th>
+          <td>21.7 GB</td>
+          <td>導入互換性・速度・精度の初期比較候補</td>
+        </tr>
+        <tr>
+          <th scope="row">Q5_K_M</th>
+          <td>25.3 GB</td>
+          <td>余裕がある場合の精度比較候補</td>
+        </tr>
+        <tr>
+          <th scope="row">Q6_K</th>
+          <td>29.2 GB</td>
+          <td>量子化による差の追加比較候補</td>
+        </tr>
+        <tr>
+          <th scope="row">Q8_0</th>
+          <td>37.8 GB</td>
+          <td>高精度側の参照候補</td>
+        </tr>
+        <tr>
+          <th scope="row">BF16</th>
+          <td>71.1 GB・2分割</td>
+          <td>GGUF。safetensorsは約72 GBと案内される</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      全公式GGUFに1層のMTPと専用chat
+      templateが含まれる。MTPの実際の対応・加速率はbackendごとに検証する。
+      別モデル用のMTPを転用しない。3B
+      activeは計算量の性格を示し、3B分のメモリーだけで動くという意味ではない。
+      重み容量に加え、KV・recurrent state、計算用buffer、slot数、他Provider、OSの余裕を評価する。
+      開発元は特定のBF16構成で全contextのKV約5.4 GBと説明しているが、
+      その値をlocal-nodeの総メモリー使用量や多重session容量に転用しない。
+    </p>
+  </section>
+
+  <section id="benchmarks">
+    <h2>単一タスクとツール利用を裏づける公開値</h2>
+    <table>
+      <caption>
+        開発元の報告値。ApexとQwen3.6-35B-A3Bの比較であり、ローカル実測ではない
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">評価</th>
+          <th scope="col">Apex</th>
+          <th scope="col">Qwen3.6</th>
+          <th scope="col">判断への使い方</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">BFCL V4</th>
+          <td>84.0</td>
+          <td>75.2</td>
+          <td>関数呼び出しの有望な証拠。ただし独自の全entry非加重集計</td>
+        </tr>
+        <tr>
+          <th scope="row">AutomationBench</th>
+          <td>49.3</td>
+          <td>10.0</td>
+          <td>一つの自動化作業を複数手順で進める能力の参考</td>
+        </tr>
+        <tr>
+          <th scope="row">Terminal-Bench 2.1</th>
+          <td>65.2</td>
+          <td>46.1</td>
+          <td>端末環境内の作業遂行の参考</td>
+        </tr>
+        <tr>
+          <th scope="row">SWE-bench Verified</th>
+          <td>73.4</td>
+          <td>63.8</td>
+          <td>修正後の公式テスト通過。ネット接続なし</td>
+        </tr>
+        <tr>
+          <th scope="row">LiveCodeBench v6</th>
+          <td>82.3</td>
+          <td>84.5</td>
+          <td>アルゴリズム実装ではbaseを下回る。全用途の一律改善ではない</td>
+        </tr>
+        <tr>
+          <th scope="row">SciCode main/subproblem</th>
+          <td>62.6 / 75.6</td>
+          <td>37.5 / 60.6</td>
+          <td>ツール無効の科学コード生成。掲載値をそのまま記録</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      BFCL以外の多くはClaude Code harnessによる評価。BFCLは公式gorilla pipelineとnative function
+      callingを使う。 発表脚注はBFCLの5,106 entryの非加重通過率と明記している。 公式BFCL
+      V4の総合値はAgentic 40%、Multi-turn 30%、Live 10%、Non-live 10%、 Hallucination
+      10%の構成で、84.0を公式総合順位へ置き換えることはできない。
+      同じ集計でのbaseとの差は参考になるが、カテゴリ内訳なしに複雑なmulti-turnの信頼性を断定しない。
+    </p>
+    <p>
+      Apexの公開条件はreasoning
+      effort=max、temperature=1.0、top-p=0.95、top-k=20、各task一回のpass@1。
+      pass@1でも、その一回のagent run中に複数回のツール呼び出し・修正があり得る。
+      比較モデルには各モデルの既定samplingを使っており、同一samplingの純粋な重み比較ではない。
+      この調査では独立した追試、反復ごとの分散、Apexの量子化別成績、日本語の業務task成績は確認できなかった。
+      短い出力予算・低遅延の条件へ公開値をそのまま移さない。
+    </p>
+    <p>
+      「単一タスク」が一つの依頼をツールで調べ、計算し、修正して完了する意味なら候補価値が高い。
+      ツールなしの一回の応答にも改善の報告はあるが、baseより低い評価もある。
+      常に一発で正解する、短時間で終わる、現行要求のQwen3.8等を上回るという証拠はまだない。
+    </p>
+  </section>
+
+  <section id="json">
+    <h2>JSON生成に関する結論</h2>
+    <p>
+      確認した公式発表・model card・READMEには、JSON専用学習の説明、厳密JSON Schema適合率、
+      複雑な抽出での内容正確性の比較値はない。JSONが苦手だと示されたわけでもなく、特化の有無は未確認とする。
+      公式Tool Calling節では、モデルはQwen
+      XML形式で関数を出力し、serverのparserがAPIのtool_callsへ変換すると説明する。
+      BFCLの高さだけで、任意のJSON本文・深い入れ子・union・null・列挙・日本語の抽出が得意とは結論しない。
+    </p>
+    <table>
+      <caption>
+        JSON用途で分けて測る三つの能力
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">能力</th>
+          <th scope="col">測定方法</th>
+          <th scope="col">現時点の根拠</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">JSON構文の正しさ</th>
+          <td>前置き・Markdownを含めず全contentをJSON parse</td>
+          <td>モデル単独での公開適合率は未確認</td>
+        </tr>
+        <tr>
+          <th scope="row">schemaへの適合</th>
+          <td>required、型、enum、null、追加key、入れ子を外部validatorで検証</td>
+          <td>backendの制約付き生成を併用できる可能性。Apexとの組合せは未実測</td>
+        </tr>
+        <tr>
+          <th scope="row">値の正確性</th>
+          <td>正解値、入力根拠、項目間整合性、不明値の適切な表現を採点</td>
+          <td>構文制約とBFCLだけでは保証されない</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      llama.cppはJSON Schemaの一部をGBNFへ変換し、response_format等で生成を制約できる。
+      backendが対応する制約だけを前提とし、schemaは別途validatorでも確認する。
+      schema自体は通常の本文生成のpromptへ自動注入されないため、必要な構造をpromptにも説明する。
+      制約付き生成は値の事実性や業務規則の正しさを保証しない。
+      動的thinkingとの併用ではreasoningとcontentの分離、grammarを適用する区間、
+      streamingの終端、出力打切り時の挙動を検証する。
+    </p>
+  </section>
+
+  <section id="deployment">
+    <h2>ローカル運用時の注意と比較手順</h2>
+    <p>
+      専用templateを保持し、llama.cppでは--jinjaを使う。別のQwen templateへ置換しない。
+      公式の生成開始位置は&lt;think&gt;。SGLangとvLLMはqwen3 reasoning parser、qwen3_coder tool
+      parserを指定する例がある。
+      APIのthinkingフィールドは多くの例でreasoning_content、vLLMではreasoning。
+      multi-turnではassistant全体とtool_call_id付き結果を保持し、必要に応じpreserve_thinkingを有効にする。
+      templateにenable_thinking=falseの分岐はあるが、公開max設定の性能や完全な推論停止を保証するものとして使わない。
+    </p>
+    <p>
+      公式例のmax_tokens=65,536はthinkingを含む上限であり、毎回その長さになるという意味ではない。
+      初期32K contextは互換性試験に使えるが、この出力上限全体は収まらない。
+      agent比較のcontext・出力・期限を事前に揃え、足りない予算での失敗と能力不足を分けて記録する。
+      NVIDIA向けの公式速度改善をAMD・Vulkanへ適用せず、MTPもOFFから始めて独立比較する。
+    </p>
+    <ol>
+      <li>
+        対象の単一taskをAgent ProfileとProvider
+        subsetで特定し、その要求が解決するbaselineを記録する。
+        Apexは明示選択の比較variantとして設計する。共通のtool定義、task、harness、context、slot、総期限を使う。
+      </li>
+      <li>
+        初期候補は公式Q4_K_M。余裕があればQ5_K_Mを追加する。
+        repository外へ取得する段階でrevision・hashを固定し、backendのrevision・templateも記録する。
+        起動前に競合Providerと実際の空き容量を確認し、既存の作業を停止せずに比較できる条件を確保する。
+      </li>
+      <li>
+        単一依頼の遂行は、日本語の抽出・ファイル修正・検索後の回答・計算後の判定等の固定taskで測る。
+        正常tool、不要tool、複数候補、必須引数不足、tool失敗後の修正、最終回答への到達を含める。
+        taskは独立にし、過去の会話や成功結果を次のtaskへ持ち込まない。
+      </li>
+      <li>
+        JSONは素のpromptとschema制約ありを別条件で測る。nested object、array、enum、null、
+        quote・改行、日本語、不明情報、似た項目、項目間の整合性を含める。
+        生の最初の出力を採点し、補修・再試行後の成績を別に記録する。
+      </li>
+      <li>
+        例えば30件以上の固定taskを3反復する探索試験から開始する。これは信頼性保証のサンプル数ではない。
+        完了率、内容正確性、schema適合率、不要tool・誤tool率、呼出回数、生成tokens、
+        中央値・p95の完了時間、ロード時間、peakメモリーを記録する。
+        warm時とcold時、品質優先と実用の出力予算を分ける。
+      </li>
+    </ol>
+    <p>
+      採用判断は、対象taskの正確な完了率と許容時間内に完了した件数を中心に置く。
+      tool利用で改善し、追加コストが許容できれば用途別worker候補とする。
+      JSON専用採用には内容正確性とschema適合の両方で既存の要求別baselineとの比較が必要。
+      この文書は導入判断の調査記録であり、runtime登録・配備・受入完了の記録ではない。
+    </p>
+  </section>
+
+  <section id="sources">
+    <h2>一次資料と調査時revision</h2>
+    <p>取得日：2026-11-01。外部URLは再調査用の文字列として記録する。</p>
+    <ul>
+      <li>公式発表・評価脚注：<code>https://www.apexin.com/apex-35b/</code></li>
+      <li>公式README：<code>https://github.com/apexin-ai/Apex-35B-V1.0/tree/489604e2bff7bc03df61d8f8e08ce1026cf38c62</code></li>
+      <li>本体・config・template：<code>https://huggingface.co/Apexintelligence-AI/Apex-35B-V1.0/tree/5105f8f9ed8fd8212a72da546bcbb4f01d2cfd68</code></li>
+      <li>公式GGUF：<code>https://huggingface.co/Apexintelligence-AI/Apex-35B-V1.0-GGUF/tree/c585fe8de7387925133ab7a573916c2d7070d714</code></li>
+      <li>BFCL公式集計：<code>https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html</code></li>
+      <li>
+        llama.cpp
+        grammar仕様：<code>https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md</code>。可変masterを参照したため実験時に再確認する。
+      </li>
+    </ul>
+  </section>
+</article>

@@ -1,0 +1,182 @@
+<article lang="ja">
+  <h1>Unlimited-OCR 2と現行OCRの比較</h1>
+  <p>
+    2026年11月1日の公開資料と配備成果物を確認した調査。現行の画像・動画OCRにはRapidOCRを維持し、
+    Unlimited-OCR
+    2は長文書の構造復元を行う別サービス候補とする。両者を同一入力で実行した精度・速度比較は未実施。
+    新しいモデルの取得、推論、配備、既存設定の変更は行っていない。
+  </p>
+  <section id="installed">
+    <h2>比較対象の特定</h2>
+    <p>
+      現行サービスはLARMが管理する独立アプリocr-hostであり、通常のLLM
+      profileから推測したモデルではない。 gatewayの実行先はvision-ocr-host release
+      <code>7e97dbc683e120e5dbcea7382749bf4f5c4cfd2575f496f6db304baff4695811</code>。 配備済みのコードはPP-OCRv6
+      Smallの検出・認識と日本語設定を指定し、 配備済みpackageのmetadataはRapidOCR 3.10.0である。
+      調査時点でgatewayとLAN ingressは稼働、推論workerは停止していた。
+      workerは要求時に起動する設計であり、この停止状態を構成不良とは扱わない。
+    </p>
+    <p>
+      詳細は<a href="./ocr-object-on-demand-hosting-2026-10-13.html">現行OCRの構築・受入記録</a>と
+      <a href="./ocr-gateway-lan-ingress-2026-10-17.html">LAN入口の記録</a>を参照する。
+      本調査では画像を送信しての再受入は実施していない。
+    </p>
+  </section>
+  <section id="comparison">
+    <h2>機能と運用の比較</h2>
+    <table>
+      <caption>
+        現行配備とUnlimited-OCR 2の公式実装に基づく比較
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">項目</th>
+          <th scope="col">現行RapidOCR / PP-OCRv6 Small</th>
+          <th scope="col">Unlimited-OCR 2</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">主用途</th>
+          <td>画像内の文字領域検出と文字起こし。動画はフレーム抽出してOCR。</td>
+          <td>複数ページをまとめた文書解析。ページをまたぐ文章・表の連結と見出し構造の復元。</td>
+        </tr>
+        <tr>
+          <th scope="row">出力</th>
+          <td>文字列、行ごとのpolygon、confidence。</td>
+          <td>
+            ページ・ブロック種別・座標・内容を持つ独自トークン列。公式後処理でMarkdownとHTML表へ変換。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">文書構造</th>
+          <td>現行アプリには表構造・見出し階層・ページ間連結の復元機能なし。</td>
+          <td>表・図・見出し・段組・ページ間連結に対応する出力と後処理を用意。</td>
+        </tr>
+        <tr>
+          <th scope="row">日本語</th>
+          <td>
+            日本語設定で配備。既存の日本語画像受入記録あり。縦書き・細字等の網羅的評価は未実施。
+          </td>
+          <td>
+            本調査で日本語の比較精度を裏付ける評価は確認できず。MarathonDocBenchは中国語・英語の評価。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">実行方式</th>
+          <td>ONNX RuntimeのCPU推論。intra-op 4、inter-op 1。</td>
+          <td>Transformersまたは専用SGLang wheel。公式例はBF16とCUDA、NVIDIA A800 80GBで検証。</td>
+        </tr>
+        <tr>
+          <th scope="row">モデル容量</th>
+          <td>準備済み検出モデル9,929,594 bytes、認識モデル21,234,383 bytes、合計約31.2 MB。</td>
+          <td>
+            公式モデルは約3B。重みindexのtotal_sizeは6,687,958,536 bytes、約6.69
+            GB。実行時メモリーは別途必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">資源制約</th>
+          <td>現行workerのMemoryMaxは2 GiB、CPUQuotaは400%。上限設定であり実測消費量ではない。</td>
+          <td>
+            画像エンコード、KV、作業領域等の計測が必要。A800
+            80GBは公式検証機であり最低VRAM要件を意味しない。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">入力</th>
+          <td>
+            JPEG・PNG・WebP。MP4・MOV・WebMは30秒以内、毎秒2枚、最大60枚。現行APIはPDF非対応。
+          </td>
+          <td>
+            ページ画像列を文書単位で投入。公式PDF例はPyMuPDFで画像化する。動画用APIは別途実装が必要。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">速度</th>
+          <td>小型のCPU推論で短い画像処理に適した構成。同一条件の比較測定はなし。</td>
+          <td>
+            文章を逐次生成するため出力長も所要時間に影響。現行環境での時間、起動時間、同時実行性能は未測定。
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">導入状態</th>
+          <td>認証、オンデマンド起動、idle停止、画像・動画APIまで配備済み。</td>
+          <td>本環境には未導入。要求・結果形式、文書job、起動停止、資源管理への接続が必要。</td>
+        </tr>
+        <tr>
+          <th scope="row">ライセンス</th>
+          <td>RapidOCRと対象PP-OCRモデルはApache-2.0。</td>
+          <td>公式コードはMIT。依存package等の条件は配備時に別途確認する。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section id="limits">
+    <h2>Unlimitedの意味とこのPCでの制約</h2>
+    <p>
+      2026年10月27日公開の2を比較対象とした。SR-SWAは長い系列で参照する情報を絞り、
+      デコード各段階のattention負荷を抑える方式である。ページ数に関係なく全文書の処理時間や総メモリーが一定になるという意味ではない。
+      公式サーバーはページ窓と出力上限を設定でき、窓を小さくするとページをまたぐ連結品質を損ねる場合がある。
+    </p>
+    <p>
+      実機CPUはAMD Ryzen AI Max+ 395、GPUはRadeon 8060S、ホストメモリーは約121 GiB。
+      公式のCUDA向け手順は、このAMD環境での動作保証にはならない。
+      専用attention実装とSGLang改変版を含むため、ROCm等での実行可否・性能を先に検証する必要がある。
+      メモリー容量だけで導入可能とは判定せず、AMDでは不可能とも断定しない。
+    </p>
+    <p>
+      MarathonDocBenchは100文書・各100〜300ページの中国語・英語ベンチマーク。
+      この結果を日本語の単画像OCR精度やRapidOCRへの直接の勝率に置き換えることはできない。
+      現行OCRとUnlimited-OCR 2の同条件実測値がないため、精度向上率や速度倍率は提示しない。
+    </p>
+  </section>
+  <section id="recommendation">
+    <h2>判断と次の比較条件</h2>
+    <p>
+      画面、カメラ、字幕、短い画像から文字と位置を得る用途は現行サービスを維持する。
+      論文、報告書、長いPDFの表や段落を復元したい場合にUnlimited-OCR 2を別途評価する。
+      採用時は文書解析を明示要求する独立サービスとして扱い、通常OCRの要求で自動起動しない。
+    </p>
+    <ol>
+      <li>まずAMD環境での単ページ推論の成立と実測メモリーを確認し、その後に複数ページへ広げる。</li>
+      <li>
+        同じ日本語画像で文字誤り率、領域の見落とし、数字・固有名詞・縦書き・空白ページを評価する。
+      </li>
+      <li>
+        表、段組、見出し、ページ間連結は文字認識と分けて採点し、1・10・100ページの増加も比較する。
+      </li>
+      <li>
+        起動込み時間と起動後時間、文書全体の完了時間、peakメモリー、既存Providerとの競合を測る。
+      </li>
+      <li>
+        単画像の文字精度だけを改善する場合は、現行構成に近いPP-OCRv6 Mediumも同じ資料で比較する。
+      </li>
+    </ol>
+  </section>
+  <section id="sources">
+    <h2>確認元</h2>
+    <p>外部資料は参照先を文字列で記録する。確認日は2026年11月1日。</p>
+    <dl>
+      <dt>公式実行方法・公開日・長文書処理</dt>
+      <dd><code>https://github.com/baidu/Unlimited-OCR</code></dd>
+      <dt>公式モデル情報</dt>
+      <dd><code>https://huggingface.co/baidu/Unlimited-OCR-2</code></dd>
+      <dt>公式重み容量index</dt>
+      <dd><code>https://huggingface.co/baidu/Unlimited-OCR-2/resolve/main/model.safetensors.index.json</code></dd>
+      <dt>出力形式と後処理</dt>
+      <dd><code>https://github.com/baidu/Unlimited-OCR/blob/main/utils/README.md</code></dd>
+      <dt>長文書評価データ</dt>
+      <dd><code>https://huggingface.co/datasets/baidu/MarathonDocBench</code></dd>
+      <dt>RapidOCRモデル・日本語対応表</dt>
+      <dd><code>https://github.com/RapidAI/RapidOCR/blob/main/python/rapidocr/default_models.yaml</code></dd>
+      <dt>公式コードのライセンス</dt>
+      <dd><code>https://github.com/baidu/Unlimited-OCR/blob/main/LICENSE</code></dd>
+      <dt>ローカル配備確認</dt>
+      <dd>
+        gatewayとworkerのsystemd定義、配備release内のvision_ocr/engines.pyとRapidOCR
+        metadata、準備済みmodels.jsonを読取確認。
+      </dd>
+    </dl>
+  </section>
+</article>

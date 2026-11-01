@@ -1,0 +1,26 @@
+[Unit]
+Description=LARM Audio8 Realistic Japanese GPU speech provider
+After=local-fs.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/ai/apps/larm-current/apps/audio8-tts
+Environment=HOME=/srv/ai/cache
+Environment=XDG_CACHE_HOME=/srv/ai/cache
+Environment=HF_HUB_OFFLINE=1
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=MIOPEN_FIND_MODE=FAST
+Environment=AUDIO8_MODEL_ROOT=/srv/ai/models/Edge0/Audio8-TTS-Realistic-0.6b
+Environment=AUDIO8_VOICE_MANIFEST=/srv/ai/models/Edge0/audio8-ja-voices-v2/manifest.json
+Environment=OMP_NUM_THREADS=4
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/srv/ai/apps/audio8-tts-runtime/.venv/bin/python -m uvicorn audio8_api:app --host 127.0.0.1 --port 8097 --workers 1 --no-access-log
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=90
+TimeoutStopSec=100
+LimitNOFILE=65535
+UMask=0077
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

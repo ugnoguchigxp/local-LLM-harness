@@ -19,7 +19,6 @@ export type PreparedGatewayRequestBody = {
   chatResponseFormat?: "sse";
   speechRequest?: AudioSpeechRequest;
   speechRequestBytes?: Uint8Array;
-  voicevoxOnlyParameter?: string;
   embeddingRequest?: EmbeddingRequest;
   embeddingRequestBytes?: Uint8Array;
   visualPerceptionRequest?: VisualPerceptionRequest;
@@ -161,36 +160,7 @@ export async function prepareGatewayRequestBody(input: {
         };
       }
       body.speechRequest = parsed.data;
-      if (
-        parsed.data.model === "voicevox-core"
-        && parsed.data.speed !== undefined
-        && (parsed.data.speed < 0.5 || parsed.data.speed > 2)
-      ) {
-        return {
-          ok: false,
-          error: {
-            status: 400,
-            code: "invalid_request",
-            message: "speed must be between 0.5 and 2 for voicevox-core",
-            param: "speed",
-            format: "openai",
-          },
-        };
-      }
-      body.voicevoxOnlyParameter = ["style", "pitch_scale", "intonation_scale"]
-        .find((name) => parsed.data[name as keyof typeof parsed.data] !== undefined);
-      if (body.voicevoxOnlyParameter && parsed.data.model !== "voicevox-core") {
-        return {
-          ok: false,
-          error: {
-            status: 400,
-            code: "unsupported_parameter",
-            message: `${body.voicevoxOnlyParameter} is supported only by voicevox-core`,
-            param: body.voicevoxOnlyParameter,
-            format: "openai",
-          },
-        };
-      }
+
     } catch (error) {
       return { ok: false, error: openAiError(error) };
     }

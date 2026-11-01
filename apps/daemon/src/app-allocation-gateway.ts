@@ -1,5 +1,7 @@
 import {
   getRuntime,
+  inspectSpeechControls,
+  type AudioSpeechRequest,
   selectProtocolBinding,
   type Registry,
   type RuntimeProtocol,
@@ -37,7 +39,7 @@ export function resolveGatewayAllocation(input: {
   scoped?: VerifiedProviderToken;
   capabilityHeader?: string;
   contextViewId?: string;
-  voicevoxOnlyParameter?: string;
+  speechRequest?: AudioSpeechRequest;
   metrics?: MetricsRegistry;
   onEvent?: (event: { name: string; labels: Record<string, string> }) => void;
 }): GatewayAllocationResolution {
@@ -90,16 +92,6 @@ export function resolveGatewayAllocation(input: {
       ),
     };
   }
-  if (input.voicevoxOnlyParameter && selected.binding.capability !== "speech.tts") {
-    return {
-      ok: false,
-      response: input.context.json(openAiErrorBody(
-        "unsupported_parameter",
-        `${input.voicevoxOnlyParameter} is not supported by the allocated TTS provider`,
-        input.voicevoxOnlyParameter,
-      ), 400),
-    };
-  }
   const resolved = input.control.resolveAllocation(allocationId, selected.binding.capability);
   if (resolved.status !== 200 || !("endpoint" in resolved.body)) {
     return {
@@ -113,6 +105,10 @@ export function resolveGatewayAllocation(input: {
       ok: false,
       response: input.context.json(errorBody("protocol_mismatch", "allocated runtime protocol does not match"), 409),
     };
+  }
+  if (input.speechRequest) {
+    const error = inspectSpeechControls(runtime.speech, input.speechRequest);
+    if (error) return { ok: false, response: input.context.json(openAiErrorBody(error.code, error.message, error.param), 400) };
   }
   if (
     input.protocol === "openai.chat-completions.v1"

@@ -99,9 +99,11 @@ test("production agent profiles compile to strict protocol-aware provider contra
     "saaa-backchannel-default",
     "saaa-conversation-gemma4-26b-64k",
     "saaa-conversation-gemma4-26b-voice",
+    "tts-audio8",
     "tts-default",
     "tts-english",
     "tts-expressive",
+    "tts-voicevox",
     "visual-perception",
   ]);
   expect(catalog.audiences.map((audience) => audience.id)).toEqual([
@@ -163,7 +165,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
         readiness: "system-one",
       }, {
         name: "tts",
-        route: "tts-voicevox",
+        route: "tts-audio8",
         protocol: "openai.audio-speech.v1",
         readiness: "tts-speech",
       }, {
@@ -272,8 +274,8 @@ test("production agent profiles compile to strict protocol-aware provider contra
         {
           name: "tts",
           capability: "speech.tts",
-          route: "tts-voicevox",
-          publicModel: "voicevox-core",
+          route: "tts-audio8",
+          publicModel: "audio8-tts-realistic-0.6b",
         },
         {
           name: "tts-english",
@@ -310,7 +312,7 @@ test("production agent profiles compile to strict protocol-aware provider contra
     capability: "speech.tts",
     route: "tts-voicevox",
     schedulingPriority: 0,
-    profileIds: ["tts-default"],
+    profileIds: ["tts-voicevox"],
   });
   expect(catalog.profiles.find((profile) => profile.id === "contextstill-embedding"))
     .toMatchObject({
@@ -354,9 +356,9 @@ test("production agent profiles compile to strict protocol-aware provider contra
       selectionPolicy: "explicit-only",
       providers: [{
         capability: "speech.tts",
-        route: "tts-voicevox",
+        route: "tts-audio8",
         protocol: "openai.audio-speech.v1",
-        publicModel: "voicevox-core",
+        publicModel: "audio8-tts-realistic-0.6b",
         readiness: "tts-speech",
       }],
     });
